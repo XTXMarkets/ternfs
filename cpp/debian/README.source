@@ -1,0 +1,10 @@
+The package is built from the cpp directory:
+
+    dpkg-buildpackage -us -uc -b
+
+For local Go development, use the Go build helper:
+
+    ../go/build.py --test
+
+The workflow publishing the package should replace the placeholder changelog
+version with a version containing the TernFS revision.

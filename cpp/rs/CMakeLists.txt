@@ -5,6 +5,12 @@
 include_directories(${ternfs_SOURCE_DIR}/core)
 
 add_library(rs rs.h rs.cpp gf_tables.c)
+ternfs_install_go_client_library(
+    rs
+    rs.h
+    ternfs-rs
+    "TernFS Reed-Solomon library"
+)
 
 add_executable(rs-tests tests.cpp)
 target_link_libraries(rs-tests PRIVATE rs core)

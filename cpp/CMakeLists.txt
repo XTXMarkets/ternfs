@@ -11,6 +11,9 @@ set(CMAKE_CXX_COMPILER clang++)
 
 project(ternfs)
 
+include(GNUInstallDirs)
+include(cmake/go-client-library.cmake)
+
 # Yes, this means that it won't work for multi-configuration stuff, which is fine for now.
 if(NOT CMAKE_BUILD_TYPE)
     set(

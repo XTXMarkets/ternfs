@@ -1,0 +1,9 @@
+prefix=@CMAKE_INSTALL_PREFIX@
+libdir=${prefix}/@CMAKE_INSTALL_LIBDIR@
+includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@/ternfs
+
+Name: @TERNFS_PC_NAME@
+Description: @TERNFS_PC_DESCRIPTION@
+Version: 0
+Libs: -L${libdir} -l@TERNFS_PC_LIBRARY@
+Cflags: -I${includedir}

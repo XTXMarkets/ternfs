@@ -20,5 +20,3 @@ tern-integrationtest.*
 .go-cache
 ternfs-client*
 _codeql_detected_source_root
-go/core/crc32c/libcrc32c.a
-go/core/rs/librs.a

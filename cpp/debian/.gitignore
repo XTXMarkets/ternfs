@@ -1,0 +1,6 @@
+/.debhelper/
+/debhelper-build-stamp
+/files
+/ternfs-go-client-dev/
+/ternfs-go-client-dev.debhelper.log
+/ternfs-go-client-dev.substvars

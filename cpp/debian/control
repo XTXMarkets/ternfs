@@ -1,0 +1,20 @@
+Source: ternfs-go-client-dev
+Section: libdevel
+Priority: optional
+Maintainer: Restech <restech@xtxmarkets.com>
+Build-Depends:
+ debhelper-compat (= 13),
+ clang,
+ cmake,
+ lld,
+ ninja-build,
+ python3,
+Standards-Version: 4.6.2
+Rules-Requires-Root: no
+
+Package: ternfs-go-client-dev
+Architecture: amd64
+Depends: pkg-config, ${misc:Depends}
+Description: Native build dependencies for the TernFS Go client
+ Static CRC32C and Reed-Solomon libraries and their public headers, built
+ from the TernFS C++ sources for use by the TernFS Go client.

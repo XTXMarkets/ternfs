@@ -15,7 +15,7 @@ build_variant=$1
 container=
 case $build_variant in
     alpine|alpinedebug)
-        container=ghcr.io/xtxmarkets/ternfs-alpine-build:2025-09-18-1
+        container=ghcr.io/xtxmarkets/ternfs-alpine-build:2027-09-02
         ;;
     ubuntu|ubuntudebug|ubuntusanitized|ubuntuvalgrind)
         container=${TERN_UBUNTU_BUILD_CONTAINER:-ghcr.io/xtxmarkets/ternfs-ubuntu-build:2026-03-11}
@@ -68,15 +68,12 @@ fi
 out_dir=build/$build_variant
 mkdir -p $out_dir
 
-# build C libs we need for go (always as a release build)
+# Select the CMake build directory for Go's native dependencies.
 case $build_variant in
-    ubuntu*) golibs_variant=ubuntu ;;
-    alpine*) golibs_variant=alpine ;;
-    *) golibs_variant=release ;;
+    ubuntu*) golibs_variant=go-ubuntu ;;
+    alpine*) golibs_variant=go-alpine ;;
+    *) golibs_variant=go-release ;;
 esac
-${PWD}/cpp/build.py $golibs_variant --cmake-build-type=release $static_flag rs crc32c
-cp cpp/build/$golibs_variant/crc32c/libcrc32c.a go/core/crc32c/
-cp cpp/build/$golibs_variant/rs/librs.a go/core/rs/
 
 ${PWD}/go/build.py --generate # generate C++ files
 
@@ -84,7 +81,7 @@ ${PWD}/go/build.py --generate # generate C++ files
 ${PWD}/cpp/build.py $build_variant --cmake-build-type=$cmake_build_type $static_flag
 
 # build go
-${PWD}/go/build.py $static_flag
+${PWD}/go/build.py --native-variant $golibs_variant $static_flag
 
 # copy binaries
 binaries=(

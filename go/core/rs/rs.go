@@ -10,8 +10,8 @@ import (
 	"xtx/ternfs/core/parity"
 )
 
-// #cgo LDFLAGS: -L${SRCDIR} -lrs
-// #include "../../../cpp/rs/rs.h"
+// #cgo pkg-config: ternfs-rs
+// #include <rs.h>
 //
 // void set_ptr(uint8_t** ptrs, size_t i, uint8_t* ptr) {
 //     ptrs[i] = ptr;

@@ -1,0 +1,27 @@
+#!/usr/bin/make -f
+
+DEB_HOST_MULTIARCH ?= $(shell dpkg-architecture -qDEB_HOST_MULTIARCH)
+PACKAGE_ROOT := debian/ternfs-go-client-dev
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	@:
+
+override_dh_auto_build:
+	./build.py debian \
+		--cmake-build-type=release \
+		--cmake-install-prefix=/usr \
+		--cmake-install-libdir=lib/$(DEB_HOST_MULTIARCH) \
+		rs crc32c
+
+override_dh_auto_test:
+	@:
+
+override_dh_auto_install:
+	DESTDIR=$(CURDIR)/$(PACKAGE_ROOT) cmake --install build/debian
+
+override_dh_auto_clean:
+	rm -rf build/debian
+	dh_clean

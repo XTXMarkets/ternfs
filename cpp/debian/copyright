@@ -1,0 +1,29 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: ternfs
+Source: https://github.com/XTXMarkets/ternfs
+
+Files: crc32c/* rs/*
+Copyright: 2025 XTX Markets Technologies Limited
+License: Apache-2.0-with-LLVM-exception
+
+Files: debian/*
+Copyright: 2027 XTX Markets Technologies Limited
+License: GPL-2.0-or-later
+
+License: Apache-2.0-with-LLVM-exception
+ On Debian systems, the Apache License version 2.0 is available in
+ /usr/share/common-licenses/Apache-2.0.
+ .
+ As an exception, if, as a result of compiling source code, portions of this
+ software are embedded into an object form of that source code, those embedded
+ portions may be redistributed in object form without complying with the
+ conditions of Sections 4(a), 4(b), and 4(d) of the Apache License.
+ .
+ If compiled forms of this software are combined or linked with GPLv2 software
+ and a court determines that a provision of the Apache License conflicts with
+ GPLv2, that provision may be waived in its entirety with respect to the
+ combined software.
+
+License: GPL-2.0-or-later
+ On Debian systems, the complete text of the GNU General Public License
+ version 2 is available in /usr/share/common-licenses/GPL-2.

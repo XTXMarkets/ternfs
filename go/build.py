@@ -17,17 +17,23 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--race', action='store_true', help='Build Go with -race')
 parser.add_argument('--static', action='store_true', help='Statically link')
 parser.add_argument('--generate', action='store_true', help='Run generate rather than build')
+parser.add_argument('--test', action='store_true', help='Run tests rather than build')
+parser.add_argument(
+    '--native-variant',
+    default='go-release',
+    help='CMake build directory for native Go dependencies (default: go-release)',
+)
 parser.add_argument('--close-tracker', action='store_true', help='Build the BPF object file for the ternfuse close tracker')
 parser.add_argument('paths', nargs='*')
 args = parser.parse_args()
 
 paths = args.paths
 
-if args.generate and (args.race or paths or args.close_tracker):
+if args.generate and (args.race or args.static or args.test or paths or args.close_tracker):
     print('--generate only works as the only flag')
     sys.exit(2)
 
-if args.close_tracker and (args.race or paths or args.generate):
+if args.close_tracker and (args.race or args.static or args.test or paths or args.generate):
     print('--close-tracker only works as the only flag')
     sys.exit(2)
 
@@ -42,6 +48,40 @@ if args.close_tracker:
 if args.generate:
     subprocess.run(['go', 'generate', './...'], cwd=go_dir, check=True)
 else:
+    cpp_dir = go_dir.parent / 'cpp'
+    native_build = [
+        str(cpp_dir / 'build.py'),
+        args.native_variant,
+        '--cmake-build-type=release',
+    ]
+    if args.static:
+        native_build.append('--static')
+    subprocess.run(native_build + ['rs', 'crc32c'], check=True)
+
+    env = os.environ.copy()
+    pkg_config_dirs = [
+        cpp_dir / 'build' / args.native_variant / 'crc32c',
+        cpp_dir / 'build' / args.native_variant / 'rs',
+    ]
+    pkg_config_path = os.pathsep.join(str(path) for path in pkg_config_dirs)
+    if env.get('PKG_CONFIG_PATH'):
+        pkg_config_path += os.pathsep + env['PKG_CONFIG_PATH']
+    env['PKG_CONFIG_PATH'] = pkg_config_path
+
+    go_flags = (
+        (['-ldflags=-extldflags=-static'] if args.static else [])
+        + (['-race'] if args.race else [])
+    )
+
+    if args.test:
+        subprocess.run(
+            ['go', 'test'] + go_flags + (paths or ['./...']),
+            cwd=go_dir,
+            env=env,
+            check=True,
+        )
+        sys.exit(0)
+
     if len(paths) == 0:
         vendor_dir = go_dir / 'vendor'
         pattern = re.compile(r'^package main', re.MULTILINE)
@@ -60,7 +100,8 @@ else:
         path = go_dir / Path(path_str)
         print(f'Building {path_str}')
         subprocess.run(
-            ['go', 'build'] + (['-ldflags=-extldflags=-static'] if args.static else []) + (['-race'] if args.race else []) + ['.'],
+            ['go', 'build'] + go_flags + ['.'],
             cwd=str(path),
+            env=env,
             check=True,
         )
