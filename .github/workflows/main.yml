@@ -96,6 +96,16 @@ jobs:
         run: apt-get install -y build-essential
       - name: Run functional tests
         run: ./ci.py --functional --docker --build
+      - name: Build bpftools
+        # As of now (2025-09-12) the AWS-packaged ubuntu 24.04 does not seem to have
+        # the right bpftools packages, so build from source.
+        run: |
+          apt-get remove -y linux-tools-*
+          apt-get install -y git build-essential libbpf-dev clang llvm
+          git clone --recurse-submodules https://github.com/libbpf/bpftool.git
+          cd bpftool/src
+          make -j install
+          ln -s /usr/local/sbin/bpftool /usr/sbin/bpftool
       - name: Run integration tests
         run: ./ci.py --build --short --integration --docker
       - name: Install packages for kmod CI

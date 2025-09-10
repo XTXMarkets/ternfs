@@ -43,7 +43,7 @@ func (c *Client) metadataRequest(
 		now := time.Now()
 		timeout := timeouts.NextNow(startedAt, now)
 		if timeout == 0 {
-			log.RaiseAlert("giving up on request to shard %v after waiting for %v", shid, now.Sub(startedAt))
+			log.RaiseAlert("giving up on request to shard %v after waiting for %v max=%v", shid, now.Sub(startedAt), timeouts.Max)
 			return msgs.TIMEOUT
 		}
 		if counters != nil {

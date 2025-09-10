@@ -13,7 +13,6 @@ import (
 	"path"
 	"sort"
 	"unsafe"
-	"xtx/ternfs/client"
 	"xtx/ternfs/core/log"
 	"xtx/ternfs/core/wyhash"
 	"xtx/ternfs/msgs"
@@ -72,7 +71,7 @@ func openDir(path string) (C.int, error) {
 
 type dent struct {
 	ino        msgs.InodeId
-	nextOffset int64
+	nextOffset C.off_t
 	reclen     C.ushort
 	typ        C.char
 	name       string
@@ -163,15 +162,9 @@ func dirSeek(fd C.int, off C.long, whence C.int) (C.long, error) {
 	return off, nil
 }
 
-func dirSeekTest(log *log.Logger, registryAddress string, mountPoint string) {
-	c, err := client.NewClient(log, nil, registryAddress, msgs.AddrsInfo{})
-	if err != nil {
-		panic(err)
-	}
-	// create 10k files/symlinks/dirs
-	numFiles := 10_000
-	log.Info("creating %v paths", numFiles)
-	for i := 0; i < numFiles; i++ {
+func dirSeekTest(log *log.Logger, registryAddress string, mountPoint string, numPaths int) {
+	log.Info("creating %v paths", numPaths)
+	for i := 0; i < numPaths; i++ {
 		path := path.Join(mountPoint, fmt.Sprintf("%v", i))
 		if i%10 == 0 { // dirs, not too many since they're more expensive to create
 			if err := os.Mkdir(path, 0777); err != nil {
@@ -205,6 +198,8 @@ func dirSeekTest(log *log.Logger, registryAddress string, mountPoint string) {
 	}
 	// verify dents with what we get straight from the server
 	{
+		c := newTestClient(log, registryAddress, nil)
+		defer c.Close()
 		ix := 2 // . and ..
 		req := msgs.ReadDirReq{
 			DirId: msgs.ROOT_DIR_INODE_ID,
@@ -217,8 +212,8 @@ func dirSeekTest(log *log.Logger, registryAddress string, mountPoint string) {
 			for i := range resp.Results {
 				dent := &dents[ix+i]
 				edge := &resp.Results[i]
-				if dent.name != edge.Name || dent.ino != edge.TargetId || dents[ix+i-1].nextOffset != int64(edge.NameHash) {
-					panic(fmt.Errorf("mismatching edge %+v and dent %+v dent at index %+v", ix+i, edge, dent))
+				if dent.name != edge.Name || dent.ino != edge.TargetId || dents[ix+i-1].nextOffset != C.off_t(edge.NameHash) {
+					panic(fmt.Errorf("mismatching edge %+v and dent %+v dent at index %+v", edge, dent, ix+i))
 				}
 			}
 			ix += len(resp.Results)

@@ -124,20 +124,44 @@ github.com/aws/smithy-go/tracing
 github.com/aws/smithy-go/transport/http
 github.com/aws/smithy-go/transport/http/internal/io
 github.com/aws/smithy-go/waiter
-# github.com/hanwen/go-fuse/v2 v2.2.0
-## explicit; go 1.13
+# github.com/cilium/ebpf v0.19.0
+## explicit; go 1.23.0
+github.com/cilium/ebpf
+github.com/cilium/ebpf/asm
+github.com/cilium/ebpf/btf
+github.com/cilium/ebpf/internal
+github.com/cilium/ebpf/internal/efw
+github.com/cilium/ebpf/internal/kallsyms
+github.com/cilium/ebpf/internal/kconfig
+github.com/cilium/ebpf/internal/linux
+github.com/cilium/ebpf/internal/platform
+github.com/cilium/ebpf/internal/sys
+github.com/cilium/ebpf/internal/sysenc
+github.com/cilium/ebpf/internal/testutils/testmain
+github.com/cilium/ebpf/internal/tracefs
+github.com/cilium/ebpf/internal/unix
+github.com/cilium/ebpf/link
+github.com/cilium/ebpf/rlimit
+# github.com/hanwen/go-fuse/v2 v2.8.0
+## explicit; go 1.17
 github.com/hanwen/go-fuse/v2/fs
 github.com/hanwen/go-fuse/v2/fuse
 github.com/hanwen/go-fuse/v2/internal
+github.com/hanwen/go-fuse/v2/internal/fallocate
+github.com/hanwen/go-fuse/v2/internal/ioctl
+github.com/hanwen/go-fuse/v2/internal/openat
+github.com/hanwen/go-fuse/v2/internal/renameat
 github.com/hanwen/go-fuse/v2/internal/utimens
+github.com/hanwen/go-fuse/v2/internal/xattr
 github.com/hanwen/go-fuse/v2/splice
-# github.com/mattn/go-sqlite3 v1.14.16
-## explicit; go 1.16
+# github.com/mattn/go-sqlite3 v1.14.32
+## explicit; go 1.19
 github.com/mattn/go-sqlite3
 # golang.org/x/sync v0.11.0
 ## explicit; go 1.18
 golang.org/x/sync/errgroup
 golang.org/x/sync/semaphore
-# golang.org/x/sys v0.16.0
-## explicit; go 1.18
+# golang.org/x/sys v0.31.0
+## explicit; go 1.23.0
 golang.org/x/sys/unix
+golang.org/x/sys/windows

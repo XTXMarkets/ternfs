@@ -5,36 +5,34 @@
 package fuse
 
 import (
-	"log"
 	"syscall"
 )
 
-func (ms *Server) systemWrite(req *request, header []byte) Status {
-	if req.flatDataSize() == 0 {
+const useSingleReader = false
+
+func (ms *Server) write(req *request) Status {
+	if req.outPayloadSize() == 0 {
 		err := handleEINTR(func() error {
-			_, err := syscall.Write(ms.mountFd, header)
+			_, err := syscall.Write(ms.mountFd, req.outputBuf)
 			return err
 		})
 		return ToStatus(err)
 	}
-
 	if req.fdData != nil {
 		if ms.canSplice {
-			err := ms.trySplice(header, req, req.fdData)
+			err := ms.trySplice(req, req.fdData)
 			if err == nil {
 				req.readResult.Done()
 				return OK
 			}
-			log.Println("trySplice:", err)
+			ms.opts.Logger.Println("trySplice:", err)
 		}
 
-		sz := req.flatDataSize()
-		buf := ms.allocOut(req, uint32(sz))
-		req.flatData, req.status = req.fdData.Bytes(buf)
-		header = req.serializeHeader(len(req.flatData))
+		req.outPayload, req.status = req.fdData.Bytes(req.outPayload)
+		req.serializeHeader(len(req.outPayload))
 	}
 
-	_, err := writev(ms.mountFd, [][]byte{header, req.flatData})
+	_, err := writev(ms.mountFd, [][]byte{req.outputBuf, req.outPayload})
 	if req.readResult != nil {
 		req.readResult.Done()
 	}

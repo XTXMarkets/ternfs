@@ -56,17 +56,7 @@ func cleanupAfterTest(
 	counters *client.ClientCounters,
 	pauseBlockServiceKiller *sync.Mutex,
 ) {
-	c, err := client.NewClient(log, nil, registryAddress, msgs.AddrsInfo{})
-	if err != nil {
-		panic(err)
-	}
-	shardTimeout := client.DefaultShardTimeout
-	shardTimeout.Initial = 5 * time.Millisecond
-	cdcTimeout := client.DefaultCDCTimeout
-	cdcTimeout.Initial = 5 *time.Millisecond
-	c.SetCounters(counters)
-	c.SetCDCTimeouts(&cdcTimeout)
-	c.SetShardTimeouts(&shardTimeout)
+	c := newTestClient(log, registryAddress, counters)
 	defer c.Close()
 	// Delete all current things
 	deleteDir(log, c, msgs.NULL_INODE_ID, "", 0, msgs.ROOT_DIR_INODE_ID)
@@ -99,7 +89,7 @@ func cleanupAfterTest(
 			panic(err)
 		}
 		if len(visitDirsResp.Ids) > 0 && !(len(visitDirsResp.Ids) == 1 && visitDirsResp.Ids[0] == msgs.ROOT_DIR_INODE_ID) {
-			panic(err)
+			panic(fmt.Errorf("bad response ids"))
 		}
 		// No files
 		visitFilesResp := msgs.VisitFilesResp{}

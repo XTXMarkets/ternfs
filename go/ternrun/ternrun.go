@@ -218,11 +218,15 @@ func main() {
 			if loc > 0 {
 				dirName = fmt.Sprintf("%s_loc%d", dirName, loc)
 			}
+			failureDomain := fmt.Sprintf("%d", i)
+			if numLocations > 1 {
+				failureDomain = fmt.Sprintf("%d_%d", i, loc)
+			}
 			opts := managedprocess.BlockServiceOpts{
 				Exe:              goExes.BlocksExe,
 				Path:             path.Join(*dataDir, dirName),
 				StorageClasses:   storageClasses,
-				FailureDomain:    fmt.Sprintf("%d_%d", i, loc),
+				FailureDomain:    failureDomain,
 				Location:         msgs.Location(loc),
 				LogLevel:         level,
 				RegistryAddress:  registryAddressToUse,

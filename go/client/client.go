@@ -447,7 +447,7 @@ func (cm *clientMetadata) parseResponse(log *log.Logger, req *metadataProcessorR
 			}
 			return
 		}
-		log.Debug("received resp %v req id %v from shard %v", req.resp, req.requestId, req.shard)
+		log.Debug("received resp %T %v req id %v from shard %v", req.resp, req.resp, req.requestId, req.shard)
 		// done
 		req.respCh <- &metadataProcessorResponse{
 			requestId: req.requestId,
@@ -1116,7 +1116,7 @@ func (c *Client) SetCDCTimeouts(t *timing.ReqTimeouts) {
 
 // Override the block timeout parameters.
 // This is only safe to use during initialization.
-func (c *Client) SetBlockTimeout(t *timing.ReqTimeouts) {
+func (c *Client) SetBlockTimeouts(t *timing.ReqTimeouts) {
 	c.blockTimeout = t
 }
 

@@ -22,6 +22,7 @@ import (
 	"syscall"
 	"time"
 	"xtx/ternfs/core/log"
+	"xtx/ternfs/core/timing"
 	"xtx/ternfs/msgs"
 )
 
@@ -334,14 +335,17 @@ func (procs *ManagedProcesses) StartBlockService(ll *log.Logger, opts *BlockServ
 }
 
 type FuseOpts struct {
-	Exe                 string
-	Path                string
-	LogLevel            log.LogLevel
-	Wait                bool
-	RegistryAddress     string
-	Profile             bool
-	InitialShardTimeout time.Duration
-	InitialCDCTimeout   time.Duration
+	Exe                string
+	Path               string
+	LogLevel           log.LogLevel
+	Wait               bool
+	RegistryAddress    string
+	Profile            bool
+	ShardTimeouts      timing.ReqTimeouts
+	CDCTimeouts        timing.ReqTimeouts
+	BlockTimeouts      timing.ReqTimeouts
+	CloseTrackerObject string
+	SetUid             bool
 }
 
 func (procs *ManagedProcesses) StartFuse(ll *log.Logger, opts *FuseOpts) string {
@@ -367,11 +371,38 @@ func (procs *ManagedProcesses) StartFuse(ll *log.Logger, opts *FuseOpts) string 
 	if opts.Profile {
 		args = append(args, "-profile-file", path.Join(opts.Path, "pprof"))
 	}
-	if opts.InitialCDCTimeout != 0 {
-		args = append(args, "-initial-cdc-timeout", opts.InitialCDCTimeout.String())
+	if opts.ShardTimeouts.Initial != 0 {
+		args = append(args, "-initial-shard-timeout", opts.ShardTimeouts.Initial.String())
 	}
-	if opts.InitialShardTimeout != 0 {
-		args = append(args, "-initial-shard-timeout", opts.InitialShardTimeout.String())
+	if opts.ShardTimeouts.Max != 0 {
+		args = append(args, "-max-shard-timeout", opts.ShardTimeouts.Max.String())
+	}
+	if opts.ShardTimeouts.Overall != 0 {
+		args = append(args, "-overall-shard-timeout", opts.ShardTimeouts.Overall.String())
+	}
+	if opts.CDCTimeouts.Initial != 0 {
+		args = append(args, "-initial-cdc-timeout", opts.CDCTimeouts.Initial.String())
+	}
+	if opts.CDCTimeouts.Max != 0 {
+		args = append(args, "-max-cdc-timeout", opts.CDCTimeouts.Max.String())
+	}
+	if opts.CDCTimeouts.Overall != 0 {
+		args = append(args, "-overall-cdc-timeout", opts.CDCTimeouts.Overall.String())
+	}
+	if opts.BlockTimeouts.Initial != 0 {
+		args = append(args, "-initial-block-timeout", opts.BlockTimeouts.Initial.String())
+	}
+	if opts.BlockTimeouts.Max != 0 {
+		args = append(args, "-max-block-timeout", opts.BlockTimeouts.Max.String())
+	}
+	if opts.BlockTimeouts.Overall != 0 {
+		args = append(args, "-overall-block-timeout", opts.BlockTimeouts.Overall.String())
+	}
+	if opts.CloseTrackerObject != "" {
+		args = append(args, "-close-tracker-object", opts.CloseTrackerObject)
+	}
+	if opts.SetUid {
+		args = append(args, "-set-uid")
 	}
 	args = append(args, mountPoint)
 	procs.Start(ll, &ManagedProcessArgs{

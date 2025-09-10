@@ -1,12 +1,9 @@
 # Copyright 2025 XTX Markets Technologies Limited
 #
 # SPDX-License-Identifier: GPL-2.0-or-later
-
-# The image we use to build the static "alpine" binaries
-# that we deploy.
-# We are staying on 3.18 and patching in go1.22 instead of moving to 3.20
-# due to issues with compiling the go-sqlite3 lib on 3.20.
-# We intend to drop the alpine build entirely, see https://internal-repo/issues/336.
+# The image we use to build the static "alpine" binaries.
+# We are staying on 3.18 and patching in recent go due to the RocksDB we're
+# using not playing well with the compilers shipped in 3.22.
 FROM alpine:3.18
 LABEL org.opencontainers.image.source https://github.com/XTXMarkets/ternfs
 RUN set -eu
@@ -15,8 +12,8 @@ RUN apk add ca-certificates
 RUN /usr/sbin/update-ca-certificates
 RUN apk add --no-cache bash perl coreutils python3 musl gcc g++ clang lld make cmake ninja mandoc linux-headers patch wget
 # Explicitly install go outside of apk since the default version is 1.18
-RUN wget https://go.dev/dl/go1.22.3.linux-amd64.tar.gz
-RUN echo 8920ea521bad8f6b7bc377b4824982e011c19af27df88a815e3586ea895f1b36 go1.22.3.linux-amd64.tar.gz | sha256sum --check
-RUN tar -C /usr/local -xzf go1.22.3.linux-amd64.tar.gz; rm go1.22.3.linux-amd64.tar.gz
+RUN wget https://go.dev/dl/go1.25.1.linux-amd64.tar.gz
+RUN echo 7716a0d940a0f6ae8e1f3b3f4f36299dc53e31b16840dbd171254312c41ca12e go1.25.1.linux-amd64.tar.gz | sha256sum --check
+RUN tar -C /usr/local -xzf go1.25.1.linux-amd64.tar.gz; rm go1.25.1.linux-amd64.tar.gz
 ENV PATH="${PATH}:/usr/local/go/bin"
 ENV IN_TERN_BUILD_CONTAINER Y

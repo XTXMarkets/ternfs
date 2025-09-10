@@ -62,12 +62,12 @@ struct Duration {
     void sleepRetry() const;
 };
 
-constexpr Duration operator "" _ns   (unsigned long long t) { return Duration(t); }
-constexpr Duration operator "" _us   (unsigned long long t) { return Duration(t*1'000); }
-constexpr Duration operator "" _ms   (unsigned long long t) { return Duration(t*1'000'000); }
-constexpr Duration operator "" _sec  (unsigned long long t) { return Duration(t*1'000'000'000ull); }
-constexpr Duration operator "" _mins (unsigned long long t) { return Duration(t*1'000'000'000ull*60); }
-constexpr Duration operator "" _hours(unsigned long long t) { return Duration(t*1'000'000'000ull*60*60); }
+constexpr Duration operator ""_ns   (unsigned long long t) { return Duration(t); }
+constexpr Duration operator ""_us   (unsigned long long t) { return Duration(t*1'000); }
+constexpr Duration operator ""_ms   (unsigned long long t) { return Duration(t*1'000'000); }
+constexpr Duration operator ""_sec  (unsigned long long t) { return Duration(t*1'000'000'000ull); }
+constexpr Duration operator ""_mins (unsigned long long t) { return Duration(t*1'000'000'000ull*60); }
+constexpr Duration operator ""_hours(unsigned long long t) { return Duration(t*1'000'000'000ull*60*60); }
 
 std::ostream& operator<<(std::ostream& out, Duration d);
 

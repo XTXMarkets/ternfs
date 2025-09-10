@@ -8,13 +8,13 @@ package fuse
 const pollHackName = ".go-fuse-epoll-hack"
 const pollHackInode = ^uint64(0)
 
-func doPollHackLookup(ms *Server, req *request) {
+func doPollHackLookup(ms *protocolServer, req *request) {
 	attr := Attr{
 		Ino:   pollHackInode,
 		Mode:  S_IFREG | 0644,
 		Nlink: 1,
 	}
-	switch req.inHeader.Opcode {
+	switch req.inHeader().Opcode {
 	case _OP_LOOKUP:
 		out := (*EntryOut)(req.outData())
 		*out = EntryOut{

@@ -102,7 +102,7 @@ func newState(
 	{
 		blockTimeout := client.DefaultBlockTimeout
 		blockTimeout.Overall = 5 * time.Minute
-		st.client.SetBlockTimeout(&blockTimeout)
+		st.client.SetBlockTimeouts(&blockTimeout)
 		shardTimeout := client.DefaultShardTimeout
 		shardTimeout.Overall = 5 * time.Minute
 		st.client.SetShardTimeouts(&shardTimeout)

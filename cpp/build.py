@@ -26,9 +26,9 @@ build_dir.mkdir(parents=True, exist_ok=True)
 
 if build_type in ('ubuntu', 'ubuntudebug', 'ubuntusanitized', 'ubuntuvalgrind', 'alpine', 'alpinedebug') and 'IN_TERN_BUILD_CONTAINER' not in os.environ:
     if build_type.startswith('alpine'):
-        container = 'ghcr.io/xtxmarkets/ternfs-alpine-build:2025-09-03'
+        container = 'ghcr.io/xtxmarkets/ternfs-alpine-build:2025-09-18-1'
     else:
-        container = 'ghcr.io/xtxmarkets/ternfs-ubuntu-build:2025-09-03'
+        container = 'ghcr.io/xtxmarkets/ternfs-ubuntu-build:2025-09-18'
     # See <https://groups.google.com/g/seastar-dev/c/r7W-Kqzy9O4>
     # for motivation for `--security-opt seccomp=unconfined`,
     # the `--pids-limit -1` is not something I hit but it seems

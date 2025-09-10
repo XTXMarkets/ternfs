@@ -1,19 +1,10 @@
 # Copyright 2025 XTX Markets Technologies Limited
 #
 # SPDX-License-Identifier: GPL-2.0-or-later
-
-FROM ubuntu:22.04
+FROM ubuntu:noble-20250910
 LABEL org.opencontainers.image.source https://github.com/XTXMarkets/ternfs
 RUN set -eu
-# See <https://stackoverflow.com/questions/71941032/why-i-cannot-run-apt-update-inside-a-fresh-ubuntu22-04>
-RUN rm -f /etc/apt/apt.conf.d/docker-clean
 RUN apt-get update
-RUN apt-get install -y python3 gcc g++ clang lld make cmake ninja-build mandoc build-essential git fuse valgrind llvm ca-certificates wget
+RUN apt-get install -y python3 gcc g++ clang lld make cmake ninja-build mandoc build-essential git fuse valgrind llvm wget rsync golang-go
 RUN apt-get clean
-# Explicitly install go outside of apt since the default version is 1.18
-RUN /usr/sbin/update-ca-certificates
-RUN wget https://go.dev/dl/go1.22.3.linux-amd64.tar.gz
-RUN echo 8920ea521bad8f6b7bc377b4824982e011c19af27df88a815e3586ea895f1b36 go1.22.3.linux-amd64.tar.gz | sha256sum --check
-RUN tar -C /usr/local -xzf go1.22.3.linux-amd64.tar.gz; rm go1.22.3.linux-amd64.tar.gz
-ENV PATH="${PATH}:/usr/local/go/bin"
 ENV IN_TERN_BUILD_CONTAINER Y

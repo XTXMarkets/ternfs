@@ -532,7 +532,7 @@ func (c *posixFsTestHarness) checkFileData(log *log.Logger, fullFilePath string,
 		}
 		defer unix.Munmap(mm)
 	}
-	log.Debug("checking for file %v(ino=%d) of expected len %v", fullFilePath, stat.Ino, fullSize)
+	log.Debug("checking for file %v(ino=%016x) of expected len %v", fullFilePath, stat.Ino, fullSize)
 	// First do some random reads, hopefully stimulating span caches in some interesting way
 	if fullSize > 1 {
 		for i := 0; i < 10; i++ {
@@ -549,8 +549,8 @@ func (c *posixFsTestHarness) checkFileData(log *log.Logger, fullFilePath string,
 			if c.readWithMmap {
 				copy(actualPartialData, mm[offset:])
 			} else {
-				if _, err := io.ReadFull(f, actualPartialData); err != nil {
-					panic(err)
+				if read, err := io.ReadFull(f, actualPartialData); err != nil {
+					panic(fmt.Errorf("could not read file %v(ino=%016x) from %v to %v (%v read): %v", fullFilePath, stat.Ino, offset, offset+size, read, err))
 				}
 			}
 			checkFileData(fullFilePath, offset, offset+size, actualPartialData, expectedPartialData)
@@ -1088,12 +1088,7 @@ func fsTestInternal[Id comparable](
 		// Now, try to migrate away from one block service, to stimulate that code path
 		// in tests somewhere.
 		if opts.maxFileSize > 0 {
-			c, err := client.NewClient(log, nil, registryAddress, msgs.AddrsInfo{})
-			if err != nil {
-				panic(err)
-			}
-			c.SetFetchBlockServices()
-			c.SetCounters(counters)
+			c := newTestClient(log, registryAddress, counters)
 			defer c.Close()
 			blockServiceToPurge := findBlockServiceToPurge(log, c)
 			log.Info("will migrate block service %v", blockServiceToPurge)
@@ -1271,13 +1266,8 @@ func fsTest(
 	counters *client.ClientCounters,
 	harnessType WhichHarness,
 ) {
-	c, err := client.NewClient(log, nil, registryAddress, msgs.AddrsInfo{})
-	if err != nil {
-		panic(err)
-	}
-	c.SetFetchBlockServices()
+	c := newTestClient(log, registryAddress, counters)
 	defer c.Close()
-	c.SetCounters(counters)
 	switch h := harnessType.(type) {
 	case posixHarness:
 		harness := &posixFsTestHarness{

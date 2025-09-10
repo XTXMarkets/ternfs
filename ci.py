@@ -18,10 +18,8 @@ parser.add_argument('--build', action='store_true')
 parser.add_argument('--docker', action='store_true', help='Build and run in docker image')
 parser.add_argument('--prepare-image', default=None, type=str, help='Build the kmod image given the provided base image')
 parser.add_argument('--leader-only', action='store_true', help='Run only LogsDB leader with LEADER_NO_FOLLOWERS')
+parser.add_argument('--close-tracker-object', default=None, type=str, help='Run fuse driver with the given close tracker object')
 args = parser.parse_args()
-
-
-os.environ['PATH'] = f'/opt/go1.18.4/bin:{os.environ["PATH"]}'
 
 script_dir = os.path.dirname(os.path.realpath(__file__))
 os.chdir(script_dir)
@@ -36,7 +34,7 @@ if args.functional:
     bold_print('functional tests')
     if args.docker:
         bold_print('starting functional tests in docker')
-        container = 'ghcr.io/xtxmarkets/ternfs-ubuntu-build:2025-09-03'
+        container = 'ghcr.io/xtxmarkets/ternfs-ubuntu-build:2025-09-18'
         # See <https://groups.google.com/g/seastar-dev/c/r7W-Kqzy9O4>
         # for motivation for `--security-opt seccomp=unconfined`,
         # the `--pids-limit -1` is not something I hit but it seems
@@ -58,13 +56,13 @@ if args.functional:
 if args.integration:
     if args.docker:
         bold_print('starting integration tests in docker')
-        container = 'ghcr.io/xtxmarkets/ternfs-ubuntu-build:2025-09-03'
+        container = 'ghcr.io/xtxmarkets/ternfs-ubuntu-build:2025-09-18'
         # See <https://groups.google.com/g/seastar-dev/c/r7W-Kqzy9O4>
         # for motivation for `--security-opt seccomp=unconfined`,
         # the `--pids-limit -1` is not something I hit but it seems
         # like a good idea.
         run_cmd_unbuffered(
-            ['docker', 'run', '--pids-limit', '-1', '--security-opt', 'seccomp=unconfined', '--cap-add', 'SYS_ADMIN', '-v', '/dev/fuse:/dev/fuse', '--privileged', '--rm', '-i', '--mount', f'type=bind,src={script_dir},dst=/eggsfs', '-e', f'UID={os.getuid()}', '-e', f'GID={os.getgid()}', container, '/eggsfs/integration.py', '--docker'] + (['--short'] if args.short else []) + (['--leader-only'] if args.leader_only else [])
+            ['docker', 'run', '--pids-limit', '-1', '--security-opt', 'seccomp=unconfined', '--cap-add', 'SYS_ADMIN', '-v', '/dev/fuse:/dev/fuse', '-v', '/sys/kernel:/sys/kernel', '--privileged', '--rm', '-i', '--mount', f'type=bind,src={script_dir},dst=/ternfs', '-e', f'UID={os.getuid()}', '-e', f'GID={os.getgid()}', container, '/ternfs/integration.py', '--docker'] + (['--short'] if args.short else []) + (['--leader-only'] if args.leader_only else []) + (['--close-tracker-object', args.close_tracker_object] if args.close_tracker_object else [])
         )
     else:
         run_cmd_unbuffered(

@@ -26,6 +26,7 @@ import (
 	"xtx/ternfs/core/log"
 	"xtx/ternfs/core/managedprocess"
 	lrecover "xtx/ternfs/core/recover"
+	"xtx/ternfs/core/timing"
 	"xtx/ternfs/core/wyhash"
 	"xtx/ternfs/msgs"
 
@@ -77,8 +78,8 @@ func totalRequests[K comparable](cs map[K]*client.ReqCounters) uint64 {
 
 type RunTests struct {
 	overrides               *cfgOverrides
-	registryIp               string
-	registryPort             uint16
+	registryIp              string
+	registryPort            uint16
 	mountPoint              string
 	fuseMountPoint          string
 	kmod                    bool
@@ -122,8 +123,12 @@ func (r *RunTests) test(
 
 	counters := client.NewClientCounters()
 
-	r.print("running %s test, %s\n", name, extra)
-	log.Info("running %s test, %s\n", name, extra) // also in log to track progress in CI more easily
+	if extra != "" {
+		extra = ", " + extra
+	}
+
+	r.print("running %s test%s\n", name, extra)
+	log.Info("running %s test%s\n", name, extra) // also in log to track progress in CI more easily
 	t0 := time.Now()
 	run(counters)
 	elapsed := time.Since(t0)
@@ -254,25 +259,16 @@ func (r *RunTests) run(
 	log *log.Logger,
 ) {
 	defer func() { lrecover.HandleRecoverChan(log, terminateChan, recover()) }()
-	c, err := client.NewClient(log, nil, r.registryAddress(), msgs.AddrsInfo{})
-	if err != nil {
-		panic(err)
-	}
-	c.SetFetchBlockServices()
-	defer c.Close()
-	updateTimeouts(c)
-
 	{
+		c := newTestClient(log, r.registryAddress(), nil)
 		// We want to immediately clean up everything when we run the GC manually
-		if err != nil {
-			panic(err)
-		}
 		snapshotPolicy := &msgs.SnapshotPolicy{
 			DeleteAfterVersions: msgs.ActiveDeleteAfterVersions(0),
 		}
 		if err := c.MergeDirectoryInfo(log, msgs.ROOT_DIR_INODE_ID, snapshotPolicy); err != nil {
 			panic(err)
 		}
+		c.Close()
 	}
 
 	fileHistoryOpts := fileHistoryTestOpts{
@@ -347,12 +343,20 @@ func (r *RunTests) run(
 		},
 	)
 
+	parallelDirsOpts := &parallelDirsOpts{
+		numRootDirs:      10,
+		numThreads:       100,
+		actionsPerThread: 100,
+	}
+	if r.short {
+		parallelDirsOpts.actionsPerThread = 10
+	}
 	r.test(
 		log,
 		"parallel dirs",
-		"",
+		fmt.Sprintf("%v root dirs, %v threads, %v actions per thread", parallelDirsOpts.numRootDirs, parallelDirsOpts.numThreads, parallelDirsOpts.actionsPerThread),
 		func(counters *client.ClientCounters) {
-			parallelDirsTest(log, r.registryAddress(), counters)
+			parallelDirsTest(log, r.registryAddress(), counters, parallelDirsOpts)
 		},
 	)
 
@@ -455,12 +459,12 @@ func (r *RunTests) run(
 		"",
 		func(counters *client.ClientCounters) {
 			fn := path.Join(r.mountPoint, "test")
-			if err := ioutil.WriteFile(fn, []byte{}, 0644); err != nil {
+			if err := os.WriteFile(fn, []byte{}, 0644); err != nil {
 				panic(err)
 			}
 			time1 := time.Now()
 			time2 := time.Now()
-			if time1 == time2 {
+			if time.Time.Equal(time1, time2) {
 				panic(fmt.Errorf("same times"))
 			}
 			if err := syscall.UtimesNano(fn, []syscall.Timespec{syscall.NsecToTimespec(time1.UnixNano()), syscall.NsecToTimespec(time2.UnixNano())}); err != nil {
@@ -485,6 +489,7 @@ func (r *RunTests) run(
 			if _, err := os.ReadFile(fn); err != nil {
 				panic(err)
 			}
+			time.Sleep(time.Second) // try to flush out OS caches, esp in FUSE
 			info, err = os.Stat(fn)
 			if err != nil {
 				panic(err)
@@ -495,10 +500,11 @@ func (r *RunTests) run(
 				panic(fmt.Errorf("atime didn't update, %v > %v", now, atime))
 			}
 			// make sure O_NOATIME is respected
-			file, err := os.OpenFile(fn, syscall.O_RDONLY|syscall.O_NOATIME, 0)
+			file, err := os.OpenFile(fn, os.O_RDONLY|syscall.O_NOATIME, 0)
 			if err != nil {
 				panic(err)
 			}
+			time.Sleep(time.Millisecond)
 			info, err = os.Stat(fn)
 			file.Close()
 			if err != nil {
@@ -520,43 +526,45 @@ func (r *RunTests) run(
 			rand := wyhash.New(42)
 			for i := 0; i < 100; i++ {
 				fn := path.Join(r.mountPoint, fmt.Sprintf("test%v", i))
-				f, err := os.OpenFile(fn, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+				f, err := os.OpenFile(fn, os.O_CREATE|os.O_WRONLY, 0644)
 				if err != nil {
 					panic(err)
 				}
-				// write ~50MB, alternating between real content and holes
+				// Write ~50MB, alternating between real content and holes
 				// everything random so we try to cheaply stimulate all possible start/end
-				// configurations
+				// configurations.
 				data := []byte{}
+				fileSize := int64(0)
+				offset := int64(0)
 				for i := 0; i < 10; i++ {
 					// the lowest value where we have multiple pages
 					// testing multiple spans is probably not worth it, the code
 					// is identical
 					sz := int64(rand.Uint64()%10000 + 1) // ]0, 10000]
 					if rand.Uint32()%2 == 0 {            // hole
-						log.Debug("extending %v with %v zeros using seek", fn, sz)
 						var whence int
-						var offset int64
-						expectedOffset := int64(len(data)) + sz
+						var seekOffset int64
+						expectedOffset := offset + sz
 						switch rand.Uint32() % 3 {
 						case 0:
 							whence = io.SeekStart
-							offset = expectedOffset
+							seekOffset = expectedOffset
 						case 1:
 							whence = io.SeekCurrent
-							offset = sz
+							seekOffset = expectedOffset - offset
 						case 2:
 							whence = io.SeekEnd
-							offset = sz
+							seekOffset = expectedOffset - fileSize
 						}
-						retOffset, err := f.Seek(offset, whence)
+						log.Debug("extending %v with %v zeros using seek (offset=%v fileSize=%v seekOffset=%v whence=%v)", fn, sz, offset, fileSize, seekOffset, whence)
+						retOffset, err := f.Seek(seekOffset, whence)
 						if err != nil {
 							panic(err)
 						}
 						if retOffset != expectedOffset {
-							panic(fmt.Errorf("unexpected offset %v, expected %v", retOffset, expectedOffset))
+							panic(fmt.Errorf("unexpected offset %v, expected %v (whence=%v, %v + %v)", retOffset, expectedOffset, whence, len(data), sz))
 						}
-						data = append(data, make([]byte, int(sz))...)
+						offset = expectedOffset
 					} else { // read data
 						log.Debug("extending %v with %v random bytes using write", fn, sz)
 						chunk := make([]byte, sz)
@@ -566,7 +574,12 @@ func (r *RunTests) run(
 						if _, err := f.Write(chunk); err != nil {
 							panic(err)
 						}
+						// append zeros
+						data = append(data, make([]byte, int(offset)-len(data))...)
+						// append chunk
 						data = append(data, chunk...)
+						fileSize = int64(len(data))
+						offset = fileSize
 					}
 				}
 				if err := f.Close(); err != nil {
@@ -584,26 +597,35 @@ func (r *RunTests) run(
 		},
 	)
 
+	dirSeekPaths := 10_000
+	if r.short {
+		dirSeekPaths = 1_000
+	}
 	r.test(
 		log,
 		"dir seek",
 		"",
 		func(counters *client.ClientCounters) {
-			dirSeekTest(log, r.registryAddress(), r.mountPoint)
+			dirSeekTest(log, r.registryAddress(), r.mountPoint, dirSeekPaths)
 		},
 	)
 
+	parallelWriteThreads := 10000
+	if r.short {
+		parallelWriteThreads = 1000
+	}
 	r.test(
 		log,
 		"parallel write",
-		"",
+		fmt.Sprintf("%v threads", parallelWriteThreads),
 		func(counters *client.ClientCounters) {
-			numThreads := 10000
 			bufPool := bufpool.NewBufPool()
 			dirInfoCache := client.NewDirInfoCache()
 			var wg sync.WaitGroup
-			wg.Add(numThreads)
-			for i := 0; i < numThreads; i++ {
+			wg.Add(parallelWriteThreads)
+			c := newTestClient(log, r.registryAddress(), counters)
+			defer c.Close()
+			for i := 0; i < parallelWriteThreads; i++ {
 				ti := i
 				go func() {
 					defer func() { lrecover.HandleRecoverChan(log, terminateChan, recover()) }()
@@ -725,7 +747,7 @@ func (bsv *blockServiceVictim) start(
 		StorageClasses:   bsv.storageClasses,
 		FailureDomain:    bsv.failureDomain,
 		LogLevel:         log.Level(),
-		RegistryAddress:   fmt.Sprintf("127.0.0.1:%d", registryPort),
+		RegistryAddress:  fmt.Sprintf("127.0.0.1:%d", registryPort),
 		FutureCutoff:     &testBlockFutureCutoff,
 		Addr1:            fmt.Sprintf("127.0.0.1:%d", port1),
 		Addr2:            fmt.Sprintf("127.0.0.1:%d", port2),
@@ -829,29 +851,21 @@ func killBlockServices(
 	}()
 }
 
-func updateTimeouts(c *client.Client) {
-	shardTimeout := client.DefaultShardTimeout
-	cdcTimeout := client.DefaultCDCTimeout
-	blockTimeout := client.DefaultBlockTimeout
+var shardTimeouts timing.ReqTimeouts
+var cdcTimeouts timing.ReqTimeouts
+var blockTimeouts timing.ReqTimeouts
 
-	// In tests where we intentionally drop packets this makes things _much_
-	// faster
-	shardTimeout.Initial = 5 * time.Millisecond
-	cdcTimeout.Initial = 10 * time.Millisecond
-	// Tests fail frequently hitting various timeouts. Higher Max and Overall
-	// timeouts makes tests much more stable
-	shardTimeout.Max = 20 * time.Second
-	cdcTimeout.Max = 20 * time.Second
-	shardTimeout.Overall = 60 * time.Second
-	cdcTimeout.Overall = 60 * time.Second
-	// Retry block stuff quickly to avoid being starved by the block service
-	// killer (and also to go faster)
-	blockTimeout.Max = time.Second
-	blockTimeout.Overall = 10 * time.Minute // for block service killer tests
-
-	c.SetShardTimeouts(&shardTimeout)
-	c.SetCDCTimeouts(&cdcTimeout)
-	c.SetBlockTimeout(&blockTimeout)
+func newTestClient(log *log.Logger, registryAddress string, counters *client.ClientCounters) *client.Client {
+	c, err := client.NewClient(log, nil, registryAddress, msgs.AddrsInfo{})
+	if err != nil {
+		panic(err)
+	}
+	c.SetFetchBlockServices()
+	c.SetCounters(counters)
+	c.SetShardTimeouts(&shardTimeouts)
+	c.SetCDCTimeouts(&cdcTimeouts)
+	c.SetBlockTimeouts(&blockTimeouts)
+	return c
 }
 
 // 0 interval won't do, because otherwise transient files will immediately be
@@ -884,9 +898,31 @@ func main() {
 	blockServiceKiller := flag.Bool("block-service-killer", false, "Go around killing block services to stimulate paths recovering from that.")
 	race := flag.Bool("race", false, "Go race detector")
 	leaderOnly := flag.Bool("leader-only", false, "Run only LogsDB leader with LEADER_NO_FOLLOWERS")
+	closeTrackerObject := flag.String("close-tracker-object", "", "Compiled BPF object to track explicitly closed files")
 	flag.Var(&overrides, "cfg", "Config overrides")
 	flag.Parse()
 	noRunawayArgs()
+
+	{
+		shardTimeouts = client.DefaultShardTimeout
+		cdcTimeouts = client.DefaultCDCTimeout
+		blockTimeouts = client.DefaultBlockTimeout
+
+		// In tests where we intentionally drop packets this makes things _much_
+		// faster
+		shardTimeouts.Initial = 5 * time.Millisecond
+		cdcTimeouts.Initial = 10 * time.Millisecond
+		// Tests fail frequently hitting various timeouts. Higher Max and Overall
+		// timeouts makes tests much more stable
+		shardTimeouts.Max = 20 * time.Second
+		cdcTimeouts.Max = 20 * time.Second
+		shardTimeouts.Overall = 60 * time.Second
+		cdcTimeouts.Overall = 60 * time.Second
+		// Retry block stuff quickly to avoid being starved by the block service
+		// killer (and also to go faster)
+		blockTimeouts.Max = time.Second
+		blockTimeouts.Overall = 10 * time.Minute // for block service killer tests
+	}
 
 	filterRe := regexp.MustCompile(*filter)
 
@@ -962,13 +998,13 @@ func main() {
 	if *binariesDir != "" {
 		cppExes = &managedprocess.CppExes{
 			RegistryExe: path.Join(*binariesDir, "ternregistry"),
-			ShardExe:   path.Join(*binariesDir, "ternshard"),
-			CDCExe:     path.Join(*binariesDir, "terncdc"),
-			DBToolsExe: path.Join(*binariesDir, "terndbtools"),
+			ShardExe:    path.Join(*binariesDir, "ternshard"),
+			CDCExe:      path.Join(*binariesDir, "terncdc"),
+			DBToolsExe:  path.Join(*binariesDir, "terndbtools"),
 		}
 		goExes = &managedprocess.GoExes{
-			BlocksExe:  path.Join(*binariesDir, "ternblocks"),
-			FuseExe:    path.Join(*binariesDir, "ternfuse"),
+			BlocksExe: path.Join(*binariesDir, "ternblocks"),
+			FuseExe:   path.Join(*binariesDir, "ternfuse"),
 		}
 	} else {
 		fmt.Printf("building shard/cdc/blockservice/registry\n")
@@ -1066,7 +1102,7 @@ func main() {
 					opts.LogsDBFlags = []string{"-logsdb-leader"}
 				}
 			}
-			if (r == 0) {
+			if r == 0 {
 				opts.Addr1 = fmt.Sprintf("127.0.0.1:%v", registryPort)
 			} else {
 				opts.Addr1 = "127.0.0.1:0"
@@ -1078,7 +1114,7 @@ func main() {
 			procs.StartRegistry(l, &opts)
 		}
 	}
-	
+
 	err := client.WaitForRegistry(l, registryAddress, 10*time.Second)
 	if err != nil {
 		panic(fmt.Errorf("failed to connect to registry %v", err))
@@ -1140,15 +1176,15 @@ func main() {
 	// Start CDC
 	for r := uint8(0); r < replicaCount; r++ {
 		cdcOpts := &managedprocess.CDCOpts{
-			ReplicaId:      msgs.ReplicaId(r),
-			Exe:            cppExes.CDCExe,
-			Dir:            path.Join(*dataDir, fmt.Sprintf("cdc_%d", r)),
-			LogLevel:       level,
-			Valgrind:       *buildType == "valgrind",
-			Perf:           *profile,
+			ReplicaId:       msgs.ReplicaId(r),
+			Exe:             cppExes.CDCExe,
+			Dir:             path.Join(*dataDir, fmt.Sprintf("cdc_%d", r)),
+			LogLevel:        level,
+			Valgrind:        *buildType == "valgrind",
+			Perf:            *profile,
 			RegistryAddress: registryAddress,
-			Addr1:          "127.0.0.1:0",
-			Addr2:          "127.0.0.1:0",
+			Addr1:           "127.0.0.1:0",
+			Addr2:           "127.0.0.1:0",
 		}
 		if r == 0 {
 			if *leaderOnly {
@@ -1177,7 +1213,7 @@ func main() {
 				Valgrind:                  *buildType == "valgrind",
 				Perf:                      *profile,
 				OutgoingPacketDrop:        *outgoingPacketDrop,
-				RegistryAddress:            registryAddress,
+				RegistryAddress:           registryAddress,
 				Addr1:                     "127.0.0.1:0",
 				Addr2:                     "127.0.0.1:0",
 				TransientDeadlineInterval: &testTransientDeadlineInterval,
@@ -1212,14 +1248,17 @@ func main() {
 	}
 
 	fuseMountPoint := procs.StartFuse(l, &managedprocess.FuseOpts{
-		Exe:                 goExes.FuseExe,
-		Path:                path.Join(*dataDir, "fuse"),
-		LogLevel:            level,
-		Wait:                true,
-		RegistryAddress:      registryAddress,
-		Profile:             *profile,
-		InitialShardTimeout: client.DefaultShardTimeout.Initial,
-		InitialCDCTimeout:   client.DefaultCDCTimeout.Initial,
+		Exe:                goExes.FuseExe,
+		Path:               path.Join(*dataDir, "fuse"),
+		LogLevel:           level,
+		Wait:               true,
+		RegistryAddress:    registryAddress,
+		Profile:            *profile,
+		ShardTimeouts:      shardTimeouts,
+		CDCTimeouts:        cdcTimeouts,
+		BlockTimeouts:      blockTimeouts,
+		CloseTrackerObject: *closeTrackerObject,
+		SetUid:             true,
 	})
 
 	var mountPoint string
@@ -1294,8 +1333,8 @@ func main() {
 	go func() {
 		r := RunTests{
 			overrides:               &overrides,
-			registryIp:               "127.0.0.1",
-			registryPort:             registryPort,
+			registryIp:              "127.0.0.1",
+			registryPort:            registryPort,
 			mountPoint:              mountPoint,
 			fuseMountPoint:          fuseMountPoint,
 			kmod:                    *kmod,

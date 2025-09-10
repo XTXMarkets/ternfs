@@ -246,7 +246,7 @@ func main() {
 	c.SetFetchBlockServices()
 	c.SetShardTimeouts(shardTimeouts)
 	c.SetCDCTimeouts(cdcTimeouts)
-	c.SetBlockTimeout(blockTimeouts)
+	c.SetBlockTimeouts(blockTimeouts)
 	c.IncreaseNumRegistryHandlersTo(*numRegistryHandlers)
 	counters := client.NewClientCounters()
 	c.SetCounters(counters)

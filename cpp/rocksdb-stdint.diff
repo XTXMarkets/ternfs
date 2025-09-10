@@ -10,6 +10,19 @@ index f356395f3..6eaf71735 100644
  
  #include "rocksdb/slice.h"
  
+diff --git a/trace_replay/trace_replay.cc b/trace_replay/trace_replay.cc
+index 37b95852b..c681e374c 100644
+--- a/trace_replay/trace_replay.cc
++++ b/trace_replay/trace_replay.cc
+@@ -317,7 +317,7 @@ Status TracerHelper::DecodeTraceRecord(Trace* trace, int trace_file_version,
+       cf_ids.reserve(multiget_size);
+       multiget_keys.reserve(multiget_size);
+       for (uint32_t i = 0; i < multiget_size; i++) {
+-        uint32_t tmp_cfid;
++        uint32_t tmp_cfid = 0;
+         Slice tmp_key;
+         GetFixed32(&cfids_payload, &tmp_cfid);
+         GetLengthPrefixedSlice(&keys_payload, &tmp_key);
 diff --git a/util/string_util.h b/util/string_util.h
 index 55d106fff..2adf1ec68 100644
 --- a/util/string_util.h

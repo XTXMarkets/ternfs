@@ -1,15 +1,18 @@
 module xtx/ternfs
 
-go 1.22
+go 1.23.0
+
+toolchain go1.24.3
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.36.4
 	github.com/aws/aws-sdk-go-v2/config v1.29.16
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.80.2
-	github.com/hanwen/go-fuse/v2 v2.2.0
-	github.com/mattn/go-sqlite3 v1.14.16
+	github.com/cilium/ebpf v0.19.0
+	github.com/hanwen/go-fuse/v2 v2.8.0
+	github.com/mattn/go-sqlite3 v1.14.32
 	golang.org/x/sync v0.11.0
-	golang.org/x/sys v0.16.0
+	golang.org/x/sys v0.31.0
 )
 
 require (

@@ -17,14 +17,27 @@ repo_dir = go_dir.parent
 parser = argparse.ArgumentParser()
 parser.add_argument('--race', action='store_true', help='Build Go with -race')
 parser.add_argument('--generate', action='store_true', help='Run generate rather than build')
+parser.add_argument('--close-tracker', action='store_true', help='Build the BPF object file for the ternfuse close tracker')
 parser.add_argument('paths', nargs='*')
 args = parser.parse_args()
 
 paths = args.paths
 
-if args.generate and (args.race or paths):
+if args.generate and (args.race or paths or args.close_tracker):
     print('--generate only works as the only flag')
-    os.exit(2)
+    sys.exit(2)
+
+if args.close_tracker and (args.race or paths or args.generate):
+    print('--close-tracker only works as the only flag')
+    sys.exit(2)
+
+if args.close_tracker:
+    print('Dumping vmlinux.h')
+    with open(go_dir / 'closetracker' / 'vmlinux.h', 'w') as f:
+        subprocess.run(['bpftool', 'btf', 'dump', 'file', '/sys/kernel/btf/vmlinux', 'format', 'c'], stdout=f, check=True)
+    print('Building closetracker.bpf.o')
+    subprocess.run(['clang', '-g', '-O2', '-target', 'bpf', '-c', go_dir / 'closetracker' / 'closetracker.bpf.c', '-o', go_dir / 'closetracker' / 'closetracker.bpf.o'], check=True)
+    sys.exit(0)
 
 if not args.generate and len(paths) == 0:
     vendor_dir = go_dir / 'vendor'
@@ -42,7 +55,7 @@ if not args.generate and len(paths) == 0:
 
 
 if 'IN_TERN_BUILD_CONTAINER' not in os.environ:
-    container = 'ghcr.io/xtxmarkets/ternfs-alpine-build:2025-09-03'
+    container = 'ghcr.io/xtxmarkets/ternfs-alpine-build:2025-09-18-1'
     # See <https://groups.google.com/g/seastar-dev/c/r7W-Kqzy9O4>
     # for motivation for `--security-opt seccomp=unconfined`,
     # the `--pids-limit -1` is not something I hit but it seems

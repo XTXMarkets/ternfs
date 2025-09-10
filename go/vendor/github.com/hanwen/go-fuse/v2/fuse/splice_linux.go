@@ -12,23 +12,23 @@ import (
 )
 
 func (s *Server) setSplice() {
-	s.canSplice = splice.Resizable()
+	s.canSplice = splice.Resizable() && !s.opts.DisableSplice
 }
 
 // trySplice:  Zero-copy read from fdData.Fd into /dev/fuse
 //
 // This is a four-step process:
 //
-//	1) Splice data form fdData.Fd into the "pair1" pipe buffer --> pair1: [payload]
-//	   Now we know the actual payload length and can
+//  1. Splice data form fdData.Fd into the "pair1" pipe buffer --> pair1: [payload]
+//     Now we know the actual payload length and can
 //     construct the reply header
-//	2) Write header into the "pair2" pipe buffer               --> pair2: [header]
-//	4) Splice data from "pair1" into "pair2"                   --> pair2: [header][payload]
-//	3) Splice the data from "pair2" into /dev/fuse
+//  2. Write header into the "pair2" pipe buffer               --> pair2: [header]
+//  4. Splice data from "pair1" into "pair2"                   --> pair2: [header][payload]
+//  3. Splice the data from "pair2" into /dev/fuse
 //
-// This dance is neccessary because header and payload cannot be split across
+// This dance is necessary because header and payload cannot be split across
 // two splices and we cannot seek in a pipe buffer.
-func (ms *Server) trySplice(header []byte, req *request, fdData *readResultFd) error {
+func (ms *Server) trySplice(req *request, fdData *readResultFd) error {
 	var err error
 
 	// Get a pair of connected pipes
@@ -62,20 +62,20 @@ func (ms *Server) trySplice(header []byte, req *request, fdData *readResultFd) e
 
 	// Grow pipe to header + actually read size + one extra page
 	// Without the extra page the kernel will block once the pipe is almost full
-	header = req.serializeHeader(payloadLen)
-	total := len(header) + payloadLen
+	req.serializeHeader(payloadLen)
+	total := len(req.outputBuf) + payloadLen
 	pair2Sz := total + os.Getpagesize()
 	if err := pair2.Grow(pair2Sz); err != nil {
 		return err
 	}
 
 	// Write header into pair2
-	n, err := pair2.Write(header)
+	n, err := pair2.Write(req.outputBuf)
 	if err != nil {
 		return err
 	}
-	if n != len(header) {
-		return fmt.Errorf("Short write into splice: wrote %d, want %d", n, len(header))
+	if n != len(req.outputBuf) {
+		return fmt.Errorf("Short write into splice: wrote %d, want %d", n, len(req.outputBuf))
 	}
 
 	// Write data into pair2
@@ -92,6 +92,5 @@ func (ms *Server) trySplice(header []byte, req *request, fdData *readResultFd) e
 	if err != nil {
 		return err
 	}
-
 	return nil
 }

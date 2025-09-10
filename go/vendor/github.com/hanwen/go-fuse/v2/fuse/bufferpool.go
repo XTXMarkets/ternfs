@@ -16,23 +16,36 @@ type bufferPool struct {
 
 	// For each page size multiple a list of slice pointers.
 	buffersBySize []*sync.Pool
+
+	// Number of outstanding allocations. Used for testing.
+	countersBySize []int
 }
 
 var pageSize = os.Getpagesize()
 
-func (p *bufferPool) getPool(pageCount int) *sync.Pool {
+func (p *bufferPool) counters() []int {
 	p.lock.Lock()
-	for len(p.buffersBySize) < pageCount+1 {
+	defer p.lock.Unlock()
+
+	d := make([]int, len(p.countersBySize))
+	copy(d, p.countersBySize)
+	return d
+}
+
+func (p *bufferPool) getPool(pageCount int, delta int) *sync.Pool {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+	for len(p.buffersBySize) <= pageCount {
 		p.buffersBySize = append(p.buffersBySize, nil)
+		p.countersBySize = append(p.countersBySize, 0)
 	}
 	if p.buffersBySize[pageCount] == nil {
 		p.buffersBySize[pageCount] = &sync.Pool{
 			New: func() interface{} { return make([]byte, pageSize*pageCount) },
 		}
 	}
-	pool := p.buffersBySize[pageCount]
-	p.lock.Unlock()
-	return pool
+	p.countersBySize[pageCount] += delta
+	return p.buffersBySize[pageCount]
 }
 
 // AllocBuffer creates a buffer of at least the given size. After use,
@@ -48,7 +61,7 @@ func (p *bufferPool) AllocBuffer(size uint32) []byte {
 	}
 	pages := sz / pageSize
 
-	b := p.getPool(pages).Get().([]byte)
+	b := p.getPool(pages, 1).Get().([]byte)
 	return b[:size]
 }
 
@@ -65,5 +78,5 @@ func (p *bufferPool) FreeBuffer(slice []byte) {
 	pages := cap(slice) / pageSize
 	slice = slice[:cap(slice)]
 
-	p.getPool(pages).Put(slice)
+	p.getPool(pages, -1).Put(slice)
 }

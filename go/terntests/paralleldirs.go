@@ -23,29 +23,30 @@ type createInode struct {
 	creationTime msgs.TernTime
 }
 
+type parallelDirsOpts struct {
+	numRootDirs      int
+	numThreads       int
+	actionsPerThread int
+}
+
 func parallelDirsTest(
 	log *log.Logger,
 	registryAddress string,
 	counters *client.ClientCounters,
+	opts *parallelDirsOpts,
 ) {
-	numRootDirs := 10
-	numThreads := 1000
-	numThreadsDigits := int(math.Ceil(math.Log10(float64(numThreads))))
-	actionsPerThread := 100
+	numThreadsDigits := int(math.Ceil(math.Log10(float64(opts.numThreads))))
 
 	entityName := func(tid int, i int) string {
 		return fmt.Sprintf(fmt.Sprintf("%%0%dd-%%d", numThreadsDigits), tid, i)
 	}
 
-	client, err := client.NewClient(log, nil, registryAddress, msgs.AddrsInfo{})
-	if err != nil {
-		panic(err)
-	}
-	client.SetCounters(counters)
+	client := newTestClient(log, registryAddress, counters)
+	defer client.Close()
 
 	log.Info("creating root dirs")
 	rootDirs := []msgs.InodeId{}
-	for i := 0; i < numRootDirs; i++ {
+	for i := 0; i < opts.numRootDirs; i++ {
 		resp := &msgs.MakeDirectoryResp{}
 		if err := client.CDCRequest(log, &msgs.MakeDirectoryReq{OwnerId: msgs.ROOT_DIR_INODE_ID, Name: fmt.Sprintf("%v", i)}, resp); err != nil {
 			panic(err)
@@ -57,16 +58,16 @@ func parallelDirsTest(
 
 	log.Info("creating directories in parallel")
 	var wg sync.WaitGroup
-	wg.Add(numThreads)
+	wg.Add(opts.numThreads)
 	done := uint64(0)
-	inodes := make([]map[string]createInode, numThreads)
-	for i := 0; i < numThreads; i++ {
+	inodes := make([]map[string]createInode, opts.numThreads)
+	for i := 0; i < opts.numThreads; i++ {
 		tid := i
 		inodes[tid] = make(map[string]createInode)
 		go func() {
 			defer func() { lrecover.HandleRecoverChan(log, terminateChan, recover()) }()
 			rand := wyhash.New(uint64(tid))
-			for i := 0; i < actionsPerThread; i++ {
+			for i := 0; i < opts.actionsPerThread; i++ {
 				which := rand.Float64()
 				// we mostly issue creates since only one dir rename
 				// can exist at the same time.
@@ -177,7 +178,7 @@ func parallelDirsTest(
 					}
 				}
 				if atomic.AddUint64(&done, 1)%256 == 0 {
-					log.Info("went through %v/%v actions", atomic.LoadUint64(&done), numThreads*actionsPerThread)
+					log.Info("went through %v/%v actions", atomic.LoadUint64(&done), opts.numThreads*opts.actionsPerThread)
 				}
 			}
 			wg.Done()
@@ -198,7 +199,7 @@ func parallelDirsTest(
 
 	log.Info("checking")
 	expectedDirs := make(map[string]struct{})
-	for i := 0; i < numThreads; i++ {
+	for i := 0; i < opts.numThreads; i++ {
 		for d := range inodes[i] {
 			expectedDirs[d] = struct{}{}
 		}
