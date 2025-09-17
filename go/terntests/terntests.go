@@ -2,10 +2,12 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
+	"net"
 	"os"
 	"os/exec"
 	"path"
@@ -755,6 +757,19 @@ func killBlockServices(
 	rand := wyhash.New(uint64(time.Now().UnixNano()))
 	go func() {
 		defer func() { lrecover.HandleRecoverChan(log, terminateChan, recover()) }()
+		 lc := net.ListenConfig{
+			Control: func(network, address string, c syscall.RawConn) error {
+				var operr error
+				err := c.Control(func(fd uintptr) {
+					operr = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
+				})
+				if err != nil {
+					return err
+				}
+				return operr
+			},
+		}
+		var reservedPorts [2]net.Listener 
 		for {
 			// pick and kill the victim
 			pause.Lock()
@@ -772,6 +787,16 @@ func killBlockServices(
 						ports := bsPorts[failureDomain]
 						log.Info("killing %v, ports %v %v", victim.path, ports._1, ports._2)
 						procs.Kill(procId, syscall.SIGKILL)
+						if ports._1 != 0 {
+							if port1Listener, err := lc.Listen(context.Background(), "tcp4", fmt.Sprintf("127.0.0.1:%d", ports._1)); err == nil {
+								reservedPorts[0] = port1Listener	
+							}
+						}
+						if ports._2 != 0 {
+							if port2Listener, err := lc.Listen(context.Background(), "tcp4", fmt.Sprintf("127.0.0.1:%d", ports._2)); err == nil {
+								reservedPorts[1] = port2Listener	
+							}
+						}
 						break
 					}
 					j++
@@ -786,6 +811,12 @@ func killBlockServices(
 			}()
 			select {
 			case <-stopChan:
+				for i, ls := range reservedPorts {
+					if ls != nil {
+						ls.Close()
+						reservedPorts[i] = nil
+					}
+				}
 				stopChan <- struct{}{} // reply
 				return
 			case <-sleepChan:
@@ -799,6 +830,12 @@ func killBlockServices(
 				var failureDomain msgs.FailureDomain
 				copy(failureDomain.Name[:], victim.failureDomain)
 				ports := bsPorts[failureDomain]
+				for i, ls := range reservedPorts {
+					if ls != nil {
+						ls.Close()
+						reservedPorts[i] = nil
+					}
+				}
 				procId := victim.start(
 					log,
 					blocksExe,
@@ -1122,6 +1159,8 @@ func main() {
 		_1 uint16
 		_2 uint16
 	})
+	fmt.Printf("got block services %v", blockServices)
+	return
 	for _, bs := range blockServices {
 		blockServicesPorts[bs.FailureDomain] = struct {
 			_1 uint16
