@@ -1,3 +1,7 @@
+// Copyright 2025 XTX Markets Technologies Limited
+//
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
 package main
 
 import (
@@ -702,9 +706,21 @@ func generateKmod(errors []string, shardReqResps []reqRespType, cdcReqResps []re
 	hOut := new(bytes.Buffer)
 	cOut := new(bytes.Buffer)
 
+	fmt.Fprintln(hOut, "// Copyright 2025 XTX Markets Technologies Limited")
+	fmt.Fprintln(hOut, "//")
+	fmt.Fprintln(hOut, "// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception")
+	fmt.Fprintln(hOut)
 	fmt.Fprintln(hOut, "// Automatically generated with go run bincodegen.")
 	fmt.Fprintln(hOut, "// Run `go generate ./...` from the go/ directory to regenerate it.")
 	fmt.Fprintln(hOut)
+
+	fmt.Fprintln(cOut, "// Copyright 2025 XTX Markets Technologies Limited")
+	fmt.Fprintln(cOut, "//")
+	fmt.Fprintln(cOut, "// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception")
+	fmt.Fprintln(cOut)
+	fmt.Fprintln(cOut, "// Automatically generated with go run bincodegen.")
+	fmt.Fprintln(cOut, "// Run `go generate ./...` from the go/ directory to regenerate it.")
+	fmt.Fprintln(cOut)
 
 	for i, err := range errors {
 		fmt.Fprintf(hOut, "#define TERNFS_ERR_%s %d\n", err, ternErrorCodeOffset+i)
@@ -1327,6 +1343,10 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 	hppOut := new(bytes.Buffer)
 	cppOut := new(bytes.Buffer)
 
+	fmt.Fprintln(hppOut, "// Copyright 2025 XTX Markets Technologies Limited")
+	fmt.Fprintln(hppOut, "//")
+	fmt.Fprintln(hppOut, "// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception")
+	fmt.Fprintln(hppOut)
 	fmt.Fprintln(hppOut, "// Automatically generated with go run bincodegen.")
 	fmt.Fprintln(hppOut, "// Run `go generate ./...` from the go/ directory to regenerate it.")
 	fmt.Fprintln(hppOut, "#pragma once")
@@ -1336,6 +1356,10 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 	fmt.Fprintln(hppOut, "#include \"Time.hpp\"")
 	fmt.Fprintln(hppOut)
 
+	fmt.Fprintln(cppOut, "// Copyright 2025 XTX Markets Technologies Limited")
+	fmt.Fprintln(cppOut, "//")
+	fmt.Fprintln(cppOut, "// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception")
+	fmt.Fprintln(cppOut)
 	fmt.Fprintln(cppOut, "// Automatically generated with go run bincodegen.")
 	fmt.Fprintln(cppOut, "// Run `go generate ./...` from the go/ directory to regenerate it.")
 	fmt.Fprintln(cppOut, "#include \"MsgsGen.hpp\"")

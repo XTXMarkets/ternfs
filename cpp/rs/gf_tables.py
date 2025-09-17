@@ -1,9 +1,18 @@
+# Copyright 2025 XTX Markets Technologies Limited
+#
+# SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
 # Rijndael's poly, see <https://en.wikipedia.org/wiki/Finite_field_arithmetic#Rijndael's_(AES)_finite_field>
 POLY = 0x11B # x^8 + x^4 + x^3 + x + 1, or 100011011
 # See <https://en.wikipedia.org/wiki/Finite_field_arithmetic#Generator_based_tables>
 GENERATOR = 0x03 # x + 1, or 00000011
 
+# REUSE-IgnoreStart
+print('// Copyright 2025 XTX Markets Technologies Limited')
+print('//')
+print('// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception')
+# REUSE-IgnoreEnd
+print()
 print('// generated with gf_tables.py')
 print('#ifndef __KERNEL__')
 print('#include <stdint.h>')

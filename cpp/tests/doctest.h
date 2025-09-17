@@ -1,3 +1,8 @@
+// Copyright (c) 2016-2023 Viktor Kirilov
+//
+// SPDX-License-Identifier: MIT
+//
+
 // Retrieved from <https://github.com/doctest/doctest/blob/86892fc480f80fb57d9a3926cb506c0e974489d8/doctest/doctest.h>
 
 // ====================================================================== lgtm [cpp/missing-header-guard]

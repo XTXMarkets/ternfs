@@ -1,3 +1,7 @@
+// Copyright 2025 XTX Markets Technologies Limited
+//
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
 // Automatically generated with go run bincodegen.
 // Run `go generate ./...` from the go/ directory to regenerate it.
 

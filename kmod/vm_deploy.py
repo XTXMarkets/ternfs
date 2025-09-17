@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+
+# Copyright 2025 XTX Markets Technologies Limited
+#
+# SPDX-License-Identifier: GPL-2.0-or-later
+
 """
 Utility for importing binaries into vm for tests
 """

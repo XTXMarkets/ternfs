@@ -1,3 +1,7 @@
+// Copyright 2025 XTX Markets Technologies Limited
+//
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
 // Useful when we have an application which spawns some process and wants to tear down all
 // of them when it goes down, and also wants to go down itself if any of the processes
 // terminates.

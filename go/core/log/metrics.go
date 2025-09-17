@@ -1,3 +1,7 @@
+// Copyright 2025 XTX Markets Technologies Limited
+//
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
 // See <https://docs.influxdata.com/influxdb/v2/reference/syntax/line-protocol/>
 // for docs.
 package log

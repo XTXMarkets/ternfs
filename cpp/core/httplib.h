@@ -3,8 +3,8 @@
 //
 //  httplib.h
 //
-//  Copyright (c) 2023 Yuji Hirose. All rights reserved.
-//  MIT License
+//  Copyright (c) 2017 yhirose
+//  SPDX-License-Identifier: MIT
 //
 
 #ifndef CPPHTTPLIB_HTTPLIB_H

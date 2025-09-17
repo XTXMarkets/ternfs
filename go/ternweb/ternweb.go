@@ -1,3 +1,7 @@
+// Copyright 2025 XTX Markets Technologies Limited
+//
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 package main
 
 import (
@@ -711,7 +715,7 @@ func handleBlock(l *log.Logger, st *state, w http.ResponseWriter, r *http.Reques
 			{
 				var blockService msgs.BlockServiceDeprecatedInfo
 				{
-					blockServicesResp, err := st.client.RegistryRequest(l,&msgs.AllBlockServicesDeprecatedReq{})
+					blockServicesResp, err := st.client.RegistryRequest(l, &msgs.AllBlockServicesDeprecatedReq{})
 					if err != nil {
 						return sendPage(errorPage(http.StatusInternalServerError, fmt.Sprintf("Failed getting block services '%v'", err)))
 					}
@@ -870,7 +874,7 @@ func handleApi(l *log.Logger, st *state, w http.ResponseWriter, r *http.Request)
 				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 					return sendJsonErr(w, fmt.Errorf("could not decode request: %v", err), http.StatusBadRequest)
 				}
-				
+
 				resp, err := st.client.RegistryRequest(l, req)
 				if err != nil {
 					return sendJsonErr(w, err, http.StatusInternalServerError)
@@ -1115,7 +1119,7 @@ func main() {
 
 	flag.Parse()
 	noRunawayArgs()
-	
+
 	if *registry == "" {
 		fmt.Fprintf(os.Stderr, "-registry needs to be provided\n")
 		os.Exit(2)
@@ -1159,7 +1163,7 @@ func main() {
 	defer httpListener.Close()
 
 	config := &registryConfig{
-		addrs: msgs.AddrsInfo{},
+		addrs:           msgs.AddrsInfo{},
 		registryAddress: *registry,
 	}
 	state, err := newState(l, config)

@@ -1,3 +1,7 @@
+// Copyright 2025 XTX Markets Technologies Limited
+//
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 // Utility to quickly bring up a full ternfs, including all its components,
 // while hopefully not leaking processes left and right when this process dies.
 package main

@@ -1,3 +1,7 @@
+// Copyright 2025 XTX Markets Technologies Limited
+//
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 #include <asm-generic/errno.h>
 #include <linux/inet.h>
 #include <net/tcp.h>

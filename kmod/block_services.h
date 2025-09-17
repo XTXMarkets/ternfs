@@ -1,3 +1,7 @@
+// Copyright 2025 XTX Markets Technologies Limited
+//
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 // This cache is never cleared -- but it is small. For 100k disks, which is
 // what we're targeting, it'd be ~5MB.
 #ifndef _TERNFS_BLOCK_SERVICE_H

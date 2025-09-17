@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+
+# Copyright 2025 XTX Markets Technologies Limited
+#
+# SPDX-License-Identifier: GPL-2.0-or-later
+
 import sys
 import os
 from pathlib import Path

@@ -1,3 +1,7 @@
+// Copyright 2025 XTX Markets Technologies Limited
+//
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
 #define ISCSI_POLY 0x82F63B78u
 
 // Return a(x) multiplied by b(x) modulo ISCSI_POLY, For speed, this requires

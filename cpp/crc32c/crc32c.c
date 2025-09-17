@@ -1,3 +1,8 @@
+// Copyright 2022 Peter Cawley <corsix@corsix.org>
+// Copyright 2025 XTX Markets Technologies Limited
+//
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
 #ifndef __KERNEL__
 
 #include "crc32c.h"

@@ -1,3 +1,7 @@
+// Copyright 2025 XTX Markets Technologies Limited
+//
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 // A simple tests creating files looking at the history
 package main
 

@@ -1,3 +1,9 @@
+<!--
+Copyright 2025 XTX Markets Technologies Limited
+
+SPDX-License-Identifier: GPL-2.0-or-later
+-->
+
 To get a `compile_commands.json`:
 
 * Call the kmod source dir (where this file is located) `$KMOD_DIR`

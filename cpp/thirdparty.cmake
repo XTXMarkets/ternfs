@@ -1,3 +1,7 @@
+# Copyright 2025 XTX Markets Technologies Limited
+#
+# SPDX-License-Identifier: GPL-2.0-or-later
+
 find_program(MAKE_EXE NAMES gmake nmake make)
 
 if(${CMAKE_VERSION} VERSION_GREATER "3.23")
@@ -12,6 +16,7 @@ endif()
 
 # Depends on: nothing
 # Dependecy of: rocksdb
+# License: dual MIT and GPLv2
 # We build this manually because alpine doesn't have liburing-static
 ExternalProject_Add(make_uring
     DOWNLOAD_DIR ${CMAKE_CURRENT_BINARY_DIR}
@@ -40,6 +45,7 @@ set_target_properties(uring PROPERTIES IMPORTED_LOCATION ${INSTALL_DIR}/lib/libu
 
 # Depends on: none
 # Dependency of: rocksdb
+# License: BSD
 ExternalProject_Add(make_lz4
     DOWNLOAD_DIR ${CMAKE_CURRENT_BINARY_DIR}
     URL https://github.com/lz4/lz4/archive/refs/tags/v1.9.4.tar.gz
@@ -66,6 +72,7 @@ set_target_properties(lz4 PROPERTIES IMPORTED_LOCATION ${INSTALL_DIR}/lib/liblz4
 
 # Depends on: none
 # Dependency of: rocksdb
+# License: dual BSD and GPLv2
 ExternalProject_Add(make_zstd
     DOWNLOAD_DIR ${CMAKE_CURRENT_BINARY_DIR}
     URL https://github.com/facebook/zstd/archive/refs/tags/v1.5.2.tar.gz
@@ -91,6 +98,7 @@ set_target_properties(zstd PROPERTIES IMPORTED_LOCATION ${INSTALL_DIR}/lib/libzs
 
 # Depends on: lz4, zstd
 # Dependency of: eggs
+# License: dual Apache 2.0 and GPLv2
 if(${CMAKE_BUILD_TYPE} STREQUAL "valgrind")
     set(ROCKS_DB_MARCH "-march=haswell") # Valgind can't support current -march=native instructions
 endif()
@@ -133,6 +141,7 @@ set_target_properties(rocksdb PROPERTIES IMPORTED_LOCATION ${INSTALL_DIR}/lib/li
 
 # Depends on: none
 # Dependency of: eggs
+# License: BSD
 ExternalProject_Add(make_xxhash
     DOWNLOAD_DIR ${CMAKE_CURRENT_BINARY_DIR}
     URL https://github.com/Cyan4973/xxHash/archive/refs/tags/v0.8.1.tar.gz
@@ -156,6 +165,7 @@ ExternalProject_Get_property(make_xxhash INSTALL_DIR)
 include_directories(SYSTEM ${INSTALL_DIR}/include)
 set_target_properties(xxhash PROPERTIES IMPORTED_LOCATION ${INSTALL_DIR}/lib/libxxhash.a)
 
+# License: BSD
 ExternalProject_Add(make_jemalloc
     DOWNLOAD_DIR ${CMAKE_CURRENT_BINARY_DIR}
     URL https://github.com/jemalloc/jemalloc/releases/download/5.3.0/jemalloc-5.3.0.tar.bz2

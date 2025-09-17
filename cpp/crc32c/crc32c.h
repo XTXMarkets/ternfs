@@ -1,3 +1,7 @@
+// Copyright 2025 XTX Markets Technologies Limited
+//
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
 // Computes the CRC32C (C = "Castagnoli" polynomial, also used in iSCSI)
 //
 // As usual, the CRC is initialized with -1, and xor'd with -1 at the end.

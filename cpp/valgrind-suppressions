@@ -1,3 +1,7 @@
+# Copyright 2025 XTX Markets Technologies Limited
+#
+# SPDX-License-Identifier: GPL-2.0-or-later
+
 # I haven't investigated this -- some uninitialized memory when
 # invoking libunwind for the first time.
 {

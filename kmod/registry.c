@@ -1,3 +1,7 @@
+// Copyright 2025 XTX Markets Technologies Limited
+//
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 #include <asm/unaligned.h>
 #include <linux/version.h>
 #include <linux/module.h>

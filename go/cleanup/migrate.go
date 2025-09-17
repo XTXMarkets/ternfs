@@ -1,3 +1,7 @@
+// Copyright 2025 XTX Markets Technologies Limited
+//
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 // TODO right now we only use one scratch file for everything, which is obviously not
 // great -- in general this below is more a proof of concept than anything, to test
 // the right shard code paths.

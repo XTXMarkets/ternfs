@@ -1,3 +1,7 @@
+// Copyright 2025 XTX Markets Technologies Limited
+//
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
 package crc32c
 
 // #cgo LDFLAGS: -L${SRCDIR}/../../../cpp/build/alpine/crc32c -lcrc32c

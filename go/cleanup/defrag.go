@@ -1,3 +1,7 @@
+// Copyright 2025 XTX Markets Technologies Limited
+//
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 // Goes through all the _current_ files, and checks that the span block allocation
 // is coherent with the span policy. Very similar to migration, hence it shares
 // some datatypes.

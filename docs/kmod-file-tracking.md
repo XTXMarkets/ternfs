@@ -1,3 +1,9 @@
+<!--
+Copyright 2025 XTX Markets Technologies Limited
+
+SPDX-License-Identifier: GPL-2.0-or-later
+-->
+
 TernFS files are immutable: they are created once and never modified. This presents a challenge when writing a kernel module for it, since the VFS API very much assumes that files can be modified.
 
 So our high level strategy is: allow users to open a file for writing, and keep that file transient (i.e. not visible in the directory tree) until we declare it "done", and do not allow modifications after that.

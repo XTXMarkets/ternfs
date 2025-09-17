@@ -1,3 +1,7 @@
+// Copyright 2016 Intel Corporation
+// Copyright 2025 XTX Markets Technologies Limited
+//
+// SPDX-License-Identifier: Apache-2.0
 
 #include <emmintrin.h>
 #include <wmmintrin.h>

@@ -1,3 +1,7 @@
+// Copyright 2025 XTX Markets Technologies Limited
+//
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 #ifndef _TERNFS_LOG_H
 #define _TERNFS_LOG_H
 

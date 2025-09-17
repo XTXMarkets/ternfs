@@ -1,3 +1,7 @@
+// Copyright 2025 XTX Markets Technologies Limited
+//
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 // We index policies by (inode, tag), so that the automatically get updated
 // when the getattr for the inode runs. They never get freed, there should
 // be very few of them.

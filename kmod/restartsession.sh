@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 
+# Copyright 2025 XTX Markets Technologies Limited
+#
+# SPDX-License-Identifier: GPL-2.0-or-later
+
 set -eu -o pipefail
 
 run=false

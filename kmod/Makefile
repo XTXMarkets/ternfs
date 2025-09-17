@@ -1,3 +1,7 @@
+# Copyright 2025 XTX Markets Technologies Limited
+#
+# SPDX-License-Identifier: GPL-2.0-or-later
+
 KDIR ?= /lib/modules/$(shell uname -r)/build
 LLVM ?= 0
 

@@ -1,3 +1,7 @@
+// Copyright 2025 XTX Markets Technologies Limited
+//
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
 // See wyhash.h, this used to be using FFI, but I had not
 // realized that bits.Mul64 existed, and also that FFI is
 // pretty slow in Go.

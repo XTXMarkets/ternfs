@@ -1,5 +1,10 @@
-[![TernFS Logo](https://github.com/user-attachments/assets/2e895b48-1a61-4b9d-aad0-2fc03777e817 "TernFS Logo")](https://ternfs.com)
+<!--
+Copyright 2025 XTX Markets Technologies Limited
 
+SPDX-License-Identifier: GPL-2.0-or-later
+-->
+
+[![TernFS Logo](https://github.com/user-attachments/assets/2e895b48-1a61-4b9d-aad0-2fc03777e817 "TernFS Logo")](https://ternfs.com)
 
 A distributed file system. For a high-level description of TernFS, see [the TernFS blog post on the XTX Markets Tech Blog](https://xtxmarkets.com/tech/2025-ternfs). This document provides a more bare-bones overview and an introduction to the codebase.
 
@@ -215,3 +220,9 @@ Most of the codebase is understandable by VS Code/LSP:
 ## A note on naming
 
 TernFS was originally called EggsFS internally. This name quickly proved to be very poor due to the phonetic similarity to XFS, another notable filesystem. Therefore the filesystem was renamed to TernFS before open sourcing. However the old name lingers on in certain areas of the system that would have been hard to change, such as metric names.
+
+## Licensing
+
+TernFS is [Free Software](https://www.gnu.org/philosophy/free-sw.en.html). The default license for TernFS is [GPL-2.0-or-later](LICENSE/GPL-2.0-or-later.txt).
+
+The protocol definitions (`go/msgs/`), protocol generator (`go/bincodegen/`) and client library (`go/client/`, `go/core/`) are licensed under [Apache-2.0](LICENSES/Apache-2.0.txt) with the [LLVM-exception](LICENSES/LLVM-exception.txt). This license combination is both permissive (similar to MIT or BSD licenses) as well as compatible with both GPL license. We have done this to allow people to build their own proprietary client libraries while ensuring we can also freely incorporate them into the GPL v2 licensed Linux kernel.

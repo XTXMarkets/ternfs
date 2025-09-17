@@ -1,3 +1,7 @@
+// Copyright 2025 XTX Markets Technologies Limited
+//
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
 // When you want to traverse the filesystem, but you also want the
 // filepath. We have some workers per shard, to try to parallelize
 // the work nicely. However there is a work-stealing of sorts otherwise

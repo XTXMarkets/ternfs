@@ -1,3 +1,7 @@
+# Copyright 2025 XTX Markets Technologies Limited
+#
+# SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
 # File to remind myself how to derive:
 #
 # * CRC32C(A ^ B) given CRC32C(A) and CRC32C(B)

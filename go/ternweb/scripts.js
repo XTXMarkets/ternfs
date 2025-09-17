@@ -1,3 +1,7 @@
+// Copyright 2025 XTX Markets Technologies Limited
+//
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 import * as p from '/static/preact-10.18.1.module.js';
 import { useEffect, useState, useCallback } from '/static/preact-hooks-10.18.1.module.js';
 

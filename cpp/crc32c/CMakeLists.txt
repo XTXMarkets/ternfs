@@ -1,3 +1,6 @@
+# Copyright 2025 XTX Markets Technologies Limited
+#
+# SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
 include_directories(${ternfs_SOURCE_DIR}/core)
 

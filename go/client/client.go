@@ -1,3 +1,7 @@
+// Copyright 2025 XTX Markets Technologies Limited
+//
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
 // The client package provides a interface to the ternfs cluster that should be
 // sufficient for most user level operations (modifying metadata, reading and
 // writing blocks, etc).

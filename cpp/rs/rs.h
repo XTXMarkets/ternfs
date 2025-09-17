@@ -1,3 +1,7 @@
+// Copyright 2025 XTX Markets Technologies Limited
+//
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
 // Reed-Solomon implementation in the style of
 // <https://www.corsix.org/content/reed-solomon-for-software-raid>
 //
