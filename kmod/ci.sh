@@ -84,7 +84,7 @@ trace_pid=$!
 
 # Do not test migrations/scrubbing since we test this outside qemu anyway
 # (it's completely independent from the kmod code)
-ssh -p 2223 -i image-key fmazzol@localhost "tern/terntests -verbose -kmsg -kmod -filter 'large file|cp|utime|seek|ftruncate' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTests.dontDefrag -cfg fsTest.corruptFileProb=0 -outgoing-packet-drop 0.02 $short $leader_only $preserve_ddir -binaries-dir tern" | tee -a test-out
+ssh -p 2223 -i image-key fmazzol@localhost "tern/terntests -verbose -kmsg -kmod -filter 'large file|cp|utime|dir seek|ftruncate' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTests.dontDefrag -cfg fsTest.corruptFileProb=0 -outgoing-packet-drop 0.02 $short $leader_only $preserve_ddir -binaries-dir tern" | tee -a test-out
 ssh -p 2223 -i image-key fmazzol@localhost "tern/terntests -verbose -kmsg -kmod -filter 'mounted' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTests.dontDefrag -cfg fsTest.corruptFileProb=0 -outgoing-packet-drop 0.02 $short $leader_only $preserve_ddir -binaries-dir tern" | tee -a test-out
 ssh -p 2223 -i image-key fmazzol@localhost "tern/terntests -verbose -kmsg -kmod -filter 'mounted' -block-service-killer -cfg fsTest.readWithMmap -cfg fsTests.dontMigrate -cfg fsTests.dontDefrag -cfg fsTest.corruptFileProb=0 -outgoing-packet-drop 0.02 $short $leader_only $preserve_ddir -binaries-dir tern" | tee -a test-out
 ssh -p 2223 -i image-key fmazzol@localhost "tern/terntests -verbose -kmsg -kmod -filter 'rsync' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTests.dontDefrag -cfg fsTest.corruptFileProb=0 -outgoing-packet-drop 0.02 $short $leader_only $preserve_ddir -binaries-dir tern" | tee -a test-out
