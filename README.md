@@ -68,7 +68,7 @@ Finally, we want to have the option to replicate TernFS to multiple regions, to 
     * UDP replication
     * stores metadata about a specific TernFS deployment
       * shard/cdc addresses
-      * block services addressea and storage statistics
+      * block services addresses and storage statistics
     * state persisted through RocksDB with 5-node distributed consensus through LogsDB
   * **filesystem data**
     * **metadata**
