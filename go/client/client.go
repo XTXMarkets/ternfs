@@ -30,6 +30,7 @@ import (
 	"time"
 	"unsafe"
 	"xtx/ternfs/core/bincode"
+	"xtx/ternfs/core/bufpool"
 	"xtx/ternfs/core/crc32c"
 	"xtx/ternfs/core/log"
 	"xtx/ternfs/core/timing"
@@ -778,9 +779,10 @@ func (proc *blocksProcessor) processRequests(log *log.Logger) {
 			}
 			log.Debug("writing block body to %v->%v", conn.conn.LocalAddr(), conn.conn.RemoteAddr())
 			writtenBytes, err := conn.conn.ReadFrom(lr)
-			if err != nil || writtenBytes < int64(writeReq.Size) {
+			if err != nil || writtenBytes != int64(writeReq.Size) {
 				if err == nil {
-					err = io.EOF
+					log.Debug("wrote %v bytes rather than %v when writing block %v to %v->%v, returning unexpected EOF", writtenBytes, writeReq.BlockId, writeReq.Size, conn.conn.LocalAddr(), conn.conn.RemoteAddr())
+					err = io.ErrUnexpectedEOF
 				}
 				log.Info("got error when writing block body: %v", err)
 				req.resp.done(log, &proc.addr1, &proc.addr2, req.resp.extra, err)
@@ -821,43 +823,16 @@ func (proc *blocksProcessor) processResponses(log *log.Logger) {
 		}
 		if resp.resp.resp.BlocksResponseKind() == msgs.FETCH_BLOCK_WITH_CRC {
 			req := resp.resp.req.(*msgs.FetchBlockWithCrcReq)
-			pageCount := (req.Count / msgs.TERN_PAGE_SIZE)
+			pageCount := req.Count / msgs.TERN_PAGE_SIZE
+			toRead := int64(pageCount) * int64(msgs.TERN_PAGE_WITH_CRC_SIZE)
 			log.Debug("reading block body from %v->%v", connr.LocalAddr(), connr.RemoteAddr())
-			var page [msgs.TERN_PAGE_WITH_CRC_SIZE]byte
-			pageFailed := false
-			for i := uint32(0); i < pageCount; i++ {
-				bytesRead := uint32(0)
-				for bytesRead < msgs.TERN_PAGE_WITH_CRC_SIZE {
-					read, err := connr.Read(page[bytesRead:])
-					if err != nil {
-						resp.resp.done(log, &proc.addr1, &proc.addr2, resp.resp.extra, err)
-						pageFailed = true
-						break
-					}
-					bytesRead += uint32(read)
+			lr := io.LimitReader(connr, toRead)
+			if read, err := resp.resp.additionalBodyWriter.ReadFrom(lr); err != nil || read != toRead {
+				if err == nil {
+					log.Debug("read %v bytes rather than %v when reading block %v from %v->%v, returning unexpected EOF", read, toRead, req.BlockId, connr.LocalAddr(), connr.RemoteAddr())
+					err = io.ErrUnexpectedEOF
 				}
-				if pageFailed {
-					break
-				}
-				crc := binary.LittleEndian.Uint32(page[msgs.TERN_PAGE_SIZE:])
-				actualCrc := crc32c.Sum(0, page[:msgs.TERN_PAGE_SIZE])
-				if crc != actualCrc {
-					resp.resp.done(log, &proc.addr1, &proc.addr2, resp.resp.extra, msgs.BAD_BLOCK_CRC)
-					pageFailed = true
-					break
-				}
-
-				readBytes, err := resp.resp.additionalBodyWriter.ReadFrom(bytes.NewReader(page[:msgs.TERN_PAGE_SIZE]))
-				if err != nil || uint32(readBytes) < msgs.TERN_PAGE_SIZE {
-					if err == nil {
-						err = io.EOF
-					}
-					resp.resp.done(log, &proc.addr1, &proc.addr2, resp.resp.extra, err)
-					pageFailed = true
-					break
-				}
-			}
-			if pageFailed {
+				resp.resp.done(log, &proc.addr1, &proc.addr2, resp.resp.extra, err)
 				continue
 			}
 		}
@@ -975,17 +950,16 @@ type Client struct {
 	counters             *ClientCounters
 	writeBlockProcessors blocksProcessors
 	fetchBlockProcessors blocksProcessors
-	fetchBlockBufs       sync.Pool
 	eraseBlockProcessors blocksProcessors
 	checkBlockProcessors blocksProcessors
 	shardTimeout         *timing.ReqTimeouts
 	cdcTimeout           *timing.ReqTimeouts
 	blockTimeout         *timing.ReqTimeouts
 	requestIdCounter     uint64
-	registryAddress       string
+	registryAddress      string
 	addrsRefreshTicker   *time.Ticker
 	addrsRefreshClose    chan (struct{})
-	registryConn          *RegistryConn
+	registryConn         *RegistryConn
 
 	fetchBlockServices          bool
 	blockServicesLock           *sync.RWMutex
@@ -1144,12 +1118,7 @@ func NewClientDirectNoAddrs(
 ) (c *Client, err error) {
 	c = &Client{
 		// do not catch requests from previous executions
-		requestIdCounter: rand.Uint64(),
-		fetchBlockBufs: sync.Pool{
-			New: func() any {
-				return bytes.NewBuffer([]byte{})
-			},
-		},
+		requestIdCounter:            rand.Uint64(),
 		fetchBlockServices:          false,
 		blockServicesLock:           &sync.RWMutex{},
 		blockServiceToFailureDomain: make(map[msgs.BlockServiceId]msgs.FailureDomain),
@@ -1447,15 +1416,20 @@ func (c *Client) WriteBlock(log *log.Logger, timeouts *timing.ReqTimeouts, block
 	return resp.(*msgs.WriteBlockResp).Proof, nil
 }
 
-func fetchBlockSendArgs(blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32, w io.ReaderFrom, extra any, crc msgs.Crc) *sendArgs {
+func fetchBlockSendArgs(blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32, w io.ReaderFrom, extra any) *sendArgs {
+	if offset%msgs.TERN_PAGE_SIZE != 0 {
+		panic(fmt.Errorf("offset=%v not a page multiple", offset))
+	}
+	if count%msgs.TERN_PAGE_SIZE != 0 {
+		panic(fmt.Errorf("count=%v not a page multiple", count))
+	}
 	return &sendArgs{
 		blockService.Id,
 		blockService.Addrs,
 		&msgs.FetchBlockWithCrcReq{
-			BlockId:  blockId,
-			BlockCrc: crc,
-			Offset:   offset,
-			Count:    count,
+			BlockId: blockId,
+			Offset:  offset,
+			Count:   count,
 		},
 		nil,
 		&msgs.FetchBlockWithCrcResp{},
@@ -1464,14 +1438,10 @@ func fetchBlockSendArgs(blockService *msgs.BlockService, blockId msgs.BlockId, o
 	}
 }
 
-// An asynchronous version of [FetchBlock] that is currently unused.
-func (c *Client) StartFetchBlock(log *log.Logger, blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32, w io.ReaderFrom, extra any, completion chan *blockCompletion, crc msgs.Crc) error {
-	return c.fetchBlockProcessors.send(log, fetchBlockSendArgs(blockService, blockId, offset, count, w, extra, crc), completion)
-}
 
-// Return a buffer that was provided by [FetchBlock] to the internal pool.
-func (c *Client) PutFetchedBlock(body *bytes.Buffer) {
-	c.fetchBlockBufs.Put(body)
+// An asynchronous version of [FetchBlock]
+func (c *Client) StartFetchBlock(log *log.Logger, blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32, w io.ReaderFrom, extra any, completion chan *blockCompletion) error {
+       return c.fetchBlockProcessors.send(log, fetchBlockSendArgs(blockService, blockId, offset, count, w, extra), completion)
 }
 
 // Retrieve a single block from the block server.
@@ -1480,17 +1450,63 @@ func (c *Client) PutFetchedBlock(body *bytes.Buffer) {
 // Offset and count control the amount of data that is read and the position within the block.
 // The default timeout is controlled at the client level if timeouts is nil, otherwise a custom timeout can be specified.
 //
-// The function returns a buffer that is allocated from an internal pool. Once you have finished with this buffer it must
-// be returned via the [PutFetchedBlock] function.
-func (c *Client) FetchBlock(log *log.Logger, timeouts *timing.ReqTimeouts, blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32, crc msgs.Crc) (body *bytes.Buffer, err error) {
-	buf := c.fetchBlockBufs.Get().(*bytes.Buffer)
-	buf.Reset()
-
-	_, err = c.singleBlockReq(log, timeouts, &c.fetchBlockProcessors, fetchBlockSendArgs(blockService, blockId, offset, count, buf, nil, crc))
+// Note that the result will be 4KiB pages interleaved with 4-byte CRC.
+func (c *Client) FetchBlock(log *log.Logger, timeouts *timing.ReqTimeouts, blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32, w io.ReaderFrom) (err error) {
+	_, err = c.singleBlockReq(log, timeouts, &c.fetchBlockProcessors, fetchBlockSendArgs(blockService, blockId, offset, count, w, nil))
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return buf, nil
+	return nil
+}
+
+type BlockReader struct {
+	buf *bufpool.Buf
+	crc msgs.Crc // CRC of the block section we have read
+}
+
+func NewBlockReader(bufpool *bufpool.BufPool, offset uint32, count uint32) *BlockReader {
+	if offset%msgs.TERN_PAGE_SIZE != 0 {
+		panic(fmt.Errorf("offset=%v is not a page size multiple", offset))
+	}
+	if count%msgs.TERN_PAGE_SIZE != 0 {
+		panic(fmt.Errorf("count=%v is not a page size multiple", count))
+	}
+	buf := bufpool.Get(int(count/msgs.TERN_PAGE_SIZE) * int(msgs.TERN_PAGE_WITH_CRC_SIZE))
+	return &BlockReader{buf: buf}
+}
+
+func (br *BlockReader) ReadFrom(r io.Reader) (int64, error) {
+	buf := br.buf.Bytes()
+	n, err := io.ReadFull(r, buf)
+	if err != nil {
+		return int64(n), err
+	}
+	// check CRC and copy
+	pages := len(buf) / int(msgs.TERN_PAGE_WITH_CRC_SIZE)
+	for page := 0; page < pages; page++ {
+		pageBegin := page*int(msgs.TERN_PAGE_WITH_CRC_SIZE)
+		pageEnd := pageBegin + int(msgs.TERN_PAGE_SIZE)
+		pageBytes := buf[pageBegin : pageEnd]
+		expectedCrc := crc32c.Sum(0, pageBytes)
+		actualCrc := binary.LittleEndian.Uint32(buf[pageEnd:pageEnd+4])
+		if expectedCrc != actualCrc {
+			return int64(n), msgs.BAD_BLOCK_CRC
+		}
+		br.crc = msgs.Crc(crc32c.Append(uint32(br.crc), actualCrc, int(msgs.TERN_PAGE_SIZE)))
+		copy(buf[page*int(msgs.TERN_PAGE_SIZE):(page+1)*int(msgs.TERN_PAGE_SIZE)], pageBytes)
+	}
+	*br.buf.BytesPtr() = buf[:pages*int(msgs.TERN_PAGE_SIZE)]
+	return int64(n), nil
+}
+
+func (br *BlockReader) AcquireBuf() *bufpool.Buf {
+	buf := br.buf
+	br.buf = nil
+	return buf
+}
+
+func (br *BlockReader) Crc() msgs.Crc {
+	return br.crc
 }
 
 func eraseBlockSendArgs(block *msgs.RemoveSpanInitiateBlockInfo, extra any) *sendArgs {
@@ -1582,6 +1598,6 @@ func (c *Client) GetFailureDomainForBlockService(blockServiceId msgs.BlockServic
 	return failureDomain, ok
 }
 
-func (c *Client) RegistryRequest(logger *log.Logger, reqBody msgs.RegistryRequest) (msgs.RegistryResponse, error) {	
+func (c *Client) RegistryRequest(logger *log.Logger, reqBody msgs.RegistryRequest) (msgs.RegistryResponse, error) {
 	return c.registryConn.Request(reqBody)
 }

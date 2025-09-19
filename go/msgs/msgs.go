@@ -2060,7 +2060,7 @@ type FullRegistryInfo struct {
 	LastSeen   TernTime
 }
 
-type AllRegistryReplicasReq struct {}
+type AllRegistryReplicasReq struct{}
 
 type AllRegistryReplicasResp struct {
 	Replicas []FullRegistryInfo
@@ -2133,8 +2133,8 @@ type FullBlockServiceInfo struct {
 	CapacityBytes  uint64
 	AvailableBytes uint64
 	Blocks         uint64 // how many blocks we have
-	FirstSeen	   TernTime
-	LastSeen	   TernTime
+	FirstSeen      TernTime
+	LastSeen       TernTime
 	LastInfoChange TernTime // change to read/write status or addresses
 	HasFiles       bool
 	Path           string
@@ -2367,12 +2367,14 @@ type FetchBlockReq struct {
 type FetchBlockResp struct{}
 
 // Offset needs to be multiple of 4K and count as well
+// FileId/BlockCrc were used in the transition to pages + CRC,
+// they're now unused.
 type FetchBlockWithCrcReq struct {
-	FileId   InodeId
-	BlockId  BlockId
-	BlockCrc Crc
-	Offset   uint32
-	Count    uint32
+	FileIdUnused   InodeId
+	BlockId        BlockId
+	BlockCrcUnused Crc
+	Offset         uint32
+	Count          uint32
 }
 
 // Followed by data with CRC inserted after every 4K
