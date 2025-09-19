@@ -5208,36 +5208,36 @@ std::ostream& operator<<(std::ostream& out, const WriteBlockResp& x) {
 }
 
 void FetchBlockWithCrcReq::pack(BincodeBuf& buf) const {
-    fileId.pack(buf);
+    fileIdUnused.pack(buf);
     buf.packScalar<uint64_t>(blockId);
-    blockCrc.pack(buf);
+    blockCrcUnused.pack(buf);
     buf.packScalar<uint32_t>(offset);
     buf.packScalar<uint32_t>(count);
 }
 void FetchBlockWithCrcReq::unpack(BincodeBuf& buf) {
-    fileId.unpack(buf);
+    fileIdUnused.unpack(buf);
     blockId = buf.unpackScalar<uint64_t>();
-    blockCrc.unpack(buf);
+    blockCrcUnused.unpack(buf);
     offset = buf.unpackScalar<uint32_t>();
     count = buf.unpackScalar<uint32_t>();
 }
 void FetchBlockWithCrcReq::clear() {
-    fileId = InodeId();
+    fileIdUnused = InodeId();
     blockId = uint64_t(0);
-    blockCrc = Crc(0);
+    blockCrcUnused = Crc(0);
     offset = uint32_t(0);
     count = uint32_t(0);
 }
 bool FetchBlockWithCrcReq::operator==(const FetchBlockWithCrcReq& rhs) const {
-    if ((InodeId)this->fileId != (InodeId)rhs.fileId) { return false; };
+    if ((InodeId)this->fileIdUnused != (InodeId)rhs.fileIdUnused) { return false; };
     if ((uint64_t)this->blockId != (uint64_t)rhs.blockId) { return false; };
-    if ((Crc)this->blockCrc != (Crc)rhs.blockCrc) { return false; };
+    if ((Crc)this->blockCrcUnused != (Crc)rhs.blockCrcUnused) { return false; };
     if ((uint32_t)this->offset != (uint32_t)rhs.offset) { return false; };
     if ((uint32_t)this->count != (uint32_t)rhs.count) { return false; };
     return true;
 }
 std::ostream& operator<<(std::ostream& out, const FetchBlockWithCrcReq& x) {
-    out << "FetchBlockWithCrcReq(" << "FileId=" << x.fileId << ", " << "BlockId=" << x.blockId << ", " << "BlockCrc=" << x.blockCrc << ", " << "Offset=" << x.offset << ", " << "Count=" << x.count << ")";
+    out << "FetchBlockWithCrcReq(" << "FileIdUnused=" << x.fileIdUnused << ", " << "BlockId=" << x.blockId << ", " << "BlockCrcUnused=" << x.blockCrcUnused << ", " << "Offset=" << x.offset << ", " << "Count=" << x.count << ")";
     return out;
 }
 

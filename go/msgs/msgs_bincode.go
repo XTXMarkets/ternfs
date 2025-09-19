@@ -6568,13 +6568,13 @@ func (v *FetchBlockWithCrcReq) BlocksRequestKind() BlocksMessageKind {
 }
 
 func (v *FetchBlockWithCrcReq) Pack(w io.Writer) error {
-	if err := bincode.PackScalar(w, uint64(v.FileId)); err != nil {
+	if err := bincode.PackScalar(w, uint64(v.FileIdUnused)); err != nil {
 		return err
 	}
 	if err := bincode.PackScalar(w, uint64(v.BlockId)); err != nil {
 		return err
 	}
-	if err := bincode.PackScalar(w, uint32(v.BlockCrc)); err != nil {
+	if err := bincode.PackScalar(w, uint32(v.BlockCrcUnused)); err != nil {
 		return err
 	}
 	if err := bincode.PackScalar(w, uint32(v.Offset)); err != nil {
@@ -6587,13 +6587,13 @@ func (v *FetchBlockWithCrcReq) Pack(w io.Writer) error {
 }
 
 func (v *FetchBlockWithCrcReq) Unpack(r io.Reader) error {
-	if err := bincode.UnpackScalar(r, (*uint64)(&v.FileId)); err != nil {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.FileIdUnused)); err != nil {
 		return err
 	}
 	if err := bincode.UnpackScalar(r, (*uint64)(&v.BlockId)); err != nil {
 		return err
 	}
-	if err := bincode.UnpackScalar(r, (*uint32)(&v.BlockCrc)); err != nil {
+	if err := bincode.UnpackScalar(r, (*uint32)(&v.BlockCrcUnused)); err != nil {
 		return err
 	}
 	if err := bincode.UnpackScalar(r, (*uint32)(&v.Offset)); err != nil {

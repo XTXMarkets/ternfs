@@ -6843,8 +6843,8 @@ static inline void _ternfs_write_block_resp_put_proof(struct ternfs_bincode_put_
 struct ternfs_fetch_block_with_crc_req_start;
 #define ternfs_fetch_block_with_crc_req_get_start(ctx, start) struct ternfs_fetch_block_with_crc_req_start* start = NULL
 
-struct ternfs_fetch_block_with_crc_req_file_id { u64 x; };
-static inline void _ternfs_fetch_block_with_crc_req_get_file_id(struct ternfs_bincode_get_ctx* ctx, struct ternfs_fetch_block_with_crc_req_start** prev, struct ternfs_fetch_block_with_crc_req_file_id* next) {
+struct ternfs_fetch_block_with_crc_req_file_id_unused { u64 x; };
+static inline void _ternfs_fetch_block_with_crc_req_get_file_id_unused(struct ternfs_bincode_get_ctx* ctx, struct ternfs_fetch_block_with_crc_req_start** prev, struct ternfs_fetch_block_with_crc_req_file_id_unused* next) {
     if (likely(ctx->err == 0)) {
         if (unlikely(ctx->end - ctx->buf < 8)) {
             ctx->err = TERNFS_ERR_MALFORMED_RESPONSE;
@@ -6854,12 +6854,12 @@ static inline void _ternfs_fetch_block_with_crc_req_get_file_id(struct ternfs_bi
         }
     }
 }
-#define ternfs_fetch_block_with_crc_req_get_file_id(ctx, prev, next) \
-    struct ternfs_fetch_block_with_crc_req_file_id next; \
-    _ternfs_fetch_block_with_crc_req_get_file_id(ctx, &(prev), &(next))
+#define ternfs_fetch_block_with_crc_req_get_file_id_unused(ctx, prev, next) \
+    struct ternfs_fetch_block_with_crc_req_file_id_unused next; \
+    _ternfs_fetch_block_with_crc_req_get_file_id_unused(ctx, &(prev), &(next))
 
 struct ternfs_fetch_block_with_crc_req_block_id { u64 x; };
-static inline void _ternfs_fetch_block_with_crc_req_get_block_id(struct ternfs_bincode_get_ctx* ctx, struct ternfs_fetch_block_with_crc_req_file_id* prev, struct ternfs_fetch_block_with_crc_req_block_id* next) {
+static inline void _ternfs_fetch_block_with_crc_req_get_block_id(struct ternfs_bincode_get_ctx* ctx, struct ternfs_fetch_block_with_crc_req_file_id_unused* prev, struct ternfs_fetch_block_with_crc_req_block_id* next) {
     if (likely(ctx->err == 0)) {
         if (unlikely(ctx->end - ctx->buf < 8)) {
             ctx->err = TERNFS_ERR_MALFORMED_RESPONSE;
@@ -6873,8 +6873,8 @@ static inline void _ternfs_fetch_block_with_crc_req_get_block_id(struct ternfs_b
     struct ternfs_fetch_block_with_crc_req_block_id next; \
     _ternfs_fetch_block_with_crc_req_get_block_id(ctx, &(prev), &(next))
 
-struct ternfs_fetch_block_with_crc_req_block_crc { u32 x; };
-static inline void _ternfs_fetch_block_with_crc_req_get_block_crc(struct ternfs_bincode_get_ctx* ctx, struct ternfs_fetch_block_with_crc_req_block_id* prev, struct ternfs_fetch_block_with_crc_req_block_crc* next) {
+struct ternfs_fetch_block_with_crc_req_block_crc_unused { u32 x; };
+static inline void _ternfs_fetch_block_with_crc_req_get_block_crc_unused(struct ternfs_bincode_get_ctx* ctx, struct ternfs_fetch_block_with_crc_req_block_id* prev, struct ternfs_fetch_block_with_crc_req_block_crc_unused* next) {
     if (likely(ctx->err == 0)) {
         if (unlikely(ctx->end - ctx->buf < 4)) {
             ctx->err = TERNFS_ERR_MALFORMED_RESPONSE;
@@ -6884,12 +6884,12 @@ static inline void _ternfs_fetch_block_with_crc_req_get_block_crc(struct ternfs_
         }
     }
 }
-#define ternfs_fetch_block_with_crc_req_get_block_crc(ctx, prev, next) \
-    struct ternfs_fetch_block_with_crc_req_block_crc next; \
-    _ternfs_fetch_block_with_crc_req_get_block_crc(ctx, &(prev), &(next))
+#define ternfs_fetch_block_with_crc_req_get_block_crc_unused(ctx, prev, next) \
+    struct ternfs_fetch_block_with_crc_req_block_crc_unused next; \
+    _ternfs_fetch_block_with_crc_req_get_block_crc_unused(ctx, &(prev), &(next))
 
 struct ternfs_fetch_block_with_crc_req_offset { u32 x; };
-static inline void _ternfs_fetch_block_with_crc_req_get_offset(struct ternfs_bincode_get_ctx* ctx, struct ternfs_fetch_block_with_crc_req_block_crc* prev, struct ternfs_fetch_block_with_crc_req_offset* next) {
+static inline void _ternfs_fetch_block_with_crc_req_get_offset(struct ternfs_bincode_get_ctx* ctx, struct ternfs_fetch_block_with_crc_req_block_crc_unused* prev, struct ternfs_fetch_block_with_crc_req_offset* next) {
     if (likely(ctx->err == 0)) {
         if (unlikely(ctx->end - ctx->buf < 4)) {
             ctx->err = TERNFS_ERR_MALFORMED_RESPONSE;
@@ -6931,17 +6931,17 @@ static inline void ternfs_fetch_block_with_crc_req_get_finish(struct ternfs_binc
 
 #define ternfs_fetch_block_with_crc_req_put_start(ctx, start) struct ternfs_fetch_block_with_crc_req_start* start = NULL
 
-static inline void _ternfs_fetch_block_with_crc_req_put_file_id(struct ternfs_bincode_put_ctx* ctx, struct ternfs_fetch_block_with_crc_req_start** prev, struct ternfs_fetch_block_with_crc_req_file_id* next, u64 x) {
+static inline void _ternfs_fetch_block_with_crc_req_put_file_id_unused(struct ternfs_bincode_put_ctx* ctx, struct ternfs_fetch_block_with_crc_req_start** prev, struct ternfs_fetch_block_with_crc_req_file_id_unused* next, u64 x) {
     next = NULL;
     BUG_ON(ctx->end - ctx->cursor < 8);
     put_unaligned_le64(x, ctx->cursor);
     ctx->cursor += 8;
 }
-#define ternfs_fetch_block_with_crc_req_put_file_id(ctx, prev, next, x) \
-    struct ternfs_fetch_block_with_crc_req_file_id next; \
-    _ternfs_fetch_block_with_crc_req_put_file_id(ctx, &(prev), &(next), x)
+#define ternfs_fetch_block_with_crc_req_put_file_id_unused(ctx, prev, next, x) \
+    struct ternfs_fetch_block_with_crc_req_file_id_unused next; \
+    _ternfs_fetch_block_with_crc_req_put_file_id_unused(ctx, &(prev), &(next), x)
 
-static inline void _ternfs_fetch_block_with_crc_req_put_block_id(struct ternfs_bincode_put_ctx* ctx, struct ternfs_fetch_block_with_crc_req_file_id* prev, struct ternfs_fetch_block_with_crc_req_block_id* next, u64 x) {
+static inline void _ternfs_fetch_block_with_crc_req_put_block_id(struct ternfs_bincode_put_ctx* ctx, struct ternfs_fetch_block_with_crc_req_file_id_unused* prev, struct ternfs_fetch_block_with_crc_req_block_id* next, u64 x) {
     next = NULL;
     BUG_ON(ctx->end - ctx->cursor < 8);
     put_unaligned_le64(x, ctx->cursor);
@@ -6951,17 +6951,17 @@ static inline void _ternfs_fetch_block_with_crc_req_put_block_id(struct ternfs_b
     struct ternfs_fetch_block_with_crc_req_block_id next; \
     _ternfs_fetch_block_with_crc_req_put_block_id(ctx, &(prev), &(next), x)
 
-static inline void _ternfs_fetch_block_with_crc_req_put_block_crc(struct ternfs_bincode_put_ctx* ctx, struct ternfs_fetch_block_with_crc_req_block_id* prev, struct ternfs_fetch_block_with_crc_req_block_crc* next, u32 x) {
+static inline void _ternfs_fetch_block_with_crc_req_put_block_crc_unused(struct ternfs_bincode_put_ctx* ctx, struct ternfs_fetch_block_with_crc_req_block_id* prev, struct ternfs_fetch_block_with_crc_req_block_crc_unused* next, u32 x) {
     next = NULL;
     BUG_ON(ctx->end - ctx->cursor < 4);
     put_unaligned_le32(x, ctx->cursor);
     ctx->cursor += 4;
 }
-#define ternfs_fetch_block_with_crc_req_put_block_crc(ctx, prev, next, x) \
-    struct ternfs_fetch_block_with_crc_req_block_crc next; \
-    _ternfs_fetch_block_with_crc_req_put_block_crc(ctx, &(prev), &(next), x)
+#define ternfs_fetch_block_with_crc_req_put_block_crc_unused(ctx, prev, next, x) \
+    struct ternfs_fetch_block_with_crc_req_block_crc_unused next; \
+    _ternfs_fetch_block_with_crc_req_put_block_crc_unused(ctx, &(prev), &(next), x)
 
-static inline void _ternfs_fetch_block_with_crc_req_put_offset(struct ternfs_bincode_put_ctx* ctx, struct ternfs_fetch_block_with_crc_req_block_crc* prev, struct ternfs_fetch_block_with_crc_req_offset* next, u32 x) {
+static inline void _ternfs_fetch_block_with_crc_req_put_offset(struct ternfs_bincode_put_ctx* ctx, struct ternfs_fetch_block_with_crc_req_block_crc_unused* prev, struct ternfs_fetch_block_with_crc_req_offset* next, u32 x) {
     next = NULL;
     BUG_ON(ctx->end - ctx->cursor < 4);
     put_unaligned_le32(x, ctx->cursor);
