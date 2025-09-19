@@ -4927,20 +4927,20 @@ struct WriteBlockResp {
 std::ostream& operator<<(std::ostream& out, const WriteBlockResp& x);
 
 struct FetchBlockWithCrcReq {
-    InodeId fileId;
+    InodeId fileIdUnused;
     uint64_t blockId;
-    Crc blockCrc;
+    Crc blockCrcUnused;
     uint32_t offset;
     uint32_t count;
 
-    static constexpr uint16_t STATIC_SIZE = 8 + 8 + 4 + 4 + 4; // fileId + blockId + blockCrc + offset + count
+    static constexpr uint16_t STATIC_SIZE = 8 + 8 + 4 + 4 + 4; // fileIdUnused + blockId + blockCrcUnused + offset + count
 
     FetchBlockWithCrcReq() { clear(); }
     size_t packedSize() const {
         size_t _size = 0;
-        _size += 8; // fileId
+        _size += 8; // fileIdUnused
         _size += 8; // blockId
-        _size += 4; // blockCrc
+        _size += 4; // blockCrcUnused
         _size += 4; // offset
         _size += 4; // count
         return _size;

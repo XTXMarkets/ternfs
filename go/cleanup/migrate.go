@@ -28,7 +28,6 @@ import (
 	"xtx/ternfs/cleanup/scratch"
 	"xtx/ternfs/client"
 	"xtx/ternfs/core/bufpool"
-	"xtx/ternfs/core/crc32c"
 	"xtx/ternfs/core/log"
 	"xtx/ternfs/core/parity"
 	"xtx/ternfs/core/rs"
@@ -50,27 +49,26 @@ type MigrateState struct {
 func fetchBlock(
 	log *log.Logger,
 	c *client.Client,
+	bufPool *bufpool.BufPool,
 	fileId msgs.InodeId,
 	blockServices []msgs.BlockService,
 	blockSize uint32,
 	block *msgs.FetchedBlock,
-) (*bytes.Buffer, error) {
+) (*bufpool.Buf, error) {
 	blockService := &blockServices[block.BlockServiceIx]
 	// fail immediately to other block services
-	data, err := c.FetchBlock(log, &timing.NoTimeouts, blockService, block.BlockId, 0, blockSize, block.Crc)
-	if err != nil {
+	br := client.NewBlockReader(bufPool, 0, blockSize)
+	defer func() {
+		bufPool.Put(br.AcquireBuf())
+	}()
+	if err := c.FetchBlock(log, &timing.NoTimeouts, blockService, block.BlockId, 0, blockSize, br); err != nil {
 		log.Info("couldn't fetch block %v in file %v in block service %v: %v", block.BlockId, fileId, blockService, err)
 		return nil, err
 	}
-	if data.Len() != int(blockSize) {
-		panic(fmt.Errorf("data.Len() %v != blockSize %v", data.Len(), int(blockSize)))
+	if block.Crc != br.Crc() {
+		panic(fmt.Errorf("read %v CRC instead of %v", br.Crc(), block.Crc))
 	}
-	readCrc := msgs.Crc(crc32c.Sum(0, data.Bytes()))
-	if block.Crc != readCrc {
-		c.PutFetchedBlock(data)
-		return nil, fmt.Errorf("read %v CRC instead of %v", readCrc, block.Crc)
-	}
-	return data, nil
+	return br.AcquireBuf(), nil
 }
 
 func writeBlock(
@@ -148,6 +146,7 @@ func writeBlock(
 func copyBlock(
 	log *log.Logger,
 	c *client.Client,
+	bufPool *bufpool.BufPool,
 	scratch scratch.ScratchFile,
 	file msgs.InodeId,
 	blockServices []msgs.BlockService,
@@ -157,12 +156,12 @@ func copyBlock(
 	location msgs.Location,
 	block *msgs.FetchedBlock,
 ) (msgs.InodeId, msgs.BlockId, msgs.BlockServiceId, uint64, bool, error) {
-	data, err := fetchBlock(log, c, file, blockServices, blockSize, block)
+	data, err := fetchBlock(log, c, bufPool, file, blockServices, blockSize, block)
+	defer bufPool.Put(data)
 	if err != nil {
 		return msgs.NULL_INODE_ID, 0, 0, 0, true, err // might find other block services
 	}
 	fileId, blockId, blockServiceId, offset, err := writeBlock(log, c, scratch, file, blacklist, blockSize, storageClass, location, block, bytes.NewReader(data.Bytes()))
-	c.PutFetchedBlock(data)
 	return fileId, blockId, blockServiceId, offset, false, err
 }
 
@@ -202,12 +201,12 @@ func reconstructBlock(
 			continue
 		}
 		// try to fetch
-		data, err := fetchBlock(log, c, fileId, blockServices, blockSize, block)
+		data, err := fetchBlock(log, c, bufPool, fileId, blockServices, blockSize, block)
 		if err != nil {
 			log.Info("could not fetch block %v: %v, might try other ones", block.BlockId, err)
 			continue
 		}
-		defer c.PutFetchedBlock(data)
+		defer bufPool.Put(data)
 		// we managed to fetch, good
 		haveBlocks = append(haveBlocks, data.Bytes())
 		haveBlocksIxs = append(haveBlocksIxs, uint8(blockIx))
@@ -382,7 +381,7 @@ func migrateBlocksInFileGeneric(
 							var err error
 							var canRetry bool
 							var newBlockServiceId msgs.BlockServiceId
-							scratchFileId, newBlock, newBlockServiceId, scratchOffset, canRetry, err = copyBlock(log, c, scratchFile, fileId, fileSpansResp.BlockServices, blacklist, body.CellSize*uint32(body.Stripes), body.StorageClass, body.LocationId, block)
+							scratchFileId, newBlock, newBlockServiceId, scratchOffset, canRetry, err = copyBlock(log, c, bufPool, scratchFile, fileId, fileSpansResp.BlockServices, blacklist, body.CellSize*uint32(body.Stripes), body.StorageClass, body.LocationId, block)
 							if err != nil && !canRetry {
 								return err
 							}
