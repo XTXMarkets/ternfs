@@ -131,7 +131,7 @@ type env struct {
 	stats          map[msgs.BlockServiceId]*blockServiceStats
 	counters       map[msgs.BlocksMessageKind]*timing.Timings
 	eraseLocks     map[msgs.BlockServiceId]*sync.Mutex
-	registryConn    *client.RegistryConn
+	registryConn   *client.RegistryConn
 	failureDomain  string
 	hostname       string
 	pathPrefix     string
@@ -451,7 +451,7 @@ func (c *newToOldReadConverter) Read(p []byte) (int, error) {
 	return read, nil
 }
 
-func sendFetchBlock(log *log.Logger, env *env, blockServiceId msgs.BlockServiceId, basePath string, blockId msgs.BlockId, offset uint32, count uint32, conn *net.TCPConn, withCrc bool, fileId msgs.InodeId) error {
+func sendFetchBlock(log *log.Logger, env *env, blockServiceId msgs.BlockServiceId, basePath string, blockId msgs.BlockId, offset uint32, count uint32, conn *net.TCPConn, withCrc bool) error {
 	if offset%msgs.TERN_PAGE_SIZE != 0 {
 		log.RaiseAlert("trying to read from offset other than page boundary")
 		return msgs.BLOCK_FETCH_OUT_OF_BOUNDS
@@ -463,7 +463,7 @@ func sendFetchBlock(log *log.Logger, env *env, blockServiceId msgs.BlockServiceI
 	pageCount := count / msgs.TERN_PAGE_SIZE
 	offsetPageCount := offset / msgs.TERN_PAGE_SIZE
 	blockPath := path.Join(basePath, blockId.Path())
-	log.Debug("fetching block id %v at path %v", blockId, blockPath)
+	log.Debug("fetching block id %v (%v -> %v) at path %v", blockId, offset, count, blockPath)
 	f, err := os.Open(blockPath)
 
 	if errors.Is(err, syscall.ENODATA) {
@@ -475,7 +475,7 @@ func sendFetchBlock(log *log.Logger, env *env, blockServiceId msgs.BlockServiceI
 	}
 
 	if os.IsNotExist(err) {
-		log.ErrorNoAlert("could not find block to fetch at path %v for file %v. Request from client: %v", blockPath, fileId, conn.RemoteAddr())
+		log.ErrorNoAlert("could not find block to fetch at path %v. Request from client: %v", blockPath, conn.RemoteAddr())
 		return msgs.BLOCK_NOT_FOUND
 	}
 
@@ -1014,12 +1014,12 @@ func handleSingleRequest(
 			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, err)
 		}
 	case *msgs.FetchBlockReq:
-		if err := sendFetchBlock(log, env, blockServiceId, blockService.path, whichReq.BlockId, whichReq.Offset, whichReq.Count, conn, false, msgs.InodeId(0)); err != nil {
+		if err := sendFetchBlock(log, env, blockServiceId, blockService.path, whichReq.BlockId, whichReq.Offset, whichReq.Count, conn, false); err != nil {
 			log.Info("could not send block response to %v: %v", conn.RemoteAddr(), err)
 			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, err)
 		}
 	case *msgs.FetchBlockWithCrcReq:
-		if err := sendFetchBlock(log, env, blockServiceId, blockService.path, whichReq.BlockId, whichReq.Offset, whichReq.Count, conn, true, whichReq.FileId); err != nil {
+		if err := sendFetchBlock(log, env, blockServiceId, blockService.path, whichReq.BlockId, whichReq.Offset, whichReq.Count, conn, true); err != nil {
 			log.Info("could not send block response to %v: %v", conn.RemoteAddr(), err)
 			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, err)
 		}
@@ -1529,7 +1529,7 @@ func main() {
 		failureDomain:  *failureDomainStr,
 		pathPrefix:     *pathPrefixStr,
 		ioAlertPercent: uint8(*ioAlertPercent),
-		registryConn:    client.MakeRegistryConn(l, nil, *registryAddress, 1),
+		registryConn:   client.MakeRegistryConn(l, nil, *registryAddress, 1),
 	}
 
 	mountsInfo, err := getMountsInfo(l, "/proc/self/mountinfo")
@@ -1634,11 +1634,11 @@ func main() {
 	}
 
 	lc := net.ListenConfig{
-    	Control: func(network, address string, c syscall.RawConn) error {
-        	return c.Control(func(fd uintptr) {
-            	syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
-        	})
-    	},
+		Control: func(network, address string, c syscall.RawConn) error {
+			return c.Control(func(fd uintptr) {
+				syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
+			})
+		},
 	}
 
 	listener1, err := lc.Listen(context.Background(), "tcp4", fmt.Sprintf("%v:%v", net.IP(ownIp1[:]), port1))

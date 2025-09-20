@@ -1132,9 +1132,9 @@ static int fetch_block_pages_with_crc_write_req(struct block_socket* socket, str
             .end = req_msg_buf + sizeof(req_msg_buf),
         };
         ternfs_fetch_block_with_crc_req_put_start(&ctx, start);
-        ternfs_fetch_block_with_crc_req_put_file_id(&ctx, start, req_file_id, req->file_id);
+        ternfs_fetch_block_with_crc_req_put_file_id_unused(&ctx, start, req_file_id, 0);
         ternfs_fetch_block_with_crc_req_put_block_id(&ctx, req_file_id, req_block_id, req->block_id);
-        ternfs_fetch_block_with_crc_req_put_block_crc(&ctx, req_block_id, req_block_crc, req->block_crc);
+        ternfs_fetch_block_with_crc_req_put_block_crc_unused(&ctx, req_block_id, req_block_crc, 0);
         ternfs_fetch_block_with_crc_req_put_offset(&ctx, req_block_crc, req_offset, req->offset);
         ternfs_fetch_block_with_crc_req_put_count(&ctx, req_offset, req_count, req->count);
         ternfs_fetch_block_with_crc_req_put_end(ctx, req_count, end);
