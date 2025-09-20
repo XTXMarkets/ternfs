@@ -57,7 +57,7 @@ func fetchBlock(
 ) (*bufpool.Buf, error) {
 	blockService := &blockServices[block.BlockServiceIx]
 	// fail immediately to other block services
-	br := client.NewBlockReader(bufPool, 0, blockSize)
+	br := client.NewBlockReader(bufPool, 0, blockSize, blockSize)
 	defer func() {
 		bufPool.Put(br.AcquireBuf())
 	}()
@@ -65,8 +65,8 @@ func fetchBlock(
 		log.Info("couldn't fetch block %v in file %v in block service %v: %v", block.BlockId, fileId, blockService, err)
 		return nil, err
 	}
-	if block.Crc != br.Crc() {
-		panic(fmt.Errorf("read %v CRC instead of %v", br.Crc(), block.Crc))
+	if block.Crc != br.Crcs()[0] {
+		panic(fmt.Errorf("read %v CRC instead of %v", br.Crcs()[0], block.Crc))
 	}
 	return br.AcquireBuf(), nil
 }

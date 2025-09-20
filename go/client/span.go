@@ -473,7 +473,7 @@ func (c *Client) fetchCell(
 	blockIx uint8,
 	cell uint8,
 ) (buf *bufpool.Buf, crc msgs.Crc, err error) {
-	br := NewBlockReader(bufPool, uint32(cell)*body.CellSize, body.CellSize)
+	br := NewBlockReader(bufPool, uint32(cell)*body.CellSize, body.CellSize, body.CellSize)
 	defer func() {
 		bufPool.Put(br.AcquireBuf())
 	}()
@@ -484,7 +484,7 @@ func (c *Client) fetchCell(
 		log.Info("could not fetch block from block service %+v: %+v", blockService, err)
 		return nil, 0, err
 	}
-	return br.AcquireBuf(), br.Crc(), nil
+	return br.AcquireBuf(), br.Crcs()[0], nil
 }
 
 func (c *Client) fetchMirroredStripe(
@@ -699,25 +699,33 @@ func (c *Client) fetchInlineSpan(
 	return bufpool.NewBuf(&buf), nil
 }
 
-func (c *Client) fetchMirroredSpan(log *log.Logger,
+func (c *Client) fetchMirroredSpan(
+	log *log.Logger,
 	bufPool *bufpool.BufPool,
 	span *SpanWithBlockServices,
 ) (*bufpool.Buf, error) {
 	body := span.Span.Body.(*msgs.FetchedBlocksSpan)
 	blockSize := uint32(body.Stripes) * uint32(body.CellSize)
 
-	buf := bufPool.Get(int(span.Span.Header.Size))
-	for i := blockSize; i < span.Span.Header.Size; i++ {
-		buf.Bytes()[i] = 0
-	}
-
 	for _, block := range body.Blocks {
 		blockService := &span.BlockServices[block.BlockServiceIx]
 		if !blockService.Flags.CanRead() {
 			continue
 		}
-		br := NewBlockReader(bufPool, 0, blockSize)
+		br := NewBlockReader(bufPool, 0, blockSize, blockSize)
 		if err := c.FetchBlock(log, nil, blockService, block.BlockId, 0, blockSize, br); err == nil {
+			buf := br.AcquireBuf()
+			zeros := int(span.Span.Header.Size) - len(buf.Bytes())
+			if zeros >= 0 {
+				*buf.BytesPtr() = append(buf.Bytes(), make([]byte, zeros)...)
+			} else {
+				*buf.BytesPtr() = buf.Bytes()[:span.Span.Header.Size]
+			}
+			crc := crc32c.ZeroExtend(uint32(br.Crcs()[0]), zeros)
+			if msgs.Crc(crc) != span.Span.Header.Crc {
+				// panic since we CRC every page, this must be a bug in the go logic
+				panic(fmt.Errorf("bad CRC, expected %v, got %v", span.Span.Header.Crc, msgs.Crc(crc)))
+			}
 			return br.AcquireBuf(), nil
 		}
 		bufPool.Put(br.AcquireBuf())
@@ -725,7 +733,8 @@ func (c *Client) fetchMirroredSpan(log *log.Logger,
 	return nil, fmt.Errorf("could not find any suitable blocks")
 }
 
-func (c *Client) fetchRsSpan(log *log.Logger,
+func (c *Client) fetchRsSpan(
+	log *log.Logger,
 	bufPool *bufpool.BufPool,
 	span *SpanWithBlockServices,
 ) (*bufpool.Buf, error) {
@@ -741,6 +750,7 @@ func (c *Client) fetchRsSpan(log *log.Logger,
 	var blockIdx int
 	dataBlocks := body.Parity.DataBlocks()
 	blockBufs := make([]*bufpool.Buf, body.Parity.Blocks())
+	blockCrcs := make([][]msgs.Crc, body.Parity.Blocks())
 	defer func() {
 		for i := range blockBufs {
 			bufPool.Put(blockBufs[i])
@@ -762,7 +772,7 @@ scheduleMoreBlocks:
 		}
 		readerWithIx := blockReaderWithIx{
 			ix: blockIdx,
-			br: NewBlockReader(bufPool, 0, blockSize),
+			br: NewBlockReader(bufPool, 0, blockSize, body.CellSize),
 		}
 		if err := c.StartFetchBlock(log, blockService, block.BlockId, 0, blockSize, readerWithIx.br, &readerWithIx, ch); err == nil {
 			inFlightBlocks++
@@ -780,6 +790,7 @@ scheduleMoreBlocks:
 			goto scheduleMoreBlocks
 		}
 		blockBufs[readerWithIx.ix] = buf
+		blockCrcs[readerWithIx.ix] = readerWithIx.br.Crcs()
 		succeedBlocks++
 	}
 
@@ -803,22 +814,34 @@ scheduleMoreBlocks:
 		}
 		blockBufs[i] = bufPool.Get(int(blockSize))
 		rs.Get(body.Parity).RecoverInto(haveBlocksRecoverIxs, haveBlocksRecover, uint8(i), blockBufs[i].Bytes())
+		blockCrcs[i] = make([]msgs.Crc, body.Stripes)
+		for j := 0; j < int(body.Stripes); j++ {
+			blockCrcs[i][j] = msgs.Crc(crc32c.Sum(0, blockBufs[i].Bytes()[j*int(body.CellSize):(j+1)*int(body.CellSize)]))
+		}
 	}
 
 	buf := bufPool.Get(int(span.Span.Header.Size))
-	clear(buf.Bytes()[min(span.Span.Header.Size, dataSize):]) // zero pad
 
 	spanOffset := 0
 	blockOffset := 0
-	for range body.Stripes {
-		for i := range dataBlocks {
+	crc := uint32(0)
+	for i := range body.Stripes {
+		for j := range dataBlocks {
 			if spanOffset >= len(buf.Bytes()) {
 				break
 			}
-			copy(buf.Bytes()[spanOffset:], blockBufs[i].Bytes()[blockOffset:blockOffset+int(body.CellSize)])
+			copy(buf.Bytes()[spanOffset:], blockBufs[j].Bytes()[blockOffset:blockOffset+int(body.CellSize)])
 			spanOffset += int(body.CellSize)
+			crc = crc32c.Append(crc, uint32(blockCrcs[j][i]), int(body.CellSize))
 		}
 		blockOffset += int(body.CellSize)
+	}
+
+	clear(buf.Bytes()[min(span.Span.Header.Size, dataSize):]) // zero pad
+	crc = crc32c.ZeroExtend(crc, int(span.Span.Header.Size) - int(spanOffset))
+
+	if msgs.Crc(crc) != span.Span.Header.Crc {
+		panic(fmt.Errorf("expected CRC %v, got %v", span.Span.Header.Crc, msgs.Crc(crc)))
 	}
 
 	return buf, nil
