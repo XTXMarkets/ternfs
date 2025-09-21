@@ -9,6 +9,9 @@
 // we just invert the crc at the beginning and at the end.
 //
 // See <https://en.wikipedia.org/wiki/Computation_of_cyclic_redundancy_checks#CRC_variants>.
+//
+// The pclmul versions use pclmul instructions, and are therefore generally faster. They're
+// otherwise identical to the non-pclmul versions.
 #ifndef TERN_CRC32C
 #define TERN_CRC32C
 
@@ -39,6 +42,11 @@ uint32_t crc32c_append(uint32_t crc1, uint32_t crc2, size_t len2);
 // `zeros` can be negative, in which case this "undoes" `zeros`
 // zeroes.
 uint32_t crc32c_zero_extend(uint32_t crc, ssize_t zeros);
+
+uint32_t crc32c_pclmul(uint32_t crc, const char* buf, size_t len);
+uint32_t crc32c_xor_pclmul(uint32_t crc1, uint32_t crc2, size_t len);
+uint32_t crc32c_append_pclmul(uint32_t crc1, uint32_t crc2, size_t len2);
+uint32_t crc32c_zero_extend_pclmul(uint32_t crc, ssize_t zeros);
 
 #ifdef __cplusplus
 }

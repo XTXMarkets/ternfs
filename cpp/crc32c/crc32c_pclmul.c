@@ -11,5 +11,6 @@ typedef uint8_t u8;
 typedef uint32_t u32;
 typedef uint64_t u64;
 
-#define CRC32C_NAME(a) a
+#define CRC32C_USE_PCLMUL 1
+#define CRC32C_NAME(a) a##_pclmul
 #include "crc32c_body.c"

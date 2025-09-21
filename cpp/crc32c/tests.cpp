@@ -17,10 +17,17 @@
         } \
     } while (false)
 
+#define BOTH(f, ...) ({ \
+    auto x1 = f(__VA_ARGS__); \
+    auto x2 = f##_pclmul(__VA_ARGS__); \
+    ASSERT(x1 == x2); \
+    x1; \
+})
+
 int main() {
     uint32_t expectedCrc = 0x6c0ec068u;
     const char* str = "bazzer\n";
-    ASSERT(expectedCrc == crc32c(0, str, strlen(str)));
+    ASSERT(expectedCrc == BOTH(crc32c, 0, str, strlen(str)));
 
     RandomGenerator rand(0);
 
@@ -33,29 +40,29 @@ int main() {
     // Test append
     for (int i = 0; i < 1000; i++) {
         auto s1 = randString(1 + rand.generate64()%100);
-        uint32_t crc1 = crc32c(0, s1.data(), s1.size());
-        ASSERT(crc1 == crc32c_append(0, crc1, s1.size()));
+        uint32_t crc1 = BOTH(crc32c, 0, s1.data(), s1.size());
+        ASSERT(crc1 == BOTH(crc32c_append, 0, crc1, s1.size()));
         auto s2 = randString(1 + rand.generate64()%100);
-        uint32_t crc2 = crc32c(0, s2.data(), s2.size());
+        uint32_t crc2 = BOTH(crc32c, 0, s2.data(), s2.size());
         std::vector<char> s = s1;
         s.insert(s.end(), s2.begin(), s2.end());
-        uint32_t crc = crc32c(0, s.data(), s.size());
-        ASSERT(crc == crc32c_append(crc1, crc2, s2.size()));
+        uint32_t crc = BOTH(crc32c, 0, s.data(), s.size());
+        ASSERT(crc == BOTH(crc32c_append, crc1, crc2, s2.size()));
     }
 
     // Test XOR
     for (int i = 0; i < 1000; i++) {
         size_t l = 1 + rand.generate64()%100;
         auto s1 = randString(l);
-        uint32_t crc1 = crc32c(0, s1.data(), s1.size());
+        uint32_t crc1 = BOTH(crc32c, 0, s1.data(), s1.size());
         auto s2 = randString(l);
-        uint32_t crc2 = crc32c(0, s2.data(), s2.size());
+        uint32_t crc2 = BOTH(crc32c, 0, s2.data(), s2.size());
         std::vector<char> s = s1;
         for (int i = 0; i < l; i++) {
             s[i] ^= s2[i];
         }
-        uint32_t crc = crc32c(0, s.data(), s.size());
-        ASSERT(crc == crc32c_xor(crc1, crc2, l));
+        uint32_t crc = BOTH(crc32c, 0, s.data(), s.size());
+        ASSERT(crc == BOTH(crc32c_xor, crc1, crc2, l));
     }
 
     // Test zero extend
@@ -65,10 +72,10 @@ int main() {
         auto s = randString(l);
         std::vector<char> szeros(l + lzeros, 0);
         memcpy(&szeros[0], s.data(), l);
-        uint32_t crc = crc32c(0, s.data(), l);
+        uint32_t crc = BOTH(crc32c, 0, s.data(), l);
         ASSERT(
-            crc32c_zero_extend(crc, lzeros) ==
-            crc32c(0, szeros.data(), szeros.size())
+            BOTH(crc32c_zero_extend, crc, lzeros) ==
+            BOTH(crc32c, 0, szeros.data(), szeros.size())
         );
     }
 
@@ -79,10 +86,10 @@ int main() {
         auto s = randString(l);
         std::vector<char> szeros(l + lzeros, 0);
         memcpy(&szeros[0], s.data(), l);
-        uint32_t crc = crc32c(0, szeros.data(), szeros.size());
+        uint32_t crc = BOTH(crc32c, 0, szeros.data(), szeros.size());
         ASSERT(
-            crc32c_zero_extend(crc, -lzeros) ==
-            crc32c(0, s.data(), s.size())
+            BOTH(crc32c_zero_extend, crc, -lzeros) ==
+            BOTH(crc32c, 0, s.data(), s.size())
         );
     }
 
@@ -90,10 +97,12 @@ int main() {
         size_t l = 1 + rand.generate64()%100;
         auto s = randString(l);
         ASSERT(
-            crc32c(0, s.data(), s.size()) ==
-            crc32c(crc32c(0, s.data(), s.size()), "", 0)
+            BOTH(crc32c, 0, s.data(), s.size()) ==
+            BOTH(crc32c, crc32c(0, s.data(), s.size()), "", 0)
         );
     }
+
+    printf("All tests pass.\n");
 
     return 0;
 }

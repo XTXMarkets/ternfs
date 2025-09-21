@@ -1330,7 +1330,7 @@ struct ShardDBImpl {
             // mirroring blocks should all be the same
             for (int s = 0; s < req.stripes; s++) {
                 uint32_t stripeCrc = req.crcs.els[s*req.parity.blocks()].u32;
-                spanCrc = crc32c_append(spanCrc, stripeCrc, req.cellSize);
+                spanCrc = crc32c_append_pclmul(spanCrc, stripeCrc, req.cellSize);
                 for (int p = 0; p < req.parity.parityBlocks(); p++) {
                     if (req.crcs.els[s*req.parity.blocks() + 1+p].u32 != stripeCrc) {
                         LOG_DEBUG(_env, "mismatched CRC for mirrored block, expected %s, got %s", Crc(stripeCrc), req.crcs.els[s*req.parity.blocks() + 1+p]);
@@ -1347,8 +1347,8 @@ struct ShardDBImpl {
                 uint32_t parity0Crc;
                 for (int d = 0; d < req.parity.dataBlocks(); d++) {
                     uint32_t cellCrc = req.crcs.els[s*req.parity.blocks() + d].u32;
-                    spanCrc = crc32c_append(spanCrc, cellCrc, req.cellSize);
-                    parity0Crc = d == 0 ? cellCrc : crc32c_xor(parity0Crc, cellCrc, req.cellSize);
+                    spanCrc = crc32c_append_pclmul(spanCrc, cellCrc, req.cellSize);
+                    parity0Crc = d == 0 ? cellCrc : crc32c_xor_pclmul(parity0Crc, cellCrc, req.cellSize);
                 }
                 if (parity0Crc != req.crcs.els[s*req.parity.blocks() + req.parity.dataBlocks()].u32) {
                     LOG_DEBUG(_env, "bad parity 0 CRC, expected %s, got %s", Crc(parity0Crc), req.crcs.els[s*req.parity.blocks() + req.parity.dataBlocks()]);
@@ -1356,7 +1356,7 @@ struct ShardDBImpl {
                 }
             }
         }
-        spanCrc = crc32c_zero_extend(spanCrc, (ssize_t)req.size - (ssize_t)(req.cellSize * req.stripes * req.parity.dataBlocks()));
+        spanCrc = crc32c_zero_extend_pclmul(spanCrc, (ssize_t)req.size - (ssize_t)(req.cellSize * req.stripes * req.parity.dataBlocks()));
         if (spanCrc != req.crc) {
             LOG_DEBUG(_env, "bad span CRC, expected %s, got %s", Crc(spanCrc), req.crc);
             return false;
@@ -1412,8 +1412,8 @@ struct ShardDBImpl {
             return TernError::BAD_SPAN_BODY;
         }
 
-        uint32_t expectedCrc = crc32c(0, req.body.data(), req.body.size());
-        expectedCrc = crc32c_zero_extend(expectedCrc, req.size - req.body.size());
+        uint32_t expectedCrc = crc32c_pclmul(0, req.body.data(), req.body.size());
+        expectedCrc = crc32c_zero_extend_pclmul(expectedCrc, req.size - req.body.size());
         if (expectedCrc != req.crc.u32) {
             LOG_DEBUG(_env, "inline span expected CRC %s, got %s", Crc(expectedCrc), req.crc);
             return TernError::BAD_SPAN_BODY;
@@ -1479,7 +1479,7 @@ struct ShardDBImpl {
         for (int s = 0; s < req.stripes; s++) {
             uint32_t stripeCrc = 0;
             for (int d = 0; d < req.parity.dataBlocks(); d++) {
-                stripeCrc = crc32c_append(stripeCrc, req.crcs.els[s*req.parity.blocks() + d].u32, req.cellSize);
+                stripeCrc = crc32c_append_pclmul(stripeCrc, req.crcs.els[s*req.parity.blocks() + d].u32, req.cellSize);
             }
             entry.bodyStripes.els.emplace_back(stripeCrc);
         }
@@ -1608,7 +1608,7 @@ struct ShardDBImpl {
                 block.blockServiceId = pickedBlockServices[i];
                 uint32_t blockCrc = 0;
                 for (int s = 0; s < req.stripes; s++) {
-                    blockCrc = crc32c_append(blockCrc, req.crcs.els[s*req.parity.blocks() + i].u32, req.cellSize);
+                    blockCrc = crc32c_append_pclmul(blockCrc, req.crcs.els[s*req.parity.blocks() + i].u32, req.cellSize);
                 }
                 block.crc = blockCrc;
             }

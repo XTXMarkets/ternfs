@@ -10,8 +10,8 @@
 
 #include "log.h"
 
-#define CRC32C_USE_PCLMUL 0
-#define CRC32C_NAME(a) ternfs_##a
+#define CRC32C_USE_PCLMUL 1
+#define CRC32C_NAME(a) ternfs_##a##_fpu
 #include "crc32c_body.c"
 
 #endif

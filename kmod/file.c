@@ -649,7 +649,7 @@ static int write_blocks(struct ternfs_transient_span* span) {
             err = ternfs_compute_parity(span->parity, PAGE_SIZE, (const char**)&pages_bufs[0], &pages_bufs[D]);
             // compute CRCs
             for (i = 0; i < B; i++) {
-                span->cell_crcs[s*B + i] = ternfs_crc32c(span->cell_crcs[s*B + i], pages_bufs[i], PAGE_SIZE);
+                span->cell_crcs[s*B + i] = ternfs_crc32c_fpu(span->cell_crcs[s*B + i], pages_bufs[i], PAGE_SIZE);
             }
             for (i = 0; i < B; i++) {
                 kunmap_atomic(pages_bufs[i]);
@@ -662,10 +662,10 @@ static int write_blocks(struct ternfs_transient_span* span) {
         int s;
         for (s = 0; s < S; s++) {
             for (i = 0; i < D; i++) {
-                span->span_crc = ternfs_crc32c_append(span->span_crc, span->cell_crcs[s*B + i], cell_size);
+                span->span_crc = ternfs_crc32c_append_fpu(span->span_crc, span->cell_crcs[s*B + i], cell_size);
             }
         }
-        span->span_crc = ternfs_crc32c_zero_extend(span->span_crc, (int)span->written - (int)(span->block_size*D));
+        span->span_crc = ternfs_crc32c_zero_extend_fpu(span->span_crc, (int)span->written - (int)(span->block_size*D));
         kernel_fpu_end();
     }
     // Start the first attempt

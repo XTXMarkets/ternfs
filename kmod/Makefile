@@ -27,6 +27,7 @@ ternfs-client-objs += \
 	file.o \
 	rs.o \
 	crc.o \
+	crc_fpu.o \
 	span.o \
 	bincode.o \
 	revision.o \
@@ -41,7 +42,7 @@ export CF = -Wbitwise -Wcontext -Wcast_truncate -Wsparse-all -Wno-shadow -Wnopoi
 revision.c:
 	printf "#include \"sysfs.h\"\nconst char* ternfs_revision = \"$(shell git describe --always --dirty)\";\n" > revision.c
 
-EXTRA_FILES := ../cpp/crc32c/crc32c.c ../cpp/rs/gf_tables.c ../cpp/crc32c/iscsi.h ../cpp/rs/rs_core.c
+EXTRA_FILES := ../cpp/crc32c/crc32c_body.c ../cpp/rs/gf_tables.c ../cpp/rs/rs_core.c
 
 extra-files: $(EXTRA_FILES)
 	$(foreach file,$(EXTRA_FILES),cp $(file) .;)

@@ -21,6 +21,7 @@ typedef short __v8hi __attribute__((vector_size(16)));
 typedef int __v4si __attribute__((vector_size(16)));
 typedef long long __v2di __attribute__((vector_size(16)));
 
+#define _mm_set_epi32(i0, i1, i2, i3) ((__m128i)(__v4si){i3,i2,i1,i0})
 #define _mm_setr_epi32(i0, i1, i2, i3) ((__m128i)(__v4si){i0,i1,i2,i3})
 #define _mm_clmulepi64_si128(X, Y, I) ((__m128i)__builtin_ia32_pclmulqdq128((__v2di)(__m128i)(X), (__v2di)(__m128i)(Y), (char)(I)))
 #define _mm_xor_si128(a, b) ((a) ^ (b))

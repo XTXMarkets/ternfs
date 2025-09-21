@@ -476,7 +476,7 @@ retry:
         list_for_each_entry(page, &st->blocks_pages[i], lru) {
             char* page_buf = kmap_atomic(page);
             kernel_fpu_begin();
-            u32 crc = ternfs_crc32c(0, page_buf, PAGE_SIZE);
+            u32 crc = ternfs_crc32c_fpu(0, page_buf, PAGE_SIZE);
             kernel_fpu_end();
             kunmap_atomic(page_buf);
             if (crc != (u32)page->private) {

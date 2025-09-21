@@ -676,7 +676,7 @@ int ternfs_shard_create_file(struct ternfs_fs_info* info, u8 shid, int itype, co
 
 int ternfs_shard_add_inline_span(struct ternfs_fs_info* info, u64 file, u64 cookie, u64 offset, u32 size, const char* data, u8 len) {
     BUG_ON(size < len); // this never makes sense
-    u32 crc = ternfs_crc32c_simple(0, data, len);
+    u32 crc = ternfs_crc32c(0, data, len);
     crc = ternfs_crc32c_zero_extend(crc, size - len);
 
     struct sk_buff* skb;
