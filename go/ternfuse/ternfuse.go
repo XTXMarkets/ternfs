@@ -49,7 +49,7 @@ func ternErrToErrno(err error) syscall.Errno {
 	case msgs.FATAL_ERROR:
 		return syscall.EIO
 	case msgs.TIMEOUT:
-		return syscall.EIO
+		return syscall.ETIMEDOUT
 	case msgs.NOT_AUTHORISED:
 		return syscall.EACCES
 	case msgs.UNRECOGNIZED_REQUEST:
