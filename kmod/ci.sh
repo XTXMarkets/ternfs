@@ -39,7 +39,7 @@ SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 cd $SCRIPT_DIR
 
 # build kernel module
-make "KDIR=${SCRIPT_DIR}/linux" -j ternfs-client-local
+make "KDIR=${SCRIPT_DIR}/linux" -j ternfs-client
 
 # start VM in the background
 function cleanup {

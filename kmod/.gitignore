@@ -18,7 +18,7 @@ linux*
 html
 Doxyfile
 revision.c
-crc32c.c
+crc32c_body.c
 gf_tables.c
 iscsi.h
 rs_core.c

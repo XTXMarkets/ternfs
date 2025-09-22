@@ -55,18 +55,10 @@ extra-files-clean:
 ternfs-client-tests: revision.c extra-files
 	$(MAKE) -C $(KDIR) M=$(PWD) C=1 modules
 
-# Targets to build/clean the kmod when packaging it up (e.g. via dkms)
-# We'll generate revision.c separatedly, and we also don't want
-# sparse as a dependency.
-ternfs-client:
-	$(MAKE) -C $(KDIR) M=$(PWD) modules
-
 ternfs-client-clean:
 	$(MAKE) -C $(KDIR) M=$(PWD) clean
 	rm -f *.o *.ko 
 
-ternfs-client-local: revision.c extra-files
-	$(MAKE) -C $(KDIR) M=$(PWD) modules
 
 bincode_tests: bincode_tests.c bincodegen.h bincode.h
 	gcc -Wall -g -O2 -fsanitize=undefined,address -fno-sanitize-recover=all bincode_tests.c -o bincode_tests
@@ -77,5 +69,11 @@ bincode_tests-clean:
 
 deb-package: revision.c extra-files
 	dpkg-buildpackage -us -uc
+
+# Targets to build/clean the kmod when packaging it up
+# We'll generate revision.c separatedly, and we also don't want
+# sparse as a dependency.
+ternfs-client: revision.c extra-files
+	$(MAKE) -C $(KDIR) M=$(PWD) modules
 
 clean: ternfs-client-clean bincode_tests-clean
