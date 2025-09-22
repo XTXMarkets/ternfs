@@ -66,6 +66,7 @@ public:
     BincodeBytes(): _data(0) {}
     BincodeBytes(const char* data, size_t length): _data(0) { copy(data, length); }
     BincodeBytes(const rocksdb::Slice& slice): BincodeBytes(slice.data(), slice.size()) {}
+    BincodeBytes(const std::string& str): BincodeBytes(str.data(), str.size()) {}
     BincodeBytes(const BincodeBytesRef& ref): BincodeBytes(ref.data(), ref.size()) {}
     BincodeBytes(const char* str): BincodeBytes(str, strlen(str)) {}
 
@@ -195,9 +196,19 @@ struct BincodeFixedBytes {
     static constexpr uint16_t STATIC_SIZE = SZ;
 
     BincodeFixedBytes() { clear(); }
+    BincodeFixedBytes(const char* data, size_t length) { copy(data, length); }
+    BincodeFixedBytes(const rocksdb::Slice& slice): BincodeFixedBytes(slice.data(), slice.size()) {}
+    BincodeFixedBytes(const BincodeBytesRef& ref): BincodeFixedBytes(ref.data(), ref.size()) {}
+    BincodeFixedBytes(const char* str): BincodeFixedBytes(str, strlen(str)) {}
     BincodeFixedBytes(const std::array<uint8_t, SZ>& data_): data(data_) {}
 
     void clear() { memset(data.data(), 0, SZ); }
+
+    void copy(const char* data_, size_t length) {
+        clear();
+        ALWAYS_ASSERT(length < SZ);
+        memcpy(data.data(), data_, length);
+    }
 
     constexpr size_t packedSize() const {
         return SZ;

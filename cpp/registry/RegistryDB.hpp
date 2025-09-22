@@ -39,6 +39,8 @@ public:
 
     void processLogEntries(std::vector<LogsDBLogEntry>& logEntries, std::vector<RegistryDBWriteResult>& writeResults);
 
+    void flush(bool sync = true) { _db->FlushWAL(sync); }
+
 private:
     void _initDb();
 

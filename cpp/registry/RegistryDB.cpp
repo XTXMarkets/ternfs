@@ -106,7 +106,7 @@ void RegistryDB::processLogEntries(std::vector<LogsDBLogEntry>& logEntries, std:
         switch (res.kind) {
         case RegistryMessageKind::CREATE_LOCATION: {
             auto& req = reqContainer.getCreateLocation();
-            StaticValue<ShardInfoKey> key;
+            StaticValue<LocationInfoKey> key;
             std::string value;
             key().setLocationId(req.id);
             auto status = _db->Get({}, _locationsCf, key.toSlice(), &value);
@@ -119,17 +119,19 @@ void RegistryDB::processLogEntries(std::vector<LogsDBLogEntry>& logEntries, std:
             newLocation.id = req.id;
             newLocation.name = req.name;
             writeLocationInfo(writeBatch, _locationsCf, newLocation);
+            initializeShardsForLocation(writeBatch, _shardsCf, req.id);
+            initializeCdcForLocation(writeBatch, _cdcCf, req.id);
             toReload.locations = toReload.registry = toReload.shards = toReload.cdc = true;
             break;
         }
         case RegistryMessageKind::RENAME_LOCATION: {
             auto& req = reqContainer.getRenameLocation();
-            StaticValue<ShardInfoKey> key;
+            StaticValue<LocationInfoKey> key;
             std::string value;
             key().setLocationId(req.id);
             auto status = _db->Get({}, _locationsCf, key.toSlice(), &value);
             if (status == rocksdb::Status::NotFound()) {
-                LOG_ERROR(_env, "unknown location in req %s", req);
+                LOG_DEBUG(_env, "unknown location in req %s", req);
                 res.err = TernError::LOCATION_NOT_FOUND;
                 break;
             }
@@ -150,7 +152,7 @@ void RegistryDB::processLogEntries(std::vector<LogsDBLogEntry>& logEntries, std:
             key().setShardId(req.shrid.shardId().u8);
             auto status = _db->Get({}, _shardsCf, key.toSlice(), &value);
             if (status == rocksdb::Status::NotFound()) {
-                LOG_ERROR(_env, "unknown shard replica in req %s", req);
+                LOG_DEBUG(_env, "unknown shard replica in req %s", req);
                 res.err = TernError::INVALID_REPLICA;
                 break;
             }
@@ -184,7 +186,7 @@ void RegistryDB::processLogEntries(std::vector<LogsDBLogEntry>& logEntries, std:
             key().setReplicaId(req.replica);
             auto status = _db->Get({}, _cdcCf, key.toSlice(), &value);
             if (status == rocksdb::Status::NotFound()) {
-                LOG_ERROR(_env, "unknown cdc replica in req %s", req);
+                LOG_DEBUG(_env, "unknown cdc replica in req %s", req);
                 res.err = TernError::INVALID_REPLICA;
                 break;
             }
@@ -220,7 +222,7 @@ void RegistryDB::processLogEntries(std::vector<LogsDBLogEntry>& logEntries, std:
                 std::string value;
                 auto status = _db->Get({}, _blockServicesCf, key.toSlice(), &value);
                 if (status == rocksdb::Status::NotFound()) {
-                    LOG_ERROR(_env, "unknown block service in req %s", req);
+                    LOG_DEBUG(_env, "unknown block service in req %s", req);
                     res.err = TernError::BLOCK_SERVICE_NOT_FOUND;
                     break;
                 }
