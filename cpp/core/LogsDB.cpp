@@ -288,7 +288,7 @@ public:
         ROCKS_DB_CHECKED(_sharedDb.db()->Write({}, &batch));
     }
 
-    void writeLogEntry(const LogsDBLogEntry entry) {
+    void writeLogEntry(const LogsDBLogEntry& entry) {
         _maybeRotate();
 
         auto& partition = _getPartitionForIdx(entry.idx);
@@ -1701,7 +1701,6 @@ public:
             }
         }
         for(auto& req : requests) {
-            ALWAYS_ASSERT(req.msg.body.kind() == req.msg.body.kind());
             switch (req.msg.body.kind()) {
             case LogMessageKind::ERROR:
                 LOG_ERROR(_env, "Bad request %s", req);

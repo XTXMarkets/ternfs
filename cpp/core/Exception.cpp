@@ -157,7 +157,7 @@ std::string removeTemplates(const std::string & s) {
     //       which needs fixing
     size_t begin = 0;
     int stack = 0;
-    for (size_t i=0; i<r.size(); ++i) {
+    for (size_t i = 0; i < r.size(); ++i) {
         if (r[i] == '<') {
             if (stack == 0) begin = i;
             ++stack;
@@ -165,7 +165,7 @@ std::string removeTemplates(const std::string & s) {
             if (stack == 0) continue;
             --stack;
             if (stack == 0) {
-                r = r.substr(0, begin) + r.substr(i+1);
+                r.erase(begin, i + 1 - begin);
                 i = begin;
             }
         }
@@ -174,7 +174,7 @@ std::string removeTemplates(const std::string & s) {
     // Remove any trailing [with args ...] sections
     size_t with_args = r.find(" [with args");
     if (with_args != std::string::npos && r[r.size()-1] == ']') {
-        r = r.substr(0, with_args);
+        r.resize(with_args);
     }
 
     return r;

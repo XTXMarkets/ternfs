@@ -98,7 +98,10 @@ Xmon::Xmon(
             throw SYSCALL_EXCEPTION("gethostname");
         }
         _hostname = buf;
-        _hostname = _hostname.substr(0, _hostname.find("."));
+        auto end = _hostname.find(".");
+        if (end != -1) {
+            _hostname.resize(end);
+        }
     }
     _appInstance = _appInstance + "@" + _hostname;
 
