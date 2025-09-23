@@ -164,5 +164,7 @@ int main(void) {
         }
     }
 
+    printf("All tests pass.\n");
+
     return 0;
 }

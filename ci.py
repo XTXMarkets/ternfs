@@ -24,49 +24,57 @@ args = parser.parse_args()
 script_dir = os.path.dirname(os.path.realpath(__file__))
 os.chdir(script_dir)
 
+def run_docker_unbuffered(docker_args, args):
+    # See <https://groups.google.com/g/seastar-dev/c/r7W-Kqzy9O4>
+    # for motivation for `--security-opt seccomp=unconfined`,
+    # the `--pids-limit -1` is not something I hit but it seems
+    # like a good idea.
+    container = 'ghcr.io/xtxmarkets/ternfs-ubuntu-build:2025-09-18'
+    run_cmd_unbuffered(
+        ['docker', 'run', '--pids-limit', '-1', '--security-opt', 'seccomp=unconfined', '--mount', f'type=bind,src={script_dir},dst=/ternfs', '--cap-add', 'SYS_ADMIN', '--privileged', '--rm', '-i', '-e', f'UID={os.getuid()}', '-e', f'GID={os.getgid()}'] + docker_args + [container] + args
+    )
+
 if args.build:
     bold_print('building')
     for r in (['ubuntu', 'ubuntusanitized', 'ubuntuvalgrind'] if args.docker else ['release', 'sanitized', 'valgrind']):
         wait_cmd(run_cmd(['./build.sh', r]))
-    wait_cmd(run_cmd(['make', 'bincode_tests'], cwd='kmod'))
+    if args.docker:
+        run_docker_unbuffered(['-w', '/ternfs/kmod'], ['make', 'bincode_tests'])
+    else:
+        wait_cmd(run_cmd(['make', 'bincode_tests'], cwd='kmod'))
 
 if args.functional:
     bold_print('functional tests')
     if args.docker:
         bold_print('starting functional tests in docker')
         container = 'ghcr.io/xtxmarkets/ternfs-ubuntu-build:2025-09-18'
-        # See <https://groups.google.com/g/seastar-dev/c/r7W-Kqzy9O4>
-        # for motivation for `--security-opt seccomp=unconfined`,
-        # the `--pids-limit -1` is not something I hit but it seems
-        # like a good idea.
-        run_cmd_unbuffered(
-            ['docker', 'run', '--pids-limit', '-1', '--security-opt', 'seccomp=unconfined', '--cap-add', 'SYS_ADMIN', '--privileged', '--rm', '-i', '--mount', f'type=bind,src={script_dir},dst={script_dir}', '-w', f'{script_dir}', '-e', f'UID={os.getuid()}', '-e', f'GID={os.getgid()}', container, './cpp/tests.sh']
+        run_docker_unbuffered(
+            ['-w', '/ternfs'], ['./cpp/tests.sh']
         )
-        run_cmd_unbuffered(
-            ['docker', 'run', '--pids-limit', '-1', '--security-opt', 'seccomp=unconfined', '--cap-add', 'SYS_ADMIN', '--privileged', '--rm', '-i', '--mount', f'type=bind,src={script_dir},dst={script_dir}', '-w', f'{script_dir}/go', '-e', f'UID={os.getuid()}', '-e', f'GID={os.getgid()}', container, 'go', 'test', './...']
+        run_docker_unbuffered(
+            ['-w', '/ternfs/kmod'], ['./bincode_tests']
         )
-        #run_cmd_unbuffered(
-        #    ['docker', 'run', '--pids-limit', '-1', '--security-opt', 'seccomp=unconfined', '--cap-add', 'SYS_ADMIN', '-v', '/dev/fuse:/dev/fuse', '--privileged', '--rm', '-i', '--mount', f'type=bind,src={script_dir},dst={script_dir}', '-w', f'{script_dir}/kmod', '-e', f'UID={os.getuid()}', '-e', f'GID={os.getgid()}', container, './bincode_tests']
-        #)
-    # ToDo bincode_tests don't work in container mising libasan.so
-    wait_cmds(
-        [run_cmd(['./bincode_tests'], cwd='kmod')] + ([] if args.docker else [run_cmd(['./cpp/tests.sh']), run_cmd(['go', 'test', './...'], cwd='go')]),
-    )
+        run_docker_unbuffered(
+            ['-w', '/ternfs/go'], ['go', 'test', './...']
+        )
+    else:
+        wait_cmds([
+            run_cmd(['./bincode_tests'], cwd='kmod'),
+            run_cmd(['./cpp/tests.sh']),
+            run_cmd(['go', 'test', './...'], cwd='go')
+        ])
 
 if args.integration:
+    integration_args = (['--short'] if args.short else []) + (['--leader-only'] if args.leader_only else []) + (['--close-tracker-object', args.close_tracker_object] if args.close_tracker_object else [])
     if args.docker:
         bold_print('starting integration tests in docker')
-        container = 'ghcr.io/xtxmarkets/ternfs-ubuntu-build:2025-09-18'
-        # See <https://groups.google.com/g/seastar-dev/c/r7W-Kqzy9O4>
-        # for motivation for `--security-opt seccomp=unconfined`,
-        # the `--pids-limit -1` is not something I hit but it seems
-        # like a good idea.
-        run_cmd_unbuffered(
-            ['docker', 'run', '--pids-limit', '-1', '--security-opt', 'seccomp=unconfined', '--cap-add', 'SYS_ADMIN', '-v', '/dev/fuse:/dev/fuse', '-v', '/sys/kernel:/sys/kernel', '--privileged', '--rm', '-i', '--mount', f'type=bind,src={script_dir},dst=/ternfs', '-e', f'UID={os.getuid()}', '-e', f'GID={os.getgid()}', container, '/ternfs/integration.py', '--docker'] + (['--short'] if args.short else []) + (['--leader-only'] if args.leader_only else []) + (['--close-tracker-object', args.close_tracker_object] if args.close_tracker_object else [])
+        run_docker_unbuffered(
+            [],
+            ['/ternfs/integration.py', '--docker'] + integration_args
         )
     else:
         run_cmd_unbuffered(
-            ['./integration.py'] + (['--short'] if args.short else []) + (['--leader-only'] if args.leader_only else [])
+            ['./integration.py'] + integration_args
         )
 
 if args.prepare_image:
