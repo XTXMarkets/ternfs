@@ -508,7 +508,7 @@ private:
             auto &allRegiResp = resp.resp.setAllRegistryReplicas();
             for (uint8_t i = 0; i < _replicas.size(); ++i) {
                 auto &addrs = _replicas[i];
-                if (addrs.addrs[0].ip.data[0] == 0) {
+                if (addrs.addrs[0].port == 0 && addrs.addrs[1].port == 0) {
                     continue;
                 }
                 auto &replica = allRegiResp.replicas.els.emplace_back();

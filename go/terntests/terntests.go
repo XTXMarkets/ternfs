@@ -783,7 +783,7 @@ func killBlockServices(
 	rand := wyhash.New(uint64(time.Now().UnixNano()))
 	go func() {
 		defer func() { lrecover.HandleRecoverChan(log, terminateChan, recover()) }()
-		 lc := net.ListenConfig{
+		lc := net.ListenConfig{
 			Control: func(network, address string, c syscall.RawConn) error {
 				var operr error
 				err := c.Control(func(fd uintptr) {
@@ -795,7 +795,7 @@ func killBlockServices(
 				return operr
 			},
 		}
-		var reservedPorts [2]net.Listener 
+		var reservedPorts [2]net.Listener
 		for {
 			// pick and kill the victim
 			pause.Lock()
@@ -815,12 +815,12 @@ func killBlockServices(
 						procs.Kill(procId, syscall.SIGKILL)
 						if ports._1 != 0 {
 							if port1Listener, err := lc.Listen(context.Background(), "tcp4", fmt.Sprintf("127.0.0.1:%d", ports._1)); err == nil {
-								reservedPorts[0] = port1Listener	
+								reservedPorts[0] = port1Listener
 							}
 						}
 						if ports._2 != 0 {
 							if port2Listener, err := lc.Listen(context.Background(), "tcp4", fmt.Sprintf("127.0.0.1:%d", ports._2)); err == nil {
-								reservedPorts[1] = port2Listener	
+								reservedPorts[1] = port2Listener
 							}
 						}
 						break
@@ -1126,11 +1126,12 @@ func main() {
 				dir = path.Join(*dataDir, "registry")
 			}
 			opts := managedprocess.RegistryOpts{
-				Exe:             cppExes.RegistryExe,
-				LogLevel:        level,
-				Dir:             dir,
-				RegistryAddress: registryAddress,
-				Replica:         msgs.ReplicaId(r),
+				Exe:               cppExes.RegistryExe,
+				LogLevel:          level,
+				Dir:               dir,
+				RegistryAddress:   registryAddress,
+				Replica:           msgs.ReplicaId(r),
+				UsingDynamicPorts: true,
 			}
 			if r == 0 {
 				if *leaderOnly {

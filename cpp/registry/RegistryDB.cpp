@@ -12,6 +12,7 @@
 #include "RegistryDBData.hpp"
 #include "RocksDBUtils.hpp"
 #include "Time.hpp"
+#include <rocksdb/db.h>
 #include <rocksdb/write_batch.h>
 
 static constexpr auto REGISTRY_CF_NAME = "registry";
@@ -82,6 +83,80 @@ static bool addressesIntersect(const AddrsInfo& currentAddr, const AddrsInfo& ne
         }
     }
     return false;
+}
+
+
+static void wipeRegistryPorts(rocksdb::WriteBatch& batch, rocksdb::DB* db, rocksdb::ColumnFamilyHandle* cf) {
+    auto* it = db->NewIterator(rocksdb::ReadOptions(), cf);
+    for (it->SeekToFirst(); it->Valid(); it->Next()) {
+        FullRegistryInfo info;
+        readRegistryInfo(it->key(), it->value(), info);
+        for (auto& addr : info.addrs.addrs) {
+            addr.port = 0;
+        }
+        writeRegistryInfo(batch, cf, info);
+    }
+    ROCKS_DB_CHECKED(it->status());
+    delete it;
+}
+
+static void wipeShardPorts(rocksdb::WriteBatch& batch, rocksdb::DB* db, rocksdb::ColumnFamilyHandle* cf) {
+    auto* it = db->NewIterator(rocksdb::ReadOptions(), cf);
+    for (it->SeekToFirst(); it->Valid(); it->Next()) {
+        FullShardInfo info;
+        readShardInfo(it->key(), it->value(), info);
+        for (auto& addr : info.addrs.addrs) {
+            addr.port = 0;
+        }
+        writeShardInfo(batch, cf, info);
+    }
+    ROCKS_DB_CHECKED(it->status());
+    delete it;
+}
+
+static void wipeCdcPorts(rocksdb::WriteBatch& batch, rocksdb::DB* db, rocksdb::ColumnFamilyHandle* cf) {
+    auto* it = db->NewIterator(rocksdb::ReadOptions(), cf);
+    for (it->SeekToFirst(); it->Valid(); it->Next()) {
+        CdcInfo info;
+        readCdcInfo(it->key(), it->value(), info);
+        for (auto& addr : info.addrs.addrs) {
+            addr.port = 0;
+        }
+        writeCdcInfo(batch, cf, info);
+    }
+    ROCKS_DB_CHECKED(it->status());
+    delete it;
+}
+
+static void wipeBlockServicePorts(rocksdb::WriteBatch& batch, rocksdb::DB* db, 
+    rocksdb::ColumnFamilyHandle* blockServiceCf, rocksdb::ColumnFamilyHandle* writableBlockServiceCf, rocksdb::ColumnFamilyHandle* lastHeartBeatCf)
+{
+    auto* it = db->NewIterator(rocksdb::ReadOptions(), blockServiceCf);
+    auto now = ternNow();
+    for (it->SeekToFirst(); it->Valid(); it->Next()) {
+        FullBlockServiceInfo info;
+        readBlockServiceInfo(it->key(), it->value(), info);
+        if (info.flags == BlockServiceFlags::DECOMMISSIONED) {
+            continue;
+        }
+        for (auto& addr : info.addrs.addrs) {
+            addr.port = 0;
+        }
+        StaticValue<WritableBlockServiceKey> writableKey;
+        StaticValue<LastHeartBeatKey> lastHeartBeat;
+        bool wasWritable = false;
+        if (isWritable(info.flags) && info.availableBytes > 0) {
+            blockServiceToWritableBlockServiceKey(info, writableKey());
+            batch.Delete(writableBlockServiceCf, writableKey.toSlice());
+        }
+        blockServiceToLastHeartBeat(info, lastHeartBeat());
+        batch.Delete(lastHeartBeatCf, lastHeartBeat.toSlice());
+        info.flags = info.flags | BlockServiceFlags::STALE;
+        info.lastInfoChange = now;
+        writeBlockServiceInfo(batch, blockServiceCf, info);
+    }
+    ROCKS_DB_CHECKED(it->status());
+    delete it;
 }
 
 void RegistryDB::processLogEntries(std::vector<LogsDBLogEntry>& logEntries, std::vector<RegistryDBWriteResult>& writeResults) {
@@ -551,6 +626,15 @@ void RegistryDB::_initDb() {
 
         ROCKS_DB_CHECKED(_db->Write({}, &batch));
         LOG_INFO(_env, "initialized Registry RocksDB");
+    }
+    if (_options.usingDynamicPorts) {
+        LOG_INFO(_env, "wiping dynamic service ports to speed up bootstrap");
+        rocksdb::WriteBatch batch;
+        wipeRegistryPorts(batch, _db, _registryCf);
+        wipeShardPorts(batch, _db,  _shardsCf);
+        wipeCdcPorts(batch, _db, _cdcCf);
+        wipeBlockServicePorts(batch, _db, _blockServicesCf, _writableBlockServicesCf, _lastHeartBeatCf);
+        ROCKS_DB_CHECKED(_db->Write({}, &batch));
     }
 }
 

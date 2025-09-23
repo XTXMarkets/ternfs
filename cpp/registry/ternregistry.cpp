@@ -61,6 +61,11 @@ static bool parseRegistryOptions(CommandLineArgs& args, RegistryOptions& options
             options.writableBlockServiceUpdateInterval = parseDuration(args.next());
             continue;
         }
+        if (arg == "-using-dynamic-ports") {
+            args.next();
+            options.usingDynamicPorts = true;
+            continue;
+        }
         fprintf(stderr, "unknown argument %s\n", args.peekArg().c_str());
         return false;
     }
@@ -93,6 +98,8 @@ static void printRegistryOptionsUsage() {
     fprintf(stderr, "       Maximum number of block services to assign to a shard for writting at any given time. Default is 28\n");
     fprintf(stderr, " -writable-block-service-update-interval\n");
     fprintf(stderr, "       Maximum interval at which to change writable services assigned to shards. Default 30 min\n");
+    fprintf(stderr, " -using-dynamic-ports\n");
+    fprintf(stderr, "       Inform registry services are using dynamic ports. Registry will wipe port information on startup to speed up bootstrap\n");
 }
 
 static bool validateRegistryOptions(const RegistryOptions& options) {

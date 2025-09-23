@@ -89,7 +89,7 @@ bool Registerer::_updateReplicas(const std::vector<FullRegistryInfo> &allReplica
 
     size_t knownReplicas{0};
     for (auto &replica : localReplicas) {
-        if (replica.addrs[0].port != 0) {
+        if (replica.addrs[0].port != 0 || replica.addrs[1].port) {
             ++knownReplicas;
         }
     }

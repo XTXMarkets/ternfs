@@ -27,6 +27,7 @@ struct RegistryOptions {
     uint8_t alertAfterUnavailableFailureDomains = 3;
     uint32_t maxFailureDomainsPerShard = 28;
     Duration writableBlockServiceUpdateInterval = 30_mins;
+    bool usingDynamicPorts = false;
 };
 
 struct RegistryState;

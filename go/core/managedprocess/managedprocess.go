@@ -432,6 +432,7 @@ type RegistryOpts struct {
 	Addr1           string
 	Addr2           string
 	LogsDBFlags     []string
+	UsingDynamicPorts bool
 }
 
 func (procs *ManagedProcesses) StartRegistry(ll *log.Logger, opts *RegistryOpts) {
@@ -460,6 +461,9 @@ func (procs *ManagedProcesses) StartRegistry(ll *log.Logger, opts *RegistryOpts)
 	}
 	if opts.LogsDBFlags != nil {
 		args = append(args, opts.LogsDBFlags...)
+	}
+	if opts.UsingDynamicPorts {
+		args = append(args, "-using-dynamic-ports")
 	}
 	procs.Start(ll, &ManagedProcessArgs{
 		Name:            "registry",
