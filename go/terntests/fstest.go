@@ -961,6 +961,8 @@ func corruptFiles(
 	return corrupted
 }
 
+var stacktraceMu sync.Mutex
+
 func fsTestInternal[Id comparable](
 	log *log.Logger,
 	c *client.Client,
@@ -1064,10 +1066,12 @@ func fsTestInternal[Id comparable](
 			defer func() {
 				err := recover()
 				if err != nil {
+					stacktraceMu.Lock()
 					log.Info("stacktrace for %v:", err)
 					for _, line := range strings.Split(string(debug.Stack()), "\n") {
 						log.Info("%s", line)
 					}
+					stacktraceMu.Unlock()
 				}
 				c <- err
 			}()

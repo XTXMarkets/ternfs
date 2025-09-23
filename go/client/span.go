@@ -12,12 +12,14 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"syscall"
 	"xtx/ternfs/core/bufpool"
 	"xtx/ternfs/core/crc32c"
 	"xtx/ternfs/core/log"
 	"xtx/ternfs/core/parity"
 	"xtx/ternfs/core/rs"
 	"xtx/ternfs/core/timing"
+	"xtx/ternfs/divide32"
 	"xtx/ternfs/msgs"
 )
 
@@ -451,242 +453,6 @@ func (c *Client) CreateFile(
 	return fileId, nil
 }
 
-type FetchedStripe struct {
-	Buf   *bufpool.Buf
-	Start uint64
-	owned bool
-}
-
-func (fs *FetchedStripe) Put(bufPool *bufpool.BufPool) {
-	if !fs.owned {
-		return
-	}
-	fs.owned = false
-	bufPool.Put(fs.Buf)
-}
-
-func (c *Client) fetchCell(
-	log *log.Logger,
-	bufPool *bufpool.BufPool,
-	blockServices []msgs.BlockService,
-	body *msgs.FetchedBlocksSpan,
-	blockIx uint8,
-	cell uint8,
-) (buf *bufpool.Buf, crc msgs.Crc, err error) {
-	br := NewBlockReader(bufPool, uint32(cell)*body.CellSize, body.CellSize, body.CellSize)
-	defer func() {
-		bufPool.Put(br.AcquireBuf())
-	}()
-	block := &body.Blocks[blockIx]
-	blockService := &blockServices[block.BlockServiceIx]
-	// fail immediately to other block services
-	if err := c.FetchBlock(log, &timing.NoTimeouts, blockService, block.BlockId, uint32(cell)*body.CellSize, body.CellSize, br); err != nil {
-		log.Info("could not fetch block from block service %+v: %+v", blockService, err)
-		return nil, 0, err
-	}
-	return br.AcquireBuf(), br.Crcs()[0], nil
-}
-
-func (c *Client) fetchMirroredStripe(
-	log *log.Logger,
-	bufPool *bufpool.BufPool,
-	span *SpanWithBlockServices,
-	body *msgs.FetchedBlocksSpan,
-	offset uint64,
-) (start uint64, buf *bufpool.Buf, err error) {
-	spanOffset := uint32(offset - span.Span.Header.ByteOffset)
-	cell := spanOffset / body.CellSize
-	B := body.Parity.Blocks()
-	start = span.Span.Header.ByteOffset + uint64(cell*body.CellSize)
-
-	log.Debug("getting cell %v -> %v", start, span.Span.Header.ByteOffset+uint64((cell+1)*body.CellSize))
-
-	found := false
-	for i := 0; i < B && !found; i++ {
-		block := &body.Blocks[i]
-		blockService := &span.BlockServices[block.BlockServiceIx]
-		if !blockService.Flags.CanRead() {
-			continue
-		}
-		var crc msgs.Crc
-		buf, crc, err = c.fetchCell(log, bufPool, span.BlockServices, body, uint8(i), uint8(cell))
-		if err != nil {
-			continue
-		}
-		if crc != body.StripesCrc[cell] {
-			// we check the block pages page-by-page
-			panic(fmt.Errorf("expected crc %v, got %v, for block %v in block service %v", body.StripesCrc[cell], crc, block.BlockId, blockService.Id))
-		}
-		found = true
-	}
-
-	if !found {
-		return 0, nil, fmt.Errorf("could not find any suitable blocks")
-	}
-
-	return start, buf, nil
-}
-
-func (c *Client) fetchRsStripe(
-	log *log.Logger,
-	bufPool *bufpool.BufPool,
-	fileId msgs.InodeId,
-	span *SpanWithBlockServices,
-	body *msgs.FetchedBlocksSpan,
-	offset uint64,
-) (start uint64, buf *bufpool.Buf, err error) {
-	D := body.Parity.DataBlocks()
-	B := body.Parity.Blocks()
-	spanOffset := uint32(offset - span.Span.Header.ByteOffset)
-	blocks := make([]*bufpool.Buf, B)
-	crcs := make([]msgs.Crc, B)
-	defer func() {
-		for i := range blocks {
-			bufPool.Put(blocks[i])
-		}
-	}()
-	blocksFound := 0
-	stripe := spanOffset / (uint32(D) * body.CellSize)
-	if stripe >= uint32(body.Stripes) {
-		panic(fmt.Errorf("impossible: stripe %v >= stripes %v, file=%v spanOffset=%v, spanSize=%v, cellSize=%v, D=%v", stripe, body.Stripes, fileId, spanOffset, span.Span.Header.Size, body.CellSize, D))
-	}
-	log.Debug("fetching stripe %v, cell size %v", stripe, body.CellSize)
-	for i := 0; i < B; i++ {
-		block := &body.Blocks[i]
-		blockService := &span.BlockServices[block.BlockServiceIx]
-		if !blockService.Flags.CanRead() {
-			continue
-		}
-		buf, crcs[i], err = c.fetchCell(log, bufPool, span.BlockServices, body, uint8(i), uint8(stripe))
-		if err != nil {
-			continue
-		}
-		// we managed to get the block, store it
-		blocks[i] = buf
-		blocksFound++
-		if blocksFound >= D {
-			break
-		}
-	}
-	if blocksFound != D {
-		return 0, nil, fmt.Errorf("couldn't get enough block connections (need at least %v, got %v)", D, blocksFound)
-	}
-
-	stripeBuf := bufPool.Get(D * int(body.CellSize))
-
-	// check if we're missing data blocks, and recover them if needed
-	stripeCrc := uint32(0)
-	for i := 0; i < D; i++ {
-		if blocks[i] == nil {
-			haveBlocksRecover := [][]byte{}
-			haveBlocksRecoverIxs := []uint8{}
-			for j := 0; j < B; j++ {
-				if blocks[j] != nil {
-					haveBlocksRecover = append(haveBlocksRecover, blocks[j].Bytes())
-					haveBlocksRecoverIxs = append(haveBlocksRecoverIxs, uint8(j))
-					if len(haveBlocksRecover) >= D {
-						break
-					}
-				}
-			}
-			blocks[i] = bufPool.Get(int(body.CellSize))
-			rs.Get(body.Parity).RecoverInto(haveBlocksRecoverIxs, haveBlocksRecover, uint8(i), blocks[i].Bytes())
-			crcs[i] = msgs.Crc(crc32c.Sum(0, blocks[i].Bytes()))
-		}
-		copy(stripeBuf.Bytes()[i*int(body.CellSize):(i+1)*int(body.CellSize)], blocks[i].Bytes())
-		stripeCrc = crc32c.Append(stripeCrc, uint32(crcs[i]), int(body.CellSize))
-	}
-
-	// check if our crc is scuppered
-	if stripeCrc != uint32(body.StripesCrc[stripe]) {
-		// we check the block pages page-py-page
-		panic(fmt.Errorf("bad crc, expected %v, got %v", msgs.Crc(stripeCrc), body.StripesCrc[stripe]))
-	}
-
-	return span.Span.Header.ByteOffset + uint64(stripe)*uint64(D)*uint64(body.CellSize), stripeBuf, nil
-}
-
-func (c *Client) FetchStripeFromSpan(
-	log *log.Logger,
-	bufPool *bufpool.BufPool,
-	fileId msgs.InodeId,
-	span *SpanWithBlockServices,
-	offset uint64,
-) (*FetchedStripe, error) {
-	if offset < span.Span.Header.ByteOffset || offset >= span.Span.Header.ByteOffset+uint64(span.Span.Header.Size) {
-		panic(fmt.Errorf("out of bounds offset %v for span going from %v to %v", offset, span.Span.Header.ByteOffset, span.Span.Header.ByteOffset+uint64(span.Span.Header.Size)))
-	}
-	log.DebugStack(1, "will fetch span %v -> %v", span.Span.Header.ByteOffset, span.Span.Header.ByteOffset+uint64(span.Span.Header.Size))
-
-	// if inline, it's very easy
-	if span.Span.Header.StorageClass == msgs.INLINE_STORAGE {
-		data := span.Span.Body.(*msgs.FetchedInlineSpan).Body
-		dataCrc := msgs.Crc(crc32c.Sum(0, data))
-		if dataCrc != span.Span.Header.Crc {
-			panic(fmt.Errorf("header CRC for inline span is %v, but data is %v", span.Span.Header.Crc, dataCrc))
-		}
-		buf := append([]byte{}, span.Span.Body.(*msgs.FetchedInlineSpan).Body...)
-		stripe := &FetchedStripe{
-			Buf:   bufpool.NewBuf(&buf),
-			Start: span.Span.Header.ByteOffset,
-		}
-		log.Debug("fetched inline span")
-		return stripe, nil
-	}
-
-	// otherwise we need to fetch
-	body := span.Span.Body.(*msgs.FetchedBlocksSpan)
-	D := body.Parity.DataBlocks()
-
-	// if we're in trailing zeros, just return the trailing zeros part
-	// (this is a "synthetic" stripe of sorts, but it's helpful to callers)
-	spanDataEnd := span.Span.Header.ByteOffset + uint64(body.Stripes)*uint64(D*int(body.CellSize))
-	if offset >= spanDataEnd {
-		buf := bufPool.Get(int(uint64(span.Span.Header.Size) - spanDataEnd))
-		bufSlice := buf.Bytes()
-		for i := range bufSlice {
-			bufSlice[i] = 0
-		}
-		stripe := &FetchedStripe{
-			Buf:   buf,
-			Start: spanDataEnd,
-			owned: true,
-		}
-		return stripe, nil
-	}
-
-	// otherwise just fetch
-	var start uint64
-	var buf *bufpool.Buf
-	var err error
-	if D == 1 {
-		start, buf, err = c.fetchMirroredStripe(log, bufPool, span, body, offset)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		start, buf, err = c.fetchRsStripe(log, bufPool, fileId, span, body, offset)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// chop off trailing zeros in the span
-	stripeEnd := start + uint64(len(buf.Bytes()))
-	spanEnd := span.Span.Header.ByteOffset + uint64(span.Span.Header.Size)
-	if stripeEnd > spanEnd {
-		*buf.BytesPtr() = (*buf.BytesPtr())[:uint64(len(*buf.BytesPtr()))-(stripeEnd-spanEnd)]
-	}
-
-	// we're done
-	stripe := &FetchedStripe{
-		Buf:   buf,
-		owned: true,
-		Start: start,
-	}
-	return stripe, nil
-}
-
 func (c *Client) fetchInlineSpan(
 	inlineSpan *msgs.FetchedInlineSpan,
 	crc msgs.Crc,
@@ -838,7 +604,7 @@ scheduleMoreBlocks:
 	}
 
 	clear(buf.Bytes()[min(span.Span.Header.Size, dataSize):]) // zero pad
-	crc = crc32c.ZeroExtend(crc, int(span.Span.Header.Size) - int(spanOffset))
+	crc = crc32c.ZeroExtend(crc, int(span.Span.Header.Size)-int(spanOffset))
 
 	if msgs.Crc(crc) != span.Span.Header.Crc {
 		panic(fmt.Errorf("expected CRC %v, got %v", span.Span.Header.Crc, msgs.Crc(crc)))
@@ -854,6 +620,7 @@ func (c *Client) FetchSpan(
 	fileId msgs.InodeId,
 	span *SpanWithBlockServices,
 ) (*bufpool.Buf, error) {
+	log.Debug("fetching span file=%v offset=%v", fileId, span.Span.Header.ByteOffset)
 	switch {
 	// inline storage
 	case span.Span.Header.StorageClass == msgs.INLINE_STORAGE:
@@ -865,32 +632,6 @@ func (c *Client) FetchSpan(
 	default:
 		return c.fetchRsSpan(log, bufPool, span)
 	}
-}
-
-// Returns nil, nil if span or stripe cannot be found.
-// Stripe might not be found because
-func (c *Client) FetchStripe(
-	log *log.Logger,
-	bufPool *bufpool.BufPool,
-	fileId msgs.InodeId,
-	spans []SpanWithBlockServices,
-	offset uint64,
-) (*FetchedStripe, error) {
-	// find span
-	spanIx := sort.Search(len(spans), func(i int) bool {
-		return offset < spans[i].Span.Header.ByteOffset+uint64(spans[i].Span.Header.Size)
-	})
-	if spanIx >= len(spans) {
-		log.Debug("empty file offset=%v spanIx=%v len(spans)=%v", offset, spanIx, len(spans))
-		return nil, nil // out of spans
-	}
-	span := &spans[spanIx]
-	if offset >= (span.Span.Header.ByteOffset + uint64(span.Span.Header.Size)) {
-		log.Debug("could not find span")
-		return nil, nil // out of spans
-	}
-
-	return c.FetchStripeFromSpan(log, bufPool, fileId, span, offset)
 }
 
 type SpanWithBlockServices struct {
@@ -921,60 +662,261 @@ func (c *Client) FetchSpans(
 	return spans, err
 }
 
+type FileReader struct {
+}
+
 type fileReader struct {
-	client        *Client
-	log           *log.Logger
-	bufPool       *bufpool.BufPool
-	fileId        msgs.InodeId
-	fileSize      int64 // if -1, we haven't initialized this yet
-	spans         []SpanWithBlockServices
-	currentStripe *FetchedStripe
-	cursor        uint64
+	client   *Client
+	log      *log.Logger
+	bufPool  *bufpool.BufPool
+	fileId   msgs.InodeId
+	mu       sync.Mutex
+	fileSize uint64
+	spans    []SpanWithBlockServices
+	offset   uint64
 }
 
 func (f *fileReader) Close() error {
-	if f.currentStripe != nil {
-		f.currentStripe.Put(f.bufPool)
-	}
 	return nil
 }
 
-func (f *fileReader) Read(p []byte) (int, error) {
-	if f.currentStripe == nil || f.cursor >= (f.currentStripe.Start+uint64(len(f.currentStripe.Buf.Bytes()))) {
-		var err error
-		f.currentStripe, err = f.client.FetchStripe(f.log, f.bufPool, f.fileId, f.spans, f.cursor)
-		if err != nil {
-			return 0, err
-		}
-		if f.currentStripe == nil {
-			return 0, io.EOF
-		}
-		return f.Read(p)
+func (fr *fileReader) findSpan(offset uint64) *SpanWithBlockServices {
+	if fr.fileSize == 0 {
+		return nil
 	}
-	r := copy(p, f.currentStripe.Buf.Bytes()[f.cursor-f.currentStripe.Start:])
-	f.cursor += uint64(r)
+	ix := sort.Search(len(fr.spans), func(i int) bool {
+		return fr.spans[i].Span.Header.ByteOffset > offset
+	})
+	ix--
+	if offset >= fr.spans[ix].Span.Header.ByteOffset+uint64(fr.spans[ix].Span.Header.Size) {
+		return nil
+	}
+	return &fr.spans[ix]
+}
+
+func (f *fileReader) readFallback(span *SpanWithBlockServices, p []byte) (int, error) {
+	buf, err := f.client.FetchSpan(f.log, f.bufPool, f.fileId, span)
+	defer f.bufPool.Put(buf)
+	if err != nil {
+		return 0, err
+	}
+	r := copy(p, buf.Bytes()[f.offset-span.Span.Header.ByteOffset:])
 	return r, nil
 }
 
+func (f *fileReader) readMirrored(span *SpanWithBlockServices, p []byte) (int, error) {
+	body := span.Span.Body.(*msgs.FetchedBlocksSpan)
+	// TODO implement trailing zeros, this functionality is currently unused
+	spanDataSize := body.CellSize * uint32(body.Stripes) * uint32(body.Parity.DataBlocks())
+	if spanDataSize < span.Span.Header.Size {
+		panic("unimplemented trailing zeros fetch")
+	}
+	fileStart := f.offset / uint64(msgs.TERN_PAGE_SIZE) * uint64(msgs.TERN_PAGE_SIZE)
+	fileEnd := ((f.offset + uint64(len(p)) + uint64(msgs.TERN_PAGE_SIZE) - 1) / uint64(msgs.TERN_PAGE_SIZE)) * uint64(msgs.TERN_PAGE_SIZE)
+	blockStart := uint32(fileStart - span.Span.Header.ByteOffset)
+	blockEnd := uint32(fileEnd - span.Span.Header.ByteOffset)
+	var err error
+	for i := range body.Blocks {
+		block := &body.Blocks[i]
+		blockService := &span.BlockServices[block.BlockServiceIx]
+		if !blockService.Flags.CanRead() {
+			continue
+		}
+		br := NewBlockReader(f.bufPool, blockStart, blockEnd, blockEnd-blockStart)
+		defer f.bufPool.Put(br.AcquireBuf())
+		// TODO check CRC for entire stripes
+		err = f.client.FetchBlock(f.log, nil, &span.BlockServices[block.BlockServiceIx], block.BlockId, blockStart, blockEnd, br)
+		if err == nil {
+			buf := br.AcquireBuf()
+			n := copy(p, buf.Bytes()[f.offset-fileStart:])
+			f.bufPool.Put(buf)
+			return n, nil
+		}
+		f.bufPool.Put(br.AcquireBuf())
+	}
+	if err == nil {
+		err = fmt.Errorf("could not find suitable block service for file=%v offset=%v", f.fileId, f.offset)
+	}
+	return 0, err
+}
+
+// So that we can do copy(out[outStart:outEnd], fetchedBlock[blockStart-segments.fetchStart:blockEnd-segments.fetchStart])
+type readRsBlockSegment struct {
+	outStart   uint32
+	outEnd     uint32
+	blockStart uint32
+	blockEnd   uint32
+}
+
+type readRsBlock struct {
+	segments    [15]readRsBlockSegment // max 15 stripes
+	numSegments int
+	fetchStart  uint32 // where to start fetching this block from
+	reader      *BlockReader
+}
+
+func (b *readRsBlock) blockCount() uint32 {
+	return b.segments[b.numSegments-1].blockEnd - b.fetchStart
+}
+
+func (f *fileReader) readRs(span *SpanWithBlockServices, p []byte) (int, error) {
+	body := span.Span.Body.(*msgs.FetchedBlocksSpan)
+	// TODO implement trailing zeros, this functionality is currently unused
+	spanDataSize := body.CellSize * uint32(body.Stripes) * uint32(body.Parity.DataBlocks())
+	if spanDataSize < span.Span.Header.Size {
+		panic("unimplemented trailing zeros fetch")
+	}
+	// fill in segments
+	var blocks [16]readRsBlock
+	// The indices of the region inside the span that we're interested in.
+	// Note that we rely on the data to be larger than the actual size (see above)
+	spanStart := uint32(f.offset - span.Span.Header.ByteOffset)
+	spanEnd := spanStart + uint32(min(uint64(len(p)), uint64(span.Span.Header.Size-spanStart)))
+	{
+		// Go cell-by-cell. We start from the cell that contains spanStart,
+		// and end up in the cell that contains spanEnd-1.
+		stripeSize := body.CellSize*uint32(body.Parity.DataBlocks())
+		dataDiv := divide32.NewDivisor(uint32(body.Parity.DataBlocks()))
+		for cellIx := spanStart / body.CellSize; cellIx < (spanEnd+body.CellSize-1)/body.CellSize; cellIx++ {
+			stripeIx := dataDiv.Div(cellIx)
+			blockIx := dataDiv.Mod(cellIx)
+			segments := &blocks[blockIx]
+			segment := &segments.segments[segments.numSegments]
+			cellStart := cellIx * body.CellSize
+			blockAdjustment := stripeIx*stripeSize + blockIx*body.CellSize - stripeIx*body.CellSize
+			if cellStart <= spanStart { // first one, round down to page, <= is important, we want to set fetchStart below even if spanStart is a multiple of cell size
+				cellStart = (spanStart / msgs.TERN_PAGE_SIZE) * msgs.TERN_PAGE_SIZE
+				segments.fetchStart = cellStart - blockAdjustment
+				segment.blockStart = spanStart - blockAdjustment
+				segment.outStart = 0
+			} else {
+				segment.blockStart = cellStart - blockAdjustment
+				segment.outStart = cellStart - spanStart
+			}
+			cellEnd := (cellIx + 1) * body.CellSize
+			if cellEnd > spanEnd { // last one, round up to page
+				cellEnd = ((spanEnd + msgs.TERN_PAGE_SIZE - 1) / msgs.TERN_PAGE_SIZE) * msgs.TERN_PAGE_SIZE
+				segment.outEnd = spanEnd - spanStart
+			} else {
+				segment.outEnd = cellEnd - spanStart
+			}
+			segment.blockEnd = cellEnd - blockAdjustment
+			segments.numSegments++
+		}
+	}
+	// start segments
+	blocksFetching := 0
+	var err error
+	ch := make(chan *blockCompletion, body.Parity.DataBlocks())
+	for i := range body.Parity.DataBlocks() {
+		segments := &blocks[i]
+		if segments.numSegments == 0 {
+			continue
+		}
+		block := &body.Blocks[i]
+		segments.reader = NewBlockReader(f.bufPool, segments.fetchStart, segments.blockCount(), segments.blockCount())
+		if err = f.client.StartFetchBlock(f.log, &span.BlockServices[block.BlockServiceIx], block.BlockId, segments.fetchStart, segments.blockCount(), segments.reader, segments, ch); err != nil {
+			break
+		}
+		blocksFetching++
+	}
+	copied := 0
+	if err != nil {
+		goto Err
+	}
+	// fetch results
+	for blocksFetching > 0 {
+		resp := <-ch
+		blocksFetching--
+		segments := resp.Extra.(*readRsBlock)
+		if resp.Error != nil {
+			f.bufPool.Put(segments.reader.AcquireBuf())
+			err = resp.Error
+			goto Err
+		} else {
+			buf := segments.reader.AcquireBuf()
+			for i := 0; i < segments.numSegments; i++ {
+				segment := &segments.segments[i]
+				to := p[segment.outStart:segment.outEnd]
+				from := buf.Bytes()[segment.blockStart-segments.fetchStart:segment.blockEnd-segments.fetchStart]
+				copied += copy(to, from)
+			}
+			f.bufPool.Put(buf)
+		}
+	}
+	if copied != int(spanEnd)-int(spanStart) {
+		panic("impossible")
+	}
+	return copied, nil
+Err:
+	if err == nil {
+		panic("impossible")
+	}
+	f.log.Info("Could not read file=%v offset=%v len=%v through stripes, falling back to entire span: %v", f.fileId, f.offset, len(p), err)
+	for range blocksFetching {
+		resp := <-ch
+		segments := resp.Extra.(*readRsBlock)
+		f.bufPool.Put(segments.reader.AcquireBuf())
+	}
+	return 0, err
+}
+
+func (f *fileReader) readInternal(p []byte) (int, error) {
+	span := f.findSpan(f.offset)
+	if span == nil {
+		return 0, io.EOF
+	}
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if span.Span.Header.StorageClass == msgs.INLINE_STORAGE {
+		body := span.Span.Body.(*msgs.FetchedInlineSpan)
+		// TODO easy to implement I just don't want to commit effectively untested code
+		if span.Span.Header.Size != uint32(len(body.Body)) {
+			panic("unimplemented trailing zeros")
+		}
+		return copy(p, body.Body[f.offset-span.Span.Header.ByteOffset:]), nil
+	}
+	body := span.Span.Body.(*msgs.FetchedBlocksSpan)
+	if body.Parity.DataBlocks() == 1 { // mirrored
+		return f.readMirrored(span, p)
+	} else { // RS
+		// if this doesn't work, we fall back to reading the whole span,
+		// we should be smarter and only reconstruct what's needed instead
+		n, err := f.readRs(span, p)
+		if err != nil {
+			return f.readFallback(span, p)
+		}
+		return n, err
+	}
+}
+
+func (f *fileReader) Read(p []byte) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n, err := f.readInternal(p)
+	f.log.Debug("read file=%v fileSize=%v offset=%v len=%v read=%v", f.fileId, f.fileSize, f.offset, len(p), n)
+	f.offset += uint64(n)
+	return n, err
+}
+
 func (f *fileReader) Seek(offset int64, whence int) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	switch whence {
 	case io.SeekStart:
-		f.cursor = uint64(offset)
 	case io.SeekCurrent:
-		f.cursor = uint64(int64(f.cursor) + offset)
+		offset = int64(f.offset) + offset
 	case io.SeekEnd:
-		if f.fileSize < 0 {
-			resp := msgs.StatFileResp{}
-			if err := f.client.ShardRequest(f.log, f.fileId.Shard(), &msgs.StatFileReq{Id: f.fileId}, &resp); err != nil {
-				return 0, err
-			}
-			f.fileSize = int64(resp.Size)
-		}
-		f.cursor = uint64(f.fileSize + offset)
+		offset = int64(f.fileSize) + offset
 	default:
-		return 0, fmt.Errorf("bad whence %v", whence)
+		return 0, syscall.EINVAL
 	}
-	return int64(f.cursor), nil
+	if offset < 0 {
+		return 0, syscall.EINVAL
+	}
+	f.offset = uint64(offset)
+	return int64(f.offset), nil
 }
 
 func (c *Client) ReadFile(
@@ -987,12 +929,14 @@ func (c *Client) ReadFile(
 		return nil, err
 	}
 	r := &fileReader{
-		client:   c,
-		log:      log,
-		bufPool:  bufPool,
-		fileId:   id,
-		fileSize: -1,
-		spans:    spans,
+		client:  c,
+		log:     log,
+		bufPool: bufPool,
+		fileId:  id,
+		spans:   spans,
+	}
+	for i := range r.spans {
+		r.fileSize += uint64(r.spans[i].Span.Header.Size)
 	}
 	return r, nil
 }
@@ -1009,9 +953,7 @@ func (c *Client) FetchFile(
 	bufs := make([]*bufpool.Buf, len(spans))
 	defer func() {
 		for _, b := range bufs {
-			if b != nil {
-				bufPool.Put(b)
-			}
+			bufPool.Put(b)
 		}
 	}()
 	wg := sync.WaitGroup{}

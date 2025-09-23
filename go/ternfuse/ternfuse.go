@@ -1182,8 +1182,8 @@ func main() {
 		MountOptions: fuse.MountOptions{
 			FsName:             "ternfs",
 			Name:               "ternfuse" + mountPoint,
-			MaxWrite:           1 << 20,
-			MaxReadAhead:       1 << 20,
+			MaxWrite:           200 << 20, // twice max span size
+			MaxReadAhead:       200 << 20,
 			DisableXAttrs:      true,
 			Debug:              *verbose,
 			DisableReadDirPlus: true,

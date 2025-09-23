@@ -117,7 +117,7 @@ func readFile(log *log.Logger, bufPool *bufpool.BufPool, client *client.Client, 
 		read, err := r.Read(buf.Bytes()[cursor:])
 		if err == io.EOF {
 			if cursor != len(buf.Bytes()) {
-				panic(fmt.Errorf("expected file read of size %v, got %v", len(buf.Bytes()), cursor))
+				panic(fmt.Errorf("expected file read of size %v for file %v, got %v", len(buf.Bytes()), id, cursor))
 			}
 			break
 		}
