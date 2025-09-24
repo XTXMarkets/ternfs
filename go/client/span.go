@@ -662,25 +662,14 @@ func (c *Client) FetchSpans(
 	return spans, err
 }
 
+// Thread safe.
 type FileReader struct {
-}
-
-type fileReader struct {
-	client   *Client
-	log      *log.Logger
-	bufPool  *bufpool.BufPool
 	fileId   msgs.InodeId
-	mu       sync.Mutex
 	fileSize uint64
 	spans    []SpanWithBlockServices
-	offset   uint64
 }
 
-func (f *fileReader) Close() error {
-	return nil
-}
-
-func (fr *fileReader) findSpan(offset uint64) *SpanWithBlockServices {
+func (fr *FileReader) findSpan(offset uint64) *SpanWithBlockServices {
 	if fr.fileSize == 0 {
 		return nil
 	}
@@ -694,25 +683,25 @@ func (fr *fileReader) findSpan(offset uint64) *SpanWithBlockServices {
 	return &fr.spans[ix]
 }
 
-func (f *fileReader) readFallback(span *SpanWithBlockServices, p []byte) (int, error) {
-	buf, err := f.client.FetchSpan(f.log, f.bufPool, f.fileId, span)
-	defer f.bufPool.Put(buf)
+func (f *FileReader) readFallback(log *log.Logger, client *Client, bufPool *bufpool.BufPool, offset uint64, span *SpanWithBlockServices, p []byte) (int, error) {
+	buf, err := client.FetchSpan(log, bufPool, f.fileId, span)
+	defer bufPool.Put(buf)
 	if err != nil {
 		return 0, err
 	}
-	r := copy(p, buf.Bytes()[f.offset-span.Span.Header.ByteOffset:])
+	r := copy(p, buf.Bytes()[offset-span.Span.Header.ByteOffset:])
 	return r, nil
 }
 
-func (f *fileReader) readMirrored(span *SpanWithBlockServices, p []byte) (int, error) {
+func (f *FileReader) readMirrored(log *log.Logger, client *Client, bufPool *bufpool.BufPool, offset uint64, span *SpanWithBlockServices, p []byte) (int, error) {
 	body := span.Span.Body.(*msgs.FetchedBlocksSpan)
 	// TODO implement trailing zeros, this functionality is currently unused
 	spanDataSize := body.CellSize * uint32(body.Stripes) * uint32(body.Parity.DataBlocks())
 	if spanDataSize < span.Span.Header.Size {
 		panic("unimplemented trailing zeros fetch")
 	}
-	fileStart := f.offset / uint64(msgs.TERN_PAGE_SIZE) * uint64(msgs.TERN_PAGE_SIZE)
-	fileEnd := ((f.offset + uint64(len(p)) + uint64(msgs.TERN_PAGE_SIZE) - 1) / uint64(msgs.TERN_PAGE_SIZE)) * uint64(msgs.TERN_PAGE_SIZE)
+	fileStart := offset / uint64(msgs.TERN_PAGE_SIZE) * uint64(msgs.TERN_PAGE_SIZE)
+	fileEnd := ((offset + uint64(len(p)) + uint64(msgs.TERN_PAGE_SIZE) - 1) / uint64(msgs.TERN_PAGE_SIZE)) * uint64(msgs.TERN_PAGE_SIZE)
 	blockStart := uint32(fileStart - span.Span.Header.ByteOffset)
 	blockEnd := uint32(fileEnd - span.Span.Header.ByteOffset)
 	var err error
@@ -722,20 +711,20 @@ func (f *fileReader) readMirrored(span *SpanWithBlockServices, p []byte) (int, e
 		if !blockService.Flags.CanRead() {
 			continue
 		}
-		br := NewBlockReader(f.bufPool, blockStart, blockEnd, blockEnd-blockStart)
-		defer f.bufPool.Put(br.AcquireBuf())
+		br := NewBlockReader(bufPool, blockStart, blockEnd, blockEnd-blockStart)
+		defer bufPool.Put(br.AcquireBuf())
 		// TODO check CRC for entire stripes
-		err = f.client.FetchBlock(f.log, nil, &span.BlockServices[block.BlockServiceIx], block.BlockId, blockStart, blockEnd, br)
+		err = client.FetchBlock(log, nil, &span.BlockServices[block.BlockServiceIx], block.BlockId, blockStart, blockEnd, br)
 		if err == nil {
 			buf := br.AcquireBuf()
-			n := copy(p, buf.Bytes()[f.offset-fileStart:])
-			f.bufPool.Put(buf)
+			n := copy(p, buf.Bytes()[offset-fileStart:])
+			bufPool.Put(buf)
 			return n, nil
 		}
-		f.bufPool.Put(br.AcquireBuf())
+		bufPool.Put(br.AcquireBuf())
 	}
 	if err == nil {
-		err = fmt.Errorf("could not find suitable block service for file=%v offset=%v", f.fileId, f.offset)
+		err = fmt.Errorf("could not find suitable block service for file=%v offset=%v", f.fileId, offset)
 	}
 	return 0, err
 }
@@ -759,7 +748,7 @@ func (b *readRsBlock) blockCount() uint32 {
 	return b.segments[b.numSegments-1].blockEnd - b.fetchStart
 }
 
-func (f *fileReader) readRs(span *SpanWithBlockServices, p []byte) (int, error) {
+func (f *FileReader) readRs(log *log.Logger, client *Client, bufPool *bufpool.BufPool, offset uint64, span *SpanWithBlockServices, p []byte) (int, error) {
 	body := span.Span.Body.(*msgs.FetchedBlocksSpan)
 	// TODO implement trailing zeros, this functionality is currently unused
 	spanDataSize := body.CellSize * uint32(body.Stripes) * uint32(body.Parity.DataBlocks())
@@ -770,12 +759,12 @@ func (f *fileReader) readRs(span *SpanWithBlockServices, p []byte) (int, error) 
 	var blocks [16]readRsBlock
 	// The indices of the region inside the span that we're interested in.
 	// Note that we rely on the data to be larger than the actual size (see above)
-	spanStart := uint32(f.offset - span.Span.Header.ByteOffset)
+	spanStart := uint32(offset - span.Span.Header.ByteOffset)
 	spanEnd := spanStart + uint32(min(uint64(len(p)), uint64(span.Span.Header.Size-spanStart)))
 	{
 		// Go cell-by-cell. We start from the cell that contains spanStart,
 		// and end up in the cell that contains spanEnd-1.
-		stripeSize := body.CellSize*uint32(body.Parity.DataBlocks())
+		stripeSize := body.CellSize * uint32(body.Parity.DataBlocks())
 		dataDiv := divide32.NewDivisor(uint32(body.Parity.DataBlocks()))
 		for cellIx := spanStart / body.CellSize; cellIx < (spanEnd+body.CellSize-1)/body.CellSize; cellIx++ {
 			stripeIx := dataDiv.Div(cellIx)
@@ -814,8 +803,8 @@ func (f *fileReader) readRs(span *SpanWithBlockServices, p []byte) (int, error) 
 			continue
 		}
 		block := &body.Blocks[i]
-		segments.reader = NewBlockReader(f.bufPool, segments.fetchStart, segments.blockCount(), segments.blockCount())
-		if err = f.client.StartFetchBlock(f.log, &span.BlockServices[block.BlockServiceIx], block.BlockId, segments.fetchStart, segments.blockCount(), segments.reader, segments, ch); err != nil {
+		segments.reader = NewBlockReader(bufPool, segments.fetchStart, segments.blockCount(), segments.blockCount())
+		if err = client.StartFetchBlock(log, &span.BlockServices[block.BlockServiceIx], block.BlockId, segments.fetchStart, segments.blockCount(), segments.reader, segments, ch); err != nil {
 			break
 		}
 		blocksFetching++
@@ -830,7 +819,7 @@ func (f *fileReader) readRs(span *SpanWithBlockServices, p []byte) (int, error) 
 		blocksFetching--
 		segments := resp.Extra.(*readRsBlock)
 		if resp.Error != nil {
-			f.bufPool.Put(segments.reader.AcquireBuf())
+			bufPool.Put(segments.reader.AcquireBuf())
 			err = resp.Error
 			goto Err
 		} else {
@@ -838,10 +827,10 @@ func (f *fileReader) readRs(span *SpanWithBlockServices, p []byte) (int, error) 
 			for i := 0; i < segments.numSegments; i++ {
 				segment := &segments.segments[i]
 				to := p[segment.outStart:segment.outEnd]
-				from := buf.Bytes()[segment.blockStart-segments.fetchStart:segment.blockEnd-segments.fetchStart]
+				from := buf.Bytes()[segment.blockStart-segments.fetchStart : segment.blockEnd-segments.fetchStart]
 				copied += copy(to, from)
 			}
-			f.bufPool.Put(buf)
+			bufPool.Put(buf)
 		}
 	}
 	if copied != int(spanEnd)-int(spanStart) {
@@ -852,17 +841,18 @@ Err:
 	if err == nil {
 		panic("impossible")
 	}
-	f.log.Info("Could not read file=%v offset=%v len=%v through stripes, falling back to entire span: %v", f.fileId, f.offset, len(p), err)
+	log.Info("Could not read file=%v offset=%v len=%v through stripes, falling back to entire span: %v", f.fileId, offset, len(p), err)
 	for range blocksFetching {
 		resp := <-ch
 		segments := resp.Extra.(*readRsBlock)
-		f.bufPool.Put(segments.reader.AcquireBuf())
+		bufPool.Put(segments.reader.AcquireBuf())
 	}
 	return 0, err
 }
 
-func (f *fileReader) readInternal(p []byte) (int, error) {
-	span := f.findSpan(f.offset)
+// Note: this function does _not_ seek, and is thread-safe, unlike Seek, which is not.
+func (f *FileReader) Read(log *log.Logger, client *Client, bufPool *bufpool.BufPool, offset uint64, p []byte) (int, error) {
+	span := f.findSpan(offset)
 	if span == nil {
 		return 0, io.EOF
 	}
@@ -875,40 +865,58 @@ func (f *fileReader) readInternal(p []byte) (int, error) {
 		if span.Span.Header.Size != uint32(len(body.Body)) {
 			panic("unimplemented trailing zeros")
 		}
-		return copy(p, body.Body[f.offset-span.Span.Header.ByteOffset:]), nil
+		return copy(p, body.Body[offset-span.Span.Header.ByteOffset:]), nil
 	}
 	body := span.Span.Body.(*msgs.FetchedBlocksSpan)
 	if body.Parity.DataBlocks() == 1 { // mirrored
-		return f.readMirrored(span, p)
+		return f.readMirrored(log, client, bufPool, offset, span, p)
 	} else { // RS
 		// if this doesn't work, we fall back to reading the whole span,
 		// we should be smarter and only reconstruct what's needed instead
-		n, err := f.readRs(span, p)
+		n, err := f.readRs(log, client, bufPool, offset, span, p)
 		if err != nil {
-			return f.readFallback(span, p)
+			return f.readFallback(log, client, bufPool, offset, span, p)
 		}
 		return n, err
 	}
 }
 
+func (client *Client) NewFileReader(log *log.Logger, id msgs.InodeId) (*FileReader, error) {
+	spans, err := client.FetchSpans(log, id)
+	if err != nil {
+		return nil, err
+	}
+	r := &FileReader{
+		fileId: id,
+		spans:  spans,
+	}
+	for i := range r.spans {
+		r.fileSize += uint64(r.spans[i].Span.Header.Size)
+	}
+	return r, nil
+}
+
+type fileReader struct {
+	client  *Client
+	log     *log.Logger
+	bufPool *bufpool.BufPool
+	offset  uint64
+	reader  *FileReader
+}
+
 func (f *fileReader) Read(p []byte) (int, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	n, err := f.readInternal(p)
-	f.log.Debug("read file=%v fileSize=%v offset=%v len=%v read=%v", f.fileId, f.fileSize, f.offset, len(p), n)
-	f.offset += uint64(n)
+	n, err := f.reader.Read(f.log, f.client, f.bufPool, f.offset, p)
+	f.Seek(int64(n), io.SeekCurrent)
 	return n, err
 }
 
 func (f *fileReader) Seek(offset int64, whence int) (int64, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	switch whence {
 	case io.SeekStart:
 	case io.SeekCurrent:
 		offset = int64(f.offset) + offset
 	case io.SeekEnd:
-		offset = int64(f.fileSize) + offset
+		offset = int64(f.reader.fileSize) + offset
 	default:
 		return 0, syscall.EINVAL
 	}
@@ -919,12 +927,16 @@ func (f *fileReader) Seek(offset int64, whence int) (int64, error) {
 	return int64(f.offset), nil
 }
 
+func (f *fileReader) Close() error {
+	return nil
+}
+
 func (c *Client) ReadFile(
 	log *log.Logger,
 	bufPool *bufpool.BufPool,
 	id msgs.InodeId,
 ) (io.ReadSeekCloser, error) {
-	spans, err := c.FetchSpans(log, id)
+	fr, err := c.NewFileReader(log, id)
 	if err != nil {
 		return nil, err
 	}
@@ -932,11 +944,7 @@ func (c *Client) ReadFile(
 		client:  c,
 		log:     log,
 		bufPool: bufPool,
-		fileId:  id,
-		spans:   spans,
-	}
-	for i := range r.spans {
-		r.fileSize += uint64(r.spans[i].Span.Header.Size)
+		reader:  fr,
 	}
 	return r, nil
 }

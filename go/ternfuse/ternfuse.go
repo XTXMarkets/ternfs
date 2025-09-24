@@ -263,17 +263,10 @@ type failedTransientFile struct {
 	writeError syscall.Errno
 }
 
-type readFile struct {
-	wg   sync.WaitGroup
-	once sync.Once
-	data *[]byte
-	err  error
-}
-
 type ternFile struct {
 	id   msgs.InodeId
 	mu   sync.RWMutex
-	body any // one of *transientFile/failedTransientFile/*readFile
+	body any // one of *transientFile/failedTransientFile/*FileReader
 }
 
 func (n *ternNode) createInternal(name string, flags uint32, mode uint32) (tf *ternFile, errno syscall.Errno) {
@@ -449,7 +442,7 @@ func (f *ternFile) Write(ctx context.Context, data []byte, off int64) (written u
 			}
 		}
 		return f.write(data)
-	case *readFile:
+	case *client.FileReader:
 		return 0, syscall.ENOTSUP
 	case failedTransientFile:
 		return 0, tf.writeError
@@ -515,7 +508,7 @@ func (f *ternFile) Setattr(ctx context.Context, in *fuse.SetAttrIn, out *fuse.At
 			remaining -= toWrite
 		}
 		return 0
-	case *readFile: // we can set times for already linked files
+	case *client.FileReader: // we can set times for already linked files
 		logger.Debug("setattr readFile")
 		return readFileSetattr(f.id, in, out)
 	case failedTransientFile:
@@ -566,11 +559,14 @@ func (f *ternFile) Flush(ctx context.Context) syscall.Errno {
 			f.body = failedTransientFile{err}
 			return err
 		}
-		of := &readFile{}
-		of.wg.Add(1)
-		f.body = of
+		fr, err := c.NewFileReader(logger, f.id)
+		if err != nil {
+			f.body = failedTransientFile{ternErrToErrno(err)}
+			return ternErrToErrno(err)
+		}
+		f.body = fr
 		return 0
-	case *readFile:
+	case *client.FileReader:
 		return 0
 	case failedTransientFile:
 		return tf.writeError
@@ -640,11 +636,13 @@ func (n *ternNode) Rename(ctx context.Context, oldName string, newParent0 fs.Ino
 func (n *ternNode) Open(ctx context.Context, flags uint32) (fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
 	logger.Debug("open file=%v flags=%08x", n.id, flags)
 
-	of := &readFile{}
-	of.wg.Add(1)
+	fr, err := c.NewFileReader(logger, n.id)
+	if err != nil {
+		return nil, 0, ternErrToErrno(err)
+	}
 	f := ternFile{
 		id:   n.id,
-		body: of,
+		body: fr,
 	}
 
 	if flags|syscall.O_NOATIME != 0 {
@@ -684,29 +682,22 @@ func (f *ternFile) Read(ctx context.Context, dest []byte, off int64) (fuse.ReadR
 	switch tf := f.body.(type) {
 	case *transientFile:
 		return nil, syscall.ENOTSUP
-	case *readFile:
-		// Obviously we shouldn't read all at once...
-		tf.once.Do(func() {
-			defer tf.wg.Done()
-			buf, err := c.FetchFile(logger, bufPool, f.id)
-			if err != nil {
-				tf.err = err
-				return
+	case *client.FileReader:
+		if off < 0 {
+			return nil, syscall.EINVAL
+		}
+		// FUSE seems to require a full read
+		r := 0
+		for r < len(dest) {
+			thisR, err := tf.Read(logger, c, bufPool, uint64(off)+uint64(r), dest[r:])
+			if thisR == 0 || err == io.EOF {
+				break
 			}
-			bufData := buf.Bytes()
-			tf.data = &bufData
-		})
-		tf.wg.Wait()
-		if tf.err != nil {
-			logger.ErrorNoAlert("read error: %v", tf.err)
-			return fuse.ReadResultData([]byte{}), syscall.EIO
+			if err != nil {
+				return fuse.ReadResultData(dest[:r+thisR]), ternErrToErrno(err)
+			}
+			r += thisR
 		}
-		data := *tf.data
-		logger.Debug("read id=%v off=%v count=%v len=%v", f.id, off, len(dest), len(data))
-		if off > int64(len(data)) {
-			return fuse.ReadResultData([]byte{}), 0
-		}
-		r := copy(dest, data[off:])
 		return fuse.ReadResultData(dest[:r]), 0
 	case failedTransientFile:
 		return nil, tf.writeError
