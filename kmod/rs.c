@@ -282,10 +282,11 @@ int ternfs_recover(
         }
 
         recover_matmul(PAGE_SIZE, (const u8**)have_bufs, want_buf, mat);
-        for (b = 0; b < B; b++) { // unmap pages, rotate list
+        for (b = 0, j = 0; b < B; b++) { // unmap pages, rotate list
             if ((1u<<b) & have_blocks) {
-                kunmap_atomic(have_bufs[b]);
+                kunmap_atomic(have_bufs[j]);
                 list_rotate_left(&pages[b]);
+                j++;
             }
             if ((1u<<b) & want_block) {
                 kunmap_atomic(want_buf);
