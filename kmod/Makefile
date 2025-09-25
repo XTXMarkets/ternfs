@@ -5,6 +5,9 @@
 KDIR ?= /lib/modules/$(shell uname -r)/build
 LLVM ?= 0
 
+MINOR_VERSION ?= 0
+FULL_MINOR_VERSION := "$(MINOR_VERSION)-$(shell git describe --always --dirty)"
+
 obj-m += ternfs-client.o
 
 ternfs-client-objs += \
@@ -67,7 +70,11 @@ bincode_tests-clean:
 	rm -f bincode_tests rs_tests ubuntu.img test-out trace vm-out dmesg
 	rm -rf tmp
 
-deb-package: revision.c extra-files
+dkms-version:
+	cp debian_tmpl/* debian/. && find debian -maxdepth 1 -type f -exec sed -i "s/##VERSION##/$(FULL_MINOR_VERSION)/g" {} \;
+
+
+deb-package: revision.c extra-files dkms-version
 	dpkg-buildpackage -us -uc
 
 # Targets to build kmod from dkms package,

@@ -1,0 +1,3 @@
+*.c /usr/src/ternfs-client-1.##VERSION##/
+*.h /usr/src/ternfs-client-1.##VERSION##/
+Makefile /usr/src/ternfs-client-1.##VERSION##/

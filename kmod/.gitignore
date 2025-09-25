@@ -24,3 +24,7 @@ iscsi.h
 rs_core.c
 debian/debhelper-build-stamp
 debian/files
+debian/changelog
+debian/dkms
+debian/install
+ternfs-client.service

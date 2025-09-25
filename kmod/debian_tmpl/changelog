@@ -1,4 +1,4 @@
-ternfs-client (1.0-xxxxxx) unstable; urgency=low
+ternfs-client (1.##VERSION##) unstable; urgency=low
 
   * Initial release.
 

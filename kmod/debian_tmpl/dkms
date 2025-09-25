@@ -1,5 +1,5 @@
 PACKAGE_NAME="ternfs-client"
-PACKAGE_VERSION="1.0-xxxxxx"
+PACKAGE_VERSION="1.##VERSION##"
 
 BUILT_MODULE_NAME[0]="$PACKAGE_NAME"      # build from top-level
 DEST_MODULE_LOCATION[0]="/kernel/drivers/extra"
