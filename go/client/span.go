@@ -478,8 +478,10 @@ func (c *Client) fetchMirroredSpan(
 		if !blockService.Flags.CanRead() {
 			continue
 		}
-		br := NewBlockReader(bufPool, 0, blockSize, blockSize)
-		if err := c.FetchBlock(log, nil, blockService, block.BlockId, 0, blockSize, br); err == nil {
+		var crc CrcAccumulator
+		var br BlockReader
+		br.New(bufPool, 0, blockSize, &crc)
+		if err := c.FetchBlock(log, nil, blockService, block.BlockId, 0, blockSize, &br); err == nil {
 			buf := br.AcquireBuf()
 			zeros := int(span.Span.Header.Size) - len(buf.Bytes())
 			if zeros >= 0 {
@@ -487,7 +489,7 @@ func (c *Client) fetchMirroredSpan(
 			} else {
 				*buf.BytesPtr() = buf.Bytes()[:span.Span.Header.Size]
 			}
-			crc := crc32c.ZeroExtend(uint32(br.Crcs()[0]), zeros)
+			crc := crc32c.ZeroExtend(uint32(crc.Crc), zeros)
 			if msgs.Crc(crc) != span.Span.Header.Crc {
 				// panic since we CRC every page, this must be a bug in the go logic
 				panic(fmt.Errorf("bad CRC, expected %v, got %v", span.Span.Header.Crc, msgs.Crc(crc)))
@@ -516,7 +518,7 @@ func (c *Client) fetchRsSpan(
 	var blockIdx int
 	dataBlocks := body.Parity.DataBlocks()
 	blockBufs := make([]*bufpool.Buf, body.Parity.Blocks())
-	blockCrcs := make([][]msgs.Crc, body.Parity.Blocks())
+	blockCrcs := make([]*[15]msgs.Crc, body.Parity.Blocks())
 	defer func() {
 		for i := range blockBufs {
 			bufPool.Put(blockBufs[i])
@@ -524,8 +526,9 @@ func (c *Client) fetchRsSpan(
 	}()
 
 	type blockReaderWithIx struct {
-		ix int
-		br *BlockReader
+		ix        int
+		br        BlockReader
+		cellsCrcs CellsCrcs
 	}
 
 scheduleMoreBlocks:
@@ -536,11 +539,10 @@ scheduleMoreBlocks:
 			blockIdx++
 			continue
 		}
-		readerWithIx := blockReaderWithIx{
-			ix: blockIdx,
-			br: NewBlockReader(bufPool, 0, blockSize, body.CellSize),
-		}
-		if err := c.StartFetchBlock(log, blockService, block.BlockId, 0, blockSize, readerWithIx.br, &readerWithIx, ch); err == nil {
+		readerWithIx := blockReaderWithIx{ix: blockIdx}
+		readerWithIx.br.New(bufPool, 0, blockSize, &readerWithIx.cellsCrcs)
+		readerWithIx.cellsCrcs.New(body.CellSize)
+		if err := c.StartFetchBlock(log, blockService, block.BlockId, 0, blockSize, &readerWithIx.br, &readerWithIx, ch); err == nil {
 			inFlightBlocks++
 		}
 		blockIdx++
@@ -556,7 +558,7 @@ scheduleMoreBlocks:
 			goto scheduleMoreBlocks
 		}
 		blockBufs[readerWithIx.ix] = buf
-		blockCrcs[readerWithIx.ix] = readerWithIx.br.Crcs()
+		blockCrcs[readerWithIx.ix] = readerWithIx.cellsCrcs.Crcs()
 		succeedBlocks++
 	}
 
@@ -580,7 +582,7 @@ scheduleMoreBlocks:
 		}
 		blockBufs[i] = bufPool.Get(int(blockSize))
 		rs.Get(body.Parity).RecoverInto(haveBlocksRecoverIxs, haveBlocksRecover, uint8(i), blockBufs[i].Bytes())
-		blockCrcs[i] = make([]msgs.Crc, body.Stripes)
+		blockCrcs[i] = &[15]msgs.Crc{}
 		for j := 0; j < int(body.Stripes); j++ {
 			blockCrcs[i][j] = msgs.Crc(crc32c.Sum(0, blockBufs[i].Bytes()[j*int(body.CellSize):(j+1)*int(body.CellSize)]))
 		}
@@ -711,17 +713,18 @@ func (f *FileReader) readMirrored(log *log.Logger, client *Client, bufPool *bufp
 		if !blockService.Flags.CanRead() {
 			continue
 		}
-		br := NewBlockReader(bufPool, blockStart, blockEnd, blockEnd-blockStart)
-		defer bufPool.Put(br.AcquireBuf())
+		var br BlockReader
+		br.New(bufPool, blockStart, blockEnd, nil)
 		// TODO check CRC for entire stripes
-		err = client.FetchBlock(log, nil, &span.BlockServices[block.BlockServiceIx], block.BlockId, blockStart, blockEnd, br)
+		err = client.FetchBlock(log, nil, &span.BlockServices[block.BlockServiceIx], block.BlockId, blockStart, blockEnd, &br)
 		if err == nil {
 			buf := br.AcquireBuf()
 			n := copy(p, buf.Bytes()[offset-fileStart:])
 			bufPool.Put(buf)
 			return n, nil
+		} else {
+			bufPool.Put(br.AcquireBuf())
 		}
-		bufPool.Put(br.AcquireBuf())
 	}
 	if err == nil {
 		err = fmt.Errorf("could not find suitable block service for file=%v offset=%v", f.fileId, offset)
@@ -741,7 +744,7 @@ type readRsBlock struct {
 	segments    [15]readRsBlockSegment // max 15 stripes
 	numSegments int
 	fetchStart  uint32 // where to start fetching this block from
-	reader      *BlockReader
+	reader      BlockReader
 }
 
 func (b *readRsBlock) blockCount() uint32 {
@@ -803,8 +806,8 @@ func (f *FileReader) readRs(log *log.Logger, client *Client, bufPool *bufpool.Bu
 			continue
 		}
 		block := &body.Blocks[i]
-		segments.reader = NewBlockReader(bufPool, segments.fetchStart, segments.blockCount(), segments.blockCount())
-		if err = client.StartFetchBlock(log, &span.BlockServices[block.BlockServiceIx], block.BlockId, segments.fetchStart, segments.blockCount(), segments.reader, segments, ch); err != nil {
+		segments.reader.New(bufPool, segments.fetchStart, segments.blockCount(), nil)
+		if err = client.StartFetchBlock(log, &span.BlockServices[block.BlockServiceIx], block.BlockId, segments.fetchStart, segments.blockCount(), &segments.reader, segments, ch); err != nil {
 			break
 		}
 		blocksFetching++

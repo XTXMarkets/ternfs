@@ -240,7 +240,7 @@ u64 crc32c_mul(u32 a, u32 b32) {
 __attribute__((no_sanitize("integer")))
 #endif
 #ifdef __KERNEL__
-__attribute__((target("crc32,pclmul")))
+__attribute__((target("crc32")))
 #endif
 static u32 crc32c_mod_p(u64 a) {
   return _mm_crc32_u32(0, a) ^ (a >> 32);

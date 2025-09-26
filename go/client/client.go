@@ -34,6 +34,7 @@ import (
 	"xtx/ternfs/core/crc32c"
 	"xtx/ternfs/core/log"
 	"xtx/ternfs/core/timing"
+	"xtx/ternfs/divide32"
 	"xtx/ternfs/msgs"
 )
 
@@ -1438,10 +1439,9 @@ func fetchBlockSendArgs(blockService *msgs.BlockService, blockId msgs.BlockId, o
 	}
 }
 
-
 // An asynchronous version of [FetchBlock]
 func (c *Client) StartFetchBlock(log *log.Logger, blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32, w io.ReaderFrom, extra any, completion chan *blockCompletion) error {
-       return c.fetchBlockProcessors.send(log, fetchBlockSendArgs(blockService, blockId, offset, count, w, extra), completion)
+	return c.fetchBlockProcessors.send(log, fetchBlockSendArgs(blockService, blockId, offset, count, w, extra), completion)
 }
 
 // Retrieve a single block from the block server.
@@ -1459,35 +1459,63 @@ func (c *Client) FetchBlock(log *log.Logger, timeouts *timing.ReqTimeouts, block
 	return nil
 }
 
-type BlockReader struct {
-	buf *bufpool.Buf
-	crcs []msgs.Crc
+type CrcReader interface {
+	Consume(crc msgs.Crc)
 }
 
-func NewBlockReader(
+type CrcAccumulator struct {
+	msgs.Crc
+}
+
+func (c *CrcAccumulator) Consume(crc msgs.Crc) {
+	c.Crc = msgs.Crc(crc32c.Append(uint32(c.Crc), uint32(crc), int(msgs.TERN_PAGE_SIZE)))
+}
+
+type CellsCrcs struct {
+	crcs           [15]msgs.Crc // 15 = max number of stripes
+	position       uint32
+	positionToCell divide32.Divisor
+}
+
+func (crcs *CellsCrcs) New(cellSize uint32) {
+	if cellSize % msgs.TERN_PAGE_SIZE != 0{
+		panic(fmt.Errorf("cellSize=%v is not a page size multiple", cellSize))
+	}
+	clear(crcs.crcs[:])
+	crcs.position = 0
+	crcs.positionToCell = divide32.NewDivisor(cellSize)
+}
+
+func (crcs *CellsCrcs) Consume(crc msgs.Crc) {
+	cellIx := crcs.positionToCell.Div(crcs.position)
+	crcs.position += msgs.TERN_PAGE_SIZE
+	crcs.crcs[cellIx] = msgs.Crc(crc32c.Append(uint32(crcs.crcs[cellIx]), uint32(crc), int(msgs.TERN_PAGE_SIZE)))
+}
+
+func (crcs *CellsCrcs) Crcs() *[15]msgs.Crc {
+	return &crcs.crcs
+}
+
+type BlockReader struct {
+	buf       *bufpool.Buf
+	crcReader CrcReader
+}
+
+func (br *BlockReader) New(
 	bufpool *bufpool.BufPool,
 	offset uint32,
 	count uint32,
-	crcsEvery uint32,
-) *BlockReader {
+	crcReader CrcReader, // gets fed the pages' crcs, one by one. can be nil.
+) {
 	if offset%msgs.TERN_PAGE_SIZE != 0 {
 		panic(fmt.Errorf("offset=%v is not a page size multiple", offset))
 	}
 	if count%msgs.TERN_PAGE_SIZE != 0 {
 		panic(fmt.Errorf("count=%v is not a page size multiple", count))
 	}
-	if crcsEvery%msgs.TERN_PAGE_SIZE != 0 {
-		panic(fmt.Errorf("crcsEvery=%v is not a page size multiple", crcsEvery))
-	}
-	if count%crcsEvery != 0 {
-		panic(fmt.Errorf("crcsEvery=%v is not a multiple of count=%v", crcsEvery, count))
-	}
-	if crcsEvery > count {
-		panic(fmt.Errorf("crcsEvery=%v > count=%v", crcsEvery, count))
-	}
 	buf := bufpool.Get(int(count/msgs.TERN_PAGE_SIZE) * int(msgs.TERN_PAGE_WITH_CRC_SIZE))
-	crcs := make([]msgs.Crc, count / crcsEvery)
-	return &BlockReader{buf: buf, crcs: crcs}
+	br.buf = buf
+	br.crcReader = crcReader
 }
 
 func (br *BlockReader) ReadFrom(r io.Reader) (int64, error) {
@@ -1498,18 +1526,18 @@ func (br *BlockReader) ReadFrom(r io.Reader) (int64, error) {
 	}
 	// check CRC and copy
 	pages := len(buf) / int(msgs.TERN_PAGE_WITH_CRC_SIZE)
-	pagesPerCrc := pages/len(br.crcs)
 	for page := 0; page < pages; page++ {
-		pageBegin := page*int(msgs.TERN_PAGE_WITH_CRC_SIZE)
+		pageBegin := page * int(msgs.TERN_PAGE_WITH_CRC_SIZE)
 		pageEnd := pageBegin + int(msgs.TERN_PAGE_SIZE)
-		pageBytes := buf[pageBegin : pageEnd]
+		pageBytes := buf[pageBegin:pageEnd]
 		expectedCrc := crc32c.Sum(0, pageBytes)
-		actualCrc := binary.LittleEndian.Uint32(buf[pageEnd:pageEnd+4])
+		actualCrc := binary.LittleEndian.Uint32(buf[pageEnd : pageEnd+4])
 		if expectedCrc != actualCrc {
 			return int64(n), msgs.BAD_BLOCK_CRC
 		}
-		crcIx := page/pagesPerCrc
-		br.crcs[crcIx] = msgs.Crc(crc32c.Append(uint32(br.crcs[crcIx]), actualCrc, int(msgs.TERN_PAGE_SIZE)))
+		if br.crcReader != nil {
+			br.crcReader.Consume(msgs.Crc(expectedCrc))
+		}
 		copy(buf[page*int(msgs.TERN_PAGE_SIZE):(page+1)*int(msgs.TERN_PAGE_SIZE)], pageBytes)
 	}
 	*br.buf.BytesPtr() = buf[:pages*int(msgs.TERN_PAGE_SIZE)]
@@ -1520,10 +1548,6 @@ func (br *BlockReader) AcquireBuf() *bufpool.Buf {
 	buf := br.buf
 	br.buf = nil
 	return buf
-}
-
-func (br *BlockReader) Crcs() []msgs.Crc {
-	return br.crcs
 }
 
 func eraseBlockSendArgs(block *msgs.RemoveSpanInitiateBlockInfo, extra any) *sendArgs {
