@@ -64,42 +64,6 @@ const int WRITER_QUEUE_SIZE = 8192;
 const int READER_QUEUE_SIZE = 1024;
 const int MAX_RECV_MSGS = 100;
 
-enum class WriterQueueEntryKind :uint8_t {
-    LOGSDB_REQUEST = 1,
-    LOGSDB_RESPONSE = 2,
-    SHARD_REQUEST = 3,
-    SHARD_RESPONSE = 4,
-    PROXY_LOGSDB_REQUEST = 5,
-    PROXY_LOGSDB_RESPONSE = 6,
-};
-
-std::ostream& operator<<(std::ostream& out, WriterQueueEntryKind kind) {
-    switch (kind) {
-    case WriterQueueEntryKind::LOGSDB_REQUEST:
-        out << "LOGSDB_REQUEST";
-        break;
-    case WriterQueueEntryKind::LOGSDB_RESPONSE:
-        out << "LOGSDB_RESPONSE";
-        break;
-    case WriterQueueEntryKind::SHARD_REQUEST:
-        out << "SHARD_REQUEST";
-        break;
-    case WriterQueueEntryKind::SHARD_RESPONSE:
-        out << "SHARD_RESPONSE";
-        break;
-    case WriterQueueEntryKind::PROXY_LOGSDB_REQUEST:
-        out << "PROXY_LOGSDB_REQUEST";
-        break;
-    case WriterQueueEntryKind::PROXY_LOGSDB_RESPONSE:
-        out << "PROXY_LOGSDB_RESPONSE";
-        break;
-    default:
-        out << "Unknown WriterQueueEntryKind(" << (uint8_t)kind << ")";
-      break;
-    }
-    return out;
-}
-
 std::ostream& operator<<(std::ostream& out, const std::vector<FullShardInfo>& shards) {
     out << "[";
     for (const auto& s : shards) {
@@ -109,132 +73,6 @@ std::ostream& operator<<(std::ostream& out, const std::vector<FullShardInfo>& sh
 
 }
 
-class ShardWriterRequest {
-public:
-    ShardWriterRequest() { clear(); }
-
-    ShardWriterRequest(ShardWriterRequest&& other) {
-        *this = std::move(other);
-    }
-
-    ShardWriterRequest& operator=(ShardWriterRequest&& other) {
-        _kind = other._kind;
-        _data = std::move(other._data);
-        other.clear();
-        return *this;
-    }
-
-    void clear() { _kind = (WriterQueueEntryKind)0; }
-
-    WriterQueueEntryKind kind() const { return _kind; }
-
-    LogsDBRequest& setLogsDBRequest() {
-        _kind = WriterQueueEntryKind::LOGSDB_REQUEST;
-        auto& x = _data.emplace<0>();
-        return x;
-    }
-
-    const LogsDBRequest& getLogsDBRequest() const {
-        ALWAYS_ASSERT(_kind == WriterQueueEntryKind::LOGSDB_REQUEST, "%s != %s", _kind, WriterQueueEntryKind::LOGSDB_REQUEST);
-        return std::get<0>(_data);
-    }
-
-    LogsDBRequest&& moveLogsDBRequest() {
-        ALWAYS_ASSERT(_kind == WriterQueueEntryKind::LOGSDB_REQUEST, "%s != %s", _kind, WriterQueueEntryKind::LOGSDB_REQUEST);
-        clear();
-        return std::move(std::get<0>(_data));
-    }
-
-    LogsDBResponse& setLogsDBResponse() {
-        _kind = WriterQueueEntryKind::LOGSDB_RESPONSE;
-        auto& x = _data.emplace<1>();
-        return x;
-    }
-
-    const LogsDBResponse& getLogsDBResponse() const {
-        ALWAYS_ASSERT(_kind == WriterQueueEntryKind::LOGSDB_RESPONSE, "%s != %s", _kind, WriterQueueEntryKind::LOGSDB_RESPONSE);
-        return std::get<1>(_data);
-    }
-
-    LogsDBResponse&& moveLogsDBResponse() {
-        ALWAYS_ASSERT(_kind == WriterQueueEntryKind::LOGSDB_RESPONSE, "%s != %s", _kind, WriterQueueEntryKind::LOGSDB_RESPONSE);
-        clear();
-        return std::move(std::get<1>(_data));
-    }
-
-    ShardReq& setShardReq() {
-        _kind = WriterQueueEntryKind::SHARD_REQUEST;
-        auto& x = _data.emplace<2>();
-        return x;
-    }
-
-    const ShardReq& getShardReq() const {
-        ALWAYS_ASSERT(_kind == WriterQueueEntryKind::SHARD_REQUEST, "%s != %s", _kind, WriterQueueEntryKind::SHARD_REQUEST);
-        return std::get<2>(_data);
-    }
-
-    ShardReq&& moveShardReq() {
-        ALWAYS_ASSERT(_kind == WriterQueueEntryKind::SHARD_REQUEST, "%s != %s", _kind, WriterQueueEntryKind::SHARD_REQUEST);
-        clear();
-        return std::move(std::get<2>(_data));
-    }
-
-    ProxyShardRespMsg& setShardResp() {
-        _kind = WriterQueueEntryKind::SHARD_RESPONSE;
-        auto& x = _data.emplace<3>();
-        return x;
-    }
-
-    const ProxyShardRespMsg& getShardResp() const {
-        ALWAYS_ASSERT(_kind == WriterQueueEntryKind::SHARD_RESPONSE, "%s != %s", _kind, WriterQueueEntryKind::SHARD_RESPONSE);
-        return std::get<3>(_data);
-    }
-
-    ProxyShardRespMsg&& moveShardResp() {
-        ALWAYS_ASSERT(_kind == WriterQueueEntryKind::SHARD_RESPONSE, "%s != %s", _kind, WriterQueueEntryKind::SHARD_RESPONSE);
-        clear();
-        return std::move(std::get<3>(_data));
-    }
-
-    ProxyLogsDBRequest& setProxyLogsDBRequest() {
-        _kind = WriterQueueEntryKind::PROXY_LOGSDB_REQUEST;
-        auto& x = _data.emplace<4>();
-        return x;
-    }
-
-    const ProxyLogsDBRequest& getProxyLogsDBRequest() const {
-        ALWAYS_ASSERT(_kind == WriterQueueEntryKind::PROXY_LOGSDB_REQUEST, "%s != %s", _kind, WriterQueueEntryKind::PROXY_LOGSDB_REQUEST);
-        return std::get<4>(_data);
-    }
-
-    ProxyLogsDBRequest&& moveProxyLogsDBRequest() {
-        ALWAYS_ASSERT(_kind == WriterQueueEntryKind::PROXY_LOGSDB_REQUEST, "%s != %s", _kind, WriterQueueEntryKind::PROXY_LOGSDB_REQUEST);
-        clear();
-        return std::move(std::get<4>(_data));
-    }
-
-    ProxyLogsDBResponse& setProxyLogsDBResponse() {
-        _kind = WriterQueueEntryKind::PROXY_LOGSDB_RESPONSE;
-        auto& x = _data.emplace<5>();
-        return x;
-    }
-
-    const ProxyLogsDBResponse& getProxyLogsDBResponse() const {
-        ALWAYS_ASSERT(_kind == WriterQueueEntryKind::PROXY_LOGSDB_RESPONSE, "%s != %s", _kind, WriterQueueEntryKind::PROXY_LOGSDB_RESPONSE);
-        return std::get<5>(_data);
-    }
-
-    ProxyLogsDBResponse&& moveProxyLogsDBResponse() {
-        ALWAYS_ASSERT(_kind == WriterQueueEntryKind::PROXY_LOGSDB_RESPONSE, "%s != %s", _kind, WriterQueueEntryKind::PROXY_LOGSDB_RESPONSE);
-        clear();
-        return std::move(std::get<5>(_data));
-    }
-
-private:
-    WriterQueueEntryKind _kind;
-    std::variant<LogsDBRequest, LogsDBResponse, ShardReq, ProxyShardRespMsg, ProxyLogsDBRequest, ProxyLogsDBResponse> _data;
-};
-
 struct ShardShared {
     const ShardOptions& options;
 
@@ -242,7 +80,13 @@ struct ShardShared {
     std::array<UDPSocketPair, 1> socks; // in an array to play with UDPReceiver<>
 
     // server to -> reader/writer communication
-    SPSC<ShardWriterRequest> writerRequestsQueue;
+    MultiSPSCWaiter writeQueuesWaiter;
+    SPSC<LogsDBRequest, true> logsDBRequestQueue;
+    SPSC<LogsDBResponse, true> logsDBResponseQueue;
+    SPSC<ProxyLogsDBRequest, true> proxyLogsDBRequestQueue;
+    SPSC<ProxyLogsDBResponse, true> proxyLogsDBResponseQueue;
+    SPSC<ShardReq, true> writerShardReqQueue;
+    SPSC<ProxyShardRespMsg, true> writerProxyShardRespQueue;
     SPSC<ShardReq> readerRequestsQueue;
 
     // databases and caches
@@ -258,10 +102,22 @@ struct ShardShared {
     // statistics
     std::array<Timings, maxShardMessageKind+1> timings;
     std::array<ErrorCount, maxShardMessageKind+1> errors;
-    std::atomic<double> logEntriesQueueSize;
+    std::atomic<double> logsDBRequestQueueSize;
+    std::atomic<double> logsDBResponseQueueSize;
+    std::atomic<double> proxyLogsDBRequestQueueSize;
+    std::atomic<double> proxyLogsDBResponseQueueSize;
+    std::atomic<double> writerRequestQueueSize;
+    std::atomic<double> writerProxyRespQueueSize;
     std::atomic<double> readerRequestQueueSize;
     std::array<std::atomic<double>, 2> receivedRequests; // how many requests we got at once from each socket
-    std::atomic<double> pulledWriteRequests; // how many requests we got from write queue
+    // how many requests we got from write queue
+    std::atomic<double> pulledLogsDBRequests;
+    std::atomic<double> pulledLogsDBResponses;
+    std::atomic<double> pulledProxyLogsDBRequests;
+    std::atomic<double> pulledProxyLogsDBResponses;
+    std::atomic<double> pulledWriteRequests;
+    std::atomic<double> pulledProxyWriteResponses;
+    
     std::atomic<double> pulledReadRequests; // how many requests we got from read queue
 
     // we should get up to date information from registry before we start serving any requests
@@ -273,7 +129,12 @@ struct ShardShared {
     ShardShared(const ShardOptions& options_, SharedRocksDB& sharedDB_, BlockServicesCacheDB& blockServicesCache_, ShardDB& shardDB_, LogsDB& logsDB_, UDPSocketPair&& sock) :
         options(options_),
         socks({std::move(sock)}),
-        writerRequestsQueue(WRITER_QUEUE_SIZE),
+        logsDBRequestQueue(WRITER_QUEUE_SIZE, writeQueuesWaiter),
+        logsDBResponseQueue(WRITER_QUEUE_SIZE, writeQueuesWaiter),
+        proxyLogsDBRequestQueue(WRITER_QUEUE_SIZE, writeQueuesWaiter),
+        proxyLogsDBResponseQueue(WRITER_QUEUE_SIZE, writeQueuesWaiter),
+        writerShardReqQueue(WRITER_QUEUE_SIZE, writeQueuesWaiter),
+        writerProxyShardRespQueue(WRITER_QUEUE_SIZE, writeQueuesWaiter),
         readerRequestsQueue(READER_QUEUE_SIZE),
         sharedDB(sharedDB_),
         logsDB(logsDB_),
@@ -281,9 +142,19 @@ struct ShardShared {
         blockServicesCache(blockServicesCache_),
         replicas(nullptr),
         leadersAtOtherLocations(std::make_shared<std::vector<FullShardInfo>>()),
-        logEntriesQueueSize(0),
+        logsDBRequestQueueSize(0),
+        logsDBResponseQueueSize(0),
+        proxyLogsDBRequestQueueSize(0),
+        proxyLogsDBResponseQueueSize(0),
+        writerRequestQueueSize(0),
+        writerProxyRespQueueSize(0),
         readerRequestQueueSize(0),
+        pulledLogsDBRequests(0),
+        pulledLogsDBResponses(0),
+        pulledProxyLogsDBRequests(0),
+        pulledProxyLogsDBResponses(0),
         pulledWriteRequests(0),
+        pulledProxyWriteResponses(0),
         pulledReadRequests(0),
         isInitiated(false),
         isBlockServiceCacheInitiated(false)
@@ -426,7 +297,12 @@ private:
     AES128Key _expandedShardKey;
 
     // log entries buffers
-    std::vector<ShardWriterRequest> _writeEntries;
+    std::vector<LogsDBRequest> _logsDBRequests;
+    std::vector<LogsDBResponse> _logsDBResponses;
+    std::vector<ProxyLogsDBRequest> _proxyLogsDBRequests;
+    std::vector<ProxyLogsDBResponse> _proxyLogsDBResponses;
+    std::vector<ShardReq> _writeReqs;
+    std::vector<ProxyShardRespMsg> _proxyResponses;
 
     // read requests buffer
     std::vector<ShardReq> _readRequests;
@@ -460,17 +336,19 @@ private:
         LogRespMsg* respMsg = nullptr;
 
         auto replicaId = _getReplicaId(msg.clientAddr);
+        bool proxyLocation = true;
 
         if (replicaId != LogsDB::REPLICA_COUNT) {
-            auto& resp = _writeEntries.emplace_back().setLogsDBResponse();
+            auto& resp = _logsDBResponses.emplace_back();
             resp.replicaId = replicaId;
             respMsg = &resp.msg;
+            proxyLocation = false;
         } else {
             // try matching to other locations
             auto leadersPtr = _shared.leadersAtOtherLocations;
             for (auto& leader : *leadersPtr) {
                 if (leader.locationId == 0 && leader.addrs.contains(msg.clientAddr)) {
-                    auto& resp = _writeEntries.emplace_back().setProxyLogsDBResponse();
+                    auto& resp = _proxyLogsDBResponses.emplace_back();
                     respMsg = &resp.response.msg;
                     break;
                 }
@@ -486,7 +364,11 @@ private:
             respMsg->unpack(msg.buf, _expandedShardKey);
         } catch (const BincodeException& err) {
             LOG_ERROR(_env, "Could not parse LogsDBResponse: %s", err.what());
-            _writeEntries.pop_back();
+            if (proxyLocation) {
+                _proxyLogsDBResponses.pop_back();
+            } else {    
+                _logsDBResponses.pop_back();
+            }
             return;
         }
         LOG_DEBUG(_env, "Received response %s for requests id %s from replica id %s", respMsg->body.kind(), respMsg->id, replicaId);
@@ -495,19 +377,21 @@ private:
     void _handleLogsDBRequest(UDPMessage& msg) {
         LOG_DEBUG(_env, "received LogsDBRequest from %s", msg.clientAddr);
         LogReqMsg* reqMsg = nullptr;
+        bool proxyLocation = true;
 
         auto replicaId = _getReplicaId(msg.clientAddr);
 
         if (replicaId != LogsDB::REPLICA_COUNT) {
-            auto& req = _writeEntries.emplace_back().setLogsDBRequest();
+            auto& req = _logsDBRequests.emplace_back();
             req.replicaId = replicaId;
             reqMsg = &req.msg;
+            proxyLocation = false;
         } else {
             // try matching to other locations
             auto leadersPtr = _shared.leadersAtOtherLocations;
             for (auto& leader : *leadersPtr) {
                 if (leader.addrs.contains(msg.clientAddr)) {
-                    auto& req = _writeEntries.emplace_back().setProxyLogsDBRequest();
+                    auto& req = _proxyLogsDBRequests.emplace_back();
                     req.clientAddr = msg.clientAddr;
                     req.sockIx = msg.socketIx;
                     reqMsg = &req.request.msg;
@@ -525,7 +409,11 @@ private:
             reqMsg->unpack(msg.buf, _expandedShardKey);
         } catch (const BincodeException& err) {
             LOG_ERROR(_env, "Could not parse LogsDBRequest: %s", err.what());
-            _writeEntries.pop_back();
+            if (proxyLocation) {
+                _proxyLogsDBRequests.pop_back();
+            } else {    
+                _logsDBRequests.pop_back();
+            }
             return;
         }
         LOG_DEBUG(_env, "Received request %s with requests id %s from replica id %s", reqMsg->body.kind(), reqMsg->id, replicaId);
@@ -602,7 +490,7 @@ private:
             LOG_DEBUG(_env, "parsed request: %s", req);
         }
 
-        auto& entry = readOnlyShardReq(req.body.kind()) ? _readRequests.emplace_back() : _writeEntries.emplace_back().setShardReq();
+        auto& entry = readOnlyShardReq(req.body.kind()) ? _readRequests.emplace_back() : _writeReqs.emplace_back();
         entry.sockIx = msg.socketIx;
         entry.clientAddr = msg.clientAddr;
         entry.receivedAt = t0;
@@ -618,13 +506,13 @@ private:
             return;
         }
 
-        ProxyShardRespMsg& resp = _writeEntries.emplace_back().setShardResp();
+        ProxyShardRespMsg& resp = _proxyResponses.emplace_back();
         try {
             resp.unpack(msg.buf, _expandedShardKey);
         } catch (const BincodeException& err) {
             LOG_ERROR(_env, "Could not parse: %s", err.what());
             RAISE_ALERT(_env, "could not parse request from %s, dropping it.", msg.clientAddr);
-            _writeEntries.pop_back();
+            _proxyResponses.pop_back();
             return;
         }
 
@@ -639,7 +527,12 @@ public:
             return;
         }
 
-        _writeEntries.clear();
+        _logsDBRequests.clear();
+        _logsDBResponses.clear();
+        _proxyLogsDBRequests.clear();
+        _proxyLogsDBResponses.clear();
+        _writeReqs.clear();
+        _proxyResponses.clear();
         _readRequests.clear();
 
         if (unlikely(!_channel->receiveMessages(_env, _shared.socks, *_receiver))) {
@@ -677,30 +570,25 @@ public:
             _shared.receivedRequests[i] = _shared.receivedRequests[i]*0.95 + ((double)shardMsgCount[i])*0.05;
         }
 
-        // write out write requests to queue
-        {
-            size_t numRequests = _writeEntries.size();
-            if (numRequests > 0) {
-                LOG_DEBUG(_env, "pushing %s requests to writer", numRequests);
-                uint32_t pushed = _shared.writerRequestsQueue.push(_writeEntries);
-                _shared.logEntriesQueueSize = _shared.logEntriesQueueSize*0.95 + _shared.writerRequestsQueue.size()*0.05;
-                if (pushed < numRequests) {
-                    LOG_INFO(_env, "tried to push %s requests to write queue, but pushed %s instead", numRequests, pushed);
-                }
-            }
-        }
+        // write out write requests to queues
+        _shared.logsDBRequestQueue.push(_logsDBRequests);
+        _shared.logsDBRequestQueueSize = _shared.logsDBRequestQueueSize*0.95 + _shared.logsDBRequestQueue.size()*0.05;
+        
+        _shared.logsDBResponseQueue.push(_logsDBResponses);
+        _shared.logsDBResponseQueueSize = _shared.logsDBResponseQueueSize*0.95 + _shared.logsDBResponseQueue.size()*0.05;
+
+        _shared.proxyLogsDBRequestQueue.push(_proxyLogsDBRequests);
+        _shared.proxyLogsDBRequestQueueSize = _shared.proxyLogsDBRequestQueueSize*0.95 + _shared.proxyLogsDBRequestQueue.size()*0.05;
+
+        _shared.proxyLogsDBResponseQueue.push(_proxyLogsDBResponses);
+        _shared.proxyLogsDBResponseQueueSize = _shared.proxyLogsDBResponseQueueSize*0.95 + _shared.proxyLogsDBResponseQueue.size()*0.05;
+
+        _shared.writerShardReqQueue.push(_writeReqs);
+        _shared.writerRequestQueueSize = _shared.writerRequestQueueSize*0.95 + _shared.writerShardReqQueue.size()*0.05;
+
         // write out read requests to queue
-        {
-            size_t numReadRequests = _readRequests.size();
-            if (numReadRequests > 0) {
-                LOG_DEBUG(_env, "pushing %s read requests to reader", numReadRequests);
-                uint32_t pushed = _shared.readerRequestsQueue.push(_readRequests);
-                _shared.readerRequestQueueSize = _shared.readerRequestQueueSize*0.95 + _shared.readerRequestsQueue.size()*0.05;
-                if (pushed < numReadRequests) {
-                    LOG_INFO(_env, "tried to push %s elements to reader queue, but pushed %s instead", numReadRequests, pushed);
-                }
-            }
-        }
+        _shared.readerRequestsQueue.push(_readRequests);
+        _shared.readerRequestQueueSize = _shared.readerRequestQueueSize*0.95 + _shared.readerRequestsQueue.size()*0.05;
     }
 };
 
@@ -752,7 +640,6 @@ private:
 
     // work queue
     const size_t _maxWorkItemsAtOnce;
-    std::vector<ShardWriterRequest> _workItems;
 
     LogsDB& _logsDB;
     bool _isLogsDBLeader;
@@ -804,7 +691,12 @@ private:
     std::shared_ptr<std::array<AddrsInfo, LogsDB::REPLICA_COUNT>> _replicaInfo;
 
     virtual void sendStop() override {
-        _shared.writerRequestsQueue.close();
+        _shared.logsDBRequestQueue.close();
+        _shared.logsDBResponseQueue.close();
+        _shared.proxyLogsDBRequestQueue.close();
+        _shared.proxyLogsDBResponseQueue.close();
+        _shared.writerShardReqQueue.close();
+        _shared.writerProxyShardRespQueue.close();
     }
 
 public:
@@ -835,7 +727,6 @@ public:
         };
         memset(_catchupWindow.data(), 0, _catchupWindow.size()*sizeof(decltype(_catchupWindow)::value_type));
         convertProb("outgoing", _shared.options.serverOptions.simulateOutgoingPacketDrop, _outgoingPacketDropProbability);
-        _workItems.reserve(_maxWorkItemsAtOnce);
         _shardEntries.reserve(LogsDB::IN_FLIGHT_APPEND_WINDOW);
     }
 
@@ -1574,7 +1465,6 @@ public:
     }
 
     virtual void step() override {
-        _workItems.clear();
         _logsDBRequests.clear();
         _logsDBResponses.clear();
         _logsDBOutRequests.clear();
@@ -1588,40 +1478,38 @@ public:
         _proxyReadRequestsIndices.clear();
 
         _replicaInfo = _shared.replicas;
-        uint32_t pulled = _shared.writerRequestsQueue.pull(_workItems, _maxWorkItemsAtOnce, _nextTimeout);
-        auto start = ternNow();
-        if (likely(pulled > 0)) {
-            LOG_DEBUG(_env, "pulled %s requests from write queue", pulled);
-            _shared.pulledWriteRequests = _shared.pulledWriteRequests*0.95 + ((double)pulled)*0.05;
-        }
-        if (unlikely(_shared.writerRequestsQueue.isClosed())) {
+        auto hasWork = _shared.writeQueuesWaiter.wait(_nextTimeout);
+        auto remainingPullBudget = _maxWorkItemsAtOnce;
+        if (unlikely(!hasWork && _shared.logsDBRequestQueue.isClosed())) {
             // queue is closed, stop
             stop();
             return;
         }
 
-        for(auto& item : _workItems) {
-            switch (item.kind()) {
-            case WriterQueueEntryKind::LOGSDB_REQUEST:
-                _logsDBRequests.emplace_back(item.moveLogsDBRequest());
-                break;
-            case WriterQueueEntryKind::LOGSDB_RESPONSE:
-                _logsDBResponses.emplace_back(item.moveLogsDBResponse());
-                break;
-            case WriterQueueEntryKind::SHARD_REQUEST:
-                _shardRequests.emplace_back(item.moveShardReq());
-                break;
-            case WriterQueueEntryKind::SHARD_RESPONSE:
-                _shardResponses.emplace_back(item.moveShardResp());
-                break;
-            case WriterQueueEntryKind::PROXY_LOGSDB_REQUEST:
-                _proxyLogsDBRequests.emplace_back(item.moveProxyLogsDBRequest());
-                break;
-            case WriterQueueEntryKind::PROXY_LOGSDB_RESPONSE:
-                _proxyLogsDBResponses.emplace_back(item.moveProxyLogsDBResponse());
-                break;
-            }
-        }
+        auto start = ternNow();
+
+        // the order here determins priority of processing when there is more work than we can handle at once
+        
+        // we prioritize LogsDB requests and responses as they make us progress state
+        remainingPullBudget -= _shared.logsDBResponseQueue.pull(_logsDBResponses, remainingPullBudget);
+        _shared.pulledLogsDBResponses = _shared.pulledLogsDBResponses*0.95 + ((double)_logsDBResponses.size())*0.05;
+        remainingPullBudget -= _shared.logsDBRequestQueue.pull(_logsDBRequests, remainingPullBudget);
+        _shared.pulledLogsDBRequests = _shared.pulledLogsDBRequests*0.95 + ((double)_logsDBRequests.size())*0.05;
+
+        // then ProxyLogsDB requests/responses as they are needed to make progress on secondary locations
+        remainingPullBudget -= _shared.proxyLogsDBResponseQueue.pull(_proxyLogsDBResponses, remainingPullBudget);
+        _shared.pulledProxyLogsDBResponses = _shared.pulledProxyLogsDBResponses*0.95 + ((double)_proxyLogsDBResponses.size())*0.05;
+        remainingPullBudget -= _shared.proxyLogsDBRequestQueue.pull(_proxyLogsDBRequests, remainingPullBudget);
+        _shared.pulledProxyLogsDBRequests = _shared.pulledProxyLogsDBRequests*0.95 + ((double)_proxyLogsDBRequests.size())*0.05;
+        
+        // then shard reponses as these are responses for requests we sent to primary location
+        remainingPullBudget -= _shared.writerProxyShardRespQueue.pull(_shardResponses, remainingPullBudget);
+        _shared.pulledProxyWriteResponses = _shared.pulledProxyWriteResponses*0.95 + ((double)_shardResponses.size())*0.05;
+
+        // last are new requests from local clients and then proxy locations
+        remainingPullBudget -= _shared.writerShardReqQueue.pull(_shardRequests, remainingPullBudget);
+        _shared.pulledWriteRequests = _shared.pulledWriteRequests*0.95 + ((double)_shardRequests.size())*0.05;
+        
         logsDBStep();
         auto loopTime = ternNow() - start;
     }
@@ -2004,7 +1892,8 @@ private:
     MetricsBuilder _metricsBuilder;
     std::unordered_map<std::string, uint64_t> _rocksDBStats;
     std::array<XmonNCAlert, 2> _sockQueueAlerts;
-    XmonNCAlert _writeQueueAlert;
+    XmonNCAlert _writeQueuesAlert;
+    XmonNCAlert _readerQueueAlert;
 public:
     ShardMetricsInserter(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const InfluxDB& influxDB, ShardShared& shared):
         PeriodicLoop(logger, xmon, "metrics", {1_sec, 1.0, 1_mins, 0.1}),
@@ -2014,7 +1903,8 @@ public:
         _location(_shared.options.logsDBOptions.location),
         _sendMetricsAlert(XmonAppType::DAYTIME, 5_mins),
         _sockQueueAlerts({XmonAppType::NEVER, XmonAppType::NEVER}),
-        _writeQueueAlert(XmonAppType::NEVER)
+        _writeQueuesAlert(XmonAppType::NEVER),
+        _readerQueueAlert(XmonAppType::NEVER)
     {}
 
     virtual ~ShardMetricsInserter() = default;
@@ -2028,10 +1918,30 @@ public:
                 _env.clearAlert(_sockQueueAlerts[i]);
             }
         }
-        if (std::ceil(_shared.logEntriesQueueSize) >= WRITER_QUEUE_SIZE) {
-            _env.updateAlert(_writeQueueAlert, "write queue is full (%s)", _shared.logEntriesQueueSize);
+        if (std::ceil(_shared.logsDBRequestQueueSize) >= WRITER_QUEUE_SIZE ||
+            std::ceil(_shared.logsDBResponseQueueSize) >= WRITER_QUEUE_SIZE ||
+            std::ceil(_shared.proxyLogsDBRequestQueueSize) >= WRITER_QUEUE_SIZE ||
+            std::ceil(_shared.proxyLogsDBResponseQueueSize) >= WRITER_QUEUE_SIZE ||
+            std::ceil(_shared.writerRequestQueueSize) >= WRITER_QUEUE_SIZE ||
+            std::ceil(_shared.writerProxyRespQueueSize) >= WRITER_QUEUE_SIZE
+        ) {
+            _env.updateAlert(_writeQueuesAlert,
+                "some write queues are full logsDBReq(%s), "
+                "logsDBResp(%s), proxyLogsDBReq(%s), proxyLogsDBResp(%s), proxyRespQueueSize(%s), writerReq(%s)",
+                _shared.logsDBRequestQueueSize,
+                _shared.logsDBResponseQueueSize,
+                _shared.proxyLogsDBRequestQueueSize,
+                _shared.proxyLogsDBResponseQueueSize,
+                _shared.writerProxyRespQueueSize,
+                _shared.writerRequestQueueSize
+            );
         } else {
-            _env.clearAlert(_writeQueueAlert);
+            _env.clearAlert(_writeQueuesAlert);
+        }
+        if (std::ceil(_shared.readerRequestQueueSize) >= READER_QUEUE_SIZE) {
+            _env.updateAlert(_readerQueueAlert, "reader request queue is full (%s)", _shared.readerRequestQueueSize);
+        } else {
+            _env.clearAlert(_readerQueueAlert);
         }
         auto now = ternNow();
         for (ShardMessageKind kind : allShardMessageKind) {
@@ -2054,10 +1964,45 @@ public:
             }
         }
         {
-            _metricsBuilder.measurement("eggsfs_shard_write_queue");
+            _metricsBuilder.measurement("eggsfs_shard_logsdb_request_queue");
             _metricsBuilder.tag("shard", _shrid);
             _metricsBuilder.tag("location", int(_location));
-            _metricsBuilder.fieldFloat("size", _shared.logEntriesQueueSize);
+            _metricsBuilder.fieldFloat("size", _shared.logsDBRequestQueueSize);
+            _metricsBuilder.timestamp(now);
+        }
+        {
+            _metricsBuilder.measurement("eggsfs_shard_logsdb_response_queue");
+            _metricsBuilder.tag("shard", _shrid);
+            _metricsBuilder.tag("location", int(_location));
+            _metricsBuilder.fieldFloat("size", _shared.logsDBResponseQueueSize);
+            _metricsBuilder.timestamp(now);
+        }
+        {
+            _metricsBuilder.measurement("eggsfs_shard_proxy_logsdb_request_queue");
+            _metricsBuilder.tag("shard", _shrid);
+            _metricsBuilder.tag("location", int(_location));
+            _metricsBuilder.fieldFloat("size", _shared.proxyLogsDBRequestQueueSize);
+            _metricsBuilder.timestamp(now);
+        }
+        {
+            _metricsBuilder.measurement("eggsfs_shard_proxy_logsdb_response_queue");
+            _metricsBuilder.tag("shard", _shrid);
+            _metricsBuilder.tag("location", int(_location));
+            _metricsBuilder.fieldFloat("size", _shared.proxyLogsDBResponseQueueSize);
+            _metricsBuilder.timestamp(now);
+        }
+        {
+            _metricsBuilder.measurement("eggsfs_shard_writer_request_queue");
+            _metricsBuilder.tag("shard", _shrid);
+            _metricsBuilder.tag("location", int(_location));
+            _metricsBuilder.fieldFloat("size", _shared.writerRequestQueueSize);
+            _metricsBuilder.timestamp(now);
+        }
+        {
+            _metricsBuilder.measurement("eggsfs_shard_writer_proxy_response_queue");
+            _metricsBuilder.tag("shard", _shrid);
+            _metricsBuilder.tag("location", int(_location));
+            _metricsBuilder.fieldFloat("size", _shared.writerProxyRespQueueSize);
             _metricsBuilder.timestamp(now);
         }
         {
