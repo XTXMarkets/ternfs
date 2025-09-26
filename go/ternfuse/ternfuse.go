@@ -652,7 +652,7 @@ func (n *ternNode) Open(ctx context.Context, flags uint32) (fh fs.FileHandle, fu
 		})
 	}
 
-	return &f, fuse.FOPEN_CACHE_DIR | fuse.FOPEN_KEEP_CACHE, 0
+	return &f, fuse.FOPEN_KEEP_CACHE, 0
 }
 
 func (n *ternNode) OpendirHandle(ctx context.Context, flags uint32) (fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
@@ -672,7 +672,7 @@ func (n *ternNode) OpendirHandle(ctx context.Context, flags uint32) (fh fs.FileH
 		parent: parent,
 		cursor: -1,
 	}
-	return od, fuse.FOPEN_CACHE_DIR | fuse.FOPEN_KEEP_CACHE, 0
+	return od, fuse.FOPEN_CACHE_DIR, 0
 }
 
 func (f *ternFile) Read(ctx context.Context, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
@@ -1040,8 +1040,8 @@ func main() {
 	maxBlockTimeout := flag.Duration("max-block-timeout", 0, "")
 	overallBlockTimeout := flag.Duration("overall-block-timeout", 0, "")
 	mtu := flag.Uint64("mtu", msgs.DEFAULT_UDP_MTU, "mtu used talking to shards and cdc")
-	fileAttrCacheTimeFlag := flag.Duration("file-attr-cache-time", time.Millisecond*250, "time to cache file attributes for read-only files before rechecking with the server. Set to 0 to disable caching. (default: 250ms)")
-	dirAttrCacheTimeFlag := flag.Duration("dir-attr-cache-time", time.Millisecond*250, "time to cache directory attributes before rechecking with the server. Set to 0 to disable caching. (default: 250ms)")
+	attrCacheTimeFlag := flag.Duration("attr-cache-time", time.Hour*24, "How long to cache inode (both file and directories) attributes for. Default: 1 day. Note that this is not very important to clients: the only ones that are relevant are times (which can be modified), and directory mtimes, but typically clients do not care about those very much.")
+	dirEntryCacheTimeFlag := flag.Duration("dir-entry-cache-time", time.Millisecond*250, "How long to cache directory entries (negative _and_ positive) for. Set to 0 to disable caching. (default: 250ms)")
 	closeTrackerObject := flag.String("close-tracker-object", "", "Compiled BPF object to track explicitly closed files")
 	setUid := flag.Bool("set-uid", false, "")
 	flag.Usage = usage
@@ -1167,14 +1167,15 @@ func main() {
 		id: msgs.ROOT_DIR_INODE_ID,
 	}
 	fuseOptions := &fs.Options{
-		Logger:       golog.New(os.Stderr, "fuse", golog.Ldate|golog.Ltime|golog.Lmicroseconds|golog.Lshortfile),
-		AttrTimeout:  fileAttrCacheTimeFlag,
-		EntryTimeout: dirAttrCacheTimeFlag,
+		Logger:          golog.New(os.Stderr, "fuse", golog.Ldate|golog.Ltime|golog.Lmicroseconds|golog.Lshortfile),
+		AttrTimeout:     attrCacheTimeFlag,
+		EntryTimeout:    dirEntryCacheTimeFlag,
+		NegativeTimeout: dirEntryCacheTimeFlag,
 		MountOptions: fuse.MountOptions{
 			FsName:             "ternfs",
 			Name:               "ternfuse" + mountPoint,
-			MaxWrite:           200 << 20, // twice max span size
-			MaxReadAhead:       200 << 20,
+			MaxWrite:           1 << 20, // the kernel generally won't do more than a few 100s KBs in either of those
+			MaxReadAhead:       1 << 20, // we rely on ternblocks pre-reading HDD blocks.
 			DisableXAttrs:      true,
 			Debug:              *verbose,
 			DisableReadDirPlus: true,
