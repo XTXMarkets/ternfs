@@ -61,7 +61,7 @@ static std::pair<int, std::string> writeRegistryRequest(int fd, const RegistryRe
     std::vector<char> buf(req.packedSize());
     BincodeBuf bbuf(buf.data(), buf.size());
     req.pack(bbuf);
-    struct pollfd pfd{.fd = fd, .events = POLLOUT};
+    struct pollfd pfd{.fd = fd, .events = POLLOUT, .revents = 0};
     // Write out
 #define WRITE_OUT(buf, len) \
     do { \
@@ -86,7 +86,7 @@ static std::pair<int, std::string> writeRegistryRequest(int fd, const RegistryRe
 
 static std::pair<int, std::string> readRegistryResponse(int fd, RegistryRespContainer& resp, Duration timeout) {
     static_assert(std::endian::native == std::endian::little);
-    struct pollfd pfd{.fd = fd, .events = POLLIN};
+    struct pollfd pfd{.fd = fd, .events = POLLIN, .revents = 0};
 #define READ_IN(buf, count) \
     do { \
         ssize_t readSoFar = 0; \

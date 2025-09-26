@@ -1066,7 +1066,7 @@ func fsTestInternal[Id comparable](
 				if err != nil {
 					log.Info("stacktrace for %v:", err)
 					for _, line := range strings.Split(string(debug.Stack()), "\n") {
-						log.Info(line)
+						log.Info("%s", line)
 					}
 				}
 				c <- err

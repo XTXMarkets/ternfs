@@ -577,7 +577,7 @@ func xmonRaiseStack(
 	file, line := getFileLine(1 + calldepth)
 	message := fmt.Sprintf("%s:%d "+format, append([]any{file, line}, v...)...)
 	if binnable || quietPeriod == 0 {
-		log.LogLocation(logLevel, file, line, message)
+		log.LogLocation(logLevel, file, line, "%s", message)
 	}
 	if *alertId < 0 {
 		*alertId = atomic.AddInt64(&alertIdCount, 1)

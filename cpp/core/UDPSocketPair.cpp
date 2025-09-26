@@ -61,6 +61,9 @@ void UDPSender::sendMessages(Env& env, const UDPSocketPair& socks) {
                 .msg_namelen = sizeof(_sendAddrs[i][j]),
                 .msg_iov = &vec,
                 .msg_iovlen = 1,
+                .msg_control = nullptr,
+                .msg_controllen = 0,
+                .msg_flags = 0,
             };
             hdr.msg_len = vec.iov_len;
         }
