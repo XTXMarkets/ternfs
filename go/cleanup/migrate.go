@@ -185,7 +185,7 @@ func reconstructBlock(
 ) (msgs.InodeId, msgs.BlockId, msgs.BlockServiceId, uint64, error) {
 	D := parity.DataBlocks()
 	haveBlocks := [][]byte{}
-	haveBlocksIxs := []uint8{}
+	var haveBlocksIxs uint32
 	for blockIx := range blocks {
 		block := &blocks[blockIx]
 		blockService := blockServices[block.BlockServiceIx]
@@ -211,7 +211,7 @@ func reconstructBlock(
 		defer bufPool.Put(data)
 		// we managed to fetch, good
 		haveBlocks = append(haveBlocks, data.Bytes())
-		haveBlocksIxs = append(haveBlocksIxs, uint8(blockIx))
+		haveBlocksIxs |= uint32(1) << blockIx
 		if len(haveBlocks) >= D {
 			break
 		}

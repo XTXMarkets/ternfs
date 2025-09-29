@@ -1550,6 +1550,10 @@ func (br *BlockReader) AcquireBuf() *bufpool.Buf {
 	return buf
 }
 
+func (br *BlockReader) Buf() *bufpool.Buf {
+	return br.buf
+}
+
 func eraseBlockSendArgs(block *msgs.RemoveSpanInitiateBlockInfo, extra any) *sendArgs {
 	return &sendArgs{
 		block.BlockServiceId,

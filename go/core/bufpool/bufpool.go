@@ -16,13 +16,13 @@ const (
 
 type BufPool struct {
 	buckets        [numBuckets]sync.Pool
-	bucketsMaxSize [numBuckets-1]int
+	bucketsMaxSize [numBuckets - 1]int
 }
 
 func NewBufPool() *BufPool {
 	bp := &BufPool{}
 	sz := minSize
-	for i := range numBuckets-1 {
+	for i := range numBuckets - 1 {
 		sz = (sz * 3) / 2
 		sz = ((sz + 4096 - 1) / 4096) * 4096 // page-align all sizes
 		bp.bucketsMaxSize[i] = sz
@@ -65,14 +65,6 @@ func (b *Buf) BytesPtr() *[]byte {
 		panic("accessing freed buffer")
 	}
 	return res
-}
-
-func (b *Buf) Acquire() *Buf {
-	res := b.b.Swap(nil)
-	if res == nil {
-		panic("accessing freed buffer")
-	}
-	return NewBuf(res)
 }
 
 func (bpool *BufPool) bucket(l int) int {

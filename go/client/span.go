@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/bits"
 	"path/filepath"
 	"sort"
 	"sync"
@@ -19,7 +20,6 @@ import (
 	"xtx/ternfs/core/parity"
 	"xtx/ternfs/core/rs"
 	"xtx/ternfs/core/timing"
-	"xtx/ternfs/divide32"
 	"xtx/ternfs/msgs"
 )
 
@@ -501,8 +501,9 @@ func (c *Client) fetchMirroredSpan(
 	return nil, fmt.Errorf("could not find any suitable blocks")
 }
 
-func (c *Client) fetchRsSpan(
+func fetchRsSpan(
 	log *log.Logger,
+	startFetch startFetch,
 	bufPool *bufpool.BufPool,
 	span *SpanWithBlockServices,
 ) (*bufpool.Buf, error) {
@@ -542,7 +543,7 @@ scheduleMoreBlocks:
 		readerWithIx := blockReaderWithIx{ix: blockIdx}
 		readerWithIx.br.New(bufPool, 0, blockSize, &readerWithIx.cellsCrcs)
 		readerWithIx.cellsCrcs.New(body.CellSize)
-		if err := c.StartFetchBlock(log, blockService, block.BlockId, 0, blockSize, &readerWithIx.br, &readerWithIx, ch); err == nil {
+		if err := startFetch.StartFetchBlock(log, blockService, block.BlockId, 0, blockSize, &readerWithIx.br, &readerWithIx, ch); err == nil {
 			inFlightBlocks++
 		}
 		blockIdx++
@@ -567,12 +568,12 @@ scheduleMoreBlocks:
 	}
 
 	haveBlocksRecover := [][]byte{}
-	haveBlocksRecoverIxs := []uint8{}
+	var haveBlocksRecoverIxs uint32
 	// collect what we have in case we need to recover
 	for i := range blockBufs {
 		if blockBufs[i] != nil {
 			haveBlocksRecover = append(haveBlocksRecover, blockBufs[i].Bytes())
-			haveBlocksRecoverIxs = append(haveBlocksRecoverIxs, uint8(i))
+			haveBlocksRecoverIxs |= uint32(1) << i
 		}
 	}
 	// recover what is missing
@@ -632,7 +633,7 @@ func (c *Client) FetchSpan(
 		return c.fetchMirroredSpan(log, bufPool, span)
 	// RS replication
 	default:
-		return c.fetchRsSpan(log, bufPool, span)
+		return fetchRsSpan(log, c, bufPool, span)
 	}
 }
 
@@ -669,6 +670,14 @@ type FileReader struct {
 	fileId   msgs.InodeId
 	fileSize uint64
 	spans    []SpanWithBlockServices
+	/*
+		// We store the CRC of the latest stripe. If we happen to continue
+		// from the previous offset (common occurrence) we carry it forward
+		// and try to complete it. This is a best-effort check, although it
+		// should kick in pretty often.
+		crc       msgs.Crc
+		crcOffset uint64
+	*/
 }
 
 func (fr *FileReader) findSpan(offset uint64) *SpanWithBlockServices {
@@ -683,16 +692,6 @@ func (fr *FileReader) findSpan(offset uint64) *SpanWithBlockServices {
 		return nil
 	}
 	return &fr.spans[ix]
-}
-
-func (f *FileReader) readFallback(log *log.Logger, client *Client, bufPool *bufpool.BufPool, offset uint64, span *SpanWithBlockServices, p []byte) (int, error) {
-	buf, err := client.FetchSpan(log, bufPool, f.fileId, span)
-	defer bufPool.Put(buf)
-	if err != nil {
-		return 0, err
-	}
-	r := copy(p, buf.Bytes()[offset-span.Span.Header.ByteOffset:])
-	return r, nil
 }
 
 func (f *FileReader) readMirrored(log *log.Logger, client *Client, bufPool *bufpool.BufPool, offset uint64, span *SpanWithBlockServices, p []byte) (int, error) {
@@ -732,134 +731,363 @@ func (f *FileReader) readMirrored(log *log.Logger, client *Client, bufPool *bufp
 	return 0, err
 }
 
-// So that we can do copy(out[outStart:outEnd], fetchedBlock[blockStart-segments.fetchStart:blockEnd-segments.fetchStart])
-type readRsBlockSegment struct {
-	outStart   uint32
-	outEnd     uint32
-	blockStart uint32
-	blockEnd   uint32
+type readRsState struct {
+	span *msgs.FetchedBlocksSpan
+	// The indices of the region of the span we're interested in.
+	// Note that we rely on the data to be larger than the actual
+	// span size.
+	spanStart uint32
+	spanEnd   uint32
+	// Blocks we're downloading because we need the data.
+	// Lenght is D
+	blocks   []BlockReader
+	blocksCh chan *blockCompletion
+	// Blocks we're downloading because we're recovering stuff.
+	// Lenghth is D+P.
+	// Note that we might have to recover some blocks that we're
+	// also downloading because we need more of them.
+	recoverBlocks   []BlockReader
+	recoverBlocksCh chan *blockCompletion
+	// Bitmaps with status of `blocks`
+	fetching  uint32
+	succeeded uint32
+	failed    uint32
+	// Bitmaps with status of `recoverBlocks`
+	recoverFetching  uint32
+	recoverSucceeded uint32
+	recoverFailed    uint32
 }
 
-type readRsBlock struct {
-	segments    [15]readRsBlockSegment // max 15 stripes
-	numSegments int
-	fetchStart  uint32 // where to start fetching this block from
-	reader      BlockReader
+// Block start: where to download from in the block.
+// blockFrom/blockTo: where to copy from this block. These offsets are
+// relative to the block start.
+// outFrom/outTo: where to copy into the output array.
+func (rs *readRsState) cell(stripeIx uint32, blockIx uint32) (blockStart uint32, blockFrom uint32, blockTo uint32, outFrom uint32, outTo uint32) {
+	stripeSize := rs.span.CellSize * uint32(rs.span.Parity.DataBlocks())
+	cellIx := stripeIx*uint32(rs.span.Parity.DataBlocks()) + blockIx
+	cellStart := cellIx * rs.span.CellSize
+	cellEnd := (cellIx + 1) * rs.span.CellSize
+	if cellStart >= rs.spanEnd || cellEnd <= rs.spanStart { // totally out of bounds
+		return 0, 0, 0, 0, 0
+	}
+	blockAdjustment := stripeIx*stripeSize + blockIx*rs.span.CellSize - stripeIx*rs.span.CellSize
+	// first one, round down to page, <= is important, we want to set fetchStart below even if spanStart is a multiple of cell size
+	if cellStart <= rs.spanStart {
+		cellStart = (rs.spanStart / msgs.TERN_PAGE_SIZE) * msgs.TERN_PAGE_SIZE
+		blockStart = cellStart - blockAdjustment
+		blockFrom = rs.spanStart - blockAdjustment
+		outFrom = 0
+	} else {
+		blockFrom = cellStart - blockAdjustment
+		blockStart = blockFrom
+		outFrom = cellStart - rs.spanStart
+	}
+	// last one, round up to page
+	if cellEnd > rs.spanEnd {
+		cellEnd = ((rs.spanEnd + msgs.TERN_PAGE_SIZE - 1) / msgs.TERN_PAGE_SIZE) * msgs.TERN_PAGE_SIZE
+		outTo = rs.spanEnd - rs.spanStart
+	} else {
+		outTo = cellEnd - rs.spanStart
+	}
+	blockTo = cellEnd - blockAdjustment
+	return blockStart, blockFrom, blockTo, outFrom, outTo
 }
 
-func (b *readRsBlock) blockCount() uint32 {
-	return b.segments[b.numSegments-1].blockEnd - b.fetchStart
+func (rs *readRsState) blockToDownload(blockIx uint32) (blockStart uint32, blockFrom uint32, blockTo uint32) {
+	for stripeIx := range uint32(rs.span.Stripes) {
+		thisStart, thisFrom, thisTo, _, _ := rs.cell(stripeIx, blockIx)
+		if thisFrom == thisTo {
+			continue
+		}
+		blockStart = min(thisStart, blockStart)
+		blockFrom = min(thisFrom, blockFrom)
+		blockTo = max(blockTo, thisTo)
+	}
+	return blockStart, blockFrom, blockTo
 }
 
-func (f *FileReader) readRs(log *log.Logger, client *Client, bufPool *bufpool.BufPool, offset uint64, span *SpanWithBlockServices, p []byte) (int, error) {
+func (rs *readRsState) copyToOut(blockIx uint32, blockStart uint32, buf []byte, out []byte) {
+	for stripeIx := range uint32(rs.span.Stripes) {
+		_, blockFrom, blockTo, outFrom, outTo := rs.cell(stripeIx, uint32(blockIx))
+		if blockFrom == blockTo {
+			continue
+		}
+		to := out[outFrom:outTo]
+		from := buf[blockFrom-blockStart : blockTo-blockStart]
+		copy(to, from)
+	}
+}
+
+func (rs *readRsState) freeBlocks(bufPool *bufpool.BufPool) {
+	if rs.blocks != nil {
+		for i := range rs.blocks {
+			bufPool.Put(rs.blocks[i].AcquireBuf())
+		}
+	}
+	if rs.recoverBlocks != nil {
+		for i := range rs.recoverBlocks {
+			bufPool.Put(rs.recoverBlocks[i].AcquireBuf())
+		}
+	}
+}
+
+func printBlockBitmap(
+	numBlocks int,
+	bitmap uint32,
+) string {
+	s := make([]byte, numBlocks)
+	for i := range numBlocks {
+		if bitmap&(uint32(1)<<i) != 0 {
+			s[i] = '1'
+		} else {
+			s[i] = '0'
+		}
+	}
+	return string(s)
+}
+
+func readRsRecover(
+	log *log.Logger,
+	startFetch startFetch,
+	bufPool *bufpool.BufPool,
+	span *SpanWithBlockServices,
+	out []byte,
+	state *readRsState,
+) (int, error) {
+	// Sad case -- we didn't. We switch to the fetching mode whereby
+	// we try to fetch from the page cache first. We also make a somewhat
+	// pessimistic assumption: we assume that any recover block might
+	// need to cover any other block. This saves us from cases where we
+	// started covering from one block but then we actually need to cover
+	// more because another block is involved, too. So the first thing
+	// we compute is the from/to recover we need for any recover block we
+	// will start.
+	state.recoverBlocks = make([]BlockReader, state.span.Parity.Blocks())
+	state.recoverBlocksCh = make(chan *blockCompletion, state.span.Parity.DataBlocks())
+	var recoverStart, recoverEnd uint32
+	for blockIx := range uint32(state.span.Parity.DataBlocks()) {
+		blockStart, _, blockTo := state.blockToDownload(blockIx)
+		recoverStart = min(recoverStart, blockStart)
+		recoverEnd = max(blockTo, recoverEnd)
+	}
+	// Mark things that don't need recover fetching as complete already,
+	// and those that are failed or can't be read failed also. Again we
+	// cut corners a bit and if we need to recover anything at all we
+	// re-request everything from the block. If we don't need to request
+	// anything we just use the fetched data.
+	for blockIx := range uint32(state.span.Parity.DataBlocks()) {
+		if state.failed&(uint32(1)<<blockIx) != 0 || !span.BlockServices[state.span.Blocks[blockIx].BlockServiceIx].Flags.CanRead() {
+			state.recoverFailed |= uint32(1) << blockIx
+		} else {
+			if state.succeeded&(uint32(1)<<blockIx) != 0 {
+				blockStart, _, blockTo := state.blockToDownload(blockIx)
+				if blockStart <= recoverStart && recoverEnd <= blockTo {
+					state.recoverSucceeded |= uint32(1) << blockIx
+				}
+			}
+		}
+	}
+	// Mark the parity blocks we can't read as failed also.
+	for pBlockIx := range uint32(state.span.Parity.ParityBlocks()) {
+		blockIx := uint32(state.span.Parity.DataBlocks()) + pBlockIx
+		if !span.BlockServices[state.span.Blocks[blockIx].BlockServiceIx].Flags.CanRead() {
+			state.recoverFailed |= uint32(1) << blockIx
+		}
+	}
+	// OK, now we take the steps needed to download what we need to
+	// reconstruct stuff, stopping when we're hopeless.
+	for bits.OnesCount32(state.recoverSucceeded) < state.span.Parity.DataBlocks() && bits.OnesCount32(state.recoverFailed) <= state.span.Parity.ParityBlocks() {
+		// Find new recover blocks to start
+		for blockIx := uint32(0); blockIx < uint32(state.span.Parity.Blocks()) && bits.OnesCount32(state.fetching|state.recoverSucceeded|state.recoverFetching) < state.span.Parity.DataBlocks(); blockIx++ {
+			if (uint32(1)<<blockIx)&(state.fetching|state.recoverFetching|state.recoverSucceeded|state.recoverFailed) != 0 {
+				// We've already dealt or are dealing with this one
+				continue
+			}
+			// Start fetching.
+			block := &state.span.Blocks[blockIx]
+			reader := &state.recoverBlocks[blockIx]
+			reader.New(bufPool, recoverStart, recoverEnd-recoverStart, nil)
+			if err := startFetch.StartFetchBlock(log, &span.BlockServices[block.BlockServiceIx], block.BlockId, recoverStart, recoverEnd-recoverStart, reader, uint8(blockIx), state.recoverBlocksCh); err != nil {
+				state.recoverFailed |= uint32(1) << blockIx
+			} else {
+				state.recoverFetching |= uint32(1) << blockIx
+			}
+		}
+		// Wait for at least one update
+		select {
+		case resp := <-state.blocksCh:
+			blockIx := resp.Extra.(uint8)
+			state.fetching &= ^(uint32(1) << blockIx)
+			if resp.Error != nil {
+				state.failed |= uint32(1) << blockIx
+				state.recoverFailed |= uint32(1) << blockIx
+			} else {
+				reader := &state.blocks[blockIx]
+				buf := reader.Buf()
+				blockStart, _, blockTo := state.blockToDownload(uint32(blockIx))
+				// If the fetched subsumed the resuming, mark it as such
+				if blockStart <= recoverStart && recoverEnd <= blockTo {
+					state.recoverSucceeded |= uint32(1) << blockIx
+				}
+				state.copyToOut(uint32(blockIx), blockStart, buf.Bytes(), out)
+				state.succeeded |= uint32(1) << blockIx
+			}
+		case resp := <-state.recoverBlocksCh:
+			blockIx := resp.Extra.(uint8)
+			state.recoverFetching &= ^(uint32(1) << blockIx)
+			if resp.Error != nil {
+				state.recoverFailed |= uint32(1) << blockIx
+			} else {
+				state.recoverSucceeded |= uint32(1) << blockIx
+			}
+		}
+	}
+	// We've made it, do the reconstruction.
+	if bits.OnesCount32(state.recoverSucceeded) == state.span.Parity.DataBlocks() {
+		// Accumulate successful blocks
+		haveBlocks := make([][]byte, 0, state.span.Parity.DataBlocks())
+		for blockIx := range uint32(state.span.Parity.Blocks()) {
+			if state.recoverSucceeded&(uint32(1)<<blockIx) != 0 {
+				if buf := state.recoverBlocks[blockIx].Buf(); buf != nil { // it was fetched during recovery
+					haveBlocks = append(haveBlocks, buf.Bytes())
+				} else { // it was fetched during normal reading
+					blockStart, _, _ := state.blockToDownload(blockIx)
+					buf := state.blocks[blockIx].Buf()
+					haveBlocks = append(haveBlocks, buf.Bytes()[recoverStart-blockStart:recoverEnd-blockStart])
+				}
+			}
+		}
+		// Buffer to store the RS result (note that the fetching buf, if present,
+		// might be smaller).
+		recoverBuf := bufPool.Get(int(recoverEnd - recoverStart))
+		defer bufPool.Put(recoverBuf)
+		// Now do the recovery + copy for every failed block
+		rs := rs.Get(state.span.Parity)
+		for blockIx := range uint32(state.span.Parity.DataBlocks()) {
+			if state.failed&(uint32(1)<<blockIx) != 0 {
+				rs.RecoverInto(state.recoverSucceeded, haveBlocks, uint8(blockIx), recoverBuf.Bytes())
+				state.copyToOut(uint32(blockIx), recoverStart, recoverBuf.Bytes(), out)
+			}
+		}
+		return int(state.spanEnd - state.spanStart), nil
+	}
+	// We very much have not made it.
+	return 0, fmt.Errorf("could not recover span data succeeded=%s fetching=%s failed=%v recoverSucceeded=%v recoverFetching=%v recoverFailed=%v", printBlockBitmap(state.span.Parity.DataBlocks(), state.succeeded), printBlockBitmap(state.span.Parity.DataBlocks(), state.fetching), printBlockBitmap(state.span.Parity.DataBlocks(), state.failed), printBlockBitmap(state.span.Parity.Blocks(), state.recoverSucceeded), printBlockBitmap(state.span.Parity.Blocks(), state.recoverFetching), printBlockBitmap(state.span.Parity.Blocks(), state.recoverFailed))
+}
+
+type startFetch interface {
+	StartFetchBlock(log *log.Logger, blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32, w io.ReaderFrom, extra any, completion chan *blockCompletion) error
+}
+
+// The goal here is to read as little as possible (i.e. only the pages
+// involved), which is a common use case for flash storage. We also assume
+// that while the currently requested region is _not_ in the page cache,
+// other regions might, so we try fetching there first if we need to
+// reconstruct.
+//
+// `startFetch` is stubbed out so that we can mock it and test this
+// pretty tricky function in isolation.
+func readRs(
+	log *log.Logger,
+	startFetch startFetch,
+	bufPool *bufpool.BufPool,
+	offset uint32, // offset in the _span_.
+	span *SpanWithBlockServices,
+	out []byte,
+) (int, error) {
 	body := span.Span.Body.(*msgs.FetchedBlocksSpan)
 	// TODO implement trailing zeros, this functionality is currently unused
 	spanDataSize := body.CellSize * uint32(body.Stripes) * uint32(body.Parity.DataBlocks())
 	if spanDataSize < span.Span.Header.Size {
-		panic("unimplemented trailing zeros fetch")
+		panic(fmt.Errorf("unimplemented trailing zeros fetch spanSize=%v spanDataSize=%v", span.Span.Header.Size, spanDataSize))
 	}
-	// fill in segments
-	var blocks [16]readRsBlock
-	// The indices of the region inside the span that we're interested in.
-	// Note that we rely on the data to be larger than the actual size (see above)
-	spanStart := uint32(offset - span.Span.Header.ByteOffset)
-	spanEnd := spanStart + uint32(min(uint64(len(p)), uint64(span.Span.Header.Size-spanStart)))
-	{
-		// Go cell-by-cell. We start from the cell that contains spanStart,
-		// and end up in the cell that contains spanEnd-1.
-		stripeSize := body.CellSize * uint32(body.Parity.DataBlocks())
-		dataDiv := divide32.NewDivisor(uint32(body.Parity.DataBlocks()))
-		for cellIx := spanStart / body.CellSize; cellIx < (spanEnd+body.CellSize-1)/body.CellSize; cellIx++ {
-			stripeIx := dataDiv.Div(cellIx)
-			blockIx := dataDiv.Mod(cellIx)
-			segments := &blocks[blockIx]
-			segment := &segments.segments[segments.numSegments]
-			cellStart := cellIx * body.CellSize
-			blockAdjustment := stripeIx*stripeSize + blockIx*body.CellSize - stripeIx*body.CellSize
-			if cellStart <= spanStart { // first one, round down to page, <= is important, we want to set fetchStart below even if spanStart is a multiple of cell size
-				cellStart = (spanStart / msgs.TERN_PAGE_SIZE) * msgs.TERN_PAGE_SIZE
-				segments.fetchStart = cellStart - blockAdjustment
-				segment.blockStart = spanStart - blockAdjustment
-				segment.outStart = 0
-			} else {
-				segment.blockStart = cellStart - blockAdjustment
-				segment.outStart = cellStart - spanStart
-			}
-			cellEnd := (cellIx + 1) * body.CellSize
-			if cellEnd > spanEnd { // last one, round up to page
-				cellEnd = ((spanEnd + msgs.TERN_PAGE_SIZE - 1) / msgs.TERN_PAGE_SIZE) * msgs.TERN_PAGE_SIZE
-				segment.outEnd = spanEnd - spanStart
-			} else {
-				segment.outEnd = cellEnd - spanStart
-			}
-			segment.blockEnd = cellEnd - blockAdjustment
-			segments.numSegments++
+	state := readRsState{
+		span:     body,
+		blocksCh: make(chan *blockCompletion, body.Parity.DataBlocks()),
+		blocks:   make([]BlockReader, body.Parity.DataBlocks()),
+	}
+	state.spanStart = offset
+	state.spanEnd = state.spanStart + uint32(min(uint64(len(out)), uint64(span.Span.Header.Size-state.spanStart)))
+	// Cleanup all buffers when done
+	defer func() {
+		fetching := bits.OnesCount32(state.fetching)
+		recoverFetching := bits.OnesCount32(state.recoverFetching)
+		if fetching > 0 || recoverFetching > 0 {
+			go func() {
+				// Need to make sure that all requests to be finished
+				// before we can free the buffers. No need to block
+				// the exit though.
+				for fetching > 0 || recoverFetching > 0 {
+					select {
+					case <-state.blocksCh:
+						fetching--
+					case <-state.recoverBlocksCh:
+						recoverFetching--
+					}
+
+				}
+				state.freeBlocks(bufPool)
+			}()
+		} else {
+			state.freeBlocks(bufPool)
 		}
-	}
-	// start segments
-	blocksFetching := 0
-	var err error
-	ch := make(chan *blockCompletion, body.Parity.DataBlocks())
-	for i := range body.Parity.DataBlocks() {
-		segments := &blocks[i]
-		if segments.numSegments == 0 {
+	}()
+	for blockIx := range uint32(body.Parity.DataBlocks()) {
+		start, from, to := state.blockToDownload(blockIx)
+		if from == to {
+			state.succeeded |= uint32(1) << blockIx
 			continue
 		}
-		block := &body.Blocks[i]
-		segments.reader.New(bufPool, segments.fetchStart, segments.blockCount(), nil)
-		if err = client.StartFetchBlock(log, &span.BlockServices[block.BlockServiceIx], block.BlockId, segments.fetchStart, segments.blockCount(), &segments.reader, segments, ch); err != nil {
-			break
-		}
-		blocksFetching++
-	}
-	copied := 0
-	if err != nil {
-		goto Err
-	}
-	// fetch results
-	for blocksFetching > 0 {
-		resp := <-ch
-		blocksFetching--
-		segments := resp.Extra.(*readRsBlock)
-		if resp.Error != nil {
-			bufPool.Put(segments.reader.AcquireBuf())
-			err = resp.Error
-			goto Err
+		count := to - start
+		state.blocks[blockIx].New(bufPool, start, count, nil)
+		block := state.span.Blocks[blockIx]
+		blockService := &span.BlockServices[block.BlockServiceIx]
+		if !blockService.Flags.CanRead() {
+			state.failed |= uint32(1) << blockIx
+		} else if err := startFetch.StartFetchBlock(log, &span.BlockServices[block.BlockServiceIx], block.BlockId, start, count, &state.blocks[blockIx], uint8(blockIx), state.blocksCh); err != nil {
+			state.failed |= uint32(1) << blockIx
 		} else {
-			buf := segments.reader.AcquireBuf()
-			for i := 0; i < segments.numSegments; i++ {
-				segment := &segments.segments[i]
-				to := p[segment.outStart:segment.outEnd]
-				from := buf.Bytes()[segment.blockStart-segments.fetchStart : segment.blockEnd-segments.fetchStart]
-				copied += copy(to, from)
-			}
-			bufPool.Put(buf)
+			state.fetching |= uint32(1) << blockIx
 		}
 	}
-	if copied != int(spanEnd)-int(spanStart) {
-		panic("impossible")
+	// Proceed as long as everyone's happy and as long as we're not done.
+	// As soon as something fails, immediately bail so that we'll start
+	// downloading more stuff.
+	for bits.OnesCount32(state.succeeded) < body.Parity.DataBlocks() && bits.OnesCount32(state.failed) == 0 {
+		resp := <-state.blocksCh
+		blockIx := resp.Extra.(uint8)
+		state.fetching &= ^(uint32(1) << blockIx)
+		if resp.Error != nil {
+			state.failed |= uint32(1) << blockIx
+		} else {
+			reader := &state.blocks[blockIx]
+			buf := reader.Buf()
+			blockStart, _, _ := state.blockToDownload(uint32(blockIx))
+			state.copyToOut(uint32(blockIx), blockStart, buf.Bytes(), out)
+			state.succeeded |= uint32(1) << blockIx
+		}
 	}
-	return copied, nil
-Err:
-	if err == nil {
-		panic("impossible")
+	// Happy case: we got them all on the first try
+	if bits.OnesCount32(state.succeeded) == body.Parity.DataBlocks() {
+		return int(state.spanEnd - state.spanStart), nil
 	}
-	log.Info("Could not read file=%v offset=%v len=%v through stripes, falling back to entire span: %v", f.fileId, offset, len(p), err)
-	for range blocksFetching {
-		resp := <-ch
-		segments := resp.Extra.(*readRsBlock)
-		bufPool.Put(segments.reader.AcquireBuf())
-	}
-	return 0, err
+	// Go into recovery
+	return readRsRecover(log, startFetch, bufPool, span, out, &state)
 }
 
-// Note: this function does _not_ seek, and is thread-safe, unlike Seek, which is not.
-func (f *FileReader) Read(log *log.Logger, client *Client, bufPool *bufpool.BufPool, offset uint64, p []byte) (int, error) {
+// Thread safe (but concurrent access might lead to duplicated fetches).
+func (f *FileReader) Read(
+	log *log.Logger,
+	client *Client,
+	bufPool *bufpool.BufPool,
+	offset uint64,
+	dest []byte,
+) (int, error) {
 	span := f.findSpan(offset)
 	if span == nil {
 		return 0, io.EOF
 	}
-	if len(p) == 0 {
+	if len(dest) == 0 {
 		return 0, nil
 	}
 	if span.Span.Header.StorageClass == msgs.INLINE_STORAGE {
@@ -868,19 +1096,13 @@ func (f *FileReader) Read(log *log.Logger, client *Client, bufPool *bufpool.BufP
 		if span.Span.Header.Size != uint32(len(body.Body)) {
 			panic("unimplemented trailing zeros")
 		}
-		return copy(p, body.Body[offset-span.Span.Header.ByteOffset:]), nil
+		return copy(dest, body.Body[offset-span.Span.Header.ByteOffset:]), nil
 	}
 	body := span.Span.Body.(*msgs.FetchedBlocksSpan)
 	if body.Parity.DataBlocks() == 1 { // mirrored
-		return f.readMirrored(log, client, bufPool, offset, span, p)
+		return f.readMirrored(log, client, bufPool, offset, span, dest)
 	} else { // RS
-		// if this doesn't work, we fall back to reading the whole span,
-		// we should be smarter and only reconstruct what's needed instead
-		n, err := f.readRs(log, client, bufPool, offset, span, p)
-		if err != nil {
-			return f.readFallback(log, client, bufPool, offset, span, p)
-		}
-		return n, err
+		return readRs(log, client, bufPool, uint32(offset-span.Span.Header.ByteOffset), span, dest)
 	}
 }
 

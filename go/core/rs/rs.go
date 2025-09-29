@@ -85,7 +85,7 @@ func (r *Rs) ComputeParityInto(data [][]byte, parity [][]byte) {
 }
 
 func (r *Rs) Recover(
-	haveBlocks []uint8,
+	haveBlocks uint32,
 	blocks [][]byte,
 	wantBlock uint8,
 ) []byte {
@@ -95,7 +95,7 @@ func (r *Rs) Recover(
 }
 
 func (r *Rs) RecoverInto(
-	haveBlocks []uint8,
+	haveBlocks uint32, // bitmap
 	blocks [][]byte,
 	wantBlock uint8,
 	block []byte,
@@ -104,27 +104,20 @@ func (r *Rs) RecoverInto(
 	if len(block) != blockSize {
 		panic(fmt.Errorf("differing block size, expected %v, got %v", blockSize, len(block)))
 	}
-	for i, haveBlock := range haveBlocks {
-		if int(haveBlock) >= r.Parity().Blocks() {
-			panic(fmt.Errorf("haveBlocks[%d]=%d >= %d", i, haveBlock, r.Parity().ParityBlocks()))
-		}
-		if haveBlock == wantBlock {
-			panic(fmt.Errorf("haveBlocks[%d]=%d == want_block=%d", i, haveBlock, wantBlock))
-		}
-		if i == 0 {
+	for blockIx := range uint8(32) {
+		if haveBlocks&(uint32(1)<<blockIx) == 0 {
 			continue
 		}
-		if haveBlock <= haveBlocks[i-1] {
-			panic(fmt.Errorf("haveBlocks[%d]=%d <= haveBlocks[%d-1]=%d", i, haveBlock, i, haveBlocks[i-1]))
+		if int(blockIx) >= r.Parity().Blocks() {
+			panic(fmt.Errorf("blockIx=%d >= %d", blockIx, r.Parity().Blocks()))
+		}
+		if blockIx == wantBlock {
+			panic(fmt.Errorf("blockIx=%d == wantBlock=%d", blockIx, wantBlock))
 		}
 	}
 	blocksPtrs := (**C.uchar)(C.malloc(C.size_t(uintptr(r.Parity().DataBlocks()) * unsafe.Sizeof((*C.uchar)(nil)))))
 	for i := range blocks {
 		C.set_ptr(blocksPtrs, C.ulong(i), (*C.uchar)(&blocks[i][0]))
 	}
-	var haveBlocksBit C.uint
-	for _, haveBlock := range haveBlocks {
-		haveBlocksBit |= C.uint(1) << haveBlock
-	}
-	C.rs_recover(r.r, C.ulong(blockSize), haveBlocksBit, blocksPtrs, C.uint(1)<<wantBlock, (*C.uchar)(&block[0]))
+	C.rs_recover(r.r, C.ulong(blockSize), C.uint(haveBlocks), blocksPtrs, C.uint(1)<<wantBlock, (*C.uchar)(&block[0]))
 }
