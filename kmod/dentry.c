@@ -29,7 +29,7 @@ static inline int ternfs_dir_needs_reval(struct ternfs_inode* dir, struct dentry
             if (ternfs_shard_lookup(
                     dir->inode.i_sb->s_fs_info, dir->inode.i_ino,
                     dentry->d_name.name, dentry->d_name.len,
-                    &ino, &creation_time) < 0))
+                    &ino, &creation_time) < 0)
             {
                 ret = 0;
             } else {
