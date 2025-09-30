@@ -14,6 +14,45 @@
 
 TERNFS_DEFINE_COUNTER(ternfs_stat_dir_revalidations);
 
+static inline int ternfs_dir_needs_reval(struct ternfs_inode* dir, struct dentry* dentry) {
+    // 0 => invalid
+    // -ECHILD => revalidate parent dir
+    // 1 => valid
+    u64 dentry_dir_mtime = dentry->d_time;
+    int ret;
+    u64 t = get_jiffies_64();
+    if (dentry_dir_mtime != dir->mtime) {
+        if (dentry->d_inode == NULL || !S_ISDIR(dentry->d_inode->i_mode)) { ret = 0; }
+        else {
+            u64 ino, creation_time;
+
+            if (ternfs_shard_lookup(
+                    dir->inode.i_sb->s_fs_info, dir->inode.i_ino,
+                    dentry->d_name.name, dentry->d_name.len,
+                    &ino, &creation_time) < 0))
+            {
+                ret = 0;
+            } else {
+                if (dentry->d_inode->i_ino != ino) {
+                    ret = 0;
+                } else {
+                    dentry->d_time = dir->mtime;
+                    ret = 1;
+                }
+            }
+        }
+    }
+    else if (t >= dir->dir.mtime_expiry) { ret = -ECHILD; }
+    else { ret = 1; }
+
+    ternfs_debug(
+        "t=%llu dir=%p dir_id=0x%016lx dir_mtime=%llu dir_mtime_expiry=%llu dentry=%pd dentry_dir_mtime=%llu -> ret=%d",
+        t, dir, dir->inode.i_ino, dir->mtime, dir->dir.mtime_expiry, dentry, dentry_dir_mtime, ret
+    );
+
+    return ret;
+}
+
 static int ternfs_d_revalidate(struct dentry* dentry, unsigned int flags) {
     struct dentry* parent;
     struct inode* dir;
