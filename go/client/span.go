@@ -97,10 +97,7 @@ func ensureLen(buf *[]byte, l int) {
 		*buf = (*buf)[:cap(*buf)]
 		*buf = append(*buf, make([]byte, l-len(*buf))...)
 	}
-	// memset? what's that?
-	for i := lenBefore; i < len(*buf); i++ {
-		(*buf)[i] = 0
-	}
+	clear((*buf)[lenBefore:])
 }
 
 type SpanParameters struct {
