@@ -846,9 +846,100 @@ func printBlockBitmap(
 	return string(s)
 }
 
+type PageCache interface {
+	// Return 0 if things could not be found in the cache. Must read multiples of
+	// TERN_PAGE_SIZE, or not at all.
+	ReadCache(offset uint64, dest []byte) (count int)
+	// WriteCache(offset uint64, dest []byte)
+}
+
+func readRsStartFetchBlockWithCache(
+	log *log.Logger,
+	bufPool *bufpool.BufPool,
+	startFetch startFetch,
+	pageCache PageCache,
+	span *SpanWithBlockServices,
+	state *readRsState,
+	blockIx uint8,
+	recoverStart uint32,
+	recoverEnd uint32,
+) error {
+	reader := &state.recoverBlocks[blockIx]
+	reader.New(bufPool, recoverStart, recoverEnd-recoverStart, nil)
+	offset := recoverStart
+	count := recoverEnd - recoverStart
+	// If we have the page cache, try to retrieve data blocks from it. We read
+	// from the page cache until we can, left to right, and hand off to block
+	// services from when we can't onwards. We trust the page cache to not return
+	// bad results (i.e. we don't, and can't, CRC its pages).
+	block := &state.span.Blocks[blockIx]
+	if pageCache == nil || blockIx >= uint8(state.span.Parity.DataBlocks()) {
+		return startFetch.StartFetchBlock(log, &span.BlockServices[block.BlockServiceIx], block.BlockId, offset, count, reader, uint8(blockIx), state.recoverBlocksCh)
+	}
+	go func() {
+		// Go cell-by-cell, fetching from the page cache as much as we can
+		readFromPageCache := uint32(0) // without CRCs
+		stripeSize := uint32(state.span.Parity.DataBlocks()) * state.span.CellSize
+		readerBuf := reader.PagesWithCrcBuffer()
+		for stripeIx := uint32(0); stripeIx < uint32(state.span.Stripes); stripeIx++ {
+			blockCellStart := stripeIx * state.span.CellSize
+			blockCellEnd := blockCellStart + state.span.CellSize
+			if blockCellEnd <= offset {
+				continue
+			}
+			if blockCellStart >= offset+count {
+				break
+			}
+			fileStart := span.Span.Header.ByteOffset + uint64(stripeSize*stripeIx) + uint64(uint32(blockIx)*state.span.CellSize)
+			pageCacheReadCount := state.span.CellSize
+			if blockCellStart < offset {
+				fileStart += uint64(offset - blockCellStart)
+				pageCacheReadCount -= offset - blockCellStart
+			}
+			if blockCellEnd > offset+count {
+				pageCacheReadCount -= blockCellEnd - (offset + count)
+			}
+			// Spilling after end of file, round down to page. I think technically we could probably
+			// round _up_ to page, but let's be safe.
+			if fileStart+uint64(pageCacheReadCount) > span.Span.Header.ByteOffset+uint64(span.Span.Header.Size) {
+				fileEnd := ((span.Span.Header.ByteOffset + uint64(span.Span.Header.Size)) / uint64(msgs.TERN_PAGE_SIZE)) * uint64(msgs.TERN_PAGE_SIZE)
+				if fileEnd <= fileStart {
+					break
+				}
+				pageCacheReadCount = uint32(fileEnd - fileStart)
+			}
+			r := pageCache.ReadCache(fileStart, readerBuf[readFromPageCache:readFromPageCache+pageCacheReadCount])
+			// Round down to page, Linux's page cache should never return half-pages I think, but
+			// let's be safe.
+			r = (r / int(msgs.TERN_PAGE_SIZE)) * int(msgs.TERN_PAGE_SIZE)
+			readFromPageCache += uint32(r)
+			if r < int(pageCacheReadCount) {
+				break
+			}
+		}
+		reader.Advance(readFromPageCache)
+		if readFromPageCache == count { // we got everything from page cache
+			_, err := reader.ReadFrom(bytes.NewReader([]byte{})) // realign
+			state.recoverBlocksCh <- &blockCompletion{
+				Error: err,
+				Extra: uint8(blockIx),
+			}
+		} else {
+			if err := startFetch.StartFetchBlock(log, &span.BlockServices[block.BlockServiceIx], block.BlockId, offset+readFromPageCache, count-readFromPageCache, reader, uint8(blockIx), state.recoverBlocksCh); err != nil {
+				state.recoverBlocksCh <- &blockCompletion{
+					Error: err,
+					Extra: uint8(blockIx),
+				}
+			}
+		}
+	}()
+	return nil
+}
+
 func readRsRecover(
 	log *log.Logger,
 	startFetch startFetch,
+	pageCache PageCache,
 	bufPool *bufpool.BufPool,
 	span *SpanWithBlockServices,
 	out []byte,
@@ -903,11 +994,8 @@ func readRsRecover(
 				// We've already dealt or are dealing with this one
 				continue
 			}
-			// Start fetching.
-			block := &state.span.Blocks[blockIx]
-			reader := &state.recoverBlocks[blockIx]
-			reader.New(bufPool, recoverStart, recoverEnd-recoverStart, nil)
-			if err := startFetch.StartFetchBlock(log, &span.BlockServices[block.BlockServiceIx], block.BlockId, recoverStart, recoverEnd-recoverStart, reader, uint8(blockIx), state.recoverBlocksCh); err != nil {
+			// Start fetching, with page cache.
+			if err := readRsStartFetchBlockWithCache(log, bufPool, startFetch, pageCache, span, state, uint8(blockIx), recoverStart, recoverEnd); err != nil {
 				state.recoverFailed |= uint32(1) << blockIx
 			} else {
 				state.recoverFetching |= uint32(1) << blockIx
@@ -990,6 +1078,7 @@ type startFetch interface {
 func readRs(
 	log *log.Logger,
 	startFetch startFetch,
+	pageCache PageCache,
 	bufPool *bufpool.BufPool,
 	offset uint32, // offset in the _span_.
 	span *SpanWithBlockServices,
@@ -1072,7 +1161,7 @@ func readRs(
 		return int(state.spanEnd - state.spanStart), nil
 	}
 	// Go into recovery
-	return readRsRecover(log, startFetch, bufPool, span, out, &state)
+	return readRsRecover(log, startFetch, pageCache, bufPool, span, out, &state)
 }
 
 // Thread safe (but concurrent access might lead to duplicated fetches).
@@ -1102,7 +1191,7 @@ func (f *FileReader) Read(
 	if body.Parity.DataBlocks() == 1 { // mirrored
 		return f.readMirrored(log, client, bufPool, offset, span, dest)
 	} else { // RS
-		return readRs(log, client, bufPool, uint32(offset-span.Span.Header.ByteOffset), span, dest)
+		return readRs(log, client, nil, bufPool, uint32(offset-span.Span.Header.ByteOffset), span, dest)
 	}
 }
 

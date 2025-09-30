@@ -43,6 +43,8 @@ func handleRecover(
 
 type blockFetcher struct {
 	errorsChan   chan *errorWithStack
+	spanOffset   uint64
+	contents     []byte
 	dataBlocks   [][]byte
 	parityBlocks [][]byte
 	bad          uint32
@@ -89,29 +91,14 @@ func (bf *blockFetcher) StartFetchBlock(log *log.Logger, blockService *msgs.Bloc
 	return nil
 }
 
-func (bf *blockFetcher) startFetchBlockAlways(log *log.Logger, blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32, w io.ReaderFrom) {
-	blockIx := int(blockId)
-	if offset%msgs.TERN_PAGE_SIZE != 0 {
-		panic(fmt.Errorf("bad offset"))
+func (bf *blockFetcher) ReadCache(offset uint64, dest []byte) (count int) {
+	if offset < bf.spanOffset {
+		panic(fmt.Errorf("bad offset=%v < bf.spanOffset=%v", offset, bf.spanOffset))
 	}
-	if count%msgs.TERN_PAGE_SIZE != 0 {
-		panic(fmt.Errorf("bad page size"))
+	if offset+uint64(len(dest)) > bf.spanOffset+uint64(len(bf.contents)) {
+		panic(fmt.Errorf("bad offset=%v + len(dest)=%v > bf.spanOffset=%v + len(bf.contents)=%v", offset, len(dest), bf.spanOffset, len(bf.contents)))
 	}
-	blockLength := uint32(len(bf.dataBlocks[0]))
-	if offset+count > blockLength {
-		panic(fmt.Errorf("out of bounds read %v+%v > %v", offset, count, blockLength))
-	}
-	var block []byte
-	if blockIx < len(bf.dataBlocks) {
-		block = bf.dataBlocks[blockIx]
-	} else {
-		block = bf.parityBlocks[blockIx-len(bf.dataBlocks)]
-	}
-	actualOffset := (offset / msgs.TERN_PAGE_SIZE) * msgs.TERN_PAGE_WITH_CRC_SIZE
-	actualCount := (count / msgs.TERN_PAGE_SIZE) * msgs.TERN_PAGE_WITH_CRC_SIZE
-	if n, err := w.ReadFrom(bytes.NewReader(block[actualOffset : actualOffset+actualCount])); err != nil || n != int64(actualCount) {
-		panic(fmt.Errorf("bad read"))
-	}
+	return copy(dest, bf.contents[offset-bf.spanOffset:])
 }
 
 func insertPageCrcs(data []byte) []byte {
@@ -126,7 +113,19 @@ func insertPageCrcs(data []byte) []byte {
 	return data
 }
 
-func setupSpan(terminateChan chan *errorWithStack, parity parity.Parity, stripes uint8, contents []byte) (*SpanWithBlockServices, *blockFetcher) {
+const (
+	NO_PAGE_CACHE int = iota
+	PAGE_CACHE_ALWAYS_SUCCEEDS
+	PAGE_CACHE_SOMETIMES_SUCCEEDS
+)
+
+func setupSpan(
+	terminateChan chan *errorWithStack,
+	parity parity.Parity,
+	stripes uint8,
+	spanOffset uint64,
+	contents []byte,
+) (*SpanWithBlockServices, *blockFetcher) {
 	if parity.DataBlocks() == 0 {
 		panic(fmt.Errorf("not enough data blocks"))
 	}
@@ -172,8 +171,9 @@ func setupSpan(terminateChan chan *errorWithStack, parity parity.Parity, stripes
 	}
 	span := &msgs.FetchedSpan{
 		Header: msgs.FetchedSpanHeader{
-			Size: uint32(len(contents)),
-			Crc:  msgs.Crc(crc32c.Sum(0, contents)),
+			Size:       uint32(len(contents)),
+			Crc:        msgs.Crc(crc32c.Sum(0, contents)),
+			ByteOffset: spanOffset,
 		},
 		Body: &msgs.FetchedBlocksSpan{
 			Parity:   parity,
@@ -183,18 +183,38 @@ func setupSpan(terminateChan chan *errorWithStack, parity parity.Parity, stripes
 		},
 	}
 	fetcher := &blockFetcher{
+		contents:     contents,
 		dataBlocks:   dataBlocks,
 		parityBlocks: parityBlocks,
+		spanOffset:   spanOffset,
 		errorsChan:   terminateChan,
 		info:         fmt.Sprintf("block fetcher for parity=%v stripes=%v length=%v", parity, stripes, len(contents)),
 	}
 	return &SpanWithBlockServices{BlockServices: []msgs.BlockService{{}}, Span: span}, fetcher
 }
 
+type flakyPageCache struct {
+	r wyhash.Rand
+	c PageCache
+}
+
+func (fpc *flakyPageCache) ReadCache(offset uint64, dest []byte) (count int) {
+	x := fpc.r.Float64()
+	if x < 0.3 {
+		return 0
+	}
+	if x < 0.6 {
+		dest = dest[:fpc.r.Uint64()%uint64(len(dest))]
+	}
+	return fpc.c.ReadCache(offset, dest)
+}
+
+
 func runRsReadTest(
 	log *log.Logger,
 	bufPool *bufpool.BufPool,
 	errorsChan chan *errorWithStack,
+	pageCacheMode int,
 	parity parity.Parity,
 	stripes uint8,
 	length int, // length of content
@@ -206,10 +226,19 @@ func runRsReadTest(
 	defer func() {
 		handleRecover(errorsChan, recover(), fmt.Sprintf("test runner for parity=%v stripes=%v length=%v lastReadFrom=%v lastReadTo=%v lastBad=%s", parity, stripes, length, lastReadFrom, lastReadTo, printBlockBitmap(parity.Blocks(), lastBad)))
 	}()
-	r := wyhash.New(uint64(length) | uint64(stripes)<<32 | uint64(parity)<<32 + 8)
+	seed := uint64(length) | uint64(stripes)<<32 | uint64(parity)<<(32 + 8)
+	r := wyhash.New(seed)
 	contents := make([]byte, length)
 	r.Read(contents)
-	span, fetch := setupSpan(errorsChan, parity, stripes, contents)
+	span, fetch := setupSpan(errorsChan, parity, stripes, r.Uint64()%(100<<30), contents)
+	var pageCache PageCache
+	switch pageCacheMode {
+	case NO_PAGE_CACHE:
+	case PAGE_CACHE_ALWAYS_SUCCEEDS:
+		pageCache = fetch
+	case PAGE_CACHE_SOMETIMES_SUCCEEDS:
+		pageCache = &flakyPageCache{r: *wyhash.New(seed), c: fetch}
+	}
 	check := func(from uint32, to uint32) {
 		lastReadFrom = from
 		lastReadTo = to
@@ -222,7 +251,7 @@ func runRsReadTest(
 		}
 		lastBad = fetch.bad
 		contentsOut := make([]byte, to-from)
-		read, err := readRs(log, fetch, bufPool, from, span, contentsOut)
+		read, err := readRs(log, fetch, pageCache, bufPool, from, span, contentsOut)
 		if err != nil {
 			panic(err)
 		}
@@ -279,7 +308,7 @@ func runRsSpanTest(
 	r := wyhash.New(uint64(length) | uint64(stripes)<<32 | uint64(parity)<<32 + 8)
 	contents := make([]byte, length)
 	r.Read(contents)
-	span, fetch := setupSpan(errorsChan, parity, stripes, contents)
+	span, fetch := setupSpan(errorsChan, parity, stripes, 0, contents)
 	for range iterations {
 		{
 			numBad := r.Uint32() % uint32(parity.ParityBlocks())
@@ -380,7 +409,27 @@ func runRsTests(
 }
 
 func TestRsReader(t *testing.T) {
-	runRsTests(runRsReadTest)
+	runRsTests(
+		func(log *log.Logger, bufPool *bufpool.BufPool, errorsChan chan *errorWithStack, parity parity.Parity, stripes uint8, length, iterations int) {
+			runRsReadTest(log, bufPool, errorsChan, NO_PAGE_CACHE, parity, stripes, length, iterations)
+		},
+	)
+}
+
+func TestRsReaderWithPageCache(t *testing.T) {
+	runRsTests(
+		func(log *log.Logger, bufPool *bufpool.BufPool, errorsChan chan *errorWithStack, parity parity.Parity, stripes uint8, length, iterations int) {
+			runRsReadTest(log, bufPool, errorsChan, PAGE_CACHE_ALWAYS_SUCCEEDS, parity, stripes, length, iterations)
+		},
+	)
+}
+
+func TestRsReaderWithRandomPageCache(t *testing.T) {
+	runRsTests(
+		func(log *log.Logger, bufPool *bufpool.BufPool, errorsChan chan *errorWithStack, parity parity.Parity, stripes uint8, length, iterations int) {
+			runRsReadTest(log, bufPool, errorsChan, PAGE_CACHE_SOMETIMES_SUCCEEDS, parity, stripes, length, iterations)
+		},
+	)
 }
 
 func TestRsSpan(t *testing.T) {

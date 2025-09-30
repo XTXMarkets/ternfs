@@ -1460,14 +1460,16 @@ func (c *Client) FetchBlock(log *log.Logger, timeouts *timing.ReqTimeouts, block
 }
 
 type CrcReader interface {
-	Consume(crc msgs.Crc)
+	// Does something with the crc for the page starting
+	// at this offset.
+	Consume(offset uint32, crc msgs.Crc)
 }
 
 type CrcAccumulator struct {
 	msgs.Crc
 }
 
-func (c *CrcAccumulator) Consume(crc msgs.Crc) {
+func (c *CrcAccumulator) Consume(offset uint32, crc msgs.Crc) {
 	c.Crc = msgs.Crc(crc32c.Append(uint32(c.Crc), uint32(crc), int(msgs.TERN_PAGE_SIZE)))
 }
 
@@ -1478,7 +1480,7 @@ type CellsCrcs struct {
 }
 
 func (crcs *CellsCrcs) New(cellSize uint32) {
-	if cellSize % msgs.TERN_PAGE_SIZE != 0{
+	if cellSize%msgs.TERN_PAGE_SIZE != 0 {
 		panic(fmt.Errorf("cellSize=%v is not a page size multiple", cellSize))
 	}
 	clear(crcs.crcs[:])
@@ -1486,7 +1488,7 @@ func (crcs *CellsCrcs) New(cellSize uint32) {
 	crcs.positionToCell = divide32.NewDivisor(cellSize)
 }
 
-func (crcs *CellsCrcs) Consume(crc msgs.Crc) {
+func (crcs *CellsCrcs) Consume(offset uint32, crc msgs.Crc) {
 	cellIx := crcs.positionToCell.Div(crcs.position)
 	crcs.position += msgs.TERN_PAGE_SIZE
 	crcs.crcs[cellIx] = msgs.Crc(crc32c.Append(uint32(crcs.crcs[cellIx]), uint32(crc), int(msgs.TERN_PAGE_SIZE)))
@@ -1498,6 +1500,7 @@ func (crcs *CellsCrcs) Crcs() *[15]msgs.Crc {
 
 type BlockReader struct {
 	buf       *bufpool.Buf
+	offset    uint32
 	crcReader CrcReader
 }
 
@@ -1518,30 +1521,53 @@ func (br *BlockReader) New(
 	br.crcReader = crcReader
 }
 
-func (br *BlockReader) ReadFrom(r io.Reader) (int64, error) {
-	buf := br.buf.Bytes()
-	n, err := io.ReadFull(r, buf)
-	if err != nil {
-		return int64(n), err
+func (br *BlockReader) PagesWithCrcBuffer() []byte {
+	return br.buf.Bytes()[br.offset:]
+}
+
+// This lets you assert that you've written already checked
+// pages for a total of `count` bytes (_excluding_ CRCs).
+func (br *BlockReader) Advance(count uint32) {
+	if count%msgs.TERN_PAGE_SIZE != 0 {
+		panic(fmt.Errorf("count not a multiple of msgs.TERN_PAGE_SIZE"))
 	}
+	if ((br.offset+count)/msgs.TERN_PAGE_SIZE)*msgs.TERN_PAGE_WITH_CRC_SIZE > uint32(len(br.buf.Bytes())) {
+		panic(fmt.Errorf("overlong count"))
+	}
+	br.offset += count
+}
+
+func (br *BlockReader) ReadFrom(r io.Reader) (n int64, err error) {
+	// Remove CRC space for pages we've already read
+	origLen := len(br.buf.Bytes())
+	*br.buf.BytesPtr() = br.buf.Bytes()[:origLen-int(br.offset/msgs.TERN_PAGE_SIZE)*int(msgs.TERN_PAGE_WITH_CRC_SIZE-msgs.TERN_PAGE_SIZE)]
+	{
+		buf := br.buf.Bytes()[br.offset:]
+		ni, err := io.ReadFull(r, buf)
+		n = int64(ni)
+		if err != nil {
+			return n, err
+		}
+	}
+	buf := br.buf.Bytes()
 	// check CRC and copy
-	pages := len(buf) / int(msgs.TERN_PAGE_WITH_CRC_SIZE)
-	for page := 0; page < pages; page++ {
-		pageBegin := page * int(msgs.TERN_PAGE_WITH_CRC_SIZE)
+	pagesWithCrc := origLen/int(msgs.TERN_PAGE_WITH_CRC_SIZE) - int(br.offset)/int(msgs.TERN_PAGE_SIZE)
+	for page := 0; page < pagesWithCrc; page++ {
+		pageBegin := int(br.offset) + page*int(msgs.TERN_PAGE_WITH_CRC_SIZE)
 		pageEnd := pageBegin + int(msgs.TERN_PAGE_SIZE)
 		pageBytes := buf[pageBegin:pageEnd]
 		expectedCrc := crc32c.Sum(0, pageBytes)
 		actualCrc := binary.LittleEndian.Uint32(buf[pageEnd : pageEnd+4])
 		if expectedCrc != actualCrc {
-			return int64(n), msgs.BAD_BLOCK_CRC
+			return n, msgs.BAD_BLOCK_CRC
 		}
 		if br.crcReader != nil {
-			br.crcReader.Consume(msgs.Crc(expectedCrc))
+			br.crcReader.Consume(br.offset+uint32(pagesWithCrc)*msgs.TERN_PAGE_SIZE, msgs.Crc(expectedCrc))
 		}
-		copy(buf[page*int(msgs.TERN_PAGE_SIZE):(page+1)*int(msgs.TERN_PAGE_SIZE)], pageBytes)
+		copy(buf[int(br.offset)+page*int(msgs.TERN_PAGE_SIZE):int(br.offset)+(page+1)*int(msgs.TERN_PAGE_SIZE)], pageBytes)
 	}
-	*br.buf.BytesPtr() = buf[:pages*int(msgs.TERN_PAGE_SIZE)]
-	return int64(n), nil
+	*br.buf.BytesPtr() = buf[:br.offset+uint32(pagesWithCrc)*msgs.TERN_PAGE_SIZE]
+	return n, nil
 }
 
 func (br *BlockReader) AcquireBuf() *bufpool.Buf {
