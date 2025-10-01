@@ -44,6 +44,7 @@ func main() {
 	noFuse := flag.Bool("no-fuse", false, "")
 	leaderOnly := flag.Bool("leader-only", false, "Run only LogsDB leader with LEADER_NO_FOLLOWERS")
 	locations := flag.String("locations", "loc1", "Comma separated list of locations to simulate multi datacenter. Default `loc1`")
+	noGc := flag.Bool("no-gc", false, "Don't start GC processes")
 	flag.Parse()
 	noRunawayArgs()
 
@@ -194,7 +195,7 @@ func main() {
 			// it's possible location already exits, try renaming it
 			_, err = client.RegistryRequest(l, nil, registryAddress, &msgs.RenameLocationReq{msgs.Location(i), locName})
 			if err != nil {
-				panic(fmt.Errorf("failed to create location %v", err))
+				panic(fmt.Errorf("failed to create location: %v", err))
 			}
 		}
 		if i == 0 {
@@ -353,20 +354,22 @@ func main() {
 		fmt.Printf("operational\n")
 	}
 
-	procs.StartGc(l, &managedprocess.GcOptions{
-		Exe:                goExes.GcExe,
-		Dir:                path.Join(*dataDir, "gc"),
-		LogLevel:           level,
-		Xmon:               *xmon,
-		RegistryAddress:    registryAddress,
-		Addr1:              "127.0.0.1:0",
-		Migrate:            true,
-		CollectDirectories: true,
-		DestructFiles:      true,
-		Scrub:              true,
-	})
+	if !*noGc {
+		procs.StartGc(l, &managedprocess.GcOptions{
+			Exe:                goExes.GcExe,
+			Dir:                path.Join(*dataDir, "gc"),
+			LogLevel:           level,
+			Xmon:               *xmon,
+			RegistryAddress:    registryAddress,
+			Addr1:              "127.0.0.1:0",
+			Migrate:            true,
+			CollectDirectories: true,
+			DestructFiles:      true,
+			Scrub:              true,
+		})
 
-	fmt.Printf("started scrub/collect directores/destruct files/migrate\n")
+		fmt.Printf("started scrub/collect directores/destruct files/migrate\n")
+	}
 
 	if *webHttpPort != 0 {
 		procs.StartWeb(l, &managedprocess.WebOptions{
