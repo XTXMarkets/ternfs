@@ -38,6 +38,7 @@ var dirInfoCache *client.DirInfoCache
 var bufPool *bufpool.BufPool
 var filesGid uint32
 var filesUid uint32
+var readdirBatchSize int
 
 var closeMapCollection *ebpf.Collection
 var closeMapTracepoint link.Link
@@ -796,12 +797,52 @@ func (n *ternNode) Setattr(ctx context.Context, f fs.FileHandle, in *fuse.SetAtt
 	return readFileSetattr(n.id, in, out)
 }
 
+type openDirectoryEntryAttr struct {
+	size  uint64
+	mtime msgs.TernTime
+	atime msgs.TernTime
+	err   any
+}
+
+type openDirectoryEntry struct {
+	fuse.DirEntry
+	openDirectoryEntryAttr
+}
+
+func (od *openDirectoryEntry) GetDirEntry(out *fuse.DirEntry) {
+	*out = od.DirEntry
+}
+
+func (od *openDirectoryEntry) Lookup(ctx context.Context, parent *fs.Inode, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
+	if od.DirEntry.Name == "." || od.DirEntry.Name == ".." {
+		panic(fmt.Errorf("lookup called on ./.."))
+	}
+	id := msgs.InodeId(od.DirEntry.Ino)
+	if id.Type() != msgs.DIRECTORY {
+		out.Owner.Gid = filesGid
+		out.Owner.Uid = filesUid
+	}
+	newNode := &ternNode{id: id}
+	out.Size = od.size
+	mtime := uint64(od.mtime)
+	mtimesec := mtime / 1000000000
+	mtimens := uint32(mtime % 1000000000)
+	out.Ctime = mtimesec
+	out.Ctimensec = mtimens
+	out.Mtime = mtimesec
+	out.Mtimensec = mtimens
+	atime := uint64(od.atime)
+	out.Atime = atime / 1000000000
+	out.Atimensec = uint32(atime % 1000000000)
+	return parent.NewInode(ctx, newNode, fs.StableAttr{Ino: od.DirEntry.Ino, Mode: inodeTypeToMode(id.Type())}), 0
+}
+
 type openDirectory struct {
 	mu      sync.Mutex
 	id      msgs.InodeId
 	parent  msgs.InodeId
 	off     uint64
-	entries []fuse.DirEntry
+	entries []openDirectoryEntry
 	cursor  int // If >=0, we can just read from resp at that index
 }
 
@@ -815,6 +856,11 @@ func (d *openDirectory) Seekdir(ctx context.Context, off uint64) syscall.Errno {
 		d.cursor = -1
 	}
 	return 0
+}
+
+type statDirentryResp struct {
+	ix int
+	openDirectoryEntryAttr
 }
 
 func (d *openDirectory) hasNext() (bool, syscall.Errno) {
@@ -840,19 +886,69 @@ NoCursor:
 
 	// If we don't have a cursor, get at the current offset
 	logger.Debug("dir=%v fetching entries at %v", d.id, d.off)
-	var resp msgs.ReadDirResp
-	if err := shardRequest(d.id.Shard(), &msgs.ReadDirReq{DirId: d.id, StartHash: msgs.NameHash(d.off)}, &resp); err != 0 {
-		return false, ternErrToErrno(err)
-	}
-	d.entries = make([]fuse.DirEntry, len(resp.Results))
-	for i := range resp.Results {
-		result := &resp.Results[i]
-		d.entries[i] = fuse.DirEntry{
-			Mode: inodeTypeToMode(result.TargetId.Type()),
-			Name: result.Name,
-			Ino:  uint64(result.TargetId),
-			Off:  uint64(result.NameHash),
+	req := &msgs.ReadDirReq{DirId: d.id, StartHash: msgs.NameHash(d.off)}
+	respCh := make(chan statDirentryResp)
+	{
+		var resp msgs.ReadDirResp
+		d.entries = []openDirectoryEntry{}
+		for len(d.entries) < readdirBatchSize {
+			if err := shardRequest(d.id.Shard(), req, &resp); err != 0 {
+				return false, ternErrToErrno(err)
+			}
+			lenBefore := len(d.entries)
+			d.entries = append(d.entries, make([]openDirectoryEntry, len(resp.Results))...)
+			for i := lenBefore; i < len(d.entries); i++ {
+				ix := i
+				result := &resp.Results[ix-lenBefore]
+				targetId := result.TargetId
+				d.entries[ix] = openDirectoryEntry{
+					DirEntry: fuse.DirEntry{
+						Mode: inodeTypeToMode(result.TargetId.Type()),
+						Name: result.Name,
+						Ino:  uint64(targetId),
+						Off:  uint64(result.NameHash),
+					},
+				}
+				go func() {
+					attrResp := statDirentryResp{ix: ix}
+					defer func() {
+						err := recover()
+						if err != nil && attrResp.err != nil {
+							attrResp.err = err
+						}
+						respCh <- attrResp
+					}()
+					if targetId.Type() == msgs.DIRECTORY {
+						resp := &msgs.StatDirectoryResp{}
+						if err := c.ShardRequest(logger, targetId.Shard(), &msgs.StatDirectoryReq{Id: targetId}, resp); err != nil {
+							attrResp.err = err
+						} else {
+							attrResp.openDirectoryEntryAttr.mtime = resp.Mtime
+						}
+					} else {
+						resp := &msgs.StatFileResp{}
+						if err := c.ShardRequest(logger, targetId.Shard(), &msgs.StatFileReq{Id: targetId}, resp); err != nil {
+							attrResp.err = err
+						} else {
+							attrResp.openDirectoryEntryAttr = openDirectoryEntryAttr{
+								size:  resp.Size,
+								mtime: resp.Mtime,
+								atime: resp.Atime,
+							}
+						}
+					}
+				}()
+			}
+			req.StartHash = resp.NextHash
+			if req.StartHash == 0 {
+				break
+			}
 		}
+	}
+	// Get all stat responses
+	for range d.entries {
+		resp := <-respCh
+		d.entries[resp.ix].openDirectoryEntryAttr = resp.openDirectoryEntryAttr
 	}
 	// If we're seeking at off 0 or 1, add "." and "..". Note that we don't use
 	// CreationTime.
@@ -860,17 +956,17 @@ NoCursor:
 		var parentIndex int
 		if d.off == 0 {
 			d.entries = append(
-				[]fuse.DirEntry{
-					{Mode: syscall.S_IFDIR, Name: ".", Ino: uint64(d.id), Off: 0},
-					{Mode: syscall.S_IFDIR, Name: "..", Ino: uint64(d.parent), Off: 1},
+				[]openDirectoryEntry{
+					{DirEntry: fuse.DirEntry{Mode: syscall.S_IFDIR, Name: ".", Ino: uint64(d.id), Off: 0}},
+					{DirEntry: fuse.DirEntry{Mode: syscall.S_IFDIR, Name: "..", Ino: uint64(d.parent), Off: 1}},
 				},
 				d.entries...,
 			)
 			parentIndex = 1
 		} else {
 			d.entries = append(
-				[]fuse.DirEntry{
-					{Mode: syscall.S_IFDIR, Name: "..", Ino: uint64(d.parent), Off: 1},
+				[]openDirectoryEntry{
+					{DirEntry: fuse.DirEntry{Mode: syscall.S_IFDIR, Name: "..", Ino: uint64(d.parent), Off: 1}},
 				},
 				d.entries...,
 			)
@@ -886,10 +982,10 @@ NoCursor:
 	// Fixup offsets (they're the "next" offset)
 	for i := range d.entries {
 		if i == len(d.entries)-1 {
-			if resp.NextHash == 0 {
+			if req.StartHash == 0 {
 				d.entries[i].Off = (uint64(1) << 63) - 1
 			} else {
-				d.entries[i].Off = uint64(resp.NextHash)
+				d.entries[i].Off = uint64(req.StartHash)
 			}
 		} else {
 			d.entries[i].Off = d.entries[i+1].Off
@@ -909,7 +1005,7 @@ NoCursor:
 	return true, 0
 }
 
-func (d *openDirectory) Readdirent(ctx context.Context) (*fuse.DirEntry, syscall.Errno) {
+func (d *openDirectory) Readdirent(ctx context.Context) (fs.HasDirEntry, syscall.Errno) {
 	logger.Debug("dir=%v readdirrent", d.id)
 
 	d.mu.Lock()
@@ -952,6 +1048,9 @@ var _ = (fs.FileReader)((*ternFile)(nil))
 
 var _ = (fs.FileSeekdirer)((*openDirectory)(nil))
 var _ = (fs.FileReaddirenter)((*openDirectory)(nil))
+
+var _ = (fs.HasDirEntry)((*openDirectoryEntry)(nil))
+var _ = (fs.DirEntryLookuper)((*openDirectoryEntry)(nil))
 
 func initializeCloseMap(closeTrackerObj string, mountPoint string) {
 	logger.Info("Will use BPF object %q to setup close map", closeTrackerObj)
@@ -1063,6 +1162,7 @@ func main() {
 	dirEntryCacheTimeFlag := flag.Duration("dir-entry-cache-time", time.Millisecond*250, "How long to cache directory entries (negative _and_ positive) for. Set to 0 to disable caching. (default: 250ms)")
 	closeTrackerObject := flag.String("close-tracker-object", "", "Compiled BPF object to track explicitly closed files")
 	setUid := flag.Bool("set-uid", false, "")
+	readdirBatchSizeFlag := flag.Int("readdir-batch-size", 1000, "How many readdir entries to fetch + stat at once. Useful since the stats will all be sent in parallel.")
 	flag.Usage = usage
 	flag.Parse()
 
@@ -1078,6 +1178,11 @@ func main() {
 	mountPoint := flag.Args()[0]
 
 	client.SetMTU(*mtu)
+
+	if *readdirBatchSizeFlag <= 0 {
+		fmt.Fprintf(os.Stderr, "-readdir-batch-size must be positive")
+	}
+	readdirBatchSize = *readdirBatchSizeFlag
 
 	if mountPoint == "" {
 		fmt.Fprintf(os.Stderr, "Please specify mountpoint with -mountpoint\n")
@@ -1197,7 +1302,7 @@ func main() {
 			MaxReadAhead:       1 << 20, // we rely on ternblocks pre-reading HDD blocks.
 			DisableXAttrs:      true,
 			Debug:              *verbose,
-			DisableReadDirPlus: true,
+			DisableReadDirPlus: false,
 		},
 	}
 	if *allowOther {

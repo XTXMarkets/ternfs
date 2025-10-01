@@ -142,7 +142,7 @@ github.com/cilium/ebpf/internal/tracefs
 github.com/cilium/ebpf/internal/unix
 github.com/cilium/ebpf/link
 github.com/cilium/ebpf/rlimit
-# github.com/hanwen/go-fuse/v2 v2.8.0
+# github.com/hanwen/go-fuse/v2 v2.8.0 => github.com/bitonic/go-fuse/v2 v2.0.0-20251001121756-22ce115c0dfc
 ## explicit; go 1.17
 github.com/hanwen/go-fuse/v2/fs
 github.com/hanwen/go-fuse/v2/fuse
@@ -165,3 +165,4 @@ golang.org/x/sync/semaphore
 ## explicit; go 1.23.0
 golang.org/x/sys/unix
 golang.org/x/sys/windows
+# github.com/hanwen/go-fuse/v2 => github.com/bitonic/go-fuse/v2 v2.0.0-20251001121756-22ce115c0dfc
