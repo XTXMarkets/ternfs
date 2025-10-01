@@ -32,6 +32,7 @@ import (
 )
 
 var c *client.Client
+var server *fuse.Server
 var logger *log.Logger
 var dirInfoCache *client.DirInfoCache
 var bufPool *bufpool.BufPool
@@ -675,6 +676,24 @@ func (n *ternNode) OpendirHandle(ctx context.Context, flags uint32) (fh fs.FileH
 	return od, fuse.FOPEN_CACHE_DIR, 0
 }
 
+type fusePageCache struct {
+	id msgs.InodeId
+}
+
+func (fc fusePageCache) ReadCache(offset uint64, dest []byte) (count int) {
+	count, err := server.InodeRetrieveCache(uint64(fc.id), int64(offset), dest)
+	if err != fuse.OK {
+		logger.RaiseAlert("Could not read from cache id=%v offset=%v len=%v err=%v", fc.id, offset, len(dest), err)
+	}
+	return count
+}
+
+func (fc fusePageCache) WriteCache(offset uint64, data []byte) {
+	if err := server.InodeNotifyStoreCache(uint64(fc.id), int64(offset), data); err != fuse.OK {
+		logger.RaiseAlert("Could not write to cache id=%v offset=%v len=%v err=%v", fc.id, offset, len(data), err)
+	}
+}
+
 func (f *ternFile) Read(ctx context.Context, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
@@ -689,7 +708,7 @@ func (f *ternFile) Read(ctx context.Context, dest []byte, off int64) (fuse.ReadR
 		// FUSE seems to require a full read
 		r := 0
 		for r < len(dest) {
-			thisR, err := tf.Read(logger, c, bufPool, uint64(off)+uint64(r), dest[r:])
+			thisR, err := tf.Read(logger, c, fusePageCache{f.id}, bufPool, uint64(off)+uint64(r), dest[r:])
 			if thisR == 0 || err == io.EOF {
 				break
 			}
@@ -1184,7 +1203,7 @@ func main() {
 	if *allowOther {
 		fuseOptions.MountOptions.Options = append(fuseOptions.MountOptions.Options, "allow_other")
 	}
-	server, err := fs.Mount(mountPoint, &root, fuseOptions)
+	server, err = fs.Mount(mountPoint, &root, fuseOptions)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Could not mount: %v", err)
 		os.Exit(1)

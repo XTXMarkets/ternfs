@@ -66,7 +66,7 @@ func (bf *blockFetcher) StartFetchBlock(log *log.Logger, blockService *msgs.Bloc
 	// TODO randomize completion order
 	go func() {
 		defer func() {
-			handleRecover(bf.errorsChan, recover(), fmt.Sprintf("%s blockId=%v offset=%v count=%v", bf.info, blockId, offset, count))
+			handleRecover(bf.errorsChan, recover(), fmt.Sprintf("%s fetch block blockId=%v offset=%v count=%v", bf.info, blockId, offset, count))
 		}()
 		if bf.bad&(uint32(1)<<blockIx) != 0 {
 			completion <- &blockCompletion{
@@ -99,6 +99,23 @@ func (bf *blockFetcher) ReadCache(offset uint64, dest []byte) (count int) {
 		panic(fmt.Errorf("bad offset=%v + len(dest)=%v > bf.spanOffset=%v + len(bf.contents)=%v", offset, len(dest), bf.spanOffset, len(bf.contents)))
 	}
 	return copy(dest, bf.contents[offset-bf.spanOffset:])
+}
+
+func (bf *blockFetcher) WriteCache(offset uint64, data []byte) {
+	defer func() {
+		handleRecover(bf.errorsChan, recover(), fmt.Sprintf("%s write cache offset=%v count=%v", bf.info, offset, len(data)))
+	}()
+	// Check that we don't write outside file boundaries, and that the
+	// contents match.
+	if offset < bf.spanOffset {
+		panic(fmt.Errorf("offset=%v < bf.spanOffset=%v", offset, bf.spanOffset))
+	}
+	if offset+uint64(len(data)) > bf.spanOffset+uint64(len(bf.contents)) {
+		panic(fmt.Errorf("offset=%v + len(data)=%v > bf.spanOffset=%v + len(bf.contents)=%v", offset, len(data), bf.spanOffset, len(bf.contents)))
+	}
+	if !bytes.Equal(bf.contents[offset-bf.spanOffset:(offset-bf.spanOffset)+uint64(len(data))], data) {
+		panic(fmt.Errorf("mismatching page cache write"))
+	}
 }
 
 func insertPageCrcs(data []byte) []byte {
@@ -209,6 +226,9 @@ func (fpc *flakyPageCache) ReadCache(offset uint64, dest []byte) (count int) {
 	return fpc.c.ReadCache(offset, dest)
 }
 
+func (fpc *flakyPageCache) WriteCache(offset uint64, data []byte) {
+	fpc.c.WriteCache(offset, data)
+}
 
 func runRsReadTest(
 	log *log.Logger,
@@ -226,7 +246,7 @@ func runRsReadTest(
 	defer func() {
 		handleRecover(errorsChan, recover(), fmt.Sprintf("test runner for parity=%v stripes=%v length=%v lastReadFrom=%v lastReadTo=%v lastBad=%s", parity, stripes, length, lastReadFrom, lastReadTo, printBlockBitmap(parity.Blocks(), lastBad)))
 	}()
-	seed := uint64(length) | uint64(stripes)<<32 | uint64(parity)<<(32 + 8)
+	seed := uint64(length) | uint64(stripes)<<32 | uint64(parity)<<(32+8)
 	r := wyhash.New(seed)
 	contents := make([]byte, length)
 	r.Read(contents)
