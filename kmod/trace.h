@@ -39,6 +39,7 @@ TRACE_DEFINE_ENUM(LOOKUP_JUMPED);
 TRACE_DEFINE_ENUM(LOOKUP_ROOT);
 
 #define show_lookup_flags(flags) \
+
 	__print_flags(flags, "|", \
 			{ LOOKUP_FOLLOW, "FOLLOW" }, \
 			{ LOOKUP_DIRECTORY, "DIRECTORY" }, \
@@ -54,6 +55,7 @@ TRACE_DEFINE_ENUM(LOOKUP_ROOT);
 			{ LOOKUP_ROOT, "ROOT" }, \
 			{ LOOKUP_EMPTY, "EMPTY" }, \
 			{ LOOKUP_DOWN, "DOWN" })
+
 #else
 
 #define show_lookup_flags(flags) \
@@ -70,6 +72,12 @@ TRACE_DEFINE_ENUM(LOOKUP_ROOT);
 			{ LOOKUP_RENAME_TARGET, "RENAME_TARGET" }, \
 			{ LOOKUP_EMPTY, "EMPTY" }, \
 			{ LOOKUP_DOWN, "DOWN" })
+#endif
+
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 10, 0))
+#define __assign_str_impl(a, b) __assign_str(a, b)
+#else
+#define __assign_str_impl(a, b) __assign_str(a);
 #endif
 
 #define TERNFS_TRACE_EVENT_inode(_name) \
@@ -110,7 +118,7 @@ TRACE_DEFINE_ENUM(LOOKUP_ROOT);
         ), \
         TP_fast_assign( \
             __entry->dir = dir->i_ino; \
-            __assign_str(name, dentry->d_name.name); \
+            __assign_str_impl(name, dentry->d_name.name); \
         ), \
         TP_printk("dir=%#llx name=%s", __entry->dir, __get_str(name)) \
     )
@@ -127,7 +135,7 @@ TRACE_DEFINE_ENUM(LOOKUP_ROOT);
         TP_fast_assign( \
             __entry->dir = dir->i_ino; \
             __entry->err = err; \
-            __assign_str(name, dentry->d_name.name); \
+            __assign_str_impl(name, dentry->d_name.name); \
         ), \
         TP_printk("dir=%llx name=%s err=%d", __entry->dir, __get_str(name), __entry->err) \
     )
@@ -144,7 +152,7 @@ TRACE_DEFINE_ENUM(LOOKUP_ROOT);
         TP_fast_assign( \
             __entry->dir = dir->i_ino; \
             __entry->ino = inode ? inode->i_ino : 0; \
-            __assign_str(name, dentry->d_name.name); \
+            __assign_str_impl(name, dentry->d_name.name); \
         ), \
         TP_printk("dir=%llx name=%s ino=%llx", __entry->dir, __get_str(name), __entry->ino) \
     )
@@ -164,7 +172,7 @@ TRACE_DEFINE_ENUM(LOOKUP_ROOT);
             __entry->dir = dir->i_ino; \
             __entry->ino = inode ? inode->i_ino : 0; \
             __entry->err = err; \
-            __assign_str(name, dentry->d_name.name); \
+            __assign_str_impl(name, dentry->d_name.name); \
         ), \
         TP_printk("dir=%llx name=%s ino=%llx err=%d", __entry->dir, __get_str(name), __entry->ino, __entry->err) \
     )
@@ -218,10 +226,10 @@ TRACE_EVENT(eggsfs_vfs_rename_enter,
         __entry->old_dir_ino = old_dir->i_ino;
         __entry->new_dir_ino = new_dir->i_ino;
         __entry->ino = old_dentry->d_inode->i_ino;
-        __assign_str(old_parent, old_dentry->d_parent->d_name.name);
-        __assign_str(old_name, old_dentry->d_name.name)
-        __assign_str(new_parent, new_dentry->d_parent->d_name.name);
-        __assign_str(new_name, new_dentry->d_name.name)
+        __assign_str_impl(old_parent, old_dentry->d_parent->d_name.name);
+        __assign_str_impl(old_name, old_dentry->d_name.name)
+        __assign_str_impl(new_parent, new_dentry->d_parent->d_name.name);
+        __assign_str_impl(new_name, new_dentry->d_name.name)
     ),
     TP_printk("ino=%lld old_dir=%lld old_name=%s/%s -> new_dir=%lld new_name=%s/%s", __entry->ino, __entry->old_dir_ino, __get_str(old_parent), __get_str(old_name), __entry->new_dir_ino, __get_str(new_parent), __get_str(new_name))
 );
@@ -245,10 +253,10 @@ TRACE_EVENT(eggsfs_vfs_rename_exit,
         __entry->new_dir_ino = new_dir->i_ino;
         __entry->ino = old_dentry->d_inode->i_ino;
         __entry->err = err;
-        __assign_str(old_parent, old_dentry->d_parent->d_name.name);
-        __assign_str(old_name, old_dentry->d_name.name)
-        __assign_str(new_parent, new_dentry->d_parent->d_name.name);
-        __assign_str(new_name, new_dentry->d_name.name)
+        __assign_str_impl(old_parent, old_dentry->d_parent->d_name.name);
+        __assign_str_impl(old_name, old_dentry->d_name.name)
+        __assign_str_impl(new_parent, new_dentry->d_parent->d_name.name);
+        __assign_str_impl(new_name, new_dentry->d_name.name)
     ),
     TP_printk("ino=%lld old_dir=%lld old_name=%s/%s -> new_dir=%lld new_name=%s/%s err=%d", __entry->ino, __entry->old_dir_ino, __get_str(old_parent), __get_str(old_name), __entry->new_dir_ino, __get_str(new_parent), __get_str(new_name), __entry->err)
 );
@@ -342,8 +350,8 @@ TRACE_EVENT(eggsfs_dentry_handle_enoent,
     ),
     TP_fast_assign(
         __entry->ino = dentry->d_inode ? dentry->d_inode->i_ino : 0;
-        __assign_str(name, dentry->d_parent->d_name.name);
-        __assign_str(name, dentry->d_name.name);
+        __assign_str_impl(name, dentry->d_parent->d_name.name);
+        __assign_str_impl(name, dentry->d_name.name);
     ),
     TP_printk("ino=%lld name=%s/%s", __entry->ino, __get_str(parent), __get_str(name))
 );

@@ -119,9 +119,9 @@ jobs:
           apt-get build-dep -y linux linux-image-unsigned-$(uname -r)
           apt-get install -y fakeroot llvm libncurses-dev dwarves
       - name: Download base qemu image
-        run: curl -fsSL -O https://cloud-images.ubuntu.com/focal/current/focal-server-cloudimg-amd64.img
+        run: curl -fsSL -O https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
       - name: Run kmod tests
-        run: ./ci.py --short --prepare-image ${{ github.workspace }}/focal-server-cloudimg-amd64.img --kmod --leader-only
+        run: ./ci.py --short --prepare-image ${{ github.workspace }}/noble-server-cloudimg-amd64.img --kmod --leader-only
       - name: Upload logs on failure
         if: failure()
         uses: actions/upload-artifact@v4

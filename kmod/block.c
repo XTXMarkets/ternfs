@@ -1579,7 +1579,7 @@ int __init ternfs_block_init(void) {
         "ternfs_fetch_block_request_cache",
         sizeof(struct fetch_request),
         0,
-        SLAB_RECLAIM_ACCOUNT | SLAB_MEM_SPREAD,
+        SLAB_RECLAIM_ACCOUNT,
         fetch_request_constructor
     );
     if (!fetch_request_cachep) { err = -ENOMEM; goto out_err; }
@@ -1588,7 +1588,7 @@ int __init ternfs_block_init(void) {
         "ternfs_write_block_request_cache",
         sizeof(struct write_request),
         0,
-        SLAB_RECLAIM_ACCOUNT | SLAB_MEM_SPREAD,
+        SLAB_RECLAIM_ACCOUNT,
         write_request_constructor
     );
     if (!write_request_cachep) { err = -ENOMEM; goto out_fetch_request; }

@@ -5,6 +5,9 @@
 // Automatically generated with go run bincodegen.
 // Run `go generate ./...` from the go/ directory to regenerate it.
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-but-set-parameter"
+
 #define TERNFS_ERR_INTERNAL_ERROR 10
 #define TERNFS_ERR_FATAL_ERROR 11
 #define TERNFS_ERR_TIMEOUT 12
@@ -7005,4 +7008,6 @@ static inline void ternfs_fetch_block_with_crc_resp_get_finish(struct ternfs_bin
 #define ternfs_fetch_block_with_crc_resp_put_end(ctx, prev, next) \
     { struct ternfs_fetch_block_with_crc_resp_start** __dummy __attribute__((unused)) = &(prev); }\
     struct ternfs_fetch_block_with_crc_resp_end* next __attribute__((unused)) = NULL
+
+#pragma GCC diagnostic pop
 

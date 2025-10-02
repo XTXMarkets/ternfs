@@ -8,6 +8,7 @@
 #include <linux/sched/mm.h>
 #include <linux/mm.h>
 #include <linux/pagemap.h>
+#include <linux/version.h>
 
 #include "bincode.h"
 #include "inode.h"
@@ -175,6 +176,8 @@ static void hold_transient_span(struct ternfs_transient_span* span) {
     atomic_inc(&span->refcount);
 }
 
+#define lru_to_page_impl(head) (list_entry((head)->prev, struct page, lru))
+
 static bool put_transient_span(struct ternfs_transient_span* span) {
     if (atomic_dec_return(&span->refcount) == 0) {
         BUG_ON(spin_is_locked(&span->lock));
@@ -186,9 +189,9 @@ static bool put_transient_span(struct ternfs_transient_span* span) {
         // It is however fine to adjust the OOM score here as technically
         // the file system is now responsible for this memory and it's no
         // longer tied to the process lifetime.
-#define FREE_PAGES(__pages) \
-        while (!list_empty(__pages)) { \
-            struct page* victim = lru_to_page(__pages); \
+#define FREE_PAGES(pages) \
+        while (!list_empty(pages)) { \
+            struct page* victim = lru_to_page_impl(pages); \
             list_del(&victim->lru); \
             put_page(victim); \
             num_pages++; \
@@ -1110,7 +1113,11 @@ static loff_t file_lseek(struct file *file, loff_t offset, int whence) {
             goto out;
         }
         file->f_pos = ppos;
-        file->f_version = 0; // what's this for?
+        // See 3352633ce6b221d64bf40644d412d9670e7d56e3 in linux repo, f_version
+        // was not well defined before anyway and they removed it.
+        #if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0))
+        file->f_version = 0;
+        #endif
     }
 
 out:
@@ -1162,6 +1169,7 @@ static void process_file_pages(struct address_space *mapping, struct list_head *
     }
 }
 
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 18, 0))
 static int file_readpages(struct file *filp, struct address_space *mapping, struct list_head *pages, unsigned nr_pages) {
     int err = 0;
 
@@ -1227,6 +1235,7 @@ out_err:
     put_pages_list(pages);
     return err;
 }
+#endif
 
 static int file_readpage(struct file* filp, struct page* page) {
     struct inode* inode = file_inode(filp);
@@ -1323,7 +1332,10 @@ retry:
 
 out:
     if (unlikely(err)) {
+        // SetPageError was removed because it was unused by that point
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0))
         SetPageError(page);
+#endif
     } else {
         SetPageUptodate(page);
     }
@@ -1494,7 +1506,7 @@ int __init ternfs_file_init(void) {
         "ternfs_transient_span_cache",
         sizeof(struct ternfs_transient_span),
         0,
-        SLAB_RECLAIM_ACCOUNT | SLAB_MEM_SPREAD,
+        SLAB_RECLAIM_ACCOUNT,
         &init_transient_span
     );
     if (!ternfs_transient_span_cachep) { return -ENOMEM; }

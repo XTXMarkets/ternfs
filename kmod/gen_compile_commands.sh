@@ -11,6 +11,6 @@ cd $SCRIPT_DIR
 
 set -x
 
-./linux/scripts/gen_compile_commands.py
+./linux/scripts/clang-tools/gen_compile_commands.py
 sed -i 's:-I.:-I./linux:g' ./compile_commands.json
 sed -i 's:-include .:-include ./linux:g' ./compile_commands.json

@@ -14,8 +14,8 @@ qemu-system-x86_64 \
     -cpu host \
     -kernel "${SCRIPT_DIR}/linux/arch/x86/boot/bzImage" \
     -append "root=/dev/sda1 single console=ttyS0 systemd.unit=graphical.target" \
-    -drive file="${SCRIPT_DIR}/ubuntu.img",index=0,media=disk,cache=unsafe \
-    -drive file="${SCRIPT_DIR}/init.img",index=1,media=disk,cache=unsafe \
+    -drive file="${SCRIPT_DIR}/ubuntu.img,format=qcow2",index=0,media=disk,cache=unsafe \
+    -drive file="${SCRIPT_DIR}/init.img,format=raw",index=1,media=disk,cache=unsafe \
     -m 128G \
     -smp $(nproc),cores=$(nproc) \
     -nographic \

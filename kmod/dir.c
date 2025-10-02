@@ -562,7 +562,7 @@ int __init ternfs_dir_init(void) {
         "ternfs_dirents_cache",
         sizeof(struct ternfs_dirents),
         0,
-        SLAB_RECLAIM_ACCOUNT | SLAB_MEM_SPREAD,
+        SLAB_RECLAIM_ACCOUNT,
         NULL
     );
     if (!ternfs_dirents_cachep) {
@@ -573,7 +573,7 @@ int __init ternfs_dir_init(void) {
         "ternfs_readdir_ctx_cache",
         sizeof(struct ternfs_readdir_ctx),
         0,
-        SLAB_RECLAIM_ACCOUNT | SLAB_MEM_SPREAD,
+        SLAB_RECLAIM_ACCOUNT,
         NULL
     );
     if (!ternfs_readdir_ctx_cachep) {

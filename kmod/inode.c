@@ -83,7 +83,7 @@ static void ternfs_inode_init_once(void* ptr) {
 int __init ternfs_inode_init(void) {
     ternfs_inode_cachep = kmem_cache_create(
         "ternfs_inode_cache", sizeof(struct ternfs_inode),
-        0, SLAB_RECLAIM_ACCOUNT | SLAB_MEM_SPREAD, ternfs_inode_init_once
+        0, SLAB_RECLAIM_ACCOUNT, ternfs_inode_init_once
     );
     if (!ternfs_inode_cachep) { return -ENOMEM; }
 

@@ -2,8 +2,12 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <asm/unaligned.h>
 #include <linux/version.h>
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0))
+#include <asm/unaligned.h>
+#else
+#include <linux/unaligned.h>
+#endif
 #include <linux/module.h>
 #include <linux/dns_resolver.h>
 #include <linux/sunrpc/addr.h>

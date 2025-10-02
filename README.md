@@ -171,7 +171,7 @@ Will run the integration tests as CI would (inside the Ubuntu docker image). You
 To work with the qemu kmod tests you'll first need to download the base Ubuntu image we use for testing:
 
 ```
-% wget -P kmod 'https://cloud-images.ubuntu.com/focal/current/focal-server-cloudimg-amd64.img'
+% wget -P kmod 'https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img'
 ```
 
 Then you can run the CI tests in kmod like so:

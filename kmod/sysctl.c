@@ -35,12 +35,12 @@ int ternfs_debug_output = 0;
     return 0;
 
 static int drop_fetch_block_sockets;
-static int ternfs_drop_fetch_block_sockets_sysctl(struct ctl_table* table, int write, void __sysctl_buffer* buffer, size_t* len, loff_t* ppos) {
+static int ternfs_drop_fetch_block_sockets_sysctl(const struct ctl_table* table, int write, void __sysctl_buffer* buffer, size_t* len, loff_t* ppos) {
     ternfs_do_sysctl(ternfs_drop_fetch_block_sockets);
 }
 
 static int drop_write_block_sockets;
-static int ternfs_drop_write_block_sockets_sysctl(struct ctl_table* table, int write, void __sysctl_buffer* buffer, size_t* len, loff_t* ppos) {
+static int ternfs_drop_write_block_sockets_sysctl(const struct ctl_table* table, int write, void __sysctl_buffer* buffer, size_t* len, loff_t* ppos) {
     ternfs_do_sysctl(ternfs_drop_write_block_sockets);
 }
 
@@ -154,13 +154,12 @@ static struct ctl_table ternfs_cb_sysctls[] = {
     {}
 };
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 4, 0)
 static struct ctl_table ternfs_cb_sysctl_dir[] = {
     {
         .procname = "eggsfs",
         .mode = 0555,
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 4, 0)
         .child = ternfs_cb_sysctls,
-#endif        
     },
     { }
 };
@@ -169,12 +168,11 @@ static struct ctl_table ternfs_cb_sysctl_root[] = {
     {
         .procname = "fs",
         .mode = 0555,
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 4, 0)
         .child = ternfs_cb_sysctl_dir,
-#endif
     },
     { }
 };
+#endif
 
 static struct ctl_table_header* ternfs_callback_sysctl_table;
 

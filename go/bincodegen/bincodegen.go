@@ -713,6 +713,9 @@ func generateKmod(errors []string, shardReqResps []reqRespType, cdcReqResps []re
 	fmt.Fprintln(hOut, "// Automatically generated with go run bincodegen.")
 	fmt.Fprintln(hOut, "// Run `go generate ./...` from the go/ directory to regenerate it.")
 	fmt.Fprintln(hOut)
+	fmt.Fprintln(hOut, "#pragma GCC diagnostic push")
+	fmt.Fprintln(hOut, "#pragma GCC diagnostic ignored \"-Wunused-but-set-parameter\"")
+	fmt.Fprintln(hOut)
 
 	fmt.Fprintln(cOut, "// Copyright 2025 XTX Markets Technologies Limited")
 	fmt.Fprintln(cOut, "//")
@@ -772,6 +775,9 @@ func generateKmod(errors []string, shardReqResps []reqRespType, cdcReqResps []re
 	generateReqResps(cdcReqResps)
 	generateReqResps(registryReqResps)
 	generateReqResps(blocksReqResps)
+
+	fmt.Fprintln(hOut, "#pragma GCC diagnostic pop")
+	fmt.Fprintln(hOut)
 
 	return hOut.Bytes(), cOut.Bytes()
 }

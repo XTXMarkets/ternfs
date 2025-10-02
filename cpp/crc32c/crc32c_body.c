@@ -223,7 +223,7 @@ static u64 crc32c_mul(u32 a, u32 b) {
 #ifdef __clang__
 __attribute__((no_sanitize("integer")))
 #endif
-u64 crc32c_mul(u32 a, u32 b32) {
+static u64 crc32c_mul(u32 a, u32 b32) {
     u64 b = (u64)b32 << 32;
     u64 c = 0;
     int i;

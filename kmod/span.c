@@ -506,6 +506,13 @@ retry:
     put_fetch_span_pages(st);
 }
 
+#define lru_to_page_impl(head) (list_entry((head)->prev, struct page, lru))
+
+static inline pgoff_t page_index_impl(struct page *page) {
+    return page->index;
+}
+
+
 int ternfs_span_get_pages(struct ternfs_block_span* block_span, struct address_space * mapping, struct list_head *pages, unsigned nr_pages, struct list_head *extra_pages) {
     int err;
 
@@ -514,9 +521,9 @@ int ternfs_span_get_pages(struct ternfs_block_span* block_span, struct address_s
         return -EIO;
     }
 
-    loff_t off_start = page_offset(lru_to_page(pages));
+    loff_t off_start = page_offset(lru_to_page_impl(pages));
     unsigned long page_ix;
-    unsigned long first_page_index = page_index(lru_to_page(pages));
+    unsigned long first_page_index = page_index_impl(lru_to_page_impl(pages));
     // Work out start and end index for each block we need to fetch.
     loff_t curr_off = off_start;
     u64 span_offset = off_start - block_span->span.start;
@@ -587,7 +594,7 @@ int ternfs_span_get_pages(struct ternfs_block_span* block_span, struct address_s
 
             for(i = 0; i < page_count; i++) {
                 page_ix = curr_off/PAGE_SIZE;
-                struct page *page = lru_to_page(pages);
+                struct page *page = lru_to_page_impl(pages);
                 if (page != NULL) {
                     if(page->index != page_ix) {
                         ternfs_warn("adding stripe_ix %d, block_ix=%d page_ix: have %ld, want %ld, curr_off=%lld, block_off=%d", stripe_ix, curr_block_ix, page->index, page_ix, curr_off, next_block_offset);
@@ -682,7 +689,7 @@ int ternfs_span_get_pages(struct ternfs_block_span* block_span, struct address_s
     }
 
     for (i = 0; i < num_zero_pages; i++) {
-        struct page* page = lru_to_page(pages);
+        struct page* page = lru_to_page_impl(pages);
         BUG_ON(page == NULL);
         list_del(&page->lru);
         char* dst = kmap_atomic(page);
@@ -772,7 +779,7 @@ int ternfs_span_get_pages(struct ternfs_block_span* block_span, struct address_s
     }
 
     for (i = 0; i < num_zero_pages; i++) {
-        struct page *page = lru_to_page(&zero_pages);
+        struct page *page = lru_to_page_impl(&zero_pages);
         BUG_ON(page == NULL);
         list_del(&page->lru);
         list_add_tail(&page->lru, pages);
@@ -1045,7 +1052,7 @@ int ternfs_span_init(void) {
         "ternfs_block_span_cache",
         sizeof(struct ternfs_block_span),
         0,
-        SLAB_RECLAIM_ACCOUNT | SLAB_MEM_SPREAD,
+        SLAB_RECLAIM_ACCOUNT,
         NULL
     );
     if (!ternfs_block_span_cachep) {
@@ -1057,7 +1064,7 @@ int ternfs_span_init(void) {
         "ternfs_inline_span_cache",
         sizeof(struct ternfs_inline_span),
         0,
-        SLAB_RECLAIM_ACCOUNT | SLAB_MEM_SPREAD,
+        SLAB_RECLAIM_ACCOUNT,
         offsetof(struct ternfs_inline_span, body),
         sizeof(((struct ternfs_inline_span*)NULL)->body),
         NULL
@@ -1070,7 +1077,7 @@ int ternfs_span_init(void) {
         "ternfs_fetch_span_pages_cache",
         sizeof(struct fetch_span_pages_state),
         0,
-        SLAB_RECLAIM_ACCOUNT | SLAB_MEM_SPREAD,
+        SLAB_RECLAIM_ACCOUNT,
         &init_fetch_span_pages
     );
     if (!ternfs_fetch_span_pages_cachep) {

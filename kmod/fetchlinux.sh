@@ -6,19 +6,21 @@
 
 set -eu -o pipefail
 
-version=linux-5.4.237
+# version=5.4.237
+version=6.12.49
 
 # Download or resume
-curl -C - -O "https://cdn.kernel.org/pub/linux/kernel/v5.x/${version}.tar.gz"
+curl -C - -O "https://cdn.kernel.org/pub/linux/kernel/v${version%%.*}.x/linux-${version}.tar.gz"
 
 # Check
-sha512sum -c "${version}.tar.gz.sha512"
+sha512sum -c "linux-${version}.tar.gz.sha512"
 
 # Extract
-tar xf "${version}.tar.gz"
+tar xf "linux-${version}.tar.gz"
 
 # Copy config
-cp config-kasan ${version}/.config
+cp "config-kasan-${version}" "linux-${version}/.config"
 
 # Create symlink
-ln -sf ${version} linux
+rm -f linux
+ln -sf linux-${version} linux
