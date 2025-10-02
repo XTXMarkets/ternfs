@@ -151,7 +151,9 @@ static struct ctl_table ternfs_cb_sysctls[] = {
         .extra2 = &ternfs_max_mtu,
     },
 
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0))
     {}
+#endif
 };
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 4, 0)
@@ -161,7 +163,8 @@ static struct ctl_table ternfs_cb_sysctl_dir[] = {
         .mode = 0555,
         .child = ternfs_cb_sysctls,
     },
-    { }
+
+    {}
 };
 
 static struct ctl_table ternfs_cb_sysctl_root[] = {
@@ -170,7 +173,8 @@ static struct ctl_table ternfs_cb_sysctl_root[] = {
         .mode = 0555,
         .child = ternfs_cb_sysctl_dir,
     },
-    { }
+
+    {}
 };
 #endif
 
