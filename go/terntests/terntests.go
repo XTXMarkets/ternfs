@@ -83,7 +83,6 @@ type RunTests struct {
 	registryIp              string
 	registryPort            uint16
 	mountPoint              string
-	fuseMountPoint          string
 	kmod                    bool
 	short                   bool
 	filter                  *regexp.Regexp
@@ -1286,20 +1285,6 @@ func main() {
 		}()
 	}
 
-	fuseMountPoint := procs.StartFuse(l, &managedprocess.FuseOpts{
-		Exe:                goExes.FuseExe,
-		Path:               path.Join(*dataDir, "fuse"),
-		LogLevel:           level,
-		Wait:               true,
-		RegistryAddress:    registryAddress,
-		Profile:            *profile,
-		ShardTimeouts:      shardTimeouts,
-		CDCTimeouts:        cdcTimeouts,
-		BlockTimeouts:      blockTimeouts,
-		CloseTrackerObject: *closeTrackerObject,
-		SetUid:             true,
-	})
-
 	var mountPoint string
 	if *kmod {
 		mountPoint = path.Join(*dataDir, "kmod", "mnt")
@@ -1317,7 +1302,19 @@ func main() {
 			}
 		}()
 	} else {
-		mountPoint = fuseMountPoint
+		mountPoint = procs.StartFuse(l, &managedprocess.FuseOpts{
+			Exe:                goExes.FuseExe,
+			Path:               path.Join(*dataDir, "fuse"),
+			LogLevel:           level,
+			Wait:               true,
+			RegistryAddress:    registryAddress,
+			Profile:            *profile,
+			ShardTimeouts:      shardTimeouts,
+			CDCTimeouts:        cdcTimeouts,
+			BlockTimeouts:      blockTimeouts,
+			CloseTrackerObject: *closeTrackerObject,
+			SetUid:             true,
+		})
 	}
 
 	fmt.Printf("operational 🤖\n")
@@ -1375,7 +1372,6 @@ func main() {
 			registryIp:              "127.0.0.1",
 			registryPort:            registryPort,
 			mountPoint:              mountPoint,
-			fuseMountPoint:          fuseMountPoint,
 			kmod:                    *kmod,
 			short:                   *short,
 			filter:                  filterRe,
