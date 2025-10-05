@@ -21,20 +21,30 @@ static inline int ternfs_dir_needs_reval(struct ternfs_inode* dir, struct dentry
     u64 dentry_dir_mtime = dentry->d_time;
     int ret;
     u64 t = get_jiffies_64();
-    if (dentry_dir_mtime != dir->mtime) {
-        if (dentry->d_inode == NULL || !S_ISDIR(dentry->d_inode->i_mode)) { ret = 0; }
+    if (t >= dir->dir.mtime_expiry) { ret = -ECHILD; }
+    else if (dentry_dir_mtime != dir->mtime) {
+        struct inode* inode;
+        if (in_rcu) {
+            inode = d_inode_rcu(dentry);
+        } else {
+            inode = dentry->d_inode;
+        }
+        // We are fine invalidating negative or dentries for non-directories
+        // as this is not expensive
+        if (inode == NULL || !S_ISDIR(inode->i_mode)) { ret = 0; }
+        // we want to confirm we are still valid but we need  to do lookup
+        // so we need to drop into non-rcu mode
         else if (in_rcu) { ret = -ECHILD; }
         else {
             u64 ino, creation_time;
-
             if (ternfs_shard_lookup(
-                    dir->inode.i_sb->s_fs_info, dir->inode.i_ino,
+                    inode->i_sb->s_fs_info, dir->inode.i_ino,
                     dentry->d_name.name, dentry->d_name.len,
                     &ino, &creation_time) < 0)
             {
                 ret = 0;
             } else {
-                if (dentry->d_inode->i_ino != ino) {
+                if (inode->i_ino != ino) {
                     ret = 0;
                 } else {
                     dentry->d_time = dir->mtime;
@@ -43,7 +53,6 @@ static inline int ternfs_dir_needs_reval(struct ternfs_inode* dir, struct dentry
             }
         }
     }
-    else if (t >= dir->dir.mtime_expiry) { ret = -ECHILD; }
     else { ret = 1; }
 
     ternfs_debug(
@@ -71,6 +80,9 @@ static int ternfs_d_revalidate(struct dentry* dentry, unsigned int flags) {
         parent = READ_ONCE(dentry->d_parent);
         dir = d_inode_rcu(parent);
         if (!dir) { return -ECHILD; }
+        // we are either asked for validiti of our root dentry or we are bound mounted
+        // either way we can't return invalid
+        if (parent->d_sb != dentry->d_sb) { return 1; }
         ret = ternfs_dir_needs_reval(TERNFS_I(dir), dentry, true);
         if (parent != READ_ONCE(dentry->d_parent)) { return -ECHILD; }
         return ret;
