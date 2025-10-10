@@ -36,7 +36,7 @@ public:
         ++_currentArg;
         return *this;
     }
-    
+
     std::string getArg() {
         auto res = peekArg();
         next();
@@ -87,7 +87,7 @@ static inline bool parseLogOptions(CommandLineArgs& args, LogOptions& options) {
             args.dieWithUsage();
         }
         return true;
-    } 
+    }
     if (arg == "-log-file") {
         options.logFile = args.next().getArg();
         return true;
@@ -105,13 +105,13 @@ static inline void printLogOptionsUsage() {
     fprintf(stderr, "    	Same as '-log-level debug'.\n");
 }
 
-static inline bool validateLogOptions(const LogOptions& options) { 
+static inline bool validateLogOptions(const LogOptions& options) {
 #ifndef TERN_DEBUG
     if (options.logLevel <= LogLevel::LOG_TRACE) {
         fprintf(stderr,"Cannot use trace for non-debug builds (it won't work).\n");
         return false;
     }
-#endif    
+#endif
     return true;
 }
 
@@ -165,8 +165,8 @@ static inline void printMetricsOptionsUsage() {
     fprintf(stderr, "    	Enable metrics.\n");
 }
 
-static inline bool validateMetricsOptions(const MetricsOptions& options) { 
-    if (options.origin.empty() != options.org.empty() || 
+static inline bool validateMetricsOptions(const MetricsOptions& options) {
+    if (options.origin.empty() != options.org.empty() ||
         options.origin.empty() != options.bucket.empty())
     {
         fprintf(stderr, "either all or none of the -influx-db flags must be provided\n");
@@ -175,7 +175,7 @@ static inline bool validateMetricsOptions(const MetricsOptions& options) {
     return true;
 }
 
-// RegistryClientOptions 
+// RegistryClientOptions
 
 struct RegistryClientOptions {
     std::string host;
@@ -201,7 +201,7 @@ static inline void printRegistryClientOptionsUsage() {
     fprintf(stderr, "    	How to reach registry\n");
 }
 
-static inline bool validateRegistryClientOptions(const RegistryClientOptions& options) { 
+static inline bool validateRegistryClientOptions(const RegistryClientOptions& options) {
     if (options.host.empty()) {
         fprintf(stderr, "-registry needs to be set\n");
         return false;
@@ -284,7 +284,7 @@ static inline void printLogsDBOptionsUsage() {
     fprintf(stderr, "    	Which location we are running as [0-255]. Default is 0\n");
 }
 
-static inline bool validateLogsDBOptions(const LogsDBOptions& options) { 
+static inline bool validateLogsDBOptions(const LogsDBOptions& options) {
     if (options.dbDir.empty()) {
         fprintf(stderr, "-db-dir needs to be set\n");
         return false;
@@ -404,7 +404,7 @@ static inline void printServerOptionsUsage() {
     fprintf(stderr, "    	Drop given ratio of packets after processing them.\n");
 }
 
-static inline bool validateServerOptions(const ServerOptions& options) { 
+static inline bool validateServerOptions(const ServerOptions& options) {
     if (options.numAddressesFound == 0) {
         fprintf(stderr, "at least one -addr needs to be defined\n");
         return false;
@@ -422,6 +422,16 @@ static inline uint32_t parseUint32(CommandLineArgs& args) {
     uint64_t x = std::stoull(arg, &processed);
     if (processed != arg.size() || x > std::numeric_limits<uint32_t>::max()) {
         fprintf(stderr, "Invalid argument '%s', expecting an unsigned integer\n", arg.c_str());
+    }
+    return static_cast<uint32_t>(x);
+}
+
+static inline uint32_t parseUint16(CommandLineArgs& args) {
+    size_t processed;
+    auto arg = args.getArg();
+    uint64_t x = std::stoull(arg, &processed);
+    if (processed != arg.size() || x > std::numeric_limits<uint16_t>::max()) {
+        fprintf(stderr, "Invalid argument '%s', expecting an unsigned 16-bit integer\n", arg.c_str());
     }
     return static_cast<uint32_t>(x);
 }

@@ -13,7 +13,7 @@
 
 static bool parseShardOptions(CommandLineArgs& args, ShardOptions& options) {
     while(!args.done()) {
-        if (parseLogOptions(args, options.logOptions) || 
+        if (parseLogOptions(args, options.logOptions) ||
             parseXmonOptions(args, options.xmonOptions) ||
             parseMetricsOptions(args, options.metricsOptions) ||
             parseRegistryClientOptions(args, options.registryClientOptions) ||
@@ -32,6 +32,14 @@ static bool parseShardOptions(CommandLineArgs& args, ShardOptions& options) {
             options.shardIdSet = true;
             continue;
         }
+        if (arg == "-num-readers") {
+            options.numReaders = parseUint16(args.next());
+            if (options.numReaders == 0) {
+                fprintf(stderr, "-num-readers must be bigger than 0\n");
+                return false;
+            }
+            continue;
+        }
         fprintf(stderr, "unknown argument %s\n", args.peekArg().c_str());
         return false;
     }
@@ -46,18 +54,20 @@ static void printShardOptionsUsage() {
     printLogsDBOptionsUsage();
     printServerOptionsUsage();
     fprintf(stderr, "ShardOptions:\n");
+    fprintf(stderr, " -num-readers\n");
+    fprintf(stderr, "    	Number of reader threads. Default: 1\n");
     fprintf(stderr, " -shard\n");
     fprintf(stderr, "    	Which shard we are running as [0-255]\n");
     fprintf(stderr, " -transient-deadline-interval\n");
     fprintf(stderr, "    	Tweaks the interval with which the deadline for transient file gets bumped.\n");
 }
 
-static bool validateShardOptions(const ShardOptions& options) { 
+static bool validateShardOptions(const ShardOptions& options) {
     if (!options.shardIdSet) {
         fprintf(stderr, "-shard needs to be set\n");
         return false;
     }
-    return (validateLogOptions(options.logOptions) && 
+    return (validateLogOptions(options.logOptions) &&
             validateXmonOptions(options.xmonOptions) &&
             validateMetricsOptions(options.metricsOptions) &&
             validateRegistryClientOptions(options.registryClientOptions) &&

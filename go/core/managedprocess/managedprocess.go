@@ -655,6 +655,7 @@ type ShardOpts struct {
 	Xmon                      string
 	Location                  msgs.Location
 	LogsDBFlags               []string
+	NumReaders                uint16
 }
 
 func (procs *ManagedProcesses) StartShard(ll *log.Logger, repoDir string, opts *ShardOpts) {
@@ -671,6 +672,9 @@ func (procs *ManagedProcesses) StartShard(ll *log.Logger, repoDir string, opts *
 		"-shard", fmt.Sprintf("%d", int(opts.Shrid.Shard())),
 		"-replica", fmt.Sprintf("%d", int(opts.Shrid.Replica())),
 		"-location", fmt.Sprintf("%d", int(opts.Location)),
+	}
+	if opts.NumReaders != 0 {
+		args = append(args, "-num-readers", fmt.Sprintf("%d", opts.NumReaders))
 	}
 	if opts.Addr2 != "" {
 		args = append(args, "-addr", opts.Addr2)

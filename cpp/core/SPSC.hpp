@@ -7,6 +7,7 @@
 #include <cerrno>
 #include <cstdint>
 #include <ctime>
+#include <iterator>
 #include <vector>
 #include <stdint.h>
 #include <atomic>
@@ -125,15 +126,24 @@ public:
     // pushed. First element in `els` gets pushed first. Returns 0
     // if the queue is closed.
     uint32_t push(std::vector<A>& els) {
+        auto begin = els.begin();
+        auto end = els.end();
+        return std::distance(begin, push(begin,end));
+    }
+
+    // Tries to push all the elements. Returns iterator past last pushed element
+    // Returns begin iterator if nothing is pushed or queue is closed
+    typename std::vector<A>::iterator push(typename std::vector<A>::iterator begin, typename std::vector<A>::iterator end) {
         uint32_t sz = _size.load(std::memory_order_relaxed);
 
         // queue is closed
-        if (unlikely(sz & (1ull<<31))) { return 0; }
+        if (unlikely(sz & (1ull<<31))) { return begin; }
 
         // push as much as possible
-        uint32_t toPush = std::min<uint64_t>(els.size(), _maxSize-sz);
+        uint32_t toPush = std::min<uint64_t>(std::distance(begin,end), _maxSize-sz);
         for (uint32_t i = 0; i < toPush; i++, _head++) {
-            _elements[_head&_sizeMask] = std::move(els[i]);
+            _elements[_head&_sizeMask] = std::move(*begin);
+            ++begin;
         }
 
         // update size and wake up puller, if necessary
@@ -152,7 +162,7 @@ public:
             }
         }
 
-        return toPush;
+        return begin;
     }
 
     // Drains at least one element, blocking if there are no elements,

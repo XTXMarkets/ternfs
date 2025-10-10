@@ -14,10 +14,12 @@ struct ShardOptions {
     RegistryClientOptions registryClientOptions;
     LogsDBOptions logsDBOptions;
     ServerOptions serverOptions;
-    
+
     Duration transientDeadlineInterval = DEFAULT_DEADLINE_INTERVAL;
     ShardId shardId;
     bool shardIdSet = false;
+
+    uint16_t numReaders = 1;
 
     // implicit options
     bool isLeader() const { return !logsDBOptions.avoidBeingLeader; }
