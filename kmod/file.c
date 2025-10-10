@@ -205,8 +205,8 @@ static bool put_transient_span(struct ternfs_transient_span* span) {
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(6,2,0))
         atomic_long_add_return(-num_pages, &span->enode->file.mm->rss_stat.count[MM_FILEPAGES]);
 #else
-        percpu_counter_add(&span->enode->file.mm->rss_stat[MM_FILEPAGES], -num_pages);   
-#endif 
+        percpu_counter_add(&span->enode->file.mm->rss_stat[MM_FILEPAGES], -num_pages);
+#endif
         if (span->started_flushing) {
             up(&span->enode->file.flushing_span_sema);
         }
@@ -825,6 +825,18 @@ ssize_t ternfs_file_write_internal(struct ternfs_inode* enode, int flags, loff_t
             ret = min(count, PAGE_SIZE - page->index);
         }
         if (ret < 0) { err = ret; goto out_err_permanent; }
+        if (unlikely(ret == 0 && page->index == 0)) {
+            // if we just continue we will allocate another page in the list
+            // we should free the page we just allocated
+            // TODO: we could utilize page offset for this
+            list_del(&page->lru);
+            put_page(page);
+            #if (LINUX_VERSION_CODE < KERNEL_VERSION(6,2,0))
+                atomic_long_add_return(-1, &span->enode->file.mm->rss_stat.count[MM_FILEPAGES]);
+            #else
+                percpu_counter_add(&span->enode->file.mm->rss_stat[MM_FILEPAGES], -1);
+            #endif
+        }
         ternfs_debug("written %d to page %p", ret, page);
         enode->inode.i_size += ret;
         span->written += ret;
@@ -849,10 +861,12 @@ out_err_permanent:
     atomic_cmpxchg(&enode->file.transient_err, 0, err);
 out_err:
     ternfs_debug("err=%d", err);
-    if (err == -EAGAIN && *ppos > ppos_before) {
+    if (*ppos > ppos_before) {
         // We can just return what we've already written. In fact, it's important
         // that we do so, otherwise repeated calls might fail because they'd be
         // with the wrong offset.
+        // For simplicity we return this even on permanent error. Next call will
+        // fail early.
         goto out;
     }
     return err;
@@ -1356,18 +1370,18 @@ static void file_readahead(struct readahead_control *rac)
     pgoff_t index;
     loff_t off;
     unsigned nr_pages = readahead_count(rac);
-    
+
     if (nr_pages == 0)
         return;
 
     // make sure we have size information
     int err = ternfs_do_getattr(enode, ATTR_CACHE_NORM_TIMEOUT);
     if (err) { return; }
-        
+
     index = readahead_index(rac);
     off = index << PAGE_SHIFT;
-    
-    ternfs_debug("enode=%p, ino=%ld, index=%lu, offset=%lld, nr_pages=%u", 
+
+    ternfs_debug("enode=%p, ino=%ld, index=%lu, offset=%lld, nr_pages=%u",
                  enode, inode->i_ino, index, off, nr_pages);
 
     struct ternfs_span *span = NULL;
@@ -1380,11 +1394,11 @@ static void file_readahead(struct readahead_control *rac)
         // Allocate and zero-fill pages for out-of-bounds requests
         unsigned i;
         for (i = 0; i < nr_pages; i++) {
-                
+
             page = alloc_page(readahead_gfp_mask(rac->mapping));
             if (!page)
                 break;
-                
+
             page->index = index + i;
             zero_user_segment(page, 0, PAGE_SIZE);
             list_add(&page->lru, &pages);
@@ -1408,7 +1422,7 @@ static void file_readahead(struct readahead_control *rac)
         page = alloc_page(readahead_gfp_mask(rac->mapping));
         if (!page)
             break;
-            
+
         page->index = index + i;
         list_add(&page->lru, &pages);
         pages_allocated++;
@@ -1421,20 +1435,20 @@ static void file_readahead(struct readahead_control *rac)
     if (span->storage_class == TERNFS_INLINE_STORAGE) {
         struct ternfs_inline_span *inline_span = TERNFS_INLINE_SPAN(span);
         u64 span_start = span->start;
-        
+
         list_for_each_entry(page, &pages, lru) {
             u64 page_off = page_offset(page);
             if (page_off >= inode->i_size) {
                 zero_user_segment(page, 0, PAGE_SIZE);
                 continue;
             }
-            
+
             u64 span_offset = page_off - span_start;
             if (span_offset >= inline_span->len) {
                 zero_user_segment(page, 0, PAGE_SIZE);
                 continue;
             }
-            
+
             size_t to_copy = min((size_t)(inline_span->len - span_offset), (size_t)PAGE_SIZE);
             char *dst = kmap_atomic(page);
             memcpy(dst, inline_span->body + span_offset, to_copy);
@@ -1446,7 +1460,7 @@ static void file_readahead(struct readahead_control *rac)
         struct ternfs_block_span *block_span = TERNFS_BLOCK_SPAN(span);
         err = ternfs_span_get_pages(block_span, rac->mapping, &pages, pages_allocated, &extra_pages);
         if (err) {
-            ternfs_warn("readahead of %u pages at off=%lld in file %016lx failed with error %d", 
+            ternfs_warn("readahead of %u pages at off=%lld in file %016lx failed with error %d",
                        pages_allocated, off, enode->inode.i_ino, err);
             put_pages_list(&extra_pages);
             goto out_err;
@@ -1486,7 +1500,7 @@ static int file_readfolio(struct file *filp, struct folio *folio) {
     BUG_ON(folio_nr_pages(folio) != 1);
     return file_readpage(filp, folio_page(folio, 0));
 }
-#endif 
+#endif
 
 const struct address_space_operations ternfs_mmap_operations = {
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 18, 0))
