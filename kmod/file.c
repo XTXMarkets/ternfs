@@ -600,6 +600,7 @@ static int write_blocks(struct ternfs_transient_span* span) {
     ternfs_debug("allocating padding pages_per_block=%u total_pages=%u current_pages=%u", pages_per_block, data_pages, current_data_pages);
     // This can happen if we have trailing zeros because of how we arrange the
     // stripes.
+    BUG_ON(data_pages < current_data_pages);
     for (i = current_data_pages; i < data_pages; i++) {
         struct page* zpage = alloc_write_page(&enode->file);
         if (zpage == NULL) {
@@ -609,6 +610,7 @@ static int write_blocks(struct ternfs_transient_span* span) {
         }
         list_add_tail(&zpage->lru, &span->pages);
     }
+    u32 padding_page_count = data_pages - current_data_pages;
     int cell_size = span->block_size / S;
     ternfs_debug("arranging pages");
     // First, we arrange the data blocks appropriatedly.
@@ -617,7 +619,9 @@ static int write_blocks(struct ternfs_transient_span* span) {
         int block = 0;
         struct page* page;
         struct page* tmp;
+        int page_count = 0;
         list_for_each_entry_safe(page, tmp, &span->pages, lru) {
+            ++page_count;
             list_del(&page->lru);
             list_add_tail(&page->lru, &span->blocks[block]);
             cell_offset += PAGE_SIZE;
@@ -627,6 +631,7 @@ static int write_blocks(struct ternfs_transient_span* span) {
                 cell_offset = 0;
             }
         }
+        BUG_ON(page_count - padding_page_count != (span->written + PAGE_SIZE - 1) / PAGE_SIZE);
     }
     // Then we allocate the parity blocks
     for (i = D; i < B; i++) {
@@ -725,6 +730,7 @@ static int start_flushing(struct ternfs_inode* enode, bool non_blocking) {
     if (span->storage_class == TERNFS_INLINE_STORAGE) {
         // this is an easy one, just add the inline span
         struct page* page = list_first_entry(&span->pages, struct page, lru);
+        BUG_ON(page != list_last_entry(&span->pages, struct page, lru));
         char* data = kmap(page);
         ternfs_debug("adding inline span of length %d", span->written);
         err = ternfs_error_to_linux(ternfs_shard_add_inline_span(
@@ -807,7 +813,7 @@ ssize_t ternfs_file_write_internal(struct ternfs_inode* enode, int flags, loff_t
         // grab the page to write to
         struct page* page = list_empty(&span->pages) ? NULL : list_last_entry(&span->pages, struct page, lru);
         if (page == NULL || page->index == 0) { // we're the first ones to get here, or we need to switch to the next one
-            BUG_ON(page != NULL && page->index > PAGE_SIZE);
+            BUG_ON(page != NULL && page->index >= PAGE_SIZE);
             page = alloc_write_page(&enode->file);
             if (!page) {
                 err = -ENOMEM;
