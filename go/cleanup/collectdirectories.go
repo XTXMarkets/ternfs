@@ -30,6 +30,39 @@ type CollectDirectoriesState struct {
 	Cursors           [256]msgs.InodeId
 }
 
+func HardUnlinkFile(
+	log *log.Logger,
+	c *client.Client,
+	dirId msgs.InodeId,
+	fileId msgs.InodeId,
+	name string,
+	creationTime msgs.TernTime,
+) (err error) {
+	if dirId.Shard() == fileId.Shard() {
+		// same shard, we can delete directly. We also know that this is not a directory (it's an
+		// owned, but snapshot edge)
+		log.Debug("%v: removing owned snapshot edge fileId=%v name=%q creationTime=%v", dirId, fileId, name, creationTime)
+		req := msgs.SameShardHardFileUnlinkReq{
+			OwnerId:      dirId,
+			TargetId:     fileId,
+			Name:         name,
+			CreationTime: creationTime,
+		}
+		err = c.ShardRequest(log, dirId.Shard(), &req, &msgs.SameShardHardFileUnlinkResp{})
+	} else {
+		// different shard, we need to go through the CDC
+		log.Debug("%v: removing cross-shard owned snapshot edge fileId=%v name=%q creationTime=%v", dirId, fileId, name, creationTime)
+		req := msgs.CrossShardHardUnlinkFileReq{
+			OwnerId:      dirId,
+			TargetId:     fileId,
+			Name:         name,
+			CreationTime: creationTime,
+		}
+		err = c.CDCRequest(log, &req, &msgs.CrossShardHardUnlinkFileResp{})
+	}
+	return err
+}
+
 // returns whether all the edges were removed
 func applyPolicy(
 	log *log.Logger,
@@ -54,29 +87,7 @@ func applyPolicy(
 			if edge.TargetId.Id().Type() == msgs.DIRECTORY {
 				panic(fmt.Errorf("unexpected owned directory owner=%v edge=%+v", dirId, edge))
 			}
-			if edge.TargetId.Id().Shard() == dirId.Shard() {
-				// same shard, we can delete directly. We also know that this is not a directory (it's an
-				// owned, but snapshot edge)
-				log.Debug("%v: removing owned snapshot edge %+v", dirId, edge)
-				req := msgs.SameShardHardFileUnlinkReq{
-					OwnerId:      dirId,
-					TargetId:     edge.TargetId.Id(),
-					Name:         edge.Name,
-					CreationTime: edge.CreationTime,
-				}
-				err = c.ShardRequest(log, dirId.Shard(), &req, &msgs.SameShardHardFileUnlinkResp{})
-			} else {
-				// different shard, we need to go through the CDC
-				log.Debug("%v: removing cross-shard owned edge %+v", dirId, edge)
-				req := msgs.CrossShardHardUnlinkFileReq{
-					OwnerId:      dirId,
-					TargetId:     edge.TargetId.Id(),
-					Name:         edge.Name,
-					CreationTime: edge.CreationTime,
-				}
-				err = c.CDCRequest(log, &req, &msgs.CrossShardHardUnlinkFileResp{})
-
-			}
+			err = HardUnlinkFile(log, c, dirId, edge.TargetId.Id(), edge.Name, edge.CreationTime)
 		} else {
 			// non-owned edge, we can just kill it without worrying about much.
 			log.Debug("%v: removing non-owned edge %+v", dirId, edge)

@@ -156,3 +156,15 @@ func TestDontDeleteCurrent(t *testing.T) {
 	}
 	assert.Equal(t, 0, edgesToRemove(msgs.NULL_INODE_ID, &msgs.SnapshotPolicy{DeleteAfterTime: msgs.ActiveDeleteAfterTime(time.Hour)}, date(5), edges, time.Duration(0)))
 }
+
+func TestDeleteOrphanDelete(t *testing.T) {
+	edges := []msgs.Edge{
+		{
+			TargetId:     msgs.InodeIdExtra(msgs.NULL_INODE_ID),
+			Name:         "f",
+			CreationTime: date(1),
+		},
+	}
+	assert.Equal(t, 1, edgesToRemove(msgs.NULL_INODE_ID, &msgs.SnapshotPolicy{DeleteAfterTime: msgs.ActiveDeleteAfterTime(time.Hour)}, date(5), edges, time.Duration(0)))
+}
+

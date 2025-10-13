@@ -19,6 +19,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"xtx/ternfs/cleanup"
 	"xtx/ternfs/client"
 	"xtx/ternfs/core/bufpool"
 	"xtx/ternfs/core/flags"
@@ -558,7 +559,8 @@ func (f *ternFile) Flush(ctx context.Context) syscall.Errno {
 			OwnerId: tf.dir,
 			Name:    tf.name,
 		}
-		if err := shardRequest(tf.dir.Shard(), &req, &msgs.LinkFileResp{}); err != 0 {
+		resp := &msgs.LinkFileResp{}
+		if err := shardRequest(tf.dir.Shard(), &req, resp); err != 0 {
 			f.body = failedTransientFile{err}
 			return err
 		}
@@ -727,6 +729,18 @@ func (f *ternFile) Read(ctx context.Context, dest []byte, off int64) (fuse.ReadR
 	}
 }
 
+func canDeleteFileImmediately(dirId msgs.InodeId) (bool, syscall.Errno) {
+	policy := &msgs.SnapshotPolicy{}
+	if _, err := c.ResolveDirectoryInfoEntry(logger, dirInfoCache, dirId, policy); err != nil {
+		return false, ternErrToErrno(err)
+	}
+	delete :=
+		!(!policy.DeleteAfterTime.Active() && !policy.DeleteAfterVersions.Active()) && // not infinite retention
+			((!policy.DeleteAfterVersions.Active() || policy.DeleteAfterTime.Time() == time.Duration(0)) || // immediate deletion through time or
+				(!policy.DeleteAfterTime.Active() || policy.DeleteAfterVersions.Versions() == 0)) // immediate deletion through versions
+	return delete, 0
+}
+
 func (n *ternNode) Unlink(ctx context.Context, name string) syscall.Errno {
 	logger.Debug("unlink dir=%v, name=%q", n.id, name)
 
@@ -740,7 +754,17 @@ func (n *ternNode) Unlink(ctx context.Context, name string) syscall.Errno {
 		Name:         name,
 		CreationTime: lookupResp.CreationTime,
 	}
-	return shardRequest(n.id.Shard(), &unlinkReq, &msgs.SoftUnlinkFileResp{})
+	if err := shardRequest(n.id.Shard(), &unlinkReq, &msgs.SoftUnlinkFileResp{}); err != 0 {
+		return err
+	}
+	if canDelete, err := canDeleteFileImmediately(n.id); err != 0 {
+		return err
+	} else if canDelete {
+		if err := cleanup.HardUnlinkFile(logger, c, n.id, lookupResp.TargetId, name, lookupResp.CreationTime); err != nil {
+			return ternErrToErrno(err)
+		}
+	}
+	return 0
 }
 
 func (n *ternNode) Rmdir(ctx context.Context, name string) syscall.Errno {

@@ -15,8 +15,6 @@ import (
 // `edges` should be all the snapshot edges for a certain name, oldest edge first. This
 // must include the current edge.
 //
-// It is assumed that every delete in the input will be be preceeded by a non-delete.
-//
 // If it returns N, edges[N:] will be well formed too in the sense above.
 func edgesToRemove(dir msgs.InodeId, policy *msgs.SnapshotPolicy, now msgs.TernTime, edges []msgs.Edge, minEdgeAge time.Duration) int {
 	if len(edges) == 0 {
