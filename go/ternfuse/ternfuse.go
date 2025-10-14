@@ -757,11 +757,13 @@ func (n *ternNode) Unlink(ctx context.Context, name string) syscall.Errno {
 	if err := shardRequest(n.id.Shard(), &unlinkReq, &msgs.SoftUnlinkFileResp{}); err != 0 {
 		return err
 	}
+	// When we're trying to delete immediately, we might be racing with GC to
+	// delete the file or even the whole directory, so let errors slide
 	if canDelete, err := canDeleteFileImmediately(n.id); err != 0 {
-		return err
+		// ignore error
 	} else if canDelete {
 		if err := cleanup.HardUnlinkFile(logger, c, n.id, lookupResp.TargetId, name, lookupResp.CreationTime); err != nil {
-			return ternErrToErrno(err)
+			// ignore error
 		}
 	}
 	return 0
