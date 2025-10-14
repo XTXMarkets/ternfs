@@ -20,44 +20,6 @@
 
 extern unsigned ternfs_disable_ftruncate;
 
-struct ternfs_inode_policy {
-    u64 fetched_at_jiffies;
-    struct ternfs_policy* policy;
-};
-
-static inline u8 ternfs_block_policy_len(const char* body, u8 len) {
-    BUG_ON(len == 0);
-    return *(u8*)body;
-}
-
-static inline void ternfs_block_policy_get(const char* body, u8 len, int ix, u8* storage_class, u32* min_size) {
-    BUG_ON(ix < 0 || ix >= ternfs_block_policy_len(body, len));
-    const char* b = body + 2 + ix*TERNFS_BLOCK_POLICY_ENTRY_SIZE;
-    *storage_class = *(u8*)b; b += 1;
-    *min_size = get_unaligned_le32(b); b += 4;
-}
-
-static inline u8 ternfs_span_policy_len(const char* body, u8 len) {
-    BUG_ON(len == 0);
-    return *(u8*)body;
-}
-
-static inline void ternfs_span_policy_get(const char* body, u8 len, int ix, u32* max_size, u8* parity) {
-    BUG_ON(ix < 0 || ix >= ternfs_span_policy_len(body, len));
-    const char* b = body + 2 + ix*TERNFS_BLOCK_POLICY_ENTRY_SIZE;
-    *max_size = get_unaligned_le32(b); b += 4;
-    *parity = *(u8*)b; b += 1;
-}
-
-static inline void ternfs_span_policy_last(const char* body, u8 len, u32* max_size, u8* parity) {
-    ternfs_span_policy_get(body, len, ternfs_span_policy_len(body, len)-1, max_size, parity);
-}
-
-static inline u32 ternfs_stripe_policy(const char* body, u8 len) {
-    BUG_ON(len != 4);
-    return get_unaligned_le32(body);
-}
-
 struct ternfs_transient_span;
 
 #define TERNFS_FILE_STATUS_NONE 0     // we have created the inode, we haven't opened it yet
@@ -141,6 +103,10 @@ struct ternfs_inode {
     struct ternfs_policy* block_policy;
     struct ternfs_policy* span_policy;
     struct ternfs_policy* stripe_policy;
+    // We use the snapshot policy to immediately declare file transient if policy
+    // requests it. This is to reduce load on gc for high churn directories where we
+    // don't care about snapshots.
+    struct ternfs_policy* snapshot_policy;
 
     union {
         struct ternfs_inode_file file;

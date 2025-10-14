@@ -68,7 +68,7 @@ void ternfs_inode_evict(struct inode* inode) {
 }
 
 void ternfs_inode_free(struct inode* inode) {
-    
+
     struct ternfs_inode* enode = TERNFS_I(inode);
     ternfs_debug("enode=%p", enode);
     kmem_cache_free(ternfs_inode_cachep, enode);
@@ -199,7 +199,8 @@ static void getattr_async_complete(struct work_struct* work) {
             struct ternfs_policy_body block_policy;
             struct ternfs_policy_body span_policy;
             struct ternfs_policy_body stripe_policy;
-            err = ternfs_error_to_linux(ternfs_shard_parse_getattr_dir(skb, &mtime, &owner, &block_policy, &span_policy, &stripe_policy));
+            struct ternfs_policy_body snapshot_policy;
+            err = ternfs_error_to_linux(ternfs_shard_parse_getattr_dir(skb, &mtime, &owner, &block_policy, &span_policy, &stripe_policy, &snapshot_policy));
             if (err == 0) {
                 if (block_policy.len) {
                     enode->block_policy = ternfs_upsert_policy(enode->inode.i_ino, BLOCK_POLICY_TAG, block_policy.body, block_policy.len);
@@ -209,6 +210,9 @@ static void getattr_async_complete(struct work_struct* work) {
                 }
                 if (stripe_policy.len) {
                     enode->stripe_policy = ternfs_upsert_policy(enode->inode.i_ino, STRIPE_POLICY_TAG, stripe_policy.body, stripe_policy.len);
+                }
+                if (snapshot_policy.len) {
+                    enode->snapshot_policy = ternfs_upsert_policy(enode->inode.i_ino, SNAPSHOT_POLICY_TAG, snapshot_policy.body, snapshot_policy.len);
                 }
                 expiry = get_jiffies_64() + ternfs_dir_getattr_refresh_time_jiffies;
             }
@@ -287,6 +291,7 @@ int ternfs_do_getattr(struct ternfs_inode* enode, int cache_timeout_type) {
                 struct ternfs_policy_body block_policy;
                 struct ternfs_policy_body span_policy;
                 struct ternfs_policy_body stripe_policy;
+                struct ternfs_policy_body snapshot_policy;
                 err = ternfs_shard_getattr_dir(
                     (struct ternfs_fs_info*)enode->inode.i_sb->s_fs_info,
                     enode->inode.i_ino,
@@ -294,7 +299,8 @@ int ternfs_do_getattr(struct ternfs_inode* enode, int cache_timeout_type) {
                     &owner,
                     &block_policy,
                     &span_policy,
-                    &stripe_policy
+                    &stripe_policy,
+                    &snapshot_policy
                 );
                 if (err == 0) {
                     if (block_policy.len) {
@@ -305,6 +311,9 @@ int ternfs_do_getattr(struct ternfs_inode* enode, int cache_timeout_type) {
                     }
                     if (stripe_policy.len) {
                         enode->stripe_policy = ternfs_upsert_policy(enode->inode.i_ino, STRIPE_POLICY_TAG, stripe_policy.body, stripe_policy.len);
+                    }
+                    if (snapshot_policy.len) {
+                        enode->snapshot_policy = ternfs_upsert_policy(enode->inode.i_ino, SNAPSHOT_POLICY_TAG, snapshot_policy.body, snapshot_policy.len);
                     }
                     expiry = get_jiffies_64() + ternfs_dir_getattr_refresh_time_jiffies;
                 }
@@ -720,6 +729,7 @@ struct inode* ternfs_get_inode(
             enode->block_policy = parent->block_policy;
             enode->span_policy = parent->span_policy;
             enode->stripe_policy = parent->stripe_policy;
+            enode->snapshot_policy = parent->snapshot_policy;
         } else {
             bool is_root = ino == TERNFS_ROOT_INODE;
             BUG_ON(!allow_no_parent && !is_root);
@@ -727,11 +737,13 @@ struct inode* ternfs_get_inode(
                 enode->block_policy = NULL;
                 enode->span_policy = NULL;
                 enode->stripe_policy = NULL;
+                enode->snapshot_policy = NULL;
             } else {
                 struct ternfs_inode* root = TERNFS_I(sb->s_root->d_inode);
                 enode->block_policy = root->block_policy;
                 enode->span_policy = root->span_policy;
                 enode->stripe_policy = root->stripe_policy;
+                enode->snapshot_policy = root->snapshot_policy;
             }
         }
 

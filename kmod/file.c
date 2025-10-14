@@ -490,24 +490,24 @@ static int compute_span_parameters(
     ternfs_get_policy_body(stripe_policy_p, &stripe_policy);
 
     // Pick parity
-    int num_span_policies = ternfs_span_policy_len(span_policy.body, span_policy.len);
+    int num_span_policies = ternfs_span_policy_len(&span_policy);
     BUG_ON(num_span_policies == 0);
     int i;
     u8 parity = 0;
     for (i = num_span_policies - 2; i >= 0; i--) {
         u32 max_size;
         u8 this_parity;
-        ternfs_span_policy_get(span_policy.body, span_policy.len, i, &max_size, &this_parity);
+        ternfs_span_policy_get(&span_policy, i, &max_size, &this_parity);
         if (span_size > max_size) {
             i++;
-            ternfs_span_policy_get(span_policy.body, span_policy.len, i, &max_size, &parity);
+            ternfs_span_policy_get(&span_policy, i, &max_size, &parity);
             break;
         }
     }
     if (parity == 0) {
         i = 0;
         u32 max_size;
-        ternfs_span_policy_get(span_policy.body, span_policy.len, i, &max_size, &parity);
+        ternfs_span_policy_get(&span_policy, i, &max_size, &parity);
         BUG_ON(span_size > max_size);
     }
     if (unlikely(ternfs_data_blocks(parity) > TERNFS_MAX_DATA || ternfs_parity_blocks(parity) > TERNFS_MAX_PARITY)) {
@@ -519,7 +519,7 @@ static int compute_span_parameters(
     // blocks/stripes/spans are multiples of PAGE_SIZE. We might also have some extra pages
     // at the end to have things to line up correctly. This should only happens for big spans
     // anyway (small spans will just use mirroring).
-    u32 target_stripe_size = ternfs_stripe_policy(stripe_policy.body, stripe_policy.len);
+    u32 target_stripe_size = ternfs_stripe_policy(&stripe_policy);
     int S;
     if (ternfs_data_blocks(parity) == 1) {
         // If we only have one data block, things are also pretty simple (just mirroring).
@@ -545,7 +545,7 @@ static int compute_span_parameters(
     u8 storage_class;
     for (i = num_block_policies-1; i >= 0; i--) {
         u32 min_size;
-        ternfs_block_policy_get(block_policy.body, block_policy.len, i, &storage_class, &min_size);
+        ternfs_block_policy_get(&block_policy, i, &storage_class, &min_size);
         if (block_size > min_size) {
             break;
         }
@@ -789,7 +789,7 @@ ssize_t ternfs_file_write_internal(struct ternfs_inode* enode, int flags, loff_t
         struct ternfs_policy_body span_policy;
         ternfs_get_policy_body(enode->span_policy, &span_policy);
         u8 p;
-        ternfs_span_policy_last(span_policy.body, span_policy.len, &max_span_size, &p);
+        ternfs_span_policy_last(&span_policy, &max_span_size, &p);
     }
     BUG_ON(max_span_size%PAGE_SIZE != 0); // needed for "new span" logic paired with page copying below, we could avoid it
 

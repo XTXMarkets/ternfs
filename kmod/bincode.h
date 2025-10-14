@@ -160,6 +160,7 @@ static const u32 TERNFS_BLOCKS_REQ_PROTOCOL_VERSION = 0x4f4c42;
 // '14f4c42'
 static const u32 TERNFS_BLOCKS_RESP_PROTOCOL_VERSION = 0x14f4c42;
 
+static const u8 SNAPSHOT_POLICY_TAG = 1;
 static const u8 SPAN_POLICY_TAG = 2;
 static const u8 BLOCK_POLICY_TAG = 3;
 static const u8 STRIPE_POLICY_TAG = 4;

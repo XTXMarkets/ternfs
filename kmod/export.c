@@ -75,7 +75,7 @@ static struct inode* ternfs_nfs_get_inode(struct super_block *sb, u64 ino) {
 
 static struct dentry* ternfs_fh_to_dentry(struct super_block *sb, struct fid *fid, int fh_len, int fileid_type) {
     struct ternfs_fh *efh = (struct ternfs_fh *)fid;
-    
+
     int expected_len = ternfs_fh_length(fileid_type);
     if (expected_len < 0) {
         ternfs_warn("unexpected fid type %d", fileid_type);
@@ -125,6 +125,7 @@ static struct dentry* ternfs_get_parent(struct dentry *child) {
     struct ternfs_policy_body block_policy;
     struct ternfs_policy_body span_policy;
     struct ternfs_policy_body stripe_policy;
+    struct ternfs_policy_body snapshot_policy;
     int err = ternfs_error_to_linux(ternfs_shard_getattr_dir(
         (struct ternfs_fs_info *)child->d_inode->i_sb->s_fs_info,
         child->d_inode->i_ino,
@@ -132,7 +133,8 @@ static struct dentry* ternfs_get_parent(struct dentry *child) {
         &owner,
         &block_policy,
         &span_policy,
-        &stripe_policy
+        &stripe_policy,
+        &snapshot_policy
     ));
     if (err != 0) {
         return ERR_PTR(err);

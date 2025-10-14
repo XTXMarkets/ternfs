@@ -35,7 +35,8 @@ int ternfs_shard_getattr_dir(
     u64* owner,
     struct ternfs_policy_body* block_policies,
     struct ternfs_policy_body* span_policies,
-    struct ternfs_policy_body* stripe_policy
+    struct ternfs_policy_body* stripe_policy,
+    struct ternfs_policy_body* snapshot_policy
 );
 int ternfs_shard_async_getattr_dir(struct ternfs_fs_info* info, struct ternfs_metadata_request* metadata_req, u64 dir);
 int ternfs_shard_parse_getattr_dir(
@@ -44,7 +45,8 @@ int ternfs_shard_parse_getattr_dir(
     u64* owner,
     struct ternfs_policy_body* block_policies,
     struct ternfs_policy_body* span_policies,
-    struct ternfs_policy_body* stripe_policy
+    struct ternfs_policy_body* stripe_policy,
+    struct ternfs_policy_body* snapshot_policy
 );
 int ternfs_shard_create_file(struct ternfs_fs_info* info, u8 shid, int itype, const char* name, int name_len, u64* ino, u64* cookie);
 

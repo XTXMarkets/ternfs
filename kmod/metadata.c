@@ -513,11 +513,13 @@ int ternfs_shard_parse_getattr_dir(
     u64* owner,
     struct ternfs_policy_body* block_policies,
     struct ternfs_policy_body* span_policies,
-    struct ternfs_policy_body* stripe_policy
+    struct ternfs_policy_body* stripe_policy,
+    struct ternfs_policy_body* snapshot_policy
 ) {
     block_policies->len = 0;
     span_policies->len = 0;
     stripe_policy->len = 0;
+    snapshot_policy->len = 0;
 
     u8 kind = TERNFS_SHARD_STAT_DIRECTORY;
     PREPARE_SHARD_RESP_CTX();
@@ -545,6 +547,10 @@ int ternfs_shard_parse_getattr_dir(
             stripe_policy->len = body.str.len;
             memcpy(stripe_policy->body, body.str.buf, body.str.len);
         }
+        if (tag.x == SNAPSHOT_POLICY_TAG) {
+            snapshot_policy->len = body.str.len;
+            memcpy(snapshot_policy->body, body.str.buf, body.str.len);
+        }
     }
     ternfs_directory_info_get_end(&ctx, entries, info_end);
     ternfs_stat_directory_resp_get_end(&ctx, info_end, end);
@@ -563,7 +569,8 @@ int ternfs_shard_getattr_dir(
     u64* owner,
     struct ternfs_policy_body* block_policies,
     struct ternfs_policy_body* span_policies,
-    struct ternfs_policy_body* stripe_policy
+    struct ternfs_policy_body* stripe_policy,
+    struct ternfs_policy_body* snapshot_policy
 ) {
     struct sk_buff* skb;
     u32 attempts;
@@ -579,7 +586,7 @@ int ternfs_shard_getattr_dir(
         if (IS_ERR(skb)) { return PTR_ERR(skb); }
     }
 
-    return ternfs_shard_parse_getattr_dir(skb, mtime, owner, block_policies, span_policies, stripe_policy);
+    return ternfs_shard_parse_getattr_dir(skb, mtime, owner, block_policies, span_policies, stripe_policy, snapshot_policy);
 }
 
 int ternfs_shard_async_getattr_file(struct ternfs_fs_info* info, struct ternfs_metadata_request* metadata_req, u64 file) {
