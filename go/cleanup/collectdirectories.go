@@ -107,13 +107,16 @@ func applyPolicy(
 	return toCollect == len(edges), nil
 }
 
-func CollectDirectory(log *log.Logger, c *client.Client, dirInfoCache *client.DirInfoCache, stats *CollectDirectoriesStats, dirId msgs.InodeId, minEdgeAge time.Duration) error {
+func CollectDirectory(log *log.Logger, c *client.Client, dirInfoCache *client.DirInfoCache, stats *CollectDirectoriesStats, dirId msgs.InodeId, minEdgeAge time.Duration, forcePolicy *msgs.SnapshotPolicy) error {
 	log.Debug("%v: collecting", dirId)
 	atomic.AddUint64(&stats.VisitedDirectories, 1)
 
-	policy := &msgs.SnapshotPolicy{}
-	if _, err := c.ResolveDirectoryInfoEntry(log, dirInfoCache, dirId, policy); err != nil {
-		return err
+	policy := forcePolicy
+	if policy == nil {
+		policy = &msgs.SnapshotPolicy{}
+		if _, err := c.ResolveDirectoryInfoEntry(log, dirInfoCache, dirId, policy); err != nil {
+			return err
+		}
 	}
 	dirEdges := make(map[string][]msgs.Edge)
 	req := msgs.FullReadDirReq{
@@ -196,7 +199,7 @@ func collectDirectoriesWorker(
 		}
 		log.Debug("received worker request for shard %v len=%v cap=%v", shid, len(workersChan), cap(workersChan))
 		atomic.StoreUint64(&stats.WorkersQueuesSize[shid], uint64(len(workersChan)))
-		if err := CollectDirectory(log, c, dirInfoCache, &stats.Stats, dir, minEdgeAge); err != nil {
+		if err := CollectDirectory(log, c, dirInfoCache, &stats.Stats, dir, minEdgeAge, nil); err != nil {
 			log.Info("could not destruct directory %v, terminating: %v", dir, err)
 			select {
 			case terminateChan <- err:
