@@ -464,11 +464,11 @@ std::ostream& operator<<(std::ostream& out, CDCMessageKind kind) {
     case CDCMessageKind::RENAME_DIRECTORY:
         out << "RENAME_DIRECTORY";
         break;
-    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
-        out << "HARD_UNLINK_DIRECTORY";
-        break;
     case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
         out << "CROSS_SHARD_HARD_UNLINK_FILE";
+        break;
+    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
+        out << "HARD_UNLINK_DIRECTORY";
         break;
     case CDCMessageKind::CDC_SNAPSHOT:
         out << "CDC_SNAPSHOT";
@@ -3903,38 +3903,6 @@ std::ostream& operator<<(std::ostream& out, const RenameDirectoryResp& x) {
     return out;
 }
 
-void HardUnlinkDirectoryReq::pack(BincodeBuf& buf) const {
-    dirId.pack(buf);
-}
-void HardUnlinkDirectoryReq::unpack(BincodeBuf& buf) {
-    dirId.unpack(buf);
-}
-void HardUnlinkDirectoryReq::clear() {
-    dirId = InodeId();
-}
-bool HardUnlinkDirectoryReq::operator==(const HardUnlinkDirectoryReq& rhs) const {
-    if ((InodeId)this->dirId != (InodeId)rhs.dirId) { return false; };
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const HardUnlinkDirectoryReq& x) {
-    out << "HardUnlinkDirectoryReq(" << "DirId=" << x.dirId << ")";
-    return out;
-}
-
-void HardUnlinkDirectoryResp::pack(BincodeBuf& buf) const {
-}
-void HardUnlinkDirectoryResp::unpack(BincodeBuf& buf) {
-}
-void HardUnlinkDirectoryResp::clear() {
-}
-bool HardUnlinkDirectoryResp::operator==(const HardUnlinkDirectoryResp& rhs) const {
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const HardUnlinkDirectoryResp& x) {
-    out << "HardUnlinkDirectoryResp(" << ")";
-    return out;
-}
-
 void CrossShardHardUnlinkFileReq::pack(BincodeBuf& buf) const {
     ownerId.pack(buf);
     targetId.pack(buf);
@@ -3976,6 +3944,38 @@ bool CrossShardHardUnlinkFileResp::operator==(const CrossShardHardUnlinkFileResp
 }
 std::ostream& operator<<(std::ostream& out, const CrossShardHardUnlinkFileResp& x) {
     out << "CrossShardHardUnlinkFileResp(" << ")";
+    return out;
+}
+
+void HardUnlinkDirectoryReq::pack(BincodeBuf& buf) const {
+    dirId.pack(buf);
+}
+void HardUnlinkDirectoryReq::unpack(BincodeBuf& buf) {
+    dirId.unpack(buf);
+}
+void HardUnlinkDirectoryReq::clear() {
+    dirId = InodeId();
+}
+bool HardUnlinkDirectoryReq::operator==(const HardUnlinkDirectoryReq& rhs) const {
+    if ((InodeId)this->dirId != (InodeId)rhs.dirId) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const HardUnlinkDirectoryReq& x) {
+    out << "HardUnlinkDirectoryReq(" << "DirId=" << x.dirId << ")";
+    return out;
+}
+
+void HardUnlinkDirectoryResp::pack(BincodeBuf& buf) const {
+}
+void HardUnlinkDirectoryResp::unpack(BincodeBuf& buf) {
+}
+void HardUnlinkDirectoryResp::clear() {
+}
+bool HardUnlinkDirectoryResp::operator==(const HardUnlinkDirectoryResp& rhs) const {
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const HardUnlinkDirectoryResp& x) {
+    out << "HardUnlinkDirectoryResp(" << ")";
     return out;
 }
 
@@ -8066,21 +8066,21 @@ RenameDirectoryReq& CDCReqContainer::setRenameDirectory() {
     auto& x = _data.emplace<3>();
     return x;
 }
-const HardUnlinkDirectoryReq& CDCReqContainer::getHardUnlinkDirectory() const {
-    ALWAYS_ASSERT(_kind == CDCMessageKind::HARD_UNLINK_DIRECTORY, "%s != %s", _kind, CDCMessageKind::HARD_UNLINK_DIRECTORY);
-    return std::get<4>(_data);
-}
-HardUnlinkDirectoryReq& CDCReqContainer::setHardUnlinkDirectory() {
-    _kind = CDCMessageKind::HARD_UNLINK_DIRECTORY;
-    auto& x = _data.emplace<4>();
-    return x;
-}
 const CrossShardHardUnlinkFileReq& CDCReqContainer::getCrossShardHardUnlinkFile() const {
     ALWAYS_ASSERT(_kind == CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE, "%s != %s", _kind, CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE);
-    return std::get<5>(_data);
+    return std::get<4>(_data);
 }
 CrossShardHardUnlinkFileReq& CDCReqContainer::setCrossShardHardUnlinkFile() {
     _kind = CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE;
+    auto& x = _data.emplace<4>();
+    return x;
+}
+const HardUnlinkDirectoryReq& CDCReqContainer::getHardUnlinkDirectory() const {
+    ALWAYS_ASSERT(_kind == CDCMessageKind::HARD_UNLINK_DIRECTORY, "%s != %s", _kind, CDCMessageKind::HARD_UNLINK_DIRECTORY);
+    return std::get<5>(_data);
+}
+HardUnlinkDirectoryReq& CDCReqContainer::setHardUnlinkDirectory() {
+    _kind = CDCMessageKind::HARD_UNLINK_DIRECTORY;
     auto& x = _data.emplace<5>();
     return x;
 }
@@ -8122,11 +8122,11 @@ void CDCReqContainer::operator=(const CDCReqContainer& other) {
     case CDCMessageKind::RENAME_DIRECTORY:
         setRenameDirectory() = other.getRenameDirectory();
         break;
-    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
-        setHardUnlinkDirectory() = other.getHardUnlinkDirectory();
-        break;
     case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
         setCrossShardHardUnlinkFile() = other.getCrossShardHardUnlinkFile();
+        break;
+    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
+        setHardUnlinkDirectory() = other.getHardUnlinkDirectory();
         break;
     case CDCMessageKind::CDC_SNAPSHOT:
         setCdcSnapshot() = other.getCdcSnapshot();
@@ -8152,9 +8152,9 @@ size_t CDCReqContainer::packedSize() const {
         return sizeof(CDCMessageKind) + std::get<2>(_data).packedSize();
     case CDCMessageKind::RENAME_DIRECTORY:
         return sizeof(CDCMessageKind) + std::get<3>(_data).packedSize();
-    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
-        return sizeof(CDCMessageKind) + std::get<4>(_data).packedSize();
     case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
+        return sizeof(CDCMessageKind) + std::get<4>(_data).packedSize();
+    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
         return sizeof(CDCMessageKind) + std::get<5>(_data).packedSize();
     case CDCMessageKind::CDC_SNAPSHOT:
         return sizeof(CDCMessageKind) + std::get<6>(_data).packedSize();
@@ -8178,10 +8178,10 @@ void CDCReqContainer::pack(BincodeBuf& buf) const {
     case CDCMessageKind::RENAME_DIRECTORY:
         std::get<3>(_data).pack(buf);
         break;
-    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
+    case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
         std::get<4>(_data).pack(buf);
         break;
-    case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
+    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
         std::get<5>(_data).pack(buf);
         break;
     case CDCMessageKind::CDC_SNAPSHOT:
@@ -8207,10 +8207,10 @@ void CDCReqContainer::unpack(BincodeBuf& buf) {
     case CDCMessageKind::RENAME_DIRECTORY:
         _data.emplace<3>().unpack(buf);
         break;
-    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
+    case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
         _data.emplace<4>().unpack(buf);
         break;
-    case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
+    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
         _data.emplace<5>().unpack(buf);
         break;
     case CDCMessageKind::CDC_SNAPSHOT:
@@ -8233,10 +8233,10 @@ bool CDCReqContainer::operator==(const CDCReqContainer& other) const {
         return getSoftUnlinkDirectory() == other.getSoftUnlinkDirectory();
     case CDCMessageKind::RENAME_DIRECTORY:
         return getRenameDirectory() == other.getRenameDirectory();
-    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
-        return getHardUnlinkDirectory() == other.getHardUnlinkDirectory();
     case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
         return getCrossShardHardUnlinkFile() == other.getCrossShardHardUnlinkFile();
+    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
+        return getHardUnlinkDirectory() == other.getHardUnlinkDirectory();
     case CDCMessageKind::CDC_SNAPSHOT:
         return getCdcSnapshot() == other.getCdcSnapshot();
     default:
@@ -8258,11 +8258,11 @@ std::ostream& operator<<(std::ostream& out, const CDCReqContainer& x) {
     case CDCMessageKind::RENAME_DIRECTORY:
         out << x.getRenameDirectory();
         break;
-    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
-        out << x.getHardUnlinkDirectory();
-        break;
     case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
         out << x.getCrossShardHardUnlinkFile();
+        break;
+    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
+        out << x.getHardUnlinkDirectory();
         break;
     case CDCMessageKind::CDC_SNAPSHOT:
         out << x.getCdcSnapshot();
@@ -8321,21 +8321,21 @@ RenameDirectoryResp& CDCRespContainer::setRenameDirectory() {
     auto& x = _data.emplace<4>();
     return x;
 }
-const HardUnlinkDirectoryResp& CDCRespContainer::getHardUnlinkDirectory() const {
-    ALWAYS_ASSERT(_kind == CDCMessageKind::HARD_UNLINK_DIRECTORY, "%s != %s", _kind, CDCMessageKind::HARD_UNLINK_DIRECTORY);
-    return std::get<5>(_data);
-}
-HardUnlinkDirectoryResp& CDCRespContainer::setHardUnlinkDirectory() {
-    _kind = CDCMessageKind::HARD_UNLINK_DIRECTORY;
-    auto& x = _data.emplace<5>();
-    return x;
-}
 const CrossShardHardUnlinkFileResp& CDCRespContainer::getCrossShardHardUnlinkFile() const {
     ALWAYS_ASSERT(_kind == CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE, "%s != %s", _kind, CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE);
-    return std::get<6>(_data);
+    return std::get<5>(_data);
 }
 CrossShardHardUnlinkFileResp& CDCRespContainer::setCrossShardHardUnlinkFile() {
     _kind = CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE;
+    auto& x = _data.emplace<5>();
+    return x;
+}
+const HardUnlinkDirectoryResp& CDCRespContainer::getHardUnlinkDirectory() const {
+    ALWAYS_ASSERT(_kind == CDCMessageKind::HARD_UNLINK_DIRECTORY, "%s != %s", _kind, CDCMessageKind::HARD_UNLINK_DIRECTORY);
+    return std::get<6>(_data);
+}
+HardUnlinkDirectoryResp& CDCRespContainer::setHardUnlinkDirectory() {
+    _kind = CDCMessageKind::HARD_UNLINK_DIRECTORY;
     auto& x = _data.emplace<6>();
     return x;
 }
@@ -8380,11 +8380,11 @@ void CDCRespContainer::operator=(const CDCRespContainer& other) {
     case CDCMessageKind::RENAME_DIRECTORY:
         setRenameDirectory() = other.getRenameDirectory();
         break;
-    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
-        setHardUnlinkDirectory() = other.getHardUnlinkDirectory();
-        break;
     case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
         setCrossShardHardUnlinkFile() = other.getCrossShardHardUnlinkFile();
+        break;
+    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
+        setHardUnlinkDirectory() = other.getHardUnlinkDirectory();
         break;
     case CDCMessageKind::CDC_SNAPSHOT:
         setCdcSnapshot() = other.getCdcSnapshot();
@@ -8412,9 +8412,9 @@ size_t CDCRespContainer::packedSize() const {
         return sizeof(CDCMessageKind) + std::get<3>(_data).packedSize();
     case CDCMessageKind::RENAME_DIRECTORY:
         return sizeof(CDCMessageKind) + std::get<4>(_data).packedSize();
-    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
-        return sizeof(CDCMessageKind) + std::get<5>(_data).packedSize();
     case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
+        return sizeof(CDCMessageKind) + std::get<5>(_data).packedSize();
+    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
         return sizeof(CDCMessageKind) + std::get<6>(_data).packedSize();
     case CDCMessageKind::CDC_SNAPSHOT:
         return sizeof(CDCMessageKind) + std::get<7>(_data).packedSize();
@@ -8441,10 +8441,10 @@ void CDCRespContainer::pack(BincodeBuf& buf) const {
     case CDCMessageKind::RENAME_DIRECTORY:
         std::get<4>(_data).pack(buf);
         break;
-    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
+    case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
         std::get<5>(_data).pack(buf);
         break;
-    case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
+    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
         std::get<6>(_data).pack(buf);
         break;
     case CDCMessageKind::CDC_SNAPSHOT:
@@ -8473,10 +8473,10 @@ void CDCRespContainer::unpack(BincodeBuf& buf) {
     case CDCMessageKind::RENAME_DIRECTORY:
         _data.emplace<4>().unpack(buf);
         break;
-    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
+    case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
         _data.emplace<5>().unpack(buf);
         break;
-    case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
+    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
         _data.emplace<6>().unpack(buf);
         break;
     case CDCMessageKind::CDC_SNAPSHOT:
@@ -8501,10 +8501,10 @@ bool CDCRespContainer::operator==(const CDCRespContainer& other) const {
         return getSoftUnlinkDirectory() == other.getSoftUnlinkDirectory();
     case CDCMessageKind::RENAME_DIRECTORY:
         return getRenameDirectory() == other.getRenameDirectory();
-    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
-        return getHardUnlinkDirectory() == other.getHardUnlinkDirectory();
     case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
         return getCrossShardHardUnlinkFile() == other.getCrossShardHardUnlinkFile();
+    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
+        return getHardUnlinkDirectory() == other.getHardUnlinkDirectory();
     case CDCMessageKind::CDC_SNAPSHOT:
         return getCdcSnapshot() == other.getCdcSnapshot();
     default:
@@ -8529,11 +8529,11 @@ std::ostream& operator<<(std::ostream& out, const CDCRespContainer& x) {
     case CDCMessageKind::RENAME_DIRECTORY:
         out << x.getRenameDirectory();
         break;
-    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
-        out << x.getHardUnlinkDirectory();
-        break;
     case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
         out << x.getCrossShardHardUnlinkFile();
+        break;
+    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
+        out << x.getHardUnlinkDirectory();
         break;
     case CDCMessageKind::CDC_SNAPSHOT:
         out << x.getCdcSnapshot();

@@ -123,8 +123,8 @@ func edgesToRemove(dir msgs.InodeId, policy *msgs.SnapshotPolicy, now msgs.TernT
 	if firstGoodEdge < 0 {
 		firstGoodEdge = 0
 	}
-	// if the last edge is a delete, remove that too (we don't want to keep a delete hanging)
-	if firstGoodEdge < len(edges) && edges[firstGoodEdge].TargetId.Id() == msgs.NULL_INODE_ID {
+	// remove trailing delete edges
+    for firstGoodEdge < len(edges) && edges[firstGoodEdge].TargetId.Id() == msgs.NULL_INODE_ID {
 		firstGoodEdge++
 	}
 	return firstGoodEdge

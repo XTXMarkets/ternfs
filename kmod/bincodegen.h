@@ -132,9 +132,10 @@ const char* ternfs_shard_kind_str(int kind);
 #define TERNFS_CDC_RENAME_FILE 0x2
 #define TERNFS_CDC_SOFT_UNLINK_DIRECTORY 0x3
 #define TERNFS_CDC_RENAME_DIRECTORY 0x4
-#define __print_ternfs_cdc_kind(k) __print_symbolic(k, { 1, "MAKE_DIRECTORY" }, { 2, "RENAME_FILE" }, { 3, "SOFT_UNLINK_DIRECTORY" }, { 4, "RENAME_DIRECTORY" })
-#define TERNFS_CDC_KIND_MAX 4
-static const u8 __ternfs_cdc_kind_index_mappings[256] = {255, 0, 1, 2, 3, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255};
+#define TERNFS_CDC_CROSS_SHARD_HARD_UNLINK_FILE 0x6
+#define __print_ternfs_cdc_kind(k) __print_symbolic(k, { 1, "MAKE_DIRECTORY" }, { 2, "RENAME_FILE" }, { 3, "SOFT_UNLINK_DIRECTORY" }, { 4, "RENAME_DIRECTORY" }, { 6, "CROSS_SHARD_HARD_UNLINK_FILE" })
+#define TERNFS_CDC_KIND_MAX 5
+static const u8 __ternfs_cdc_kind_index_mappings[256] = {255, 0, 1, 2, 3, 255, 4, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255};
 const char* ternfs_cdc_kind_str(int kind);
 
 #define TERNFS_REGISTRY_LOCAL_SHARDS 0x3
@@ -6085,6 +6086,156 @@ static inline void _ternfs_rename_directory_resp_put_creation_time(struct ternfs
 #define ternfs_rename_directory_resp_put_end(ctx, prev, next) \
     { struct ternfs_rename_directory_resp_creation_time* __dummy __attribute__((unused)) = &(prev); }\
     struct ternfs_rename_directory_resp_end* next __attribute__((unused)) = NULL
+
+#define TERNFS_CROSS_SHARD_HARD_UNLINK_FILE_REQ_MAX_SIZE 280
+struct ternfs_cross_shard_hard_unlink_file_req_start;
+#define ternfs_cross_shard_hard_unlink_file_req_get_start(ctx, start) struct ternfs_cross_shard_hard_unlink_file_req_start* start = NULL
+
+struct ternfs_cross_shard_hard_unlink_file_req_owner_id { u64 x; };
+static inline void _ternfs_cross_shard_hard_unlink_file_req_get_owner_id(struct ternfs_bincode_get_ctx* ctx, struct ternfs_cross_shard_hard_unlink_file_req_start** prev, struct ternfs_cross_shard_hard_unlink_file_req_owner_id* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 8)) {
+            ctx->err = TERNFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_le64(ctx->buf);
+            ctx->buf += 8;
+        }
+    }
+}
+#define ternfs_cross_shard_hard_unlink_file_req_get_owner_id(ctx, prev, next) \
+    struct ternfs_cross_shard_hard_unlink_file_req_owner_id next; \
+    _ternfs_cross_shard_hard_unlink_file_req_get_owner_id(ctx, &(prev), &(next))
+
+struct ternfs_cross_shard_hard_unlink_file_req_target_id { u64 x; };
+static inline void _ternfs_cross_shard_hard_unlink_file_req_get_target_id(struct ternfs_bincode_get_ctx* ctx, struct ternfs_cross_shard_hard_unlink_file_req_owner_id* prev, struct ternfs_cross_shard_hard_unlink_file_req_target_id* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 8)) {
+            ctx->err = TERNFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_le64(ctx->buf);
+            ctx->buf += 8;
+        }
+    }
+}
+#define ternfs_cross_shard_hard_unlink_file_req_get_target_id(ctx, prev, next) \
+    struct ternfs_cross_shard_hard_unlink_file_req_target_id next; \
+    _ternfs_cross_shard_hard_unlink_file_req_get_target_id(ctx, &(prev), &(next))
+
+struct ternfs_cross_shard_hard_unlink_file_req_name { struct ternfs_bincode_bytes str; };
+static inline void _ternfs_cross_shard_hard_unlink_file_req_get_name(struct ternfs_bincode_get_ctx* ctx, struct ternfs_cross_shard_hard_unlink_file_req_target_id* prev, struct ternfs_cross_shard_hard_unlink_file_req_name* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 1)) {
+            ctx->err = TERNFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->str.len = *(u8*)(ctx->buf);
+            ctx->buf++;
+            if (unlikely(ctx->end - ctx->buf < next->str.len)) {
+                ctx->err = TERNFS_ERR_MALFORMED_RESPONSE;
+            } else {
+                next->str.buf = ctx->buf;
+                ctx->buf += next->str.len;
+            }
+        }
+    }
+}
+#define ternfs_cross_shard_hard_unlink_file_req_get_name(ctx, prev, next) \
+    struct ternfs_cross_shard_hard_unlink_file_req_name next; \
+    _ternfs_cross_shard_hard_unlink_file_req_get_name(ctx, &(prev), &(next))
+
+struct ternfs_cross_shard_hard_unlink_file_req_creation_time { u64 x; };
+static inline void _ternfs_cross_shard_hard_unlink_file_req_get_creation_time(struct ternfs_bincode_get_ctx* ctx, struct ternfs_cross_shard_hard_unlink_file_req_name* prev, struct ternfs_cross_shard_hard_unlink_file_req_creation_time* next) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->end - ctx->buf < 8)) {
+            ctx->err = TERNFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            next->x = get_unaligned_le64(ctx->buf);
+            ctx->buf += 8;
+        }
+    }
+}
+#define ternfs_cross_shard_hard_unlink_file_req_get_creation_time(ctx, prev, next) \
+    struct ternfs_cross_shard_hard_unlink_file_req_creation_time next; \
+    _ternfs_cross_shard_hard_unlink_file_req_get_creation_time(ctx, &(prev), &(next))
+
+struct ternfs_cross_shard_hard_unlink_file_req_end;
+#define ternfs_cross_shard_hard_unlink_file_req_get_end(ctx, prev, next) \
+    { struct ternfs_cross_shard_hard_unlink_file_req_creation_time* __dummy __attribute__((unused)) = &(prev); }\
+    struct ternfs_cross_shard_hard_unlink_file_req_end* next = NULL
+
+static inline void ternfs_cross_shard_hard_unlink_file_req_get_finish(struct ternfs_bincode_get_ctx* ctx, struct ternfs_cross_shard_hard_unlink_file_req_end* end) {
+    if (unlikely(ctx->buf != ctx->end)) {
+        ctx->err = TERNFS_ERR_MALFORMED_RESPONSE;
+    }
+}
+
+#define ternfs_cross_shard_hard_unlink_file_req_put_start(ctx, start) struct ternfs_cross_shard_hard_unlink_file_req_start* start = NULL
+
+static inline void _ternfs_cross_shard_hard_unlink_file_req_put_owner_id(struct ternfs_bincode_put_ctx* ctx, struct ternfs_cross_shard_hard_unlink_file_req_start** prev, struct ternfs_cross_shard_hard_unlink_file_req_owner_id* next, u64 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 8);
+    put_unaligned_le64(x, ctx->cursor);
+    ctx->cursor += 8;
+}
+#define ternfs_cross_shard_hard_unlink_file_req_put_owner_id(ctx, prev, next, x) \
+    struct ternfs_cross_shard_hard_unlink_file_req_owner_id next; \
+    _ternfs_cross_shard_hard_unlink_file_req_put_owner_id(ctx, &(prev), &(next), x)
+
+static inline void _ternfs_cross_shard_hard_unlink_file_req_put_target_id(struct ternfs_bincode_put_ctx* ctx, struct ternfs_cross_shard_hard_unlink_file_req_owner_id* prev, struct ternfs_cross_shard_hard_unlink_file_req_target_id* next, u64 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 8);
+    put_unaligned_le64(x, ctx->cursor);
+    ctx->cursor += 8;
+}
+#define ternfs_cross_shard_hard_unlink_file_req_put_target_id(ctx, prev, next, x) \
+    struct ternfs_cross_shard_hard_unlink_file_req_target_id next; \
+    _ternfs_cross_shard_hard_unlink_file_req_put_target_id(ctx, &(prev), &(next), x)
+
+static inline void _ternfs_cross_shard_hard_unlink_file_req_put_name(struct ternfs_bincode_put_ctx* ctx, struct ternfs_cross_shard_hard_unlink_file_req_target_id* prev, struct ternfs_cross_shard_hard_unlink_file_req_name* next, const char* str, int str_len) {
+    next = NULL;
+    BUG_ON(str_len < 0 || str_len > 255);
+    BUG_ON(ctx->end - ctx->cursor < (1 + str_len));
+    *(u8*)(ctx->cursor) = str_len;
+    memcpy(ctx->cursor + 1, str, str_len);
+    ctx->cursor += 1 + str_len;
+}
+#define ternfs_cross_shard_hard_unlink_file_req_put_name(ctx, prev, next, str, str_len) \
+    struct ternfs_cross_shard_hard_unlink_file_req_name next; \
+    _ternfs_cross_shard_hard_unlink_file_req_put_name(ctx, &(prev), &(next), str, str_len)
+
+static inline void _ternfs_cross_shard_hard_unlink_file_req_put_creation_time(struct ternfs_bincode_put_ctx* ctx, struct ternfs_cross_shard_hard_unlink_file_req_name* prev, struct ternfs_cross_shard_hard_unlink_file_req_creation_time* next, u64 x) {
+    next = NULL;
+    BUG_ON(ctx->end - ctx->cursor < 8);
+    put_unaligned_le64(x, ctx->cursor);
+    ctx->cursor += 8;
+}
+#define ternfs_cross_shard_hard_unlink_file_req_put_creation_time(ctx, prev, next, x) \
+    struct ternfs_cross_shard_hard_unlink_file_req_creation_time next; \
+    _ternfs_cross_shard_hard_unlink_file_req_put_creation_time(ctx, &(prev), &(next), x)
+
+#define ternfs_cross_shard_hard_unlink_file_req_put_end(ctx, prev, next) \
+    { struct ternfs_cross_shard_hard_unlink_file_req_creation_time* __dummy __attribute__((unused)) = &(prev); }\
+    struct ternfs_cross_shard_hard_unlink_file_req_end* next __attribute__((unused)) = NULL
+
+#define TERNFS_CROSS_SHARD_HARD_UNLINK_FILE_RESP_SIZE 0
+struct ternfs_cross_shard_hard_unlink_file_resp_start;
+#define ternfs_cross_shard_hard_unlink_file_resp_get_start(ctx, start) struct ternfs_cross_shard_hard_unlink_file_resp_start* start = NULL
+
+struct ternfs_cross_shard_hard_unlink_file_resp_end;
+#define ternfs_cross_shard_hard_unlink_file_resp_get_end(ctx, prev, next) \
+    { struct ternfs_cross_shard_hard_unlink_file_resp_start** __dummy __attribute__((unused)) = &(prev); }\
+    struct ternfs_cross_shard_hard_unlink_file_resp_end* next = NULL
+
+static inline void ternfs_cross_shard_hard_unlink_file_resp_get_finish(struct ternfs_bincode_get_ctx* ctx, struct ternfs_cross_shard_hard_unlink_file_resp_end* end) {
+    if (unlikely(ctx->buf != ctx->end)) {
+        ctx->err = TERNFS_ERR_MALFORMED_RESPONSE;
+    }
+}
+
+#define ternfs_cross_shard_hard_unlink_file_resp_put_start(ctx, start) struct ternfs_cross_shard_hard_unlink_file_resp_start* start = NULL
+
+#define ternfs_cross_shard_hard_unlink_file_resp_put_end(ctx, prev, next) \
+    { struct ternfs_cross_shard_hard_unlink_file_resp_start** __dummy __attribute__((unused)) = &(prev); }\
+    struct ternfs_cross_shard_hard_unlink_file_resp_end* next __attribute__((unused)) = NULL
 
 #define TERNFS_LOCAL_SHARDS_REQ_SIZE 0
 struct ternfs_local_shards_req_start;

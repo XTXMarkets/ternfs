@@ -749,10 +749,10 @@ func (k CDCMessageKind) String() string {
 		return "SOFT_UNLINK_DIRECTORY"
 	case 4:
 		return "RENAME_DIRECTORY"
-	case 5:
-		return "HARD_UNLINK_DIRECTORY"
 	case 6:
 		return "CROSS_SHARD_HARD_UNLINK_FILE"
+	case 5:
+		return "HARD_UNLINK_DIRECTORY"
 	case 7:
 		return "CDC_SNAPSHOT"
 	default:
@@ -765,8 +765,8 @@ const (
 	RENAME_FILE                  CDCMessageKind = 0x2
 	SOFT_UNLINK_DIRECTORY        CDCMessageKind = 0x3
 	RENAME_DIRECTORY             CDCMessageKind = 0x4
-	HARD_UNLINK_DIRECTORY        CDCMessageKind = 0x5
 	CROSS_SHARD_HARD_UNLINK_FILE CDCMessageKind = 0x6
+	HARD_UNLINK_DIRECTORY        CDCMessageKind = 0x5
 	CDC_SNAPSHOT                 CDCMessageKind = 0x7
 )
 
@@ -775,8 +775,8 @@ var AllCDCMessageKind = [...]CDCMessageKind{
 	RENAME_FILE,
 	SOFT_UNLINK_DIRECTORY,
 	RENAME_DIRECTORY,
-	HARD_UNLINK_DIRECTORY,
 	CROSS_SHARD_HARD_UNLINK_FILE,
+	HARD_UNLINK_DIRECTORY,
 	CDC_SNAPSHOT,
 }
 
@@ -792,10 +792,10 @@ func MkCDCMessage(k string) (CDCRequest, CDCResponse, error) {
 		return &SoftUnlinkDirectoryReq{}, &SoftUnlinkDirectoryResp{}, nil
 	case k == "RENAME_DIRECTORY":
 		return &RenameDirectoryReq{}, &RenameDirectoryResp{}, nil
-	case k == "HARD_UNLINK_DIRECTORY":
-		return &HardUnlinkDirectoryReq{}, &HardUnlinkDirectoryResp{}, nil
 	case k == "CROSS_SHARD_HARD_UNLINK_FILE":
 		return &CrossShardHardUnlinkFileReq{}, &CrossShardHardUnlinkFileResp{}, nil
+	case k == "HARD_UNLINK_DIRECTORY":
+		return &HardUnlinkDirectoryReq{}, &HardUnlinkDirectoryResp{}, nil
 	case k == "CDC_SNAPSHOT":
 		return &CdcSnapshotReq{}, &CdcSnapshotResp{}, nil
 	default:
@@ -3828,36 +3828,6 @@ func (v *RenameDirectoryResp) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *HardUnlinkDirectoryReq) CDCRequestKind() CDCMessageKind {
-	return HARD_UNLINK_DIRECTORY
-}
-
-func (v *HardUnlinkDirectoryReq) Pack(w io.Writer) error {
-	if err := bincode.PackScalar(w, uint64(v.DirId)); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (v *HardUnlinkDirectoryReq) Unpack(r io.Reader) error {
-	if err := bincode.UnpackScalar(r, (*uint64)(&v.DirId)); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (v *HardUnlinkDirectoryResp) CDCResponseKind() CDCMessageKind {
-	return HARD_UNLINK_DIRECTORY
-}
-
-func (v *HardUnlinkDirectoryResp) Pack(w io.Writer) error {
-	return nil
-}
-
-func (v *HardUnlinkDirectoryResp) Unpack(r io.Reader) error {
-	return nil
-}
-
 func (v *CrossShardHardUnlinkFileReq) CDCRequestKind() CDCMessageKind {
 	return CROSS_SHARD_HARD_UNLINK_FILE
 }
@@ -3903,6 +3873,36 @@ func (v *CrossShardHardUnlinkFileResp) Pack(w io.Writer) error {
 }
 
 func (v *CrossShardHardUnlinkFileResp) Unpack(r io.Reader) error {
+	return nil
+}
+
+func (v *HardUnlinkDirectoryReq) CDCRequestKind() CDCMessageKind {
+	return HARD_UNLINK_DIRECTORY
+}
+
+func (v *HardUnlinkDirectoryReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.DirId)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *HardUnlinkDirectoryReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.DirId)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *HardUnlinkDirectoryResp) CDCResponseKind() CDCMessageKind {
+	return HARD_UNLINK_DIRECTORY
+}
+
+func (v *HardUnlinkDirectoryResp) Pack(w io.Writer) error {
+	return nil
+}
+
+func (v *HardUnlinkDirectoryResp) Unpack(r io.Reader) error {
 	return nil
 }
 

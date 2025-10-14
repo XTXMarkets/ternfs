@@ -59,6 +59,18 @@ static inline u32 ternfs_stripe_policy(const struct ternfs_policy_body* policy) 
     return get_unaligned_le32(policy->body);
 }
 
+struct ternfs_snapshot_policy {
+    u64 delete_after_time;
+    u16 delete_after_versions;
+};
+
+static inline void ternfs_snapshot_policy_get(const struct ternfs_policy_body* policy, struct ternfs_snapshot_policy* snapshot_policy) {
+    BUG_ON(policy->len != 10);
+    const char* b = policy->body;
+    snapshot_policy->delete_after_time = get_unaligned_le64(b); b += 8;
+    snapshot_policy->delete_after_versions = get_unaligned_le16(b);
+}
+
 int __init ternfs_policy_init(void);
 void __cold ternfs_policy_exit(void);
 

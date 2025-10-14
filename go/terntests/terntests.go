@@ -764,6 +764,39 @@ func (r *RunTests) run(
 					}
 				}
 			}
+			// Try cross shard deletion
+			sourceDirName := "other-shard-source"
+			{
+				resp := &msgs.MakeDirectoryResp{}
+				if err := c.CDCRequest(log, &msgs.MakeDirectoryReq{OwnerId: msgs.ROOT_DIR_INODE_ID, Name: sourceDirName}, resp); err != nil {
+					panic(err)
+				}
+			}
+			if err := os.WriteFile(path.Join(r.mountPoint, sourceDirName, fileName), []byte("test"), 0666); err != nil {
+				panic(err)
+			}
+			if err := os.Rename(path.Join(r.mountPoint, sourceDirName, fileName),path.Join(r.mountPoint, dirName, fileName)); err != nil {
+				panic(err)
+			}
+			if err := os.Remove(path.Join(r.mountPoint, dirName, fileName)); err != nil {
+				panic(err)
+			}
+			{
+				req := &msgs.FullReadDirReq{
+					DirId: dirId,
+					Flags: msgs.FULL_READ_DIR_SAME_NAME,
+					StartName: fileName,
+				}
+				resp := &msgs.FullReadDirResp{}
+				if err := c.ShardRequest(log, dirId.Shard(), req, resp); err != nil {
+					panic(err)
+				}
+				for i := range resp.Results {
+					if resp.Results[i].Current || resp.Results[i].TargetId.Extra() {
+						panic(fmt.Errorf("unexpected owned edge"))
+					}
+				}
+			}
 		},
 	)
 

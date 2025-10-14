@@ -1842,6 +1842,11 @@ func main() {
 			reflect.TypeOf(msgs.RenameDirectoryReq{}),
 			reflect.TypeOf(msgs.RenameDirectoryResp{}),
 		},
+		{
+			0x06,
+			reflect.TypeOf(msgs.CrossShardHardUnlinkFileReq{}),
+			reflect.TypeOf(msgs.CrossShardHardUnlinkFileResp{}),
+		},
 	}
 
 	cdcReqResps := append(kernelCdcReqResps, []reqRespType{
@@ -1849,11 +1854,6 @@ func main() {
 			0x05,
 			reflect.TypeOf(msgs.HardUnlinkDirectoryReq{}),
 			reflect.TypeOf(msgs.HardUnlinkDirectoryResp{}),
-		},
-		{
-			0x06,
-			reflect.TypeOf(msgs.CrossShardHardUnlinkFileReq{}),
-			reflect.TypeOf(msgs.CrossShardHardUnlinkFileResp{}),
 		},
 		{
 			0x07,

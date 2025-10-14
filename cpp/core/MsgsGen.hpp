@@ -315,8 +315,8 @@ enum class CDCMessageKind : uint8_t {
     RENAME_FILE = 2,
     SOFT_UNLINK_DIRECTORY = 3,
     RENAME_DIRECTORY = 4,
-    HARD_UNLINK_DIRECTORY = 5,
     CROSS_SHARD_HARD_UNLINK_FILE = 6,
+    HARD_UNLINK_DIRECTORY = 5,
     CDC_SNAPSHOT = 7,
     EMPTY = 255,
 };
@@ -326,8 +326,8 @@ const std::vector<CDCMessageKind> allCDCMessageKind {
     CDCMessageKind::RENAME_FILE,
     CDCMessageKind::SOFT_UNLINK_DIRECTORY,
     CDCMessageKind::RENAME_DIRECTORY,
-    CDCMessageKind::HARD_UNLINK_DIRECTORY,
     CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE,
+    CDCMessageKind::HARD_UNLINK_DIRECTORY,
     CDCMessageKind::CDC_SNAPSHOT,
 };
 
@@ -3574,42 +3574,6 @@ struct RenameDirectoryResp {
 
 std::ostream& operator<<(std::ostream& out, const RenameDirectoryResp& x);
 
-struct HardUnlinkDirectoryReq {
-    InodeId dirId;
-
-    static constexpr uint16_t STATIC_SIZE = 8; // dirId
-
-    HardUnlinkDirectoryReq() { clear(); }
-    size_t packedSize() const {
-        size_t _size = 0;
-        _size += 8; // dirId
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const HardUnlinkDirectoryReq&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const HardUnlinkDirectoryReq& x);
-
-struct HardUnlinkDirectoryResp {
-
-    static constexpr uint16_t STATIC_SIZE = 0; // 
-
-    HardUnlinkDirectoryResp() { clear(); }
-    size_t packedSize() const {
-        size_t _size = 0;
-        return _size;
-    }
-    void pack(BincodeBuf& buf) const;
-    void unpack(BincodeBuf& buf);
-    void clear();
-    bool operator==(const HardUnlinkDirectoryResp&rhs) const;
-};
-
-std::ostream& operator<<(std::ostream& out, const HardUnlinkDirectoryResp& x);
-
 struct CrossShardHardUnlinkFileReq {
     InodeId ownerId;
     InodeId targetId;
@@ -3651,6 +3615,42 @@ struct CrossShardHardUnlinkFileResp {
 };
 
 std::ostream& operator<<(std::ostream& out, const CrossShardHardUnlinkFileResp& x);
+
+struct HardUnlinkDirectoryReq {
+    InodeId dirId;
+
+    static constexpr uint16_t STATIC_SIZE = 8; // dirId
+
+    HardUnlinkDirectoryReq() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += 8; // dirId
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const HardUnlinkDirectoryReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const HardUnlinkDirectoryReq& x);
+
+struct HardUnlinkDirectoryResp {
+
+    static constexpr uint16_t STATIC_SIZE = 0; // 
+
+    HardUnlinkDirectoryResp() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const HardUnlinkDirectoryResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const HardUnlinkDirectoryResp& x);
 
 struct CdcSnapshotReq {
     uint64_t snapshotId;
@@ -5606,9 +5606,9 @@ std::ostream& operator<<(std::ostream& out, const ShardRespContainer& x);
 
 struct CDCReqContainer {
 private:
-    static constexpr std::array<size_t,7> _staticSizes = {MakeDirectoryReq::STATIC_SIZE, RenameFileReq::STATIC_SIZE, SoftUnlinkDirectoryReq::STATIC_SIZE, RenameDirectoryReq::STATIC_SIZE, HardUnlinkDirectoryReq::STATIC_SIZE, CrossShardHardUnlinkFileReq::STATIC_SIZE, CdcSnapshotReq::STATIC_SIZE};
+    static constexpr std::array<size_t,7> _staticSizes = {MakeDirectoryReq::STATIC_SIZE, RenameFileReq::STATIC_SIZE, SoftUnlinkDirectoryReq::STATIC_SIZE, RenameDirectoryReq::STATIC_SIZE, CrossShardHardUnlinkFileReq::STATIC_SIZE, HardUnlinkDirectoryReq::STATIC_SIZE, CdcSnapshotReq::STATIC_SIZE};
     CDCMessageKind _kind = CDCMessageKind::EMPTY;
-    std::variant<MakeDirectoryReq, RenameFileReq, SoftUnlinkDirectoryReq, RenameDirectoryReq, HardUnlinkDirectoryReq, CrossShardHardUnlinkFileReq, CdcSnapshotReq> _data;
+    std::variant<MakeDirectoryReq, RenameFileReq, SoftUnlinkDirectoryReq, RenameDirectoryReq, CrossShardHardUnlinkFileReq, HardUnlinkDirectoryReq, CdcSnapshotReq> _data;
 public:
     CDCReqContainer();
     CDCReqContainer(const CDCReqContainer& other);
@@ -5626,10 +5626,10 @@ public:
     SoftUnlinkDirectoryReq& setSoftUnlinkDirectory();
     const RenameDirectoryReq& getRenameDirectory() const;
     RenameDirectoryReq& setRenameDirectory();
-    const HardUnlinkDirectoryReq& getHardUnlinkDirectory() const;
-    HardUnlinkDirectoryReq& setHardUnlinkDirectory();
     const CrossShardHardUnlinkFileReq& getCrossShardHardUnlinkFile() const;
     CrossShardHardUnlinkFileReq& setCrossShardHardUnlinkFile();
+    const HardUnlinkDirectoryReq& getHardUnlinkDirectory() const;
+    HardUnlinkDirectoryReq& setHardUnlinkDirectory();
     const CdcSnapshotReq& getCdcSnapshot() const;
     CdcSnapshotReq& setCdcSnapshot();
 
@@ -5646,9 +5646,9 @@ std::ostream& operator<<(std::ostream& out, const CDCReqContainer& x);
 
 struct CDCRespContainer {
 private:
-    static constexpr std::array<size_t,8> _staticSizes = {sizeof(TernError), MakeDirectoryResp::STATIC_SIZE, RenameFileResp::STATIC_SIZE, SoftUnlinkDirectoryResp::STATIC_SIZE, RenameDirectoryResp::STATIC_SIZE, HardUnlinkDirectoryResp::STATIC_SIZE, CrossShardHardUnlinkFileResp::STATIC_SIZE, CdcSnapshotResp::STATIC_SIZE};
+    static constexpr std::array<size_t,8> _staticSizes = {sizeof(TernError), MakeDirectoryResp::STATIC_SIZE, RenameFileResp::STATIC_SIZE, SoftUnlinkDirectoryResp::STATIC_SIZE, RenameDirectoryResp::STATIC_SIZE, CrossShardHardUnlinkFileResp::STATIC_SIZE, HardUnlinkDirectoryResp::STATIC_SIZE, CdcSnapshotResp::STATIC_SIZE};
     CDCMessageKind _kind = CDCMessageKind::EMPTY;
-    std::variant<TernError, MakeDirectoryResp, RenameFileResp, SoftUnlinkDirectoryResp, RenameDirectoryResp, HardUnlinkDirectoryResp, CrossShardHardUnlinkFileResp, CdcSnapshotResp> _data;
+    std::variant<TernError, MakeDirectoryResp, RenameFileResp, SoftUnlinkDirectoryResp, RenameDirectoryResp, CrossShardHardUnlinkFileResp, HardUnlinkDirectoryResp, CdcSnapshotResp> _data;
 public:
     CDCRespContainer();
     CDCRespContainer(const CDCRespContainer& other);
@@ -5668,10 +5668,10 @@ public:
     SoftUnlinkDirectoryResp& setSoftUnlinkDirectory();
     const RenameDirectoryResp& getRenameDirectory() const;
     RenameDirectoryResp& setRenameDirectory();
-    const HardUnlinkDirectoryResp& getHardUnlinkDirectory() const;
-    HardUnlinkDirectoryResp& setHardUnlinkDirectory();
     const CrossShardHardUnlinkFileResp& getCrossShardHardUnlinkFile() const;
     CrossShardHardUnlinkFileResp& setCrossShardHardUnlinkFile();
+    const HardUnlinkDirectoryResp& getHardUnlinkDirectory() const;
+    HardUnlinkDirectoryResp& setHardUnlinkDirectory();
     const CdcSnapshotResp& getCdcSnapshot() const;
     CdcSnapshotResp& setCdcSnapshot();
 

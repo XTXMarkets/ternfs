@@ -134,6 +134,7 @@ const char* ternfs_cdc_kind_str(int kind) {
     case 2: return "RENAME_FILE";
     case 3: return "SOFT_UNLINK_DIRECTORY";
     case 4: return "RENAME_DIRECTORY";
+    case 6: return "CROSS_SHARD_HARD_UNLINK_FILE";
     default: return "UNKNOWN";
     }
 }

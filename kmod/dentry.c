@@ -4,12 +4,14 @@
 
 #include "dentry.h"
 
+#include "bincode.h"
 #include "inode_compat.h"
 #include "log.h"
 #include "dir.h"
 #include "err.h"
 #include "inode.h"
 #include "metadata.h"
+#include "policy.h"
 #include "trace.h"
 
 TERNFS_DEFINE_COUNTER(ternfs_stat_dir_revalidations);
@@ -277,6 +279,61 @@ out_err:
     return err;
 }
 
+#define POLICY_DELETE_AFTER_TIME_ACTIVE_AND_ZERO (1ull << 63)
+#define POLICY_DELETE_AFTER_VERSIONS_ACTIVE_AND_ZERO (1 << 15)
+
+static int ternfs_delete_file(
+    struct ternfs_fs_info* info, u64 dir, u64 file, const char* name, int name_len, u64 creation_time,
+    struct ternfs_policy* snapshot_policy
+) {
+    int err;
+
+    u64 delete_creation_time;
+    err = ternfs_shard_soft_unlink_file(
+        info,
+        dir,
+        file,
+        name,
+        name_len,
+        creation_time,
+        &delete_creation_time
+    );
+    struct ternfs_policy_body snapshot_policy_body;
+    ternfs_get_policy_body(snapshot_policy, &snapshot_policy_body);
+    struct ternfs_snapshot_policy policy;
+    ternfs_snapshot_policy_get(&snapshot_policy_body, &policy);
+    if (likely(policy.delete_after_time != POLICY_DELETE_AFTER_TIME_ACTIVE_AND_ZERO &&
+        policy.delete_after_versions != POLICY_DELETE_AFTER_VERSIONS_ACTIVE_AND_ZERO)) {
+        goto out;
+    }
+
+    if (unlikely(err)) {
+        goto out;
+    }
+
+    if (unlikely(ternfs_inode_shard(dir) != ternfs_inode_shard(file))) {
+        err = ternfs_cdc_cross_shard_hard_unlink_file(
+            info,
+            dir,
+            file,
+            name,
+            name_len,
+            creation_time
+        );
+    } else {
+        err = ternfs_shard_hard_unlink_file(
+            info,
+            dir,
+            file,
+            name,
+            name_len,
+            creation_time
+        );
+    }
+out:
+    return err;
+}
+
 // vfs: exclusive dir,d_entry->d_inode.i_rwsem
 int ternfs_unlink(struct inode* dir, struct dentry* dentry) {
     int err;
@@ -291,15 +348,14 @@ int ternfs_unlink(struct inode* dir, struct dentry* dentry) {
     }
 
     struct ternfs_inode* enode = TERNFS_I(dentry->d_inode);
-    u64 delete_creation_time;
-    err = ternfs_shard_soft_unlink_file(
+    err = ternfs_delete_file(
         (struct ternfs_fs_info*)dir->i_sb->s_fs_info,
         dir->i_ino,
         dentry->d_inode->i_ino,
         dentry->d_name.name,
         dentry->d_name.len,
         enode->edge_creation_time,
-        &delete_creation_time
+        enode->snapshot_policy
     );
     if (unlikely(err)) {
         if (err < 0) { goto out_err; }

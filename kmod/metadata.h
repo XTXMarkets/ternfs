@@ -23,6 +23,7 @@ int ternfs_shard_readdir(struct ternfs_fs_info* info, u64 dir, u64 start_pos, vo
 int ternfs_shard_soft_unlink_file(
     struct ternfs_fs_info* info, u64 dir, u64 file, const char* name, int name_len, u64 creation_time, u64* delete_creation_time
 );
+int ternfs_shard_hard_unlink_file(struct ternfs_fs_info* info, u64 dir, u64 file, const char* name, int name_len, u64 creation_time);
 int ternfs_shard_rename(struct ternfs_fs_info* info, u64 dir, u64 target_id, const char* old_name, int old_name_len, u64 old_creation_time, const char* new_name, int new_name_len, u64* new_creation_time);
 int ternfs_shard_link_file(struct ternfs_fs_info* info, u64 file, u64 cookie, u64 dir, const char* name, int name_len, u64* creation_time);
 int ternfs_shard_getattr_file(struct ternfs_fs_info* info, u64 file, u64* mtime, u64* atime, u64* size);
@@ -107,6 +108,7 @@ int ternfs_shard_move_span(
 
 int ternfs_cdc_mkdir(struct ternfs_fs_info* info, u64 dir, const char* name, int name_len, u64* ino, u64* creation_time);
 int ternfs_cdc_rmdir(struct ternfs_fs_info* info, u64 owner_dir, u64 target, u64 creation_time, const char* name, int name_len);
+int ternfs_cdc_cross_shard_hard_unlink_file(struct ternfs_fs_info* info, u64 dir, u64 file, const char* name, int name_len, u64 creation_time);
 
 int ternfs_cdc_rename_directory(
     struct ternfs_fs_info* info,
