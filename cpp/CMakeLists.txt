@@ -50,10 +50,9 @@ set(SANITIZE_OPTIONS "-fsanitize=undefined,address,integer,function;-fno-sanitiz
 add_compile_options("$<$<CONFIG:sanitized>:${SANITIZE_OPTIONS}>")
 add_link_options("$<$<CONFIG:sanitized>:${SANITIZE_OPTIONS}>")
 
-# we only use jemalloc in release builds, alpine doesn't seem to
-# like jemalloc very much, and sanitizer etc works better without it
-if ("${CMAKE_BUILD_TYPE}" STREQUAL "release")
-    set(TERNFS_JEMALLOC_LIBS "jemalloc")
+# we only use mimalloc in release builds, sanitizer etc works better without it
+if("${CMAKE_BUILD_TYPE}" MATCHES "^(release|alpine)$")
+    set(TERNFS_MIMALLOC_LIBS "mimalloc")
 endif()
 
 include(thirdparty.cmake)

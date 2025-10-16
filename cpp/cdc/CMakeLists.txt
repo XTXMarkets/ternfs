@@ -8,4 +8,4 @@ add_library(cdc CDC.cpp CDC.hpp CDCDB.cpp CDCDB.hpp CDCDBData.hpp)
 target_link_libraries(cdc PRIVATE core)
 
 add_executable(terncdc terncdc.cpp)
-target_link_libraries(terncdc PRIVATE core shard cdc ${TERNFS_JEMALLOC_LIBS})
+target_link_libraries(terncdc PRIVATE core shard cdc ${TERNFS_MIMALLOC_LIBS})

@@ -8,4 +8,4 @@ add_library(shard Shard.cpp Shard.hpp ShardDB.cpp ShardDB.hpp ShardDBData.cpp Sh
 target_link_libraries(shard PRIVATE core)
 
 add_executable(ternshard ternshard.cpp)
-target_link_libraries(ternshard PRIVATE core shard crc32c ${TERNFS_JEMALLOC_LIBS})
+target_link_libraries(ternshard PRIVATE core shard crc32c ${TERNFS_MIMALLOC_LIBS})

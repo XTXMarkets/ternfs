@@ -9,4 +9,4 @@ add_library(registry Registry.hpp Registry.cpp RegistryDB.hpp RegistryDB.cpp
 target_link_libraries(registry PRIVATE core)
 
 add_executable(ternregistry ternregistry.cpp)
-target_link_libraries(ternregistry PRIVATE core registry crc32c ${TERNFS_JEMALLOC_LIBS})
+target_link_libraries(ternregistry PRIVATE core registry crc32c ${TERNFS_MIMALLOC_LIBS})

@@ -8,4 +8,4 @@ add_library(sharddbtools ShardDBTools.hpp ShardDBTools.cpp LogsDBTools.hpp LogsD
 target_link_libraries(sharddbtools PRIVATE core shard cdc)
 
 add_executable(terndbtools terndbtools.cpp)
-target_link_libraries(terndbtools PRIVATE core shard sharddbtools ${TERNFS_JEMALLOC_LIBS})
+target_link_libraries(terndbtools PRIVATE core shard sharddbtools ${TERNFS_MIMALLOC_LIBS})

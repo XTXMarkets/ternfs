@@ -165,31 +165,39 @@ ExternalProject_Get_property(make_xxhash INSTALL_DIR)
 include_directories(SYSTEM ${INSTALL_DIR}/include)
 set_target_properties(xxhash PROPERTIES IMPORTED_LOCATION ${INSTALL_DIR}/lib/libxxhash.a)
 
+set(DEP_MIMALLOC_CMAKE_ARGS
+    -DCMAKE_INSTALL_PREFIX:PATH=<INSTALL_DIR>
+    -DCMAKE_BUILD_TYPE=Release
+    -DMI_BUILD_SHARED:BOOL=OFF
+    -DMI_BUILD_TESTS:BOOL=OFF
+    -DMI_OPT_ARCH:BOOL=ON
+)
+if("${CMAKE_BUILD_TYPE}" MATCHES "^alpine")
+    list(APPEND DEP_MIMALLOC_CMAKE_ARGS -DMI_LIBC_MUSL:BOOL=ON)
+endif()
+
 # License: BSD
-ExternalProject_Add(make_jemalloc
+ExternalProject_Add(make_mimalloc
     DOWNLOAD_DIR ${CMAKE_CURRENT_BINARY_DIR}
-    URL https://github.com/jemalloc/jemalloc/releases/download/5.3.0/jemalloc-5.3.0.tar.bz2
-    URL_HASH SHA256=2db82d1e7119df3e71b7640219b6dfe84789bc0537983c3b7ac4f7189aecfeaa
-    PREFIX thirdparty/jemalloc
+    URL https://github.com/microsoft/mimalloc/archive/refs/tags/v3.0.10.tar.gz
+    URL_HASH SHA256=ee5556a31060f2289497f00126e90bf871e90933f98e21ea13dca3578e9ccfb5
+    PREFIX thirdparty/mimalloc
     UPDATE_COMMAND ""
-    SOURCE_DIR ${make_jemalloc_SOURCE_DIR}
-    CONFIGURE_COMMAND ./configure --prefix=<INSTALL_DIR> --disable-libdl
-    BUILD_IN_SOURCE 1
-    BUILD_COMMAND ${MAKE_EXE} -j ${MAKE_PARALLELISM}
-    BUILD_BYPRODUCTS <INSTALL_DIR>/lib/libjemalloc.a
-    INSTALL_COMMAND ${MAKE_EXE} install PREFIX=<INSTALL_DIR>
+    SOURCE_DIR ${make_mimalloc_SOURCE_DIR}
+    CMAKE_ARGS ${DEP_MIMALLOC_CMAKE_ARGS}
+    BUILD_BYPRODUCTS <INSTALL_DIR>/lib/mimalloc-3.0/libmimalloc.a
     LOG_DOWNLOAD ON
     LOG_CONFIGURE ON
     LOG_INSTALL ON
     LOG_BUILD ON
     LOG_OUTPUT_ON_FAILURE ON
 )
-add_library(jemalloc STATIC IMPORTED)
-ExternalProject_Get_property(make_jemalloc INSTALL_DIR)
+add_library(mimalloc STATIC IMPORTED)
+ExternalProject_Get_property(make_mimalloc INSTALL_DIR)
 include_directories(SYSTEM ${INSTALL_DIR}/include)
-set_target_properties(jemalloc PROPERTIES IMPORTED_LOCATION ${INSTALL_DIR}/lib/libjemalloc.a)
+set_target_properties(mimalloc PROPERTIES IMPORTED_LOCATION ${INSTALL_DIR}/lib/mimalloc-3.0/libmimalloc.a)
 
 # This explicit dependency tracking is needed for ninja, which is blind to the
 # include dependencies from our code into the above, apparently.
 add_custom_target(thirdparty)
-add_dependencies(thirdparty make_uring make_lz4 make_zstd make_rocksdb make_xxhash make_jemalloc)
+add_dependencies(thirdparty make_uring make_lz4 make_zstd make_rocksdb make_xxhash make_mimalloc)
