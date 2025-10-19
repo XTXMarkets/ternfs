@@ -193,6 +193,18 @@ struct dentry* ternfs_lookup(struct inode* dir, struct dentry* dentry, unsigned 
     }
     inode->i_ino = ino;
     TERNFS_I(inode)->edge_creation_time = creation_time;
+    if (S_ISDIR(inode->i_mode)) {
+        // We want to fetch mtime and policies for directory
+        // if they were not fetched before.
+        // We can't fetch them asynchronously as this lookup call
+        // might be part of a lookup chain and will be followed by immediate
+        // child lookup.
+        // We need to have mtime and policies populated when we are doing a
+        // child lookup as it will inherit the parent policies immediately and use
+        // mtime in subsequent d_invalidate calls to determine if dentry is
+        // valid or not.
+        ternfs_do_getattr(TERNFS_I(inode), ATTR_CACHE_DIR_TIMEOUT);
+    }
 
     dentry->d_time = TERNFS_I(dir)->mtime;
 
