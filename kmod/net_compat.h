@@ -32,13 +32,16 @@ static inline ssize_t kernel_sendpage(struct socket *sock, struct page *page,
     void *page_addr = kmap(page);
     iov.iov_base = page_addr + offset;
     iov.iov_len = size;
-
-    msg.msg_flags = MSG_SPLICE_PAGES | flags;
+    if (likely(sendpage_ok(page))) {
+      msg.msg_flags = MSG_SPLICE_PAGES | flags;
+    } else {
+      msg.msg_flags = flags;
+    }
 
     result = kernel_sendmsg(sock, &msg, &iov, 1, size);
 
     kunmap(page);
-    
+
     return result;
 }
 #endif
