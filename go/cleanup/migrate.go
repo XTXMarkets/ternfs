@@ -583,12 +583,12 @@ type fileMigrationResult struct {
 }
 
 type migrator struct {
-	registryAddress            string
+	registryAddress           string
 	log                       *log.Logger
 	client                    *client.Client
 	numMigrators              uint64
 	migratorIdx               uint64
-	numFilesPerShard          int
+	numParallelFiles          uint64
 	stats                     MigrateStats
 	blockServicesLock         *sync.RWMutex
 	scheduledBlockServices    map[msgs.BlockServiceId]any
@@ -596,37 +596,35 @@ type migrator struct {
 	fileFetchers              [256]chan msgs.BlockServiceId
 	fileAggregatorNewFile     chan msgs.InodeId
 	fileAggregatoFileFinished chan fileMigrationResult
-	fileMigratorsNewFile      [256]chan msgs.InodeId
+	fileMigratorsNewFile      chan msgs.InodeId
 	statsC                    chan MigrateStats
 	stopC                     chan bool
-
 	logOnly             bool
 	failureDomainFilter string
 }
 
-func Migrator(registryAddress string, log *log.Logger, client *client.Client, numMigrators uint64, migratorIdx uint64, numFilesPerShard int, logOnly bool, failureDomain string) *migrator {
+func Migrator(registryAddress string, log *log.Logger, client *client.Client, numMigrators uint64, migratorIdx uint64, numParallelFiles uint32, logOnly bool, failureDomain string) *migrator {
 	res := migrator{
 		registryAddress,
 		log,
 		client,
 		numMigrators,
 		migratorIdx,
-		numFilesPerShard,
+		uint64(numParallelFiles),
 		MigrateStats{},
 		&sync.RWMutex{},
 		map[msgs.BlockServiceId]any{},
 		map[msgs.BlockServiceId]time.Time{},
 		[256]chan msgs.BlockServiceId{},
 		make(chan msgs.InodeId, 10000),
-		make(chan fileMigrationResult, 256*numFilesPerShard),
-		[256]chan msgs.InodeId{},
+		make(chan fileMigrationResult, numParallelFiles),
+		make(chan msgs.InodeId, numParallelFiles),
 		make(chan MigrateStats, 10),
 		make(chan bool),
 		logOnly,
 		failureDomain}
-	for i := 0; i < len(res.fileMigratorsNewFile); i++ {
+	for i := range len(res.fileFetchers) {
 		res.fileFetchers[i] = make(chan msgs.BlockServiceId, 500)
-		res.fileMigratorsNewFile[i] = make(chan msgs.InodeId, res.numFilesPerShard)
 	}
 	return &res
 }
@@ -816,20 +814,15 @@ func (m *migrator) runFileAggregator(wg *sync.WaitGroup) {
 		defer ticker.Stop()
 		timeStats := newTimeStats()
 		totalInProgress := uint64(0)
-		inProgressPerShard := [256]int{}
-		queuePerShard := [256]filePQ{}
+		queue := filePQ{inodeToIdx: make(map[msgs.InodeId]int)}
+		heap.Init(&queue)
 		inProgressFiles := map[msgs.InodeId]int{}
-		for i := 0; i < len(queuePerShard); i++ {
-			queuePerShard[i].inodeToIdx = make(map[msgs.InodeId]int)
-			heap.Init(&queuePerShard[i])
-		}
-		pushMoreWork := func(shid msgs.ShardId) {
-			for inProgressPerShard[shid] < m.numFilesPerShard && queuePerShard[shid].Len() > 0 {
-				newFile := heap.Pop(&queuePerShard[shid]).(fileInfo)
-				inProgressPerShard[shid]++
+		pushMoreWork := func() {
+			for totalInProgress < m.numParallelFiles && queue.Len() > 0 {
+				newFile := heap.Pop(&queue).(fileInfo)
 				totalInProgress++
 				inProgressFiles[newFile.id] = 1
-				m.fileMigratorsNewFile[shid] <- newFile.id
+				m.fileMigratorsNewFile <- newFile.id
 			}
 		}
 		inProgressAlert := m.log.NewNCAlert(1 * time.Minute)
@@ -848,35 +841,32 @@ func (m *migrator) runFileAggregator(wg *sync.WaitGroup) {
 				if errorCount, ok := inProgressFiles[newFileId]; ok {
 					inProgressFiles[newFileId] = errorCount + 1
 				} else {
-					shid := newFileId.Shard()
-					idx, ok := queuePerShard[shid].inodeToIdx[newFileId]
+					idx, ok := queue.inodeToIdx[newFileId]
 					if !ok {
-						heap.Push(&queuePerShard[shid], fileInfo{newFileId, 1})
+						heap.Push(&queue, fileInfo{newFileId, 1})
 						m.stats.FilesToMigrate++
-						pushMoreWork(shid)
+						pushMoreWork()
 					} else {
-						queuePerShard[shid].pq[idx].errorCount++
-						heap.Fix(&queuePerShard[shid], idx)
+						queue.pq[idx].errorCount++
+						heap.Fix(&queue, idx)
 					}
 				}
 			case fileResult, ok := <-m.fileAggregatoFileFinished:
 				if !ok {
 					return
 				}
-				shid := fileResult.id.Shard()
-				inProgressPerShard[shid]--
 				totalInProgress--
 				m.stats.FilesToMigrate--
 				errorCount := inProgressFiles[fileResult.id] - 1
 				if errorCount > 0 {
 					// we saw the file again in another block service while it was processed
 					// queue it again
-					heap.Push(&queuePerShard[shid], fileInfo{fileResult.id, errorCount})
+					heap.Push(&queue, fileInfo{fileResult.id, errorCount})
 					m.stats.FilesToMigrate++
 				} else {
 					delete(inProgressFiles, fileResult.id)
 				}
-				pushMoreWork(shid)
+				pushMoreWork()
 				if fileResult.err != nil && errorCount == 0 {
 					m.fileAggregatorNewFile <- fileResult.id
 				}
@@ -901,9 +891,7 @@ func (m *migrator) runFileAggregator(wg *sync.WaitGroup) {
 
 func (m *migrator) closeMigrators() {
 	m.log.Debug("stopping fileMigrators")
-	for _, c := range m.fileMigratorsNewFile {
-		close(c)
-	}
+	close(m.fileMigratorsNewFile)
 }
 
 func (m *migrator) runFileMigrators(wg *sync.WaitGroup) {
@@ -914,31 +902,41 @@ func (m *migrator) runFileMigrators(wg *sync.WaitGroup) {
 		return ok, nil
 	}
 	bufPool := bufpool.NewBufPool()
-	for i := 0; i < len(m.fileMigratorsNewFile); i++ {
-		for j := 0; j < m.numFilesPerShard; j++ {
-			wg.Add(1)
-			go func(idx int, shid msgs.ShardId, c <-chan msgs.InodeId) {
-				defer wg.Done()
-				tmpFile := scratch.NewScratchFile(m.log, m.client, shid, fmt.Sprintf("migrator %d for blockservices in shard %v", j, shid))
-				defer tmpFile.Close()
-				blockNotFoundAlert := m.log.NewNCAlert(0)
-				for file := range c {
-					err := error(nil)
-					for {
-						if err = migrateBlocksInFileGeneric(m.log, m.client, bufPool, &m.stats, nil, nil, "", badBlock, tmpFile, file); err == nil {
-							break
-						}
-						if err != msgs.BLOCK_NOT_FOUND {
-							m.log.Info("could not migrate file %v in shard %v: %v", file, shid, err)
-							break
-						}
-						m.log.RaiseNC(blockNotFoundAlert, "could not migrate blocks in file %v because a block was not found in it. this is probably due to conflicts with other migrations or scrubbing. will retry in one second.", file)
-						time.Sleep(time.Second)
+	for range m.numParallelFiles {
+		wg.Go(func() {
+			var scratchFiles [256]scratch.ScratchFile
+			blockNotFoundAlert := m.log.NewNCAlert(0)
+			defer func() {
+				for _, tmpFile := range scratchFiles {
+					if tmpFile == nil {
+						continue
 					}
-					m.log.ClearNC(blockNotFoundAlert)
-					m.fileAggregatoFileFinished <- fileMigrationResult{file, err}
+					tmpFile.Close()
 				}
-			}(j, msgs.ShardId(i), m.fileMigratorsNewFile[i])
-		}
+			}()
+			for file := range m.fileMigratorsNewFile {
+				shid := file.Shard()
+				if scratchFiles[shid] == nil {
+					scratchFiles[shid] = scratch.NewScratchFile(m.log, m.client, shid, fmt.Sprintf("migrator for blockservices in shard %v", shid))
+				}
+				tmpFile := scratchFiles[shid]
+
+				err := error(nil)
+				for {
+					if err = migrateBlocksInFileGeneric(m.log, m.client, bufPool, &m.stats, nil, nil, "", badBlock, tmpFile, file); err == nil {
+						break
+					}
+					if err != msgs.BLOCK_NOT_FOUND {
+						m.log.Info("could not migrate file %v in shard %v: %v", file, shid, err)
+						break
+					}
+					m.log.RaiseNC(blockNotFoundAlert, "could not migrate blocks in file %v because a block was not found in it. this is probably due to conflicts with other migrations or scrubbing. will retry in one second.", file)
+					time.Sleep(time.Second)
+				}
+				m.log.ClearNC(blockNotFoundAlert)
+				m.fileAggregatoFileFinished <- fileMigrationResult{file, err}
+			}
+		})
 	}
+
 }

@@ -112,7 +112,7 @@ func main() {
 	migrate := flag.Bool("migrate", false, "migrate")
 	numMigrators := flag.Int("num-migrators", 1, "How many migrate instances are running. 1 by default")
 	migratorIdx := flag.Int("migrator-idx", 0, "Which migrate instance is this. should be less than num-migrators. 0 by default")
-	numMigrationsPerShard := flag.Int("num-migrations-per-shard", 1, "Number of file migrations to do in parallel per shard. 1 by default")
+	numFileMigrators := flag.Uint("num-file-migrators", 1, "Number of file migrations to do in parallel. 1 by default")
 	migrateFailureDomain := flag.String("migrate-failure-domain", "", "If present, will only migrate block services from this failure domain.")
 	migratorLogOnly := flag.Bool("migrator-log-only", false, "if true will only log files that would be migrated")
 	scrub := flag.Bool("scrub", false, "scrub")
@@ -404,10 +404,10 @@ func main() {
 	if *migrate {
 		go func() {
 			defer func() { lrecover.HandleRecoverChan(l, terminateChan, recover()) }()
-			migrator := cleanup.Migrator(*registryAddress, l, c, uint64(*numMigrators), uint64(*migratorIdx), *numMigrationsPerShard, *migratorLogOnly, *migrateFailureDomain)
+			migrator := cleanup.Migrator(*registryAddress, l, c, uint64(*numMigrators), uint64(*migratorIdx), uint32(*numFileMigrators), *migratorLogOnly, *migrateFailureDomain)
 			migrator.Run()
 		}()
-	} 
+	}
 
 	defragStats := &cleanup.DefragStats{}
 	if *defrag {

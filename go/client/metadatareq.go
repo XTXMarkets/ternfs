@@ -65,7 +65,6 @@ func (c *Client) metadataRequest(
 		log.DebugStack(1, "waiting for response for req id %v on channel", requestId)
 		resp := <-respChan
 		if resp.err == msgs.TIMEOUT {
-			log.RaiseNC(timeoutAlert, "timed out when receiving resp %v %+v of typ %T (started %v ago) to shard %v, might retry", requestId, reqBody, reqBody, now.Sub(startedAt), shid)
 			attempts++
 			continue
 		}
