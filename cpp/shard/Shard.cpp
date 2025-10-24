@@ -102,33 +102,23 @@ struct ShardShared {
     // statistics
     std::array<Timings, maxShardMessageKind+1> timings;
     std::array<ErrorCount, maxShardMessageKind+1> errors;
-    std::atomic<double> logsDBRequestQueueSize;
-    std::atomic<double> logsDBResponseQueueSize;
-    std::atomic<double> proxyLogsDBRequestQueueSize;
-    std::atomic<double> proxyLogsDBResponseQueueSize;
-    std::atomic<double> writerRequestQueueSize;
-    std::atomic<double> writerProxyRespQueueSize;
-    std::atomic<double> readerRequestQueueSize;
-    std::array<std::atomic<double>, 2> receivedRequests; // how many requests we got at once from each socket
-    // how many requests we pulled from queues
-    std::atomic<double> pulledLogsDBRequests;
-    std::atomic<double> pulledLogsDBResponses;
-    std::atomic<double> pulledProxyLogsDBRequests;
-    std::atomic<double> pulledProxyLogsDBResponses;
-    std::atomic<double> pulledWriteRequests;
-    std::atomic<double> pulledProxyWriteResponses;
-    std::atomic<double> pulledReadRequests;
+    std::atomic<uint64_t> receivedLogsDBReqs;
+    std::atomic<uint64_t> receivedLogsDBResps;
+    std::atomic<uint64_t> receivedProxyLogsDBReqs;
+    std::atomic<uint64_t> receivedProxyLogsDBResps;
+    std::atomic<uint64_t> receivedWriterReqs;
+    std::atomic<uint64_t> receivedWriterProxyResps;
+    std::atomic<uint64_t> receivedReaderReqs;
+    std::array<std::atomic<uint64_t>, 2> receivedRequests; // how many requests we got at once from each socket
 
     // how many requests we dropped
-    std::atomic<double> droppedLogsDBRequests;
-    std::atomic<double> droppedLogsDBResponses;
-    std::atomic<double> droppedProxyLogsDBRequests;
-    std::atomic<double> droppedProxyLogsDBResponses;
-    std::atomic<double> droppedWriteRequests;
-    std::atomic<double> droppedProxyWriteResponses;
-    std::atomic<double> droppedReadRequests;
-
-
+    std::atomic<uint64_t> droppedLogsDBReqs;
+    std::atomic<uint64_t> droppedLogsDBResps;
+    std::atomic<uint64_t> droppedProxyLogsDBReqs;
+    std::atomic<uint64_t> droppedProxyLogsDBResps;
+    std::atomic<uint64_t> droppedWriteReqs;
+    std::atomic<uint64_t> droppedProxyWriteResps;
+    std::atomic<uint64_t> droppedReadReqs;
 
     // we should get up to date information from registry before we start serving any requests
     // this is populated by ShardRegisterer
@@ -151,27 +141,20 @@ struct ShardShared {
         blockServicesCache(blockServicesCache_),
         replicas(nullptr),
         leadersAtOtherLocations(std::make_shared<std::vector<FullShardInfo>>()),
-        logsDBRequestQueueSize(0),
-        logsDBResponseQueueSize(0),
-        proxyLogsDBRequestQueueSize(0),
-        proxyLogsDBResponseQueueSize(0),
-        writerRequestQueueSize(0),
-        writerProxyRespQueueSize(0),
-        readerRequestQueueSize(0),
-        pulledLogsDBRequests(0),
-        pulledLogsDBResponses(0),
-        pulledProxyLogsDBRequests(0),
-        pulledProxyLogsDBResponses(0),
-        pulledWriteRequests(0),
-        pulledProxyWriteResponses(0),
-        pulledReadRequests(0),
-        droppedLogsDBRequests(0),
-        droppedLogsDBResponses(0),
-        droppedProxyLogsDBRequests(0),
-        droppedProxyLogsDBResponses(0),
-        droppedWriteRequests(0),
-        droppedProxyWriteResponses(0),
-        droppedReadRequests(0),
+        receivedLogsDBReqs(0),
+        receivedLogsDBResps(0),
+        receivedProxyLogsDBReqs(0),
+        receivedProxyLogsDBResps(0),
+        receivedWriterReqs(0),
+        receivedWriterProxyResps(0),
+        receivedReaderReqs(0),
+        droppedLogsDBReqs(0),
+        droppedLogsDBResps(0),
+        droppedProxyLogsDBReqs(0),
+        droppedProxyLogsDBResps(0),
+        droppedWriteReqs(0),
+        droppedProxyWriteResps(0),
+        droppedReadReqs(0),
         isInitiated(false),
         isBlockServiceCacheInitiated(false)
     {
@@ -594,53 +577,48 @@ public:
 
         // write out write requests to queues
         auto pushed = _shared.logsDBRequestQueue.push(_logsDBRequests);
-        _shared.logsDBRequestQueueSize = _shared.logsDBRequestQueueSize*0.95 + _shared.logsDBRequestQueue.size()*0.05;
-        _shared.droppedLogsDBRequests = _shared.droppedLogsDBRequests*0.95 + (_logsDBRequests.size()-pushed)*0.05;
+        _shared.receivedLogsDBReqs.fetch_add(_logsDBRequests.size(), std::memory_order_relaxed);
+        _shared.droppedLogsDBReqs.fetch_add(_logsDBRequests.size() - pushed, std::memory_order_relaxed);
 
         pushed = _shared.logsDBResponseQueue.push(_logsDBResponses);
-        _shared.logsDBResponseQueueSize = _shared.logsDBResponseQueueSize*0.95 + _shared.logsDBResponseQueue.size()*0.05;
-        _shared.droppedLogsDBResponses = _shared.droppedLogsDBResponses*0.95 + (_logsDBResponses.size()-pushed)*0.05;
+        _shared.receivedLogsDBResps.fetch_add(_logsDBResponses.size(), std::memory_order_relaxed);
+        _shared.droppedLogsDBResps.fetch_add(_logsDBResponses.size() - pushed, std::memory_order_relaxed);
 
         pushed = _shared.proxyLogsDBRequestQueue.push(_proxyLogsDBRequests);
-        _shared.proxyLogsDBRequestQueueSize = _shared.proxyLogsDBRequestQueueSize*0.95 + _shared.proxyLogsDBRequestQueue.size()*0.05;
-        _shared.droppedProxyLogsDBRequests = _shared.droppedProxyLogsDBRequests*0.95 + (_proxyLogsDBRequests.size()-pushed)*0.05;
+        _shared.receivedProxyLogsDBReqs.fetch_add(_proxyLogsDBRequests.size(), std::memory_order_relaxed);
+        _shared.droppedProxyLogsDBReqs.fetch_add(_proxyLogsDBRequests.size() - pushed, std::memory_order_relaxed);
 
         pushed = _shared.proxyLogsDBResponseQueue.push(_proxyLogsDBResponses);
-        _shared.proxyLogsDBResponseQueueSize = _shared.proxyLogsDBResponseQueueSize*0.95 + _shared.proxyLogsDBResponseQueue.size()*0.05;
-        _shared.droppedProxyLogsDBResponses = _shared.droppedProxyLogsDBResponses*0.95 + (_proxyLogsDBResponses.size()-pushed)*0.05;
+        _shared.receivedProxyLogsDBResps.fetch_add(_proxyLogsDBResponses.size(), std::memory_order_relaxed);
+        _shared.droppedProxyLogsDBResps.fetch_add(_proxyLogsDBResponses.size() - pushed, std::memory_order_relaxed);
 
         pushed = _shared.writerProxyShardRespQueue.push(_proxyResponses);
-        _shared.writerProxyRespQueueSize = _shared.writerProxyRespQueueSize*0.95 + _shared.writerProxyShardRespQueue.size()*0.05;
-        _shared.droppedProxyWriteResponses = _shared.droppedProxyWriteResponses*0.95 + (_proxyResponses.size()-pushed)*0.05;
+        _shared.receivedWriterProxyResps.fetch_add(_proxyResponses.size(), std::memory_order_relaxed);
+        _shared.droppedProxyWriteResps.fetch_add(_proxyResponses.size() - pushed, std::memory_order_relaxed);
 
         pushed = _shared.writerShardReqQueue.push(_writeReqs);
-        _shared.writerRequestQueueSize = _shared.writerRequestQueueSize*0.95 + _shared.writerShardReqQueue.size()*0.05;
-        _shared.droppedWriteRequests = _shared.droppedWriteRequests*0.95 + (_writeReqs.size()-pushed)*0.05;
+        _shared.receivedWriterReqs.fetch_add(_writeReqs.size(), std::memory_order_relaxed);
+        _shared.droppedWriteReqs.fetch_add(_writeReqs.size() - pushed, std::memory_order_relaxed);
 
         // write out read requests to queue
         auto readIt = _readRequests.begin();
         auto readQueueIt = _readQueueIt;
         for(;;) {
             readIt = (*readQueueIt)->push(readIt, _readRequests.end());
-            if (readIt == _readRequests.end()) {
-                break;
-            }
             if (++readQueueIt == _shared.readerRequestsQueues.end()) {
                 readQueueIt = _shared.readerRequestsQueues.begin();
+            }
+            if (readIt == _readRequests.end()) {
+                break;
             }
             if (readQueueIt == _readQueueIt) {
                 break;
             }
         }
-        auto dropped = std::distance(readIt, _readRequests.end());
-        pushed = _readRequests.size() - dropped;
-        size_t readQueuesSize = 0;
-        for (const auto& q : _shared.readerRequestsQueues) {
-            readQueuesSize += q->size();
-        }
+        _readQueueIt = readQueueIt;
 
-        _shared.readerRequestQueueSize = _shared.readerRequestQueueSize*0.95 + readQueuesSize*0.05;
-        _shared.droppedReadRequests = _shared.droppedReadRequests*0.95 + dropped*0.05;
+        _shared.receivedReaderReqs.fetch_add(_readRequests.size(), std::memory_order_relaxed);
+        _shared.droppedReadReqs.fetch_add(std::distance(readIt, _readRequests.end()), std::memory_order_relaxed);
     }
 };
 
@@ -1544,23 +1522,17 @@ public:
 
         // we prioritize LogsDB requests and responses as they make us progress state
         remainingPullBudget -= _shared.logsDBResponseQueue.pull(_logsDBResponses, remainingPullBudget);
-        _shared.pulledLogsDBResponses = _shared.pulledLogsDBResponses*0.95 + ((double)_logsDBResponses.size())*0.05;
         remainingPullBudget -= _shared.logsDBRequestQueue.pull(_logsDBRequests, remainingPullBudget);
-        _shared.pulledLogsDBRequests = _shared.pulledLogsDBRequests*0.95 + ((double)_logsDBRequests.size())*0.05;
 
         // then ProxyLogsDB requests/responses as they are needed to make progress on secondary locations
         remainingPullBudget -= _shared.proxyLogsDBResponseQueue.pull(_proxyLogsDBResponses, remainingPullBudget);
-        _shared.pulledProxyLogsDBResponses = _shared.pulledProxyLogsDBResponses*0.95 + ((double)_proxyLogsDBResponses.size())*0.05;
         remainingPullBudget -= _shared.proxyLogsDBRequestQueue.pull(_proxyLogsDBRequests, remainingPullBudget);
-        _shared.pulledProxyLogsDBRequests = _shared.pulledProxyLogsDBRequests*0.95 + ((double)_proxyLogsDBRequests.size())*0.05;
 
         // then shard reponses as these are responses for requests we sent to primary location
         remainingPullBudget -= _shared.writerProxyShardRespQueue.pull(_shardResponses, remainingPullBudget);
-        _shared.pulledProxyWriteResponses = _shared.pulledProxyWriteResponses*0.95 + ((double)_shardResponses.size())*0.05;
 
         // last are new requests from local clients and then proxy locations
         remainingPullBudget -= _shared.writerShardReqQueue.pull(_shardRequests, remainingPullBudget);
-        _shared.pulledWriteRequests = _shared.pulledWriteRequests*0.95 + ((double)_shardRequests.size())*0.05;
 
         logsDBStep();
         auto loopTime = ternNow() - start;
@@ -1614,16 +1586,13 @@ public:
         _requests.clear();
         uint32_t pulled = _queue.pull(_requests, MAX_RECV_MSGS * 2);
         auto start = ternNow();
-        if (likely(pulled > 0)) {
-            LOG_DEBUG(_env, "pulled %s requests from read queue", pulled);
-            _shared.pulledReadRequests = _shared.pulledReadRequests*0.95 + ((double)pulled)*0.05;
-        }
         if (unlikely(_queue.isClosed())) {
             // queue is closed, stop
             stop();
             return;
         }
 
+        LOG_DEBUG(_env, "pulled %s requests from read queue", pulled);
         for(auto& req : _requests) {
             ALWAYS_ASSERT(readOnlyShardReq(req.msg.body.kind()));
             bool dropArtificially = _packetDropRand.generate64() % 10'000 < _outgoingPacketDropProbability;
@@ -1938,8 +1907,7 @@ static void logsDBstatsToMetrics(struct MetricsBuilder& metricsBuilder, const Lo
 
 struct Metric {
     std::string name;
-    std::string fieldName;
-    std::atomic<double>* value;
+    std::atomic<uint64_t>* value;
 };
 
 struct ShardMetricsInserter : PeriodicLoop {
@@ -1951,9 +1919,6 @@ private:
     XmonNCAlert _sendMetricsAlert;
     MetricsBuilder _metricsBuilder;
     std::unordered_map<std::string, uint64_t> _rocksDBStats;
-    std::array<XmonNCAlert, 2> _sockQueueAlerts;
-    XmonNCAlert _writeQueuesAlert;
-    XmonNCAlert _readerQueueAlert;
     std::vector<Metric> _stats;
 public:
     ShardMetricsInserter(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const InfluxDB& influxDB, ShardShared& shared):
@@ -1962,36 +1927,25 @@ public:
         _shared(shared),
         _shrid(_shared.options.shrid()),
         _location(_shared.options.logsDBOptions.location),
-        _sendMetricsAlert(XmonAppType::DAYTIME, 5_mins),
-        _sockQueueAlerts({XmonAppType::NEVER, XmonAppType::NEVER}),
-        _writeQueuesAlert(XmonAppType::NEVER),
-        _readerQueueAlert(XmonAppType::NEVER)
+        _sendMetricsAlert(XmonAppType::DAYTIME, 5_mins)
     {
         _stats = {
-            // queue sizes
-            {"eggsfs_shard_logsdb_request_queue", "size", &_shared.logsDBRequestQueueSize},
-            {"eggsfs_shard_logsdb_response_queue", "size", &_shared.logsDBResponseQueueSize},
-            {"eggsfs_shard_proxy_logsdb_request_queue", "size", &_shared.proxyLogsDBRequestQueueSize},
-            {"eggsfs_shard_proxy_logsdb_response_queue", "size", &_shared.proxyLogsDBResponseQueueSize},
-            {"eggsfs_shard_writer_request_queue", "size", &_shared.writerRequestQueueSize},
-            {"eggsfs_shard_writer_proxy_response_queue", "size", &_shared.writerProxyRespQueueSize},
-            {"eggsfs_shard_read_queue", "size", &_shared.readerRequestQueueSize},
-            // pulled counts
-            {"eggsfs_shard_pulled_logsdb_requests", "count", &_shared.pulledLogsDBRequests},
-            {"eggsfs_shard_pulled_logsdb_responses", "count", &_shared.pulledLogsDBResponses},
-            {"eggsfs_shard_pulled_proxy_logsdb_requests", "count", &_shared.pulledProxyLogsDBRequests},
-            {"eggsfs_shard_pulled_proxy_logsdb_responses", "count", &_shared.pulledProxyLogsDBResponses},
-            {"eggsfs_shard_pulled_writer_requests", "count", &_shared.pulledWriteRequests},
-            {"eggsfs_shard_pulled_writer_proxy_responses", "count", &_shared.pulledProxyWriteResponses},
-            {"eggsfs_shard_pulled_read_requests", "count", &_shared.pulledReadRequests},
+            // received counts
+            {"eggsfs_shard_logsdb_requests_received", &_shared.receivedLogsDBReqs},
+            {"eggsfs_shard_logsdb_responses_received", &_shared.receivedLogsDBResps},
+            {"eggsfs_shard_proxy_logsdb_requests_received", &_shared.receivedProxyLogsDBReqs},
+            {"eggsfs_shard_proxy_logsdb_responses_received",&_shared.receivedProxyLogsDBResps},
+            {"eggsfs_shard_write_requests_received", &_shared.receivedWriterReqs},
+            {"eggsfs_shard_write_proxy_responses_received", &_shared.receivedWriterProxyResps},
+            {"eggsfs_shard_read_requests_received", &_shared.receivedReaderReqs},
             // dropped counts
-            {"eggsfs_shard_dropped_logsdb_requests", "count", &_shared.droppedLogsDBRequests},
-            {"eggsfs_shard_dropped_logsdb_responses", "count", &_shared.droppedLogsDBResponses},
-            {"eggsfs_shard_dropped_proxy_logsdb_requests", "count", &_shared.droppedLogsDBRequests},
-            {"eggsfs_shard_dropped_proxy_logsdb_responses", "count", &_shared.droppedProxyLogsDBResponses},
-            {"eggsfs_shard_dropped_writer_requests", "count", &_shared.droppedWriteRequests},
-            {"eggsfs_shard_dropped_writer_proxy_responses", "count", &_shared.droppedProxyWriteResponses},
-            {"eggsfs_shard_dropped_read_requests", "count", &_shared.droppedReadRequests},
+            {"eggsfs_shard_logsdb_requests_dropped", &_shared.droppedLogsDBReqs},
+            {"eggsfs_shard_logsdb_responses_dropped", &_shared.droppedLogsDBResps},
+            {"eggsfs_shard_proxy_logsdb_requests_dropped", &_shared.droppedProxyLogsDBReqs},
+            {"eggsfs_shard_proxy_logsdb_responses_dropped",&_shared.droppedProxyLogsDBResps},
+            {"eggsfs_shard_write_requests_dropped", &_shared.droppedWriteReqs},
+            {"eggsfs_shard_write_proxy_responses_droppedd", &_shared.droppedProxyWriteResps},
+            {"eggsfs_shard_read_requests_dropped", &_shared.droppedReadReqs},
         };
     }
 
@@ -1999,42 +1953,11 @@ public:
 
     virtual bool periodicStep() {
         _shared.sharedDB.dumpRocksDBStatistics();
-        for (int i = 0; i < 2; i++) {
-            if (std::ceil(_shared.receivedRequests[i]) >= MAX_RECV_MSGS) {
-                _env.updateAlert(_sockQueueAlerts[i], "recv queue for sock %s is full (%s)", i, _shared.receivedRequests[i]);
-            } else {
-                _env.clearAlert(_sockQueueAlerts[i]);
-            }
-        }
-        if (std::ceil(_shared.logsDBRequestQueueSize) >= WRITER_QUEUE_SIZE ||
-            std::ceil(_shared.logsDBResponseQueueSize) >= WRITER_QUEUE_SIZE ||
-            std::ceil(_shared.proxyLogsDBRequestQueueSize) >= WRITER_QUEUE_SIZE ||
-            std::ceil(_shared.proxyLogsDBResponseQueueSize) >= WRITER_QUEUE_SIZE ||
-            std::ceil(_shared.writerRequestQueueSize) >= WRITER_QUEUE_SIZE ||
-            std::ceil(_shared.writerProxyRespQueueSize) >= WRITER_QUEUE_SIZE
-        ) {
-            _env.updateAlert(_writeQueuesAlert,
-                "some write queues are full logsDBReq(%s), "
-                "logsDBResp(%s), proxyLogsDBReq(%s), proxyLogsDBResp(%s), proxyRespQueueSize(%s), writerReq(%s)",
-                _shared.logsDBRequestQueueSize,
-                _shared.logsDBResponseQueueSize,
-                _shared.proxyLogsDBRequestQueueSize,
-                _shared.proxyLogsDBResponseQueueSize,
-                _shared.writerProxyRespQueueSize,
-                _shared.writerRequestQueueSize
-            );
-        } else {
-            _env.clearAlert(_writeQueuesAlert);
-        }
-        if (std::ceil(_shared.readerRequestQueueSize) >= READER_QUEUE_SIZE) {
-            _env.updateAlert(_readerQueueAlert, "reader request queue is full (%s)", _shared.readerRequestQueueSize);
-        } else {
-            _env.clearAlert(_readerQueueAlert);
-        }
         auto newMeassurement = [this](const std::string& name) {
             _metricsBuilder.measurement(name);
             _metricsBuilder.tag("shard", _shrid);
             _metricsBuilder.tag("location", int(_location));
+            _metricsBuilder.tag("leader", _shared.logsDB.isLeader());
         };
         auto now = ternNow();
         for (ShardMessageKind kind : allShardMessageKind) {
@@ -2066,7 +1989,7 @@ public:
 
         for (const auto& stat : _stats) {
             newMeassurement(stat.name);
-            _metricsBuilder.fieldFloat(stat.fieldName, *stat.value);
+            _metricsBuilder.fieldU64("count", *stat.value);
             _metricsBuilder.timestamp(now);
         }
 
