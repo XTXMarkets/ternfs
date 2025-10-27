@@ -27,6 +27,12 @@ struct ternfs_block_service {
     u8 flags;
 };
 
+static inline bool ternfs_block_services_equal(struct ternfs_block_service* l, struct ternfs_block_service* r) {
+    // We don't memcmp to not compare padding.
+    return l->id == r->id && l->ip1 == r->ip1 && l->ip2 == r->ip2 &&
+        l->port1 == r->port1 && l->port2 == r->port2 && l->flags == r->flags;
+}
+
 // Returns an error immediately if it can't connect to the block service or anyway
 // if it thinks the block service is no good.
 //

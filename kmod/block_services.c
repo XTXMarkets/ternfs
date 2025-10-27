@@ -34,13 +34,16 @@ static struct ternfs_stored_block_service* find_block_service(u64 bs_id) {
 }
 
 struct ternfs_stored_block_service* ternfs_upsert_block_service(struct ternfs_block_service* bs) {
+    // It is currently not possible to remove block services from hash map.
+    // Furthermore returned block service nodes are stored for arbitrary time period so this can't
+    // really work with RCU. If we add support for removing block services this code needs rethinking.
     struct ternfs_stored_block_service* bs_node = find_block_service(bs->id);
     if (likely(bs_node != NULL)) {
         // We found one, check if we need to update
         rcu_read_lock();
         {
             struct ternfs_block_service* existing_bs = rcu_dereference(bs_node->bs);
-            if (memcmp(bs, existing_bs, sizeof(*bs)) == 0) { // still the same, no update needed
+            if (ternfs_block_services_equal(existing_bs, bs)) { // still the same, no update needed
                 rcu_read_unlock();
                 trace_eggsfs_upsert_block_service(bs->id, TERNFS_UPSERT_BLOCKSERVICE_MATCH);
                 return bs_node;
@@ -61,12 +64,13 @@ struct ternfs_stored_block_service* ternfs_upsert_block_service(struct ternfs_bl
         rcu_assign_pointer(bs_node->bs, new_bs);
         spin_unlock(&bs_node->lock);
 
-        // Free old thing
+        // TODO: switch to call_rcu
         synchronize_rcu();
         kfree(old_bs);
-    } else {
-        trace_eggsfs_upsert_block_service(bs->id, TERNFS_UPSERT_BLOCKSERVICE_NEW);
+        return bs_node;
     }
+
+    trace_eggsfs_upsert_block_service(bs->id, TERNFS_UPSERT_BLOCKSERVICE_NEW);
 
     // We need to add a new one. Allocate both struct and body
     struct ternfs_stored_block_service* new_bs_node = kmalloc(sizeof(struct ternfs_stored_block_service), GFP_KERNEL);
