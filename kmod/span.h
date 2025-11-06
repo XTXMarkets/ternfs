@@ -12,6 +12,9 @@
 #include "rs.h"
 #include "super.h"
 
+
+extern int ternfs_span_cache_retention_jiffies;
+
 // span cache for specific inode
 struct ternfs_file_spans {
     u64 __ino;
@@ -19,7 +22,7 @@ struct ternfs_file_spans {
     // as of now we use a read/write semaphore for simplicity (we'd need to
     // be careful when freeing spans).
     struct rb_root __spans;
-    struct rw_semaphore __lock;    
+    struct rw_semaphore __lock;
 };
 
 void ternfs_init_file_spans(struct ternfs_file_spans* spans, u64 ino);
@@ -32,11 +35,12 @@ struct ternfs_span {
     u64 ino;
     u64 start;
     u64 end;
+    u64 fetched_at;
     // To be in the inode tree. Note that we might _not_ be in the
     // tree once the inode releases us.
     struct rb_node node;
     // The inode and in progress reads hold references to us.
-    // The reads can decide to unlink the span on error but other in 
+    // The reads can decide to unlink the span on error but other in
     // progress reads for same span need to finish before this can be freed.
     atomic_t refcount;
     // Used to determine which type of span this is enclosed in.

@@ -24,6 +24,8 @@
 #include "sysctl.h"
 #include "block_services.h"
 
+int ternfs_span_cache_retention_jiffies = 24 * 60 * 60 * HZ; // 1 day
+
 static struct kmem_cache* ternfs_block_span_cachep;
 static struct kmem_cache* ternfs_inline_span_cachep;
 static struct kmem_cache* ternfs_fetch_span_pages_cachep;
@@ -242,12 +244,12 @@ static int try_fill_from_page_cache(struct address_space *mapping, struct list_h
         if (cached_page == NULL) {
             break;
         }
-        
+
         // from kernel 5.19 pages are added to page cache before calling readahead
         // since readahead does not need to read everything it's possible some pages
-        // are in page cache but were never filled. 
+        // are in page cache but were never filled.
         // we need to check if page is up to date before using it
-        // otherwise we could reconstruct other pages using incorrect data 
+        // otherwise we could reconstruct other pages using incorrect data
         if (!PageUptodate(cached_page)) {
             put_page(cached_page);
             break;
@@ -257,7 +259,7 @@ static int try_fill_from_page_cache(struct address_space *mapping, struct list_h
         memcpy(to_ptr, from_ptr, PAGE_SIZE);
         kunmap_atomic(to_ptr);
         kunmap_atomic(from_ptr);
-        put_page(cached_page);        
+        put_page(cached_page);
         have_pages++;
     }
     if (have_pages == nr_pages) { return 1; }
@@ -960,6 +962,8 @@ struct ternfs_span* ternfs_get_span(struct ternfs_fs_info* fs_info, struct ternf
         return s; \
     } while(0)
 
+    u64 fetched_at = get_jiffies_64();
+
 retry:
     // Check if we already have the span
     {
@@ -971,7 +975,13 @@ retry:
         }
         up_read(&spans->__lock);
         if (likely(span != NULL)) {
-            return span;
+            // evict expired span
+            if (unlikely(fetched_at - span->fetched_at > ternfs_span_cache_retention_jiffies)) {
+                ternfs_unlink_span(spans, span);
+                span = NULL;
+            } else {
+                return span;
+            }
         }
         // While it looks it must be there it could be again removed already
         // BUG_ON(fetched); // If we've just fetched it must be here.
@@ -1002,12 +1012,14 @@ retry:
         up_write(&spans->__lock);
         GET_SPAN_EXIT(ERR_PTR(err));
     }
+
     // add them to enode spans
     for (;;) {
         struct rb_node* node = rb_first(&ctx.spans);
         if (node == NULL) { break; }
         rb_erase(node, &ctx.spans);
         struct ternfs_span* span = rb_entry(node, struct ternfs_span, node);
+        span->fetched_at = fetched_at;
         if (!insert_span(&spans->__spans, span)) {
             // Span is already cached
             ternfs_put_span(span);

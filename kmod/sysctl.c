@@ -146,7 +146,10 @@ static struct ctl_table ternfs_cb_sysctls[] = {
     TERNFS_CTL_INT_JIFFIES(initial_cdc_timeout),
     TERNFS_CTL_INT_JIFFIES(max_cdc_timeout),
     TERNFS_CTL_INT_JIFFIES(overall_cdc_timeout),
+    TERNFS_CTL_INT_JIFFIES(fetch_block_timeout),
+    TERNFS_CTL_INT_JIFFIES(write_block_timeout),
     TERNFS_CTL_INT_JIFFIES(block_service_connect_timeout),
+    TERNFS_CTL_INT_JIFFIES(span_cache_retention),
 
     TERNFS_CTL_UINT(readahead_pages),
     TERNFS_CTL_UINT(max_write_span_attempts),
