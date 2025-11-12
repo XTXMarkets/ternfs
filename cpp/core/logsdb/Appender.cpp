@@ -70,14 +70,14 @@ TernError Appender::appendEntries(std::vector<LogsDBLogEntry>& entries) {
     if (!_leaderElection.isLeader()) {
         return TernError::LEADER_PREEMPTED;
     }
-    auto availableSpace = LogsDB::IN_FLIGHT_APPEND_WINDOW - entriesInFlight();
+    auto availableSpace = LogsDBConsts::IN_FLIGHT_APPEND_WINDOW - entriesInFlight();
     auto countToAppend = std::min(entries.size(), availableSpace);
     for(size_t i = 0; i < countToAppend; ++i) {
         entries[i].idx = _metadata.assignLogIdx();
         auto offset = (_entriesEnd + i) & IN_FLIGHT_MASK;
         _entries[offset] = entries[i];
         auto& requestIds = _requestIds[offset];
-        for(ReplicaId replicaId = 0; replicaId.u8 < LogsDB::REPLICA_COUNT; ++replicaId.u8) {
+        for(ReplicaId replicaId = 0; replicaId.u8 < LogsDBConsts::REPLICA_COUNT; ++replicaId.u8) {
             if (replicaId == _metadata.getReplicaId()) {
                 requestIds[replicaId.u8] = 0;
                 continue;
@@ -140,7 +140,7 @@ uint64_t Appender::entriesInFlight() const {
 }
 
 void Appender::_init() {
-    for(ReplicaId replicaId = 0; replicaId.u8 < LogsDB::REPLICA_COUNT; ++replicaId.u8) {
+    for(ReplicaId replicaId = 0; replicaId.u8 < LogsDBConsts::REPLICA_COUNT; ++replicaId.u8) {
         if (replicaId == _metadata.getReplicaId()) {
             _releaseRequests[replicaId.u8] = 0;
             continue;

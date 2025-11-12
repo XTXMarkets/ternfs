@@ -12,6 +12,7 @@
 #include "../Protocol.hpp"
 #include "DataPartitions.hpp"
 #include "LogMetadata.hpp"
+#include "LogsDBCommon.hpp"
 #include "ReqResp.hpp"
 
 // Forward declarations
@@ -42,8 +43,8 @@ std::ostream& operator<<(std::ostream& out, LeadershipState state);
 struct LeaderElectionState {
     ReqResp::QuorumTrackArray requestIds;
     LogIdx lastReleased;
-    std::array<ReqResp::QuorumTrackArray, LogsDB::IN_FLIGHT_APPEND_WINDOW> recoveryRequests;
-    std::array<LogsDBLogEntry, LogsDB::IN_FLIGHT_APPEND_WINDOW> recoveryEntries;
+    std::array<ReqResp::QuorumTrackArray, LogsDBConsts::IN_FLIGHT_APPEND_WINDOW> recoveryRequests;
+    std::array<LogsDBLogEntry, LogsDBConsts::IN_FLIGHT_APPEND_WINDOW> recoveryEntries;
 };
 
 class LeaderElection {

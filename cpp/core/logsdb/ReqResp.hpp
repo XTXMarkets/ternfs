@@ -11,19 +11,19 @@
 #include <vector>
 
 #include "../Protocol.hpp"
+#include "LogsDBCommon.hpp"
 
 // Forward declarations
 struct LogsDBRequest;
 struct LogsDBResponse;
 struct LogsDBStats;
-class LogsDB;
 
 class ReqResp {
     public:
         static constexpr size_t UNUSED_REQ_ID = std::numeric_limits<size_t>::max();
         static constexpr size_t CONFIRMED_REQ_ID = 0;
 
-        using QuorumTrackArray = std::array<uint64_t, LogsDB::REPLICA_COUNT>;
+        using QuorumTrackArray = std::array<uint64_t, LogsDBConsts::REPLICA_COUNT>;
 
         ReqResp(LogsDBStats& stats);
 

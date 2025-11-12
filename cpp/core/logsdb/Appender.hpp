@@ -11,6 +11,7 @@
 #include "../Protocol.hpp"
 #include "LeaderElection.hpp"
 #include "LogMetadata.hpp"
+#include "LogsDBCommon.hpp"
 #include "ReqResp.hpp"
 
 // Forward declarations
@@ -21,8 +22,8 @@ struct LogWriteResp;
 class LogsDB;
 
 class Appender {
-    static constexpr size_t IN_FLIGHT_MASK = LogsDB::IN_FLIGHT_APPEND_WINDOW - 1;
-    static_assert((IN_FLIGHT_MASK & LogsDB::IN_FLIGHT_APPEND_WINDOW) == 0);
+    static constexpr size_t IN_FLIGHT_MASK = LogsDBConsts::IN_FLIGHT_APPEND_WINDOW - 1;
+    static_assert((IN_FLIGHT_MASK & LogsDBConsts::IN_FLIGHT_APPEND_WINDOW) == 0);
 public:
     Appender(Env& env, LogsDBStats& stats, ReqResp& reqResp, LogMetadata& metadata, LeaderElection& leaderElection, bool noReplication);
 
@@ -45,7 +46,7 @@ private:
     uint64_t _entriesStart;
     uint64_t _entriesEnd;
 
-    std::array<LogsDBLogEntry, LogsDB::IN_FLIGHT_APPEND_WINDOW> _entries;
-    std::array<ReqResp::QuorumTrackArray, LogsDB::IN_FLIGHT_APPEND_WINDOW> _requestIds;
+    std::array<LogsDBLogEntry, LogsDBConsts::IN_FLIGHT_APPEND_WINDOW> _entries;
+    std::array<ReqResp::QuorumTrackArray, LogsDBConsts::IN_FLIGHT_APPEND_WINDOW> _requestIds;
     ReqResp::QuorumTrackArray _releaseRequests;
 };

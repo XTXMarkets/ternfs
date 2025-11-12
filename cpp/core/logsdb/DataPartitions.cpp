@@ -256,7 +256,7 @@ std::vector<std::unique_ptr<rocksdb::Iterator>> DataPartitions::_getPartitionIte
 
 void DataPartitions::_maybeRotate() {
     auto& partition = _getPartitionForIdx(MAX_LOG_IDX);
-    if (likely(partition.firstWriteTime == 0 || (partition.firstWriteTime + LogsDB::PARTITION_TIME_SPAN > ternNow()))) {
+    if (likely(partition.firstWriteTime == 0 || (partition.firstWriteTime + LogsDBConsts::PARTITION_TIME_SPAN > ternNow()))) {
         return;
     }
     // we only need to drop older partition and reset it's info.

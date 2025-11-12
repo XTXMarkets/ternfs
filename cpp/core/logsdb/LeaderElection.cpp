@@ -56,7 +56,7 @@ void LeaderElection::maybeStartLeaderElection() {
     }
     auto now = ternNow();
     if (_state != LeadershipState::FOLLOWER ||
-        (_leaderLastActive + LogsDB::LEADER_INACTIVE_TIMEOUT > now)) {
+        (_leaderLastActive + LogsDBConsts::LEADER_INACTIVE_TIMEOUT > now)) {
         update_atomic_stat_ema(_stats.leaderLastActive, now - _leaderLastActive);
         return;
     }
@@ -143,7 +143,7 @@ void LeaderElection::proccessRecoveryReadResponse(ReplicaId fromReplicaId, LogsD
         {
             ALWAYS_ASSERT(state.lastReleased < request.msg.body.getLogRecoveryRead().idx);
             auto entryOffset = request.msg.body.getLogRecoveryRead().idx.u64 - state.lastReleased.u64 - 1;
-            ALWAYS_ASSERT(entryOffset < LogsDB::IN_FLIGHT_APPEND_WINDOW);
+            ALWAYS_ASSERT(entryOffset < LogsDBConsts::IN_FLIGHT_APPEND_WINDOW);
             ALWAYS_ASSERT(state.recoveryRequests[entryOffset][request.replicaId.u8] == request.msg.id);
             auto& entry = state.recoveryEntries[entryOffset];
             if (response.value.els.size() != 0) {
@@ -176,7 +176,7 @@ void LeaderElection::proccessRecoveryWriteResponse(ReplicaId fromReplicaId, Logs
         {
             ALWAYS_ASSERT(state.lastReleased < request.msg.body.getLogRecoveryWrite().idx);
             auto entryOffset = request.msg.body.getLogRecoveryWrite().idx.u64 - state.lastReleased.u64 - 1;
-            ALWAYS_ASSERT(entryOffset < LogsDB::IN_FLIGHT_APPEND_WINDOW);
+            ALWAYS_ASSERT(entryOffset < LogsDBConsts::IN_FLIGHT_APPEND_WINDOW);
             ALWAYS_ASSERT(state.recoveryRequests[entryOffset][request.replicaId.u8] == request.msg.id);
             state.recoveryRequests[entryOffset][request.replicaId.u8] = 0;
             _reqResp.eraseRequest(request.msg.id);
@@ -315,14 +315,14 @@ void LeaderElection::_tryProgressToDigest() {
 
     // Populate entries we have and don't ask for them
     std::vector<LogsDBLogEntry> entries;
-    entries.reserve(LogsDB::IN_FLIGHT_APPEND_WINDOW);
+    entries.reserve(LogsDBConsts::IN_FLIGHT_APPEND_WINDOW);
     auto it = _data.getIterator();
     it.seek(_electionState->lastReleased);
     it.next();
     for(; it.valid(); ++it) {
         entries.emplace_back(it.entry());
     }
-    ALWAYS_ASSERT(entries.size() <= LogsDB::IN_FLIGHT_APPEND_WINDOW);
+    ALWAYS_ASSERT(entries.size() <= LogsDBConsts::IN_FLIGHT_APPEND_WINDOW);
     for (auto& entry : entries) {
         auto offset = entry.idx.u64 - _electionState->lastReleased.u64 - 1;
         _electionState->recoveryEntries[offset] = entry;
@@ -337,7 +337,7 @@ void LeaderElection::_tryProgressToDigest() {
         entry.idx = _electionState->lastReleased + i + 1;
         auto& requestIds = _electionState->recoveryRequests[i];
         auto& participatingReplicas = _electionState->requestIds;
-        for(ReplicaId replicaId = 0; replicaId.u8 < LogsDB::REPLICA_COUNT; ++replicaId.u8) {
+        for(ReplicaId replicaId = 0; replicaId.u8 < LogsDBConsts::REPLICA_COUNT; ++replicaId.u8) {
             if (replicaId == _replicaId) {
                 requestIds[replicaId.u8] = ReqResp::CONFIRMED_REQ_ID;
                 continue;
@@ -383,7 +383,7 @@ void LeaderElection::_tryProgressToReplication() {
         }
         auto& requestIds = _electionState->recoveryRequests[i];
         auto& participatingReplicas = _electionState->requestIds;
-        for (ReplicaId replicaId = 0; replicaId.u8 < LogsDB::REPLICA_COUNT; ++replicaId.u8) {
+        for (ReplicaId replicaId = 0; replicaId.u8 < LogsDBConsts::REPLICA_COUNT; ++replicaId.u8) {
             if (replicaId == replicaId) {
                 requestIds[replicaId.u8] = ReqResp::CONFIRMED_REQ_ID;
                 continue;
@@ -435,7 +435,7 @@ void LeaderElection::_tryProgressToLeaderConfirm() {
     LOG_INFO(_env,"Replication of extra records complete. Progressing to CONFIRMING_LEADERSHIP with token: %s, newLastReleased: %s", _metadata.getNomineeToken(), newLastReleased);
 
     auto& requestIds = _electionState->requestIds;
-    for (ReplicaId replicaId = 0; replicaId.u8 < LogsDB::REPLICA_COUNT; ++replicaId.u8) {
+    for (ReplicaId replicaId = 0; replicaId.u8 < LogsDBConsts::REPLICA_COUNT; ++replicaId.u8) {
         if (replicaId == _replicaId) {
             requestIds[replicaId.u8] = ReqResp::CONFIRMED_REQ_ID;
             continue;

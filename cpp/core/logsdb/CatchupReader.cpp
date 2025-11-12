@@ -46,8 +46,8 @@ void CatchupReader::readEntries(std::vector<LogsDBLogEntry>& entries, size_t max
 }
 
 void CatchupReader::init() {
-    _missingEntries.reserve(LogsDB::CATCHUP_WINDOW);
-    _requestIds.reserve(LogsDB::CATCHUP_WINDOW);
+    _missingEntries.reserve(LogsDBConsts::CATCHUP_WINDOW);
+    _requestIds.reserve(LogsDBConsts::CATCHUP_WINDOW);
     _findMissingEntries();
 }
 
@@ -126,7 +126,7 @@ void CatchupReader::_findMissingEntries() {
     auto it = _data.getIterator();
     auto startIdx = _lastContinuousIdx;
     it.seek(++startIdx);
-    while (startIdx <= lastReleased && _missingEntries.size() < LogsDB::CATCHUP_WINDOW) {
+    while (startIdx <= lastReleased && _missingEntries.size() < LogsDBConsts::CATCHUP_WINDOW) {
         if(!it.valid() || startIdx < it.key() ) {
             _missingEntries.emplace_back(startIdx);
         } else {
@@ -146,7 +146,7 @@ void CatchupReader::_findMissingEntries() {
     for(auto logIdx : _missingEntries) {
         _requestIds.emplace_back();
         auto& requests = _requestIds.back();
-        for (ReplicaId replicaId = 0; replicaId.u8 < LogsDB::REPLICA_COUNT; ++replicaId.u8 ) {
+        for (ReplicaId replicaId = 0; replicaId.u8 < LogsDBConsts::REPLICA_COUNT; ++replicaId.u8 ) {
             if (replicaId == _replicaId) {
                 requests[replicaId.u8] = 0;
                 continue;

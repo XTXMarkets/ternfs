@@ -41,9 +41,9 @@ void ReqResp::cleanupRequests(QuorumTrackArray& requestIds) {
 
 void ReqResp::resendTimedOutRequests() {
     auto now = ternNow();
-    auto defaultCutoffTime = now - LogsDB::RESPONSE_TIMEOUT;
-    auto releaseCutoffTime = now - LogsDB::SEND_RELEASE_INTERVAL;
-    auto readCutoffTime = now - LogsDB::READ_TIMEOUT;
+    auto defaultCutoffTime = now - LogsDBConsts::RESPONSE_TIMEOUT;
+    auto releaseCutoffTime = now - LogsDBConsts::SEND_RELEASE_INTERVAL;
+    auto readCutoffTime = now - LogsDBConsts::READ_TIMEOUT;
     auto cutoffTime = now;
     uint64_t timedOutCount{0};
     for (auto& r : _requests) {
@@ -90,9 +90,9 @@ void ReqResp::getResponsesToSend(std::vector<LogsDBResponse>& responses) {
 
 Duration ReqResp::getNextTimeout() const {
     if (_requests.empty()) {
-        return LogsDB::LEADER_INACTIVE_TIMEOUT;
+        return LogsDBConsts::LEADER_INACTIVE_TIMEOUT;
     }
-    return LogsDB::RESPONSE_TIMEOUT;
+    return LogsDBConsts::RESPONSE_TIMEOUT;
 }
 
 bool ReqResp::isQuorum(const QuorumTrackArray& requestIds) {

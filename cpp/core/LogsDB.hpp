@@ -16,6 +16,7 @@
 #include "Protocol.hpp"
 #include "SharedRocksDB.hpp"
 #include "Time.hpp"
+#include "logsdb/LogsDBCommon.hpp"
 
 // Forward declarations for logsdb components
 class DataPartitions;
@@ -100,14 +101,15 @@ struct LogsDBStats {
 
 class LogsDB {
 public:
-    static constexpr size_t REPLICA_COUNT = 5;
-    static constexpr Duration PARTITION_TIME_SPAN = 12_hours;
-    static constexpr Duration RESPONSE_TIMEOUT = 10_ms;
-    static constexpr Duration READ_TIMEOUT = 1_sec;
-    static constexpr Duration SEND_RELEASE_INTERVAL = 300_ms;
-    static constexpr Duration LEADER_INACTIVE_TIMEOUT = 1_sec;
-    static constexpr size_t IN_FLIGHT_APPEND_WINDOW = 1 << 8;
-    static constexpr size_t CATCHUP_WINDOW = 1 << 8 ;
+    // Constants - for backward compatibility, these reference LogsDBConsts
+    static constexpr size_t REPLICA_COUNT = LogsDBConsts::REPLICA_COUNT;
+    static constexpr Duration PARTITION_TIME_SPAN = LogsDBConsts::PARTITION_TIME_SPAN;
+    static constexpr Duration RESPONSE_TIMEOUT = LogsDBConsts::RESPONSE_TIMEOUT;
+    static constexpr Duration READ_TIMEOUT = LogsDBConsts::READ_TIMEOUT;
+    static constexpr Duration SEND_RELEASE_INTERVAL = LogsDBConsts::SEND_RELEASE_INTERVAL;
+    static constexpr Duration LEADER_INACTIVE_TIMEOUT = LogsDBConsts::LEADER_INACTIVE_TIMEOUT;
+    static constexpr size_t IN_FLIGHT_APPEND_WINDOW = LogsDBConsts::IN_FLIGHT_APPEND_WINDOW;
+    static constexpr size_t CATCHUP_WINDOW = LogsDBConsts::CATCHUP_WINDOW;
 
     static constexpr size_t MAX_UDP_ENTRY_SIZE = MAX_UDP_MTU - std::max(LogReqMsg::STATIC_SIZE, LogRespMsg::STATIC_SIZE);
     static constexpr size_t DEFAULT_UDP_ENTRY_SIZE = DEFAULT_UDP_MTU - std::max(LogReqMsg::STATIC_SIZE, LogRespMsg::STATIC_SIZE);
