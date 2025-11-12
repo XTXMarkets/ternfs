@@ -9,10 +9,10 @@
 #include "../Env.hpp"
 #include "../Protocol.hpp"
 #include "LeaderElection.hpp"
+#include "LogsDBTypes.hpp"
 #include "ReqResp.hpp"
 
 // Forward declarations
-struct LogsDBLogEntry;
 struct LogsDBRequest;
 struct ReleaseReq;
 

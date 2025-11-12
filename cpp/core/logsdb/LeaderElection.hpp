@@ -13,10 +13,10 @@
 #include "DataPartitions.hpp"
 #include "LogMetadata.hpp"
 #include "LogsDBCommon.hpp"
+#include "LogsDBTypes.hpp"
 #include "ReqResp.hpp"
 
 // Forward declarations
-struct LogsDBLogEntry;
 struct LogsDBRequest;
 struct LogsDBStats;
 struct NewLeaderReq;

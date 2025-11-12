@@ -17,6 +17,7 @@
 #include "SharedRocksDB.hpp"
 #include "Time.hpp"
 #include "logsdb/LogsDBCommon.hpp"
+#include "logsdb/LogsDBTypes.hpp"
 
 // Forward declarations for logsdb components
 class DataPartitions;
@@ -54,31 +55,7 @@ class Appender;
 // Since they were not part of the leader election they know their records after last released point have not been taken into
 // account and could have been overwriten. They at this point drop these records and catch up from lastReleased point.
 
-
-struct LogsDBLogEntry {
-    LogIdx idx;
-    std::vector<uint8_t> value;
-    bool operator==(const LogsDBLogEntry& oth) const {
-        return idx == oth.idx && value == oth.value;
-    }
-};
-
-std::ostream& operator<<(std::ostream& out, const LogsDBLogEntry& entry);
-
-struct LogsDBRequest {
-    ReplicaId replicaId;
-    TernTime sentTime;
-    LogReqMsg msg;
-};
-
-std::ostream& operator<<(std::ostream& out, const LogsDBRequest& entry);
-
-struct LogsDBResponse {
-    ReplicaId replicaId;
-    LogRespMsg msg;
-};
-
-std::ostream& operator<<(std::ostream& out, const LogsDBResponse& entry);
+// LogsDBLogEntry, LogsDBRequest, and LogsDBResponse are now defined in logsdb/LogsDBTypes.hpp
 
 struct LogsDBStats {
     std::atomic<Duration> idleTime{0};

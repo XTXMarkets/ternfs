@@ -12,14 +12,13 @@
 #include "LeaderElection.hpp"
 #include "LogMetadata.hpp"
 #include "LogsDBCommon.hpp"
+#include "LogsDBTypes.hpp"
 #include "ReqResp.hpp"
 
 // Forward declarations
-struct LogsDBLogEntry;
 struct LogsDBRequest;
 struct LogsDBStats;
 struct LogWriteResp;
-class LogsDB;
 
 class Appender {
     static constexpr size_t IN_FLIGHT_MASK = LogsDBConsts::IN_FLIGHT_APPEND_WINDOW - 1;

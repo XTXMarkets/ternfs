@@ -12,6 +12,7 @@
 #include <string>
 
 #include "../Bincode.hpp"
+#include "../RocksDBUtils.hpp"
 #include "../Time.hpp"
 
 // LogsDB constants - moved here to avoid circular dependencies
