@@ -19,3 +19,4 @@ linux-*.tar.gz
 tern-integrationtest.*
 .go-cache
 ternfs-client*
+_codeql_detected_source_root

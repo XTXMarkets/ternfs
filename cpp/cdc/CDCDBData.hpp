@@ -6,6 +6,7 @@
 
 #include <bit>
 #include <cstddef>
+#include <ostream>
 #include <rocksdb/slice.h>
 
 #include "Assert.hpp"
@@ -127,6 +128,15 @@ struct MakeDirectoryState {
     }
 };
 
+static inline std::ostream& operator<<(std::ostream& out, const MakeDirectoryState& x) {
+    out << "MakeDirectoryState(dirId=" << x.dirId()
+        << ", oldCreationTime=" << x.oldCreationTime()
+        << ", creationTime=" << x.creationTime()
+        << ", exitError=" << x.exitError()
+        << ")";
+    return out;
+}
+
 struct RenameFileState {
     FIELDS(
         LE, TernTime,  newOldCreationTime, setNewOldCreationTime,
@@ -142,6 +152,14 @@ struct RenameFileState {
     }
 };
 
+static inline std::ostream& operator<<(std::ostream& out, const RenameFileState& x) {
+    out << "RenameFileState(newOldCreationTime=" << x.newOldCreationTime()
+        << ", newCreationTime=" << x.newCreationTime()
+        << ", exitError=" << x.exitError()
+        << ")";
+    return out;
+}
+
 struct SoftUnlinkDirectoryState {
     FIELDS(
         LE, InodeId,   statDirId, setStatDirId,
@@ -153,6 +171,13 @@ struct SoftUnlinkDirectoryState {
         setExitError(TernError::NO_ERROR);
     }
 };
+
+static inline std::ostream& operator<<(std::ostream& out, const SoftUnlinkDirectoryState& x) {
+    out << "SoftUnlinkDirectoryState(statDirId=" << x.statDirId()
+        << ", exitError=" << x.exitError()
+        << ")";
+    return out;
+}
 
 struct RenameDirectoryState {
     FIELDS(
@@ -169,15 +194,33 @@ struct RenameDirectoryState {
     }
 };
 
+static inline std::ostream& operator<<(std::ostream& out, const RenameDirectoryState& x) {
+    out << "RenameDirectoryState(newOldCreationTime=" << x.newOldCreationTime()
+        << ", newCreationTime=" << x.newCreationTime()
+        << ", exitError=" << x.exitError()
+        << ")";
+    return out;
+}
+
 struct HardUnlinkDirectoryState {
     FIELDS(END_STATIC)
     void start() {}
 };
 
+static inline std::ostream& operator<<(std::ostream& out, const HardUnlinkDirectoryState& x) {
+    out << "HardUnlinkDirectoryState()";
+    return out;
+}
+
 struct CrossShardHardUnlinkFileState {
     FIELDS(END_STATIC)
     void start() {}
 };
+
+static inline std::ostream& operator<<(std::ostream& out, const CrossShardHardUnlinkFileState& _) {
+    out << "CrossShardHardUnlinkFileState()";
+    return out;
+}
 
 template<typename Type, typename ...Types>
 constexpr size_t maxMaxSize() {
@@ -226,7 +269,7 @@ struct TxnState {
     }
 
     #define TXN_STATE(kind, type, getName, startName) \
-        type getName() { \
+        type getName() const { \
             ALWAYS_ASSERT(reqKind() == CDCMessageKind::kind); \
             type v; \
             v._data = _data + MIN_SIZE; \
@@ -265,3 +308,31 @@ struct TxnState {
         memset(_data+MIN_SIZE, 0, size()-MIN_SIZE);
     }
 };
+
+static inline std::ostream& operator<<(std::ostream& out, const TxnState& x) {
+    out << "TxnState(reqKind=" << x.reqKind() << ", step=" << (uint32_t)x.step();
+    switch (x.reqKind()) {
+    case CDCMessageKind::MAKE_DIRECTORY:
+        out << ", " << x.getMakeDirectory();
+        break;
+    case CDCMessageKind::RENAME_FILE:
+        out << ", " << x.getRenameFile();
+        break;
+    case CDCMessageKind::SOFT_UNLINK_DIRECTORY:
+        out << ", " << x.getSoftUnlinkDirectory();
+        break;
+    case CDCMessageKind::RENAME_DIRECTORY:
+        out << ", " << x.getRenameDirectory();
+        break;
+    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
+        out << ", " << x.getHardUnlinkDirectory();
+        break;
+    case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
+        out << ", " << x.getCrossShardHardUnlinkFile();
+        break;
+    default:
+        throw TERN_EXCEPTION("bad cdc message kind %s", x.reqKind());
+    }
+    out << ")";
+    return out;
+}

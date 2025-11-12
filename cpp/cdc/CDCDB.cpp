@@ -1012,13 +1012,13 @@ struct RenameDirectoryStateMachine {
 
     // Check that changing this parent-child relationship wouldn't create
     // loops in directory structure.
-    bool loopCheck() {
+    TernError loopCheck() const {
         std::unordered_set<InodeId> visited;
         InodeId cursor = req.targetId;
         for (;;) {
             if (visited.count(cursor) > 0) {
                 LOG_INFO(env.env, "Re-encountered %s in loop check, will return false", cursor);
-                return false;
+                return TernError::LOOP_IN_DIRECTORY_RENAME;
             }
             LOG_DEBUG(env.env, "Performing loop check for %s", cursor);
             visited.insert(cursor);
@@ -1027,14 +1027,18 @@ struct RenameDirectoryStateMachine {
             } else {
                 auto k = InodeIdKey::Static(cursor);
                 std::string v;
-                ROCKS_DB_CHECKED(env.dbTxn.Get({}, env.parentCf, k.toSlice(), &v));
+                auto status = env.dbTxn.Get({}, env.parentCf, k.toSlice(), &v);
+                if (status == rocksdb::Status::NotFound()) {
+                    return TernError::DIRECTORY_NOT_FOUND;
+                }
+                ROCKS_DB_CHECKED(status);
                 cursor = ExternalValue<InodeIdValue>(v)().id();
             }
             if (cursor == ROOT_DIR_INODE_ID) {
                 break;
             }
         }
-        return true;
+        return TernError::NO_ERROR;
     }
 
     void start() {
@@ -1042,9 +1046,9 @@ struct RenameDirectoryStateMachine {
             env.finishWithError(TernError::TYPE_IS_NOT_DIRECTORY);
         } else if (req.oldOwnerId == req.newOwnerId) {
             env.finishWithError(TernError::SAME_DIRECTORIES);
-        } else if (!loopCheck()) {
+        } else if (auto err = loopCheck(); err != TernError::NO_ERROR) {
             // First, check if we'd create a loop
-            env.finishWithError(TernError::LOOP_IN_DIRECTORY_RENAME);
+            env.finishWithError(err);
         } else {
             // Now, actually start by locking the old edge
             lockOldEdge();
@@ -1077,7 +1081,7 @@ struct RenameDirectoryStateMachine {
     }
 
     void lookupOldCreationTime(bool repeated = false) {
-        auto& shardReq = env.needsShard(RENAME_FILE_LOOKUP_OLD_CREATION_TIME, req.newOwnerId.shard(), repeated).setFullReadDir();
+        auto& shardReq = env.needsShard(RENAME_DIRECTORY_LOOKUP_OLD_CREATION_TIME, req.newOwnerId.shard(), repeated).setFullReadDir();
         shardReq.dirId = req.newOwnerId;
         shardReq.flags = FULL_READ_DIR_BACKWARDS | FULL_READ_DIR_SAME_NAME | FULL_READ_DIR_CURRENT;
         shardReq.limit = 1;
@@ -1097,7 +1101,7 @@ struct RenameDirectoryStateMachine {
             ALWAYS_ASSERT(err == TernError::NO_ERROR);
             // there might be no existing edge
             const auto& fullReadDir = resp.getFullReadDir();
-            ALWAYS_ASSERT(fullReadDir.results.els.size() < 2); // we have limit=1
+            ALWAYS_ASSERT(fullReadDir.results.els.size() < 2); // we have current and same name
             if (fullReadDir.results.els.size() == 0) {
                 state.setNewOldCreationTime(0); // there was nothing present for this name
             } else {
@@ -1123,7 +1127,7 @@ struct RenameDirectoryStateMachine {
         } else if (err == TernError::MISMATCHING_CREATION_TIME) {
             // we need to lookup the creation time again.
             lookupOldCreationTime();
-        } else if (err == TernError::CANNOT_OVERRIDE_NAME) {
+        } else if (err == TernError::CANNOT_OVERRIDE_NAME || err == TernError::DIRECTORY_NOT_FOUND) {
             state.setExitError(err);
             rollback();
         } else {
@@ -1210,7 +1214,7 @@ struct RenameDirectoryStateMachine {
         shardReq.name = req.oldName;
         shardReq.targetId = req.targetId;
         shardReq.wasMoved = false;
-        shardReq.creationTime = state.newCreationTime();
+        shardReq.creationTime = req.oldCreationTime;
     }
 
     void afterRollback(const ShardRespContainer& resp) {
@@ -1750,7 +1754,7 @@ struct CDCDBImpl {
         // we've finished doing other stuff
         std::vector<CDCTxnId>& txnIds
     ) {
-        LOG_DEBUG(_env, "advancing txn %s of kind %s with state", txnId, req.kind());
+        LOG_DEBUG(_env, "advancing txn %s with state %s", txnId, state());
         StateMachineEnv sm(_env, _defaultCf, _parentCf, dbTxn, txnId, state().step(), step);
         switch (req.kind()) {
         case CDCMessageKind::MAKE_DIRECTORY:
