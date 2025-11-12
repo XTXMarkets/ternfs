@@ -135,7 +135,6 @@ type env struct {
 	failureDomain  string
 	hostname       string
 	pathPrefix     string
-	readWholeFile  bool
 	ioAlertPercent uint8
 }
 
@@ -451,7 +450,7 @@ func (c *newToOldReadConverter) Read(p []byte) (int, error) {
 	return read, nil
 }
 
-func sendFetchBlock(log *log.Logger, env *env, blockServiceId msgs.BlockServiceId, basePath string, blockId msgs.BlockId, offset uint32, count uint32, conn *net.TCPConn, withCrc bool) error {
+func sendFetchBlock(log *log.Logger, env *env, blockServiceId msgs.BlockServiceId, basePath string, blockId msgs.BlockId, offset uint32, count uint32, conn *net.TCPConn, withCrc bool, storageClass msgs.StorageClass) error {
 	if offset%msgs.TERN_PAGE_SIZE != 0 {
 		log.RaiseAlert("trying to read from offset other than page boundary")
 		return msgs.BLOCK_FETCH_OUT_OF_BOUNDS
@@ -491,21 +490,22 @@ func sendFetchBlock(log *log.Logger, env *env, blockServiceId msgs.BlockServiceI
 	if err != nil {
 		return err
 	}
-	preReadSize := fi.Size()
 	filePageCount := uint32(fi.Size()) / msgs.TERN_PAGE_WITH_CRC_SIZE
 	if offsetPageCount+pageCount > filePageCount {
 		log.RaiseAlert("malformed request for block %v. requested read at [%d - %d] but stored block size is %d", blockId, offset, offset+count, filePageCount*msgs.TERN_PAGE_SIZE)
 		return msgs.BLOCK_FETCH_OUT_OF_BOUNDS
 	}
-	if !env.readWholeFile {
-		preReadSize = int64(pageCount) * int64(msgs.TERN_PAGE_WITH_CRC_SIZE)
-	}
+	// Decide whether to read ahead based on storage class: always for HDD, never for FLASH
+	readAhead := storageClass == msgs.HDD_STORAGE
 	var reader io.ReadSeeker = f
 
 	if withCrc {
 		offset = offsetPageCount * msgs.TERN_PAGE_WITH_CRC_SIZE
 		count = pageCount * msgs.TERN_PAGE_WITH_CRC_SIZE
-		unix.Fadvise(int(f.Fd()), int64(offset), preReadSize, unix.FADV_SEQUENTIAL|unix.FADV_WILLNEED)
+		// Only issue fadvise syscall if we're reading ahead
+		if readAhead {
+			unix.Fadvise(int(f.Fd()), int64(offset), fi.Size(), unix.FADV_SEQUENTIAL|unix.FADV_WILLNEED)
+		}
 
 		if _, err := reader.Seek(int64(offset), 0); err != nil {
 			return err
@@ -534,7 +534,10 @@ func sendFetchBlock(log *log.Logger, env *env, blockServiceId msgs.BlockServiceI
 	} else {
 		// the only remaining case is that we have a file in new format and client wants old format
 		offset = offsetPageCount * msgs.TERN_PAGE_WITH_CRC_SIZE
-		unix.Fadvise(int(f.Fd()), int64(offset), preReadSize, unix.FADV_SEQUENTIAL|unix.FADV_WILLNEED)
+		// Only issue fadvise syscall if we're reading ahead
+		if readAhead {
+			unix.Fadvise(int(f.Fd()), int64(offset), fi.Size(), unix.FADV_SEQUENTIAL|unix.FADV_WILLNEED)
+		}
 		if _, err := reader.Seek(int64(offset), 0); err != nil {
 			return err
 		}
@@ -1014,12 +1017,12 @@ func handleSingleRequest(
 			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, err)
 		}
 	case *msgs.FetchBlockReq:
-		if err := sendFetchBlock(log, env, blockServiceId, blockService.path, whichReq.BlockId, whichReq.Offset, whichReq.Count, conn, false); err != nil {
+		if err := sendFetchBlock(log, env, blockServiceId, blockService.path, whichReq.BlockId, whichReq.Offset, whichReq.Count, conn, false, blockService.storageClass); err != nil {
 			log.Info("could not send block response to %v: %v", conn.RemoteAddr(), err)
 			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, err)
 		}
 	case *msgs.FetchBlockWithCrcReq:
-		if err := sendFetchBlock(log, env, blockServiceId, blockService.path, whichReq.BlockId, whichReq.Offset, whichReq.Count, conn, true); err != nil {
+		if err := sendFetchBlock(log, env, blockServiceId, blockService.path, whichReq.BlockId, whichReq.Offset, whichReq.Count, conn, true, blockService.storageClass); err != nil {
 			log.Info("could not send block response to %v: %v", conn.RemoteAddr(), err)
 			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, err)
 		}
@@ -1358,7 +1361,6 @@ func main() {
 	influxDBOrg := flag.String("influx-db-org", "", "InfluxDB org")
 	influxDBBucket := flag.String("influx-db-bucket", "", "InfluxDB bucket")
 	locationId := flag.Uint("location", 10000, "Location ID")
-	readWholeFile := flag.Bool("read-whole-file", false, "")
 	ioAlertPercent := flag.Uint("io-alert-percent", 10, "Threshold percent of I/O errors over which we alert")
 	registryConnectionTimeout := flag.Duration("registry-connection-timeout", 10*time.Second, "")
 
@@ -1525,7 +1527,6 @@ func main() {
 		bufPool:        bufPool,
 		stats:          make(map[msgs.BlockServiceId]*blockServiceStats),
 		eraseLocks:     make(map[msgs.BlockServiceId]*sync.Mutex),
-		readWholeFile:  *readWholeFile,
 		failureDomain:  *failureDomainStr,
 		pathPrefix:     *pathPrefixStr,
 		ioAlertPercent: uint8(*ioAlertPercent),
