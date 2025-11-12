@@ -495,7 +495,10 @@ func sendFetchBlock(log *log.Logger, env *env, blockServiceId msgs.BlockServiceI
 		log.RaiseAlert("malformed request for block %v. requested read at [%d - %d] but stored block size is %d", blockId, offset, offset+count, filePageCount*msgs.TERN_PAGE_SIZE)
 		return msgs.BLOCK_FETCH_OUT_OF_BOUNDS
 	}
-	// Decide whether to read ahead based on storage class: always for HDD, never for FLASH
+	// Decide whether to read ahead based on storage class: always for HDD, never for FLASH.
+	// Read-ahead is crucial for HDD performance because sequential reads are much faster than random access,
+	// so reading the whole file amortizes seek time. For FLASH/SSD, random access is fast enough that
+	// read-ahead provides no benefit and just wastes I/O bandwidth and memory.
 	readAhead := storageClass == msgs.HDD_STORAGE
 	var reader io.ReadSeeker = f
 
