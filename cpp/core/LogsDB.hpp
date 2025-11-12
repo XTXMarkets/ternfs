@@ -6,6 +6,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <memory>
 #include <ostream>
 #include <vector>
 #include <rocksdb/db.h>
@@ -15,6 +16,15 @@
 #include "Protocol.hpp"
 #include "SharedRocksDB.hpp"
 #include "Time.hpp"
+
+// Forward declarations for logsdb components
+class DataPartitions;
+class LogMetadata;
+class ReqResp;
+class LeaderElection;
+class BatchWriter;
+class CatchupReader;
+class Appender;
 
 // ** Releases **
 // Released records are records which have been confirmed by the leader to have been at some point correctly replicated.
@@ -88,8 +98,6 @@ struct LogsDBStats {
     std::atomic<bool> isLeader{false};
 };
 
-class LogsDBImpl;
-
 class LogsDB {
 public:
     static constexpr size_t REPLICA_COUNT = 5;
@@ -150,5 +158,20 @@ private:
     friend class LogsDBTools;
     static void _getUnreleasedLogEntries(Env& env, SharedRocksDB& sharedDB, LogIdx& lastReleasedOut, std::vector<LogIdx>& unreleasedLogEntriesOut);
     static void _getLogEntries(Env& env, SharedRocksDB& sharedDB, LogIdx start, size_t count, std::vector<LogsDBLogEntry>& logEntriesOut);
-    LogsDBImpl* _impl;
+    
+    void _maybeLogStatus(TernTime now);
+
+    Env _env;
+    rocksdb::DB* _db;
+    const ReplicaId _replicaId;
+    LogsDBStats _stats;
+    std::unique_ptr<DataPartitions> _partitions;
+    std::unique_ptr<LogMetadata> _metadata;
+    std::unique_ptr<ReqResp> _reqResp;
+    std::unique_ptr<LeaderElection> _leaderElection;
+    std::unique_ptr<BatchWriter> _batchWriter;
+    std::unique_ptr<CatchupReader> _catchupReader;
+    std::unique_ptr<Appender> _appender;
+    TernTime _infoLoggedTime;
+    TernTime _lastLoopFinished;
 };

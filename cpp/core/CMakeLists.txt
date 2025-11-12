@@ -2,8 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-file(GLOB core_sources CONFIGURE_DEPENDS "*.cpp")
-file(GLOB core_headers CONFIGURE_DEPENDS "*.hpp")
+file(GLOB core_sources CONFIGURE_DEPENDS "*.cpp" "logsdb/*.cpp")
+file(GLOB core_headers CONFIGURE_DEPENDS "*.hpp" "logsdb/*.hpp")
 
 add_library(core ${core_sources} ${core_headers})
 add_dependencies(core thirdparty)
