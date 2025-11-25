@@ -1035,60 +1035,68 @@ char* ternfs_read_link(struct ternfs_inode* enode) {
     ternfs_debug("ino=%016lx", enode->inode.i_ino);
 
     BUG_ON(ternfs_inode_type(enode->inode.i_ino) != TERNFS_INODE_SYMLINK);
+    int err = 0;
+    LIST_HEAD(pages);
+    LIST_HEAD(extra_pages);
+    char* buf = NULL;
+    struct ternfs_span* span = NULL;
 
     // make sure we have size information
-    int err = ternfs_do_getattr(enode, ATTR_CACHE_NORM_TIMEOUT);
-    if (err) { return ERR_PTR(err); }
+    err = ternfs_do_getattr(enode, ATTR_CACHE_NORM_TIMEOUT);
+    if (err) { goto out; }
 
     BUG_ON(enode->inode.i_size > PAGE_SIZE); // for simplicity...
     size_t size = enode->inode.i_size;
-
     ternfs_debug("size=%lu", size);
 
-    struct ternfs_span* span = ternfs_get_span((struct ternfs_fs_info*)enode->inode.i_sb->s_fs_info, &enode->file.spans, 0);
-    if (span == NULL) {
-        ternfs_debug("got no span, empty file?");
-        return "";
+    buf = kmalloc(size+1, GFP_KERNEL);
+    if (buf == NULL) { err = -ENOMEM; goto out; }
+    buf[size] = '\0';
+
+    if (size == 0) { goto out; } // empty link
+    span = ternfs_get_span((struct ternfs_fs_info*)enode->inode.i_sb->s_fs_info, &enode->file.spans, 0);
+
+    BUG_ON(span == NULL); // should not happen
+    if (IS_ERR(span)) {
+        err = PTR_ERR(span);
+        goto out;
     }
-    if (IS_ERR(span)) { return ERR_CAST(span); }
 
     BUG_ON(span->end-span->start != size); // again, for simplicity
 
-    char* buf = kmalloc(size+1, GFP_KERNEL);
-    if (buf == NULL) { err = -ENOMEM; goto out_err; }
 
     if (span->storage_class == TERNFS_INLINE_STORAGE) {
         memcpy(buf, TERNFS_INLINE_SPAN(span)->body, size);
     } else {
         struct page* page;
         struct ternfs_block_span* block_span = TERNFS_BLOCK_SPAN(span);
-        LIST_HEAD(pages);
         page = alloc_page(GFP_KERNEL);
         if(IS_ERR(page)) {
             err = PTR_ERR(page);
-            goto out_err;
+            goto out;
         }
         page->index = 0;
         list_add_tail(&page->lru, &pages);
-        LIST_HEAD(extra_pages);
         err = ternfs_span_get_pages(block_span, enode->inode.i_mapping, &pages, 1, &extra_pages);
-        if (err) goto out_err;
-        list_del(&page->lru);
-        put_pages_list(&pages);
-        put_pages_list(&extra_pages);
+        if (err) { goto out; }
         char* page_buf = kmap(page);
         memcpy(buf, page_buf, size);
         kunmap(page);
     }
-    buf[size] = '\0';
+
+
+out:
+    if (span) { ternfs_put_span(span); }
+    put_pages_list(&pages);
+    put_pages_list(&extra_pages);
+    if (err) { goto out_err; }
 
     ternfs_debug("link %*pE", (int)size, buf);
-    ternfs_put_span(span);
     return buf;
 
 out_err:
+    if (buf) { kfree(buf); }
     ternfs_debug("get_link err=%d", err);
-    ternfs_put_span(span);
     return ERR_PTR(err);
 }
 
@@ -1312,7 +1320,7 @@ retry:
         struct page* stripe_page = NULL;
 
         LIST_HEAD(pages);
-        stripe_page = alloc_page(GFP_KERNEL);
+        stripe_page = alloc_page(GFP_NOFS);
         if(!stripe_page) {
             err = -ENOMEM;
             goto out;
