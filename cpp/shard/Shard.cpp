@@ -8,7 +8,6 @@
 #include <cstdint>
 #include <memory>
 #include <ostream>
-#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -50,6 +49,11 @@ struct ShardReq {
     int sockIx; // which sock to use to reply
 };
 
+struct ShardResp {
+    ShardRespMsg msg;
+    IpPort clientAddr;
+};
+
 struct ProxyLogsDBRequest {
     IpPort clientAddr;
     int sockIx; // which sock to use to reply
@@ -87,6 +91,7 @@ struct ShardShared {
     SPSC<ProxyLogsDBRequest, true> proxyLogsDBRequestQueue;
     SPSC<ProxyLogsDBResponse, true> proxyLogsDBResponseQueue;
     SPSC<ShardReq, true> writerShardReqQueue;
+    SPSC<ShardResp, true> writerShardRespQueue;
     SPSC<ProxyShardRespMsg, true> writerProxyShardRespQueue;
     std::vector<std::unique_ptr<SPSC<ShardReq>>> readerRequestsQueues;
 
@@ -135,6 +140,7 @@ struct ShardShared {
         proxyLogsDBRequestQueue(WRITER_QUEUE_SIZE, writeQueuesWaiter),
         proxyLogsDBResponseQueue(WRITER_QUEUE_SIZE, writeQueuesWaiter),
         writerShardReqQueue(WRITER_QUEUE_SIZE, writeQueuesWaiter),
+        writerShardRespQueue(WRITER_QUEUE_SIZE, writeQueuesWaiter),
         writerProxyShardRespQueue(WRITER_QUEUE_SIZE, writeQueuesWaiter),
         sharedDB(sharedDB_),
         logsDB(logsDB_),
@@ -280,8 +286,9 @@ static void packCheckPointedShardResponse(
     LOG_DEBUG(env, "will send response for req id %s kind %s to %s", msg.id, reqKind, req.clientAddr);
 }
 
-static constexpr std::array<uint32_t, 6> ShardProtocols = {
+static constexpr std::array<uint32_t, 7> ShardProtocols = {
         SHARD_REQ_PROTOCOL_VERSION,
+        SHARD_RESP_PROTOCOL_VERSION,
         CDC_TO_SHARD_REQ_PROTOCOL_VERSION,
         LOG_REQ_PROTOCOL_VERSION,
         LOG_RESP_PROTOCOL_VERSION,
@@ -306,6 +313,7 @@ private:
     std::vector<ProxyLogsDBResponse> _proxyLogsDBResponses;
     std::vector<ShardReq> _writeReqs;
     std::vector<ProxyShardRespMsg> _proxyResponses;
+    std::vector<ShardResp> _waitResponses;
 
     // read requests buffer
     std::vector<ShardReq> _readRequests;
@@ -505,25 +513,44 @@ private:
     }
 
     void _handleShardResponse(UDPMessage& msg, uint32_t protocol) {
-        ALWAYS_ASSERT(protocol == PROXY_SHARD_RESP_PROTOCOL_VERSION);
         LOG_DEBUG(_env, "received message from %s", msg.clientAddr);
         if (unlikely(!_shared.options.isLeader())) {
             LOG_DEBUG(_env, "not leader, dropping response %s", msg.clientAddr);
             return;
         }
-
-        ProxyShardRespMsg& resp = _proxyResponses.emplace_back();
-        try {
-            resp.unpack(msg.buf, _expandedShardKey);
-        } catch (const BincodeException& err) {
-            LOG_ERROR(_env, "Could not parse: %s", err.what());
-            RAISE_ALERT(_env, "could not parse request from %s, dropping it.", msg.clientAddr);
-            _proxyResponses.pop_back();
-            return;
+        switch (protocol) {
+        case SHARD_RESP_PROTOCOL_VERSION: {
+            ShardResp& resp = _waitResponses.emplace_back();
+            try {
+                resp.msg.unpack(msg.buf);
+                ALWAYS_ASSERT(resp.msg.body.kind() == ShardMessageKind::WAIT_STATE_APPLIED);
+                resp.clientAddr = msg.clientAddr;
+            } catch (const BincodeException& err) {
+                LOG_ERROR(_env, "Could not parse: %s", err.what());
+                RAISE_ALERT(_env, "could not parse request from %s, dropping it.", msg.clientAddr);
+                _waitResponses.pop_back();
+                return;
+            }
+            LOG_DEBUG(_env, "parsed shard response from %s: %s", msg.clientAddr, resp.msg);
+            break;
+        }
+        case PROXY_SHARD_RESP_PROTOCOL_VERSION: {
+            ProxyShardRespMsg& resp = _proxyResponses.emplace_back();
+            try {
+                resp.unpack(msg.buf, _expandedShardKey);
+            } catch (const BincodeException& err) {
+                LOG_ERROR(_env, "Could not parse: %s", err.what());
+                RAISE_ALERT(_env, "could not parse request from %s, dropping it.", msg.clientAddr);
+                _proxyResponses.pop_back();
+                return;
+            }
+            LOG_DEBUG(_env, "parsed shard response from %s: %s", msg.clientAddr, resp);
+            break;
+        }
+        default:
+            ALWAYS_ASSERT(false, "Unknown protocol version");
         }
 
-        auto t0 = ternNow();
-        LOG_DEBUG(_env, "parsed shard response from %s: %s", msg.clientAddr, resp);
     }
 
 public:
@@ -540,6 +567,7 @@ public:
         _writeReqs.clear();
         _proxyResponses.clear();
         _readRequests.clear();
+        _waitResponses.clear();
 
         if (unlikely(!_channel->receiveMessages(_env, _shared.socks, *_receiver))) {
             return;
@@ -555,6 +583,10 @@ public:
 
         for (auto& msg: _channel->protocolMessages(PROXY_SHARD_RESP_PROTOCOL_VERSION)) {
             _handleShardResponse(msg, PROXY_SHARD_RESP_PROTOCOL_VERSION);
+        }
+
+        for (auto& msg: _channel->protocolMessages(SHARD_RESP_PROTOCOL_VERSION)) {
+            _handleShardResponse(msg, SHARD_RESP_PROTOCOL_VERSION);
         }
 
         std::array<size_t, 2> shardMsgCount{0, 0};
@@ -577,6 +609,7 @@ public:
         }
 
         // write out write requests to queues
+        _shared.writerShardRespQueue.push(_waitResponses);
         auto pushed = _shared.logsDBRequestQueue.push(_logsDBRequests);
         _shared.receivedLogsDBReqs.fetch_add(_logsDBRequests.size(), std::memory_order_relaxed);
         _shared.droppedLogsDBReqs.fetch_add(_logsDBRequests.size() - pushed, std::memory_order_relaxed);
@@ -655,6 +688,19 @@ struct ProxyShardReq {
     TernTime finished;
 };
 
+struct CrossRegionLocationState {
+    TernTime lastSent;
+    uint64_t waitReqId;
+};
+
+struct CrossRegionWaitInfo {
+    LogIdx idx;
+    ShardReq originalRequest;
+    CdcToShardRespMsg responseToSend;
+    std::unordered_map<uint8_t, CrossRegionLocationState> locationStates; // location ID -> state
+    TernTime createdAt;
+};
+
 struct ShardWriter : Loop {
 private:
     const std::string _basePath;
@@ -686,6 +732,7 @@ private:
     std::vector<ProxyLogsDBRequest> _proxyLogsDBRequests; // catchup requests from logs db leader in proxy location
                                                           // or write requests from logs db leader in primary location
     std::vector<ProxyLogsDBResponse> _proxyLogsDBResponses; // responses from logs db leader in primary location
+    std::vector<ShardResp> _waitResponses; // responses to wait state applied messages
 
     // buffers for outgoing local losgsdb requests/responses
     std::vector<LogsDBRequest *> _logsDBOutRequests;
@@ -720,6 +767,12 @@ private:
 
     std::map<std::pair<LogIdx, uint64_t>, ShardReq> _waitStateRequests; // log idx + request id for requests waiting for logsdb to advance
 
+    // Cross-region wait tracking for CDC writes
+    static constexpr Duration CROSS_REGION_WAIT_RETRY_INTERVAL = 200_ms;
+    static constexpr Duration SHARD_DOWN_THRESHOLD = 10_mins;
+    std::unordered_map<uint64_t, CrossRegionWaitInfo> _crossRegionWaitResponses; // wait req id -> info
+    std::unordered_map<uint64_t, uint64_t> _waitReqIdToResponseId;
+
     uint64_t _requestIdCounter;
 
     std::unordered_map<uint64_t, ShardReq> _logIdToShardRequest; // used to track which log entry was generated by which request
@@ -731,6 +784,7 @@ private:
         _shared.proxyLogsDBRequestQueue.close();
         _shared.proxyLogsDBResponseQueue.close();
         _shared.writerShardReqQueue.close();
+        _shared.writerShardRespQueue.close();
         _shared.writerProxyShardRespQueue.close();
     }
 
@@ -858,6 +912,90 @@ public:
         }
     }
 
+    void _sendCrossRegionWaitResponses() {
+        if (_crossRegionWaitResponses.empty()) {
+            return;
+        }
+
+        auto now = ternNow();
+        auto leadersAtOtherLocations = _shared.leadersAtOtherLocations;
+
+        for (auto it = _crossRegionWaitResponses.begin(); it != _crossRegionWaitResponses.end(); ) {
+            auto& waitInfo = it->second;
+            bool shouldSendResponse = false;
+
+            // Check if any locations need retry or are down
+            for (auto locIt = waitInfo.locationStates.begin(); locIt != waitInfo.locationStates.end(); ) {
+                uint8_t locationId = locIt->first;
+                auto& locState = locIt->second;
+
+                bool locationFound = false;
+                bool locationDown = false;
+                AddrsInfo locationAddrs;
+
+                for (const auto& leader : *leadersAtOtherLocations) {
+                    if (leader.locationId == locationId) {
+                        locationFound = true;
+                        locationAddrs = leader.addrs;
+                        auto timeSinceLastSeen = now - leader.lastSeen;
+                        if (timeSinceLastSeen >= SHARD_DOWN_THRESHOLD) {
+                            locationDown = true;
+                            LOG_INFO(_env, "Location %s detected as down (no response for %s), removing from wait list for LogIdx %s",
+                                    locationId, timeSinceLastSeen, waitInfo.idx.u64);
+                        }
+                        break;
+                    }
+                }
+
+                if (!locationFound || locationDown) {
+                    _waitReqIdToResponseId.erase(locState.waitReqId);
+                    locIt = waitInfo.locationStates.erase(locIt);
+                    continue;
+                }
+
+                auto timeSinceLastSent = now - locState.lastSent;
+                if (timeSinceLastSent >= CROSS_REGION_WAIT_RETRY_INTERVAL) {
+                    uint64_t waitReqId = locState.waitReqId;
+
+                    ShardReqMsg waitReq;
+                    waitReq.id = waitReqId;
+                    auto& waitBody = waitReq.body.setWaitStateApplied();
+                    waitBody.idx.u64 = waitInfo.idx.u64;
+
+                    _sender.prepareOutgoingMessage(
+                        _env,
+                        _shared.sock().addr(),
+                        locationAddrs,
+                        [&waitReq](BincodeBuf& buf) {
+                            waitReq.pack(buf);
+                        });
+
+                    LOG_DEBUG(_env, "Retrying WaitStateAppliedReq (id=%s) for LogIdx %s to location %s",
+                             waitReqId, waitInfo.idx.u64, locationId);
+                    locState.lastSent = now;
+                }
+
+                ++locIt;
+            }
+
+            if (waitInfo.locationStates.empty()) {
+                LOG_DEBUG(_env, "All secondary locations have applied LogIdx %s, sending response for request %s",
+                         waitInfo.idx.u64, waitInfo.originalRequest.msg.id);
+
+                bool dropArtificially = _packetDropRand.generate64() % 10'000 < _outgoingPacketDropProbability;
+                packCheckPointedShardResponse(_env, _shared, _shared.sock().addr(), _sender,
+                                             dropArtificially, waitInfo.originalRequest,
+                                             waitInfo.responseToSend, _expandedCDCKey);
+
+                ALWAYS_ASSERT(_inFlightRequestKeys.erase(InFlightRequestKey{waitInfo.originalRequest.msg.id,
+                                                                            waitInfo.originalRequest.clientAddr}) == 1);
+                it = _crossRegionWaitResponses.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
     void _tryReplicateToOtherLocations() {
         // if we are not leader or in proxy location already we will not try to replicate
         if (!_isLogsDBLeader || _shared.options.isProxyLocation()) {
@@ -951,6 +1089,7 @@ public:
 
                     // depending on protocol we need different kind of responses
                     bool dropArtificially = _packetDropRand.generate64() % 10'000 < _outgoingPacketDropProbability;
+                    bool shouldWait = false;
                     switch(request.protocol){
                         case SHARD_REQ_PROTOCOL_VERSION:
                             {
@@ -999,7 +1138,62 @@ public:
                                 resp.body.checkPointIdx = shardEntry.idx;
                                 resp.id = request.msg.id;
                                 _shared.shardDB.applyLogEntry(logsDBEntry.idx.u64, shardEntry,  resp.body.resp);
-                                packCheckPointedShardResponse(_env, _shared, _shared.sock().addr(), _sender, dropArtificially, request, resp, _expandedCDCKey);
+
+
+                                // For CDC requests, wait for all secondary leaders to apply
+                                // before sending response
+                                auto now = ternNow();
+                                auto leadersAtOtherLocations = _shared.leadersAtOtherLocations;
+                                if (!leadersAtOtherLocations->empty()) {
+
+                                    CrossRegionWaitInfo waitInfo;
+                                    waitInfo.idx = shardEntry.idx;
+                                    waitInfo.createdAt = now;
+
+                                    uint64_t responseId = request.msg.id;
+
+                                    for (const auto& leader : *leadersAtOtherLocations) {
+                                         if (leader.locationId == 0) continue;
+                                        auto timeSinceLastSeen = now - leader.lastSeen;
+                                        if (timeSinceLastSeen >= SHARD_DOWN_THRESHOLD) {
+                                            LOG_INFO(_env, "Skipping wait for secondary leader at location %s (down for %s)",
+                                                    leader.locationId, timeSinceLastSeen);
+                                            continue;
+                                        }
+                                        shouldWait = true;
+
+                                        uint64_t waitReqId = ++_requestIdCounter;
+                                        CrossRegionLocationState locState;
+                                        locState.lastSent = now;
+                                        locState.waitReqId = waitReqId;
+                                        waitInfo.locationStates[leader.locationId] = locState;
+                                        _waitReqIdToResponseId[waitReqId] = responseId;
+
+                                        ShardReqMsg waitReq;
+                                        waitReq.id = waitReqId;
+                                        auto& waitBody = waitReq.body.setWaitStateApplied();
+                                        waitBody.idx.u64 = shardEntry.idx.u64;
+
+                                        _sender.prepareOutgoingMessage(
+                                            _env,
+                                            _shared.sock().addr(),
+                                            leader.addrs,
+                                            [&waitReq](BincodeBuf& buf) {
+                                                waitReq.pack(buf);
+                                            });
+
+                                        LOG_DEBUG(_env, "Sent WaitStateAppliedReq (id=%s) for LogIdx %s to location %s",
+                                                 waitReqId, shardEntry.idx.u64, leader.locationId);
+                                    }
+                                    if (shouldWait) {
+                                        waitInfo.originalRequest = std::move(request);
+                                        waitInfo.responseToSend = std::move(resp);
+                                        _crossRegionWaitResponses[responseId] = std::move(waitInfo);
+                                    }
+                                }
+                                if (!shouldWait) {
+                                    packCheckPointedShardResponse(_env, _shared, _shared.sock().addr(), _sender, dropArtificially, request, resp, _expandedCDCKey);
+                                }
                             }
                             break;
                         case PROXY_SHARD_REQ_PROTOCOL_VERSION:
@@ -1012,7 +1206,9 @@ public:
                             }
                             break;
                     }
-                    ALWAYS_ASSERT(_inFlightRequestKeys.erase(InFlightRequestKey{request.msg.id, request.clientAddr}) == 1);
+                    if (!shouldWait) {
+                        ALWAYS_ASSERT(_inFlightRequestKeys.erase(InFlightRequestKey{request.msg.id, request.clientAddr}) == 1);
+                    }
                     _logIdToShardRequest.erase(it);
                 } else {
                     // we are not leader, we can not do any checks and there is no response to send
@@ -1230,6 +1426,7 @@ public:
             _shardResponses.clear();
             _proxyLogsDBRequests.clear();
             _proxyLogsDBResponses.clear();
+            _waitResponses.clear();
         }
 
         _linkReadRequests.clear();
@@ -1340,6 +1537,42 @@ public:
             _logIdToShardRequest.insert({entry.idx.u64, std::move(req)});
         }
 
+        for(auto& waitResp : _waitResponses) {
+            ALWAYS_ASSERT(waitResp.msg.body.kind() == ShardMessageKind::WAIT_STATE_APPLIED);
+            auto waitReqIt = _waitReqIdToResponseId.find(waitResp.msg.id);
+            if (waitReqIt != _waitReqIdToResponseId.end()) {
+                uint64_t responseId = waitReqIt->second;
+                auto waitIt = _crossRegionWaitResponses.find(responseId);
+                if (waitIt != _crossRegionWaitResponses.end()) {
+                    // Match source address to location ID
+                    auto leadersAtOtherLocations = _shared.leadersAtOtherLocations;
+                    uint8_t respondingLocationId = 255; // Invalid location ID
+
+                    for (const auto& leader : *leadersAtOtherLocations) {
+                        if (leader.locationId == 0) {
+                            continue;
+                        }
+                        if (leader.addrs.contains(waitResp.clientAddr)) {
+                            respondingLocationId = leader.locationId;
+                            break;
+                        }
+                    }
+                    auto locIt = waitIt->second.locationStates.find(respondingLocationId);
+                    if (locIt == waitIt->second.locationStates.end()) {
+                        // it's possible leader address change and we could not match it
+                        // we just ignore this response as we will retry later
+                        continue;
+                    }
+
+                    auto& locState = locIt->second;
+                    waitIt->second.locationStates.erase(locIt);
+                    LOG_DEBUG(_env, "Received WaitStateAppliedResp for LogIdx %s from location %s, %s locations remaining",
+                                waitIt->second.idx.u64, respondingLocationId,
+                                waitIt->second.locationStates.size());
+                    _waitReqIdToResponseId.erase(waitReqIt);
+                }
+            }
+        }
 
         for(auto& resp: _shardResponses) {
             auto it = _proxyShardRequests.find(resp.id);
@@ -1526,6 +1759,8 @@ public:
 
         _sendWaitStateAppliedResponses();
 
+        _sendCrossRegionWaitResponses();
+
         _shared.shardDB.flush(true);
 
         for (auto& req : _linkReadRequests) {
@@ -1620,6 +1855,7 @@ public:
         _logsDBOutResponses.clear();
         _shardRequests.clear();
         _shardResponses.clear();
+        _waitResponses.clear();
         _shardEntries.clear();
         _proxyLogsDBRequests.clear();
         _proxyLogsDBResponses.clear();
@@ -1638,6 +1874,8 @@ public:
         auto start = ternNow();
 
         // the order here determins priority of processing when there is more work than we can handle at once
+        // we pull wait state responses without budget limit as they only do in memory modifications
+        _shared.writerShardRespQueue.pull(_waitResponses, WRITER_QUEUE_SIZE);
 
         // we prioritize LogsDB requests and responses as they make us progress state
         remainingPullBudget -= _shared.logsDBResponseQueue.pull(_logsDBResponses, remainingPullBudget);
