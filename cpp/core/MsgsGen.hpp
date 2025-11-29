@@ -461,6 +461,24 @@ constexpr int maxLogMessageKind = 7;
 
 std::ostream& operator<<(std::ostream& out, LogMessageKind kind);
 
+enum class SyncMessageKind : uint8_t {
+    ERROR = 0,
+    SYNC_START = 1,
+    SYNC_CHUNK = 2,
+    SYNC_COMPLETE = 3,
+    EMPTY = 255,
+};
+
+const std::vector<SyncMessageKind> allSyncMessageKind {
+    SyncMessageKind::SYNC_START,
+    SyncMessageKind::SYNC_CHUNK,
+    SyncMessageKind::SYNC_COMPLETE,
+};
+
+constexpr int maxSyncMessageKind = 3;
+
+std::ostream& operator<<(std::ostream& out, SyncMessageKind kind);
+
 struct FailureDomain {
     BincodeFixedBytes<16> name;
 
@@ -1534,6 +1552,27 @@ struct LocationInfo {
 };
 
 std::ostream& operator<<(std::ostream& out, const LocationInfo& x);
+
+struct ColumnFamilyInfo {
+    uint32_t index;
+    BincodeBytes name;
+
+    static constexpr uint16_t STATIC_SIZE = 4 + BincodeBytes::STATIC_SIZE; // index + name
+
+    ColumnFamilyInfo() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += 4; // index
+        _size += name.packedSize(); // name
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const ColumnFamilyInfo&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const ColumnFamilyInfo& x);
 
 struct LookupReq {
     InodeId dirId;
@@ -5479,6 +5518,138 @@ struct LogRecoveryWriteResp {
 
 std::ostream& operator<<(std::ostream& out, const LogRecoveryWriteResp& x);
 
+struct SyncStartReq {
+    uint64_t lastAppliedLogEntry;
+
+    static constexpr uint16_t STATIC_SIZE = 8; // lastAppliedLogEntry
+
+    SyncStartReq() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += 8; // lastAppliedLogEntry
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const SyncStartReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const SyncStartReq& x);
+
+struct SyncStartResp {
+    uint64_t snapshotLogEntry;
+    BincodeList<ColumnFamilyInfo> columnFamilies;
+    uint64_t totalSizeEstimate;
+
+    static constexpr uint16_t STATIC_SIZE = 8 + BincodeList<ColumnFamilyInfo>::STATIC_SIZE + 8; // snapshotLogEntry + columnFamilies + totalSizeEstimate
+
+    SyncStartResp() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += 8; // snapshotLogEntry
+        _size += columnFamilies.packedSize(); // columnFamilies
+        _size += 8; // totalSizeEstimate
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const SyncStartResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const SyncStartResp& x);
+
+struct SyncChunkReq {
+    uint32_t cfIndex;
+    BincodeBytes cfName;
+    BincodeBytes keyStart;
+    uint32_t maxSize;
+
+    static constexpr uint16_t STATIC_SIZE = 4 + BincodeBytes::STATIC_SIZE + BincodeBytes::STATIC_SIZE + 4; // cfIndex + cfName + keyStart + maxSize
+
+    SyncChunkReq() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += 4; // cfIndex
+        _size += cfName.packedSize(); // cfName
+        _size += keyStart.packedSize(); // keyStart
+        _size += 4; // maxSize
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const SyncChunkReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const SyncChunkReq& x);
+
+struct SyncChunkResp {
+    uint32_t cfIndex;
+    BincodeBytes cfName;
+    BincodeList<BincodeBytes> keys;
+    BincodeList<BincodeBytes> values;
+    BincodeBytes nextKeyStart;
+    bool isLastCF;
+
+    static constexpr uint16_t STATIC_SIZE = 4 + BincodeBytes::STATIC_SIZE + BincodeList<BincodeBytes>::STATIC_SIZE + BincodeList<BincodeBytes>::STATIC_SIZE + BincodeBytes::STATIC_SIZE + 1; // cfIndex + cfName + keys + values + nextKeyStart + isLastCF
+
+    SyncChunkResp() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += 4; // cfIndex
+        _size += cfName.packedSize(); // cfName
+        _size += keys.packedSize(); // keys
+        _size += values.packedSize(); // values
+        _size += nextKeyStart.packedSize(); // nextKeyStart
+        _size += 1; // isLastCF
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const SyncChunkResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const SyncChunkResp& x);
+
+struct SyncCompleteReq {
+    bool success;
+
+    static constexpr uint16_t STATIC_SIZE = 1; // success
+
+    SyncCompleteReq() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        _size += 1; // success
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const SyncCompleteReq&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const SyncCompleteReq& x);
+
+struct SyncCompleteResp {
+
+    static constexpr uint16_t STATIC_SIZE = 0; // 
+
+    SyncCompleteResp() { clear(); }
+    size_t packedSize() const {
+        size_t _size = 0;
+        return _size;
+    }
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    void clear();
+    bool operator==(const SyncCompleteResp&rhs) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const SyncCompleteResp& x);
+
 struct ShardReqContainer {
 private:
     static constexpr std::array<size_t,46> _staticSizes = {LookupReq::STATIC_SIZE, StatFileReq::STATIC_SIZE, StatDirectoryReq::STATIC_SIZE, ReadDirReq::STATIC_SIZE, ConstructFileReq::STATIC_SIZE, AddSpanInitiateReq::STATIC_SIZE, AddSpanCertifyReq::STATIC_SIZE, LinkFileReq::STATIC_SIZE, SoftUnlinkFileReq::STATIC_SIZE, LocalFileSpansReq::STATIC_SIZE, SameDirectoryRenameReq::STATIC_SIZE, AddInlineSpanReq::STATIC_SIZE, SetTimeReq::STATIC_SIZE, FullReadDirReq::STATIC_SIZE, MoveSpanReq::STATIC_SIZE, RemoveNonOwnedEdgeReq::STATIC_SIZE, SameShardHardFileUnlinkReq::STATIC_SIZE, StatTransientFileReq::STATIC_SIZE, ShardSnapshotReq::STATIC_SIZE, FileSpansReq::STATIC_SIZE, AddSpanLocationReq::STATIC_SIZE, ScrapTransientFileReq::STATIC_SIZE, SetDirectoryInfoReq::STATIC_SIZE, GetLinkEntriesReq::STATIC_SIZE, WaitStateAppliedReq::STATIC_SIZE, VisitDirectoriesReq::STATIC_SIZE, VisitFilesReq::STATIC_SIZE, VisitTransientFilesReq::STATIC_SIZE, RemoveSpanInitiateReq::STATIC_SIZE, RemoveSpanCertifyReq::STATIC_SIZE, SwapBlocksReq::STATIC_SIZE, BlockServiceFilesReq::STATIC_SIZE, RemoveInodeReq::STATIC_SIZE, AddSpanInitiateWithReferenceReq::STATIC_SIZE, RemoveZeroBlockServiceFilesReq::STATIC_SIZE, SwapSpansReq::STATIC_SIZE, SameDirectoryRenameSnapshotReq::STATIC_SIZE, AddSpanAtLocationInitiateReq::STATIC_SIZE, CreateDirectoryInodeReq::STATIC_SIZE, SetDirectoryOwnerReq::STATIC_SIZE, RemoveDirectoryOwnerReq::STATIC_SIZE, CreateLockedCurrentEdgeReq::STATIC_SIZE, LockCurrentEdgeReq::STATIC_SIZE, UnlockCurrentEdgeReq::STATIC_SIZE, RemoveOwnedSnapshotFileEdgeReq::STATIC_SIZE, MakeFileTransientReq::STATIC_SIZE};
@@ -6054,6 +6225,72 @@ public:
 };
 
 std::ostream& operator<<(std::ostream& out, const LogRespContainer& x);
+
+struct SyncReqContainer {
+private:
+    static constexpr std::array<size_t,3> _staticSizes = {SyncStartReq::STATIC_SIZE, SyncChunkReq::STATIC_SIZE, SyncCompleteReq::STATIC_SIZE};
+    SyncMessageKind _kind = SyncMessageKind::EMPTY;
+    std::variant<SyncStartReq, SyncChunkReq, SyncCompleteReq> _data;
+public:
+    SyncReqContainer();
+    SyncReqContainer(const SyncReqContainer& other);
+    SyncReqContainer(SyncReqContainer&& other);
+    void operator=(const SyncReqContainer& other);
+    void operator=(SyncReqContainer&& other);
+
+    SyncMessageKind kind() const { return _kind; }
+
+    const SyncStartReq& getSyncStart() const;
+    SyncStartReq& setSyncStart();
+    const SyncChunkReq& getSyncChunk() const;
+    SyncChunkReq& setSyncChunk();
+    const SyncCompleteReq& getSyncComplete() const;
+    SyncCompleteReq& setSyncComplete();
+
+    void clear() { _kind = SyncMessageKind::EMPTY; };
+
+    static constexpr size_t STATIC_SIZE = sizeof(SyncMessageKind) + *std::max_element(_staticSizes.begin(), _staticSizes.end());
+    size_t packedSize() const;
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    bool operator==(const SyncReqContainer& other) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const SyncReqContainer& x);
+
+struct SyncRespContainer {
+private:
+    static constexpr std::array<size_t,4> _staticSizes = {sizeof(TernError), SyncStartResp::STATIC_SIZE, SyncChunkResp::STATIC_SIZE, SyncCompleteResp::STATIC_SIZE};
+    SyncMessageKind _kind = SyncMessageKind::EMPTY;
+    std::variant<TernError, SyncStartResp, SyncChunkResp, SyncCompleteResp> _data;
+public:
+    SyncRespContainer();
+    SyncRespContainer(const SyncRespContainer& other);
+    SyncRespContainer(SyncRespContainer&& other);
+    void operator=(const SyncRespContainer& other);
+    void operator=(SyncRespContainer&& other);
+
+    SyncMessageKind kind() const { return _kind; }
+
+    const TernError& getError() const;
+    TernError& setError();
+    const SyncStartResp& getSyncStart() const;
+    SyncStartResp& setSyncStart();
+    const SyncChunkResp& getSyncChunk() const;
+    SyncChunkResp& setSyncChunk();
+    const SyncCompleteResp& getSyncComplete() const;
+    SyncCompleteResp& setSyncComplete();
+
+    void clear() { _kind = SyncMessageKind::EMPTY; };
+
+    static constexpr size_t STATIC_SIZE = sizeof(SyncMessageKind) + *std::max_element(_staticSizes.begin(), _staticSizes.end());
+    size_t packedSize() const;
+    void pack(BincodeBuf& buf) const;
+    void unpack(BincodeBuf& buf);
+    bool operator==(const SyncRespContainer& other) const;
+};
+
+std::ostream& operator<<(std::ostream& out, const SyncRespContainer& x);
 
 enum class ShardLogEntryKind : uint16_t {
     CONSTRUCT_FILE = 1,

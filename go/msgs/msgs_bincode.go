@@ -1139,6 +1139,46 @@ func MkLogMessage(k string) (LogRequest, LogResponse, error) {
 	}
 }
 
+func (k SyncMessageKind) String() string {
+	switch k {
+	case 1:
+		return "SYNC_START"
+	case 2:
+		return "SYNC_CHUNK"
+	case 3:
+		return "SYNC_COMPLETE"
+	default:
+		return fmt.Sprintf("SyncMessageKind(%d)", k)
+	}
+}
+
+const (
+	SYNC_START    SyncMessageKind = 0x1
+	SYNC_CHUNK    SyncMessageKind = 0x2
+	SYNC_COMPLETE SyncMessageKind = 0x3
+)
+
+var AllSyncMessageKind = [...]SyncMessageKind{
+	SYNC_START,
+	SYNC_CHUNK,
+	SYNC_COMPLETE,
+}
+
+const MaxSyncMessageKind SyncMessageKind = 3
+
+func MkSyncMessage(k string) (SyncRequest, SyncResponse, error) {
+	switch {
+	case k == "SYNC_START":
+		return &SyncStartReq{}, &SyncStartResp{}, nil
+	case k == "SYNC_CHUNK":
+		return &SyncChunkReq{}, &SyncChunkResp{}, nil
+	case k == "SYNC_COMPLETE":
+		return &SyncCompleteReq{}, &SyncCompleteResp{}, nil
+	default:
+		return nil, nil, fmt.Errorf("bad kind string %s", k)
+	}
+}
+
 func (v *LookupReq) ShardRequestKind() ShardMessageKind {
 	return LOOKUP
 }
@@ -5265,6 +5305,26 @@ func (v *LocationInfo) Unpack(r io.Reader) error {
 	return nil
 }
 
+func (v *ColumnFamilyInfo) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint32(v.Index)); err != nil {
+		return err
+	}
+	if err := bincode.PackBytes(w, []byte(v.Name)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *ColumnFamilyInfo) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint32)(&v.Index)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackString(r, &v.Name); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (v *IpPort) Pack(w io.Writer) error {
 	if err := bincode.PackFixedBytes(w, 4, v.Addrs[:]); err != nil {
 		return err
@@ -7175,5 +7235,206 @@ func (v *LogRecoveryWriteResp) Unpack(r io.Reader) error {
 	if err := bincode.UnpackScalar(r, (*uint16)(&v.Result)); err != nil {
 		return err
 	}
+	return nil
+}
+
+func (v *SyncStartReq) SyncRequestKind() SyncMessageKind {
+	return SYNC_START
+}
+
+func (v *SyncStartReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.LastAppliedLogEntry)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *SyncStartReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.LastAppliedLogEntry)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *SyncStartResp) SyncResponseKind() SyncMessageKind {
+	return SYNC_START
+}
+
+func (v *SyncStartResp) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.SnapshotLogEntry)); err != nil {
+		return err
+	}
+	len1 := len(v.ColumnFamilies)
+	if err := bincode.PackLength(w, len1); err != nil {
+		return err
+	}
+	for i := 0; i < len1; i++ {
+		if err := v.ColumnFamilies[i].Pack(w); err != nil {
+			return err
+		}
+	}
+	if err := bincode.PackScalar(w, uint64(v.TotalSizeEstimate)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *SyncStartResp) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.SnapshotLogEntry)); err != nil {
+		return err
+	}
+	var len1 int
+	if err := bincode.UnpackLength(r, &len1); err != nil {
+		return err
+	}
+	bincode.EnsureLength(&v.ColumnFamilies, len1)
+	for i := 0; i < len1; i++ {
+		if err := v.ColumnFamilies[i].Unpack(r); err != nil {
+			return err
+		}
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.TotalSizeEstimate)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *SyncChunkReq) SyncRequestKind() SyncMessageKind {
+	return SYNC_CHUNK
+}
+
+func (v *SyncChunkReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint32(v.CfIndex)); err != nil {
+		return err
+	}
+	if err := bincode.PackBytes(w, []byte(v.CfName)); err != nil {
+		return err
+	}
+	if err := bincode.PackBytes(w, []byte(v.KeyStart)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint32(v.MaxSize)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *SyncChunkReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint32)(&v.CfIndex)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackString(r, &v.CfName); err != nil {
+		return err
+	}
+	if err := bincode.UnpackBytes(r, (*[]byte)(&v.KeyStart)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint32)(&v.MaxSize)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *SyncChunkResp) SyncResponseKind() SyncMessageKind {
+	return SYNC_CHUNK
+}
+
+func (v *SyncChunkResp) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint32(v.CfIndex)); err != nil {
+		return err
+	}
+	if err := bincode.PackBytes(w, []byte(v.CfName)); err != nil {
+		return err
+	}
+	len1 := len(v.Keys)
+	if err := bincode.PackLength(w, len1); err != nil {
+		return err
+	}
+	for i := 0; i < len1; i++ {
+		if err := bincode.PackBytes(w, []byte(v.Keys[i])); err != nil {
+			return err
+		}
+	}
+	len2 := len(v.Values)
+	if err := bincode.PackLength(w, len2); err != nil {
+		return err
+	}
+	for i := 0; i < len2; i++ {
+		if err := bincode.PackBytes(w, []byte(v.Values[i])); err != nil {
+			return err
+		}
+	}
+	if err := bincode.PackBytes(w, []byte(v.NextKeyStart)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, bool(v.IsLastCF)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *SyncChunkResp) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint32)(&v.CfIndex)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackString(r, &v.CfName); err != nil {
+		return err
+	}
+	var len1 int
+	if err := bincode.UnpackLength(r, &len1); err != nil {
+		return err
+	}
+	bincode.EnsureLength(&v.Keys, len1)
+	for i := 0; i < len1; i++ {
+		if err := bincode.UnpackBytes(r, (*[]byte)(&v.Keys[i])); err != nil {
+			return err
+		}
+	}
+	var len2 int
+	if err := bincode.UnpackLength(r, &len2); err != nil {
+		return err
+	}
+	bincode.EnsureLength(&v.Values, len2)
+	for i := 0; i < len2; i++ {
+		if err := bincode.UnpackBytes(r, (*[]byte)(&v.Values[i])); err != nil {
+			return err
+		}
+	}
+	if err := bincode.UnpackBytes(r, (*[]byte)(&v.NextKeyStart)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*bool)(&v.IsLastCF)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *SyncCompleteReq) SyncRequestKind() SyncMessageKind {
+	return SYNC_COMPLETE
+}
+
+func (v *SyncCompleteReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, bool(v.Success)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *SyncCompleteReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*bool)(&v.Success)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *SyncCompleteResp) SyncResponseKind() SyncMessageKind {
+	return SYNC_COMPLETE
+}
+
+func (v *SyncCompleteResp) Pack(w io.Writer) error {
+	return nil
+}
+
+func (v *SyncCompleteResp) Unpack(r io.Reader) error {
 	return nil
 }

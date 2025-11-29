@@ -58,6 +58,14 @@ constexpr uint32_t  LOG_REQ_PROTOCOL_VERSION = 0x474f4c;
 // '1474f4c'
 constexpr uint32_t LOG_RESP_PROTOCOL_VERSION = 0x1474f4c;
 
+// >>> format(struct.unpack('<I', b'SYN\0')[0], 'x')
+// '4e5953'
+constexpr uint32_t SYNC_REQ_PROTOCOL_VERSION = 0x4e5953;
+
+// >>> format(struct.unpack('<I', b'SYN\1')[0], 'x')
+// '14e5953'
+constexpr uint32_t SYNC_RESP_PROTOCOL_VERSION = 0x14e5953;
+
 struct ShardCheckPointedResp {
 public:
     static constexpr size_t STATIC_SIZE = LogIdx::STATIC_SIZE + ShardRespContainer::STATIC_SIZE;
@@ -103,3 +111,5 @@ using LogReqMsg = SignedProtocolMessage<LOG_REQ_PROTOCOL_VERSION, LogReqContaine
 using LogRespMsg = SignedProtocolMessage<LOG_RESP_PROTOCOL_VERSION, LogRespContainer>;
 using ProxyShardReqMsg = SignedProtocolMessage<PROXY_SHARD_REQ_PROTOCOL_VERSION, ShardReqContainer>;
 using ProxyShardRespMsg = SignedProtocolMessage<PROXY_SHARD_RESP_PROTOCOL_VERSION, ShardCheckPointedResp>;
+using SyncReqMsg = ProtocolMessage<SYNC_REQ_PROTOCOL_VERSION, SyncReqContainer>;
+using SyncRespMsg = ProtocolMessage<SYNC_RESP_PROTOCOL_VERSION, SyncRespContainer>;

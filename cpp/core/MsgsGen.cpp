@@ -663,6 +663,30 @@ std::ostream& operator<<(std::ostream& out, LogMessageKind kind) {
     return out;
 }
 
+std::ostream& operator<<(std::ostream& out, SyncMessageKind kind) {
+    switch (kind) {
+    case SyncMessageKind::ERROR:
+        out << "ERROR";
+        break;
+    case SyncMessageKind::SYNC_START:
+        out << "SYNC_START";
+        break;
+    case SyncMessageKind::SYNC_CHUNK:
+        out << "SYNC_CHUNK";
+        break;
+    case SyncMessageKind::SYNC_COMPLETE:
+        out << "SYNC_COMPLETE";
+        break;
+    case SyncMessageKind::EMPTY:
+        out << "EMPTY";
+        break;
+    default:
+        out << "SyncMessageKind(" << ((int)kind) << ")";
+        break;
+    }
+    return out;
+}
+
 void FailureDomain::pack(BincodeBuf& buf) const {
     buf.packFixedBytes<16>(name);
 }
@@ -1720,6 +1744,28 @@ bool LocationInfo::operator==(const LocationInfo& rhs) const {
 }
 std::ostream& operator<<(std::ostream& out, const LocationInfo& x) {
     out << "LocationInfo(" << "Id=" << (int)x.id << ", " << "Name=" << GoLangQuotedStringFmt(x.name.data(), x.name.size()) << ")";
+    return out;
+}
+
+void ColumnFamilyInfo::pack(BincodeBuf& buf) const {
+    buf.packScalar<uint32_t>(index);
+    buf.packBytes(name);
+}
+void ColumnFamilyInfo::unpack(BincodeBuf& buf) {
+    index = buf.unpackScalar<uint32_t>();
+    buf.unpackBytes(name);
+}
+void ColumnFamilyInfo::clear() {
+    index = uint32_t(0);
+    name.clear();
+}
+bool ColumnFamilyInfo::operator==(const ColumnFamilyInfo& rhs) const {
+    if ((uint32_t)this->index != (uint32_t)rhs.index) { return false; };
+    if (name != rhs.name) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const ColumnFamilyInfo& x) {
+    out << "ColumnFamilyInfo(" << "Index=" << x.index << ", " << "Name=" << GoLangQuotedStringFmt(x.name.data(), x.name.size()) << ")";
     return out;
 }
 
@@ -5768,6 +5814,150 @@ bool LogRecoveryWriteResp::operator==(const LogRecoveryWriteResp& rhs) const {
 }
 std::ostream& operator<<(std::ostream& out, const LogRecoveryWriteResp& x) {
     out << "LogRecoveryWriteResp(" << "Result=" << x.result << ")";
+    return out;
+}
+
+void SyncStartReq::pack(BincodeBuf& buf) const {
+    buf.packScalar<uint64_t>(lastAppliedLogEntry);
+}
+void SyncStartReq::unpack(BincodeBuf& buf) {
+    lastAppliedLogEntry = buf.unpackScalar<uint64_t>();
+}
+void SyncStartReq::clear() {
+    lastAppliedLogEntry = uint64_t(0);
+}
+bool SyncStartReq::operator==(const SyncStartReq& rhs) const {
+    if ((uint64_t)this->lastAppliedLogEntry != (uint64_t)rhs.lastAppliedLogEntry) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const SyncStartReq& x) {
+    out << "SyncStartReq(" << "LastAppliedLogEntry=" << x.lastAppliedLogEntry << ")";
+    return out;
+}
+
+void SyncStartResp::pack(BincodeBuf& buf) const {
+    buf.packScalar<uint64_t>(snapshotLogEntry);
+    buf.packList<ColumnFamilyInfo>(columnFamilies);
+    buf.packScalar<uint64_t>(totalSizeEstimate);
+}
+void SyncStartResp::unpack(BincodeBuf& buf) {
+    snapshotLogEntry = buf.unpackScalar<uint64_t>();
+    buf.unpackList<ColumnFamilyInfo>(columnFamilies);
+    totalSizeEstimate = buf.unpackScalar<uint64_t>();
+}
+void SyncStartResp::clear() {
+    snapshotLogEntry = uint64_t(0);
+    columnFamilies.clear();
+    totalSizeEstimate = uint64_t(0);
+}
+bool SyncStartResp::operator==(const SyncStartResp& rhs) const {
+    if ((uint64_t)this->snapshotLogEntry != (uint64_t)rhs.snapshotLogEntry) { return false; };
+    if (columnFamilies != rhs.columnFamilies) { return false; };
+    if ((uint64_t)this->totalSizeEstimate != (uint64_t)rhs.totalSizeEstimate) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const SyncStartResp& x) {
+    out << "SyncStartResp(" << "SnapshotLogEntry=" << x.snapshotLogEntry << ", " << "ColumnFamilies=" << x.columnFamilies << ", " << "TotalSizeEstimate=" << x.totalSizeEstimate << ")";
+    return out;
+}
+
+void SyncChunkReq::pack(BincodeBuf& buf) const {
+    buf.packScalar<uint32_t>(cfIndex);
+    buf.packBytes(cfName);
+    buf.packBytes(keyStart);
+    buf.packScalar<uint32_t>(maxSize);
+}
+void SyncChunkReq::unpack(BincodeBuf& buf) {
+    cfIndex = buf.unpackScalar<uint32_t>();
+    buf.unpackBytes(cfName);
+    buf.unpackBytes(keyStart);
+    maxSize = buf.unpackScalar<uint32_t>();
+}
+void SyncChunkReq::clear() {
+    cfIndex = uint32_t(0);
+    cfName.clear();
+    keyStart.clear();
+    maxSize = uint32_t(0);
+}
+bool SyncChunkReq::operator==(const SyncChunkReq& rhs) const {
+    if ((uint32_t)this->cfIndex != (uint32_t)rhs.cfIndex) { return false; };
+    if (cfName != rhs.cfName) { return false; };
+    if (keyStart != rhs.keyStart) { return false; };
+    if ((uint32_t)this->maxSize != (uint32_t)rhs.maxSize) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const SyncChunkReq& x) {
+    out << "SyncChunkReq(" << "CfIndex=" << x.cfIndex << ", " << "CfName=" << GoLangQuotedStringFmt(x.cfName.data(), x.cfName.size()) << ", " << "KeyStart=" << x.keyStart << ", " << "MaxSize=" << x.maxSize << ")";
+    return out;
+}
+
+void SyncChunkResp::pack(BincodeBuf& buf) const {
+    buf.packScalar<uint32_t>(cfIndex);
+    buf.packBytes(cfName);
+    buf.packList<BincodeBytes>(keys);
+    buf.packList<BincodeBytes>(values);
+    buf.packBytes(nextKeyStart);
+    buf.packScalar<bool>(isLastCF);
+}
+void SyncChunkResp::unpack(BincodeBuf& buf) {
+    cfIndex = buf.unpackScalar<uint32_t>();
+    buf.unpackBytes(cfName);
+    buf.unpackList<BincodeBytes>(keys);
+    buf.unpackList<BincodeBytes>(values);
+    buf.unpackBytes(nextKeyStart);
+    isLastCF = buf.unpackScalar<bool>();
+}
+void SyncChunkResp::clear() {
+    cfIndex = uint32_t(0);
+    cfName.clear();
+    keys.clear();
+    values.clear();
+    nextKeyStart.clear();
+    isLastCF = bool(0);
+}
+bool SyncChunkResp::operator==(const SyncChunkResp& rhs) const {
+    if ((uint32_t)this->cfIndex != (uint32_t)rhs.cfIndex) { return false; };
+    if (cfName != rhs.cfName) { return false; };
+    if (keys != rhs.keys) { return false; };
+    if (values != rhs.values) { return false; };
+    if (nextKeyStart != rhs.nextKeyStart) { return false; };
+    if ((bool)this->isLastCF != (bool)rhs.isLastCF) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const SyncChunkResp& x) {
+    out << "SyncChunkResp(" << "CfIndex=" << x.cfIndex << ", " << "CfName=" << GoLangQuotedStringFmt(x.cfName.data(), x.cfName.size()) << ", " << "Keys=" << x.keys << ", " << "Values=" << x.values << ", " << "NextKeyStart=" << x.nextKeyStart << ", " << "IsLastCF=" << x.isLastCF << ")";
+    return out;
+}
+
+void SyncCompleteReq::pack(BincodeBuf& buf) const {
+    buf.packScalar<bool>(success);
+}
+void SyncCompleteReq::unpack(BincodeBuf& buf) {
+    success = buf.unpackScalar<bool>();
+}
+void SyncCompleteReq::clear() {
+    success = bool(0);
+}
+bool SyncCompleteReq::operator==(const SyncCompleteReq& rhs) const {
+    if ((bool)this->success != (bool)rhs.success) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const SyncCompleteReq& x) {
+    out << "SyncCompleteReq(" << "Success=" << x.success << ")";
+    return out;
+}
+
+void SyncCompleteResp::pack(BincodeBuf& buf) const {
+}
+void SyncCompleteResp::unpack(BincodeBuf& buf) {
+}
+void SyncCompleteResp::clear() {
+}
+bool SyncCompleteResp::operator==(const SyncCompleteResp& rhs) const {
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const SyncCompleteResp& x) {
+    out << "SyncCompleteResp(" << ")";
     return out;
 }
 
@@ -10935,6 +11125,323 @@ std::ostream& operator<<(std::ostream& out, const LogRespContainer& x) {
         break;
     default:
         throw TERN_EXCEPTION("bad LogMessageKind kind %s", x.kind());
+    }
+    return out;
+}
+
+const SyncStartReq& SyncReqContainer::getSyncStart() const {
+    ALWAYS_ASSERT(_kind == SyncMessageKind::SYNC_START, "%s != %s", _kind, SyncMessageKind::SYNC_START);
+    return std::get<0>(_data);
+}
+SyncStartReq& SyncReqContainer::setSyncStart() {
+    _kind = SyncMessageKind::SYNC_START;
+    auto& x = _data.emplace<0>();
+    return x;
+}
+const SyncChunkReq& SyncReqContainer::getSyncChunk() const {
+    ALWAYS_ASSERT(_kind == SyncMessageKind::SYNC_CHUNK, "%s != %s", _kind, SyncMessageKind::SYNC_CHUNK);
+    return std::get<1>(_data);
+}
+SyncChunkReq& SyncReqContainer::setSyncChunk() {
+    _kind = SyncMessageKind::SYNC_CHUNK;
+    auto& x = _data.emplace<1>();
+    return x;
+}
+const SyncCompleteReq& SyncReqContainer::getSyncComplete() const {
+    ALWAYS_ASSERT(_kind == SyncMessageKind::SYNC_COMPLETE, "%s != %s", _kind, SyncMessageKind::SYNC_COMPLETE);
+    return std::get<2>(_data);
+}
+SyncCompleteReq& SyncReqContainer::setSyncComplete() {
+    _kind = SyncMessageKind::SYNC_COMPLETE;
+    auto& x = _data.emplace<2>();
+    return x;
+}
+SyncReqContainer::SyncReqContainer() {
+    clear();
+}
+
+SyncReqContainer::SyncReqContainer(const SyncReqContainer& other) {
+    *this = other;
+}
+
+SyncReqContainer::SyncReqContainer(SyncReqContainer&& other) {
+    _data = std::move(other._data);
+    _kind = other._kind;
+    other._kind = SyncMessageKind::EMPTY;
+}
+
+void SyncReqContainer::operator=(const SyncReqContainer& other) {
+    if (other.kind() == SyncMessageKind::EMPTY) { clear(); return; }
+    switch (other.kind()) {
+    case SyncMessageKind::SYNC_START:
+        setSyncStart() = other.getSyncStart();
+        break;
+    case SyncMessageKind::SYNC_CHUNK:
+        setSyncChunk() = other.getSyncChunk();
+        break;
+    case SyncMessageKind::SYNC_COMPLETE:
+        setSyncComplete() = other.getSyncComplete();
+        break;
+    default:
+        throw TERN_EXCEPTION("bad SyncMessageKind kind %s", other.kind());
+    }
+}
+
+void SyncReqContainer::operator=(SyncReqContainer&& other) {
+    _data = std::move(other._data);
+    _kind = other._kind;
+    other._kind = SyncMessageKind::EMPTY;
+}
+
+size_t SyncReqContainer::packedSize() const {
+    switch (_kind) {
+    case SyncMessageKind::SYNC_START:
+        return sizeof(SyncMessageKind) + std::get<0>(_data).packedSize();
+    case SyncMessageKind::SYNC_CHUNK:
+        return sizeof(SyncMessageKind) + std::get<1>(_data).packedSize();
+    case SyncMessageKind::SYNC_COMPLETE:
+        return sizeof(SyncMessageKind) + std::get<2>(_data).packedSize();
+    default:
+        throw TERN_EXCEPTION("bad SyncMessageKind kind %s", _kind);
+    }
+}
+
+void SyncReqContainer::pack(BincodeBuf& buf) const {
+    buf.packScalar<SyncMessageKind>(_kind);
+    switch (_kind) {
+    case SyncMessageKind::SYNC_START:
+        std::get<0>(_data).pack(buf);
+        break;
+    case SyncMessageKind::SYNC_CHUNK:
+        std::get<1>(_data).pack(buf);
+        break;
+    case SyncMessageKind::SYNC_COMPLETE:
+        std::get<2>(_data).pack(buf);
+        break;
+    default:
+        throw TERN_EXCEPTION("bad SyncMessageKind kind %s", _kind);
+    }
+}
+
+void SyncReqContainer::unpack(BincodeBuf& buf) {
+    _kind = buf.unpackScalar<SyncMessageKind>();
+    switch (_kind) {
+    case SyncMessageKind::SYNC_START:
+        _data.emplace<0>().unpack(buf);
+        break;
+    case SyncMessageKind::SYNC_CHUNK:
+        _data.emplace<1>().unpack(buf);
+        break;
+    case SyncMessageKind::SYNC_COMPLETE:
+        _data.emplace<2>().unpack(buf);
+        break;
+    default:
+        throw BINCODE_EXCEPTION("bad SyncMessageKind kind %s", _kind);
+    }
+}
+
+bool SyncReqContainer::operator==(const SyncReqContainer& other) const {
+    if (_kind != other.kind()) { return false; }
+    if (_kind == SyncMessageKind::EMPTY) { return true; }
+    switch (_kind) {
+    case SyncMessageKind::SYNC_START:
+        return getSyncStart() == other.getSyncStart();
+    case SyncMessageKind::SYNC_CHUNK:
+        return getSyncChunk() == other.getSyncChunk();
+    case SyncMessageKind::SYNC_COMPLETE:
+        return getSyncComplete() == other.getSyncComplete();
+    default:
+        throw BINCODE_EXCEPTION("bad SyncMessageKind kind %s", _kind);
+    }
+}
+
+std::ostream& operator<<(std::ostream& out, const SyncReqContainer& x) {
+    switch (x.kind()) {
+    case SyncMessageKind::SYNC_START:
+        out << x.getSyncStart();
+        break;
+    case SyncMessageKind::SYNC_CHUNK:
+        out << x.getSyncChunk();
+        break;
+    case SyncMessageKind::SYNC_COMPLETE:
+        out << x.getSyncComplete();
+        break;
+    case SyncMessageKind::EMPTY:
+        out << "EMPTY";
+        break;
+    default:
+        throw TERN_EXCEPTION("bad SyncMessageKind kind %s", x.kind());
+    }
+    return out;
+}
+
+const TernError& SyncRespContainer::getError() const {
+    ALWAYS_ASSERT(_kind == SyncMessageKind::ERROR, "%s != %s", _kind, SyncMessageKind::ERROR);
+    return std::get<0>(_data);
+}
+TernError& SyncRespContainer::setError() {
+    _kind = SyncMessageKind::ERROR;
+    auto& x = _data.emplace<0>();
+    return x;
+}
+const SyncStartResp& SyncRespContainer::getSyncStart() const {
+    ALWAYS_ASSERT(_kind == SyncMessageKind::SYNC_START, "%s != %s", _kind, SyncMessageKind::SYNC_START);
+    return std::get<1>(_data);
+}
+SyncStartResp& SyncRespContainer::setSyncStart() {
+    _kind = SyncMessageKind::SYNC_START;
+    auto& x = _data.emplace<1>();
+    return x;
+}
+const SyncChunkResp& SyncRespContainer::getSyncChunk() const {
+    ALWAYS_ASSERT(_kind == SyncMessageKind::SYNC_CHUNK, "%s != %s", _kind, SyncMessageKind::SYNC_CHUNK);
+    return std::get<2>(_data);
+}
+SyncChunkResp& SyncRespContainer::setSyncChunk() {
+    _kind = SyncMessageKind::SYNC_CHUNK;
+    auto& x = _data.emplace<2>();
+    return x;
+}
+const SyncCompleteResp& SyncRespContainer::getSyncComplete() const {
+    ALWAYS_ASSERT(_kind == SyncMessageKind::SYNC_COMPLETE, "%s != %s", _kind, SyncMessageKind::SYNC_COMPLETE);
+    return std::get<3>(_data);
+}
+SyncCompleteResp& SyncRespContainer::setSyncComplete() {
+    _kind = SyncMessageKind::SYNC_COMPLETE;
+    auto& x = _data.emplace<3>();
+    return x;
+}
+SyncRespContainer::SyncRespContainer() {
+    clear();
+}
+
+SyncRespContainer::SyncRespContainer(const SyncRespContainer& other) {
+    *this = other;
+}
+
+SyncRespContainer::SyncRespContainer(SyncRespContainer&& other) {
+    _data = std::move(other._data);
+    _kind = other._kind;
+    other._kind = SyncMessageKind::EMPTY;
+}
+
+void SyncRespContainer::operator=(const SyncRespContainer& other) {
+    if (other.kind() == SyncMessageKind::EMPTY) { clear(); return; }
+    switch (other.kind()) {
+    case SyncMessageKind::ERROR:
+        setError() = other.getError();
+        break;
+    case SyncMessageKind::SYNC_START:
+        setSyncStart() = other.getSyncStart();
+        break;
+    case SyncMessageKind::SYNC_CHUNK:
+        setSyncChunk() = other.getSyncChunk();
+        break;
+    case SyncMessageKind::SYNC_COMPLETE:
+        setSyncComplete() = other.getSyncComplete();
+        break;
+    default:
+        throw TERN_EXCEPTION("bad SyncMessageKind kind %s", other.kind());
+    }
+}
+
+void SyncRespContainer::operator=(SyncRespContainer&& other) {
+    _data = std::move(other._data);
+    _kind = other._kind;
+    other._kind = SyncMessageKind::EMPTY;
+}
+
+size_t SyncRespContainer::packedSize() const {
+    switch (_kind) {
+    case SyncMessageKind::ERROR:
+        return sizeof(SyncMessageKind) + sizeof(TernError);
+    case SyncMessageKind::SYNC_START:
+        return sizeof(SyncMessageKind) + std::get<1>(_data).packedSize();
+    case SyncMessageKind::SYNC_CHUNK:
+        return sizeof(SyncMessageKind) + std::get<2>(_data).packedSize();
+    case SyncMessageKind::SYNC_COMPLETE:
+        return sizeof(SyncMessageKind) + std::get<3>(_data).packedSize();
+    default:
+        throw TERN_EXCEPTION("bad SyncMessageKind kind %s", _kind);
+    }
+}
+
+void SyncRespContainer::pack(BincodeBuf& buf) const {
+    buf.packScalar<SyncMessageKind>(_kind);
+    switch (_kind) {
+    case SyncMessageKind::ERROR:
+        buf.packScalar<TernError>(std::get<0>(_data));
+        break;
+    case SyncMessageKind::SYNC_START:
+        std::get<1>(_data).pack(buf);
+        break;
+    case SyncMessageKind::SYNC_CHUNK:
+        std::get<2>(_data).pack(buf);
+        break;
+    case SyncMessageKind::SYNC_COMPLETE:
+        std::get<3>(_data).pack(buf);
+        break;
+    default:
+        throw TERN_EXCEPTION("bad SyncMessageKind kind %s", _kind);
+    }
+}
+
+void SyncRespContainer::unpack(BincodeBuf& buf) {
+    _kind = buf.unpackScalar<SyncMessageKind>();
+    switch (_kind) {
+    case SyncMessageKind::ERROR:
+        _data.emplace<0>(buf.unpackScalar<TernError>());
+        break;
+    case SyncMessageKind::SYNC_START:
+        _data.emplace<1>().unpack(buf);
+        break;
+    case SyncMessageKind::SYNC_CHUNK:
+        _data.emplace<2>().unpack(buf);
+        break;
+    case SyncMessageKind::SYNC_COMPLETE:
+        _data.emplace<3>().unpack(buf);
+        break;
+    default:
+        throw BINCODE_EXCEPTION("bad SyncMessageKind kind %s", _kind);
+    }
+}
+
+bool SyncRespContainer::operator==(const SyncRespContainer& other) const {
+    if (_kind != other.kind()) { return false; }
+    if (_kind == SyncMessageKind::EMPTY) { return true; }
+    switch (_kind) {
+    case SyncMessageKind::ERROR:
+        return getError() == other.getError();
+    case SyncMessageKind::SYNC_START:
+        return getSyncStart() == other.getSyncStart();
+    case SyncMessageKind::SYNC_CHUNK:
+        return getSyncChunk() == other.getSyncChunk();
+    case SyncMessageKind::SYNC_COMPLETE:
+        return getSyncComplete() == other.getSyncComplete();
+    default:
+        throw BINCODE_EXCEPTION("bad SyncMessageKind kind %s", _kind);
+    }
+}
+
+std::ostream& operator<<(std::ostream& out, const SyncRespContainer& x) {
+    switch (x.kind()) {
+    case SyncMessageKind::ERROR:
+        out << x.getError();
+        break;
+    case SyncMessageKind::SYNC_START:
+        out << x.getSyncStart();
+        break;
+    case SyncMessageKind::SYNC_CHUNK:
+        out << x.getSyncChunk();
+        break;
+    case SyncMessageKind::SYNC_COMPLETE:
+        out << x.getSyncComplete();
+        break;
+    case SyncMessageKind::EMPTY:
+        out << "EMPTY";
+        break;
+    default:
+        throw TERN_EXCEPTION("bad SyncMessageKind kind %s", x.kind());
     }
     return out;
 }

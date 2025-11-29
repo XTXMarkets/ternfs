@@ -305,7 +305,7 @@ func generateGoErrorCodes(out io.Writer, errors []string) {
 //go:embed msgs_bincode.go.header
 var goHeader string
 
-func generateGo(errors []string, shardReqResps []reqRespType, cdcReqResps []reqRespType, registryReqResps []reqRespType, blocksReqResps []reqRespType, logReqResps []reqRespType, extras []reflect.Type) []byte {
+func generateGo(errors []string, shardReqResps []reqRespType, cdcReqResps []reqRespType, registryReqResps []reqRespType, blocksReqResps []reqRespType, logReqResps []reqRespType, syncReqResps []reqRespType, extras []reflect.Type) []byte {
 	out := new(bytes.Buffer)
 
 	out.Write([]byte(goHeader))
@@ -317,6 +317,7 @@ func generateGo(errors []string, shardReqResps []reqRespType, cdcReqResps []reqR
 	generateGoMsgKind(out, "RegistryMessageKind", "RegistryRequest", "RegistryResponse", "MkRegistryMessage", registryReqResps)
 	generateGoMsgKind(out, "BlocksMessageKind", "BlocksRequest", "BlocksResponse", "MkBlocksMessage", blocksReqResps)
 	generateGoMsgKind(out, "LogMessageKind", "LogRequest", "LogResponse", "MkLogMessage", logReqResps)
+	generateGoMsgKind(out, "SyncMessageKind", "SyncRequest", "SyncResponse", "MkSyncMessage", syncReqResps)
 
 	for _, reqResp := range shardReqResps {
 		generateGoReqResp(out, reqResp, "ShardMessageKind", "ShardRequestKind", "ShardResponseKind")
@@ -335,6 +336,9 @@ func generateGo(errors []string, shardReqResps []reqRespType, cdcReqResps []reqR
 	}
 	for _, reqResp := range logReqResps {
 		generateGoReqResp(out, reqResp, "LogMessageKind", "LogRequestKind", "LogResponseKind")
+	}
+	for _, reqResp := range syncReqResps {
+		generateGoReqResp(out, reqResp, "SyncMessageKind", "SyncRequestKind", "SyncResponseKind")
 	}
 
 	return out.Bytes()
@@ -1345,7 +1349,7 @@ var fetchedSpanCpp string
 //go:embed FetchedFullSpan.hpp
 var fetchedFullSpanCpp string
 
-func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []reqRespType, registryReqResps []reqRespType, blocksReqResps []reqRespType, logReqResps []reqRespType, extras []reflect.Type) ([]byte, []byte) {
+func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []reqRespType, registryReqResps []reqRespType, blocksReqResps []reqRespType, logReqResps []reqRespType, syncReqResps []reqRespType, extras []reflect.Type) ([]byte, []byte) {
 	hppOut := new(bytes.Buffer)
 	cppOut := new(bytes.Buffer)
 
@@ -1378,6 +1382,7 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 	generateCppKind(hppOut, cppOut, "Registry", registryReqResps)
 	generateCppKind(hppOut, cppOut, "Blocks", blocksReqResps)
 	generateCppKind(hppOut, cppOut, "Log", logReqResps)
+	generateCppKind(hppOut, cppOut, "Sync", syncReqResps)
 
 	for _, typ := range extras {
 		generateCppSingle(hppOut, cppOut, typ)
@@ -1410,11 +1415,16 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 		generateCppSingle(hppOut, cppOut, reqResp.req)
 		generateCppSingle(hppOut, cppOut, reqResp.resp)
 	}
+	for _, reqResp := range syncReqResps {
+		generateCppSingle(hppOut, cppOut, reqResp.req)
+		generateCppSingle(hppOut, cppOut, reqResp.resp)
+	}
 
 	generateCppReqResp(hppOut, cppOut, "Shard", shardReqResps)
 	generateCppReqResp(hppOut, cppOut, "CDC", cdcReqResps)
 	generateCppReqResp(hppOut, cppOut, "Registry", registryReqResps)
 	generateCppReqResp(hppOut, cppOut, "Log", logReqResps)
+	generateCppReqResp(hppOut, cppOut, "Sync", syncReqResps)
 
 	generateCppLogEntries(
 		hppOut,
@@ -2102,6 +2112,24 @@ func main() {
 		},
 	}
 
+	syncReqResps := []reqRespType{
+		{
+			0x01,
+			reflect.TypeOf(msgs.SyncStartReq{}),
+			reflect.TypeOf(msgs.SyncStartResp{}),
+		},
+		{
+			0x02,
+			reflect.TypeOf(msgs.SyncChunkReq{}),
+			reflect.TypeOf(msgs.SyncChunkResp{}),
+		},
+		{
+			0x03,
+			reflect.TypeOf(msgs.SyncCompleteReq{}),
+			reflect.TypeOf(msgs.SyncCompleteResp{}),
+		},
+	}
+
 	kernelExtras := []reflect.Type{
 		reflect.TypeOf(msgs.DirectoryInfoEntry{}),
 		reflect.TypeOf(msgs.DirectoryInfo{}),
@@ -2145,6 +2173,7 @@ func main() {
 			reflect.TypeOf(msgs.FullBlockServiceInfo{}),
 			reflect.TypeOf(msgs.CdcInfo{}),
 			reflect.TypeOf(msgs.LocationInfo{}),
+			reflect.TypeOf(msgs.ColumnFamilyInfo{}),
 		}...)...)
 
 	goExtras := append(extras, []reflect.Type{
@@ -2157,7 +2186,7 @@ func main() {
 		reflect.TypeOf(msgs.AddrsInfo{})},
 		kernelExtras...)
 
-	goCode := generateGo(errors, shardReqResps, cdcReqResps, registryReqResps, blocksReqResps, logReqResps, goExtras)
+	goCode := generateGo(errors, shardReqResps, cdcReqResps, registryReqResps, blocksReqResps, logReqResps, syncReqResps, goExtras)
 	goOutFileName := fmt.Sprintf("%s/msgs_bincode.go", cwd)
 	writeIfChanged(goOutFileName, goCode)
 
@@ -2165,7 +2194,7 @@ func main() {
 	writeIfChanged(fmt.Sprintf("%s/../../kmod/bincodegen.h", cwd), kmodHBytes)
 	writeIfChanged(fmt.Sprintf("%s/../../kmod/bincodegen.c", cwd), kmodCBytes)
 
-	hppBytes, cppBytes := generateCpp(errors, shardReqResps, cdcReqResps, registryReqResps, blocksReqResps, logReqResps, extras)
+	hppBytes, cppBytes := generateCpp(errors, shardReqResps, cdcReqResps, registryReqResps, blocksReqResps, logReqResps, syncReqResps, extras)
 	writeIfChanged(fmt.Sprintf("%s/../../cpp/core/MsgsGen.hpp", cwd), hppBytes)
 	writeIfChanged(fmt.Sprintf("%s/../../cpp/core/MsgsGen.cpp", cwd), cppBytes)
 }

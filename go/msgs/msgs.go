@@ -92,6 +92,14 @@ const LOG_REQ_PROTOCOL_VERSION uint32 = 0x474f4c
 // '1474f4c'
 const LOG_RESP_PROTOCOL_VERSION uint32 = 0x1474f4c
 
+// >>> format(struct.unpack('<I', b'SYN\0')[0], 'x')
+// '4e5953'
+const SYNC_REQ_PROTOCOL_VERSION uint32 = 0x4e5953
+
+// >>> format(struct.unpack('<I', b'SYN\1')[0], 'x')
+// '14e5953'
+const SYNC_RESP_PROTOCOL_VERSION uint32 = 0x14e5953
+
 // For CDC/SHARD we use 0 as an error kind
 const ERROR_KIND uint8 = 0
 
@@ -562,6 +570,8 @@ type RegistryMessageKind uint8
 type BlocksMessageKind uint8
 
 type LogMessageKind uint8
+
+type SyncMessageKind uint8
 
 type CtrlMessageKind uint8
 
@@ -2510,4 +2520,79 @@ type LogRecoveryWriteReq struct {
 
 type LogRecoveryWriteResp struct {
 	Result TernError
+}
+
+// --------------------------------------------------------------------
+// Sync requests/responses (for replica database synchronization)
+
+type SyncRequest interface {
+	bincode.Packable
+	bincode.Unpackable
+	SyncRequestKind() SyncMessageKind
+}
+
+type SyncResponse interface {
+	bincode.Packable
+	bincode.Unpackable
+	SyncResponseKind() SyncMessageKind
+}
+
+// Column family info for sync - maps index to name
+type ColumnFamilyInfo struct {
+	Index uint32
+	Name  string
+}
+
+// Request to start a sync operation
+type SyncStartReq struct {
+	// Current log entry of destination (0 if uninitialized)
+	LastAppliedLogEntry uint64
+}
+
+// Response with snapshot metadata
+type SyncStartResp struct {
+	// Log entry at the time of snapshot creation
+	SnapshotLogEntry uint64
+	// List of column families with their indices and names
+	ColumnFamilies []ColumnFamilyInfo
+	// Estimated total size in bytes
+	TotalSizeEstimate uint64
+}
+
+// Request for a chunk of data from a specific column family
+type SyncChunkReq struct {
+	// Column family index (from ColumnFamilies list)
+	CfIndex uint32
+	// Column family name (must match source's name for this index)
+	CfName string
+	// Start key for this chunk (empty = start from beginning)
+	KeyStart []byte
+	// Maximum bytes to return in this chunk
+	MaxSize uint32
+}
+
+// Response with chunk data
+type SyncChunkResp struct {
+	// Column family index
+	CfIndex uint32
+	// Column family name (echoed back for verification)
+	CfName string
+	// Keys in this chunk
+	Keys [][]byte
+	// Values in this chunk (parallel array to Keys)
+	Values [][]byte
+	// Next key to start from (empty = column family complete)
+	NextKeyStart []byte
+	// True if this is the last column family and it's complete
+	IsLastCF bool
+}
+
+// Request to complete/finalize sync
+type SyncCompleteReq struct {
+	// Whether sync completed successfully
+	Success bool
+}
+
+// Response acknowledging sync completion
+type SyncCompleteResp struct {
 }
