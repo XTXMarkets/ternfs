@@ -868,23 +868,12 @@ static ssize_t file_write_iter(struct kiocb* iocb, struct iov_iter* from) {
     return res;
 }
 
-int ternfs_file_flush(struct ternfs_inode* enode, struct dentry* dentry) {
-    trace_eggsfs_inode_lock(&enode->inode, TERNFS_INODE_LOCK, "flush");
-    inode_lock(&enode->inode);
+// shared functionality of ternfs_flush and ternfs_link
+// takes the file we're trying to flush/link, the directory we're going to put it in, and a name/len pair to assign
+static int flush_and_link(struct ternfs_inode *enode, struct dentry *parent, const char *name, size_t name_len) {
+    BUG_ON(!inode_is_locked(&enode->inode));
 
     int err = 0;
-
-    // Not writing, there's nothing to do, there's nothing to do, files are immutable
-    if (enode->file.status != TERNFS_FILE_STATUS_WRITING) {
-        ternfs_debug("status=%d, won't flush", enode->file.status);
-        goto out_early;
-    }
-
-    // We are in another process, skip
-    if (enode->file.owner != current->group_leader) {
-        ternfs_debug("owner=%p != group_leader=%p, won't flush", enode->file.owner, current->group_leader);
-        goto out_early;
-    }
 
     bool file_is_alive_and_flushing = false;
 
@@ -918,7 +907,7 @@ int ternfs_file_flush(struct ternfs_inode* enode, struct dentry* dentry) {
     ternfs_debug("linking file");
     err = ternfs_error_to_linux(ternfs_shard_link_file(
         (struct ternfs_fs_info*)enode->inode.i_sb->s_fs_info, enode->inode.i_ino,
-        enode->file.cookie, dentry->d_parent->d_inode->i_ino, dentry->d_name.name, dentry->d_name.len,
+        enode->file.cookie, parent->d_inode->i_ino, name, name_len,
         &enode->edge_creation_time
     ));
     if (err < 0) { goto out; }
@@ -934,7 +923,6 @@ int ternfs_file_flush(struct ternfs_inode* enode, struct dentry* dentry) {
     // expire the directory listing -- we know for a fact that it
     // is wrong, it now contains this file.
     {
-        struct dentry* parent = dget_parent(dentry);
         WRITE_ONCE(TERNFS_I(d_inode(parent))->dir.mtime_expiry, 0);
         dput(parent);
     }
@@ -969,54 +957,32 @@ out:
         mmdrop(enode->file.mm);
     }
     enode->file.mm = NULL;
-    inode_unlock(&enode->inode);
-    trace_eggsfs_inode_lock(&enode->inode, TERNFS_INODE_UNLOCK, "flush");
-    return err;
 
-out_early:
-    inode_unlock(&enode->inode);
-    trace_eggsfs_inode_lock(&enode->inode, TERNFS_INODE_UNLOCK, "flush");
     return err;
 }
 
-static int flush_and_link(struct ternfs_inode *enode, struct dentry *parent, unsigned long i_ino, const char *name, size_t name_len) {
+int ternfs_file_flush(struct ternfs_inode* enode, struct dentry* dentry) {
     int err = 0;
-    bool file_is_alive_and_flushing = false;
+    trace_eggsfs_inode_lock(&enode->inode, TERNFS_INODE_LOCK, "flush");
+    inode_lock(&enode->inode);
 
-    err = atomic_read(&enode->file.transient_err);
-    if (err < 0) return err;
-
-    err = start_flushing(enode, false);
-    if (err < 0) return err;
-
-    down(&enode->file.flushing_span_sema);
-    file_is_alive_and_flushing = true;
-
-    err = atomic_read(&enode->file.transient_err);
-    if (err < 0) return err;
-
-    // finally link the file
-    ternfs_debug("linking file");
-    err = ternfs_error_to_linux(ternfs_shard_link_file(
-        (struct ternfs_fs_info*)enode->inode.i_sb->s_fs_info, enode->inode.i_ino,
-        enode->file.cookie, i_ino, name, name_len,
-        &enode->edge_creation_time
-    ));
-    if (err < 0) return err;
-
-    // update timestamps
-    inode_set_mtime(&enode->inode, enode->edge_creation_time / 1000000000, enode->edge_creation_time % 1000000000);
-    inode_set_ctime(&enode->inode, enode->edge_creation_time / 1000000000, enode->edge_creation_time % 1000000000);
-
-    // file is now flushed and immutable
-    enode->file.status = TERNFS_FILE_STATUS_READING;
-    smp_store_release(&enode->getattr_expiry, 0);
-
-    // expire parent directory listing
-    {
-        WRITE_ONCE(TERNFS_I(d_inode(parent))->dir.mtime_expiry, 0);
-        dput(parent);
+    // Not writing, there's nothing to do, there's nothing to do, files are immutable
+    if (enode->file.status != TERNFS_FILE_STATUS_WRITING) {
+        ternfs_debug("status=%d, won't flush", enode->file.status);
+        goto out;
     }
+
+    // We are in another process, skip
+    if (enode->file.owner != current->group_leader) {
+        ternfs_debug("owner=%p != group_leader=%p, won't flush", enode->file.owner, current->group_leader);
+        goto out;
+    }
+
+    err = flush_and_link(enode, dentry->d_parent, dentry->d_name.name, dentry->d_name.len);
+
+out:
+    inode_unlock(&enode->inode);
+    trace_eggsfs_inode_lock(&enode->inode, TERNFS_INODE_UNLOCK, "flush");
     return err;
 }
 
@@ -1030,101 +996,30 @@ int ternfs_link(struct dentry* old_dentry, struct inode* dir, struct dentry* new
 
     // TODO: there are probably cases in which this could be allowed (e.g. cross directory things that happen to use identical storage)
     if (!old_dentry->d_parent || old_dentry->d_parent->d_inode != dir) {
-        ternfs_debug("tried to link a file not in the right directory");
+        ternfs_debug("tried to link a file in a different directory than the one it was opened in");
         err = -EXDEV;
-        goto out_early;
+        goto out;
     }
 
-    if (inode->i_nlink > 0) {
-        ternfs_debug("tried to hardlink an existing file");
-        err = -EINVAL;
-        goto out_early;
-    }
-
-    // O_TMPFILE files have I_LINKABLE set (it's unset on e.g. deleted files)
-    // TODO: do we even get called if I_LINKABLE is not set?
-    if (!(inode->i_state & I_LINKABLE)) {
-        ternfs_debug("file not linkable");
-        err = -EINVAL;
-        goto out_early;
-    }
-
+    // linking existing files is not allowed
+    // TODO: check i_nlink once we actually start reporting link counts
     if (enode->file.status != TERNFS_FILE_STATUS_WRITING) {
         ternfs_debug("status=%d, won't link", enode->file.status);
         err = -EINVAL;
-        goto out_early;
+        goto out;
     }
 
+    // this is not an error in normal flush (because other processes could close the fd) but linking would be weird
     if (enode->file.owner != current->group_leader) {
         ternfs_debug("owner=%p != group_leader=%p, won't link", enode->file.owner, current->group_leader);
         err = -EPERM;
-        goto out_early;
+        goto out;
     }
 
-    bool file_is_alive_and_flushing = false;
-
-    err = atomic_read(&enode->file.transient_err);
-    if (err < 0) { goto out; }
-
-    err = start_flushing(enode, false);
-    if (err < 0) { goto out; }
-
-    down(&enode->file.flushing_span_sema);
-    file_is_alive_and_flushing = true;
-
-    err = atomic_read(&enode->file.transient_err);
-    if (err < 0) { goto out; }
-
-    // finally link the file
-    ternfs_debug("linking file");
-    err = ternfs_error_to_linux(ternfs_shard_link_file(
-        (struct ternfs_fs_info*)enode->inode.i_sb->s_fs_info, enode->inode.i_ino,
-        enode->file.cookie, dir->i_ino, new_dentry->d_name.name, new_dentry->d_name.len,
-        &enode->edge_creation_time
-    ));
-    if (err < 0) { goto out; }
-
-    // update timestamps
-    inode_set_mtime(&enode->inode, enode->edge_creation_time / 1000000000, enode->edge_creation_time % 1000000000);
-    inode_set_ctime(&enode->inode, enode->edge_creation_time / 1000000000, enode->edge_creation_time % 1000000000);
-
-    // file is now flushed and immutable
-    enode->file.status = TERNFS_FILE_STATUS_READING;
-    smp_store_release(&enode->getattr_expiry, 0);
-
-    // expire parent directory listing
-    {
-        struct dentry* parent = dget_parent(new_dentry);
-        WRITE_ONCE(TERNFS_I(d_inode(parent))->dir.mtime_expiry, 0);
-        dput(parent);
-    }
-
-    // increment inode refcount and instantiate dentry
-    ihold(&enode->inode);
-    d_instantiate(new_dentry, &enode->inode);
+    struct dentry* parent = dget_parent(new_dentry);
+    err = flush_and_link(enode, parent, new_dentry->d_name.name, new_dentry->d_name.len);
 
 out:
-    if (err) {
-        atomic_cmpxchg(&enode->file.transient_err, 0, err);
-    }
-    if (!file_is_alive_and_flushing) {
-        down(&enode->file.flushing_span_sema);
-        up(&enode->file.flushing_span_sema);
-    }
-    // clean up writing span
-    if (enode->file.writing_span != NULL) {
-        BUG_ON(!put_transient_span(enode->file.writing_span));
-        enode->file.writing_span = NULL;
-    }
-    BUG_ON(enode->file.writing_span != NULL);
-    if (enode->file.mm) {
-        mmdrop(enode->file.mm);
-    }
-    enode->file.mm = NULL;
-    inode_unlock(&enode->inode);
-    return err;
-
-out_early:
     inode_unlock(&enode->inode);
     return err;
 }
