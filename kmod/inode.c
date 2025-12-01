@@ -611,6 +611,30 @@ static int COMPAT_FUNC_UNS_IMP(ternfs_symlink, struct inode* dir, struct dentry*
     return 0;
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,6,0)
+static int COMPAT_FUNC_UNS_IMP(ternfs_tmpfile, struct inode* dir, struct file* file, umode_t mode) {
+    struct dentry* dentry = file->f_path.dentry; // dentry with a "fake" name
+#else
+static int COMPAT_FUNC_UNS_IMP(ternfs_tmpfile, struct inode* dir, struct dentry* dentry, umode_t mode) {
+#endif
+    ternfs_debug("ternfs_tempfile: name: %s", dentry->d_name.name);
+    struct ternfs_inode* enode = ternfs_create_internal(dir, TERNFS_INODE_FILE, dentry);
+    if (IS_ERR(enode)) { return PTR_ERR(enode); }
+
+    // the file is created in writing status by ternfs_create_internal
+    // and it remains unlinked until linkat() is called
+    // once link is called we can then assign a name
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,6,0)
+    // in 6.6+, finish_open_simple handles d_instantiate
+    return finish_open_simple(file, 0);
+#else
+    // for older kernels, we need to instantiate as unhashed
+    d_tmpfile(dentry, &enode->inode);
+    return 0;
+#endif
+}
+
 static const char* ternfs_get_link(struct dentry* dentry, struct inode* inode, struct delayed_call* destructor) {
     // Can't be bothered to think about RCU
     if (dentry == NULL) { return ERR_PTR(-ECHILD); }
@@ -702,6 +726,7 @@ static const struct inode_operations ternfs_dir_inode_ops = {
     .rename = ternfs_rename,
     .getattr = ternfs_getattr,
     .symlink = ternfs_symlink,
+    .tmpfile = ternfs_tmpfile,
 };
 
 static const struct inode_operations ternfs_file_inode_ops = {
