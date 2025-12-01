@@ -990,12 +990,15 @@ int ternfs_link(struct dentry* old_dentry, struct inode* dir, struct dentry* new
     struct inode* inode = d_inode(old_dentry);
     struct ternfs_inode* enode = TERNFS_I(inode);
 
-    inode_lock(&enode->inode);
+    // should be done by vfs_link
+    BUG_ON(!inode_is_locked(inode));
 
     int err = 0;
 
+    struct dentry* parent = dget_parent(old_dentry);
+
     // TODO: there are probably cases in which this could be allowed (e.g. cross directory things that happen to use identical storage)
-    if (!old_dentry->d_parent || old_dentry->d_parent->d_inode != dir) {
+    if (!parent || parent->d_inode != dir) {
         ternfs_debug("tried to link a file in a different directory than the one it was opened in");
         err = -EXDEV;
         goto out;
@@ -1016,11 +1019,9 @@ int ternfs_link(struct dentry* old_dentry, struct inode* dir, struct dentry* new
         goto out;
     }
 
-    struct dentry* parent = dget_parent(new_dentry);
     err = flush_and_link(enode, parent, new_dentry->d_name.name, new_dentry->d_name.len);
 
 out:
-    inode_unlock(&enode->inode);
     return err;
 }
 
