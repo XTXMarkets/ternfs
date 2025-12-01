@@ -720,6 +720,7 @@ static int ternfs_update_time(struct inode* inode, int flags) {
 static const struct inode_operations ternfs_dir_inode_ops = {
     .create = ternfs_create,
     .lookup = ternfs_lookup,
+    .link = ternfs_link,
     .unlink = ternfs_unlink,
     .mkdir = ternfs_mkdir,
     .rmdir = ternfs_rmdir,
