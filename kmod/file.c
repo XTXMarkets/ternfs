@@ -1028,6 +1028,11 @@ out:
 static int file_flush_internal(struct file* filp, fl_owner_t id) { // can we get write while this is in progress?
     struct ternfs_inode* enode = TERNFS_I(filp->f_inode);
     struct dentry* dentry = filp->f_path.dentry;
+
+    // ternfs_file_flush also links, but tmpfiles are only linked when linkat is called
+    if (unlikely(filp->f_flags & __O_TMPFILE))
+        return 0;
+
     return ternfs_file_flush(enode, dentry);
 }
 
