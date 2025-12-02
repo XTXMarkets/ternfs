@@ -870,6 +870,7 @@ static ssize_t file_write_iter(struct kiocb* iocb, struct iov_iter* from) {
 
 // shared functionality of ternfs_flush and ternfs_link
 // takes the file we're trying to flush/link, the directory we're going to put it in, and a name/len pair to assign
+// note: caller must take care of dget_parent/dput
 static int flush_and_link(struct ternfs_inode *enode, struct dentry *parent, const char *name, size_t name_len) {
     BUG_ON(!inode_is_locked(&enode->inode));
 
@@ -922,10 +923,7 @@ static int flush_and_link(struct ternfs_inode *enode, struct dentry *parent, con
 
     // expire the directory listing -- we know for a fact that it
     // is wrong, it now contains this file.
-    {
-        WRITE_ONCE(TERNFS_I(d_inode(parent))->dir.mtime_expiry, 0);
-        dput(parent);
-    }
+    WRITE_ONCE(TERNFS_I(d_inode(parent))->dir.mtime_expiry, 0);
 
 out:
     if (err) {
@@ -978,7 +976,11 @@ int ternfs_file_flush(struct ternfs_inode* enode, struct dentry* dentry) {
         goto out;
     }
 
-    err = flush_and_link(enode, dentry->d_parent, dentry->d_name.name, dentry->d_name.len);
+    struct dentry *parent = dget_parent(dentry);
+
+    err = flush_and_link(enode, parent, dentry->d_name.name, dentry->d_name.len);
+
+    dput(parent);
 
 out:
     inode_unlock(&enode->inode);
@@ -1022,6 +1024,8 @@ int ternfs_link(struct dentry* old_dentry, struct inode* dir, struct dentry* new
     err = flush_and_link(enode, parent, new_dentry->d_name.name, new_dentry->d_name.len);
 
 out:
+    dput(parent);
+
     return err;
 }
 
