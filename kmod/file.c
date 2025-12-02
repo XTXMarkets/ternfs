@@ -997,7 +997,7 @@ int ternfs_link(struct dentry* old_dentry, struct inode* dir, struct dentry* new
 
     struct dentry* parent = dget_parent(old_dentry);
 
-    // TODO: there are probably cases in which this could be allowed (e.g. cross directory things that happen to use identical storage)
+    // TODO: there are probably cases in which this could be allowed (e.g. cross directory things that happen to be in the same shard)
     if (!parent || parent->d_inode != dir) {
         ternfs_debug("tried to link a file in a different directory than the one it was opened in");
         err = -EXDEV;
