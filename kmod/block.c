@@ -15,7 +15,6 @@
 #include "log.h"
 #include "err.h"
 #include "super.h"
-#include "crc.h"
 #include "trace.h"
 #include "wq.h"
 #include "file.h"
@@ -65,7 +64,6 @@ struct block_ops {
     void (*sk_write_space)(struct sock *sk);
     void (*sk_data_ready)(struct sock *sk);
     void (*write_work)(struct work_struct* work);
-    void (*cleanup_work)(struct work_struct* work);
     int (*write_req)(struct block_socket* socket, struct block_request* req);
     int (*receive_req)(read_descriptor_t* rd_desc, struct sk_buff* skb, unsigned int offset, size_t len);
 };
@@ -74,7 +72,6 @@ static void block_socket_sk_write_space(struct sock *sk);
 
 static void fetch_block_pages_with_crc_sk_data_ready(struct sock *sk);
 static void fetch_block_pages_with_crc_write_work(struct work_struct* work);
-static void fetch_block_pages_with_crc_cleanup_work(struct work_struct* work);
 static int fetch_block_pages_with_crc_write_req(struct block_socket* socket, struct block_request* breq);
 static int fetch_block_pages_with_crc_receive_req(read_descriptor_t* rd_desc, struct sk_buff* skb, unsigned int offset, size_t len);
 
@@ -82,7 +79,6 @@ static struct block_ops fetch_block_pages_witch_crc_ops = {
     .sk_write_space = block_socket_sk_write_space,
     .sk_data_ready = fetch_block_pages_with_crc_sk_data_ready,
     .write_work = fetch_block_pages_with_crc_write_work,
-    .cleanup_work = fetch_block_pages_with_crc_cleanup_work,
     .write_req = fetch_block_pages_with_crc_write_req,
     .receive_req = fetch_block_pages_with_crc_receive_req,
     .timeout_jiffies = &ternfs_fetch_block_timeout_jiffies,
@@ -90,7 +86,6 @@ static struct block_ops fetch_block_pages_witch_crc_ops = {
 
 static void write_block_sk_data_ready(struct sock *sk);
 static void write_block_write_work(struct work_struct* work);
-static void write_block_cleanup_work(struct work_struct* work);
 static int write_block_write_req(struct block_socket* socket, struct block_request* breq);
 static int write_block_receive_req(read_descriptor_t* rd_desc, struct sk_buff* skb, unsigned int offset, size_t len);
 
@@ -98,7 +93,6 @@ static struct block_ops write_block_ops = {
     .sk_write_space = block_socket_sk_write_space,
     .sk_data_ready = write_block_sk_data_ready,
     .write_work = write_block_write_work,
-    .cleanup_work = write_block_cleanup_work,
     .write_req = write_block_write_req,
     .receive_req = write_block_receive_req,
     .timeout_jiffies = &ternfs_write_block_timeout_jiffies,
@@ -146,6 +140,16 @@ static void block_ops_init(struct block_ops* ops) {
     }
 }
 
+// Locking principles around this are quite complex as it can be used from
+// multiple contexts (workqueue, socket callbacks and direct calls enqueing more work).
+// Safe disposal is protected via reference counting.
+// While active socket is held in a hash table protected by RCU. This always hold one reference
+// and the removal from hash table only drops the reference after rcu synchronize is done.
+// This makes taking a reference under an rcu lock safe.
+// Because we always remove socket callbacks before removing from hash table and wait for completion of any ongoing
+// work it is also safe to take a refernce from any of the socket_callbacks.
+// Helper functions for erroring out socket or enquing work quarantee that reference is either passed
+// to the work queue or dropped if work is not scheduled. It is unsafe to use socket after calling those functions.
 struct block_socket {
     struct socket* sock;
     struct sockaddr_in addr;
@@ -169,29 +173,58 @@ struct block_socket {
     spinlock_t list_lock;
     // We schedule write work as kernel is unhappy if we write from sk_write_space callback
     // write work is scheduled on ternfs_fast_wq and we yield after at most 10ms of writing
+    // we also check if socket needs to be cleaned up due to error timeout and do it from same work
     struct work_struct write_work;
-    // We schedule cleanup work on ternfs_fast_wq when we error out socket or if there was no activity for block_ops->timeout_jiffies
-    struct work_struct cleanup_work;
+    atomic_t write_work_active;
+    atomic_t refcount;
     // There could be multiple cleanup items scheduled, we only want first one to remove socket from hash, wake up waiters, remove requests
     bool terminal;
     // Read end. "sk_data_ready" callback does all the work.
     struct list_head read;
     // used for waiting on connect or waiting for socket do be fully removed
     struct completion sock_wait;
-    // we need number of waiters as last waiter needs to schedule work to free the socket (it will be terminal by then)
-    int waiters;
     // Saved callbacks
     void (*saved_state_change)(struct sock *sk);
     void (*saved_data_ready)(struct sock *sk);
     void (*saved_write_space)(struct sock *sk);
 };
 
+
+// This function needs to be called while holding a reference to the socket
+// or holding and RCU lock or from under the socket callback lock.
+inline void block_socket_hold(struct block_socket* socket) {
+    int ref_count = atomic_inc_return(&socket->refcount);
+    BUG_ON(ref_count <= 1); // initial reference is set on init
+}
+
+
+inline void block_socket_put(struct block_socket* socket) {
+    int ref_count = atomic_dec_return(&socket->refcount);
+    BUG_ON(ref_count < 0);
+    if (ref_count == 0) {
+        sock_release(socket->sock);
+        kfree(socket);
+    }
+}
+
+// if cleanup was scheduled ref is passed to workqueue otherwise refcount is reduced
+// it is not safe to use socket after calling this function
+inline void queue_work_or_put(struct block_socket* socket) {
+    if (!queue_work(ternfs_fast_wq, &socket->write_work)) {
+        block_socket_put(socket);
+    }
+}
+
 // Needs to be called with read lock on socket->sock->sock->sk_callback_lock
 // or from workqueue context (ternfs_fast_wq)
 // Errors socket if not already in error state and schedules cleanup
+// if cleanup was scheduled ref is passed to workqueue otherwise refcount is reduced
+// it is not safe to use socket after calling this function
 inline void error_socket(struct block_socket* socket, int err) {
     if (atomic_cmpxchg(&socket->err, 0, err) == 0) {
-        queue_work(ternfs_fast_wq, &socket->cleanup_work);
+        queue_work_or_put(socket);
+    } else {
+        block_socket_put(socket);
     }
 }
 
@@ -203,6 +236,7 @@ static void block_ops_exit(struct block_ops* ops) {
     rcu_read_lock();
     hash_for_each_rcu(ops->sockets, bucket, sock, hnode) {
         ternfs_debug("scheduling winddown for %d", ntohs(sock->addr.sin_port));
+        block_socket_hold(sock);
         error_socket(sock, -ECONNABORTED);
     }
     rcu_read_unlock();
@@ -281,6 +315,9 @@ static void block_socket_state_check_locked(struct sock* sk) {
     // Right now we connect beforehand, so every change is trouble. Just
     // kill the socket.
     ternfs_debug("socket state check triggered: %d, will fail reqs", sk->sk_state);
+    // we are protected by callback lock but not holding a reference
+    // we need to take it for the error_socket call
+    block_socket_hold(socket);
     error_socket(socket, -ECONNABORTED); // TODO we could have nicer errors
 }
 
@@ -315,18 +352,141 @@ static void block_socket_connect_sk_state_change(struct sock* sk) {
     saved_state_change(sk);
 }
 
+inline bool block_socket_check_timeout(struct block_socket* socket, u64 now, u64 timeout_jiffies, bool set_error) {
+    // if something is locked activity in progress, nothing to do
+    if (!spin_trylock_bh(&socket->list_lock)) {
+        return false;
+    }
+    u64 last_activity = max(socket->last_read_activity, socket->last_write_activity);
+    bool timed_out = now - min(now, last_activity) > timeout_jiffies;
+    if (set_error && timed_out) {
+        atomic_cmpxchg(&socket->err, 0, -ETIMEDOUT);
+    }
+    spin_unlock_bh(&socket->list_lock);
+    return timed_out;
+}
+
+// Call periodically to check for inactive ones and schedules work on them to potentially time them out
+static void timeout_sockets(struct block_ops* ops) {
+    int bucket;
+    struct block_socket* sock;
+    u64 now = get_jiffies_64();
+
+    rcu_read_lock();
+    hash_for_each_rcu(ops->sockets, bucket, sock, hnode) {
+        if (block_socket_check_timeout(sock, now, *ops->timeout_jiffies, false)) {
+            // We can't clean up here as timing out involves removing from hash and needs
+            // synchronization through rcu_synchronize
+            block_socket_hold(sock);
+            queue_work_or_put(sock);
+        }
+    }
+    rcu_read_unlock();
+}
+
+// check if socket needs cleanup due to error or timeout
+// returns true if socket was cleaned up or partly cleaned up
+static bool block_socket_cleanup(
+    struct block_ops* ops,
+    struct block_socket* socket,
+    bool check_timeout
+) {
+    if (check_timeout) {
+        block_socket_check_timeout(socket, get_jiffies_64(), *ops->timeout_jiffies, true);
+    }
+    int err = atomic_read(&socket->err);
+
+    if (!err) {
+        return false;
+    }
+    // wait for callbacks to complete
+    write_lock_bh(&socket->sock->sk->sk_callback_lock);
+
+    // We are killing the socket either due to error or timeout
+    // We already have callback lock, no callback could be running except for
+    // default linux callback which we don't care about.
+    socket->sock->sk->sk_data_ready = socket->saved_data_ready;
+    socket->sock->sk->sk_state_change = socket->saved_state_change;
+    socket->sock->sk->sk_write_space = socket->saved_write_space;
+    socket->sock->sk->sk_user_data = NULL;
+    write_unlock_bh(&socket->sock->sk->sk_callback_lock);
+
+    ternfs_debug("winding down socket to %pI4:%d due to %d", &socket->addr.sin_addr, ntohs(socket->addr.sin_port), err);
+
+    u64 key = block_socket_key(&socket->addr);
+    int bucket = hash_min(key, BLOCK_SOCKET_BITS);
+
+    if (!socket->terminal) {
+        socket->terminal = true;
+
+        // First, remove socket from hashmap. After we're done with this,
+        // we know nobody's going to add new requests to this.
+        spin_lock(&ops->locks[bucket]);
+        hash_del_rcu(&socket->hnode); // tied to atomic_dec below
+        spin_unlock(&ops->locks[bucket]);
+        synchronize_rcu();
+
+        // Adjust len, notify waiters
+        smp_mb__before_atomic();
+        atomic_dec(&ops->len[bucket]);
+        wake_up_all(&ops->wqs[bucket]);
+
+        // wake up waiters on socket removal from list
+        complete_all(&socket->sock_wait);
+
+        // Now complete all the remaining requests with the error.
+        // We are not the only one remaining, there could be waiters for cleanup completion
+        // We need to take locks
+
+        struct block_request* req;
+        struct block_request* tmp;
+
+        struct list_head all_reqs;
+        INIT_LIST_HEAD(&all_reqs);
+
+        spin_lock_bh(&socket->list_lock);
+
+        list_for_each_entry_safe(req, tmp, &socket->read, read_list) {
+            if (!list_empty(&req->write_list)) {
+                list_del(&req->write_list);
+            }
+            list_del(&req->read_list);
+            list_add(&req->write_list, &all_reqs);
+        }
+        list_for_each_entry_safe(req, tmp, &socket->write, write_list) {
+            list_del(&req->write_list);
+            list_add(&req->write_list, &all_reqs);
+        }
+        spin_unlock_bh(&socket->list_lock);
+
+        list_for_each_entry_safe(req, tmp, &all_reqs, write_list) {
+            atomic_cmpxchg(&req->err, 0, err);
+            ternfs_debug("completing request because of a socket winddown");
+            list_del(&req->write_list);
+            block_socket_log_req_completion(socket, req);
+            queue_work(ternfs_wq, &req->complete_work);
+        }
+    }
+
+    block_socket_put(socket);
+    return true;
+}
+
 static void block_socket_write_work(
     struct block_ops* ops,
     struct block_socket* socket
 ) {
-
     ternfs_debug("%pI4:%d", &socket->addr.sin_addr, ntohs(socket->addr.sin_port));
-    // if socked failed, exit immediately
-    if (atomic_read(&socket->err)) {
-        if (socket->terminal) {
-            queue_work(ternfs_fast_wq, &socket->cleanup_work);
-        }
+
+    if (atomic_cmpxchg(&socket->write_work_active, 0, 1) != 0) {
+        // already active but we need to requeue in case it is just about to exit
+        // and will not pick up new work
+        queue_work_or_put(socket);
         return;
+    }
+
+    if (block_socket_cleanup(ops, socket, false)) {
+        goto out;
     }
 
     struct block_request* req;
@@ -338,9 +498,10 @@ static void block_socket_write_work(
 
     while (req != NULL) {
         if (get_jiffies_64() - start > MSECS_TO_JIFFIES(10)) {
-            queue_work(ternfs_fast_wq, &socket->write_work);
+            atomic_set(&socket->write_work_active, 0);
+            queue_work_or_put(socket);
             //yield to other sockets
-            break;
+            return;
         }
         // Can't be done already, we just got the req
         BUG_ON(req->left_to_write == 0);
@@ -352,6 +513,7 @@ static void block_socket_write_work(
 
         int sent = ops->write_req(socket, req);
         if (sent < 0) {
+            atomic_set(&socket->write_work_active, 0);
             error_socket(socket, sent);
             return;
         }
@@ -384,6 +546,9 @@ static void block_socket_write_work(
             queue_work(ternfs_wq, &completed_req->complete_work);
         }
     }
+out:
+    atomic_set(&socket->write_work_active, 0);
+    block_socket_put(socket);
 }
 
 static void block_socket_sk_write_space(struct sock* sk) {
@@ -391,7 +556,8 @@ static void block_socket_sk_write_space(struct sock* sk) {
     read_lock_bh(&sk->sk_callback_lock);
     struct block_socket* socket = (struct block_socket*)sk->sk_user_data;
     if (socket != NULL) {
-        queue_work(ternfs_fast_wq, &socket->write_work);
+        block_socket_hold(socket);
+        queue_work_or_put(socket);
         old_write_space = socket->saved_write_space;
     } else {
         old_write_space = sk->sk_write_space;
@@ -401,9 +567,7 @@ static void block_socket_sk_write_space(struct sock* sk) {
 }
 
 // Gets the socket, and acquires a reference to it.
-//
-// If successful, returns with RCU read lock taken.
-static struct block_socket* __acquires(RCU) get_block_socket(
+static struct block_socket*  get_block_socket(
     struct block_ops* ops,
     struct sockaddr_in* addr
 ) {
@@ -414,6 +578,8 @@ static struct block_socket* __acquires(RCU) get_block_socket(
     struct block_socket* sock;
     hlist_for_each_entry_rcu(sock, &ops->sockets[bucket], hnode) {
         if (block_socket_key(&sock->addr) == key) {
+            block_socket_hold(sock);
+            rcu_read_unlock();
             return sock;
         }
     }
@@ -478,13 +644,13 @@ static struct block_socket* __acquires(RCU) get_block_socket(
     spin_lock_init(&sock->list_lock);
     INIT_LIST_HEAD(&sock->write);
     INIT_WORK(&sock->write_work, ops->write_work);
-    INIT_WORK(&sock->cleanup_work, ops->cleanup_work);
+    atomic_set(&sock->write_work_active, 0);
+    atomic_set(&sock->refcount, 1);
     INIT_LIST_HEAD(&sock->read);
 
 
     sock->terminal = false;
     sock->last_read_activity = sock->last_write_activity = get_jiffies_64();
-    sock->waiters = 0;
 
     // now insert
     struct block_socket* other_sock;
@@ -523,6 +689,7 @@ static struct block_socket* __acquires(RCU) get_block_socket(
             return get_block_socket(ops, addr);
         }
     }
+    rcu_read_unlock();
 
     // Put the new callbacks in
 
@@ -531,6 +698,8 @@ static struct block_socket* __acquires(RCU) get_block_socket(
     sock->sock->sk->sk_data_ready = ops->sk_data_ready;
     sock->sock->sk->sk_state_change = block_socket_sk_state_change;
     sock->sock->sk->sk_write_space = ops->sk_write_space;
+
+    block_socket_hold(sock); // we are now sure we'll return it
 
     // Insert the socket into the hash map -- anyone else which
     // will find it will be good to do.
@@ -548,115 +717,7 @@ static struct block_socket* __acquires(RCU) get_block_socket(
 out_err_sock:
     kfree(sock);
 out_err:
-    // we grab rcu to keep sparse happy as we promised to acquire RCU
-    rcu_read_lock();
     return ERR_PTR(err);
-}
-
-inline bool block_socket_check_timeout(struct block_socket* socket, u64 now, u64 timeout_jiffies, bool set_error) {
-    // if something is locked activity in progress, nothing to do
-    if (!spin_trylock_bh(&socket->list_lock)) {
-        return false;
-    }
-    u64 last_activity = max(socket->last_read_activity, socket->last_write_activity);
-    bool timed_out = now - min(now, last_activity) > timeout_jiffies;
-    if (set_error && timed_out) {
-        atomic_cmpxchg(&socket->err, 0, -ETIMEDOUT);
-    }
-    spin_unlock_bh(&socket->list_lock);
-    return timed_out;
-}
-
-static void block_socket_cleanup_work(
-    struct block_ops* ops,
-    struct block_socket* socket
-) {
-    block_socket_check_timeout(socket, get_jiffies_64(), *ops->timeout_jiffies, true);
-    int err = atomic_read(&socket->err);
-
-    if (!err) {
-        return;
-    }
-    // wait for callbacks to complete
-    write_lock_bh(&socket->sock->sk->sk_callback_lock);
-
-    // We are killing the socket either due to error or timeout
-    // We already have callback lock, no callback could be running except for
-    // default linux callback which we don't care about.
-    socket->sock->sk->sk_data_ready = socket->saved_data_ready;
-    socket->sock->sk->sk_state_change = socket->saved_state_change;
-    socket->sock->sk->sk_write_space = socket->saved_write_space;
-    socket->sock->sk->sk_user_data = NULL;
-    write_unlock_bh(&socket->sock->sk->sk_callback_lock);
-
-    ternfs_debug("winding down socket to %pI4:%d due to %d", &socket->addr.sin_addr, ntohs(socket->addr.sin_port), err);
-
-    u64 key = block_socket_key(&socket->addr);
-    int bucket = hash_min(key, BLOCK_SOCKET_BITS);
-    bool completion_waiters = false;
-
-    if (!socket->terminal) {
-        socket->terminal = true;
-
-        // First, remove socket from hashmap. After we're done with this,
-        // we know nobody's going to add new requests to this.
-        spin_lock(&ops->locks[bucket]);
-        hash_del_rcu(&socket->hnode); // tied to atomic_dec below
-        spin_unlock(&ops->locks[bucket]);
-        synchronize_rcu();
-
-        // Now complete all the remaining requests with the error.
-        // We are not the only one remaining, there could be waiters for cleanup completion
-        // We need to take locks
-
-        struct block_request* req;
-        struct block_request* tmp;
-
-        struct list_head all_reqs;
-        INIT_LIST_HEAD(&all_reqs);
-
-        spin_lock_bh(&socket->list_lock);
-
-        list_for_each_entry_safe(req, tmp, &socket->read, read_list) {
-            if (!list_empty(&req->write_list)) {
-                list_del(&req->write_list);
-            }
-            list_del(&req->read_list);
-            list_add(&req->write_list, &all_reqs);
-        }
-        list_for_each_entry_safe(req, tmp, &socket->write, write_list) {
-            list_del(&req->write_list);
-            list_add(&req->write_list, &all_reqs);
-        }
-        completion_waiters = socket->waiters != 0;
-        spin_unlock_bh(&socket->list_lock);
-
-        if (completion_waiters) {
-            // wake them up, last one will schedule termination work
-            complete_all(&socket->sock_wait);
-        }
-
-
-        list_for_each_entry_safe(req, tmp, &all_reqs, write_list) {
-            atomic_cmpxchg(&req->err, 0, err);
-            ternfs_debug("completing request because of a socket winddown");
-            list_del(&req->write_list);
-            block_socket_log_req_completion(socket, req);
-            queue_work(ternfs_wq, &req->complete_work);
-        }
-    }
-
-    // Finally, kill the socket, unless there were waiters or if there is another work item remaining, in which
-    // case it'll kill the socket but won't execute the cleanup operation above.
-    if (!(completion_waiters || test_bit(WORK_STRUCT_PENDING_BIT, work_data_bits(&socket->cleanup_work)) || test_bit(WORK_STRUCT_PENDING_BIT, work_data_bits(&socket->write_work)))) {
-        sock_release(socket->sock);
-        kfree(socket);
-
-        // Adjust len, notify waiters
-        smp_mb__before_atomic();
-        atomic_dec(&ops->len[bucket]);
-        wake_up_all(&ops->wqs[bucket]);
-    }
 }
 
 static int block_socket_receive_req_locked(
@@ -673,6 +734,7 @@ static int block_socket_receive_req_locked(
     size_t len0 = len;
 
     if (atomic_read(&socket->err)) {
+        block_socket_put(socket);
         return len0;
     }
 
@@ -722,6 +784,7 @@ static int block_socket_receive_req_locked(
 
     // We have more data but no requests. This should not happen
     BUG_ON(req == NULL && len > 0);
+    block_socket_put(socket);
     return len0 - len;
 }
 
@@ -734,15 +797,18 @@ static void block_socket_sk_data_ready(
         read_descriptor_t rd_desc;
         // Taken from iscsi -- we set count to 1 because we want the network layer to
         // hand us all the skbs that are available.
-        rd_desc.arg.data = sk->sk_user_data;
+        struct block_socket* socket = rd_desc.arg.data = sk->sk_user_data;
         rd_desc.count = 1;
+        // while this is protected by callback lock the callback might want to error a socket
+        // and enqueue cleanup work which needs a reference. best to take it here
+        block_socket_hold(socket);
         tcp_read_sock(sk, &rd_desc, ops->receive_req);
         block_socket_state_check_locked(sk);
     }
     read_unlock_bh(&sk->sk_callback_lock);
 }
 
-static struct block_socket* __acquires(RCU) get_blockservice_socket(
+static struct block_socket* get_blockservice_socket(
     struct block_ops* ops,
     struct ternfs_block_service* bs
 )   {
@@ -766,9 +832,7 @@ static struct block_socket* __acquires(RCU) get_blockservice_socket(
         if (!IS_ERR(sock)) {
             goto out;
         }
-        rcu_read_unlock();
     }
-    rcu_read_lock();
 out:
     return sock;
 }
@@ -796,28 +860,23 @@ static int block_socket_start_req(
 
 
 retry_get_socket:
-    // As the very last thing, try to get the socket (will get RCU lock).
+    // As the very last thing, try to get the socket with increased refcount.
     sock = get_blockservice_socket(ops, bs);
     if (IS_ERR(sock)) {
         err = PTR_ERR(sock);
-        rcu_read_unlock();
         goto out_err;
     }
     err = 0;
 
-    // We have a socket, and we also have the RCU lock. We need to hurry
-    // and place the request in the queue, and schedule work. Everything
-    // in the RCU section, since otherwise the socket might be cleared
-    // under our feet. We need to put it in both write and read queue
+    // We have a socket We need to place the request in the queue,
+    // and schedule work. We need to put it in both write and read queue
     // to avoid a race where we get response before we move it from write
     // to read queue
     is_first = false;
     socket_error = false;
     spin_lock_bh(&sock->list_lock);
     socket_error = atomic_read(&sock->err) != 0;
-    if (socket_error) {
-        ++sock->waiters;
-    } else {
+    if (!socket_error) {
         is_first = list_first_entry_or_null(&sock->write, struct block_request, write_list) == NULL;
         list_add_tail(&req->write_list, &sock->write);
         if (is_first) {
@@ -828,18 +887,13 @@ retry_get_socket:
     }
     spin_unlock_bh(&sock->list_lock);
 
-    // current socket is in errored state. Release rcu and wait for removal. Socket will not get destroyed
-    // as we incremented waiters under a lock above.
+    // current socket is in errored state. Wait for removal. Socket will not get destroyed
+    // as hold a reference to it.
     if (socket_error) {
-        rcu_read_unlock();
         err = wait_for_completion_timeout(&sock->sock_wait, MSECS_TO_JIFFIES(100));
-        // we can't use atomics if we want to have a timeout here otherwise we race with destruction
-        spin_lock_bh(&sock->list_lock);
-        bool last_waiter = --sock->waiters == 0;
-        spin_unlock_bh(&sock->list_lock);
-        if (last_waiter) {
-            queue_work(ternfs_fast_wq, &sock->cleanup_work);
-        }
+        // we timed out or got awoken in any case drop the reference
+        block_socket_put(sock);
+
 
         if (err <= 0) {
             ternfs_warn("timed out waiting for socked to bs=%016llx  to be cleaned up", bs->id);
@@ -851,33 +905,16 @@ retry_get_socket:
 
     // We are first request in write queue, schedule writing
     if (is_first) {
-        queue_work(ternfs_fast_wq, &sock->write_work);
+        queue_work_or_put(sock);
+    } else {
+        block_socket_put(sock);
     }
 
-    // we're done
-    rcu_read_unlock();
     return 0;
 
 out_err:
     ternfs_info("couldn't start block request, err=%d", err);
     return err;
-}
-
-// Call periodically to check for inactive ones and schedules work on them to potentially time them out
-static void timeout_sockets(struct block_ops* ops) {
-    int bucket;
-    struct block_socket* sock;
-    u64 now = get_jiffies_64();
-
-    rcu_read_lock();
-    hash_for_each_rcu(ops->sockets, bucket, sock, hnode) {
-        if (block_socket_check_timeout(sock, now, *ops->timeout_jiffies, false)) {
-            // We can't clean up here as timing out involves removing from hash and needs
-            // synchronization through rcu_synchronize
-            queue_work(ternfs_fast_wq, &sock->cleanup_work);
-        }
-    }
-    rcu_read_unlock();
 }
 
 static int drop_sockets(struct block_ops* ops) {
@@ -891,6 +928,7 @@ static int drop_sockets(struct block_ops* ops) {
         // We put EAGAIN here so that the caller can restart the
         // request if it wants to (since we didn't really encounter
         // any error). We don't currently do this though.
+        block_socket_hold(sock);
         error_socket(sock, -EAGAIN);
     }
     rcu_read_unlock();
@@ -1152,11 +1190,6 @@ static void fetch_block_pages_with_crc_write_work(struct work_struct* work) {
     block_socket_write_work(&fetch_block_pages_witch_crc_ops, container_of(work, struct block_socket, write_work));
 }
 
-static void fetch_block_pages_with_crc_cleanup_work(struct work_struct* work) {
-    struct block_socket* socket = container_of(work, struct block_socket, cleanup_work);
-    block_socket_cleanup_work(&fetch_block_pages_witch_crc_ops, socket);
-}
-
 static int fetch_block_pages_with_crc_receive_req(read_descriptor_t* rd_desc, struct sk_buff* skb, unsigned int offset, size_t len) {
     return block_socket_receive_req_locked(fetch_receive_single_req, rd_desc, skb, offset, len);
 }
@@ -1409,11 +1442,6 @@ out_err:
 static void write_block_write_work(struct work_struct* work) {
     struct block_socket* socket = container_of(work, struct block_socket, write_work);
     block_socket_write_work(&write_block_ops, socket);
-}
-
-static void write_block_cleanup_work(struct work_struct* work) {
-    struct block_socket* socket = container_of(work, struct block_socket, cleanup_work);
-    block_socket_cleanup_work(&write_block_ops, socket);
 }
 
 static int write_block_receive_single_req(
