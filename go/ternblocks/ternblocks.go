@@ -44,6 +44,7 @@ import (
 	"xtx/ternfs/core/wyhash"
 	"xtx/ternfs/msgs"
 
+	"golang.org/x/net/ipv4"
 	"golang.org/x/sys/unix"
 )
 
@@ -1388,6 +1389,7 @@ func main() {
 	locationId := flag.Uint("location", 10000, "Location ID")
 	ioAlertPercent := flag.Uint("io-alert-percent", 10, "Threshold percent of I/O errors over which we alert")
 	registryConnectionTimeout := flag.Duration("registry-connection-timeout", 10*time.Second, "")
+	dscp := flag.Uint("dscp", 0, "DSCP value to set on connections")
 
 	flag.Parse()
 	flagErrors := false
@@ -1430,6 +1432,11 @@ func main() {
 
 	if *hardwareEventAddress != "" && *hostname == "" {
 		fmt.Fprintf(os.Stderr, "-hostname must be provided if you need hardware event reporting\n")
+		flagErrors = true
+	}
+
+	if *dscp > 63 {
+		fmt.Fprintf(os.Stderr, "DSCP value must be between 0 and 63\n")
 		flagErrors = true
 	}
 
@@ -1743,6 +1750,25 @@ func main() {
 			if err != nil {
 				terminateChan <- err
 				return
+			}
+
+			if (*dscp != 0) {
+				// check if client wants to override DSCP
+				ipv4Conn := ipv4.NewConn(conn)
+				currentDSCP, err := ipv4Conn.TOS()
+				if err != nil {
+					terminateChan <- err
+					return
+				}
+				if currentDSCP >> 2 == 0 {
+					// Client did not set DSCP, so we set it
+					// Note that we shift left by 2 as the lower 2 bits are used for ECN
+					err = ipv4Conn.SetTOS(int(*dscp) << 2)
+					if err != nil {
+						terminateChan <- err
+						return
+					}
+				}
 			}
 			go func() {
 				defer func() { lrecover.HandleRecoverChan(l, terminateChan, recover()) }()

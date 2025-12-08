@@ -157,12 +157,18 @@ github.com/hanwen/go-fuse/v2/splice
 # github.com/mattn/go-sqlite3 v1.14.32
 ## explicit; go 1.19
 github.com/mattn/go-sqlite3
+# golang.org/x/net v0.47.0
+## explicit; go 1.24.0
+golang.org/x/net/bpf
+golang.org/x/net/internal/iana
+golang.org/x/net/internal/socket
+golang.org/x/net/ipv4
 # golang.org/x/sync v0.11.0
 ## explicit; go 1.18
 golang.org/x/sync/errgroup
 golang.org/x/sync/semaphore
-# golang.org/x/sys v0.31.0
-## explicit; go 1.23.0
+# golang.org/x/sys v0.38.0
+## explicit; go 1.24.0
 golang.org/x/sys/unix
 golang.org/x/sys/windows
 # github.com/hanwen/go-fuse/v2 => github.com/bitonic/go-fuse/v2 v2.0.0-20251001121756-22ce115c0dfc
