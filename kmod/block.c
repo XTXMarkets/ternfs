@@ -467,7 +467,7 @@ static bool block_socket_cleanup(
             queue_work(ternfs_wq, &req->complete_work);
         }
     }
-
+    atomic_set(&socket->write_work_active, 0);
     block_socket_put(socket);
     return true;
 }
@@ -486,7 +486,7 @@ static void block_socket_write_work(
     }
 
     if (block_socket_cleanup(ops, socket, false)) {
-        goto out;
+        return;
     }
 
     struct block_request* req;
@@ -546,7 +546,6 @@ static void block_socket_write_work(
             queue_work(ternfs_wq, &completed_req->complete_work);
         }
     }
-out:
     atomic_set(&socket->write_work_active, 0);
     block_socket_put(socket);
 }
