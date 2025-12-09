@@ -59,7 +59,7 @@ struct ternfs_inline_span {
     })
 
 struct ternfs_block {
-    struct ternfs_stored_block_service* bs;
+    struct ternfs_block_service bs;
     u64 id;
     u32 crc;
 };

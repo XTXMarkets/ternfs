@@ -23,7 +23,6 @@
 #include "file.h"
 #include "debugfs.h"
 #include "policy.h"
-#include "block_services.h"
 
 MODULE_LICENSE("GPL");
 
@@ -52,9 +51,6 @@ static int __init ternfs_init(void) {
 
     err = ternfs_policy_init();
     if (err) { goto out_policy; }
-
-    err = ternfs_block_service_init();
-    if (err) { goto out_block_service; }
 
     err = ternfs_sysfs_init();
     if (err) { goto out_sysfs; }
@@ -102,8 +98,6 @@ out_block:
 out_sysctl:
     ternfs_sysfs_exit();
 out_sysfs:
-    ternfs_block_service_exit();
-out_block_service:
     ternfs_policy_exit();
 out_policy:
     ternfs_rs_exit();
@@ -124,7 +118,6 @@ static void __exit ternfs_exit(void) {
     ternfs_block_exit();
     ternfs_sysctl_exit();
     ternfs_sysfs_exit();
-    ternfs_block_service_exit();
     ternfs_policy_exit();
     ternfs_rs_exit();
 

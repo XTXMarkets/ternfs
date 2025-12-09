@@ -12,7 +12,6 @@
 #include <linux/workqueue.h>
 #include <linux/parser.h>
 
-#include "block_services.h"
 #include "log.h"
 #include "inode.h"
 #include "export.h"
@@ -171,92 +170,6 @@ static int ternfs_refresh_fs_info(struct ternfs_fs_info* info) {
             atomic64_set(&info->cdc_addr2, ternfs_mk_addr(cdc_ip2.x, cdc_port2.x));
         }
     }
-
-    {
-        {
-            char changed_block_services_req[TERNFS_REGISTRY_REQ_HEADER_SIZE + TERNFS_LOCAL_CHANGED_BLOCK_SERVICES_REQ_SIZE];
-            struct ternfs_bincode_put_ctx ctx = {
-                .start = changed_block_services_req + TERNFS_REGISTRY_REQ_HEADER_SIZE,
-                .cursor = changed_block_services_req + TERNFS_REGISTRY_REQ_HEADER_SIZE,
-                .end = changed_block_services_req + sizeof(changed_block_services_req),
-            };
-            ternfs_local_changed_block_services_req_put_start(&ctx, start);
-            ternfs_local_changed_block_services_req_put_changed_since(&ctx, start, changed_since, info->block_services_last_changed_time);
-            ternfs_local_changed_block_services_req_put_end(&ctx, changed_since, end);
-            ternfs_write_registry_req_header(changed_block_services_req, TERNFS_LOCAL_CHANGED_BLOCK_SERVICES_REQ_SIZE, TERNFS_REGISTRY_LOCAL_CHANGED_BLOCK_SERVICES);
-            if (err = sendloop(registry_sock, changed_block_services_req, sizeof changed_block_services_req), err < 0) goto out_sock;
-        }
-        u32 registry_resp_len;
-        u8 registry_resp_kind;
-        {
-            char block_services_resp_header[TERNFS_REGISTRY_RESP_HEADER_SIZE];
-            if (err = recvloop(registry_sock, block_services_resp_header, sizeof block_services_resp_header), err < 0) goto out_sock;
-            err = ternfs_read_registry_resp_header(block_services_resp_header, &registry_resp_len, &registry_resp_kind);
-            if (err < 0) { goto out_sock; }
-        }
-        u64 last_changed;
-        u16 block_services_len;
-        {
-            char last_changed_and_len[sizeof(last_changed) + sizeof(block_services_len)];
-            if (registry_resp_len < sizeof(last_changed_and_len)) {
-                ternfs_debug("expected size of at least %ld for BlockServicesWithFlagChangeResp, got %d", sizeof(last_changed_and_len), registry_resp_len);
-                err = -EINVAL;
-                goto out_sock;
-            }
-            if (err = recvloop(registry_sock, last_changed_and_len, sizeof last_changed_and_len), err < 0) goto out_sock;
-            last_changed = get_unaligned_le64(last_changed_and_len);
-            block_services_len = get_unaligned_le16(last_changed_and_len + sizeof(last_changed));
-            registry_resp_len -= sizeof(last_changed_and_len);
-        }
-        {
-            if (registry_resp_len != TERNFS_BLOCK_SERVICE_SIZE * block_services_len) {
-                ternfs_debug("expected size of at least %d for %d BlockServices in BlockServicesWithFlagChangeResp, got %d",
-                    TERNFS_BLOCK_SERVICE_SIZE * block_services_len, block_services_len, registry_resp_len);
-                err = -EINVAL;
-                goto out_sock;
-            }
-            u16 block_service_idx;
-            for (block_service_idx = 0; block_service_idx < block_services_len; block_service_idx++) {
-                char block_service_buf[TERNFS_BLOCK_SERVICE_SIZE];
-                if (err = recvloop(registry_sock, block_service_buf, sizeof block_service_buf), err < 0) goto out_sock;
-                struct ternfs_bincode_get_ctx bs_ctx = {
-                    .buf = block_service_buf,
-                    .end = block_service_buf + sizeof(block_service_buf),
-                    .err = 0,
-                };
-                ternfs_block_service_get_start(&bs_ctx, start);
-                ternfs_block_service_get_addrs(&bs_ctx, start, addr_start);
-                ternfs_addrs_info_get_addr1(&bs_ctx, addr_start, ipport1_start);
-                ternfs_ip_port_get_addrs(&bs_ctx, ipport1_start, ip1);
-                ternfs_ip_port_get_port(&bs_ctx, ip1, port1);
-                ternfs_ip_port_get_end(&bs_ctx, port1, ipport1_end);
-                ternfs_addrs_info_get_addr2(&bs_ctx, ipport1_end, ipport2_start);
-                ternfs_ip_port_get_addrs(&bs_ctx, ipport2_start, ip2);
-                ternfs_ip_port_get_port(&bs_ctx, ip2, port2);
-                ternfs_ip_port_get_end(&bs_ctx, port2, ipport2_end);
-                ternfs_addrs_info_get_end(&bs_ctx, ipport2_end, addr_end);
-                ternfs_block_service_get_id(&bs_ctx, addr_end, bs_id);
-                ternfs_block_service_get_flags(&bs_ctx, bs_id, bs_flags);
-                ternfs_block_service_get_end(&bs_ctx, bs_flags, end);
-                ternfs_block_service_get_finish(&bs_ctx, end);
-                if (bs_ctx.err != 0) { err = ternfs_error_to_linux(bs_ctx.err); goto out_sock; }
-
-                struct ternfs_block_service bs;
-                bs.id = bs_id.x;
-                bs.ip1 = ip1.x;
-                bs.port1 = port1.x;
-                bs.ip2 = ip2.x;
-                bs.port2 = port2.x;
-                bs.flags = bs_flags.x;
-                struct ternfs_stored_block_service* sbs = ternfs_upsert_block_service(&bs);
-                if (IS_ERR(sbs)) {
-                    err = PTR_ERR(sbs);
-                    goto out_sock;
-                }
-            }
-        }
-        info->block_services_last_changed_time = last_changed;
-    }
     {
         static_assert(TERNFS_INFO_REQ_SIZE == 0);
         char info_req[TERNFS_REGISTRY_REQ_HEADER_SIZE];
@@ -408,12 +321,6 @@ static struct ternfs_fs_info* ternfs_init_fs_info(struct net* net, const char* d
 
     err = ternfs_init_shard_socket(&ternfs_info->sock);
     if (err) { goto out_addr; }
-
-    // for the first update we will ask for everything that changed in last day.
-    // this is more than enough time for any older changed to be visible to shards and propagated through block info
-    u64 atime_ns = ktime_get_real_ns();
-    atime_ns -= min(atime_ns, 86400000000000ull);
-    ternfs_info->block_services_last_changed_time = atime_ns;
 
     err = ternfs_refresh_fs_info(ternfs_info);
     if (err != 0) { goto out_socket; }

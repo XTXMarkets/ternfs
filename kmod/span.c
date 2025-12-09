@@ -22,9 +22,8 @@
 #include "trace.h"
 #include "intrshims.h"
 #include "sysctl.h"
-#include "block_services.h"
 
-int ternfs_span_cache_retention_jiffies = 24 * 60 * 60 * HZ; // 1 day
+int ternfs_span_cache_retention_jiffies = 10 * 60  * HZ; // 10 minutes
 
 static struct kmem_cache* ternfs_block_span_cachep;
 static struct kmem_cache* ternfs_inline_span_cachep;
@@ -375,16 +374,13 @@ static int fetch_span_blocks(struct fetch_span_pages_state* st) {
             }
         }
 
-        //fetch_stripe_trace(st, TERNFS_FETCH_STRIPE_BLOCK_START, i, 0);
         hold_fetch_span_pages(st);
         ternfs_debug("block start st=%p block_service=%016llx block_id=%016llx", st, block->id, block->id);
-        struct ternfs_block_service bs;
-        ternfs_get_block_service(block->bs, &bs);
         // Fetches a single cell from the block
         int block_err = ternfs_fetch_block_pages_with_crc(
             &span_block_done,
             (void*)st,
-            &bs, &st->blocks_pages[i], span->span.ino, block->id, block->crc, st->start_offset, st->size
+            &block->bs, &st->blocks_pages[i], span->span.ino, block->id, block->crc, st->start_offset, st->size
         );
         if (block_err) {
             BUG_ON(list_empty(&st->blocks_pages[i]));
@@ -906,19 +902,13 @@ static void file_spans_cb_block(
     block->id = block_id;
     block->crc = crc;
 
-    // Populate bs cache
-    struct ternfs_block_service bs;
-    bs.id = bs_id;
-    bs.ip1 = ip1;
-    bs.port1 = port1;
-    bs.ip2 = ip2;
-    bs.port2 = port2;
-    bs.flags = flags;
-    block->bs = ternfs_upsert_block_service(&bs);
-    if (IS_ERR(block->bs)) {
-        ctx->err = PTR_ERR(block->bs);
-        return;
-    }
+    struct ternfs_block_service* bs = &block->bs;
+    bs->id = bs_id;
+    bs->ip1 = ip1;
+    bs->port1 = port1;
+    bs->ip2 = ip2;
+    bs->port2 = port2;
+    bs->flags = flags;
 }
 
 static void file_spans_cb_inline_span(void* data, u64 offset, u32 size, u8 len, const char* body) {

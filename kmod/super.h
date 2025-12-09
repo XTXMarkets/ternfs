@@ -28,8 +28,6 @@ struct ternfs_fs_info {
     atomic64_t capacity;
     atomic64_t available;
 
-    u64 block_services_last_changed_time;
-
     struct delayed_work registry_refresh_work;
 
     kuid_t uid;

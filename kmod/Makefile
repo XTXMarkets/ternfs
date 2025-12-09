@@ -34,8 +34,7 @@ ternfs-client-objs += \
 	span.o \
 	bincode.o \
 	revision.o \
-	policy.o \
-	block_services.o
+	policy.o
 
 EXTRA_CFLAGS = -I$(src) -g -DDEBUG -fdiagnostics-color=always -Wno-declaration-after-statement
 
@@ -60,7 +59,7 @@ ternfs-client-tests: revision.c extra-files
 
 ternfs-client-clean:
 	$(MAKE) -C $(KDIR) M=$(PWD) clean
-	rm -f *.o *.ko 
+	rm -f *.o *.ko
 
 
 bincode_tests: bincode_tests.c bincodegen.h bincode.h

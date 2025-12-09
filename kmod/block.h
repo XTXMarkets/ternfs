@@ -20,7 +20,6 @@ extern int ternfs_fetch_block_timeout_jiffies;
 extern int ternfs_write_block_timeout_jiffies;
 extern int ternfs_block_service_connect_timeout_jiffies;
 
-#define TERNFS_BLOCK_SERVICE_EXPECTED_PADDING 3
 struct ternfs_block_service {
     u64 id;
     u32 ip1;
@@ -28,13 +27,7 @@ struct ternfs_block_service {
     u16 port1;
     u16 port2;
     u8 flags;
-    u8 _[TERNFS_BLOCK_SERVICE_EXPECTED_PADDING];
 };
-
-static inline bool ternfs_block_services_equal(struct ternfs_block_service* l, struct ternfs_block_service* r) {
-    BUILD_BUG_ON(sizeof(struct ternfs_block_service) != offsetof(struct ternfs_block_service, _) + TERNFS_BLOCK_SERVICE_EXPECTED_PADDING);
-    return memcmp(l, r, offsetof(struct ternfs_block_service, _)) == 0;
-}
 
 // Returns an error immediately if it can't connect to the block service or anyway
 // if it thinks the block service is no good.
