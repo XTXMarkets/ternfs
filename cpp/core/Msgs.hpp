@@ -491,11 +491,11 @@ static inline BlockServiceFlags operator~(BlockServiceFlags b) {
     return (BlockServiceFlags) (~(uint8_t)b);
 }
 
-static inline bool isWritable(BlockServiceFlags flags) {
+static inline bool blockServiceFlagsWritable(BlockServiceFlags flags) {
     return (flags & (BlockServiceFlags::STALE | BlockServiceFlags::NO_WRITE | BlockServiceFlags::DECOMMISSIONED)) == BlockServiceFlags::EMPTY;
 }
 
-static inline bool isReadable(BlockServiceFlags flags) {
+static inline bool blockServiceFlagsReadable(BlockServiceFlags flags) {
     return (flags & (BlockServiceFlags::STALE | BlockServiceFlags::NO_READ | BlockServiceFlags::DECOMMISSIONED)) == BlockServiceFlags::EMPTY;
 }
 

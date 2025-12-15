@@ -21,6 +21,7 @@ struct ShardOptions {
 
     uint16_t numReaders = 1;
     Duration regionStalenessThreshold = 10_mins;
+    Duration blockServiceWritableDelay = 5_mins;  // delay before new block service becomes writable
 
     // implicit options
     bool isLeader() const { return !logsDBOptions.avoidBeingLeader; }

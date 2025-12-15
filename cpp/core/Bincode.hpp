@@ -206,7 +206,7 @@ struct BincodeFixedBytes {
 
     void copy(const char* data_, size_t length) {
         clear();
-        ALWAYS_ASSERT(length < SZ);
+        ALWAYS_ASSERT(length <= SZ);
         memcpy(data.data(), data_, length);
     }
 

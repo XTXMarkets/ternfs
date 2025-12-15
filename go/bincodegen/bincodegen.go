@@ -956,11 +956,38 @@ func generateCppSingle(hpp io.Writer, cpp io.Writer, t reflect.Type) {
 		eq:     new(bytes.Buffer),
 	}
 
+	isScalar := func(rt reflect.Type) bool {
+		if rt.Kind() == reflect.Bool || rt.Kind() == reflect.Uint8 || rt.Kind() == reflect.Uint16 ||
+			rt.Kind() == reflect.Uint32 || rt.Kind() == reflect.Uint64 {
+			return true
+		}
+		switch rt.Name() {
+		case "InodeId", "InodeIdExtra", "Parity", "TernTime", "ShardId", "Crc", "BlockServiceId", "ReplicaId", "ShardReplicaId", "LogIdx", "LeaderToken", "Ip", "IpPort", "AddrsInfo", "TernError", "BlockServiceFlags", "CDCMessageKind", "ShardMessageKind", "BlocksMessageKind", "RegistryMessageKind", "LogMessageKind":
+			return true
+		default:
+			return false
+		}
+	}
+
+	// Collect constructor parameters and initializers while emitting fields
+	ctorParams := make([]string, 0, t.NumField())
+	ctorInits := make([]string, 0, t.NumField())
+
 	fmt.Fprintf(hpp, "struct %s {\n", t.Name())
 	for i := 0; i < t.NumField(); i++ {
 		fld := t.Field(i)
 		name := cppFieldName(fld)
-		fmt.Fprintf(hpp, "    %s %s;\n", cppType(fld.Type), name)
+		ctype := cppType(fld.Type)
+		fmt.Fprintf(hpp, "    %s %s;\n", ctype, name)
+
+		if isScalar(fld.Type) {
+			ctorParams = append(ctorParams, fmt.Sprintf("%s %s_", ctype, name))
+			ctorInits = append(ctorInits, fmt.Sprintf("%s(%s_)", name, name))
+		} else {
+			ctorParams = append(ctorParams, fmt.Sprintf("%s&& %s_", ctype, name))
+			ctorInits = append(ctorInits, fmt.Sprintf("%s(std::move(%s_))", name, name))
+		}
+
 		cg.gen(&subexpr{
 			typ: fld.Type,
 			tag: parseTag(fld.Tag),
@@ -974,6 +1001,13 @@ func generateCppSingle(hpp io.Writer, cpp io.Writer, t reflect.Type) {
 	fmt.Fprintf(hpp, "    static constexpr uint16_t STATIC_SIZE = %s; // %s\n", strings.Join(cg.staticSize, " + "), strings.Join(cg.staticSizeInfo, " + "))
 	fmt.Fprintf(hpp, "\n")
 	fmt.Fprintf(hpp, "    %s() { clear(); }\n", t.Name())
+	if len(ctorParams) > 0 {
+		fmt.Fprintf(hpp, "    explicit %s(%s) : %s {}\n", t.Name(), strings.Join(ctorParams, ", "), strings.Join(ctorInits, ", "))
+	}
+	fmt.Fprintf(hpp, "    %s(const %s&) = default;\n", t.Name(), t.Name())
+	fmt.Fprintf(hpp, "    %s& operator=(const %s&) = default;\n", t.Name(), t.Name())
+	fmt.Fprintf(hpp, "    %s(%s&&) = default;\n", t.Name(), t.Name())
+	fmt.Fprintf(hpp, "    %s& operator=(%s&&) = default;\n", t.Name(), t.Name())
 
 	fmt.Fprintf(hpp, "    size_t packedSize() const {\n")
 	fmt.Fprintf(hpp, "        size_t _size = 0;\n")
@@ -1358,6 +1392,7 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 	fmt.Fprintln(hppOut, "#pragma once")
 	fmt.Fprintln(hppOut, "#include \"Msgs.hpp\"")
 	fmt.Fprintln(hppOut, "#include <algorithm>")
+	fmt.Fprintln(hppOut, "#include <utility>")
 	fmt.Fprintln(hppOut, "#include <variant>")
 	fmt.Fprintln(hppOut, "#include \"Time.hpp\"")
 	fmt.Fprintln(hppOut)

@@ -149,7 +149,7 @@ static void wipeBlockServicePorts(rocksdb::WriteBatch& batch, rocksdb::DB* db,
         StaticValue<WritableBlockServiceKey> writableKey;
         StaticValue<LastHeartBeatKey> lastHeartBeat;
         bool wasWritable = false;
-        if (isWritable(info.flags) && info.availableBytes > 0) {
+        if (blockServiceFlagsWritable(info.flags) && info.availableBytes > 0) {
             blockServiceToWritableBlockServiceKey(info, writableKey());
             batch.Delete(writableBlockServiceCf, writableKey.toSlice());
         }
@@ -370,7 +370,7 @@ void RegistryDB::processLogEntries(std::vector<LogsDBLogEntry>& logEntries, std:
                     StaticValue<LastHeartBeatKey> lastHeartBeat;
                     bool wasWritable = false;
                     if (!newService) {
-                        if (isWritable(info.flags) && info.availableBytes > 0) {
+                        if (blockServiceFlagsWritable(info.flags) && info.availableBytes > 0) {
                             wasWritable = true;
                             blockServiceToWritableBlockServiceKey(info, writableKey());
                             writeBatch.Delete(_writableBlockServicesCf, writableKey.toSlice());
@@ -391,7 +391,7 @@ void RegistryDB::processLogEntries(std::vector<LogsDBLogEntry>& logEntries, std:
                     info.availableBytes = newInfo.availableBytes;
                     info.blocks = newInfo.blocks;
                     bool nowWritable = false;
-                    if (isWritable(info.flags) && info.availableBytes > 0 && (requestTime - info.firstSeen >= _options.blockServiceUsageDelay)) {
+                    if (blockServiceFlagsWritable(info.flags) && info.availableBytes > 0 && (requestTime - info.firstSeen >= _options.blockServiceUsageDelay)) {
                         nowWritable = true;
                         blockServiceToWritableBlockServiceKey(info, writableKey());
                         writeBatch.Put(_writableBlockServicesCf, writableKey.toSlice(), {});
@@ -465,7 +465,7 @@ void RegistryDB::processLogEntries(std::vector<LogsDBLogEntry>& logEntries, std:
                     // no updates allowed to decomissioned services do nothing
                     break;
                 }
-                if (isWritable(info.flags) && info.availableBytes > 0) {
+                if (blockServiceFlagsWritable(info.flags) && info.availableBytes > 0) {
                     StaticValue<WritableBlockServiceKey> writableKey;
                     writableChanged = true;
                     blockServiceToWritableBlockServiceKey(info, writableKey());
@@ -1044,7 +1044,7 @@ bool RegistryDB::_updateStaleBlockServices(TernTime now) {
         FullBlockServiceInfo info;
         readBlockServiceInfo(bsKey.toSlice(), value, info);
         StaticValue<WritableBlockServiceKey> writableKey;
-        if (isWritable(info.flags) && info.availableBytes > 0) {
+        if (blockServiceFlagsWritable(info.flags) && info.availableBytes > 0) {
             writableChanged = true;
             blockServiceToWritableBlockServiceKey(info, writableKey());
             writeBatch.Delete(_writableBlockServicesCf, writableKey.toSlice());

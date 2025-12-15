@@ -7,6 +7,7 @@
 #pragma once
 #include "Msgs.hpp"
 #include <algorithm>
+#include <utility>
 #include <variant>
 #include "Time.hpp"
 
@@ -473,6 +474,11 @@ struct FailureDomain {
     static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<16>::STATIC_SIZE; // name
 
     FailureDomain() { clear(); }
+    explicit FailureDomain(BincodeFixedBytes<16>&& name_) : name(std::move(name_)) {}
+    FailureDomain(const FailureDomain&) = default;
+    FailureDomain& operator=(const FailureDomain&) = default;
+    FailureDomain(FailureDomain&&) = default;
+    FailureDomain& operator=(FailureDomain&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += BincodeFixedBytes<16>::STATIC_SIZE; // name
@@ -493,6 +499,11 @@ struct DirectoryInfoEntry {
     static constexpr uint16_t STATIC_SIZE = 1 + BincodeBytes::STATIC_SIZE; // tag + body
 
     DirectoryInfoEntry() { clear(); }
+    explicit DirectoryInfoEntry(uint8_t tag_, BincodeBytes&& body_) : tag(tag_), body(std::move(body_)) {}
+    DirectoryInfoEntry(const DirectoryInfoEntry&) = default;
+    DirectoryInfoEntry& operator=(const DirectoryInfoEntry&) = default;
+    DirectoryInfoEntry(DirectoryInfoEntry&&) = default;
+    DirectoryInfoEntry& operator=(DirectoryInfoEntry&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 1; // tag
@@ -513,6 +524,11 @@ struct DirectoryInfo {
     static constexpr uint16_t STATIC_SIZE = BincodeList<DirectoryInfoEntry>::STATIC_SIZE; // entries
 
     DirectoryInfo() { clear(); }
+    explicit DirectoryInfo(BincodeList<DirectoryInfoEntry>&& entries_) : entries(std::move(entries_)) {}
+    DirectoryInfo(const DirectoryInfo&) = default;
+    DirectoryInfo& operator=(const DirectoryInfo&) = default;
+    DirectoryInfo(DirectoryInfo&&) = default;
+    DirectoryInfo& operator=(DirectoryInfo&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += entries.packedSize(); // entries
@@ -535,6 +551,11 @@ struct CurrentEdge {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // targetId + nameHash + name + creationTime
 
     CurrentEdge() { clear(); }
+    explicit CurrentEdge(InodeId targetId_, uint64_t nameHash_, BincodeBytes&& name_, TernTime creationTime_) : targetId(targetId_), nameHash(nameHash_), name(std::move(name_)), creationTime(creationTime_) {}
+    CurrentEdge(const CurrentEdge&) = default;
+    CurrentEdge& operator=(const CurrentEdge&) = default;
+    CurrentEdge(CurrentEdge&&) = default;
+    CurrentEdge& operator=(CurrentEdge&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // targetId
@@ -561,6 +582,11 @@ struct AddSpanInitiateBlockInfo {
     static constexpr uint16_t STATIC_SIZE = AddrsInfo::STATIC_SIZE + 8 + FailureDomain::STATIC_SIZE + 8 + BincodeFixedBytes<8>::STATIC_SIZE; // blockServiceAddrs + blockServiceId + blockServiceFailureDomain + blockId + certificate
 
     AddSpanInitiateBlockInfo() { clear(); }
+    explicit AddSpanInitiateBlockInfo(AddrsInfo blockServiceAddrs_, BlockServiceId blockServiceId_, FailureDomain&& blockServiceFailureDomain_, uint64_t blockId_, BincodeFixedBytes<8>&& certificate_) : blockServiceAddrs(blockServiceAddrs_), blockServiceId(blockServiceId_), blockServiceFailureDomain(std::move(blockServiceFailureDomain_)), blockId(blockId_), certificate(std::move(certificate_)) {}
+    AddSpanInitiateBlockInfo(const AddSpanInitiateBlockInfo&) = default;
+    AddSpanInitiateBlockInfo& operator=(const AddSpanInitiateBlockInfo&) = default;
+    AddSpanInitiateBlockInfo(AddSpanInitiateBlockInfo&&) = default;
+    AddSpanInitiateBlockInfo& operator=(AddSpanInitiateBlockInfo&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += blockServiceAddrs.packedSize(); // blockServiceAddrs
@@ -589,6 +615,11 @@ struct RemoveSpanInitiateBlockInfo {
     static constexpr uint16_t STATIC_SIZE = AddrsInfo::STATIC_SIZE + 8 + FailureDomain::STATIC_SIZE + 1 + 8 + BincodeFixedBytes<8>::STATIC_SIZE; // blockServiceAddrs + blockServiceId + blockServiceFailureDomain + blockServiceFlags + blockId + certificate
 
     RemoveSpanInitiateBlockInfo() { clear(); }
+    explicit RemoveSpanInitiateBlockInfo(AddrsInfo blockServiceAddrs_, BlockServiceId blockServiceId_, FailureDomain&& blockServiceFailureDomain_, BlockServiceFlags blockServiceFlags_, uint64_t blockId_, BincodeFixedBytes<8>&& certificate_) : blockServiceAddrs(blockServiceAddrs_), blockServiceId(blockServiceId_), blockServiceFailureDomain(std::move(blockServiceFailureDomain_)), blockServiceFlags(blockServiceFlags_), blockId(blockId_), certificate(std::move(certificate_)) {}
+    RemoveSpanInitiateBlockInfo(const RemoveSpanInitiateBlockInfo&) = default;
+    RemoveSpanInitiateBlockInfo& operator=(const RemoveSpanInitiateBlockInfo&) = default;
+    RemoveSpanInitiateBlockInfo(RemoveSpanInitiateBlockInfo&&) = default;
+    RemoveSpanInitiateBlockInfo& operator=(RemoveSpanInitiateBlockInfo&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += blockServiceAddrs.packedSize(); // blockServiceAddrs
@@ -614,6 +645,11 @@ struct BlockProof {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<8>::STATIC_SIZE; // blockId + proof
 
     BlockProof() { clear(); }
+    explicit BlockProof(uint64_t blockId_, BincodeFixedBytes<8>&& proof_) : blockId(blockId_), proof(std::move(proof_)) {}
+    BlockProof(const BlockProof&) = default;
+    BlockProof& operator=(const BlockProof&) = default;
+    BlockProof(BlockProof&&) = default;
+    BlockProof& operator=(BlockProof&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // blockId
@@ -636,6 +672,11 @@ struct BlockService {
     static constexpr uint16_t STATIC_SIZE = AddrsInfo::STATIC_SIZE + 8 + 1; // addrs + id + flags
 
     BlockService() { clear(); }
+    explicit BlockService(AddrsInfo addrs_, BlockServiceId id_, BlockServiceFlags flags_) : addrs(addrs_), id(id_), flags(flags_) {}
+    BlockService(const BlockService&) = default;
+    BlockService& operator=(const BlockService&) = default;
+    BlockService(BlockService&&) = default;
+    BlockService& operator=(BlockService&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += addrs.packedSize(); // addrs
@@ -658,6 +699,11 @@ struct ShardInfo {
     static constexpr uint16_t STATIC_SIZE = AddrsInfo::STATIC_SIZE + 8; // addrs + lastSeen
 
     ShardInfo() { clear(); }
+    explicit ShardInfo(AddrsInfo addrs_, TernTime lastSeen_) : addrs(addrs_), lastSeen(lastSeen_) {}
+    ShardInfo(const ShardInfo&) = default;
+    ShardInfo& operator=(const ShardInfo&) = default;
+    ShardInfo(ShardInfo&&) = default;
+    ShardInfo& operator=(ShardInfo&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += addrs.packedSize(); // addrs
@@ -679,6 +725,11 @@ struct BlockPolicyEntry {
     static constexpr uint16_t STATIC_SIZE = 1 + 4; // storageClass + minSize
 
     BlockPolicyEntry() { clear(); }
+    explicit BlockPolicyEntry(uint8_t storageClass_, uint32_t minSize_) : storageClass(storageClass_), minSize(minSize_) {}
+    BlockPolicyEntry(const BlockPolicyEntry&) = default;
+    BlockPolicyEntry& operator=(const BlockPolicyEntry&) = default;
+    BlockPolicyEntry(BlockPolicyEntry&&) = default;
+    BlockPolicyEntry& operator=(BlockPolicyEntry&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 1; // storageClass
@@ -700,6 +751,11 @@ struct SpanPolicyEntry {
     static constexpr uint16_t STATIC_SIZE = 4 + 1; // maxSize + parity
 
     SpanPolicyEntry() { clear(); }
+    explicit SpanPolicyEntry(uint32_t maxSize_, Parity parity_) : maxSize(maxSize_), parity(parity_) {}
+    SpanPolicyEntry(const SpanPolicyEntry&) = default;
+    SpanPolicyEntry& operator=(const SpanPolicyEntry&) = default;
+    SpanPolicyEntry(SpanPolicyEntry&&) = default;
+    SpanPolicyEntry& operator=(SpanPolicyEntry&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 4; // maxSize
@@ -720,6 +776,11 @@ struct StripePolicy {
     static constexpr uint16_t STATIC_SIZE = 4; // targetStripeSize
 
     StripePolicy() { clear(); }
+    explicit StripePolicy(uint32_t targetStripeSize_) : targetStripeSize(targetStripeSize_) {}
+    StripePolicy(const StripePolicy&) = default;
+    StripePolicy& operator=(const StripePolicy&) = default;
+    StripePolicy(StripePolicy&&) = default;
+    StripePolicy& operator=(StripePolicy&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 4; // targetStripeSize
@@ -741,6 +802,11 @@ struct FetchedBlock {
     static constexpr uint16_t STATIC_SIZE = 1 + 8 + 4; // blockServiceIx + blockId + crc
 
     FetchedBlock() { clear(); }
+    explicit FetchedBlock(uint8_t blockServiceIx_, uint64_t blockId_, Crc crc_) : blockServiceIx(blockServiceIx_), blockId(blockId_), crc(crc_) {}
+    FetchedBlock(const FetchedBlock&) = default;
+    FetchedBlock& operator=(const FetchedBlock&) = default;
+    FetchedBlock(FetchedBlock&&) = default;
+    FetchedBlock& operator=(FetchedBlock&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 1; // blockServiceIx
@@ -765,6 +831,11 @@ struct FetchedSpanHeader {
     static constexpr uint16_t STATIC_SIZE = 8 + 4 + 4 + 1; // byteOffset + size + crc + storageClass
 
     FetchedSpanHeader() { clear(); }
+    explicit FetchedSpanHeader(uint64_t byteOffset_, uint32_t size_, Crc crc_, uint8_t storageClass_) : byteOffset(byteOffset_), size(size_), crc(crc_), storageClass(storageClass_) {}
+    FetchedSpanHeader(const FetchedSpanHeader&) = default;
+    FetchedSpanHeader& operator=(const FetchedSpanHeader&) = default;
+    FetchedSpanHeader(FetchedSpanHeader&&) = default;
+    FetchedSpanHeader& operator=(FetchedSpanHeader&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // byteOffset
@@ -787,6 +858,11 @@ struct FetchedInlineSpan {
     static constexpr uint16_t STATIC_SIZE = BincodeBytes::STATIC_SIZE; // body
 
     FetchedInlineSpan() { clear(); }
+    explicit FetchedInlineSpan(BincodeBytes&& body_) : body(std::move(body_)) {}
+    FetchedInlineSpan(const FetchedInlineSpan&) = default;
+    FetchedInlineSpan& operator=(const FetchedInlineSpan&) = default;
+    FetchedInlineSpan(FetchedInlineSpan&&) = default;
+    FetchedInlineSpan& operator=(FetchedInlineSpan&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += body.packedSize(); // body
@@ -810,6 +886,11 @@ struct FetchedBlocksSpan {
     static constexpr uint16_t STATIC_SIZE = 1 + 1 + 4 + BincodeList<FetchedBlock>::STATIC_SIZE + BincodeList<Crc>::STATIC_SIZE; // parity + stripes + cellSize + blocks + stripesCrc
 
     FetchedBlocksSpan() { clear(); }
+    explicit FetchedBlocksSpan(Parity parity_, uint8_t stripes_, uint32_t cellSize_, BincodeList<FetchedBlock>&& blocks_, BincodeList<Crc>&& stripesCrc_) : parity(parity_), stripes(stripes_), cellSize(cellSize_), blocks(std::move(blocks_)), stripesCrc(std::move(stripesCrc_)) {}
+    FetchedBlocksSpan(const FetchedBlocksSpan&) = default;
+    FetchedBlocksSpan& operator=(const FetchedBlocksSpan&) = default;
+    FetchedBlocksSpan(FetchedBlocksSpan&&) = default;
+    FetchedBlocksSpan& operator=(FetchedBlocksSpan&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 1; // parity
@@ -936,6 +1017,11 @@ struct FetchedBlockServices {
     static constexpr uint16_t STATIC_SIZE = 1 + 1 + 1 + 1 + 4 + BincodeList<FetchedBlock>::STATIC_SIZE + BincodeList<Crc>::STATIC_SIZE; // locationId + storageClass + parity + stripes + cellSize + blocks + stripesCrc
 
     FetchedBlockServices() { clear(); }
+    explicit FetchedBlockServices(uint8_t locationId_, uint8_t storageClass_, Parity parity_, uint8_t stripes_, uint32_t cellSize_, BincodeList<FetchedBlock>&& blocks_, BincodeList<Crc>&& stripesCrc_) : locationId(locationId_), storageClass(storageClass_), parity(parity_), stripes(stripes_), cellSize(cellSize_), blocks(std::move(blocks_)), stripesCrc(std::move(stripesCrc_)) {}
+    FetchedBlockServices(const FetchedBlockServices&) = default;
+    FetchedBlockServices& operator=(const FetchedBlockServices&) = default;
+    FetchedBlockServices(FetchedBlockServices&&) = default;
+    FetchedBlockServices& operator=(FetchedBlockServices&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 1; // locationId
@@ -961,6 +1047,11 @@ struct FetchedLocations {
     static constexpr uint16_t STATIC_SIZE = BincodeList<FetchedBlockServices>::STATIC_SIZE; // locations
 
     FetchedLocations() { clear(); }
+    explicit FetchedLocations(BincodeList<FetchedBlockServices>&& locations_) : locations(std::move(locations_)) {}
+    FetchedLocations(const FetchedLocations&) = default;
+    FetchedLocations& operator=(const FetchedLocations&) = default;
+    FetchedLocations(FetchedLocations&&) = default;
+    FetchedLocations& operator=(FetchedLocations&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += locations.packedSize(); // locations
@@ -983,6 +1074,11 @@ struct FetchedSpanHeaderFull {
     static constexpr uint16_t STATIC_SIZE = 8 + 4 + 4 + 1; // byteOffset + size + crc + isInline
 
     FetchedSpanHeaderFull() { clear(); }
+    explicit FetchedSpanHeaderFull(uint64_t byteOffset_, uint32_t size_, Crc crc_, bool isInline_) : byteOffset(byteOffset_), size(size_), crc(crc_), isInline(isInline_) {}
+    FetchedSpanHeaderFull(const FetchedSpanHeaderFull&) = default;
+    FetchedSpanHeaderFull& operator=(const FetchedSpanHeaderFull&) = default;
+    FetchedSpanHeaderFull(FetchedSpanHeaderFull&&) = default;
+    FetchedSpanHeaderFull& operator=(FetchedSpanHeaderFull&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // byteOffset
@@ -1093,6 +1189,11 @@ struct BlacklistEntry {
     static constexpr uint16_t STATIC_SIZE = FailureDomain::STATIC_SIZE + 8; // failureDomain + blockService
 
     BlacklistEntry() { clear(); }
+    explicit BlacklistEntry(FailureDomain&& failureDomain_, BlockServiceId blockService_) : failureDomain(std::move(failureDomain_)), blockService(blockService_) {}
+    BlacklistEntry(const BlacklistEntry&) = default;
+    BlacklistEntry& operator=(const BlacklistEntry&) = default;
+    BlacklistEntry(BlacklistEntry&&) = default;
+    BlacklistEntry& operator=(BlacklistEntry&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += failureDomain.packedSize(); // failureDomain
@@ -1117,6 +1218,11 @@ struct Edge {
     static constexpr uint16_t STATIC_SIZE = 1 + 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // current + targetId + nameHash + name + creationTime
 
     Edge() { clear(); }
+    explicit Edge(bool current_, InodeIdExtra targetId_, uint64_t nameHash_, BincodeBytes&& name_, TernTime creationTime_) : current(current_), targetId(targetId_), nameHash(nameHash_), name(std::move(name_)), creationTime(creationTime_) {}
+    Edge(const Edge&) = default;
+    Edge& operator=(const Edge&) = default;
+    Edge(Edge&&) = default;
+    Edge& operator=(Edge&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 1; // current
@@ -1142,6 +1248,11 @@ struct FullReadDirCursor {
     static constexpr uint16_t STATIC_SIZE = 1 + BincodeBytes::STATIC_SIZE + 8; // current + startName + startTime
 
     FullReadDirCursor() { clear(); }
+    explicit FullReadDirCursor(bool current_, BincodeBytes&& startName_, TernTime startTime_) : current(current_), startName(std::move(startName_)), startTime(startTime_) {}
+    FullReadDirCursor(const FullReadDirCursor&) = default;
+    FullReadDirCursor& operator=(const FullReadDirCursor&) = default;
+    FullReadDirCursor(FullReadDirCursor&&) = default;
+    FullReadDirCursor& operator=(FullReadDirCursor&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 1; // current
@@ -1165,6 +1276,11 @@ struct LinkEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + 8; // id + ownerId + time
 
     LinkEntry() { clear(); }
+    explicit LinkEntry(InodeId id_, InodeId ownerId_, TernTime time_) : id(id_), ownerId(ownerId_), time(time_) {}
+    LinkEntry(const LinkEntry&) = default;
+    LinkEntry& operator=(const LinkEntry&) = default;
+    LinkEntry(LinkEntry&&) = default;
+    LinkEntry& operator=(LinkEntry&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // id
@@ -1190,6 +1306,11 @@ struct FullRegistryInfo {
     static constexpr uint16_t STATIC_SIZE = 1 + 1 + 1 + AddrsInfo::STATIC_SIZE + 8; // id + locationId + isLeader + addrs + lastSeen
 
     FullRegistryInfo() { clear(); }
+    explicit FullRegistryInfo(ReplicaId id_, uint8_t locationId_, bool isLeader_, AddrsInfo addrs_, TernTime lastSeen_) : id(id_), locationId(locationId_), isLeader(isLeader_), addrs(addrs_), lastSeen(lastSeen_) {}
+    FullRegistryInfo(const FullRegistryInfo&) = default;
+    FullRegistryInfo& operator=(const FullRegistryInfo&) = default;
+    FullRegistryInfo(FullRegistryInfo&&) = default;
+    FullRegistryInfo& operator=(FullRegistryInfo&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 1; // id
@@ -1215,6 +1336,11 @@ struct TransientFile {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<8>::STATIC_SIZE + 8; // id + cookie + deadlineTime
 
     TransientFile() { clear(); }
+    explicit TransientFile(InodeId id_, BincodeFixedBytes<8>&& cookie_, TernTime deadlineTime_) : id(id_), cookie(std::move(cookie_)), deadlineTime(deadlineTime_) {}
+    TransientFile(const TransientFile&) = default;
+    TransientFile& operator=(const TransientFile&) = default;
+    TransientFile(TransientFile&&) = default;
+    TransientFile& operator=(TransientFile&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // id
@@ -1237,6 +1363,11 @@ struct EntryNewBlockInfo {
     static constexpr uint16_t STATIC_SIZE = 8 + 4; // blockServiceId + crc
 
     EntryNewBlockInfo() { clear(); }
+    explicit EntryNewBlockInfo(BlockServiceId blockServiceId_, Crc crc_) : blockServiceId(blockServiceId_), crc(crc_) {}
+    EntryNewBlockInfo(const EntryNewBlockInfo&) = default;
+    EntryNewBlockInfo& operator=(const EntryNewBlockInfo&) = default;
+    EntryNewBlockInfo(EntryNewBlockInfo&&) = default;
+    EntryNewBlockInfo& operator=(EntryNewBlockInfo&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // blockServiceId
@@ -1269,6 +1400,11 @@ struct BlockServiceDeprecatedInfo {
     static constexpr uint16_t STATIC_SIZE = 8 + AddrsInfo::STATIC_SIZE + 1 + FailureDomain::STATIC_SIZE + BincodeFixedBytes<16>::STATIC_SIZE + 1 + 8 + 8 + 8 + BincodeBytes::STATIC_SIZE + 8 + 1 + 8; // id + addrs + storageClass + failureDomain + secretKey + flags + capacityBytes + availableBytes + blocks + path + lastSeen + hasFiles + flagsLastChanged
 
     BlockServiceDeprecatedInfo() { clear(); }
+    explicit BlockServiceDeprecatedInfo(BlockServiceId id_, AddrsInfo addrs_, uint8_t storageClass_, FailureDomain&& failureDomain_, BincodeFixedBytes<16>&& secretKey_, BlockServiceFlags flags_, uint64_t capacityBytes_, uint64_t availableBytes_, uint64_t blocks_, BincodeBytes&& path_, TernTime lastSeen_, bool hasFiles_, TernTime flagsLastChanged_) : id(id_), addrs(addrs_), storageClass(storageClass_), failureDomain(std::move(failureDomain_)), secretKey(std::move(secretKey_)), flags(flags_), capacityBytes(capacityBytes_), availableBytes(availableBytes_), blocks(blocks_), path(std::move(path_)), lastSeen(lastSeen_), hasFiles(hasFiles_), flagsLastChanged(flagsLastChanged_) {}
+    BlockServiceDeprecatedInfo(const BlockServiceDeprecatedInfo&) = default;
+    BlockServiceDeprecatedInfo& operator=(const BlockServiceDeprecatedInfo&) = default;
+    BlockServiceDeprecatedInfo(BlockServiceDeprecatedInfo&&) = default;
+    BlockServiceDeprecatedInfo& operator=(BlockServiceDeprecatedInfo&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // id
@@ -1303,6 +1439,11 @@ struct BlockServiceInfoShort {
     static constexpr uint16_t STATIC_SIZE = 1 + FailureDomain::STATIC_SIZE + 8 + 1; // locationId + failureDomain + id + storageClass
 
     BlockServiceInfoShort() { clear(); }
+    explicit BlockServiceInfoShort(uint8_t locationId_, FailureDomain&& failureDomain_, BlockServiceId id_, uint8_t storageClass_) : locationId(locationId_), failureDomain(std::move(failureDomain_)), id(id_), storageClass(storageClass_) {}
+    BlockServiceInfoShort(const BlockServiceInfoShort&) = default;
+    BlockServiceInfoShort& operator=(const BlockServiceInfoShort&) = default;
+    BlockServiceInfoShort(BlockServiceInfoShort&&) = default;
+    BlockServiceInfoShort& operator=(BlockServiceInfoShort&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 1; // locationId
@@ -1325,6 +1466,11 @@ struct SpanPolicy {
     static constexpr uint16_t STATIC_SIZE = BincodeList<SpanPolicyEntry>::STATIC_SIZE; // entries
 
     SpanPolicy() { clear(); }
+    explicit SpanPolicy(BincodeList<SpanPolicyEntry>&& entries_) : entries(std::move(entries_)) {}
+    SpanPolicy(const SpanPolicy&) = default;
+    SpanPolicy& operator=(const SpanPolicy&) = default;
+    SpanPolicy(SpanPolicy&&) = default;
+    SpanPolicy& operator=(SpanPolicy&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += entries.packedSize(); // entries
@@ -1344,6 +1490,11 @@ struct BlockPolicy {
     static constexpr uint16_t STATIC_SIZE = BincodeList<BlockPolicyEntry>::STATIC_SIZE; // entries
 
     BlockPolicy() { clear(); }
+    explicit BlockPolicy(BincodeList<BlockPolicyEntry>&& entries_) : entries(std::move(entries_)) {}
+    BlockPolicy(const BlockPolicy&) = default;
+    BlockPolicy& operator=(const BlockPolicy&) = default;
+    BlockPolicy(BlockPolicy&&) = default;
+    BlockPolicy& operator=(BlockPolicy&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += entries.packedSize(); // entries
@@ -1364,6 +1515,11 @@ struct SnapshotPolicy {
     static constexpr uint16_t STATIC_SIZE = 8 + 2; // deleteAfterTime + deleteAfterVersions
 
     SnapshotPolicy() { clear(); }
+    explicit SnapshotPolicy(uint64_t deleteAfterTime_, uint16_t deleteAfterVersions_) : deleteAfterTime(deleteAfterTime_), deleteAfterVersions(deleteAfterVersions_) {}
+    SnapshotPolicy(const SnapshotPolicy&) = default;
+    SnapshotPolicy& operator=(const SnapshotPolicy&) = default;
+    SnapshotPolicy(SnapshotPolicy&&) = default;
+    SnapshotPolicy& operator=(SnapshotPolicy&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // deleteAfterTime
@@ -1388,6 +1544,11 @@ struct FullShardInfo {
     static constexpr uint16_t STATIC_SIZE = 2 + 1 + AddrsInfo::STATIC_SIZE + 8 + 1; // id + isLeader + addrs + lastSeen + locationId
 
     FullShardInfo() { clear(); }
+    explicit FullShardInfo(ShardReplicaId id_, bool isLeader_, AddrsInfo addrs_, TernTime lastSeen_, uint8_t locationId_) : id(id_), isLeader(isLeader_), addrs(addrs_), lastSeen(lastSeen_), locationId(locationId_) {}
+    FullShardInfo(const FullShardInfo&) = default;
+    FullShardInfo& operator=(const FullShardInfo&) = default;
+    FullShardInfo(FullShardInfo&&) = default;
+    FullShardInfo& operator=(FullShardInfo&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 2; // id
@@ -1422,6 +1583,11 @@ struct RegisterBlockServiceInfo {
     static constexpr uint16_t STATIC_SIZE = 8 + 1 + AddrsInfo::STATIC_SIZE + 1 + FailureDomain::STATIC_SIZE + BincodeFixedBytes<16>::STATIC_SIZE + 1 + 1 + 8 + 8 + 8 + BincodeBytes::STATIC_SIZE; // id + locationId + addrs + storageClass + failureDomain + secretKey + flags + flagsMask + capacityBytes + availableBytes + blocks + path
 
     RegisterBlockServiceInfo() { clear(); }
+    explicit RegisterBlockServiceInfo(BlockServiceId id_, uint8_t locationId_, AddrsInfo addrs_, uint8_t storageClass_, FailureDomain&& failureDomain_, BincodeFixedBytes<16>&& secretKey_, BlockServiceFlags flags_, uint8_t flagsMask_, uint64_t capacityBytes_, uint64_t availableBytes_, uint64_t blocks_, BincodeBytes&& path_) : id(id_), locationId(locationId_), addrs(addrs_), storageClass(storageClass_), failureDomain(std::move(failureDomain_)), secretKey(std::move(secretKey_)), flags(flags_), flagsMask(flagsMask_), capacityBytes(capacityBytes_), availableBytes(availableBytes_), blocks(blocks_), path(std::move(path_)) {}
+    RegisterBlockServiceInfo(const RegisterBlockServiceInfo&) = default;
+    RegisterBlockServiceInfo& operator=(const RegisterBlockServiceInfo&) = default;
+    RegisterBlockServiceInfo(RegisterBlockServiceInfo&&) = default;
+    RegisterBlockServiceInfo& operator=(RegisterBlockServiceInfo&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // id
@@ -1466,6 +1632,11 @@ struct FullBlockServiceInfo {
     static constexpr uint16_t STATIC_SIZE = 8 + 1 + AddrsInfo::STATIC_SIZE + 1 + FailureDomain::STATIC_SIZE + BincodeFixedBytes<16>::STATIC_SIZE + 1 + 8 + 8 + 8 + 8 + 8 + 8 + 1 + BincodeBytes::STATIC_SIZE; // id + locationId + addrs + storageClass + failureDomain + secretKey + flags + capacityBytes + availableBytes + blocks + firstSeen + lastSeen + lastInfoChange + hasFiles + path
 
     FullBlockServiceInfo() { clear(); }
+    explicit FullBlockServiceInfo(BlockServiceId id_, uint8_t locationId_, AddrsInfo addrs_, uint8_t storageClass_, FailureDomain&& failureDomain_, BincodeFixedBytes<16>&& secretKey_, BlockServiceFlags flags_, uint64_t capacityBytes_, uint64_t availableBytes_, uint64_t blocks_, TernTime firstSeen_, TernTime lastSeen_, TernTime lastInfoChange_, bool hasFiles_, BincodeBytes&& path_) : id(id_), locationId(locationId_), addrs(addrs_), storageClass(storageClass_), failureDomain(std::move(failureDomain_)), secretKey(std::move(secretKey_)), flags(flags_), capacityBytes(capacityBytes_), availableBytes(availableBytes_), blocks(blocks_), firstSeen(firstSeen_), lastSeen(lastSeen_), lastInfoChange(lastInfoChange_), hasFiles(hasFiles_), path(std::move(path_)) {}
+    FullBlockServiceInfo(const FullBlockServiceInfo&) = default;
+    FullBlockServiceInfo& operator=(const FullBlockServiceInfo&) = default;
+    FullBlockServiceInfo(FullBlockServiceInfo&&) = default;
+    FullBlockServiceInfo& operator=(FullBlockServiceInfo&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // id
@@ -1503,6 +1674,11 @@ struct CdcInfo {
     static constexpr uint16_t STATIC_SIZE = 1 + 1 + 1 + AddrsInfo::STATIC_SIZE + 8; // replicaId + locationId + isLeader + addrs + lastSeen
 
     CdcInfo() { clear(); }
+    explicit CdcInfo(ReplicaId replicaId_, uint8_t locationId_, bool isLeader_, AddrsInfo addrs_, TernTime lastSeen_) : replicaId(replicaId_), locationId(locationId_), isLeader(isLeader_), addrs(addrs_), lastSeen(lastSeen_) {}
+    CdcInfo(const CdcInfo&) = default;
+    CdcInfo& operator=(const CdcInfo&) = default;
+    CdcInfo(CdcInfo&&) = default;
+    CdcInfo& operator=(CdcInfo&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 1; // replicaId
@@ -1527,6 +1703,11 @@ struct LocationInfo {
     static constexpr uint16_t STATIC_SIZE = 1 + BincodeBytes::STATIC_SIZE; // id + name
 
     LocationInfo() { clear(); }
+    explicit LocationInfo(uint8_t id_, BincodeBytes&& name_) : id(id_), name(std::move(name_)) {}
+    LocationInfo(const LocationInfo&) = default;
+    LocationInfo& operator=(const LocationInfo&) = default;
+    LocationInfo(LocationInfo&&) = default;
+    LocationInfo& operator=(LocationInfo&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 1; // id
@@ -1548,6 +1729,11 @@ struct LookupReq {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE; // dirId + name
 
     LookupReq() { clear(); }
+    explicit LookupReq(InodeId dirId_, BincodeBytes&& name_) : dirId(dirId_), name(std::move(name_)) {}
+    LookupReq(const LookupReq&) = default;
+    LookupReq& operator=(const LookupReq&) = default;
+    LookupReq(LookupReq&&) = default;
+    LookupReq& operator=(LookupReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // dirId
@@ -1569,6 +1755,11 @@ struct LookupResp {
     static constexpr uint16_t STATIC_SIZE = 8 + 8; // targetId + creationTime
 
     LookupResp() { clear(); }
+    explicit LookupResp(InodeId targetId_, TernTime creationTime_) : targetId(targetId_), creationTime(creationTime_) {}
+    LookupResp(const LookupResp&) = default;
+    LookupResp& operator=(const LookupResp&) = default;
+    LookupResp(LookupResp&&) = default;
+    LookupResp& operator=(LookupResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // targetId
@@ -1589,6 +1780,11 @@ struct StatFileReq {
     static constexpr uint16_t STATIC_SIZE = 8; // id
 
     StatFileReq() { clear(); }
+    explicit StatFileReq(InodeId id_) : id(id_) {}
+    StatFileReq(const StatFileReq&) = default;
+    StatFileReq& operator=(const StatFileReq&) = default;
+    StatFileReq(StatFileReq&&) = default;
+    StatFileReq& operator=(StatFileReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // id
@@ -1610,6 +1806,11 @@ struct StatFileResp {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + 8; // mtime + atime + size
 
     StatFileResp() { clear(); }
+    explicit StatFileResp(TernTime mtime_, TernTime atime_, uint64_t size_) : mtime(mtime_), atime(atime_), size(size_) {}
+    StatFileResp(const StatFileResp&) = default;
+    StatFileResp& operator=(const StatFileResp&) = default;
+    StatFileResp(StatFileResp&&) = default;
+    StatFileResp& operator=(StatFileResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // mtime
@@ -1631,6 +1832,11 @@ struct StatDirectoryReq {
     static constexpr uint16_t STATIC_SIZE = 8; // id
 
     StatDirectoryReq() { clear(); }
+    explicit StatDirectoryReq(InodeId id_) : id(id_) {}
+    StatDirectoryReq(const StatDirectoryReq&) = default;
+    StatDirectoryReq& operator=(const StatDirectoryReq&) = default;
+    StatDirectoryReq(StatDirectoryReq&&) = default;
+    StatDirectoryReq& operator=(StatDirectoryReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // id
@@ -1652,6 +1858,11 @@ struct StatDirectoryResp {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + DirectoryInfo::STATIC_SIZE; // mtime + owner + info
 
     StatDirectoryResp() { clear(); }
+    explicit StatDirectoryResp(TernTime mtime_, InodeId owner_, DirectoryInfo&& info_) : mtime(mtime_), owner(owner_), info(std::move(info_)) {}
+    StatDirectoryResp(const StatDirectoryResp&) = default;
+    StatDirectoryResp& operator=(const StatDirectoryResp&) = default;
+    StatDirectoryResp(StatDirectoryResp&&) = default;
+    StatDirectoryResp& operator=(StatDirectoryResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // mtime
@@ -1675,6 +1886,11 @@ struct ReadDirReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + 2; // dirId + startHash + mtu
 
     ReadDirReq() { clear(); }
+    explicit ReadDirReq(InodeId dirId_, uint64_t startHash_, uint16_t mtu_) : dirId(dirId_), startHash(startHash_), mtu(mtu_) {}
+    ReadDirReq(const ReadDirReq&) = default;
+    ReadDirReq& operator=(const ReadDirReq&) = default;
+    ReadDirReq(ReadDirReq&&) = default;
+    ReadDirReq& operator=(ReadDirReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // dirId
@@ -1697,6 +1913,11 @@ struct ReadDirResp {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeList<CurrentEdge>::STATIC_SIZE; // nextHash + results
 
     ReadDirResp() { clear(); }
+    explicit ReadDirResp(uint64_t nextHash_, BincodeList<CurrentEdge>&& results_) : nextHash(nextHash_), results(std::move(results_)) {}
+    ReadDirResp(const ReadDirResp&) = default;
+    ReadDirResp& operator=(const ReadDirResp&) = default;
+    ReadDirResp(ReadDirResp&&) = default;
+    ReadDirResp& operator=(ReadDirResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // nextHash
@@ -1718,6 +1939,11 @@ struct ConstructFileReq {
     static constexpr uint16_t STATIC_SIZE = 1 + BincodeBytes::STATIC_SIZE; // type + note
 
     ConstructFileReq() { clear(); }
+    explicit ConstructFileReq(uint8_t type_, BincodeBytes&& note_) : type(type_), note(std::move(note_)) {}
+    ConstructFileReq(const ConstructFileReq&) = default;
+    ConstructFileReq& operator=(const ConstructFileReq&) = default;
+    ConstructFileReq(ConstructFileReq&&) = default;
+    ConstructFileReq& operator=(ConstructFileReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 1; // type
@@ -1739,6 +1965,11 @@ struct ConstructFileResp {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<8>::STATIC_SIZE; // id + cookie
 
     ConstructFileResp() { clear(); }
+    explicit ConstructFileResp(InodeId id_, BincodeFixedBytes<8>&& cookie_) : id(id_), cookie(std::move(cookie_)) {}
+    ConstructFileResp(const ConstructFileResp&) = default;
+    ConstructFileResp& operator=(const ConstructFileResp&) = default;
+    ConstructFileResp(ConstructFileResp&&) = default;
+    ConstructFileResp& operator=(ConstructFileResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // id
@@ -1769,6 +2000,11 @@ struct AddSpanInitiateReq {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<8>::STATIC_SIZE + 8 + 4 + 4 + 1 + BincodeList<BlacklistEntry>::STATIC_SIZE + 1 + 1 + 4 + BincodeList<Crc>::STATIC_SIZE; // fileId + cookie + byteOffset + size + crc + storageClass + blacklist + parity + stripes + cellSize + crcs
 
     AddSpanInitiateReq() { clear(); }
+    explicit AddSpanInitiateReq(InodeId fileId_, BincodeFixedBytes<8>&& cookie_, uint64_t byteOffset_, uint32_t size_, Crc crc_, uint8_t storageClass_, BincodeList<BlacklistEntry>&& blacklist_, Parity parity_, uint8_t stripes_, uint32_t cellSize_, BincodeList<Crc>&& crcs_) : fileId(fileId_), cookie(std::move(cookie_)), byteOffset(byteOffset_), size(size_), crc(crc_), storageClass(storageClass_), blacklist(std::move(blacklist_)), parity(parity_), stripes(stripes_), cellSize(cellSize_), crcs(std::move(crcs_)) {}
+    AddSpanInitiateReq(const AddSpanInitiateReq&) = default;
+    AddSpanInitiateReq& operator=(const AddSpanInitiateReq&) = default;
+    AddSpanInitiateReq(AddSpanInitiateReq&&) = default;
+    AddSpanInitiateReq& operator=(AddSpanInitiateReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // fileId
@@ -1798,6 +2034,11 @@ struct AddSpanInitiateResp {
     static constexpr uint16_t STATIC_SIZE = BincodeList<AddSpanInitiateBlockInfo>::STATIC_SIZE; // blocks
 
     AddSpanInitiateResp() { clear(); }
+    explicit AddSpanInitiateResp(BincodeList<AddSpanInitiateBlockInfo>&& blocks_) : blocks(std::move(blocks_)) {}
+    AddSpanInitiateResp(const AddSpanInitiateResp&) = default;
+    AddSpanInitiateResp& operator=(const AddSpanInitiateResp&) = default;
+    AddSpanInitiateResp(AddSpanInitiateResp&&) = default;
+    AddSpanInitiateResp& operator=(AddSpanInitiateResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += blocks.packedSize(); // blocks
@@ -1820,6 +2061,11 @@ struct AddSpanCertifyReq {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<8>::STATIC_SIZE + 8 + BincodeList<BlockProof>::STATIC_SIZE; // fileId + cookie + byteOffset + proofs
 
     AddSpanCertifyReq() { clear(); }
+    explicit AddSpanCertifyReq(InodeId fileId_, BincodeFixedBytes<8>&& cookie_, uint64_t byteOffset_, BincodeList<BlockProof>&& proofs_) : fileId(fileId_), cookie(std::move(cookie_)), byteOffset(byteOffset_), proofs(std::move(proofs_)) {}
+    AddSpanCertifyReq(const AddSpanCertifyReq&) = default;
+    AddSpanCertifyReq& operator=(const AddSpanCertifyReq&) = default;
+    AddSpanCertifyReq(AddSpanCertifyReq&&) = default;
+    AddSpanCertifyReq& operator=(AddSpanCertifyReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // fileId
@@ -1841,6 +2087,10 @@ struct AddSpanCertifyResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     AddSpanCertifyResp() { clear(); }
+    AddSpanCertifyResp(const AddSpanCertifyResp&) = default;
+    AddSpanCertifyResp& operator=(const AddSpanCertifyResp&) = default;
+    AddSpanCertifyResp(AddSpanCertifyResp&&) = default;
+    AddSpanCertifyResp& operator=(AddSpanCertifyResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -1862,6 +2112,11 @@ struct LinkFileReq {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<8>::STATIC_SIZE + 8 + BincodeBytes::STATIC_SIZE; // fileId + cookie + ownerId + name
 
     LinkFileReq() { clear(); }
+    explicit LinkFileReq(InodeId fileId_, BincodeFixedBytes<8>&& cookie_, InodeId ownerId_, BincodeBytes&& name_) : fileId(fileId_), cookie(std::move(cookie_)), ownerId(ownerId_), name(std::move(name_)) {}
+    LinkFileReq(const LinkFileReq&) = default;
+    LinkFileReq& operator=(const LinkFileReq&) = default;
+    LinkFileReq(LinkFileReq&&) = default;
+    LinkFileReq& operator=(LinkFileReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // fileId
@@ -1884,6 +2139,11 @@ struct LinkFileResp {
     static constexpr uint16_t STATIC_SIZE = 8; // creationTime
 
     LinkFileResp() { clear(); }
+    explicit LinkFileResp(TernTime creationTime_) : creationTime(creationTime_) {}
+    LinkFileResp(const LinkFileResp&) = default;
+    LinkFileResp& operator=(const LinkFileResp&) = default;
+    LinkFileResp(LinkFileResp&&) = default;
+    LinkFileResp& operator=(LinkFileResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // creationTime
@@ -1906,6 +2166,11 @@ struct SoftUnlinkFileReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // ownerId + fileId + name + creationTime
 
     SoftUnlinkFileReq() { clear(); }
+    explicit SoftUnlinkFileReq(InodeId ownerId_, InodeId fileId_, BincodeBytes&& name_, TernTime creationTime_) : ownerId(ownerId_), fileId(fileId_), name(std::move(name_)), creationTime(creationTime_) {}
+    SoftUnlinkFileReq(const SoftUnlinkFileReq&) = default;
+    SoftUnlinkFileReq& operator=(const SoftUnlinkFileReq&) = default;
+    SoftUnlinkFileReq(SoftUnlinkFileReq&&) = default;
+    SoftUnlinkFileReq& operator=(SoftUnlinkFileReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // ownerId
@@ -1928,6 +2193,11 @@ struct SoftUnlinkFileResp {
     static constexpr uint16_t STATIC_SIZE = 8; // deleteCreationTime
 
     SoftUnlinkFileResp() { clear(); }
+    explicit SoftUnlinkFileResp(TernTime deleteCreationTime_) : deleteCreationTime(deleteCreationTime_) {}
+    SoftUnlinkFileResp(const SoftUnlinkFileResp&) = default;
+    SoftUnlinkFileResp& operator=(const SoftUnlinkFileResp&) = default;
+    SoftUnlinkFileResp(SoftUnlinkFileResp&&) = default;
+    SoftUnlinkFileResp& operator=(SoftUnlinkFileResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // deleteCreationTime
@@ -1950,6 +2220,11 @@ struct LocalFileSpansReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + 4 + 2; // fileId + byteOffset + limit + mtu
 
     LocalFileSpansReq() { clear(); }
+    explicit LocalFileSpansReq(InodeId fileId_, uint64_t byteOffset_, uint32_t limit_, uint16_t mtu_) : fileId(fileId_), byteOffset(byteOffset_), limit(limit_), mtu(mtu_) {}
+    LocalFileSpansReq(const LocalFileSpansReq&) = default;
+    LocalFileSpansReq& operator=(const LocalFileSpansReq&) = default;
+    LocalFileSpansReq(LocalFileSpansReq&&) = default;
+    LocalFileSpansReq& operator=(LocalFileSpansReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // fileId
@@ -1974,6 +2249,11 @@ struct LocalFileSpansResp {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeList<BlockService>::STATIC_SIZE + BincodeList<FetchedSpan>::STATIC_SIZE; // nextOffset + blockServices + spans
 
     LocalFileSpansResp() { clear(); }
+    explicit LocalFileSpansResp(uint64_t nextOffset_, BincodeList<BlockService>&& blockServices_, BincodeList<FetchedSpan>&& spans_) : nextOffset(nextOffset_), blockServices(std::move(blockServices_)), spans(std::move(spans_)) {}
+    LocalFileSpansResp(const LocalFileSpansResp&) = default;
+    LocalFileSpansResp& operator=(const LocalFileSpansResp&) = default;
+    LocalFileSpansResp(LocalFileSpansResp&&) = default;
+    LocalFileSpansResp& operator=(LocalFileSpansResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // nextOffset
@@ -1999,6 +2279,11 @@ struct SameDirectoryRenameReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8 + BincodeBytes::STATIC_SIZE; // targetId + dirId + oldName + oldCreationTime + newName
 
     SameDirectoryRenameReq() { clear(); }
+    explicit SameDirectoryRenameReq(InodeId targetId_, InodeId dirId_, BincodeBytes&& oldName_, TernTime oldCreationTime_, BincodeBytes&& newName_) : targetId(targetId_), dirId(dirId_), oldName(std::move(oldName_)), oldCreationTime(oldCreationTime_), newName(std::move(newName_)) {}
+    SameDirectoryRenameReq(const SameDirectoryRenameReq&) = default;
+    SameDirectoryRenameReq& operator=(const SameDirectoryRenameReq&) = default;
+    SameDirectoryRenameReq(SameDirectoryRenameReq&&) = default;
+    SameDirectoryRenameReq& operator=(SameDirectoryRenameReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // targetId
@@ -2022,6 +2307,11 @@ struct SameDirectoryRenameResp {
     static constexpr uint16_t STATIC_SIZE = 8; // newCreationTime
 
     SameDirectoryRenameResp() { clear(); }
+    explicit SameDirectoryRenameResp(TernTime newCreationTime_) : newCreationTime(newCreationTime_) {}
+    SameDirectoryRenameResp(const SameDirectoryRenameResp&) = default;
+    SameDirectoryRenameResp& operator=(const SameDirectoryRenameResp&) = default;
+    SameDirectoryRenameResp(SameDirectoryRenameResp&&) = default;
+    SameDirectoryRenameResp& operator=(SameDirectoryRenameResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // newCreationTime
@@ -2047,6 +2337,11 @@ struct AddInlineSpanReq {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<8>::STATIC_SIZE + 1 + 8 + 4 + 4 + BincodeBytes::STATIC_SIZE; // fileId + cookie + storageClass + byteOffset + size + crc + body
 
     AddInlineSpanReq() { clear(); }
+    explicit AddInlineSpanReq(InodeId fileId_, BincodeFixedBytes<8>&& cookie_, uint8_t storageClass_, uint64_t byteOffset_, uint32_t size_, Crc crc_, BincodeBytes&& body_) : fileId(fileId_), cookie(std::move(cookie_)), storageClass(storageClass_), byteOffset(byteOffset_), size(size_), crc(crc_), body(std::move(body_)) {}
+    AddInlineSpanReq(const AddInlineSpanReq&) = default;
+    AddInlineSpanReq& operator=(const AddInlineSpanReq&) = default;
+    AddInlineSpanReq(AddInlineSpanReq&&) = default;
+    AddInlineSpanReq& operator=(AddInlineSpanReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // fileId
@@ -2071,6 +2366,10 @@ struct AddInlineSpanResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     AddInlineSpanResp() { clear(); }
+    AddInlineSpanResp(const AddInlineSpanResp&) = default;
+    AddInlineSpanResp& operator=(const AddInlineSpanResp&) = default;
+    AddInlineSpanResp(AddInlineSpanResp&&) = default;
+    AddInlineSpanResp& operator=(AddInlineSpanResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -2091,6 +2390,11 @@ struct SetTimeReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + 8; // id + mtime + atime
 
     SetTimeReq() { clear(); }
+    explicit SetTimeReq(InodeId id_, uint64_t mtime_, uint64_t atime_) : id(id_), mtime(mtime_), atime(atime_) {}
+    SetTimeReq(const SetTimeReq&) = default;
+    SetTimeReq& operator=(const SetTimeReq&) = default;
+    SetTimeReq(SetTimeReq&&) = default;
+    SetTimeReq& operator=(SetTimeReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // id
@@ -2111,6 +2415,10 @@ struct SetTimeResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     SetTimeResp() { clear(); }
+    SetTimeResp(const SetTimeResp&) = default;
+    SetTimeResp& operator=(const SetTimeResp&) = default;
+    SetTimeResp(SetTimeResp&&) = default;
+    SetTimeResp& operator=(SetTimeResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -2134,6 +2442,11 @@ struct FullReadDirReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 1 + BincodeBytes::STATIC_SIZE + 8 + 2 + 2; // dirId + flags + startName + startTime + limit + mtu
 
     FullReadDirReq() { clear(); }
+    explicit FullReadDirReq(InodeId dirId_, uint8_t flags_, BincodeBytes&& startName_, TernTime startTime_, uint16_t limit_, uint16_t mtu_) : dirId(dirId_), flags(flags_), startName(std::move(startName_)), startTime(startTime_), limit(limit_), mtu(mtu_) {}
+    FullReadDirReq(const FullReadDirReq&) = default;
+    FullReadDirReq& operator=(const FullReadDirReq&) = default;
+    FullReadDirReq(FullReadDirReq&&) = default;
+    FullReadDirReq& operator=(FullReadDirReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // dirId
@@ -2159,6 +2472,11 @@ struct FullReadDirResp {
     static constexpr uint16_t STATIC_SIZE = FullReadDirCursor::STATIC_SIZE + BincodeList<Edge>::STATIC_SIZE; // next + results
 
     FullReadDirResp() { clear(); }
+    explicit FullReadDirResp(FullReadDirCursor&& next_, BincodeList<Edge>&& results_) : next(std::move(next_)), results(std::move(results_)) {}
+    FullReadDirResp(const FullReadDirResp&) = default;
+    FullReadDirResp& operator=(const FullReadDirResp&) = default;
+    FullReadDirResp(FullReadDirResp&&) = default;
+    FullReadDirResp& operator=(FullReadDirResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += next.packedSize(); // next
@@ -2185,6 +2503,11 @@ struct MoveSpanReq {
     static constexpr uint16_t STATIC_SIZE = 4 + 8 + 8 + BincodeFixedBytes<8>::STATIC_SIZE + 8 + 8 + BincodeFixedBytes<8>::STATIC_SIZE; // spanSize + fileId1 + byteOffset1 + cookie1 + fileId2 + byteOffset2 + cookie2
 
     MoveSpanReq() { clear(); }
+    explicit MoveSpanReq(uint32_t spanSize_, InodeId fileId1_, uint64_t byteOffset1_, BincodeFixedBytes<8>&& cookie1_, InodeId fileId2_, uint64_t byteOffset2_, BincodeFixedBytes<8>&& cookie2_) : spanSize(spanSize_), fileId1(fileId1_), byteOffset1(byteOffset1_), cookie1(std::move(cookie1_)), fileId2(fileId2_), byteOffset2(byteOffset2_), cookie2(std::move(cookie2_)) {}
+    MoveSpanReq(const MoveSpanReq&) = default;
+    MoveSpanReq& operator=(const MoveSpanReq&) = default;
+    MoveSpanReq(MoveSpanReq&&) = default;
+    MoveSpanReq& operator=(MoveSpanReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 4; // spanSize
@@ -2209,6 +2532,10 @@ struct MoveSpanResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     MoveSpanResp() { clear(); }
+    MoveSpanResp(const MoveSpanResp&) = default;
+    MoveSpanResp& operator=(const MoveSpanResp&) = default;
+    MoveSpanResp(MoveSpanResp&&) = default;
+    MoveSpanResp& operator=(MoveSpanResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -2230,6 +2557,11 @@ struct RemoveNonOwnedEdgeReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // dirId + targetId + name + creationTime
 
     RemoveNonOwnedEdgeReq() { clear(); }
+    explicit RemoveNonOwnedEdgeReq(InodeId dirId_, InodeId targetId_, BincodeBytes&& name_, TernTime creationTime_) : dirId(dirId_), targetId(targetId_), name(std::move(name_)), creationTime(creationTime_) {}
+    RemoveNonOwnedEdgeReq(const RemoveNonOwnedEdgeReq&) = default;
+    RemoveNonOwnedEdgeReq& operator=(const RemoveNonOwnedEdgeReq&) = default;
+    RemoveNonOwnedEdgeReq(RemoveNonOwnedEdgeReq&&) = default;
+    RemoveNonOwnedEdgeReq& operator=(RemoveNonOwnedEdgeReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // dirId
@@ -2251,6 +2583,10 @@ struct RemoveNonOwnedEdgeResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     RemoveNonOwnedEdgeResp() { clear(); }
+    RemoveNonOwnedEdgeResp(const RemoveNonOwnedEdgeResp&) = default;
+    RemoveNonOwnedEdgeResp& operator=(const RemoveNonOwnedEdgeResp&) = default;
+    RemoveNonOwnedEdgeResp(RemoveNonOwnedEdgeResp&&) = default;
+    RemoveNonOwnedEdgeResp& operator=(RemoveNonOwnedEdgeResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -2272,6 +2608,11 @@ struct SameShardHardFileUnlinkReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // ownerId + targetId + name + creationTime
 
     SameShardHardFileUnlinkReq() { clear(); }
+    explicit SameShardHardFileUnlinkReq(InodeId ownerId_, InodeId targetId_, BincodeBytes&& name_, TernTime creationTime_) : ownerId(ownerId_), targetId(targetId_), name(std::move(name_)), creationTime(creationTime_) {}
+    SameShardHardFileUnlinkReq(const SameShardHardFileUnlinkReq&) = default;
+    SameShardHardFileUnlinkReq& operator=(const SameShardHardFileUnlinkReq&) = default;
+    SameShardHardFileUnlinkReq(SameShardHardFileUnlinkReq&&) = default;
+    SameShardHardFileUnlinkReq& operator=(SameShardHardFileUnlinkReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // ownerId
@@ -2293,6 +2634,10 @@ struct SameShardHardFileUnlinkResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     SameShardHardFileUnlinkResp() { clear(); }
+    SameShardHardFileUnlinkResp(const SameShardHardFileUnlinkResp&) = default;
+    SameShardHardFileUnlinkResp& operator=(const SameShardHardFileUnlinkResp&) = default;
+    SameShardHardFileUnlinkResp(SameShardHardFileUnlinkResp&&) = default;
+    SameShardHardFileUnlinkResp& operator=(SameShardHardFileUnlinkResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -2311,6 +2656,11 @@ struct StatTransientFileReq {
     static constexpr uint16_t STATIC_SIZE = 8; // id
 
     StatTransientFileReq() { clear(); }
+    explicit StatTransientFileReq(InodeId id_) : id(id_) {}
+    StatTransientFileReq(const StatTransientFileReq&) = default;
+    StatTransientFileReq& operator=(const StatTransientFileReq&) = default;
+    StatTransientFileReq(StatTransientFileReq&&) = default;
+    StatTransientFileReq& operator=(StatTransientFileReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // id
@@ -2332,6 +2682,11 @@ struct StatTransientFileResp {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE; // mtime + size + note
 
     StatTransientFileResp() { clear(); }
+    explicit StatTransientFileResp(TernTime mtime_, uint64_t size_, BincodeBytes&& note_) : mtime(mtime_), size(size_), note(std::move(note_)) {}
+    StatTransientFileResp(const StatTransientFileResp&) = default;
+    StatTransientFileResp& operator=(const StatTransientFileResp&) = default;
+    StatTransientFileResp(StatTransientFileResp&&) = default;
+    StatTransientFileResp& operator=(StatTransientFileResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // mtime
@@ -2353,6 +2708,11 @@ struct ShardSnapshotReq {
     static constexpr uint16_t STATIC_SIZE = 8; // snapshotId
 
     ShardSnapshotReq() { clear(); }
+    explicit ShardSnapshotReq(uint64_t snapshotId_) : snapshotId(snapshotId_) {}
+    ShardSnapshotReq(const ShardSnapshotReq&) = default;
+    ShardSnapshotReq& operator=(const ShardSnapshotReq&) = default;
+    ShardSnapshotReq(ShardSnapshotReq&&) = default;
+    ShardSnapshotReq& operator=(ShardSnapshotReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // snapshotId
@@ -2371,6 +2731,10 @@ struct ShardSnapshotResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     ShardSnapshotResp() { clear(); }
+    ShardSnapshotResp(const ShardSnapshotResp&) = default;
+    ShardSnapshotResp& operator=(const ShardSnapshotResp&) = default;
+    ShardSnapshotResp(ShardSnapshotResp&&) = default;
+    ShardSnapshotResp& operator=(ShardSnapshotResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -2392,6 +2756,11 @@ struct FileSpansReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + 4 + 2; // fileId + byteOffset + limit + mtu
 
     FileSpansReq() { clear(); }
+    explicit FileSpansReq(InodeId fileId_, uint64_t byteOffset_, uint32_t limit_, uint16_t mtu_) : fileId(fileId_), byteOffset(byteOffset_), limit(limit_), mtu(mtu_) {}
+    FileSpansReq(const FileSpansReq&) = default;
+    FileSpansReq& operator=(const FileSpansReq&) = default;
+    FileSpansReq(FileSpansReq&&) = default;
+    FileSpansReq& operator=(FileSpansReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // fileId
@@ -2416,6 +2785,11 @@ struct FileSpansResp {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeList<BlockService>::STATIC_SIZE + BincodeList<FetchedFullSpan>::STATIC_SIZE; // nextOffset + blockServices + spans
 
     FileSpansResp() { clear(); }
+    explicit FileSpansResp(uint64_t nextOffset_, BincodeList<BlockService>&& blockServices_, BincodeList<FetchedFullSpan>&& spans_) : nextOffset(nextOffset_), blockServices(std::move(blockServices_)), spans(std::move(spans_)) {}
+    FileSpansResp(const FileSpansResp&) = default;
+    FileSpansResp& operator=(const FileSpansResp&) = default;
+    FileSpansResp(FileSpansResp&&) = default;
+    FileSpansResp& operator=(FileSpansResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // nextOffset
@@ -2441,6 +2815,11 @@ struct AddSpanLocationReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeList<uint64_t>::STATIC_SIZE + 8 + 8; // fileId1 + byteOffset1 + blocks1 + fileId2 + byteOffset2
 
     AddSpanLocationReq() { clear(); }
+    explicit AddSpanLocationReq(InodeId fileId1_, uint64_t byteOffset1_, BincodeList<uint64_t>&& blocks1_, InodeId fileId2_, uint64_t byteOffset2_) : fileId1(fileId1_), byteOffset1(byteOffset1_), blocks1(std::move(blocks1_)), fileId2(fileId2_), byteOffset2(byteOffset2_) {}
+    AddSpanLocationReq(const AddSpanLocationReq&) = default;
+    AddSpanLocationReq& operator=(const AddSpanLocationReq&) = default;
+    AddSpanLocationReq(AddSpanLocationReq&&) = default;
+    AddSpanLocationReq& operator=(AddSpanLocationReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // fileId1
@@ -2463,6 +2842,10 @@ struct AddSpanLocationResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     AddSpanLocationResp() { clear(); }
+    AddSpanLocationResp(const AddSpanLocationResp&) = default;
+    AddSpanLocationResp& operator=(const AddSpanLocationResp&) = default;
+    AddSpanLocationResp(AddSpanLocationResp&&) = default;
+    AddSpanLocationResp& operator=(AddSpanLocationResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -2482,6 +2865,11 @@ struct ScrapTransientFileReq {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<8>::STATIC_SIZE; // id + cookie
 
     ScrapTransientFileReq() { clear(); }
+    explicit ScrapTransientFileReq(InodeId id_, BincodeFixedBytes<8>&& cookie_) : id(id_), cookie(std::move(cookie_)) {}
+    ScrapTransientFileReq(const ScrapTransientFileReq&) = default;
+    ScrapTransientFileReq& operator=(const ScrapTransientFileReq&) = default;
+    ScrapTransientFileReq(ScrapTransientFileReq&&) = default;
+    ScrapTransientFileReq& operator=(ScrapTransientFileReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // id
@@ -2501,6 +2889,10 @@ struct ScrapTransientFileResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     ScrapTransientFileResp() { clear(); }
+    ScrapTransientFileResp(const ScrapTransientFileResp&) = default;
+    ScrapTransientFileResp& operator=(const ScrapTransientFileResp&) = default;
+    ScrapTransientFileResp(ScrapTransientFileResp&&) = default;
+    ScrapTransientFileResp& operator=(ScrapTransientFileResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -2520,6 +2912,11 @@ struct SetDirectoryInfoReq {
     static constexpr uint16_t STATIC_SIZE = 8 + DirectoryInfo::STATIC_SIZE; // id + info
 
     SetDirectoryInfoReq() { clear(); }
+    explicit SetDirectoryInfoReq(InodeId id_, DirectoryInfo&& info_) : id(id_), info(std::move(info_)) {}
+    SetDirectoryInfoReq(const SetDirectoryInfoReq&) = default;
+    SetDirectoryInfoReq& operator=(const SetDirectoryInfoReq&) = default;
+    SetDirectoryInfoReq(SetDirectoryInfoReq&&) = default;
+    SetDirectoryInfoReq& operator=(SetDirectoryInfoReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // id
@@ -2539,6 +2936,10 @@ struct SetDirectoryInfoResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     SetDirectoryInfoResp() { clear(); }
+    SetDirectoryInfoResp(const SetDirectoryInfoResp&) = default;
+    SetDirectoryInfoResp& operator=(const SetDirectoryInfoResp&) = default;
+    SetDirectoryInfoResp(SetDirectoryInfoResp&&) = default;
+    SetDirectoryInfoResp& operator=(SetDirectoryInfoResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -2558,6 +2959,11 @@ struct GetLinkEntriesReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 2; // fromIdx + mtu
 
     GetLinkEntriesReq() { clear(); }
+    explicit GetLinkEntriesReq(LogIdx fromIdx_, uint16_t mtu_) : fromIdx(fromIdx_), mtu(mtu_) {}
+    GetLinkEntriesReq(const GetLinkEntriesReq&) = default;
+    GetLinkEntriesReq& operator=(const GetLinkEntriesReq&) = default;
+    GetLinkEntriesReq(GetLinkEntriesReq&&) = default;
+    GetLinkEntriesReq& operator=(GetLinkEntriesReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // fromIdx
@@ -2579,6 +2985,11 @@ struct GetLinkEntriesResp {
     static constexpr uint16_t STATIC_SIZE = BincodeList<LinkEntry>::STATIC_SIZE + 8; // entries + nextIdx
 
     GetLinkEntriesResp() { clear(); }
+    explicit GetLinkEntriesResp(BincodeList<LinkEntry>&& entries_, LogIdx nextIdx_) : entries(std::move(entries_)), nextIdx(nextIdx_) {}
+    GetLinkEntriesResp(const GetLinkEntriesResp&) = default;
+    GetLinkEntriesResp& operator=(const GetLinkEntriesResp&) = default;
+    GetLinkEntriesResp(GetLinkEntriesResp&&) = default;
+    GetLinkEntriesResp& operator=(GetLinkEntriesResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += entries.packedSize(); // entries
@@ -2599,6 +3010,11 @@ struct WaitStateAppliedReq {
     static constexpr uint16_t STATIC_SIZE = 8; // idx
 
     WaitStateAppliedReq() { clear(); }
+    explicit WaitStateAppliedReq(LogIdx idx_) : idx(idx_) {}
+    WaitStateAppliedReq(const WaitStateAppliedReq&) = default;
+    WaitStateAppliedReq& operator=(const WaitStateAppliedReq&) = default;
+    WaitStateAppliedReq(WaitStateAppliedReq&&) = default;
+    WaitStateAppliedReq& operator=(WaitStateAppliedReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // idx
@@ -2617,6 +3033,10 @@ struct WaitStateAppliedResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     WaitStateAppliedResp() { clear(); }
+    WaitStateAppliedResp(const WaitStateAppliedResp&) = default;
+    WaitStateAppliedResp& operator=(const WaitStateAppliedResp&) = default;
+    WaitStateAppliedResp(WaitStateAppliedResp&&) = default;
+    WaitStateAppliedResp& operator=(WaitStateAppliedResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -2636,6 +3056,11 @@ struct VisitDirectoriesReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 2; // beginId + mtu
 
     VisitDirectoriesReq() { clear(); }
+    explicit VisitDirectoriesReq(InodeId beginId_, uint16_t mtu_) : beginId(beginId_), mtu(mtu_) {}
+    VisitDirectoriesReq(const VisitDirectoriesReq&) = default;
+    VisitDirectoriesReq& operator=(const VisitDirectoriesReq&) = default;
+    VisitDirectoriesReq(VisitDirectoriesReq&&) = default;
+    VisitDirectoriesReq& operator=(VisitDirectoriesReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // beginId
@@ -2657,6 +3082,11 @@ struct VisitDirectoriesResp {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeList<InodeId>::STATIC_SIZE; // nextId + ids
 
     VisitDirectoriesResp() { clear(); }
+    explicit VisitDirectoriesResp(InodeId nextId_, BincodeList<InodeId>&& ids_) : nextId(nextId_), ids(std::move(ids_)) {}
+    VisitDirectoriesResp(const VisitDirectoriesResp&) = default;
+    VisitDirectoriesResp& operator=(const VisitDirectoriesResp&) = default;
+    VisitDirectoriesResp(VisitDirectoriesResp&&) = default;
+    VisitDirectoriesResp& operator=(VisitDirectoriesResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // nextId
@@ -2678,6 +3108,11 @@ struct VisitFilesReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 2; // beginId + mtu
 
     VisitFilesReq() { clear(); }
+    explicit VisitFilesReq(InodeId beginId_, uint16_t mtu_) : beginId(beginId_), mtu(mtu_) {}
+    VisitFilesReq(const VisitFilesReq&) = default;
+    VisitFilesReq& operator=(const VisitFilesReq&) = default;
+    VisitFilesReq(VisitFilesReq&&) = default;
+    VisitFilesReq& operator=(VisitFilesReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // beginId
@@ -2699,6 +3134,11 @@ struct VisitFilesResp {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeList<InodeId>::STATIC_SIZE; // nextId + ids
 
     VisitFilesResp() { clear(); }
+    explicit VisitFilesResp(InodeId nextId_, BincodeList<InodeId>&& ids_) : nextId(nextId_), ids(std::move(ids_)) {}
+    VisitFilesResp(const VisitFilesResp&) = default;
+    VisitFilesResp& operator=(const VisitFilesResp&) = default;
+    VisitFilesResp(VisitFilesResp&&) = default;
+    VisitFilesResp& operator=(VisitFilesResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // nextId
@@ -2720,6 +3160,11 @@ struct VisitTransientFilesReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 2; // beginId + mtu
 
     VisitTransientFilesReq() { clear(); }
+    explicit VisitTransientFilesReq(InodeId beginId_, uint16_t mtu_) : beginId(beginId_), mtu(mtu_) {}
+    VisitTransientFilesReq(const VisitTransientFilesReq&) = default;
+    VisitTransientFilesReq& operator=(const VisitTransientFilesReq&) = default;
+    VisitTransientFilesReq(VisitTransientFilesReq&&) = default;
+    VisitTransientFilesReq& operator=(VisitTransientFilesReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // beginId
@@ -2741,6 +3186,11 @@ struct VisitTransientFilesResp {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeList<TransientFile>::STATIC_SIZE; // nextId + files
 
     VisitTransientFilesResp() { clear(); }
+    explicit VisitTransientFilesResp(InodeId nextId_, BincodeList<TransientFile>&& files_) : nextId(nextId_), files(std::move(files_)) {}
+    VisitTransientFilesResp(const VisitTransientFilesResp&) = default;
+    VisitTransientFilesResp& operator=(const VisitTransientFilesResp&) = default;
+    VisitTransientFilesResp(VisitTransientFilesResp&&) = default;
+    VisitTransientFilesResp& operator=(VisitTransientFilesResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // nextId
@@ -2762,6 +3212,11 @@ struct RemoveSpanInitiateReq {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<8>::STATIC_SIZE; // fileId + cookie
 
     RemoveSpanInitiateReq() { clear(); }
+    explicit RemoveSpanInitiateReq(InodeId fileId_, BincodeFixedBytes<8>&& cookie_) : fileId(fileId_), cookie(std::move(cookie_)) {}
+    RemoveSpanInitiateReq(const RemoveSpanInitiateReq&) = default;
+    RemoveSpanInitiateReq& operator=(const RemoveSpanInitiateReq&) = default;
+    RemoveSpanInitiateReq(RemoveSpanInitiateReq&&) = default;
+    RemoveSpanInitiateReq& operator=(RemoveSpanInitiateReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // fileId
@@ -2783,6 +3238,11 @@ struct RemoveSpanInitiateResp {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeList<RemoveSpanInitiateBlockInfo>::STATIC_SIZE; // byteOffset + blocks
 
     RemoveSpanInitiateResp() { clear(); }
+    explicit RemoveSpanInitiateResp(uint64_t byteOffset_, BincodeList<RemoveSpanInitiateBlockInfo>&& blocks_) : byteOffset(byteOffset_), blocks(std::move(blocks_)) {}
+    RemoveSpanInitiateResp(const RemoveSpanInitiateResp&) = default;
+    RemoveSpanInitiateResp& operator=(const RemoveSpanInitiateResp&) = default;
+    RemoveSpanInitiateResp(RemoveSpanInitiateResp&&) = default;
+    RemoveSpanInitiateResp& operator=(RemoveSpanInitiateResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // byteOffset
@@ -2806,6 +3266,11 @@ struct RemoveSpanCertifyReq {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<8>::STATIC_SIZE + 8 + BincodeList<BlockProof>::STATIC_SIZE; // fileId + cookie + byteOffset + proofs
 
     RemoveSpanCertifyReq() { clear(); }
+    explicit RemoveSpanCertifyReq(InodeId fileId_, BincodeFixedBytes<8>&& cookie_, uint64_t byteOffset_, BincodeList<BlockProof>&& proofs_) : fileId(fileId_), cookie(std::move(cookie_)), byteOffset(byteOffset_), proofs(std::move(proofs_)) {}
+    RemoveSpanCertifyReq(const RemoveSpanCertifyReq&) = default;
+    RemoveSpanCertifyReq& operator=(const RemoveSpanCertifyReq&) = default;
+    RemoveSpanCertifyReq(RemoveSpanCertifyReq&&) = default;
+    RemoveSpanCertifyReq& operator=(RemoveSpanCertifyReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // fileId
@@ -2827,6 +3292,10 @@ struct RemoveSpanCertifyResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     RemoveSpanCertifyResp() { clear(); }
+    RemoveSpanCertifyResp(const RemoveSpanCertifyResp&) = default;
+    RemoveSpanCertifyResp& operator=(const RemoveSpanCertifyResp&) = default;
+    RemoveSpanCertifyResp(RemoveSpanCertifyResp&&) = default;
+    RemoveSpanCertifyResp& operator=(RemoveSpanCertifyResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -2850,6 +3319,11 @@ struct SwapBlocksReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + 8 + 8 + 8 + 8; // fileId1 + byteOffset1 + blockId1 + fileId2 + byteOffset2 + blockId2
 
     SwapBlocksReq() { clear(); }
+    explicit SwapBlocksReq(InodeId fileId1_, uint64_t byteOffset1_, uint64_t blockId1_, InodeId fileId2_, uint64_t byteOffset2_, uint64_t blockId2_) : fileId1(fileId1_), byteOffset1(byteOffset1_), blockId1(blockId1_), fileId2(fileId2_), byteOffset2(byteOffset2_), blockId2(blockId2_) {}
+    SwapBlocksReq(const SwapBlocksReq&) = default;
+    SwapBlocksReq& operator=(const SwapBlocksReq&) = default;
+    SwapBlocksReq(SwapBlocksReq&&) = default;
+    SwapBlocksReq& operator=(SwapBlocksReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // fileId1
@@ -2873,6 +3347,10 @@ struct SwapBlocksResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     SwapBlocksResp() { clear(); }
+    SwapBlocksResp(const SwapBlocksResp&) = default;
+    SwapBlocksResp& operator=(const SwapBlocksResp&) = default;
+    SwapBlocksResp(SwapBlocksResp&&) = default;
+    SwapBlocksResp& operator=(SwapBlocksResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -2892,6 +3370,11 @@ struct BlockServiceFilesReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8; // blockServiceId + startFrom
 
     BlockServiceFilesReq() { clear(); }
+    explicit BlockServiceFilesReq(BlockServiceId blockServiceId_, InodeId startFrom_) : blockServiceId(blockServiceId_), startFrom(startFrom_) {}
+    BlockServiceFilesReq(const BlockServiceFilesReq&) = default;
+    BlockServiceFilesReq& operator=(const BlockServiceFilesReq&) = default;
+    BlockServiceFilesReq(BlockServiceFilesReq&&) = default;
+    BlockServiceFilesReq& operator=(BlockServiceFilesReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // blockServiceId
@@ -2912,6 +3395,11 @@ struct BlockServiceFilesResp {
     static constexpr uint16_t STATIC_SIZE = BincodeList<InodeId>::STATIC_SIZE; // fileIds
 
     BlockServiceFilesResp() { clear(); }
+    explicit BlockServiceFilesResp(BincodeList<InodeId>&& fileIds_) : fileIds(std::move(fileIds_)) {}
+    BlockServiceFilesResp(const BlockServiceFilesResp&) = default;
+    BlockServiceFilesResp& operator=(const BlockServiceFilesResp&) = default;
+    BlockServiceFilesResp(BlockServiceFilesResp&&) = default;
+    BlockServiceFilesResp& operator=(BlockServiceFilesResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += fileIds.packedSize(); // fileIds
@@ -2931,6 +3419,11 @@ struct RemoveInodeReq {
     static constexpr uint16_t STATIC_SIZE = 8; // id
 
     RemoveInodeReq() { clear(); }
+    explicit RemoveInodeReq(InodeId id_) : id(id_) {}
+    RemoveInodeReq(const RemoveInodeReq&) = default;
+    RemoveInodeReq& operator=(const RemoveInodeReq&) = default;
+    RemoveInodeReq(RemoveInodeReq&&) = default;
+    RemoveInodeReq& operator=(RemoveInodeReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // id
@@ -2949,6 +3442,10 @@ struct RemoveInodeResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     RemoveInodeResp() { clear(); }
+    RemoveInodeResp(const RemoveInodeResp&) = default;
+    RemoveInodeResp& operator=(const RemoveInodeResp&) = default;
+    RemoveInodeResp(RemoveInodeResp&&) = default;
+    RemoveInodeResp& operator=(RemoveInodeResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -2968,6 +3465,11 @@ struct AddSpanInitiateWithReferenceReq {
     static constexpr uint16_t STATIC_SIZE = AddSpanInitiateReq::STATIC_SIZE + 8; // req + reference
 
     AddSpanInitiateWithReferenceReq() { clear(); }
+    explicit AddSpanInitiateWithReferenceReq(AddSpanInitiateReq&& req_, InodeId reference_) : req(std::move(req_)), reference(reference_) {}
+    AddSpanInitiateWithReferenceReq(const AddSpanInitiateWithReferenceReq&) = default;
+    AddSpanInitiateWithReferenceReq& operator=(const AddSpanInitiateWithReferenceReq&) = default;
+    AddSpanInitiateWithReferenceReq(AddSpanInitiateWithReferenceReq&&) = default;
+    AddSpanInitiateWithReferenceReq& operator=(AddSpanInitiateWithReferenceReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += req.packedSize(); // req
@@ -2988,6 +3490,11 @@ struct AddSpanInitiateWithReferenceResp {
     static constexpr uint16_t STATIC_SIZE = AddSpanInitiateResp::STATIC_SIZE; // resp
 
     AddSpanInitiateWithReferenceResp() { clear(); }
+    explicit AddSpanInitiateWithReferenceResp(AddSpanInitiateResp&& resp_) : resp(std::move(resp_)) {}
+    AddSpanInitiateWithReferenceResp(const AddSpanInitiateWithReferenceResp&) = default;
+    AddSpanInitiateWithReferenceResp& operator=(const AddSpanInitiateWithReferenceResp&) = default;
+    AddSpanInitiateWithReferenceResp(AddSpanInitiateWithReferenceResp&&) = default;
+    AddSpanInitiateWithReferenceResp& operator=(AddSpanInitiateWithReferenceResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += resp.packedSize(); // resp
@@ -3008,6 +3515,11 @@ struct RemoveZeroBlockServiceFilesReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8; // startBlockService + startFile
 
     RemoveZeroBlockServiceFilesReq() { clear(); }
+    explicit RemoveZeroBlockServiceFilesReq(BlockServiceId startBlockService_, InodeId startFile_) : startBlockService(startBlockService_), startFile(startFile_) {}
+    RemoveZeroBlockServiceFilesReq(const RemoveZeroBlockServiceFilesReq&) = default;
+    RemoveZeroBlockServiceFilesReq& operator=(const RemoveZeroBlockServiceFilesReq&) = default;
+    RemoveZeroBlockServiceFilesReq(RemoveZeroBlockServiceFilesReq&&) = default;
+    RemoveZeroBlockServiceFilesReq& operator=(RemoveZeroBlockServiceFilesReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // startBlockService
@@ -3030,6 +3542,11 @@ struct RemoveZeroBlockServiceFilesResp {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + 8; // removed + nextBlockService + nextFile
 
     RemoveZeroBlockServiceFilesResp() { clear(); }
+    explicit RemoveZeroBlockServiceFilesResp(uint64_t removed_, BlockServiceId nextBlockService_, InodeId nextFile_) : removed(removed_), nextBlockService(nextBlockService_), nextFile(nextFile_) {}
+    RemoveZeroBlockServiceFilesResp(const RemoveZeroBlockServiceFilesResp&) = default;
+    RemoveZeroBlockServiceFilesResp& operator=(const RemoveZeroBlockServiceFilesResp&) = default;
+    RemoveZeroBlockServiceFilesResp(RemoveZeroBlockServiceFilesResp&&) = default;
+    RemoveZeroBlockServiceFilesResp& operator=(RemoveZeroBlockServiceFilesResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // removed
@@ -3056,6 +3573,11 @@ struct SwapSpansReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeList<uint64_t>::STATIC_SIZE + 8 + 8 + BincodeList<uint64_t>::STATIC_SIZE; // fileId1 + byteOffset1 + blocks1 + fileId2 + byteOffset2 + blocks2
 
     SwapSpansReq() { clear(); }
+    explicit SwapSpansReq(InodeId fileId1_, uint64_t byteOffset1_, BincodeList<uint64_t>&& blocks1_, InodeId fileId2_, uint64_t byteOffset2_, BincodeList<uint64_t>&& blocks2_) : fileId1(fileId1_), byteOffset1(byteOffset1_), blocks1(std::move(blocks1_)), fileId2(fileId2_), byteOffset2(byteOffset2_), blocks2(std::move(blocks2_)) {}
+    SwapSpansReq(const SwapSpansReq&) = default;
+    SwapSpansReq& operator=(const SwapSpansReq&) = default;
+    SwapSpansReq(SwapSpansReq&&) = default;
+    SwapSpansReq& operator=(SwapSpansReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // fileId1
@@ -3079,6 +3601,10 @@ struct SwapSpansResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     SwapSpansResp() { clear(); }
+    SwapSpansResp(const SwapSpansResp&) = default;
+    SwapSpansResp& operator=(const SwapSpansResp&) = default;
+    SwapSpansResp(SwapSpansResp&&) = default;
+    SwapSpansResp& operator=(SwapSpansResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -3101,6 +3627,11 @@ struct SameDirectoryRenameSnapshotReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8 + BincodeBytes::STATIC_SIZE; // targetId + dirId + oldName + oldCreationTime + newName
 
     SameDirectoryRenameSnapshotReq() { clear(); }
+    explicit SameDirectoryRenameSnapshotReq(InodeId targetId_, InodeId dirId_, BincodeBytes&& oldName_, TernTime oldCreationTime_, BincodeBytes&& newName_) : targetId(targetId_), dirId(dirId_), oldName(std::move(oldName_)), oldCreationTime(oldCreationTime_), newName(std::move(newName_)) {}
+    SameDirectoryRenameSnapshotReq(const SameDirectoryRenameSnapshotReq&) = default;
+    SameDirectoryRenameSnapshotReq& operator=(const SameDirectoryRenameSnapshotReq&) = default;
+    SameDirectoryRenameSnapshotReq(SameDirectoryRenameSnapshotReq&&) = default;
+    SameDirectoryRenameSnapshotReq& operator=(SameDirectoryRenameSnapshotReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // targetId
@@ -3124,6 +3655,11 @@ struct SameDirectoryRenameSnapshotResp {
     static constexpr uint16_t STATIC_SIZE = 8; // newCreationTime
 
     SameDirectoryRenameSnapshotResp() { clear(); }
+    explicit SameDirectoryRenameSnapshotResp(TernTime newCreationTime_) : newCreationTime(newCreationTime_) {}
+    SameDirectoryRenameSnapshotResp(const SameDirectoryRenameSnapshotResp&) = default;
+    SameDirectoryRenameSnapshotResp& operator=(const SameDirectoryRenameSnapshotResp&) = default;
+    SameDirectoryRenameSnapshotResp(SameDirectoryRenameSnapshotResp&&) = default;
+    SameDirectoryRenameSnapshotResp& operator=(SameDirectoryRenameSnapshotResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // newCreationTime
@@ -3144,6 +3680,11 @@ struct AddSpanAtLocationInitiateReq {
     static constexpr uint16_t STATIC_SIZE = 1 + AddSpanInitiateWithReferenceReq::STATIC_SIZE; // locationId + req
 
     AddSpanAtLocationInitiateReq() { clear(); }
+    explicit AddSpanAtLocationInitiateReq(uint8_t locationId_, AddSpanInitiateWithReferenceReq&& req_) : locationId(locationId_), req(std::move(req_)) {}
+    AddSpanAtLocationInitiateReq(const AddSpanAtLocationInitiateReq&) = default;
+    AddSpanAtLocationInitiateReq& operator=(const AddSpanAtLocationInitiateReq&) = default;
+    AddSpanAtLocationInitiateReq(AddSpanAtLocationInitiateReq&&) = default;
+    AddSpanAtLocationInitiateReq& operator=(AddSpanAtLocationInitiateReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 1; // locationId
@@ -3164,6 +3705,11 @@ struct AddSpanAtLocationInitiateResp {
     static constexpr uint16_t STATIC_SIZE = AddSpanInitiateResp::STATIC_SIZE; // resp
 
     AddSpanAtLocationInitiateResp() { clear(); }
+    explicit AddSpanAtLocationInitiateResp(AddSpanInitiateResp&& resp_) : resp(std::move(resp_)) {}
+    AddSpanAtLocationInitiateResp(const AddSpanAtLocationInitiateResp&) = default;
+    AddSpanAtLocationInitiateResp& operator=(const AddSpanAtLocationInitiateResp&) = default;
+    AddSpanAtLocationInitiateResp(AddSpanAtLocationInitiateResp&&) = default;
+    AddSpanAtLocationInitiateResp& operator=(AddSpanAtLocationInitiateResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += resp.packedSize(); // resp
@@ -3185,6 +3731,11 @@ struct CreateDirectoryInodeReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + DirectoryInfo::STATIC_SIZE; // id + ownerId + info
 
     CreateDirectoryInodeReq() { clear(); }
+    explicit CreateDirectoryInodeReq(InodeId id_, InodeId ownerId_, DirectoryInfo&& info_) : id(id_), ownerId(ownerId_), info(std::move(info_)) {}
+    CreateDirectoryInodeReq(const CreateDirectoryInodeReq&) = default;
+    CreateDirectoryInodeReq& operator=(const CreateDirectoryInodeReq&) = default;
+    CreateDirectoryInodeReq(CreateDirectoryInodeReq&&) = default;
+    CreateDirectoryInodeReq& operator=(CreateDirectoryInodeReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // id
@@ -3206,6 +3757,11 @@ struct CreateDirectoryInodeResp {
     static constexpr uint16_t STATIC_SIZE = 8; // mtime
 
     CreateDirectoryInodeResp() { clear(); }
+    explicit CreateDirectoryInodeResp(TernTime mtime_) : mtime(mtime_) {}
+    CreateDirectoryInodeResp(const CreateDirectoryInodeResp&) = default;
+    CreateDirectoryInodeResp& operator=(const CreateDirectoryInodeResp&) = default;
+    CreateDirectoryInodeResp(CreateDirectoryInodeResp&&) = default;
+    CreateDirectoryInodeResp& operator=(CreateDirectoryInodeResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // mtime
@@ -3226,6 +3782,11 @@ struct SetDirectoryOwnerReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8; // dirId + ownerId
 
     SetDirectoryOwnerReq() { clear(); }
+    explicit SetDirectoryOwnerReq(InodeId dirId_, InodeId ownerId_) : dirId(dirId_), ownerId(ownerId_) {}
+    SetDirectoryOwnerReq(const SetDirectoryOwnerReq&) = default;
+    SetDirectoryOwnerReq& operator=(const SetDirectoryOwnerReq&) = default;
+    SetDirectoryOwnerReq(SetDirectoryOwnerReq&&) = default;
+    SetDirectoryOwnerReq& operator=(SetDirectoryOwnerReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // dirId
@@ -3245,6 +3806,10 @@ struct SetDirectoryOwnerResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     SetDirectoryOwnerResp() { clear(); }
+    SetDirectoryOwnerResp(const SetDirectoryOwnerResp&) = default;
+    SetDirectoryOwnerResp& operator=(const SetDirectoryOwnerResp&) = default;
+    SetDirectoryOwnerResp(SetDirectoryOwnerResp&&) = default;
+    SetDirectoryOwnerResp& operator=(SetDirectoryOwnerResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -3264,6 +3829,11 @@ struct RemoveDirectoryOwnerReq {
     static constexpr uint16_t STATIC_SIZE = 8 + DirectoryInfo::STATIC_SIZE; // dirId + info
 
     RemoveDirectoryOwnerReq() { clear(); }
+    explicit RemoveDirectoryOwnerReq(InodeId dirId_, DirectoryInfo&& info_) : dirId(dirId_), info(std::move(info_)) {}
+    RemoveDirectoryOwnerReq(const RemoveDirectoryOwnerReq&) = default;
+    RemoveDirectoryOwnerReq& operator=(const RemoveDirectoryOwnerReq&) = default;
+    RemoveDirectoryOwnerReq(RemoveDirectoryOwnerReq&&) = default;
+    RemoveDirectoryOwnerReq& operator=(RemoveDirectoryOwnerReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // dirId
@@ -3283,6 +3853,10 @@ struct RemoveDirectoryOwnerResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     RemoveDirectoryOwnerResp() { clear(); }
+    RemoveDirectoryOwnerResp(const RemoveDirectoryOwnerResp&) = default;
+    RemoveDirectoryOwnerResp& operator=(const RemoveDirectoryOwnerResp&) = default;
+    RemoveDirectoryOwnerResp(RemoveDirectoryOwnerResp&&) = default;
+    RemoveDirectoryOwnerResp& operator=(RemoveDirectoryOwnerResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -3304,6 +3878,11 @@ struct CreateLockedCurrentEdgeReq {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE + 8 + 8; // dirId + name + targetId + oldCreationTime
 
     CreateLockedCurrentEdgeReq() { clear(); }
+    explicit CreateLockedCurrentEdgeReq(InodeId dirId_, BincodeBytes&& name_, InodeId targetId_, TernTime oldCreationTime_) : dirId(dirId_), name(std::move(name_)), targetId(targetId_), oldCreationTime(oldCreationTime_) {}
+    CreateLockedCurrentEdgeReq(const CreateLockedCurrentEdgeReq&) = default;
+    CreateLockedCurrentEdgeReq& operator=(const CreateLockedCurrentEdgeReq&) = default;
+    CreateLockedCurrentEdgeReq(CreateLockedCurrentEdgeReq&&) = default;
+    CreateLockedCurrentEdgeReq& operator=(CreateLockedCurrentEdgeReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // dirId
@@ -3326,6 +3905,11 @@ struct CreateLockedCurrentEdgeResp {
     static constexpr uint16_t STATIC_SIZE = 8; // creationTime
 
     CreateLockedCurrentEdgeResp() { clear(); }
+    explicit CreateLockedCurrentEdgeResp(TernTime creationTime_) : creationTime(creationTime_) {}
+    CreateLockedCurrentEdgeResp(const CreateLockedCurrentEdgeResp&) = default;
+    CreateLockedCurrentEdgeResp& operator=(const CreateLockedCurrentEdgeResp&) = default;
+    CreateLockedCurrentEdgeResp(CreateLockedCurrentEdgeResp&&) = default;
+    CreateLockedCurrentEdgeResp& operator=(CreateLockedCurrentEdgeResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // creationTime
@@ -3348,6 +3932,11 @@ struct LockCurrentEdgeReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + 8 + BincodeBytes::STATIC_SIZE; // dirId + targetId + creationTime + name
 
     LockCurrentEdgeReq() { clear(); }
+    explicit LockCurrentEdgeReq(InodeId dirId_, InodeId targetId_, TernTime creationTime_, BincodeBytes&& name_) : dirId(dirId_), targetId(targetId_), creationTime(creationTime_), name(std::move(name_)) {}
+    LockCurrentEdgeReq(const LockCurrentEdgeReq&) = default;
+    LockCurrentEdgeReq& operator=(const LockCurrentEdgeReq&) = default;
+    LockCurrentEdgeReq(LockCurrentEdgeReq&&) = default;
+    LockCurrentEdgeReq& operator=(LockCurrentEdgeReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // dirId
@@ -3369,6 +3958,10 @@ struct LockCurrentEdgeResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     LockCurrentEdgeResp() { clear(); }
+    LockCurrentEdgeResp(const LockCurrentEdgeResp&) = default;
+    LockCurrentEdgeResp& operator=(const LockCurrentEdgeResp&) = default;
+    LockCurrentEdgeResp(LockCurrentEdgeResp&&) = default;
+    LockCurrentEdgeResp& operator=(LockCurrentEdgeResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -3391,6 +3984,11 @@ struct UnlockCurrentEdgeReq {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE + 8 + 8 + 1; // dirId + name + creationTime + targetId + wasMoved
 
     UnlockCurrentEdgeReq() { clear(); }
+    explicit UnlockCurrentEdgeReq(InodeId dirId_, BincodeBytes&& name_, TernTime creationTime_, InodeId targetId_, bool wasMoved_) : dirId(dirId_), name(std::move(name_)), creationTime(creationTime_), targetId(targetId_), wasMoved(wasMoved_) {}
+    UnlockCurrentEdgeReq(const UnlockCurrentEdgeReq&) = default;
+    UnlockCurrentEdgeReq& operator=(const UnlockCurrentEdgeReq&) = default;
+    UnlockCurrentEdgeReq(UnlockCurrentEdgeReq&&) = default;
+    UnlockCurrentEdgeReq& operator=(UnlockCurrentEdgeReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // dirId
@@ -3413,6 +4011,10 @@ struct UnlockCurrentEdgeResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     UnlockCurrentEdgeResp() { clear(); }
+    UnlockCurrentEdgeResp(const UnlockCurrentEdgeResp&) = default;
+    UnlockCurrentEdgeResp& operator=(const UnlockCurrentEdgeResp&) = default;
+    UnlockCurrentEdgeResp(UnlockCurrentEdgeResp&&) = default;
+    UnlockCurrentEdgeResp& operator=(UnlockCurrentEdgeResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -3434,6 +4036,11 @@ struct RemoveOwnedSnapshotFileEdgeReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // ownerId + targetId + name + creationTime
 
     RemoveOwnedSnapshotFileEdgeReq() { clear(); }
+    explicit RemoveOwnedSnapshotFileEdgeReq(InodeId ownerId_, InodeId targetId_, BincodeBytes&& name_, TernTime creationTime_) : ownerId(ownerId_), targetId(targetId_), name(std::move(name_)), creationTime(creationTime_) {}
+    RemoveOwnedSnapshotFileEdgeReq(const RemoveOwnedSnapshotFileEdgeReq&) = default;
+    RemoveOwnedSnapshotFileEdgeReq& operator=(const RemoveOwnedSnapshotFileEdgeReq&) = default;
+    RemoveOwnedSnapshotFileEdgeReq(RemoveOwnedSnapshotFileEdgeReq&&) = default;
+    RemoveOwnedSnapshotFileEdgeReq& operator=(RemoveOwnedSnapshotFileEdgeReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // ownerId
@@ -3455,6 +4062,10 @@ struct RemoveOwnedSnapshotFileEdgeResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     RemoveOwnedSnapshotFileEdgeResp() { clear(); }
+    RemoveOwnedSnapshotFileEdgeResp(const RemoveOwnedSnapshotFileEdgeResp&) = default;
+    RemoveOwnedSnapshotFileEdgeResp& operator=(const RemoveOwnedSnapshotFileEdgeResp&) = default;
+    RemoveOwnedSnapshotFileEdgeResp(RemoveOwnedSnapshotFileEdgeResp&&) = default;
+    RemoveOwnedSnapshotFileEdgeResp& operator=(RemoveOwnedSnapshotFileEdgeResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -3474,6 +4085,11 @@ struct MakeFileTransientReq {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE; // id + note
 
     MakeFileTransientReq() { clear(); }
+    explicit MakeFileTransientReq(InodeId id_, BincodeBytes&& note_) : id(id_), note(std::move(note_)) {}
+    MakeFileTransientReq(const MakeFileTransientReq&) = default;
+    MakeFileTransientReq& operator=(const MakeFileTransientReq&) = default;
+    MakeFileTransientReq(MakeFileTransientReq&&) = default;
+    MakeFileTransientReq& operator=(MakeFileTransientReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // id
@@ -3493,6 +4109,10 @@ struct MakeFileTransientResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     MakeFileTransientResp() { clear(); }
+    MakeFileTransientResp(const MakeFileTransientResp&) = default;
+    MakeFileTransientResp& operator=(const MakeFileTransientResp&) = default;
+    MakeFileTransientResp(MakeFileTransientResp&&) = default;
+    MakeFileTransientResp& operator=(MakeFileTransientResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -3512,6 +4132,11 @@ struct MakeDirectoryReq {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE; // ownerId + name
 
     MakeDirectoryReq() { clear(); }
+    explicit MakeDirectoryReq(InodeId ownerId_, BincodeBytes&& name_) : ownerId(ownerId_), name(std::move(name_)) {}
+    MakeDirectoryReq(const MakeDirectoryReq&) = default;
+    MakeDirectoryReq& operator=(const MakeDirectoryReq&) = default;
+    MakeDirectoryReq(MakeDirectoryReq&&) = default;
+    MakeDirectoryReq& operator=(MakeDirectoryReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // ownerId
@@ -3533,6 +4158,11 @@ struct MakeDirectoryResp {
     static constexpr uint16_t STATIC_SIZE = 8 + 8; // id + creationTime
 
     MakeDirectoryResp() { clear(); }
+    explicit MakeDirectoryResp(InodeId id_, TernTime creationTime_) : id(id_), creationTime(creationTime_) {}
+    MakeDirectoryResp(const MakeDirectoryResp&) = default;
+    MakeDirectoryResp& operator=(const MakeDirectoryResp&) = default;
+    MakeDirectoryResp(MakeDirectoryResp&&) = default;
+    MakeDirectoryResp& operator=(MakeDirectoryResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // id
@@ -3558,6 +4188,11 @@ struct RenameFileReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8 + 8 + BincodeBytes::STATIC_SIZE; // targetId + oldOwnerId + oldName + oldCreationTime + newOwnerId + newName
 
     RenameFileReq() { clear(); }
+    explicit RenameFileReq(InodeId targetId_, InodeId oldOwnerId_, BincodeBytes&& oldName_, TernTime oldCreationTime_, InodeId newOwnerId_, BincodeBytes&& newName_) : targetId(targetId_), oldOwnerId(oldOwnerId_), oldName(std::move(oldName_)), oldCreationTime(oldCreationTime_), newOwnerId(newOwnerId_), newName(std::move(newName_)) {}
+    RenameFileReq(const RenameFileReq&) = default;
+    RenameFileReq& operator=(const RenameFileReq&) = default;
+    RenameFileReq(RenameFileReq&&) = default;
+    RenameFileReq& operator=(RenameFileReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // targetId
@@ -3582,6 +4217,11 @@ struct RenameFileResp {
     static constexpr uint16_t STATIC_SIZE = 8; // creationTime
 
     RenameFileResp() { clear(); }
+    explicit RenameFileResp(TernTime creationTime_) : creationTime(creationTime_) {}
+    RenameFileResp(const RenameFileResp&) = default;
+    RenameFileResp& operator=(const RenameFileResp&) = default;
+    RenameFileResp(RenameFileResp&&) = default;
+    RenameFileResp& operator=(RenameFileResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // creationTime
@@ -3604,6 +4244,11 @@ struct SoftUnlinkDirectoryReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + 8 + BincodeBytes::STATIC_SIZE; // ownerId + targetId + creationTime + name
 
     SoftUnlinkDirectoryReq() { clear(); }
+    explicit SoftUnlinkDirectoryReq(InodeId ownerId_, InodeId targetId_, TernTime creationTime_, BincodeBytes&& name_) : ownerId(ownerId_), targetId(targetId_), creationTime(creationTime_), name(std::move(name_)) {}
+    SoftUnlinkDirectoryReq(const SoftUnlinkDirectoryReq&) = default;
+    SoftUnlinkDirectoryReq& operator=(const SoftUnlinkDirectoryReq&) = default;
+    SoftUnlinkDirectoryReq(SoftUnlinkDirectoryReq&&) = default;
+    SoftUnlinkDirectoryReq& operator=(SoftUnlinkDirectoryReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // ownerId
@@ -3625,6 +4270,10 @@ struct SoftUnlinkDirectoryResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     SoftUnlinkDirectoryResp() { clear(); }
+    SoftUnlinkDirectoryResp(const SoftUnlinkDirectoryResp&) = default;
+    SoftUnlinkDirectoryResp& operator=(const SoftUnlinkDirectoryResp&) = default;
+    SoftUnlinkDirectoryResp(SoftUnlinkDirectoryResp&&) = default;
+    SoftUnlinkDirectoryResp& operator=(SoftUnlinkDirectoryResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -3648,6 +4297,11 @@ struct RenameDirectoryReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8 + 8 + BincodeBytes::STATIC_SIZE; // targetId + oldOwnerId + oldName + oldCreationTime + newOwnerId + newName
 
     RenameDirectoryReq() { clear(); }
+    explicit RenameDirectoryReq(InodeId targetId_, InodeId oldOwnerId_, BincodeBytes&& oldName_, TernTime oldCreationTime_, InodeId newOwnerId_, BincodeBytes&& newName_) : targetId(targetId_), oldOwnerId(oldOwnerId_), oldName(std::move(oldName_)), oldCreationTime(oldCreationTime_), newOwnerId(newOwnerId_), newName(std::move(newName_)) {}
+    RenameDirectoryReq(const RenameDirectoryReq&) = default;
+    RenameDirectoryReq& operator=(const RenameDirectoryReq&) = default;
+    RenameDirectoryReq(RenameDirectoryReq&&) = default;
+    RenameDirectoryReq& operator=(RenameDirectoryReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // targetId
@@ -3672,6 +4326,11 @@ struct RenameDirectoryResp {
     static constexpr uint16_t STATIC_SIZE = 8; // creationTime
 
     RenameDirectoryResp() { clear(); }
+    explicit RenameDirectoryResp(TernTime creationTime_) : creationTime(creationTime_) {}
+    RenameDirectoryResp(const RenameDirectoryResp&) = default;
+    RenameDirectoryResp& operator=(const RenameDirectoryResp&) = default;
+    RenameDirectoryResp(RenameDirectoryResp&&) = default;
+    RenameDirectoryResp& operator=(RenameDirectoryResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // creationTime
@@ -3694,6 +4353,11 @@ struct CrossShardHardUnlinkFileReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // ownerId + targetId + name + creationTime
 
     CrossShardHardUnlinkFileReq() { clear(); }
+    explicit CrossShardHardUnlinkFileReq(InodeId ownerId_, InodeId targetId_, BincodeBytes&& name_, TernTime creationTime_) : ownerId(ownerId_), targetId(targetId_), name(std::move(name_)), creationTime(creationTime_) {}
+    CrossShardHardUnlinkFileReq(const CrossShardHardUnlinkFileReq&) = default;
+    CrossShardHardUnlinkFileReq& operator=(const CrossShardHardUnlinkFileReq&) = default;
+    CrossShardHardUnlinkFileReq(CrossShardHardUnlinkFileReq&&) = default;
+    CrossShardHardUnlinkFileReq& operator=(CrossShardHardUnlinkFileReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // ownerId
@@ -3715,6 +4379,10 @@ struct CrossShardHardUnlinkFileResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     CrossShardHardUnlinkFileResp() { clear(); }
+    CrossShardHardUnlinkFileResp(const CrossShardHardUnlinkFileResp&) = default;
+    CrossShardHardUnlinkFileResp& operator=(const CrossShardHardUnlinkFileResp&) = default;
+    CrossShardHardUnlinkFileResp(CrossShardHardUnlinkFileResp&&) = default;
+    CrossShardHardUnlinkFileResp& operator=(CrossShardHardUnlinkFileResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -3733,6 +4401,11 @@ struct HardUnlinkDirectoryReq {
     static constexpr uint16_t STATIC_SIZE = 8; // dirId
 
     HardUnlinkDirectoryReq() { clear(); }
+    explicit HardUnlinkDirectoryReq(InodeId dirId_) : dirId(dirId_) {}
+    HardUnlinkDirectoryReq(const HardUnlinkDirectoryReq&) = default;
+    HardUnlinkDirectoryReq& operator=(const HardUnlinkDirectoryReq&) = default;
+    HardUnlinkDirectoryReq(HardUnlinkDirectoryReq&&) = default;
+    HardUnlinkDirectoryReq& operator=(HardUnlinkDirectoryReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // dirId
@@ -3751,6 +4424,10 @@ struct HardUnlinkDirectoryResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     HardUnlinkDirectoryResp() { clear(); }
+    HardUnlinkDirectoryResp(const HardUnlinkDirectoryResp&) = default;
+    HardUnlinkDirectoryResp& operator=(const HardUnlinkDirectoryResp&) = default;
+    HardUnlinkDirectoryResp(HardUnlinkDirectoryResp&&) = default;
+    HardUnlinkDirectoryResp& operator=(HardUnlinkDirectoryResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -3769,6 +4446,11 @@ struct CdcSnapshotReq {
     static constexpr uint16_t STATIC_SIZE = 8; // snapshotId
 
     CdcSnapshotReq() { clear(); }
+    explicit CdcSnapshotReq(uint64_t snapshotId_) : snapshotId(snapshotId_) {}
+    CdcSnapshotReq(const CdcSnapshotReq&) = default;
+    CdcSnapshotReq& operator=(const CdcSnapshotReq&) = default;
+    CdcSnapshotReq(CdcSnapshotReq&&) = default;
+    CdcSnapshotReq& operator=(CdcSnapshotReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // snapshotId
@@ -3787,6 +4469,10 @@ struct CdcSnapshotResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     CdcSnapshotResp() { clear(); }
+    CdcSnapshotResp(const CdcSnapshotResp&) = default;
+    CdcSnapshotResp& operator=(const CdcSnapshotResp&) = default;
+    CdcSnapshotResp(CdcSnapshotResp&&) = default;
+    CdcSnapshotResp& operator=(CdcSnapshotResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -3804,6 +4490,10 @@ struct LocalShardsReq {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     LocalShardsReq() { clear(); }
+    LocalShardsReq(const LocalShardsReq&) = default;
+    LocalShardsReq& operator=(const LocalShardsReq&) = default;
+    LocalShardsReq(LocalShardsReq&&) = default;
+    LocalShardsReq& operator=(LocalShardsReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -3822,6 +4512,11 @@ struct LocalShardsResp {
     static constexpr uint16_t STATIC_SIZE = BincodeList<ShardInfo>::STATIC_SIZE; // shards
 
     LocalShardsResp() { clear(); }
+    explicit LocalShardsResp(BincodeList<ShardInfo>&& shards_) : shards(std::move(shards_)) {}
+    LocalShardsResp(const LocalShardsResp&) = default;
+    LocalShardsResp& operator=(const LocalShardsResp&) = default;
+    LocalShardsResp(LocalShardsResp&&) = default;
+    LocalShardsResp& operator=(LocalShardsResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += shards.packedSize(); // shards
@@ -3840,6 +4535,10 @@ struct LocalCdcReq {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     LocalCdcReq() { clear(); }
+    LocalCdcReq(const LocalCdcReq&) = default;
+    LocalCdcReq& operator=(const LocalCdcReq&) = default;
+    LocalCdcReq(LocalCdcReq&&) = default;
+    LocalCdcReq& operator=(LocalCdcReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -3859,6 +4558,11 @@ struct LocalCdcResp {
     static constexpr uint16_t STATIC_SIZE = AddrsInfo::STATIC_SIZE + 8; // addrs + lastSeen
 
     LocalCdcResp() { clear(); }
+    explicit LocalCdcResp(AddrsInfo addrs_, TernTime lastSeen_) : addrs(addrs_), lastSeen(lastSeen_) {}
+    LocalCdcResp(const LocalCdcResp&) = default;
+    LocalCdcResp& operator=(const LocalCdcResp&) = default;
+    LocalCdcResp(LocalCdcResp&&) = default;
+    LocalCdcResp& operator=(LocalCdcResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += addrs.packedSize(); // addrs
@@ -3878,6 +4582,10 @@ struct InfoReq {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     InfoReq() { clear(); }
+    InfoReq(const InfoReq&) = default;
+    InfoReq& operator=(const InfoReq&) = default;
+    InfoReq(InfoReq&&) = default;
+    InfoReq& operator=(InfoReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -3900,6 +4608,11 @@ struct InfoResp {
     static constexpr uint16_t STATIC_SIZE = 4 + 4 + 8 + 8 + 8; // numBlockServices + numFailureDomains + capacity + available + blocks
 
     InfoResp() { clear(); }
+    explicit InfoResp(uint32_t numBlockServices_, uint32_t numFailureDomains_, uint64_t capacity_, uint64_t available_, uint64_t blocks_) : numBlockServices(numBlockServices_), numFailureDomains(numFailureDomains_), capacity(capacity_), available(available_), blocks(blocks_) {}
+    InfoResp(const InfoResp&) = default;
+    InfoResp& operator=(const InfoResp&) = default;
+    InfoResp(InfoResp&&) = default;
+    InfoResp& operator=(InfoResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 4; // numBlockServices
@@ -3922,6 +4635,10 @@ struct RegistryReq {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     RegistryReq() { clear(); }
+    RegistryReq(const RegistryReq&) = default;
+    RegistryReq& operator=(const RegistryReq&) = default;
+    RegistryReq(RegistryReq&&) = default;
+    RegistryReq& operator=(RegistryReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -3940,6 +4657,11 @@ struct RegistryResp {
     static constexpr uint16_t STATIC_SIZE = AddrsInfo::STATIC_SIZE; // addrs
 
     RegistryResp() { clear(); }
+    explicit RegistryResp(AddrsInfo addrs_) : addrs(addrs_) {}
+    RegistryResp(const RegistryResp&) = default;
+    RegistryResp& operator=(const RegistryResp&) = default;
+    RegistryResp(RegistryResp&&) = default;
+    RegistryResp& operator=(RegistryResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += addrs.packedSize(); // addrs
@@ -3959,6 +4681,11 @@ struct LocalChangedBlockServicesReq {
     static constexpr uint16_t STATIC_SIZE = 8; // changedSince
 
     LocalChangedBlockServicesReq() { clear(); }
+    explicit LocalChangedBlockServicesReq(TernTime changedSince_) : changedSince(changedSince_) {}
+    LocalChangedBlockServicesReq(const LocalChangedBlockServicesReq&) = default;
+    LocalChangedBlockServicesReq& operator=(const LocalChangedBlockServicesReq&) = default;
+    LocalChangedBlockServicesReq(LocalChangedBlockServicesReq&&) = default;
+    LocalChangedBlockServicesReq& operator=(LocalChangedBlockServicesReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // changedSince
@@ -3979,6 +4706,11 @@ struct LocalChangedBlockServicesResp {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeList<BlockService>::STATIC_SIZE; // lastChange + blockServices
 
     LocalChangedBlockServicesResp() { clear(); }
+    explicit LocalChangedBlockServicesResp(TernTime lastChange_, BincodeList<BlockService>&& blockServices_) : lastChange(lastChange_), blockServices(std::move(blockServices_)) {}
+    LocalChangedBlockServicesResp(const LocalChangedBlockServicesResp&) = default;
+    LocalChangedBlockServicesResp& operator=(const LocalChangedBlockServicesResp&) = default;
+    LocalChangedBlockServicesResp(LocalChangedBlockServicesResp&&) = default;
+    LocalChangedBlockServicesResp& operator=(LocalChangedBlockServicesResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // lastChange
@@ -4000,6 +4732,11 @@ struct CreateLocationReq {
     static constexpr uint16_t STATIC_SIZE = 1 + BincodeBytes::STATIC_SIZE; // id + name
 
     CreateLocationReq() { clear(); }
+    explicit CreateLocationReq(uint8_t id_, BincodeBytes&& name_) : id(id_), name(std::move(name_)) {}
+    CreateLocationReq(const CreateLocationReq&) = default;
+    CreateLocationReq& operator=(const CreateLocationReq&) = default;
+    CreateLocationReq(CreateLocationReq&&) = default;
+    CreateLocationReq& operator=(CreateLocationReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 1; // id
@@ -4019,6 +4756,10 @@ struct CreateLocationResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     CreateLocationResp() { clear(); }
+    CreateLocationResp(const CreateLocationResp&) = default;
+    CreateLocationResp& operator=(const CreateLocationResp&) = default;
+    CreateLocationResp(CreateLocationResp&&) = default;
+    CreateLocationResp& operator=(CreateLocationResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -4038,6 +4779,11 @@ struct RenameLocationReq {
     static constexpr uint16_t STATIC_SIZE = 1 + BincodeBytes::STATIC_SIZE; // id + name
 
     RenameLocationReq() { clear(); }
+    explicit RenameLocationReq(uint8_t id_, BincodeBytes&& name_) : id(id_), name(std::move(name_)) {}
+    RenameLocationReq(const RenameLocationReq&) = default;
+    RenameLocationReq& operator=(const RenameLocationReq&) = default;
+    RenameLocationReq(RenameLocationReq&&) = default;
+    RenameLocationReq& operator=(RenameLocationReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 1; // id
@@ -4057,6 +4803,10 @@ struct RenameLocationResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     RenameLocationResp() { clear(); }
+    RenameLocationResp(const RenameLocationResp&) = default;
+    RenameLocationResp& operator=(const RenameLocationResp&) = default;
+    RenameLocationResp(RenameLocationResp&&) = default;
+    RenameLocationResp& operator=(RenameLocationResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -4078,6 +4828,11 @@ struct RegisterShardReq {
     static constexpr uint16_t STATIC_SIZE = 2 + 1 + AddrsInfo::STATIC_SIZE + 1; // shrid + isLeader + addrs + location
 
     RegisterShardReq() { clear(); }
+    explicit RegisterShardReq(ShardReplicaId shrid_, bool isLeader_, AddrsInfo addrs_, uint8_t location_) : shrid(shrid_), isLeader(isLeader_), addrs(addrs_), location(location_) {}
+    RegisterShardReq(const RegisterShardReq&) = default;
+    RegisterShardReq& operator=(const RegisterShardReq&) = default;
+    RegisterShardReq(RegisterShardReq&&) = default;
+    RegisterShardReq& operator=(RegisterShardReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 2; // shrid
@@ -4099,6 +4854,10 @@ struct RegisterShardResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     RegisterShardResp() { clear(); }
+    RegisterShardResp(const RegisterShardResp&) = default;
+    RegisterShardResp& operator=(const RegisterShardResp&) = default;
+    RegisterShardResp(RegisterShardResp&&) = default;
+    RegisterShardResp& operator=(RegisterShardResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -4116,6 +4875,10 @@ struct LocationsReq {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     LocationsReq() { clear(); }
+    LocationsReq(const LocationsReq&) = default;
+    LocationsReq& operator=(const LocationsReq&) = default;
+    LocationsReq(LocationsReq&&) = default;
+    LocationsReq& operator=(LocationsReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -4134,6 +4897,11 @@ struct LocationsResp {
     static constexpr uint16_t STATIC_SIZE = BincodeList<LocationInfo>::STATIC_SIZE; // locations
 
     LocationsResp() { clear(); }
+    explicit LocationsResp(BincodeList<LocationInfo>&& locations_) : locations(std::move(locations_)) {}
+    LocationsResp(const LocationsResp&) = default;
+    LocationsResp& operator=(const LocationsResp&) = default;
+    LocationsResp(LocationsResp&&) = default;
+    LocationsResp& operator=(LocationsResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += locations.packedSize(); // locations
@@ -4156,6 +4924,11 @@ struct RegisterCdcReq {
     static constexpr uint16_t STATIC_SIZE = 1 + 1 + 1 + AddrsInfo::STATIC_SIZE; // replica + location + isLeader + addrs
 
     RegisterCdcReq() { clear(); }
+    explicit RegisterCdcReq(ReplicaId replica_, uint8_t location_, bool isLeader_, AddrsInfo addrs_) : replica(replica_), location(location_), isLeader(isLeader_), addrs(addrs_) {}
+    RegisterCdcReq(const RegisterCdcReq&) = default;
+    RegisterCdcReq& operator=(const RegisterCdcReq&) = default;
+    RegisterCdcReq(RegisterCdcReq&&) = default;
+    RegisterCdcReq& operator=(RegisterCdcReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 1; // replica
@@ -4177,6 +4950,10 @@ struct RegisterCdcResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     RegisterCdcResp() { clear(); }
+    RegisterCdcResp(const RegisterCdcResp&) = default;
+    RegisterCdcResp& operator=(const RegisterCdcResp&) = default;
+    RegisterCdcResp(RegisterCdcResp&&) = default;
+    RegisterCdcResp& operator=(RegisterCdcResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -4197,6 +4974,11 @@ struct SetBlockServiceFlagsReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 1 + 1; // id + flags + flagsMask
 
     SetBlockServiceFlagsReq() { clear(); }
+    explicit SetBlockServiceFlagsReq(BlockServiceId id_, BlockServiceFlags flags_, uint8_t flagsMask_) : id(id_), flags(flags_), flagsMask(flagsMask_) {}
+    SetBlockServiceFlagsReq(const SetBlockServiceFlagsReq&) = default;
+    SetBlockServiceFlagsReq& operator=(const SetBlockServiceFlagsReq&) = default;
+    SetBlockServiceFlagsReq(SetBlockServiceFlagsReq&&) = default;
+    SetBlockServiceFlagsReq& operator=(SetBlockServiceFlagsReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // id
@@ -4217,6 +4999,10 @@ struct SetBlockServiceFlagsResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     SetBlockServiceFlagsResp() { clear(); }
+    SetBlockServiceFlagsResp(const SetBlockServiceFlagsResp&) = default;
+    SetBlockServiceFlagsResp& operator=(const SetBlockServiceFlagsResp&) = default;
+    SetBlockServiceFlagsResp(SetBlockServiceFlagsResp&&) = default;
+    SetBlockServiceFlagsResp& operator=(SetBlockServiceFlagsResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -4235,6 +5021,11 @@ struct RegisterBlockServicesReq {
     static constexpr uint16_t STATIC_SIZE = BincodeList<RegisterBlockServiceInfo>::STATIC_SIZE; // blockServices
 
     RegisterBlockServicesReq() { clear(); }
+    explicit RegisterBlockServicesReq(BincodeList<RegisterBlockServiceInfo>&& blockServices_) : blockServices(std::move(blockServices_)) {}
+    RegisterBlockServicesReq(const RegisterBlockServicesReq&) = default;
+    RegisterBlockServicesReq& operator=(const RegisterBlockServicesReq&) = default;
+    RegisterBlockServicesReq(RegisterBlockServicesReq&&) = default;
+    RegisterBlockServicesReq& operator=(RegisterBlockServicesReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += blockServices.packedSize(); // blockServices
@@ -4253,6 +5044,10 @@ struct RegisterBlockServicesResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     RegisterBlockServicesResp() { clear(); }
+    RegisterBlockServicesResp(const RegisterBlockServicesResp&) = default;
+    RegisterBlockServicesResp& operator=(const RegisterBlockServicesResp&) = default;
+    RegisterBlockServicesResp(RegisterBlockServicesResp&&) = default;
+    RegisterBlockServicesResp& operator=(RegisterBlockServicesResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -4272,6 +5067,11 @@ struct ChangedBlockServicesAtLocationReq {
     static constexpr uint16_t STATIC_SIZE = 1 + 8; // locationId + changedSince
 
     ChangedBlockServicesAtLocationReq() { clear(); }
+    explicit ChangedBlockServicesAtLocationReq(uint8_t locationId_, TernTime changedSince_) : locationId(locationId_), changedSince(changedSince_) {}
+    ChangedBlockServicesAtLocationReq(const ChangedBlockServicesAtLocationReq&) = default;
+    ChangedBlockServicesAtLocationReq& operator=(const ChangedBlockServicesAtLocationReq&) = default;
+    ChangedBlockServicesAtLocationReq(ChangedBlockServicesAtLocationReq&&) = default;
+    ChangedBlockServicesAtLocationReq& operator=(ChangedBlockServicesAtLocationReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 1; // locationId
@@ -4293,6 +5093,11 @@ struct ChangedBlockServicesAtLocationResp {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeList<BlockService>::STATIC_SIZE; // lastChange + blockServices
 
     ChangedBlockServicesAtLocationResp() { clear(); }
+    explicit ChangedBlockServicesAtLocationResp(TernTime lastChange_, BincodeList<BlockService>&& blockServices_) : lastChange(lastChange_), blockServices(std::move(blockServices_)) {}
+    ChangedBlockServicesAtLocationResp(const ChangedBlockServicesAtLocationResp&) = default;
+    ChangedBlockServicesAtLocationResp& operator=(const ChangedBlockServicesAtLocationResp&) = default;
+    ChangedBlockServicesAtLocationResp(ChangedBlockServicesAtLocationResp&&) = default;
+    ChangedBlockServicesAtLocationResp& operator=(ChangedBlockServicesAtLocationResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // lastChange
@@ -4313,6 +5118,11 @@ struct ShardsAtLocationReq {
     static constexpr uint16_t STATIC_SIZE = 1; // locationId
 
     ShardsAtLocationReq() { clear(); }
+    explicit ShardsAtLocationReq(uint8_t locationId_) : locationId(locationId_) {}
+    ShardsAtLocationReq(const ShardsAtLocationReq&) = default;
+    ShardsAtLocationReq& operator=(const ShardsAtLocationReq&) = default;
+    ShardsAtLocationReq(ShardsAtLocationReq&&) = default;
+    ShardsAtLocationReq& operator=(ShardsAtLocationReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 1; // locationId
@@ -4332,6 +5142,11 @@ struct ShardsAtLocationResp {
     static constexpr uint16_t STATIC_SIZE = BincodeList<ShardInfo>::STATIC_SIZE; // shards
 
     ShardsAtLocationResp() { clear(); }
+    explicit ShardsAtLocationResp(BincodeList<ShardInfo>&& shards_) : shards(std::move(shards_)) {}
+    ShardsAtLocationResp(const ShardsAtLocationResp&) = default;
+    ShardsAtLocationResp& operator=(const ShardsAtLocationResp&) = default;
+    ShardsAtLocationResp(ShardsAtLocationResp&&) = default;
+    ShardsAtLocationResp& operator=(ShardsAtLocationResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += shards.packedSize(); // shards
@@ -4351,6 +5166,11 @@ struct CdcAtLocationReq {
     static constexpr uint16_t STATIC_SIZE = 1; // locationId
 
     CdcAtLocationReq() { clear(); }
+    explicit CdcAtLocationReq(uint8_t locationId_) : locationId(locationId_) {}
+    CdcAtLocationReq(const CdcAtLocationReq&) = default;
+    CdcAtLocationReq& operator=(const CdcAtLocationReq&) = default;
+    CdcAtLocationReq(CdcAtLocationReq&&) = default;
+    CdcAtLocationReq& operator=(CdcAtLocationReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 1; // locationId
@@ -4371,6 +5191,11 @@ struct CdcAtLocationResp {
     static constexpr uint16_t STATIC_SIZE = AddrsInfo::STATIC_SIZE + 8; // addrs + lastSeen
 
     CdcAtLocationResp() { clear(); }
+    explicit CdcAtLocationResp(AddrsInfo addrs_, TernTime lastSeen_) : addrs(addrs_), lastSeen(lastSeen_) {}
+    CdcAtLocationResp(const CdcAtLocationResp&) = default;
+    CdcAtLocationResp& operator=(const CdcAtLocationResp&) = default;
+    CdcAtLocationResp(CdcAtLocationResp&&) = default;
+    CdcAtLocationResp& operator=(CdcAtLocationResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += addrs.packedSize(); // addrs
@@ -4395,6 +5220,11 @@ struct RegisterRegistryReq {
     static constexpr uint16_t STATIC_SIZE = 1 + 1 + 1 + AddrsInfo::STATIC_SIZE + 1; // replicaId + location + isLeader + addrs + bootstrap
 
     RegisterRegistryReq() { clear(); }
+    explicit RegisterRegistryReq(ReplicaId replicaId_, uint8_t location_, bool isLeader_, AddrsInfo addrs_, bool bootstrap_) : replicaId(replicaId_), location(location_), isLeader(isLeader_), addrs(addrs_), bootstrap(bootstrap_) {}
+    RegisterRegistryReq(const RegisterRegistryReq&) = default;
+    RegisterRegistryReq& operator=(const RegisterRegistryReq&) = default;
+    RegisterRegistryReq(RegisterRegistryReq&&) = default;
+    RegisterRegistryReq& operator=(RegisterRegistryReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 1; // replicaId
@@ -4417,6 +5247,10 @@ struct RegisterRegistryResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     RegisterRegistryResp() { clear(); }
+    RegisterRegistryResp(const RegisterRegistryResp&) = default;
+    RegisterRegistryResp& operator=(const RegisterRegistryResp&) = default;
+    RegisterRegistryResp(RegisterRegistryResp&&) = default;
+    RegisterRegistryResp& operator=(RegisterRegistryResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -4434,6 +5268,10 @@ struct AllRegistryReplicasReq {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     AllRegistryReplicasReq() { clear(); }
+    AllRegistryReplicasReq(const AllRegistryReplicasReq&) = default;
+    AllRegistryReplicasReq& operator=(const AllRegistryReplicasReq&) = default;
+    AllRegistryReplicasReq(AllRegistryReplicasReq&&) = default;
+    AllRegistryReplicasReq& operator=(AllRegistryReplicasReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -4452,6 +5290,11 @@ struct AllRegistryReplicasResp {
     static constexpr uint16_t STATIC_SIZE = BincodeList<FullRegistryInfo>::STATIC_SIZE; // replicas
 
     AllRegistryReplicasResp() { clear(); }
+    explicit AllRegistryReplicasResp(BincodeList<FullRegistryInfo>&& replicas_) : replicas(std::move(replicas_)) {}
+    AllRegistryReplicasResp(const AllRegistryReplicasResp&) = default;
+    AllRegistryReplicasResp& operator=(const AllRegistryReplicasResp&) = default;
+    AllRegistryReplicasResp(AllRegistryReplicasResp&&) = default;
+    AllRegistryReplicasResp& operator=(AllRegistryReplicasResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += replicas.packedSize(); // replicas
@@ -4471,6 +5314,11 @@ struct ShardBlockServicesDEPRECATEDReq {
     static constexpr uint16_t STATIC_SIZE = 1; // shardId
 
     ShardBlockServicesDEPRECATEDReq() { clear(); }
+    explicit ShardBlockServicesDEPRECATEDReq(ShardId shardId_) : shardId(shardId_) {}
+    ShardBlockServicesDEPRECATEDReq(const ShardBlockServicesDEPRECATEDReq&) = default;
+    ShardBlockServicesDEPRECATEDReq& operator=(const ShardBlockServicesDEPRECATEDReq&) = default;
+    ShardBlockServicesDEPRECATEDReq(ShardBlockServicesDEPRECATEDReq&&) = default;
+    ShardBlockServicesDEPRECATEDReq& operator=(ShardBlockServicesDEPRECATEDReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 1; // shardId
@@ -4490,6 +5338,11 @@ struct ShardBlockServicesDEPRECATEDResp {
     static constexpr uint16_t STATIC_SIZE = BincodeList<BlockServiceId>::STATIC_SIZE; // blockServices
 
     ShardBlockServicesDEPRECATEDResp() { clear(); }
+    explicit ShardBlockServicesDEPRECATEDResp(BincodeList<BlockServiceId>&& blockServices_) : blockServices(std::move(blockServices_)) {}
+    ShardBlockServicesDEPRECATEDResp(const ShardBlockServicesDEPRECATEDResp&) = default;
+    ShardBlockServicesDEPRECATEDResp& operator=(const ShardBlockServicesDEPRECATEDResp&) = default;
+    ShardBlockServicesDEPRECATEDResp(ShardBlockServicesDEPRECATEDResp&&) = default;
+    ShardBlockServicesDEPRECATEDResp& operator=(ShardBlockServicesDEPRECATEDResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += blockServices.packedSize(); // blockServices
@@ -4508,6 +5361,10 @@ struct CdcReplicasDEPRECATEDReq {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     CdcReplicasDEPRECATEDReq() { clear(); }
+    CdcReplicasDEPRECATEDReq(const CdcReplicasDEPRECATEDReq&) = default;
+    CdcReplicasDEPRECATEDReq& operator=(const CdcReplicasDEPRECATEDReq&) = default;
+    CdcReplicasDEPRECATEDReq(CdcReplicasDEPRECATEDReq&&) = default;
+    CdcReplicasDEPRECATEDReq& operator=(CdcReplicasDEPRECATEDReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -4526,6 +5383,11 @@ struct CdcReplicasDEPRECATEDResp {
     static constexpr uint16_t STATIC_SIZE = BincodeList<AddrsInfo>::STATIC_SIZE; // replicas
 
     CdcReplicasDEPRECATEDResp() { clear(); }
+    explicit CdcReplicasDEPRECATEDResp(BincodeList<AddrsInfo>&& replicas_) : replicas(std::move(replicas_)) {}
+    CdcReplicasDEPRECATEDResp(const CdcReplicasDEPRECATEDResp&) = default;
+    CdcReplicasDEPRECATEDResp& operator=(const CdcReplicasDEPRECATEDResp&) = default;
+    CdcReplicasDEPRECATEDResp(CdcReplicasDEPRECATEDResp&&) = default;
+    CdcReplicasDEPRECATEDResp& operator=(CdcReplicasDEPRECATEDResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += replicas.packedSize(); // replicas
@@ -4544,6 +5406,10 @@ struct AllShardsReq {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     AllShardsReq() { clear(); }
+    AllShardsReq(const AllShardsReq&) = default;
+    AllShardsReq& operator=(const AllShardsReq&) = default;
+    AllShardsReq(AllShardsReq&&) = default;
+    AllShardsReq& operator=(AllShardsReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -4562,6 +5428,11 @@ struct AllShardsResp {
     static constexpr uint16_t STATIC_SIZE = BincodeList<FullShardInfo>::STATIC_SIZE; // shards
 
     AllShardsResp() { clear(); }
+    explicit AllShardsResp(BincodeList<FullShardInfo>&& shards_) : shards(std::move(shards_)) {}
+    AllShardsResp(const AllShardsResp&) = default;
+    AllShardsResp& operator=(const AllShardsResp&) = default;
+    AllShardsResp(AllShardsResp&&) = default;
+    AllShardsResp& operator=(AllShardsResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += shards.packedSize(); // shards
@@ -4581,6 +5452,11 @@ struct DecommissionBlockServiceReq {
     static constexpr uint16_t STATIC_SIZE = 8; // id
 
     DecommissionBlockServiceReq() { clear(); }
+    explicit DecommissionBlockServiceReq(BlockServiceId id_) : id(id_) {}
+    DecommissionBlockServiceReq(const DecommissionBlockServiceReq&) = default;
+    DecommissionBlockServiceReq& operator=(const DecommissionBlockServiceReq&) = default;
+    DecommissionBlockServiceReq(DecommissionBlockServiceReq&&) = default;
+    DecommissionBlockServiceReq& operator=(DecommissionBlockServiceReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // id
@@ -4599,6 +5475,10 @@ struct DecommissionBlockServiceResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     DecommissionBlockServiceResp() { clear(); }
+    DecommissionBlockServiceResp(const DecommissionBlockServiceResp&) = default;
+    DecommissionBlockServiceResp& operator=(const DecommissionBlockServiceResp&) = default;
+    DecommissionBlockServiceResp(DecommissionBlockServiceResp&&) = default;
+    DecommissionBlockServiceResp& operator=(DecommissionBlockServiceResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -4618,6 +5498,11 @@ struct MoveShardLeaderReq {
     static constexpr uint16_t STATIC_SIZE = 2 + 1; // shrid + location
 
     MoveShardLeaderReq() { clear(); }
+    explicit MoveShardLeaderReq(ShardReplicaId shrid_, uint8_t location_) : shrid(shrid_), location(location_) {}
+    MoveShardLeaderReq(const MoveShardLeaderReq&) = default;
+    MoveShardLeaderReq& operator=(const MoveShardLeaderReq&) = default;
+    MoveShardLeaderReq(MoveShardLeaderReq&&) = default;
+    MoveShardLeaderReq& operator=(MoveShardLeaderReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 2; // shrid
@@ -4637,6 +5522,10 @@ struct MoveShardLeaderResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     MoveShardLeaderResp() { clear(); }
+    MoveShardLeaderResp(const MoveShardLeaderResp&) = default;
+    MoveShardLeaderResp& operator=(const MoveShardLeaderResp&) = default;
+    MoveShardLeaderResp(MoveShardLeaderResp&&) = default;
+    MoveShardLeaderResp& operator=(MoveShardLeaderResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -4656,6 +5545,11 @@ struct ClearShardInfoReq {
     static constexpr uint16_t STATIC_SIZE = 2 + 1; // shrid + location
 
     ClearShardInfoReq() { clear(); }
+    explicit ClearShardInfoReq(ShardReplicaId shrid_, uint8_t location_) : shrid(shrid_), location(location_) {}
+    ClearShardInfoReq(const ClearShardInfoReq&) = default;
+    ClearShardInfoReq& operator=(const ClearShardInfoReq&) = default;
+    ClearShardInfoReq(ClearShardInfoReq&&) = default;
+    ClearShardInfoReq& operator=(ClearShardInfoReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 2; // shrid
@@ -4675,6 +5569,10 @@ struct ClearShardInfoResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     ClearShardInfoResp() { clear(); }
+    ClearShardInfoResp(const ClearShardInfoResp&) = default;
+    ClearShardInfoResp& operator=(const ClearShardInfoResp&) = default;
+    ClearShardInfoResp(ClearShardInfoResp&&) = default;
+    ClearShardInfoResp& operator=(ClearShardInfoResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -4693,6 +5591,11 @@ struct ShardBlockServicesReq {
     static constexpr uint16_t STATIC_SIZE = 1; // shardId
 
     ShardBlockServicesReq() { clear(); }
+    explicit ShardBlockServicesReq(ShardId shardId_) : shardId(shardId_) {}
+    ShardBlockServicesReq(const ShardBlockServicesReq&) = default;
+    ShardBlockServicesReq& operator=(const ShardBlockServicesReq&) = default;
+    ShardBlockServicesReq(ShardBlockServicesReq&&) = default;
+    ShardBlockServicesReq& operator=(ShardBlockServicesReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 1; // shardId
@@ -4712,6 +5615,11 @@ struct ShardBlockServicesResp {
     static constexpr uint16_t STATIC_SIZE = BincodeList<BlockServiceInfoShort>::STATIC_SIZE; // blockServices
 
     ShardBlockServicesResp() { clear(); }
+    explicit ShardBlockServicesResp(BincodeList<BlockServiceInfoShort>&& blockServices_) : blockServices(std::move(blockServices_)) {}
+    ShardBlockServicesResp(const ShardBlockServicesResp&) = default;
+    ShardBlockServicesResp& operator=(const ShardBlockServicesResp&) = default;
+    ShardBlockServicesResp(ShardBlockServicesResp&&) = default;
+    ShardBlockServicesResp& operator=(ShardBlockServicesResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += blockServices.packedSize(); // blockServices
@@ -4730,6 +5638,10 @@ struct AllCdcReq {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     AllCdcReq() { clear(); }
+    AllCdcReq(const AllCdcReq&) = default;
+    AllCdcReq& operator=(const AllCdcReq&) = default;
+    AllCdcReq(AllCdcReq&&) = default;
+    AllCdcReq& operator=(AllCdcReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -4748,6 +5660,11 @@ struct AllCdcResp {
     static constexpr uint16_t STATIC_SIZE = BincodeList<CdcInfo>::STATIC_SIZE; // replicas
 
     AllCdcResp() { clear(); }
+    explicit AllCdcResp(BincodeList<CdcInfo>&& replicas_) : replicas(std::move(replicas_)) {}
+    AllCdcResp(const AllCdcResp&) = default;
+    AllCdcResp& operator=(const AllCdcResp&) = default;
+    AllCdcResp(AllCdcResp&&) = default;
+    AllCdcResp& operator=(AllCdcResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += replicas.packedSize(); // replicas
@@ -4769,6 +5686,11 @@ struct EraseDecommissionedBlockReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeFixedBytes<8>::STATIC_SIZE; // blockServiceId + blockId + certificate
 
     EraseDecommissionedBlockReq() { clear(); }
+    explicit EraseDecommissionedBlockReq(BlockServiceId blockServiceId_, uint64_t blockId_, BincodeFixedBytes<8>&& certificate_) : blockServiceId(blockServiceId_), blockId(blockId_), certificate(std::move(certificate_)) {}
+    EraseDecommissionedBlockReq(const EraseDecommissionedBlockReq&) = default;
+    EraseDecommissionedBlockReq& operator=(const EraseDecommissionedBlockReq&) = default;
+    EraseDecommissionedBlockReq(EraseDecommissionedBlockReq&&) = default;
+    EraseDecommissionedBlockReq& operator=(EraseDecommissionedBlockReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // blockServiceId
@@ -4790,6 +5712,11 @@ struct EraseDecommissionedBlockResp {
     static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<8>::STATIC_SIZE; // proof
 
     EraseDecommissionedBlockResp() { clear(); }
+    explicit EraseDecommissionedBlockResp(BincodeFixedBytes<8>&& proof_) : proof(std::move(proof_)) {}
+    EraseDecommissionedBlockResp(const EraseDecommissionedBlockResp&) = default;
+    EraseDecommissionedBlockResp& operator=(const EraseDecommissionedBlockResp&) = default;
+    EraseDecommissionedBlockResp(EraseDecommissionedBlockResp&&) = default;
+    EraseDecommissionedBlockResp& operator=(EraseDecommissionedBlockResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += BincodeFixedBytes<8>::STATIC_SIZE; // proof
@@ -4808,6 +5735,10 @@ struct AllBlockServicesDeprecatedReq {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     AllBlockServicesDeprecatedReq() { clear(); }
+    AllBlockServicesDeprecatedReq(const AllBlockServicesDeprecatedReq&) = default;
+    AllBlockServicesDeprecatedReq& operator=(const AllBlockServicesDeprecatedReq&) = default;
+    AllBlockServicesDeprecatedReq(AllBlockServicesDeprecatedReq&&) = default;
+    AllBlockServicesDeprecatedReq& operator=(AllBlockServicesDeprecatedReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -4826,6 +5757,11 @@ struct AllBlockServicesDeprecatedResp {
     static constexpr uint16_t STATIC_SIZE = BincodeList<BlockServiceDeprecatedInfo>::STATIC_SIZE; // blockServices
 
     AllBlockServicesDeprecatedResp() { clear(); }
+    explicit AllBlockServicesDeprecatedResp(BincodeList<BlockServiceDeprecatedInfo>&& blockServices_) : blockServices(std::move(blockServices_)) {}
+    AllBlockServicesDeprecatedResp(const AllBlockServicesDeprecatedResp&) = default;
+    AllBlockServicesDeprecatedResp& operator=(const AllBlockServicesDeprecatedResp&) = default;
+    AllBlockServicesDeprecatedResp(AllBlockServicesDeprecatedResp&&) = default;
+    AllBlockServicesDeprecatedResp& operator=(AllBlockServicesDeprecatedResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += blockServices.packedSize(); // blockServices
@@ -4844,6 +5780,10 @@ struct AllBlockServicesReq {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     AllBlockServicesReq() { clear(); }
+    AllBlockServicesReq(const AllBlockServicesReq&) = default;
+    AllBlockServicesReq& operator=(const AllBlockServicesReq&) = default;
+    AllBlockServicesReq(AllBlockServicesReq&&) = default;
+    AllBlockServicesReq& operator=(AllBlockServicesReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -4862,6 +5802,11 @@ struct AllBlockServicesResp {
     static constexpr uint16_t STATIC_SIZE = BincodeList<FullBlockServiceInfo>::STATIC_SIZE; // blockServices
 
     AllBlockServicesResp() { clear(); }
+    explicit AllBlockServicesResp(BincodeList<FullBlockServiceInfo>&& blockServices_) : blockServices(std::move(blockServices_)) {}
+    AllBlockServicesResp(const AllBlockServicesResp&) = default;
+    AllBlockServicesResp& operator=(const AllBlockServicesResp&) = default;
+    AllBlockServicesResp(AllBlockServicesResp&&) = default;
+    AllBlockServicesResp& operator=(AllBlockServicesResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += blockServices.packedSize(); // blockServices
@@ -4882,6 +5827,11 @@ struct MoveCdcLeaderReq {
     static constexpr uint16_t STATIC_SIZE = 1 + 1; // replica + location
 
     MoveCdcLeaderReq() { clear(); }
+    explicit MoveCdcLeaderReq(ReplicaId replica_, uint8_t location_) : replica(replica_), location(location_) {}
+    MoveCdcLeaderReq(const MoveCdcLeaderReq&) = default;
+    MoveCdcLeaderReq& operator=(const MoveCdcLeaderReq&) = default;
+    MoveCdcLeaderReq(MoveCdcLeaderReq&&) = default;
+    MoveCdcLeaderReq& operator=(MoveCdcLeaderReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 1; // replica
@@ -4901,6 +5851,10 @@ struct MoveCdcLeaderResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     MoveCdcLeaderResp() { clear(); }
+    MoveCdcLeaderResp(const MoveCdcLeaderResp&) = default;
+    MoveCdcLeaderResp& operator=(const MoveCdcLeaderResp&) = default;
+    MoveCdcLeaderResp(MoveCdcLeaderResp&&) = default;
+    MoveCdcLeaderResp& operator=(MoveCdcLeaderResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -4920,6 +5874,11 @@ struct ClearCdcInfoReq {
     static constexpr uint16_t STATIC_SIZE = 1 + 1; // replica + location
 
     ClearCdcInfoReq() { clear(); }
+    explicit ClearCdcInfoReq(ReplicaId replica_, uint8_t location_) : replica(replica_), location(location_) {}
+    ClearCdcInfoReq(const ClearCdcInfoReq&) = default;
+    ClearCdcInfoReq& operator=(const ClearCdcInfoReq&) = default;
+    ClearCdcInfoReq(ClearCdcInfoReq&&) = default;
+    ClearCdcInfoReq& operator=(ClearCdcInfoReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 1; // replica
@@ -4939,6 +5898,10 @@ struct ClearCdcInfoResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     ClearCdcInfoResp() { clear(); }
+    ClearCdcInfoResp(const ClearCdcInfoResp&) = default;
+    ClearCdcInfoResp& operator=(const ClearCdcInfoResp&) = default;
+    ClearCdcInfoResp(ClearCdcInfoResp&&) = default;
+    ClearCdcInfoResp& operator=(ClearCdcInfoResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -4958,6 +5921,11 @@ struct UpdateBlockServicePathReq {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE; // id + newPath
 
     UpdateBlockServicePathReq() { clear(); }
+    explicit UpdateBlockServicePathReq(BlockServiceId id_, BincodeBytes&& newPath_) : id(id_), newPath(std::move(newPath_)) {}
+    UpdateBlockServicePathReq(const UpdateBlockServicePathReq&) = default;
+    UpdateBlockServicePathReq& operator=(const UpdateBlockServicePathReq&) = default;
+    UpdateBlockServicePathReq(UpdateBlockServicePathReq&&) = default;
+    UpdateBlockServicePathReq& operator=(UpdateBlockServicePathReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // id
@@ -4977,6 +5945,10 @@ struct UpdateBlockServicePathResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     UpdateBlockServicePathResp() { clear(); }
+    UpdateBlockServicePathResp(const UpdateBlockServicePathResp&) = default;
+    UpdateBlockServicePathResp& operator=(const UpdateBlockServicePathResp&) = default;
+    UpdateBlockServicePathResp(UpdateBlockServicePathResp&&) = default;
+    UpdateBlockServicePathResp& operator=(UpdateBlockServicePathResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -4996,6 +5968,11 @@ struct SetBlockServiceHasFilesReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 1; // id + hasFiles
 
     SetBlockServiceHasFilesReq() { clear(); }
+    explicit SetBlockServiceHasFilesReq(BlockServiceId id_, bool hasFiles_) : id(id_), hasFiles(hasFiles_) {}
+    SetBlockServiceHasFilesReq(const SetBlockServiceHasFilesReq&) = default;
+    SetBlockServiceHasFilesReq& operator=(const SetBlockServiceHasFilesReq&) = default;
+    SetBlockServiceHasFilesReq(SetBlockServiceHasFilesReq&&) = default;
+    SetBlockServiceHasFilesReq& operator=(SetBlockServiceHasFilesReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // id
@@ -5015,6 +5992,10 @@ struct SetBlockServiceHasFilesResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     SetBlockServiceHasFilesResp() { clear(); }
+    SetBlockServiceHasFilesResp(const SetBlockServiceHasFilesResp&) = default;
+    SetBlockServiceHasFilesResp& operator=(const SetBlockServiceHasFilesResp&) = default;
+    SetBlockServiceHasFilesResp(SetBlockServiceHasFilesResp&&) = default;
+    SetBlockServiceHasFilesResp& operator=(SetBlockServiceHasFilesResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -5033,6 +6014,11 @@ struct BlockServicesNeedingMigrationReq {
     static constexpr uint16_t STATIC_SIZE = 1; // locationId
 
     BlockServicesNeedingMigrationReq() { clear(); }
+    explicit BlockServicesNeedingMigrationReq(uint8_t locationId_) : locationId(locationId_) {}
+    BlockServicesNeedingMigrationReq(const BlockServicesNeedingMigrationReq&) = default;
+    BlockServicesNeedingMigrationReq& operator=(const BlockServicesNeedingMigrationReq&) = default;
+    BlockServicesNeedingMigrationReq(BlockServicesNeedingMigrationReq&&) = default;
+    BlockServicesNeedingMigrationReq& operator=(BlockServicesNeedingMigrationReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 1; // locationId
@@ -5052,6 +6038,11 @@ struct BlockServicesNeedingMigrationResp {
     static constexpr uint16_t STATIC_SIZE = BincodeList<BlockServiceId>::STATIC_SIZE; // blockServices
 
     BlockServicesNeedingMigrationResp() { clear(); }
+    explicit BlockServicesNeedingMigrationResp(BincodeList<BlockServiceId>&& blockServices_) : blockServices(std::move(blockServices_)) {}
+    BlockServicesNeedingMigrationResp(const BlockServicesNeedingMigrationResp&) = default;
+    BlockServicesNeedingMigrationResp& operator=(const BlockServicesNeedingMigrationResp&) = default;
+    BlockServicesNeedingMigrationResp(BlockServicesNeedingMigrationResp&&) = default;
+    BlockServicesNeedingMigrationResp& operator=(BlockServicesNeedingMigrationResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += blockServices.packedSize(); // blockServices
@@ -5073,6 +6064,11 @@ struct FetchBlockReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 4 + 4; // blockId + offset + count
 
     FetchBlockReq() { clear(); }
+    explicit FetchBlockReq(uint64_t blockId_, uint32_t offset_, uint32_t count_) : blockId(blockId_), offset(offset_), count(count_) {}
+    FetchBlockReq(const FetchBlockReq&) = default;
+    FetchBlockReq& operator=(const FetchBlockReq&) = default;
+    FetchBlockReq(FetchBlockReq&&) = default;
+    FetchBlockReq& operator=(FetchBlockReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // blockId
@@ -5093,6 +6089,10 @@ struct FetchBlockResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     FetchBlockResp() { clear(); }
+    FetchBlockResp(const FetchBlockResp&) = default;
+    FetchBlockResp& operator=(const FetchBlockResp&) = default;
+    FetchBlockResp(FetchBlockResp&&) = default;
+    FetchBlockResp& operator=(FetchBlockResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -5114,6 +6114,11 @@ struct WriteBlockReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 4 + 4 + BincodeFixedBytes<8>::STATIC_SIZE; // blockId + crc + size + certificate
 
     WriteBlockReq() { clear(); }
+    explicit WriteBlockReq(uint64_t blockId_, Crc crc_, uint32_t size_, BincodeFixedBytes<8>&& certificate_) : blockId(blockId_), crc(crc_), size(size_), certificate(std::move(certificate_)) {}
+    WriteBlockReq(const WriteBlockReq&) = default;
+    WriteBlockReq& operator=(const WriteBlockReq&) = default;
+    WriteBlockReq(WriteBlockReq&&) = default;
+    WriteBlockReq& operator=(WriteBlockReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // blockId
@@ -5136,6 +6141,11 @@ struct WriteBlockResp {
     static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<8>::STATIC_SIZE; // proof
 
     WriteBlockResp() { clear(); }
+    explicit WriteBlockResp(BincodeFixedBytes<8>&& proof_) : proof(std::move(proof_)) {}
+    WriteBlockResp(const WriteBlockResp&) = default;
+    WriteBlockResp& operator=(const WriteBlockResp&) = default;
+    WriteBlockResp(WriteBlockResp&&) = default;
+    WriteBlockResp& operator=(WriteBlockResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += BincodeFixedBytes<8>::STATIC_SIZE; // proof
@@ -5159,6 +6169,11 @@ struct FetchBlockWithCrcReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + 4 + 4 + 4; // fileIdUnused + blockId + blockCrcUnused + offset + count
 
     FetchBlockWithCrcReq() { clear(); }
+    explicit FetchBlockWithCrcReq(InodeId fileIdUnused_, uint64_t blockId_, Crc blockCrcUnused_, uint32_t offset_, uint32_t count_) : fileIdUnused(fileIdUnused_), blockId(blockId_), blockCrcUnused(blockCrcUnused_), offset(offset_), count(count_) {}
+    FetchBlockWithCrcReq(const FetchBlockWithCrcReq&) = default;
+    FetchBlockWithCrcReq& operator=(const FetchBlockWithCrcReq&) = default;
+    FetchBlockWithCrcReq(FetchBlockWithCrcReq&&) = default;
+    FetchBlockWithCrcReq& operator=(FetchBlockWithCrcReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // fileIdUnused
@@ -5181,6 +6196,10 @@ struct FetchBlockWithCrcResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     FetchBlockWithCrcResp() { clear(); }
+    FetchBlockWithCrcResp(const FetchBlockWithCrcResp&) = default;
+    FetchBlockWithCrcResp& operator=(const FetchBlockWithCrcResp&) = default;
+    FetchBlockWithCrcResp(FetchBlockWithCrcResp&&) = default;
+    FetchBlockWithCrcResp& operator=(FetchBlockWithCrcResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -5200,6 +6219,11 @@ struct EraseBlockReq {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeFixedBytes<8>::STATIC_SIZE; // blockId + certificate
 
     EraseBlockReq() { clear(); }
+    explicit EraseBlockReq(uint64_t blockId_, BincodeFixedBytes<8>&& certificate_) : blockId(blockId_), certificate(std::move(certificate_)) {}
+    EraseBlockReq(const EraseBlockReq&) = default;
+    EraseBlockReq& operator=(const EraseBlockReq&) = default;
+    EraseBlockReq(EraseBlockReq&&) = default;
+    EraseBlockReq& operator=(EraseBlockReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // blockId
@@ -5220,6 +6244,11 @@ struct EraseBlockResp {
     static constexpr uint16_t STATIC_SIZE = BincodeFixedBytes<8>::STATIC_SIZE; // proof
 
     EraseBlockResp() { clear(); }
+    explicit EraseBlockResp(BincodeFixedBytes<8>&& proof_) : proof(std::move(proof_)) {}
+    EraseBlockResp(const EraseBlockResp&) = default;
+    EraseBlockResp& operator=(const EraseBlockResp&) = default;
+    EraseBlockResp(EraseBlockResp&&) = default;
+    EraseBlockResp& operator=(EraseBlockResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += BincodeFixedBytes<8>::STATIC_SIZE; // proof
@@ -5239,6 +6268,11 @@ struct TestWriteReq {
     static constexpr uint16_t STATIC_SIZE = 8; // size
 
     TestWriteReq() { clear(); }
+    explicit TestWriteReq(uint64_t size_) : size(size_) {}
+    TestWriteReq(const TestWriteReq&) = default;
+    TestWriteReq& operator=(const TestWriteReq&) = default;
+    TestWriteReq(TestWriteReq&&) = default;
+    TestWriteReq& operator=(TestWriteReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // size
@@ -5257,6 +6291,10 @@ struct TestWriteResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     TestWriteResp() { clear(); }
+    TestWriteResp(const TestWriteResp&) = default;
+    TestWriteResp& operator=(const TestWriteResp&) = default;
+    TestWriteResp(TestWriteResp&&) = default;
+    TestWriteResp& operator=(TestWriteResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -5277,6 +6315,11 @@ struct CheckBlockReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 4 + 4; // blockId + size + crc
 
     CheckBlockReq() { clear(); }
+    explicit CheckBlockReq(uint64_t blockId_, uint32_t size_, Crc crc_) : blockId(blockId_), size(size_), crc(crc_) {}
+    CheckBlockReq(const CheckBlockReq&) = default;
+    CheckBlockReq& operator=(const CheckBlockReq&) = default;
+    CheckBlockReq(CheckBlockReq&&) = default;
+    CheckBlockReq& operator=(CheckBlockReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // blockId
@@ -5297,6 +6340,10 @@ struct CheckBlockResp {
     static constexpr uint16_t STATIC_SIZE = 0; // 
 
     CheckBlockResp() { clear(); }
+    CheckBlockResp(const CheckBlockResp&) = default;
+    CheckBlockResp& operator=(const CheckBlockResp&) = default;
+    CheckBlockResp(CheckBlockResp&&) = default;
+    CheckBlockResp& operator=(CheckBlockResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         return _size;
@@ -5318,6 +6365,11 @@ struct LogWriteReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + 8 + BincodeList<uint8_t>::STATIC_SIZE; // token + lastReleased + idx + value
 
     LogWriteReq() { clear(); }
+    explicit LogWriteReq(LeaderToken token_, LogIdx lastReleased_, LogIdx idx_, BincodeList<uint8_t>&& value_) : token(token_), lastReleased(lastReleased_), idx(idx_), value(std::move(value_)) {}
+    LogWriteReq(const LogWriteReq&) = default;
+    LogWriteReq& operator=(const LogWriteReq&) = default;
+    LogWriteReq(LogWriteReq&&) = default;
+    LogWriteReq& operator=(LogWriteReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // token
@@ -5340,6 +6392,11 @@ struct LogWriteResp {
     static constexpr uint16_t STATIC_SIZE = 2; // result
 
     LogWriteResp() { clear(); }
+    explicit LogWriteResp(TernError result_) : result(result_) {}
+    LogWriteResp(const LogWriteResp&) = default;
+    LogWriteResp& operator=(const LogWriteResp&) = default;
+    LogWriteResp(LogWriteResp&&) = default;
+    LogWriteResp& operator=(LogWriteResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 2; // result
@@ -5360,6 +6417,11 @@ struct ReleaseReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8; // token + lastReleased
 
     ReleaseReq() { clear(); }
+    explicit ReleaseReq(LeaderToken token_, LogIdx lastReleased_) : token(token_), lastReleased(lastReleased_) {}
+    ReleaseReq(const ReleaseReq&) = default;
+    ReleaseReq& operator=(const ReleaseReq&) = default;
+    ReleaseReq(ReleaseReq&&) = default;
+    ReleaseReq& operator=(ReleaseReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // token
@@ -5380,6 +6442,11 @@ struct ReleaseResp {
     static constexpr uint16_t STATIC_SIZE = 2; // result
 
     ReleaseResp() { clear(); }
+    explicit ReleaseResp(TernError result_) : result(result_) {}
+    ReleaseResp(const ReleaseResp&) = default;
+    ReleaseResp& operator=(const ReleaseResp&) = default;
+    ReleaseResp(ReleaseResp&&) = default;
+    ReleaseResp& operator=(ReleaseResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 2; // result
@@ -5399,6 +6466,11 @@ struct LogReadReq {
     static constexpr uint16_t STATIC_SIZE = 8; // idx
 
     LogReadReq() { clear(); }
+    explicit LogReadReq(LogIdx idx_) : idx(idx_) {}
+    LogReadReq(const LogReadReq&) = default;
+    LogReadReq& operator=(const LogReadReq&) = default;
+    LogReadReq(LogReadReq&&) = default;
+    LogReadReq& operator=(LogReadReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // idx
@@ -5419,6 +6491,11 @@ struct LogReadResp {
     static constexpr uint16_t STATIC_SIZE = 2 + BincodeList<uint8_t>::STATIC_SIZE; // result + value
 
     LogReadResp() { clear(); }
+    explicit LogReadResp(TernError result_, BincodeList<uint8_t>&& value_) : result(result_), value(std::move(value_)) {}
+    LogReadResp(const LogReadResp&) = default;
+    LogReadResp& operator=(const LogReadResp&) = default;
+    LogReadResp(LogReadResp&&) = default;
+    LogReadResp& operator=(LogReadResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 2; // result
@@ -5439,6 +6516,11 @@ struct NewLeaderReq {
     static constexpr uint16_t STATIC_SIZE = 8; // nomineeToken
 
     NewLeaderReq() { clear(); }
+    explicit NewLeaderReq(LeaderToken nomineeToken_) : nomineeToken(nomineeToken_) {}
+    NewLeaderReq(const NewLeaderReq&) = default;
+    NewLeaderReq& operator=(const NewLeaderReq&) = default;
+    NewLeaderReq(NewLeaderReq&&) = default;
+    NewLeaderReq& operator=(NewLeaderReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // nomineeToken
@@ -5459,6 +6541,11 @@ struct NewLeaderResp {
     static constexpr uint16_t STATIC_SIZE = 2 + 8; // result + lastReleased
 
     NewLeaderResp() { clear(); }
+    explicit NewLeaderResp(TernError result_, LogIdx lastReleased_) : result(result_), lastReleased(lastReleased_) {}
+    NewLeaderResp(const NewLeaderResp&) = default;
+    NewLeaderResp& operator=(const NewLeaderResp&) = default;
+    NewLeaderResp(NewLeaderResp&&) = default;
+    NewLeaderResp& operator=(NewLeaderResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 2; // result
@@ -5480,6 +6567,11 @@ struct NewLeaderConfirmReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8; // nomineeToken + releasedIdx
 
     NewLeaderConfirmReq() { clear(); }
+    explicit NewLeaderConfirmReq(LeaderToken nomineeToken_, LogIdx releasedIdx_) : nomineeToken(nomineeToken_), releasedIdx(releasedIdx_) {}
+    NewLeaderConfirmReq(const NewLeaderConfirmReq&) = default;
+    NewLeaderConfirmReq& operator=(const NewLeaderConfirmReq&) = default;
+    NewLeaderConfirmReq(NewLeaderConfirmReq&&) = default;
+    NewLeaderConfirmReq& operator=(NewLeaderConfirmReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // nomineeToken
@@ -5500,6 +6592,11 @@ struct NewLeaderConfirmResp {
     static constexpr uint16_t STATIC_SIZE = 2; // result
 
     NewLeaderConfirmResp() { clear(); }
+    explicit NewLeaderConfirmResp(TernError result_) : result(result_) {}
+    NewLeaderConfirmResp(const NewLeaderConfirmResp&) = default;
+    NewLeaderConfirmResp& operator=(const NewLeaderConfirmResp&) = default;
+    NewLeaderConfirmResp(NewLeaderConfirmResp&&) = default;
+    NewLeaderConfirmResp& operator=(NewLeaderConfirmResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 2; // result
@@ -5520,6 +6617,11 @@ struct LogRecoveryReadReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8; // nomineeToken + idx
 
     LogRecoveryReadReq() { clear(); }
+    explicit LogRecoveryReadReq(LeaderToken nomineeToken_, LogIdx idx_) : nomineeToken(nomineeToken_), idx(idx_) {}
+    LogRecoveryReadReq(const LogRecoveryReadReq&) = default;
+    LogRecoveryReadReq& operator=(const LogRecoveryReadReq&) = default;
+    LogRecoveryReadReq(LogRecoveryReadReq&&) = default;
+    LogRecoveryReadReq& operator=(LogRecoveryReadReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // nomineeToken
@@ -5541,6 +6643,11 @@ struct LogRecoveryReadResp {
     static constexpr uint16_t STATIC_SIZE = 2 + BincodeList<uint8_t>::STATIC_SIZE; // result + value
 
     LogRecoveryReadResp() { clear(); }
+    explicit LogRecoveryReadResp(TernError result_, BincodeList<uint8_t>&& value_) : result(result_), value(std::move(value_)) {}
+    LogRecoveryReadResp(const LogRecoveryReadResp&) = default;
+    LogRecoveryReadResp& operator=(const LogRecoveryReadResp&) = default;
+    LogRecoveryReadResp(LogRecoveryReadResp&&) = default;
+    LogRecoveryReadResp& operator=(LogRecoveryReadResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 2; // result
@@ -5563,6 +6670,11 @@ struct LogRecoveryWriteReq {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeList<uint8_t>::STATIC_SIZE; // nomineeToken + idx + value
 
     LogRecoveryWriteReq() { clear(); }
+    explicit LogRecoveryWriteReq(LeaderToken nomineeToken_, LogIdx idx_, BincodeList<uint8_t>&& value_) : nomineeToken(nomineeToken_), idx(idx_), value(std::move(value_)) {}
+    LogRecoveryWriteReq(const LogRecoveryWriteReq&) = default;
+    LogRecoveryWriteReq& operator=(const LogRecoveryWriteReq&) = default;
+    LogRecoveryWriteReq(LogRecoveryWriteReq&&) = default;
+    LogRecoveryWriteReq& operator=(LogRecoveryWriteReq&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // nomineeToken
@@ -5584,6 +6696,11 @@ struct LogRecoveryWriteResp {
     static constexpr uint16_t STATIC_SIZE = 2; // result
 
     LogRecoveryWriteResp() { clear(); }
+    explicit LogRecoveryWriteResp(TernError result_) : result(result_) {}
+    LogRecoveryWriteResp(const LogRecoveryWriteResp&) = default;
+    LogRecoveryWriteResp& operator=(const LogRecoveryWriteResp&) = default;
+    LogRecoveryWriteResp(LogRecoveryWriteResp&&) = default;
+    LogRecoveryWriteResp& operator=(LogRecoveryWriteResp&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 2; // result
@@ -6230,6 +7347,11 @@ struct ConstructFileEntry {
     static constexpr uint16_t STATIC_SIZE = 1 + 8 + BincodeBytes::STATIC_SIZE; // type + deadlineTime + note
 
     ConstructFileEntry() { clear(); }
+    explicit ConstructFileEntry(uint8_t type_, TernTime deadlineTime_, BincodeBytes&& note_) : type(type_), deadlineTime(deadlineTime_), note(std::move(note_)) {}
+    ConstructFileEntry(const ConstructFileEntry&) = default;
+    ConstructFileEntry& operator=(const ConstructFileEntry&) = default;
+    ConstructFileEntry(ConstructFileEntry&&) = default;
+    ConstructFileEntry& operator=(ConstructFileEntry&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 1; // type
@@ -6253,6 +7375,11 @@ struct LinkFileEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE; // fileId + ownerId + name
 
     LinkFileEntry() { clear(); }
+    explicit LinkFileEntry(InodeId fileId_, InodeId ownerId_, BincodeBytes&& name_) : fileId(fileId_), ownerId(ownerId_), name(std::move(name_)) {}
+    LinkFileEntry(const LinkFileEntry&) = default;
+    LinkFileEntry& operator=(const LinkFileEntry&) = default;
+    LinkFileEntry(LinkFileEntry&&) = default;
+    LinkFileEntry& operator=(LinkFileEntry&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // fileId
@@ -6278,6 +7405,11 @@ struct SameDirectoryRenameEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8 + BincodeBytes::STATIC_SIZE; // dirId + targetId + oldName + oldCreationTime + newName
 
     SameDirectoryRenameEntry() { clear(); }
+    explicit SameDirectoryRenameEntry(InodeId dirId_, InodeId targetId_, BincodeBytes&& oldName_, TernTime oldCreationTime_, BincodeBytes&& newName_) : dirId(dirId_), targetId(targetId_), oldName(std::move(oldName_)), oldCreationTime(oldCreationTime_), newName(std::move(newName_)) {}
+    SameDirectoryRenameEntry(const SameDirectoryRenameEntry&) = default;
+    SameDirectoryRenameEntry& operator=(const SameDirectoryRenameEntry&) = default;
+    SameDirectoryRenameEntry(SameDirectoryRenameEntry&&) = default;
+    SameDirectoryRenameEntry& operator=(SameDirectoryRenameEntry&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // dirId
@@ -6304,6 +7436,11 @@ struct SoftUnlinkFileEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // ownerId + fileId + name + creationTime
 
     SoftUnlinkFileEntry() { clear(); }
+    explicit SoftUnlinkFileEntry(InodeId ownerId_, InodeId fileId_, BincodeBytes&& name_, TernTime creationTime_) : ownerId(ownerId_), fileId(fileId_), name(std::move(name_)), creationTime(creationTime_) {}
+    SoftUnlinkFileEntry(const SoftUnlinkFileEntry&) = default;
+    SoftUnlinkFileEntry& operator=(const SoftUnlinkFileEntry&) = default;
+    SoftUnlinkFileEntry(SoftUnlinkFileEntry&&) = default;
+    SoftUnlinkFileEntry& operator=(SoftUnlinkFileEntry&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // ownerId
@@ -6328,6 +7465,11 @@ struct CreateDirectoryInodeEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + DirectoryInfo::STATIC_SIZE; // id + ownerId + info
 
     CreateDirectoryInodeEntry() { clear(); }
+    explicit CreateDirectoryInodeEntry(InodeId id_, InodeId ownerId_, DirectoryInfo&& info_) : id(id_), ownerId(ownerId_), info(std::move(info_)) {}
+    CreateDirectoryInodeEntry(const CreateDirectoryInodeEntry&) = default;
+    CreateDirectoryInodeEntry& operator=(const CreateDirectoryInodeEntry&) = default;
+    CreateDirectoryInodeEntry(CreateDirectoryInodeEntry&&) = default;
+    CreateDirectoryInodeEntry& operator=(CreateDirectoryInodeEntry&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // id
@@ -6352,6 +7494,11 @@ struct CreateLockedCurrentEdgeEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE + 8 + 8; // dirId + name + targetId + oldCreationTime
 
     CreateLockedCurrentEdgeEntry() { clear(); }
+    explicit CreateLockedCurrentEdgeEntry(InodeId dirId_, BincodeBytes&& name_, InodeId targetId_, TernTime oldCreationTime_) : dirId(dirId_), name(std::move(name_)), targetId(targetId_), oldCreationTime(oldCreationTime_) {}
+    CreateLockedCurrentEdgeEntry(const CreateLockedCurrentEdgeEntry&) = default;
+    CreateLockedCurrentEdgeEntry& operator=(const CreateLockedCurrentEdgeEntry&) = default;
+    CreateLockedCurrentEdgeEntry(CreateLockedCurrentEdgeEntry&&) = default;
+    CreateLockedCurrentEdgeEntry& operator=(CreateLockedCurrentEdgeEntry&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // dirId
@@ -6378,6 +7525,11 @@ struct UnlockCurrentEdgeEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE + 8 + 8 + 1; // dirId + name + creationTime + targetId + wasMoved
 
     UnlockCurrentEdgeEntry() { clear(); }
+    explicit UnlockCurrentEdgeEntry(InodeId dirId_, BincodeBytes&& name_, TernTime creationTime_, InodeId targetId_, bool wasMoved_) : dirId(dirId_), name(std::move(name_)), creationTime(creationTime_), targetId(targetId_), wasMoved(wasMoved_) {}
+    UnlockCurrentEdgeEntry(const UnlockCurrentEdgeEntry&) = default;
+    UnlockCurrentEdgeEntry& operator=(const UnlockCurrentEdgeEntry&) = default;
+    UnlockCurrentEdgeEntry(UnlockCurrentEdgeEntry&&) = default;
+    UnlockCurrentEdgeEntry& operator=(UnlockCurrentEdgeEntry&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // dirId
@@ -6404,6 +7556,11 @@ struct LockCurrentEdgeEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE + 8 + 8; // dirId + name + creationTime + targetId
 
     LockCurrentEdgeEntry() { clear(); }
+    explicit LockCurrentEdgeEntry(InodeId dirId_, BincodeBytes&& name_, TernTime creationTime_, InodeId targetId_) : dirId(dirId_), name(std::move(name_)), creationTime(creationTime_), targetId(targetId_) {}
+    LockCurrentEdgeEntry(const LockCurrentEdgeEntry&) = default;
+    LockCurrentEdgeEntry& operator=(const LockCurrentEdgeEntry&) = default;
+    LockCurrentEdgeEntry(LockCurrentEdgeEntry&&) = default;
+    LockCurrentEdgeEntry& operator=(LockCurrentEdgeEntry&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // dirId
@@ -6427,6 +7584,11 @@ struct RemoveDirectoryOwnerEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + DirectoryInfo::STATIC_SIZE; // dirId + info
 
     RemoveDirectoryOwnerEntry() { clear(); }
+    explicit RemoveDirectoryOwnerEntry(InodeId dirId_, DirectoryInfo&& info_) : dirId(dirId_), info(std::move(info_)) {}
+    RemoveDirectoryOwnerEntry(const RemoveDirectoryOwnerEntry&) = default;
+    RemoveDirectoryOwnerEntry& operator=(const RemoveDirectoryOwnerEntry&) = default;
+    RemoveDirectoryOwnerEntry(RemoveDirectoryOwnerEntry&&) = default;
+    RemoveDirectoryOwnerEntry& operator=(RemoveDirectoryOwnerEntry&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // dirId
@@ -6447,6 +7609,11 @@ struct RemoveInodeEntry {
     static constexpr uint16_t STATIC_SIZE = 8; // id
 
     RemoveInodeEntry() { clear(); }
+    explicit RemoveInodeEntry(InodeId id_) : id(id_) {}
+    RemoveInodeEntry(const RemoveInodeEntry&) = default;
+    RemoveInodeEntry& operator=(const RemoveInodeEntry&) = default;
+    RemoveInodeEntry(RemoveInodeEntry&&) = default;
+    RemoveInodeEntry& operator=(RemoveInodeEntry&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // id
@@ -6467,6 +7634,11 @@ struct SetDirectoryOwnerEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + 8; // dirId + ownerId
 
     SetDirectoryOwnerEntry() { clear(); }
+    explicit SetDirectoryOwnerEntry(InodeId dirId_, InodeId ownerId_) : dirId(dirId_), ownerId(ownerId_) {}
+    SetDirectoryOwnerEntry(const SetDirectoryOwnerEntry&) = default;
+    SetDirectoryOwnerEntry& operator=(const SetDirectoryOwnerEntry&) = default;
+    SetDirectoryOwnerEntry(SetDirectoryOwnerEntry&&) = default;
+    SetDirectoryOwnerEntry& operator=(SetDirectoryOwnerEntry&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // dirId
@@ -6488,6 +7660,11 @@ struct SetDirectoryInfoEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + DirectoryInfo::STATIC_SIZE; // dirId + info
 
     SetDirectoryInfoEntry() { clear(); }
+    explicit SetDirectoryInfoEntry(InodeId dirId_, DirectoryInfo&& info_) : dirId(dirId_), info(std::move(info_)) {}
+    SetDirectoryInfoEntry(const SetDirectoryInfoEntry&) = default;
+    SetDirectoryInfoEntry& operator=(const SetDirectoryInfoEntry&) = default;
+    SetDirectoryInfoEntry(SetDirectoryInfoEntry&&) = default;
+    SetDirectoryInfoEntry& operator=(SetDirectoryInfoEntry&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // dirId
@@ -6511,6 +7688,11 @@ struct RemoveNonOwnedEdgeEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // dirId + targetId + name + creationTime
 
     RemoveNonOwnedEdgeEntry() { clear(); }
+    explicit RemoveNonOwnedEdgeEntry(InodeId dirId_, InodeId targetId_, BincodeBytes&& name_, TernTime creationTime_) : dirId(dirId_), targetId(targetId_), name(std::move(name_)), creationTime(creationTime_) {}
+    RemoveNonOwnedEdgeEntry(const RemoveNonOwnedEdgeEntry&) = default;
+    RemoveNonOwnedEdgeEntry& operator=(const RemoveNonOwnedEdgeEntry&) = default;
+    RemoveNonOwnedEdgeEntry(RemoveNonOwnedEdgeEntry&&) = default;
+    RemoveNonOwnedEdgeEntry& operator=(RemoveNonOwnedEdgeEntry&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // dirId
@@ -6534,6 +7716,11 @@ struct ScrapTransientFileEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + 8; // id + deadlineTime
 
     ScrapTransientFileEntry() { clear(); }
+    explicit ScrapTransientFileEntry(InodeId id_, TernTime deadlineTime_) : id(id_), deadlineTime(deadlineTime_) {}
+    ScrapTransientFileEntry(const ScrapTransientFileEntry&) = default;
+    ScrapTransientFileEntry& operator=(const ScrapTransientFileEntry&) = default;
+    ScrapTransientFileEntry(ScrapTransientFileEntry&&) = default;
+    ScrapTransientFileEntry& operator=(ScrapTransientFileEntry&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // id
@@ -6554,6 +7741,11 @@ struct RemoveSpanInitiateEntry {
     static constexpr uint16_t STATIC_SIZE = 8; // fileId
 
     RemoveSpanInitiateEntry() { clear(); }
+    explicit RemoveSpanInitiateEntry(InodeId fileId_) : fileId(fileId_) {}
+    RemoveSpanInitiateEntry(const RemoveSpanInitiateEntry&) = default;
+    RemoveSpanInitiateEntry& operator=(const RemoveSpanInitiateEntry&) = default;
+    RemoveSpanInitiateEntry(RemoveSpanInitiateEntry&&) = default;
+    RemoveSpanInitiateEntry& operator=(RemoveSpanInitiateEntry&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // fileId
@@ -6583,6 +7775,11 @@ struct AddSpanInitiateEntry {
     static constexpr uint16_t STATIC_SIZE = 1 + 8 + 8 + 4 + 4 + 1 + 1 + 1 + 4 + BincodeList<EntryNewBlockInfo>::STATIC_SIZE + BincodeList<Crc>::STATIC_SIZE; // withReference + fileId + byteOffset + size + crc + storageClass + parity + stripes + cellSize + bodyBlocks + bodyStripes
 
     AddSpanInitiateEntry() { clear(); }
+    explicit AddSpanInitiateEntry(bool withReference_, InodeId fileId_, uint64_t byteOffset_, uint32_t size_, Crc crc_, uint8_t storageClass_, Parity parity_, uint8_t stripes_, uint32_t cellSize_, BincodeList<EntryNewBlockInfo>&& bodyBlocks_, BincodeList<Crc>&& bodyStripes_) : withReference(withReference_), fileId(fileId_), byteOffset(byteOffset_), size(size_), crc(crc_), storageClass(storageClass_), parity(parity_), stripes(stripes_), cellSize(cellSize_), bodyBlocks(std::move(bodyBlocks_)), bodyStripes(std::move(bodyStripes_)) {}
+    AddSpanInitiateEntry(const AddSpanInitiateEntry&) = default;
+    AddSpanInitiateEntry& operator=(const AddSpanInitiateEntry&) = default;
+    AddSpanInitiateEntry(AddSpanInitiateEntry&&) = default;
+    AddSpanInitiateEntry& operator=(AddSpanInitiateEntry&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 1; // withReference
@@ -6614,6 +7811,11 @@ struct AddSpanCertifyEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeList<BlockProof>::STATIC_SIZE; // fileId + byteOffset + proofs
 
     AddSpanCertifyEntry() { clear(); }
+    explicit AddSpanCertifyEntry(InodeId fileId_, uint64_t byteOffset_, BincodeList<BlockProof>&& proofs_) : fileId(fileId_), byteOffset(byteOffset_), proofs(std::move(proofs_)) {}
+    AddSpanCertifyEntry(const AddSpanCertifyEntry&) = default;
+    AddSpanCertifyEntry& operator=(const AddSpanCertifyEntry&) = default;
+    AddSpanCertifyEntry(AddSpanCertifyEntry&&) = default;
+    AddSpanCertifyEntry& operator=(AddSpanCertifyEntry&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // fileId
@@ -6640,6 +7842,11 @@ struct AddInlineSpanEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + 1 + 8 + 4 + 4 + BincodeBytes::STATIC_SIZE; // fileId + storageClass + byteOffset + size + crc + body
 
     AddInlineSpanEntry() { clear(); }
+    explicit AddInlineSpanEntry(InodeId fileId_, uint8_t storageClass_, uint64_t byteOffset_, uint32_t size_, Crc crc_, BincodeBytes&& body_) : fileId(fileId_), storageClass(storageClass_), byteOffset(byteOffset_), size(size_), crc(crc_), body(std::move(body_)) {}
+    AddInlineSpanEntry(const AddInlineSpanEntry&) = default;
+    AddInlineSpanEntry& operator=(const AddInlineSpanEntry&) = default;
+    AddInlineSpanEntry(AddInlineSpanEntry&&) = default;
+    AddInlineSpanEntry& operator=(AddInlineSpanEntry&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // fileId
@@ -6665,6 +7872,11 @@ struct MakeFileTransientDEPRECATEDEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE; // id + note
 
     MakeFileTransientDEPRECATEDEntry() { clear(); }
+    explicit MakeFileTransientDEPRECATEDEntry(InodeId id_, BincodeBytes&& note_) : id(id_), note(std::move(note_)) {}
+    MakeFileTransientDEPRECATEDEntry(const MakeFileTransientDEPRECATEDEntry&) = default;
+    MakeFileTransientDEPRECATEDEntry& operator=(const MakeFileTransientDEPRECATEDEntry&) = default;
+    MakeFileTransientDEPRECATEDEntry(MakeFileTransientDEPRECATEDEntry&&) = default;
+    MakeFileTransientDEPRECATEDEntry& operator=(MakeFileTransientDEPRECATEDEntry&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // id
@@ -6687,6 +7899,11 @@ struct RemoveSpanCertifyEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeList<BlockProof>::STATIC_SIZE; // fileId + byteOffset + proofs
 
     RemoveSpanCertifyEntry() { clear(); }
+    explicit RemoveSpanCertifyEntry(InodeId fileId_, uint64_t byteOffset_, BincodeList<BlockProof>&& proofs_) : fileId(fileId_), byteOffset(byteOffset_), proofs(std::move(proofs_)) {}
+    RemoveSpanCertifyEntry(const RemoveSpanCertifyEntry&) = default;
+    RemoveSpanCertifyEntry& operator=(const RemoveSpanCertifyEntry&) = default;
+    RemoveSpanCertifyEntry(RemoveSpanCertifyEntry&&) = default;
+    RemoveSpanCertifyEntry& operator=(RemoveSpanCertifyEntry&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // fileId
@@ -6711,6 +7928,11 @@ struct RemoveOwnedSnapshotFileEdgeEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8; // ownerId + targetId + name + creationTime
 
     RemoveOwnedSnapshotFileEdgeEntry() { clear(); }
+    explicit RemoveOwnedSnapshotFileEdgeEntry(InodeId ownerId_, InodeId targetId_, BincodeBytes&& name_, TernTime creationTime_) : ownerId(ownerId_), targetId(targetId_), name(std::move(name_)), creationTime(creationTime_) {}
+    RemoveOwnedSnapshotFileEdgeEntry(const RemoveOwnedSnapshotFileEdgeEntry&) = default;
+    RemoveOwnedSnapshotFileEdgeEntry& operator=(const RemoveOwnedSnapshotFileEdgeEntry&) = default;
+    RemoveOwnedSnapshotFileEdgeEntry(RemoveOwnedSnapshotFileEdgeEntry&&) = default;
+    RemoveOwnedSnapshotFileEdgeEntry& operator=(RemoveOwnedSnapshotFileEdgeEntry&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // ownerId
@@ -6738,6 +7960,11 @@ struct SwapBlocksEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + 8 + 8 + 8 + 8; // fileId1 + byteOffset1 + blockId1 + fileId2 + byteOffset2 + blockId2
 
     SwapBlocksEntry() { clear(); }
+    explicit SwapBlocksEntry(InodeId fileId1_, uint64_t byteOffset1_, uint64_t blockId1_, InodeId fileId2_, uint64_t byteOffset2_, uint64_t blockId2_) : fileId1(fileId1_), byteOffset1(byteOffset1_), blockId1(blockId1_), fileId2(fileId2_), byteOffset2(byteOffset2_), blockId2(blockId2_) {}
+    SwapBlocksEntry(const SwapBlocksEntry&) = default;
+    SwapBlocksEntry& operator=(const SwapBlocksEntry&) = default;
+    SwapBlocksEntry(SwapBlocksEntry&&) = default;
+    SwapBlocksEntry& operator=(SwapBlocksEntry&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // fileId1
@@ -6768,6 +7995,11 @@ struct MoveSpanEntry {
     static constexpr uint16_t STATIC_SIZE = 4 + 8 + 8 + BincodeFixedBytes<8>::STATIC_SIZE + 8 + 8 + BincodeFixedBytes<8>::STATIC_SIZE; // spanSize + fileId1 + byteOffset1 + cookie1 + fileId2 + byteOffset2 + cookie2
 
     MoveSpanEntry() { clear(); }
+    explicit MoveSpanEntry(uint32_t spanSize_, InodeId fileId1_, uint64_t byteOffset1_, BincodeFixedBytes<8>&& cookie1_, InodeId fileId2_, uint64_t byteOffset2_, BincodeFixedBytes<8>&& cookie2_) : spanSize(spanSize_), fileId1(fileId1_), byteOffset1(byteOffset1_), cookie1(std::move(cookie1_)), fileId2(fileId2_), byteOffset2(byteOffset2_), cookie2(std::move(cookie2_)) {}
+    MoveSpanEntry(const MoveSpanEntry&) = default;
+    MoveSpanEntry& operator=(const MoveSpanEntry&) = default;
+    MoveSpanEntry(MoveSpanEntry&&) = default;
+    MoveSpanEntry& operator=(MoveSpanEntry&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 4; // spanSize
@@ -6795,6 +8027,11 @@ struct SetTimeEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + 8; // id + mtime + atime
 
     SetTimeEntry() { clear(); }
+    explicit SetTimeEntry(InodeId id_, uint64_t mtime_, uint64_t atime_) : id(id_), mtime(mtime_), atime(atime_) {}
+    SetTimeEntry(const SetTimeEntry&) = default;
+    SetTimeEntry& operator=(const SetTimeEntry&) = default;
+    SetTimeEntry(SetTimeEntry&&) = default;
+    SetTimeEntry& operator=(SetTimeEntry&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // id
@@ -6817,6 +8054,11 @@ struct RemoveZeroBlockServiceFilesEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + 8; // startBlockService + startFile
 
     RemoveZeroBlockServiceFilesEntry() { clear(); }
+    explicit RemoveZeroBlockServiceFilesEntry(BlockServiceId startBlockService_, InodeId startFile_) : startBlockService(startBlockService_), startFile(startFile_) {}
+    RemoveZeroBlockServiceFilesEntry(const RemoveZeroBlockServiceFilesEntry&) = default;
+    RemoveZeroBlockServiceFilesEntry& operator=(const RemoveZeroBlockServiceFilesEntry&) = default;
+    RemoveZeroBlockServiceFilesEntry(RemoveZeroBlockServiceFilesEntry&&) = default;
+    RemoveZeroBlockServiceFilesEntry& operator=(RemoveZeroBlockServiceFilesEntry&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // startBlockService
@@ -6842,6 +8084,11 @@ struct SwapSpansEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeList<uint64_t>::STATIC_SIZE + 8 + 8 + BincodeList<uint64_t>::STATIC_SIZE; // fileId1 + byteOffset1 + blocks1 + fileId2 + byteOffset2 + blocks2
 
     SwapSpansEntry() { clear(); }
+    explicit SwapSpansEntry(InodeId fileId1_, uint64_t byteOffset1_, BincodeList<uint64_t>&& blocks1_, InodeId fileId2_, uint64_t byteOffset2_, BincodeList<uint64_t>&& blocks2_) : fileId1(fileId1_), byteOffset1(byteOffset1_), blocks1(std::move(blocks1_)), fileId2(fileId2_), byteOffset2(byteOffset2_), blocks2(std::move(blocks2_)) {}
+    SwapSpansEntry(const SwapSpansEntry&) = default;
+    SwapSpansEntry& operator=(const SwapSpansEntry&) = default;
+    SwapSpansEntry(SwapSpansEntry&&) = default;
+    SwapSpansEntry& operator=(SwapSpansEntry&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // fileId1
@@ -6870,6 +8117,11 @@ struct SameDirectoryRenameSnapshotEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8 + BincodeBytes::STATIC_SIZE; // dirId + targetId + oldName + oldCreationTime + newName
 
     SameDirectoryRenameSnapshotEntry() { clear(); }
+    explicit SameDirectoryRenameSnapshotEntry(InodeId dirId_, InodeId targetId_, BincodeBytes&& oldName_, TernTime oldCreationTime_, BincodeBytes&& newName_) : dirId(dirId_), targetId(targetId_), oldName(std::move(oldName_)), oldCreationTime(oldCreationTime_), newName(std::move(newName_)) {}
+    SameDirectoryRenameSnapshotEntry(const SameDirectoryRenameSnapshotEntry&) = default;
+    SameDirectoryRenameSnapshotEntry& operator=(const SameDirectoryRenameSnapshotEntry&) = default;
+    SameDirectoryRenameSnapshotEntry(SameDirectoryRenameSnapshotEntry&&) = default;
+    SameDirectoryRenameSnapshotEntry& operator=(SameDirectoryRenameSnapshotEntry&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // dirId
@@ -6904,6 +8156,11 @@ struct AddSpanAtLocationInitiateEntry {
     static constexpr uint16_t STATIC_SIZE = 1 + 1 + 8 + 8 + 4 + 4 + 1 + 1 + 1 + 4 + BincodeList<EntryNewBlockInfo>::STATIC_SIZE + BincodeList<Crc>::STATIC_SIZE; // locationId + withReference + fileId + byteOffset + size + crc + storageClass + parity + stripes + cellSize + bodyBlocks + bodyStripes
 
     AddSpanAtLocationInitiateEntry() { clear(); }
+    explicit AddSpanAtLocationInitiateEntry(uint8_t locationId_, bool withReference_, InodeId fileId_, uint64_t byteOffset_, uint32_t size_, Crc crc_, uint8_t storageClass_, Parity parity_, uint8_t stripes_, uint32_t cellSize_, BincodeList<EntryNewBlockInfo>&& bodyBlocks_, BincodeList<Crc>&& bodyStripes_) : locationId(locationId_), withReference(withReference_), fileId(fileId_), byteOffset(byteOffset_), size(size_), crc(crc_), storageClass(storageClass_), parity(parity_), stripes(stripes_), cellSize(cellSize_), bodyBlocks(std::move(bodyBlocks_)), bodyStripes(std::move(bodyStripes_)) {}
+    AddSpanAtLocationInitiateEntry(const AddSpanAtLocationInitiateEntry&) = default;
+    AddSpanAtLocationInitiateEntry& operator=(const AddSpanAtLocationInitiateEntry&) = default;
+    AddSpanAtLocationInitiateEntry(AddSpanAtLocationInitiateEntry&&) = default;
+    AddSpanAtLocationInitiateEntry& operator=(AddSpanAtLocationInitiateEntry&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 1; // locationId
@@ -6938,6 +8195,11 @@ struct AddSpanLocationEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeList<uint64_t>::STATIC_SIZE + 8 + 8; // fileId1 + byteOffset1 + blocks1 + fileId2 + byteOffset2
 
     AddSpanLocationEntry() { clear(); }
+    explicit AddSpanLocationEntry(InodeId fileId1_, uint64_t byteOffset1_, BincodeList<uint64_t>&& blocks1_, InodeId fileId2_, uint64_t byteOffset2_) : fileId1(fileId1_), byteOffset1(byteOffset1_), blocks1(std::move(blocks1_)), fileId2(fileId2_), byteOffset2(byteOffset2_) {}
+    AddSpanLocationEntry(const AddSpanLocationEntry&) = default;
+    AddSpanLocationEntry& operator=(const AddSpanLocationEntry&) = default;
+    AddSpanLocationEntry(AddSpanLocationEntry&&) = default;
+    AddSpanLocationEntry& operator=(AddSpanLocationEntry&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // fileId1
@@ -6965,6 +8227,11 @@ struct SameShardHardFileUnlinkEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE + 8 + 8; // ownerId + targetId + name + creationTime + deadlineTime
 
     SameShardHardFileUnlinkEntry() { clear(); }
+    explicit SameShardHardFileUnlinkEntry(InodeId ownerId_, InodeId targetId_, BincodeBytes&& name_, TernTime creationTime_, TernTime deadlineTime_) : ownerId(ownerId_), targetId(targetId_), name(std::move(name_)), creationTime(creationTime_), deadlineTime(deadlineTime_) {}
+    SameShardHardFileUnlinkEntry(const SameShardHardFileUnlinkEntry&) = default;
+    SameShardHardFileUnlinkEntry& operator=(const SameShardHardFileUnlinkEntry&) = default;
+    SameShardHardFileUnlinkEntry(SameShardHardFileUnlinkEntry&&) = default;
+    SameShardHardFileUnlinkEntry& operator=(SameShardHardFileUnlinkEntry&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // ownerId
@@ -6990,6 +8257,11 @@ struct MakeFileTransientEntry {
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeBytes::STATIC_SIZE; // id + deadlineTime + note
 
     MakeFileTransientEntry() { clear(); }
+    explicit MakeFileTransientEntry(InodeId id_, TernTime deadlineTime_, BincodeBytes&& note_) : id(id_), deadlineTime(deadlineTime_), note(std::move(note_)) {}
+    MakeFileTransientEntry(const MakeFileTransientEntry&) = default;
+    MakeFileTransientEntry& operator=(const MakeFileTransientEntry&) = default;
+    MakeFileTransientEntry(MakeFileTransientEntry&&) = default;
+    MakeFileTransientEntry& operator=(MakeFileTransientEntry&&) = default;
     size_t packedSize() const {
         size_t _size = 0;
         _size += 8; // id

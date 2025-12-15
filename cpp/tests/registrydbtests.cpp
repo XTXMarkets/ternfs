@@ -835,7 +835,7 @@ TEST_CASE("ShardBlockServiceAssignment") {
                 CHECK(svc.availableBytes > 0);
                 CHECK(svc.storageClass == 1);
                 // Check if service would be considered writable
-                if (isWritable(svc.flags) && svc.availableBytes > 0) {
+                if (blockServiceFlagsWritable(svc.flags) && svc.availableBytes > 0) {
                     writableCount++;
                 }
             }

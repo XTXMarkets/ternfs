@@ -4,7 +4,7 @@
 
 include_directories(${ternfs_SOURCE_DIR}/core ${ternfs_SOURCE_DIR}/crc32c)
 
-add_library(shard Shard.cpp Shard.hpp ShardDB.cpp ShardDB.hpp ShardDBData.cpp ShardDBData.hpp BlockServicesCacheDB.hpp BlockServicesCacheDB.cpp)
+add_library(shard Shard.cpp Shard.hpp ShardDB.cpp ShardDB.hpp ShardDBData.cpp ShardDBData.hpp BlockServicesCacheDB.hpp BlockServicesCacheDB.cpp BlockServicePicker.hpp BlockServicePicker.cpp)
 target_link_libraries(shard PRIVATE core)
 
 add_executable(ternshard ternshard.cpp)

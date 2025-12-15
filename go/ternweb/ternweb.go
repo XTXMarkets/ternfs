@@ -867,18 +867,24 @@ func handleApi(l *log.Logger, st *state, w http.ResponseWriter, r *http.Request)
 				if len(segments) != 3 {
 					return badUrl("bad segments len")
 				}
+				log.Info("handling registry api request %v", segments[2])
 				req, _, err := msgs.MkRegistryMessage(segments[2])
 				if err != nil {
+					log.Info("bad registry api request type %v: %v", segments[2], err)
 					return badUrl("bad ")
 				}
 				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					log.Info("could not decode registry api request body: %v", err)
 					return sendJsonErr(w, fmt.Errorf("could not decode request: %v", err), http.StatusBadRequest)
 				}
+				log.Info("decoded registry api request %T", req)
 
 				resp, err := st.client.RegistryRequest(l, req)
 				if err != nil {
+					log.Info("error handling registry api request %T: %v", req, err)
 					return sendJsonErr(w, err, http.StatusInternalServerError)
 				}
+				log.Info("handled registry api request %T with response %v", req, resp)
 				return sendResponse(resp)
 			case "cdc":
 				if len(segments) != 3 {

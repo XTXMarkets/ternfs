@@ -44,6 +44,10 @@ static bool parseShardOptions(CommandLineArgs& args, ShardOptions& options) {
             options.regionStalenessThreshold = parseDuration(args.next());
             continue;
         }
+        if (arg == "-block-service-writable-delay") {
+            options.blockServiceWritableDelay = parseDuration(args.next());
+            continue;
+        }
         fprintf(stderr, "unknown argument %s\n", args.peekArg().c_str());
         return false;
     }
@@ -66,7 +70,8 @@ static void printShardOptionsUsage() {
     fprintf(stderr, "    	Which shard we are running as [0-255]\n");
     fprintf(stderr, " -transient-deadline-interval\n");
     fprintf(stderr, "    	Tweaks the interval with which the deadline for transient file gets bumped.\n");
-}
+    fprintf(stderr, " -block-service-writable-delay\n");
+    fprintf(stderr, "       Delay before a new block service becomes writable. Default: 5m\n");}
 
 static bool validateShardOptions(const ShardOptions& options) {
     if (!options.shardIdSet) {

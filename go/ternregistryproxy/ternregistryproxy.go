@@ -164,6 +164,8 @@ func handleRequestParsed(log *log.Logger, s *state, req msgs.RegistryRequest) (m
 		resp, err = handleProxyRequest(log, s, req)
 	case *msgs.BlockServicesNeedingMigrationReq:
 		resp, err = handleProxyRequest(log, s, req)
+	case *msgs.AllBlockServicesReq:
+		resp, err = handleProxyRequest(log, s, req)
 	default:
 		err = fmt.Errorf("bad req type %T", req)
 	}

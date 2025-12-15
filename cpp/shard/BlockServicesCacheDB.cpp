@@ -10,6 +10,7 @@
 #include "Msgs.hpp"
 #include "MsgsGen.hpp"
 #include "RocksDBUtils.hpp"
+#include "Time.hpp"
 
 enum class BlockServicesCacheKey : uint8_t {
     CURRENT_BLOCK_SERVICES = 0,
@@ -137,20 +138,36 @@ struct BlockServiceBody {
         EMIT_OFFSET, V0_OFFSET,
         LE, BlockServiceFlags, flagsV1, setFlagsV1,
         EMIT_OFFSET, V1_OFFSET,
+        LE, uint8_t,  locationIdV2,     setLocationIdV2,
+        LE, uint64_t, capacityBytesV2,  setCapacityBytesV2,
+        LE, uint64_t, availableBytesV2, setAvailableBytesV2,
+        LE, uint64_t, blocksV2,         setBlocksV2,
+        LE, uint64_t, firstSeenV2,      setFirstSeenV2,
+        LE, uint64_t, lastSeenV2,       setLastSeenV2,
+        LE, uint64_t, lastInfoChangeV2, setLastInfoChangeV2,
+        LE, uint8_t,  hasFilesV2,       setHasFilesV2,
+        BYTES, pathV2, setPathV2,
         END
     )
 
-    static constexpr size_t MAX_SIZE = V1_OFFSET;
+    static constexpr size_t V2_OFFSET = V1_OFFSET + 1 + 8*6 + 1;  // locationId + 6 uint64_t + hasFiles
+
+    static constexpr size_t MIN_SIZE = V2_OFFSET + sizeof(uint8_t);  // +1 for path length byte
+    static constexpr size_t MAX_SIZE = MIN_SIZE + 255;  // max path size
 
     size_t size() const {
         switch (version()) {
         case 0: return V0_OFFSET;
         case 1: return V1_OFFSET;
+        case 2: return MIN_SIZE + pathV2().size();
         default: throw TERN_EXCEPTION("bad version %s", version());
         }
     }
 
-    void checkSize(size_t s) { ALWAYS_ASSERT(s == size()); }
+    void checkSize(size_t sz) {
+        ALWAYS_ASSERT(sz >= MIN_SIZE || version() < 2, "expected %s >= %s", sz, MIN_SIZE);
+        ALWAYS_ASSERT(sz == size());
+    }
 
     BlockServiceFlags flags() const {
         if (unlikely(version() == 0)) { return BlockServiceFlags::EMPTY; }
@@ -161,16 +178,108 @@ struct BlockServiceBody {
         ALWAYS_ASSERT(version() > 0);
         setFlagsV1(f);
     }
+
+    uint8_t locationId() const {
+        ALWAYS_ASSERT(version() >= 2);
+        return locationIdV2();
+    }
+
+    void setLocationId(uint8_t v) {
+        ALWAYS_ASSERT(version() >= 2);
+        setLocationIdV2(v);
+    }
+
+    uint64_t capacityBytes() const {
+        ALWAYS_ASSERT(version() >= 2);
+        return capacityBytesV2();
+    }
+
+    void setCapacityBytes(uint64_t v) {
+        ALWAYS_ASSERT(version() >= 2);
+        setCapacityBytesV2(v);
+    }
+
+    uint64_t availableBytes() const {
+        ALWAYS_ASSERT(version() >= 2);
+        return availableBytesV2();
+    }
+
+    void setAvailableBytes(uint64_t v) {
+        ALWAYS_ASSERT(version() >= 2);
+        setAvailableBytesV2(v);
+    }
+
+    uint64_t blocks() const {
+        ALWAYS_ASSERT(version() >= 2);
+        return blocksV2();
+    }
+
+    void setBlocks(uint64_t v) {
+        ALWAYS_ASSERT(version() >= 2);
+        setBlocksV2(v);
+    }
+
+    uint64_t firstSeen() const {
+        ALWAYS_ASSERT(version() >= 2);
+        return firstSeenV2();
+    }
+
+    void setFirstSeen(uint64_t v) {
+        ALWAYS_ASSERT(version() >= 2);
+        setFirstSeenV2(v);
+    }
+
+    uint64_t lastSeen() const {
+        ALWAYS_ASSERT(version() >= 2);
+        return lastSeenV2();
+    }
+
+    void setLastSeen(uint64_t v) {
+        ALWAYS_ASSERT(version() >= 2);
+        setLastSeenV2(v);
+    }
+
+    uint64_t lastInfoChange() const {
+        ALWAYS_ASSERT(version() >= 2);
+        return lastInfoChangeV2();
+    }
+
+    void setLastInfoChange(uint64_t v) {
+        ALWAYS_ASSERT(version() >= 2);
+        setLastInfoChangeV2(v);
+    }
+
+    bool hasFiles() const {
+        ALWAYS_ASSERT(version() >= 2);
+        return hasFilesV2() != 0;
+    }
+
+    void setHasFiles(bool v) {
+        ALWAYS_ASSERT(version() >= 2);
+        setHasFilesV2(v ? 1 : 0);
+    }
+
+    std::string_view path() const {
+        if (version() < 2) { return ""; }
+        auto ref = pathV2();
+        return std::string_view(ref.data(), ref.size());
+    }
+
+    void setPath(const std::string& p) {
+        ALWAYS_ASSERT(version() >= 2);
+        setPathV2(BincodeBytesRef(p.data(), p.size()));
+    }
 };
 
 std::vector<rocksdb::ColumnFamilyDescriptor> BlockServicesCacheDB::getColumnFamilyDescriptors() {
     return std::vector<rocksdb::ColumnFamilyDescriptor> {{"blockServicesCache", {}}};
 }
 
-BlockServicesCacheDB::BlockServicesCacheDB(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const SharedRocksDB& sharedDB) :
+BlockServicesCacheDB::BlockServicesCacheDB(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const SharedRocksDB& sharedDB, Duration blockServiceWritableDelay) :
     _env(logger, xmon, "bs_cache_db"),
     _db(sharedDB.db()),
-    _blockServicesCF(sharedDB.getCF("blockServicesCache"))
+    _blockServicesCF(sharedDB.getCF("blockServicesCache")),
+    _picker(15, blockServiceWritableDelay)
 {
     LOG_INFO(_env, "Initializing block services cache DB");
 
@@ -217,6 +326,29 @@ BlockServicesCacheDB::BlockServicesCacheDB(Logger& logger, std::shared_ptr<XmonA
                 cache.storageClass = v().storageClass();
                 cache.flags = v().flags();
                 cache.failureDomain = v().failureDomain();
+
+                if (v().version() >= 2) {
+                    cache.locationId = v().locationId();
+                    cache.capacityBytes = v().capacityBytes();
+                    cache.availableBytes = v().availableBytes();
+                    cache.blocks = v().blocks();
+                    cache.firstSeen = TernTime(v().firstSeen());
+                    cache.lastSeen = TernTime(v().lastSeen());
+                    cache.lastInfoChange = TernTime(v().lastInfoChange());
+                    cache.hasFiles = v().hasFiles();
+                    cache.path = (v().version() >= 2) ? std::string(v().path()) : "";
+                } else {
+                    // Set defaults for v1 format
+                    cache.locationId = 0;
+                    cache.capacityBytes = 0;
+                    cache.availableBytes = 0;
+                    cache.blocks = 0;
+                    cache.firstSeen = TernTime();
+                    cache.lastSeen = TernTime();
+                    cache.lastInfoChange = TernTime();
+                    cache.hasFiles = false;
+                    cache.path = "";
+                }
             }
             ROCKS_DB_CHECKED(it->status());
         }
@@ -253,14 +385,13 @@ void BlockServicesCacheDB::updateCache(const std::vector<FullBlockServiceInfo>& 
     std::unique_lock _(_mutex);
 
     rocksdb::WriteBatch batch;
-    // fill in main cache first
     StaticValue<BlockServiceKey> blockKey;
     blockKey().setKey(BLOCK_SERVICE_KEY);
     StaticValue<BlockServiceBody> blockBody;
     for (int i = 0; i < blockServices.size(); i++) {
         const auto& entryBlock = blockServices[i];
         blockKey().setBlockServiceId(entryBlock.id.u64);
-        blockBody().setVersion(1);
+        blockBody().setVersion(2);
         blockBody().setId(entryBlock.id.u64);
         blockBody().setIp1(entryBlock.addrs[0].ip.data);
         blockBody().setPort1(entryBlock.addrs[0].port);
@@ -270,15 +401,44 @@ void BlockServicesCacheDB::updateCache(const std::vector<FullBlockServiceInfo>& 
         blockBody().setFailureDomain(entryBlock.failureDomain.name.data);
         blockBody().setSecretKey(entryBlock.secretKey.data);
         blockBody().setFlags(entryBlock.flags);
+        blockBody().setLocationId(entryBlock.locationId);
+        blockBody().setCapacityBytes(entryBlock.capacityBytes);
+        blockBody().setAvailableBytes(entryBlock.availableBytes);
+        blockBody().setBlocks(entryBlock.blocks);
+        blockBody().setLastSeen(entryBlock.lastSeen.ns);
+        blockBody().setLastInfoChange(entryBlock.lastInfoChange.ns);
+        blockBody().setHasFiles(entryBlock.hasFiles);
+
+        uint64_t firstSeen;
+        auto it = _blockServices.find(entryBlock.id.u64);
+        if (it == _blockServices.end()) {
+            firstSeen = ternNow().ns;
+        } else {
+            firstSeen = it->second.firstSeen.ns;
+        }
+        blockBody().setFirstSeen(firstSeen);
+        blockBody().setPath(std::string(entryBlock.path.data(), entryBlock.path.size()));
+
         ROCKS_DB_CHECKED(batch.Put(_blockServicesCF, blockKey.toSlice(), blockBody.toSlice()));
+
+        // Update in-memory cache
         auto& cache = _blockServices[entryBlock.id.u64];
         expandKey(entryBlock.secretKey.data, cache.secretKey);
         cache.addrs = entryBlock.addrs;
         cache.storageClass = entryBlock.storageClass;
         cache.failureDomain = entryBlock.failureDomain.name.data;
         cache.flags = entryBlock.flags;
+        cache.locationId = entryBlock.locationId;
+        cache.capacityBytes = entryBlock.capacityBytes;
+        cache.availableBytes = entryBlock.availableBytes;
+        cache.blocks = entryBlock.blocks;
+        cache.lastSeen = entryBlock.lastSeen;
+        cache.lastInfoChange = entryBlock.lastInfoChange;
+        cache.hasFiles = entryBlock.hasFiles;
+        cache.firstSeen = TernTime(firstSeen);
+        cache.path = std::string(entryBlock.path.data(), entryBlock.path.size());
     }
-    // then the current block services
+
     ALWAYS_ASSERT(currentBlockServices.size() < 256); // TODO handle this properly
     _currentBlockServices.clear();
     for (auto& bs: currentBlockServices) {
@@ -293,6 +453,18 @@ void BlockServicesCacheDB::updateCache(const std::vector<FullBlockServiceInfo>& 
     ROCKS_DB_CHECKED(_db->Write({}, &batch));
 
     _haveBlockServices = true;
+    // Rebuild precomputed picker state
+    _picker.update(_blockServices, _currentBlockServices);
+}
+
+TernError BlockServicesCacheDB::pickBlockServices(
+    uint8_t locationId,
+    uint8_t storageClass,
+    int needed,
+    const std::vector<BlacklistEntry>& blacklist,
+    std::vector<BlockServiceId>& out
+) const {
+    return _picker.pick(locationId, storageClass, needed, blacklist, out);
 }
 
 bool BlockServicesCacheDB::haveBlockServices() const {

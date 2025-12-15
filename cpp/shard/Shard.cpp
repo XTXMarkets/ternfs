@@ -2449,6 +2449,47 @@ public:
                 _metricsBuilder.timestamp(now);
             }
         }
+
+        {
+            auto stats = _shared.blockServicesCache.getPickerStats();
+
+            // Per-location/storage stats
+            for (const auto& ls : stats.locStorage) {
+                if (ls.totalPicks == 0) continue;
+
+                uint8_t locationId = ls.key >> 8;
+                uint8_t storageClass = ls.key & 0xFF;
+
+                _metricsBuilder.measurement("eggsfs_picker_location_storage");
+                _metricsBuilder.tag("shard", _shrid);
+                _metricsBuilder.tag("location_id", (int)locationId);
+                _metricsBuilder.tag("storage_class", (int)storageClass);
+                _metricsBuilder.fieldU64("total_picks", ls.totalPicks);
+                _metricsBuilder.fieldU64("fallback_picks", ls.fallbackPicks);
+                _metricsBuilder.fieldU64("writable_failure_domains", ls.writableFailureDomains);
+                _metricsBuilder.fieldU64("writable_block_services", ls.writableBlockServices);
+                _metricsBuilder.fieldU64("max_fd_weight", ls.maxWeight);
+                _metricsBuilder.fieldU64("min_fd_weight", ls.minWeight);
+                _metricsBuilder.timestamp(now);
+            }
+
+            if (stats.maxServicePicks > 0) {
+                _metricsBuilder.measurement("eggsfs_picker_service_picks");
+                _metricsBuilder.tag("shard", _shrid);
+                _metricsBuilder.fieldU64("min_picks", stats.minServicePicks);
+                _metricsBuilder.fieldU64("max_picks", stats.maxServicePicks);
+                _metricsBuilder.timestamp(now);
+            }
+
+            if (stats.maxFdPicks > 0) {
+                _metricsBuilder.measurement("eggsfs_picker_fd_picks");
+                _metricsBuilder.tag("shard", _shrid);
+                _metricsBuilder.fieldU64("min_picks", stats.minFdPicks);
+                _metricsBuilder.fieldU64("max_picks", stats.maxFdPicks);
+                _metricsBuilder.timestamp(now);
+            }
+        }
+
         logsDBstatsToMetrics(_metricsBuilder, _shared.logsDB.getStats(), _shrid, _location, now);
         std::string err = sendMetrics(_influxDB, 10_sec, _metricsBuilder.payload());
         _metricsBuilder.reset();
@@ -2529,7 +2570,7 @@ void runShard(ShardOptions& options) {
     rocksDBOptions.manual_wal_flush = true;
     sharedDB.open(rocksDBOptions);
 
-    BlockServicesCacheDB blockServicesCache(logger, xmon, sharedDB);
+    BlockServicesCacheDB blockServicesCache(logger, xmon, sharedDB, options.blockServiceWritableDelay);
 
     ShardDB shardDB(logger, xmon, options.shardId, options.logsDBOptions.location, options.transientDeadlineInterval, sharedDB, blockServicesCache);
     LogsDB logsDB(logger, xmon, sharedDB, options.logsDBOptions.replicaId, shardDB.lastAppliedLogEntry(), options.logsDBOptions.noReplication, options.logsDBOptions.avoidBeingLeader);

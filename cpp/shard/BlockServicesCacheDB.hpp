@@ -15,6 +15,7 @@
 #include "Env.hpp"
 #include "SharedRocksDB.hpp"
 #include "Msgs.hpp"
+#include "BlockServicePicker.hpp"
 
 struct BlockServiceCache {
     AES128Key secretKey;
@@ -22,6 +23,15 @@ struct BlockServiceCache {
     AddrsInfo addrs;
     uint8_t storageClass;
     BlockServiceFlags flags;
+    uint8_t locationId;
+    uint64_t capacityBytes;
+    uint64_t availableBytes;
+    uint64_t blocks;
+    TernTime firstSeen;
+    TernTime lastSeen;
+    TernTime lastInfoChange;
+    bool hasFiles;
+    std::string path;
 };
 
 struct BlockServicesCache {
@@ -63,12 +73,23 @@ private:
     std::unordered_map<uint64_t, BlockServiceCache> _blockServices;
     // The block services that we currently want to write to.
     std::vector<BlockServiceInfoShort> _currentBlockServices;
+    BlockServicePicker _picker;
 
 public:
-    BlockServicesCacheDB(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const SharedRocksDB& sharedDB);
+    BlockServicesCacheDB(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const SharedRocksDB& sharedDB, Duration blockServiceWritableDelay = 5_mins);
     static std::vector<rocksdb::ColumnFamilyDescriptor> getColumnFamilyDescriptors();
 
     void updateCache(const std::vector<FullBlockServiceInfo>& blockServices, const std::vector<BlockServiceInfoShort>& currentBlockServices);
+
+    // Pick block services for a given location/storage class. Returns
+    // COULD_NOT_PICK_BLOCK_SERVICES on failure.
+    TernError pickBlockServices(
+        uint8_t locationId,
+        uint8_t storageClass,
+        int needed,
+        const std::vector<BlacklistEntry>& blacklist,
+        std::vector<BlockServiceId>& out
+    ) const;
 
     // We've seen at least one `updateCache()`, or we've loaded the
     // block services from the cache.
@@ -94,4 +115,8 @@ public:
     // you cannot use it in the `applyLogEntry()` call tree _unless you're filling
     // in a response (point 1 above).
     BlockServicesCache getCache() const;
+
+    BlockServicePicker::StatsSnapshot getPickerStats() const {
+        return _picker.getStats();
+    }
 };

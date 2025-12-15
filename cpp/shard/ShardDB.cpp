@@ -1365,19 +1365,6 @@ struct ShardDBImpl {
         return true;
     }
 
-    bool _blockServiceMatchesBlacklist(
-        const std::vector<BlacklistEntry>& blacklists,
-        const FailureDomain& failureDomain,
-        BlockServiceId blockServiceId
-    ) {
-        for (const auto& blacklist: blacklists) {
-            if (blacklist.blockService == blockServiceId || blacklist.failureDomain == failureDomain) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     TernError _prepareAddInlineSpan(TernTime time, const AddInlineSpanReq& req, AddInlineSpanEntry& entry) {
         if (req.fileId.type() != InodeType::FILE && req.fileId.type() != InodeType::SYMLINK) {
             return TernError::TYPE_IS_DIRECTORY;
@@ -1429,12 +1416,9 @@ struct ShardDBImpl {
         return TernError::NO_ERROR;
     }
 
-    TernError _prepareAddSpanInitiate(const rocksdb::ReadOptions& options, TernTime time, const AddSpanAtLocationInitiateReq& request, InodeId reference, AddSpanAtLocationInitiateEntry& entry) {
+    TernError _prepareAddSpanInitiate(TernTime time, const AddSpanAtLocationInitiateReq& request, AddSpanAtLocationInitiateEntry& entry) {
         auto& req = request.req.req;
         if (req.fileId.type() != InodeType::FILE && req.fileId.type() != InodeType::SYMLINK) {
-            return TernError::TYPE_IS_DIRECTORY;
-        }
-        if (reference.type() != InodeType::FILE && reference.type() != InodeType::SYMLINK) {
             return TernError::TYPE_IS_DIRECTORY;
         }
         if (req.fileId.shard() != _shid) {
@@ -1470,11 +1454,6 @@ struct ShardDBImpl {
         entry.crc = req.crc;
         entry.stripes = req.stripes;
 
-        //TODO hack for failover to flash in NOK
-        if (entry.locationId == 1 && entry.storageClass == HDD_STORAGE) {
-            entry.storageClass = FLASH_STORAGE;
-        }
-
         // fill stripe CRCs
         for (int s = 0; s < req.stripes; s++) {
             uint32_t stripeCrc = 0;
@@ -1484,124 +1463,19 @@ struct ShardDBImpl {
             entry.bodyStripes.els.emplace_back(stripeCrc);
         }
 
-        // Now fill in the block services. Generally we want to try to keep them the same
-        // throughout the file, if possible, so that the likelihood of data loss is minimized.
-        //
-        // Currently things are spread out in faiure domains nicely by just having the current
-        // block services to be all on different failure domains.
         {
-            auto inMemoryBlockServicesData = _blockServicesCache.getCache();
-            std::vector<BlockServiceId> candidateBlockServices;
-            candidateBlockServices.reserve(inMemoryBlockServicesData.currentBlockServices.size());
-            LOG_DEBUG(_env, "Starting out with %s current block services", candidateBlockServices.size());
-            std::vector<BlacklistEntry> blacklist{req.blacklist.els};
-            {
-                for (BlockServiceInfoShort bs: inMemoryBlockServicesData.currentBlockServices) {
-                    if (bs.locationId != entry.locationId) {
-                        LOG_DEBUG(_env, "Skipping %s because of location mismatch(%s != %s)", bs.id, (int)bs.locationId, (int)entry.locationId);
-                        continue;
-                    }
-                    if (bs.storageClass != entry.storageClass) {
-                        LOG_DEBUG(_env, "Skipping %s because of different storage class (%s != %s)", bs.id, (int)bs.storageClass, (int)entry.storageClass);
-                        continue;
-                    }
-                    if (_blockServiceMatchesBlacklist(blacklist, bs.failureDomain, bs.id)) {
-                        LOG_DEBUG(_env, "Skipping %s because it matches blacklist", bs.id);
-                        continue;
-                    }
-                    candidateBlockServices.emplace_back(bs.id);
-                    BlacklistEntry newBlacklistEntry;
-                    newBlacklistEntry.failureDomain = bs.failureDomain;
-                    newBlacklistEntry.blockService = bs.id;
-                    blacklist.emplace_back(std::move(newBlacklistEntry));
-                }
-            }
-            LOG_DEBUG(_env, "Starting out with %s block service candidates, parity %s", candidateBlockServices.size(), entry.parity);
             std::vector<BlockServiceId> pickedBlockServices;
-            pickedBlockServices.reserve(req.parity.blocks());
-            // We try to copy the block services from the first and the last span. The first
-            // span is generally considered the "reference" one, and should work in the common
-            // case. The last span is useful only in the case where we start using different
-            // block services mid-file, probably because a block service went down. Why not
-            // always use the last span? When we migrate or defrag or in generally reorganize
-            // the spans we generally work from left-to-right, and in that case if we always
-            // looked at the last one we'd pick a random block service every time. The "last
-            // span" fallback is free in the common case anyhow.
-            const auto fillInBlockServicesFromSpan = [&](bool first) {
-                // empty file, bail out early and avoid pointless double lookup
-                if (entry.fileId == reference && entry.byteOffset == 0) {
-                    return;
-                }
-                // we're already done (avoid double seek in the common case)
-                if (pickedBlockServices.size() >= req.parity.blocks() || candidateBlockServices.size() < 0) {
-                    return;
-                }
-                StaticValue<SpanKey> startK;
-                startK().setFileId(reference);
-                // We should never have many tombstones here (spans aren't really deleted and
-                // re-added apart from rare cases), so the offset upper bound is fine.
-                startK().setOffset(first ? 0 : ~(uint64_t)0);
-                std::unique_ptr<rocksdb::Iterator> it(_db->NewIterator(options, _spansCf));
-                it->SeekForPrev(startK.toSlice());
-                if (!it->Valid()) { // nothing to do if we can't find a span
-                    if (!it->status().IsNotFound()) {
-                        ROCKS_DB_CHECKED(it->status());
-                    }
-                    return;
-                }
-                auto k = ExternalValue<SpanKey>::FromSlice(it->key());
-                auto span = ExternalValue<SpanBody>::FromSlice(it->value());
-                if (span().isInlineStorage()) { return; }
+            TernError pickErr = _blockServicesCache.pickBlockServices(
+                entry.locationId,
+                entry.storageClass,
+                req.parity.blocks(),
+                req.blacklist.els,
+                pickedBlockServices
+            );
+            if (pickErr != TernError::NO_ERROR) {
+                return pickErr;
+            }
 
-                // find correct location
-                uint8_t loc_idx = INVALID_LOCATION;
-                for(uint8_t idx = 0; idx < span().locationCount(); ++idx) {
-                    if (span().blocksBodyReadOnly(idx).location() == request.locationId) {
-                        loc_idx = idx;
-                        break;
-                    }
-                }
-                if (loc_idx == INVALID_LOCATION) {
-                    // we couldn't find information in this location nothing more to do
-                    return;
-                }
-                auto blocks = span().blocksBodyReadOnly(loc_idx);
-                for (
-                    int i = 0;
-                    i < blocks.parity().blocks() && pickedBlockServices.size() < req.parity.blocks() && candidateBlockServices.size() > 0;
-                    i++
-                ) {
-                    const BlockBody spanBlock = blocks.block(i);
-                    auto isCandidate = std::find(candidateBlockServices.begin(), candidateBlockServices.end(), spanBlock.blockService());
-                    if (isCandidate == candidateBlockServices.end()) {
-                        continue;
-                    }
-                    LOG_DEBUG(_env, "(1) Picking block service candidate %s, failure domain %s", spanBlock.blockService(), GoLangQuotedStringFmt((const char*)inMemoryBlockServicesData.blockServices.at(spanBlock.blockService().u64).failureDomain.data(), 16));
-                    BlockServiceId blockServiceId = spanBlock.blockService();
-                    pickedBlockServices.emplace_back(blockServiceId);
-                    std::iter_swap(isCandidate, candidateBlockServices.end()-1);
-                    candidateBlockServices.pop_back();
-                }
-            };
-            fillInBlockServicesFromSpan(true);
-            fillInBlockServicesFromSpan(false);
-            // Fill in whatever remains. We don't need to be deterministic here (we would have to
-            // if we were in log application), but we might as well.
-            {
-                RandomGenerator rand(time.ns);
-                while (pickedBlockServices.size() < req.parity.blocks() && candidateBlockServices.size() > 0) {
-                    uint64_t ix = rand.generate64() % candidateBlockServices.size();
-                    LOG_DEBUG(_env, "(2) Picking block service candidate %s, failure domain %s", candidateBlockServices[ix], GoLangQuotedStringFmt((const char*)inMemoryBlockServicesData.blockServices.at(candidateBlockServices[ix].u64).failureDomain.data(), 16));
-                    pickedBlockServices.emplace_back(candidateBlockServices[ix]);
-                    std::iter_swap(candidateBlockServices.begin()+ix, candidateBlockServices.end()-1);
-                    candidateBlockServices.pop_back();
-                }
-            }
-            // If we still couldn't find enough block services, we're toast.
-            if (pickedBlockServices.size() < req.parity.blocks()) {
-                return TernError::COULD_NOT_PICK_BLOCK_SERVICES;
-            }
-            // Now generate the blocks
             entry.bodyBlocks.els.resize(req.parity.blocks());
             for (int i = 0; i < req.parity.blocks(); i++) {
                 auto& block = entry.bodyBlocks.els[i];
@@ -1865,20 +1739,20 @@ struct ShardDBImpl {
             spanInitiateAtLocationReq.locationId = DEFAULT_LOCATION;
             spanInitiateAtLocationReq.req.reference = NULL_INODE_ID;
             spanInitiateAtLocationReq.req.req = req.getAddSpanInitiate();
-            err = _prepareAddSpanInitiate(options, time, spanInitiateAtLocationReq, spanInitiateAtLocationReq.req.req.fileId, logEntryBody.setAddSpanAtLocationInitiate());
+            err = _prepareAddSpanInitiate(time, spanInitiateAtLocationReq, logEntryBody.setAddSpanAtLocationInitiate());
             break; }
         case ShardMessageKind::ADD_SPAN_INITIATE_WITH_REFERENCE: {
             AddSpanAtLocationInitiateReq spanInitiateAtLocationReq;
             spanInitiateAtLocationReq.locationId = DEFAULT_LOCATION;
             spanInitiateAtLocationReq.req = req.getAddSpanInitiateWithReference();
-            err = _prepareAddSpanInitiate(options, time, spanInitiateAtLocationReq, spanInitiateAtLocationReq.req.reference, logEntryBody.setAddSpanAtLocationInitiate());
+            err = _prepareAddSpanInitiate(time, spanInitiateAtLocationReq, logEntryBody.setAddSpanAtLocationInitiate());
             break; }
         case ShardMessageKind::ADD_SPAN_AT_LOCATION_INITIATE: {
             auto reference = req.getAddSpanAtLocationInitiate().req.reference;
             if (reference == NULL_INODE_ID) {
                 reference = req.getAddSpanAtLocationInitiate().req.req.fileId;
             }
-            err = _prepareAddSpanInitiate(options, time, req.getAddSpanAtLocationInitiate(), reference, logEntryBody.setAddSpanAtLocationInitiate());
+            err = _prepareAddSpanInitiate(time, req.getAddSpanAtLocationInitiate(), logEntryBody.setAddSpanAtLocationInitiate());
             break; }
         case ShardMessageKind::ADD_SPAN_CERTIFY:
             err = _prepareAddSpanCertify(time, req.getAddSpanCertify(), logEntryBody.setAddSpanCertify());

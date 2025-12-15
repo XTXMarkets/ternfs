@@ -12,3 +12,9 @@ target_link_libraries(logsdbtests PRIVATE core)
 
 add_executable(registrydbtests registrydbtests.cpp doctest.h)
 target_link_libraries(registrydbtests PRIVATE core registry)
+
+add_executable(blockservicepickertests blockservicepickertests.cpp doctest.h)
+target_link_libraries(blockservicepickertests PRIVATE core shard)
+
+add_executable(blockservicescachedbtests blockservicescachedbtests.cpp doctest.h)
+target_link_libraries(blockservicescachedbtests PRIVATE core shard)

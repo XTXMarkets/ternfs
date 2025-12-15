@@ -196,7 +196,7 @@ public:
                         targetBS = &bs;
                     }
 
-                    if(!bs.hasFiles || isReadable(bs.flags)) {
+                    if(!bs.hasFiles || blockServiceFlagsReadable(bs.flags)) {
                         continue;
                     }
 

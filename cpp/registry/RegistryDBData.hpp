@@ -160,7 +160,7 @@ static inline void writeShardInfo(rocksdb::WriteBatch& batch, rocksdb::ColumnFam
     key().setLocationId(shardInfo.locationId);
     key().setShardId(shardInfo.id.shardId().u8);
     key().setReplicaId(shardInfo.id.replicaId().u8);
-    
+
     value()._setVersion(0);
     value().setIsLeader(shardInfo.isLeader);
     value().setLastSeen(shardInfo.lastSeen);
@@ -174,7 +174,7 @@ static inline void writeShardInfo(rocksdb::WriteBatch& batch, rocksdb::ColumnFam
 }
 
 static inline void initializeShardsForLocation(
-    rocksdb::WriteBatch&  batch, rocksdb::ColumnFamilyHandle* cf, LocationId locationId) 
+    rocksdb::WriteBatch&  batch, rocksdb::ColumnFamilyHandle* cf, LocationId locationId)
 {
     FullShardInfo shardInfo;
     shardInfo.clear();
@@ -240,7 +240,7 @@ static inline void writeCdcInfo(rocksdb::WriteBatch& batch, rocksdb::ColumnFamil
 }
 
 static inline void initializeCdcForLocation(
-    rocksdb::WriteBatch&  batch, rocksdb::ColumnFamilyHandle* cf, LocationId locationId) 
+    rocksdb::WriteBatch&  batch, rocksdb::ColumnFamilyHandle* cf, LocationId locationId)
 {
     CdcInfo cdcInfo;
     cdcInfo.clear();
@@ -278,15 +278,15 @@ struct BlockServiceInfoValue {
         LE,     uint64_t,   blocks, setBlocks,
         LE,     bool,       hasFiles, setHasFiles,
         EMIT_OFFSET, STATIC_SIZE,
-        
+
         BYTES, path, setPath,
         END
     )
-    
+
     static constexpr size_t MIN_SIZE =
         STATIC_SIZE +
         sizeof(uint8_t);    // pathLen
-    
+
     static constexpr size_t MAX_SIZE = MIN_SIZE + 255;
 
     size_t size() const {
@@ -303,7 +303,7 @@ static inline void readBlockServiceInfo(rocksdb::Slice key_, rocksdb::Slice valu
     auto key = ExternalValue<BlockServiceInfoKey>::FromSlice(key_);
     auto value = ExternalValue<BlockServiceInfoValue>::FromSlice(value_);
     blockServiceInfo.id = key().id();
-    
+
     blockServiceInfo.locationId = value().locationId();
     blockServiceInfo.storageClass = value().storageClass();
     blockServiceInfo.failureDomain.name = value().failureDomain();
@@ -315,7 +315,7 @@ static inline void readBlockServiceInfo(rocksdb::Slice key_, rocksdb::Slice valu
     blockServiceInfo.addrs.addrs[0].port = value().port1();
     blockServiceInfo.addrs.addrs[1].ip = value().ip2();
     blockServiceInfo.addrs.addrs[1].port = value().port2();
-    
+
     blockServiceInfo.flags = value().flags();
     blockServiceInfo.capacityBytes = value().capacityBytes();
     blockServiceInfo.availableBytes = value().availableBytes();
@@ -343,7 +343,7 @@ static inline void writeBlockServiceInfo(
     value().setPort1(blockServiceInfo.addrs.addrs[0].port);
     value().setIp2(blockServiceInfo.addrs.addrs[1].ip.data);
     value().setPort2(blockServiceInfo.addrs.addrs[1].port);
-    
+
     value().setFlags(blockServiceInfo.flags);
     value().setCapacityBytes(blockServiceInfo.capacityBytes);
     value().setAvailableBytes(blockServiceInfo.availableBytes);
@@ -355,7 +355,7 @@ static inline void writeBlockServiceInfo(
     );
 }
 
-static constexpr auto MAX_SERVICE_KEY_SIZE = 
+static constexpr auto MAX_SERVICE_KEY_SIZE =
     std::max(std::max(std::max(
         RegistryReplicaInfoKey::MAX_SIZE, ShardInfoKey::MAX_SIZE), CdcInfoKey::MAX_SIZE),BlockServiceInfoKey::MAX_SIZE);
 
@@ -432,7 +432,7 @@ struct WritableBlockServiceKey {
 
 static inline void blockServiceToWritableBlockServiceKey(const FullBlockServiceInfo& bs, WritableBlockServiceKey key) {
     ALWAYS_ASSERT(bs.availableBytes > 0);
-    ALWAYS_ASSERT(isWritable(bs.flags));
+    ALWAYS_ASSERT(blockServiceFlagsWritable(bs.flags));
     key.setLocationId(bs.locationId);
     key.setStorageClass(bs.storageClass);
     key.setFailureDomain(bs.failureDomain.name.data);

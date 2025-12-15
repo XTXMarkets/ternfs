@@ -68,6 +68,8 @@ func readRegistryResponse(
 	kind := msgs.RegistryMessageKind(data[0])
 	var resp msgs.RegistryResponse
 	switch kind {
+	case msgs.REGISTRY:
+		resp = &msgs.RegistryResp{}
 	case msgs.LOCAL_SHARDS:
 		resp = &msgs.LocalShardsResp{}
 	case msgs.REGISTER_SHARD:
@@ -124,6 +126,8 @@ func readRegistryResponse(
 		resp = &msgs.UpdateBlockServicePathResp{}
 	case msgs.BLOCK_SERVICES_NEEDING_MIGRATION:
 		resp = &msgs.BlockServicesNeedingMigrationResp{}
+	case msgs.ALL_BLOCK_SERVICES:
+		resp = &msgs.AllBlockServicesResp{}
 	default:
 		return nil, fmt.Errorf("bad registry response kind %v", kind)
 	}
