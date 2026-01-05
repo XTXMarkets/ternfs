@@ -1172,8 +1172,8 @@ public:
                                 // before sending response
                                 auto now = ternNow();
                                 auto leadersAtOtherLocations = _shared.getLeadersAtOtherLocations();
-                                if ((!leadersAtOtherLocations->empty()) && resp.body.resp.kind() == ShardMessageKind::CREATE_DIRECTORY_INODE) {
-
+                                if ((!leadersAtOtherLocations->empty()) &&
+                                    (resp.body.resp.kind() == ShardMessageKind::CREATE_DIRECTORY_INODE || resp.body.resp.kind() == ShardMessageKind::CREATE_LOCKED_CURRENT_EDGE)) {
                                     CrossRegionWaitInfo waitInfo;
                                     waitInfo.idx = shardEntry.idx;
                                     waitInfo.createdAt = now;
@@ -1593,7 +1593,7 @@ public:
                 uint64_t responseId = resp.id;
 
                 for (const auto& leader : *leadersAtOtherLocations) {
-                        if (leader.locationId == 0) continue;
+                    if (leader.locationId == 0) continue;
                     auto timeSinceLastSeen = now - leader.lastSeen;
                     if (timeSinceLastSeen >= _shardDownThreshold) {
                         LOG_INFO(_env, "Skipping wait for secondary leader at location %s (down for %s)",
