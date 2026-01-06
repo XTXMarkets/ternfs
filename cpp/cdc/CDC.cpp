@@ -22,6 +22,7 @@
 #include "Exception.hpp"
 #include "LogsDB.hpp"
 #include "Loop.hpp"
+#include "MsgsGen.hpp"
 #include "MultiplexedChannel.hpp"
 #include "PeriodicLoop.hpp"
 #include "Protocol.hpp"
@@ -402,6 +403,12 @@ public:
                     ALWAYS_ASSERT(!foundLastInserted);
                     ALWAYS_ASSERT(_logEntryIdxToReqInfos.contains(_logsDBLogIndex.u64));
                     ALWAYS_ASSERT(_inFlightLogEntries.contains(_logsDBLogIndex.u64));
+                    auto& droppedReqInfos = _logEntryIdxToReqInfos[_logsDBLogIndex.u64];
+                    for (auto& reqInfo : droppedReqInfos) {
+                        InFlightCDCRequestKey key(reqInfo.reqId, reqInfo.clientAddr);
+                        ALWAYS_ASSERT(_inFlightCDCReqs.contains(key));
+                        _inFlightCDCReqs.erase(key);
+                    }
                     _logEntryIdxToReqInfos.erase(_logsDBLogIndex.u64);
                     _inFlightLogEntries.erase(_logsDBLogIndex.u64);
                     --_logsDBLogIndex.u64;
@@ -464,7 +471,6 @@ public:
                     inFlight.receivedAt = reqInfo.receivedAt;
                     inFlight.sockIx = reqInfo.sockIx;
                     _updateInFlightTxns();
-                    _inFlightCDCReqs.insert(InFlightCDCRequestKey(reqInfo.reqId, reqInfo.clientAddr));
                 }
                 _processStep();
                 _logEntryIdxToReqInfos.erase(cdcEntry.logIdx());
@@ -692,6 +698,8 @@ private:
             }
 
             auto& cdcReq = _cdcReqs.emplace_back(std::move(cdcMsg.body));
+
+            _inFlightCDCReqs.insert(InFlightCDCRequestKey(cdcMsg.id, msg.clientAddr));
 
             LOG_DEBUG(_env, "CDC request %s successfully parsed, will process soon", cdcReq.kind());
             _cdcReqsInfo.emplace_back(CDCReqInfo{
