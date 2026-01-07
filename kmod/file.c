@@ -24,6 +24,7 @@
 #include "bincode.h"
 #include "dir.h"
 #include "inode_compat.h"
+#include "page_compat.h"
 
 unsigned ternfs_atime_update_interval_sec = 0;
 

@@ -11,6 +11,7 @@
 #include "err.h"
 #include "inode.h"
 #include "metadata.h"
+#include "page_compat.h"
 #include "trace.h"
 
 static struct kmem_cache* ternfs_dirents_cachep;

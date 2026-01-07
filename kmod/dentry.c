@@ -4,6 +4,8 @@
 
 #include "dentry.h"
 
+#include <linux/version.h>
+
 #include "bincode.h"
 #include "inode_compat.h"
 #include "log.h"
@@ -13,6 +15,7 @@
 #include "metadata.h"
 #include "policy.h"
 #include "trace.h"
+
 
 TERNFS_DEFINE_COUNTER(ternfs_stat_dir_revalidations);
 
@@ -64,10 +67,13 @@ static inline int ternfs_dir_needs_reval(struct ternfs_inode* dir, struct dentry
 
     return ret;
 }
-
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 14, 0)
 static int ternfs_d_revalidate(struct dentry* dentry, unsigned int flags) {
-    struct dentry* parent;
+#else
+static int ternfs_d_revalidate(struct inode *, const struct qstr *, struct dentry* dentry, unsigned int flags) {
+#endif
     struct inode* dir;
+    struct dentry* parent;
     int ret;
 
     ternfs_debug("dentry=%pd flags=%x[rcu=%d]", dentry, flags, !!(flags & LOOKUP_RCU));

@@ -7,7 +7,7 @@
 set -eu -o pipefail
 
 # version=5.4.237
-version=6.12.49
+version=6.14.9
 
 # Download or resume
 curl -C - -O "https://cdn.kernel.org/pub/linux/kernel/v${version%%.*}.x/linux-${version}.tar.gz"

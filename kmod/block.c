@@ -19,6 +19,7 @@
 #include "wq.h"
 #include "file.h"
 #include "net_compat.h"
+#include "page_compat.h"
 
 // Static data
 // --------------------------------------------------------------------

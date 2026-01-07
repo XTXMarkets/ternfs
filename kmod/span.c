@@ -22,6 +22,7 @@
 #include "trace.h"
 #include "intrshims.h"
 #include "sysctl.h"
+#include "page_compat.h"
 
 int ternfs_span_cache_retention_jiffies = 10 * 60  * HZ; // 10 minutes
 
