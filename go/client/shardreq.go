@@ -67,6 +67,19 @@ func (c *Client) checkNewEdgeAfterRename(
 		logger.Info("got mismatched current target (%v), giving up and returning original error", lookupResp.TargetId)
 		return false
 	}
+	nowNs := msgs.Now()
+	var delta msgs.TernTime
+	if nowNs > lookupResp.CreationTime {
+		delta = nowNs - lookupResp.CreationTime
+	} else {
+		delta = lookupResp.CreationTime - nowNs
+	}
+	const edgeRenameMaxFuzzNs = msgs.TernTime(60 * 1000 * 1000 * 1000) // 60 seconds
+	if delta > edgeRenameMaxFuzzNs {
+		logger.Info("got creation time %v too far from now %v (delta %v), giving up and returning original error", lookupResp.CreationTime, nowNs, delta)
+		return false
+	}
+
 	*creationTime = lookupResp.CreationTime
 	return true
 }

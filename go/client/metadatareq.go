@@ -78,7 +78,17 @@ func (c *Client) metadataRequest(
 		if resp.err != nil {
 			var isTernError bool
 			ternError, isTernError = resp.err.(msgs.TernError)
-			if isTernError && attempts > 0 {
+			shouldCheckIdempotency := attempts > 0
+			if (shid >=0) {
+				if reqBody.(msgs.ShardRequest).ShardRequestKind() == msgs.SAME_DIRECTORY_RENAME {
+					shouldCheckIdempotency = true
+				}
+			} else {
+				if reqBody.(msgs.CDCRequest).CDCRequestKind() == msgs.RENAME_FILE || reqBody.(msgs.CDCRequest).CDCRequestKind() == msgs.RENAME_DIRECTORY {
+					shouldCheckIdempotency = true
+				}
+			}
+			if isTernError && shouldCheckIdempotency {
 				if shid >= 0 {
 					ternError = c.checkRepeatedShardRequestError(log, reqBody.(msgs.ShardRequest), respBody.(msgs.ShardResponse), ternError)
 				} else {

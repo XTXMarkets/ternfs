@@ -21,6 +21,8 @@ int ternfs_mtu = TERNFS_DEFAULT_MTU;
 int ternfs_default_mtu = TERNFS_DEFAULT_MTU;
 int ternfs_max_mtu = TERNFS_MAX_MTU;
 
+#define TERNFS_RENAME_NEW_EDGE_CREATION_TIME_FUZZ_NS (60ULL * 1000 * 1000 * 1000) // 60 seconds
+
 static DEFINE_PER_CPU(u64, next_request_id);
 
 static inline u64 alloc_request_id(void) {
@@ -356,6 +358,13 @@ static bool check_new_edge_after_rename(
         consume_skb(skb);
         if (ctx.err != 0) { return false; }
         if (resp_target.x != target) { return false; }
+
+        u64 now_ns = ktime_get_real_ns();
+        u64 delta = now_ns > resp_creation_time.x ? now_ns - resp_creation_time.x : resp_creation_time.x - now_ns;
+        if (delta > TERNFS_RENAME_NEW_EDGE_CREATION_TIME_FUZZ_NS) {
+            return false;
+        }
+
         *creation_time = resp_creation_time.x;
     }
 
@@ -483,7 +492,7 @@ int ternfs_shard_rename(
         ternfs_same_directory_rename_resp_get_end(&ctx, resp_new_creation_time, end);
         ternfs_same_directory_rename_resp_get_finish(&ctx, end);
         bool recovered = false;
-        if (attempts > 1 && ctx.err == TERNFS_ERR_EDGE_NOT_FOUND) {
+        if (ctx.err == TERNFS_ERR_EDGE_NOT_FOUND) {
             ternfs_debug("got edge not found, performing followup checks");
             // See commentary in shardreq.go
             if (
@@ -1239,7 +1248,7 @@ int ternfs_cdc_rename_directory(
         ternfs_rename_directory_resp_get_end(&ctx, resp_new_creation_time, end);
         ternfs_rename_directory_resp_get_finish(&ctx, end);
         bool recovered = false;
-        if (attempts > 1 && ctx.err == TERNFS_ERR_EDGE_NOT_FOUND) {
+        if (ctx.err == TERNFS_ERR_EDGE_NOT_FOUND) {
             ternfs_debug("got edge not found, performing followup checks");
             // See commentary in shardreq.go
             if (
@@ -1290,7 +1299,7 @@ int ternfs_cdc_rename_file(
         ternfs_rename_file_resp_get_end(&ctx, resp_new_creation_time, end);
         ternfs_rename_file_resp_get_finish(&ctx, end);
         bool recovered = false;
-        if (attempts > 1 && ctx.err == TERNFS_ERR_EDGE_NOT_FOUND) {
+        if (ctx.err == TERNFS_ERR_EDGE_NOT_FOUND) {
             ternfs_debug("got edge not found, performing followup checks");
             // See commentary in shardreq.go
             if (
