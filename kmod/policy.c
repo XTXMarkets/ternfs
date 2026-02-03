@@ -13,6 +13,18 @@
 
 #include "log.h"
 
+struct policy_body {
+    struct rcu_head rcu_list; // used to pass to call_rcu
+    u8 len;
+    char body[1];
+};
+
+static void rcu_policy_body_put(struct rcu_head* rcu) {
+    struct policy_body* body = container_of(rcu, struct policy_body, rcu_list);
+    destroy_rcu_head(&body->rcu_list);
+    kfree(body);
+}
+
 struct ternfs_policy {
     struct hlist_node hnode;
     spinlock_t lock;
@@ -20,7 +32,7 @@ struct ternfs_policy {
     u8 tag;
     // First byte: len, then the body. We store this separatedly
     // since we it's RCU protected.
-    char __rcu*  body;
+    struct policy_body __rcu*  body;
 };
 
 #define POLICY_BITS 8
@@ -50,9 +62,9 @@ struct ternfs_policy* ternfs_upsert_policy(u64 inode, u8 tag, char* body, int le
         // We found one, check if we need to update.
         rcu_read_lock();
         {
-            char* body = rcu_dereference(policy->body);
-            u8 curr_len = *(u8*)body;
-            if (likely(curr_len == len && memcmp(body, body+1, len) == 0)) { // still the same, no update needed
+            struct policy_body* curr_body = rcu_dereference(policy->body);
+            u8 curr_len = curr_body->len;
+            if (likely(curr_len == len && memcmp(curr_body->body, body, len) == 0)) { // still the same, no update needed
                 rcu_read_unlock();
                 return policy;
             }
@@ -60,22 +72,25 @@ struct ternfs_policy* ternfs_upsert_policy(u64 inode, u8 tag, char* body, int le
         rcu_read_unlock();
 
         // things differ, we do need to update, first allocate and fill the body
-        char* new_body = kmalloc(1 + len, GFP_KERNEL);
+        size_t new_len = sizeof(struct policy_body) - 1 + len;
+        // we need to align to at least 8 bytes for RCU
+        new_len = ALIGN(new_len, 8);
+        struct policy_body* new_body = kmalloc(new_len, GFP_KERNEL);
         if (new_body == NULL) {
             return ERR_PTR(-ENOMEM);
         }
-        *(u8*)new_body = (u8)len;
-        memcpy(new_body+1, body, len);
+        init_rcu_head(&new_body->rcu_list);
+        new_body->len = (u8)len;
+        memcpy(new_body->body, body, len);
 
         // Swap the pointers
         spin_lock(&policy->lock);
-        char* old_body = rcu_dereference_protected(policy->body, lockdep_is_held(&policy->lock));
+        struct policy_body* old_body = rcu_dereference_protected(policy->body, lockdep_is_held(&policy->lock));
         rcu_assign_pointer(policy->body, new_body);
         spin_unlock(&policy->lock);
 
         // free old thing
-        synchronize_rcu();
-        kfree(old_body);
+        call_rcu(&old_body->rcu_list, rcu_policy_body_put);
 
         // done
         return policy;
@@ -86,14 +101,17 @@ struct ternfs_policy* ternfs_upsert_policy(u64 inode, u8 tag, char* body, int le
     if (new_policy == NULL) {
         return ERR_PTR(-ENOMEM);
     }
-    u8* new_policy_body = kmalloc(1 + len, GFP_KERNEL);
+    size_t body_len = sizeof(struct policy_body) - 1 + len;
+    body_len = ALIGN(body_len, 8);
+    struct policy_body* new_policy_body = kmalloc(body_len, GFP_KERNEL);
     if (new_policy_body == NULL) {
         kfree(new_policy);
         return ERR_PTR(-ENOMEM);
     }
 
-    *new_policy_body = len;
-    memcpy(new_policy_body+1, body, len);
+    init_rcu_head(&new_policy_body->rcu_list);
+    new_policy_body->len = (u8)len;
+    memcpy(new_policy_body->body, body, len);
     rcu_assign_pointer(new_policy->body, new_policy_body);
 
     new_policy->inode = inode;
@@ -120,9 +138,9 @@ struct ternfs_policy* ternfs_upsert_policy(u64 inode, u8 tag, char* body, int le
 
 void ternfs_get_policy_body(struct ternfs_policy* policy, struct ternfs_policy_body* body_struct) {
     rcu_read_lock();
-    char* body = rcu_dereference(policy->body);
-    body_struct->len = *(u8*)body;
-    memcpy(body_struct->body, body+1, body_struct->len);
+    struct policy_body* body = rcu_dereference(policy->body);
+    body_struct->len = body->len;
+    memcpy(body_struct->body, body->body, body_struct->len);
     rcu_read_unlock();
 }
 

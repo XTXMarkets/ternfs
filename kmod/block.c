@@ -153,6 +153,8 @@ static void block_ops_init(struct block_ops* ops) {
 // to the work queue or dropped if work is not scheduled. It is unsafe to use socket after calling those functions.
 struct block_socket {
     struct socket* sock;
+    // to store in call_rcu
+    struct rcu_head rcu_list;
     struct sockaddr_in addr;
     // We'll check that not more than `block_ops.timeout_jiffies` has passed since this.
     // For this reason, we set this timeout when:
@@ -178,6 +180,7 @@ struct block_socket {
     struct work_struct write_work;
     atomic_t write_work_active;
     atomic_t refcount;
+
     // There could be multiple cleanup items scheduled, we only want first one to remove socket from hash, wake up waiters, remove requests
     bool terminal;
     // Read end. "sk_data_ready" callback does all the work.
@@ -299,6 +302,12 @@ inline void block_socket_put(struct block_socket* socket) {
         ternfs_debug("free socket(%p) %pI4:%d", socket, &socket->addr.sin_addr, ntohs(socket->addr.sin_port));
         kfree(socket);
     }
+}
+
+static void rcu_block_socket_put(struct rcu_head* rcu) {
+    struct block_socket* socket = container_of(rcu, struct block_socket, rcu_list);
+    destroy_rcu_head(&socket->rcu_list);
+    block_socket_put(socket);
 }
 
 // if cleanup was scheduled ref is passed to workqueue otherwise refcount is reduced
@@ -474,11 +483,9 @@ static bool block_socket_cleanup(
     spin_lock(&ops->locks[bucket]);
     hash_del_rcu(&socket->hnode); // tied to atomic_dec below
     spin_unlock(&ops->locks[bucket]);
-    synchronize_rcu();
+    // The RCU callback will release the hash table's reference after the grace period
+    call_rcu(&socket->rcu_list, rcu_block_socket_put);
     ternfs_debug("socket(%p) %pI4:%d refcount %d removed from hashmap", socket, &socket->addr.sin_addr, ntohs(socket->addr.sin_port), atomic_read(&socket->refcount));
-
-    // Release the reference held by hash table
-    block_socket_put(socket);
 
     // Adjust len, notify waiters
     smp_mb__before_atomic();
@@ -618,6 +625,7 @@ static struct block_socket*  get_block_socket(
     memcpy(&sock->addr, addr, sizeof(struct sockaddr_in));
 
     atomic_set(&sock->err, 0);
+    init_rcu_head(&sock->rcu_list);
     spin_lock_init(&sock->list_lock);
     INIT_LIST_HEAD(&sock->write);
     INIT_WORK(&sock->write_work, ops->write_work);
