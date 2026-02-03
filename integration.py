@@ -16,6 +16,7 @@ parser.add_argument('--short', action='store_true')
 parser.add_argument('--docker', action='store_true')
 parser.add_argument('--leader-only', action='store_true', help='Run only LogsDB leader with LEADER_NO_FOLLOWERS')
 parser.add_argument('--close-tracker-object', default=None, type=str, help='Run fuse driver with the given close tracker object')
+parser.add_argument('--filter', default=None, type=str, help='Regex to filter test names')
 args = parser.parse_args()
 
 script_dir = os.path.dirname(os.path.realpath(__file__))
@@ -40,15 +41,16 @@ else:
 bold_print('integration tests')
 short = ['-short'] if args.short else []
 leader_only = ['-leader-only'] if args.leader_only else []
+filter_arg = ['-filter', args.filter] if args.filter else []
 # -block-service-killer does not work with FUSE driver, unless we're using
 # the close tracker (the duplicated FDs of the child processes confuse the
 # FUSE driver).
 close_tracker_object = ['-block-service-killer', '-close-tracker-object', args.close_tracker_object] if args.close_tracker_object else []
 tests = [
-    ['./go/terntests/terntests', '-binaries-dir', build_sanitized, '-verbose', '-repo-dir', '.', '-tmp-dir', '.', '-outgoing-packet-drop', '0.02'] + short + leader_only,
+    ['./go/terntests/terntests', '-binaries-dir', build_sanitized, '-verbose', '-repo-dir', '.', '-tmp-dir', '.', '-outgoing-packet-drop', '0.02'] + short + leader_only + filter_arg,
     # valgrind is super slow, it still surfaced bugs in the past but only run a couple of tests
     # and only short
-    ['./go/terntests/terntests', '-binaries-dir', build_valgrind, '-verbose', '-repo-dir', '.', '-tmp-dir', '.', '-short', '-filter', 'history|direct|cp'] + leader_only,
+    ['./go/terntests/terntests', '-binaries-dir', build_valgrind, '-verbose', '-repo-dir', '.', '-tmp-dir', '.', '-short', '-filter', args.filter if args.filter else 'history|direct|cp'] + leader_only,
 ]
 # we need three free ports, we get them here upfront rather than in registry to reduce
 # the chance of races -- if we got it from the integration tests it'll be while

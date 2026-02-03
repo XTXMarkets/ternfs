@@ -334,41 +334,58 @@ static bool check_deleted_edge(
 static bool check_new_edge_after_rename(
     struct ternfs_fs_info* info, u64 dir, u64 target, const char* name, int name_len, u64* creation_time
 ) {
+    int i;
     struct sk_buff* skb;
     u32 attempts;
     u64 req_id = alloc_request_id();
-    u8 kind = TERNFS_SHARD_LOOKUP;
+    u8 kind = TERNFS_SHARD_FULL_READ_DIR;
     {
-        PREPARE_SHARD_REQ_CTX(TERNFS_LOOKUP_REQ_MAX_SIZE);
-        ternfs_lookup_req_put_start(&ctx, start);
-        ternfs_lookup_req_put_dir_id(&ctx, start, dir_req, dir);
-        ternfs_lookup_req_put_name(&ctx, dir_req, name_req, name, name_len);
-        ternfs_lookup_req_put_end(&ctx, name_req, end);
+        PREPARE_SHARD_REQ_CTX(TERNFS_FULL_READ_DIR_REQ_MAX_SIZE);
+        ternfs_full_read_dir_req_put_start(&ctx, start);
+        ternfs_full_read_dir_req_put_dir_id(&ctx, start, dir_req, dir);
+        ternfs_full_read_dir_req_put_flags(&ctx, dir_req, flags, TERNFS_FULL_READ_DIR_BACKWARDS|TERNFS_FULL_READ_DIR_CURRENT|TERNFS_FULL_READ_DIR_SAME_NAME);
+        ternfs_full_read_dir_req_put_start_name(&ctx, flags, name_req, name, name_len);
+        ternfs_full_read_dir_req_put_start_time(&ctx, name_req, start_time, 0);
+        ternfs_full_read_dir_req_put_limit(&ctx, start_time, limit, 0);
+        ternfs_full_read_dir_req_put_mtu(&ctx, limit, mtu, ternfs_mtu);
+        ternfs_full_read_dir_req_put_end(&ctx, mtu, end);
         skb = ternfs_send_shard_req(info, ternfs_inode_shard(dir), req_id, &ctx, &attempts);
         if (IS_ERR(skb)) { return false; }
     }
-
+    bool good = false;
     {
         PREPARE_SHARD_RESP_CTX();
-        ternfs_lookup_resp_get_start(&ctx, start);
-        ternfs_lookup_resp_get_target_id(&ctx, start, resp_target);
-        ternfs_lookup_resp_get_creation_time(&ctx, resp_target, resp_creation_time);
-        ternfs_lookup_resp_get_end(&ctx, resp_creation_time, end);
-        ternfs_lookup_resp_get_finish(&ctx, end);
+        ternfs_full_read_dir_resp_get_start(&ctx, start);
+        ternfs_full_read_dir_resp_get_next(&ctx, start, cursor);
+        ternfs_full_read_dir_cursor_get_current(&ctx, cursor, cur_current);
+        ternfs_full_read_dir_cursor_get_start_name(&ctx, cur_current, cur_start_name);
+        ternfs_full_read_dir_cursor_get_start_time(&ctx, cur_start_name, cur_start_time);
+        ternfs_full_read_dir_cursor_get_end(&ctx, cur_start_time, cur_end);
+        ternfs_full_read_dir_resp_get_results(&ctx, cur_end, results_len);
+        for (i = 0; i < results_len.len; ++i) {
+            ternfs_edge_get_start(&ctx, start);
+            ternfs_edge_get_current(&ctx, start, edge_current);
+            ternfs_edge_get_target_id(&ctx, edge_current, edge_target);
+            ternfs_edge_get_name_hash(&ctx, edge_target, edge_name_hash);
+            ternfs_edge_get_name(&ctx, edge_name_hash, edge_name);
+            ternfs_edge_get_creation_time(&ctx, edge_name, edge_creation_time);
+            ternfs_edge_get_end(&ctx, edge_creation_time, end);
+            ternfs_bincode_get_finish_list_el(end);
+            if (likely(ctx.err == 0) && !good && TERNFS_GET_EXTRA_ID(edge_target.x) == target) {
+                u64 now_ns = ktime_get_real_ns();
+                u64 delta = now_ns > edge_creation_time.x ? now_ns - edge_creation_time.x : edge_creation_time.x - now_ns;
+                if (delta < TERNFS_RENAME_NEW_EDGE_CREATION_TIME_FUZZ_NS) {
+                    good = true;
+                    *creation_time = edge_creation_time.x;
+                }
+            }
+        }
+        ternfs_full_read_dir_resp_get_end(&ctx, results_len, end);
+        ternfs_full_read_dir_resp_get_finish(&ctx, end);
         consume_skb(skb);
         if (ctx.err != 0) { return false; }
-        if (resp_target.x != target) { return false; }
-
-        u64 now_ns = ktime_get_real_ns();
-        u64 delta = now_ns > resp_creation_time.x ? now_ns - resp_creation_time.x : resp_creation_time.x - now_ns;
-        if (delta > TERNFS_RENAME_NEW_EDGE_CREATION_TIME_FUZZ_NS) {
-            return false;
-        }
-
-        *creation_time = resp_creation_time.x;
     }
-
-    return true;
+    return good;
 }
 
 int ternfs_shard_soft_unlink_file(struct ternfs_fs_info* info, u64 dir, u64 file, const char* name, int name_len, u64 creation_time, u64* delete_creation_time) {

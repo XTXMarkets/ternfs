@@ -56,32 +56,43 @@ func (c *Client) checkNewEdgeAfterRename(
 	name string,
 	creationTime *msgs.TernTime,
 ) bool {
-	// Then we check the target edge
-	lookupResp := msgs.LookupResp{}
-	err := c.ShardRequest(logger, dirId.Shard(), &msgs.LookupReq{DirId: dirId, Name: name}, &lookupResp)
+	// Then we check if target edge existed by reading full dir entries backwards
+	// Note that checking current edge is not enough as it could have already been overwritten
+	// by a subsequent rename of another file to the same name.
+	fullReadDirResponse := msgs.FullReadDirResp{}
+	err := c.ShardRequest(
+		logger, dirId.Shard(),
+		&msgs.FullReadDirReq{
+			DirId: dirId,
+			StartName: name,
+			Flags: msgs.FULL_READ_DIR_CURRENT | msgs.FULL_READ_DIR_SAME_NAME | msgs.FULL_READ_DIR_BACKWARDS,
+		},
+		&fullReadDirResponse,
+	)
 	if err != nil {
-		logger.Info("failed to get current edge (err %v), giving up and returning original error", err)
+		logger.Debug("failed to reading full dir (err %v), giving up and returning original error", err)
 		return false
 	}
-	if lookupResp.TargetId != targetId {
-		logger.Info("got mismatched current target (%v), giving up and returning original error", lookupResp.TargetId)
-		return false
-	}
-	nowNs := msgs.Now()
-	var delta msgs.TernTime
-	if nowNs > lookupResp.CreationTime {
-		delta = nowNs - lookupResp.CreationTime
-	} else {
-		delta = lookupResp.CreationTime - nowNs
-	}
-	const edgeRenameMaxFuzzNs = msgs.TernTime(60 * 1000 * 1000 * 1000) // 60 seconds
-	if delta > edgeRenameMaxFuzzNs {
-		logger.Info("got creation time %v too far from now %v (delta %v), giving up and returning original error", lookupResp.CreationTime, nowNs, delta)
-		return false
-	}
+	for _, result := range fullReadDirResponse.Results {
+		if result.TargetId.Id() != targetId {
+			continue
+		}
+		nowNs := msgs.Now()
+		var delta msgs.TernTime
+		if nowNs > result.CreationTime {
+			delta = nowNs - result.CreationTime
+		} else {
+			delta = result.CreationTime - nowNs
+		}
+		const edgeRenameMaxFuzzNs = msgs.TernTime(60 * 1000 * 1000 * 1000) // 60 seconds
+		if delta > edgeRenameMaxFuzzNs {
+			continue;
+		}
 
-	*creationTime = lookupResp.CreationTime
-	return true
+		*creationTime = result.CreationTime
+		return true
+	}
+	return false
 }
 
 func (c *Client) checkRepeatedShardRequestError(

@@ -19,6 +19,7 @@ parser.add_argument('--docker', action='store_true', help='Build and run in dock
 parser.add_argument('--prepare-image', default=None, type=str, help='Build the kmod image given the provided base image')
 parser.add_argument('--leader-only', action='store_true', help='Run only LogsDB leader with LEADER_NO_FOLLOWERS')
 parser.add_argument('--close-tracker-object', default=None, type=str, help='Run fuse driver with the given close tracker object')
+parser.add_argument('--filter', default=None, type=str, help='Regex to filter test names')
 args = parser.parse_args()
 
 script_dir = os.path.dirname(os.path.realpath(__file__))
@@ -65,7 +66,7 @@ if args.functional:
         ])
 
 if args.integration:
-    integration_args = (['--short'] if args.short else []) + (['--leader-only'] if args.leader_only else []) + (['--close-tracker-object', args.close_tracker_object] if args.close_tracker_object else [])
+    integration_args = (['--short'] if args.short else []) + (['--leader-only'] if args.leader_only else []) + (['--close-tracker-object', args.close_tracker_object] if args.close_tracker_object else []) + (['--filter', args.filter] if args.filter else [])
     if args.docker:
         bold_print('starting integration tests in docker')
         run_docker_unbuffered(
@@ -83,4 +84,4 @@ if args.prepare_image:
 
 if args.kmod:
     bold_print('kmod tests')
-    wait_cmd(run_cmd(['./kmod/ci.sh'] + (['-short'] if args.short else []) + (['-leader-only'] if args.leader_only else [])))
+    wait_cmd(run_cmd(['./kmod/ci.sh'] + (['-short'] if args.short else []) + (['-leader-only'] if args.leader_only else []) + (['-filter', args.filter] if args.filter else [])))

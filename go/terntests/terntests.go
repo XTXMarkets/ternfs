@@ -800,6 +800,58 @@ func (r *RunTests) run(
 		},
 	)
 
+	parallelMoveFiles := 1000
+	r.test(
+		log,
+		"parallel move to same destination",
+		fmt.Sprintf("%v files", parallelMoveFiles),
+		func(counters *client.ClientCounters) {
+			testDir := path.Join(r.mountPoint, "parallel-move-test")
+			if err := os.Mkdir(testDir, 0777); err != nil {
+				panic(err)
+			}
+
+			for i := 0; i < parallelMoveFiles; i++ {
+				fn := path.Join(testDir, fmt.Sprintf("file-%d", i))
+				if err := os.WriteFile(fn, []byte(fmt.Sprintf("content-%d", i)), 0666); err != nil {
+					panic(err)
+				}
+			}
+
+			// Move all files in parallel to the same destination name
+			destFile := path.Join(testDir, "target")
+			var wg sync.WaitGroup
+			wg.Add(parallelMoveFiles)
+			startSignal := make(chan struct{})
+			for i := 0; i < parallelMoveFiles; i++ {
+				ti := i
+				go func() {
+					defer func() { lrecover.HandleRecoverChan(log, terminateChan, recover()) }()
+					srcFile := path.Join(testDir, fmt.Sprintf("file-%d", ti))
+					// Wait for signal to start all renames simultaneously
+					<-startSignal
+					if err := os.Rename(srcFile, destFile); err != nil {
+						panic(fmt.Errorf("failed to rename file-%d: %w", ti, err))
+					}
+					wg.Done()
+				}()
+			}
+			close(startSignal)
+			wg.Wait()
+
+			if _, err := os.Stat(destFile); err != nil {
+				panic(fmt.Errorf("destination file should exist: %w", err))
+			}
+
+			for i := 0; i < parallelMoveFiles; i++ {
+				fn := path.Join(testDir, fmt.Sprintf("file-%d", i))
+				if _, err := os.Stat(fn); !os.IsNotExist(err) {
+					panic(fmt.Errorf("source file %d should not exist, err=%v", i, err))
+				}
+			}
+		},
+	)
+
 	terminateChan <- nil
 }
 

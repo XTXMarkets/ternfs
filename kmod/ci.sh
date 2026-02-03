@@ -9,6 +9,7 @@ set -eu -o pipefail
 short=""
 leader_only=""
 preserve_ddir=""
+filter=""
 
 while [[ "$#" -gt 0 ]]; do
     case "$1" in
@@ -24,8 +25,12 @@ while [[ "$#" -gt 0 ]]; do
             preserve_ddir="-preserve-data-dir"
             shift
 	    ;;
+        -filter)
+            filter="$2"
+            shift 2
+            ;;
         *)
-            echo "Bad usage -- only accepted flags are -short, -leader-only and -preserve-data-dir"
+            echo "Bad usage -- only accepted flags are -short, -leader-only, -preserve-data-dir and -filter"
             exit 2
             ;;
     esac
@@ -34,6 +39,7 @@ done
 echo "Running with short $short"
 echo "Running with leader_only $leader_only"
 echo "Running with preserve_ddir $preserve_ddir"
+echo "Running with filter $filter"
 
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 cd $SCRIPT_DIR
@@ -84,10 +90,14 @@ trace_pid=$!
 
 # Do not test migrations/scrubbing since we test this outside qemu anyway
 # (it's completely independent from the kmod code)
-ssh -p 2223 -i image-key fmazzol@localhost "tern/terntests -verbose -kmsg -kmod -filter 'large file|cp|utime|dir seek|ftruncate|delete immediately' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTests.dontDefrag -cfg fsTest.corruptFileProb=0 -outgoing-packet-drop 0.02 $short $leader_only $preserve_ddir -binaries-dir tern" | tee -a test-out
-ssh -p 2223 -i image-key fmazzol@localhost "tern/terntests -verbose -kmsg -kmod -filter 'mounted' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTests.dontDefrag -cfg fsTest.corruptFileProb=0 -outgoing-packet-drop 0.02 $short $leader_only $preserve_ddir -binaries-dir tern" | tee -a test-out
-ssh -p 2223 -i image-key fmazzol@localhost "tern/terntests -verbose -kmsg -kmod -filter 'mounted' -block-service-killer -cfg fsTest.readWithMmap -cfg fsTests.dontMigrate -cfg fsTests.dontDefrag -cfg fsTest.corruptFileProb=0 -outgoing-packet-drop 0.02 $short $leader_only $preserve_ddir -binaries-dir tern" | tee -a test-out
-ssh -p 2223 -i image-key fmazzol@localhost "tern/terntests -verbose -kmsg -kmod -filter 'rsync' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTests.dontDefrag -cfg fsTest.corruptFileProb=0 -outgoing-packet-drop 0.02 $short $leader_only $preserve_ddir -binaries-dir tern" | tee -a test-out
+if [ -n "$filter" ]; then
+    ssh -p 2223 -i image-key fmazzol@localhost "tern/terntests -verbose -kmsg -kmod -filter '$filter' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTests.dontDefrag -cfg fsTest.corruptFileProb=0 -outgoing-packet-drop 0.02 $short $leader_only $preserve_ddir -binaries-dir tern" | tee -a test-out
+else
+    ssh -p 2223 -i image-key fmazzol@localhost "tern/terntests -verbose -kmsg -kmod -filter 'large file|cp|utime|dir seek|ftruncate|delete immediately' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTests.dontDefrag -cfg fsTest.corruptFileProb=0 -outgoing-packet-drop 0.02 $short $leader_only $preserve_ddir -binaries-dir tern" | tee -a test-out
+    ssh -p 2223 -i image-key fmazzol@localhost "tern/terntests -verbose -kmsg -kmod -filter 'mounted' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTests.dontDefrag -cfg fsTest.corruptFileProb=0 -outgoing-packet-drop 0.02 $short $leader_only $preserve_ddir -binaries-dir tern" | tee -a test-out
+    ssh -p 2223 -i image-key fmazzol@localhost "tern/terntests -verbose -kmsg -kmod -filter 'mounted' -block-service-killer -cfg fsTest.readWithMmap -cfg fsTests.dontMigrate -cfg fsTests.dontDefrag -cfg fsTest.corruptFileProb=0 -outgoing-packet-drop 0.02 $short $leader_only $preserve_ddir -binaries-dir tern" | tee -a test-out
+    ssh -p 2223 -i image-key fmazzol@localhost "tern/terntests -verbose -kmsg -kmod -filter 'rsync' -block-service-killer -cfg fsTests.dontMigrate -cfg fsTests.dontDefrag -cfg fsTest.corruptFileProb=0 -outgoing-packet-drop 0.02 $short $leader_only $preserve_ddir -binaries-dir tern" | tee -a test-out
+fi
 
 echo 'Unmounting'
 timeout -s KILL 300 ssh -p 2223 -i image-key fmazzol@localhost "grep eggsfs /proc/mounts | awk '{print \$2}' | xargs -r sudo umount"
