@@ -68,66 +68,72 @@ func readRegistryResponse(
 	kind := msgs.RegistryMessageKind(data[0])
 	var resp msgs.RegistryResponse
 	switch kind {
-	case msgs.REGISTRY:
-		resp = &msgs.RegistryResp{}
 	case msgs.LOCAL_SHARDS:
 		resp = &msgs.LocalShardsResp{}
-	case msgs.REGISTER_SHARD:
-		resp = &msgs.RegisterShardResp{}
-	case msgs.ALL_BLOCK_SERVICES_DEPRECATED:
-		resp = &msgs.AllBlockServicesDeprecatedResp{}
-	case msgs.SET_BLOCK_SERVICE_FLAGS:
-		resp = &msgs.SetBlockServiceFlagsResp{}
-	case msgs.DECOMMISSION_BLOCK_SERVICE:
-		resp = &msgs.DecommissionBlockServiceResp{}
-	case msgs.REGISTER_CDC:
-		resp = &msgs.RegisterCdcResp{}
 	case msgs.LOCAL_CDC:
 		resp = &msgs.LocalCdcResp{}
-	case msgs.CDC_REPLICAS_DE_PR_EC_AT_ED:
-		resp = &msgs.CdcReplicasDEPRECATEDResp{}
 	case msgs.INFO:
 		resp = &msgs.InfoResp{}
-	case msgs.SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
-		resp = &msgs.ShardBlockServicesDEPRECATEDResp{}
-	case msgs.ERASE_DECOMMISSIONED_BLOCK:
-		resp = &msgs.EraseDecommissionedBlockResp{}
-	case msgs.ALL_CDC:
-		resp = &msgs.AllCdcResp{}
-	case msgs.CLEAR_CDC_INFO:
-		resp = &msgs.ClearCdcInfoResp{}
-	case msgs.CLEAR_SHARD_INFO:
-		resp = &msgs.ClearShardInfoResp{}
-	case msgs.CREATE_LOCATION:
-		resp = &msgs.CreateLocationResp{}
+	case msgs.REGISTRY:
+		resp = &msgs.RegistryResp{}
 	case msgs.LOCAL_CHANGED_BLOCK_SERVICES:
 		resp = &msgs.LocalChangedBlockServicesResp{}
-	case msgs.LOCATIONS:
-		resp = &msgs.LocationsResp{}
-	case msgs.MOVE_CDC_LEADER:
-		resp = &msgs.MoveCdcLeaderResp{}
-	case msgs.MOVE_SHARD_LEADER:
-		resp = &msgs.MoveShardLeaderResp{}
+	case msgs.CREATE_LOCATION:
+		resp = &msgs.CreateLocationResp{}
 	case msgs.RENAME_LOCATION:
 		resp = &msgs.RenameLocationResp{}
-	case msgs.ALL_SHARDS:
-		resp = &msgs.AllShardsResp{}
-	case msgs.CDC_AT_LOCATION:
-		resp = &msgs.CdcAtLocationResp{}
-	case msgs.CHANGED_BLOCK_SERVICES_AT_LOCATION:
-		resp = &msgs.ChangedBlockServicesAtLocationResp{}
+	case msgs.REGISTER_SHARD:
+		resp = &msgs.RegisterShardResp{}
+	case msgs.LOCATIONS:
+		resp = &msgs.LocationsResp{}
+	case msgs.REGISTER_CDC:
+		resp = &msgs.RegisterCdcResp{}
+	case msgs.SET_BLOCK_SERVICE_FLAGS:
+		resp = &msgs.SetBlockServiceFlagsResp{}
 	case msgs.REGISTER_BLOCK_SERVICES:
 		resp = &msgs.RegisterBlockServicesResp{}
+	case msgs.CHANGED_BLOCK_SERVICES_AT_LOCATION:
+		resp = &msgs.ChangedBlockServicesAtLocationResp{}
 	case msgs.SHARDS_AT_LOCATION:
 		resp = &msgs.ShardsAtLocationResp{}
+	case msgs.CDC_AT_LOCATION:
+		resp = &msgs.CdcAtLocationResp{}
+	case msgs.REGISTER_REGISTRY:
+		resp = &msgs.RegisterRegistryResp{}
+	case msgs.ALL_REGISTRY_REPLICAS:
+		resp = &msgs.AllRegistryReplicasResp{}
+	case msgs.SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
+		resp = &msgs.ShardBlockServicesDEPRECATEDResp{}
+	case msgs.CDC_REPLICAS_DE_PR_EC_AT_ED:
+		resp = &msgs.CdcReplicasDEPRECATEDResp{}
+	case msgs.ALL_SHARDS:
+		resp = &msgs.AllShardsResp{}
+	case msgs.DECOMMISSION_BLOCK_SERVICE:
+		resp = &msgs.DecommissionBlockServiceResp{}
+	case msgs.MOVE_SHARD_LEADER:
+		resp = &msgs.MoveShardLeaderResp{}
+	case msgs.CLEAR_SHARD_INFO:
+		resp = &msgs.ClearShardInfoResp{}
 	case msgs.SHARD_BLOCK_SERVICES:
 		resp = &msgs.ShardBlockServicesResp{}
-	case msgs.UPDATE_BLOCK_SERVICE_PATH:
-		resp = &msgs.UpdateBlockServicePathResp{}
-	case msgs.BLOCK_SERVICES_NEEDING_MIGRATION:
-		resp = &msgs.BlockServicesNeedingMigrationResp{}
+	case msgs.ALL_CDC:
+		resp = &msgs.AllCdcResp{}
+	case msgs.ERASE_DECOMMISSIONED_BLOCK:
+		resp = &msgs.EraseDecommissionedBlockResp{}
+	case msgs.ALL_BLOCK_SERVICES_DEPRECATED:
+		resp = &msgs.AllBlockServicesDeprecatedResp{}
 	case msgs.ALL_BLOCK_SERVICES:
 		resp = &msgs.AllBlockServicesResp{}
+	case msgs.MOVE_CDC_LEADER:
+		resp = &msgs.MoveCdcLeaderResp{}
+	case msgs.CLEAR_CDC_INFO:
+		resp = &msgs.ClearCdcInfoResp{}
+	case msgs.UPDATE_BLOCK_SERVICE_PATH:
+		resp = &msgs.UpdateBlockServicePathResp{}
+	case msgs.SET_BLOCK_SERVICE_HAS_FILES:
+		resp = &msgs.SetBlockServiceHasFilesResp{}
+	case msgs.BLOCK_SERVICES_NEEDING_MIGRATION:
+		resp = &msgs.BlockServicesNeedingMigrationResp{}
 	default:
 		return nil, fmt.Errorf("bad registry response kind %v", kind)
 	}
