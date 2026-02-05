@@ -4006,27 +4006,28 @@ DirectoryInfo defaultDirectoryInfo() {
 
     // For reasonining of the values here, see docs/parity.md
 
-    // Block policy: up to 2.5MB: FLASH. Up to 100MiB: HDD. This is the maximum block size.
+    // Block policy: up to 2.5MB: FLASH. Above: HDD.
+    constexpr uint32_t MIN_HDD_BLOCK_SIZE = 2560000;
     BlockPolicy blockPolicy;
     auto& flashBlocks = blockPolicy.entries.els.emplace_back();
     flashBlocks.minSize = 0;
     flashBlocks.storageClass = storageClassByName("FLASH");
     auto& hddBlocks = blockPolicy.entries.els.emplace_back();
-    hddBlocks.minSize = 610 << 12; // roughly 2.5MB, page aligned
+    hddBlocks.minSize = MIN_HDD_BLOCK_SIZE;
     hddBlocks.storageClass = storageClassByName("HDD");
     addSegment(BLOCK_POLICY_TAG, blockPolicy);
 
     // Span policy -- see docs/parity.md
     SpanPolicy spanPolicy;
-    {
-        auto& flashSpans = spanPolicy.entries.els.emplace_back();
-        flashSpans.maxSize = (2*610) << 12; // roughly 5MB, page aligned
-        flashSpans.parity = Parity(10, 4);
-    }
-    for (int i = 1; i < 10; i++) {
-        auto& spans = spanPolicy.entries.els.emplace_back();
-        spans.maxSize = spanPolicy.entries.els.back().maxSize + (610 << 12);
-        spans.parity = Parity(i+1, 4);
+    auto addSpan = [&spanPolicy](uint32_t maxSize, uint8_t data, uint8_t parity) {
+        auto& span = spanPolicy.entries.els.emplace_back();
+        span.maxSize = maxSize;
+        span.parity = Parity(data, parity);
+    };
+    addSpan(65536, 1, 4);
+    addSpan(5120000, 10, 4);
+    for (uint8_t i = 2; i < 11; ++i) {
+        addSpan((i+1)*MIN_HDD_BLOCK_SIZE, i, 4);
     }
     addSegment(SPAN_POLICY_TAG, spanPolicy);
 
