@@ -668,46 +668,48 @@ private:
     void _processCDCMessages() {
         int startUpdateSize = _updateSize();
         for (auto& msg: _channel.protocolMessages(CDC_REQ_PROTOCOL_VERSION)) {
-            // First, try to parse the header
-            CDCReqMsg cdcMsg;
-            try {
-                cdcMsg.unpack(msg.buf);
-            } catch (const BincodeException& err) {
-                LOG_ERROR(_env, "could not parse: %s", err.what());
-                RAISE_ALERT(_env, "could not parse request from %s, dropping it.", msg.clientAddr);
-                continue;
+            while (msg.buf.remaining()) {
+                // First, try to parse the header
+                CDCReqMsg cdcMsg;
+                try {
+                    cdcMsg.unpack(msg.buf);
+                } catch (const BincodeException& err) {
+                    LOG_ERROR(_env, "could not parse: %s", err.what());
+                    RAISE_ALERT(_env, "could not parse request from %s, dropping it.", msg.clientAddr);
+                    break;
+                }
+
+                LOG_DEBUG(_env, "received request id %s, kind %s", cdcMsg.id, cdcMsg.body.kind());
+                auto receivedAt = ternNow();
+
+                if (unlikely(cdcMsg.body.kind() == CDCMessageKind::CDC_SNAPSHOT)) {
+                    _processCDCSnapshotMessage(cdcMsg, msg);
+                    continue;
+                }
+
+                // If we're already processing this request, drop it to try to not clog the queue
+                if (_inFlightCDCReqs.contains(InFlightCDCRequestKey(cdcMsg.id, msg.clientAddr))) {
+                    LOG_DEBUG(_env, "dropping req id %s from %s since it's already being processed", cdcMsg.id, msg.clientAddr);
+                    continue;
+                }
+
+                if (unlikely(_shared.isLeader.load(std::memory_order_relaxed) == false)) {
+                    LOG_DEBUG(_env, "dropping request since we're not the leader %s", cdcMsg);
+                    continue;
+                }
+
+                auto& cdcReq = _cdcReqs.emplace_back(std::move(cdcMsg.body));
+
+                _inFlightCDCReqs.insert(InFlightCDCRequestKey(cdcMsg.id, msg.clientAddr));
+
+                LOG_DEBUG(_env, "CDC request %s successfully parsed, will process soon", cdcReq.kind());
+                _cdcReqsInfo.emplace_back(CDCReqInfo{
+                        .reqId = cdcMsg.id,
+                        .clientAddr = msg.clientAddr,
+                        .receivedAt = receivedAt,
+                        .sockIx = msg.socketIx,
+                        });
             }
-
-            LOG_DEBUG(_env, "received request id %s, kind %s", cdcMsg.id, cdcMsg.body.kind());
-            auto receivedAt = ternNow();
-
-            if (unlikely(cdcMsg.body.kind() == CDCMessageKind::CDC_SNAPSHOT)) {
-                _processCDCSnapshotMessage(cdcMsg, msg);
-                continue;
-            }
-
-            // If we're already processing this request, drop it to try to not clog the queue
-            if (_inFlightCDCReqs.contains(InFlightCDCRequestKey(cdcMsg.id, msg.clientAddr))) {
-                LOG_DEBUG(_env, "dropping req id %s from %s since it's already being processed", cdcMsg.id, msg.clientAddr);
-                continue;
-            }
-
-            if (unlikely(_shared.isLeader.load(std::memory_order_relaxed) == false)) {
-                LOG_DEBUG(_env, "dropping request since we're not the leader %s", cdcMsg);
-                continue;
-            }
-
-            auto& cdcReq = _cdcReqs.emplace_back(std::move(cdcMsg.body));
-
-            _inFlightCDCReqs.insert(InFlightCDCRequestKey(cdcMsg.id, msg.clientAddr));
-
-            LOG_DEBUG(_env, "CDC request %s successfully parsed, will process soon", cdcReq.kind());
-            _cdcReqsInfo.emplace_back(CDCReqInfo{
-                .reqId = cdcMsg.id,
-                .clientAddr = msg.clientAddr,
-                .receivedAt = receivedAt,
-                .sockIx = msg.socketIx,
-            });
         }
     }
 

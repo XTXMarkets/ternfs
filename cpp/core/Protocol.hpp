@@ -93,13 +93,13 @@ inline std::ostream& operator<<(std::ostream& out, const ShardCheckPointedResp& 
     return out << "checkPointIdx: " << resp.checkPointIdx << " resp: " << resp.resp;
 }
 
-using ShardReqMsg = ProtocolMessage<SHARD_REQ_PROTOCOL_VERSION, ShardReqContainer>;
-using ShardRespMsg = ProtocolMessage<SHARD_RESP_PROTOCOL_VERSION, ShardRespContainer>;
-using CdcToShardReqMsg = SignedProtocolMessage<CDC_TO_SHARD_REQ_PROTOCOL_VERSION, ShardReqContainer>;
-using CdcToShardRespMsg = SignedProtocolMessage<CDC_TO_SHARD_RESP_PROTOCOL_VERSION, ShardCheckPointedResp>;
-using CDCReqMsg = ProtocolMessage<CDC_REQ_PROTOCOL_VERSION, CDCReqContainer>;
-using CDCRespMsg = ProtocolMessage<CDC_RESP_PROTOCOL_VERSION, CDCRespContainer>;
-using LogReqMsg = SignedProtocolMessage<LOG_REQ_PROTOCOL_VERSION, LogReqContainer>;
-using LogRespMsg = SignedProtocolMessage<LOG_RESP_PROTOCOL_VERSION, LogRespContainer>;
-using ProxyShardReqMsg = SignedProtocolMessage<PROXY_SHARD_REQ_PROTOCOL_VERSION, ShardReqContainer>;
-using ProxyShardRespMsg = SignedProtocolMessage<PROXY_SHARD_RESP_PROTOCOL_VERSION, ShardCheckPointedResp>;
+using ShardReqMsg = ProtocolMessage<SHARD_REQ_PROTOCOL_VERSION, ShardReqContainer, false>;
+using ShardRespMsg = ProtocolMessage<SHARD_RESP_PROTOCOL_VERSION, ShardRespContainer, false>;
+using CdcToShardReqMsg = SignedProtocolMessage<CDC_TO_SHARD_REQ_PROTOCOL_VERSION, ShardReqContainer, false>;
+using CdcToShardRespMsg = SignedProtocolMessage<CDC_TO_SHARD_RESP_PROTOCOL_VERSION, ShardCheckPointedResp, false>;
+using CDCReqMsg = ProtocolMessage<CDC_REQ_PROTOCOL_VERSION, CDCReqContainer, false>;
+using CDCRespMsg = ProtocolMessage<CDC_RESP_PROTOCOL_VERSION, CDCRespContainer, false>;
+using LogReqMsg = SignedProtocolMessage<LOG_REQ_PROTOCOL_VERSION, LogReqContainer, false>;
+using LogRespMsg = SignedProtocolMessage<LOG_RESP_PROTOCOL_VERSION, LogRespContainer, false>;
+using ProxyShardReqMsg = SignedProtocolMessage<PROXY_SHARD_REQ_PROTOCOL_VERSION, ShardReqContainer, false>;
+using ProxyShardRespMsg = SignedProtocolMessage<PROXY_SHARD_RESP_PROTOCOL_VERSION, ShardCheckPointedResp, false>;

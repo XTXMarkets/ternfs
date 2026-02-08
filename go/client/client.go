@@ -226,6 +226,7 @@ type rawMetadataResponse struct {
 	kind       uint8
 	respLen    int
 	buf        *[]byte // the buf contains the header
+	offset		int
 }
 
 type clientMetadata struct {
@@ -368,115 +369,131 @@ func (cm *clientMetadata) processRequests(log *log.Logger) {
 	log.Debug("got close request in request processor, winding down")
 }
 
-func (cm *clientMetadata) parseResponse(log *log.Logger, req *metadataProcessorRequest, rawResp *rawMetadataResponse, dischargeBuf bool) {
+func (cm *clientMetadata) handlePacket(log *log.Logger, rawResp *rawMetadataResponse) {
+	releaseBuf := true
 	defer func() {
-		if !dischargeBuf {
-			return
-		}
-		select {
-		case cm.responsesBufs <- rawResp.buf:
-		default:
-			panic(fmt.Errorf("impossible: could not put back response buffer which we got from socket drainer"))
+		if releaseBuf && rawResp.buf != nil {
+			select {
+			case cm.responsesBufs <- rawResp.buf:
+			default:
+				panic(fmt.Errorf("impossible: could not put back response buffer which we got from socket drainer"))
+			}
 		}
 	}()
-	// check protocol
-	if req.shard < 0 { // CDC
-		if rawResp.protocol != msgs.CDC_RESP_PROTOCOL_VERSION {
-			log.RaiseAlert("got bad cdc protocol %v for request id %v, ignoring", rawResp.protocol, req.requestId)
-			return
-		}
-	} else {
-		if rawResp.protocol != msgs.SHARD_RESP_PROTOCOL_VERSION {
-			log.RaiseAlert("got bad shard protocol %v for request id %v, shard %v, ignoring", rawResp.protocol, req.shard, req.requestId)
-			return
-		}
+
+	buf := *rawResp.buf
+
+	if rawResp.offset == 0 {
+		rawResp.offset = 4
 	}
-	// remove everywhere
-	delete(cm.earlyRequests, req.requestId)
-	if _, found := cm.requestsById[req.requestId]; found {
-		delete(cm.requestsById, req.requestId)
-		heap.Remove(&cm.requestsByTimeout, req.index)
-	}
-	if rawResp.kind == msgs.ERROR {
-		var err error
-		if rawResp.respLen != 4+8+1+2 {
-			log.RaiseAlert("bad error response length %v, expected %v", rawResp.respLen, 4+8+1+2)
-			err = msgs.MALFORMED_RESPONSE
-		} else {
-			err = msgs.TernError(binary.LittleEndian.Uint16((*rawResp.buf)[4+8+1:]))
-		}
-		req.respCh <- &metadataProcessorResponse{
-			requestId: req.requestId,
-			err:       err,
-			extra:     req.extra,
-			resp:      nil,
-		}
-	} else {
-		// check kind
-		if req.shard < 0 { // CDC
-			expectedKind := req.req.(msgs.CDCRequest).CDCRequestKind()
-			if uint8(expectedKind) != rawResp.kind {
-				log.RaiseAlert("got bad cdc kind %v for request id %v, expected %v", msgs.CDCMessageKind(rawResp.kind), req.requestId, expectedKind)
+
+	reader := bytes.NewReader(buf[rawResp.offset:rawResp.respLen])
+
+	for reader.Len() > 0 {
+			if reader.Len() < 9 {
+				log.RaiseAlert("got runt metadata message, expected at least %v bytes, got %v", 8+1, reader.Len())
+				break
+			}
+
+			var reqId uint64
+			binary.Read(reader, binary.LittleEndian, &reqId)
+			var kind uint8
+			binary.Read(reader, binary.LittleEndian, &kind)
+
+			req, ok := cm.requestsById[reqId]
+			if !ok {
+				rawResp.offset = rawResp.respLen - reader.Len() - 9
+
+				cm.earlyRequests[reqId] = *rawResp
+
+				releaseBuf = false
+				return
+			}
+
+			if req.shard < 0 { // CDC
+				if rawResp.protocol != msgs.CDC_RESP_PROTOCOL_VERSION {
+					log.RaiseAlert("got bad cdc protocol %v for request id %v, ignoring", rawResp.protocol, req.requestId)
+					break
+				}
+			} else {
+				if rawResp.protocol != msgs.SHARD_RESP_PROTOCOL_VERSION {
+					log.RaiseAlert("got bad shard protocol %v for request id %v, shard %v, ignoring", rawResp.protocol, req.shard, req.requestId)
+					break
+				}
+			}
+
+			delete(cm.requestsById, req.requestId)
+			heap.Remove(&cm.requestsByTimeout, req.index)
+
+			if kind == msgs.ERROR {
+				var errCode uint16
+				var err error
+				if binary.Read(reader, binary.LittleEndian, &errCode) != nil {
+					log.RaiseAlert("bad error response length for request id %v", reqId)
+					err = msgs.MALFORMED_RESPONSE
+				} else {
+					err = msgs.TernError(errCode)
+				}
 				req.respCh <- &metadataProcessorResponse{
-					requestId: req.requestId,
-					err:       msgs.MALFORMED_RESPONSE,
+					requestId: reqId,
+					err:       err,
 					extra:     req.extra,
 					resp:      nil,
 				}
-				return
-			}
-		} else {
-			expectedKind := req.req.(msgs.ShardRequest).ShardRequestKind()
-			if uint8(expectedKind) != rawResp.kind {
-				log.RaiseAlert("got bad shard kind %v for request id %v, shard %v, expected %v", msgs.ShardMessageKind(rawResp.kind), req.requestId, req.shard, expectedKind)
+			} else {
+				// check kind
+				if req.shard < 0 { // CDC
+					expectedKind := req.req.(msgs.CDCRequest).CDCRequestKind()
+					if uint8(expectedKind) != kind {
+						log.RaiseAlert("got bad cdc kind %v for request id %v, expected %v", msgs.CDCMessageKind(rawResp.kind), req.requestId, expectedKind)
+						req.respCh <- &metadataProcessorResponse{
+							requestId: reqId,
+							err:       msgs.MALFORMED_RESPONSE,
+							extra:     req.extra,
+							resp:      nil,
+						}
+						break
+					}
+				} else {
+					expectedKind := req.req.(msgs.ShardRequest).ShardRequestKind()
+					if uint8(expectedKind) != kind {
+						log.RaiseAlert("got bad shard kind %v for request id %v, shard %v, expected %v", msgs.ShardMessageKind(rawResp.kind), req.requestId, req.shard, expectedKind)
+						req.respCh <- &metadataProcessorResponse{
+							requestId: reqId,
+							err:       msgs.MALFORMED_RESPONSE,
+							extra:     req.extra,
+							resp:      nil,
+						}
+						break
+					}
+				}
+
+				// unpack
+				if err := req.resp.Unpack(reader); err != nil {
+					log.RaiseAlert("could not unpack resp %T for request id %v, shard %v: %v", req.resp, req.requestId, req.shard, err)
+					req.respCh <- &metadataProcessorResponse{
+						requestId: req.requestId,
+						err:       err,
+						extra:     req.extra,
+						resp:      nil,
+					}
+					return
+				}
+				log.Debug("received resp %T %v req id %v from shard %v", req.resp, req.resp, req.requestId, req.shard)
+				// done
 				req.respCh <- &metadataProcessorResponse{
 					requestId: req.requestId,
-					err:       msgs.MALFORMED_RESPONSE,
+					err:       nil,
 					extra:     req.extra,
-					resp:      nil,
+					resp:      req.resp,
 				}
-				return
 			}
-		}
-		// unpack
-		if err := bincode.Unpack((*rawResp.buf)[4+8+1:rawResp.respLen], req.resp); err != nil {
-			log.RaiseAlert("could not unpack resp %T for request id %v, shard %v: %v", req.resp, req.requestId, req.shard, err)
-			req.respCh <- &metadataProcessorResponse{
-				requestId: req.requestId,
-				err:       err,
-				extra:     req.extra,
-				resp:      nil,
-			}
-			return
-		}
-		log.Debug("received resp %T %v req id %v from shard %v", req.resp, req.resp, req.requestId, req.shard)
-		// done
-		req.respCh <- &metadataProcessorResponse{
-			requestId: req.requestId,
-			err:       nil,
-			extra:     req.extra,
-			resp:      req.resp,
-		}
 	}
 }
 
 func (cm *clientMetadata) processRawResponse(log *log.Logger, rawResp *rawMetadataResponse) {
 	if rawResp.buf != nil {
-		if req, found := cm.requestsById[rawResp.requestId]; found {
-			// Common case, the request is already there
-			cm.parseResponse(log, req, rawResp, true)
-		} else {
-			// Uncommon case, the request is missing. In this (rare) case
-			// we still discharge the buffer immediately so that it's already
-			// available for use
-			buf := make([]byte, clientMtu)
-			select {
-			case cm.responsesBufs <- &buf:
-			default:
-				panic(fmt.Errorf("impossible: could not return buffer"))
-			}
-			cm.earlyRequests[rawResp.requestId] = *rawResp
-		}
+		cm.handlePacket(log, rawResp)
 	}
 	now := time.Now()
 	// expire requests
@@ -507,6 +524,13 @@ func (cm *clientMetadata) processRawResponse(log *log.Logger, rawResp *rawMetada
 		for reqId, rawReq := range cm.earlyRequests {
 			if now.Sub(rawReq.receivedAt) > 10*time.Minute {
 				delete(cm.earlyRequests, reqId)
+
+				// release buffer
+				select {
+				case cm.responsesBufs <- rawReq.buf:
+				default:
+					panic(fmt.Errorf("impossible: could not put back response buffer which we got from socket drainer"))
+				}
 			}
 		}
 	}
@@ -531,7 +555,16 @@ func (cm *clientMetadata) processResponses(log *log.Logger) {
 		case req := <-cm.inFlight:
 			if rawResp, found := cm.earlyRequests[req.requestId]; found {
 				// uncommon case: we have a response for this already.
-				cm.parseResponse(log, req, &rawResp, false)
+				// remove from earlyRequests, handlePacket will take ownership
+				delete(cm.earlyRequests, req.requestId)
+
+				if _, found := cm.requestsById[req.requestId]; found {
+					heap.Remove(&cm.requestsByTimeout, req.index)
+				}
+				cm.requestsById[req.requestId] = req
+				heap.Push(&cm.requestsByTimeout, req)
+
+				cm.handlePacket(log, &rawResp)
 			} else {
 				// common case: we don't have the response yet, put it in the data structures and wait.
 				// if the request was there before, we remove it from the heap so that we don't have
@@ -584,6 +617,7 @@ func (cm *clientMetadata) drainSocket(log *log.Logger) {
 			protocol:   binary.LittleEndian.Uint32(*buf),
 			requestId:  binary.LittleEndian.Uint64((*buf)[4:]),
 			kind:       (*buf)[4+8],
+			offset: 	4,
 		}
 		cm.rawResponses <- rawResp
 	}
