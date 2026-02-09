@@ -122,7 +122,7 @@ TEST_CASE("EmptyLogsDBNoOverrides") {
 TEST_CASE("LogsDBStandAloneLeader") {
     _setCurrentTime(ternNow());
     LogIdx readUpTo = 0;
-    TempLogsDB db(LogLevel::LOG_ERROR, 0, readUpTo,true,false);
+    TempLogsDB db(LogLevel::LOG_ERROR, 0, readUpTo,true,false, false);
 
     std::vector<LogsDBRequest> inReq;
     std::vector<LogsDBResponse> inResp;
@@ -153,7 +153,7 @@ TEST_CASE("LogsDBStandAloneLeader") {
 
 TEST_CASE("LogsDBAvoidBeingLeader") {
     _setCurrentTime(ternNow());
-    TempLogsDB db(LogLevel::LOG_ERROR, 0, 0, true, true);
+    TempLogsDB db(LogLevel::LOG_ERROR, 0, 0, true, true, true);
     REQUIRE_FALSE(db->isLeader());
     std::vector<LogsDBRequest> inReq;
     std::vector<LogsDBResponse> inResp;
@@ -174,7 +174,7 @@ TEST_CASE("LogsDBAvoidBeingLeader") {
     REQUIRE(db->getNextTimeout() == LogsDB::LEADER_INACTIVE_TIMEOUT);
 }
 
-TEST_CASE("EmptyLogsDBLeaderElection" * doctest::skip(true)) { // leader election temporarily disabled in code
+TEST_CASE("EmptyLogsDBLeaderElection") {
     _setCurrentTime(ternNow());
     TempLogsDB db(LogLevel::LOG_ERROR);
     REQUIRE_FALSE(db->isLeader());

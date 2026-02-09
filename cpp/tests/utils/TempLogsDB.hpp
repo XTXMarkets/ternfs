@@ -23,6 +23,7 @@ struct TempLogsDB {
         ReplicaId replicaId = 0,
         LogIdx lastRead = 0,
         bool noReplication = false,
+        bool skipLeaderElection = false,
         bool avoidBeingLeader = false): logger(level, STDERR_FILENO, false, false)
     {
         dbDir = std::string("temp-logs-db.XXXXXX");
@@ -33,7 +34,7 @@ struct TempLogsDB {
         sharedDB = std::make_unique<SharedRocksDB>(logger, xmon, dbDir + "/db", dbDir + "/db-statistics.txt");
 
         initSharedDB();
-        db = std::make_unique<LogsDB>(logger, xmon, *sharedDB, replicaId, lastRead, noReplication, avoidBeingLeader);
+        db = std::make_unique<LogsDB>(logger, xmon, *sharedDB, replicaId, lastRead, noReplication, skipLeaderElection, avoidBeingLeader);
     }
 
     // useful to test recovery
@@ -41,12 +42,13 @@ struct TempLogsDB {
         ReplicaId replicaId = 0,
         LogIdx lastRead = 0,
         bool noReplication = false,
+        bool skipLeaderElection = false,
         bool avoidBeingLeader = false)
     {
         db->close();
         sharedDB = std::make_unique<SharedRocksDB>(logger, xmon, dbDir + "/db", dbDir + "/db-statistics.txt");
         initSharedDB();
-        db = std::make_unique<LogsDB>(logger, xmon, *sharedDB, replicaId, lastRead, noReplication, avoidBeingLeader);
+        db = std::make_unique<LogsDB>(logger, xmon, *sharedDB, replicaId, lastRead, noReplication, skipLeaderElection, avoidBeingLeader);
     }
 
     ~TempLogsDB() {

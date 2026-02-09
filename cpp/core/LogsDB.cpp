@@ -696,10 +696,11 @@ struct LeaderElectionState {
 
 class LeaderElection {
 public:
-    LeaderElection(Env& env, LogsDBStats& stats, bool noReplication, bool avoidBeingLeader, ReplicaId replicaId, LogMetadata& metadata, DataPartitions& data, ReqResp& reqResp) :
+    LeaderElection(Env& env, LogsDBStats& stats, bool noReplication, bool skipLeaderElection, bool avoidBeingLeader, ReplicaId replicaId, LogMetadata& metadata, DataPartitions& data, ReqResp& reqResp) :
         _env(env),
         _stats(stats),
         _noReplication(noReplication),
+        _skipLeaderElection(skipLeaderElection),
         _avoidBeingLeader(avoidBeingLeader),
         _replicaId(replicaId),
         _metadata(metadata),
@@ -731,8 +732,7 @@ public:
         _electionState->lastReleased = _metadata.getLastReleased();
         _leaderLastActive = now;
 
-        //if (unlikely(_noReplication)) {
-        {
+        if (unlikely(_skipLeaderElection || _noReplication)) {
             LOG_INFO(_env,"ForceLeader set, skipping to confirming leader phase");
             _electionState->requestIds.fill(ReqResp::CONFIRMED_REQ_ID);
             _tryBecomeLeader();
@@ -1146,6 +1146,7 @@ private:
     Env& _env;
     LogsDBStats& _stats;
     const bool _noReplication;
+    const bool _skipLeaderElection;
     const bool _avoidBeingLeader;
     const ReplicaId _replicaId;
     LogMetadata& _metadata;
@@ -1591,6 +1592,7 @@ public:
         ReplicaId replicaId,
         LogIdx lastRead,
         bool noReplication,
+        bool skipLeaderElection,
         bool avoidBeingLeader)
     :
         _env(logger, xmon, "LogsDB"),
@@ -1600,7 +1602,7 @@ public:
         _partitions(_env,sharedDB),
         _metadata(_env,_stats, sharedDB, replicaId, _partitions),
         _reqResp(_stats),
-        _leaderElection(_env, _stats, noReplication, avoidBeingLeader, replicaId, _metadata, _partitions, _reqResp),
+        _leaderElection(_env, _stats, noReplication, skipLeaderElection, avoidBeingLeader, replicaId, _metadata, _partitions, _reqResp),
         _batchWriter(_env,_reqResp, _leaderElection),
         _catchupReader(_stats, _reqResp, _metadata, _partitions, replicaId, lastRead),
         _appender(_env, _stats, _reqResp, _metadata, _leaderElection, noReplication)
@@ -1821,9 +1823,10 @@ LogsDB::LogsDB(
         ReplicaId replicaId,
         LogIdx lastRead,
         bool noReplication,
+        bool skipLeaderElection,
         bool avoidBeingLeader)
 {
-    _impl = new LogsDBImpl(logger, xmon, sharedDB, replicaId, lastRead, noReplication, avoidBeingLeader);
+    _impl = new LogsDBImpl(logger, xmon, sharedDB, replicaId, lastRead, noReplication, skipLeaderElection, avoidBeingLeader);
 }
 
 LogsDB::~LogsDB() {

@@ -243,6 +243,7 @@ static inline uint8_t parseUint8(CommandLineArgs& args) {
 struct LogsDBOptions {
     std::string dbDir;
     bool avoidBeingLeader = true;
+    bool leaderElection = false;
     bool noReplication = false;
     bool initialStart = false;
     ReplicaId replicaId = ReplicaId::invalid();
@@ -262,6 +263,11 @@ static inline bool parseLogsDBOptions(CommandLineArgs& args, LogsDBOptions& opti
     if (arg == "-logsdb-leader") {
         args.next();
         options.avoidBeingLeader = false;
+        return true;
+    }
+    if (arg == "-logsdb-leader-election") {
+        args.next();
+        options.leaderElection = true;
         return true;
     }
     if (arg == "-logsdb-no-replication") {
@@ -287,6 +293,8 @@ static inline void printLogsDBOptionsUsage() {
     fprintf(stderr, "    	Base directory path, db will be created in db subdirectory\n");
     fprintf(stderr, " -logsdb-leader\n");
     fprintf(stderr, "    	Allow replica to become leader. Default is false\n");
+    fprintf(stderr, " -logsdb-leader-election\n");
+    fprintf(stderr, "    	Allow replicas to elect a leader. Default is false\n");
     fprintf(stderr, " -logsdb-no-replication\n");
     fprintf(stderr, "    	Don't wait for acks from other replicas when becoming leader or replicating.\n");
     fprintf(stderr, "    	Can only be set if -logsdb-leader is also set. Default is false\n");

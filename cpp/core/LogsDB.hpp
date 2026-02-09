@@ -113,6 +113,7 @@ public:
         ReplicaId replicaId,
         LogIdx lastRead,
         bool noReplication,
+        bool skipLeaderElection,
         bool avoidBeingLeader);
 
     ~LogsDB();

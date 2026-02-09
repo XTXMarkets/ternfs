@@ -438,6 +438,7 @@ void Registry::start(const RegistryOptions& options, LoopThreads& threads) {
     _state->logsDB = std::make_unique<LogsDB>(
         logger, xmon, *_state->sharedDB, options.logsDBOptions.replicaId,
         _state->registryDB->lastAppliedLogEntry(), options.logsDBOptions.noReplication,
+        !options.logsDBOptions.leaderElection,
         options.logsDBOptions.avoidBeingLeader);
     _env.clearAlert(dbInitAlert);
 

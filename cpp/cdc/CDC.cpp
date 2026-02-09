@@ -1236,7 +1236,7 @@ void runCDC(CDCOptions& options) {
     sharedDb.openTransactionDB(dbOptions);
 
     CDCDB db(logger, xmon, sharedDb);
-    LogsDB logsDB(logger, xmon, sharedDb, options.logsDBOptions.replicaId, db.lastAppliedLogEntry(), options.logsDBOptions.noReplication, options.logsDBOptions.avoidBeingLeader);
+    LogsDB logsDB(logger, xmon, sharedDb, options.logsDBOptions.replicaId, db.lastAppliedLogEntry(), options.logsDBOptions.noReplication, !options.logsDBOptions.leaderElection, options.logsDBOptions.avoidBeingLeader);
     CDCShared shared(
         sharedDb, db, logsDB,
         std::array<UDPSocketPair, 2>({UDPSocketPair(env, options.serverOptions.addrs), UDPSocketPair(env, options.cdcToShardAddress)})

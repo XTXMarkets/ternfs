@@ -2573,7 +2573,7 @@ void runShard(ShardOptions& options) {
     BlockServicesCacheDB blockServicesCache(logger, xmon, sharedDB, options.blockServiceWritableDelay);
 
     ShardDB shardDB(logger, xmon, options.shardId, options.logsDBOptions.location, options.transientDeadlineInterval, sharedDB, blockServicesCache);
-    LogsDB logsDB(logger, xmon, sharedDB, options.logsDBOptions.replicaId, shardDB.lastAppliedLogEntry(), options.logsDBOptions.noReplication, options.logsDBOptions.avoidBeingLeader);
+    LogsDB logsDB(logger, xmon, sharedDB, options.logsDBOptions.replicaId, shardDB.lastAppliedLogEntry(), options.logsDBOptions.noReplication, !options.logsDBOptions.leaderElection, options.logsDBOptions.avoidBeingLeader);
     env.clearAlert(dbInitAlert);
 
     ShardShared shared(options, sharedDB, blockServicesCache, shardDB, logsDB, UDPSocketPair(env, options.serverOptions.addrs));
