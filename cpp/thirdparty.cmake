@@ -103,23 +103,15 @@ if(${CMAKE_BUILD_TYPE} STREQUAL "valgrind")
     set(ROCKS_DB_MARCH "-march=haswell") # Valgind can't support current -march=native instructions
 endif()
 # musl doesn't seem to like AVX512, at least for now.
+# the -include cstdint is a workaround for issue #13365, fixed in PR #14334
 separate_arguments(
     rocksdb_build UNIX_COMMAND
-    "env ROCKSDB_DISABLE_ZLIB=y ROCKSDB_DISABLE_BZIP=1 ROCKSDB_DISABLE_SNAPPY=1 ${MAKE_EXE} USE_RTTI=1 EXTRA_CXXFLAGS='${ROCKS_DB_MARCH} -mno-avx512f -DROCKSDB_NO_DYNAMIC_EXTENSION' EXTRA_CFLAGS='${ROCKS_DB_MARCH} -mno-avx512f' -j ${MAKE_PARALLELISM} static_lib"
+    "env ROCKSDB_DISABLE_ZLIB=y ROCKSDB_DISABLE_BZIP=1 ROCKSDB_DISABLE_SNAPPY=1 ${MAKE_EXE} USE_RTTI=1 EXTRA_CXXFLAGS='${ROCKS_DB_MARCH} -mno-avx512f -DROCKSDB_NO_DYNAMIC_EXTENSION -include cstdint' EXTRA_CFLAGS='${ROCKS_DB_MARCH} -mno-avx512f' -j ${MAKE_PARALLELISM} static_lib"
 )
 ExternalProject_Add(make_rocksdb
     DOWNLOAD_DIR ${CMAKE_CURRENT_BINARY_DIR}
     URL https://github.com/facebook/rocksdb/archive/refs/tags/v7.9.2.tar.gz
     URL_HASH SHA256=886378093098a1b2521b824782db7f7dd86224c232cf9652fcaf88222420b292
-    # When we upgraded dev boxes to newer arch and therefore newer clang this was
-    # needed. New RocksDB (e.g. 8.10.0) compiles out of the box, but we don't have
-    # a great way to test this upgrade on the live cluster.
-    #
-    # The || true is so that the patch application is idempotent (there's no way to have
-    # patch return 0 when -N skips patches, which is what we want here). This is safe
-    # since the code is hashed anyway, but if you change the RocksDB release (which
-    # you probably shouldn't without some thorough testing) you should keep this in mind.
-    PATCH_COMMAND sh -c "patch -N -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/rocksdb-stdint.diff || true"
     PREFIX thirdparty/rocksdb
     UPDATE_COMMAND ""
     SOURCE_DIR ${make_rocksdb_SOURCE_DIR}
