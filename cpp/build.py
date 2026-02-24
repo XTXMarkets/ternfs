@@ -39,11 +39,14 @@ if build_type in ('ubuntu', 'ubuntudebug', 'ubuntusanitized', 'ubuntuvalgrind', 
     )
 else:
     os.chdir(str(build_dir))
-    build_types = {
+    is_static_build = build_type.startswith('alpine')
+    build_type= {
         'ubuntu': 'release',
         'ubuntudebug': 'debug',
         'ubuntusanitized': 'sanitized',
         'ubuntuvalgrind': 'valgrind',
-    }
-    subprocess.run(['cmake', '-G', 'Ninja', f'-DCMAKE_BUILD_TYPE={build_types.get(build_type, build_type)}', '../..'], check=True)
+        'alpine': 'release',
+        'alpinedebug': 'debug',
+    }.get(build_type, build_type)
+    subprocess.run(['cmake', '-G', 'Ninja', f'-DCMAKE_BUILD_TYPE={build_type}', f'-DTERN_STATIC_BUILD={is_static_build}', '../..'], check=True)
     subprocess.run(['ninja'] + sys.argv[2:], check=True)

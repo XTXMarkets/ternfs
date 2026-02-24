@@ -11,10 +11,9 @@ thread_local static char strerror_buf[128];
 // libstdc++ sets _GNU_SOURCE. So we just define a safe version here
 // to avoid repeated annoyances.
 //
-// Testing for _GNU_SOURCE does not work, because the alpine build
-// has that set, too.
+// Testing for _GNU_SOURCE does not work, because musl also sets it.
 
-#ifdef TERN_ALPINE
+#ifdef TERN_MUSL
 const char* safe_strerror(int errnum) {
     int res = strerror_r(errnum, strerror_buf, sizeof(strerror_buf));
     if (res > 0) {

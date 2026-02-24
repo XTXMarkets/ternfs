@@ -15,13 +15,25 @@ project(ternfs)
 if(NOT CMAKE_BUILD_TYPE)
     set(
         CMAKE_BUILD_TYPE release CACHE STRING
-        "Choose the type of build, options are: 'debug', 'release', 'alpine', 'valgrind', 'sanitized'."
+        "Choose the type of build, options are: 'debug', 'release', 'valgrind', 'sanitized'."
         FORCE
     )
 endif()
 
-if (NOT (${CMAKE_BUILD_TYPE} MATCHES "^(debug|release|alpine|alpinedebug|sanitized|valgrind)$"))
-    message(FATAL_ERROR "Build type must be one of debug, release, sanitized, alpine, alpinedebug got ${CMAKE_BUILD_TYPE}")
+if (NOT (${CMAKE_BUILD_TYPE} MATCHES "^(debug|release|sanitized|valgrind)$"))
+    message(FATAL_ERROR "Build type must be one of debug, release, sanitized, valgrind got ${CMAKE_BUILD_TYPE}")
+endif()
+
+option(TERN_STATIC_BUILD "Build statically" OFF)
+
+# Detect musl libc via the compiler's target triple
+execute_process(
+    COMMAND ${CMAKE_C_COMPILER} -dumpmachine
+    OUTPUT_VARIABLE TARGET_TRIPLE
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+if(TARGET_TRIPLE MATCHES "musl")
+    set(USING_MUSL TRUE)
 endif()
 
 set(CMAKE_CXX_STANDARD 20)
@@ -37,13 +49,15 @@ add_compile_options("$<$<CONFIG:valgrind>:-march=haswell;-maes;-mgfni>")
 add_compile_options("$<$<NOT:$<CONFIG:valgrind>>:-march=skylake;-mgfni>")
 
 # performance/debug stuff
-add_compile_options("$<$<NOT:$<CONFIG:debug,alpinedebug>>:-O3>")
-add_compile_options("$<$<CONFIG:debug,alpinedebug>:-Og;-DTERN_DEBUG>")
+add_compile_options("$<$<NOT:$<CONFIG:debug>>:-O3>")
+add_compile_options("$<$<CONFIG:debug>:-Og;-DTERN_DEBUG>")
 
-# We build the release build statically in Alpine
-add_compile_options("$<$<CONFIG:alpine,alpinedebug>:-DTERN_ALPINE>")
-add_link_options("$<$<CONFIG:alpine,alpinedebug>:-static>")
-add_link_options("$<$<NOT:$<CONFIG:alpine,alpinedebug>>:-no-pie>")
+# used by cpp/core/strerror.cpp
+add_compile_options("$<$<BOOL:${USING_MUSL}>:-DTERN_MUSL>")
+
+# we build the release build statically in Alpine
+add_link_options("$<$<BOOL:${TERN_STATIC_BUILD}>:-static>")
+add_link_options("$<$<NOT:$<BOOL:${TERN_STATIC_BUILD}>>:-no-pie>")
 
 # sanitizer options
 set(SANITIZE_OPTIONS "-fsanitize=undefined,address,integer,function;-fno-sanitize-recover=all;-fsanitize-blacklist=${CMAKE_SOURCE_DIR}/ubsan-ignorelist")
@@ -51,7 +65,7 @@ add_compile_options("$<$<CONFIG:sanitized>:${SANITIZE_OPTIONS}>")
 add_link_options("$<$<CONFIG:sanitized>:${SANITIZE_OPTIONS}>")
 
 # we only use mimalloc in release builds, sanitizer etc works better without it
-if("${CMAKE_BUILD_TYPE}" MATCHES "^(release|alpine)$")
+if("${CMAKE_BUILD_TYPE}" STREQUAL "release")
     set(TERNFS_MIMALLOC_LIBS "mimalloc")
 endif()
 
