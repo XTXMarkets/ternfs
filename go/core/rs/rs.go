@@ -10,7 +10,7 @@ import (
 	"xtx/ternfs/core/parity"
 )
 
-// #cgo LDFLAGS: -L${SRCDIR}/../../../cpp/build/alpine/rs -lrs
+// #cgo LDFLAGS: -L${SRCDIR} -lrs
 // #include "../../../cpp/rs/rs.h"
 //
 // void set_ptr(uint8_t** ptrs, size_t i, uint8_t* ptr) {

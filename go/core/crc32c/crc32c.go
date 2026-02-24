@@ -4,7 +4,7 @@
 
 package crc32c
 
-// #cgo LDFLAGS: -L${SRCDIR}/../../../cpp/build/alpine/crc32c -lcrc32c
+// #cgo LDFLAGS: -L${SRCDIR} -lcrc32c
 // #include "../../../cpp/crc32c/crc32c.h"
 import "C"
 import (
