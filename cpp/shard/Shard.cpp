@@ -177,25 +177,25 @@ struct ShardShared {
     }
 
     inline std::shared_ptr<const std::array<AddrsInfo, LogsDB::REPLICA_COUNT>> getReplicas() const {
-        return std::atomic_load(&_replicas);
+        return _replicas.load();
     }
 
     inline void setReplicas(const std::array<AddrsInfo, LogsDB::REPLICA_COUNT>&& replicas) {
-        std::atomic_store(&_replicas, std::make_shared<const std::array<AddrsInfo, LogsDB::REPLICA_COUNT>>(replicas));
+        _replicas.store(std::make_shared<const std::array<AddrsInfo, LogsDB::REPLICA_COUNT>>(replicas));
     }
 
     inline std::shared_ptr<const std::vector<FullShardInfo>> getLeadersAtOtherLocations() const {
-        return std::atomic_load(&_leadersAtOtherLocations);
+        return _leadersAtOtherLocations.load();
     }
 
     inline void setLeadersAtOtherLocations(const std::vector<FullShardInfo>&& leadersAtOtherLocations) {
-        std::atomic_store(&_leadersAtOtherLocations, std::make_shared<const std::vector<FullShardInfo>>(leadersAtOtherLocations));
+        _leadersAtOtherLocations.store(std::make_shared<const std::vector<FullShardInfo>>(leadersAtOtherLocations));
     }
 
 private:
     // replication information
-    std::shared_ptr<const std::array<AddrsInfo, LogsDB::REPLICA_COUNT>> _replicas; // used for replicating shard within location
-    std::shared_ptr<const std::vector<FullShardInfo>> _leadersAtOtherLocations; // used for cross location replication
+    std::atomic<std::shared_ptr<const std::array<AddrsInfo, LogsDB::REPLICA_COUNT>>> _replicas; // used for replicating shard within location
+    std::atomic<std::shared_ptr<const std::vector<FullShardInfo>>> _leadersAtOtherLocations; // used for cross location replication
 };
 
 static bool bigRequest(ShardMessageKind kind) {

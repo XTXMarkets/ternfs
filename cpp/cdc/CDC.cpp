@@ -59,13 +59,13 @@ struct CDCShared {
         }
     }
     inline std::shared_ptr<const std::array<AddrsInfo, LogsDB::REPLICA_COUNT>> getReplicas()  {
-        return std::atomic_load(&_replicas);
+        return _replicas.load();
     }
     inline void setReplicas(const std::array<AddrsInfo, LogsDB::REPLICA_COUNT>&& newReplicas)  {
-        std::atomic_store(&_replicas, std::make_shared<const std::array<AddrsInfo, LogsDB::REPLICA_COUNT>>(newReplicas));
+        _replicas.store(std::make_shared<const std::array<AddrsInfo, LogsDB::REPLICA_COUNT>>(newReplicas));
     }
 private:
-    std::shared_ptr<const std::array<AddrsInfo, LogsDB::REPLICA_COUNT>> _replicas;
+    std::atomic<std::shared_ptr<const std::array<AddrsInfo, LogsDB::REPLICA_COUNT>>> _replicas;
 };
 
 struct InFlightShardRequest {

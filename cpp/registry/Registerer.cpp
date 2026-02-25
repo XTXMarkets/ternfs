@@ -99,11 +99,11 @@ bool Registerer::_updateReplicas(const std::vector<FullRegistryInfo> &allReplica
         return false;
     }
 
-    if (unlikely(*_replicas != localReplicas)) {
+    if (unlikely(*_replicas.load() != localReplicas)) {
         LOG_DEBUG(_env, "Updating replicas to %s %s %s %s %s", localReplicas[0],
                 localReplicas[1], localReplicas[2], localReplicas[3],
                 localReplicas[4]);
-        std::atomic_exchange(&_replicas, std::make_shared<std::array<AddrsInfo, LogsDB::REPLICA_COUNT>>(localReplicas));
+        _replicas.exchange(std::make_shared<std::array<AddrsInfo, LogsDB::REPLICA_COUNT>>(localReplicas));
     }
     return _hasEnoughReplicas.exchange(true, std::memory_order_release);
 }

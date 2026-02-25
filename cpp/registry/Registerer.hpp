@@ -34,7 +34,7 @@ public:
     }
 
     inline std::shared_ptr<std::array<AddrsInfo, LogsDB::REPLICA_COUNT>> replicas() {
-        return std::atomic_load(&_replicas);
+        return _replicas.load();
     }
 
     virtual bool periodicStep() override;
@@ -46,7 +46,7 @@ private:
     XmonNCAlert _alert;
 
     std::atomic<bool> _hasEnoughReplicas;
-    std::shared_ptr<std::array<AddrsInfo, LogsDB::REPLICA_COUNT>> _replicas;
+    std::atomic<std::shared_ptr<std::array<AddrsInfo, LogsDB::REPLICA_COUNT>>> _replicas;
 
     void _init(const std::vector<FullRegistryInfo> &cachedReplicas);
     bool _updateReplicas(const std::vector<FullRegistryInfo> &allReplicas);

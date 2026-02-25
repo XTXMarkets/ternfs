@@ -182,7 +182,7 @@ struct ShardDBImpl {
 
     AssertiveLock _applyLogEntryLock;
 
-    std::shared_ptr<const rocksdb::Snapshot> _currentReadSnapshot;
+    std::atomic<std::shared_ptr<const rocksdb::Snapshot>> _currentReadSnapshot;
 
     const BlockServicesCacheDB& _blockServicesCache;
 
@@ -221,7 +221,7 @@ struct ShardDBImpl {
 
     void close() {
         LOG_INFO(_env, "destroying read snapshot");
-        _currentReadSnapshot.reset();
+        _currentReadSnapshot.store(nullptr);
     }
 
     void _initDb() {
@@ -3969,14 +3969,14 @@ struct ShardDBImpl {
     }
 
     std::shared_ptr<const rocksdb::Snapshot> _getCurrentReadSnapshot() {
-        return std::atomic_load(&_currentReadSnapshot);
+        return _currentReadSnapshot.load();
     }
 
     void _updateCurrentReadSnapshot() {
         const rocksdb::Snapshot* snapshotPtr = _db->GetSnapshot();
         ALWAYS_ASSERT(snapshotPtr != nullptr);
         std::shared_ptr<const rocksdb::Snapshot> snapshot(snapshotPtr, [this](const rocksdb::Snapshot* ptr) { _db->ReleaseSnapshot(ptr); });
-        std::atomic_exchange(&_currentReadSnapshot, snapshot);
+        _currentReadSnapshot.exchange(snapshot);
     }
 
     void flush(bool sync) {
