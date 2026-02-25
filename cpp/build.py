@@ -4,49 +4,24 @@
 #
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-import sys
 import os
 from pathlib import Path
 import subprocess
+import argparse
 
-if len(sys.argv) < 2:
-    print(f'Usage: {sys.argv[0]} <build-type> [NINJA_ARG ...]', file=sys.stderr)
-    sys.exit(2)
+parser = argparse.ArgumentParser()
+parser.add_argument('build_variant')
+parser.add_argument('--cmake-build-type', help='CMake build type (default: same as build variant)')
+parser.add_argument('--static', action='store_true', help='Static build')
+args, ninja_args = parser.parse_known_intermixed_args()
 
-if len(sys.argv) == 1:
-    build_type = 'release'
-else:
-    build_type = sys.argv[1]
+cmake_build_type = args.cmake_build_type or args.build_variant
 
 cpp_dir = Path(__file__).resolve().parent
-repo_dir = cpp_dir.parent
 
-build_dir = cpp_dir / 'build' / build_type
+build_dir = cpp_dir / 'build' / args.build_variant
 build_dir.mkdir(parents=True, exist_ok=True)
 
-if build_type in ('ubuntu', 'ubuntudebug', 'ubuntusanitized', 'ubuntuvalgrind', 'alpine', 'alpinedebug') and 'IN_TERN_BUILD_CONTAINER' not in os.environ:
-    if build_type.startswith('alpine'):
-        container = 'ghcr.io/xtxmarkets/ternfs-alpine-build:2025-09-18-1'
-    else:
-        container = os.getenv('TERN_UBUNTU_BUILD_CONTAINER', 'ghcr.io/xtxmarkets/ternfs-ubuntu-build:2025-09-18')
-    # See <https://groups.google.com/g/seastar-dev/c/r7W-Kqzy9O4>
-    # for motivation for `--security-opt seccomp=unconfined`,
-    # the `--pids-limit -1` is not something I hit but it seems
-    # like a good idea.
-    subprocess.run(
-        ['docker', 'run', '--network', 'host', '-e', 'MAKE_PARALLELISM', '-e', 'http_proxy', '-e', 'https_proxy', '-e', 'no_proxy', '--pids-limit', '-1', '--security-opt', 'seccomp=unconfined', '--rm', '-i', '--mount', f'type=bind,src={repo_dir},dst=/ternfs', '-u', f'{os.getuid()}:{os.getgid()}', container, '/ternfs/cpp/build.py', build_type] + sys.argv[2:],
-        check=True,
-    )
-else:
-    os.chdir(str(build_dir))
-    is_static_build = build_type.startswith('alpine')
-    build_type= {
-        'ubuntu': 'release',
-        'ubuntudebug': 'debug',
-        'ubuntusanitized': 'sanitized',
-        'ubuntuvalgrind': 'valgrind',
-        'alpine': 'release',
-        'alpinedebug': 'debug',
-    }.get(build_type, build_type)
-    subprocess.run(['cmake', '-G', 'Ninja', f'-DCMAKE_BUILD_TYPE={build_type}', f'-DTERN_STATIC_BUILD={is_static_build}', '../..'], check=True)
-    subprocess.run(['ninja'] + sys.argv[2:], check=True)
+os.chdir(str(build_dir))
+subprocess.run(['cmake', '-G', 'Ninja', f'-DCMAKE_BUILD_TYPE={cmake_build_type}', f'-DTERN_STATIC_BUILD={args.static}', '../..'], check=True)
+subprocess.run(['ninja'] + ninja_args, check=True)
