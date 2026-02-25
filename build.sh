@@ -64,10 +64,15 @@ fi
 out_dir=build/$build_variant
 mkdir -p $out_dir
 
-# build C libs we need for go
-${PWD}/cpp/build.py golibs --cmake-build-type=release $static_flag rs crc32c
-cp cpp/build/golibs/crc32c/libcrc32c.a go/core/crc32c/
-cp cpp/build/golibs/rs/librs.a go/core/rs/
+# build C libs we need for go (always as a release build)
+case $build_variant in
+    ubuntu*) golibs_variant=ubuntu ;;
+    alpine*) golibs_variant=alpine ;;
+    *) golibs_variant=release ;;
+esac
+${PWD}/cpp/build.py $golibs_variant --cmake-build-type=release $static_flag rs crc32c
+cp cpp/build/$golibs_variant/crc32c/libcrc32c.a go/core/crc32c/
+cp cpp/build/$golibs_variant/rs/librs.a go/core/rs/
 
 ${PWD}/go/build.py --generate # generate C++ files
 
