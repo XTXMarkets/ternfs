@@ -150,8 +150,8 @@ int main(void) {
                     BUG_ON(target_id.x != i);
                     BUG_ON(name_hash.x != i + 42);
                     BUG_ON(name.str.len != 1);
-                    char name_str[11];
-                    snprintf(name_str, 11, "%d", i);
+                    char name_str[12];
+                    snprintf(name_str, sizeof(name_str), "%d", i);
                     BUG_ON(strlen(name_str) != 1);
                     BUG_ON(strncmp(name.str.buf, name_str, 1) != 0);
                     BUG_ON(creation_time.x != i + 1000);
