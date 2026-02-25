@@ -5,5 +5,5 @@
 [integer]
 # <https://github.com/google/sanitizers/issues/1346>, ticket also
 # contains some typically funny ranting.
-src:.*bits/basic_string.h$
-src:.*bits/basic_string.tcc$
+src:*bits/basic_string.h
+src:*bits/basic_string.tcc
