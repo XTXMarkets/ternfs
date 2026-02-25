@@ -842,7 +842,7 @@ public:
                 ALWAYS_ASSERT(iprob > 0 && iprob < 10'000);
             }
         };
-        memset(_catchupWindow.data(), 0, _catchupWindow.size()*sizeof(decltype(_catchupWindow)::value_type));
+        _catchupWindow = {};
         convertProb("outgoing", _shared.options.serverOptions.simulateOutgoingPacketDrop, _outgoingPacketDropProbability);
         _shardEntries.reserve(LogsDB::IN_FLIGHT_APPEND_WINDOW);
     }
