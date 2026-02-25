@@ -99,17 +99,15 @@ set_target_properties(zstd PROPERTIES IMPORTED_LOCATION ${INSTALL_DIR}/lib/libzs
 # Depends on: lz4, zstd
 # Dependency of: eggs
 # License: dual Apache 2.0 and GPLv2
-if(${CMAKE_BUILD_TYPE} STREQUAL "valgrind")
-    set(ROCKS_DB_MARCH "-march=haswell") # Valgind can't support current -march=native instructions
-endif()
-# musl doesn't seem to like AVX512, at least for now.
-if(USING_MUSL)
-    set(ROCKS_DB_NO_AVX512 "-mno-avx512f")
+# both valgrind and musl can't handle avx512, haswell is the last architecture without it
+set(ROCKS_DB_PORTABLE "0")
+if(${CMAKE_BUILD_TYPE} STREQUAL "valgrind" OR USING_MUSL)
+    set(ROCKS_DB_PORTABLE "haswell")
 endif()
 # the -include cstdint is a workaround for issue #13365, fixed in PR #14334
 separate_arguments(
     rocksdb_build UNIX_COMMAND
-    "env ROCKSDB_DISABLE_ZLIB=y ROCKSDB_DISABLE_BZIP=1 ROCKSDB_DISABLE_SNAPPY=1 DISABLE_WARNING_AS_ERROR=1 ${MAKE_EXE} USE_RTTI=1 EXTRA_CXXFLAGS='${ROCKS_DB_MARCH} ${ROCKS_DB_NO_AVX512} -DROCKSDB_NO_DYNAMIC_EXTENSION -include cstdint' EXTRA_CFLAGS='${ROCKS_DB_MARCH} ${ROCKS_DB_NO_AVX512}' -j ${MAKE_PARALLELISM} static_lib"
+    "env ROCKSDB_DISABLE_ZLIB=y ROCKSDB_DISABLE_BZIP=1 ROCKSDB_DISABLE_SNAPPY=1 DISABLE_WARNING_AS_ERROR=1 ${MAKE_EXE} USE_RTTI=1 PORTABLE=${ROCKS_DB_PORTABLE} EXTRA_CXXFLAGS='-DROCKSDB_NO_DYNAMIC_EXTENSION -include cstdint' -j ${MAKE_PARALLELISM} static_lib"
 )
 ExternalProject_Add(make_rocksdb
     DOWNLOAD_DIR ${CMAKE_CURRENT_BINARY_DIR}
