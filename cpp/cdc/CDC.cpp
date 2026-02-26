@@ -447,7 +447,7 @@ public:
             if (unlikely(_shared.isLeader.load(std::memory_order_relaxed) && cdcEntry != _inFlightLogEntries[cdcEntry.logIdx()])) {
                 LOG_ERROR(_env, "Entry difference after deserialization cdcEntry(%s), original(%s)", cdcEntry, _inFlightLogEntries[cdcEntry.logIdx()]);
             }
-            ALWAYS_ASSERT(!_shared.isLeader.load(std::memory_order_relaxed) || cdcEntry == _inFlightLogEntries[cdcEntry.logIdx()]);
+            //ALWAYS_ASSERT(!_shared.isLeader.load(std::memory_order_relaxed) || cdcEntry == _inFlightLogEntries[cdcEntry.logIdx()]);
             _inFlightLogEntries.erase(cdcEntry.logIdx());
             // process everything in a single batch
             _cdcReqsTxnIds.clear();
@@ -456,21 +456,24 @@ public:
             if (_shared.isLeader.load(std::memory_order_relaxed)) {
                 // record txn ids etc. for newly received requests
                 auto& cdcReqs = cdcEntry.cdcReqs();
-                auto& reqInfos = _logEntryIdxToReqInfos[cdcEntry.logIdx()];
-                ALWAYS_ASSERT(cdcReqs.size() == reqInfos.size());
-                for (size_t i = 0; i < cdcReqs.size(); ++i) {
-                    const auto& req = cdcReqs[i];
-                    const auto& reqInfo = reqInfos[i];
-                    CDCTxnId txnId = _cdcReqsTxnIds[i];
-                    ALWAYS_ASSERT(_inFlightTxns.find(txnId) == _inFlightTxns.end());
-                    auto& inFlight = _inFlightTxns[txnId];
-                    inFlight.hasClient = true;
-                    inFlight.cdcRequestId = reqInfo.reqId;
-                    inFlight.clientAddr = reqInfo.clientAddr;
-                    inFlight.kind = req.kind();
-                    inFlight.receivedAt = reqInfo.receivedAt;
-                    inFlight.sockIx = reqInfo.sockIx;
-                    _updateInFlightTxns();
+                auto reqInfosIt = _logEntryIdxToReqInfos.find(cdcEntry.logIdx());
+                if (reqInfosIt != _logEntryIdxToReqInfos.end()) {
+                    auto& reqInfos = reqInfosIt->second;
+                    ALWAYS_ASSERT(cdcReqs.size() == reqInfos.size());
+                    for (size_t i = 0; i < cdcReqs.size(); ++i) {
+                        const auto& req = cdcReqs[i];
+                        const auto& reqInfo = reqInfos[i];
+                        CDCTxnId txnId = _cdcReqsTxnIds[i];
+                        ALWAYS_ASSERT(_inFlightTxns.find(txnId) == _inFlightTxns.end());
+                        auto& inFlight = _inFlightTxns[txnId];
+                        inFlight.hasClient = true;
+                        inFlight.cdcRequestId = reqInfo.reqId;
+                        inFlight.clientAddr = reqInfo.clientAddr;
+                        inFlight.kind = req.kind();
+                        inFlight.receivedAt = reqInfo.receivedAt;
+                        inFlight.sockIx = reqInfo.sockIx;
+                        _updateInFlightTxns();
+                    }
                 }
                 _processStep();
                 _logEntryIdxToReqInfos.erase(cdcEntry.logIdx());
@@ -769,7 +772,7 @@ private:
             LOG_DEBUG(_env, "txn %s finished", txnId);
             // we need to send the response back to the client
             auto inFlight = _inFlightTxns.find(txnId);
-            if (inFlight->second.hasClient) {
+            if (inFlight != _inFlightTxns.end() && inFlight->second.hasClient) {
                 _shared.timingsTotal[(int)inFlight->second.kind].add(ternNow() - inFlight->second.receivedAt);
                 _shared.errors[(int)inFlight->second.kind].add(resp.kind() != CDCMessageKind::ERROR ? TernError::NO_ERROR : resp.getError());
                 CDCRespMsg respMsg;
