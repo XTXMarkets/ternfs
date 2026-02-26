@@ -1922,11 +1922,6 @@ struct CDCDBImpl {
             auto k = CDCTxnIdKey::Static(txnId);
             ROCKS_DB_CHECKED(dbTxn.Delete(_executingCf, k.toSlice()));
         }
-        {
-            // delete from _enqueuedCf
-            auto k = CDCTxnIdKey::Static(txnId);
-            ROCKS_DB_CHECKED(dbTxn.Delete(_enqueuedCf, k.toSlice()));
-        }
         // delete from dirsToTxnIds
         _removeFromDirsToTxns(dbTxn, txnId, req, txnIds);
     }
