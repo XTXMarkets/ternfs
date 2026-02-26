@@ -1555,6 +1555,89 @@ struct CDCDBImpl {
         // to delete here one-by-one.
     }
 
+    void _cleanup() {
+        rocksdb::DB& db = *_dbDontUseDirectly->GetBaseDB();
+
+        LOG_INFO(_env, "Cleaning up _enqueuedCfs");
+        {
+            std::unique_ptr<rocksdb::Iterator> enqueuedIt(db.NewIterator({}, _enqueuedCf));
+            std::unique_ptr<rocksdb::Iterator> executingIt(db.NewIterator({}, _executingCf));
+            CDCTxnId deleteStart(1);
+            CDCTxnId deleteEnd(1);
+            const auto deleteSeries = [&]() {
+                auto from = CDCTxnIdKey::Static(deleteStart);
+                auto to = CDCTxnIdKey::Static(deleteEnd);
+                ROCKS_DB_CHECKED(db.DeleteRange(rocksdb::WriteOptions(), _enqueuedCf, from.toSlice(), to.toSlice()));
+                deleteStart = {1};
+                deleteEnd = {1};
+            };
+            enqueuedIt->SeekToFirst();
+            executingIt->SeekToFirst();
+            for (uint64_t processed = 0;; processed++) {
+                if ((processed % 1'000'000) == 0) {
+                    LOG_INFO(_env, "Processed %s entries", processed);
+                }
+                if (!enqueuedIt->Valid()) { // we're done
+                    ALWAYS_ASSERT(!executingIt->Valid());
+                    break;
+                }
+                auto enqueuedK = ExternalValue<CDCTxnIdKey>::FromSlice(enqueuedIt->key());
+                bool isExecuting = false;
+                if (executingIt->Valid()) {
+                    auto executingK = ExternalValue<CDCTxnIdKey>::FromSlice(executingIt->key());
+                    ALWAYS_ASSERT(executingK().id() >= enqueuedK().id());
+                    isExecuting = enqueuedK().id() == executingK().id();
+                }
+                if (!isExecuting) { // not present in executing, delete
+                    auto txnId = enqueuedK().id();
+                    if (deleteEnd == txnId) {
+                        deleteEnd = CDCTxnId(txnId.x+1);
+                    } else {
+                        deleteSeries();
+                        deleteStart = txnId;
+                        deleteEnd = CDCTxnId(deleteStart.x+1);
+                    }
+                } else {
+                    executingIt->Next();
+                }
+                enqueuedIt->Next();
+            }
+            ROCKS_DB_CHECKED(enqueuedIt->status());
+            ROCKS_DB_CHECKED(executingIt->status());
+            deleteSeries();
+        }
+
+        LOG_INFO(_env, "Re-creating dirsToTxnsCf");
+        {
+            {
+                StaticValue<DirsToTxnsKey> from;
+                from().setDirId(InodeId::FromU64Unchecked(0));
+                from().setSentinel();
+                StaticValue<DirsToTxnsKey> to;
+                to().setDirId(InodeId::FromU64Unchecked(~(uint64_t)0));
+                to().setTxnId(CDCTxnId(~(uint64_t)0));
+                ROCKS_DB_CHECKED(db.DeleteRange(rocksdb::WriteOptions(), _dirsToTxnsCf, from.toSlice(), to.toSlice()));
+            }
+            std::unique_ptr<rocksdb::Iterator> it(db.NewIterator({}, _enqueuedCf));
+            for (it->SeekToFirst(); it->Valid(); it->Next()) {
+                auto txnIdK = ExternalValue<CDCTxnIdKey>::FromSlice(it->key());
+                CDCReqContainer cdcReq;
+                bincodeFromRocksValue(it->value(), cdcReq);
+                _addToDirsToTxnsGeneric(
+                    [&](rocksdb::ColumnFamilyHandle* cf, rocksdb::Slice k, std::string* v) {
+                        return db.Get({}, cf, k, v);
+                    },
+                    [&](rocksdb::ColumnFamilyHandle* cf, rocksdb::Slice k, rocksdb::Slice v) {
+                        return db.Put({}, cf, k, v);
+                    },
+
+                    txnIdK().id(), cdcReq
+                );
+            }
+            ROCKS_DB_CHECKED(it->status());
+        }
+    }
+
     void _initDb() {
         rocksdb::WriteOptions options;
         options.sync = true;
@@ -1570,6 +1653,8 @@ struct CDCDBImpl {
         }
 
         commitTransaction(*dbTxn);
+
+        _cleanup();
 
         // This means that it'll be recreated and dropped each time, but that's OK.
         _dbDontUseDirectly->DropColumnFamily(_reqQueueCfLegacy);
@@ -1634,7 +1719,8 @@ struct CDCDBImpl {
         ROCKS_DB_CHECKED(dbTxn.Put({}, cdcMetadataKey(&LAST_APPLIED_LOG_ENTRY_KEY), v.toSlice()));
     }
 
-    void _addToDirsToTxns(rocksdb::Transaction& dbTxn, CDCTxnId txnId, const CDCReqContainer& req) {
+    template<typename Get, typename Put>
+    void _addToDirsToTxnsGeneric(Get&& get, Put&& put, CDCTxnId txnId, const CDCReqContainer& req) {
         for (const auto dirId: directoriesNeedingLock(req)) {
             LOG_DEBUG(_env, "adding dir %s for txn %s", dirId, txnId);
             {
@@ -1642,7 +1728,7 @@ struct CDCDBImpl {
                 StaticValue<DirsToTxnsKey> k;
                 k().setDirId(dirId);
                 k().setTxnId(txnId);
-                ROCKS_DB_CHECKED(dbTxn.Put(_dirsToTxnsCf, k.toSlice(), ""));
+                ROCKS_DB_CHECKED(put(_dirsToTxnsCf, k.toSlice(), rocksdb::Slice()));
             }
             {
                 // sentinel, if necessary
@@ -1650,15 +1736,28 @@ struct CDCDBImpl {
                 k().setDirId(dirId);
                 k().setSentinel();
                 std::string v;
-                auto status = dbTxn.Get({}, _dirsToTxnsCf, k.toSlice(), &v);
+                auto status = get(_dirsToTxnsCf, k.toSlice(), &v);
                 if (status.IsNotFound()) { // we're the first ones here, add the sentinel
                     auto v = CDCTxnIdValue::Static(txnId);
-                    ROCKS_DB_CHECKED(dbTxn.Put(_dirsToTxnsCf, k.toSlice(), v.toSlice()));
+                    ROCKS_DB_CHECKED(put(_dirsToTxnsCf, k.toSlice(), v.toSlice()));
                 } else {
                     ROCKS_DB_CHECKED(status);
                 }
             }
         }
+    }
+
+    void _addToDirsToTxns(rocksdb::Transaction& dbTxn, CDCTxnId txnId, const CDCReqContainer& req) {
+        _addToDirsToTxnsGeneric(
+            [&](rocksdb::ColumnFamilyHandle* cf, rocksdb::Slice k, std::string* v) {
+                return dbTxn.Get({}, cf, k, v);
+            },
+            [&](rocksdb::ColumnFamilyHandle* cf, rocksdb::Slice k, rocksdb::Slice v) {
+                return dbTxn.Put(cf, k, v);
+            },
+            txnId,
+            req
+        );
     }
 
     // Returns the txn ids that might be free to work now. Note that we don't
@@ -1813,6 +1912,11 @@ struct CDCDBImpl {
             // delete from _executingCf
             auto k = CDCTxnIdKey::Static(txnId);
             ROCKS_DB_CHECKED(dbTxn.Delete(_executingCf, k.toSlice()));
+        }
+        {
+            // delete from _enqueuedCf
+            auto k = CDCTxnIdKey::Static(txnId);
+            ROCKS_DB_CHECKED(dbTxn.Delete(_enqueuedCf, k.toSlice()));
         }
         // delete from dirsToTxnIds
         _removeFromDirsToTxns(dbTxn, txnId, req, txnIds);

@@ -29,6 +29,22 @@ struct CDCTxnId {
     bool operator!=(const CDCTxnId rhs) const {
         return x != rhs.x;
     }
+
+    bool operator>(const CDCTxnId rhs) const {
+        return x > rhs.x;
+    }
+
+    bool operator>=(const CDCTxnId rhs) const {
+        return x >= rhs.x;
+    }
+
+    bool operator<(const CDCTxnId rhs) const {
+        return x < rhs.x;
+    }
+
+    bool operator<=(const CDCTxnId rhs) const {
+        return x <= rhs.x;
+    }
 };
 
 std::ostream& operator<<(std::ostream& out, CDCTxnId id);
