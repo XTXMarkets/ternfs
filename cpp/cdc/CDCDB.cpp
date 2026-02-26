@@ -1688,7 +1688,7 @@ struct CDCDBImpl {
             {
                 // Additional safety check: the key is what we expect.
                 auto foundKey = ExternalValue<DirsToTxnsKey>::FromSlice(it->key());
-                ALWAYS_ASSERT(!foundKey().isSentinel() && foundKey().txnId() == txnId);
+                ALWAYS_ASSERT(foundKey().dirId() == dirId && !foundKey().isSentinel() && foundKey().txnId() == txnId);
             }
             // now that we've done our checks, we can remove the key
             ROCKS_DB_CHECKED(dbTxn.Delete(_dirsToTxnsCf, k.toSlice()));
@@ -1700,6 +1700,7 @@ struct CDCDBImpl {
             it->Next();
             if (it->Valid()) { // there's something, set the sentinel
                 auto nextK = ExternalValue<DirsToTxnsKey>::FromSlice(it->key());
+                ALWAYS_ASSERT(nextK().dirId() == dirId); // must be true, given the iterator bound above
                 auto sentinelV = CDCTxnIdValue::Static(nextK().txnId());
                 LOG_DEBUG(_env, "selected %s as next in line after finishing %s", nextK().txnId(), txnId);
                 mightBeReady.emplace_back(nextK().txnId());
