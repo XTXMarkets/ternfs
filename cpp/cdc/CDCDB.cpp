@@ -1592,7 +1592,7 @@ struct CDCDBImpl {
             _setVersion(*dbTxn, 1);
         }
 
-        // _cleanup(*dbTxn);
+        _cleanup(*dbTxn);
 
         commitTransaction(*dbTxn);
 
@@ -1918,6 +1918,8 @@ struct CDCDBImpl {
             ROCKS_DB_CHECKED(dbTxn.Get({}, _enqueuedCf, txnIdK.toSlice(), &reqV));
             bincodeFromRocksValue(reqV, cdcReq);
         }
+
+        LOG_DEBUG(_env, "getting state for txn %s", txnId);
 
         // Get the state
         std::string txnStateV;
