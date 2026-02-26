@@ -16,6 +16,7 @@ struct CDCOptions {
 
     Duration shardTimeout = 100_ms;
     AddrsInfo cdcToShardAddress = {};
+    bool rejectClientRequests = false;
 };
 
 void runCDC(CDCOptions& options);

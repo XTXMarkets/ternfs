@@ -227,6 +227,7 @@ constexpr uint64_t MAX_MSG_RECEIVE = (LogsDB::CATCHUP_WINDOW + LogsDB::IN_FLIGHT
 struct CDCServer : Loop {
 private:
     CDCShared& _shared;
+    const CDCOptions& _options;
     const std::string _basePath;
     bool _seenShards;
     uint64_t _currentLogIndex;
@@ -278,6 +279,7 @@ public:
     CDCServer(Logger& logger, std::shared_ptr<XmonAgent>& xmon, CDCOptions& options, CDCShared& shared) :
         Loop(logger, xmon, "req_server"),
         _shared(shared),
+        _options(options),
         _basePath(options.logsDBOptions.dbDir),
         _seenShards(false),
         _currentLogIndex(_shared.db.lastAppliedLogEntry()),
@@ -694,6 +696,11 @@ private:
 
             if (unlikely(_shared.isLeader.load(std::memory_order_relaxed) == false)) {
                 LOG_DEBUG(_env, "dropping request since we're not the leader %s", cdcMsg);
+                continue;
+            }
+
+            if (unlikely(_options.rejectClientRequests)) {
+                LOG_DEBUG(_env, "dropping request since we're rejecting client requests %s", cdcMsg);
                 continue;
             }
 
@@ -1203,6 +1210,7 @@ void runCDC(CDCOptions& options) {
     LOG_INFO(env, "  registryPort = %s", options.registryClientOptions.port);
     LOG_INFO(env, "  cdcAddrs = %s", options.serverOptions.addrs);
     LOG_INFO(env, "  syslog = %s", (int)options.logOptions.syslog);
+    LOG_INFO(env, "  rejectClientRequests = %s", (int)options.rejectClientRequests);
     LOG_INFO(env, "Using LogsDB with options:");
     LOG_INFO(env, "    avoidBeingLeader = '%s'", (int)options.logsDBOptions.avoidBeingLeader);
     LOG_INFO(env, "    noReplication = '%s'", (int)options.logsDBOptions.noReplication);

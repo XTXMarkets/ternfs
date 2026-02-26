@@ -10,7 +10,7 @@
 
 static bool parseCDCOptions(CommandLineArgs& args, CDCOptions& options) {
     while(!args.done()) {
-        if (parseLogOptions(args, options.logOptions) || 
+        if (parseLogOptions(args, options.logOptions) ||
             parseXmonOptions(args, options.xmonOptions) ||
             parseMetricsOptions(args, options.metricsOptions) ||
             parseRegistryClientOptions(args, options.registryClientOptions) ||
@@ -22,6 +22,11 @@ static bool parseCDCOptions(CommandLineArgs& args, CDCOptions& options) {
         std::string arg = args.peekArg();
         if (arg == "-shard-timeout") {
             options.shardTimeout = parseDuration(args.next());
+            continue;
+        }
+        if (arg == "-reject-client-requests") {
+            options.rejectClientRequests = true;
+            args.next();
             continue;
         }
         fprintf(stderr, "unknown argument %s\n", args.peekArg().c_str());
@@ -39,11 +44,13 @@ static void printCDCOptionsUsage() {
     printServerOptionsUsage();
     fprintf(stderr, "CDCOptions:\n");
     fprintf(stderr, " -shard-timeout\n");
-    fprintf(stderr, "    	How much to wait for shard responses. Right now this is a simple loop.\n");
+    fprintf(stderr, "        How much to wait for shard responses. Right now this is a simple loop.\n");
+    fprintf(stderr, " -reject-client-requests\n");
+    fprintf(stderr, "        Reject client requests.\n");
 }
 
 static bool validateCDCOptions(const CDCOptions& options) {
-    return (validateLogOptions(options.logOptions) && 
+    return (validateLogOptions(options.logOptions) &&
             validateXmonOptions(options.xmonOptions) &&
             validateMetricsOptions(options.metricsOptions) &&
             validateRegistryClientOptions(options.registryClientOptions) &&
