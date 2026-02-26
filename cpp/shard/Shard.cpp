@@ -472,61 +472,63 @@ private:
             return;
         }
 
-        ShardReqMsg req;
-        try {
-            switch (protocol) {
-            case CDC_TO_SHARD_REQ_PROTOCOL_VERSION:
-                {
-                    CdcToShardReqMsg signedReq;
-                    signedReq.unpack(msg.buf, _expandedCDCKey);
-                    req.id = signedReq.id;
-                    req.body = std::move(signedReq.body);
+        while (msg.buf.remaining()) {
+            ShardReqMsg req;
+            try {
+                switch (protocol) {
+                    case CDC_TO_SHARD_REQ_PROTOCOL_VERSION:
+                        {
+                            CdcToShardReqMsg signedReq;
+                            signedReq.unpack(msg.buf, _expandedCDCKey);
+                            req.id = signedReq.id;
+                            req.body = std::move(signedReq.body);
+                        }
+                        break;
+                    case SHARD_REQ_PROTOCOL_VERSION:
+                        req.unpack(msg.buf);
+                        if (isPrivilegedRequestKind((uint8_t)req.body.kind())) {
+                            LOG_ERROR(_env, "Received unauthenticated request %s from %s", req.body.kind(), msg.clientAddr);
+                            return;
+                        }
+                        break;
+                    case PROXY_SHARD_REQ_PROTOCOL_VERSION:
+                        {
+                            ProxyShardReqMsg signedReq;
+                            signedReq.unpack(msg.buf, _expandedShardKey);
+                            req.id = signedReq.id;
+                            req.body = std::move(signedReq.body);
+                        }
+                        break;
+                    default:
+                        ALWAYS_ASSERT(false, "Unknown protocol version");
                 }
-                break;
-            case SHARD_REQ_PROTOCOL_VERSION:
-                req.unpack(msg.buf);
-                if (isPrivilegedRequestKind((uint8_t)req.body.kind())) {
-                    LOG_ERROR(_env, "Received unauthenticated request %s from %s", req.body.kind(), msg.clientAddr);
-                    return;
-                }
-                break;
-            case PROXY_SHARD_REQ_PROTOCOL_VERSION:
-                {
-                    ProxyShardReqMsg signedReq;
-                    signedReq.unpack(msg.buf, _expandedShardKey);
-                    req.id = signedReq.id;
-                    req.body = std::move(signedReq.body);
-                }
-                break;
-            default:
-                ALWAYS_ASSERT(false, "Unknown protocol version");
+            } catch (const BincodeException& err) {
+                LOG_ERROR(_env, "Could not parse: %s", err.what());
+                RAISE_ALERT(_env, "could not parse request from %s, dropping it.", msg.clientAddr);
+                return;
             }
-        } catch (const BincodeException& err) {
-            LOG_ERROR(_env, "Could not parse: %s", err.what());
-            RAISE_ALERT(_env, "could not parse request from %s, dropping it.", msg.clientAddr);
-            return;
-        }
 
-        auto t0 = ternNow();
+            auto t0 = ternNow();
 
-        LOG_DEBUG(_env, "received request id %s, kind %s, from %s", req.id, req.body.kind(), msg.clientAddr);
+            LOG_DEBUG(_env, "received request id %s, kind %s, from %s", req.id, req.body.kind(), msg.clientAddr);
 
-        if (bigRequest(req.body.kind())) {
+            if (bigRequest(req.body.kind())) {
                 if (unlikely(_env._shouldLog(LogLevel::LOG_TRACE))) {
                     LOG_TRACE(_env, "parsed request: %s", req);
                 } else {
                     LOG_DEBUG(_env, "parsed request: <omitted>");
                 }
-        } else {
-            LOG_DEBUG(_env, "parsed request: %s", req);
-        }
+            } else {
+                LOG_DEBUG(_env, "parsed request: %s", req);
+            }
 
-        auto& entry = _requestNeedsConsistency(req.body.kind(), protocol) ? _writeReqs.emplace_back() : _readRequests.emplace_back();
-        entry.sockIx = msg.socketIx;
-        entry.clientAddr = msg.clientAddr;
-        entry.receivedAt = t0;
-        entry.protocol = protocol;
-        entry.msg = std::move(req);
+            auto& entry = _requestNeedsConsistency(req.body.kind(), protocol) ? _writeReqs.emplace_back() : _readRequests.emplace_back();
+            entry.sockIx = msg.socketIx;
+            entry.clientAddr = msg.clientAddr;
+            entry.receivedAt = t0;
+            entry.protocol = protocol;
+            entry.msg = std::move(req);
+        }
     }
 
     // All write requests fall into this category. Some read requests issues by CDC also need cross regional consistency
