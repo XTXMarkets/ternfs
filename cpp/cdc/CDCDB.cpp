@@ -1698,14 +1698,20 @@ struct CDCDBImpl {
             sentinelK().setDirId(dirId);
             sentinelK().setSentinel();
             it->Next();
+            bool removeSentinel = true;
             if (it->Valid()) { // there's something, set the sentinel
                 auto nextK = ExternalValue<DirsToTxnsKey>::FromSlice(it->key());
-                auto sentinelV = CDCTxnIdValue::Static(nextK().txnId());
-                LOG_DEBUG(_env, "selected %s as next in line after finishing %s", nextK().txnId(), txnId);
-                mightBeReady.emplace_back(nextK().txnId());
-                ROCKS_DB_CHECKED(dbTxn.Put(_dirsToTxnsCf, sentinelK.toSlice(), sentinelV.toSlice()));
-            } else { // we were the last ones here, remove sentinel
+                if (nextK().dirId() == dirId) {
+                    removeSentinel = false;
+                    auto sentinelV = CDCTxnIdValue::Static(nextK().txnId());
+                    LOG_DEBUG(_env, "selected %s as next in line after finishing %s", nextK().txnId(), txnId);
+                    mightBeReady.emplace_back(nextK().txnId());
+                    ROCKS_DB_CHECKED(dbTxn.Put(_dirsToTxnsCf, sentinelK.toSlice(), sentinelV.toSlice()));
+                }
+            } else {
                 ROCKS_DB_CHECKED(it->status());
+            }
+            if (removeSentinel) { // we were the last ones here, remove sentinel
                 ROCKS_DB_CHECKED(dbTxn.Delete(_dirsToTxnsCf, sentinelK.toSlice()));
             }
         }
