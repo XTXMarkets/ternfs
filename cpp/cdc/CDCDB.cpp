@@ -77,6 +77,7 @@ std::vector<rocksdb::ColumnFamilyDescriptor> CDCDB::getColumnFamilyDescriptors()
         {"enqueued", {}},
         {"executing", {}},
         {"dirsToTxns", {}},
+        {"enqueuedTrimmed", {}},
     };
 }
 
@@ -1417,7 +1418,7 @@ struct CDCDBImpl {
 
     rocksdb::ColumnFamilyHandle* _defaultCf;
     rocksdb::ColumnFamilyHandle* _parentCf;
-    rocksdb::ColumnFamilyHandle* _enqueuedCf; // V1, txnId -> CDC req, only for executing or waiting to be executed requests
+    rocksdb::ColumnFamilyHandle* _enqueuedCf; // V2, txnId -> CDC req, only for executing or waiting to be executed requests
     rocksdb::ColumnFamilyHandle* _executingCf; // V1, txnId -> CDC state machine, for requests that are executing
     // V1, data structure storing a dir to txn ids mapping:
     // InodeId -> txnId -- sentinel telling us what the first txn in line is. If none, zero.
@@ -1425,6 +1426,7 @@ struct CDCDBImpl {
     // InodeId, txnId set with the queue
     rocksdb::ColumnFamilyHandle* _dirsToTxnsCf;
     // legacy
+    rocksdb::ColumnFamilyHandle* _enqueuedCfLegacy; // V1, txnId -> CDC req, before we properly dropped them
     rocksdb::ColumnFamilyHandle* _reqQueueCfLegacy; // V0, txnId -> CDC req, for all the requests (including historical)
 
     AssertiveLock _processLock;
@@ -1442,7 +1444,8 @@ struct CDCDBImpl {
         _defaultCf = sharedDb.getCF(rocksdb::kDefaultColumnFamilyName);
         _reqQueueCfLegacy = sharedDb.getCF("reqQueue");
         _parentCf = sharedDb.getCF("parent");
-        _enqueuedCf = sharedDb.getCF("enqueued");
+        _enqueuedCfLegacy = sharedDb.getCF("enqueued");
+        _enqueuedCf = sharedDb.getCF("enqueuedTrimmed");
         _executingCf = sharedDb.getCF("executing");
         _dirsToTxnsCf = sharedDb.getCF("dirsToTxns");
         _dbDontUseDirectly = sharedDb.transactionDB();
@@ -1555,6 +1558,40 @@ struct CDCDBImpl {
         // to delete here one-by-one.
     }
 
+    void _initDbV2(rocksdb::Transaction& dbTxn) {
+        LOG_INFO(_env, "initializing V2 db");
+
+        LOG_INFO(_env, "Executing txns from old CF to new CF");
+        {
+            std::unique_ptr<rocksdb::Iterator> it(dbTxn.GetIterator({}, _executingCf));
+            for (it->SeekToFirst(); it->Valid(); it->Next()) {
+                std::string value;
+                ROCKS_DB_CHECKED(dbTxn.Get({}, _enqueuedCfLegacy, it->key(), &value));
+                ROCKS_DB_CHECKED(dbTxn.Put(_enqueuedCf, it->key(), value));
+            }
+            ROCKS_DB_CHECKED(it->status());
+        }
+
+        LOG_INFO(_env, "Re-creating dirsToTxnsCf");
+        {
+            std::unique_ptr<rocksdb::Iterator> it(dbTxn.GetIterator({}, _dirsToTxnsCf));
+            for (it->SeekToFirst(); it->Valid(); it->Next()) {
+                ROCKS_DB_CHECKED(dbTxn.Delete(_dirsToTxnsCf, it->key()));
+            }
+            ROCKS_DB_CHECKED(it->status());
+        }
+        {
+            std::unique_ptr<rocksdb::Iterator> it(dbTxn.GetIterator({}, _enqueuedCf));
+            for (it->SeekToFirst(); it->Valid(); it->Next()) {
+                auto txnIdK = ExternalValue<CDCTxnIdKey>::FromSlice(it->key());
+                CDCReqContainer cdcReq;
+                bincodeFromRocksValue(it->value(), cdcReq);
+                _addToDirsToTxns(dbTxn, txnIdK().id(), cdcReq);
+            }
+            ROCKS_DB_CHECKED(it->status());
+        }
+    }
+
     void _initDb() {
         rocksdb::WriteOptions options;
         options.sync = true;
@@ -1568,11 +1605,16 @@ struct CDCDBImpl {
             _initDbV1(*dbTxn);
             _setVersion(*dbTxn, 1);
         }
+        if (_version(*dbTxn) == 1) {
+            _initDbV2(*dbTxn);
+            _setVersion(*dbTxn, 2);
+        }
 
         commitTransaction(*dbTxn);
 
-        // This means that it'll be recreated and dropped each time, but that's OK.
+        // This means that they will be recreated and dropped each time, but that's OK.
         _dbDontUseDirectly->DropColumnFamily(_reqQueueCfLegacy);
+        _dbDontUseDirectly->DropColumnFamily(_enqueuedCfLegacy);
 
         LOG_INFO(_env, "DB initialization done");
     }
