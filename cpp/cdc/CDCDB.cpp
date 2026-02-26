@@ -1592,7 +1592,7 @@ struct CDCDBImpl {
             _setVersion(*dbTxn, 1);
         }
 
-        _cleanup(*dbTxn);
+        // _cleanup(*dbTxn);
 
         commitTransaction(*dbTxn);
 
