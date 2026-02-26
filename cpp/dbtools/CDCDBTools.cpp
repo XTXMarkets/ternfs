@@ -18,6 +18,7 @@
 #include "RocksDBUtils.hpp"
 #include "CDCDB.hpp"
 #include "SharedRocksDB.hpp"
+#include "CDCDBData.hpp"
 
 void CDCDBTools::outputLogEntries(const std::string& dbPath, LogIdx startIdx, size_t count) {
     Logger logger(LogLevel::LOG_INFO, STDERR_FILENO, false, false);
@@ -57,5 +58,37 @@ void CDCDBTools::outputLogEntries(const std::string& dbPath, LogIdx startIdx, si
             break;
         }
     }
+}
+
+void CDCDBTools::verifyDirsToTxnCf(const std::string& dbPath) {
+    Logger logger(LogLevel::LOG_INFO, STDERR_FILENO, false, false);
+    std::shared_ptr<XmonAgent> xmon;
+    Env env(logger, xmon, "CDCDBTools");
+    SharedRocksDB sharedDb(logger, xmon, dbPath, "");
+    auto cdcCFdescriptors = CDCDB::getColumnFamilyDescriptors();
+    for (auto it = cdcCFdescriptors.begin(); it != cdcCFdescriptors.end(); ++it) {
+        if (it->name == "reqQueue") {
+            cdcCFdescriptors.erase(it);
+            break;
+        }
+    }
+    sharedDb.registerCFDescriptors(cdcCFdescriptors);
+    sharedDb.registerCFDescriptors(LogsDB::getColumnFamilyDescriptors());
+    rocksdb::Options rocksDBOptions;
+    rocksDBOptions.compression = rocksdb::kLZ4Compression;
+    rocksDBOptions.bottommost_compression = rocksdb::kZSTD;
+    sharedDb.openForReadOnly(rocksDBOptions);
+    auto db = sharedDb.db();
+
+    auto dirsToTxnsCf = sharedDb.getCF("dirsToTxns");
+
+    std::unique_ptr<rocksdb::Iterator> it(db->NewIterator({}, dirsToTxnsCf));
+    InodeId currentInode;
+    for (it->SeekToFirst(); it->Valid(); it->Next()) {
+        auto nextK = ExternalValue<DirsToTxnsKey>::FromSlice(it->key());
+        ALWAYS_ASSERT((nextK().dirId() != currentInode) == nextK().isSentinel(), "Sentinel does not change inode (%s, %s)", currentInode, nextK().dirId());
+        currentInode = nextK().dirId();
+    }
+    ROCKS_DB_CHECKED(it->status());
 }
 

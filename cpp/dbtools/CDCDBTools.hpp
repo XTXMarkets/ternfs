@@ -11,4 +11,5 @@
 class CDCDBTools {
 public:
     static void outputLogEntries(const std::string& dbPath, LogIdx startIdx = 0, size_t count = std::numeric_limits<size_t>::max());
+    static void verifyDirsToTxnCf(const std::string& dbPath);
 };

@@ -304,6 +304,9 @@ int main(int argc, char** argv) {
             LogIdx startIdx = std::stoull(getNextArg());
             size_t count = std::stoull(getNextArg());
             CDCDBTools::outputLogEntries(dbPath, startIdx, count);
+        } else if (arg == "cdc-verify-dirs-to-txn") {
+            std::string dbPath = getNextArg();
+            CDCDBTools::verifyDirsToTxnCf(dbPath);
         } else if (arg == "fsck") {
             std::string dbPath = getNextArg();
             ShardDBTools::fsck(dbPath);
