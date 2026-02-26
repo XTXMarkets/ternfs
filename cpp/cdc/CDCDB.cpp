@@ -1558,6 +1558,7 @@ struct CDCDBImpl {
     void _cleanup() {
         rocksdb::DB& db = *_dbDontUseDirectly->GetBaseDB();
 
+        #if 0
         LOG_INFO(_env, "Cleaning up _enqueuedCfs");
         {
             std::unique_ptr<rocksdb::Iterator> enqueuedIt(db.NewIterator({}, _enqueuedCf));
@@ -1606,6 +1607,7 @@ struct CDCDBImpl {
             ROCKS_DB_CHECKED(executingIt->status());
             deleteSeries();
         }
+        #endif
 
         LOG_INFO(_env, "Re-creating dirsToTxnsCf");
         {
@@ -1618,11 +1620,13 @@ struct CDCDBImpl {
                 to().setTxnId(CDCTxnId(~(uint64_t)0));
                 ROCKS_DB_CHECKED(db.DeleteRange(rocksdb::WriteOptions(), _dirsToTxnsCf, from.toSlice(), to.toSlice()));
             }
-            std::unique_ptr<rocksdb::Iterator> it(db.NewIterator({}, _enqueuedCf));
+            std::unique_ptr<rocksdb::Iterator> it(db.NewIterator({}, _executingCf));
             for (it->SeekToFirst(); it->Valid(); it->Next()) {
                 auto txnIdK = ExternalValue<CDCTxnIdKey>::FromSlice(it->key());
+                std::string reqV;
+                ROCKS_DB_CHECKED(db.Get({}, _enqueuedCf, it->key(), &reqV));
                 CDCReqContainer cdcReq;
-                bincodeFromRocksValue(it->value(), cdcReq);
+                bincodeFromRocksValue(reqV, cdcReq);
                 _addToDirsToTxnsGeneric(
                     [&](rocksdb::ColumnFamilyHandle* cf, rocksdb::Slice k, std::string* v) {
                         return db.Get({}, cf, k, v);
