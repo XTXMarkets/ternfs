@@ -1558,57 +1558,6 @@ struct CDCDBImpl {
     void _cleanup() {
         rocksdb::DB& db = *_dbDontUseDirectly->GetBaseDB();
 
-        #if 0
-        LOG_INFO(_env, "Cleaning up _enqueuedCfs");
-        {
-            std::unique_ptr<rocksdb::Iterator> enqueuedIt(db.NewIterator({}, _enqueuedCf));
-            std::unique_ptr<rocksdb::Iterator> executingIt(db.NewIterator({}, _executingCf));
-            CDCTxnId deleteStart(1);
-            CDCTxnId deleteEnd(1);
-            const auto deleteSeries = [&]() {
-                auto from = CDCTxnIdKey::Static(deleteStart);
-                auto to = CDCTxnIdKey::Static(deleteEnd);
-                ROCKS_DB_CHECKED(db.DeleteRange(rocksdb::WriteOptions(), _enqueuedCf, from.toSlice(), to.toSlice()));
-                deleteStart = {1};
-                deleteEnd = {1};
-            };
-            enqueuedIt->SeekToFirst();
-            executingIt->SeekToFirst();
-            for (uint64_t processed = 0;; processed++) {
-                if ((processed % 1'000'000) == 0) {
-                    LOG_INFO(_env, "Processed %s entries", processed);
-                }
-                if (!enqueuedIt->Valid()) { // we're done
-                    ALWAYS_ASSERT(!executingIt->Valid());
-                    break;
-                }
-                auto enqueuedK = ExternalValue<CDCTxnIdKey>::FromSlice(enqueuedIt->key());
-                bool isExecuting = false;
-                if (executingIt->Valid()) {
-                    auto executingK = ExternalValue<CDCTxnIdKey>::FromSlice(executingIt->key());
-                    ALWAYS_ASSERT(executingK().id() >= enqueuedK().id());
-                    isExecuting = enqueuedK().id() == executingK().id();
-                }
-                if (!isExecuting) { // not present in executing, delete
-                    auto txnId = enqueuedK().id();
-                    if (deleteEnd == txnId) {
-                        deleteEnd = CDCTxnId(txnId.x+1);
-                    } else {
-                        deleteSeries();
-                        deleteStart = txnId;
-                        deleteEnd = CDCTxnId(deleteStart.x+1);
-                    }
-                } else {
-                    executingIt->Next();
-                }
-                enqueuedIt->Next();
-            }
-            ROCKS_DB_CHECKED(enqueuedIt->status());
-            ROCKS_DB_CHECKED(executingIt->status());
-            deleteSeries();
-        }
-        #endif
-
         LOG_INFO(_env, "Re-creating dirsToTxnsCf");
         {
             {
