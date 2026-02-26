@@ -1560,6 +1560,7 @@ struct CDCDBImpl {
 
         LOG_INFO(_env, "Re-creating dirsToTxnsCf");
         {
+            #if 0
             {
                 StaticValue<DirsToTxnsKey> from;
                 from().setDirId(InodeId::FromU64Unchecked(0));
@@ -1588,6 +1589,7 @@ struct CDCDBImpl {
                 );
             }
             ROCKS_DB_CHECKED(it->status());
+            #endif
         }
     }
 
