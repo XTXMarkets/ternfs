@@ -26,6 +26,7 @@ ExternalProject_Add(make_uring
     DOWNLOAD_DIR ${THIRDPARTY_DOWNLOAD_DIR}
     URL https://github.com/axboe/liburing/archive/refs/tags/liburing-2.3.tar.gz
     URL_HASH SHA256=60b367dbdc6f2b0418a6e0cd203ee0049d9d629a36706fcf91dfb9428bae23c8
+    DOWNLOAD_NAME liburing.tar.gz
     PREFIX thirdparty/uring
     UPDATE_COMMAND ""
     CONFIGURE_COMMAND ./configure --prefix=<INSTALL_DIR>
@@ -53,6 +54,7 @@ ExternalProject_Add(make_lz4
     DOWNLOAD_DIR ${THIRDPARTY_DOWNLOAD_DIR}
     URL https://github.com/lz4/lz4/archive/refs/tags/v1.9.4.tar.gz
     URL_HASH SHA256=0b0e3aa07c8c063ddf40b082bdf7e37a1562bda40a0ff5272957f3e987e0e54b
+    DOWNLOAD_NAME lz4.tar.gz
     PREFIX thirdparty/lz4
     UPDATE_COMMAND ""
     CONFIGURE_COMMAND ""
@@ -79,6 +81,7 @@ ExternalProject_Add(make_zstd
     DOWNLOAD_DIR ${THIRDPARTY_DOWNLOAD_DIR}
     URL https://github.com/facebook/zstd/archive/refs/tags/v1.5.2.tar.gz
     URL_HASH SHA256=f7de13462f7a82c29ab865820149e778cbfe01087b3a55b5332707abf9db4a6e
+    DOWNLOAD_NAME zstd.tar.gz
     PREFIX thirdparty/zstd
     UPDATE_COMMAND ""
     CONFIGURE_COMMAND ""
@@ -114,6 +117,7 @@ ExternalProject_Add(make_rocksdb
     DOWNLOAD_DIR ${THIRDPARTY_DOWNLOAD_DIR}
     URL https://github.com/facebook/rocksdb/archive/refs/tags/v7.9.2.tar.gz
     URL_HASH SHA256=886378093098a1b2521b824782db7f7dd86224c232cf9652fcaf88222420b292
+    DOWNLOAD_NAME rocksdb.tar.gz
     PREFIX thirdparty/rocksdb
     UPDATE_COMMAND ""
     CONFIGURE_COMMAND ""
@@ -139,6 +143,7 @@ ExternalProject_Add(make_xxhash
     DOWNLOAD_DIR ${THIRDPARTY_DOWNLOAD_DIR}
     URL https://github.com/Cyan4973/xxHash/archive/refs/tags/v0.8.1.tar.gz
     URL_HASH SHA256=3bb6b7d6f30c591dd65aaaff1c8b7a5b94d81687998ca9400082c739a690436c
+    DOWNLOAD_NAME xxhash.tar.gz
     PREFIX thirdparty/xxhash
     UPDATE_COMMAND ""
     CONFIGURE_COMMAND ""
@@ -173,6 +178,7 @@ ExternalProject_Add(make_mimalloc
     DOWNLOAD_DIR ${THIRDPARTY_DOWNLOAD_DIR}
     URL https://github.com/microsoft/mimalloc/archive/refs/tags/v3.0.10.tar.gz
     URL_HASH SHA256=ee5556a31060f2289497f00126e90bf871e90933f98e21ea13dca3578e9ccfb5
+    DOWNLOAD_NAME mimalloc.tar.gz
     PREFIX thirdparty/mimalloc
     UPDATE_COMMAND ""
     CMAKE_ARGS ${DEP_MIMALLOC_CMAKE_ARGS}
