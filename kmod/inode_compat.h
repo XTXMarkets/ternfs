@@ -58,7 +58,10 @@ static inline struct timespec64 inode_set_ctime(struct inode *inode,
 
 #endif
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 7, 0)
+// inode atime/mtime accessors were added in mainline v6.7-rc1, but may be
+// backported to earlier kernels (e.g. WSL2 6.6.x)
+// the Makefile greps the kernel headers and sets HAVE_INODE_ATIME_ACCESSORS
+#ifndef HAVE_INODE_ATIME_ACCESSORS
 
 static inline time64_t inode_get_atime_sec(const struct inode *inode)
 {

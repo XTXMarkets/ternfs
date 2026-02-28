@@ -36,7 +36,13 @@ ternfs-client-objs += \
 	revision.o \
 	policy.o
 
+HAVE_INODE_ATIME_ACCESSORS := $(shell grep -q inode_get_atime_sec \
+    $(srctree)/include/linux/fs.h 2>/dev/null && echo 1)
+
 EXTRA_CFLAGS = -I$(src) -g -DDEBUG -fdiagnostics-color=always -Wno-declaration-after-statement
+ifeq ($(HAVE_INODE_ATIME_ACCESSORS),1)
+  EXTRA_CFLAGS += -DHAVE_INODE_ATIME_ACCESSORS
+endif
 
 export CF = -Wbitwise -Wcontext -Wcast_truncate -Wsparse-all -Wno-shadow -Wnopointer-arith -Wnosizeof-bool -DCONFIG_SPARSE_RCU_POINTER
 
