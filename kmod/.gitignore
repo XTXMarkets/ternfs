@@ -28,3 +28,7 @@ debian/changelog
 debian/dkms
 debian/install
 ternfs-client.service
+WSL2-Linux-Kernel-*
+wsl-linux
+config-wsl
+etag-*
