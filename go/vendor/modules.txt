@@ -157,6 +157,9 @@ github.com/hanwen/go-fuse/v2/splice
 # github.com/mattn/go-sqlite3 v1.14.32
 ## explicit; go 1.19
 github.com/mattn/go-sqlite3
+# github.com/winfsp/cgofuse v1.5.0
+## explicit
+github.com/winfsp/cgofuse/fuse
 # golang.org/x/net v0.47.0
 ## explicit; go 1.24.0
 golang.org/x/net/bpf

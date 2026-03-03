@@ -11,6 +11,7 @@ require (
 	github.com/cilium/ebpf v0.19.0
 	github.com/hanwen/go-fuse/v2 v2.8.0
 	github.com/mattn/go-sqlite3 v1.14.32
+	github.com/winfsp/cgofuse v1.5.0
 	golang.org/x/sync v0.11.0
 	golang.org/x/sys v0.38.0
 )
