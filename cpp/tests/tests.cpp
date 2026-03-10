@@ -413,6 +413,9 @@ struct TempShardDB {
     }
 
     ~TempShardDB() {
+        db.reset();
+        blockServicesCacheDB.reset();
+        sharedDB.reset();
         std::error_code err;
         if (std::filesystem::remove_all(std::filesystem::path(dbDir), err) < 0) {
             std::cerr << "Could not remove " << dbDir << ": " << err << std::endl;

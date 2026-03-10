@@ -27,6 +27,7 @@ struct TempBlockServicesCacheDB {
     }
 
     ~TempBlockServicesCacheDB() {
+        sharedDB.reset();
         std::error_code err;
         std::filesystem::remove_all(std::filesystem::path(dbDir), err);
     }
