@@ -60,7 +60,6 @@ void ternfs_inode_evict(struct inode* inode) {
     if (S_ISDIR(inode->i_mode)) {
         ternfs_dir_drop_cache(enode);
     } else if (S_ISREG(inode->i_mode)) {
-        // We need to clear the spans
         ternfs_free_file_spans(&enode->file.spans);
     }
     truncate_inode_pages(&inode->i_data, 0);
@@ -234,7 +233,7 @@ static void getattr_async_complete(struct work_struct* work) {
         }
 
         if (err) {
-            ternfs_info("could not perform async stat to 0x%016lx: %d", enode->inode.i_ino, err);
+            ternfs_info("could not perform async stat enode=%p id=0x%016lx err=%d", enode, enode->inode.i_ino, err);
         } else {
             WRITE_ONCE(enode->mtime, mtime);
             inode_set_mtime(&enode->inode, mtime / 1000000000, mtime % 1000000000);
@@ -242,7 +241,7 @@ static void getattr_async_complete(struct work_struct* work) {
             if (has_atime) {
                 inode_set_atime(&enode->inode, atime / 1000000000, atime % 1000000000);
             }
-            ternfs_debug("id=%016lx new_expiry=%llu", enode->inode.i_ino, expiry);
+            ternfs_debug("stat complete enode=%p id=0x%016lx new_expiry=%llu", enode, enode->inode.i_ino, expiry);
             smp_store_release(&enode->getattr_expiry, expiry);
         }
     }
@@ -345,20 +344,20 @@ int ternfs_do_getattr(struct ternfs_inode* enode, int cache_timeout_type) {
                     BUG_ON(enode->file.status != TERNFS_FILE_STATUS_WRITING);
                 }
             }
-            if (err) { err = ternfs_error_to_linux(err); goto out; }
-            else {
+            if (err) {
+                err = ternfs_error_to_linux(err);
+            } else {
                 WRITE_ONCE(enode->mtime, mtime);
                 inode_set_mtime(&enode->inode, mtime / 1000000000, mtime % 1000000000);
                 inode_set_ctime(&enode->inode, mtime / 1000000000, mtime % 1000000000);
                 if (has_atime) {
                     inode_set_atime(&enode->inode, atime / 1000000000, atime % 1000000000);
                 }
+                if (S_ISDIR(enode->inode.i_mode)) {
+                    smp_store_release(&enode->dir.mtime_expiry, get_jiffies_64() + ternfs_dir_dentry_refresh_time_jiffies);
+                }
+                smp_store_release(&enode->getattr_expiry, expiry);
             }
-
-            if (S_ISDIR(enode->inode.i_mode)) {
-                smp_store_release(&enode->dir.mtime_expiry, get_jiffies_64() + ternfs_dir_dentry_refresh_time_jiffies);
-            }
-            smp_store_release(&enode->getattr_expiry, expiry);
 
 out:
             ternfs_latch_release(&enode->getattr_update_latch, seqno);

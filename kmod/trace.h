@@ -491,8 +491,9 @@ TRACE_EVENT(eggsfs_get_span_exit,
     TP_fast_assign(
         __entry->file_id = file_id;
         __entry->offset = offset;
+        __entry->err = err;
     ),
-    TP_printk("file_id=%016llx offset=%llu, err=%d", __entry->file_id, __entry->offset, __entry->err)
+    TP_printk("file_id=%016llx offset=%llu err=%d", __entry->file_id, __entry->offset, __entry->err)
 );
 
 #define TERNFS_UPSERT_BLOCKSERVICE_MATCH 0
@@ -518,6 +519,81 @@ TRACE_EVENT(eggsfs_upsert_block_service,
             { TERNFS_UPSERT_BLOCKSERVICE_NOMATCH, "nomatch" },
             { TERNFS_UPSERT_BLOCKSERVICE_NEW, "new" }
         )
+    )
+);
+
+TRACE_EVENT(eggsfs_span_get_pages_enter,
+    TP_PROTO(u64 file_id, u64 offset, u32 nr_pages),
+    TP_ARGS(     file_id,     offset,     nr_pages),
+
+    TP_STRUCT__entry(
+        __field(u64, file_id)
+        __field(u64, offset)
+        __field(u32, nr_pages)
+    ),
+    TP_fast_assign(
+        __entry->file_id = file_id;
+        __entry->offset = offset;
+        __entry->nr_pages = nr_pages;
+    ),
+    TP_printk("file_id=%016llx offset=%llu nr_pages=%u", __entry->file_id, __entry->offset, __entry->nr_pages)
+);
+
+TRACE_EVENT(eggsfs_span_get_pages_exit,
+    TP_PROTO(u64 file_id, u64 offset, u32 nr_pages, int err),
+    TP_ARGS(     file_id,     offset,     nr_pages,     err),
+
+    TP_STRUCT__entry(
+        __field(u64, file_id)
+        __field(u64, offset)
+        __field(u32, nr_pages)
+        __field(int, err)
+    ),
+    TP_fast_assign(
+        __entry->file_id = file_id;
+        __entry->offset = offset;
+        __entry->nr_pages = nr_pages;
+        __entry->err = err;
+    ),
+    TP_printk("file_id=%016llx offset=%llu nr_pages=%u err=%d", __entry->file_id, __entry->offset, __entry->nr_pages, __entry->err)
+);
+
+#define TERNFS_FETCH_BLOCK_START 0
+#define TERNFS_FETCH_BLOCK_DONE 1
+#define TERNFS_FETCH_BLOCK_FAIL 2
+#define TERNFS_FETCH_BLOCK_CRC_FAIL 3
+
+TRACE_EVENT(eggsfs_fetch_block,
+    TP_PROTO(u64 file_id, u64 block_id, u8 block_ix, u8 stripe_ix, u8 event, int err),
+    TP_ARGS(     file_id,     block_id,    block_ix,    stripe_ix,    event,     err),
+
+    TP_STRUCT__entry(
+        __field(u64, file_id)
+        __field(u64, block_id)
+        __field(int, err)
+        __field(u8, block_ix)
+        __field(u8, stripe_ix)
+        __field(u8, event)
+    ),
+    TP_fast_assign(
+        __entry->file_id = file_id;
+        __entry->block_id = block_id;
+        __entry->block_ix = block_ix;
+        __entry->stripe_ix = stripe_ix;
+        __entry->event = event;
+        __entry->err = err;
+    ),
+    TP_printk(
+        "file_id=%016llx block_id=%016llx block_ix=%u stripe_ix=%u event=%s err=%d",
+        __entry->file_id, __entry->block_id, __entry->block_ix, __entry->stripe_ix,
+        __print_symbolic(
+            __entry->event,
+            { 0, "start" },
+            { 1, "done" },
+            { 2, "fail" },
+            { 3, "crc_fail" }
+        ),
+        __entry->err
     )
 );
 

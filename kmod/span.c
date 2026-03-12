@@ -149,9 +149,6 @@ inline void fetch_span_pages_state_request_full_fetch(struct fetch_span_pages_st
 }
 
 static void free_fetch_span_pages(struct fetch_span_pages_state* st) {
-    // we're the last ones here
-    //fetch_stripe_trace(st, TERNFS_FETCH_STRIPE_FREE, -1, atomic_read(&st->err));
-
     while (down_trylock(&st->sema) == 0) {} // reset sema to zero for next usage
 
     // Free leftover blocks (also ensures the lists are all nice and empty for the
@@ -198,22 +195,22 @@ static void store_block_pages(struct fetch_span_pages_state* st) {
     }
 
     if (__builtin_popcountll(blocks) != want_blocks) {
-        ternfs_warn("have %lld blocks, want %d, succeeded: %d, failed:%d, start:%d end:%d", __builtin_popcountll(blocks), want_blocks, blocks, failed_blocks, atomic_read(&st->start_block), atomic_read(&st->end_block));
+        ternfs_error("file=%016llx span=%llu have %lld blocks, want %d, succeeded=%04x, failed=%04x, start=%d end=%d", span->span.ino, span->span.start, __builtin_popcountll(blocks), want_blocks, blocks, failed_blocks, atomic_read(&st->start_block), atomic_read(&st->end_block));
         BUG();
     }
     if (unlikely(failed_blocks > 0) && D != 1) { // we need to recover data using RS
         for (i = 0; i < D; i++) { // fill in missing data blocks
             if ((1ull<<i) & blocks) { continue; } // we have this one already
             if (list_empty(&st->blocks_pages[i])) {
-                ternfs_warn("list empty for recovery, block %d, start %d, end %d, blocks %d, failed %d", i, start, end, blocks, failed_blocks);
+                ternfs_error("file=%016llx span=%llu list empty for recovery, block %d, start %d, end %d, blocks=%04x, failed=%04x", span->span.ino, span->span.start, i, start, end, blocks, failed_blocks);
                 BUG();
             }
 
             // compute
-            ternfs_info("recovering block %d, stripe %d, D=%d, want_blocks=%d, blocks=%d, failed_blocks=%d", i, fetch_span_pages_state_stripe_ix(st), D, want_blocks, blocks, failed_blocks);
+            ternfs_debug("file=%016llx recovering block %d stripe=%d D=%d want=%d succeeded=%04x failed=%04x", span->span.ino, i, fetch_span_pages_state_stripe_ix(st), D, want_blocks, blocks, failed_blocks);
             int err = ternfs_recover(span->parity, blocks, 1ull<<i, pages_per_block, st->blocks_pages);
             if (err) {
-                ternfs_warn("recovery for block %d, stripe %d failed. err=%d", i, fetch_span_pages_state_stripe_ix(st), err);
+                ternfs_warn("file=%016llx recovery for block %d stripe=%d failed err=%d", span->span.ino, i, fetch_span_pages_state_stripe_ix(st), err);
                 atomic_set(&st->err, err);
             }
         }
@@ -222,7 +219,7 @@ static void store_block_pages(struct fetch_span_pages_state* st) {
         for (i = 0; i < B; i++) {
             if ((1ull<<i) & blocks) break;
         }
-        if (failed_blocks) ternfs_info("recovering block %d, stripe %d, D=%d, want_blocks=%d, blocks=%d, failed_blocks=%d", i, fetch_span_pages_state_stripe_ix(st), D, want_blocks, blocks, failed_blocks);
+        if (failed_blocks) ternfs_debug("file=%016llx recovering block %d stripe=%d D=%d want=%d succeeded=%04x failed=%04x", span->span.ino, i, fetch_span_pages_state_stripe_ix(st), D, want_blocks, blocks, failed_blocks);
         // Copy pages over from any non 0 block regardless if it was selected
         // to spread the load or because any other block failed.
         fetch_span_pages_move_list(st, i, 0);
@@ -295,7 +292,7 @@ static int fetch_span_blocks(struct fetch_span_pages_state* st) {
             return 0;
         }
         if (__builtin_popcountll(failed) > P) { // nowhere to go from here but tears
-            ternfs_info("we're out of blocks, giving up " LOG_STR, LOG_ARGS);
+            ternfs_warn("we're out of blocks, giving up " LOG_STR, LOG_ARGS);
             int err = atomic_read(&st->last_block_err);
             BUG_ON(err == 0);
             return err;
@@ -338,7 +335,7 @@ static int fetch_span_blocks(struct fetch_span_pages_state* st) {
         if (D == 1) fetch_span_pages_move_list(st, 0, i);
 
         if(list_empty(&st->blocks_pages[i]) && failed_blocks == 0) {
-            ternfs_warn("empty list at file=%016llx, block %d, stripe %d, offset=%d, size=%d, span_start=%lld, span_end=%lld. blocks=%lld, failed:%d", span->span.ino, i, fetch_span_pages_state_stripe_ix(st), st->start_offset, st->size, span->span.start, span->span.end, blocks, failed_blocks);
+            ternfs_error("file=%016llx empty list at block %d, stripe %d, offset=%d, size=%d, span_start=%lld, span_end=%lld, blocks=%lld, failed=%d", span->span.ino, i, fetch_span_pages_state_stripe_ix(st), st->start_offset, st->size, span->span.start, span->span.end, blocks, failed_blocks);
         }
         BUG_ON(list_empty(&st->blocks_pages[i]) && failed_blocks == 0);
 
@@ -349,7 +346,7 @@ static int fetch_span_blocks(struct fetch_span_pages_state* st) {
                 u32 page_ix = curr_off/PAGE_SIZE;
                 struct page* page = __page_cache_alloc(readahead_gfp_mask(st->mapping));
                 if (!page) {
-                    ternfs_warn("couldn't alocate page at index %d", page_ix);
+                    ternfs_warn("file=%016llx couldn't allocate page at index %d, block %d, stripe %d", span->span.ino, page_ix, i, fetch_span_pages_state_stripe_ix(st));
                     atomic_set(&st->last_block_err, -ENOMEM);
                     put_pages_list(&st->blocks_pages[i]);
                     return -ENOMEM;
@@ -368,7 +365,7 @@ static int fetch_span_blocks(struct fetch_span_pages_state* st) {
             if (i < D && curr_off < span->span.end) {
                 int have_pages = try_fill_from_page_cache(st->mapping, &st->blocks_pages[i], curr_off/PAGE_SIZE, st->size/PAGE_SIZE);
                 if (have_pages == st->size/PAGE_SIZE && curr_off + st->size <= st->block_span->span.end) {
-                    ternfs_info("found all pages in cache block %d, stripe %d", i, fetch_span_pages_state_stripe_ix(st));
+                    ternfs_debug("file=%016llx found all pages in cache block %d, stripe %d", span->span.ino, i, fetch_span_pages_state_stripe_ix(st));
                     while (unlikely(!atomic64_try_cmpxchg(&st->blocks, &blocks, SUCCEEDED_SET(DOWNLOADING_UNSET(blocks, i), i)))) {}
                     continue;
                 }
@@ -376,6 +373,7 @@ static int fetch_span_blocks(struct fetch_span_pages_state* st) {
         }
 
         hold_fetch_span_pages(st);
+        trace_eggsfs_fetch_block(span->span.ino, block->id, i, fetch_span_pages_state_stripe_ix(st), TERNFS_FETCH_BLOCK_START, 0);
         ternfs_debug("block start st=%p block_service=%016llx block_id=%016llx", st, block->id, block->id);
         // Fetches a single cell from the block
         int block_err = ternfs_fetch_block_pages_with_crc(
@@ -387,12 +385,12 @@ static int fetch_span_blocks(struct fetch_span_pages_state* st) {
             BUG_ON(list_empty(&st->blocks_pages[i]));
             atomic_set(&st->last_block_err, block_err);
             put_fetch_span_pages(st);
-            ternfs_info("loading block %d failed " LOG_STR, i, LOG_ARGS);
+            ternfs_debug("loading block %d failed " LOG_STR, i, LOG_ARGS);
 
             // Downloading some block failed, all blocks + parity will be needed for RS recovery.
             fetch_span_pages_state_request_full_fetch(st, i);
 
-            //fetch_stripe_trace(st, TERNFS_FETCH_STRIPE_BLOCK_DONE, i, block_err);
+            trace_eggsfs_fetch_block(span->span.ino, block->id, i, fetch_span_pages_state_stripe_ix(st), TERNFS_FETCH_BLOCK_FAIL, block_err);
             // mark it as failed and not downloading
             blocks = atomic64_read(&st->blocks);
             while (unlikely(!atomic64_try_cmpxchg(&st->blocks, &blocks, FAILED_SET(DOWNLOADING_UNSET(blocks, i), i)))) {}
@@ -427,8 +425,6 @@ static void span_block_done(void* data, u64 block_id, struct list_head* pages, i
         st, i, block_id, span->span.ino, span->span.start, st->start_offset, st->size, D, P, err
     );
 
-    //fetch_stripe_trace(st, TERNFS_FETCH_STRIPE_BLOCK_DONE, i, err);
-
     bool finished = false;
     // we reuse the supplied pages, move them back to reuse for fetching and
     // RS recovery if needed.
@@ -447,7 +443,9 @@ static void span_block_done(void* data, u64 block_id, struct list_head* pages, i
 retry:
     if (err) {
         s64 blocks = atomic64_read(&st->blocks);
-        ternfs_info("fetching block %016llx (index:%d, D=%d, P=%d, blocks:%lld) in file %016llx failed: %d", block_id, i, D, P, blocks, span->span.ino, err);
+        trace_eggsfs_fetch_block(span->span.ino, block_id, i, fetch_span_pages_state_stripe_ix(st),
+            err == TERNFS_ERR_BAD_BLOCK_CRC ? TERNFS_FETCH_BLOCK_CRC_FAIL : TERNFS_FETCH_BLOCK_FAIL, err);
+        ternfs_debug("file=%016llx fetching block %016llx (index=%d, D=%d, P=%d, blocks=%lld) failed: %d", span->span.ino, block_id, i, D, P, blocks, err);
         atomic_set(&st->last_block_err, err);
         // it failed, try to restore order
         // mark it as failed and not downloading
@@ -484,6 +482,7 @@ retry:
             }
             block_offset += PAGE_SIZE;
         }
+        trace_eggsfs_fetch_block(span->span.ino, block_id, i, fetch_span_pages_state_stripe_ix(st), TERNFS_FETCH_BLOCK_DONE, 0);
         while (unlikely(!atomic64_try_cmpxchg(&st->blocks, &blocks, SUCCEEDED_SET(DOWNLOADING_UNSET(blocks, i), i)))) {}
         finished = __builtin_popcountll(SUCCEEDED_GET(SUCCEEDED_SET(blocks, i))) == fetch_span_pages_state_need_blocks(st); // blocks = last old one, we need to reapply
     }
@@ -494,7 +493,6 @@ retry:
         // if we have no errors
         err = atomic_read(&st->err);
         if (err == 0) { store_block_pages(st); }
-        //fetch_stripe_trace(st, TERNFS_FETCH_STRIPE_END, -1, err);
         // Wake up waiters. The trace above needs to happen before because it
         // references the stripe. If the caller is allowed to continue,
         // the stripe may get reclaimed and it results in null pointer deref.
@@ -516,13 +514,16 @@ int ternfs_span_get_pages(struct ternfs_block_span* block_span, struct address_s
     int err;
 
     if (list_empty(pages)) {
-        ternfs_warn("called with empty list of pages for file %016llx", block_span->span.ino);
+        ternfs_error("file=%016llx called with empty list of pages", block_span->span.ino);
         return -EIO;
     }
 
     loff_t off_start = page_offset(lru_to_page_impl(pages));
     unsigned long page_ix;
     unsigned long first_page_index = page_index_impl(lru_to_page_impl(pages));
+
+    trace_eggsfs_span_get_pages_enter(block_span->span.ino, off_start, nr_pages);
+
     // Work out start and end index for each block we need to fetch.
     loff_t curr_off = off_start;
     u64 span_offset = off_start - block_span->span.start;
@@ -542,7 +543,7 @@ int ternfs_span_get_pages(struct ternfs_block_span* block_span, struct address_s
     LIST_HEAD(zero_pages);
     unsigned num_zero_pages = min(nr_pages - span_pages, span_zero_pages);
     if (num_zero_pages > 0)
-        ternfs_info("zero_pages:%d, num_pages:%d, span_pages:%d, span->start=%lld, span->end=%lld, stripe_size=%d, num_stripes=%d, diff=%lld", num_zero_pages, nr_pages, span_pages, block_span->span.start, block_span->span.end, stripe_size, block_span->num_stripes, block_span->span.end - span_physical_end);
+        ternfs_debug("file=%016llx zero_pages=%d nr_pages=%d span_pages=%d span_start=%lld span_end=%lld stripe_size=%d num_stripes=%d diff=%lld", block_span->span.ino, num_zero_pages, nr_pages, span_pages, block_span->span.start, block_span->span.end, stripe_size, block_span->num_stripes, block_span->span.end - span_physical_end);
 
     unsigned remaining_pages = span_pages;
     struct fetch_span_pages_state *fetches[TERNFS_MAX_STRIPES];
@@ -596,7 +597,7 @@ int ternfs_span_get_pages(struct ternfs_block_span* block_span, struct address_s
                 struct page *page = lru_to_page_impl(pages);
                 if (page != NULL) {
                     if(page->index != page_ix) {
-                        ternfs_warn("adding stripe_ix %d, block_ix=%d page_ix: have %ld, want %ld, curr_off=%lld, block_off=%d", stripe_ix, curr_block_ix, page->index, page_ix, curr_off, next_block_offset);
+                        ternfs_error("file=%016llx stripe=%d block=%d page_ix: have %ld want %ld curr_off=%lld block_off=%d", block_span->span.ino, stripe_ix, curr_block_ix, page->index, page_ix, curr_off, next_block_offset);
                         BUG();
                     }
                     list_del(&page->lru);
@@ -661,7 +662,7 @@ int ternfs_span_get_pages(struct ternfs_block_span* block_span, struct address_s
                 st->size = page_count * PAGE_SIZE;
             } else {
                 if (st->size != page_count * PAGE_SIZE) {
-                    ternfs_warn("read_size: %d, new: %ld", st->size, page_count * PAGE_SIZE);
+                    ternfs_error("file=%016llx stripe=%d block=%d read_size mismatch: existing=%d new=%ld", block_span->span.ino, stripe_ix, curr_block_ix, st->size, page_count * PAGE_SIZE);
                     BUG();
                 }
             }
@@ -741,9 +742,7 @@ int ternfs_span_get_pages(struct ternfs_block_span* block_span, struct address_s
                 struct page *page = list_first_entry_or_null(&st->blocks_pages[curr_block_ix], struct page, lru);
                 BUG_ON(page == NULL);
                 if (page->index != page_ix) {
-                    ternfs_debug("first_page_index:%ld start_block=%d, end_block=%d, D=%d, stripe_offset=%lld, span_offset=%lld", first_page_index, atomic_read(&st->start_block), atomic_read(&st->end_block), D, stripe_offset, span_offset);
-                    ternfs_info("ino:%016llx, curr_block_ix=%d, read_size=%d, curr_size=%d", block_span->span.ino, curr_block_ix, st->size, curr_size);
-                    ternfs_warn("block_ix:%d curr_off:%lld want:%ld have:%ld remaining:%d", curr_block_ix, curr_off, page->index, page_ix, remaining_pages);
+                    ternfs_error("file=%016llx block=%d stripe=%d page index mismatch: have=%ld want=%ld curr_off=%lld read_size=%d curr_size=%d remaining=%d start_block=%d end_block=%d D=%d", block_span->span.ino, curr_block_ix, stripe_ix, page->index, page_ix, curr_off, st->size, curr_size, remaining_pages, atomic_read(&st->start_block), atomic_read(&st->end_block), D);
                     BUG();
                 }
                 list_del(&page->lru);
@@ -765,7 +764,7 @@ int ternfs_span_get_pages(struct ternfs_block_span* block_span, struct address_s
             // balance. This is one of the checks to make sure they do.
             BUG_ON(remaining_pages < 0);
             if(!list_empty(&st->blocks_pages[curr_block_ix])) {
-                ternfs_warn("list not empty at block:%d, stripe_ix:%d, remaining=%d", curr_block_ix, stripe_ix, remaining_pages);
+                ternfs_error("file=%016llx list not empty at block=%d stripe=%d remaining=%d", block_span->span.ino, curr_block_ix, stripe_ix, remaining_pages);
                 BUG();
             }
         }
@@ -785,6 +784,7 @@ int ternfs_span_get_pages(struct ternfs_block_span* block_span, struct address_s
     }
 
 out:
+    trace_eggsfs_span_get_pages_exit(block_span->span.ino, off_start, nr_pages, err);
     for (i = 0; i < block_span->num_stripes; i++) {
         if (fetches[i] != NULL) put_fetch_span_pages(fetches[i]);
     }
@@ -855,12 +855,12 @@ static void file_spans_cb_span(void* data, u64 offset, u32 size, u32 crc, u8 sto
     struct get_span_ctx* ctx = (struct get_span_ctx*)data;
     if (ctx->err) { return; }
     if (offset % PAGE_SIZE) {
-        ternfs_warn("span start is not a multiple of page size %llu", offset);
+        ternfs_error("file=%016llx offset=%llu span start is not a multiple of page size", ctx->ino, offset);
         ctx->err = -EIO;
         return;
     }
     if (cell_size % PAGE_SIZE) {
-        ternfs_warn("cell size not multiple of page size %u", cell_size);
+        ternfs_error("file=%016llx offset=%llu cell_size=%u not multiple of page size", ctx->ino, offset, cell_size);
         ctx->err = -EIO;
         return;
     }
@@ -870,7 +870,7 @@ static void file_spans_cb_span(void* data, u64 offset, u32 size, u32 crc, u8 sto
     atomic_set(&span->span.refcount, 1);
 
     if (ternfs_data_blocks(parity) > TERNFS_MAX_DATA || ternfs_parity_blocks(parity) > TERNFS_MAX_PARITY) {
-        ternfs_warn("D=%d > %d || P=%d > %d", ternfs_data_blocks(parity), TERNFS_MAX_DATA, ternfs_data_blocks(parity), TERNFS_MAX_PARITY);
+        ternfs_error("file=%016llx offset=%llu invalid parity config D=%d (max=%d) P=%d (max=%d)", ctx->ino, offset, ternfs_data_blocks(parity), TERNFS_MAX_DATA, ternfs_parity_blocks(parity), TERNFS_MAX_PARITY);
         ctx->err = -EIO;
         ternfs_put_span(&span->span);
         return;
@@ -919,7 +919,7 @@ static void file_spans_cb_inline_span(void* data, u64 offset, u32 size, u8 len, 
     if (ctx->err) { return; }
 
     if (offset % PAGE_SIZE) {
-        ternfs_warn("span start is not a multiple of page size %llu", offset);
+        ternfs_error("file=%016llx offset=%llu inline span start is not a multiple of page size", ctx->ino, offset);
         ctx->err = -EIO;
         return;
     }
@@ -993,7 +993,7 @@ retry:
     ));
     err = err ?: ctx.err;
     if (unlikely(err)) {
-        ternfs_debug("failed to get file spans at %llu err=%d", offset, err);
+        ternfs_warn("file=%016llx failed to get file spans at offset=%llu err=%d", spans->__ino, offset, err);
         for (;;) { // free all the spans we just got
             struct rb_node* node = rb_first(&ctx.spans);
             if (node == NULL) { break; }
