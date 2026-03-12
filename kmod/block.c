@@ -256,9 +256,15 @@ static void block_socket_log_req_completion(struct block_socket* socket, struct 
     u64 waiting = reading_started - waiting_started;
     u64 reading = completed - reading_started;
 
-    ternfs_warn("dropped block request to %pI4:%d (err=%d) last_state=%d left_to_read=%d left_to_write=%d elapsed=%llums [queued=%llums, writing=%llums, waiting=%llums, reading=%llums]",
-        &socket->addr.sin_addr, ntohs(socket->addr.sin_port), err, state, req->left_to_read, req->left_to_write, jiffies64_to_msecs(total),
-        jiffies64_to_msecs(queued), jiffies64_to_msecs(writing), jiffies64_to_msecs(waiting), jiffies64_to_msecs(reading));
+    if (err) {
+        ternfs_warn("dropped block request to %pI4:%d (err=%d) last_state=%d left_to_read=%d left_to_write=%d elapsed=%llums [queued=%llums, writing=%llums, waiting=%llums, reading=%llums]",
+            &socket->addr.sin_addr, ntohs(socket->addr.sin_port), err, state, req->left_to_read, req->left_to_write, jiffies64_to_msecs(total),
+            jiffies64_to_msecs(queued), jiffies64_to_msecs(writing), jiffies64_to_msecs(waiting), jiffies64_to_msecs(reading));
+    } else {
+        ternfs_info("dropped slow block request to %pI4:%d last_state=%d left_to_read=%d left_to_write=%d elapsed=%llums [queued=%llums, writing=%llums, waiting=%llums, reading=%llums]",
+            &socket->addr.sin_addr, ntohs(socket->addr.sin_port), state, req->left_to_read, req->left_to_write, jiffies64_to_msecs(total),
+            jiffies64_to_msecs(queued), jiffies64_to_msecs(writing), jiffies64_to_msecs(waiting), jiffies64_to_msecs(reading));
+    }
 }
 
 
@@ -941,7 +947,7 @@ retry_get_socket:
     return 0;
 
 out_err:
-    ternfs_info("couldn't start block request, err=%d", err);
+    ternfs_warn("couldn't start block request to bs=%016llx, err=%d", bs->id, err);
     return err;
 }
 
@@ -1084,7 +1090,7 @@ static int fetch_receive_single_req(
 
         // Protocol check
         if (unlikely(le32_to_cpu(req->header.data.protocol) != TERNFS_BLOCKS_RESP_PROTOCOL_VERSION)) {
-            ternfs_info("bad blocks resp protocol, expected %*pE, got %*pE", 4, &TERNFS_BLOCKS_RESP_PROTOCOL_VERSION, 4, &req->header.data.protocol);
+            ternfs_error("bad blocks resp protocol, expected %*pE, got %*pE", 4, &TERNFS_BLOCKS_RESP_PROTOCOL_VERSION, 4, &req->header.data.protocol);
             return ternfs_error_to_linux(TERNFS_ERR_MALFORMED_RESPONSE);
         }
 
@@ -1301,7 +1307,7 @@ out_err_pages:
     }
     kmem_cache_free(fetch_request_cachep, req);
 out_err:
-    ternfs_info("couldn't start fetch block request, err=%d", err);
+    ternfs_warn("couldn't start fetch block request, bs=%016llx block_id=%016llx err=%d", bs->id, block_id, err);
     return err;
 }
 
@@ -1342,6 +1348,9 @@ struct write_request {
 
 static void write_block_complete(struct block_request* breq) {
     struct write_request* req = get_write_request(breq);
+
+    trace_eggsfs_block_write(req->block_service_id, req->block_id, TERNFS_BLOCK_WRITE_DONE,
+        req->size, 0, 0, 0, atomic_read(&req->breq.err));
 
     // might be that we didn't consume all the pages -- in which case we need
     // to keep rotating until we're there.
@@ -1392,7 +1401,14 @@ static int write_block_write_req(struct block_socket* socket, struct block_reque
     u32 write_req_written0 = write_size - breq->left_to_write;
     u32 write_req_written = write_req_written0;
 
-#define BLOCK_WRITE_EXIT return write_req_written - write_req_written0;
+    trace_eggsfs_block_write(req->block_service_id, req->block_id, TERNFS_BLOCK_WRITE_WRITE_ENTER,
+        req->size, (u8)min_t(u32, write_req_written, 255), write_req_written, 0, 0);
+
+#define BLOCK_WRITE_EXIT do { \
+        trace_eggsfs_block_write(req->block_service_id, req->block_id, TERNFS_BLOCK_WRITE_WRITE_EXIT, \
+            req->size, (u8)min_t(u32, write_req_written, 255), write_req_written, 0, 0); \
+        return write_req_written - write_req_written0; \
+    } while (0);
 
     // Still writing request -- we just serialize the buffer each time and send it out
     while (write_req_written < TERNFS_BLOCKS_REQ_HEADER_SIZE+TERNFS_WRITE_BLOCK_REQ_SIZE) {
@@ -1461,6 +1477,8 @@ static int write_block_write_req(struct block_socket* socket, struct block_reque
 out_err:
     ternfs_debug("block write failed err=%d", err);
     BUG_ON(err == 0);
+    trace_eggsfs_block_write(req->block_service_id, req->block_id, TERNFS_BLOCK_WRITE_WRITE_EXIT,
+        req->size, (u8)min_t(u32, write_req_written, 255), write_req_written, 0, err);
     atomic_cmpxchg(&breq->err, 0, err);
     return err;
 
@@ -1482,11 +1500,17 @@ static int write_block_receive_single_req(
     size_t len = len0;
     u32 write_resp_read = (TERNFS_BLOCKS_RESP_HEADER_SIZE + TERNFS_WRITE_BLOCK_RESP_SIZE) - req->breq.left_to_read;
 
+    trace_eggsfs_block_write(req->block_service_id, req->block_id, TERNFS_BLOCK_WRITE_RECV_ENTER,
+        req->size, 0, 0, (u8)write_resp_read, 0);
+
 #define BLOCK_WRITE_EXIT(i) do { \
-        if (i < 0) { \
-            atomic_cmpxchg(&req->breq.err, 0, i); \
+        int __bwe_ret = (i); \
+        trace_eggsfs_block_write(req->block_service_id, req->block_id, TERNFS_BLOCK_WRITE_RECV_EXIT, \
+            req->size, 0, 0, (u8)write_resp_read, __bwe_ret < 0 ? __bwe_ret : 0); \
+        if (__bwe_ret < 0) { \
+            atomic_cmpxchg(&req->breq.err, 0, __bwe_ret); \
         } \
-        return i; \
+        return __bwe_ret; \
     } while (0)
 
     // Write resp
@@ -1509,7 +1533,7 @@ static int write_block_receive_single_req(
 
     // Protocol check
     if (unlikely(le32_to_cpu(req->write_resp.data.protocol) != TERNFS_BLOCKS_RESP_PROTOCOL_VERSION)) {
-        ternfs_info("bad blocks resp protocol, expected %*pE, got %*pE", 4, &TERNFS_BLOCKS_RESP_PROTOCOL_VERSION, 4, &req->write_resp.data.protocol);
+        ternfs_error("bad blocks resp protocol, expected %*pE, got %*pE", 4, &TERNFS_BLOCKS_RESP_PROTOCOL_VERSION, 4, &req->write_resp.data.protocol);
         BLOCK_WRITE_EXIT(ternfs_error_to_linux(TERNFS_ERR_MALFORMED_RESPONSE));
     }
 
@@ -1519,7 +1543,7 @@ static int write_block_receive_single_req(
         int read = HEADER_COPY(req->write_resp.buf + write_resp_read, error_left);
         error_left -= read;
         if (error_left > 0) { BLOCK_WRITE_EXIT(len0-len); }
-        ternfs_info("writing block to bs=%016llx block_id=%016llx failed=%u", req->block_service_id, req->block_id, req->write_resp.data.error);
+        ternfs_warn("writing block to bs=%016llx block_id=%016llx failed=%u", req->block_service_id, req->block_id, req->write_resp.data.error);
         // We immediately start writing, so any error here means that the socket is kaput
         int err = ternfs_error_to_linux(le16_to_cpu(req->write_resp.data.error));
         BLOCK_WRITE_EXIT(err);
@@ -1564,6 +1588,8 @@ int ternfs_write_block(
 
     BUG_ON(list_empty(pages));
 
+    trace_eggsfs_block_write(bs->id, block_id, TERNFS_BLOCK_WRITE_START, size, 0, 0, 0, 0);
+
     // can't write
     if (unlikely(bs->flags & TERNFS_BLOCK_SERVICE_DONT_WRITE)) {
         ternfs_debug("could not write block given block flags %02x", bs->flags);
@@ -1596,13 +1622,14 @@ int ternfs_write_block(
         goto out_err_req;
     }
 
+    trace_eggsfs_block_write(bs->id, block_id, TERNFS_BLOCK_WRITE_QUEUED, size, 0, 0, 0, 0);
     return 0;
 
 out_err_req:
     list_replace_init(&req->pages, pages);
     kmem_cache_free(write_request_cachep, req);
 out_err:
-    ternfs_info("couldn't start write block request, err=%d", err);
+    ternfs_warn("couldn't start write block request, bs=%016llx block_id=%016llx err=%d", bs->id, block_id, err);
     return err;
 }
 

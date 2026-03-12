@@ -597,45 +597,6 @@ TRACE_EVENT(eggsfs_fetch_block,
     )
 );
 
-#if 0
-#define TERNFS_FETCH_BLOCK_SOCKET_START 0
-#define TERNFS_FETCH_BLOCK_SOCKET_BLOCK_START 1
-#define TERNFS_FETCH_BLOCK_SOCKET_BLOCK_DONE 2
-#define TERNFS_FETCH_BLOCK_SOCKET_END 3
-#define TERNFS_FETCH_BLOCK_SOCKET_FREE 4
-
-TRACE_EVENT(eggsfs_fetch_block_socket,
-    TP_PROTO(u32 ip, u16 port, u8 event, int err),
-    TP_ARGS(     ip,     port,    event,     err),
-
-    TP_STRUCT__entry(
-        __field(u32, ip)
-        __field(int, err)
-        __field(u16, port)
-        __field(u8, event)
-    ),
-    TP_fast_assign(
-        __entry->ip = ip;
-        __entry->err = err;
-        __entry->port = port;
-        __entry->event = event;
-    ),
-    TP_printk(
-        "ip=%08x port=%u event=%s err=%d",
-        __entry->ip, __entry->port,
-        __print_symbolic(
-            __entry->event,
-            { TERNFS_FETCH_STRIPE_START, "start" },
-            { TERNFS_FETCH_STRIPE_BLOCK_START, "block_start" },
-            { TERNFS_FETCH_STRIPE_BLOCK_DONE, "block_done" },
-            { TERNFS_FETCH_STRIPE_END, "end" },
-            { TERNFS_FETCH_STRIPE_FREE, "free" }
-        ),
-        __entry->block, __entry->err
-    )
-)
-#endif
-
 #endif /* _TRACE_EGGFS_H */
 
 #undef TRACE_INCLUDE_PATH
