@@ -276,7 +276,7 @@ int ternfs_rmdir(struct inode* dir, struct dentry* dentry) {
     BUG_ON(!dentry->d_inode);
 
     if (unlikely(dentry->d_name.len > TERNFS_MAX_FILENAME)) {
-        pr_err("ternfs: ternfs_rmdir dir=%lu dentry=%pd exceed max filename length %d\n", dir->i_ino, dentry, TERNFS_MAX_FILENAME);
+        ternfs_error("dir=%016lx dentry=%pd exceeds max filename length=%d", dir->i_ino, dentry, TERNFS_MAX_FILENAME);
         err = -ENAMETOOLONG;
         goto out_err;
     }
@@ -360,7 +360,7 @@ int ternfs_unlink(struct inode* dir, struct dentry* dentry) {
     BUG_ON(!dentry->d_inode);
 
     if (unlikely(dentry->d_name.len > TERNFS_MAX_FILENAME)) {
-        pr_err("ternfs: ternfs_unlink dir=%lu dentry=%pd exceed max filename length %d\n", dir->i_ino, dentry, TERNFS_MAX_FILENAME);
+        ternfs_error("dir=%016lx dentry=%pd exceeds max filename length=%d", dir->i_ino, dentry, TERNFS_MAX_FILENAME);
         err = -ENAMETOOLONG;
         goto out_err;
     }
@@ -398,7 +398,7 @@ int COMPAT_FUNC_UNS_IMP(ternfs_rename, struct inode* old_dir, struct dentry* old
     trace_eggsfs_vfs_rename_enter(old_dir, old_dentry, new_dir, new_dentry);
 
     if (!old_dentry->d_inode) { // TODO can this ever happen?
-        ternfs_warn("got no inodes for old dentry!");
+        ternfs_error("old_dir=%016lx got no inode for old dentry", old_dir->i_ino);
         return -EIO;
     }
     struct ternfs_inode* enode = TERNFS_I(old_dentry->d_inode);
