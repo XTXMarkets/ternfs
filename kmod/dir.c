@@ -158,7 +158,7 @@ again: // progress: whoever wins the lock either get pages or fails
 out_err:
     kmem_cache_free(ternfs_readdir_ctx_cachep, ctx);
     trace_eggsfs_vfs_opendir_exit(inode, err);
-    ternfs_debug("err=%d", err);
+    ternfs_info("dir=%016lx opendir failed err=%d", inode->i_ino, err);
     return err;
 }
 
@@ -169,7 +169,7 @@ static void update_dcache(struct dentry* parent, u64 dir_seqno, const char* name
     DECLARE_WAIT_QUEUE_HEAD_ONSTACK(wq);
     struct inode* parent_inode = parent->d_inode;
     if (unlikely(parent_inode == NULL)) { // TODO can this ever happen?
-        ternfs_warn("got NULL in dentry parent (ino %016llx)", ino);
+        ternfs_error("dir=%016llx got NULL dentry parent", ino);
         return;
     }
 
@@ -224,7 +224,7 @@ out:
     if (enode) {
         int err = ternfs_start_async_getattr(enode);
         if (err < 0 && err != -ERESTARTSYS) {
-            ternfs_warn("could not send async getattr: %d", err);
+            ternfs_warn("dir=%016lx could not send async getattr err=%d", parent_inode->i_ino, err);
         }
     }
     dput(dentry);
@@ -340,7 +340,7 @@ out_err:
     put_pages_list(&ctx.dirents->pages);
 out_err_dirents:
     kmem_cache_free(ternfs_dirents_cachep, dirents);
-    ternfs_info("err=%d", err);
+    ternfs_warn("dir=%016lx readdir failed err=%d", enode->inode.i_ino, err);
     return ERR_PTR(err);
 };
 
@@ -364,7 +364,7 @@ static int ternfs_dir_read(struct file* filp, struct dir_context* dctx) {
     // if they're present). So we accept it.
 
     if (dctx->pos < 0) {
-        ternfs_warn("got negative pos %lld, this should never happen", dctx->pos);
+        ternfs_error("got negative pos=%lld, this should never happen", dctx->pos);
         return -EIO;
     }
 
