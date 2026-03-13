@@ -354,6 +354,79 @@ TRACE_EVENT(eggsfs_dentry_handle_enoent,
     TP_printk("ino=%lld name=%s/%s", __entry->ino, __get_str(parent), __get_str(name))
 );
 
+// file.c
+TRACE_EVENT(eggsfs_file_write_enter,
+    TP_PROTO(u64 file_id, loff_t offset, size_t count),
+    TP_ARGS(     file_id,      offset,        count),
+
+    TP_STRUCT__entry(
+        __field(u64, file_id)
+        __field(loff_t, offset)
+        __field(size_t, count)
+    ),
+    TP_fast_assign(
+        __entry->file_id = file_id;
+        __entry->offset = offset;
+        __entry->count = count;
+    ),
+    TP_printk("file_id=%016llx offset=%lld count=%zu", __entry->file_id, __entry->offset, __entry->count)
+);
+
+TRACE_EVENT(eggsfs_file_write_exit,
+    TP_PROTO(u64 file_id, loff_t offset, ssize_t written, int err),
+    TP_ARGS(     file_id,      offset,          written,      err),
+
+    TP_STRUCT__entry(
+        __field(u64, file_id)
+        __field(loff_t, offset)
+        __field(ssize_t, written)
+        __field(int, err)
+    ),
+    TP_fast_assign(
+        __entry->file_id = file_id;
+        __entry->offset = offset;
+        __entry->written = written;
+        __entry->err = err;
+    ),
+    TP_printk("file_id=%016llx offset=%lld written=%zd err=%d", __entry->file_id, __entry->offset, __entry->written, __entry->err)
+);
+
+TRACE_EVENT(eggsfs_file_read_enter,
+    TP_PROTO(u64 file_id, loff_t offset, unsigned int nr_pages),
+    TP_ARGS(     file_id,      offset,                nr_pages),
+
+    TP_STRUCT__entry(
+        __field(u64, file_id)
+        __field(loff_t, offset)
+        __field(unsigned int, nr_pages)
+    ),
+    TP_fast_assign(
+        __entry->file_id = file_id;
+        __entry->offset = offset;
+        __entry->nr_pages = nr_pages;
+    ),
+    TP_printk("file_id=%016llx offset=%lld nr_pages=%u", __entry->file_id, __entry->offset, __entry->nr_pages)
+);
+
+TRACE_EVENT(eggsfs_file_read_exit,
+    TP_PROTO(u64 file_id, loff_t offset, unsigned int nr_pages, int err),
+    TP_ARGS(     file_id,      offset,                nr_pages,     err),
+
+    TP_STRUCT__entry(
+        __field(u64, file_id)
+        __field(loff_t, offset)
+        __field(unsigned int, nr_pages)
+        __field(int, err)
+    ),
+    TP_fast_assign(
+        __entry->file_id = file_id;
+        __entry->offset = offset;
+        __entry->nr_pages = nr_pages;
+        __entry->err = err;
+    ),
+    TP_printk("file_id=%016llx offset=%lld nr_pages=%u err=%d", __entry->file_id, __entry->offset, __entry->nr_pages, __entry->err)
+);
+
 #define TERNFS_BLOCK_WRITE_START 7
 #define TERNFS_BLOCK_WRITE_QUEUED 0
 #define TERNFS_BLOCK_WRITE_RECV_ENTER 1

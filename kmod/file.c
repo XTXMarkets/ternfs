@@ -246,7 +246,7 @@ static int move_span_and_restart(struct ternfs_transient_span* span) {
     return 0;
 
 out_err:
-    ternfs_info("moving span failed %d", err);
+    ternfs_warn("file=%016lx moving span failed err=%d", enode->inode.i_ino, err);
     return err;
 }
 
@@ -258,7 +258,7 @@ static int retry_after_block_error(struct ternfs_transient_span* span) {
     for (i = 0; i < B; i++) {
         if (span->blocks_errs[i]) {
             if (err) {
-                ternfs_info("dropping err %d, since we already returned %d", span->blocks_errs[i], err);
+                ternfs_debug("dropping err=%d, since we already returned err=%d", span->blocks_errs[i], err);
             } else {
                 err = span->blocks_errs[i];
             }
@@ -267,10 +267,10 @@ static int retry_after_block_error(struct ternfs_transient_span* span) {
     BUG_ON(err == 0);
 
     if (span->attempts < ternfs_max_write_span_attempts) {
-        ternfs_info("writing span failed with err %d after %d attempts, will try again", err, span->attempts);
+        ternfs_warn("file=%016lx writing span failed err=%d attempts=%d, will try again", span->enode->inode.i_ino, err, span->attempts);
         return move_span_and_restart(span);
     } else {
-        ternfs_warn("writing span failed with err %d after %d attempts, giving up", err, span->attempts);
+        ternfs_warn("file=%016lx writing span failed err=%d attempts=%d, giving up", span->enode->inode.i_ino, err, span->attempts);
         return err;
     }
 }
@@ -371,7 +371,7 @@ static int add_span_initiate(struct ternfs_transient_span* span) {
         if (span->blocks_errs[i]) {
             if (span->blacklist_length == TERNFS_MAX_BLACKLIST_LENGTH) {
                 // it's ok to try again, we have limit on number of attempts
-                ternfs_warn("span initiate blacklist full, dropping other errored out blocks");
+                ternfs_warn("file=%016lx span initiate blacklist full, dropping other errored out blocks", enode->inode.i_ino);
                 break;
             }
             static_assert(sizeof(span->blacklisted_failure_domains[span->blacklist_length]) == sizeof(span->failure_domains[i]));
@@ -511,7 +511,7 @@ static int compute_span_parameters(
         BUG_ON(span_size > max_size);
     }
     if (unlikely(ternfs_data_blocks(parity) > TERNFS_MAX_DATA || ternfs_parity_blocks(parity) > TERNFS_MAX_PARITY)) {
-        ternfs_info("got asked to write with parity (%d,%d), which is beyond max blocks (%d,%d)", ternfs_data_blocks(parity), ternfs_parity_blocks(parity), TERNFS_MAX_DATA, TERNFS_MAX_PARITY);
+        ternfs_error("file=%016lx got asked to write with parity=(%d,%d), beyond max blocks=(%d,%d)", span->enode->inode.i_ino, ternfs_data_blocks(parity), ternfs_parity_blocks(parity), TERNFS_MAX_DATA, TERNFS_MAX_PARITY);
         return -EINVAL;
     }
 
@@ -747,7 +747,7 @@ static int start_flushing(struct ternfs_inode* enode, bool non_blocking) {
 
 out:
     if (err) {
-        ternfs_info("attempting to flush failed permanently, err=%d ino=%016lx", err, enode->inode.i_ino);
+        ternfs_warn("file=%016lx flush failed permanently err=%d", enode->inode.i_ino, err);
         atomic_cmpxchg(&enode->file.transient_err, 0, err);
     }
     // we don't need this anymore (the requests might though)
@@ -766,6 +766,7 @@ ssize_t ternfs_file_write_internal(struct ternfs_inode* enode, int flags, loff_t
 
     loff_t ppos_before = *ppos;
 
+    trace_eggsfs_file_write_enter(enode->inode.i_ino, *ppos, count);
     ternfs_debug("enode=%p, ino=%lu, count=%lu, size=%lld, *ppos=%lld status=%d", enode, enode->inode.i_ino, count, enode->inode.i_size, *ppos, enode->file.status);
 
     if (enode->file.status != TERNFS_FILE_STATUS_WRITING) {
@@ -861,6 +862,7 @@ ssize_t ternfs_file_write_internal(struct ternfs_inode* enode, int flags, loff_t
 out:
     written = *ppos - ppos_before;
     ternfs_debug("written=%d", written);
+    trace_eggsfs_file_write_exit(enode->inode.i_ino, ppos_before, written, 0);
     return written;
 
 out_err_permanent:
@@ -875,6 +877,7 @@ out_err:
         // fail early.
         goto out;
     }
+    trace_eggsfs_file_write_exit(enode->inode.i_ino, ppos_before, 0, err);
     return err;
 }
 
@@ -1182,7 +1185,7 @@ static void process_file_pages(struct address_space *mapping, struct list_head *
         }
         list_del(&page->lru);
         u32 refct = atomic_read(&page->_refcount);
-        if(refct != 1) ternfs_warn("page refcount=%d, expected 1 at index %ld, pages=%d", refct, page->index, nr_pages);
+        if(refct != 1) ternfs_error("page refcount=%d expected=1 index=%ld nr_pages=%d", refct, page->index, nr_pages);
         err = add_to_page_cache_lru(page,
                         mapping,
                         page->index,
@@ -1204,6 +1207,7 @@ static int file_readpages(struct file *filp, struct address_space *mapping, stru
     struct inode* inode = file_inode(filp);
     struct ternfs_inode* enode = TERNFS_I(inode);
     loff_t off = page_offset(lru_to_page(pages));
+    trace_eggsfs_file_read_enter(enode->inode.i_ino, off, nr_pages);
     ternfs_debug("enode=%p, ino=%ld, offset=%lld, nr_pages=%u", enode, inode->i_ino, off, nr_pages);
 
     struct ternfs_span* span = NULL;
@@ -1219,7 +1223,7 @@ static int file_readpages(struct file *filp, struct address_space *mapping, stru
 
     span = ternfs_get_span((struct ternfs_fs_info*)enode->inode.i_sb->s_fs_info, &enode->file.spans, off);
     if (IS_ERR(span)) {
-        ternfs_warn("ternfs_get_span_failed at pos %llu", off);
+        ternfs_warn("file=%016lx get_span failed at offset=%lld", enode->inode.i_ino, off);
         err = PTR_ERR(span);
         span = NULL;
         goto out_err;
@@ -1245,7 +1249,7 @@ static int file_readpages(struct file *filp, struct address_space *mapping, stru
         struct ternfs_block_span* block_span = TERNFS_BLOCK_SPAN(span);
         err = ternfs_span_get_pages(block_span, mapping, pages, nr_pages, &extra_pages);
         if (err) {
-            ternfs_warn("readahead of %d pages at off=%lld in file %016lx failed with error %d", nr_pages, off, enode->inode.i_ino, err);
+            ternfs_warn("file=%016lx readahead of nr_pages=%d at offset=%lld failed err=%d", enode->inode.i_ino, nr_pages, off, err);
             put_pages_list(&extra_pages);
             goto out_err;
         }
@@ -1254,6 +1258,7 @@ out:
     ternfs_put_span(span);
     process_file_pages(mapping, pages, nr_pages);
     process_file_pages(mapping, &extra_pages, 0);
+    trace_eggsfs_file_read_exit(enode->inode.i_ino, off, nr_pages, 0);
     return 0;
 
 out_err:
@@ -1261,6 +1266,7 @@ out_err:
         ternfs_put_span(span);
     }
     put_pages_list(pages);
+    trace_eggsfs_file_read_exit(enode->inode.i_ino, off, nr_pages, err);
     return err;
 }
 #endif
@@ -1270,6 +1276,8 @@ static int file_readpage(struct file* filp, struct page* page) {
     struct ternfs_inode* enode = TERNFS_I(inode);
     u64 off = page_offset(page);
     int err = 0;
+
+    trace_eggsfs_file_read_enter(enode->inode.i_ino, off, 1);
 
     struct ternfs_span* span = NULL;
 
@@ -1287,14 +1295,14 @@ retry:
     }
     span = ternfs_get_span((struct ternfs_fs_info*)enode->inode.i_sb->s_fs_info, &enode->file.spans, off);
     if (IS_ERR(span)) {
-        ternfs_debug("ternfs_get_span_failed at pos %llu", off);
+        ternfs_debug("file=%016lx get_span failed at offset=%llu", enode->inode.i_ino, off);
         err = PTR_ERR(span);
         span = NULL;
         goto out;
     }
 
     if (span->start%PAGE_SIZE != 0) {
-        ternfs_warn("span start is not a multiple of page size %llu", span->start);
+        ternfs_error("file=%016lx offset=%llu span start not a multiple of page size", enode->inode.i_ino, span->start);
         span = NULL;
         err = -EIO;
         goto out;
@@ -1312,7 +1320,7 @@ retry:
     } else {
         struct ternfs_block_span* block_span = TERNFS_BLOCK_SPAN(span);
         if (block_span->cell_size%PAGE_SIZE != 0) {
-            ternfs_warn("cell size not multiple of page size %u", block_span->cell_size);
+            ternfs_error("file=%016lx cell_size=%u not multiple of page size", enode->inode.i_ino, block_span->cell_size);
             err = -EIO;
             goto out;
         }
@@ -1333,13 +1341,13 @@ retry:
         if (err) {
             put_pages_list(&pages);
             struct timespec64 end_ts = ns_to_timespec64(ktime_get_real_ns());
-            ternfs_warn("reading page %lld in file %016lx failed with error %d", off, enode->inode.i_ino, err);
+            ternfs_warn("file=%016lx reading page at offset=%lld failed err=%d", enode->inode.i_ino, off, err);
             if ((end_ts.tv_sec - start_ts.tv_sec) > ternfs_file_io_timeout_sec) {
-                ternfs_warn("io timeout while reading page at off=%lld in file %016lx last error %d", off, enode->inode.i_ino, err);
+                ternfs_warn("file=%016lx io timeout reading page at offset=%lld err=%d", enode->inode.i_ino, off, err);
                 goto out;
             }
             if ((end_ts.tv_sec - last_span_refresh_ts.tv_sec) > ternfs_file_io_retry_refresh_span_interval_sec) {
-                ternfs_info("refreshing span %lld of file %016lx as the span structure or block service flags could have changed in the meantime", off, enode->inode.i_ino);
+                ternfs_debug("file=%016lx refreshing span at offset=%lld", enode->inode.i_ino, off);
                 ternfs_unlink_span(&enode->file.spans, span);
                 span = NULL; // unlink already reduced refcount
                 last_span_refresh_ts = end_ts;
@@ -1371,6 +1379,7 @@ out:
         ternfs_put_span(span);
     }
     unlock_page(page);
+    trace_eggsfs_file_read_exit(enode->inode.i_ino, off, 1, err);
     return err;
 }
 
@@ -1395,6 +1404,7 @@ static void file_readahead(struct readahead_control *rac)
     index = readahead_index(rac);
     off = index << PAGE_SHIFT;
 
+    trace_eggsfs_file_read_enter(enode->inode.i_ino, off, nr_pages);
     ternfs_debug("enode=%p, ino=%ld, index=%lu, offset=%lld, nr_pages=%u",
                  enode, inode->i_ino, index, off, nr_pages);
 
@@ -1424,7 +1434,7 @@ static void file_readahead(struct readahead_control *rac)
     // Get the span for this offset
     span = ternfs_get_span((struct ternfs_fs_info*)enode->inode.i_sb->s_fs_info, &enode->file.spans, off);
     if (IS_ERR(span)) {
-        ternfs_warn("ternfs_get_span_failed at pos %llu", off);
+        ternfs_warn("file=%016lx get_span failed at offset=%llu", enode->inode.i_ino, off);
         err = PTR_ERR(span);
         span = NULL;
         goto out_err;
@@ -1474,8 +1484,8 @@ static void file_readahead(struct readahead_control *rac)
         struct ternfs_block_span *block_span = TERNFS_BLOCK_SPAN(span);
         err = ternfs_span_get_pages(block_span, rac->mapping, &pages, pages_allocated, &extra_pages);
         if (err) {
-            ternfs_warn("readahead of %u pages at off=%lld in file %016lx failed with error %d",
-                       pages_allocated, off, enode->inode.i_ino, err);
+            ternfs_warn("file=%016lx readahead of nr_pages=%u at offset=%lld failed err=%d",
+                       enode->inode.i_ino, pages_allocated, off, err);
             put_pages_list(&extra_pages);
             goto out_err;
         }
@@ -1498,6 +1508,7 @@ out_process:
     // Process any extra pages
     process_file_pages(rac->mapping, &extra_pages, 0);
     put_pages_list(&pages);
+    trace_eggsfs_file_read_exit(enode->inode.i_ino, off, nr_pages, 0);
     return;
 
 out_err:
@@ -1505,6 +1516,7 @@ out_err:
         ternfs_put_span(span);
     }
     put_pages_list(&pages);
+    trace_eggsfs_file_read_exit(enode->inode.i_ino, off, nr_pages, err);
     return;
 }
 #endif
