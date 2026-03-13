@@ -104,11 +104,11 @@ static void sock_readable(struct sock* sk) {
         // u32 protocol + u64 req_id + u8 kind. Note that we check the protocol later on.
         // We just need the request id here, and the kind for logging.
         if (unlikely(skb->len < 13)) {
-            ternfs_warn("dropping runt ternfs request");
+            ternfs_warn("dropping runt ternfs request len=%u", skb->len);
             goto drop_skb;
         }
         if (unlikely(skb->len > TERNFS_MAX_MTU)) {
-            ternfs_warn("dropping overlong ternfs request");
+            ternfs_warn("dropping overlong ternfs request len=%u", skb->len);
             goto drop_skb;
         }
         u32 resp_len = skb->len;
@@ -310,7 +310,7 @@ int ternfs_metadata_send_request(
     err = kernel_sendmsg(sock->sock, &msg, &vec, 1, len);
     if (unlikely(err < 0)) {
         if (err != -ERESTARTSYS) {
-            ternfs_info("could not send: %d", err);
+            ternfs_warn("could not send request: shard=%d kind=%d err=%d", req->shard, kind, err);
             INC_STAT_COUNTER(req, kind, NET_FAILURES);
         }
         // For ENETUNREACH, we pretend to have sent it, and then the timeout
