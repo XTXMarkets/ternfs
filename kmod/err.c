@@ -81,7 +81,7 @@ bool ternfs_unexpected_error(int err) {
 int ternfs_error_to_linux(int err) {
     bool unexpected = ternfs_unexpected_error(err);
     if (unexpected) {
-        ternfs_warn("unexpected ternsfs error %s (%d)", ternfs_err_str(err), err);
+        ternfs_error("unexpected ternfs error=%s (%d)", ternfs_err_str(err), err);
     }
     if (err <= 0) { return err; }
     switch (err) {
