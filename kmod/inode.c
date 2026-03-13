@@ -51,11 +51,13 @@ struct inode* ternfs_inode_alloc(struct super_block* sb) {
     INIT_DELAYED_WORK(&enode->getattr_async_work, &getattr_async_complete);
 
     ternfs_debug("done enode=%p", enode);
+    trace_eggsfs_inode_alloc(&enode->inode);
     return &enode->inode;
 }
 
 void ternfs_inode_evict(struct inode* inode) {
     struct ternfs_inode* enode = TERNFS_I(inode);
+    trace_eggsfs_inode_evict(inode);
     ternfs_debug("evict enode=%p", enode);
     if (S_ISDIR(inode->i_mode)) {
         ternfs_dir_drop_cache(enode);
@@ -69,6 +71,7 @@ void ternfs_inode_evict(struct inode* inode) {
 void ternfs_inode_free(struct inode* inode) {
 
     struct ternfs_inode* enode = TERNFS_I(inode);
+    trace_eggsfs_inode_free(inode);
     ternfs_debug("enode=%p", enode);
     kmem_cache_free(ternfs_inode_cachep, enode);
 }
@@ -592,9 +595,11 @@ static int COMPAT_FUNC_UNS_IMP(ternfs_symlink, struct inode* dir, struct dentry*
     vec.iov_base = (void*)path;
     vec.iov_len = len;
     iov_iter_kvec(&from, WRITE, &vec, 1, vec.iov_len);
+    trace_eggsfs_inode_lock(&enode->inode, TERNFS_INODE_LOCK, "symlink");
     inode_lock(&enode->inode);
     int err = ternfs_file_write(enode, 0, &ppos, &from);
     inode_unlock(&enode->inode);
+    trace_eggsfs_inode_lock(&enode->inode, TERNFS_INODE_UNLOCK, "symlink");
     if (err < 0) { return err; }
     // ...and flush them
     err = ternfs_file_flush(enode, dentry);

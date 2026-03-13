@@ -183,9 +183,41 @@ TERNFS_TRACE_EVENT_dir_dentry_inode(dcache_delete_entry);
 TERNFS_TRACE_EVENT_dir_dentry_inode(dcache_invalidate_entry);
 
 // inode.c
+TERNFS_TRACE_EVENT_inode(inode_alloc);
+TERNFS_TRACE_EVENT_inode(inode_evict);
+TERNFS_TRACE_EVENT_inode(inode_free);
+
 TERNFS_TRACE_EVENT_inode(vfs_getattr_enter);
 TERNFS_TRACE_EVENT_inode(vfs_getattr_lock);
 TERNFS_TRACE_EVENT_inode_ret(vfs_getattr_exit);
+
+#define TERNFS_INODE_LOCK 0
+#define TERNFS_INODE_LOCK_TRYLOCK 1
+#define TERNFS_INODE_LOCK_TRYLOCK_FAIL 2
+#define TERNFS_INODE_UNLOCK 3
+
+TRACE_EVENT(eggsfs_inode_lock,
+    TP_PROTO(struct inode* inode, u8 event, const char* caller),
+    TP_ARGS(inode, event, caller),
+    TP_STRUCT__entry(
+        __field(u64, ino)
+        __field(u8, event)
+        __string(caller, caller)
+    ),
+    TP_fast_assign(
+        __entry->ino = inode->i_ino;
+        __entry->event = event;
+        __assign_str_impl(caller, caller);
+    ),
+    TP_printk("enode=%#llx event=%s caller=%s",
+        __entry->ino,
+        __print_symbolic(__entry->event,
+            { 0, "lock" },
+            { 1, "trylock" },
+            { 2, "trylock_fail" },
+            { 3, "unlock" }),
+        __get_str(caller))
+);
 
 // dir.c
 TERNFS_TRACE_EVENT_inode(vfs_opendir_enter);

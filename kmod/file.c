@@ -72,6 +72,7 @@ static_assert(sizeof(struct ternfs_transient_span) < (2<<10));
 // open_mutex held here
 // really want atomic open for this
 static int file_open(struct inode* inode, struct file* filp) {
+    trace_eggsfs_inode_lock(inode, TERNFS_INODE_LOCK, "file_open");
     inode_lock(inode); // for the .status modification below
 
     struct ternfs_inode* enode = TERNFS_I(inode);
@@ -132,6 +133,7 @@ static int file_open(struct inode* inode, struct file* filp) {
     }
 out:
     inode_unlock(inode);
+    trace_eggsfs_inode_lock(inode, TERNFS_INODE_UNLOCK, "file_open");
     return err;
 }
 
@@ -891,18 +893,24 @@ static ssize_t file_write_iter(struct kiocb* iocb, struct iov_iter* from) {
     struct ternfs_inode* enode = TERNFS_I(inode);
 
     if (!inode_trylock(inode)) {
+        trace_eggsfs_inode_lock(inode, TERNFS_INODE_LOCK_TRYLOCK_FAIL, "write_iter");
         if (iocb->ki_flags & IOCB_NOWAIT) {
             return -EAGAIN;
         }
+        trace_eggsfs_inode_lock(inode, TERNFS_INODE_LOCK, "write_iter");
         inode_lock(inode);
+    } else {
+        trace_eggsfs_inode_lock(inode, TERNFS_INODE_LOCK_TRYLOCK, "write_iter");
     }
     ssize_t res = ternfs_file_write(enode, iocb->ki_flags, &iocb->ki_pos, from);
     inode_unlock(inode);
+    trace_eggsfs_inode_lock(inode, TERNFS_INODE_UNLOCK, "write_iter");
 
     return res;
 }
 
 int ternfs_file_flush(struct ternfs_inode* enode, struct dentry* dentry) {
+    trace_eggsfs_inode_lock(&enode->inode, TERNFS_INODE_LOCK, "flush");
     inode_lock(&enode->inode);
 
     int err = 0;
@@ -1003,10 +1011,12 @@ out:
     }
     enode->file.mm = NULL;
     inode_unlock(&enode->inode);
+    trace_eggsfs_inode_lock(&enode->inode, TERNFS_INODE_UNLOCK, "flush");
     return err;
 
 out_early:
     inode_unlock(&enode->inode);
+    trace_eggsfs_inode_lock(&enode->inode, TERNFS_INODE_UNLOCK, "flush");
     return err;
 }
 
@@ -1117,6 +1127,7 @@ static loff_t file_lseek(struct file *file, loff_t offset, int whence) {
         return generic_file_llseek(file, offset, whence);
     }
 
+    trace_eggsfs_inode_lock(inode, TERNFS_INODE_LOCK, "lseek");
     inode_lock(inode);
 
     loff_t ppos = file->f_pos;
@@ -1153,6 +1164,7 @@ static loff_t file_lseek(struct file *file, loff_t offset, int whence) {
 
 out:
     inode_unlock(inode);
+    trace_eggsfs_inode_lock(inode, TERNFS_INODE_UNLOCK, "lseek");
     return offset;
 
 out_err:

@@ -516,6 +516,7 @@ static int ternfs_dir_close(struct inode* inode, struct file* filp) {
 static loff_t ternfs_dir_seek(struct file* file, loff_t offset, int whence) {
     struct inode* inode = file_inode(file);
 
+    trace_eggsfs_inode_lock(inode, TERNFS_INODE_LOCK, "readdir");
     inode_lock(inode);
 
     switch (whence) {
@@ -543,6 +544,7 @@ static loff_t ternfs_dir_seek(struct file* file, loff_t offset, int whence) {
 
 out_err:
     inode_unlock(inode);
+    trace_eggsfs_inode_lock(inode, TERNFS_INODE_UNLOCK, "readdir");
     return offset;
 }
 
