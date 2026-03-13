@@ -233,7 +233,7 @@ static void getattr_async_complete(struct work_struct* work) {
         }
 
         if (err) {
-            ternfs_info("could not perform async stat enode=%p id=0x%016lx err=%d", enode, enode->inode.i_ino, err);
+            ternfs_warn("file=%016lx async stat failed err=%d", enode->inode.i_ino, err);
         } else {
             WRITE_ONCE(enode->mtime, mtime);
             inode_set_mtime(&enode->inode, mtime / 1000000000, mtime % 1000000000);
@@ -366,7 +366,7 @@ out:
         } else {
             long ret = ternfs_latch_wait_timeout(&enode->getattr_update_latch, seqno, 2 * ternfs_overall_shard_timeout_jiffies);
             if (unlikely(ret < 1)) {
-                ternfs_warn("latch_wait timed out, this should never happen, getattr stuck? id=0x%016lx getattr_async_seqno=%lld counter=%lld seqno=%lld", enode->inode.i_ino, enode->getattr_async_seqno, atomic64_read(&enode->getattr_update_latch.counter), seqno);
+                ternfs_error("file=%016lx latch_wait timed out, this should never happen, getattr stuck? getattr_async_seqno=%lld counter=%lld seqno=%lld", enode->inode.i_ino, enode->getattr_async_seqno, atomic64_read(&enode->getattr_update_latch.counter), seqno);
                 return -EDEADLK;
             }
         }
@@ -388,7 +388,7 @@ static struct ternfs_inode* ternfs_create_internal(struct inode* parent, int ity
     struct mm_struct* mm = owner->mm;
     if (mm == NULL) {
         preempt_enable();
-        ternfs_warn("current->group_leader->mm = NULL, called from kernel thread?");
+        ternfs_error("current->group_leader->mm = NULL, called from kernel thread?");
         return ERR_PTR(-EIO);
     }
     // We might need the mm beyond the file lifetime, to clear up block write pages MM_FILEPAGES
