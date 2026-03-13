@@ -121,6 +121,7 @@ func main() {
 	scrub := flag.Bool("scrub", false, "scrub")
 	scrubWorkersPerShard := flag.Int("scrub-workers-per-shard", 10, "")
 	scrubWorkersQueueSize := flag.Int("scrub-workers-queue-size", 50, "")
+	scrubMinCycleInterval := flag.Duration("scrub-min-cycle-interval", 15*time.Minute, "Minimum interval between scrub cycles per shard")
 	dataDir := flag.String("data-dir", "", "Where to store the GC files. This is currently non-critical data (files/directories/transient files count, migrations)")
 	pprofHttpPort := flag.Int("pprof-http-port", -1, "Port on which to run the pprof HTTP server")
 	flag.Parse()
@@ -409,8 +410,12 @@ func main() {
 			go func() {
 				defer func() { lrecover.HandleRecoverChan(l, terminateChan, recover()) }()
 				for {
+					cycleStart := time.Now()
 					if err := cleanup.ScrubFiles(l, c, opts, rateLimit, scrubState, shid); err != nil {
 						l.RaiseAlert("could not scrub files: %v", err)
+					}
+					if elapsed := time.Since(cycleStart); elapsed < *scrubMinCycleInterval {
+						time.Sleep(*scrubMinCycleInterval - elapsed)
 					}
 				}
 			}()
