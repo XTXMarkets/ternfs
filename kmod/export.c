@@ -4,6 +4,7 @@
 
 #include "export.h"
 #include "inode.h"
+#include "log.h"
 #include "metadata.h"
 #include "err.h"
 
@@ -78,11 +79,11 @@ static struct dentry* ternfs_fh_to_dentry(struct super_block *sb, struct fid *fi
 
     int expected_len = ternfs_fh_length(fileid_type);
     if (expected_len < 0) {
-        ternfs_warn("unexpected fid type %d", fileid_type);
+        ternfs_error("unexpected fid type=%d", fileid_type);
         return NULL;
     }
     if (fh_len < expected_len) {
-        ternfs_warn("unexpected fh len %d, expected at least %d", fh_len, expected_len);
+        ternfs_error("unexpected fh len=%d expected=%d", fh_len, expected_len);
         return NULL;
     }
 
@@ -99,11 +100,11 @@ static struct dentry* ternfs_fh_to_parent(struct super_block *sb, struct fid *fi
 
     int expected_len = ternfs_fh_length(fileid_type);
     if (expected_len < 0) {
-        ternfs_warn("unexpected fid type %d", fileid_type);
+        ternfs_error("unexpected fid type=%d", fileid_type);
         return NULL;
     }
     if (fh_len < expected_len) {
-        ternfs_warn("unexpected fh len %d, expected at least %d", fh_len, expected_len);
+        ternfs_error("unexpected fh len=%d expected=%d", fh_len, expected_len);
         return NULL;
     }
     if (fileid_type != FILEID_INO32_GEN_PARENT) {
