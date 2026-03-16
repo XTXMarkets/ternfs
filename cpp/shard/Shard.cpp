@@ -127,8 +127,10 @@ struct ShardShared {
     std::atomic<bool> isInitiated;
     std::atomic<bool> isBlockServiceCacheInitiated;
 
+    RegistryClient registryClient;
+
     ShardShared() = delete;
-    ShardShared(const ShardOptions& options_, SharedRocksDB& sharedDB_, BlockServicesCacheDB& blockServicesCache_, ShardDB& shardDB_, LogsDB& logsDB_, UDPSocketPair&& sock) :
+    ShardShared(const ShardOptions& options_, SharedRocksDB& sharedDB_, BlockServicesCacheDB& blockServicesCache_, ShardDB& shardDB_, LogsDB& logsDB_, UDPSocketPair&& sock, Logger& logger, std::shared_ptr<XmonAgent>& xmon) :
         options(options_),
         socks({std::move(sock)}),
         logsDBRequestQueue(WRITER_QUEUE_SIZE, writeQueuesWaiter),
@@ -158,6 +160,7 @@ struct ShardShared {
         droppedReadReqs(0),
         isInitiated(false),
         isBlockServiceCacheInitiated(false),
+        registryClient(logger, xmon, options_.registryClientOptions.host, options_.registryClientOptions.port, options_.registryClientOptions.timeout),
         _replicas(nullptr),
         _leadersAtOtherLocations(std::make_shared<const std::vector<FullShardInfo>>())
     {
@@ -2086,8 +2089,6 @@ private:
     const ShardReplicaId _shrid;
     const uint8_t _location;
     const bool _noReplication;
-    const std::string _registryHost;
-    const uint16_t _registryPort;
     XmonNCAlert _alert;
 public:
     ShardRegisterer(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardShared& shared) :
@@ -2095,9 +2096,7 @@ public:
         _shared(shared),
         _shrid(_shared.options.shrid()),
         _location(_shared.options.logsDBOptions.location),
-        _noReplication(_shared.options.logsDBOptions.noReplication),
-        _registryHost(_shared.options.registryClientOptions.host),
-        _registryPort(_shared.options.registryClientOptions.port)
+        _noReplication(_shared.options.logsDBOptions.noReplication)
     {}
 
     virtual ~ShardRegisterer() = default;
@@ -2110,7 +2109,7 @@ public:
         {
             LOG_INFO(_env, "Registering ourselves (shard %s, location %s, %s) with registry", _shrid, (int)_location, _shared.sock().addr());
             // ToDO: once leader election is fully enabled report or leader status instead of value of flag passed on startup
-            const auto [err, errStr] = registerShard(_registryHost, _registryPort, 10_sec, _shrid, _location, _shared.options.isLeader(), _shared.sock().addr());
+            const auto [err, errStr] = _shared.registryClient.registerShard(_shrid, _location, _shared.options.isLeader(), _shared.sock().addr());
             if (err == EINTR) { return false; }
             if (err) {
                 _env.updateAlert(_alert, "Couldn't register ourselves with registry: %s", errStr);
@@ -2121,7 +2120,7 @@ public:
         {
             std::vector<FullShardInfo> allReplicas;
             LOG_INFO(_env, "Fetching replicas for shardId %s from registry", _shrid.shardId());
-            const auto [err, errStr] = fetchShardReplicas(_registryHost, _registryPort, 10_sec, _shrid.shardId(), allReplicas);
+            const auto [err, errStr] = _shared.registryClient.fetchShardReplicas(_shrid.shardId(), allReplicas);
             if (err == EINTR) { return false; }
             if (err) {
                 _env.updateAlert(_alert, "Failed getting shard replicas from registry: %s", errStr);
@@ -2177,8 +2176,6 @@ struct ShardBlockServiceUpdater : PeriodicLoop {
 private:
     ShardShared& _shared;
     ShardReplicaId _shrid;
-    std::string _registryHost;
-    uint16_t _registryPort;
     XmonNCAlert _alert;
     std::vector<FullBlockServiceInfo> _blockServices;
     std::vector<BlockServiceInfoShort> _currentBlockServices;
@@ -2188,8 +2185,6 @@ public:
         PeriodicLoop(logger, xmon, "bs_updater", {1_sec, shared.options.isLeader() ? 30_sec : 2_mins}),
         _shared(shared),
         _shrid(_shared.options.shrid()),
-        _registryHost(_shared.options.registryClientOptions.host),
-        _registryPort(_shared.options.registryClientOptions.port),
         _updatedOnce(false)
     {
         _env.updateAlert(_alert, "Waiting to fetch block services for the first time");
@@ -2203,8 +2198,8 @@ public:
             _currentBlockServices.clear();
         }
 
-        LOG_INFO(_env, "about to fetch block services from %s:%s", _registryHost, _registryPort);
-        const auto [err, errStr] = fetchBlockServices(_registryHost, _registryPort, 10_sec, _shrid.shardId(), _blockServices, _currentBlockServices);
+        LOG_INFO(_env, "about to fetch block services from registry");
+        const auto [err, errStr] = _shared.registryClient.fetchBlockServices(_shrid.shardId(), _blockServices, _currentBlockServices);
         if (err == EINTR) { return false; }
         if (err) {
             _env.updateAlert(_alert, "could not reach registry: %s", errStr);
@@ -2576,7 +2571,7 @@ void runShard(ShardOptions& options) {
     LogsDB logsDB(logger, xmon, sharedDB, options.logsDBOptions.replicaId, shardDB.lastAppliedLogEntry(), options.logsDBOptions.noReplication, !options.logsDBOptions.leaderElection, options.logsDBOptions.avoidBeingLeader);
     env.clearAlert(dbInitAlert);
 
-    ShardShared shared(options, sharedDB, blockServicesCache, shardDB, logsDB, UDPSocketPair(env, options.serverOptions.addrs));
+    ShardShared shared(options, sharedDB, blockServicesCache, shardDB, logsDB, UDPSocketPair(env, options.serverOptions.addrs), logger, xmon);
 
     threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardServer>(logger, xmon, shared)));
     for (uint16_t i = 0; i < options.numReaders; ++i) {

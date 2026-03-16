@@ -53,7 +53,9 @@ struct CDCShared {
     std::atomic<double> updateSize;
     ErrorCount shardErrors;
 
-    CDCShared(SharedRocksDB& sharedDb_, CDCDB& db_, LogsDB& logsDB_, std::array<UDPSocketPair, 2>&& socks_) : sharedDb(sharedDb_), db(db_), logsDB(logsDB_), socks(std::move(socks_)), isLeader(false), inFlightTxns(0), updateSize(0) {
+    RegistryClient registryClient;
+
+    CDCShared(SharedRocksDB& sharedDb_, CDCDB& db_, LogsDB& logsDB_, std::array<UDPSocketPair, 2>&& socks_, Logger& logger, std::shared_ptr<XmonAgent>& xmon, const RegistryClientOptions& registryClientOptions) : sharedDb(sharedDb_), db(db_), logsDB(logsDB_), socks(std::move(socks_)), isLeader(false), inFlightTxns(0), updateSize(0), registryClient(logger, xmon, registryClientOptions.host, registryClientOptions.port, registryClientOptions.timeout) {
         for (CDCMessageKind kind : allCDCMessageKind) {
             timingsTotal[(int)kind] = Timings::Standard();
         }
@@ -860,8 +862,6 @@ private:
 
 struct CDCShardUpdater : PeriodicLoop {
     CDCShared& _shared;
-    std::string _registryHost;
-    uint16_t _registryPort;
 
     // loop data
     std::array<ShardInfo, 256> _shards;
@@ -870,8 +870,6 @@ public:
     CDCShardUpdater(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const CDCOptions& options, CDCShared& shared):
         PeriodicLoop(logger, xmon, "shard_updater", {1_sec, 1_mins}),
         _shared(shared),
-        _registryHost(options.registryClientOptions.host),
-        _registryPort(options.registryClientOptions.port),
         _alert(10_sec)
     {
         _env.updateAlert(_alert, "Waiting to get shards");
@@ -881,10 +879,10 @@ public:
 
     virtual bool periodicStep() override {
         LOG_INFO(_env, "Fetching shards");
-        const auto [err, errStr] = fetchLocalShards(_registryHost, _registryPort, 10_sec, _shards);
+        const auto [err, errStr] = _shared.registryClient.fetchLocalShards(_shards);
         if (err == EINTR) { return false; }
         if (err) {
-            _env.updateAlert(_alert, "failed to reach registry at %s:%s to fetch shards, will retry: %s", _registryHost, _registryPort, errStr);
+            _env.updateAlert(_alert, "failed to reach registry to fetch shards, will retry: %s", errStr);
             return false;
         }
         bool badShard = false;
@@ -918,8 +916,6 @@ struct CDCRegisterer : PeriodicLoop {
     const bool _noReplication;
     const bool _avoidBeingLeader;
     const bool _initialStart;
-    const std::string _registryHost;
-    const uint16_t _registryPort;
     XmonNCAlert _alert;
 public:
     CDCRegisterer(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const CDCOptions& options, CDCShared& shared):
@@ -930,8 +926,6 @@ public:
         _noReplication(options.logsDBOptions.noReplication),
         _avoidBeingLeader(options.logsDBOptions.avoidBeingLeader),
         _initialStart(options.logsDBOptions.initialStart),
-        _registryHost(options.registryClientOptions.host),
-        _registryPort(options.registryClientOptions.port),
         _alert(10_sec)
     {}
 
@@ -941,7 +935,7 @@ public:
         LOG_DEBUG(_env, "Registering ourselves (CDC %s, location %s,  %s) with registry", _replicaId, (int)_location, _shared.socks[CDC_SOCK].addr());
         {
             // TODO: report _shared.isleader instead of command line flag once leader election is enabled
-            const auto [err, errStr] = registerCDCReplica(_registryHost, _registryPort, 10_sec, _replicaId, _location, !_avoidBeingLeader, _shared.socks[CDC_SOCK].addr());
+            const auto [err, errStr] = _shared.registryClient.registerCDCReplica(_replicaId, _location, !_avoidBeingLeader, _shared.socks[CDC_SOCK].addr());
             if (err == EINTR) { return false; }
             if (err) {
                 _env.updateAlert(_alert, "Couldn't register ourselves with registry: %s", errStr);
@@ -953,7 +947,7 @@ public:
         {
             std::array<AddrsInfo, 5> replicas;
             LOG_INFO(_env, "Fetching replicas for CDC from registry");
-            const auto [err, errStr] = fetchCDCReplicas(_registryHost, _registryPort, 10_sec, replicas);
+            const auto [err, errStr] = _shared.registryClient.fetchCDCReplicas(replicas);
             if (err == EINTR) { return false; }
             if (err) {
                 _env.updateAlert(_alert, "Failed getting CDC replicas from registry: %s", errStr);
@@ -1250,7 +1244,8 @@ void runCDC(CDCOptions& options) {
     LogsDB logsDB(logger, xmon, sharedDb, options.logsDBOptions.replicaId, db.lastAppliedLogEntry(), options.logsDBOptions.noReplication, !options.logsDBOptions.leaderElection, options.logsDBOptions.avoidBeingLeader);
     CDCShared shared(
         sharedDb, db, logsDB,
-        std::array<UDPSocketPair, 2>({UDPSocketPair(env, options.serverOptions.addrs), UDPSocketPair(env, options.cdcToShardAddress)})
+        std::array<UDPSocketPair, 2>({UDPSocketPair(env, options.serverOptions.addrs), UDPSocketPair(env, options.cdcToShardAddress)}),
+        logger, xmon, options.registryClientOptions
     );
 
     LOG_INFO(env, "Spawning server threads");

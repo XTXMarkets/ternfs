@@ -7,7 +7,6 @@
 #include "Env.hpp"
 #include "Metrics.hpp"
 #include "Msgs.hpp"
-#include "RegistryClient.hpp"
 #include "Xmon.hpp"
 #include <arpa/inet.h>
 #include <cstdio>
@@ -56,6 +55,57 @@ private:
     char **_argv;
     void (*_printUsage)(const char*);
 };
+
+// Parsing Helpers
+
+Duration parseDuration(CommandLineArgs& args);
+
+static inline uint32_t parseUint32(CommandLineArgs& args) {
+    size_t processed;
+    auto arg = args.getArg();
+    uint64_t x = std::stoull(arg, &processed);
+    if (processed != arg.size() || x > std::numeric_limits<uint32_t>::max()) {
+        fprintf(stderr, "Invalid argument '%s', expecting an unsigned integer\n", arg.c_str());
+    }
+    return static_cast<uint32_t>(x);
+}
+
+static inline uint16_t parseUint16(CommandLineArgs& args) {
+    size_t processed;
+    auto arg = args.getArg();
+    uint64_t x = std::stoull(arg, &processed);
+    if (processed != arg.size() || x > std::numeric_limits<uint16_t>::max()) {
+        fprintf(stderr, "Invalid argument '%s', expecting an unsigned 16-bit integer\n", arg.c_str());
+    }
+    return static_cast<uint16_t>(x);
+}
+
+static inline bool parseAddress(const std::string& fullAddress, std::string& host, uint16_t& port) {
+    // split host:port
+    auto colon = fullAddress.find(":");
+    if (colon == fullAddress.size()) {
+        fprintf(stderr, "Could not find colon\n");
+        return false;
+    }
+    // parse port
+    if (fullAddress.size() - colon > 6) {
+        return false; // port too long
+    }
+    uint32_t port_ = 0;
+    for (int i = colon + 1; i < fullAddress.size(); i++) {
+        char ch = fullAddress[i];
+        if ((i == colon + 1 && ch == '0') || ch < '0' || ch > '9') {
+            return false;
+        }
+        port_ = port_*10 + (ch-'0');
+    }
+    if (port_ == 0 || port_ > 65535) {
+        return false;
+    }
+    port = static_cast<uint16_t>(port_);
+    host = {fullAddress.begin(), fullAddress.begin()+colon};
+    return true;
+}
 
 // LogOptions
 struct LogOptions {
@@ -186,16 +236,21 @@ static inline bool validateMetricsOptions(const MetricsOptions& options) {
 struct RegistryClientOptions {
     std::string host;
     uint16_t port;
+    Duration timeout = 10_sec;
 };
 
 static inline bool parseRegistryClientOptions(CommandLineArgs& args, RegistryClientOptions& options) {
     std::string arg = args.peekArg();
     if (arg == "-registry") {
-        if (!parseRegistryAddress(args.next().peekArg(), options.host, options.port)) {
+        if (!parseAddress(args.next().peekArg(), options.host, options.port)) {
             fprintf(stderr, "failed parsing registry address %s\n",args.peekArg().c_str());
             args.dieWithUsage();
         }
         args.next();
+        return true;
+    }
+    if (arg == "-registry-timeout") {
+        options.timeout = parseDuration(args.next());
         return true;
     }
     return false;
@@ -205,6 +260,8 @@ static inline void printRegistryClientOptionsUsage() {
     fprintf(stderr, "RegistryClientOptions:\n");
     fprintf(stderr, " -registry host:port\n");
     fprintf(stderr, "    	How to reach registry\n");
+    fprintf(stderr, " -registry-timeout <duration>\n");
+    fprintf(stderr, "    	Operation timeout for registry requests (default 10s)\n");
 }
 
 static inline bool validateRegistryClientOptions(const RegistryClientOptions& options) {
@@ -442,26 +499,3 @@ static inline bool validateServerOptions(const ServerOptions& options) {
     return true;
 }
 
-// Parsing Helpers
-
-Duration parseDuration(CommandLineArgs& args);
-
-static inline uint32_t parseUint32(CommandLineArgs& args) {
-    size_t processed;
-    auto arg = args.getArg();
-    uint64_t x = std::stoull(arg, &processed);
-    if (processed != arg.size() || x > std::numeric_limits<uint32_t>::max()) {
-        fprintf(stderr, "Invalid argument '%s', expecting an unsigned integer\n", arg.c_str());
-    }
-    return static_cast<uint32_t>(x);
-}
-
-static inline uint16_t parseUint16(CommandLineArgs& args) {
-    size_t processed;
-    auto arg = args.getArg();
-    uint64_t x = std::stoull(arg, &processed);
-    if (processed != arg.size() || x > std::numeric_limits<uint16_t>::max()) {
-        fprintf(stderr, "Invalid argument '%s', expecting an unsigned 16-bit integer\n", arg.c_str());
-    }
-    return static_cast<uint16_t>(x);
-}

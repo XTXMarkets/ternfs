@@ -9,6 +9,7 @@
 #include "LogsDB.hpp"
 #include "Msgs.hpp"
 #include "PeriodicLoop.hpp"
+#include "RegistryClient.hpp"
 
 #include "RegistryCommon.hpp"
 
@@ -20,7 +21,7 @@ public:
                 const std::vector<FullRegistryInfo>& cachedReplicas)
         : PeriodicLoop(logger, xmon, "registerer", {1_sec, 1, 2_mins, 1}),
         _logsDBOptions(options.logsDBOptions),
-        _clientOptions(options.registryClientOptions),
+        _registryClient(logger, xmon, options.registryClientOptions.host, options.registryClientOptions.port, options.registryClientOptions.timeout),
         _boundAddresses(boundAddresses),
         _hasEnoughReplicas(false),
         _replicas(std::make_shared<std::array<AddrsInfo, LogsDB::REPLICA_COUNT>>()) {
@@ -41,7 +42,7 @@ public:
 
 private:
     const LogsDBOptions _logsDBOptions;
-    const RegistryClientOptions _clientOptions;
+    RegistryClient _registryClient;
     const AddrsInfo _boundAddresses;
     XmonNCAlert _alert;
 

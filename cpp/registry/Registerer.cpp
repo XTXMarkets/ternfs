@@ -29,7 +29,7 @@ bool Registerer::periodicStep() {
             _boundAddresses);
 
         const auto [err, errStr] =
-            registerRegistry(_clientOptions.host, _clientOptions.port, 10_sec,
+            _registryClient.registerRegistry(
                             _logsDBOptions.replicaId, _logsDBOptions.location,
                             !_logsDBOptions.avoidBeingLeader, _boundAddresses,
                             !_hasEnoughReplicas.load(std::memory_order_relaxed));
@@ -45,8 +45,7 @@ bool Registerer::periodicStep() {
     {
         std::vector<FullRegistryInfo> allReplicas;
         LOG_DEBUG(_env, "Fetching replicas from registry");
-        const auto [err, errStr] = fetchRegistryReplicas(
-            _clientOptions.host, _clientOptions.port, 10_sec, allReplicas);
+        const auto [err, errStr] = _registryClient.fetchRegistryReplicas(allReplicas);
         if (err == EINTR) {
             return false;
         }

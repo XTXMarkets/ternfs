@@ -4,87 +4,82 @@
 
 #pragma once
 
+#include <mutex>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "Connect.hpp"
+#include "Env.hpp"
 #include "Msgs.hpp"
 #include "MsgsGen.hpp"
+#include "Time.hpp"
 
-// The host here is the scheme + host + port, e.g. `http://localhost:5000`.
-//
-// If the first number is non-zero, we errored out, and the element contains
-// an error. We only returns error strings for errors that might be transient
-// (e.g. we cannot connect to the server, or the connection dies), and crash
-// on things that are almost certainly not transient (e.g. bad data on
-// the wire).
-//
-// This function does double duty -- it both gets all the block services
-// (the shard needs to know which ones exist to fill in addrs), but it also
-// fills in the block services for the shard specifically.
-std::pair<int, std::string> fetchBlockServices(
-    const std::string& registryHost,
-    uint16_t registryPort,
-    Duration timeout,
-    ShardId shid,
-    std::vector<FullBlockServiceInfo>& blockServices,
-    std::vector<BlockServiceInfoShort>& currentBlockServices
-);
+class RegistryClient {
+public:
+    RegistryClient(Logger& logger, std::shared_ptr<XmonAgent>& xmon,
+                   const std::string& host, uint16_t port,
+                   Duration timeout);
+    ~RegistryClient() = default;
 
-std::pair<int, std::string> registerRegistry(
-    const std::string& registryHost,
-    uint16_t registryPort,
-    Duration timeout,
-    ReplicaId replicaId,
-    uint8_t location,
-    bool isLeader,
-    const AddrsInfo& addrs,
-    bool bootstrap
-);
+    RegistryClient(const RegistryClient&) = delete;
+    RegistryClient& operator=(const RegistryClient&) = delete;
 
-std::pair<int, std::string> fetchRegistryReplicas(
-    const std::string& registryHost,
-    uint16_t registryPort,
-    Duration timeout,
-    std::vector<FullRegistryInfo>& replicas
-);
+    std::pair<int, std::string> fetchBlockServices(
+        ShardId shid,
+        std::vector<FullBlockServiceInfo>& blockServices,
+        std::vector<BlockServiceInfoShort>& currentBlockServices
+    );
 
-std::pair<int, std::string> registerShard(
-    const std::string& registryHost,
-    uint16_t registryPort,
-    Duration timeout,
-    ShardReplicaId shrid,
-    uint8_t location,
-    bool isLeader,
-    const AddrsInfo& addrs
-);
+    std::pair<int, std::string> registerRegistry(
+        ReplicaId replicaId,
+        uint8_t location,
+        bool isLeader,
+        const AddrsInfo& addrs,
+        bool bootstrap
+    );
 
-std::pair<int, std::string> fetchShardReplicas(
-    const std::string& registryHost,
-    uint16_t registryPort,
-    Duration timeout,
-    ShardId shid,
-    std::vector<FullShardInfo>& replicas
-);
+    std::pair<int, std::string> fetchRegistryReplicas(
+        std::vector<FullRegistryInfo>& replicas
+    );
 
-std::pair<int, std::string> registerCDCReplica(
-    const std::string& registryHost,
-    uint16_t registryPort,
-    Duration timeout,
-    ReplicaId replicaId,
-    uint8_t location,
-    bool isLeader,
-    const AddrsInfo& addrs
-);
+    std::pair<int, std::string> registerShard(
+        ShardReplicaId shrid,
+        uint8_t location,
+        bool isLeader,
+        const AddrsInfo& addrs
+    );
 
-std::pair<int, std::string> fetchCDCReplicas(
-    const std::string& registryHost,
-    uint16_t registryPort,
-    Duration timeout,
-    std::array<AddrsInfo, 5>& replicas
-);
+    std::pair<int, std::string> fetchShardReplicas(
+        ShardId shid,
+        std::vector<FullShardInfo>& replicas
+    );
 
-std::pair<int, std::string> fetchLocalShards(
-    const std::string& registryHost,
-    uint16_t registryPort,
-    Duration timeout,
-    std::array<ShardInfo, 256>& shards
-);
+    std::pair<int, std::string> registerCDCReplica(
+        ReplicaId replicaId,
+        uint8_t location,
+        bool isLeader,
+        const AddrsInfo& addrs
+    );
 
-bool parseRegistryAddress(const std::string& fullRegistryAddress, std::string& registryHost, uint16_t& registryPort);
+    std::pair<int, std::string> fetchCDCReplicas(
+        std::array<AddrsInfo, 5>& replicas
+    );
+
+    std::pair<int, std::string> fetchLocalShards(
+        std::array<ShardInfo, 256>& shards
+    );
+
+private:
+    const std::string _host;
+    const uint16_t _port;
+    const Duration _timeout;
+    Env _env;
+
+    std::mutex _mutex;
+    Sock _sock;
+
+    std::pair<int, std::string> _ensureConnected();
+    void _closeConnection();
+    std::pair<int, std::string> _doRequest(RegistryReqContainer& req, RegistryRespContainer& resp);
+};

@@ -38,23 +38,6 @@ static std::string generateErrString(const std::string& what, int err) {
     return explicitGenerateErrString(what, err, (std::string(translateErrno(err)) + "=" + safe_strerror(err)).c_str());
 }
 
-static std::pair<Sock, std::string> registrySock(const std::string& host, uint16_t port, Duration timeout) {
-    auto [sock, err] = connectToHost(host, port, timeout);
-    if (sock.error()) {
-        return {std::move(sock), err};
-    }
-
-    struct timeval tv;
-    tv.tv_sec = timeout.ns/1'000'000'000ull;
-    tv.tv_usec = (timeout.ns%1'000'000'000ull)/1'000;
-
-    if (setsockopt(sock.get(), SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
-        throw SYSCALL_EXCEPTION("setsockopt");
-    }
-
-    return {std::move(sock), ""};
-}
-
 static std::pair<int, std::string> writeRegistryRequest(int fd, const RegistryReqContainer& req, Duration timeout) {
     static_assert(std::endian::native == std::endian::little);
     // Serialize
@@ -126,32 +109,90 @@ static std::pair<int, std::string> readRegistryResponse(int fd, RegistryRespCont
     return {};
 }
 
-std::pair<int, std::string> fetchBlockServices(const std::string& addr, uint16_t port, Duration timeout, ShardId shid, std::vector<FullBlockServiceInfo>& blockServices, std::vector<BlockServiceInfoShort>& currentBlockServices) {
+// RegistryClient implementation
+
+RegistryClient::RegistryClient(Logger& logger, std::shared_ptr<XmonAgent>& xmon,
+                               const std::string& host, uint16_t port,
+                               Duration timeout)
+    : _host(host), _port(port), _timeout(timeout),
+      _env(logger, xmon, "registry_client") {}
+
+std::pair<int, std::string> RegistryClient::_ensureConnected() {
+    if (!_sock.error()) {
+        return {};
+    }
+
+    auto [sock, err] = connectToHost(_host, _port, _timeout);
+    if (sock.error()) {
+        return {sock.getErrno(), err};
+    }
+
+    struct timeval tv;
+    tv.tv_sec = _timeout.ns/1'000'000'000ull;
+    tv.tv_usec = (_timeout.ns%1'000'000'000ull)/1'000;
+
+    if (setsockopt(sock.get(), SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
+        throw SYSCALL_EXCEPTION("setsockopt SO_RCVTIMEO");
+    }
+
+    int keepalive = 1;
+    if (setsockopt(sock.get(), SOL_SOCKET, SO_KEEPALIVE, &keepalive, sizeof(keepalive)) < 0) {
+        throw SYSCALL_EXCEPTION("setsockopt SO_KEEPALIVE");
+    }
+    int keepidle = 30;
+    if (setsockopt(sock.get(), IPPROTO_TCP, TCP_KEEPIDLE, &keepidle, sizeof(keepidle)) < 0) {
+        throw SYSCALL_EXCEPTION("setsockopt TCP_KEEPIDLE");
+    }
+    int keepintvl = 10;
+    if (setsockopt(sock.get(), IPPROTO_TCP, TCP_KEEPINTVL, &keepintvl, sizeof(keepintvl)) < 0) {
+        throw SYSCALL_EXCEPTION("setsockopt TCP_KEEPINTVL");
+    }
+    int keepcnt = 3;
+    if (setsockopt(sock.get(), IPPROTO_TCP, TCP_KEEPCNT, &keepcnt, sizeof(keepcnt)) < 0) {
+        throw SYSCALL_EXCEPTION("setsockopt TCP_KEEPCNT");
+    }
+
+    LOG_DEBUG(_env, "connected to registry at %s:%s", _host, _port);
+    _sock = std::move(sock);
+    return {};
+}
+
+void RegistryClient::_closeConnection() {
+    _sock = Sock();
+}
+
+std::pair<int, std::string> RegistryClient::_doRequest(RegistryReqContainer& req, RegistryRespContainer& resp) {
+    {
+        const auto [err, errStr] = _ensureConnected();
+        if (err) { return {err, errStr}; }
+    }
+    {
+        const auto [err, errStr] = writeRegistryRequest(_sock.get(), req, _timeout);
+        if (err) { _closeConnection(); return {err, errStr}; }
+    }
+    {
+        const auto [err, errStr] = readRegistryResponse(_sock.get(), resp, _timeout);
+        if (err) { _closeConnection(); return {err, errStr}; }
+    }
+    return {};
+}
+
+std::pair<int, std::string> RegistryClient::fetchBlockServices(ShardId shid, std::vector<FullBlockServiceInfo>& blockServices, std::vector<BlockServiceInfoShort>& currentBlockServices) {
+    std::scoped_lock lock(_mutex);
     blockServices.clear();
     currentBlockServices.clear();
 
 #define FAIL(err, errStr) do { blockServices.clear(); currentBlockServices.clear(); return {err, errStr}; } while (0)
 
-    auto [sock, err] = registrySock(addr, port, timeout);
-    if (sock.error()) {
-        return {sock.getErrno(), err};
-    }
-
     // all block services
     {
         RegistryReqContainer reqContainer;
         auto& req = reqContainer.setAllBlockServices();
-        {
-            const auto [err, errStr] = writeRegistryRequest(sock.get(), reqContainer, timeout);
-            if (err) { FAIL(err, errStr); }
-        }
-
         RegistryRespContainer respContainer;
         {
-            const auto [err, errStr] = readRegistryResponse(sock.get(), respContainer, timeout);
+            const auto [err, errStr] = _doRequest(reqContainer, respContainer);
             if (err) { FAIL(err, errStr); }
         }
-
         blockServices = respContainer.getAllBlockServices().blockServices.els;
     }
 
@@ -160,17 +201,11 @@ std::pair<int, std::string> fetchBlockServices(const std::string& addr, uint16_t
         RegistryReqContainer reqContainer;
         auto& req = reqContainer.setShardBlockServices();
         req.shardId = shid;
-        {
-            const auto [err, errStr] = writeRegistryRequest(sock.get(), reqContainer, timeout);
-            if (err) { FAIL(err, errStr); }
-        }
-
         RegistryRespContainer respContainer;
         {
-            const auto [err, errStr] = readRegistryResponse(sock.get(), respContainer, timeout);
+            const auto [err, errStr] = _doRequest(reqContainer, respContainer);
             if (err) { FAIL(err, errStr); }
         }
-
         currentBlockServices = respContainer.getShardBlockServices().blockServices.els;
     }
 
@@ -216,20 +251,11 @@ std::pair<int, std::string> fetchBlockServices(const std::string& addr, uint16_t
 #undef FAIL
 }
 
-std::pair<int, std::string> registerRegistry(
-    const std::string& registryHost,
-    uint16_t registryPort,
-    Duration timeout,
-    ReplicaId replicaId,
-    uint8_t location,
-    bool isLeader,
-    const AddrsInfo& addrs,
-    bool bootstrap
+std::pair<int, std::string> RegistryClient::registerRegistry(
+    ReplicaId replicaId, uint8_t location, bool isLeader,
+    const AddrsInfo& addrs, bool bootstrap
 ) {
-    const auto [sock, errStr] = registrySock(registryHost, registryPort, timeout);
-    if (sock.error()) {
-        return {sock.getErrno(), errStr};
-    }
+    std::scoped_lock lock(_mutex);
 
     RegistryReqContainer reqContainer;
     auto& req = reqContainer.setRegisterRegistry();
@@ -238,58 +264,38 @@ std::pair<int, std::string> registerRegistry(
     req.isLeader = isLeader;
     req.addrs = addrs;
     req.bootstrap = bootstrap;
-    {
-        const auto [err, errStr] = writeRegistryRequest(sock.get(), reqContainer, timeout);
-        if (err) { return {err, errStr}; }
-    }
 
     RegistryRespContainer respContainer;
     {
-        const auto [err, errStr] = readRegistryResponse(sock.get(), respContainer, timeout);
+        const auto [err, errStr] = _doRequest(reqContainer, respContainer);
         if (err) { return {err, errStr}; }
     }
     respContainer.getRegisterRegistry(); // check that the response is of the right type
-
     return {};
 }
 
-std::pair<int, std::string> fetchRegistryReplicas(
-    const std::string& registryHost,
-    uint16_t registryPort,
-    Duration timeout,
+std::pair<int, std::string> RegistryClient::fetchRegistryReplicas(
     std::vector<FullRegistryInfo>& replicas
 ) {
-    const auto [sock, errStr] = registrySock(registryHost, registryPort, timeout);
-    if (sock.error()) {
-        return {sock.getErrno(), errStr};
-    }
+    std::scoped_lock lock(_mutex);
 
     RegistryReqContainer reqContainer;
     auto& req = reqContainer.setAllRegistryReplicas();
-    {
-        const auto [err, errStr] = writeRegistryRequest(sock.get(), reqContainer, timeout);
-        if (err) { return {err, errStr}; }
-    }
 
     RegistryRespContainer respContainer;
     {
-        const auto [err, errStr] = readRegistryResponse(sock.get(), respContainer, timeout);
+        const auto [err, errStr] = _doRequest(reqContainer, respContainer);
         if (err) { return {err, errStr}; }
     }
-
     replicas = respContainer.getAllRegistryReplicas().replicas.els;
-
     return {};
 }
 
-std::pair<int, std::string> registerShard(
-    const std::string& addr, uint16_t port, Duration timeout, ShardReplicaId shrid, uint8_t location, bool isLeader,
+std::pair<int, std::string> RegistryClient::registerShard(
+    ShardReplicaId shrid, uint8_t location, bool isLeader,
     const AddrsInfo& addrs
 ) {
-    const auto [sock, errStr] = registrySock(addr, port, timeout);
-    if (sock.error()) {
-        return {sock.getErrno(), errStr};
-    }
+    std::scoped_lock lock(_mutex);
 
     RegistryReqContainer reqContainer;
     auto& req = reqContainer.setRegisterShard();
@@ -297,39 +303,27 @@ std::pair<int, std::string> registerShard(
     req.location = location;
     req.isLeader = isLeader;
     req.addrs = addrs;
-    {
-        const auto [err, errStr] = writeRegistryRequest(sock.get(), reqContainer, timeout);
-        if (err) { return {err, errStr}; }
-    }
 
     RegistryRespContainer respContainer;
     {
-        const auto [err, errStr] = readRegistryResponse(sock.get(), respContainer, timeout);
+        const auto [err, errStr] = _doRequest(reqContainer, respContainer);
         if (err) { return {err, errStr}; }
     }
     respContainer.getRegisterShard(); // check that the response is of the right type
-
     return {};
 }
 
-std::pair<int, std::string> fetchShardReplicas(
-    const std::string& addr, uint16_t port, Duration timeout, ShardId shid, std::vector<FullShardInfo>& replicas
+std::pair<int, std::string> RegistryClient::fetchShardReplicas(
+    ShardId shid, std::vector<FullShardInfo>& replicas
 ) {
-    const auto [sock, errStr] = registrySock(addr, port, timeout);
-    if (sock.error()) {
-        return {sock.getErrno(), errStr};
-    }
+    std::scoped_lock lock(_mutex);
 
     RegistryReqContainer reqContainer;
     auto& req = reqContainer.setAllShards();
-    {
-        const auto [err, errStr] = writeRegistryRequest(sock.get(), reqContainer, timeout);
-        if (err) { return {err, errStr}; }
-    }
 
     RegistryRespContainer respContainer;
     {
-        const auto [err, errStr] = readRegistryResponse(sock.get(), respContainer, timeout);
+        const auto [err, errStr] = _doRequest(reqContainer, respContainer);
         if (err) { return {err, errStr}; }
     }
 
@@ -338,15 +332,14 @@ std::pair<int, std::string> fetchShardReplicas(
             replicas.emplace_back(std::move(shard));
         }
     }
-
     return {};
 }
 
-std::pair<int, std::string> registerCDCReplica(const std::string& host, uint16_t port, Duration timeout, ReplicaId replicaId, uint8_t location, bool isLeader, const AddrsInfo& addrs) {
-    const auto [sock, errStr] = registrySock(host, port, timeout);
-    if (sock.error()) {
-        return {sock.getErrno(), errStr};
-    }
+std::pair<int, std::string> RegistryClient::registerCDCReplica(
+    ReplicaId replicaId, uint8_t location, bool isLeader,
+    const AddrsInfo& addrs
+) {
+    std::scoped_lock lock(_mutex);
 
     RegistryReqContainer reqContainer;
     auto& req = reqContainer.setRegisterCdc();
@@ -354,40 +347,27 @@ std::pair<int, std::string> registerCDCReplica(const std::string& host, uint16_t
     req.location = location;
     req.isLeader = isLeader;
     req.addrs = addrs;
-    {
-        const auto [err, errStr] = writeRegistryRequest(sock.get(), reqContainer, timeout);
-        if (err) { return {err, errStr}; }
-    }
 
     RegistryRespContainer respContainer;
     {
-        const auto [err, errStr] = readRegistryResponse(sock.get(), respContainer, timeout);
+        const auto [err, errStr] = _doRequest(reqContainer, respContainer);
         if (err) { return {err, errStr}; }
     }
     respContainer.getRegisterCdc();
-
     return {};
 }
 
-std::pair<int, std::string> fetchCDCReplicas(
-    const std::string& addr, uint16_t port, Duration timeout, std::array<AddrsInfo, 5>& replicas
+std::pair<int, std::string> RegistryClient::fetchCDCReplicas(
+    std::array<AddrsInfo, 5>& replicas
 ) {
-    const auto [sock, errStr] = registrySock(addr, port, timeout);
-    if (sock.error()) {
-        return {sock.getErrno(), errStr};
-    }
+    std::scoped_lock lock(_mutex);
 
     RegistryReqContainer reqContainer;
     auto& req = reqContainer.setCdcReplicasDEPRECATED();
 
-    {
-        const auto [err, errStr] = writeRegistryRequest(sock.get(), reqContainer, timeout);
-        if (err) { return {err, errStr}; }
-    }
-
     RegistryRespContainer respContainer;
     {
-        const auto [err, errStr] = readRegistryResponse(sock.get(), respContainer, timeout);
+        const auto [err, errStr] = _doRequest(reqContainer, respContainer);
         if (err) { return {err, errStr}; }
     }
 
@@ -397,26 +377,20 @@ std::pair<int, std::string> fetchCDCReplicas(
     for (int i = 0; i < replicas.size(); i++) {
         replicas[i] = respContainer.getCdcReplicasDEPRECATED().replicas.els[i];
     }
-
     return {};
 }
 
-std::pair<int, std::string> fetchLocalShards(const std::string& host, uint16_t port, Duration timeout, std::array<ShardInfo, 256>& shards) {
-    const auto [sock, errStr] = registrySock(host, port, timeout);
-    if (sock.error()) {
-        return {sock.getErrno(), errStr};
-    }
+std::pair<int, std::string> RegistryClient::fetchLocalShards(
+    std::array<ShardInfo, 256>& shards
+) {
+    std::scoped_lock lock(_mutex);
 
     RegistryReqContainer reqContainer;
     reqContainer.setLocalShards();
-    {
-        const auto [err, errStr] = writeRegistryRequest(sock.get(), reqContainer, timeout);
-        if (err) { return {err, errStr}; }
-    }
 
     RegistryRespContainer respContainer;
     {
-        const auto [err, errStr] = readRegistryResponse(sock.get(), respContainer, timeout);
+        const auto [err, errStr] = _doRequest(reqContainer, respContainer);
         if (err) { return {err, errStr}; }
     }
     if (respContainer.getLocalShards().shards.els.size() != shards.size()) {
@@ -425,7 +399,6 @@ std::pair<int, std::string> fetchLocalShards(const std::string& host, uint16_t p
     for (int i = 0; i < shards.size(); i++) {
         shards[i] = respContainer.getLocalShards().shards.els[i];
     }
-
     return {};
 }
 
