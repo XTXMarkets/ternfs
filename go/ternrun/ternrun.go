@@ -266,7 +266,10 @@ func main() {
 		waitRegistryFor = 60 * time.Second
 	}
 	fmt.Printf("waiting for block services for %v...\n", waitRegistryFor)
-	client.WaitForBlockServices(l, registryAddress, int(*failureDomains*(*hddBlockServices+*flashBlockServices)*numLocations), true, waitRegistryFor)
+	_, err = client.WaitForBlockServices(l, registryAddress, int(*failureDomains*(*hddBlockServices+*flashBlockServices)*numLocations), waitRegistryFor)
+	if err != nil {
+		panic(fmt.Errorf("failed to wait for block services: %v", err))
+	}
 
 	// Start CDC
 	{
@@ -308,18 +311,20 @@ func main() {
 				if loc > 0 {
 					dirName = fmt.Sprintf("%s_loc%d", dirName, loc)
 				}
+				noWritableDelay := time.Duration(0)
 				opts := managedprocess.ShardOpts{
-					Exe:             cppExes.ShardExe,
-					Shrid:           shrid,
-					Dir:             path.Join(*dataDir, dirName),
-					LogLevel:        level,
-					Valgrind:        *buildType == "valgrind",
-					RegistryAddress: registryAddressToUse,
-					Perf:            *profile,
-					Xmon:            *xmon,
-					Location:        msgs.Location(loc),
-					LogsDBFlags:     nil,
-					Addr1:           "127.0.0.1:0",
+					Exe:                       cppExes.ShardExe,
+					Shrid:                     shrid,
+					Dir:                       path.Join(*dataDir, dirName),
+					LogLevel:                  level,
+					Valgrind:                  *buildType == "valgrind",
+					RegistryAddress:           registryAddressToUse,
+					Perf:                      *profile,
+					Xmon:                      *xmon,
+					Location:                  msgs.Location(loc),
+					LogsDBFlags:               nil,
+					Addr1:                     "127.0.0.1:0",
+					BlockServiceWritableDelay: &noWritableDelay,
 				}
 				if r == 0 {
 					if *leaderOnly {

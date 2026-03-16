@@ -16,8 +16,6 @@
 #include <sys/time.h>
 #include <array>
 #include <netinet/tcp.h>
-#include <unordered_map>
-#include <unordered_set>
 
 #include "Bincode.hpp"
 #include "Msgs.hpp"
@@ -177,78 +175,20 @@ std::pair<int, std::string> RegistryClient::_doRequest(RegistryReqContainer& req
     return {};
 }
 
-std::pair<int, std::string> RegistryClient::fetchBlockServices(ShardId shid, std::vector<FullBlockServiceInfo>& blockServices, std::vector<BlockServiceInfoShort>& currentBlockServices) {
+std::pair<int, std::string> RegistryClient::fetchBlockServices(std::vector<FullBlockServiceInfo>& blockServices) {
     std::scoped_lock lock(_mutex);
     blockServices.clear();
-    currentBlockServices.clear();
 
-#define FAIL(err, errStr) do { blockServices.clear(); currentBlockServices.clear(); return {err, errStr}; } while (0)
-
-    // all block services
+    RegistryReqContainer reqContainer;
+    reqContainer.setAllBlockServices();
+    RegistryRespContainer respContainer;
     {
-        RegistryReqContainer reqContainer;
-        auto& req = reqContainer.setAllBlockServices();
-        RegistryRespContainer respContainer;
-        {
-            const auto [err, errStr] = _doRequest(reqContainer, respContainer);
-            if (err) { FAIL(err, errStr); }
-        }
-        blockServices = respContainer.getAllBlockServices().blockServices.els;
+        const auto [err, errStr] = _doRequest(reqContainer, respContainer);
+        if (err) { blockServices.clear(); return {err, errStr}; }
     }
-
-    // current block services
-    {
-        RegistryReqContainer reqContainer;
-        auto& req = reqContainer.setShardBlockServices();
-        req.shardId = shid;
-        RegistryRespContainer respContainer;
-        {
-            const auto [err, errStr] = _doRequest(reqContainer, respContainer);
-            if (err) { FAIL(err, errStr); }
-        }
-        currentBlockServices = respContainer.getShardBlockServices().blockServices.els;
-    }
-
-    // check that all current block services are known -- there's a small race here
-    // the caller should just retry in these cases.
-    // check that all current block services are from different failure domains
-    // registry should guarantee that when sending response but verify the invariant
-    {
-        std::unordered_set<uint64_t> knownBlockServices;
-        std::unordered_map<uint64_t, const FullBlockServiceInfo* > bsIdToBlockService;
-        std::unordered_set<std::string> fdSet;
-        for (const auto& bs : blockServices) {
-            knownBlockServices.insert(bs.id.u64);
-            bsIdToBlockService[bs.id.u64] = &bs;
-        }
-
-        for (auto storageClass : {HDD_STORAGE, FLASH_STORAGE}) {
-            fdSet.clear();
-            for (BlockServiceInfoShort bs : currentBlockServices) {
-                if (bs.storageClass != storageClass) { continue; }
-                if (!knownBlockServices.contains(bs.id.u64)) {
-                    std::stringstream ss;
-                    ss << "got unknown block service " << bs.id << " in current block services, was probably added in the meantime, please retry";
-                    FAIL(EIO, ss.str());
-                }
-                auto fdName = std::string((const char*)bs.failureDomain.name.data.data(), bs.failureDomain.name.data.size());
-                if (!fdSet.insert(fdName).second) {
-                    std::stringstream ss;
-                    ss << "got multiple block services in the same failure domain: " << fdName;
-                    FAIL(EIO, ss.str());
-                }
-            }
-            if (fdSet.size() < 14) {
-                std::stringstream ss;
-                ss << "we need at least 14 block services per storage class but we got " << storageClass << ": " << fdSet.size();
-                FAIL(EIO, ss.str());
-            }
-        }
-    }
+    blockServices = respContainer.getAllBlockServices().blockServices.els;
 
     return {};
-
-#undef FAIL
 }
 
 std::pair<int, std::string> RegistryClient::registerRegistry(

@@ -26,9 +26,7 @@ public:
     RegistryClient& operator=(const RegistryClient&) = delete;
 
     std::pair<int, std::string> fetchBlockServices(
-        ShardId shid,
-        std::vector<FullBlockServiceInfo>& blockServices,
-        std::vector<BlockServiceInfoShort>& currentBlockServices
+        std::vector<FullBlockServiceInfo>& blockServices
     );
 
     std::pair<int, std::string> registerRegistry(

@@ -39,14 +39,12 @@ private:
     std::shared_mutex& _shared_mutex;
 public:
     const std::unordered_map<uint64_t, BlockServiceCache>& blockServices;
-    const std::vector<BlockServiceInfoShort>& currentBlockServices;
 
     BlockServicesCache(
         std::shared_mutex& mutex,
-        const std::unordered_map<uint64_t, BlockServiceCache>& blockServices_,
-        const std::vector<BlockServiceInfoShort>& currentBlockServices_
+        const std::unordered_map<uint64_t, BlockServiceCache>& blockServices_
     ) :
-        _shared_mutex(mutex), blockServices(blockServices_), currentBlockServices(currentBlockServices_)
+        _shared_mutex(mutex), blockServices(blockServices_)
     {
         _shared_mutex.lock_shared();
     }
@@ -71,15 +69,13 @@ private:
     mutable std::shared_mutex _mutex;
     // Cache of all the block services as an in-memory map.
     std::unordered_map<uint64_t, BlockServiceCache> _blockServices;
-    // The block services that we currently want to write to.
-    std::vector<BlockServiceInfoShort> _currentBlockServices;
     BlockServicePicker _picker;
 
 public:
     BlockServicesCacheDB(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const SharedRocksDB& sharedDB, Duration blockServiceWritableDelay = 5_mins);
     static std::vector<rocksdb::ColumnFamilyDescriptor> getColumnFamilyDescriptors();
 
-    void updateCache(const std::vector<FullBlockServiceInfo>& blockServices, const std::vector<BlockServiceInfoShort>& currentBlockServices);
+    void updateCache(const std::vector<FullBlockServiceInfo>& blockServices);
 
     // Pick block services for a given location/storage class. Returns
     // COULD_NOT_PICK_BLOCK_SERVICES on failure.

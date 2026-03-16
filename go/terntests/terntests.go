@@ -1329,7 +1329,10 @@ func main() {
 
 	// wait for block services first, so we know that shards will immediately have all of them
 	fmt.Printf("waiting for block services for %v...\n", waitRegistryFor)
-	blockServices := client.WaitForBlockServices(l, fmt.Sprintf("127.0.0.1:%v", registryPort), failureDomains*(hddBlockServices+flashBlockServices), true, waitRegistryFor)
+	blockServices, err := client.WaitForBlockServices(l, fmt.Sprintf("127.0.0.1:%v", registryPort), failureDomains*(hddBlockServices+flashBlockServices), waitRegistryFor)
+	if err != nil {
+		panic(fmt.Errorf("failed to wait for block services: %v", err))
+	}
 	blockServicesPorts := make(map[msgs.FailureDomain]struct {
 		_1 uint16
 		_2 uint16
@@ -1379,6 +1382,7 @@ func main() {
 	for i := 0; i < numShards; i++ {
 		for r := uint8(0); r < replicaCount; r++ {
 			shrid := msgs.MakeShardReplicaId(msgs.ShardId(i), msgs.ReplicaId(r))
+			noWritableDelay := time.Duration(0)
 			shopts := managedprocess.ShardOpts{
 				Exe:                       cppExes.ShardExe,
 				Dir:                       path.Join(*dataDir, fmt.Sprintf("shard_%03d_%d", i, r)),
@@ -1391,6 +1395,7 @@ func main() {
 				Addr1:                     "127.0.0.1:0",
 				Addr2:                     "127.0.0.1:0",
 				TransientDeadlineInterval: &testTransientDeadlineInterval,
+				BlockServiceWritableDelay: &noWritableDelay,
 				LogsDBFlags:               nil,
 			}
 			if r == 0 {

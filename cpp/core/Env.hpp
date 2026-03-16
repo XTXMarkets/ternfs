@@ -93,7 +93,7 @@ public:
         }
     }
 
-    bool _shouldLog(LogLevel level) {
+    bool shouldLog(LogLevel level) const {
         return level >= _logLevel;
     }
 
@@ -151,15 +151,15 @@ public:
         }
     }
 
-    bool _shouldLog(LogLevel level) {
-        return _logger._shouldLog(level);
+    bool shouldLog(LogLevel level) const {
+        return _logger.shouldLog(level);
     }
 };
 
 #ifdef TERN_DEBUG
     #define LOG_TRACE(env, ...) \
         do { \
-            if (unlikely((env)._shouldLog(LogLevel::LOG_TRACE))) { \
+            if (unlikely((env).shouldLog(LogLevel::LOG_TRACE))) { \
                 (env)._log(LogLevel::LOG_TRACE, VALIDATE_FORMAT(__VA_ARGS__)); \
             } \
         } while (false)
@@ -169,21 +169,21 @@ public:
 
 #define LOG_DEBUG(env, ...) \
     do { \
-        if (unlikely((env)._shouldLog(LogLevel::LOG_DEBUG))) { \
+        if (unlikely((env).shouldLog(LogLevel::LOG_DEBUG))) { \
             (env)._log(LogLevel::LOG_DEBUG, VALIDATE_FORMAT(__VA_ARGS__)); \
         } \
     } while (false)
 
 #define LOG_INFO(env, ...) \
     do { \
-        if (likely((env)._shouldLog(LogLevel::LOG_INFO))) { \
+        if (likely((env).shouldLog(LogLevel::LOG_INFO))) { \
             (env)._log(LogLevel::LOG_INFO, VALIDATE_FORMAT(__VA_ARGS__)); \
         } \
     } while (false)
 
 #define LOG_ERROR(env, ...) \
     do { \
-        if (likely((env)._shouldLog(LogLevel::LOG_ERROR))) { \
+        if (likely((env).shouldLog(LogLevel::LOG_ERROR))) { \
             (env)._log(LogLevel::LOG_ERROR, VALIDATE_FORMAT(__VA_ARGS__)); \
         } \
     } while (false)

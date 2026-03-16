@@ -656,6 +656,7 @@ type ShardOpts struct {
 	Location                  msgs.Location
 	LogsDBFlags               []string
 	NumReaders                uint16
+	BlockServiceWritableDelay *time.Duration
 }
 
 func (procs *ManagedProcesses) StartShard(ll *log.Logger, repoDir string, opts *ShardOpts) {
@@ -681,6 +682,9 @@ func (procs *ManagedProcesses) StartShard(ll *log.Logger, repoDir string, opts *
 	}
 	if opts.TransientDeadlineInterval != nil {
 		args = append(args, "-transient-deadline-interval", fmt.Sprintf("%dns", opts.TransientDeadlineInterval.Nanoseconds()))
+	}
+	if opts.BlockServiceWritableDelay != nil {
+		args = append(args, "-block-service-writable-delay", fmt.Sprintf("%dns", opts.BlockServiceWritableDelay.Nanoseconds()))
 	}
 	if opts.Xmon != "" {
 		args = append(args, "-xmon", opts.Xmon)

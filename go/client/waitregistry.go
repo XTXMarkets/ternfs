@@ -11,33 +11,26 @@ import (
 	"xtx/ternfs/msgs"
 )
 
-func WaitForBlockServices(ll *log.Logger, registryAddress string, expectedBlockServices int, waitCurrentServicesCalcuation bool, timeout time.Duration) []msgs.BlockServiceDeprecatedInfo {
+func WaitForBlockServices(ll *log.Logger, registryAddress string, expectedBlockServices int, timeout time.Duration) ([]msgs.BlockServiceDeprecatedInfo, error) {
 	var err error
+	t0 := time.Now()
 	for {
+		if time.Since(t0) > timeout {
+			return nil, fmt.Errorf("giving up waiting for block services, last error: %w", err)
+		}
+		time.Sleep(10 * time.Millisecond)
 		var resp msgs.RegistryResponse
 		var bss []msgs.BlockServiceDeprecatedInfo
 		resp, err = RegistryRequest(ll, nil, registryAddress, &msgs.AllBlockServicesDeprecatedReq{})
 		if err != nil {
 			ll.Debug("got error while getting block services from registry, will keep waiting: %v", err)
-			goto KeepChecking
+			continue
 		}
 		bss = resp.(*msgs.AllBlockServicesDeprecatedResp).BlockServices
-		if len(bss) < expectedBlockServices {
-			err = fmt.Errorf("not all block services are up yet, will keep waiting")
-			ll.Debug("%v", err)
-			goto KeepChecking
+		if len(bss) >= expectedBlockServices {
+			return bss, nil
 		}
-
-		if waitCurrentServicesCalcuation {
-			resp, err = RegistryRequest(ll, nil, registryAddress, &msgs.ShardBlockServicesDEPRECATEDReq{0})
-			if err != nil || len(resp.(*msgs.ShardBlockServicesDEPRECATEDResp).BlockServices) == 0 {
-				ll.Debug("current block services not calculated, will keep waiting")
-				goto KeepChecking
-			}
-		}
-		return bss
-	KeepChecking:
-		time.Sleep(10 * time.Millisecond)
+		err = fmt.Errorf("not all block services are up yet, will keep waiting")
 	}
 }
 

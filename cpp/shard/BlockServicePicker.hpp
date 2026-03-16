@@ -13,6 +13,7 @@
 #include <vector>
 
 
+#include "Env.hpp"
 #include "MsgsGen.hpp"
 #include "Random.hpp"
 #include "Time.hpp"
@@ -45,8 +46,6 @@ struct BlockServicePicker {
             uint64_t weight;
         };
         std::unordered_map<uint64_t, ServiceLookup> serviceToFdInfo;
-        // Fallback: current block services (original simple list)
-        std::unordered_map<uint16_t, std::vector<BlockServiceInfoShort>> currentByLocClass;
         // Set of (location, storageClass) keys that should use fallback storage class
         // Populated when there are no block services (writable or unwritable) for that combination
         std::unordered_set<uint16_t> needsFallback;
@@ -54,7 +53,6 @@ struct BlockServicePicker {
 
     struct LocationStorageStats {
         std::atomic<uint64_t> totalPicks{0};
-        std::atomic<uint64_t> fallbackPicks{0};
         std::atomic<uint64_t> writableFailureDomains{0};
         std::atomic<uint64_t> writableBlockServices{0};
         std::atomic<uint64_t> maxWeight{0};
@@ -63,6 +61,7 @@ struct BlockServicePicker {
 
     std::atomic<std::shared_ptr<const State>> _state{nullptr};
     mutable RandomGenerator _rng;
+    mutable Env _env;
 
     // mutable as pick is const
     mutable std::unordered_map<uint16_t, LocationStorageStats> _locStorageStats;
@@ -72,11 +71,10 @@ struct BlockServicePicker {
     const uint8_t _maxBlocksToPick;
     const Duration _writableDelay;
 
-    explicit BlockServicePicker(uint8_t maxBlocksToPick = 15, Duration writableDelay = 5_mins);
+    BlockServicePicker(Logger& logger, std::shared_ptr<XmonAgent>& xmon, uint8_t maxBlocksToPick = 15, Duration writableDelay = 5_mins);
 
     void update(
-        const std::unordered_map<uint64_t, BlockServiceCache>& allBlockServices,
-        const std::vector<BlockServiceInfoShort>& currentBlockServices
+        const std::unordered_map<uint64_t, BlockServiceCache>& allBlockServices
     );
 
     // Pick "needed" services for (locationId, storageClass), honoring blacklist.
@@ -93,7 +91,6 @@ struct BlockServicePicker {
         struct LocStorageSnap {
             uint16_t key;
             uint64_t totalPicks;
-            uint64_t fallbackPicks;
             uint64_t writableFailureDomains;
             uint64_t writableBlockServices;
             uint64_t maxWeight;

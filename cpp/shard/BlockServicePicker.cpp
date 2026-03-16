@@ -82,26 +82,47 @@ namespace {
             }
             lsInfo.totalWeight += fd.totalWeight;
         }
+
+        // Fix up rounding errors: ensure maxFdWeight * maxBlocksToPick <= totalWeight
+        for (;;) {
+            BlockServicePicker::FailureDomainInfo* maxFd = nullptr;
+            uint64_t maxW = 0;
+            for (auto& fd : failureDomains) {
+                if (fd.totalWeight > maxW) {
+                    maxW = fd.totalWeight;
+                    maxFd = &fd;
+                }
+            }
+            if (!maxFd || maxW * maxBlocksToPick <= lsInfo.totalWeight) break;
+
+            // Find the largest service in the max FD and reduce it by 1
+            BlockServicePicker::BlockServiceInfo* maxSvc = nullptr;
+            uint64_t maxSvcW = 0;
+            for (auto& svc : maxFd->services) {
+                if (svc.availableBytes > maxSvcW) {
+                    maxSvcW = svc.availableBytes;
+                    maxSvc = &svc;
+                }
+            }
+            if (!maxSvc || maxSvcW <= 1) break;
+            maxSvc->availableBytes--;
+            serviceToFdInfo[maxSvc->id.u64].weight--;
+            maxFd->totalWeight--;
+            lsInfo.totalWeight--;
+        }
     }
 }
 
-BlockServicePicker::BlockServicePicker(uint8_t maxBlocksToPick, Duration writableDelay)
-    : _state(nullptr), _rng(ternNow().ns), _maxBlocksToPick(maxBlocksToPick), _writableDelay(writableDelay) {}
+BlockServicePicker::BlockServicePicker(Logger& logger, std::shared_ptr<XmonAgent>& xmon, uint8_t maxBlocksToPick, Duration writableDelay)
+    : _state(nullptr), _rng(ternNow().ns), _env(logger, xmon, "block_service_picker"), _maxBlocksToPick(maxBlocksToPick), _writableDelay(writableDelay) {}
 
 void BlockServicePicker::update(
-    const std::unordered_map<uint64_t, BlockServiceCache>& allBlockServices,
-    const std::vector<BlockServiceInfoShort>& currentBlockServices
+    const std::unordered_map<uint64_t, BlockServiceCache>& allBlockServices
 ) {
     auto next = std::make_shared<State>();
     next->byLocClass.clear();
-    next->currentByLocClass.clear();
     next->serviceToFdInfo.clear();
     next->needsFallback.clear();
-
-    // Backwards compatibility: store current block services
-    for (const auto& bs : currentBlockServices) {
-        next->currentByLocClass[lcKey(bs.locationId, bs.storageClass)].emplace_back(bs);
-    }
 
     // Build weighted structure: group by location/storageClass, then by failure domain
     // Map: (location, storageClass) -> map of (failure domain string) -> failure domain index
@@ -181,6 +202,8 @@ TernError BlockServicePicker::pick(
 ) const {
     auto state = _state.load(std::memory_order_acquire);
     if (!state || needed == 0 || needed > _maxBlocksToPick) {
+        LOG_DEBUG(_env, "pick failed: state=%s needed=%s maxBlocksToPick=%s",
+            state != nullptr, (int)needed, (int)_maxBlocksToPick);
         return TernError::COULD_NOT_PICK_BLOCK_SERVICES;
     }
 
@@ -210,8 +233,6 @@ TernError BlockServicePicker::pick(
 
         for (const auto& fdInfo : lsInfo.failureDomains) {
             uint64_t adjustedWeight = fdInfo.totalWeight;
-            // Check if entire FD is blacklisted
-            bool fdBlacklisted = false;
             for (const auto& b : blacklist) {
                 if (b.failureDomain == fdInfo.failureDomain) {
                     adjustedWeight = 0;
@@ -242,7 +263,7 @@ TernError BlockServicePicker::pick(
             out.reserve(needed);
 
             uint64_t step = totalWeight / needed;
-            if (step > maxFdWeight) {
+            if (step >= maxFdWeight) {
                 uint64_t offset = _rng.generate64() % totalWeight;
 
                 for (uint8_t i = 0; i < needed; i++) {
@@ -290,53 +311,32 @@ TernError BlockServicePicker::pick(
         }
     }
 
-    // backwards compatibility: fallback to current block services
-    auto fallbackIt = state->currentByLocClass.find(key);
-
-    if (fallbackIt == state->currentByLocClass.end()) {
-        out.clear();
-        return TernError::COULD_NOT_PICK_BLOCK_SERVICES;
-    }
-
-    std::vector<BlockServiceId> candidates;
-    candidates.reserve(fallbackIt->second.size());
-    for (const auto& bs : fallbackIt->second) {
-        bool blacklisted = false;
-        for (const auto& b : blacklist) {
-            if (b.blockService == bs.id || b.failureDomain == bs.failureDomain) {
-                blacklisted = true;
-                break;
+    if (_env.shouldLog(LogLevel::LOG_DEBUG)) {
+        auto it2 = state->byLocClass.find(key);
+        if (it2 == state->byLocClass.end()) {
+            LOG_DEBUG(_env, "pick failed: no entry for location=%s storageClass=%s (key=0x%s), byLocClass has %s entries, needsFallback has %s entries",
+                (int)locationId, (int)storageClass, key, state->byLocClass.size(), state->needsFallback.size());
+            for (const auto& [k, lsInfo] : state->byLocClass) {
+                LOG_DEBUG(_env, "  byLocClass key=0x%s: failureDomains=%s totalWeight=%s",
+                    k, lsInfo.failureDomains.size(), lsInfo.totalWeight);
+            }
+        } else {
+            const auto& lsInfo = it2->second;
+            size_t totalServices = 0;
+            for (const auto& fd : lsInfo.failureDomains) {
+                totalServices += fd.services.size();
+            }
+            LOG_DEBUG(_env, "pick failed: location=%s storageClass=%s needed=%s blacklist=%s failureDomains=%s totalServices=%s totalWeight=%s",
+                (int)locationId, (int)storageClass, (int)needed, blacklist.size(), lsInfo.failureDomains.size(), totalServices, lsInfo.totalWeight);
+            for (size_t fdIdx = 0; fdIdx < lsInfo.failureDomains.size(); fdIdx++) {
+                const auto& fdInfo = lsInfo.failureDomains[fdIdx];
+                LOG_DEBUG(_env, "  fd[%s]: services=%s totalWeight=%s",
+                    fdIdx, fdInfo.services.size(), fdInfo.totalWeight);
             }
         }
-        if (!blacklisted) {
-            candidates.emplace_back(bs.id);
-        }
     }
-
     out.clear();
-
-    while (!candidates.empty() && out.size() < needed) {
-        auto ix = _rng.generate64() % candidates.size();
-        out.emplace_back(candidates[ix]);
-        std::swap(candidates[ix], candidates.back());
-        candidates.pop_back();
-    }
-
-    if (out.size() < needed) {
-        out.clear();
-        return TernError::COULD_NOT_PICK_BLOCK_SERVICES;
-    }
-
-    {
-        std::lock_guard lock(_statsMutex);
-        _locStorageStats[key].totalPicks.fetch_add(needed, std::memory_order_relaxed);
-        _locStorageStats[key].fallbackPicks.fetch_add(needed, std::memory_order_relaxed);
-        for (const auto& id : out) {
-            _blockServiceStats[id.u64].fetch_add(1, std::memory_order_relaxed);
-        }
-    }
-
-    return TernError::NO_ERROR;
+    return TernError::COULD_NOT_PICK_BLOCK_SERVICES;
 }
 
 BlockServicePicker::StatsSnapshot BlockServicePicker::getStats() const {
@@ -347,7 +347,6 @@ BlockServicePicker::StatsSnapshot BlockServicePicker::getStats() const {
         snapshot.locStorage.push_back({
             key,
             stats.totalPicks.load(std::memory_order_relaxed),
-            stats.fallbackPicks.load(std::memory_order_relaxed),
             stats.writableFailureDomains.load(std::memory_order_relaxed),
             stats.writableBlockServices.load(std::memory_order_relaxed),
             stats.maxWeight.load(std::memory_order_relaxed),
@@ -387,7 +386,6 @@ void BlockServicePicker::resetStats() {
 
     for (auto& [key, stats] : _locStorageStats) {
         stats.totalPicks.store(0, std::memory_order_relaxed);
-        stats.fallbackPicks.store(0, std::memory_order_relaxed);
     }
 
     for (auto& [id, stats] : _blockServiceStats) {

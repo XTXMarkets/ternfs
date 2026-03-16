@@ -245,7 +245,7 @@ static void packShardResponse(
     if (respKind != ShardMessageKind::ERROR) {
         LOG_DEBUG(env, "successfully processed request %s with kind %s in %s", msg.id, reqKind, elapsed);
         if (bigResponse(respKind)) {
-            if (unlikely(env._shouldLog(LogLevel::LOG_TRACE))) {
+            if (unlikely(env.shouldLog(LogLevel::LOG_TRACE))) {
                 LOG_TRACE(env, "resp: %s", msg);
             } else {
                 LOG_DEBUG(env, "resp: <omitted>");
@@ -288,7 +288,7 @@ static void packCheckPointedShardResponse(
     if (respKind != ShardMessageKind::ERROR) {
         LOG_DEBUG(env, "successfully processed request %s with kind %s in %s", msg.id, reqKind, elapsed);
         if (bigResponse(respKind)) {
-            if (unlikely(env._shouldLog(LogLevel::LOG_TRACE))) {
+            if (unlikely(env.shouldLog(LogLevel::LOG_TRACE))) {
                 LOG_TRACE(env, "resp: %s", msg);
             } else {
                 LOG_DEBUG(env, "resp: <omitted>");
@@ -515,7 +515,7 @@ private:
         LOG_DEBUG(_env, "received request id %s, kind %s, from %s", req.id, req.body.kind(), msg.clientAddr);
 
         if (bigRequest(req.body.kind())) {
-                if (unlikely(_env._shouldLog(LogLevel::LOG_TRACE))) {
+                if (unlikely(_env.shouldLog(LogLevel::LOG_TRACE))) {
                     LOG_TRACE(_env, "parsed request: %s", req);
                 } else {
                     LOG_DEBUG(_env, "parsed request: <omitted>");
@@ -2178,7 +2178,6 @@ private:
     ShardReplicaId _shrid;
     XmonNCAlert _alert;
     std::vector<FullBlockServiceInfo> _blockServices;
-    std::vector<BlockServiceInfoShort> _currentBlockServices;
     bool _updatedOnce;
 public:
     ShardBlockServiceUpdater(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardShared& shared):
@@ -2193,13 +2192,12 @@ public:
     virtual bool periodicStep() override {
         if (!_blockServices.empty()) {
             // We delayed applying cache update most likely we were leader. We should apply it now
-            _shared.blockServicesCache.updateCache(_blockServices, _currentBlockServices);
+            _shared.blockServicesCache.updateCache(_blockServices);
             _blockServices.clear();
-            _currentBlockServices.clear();
         }
 
         LOG_INFO(_env, "about to fetch block services from registry");
-        const auto [err, errStr] = _shared.registryClient.fetchBlockServices(_shrid.shardId(), _blockServices, _currentBlockServices);
+        const auto [err, errStr] = _shared.registryClient.fetchBlockServices(_blockServices);
         if (err == EINTR) { return false; }
         if (err) {
             _env.updateAlert(_alert, "could not reach registry: %s", errStr);
@@ -2212,9 +2210,8 @@ public:
         // We immediately update cache if we are leader and delay until next iteration on leader unless this is first update which we apply immediately
         if (!_shared.options.isLeader() || !_updatedOnce) {
             _updatedOnce = true;
-            _shared.blockServicesCache.updateCache(_blockServices, _currentBlockServices);
+            _shared.blockServicesCache.updateCache(_blockServices);
             _blockServices.clear();
-            _currentBlockServices.clear();
             _shared.isBlockServiceCacheInitiated.store(true, std::memory_order_release);
             LOG_DEBUG(_env, "updated block services");
         }
@@ -2460,7 +2457,6 @@ public:
                 _metricsBuilder.tag("location_id", (int)locationId);
                 _metricsBuilder.tag("storage_class", (int)storageClass);
                 _metricsBuilder.fieldU64("total_picks", ls.totalPicks);
-                _metricsBuilder.fieldU64("fallback_picks", ls.fallbackPicks);
                 _metricsBuilder.fieldU64("writable_failure_domains", ls.writableFailureDomains);
                 _metricsBuilder.fieldU64("writable_block_services", ls.writableBlockServices);
                 _metricsBuilder.fieldU64("max_fd_weight", ls.maxWeight);
