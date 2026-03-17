@@ -79,7 +79,7 @@ func (c *Client) metadataRequest(
 			var isTernError bool
 			ternError, isTernError = resp.err.(msgs.TernError)
 			shouldCheckIdempotency := attempts > 0
-			if (shid >=0) {
+			if shid >= 0 {
 				if reqBody.(msgs.ShardRequest).ShardRequestKind() == msgs.SAME_DIRECTORY_RENAME {
 					shouldCheckIdempotency = true
 				}

@@ -422,16 +422,16 @@ func (procs *ManagedProcesses) StartFuse(ll *log.Logger, opts *FuseOpts) string 
 }
 
 type RegistryOpts struct {
-	Exe             string
-	Dir             string
-	Replica         msgs.ReplicaId
-	LogLevel        log.LogLevel
-	Stale           time.Duration
-	Xmon            string
-	RegistryAddress string
-	Addr1           string
-	Addr2           string
-	LogsDBFlags     []string
+	Exe               string
+	Dir               string
+	Replica           msgs.ReplicaId
+	LogLevel          log.LogLevel
+	Stale             time.Duration
+	Xmon              string
+	RegistryAddress   string
+	Addr1             string
+	Addr2             string
+	LogsDBFlags       []string
 	UsingDynamicPorts bool
 }
 

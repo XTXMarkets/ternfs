@@ -28,16 +28,16 @@ import (
 )
 
 type state struct {
-	counters    map[msgs.RegistryMessageKind]*timing.Timings
-	config      *registryProxyConfig
+	counters     map[msgs.RegistryMessageKind]*timing.Timings
+	config       *registryProxyConfig
 	registryConn *client.RegistryConn
 }
 
 type registryProxyConfig struct {
-	addrs          msgs.AddrsInfo
-	location       msgs.Location
+	addrs           msgs.AddrsInfo
+	location        msgs.Location
 	registryAddress string
-	numHandlers    uint
+	numHandlers     uint
 }
 
 func newState(
@@ -46,7 +46,7 @@ func newState(
 	idb *log.InfluxDB,
 ) *state {
 	st := &state{
-		config:      conf,
+		config:       conf,
 		registryConn: client.MakeRegistryConn(l, nil, conf.registryAddress, conf.numHandlers),
 	}
 
@@ -539,9 +539,9 @@ func main() {
 	}
 
 	config := &registryProxyConfig{
-		addrs:          msgs.AddrsInfo{msgs.IpPort{ownIp1, ownPort1}, msgs.IpPort{ownIp2, ownPort2}},
-		location:       msgs.Location(*location),
-		numHandlers:    *numHandlers,
+		addrs:           msgs.AddrsInfo{msgs.IpPort{ownIp1, ownPort1}, msgs.IpPort{ownIp2, ownPort2}},
+		location:        msgs.Location(*location),
+		numHandlers:     *numHandlers,
 		registryAddress: *registryAddress,
 	}
 	state := newState(log, config, influxDB)

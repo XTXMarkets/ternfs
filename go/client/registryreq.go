@@ -183,11 +183,11 @@ type shuckReq struct {
 }
 
 type RegistryConn struct {
-	log            *log.Logger
-	timeout        RegistryTimeouts
+	log             *log.Logger
+	timeout         RegistryTimeouts
 	registryAddress string
-	reqChan        chan shuckReq
-	numHandlers    uint
+	reqChan         chan shuckReq
+	numHandlers     uint
 }
 
 func MakeRegistryConn(

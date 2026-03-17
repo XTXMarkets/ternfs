@@ -63,9 +63,9 @@ func (c *Client) checkNewEdgeAfterRename(
 	err := c.ShardRequest(
 		logger, dirId.Shard(),
 		&msgs.FullReadDirReq{
-			DirId: dirId,
+			DirId:     dirId,
 			StartName: name,
-			Flags: msgs.FULL_READ_DIR_CURRENT | msgs.FULL_READ_DIR_SAME_NAME | msgs.FULL_READ_DIR_BACKWARDS,
+			Flags:     msgs.FULL_READ_DIR_CURRENT | msgs.FULL_READ_DIR_SAME_NAME | msgs.FULL_READ_DIR_BACKWARDS,
 		},
 		&fullReadDirResponse,
 	)
@@ -86,7 +86,7 @@ func (c *Client) checkNewEdgeAfterRename(
 		}
 		const edgeRenameMaxFuzzNs = msgs.TernTime(60 * 1000 * 1000 * 1000) // 60 seconds
 		if delta > edgeRenameMaxFuzzNs {
-			continue;
+			continue
 		}
 
 		*creationTime = result.CreationTime

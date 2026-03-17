@@ -1050,7 +1050,7 @@ func handleSingleRequest(
 		}
 		if now.After(futureCutoffTime) {
 			log.ErrorNoAlert("block %v is too old to be written (now=%v, futureCutoffTime=%v)", whichReq.BlockId, now, futureCutoffTime)
-			atomic.AddUint64(&env.stats[blockServiceId].blockTooOldForWrite,1)
+			atomic.AddUint64(&env.stats[blockServiceId].blockTooOldForWrite, 1)
 			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, msgs.BLOCK_TOO_OLD_FOR_WRITE)
 		}
 		if err := checkWriteCertificate(log, blockService.cipher, blockServiceId, whichReq, env.stats[blockServiceId]); err != nil {
@@ -1606,7 +1606,7 @@ func main() {
 		l.Info("block service %v at %v, storage class %v", id, blockService.path, blockService.storageClass)
 	}
 
-	if len(blockServices) + failedBlockServiceCount != flag.NArg()/2 {
+	if len(blockServices)+failedBlockServiceCount != flag.NArg()/2 {
 		panic(fmt.Errorf("duplicate block services"))
 	}
 
@@ -1755,7 +1755,7 @@ func main() {
 				return
 			}
 
-			if (*dscp != 0) {
+			if *dscp != 0 {
 				// check if client wants to override DSCP
 				ipv4Conn := ipv4.NewConn(conn)
 				currentDSCP, err := ipv4Conn.TOS()
@@ -1763,7 +1763,7 @@ func main() {
 					terminateChan <- err
 					return
 				}
-				if currentDSCP >> 2 == 0 {
+				if currentDSCP>>2 == 0 {
 					// Client did not set DSCP, so we set it
 					// Note that we shift left by 2 as the lower 2 bits are used for ECN
 					err = ipv4Conn.SetTOS(int(*dscp) << 2)

@@ -750,8 +750,8 @@ func (r *RunTests) run(
 			}
 			{
 				req := &msgs.FullReadDirReq{
-					DirId: dirId,
-					Flags: msgs.FULL_READ_DIR_SAME_NAME,
+					DirId:     dirId,
+					Flags:     msgs.FULL_READ_DIR_SAME_NAME,
 					StartName: fileName,
 				}
 				resp := &msgs.FullReadDirResp{}
@@ -775,7 +775,7 @@ func (r *RunTests) run(
 			if err := os.WriteFile(path.Join(r.mountPoint, sourceDirName, fileName), []byte("test"), 0666); err != nil {
 				panic(err)
 			}
-			if err := os.Rename(path.Join(r.mountPoint, sourceDirName, fileName),path.Join(r.mountPoint, dirName, fileName)); err != nil {
+			if err := os.Rename(path.Join(r.mountPoint, sourceDirName, fileName), path.Join(r.mountPoint, dirName, fileName)); err != nil {
 				panic(err)
 			}
 			if err := os.Remove(path.Join(r.mountPoint, dirName, fileName)); err != nil {
@@ -783,8 +783,8 @@ func (r *RunTests) run(
 			}
 			{
 				req := &msgs.FullReadDirReq{
-					DirId: dirId,
-					Flags: msgs.FULL_READ_DIR_SAME_NAME,
+					DirId:     dirId,
+					Flags:     msgs.FULL_READ_DIR_SAME_NAME,
 					StartName: fileName,
 				}
 				resp := &msgs.FullReadDirResp{}

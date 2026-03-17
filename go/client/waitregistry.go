@@ -73,7 +73,7 @@ func WaitForClient(log *log.Logger, registryAddress string, timeout time.Duratio
 				continue
 			}
 		}
-		if (!client.IsReady()) {
+		if !client.IsReady() {
 			log.Info("client not ready, waiting")
 			time.Sleep(time.Second)
 			continue

@@ -158,13 +158,13 @@ func main() {
 			}
 
 			opts := managedprocess.RegistryOpts{
-				Exe:             cppExes.RegistryExe,
-				LogLevel:        level,
-				Dir:             dir,
-				RegistryAddress: registryAddress,
-				Replica:         msgs.ReplicaId(r),
-				Xmon:            *xmon,
-				Addr1:           "127.0.0.1:0",
+				Exe:               cppExes.RegistryExe,
+				LogLevel:          level,
+				Dir:               dir,
+				RegistryAddress:   registryAddress,
+				Replica:           msgs.ReplicaId(r),
+				Xmon:              *xmon,
+				Addr1:             "127.0.0.1:0",
 				UsingDynamicPorts: true,
 			}
 			if r == 0 {

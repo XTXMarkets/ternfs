@@ -893,11 +893,11 @@ func main() {
 				panic(err)
 			}
 		}
-		if flagsToClear & msgs.TERNFS_BLOCK_SERVICE_DECOMMISSIONED != msgs.TERNFS_BLOCK_SERVICE_EMPTY {
+		if flagsToClear&msgs.TERNFS_BLOCK_SERVICE_DECOMMISSIONED != msgs.TERNFS_BLOCK_SERVICE_EMPTY {
 			fmt.Fprintf(os.Stderr, "cannot unset DECOMMISSIONED flag\n")
 			os.Exit(2)
 		}
-		if flagsToSet & flagsToClear != msgs.TERNFS_BLOCK_SERVICE_EMPTY {
+		if flagsToSet&flagsToClear != msgs.TERNFS_BLOCK_SERVICE_EMPTY {
 			fmt.Fprintf(os.Stderr, "there can not be intersection between -set and -unset\n")
 			os.Exit(2)
 		}
@@ -1099,7 +1099,10 @@ func main() {
 			location msgs.Location
 			storage  msgs.StorageClass
 		}
-		groupTotals := make(map[locClassKey]struct{ current uint64; snapshot uint64 })
+		groupTotals := make(map[locClassKey]struct {
+			current  uint64
+			snapshot uint64
+		})
 		groupTotalsMutex := sync.Mutex{}
 		histogram := timing.NewHistogram(256, 255, 1.15) // max: ~900PB
 		histoLogicalSizeBins := make([]uint64, 256)

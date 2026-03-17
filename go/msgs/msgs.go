@@ -1435,12 +1435,12 @@ type SetTimeResp struct{}
 type LinkEntry struct {
 	Id      InodeId
 	OwnerId InodeId
-	Time 	TernTime
+	Time    TernTime
 }
 
 type GetLinkEntriesReq struct {
 	FromIdx LogIdx
-	Mtu 	uint16
+	Mtu     uint16
 }
 
 type GetLinkEntriesResp struct {
@@ -1452,7 +1452,7 @@ type WaitStateAppliedReq struct {
 	Idx LogIdx
 }
 
-type WaitStateAppliedResp struct {}
+type WaitStateAppliedResp struct{}
 
 // --------------------------------------------------------------------
 // CDC requests/responses

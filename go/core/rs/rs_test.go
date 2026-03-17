@@ -63,7 +63,7 @@ func TestComputeParity(t *testing.T) {
 			}
 			haveBlocksBit := uint32(0)
 			for _, blockIx := range haveBlocks {
-				haveBlocksBit |= uint32(1)<<blockIx
+				haveBlocksBit |= uint32(1) << blockIx
 			}
 			recoveredBlock := rs.Recover(haveBlocksBit, have, wantBlock)
 			assert.EqualBytes(t, blocks[wantBlock], recoveredBlock)

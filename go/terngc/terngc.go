@@ -159,7 +159,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	if (*migrate) {
+	if *migrate {
 		if *migrateLocation >= 256 {
 			fmt.Fprintf(os.Stderr, "-migrate-location must be set and between 0 and 255\n")
 		}

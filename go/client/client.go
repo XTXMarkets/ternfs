@@ -961,7 +961,7 @@ type Client struct {
 	registryAddress      string
 	addrsRefreshClose    chan (struct{})
 	registryConn         *RegistryConn
-	clientReady		     atomic.Bool
+	clientReady          atomic.Bool
 
 	fetchBlockServices          bool
 	blockServicesLock           *sync.RWMutex
@@ -1003,7 +1003,6 @@ func (c *Client) refreshAddrs() error {
 		}
 		c.SetAddrs(cdcAddrs, &shardAddrs)
 	}
-
 
 	fetchBlockServices := func() bool {
 		c.blockServicesLock.RLock()
@@ -1071,7 +1070,7 @@ func NewClient(
 			if err := c.refreshAddrs(); err != nil {
 				log.RaiseNC(addressRefreshAlert, "%v", err)
 				if !wasReady {
-					addrsRefreshTicker.Reset(10*time.Second)
+					addrsRefreshTicker.Reset(10 * time.Second)
 				}
 			} else {
 				if !wasReady {

@@ -599,9 +599,9 @@ type migrator struct {
 	fileMigratorsNewFile      chan msgs.InodeId
 	statsC                    chan MigrateStats
 	stopC                     chan bool
-	logOnly             bool
-	failureDomainFilter string
-	locationId          msgs.Location
+	logOnly                   bool
+	failureDomainFilter       string
+	locationId                msgs.Location
 }
 
 func Migrator(registryAddress string, log *log.Logger, client *client.Client, numMigrators uint64, migratorIdx uint64, numParallelFiles uint32, logOnly bool, failureDomain string, locationId msgs.Location) *migrator {

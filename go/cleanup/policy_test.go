@@ -167,4 +167,3 @@ func TestDeleteOrphanDelete(t *testing.T) {
 	}
 	assert.Equal(t, 1, edgesToRemove(msgs.NULL_INODE_ID, &msgs.SnapshotPolicy{DeleteAfterTime: msgs.ActiveDeleteAfterTime(time.Hour)}, date(5), edges, time.Duration(0)))
 }
-
