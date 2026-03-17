@@ -18,7 +18,8 @@ sha512sum -c "linux-$version.tar.gz.sha512"
 
 tar xf "linux-$version.tar.gz"
 cp "$wsl_dir/Microsoft/config-wsl" .
-cp "$wsl_dir/Microsoft/config-wsl" "$wsl_dir/.config"
+sed -i /CONFIG_DEBUG_PREEMPT=/s/y/n/ config-wsl
+cp config-wsl "$wsl_dir/.config"
 ln -sf "$wsl_dir" wsl-linux
 
 else
