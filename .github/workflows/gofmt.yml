@@ -1,0 +1,24 @@
+name: gofmt
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  gofmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+
+      - name: Check gofmt
+        run: |
+          unformatted=$(find go/ -name '*.go' -not -path 'go/vendor/*' | xargs gofmt -l)
+          if [ -n "$unformatted" ]; then
+            echo "The following Go files are not gofmt-formatted:"
+            echo "$unformatted"
+            exit 1
+          fi

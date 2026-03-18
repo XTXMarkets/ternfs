@@ -1,0 +1,19 @@
+#!/bin/sh
+# Pre-commit hook: checks that staged Go files are gofmt-formatted.
+# To enable: git config core.hooksPath githooks
+
+staged=$(git diff --cached --name-only --diff-filter=ACM -- '*.go')
+if [ -z "$staged" ]; then
+    exit 0
+fi
+
+unformatted=$(echo "$staged" | xargs gofmt -l 2>/dev/null)
+if [ -n "$unformatted" ]; then
+    echo "The following Go files are not gofmt-formatted:"
+    echo "$unformatted"
+    echo ""
+    echo "Run: gofmt -w <file>"
+    exit 1
+fi
+
+exit 0
