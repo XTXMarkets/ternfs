@@ -192,16 +192,23 @@ func (s *Server) opGetattr(args GETATTR4args, st *compoundState, w *COMPOUND4res
 	}
 	ni, err := s.fs.Stat(st.currentID)
 	if err != nil {
-		ew := w.AppendResarray_Getattr()
-		status := s.errToNFS(err)
-		ew.SetValue_Default(status)
-		w.Resume(ew.Finish())
-		return status
-	}
-
-	// If the file has an active staging buffer, use its size.
-	if sz, ok := s.stagingStore.StagedSize(st.currentID); ok {
-		ni.Size = sz
+		// If Stat fails but the file is being staged (transient file not yet
+		// linked), synthesize metadata from the staging store.
+		if sz, ok := s.stagingStore.StagedSize(st.currentID); ok {
+			now := time.Now()
+			ni = NodeInfo{Size: sz, Mtime: now, Atime: now}
+		} else {
+			ew := w.AppendResarray_Getattr()
+			status := s.errToNFS(err)
+			ew.SetValue_Default(status)
+			w.Resume(ew.Finish())
+			return status
+		}
+	} else {
+		// If the file has an active staging buffer, use its size.
+		if sz, ok := s.stagingStore.StagedSize(st.currentID); ok {
+			ni.Size = sz
+		}
 	}
 
 	reqMask := parseBitmap(args.AttrRequest())
