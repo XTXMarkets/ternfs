@@ -87,9 +87,10 @@ type TernVFS interface {
 
 	// ConstructFile creates a transient file (not yet visible in any
 	// directory). Returns the file's InodeID and a Cookie that must be
-	// provided for subsequent operations on the file. Matches TernFS
-	// ConstructFileReq semantics.
-	ConstructFile() (InodeID, Cookie, error)
+	// provided for subsequent operations on the file. dirID is the
+	// intended target directory (used for shard selection in TernFS).
+	// Matches TernFS ConstructFileReq semantics.
+	ConstructFile(dirID InodeID) (InodeID, Cookie, error)
 
 	// LinkFile links a transient file into a directory, making it visible.
 	// The correct cookie (from ConstructFile) must be provided. data is the
@@ -390,7 +391,7 @@ func (lfs *LocalTernVFS) Symlink(dirID InodeID, name string, target string) (Ino
 	return lfs.register(childPath, dirID), nil
 }
 
-func (lfs *LocalTernVFS) ConstructFile() (InodeID, Cookie, error) {
+func (lfs *LocalTernVFS) ConstructFile(dirID InodeID) (InodeID, Cookie, error) {
 	// Create a temp file to simulate a transient TernFS file.
 	f, err := os.CreateTemp(lfs.root, ".transient-*")
 	if err != nil {

@@ -399,7 +399,7 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 			if err != nil {
 				// File doesn't exist — construct a transient file.
 				var fileCookie Cookie
-				id, fileCookie, err = s.fs.ConstructFile()
+				id, fileCookie, err = s.fs.ConstructFile(dirID)
 				if err != nil {
 					ew := w.AppendResarray_Open()
 					ew.SetValue_Default(s.errToNFS(err))

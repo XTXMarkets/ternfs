@@ -9,11 +9,16 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"xtx/ternfs/client"
+	"xtx/ternfs/core/bufpool"
+	"xtx/ternfs/core/log"
+	"xtx/ternfs/msgs"
 )
 
 func main() {
 	addr := flag.String("addr", ":2049", "listen address")
-	root := flag.String("root", ".", "root directory to export")
+	root := flag.String("root", "", "local root directory to export (for testing)")
+	registry := flag.String("registry", "", "TernFS registry address (for production)")
 	staging := flag.String("staging", "", "staging directory for writes (omit for read-only)")
 	verbose := flag.Bool("v", false, "verbose logging of NFS requests/responses")
 	flag.Parse()
@@ -22,41 +27,65 @@ func main() {
 	if *verbose {
 		level = slog.LevelDebug
 	}
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+	slogger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 
-	absRoot, err := filepath.Abs(*root)
-	if err != nil {
-		logger.Error("resolving root path", "err", err)
-		os.Exit(1)
-	}
-	info, err := os.Stat(absRoot)
-	if err != nil || !info.IsDir() {
-		logger.Error("root must be a directory", "path", absRoot)
+	if (*root == "") == (*registry == "") {
+		slogger.Error("exactly one of -root (local) or -registry (TernFS) must be specified")
 		os.Exit(1)
 	}
 
 	var ss StagingStore
+	var err error
 	if *staging != "" {
-		ss, err = NewLocalStagingStore(*staging, logger)
+		ss, err = NewLocalStagingStore(*staging, slogger)
 		if err != nil {
-			logger.Error("creating staging store", "err", err)
+			slogger.Error("creating staging store", "err", err)
 			os.Exit(1)
 		}
-		logger.Info("staging directory configured", "path", *staging)
+		slogger.Info("staging directory configured", "path", *staging)
 	} else {
 		ss = readOnlyStagingStore{}
-		logger.Info("no staging directory — read-only mode")
+		slogger.Info("no staging directory — read-only mode")
 	}
 
-	fs := NewLocalTernVFS(absRoot)
-	srv, err := NewServer(fs, ss, logger)
+	var fs TernVFS
+	if *root != "" {
+		absRoot, err := filepath.Abs(*root)
+		if err != nil {
+			slogger.Error("resolving root path", "err", err)
+			os.Exit(1)
+		}
+		info, err := os.Stat(absRoot)
+		if err != nil || !info.IsDir() {
+			slogger.Error("root must be a directory", "path", absRoot)
+			os.Exit(1)
+		}
+		fs = NewLocalTernVFS(absRoot)
+		slogger.Info("local VFS mode", "root", absRoot)
+	} else {
+		logLevel := log.INFO
+		if *verbose {
+			logLevel = log.DEBUG
+		}
+		ternLogger := log.NewLogger(os.Stderr, &log.LoggerOptions{Level: logLevel})
+		c, err := client.NewClient(ternLogger, nil, *registry, msgs.AddrsInfo{})
+		if err != nil {
+			slogger.Error("connecting to TernFS registry", "err", err)
+			os.Exit(1)
+		}
+		bp := bufpool.NewBufPool()
+		fs = NewRemoteTernVFS(c, ternLogger, bp)
+		slogger.Info("TernFS mode", "registry", *registry)
+	}
+
+	srv, err := NewServer(fs, ss, slogger)
 	if err != nil {
-		logger.Error("creating server", "err", err)
+		slogger.Error("creating server", "err", err)
 		os.Exit(1)
 	}
-	logger.Info("NFS server listening", "addr", *addr, "root", absRoot)
+	slogger.Info("NFS server listening", "addr", *addr)
 	if err := srv.ListenAndServe(*addr); err != nil {
-		logger.Error("server error", "err", err)
+		slogger.Error("server error", "err", err)
 		os.Exit(1)
 	}
 }
