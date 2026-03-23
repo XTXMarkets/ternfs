@@ -1378,7 +1378,7 @@ func main() {
 	hardwareEventAddress := flag.String("hardwareevent", "", "Server address (host:port) to send hardware events to OR empty for no event logging")
 	profileFile := flag.String("profile-file", "", "")
 	syslog := flag.Bool("syslog", false, "")
-	connectionTimeout := flag.Duration("connection-timeout", 10*time.Minute, "")
+	connectionTimeout := flag.Duration("connection-idle-timeout", 10*time.Minute, "Close connections idle for this long. Keepalive probes are sent at half this interval.")
 	reservedStorage := flag.Uint64("reserved-storage", 100<<30, "How many bytes to reserve and under-report capacity")
 	influxDBOrigin := flag.String("influx-db-origin", "", "Base URL to InfluxDB endpoint")
 	influxDBOrg := flag.String("influx-db-org", "", "InfluxDB org")
@@ -1745,6 +1745,12 @@ func main() {
 		raiseAlerts(l, env, blockServices)
 	}()
 
+	setupConn := func(conn net.Conn) {
+		tcpConn := conn.(*net.TCPConn)
+		tcpConn.SetKeepAlive(true)
+		tcpConn.SetKeepAlivePeriod(*connectionTimeout / 2)
+	}
+
 	go func() {
 		defer func() { lrecover.HandleRecoverChan(l, terminateChan, recover()) }()
 		for {
@@ -1773,6 +1779,7 @@ func main() {
 					}
 				}
 			}
+			setupConn(conn)
 			go func() {
 				defer func() { lrecover.HandleRecoverChan(l, terminateChan, recover()) }()
 				handleRequest(l, env, terminateChan, blockServices, deadBlockServices, conn.(*net.TCPConn), *futureCutoff, *connectionTimeout)
@@ -1789,6 +1796,7 @@ func main() {
 					terminateChan <- err
 					return
 				}
+				setupConn(conn)
 				go func() {
 					defer func() { lrecover.HandleRecoverChan(l, terminateChan, recover()) }()
 					handleRequest(l, env, terminateChan, blockServices, deadBlockServices, conn.(*net.TCPConn), *futureCutoff, *connectionTimeout)

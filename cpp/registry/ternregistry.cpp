@@ -38,6 +38,10 @@ static bool parseRegistryOptions(CommandLineArgs& args, RegistryOptions& options
             options.maxConnections = parseUint32(args.next());
             continue;
         }
+        if (arg == "-connection-idle-timeout") {
+            options.connectionIdleTimeout = parseDuration(args.next());
+            continue;
+        }
         if (arg == "-min-auto-decom-interval") {
             options.minDecomInterval = parseDuration(args.next());
             continue;
@@ -95,6 +99,8 @@ static void printRegistryOptionsUsage() {
     fprintf(stderr, "       Don't allow leader to implicitly change on heartbeat but require LeaderMoveReq.\n");
     fprintf(stderr, " -max-connections\n");
     fprintf(stderr, "       Maximum number of connections to serve at the same time. Default is 4000\n");
+    fprintf(stderr, " -connection-idle-timeout\n");
+    fprintf(stderr, "       Close connections idle for this long. Keepalive probes at half this interval. Default is 5min\n");
     fprintf(stderr, " -num-readers\n");
     fprintf(stderr, "       Number of reader threads to create. Default is 1\n");
     fprintf(stderr, " -min-auto-decom-interval\n");

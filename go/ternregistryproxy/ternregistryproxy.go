@@ -346,11 +346,11 @@ func readRegistryRequest(
 	return req, nil
 }
 
-func handleRequest(log *log.Logger, s *state, conn *net.TCPConn) {
+func handleRequest(log *log.Logger, s *state, conn *net.TCPConn, connectionIdleTimeout time.Duration) {
 	defer conn.Close()
 
 	for {
-		conn.SetReadDeadline(time.Now().Add(5 * time.Minute))
+		conn.SetReadDeadline(time.Now().Add(connectionIdleTimeout))
 		req, err := readRegistryRequest(log, conn)
 		conn.SetReadDeadline(time.Time{})
 
@@ -434,6 +434,7 @@ func main() {
 	location := flag.Uint("location", 0, "Location id for this registry proxy.")
 	numHandlers := flag.Uint("num-handlers", 100, "Number of registry connections to open.")
 	maxConnections := flag.Uint("max-connections", 4000, "Maximum number of connections to accept.")
+	connectionIdleTimeout := flag.Duration("connection-idle-timeout", 5*time.Minute, "Close connections idle for this long. Keepalive probes are sent at half this interval.")
 	mtu := flag.Uint64("mtu", 0, "")
 
 	flag.Parse()
@@ -573,12 +574,15 @@ func main() {
 					atomic.AddInt64(&activeConnections, -1)
 					continue
 				}
+				tcpConn := conn.(*net.TCPConn)
+				tcpConn.SetKeepAlive(true)
+				tcpConn.SetKeepAlivePeriod(*connectionIdleTimeout / 2)
 				go func() {
 					defer func() {
 						atomic.AddInt64(&activeConnections, -1)
 						lrecover.HandleRecoverChan(log, terminateChan, recover())
 					}()
-					handleRequest(log, state, conn.(*net.TCPConn))
+					handleRequest(log, state, tcpConn, *connectionIdleTimeout)
 				}()
 			}
 		}()

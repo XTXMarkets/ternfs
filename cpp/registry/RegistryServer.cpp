@@ -6,8 +6,10 @@
 #include "Assert.hpp"
 #include "Env.hpp"
 #include "MsgsGen.hpp"
+#include <algorithm>
 #include <mutex>
 #include <shared_mutex>
+#include <netinet/tcp.h>
 
 bool RegistryServer::init() {
     _epollFd = epoll_create1(0);
@@ -93,6 +95,7 @@ bool RegistryServer::receiveMessages(Duration timeout){
                 _writeClient(_events[i].data.fd);
             }
         }
+        _removeIdleClients();
     }
     if (haveUdpMessages) {
         if (!_channel.receiveMessages(_env, _socks, *_receiver, MAX_RECV_MSGS, -1, true)) {
@@ -180,12 +183,25 @@ void RegistryServer::_acceptConnection(int fd) {
 
     if (_clients.size() == _maxConnections) {
         LOG_DEBUG(_env, "dropping connection as we reached connection limit");
-        close(fd);
+        close(clientFd);
         return;
     }
 
-    auto client_it = _clients.emplace(clientFd, Client{clientFd, {}, {}, ternNow(),0,0}).first;
+    if (_connectionIdleTimeout.ns > 0) {
+        int keepalive = 1;
+        setsockopt(clientFd, SOL_SOCKET, SO_KEEPALIVE, &keepalive, sizeof(keepalive));
+        int keepidleSec = std::max(1, (int)(_connectionIdleTimeout.ns / 2'000'000'000ull));
+        setsockopt(clientFd, IPPROTO_TCP, TCP_KEEPIDLE, &keepidleSec, sizeof(keepidleSec));
+        int keepintvl = std::max(1, keepidleSec / 3);
+        setsockopt(clientFd, IPPROTO_TCP, TCP_KEEPINTVL, &keepintvl, sizeof(keepintvl));
+        int keepcnt = 3;
+        setsockopt(clientFd, IPPROTO_TCP, TCP_KEEPCNT, &keepcnt, sizeof(keepcnt));
+    }
+
+    auto now = ternNow();
+    auto client_it = _clients.emplace(clientFd, Client{clientFd, {}, {}, now,0,0}).first;
     client_it->second.readBuffer.resize(MESSAGE_HEADER_SIZE);
+    _clientsByActivity.emplace(now, clientFd);
 
     epoll_event event{};
     event.events = EPOLLIN | EPOLLHUP | EPOLLERR | EPOLLRDHUP;
@@ -203,7 +219,9 @@ void RegistryServer::_readClient(int fd) {
     ALWAYS_ASSERT(it != _clients.end());
 
     Client &client = it->second;
+    _clientsByActivity.erase({client.lastActive, fd});
     client.lastActive = ternNow();
+    _clientsByActivity.emplace(client.lastActive, fd);
     size_t bytesToRead = client.readBuffer.size() - client.messageBytesProcessed;
     ssize_t bytesRead;
 
@@ -279,6 +297,7 @@ void RegistryServer::_removeClient(int fd) {
     auto it = _clients.find(fd);
     ALWAYS_ASSERT(it != _clients.end());
 
+    _clientsByActivity.erase({it->second.lastActive, fd});
     epoll_ctl(_epollFd, EPOLL_CTL_DEL, fd, nullptr);
     close(fd);
     if (it->second.inFlightRequestId != 0) {
@@ -287,6 +306,22 @@ void RegistryServer::_removeClient(int fd) {
     _clients.erase(it);
     LOG_TRACE(_env, "removing client %s", fd);
   }
+
+void RegistryServer::_removeIdleClients() {
+    if (_connectionIdleTimeout.ns == 0) {
+        return;
+    }
+    auto cutoff = ternNow() - _connectionIdleTimeout;
+    while (!_clientsByActivity.empty()) {
+        auto it = _clientsByActivity.begin();
+        if (it->first > cutoff) {
+            break;
+        }
+        int fd = it->second;
+        LOG_DEBUG(_env, "removing idle client fd %s", fd);
+        _removeClient(fd);
+    }
+}
 
   void RegistryServer::_handleLogsDBResponse(UDPMessage &msg) {
     LOG_TRACE(_env, "received LogsDBResponse from %s", msg.clientAddr);
@@ -397,7 +432,9 @@ void RegistryServer::_writeClient(int fd, bool registerEpoll) {
     auto it = _clients.find(fd);
     ALWAYS_ASSERT(it != _clients.end());
     auto &client = it->second;
+    _clientsByActivity.erase({client.lastActive, fd});
     client.lastActive = ternNow();
+    _clientsByActivity.emplace(client.lastActive, fd);
     ssize_t bytesToWrite = client.writeBuffer.size() - client.messageBytesProcessed;
     ssize_t bytesWritten = 0;
     LOG_TRACE(_env, "writing to client %s, %s bytes left", fd, bytesToWrite);

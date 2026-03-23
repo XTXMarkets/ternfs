@@ -21,6 +21,7 @@ struct RegistryOptions {
     bool enforceStableIp = false;
     bool enforceStableLeader = false;
     uint32_t maxConnections = 4000;
+    Duration connectionIdleTimeout = 5_mins;
     Duration staleDelay = 3_mins;
     Duration blockServiceUsageDelay = 0_mins;
     Duration minDecomInterval = 1_hours;

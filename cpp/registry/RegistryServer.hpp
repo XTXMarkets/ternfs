@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include <set>
+
 #include "LogsDB.hpp"
 #include "MultiplexedChannel.hpp"
 #include "Protocol.hpp"
@@ -43,6 +45,7 @@ public:
     RegistryServer(const RegistryOptions &options, Env& env) :
         _options(options.serverOptions),
         _maxConnections(options.maxConnections),
+        _connectionIdleTimeout(options.connectionIdleTimeout),
         _env(env),
         _socks({UDPSocketPair(_env, _options.addrs)}),
         _boundAddresses(_socks[0].addr()),
@@ -81,6 +84,7 @@ public:
 private:
     const ServerOptions _options;
     uint32_t _maxConnections;
+    Duration _connectionIdleTimeout;
 
     Env& _env;
 
@@ -105,6 +109,7 @@ private:
     };
     std::mutex _clients_req_mutex;
     std::unordered_map<int, Client> _clients;
+    std::set<std::pair<TernTime, int>> _clientsByActivity; // (lastActive, fd) for efficient idle cleanup
 
     uint64_t _lastRequestId;
 
@@ -127,6 +132,7 @@ private:
 
     void _acceptConnection(int fd);
     void _removeClient(int fd);
+    void _removeIdleClients();
     void _readClient(int fd);
     void _writeClient(int fd, bool registerEpoll = false);
 
