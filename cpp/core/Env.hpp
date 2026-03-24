@@ -20,7 +20,8 @@ enum class LogLevel : uint32_t {
     LOG_TRACE = 0,
     LOG_DEBUG = 1,
     LOG_INFO = 2,
-    LOG_ERROR = 3,
+    LOG_WARN = 3,
+    LOG_ERROR = 4,
 };
 
 std::ostream& operator<<(std::ostream& out, LogLevel ll);
@@ -65,6 +66,8 @@ public:
                     syslogLevel = 7; break;
                 case LogLevel::LOG_INFO:
                     syslogLevel = 6; break;
+                case LogLevel::LOG_WARN:
+                    syslogLevel = 4; break;
                 case LogLevel::LOG_ERROR:
                     syslogLevel = 3; break;
                 default:
@@ -178,6 +181,13 @@ public:
     do { \
         if (likely((env).shouldLog(LogLevel::LOG_INFO))) { \
             (env)._log(LogLevel::LOG_INFO, VALIDATE_FORMAT(__VA_ARGS__)); \
+        } \
+    } while (false)
+
+#define LOG_WARN(env, ...) \
+    do { \
+        if (likely((env).shouldLog(LogLevel::LOG_WARN))) { \
+            (env)._log(LogLevel::LOG_WARN, VALIDATE_FORMAT(__VA_ARGS__)); \
         } \
     } while (false)
 

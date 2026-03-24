@@ -134,6 +134,8 @@ static inline bool parseLogOptions(CommandLineArgs& args, LogOptions& options) {
             options.logLevel = LogLevel::LOG_DEBUG;
         } else if (logLevel == "info") {
             options.logLevel = LogLevel::LOG_INFO;
+        } else if (logLevel == "warn") {
+            options.logLevel = LogLevel::LOG_WARN;
         } else if (logLevel == "error") {
             options.logLevel = LogLevel::LOG_ERROR;
         } else {

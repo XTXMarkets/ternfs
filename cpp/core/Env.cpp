@@ -20,6 +20,9 @@ std::ostream& operator<<(std::ostream& out, LogLevel ll) {
     case LogLevel::LOG_INFO:
         out << "INFO";
         break;
+    case LogLevel::LOG_WARN:
+        out << "WARN";
+        break;
     case LogLevel::LOG_ERROR:
         out << "ERROR";
         break;

@@ -23,7 +23,8 @@ type LogLevel uint8
 const TRACE LogLevel = 0
 const DEBUG LogLevel = 1
 const INFO LogLevel = 2
-const ERROR LogLevel = 3
+const WARN LogLevel = 3
+const ERROR LogLevel = 4
 
 func (ll LogLevel) String() string {
 	switch ll {
@@ -33,6 +34,8 @@ func (ll LogLevel) String() string {
 		return "DEBUG"
 	case INFO:
 		return "INFO"
+	case WARN:
+		return "WARN"
 	case ERROR:
 		return "ERROR"
 	default:
@@ -92,6 +95,9 @@ func (log *Logger) formatLog(level LogLevel, time time.Time, file string, line i
 	case ERROR:
 		levelColor = red
 		syslogPrio = syslogError
+	case WARN:
+		levelColor = yellow
+		syslogPrio = syslogWarn
 	case INFO:
 		levelColor = blue
 		syslogPrio = syslogInfo
@@ -242,6 +248,10 @@ func (l *Logger) Info(format string, v ...any) {
 
 func (l *Logger) InfoStack(calldepth int, format string, v ...any) {
 	l.LogStack(1+calldepth, INFO, format, v...)
+}
+
+func (l *Logger) Warn(format string, v ...any) {
+	l.LogStack(1, WARN, format, v...)
 }
 
 // There should be very few times where you want an error log but not an alert.
