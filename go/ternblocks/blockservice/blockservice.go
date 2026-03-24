@@ -48,6 +48,7 @@ type BlockServiceOptions struct {
 	MaxConcurrentReads    int
 	FutureCutoff          time.Duration
 	PastCutoff            time.Duration
+	EraseCutoff           time.Duration
 	ReservedCapacityBytes uint64
 }
 
@@ -454,10 +455,10 @@ func (b *BlockService) EraseBlock(blockId msgs.BlockId, cert [8]byte) ([8]byte, 
 	}
 
 	now := time.Now()
-	pastCutoff := now.Add(-b.options.PastCutoff)
+	eraseCutoff := now.Add(-b.options.EraseCutoff)
 	blockTime := msgs.TernTime(uint64(blockId)).Time()
 
-	if blockTime.After(pastCutoff) {
+	if blockTime.After(eraseCutoff) {
 		return proof, msgs.BLOCK_TOO_RECENT_FOR_DELETION
 	}
 
@@ -468,7 +469,7 @@ func (b *BlockService) EraseBlock(blockId msgs.BlockId, cert [8]byte) ([8]byte, 
 	blockPath := path.Join(b.localPath, blockId.Path())
 	b.logger.Debug("deleting block %v at path %v", blockId, blockPath)
 	err := eraseFileIfExistsAndSyncDir(blockPath)
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		atomic.AddUint64(&b.IoErrors, 1)
 		return proof, err
 	}

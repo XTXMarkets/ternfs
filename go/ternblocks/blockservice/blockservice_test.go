@@ -50,6 +50,7 @@ func createTestService(t *testing.T) *BlockService {
 		BufferSize:   1024 * 1024,
 		FutureCutoff: time.Minute,
 		PastCutoff:   time.Minute,
+		EraseCutoff:  time.Minute,
 	}, pool, bsInfo, "dev1")
 
 	deadline := time.Now().Add(5 * time.Second)

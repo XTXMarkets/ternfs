@@ -884,7 +884,7 @@ func (bsv *blockServiceVictim) start(
 		FailureDomain:    bsv.failureDomain,
 		LogLevel:         log.Level(),
 		RegistryAddress:  fmt.Sprintf("127.0.0.1:%d", registryPort),
-		FutureCutoff:     &testBlockFutureCutoff,
+		EraseCutoff:      &testBlockEraseCutoff,
 		Addr1:            fmt.Sprintf("127.0.0.1:%d", port1),
 		Addr2:            fmt.Sprintf("127.0.0.1:%d", port2),
 		Profile:          profile,
@@ -1042,7 +1042,7 @@ func newTestClient(log *log.Logger, registryAddress string, counters *client.Cli
 // 0 interval won't do, because otherwise transient files will immediately be
 // expired and not picked.
 var testTransientDeadlineInterval = 30 * time.Second
-var testBlockFutureCutoff = testTransientDeadlineInterval / 2
+var testBlockEraseCutoff = testTransientDeadlineInterval / 2
 
 func main() {
 	overrides := make(cfgOverrides)

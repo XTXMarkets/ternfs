@@ -273,7 +273,7 @@ type BlockServiceOpts struct {
 	StorageClasses   []msgs.StorageClass
 	FailureDomain    string
 	Location         msgs.Location
-	FutureCutoff     *time.Duration
+	EraseCutoff      *time.Duration
 	LogLevel         log.LogLevel
 	RegistryAddress  string
 	Profile          bool
@@ -300,8 +300,8 @@ func (procs *ManagedProcesses) StartBlockService(ll *log.Logger, opts *BlockServ
 	if opts.Addr2 != "" {
 		args = append(args, "-addr", opts.Addr2)
 	}
-	if opts.FutureCutoff != nil {
-		args = append(args, "-future-cutoff", opts.FutureCutoff.String())
+	if opts.EraseCutoff != nil {
+		args = append(args, "-erase-cutoff", opts.EraseCutoff.String())
 	}
 	if opts.LogLevel == log.DEBUG {
 		args = append(args, "-verbose")
