@@ -802,7 +802,7 @@ func main() {
 			Crc:     msgs.Crc(crc32c.Sum(0, fileContents)),
 			Size:    uint32(len(fileContents)),
 		}
-		req.Certificate = certificate.BlockWriteCertificate(cipher, blockServiceInfo.Id, &req)
+		req.Certificate = certificate.BlockWriteCertificate(cipher, blockServiceInfo.Id, req.BlockId, req.Crc, req.Size)
 		l.Info("request: %+v", req)
 	}
 	commands["write-block-req"] = commandSpec{

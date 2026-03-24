@@ -5,36 +5,41 @@
 package certificate
 
 import (
-	"bytes"
 	"crypto/cipher"
 	"encoding/binary"
 	"xtx/ternfs/core/cbcmac"
 	"xtx/ternfs/msgs"
 )
 
-func BlockWriteCertificate(cipher cipher.Block, blockServiceId msgs.BlockServiceId, req *msgs.WriteBlockReq) [8]byte {
-	w := bytes.NewBuffer([]byte{})
-	binary.Write(w, binary.LittleEndian, uint64(blockServiceId))
-	w.Write([]byte{'w'})
-	binary.Write(w, binary.LittleEndian, uint64(req.BlockId))
-	binary.Write(w, binary.LittleEndian, uint32(req.Crc))
-	binary.Write(w, binary.LittleEndian, uint32(req.Size))
-	return cbcmac.CBCMAC(cipher, w.Bytes())
+func BlockWriteCertificate(cipher cipher.Block, blockServiceId msgs.BlockServiceId, blockId msgs.BlockId, crc msgs.Crc, size uint32) [8]byte {
+	var buf [25]byte
+	binary.LittleEndian.PutUint64(buf[0:8], uint64(blockServiceId))
+	buf[8] = 'w'
+	binary.LittleEndian.PutUint64(buf[9:17], uint64(blockId))
+	binary.LittleEndian.PutUint32(buf[17:21], uint32(crc))
+	binary.LittleEndian.PutUint32(buf[21:25], size)
+	return cbcmac.CBCMAC(cipher, buf[:])
 }
 
 func CheckBlockWriteCertificate(cipher cipher.Block, blockServiceId msgs.BlockServiceId, req *msgs.WriteBlockReq) ([8]byte, bool) {
-	expectedMac := BlockWriteCertificate(cipher, blockServiceId, req)
+	expectedMac := BlockWriteCertificate(cipher, blockServiceId, req.BlockId, req.Crc, req.Size)
 	return expectedMac, expectedMac == req.Certificate
 }
 
-func BlockEraseCertificate(blockServiceId msgs.BlockServiceId, blockId msgs.BlockId, key cipher.Block) [8]byte {
-	buf := bytes.NewBuffer([]byte{})
-	// struct.pack_into('<QcQ', b, 0, block['block_service_id'], b'e', block['block_id'])
-	binary.Write(buf, binary.LittleEndian, uint64(blockServiceId))
-	buf.Write([]byte{'e'})
-	binary.Write(buf, binary.LittleEndian, uint64(blockId))
+func BlockWriteProof(cipher cipher.Block, blockServiceId msgs.BlockServiceId, blockId msgs.BlockId) [8]byte {
+	var buf [17]byte
+	binary.LittleEndian.PutUint64(buf[0:8], uint64(blockServiceId))
+	buf[8] = 'W'
+	binary.LittleEndian.PutUint64(buf[9:17], uint64(blockId))
+	return cbcmac.CBCMAC(cipher, buf[:])
+}
 
-	return cbcmac.CBCMAC(key, buf.Bytes())
+func BlockEraseCertificate(blockServiceId msgs.BlockServiceId, blockId msgs.BlockId, key cipher.Block) [8]byte {
+	var buf [17]byte
+	binary.LittleEndian.PutUint64(buf[0:8], uint64(blockServiceId))
+	buf[8] = 'e'
+	binary.LittleEndian.PutUint64(buf[9:17], uint64(blockId))
+	return cbcmac.CBCMAC(key, buf[:])
 }
 
 func CheckBlockEraseCertificate(blockServiceId msgs.BlockServiceId, cipher cipher.Block, req *msgs.EraseBlockReq) ([8]byte, bool) {
@@ -43,13 +48,11 @@ func CheckBlockEraseCertificate(blockServiceId msgs.BlockServiceId, cipher ciphe
 }
 
 func BlockEraseProof(blockServiceId msgs.BlockServiceId, blockId msgs.BlockId, key cipher.Block) [8]byte {
-	buf := bytes.NewBuffer([]byte{})
-	// struct.pack_into('<QcQ', b, 0, block['block_service_id'], b'E', block['block_id'])
-	binary.Write(buf, binary.LittleEndian, uint64(blockServiceId))
-	buf.Write([]byte{'E'})
-	binary.Write(buf, binary.LittleEndian, uint64(blockId))
-
-	return cbcmac.CBCMAC(key, buf.Bytes())
+	var buf [17]byte
+	binary.LittleEndian.PutUint64(buf[0:8], uint64(blockServiceId))
+	buf[8] = 'E'
+	binary.LittleEndian.PutUint64(buf[9:17], uint64(blockId))
+	return cbcmac.CBCMAC(key, buf[:])
 }
 
 func CheckBlockEraseProof(blockServiceId msgs.BlockServiceId, cipher cipher.Block, req *msgs.EraseBlockReq) ([8]byte, bool) {
