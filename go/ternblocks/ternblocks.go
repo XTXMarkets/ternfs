@@ -217,7 +217,7 @@ func updateBlockServiceInfoBlocks(
 ) error {
 	t := time.Now()
 	log.Info("starting to count blocks for %v", blockService.cachedInfo.Id)
-	blocksWithCrc, err := countBlocks(path.Join(blockService.path, "with_crc"))
+	blocksWithCrc, err := countBlocks(blockService.path)
 	if err != nil {
 		return err
 	}
@@ -1160,9 +1160,6 @@ func retrieveOrCreateKey(log *log.Logger, dir string) ([16]byte, error) {
 			panic(err)
 		}
 		log.Info("creating directory structure")
-		if err := os.Mkdir(path.Join(dir, "with_crc"), 0755); err != nil && !os.IsExist(err) {
-			return [16]byte{}, fmt.Errorf("failed to create folder %s error: %v", path.Join(dir, "with_crc"), err)
-		}
 	} else if read != 16 {
 		return [16]byte{}, fmt.Errorf("short secret key (%v rather than 16 bytes)", read)
 	} else {
