@@ -11,7 +11,7 @@ import (
 	"xtx/ternfs/msgs"
 )
 
-func WaitForBlockServices(ll *log.Logger, registryAddress string, expectedBlockServices int, timeout time.Duration) ([]msgs.BlockServiceDeprecatedInfo, error) {
+func WaitForBlockServices(ll *log.Logger, registryAddress string, expectedBlockServices int, timeout time.Duration) ([]msgs.FullBlockServiceInfo, error) {
 	var err error
 	t0 := time.Now()
 	for {
@@ -20,13 +20,13 @@ func WaitForBlockServices(ll *log.Logger, registryAddress string, expectedBlockS
 		}
 		time.Sleep(10 * time.Millisecond)
 		var resp msgs.RegistryResponse
-		var bss []msgs.BlockServiceDeprecatedInfo
-		resp, err = RegistryRequest(ll, nil, registryAddress, &msgs.AllBlockServicesDeprecatedReq{})
+		var bss []msgs.FullBlockServiceInfo
+		resp, err = RegistryRequest(ll, nil, registryAddress, &msgs.ChangedBlockServicesReq{})
 		if err != nil {
 			ll.Debug("got error while getting block services from registry, will keep waiting: %v", err)
 			continue
 		}
-		bss = resp.(*msgs.AllBlockServicesDeprecatedResp).BlockServices
+		bss = resp.(*msgs.ChangedBlockServicesResp).BlockServices
 		if len(bss) >= expectedBlockServices {
 			return bss, nil
 		}

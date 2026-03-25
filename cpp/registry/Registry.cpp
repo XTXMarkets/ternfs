@@ -153,7 +153,9 @@ public:
             case RegistryMessageKind::ALL_BLOCK_SERVICES:
             case RegistryMessageKind::ALL_SHARDS:
             case RegistryMessageKind::ALL_CDC:
-            case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION: {
+            case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION:
+            case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
+            case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE: {
                 _readRequests.emplace_back(std::move(req));
                 break;
             }

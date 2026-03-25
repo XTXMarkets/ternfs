@@ -451,11 +451,11 @@ func main() {
 			os.Exit(2)
 		}
 		l.Info("requesting block services")
-		blockServicesResp, err := client.RegistryRequest(l, nil, *registryAddress, &msgs.AllBlockServicesDeprecatedReq{})
+		blockServicesResp, err := client.RegistryRequest(l, nil, *registryAddress, &msgs.ChangedBlockServicesReq{})
 		if err != nil {
 			panic(err)
 		}
-		blockServices := blockServicesResp.(*msgs.AllBlockServicesDeprecatedResp)
+		blockServices := blockServicesResp.(*msgs.ChangedBlockServicesResp)
 		blockServicesToMigrate := make(map[string]*[]msgs.BlockServiceId) // by failure domain
 		numBlockServicesToMigrate := 0
 		for _, bs := range blockServices.BlockServices {
@@ -777,12 +777,12 @@ func main() {
 	blockReqBlockService := blockReqCmd.Uint64("bs", 0, "Block service")
 	blockReqFile := blockReqCmd.String("file", "", "")
 	blockReqRun := func() {
-		resp, err := client.RegistryRequest(l, nil, *registryAddress, &msgs.AllBlockServicesDeprecatedReq{})
+		resp, err := client.RegistryRequest(l, nil, *registryAddress, &msgs.ChangedBlockServicesReq{})
 		if err != nil {
 			panic(err)
 		}
-		blockServices := resp.(*msgs.AllBlockServicesDeprecatedResp)
-		var blockServiceInfo msgs.BlockServiceDeprecatedInfo
+		blockServices := resp.(*msgs.ChangedBlockServicesResp)
+		var blockServiceInfo msgs.FullBlockServiceInfo
 		for _, bsInfo := range blockServices.BlockServices {
 			if bsInfo.Id == msgs.BlockServiceId(*blockReqBlockService) {
 				blockServiceInfo = bsInfo
@@ -814,12 +814,12 @@ func main() {
 	testBlockWriteBlockService := testBlockWriteCmd.String("bs", "", "Block service. If comma-separated, they'll be written in parallel to the specified ones.")
 	testBlockWriteSize := testBlockWriteCmd.Uint("size", 0, "Size (must fit in u32)")
 	testBlockWriteRun := func() {
-		resp, err := client.RegistryRequest(l, nil, *registryAddress, &msgs.AllBlockServicesDeprecatedReq{})
+		resp, err := client.RegistryRequest(l, nil, *registryAddress, &msgs.ChangedBlockServicesReq{})
 		if err != nil {
 			panic(err)
 		}
-		blockServices := resp.(*msgs.AllBlockServicesDeprecatedResp)
-		bsInfos := []msgs.BlockServiceDeprecatedInfo{}
+		blockServices := resp.(*msgs.ChangedBlockServicesResp)
+		bsInfos := []msgs.FullBlockServiceInfo{}
 		for _, str := range strings.Split(*testBlockWriteBlockService, ",") {
 			bsId, err := strconv.ParseUint(str, 0, 64)
 			if err != nil {
@@ -923,11 +923,11 @@ func main() {
 		}
 		if *blockserviceFlagsFailureDomain != "" || *blockserviceFlagsPathPrefix != "" {
 			l.Info("requesting block services")
-			blockServicesResp, err := client.RegistryRequest(l, nil, *registryAddress, &msgs.AllBlockServicesDeprecatedReq{})
+			blockServicesResp, err := client.RegistryRequest(l, nil, *registryAddress, &msgs.ChangedBlockServicesReq{})
 			if err != nil {
 				panic(err)
 			}
-			blockServices := blockServicesResp.(*msgs.AllBlockServicesDeprecatedResp)
+			blockServices := blockServicesResp.(*msgs.ChangedBlockServicesResp)
 			for _, bs := range blockServices.BlockServices {
 				if bs.Flags&msgs.TERNFS_BLOCK_SERVICE_DECOMMISSIONED != 0 {
 					continue

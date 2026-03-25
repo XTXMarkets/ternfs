@@ -76,6 +76,7 @@ public:
     static std::vector<rocksdb::ColumnFamilyDescriptor> getColumnFamilyDescriptors();
 
     void updateCache(const std::vector<FullBlockServiceInfo>& blockServices);
+    void updateAvailableSpace(const std::vector<BlockServiceSpace>& blockServices);
 
     // Pick block services for a given location/storage class. Returns
     // COULD_NOT_PICK_BLOCK_SERVICES on failure.
@@ -87,7 +88,7 @@ public:
         std::vector<BlockServiceId>& out
     ) const;
 
-    // We've seen at least one `updateCache()`, or we've loaded the
+    // We've seen at least one update, or we've loaded the
     // block services from the cache.
     bool haveBlockServices() const;
 

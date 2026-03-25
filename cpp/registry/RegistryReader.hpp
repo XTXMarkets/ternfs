@@ -72,5 +72,7 @@ private:
     std::vector<FullBlockServiceInfo> _allBlockServicesFull();
     std::vector<BlockServiceId> _blockServicesNeedingMigration(LocationId location);
     std::vector<BlockService> _changedBlockServices(LocationId location, TernTime changedSince);
+    ChangedBlockServicesResp _changedBlockServicesFull(TernTime since);
+    std::vector<BlockServiceSpace> _blockServiceAvailableSpace();
     TernError _eraseBlock(const EraseDecommissionedBlockReq& req, BincodeFixedBytes<8>& proof);
 };

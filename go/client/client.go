@@ -1010,11 +1010,11 @@ func (c *Client) refreshAddrs() error {
 		return c.fetchBlockServices
 	}()
 	if fetchBlockServices {
-		blockServicesResp, err := c.registryConn.Request(&msgs.AllBlockServicesDeprecatedReq{})
+		blockServicesResp, err := c.registryConn.Request(&msgs.ChangedBlockServicesReq{})
 		if err != nil {
 			errMsg += fmt.Sprintf("could not request block services from registry: %v; ", err)
 		} else {
-			blockServices := blockServicesResp.(*msgs.AllBlockServicesDeprecatedResp)
+			blockServices := blockServicesResp.(*msgs.ChangedBlockServicesResp)
 			var blockServicesToAdd []msgs.BlacklistEntry
 			func() {
 				c.blockServicesLock.RLock()

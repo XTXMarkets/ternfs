@@ -205,6 +205,16 @@ void RegistryReader::step() {
             registryResp.blockServices.els = _blockServicesNeedingMigration(migrationReq.locationId);
             break;
         }
+        case RegistryMessageKind::CHANGED_BLOCK_SERVICES: {
+            auto& changedReq = req.req.getChangedBlockServices();
+            resp.resp.setChangedBlockServices() = _changedBlockServicesFull(changedReq.since);
+            break;
+        }
+        case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE: {
+            auto& registryResp = resp.resp.setBlockServiceAvailableSpace();
+            registryResp.blockServices.els = _blockServiceAvailableSpace();
+            break;
+        }
         default:
             ALWAYS_ASSERT(false, "unexpected request kind %s", req.req.kind());
         }
@@ -371,7 +381,43 @@ std::vector<BlockService> RegistryReader::_changedBlockServices(LocationId locat
         auto& bsOut = res.emplace_back();
         bsOut.id = bs.id;
         bsOut.addrs = bs.addrs;
-        bsOut.flags = bsOut.flags;
+        bsOut.flags = bs.flags;
+    }
+    return res;
+}
+
+ChangedBlockServicesResp RegistryReader::_changedBlockServicesFull(TernTime since) {
+    _populateBlockServiceCache();
+    ChangedBlockServicesResp resp;
+    if (_cachedBlockServices.empty()) {
+        return resp;
+    }
+    resp.lastChange = _cachedBlockServices[0].lastInfoChange;
+    if (since.ns == 0) {
+        resp.blockServices.els = _cachedBlockServices;
+    } else {
+        for (auto& bs : _cachedBlockServices) {
+            if (bs.lastInfoChange <= since) {
+                break;
+            }
+            resp.blockServices.els.push_back(bs);
+        }
+    }
+    return resp;
+}
+
+std::vector<BlockServiceSpace> RegistryReader::_blockServiceAvailableSpace() {
+    _populateBlockServiceCache();
+    std::vector<BlockServiceSpace> res;
+    for (auto& bs : _cachedBlockServices) {
+        if (bs.flags == BlockServiceFlags::DECOMMISSIONED) {
+            continue;
+        }
+        auto& out = res.emplace_back();
+        out.id = bs.id;
+        out.capacityBytes = bs.capacityBytes;
+        out.availableBytes = bs.availableBytes;
+        out.blocks = bs.blocks;
     }
     return res;
 }

@@ -2183,51 +2183,70 @@ public:
     }
 };
 
-struct ShardBlockServiceUpdater : PeriodicLoop {
+struct ShardBlockServiceInfoUpdater : PeriodicLoop {
 private:
     ShardShared& _shared;
-    ShardReplicaId _shrid;
     XmonNCAlert _alert;
-    std::vector<FullBlockServiceInfo> _blockServices;
-    bool _updatedOnce;
+    TernTime _lastInfoCheck{};
 public:
-    ShardBlockServiceUpdater(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardShared& shared):
-        PeriodicLoop(logger, xmon, "bs_updater", {1_sec, shared.options.isLeader() ? 30_sec : 2_mins}),
-        _shared(shared),
-        _shrid(_shared.options.shrid()),
-        _updatedOnce(false)
+    ShardBlockServiceInfoUpdater(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardShared& shared):
+        PeriodicLoop(logger, xmon, "bs_info_updater", {1_sec, 30_sec}),
+        _shared(shared)
     {
         _env.updateAlert(_alert, "Waiting to fetch block services for the first time");
     }
 
     virtual bool periodicStep() override {
-        if (!_blockServices.empty()) {
-            // We delayed applying cache update most likely we were leader. We should apply it now
-            _shared.blockServicesCache.updateCache(_blockServices);
-            _blockServices.clear();
-        }
-
-        LOG_INFO(_env, "about to fetch block services from registry");
-        const auto [err, errStr] = _shared.registryClient.fetchBlockServices(_blockServices);
+        LOG_INFO(_env, "about to fetch changed block services from registry (since %s)", _lastInfoCheck);
+        TernTime lastChange;
+        std::vector<FullBlockServiceInfo> blockServices;
+        const auto [err, errStr] = _shared.registryClient.fetchChangedBlockServices(_lastInfoCheck, lastChange, blockServices);
         if (err == EINTR) { return false; }
         if (err) {
             _env.updateAlert(_alert, "could not reach registry: %s", errStr);
             return false;
         }
-        if (_blockServices.empty()) {
-            _env.updateAlert(_alert, "got no block services");
+        if (_lastInfoCheck.ns == 0 && blockServices.empty()) {
+            _env.updateAlert(_alert, "got no block services on initial sync");
             return false;
         }
-        // We immediately update cache if we are leader and delay until next iteration on leader unless this is first update which we apply immediately
-        if (!_shared.options.isLeader() || !_updatedOnce) {
-            _updatedOnce = true;
-            _shared.blockServicesCache.updateCache(_blockServices);
-            _blockServices.clear();
-            _shared.isBlockServiceCacheInitiated.store(true, std::memory_order_release);
-            LOG_DEBUG(_env, "updated block services");
+        if (!blockServices.empty()) {
+            _shared.blockServicesCache.updateCache(blockServices);
+            LOG_DEBUG(_env, "updated %s changed block services", blockServices.size());
         }
+        _lastInfoCheck = lastChange;
+        _shared.isBlockServiceCacheInitiated.store(true, std::memory_order_release);
         _env.clearAlert(_alert);
+        return true;
+    }
+};
 
+struct ShardBlockServiceSpaceUpdater : PeriodicLoop {
+private:
+    ShardShared& _shared;
+    XmonNCAlert _alert;
+public:
+    ShardBlockServiceSpaceUpdater(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardShared& shared):
+        PeriodicLoop(logger, xmon, "bs_spce_updater", {1_sec, 5_mins}),
+        _shared(shared)
+    {}
+
+    virtual bool periodicStep() override {
+        if (!_shared.blockServicesCache.haveBlockServices()) {
+            LOG_DEBUG(_env, "waiting for block services info updater to do initial sync");
+            return false;
+        }
+        LOG_INFO(_env, "about to fetch block service available space from registry");
+        std::vector<BlockServiceSpace> blockServices;
+        const auto [err, errStr] = _shared.registryClient.fetchBlockServiceAvailableSpace(blockServices);
+        if (err == EINTR) { return false; }
+        if (err) {
+            _env.updateAlert(_alert, "could not reach registry: %s", errStr);
+            return false;
+        }
+        _shared.blockServicesCache.updateAvailableSpace(blockServices);
+        LOG_DEBUG(_env, "updated available space for %s block services", blockServices.size());
+        _env.clearAlert(_alert);
         return true;
     }
 };
@@ -2586,7 +2605,8 @@ void runShard(ShardOptions& options) {
     }
     threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardWriter>(logger, xmon, shared)));
     threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardRegisterer>(logger, xmon, shared)));
-    threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardBlockServiceUpdater>(logger, xmon, shared)));
+    threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardBlockServiceInfoUpdater>(logger, xmon, shared)));
+    threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardBlockServiceSpaceUpdater>(logger, xmon, shared)));
     if (!options.metricsOptions.origin.empty()) {
         threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardMetricsInserter>(logger, xmon, options.metricsOptions, shared)));
     }

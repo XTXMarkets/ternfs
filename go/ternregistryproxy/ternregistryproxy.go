@@ -172,6 +172,10 @@ func handleRequestParsed(log *log.Logger, s *state, req msgs.RegistryRequest) (m
 		resp, err = handleProxyRequest(log, s, req)
 	case *msgs.AllCdcReq:
 		resp, err = handleProxyRequest(log, s, req)
+	case *msgs.ChangedBlockServicesReq:
+		resp, err = handleProxyRequest(log, s, req)
+	case *msgs.BlockServiceAvailableSpaceReq:
+		resp, err = handleProxyRequest(log, s, req)
 	default:
 		err = fmt.Errorf("bad req type %T", req)
 	}
@@ -349,6 +353,10 @@ func readRegistryRequest(
 		req = &msgs.AllShardsReq{}
 	case msgs.ALL_CDC:
 		req = &msgs.AllCdcReq{}
+	case msgs.CHANGED_BLOCK_SERVICES:
+		req = &msgs.ChangedBlockServicesReq{}
+	case msgs.BLOCK_SERVICE_AVAILABLE_SPACE:
+		req = &msgs.BlockServiceAvailableSpaceReq{}
 	default:
 		return nil, fmt.Errorf("bad registry request kind %v", kind)
 	}

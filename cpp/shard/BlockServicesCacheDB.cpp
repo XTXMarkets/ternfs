@@ -271,7 +271,7 @@ BlockServicesCache BlockServicesCacheDB::getCache() const {
 }
 
 void BlockServicesCacheDB::updateCache(const std::vector<FullBlockServiceInfo>& blockServices) {
-    LOG_INFO(_env, "Updating block service cache");
+    LOG_INFO(_env, "Updating %s changed block services", blockServices.size());
 
     std::unique_lock _(_mutex);
 
@@ -279,8 +279,7 @@ void BlockServicesCacheDB::updateCache(const std::vector<FullBlockServiceInfo>& 
     StaticValue<BlockServiceKey> blockKey;
     blockKey().setKey(BLOCK_SERVICE_KEY);
     StaticValue<BlockServiceBody> blockBody;
-    for (int i = 0; i < blockServices.size(); i++) {
-        const auto& entryBlock = blockServices[i];
+    for (const auto& entryBlock : blockServices) {
         blockKey().setBlockServiceId(entryBlock.id.u64);
         blockBody().setVersion(2);
         blockBody().setId(entryBlock.id.u64);
@@ -299,20 +298,11 @@ void BlockServicesCacheDB::updateCache(const std::vector<FullBlockServiceInfo>& 
         blockBody().setLastSeen(entryBlock.lastSeen.ns);
         blockBody().setLastInfoChange(entryBlock.lastInfoChange.ns);
         blockBody().setHasFiles(entryBlock.hasFiles);
-
-        uint64_t firstSeen;
-        auto it = _blockServices.find(entryBlock.id.u64);
-        if (it == _blockServices.end()) {
-            firstSeen = ternNow().ns;
-        } else {
-            firstSeen = it->second.firstSeen.ns;
-        }
-        blockBody().setFirstSeen(firstSeen);
+        blockBody().setFirstSeen(entryBlock.firstSeen.ns);
         blockBody().setPath(std::string(entryBlock.path.data(), entryBlock.path.size()));
 
         ROCKS_DB_CHECKED(batch.Put(_blockServicesCF, blockKey.toSlice(), blockBody.toSlice()));
 
-        // Update in-memory cache
         auto& cache = _blockServices[entryBlock.id.u64];
         expandKey(entryBlock.secretKey.data, cache.secretKey);
         cache.addrs = entryBlock.addrs;
@@ -326,16 +316,54 @@ void BlockServicesCacheDB::updateCache(const std::vector<FullBlockServiceInfo>& 
         cache.lastSeen = entryBlock.lastSeen;
         cache.lastInfoChange = entryBlock.lastInfoChange;
         cache.hasFiles = entryBlock.hasFiles;
-        cache.firstSeen = TernTime(firstSeen);
+        cache.firstSeen = entryBlock.firstSeen;
         cache.path = std::string(entryBlock.path.data(), entryBlock.path.size());
     }
 
-    // We intentionally do not flush here, it's not critical
-    // and shard writes will flush anwyay.
     ROCKS_DB_CHECKED(_db->Write({}, &batch));
 
     _haveBlockServices = true;
-    // Rebuild precomputed picker state
+    _picker.update(_blockServices);
+}
+
+void BlockServicesCacheDB::updateAvailableSpace(const std::vector<BlockServiceSpace>& blockServices) {
+    LOG_INFO(_env, "Updating available space for %s block services", blockServices.size());
+
+    std::unique_lock _(_mutex);
+
+    rocksdb::WriteBatch batch;
+    StaticValue<BlockServiceKey> blockKey;
+    blockKey().setKey(BLOCK_SERVICE_KEY);
+    for (const auto& entry : blockServices) {
+        auto it = _blockServices.find(entry.id.u64);
+        if (it == _blockServices.end()) {
+            continue;
+        }
+
+        it->second.capacityBytes = entry.capacityBytes;
+        it->second.availableBytes = entry.availableBytes;
+        it->second.blocks = entry.blocks;
+
+        // Update RocksDB - read existing entry and update space fields
+        blockKey().setBlockServiceId(entry.id.u64);
+        std::string existingValue;
+        auto status = _db->Get({}, _blockServicesCF, blockKey.toSlice(), &existingValue);
+        if (status.IsNotFound()) {
+            continue;
+        }
+        ROCKS_DB_CHECKED(status);
+        auto v = ExternalValue<BlockServiceBody>::FromSlice(rocksdb::Slice(existingValue));
+        if (v().version() < 2) {
+            continue;
+        }
+        v().setCapacityBytes(entry.capacityBytes);
+        v().setAvailableBytes(entry.availableBytes);
+        v().setBlocks(entry.blocks);
+        ROCKS_DB_CHECKED(batch.Put(_blockServicesCF, blockKey.toSlice(), rocksdb::Slice(existingValue)));
+    }
+
+    ROCKS_DB_CHECKED(_db->Write({}, &batch));
+
     _picker.update(_blockServices);
 }
 

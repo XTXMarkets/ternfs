@@ -351,8 +351,8 @@ export function renderIndex() {
         const [blockServices, setBlockServices] = useState(null);
         const [locations, setLocations] = useState(null);
         useEffect(async () => {
-            const resp = await registryReq('ALL_BLOCK_SERVICES_DEPRECATED', {});
-            setBlockServices(resp);
+            const resp = await registryReq('CHANGED_BLOCK_SERVICES', {Since: 0});
+            setBlockServices(resp.BlockServices);
         }, []);
 
         useEffect(async () => {
@@ -374,39 +374,43 @@ export function renderIndex() {
         let capacity = 0;
         let available = 0;
         let blocks = 0n;
-        for (const bs of blockServices.BlockServices) {
+        for (const bs of blockServices) {
             failureDomains.add(bs.FailureDomain);
             capacity += bs.CapacityBytes;
             available += bs.AvailableBytes;
             blocks += BigInt(bs.Blocks);
             rows.push([
                 bs.FailureDomain,
+                bs.LocationId,
                 bs.Addrs.Addr1,
                 bs.Addrs.Addr2,
                 bs.Path,
                 bs.Id,
                 bs.Flags,
-                bs.FlagsLastChanged,
+                bs.LastInfoChange,
                 bs.StorageClass,
                 bs.Blocks,
                 bs.CapacityBytes,
                 bs.AvailableBytes,
+                bs.FirstSeen,
                 bs.LastSeen,
                 bs.HasFiles,
             ]);
         }
         const cols = [
             {name: 'FailureDomain'},
+            {name: 'LocationId', string: id => locations.get(id) || id},
             {name: 'Address 1'},
             {name: 'Address 2'},
             {name: 'Path', render: t => p.h('code', {}, t)},
             {name: 'Id', render: t => p.h('code', {}, t)},
             {name: 'Flags', string: stringifyShortFlags, render: t => p.h('code', {}, t)},
-            {name: 'FlagsLastChanged', render: flc => stringifyAgo(new Date(flc), now)},
+            {name: 'LastInfoChange', render: t => stringifyAgo(new Date(t), now)},
             {name: 'StorageClass', string: stringifyStorageClass},
             {name: 'Blocks'},
             {name: 'Capacity', string: stringifySize},
             {name: 'Available', string: stringifySize},
+            {name: 'FirstSeen', render: t => stringifyAgo(new Date(t), now)},
             {name: 'LastSeen', render: ls => stringifyAgo(new Date(ls), now)},
             {name: 'HasFiles', string: x => x === true ? "yes" : "no"},
         ];

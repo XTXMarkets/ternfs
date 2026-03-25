@@ -895,6 +895,10 @@ func (k RegistryMessageKind) String() string {
 		return "ALL_SHARDS"
 	case 43:
 		return "ALL_CDC"
+	case 44:
+		return "CHANGED_BLOCK_SERVICES"
+	case 45:
+		return "BLOCK_SERVICE_AVAILABLE_SPACE"
 	default:
 		return fmt.Sprintf("RegistryMessageKind(%d)", k)
 	}
@@ -937,6 +941,8 @@ const (
 	ALL_REGISTRY_REPLICAS                RegistryMessageKind = 0x29
 	ALL_SHARDS                           RegistryMessageKind = 0x2A
 	ALL_CDC                              RegistryMessageKind = 0x2B
+	CHANGED_BLOCK_SERVICES               RegistryMessageKind = 0x2C
+	BLOCK_SERVICE_AVAILABLE_SPACE        RegistryMessageKind = 0x2D
 )
 
 var AllRegistryMessageKind = [...]RegistryMessageKind{
@@ -976,9 +982,11 @@ var AllRegistryMessageKind = [...]RegistryMessageKind{
 	ALL_REGISTRY_REPLICAS,
 	ALL_SHARDS,
 	ALL_CDC,
+	CHANGED_BLOCK_SERVICES,
+	BLOCK_SERVICE_AVAILABLE_SPACE,
 }
 
-const MaxRegistryMessageKind RegistryMessageKind = 43
+const MaxRegistryMessageKind RegistryMessageKind = 45
 
 func MkRegistryMessage(k string) (RegistryRequest, RegistryResponse, error) {
 	switch {
@@ -1054,6 +1062,10 @@ func MkRegistryMessage(k string) (RegistryRequest, RegistryResponse, error) {
 		return &AllShardsReq{}, &AllShardsResp{}, nil
 	case k == "ALL_CDC":
 		return &AllCdcReq{}, &AllCdcResp{}, nil
+	case k == "CHANGED_BLOCK_SERVICES":
+		return &ChangedBlockServicesReq{}, &ChangedBlockServicesResp{}, nil
+	case k == "BLOCK_SERVICE_AVAILABLE_SPACE":
+		return &BlockServiceAvailableSpaceReq{}, &BlockServiceAvailableSpaceResp{}, nil
 	default:
 		return nil, nil, fmt.Errorf("bad kind string %s", k)
 	}
@@ -5249,6 +5261,38 @@ func (v *FullBlockServiceInfo) Unpack(r io.Reader) error {
 	return nil
 }
 
+func (v *BlockServiceSpace) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.Id)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.CapacityBytes)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.AvailableBytes)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.Blocks)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *BlockServiceSpace) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.Id)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.CapacityBytes)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.AvailableBytes)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.Blocks)); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (v *CdcInfo) Pack(w io.Writer) error {
 	if err := bincode.PackScalar(w, uint8(v.ReplicaId)); err != nil {
 		return err
@@ -6931,6 +6975,104 @@ func (v *AllCdcResp) Unpack(r io.Reader) error {
 	bincode.EnsureLength(&v.Replicas, len1)
 	for i := 0; i < len1; i++ {
 		if err := v.Replicas[i].Unpack(r); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (v *ChangedBlockServicesReq) RegistryRequestKind() RegistryMessageKind {
+	return CHANGED_BLOCK_SERVICES
+}
+
+func (v *ChangedBlockServicesReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.Since)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *ChangedBlockServicesReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.Since)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *ChangedBlockServicesResp) RegistryResponseKind() RegistryMessageKind {
+	return CHANGED_BLOCK_SERVICES
+}
+
+func (v *ChangedBlockServicesResp) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.LastChange)); err != nil {
+		return err
+	}
+	len1 := len(v.BlockServices)
+	if err := bincode.PackLength(w, len1); err != nil {
+		return err
+	}
+	for i := 0; i < len1; i++ {
+		if err := v.BlockServices[i].Pack(w); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (v *ChangedBlockServicesResp) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.LastChange)); err != nil {
+		return err
+	}
+	var len1 int
+	if err := bincode.UnpackLength(r, &len1); err != nil {
+		return err
+	}
+	bincode.EnsureLength(&v.BlockServices, len1)
+	for i := 0; i < len1; i++ {
+		if err := v.BlockServices[i].Unpack(r); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (v *BlockServiceAvailableSpaceReq) RegistryRequestKind() RegistryMessageKind {
+	return BLOCK_SERVICE_AVAILABLE_SPACE
+}
+
+func (v *BlockServiceAvailableSpaceReq) Pack(w io.Writer) error {
+	return nil
+}
+
+func (v *BlockServiceAvailableSpaceReq) Unpack(r io.Reader) error {
+	return nil
+}
+
+func (v *BlockServiceAvailableSpaceResp) RegistryResponseKind() RegistryMessageKind {
+	return BLOCK_SERVICE_AVAILABLE_SPACE
+}
+
+func (v *BlockServiceAvailableSpaceResp) Pack(w io.Writer) error {
+	len1 := len(v.BlockServices)
+	if err := bincode.PackLength(w, len1); err != nil {
+		return err
+	}
+	for i := 0; i < len1; i++ {
+		if err := v.BlockServices[i].Pack(w); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (v *BlockServiceAvailableSpaceResp) Unpack(r io.Reader) error {
+	var len1 int
+	if err := bincode.UnpackLength(r, &len1); err != nil {
+		return err
+	}
+	bincode.EnsureLength(&v.BlockServices, len1)
+	for i := 0; i < len1; i++ {
+		if err := v.BlockServices[i].Unpack(r); err != nil {
 			return err
 		}
 	}

@@ -2093,6 +2093,16 @@ func main() {
 			reflect.TypeOf(msgs.AllCdcReq{}),
 			reflect.TypeOf(msgs.AllCdcResp{}),
 		},
+		{
+			0x2C,
+			reflect.TypeOf(msgs.ChangedBlockServicesReq{}),
+			reflect.TypeOf(msgs.ChangedBlockServicesResp{}),
+		},
+		{
+			0x2D,
+			reflect.TypeOf(msgs.BlockServiceAvailableSpaceReq{}),
+			reflect.TypeOf(msgs.BlockServiceAvailableSpaceResp{}),
+		},
 	}...)
 
 	kernelBlocksReqResps := []reqRespType{
@@ -2210,6 +2220,7 @@ func main() {
 			reflect.TypeOf(msgs.FullShardInfo{}),
 			reflect.TypeOf(msgs.RegisterBlockServiceInfo{}),
 			reflect.TypeOf(msgs.FullBlockServiceInfo{}),
+			reflect.TypeOf(msgs.BlockServiceSpace{}),
 			reflect.TypeOf(msgs.CdcInfo{}),
 			reflect.TypeOf(msgs.LocationInfo{}),
 		}...)...)

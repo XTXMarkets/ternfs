@@ -74,11 +74,6 @@ type state struct {
 	client *client.Client
 }
 
-type BlockServiceInfoWithLocation struct {
-	msgs.BlockServiceDeprecatedInfo
-	LocationId msgs.Location
-}
-
 type registryConfig struct {
 	registryAddress string
 	addrs           msgs.AddrsInfo
@@ -336,14 +331,14 @@ func handleIndex(ll *log.Logger, state *state, w http.ResponseWriter, r *http.Re
 				return errorPage(http.StatusNotFound, "not found")
 			}
 
-			blockServicesResp, err := state.client.RegistryRequest(ll, &msgs.AllBlockServicesDeprecatedReq{})
+			blockServicesResp, err := state.client.RegistryRequest(ll, &msgs.ChangedBlockServicesReq{})
 			if err != nil {
 				ll.RaiseAlert("error reading block services: %s", err)
 				return errorPage(http.StatusInternalServerError, fmt.Sprintf("error reading block services: %s", err))
 			}
 
 			data := indexData{
-				NumBlockServices: len(blockServicesResp.(*msgs.AllBlockServicesDeprecatedResp).BlockServices),
+				NumBlockServices: len(blockServicesResp.(*msgs.ChangedBlockServicesResp).BlockServices),
 			}
 			totalCapacityBytes := uint64(0)
 			totalAvailableBytes := uint64(0)
@@ -438,13 +433,13 @@ func normalizePath(path string) string {
 }
 
 func handleStorageHostStatus(ll *log.Logger, s *state, req *public.StorageHostStatusReq) (*public.StorageHostStatusResp, error) {
-	blockServicesResp, err := s.client.RegistryRequest(ll, &msgs.AllBlockServicesDeprecatedReq{})
+	blockServicesResp, err := s.client.RegistryRequest(ll, &msgs.ChangedBlockServicesReq{})
 	if err != nil {
 		return nil, err
 	}
 
 	ret := public.StorageHostStatusResp{IsIdle: true, IsDrained: true}
-	for _, v := range blockServicesResp.(*msgs.AllBlockServicesDeprecatedResp).BlockServices {
+	for _, v := range blockServicesResp.(*msgs.ChangedBlockServicesResp).BlockServices {
 		if v.HasFiles {
 			ret.IsDrained = false
 		}
@@ -713,14 +708,14 @@ func handleBlock(l *log.Logger, st *state, w http.ResponseWriter, r *http.Reques
 			var blockService msgs.BlockService
 			var conn *net.TCPConn
 			{
-				var blockService msgs.BlockServiceDeprecatedInfo
+				var blockService msgs.FullBlockServiceInfo
 				{
-					blockServicesResp, err := st.client.RegistryRequest(l, &msgs.AllBlockServicesDeprecatedReq{})
+					blockServicesResp, err := st.client.RegistryRequest(l, &msgs.ChangedBlockServicesReq{})
 					if err != nil {
 						return sendPage(errorPage(http.StatusInternalServerError, fmt.Sprintf("Failed getting block services '%v'", err)))
 					}
 					var found = false
-					for _, bs := range blockServicesResp.(*msgs.AllBlockServicesDeprecatedResp).BlockServices {
+					for _, bs := range blockServicesResp.(*msgs.ChangedBlockServicesResp).BlockServices {
 						if bs.Id == blockServiceId {
 							blockService = bs
 							found = true

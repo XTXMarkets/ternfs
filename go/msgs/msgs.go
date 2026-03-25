@@ -2143,6 +2143,28 @@ type ChangedBlockServicesAtLocationResp struct {
 	BlockServices []BlockService
 }
 
+type ChangedBlockServicesReq struct {
+	Since TernTime
+}
+
+type ChangedBlockServicesResp struct {
+	LastChange    TernTime // max lastInfoChange across all block services; pass back as Since in next request
+	BlockServices []FullBlockServiceInfo
+}
+
+type BlockServiceSpace struct {
+	Id             BlockServiceId
+	CapacityBytes  uint64
+	AvailableBytes uint64
+	Blocks         uint64
+}
+
+type BlockServiceAvailableSpaceReq struct{}
+
+type BlockServiceAvailableSpaceResp struct {
+	BlockServices []BlockServiceSpace
+}
+
 type RegisterBlockServiceInfo struct {
 	Id             BlockServiceId
 	LocationId     Location

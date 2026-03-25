@@ -179,22 +179,6 @@ std::pair<int, std::string> RegistryClient::_doRequest(RegistryReqContainer& req
     return {};
 }
 
-std::pair<int, std::string> RegistryClient::fetchBlockServices(std::vector<FullBlockServiceInfo>& blockServices) {
-    std::scoped_lock lock(_mutex);
-    blockServices.clear();
-
-    RegistryReqContainer reqContainer;
-    reqContainer.setAllBlockServices();
-    RegistryRespContainer respContainer;
-    {
-        const auto [err, errStr] = _doRequest(reqContainer, respContainer);
-        if (err) { blockServices.clear(); return {err, errStr}; }
-    }
-    blockServices = respContainer.getAllBlockServices().blockServices.els;
-
-    return {};
-}
-
 std::pair<int, std::string> RegistryClient::registerRegistry(
     ReplicaId replicaId, uint8_t location, bool isLeader,
     const AddrsInfo& addrs, bool bootstrap
@@ -421,6 +405,47 @@ std::pair<int, std::string> RegistryClient::fetchLocalShards(
     for (int i = 0; i < shards.size(); i++) {
         shards[i] = respContainer.getLocalShards().shards.els[i];
     }
+    return {};
+}
+
+std::pair<int, std::string> RegistryClient::fetchChangedBlockServices(
+    TernTime since,
+    TernTime& lastChange,
+    std::vector<FullBlockServiceInfo>& blockServices
+) {
+    std::scoped_lock lock(_mutex);
+    blockServices.clear();
+
+    RegistryReqContainer reqContainer;
+    auto& req = reqContainer.setChangedBlockServices();
+    req.since = since;
+    RegistryRespContainer respContainer;
+    {
+        const auto [err, errStr] = _doRequest(reqContainer, respContainer);
+        if (err) { blockServices.clear(); return {err, errStr}; }
+    }
+    auto& resp = respContainer.getChangedBlockServices();
+    lastChange = resp.lastChange;
+    blockServices = std::move(resp.blockServices.els);
+
+    return {};
+}
+
+std::pair<int, std::string> RegistryClient::fetchBlockServiceAvailableSpace(
+    std::vector<BlockServiceSpace>& blockServices
+) {
+    std::scoped_lock lock(_mutex);
+    blockServices.clear();
+
+    RegistryReqContainer reqContainer;
+    reqContainer.setBlockServiceAvailableSpace();
+    RegistryRespContainer respContainer;
+    {
+        const auto [err, errStr] = _doRequest(reqContainer, respContainer);
+        if (err) { blockServices.clear(); return {err, errStr}; }
+    }
+    blockServices = std::move(respContainer.getBlockServiceAvailableSpace().blockServices.els);
+
     return {};
 }
 

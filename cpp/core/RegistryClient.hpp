@@ -29,8 +29,14 @@ public:
         return _timeout;
     }
 
-    std::pair<int, std::string> fetchBlockServices(
+    std::pair<int, std::string> fetchChangedBlockServices(
+        TernTime since,
+        TernTime& lastChange,
         std::vector<FullBlockServiceInfo>& blockServices
+    );
+
+    std::pair<int, std::string> fetchBlockServiceAvailableSpace(
+        std::vector<BlockServiceSpace>& blockServices
     );
 
     std::pair<int, std::string> registerRegistry(

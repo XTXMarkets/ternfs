@@ -608,6 +608,12 @@ std::ostream& operator<<(std::ostream& out, RegistryMessageKind kind) {
     case RegistryMessageKind::ALL_CDC:
         out << "ALL_CDC";
         break;
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
+        out << "CHANGED_BLOCK_SERVICES";
+        break;
+    case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
+        out << "BLOCK_SERVICE_AVAILABLE_SPACE";
+        break;
     case RegistryMessageKind::EMPTY:
         out << "EMPTY";
         break;
@@ -1688,6 +1694,36 @@ bool FullBlockServiceInfo::operator==(const FullBlockServiceInfo& rhs) const {
 }
 std::ostream& operator<<(std::ostream& out, const FullBlockServiceInfo& x) {
     out << "FullBlockServiceInfo(" << "Id=" << x.id << ", " << "LocationId=" << (int)x.locationId << ", " << "Addrs=" << x.addrs << ", " << "StorageClass=" << (int)x.storageClass << ", " << "FailureDomain=" << x.failureDomain << ", " << "SecretKey=" << x.secretKey << ", " << "Flags=" << x.flags << ", " << "CapacityBytes=" << x.capacityBytes << ", " << "AvailableBytes=" << x.availableBytes << ", " << "Blocks=" << x.blocks << ", " << "FirstSeen=" << x.firstSeen << ", " << "LastSeen=" << x.lastSeen << ", " << "LastInfoChange=" << x.lastInfoChange << ", " << "HasFiles=" << x.hasFiles << ", " << "Path=" << GoLangQuotedStringFmt(x.path.data(), x.path.size()) << ")";
+    return out;
+}
+
+void BlockServiceSpace::pack(BincodeBuf& buf) const {
+    id.pack(buf);
+    buf.packScalar<uint64_t>(capacityBytes);
+    buf.packScalar<uint64_t>(availableBytes);
+    buf.packScalar<uint64_t>(blocks);
+}
+void BlockServiceSpace::unpack(BincodeBuf& buf) {
+    id.unpack(buf);
+    capacityBytes = buf.unpackScalar<uint64_t>();
+    availableBytes = buf.unpackScalar<uint64_t>();
+    blocks = buf.unpackScalar<uint64_t>();
+}
+void BlockServiceSpace::clear() {
+    id = BlockServiceId(0);
+    capacityBytes = uint64_t(0);
+    availableBytes = uint64_t(0);
+    blocks = uint64_t(0);
+}
+bool BlockServiceSpace::operator==(const BlockServiceSpace& rhs) const {
+    if ((BlockServiceId)this->id != (BlockServiceId)rhs.id) { return false; };
+    if ((uint64_t)this->capacityBytes != (uint64_t)rhs.capacityBytes) { return false; };
+    if ((uint64_t)this->availableBytes != (uint64_t)rhs.availableBytes) { return false; };
+    if ((uint64_t)this->blocks != (uint64_t)rhs.blocks) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const BlockServiceSpace& x) {
+    out << "BlockServiceSpace(" << "Id=" << x.id << ", " << "CapacityBytes=" << x.capacityBytes << ", " << "AvailableBytes=" << x.availableBytes << ", " << "Blocks=" << x.blocks << ")";
     return out;
 }
 
@@ -5476,6 +5512,78 @@ bool AllCdcResp::operator==(const AllCdcResp& rhs) const {
 }
 std::ostream& operator<<(std::ostream& out, const AllCdcResp& x) {
     out << "AllCdcResp(" << "Replicas=" << x.replicas << ")";
+    return out;
+}
+
+void ChangedBlockServicesReq::pack(BincodeBuf& buf) const {
+    since.pack(buf);
+}
+void ChangedBlockServicesReq::unpack(BincodeBuf& buf) {
+    since.unpack(buf);
+}
+void ChangedBlockServicesReq::clear() {
+    since = TernTime();
+}
+bool ChangedBlockServicesReq::operator==(const ChangedBlockServicesReq& rhs) const {
+    if ((TernTime)this->since != (TernTime)rhs.since) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const ChangedBlockServicesReq& x) {
+    out << "ChangedBlockServicesReq(" << "Since=" << x.since << ")";
+    return out;
+}
+
+void ChangedBlockServicesResp::pack(BincodeBuf& buf) const {
+    lastChange.pack(buf);
+    buf.packList<FullBlockServiceInfo>(blockServices);
+}
+void ChangedBlockServicesResp::unpack(BincodeBuf& buf) {
+    lastChange.unpack(buf);
+    buf.unpackList<FullBlockServiceInfo>(blockServices);
+}
+void ChangedBlockServicesResp::clear() {
+    lastChange = TernTime();
+    blockServices.clear();
+}
+bool ChangedBlockServicesResp::operator==(const ChangedBlockServicesResp& rhs) const {
+    if ((TernTime)this->lastChange != (TernTime)rhs.lastChange) { return false; };
+    if (blockServices != rhs.blockServices) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const ChangedBlockServicesResp& x) {
+    out << "ChangedBlockServicesResp(" << "LastChange=" << x.lastChange << ", " << "BlockServices=" << x.blockServices << ")";
+    return out;
+}
+
+void BlockServiceAvailableSpaceReq::pack(BincodeBuf& buf) const {
+}
+void BlockServiceAvailableSpaceReq::unpack(BincodeBuf& buf) {
+}
+void BlockServiceAvailableSpaceReq::clear() {
+}
+bool BlockServiceAvailableSpaceReq::operator==(const BlockServiceAvailableSpaceReq& rhs) const {
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const BlockServiceAvailableSpaceReq& x) {
+    out << "BlockServiceAvailableSpaceReq(" << ")";
+    return out;
+}
+
+void BlockServiceAvailableSpaceResp::pack(BincodeBuf& buf) const {
+    buf.packList<BlockServiceSpace>(blockServices);
+}
+void BlockServiceAvailableSpaceResp::unpack(BincodeBuf& buf) {
+    buf.unpackList<BlockServiceSpace>(blockServices);
+}
+void BlockServiceAvailableSpaceResp::clear() {
+    blockServices.clear();
+}
+bool BlockServiceAvailableSpaceResp::operator==(const BlockServiceAvailableSpaceResp& rhs) const {
+    if (blockServices != rhs.blockServices) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const BlockServiceAvailableSpaceResp& x) {
+    out << "BlockServiceAvailableSpaceResp(" << "BlockServices=" << x.blockServices << ")";
     return out;
 }
 
@@ -9331,6 +9439,24 @@ AllCdcReq& RegistryReqContainer::setAllCdc() {
     auto& x = _data.emplace<35>();
     return x;
 }
+const ChangedBlockServicesReq& RegistryReqContainer::getChangedBlockServices() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::CHANGED_BLOCK_SERVICES, "%s != %s", _kind, RegistryMessageKind::CHANGED_BLOCK_SERVICES);
+    return std::get<36>(_data);
+}
+ChangedBlockServicesReq& RegistryReqContainer::setChangedBlockServices() {
+    _kind = RegistryMessageKind::CHANGED_BLOCK_SERVICES;
+    auto& x = _data.emplace<36>();
+    return x;
+}
+const BlockServiceAvailableSpaceReq& RegistryReqContainer::getBlockServiceAvailableSpace() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE, "%s != %s", _kind, RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE);
+    return std::get<37>(_data);
+}
+BlockServiceAvailableSpaceReq& RegistryReqContainer::setBlockServiceAvailableSpace() {
+    _kind = RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE;
+    auto& x = _data.emplace<37>();
+    return x;
+}
 RegistryReqContainer::RegistryReqContainer() {
     clear();
 }
@@ -9456,6 +9582,12 @@ void RegistryReqContainer::operator=(const RegistryReqContainer& other) {
     case RegistryMessageKind::ALL_CDC:
         setAllCdc() = other.getAllCdc();
         break;
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
+        setChangedBlockServices() = other.getChangedBlockServices();
+        break;
+    case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
+        setBlockServiceAvailableSpace() = other.getBlockServiceAvailableSpace();
+        break;
     default:
         throw TERN_EXCEPTION("bad RegistryMessageKind kind %s", other.kind());
     }
@@ -9541,6 +9673,10 @@ size_t RegistryReqContainer::packedSize() const {
         return sizeof(RegistryMessageKind) + std::get<34>(_data).packedSize();
     case RegistryMessageKind::ALL_CDC:
         return sizeof(RegistryMessageKind) + std::get<35>(_data).packedSize();
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
+        return sizeof(RegistryMessageKind) + std::get<36>(_data).packedSize();
+    case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
+        return sizeof(RegistryMessageKind) + std::get<37>(_data).packedSize();
     default:
         throw TERN_EXCEPTION("bad RegistryMessageKind kind %s", _kind);
     }
@@ -9656,6 +9792,12 @@ void RegistryReqContainer::pack(BincodeBuf& buf) const {
         break;
     case RegistryMessageKind::ALL_CDC:
         std::get<35>(_data).pack(buf);
+        break;
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
+        std::get<36>(_data).pack(buf);
+        break;
+    case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
+        std::get<37>(_data).pack(buf);
         break;
     default:
         throw TERN_EXCEPTION("bad RegistryMessageKind kind %s", _kind);
@@ -9773,6 +9915,12 @@ void RegistryReqContainer::unpack(BincodeBuf& buf) {
     case RegistryMessageKind::ALL_CDC:
         _data.emplace<35>().unpack(buf);
         break;
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
+        _data.emplace<36>().unpack(buf);
+        break;
+    case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
+        _data.emplace<37>().unpack(buf);
+        break;
     default:
         throw BINCODE_EXCEPTION("bad RegistryMessageKind kind %s", _kind);
     }
@@ -9854,6 +10002,10 @@ bool RegistryReqContainer::operator==(const RegistryReqContainer& other) const {
         return getAllShards() == other.getAllShards();
     case RegistryMessageKind::ALL_CDC:
         return getAllCdc() == other.getAllCdc();
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
+        return getChangedBlockServices() == other.getChangedBlockServices();
+    case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
+        return getBlockServiceAvailableSpace() == other.getBlockServiceAvailableSpace();
     default:
         throw BINCODE_EXCEPTION("bad RegistryMessageKind kind %s", _kind);
     }
@@ -9968,6 +10120,12 @@ std::ostream& operator<<(std::ostream& out, const RegistryReqContainer& x) {
         break;
     case RegistryMessageKind::ALL_CDC:
         out << x.getAllCdc();
+        break;
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
+        out << x.getChangedBlockServices();
+        break;
+    case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
+        out << x.getBlockServiceAvailableSpace();
         break;
     case RegistryMessageKind::EMPTY:
         out << "EMPTY";
@@ -10311,6 +10469,24 @@ AllCdcResp& RegistryRespContainer::setAllCdc() {
     auto& x = _data.emplace<36>();
     return x;
 }
+const ChangedBlockServicesResp& RegistryRespContainer::getChangedBlockServices() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::CHANGED_BLOCK_SERVICES, "%s != %s", _kind, RegistryMessageKind::CHANGED_BLOCK_SERVICES);
+    return std::get<37>(_data);
+}
+ChangedBlockServicesResp& RegistryRespContainer::setChangedBlockServices() {
+    _kind = RegistryMessageKind::CHANGED_BLOCK_SERVICES;
+    auto& x = _data.emplace<37>();
+    return x;
+}
+const BlockServiceAvailableSpaceResp& RegistryRespContainer::getBlockServiceAvailableSpace() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE, "%s != %s", _kind, RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE);
+    return std::get<38>(_data);
+}
+BlockServiceAvailableSpaceResp& RegistryRespContainer::setBlockServiceAvailableSpace() {
+    _kind = RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE;
+    auto& x = _data.emplace<38>();
+    return x;
+}
 RegistryRespContainer::RegistryRespContainer() {
     clear();
 }
@@ -10439,6 +10615,12 @@ void RegistryRespContainer::operator=(const RegistryRespContainer& other) {
     case RegistryMessageKind::ALL_CDC:
         setAllCdc() = other.getAllCdc();
         break;
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
+        setChangedBlockServices() = other.getChangedBlockServices();
+        break;
+    case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
+        setBlockServiceAvailableSpace() = other.getBlockServiceAvailableSpace();
+        break;
     default:
         throw TERN_EXCEPTION("bad RegistryMessageKind kind %s", other.kind());
     }
@@ -10526,6 +10708,10 @@ size_t RegistryRespContainer::packedSize() const {
         return sizeof(RegistryMessageKind) + std::get<35>(_data).packedSize();
     case RegistryMessageKind::ALL_CDC:
         return sizeof(RegistryMessageKind) + std::get<36>(_data).packedSize();
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
+        return sizeof(RegistryMessageKind) + std::get<37>(_data).packedSize();
+    case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
+        return sizeof(RegistryMessageKind) + std::get<38>(_data).packedSize();
     default:
         throw TERN_EXCEPTION("bad RegistryMessageKind kind %s", _kind);
     }
@@ -10644,6 +10830,12 @@ void RegistryRespContainer::pack(BincodeBuf& buf) const {
         break;
     case RegistryMessageKind::ALL_CDC:
         std::get<36>(_data).pack(buf);
+        break;
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
+        std::get<37>(_data).pack(buf);
+        break;
+    case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
+        std::get<38>(_data).pack(buf);
         break;
     default:
         throw TERN_EXCEPTION("bad RegistryMessageKind kind %s", _kind);
@@ -10764,6 +10956,12 @@ void RegistryRespContainer::unpack(BincodeBuf& buf) {
     case RegistryMessageKind::ALL_CDC:
         _data.emplace<36>().unpack(buf);
         break;
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
+        _data.emplace<37>().unpack(buf);
+        break;
+    case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
+        _data.emplace<38>().unpack(buf);
+        break;
     default:
         throw BINCODE_EXCEPTION("bad RegistryMessageKind kind %s", _kind);
     }
@@ -10847,6 +11045,10 @@ bool RegistryRespContainer::operator==(const RegistryRespContainer& other) const
         return getAllShards() == other.getAllShards();
     case RegistryMessageKind::ALL_CDC:
         return getAllCdc() == other.getAllCdc();
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
+        return getChangedBlockServices() == other.getChangedBlockServices();
+    case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
+        return getBlockServiceAvailableSpace() == other.getBlockServiceAvailableSpace();
     default:
         throw BINCODE_EXCEPTION("bad RegistryMessageKind kind %s", _kind);
     }
@@ -10964,6 +11166,12 @@ std::ostream& operator<<(std::ostream& out, const RegistryRespContainer& x) {
         break;
     case RegistryMessageKind::ALL_CDC:
         out << x.getAllCdc();
+        break;
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
+        out << x.getChangedBlockServices();
+        break;
+    case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
+        out << x.getBlockServiceAvailableSpace();
         break;
     case RegistryMessageKind::EMPTY:
         out << "EMPTY";

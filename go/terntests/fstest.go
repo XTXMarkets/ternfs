@@ -864,11 +864,11 @@ func corruptFiles(
 ) uint64 {
 	blockServicesToDataDirs := make(map[msgs.BlockServiceId]string)
 	{
-		resp, err := client.RegistryRequest(log, nil, registryAddress, &msgs.AllBlockServicesDeprecatedReq{})
+		resp, err := client.RegistryRequest(log, nil, registryAddress, &msgs.ChangedBlockServicesReq{})
 		if err != nil {
 			panic(err)
 		}
-		body := resp.(*msgs.AllBlockServicesDeprecatedResp)
+		body := resp.(*msgs.ChangedBlockServicesResp)
 		for _, block := range body.BlockServices {
 			blockServicesToDataDirs[block.Id] = strings.Split(block.Path, ":")[1]
 		}
@@ -1149,12 +1149,12 @@ func fsTestInternal[Id comparable](
 			panic(err)
 		}
 		// check that we have no flash block
-		blockServicesResp, err := client.RegistryRequest(log, nil, registryAddress, &msgs.AllBlockServicesDeprecatedReq{})
+		blockServicesResp, err := client.RegistryRequest(log, nil, registryAddress, &msgs.ChangedBlockServicesReq{})
 		if err != nil {
 			panic(err)
 		}
-		blockServices := blockServicesResp.(*msgs.AllBlockServicesDeprecatedResp)
-		blockServicesById := make(map[msgs.BlockServiceId]*msgs.BlockServiceDeprecatedInfo)
+		blockServices := blockServicesResp.(*msgs.ChangedBlockServicesResp)
+		blockServicesById := make(map[msgs.BlockServiceId]*msgs.FullBlockServiceInfo)
 		for i := range blockServices.BlockServices {
 			blockServicesById[blockServices.BlockServices[i].Id] = &blockServices.BlockServices[i]
 		}

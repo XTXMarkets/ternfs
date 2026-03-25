@@ -137,6 +137,10 @@ func readRegistryResponse(
 		resp = &msgs.AllShardsResp{}
 	case msgs.ALL_CDC:
 		resp = &msgs.AllCdcResp{}
+	case msgs.CHANGED_BLOCK_SERVICES:
+		resp = &msgs.ChangedBlockServicesResp{}
+	case msgs.BLOCK_SERVICE_AVAILABLE_SPACE:
+		resp = &msgs.BlockServiceAvailableSpaceResp{}
 	default:
 		return nil, fmt.Errorf("bad registry response kind %v", kind)
 	}

@@ -1635,18 +1635,18 @@ func main() {
 	// erase block requests for old block services safely.
 	deadBlockServices := make(map[msgs.BlockServiceId]deadBlockService)
 	{
-		var registryBlockServices []msgs.BlockServiceDeprecatedInfo
+		var registryBlockServices []msgs.FullBlockServiceInfo
 		{
 			alert := l.NewNCAlert(time.Minute)
 			l.RaiseNC(alert, "fetching block services")
 			for {
-				resp, err := env.registryConn.Request(&msgs.AllBlockServicesDeprecatedReq{})
+				resp, err := env.registryConn.Request(&msgs.ChangedBlockServicesReq{})
 				if err != nil {
 					l.RaiseNC(alert, "could not request block services from registry: %v", err)
 					time.Sleep(time.Second)
 					continue
 				}
-				registryBlockServices = resp.(*msgs.AllBlockServicesDeprecatedResp).BlockServices
+				registryBlockServices = resp.(*msgs.ChangedBlockServicesResp).BlockServices
 				break
 			}
 			l.ClearNC(alert)
