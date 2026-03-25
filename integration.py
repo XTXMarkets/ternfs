@@ -51,7 +51,7 @@ tests = [
     ['./go/terntests/terntests', '-binaries-dir', build_sanitized, '-verbose', '-repo-dir', '.', '-tmp-dir', '.', '-outgoing-packet-drop', '0.02'] + short + leader_only + filter_arg,
     # valgrind is super slow, it still surfaced bugs in the past but only run a couple of tests
     # and only short
-    ['./go/terntests/terntests', '-binaries-dir', build_valgrind, '-verbose', '-repo-dir', '.', '-tmp-dir', '.', '-short', '-filter', args.filter if args.filter else 'history|direct|cp'] + leader_only,
+    ['./go/terntests/terntests', '-binaries-dir', build_valgrind, '-verbose', '-repo-dir', '.', '-tmp-dir', '.', '-short', '-filter', args.filter if args.filter else 'history|direct|cp|tmpfile'] + leader_only,
 ]
 # we need three free ports, we get them here upfront rather than in registry to reduce
 # the chance of races -- if we got it from the integration tests it'll be while

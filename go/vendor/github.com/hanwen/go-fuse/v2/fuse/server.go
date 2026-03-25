@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -21,7 +22,9 @@ import (
 )
 
 const (
-	// Linux v4.20+ caps requests at 1 MiB. Older kernels at 128 kiB.
+	// Linux v4.20+ caps requests at 1 MiB. Older kernels at 128
+	// kiB. Deprecated: current linux kernels allow tuning this
+	// using sysctl.
 	MAX_KERNEL_WRITE = 1024 * 1024
 
 	// Linux kernel constant from include/uapi/linux/fuse.h
@@ -175,8 +178,9 @@ func NewServer(fs RawFileSystem, mountPoint string, opts *MountOptions) (*Server
 	if o.MaxWrite == 0 {
 		o.MaxWrite = defaultMaxWrite
 	}
-	if o.MaxWrite > MAX_KERNEL_WRITE {
-		o.MaxWrite = MAX_KERNEL_WRITE
+	kernelMaxWrite := getMaxWrite()
+	if o.MaxWrite > kernelMaxWrite {
+		o.MaxWrite = kernelMaxWrite
 	}
 	if o.MaxStackDepth == 0 {
 		o.MaxStackDepth = 1
@@ -188,6 +192,19 @@ func NewServer(fs RawFileSystem, mountPoint string, opts *MountOptions) (*Server
 			l = _MAX_NAME_LEN
 		}
 		o.Name = strings.Replace(name[:l], ",", ";", -1)
+	}
+
+	for _, s := range []struct {
+		flag bool
+		mask uint64
+	}{
+		{o.SyncRead, CAP_ASYNC_READ},
+		{o.DisableReadDirPlus, CAP_READDIRPLUS},
+		{!o.IDMappedMount, CAP_ALLOW_IDMAP},
+	} {
+		if s.flag {
+			o.DisabledCapabilities |= s.mask
+		}
 	}
 
 	maxReaders := runtime.GOMAXPROCS(0)
@@ -634,6 +651,7 @@ func newNotifyRequest(opcode uint32) *request {
 			_OP_NOTIFY_STORE_CACHE:    NOTIFY_STORE_CACHE,
 			_OP_NOTIFY_RETRIEVE_CACHE: NOTIFY_RETRIEVE_CACHE,
 			_OP_NOTIFY_DELETE:         NOTIFY_DELETE,
+			_OP_NOTIFY_PRUNE:          NOTIFY_PRUNE,
 		}[opcode],
 	}
 	r.inHeader().Opcode = opcode
@@ -653,6 +671,27 @@ func (ms *Server) InodeNotify(node uint64, off int64, length int64) Status {
 	entry.Ino = node
 	entry.Off = off
 	entry.Length = length
+
+	return ms.notifyWrite(req)
+}
+
+func (ms *Server) PruneNotify(nodes []uint64) Status {
+	if !ms.kernelSettings.SupportsNotify(NOTIFY_PRUNE) {
+		return ENOSYS
+	}
+
+	req := newNotifyRequest(_OP_NOTIFY_PRUNE)
+
+	entry := (*NotifyPruneOut)(req.outData())
+	entry.Count = uint32(len(nodes))
+
+	h := &reflect.SliceHeader{
+		Data: uintptr(unsafe.Pointer(&nodes[0])),
+		Len:  int(8 * entry.Count),
+		Cap:  int(8 * entry.Count),
+	}
+
+	req.outPayload = *(*[]byte)(unsafe.Pointer(h))
 
 	return ms.notifyWrite(req)
 }
@@ -883,6 +922,8 @@ func (in *InitIn) SupportsNotify(notifyType int) bool {
 		return in.SupportsVersion(7, 15)
 	case NOTIFY_DELETE:
 		return in.SupportsVersion(7, 18)
+	case NOTIFY_PRUNE:
+		return in.SupportsVersion(7, 45)
 	}
 	return false
 }

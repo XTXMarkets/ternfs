@@ -518,6 +518,28 @@ type NodeLookuper interface {
 	Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*Inode, syscall.Errno)
 }
 
+// NodeWrapChilder wraps a FS node implementation in another one. If
+// defined, it is called automatically from NewInode and
+// NewPersistentInode. Thus, existing file system implementations,
+// even from other packages, can be customized by wrapping them.  The
+// following example is a loopback file system that forbids deletions.
+//
+//	type NoDelete struct {
+//	   *fs.LoopbackNode
+//	}
+//	func (w *NoDelete) Unlink(ctx context.Context, name string) syscall.Errno {
+//	   return syscall.EPERM
+//	}
+//	func (w *NoDelete) WrapChild(ctx context.Context, ops fs.InodeEmbedder) fs.InodeEmbedder {
+//	   return &NoDelete{ops.(*LoopbackNode)}
+//	}
+//
+// See also the LoopbackReuse example for a more practical
+// application.
+type NodeWrapChilder interface {
+	WrapChild(ctx context.Context, ops InodeEmbedder) InodeEmbedder
+}
+
 // OpenDir opens a directory Inode for reading its
 // contents. The actual reading is driven from Readdir, so
 // this method is just for performing sanity/permission
@@ -723,6 +745,17 @@ func (sde SimpleDirEntry) GetDirEntry(out *fuse.DirEntry) {
 type FileReaddirenter interface {
 	// Read a single directory entry.
 	Readdirent(ctx context.Context) (HasDirEntry, syscall.Errno)
+}
+
+// FileLookuper is a directory handle that supports lookup. If this is
+// defined, FileLookuper.Lookup on the directory is called for
+// READDIRPLUS calls, rather than NodeLookuper.Lookup. The name passed
+// in will always be the last name produced by Readdirent. If a child
+// with the given name already exists, that should be returned. In
+// case of directory seeks that straddle response boundaries,
+// Readdirent may be called without a subsequent Lookup call.
+type FileLookuper interface {
+	Lookup(ctx context.Context, name string, out *fuse.EntryOut) (child *Inode, errno syscall.Errno)
 }
 
 // FileFsyncer is a directory that supports fsyncdir.

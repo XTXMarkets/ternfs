@@ -394,8 +394,9 @@ func (c *s3TestHarness) removeDirectory(log *log.Logger, dir string, name string
 var _ = (fsTestHarness[string])((*s3TestHarness)(nil))
 
 type posixFsTestHarness struct {
-	bufPool      *bufpool.BufPool
-	readWithMmap bool
+	bufPool        *bufpool.BufPool
+	readWithMmap   bool
+	useTmpfileLink bool
 }
 
 func (*posixFsTestHarness) createDirectory(l *log.Logger, owner string, name string) (fullPath string, creationTime msgs.TernTime) {
@@ -454,11 +455,20 @@ func (c *posixFsTestHarness) createFile(
 	rand := wyhash.New(dataSeed)
 	rand.Read(actualDataBuf.Bytes())
 	var f *os.File
-	f, err := os.Create(fileFullPath)
-	if err != nil {
-		panic(err)
+	if c.useTmpfileLink {
+		fd, err := unix.Open(dirFullPath, unix.O_TMPFILE|unix.O_RDWR, 0666)
+		if err != nil {
+			panic(fmt.Errorf("O_TMPFILE open in %v: %w", dirFullPath, err))
+		}
+		f = os.NewFile(uintptr(fd), fileFullPath)
+	} else {
+		var err error
+		f, err = os.Create(fileFullPath)
+		if err != nil {
+			panic(err)
+		}
 	}
-	l.LogStack(1, log.DEBUG, "posix create file %v (%v size)", fileFullPath, size)
+	l.LogStack(1, log.DEBUG, "posix create file %v (%v size, tmpfile=%v)", fileFullPath, size, c.useTmpfileLink)
 	if size > 0 {
 		// write in randomly sized chunks
 		chunks := int(rand.Uint32()%10) + 1
@@ -474,6 +484,14 @@ func (c *posixFsTestHarness) createFile(
 			if _, err := f.Write(actualDataBuf.Bytes()[offsets[i]:offsets[i+1]]); err != nil {
 				panic(err)
 			}
+		}
+	}
+	if c.useTmpfileLink {
+		// linkat via /proc/self/fd to give the tmpfile a name
+		procPath := fmt.Sprintf("/proc/self/fd/%d", f.Fd())
+		if err := unix.Linkat(unix.AT_FDCWD, procPath, unix.AT_FDCWD, fileFullPath, unix.AT_SYMLINK_FOLLOW); err != nil {
+			f.Close()
+			panic(fmt.Errorf("linkat %v -> %v: %w", procPath, fileFullPath, err))
 		}
 	}
 	if err := f.Close(); err != nil {
@@ -1252,7 +1270,8 @@ func createS3ClientFromURL(s3URL string) (client *s3.Client, bucket string) {
 }
 
 type posixHarness struct {
-	mountPoint string
+	mountPoint     string
+	useTmpfileLink bool
 }
 type s3Harness struct{}
 type apiHarness struct{}
@@ -1277,8 +1296,9 @@ func fsTest(
 	switch h := harnessType.(type) {
 	case posixHarness:
 		harness := &posixFsTestHarness{
-			bufPool:      bufpool.NewBufPool(),
-			readWithMmap: opts.readWithMmap,
+			bufPool:        bufpool.NewBufPool(),
+			readWithMmap:   opts.readWithMmap,
+			useTmpfileLink: h.useTmpfileLink,
 		}
 		state := fsTestState[string]{
 			totalDirs: 1, // root dir

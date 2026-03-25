@@ -285,24 +285,26 @@ func (b *rawBridge) setAttrTimeout(out *fuse.AttrOut) {
 
 // NewNodeFS creates a node based filesystem based on the
 // InodeEmbedder instance for the root of the tree.
+// If nil is given as opts, default settings are
+// applied, which are 1 second entry and attribute timeout.
 func NewNodeFS(root InodeEmbedder, opts *Options) fuse.RawFileSystem {
+	if opts == nil {
+		oneSec := time.Second
+		opts = &Options{
+			EntryTimeout: &oneSec,
+			AttrTimeout:  &oneSec,
+		}
+	}
 	bridge := &rawBridge{
 		automaticIno: opts.FirstAutomaticIno,
 		server:       opts.ServerCallbacks,
 		nextNodeId:   2, // the root node has nodeid 1
 		stableAttrs:  make(map[StableAttr]*Inode),
+		options:      *opts,
 	}
 
 	if bridge.automaticIno == 0 {
 		bridge.automaticIno = 1 << 63
-	}
-
-	if opts != nil {
-		bridge.options = *opts
-	} else {
-		oneSec := time.Second
-		bridge.options.EntryTimeout = &oneSec
-		bridge.options.AttrTimeout = &oneSec
 	}
 
 	stableAttr := StableAttr{
@@ -1198,9 +1200,12 @@ func (b *rawBridge) readDirMaybeLookup(cancel <-chan struct{}, input *fuse.ReadI
 		var child *Inode
 		if lu, ok := hde.(DirEntryLookuper); ok {
 			child, errno = lu.Lookup(ctx, n, entryOut)
+		} else if fileLookupper, ok := f.file.(FileLookuper); ok {
+			child, errno = fileLookupper.Lookup(ctx, de.Name, entryOut)
 		} else {
 			child, errno = b.lookup(ctx, n, de.Name, entryOut)
 		}
+
 		if errno != 0 {
 			if b.options.NegativeTimeout != nil {
 				entryOut.SetEntryTimeout(*b.options.NegativeTimeout)
@@ -1208,6 +1213,7 @@ func (b *rawBridge) readDirMaybeLookup(cancel <-chan struct{}, input *fuse.ReadI
 				// TODO: maybe simply not produce the dirent here?
 				// test?
 			}
+			// TODO: should break?
 		} else {
 			child, _ = b.addNewChild(n, de.Name, child, nil, 0, entryOut)
 			child.setEntryOut(entryOut)
@@ -1267,7 +1273,7 @@ func (b *rawBridge) Ioctl(cancel <-chan struct{}, in *fuse.IoctlIn, inbuf []byte
 	n, f := b.inode(in.NodeId, in.Fh)
 	if nio, ok := n.ops.(NodeIoctler); ok {
 		ctx := &fuse.Context{Caller: in.Caller, Cancel: cancel}
-		result, errno := nio.Ioctl(ctx, f, in.Cmd, in.Arg, inbuf, outbuf)
+		result, errno := nio.Ioctl(ctx, f.file, in.Cmd, in.Arg, inbuf, outbuf)
 		out.Result = result
 		return errnoToStatus(errno)
 	}

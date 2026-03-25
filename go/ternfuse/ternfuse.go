@@ -26,6 +26,8 @@ import (
 	"xtx/ternfs/core/log"
 	"xtx/ternfs/msgs"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/rlimit"
@@ -152,7 +154,9 @@ func cdcRequest(req msgs.CDCRequest, resp msgs.CDCResponse) syscall.Errno {
 
 type ternNode struct {
 	fs.Inode
-	id msgs.InodeId
+	id      msgs.InodeId
+	mu      sync.Mutex
+	tmpfile *ternFile // non-nil for O_TMPFILE nodes pending link
 }
 
 func (n *ternNode) getattr(f fs.FileHandle, out *fuse.Attr) syscall.Errno {
@@ -313,15 +317,83 @@ func (n *ternNode) Create(
 	ctx context.Context, name string, flags uint32, mode uint32, out *fuse.EntryOut,
 ) (node *fs.Inode, fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
 	logger.Debug("create id=%v, name=%q, flags=0x%08x, mode=0x%08x", n.id, name, flags, mode)
+	isTmpfile := flags&unix.O_TMPFILE == unix.O_TMPFILE
 	tf, err := n.createInternal(name, flags, mode)
 	if err != 0 {
 		return nil, nil, 0, err
 	}
-	fileNode := ternNode{
+	fileNode := &ternNode{
 		id: tf.id,
 	}
-	logger.Debug("created id=%v", tf.id)
-	return n.NewInode(ctx, &fileNode, fs.StableAttr{Ino: uint64(tf.id), Mode: mode}), tf, 0, 0
+	if isTmpfile {
+		// Defer linking until Link() is called; keep dir for shard routing
+		tf.body.(*transientFile).name = ""
+		fileNode.tmpfile = tf
+	}
+	logger.Debug("created id=%v (tmpfile=%v)", tf.id, isTmpfile)
+	return n.NewInode(ctx, fileNode, fs.StableAttr{Ino: uint64(tf.id), Mode: mode}), tf, 0, 0
+}
+
+func (n *ternNode) Link(ctx context.Context, target fs.InodeEmbedder, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
+	targetNode := target.(*ternNode)
+	logger.Debug("link dir=%v, target=%v, name=%q", n.id, targetNode.id, name)
+
+	targetNode.mu.Lock()
+	tf := targetNode.tmpfile
+	targetNode.mu.Unlock()
+	if tf == nil {
+		logger.Info("link target=%v has no pending tmpfile", targetNode.id)
+		return nil, syscall.EINVAL
+	}
+
+	tf.mu.Lock()
+	defer tf.mu.Unlock()
+
+	switch body := tf.body.(type) {
+	case *transientFile:
+		// File must be linked in the same directory it was created in
+		if body.dir != n.id {
+			logger.Info("link target=%v created in dir %v but linking in dir %v", targetNode.id, body.dir, n.id)
+			return nil, syscall.EXDEV
+		}
+		// Write out the last span
+		if err := tf.writeSpan(); err != 0 {
+			return nil, err
+		}
+		// Link the file
+		req := msgs.LinkFileReq{
+			FileId:  tf.id,
+			Cookie:  body.cookie,
+			OwnerId: body.dir,
+			Name:    name,
+		}
+		resp := &msgs.LinkFileResp{}
+		if err := shardRequest(body.dir.Shard(), &req, resp); err != 0 {
+			tf.body = failedTransientFile{err}
+			return nil, err
+		}
+		fr, err := c.NewFileReader(logger, tf.id)
+		if err != nil {
+			tf.body = failedTransientFile{ternErrToErrno(err)}
+			return nil, ternErrToErrno(err)
+		}
+		tf.body = fr
+
+		targetNode.mu.Lock()
+		targetNode.tmpfile = nil
+		targetNode.mu.Unlock()
+
+		child := n.NewInode(ctx, target.(*ternNode), fs.StableAttr{Ino: uint64(targetNode.id), Mode: syscall.S_IFREG})
+		if err := targetNode.getattr(nil, &out.Attr); err != 0 {
+			return child, 0 // best-effort, file is already linked
+		}
+		return child, 0
+	case failedTransientFile:
+		return nil, body.writeError
+	default:
+		logger.Info("link target=%v unexpected body type %T", targetNode.id, tf.body)
+		return nil, syscall.EINVAL
+	}
 }
 
 func (n *ternNode) Mkdir(
@@ -531,6 +603,11 @@ func (f *ternFile) Flush(ctx context.Context) syscall.Errno {
 
 	switch tf := f.body.(type) {
 	case *transientFile:
+		if tf.name == "" {
+			// tmpfile not yet linked, nothing to flush
+			logger.Debug("flush file=%v is tmpfile, skipping", f.id)
+			return 0
+		}
 		if closeMap != nil {
 			var closes uint64
 			if err := closeMap.LookupAndDelete(uint64(f.id), &closes); err != nil {

@@ -54,6 +54,8 @@ var (
 		{CAP_NO_EXPORT_SUPPORT, "NO_EXPORT_SUPPORT"},
 		{CAP_HAS_RESEND, "HAS_RESEND"},
 		{CAP_ALLOW_IDMAP, "ALLOW_IDMAP"},
+		{CAP_OVER_IO_URING, "IO_URING"},
+		{CAP_REQUEST_TIMEOUT, "REQUEST_TIMEOUT"},
 	})
 	releaseFlagNames = newFlagNames([]flagNameEntry{
 		{RELEASE_FLUSH, "FLUSH"},
@@ -323,6 +325,10 @@ func (o *NotifyRetrieveOut) string() string {
 
 func (i *NotifyRetrieveIn) string() string {
 	return fmt.Sprintf("{[%d +%d)}", i.Offset, i.Size)
+}
+
+func (o *NotifyPruneOut) string() string {
+	return fmt.Sprintf("{%d}", o.Count)
 }
 
 func (f *FallocateIn) string() string {

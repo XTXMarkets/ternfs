@@ -72,8 +72,9 @@ const (
 	_OP_NOTIFY_STORE_CACHE    = uint32(102)
 	_OP_NOTIFY_RETRIEVE_CACHE = uint32(103)
 	_OP_NOTIFY_DELETE         = uint32(104) // protocol version 18
+	_OP_NOTIFY_PRUNE          = uint32(105) // protocol version 45
 
-	_OPCODE_COUNT = uint32(105)
+	_OPCODE_COUNT = uint32(106)
 
 	// Constants from Linux kernel fs/fuse/fuse_i.h
 	// Default MaxPages value in all kernel versions
@@ -100,7 +101,8 @@ func doInit(server *protocolServer, req *request) {
 	kernelFlags := input.Flags64()
 	server.kernelSettings = *input
 	kernelFlags &= (CAP_ASYNC_READ | CAP_BIG_WRITES | CAP_FILE_OPS |
-		CAP_READDIRPLUS | CAP_NO_OPEN_SUPPORT | CAP_PARALLEL_DIROPS | CAP_MAX_PAGES | CAP_RENAME_SWAP | CAP_PASSTHROUGH | CAP_ALLOW_IDMAP)
+		CAP_READDIRPLUS | CAP_NO_OPEN_SUPPORT | CAP_PARALLEL_DIROPS | CAP_MAX_PAGES | CAP_RENAME_SWAP | CAP_PASSTHROUGH | CAP_ALLOW_IDMAP |
+		server.opts.ExtraCapabilities)
 
 	if server.opts.EnableLocks {
 		kernelFlags |= CAP_FLOCK_LOCKS | CAP_POSIX_LOCKS
@@ -111,18 +113,6 @@ func doInit(server *protocolServer, req *request) {
 	if server.opts.EnableAcl {
 		kernelFlags |= CAP_POSIX_ACL
 	}
-	if server.opts.SyncRead {
-		// Clear CAP_ASYNC_READ
-		kernelFlags &= ^uint64(CAP_ASYNC_READ)
-	}
-	if server.opts.DisableReadDirPlus {
-		// Clear CAP_READDIRPLUS
-		kernelFlags &= ^uint64(CAP_READDIRPLUS)
-	}
-	if !server.opts.IDMappedMount {
-		// Clear CAP_ALLOW_IDMAP
-		kernelFlags &= ^uint64(CAP_ALLOW_IDMAP)
-	}
 
 	if server.opts.ExplicitDataCacheControl {
 		// we don't want CAP_AUTO_INVAL_DATA even if we cannot go into fully explicit mode
@@ -130,6 +120,8 @@ func doInit(server *protocolServer, req *request) {
 	} else {
 		kernelFlags |= input.Flags64() & CAP_AUTO_INVAL_DATA
 	}
+
+	kernelFlags = kernelFlags &^ server.opts.DisabledCapabilities
 
 	// maxPages is the maximum request size we want the kernel to use, in units of
 	// memory pages (usually 4kiB). Linux v4.19 and older ignore this and always use
@@ -637,6 +629,7 @@ func init() {
 		_OP_INTERRUPT:       doInterrupt,
 		_OP_COPY_FILE_RANGE: doCopyFileRange,
 		_OP_LSEEK:           doLseek,
+		_OP_TMPFILE:         doCreate,
 	} {
 		operationHandlers[op].Func = v
 	}
@@ -646,6 +639,7 @@ func init() {
 		_OP_BMAP:                  _BmapOut{},
 		_OP_COPY_FILE_RANGE:       WriteOut{},
 		_OP_CREATE:                CreateOut{},
+		_OP_TMPFILE:               CreateOut{},
 		_OP_GETATTR:               AttrOut{},
 		_OP_GETLK:                 LkOut{},
 		_OP_GETXATTR:              GetXAttrOut{},
@@ -662,6 +656,7 @@ func init() {
 		_OP_NOTIFY_INVAL_INODE:    NotifyInvalInodeOut{},
 		_OP_NOTIFY_RETRIEVE_CACHE: NotifyRetrieveOut{},
 		_OP_NOTIFY_STORE_CACHE:    NotifyStoreOut{},
+		_OP_NOTIFY_PRUNE:          NotifyPruneOut{},
 		_OP_OPEN:                  OpenOut{},
 		_OP_OPENDIR:               OpenOut{},
 		_OP_POLL:                  _PollOut{},
@@ -681,6 +676,7 @@ func init() {
 		_OP_BMAP:            _BmapIn{},
 		_OP_COPY_FILE_RANGE: CopyFileRangeIn{},
 		_OP_CREATE:          CreateIn{},
+		_OP_TMPFILE:         CreateIn{},
 		_OP_FALLOCATE:       FallocateIn{},
 		_OP_FLUSH:           FlushIn{},
 		_OP_FORGET:          ForgetIn{},
@@ -725,6 +721,7 @@ func init() {
 	// File name args.
 	for op, count := range map[uint32]int{
 		_OP_CREATE:      1,
+		_OP_TMPFILE:     1,
 		_OP_SETXATTR:    1,
 		_OP_GETXATTR:    1,
 		_OP_LINK:        1,
