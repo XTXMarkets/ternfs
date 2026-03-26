@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <shared_mutex>
 #include <vector>
 
 #include "LogsDB.hpp"
@@ -42,6 +43,8 @@ public:
 
     void flush(bool sync = true) { _db->FlushWAL(sync); }
 
+    void updateReplicaInfo(const RegisterRegistryReq& req);
+
 private:
     void _initDb();
 
@@ -54,6 +57,9 @@ private:
 
     TernTime _lastCalculatedShardBlockServices;
     std::unordered_map<uint8_t, std::vector<BlockServiceInfoShort>> _shardBlockServices;
+
+    mutable std::shared_mutex _replicaInfosMutex;
+    std::array<FullRegistryInfo, LogsDB::REPLICA_COUNT> _replicaInfos{};
 
     rocksdb::DB* _db;
     rocksdb::ColumnFamilyHandle* _defaultCf;

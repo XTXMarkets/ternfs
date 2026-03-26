@@ -81,7 +81,6 @@ public:
         _registryDB(registryDB),
         _writer(writer),
         _tracker(tracker),
-        _replicaInfos({}),
         _replicaFinishedBootstrap({}),
         _boostrapFinished(false),
         _readers(std::move(readers))
@@ -111,8 +110,9 @@ public:
         for (auto &req : receivedRequests) {
             // Always serve registry replicas from in-memory state regardless of
             // bootstrap phase, so there is no data gap during the transition.
-            if (req.req.kind() == RegistryMessageKind::ALL_REGISTRY_REPLICAS) {
-                _serveAllRegistryReplicas(req);
+            if (req.req.kind() == RegistryMessageKind::ALL_REGISTRY_REPLICAS_DE_PR_EC_AT_ED ||
+                req.req.kind() == RegistryMessageKind::ALL_REGISTRY_REPLICAS) {
+                _readRequests.emplace_back(std::move(req));
                 continue;
             }
 
@@ -129,7 +129,7 @@ public:
             case RegistryMessageKind::REGISTER_REGISTRY: {
                 const auto &regiReq = req.req.getRegisterRegistry();
                 if (regiReq.location == _options.logsDBOptions.location) {
-                    _updateReplicaInfo(regiReq);
+                    _registryDB.updateReplicaInfo(regiReq);
                 }
                 _writeRequests.emplace_back(std::move(req));
                 break;
@@ -145,12 +145,14 @@ public:
             case RegistryMessageKind::CDC_AT_LOCATION:
             case RegistryMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
             case RegistryMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
-            case RegistryMessageKind::ALL_SHARDS:
+            case RegistryMessageKind::ALL_SHARDS_DE_PR_EC_AT_ED:
             case RegistryMessageKind::SHARD_BLOCK_SERVICES:
-            case RegistryMessageKind::ALL_CDC:
+            case RegistryMessageKind::ALL_CDC_DE_PR_EC_AT_ED:
             case RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK:
             case RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
             case RegistryMessageKind::ALL_BLOCK_SERVICES:
+            case RegistryMessageKind::ALL_SHARDS:
+            case RegistryMessageKind::ALL_CDC:
             case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION: {
                 _readRequests.emplace_back(std::move(req));
                 break;
@@ -288,6 +290,7 @@ public:
                 _writeRequests.emplace_back(std::move(req));
                 break;
             }
+            case RegistryMessageKind::ALL_REGISTRY_REPLICAS_DE_PR_EC_AT_ED:
             case RegistryMessageKind::ALL_REGISTRY_REPLICAS:
                 ALWAYS_ASSERT(false, "ALL_REGISTRY_REPLICAS should be handled before bootstrap check");
             case RegistryMessageKind::EMPTY:
@@ -333,7 +336,6 @@ private:
     RegistryWriter& _writer;
     BlockServiceFileTracker& _tracker;
 
-    std::array<FullRegistryInfo, LogsDB::REPLICA_COUNT> _replicaInfos;
     std::array<bool, LogsDB::REPLICA_COUNT> _replicaFinishedBootstrap;
     bool _boostrapFinished;
 
@@ -347,31 +349,6 @@ private:
     std::vector<std::pair<FailureDomain, TernTime>> _lastDecommissionTimes;
 
 
-    void _updateReplicaInfo(const RegisterRegistryReq &regiReq) {
-        auto& info = _replicaInfos[regiReq.replicaId.u8];
-        auto now = ternNow();
-        if (now >= info.lastSeen) {
-            info.id = regiReq.replicaId;
-            info.locationId = regiReq.location;
-            info.isLeader = regiReq.isLeader;
-            info.addrs = regiReq.addrs;
-            info.lastSeen = now;
-        }
-    }
-
-    void _serveAllRegistryReplicas(RegistryRequest &req) {
-        auto& resp = _registryResponses.emplace_back();
-        resp.requestId = req.requestId;
-        auto &allRegiResp = resp.resp.setAllRegistryReplicas();
-        for (uint8_t i = 0; i < _replicaInfos.size(); ++i) {
-            auto &info = _replicaInfos[i];
-            if (info.addrs.addrs[0].port == 0 && info.addrs.addrs[1].port == 0) {
-                continue;
-            }
-            allRegiResp.replicas.els.emplace_back(info);
-        }
-    }
-
     void _processBootstrapRequest(RegistryRequest &req) {
         auto& resp = _registryResponses.emplace_back();
         resp.requestId = req.requestId;
@@ -383,7 +360,7 @@ private:
                 LOG_TRACE(_env, "Dropping register request in bootstrap for other location");
                 break;
             }
-            _updateReplicaInfo(regiReq);
+            _registryDB.updateReplicaInfo(regiReq);
             _replicaFinishedBootstrap[regiReq.replicaId.u8] = !regiReq.bootstrap;
             resp.resp.setRegisterRegistry();
             size_t quorumSize = _replicaFinishedBootstrap.size() / 2 + 1;

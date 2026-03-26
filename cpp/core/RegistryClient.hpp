@@ -25,6 +25,10 @@ public:
     RegistryClient(const RegistryClient&) = delete;
     RegistryClient& operator=(const RegistryClient&) = delete;
 
+    Duration timeout() const {
+        return _timeout;
+    }
+
     std::pair<int, std::string> fetchBlockServices(
         std::vector<FullBlockServiceInfo>& blockServices
     );
@@ -41,6 +45,13 @@ public:
         std::vector<FullRegistryInfo>& replicas
     );
 
+    std::pair<int, std::string> fetchRegistryReplicas(
+        std::vector<FullRegistryInfo>& replicas,
+        uint8_t minKnownReplicas,
+        uint8_t location,
+        Duration timeout
+    );
+
     std::pair<int, std::string> registerShard(
         ShardReplicaId shrid,
         uint8_t location,
@@ -53,6 +64,14 @@ public:
         std::vector<FullShardInfo>& replicas
     );
 
+    std::pair<int, std::string> fetchShardReplicas(
+        ShardId shid,
+        std::vector<FullShardInfo>& replicas,
+        uint8_t minKnownReplicas,
+        uint8_t location,
+        Duration timeout
+    );
+
     std::pair<int, std::string> registerCDCReplica(
         ReplicaId replicaId,
         uint8_t location,
@@ -62,6 +81,13 @@ public:
 
     std::pair<int, std::string> fetchCDCReplicas(
         std::array<AddrsInfo, 5>& replicas
+    );
+
+    std::pair<int, std::string> fetchCDCReplicas(
+        std::array<AddrsInfo, 5>& replicas,
+        uint8_t minKnownReplicas,
+        uint8_t location,
+        Duration timeout
     );
 
     std::pair<int, std::string> fetchLocalShards(
@@ -80,4 +106,5 @@ private:
     std::pair<int, std::string> _ensureConnected();
     void _closeConnection();
     std::pair<int, std::string> _doRequest(RegistryReqContainer& req, RegistryRespContainer& resp);
+    std::pair<int, std::string> _doRequest(RegistryReqContainer& req, RegistryRespContainer& resp, Duration timeout);
 };

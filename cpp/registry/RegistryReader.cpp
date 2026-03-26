@@ -20,7 +20,13 @@ void RegistryReader::step() {
     ALWAYS_ASSERT(_reqs.empty());
     ALWAYS_ASSERT(_resps.empty());
     _clearCaches();
-    _queue.pull(_reqs, MAX_REQUESTS);
+    _queue.pull(_reqs, MAX_REQUESTS, _pendingWaits.empty() ? Duration(-1) : 1_sec);
+    for (auto& pw : _pendingWaits) {
+        auto& req = _reqs.emplace_back();
+        req.requestId = pw.requestId;
+        req.req = std::move(pw.req);
+    }
+    _pendingWaits.clear();
     for (auto &req : _reqs) {
         auto& resp = _resps.emplace_back();
         resp.requestId = req.requestId;
@@ -81,7 +87,24 @@ void RegistryReader::step() {
             registryResp.lastSeen = cdcInfo.lastSeen;
             break;
         }
+        case RegistryMessageKind::ALL_REGISTRY_REPLICAS_DE_PR_EC_AT_ED: {
+            auto &allRegiResp = resp.resp.setAllRegistryReplicasDEPRECATED();
+            allRegiResp.replicas.els = _registries();
+            break;
+        }
         case RegistryMessageKind::ALL_REGISTRY_REPLICAS: {
+            const auto& allRegiReq = req.req.getAllRegistryReplicas();
+            if (allRegiReq.minKnownReplicas > 0) {
+                auto& regs = _registries();
+                auto count = std::count_if(regs.begin(), regs.end(), [&](const auto& r) {
+                    return r.locationId == allRegiReq.location && (r.addrs.addrs[0].port != 0 || r.addrs.addrs[1].port != 0);
+                });
+                if (count < allRegiReq.minKnownReplicas) {
+                    _resps.pop_back();
+                    _pendingWaits.emplace_back(PendingWait{req.requestId, std::move(req.req)});
+                    break;
+                }
+            }
             auto &allRegiResp = resp.resp.setAllRegistryReplicas();
             allRegiResp.replicas.els = _registries();
             break;
@@ -101,8 +124,8 @@ void RegistryReader::step() {
             registryResp.replicas.els = _cdcReplicas();
             break;
         }
-        case RegistryMessageKind::ALL_SHARDS: {
-            auto& registryResp = resp.resp.setAllShards();
+        case RegistryMessageKind::ALL_SHARDS_DE_PR_EC_AT_ED: {
+            auto& registryResp = resp.resp.setAllShardsDEPRECATED();
             _populateShardCache();
             registryResp.shards.els = _cachedShardInfo;
             break;
@@ -114,9 +137,43 @@ void RegistryReader::step() {
             _registryDB.shardBlockServices(bsReq.shardId, registryResp.blockServices.els);
             break;
         }
-        case RegistryMessageKind::ALL_CDC: {
-            auto& registryResp = resp.resp.setAllCdc();
+        case RegistryMessageKind::ALL_CDC_DE_PR_EC_AT_ED: {
+            auto& registryResp = resp.resp.setAllCdcDEPRECATED();
             _populateCdcCache();
+            registryResp.replicas.els = _cachedCdc;
+            break;
+        }
+        case RegistryMessageKind::ALL_SHARDS: {
+            _populateShardCache();
+            const auto& allShardsReq = req.req.getAllShards();
+            if (allShardsReq.minKnownReplicas > 0) {
+                auto count = std::count_if(_cachedShardInfo.begin(), _cachedShardInfo.end(), [&](const auto& s) {
+                    return s.id.shardId() == ShardId{allShardsReq.shardId} && s.locationId == allShardsReq.location && (s.addrs.addrs[0].port != 0 || s.addrs.addrs[1].port != 0);
+                });
+                if (count < allShardsReq.minKnownReplicas) {
+                    _resps.pop_back();
+                    _pendingWaits.emplace_back(PendingWait{req.requestId, std::move(req.req)});
+                    break;
+                }
+            }
+            auto& registryResp = resp.resp.setAllShards();
+            registryResp.shards.els = _cachedShardInfo;
+            break;
+        }
+        case RegistryMessageKind::ALL_CDC: {
+            _populateCdcCache();
+            const auto& allCdcReq = req.req.getAllCdc();
+            if (allCdcReq.minKnownReplicas > 0) {
+                auto count = std::count_if(_cachedCdc.begin(), _cachedCdc.end(), [&](const auto& c) {
+                    return c.locationId == allCdcReq.location && (c.addrs.addrs[0].port != 0 || c.addrs.addrs[1].port != 0);
+                });
+                if (count < allCdcReq.minKnownReplicas) {
+                    _resps.pop_back();
+                    _pendingWaits.emplace_back(PendingWait{req.requestId, std::move(req.req)});
+                    break;
+                }
+            }
+            auto& registryResp = resp.resp.setAllCdc();
             registryResp.replicas.els = _cachedCdc;
             break;
         }

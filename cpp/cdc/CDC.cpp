@@ -941,13 +941,20 @@ public:
                 _env.updateAlert(_alert, "Couldn't register ourselves with registry: %s", errStr);
                 return false;
             }
-            _env.clearAlert(_alert);
         }
 
         {
             std::array<AddrsInfo, 5> replicas;
-            LOG_INFO(_env, "Fetching replicas for CDC from registry");
-            const auto [err, errStr] = _shared.registryClient.fetchCDCReplicas(replicas);
+            auto oldReplicas = _shared.getReplicas();
+            bool needsWait = _initialStart && !oldReplicas && !_noReplication;
+            uint8_t minKnown = 0;
+            Duration timeout = 10_sec;
+            if (needsWait) {
+                minKnown = LogsDB::REPLICA_COUNT;
+                timeout = 30_sec;
+            }
+            LOG_INFO(_env, "Fetching replicas for CDC from registry (minKnown=%s)", (int)minKnown);
+            const auto [err, errStr] = _shared.registryClient.fetchCDCReplicas(replicas, minKnown, _location, timeout);
             if (err == EINTR) { return false; }
             if (err) {
                 _env.updateAlert(_alert, "Failed getting CDC replicas from registry: %s", errStr);
@@ -957,15 +964,14 @@ public:
                 _env.updateAlert(_alert, "AddrsInfo in registry: %s , not matching local AddrsInfo: %s", replicas[_replicaId.u8], _shared.socks[CDC_SOCK].addr());
                 return false;
             }
-            auto oldReplicas = _shared.getReplicas();
-            if (unlikely(_initialStart && !oldReplicas)) {
+            if (unlikely(!oldReplicas)) {
                 size_t emptyReplicas{0};
                 for (auto& replica : replicas) {
                     if (replica.addrs[0].port == 0) {
                         ++emptyReplicas;
                     }
                 }
-                if (!_noReplication && emptyReplicas > 0 ) {
+                if (!_noReplication && emptyReplicas > 0) {
                     _env.updateAlert(_alert, "Didn't get enough replicas with known addresses from registry");
                     return false;
                 }
@@ -975,6 +981,7 @@ public:
                 _shared.setReplicas(std::move(replicas));
             }
         }
+        _env.clearAlert(_alert);
         return true;
     }
 };

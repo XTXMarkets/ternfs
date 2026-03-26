@@ -38,6 +38,12 @@ private:
     std::vector<RegistryRequest> _reqs;
     std::vector<RegistryResponse> _resps;
 
+    struct PendingWait {
+        uint64_t requestId;
+        RegistryReqContainer req;
+    };
+    std::vector<PendingWait> _pendingWaits;
+
 // local cache for common data, read once per step
 
     std::vector<FullRegistryInfo> _cachedRegistries;

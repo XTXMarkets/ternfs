@@ -2106,13 +2106,31 @@ public:
     }
 
     virtual bool periodicStep() {
-        bool replicaCheckOk = true;
+        // Step 1: Register first so we're discoverable
+        {
+            const bool advertiseLeader = _shared.options.isLeader() && (_noReplication || _shared.isInitiated.load(std::memory_order_acquire));
+            LOG_INFO(_env, "Registering ourselves (shard %s, location %s, %s, leader=%s) with registry", _shrid, (int)_location, _shared.sock().addr(), advertiseLeader);
+            const auto [err, errStr] = _shared.registryClient.registerShard(_shrid, _location, advertiseLeader, _shared.sock().addr());
+            if (err == EINTR) { return false; }
+            if (err) {
+                _env.updateAlert(_alert, "Couldn't register ourselves with registry: %s", errStr);
+                return false;
+            }
+        }
 
-        // Step 1: Fetch replicas first so isInitiated can be set before registration
+        // Step 2: Fetch replicas, using wait filter during initial startup
         {
             std::vector<FullShardInfo> allReplicas;
-            LOG_INFO(_env, "Fetching replicas for shardId %s from registry", _shrid.shardId());
-            const auto [err, errStr] = _shared.registryClient.fetchShardReplicas(_shrid.shardId(), allReplicas);
+            bool isInitiated = _shared.isInitiated.load(std::memory_order_acquire);
+            bool needsWait = _shared.options.logsDBOptions.initialStart && !isInitiated && !_noReplication;
+            uint8_t minKnown = 0;
+            Duration timeout = 10_sec;
+            if (needsWait) {
+                minKnown = LogsDB::REPLICA_COUNT;
+                timeout = 30_sec;
+            }
+            LOG_INFO(_env, "Fetching replicas for shardId %s from registry (minKnown=%s)", _shrid.shardId(), (int)minKnown);
+            const auto [err, errStr] = _shared.registryClient.fetchShardReplicas(_shrid.shardId(), allReplicas, minKnown, _location, timeout);
             if (err == EINTR) { return false; }
             if (err) {
                 _env.updateAlert(_alert, "Failed getting shard replicas from registry: %s", errStr);
@@ -2137,8 +2155,8 @@ public:
                 _env.updateAlert(_alert, "AddrsInfo in registry: %s , not matching local AddrsInfo: %s", localReplicas[_shrid.replicaId().u8], _shared.sock().addr());
                 return false;
             }
-            auto oldReplicas = _shared.getReplicas();
-            if (unlikely(_shared.options.logsDBOptions.initialStart && !oldReplicas)) {
+
+            if (!isInitiated) {
                 size_t emptyReplicas{0};
                 for (auto& replica : localReplicas) {
                     if (replica.addrs[0].port == 0) {
@@ -2146,10 +2164,12 @@ public:
                     }
                 }
                 if (emptyReplicas > 0 && !_noReplication) {
-                    replicaCheckOk = false;
+                    _env.updateAlert(_alert, "Didn't get enough replicas with known addresses from registry");
+                    return false;
                 }
             }
-            if (unlikely(!oldReplicas || *oldReplicas != localReplicas)) {
+
+            if (unlikely(!_shared.getReplicas() || *_shared.getReplicas() != localReplicas)) {
                 LOG_DEBUG(_env, "Updating replicas to %s %s %s %s %s", localReplicas[0], localReplicas[1], localReplicas[2], localReplicas[3], localReplicas[4]);
                 _shared.setReplicas(std::move(localReplicas));
             }
@@ -2158,29 +2178,8 @@ public:
             _shared.setLeadersAtOtherLocations(std::move(leadersAtOtherLocations));
         }
 
-        if (replicaCheckOk) {
-            _shared.isInitiated.store(true, std::memory_order_release);
-        }
-
-        // Step 2: Register with correct leader status
-        {
-            const bool advertiseLeader = _shared.options.isLeader() && (_noReplication || _shared.isInitiated.load(std::memory_order_acquire));
-            LOG_INFO(_env, "Registering ourselves (shard %s, location %s, %s, leader=%s) with registry", _shrid, (int)_location, _shared.sock().addr(), advertiseLeader);
-            const auto [err, errStr] = _shared.registryClient.registerShard(_shrid, _location, advertiseLeader, _shared.sock().addr());
-            if (err == EINTR) { return false; }
-            if (err) {
-                _env.updateAlert(_alert, "Couldn't register ourselves with registry: %s", errStr);
-                return false;
-            }
-        }
-
-        if (!replicaCheckOk) {
-            _env.updateAlert(_alert, "Didn't get enough replicas with known addresses from registry");
-            return false;
-        }
-
         _env.clearAlert(_alert);
-        return true;
+        return _shared.isInitiated.exchange(true, std::memory_order_release);
     }
 };
 

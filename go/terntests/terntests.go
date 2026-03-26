@@ -1287,9 +1287,10 @@ func main() {
 		}
 	}
 
-	err := client.WaitForRegistry(l, registryAddress, 10*time.Second)
+	fmt.Printf("waiting for %d registry replicas...\n", replicaCount)
+	_, err := client.WaitForRegistryReplicas(l, registryAddress, replicaCount, 0, 10*time.Second)
 	if err != nil {
-		panic(fmt.Errorf("failed to connect to registry %v", err))
+		panic(fmt.Errorf("failed to wait for registry replicas: %v", err))
 	}
 
 	failureDomains := 14 + 4 // so that any 4 can fail and we can still do everything.

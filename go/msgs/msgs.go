@@ -2082,9 +2082,9 @@ type FullRegistryInfo struct {
 	LastSeen   TernTime
 }
 
-type AllRegistryReplicasReq struct{}
+type AllRegistryReplicasDEPRECATEDReq struct{}
 
-type AllRegistryReplicasResp struct {
+type AllRegistryReplicasDEPRECATEDResp struct {
 	Replicas []FullRegistryInfo
 }
 
@@ -2255,7 +2255,7 @@ type ShardBlockServicesResp struct {
 	BlockServices []BlockServiceInfoShort
 }
 
-type AllShardsReq struct{}
+type AllShardsDEPRECATEDReq struct{}
 
 type FullShardInfo struct {
 	Id         ShardReplicaId
@@ -2265,7 +2265,7 @@ type FullShardInfo struct {
 	LocationId Location
 }
 
-type AllShardsResp struct {
+type AllShardsDEPRECATEDResp struct {
 	Shards []FullShardInfo
 }
 
@@ -2308,7 +2308,7 @@ type CdcAtLocationResp struct {
 	LastSeen TernTime
 }
 
-type AllCdcReq struct{}
+type AllCdcDEPRECATEDReq struct{}
 
 type CdcInfo struct {
 	ReplicaId  ReplicaId
@@ -2316,6 +2316,34 @@ type CdcInfo struct {
 	IsLeader   bool
 	Addrs      AddrsInfo
 	LastSeen   TernTime
+}
+
+type AllCdcDEPRECATEDResp struct {
+	Replicas []CdcInfo
+}
+
+type AllRegistryReplicasReq struct {
+	MinKnownReplicas uint8
+	Location         Location
+}
+
+type AllRegistryReplicasResp struct {
+	Replicas []FullRegistryInfo
+}
+
+type AllShardsReq struct {
+	MinKnownReplicas uint8
+	Location         Location
+	ShardId          ShardId
+}
+
+type AllShardsResp struct {
+	Shards []FullShardInfo
+}
+
+type AllCdcReq struct {
+	MinKnownReplicas uint8
+	Location         Location
 }
 
 type AllCdcResp struct {

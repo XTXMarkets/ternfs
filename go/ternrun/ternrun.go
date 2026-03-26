@@ -181,10 +181,11 @@ func main() {
 		}
 	}
 
-	// Waiting for registry
-	err := client.WaitForRegistry(l, registryAddress, 10*time.Second)
+	// Waiting for registry replicas
+	fmt.Printf("waiting for %d registry replicas...\n", replicaCount)
+	_, err := client.WaitForRegistryReplicas(l, registryAddress, uint8(replicaCount), 0, 10*time.Second)
 	if err != nil {
-		panic(fmt.Errorf("failed to connect to primary registry %v", err))
+		panic(fmt.Errorf("failed to wait for registry replicas: %v", err))
 	}
 
 	registryLocationAddresses := []string{registryAddress}

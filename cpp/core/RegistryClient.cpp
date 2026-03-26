@@ -160,16 +160,20 @@ void RegistryClient::_closeConnection() {
 }
 
 std::pair<int, std::string> RegistryClient::_doRequest(RegistryReqContainer& req, RegistryRespContainer& resp) {
+    return _doRequest(req, resp, _timeout);
+}
+
+std::pair<int, std::string> RegistryClient::_doRequest(RegistryReqContainer& req, RegistryRespContainer& resp, Duration timeout) {
     {
         const auto [err, errStr] = _ensureConnected();
         if (err) { return {err, errStr}; }
     }
     {
-        const auto [err, errStr] = writeRegistryRequest(_sock.get(), req, _timeout);
+        const auto [err, errStr] = writeRegistryRequest(_sock.get(), req, timeout);
         if (err) { _closeConnection(); return {err, errStr}; }
     }
     {
-        const auto [err, errStr] = readRegistryResponse(_sock.get(), resp, _timeout);
+        const auto [err, errStr] = readRegistryResponse(_sock.get(), resp, timeout);
         if (err) { _closeConnection(); return {err, errStr}; }
     }
     return {};
@@ -220,11 +224,33 @@ std::pair<int, std::string> RegistryClient::fetchRegistryReplicas(
     std::scoped_lock lock(_mutex);
 
     RegistryReqContainer reqContainer;
-    auto& req = reqContainer.setAllRegistryReplicas();
+    auto& req = reqContainer.setAllRegistryReplicasDEPRECATED();
 
     RegistryRespContainer respContainer;
     {
         const auto [err, errStr] = _doRequest(reqContainer, respContainer);
+        if (err) { return {err, errStr}; }
+    }
+    replicas = respContainer.getAllRegistryReplicasDEPRECATED().replicas.els;
+    return {};
+}
+
+std::pair<int, std::string> RegistryClient::fetchRegistryReplicas(
+    std::vector<FullRegistryInfo>& replicas,
+    uint8_t minKnownReplicas,
+    uint8_t location,
+    Duration timeout
+) {
+    std::scoped_lock lock(_mutex);
+
+    RegistryReqContainer reqContainer;
+    auto& req = reqContainer.setAllRegistryReplicas();
+    req.minKnownReplicas = minKnownReplicas;
+    req.location = location;
+
+    RegistryRespContainer respContainer;
+    {
+        const auto [err, errStr] = _doRequest(reqContainer, respContainer, timeout);
         if (err) { return {err, errStr}; }
     }
     replicas = respContainer.getAllRegistryReplicas().replicas.els;
@@ -259,11 +285,39 @@ std::pair<int, std::string> RegistryClient::fetchShardReplicas(
     std::scoped_lock lock(_mutex);
 
     RegistryReqContainer reqContainer;
-    auto& req = reqContainer.setAllShards();
+    auto& req = reqContainer.setAllShardsDEPRECATED();
 
     RegistryRespContainer respContainer;
     {
         const auto [err, errStr] = _doRequest(reqContainer, respContainer);
+        if (err) { return {err, errStr}; }
+    }
+
+    for(auto& shard : respContainer.getAllShardsDEPRECATED().shards.els) {
+        if (shard.id.shardId() == shid) {
+            replicas.emplace_back(std::move(shard));
+        }
+    }
+    return {};
+}
+
+std::pair<int, std::string> RegistryClient::fetchShardReplicas(
+    ShardId shid, std::vector<FullShardInfo>& replicas,
+    uint8_t minKnownReplicas,
+    uint8_t location,
+    Duration timeout
+) {
+    std::scoped_lock lock(_mutex);
+
+    RegistryReqContainer reqContainer;
+    auto& req = reqContainer.setAllShards();
+    req.minKnownReplicas = minKnownReplicas;
+    req.location = location;
+    req.shardId = shid.u8;
+
+    RegistryRespContainer respContainer;
+    {
+        const auto [err, errStr] = _doRequest(reqContainer, respContainer, timeout);
         if (err) { return {err, errStr}; }
     }
 
@@ -316,6 +370,34 @@ std::pair<int, std::string> RegistryClient::fetchCDCReplicas(
     }
     for (int i = 0; i < replicas.size(); i++) {
         replicas[i] = respContainer.getCdcReplicasDEPRECATED().replicas.els[i];
+    }
+    return {};
+}
+
+std::pair<int, std::string> RegistryClient::fetchCDCReplicas(
+    std::array<AddrsInfo, 5>& replicas,
+    uint8_t minKnownReplicas,
+    uint8_t location,
+    Duration timeout
+) {
+    std::scoped_lock lock(_mutex);
+
+    RegistryReqContainer reqContainer;
+    auto& req = reqContainer.setAllCdc();
+    req.minKnownReplicas = minKnownReplicas;
+    req.location = location;
+
+    RegistryRespContainer respContainer;
+    {
+        const auto [err, errStr] = _doRequest(reqContainer, respContainer, timeout);
+        if (err) { return {err, errStr}; }
+    }
+
+    for (auto& cdc : respContainer.getAllCdc().replicas.els) {
+        if (cdc.locationId != location) {
+            continue;
+        }
+        replicas[cdc.replicaId.u8] = cdc.addrs;
     }
     return {};
 }

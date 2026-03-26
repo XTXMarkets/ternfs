@@ -856,13 +856,13 @@ func (k RegistryMessageKind) String() string {
 	case 14:
 		return "REGISTER_REGISTRY"
 	case 16:
-		return "ALL_REGISTRY_REPLICAS"
+		return "ALL_REGISTRY_REPLICAS_DE_PR_EC_AT_ED"
 	case 17:
 		return "SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED"
 	case 19:
 		return "CDC_REPLICAS_DE_PR_EC_AT_ED"
 	case 20:
-		return "ALL_SHARDS"
+		return "ALL_SHARDS_DE_PR_EC_AT_ED"
 	case 21:
 		return "DECOMMISSION_BLOCK_SERVICE"
 	case 22:
@@ -872,7 +872,7 @@ func (k RegistryMessageKind) String() string {
 	case 24:
 		return "SHARD_BLOCK_SERVICES"
 	case 25:
-		return "ALL_CDC"
+		return "ALL_CDC_DE_PR_EC_AT_ED"
 	case 32:
 		return "ERASE_DECOMMISSIONED_BLOCK"
 	case 33:
@@ -889,45 +889,54 @@ func (k RegistryMessageKind) String() string {
 		return "SET_BLOCK_SERVICE_HAS_FILES"
 	case 39:
 		return "BLOCK_SERVICES_NEEDING_MIGRATION"
+	case 41:
+		return "ALL_REGISTRY_REPLICAS"
+	case 42:
+		return "ALL_SHARDS"
+	case 43:
+		return "ALL_CDC"
 	default:
 		return fmt.Sprintf("RegistryMessageKind(%d)", k)
 	}
 }
 
 const (
-	LOCAL_SHARDS                        RegistryMessageKind = 0x3
-	LOCAL_CDC                           RegistryMessageKind = 0x7
-	INFO                                RegistryMessageKind = 0x8
-	REGISTRY                            RegistryMessageKind = 0xF
-	LOCAL_CHANGED_BLOCK_SERVICES        RegistryMessageKind = 0x22
-	CREATE_LOCATION                     RegistryMessageKind = 0x1
-	RENAME_LOCATION                     RegistryMessageKind = 0x2
-	REGISTER_SHARD                      RegistryMessageKind = 0x4
-	LOCATIONS                           RegistryMessageKind = 0x5
-	REGISTER_CDC                        RegistryMessageKind = 0x6
-	SET_BLOCK_SERVICE_FLAGS             RegistryMessageKind = 0x9
-	REGISTER_BLOCK_SERVICES             RegistryMessageKind = 0xA
-	CHANGED_BLOCK_SERVICES_AT_LOCATION  RegistryMessageKind = 0xB
-	SHARDS_AT_LOCATION                  RegistryMessageKind = 0xC
-	CDC_AT_LOCATION                     RegistryMessageKind = 0xD
-	REGISTER_REGISTRY                   RegistryMessageKind = 0xE
-	ALL_REGISTRY_REPLICAS               RegistryMessageKind = 0x10
-	SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED RegistryMessageKind = 0x11
-	CDC_REPLICAS_DE_PR_EC_AT_ED         RegistryMessageKind = 0x13
-	ALL_SHARDS                          RegistryMessageKind = 0x14
-	DECOMMISSION_BLOCK_SERVICE          RegistryMessageKind = 0x15
-	MOVE_SHARD_LEADER                   RegistryMessageKind = 0x16
-	CLEAR_SHARD_INFO                    RegistryMessageKind = 0x17
-	SHARD_BLOCK_SERVICES                RegistryMessageKind = 0x18
-	ALL_CDC                             RegistryMessageKind = 0x19
-	ERASE_DECOMMISSIONED_BLOCK          RegistryMessageKind = 0x20
-	ALL_BLOCK_SERVICES_DEPRECATED       RegistryMessageKind = 0x21
-	ALL_BLOCK_SERVICES                  RegistryMessageKind = 0x28
-	MOVE_CDC_LEADER                     RegistryMessageKind = 0x23
-	CLEAR_CDC_INFO                      RegistryMessageKind = 0x24
-	UPDATE_BLOCK_SERVICE_PATH           RegistryMessageKind = 0x25
-	SET_BLOCK_SERVICE_HAS_FILES         RegistryMessageKind = 0x26
-	BLOCK_SERVICES_NEEDING_MIGRATION    RegistryMessageKind = 0x27
+	LOCAL_SHARDS                         RegistryMessageKind = 0x3
+	LOCAL_CDC                            RegistryMessageKind = 0x7
+	INFO                                 RegistryMessageKind = 0x8
+	REGISTRY                             RegistryMessageKind = 0xF
+	LOCAL_CHANGED_BLOCK_SERVICES         RegistryMessageKind = 0x22
+	CREATE_LOCATION                      RegistryMessageKind = 0x1
+	RENAME_LOCATION                      RegistryMessageKind = 0x2
+	REGISTER_SHARD                       RegistryMessageKind = 0x4
+	LOCATIONS                            RegistryMessageKind = 0x5
+	REGISTER_CDC                         RegistryMessageKind = 0x6
+	SET_BLOCK_SERVICE_FLAGS              RegistryMessageKind = 0x9
+	REGISTER_BLOCK_SERVICES              RegistryMessageKind = 0xA
+	CHANGED_BLOCK_SERVICES_AT_LOCATION   RegistryMessageKind = 0xB
+	SHARDS_AT_LOCATION                   RegistryMessageKind = 0xC
+	CDC_AT_LOCATION                      RegistryMessageKind = 0xD
+	REGISTER_REGISTRY                    RegistryMessageKind = 0xE
+	ALL_REGISTRY_REPLICAS_DE_PR_EC_AT_ED RegistryMessageKind = 0x10
+	SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED  RegistryMessageKind = 0x11
+	CDC_REPLICAS_DE_PR_EC_AT_ED          RegistryMessageKind = 0x13
+	ALL_SHARDS_DE_PR_EC_AT_ED            RegistryMessageKind = 0x14
+	DECOMMISSION_BLOCK_SERVICE           RegistryMessageKind = 0x15
+	MOVE_SHARD_LEADER                    RegistryMessageKind = 0x16
+	CLEAR_SHARD_INFO                     RegistryMessageKind = 0x17
+	SHARD_BLOCK_SERVICES                 RegistryMessageKind = 0x18
+	ALL_CDC_DE_PR_EC_AT_ED               RegistryMessageKind = 0x19
+	ERASE_DECOMMISSIONED_BLOCK           RegistryMessageKind = 0x20
+	ALL_BLOCK_SERVICES_DEPRECATED        RegistryMessageKind = 0x21
+	ALL_BLOCK_SERVICES                   RegistryMessageKind = 0x28
+	MOVE_CDC_LEADER                      RegistryMessageKind = 0x23
+	CLEAR_CDC_INFO                       RegistryMessageKind = 0x24
+	UPDATE_BLOCK_SERVICE_PATH            RegistryMessageKind = 0x25
+	SET_BLOCK_SERVICE_HAS_FILES          RegistryMessageKind = 0x26
+	BLOCK_SERVICES_NEEDING_MIGRATION     RegistryMessageKind = 0x27
+	ALL_REGISTRY_REPLICAS                RegistryMessageKind = 0x29
+	ALL_SHARDS                           RegistryMessageKind = 0x2A
+	ALL_CDC                              RegistryMessageKind = 0x2B
 )
 
 var AllRegistryMessageKind = [...]RegistryMessageKind{
@@ -947,15 +956,15 @@ var AllRegistryMessageKind = [...]RegistryMessageKind{
 	SHARDS_AT_LOCATION,
 	CDC_AT_LOCATION,
 	REGISTER_REGISTRY,
-	ALL_REGISTRY_REPLICAS,
+	ALL_REGISTRY_REPLICAS_DE_PR_EC_AT_ED,
 	SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED,
 	CDC_REPLICAS_DE_PR_EC_AT_ED,
-	ALL_SHARDS,
+	ALL_SHARDS_DE_PR_EC_AT_ED,
 	DECOMMISSION_BLOCK_SERVICE,
 	MOVE_SHARD_LEADER,
 	CLEAR_SHARD_INFO,
 	SHARD_BLOCK_SERVICES,
-	ALL_CDC,
+	ALL_CDC_DE_PR_EC_AT_ED,
 	ERASE_DECOMMISSIONED_BLOCK,
 	ALL_BLOCK_SERVICES_DEPRECATED,
 	ALL_BLOCK_SERVICES,
@@ -964,9 +973,12 @@ var AllRegistryMessageKind = [...]RegistryMessageKind{
 	UPDATE_BLOCK_SERVICE_PATH,
 	SET_BLOCK_SERVICE_HAS_FILES,
 	BLOCK_SERVICES_NEEDING_MIGRATION,
+	ALL_REGISTRY_REPLICAS,
+	ALL_SHARDS,
+	ALL_CDC,
 }
 
-const MaxRegistryMessageKind RegistryMessageKind = 40
+const MaxRegistryMessageKind RegistryMessageKind = 43
 
 func MkRegistryMessage(k string) (RegistryRequest, RegistryResponse, error) {
 	switch {
@@ -1002,14 +1014,14 @@ func MkRegistryMessage(k string) (RegistryRequest, RegistryResponse, error) {
 		return &CdcAtLocationReq{}, &CdcAtLocationResp{}, nil
 	case k == "REGISTER_REGISTRY":
 		return &RegisterRegistryReq{}, &RegisterRegistryResp{}, nil
-	case k == "ALL_REGISTRY_REPLICAS":
-		return &AllRegistryReplicasReq{}, &AllRegistryReplicasResp{}, nil
+	case k == "ALL_REGISTRY_REPLICAS_DE_PR_EC_AT_ED":
+		return &AllRegistryReplicasDEPRECATEDReq{}, &AllRegistryReplicasDEPRECATEDResp{}, nil
 	case k == "SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED":
 		return &ShardBlockServicesDEPRECATEDReq{}, &ShardBlockServicesDEPRECATEDResp{}, nil
 	case k == "CDC_REPLICAS_DE_PR_EC_AT_ED":
 		return &CdcReplicasDEPRECATEDReq{}, &CdcReplicasDEPRECATEDResp{}, nil
-	case k == "ALL_SHARDS":
-		return &AllShardsReq{}, &AllShardsResp{}, nil
+	case k == "ALL_SHARDS_DE_PR_EC_AT_ED":
+		return &AllShardsDEPRECATEDReq{}, &AllShardsDEPRECATEDResp{}, nil
 	case k == "DECOMMISSION_BLOCK_SERVICE":
 		return &DecommissionBlockServiceReq{}, &DecommissionBlockServiceResp{}, nil
 	case k == "MOVE_SHARD_LEADER":
@@ -1018,8 +1030,8 @@ func MkRegistryMessage(k string) (RegistryRequest, RegistryResponse, error) {
 		return &ClearShardInfoReq{}, &ClearShardInfoResp{}, nil
 	case k == "SHARD_BLOCK_SERVICES":
 		return &ShardBlockServicesReq{}, &ShardBlockServicesResp{}, nil
-	case k == "ALL_CDC":
-		return &AllCdcReq{}, &AllCdcResp{}, nil
+	case k == "ALL_CDC_DE_PR_EC_AT_ED":
+		return &AllCdcDEPRECATEDReq{}, &AllCdcDEPRECATEDResp{}, nil
 	case k == "ERASE_DECOMMISSIONED_BLOCK":
 		return &EraseDecommissionedBlockReq{}, &EraseDecommissionedBlockResp{}, nil
 	case k == "ALL_BLOCK_SERVICES_DEPRECATED":
@@ -1036,6 +1048,12 @@ func MkRegistryMessage(k string) (RegistryRequest, RegistryResponse, error) {
 		return &SetBlockServiceHasFilesReq{}, &SetBlockServiceHasFilesResp{}, nil
 	case k == "BLOCK_SERVICES_NEEDING_MIGRATION":
 		return &BlockServicesNeedingMigrationReq{}, &BlockServicesNeedingMigrationResp{}, nil
+	case k == "ALL_REGISTRY_REPLICAS":
+		return &AllRegistryReplicasReq{}, &AllRegistryReplicasResp{}, nil
+	case k == "ALL_SHARDS":
+		return &AllShardsReq{}, &AllShardsResp{}, nil
+	case k == "ALL_CDC":
+		return &AllCdcReq{}, &AllCdcResp{}, nil
 	default:
 		return nil, nil, fmt.Errorf("bad kind string %s", k)
 	}
@@ -6049,23 +6067,23 @@ func (v *RegisterRegistryResp) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *AllRegistryReplicasReq) RegistryRequestKind() RegistryMessageKind {
-	return ALL_REGISTRY_REPLICAS
+func (v *AllRegistryReplicasDEPRECATEDReq) RegistryRequestKind() RegistryMessageKind {
+	return ALL_REGISTRY_REPLICAS_DE_PR_EC_AT_ED
 }
 
-func (v *AllRegistryReplicasReq) Pack(w io.Writer) error {
+func (v *AllRegistryReplicasDEPRECATEDReq) Pack(w io.Writer) error {
 	return nil
 }
 
-func (v *AllRegistryReplicasReq) Unpack(r io.Reader) error {
+func (v *AllRegistryReplicasDEPRECATEDReq) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *AllRegistryReplicasResp) RegistryResponseKind() RegistryMessageKind {
-	return ALL_REGISTRY_REPLICAS
+func (v *AllRegistryReplicasDEPRECATEDResp) RegistryResponseKind() RegistryMessageKind {
+	return ALL_REGISTRY_REPLICAS_DE_PR_EC_AT_ED
 }
 
-func (v *AllRegistryReplicasResp) Pack(w io.Writer) error {
+func (v *AllRegistryReplicasDEPRECATEDResp) Pack(w io.Writer) error {
 	len1 := len(v.Replicas)
 	if err := bincode.PackLength(w, len1); err != nil {
 		return err
@@ -6078,7 +6096,7 @@ func (v *AllRegistryReplicasResp) Pack(w io.Writer) error {
 	return nil
 }
 
-func (v *AllRegistryReplicasResp) Unpack(r io.Reader) error {
+func (v *AllRegistryReplicasDEPRECATEDResp) Unpack(r io.Reader) error {
 	var len1 int
 	if err := bincode.UnpackLength(r, &len1); err != nil {
 		return err
@@ -6184,23 +6202,23 @@ func (v *CdcReplicasDEPRECATEDResp) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *AllShardsReq) RegistryRequestKind() RegistryMessageKind {
-	return ALL_SHARDS
+func (v *AllShardsDEPRECATEDReq) RegistryRequestKind() RegistryMessageKind {
+	return ALL_SHARDS_DE_PR_EC_AT_ED
 }
 
-func (v *AllShardsReq) Pack(w io.Writer) error {
+func (v *AllShardsDEPRECATEDReq) Pack(w io.Writer) error {
 	return nil
 }
 
-func (v *AllShardsReq) Unpack(r io.Reader) error {
+func (v *AllShardsDEPRECATEDReq) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *AllShardsResp) RegistryResponseKind() RegistryMessageKind {
-	return ALL_SHARDS
+func (v *AllShardsDEPRECATEDResp) RegistryResponseKind() RegistryMessageKind {
+	return ALL_SHARDS_DE_PR_EC_AT_ED
 }
 
-func (v *AllShardsResp) Pack(w io.Writer) error {
+func (v *AllShardsDEPRECATEDResp) Pack(w io.Writer) error {
 	len1 := len(v.Shards)
 	if err := bincode.PackLength(w, len1); err != nil {
 		return err
@@ -6213,7 +6231,7 @@ func (v *AllShardsResp) Pack(w io.Writer) error {
 	return nil
 }
 
-func (v *AllShardsResp) Unpack(r io.Reader) error {
+func (v *AllShardsDEPRECATEDResp) Unpack(r io.Reader) error {
 	var len1 int
 	if err := bincode.UnpackLength(r, &len1); err != nil {
 		return err
@@ -6378,23 +6396,23 @@ func (v *ShardBlockServicesResp) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *AllCdcReq) RegistryRequestKind() RegistryMessageKind {
-	return ALL_CDC
+func (v *AllCdcDEPRECATEDReq) RegistryRequestKind() RegistryMessageKind {
+	return ALL_CDC_DE_PR_EC_AT_ED
 }
 
-func (v *AllCdcReq) Pack(w io.Writer) error {
+func (v *AllCdcDEPRECATEDReq) Pack(w io.Writer) error {
 	return nil
 }
 
-func (v *AllCdcReq) Unpack(r io.Reader) error {
+func (v *AllCdcDEPRECATEDReq) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *AllCdcResp) RegistryResponseKind() RegistryMessageKind {
-	return ALL_CDC
+func (v *AllCdcDEPRECATEDResp) RegistryResponseKind() RegistryMessageKind {
+	return ALL_CDC_DE_PR_EC_AT_ED
 }
 
-func (v *AllCdcResp) Pack(w io.Writer) error {
+func (v *AllCdcDEPRECATEDResp) Pack(w io.Writer) error {
 	len1 := len(v.Replicas)
 	if err := bincode.PackLength(w, len1); err != nil {
 		return err
@@ -6407,7 +6425,7 @@ func (v *AllCdcResp) Pack(w io.Writer) error {
 	return nil
 }
 
-func (v *AllCdcResp) Unpack(r io.Reader) error {
+func (v *AllCdcDEPRECATEDResp) Unpack(r io.Reader) error {
 	var len1 int
 	if err := bincode.UnpackLength(r, &len1); err != nil {
 		return err
@@ -6742,6 +6760,177 @@ func (v *BlockServicesNeedingMigrationResp) Unpack(r io.Reader) error {
 	bincode.EnsureLength(&v.BlockServices, len1)
 	for i := 0; i < len1; i++ {
 		if err := bincode.UnpackScalar(r, (*uint64)(&v.BlockServices[i])); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (v *AllRegistryReplicasReq) RegistryRequestKind() RegistryMessageKind {
+	return ALL_REGISTRY_REPLICAS
+}
+
+func (v *AllRegistryReplicasReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint8(v.MinKnownReplicas)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint8(v.Location)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *AllRegistryReplicasReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint8)(&v.MinKnownReplicas)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint8)(&v.Location)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *AllRegistryReplicasResp) RegistryResponseKind() RegistryMessageKind {
+	return ALL_REGISTRY_REPLICAS
+}
+
+func (v *AllRegistryReplicasResp) Pack(w io.Writer) error {
+	len1 := len(v.Replicas)
+	if err := bincode.PackLength(w, len1); err != nil {
+		return err
+	}
+	for i := 0; i < len1; i++ {
+		if err := v.Replicas[i].Pack(w); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (v *AllRegistryReplicasResp) Unpack(r io.Reader) error {
+	var len1 int
+	if err := bincode.UnpackLength(r, &len1); err != nil {
+		return err
+	}
+	bincode.EnsureLength(&v.Replicas, len1)
+	for i := 0; i < len1; i++ {
+		if err := v.Replicas[i].Unpack(r); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (v *AllShardsReq) RegistryRequestKind() RegistryMessageKind {
+	return ALL_SHARDS
+}
+
+func (v *AllShardsReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint8(v.MinKnownReplicas)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint8(v.Location)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint8(v.ShardId)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *AllShardsReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint8)(&v.MinKnownReplicas)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint8)(&v.Location)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint8)(&v.ShardId)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *AllShardsResp) RegistryResponseKind() RegistryMessageKind {
+	return ALL_SHARDS
+}
+
+func (v *AllShardsResp) Pack(w io.Writer) error {
+	len1 := len(v.Shards)
+	if err := bincode.PackLength(w, len1); err != nil {
+		return err
+	}
+	for i := 0; i < len1; i++ {
+		if err := v.Shards[i].Pack(w); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (v *AllShardsResp) Unpack(r io.Reader) error {
+	var len1 int
+	if err := bincode.UnpackLength(r, &len1); err != nil {
+		return err
+	}
+	bincode.EnsureLength(&v.Shards, len1)
+	for i := 0; i < len1; i++ {
+		if err := v.Shards[i].Unpack(r); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (v *AllCdcReq) RegistryRequestKind() RegistryMessageKind {
+	return ALL_CDC
+}
+
+func (v *AllCdcReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint8(v.MinKnownReplicas)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint8(v.Location)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *AllCdcReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint8)(&v.MinKnownReplicas)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint8)(&v.Location)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *AllCdcResp) RegistryResponseKind() RegistryMessageKind {
+	return ALL_CDC
+}
+
+func (v *AllCdcResp) Pack(w io.Writer) error {
+	len1 := len(v.Replicas)
+	if err := bincode.PackLength(w, len1); err != nil {
+		return err
+	}
+	for i := 0; i < len1; i++ {
+		if err := v.Replicas[i].Pack(w); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (v *AllCdcResp) Unpack(r io.Reader) error {
+	var len1 int
+	if err := bincode.UnpackLength(r, &len1); err != nil {
+		return err
+	}
+	bincode.EnsureLength(&v.Replicas, len1)
+	for i := 0; i < len1; i++ {
+		if err := v.Replicas[i].Unpack(r); err != nil {
 			return err
 		}
 	}

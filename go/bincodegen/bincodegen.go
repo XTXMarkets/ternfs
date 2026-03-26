@@ -1995,8 +1995,8 @@ func main() {
 		},
 		{
 			0x10,
-			reflect.TypeOf(msgs.AllRegistryReplicasReq{}),
-			reflect.TypeOf(msgs.AllRegistryReplicasResp{}),
+			reflect.TypeOf(msgs.AllRegistryReplicasDEPRECATEDReq{}),
+			reflect.TypeOf(msgs.AllRegistryReplicasDEPRECATEDResp{}),
 		},
 		{
 			0x11,
@@ -2010,8 +2010,8 @@ func main() {
 		},
 		{
 			0x14,
-			reflect.TypeOf(msgs.AllShardsReq{}),
-			reflect.TypeOf(msgs.AllShardsResp{}),
+			reflect.TypeOf(msgs.AllShardsDEPRECATEDReq{}),
+			reflect.TypeOf(msgs.AllShardsDEPRECATEDResp{}),
 		},
 		{
 			0x15,
@@ -2035,8 +2035,8 @@ func main() {
 		},
 		{
 			0x19,
-			reflect.TypeOf(msgs.AllCdcReq{}),
-			reflect.TypeOf(msgs.AllCdcResp{}),
+			reflect.TypeOf(msgs.AllCdcDEPRECATEDReq{}),
+			reflect.TypeOf(msgs.AllCdcDEPRECATEDResp{}),
 		},
 		{
 			0x20,
@@ -2077,6 +2077,21 @@ func main() {
 			0x27,
 			reflect.TypeOf(msgs.BlockServicesNeedingMigrationReq{}),
 			reflect.TypeOf(msgs.BlockServicesNeedingMigrationResp{}),
+		},
+		{
+			0x29,
+			reflect.TypeOf(msgs.AllRegistryReplicasReq{}),
+			reflect.TypeOf(msgs.AllRegistryReplicasResp{}),
+		},
+		{
+			0x2A,
+			reflect.TypeOf(msgs.AllShardsReq{}),
+			reflect.TypeOf(msgs.AllShardsResp{}),
+		},
+		{
+			0x2B,
+			reflect.TypeOf(msgs.AllCdcReq{}),
+			reflect.TypeOf(msgs.AllCdcResp{}),
 		},
 	}...)
 

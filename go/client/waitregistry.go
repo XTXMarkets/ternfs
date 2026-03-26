@@ -48,6 +48,21 @@ func WaitForRegistry(ll *log.Logger, registryAddress string, timeout time.Durati
 	}
 }
 
+func WaitForRegistryReplicas(ll *log.Logger, registryAddress string, minReplicas uint8, location msgs.Location, timeout time.Duration) ([]msgs.FullRegistryInfo, error) {
+	registryTimeout := &RegistryTimeouts{
+		ReconnectTimeout: DefaultRegistryTimeout.ReconnectTimeout,
+		RequestTimeout:   timeout,
+	}
+	resp, err := RegistryRequest(ll, registryTimeout, registryAddress, &msgs.AllRegistryReplicasReq{
+		MinKnownReplicas: minReplicas,
+		Location:         location,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed waiting for registry replicas: %w", err)
+	}
+	return resp.(*msgs.AllRegistryReplicasResp).Replicas, nil
+}
+
 // getting a client implies having all shards and cdc.
 func WaitForClient(log *log.Logger, registryAddress string, timeout time.Duration) {
 	t0 := time.Now()

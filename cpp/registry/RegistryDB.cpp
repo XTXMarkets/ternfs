@@ -1063,6 +1063,19 @@ LogIdx RegistryDB::lastAppliedLogEntry() const {
     return readLastAppliedLogEntry(_db, _defaultCf);
 }
 
+void RegistryDB::updateReplicaInfo(const RegisterRegistryReq& req) {
+    std::unique_lock lock(_replicaInfosMutex);
+    auto& info = _replicaInfos[req.replicaId.u8];
+    auto now = ternNow();
+    if (now >= info.lastSeen) {
+        info.id = req.replicaId;
+        info.locationId = req.location;
+        info.isLeader = req.isLeader;
+        info.addrs = req.addrs;
+        info.lastSeen = now;
+    }
+}
+
 void RegistryDB::registries(std::vector<FullRegistryInfo>& out) const {
     out.clear();
     auto *it = _db->NewIterator(rocksdb::ReadOptions(), _registryCf);
@@ -1072,6 +1085,14 @@ void RegistryDB::registries(std::vector<FullRegistryInfo>& out) const {
     ROCKS_DB_CHECKED(it->status());
     delete it;
     ALWAYS_ASSERT(out.size() == LogsDB::REPLICA_COUNT);
+
+    std::shared_lock lock(_replicaInfosMutex);
+    for (auto& r : out) {
+        auto& info = _replicaInfos[r.id.u8];
+        if (info.lastSeen > r.lastSeen) {
+            r = info;
+        }
+    }
 }
 
 void RegistryDB::locations(std::vector<LocationInfo>& out) const {

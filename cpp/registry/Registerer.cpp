@@ -45,7 +45,14 @@ bool Registerer::periodicStep() {
     {
         std::vector<FullRegistryInfo> allReplicas;
         LOG_DEBUG(_env, "Fetching replicas from registry");
-        const auto [err, errStr] = _registryClient.fetchRegistryReplicas(allReplicas);
+        uint8_t minKnown = 0;
+        Duration timeout = _registryClient.timeout();
+        if (!_hasEnoughReplicas.load(std::memory_order_relaxed)) {
+            minKnown = _logsDBOptions.noReplication ? 1 : LogsDB::REPLICA_COUNT / 2 + 1;
+            timeout = 30_sec;
+        }
+        const auto [err, errStr] = _registryClient.fetchRegistryReplicas(
+            allReplicas, minKnown, _logsDBOptions.location, timeout);
         if (err == EINTR) {
             return false;
         }

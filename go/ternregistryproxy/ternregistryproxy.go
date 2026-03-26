@@ -114,7 +114,7 @@ func handleRequestParsed(log *log.Logger, s *state, req msgs.RegistryRequest) (m
 		resp, err = handleProxyRequest(log, s, req)
 	case *msgs.LocalShardsReq:
 		resp, err = handleLocalShards(log, s, whichReq)
-	case *msgs.AllShardsReq:
+	case *msgs.AllShardsDEPRECATEDReq:
 		resp, err = handleProxyRequest(log, s, req)
 	case *msgs.RegisterShardReq:
 		resp, err = handleProxyRequest(log, s, req)
@@ -124,7 +124,7 @@ func handleRequestParsed(log *log.Logger, s *state, req msgs.RegistryRequest) (m
 		resp, err = handleLocalChangedBlockServices(log, s, whichReq)
 	case *msgs.LocalCdcReq:
 		resp, err = handleLocalCdc(log, s, whichReq)
-	case *msgs.AllCdcReq:
+	case *msgs.AllCdcDEPRECATEDReq:
 		resp, err = handleProxyRequest(log, s, req)
 	case *msgs.CdcReplicasDEPRECATEDReq:
 		resp, err = handleProxyRequest(log, s, req)
@@ -165,6 +165,12 @@ func handleRequestParsed(log *log.Logger, s *state, req msgs.RegistryRequest) (m
 	case *msgs.BlockServicesNeedingMigrationReq:
 		resp, err = handleProxyRequest(log, s, req)
 	case *msgs.AllBlockServicesReq:
+		resp, err = handleProxyRequest(log, s, req)
+	case *msgs.AllRegistryReplicasReq:
+		resp, err = handleProxyRequest(log, s, req)
+	case *msgs.AllShardsReq:
+		resp, err = handleProxyRequest(log, s, req)
+	case *msgs.AllCdcReq:
 		resp, err = handleProxyRequest(log, s, req)
 	default:
 		err = fmt.Errorf("bad req type %T", req)
@@ -305,14 +311,14 @@ func readRegistryRequest(
 		req = &msgs.ShardBlockServicesDEPRECATEDReq{}
 	case msgs.ERASE_DECOMMISSIONED_BLOCK:
 		req = &msgs.EraseDecommissionedBlockReq{}
-	case msgs.ALL_CDC:
-		req = &msgs.AllCdcReq{}
+	case msgs.ALL_CDC_DE_PR_EC_AT_ED:
+		req = &msgs.AllCdcDEPRECATEDReq{}
 	case msgs.CLEAR_SHARD_INFO:
 		req = &msgs.ClearShardInfoReq{}
 	case msgs.MOVE_SHARD_LEADER:
 		req = &msgs.MoveShardLeaderReq{}
-	case msgs.ALL_SHARDS:
-		req = &msgs.AllShardsReq{}
+	case msgs.ALL_SHARDS_DE_PR_EC_AT_ED:
+		req = &msgs.AllShardsDEPRECATEDReq{}
 	case msgs.MOVE_CDC_LEADER:
 		req = &msgs.MoveCdcLeaderReq{}
 	case msgs.CLEAR_CDC_INFO:
@@ -337,6 +343,12 @@ func readRegistryRequest(
 		req = &msgs.BlockServicesNeedingMigrationReq{}
 	case msgs.ALL_BLOCK_SERVICES:
 		req = &msgs.AllBlockServicesReq{}
+	case msgs.ALL_REGISTRY_REPLICAS:
+		req = &msgs.AllRegistryReplicasReq{}
+	case msgs.ALL_SHARDS:
+		req = &msgs.AllShardsReq{}
+	case msgs.ALL_CDC:
+		req = &msgs.AllCdcReq{}
 	default:
 		return nil, fmt.Errorf("bad registry request kind %v", kind)
 	}

@@ -285,6 +285,7 @@ func registerPeriodically(
 	alert := log.NewNCAlert(10 * time.Second)
 	failureBackoff := 100 * time.Millisecond
 	const maxFailureBackoff = 60 * time.Second
+	registrationCount := 0
 	for {
 		req.BlockServices = req.BlockServices[:0]
 		for _, bs := range blockServices {
@@ -303,7 +304,13 @@ func registerPeriodically(
 		}
 		log.ClearNC(alert)
 		failureBackoff = 100 * time.Millisecond
-		waitFor := minimumRegisterInterval + time.Duration(mrand.Uint64()%uint64(variantRegisterInterval.Nanoseconds()))
+		registrationCount++
+		var waitFor time.Duration
+		if registrationCount < 3 {
+			waitFor = 5*time.Second + time.Duration(mrand.Uint64()%uint64((5*time.Second).Nanoseconds()))
+		} else {
+			waitFor = minimumRegisterInterval + time.Duration(mrand.Uint64()%uint64(variantRegisterInterval.Nanoseconds()))
+		}
 		log.Info("registered with %v (%v alive), waiting %v", env.registryConn.RegistryAddress(), len(blockServices), waitFor)
 		time.Sleep(waitFor)
 	}
@@ -1630,15 +1637,19 @@ func main() {
 	{
 		var registryBlockServices []msgs.BlockServiceDeprecatedInfo
 		{
-			alert := l.NewNCAlert(0)
+			alert := l.NewNCAlert(time.Minute)
 			l.RaiseNC(alert, "fetching block services")
-
-			resp, err := env.registryConn.Request(&msgs.AllBlockServicesDeprecatedReq{})
-			if err != nil {
-				panic(fmt.Errorf("could not request block services from registry: %v", err))
+			for {
+				resp, err := env.registryConn.Request(&msgs.AllBlockServicesDeprecatedReq{})
+				if err != nil {
+					l.RaiseNC(alert, "could not request block services from registry: %v", err)
+					time.Sleep(time.Second)
+					continue
+				}
+				registryBlockServices = resp.(*msgs.AllBlockServicesDeprecatedResp).BlockServices
+				break
 			}
 			l.ClearNC(alert)
-			registryBlockServices = resp.(*msgs.AllBlockServicesDeprecatedResp).BlockServices
 		}
 		for i := range registryBlockServices {
 			bs := &registryBlockServices[i]
