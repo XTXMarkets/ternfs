@@ -398,7 +398,7 @@ struct TempShardDB {
         std::shared_ptr<XmonAgent> xmon;
         sharedDB = std::make_unique<SharedRocksDB>(logger, xmon, dbDir + "/db", dbDir + "/db-statistics.txt");
         initSharedDB();
-        blockServicesCacheDB = std::make_unique<BlockServicesCacheDB>(logger, xmon, *sharedDB);
+        blockServicesCacheDB = std::make_unique<BlockServicesCacheDB>(logger, xmon, *sharedDB, 0_sec, 0, 0);
         db = std::make_unique<ShardDB>(logger, xmon, shid, 0, DEFAULT_DEADLINE_INTERVAL, *sharedDB, *blockServicesCacheDB);
     }
 
@@ -408,7 +408,7 @@ struct TempShardDB {
         db->close();
         sharedDB = std::make_unique<SharedRocksDB>(logger, xmon, dbDir + "/db", dbDir + "/db-statistics.txt");
         initSharedDB();
-        blockServicesCacheDB = std::make_unique<BlockServicesCacheDB>(logger, xmon, *sharedDB);
+        blockServicesCacheDB = std::make_unique<BlockServicesCacheDB>(logger, xmon, *sharedDB, 0_sec, 0, 0);
         db = std::make_unique<ShardDB>(logger, xmon, shid, 0, DEFAULT_DEADLINE_INTERVAL, *sharedDB, *blockServicesCacheDB);
     }
 

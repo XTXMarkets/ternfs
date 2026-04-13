@@ -2493,6 +2493,9 @@ public:
                 _metricsBuilder.fieldU64("writable_block_services", ls.writableBlockServices);
                 _metricsBuilder.fieldU64("max_fd_weight", ls.maxWeight);
                 _metricsBuilder.fieldU64("min_fd_weight", ls.minWeight);
+                _metricsBuilder.fieldU64("blacklist_repicks", ls.blacklistRepicks);
+                _metricsBuilder.fieldFloat("effective_max_ratio", ls.effectiveMaxRatio);
+                _metricsBuilder.fieldU64("throughput_estimate", ls.throughputEstimate);
                 _metricsBuilder.timestamp(now);
             }
 
@@ -2593,7 +2596,8 @@ void runShard(ShardOptions& options) {
     rocksDBOptions.manual_wal_flush = true;
     sharedDB.open(rocksDBOptions);
 
-    BlockServicesCacheDB blockServicesCache(logger, xmon, sharedDB, options.blockServiceWritableDelay);
+    BlockServicesCacheDB blockServicesCache(logger, xmon, sharedDB, options.blockServiceWritableDelay,
+        options.hddDriveThroughput, options.flashDriveThroughput);
 
     ShardDB shardDB(logger, xmon, options.shardId, options.logsDBOptions.location, options.transientDeadlineInterval, sharedDB, blockServicesCache);
     LogsDB logsDB(logger, xmon, sharedDB, options.logsDBOptions.replicaId, shardDB.lastAppliedLogEntry(), options.logsDBOptions.noReplication, !options.logsDBOptions.leaderElection, options.logsDBOptions.avoidBeingLeader);

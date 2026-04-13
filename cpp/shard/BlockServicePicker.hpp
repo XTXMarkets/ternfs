@@ -57,9 +57,16 @@ struct BlockServicePicker {
         std::atomic<uint64_t> writableBlockServices{0};
         std::atomic<uint64_t> maxWeight{0};
         std::atomic<uint64_t> minWeight{0};
+        std::atomic<uint64_t> blacklistRescales{0};
+        // Throughput tracking for dynamic ratio recalc
+        std::atomic<uint64_t> throughputBytes{0};
+        std::atomic<uint64_t> lastRecalcTimeNs{0};
+        std::atomic<uint64_t> lastThroughputEstimate{0};  // bytes/sec
+        uint64_t numDrives{0};  // set by update()
     };
 
-    std::atomic<std::shared_ptr<const State>> _state{nullptr};
+    mutable std::atomic<std::shared_ptr<const State>> _state{nullptr};
+    mutable std::atomic<std::shared_ptr<const State>> _rawState{nullptr};
     mutable RandomGenerator _rng;
     mutable Env _env;
 
@@ -68,10 +75,14 @@ struct BlockServicePicker {
     mutable std::unordered_map<uint64_t, std::atomic<uint64_t>> _blockServiceStats;
     mutable std::unordered_map<std::string, std::atomic<uint64_t>> _failureDomainStats;
     mutable std::mutex _statsMutex;  // protects map structures (not atomic values)
+    mutable std::mutex _recalcMutex;
     const uint8_t _maxBlocksToPick;
     const Duration _writableDelay;
+    const uint64_t _hddDriveThroughput;    // bytes/sec per drive
+    const uint64_t _flashDriveThroughput;  // bytes/sec per drive
 
-    BlockServicePicker(Logger& logger, std::shared_ptr<XmonAgent>& xmon, uint8_t maxBlocksToPick = 15, Duration writableDelay = 5_mins);
+    BlockServicePicker(Logger& logger, std::shared_ptr<XmonAgent>& xmon, uint8_t maxBlocksToPick, Duration writableDelay,
+                       uint64_t hddDriveThroughput, uint64_t flashDriveThroughput);
 
     void update(
         const std::unordered_map<uint64_t, BlockServiceCache>& allBlockServices
@@ -84,7 +95,8 @@ struct BlockServicePicker {
         uint8_t storageClass,
         uint8_t needed,
         const std::vector<BlacklistEntry>& blacklist,
-        std::vector<BlockServiceId>& out
+        std::vector<BlockServiceId>& out,
+        uint64_t blockSize = 0
     ) const;
 
     struct StatsSnapshot {
@@ -95,6 +107,9 @@ struct BlockServicePicker {
             uint64_t writableBlockServices;
             uint64_t maxWeight;
             uint64_t minWeight;
+            uint64_t blacklistRepicks;
+            double effectiveMaxRatio;
+            uint64_t throughputEstimate;
         };
         struct BlockServiceSnap {
             uint64_t blockServiceId;

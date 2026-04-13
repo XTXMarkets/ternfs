@@ -184,11 +184,12 @@ std::vector<rocksdb::ColumnFamilyDescriptor> BlockServicesCacheDB::getColumnFami
     return std::vector<rocksdb::ColumnFamilyDescriptor> {{"blockServicesCache", {}}};
 }
 
-BlockServicesCacheDB::BlockServicesCacheDB(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const SharedRocksDB& sharedDB, Duration blockServiceWritableDelay) :
+BlockServicesCacheDB::BlockServicesCacheDB(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const SharedRocksDB& sharedDB, Duration blockServiceWritableDelay,
+                                           uint64_t hddDriveThroughput, uint64_t flashDriveThroughput) :
     _env(logger, xmon, "bs_cache_db"),
     _db(sharedDB.db()),
     _blockServicesCF(sharedDB.getCF("blockServicesCache")),
-    _picker(logger, xmon, 15, blockServiceWritableDelay)
+    _picker(logger, xmon, 15, blockServiceWritableDelay, hddDriveThroughput, flashDriveThroughput)
 {
     LOG_INFO(_env, "Initializing block services cache DB");
 
@@ -372,9 +373,10 @@ TernError BlockServicesCacheDB::pickBlockServices(
     uint8_t storageClass,
     int needed,
     const std::vector<BlacklistEntry>& blacklist,
-    std::vector<BlockServiceId>& out
+    std::vector<BlockServiceId>& out,
+    uint64_t blockSize
 ) const {
-    return _picker.pick(locationId, storageClass, needed, blacklist, out);
+    return _picker.pick(locationId, storageClass, needed, blacklist, out, blockSize);
 }
 
 bool BlockServicesCacheDB::haveBlockServices() const {

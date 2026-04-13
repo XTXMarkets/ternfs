@@ -29,7 +29,9 @@
 #include "Msgs.hpp"
 #include "MsgsGen.hpp"
 #include "RocksDBUtils.hpp"
+#include "Shard.hpp"
 #include "ShardDB.hpp"
+
 #include "SharedRocksDB.hpp"
 #include "ShardDBData.hpp"
 #include "Time.hpp"
@@ -710,7 +712,8 @@ void ShardDBTools::outputFilesWithDuplicateFailureDomains(const std::string& dbP
     rocksDBOptions.bottommost_compression = rocksdb::kZSTD;
     sharedDb.openForReadOnly(rocksDBOptions);
     auto db = sharedDb.db();
-    BlockServicesCacheDB blockServiceDB{logger, xmon, sharedDb};
+    ShardOptions shardOptions;
+    BlockServicesCacheDB blockServiceDB{logger, xmon, sharedDb, shardOptions.blockServiceWritableDelay, shardOptions.hddDriveThroughput, shardOptions.flashDriveThroughput};
     auto blockServiceCache = blockServiceDB.getCache();
 
     rocksdb::ReadOptions options;

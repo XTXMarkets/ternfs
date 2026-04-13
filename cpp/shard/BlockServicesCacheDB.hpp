@@ -72,7 +72,8 @@ private:
     BlockServicePicker _picker;
 
 public:
-    BlockServicesCacheDB(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const SharedRocksDB& sharedDB, Duration blockServiceWritableDelay = 5_mins);
+    BlockServicesCacheDB(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const SharedRocksDB& sharedDB, Duration blockServiceWritableDelay,
+                         uint64_t hddDriveThroughput, uint64_t flashDriveThroughput);
     static std::vector<rocksdb::ColumnFamilyDescriptor> getColumnFamilyDescriptors();
 
     void updateCache(const std::vector<FullBlockServiceInfo>& blockServices);
@@ -85,7 +86,8 @@ public:
         uint8_t storageClass,
         int needed,
         const std::vector<BlacklistEntry>& blacklist,
-        std::vector<BlockServiceId>& out
+        std::vector<BlockServiceId>& out,
+        uint64_t blockSize = 0
     ) const;
 
     // We've seen at least one update, or we've loaded the

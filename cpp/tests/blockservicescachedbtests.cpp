@@ -25,7 +25,7 @@ TEST_CASE("BlockServicesCacheDB initializes empty") {
     tdb.open();
     auto* cf = tdb.sharedDB->createCF({"blockServicesCache", {}});
 
-    BlockServicesCacheDB db(logger, tdb.xmon, *tdb.sharedDB);
+    BlockServicesCacheDB db(logger, tdb.xmon, *tdb.sharedDB, 0_sec, 0, 0);
     auto cache = db.getCache();
     CHECK(cache.blockServices.size() == 0);
 }
@@ -58,13 +58,13 @@ TEST_CASE("BlockServicesCacheDB persists blockServices metadata on update") {
     blockSvcs.push_back(e);
 
     {
-        BlockServicesCacheDB db(logger, tdb.xmon, *tdb.sharedDB);
+        BlockServicesCacheDB db(logger, tdb.xmon, *tdb.sharedDB, 0_sec, 0, 0);
         db.updateCache(blockSvcs);
     }
 
     // Re-open and verify block service metadata persisted
     {
-        BlockServicesCacheDB db(logger, tdb.xmon, *tdb.sharedDB);
+        BlockServicesCacheDB db(logger, tdb.xmon, *tdb.sharedDB, 0_sec, 0, 0);
         auto cache = db.getCache();
 
         auto it = cache.blockServices.find(idBase);

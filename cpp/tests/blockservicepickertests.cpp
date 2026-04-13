@@ -16,6 +16,14 @@
 static Logger testLogger(LogLevel::LOG_ERROR, STDERR_FILENO, false, false);
 static std::shared_ptr<XmonAgent> testXmon;
 
+static BlockServicePicker makePicker(uint8_t maxBlocksToPick = 15,
+                                     Duration writableDelay = 0_sec,
+                                     uint64_t hddDriveThroughput = 0,
+                                     uint64_t flashDriveThroughput = 0) {
+    return BlockServicePicker(testLogger, testXmon, maxBlocksToPick, writableDelay,
+                              hddDriveThroughput, flashDriveThroughput);
+}
+
 static FailureDomain fdWith(uint8_t v) {
     FailureDomain fd;
     for (int i = 0; i < 16; ++i) fd.name.data[i] = v;
@@ -49,7 +57,7 @@ static std::unordered_map<uint64_t, BlockServiceCache> makeCatalog(const std::ve
 }
 
 TEST_CASE("picker basic selection") {
-    BlockServicePicker p(testLogger, testXmon, 15, 0_sec);
+    auto p = makePicker();
     std::vector<BlockServiceInfoShort> catalog{
         bs(1, 1, FLASH_STORAGE, 1),
         bs(2, 1, FLASH_STORAGE, 2),
@@ -67,7 +75,7 @@ TEST_CASE("picker basic selection") {
 }
 
 TEST_CASE("picker blacklist by id and failure domain") {
-    BlockServicePicker p(testLogger, testXmon, 15, 0_sec);
+    auto p = makePicker();
     std::vector<BlockServiceInfoShort> catalog{
         bs(10, 1, FLASH_STORAGE, 7),
         bs(11, 1, FLASH_STORAGE, 8),
@@ -88,7 +96,7 @@ TEST_CASE("picker blacklist by id and failure domain") {
 }
 
 TEST_CASE("picker insufficient candidates") {
-    BlockServicePicker p(testLogger, testXmon, 15, 0_sec);
+    auto p = makePicker();
     std::vector<BlockServiceInfoShort> catalog{
         bs(20, 1, HDD_STORAGE, 1)
     };
@@ -102,7 +110,7 @@ TEST_CASE("picker insufficient candidates") {
 }
 
 TEST_CASE("picker concurrency update while picks") {
-    BlockServicePicker p(testLogger, testXmon, 15, 0_sec);
+    auto p = makePicker();
     std::atomic<bool> stop{false};
 
     // Start with many candidates
@@ -134,7 +142,7 @@ TEST_CASE("picker concurrency update while picks") {
 
 TEST_CASE("picker weighted distribution") {
     // Use maxBlocksToPick=1 to avoid scaling effects on small clusters
-    BlockServicePicker p(testLogger, testXmon, 1, 0_sec);
+    auto p = makePicker(1);
 
     // Create services with different weights
     // Service 1000: 10 MB available (weight 10M)
@@ -204,7 +212,7 @@ TEST_CASE("picker weighted distribution") {
 }
 
 TEST_CASE("picker blacklist enforcement") {
-    BlockServicePicker p(testLogger, testXmon, 15, 0_sec);
+    auto p = makePicker();
 
     // Create 6 services in 6 different failure domains
     std::vector<BlockServiceInfoShort> catalog{
@@ -256,7 +264,7 @@ TEST_CASE("picker blacklist enforcement") {
 
 TEST_CASE("picker weighted distribution with blacklist") {
     // Use maxBlocksToPick=1 to avoid scaling effects on small clusters
-    BlockServicePicker p(testLogger, testXmon, 1, 0_sec);
+    auto p = makePicker(1);
 
     // Create services with varying weights across multiple failure domains
     // FD 1: service 100 (10MB), service 101 (10MB) - total 20MB
@@ -349,7 +357,7 @@ TEST_CASE("picker weighted distribution with blacklist") {
     CHECK(pickCounts[301] < 2400);
 }
 TEST_CASE("picker multi-service weighted distribution") {
-    BlockServicePicker p(testLogger, testXmon, 15, 0_sec);
+    auto p = makePicker();
 
     // Create 20 failure domains, each with 20-25 services with varying weights
     // This creates a large heterogeneous pool to test distribution
@@ -482,8 +490,8 @@ TEST_CASE("picker multi-service weighted distribution") {
     CHECK(allPickedServices.size() > serviceWeights.size() * 0.9);
 }
 
-TEST_CASE("picker weight scaling for dominant failure domain") {
-    BlockServicePicker p(testLogger, testXmon, 15, 0_sec);
+TEST_CASE("picker weight clamping for dominant failure domain") {
+    auto p = makePicker();
     std::vector<BlockServiceInfoShort> catalog;
 
     // Scenario:
@@ -491,8 +499,12 @@ TEST_CASE("picker weight scaling for dominant failure domain") {
     // FD 2: Large (5000)
     // FD 3-52: Small (100 each) - 50 FDs
     // Total FDs: 52
-    // We use more small FDs to make the scaling less extreme (p will be larger),
-    // allowing us to distinguish between weights more reliably.
+    //
+    // With clamping (maxBlocksToPick=15):
+    // FD1 and FD2 are both above the cap and get clamped to the same weight.
+    // Small FDs keep their exact weights (100).
+    // cap = S_unclamped / (15 - 2) = 5000 / 13 = 384
+    // newTotal = 2*384 + 50*100 = 5768
 
     // Add FD 1
     catalog.push_back(bs(1, 1, FLASH_STORAGE, 1));
@@ -514,35 +526,10 @@ TEST_CASE("picker weight scaling for dominant failure domain") {
 
     p.update(cache);
 
-    // Calculate expected scaling
-    // We replicate the logic to find expected p
-    double p_exp = 1.0;
-    double min_p = 0.0, max_p = 1.0;
-
-    for(int i=0; i<100; ++i) {
-        p_exp = (min_p + max_p) / 2.0;
-        double w1 = std::pow(10000.0, p_exp);
-        double w2 = std::pow(5000.0, p_exp);
-        double w_small = std::pow(100.0, p_exp);
-        double total = w1 + w2 + 50 * w_small;
-
-        if (w1 * 15 <= total) {
-            min_p = p_exp; // Valid, try higher
-        } else {
-            max_p = p_exp; // Invalid, try lower
-        }
-    }
-    // Use the best valid p found (min_p is the highest valid p)
-    p_exp = min_p;
-
-    double w1 = std::pow(10000.0, p_exp);
-    double w2 = std::pow(5000.0, p_exp);
-    double w_small = std::pow(100.0, p_exp);
-    double total = w1 + w2 + 50 * w_small;
-
-    double prob1 = w1 / total;
-    double prob2 = w2 / total;
-    double prob_small = w_small / total;
+    double cap = 384.0;
+    double total = 2 * cap + 50 * 100.0;
+    double probClamped = cap / total;       // ~6.66% for FD1 and FD2
+    double probSmall = 100.0 / total;       // ~1.73% for each small FD
 
     // Run many iterations
     const int NUM_ITERATIONS = 1000000;
@@ -556,88 +543,26 @@ TEST_CASE("picker weight scaling for dominant failure domain") {
         picks[out[0].u64]++;
     }
 
-    // Verify ratios
-    // FD 1
+    // FD 1 and FD 2: both clamped to same weight, so approximately equal
     double actualProb1 = (double)picks[1] / NUM_ITERATIONS;
-    CHECK(actualProb1 > prob1 * 0.85);
-    CHECK(actualProb1 < prob1 * 1.15);
-
-    // FD 2
     double actualProb2 = (double)picks[2] / NUM_ITERATIONS;
-    CHECK(actualProb2 > prob2 * 0.85);
-    CHECK(actualProb2 < prob2 * 1.15);
+    CHECK(actualProb1 > probClamped * 0.85);
+    CHECK(actualProb1 < probClamped * 1.15);
+    CHECK(actualProb2 > probClamped * 0.85);
+    CHECK(actualProb2 < probClamped * 1.15);
 
-    // Small FDs
+    // Small FDs: keep exact weights
     double totalSmallPicks = 0;
     for (int i = 3; i <= 52; ++i) {
         totalSmallPicks += picks[i];
     }
     double actualProbSmallAvg = (totalSmallPicks / 50.0) / NUM_ITERATIONS;
-    CHECK(actualProbSmallAvg > prob_small * 0.85);
-    CHECK(actualProbSmallAvg < prob_small * 1.15);
+    CHECK(actualProbSmallAvg > probSmall * 0.85);
+    CHECK(actualProbSmallAvg < probSmall * 1.15);
 
-    // Verify relative ratios are preserved (FD1 > FD2 > Small)
-    CHECK(picks[1] > picks[2]);
+    // Clamped FDs > small FDs
+    CHECK(picks[1] > (totalSmallPicks / 50.0));
     CHECK(picks[2] > (totalSmallPicks / 50.0));
-}
-
-TEST_CASE("picker with blacklisted FD after scaling") {
-    // Regression test for applyScaling rounding error.
-    // With 18 FDs and needed=14, blacklisting 1 FD should still allow picking.
-    // The scaling invariant maxFdWeight*maxBlocksToPick <= totalWeight guarantees
-    // this, but integer rounding in applyScaling can violate the invariant.
-    //
-    // We sweep weight ratios between "large" and "small" FD groups to find
-    // configurations where the rounding error triggers a false pick failure.
-
-    const int NUM_FDS = 18;
-    const int LARGE_FDS = 8;
-    const int SMALL_FDS = 10;
-    const int SVCS_PER_FD = 10;
-    const int NEEDED = 14;
-
-    // Try many weight ratios to catch the rounding edge case
-    for (int ratio100 = 150; ratio100 <= 500; ratio100 += 5) {
-        double weightRatio = ratio100 / 100.0;
-        uint64_t smallWeight = 1000000;
-        uint64_t largeWeight = static_cast<uint64_t>(smallWeight * weightRatio);
-
-        BlockServicePicker p(testLogger, testXmon, 15, 0_sec);
-        std::unordered_map<uint64_t, BlockServiceCache> cache;
-
-        uint64_t id = 1;
-        for (int fd = 1; fd <= NUM_FDS; fd++) {
-            uint64_t svcWeight = (fd <= LARGE_FDS) ? largeWeight : smallWeight;
-            for (int s = 0; s < SVCS_PER_FD; s++) {
-                BlockServiceCache entry;
-                entry.locationId = 0;
-                entry.storageClass = FLASH_STORAGE;
-                entry.failureDomain = fdWith(fd).name.data;
-                entry.flags = BlockServiceFlags::EMPTY;
-                entry.availableBytes = svcWeight;
-                entry.capacityBytes = svcWeight * 10;
-                entry.blocks = 0;
-                entry.hasFiles = false;
-                cache[id] = entry;
-                id++;
-            }
-        }
-
-        p.update(cache);
-
-        // Try blacklisting each large FD and picking needed=14
-        for (int blFd = 1; blFd <= LARGE_FDS; blFd++) {
-            std::vector<BlacklistEntry> blacklist;
-            BlacklistEntry bl;
-            bl.failureDomain = fdWith(blFd);
-            blacklist.push_back(bl);
-
-            std::vector<BlockServiceId> out;
-            auto err = p.pick(0, FLASH_STORAGE, NEEDED, blacklist, out);
-            CHECK_MESSAGE(err == TernError::NO_ERROR,
-                "pick failed with ratio=", weightRatio, " blacklisted FD=", blFd);
-        }
-    }
 }
 
 TEST_CASE("picker never picks same failure domain twice") {
@@ -660,7 +585,7 @@ TEST_CASE("picker never picks same failure domain twice") {
     };
 
     for (const auto& cfg : configs) {
-        BlockServicePicker p(testLogger, testXmon, 15, 0_sec);
+        auto p = makePicker();
         std::unordered_map<uint64_t, BlockServiceCache> cache;
         std::unordered_map<uint64_t, uint8_t> serviceToFD;  // service id -> FD byte
 
@@ -698,4 +623,463 @@ TEST_CASE("picker never picks same failure domain twice") {
             }
         }
     }
+}
+
+TEST_CASE("picker blacklist rescale metric is bumped") {
+    // Create a scenario where blacklisting a *service* (not FD) breaks the stride
+    // invariant, forcing the slow path (rescale).
+    // 3 FDs each with weight 100, maxBlocksToPick=3. step=100, maxFdWeight=100 → OK.
+    // Blacklisting a service worth 50 from FD3 → totalWeight=250, maxFdWeight=100,
+    // step=83 < 100 → invariant broken → slow path with rescale.
+    auto p = makePicker(3);
+
+    std::unordered_map<uint64_t, BlockServiceCache> cache;
+    auto makeEntry = [](uint8_t fd, uint64_t avail) {
+        BlockServiceCache entry;
+        entry.locationId = 1;
+        entry.storageClass = FLASH_STORAGE;
+        entry.failureDomain = fdWith(fd).name.data;
+        entry.flags = BlockServiceFlags::EMPTY;
+        entry.availableBytes = avail;
+        entry.capacityBytes = avail * 10;
+        entry.blocks = 0;
+        entry.hasFiles = false;
+        return entry;
+    };
+
+    cache[1] = makeEntry(1, 100);
+    cache[2] = makeEntry(2, 100);
+    cache[3] = makeEntry(3, 50);
+    cache[4] = makeEntry(3, 50);
+
+    p.update(cache);
+    p.resetStats();
+
+    // Blacklist service 3 (one of FD3's services, weight 50)
+    std::vector<BlacklistEntry> blacklist;
+    BlacklistEntry bl;
+    bl.blockService = BlockServiceId(3);
+    blacklist.push_back(bl);
+
+    for (int i = 0; i < 100; i++) {
+        std::vector<BlockServiceId> out;
+        auto err = p.pick(1, FLASH_STORAGE, 3, blacklist, out);
+        REQUIRE(err == TernError::NO_ERROR);
+        REQUIRE(out.size() == 3);
+    }
+
+    auto stats = p.getStats();
+    bool foundRescales = false;
+    for (const auto& ls : stats.locStorage) {
+        if (ls.blacklistRepicks > 0) {
+            foundRescales = true;
+            CHECK(ls.blacklistRepicks == 100);
+        }
+    }
+    CHECK(foundRescales);
+}
+
+TEST_CASE("picker extreme weight disparity uniform at max load") {
+    // Scenario: 200 existing FDs (nearly full, 5GB/disk × 100 disks = 500GB/FD)
+    // plus 5 brand-new FDs (empty, 20TB/disk × 100 disks = 2000TB/FD).
+    // Weight ratio per FD: 2000TB / 500GB = 4000x.
+    // At max load (default), ratio=1.0 clamps all FDs to minFdWeight, so distribution
+    // should be near-uniform across all FDs regardless of capacity disparity.
+    auto p = makePicker(15, 0_sec, 600'000'000, 600'000'000);
+
+    const uint64_t EXISTING_BYTES_PER_DISK = 5000000000ULL;       // 5 GB
+    const uint64_t NEW_BYTES_PER_DISK = 20000000000000ULL;         // 20 TB
+    const int DISKS_PER_FD = 100;
+    const int EXISTING_FDS = 200;
+    const int NEW_FDS = 5;
+    const int TOTAL_FDS = EXISTING_FDS + NEW_FDS;
+    const int NEEDED = 15;
+
+    std::unordered_map<uint64_t, BlockServiceCache> cache;
+    std::unordered_map<uint64_t, uint8_t> serviceToFd;
+
+    uint64_t id = 1;
+    for (int fd = 1; fd <= EXISTING_FDS; fd++) {
+        for (int d = 0; d < DISKS_PER_FD; d++) {
+            BlockServiceCache entry;
+            entry.locationId = 1;
+            entry.storageClass = FLASH_STORAGE;
+            entry.failureDomain = fdWith(fd).name.data;
+            entry.flags = BlockServiceFlags::EMPTY;
+            entry.availableBytes = EXISTING_BYTES_PER_DISK;
+            entry.capacityBytes = EXISTING_BYTES_PER_DISK * 10;
+            entry.blocks = 0;
+            entry.hasFiles = false;
+            cache[id] = entry;
+            serviceToFd[id] = fd;
+            id++;
+        }
+    }
+    for (int fd = 0; fd < NEW_FDS; fd++) {
+        uint8_t fdByte = EXISTING_FDS + 1 + fd;
+        for (int d = 0; d < DISKS_PER_FD; d++) {
+            BlockServiceCache entry;
+            entry.locationId = 1;
+            entry.storageClass = FLASH_STORAGE;
+            entry.failureDomain = fdWith(fdByte).name.data;
+            entry.flags = BlockServiceFlags::EMPTY;
+            entry.availableBytes = NEW_BYTES_PER_DISK;
+            entry.capacityBytes = NEW_BYTES_PER_DISK;
+            entry.blocks = 0;
+            entry.hasFiles = false;
+            cache[id] = entry;
+            serviceToFd[id] = fdByte;
+            id++;
+        }
+    }
+
+    p.update(cache);
+
+    const int NUM_ITERATIONS = 100000;
+    std::unordered_map<uint8_t, int> fdPickCounts;
+
+    for (int i = 0; i < NUM_ITERATIONS; i++) {
+        std::vector<BlockServiceId> out;
+        auto err = p.pick(1, FLASH_STORAGE, NEEDED, {}, out);
+        REQUIRE(err == TernError::NO_ERROR);
+        REQUIRE(out.size() == NEEDED);
+
+        for (const auto& svc : out) {
+            fdPickCounts[serviceToFd[svc.u64]]++;
+        }
+    }
+
+    uint64_t totalPicks = (uint64_t)NUM_ITERATIONS * NEEDED;
+    double expectedPerFd = (double)totalPicks / TOTAL_FDS;
+
+    for (const auto& [fd, count] : fdPickCounts) {
+        double deviation = std::abs((double)count - expectedPerFd) / expectedPerFd;
+        CHECK_MESSAGE(deviation < 0.15,
+            "FD ", (int)fd, " got ", count, " picks, expected ~", (int)expectedPerFd,
+            " (deviation ", deviation * 100, "%)");
+    }
+}
+
+TEST_CASE("picker throughput adaptation increases ratio at low load") {
+    // Low observed throughput → high effectiveMaxRatio → capacity-proportional picks.
+    // Use maxBlocksToPick=1 so stride clamping doesn't interfere (only ratio clamping matters).
+    _setCurrentTime(ternNow());
+
+    auto p = makePicker(1, 0_sec, 600'000'000, 600'000'000);
+
+    const int EXISTING_FDS = 4;
+    const int NEW_FDS = 1;
+
+    std::unordered_map<uint64_t, BlockServiceCache> cache;
+    std::unordered_map<uint64_t, uint8_t> serviceToFd;
+
+    uint64_t id = 1;
+    for (int fd = 1; fd <= EXISTING_FDS; fd++) {
+        BlockServiceCache entry;
+        entry.locationId = 1;
+        entry.storageClass = FLASH_STORAGE;
+        entry.failureDomain = fdWith(fd).name.data;
+        entry.flags = BlockServiceFlags::EMPTY;
+        entry.availableBytes = 1'000'000'000ULL;  // 1GB
+        entry.capacityBytes = 10'000'000'000ULL;
+        entry.blocks = 0;
+        entry.hasFiles = false;
+        cache[id] = entry;
+        serviceToFd[id] = fd;
+        id++;
+    }
+    {
+        uint8_t fdByte = EXISTING_FDS + 1;
+        BlockServiceCache entry;
+        entry.locationId = 1;
+        entry.storageClass = FLASH_STORAGE;
+        entry.failureDomain = fdWith(fdByte).name.data;
+        entry.flags = BlockServiceFlags::EMPTY;
+        entry.availableBytes = 100'000'000'000ULL;  // 100GB (100x more)
+        entry.capacityBytes = 100'000'000'000ULL;
+        entry.blocks = 0;
+        entry.hasFiles = false;
+        cache[id] = entry;
+        serviceToFd[id] = fdByte;
+        id++;
+    }
+
+    p.update(cache);
+
+    // Simulate low throughput: 1000 picks of 100 bytes each over 2 seconds.
+    // Per-shard total = 100KB. Cluster-wide = 25.6MB in 2s = 12.8MB/s.
+    // Max cluster throughput = 600MB/s * 5 drives = 3GB/s.
+    // Ratio = 3GB/s / 12.8MB/s ≈ 234 → effectively uncapped (raw weight ratio is 100x).
+    for (int i = 0; i < 1000; i++) {
+        std::vector<BlockServiceId> out;
+        p.pick(1, FLASH_STORAGE, 1, {}, out, 100);
+    }
+
+    _setCurrentTime(ternNow() + 2_sec);
+    p.update(cache);
+
+    std::unordered_map<uint8_t, int> fdPickCounts;
+    const int NUM_ITERATIONS = 50000;
+    for (int i = 0; i < NUM_ITERATIONS; i++) {
+        std::vector<BlockServiceId> out;
+        auto err = p.pick(1, FLASH_STORAGE, 1, {}, out);
+        REQUIRE(err == TernError::NO_ERROR);
+        REQUIRE(out.size() == 1);
+        fdPickCounts[serviceToFd[out[0].u64]]++;
+    }
+
+    double avgExisting = 0;
+    for (int fd = 1; fd <= EXISTING_FDS; fd++) avgExisting += fdPickCounts[fd];
+    avgExisting /= EXISTING_FDS;
+
+    double avgNew = fdPickCounts[EXISTING_FDS + 1];
+
+    double lowLoadRatio = avgNew / avgExisting;
+    CHECK(lowLoadRatio > 80.0);
+
+    _setCurrentTime(TernTime());
+}
+
+TEST_CASE("picker clamping ratio varies with load") {
+    // 2 FDs: FD1 = 1GB (10 drives), FD2 = 100GB (10 drives). 100x weight difference.
+    // maxBlocksToPick=1 so stride clamping doesn't interfere.
+    // At max load (initial): ratio=1.0 → all FDs clamped to minFdWeight → near-uniform.
+    // At low load (after recalc): high ratio → capacity-proportional → FD2 gets ~100x more.
+    _setCurrentTime(ternNow());
+
+    auto p = makePicker(1, 0_sec, 600'000'000, 600'000'000);
+
+    std::unordered_map<uint64_t, BlockServiceCache> cache;
+    std::unordered_map<uint64_t, uint8_t> serviceToFd;
+
+    uint64_t id = 1;
+    for (int d = 0; d < 10; d++) {
+        BlockServiceCache entry;
+        entry.locationId = 1;
+        entry.storageClass = FLASH_STORAGE;
+        entry.failureDomain = fdWith(1).name.data;
+        entry.flags = BlockServiceFlags::EMPTY;
+        entry.availableBytes = 1'000'000'000ULL;   // 1GB per drive
+        entry.capacityBytes = 10'000'000'000ULL;
+        entry.blocks = 0;
+        entry.hasFiles = false;
+        cache[id] = entry;
+        serviceToFd[id] = 1;
+        id++;
+    }
+    for (int d = 0; d < 10; d++) {
+        BlockServiceCache entry;
+        entry.locationId = 1;
+        entry.storageClass = FLASH_STORAGE;
+        entry.failureDomain = fdWith(2).name.data;
+        entry.flags = BlockServiceFlags::EMPTY;
+        entry.availableBytes = 100'000'000'000ULL;  // 100GB per drive
+        entry.capacityBytes = 100'000'000'000ULL;
+        entry.blocks = 0;
+        entry.hasFiles = false;
+        cache[id] = entry;
+        serviceToFd[id] = 2;
+        id++;
+    }
+
+    p.update(cache);
+
+    auto measureDistribution = [&]() {
+        std::unordered_map<uint8_t, int> fdPicks;
+        const int N = 50000;
+        for (int i = 0; i < N; i++) {
+            std::vector<BlockServiceId> out;
+            auto err = p.pick(1, FLASH_STORAGE, 1, {}, out);
+            REQUIRE(err == TernError::NO_ERROR);
+            fdPicks[serviceToFd[out[0].u64]]++;
+        }
+        return std::make_pair(fdPicks[1], fdPicks[2]);
+    };
+
+    // Phase 1: max load (initial state) — distribution should be near-uniform
+    auto [fd1High, fd2High] = measureDistribution();
+    double highLoadRatio = (double)fd2High / fd1High;
+    CHECK(highLoadRatio > 0.8);
+    CHECK(highLoadRatio < 1.25);
+
+    // Phase 2: simulate intermediate load targeting ratio ≈ 5.
+    // Max cluster throughput = 600MB/s * 20 drives = 12GB/s.
+    // For ratio=5: cluster throughput = 12GB/s / 5 = 2.4GB/s.
+    // Per-shard over 2s = 2.4GB/s * 2 / 256 ≈ 18.75MB → 1000 picks of ~18750 bytes.
+    // With ratio=5: ratioCap = minFdWeight(10GB) * 5 = 50GB.
+    // FD1 stays at 10GB, FD2 clamped from 1TB to 50GB → pick ratio ≈ 5x.
+    for (int i = 0; i < 1000; i++) {
+        std::vector<BlockServiceId> out;
+        p.pick(1, FLASH_STORAGE, 1, {}, out, 18750);
+    }
+    _setCurrentTime(ternNow() + 2_sec);
+    p.update(cache);
+
+    auto [fd1Mid, fd2Mid] = measureDistribution();
+    double midLoadRatio = (double)fd2Mid / fd1Mid;
+    // Intermediate load: FD2 gets more but not fully proportional (100x)
+    CHECK(midLoadRatio > 3.0);
+    CHECK(midLoadRatio < 8.0);
+
+    _setCurrentTime(TernTime(0));
+}
+
+TEST_CASE("picker insufficient live FDs returns error fast") {
+    // If blacklist leaves fewer live FDs than `needed`, we cannot satisfy the pick.
+    auto p = makePicker();
+    std::vector<BlockServiceInfoShort> catalog{
+        bs(1, 1, FLASH_STORAGE, 1),
+        bs(2, 1, FLASH_STORAGE, 2),
+        bs(3, 1, FLASH_STORAGE, 3),
+        bs(4, 1, FLASH_STORAGE, 4),
+    };
+    auto cache = makeCatalog(catalog);
+    p.update(cache);
+
+    // Blacklist two whole FDs → only 2 live FDs left, ask for 3.
+    std::vector<BlacklistEntry> blacklist;
+    BlacklistEntry b1; b1.failureDomain = fdWith(1); blacklist.push_back(b1);
+    BlacklistEntry b2; b2.failureDomain = fdWith(2); blacklist.push_back(b2);
+
+    std::vector<BlockServiceId> out;
+    auto err = p.pick(1, FLASH_STORAGE, 3, blacklist, out);
+    CHECK(err == TernError::COULD_NOT_PICK_BLOCK_SERVICES);
+    CHECK(out.size() == 0);
+}
+
+TEST_CASE("picker slow path picks distinct FDs with service blacklist") {
+    // Force the slow path: 3 FDs, each with two services. Blacklist one service
+    // in the heaviest FD so stride invariant (maxFdWeight <= step) breaks.
+    auto p = makePicker(3);
+
+    std::unordered_map<uint64_t, BlockServiceCache> cache;
+    auto mk = [](uint8_t fd, uint64_t avail) {
+        BlockServiceCache e;
+        e.locationId = 1;
+        e.storageClass = FLASH_STORAGE;
+        e.failureDomain = fdWith(fd).name.data;
+        e.flags = BlockServiceFlags::EMPTY;
+        e.availableBytes = avail;
+        e.capacityBytes = avail * 10;
+        e.blocks = 0;
+        e.hasFiles = false;
+        return e;
+    };
+    // FD1: svcs 10, 11 (both weight 100)  → FD total 200
+    // FD2: svcs 20, 21 (both weight 100)  → FD total 200
+    // FD3: svcs 30, 31 (both weight 100)  → FD total 200
+    cache[10] = mk(1, 100); cache[11] = mk(1, 100);
+    cache[20] = mk(2, 100); cache[21] = mk(2, 100);
+    cache[30] = mk(3, 100); cache[31] = mk(3, 100);
+
+    p.update(cache);
+    p.resetStats();
+
+    // Blacklist svc 30 from FD3 (weight 100): totalWeight=500, maxFdWeight=200,
+    // step = 500/3 = 166 < 200 → stride invariant broken, slow path taken.
+    std::vector<BlacklistEntry> bl;
+    BlacklistEntry e; e.blockService = BlockServiceId(30); bl.push_back(e);
+
+    const int ITER = 2000;
+    for (int i = 0; i < ITER; i++) {
+        std::vector<BlockServiceId> out;
+        auto err = p.pick(1, FLASH_STORAGE, 3, bl, out);
+        REQUIRE(err == TernError::NO_ERROR);
+        REQUIRE(out.size() == 3);
+
+        std::unordered_set<uint8_t> seenFds;
+        for (const auto& id : out) {
+            CHECK(id.u64 != 30);  // blacklisted
+            uint8_t fd = (id.u64 < 20) ? 1 : (id.u64 < 30) ? 2 : 3;
+            CHECK(seenFds.insert(fd).second);  // distinct FDs
+        }
+    }
+
+    auto stats = p.getStats();
+    bool sawRescale = false;
+    for (const auto& ls : stats.locStorage) {
+        if (ls.blacklistRepicks > 0) {
+            sawRescale = true;
+            // We took the slow path every iteration.
+            CHECK(ls.blacklistRepicks == (uint64_t)ITER);
+        }
+    }
+    CHECK(sawRescale);
+}
+
+TEST_CASE("picker drained lcKey resets throughput stats") {
+    // if an lcKey loses all services, stale numDrives /
+    // lastThroughputEstimate must be cleared so the spike path can't read them.
+    _setCurrentTime(ternNow());
+    auto p = makePicker(1, 0_sec, 600'000'000, 600'000'000);
+
+    std::vector<BlockServiceInfoShort> catalog{
+        bs(1, 1, FLASH_STORAGE, 1),
+        bs(2, 1, FLASH_STORAGE, 2),
+    };
+    p.update(makeCatalog(catalog));
+
+    // Warm the throughput estimate with a few picks.
+    for (int i = 0; i < 10; i++) {
+        std::vector<BlockServiceId> out;
+        p.pick(1, FLASH_STORAGE, 1, {}, out, 1000);
+    }
+    _setCurrentTime(ternNow() + 2_sec);
+    p.update(makeCatalog(catalog));
+
+    // Now drop all services for this lcKey.
+    p.update({});
+
+    auto stats = p.getStats();
+    for (const auto& ls : stats.locStorage) {
+        if ((ls.key & 0xFF) == FLASH_STORAGE) {
+            CHECK(ls.writableBlockServices == 0);
+            CHECK(ls.writableFailureDomains == 0);
+            CHECK(ls.throughputEstimate == 0);
+        }
+    }
+    _setCurrentTime(TernTime(0));
+}
+
+TEST_CASE("picker stale service id from dropped lcKey does not corrupt weights") {
+    // a service that existed under key K, was evicted,
+    // but still appears in a blacklist must not subtract bogus weight from
+    // the current fdWeights.
+    _setCurrentTime(ternNow());
+    auto p = makePicker(1, 0_sec, 600'000'000, 600'000'000);
+
+    // Phase 1: service 99 lives in location=1.
+    std::vector<BlockServiceInfoShort> catalog1{
+        bs(50, 1, FLASH_STORAGE, 1),
+        bs(51, 1, FLASH_STORAGE, 2),
+        bs(99, 1, FLASH_STORAGE, 3),
+    };
+    p.update(makeCatalog(catalog1));
+
+    // Trigger spike recalc so serviceToFdInfo for key=(1, FLASH) is rebuilt.
+    for (int i = 0; i < 100; i++) {
+        std::vector<BlockServiceId> out;
+        p.pick(1, FLASH_STORAGE, 1, {}, out, 1'000'000);
+    }
+    _setCurrentTime(ternNow() + 2_sec);
+
+    // Phase 2: drop service 99 (remove its FD entirely).
+    std::vector<BlockServiceInfoShort> catalog2{
+        bs(50, 1, FLASH_STORAGE, 1),
+        bs(51, 1, FLASH_STORAGE, 2),
+    };
+    p.update(makeCatalog(catalog2));
+
+    // Pick with a blacklist still referencing 99. Should succeed with no
+    // corruption of the live (50, 51) FDs' weights.
+    std::vector<BlacklistEntry> bl;
+    BlacklistEntry e; e.blockService = BlockServiceId(99); bl.push_back(e);
+    for (int i = 0; i < 50; i++) {
+        std::vector<BlockServiceId> out;
+        auto err = p.pick(1, FLASH_STORAGE, 1, bl, out);
+        REQUIRE(err == TernError::NO_ERROR);
+        REQUIRE(out.size() == 1);
+        CHECK(out[0].u64 != 99);
+    }
+    _setCurrentTime(TernTime(0));
 }

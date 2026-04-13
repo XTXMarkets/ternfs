@@ -1472,7 +1472,8 @@ struct ShardDBImpl {
                 entry.storageClass,
                 req.parity.blocks(),
                 req.blacklist.els,
-                pickedBlockServices
+                pickedBlockServices,
+                static_cast<uint64_t>(req.cellSize) * req.stripes
             );
             if (pickErr != TernError::NO_ERROR) {
                 return pickErr;

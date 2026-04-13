@@ -48,6 +48,14 @@ static bool parseShardOptions(CommandLineArgs& args, ShardOptions& options) {
             options.blockServiceWritableDelay = parseDuration(args.next());
             continue;
         }
+        if (arg == "-hdd-drive-throughput") {
+            options.hddDriveThroughput = std::stoull(args.next().getArg());
+            continue;
+        }
+        if (arg == "-flash-drive-throughput") {
+            options.flashDriveThroughput = std::stoull(args.next().getArg());
+            continue;
+        }
         fprintf(stderr, "unknown argument %s\n", args.peekArg().c_str());
         return false;
     }
@@ -71,7 +79,12 @@ static void printShardOptionsUsage() {
     fprintf(stderr, " -transient-deadline-interval\n");
     fprintf(stderr, "    	Tweaks the interval with which the deadline for transient file gets bumped.\n");
     fprintf(stderr, " -block-service-writable-delay\n");
-    fprintf(stderr, "       Delay before a new block service becomes writable. Default: 5m\n");}
+    fprintf(stderr, "       Delay before a new block service becomes writable. Default: 5m\n");
+    fprintf(stderr, " -hdd-drive-throughput\n");
+    fprintf(stderr, "       Max throughput per HDD drive in bytes/sec. Default: 35000000\n");
+    fprintf(stderr, " -flash-drive-throughput\n");
+    fprintf(stderr, "       Max throughput per flash drive in bytes/sec. Default: 350000000\n");
+}
 
 static bool validateShardOptions(const ShardOptions& options) {
     if (!options.shardIdSet) {
