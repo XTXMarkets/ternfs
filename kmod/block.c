@@ -34,8 +34,155 @@
 int ternfs_fetch_block_timeout_jiffies = MSECS_TO_JIFFIES(60 * 1000);
 int ternfs_write_block_timeout_jiffies = MSECS_TO_JIFFIES(60 * 1000);
 int ternfs_block_service_connect_timeout_jiffies = MSECS_TO_JIFFIES(4 * 1000);
+int ternfs_block_service_bad_addr_cooldown_jiffies = MSECS_TO_JIFFIES(2 * 60 * 1000);
 
 static u64 WHICH_BLOCK_IP = 0;
+
+// Bad-address cooldown table.
+//
+// When a connect attempt to a block service address fails we record the
+// address here with an expiry. get_blockservice_socket() skips addresses
+// that are still in cooldown, so a dead NIC does not keep eating the 4s
+// connect timeout for every request. Disabled when the module param
+// `ternfs_block_service_bad_addr_cooldown_jiffies` is 0.
+//
+// Reads vastly outnumber writes (every connect checks, writes happen
+// only on a failure). To keep the hot path contention-free:
+//   - `bad_addrs_live` is an atomic counter of currently-live entries;
+//     is_bad_addr() short-circuits to false without touching the table
+//     when it's zero.
+//   - Lookups walk the table under RCU. Readers never mutate; stale
+//     entries are treated as not-bad and reclaimed by writers.
+//   - Writers serialise on `bad_addrs_lock` and free entries via
+//     kfree_rcu().
+#define BAD_ADDR_BITS 6
+#define BAD_ADDR_BUCKETS (1<<BAD_ADDR_BITS)
+#define BAD_ADDR_MAX_ENTRIES 256
+
+struct bad_addr {
+    struct hlist_node hnode;
+    struct rcu_head rcu;
+    __be32 ip;
+    __be16 port;
+    u64 expiry;
+};
+
+static DEFINE_SPINLOCK(bad_addrs_lock);
+static DECLARE_HASHTABLE(bad_addrs, BAD_ADDR_BITS);
+static unsigned bad_addrs_count;  // modified only under bad_addrs_lock
+static atomic_t bad_addrs_live = ATOMIC_INIT(0);
+
+static inline u64 bad_addr_key(__be32 ip, __be16 port) {
+    return ((u64)(__force u32)ip << 16) | (u64)(__force u16)port;
+}
+
+static void bad_addr_remove_locked(struct bad_addr* entry) {
+    hash_del_rcu(&entry->hnode);
+    kfree_rcu(entry, rcu);
+    bad_addrs_count--;
+    atomic_dec(&bad_addrs_live);
+}
+
+static bool is_bad_addr(__be32 ip, __be16 port) {
+    if (atomic_read(&bad_addrs_live) == 0) {
+        return false;
+    }
+    int cooldown = READ_ONCE(ternfs_block_service_bad_addr_cooldown_jiffies);
+    if (cooldown <= 0) {
+        return false;
+    }
+
+    u64 key = bad_addr_key(ip, port);
+    u64 now = get_jiffies_64();
+    bool bad = false;
+
+    rcu_read_lock();
+    struct bad_addr* entry;
+    hlist_for_each_entry_rcu(entry, &bad_addrs[hash_min(key, BAD_ADDR_BITS)], hnode) {
+        if (entry->ip != ip || entry->port != port) { continue; }
+        // Stale entries are treated as not-bad; a writer will reclaim
+        // them the next time mark_bad_addr() touches this bucket, or
+        // when the module unloads.
+        if (!time_after64(now, entry->expiry)) {
+            bad = true;
+        }
+        break;
+    }
+    rcu_read_unlock();
+    return bad;
+}
+
+static void mark_bad_addr(__be32 ip, __be16 port) {
+    int cooldown = READ_ONCE(ternfs_block_service_bad_addr_cooldown_jiffies);
+    if (cooldown <= 0) {
+        return;
+    }
+
+    u64 key = bad_addr_key(ip, port);
+    u64 now = get_jiffies_64();
+    u64 expiry = now + (u64)cooldown;
+
+    struct bad_addr* new_entry = kmalloc(sizeof(struct bad_addr), GFP_ATOMIC);
+
+    if (new_entry == NULL) {
+        // Allocation failed; cooldown just won't apply to this address.
+        return;
+    }
+
+    spin_lock(&bad_addrs_lock);
+    struct bad_addr* entry;
+    struct hlist_node* tmp;
+    bool updated = false;
+    // While we hold the lock, opportunistically reap any stale entry in
+    // this bucket - keeps the table small and the read path short.
+    hlist_for_each_entry_safe(entry, tmp, &bad_addrs[hash_min(key, BAD_ADDR_BITS)], hnode) {
+        if (entry->ip == ip && entry->port == port) {
+            entry->expiry = expiry;
+            updated = true;
+        } else if (time_after64(now, entry->expiry)) {
+            bad_addr_remove_locked(entry);
+        }
+    }
+    if (updated) {
+        spin_unlock(&bad_addrs_lock);
+        kfree(new_entry);
+        return;
+    }
+
+    // If we've hit the cap, evict an arbitrary entry. Not an LRU, but
+    // BAD_ADDR_MAX_ENTRIES is far beyond the number of NICs we'd expect
+    // to be simultaneously bad, so this branch is mostly a backstop
+    // against unbounded growth if the failure mode somehow rotates.
+    if (bad_addrs_count >= BAD_ADDR_MAX_ENTRIES) {
+        int bucket;
+        struct bad_addr* victim = NULL;
+        for (bucket = 0; bucket < BAD_ADDR_BUCKETS && victim == NULL; bucket++) {
+            victim = hlist_entry_safe(bad_addrs[bucket].first, struct bad_addr, hnode);
+        }
+        if (victim != NULL) {
+            bad_addr_remove_locked(victim);
+        }
+    }
+
+    new_entry->ip = ip;
+    new_entry->port = port;
+    new_entry->expiry = expiry;
+    hlist_add_head_rcu(&new_entry->hnode, &bad_addrs[hash_min(key, BAD_ADDR_BITS)]);
+    bad_addrs_count++;
+    atomic_inc(&bad_addrs_live);
+    spin_unlock(&bad_addrs_lock);
+}
+
+static void bad_addrs_clear(void) {
+    int bucket;
+    struct bad_addr* entry;
+    struct hlist_node* tmp;
+    spin_lock(&bad_addrs_lock);
+    hash_for_each_safe(bad_addrs, bucket, tmp, entry, hnode) {
+        bad_addr_remove_locked(entry);
+    }
+    spin_unlock(&bad_addrs_lock);
+}
 
 static struct kmem_cache* fetch_request_cachep;
 static struct kmem_cache* write_request_cachep;
@@ -675,6 +822,7 @@ static struct block_socket*  get_block_socket(
             sock->sock->sk->sk_state_change = sock->saved_state_change;
             sock->sock->sk->sk_user_data = NULL;
             write_unlock(&sock->sock->sk->sk_callback_lock);
+            mark_bad_addr(sock->addr.sin_addr.s_addr, sock->addr.sin_port);
             block_socket_put(sock);
             goto out_err;
         } else {
@@ -688,6 +836,7 @@ static struct block_socket*  get_block_socket(
                     sock->sock->sk->sk_state_change = sock->saved_state_change;
                     sock->sock->sk->sk_user_data = NULL;
                     write_unlock(&sock->sock->sk->sk_callback_lock);
+                    mark_bad_addr(sock->addr.sin_addr.s_addr, sock->addr.sin_port);
                     block_socket_put(sock);
                     err = -ETIMEDOUT;
                     goto out_err;
@@ -860,15 +1009,34 @@ static struct block_socket* get_blockservice_socket(
     struct block_ops* ops,
     struct ternfs_block_service* bs
 )   {
-    int i, block_ip;
+    int i, block_ip, n_addrs;
     struct sockaddr_in addr;
-    struct block_socket* sock;
+    struct block_socket* sock = ERR_PTR(-ENETUNREACH);
 
-    // Try both ips (if we have them) before giving up
+    n_addrs = 1 + (bs->port2 != 0);
+
+    // If every address for this block service has recently failed to
+    // connect, fail immediately rather than wasting another 4s per
+    // attempt. The caller handles request failure (the read/write path
+    // picks a different block service or fails the op). Skipping is a
+    // no-op when cooldown is disabled (is_bad_addr returns false).
+    {
+        __be32 ip1_n = htonl(bs->ip1);
+        __be16 port1_n = htons(bs->port1);
+        bool bad1 = is_bad_addr(ip1_n, port1_n);
+        bool bad2 = (n_addrs == 2) &&
+            is_bad_addr(htonl(bs->ip2), htons(bs->port2));
+        if (bad1 && (n_addrs == 1 || bad2)) {
+            ternfs_debug("all addrs for bs=%016llx in cooldown, failing early", bs->id);
+            return ERR_PTR(-ENETUNREACH);
+        }
+    }
+
+    // Try addresses in round-robin order but skip any in cooldown.
     block_ip = WHICH_BLOCK_IP++;
-    for (i = 0; i < 1 + (bs->port2 != 0); i++, block_ip++) { // we might not have a second address
+    for (i = 0; i < n_addrs; i++, block_ip++) {
         addr.sin_family = AF_INET;
-        if (bs->port2 == 0 || block_ip&1) {
+        if (n_addrs == 1 || block_ip&1) {
             addr.sin_addr.s_addr = htonl(bs->ip1);
             addr.sin_port = htons(bs->port1);
         } else {
@@ -876,12 +1044,15 @@ static struct block_socket* get_blockservice_socket(
             addr.sin_port = htons(bs->port2);
         }
 
+        if (is_bad_addr(addr.sin_addr.s_addr, addr.sin_port)) {
+            continue;
+        }
+
         sock = get_block_socket(ops, &addr);
         if (!IS_ERR(sock)) {
-            goto out;
+            return sock;
         }
     }
-out:
     return sock;
 }
 
@@ -1675,6 +1846,9 @@ int __init ternfs_block_init(void) {
     block_ops_init(&fetch_block_pages_witch_crc_ops);
     block_ops_init(&write_block_ops);
 
+    hash_init(bad_addrs);
+    bad_addrs_count = 0;
+
     queue_work(ternfs_fast_wq, &timeout_work.work);
 
     return 0;
@@ -1700,6 +1874,8 @@ void __cold ternfs_block_exit(void) {
 
     block_ops_exit(&fetch_block_pages_witch_crc_ops);
     block_ops_exit(&write_block_ops);
+
+    bad_addrs_clear();
 
     // clear caches
     kmem_cache_destroy(fetch_request_cachep);

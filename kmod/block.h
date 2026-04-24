@@ -19,6 +19,11 @@
 extern int ternfs_fetch_block_timeout_jiffies;
 extern int ternfs_write_block_timeout_jiffies;
 extern int ternfs_block_service_connect_timeout_jiffies;
+// After a connect to a block service address fails (refused, unreachable,
+// or timed out), skip that address in get_blockservice_socket() for this
+// many jiffies. Set to 0 to disable the cooldown entirely and restore
+// the prior round-robin-with-4s-timeout behaviour.
+extern int ternfs_block_service_bad_addr_cooldown_jiffies;
 
 struct ternfs_block_service {
     u64 id;
