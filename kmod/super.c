@@ -409,7 +409,9 @@ static struct dentry* ternfs_mount(struct file_system_type* fs_type, int flags, 
 
     sb->s_fs_info = info;
 
-    sb->s_flags = SB_NOSUID | SB_NODEV | SB_NOEXEC | SB_NOATIME | SB_NODIRATIME;
+    // SB_NODIRATIME needs to be set: directory atime is TernFS-internal state used
+    // for dentry-cache invalidation and must not be touched by the VFS.
+    sb->s_flags = SB_NOSUID | SB_NODEV | SB_NOEXEC | SB_NODIRATIME;
     sb->s_iflags = SB_I_NOEXEC | SB_I_NODEV;
 
     sb->s_op = &ternfs_super_ops;

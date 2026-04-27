@@ -626,6 +626,73 @@ static const char* ternfs_get_link(struct dentry* dentry, struct inode* inode, s
     return buf;
 }
 
+// Called by the VFS (via touch_atime -> inode_update_time) on actual data access
+// of a regular file: generic_file_read_iter hits it on read/pread/readv, and
+// file_mmap() in file.c hits it for mmap. atime_needs_update() in fs/inode.c
+// already honours O_NOATIME, MNT_NOATIME, and relatime before reaching us, so
+// this function only needs to apply the ternfs_atime_update_interval_sec
+// throttle on top and push the update to the shard.
+//
+// Only wired into ternfs_file_inode_ops: directory atime is TernFS-internal
+// state (dentry cache invalidation) and must not be touched by VFS access
+// paths -- SB_NODIRATIME keeps the VFS out.
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
+static int ternfs_update_time(struct inode* inode, struct timespec64*, int flags) {
+#else
+static int ternfs_update_time(struct inode* inode, int flags) {
+#endif
+    struct ternfs_inode* enode = TERNFS_I(inode);
+
+    int non_atime = flags & ~S_ATIME;
+    if (non_atime) {
+        ternfs_generic_update_time(inode, non_atime);
+    }
+    if (!(flags & S_ATIME)) { return 0; }
+
+    u64 now_ns = ktime_get_real_ns();
+    struct timespec64 now_ts = ns_to_timespec64(now_ns);
+
+    time64_t cur_sec = inode_get_atime_sec(inode);
+    u64 diff = now_ts.tv_sec - min(cur_sec, now_ts.tv_sec);
+    if (diff < ternfs_atime_update_interval_sec) {
+        // within throttle window: bump in-memory atime only
+        inode_set_atime_to_ts(inode, now_ts);
+        return 0;
+    }
+
+    // https://internal-repo/issues/292
+    // a peer client may have already bumped atime. ternfs_do_getattr is orders
+    // of magnitude cheaper than ternfs_shard_set_time, so refresh before RPC.
+    int err = ternfs_do_getattr(enode, ATTR_CACHE_NO_TIMEOUT);
+    if (err) {
+        // non-fatal: atime errors shouldn't break reads
+        ternfs_warn("file=%016lx update_time getattr failed err=%d", inode->i_ino, err);
+        return 0;
+    }
+    cur_sec = inode_get_atime_sec(inode);
+    diff = now_ts.tv_sec - min(cur_sec, now_ts.tv_sec);
+    if (diff < ternfs_atime_update_interval_sec) { return 0; }
+
+    if ((cur_sec > now_ts.tv_sec) ||
+        (cur_sec == now_ts.tv_sec &&
+         inode_get_atime_nsec(inode) >= now_ts.tv_nsec)) {
+        // don't let atime go backwards
+        return 0;
+    }
+
+    u64 atime = now_ns | (1ull << 63);
+    err = ternfs_shard_set_time(
+        (struct ternfs_fs_info*)inode->i_sb->s_fs_info,
+        inode->i_ino, 0, atime);
+    if (err) {
+        ternfs_warn("file=%016lx update_time shard_set_time failed err=%d", inode->i_ino, err);
+        return 0;
+    }
+    inode_set_atime_to_ts(inode, now_ts);
+    smp_store_release(&enode->getattr_expiry, 0);
+    return 0;
+}
+
 static const struct inode_operations ternfs_dir_inode_ops = {
     .create = ternfs_create,
     .lookup = ternfs_lookup,
@@ -640,6 +707,7 @@ static const struct inode_operations ternfs_dir_inode_ops = {
 static const struct inode_operations ternfs_file_inode_ops = {
     .getattr = ternfs_getattr,
     .setattr = ternfs_setattr,
+    .update_time = ternfs_update_time,
 };
 
 static const struct inode_operations ternfs_symlink_inode_ops = {

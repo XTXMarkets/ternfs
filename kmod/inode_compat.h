@@ -125,4 +125,20 @@ static inline struct timespec64 inode_set_mtime(struct inode *inode,
 
 #endif
 
+// The inode_operations->update_time signature lost the `struct timespec64 *now`
+// parameter in mainline 6.6; filesystems compute the timestamp themselves now.
+// ternfs_generic_update_time hides the difference so callers can pass just (inode, flags).
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
+static inline int ternfs_generic_update_time(struct inode *inode, int flags)
+{
+	struct timespec64 now = current_time(inode);
+	return generic_update_time(inode, &now, flags);
+}
+#else
+static inline int ternfs_generic_update_time(struct inode *inode, int flags)
+{
+	return generic_update_time(inode, flags);
+}
+#endif
+
 #endif /* _TERNFS_INODE_COMPAT_H */

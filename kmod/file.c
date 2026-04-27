@@ -78,7 +78,6 @@ static int file_open(struct inode* inode, struct file* filp) {
     struct ternfs_inode* enode = TERNFS_I(inode);
 
     ternfs_debug("enode=%p status=%d owner=%p", enode, enode->file.status, current->group_leader);
-    int err = 0;
 
     if ((filp->f_mode&FMODE_WRITE) && (enode->file.status == TERNFS_FILE_STATUS_WRITING)) {
         // this is the "common" writing case, we've just created a file to write it.
@@ -90,51 +89,11 @@ static int file_open(struct inode* inode, struct file* filp) {
         // to files) are attempted. the reason is that some workflows (such as open write +
         // setattr) _will_ work.
         enode->file.status = TERNFS_FILE_STATUS_READING;
-        // also, set atime, if requested
-        if (!(filp->f_flags&O_NOATIME)) {
-            u64 atime_ns = ktime_get_real_ns();
-            struct timespec64 atime_ts = ns_to_timespec64(atime_ns);
-            u64 diff = atime_ts.tv_sec - min(inode_get_atime_sec(&enode->inode), atime_ts.tv_sec);
-            if (diff < ternfs_atime_update_interval_sec) {
-                // we don't think we should update
-                goto out;
-            }
-
-            // https://internal-repo/issues/292
-            // we might have cached data and another client updated atime.
-            // ternfs_do_getattr is orders of magnitude cheaper than ternfs_shard_set_time,
-            // so we might as well refresh and re-check
-            int err = ternfs_do_getattr(enode, ATTR_CACHE_NO_TIMEOUT);
-            if (err) {
-                goto out;
-            }
-            diff = atime_ts.tv_sec - min(inode_get_atime_sec(&enode->inode), atime_ts.tv_sec);
-            if (diff < ternfs_atime_update_interval_sec) {
-                // out local time changed and we see we don't need to update
-                goto out;
-            }
-
-            if ((inode_get_atime_sec(&enode->inode) > atime_ts.tv_sec) ||
-                (inode_get_atime_sec(&enode->inode) == atime_ts.tv_sec &&
-                 inode_get_atime_nsec(&enode->inode) == atime_ts.tv_nsec
-                )
-            ) {
-                // we don't want atime to go into the past don't update
-                goto out;
-            }
-            u64 atime = atime_ns | (1ull<<63);
-            err = ternfs_shard_set_time((struct ternfs_fs_info*)enode->inode.i_sb->s_fs_info, inode->i_ino, 0, atime);
-            if (err) {
-                goto out;
-            }
-            // we updated time. we don't need to refresh it now but allow refresh on next stat by getattr_expiry
-            smp_store_release(&enode->getattr_expiry, 0);
-        }
     }
-out:
+
     inode_unlock(inode);
     trace_eggsfs_inode_lock(inode, TERNFS_INODE_UNLOCK, "file_open");
-    return err;
+    return 0;
 }
 
 static void init_transient_span(void* p) {
@@ -1177,13 +1136,20 @@ static int file_fsync(struct file* f, loff_t start, loff_t end, int datasync) {
     return 0;
 }
 
+// filemap_fault() does not call file_accessed(), so mmap-driven reads would
+// otherwise never update atime. Bump it at mmap time before delegating.
+static int file_mmap(struct file* file, struct vm_area_struct* vma) {
+    file_accessed(file);
+    return generic_file_readonly_mmap(file, vma);
+}
+
 const struct file_operations ternfs_file_operations = {
     .open = file_open,
     .read_iter = file_read_iter,
     .write_iter = file_write_iter,
     .flush = file_flush_internal,
     .llseek = file_lseek,
-    .mmap = generic_file_readonly_mmap,
+    .mmap = file_mmap,
     .fsync = file_fsync,
 };
 
