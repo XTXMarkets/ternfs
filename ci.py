@@ -14,6 +14,7 @@ parser.add_argument('--functional', action='store_true')
 parser.add_argument('--integration', action='store_true')
 parser.add_argument('--short', action='store_true')
 parser.add_argument('--kmod', action='store_true')
+parser.add_argument('--nfs', action='store_true', help='Run the NFS integration tests in the QEMU VM (reuses the kmod VM image)')
 parser.add_argument('--build', action='store_true')
 parser.add_argument('--docker', action='store_true', help='Build and run in docker image')
 parser.add_argument('--prepare-image', default=None, type=str, help='Build the kmod image given the provided base image')
@@ -105,3 +106,7 @@ if args.prepare_image:
 if args.kmod:
     bold_print('kmod tests')
     wait_cmd(run_cmd(['./kmod/ci.sh'] + (['-short'] if args.short else []) + (['-leader-only'] if args.leader_only else []) + (['-filter', args.filter] if args.filter else [])))
+
+if args.nfs:
+    bold_print('nfs tests')
+    wait_cmd(run_cmd(['./ci_nfs.sh'] + (['-short'] if args.short else []) + (['-leader-only'] if args.leader_only else []) + (['-filter', args.filter] if args.filter else [])))

@@ -136,6 +136,8 @@ jobs:
         run: curl -fsSL -O https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
       - name: Run kmod tests
         run: ./ci.py --short --prepare-image ${{ github.workspace }}/noble-server-cloudimg-amd64.img --kmod --leader-only
+      - name: Run NFS tests
+        run: ./ci.py --short --prepare-image ${{ github.workspace }}/noble-server-cloudimg-amd64.img --nfs --leader-only
       - name: Upload logs on failure
         if: failure()
         uses: actions/upload-artifact@v4

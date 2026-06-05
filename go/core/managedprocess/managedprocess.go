@@ -617,10 +617,11 @@ type GoExes struct {
 	RegistryProxyExe string
 	WebExe           string
 	CliExe           string
+	NfsExe           string
 }
 
 func BuildGoExes(ll *log.Logger, repoDir string, race bool) *GoExes {
-	args := []string{"ternblocks", "terngc", "ternfuse", "ternregistryproxy", "ternweb", "terncli"}
+	args := []string{"ternblocks", "terngc", "ternfuse", "ternregistryproxy", "ternweb", "terncli", "nfsd"}
 	if race {
 		args = append(args, "--race")
 	}
@@ -639,7 +640,39 @@ func BuildGoExes(ll *log.Logger, repoDir string, race bool) *GoExes {
 		RegistryProxyExe: path.Join(goDir(repoDir), "ternregistryproxy", "ternregistryproxy"),
 		WebExe:           path.Join(goDir(repoDir), "ternweb", "ternweb"),
 		CliExe:           path.Join(goDir(repoDir), "terncli", "terncli"),
+		NfsExe:           path.Join(goDir(repoDir), "nfsd", "nfsd"),
 	}
+}
+
+type NfsOpts struct {
+	Exe             string
+	Path            string
+	Addr            string
+	LogLevel        log.LogLevel
+	RegistryAddress string
+}
+
+func (procs *ManagedProcesses) StartNfs(ll *log.Logger, opts *NfsOpts) string {
+	createDataDir(opts.Path)
+	stagingDir := path.Join(opts.Path, "staging")
+	createDataDir(stagingDir)
+	args := []string{
+		"-addr", opts.Addr,
+		"-registry", opts.RegistryAddress,
+		"-staging", stagingDir,
+	}
+	if opts.LogLevel == log.DEBUG || opts.LogLevel == log.TRACE {
+		args = append(args, "-v")
+	}
+	procs.Start(ll, &ManagedProcessArgs{
+		Name:            "nfsd",
+		Exe:             opts.Exe,
+		Args:            args,
+		StdoutFile:      path.Join(opts.Path, "stdout"),
+		StderrFile:      path.Join(opts.Path, "stderr"),
+		TerminateOnExit: true,
+	})
+	return opts.Addr
 }
 
 type ShardOpts struct {

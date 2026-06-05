@@ -101,6 +101,7 @@ binaries=(
     go/terngc/terngc
     go/terntests/terntests
     go/ternregistryproxy/ternregistryproxy
+    go/nfsd/nfsd
 )
 
 for binary in "${binaries[@]}"; do

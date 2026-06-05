@@ -83,6 +83,7 @@ type RunTests struct {
 	registryIp              string
 	registryPort            uint16
 	mountPoint              string
+	nfsMountPoint           string
 	terncliExe              string
 	kmod                    bool
 	short                   bool
@@ -192,6 +193,18 @@ func mountKmod(registryAddr string, mountPoint string) {
 	out, err := exec.Command("sudo", "mount", "-t", "eggsfs", dev, mountPoint).CombinedOutput()
 	if err != nil {
 		panic(fmt.Errorf("could not mount filesystem (%w): %s", err, out))
+	}
+}
+
+func mountNfs(nfsAddr string, mountPoint string) {
+	host, port, err := net.SplitHostPort(nfsAddr)
+	if err != nil {
+		panic(fmt.Errorf("bad nfs addr %q: %w", nfsAddr, err))
+	}
+	opts := fmt.Sprintf("vers=4.0,port=%s,soft,timeo=30,retrans=2", port)
+	out, err := exec.Command("sudo", "mount", "-t", "nfs4", "-o", opts, host+":/", mountPoint).CombinedOutput()
+	if err != nil {
+		panic(fmt.Errorf("could not mount nfs (%w): %s", err, out))
 	}
 }
 
@@ -344,6 +357,26 @@ func (r *RunTests) run(
 			fsTest(log, r.registryAddress(), &fsTestOpts, counters, s3Harness{})
 		},
 	)
+
+	if r.nfsMountPoint != "" {
+		r.test(
+			log,
+			"nfs mounted fs",
+			fmt.Sprintf("%v dirs, %v files, %v depth", fsTestOpts.numDirs, fsTestOpts.numFiles, fsTestOpts.depth),
+			func(counters *client.ClientCounters) {
+				fsTest(log, r.registryAddress(), &fsTestOpts, counters, posixHarness{r.nfsMountPoint})
+			},
+		)
+
+		r.test(
+			log,
+			"nfs mutations",
+			"",
+			func(counters *client.ClientCounters) {
+				nfsMutationTest(log, r.nfsMountPoint)
+			},
+		)
+	}
 
 	parallelDirsOpts := &parallelDirsOpts{
 		numRootDirs:      10,
@@ -1116,9 +1149,18 @@ func main() {
 	race := flag.Bool("race", false, "Go race detector")
 	leaderOnly := flag.Bool("leader-only", false, "Run only LogsDB leader with LEADER_NO_FOLLOWERS")
 	closeTrackerObject := flag.String("close-tracker-object", "", "Compiled BPF object to track explicitly closed files")
+	nfs := flag.Bool("nfs", false, "Also start an nfsd NFSv4 server and run the suite against an NFS kernel mount. Requires root and a kernel NFS client (mount -t nfs4).")
+	nfsPort := flag.Uint("nfs-port", 2049, "TCP port for the nfsd server when -nfs is set.")
 	flag.Var(&overrides, "cfg", "Config overrides")
 	flag.Parse()
 	noRunawayArgs()
+
+	if *nfs {
+		// The kernel NFS client can delay CLOSE for a while after the last WRITE,
+		//  so the default 30s test deadline would GC the transient mid-flight.
+		testTransientDeadlineInterval = 2 * time.Minute
+		testBlockFutureCutoff = testTransientDeadlineInterval / 2
+	}
 
 	{
 		shardTimeouts = client.DefaultShardTimeout
@@ -1223,6 +1265,7 @@ func main() {
 			BlocksExe: path.Join(*binariesDir, "ternblocks"),
 			FuseExe:   path.Join(*binariesDir, "ternfuse"),
 			CliExe:    path.Join(*binariesDir, "terncli"),
+			NfsExe:    path.Join(*binariesDir, "nfsd"),
 		}
 	} else {
 		fmt.Printf("building shard/cdc/blockservice/registry\n")
@@ -1507,6 +1550,31 @@ func main() {
 		})
 	}
 
+	var nfsMountPoint string
+	if *nfs {
+		nfsAddr := fmt.Sprintf("127.0.0.1:%v", *nfsPort)
+		procs.StartNfs(l, &managedprocess.NfsOpts{
+			Exe:             goExes.NfsExe,
+			Path:            path.Join(*dataDir, "nfs"),
+			Addr:            nfsAddr,
+			LogLevel:        level,
+			RegistryAddress: registryAddress,
+		})
+		nfsMountPoint = path.Join(*dataDir, "nfs", "mnt")
+		if err := os.MkdirAll(nfsMountPoint, 0777); err != nil {
+			panic(err)
+		}
+		mountNfs(nfsAddr, nfsMountPoint)
+		defer func() {
+			l.Info("about to unmount nfs mount")
+			out, err := exec.Command("sudo", "umount", nfsMountPoint).CombinedOutput()
+			l.Info("done unmounting nfs")
+			if err != nil {
+				fmt.Printf("could not umount nfs (%v): %s", err, out)
+			}
+		}()
+	}
+
 	fmt.Printf("operational 🤖\n")
 
 	// Start block policy changer -- this is useful to test kmod/policy.c machinery
@@ -1562,6 +1630,7 @@ func main() {
 			registryIp:              "127.0.0.1",
 			registryPort:            registryPort,
 			mountPoint:              mountPoint,
+			nfsMountPoint:           nfsMountPoint,
 			terncliExe:              goExes.CliExe,
 			kmod:                    *kmod,
 			short:                   *short,

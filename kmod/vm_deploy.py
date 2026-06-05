@@ -27,6 +27,7 @@ def build_and_upload(build_type: str) -> None:
         f"build/{build_type}/terngc",
         f"build/{build_type}/terntests",
         f"build/{build_type}/terndbtools",
+        f"build/{build_type}/nfsd",
     ]
 
     subprocess.run(
