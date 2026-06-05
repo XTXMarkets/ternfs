@@ -54,6 +54,14 @@ const (
 		(1 << (FATTR4_TIME_MODIFY - 32)) |
 		(1 << (FATTR4_MOUNTED_ON_FILEID - 32))
 
+	// Settable, write-only attributes. These have no GETATTR value (they are
+	// not in supportedAttrs* and never encoded), but must be advertised in
+	// FATTR4_SUPPORTED_ATTRS or clients won't send them in SETATTR. SIZE is
+	// already in supportedAttrs0 since it is both readable and settable.
+	settableAttrs0 uint32 = 0
+	settableAttrs1 uint32 = (1 << (FATTR4_TIME_ACCESS_SET - 32)) |
+		(1 << (FATTR4_TIME_MODIFY_SET - 32))
+
 	// Fixed FSID for the entire export.
 	fsidMajor uint64 = 0x7E4F
 	fsidMinor uint64 = 0
@@ -105,9 +113,12 @@ func encodeAttrs(mask [2]uint32, id InodeID, ni NodeInfo) []byte {
 
 	// Word 0 attributes (bits 0-31).
 	if mask[0]&(1<<FATTR4_SUPPORTED_ATTRS) != 0 {
+		// Advertise readable + settable attrs so clients will send SETATTR for
+		// the write-only ones (e.g. TIME_*_SET); these are never encoded as
+		// values below.
 		buf = binary.BigEndian.AppendUint32(buf, 2)
-		buf = binary.BigEndian.AppendUint32(buf, supportedAttrs0)
-		buf = binary.BigEndian.AppendUint32(buf, supportedAttrs1)
+		buf = binary.BigEndian.AppendUint32(buf, supportedAttrs0|settableAttrs0)
+		buf = binary.BigEndian.AppendUint32(buf, supportedAttrs1|settableAttrs1)
 	}
 	if mask[0]&(1<<FATTR4_TYPE) != 0 {
 		buf = binary.BigEndian.AppendUint32(buf, inodeNFSType(id))

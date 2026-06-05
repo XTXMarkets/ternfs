@@ -1505,11 +1505,14 @@ func TestGetattr_SupportedAttrs(t *testing.T) {
 	}
 	word0 := binary.BigEndian.Uint32(attrData[4:8])
 	word1 := binary.BigEndian.Uint32(attrData[8:12])
-	if word0 != supportedAttrs0 {
-		t.Fatalf("supported_attrs[0] = %#x, want %#x", word0, supportedAttrs0)
+	// SUPPORTED_ATTRS advertises readable + settable (write-only) attrs.
+	wantWord0 := supportedAttrs0 | settableAttrs0
+	wantWord1 := supportedAttrs1 | settableAttrs1
+	if word0 != wantWord0 {
+		t.Fatalf("supported_attrs[0] = %#x, want %#x", word0, wantWord0)
 	}
-	if word1 != supportedAttrs1 {
-		t.Fatalf("supported_attrs[1] = %#x, want %#x", word1, supportedAttrs1)
+	if word1 != wantWord1 {
+		t.Fatalf("supported_attrs[1] = %#x, want %#x", word1, wantWord1)
 	}
 }
 
