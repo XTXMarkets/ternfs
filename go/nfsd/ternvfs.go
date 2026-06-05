@@ -168,7 +168,13 @@ func (t *RemoteTernVFS) getOrCreateReader(mid msgs.InodeId) (*cachedReader, erro
 	}
 	cr = &cachedReader{reader: fr, fileSize: resp.Size}
 	t.mu.Lock()
-	t.readers[mid] = cr
+	// Another goroutine may have created the reader while we were unlocked;
+	// if so, discard ours and use theirs.
+	if existing, ok := t.readers[mid]; ok {
+		cr = existing
+	} else {
+		t.readers[mid] = cr
+	}
 	t.mu.Unlock()
 	return cr, nil
 }
