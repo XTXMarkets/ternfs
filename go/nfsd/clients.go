@@ -6,6 +6,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -159,6 +160,11 @@ func (cs *ClientStore) ConfirmClientID(clientID uint64) (uint64, error) {
 	return oldClientID, nil
 }
 
+// maxClientIDName bounds the escaped client-id filename. It leaves headroom
+// under the advertised 255-char maxname for the ".<verifier-hex>" suffix
+// (17 chars) that pending files carry.
+const maxClientIDName = 255 - 17
+
 // escapeClientID produces a filesystem-safe filename from an NFS client id
 // string. Uses Go-style escaping: normal printable ASCII passes through,
 // control characters and non-printable bytes become \xNN or \t, \n, etc.
@@ -172,6 +178,12 @@ func escapeClientID(id []byte) string {
 	// Guard against pathological "." and ".." names.
 	if s == "." || s == ".." {
 		s = `\x2e` + s[1:]
+	}
+
+	if len(s) > maxClientIDName {
+		sum := sha256.Sum256(id)
+		suffix := hex.EncodeToString(sum[:8])
+		s = s[:maxClientIDName-len(suffix)] + suffix
 	}
 	return s
 }
