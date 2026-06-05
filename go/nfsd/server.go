@@ -19,10 +19,10 @@ func peekCompoundHeader(body []byte) (tag []byte, minor uint32, ok bool) {
 	if len(body) < 4 {
 		return nil, 0, false
 	}
-	tagLen := binary.BigEndian.Uint32(body[0:4])
+	tagLen := uint64(binary.BigEndian.Uint32(body[0:4]))
 	padded := (tagLen + 3) &^ 3 // XDR pad to 4-byte boundary
 	off := 4 + padded
-	if uint64(off)+4 > uint64(len(body)) {
+	if 4+tagLen > uint64(len(body)) || off+4 > uint64(len(body)) {
 		return nil, 0, false
 	}
 	return body[4 : 4+tagLen], binary.BigEndian.Uint32(body[off : off+4]), true
@@ -94,8 +94,10 @@ func (s *Server) handleConn(conn net.Conn) {
 		}
 		req, err := parseRPCCall(frame)
 		if err != nil {
+			// A parse error means the stream is likely desynced; close the
+			// connection rather than spin on garbage until the idle timeout.
 			s.log.Warn("RPC parse error", "remote", remote, "err", err)
-			continue
+			return
 		}
 		s.log.Debug("RPC call", "remote", remote, "xid", req.xid,
 			"prog", req.prog, "vers", req.vers, "proc", req.proc)
@@ -111,7 +113,7 @@ func (s *Server) handleConn(conn net.Conn) {
 				s.log.Debug("NULL")
 				reply = buildRPCReply(req.xid, acceptSuccess)
 			case procCompound:
-				reply = s.handleCompound(req)
+				reply = s.safeHandleCompound(req, remote)
 			default:
 				s.log.Debug("unknown proc", "proc", req.proc)
 				reply = buildRPCReply(req.xid, acceptProcUnavail)
@@ -129,6 +131,19 @@ type compoundState struct {
 	currentIDSet bool
 	savedID      InodeID
 	savedIDSet   bool
+}
+
+func (s *Server) safeHandleCompound(req *rpcRequest, remote string) (reply []byte) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.log.Error("panic handling COMPOUND", "remote", remote, "xid", req.xid, "panic", r)
+			reply = buildRPCReply(req.xid, acceptSuccess)
+			reply = binary.BigEndian.AppendUint32(reply, NFS4ERR_SERVERFAULT)
+			reply = binary.BigEndian.AppendUint32(reply, 0) // empty tag
+			reply = binary.BigEndian.AppendUint32(reply, 0) // resarray count
+		}
+	}()
+	return s.handleCompound(req)
 }
 
 func (s *Server) handleCompound(req *rpcRequest) []byte {
