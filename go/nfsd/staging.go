@@ -199,7 +199,7 @@ func (s *LocalStagingStore) StagedSize(id InodeID) (uint64, bool) {
 	if !ok {
 		return 0, false
 	}
-	return entry.file.size, true
+	return entry.file.Size(), true
 }
 
 func (s *LocalStagingStore) StagedSizes() map[InodeID]uint64 {
@@ -210,7 +210,7 @@ func (s *LocalStagingStore) StagedSizes() map[InodeID]uint64 {
 	}
 	m := make(map[InodeID]uint64, len(s.files))
 	for id, entry := range s.files {
-		m[id] = entry.file.size
+		m[id] = entry.file.Size()
 	}
 	return m
 }
@@ -229,12 +229,22 @@ func (readOnlyStagingStore) StagedSize(InodeID) (uint64, bool)   { return 0, fal
 func (readOnlyStagingStore) StagedSizes() map[InodeID]uint64     { return nil }
 
 // localStagingFile is a disk-backed staging file for new file creation.
+// mu guards f and size against concurrent WRITEs to the same file.
 type localStagingFile struct {
+	mu   sync.Mutex
 	f    *os.File
 	size uint64
 }
 
+func (sf *localStagingFile) Size() uint64 {
+	sf.mu.Lock()
+	defer sf.mu.Unlock()
+	return sf.size
+}
+
 func (sf *localStagingFile) SetSize(size uint64) error {
+	sf.mu.Lock()
+	defer sf.mu.Unlock()
 	if err := sf.f.Truncate(int64(size)); err != nil {
 		return err
 	}
@@ -243,6 +253,8 @@ func (sf *localStagingFile) SetSize(size uint64) error {
 }
 
 func (sf *localStagingFile) Write(offset uint64, data []byte) error {
+	sf.mu.Lock()
+	defer sf.mu.Unlock()
 	end := offset + uint64(len(data))
 	if end > sf.size {
 		if err := sf.f.Truncate(int64(end)); err != nil {
@@ -257,6 +269,8 @@ func (sf *localStagingFile) Write(offset uint64, data []byte) error {
 }
 
 func (sf *localStagingFile) Read(offset uint64, dest []byte) (int, bool, error) {
+	sf.mu.Lock()
+	defer sf.mu.Unlock()
 	if offset >= sf.size {
 		return 0, true, nil
 	}
@@ -273,10 +287,14 @@ func (sf *localStagingFile) Read(offset uint64, dest []byte) (int, bool, error) 
 }
 
 func (sf *localStagingFile) Sync() error {
+	sf.mu.Lock()
+	defer sf.mu.Unlock()
 	return sf.f.Sync()
 }
 
 func (sf *localStagingFile) Reader() (io.ReadSeeker, error) {
+	sf.mu.Lock()
+	defer sf.mu.Unlock()
 	if _, err := sf.f.Seek(0, io.SeekStart); err != nil {
 		return nil, err
 	}
