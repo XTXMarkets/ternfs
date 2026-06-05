@@ -29,6 +29,10 @@ const (
 	authNone = 0
 	authSys  = 1
 
+	// maxRPCMessage caps total reassembled RPC message size: a max WRITE
+	// (maxReadWrite) plus headroom for COMPOUND/RPC framing.
+	maxRPCMessage = maxReadWrite + 1<<20
+
 	// Reply status.
 	msgAccepted = 0
 	msgDenied   = 1
@@ -54,8 +58,11 @@ func readFrame(r io.Reader) ([]byte, error) {
 		last := fragLen&0x80000000 != 0
 		fragLen &= 0x7FFFFFFF
 
-		if fragLen > 1<<20 {
-			return nil, fmt.Errorf("fragment too large: %d bytes", fragLen)
+		// Bound total memory per message. A single fragment can legitimately
+		// carry a full maxReadWrite WRITE plus RPC/COMPOUND framing, so the
+		// only limit is the overall message size (which has headroom for it).
+		if uint64(len(buf))+uint64(fragLen) > maxRPCMessage {
+			return nil, fmt.Errorf("RPC message too large: exceeds %d bytes", maxRPCMessage)
 		}
 
 		frag := make([]byte, fragLen)

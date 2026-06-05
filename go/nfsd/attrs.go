@@ -57,6 +57,9 @@ const (
 	// Fixed FSID for the entire export.
 	fsidMajor uint64 = 0x7E4F
 	fsidMinor uint64 = 0
+
+	// maxReadWrite is the advertised and enforced max READ/WRITE transfer size.
+	maxReadWrite = 1 << 20
 )
 
 // parseBitmap extracts up to two 32-bit words from a Bitmap4 into a fixed array.
@@ -182,10 +185,10 @@ func encodeAttrs(mask [2]uint32, id InodeID, ni NodeInfo) []byte {
 		buf = binary.BigEndian.AppendUint32(buf, 255)
 	}
 	if mask[0]&(1<<FATTR4_MAXREAD) != 0 {
-		buf = binary.BigEndian.AppendUint64(buf, 1<<20)
+		buf = binary.BigEndian.AppendUint64(buf, maxReadWrite)
 	}
 	if mask[0]&(1<<FATTR4_MAXWRITE) != 0 {
-		buf = binary.BigEndian.AppendUint64(buf, 1<<20)
+		buf = binary.BigEndian.AppendUint64(buf, maxReadWrite)
 	}
 
 	// Word 1 attributes (bits 32-63).

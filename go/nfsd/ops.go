@@ -605,7 +605,8 @@ func (s *Server) opRead(args READ4args, st *compoundState, w *COMPOUND4resWriter
 	sf := s.stagingStore.Get(st.currentID)
 
 	offset := args.Offset()
-	count := args.Count()
+	count := min(args.Count(), maxReadWrite)
+
 	buf := make([]byte, count)
 
 	var n int
