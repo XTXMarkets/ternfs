@@ -55,13 +55,27 @@ func (s *Server) opClose(args CLOSE4args, st *compoundState, w *COMPOUND4resWrit
 			return NFS4ERR_BAD_STATEID
 		}
 		sf := s.stagingStore.Get(st.currentID)
-		if sf != nil {
-			r, rErr := sf.Reader()
-			if rErr == nil {
-				_ = s.fs.LinkFile(st.currentID, meta.TernCookie, meta.DirID, meta.FileName, r)
-			}
+		if sf == nil {
+			// Invariant: a staging entry always has both meta and a data file.
+			panic("close: staging meta present but no data file")
 		}
+		r, rErr := sf.Reader()
+		if rErr != nil {
+			// Seek on an open regular file cannot fail; broken invariant.
+			panic("close: staging Reader failed: " + rErr.Error())
+		}
+		linkErr := s.fs.LinkFile(st.currentID, meta.TernCookie, meta.DirID, meta.FileName, r)
+		// Any error here is terminal: transient failures are already retried
+		// below us, and the write phase isn't resumable. Drop staging either way.
 		s.stagingStore.Remove(st.currentID)
+		if linkErr != nil {
+			status := s.errToNFS(linkErr)
+			s.log.Error("close: link file", "err", linkErr, "status", Nfsstat4Name(status))
+			ew := w.AppendResarray_Close()
+			ew.SetValue_Default(status)
+			w.Resume(ew.Finish())
+			return status
+		}
 	} else {
 		// No staging: either a read-close or a replay of a write-close.
 		// Check if the file still exists. For read opens the file is
