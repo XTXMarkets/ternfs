@@ -50,10 +50,16 @@ REPO_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 # paths in startvm.sh / vm_deploy.py resolve.
 cd "$REPO_DIR/kmod"
 
+# The VM listens on a fixed localhost:2223. A previous run (e.g. the kmod step)
+# may have recorded a host key for it, and we boot a freshly-prepared image with
+# new keys, so a stored key would mismatch and ssh would refuse. Don't use the
+# known_hosts file at all for this throwaway VM.
+SSH_OPTS=(-p 2223 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -i image-key)
+
 # start VM in the background
 function cleanup {
     echo 'Syncing logs'
-    rsync -e "ssh -p 2223 -i image-key" -avm --include='/tern-integrationtest.**/' --include=log --include=test-log --include=stderr --include=stdout --exclude='*' fmazzol@localhost:/tmp/ ./ || echo 'Could not sync logs'
+    rsync -e "ssh ${SSH_OPTS[*]}" -avm --include='/tern-integrationtest.**/' --include=log --include=test-log --include=stderr --include=stdout --exclude='*' fmazzol@localhost:/tmp/ ./ || echo 'Could not sync logs'
     echo 'Terminating QEMU'
     pkill qemu
 }
@@ -63,7 +69,7 @@ trap cleanup EXIT
 # Wait for VM to go up by trying to reach it over SSH
 chmod 0600 image-key
 ssh_attempts=0
-while ! ssh -p 2223 -o StrictHostKeyChecking=no -i image-key fmazzol@localhost true; do
+while ! ssh "${SSH_OPTS[@]}" fmazzol@localhost true; do
     sleep 1
     ssh_attempts=$((ssh_attempts + 1))
     if [ $ssh_attempts -ge 60 ]; then
@@ -82,14 +88,14 @@ deb_dir=$(mktemp -d)
 for url in "${nfs_debs[@]}"; do
     curl -fsSL -o "$deb_dir/$(basename "$url")" "$url"
 done
-scp -P 2223 -i image-key "$deb_dir"/*.deb fmazzol@localhost:/tmp/
+scp -o Port=2223 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -i image-key "$deb_dir"/*.deb fmazzol@localhost:/tmp/
 rm -rf "$deb_dir"
-ssh -p 2223 -i image-key fmazzol@localhost "sudo dpkg -i /tmp/*.deb"
+ssh "${SSH_OPTS[@]}" fmazzol@localhost "sudo dpkg -i /tmp/*.deb"
 
 
 ./vm_deploy.py
 
-ssh -p 2223 -i image-key fmazzol@localhost "tern/terntests -verbose -nfs -filter '$filter' -cfg fsTest.dontMigrate -cfg fsTest.dontDefrag -cfg fsTest.corruptFileProb=0 $short $leader_only $preserve_ddir -binaries-dir tern 2>&1" | tee -a test-out
+ssh "${SSH_OPTS[@]}" fmazzol@localhost "tern/terntests -verbose -nfs -filter '$filter' -cfg fsTest.dontMigrate -cfg fsTest.dontDefrag -cfg fsTest.corruptFileProb=0 $short $leader_only $preserve_ddir -binaries-dir tern 2>&1" | tee -a test-out
 
 echo 'Unmounting NFS'
-timeout -s KILL 300 ssh -p 2223 -i image-key fmazzol@localhost "grep nfs4 /proc/mounts | awk '{print \$2}' | xargs -r sudo umount" || true
+timeout -s KILL 300 ssh "${SSH_OPTS[@]}" fmazzol@localhost "grep nfs4 /proc/mounts | awk '{print \$2}' | xargs -r sudo umount" || true

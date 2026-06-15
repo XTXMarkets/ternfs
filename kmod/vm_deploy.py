@@ -36,7 +36,10 @@ def build_and_upload(build_type: str) -> None:
             "-p",
             "--quiet",
             "-e",
-            "ssh -p 2223 -i ../kmod/image-key -l fmazzol",
+            # Ignore known_hosts: the VM at localhost:2223 is throwaway and a
+            # freshly-prepared image presents new host keys, which would
+            # otherwise mismatch a key recorded by an earlier run.
+            "ssh -p 2223 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -i ../kmod/image-key -l fmazzol",
         ]
         + [str(REPO_DIR / f) for f in test_binaries]
         + ["localhost:tern/"],
