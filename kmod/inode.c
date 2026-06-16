@@ -626,7 +626,8 @@ static int COMPAT_FUNC_UNS_IMP(ternfs_tmpfile, struct inode* dir, struct dentry*
     // once link is called we can then assign a name
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6,6,0)
-    // in 6.6+, finish_open_simple handles d_instantiate
+    // we need d_tmpfile to instantiate dentry with our inode
+    d_tmpfile(file, &enode->inode);
     return finish_open_simple(file, 0);
 #else
     // for older kernels, we need to instantiate as unhashed

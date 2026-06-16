@@ -373,7 +373,7 @@ func (r *RunTests) run(
 			"nfs mounted fs",
 			fmt.Sprintf("%v dirs, %v files, %v depth", fsTestOpts.numDirs, fsTestOpts.numFiles, fsTestOpts.depth),
 			func(counters *client.ClientCounters) {
-				fsTest(log, r.registryAddress(), &fsTestOpts, counters, posixHarness{r.nfsMountPoint})
+				fsTest(log, r.registryAddress(), &fsTestOpts, counters, posixHarness{mountPoint: r.nfsMountPoint})
 			},
 		)
 
