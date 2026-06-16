@@ -149,18 +149,16 @@ std::vector<rocksdb::ColumnFamilyDescriptor> ShardDB::getColumnFamilyDescriptors
     rocksdb::ColumnFamilyOptions blockServicesToFilesOptions;
     blockServicesToFilesOptions.merge_operator = CreateInt64AddOperator();
 
-    // The edges CF (and to a lesser extent directories) is delete-heavy: removing
-    // directory entries leaves tombstones, and a bulk deletion can pile up millions of them.
-    // Iterating over lot of tombstones can cpu starve read path.
+    // Delete-heavy CFs iterated on the read path: piled-up tombstones cpu-starve reads.
     rocksdb::ColumnFamilyOptions tombstoneCompactOptions;
     tombstoneCompactOptions.table_properties_collector_factories.emplace_back(
         rocksdb::NewCompactOnDeletionCollectorFactory(/*sliding_window_size=*/10000, /*deletion_trigger=*/5000));
 
     return std::vector<rocksdb::ColumnFamilyDescriptor> {
             {rocksdb::kDefaultColumnFamilyName, {}},
-            {"files", {}},
-            {"spans", {}},
-            {"transientFiles", {}},
+            {"files", tombstoneCompactOptions},
+            {"spans", tombstoneCompactOptions},
+            {"transientFiles", tombstoneCompactOptions},
             {"directories", tombstoneCompactOptions},
             {"edges", tombstoneCompactOptions},
             {"blockServicesToFiles", blockServicesToFilesOptions},
