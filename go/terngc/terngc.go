@@ -13,6 +13,7 @@ import (
 	"net"
 	"os"
 	"path"
+	"sync"
 	"sync/atomic"
 	"time"
 	"xtx/ternfs/cleanup"
@@ -71,7 +72,6 @@ func loadState(db *sql.DB, what string, state any) error {
 }
 
 type CountStateSection struct {
-	Shard  msgs.ShardId
 	Counts [256]uint64
 }
 
@@ -477,6 +477,10 @@ func main() {
 				metrics.Reset()
 				// generic GC metrics
 				metrics.Measurement("eggsfs_gc")
+				metrics.Tag("idx", fmt.Sprintf("%v", *destructFilesIdx))
+				if *appInstance != "" {
+					metrics.Tag("instance", *appInstance)
+				}
 				if *destructFiles {
 					metrics.FieldU64("visited_files", atomic.LoadUint64(&destructFilesState.Stats.VisitedFiles))
 					metrics.FieldU64("destructed_files", atomic.LoadUint64(&destructFilesState.Stats.DestructedFiles))
@@ -494,6 +498,7 @@ func main() {
 				}
 				if *zeroBlockServices {
 					metrics.FieldU64("zero_block_service_files_removed", atomic.LoadUint64(&zeroBlockServiceFilesStats.ZeroBlockServiceFilesRemoved))
+					metrics.FieldU64("zero_block_service_files_cycle_duration_ns", atomic.LoadUint64(&zeroBlockServiceFilesStats.LastCycleDurationNs))
 				}
 				if *scrub {
 					metrics.FieldU64("checked_bytes", atomic.LoadUint64(&scrubState.CheckedBytes))
@@ -520,6 +525,10 @@ func main() {
 					for i := 0; i < 256; i++ {
 						metrics.Measurement("eggsfs_gc")
 						metrics.Tag("shard", fmt.Sprintf("%v", i))
+						metrics.Tag("idx", fmt.Sprintf("%v", *destructFilesIdx))
+						if *appInstance != "" {
+							metrics.Tag("instance", *appInstance)
+						}
 						if *destructFiles {
 							metrics.FieldU64("destruct_files_worker_queue_size", atomic.LoadUint64(&destructFilesState.WorkersQueuesSize[i]))
 							metrics.FieldU32("destruct_files_cycles", atomic.LoadUint32(&destructFilesState.Stats.Cycles[i]))
@@ -588,86 +597,74 @@ func main() {
 	}
 	if *countMetrics {
 		// counting transient files/files/directories
-		go func() {
+		var filesCountDurationNs, directoriesCountDurationNs, transientFilesCountDurationNs uint64
+		countShards := func(what string, count func(shid msgs.ShardId) (uint64, error), counts *[256]uint64, durationNs *uint64) {
 			for {
-				l.Info("starting to count files")
-				for i := int(countState.Files.Shard); i < 256; i++ {
-					shid := msgs.ShardId(i)
-					countState.Files.Shard = shid
-					req := msgs.VisitFilesReq{}
-					resp := msgs.VisitFilesResp{}
-					count := uint64(0)
-					var err error
-					for {
-						if err = c.ShardRequest(l, shid, &req, &resp); err != nil {
-							l.RaiseAlert("could not get files for shard %v: %v", shid, err)
-							break
+				l.Info("starting to count %v", what)
+				start := time.Now()
+				var wg sync.WaitGroup
+				for i := 0; i < 256; i++ {
+					wg.Add(1)
+					go func(shid msgs.ShardId) {
+						defer wg.Done()
+						n, err := count(shid)
+						if err != nil {
+							l.RaiseAlert("could not get %v for shard %v: %v", what, shid, err)
+							return
 						}
-						count += uint64(len(resp.Ids))
-						req.BeginId = resp.NextId
-						if req.BeginId == 0 {
-							break
-						}
-					}
-					if err == nil {
-						countState.Files.Counts[shid] = count
-					}
+						counts[shid] = n
+					}(msgs.ShardId(i))
 				}
-				countState.Files.Shard = 0
+				wg.Wait()
+				atomic.StoreUint64(durationNs, uint64(time.Since(start).Nanoseconds()))
+				l.Info("finished counting %v in %v", what, time.Since(start))
 			}
-		}()
-		go func() {
+		}
+		go countShards("files", func(shid msgs.ShardId) (uint64, error) {
+			req := msgs.VisitFilesReq{}
+			resp := msgs.VisitFilesResp{}
+			count := uint64(0)
 			for {
-				l.Info("starting to count directories")
-				for i := int(countState.Directories.Shard); i < 256; i++ {
-					shid := msgs.ShardId(i)
-					countState.Directories.Shard = shid
-					req := msgs.VisitDirectoriesReq{}
-					resp := msgs.VisitDirectoriesResp{}
-					count := uint64(0)
-					var err error
-					for {
-						if err = c.ShardRequest(l, shid, &req, &resp); err != nil {
-							l.RaiseAlert("could not get directories for shard %v: %v", shid, err)
-							break
-						}
-						count += uint64(len(resp.Ids))
-						req.BeginId = resp.NextId
-						if req.BeginId == 0 {
-							break
-						}
-					}
-					countState.Directories.Counts[shid] = count
+				if err := c.ShardRequest(l, shid, &req, &resp); err != nil {
+					return 0, err
 				}
-				countState.Directories.Shard = 0
+				count += uint64(len(resp.Ids))
+				req.BeginId = resp.NextId
+				if req.BeginId == 0 {
+					return count, nil
+				}
 			}
-		}()
-		go func() {
+		}, &countState.Files.Counts, &filesCountDurationNs)
+		go countShards("directories", func(shid msgs.ShardId) (uint64, error) {
+			req := msgs.VisitDirectoriesReq{}
+			resp := msgs.VisitDirectoriesResp{}
+			count := uint64(0)
 			for {
-				l.Info("starting to count transient files")
-				for i := int(countState.TransientFiles.Shard); i < 256; i++ {
-					shid := msgs.ShardId(i)
-					countState.TransientFiles.Shard = shid
-					req := msgs.VisitTransientFilesReq{}
-					resp := msgs.VisitTransientFilesResp{}
-					count := uint64(0)
-					var err error
-					for {
-						if err = c.ShardRequest(l, shid, &req, &resp); err != nil {
-							l.RaiseAlert("could not get transient files for shard %v: %v", shid, err)
-							break
-						}
-						count += uint64(len(resp.Files))
-						req.BeginId = resp.NextId
-						if req.BeginId == 0 {
-							break
-						}
-					}
-					countState.TransientFiles.Counts[shid] = count
+				if err := c.ShardRequest(l, shid, &req, &resp); err != nil {
+					return 0, err
 				}
-				countState.TransientFiles.Shard = 0
+				count += uint64(len(resp.Ids))
+				req.BeginId = resp.NextId
+				if req.BeginId == 0 {
+					return count, nil
+				}
 			}
-		}()
+		}, &countState.Directories.Counts, &directoriesCountDurationNs)
+		go countShards("transient files", func(shid msgs.ShardId) (uint64, error) {
+			req := msgs.VisitTransientFilesReq{}
+			resp := msgs.VisitTransientFilesResp{}
+			count := uint64(0)
+			for {
+				if err := c.ShardRequest(l, shid, &req, &resp); err != nil {
+					return 0, err
+				}
+				count += uint64(len(resp.Files))
+				req.BeginId = resp.NextId
+				if req.BeginId == 0 {
+					return count, nil
+				}
+			}
+		}, &countState.TransientFiles.Counts, &transientFilesCountDurationNs)
 		go func() {
 			metrics := log.MetricsBuilder{}
 			alert := l.NewNCAlert(10 * time.Second)
@@ -691,6 +688,11 @@ func main() {
 					metrics.FieldU64("count", countState.Directories.Counts[i])
 					metrics.Timestamp(now)
 				}
+				metrics.Measurement("eggsfs_gc")
+				metrics.FieldU64("files_count_duration_ns", atomic.LoadUint64(&filesCountDurationNs))
+				metrics.FieldU64("directories_count_duration_ns", atomic.LoadUint64(&directoriesCountDurationNs))
+				metrics.FieldU64("transient_files_count_duration_ns", atomic.LoadUint64(&transientFilesCountDurationNs))
+				metrics.Timestamp(now)
 				err = influxDB.SendMetrics(metrics.Payload())
 				if err == nil {
 					l.ClearNC(alert)
