@@ -868,29 +868,28 @@ static ssize_t file_write_iter(struct kiocb* iocb, struct iov_iter* from) {
     return res;
 }
 
-int ternfs_file_flush(struct ternfs_inode* enode, struct dentry* dentry) {
-    trace_eggsfs_inode_lock(&enode->inode, TERNFS_INODE_LOCK, "flush");
-    inode_lock(&enode->inode);
+// shared functionality of ternfs_flush and ternfs_link
+// takes the file we're trying to flush/link, the directory we're going to put it in, and a name/len pair to assign
+// note: caller must take care of dget_parent/dput
+// when do_link is false (an O_TMPFILE closed before linkat) we need to clean up.
+static int flush_and_link(struct ternfs_inode *enode, struct dentry *parent, const char *name, size_t name_len, bool do_link) {
+    BUG_ON(!inode_is_locked(&enode->inode));
 
     int err = 0;
-
-    // Not writing, there's nothing to do, there's nothing to do, files are immutable
-    if (enode->file.status != TERNFS_FILE_STATUS_WRITING) {
-        ternfs_debug("status=%d, won't flush", enode->file.status);
-        goto out_early;
-    }
-
-    // We are in another process, skip
-    if (enode->file.owner != current->group_leader) {
-        ternfs_debug("owner=%p != group_leader=%p, won't flush", enode->file.owner, current->group_leader);
-        goto out_early;
-    }
 
     bool file_is_alive_and_flushing = false;
 
     // if we've errored out already, just exit
     err = atomic_read(&enode->file.transient_err);
     if (err < 0) { goto out; }
+
+    // Discarding an unlinked tmpfile: mark it dead so a racing/dup'd write can't
+    // touch the about-to-be-freed mm, then fall through to tear it down. Not an
+    // error for the caller (a close), so we leave err == 0.
+    if (!do_link) {
+        atomic_cmpxchg(&enode->file.transient_err, 0, -EIO);
+        goto out;
+    }
 
     // If the owner doesn't have an mm anymore, it means that the file
     // is being torn down after the process has been terminated. In that case
@@ -918,7 +917,7 @@ int ternfs_file_flush(struct ternfs_inode* enode, struct dentry* dentry) {
     ternfs_debug("linking file");
     err = ternfs_error_to_linux(ternfs_shard_link_file(
         (struct ternfs_fs_info*)enode->inode.i_sb->s_fs_info, enode->inode.i_ino,
-        enode->file.cookie, dentry->d_parent->d_inode->i_ino, dentry->d_name.name, dentry->d_name.len,
+        enode->file.cookie, parent->d_inode->i_ino, name, name_len,
         &enode->edge_creation_time
     ));
     if (err < 0) { goto out; }
@@ -933,11 +932,7 @@ int ternfs_file_flush(struct ternfs_inode* enode, struct dentry* dentry) {
 
     // expire the directory listing -- we know for a fact that it
     // is wrong, it now contains this file.
-    {
-        struct dentry* parent = dget_parent(dentry);
-        WRITE_ONCE(TERNFS_I(d_inode(parent))->dir.mtime_expiry, 0);
-        dput(parent);
-    }
+    WRITE_ONCE(TERNFS_I(d_inode(parent))->dir.mtime_expiry, 0);
 
 out:
     if (err) {
@@ -969,19 +964,112 @@ out:
         mmdrop(enode->file.mm);
     }
     enode->file.mm = NULL;
+
+    return err;
+}
+
+int ternfs_file_flush(struct ternfs_inode* enode, struct dentry* dentry) {
+    int err = 0;
+    trace_eggsfs_inode_lock(&enode->inode, TERNFS_INODE_LOCK, "flush");
+    inode_lock(&enode->inode);
+
+    // Not writing, there's nothing to do, there's nothing to do, files are immutable
+    if (enode->file.status != TERNFS_FILE_STATUS_WRITING) {
+        ternfs_debug("status=%d, won't flush", enode->file.status);
+        goto out;
+    }
+
+    // We are in another process, skip
+    if (enode->file.owner != current->group_leader) {
+        ternfs_debug("owner=%p != group_leader=%p, won't flush", enode->file.owner, current->group_leader);
+        goto out;
+    }
+
+    struct dentry *parent = dget_parent(dentry);
+
+    err = flush_and_link(enode, parent, dentry->d_name.name, dentry->d_name.len, true);
+
+    dput(parent);
+
+out:
     inode_unlock(&enode->inode);
     trace_eggsfs_inode_lock(&enode->inode, TERNFS_INODE_UNLOCK, "flush");
     return err;
+}
 
-out_early:
+// Closing an O_TMPFILE that was never linked: tear down the transient state
+// (mm reference, writing span) that flush_and_link would otherwise free on link.
+// Once linkat has run the file is READING, so this becomes a no-op. The owner
+// check mirrors ternfs_file_flush: a shared-fd holder closing must not tear down
+// a file the owner is still writing -- the owner's own close handles that.
+static void ternfs_discard_tmpfile(struct ternfs_inode* enode) {
+    trace_eggsfs_inode_lock(&enode->inode, TERNFS_INODE_LOCK, "discard_tmpfile");
+    inode_lock(&enode->inode);
+    if (enode->file.status == TERNFS_FILE_STATUS_WRITING && enode->file.owner == current->group_leader) {
+        flush_and_link(enode, NULL, NULL, 0, false);
+    }
     inode_unlock(&enode->inode);
-    trace_eggsfs_inode_lock(&enode->inode, TERNFS_INODE_UNLOCK, "flush");
+    trace_eggsfs_inode_lock(&enode->inode, TERNFS_INODE_UNLOCK, "discard_tmpfile");
+}
+
+int ternfs_link(struct dentry* old_dentry, struct inode* dir, struct dentry* new_dentry) {
+    struct inode* inode = d_inode(old_dentry);
+    struct ternfs_inode* enode = TERNFS_I(inode);
+
+    // should be done by vfs_link
+    BUG_ON(!inode_is_locked(inode));
+
+    int err = 0;
+
+    struct dentry* parent = dget_parent(old_dentry);
+
+    // TODO: there are probably cases in which this could be allowed (e.g. cross directory things that happen to be in the same shard)
+    if (parent->d_inode != dir) {
+        ternfs_debug("tried to link a file in a different directory than the one it was opened in");
+        err = -EXDEV;
+        goto out;
+    }
+
+    // linking existing files is not allowed
+    // TODO: check i_nlink once we actually start reporting link counts
+    if (enode->file.status != TERNFS_FILE_STATUS_WRITING) {
+        ternfs_debug("status=%d, won't link", enode->file.status);
+        err = -EINVAL;
+        goto out;
+    }
+
+    // this is not an error in normal flush (because other processes could close the fd) but linking would be weird
+    if (enode->file.owner != current->group_leader) {
+        ternfs_debug("owner=%p != group_leader=%p, won't link", enode->file.owner, current->group_leader);
+        err = -EPERM;
+        goto out;
+    }
+
+    err = flush_and_link(enode, parent, new_dentry->d_name.name, new_dentry->d_name.len, true);
+    if (err < 0) { goto out; }
+
+    // d_tmpfile() dropped the link count to 0 when the inode was created; restore
+    // it now that the file has a name, take the dcache's inode ref, and turn the
+    // negative new_dentry positive
+    inc_nlink(inode);
+    ihold(inode);
+    d_instantiate(new_dentry, inode);
+
+out:
+    dput(parent);
+
     return err;
 }
 
 static int file_flush_internal(struct file* filp, fl_owner_t id) { // can we get write while this is in progress?
     struct ternfs_inode* enode = TERNFS_I(filp->f_inode);
     struct dentry* dentry = filp->f_path.dentry;
+
+    if (unlikely(filp->f_flags & __O_TMPFILE)) {
+        ternfs_discard_tmpfile(enode);
+        return 0;
+    }
+
     return ternfs_file_flush(enode, dentry);
 }
 

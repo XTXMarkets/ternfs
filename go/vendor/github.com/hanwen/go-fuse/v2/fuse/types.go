@@ -310,6 +310,8 @@ const (
 	CAP_NO_EXPORT_SUPPORT    = (1 << 38)
 	CAP_HAS_RESEND           = (1 << 39)
 	CAP_ALLOW_IDMAP          = (1 << 40)
+	CAP_OVER_IO_URING        = (1 << 41)
+	CAP_REQUEST_TIMEOUT      = (1 << 42)
 )
 
 type InitIn struct {
@@ -340,7 +342,9 @@ type InitOut struct {
 	Padding             uint16
 	Flags2              uint32
 	MaxStackDepth       uint32
-	Unused              [6]uint32
+	RequestTimeout      uint16
+
+	_Unused [11]uint16
 }
 
 func (o *InitOut) Flags64() uint64 {
@@ -537,6 +541,12 @@ type NotifyRetrieveIn struct {
 	Dummy4 uint64
 }
 
+type NotifyPruneOut struct {
+	Count    uint32
+	_padding uint32
+	_spare   uint64
+}
+
 const (
 	//	NOTIFY_POLL         = -1 // notify kernel that a poll waiting for IO on a file handle should wake up
 	NOTIFY_INVAL_INODE    = -2 // notify kernel that an inode should be invalidated
@@ -545,8 +555,7 @@ const (
 	NOTIFY_RETRIEVE_CACHE = -5 // retrieve data from kernel cache of an inode
 	NOTIFY_DELETE         = -6 // notify kernel that a directory entry has been deleted
 	NOTIFY_RESEND         = -7
-
-// NOTIFY_CODE_MAX     = -6
+	NOTIFY_PRUNE          = -9
 )
 
 type FlushIn struct {

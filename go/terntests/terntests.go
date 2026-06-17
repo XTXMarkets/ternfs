@@ -345,7 +345,16 @@ func (r *RunTests) run(
 		"mounted fs",
 		fmt.Sprintf("%v dirs, %v files, %v depth", fsTestOpts.numDirs, fsTestOpts.numFiles, fsTestOpts.depth),
 		func(counters *client.ClientCounters) {
-			fsTest(log, r.registryAddress(), &fsTestOpts, counters, posixHarness{r.mountPoint})
+			fsTest(log, r.registryAddress(), &fsTestOpts, counters, posixHarness{mountPoint: r.mountPoint})
+		},
+	)
+
+	r.test(
+		log,
+		"mounted fs (tmpfile)",
+		fmt.Sprintf("%v dirs, %v files, %v depth", fsTestOpts.numDirs, fsTestOpts.numFiles, fsTestOpts.depth),
+		func(counters *client.ClientCounters) {
+			fsTest(log, r.registryAddress(), &fsTestOpts, counters, posixHarness{mountPoint: r.mountPoint, useTmpfileLink: true})
 		},
 	)
 
@@ -364,7 +373,7 @@ func (r *RunTests) run(
 			"nfs mounted fs",
 			fmt.Sprintf("%v dirs, %v files, %v depth", fsTestOpts.numDirs, fsTestOpts.numFiles, fsTestOpts.depth),
 			func(counters *client.ClientCounters) {
-				fsTest(log, r.registryAddress(), &fsTestOpts, counters, posixHarness{r.nfsMountPoint})
+				fsTest(log, r.registryAddress(), &fsTestOpts, counters, posixHarness{mountPoint: r.nfsMountPoint})
 			},
 		)
 
@@ -509,6 +518,47 @@ func (r *RunTests) run(
 					panic(fmt.Errorf("expected %v, got %v", contents, contents3))
 				}
 			*/
+		},
+	)
+
+	r.test(
+		log,
+		"tmpfile",
+		"",
+		func(counters *client.ClientCounters) {
+			contents := []byte("hello from tmpfile")
+			targetPath := path.Join(r.mountPoint, "test-tmpfile")
+
+			// open with O_TMPFILE in the mount directory
+			fd, err := unix.Open(r.mountPoint, unix.O_TMPFILE|unix.O_RDWR, 0666)
+			if err != nil {
+				panic(fmt.Errorf("O_TMPFILE: %w", err))
+			}
+			f := os.NewFile(uintptr(fd), targetPath)
+
+			if _, err := f.Write(contents); err != nil {
+				f.Close()
+				panic(err)
+			}
+
+			// link via /proc/self/fd
+			procPath := fmt.Sprintf("/proc/self/fd/%d", f.Fd())
+			if err := unix.Linkat(unix.AT_FDCWD, procPath, unix.AT_FDCWD, targetPath, unix.AT_SYMLINK_FOLLOW); err != nil {
+				f.Close()
+				panic(fmt.Errorf("linkat: %w", err))
+			}
+			if err := f.Close(); err != nil {
+				panic(err)
+			}
+
+			// read back and verify
+			got, err := os.ReadFile(targetPath)
+			if err != nil {
+				panic(err)
+			}
+			if !bytes.Equal(contents, got) {
+				panic(fmt.Errorf("tmpfile content mismatch: expected %q, got %q", contents, got))
+			}
 		},
 	)
 

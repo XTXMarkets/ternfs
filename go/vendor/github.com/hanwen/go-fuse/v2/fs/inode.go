@@ -366,12 +366,17 @@ func (n *Inode) ForgetPersistent() {
 // should be standard mode argument (eg. S_IFDIR). The inode number in
 // id.Ino argument is used to implement hard-links.  If it is given,
 // and another node with the same ID is known, the new inode may be
-// ignored, and the old one used instead.
+// ignored, and the old one used instead. If the parent inode
+// implements NodeWrapChilder, the returned Inode will have a
+// different InodeEmbedder from the one passed in.
 func (n *Inode) NewInode(ctx context.Context, node InodeEmbedder, id StableAttr) *Inode {
 	return n.newInode(ctx, node, id, false)
 }
 
 func (n *Inode) newInode(ctx context.Context, ops InodeEmbedder, id StableAttr, persistent bool) *Inode {
+	if wc, ok := n.ops.(NodeWrapChilder); ok {
+		ops = wc.WrapChild(ctx, ops)
+	}
 	return n.bridge.newInode(ctx, ops, id, persistent)
 }
 
@@ -726,6 +731,19 @@ retry:
 // will be started.
 func (n *Inode) NotifyEntry(name string) syscall.Errno {
 	status := n.bridge.server.EntryNotify(n.nodeId, name)
+	return syscall.Errno(status)
+}
+
+// NotifyPrune instructs the kernel to forget the inodes passed as
+// argument. The kernel will issue FORGET requests as far as possible
+// in response.  If the receiver Inode must be forgotten too it must
+// be included in the argument separately.
+func (n *Inode) NotifyPrune(nodes []*Inode) syscall.Errno {
+	ids := make([]uint64, 0, len(nodes))
+	for _, n := range nodes {
+		ids = append(ids, n.nodeId)
+	}
+	status := n.bridge.server.(*fuse.Server).PruneNotify(ids)
 	return syscall.Errno(status)
 }
 

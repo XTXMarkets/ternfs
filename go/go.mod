@@ -34,4 +34,4 @@ require (
 	golang.org/x/net v0.47.0
 )
 
-replace github.com/hanwen/go-fuse/v2 => github.com/bitonic/go-fuse/v2 v2.0.0-20251001121756-22ce115c0dfc
+replace github.com/hanwen/go-fuse/v2 => github.com/bitonic/go-fuse/v2 v2.0.0-20260325133626-02d0b5a68d23
