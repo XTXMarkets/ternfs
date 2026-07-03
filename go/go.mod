@@ -12,7 +12,7 @@ require (
 	github.com/hanwen/go-fuse/v2 v2.8.0
 	github.com/mattn/go-sqlite3 v1.14.32
 	golang.org/x/sync v0.11.0
-	golang.org/x/sys v0.38.0
+	golang.org/x/sys v0.45.0
 )
 
 require (
@@ -31,7 +31,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.30.2 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.33.21 // indirect
 	github.com/aws/smithy-go v1.24.2 // indirect
-	golang.org/x/net v0.47.0
+	golang.org/x/net v0.55.0
 )
 
 replace github.com/hanwen/go-fuse/v2 => github.com/bitonic/go-fuse/v2 v2.0.0-20260325133626-02d0b5a68d23
