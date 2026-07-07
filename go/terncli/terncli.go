@@ -1316,15 +1316,30 @@ func main() {
 
 	estimateFileAgeCmd := flag.NewFlagSet("estimate-file-age", flag.ExitOnError)
 	estimateFileAgeId := estimateFileAgeCmd.Uint64("id", 0, "ID of the file to estimage age for")
+	estimateFileAgePath := estimateFileAgeCmd.String("path", "", "Path of the file to estimate age for (alternative to -id)")
 	estimateFileAgeRun := func() {
-		id := msgs.InodeId(*estimateFileAgeId)
 		c := getClient()
+		id := msgs.InodeId(*estimateFileAgeId)
+		if id == 0 {
+			if *estimateFileAgePath == "" {
+				panic(fmt.Errorf("either -id or -path must be specified"))
+			}
+			var err error
+			if id, err = c.ResolvePath(l, *estimateFileAgePath); err != nil {
+				panic(fmt.Errorf("could not resolve path %v: %v", *estimateFileAgePath, err))
+			}
+		}
+		if id.Type() != msgs.FILE {
+			panic(fmt.Errorf("inode id %v is not a file", id))
+		}
 		fileSpansReq := msgs.FileSpansReq{
 			FileId:     id,
 			ByteOffset: 0,
 		}
 		fileSpansResp := msgs.FileSpansResp{}
-		var oldestBlock uint64 = math.MaxUint64
+		oldestBlock := uint64(math.MaxUint64)
+		oldestByLoc := map[msgs.Location]uint64{}
+		var locOrder []msgs.Location
 
 		for {
 			if err := c.ShardRequest(l, id.Shard(), &fileSpansReq, &fileSpansResp); err != nil {
@@ -1339,6 +1354,11 @@ func main() {
 				for _, loc := range locBody.Locations {
 					for _, block := range loc.Blocks {
 						oldestBlock = min(oldestBlock, uint64(block.BlockId))
+						if _, seen := oldestByLoc[loc.LocationId]; !seen {
+							oldestByLoc[loc.LocationId] = math.MaxUint64
+							locOrder = append(locOrder, loc.LocationId)
+						}
+						oldestByLoc[loc.LocationId] = min(oldestByLoc[loc.LocationId], uint64(block.BlockId))
 					}
 				}
 			}
@@ -1358,6 +1378,9 @@ func main() {
 			return
 		} else {
 			l.Info("Estimated file age %v, %v", id, msgs.TernTime(oldestBlock))
+			for _, loc := range locOrder {
+				l.Info("  location %v: %v", loc, msgs.TernTime(oldestByLoc[loc]))
+			}
 		}
 	}
 
