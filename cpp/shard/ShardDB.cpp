@@ -869,7 +869,9 @@ struct ShardDBImpl {
     }
 
     TernError _fileSpans(rocksdb::ReadOptions& options, const FileSpansReq& req, FileSpansResp& resp) {
-        if (req.fileId.type() != InodeType::FILE) {
+        // symlinks whose target exceeds the inline threshold own block spans too, so they can
+        // show up in the block-service->files index and must be readable here (see _localFileSpans).
+        if (req.fileId.type() != InodeType::FILE && req.fileId.type() != InodeType::SYMLINK) {
             return TernError::TYPE_IS_DIRECTORY;
         }
         StaticValue<SpanKey> lowerKey;
