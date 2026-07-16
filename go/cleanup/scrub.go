@@ -152,6 +152,33 @@ func scrubWorker(
 	}
 }
 
+func blockInFile(log *log.Logger, c *client.Client, file msgs.InodeId, block msgs.BlockId) (bool, error) {
+	spansReq := msgs.FileSpansReq{FileId: file}
+	spansResp := msgs.FileSpansResp{}
+	for {
+		if err := c.ShardRequest(log, file.Shard(), &spansReq, &spansResp); err != nil {
+			return false, err
+		}
+		for spanIx := range spansResp.Spans {
+			span := &spansResp.Spans[spanIx]
+			if span.Header.IsInline {
+				continue
+			}
+			for _, loc := range span.Body.(*msgs.FetchedLocations).Locations {
+				for _, b := range loc.Blocks {
+					if b.BlockId == block {
+						return true, nil
+					}
+				}
+			}
+		}
+		spansReq.ByteOffset = spansResp.NextOffset
+		if spansReq.ByteOffset == 0 {
+			return false, nil
+		}
+	}
+}
+
 func migrateFileOnError(
 	log *log.Logger,
 	c *client.Client,
@@ -198,6 +225,19 @@ func migrateFileOnError(
 				log.Info("file %v is %v in metadata, ignoring scrub failure: %v", req.file, serr, err)
 				return true
 			}
+			// A block went missing while the file still exists. If the block is no
+			// longer referenced by the file, a concurrent migration/scrub or GC moved
+			// it under us -- skip rather than terminating the whole shard cycle. If it
+			// is still referenced, this is a real problem and we fall through to alert.
+			if err == msgs.BLOCK_NOT_FOUND {
+				stillReferenced, checkErr := blockInFile(log, c, req.file, req.block)
+				if checkErr != nil {
+					log.Info("could not verify whether block %v is still in file %v: %v", req.block, req.file, checkErr)
+				} else if !stillReferenced {
+					log.Debug("block %v no longer referenced by file %v, likely a concurrent migration/GC, skipping", req.block, req.file)
+					return true
+				}
+			}
 			log.Info("could not scrub file %v, will terminate: %v", req.file, err)
 			select {
 			case terminateChan <- err:
@@ -234,8 +274,15 @@ func scrubScraper(
 		for _, file := range fileResp.Ids {
 			spansReq := msgs.LocalFileSpansReq{FileId: file}
 			spansResp := msgs.LocalFileSpansResp{}
+			gone := false
 			for {
 				if err := c.ShardRequest(log, file.Shard(), &spansReq, &spansResp); err != nil {
+					// The file was GC'd while we were walking it -- nothing to scrub, skip it.
+					if err == msgs.FILE_NOT_FOUND {
+						log.Debug("file %v gone while scraping spans, skipping", file)
+						gone = true
+						break
+					}
 					log.Info("could not get spans: %v", err)
 					select {
 					case terminateChan <- err:
@@ -264,6 +311,9 @@ func scrubScraper(
 				if spansReq.ByteOffset == 0 {
 					break
 				}
+			}
+			if gone {
+				continue
 			}
 		}
 		stats.Cursors[shid] = fileResp.NextId
