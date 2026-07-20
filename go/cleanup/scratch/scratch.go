@@ -13,11 +13,19 @@ import (
 	"xtx/ternfs/msgs"
 )
 
+const spansPerDestructTurn = 32
+
 type ScratchFile interface {
 	Close()
 	Lock() (*lockedScratchFile, error)
 	// does not ensure valid
 	FileId() msgs.InodeId
+}
+
+type pendingInode struct {
+	id       msgs.InodeId
+	cookie   [8]byte
+	scrapped bool
 }
 
 func NewScratchFile(log *log.Logger, c *client.Client, shard msgs.ShardId, note string) ScratchFile {
@@ -31,6 +39,7 @@ func NewScratchFile(log *log.Logger, c *client.Client, shard msgs.ShardId, note 
 		clearReason:   "",
 		deadline:      0,
 		done:          make(chan struct{}),
+		wake:          make(chan struct{}, 1),
 
 		id: msgs.NULL_INODE_ID,
 	}
@@ -41,10 +50,12 @@ func NewScratchFile(log *log.Logger, c *client.Client, shard msgs.ShardId, note 
 			select {
 			case <-ticker.C:
 				scratch.releaseScratchFile()
-			case _, ok := <-scratch.done:
-				if !ok {
-					return
-				}
+				scratch.drainPending(false)
+			case <-scratch.wake:
+				scratch.drainPending(false)
+			case <-scratch.done:
+				scratch.drainPending(true)
+				return
 			}
 		}
 	}()
@@ -54,26 +65,10 @@ func NewScratchFile(log *log.Logger, c *client.Client, shard msgs.ShardId, note 
 func (f *lockedScratchFile) Unlock() {
 	f.locked = false
 	if f.clearOnUnlock {
-		f.log.Info("closing scratch file %v, reason: %s", f.id, f.clearReason)
-		resp := msgs.ScrapTransientFileResp{}
-		err := f.c.ShardRequest(
-			f.log,
-			f.shard,
-			&msgs.ScrapTransientFileReq{
-				Id:     f.id,
-				Cookie: f.cookie,
-			},
-			&resp,
-		)
-		if err != nil {
-			f.log.Info("failed to scrap transient file: %v", err)
-		}
-
+		f.log.Info("recycling scratch file %v, reason: %s", f.id, f.clearReason)
 		f.clearOnUnlock = false
 		f.clearReason = ""
-		f.id = msgs.NULL_INODE_ID
-		f.size = 0
-		f.cookie = [8]byte{}
+		f.enqueueForDestructLocked()
 	}
 	f.mu.Unlock()
 }
@@ -166,20 +161,10 @@ func (s *scratchFile) Lock() (*lockedScratchFile, error) {
 	return &lockedScratchFile{s, true}, nil
 }
 
-func (s *scratchFile) _lock() *lockedScratchFile {
-	s.mu.Lock()
-	select {
-	case <-s.done:
-		s.mu.Unlock()
-		return nil
-	default:
-	}
-	return &lockedScratchFile{s, true}
-}
-
 func (f *scratchFile) Close() {
 	f.mu.Lock()
-	defer f.mu.Unlock()
+	f.enqueueForDestructLocked()
+	f.mu.Unlock()
 	close(f.done)
 }
 
@@ -199,25 +184,130 @@ type scratchFile struct {
 	clearReason   string
 	deadline      msgs.TernTime
 	done          chan struct{}
+	wake          chan struct{}
 
-	mu     sync.Mutex
-	id     msgs.InodeId
-	cookie [8]byte
-	size   uint64
+	mu      sync.Mutex
+	id      msgs.InodeId
+	cookie  [8]byte
+	size    uint64
+	pending []pendingInode
+}
+
+func (s *scratchFile) enqueueForDestructLocked() {
+	if s.id == msgs.NULL_INODE_ID {
+		return
+	}
+	s.pending = append(s.pending, pendingInode{id: s.id, cookie: s.cookie})
+	s.id = msgs.NULL_INODE_ID
+	s.size = 0
+	s.cookie = [8]byte{}
+	select {
+	case s.wake <- struct{}{}:
+	default:
+	}
 }
 
 func (s *scratchFile) releaseScratchFile() {
-	lockedScratchFile := s._lock()
-	// If the scratch file is already closed, do nothing.
-	if lockedScratchFile == nil {
-		return
-	}
-	defer lockedScratchFile.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.id == msgs.NULL_INODE_ID {
 		return
 	}
 	if msgs.Now() > s.deadline {
-		lockedScratchFile.ClearOnUnlock(fmt.Sprintf("scratch file %v with note (%s) lifetime passed resetting", s.id, s.note))
-		return
+		s.log.Info("scratch file %v with note (%s) lifetime passed, recycling", s.id, s.note)
+		s.enqueueForDestructLocked()
 	}
+}
+
+func (s *scratchFile) drainPending(flush bool) {
+	for {
+		s.mu.Lock()
+		if len(s.pending) == 0 {
+			s.mu.Unlock()
+			return
+		}
+		p := s.pending[0]
+		s.pending = s.pending[1:]
+		s.mu.Unlock()
+
+		if s.destructTurn(&p) {
+			continue
+		}
+
+		s.mu.Lock()
+		s.pending = append(s.pending, p)
+		s.mu.Unlock()
+		if !flush {
+			select {
+			case s.wake <- struct{}{}:
+			default:
+			}
+			return
+		}
+	}
+}
+
+func (s *scratchFile) destructTurn(p *pendingInode) (finished bool) {
+
+	if !p.scrapped {
+		err := s.c.ShardRequest(s.log, s.shard, &msgs.ScrapTransientFileReq{Id: p.id, Cookie: p.cookie}, &msgs.ScrapTransientFileResp{})
+		if err == msgs.FILE_NOT_FOUND {
+			return true // GC got there first
+		}
+		if err != nil {
+			s.log.Info("could not scrap scratch file %v: %v; leaving it to GC", p.id, err)
+			return true
+		}
+		p.scrapped = true
+	}
+
+	initReq := msgs.RemoveSpanInitiateReq{FileId: p.id, Cookie: p.cookie}
+	initResp := msgs.RemoveSpanInitiateResp{}
+	for i := 0; i < spansPerDestructTurn; i++ {
+		err := s.c.ShardRequest(s.log, s.shard, &initReq, &initResp)
+		if err == msgs.FILE_EMPTY {
+			if err := s.c.ShardRequest(s.log, s.shard, &msgs.RemoveInodeReq{Id: p.id}, &msgs.RemoveInodeResp{}); err != nil {
+				s.log.Info("could not remove scratch inode %v: %v; leaving it to GC", p.id, err)
+			}
+			return true
+		}
+		if err == msgs.FILE_NOT_FOUND {
+			return true // GC got there first
+		}
+		if err != nil {
+			s.log.Info("could not initiate span removal for scratch file %v: %v; leaving it to GC", p.id, err)
+			return true
+		}
+		if len(initResp.Blocks) == 0 {
+			continue
+		}
+		certifyReq := msgs.RemoveSpanCertifyReq{FileId: p.id, Cookie: p.cookie, ByteOffset: initResp.ByteOffset}
+		certifyReq.Proofs = make([]msgs.BlockProof, len(initResp.Blocks))
+		for j := range initResp.Blocks {
+			block := &initResp.Blocks[j]
+			var proof [8]byte
+			var err error
+			if block.BlockServiceFlags.HasAny(msgs.TERNFS_BLOCK_SERVICE_DECOMMISSIONED) {
+				proof, err = s.c.EraseDecommissionedBlock(block)
+			} else {
+				proof, err = s.c.EraseBlock(s.log, block)
+			}
+			if err != nil {
+				s.log.Info("could not erase block %v for scratch file %v: %v; leaving it to GC", block.BlockId, p.id, err)
+				return true
+			}
+			certifyReq.Proofs[j].BlockId = block.BlockId
+			certifyReq.Proofs[j].Proof = proof
+		}
+
+		err = s.c.ShardRequest(s.log, s.shard, &certifyReq, &msgs.RemoveSpanCertifyResp{})
+		if err == msgs.FILE_NOT_FOUND {
+			return true // GC removed the whole inode
+		}
+		if err != nil {
+			s.log.Info("could not certify span removal for scratch file %v: %v; leaving it to GC", p.id, err)
+			return true
+		}
+	}
+	return false
 }
