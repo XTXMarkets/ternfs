@@ -138,6 +138,10 @@ std::ostream& operator<<(std::ostream& out, LogIdx idx) {
     return out;
 }
 
+std::ostream& operator<<(std::ostream& out, Epoch epoch) {
+    return out << epoch.u64;
+}
+
 std::ostream& operator<<(std::ostream& out, LeaderToken token) {
-    return out << token.idx() << ":" << token.replica();
+    return out << token.epoch() << ":" << token.replica();
 }

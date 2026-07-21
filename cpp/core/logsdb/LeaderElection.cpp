@@ -202,7 +202,7 @@ void LeaderElection::proccessNewLeaderRequest(ReplicaId fromReplicaId, uint64_t 
     auto& response = _reqResp.newResponse( fromReplicaId, requestId);
     auto& newLeaderResponse = response.msg.body.setNewLeader();
 
-    if (request.nomineeToken.idx() <= _metadata.getLeaderToken().idx() || request.nomineeToken < _metadata.getNomineeToken()) {
+    if (request.nomineeToken.epoch() <= _metadata.getLeaderToken().epoch() || request.nomineeToken < _metadata.getNomineeToken()) {
         newLeaderResponse.result = TernError::LEADER_PREEMPTED;
         return;
     }

@@ -117,7 +117,7 @@ TEST_CASE("LogMetadata persists leader and release state") {
         CHECK(stats.entriesReleased.load() == doctest::Approx(0.1));
 
         auto token = metadata.generateNomineeToken();
-        CHECK(token == LeaderToken(ReplicaId(2), LogIdx(1)));
+        CHECK(token == LeaderToken(ReplicaId(2), Epoch(1)));
         metadata.setNomineeToken(token);
         REQUIRE(metadata.updateLeaderToken(token) == TernError::NO_ERROR);
 
@@ -148,7 +148,7 @@ TEST_CASE("LogMetadata persists leader and release state") {
 
     CHECK(
         reopenedMetadata.getLeaderToken() ==
-        LeaderToken(ReplicaId(2), LogIdx(1)));
+        LeaderToken(ReplicaId(2), Epoch(1)));
     CHECK(reopenedMetadata.getLastReleased() == LogIdx(2));
     CHECK(reopenedMetadata.getLastReleasedTime() == TernTime(20));
     CHECK(reopenedStats.currentEpoch.load() == 1);
@@ -168,23 +168,23 @@ TEST_CASE("LogMetadata rejects preempted leader tokens") {
     REQUIRE(metadata.init(true));
     REQUIRE(data.init(true));
 
-    auto nominee = LeaderToken(ReplicaId(2), LogIdx(1));
+    auto nominee = LeaderToken(ReplicaId(2), Epoch(1));
     metadata.setNomineeToken(nominee);
 
     CHECK(
-        metadata.updateLeaderToken(LeaderToken(ReplicaId(1), LogIdx(1))) ==
+        metadata.updateLeaderToken(LeaderToken(ReplicaId(1), Epoch(1))) ==
         TernError::LEADER_PREEMPTED);
     CHECK(metadata.getLeaderToken() == LeaderToken(0, 0));
     CHECK(metadata.getNomineeToken() == nominee);
-    CHECK(metadata.isPreempting(LeaderToken(ReplicaId(3), LogIdx(1))));
+    CHECK(metadata.isPreempting(LeaderToken(ReplicaId(3), Epoch(1))));
     CHECK_FALSE(
-        metadata.isPreempting(LeaderToken(ReplicaId(1), LogIdx(1))));
+        metadata.isPreempting(LeaderToken(ReplicaId(1), Epoch(1))));
 
     REQUIRE(metadata.updateLeaderToken(nominee) == TernError::NO_ERROR);
     CHECK(metadata.getLeaderToken() == nominee);
     CHECK(metadata.getNomineeToken() == LeaderToken(0, 0));
     CHECK(
-        metadata.updateLeaderToken(LeaderToken(ReplicaId(1), LogIdx(1))) ==
+        metadata.updateLeaderToken(LeaderToken(ReplicaId(1), Epoch(1))) ==
         TernError::LEADER_PREEMPTED);
 }
 
@@ -210,10 +210,10 @@ TEST_CASE("LogMetadata drops unreleased entries after a skipped epoch") {
     metadata.setLastReleased(LogIdx(2));
 
     LogsDBLogEntry entry;
-    metadata.setNomineeToken(LeaderToken(ReplicaId(1), LogIdx(1)));
+    metadata.setNomineeToken(LeaderToken(ReplicaId(1), Epoch(1)));
     CHECK(data.readLogEntry(LogIdx(3), entry) == TernError::NO_ERROR);
 
-    metadata.setNomineeToken(LeaderToken(ReplicaId(1), LogIdx(2)));
+    metadata.setNomineeToken(LeaderToken(ReplicaId(1), Epoch(2)));
     CHECK(
         data.readLogEntry(LogIdx(3), entry) ==
         TernError::LOG_ENTRY_MISSING);

@@ -129,7 +129,7 @@ TEST_CASE("LeaderElection completes an empty-log election") {
         ternNow() + LogsDB::LEADER_INACTIVE_TIMEOUT + 1_ns);
     election.maybeStartLeaderElection();
     CHECK_FALSE(election.isLeader());
-    CHECK(metadata.getNomineeToken() == LeaderToken(ReplicaId(0), LogIdx(1)));
+    CHECK(metadata.getNomineeToken() == LeaderToken(ReplicaId(0), Epoch(1)));
 
     auto nominationRequests = dispatchRequests(reqResp);
     REQUIRE(nominationRequests.size() == LogsDB::REPLICA_COUNT - 1);
@@ -200,7 +200,7 @@ TEST_CASE("LeaderElection completes an empty-log election") {
     REQUIRE(completion2 != nullptr);
     CHECK(
         completion1->msg.body.getNewLeaderConfirm().nomineeToken ==
-        LeaderToken(ReplicaId(0), LogIdx(1)));
+        LeaderToken(ReplicaId(0), Epoch(1)));
     CHECK(
         completion1->msg.body.getNewLeaderConfirm().releasedIdx ==
         LogIdx(0));
@@ -218,7 +218,7 @@ TEST_CASE("LeaderElection completes an empty-log election") {
         completionResponse);
 
     CHECK(election.isLeader());
-    CHECK(metadata.getLeaderToken() == LeaderToken(ReplicaId(0), LogIdx(1)));
+    CHECK(metadata.getLeaderToken() == LeaderToken(ReplicaId(0), Epoch(1)));
     CHECK(metadata.getNomineeToken() == LeaderToken(0, 0));
     CHECK(metadata.getLastReleased() == LogIdx(0));
 }
@@ -250,7 +250,7 @@ TEST_CASE("LeaderElection participant handles recovery and completion") {
         metadata,
         data,
         reqResp);
-    auto nomineeToken = LeaderToken(ReplicaId(1), LogIdx(1));
+    auto nomineeToken = LeaderToken(ReplicaId(1), Epoch(1));
 
     NewLeaderReq nomination;
     nomination.nomineeToken = nomineeToken;
@@ -322,7 +322,7 @@ TEST_CASE("LeaderElection participant handles recovery and completion") {
     REQUIRE(data.readLogEntry(LogIdx(2), entry) == TernError::NO_ERROR);
     CHECK(std::string(entry.value.begin(), entry.value.end()) == "two");
 
-    nomination.nomineeToken = LeaderToken(ReplicaId(2), LogIdx(1));
+    nomination.nomineeToken = LeaderToken(ReplicaId(2), Epoch(1));
     election.proccessNewLeaderRequest(ReplicaId(2), 15, nomination);
     responses.clear();
     reqResp.getResponsesToSend(responses);

@@ -502,7 +502,6 @@ static inline bool blockServiceFlagsReadable(BlockServiceFlags flags) {
 std::ostream& operator<<(std::ostream& out, BlockServiceFlags flags);
 
 
-// we reserve 3 bits so that we can fit ReplicaId in LeaderToken
 struct LogIdx {
     static constexpr size_t STATIC_SIZE = sizeof(uint64_t);
     uint64_t u64;
@@ -555,14 +554,64 @@ constexpr LogIdx MAX_LOG_IDX = LogIdx(0xffffffffffffffffull >> 3);
 
 std::ostream& operator<<(std::ostream& out, LogIdx idx);
 
+// Three bits are reserved so Epoch and ReplicaId fit in LeaderToken.
+struct Epoch {
+    static constexpr size_t STATIC_SIZE = sizeof(uint64_t);
+    uint64_t u64;
+
+    constexpr Epoch(): u64(0) {}
+
+    constexpr Epoch(uint64_t epoch): u64(epoch) {
+        ALWAYS_ASSERT(valid());
+    }
+
+    Epoch& operator++() {
+        ++u64;
+        return *this;
+    }
+
+    bool operator==(Epoch rhs) const {
+        return u64 == rhs.u64;
+    }
+
+    bool operator<(Epoch rhs) const {
+        return u64 < rhs.u64;
+    }
+
+    bool operator<=(Epoch rhs) const {
+        return u64 <= rhs.u64;
+    }
+
+    void pack(BincodeBuf& buf) const {
+        buf.packScalar<uint64_t>(u64);
+    }
+
+    void unpack(BincodeBuf& buf) {
+        u64 = buf.unpackScalar<uint64_t>();
+    }
+
+    constexpr size_t packedSize() const {
+        return STATIC_SIZE;
+    }
+
+    constexpr bool valid() const {
+        return u64 < 0x2000000000000000ull;
+    }
+};
+
+constexpr Epoch MAX_EPOCH = Epoch(0xffffffffffffffffull >> 3);
+
+std::ostream& operator<<(std::ostream& out, Epoch epoch);
+
 struct LeaderToken {
     uint64_t u64;
 
+    static constexpr size_t STATIC_SIZE = sizeof(uint64_t);
 
     constexpr LeaderToken(): u64(0) {}
 
-    constexpr LeaderToken(ReplicaId replicaId, LogIdx idx): u64(idx.u64 << 3 | replicaId.u8) {
-        ALWAYS_ASSERT(replicaId.valid() && idx.valid());
+    constexpr LeaderToken(ReplicaId replicaId, Epoch epoch): u64(epoch.u64 << 3 | replicaId.u8) {
+        ALWAYS_ASSERT(replicaId.valid() && epoch.valid());
     }
 
     bool operator==(LeaderToken rhs) const {
@@ -577,12 +626,12 @@ struct LeaderToken {
         return ReplicaId(u64 & 0x7);
     }
 
-    constexpr LogIdx idx() const {
-        return LogIdx(u64 >> 3);
+    constexpr Epoch epoch() const {
+        return Epoch(u64 >> 3);
     }
 
     constexpr bool valid() const {
-        // we don't need to check LogIdx is valid as it any value is valid
+        // The encoded epoch always fits in 61 bits.
         return replica().valid();
     }
 
@@ -592,6 +641,10 @@ struct LeaderToken {
 
     void unpack(BincodeBuf& buf) {
         u64 = buf.unpackScalar<uint64_t>();
+    }
+
+    constexpr size_t packedSize() const {
+        return STATIC_SIZE;
     }
 };
 

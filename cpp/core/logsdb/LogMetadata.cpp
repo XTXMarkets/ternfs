@@ -78,7 +78,7 @@ bool LogMetadata::init(bool initialStart) {
         initSuccess = false;
         LOG_ERROR(_env, "Last released time not found! Possible DB corruption!");
     }
-    _stats.currentEpoch.store(_leaderToken.idx().u64, std::memory_order_relaxed);
+    _stats.currentEpoch.store(_leaderToken.epoch().u64, std::memory_order_relaxed);
     return initSuccess;
 }
 
@@ -109,7 +109,7 @@ TernError LogMetadata::updateLeaderToken(LeaderToken token) {
         _lastAssigned = _lastReleased;
     }
     _leaderToken = token;
-    _stats.currentEpoch.store(_leaderToken.idx().u64, std::memory_order_relaxed);
+    _stats.currentEpoch.store(_leaderToken.epoch().u64, std::memory_order_relaxed);
     _nomineeToken = LeaderToken(0,0);
     return TernError::NO_ERROR;
 }
@@ -119,15 +119,16 @@ LeaderToken LogMetadata::getNomineeToken() const {
 }
 
 void LogMetadata::setNomineeToken(LeaderToken token) {
-    if (++_leaderToken.idx() < token.idx()) {
-        LOG_INFO(_env, "Got a nominee token for epoch %s, last leader epoch is %s, we must have skipped leader election.", token.idx(), _leaderToken.idx());
+    auto nextEpoch = _leaderToken.epoch();
+    if (++nextEpoch < token.epoch()) {
+        LOG_INFO(_env, "Got a nominee token for epoch %s, last leader epoch is %s, we must have skipped leader election.", token.epoch(), _leaderToken.epoch());
         _data.dropEntriesAfterIdx(_lastReleased);
     }
     _nomineeToken = token;
 }
 
 LeaderToken LogMetadata::generateNomineeToken() const {
-    auto lastEpoch = _leaderToken.idx();
+    auto lastEpoch = _leaderToken.epoch();
     return LeaderToken(_replicaId, ++lastEpoch);
 }
 

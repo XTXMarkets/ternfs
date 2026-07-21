@@ -65,7 +65,7 @@ TEST_CASE("EmptyLogsDBNoOverrides") {
     // verify writting to follower succeeds
     {
         size_t requestId{0};
-        LeaderToken token(1, 1);
+        LeaderToken token(ReplicaId(1), Epoch(1));
         std::unordered_set<size_t> reqIds;
         entries = {initEntry(1, "entry1"), initEntry(3, "entry3"), initEntry(2, "entry2")};
         for (auto& entry : entries) {
@@ -99,7 +99,7 @@ TEST_CASE("EmptyLogsDBNoOverrides") {
     // Release written data verify it's readable and no catchup requests
     {
         size_t requestId{0};
-        LeaderToken token(1, 1);
+        LeaderToken token(ReplicaId(1), Epoch(1));
         std::unordered_set<size_t> reqIds;
         inReq.clear();
         auto& req = inReq.emplace_back();
@@ -204,7 +204,9 @@ TEST_CASE("EmptyLogsDBLeaderElection") {
         auto& req = *outReq[reqIdx];
         replicaIds.erase(req.replicaId.u8);
         REQUIRE(req.msg.body.kind() == LogMessageKind::NEW_LEADER);
-        REQUIRE(req.msg.body.getNewLeader().nomineeToken == LeaderToken(0, 1));
+        REQUIRE(
+            req.msg.body.getNewLeader().nomineeToken ==
+            LeaderToken(ReplicaId(0), Epoch(1)));
     }
     REQUIRE(replicaIds.empty());
 }

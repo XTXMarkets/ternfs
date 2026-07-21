@@ -51,6 +51,14 @@ TEST_CASE("bincode u16") { bincodeTestScalar<uint16_t>(); }
 TEST_CASE("bincode u32") { bincodeTestScalar<uint32_t>(); }
 TEST_CASE("bincode u64") { bincodeTestScalar<uint64_t>(); }
 
+TEST_CASE("LeaderToken epoch encoding") {
+    LeaderToken token(ReplicaId(3), Epoch(42));
+
+    CHECK(token.u64 == (42ull << 3 | 3));
+    CHECK(token.replica() == ReplicaId(3));
+    CHECK(token.epoch() == Epoch(42));
+}
+
 TEST_CASE("BincodeBytes") {
     BincodeBytes bytes;
     CHECK(bytes.size() == 0);

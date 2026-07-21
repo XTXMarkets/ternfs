@@ -139,7 +139,7 @@ struct BatchWriterTest {
 TEST_CASE_FIXTURE(
         BatchWriterTest,
         "BatchWriter batches writes with the same token") {
-    auto token = LeaderToken(ReplicaId(1), LogIdx(1));
+    auto token = LeaderToken(ReplicaId(1), Epoch(1));
     std::array requests{
         makeWriteRequest(11, token, LogIdx(1), LogIdx(1), "one"),
         makeWriteRequest(12, token, LogIdx(2), LogIdx(2), "two"),
@@ -170,8 +170,8 @@ TEST_CASE_FIXTURE(
 TEST_CASE_FIXTURE(
         BatchWriterTest,
         "BatchWriter flushes when a higher token arrives") {
-    auto firstToken = LeaderToken(ReplicaId(1), LogIdx(1));
-    auto secondToken = LeaderToken(ReplicaId(1), LogIdx(2));
+    auto firstToken = LeaderToken(ReplicaId(1), Epoch(1));
+    auto secondToken = LeaderToken(ReplicaId(1), Epoch(2));
     auto first = makeWriteRequest(
         21,
         firstToken,
@@ -208,8 +208,8 @@ TEST_CASE_FIXTURE(
 TEST_CASE_FIXTURE(
         BatchWriterTest,
         "BatchWriter rejects a lower token while a batch is pending") {
-    auto currentToken = LeaderToken(ReplicaId(1), LogIdx(2));
-    auto staleToken = LeaderToken(ReplicaId(1), LogIdx(1));
+    auto currentToken = LeaderToken(ReplicaId(1), Epoch(2));
+    auto staleToken = LeaderToken(ReplicaId(1), Epoch(1));
     auto current = makeWriteRequest(
         31,
         currentToken,
@@ -247,7 +247,7 @@ TEST_CASE_FIXTURE(
 TEST_CASE_FIXTURE(
         BatchWriterTest,
         "BatchWriter applies release-only batches without responses") {
-    auto token = LeaderToken(ReplicaId(2), LogIdx(1));
+    auto token = LeaderToken(ReplicaId(2), Epoch(1));
     ReleaseReq release;
     release.token = token;
     release.lastReleased = LogIdx(3);
@@ -263,7 +263,7 @@ TEST_CASE_FIXTURE(
 TEST_CASE_FIXTURE(
         BatchWriterTest,
         "BatchWriter ignores replica and token mismatches") {
-    auto token = LeaderToken(ReplicaId(1), LogIdx(1));
+    auto token = LeaderToken(ReplicaId(1), Epoch(1));
     auto write = makeWriteRequest(
         51,
         token,
