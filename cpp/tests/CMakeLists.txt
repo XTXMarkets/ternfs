@@ -16,6 +16,9 @@ target_link_libraries(logsdbreqresptests PRIVATE core)
 add_executable(logsdbdatapartitionstests logsdbdatapartitionstests.cpp doctest.h)
 target_link_libraries(logsdbdatapartitionstests PRIVATE core)
 
+add_executable(logsdbmetadatatests logsdbmetadatatests.cpp doctest.h)
+target_link_libraries(logsdbmetadatatests PRIVATE core)
+
 add_executable(registrydbtests registrydbtests.cpp doctest.h)
 target_link_libraries(registrydbtests PRIVATE core registry)
 
