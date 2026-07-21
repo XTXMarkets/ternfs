@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "Assert.hpp"
+#include "logsdb/BatchWriter.hpp"
 #include "logsdb/CatchupReader.hpp"
 #include "logsdb/DataPartitions.hpp"
 #include "logsdb/LeaderElection.hpp"
@@ -56,88 +57,6 @@ void LogsDB::clearAllData(SharedRocksDB &shardDB) {
     shardDB.deleteCF(DataPartitions::DATA_PARTITION_1_NAME);
     shardDB.db()->FlushWAL(true);
 }
-
-class BatchWriter {
-public:
-    BatchWriter(Env& env, ReqResp& reqResp, LeaderElection& leaderElection) :
-        _env(env),
-        _reqResp(reqResp),
-        _leaderElection(leaderElection),
-        _token(LeaderToken(0,0)),
-        _lastReleased(0) {}
-
-    void proccessLogWriteRequest(LogsDBRequest& request) {
-        ALWAYS_ASSERT(request.msg.body.kind() == LogMessageKind::LOG_WRITE);
-        const auto& writeRequest = request.msg.body.getLogWrite();
-        if (unlikely(request.replicaId != writeRequest.token.replica())) {
-            LOG_ERROR(_env, "Token from replica id %s does not have matching replica id. Token: %s", request.replicaId, writeRequest.token);
-            return;
-        }
-        if (unlikely(writeRequest.token < _token)) {
-            auto& resp = _reqResp.newResponse(request.replicaId, request.msg.id);
-            auto& writeResponse = resp.msg.body.setLogWrite();
-            writeResponse.result = TernError::LEADER_PREEMPTED;
-            return;
-        }
-        if (unlikely(_token < writeRequest.token )) {
-            writeBatch();
-            _token = writeRequest.token;
-        }
-        _requests.emplace_back(&request);
-        _entries.emplace_back();
-        auto& entry = _entries.back();
-        entry.idx = writeRequest.idx;
-        entry.value = writeRequest.value.els;
-        if (_lastReleased < writeRequest.lastReleased) {
-            _lastReleased = writeRequest.lastReleased;
-        }
-    }
-
-    void proccessReleaseRequest(ReplicaId fromReplicaId, uint64_t requestId, const ReleaseReq& request) {
-        if (unlikely(fromReplicaId != request.token.replica())) {
-            LOG_ERROR(_env, "Token from replica id %s does not have matching replica id. Token: %s", fromReplicaId, request.token);
-            return;
-        }
-        if (unlikely(request.token < _token)) {
-            return;
-        }
-        if (unlikely(_token < request.token )) {
-            writeBatch();
-            _token = request.token;
-        }
-
-        if (_lastReleased < request.lastReleased) {
-            _lastReleased = request.lastReleased;
-        }
-
-    }
-
-    void writeBatch() {
-        if (_token == LeaderToken(0,0)) {
-            return;
-        }
-        auto response = _leaderElection.writeLogEntries(_token, _lastReleased, _entries);
-        for (auto req : _requests) {
-            auto& resp = _reqResp.newResponse(req->replicaId, req->msg.id);
-            auto& writeResponse = resp.msg.body.setLogWrite();
-            writeResponse.result = response;
-        }
-        _requests.clear();
-        _entries.clear();
-        _lastReleased = 0;
-        _token = LeaderToken(0,0);
-    }
-
-private:
-    Env& _env;
-    ReqResp& _reqResp;
-    LeaderElection& _leaderElection;
-
-    LeaderToken _token;
-    LogIdx _lastReleased;
-    std::vector<LogsDBRequest*> _requests;
-    std::vector<LogsDBLogEntry> _entries;
-};
 
 class Appender {
     static constexpr size_t IN_FLIGHT_MASK = LogsDB::IN_FLIGHT_APPEND_WINDOW - 1;
