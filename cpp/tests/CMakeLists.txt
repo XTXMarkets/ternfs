@@ -28,6 +28,9 @@ target_link_libraries(logsdbleaderelectiontests PRIVATE core)
 add_executable(logsdbbatchwritertests logsdbbatchwritertests.cpp doctest.h)
 target_link_libraries(logsdbbatchwritertests PRIVATE core)
 
+add_executable(logsdbappendertests logsdbappendertests.cpp doctest.h)
+target_link_libraries(logsdbappendertests PRIVATE core)
+
 add_executable(registrydbtests registrydbtests.cpp doctest.h)
 target_link_libraries(registrydbtests PRIVATE core registry)
 
