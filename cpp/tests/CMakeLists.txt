@@ -22,6 +22,9 @@ target_link_libraries(logsdbmetadatatests PRIVATE core)
 add_executable(logsdbcatchupreadertests logsdbcatchupreadertests.cpp doctest.h)
 target_link_libraries(logsdbcatchupreadertests PRIVATE core)
 
+add_executable(logsdbleaderelectiontests logsdbleaderelectiontests.cpp doctest.h)
+target_link_libraries(logsdbleaderelectiontests PRIVATE core)
+
 add_executable(registrydbtests registrydbtests.cpp doctest.h)
 target_link_libraries(registrydbtests PRIVATE core registry)
 
