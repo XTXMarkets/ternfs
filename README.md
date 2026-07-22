@@ -169,6 +169,9 @@ Will build all the artifacts apart from the Kernel module. The output binaries w
 
 There's also `./build.sh ubuntu` which will do the same but in a Ubuntu container, and `./build.sh release` which will build outside docker, which means that you'll have to install some dependencies in the host machine. Both of these build options will have glibc as the only dynamically linked dependency.
 
+See [Debian packaging](docs/debian-packaging.md) for building immutable,
+co-installable userspace release packages.
+
 ### Using the Go client from another repository
 
 The `go/` module owns the native CRC32C and Reed-Solomon sources, so consumers
