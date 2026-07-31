@@ -969,6 +969,7 @@ retry:
             // evict expired span
             if (unlikely(fetched_at - span->fetched_at > ternfs_span_cache_retention_jiffies && span->storage_class != TERNFS_INLINE_STORAGE)) {
                 ternfs_unlink_span(spans, span);
+                ternfs_put_span(span); // drop the reference we took above
                 span = NULL;
             } else {
                 return span;
@@ -1023,13 +1024,18 @@ retry:
 #undef GET_SPAN_EXIT
 }
 
+// Removes the span from the cache, dropping the reference the cache itself
+// held. The caller's own reference is untouched: it is up to the caller to
+// ternfs_put_span() it once it is done with the span.
 void ternfs_unlink_span(struct ternfs_file_spans* spans, struct ternfs_span* span) {
     down_write(&spans->__lock);
+    // Somebody else might have unlinked it already, in which case the cache's
+    // reference is already gone and we must not drop it twice.
     if (likely(!RB_EMPTY_NODE(&span->node))) {
         rb_erase(&span->node, &spans->__spans);
         RB_CLEAR_NODE(&span->node);
+        ternfs_put_span(span);
     }
-    ternfs_put_span(span);
     up_write(&spans->__lock);
 }
 

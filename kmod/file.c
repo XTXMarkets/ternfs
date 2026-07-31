@@ -1414,8 +1414,9 @@ retry:
             }
             if ((end_ts.tv_sec - last_span_refresh_ts.tv_sec) > ternfs_file_io_retry_refresh_span_interval_sec) {
                 ternfs_debug("file=%016lx refreshing span at offset=%lld", enode->inode.i_ino, off);
+                // Evict the stale span from the cache. We keep our own
+                // reference: the retry below puts it before fetching again.
                 ternfs_unlink_span(&enode->file.spans, span);
-                span = NULL; // unlink already reduced refcount
                 last_span_refresh_ts = end_ts;
             }
             goto retry;
