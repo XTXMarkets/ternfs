@@ -61,7 +61,7 @@ void ternfs_inode_evict(struct inode* inode) {
     ternfs_debug("evict enode=%p", enode);
     if (S_ISDIR(inode->i_mode)) {
         ternfs_dir_drop_cache(enode);
-    } else if (S_ISREG(inode->i_mode)) {
+    } else if (S_ISREG(inode->i_mode) || S_ISLNK(inode->i_mode)) {
         ternfs_free_file_spans(&enode->file.spans);
     }
     truncate_inode_pages(&inode->i_data, 0);
