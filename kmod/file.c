@@ -1369,7 +1369,6 @@ retry:
 
     if (span->start%PAGE_SIZE != 0) {
         ternfs_error("file=%016lx offset=%llu span start not a multiple of page size", enode->inode.i_ino, span->start);
-        span = NULL;
         err = -EIO;
         goto out;
     }
