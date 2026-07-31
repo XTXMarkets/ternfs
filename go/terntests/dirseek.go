@@ -162,8 +162,21 @@ func dirSeek(fd C.int, off C.long, whence C.int) (C.long, error) {
 	return off, nil
 }
 
+// Symlink targets are stored inline in the span when they're short enough
+// (`struct ternfs_inline_span` holds up to 255 bytes), and in a block span
+// otherwise. We want both, so that reading the links below exercises both
+// span caches.
+func dirSeekSymlinkTarget(mountPoint string, i int) string {
+	if i%2 == 0 {
+		return mountPoint // short: ends up inline
+	}
+	// long: forced out of the inline span and into a block span
+	return path.Join(mountPoint, fmt.Sprintf("%0*d", 300, i))
+}
+
 func dirSeekTest(log *log.Logger, registryAddress string, mountPoint string, numPaths int) {
 	log.Info("creating %v paths", numPaths)
+	symlinkTargets := map[string]string{}
 	for i := 0; i < numPaths; i++ {
 		path := path.Join(mountPoint, fmt.Sprintf("%v", i))
 		if i%10 == 0 { // dirs, not too many since they're more expensive to create
@@ -171,9 +184,11 @@ func dirSeekTest(log *log.Logger, registryAddress string, mountPoint string, num
 				panic(err)
 			}
 		} else if i%3 == 0 {
-			if err := os.Symlink(mountPoint, path); err != nil {
+			target := dirSeekSymlinkTarget(mountPoint, i)
+			if err := os.Symlink(target, path); err != nil {
 				panic(err)
 			}
+			symlinkTargets[path] = target
 		} else {
 			f, err := os.Create(path)
 			if err != nil {
@@ -184,6 +199,21 @@ func dirSeekTest(log *log.Logger, registryAddress string, mountPoint string, num
 			}
 		}
 	}
+	// Read the symlinks back. Besides checking that we get the target we wrote,
+	// this makes sure we actually go through the symlink read path: it fetches
+	// the target through the span cache, and the spans it caches are attached
+	// to the symlink inode until the inode is evicted.
+	log.Info("reading %v symlinks", len(symlinkTargets))
+	for linkPath, target := range symlinkTargets {
+		got, err := os.Readlink(linkPath)
+		if err != nil {
+			panic(fmt.Errorf("readlink %v: %w", linkPath, err))
+		}
+		if got != target {
+			panic(fmt.Errorf("readlink %v: expected target %q, got %q", linkPath, target, got))
+		}
+	}
+
 	// open root dir
 	dirFd, err := openDir(mountPoint)
 	if err != nil {
