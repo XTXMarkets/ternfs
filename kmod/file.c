@@ -1518,8 +1518,10 @@ static void file_readahead(struct readahead_control *rac)
         pages_allocated++;
     }
 
-    if (pages_allocated == 0)
-        return;
+    if (pages_allocated == 0) {
+        err = -ENOMEM;
+        goto out_err;
+    }
 
     // Process based on span type
     if (span->storage_class == TERNFS_INLINE_STORAGE) {
