@@ -139,6 +139,9 @@ func runTagFiles(l *log.Logger, c *client.Client, p *tagFilesParams) error {
 			}
 			return nil
 		}
+		if !fileRulesApplyTo(id) {
+			return nil
+		}
 		if !owned || !current {
 			return nil
 		}
@@ -222,4 +225,8 @@ func runTagFiles(l *log.Logger, c *client.Client, p *tagFilesParams) error {
 		return walkErr
 	}
 	return closeErr
+}
+
+func fileRulesApplyTo(id msgs.InodeId) bool {
+	return id.Type() == msgs.FILE
 }

@@ -197,6 +197,22 @@ func TestFirstMatch_FirstWins(t *testing.T) {
 	}
 }
 
+func TestFileRulesApplyOnlyToRegularFiles(t *testing.T) {
+	for _, tc := range []struct {
+		inodeType msgs.InodeType
+		want      bool
+	}{
+		{msgs.FILE, true},
+		{msgs.DIRECTORY, false},
+		{msgs.SYMLINK, false},
+	} {
+		id := msgs.MakeInodeId(tc.inodeType, 0, 1)
+		if got := fileRulesApplyTo(id); got != tc.want {
+			t.Errorf("fileRulesApplyTo(%s) = %v, want %v", tc.inodeType, got, tc.want)
+		}
+	}
+}
+
 // listFinal returns sorted dir entries excluding *.tmp.
 func listFinal(t *testing.T, dir string) []string {
 	t.Helper()
