@@ -92,6 +92,29 @@ jobs:
           apt-get install -y docker-ce docker-ce-cli containerd.io
       - name: Checkout repository
         uses: actions/checkout@v4
+      - name: Compile kmod with Ubuntu 20.04 kernel headers
+        run: |
+          docker run --rm \
+            --volume "$PWD:/workspace:ro" \
+            ubuntu:20.04 \
+            bash -euxo pipefail -c '
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y \
+                build-essential \
+                ca-certificates \
+                git \
+                linux-headers-generic
+
+              cp -a /workspace /tmp/ternfs
+              git config --global --add safe.directory /tmp/ternfs
+              kernel_headers=$(find /usr/src -maxdepth 1 -type d \
+                -name "linux-headers-5.4.*-generic" | sort -V | tail -1)
+              test -n "$kernel_headers"
+              make -C /tmp/ternfs/kmod \
+                KDIR="$kernel_headers" \
+                -j"$(nproc)" \
+                ternfs-client-local
+            '
       - name: Log in to GitHub Container Registry
         run: echo "${{ secrets.REPO_GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
       - name: Install packages for CI

@@ -662,7 +662,7 @@ static const char* ternfs_get_link(struct dentry* dentry, struct inode* inode, s
 // state (dentry cache invalidation) and must not be touched by VFS access
 // paths -- SB_NODIRATIME keeps the VFS out.
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
-static int ternfs_update_time(struct inode* inode, struct timespec64*, int flags) {
+static int ternfs_update_time(struct inode* inode, struct timespec64* now, int flags) {
 #else
 static int ternfs_update_time(struct inode* inode, int flags) {
 #endif
