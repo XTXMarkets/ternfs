@@ -74,10 +74,10 @@ extra-files-clean:
 
 # C=1 builds with sparse
 ternfs-client-tests: revision.c extra-files
-	$(MAKE) -C $(KDIR) M=$(PWD) C=1 modules
+	$(MAKE) -C $(KDIR) M=$(CURDIR) C=1 modules
 
 ternfs-client-clean:
-	$(MAKE) -C $(KDIR) M=$(PWD) clean
+	$(MAKE) -C $(KDIR) M=$(CURDIR) clean
 	rm -f *.o *.ko
 
 
@@ -98,11 +98,11 @@ deb-package: revision.c extra-files dkms-version
 # Targets to build kmod from dkms package,
 # revision.c and extra files are already included
 ternfs-client:
-	$(MAKE) -C $(KDIR) M=$(PWD) modules
+	$(MAKE) -C $(KDIR) M=$(CURDIR) modules
 
 # Targets to build/clean the kmod with local linux
 # We don't want sparse as a dependency.
 ternfs-client-local: revision.c extra-files
-	$(MAKE) -C $(KDIR) M=$(PWD) modules
+	$(MAKE) -C $(KDIR) M=$(CURDIR) modules
 
 clean: ternfs-client-clean bincode_tests-clean
