@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 	"xtx/ternfs/client"
+	"xtx/ternfs/core/bufpool"
 	"xtx/ternfs/core/log"
 	"xtx/ternfs/msgs"
 )
@@ -28,15 +29,18 @@ type tagFilesParams struct {
 }
 
 type tagFilesStats struct {
-	files          atomic.Uint64
-	dirs           atomic.Uint64
-	preskipped     atomic.Uint64
-	dirsEmptyCheck atomic.Uint64
-	tags           []string
-	rowsByTag      map[string]*atomic.Uint64
-	bytesByTag     map[string]*atomic.Uint64
-	statErrors     atomic.Uint64
-	matchErrors    atomic.Uint64
+	files           atomic.Uint64
+	dirs            atomic.Uint64
+	preskipped      atomic.Uint64
+	dirsEmptyCheck  atomic.Uint64
+	tags            []string
+	rowsByTag       map[string]*atomic.Uint64
+	bytesByTag      map[string]*atomic.Uint64
+	statErrors      atomic.Uint64
+	matchErrors     atomic.Uint64
+	symlinks        atomic.Uint64
+	matchedSymlinks atomic.Uint64
+	symlinkErrors   atomic.Uint64
 }
 
 func newTagFilesStats(rules []*Rule) *tagFilesStats {
@@ -66,14 +70,19 @@ func runTagFiles(l *log.Logger, c *client.Client, p *tagFilesParams) error {
 	}
 	fileRules := make([]*Rule, 0, len(rules))
 	dirRules := make([]*Rule, 0, len(rules))
+	symlinkRules := make([]*Rule, 0, len(rules))
 	for _, r := range rules {
-		if r.AppliesTo == "directory" {
+		switch r.AppliesTo {
+		case "directory":
 			dirRules = append(dirRules, r)
-		} else {
+		case "symlink":
+			symlinkRules = append(symlinkRules, r)
+		default:
 			fileRules = append(fileRules, r)
 		}
 	}
-	l.Info("loaded %d rules (%d file, %d directory)", len(rules), len(fileRules), len(dirRules))
+	l.Info("loaded %d rules (%d file, %d directory, %d symlink)",
+		len(rules), len(fileRules), len(dirRules), len(symlinkRules))
 
 	stats := newTagFilesStats(rules)
 
@@ -87,6 +96,56 @@ func runTagFiles(l *log.Logger, c *client.Client, p *tagFilesParams) error {
 
 	now := msgs.Now()
 	startedAt := time.Now()
+
+	var symlinkFS symlinkFilesystem
+	if len(symlinkRules) > 0 {
+		symlinkFS = &ternSymlinkFilesystem{
+			client:  c,
+			log:     l,
+			bufPool: bufpool.NewBufPool(),
+		}
+	}
+
+	processSymlink := func(job symlinkJob) {
+		if symlinkFS == nil {
+			return
+		}
+		resp := msgs.StatFileResp{}
+		if err := c.ShardRequest(l, job.id.Shard(), &msgs.StatFileReq{Id: job.id}, &resp); err != nil {
+			l.ErrorNoAlert("stat symlink %s: %v", job.fullPath, err)
+			stats.symlinkErrors.Add(1)
+			return
+		}
+		fired, err := FirstSymlinkMatch(
+			symlinkRules,
+			job.fullPath,
+			resp.Size,
+			resp.Atime,
+			resp.Mtime,
+			now,
+			func() (bool, error) {
+				return symlinkIsDangling(symlinkFS, job.fullPath, job.id)
+			},
+		)
+		if err != nil {
+			l.ErrorNoAlert("resolve symlink %s: %v", job.fullPath, err)
+			stats.symlinkErrors.Add(1)
+			return
+		}
+		if fired == nil {
+			return
+		}
+		stats.matchedSymlinks.Add(1)
+		stats.rowsByTag[fired.Tag].Add(1)
+		stats.bytesByTag[fired.Tag].Add(resp.Size)
+		if p.dryRun {
+			return
+		}
+		if err := bw.AppendRow(fired.Tag, uint8(job.id.Shard()), symlinkRow(job, resp, fired)); err != nil {
+			l.ErrorNoAlert("append symlink %s: %v", job.fullPath, err)
+			stats.matchErrors.Add(1)
+		}
+	}
 
 	cb := func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error {
 		if id.Type() == msgs.DIRECTORY {
@@ -136,6 +195,16 @@ func runTagFiles(l *log.Logger, c *client.Client, p *tagFilesParams) error {
 			if err := bw.AppendRow(fired.Tag, uint8(id.Shard()), row); err != nil {
 				l.ErrorNoAlert("append row %s tag=%s: %v", fullPath, fired.Tag, err)
 				stats.matchErrors.Add(1)
+			}
+			return nil
+		}
+		if id.Type() == msgs.SYMLINK {
+			if symlinkFS != nil && owned && current {
+				stats.symlinks.Add(1)
+				fullPath := path.Join(parentPath, name)
+				if anyPathMatches(symlinkRules, fullPath) {
+					processSymlink(symlinkJob{id: id, fullPath: fullPath})
+				}
 			}
 			return nil
 		}
@@ -214,6 +283,10 @@ func runTagFiles(l *log.Logger, c *client.Client, p *tagFilesParams) error {
 	rate := float64(files) / elapsed.Seconds()
 	l.Info("tag-files done in %s: %d files visited (%d dirs), %.0f files/s, %d stat-preskipped, %d dir-empty-checks, %d stat errors, %d write errors",
 		elapsed.Truncate(time.Second), files, stats.dirs.Load(), rate, stats.preskipped.Load(), stats.dirsEmptyCheck.Load(), stats.statErrors.Load(), stats.matchErrors.Load())
+	if len(symlinkRules) > 0 {
+		l.Info("symlinks: %d visited, %d matched, %d processing errors",
+			stats.symlinks.Load(), stats.matchedSymlinks.Load(), stats.symlinkErrors.Load())
+	}
 	fmt.Fprintln(os.Stderr, "tag\trows\ttotal_bytes")
 	for _, tag := range stats.tags {
 		rows := stats.rowsByTag[tag].Load()

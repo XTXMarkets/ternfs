@@ -60,6 +60,29 @@ func TestLoadRules_AppliesToInvalid(t *testing.T) {
 	}
 }
 
+func TestLoadRules_AppliesToSymlink(t *testing.T) {
+	const j = `[{"name":"x","tag":"DELETE","applies_to":"symlink","symlink_target":"dangling","include_path_match":[".*"],"exclude_path_match":[],"file_suffix_match":[".*"],"atime_days":0,"mtime_days":0,"size_bytes":0,"extended_retention_bitfield_match":null}]`
+	rules := mustLoad(t, j)
+	if rules[0].AppliesTo != "symlink" {
+		t.Fatalf("applies_to = %q, want %q", rules[0].AppliesTo, "symlink")
+	}
+	if rules[0].SymlinkTarget != "dangling" {
+		t.Fatalf("symlink_target = %q, want %q", rules[0].SymlinkTarget, "dangling")
+	}
+}
+
+func TestLoadRules_RejectsInvalidSymlinkTarget(t *testing.T) {
+	const invalid = `[{"name":"x","tag":"DELETE","applies_to":"symlink","symlink_target":"missing","include_path_match":[".*"],"exclude_path_match":[],"file_suffix_match":[".*"],"atime_days":0,"mtime_days":0,"size_bytes":0,"extended_retention_bitfield_match":null}]`
+	if _, err := LoadRules([]byte(invalid)); err == nil {
+		t.Fatal("expected invalid symlink_target to be rejected")
+	}
+
+	const wrongType = `[{"name":"x","tag":"DELETE","applies_to":"file","symlink_target":"dangling","include_path_match":[".*"],"exclude_path_match":[],"file_suffix_match":[".*"],"atime_days":0,"mtime_days":0,"size_bytes":0,"extended_retention_bitfield_match":null}]`
+	if _, err := LoadRules([]byte(wrongType)); err == nil {
+		t.Fatal("expected symlink_target on file rule to be rejected")
+	}
+}
+
 func TestRulePredicate_HappyPath(t *testing.T) {
 	rules := mustLoad(t, oneRuleJSON)
 	now := msgs.MakeTernTime(time.Unix(1_700_000_000, 0))
