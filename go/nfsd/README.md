@@ -78,7 +78,7 @@ invocation exercises the client and server. The downloaded source and
 installation are ignored by git. Use `make clean-libnfs` to remove them.
 Fetching requires git; building requires CMake and a C compiler.
 
-This suite is not run by CI.
+**This test is currently not run in any CI workflow.**
 
 All Go test targets accept additional flags through `GO_TEST_FLAGS`. For
 example:
@@ -108,6 +108,4 @@ That filter selects exactly two tests:
   suite. It checks create/write/readback, out-of-order writes, rename, delete,
   timestamp updates, and rejection of in-place modification.
 
-This is the only current test path using a kernel NFS client. CI runs it with a
-single LogsDB leader and disables migration, defragmentation and corruption
-injection.
+This is the only current test path using a kernel NFS client.
