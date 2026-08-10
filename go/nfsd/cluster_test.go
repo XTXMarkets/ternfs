@@ -118,7 +118,9 @@ func TestMain(m *testing.M) {
 		})
 	}
 	fmt.Println("waiting for block services...")
-	client.WaitForBlockServices(ternLogger, registryAddr, failureDomains*servicesPerDomain, true, 30*time.Second)
+	if _, err := client.WaitForBlockServices(ternLogger, registryAddr, failureDomains*servicesPerDomain, 30*time.Second); err != nil {
+		panic(fmt.Errorf("failed to wait for block services: %w", err))
+	}
 
 	// Start CDC (single replica).
 	procs.StartCDC(ternLogger, *repoDir, &managedprocess.CDCOpts{
@@ -132,16 +134,18 @@ func TestMain(m *testing.M) {
 	})
 
 	// Start 256 shards (single replica each).
+	noWritableDelay := time.Duration(0)
 	for i := 0; i < 256; i++ {
 		shrid := msgs.MakeShardReplicaId(msgs.ShardId(i), 0)
 		procs.StartShard(ternLogger, *repoDir, &managedprocess.ShardOpts{
-			Exe:             cppExes.ShardExe,
-			Dir:             path.Join(dataDir, fmt.Sprintf("shard_%03d", i)),
-			LogLevel:        log.INFO,
-			Shrid:           shrid,
-			RegistryAddress: registryAddr,
-			Addr1:           "127.0.0.1:0",
-			LogsDBFlags:     []string{"-logsdb-leader", "-logsdb-no-replication", "-logsdb-initial-start"},
+			Exe:                       cppExes.ShardExe,
+			Dir:                       path.Join(dataDir, fmt.Sprintf("shard_%03d", i)),
+			LogLevel:                  log.INFO,
+			Shrid:                     shrid,
+			RegistryAddress:           registryAddr,
+			Addr1:                     "127.0.0.1:0",
+			BlockServiceWritableDelay: &noWritableDelay,
+			LogsDBFlags:               []string{"-logsdb-leader", "-logsdb-no-replication", "-logsdb-initial-start"},
 		})
 	}
 
