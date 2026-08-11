@@ -1239,6 +1239,64 @@ func TestOpenLongNameRejected(t *testing.T) {
 	}
 }
 
+func TestCreateEmptyFieldsRejected(t *testing.T) {
+	tests := []struct {
+		name          string
+		objname       []byte
+		symlink       bool
+		symlinkTarget []byte
+	}{
+		{
+			name:    "object name",
+			objname: nil,
+		},
+		{
+			name:          "symlink target",
+			objname:       []byte("link"),
+			symlink:       true,
+			symlinkTarget: nil,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			addr, cleanup := startTestServer(t, dir)
+			defer cleanup()
+			conn := dial(t, addr)
+			defer conn.Close()
+
+			res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				cw := w.AppendArgarray_Create()
+				if test.symlink {
+					ltw := cw.SetObjtype_Nf4lnk()
+					buf := ltw.SetData(test.symlinkTarget).Finish()
+					cw.Resume(buf)
+				} else {
+					cw.SetObjtype_Nf4dir()
+				}
+				nw := cw.StartObjname()
+				buf := nw.SetData(test.objname).Finish()
+				cw.Resume(buf)
+				faw := cw.StartCreateattrs()
+				bmw := faw.StartAttrmask()
+				buf = bmw.Finish()
+				faw.Resume(buf)
+				avw := faw.StartAttrVals()
+				buf = avw.SetData(nil).Finish()
+				faw.Resume(buf)
+				cw.Resume(faw.Finish())
+				w.Resume(cw.Finish())
+			})
+			if res.Status() != NFS4ERR_INVAL {
+				t.Fatalf("status = %s, want NFS4ERR_INVAL",
+					Nfsstat4Name(res.Status()))
+			}
+		})
+	}
+}
+
 func TestNoFilehandle(t *testing.T) {
 	dir := t.TempDir()
 	addr, cleanup := startTestServer(t, dir)

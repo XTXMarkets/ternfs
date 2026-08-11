@@ -142,6 +142,12 @@ func (s *Server) opCreate(args CREATE4args, st *compoundState, w *COMPOUND4resWr
 	}
 
 	nameData := args.Objname().Data()
+	if len(nameData) == 0 {
+		ew := w.AppendResarray_Create()
+		ew.SetValue_Default(NFS4ERR_INVAL)
+		w.Resume(ew.Finish())
+		return NFS4ERR_INVAL
+	}
 	if ternNameTooLong(nameData) {
 		ew := w.AppendResarray_Create()
 		ew.SetValue_Default(NFS4ERR_NAMETOOLONG)
@@ -158,7 +164,14 @@ func (s *Server) opCreate(args CREATE4args, st *compoundState, w *COMPOUND4resWr
 	case NF4DIR:
 		newID, err = s.fs.Mkdir(st.currentID, name)
 	case NF4LNK:
-		target := string(args.Objtype().AsLinktext4().Data())
+		targetData := args.Objtype().AsLinktext4().Data()
+		if len(targetData) == 0 {
+			ew := w.AppendResarray_Create()
+			ew.SetValue_Default(NFS4ERR_INVAL)
+			w.Resume(ew.Finish())
+			return NFS4ERR_INVAL
+		}
+		target := string(targetData)
 		newID, err = s.fs.Symlink(st.currentID, name, target)
 	default:
 		// We don't support creating block/char/socket/fifo devices.
