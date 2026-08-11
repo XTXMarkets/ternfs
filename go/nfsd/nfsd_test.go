@@ -1239,22 +1239,45 @@ func TestOpenLongNameRejected(t *testing.T) {
 	}
 }
 
-func TestCreateEmptyFieldsRejected(t *testing.T) {
+func TestCreateInvalidFieldsRejected(t *testing.T) {
 	tests := []struct {
 		name          string
 		objname       []byte
 		symlink       bool
 		symlinkTarget []byte
+		wantStatus    uint32
 	}{
 		{
-			name:    "object name",
-			objname: nil,
+			name:       "empty object name",
+			objname:    nil,
+			wantStatus: NFS4ERR_INVAL,
 		},
 		{
 			name:          "symlink target",
 			objname:       []byte("link"),
 			symlink:       true,
 			symlinkTarget: nil,
+			wantStatus:    NFS4ERR_INVAL,
+		},
+		{
+			name:       "dot",
+			objname:    []byte("."),
+			wantStatus: NFS4ERR_BADNAME,
+		},
+		{
+			name:       "dot dot",
+			objname:    []byte(".."),
+			wantStatus: NFS4ERR_BADNAME,
+		},
+		{
+			name:       "slash",
+			objname:    []byte("foo/bar"),
+			wantStatus: NFS4ERR_BADNAME,
+		},
+		{
+			name:       "nul",
+			objname:    []byte{'f', 'o', 'o', 0, 'b', 'a', 'r'},
+			wantStatus: NFS4ERR_BADNAME,
 		},
 	}
 
@@ -1289,9 +1312,9 @@ func TestCreateEmptyFieldsRejected(t *testing.T) {
 				cw.Resume(faw.Finish())
 				w.Resume(cw.Finish())
 			})
-			if res.Status() != NFS4ERR_INVAL {
-				t.Fatalf("status = %s, want NFS4ERR_INVAL",
-					Nfsstat4Name(res.Status()))
+			if res.Status() != test.wantStatus {
+				t.Fatalf("status = %s, want %s",
+					Nfsstat4Name(res.Status()), Nfsstat4Name(test.wantStatus))
 			}
 		})
 	}

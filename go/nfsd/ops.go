@@ -24,6 +24,13 @@ func ternNameTooLong(name []byte) bool {
 	return len(name) > maxTernNameLength
 }
 
+func ternNameUnsupported(name []byte) bool {
+	return bytes.Equal(name, []byte(".")) ||
+		bytes.Equal(name, []byte("..")) ||
+		bytes.IndexByte(name, '/') >= 0 ||
+		bytes.IndexByte(name, 0) >= 0
+}
+
 func (s *Server) opAccess(args ACCESS4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
 	if !st.currentIDSet {
 		ew := w.AppendResarray_Access()
@@ -153,6 +160,12 @@ func (s *Server) opCreate(args CREATE4args, st *compoundState, w *COMPOUND4resWr
 		ew.SetValue_Default(NFS4ERR_NAMETOOLONG)
 		w.Resume(ew.Finish())
 		return NFS4ERR_NAMETOOLONG
+	}
+	if ternNameUnsupported(nameData) {
+		ew := w.AppendResarray_Create()
+		ew.SetValue_Default(NFS4ERR_BADNAME)
+		w.Resume(ew.Finish())
+		return NFS4ERR_BADNAME
 	}
 	name := string(nameData)
 	objType := args.ObjtypeType()
