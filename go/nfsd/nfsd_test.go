@@ -1101,6 +1101,144 @@ func TestLookupNonExistent(t *testing.T) {
 	}
 }
 
+func TestLongNamesRejected(t *testing.T) {
+	longName := make([]byte, maxTernNameLength+1)
+	for i := range longName {
+		longName[i] = 'a'
+	}
+
+	tests := []struct {
+		name  string
+		build func(*COMPOUND4argsWriter)
+	}{
+		{
+			name: "lookup",
+			build: func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				lw := w.AppendArgarray_Lookup()
+				nw := lw.StartObjname()
+				buf := nw.SetData(longName).Finish()
+				lw.Resume(buf)
+				w.Resume(lw.Finish())
+			},
+		},
+		{
+			name: "create",
+			build: func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				cw := w.AppendArgarray_Create()
+				cw.SetObjtype_Nf4dir()
+				nw := cw.StartObjname()
+				buf := nw.SetData(longName).Finish()
+				cw.Resume(buf)
+				faw := cw.StartCreateattrs()
+				bmw := faw.StartAttrmask()
+				buf = bmw.Finish()
+				faw.Resume(buf)
+				avw := faw.StartAttrVals()
+				buf = avw.SetData(nil).Finish()
+				faw.Resume(buf)
+				cw.Resume(faw.Finish())
+				w.Resume(cw.Finish())
+			},
+		},
+		{
+			name: "remove",
+			build: func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				rw := w.AppendArgarray_Remove()
+				tw := rw.StartTarget()
+				buf := tw.SetData(longName).Finish()
+				rw.Resume(buf)
+				w.Resume(rw.Finish())
+			},
+		},
+		{
+			name: "rename source",
+			build: func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				w.AppendArgarray_Savefh()
+				rw := w.AppendArgarray_Rename()
+				ow := rw.StartOldname()
+				buf := ow.SetData(longName).Finish()
+				rw.Resume(buf)
+				nw := rw.StartNewname()
+				buf = nw.SetData([]byte("new")).Finish()
+				rw.Resume(buf)
+				w.Resume(rw.Finish())
+			},
+		},
+		{
+			name: "rename target",
+			build: func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				w.AppendArgarray_Savefh()
+				rw := w.AppendArgarray_Rename()
+				ow := rw.StartOldname()
+				buf := ow.SetData([]byte("old")).Finish()
+				rw.Resume(buf)
+				nw := rw.StartNewname()
+				buf = nw.SetData(longName).Finish()
+				rw.Resume(buf)
+				w.Resume(rw.Finish())
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			addr, cleanup := startTestServer(t, dir)
+			defer cleanup()
+			conn := dial(t, addr)
+			defer conn.Close()
+
+			res := sendCompound(t, conn, 1, test.build)
+			if res.Status() != NFS4ERR_NAMETOOLONG {
+				t.Fatalf("status = %s, want NFS4ERR_NAMETOOLONG",
+					Nfsstat4Name(res.Status()))
+			}
+		})
+	}
+}
+
+func TestOpenLongNameRejected(t *testing.T) {
+	dir := t.TempDir()
+	addr, cleanup := startTestServer(t, dir)
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+
+	xid := uint32(1)
+	clientID := setupClient(t, conn, &xid)
+	longName := make([]byte, maxTernNameLength+1)
+	for i := range longName {
+		longName[i] = 'a'
+	}
+
+	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+		w.AppendArgarray_Putrootfh()
+		ow := w.AppendArgarray_Open()
+		ow.SetSeqid(1)
+		ow.SetShareAccess(OPEN4_SHARE_ACCESS_READ)
+		ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
+		owner := ow.StartOwner()
+		owner = owner.SetClientid(clientID)
+		owner = owner.SetOwner([]byte("long-name-test"))
+		buf := owner.Finish()
+		ow.Resume(buf)
+		ow.SetOpenhow_Default(OPEN4_NOCREATE)
+		claim := ow.SetClaim_Null()
+		buf = claim.SetData(longName).Finish()
+		ow.Resume(buf)
+		w.Resume(ow.Finish())
+	})
+	if res.Status() != NFS4ERR_NAMETOOLONG {
+		t.Fatalf("status = %s, want NFS4ERR_NAMETOOLONG",
+			Nfsstat4Name(res.Status()))
+	}
+}
+
 func TestNoFilehandle(t *testing.T) {
 	dir := t.TempDir()
 	addr, cleanup := startTestServer(t, dir)

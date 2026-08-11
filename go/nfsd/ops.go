@@ -16,7 +16,13 @@ const (
 	unstable4 = 0
 	dataSync4 = 1
 	fileSync4 = 2
+
+	maxTernNameLength = 255
 )
+
+func ternNameTooLong(name []byte) bool {
+	return len(name) > maxTernNameLength
+}
 
 func (s *Server) opAccess(args ACCESS4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
 	if !st.currentIDSet {
@@ -135,7 +141,14 @@ func (s *Server) opCreate(args CREATE4args, st *compoundState, w *COMPOUND4resWr
 		return NFS4ERR_ROFS
 	}
 
-	name := string(args.Objname().Data())
+	nameData := args.Objname().Data()
+	if ternNameTooLong(nameData) {
+		ew := w.AppendResarray_Create()
+		ew.SetValue_Default(NFS4ERR_NAMETOOLONG)
+		w.Resume(ew.Finish())
+		return NFS4ERR_NAMETOOLONG
+	}
+	name := string(nameData)
 	objType := args.ObjtypeType()
 
 	var newID InodeID
@@ -311,7 +324,13 @@ func (s *Server) opLookup(args LOOKUP4args, st *compoundState, w *COMPOUND4resWr
 		r.SetStatus(NFS4ERR_NOFILEHANDLE)
 		return NFS4ERR_NOFILEHANDLE
 	}
-	name := string(args.Objname().Data())
+	nameData := args.Objname().Data()
+	if ternNameTooLong(nameData) {
+		r := w.AppendResarray_Lookup()
+		r.SetStatus(NFS4ERR_NAMETOOLONG)
+		return NFS4ERR_NAMETOOLONG
+	}
+	name := string(nameData)
 	// Hide the internal .nfs directory from client access.
 	if name == nfsDirName && st.currentID == s.fs.RootID() {
 		r := w.AppendResarray_Lookup()
@@ -403,7 +422,14 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 	switch claimType {
 	case CLAIM_NULL:
 		dirID := st.currentID
-		fileName := string(claim.AsNull().Data())
+		fileNameData := claim.AsNull().Data()
+		if ternNameTooLong(fileNameData) {
+			ew := w.AppendResarray_Open()
+			ew.SetValue_Default(NFS4ERR_NAMETOOLONG)
+			w.Resume(ew.Finish())
+			return NFS4ERR_NAMETOOLONG
+		}
+		fileName := string(fileNameData)
 
 		// Check if this is a create.
 		if args.OpenhowType() == OPEN4_CREATE {
@@ -842,7 +868,14 @@ func (s *Server) opRemove(args REMOVE4args, st *compoundState, w *COMPOUND4resWr
 		return NFS4ERR_ROFS
 	}
 
-	name := string(args.Target().Data())
+	nameData := args.Target().Data()
+	if ternNameTooLong(nameData) {
+		ew := w.AppendResarray_Remove()
+		ew.SetValue_Default(NFS4ERR_NAMETOOLONG)
+		w.Resume(ew.Finish())
+		return NFS4ERR_NAMETOOLONG
+	}
+	name := string(nameData)
 	err := s.fs.Remove(st.currentID, name)
 	if err != nil {
 		ew := w.AppendResarray_Remove()
@@ -878,8 +911,16 @@ func (s *Server) opRename(args RENAME4args, st *compoundState, w *COMPOUND4resWr
 		return NFS4ERR_ROFS
 	}
 
-	oldName := string(args.Oldname().Data())
-	newName := string(args.Newname().Data())
+	oldNameData := args.Oldname().Data()
+	newNameData := args.Newname().Data()
+	if ternNameTooLong(oldNameData) || ternNameTooLong(newNameData) {
+		ew := w.AppendResarray_Rename()
+		ew.SetValue_Default(NFS4ERR_NAMETOOLONG)
+		w.Resume(ew.Finish())
+		return NFS4ERR_NAMETOOLONG
+	}
+	oldName := string(oldNameData)
+	newName := string(newNameData)
 
 	err := s.fs.Rename(st.savedID, oldName, st.currentID, newName)
 	if err != nil {
