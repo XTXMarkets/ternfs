@@ -15,7 +15,19 @@ between:
 - operations which the server must reject with the correct NFS status; and
 - NFS features which are outside the intended TernFS contract.
 
-There are currently four test paths.
+There are currently five test paths.
+
+Test targets ending in `-cluster` build and start a temporary TernFS cluster.
+Test targets without that suffix do not use a TernFS cluster. For example,
+`test-libnfs` runs against the local filesystem backend. Pynfs only has a
+cluster-backed mode, so its target is `test-pynfs-cluster`; there is no
+`test-pynfs` target.
+
+Cluster-backed targets use `ss` to check the fixed registry UDP port
+`127.0.0.1:55556` before starting. They fail with an explicit error if another
+test cluster is already using that port. This check does not require root.
+Install `ss` (provided by the `iproute2` package on Debian and Ubuntu) before
+running these targets.
 
 ## Protocol tests
 
@@ -79,6 +91,59 @@ installation are ignored by git. Use `make clean-libnfs` to remove them.
 Fetching requires git; building requires CMake and a C compiler.
 
 **This test is currently not run in any CI workflow.**
+
+## pynfs protocol tests
+
+[pynfs](https://github.com/linux-nfs/pynfs) is the Linux NFS project's
+protocol test suite. The Makefile pins release `pynfs-0.5` and uses its
+NFSv4.0 server tests.
+
+Fetch and build pynfs:
+
+```sh
+make fetch-pynfs
+make build-pynfs
+```
+
+The build requires Python 3, setuptools and PLY. On Debian and Ubuntu, install
+the latter two with:
+
+```sh
+sudo apt-get install python3-setuptools python3-ply
+```
+
+Run the standard pynfs suite:
+
+```sh
+make test-pynfs-cluster
+```
+
+[`pynfs_test.go`](pynfs_test.go) reuses the `ternnfs` test harness. It starts a
+temporary TernFS cluster and `nfsd`, runs pynfs with `--maketree --rundeps`,
+and reads pynfs's JSON results so protocol failures fail the Go test. Pynfs
+itself otherwise exits successfully when individual tests fail.
+
+The standard suite includes behavior outside the TernFS contract, so an
+initial run is expected to expose unsupported operations as well as server
+bugs. Select flags or individual pynfs test codes with `PYNFS_TESTS`, and pass
+additional runner options with `PYNFS_ARGS`. The default Go test timeout is one
+hour because pynfs includes lease-expiry cases which deliberately sleep for
+several minutes. Override it with `PYNFS_TIMEOUT`:
+
+```sh
+make test-pynfs-cluster PYNFS_TESTS='putrootfh getattr'
+make test-pynfs-cluster PYNFS_TESTS='GETATTR1 GETATTR2' PYNFS_ARGS='--showtraffic'
+make test-pynfs-cluster PYNFS_TESTS='all notimed'
+make test-pynfs-cluster PYNFS_TIMEOUT=2h
+```
+
+Pynfs tags eight standard cases as `timed`; these exercise lease expiry and
+can each wait for 135 or 180 seconds with nfsd's 90-second lease. The harness
+runs Python unbuffered and reports tests taking at least one second, sorted by
+duration, after pynfs writes its results.
+
+Use `make clean-pynfs` to remove the source and generated files. This suite is
+not currently run in CI.
 
 All Go test targets accept additional flags through `GO_TEST_FLAGS`. For
 example:
