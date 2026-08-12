@@ -1320,6 +1320,67 @@ func TestCreateInvalidFieldsRejected(t *testing.T) {
 	}
 }
 
+func TestCreateFromNonDirectoryRejected(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(string) error
+	}{
+		{
+			name: "file",
+			setup: func(path string) error {
+				return os.WriteFile(path, []byte("data"), 0644)
+			},
+		},
+		{
+			name: "symlink",
+			setup: func(path string) error {
+				return os.Symlink("target", path)
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := test.setup(filepath.Join(dir, "parent")); err != nil {
+				t.Fatal(err)
+			}
+			addr, cleanup := startTestServer(t, dir)
+			defer cleanup()
+			conn := dial(t, addr)
+			defer conn.Close()
+
+			res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				lw := w.AppendArgarray_Lookup()
+				nw := lw.StartObjname()
+				buf := nw.SetData([]byte("parent")).Finish()
+				lw.Resume(buf)
+				w.Resume(lw.Finish())
+
+				cw := w.AppendArgarray_Create()
+				cw.SetObjtype_Nf4dir()
+				nw = cw.StartObjname()
+				buf = nw.SetData([]byte("child")).Finish()
+				cw.Resume(buf)
+				faw := cw.StartCreateattrs()
+				bmw := faw.StartAttrmask()
+				buf = bmw.Finish()
+				faw.Resume(buf)
+				avw := faw.StartAttrVals()
+				buf = avw.SetData(nil).Finish()
+				faw.Resume(buf)
+				cw.Resume(faw.Finish())
+				w.Resume(cw.Finish())
+			})
+			if res.Status() != NFS4ERR_NOTDIR {
+				t.Fatalf("status = %s, want NFS4ERR_NOTDIR",
+					Nfsstat4Name(res.Status()))
+			}
+		})
+	}
+}
+
 func TestNoFilehandle(t *testing.T) {
 	dir := t.TempDir()
 	addr, cleanup := startTestServer(t, dir)

@@ -141,6 +141,12 @@ func (s *Server) opCreate(args CREATE4args, st *compoundState, w *COMPOUND4resWr
 		w.Resume(ew.Finish())
 		return NFS4ERR_NOFILEHANDLE
 	}
+	if st.currentID.Type() != InodeTypeDir {
+		ew := w.AppendResarray_Create()
+		ew.SetValue_Default(NFS4ERR_NOTDIR)
+		w.Resume(ew.Finish())
+		return NFS4ERR_NOTDIR
+	}
 	if s.stagingStore.ReadOnly() {
 		ew := w.AppendResarray_Create()
 		ew.SetValue_Default(NFS4ERR_ROFS)
