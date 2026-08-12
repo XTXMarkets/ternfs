@@ -271,7 +271,7 @@ func (s *Server) handleCompound(req *rpcRequest) []byte {
 		case OP_SAVEFH:
 			opStatus = s.opSavefh(st, &w)
 		case OP_SECINFO:
-			opStatus = s.opSecinfo(st, &w)
+			opStatus = s.opSecinfo(op.AsSECINFO4args(), st, &w)
 		case OP_SETATTR:
 			opStatus = s.opSetattr(op.AsSETATTR4args(), st, &w)
 		case OP_SETCLIENTID:

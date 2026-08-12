@@ -1377,39 +1377,147 @@ func TestLongNamesRejected(t *testing.T) {
 	}
 }
 
-func TestOpenLongNameRejected(t *testing.T) {
+func TestOpenInvalidNamesRejected(t *testing.T) {
+	longName := make([]byte, maxTernNameLength+1)
+	for i := range longName {
+		longName[i] = 'a'
+	}
+
+	tests := []struct {
+		name       string
+		component  []byte
+		wantStatus uint32
+	}{
+		{"empty", nil, NFS4ERR_INVAL},
+		{"too long", longName, NFS4ERR_NAMETOOLONG},
+		{"dot", []byte("."), NFS4ERR_BADNAME},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			addr, cleanup := startTestServer(t, dir)
+			defer cleanup()
+			conn := dial(t, addr)
+			defer conn.Close()
+
+			xid := uint32(1)
+			clientID := setupClient(t, conn, &xid)
+			res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				ow := w.AppendArgarray_Open()
+				ow.SetSeqid(1)
+				ow.SetShareAccess(OPEN4_SHARE_ACCESS_READ)
+				ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
+				owner := ow.StartOwner()
+				owner = owner.SetClientid(clientID)
+				owner = owner.SetOwner([]byte("name-test"))
+				buf := owner.Finish()
+				ow.Resume(buf)
+				ow.SetOpenhow_Default(OPEN4_NOCREATE)
+				claim := ow.SetClaim_Null()
+				buf = claim.SetData(test.component).Finish()
+				ow.Resume(buf)
+				w.Resume(ow.Finish())
+			})
+			if res.Status() != test.wantStatus {
+				t.Fatalf("status = %s, want %s",
+					Nfsstat4Name(res.Status()), Nfsstat4Name(test.wantStatus))
+			}
+		})
+	}
+}
+
+func TestEmptyComponentsRejected(t *testing.T) {
+	tests := []struct {
+		name  string
+		build func(*COMPOUND4argsWriter)
+	}{
+		{
+			name: "lookup",
+			build: func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				lw := w.AppendArgarray_Lookup()
+				nw := lw.StartObjname()
+				buf := nw.SetData(nil).Finish()
+				lw.Resume(buf)
+				w.Resume(lw.Finish())
+			},
+		},
+		{
+			name: "remove",
+			build: func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				rw := w.AppendArgarray_Remove()
+				tw := rw.StartTarget()
+				buf := tw.SetData(nil).Finish()
+				rw.Resume(buf)
+				w.Resume(rw.Finish())
+			},
+		},
+		{
+			name: "secinfo",
+			build: func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				sw := w.AppendArgarray_Secinfo()
+				nw := sw.StartName()
+				buf := nw.SetData(nil).Finish()
+				sw.Resume(buf)
+				w.Resume(sw.Finish())
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			addr, cleanup := startTestServer(t, dir)
+			defer cleanup()
+			conn := dial(t, addr)
+			defer conn.Close()
+
+			res := sendCompound(t, conn, 1, test.build)
+			if res.Status() != NFS4ERR_INVAL {
+				t.Fatalf("status = %s, want NFS4ERR_INVAL",
+					Nfsstat4Name(res.Status()))
+			}
+		})
+	}
+}
+
+func TestLookuppAtRootRejected(t *testing.T) {
 	dir := t.TempDir()
 	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
 
-	xid := uint32(1)
-	clientID := setupClient(t, conn, &xid)
-	longName := make([]byte, maxTernNameLength+1)
-	for i := range longName {
-		longName[i] = 'a'
-	}
-
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
-		ow := w.AppendArgarray_Open()
-		ow.SetSeqid(1)
-		ow.SetShareAccess(OPEN4_SHARE_ACCESS_READ)
-		ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
-		owner := ow.StartOwner()
-		owner = owner.SetClientid(clientID)
-		owner = owner.SetOwner([]byte("long-name-test"))
-		buf := owner.Finish()
-		ow.Resume(buf)
-		ow.SetOpenhow_Default(OPEN4_NOCREATE)
-		claim := ow.SetClaim_Null()
-		buf = claim.SetData(longName).Finish()
-		ow.Resume(buf)
-		w.Resume(ow.Finish())
+		w.AppendArgarray_Lookupp()
 	})
-	if res.Status() != NFS4ERR_NAMETOOLONG {
-		t.Fatalf("status = %s, want NFS4ERR_NAMETOOLONG",
+	if res.Status() != NFS4ERR_NOENT {
+		t.Fatalf("status = %s, want NFS4ERR_NOENT",
+			Nfsstat4Name(res.Status()))
+	}
+}
+
+func TestSecinfoRequiresExistingName(t *testing.T) {
+	dir := t.TempDir()
+	addr, cleanup := startTestServer(t, dir)
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+
+	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+		w.AppendArgarray_Putrootfh()
+		sw := w.AppendArgarray_Secinfo()
+		nw := sw.StartName()
+		buf := nw.SetData([]byte("missing")).Finish()
+		sw.Resume(buf)
+		w.Resume(sw.Finish())
+	})
+	if res.Status() != NFS4ERR_NOENT {
+		t.Fatalf("status = %s, want NFS4ERR_NOENT",
 			Nfsstat4Name(res.Status()))
 	}
 }

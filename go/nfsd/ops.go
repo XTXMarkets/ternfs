@@ -402,10 +402,20 @@ func (s *Server) opLookup(args LOOKUP4args, st *compoundState, w *COMPOUND4resWr
 		return status
 	}
 	nameData := args.Objname().Data()
+	if len(nameData) == 0 {
+		r := w.AppendResarray_Lookup()
+		r.SetStatus(NFS4ERR_INVAL)
+		return NFS4ERR_INVAL
+	}
 	if ternNameTooLong(nameData) {
 		r := w.AppendResarray_Lookup()
 		r.SetStatus(NFS4ERR_NAMETOOLONG)
 		return NFS4ERR_NAMETOOLONG
+	}
+	if ternNameUnsupported(nameData) {
+		r := w.AppendResarray_Lookup()
+		r.SetStatus(NFS4ERR_BADNAME)
+		return NFS4ERR_BADNAME
 	}
 	name := string(nameData)
 	// Hide the internal .nfs directory from client access.
@@ -438,6 +448,11 @@ func (s *Server) opLookupp(st *compoundState, w *COMPOUND4resWriter) uint32 {
 		r := w.AppendResarray_Lookupp()
 		r.SetStatus(status)
 		return status
+	}
+	if st.currentID == s.fs.RootID() {
+		r := w.AppendResarray_Lookupp()
+		r.SetStatus(NFS4ERR_NOENT)
+		return NFS4ERR_NOENT
 	}
 	id, err := s.fs.LookupParent(st.currentID)
 	if err != nil {
@@ -511,11 +526,23 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 			return status
 		}
 		fileNameData := claim.AsNull().Data()
+		if len(fileNameData) == 0 {
+			ew := w.AppendResarray_Open()
+			ew.SetValue_Default(NFS4ERR_INVAL)
+			w.Resume(ew.Finish())
+			return NFS4ERR_INVAL
+		}
 		if ternNameTooLong(fileNameData) {
 			ew := w.AppendResarray_Open()
 			ew.SetValue_Default(NFS4ERR_NAMETOOLONG)
 			w.Resume(ew.Finish())
 			return NFS4ERR_NAMETOOLONG
+		}
+		if ternNameUnsupported(fileNameData) {
+			ew := w.AppendResarray_Open()
+			ew.SetValue_Default(NFS4ERR_BADNAME)
+			w.Resume(ew.Finish())
+			return NFS4ERR_BADNAME
 		}
 		fileName := string(fileNameData)
 
@@ -991,11 +1018,23 @@ func (s *Server) opRemove(args REMOVE4args, st *compoundState, w *COMPOUND4resWr
 	}
 
 	nameData := args.Target().Data()
+	if len(nameData) == 0 {
+		ew := w.AppendResarray_Remove()
+		ew.SetValue_Default(NFS4ERR_INVAL)
+		w.Resume(ew.Finish())
+		return NFS4ERR_INVAL
+	}
 	if ternNameTooLong(nameData) {
 		ew := w.AppendResarray_Remove()
 		ew.SetValue_Default(NFS4ERR_NAMETOOLONG)
 		w.Resume(ew.Finish())
 		return NFS4ERR_NAMETOOLONG
+	}
+	if ternNameUnsupported(nameData) {
+		ew := w.AppendResarray_Remove()
+		ew.SetValue_Default(NFS4ERR_BADNAME)
+		w.Resume(ew.Finish())
+		return NFS4ERR_BADNAME
 	}
 	name := string(nameData)
 	err := s.fs.Remove(st.currentID, name)
@@ -1114,7 +1153,7 @@ func (s *Server) opRestorefh(st *compoundState, w *COMPOUND4resWriter) uint32 {
 	return NFS4_OK
 }
 
-func (s *Server) opSecinfo(st *compoundState, w *COMPOUND4resWriter) uint32 {
+func (s *Server) opSecinfo(args SECINFO4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
 	if !st.currentIDSet {
 		ew := w.AppendResarray_Secinfo()
 		ew.SetValue_Default(NFS4ERR_NOFILEHANDLE)
@@ -1123,6 +1162,39 @@ func (s *Server) opSecinfo(st *compoundState, w *COMPOUND4resWriter) uint32 {
 	}
 	if status := requireDirectory(st.currentID); status != NFS4_OK {
 		ew := w.AppendResarray_Secinfo()
+		ew.SetValue_Default(status)
+		w.Resume(ew.Finish())
+		return status
+	}
+	nameData := args.Name().Data()
+	if len(nameData) == 0 {
+		ew := w.AppendResarray_Secinfo()
+		ew.SetValue_Default(NFS4ERR_INVAL)
+		w.Resume(ew.Finish())
+		return NFS4ERR_INVAL
+	}
+	if ternNameTooLong(nameData) {
+		ew := w.AppendResarray_Secinfo()
+		ew.SetValue_Default(NFS4ERR_NAMETOOLONG)
+		w.Resume(ew.Finish())
+		return NFS4ERR_NAMETOOLONG
+	}
+	if ternNameUnsupported(nameData) {
+		ew := w.AppendResarray_Secinfo()
+		ew.SetValue_Default(NFS4ERR_BADNAME)
+		w.Resume(ew.Finish())
+		return NFS4ERR_BADNAME
+	}
+	name := string(nameData)
+	if name == nfsDirName && st.currentID == s.fs.RootID() {
+		ew := w.AppendResarray_Secinfo()
+		ew.SetValue_Default(NFS4ERR_NOENT)
+		w.Resume(ew.Finish())
+		return NFS4ERR_NOENT
+	}
+	if _, err := s.fs.Lookup(st.currentID, name); err != nil {
+		ew := w.AppendResarray_Secinfo()
+		status := s.errToNFS(err)
 		ew.SetValue_Default(status)
 		w.Resume(ew.Finish())
 		return status
