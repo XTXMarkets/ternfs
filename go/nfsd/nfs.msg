@@ -1071,6 +1071,7 @@ union nfs_argop4 (nfs_opnum4) {
     OP_WRITE:               WRITE4args;
     OP_RELEASE_LOCKOWNER:   RELEASE_LOCKOWNER4args;
     OP_ILLEGAL:             void;
+    default:                void;
 }
 
 message ACCESS4res_entry {

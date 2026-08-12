@@ -1141,6 +1141,41 @@ func TestIllegalOp(t *testing.T) {
 	}
 }
 
+func TestUnknownOp(t *testing.T) {
+	dir := t.TempDir()
+	addr, cleanup := startTestServer(t, dir)
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+
+	// Empty tag, minor version zero, one operation, and undefined operation zero.
+	body := make([]byte, 16)
+	binary.BigEndian.PutUint32(body[8:12], 1)
+
+	reply, err := sendRPC(conn, 1, procCompound, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, ok := ReadCOMPOUND4res(parseRPCReply(t, reply))
+	if !ok {
+		t.Fatal("failed to parse COMPOUND4res")
+	}
+	if res.Status() != NFS4ERR_OP_ILLEGAL {
+		t.Fatalf("status = %s, want NFS4ERR_OP_ILLEGAL", Nfsstat4Name(res.Status()))
+	}
+	if res.ResarrayCount() != 1 {
+		t.Fatalf("resarray count = %d, want 1", res.ResarrayCount())
+	}
+	iter := res.Resarray()
+	entry := nextOp(t, &iter)
+	if entry.Disc() != OP_ILLEGAL {
+		t.Fatalf("result operation = %s, want OP_ILLEGAL", NfsOpnum4Name(entry.Disc()))
+	}
+	if status := entry.Value().AsILLEGAL4res().Status(); status != NFS4ERR_OP_ILLEGAL {
+		t.Fatalf("operation status = %s, want NFS4ERR_OP_ILLEGAL", Nfsstat4Name(status))
+	}
+}
+
 func TestLookupNonExistent(t *testing.T) {
 	dir := t.TempDir()
 	addr, cleanup := startTestServer(t, dir)

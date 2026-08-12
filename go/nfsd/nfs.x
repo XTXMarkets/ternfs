@@ -1443,6 +1443,7 @@ union nfs_argop4 switch (nfs_opnum4 argop) {
                         RELEASE_LOCKOWNER4args
                         oprelease_lockowner;
  case OP_ILLEGAL:       void;
+ default:               void;
 };
 
 union nfs_resop4 switch (nfs_opnum4 resop) {
