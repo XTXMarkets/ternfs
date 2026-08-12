@@ -1142,14 +1142,42 @@ func (s *Server) opRename(args RENAME4args, st *compoundState, w *COMPOUND4resWr
 
 	oldNameData := args.Oldname().Data()
 	newNameData := args.Newname().Data()
+	if len(oldNameData) == 0 || len(newNameData) == 0 {
+		ew := w.AppendResarray_Rename()
+		ew.SetValue_Default(NFS4ERR_INVAL)
+		w.Resume(ew.Finish())
+		return NFS4ERR_INVAL
+	}
 	if ternNameTooLong(oldNameData) || ternNameTooLong(newNameData) {
 		ew := w.AppendResarray_Rename()
 		ew.SetValue_Default(NFS4ERR_NAMETOOLONG)
 		w.Resume(ew.Finish())
 		return NFS4ERR_NAMETOOLONG
 	}
+	if ternNameUnsupported(oldNameData) || ternNameUnsupported(newNameData) {
+		ew := w.AppendResarray_Rename()
+		ew.SetValue_Default(NFS4ERR_BADNAME)
+		w.Resume(ew.Finish())
+		return NFS4ERR_BADNAME
+	}
 	oldName := string(oldNameData)
 	newName := string(newNameData)
+
+	if st.savedID == st.currentID && oldName == newName {
+		ew := w.AppendResarray_Rename()
+		okW := ew.SetValue_Nfs4Ok()
+		now := uint64(time.Now().UnixNano())
+		srcInfo := okW.SourceCinfo()
+		srcInfo.SetAtomic(TRUE)
+		srcInfo.SetBefore(now)
+		srcInfo.SetAfter(now)
+		tgtInfo := okW.TargetCinfo()
+		tgtInfo.SetAtomic(TRUE)
+		tgtInfo.SetBefore(now)
+		tgtInfo.SetAfter(now)
+		w.Resume(ew.Finish())
+		return NFS4_OK
+	}
 
 	err := s.fs.Rename(st.savedID, oldName, st.currentID, newName)
 	if err != nil {

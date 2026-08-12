@@ -1377,6 +1377,47 @@ func TestLongNamesRejected(t *testing.T) {
 	}
 }
 
+func TestRenameInvalidNamesRejected(t *testing.T) {
+	tests := []struct {
+		name       string
+		oldName    []byte
+		newName    []byte
+		wantStatus uint32
+	}{
+		{"empty source", nil, []byte("new"), NFS4ERR_INVAL},
+		{"empty target", []byte("old"), nil, NFS4ERR_INVAL},
+		{"dot source", []byte("."), []byte("new"), NFS4ERR_BADNAME},
+		{"dot target", []byte("old"), []byte("."), NFS4ERR_BADNAME},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			addr, cleanup := startTestServer(t, dir)
+			defer cleanup()
+			conn := dial(t, addr)
+			defer conn.Close()
+
+			res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				w.AppendArgarray_Savefh()
+				rw := w.AppendArgarray_Rename()
+				ow := rw.StartOldname()
+				buf := ow.SetData(test.oldName).Finish()
+				rw.Resume(buf)
+				nw := rw.StartNewname()
+				buf = nw.SetData(test.newName).Finish()
+				rw.Resume(buf)
+				w.Resume(rw.Finish())
+			})
+			if res.Status() != test.wantStatus {
+				t.Fatalf("status = %s, want %s",
+					Nfsstat4Name(res.Status()), Nfsstat4Name(test.wantStatus))
+			}
+		})
+	}
+}
+
 func TestOpenInvalidNamesRejected(t *testing.T) {
 	longName := make([]byte, maxTernNameLength+1)
 	for i := range longName {
@@ -3120,6 +3161,43 @@ func TestRename(t *testing.T) {
 	}
 	if string(data) != "rename me" {
 		t.Fatalf("new.txt content = %q, want %q", data, "rename me")
+	}
+}
+
+func TestRenameToSameNameIsNoOp(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "same"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	addr, cleanup := startTestServer(t, dir)
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+
+	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+		w.AppendArgarray_Putrootfh()
+		w.AppendArgarray_Savefh()
+		rw := w.AppendArgarray_Rename()
+		ow := rw.StartOldname()
+		buf := ow.SetData([]byte("same")).Finish()
+		rw.Resume(buf)
+		nw := rw.StartNewname()
+		buf = nw.SetData([]byte("same")).Finish()
+		rw.Resume(buf)
+		w.Resume(rw.Finish())
+	})
+	iter := expectOK(t, res)
+	nextOp(t, &iter)
+	nextOp(t, &iter)
+	ok := nextOp(t, &iter).Value().AsRENAME4resEntry().
+		Value().AsRENAME4resok()
+	if got := ok.SourceCinfo(); got.Before() != got.After() {
+		t.Errorf("source cinfo changed: before=%d after=%d",
+			got.Before(), got.After())
+	}
+	if got := ok.TargetCinfo(); got.Before() != got.After() {
+		t.Errorf("target cinfo changed: before=%d after=%d",
+			got.Before(), got.After())
 	}
 }
 
