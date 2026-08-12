@@ -812,6 +812,12 @@ func (s *Server) opReaddir(args READDIR4args, st *compoundState, w *COMPOUND4res
 	}
 
 	cookie := args.Cookie()
+	if cookie == 1 || cookie == 2 {
+		ew := w.AppendResarray_Readdir()
+		ew.SetValue_Default(NFS4ERR_BAD_COOKIE)
+		w.Resume(ew.Finish())
+		return NFS4ERR_BAD_COOKIE
+	}
 	maxCount := args.Maxcount()
 	if maxCount > 1<<20 {
 		maxCount = 1 << 20

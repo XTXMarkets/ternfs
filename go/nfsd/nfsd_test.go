@@ -3497,6 +3497,34 @@ func TestReaddirCookieverfMismatch(t *testing.T) {
 	}
 }
 
+func TestReaddirReservedCookies(t *testing.T) {
+	for _, cookie := range []uint64{1, 2} {
+		t.Run(fmt.Sprintf("cookie_%d", cookie), func(t *testing.T) {
+			dir := t.TempDir()
+			addr, cleanup := startTestServer(t, dir)
+			defer cleanup()
+			conn := dial(t, addr)
+			defer conn.Close()
+
+			res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				rw := w.AppendArgarray_Readdir()
+				rw.SetCookie(cookie)
+				rw.SetDircount(4096)
+				rw.SetMaxcount(8192)
+				bw := rw.StartAttrRequest()
+				buf := bw.Finish()
+				rw.Resume(buf)
+				w.Resume(rw.Finish())
+			})
+			if res.Status() != NFS4ERR_BAD_COOKIE {
+				t.Fatalf("status = %s, want NFS4ERR_BAD_COOKIE",
+					Nfsstat4Name(res.Status()))
+			}
+		})
+	}
+}
+
 func TestReaddirTooSmall(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("x"), 0644)
