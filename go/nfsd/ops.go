@@ -60,11 +60,17 @@ func (s *Server) opAccess(args ACCESS4args, st *compoundState, w *COMPOUND4resWr
 		w.Resume(ew.Finish())
 		return NFS4ERR_NOFILEHANDLE
 	}
-	requested := args.Access()
+	meaningful := uint32(ACCESS4_READ | ACCESS4_MODIFY | ACCESS4_EXTEND)
+	if st.currentID.Type() == InodeTypeDir {
+		meaningful |= ACCESS4_LOOKUP | ACCESS4_DELETE
+	} else {
+		meaningful |= ACCESS4_EXECUTE
+	}
+	requested := args.Access() & meaningful
 	ew := w.AppendResarray_Access()
 	ok := ew.SetValue_Nfs4Ok()
 	ok.SetSupported(requested)
-	ok.SetAccess(requested) // grant everything requested
+	ok.SetAccess(requested)
 	w.Resume(ew.Finish())
 	return NFS4_OK
 }

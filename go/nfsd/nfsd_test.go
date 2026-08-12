@@ -897,6 +897,79 @@ func TestAccess(t *testing.T) {
 	}
 }
 
+func TestAccessMasksUnsupportedBitsByType(t *testing.T) {
+	const allAccess = ACCESS4_READ | ACCESS4_LOOKUP | ACCESS4_MODIFY |
+		ACCESS4_EXTEND | ACCESS4_DELETE | ACCESS4_EXECUTE
+	const unknownAccess = 0x40
+
+	tests := []struct {
+		name       string
+		object     string
+		wantAccess uint32
+	}{
+		{
+			name:       "directory",
+			object:     "dir",
+			wantAccess: allAccess &^ ACCESS4_EXECUTE,
+		},
+		{
+			name:       "file",
+			object:     "file",
+			wantAccess: allAccess &^ (ACCESS4_LOOKUP | ACCESS4_DELETE),
+		},
+		{
+			name:       "symlink",
+			object:     "link",
+			wantAccess: allAccess &^ (ACCESS4_LOOKUP | ACCESS4_DELETE),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.Mkdir(filepath.Join(dir, "dir"), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "file"), nil, 0644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("file", filepath.Join(dir, "link")); err != nil {
+				t.Fatal(err)
+			}
+			addr, cleanup := startTestServer(t, dir)
+			defer cleanup()
+			conn := dial(t, addr)
+			defer conn.Close()
+
+			res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				lw := w.AppendArgarray_Lookup()
+				nw := lw.StartObjname()
+				buf := nw.SetData([]byte(test.object)).Finish()
+				lw.Resume(buf)
+				w.Resume(lw.Finish())
+
+				aw := w.AppendArgarray_Access()
+				aw.SetAccess(allAccess | unknownAccess)
+			})
+			iter := expectOK(t, res)
+			nextOp(t, &iter)
+			nextOp(t, &iter)
+			entry := nextOp(t, &iter)
+			ok := entry.Value().AsACCESS4resEntry().
+				Value().AsACCESS4resok()
+			if ok.Supported() != test.wantAccess {
+				t.Errorf("supported = %#x, want %#x",
+					ok.Supported(), test.wantAccess)
+			}
+			if ok.Access() != test.wantAccess {
+				t.Errorf("access = %#x, want %#x",
+					ok.Access(), test.wantAccess)
+			}
+		})
+	}
+}
+
 func TestOpenConfirmClose(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("content"), 0644)
