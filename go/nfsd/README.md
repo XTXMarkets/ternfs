@@ -127,17 +127,28 @@ The Make target writes the complete console output to `pynfs.out` while also
 displaying it. Set `PYNFS_OUTPUT` to use another path. The output file is not
 ignored by git, so completed runs remain visible during review.
 
-The standard suite includes behavior outside the TernFS contract, so an
-initial run is expected to expose unsupported operations as well as server
-bugs. Select flags or individual pynfs test codes with `PYNFS_TESTS`, and pass
-additional runner options with `PYNFS_ARGS`. The default Go test timeout is one
-hour because pynfs includes lease-expiry cases which deliberately sleep for
-several minutes. Override it with `PYNFS_TIMEOUT`:
+TernFS intentionally does not implement several POSIX and NFS features covered
+by pynfs. The harness uses two mechanisms to exclude those tests:
+
+* The default `PYNFS_TESTS` value uses pynfs flag selectors to exclude broad
+  capability classes such as FIFO, socket, GSS and ACL tests.
+* The [`pynfs_unsupported.txt`](pynfs_unsupported.txt) manifest lists
+  individual locking and hard-link cases. Using the broad `nolock` and
+  `nolink` selectors would also hide useful related tests.
+
+Select flags or individual pynfs test codes with `PYNFS_TESTS`. The manifest
+exclusions are appended after `PYNFS_TESTS`, so set `PYNFS_SKIP_FILE=` to
+bypass this manifest.
+
+Set additional runner options with `PYNFS_ARGS`. The default Go test timeout is
+one hour because pynfs includes lease-expiry cases which deliberately sleep
+for several minutes. Override it with `PYNFS_TIMEOUT`:
 
 ```sh
 make test-pynfs-cluster PYNFS_TESTS='putrootfh getattr'
 make test-pynfs-cluster PYNFS_TESTS='GETATTR1 GETATTR2' PYNFS_ARGS='--showtraffic'
-make test-pynfs-cluster PYNFS_TESTS='all notimed'
+make test-pynfs-cluster PYNFS_TESTS='all notimed noblock nochar nofifo nosocket nogss noacl nomode000'
+make test-pynfs-cluster PYNFS_TESTS='all notimed' PYNFS_SKIP_FILE=
 make test-pynfs-cluster PYNFS_TIMEOUT=2h
 ```
 

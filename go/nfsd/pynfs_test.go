@@ -7,11 +7,13 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,6 +25,44 @@ type pynfsCaseTiming struct {
 	code     string
 	name     string
 	duration time.Duration
+}
+
+var pynfsCodePattern = regexp.MustCompile(`^[A-Z][A-Z0-9]*[a-z]?$`)
+
+func pynfsSkipSelectors(path string) ([]string, error) {
+	if path == "" {
+		return nil, nil
+	}
+
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	var selectors []string
+	seen := make(map[string]int)
+	scanner := bufio.NewScanner(file)
+	for lineNumber := 1; scanner.Scan(); lineNumber++ {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if !pynfsCodePattern.MatchString(line) {
+			return nil, fmt.Errorf("%s:%d: invalid pynfs test code %q",
+				path, lineNumber, line)
+		}
+		if previousLine, ok := seen[line]; ok {
+			return nil, fmt.Errorf("%s:%d: duplicate pynfs test code %q (first on line %d)",
+				path, lineNumber, line, previousLine)
+		}
+		seen[line] = lineNumber
+		selectors = append(selectors, "no"+line)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return selectors, nil
 }
 
 func TestPynfs(t *testing.T) {
@@ -64,6 +104,15 @@ func TestPynfs(t *testing.T) {
 	if len(selectors) == 0 {
 		selectors = []string{"all"}
 	}
+	skipFile, configured := os.LookupEnv("PYNFS_SKIP_FILE")
+	if !configured {
+		skipFile = "pynfs_unsupported.txt"
+	}
+	skipSelectors, err := pynfsSkipSelectors(skipFile)
+	if err != nil {
+		t.Fatalf("read pynfs unsupported-test manifest: %v", err)
+	}
+	selectors = append(selectors, skipSelectors...)
 	args = append(args, selectors...)
 
 	cmd := exec.Command(python, args...)
