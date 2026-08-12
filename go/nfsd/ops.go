@@ -209,6 +209,37 @@ func (s *Server) opCreate(args CREATE4args, st *compoundState, w *COMPOUND4resWr
 	}
 	name := string(nameData)
 	objType := args.ObjtypeType()
+	switch objType {
+	case NF4DIR, NF4LNK:
+	case NF4REG:
+		ew := w.AppendResarray_Create()
+		ew.SetValue_Default(NFS4ERR_BADTYPE)
+		w.Resume(ew.Finish())
+		return NFS4ERR_BADTYPE
+	default:
+		// We don't support creating block/char/socket/fifo devices.
+		ew := w.AppendResarray_Create()
+		ew.SetValue_Default(NFS4ERR_NOTSUPP)
+		w.Resume(ew.Finish())
+		return NFS4ERR_NOTSUPP
+	}
+	if status := validateCreateAttrs(args.Createattrs()); status != NFS4_OK {
+		ew := w.AppendResarray_Create()
+		ew.SetValue_Default(status)
+		w.Resume(ew.Finish())
+		return status
+	}
+	if _, err := s.fs.Lookup(st.currentID, name); err == nil {
+		ew := w.AppendResarray_Create()
+		ew.SetValue_Default(NFS4ERR_EXIST)
+		w.Resume(ew.Finish())
+		return NFS4ERR_EXIST
+	} else if status := s.errToNFS(err); status != NFS4ERR_NOENT {
+		ew := w.AppendResarray_Create()
+		ew.SetValue_Default(status)
+		w.Resume(ew.Finish())
+		return status
+	}
 
 	var newID InodeID
 	var err error
@@ -226,12 +257,6 @@ func (s *Server) opCreate(args CREATE4args, st *compoundState, w *COMPOUND4resWr
 		}
 		target := string(targetData)
 		newID, err = s.fs.Symlink(st.currentID, name, target)
-	default:
-		// We don't support creating block/char/socket/fifo devices.
-		ew := w.AppendResarray_Create()
-		ew.SetValue_Default(NFS4ERR_NOTSUPP)
-		w.Resume(ew.Finish())
-		return NFS4ERR_NOTSUPP
 	}
 
 	if err != nil {
@@ -548,13 +573,27 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 
 		// Check if this is a create.
 		if args.OpenhowType() == OPEN4_CREATE {
+			createHow := args.Openhow().AsCreatehow4Entry()
 			// EXCLUSIVE4 not supported — clients should fall back
 			// to GUARDED4 or UNCHECKED4.
-			if args.Openhow().AsCreatehow4Entry().Disc() == EXCLUSIVE4 {
+			if createHow.Disc() == EXCLUSIVE4 {
 				ew := w.AppendResarray_Open()
 				ew.SetValue_Default(NFS4ERR_NOTSUPP)
 				w.Resume(ew.Finish())
 				return NFS4ERR_NOTSUPP
+			}
+			var createAttrs Fattr4
+			switch createHow.Disc() {
+			case UNCHECKED4:
+				createAttrs = createHow.Value().AsUnchecked4()
+			case GUARDED4:
+				createAttrs = createHow.Value().AsGuarded4()
+			}
+			if status := validateCreateAttrs(createAttrs); status != NFS4_OK {
+				ew := w.AppendResarray_Open()
+				ew.SetValue_Default(status)
+				w.Resume(ew.Finish())
+				return status
 			}
 			// Try lookup first.
 			id, err := s.fs.Lookup(dirID, fileName)
@@ -584,6 +623,11 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 					return NFS4ERR_IO
 				}
 				created = true
+			} else if createHow.Disc() == GUARDED4 {
+				ew := w.AppendResarray_Open()
+				ew.SetValue_Default(NFS4ERR_EXIST)
+				w.Resume(ew.Finish())
+				return NFS4ERR_EXIST
 			}
 			targetID = id
 		} else {

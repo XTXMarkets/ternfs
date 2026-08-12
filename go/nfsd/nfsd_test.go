@@ -1603,6 +1603,176 @@ func TestCreateInvalidFieldsRejected(t *testing.T) {
 	}
 }
 
+func TestCreateTypeAndAttributesValidated(t *testing.T) {
+	tests := []struct {
+		name       string
+		objType    uint32
+		mask       [2]uint32
+		wantStatus uint32
+	}{
+		{
+			name:       "regular file type",
+			objType:    NF4REG,
+			wantStatus: NFS4ERR_BADTYPE,
+		},
+		{
+			name:       "read-only attribute",
+			objType:    NF4DIR,
+			mask:       [2]uint32{1 << FATTR4_LINK_SUPPORT, 0},
+			wantStatus: NFS4ERR_INVAL,
+		},
+		{
+			name:       "unsupported writable attribute",
+			objType:    NF4DIR,
+			mask:       [2]uint32{1 << FATTR4_ACL, 0},
+			wantStatus: NFS4ERR_ATTRNOTSUPP,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			addr, cleanup := startTestServer(t, dir)
+			defer cleanup()
+			conn := dial(t, addr)
+			defer conn.Close()
+
+			res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				cw := w.AppendArgarray_Create()
+				cw.SetObjtype_Default(test.objType)
+				nw := cw.StartObjname()
+				buf := nw.SetData([]byte("new")).Finish()
+				cw.Resume(buf)
+				faw := cw.StartCreateattrs()
+				buf = finishTestFattr(faw, test.mask, nil)
+				cw.Resume(buf)
+				w.Resume(cw.Finish())
+			})
+			if res.Status() != test.wantStatus {
+				t.Fatalf("status = %s, want %s",
+					Nfsstat4Name(res.Status()), Nfsstat4Name(test.wantStatus))
+			}
+		})
+	}
+}
+
+func TestCreateExistingNameRejected(t *testing.T) {
+	tests := []struct {
+		name    string
+		objType uint32
+		setup   func(string) error
+	}{
+		{
+			name:    "directory",
+			objType: NF4DIR,
+			setup: func(path string) error {
+				return os.Mkdir(path, 0755)
+			},
+		},
+		{
+			name:    "symlink",
+			objType: NF4LNK,
+			setup: func(path string) error {
+				return os.Symlink("target", path)
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := test.setup(filepath.Join(dir, "existing")); err != nil {
+				t.Fatal(err)
+			}
+			addr, cleanup := startTestServer(t, dir)
+			defer cleanup()
+			conn := dial(t, addr)
+			defer conn.Close()
+
+			res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				cw := w.AppendArgarray_Create()
+				if test.objType == NF4LNK {
+					tw := cw.SetObjtype_Nf4lnk()
+					buf := tw.SetData([]byte("target")).Finish()
+					cw.Resume(buf)
+				} else {
+					cw.SetObjtype_Nf4dir()
+				}
+				nw := cw.StartObjname()
+				buf := nw.SetData([]byte("existing")).Finish()
+				cw.Resume(buf)
+				faw := cw.StartCreateattrs()
+				buf = finishTestFattr(faw, [2]uint32{}, nil)
+				cw.Resume(buf)
+				w.Resume(cw.Finish())
+			})
+			if res.Status() != NFS4ERR_EXIST {
+				t.Fatalf("status = %s, want NFS4ERR_EXIST",
+					Nfsstat4Name(res.Status()))
+			}
+		})
+	}
+}
+
+func TestOpenCreateAttributesValidated(t *testing.T) {
+	tests := []struct {
+		name       string
+		mask       [2]uint32
+		wantStatus uint32
+	}{
+		{
+			name:       "read-only attribute",
+			mask:       [2]uint32{1 << FATTR4_LINK_SUPPORT, 0},
+			wantStatus: NFS4ERR_INVAL,
+		},
+		{
+			name:       "unsupported writable attribute",
+			mask:       [2]uint32{1 << FATTR4_ACL, 0},
+			wantStatus: NFS4ERR_ATTRNOTSUPP,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			addr, cleanup := startTestServer(t, dir)
+			defer cleanup()
+			conn := dial(t, addr)
+			defer conn.Close()
+			xid := uint32(1)
+			clientID := setupClient(t, conn, &xid)
+
+			res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				ow := w.AppendArgarray_Open()
+				ow.SetSeqid(1)
+				ow.SetShareAccess(OPEN4_SHARE_ACCESS_BOTH)
+				ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
+				owner := ow.StartOwner()
+				owner = owner.SetClientid(clientID)
+				owner = owner.SetOwner([]byte("attr-test"))
+				buf := owner.Finish()
+				ow.Resume(buf)
+				chw := ow.SetOpenhow_Create()
+				faw := chw.SetValue_Unchecked4()
+				buf = finishTestFattr(faw, test.mask, nil)
+				chw.Resume(buf)
+				ow.Resume(chw.Finish())
+				claim := ow.SetClaim_Null()
+				buf = claim.SetData([]byte("new")).Finish()
+				ow.Resume(buf)
+				w.Resume(ow.Finish())
+			})
+			if res.Status() != test.wantStatus {
+				t.Fatalf("status = %s, want %s",
+					Nfsstat4Name(res.Status()), Nfsstat4Name(test.wantStatus))
+			}
+		})
+	}
+}
+
 func TestCreateFromNonDirectoryRejected(t *testing.T) {
 	tests := []struct {
 		name  string
