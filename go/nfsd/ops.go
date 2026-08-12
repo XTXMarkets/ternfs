@@ -1437,6 +1437,12 @@ func (s *Server) opWrite(args WRITE4args, st *compoundState, w *COMPOUND4resWrit
 		w.Resume(ew.Finish())
 		return NFS4ERR_NOFILEHANDLE
 	}
+	if status := requireRegularFile(st.currentID); status != NFS4_OK {
+		ew := w.AppendResarray_Write()
+		ew.SetValue_Default(status)
+		w.Resume(ew.Finish())
+		return status
+	}
 
 	// Find the staging buffer for this file.
 	sf := s.stagingStore.Get(st.currentID)

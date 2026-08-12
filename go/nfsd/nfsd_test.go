@@ -1849,6 +1849,8 @@ func TestCurrentFilehandleTypeValidation(t *testing.T) {
 		{"commit symlink", "link", "commit", NFS4ERR_INVAL},
 		{"read directory", "dir", "read", NFS4ERR_ISDIR},
 		{"read symlink", "link", "read", NFS4ERR_INVAL},
+		{"write directory", "dir", "write", NFS4ERR_ISDIR},
+		{"write symlink", "link", "write", NFS4ERR_INVAL},
 		{"readdir file", "file", "readdir", NFS4ERR_NOTDIR},
 		{"readdir symlink", "link", "readdir", NFS4ERR_SYMLINK},
 		{"readlink file", "file", "readlink", NFS4ERR_INVAL},
@@ -1898,6 +1900,10 @@ func TestCurrentFilehandleTypeValidation(t *testing.T) {
 				case "read":
 					rw := w.AppendArgarray_Read()
 					rw.SetCount(1)
+				case "write":
+					ww := w.AppendArgarray_Write()
+					ww = ww.SetData(nil)
+					w.Resume(ww.Finish())
 				case "readdir":
 					rw := w.AppendArgarray_Readdir()
 					rw.SetDircount(1024)
