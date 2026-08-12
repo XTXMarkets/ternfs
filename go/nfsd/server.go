@@ -138,6 +138,8 @@ type compoundState struct {
 	savedIDSet   bool
 }
 
+const maxCompoundOperations = 128
+
 func (s *Server) safeHandleCompound(req *rpcRequest, remote string) (reply []byte) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -186,6 +188,13 @@ func (s *Server) handleCompound(req *rpcRequest) []byte {
 	tagData := args.Tag().Data()
 	reply = tagW.SetData(tagData).Finish()
 	w.Resume(reply)
+
+	if args.ArgarrayCount() > maxCompoundOperations {
+		s.log.Debug("COMPOUND has too many operations",
+			"ops", args.ArgarrayCount(), "max", maxCompoundOperations)
+		w.SetStatus(NFS4ERR_RESOURCE)
+		return w.Finish()
+	}
 
 	st := &compoundState{}
 	overallStatus := NFS4_OK

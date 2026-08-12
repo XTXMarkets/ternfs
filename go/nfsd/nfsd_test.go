@@ -147,6 +147,37 @@ func TestEmptyCompound(t *testing.T) {
 	}
 }
 
+func TestCompoundOperationLimit(t *testing.T) {
+	dir := t.TempDir()
+	addr, cleanup := startTestServer(t, dir)
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+
+	body := buildCompoundBody([]byte("too-many"), func(w *COMPOUND4argsWriter) {
+		for range maxCompoundOperations + 1 {
+			w.AppendArgarray_Putrootfh()
+		}
+	})
+	reply, err := sendRPC(conn, 1, procCompound, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, ok := ReadCOMPOUND4res(parseRPCReply(t, reply))
+	if !ok {
+		t.Fatal("failed to parse COMPOUND4res")
+	}
+	if res.Status() != NFS4ERR_RESOURCE {
+		t.Fatalf("status = %d, want NFS4ERR_RESOURCE", res.Status())
+	}
+	if got := string(res.Tag().Data()); got != "too-many" {
+		t.Fatalf("tag = %q, want %q", got, "too-many")
+	}
+	if res.ResarrayCount() != 0 {
+		t.Fatalf("resarray count = %d, want 0", res.ResarrayCount())
+	}
+}
+
 // expectOK checks compound status is NFS4_OK and returns the resarray iterator.
 func expectOK(t *testing.T, res COMPOUND4res) NfsResop4EntryIter {
 	t.Helper()
