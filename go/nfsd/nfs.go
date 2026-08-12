@@ -1493,7 +1493,12 @@ func (w *FsLocations4Writer) Resume(buf []byte) {
 }
 
 func (w *FsLocations4Writer) Finish() []byte {
-	binary.BigEndian.PutUint32(w.buf[w.locationsCountOff:w.locationsCountOff+4], w.locationsCount)
+	if w.locationsCountOff == 0 {
+		w.locationsCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0) // locations_count = 0
+	} else {
+		binary.BigEndian.PutUint32(w.buf[w.locationsCountOff:w.locationsCountOff+4], w.locationsCount)
+	}
 	return w.buf
 }
 
@@ -11174,7 +11179,12 @@ func (w *COMPOUND4argsWriter) Resume(buf []byte) {
 }
 
 func (w *COMPOUND4argsWriter) Finish() []byte {
-	binary.BigEndian.PutUint32(w.buf[w.argarrayCountOff:w.argarrayCountOff+4], w.argarrayCount)
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0) // argarray_count = 0
+	} else {
+		binary.BigEndian.PutUint32(w.buf[w.argarrayCountOff:w.argarrayCountOff+4], w.argarrayCount)
+	}
 	return w.buf
 }
 
@@ -12263,7 +12273,12 @@ func (w *COMPOUND4resWriter) Resume(buf []byte) {
 }
 
 func (w *COMPOUND4resWriter) Finish() []byte {
-	binary.BigEndian.PutUint32(w.buf[w.resarrayCountOff:w.resarrayCountOff+4], w.resarrayCount)
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0) // resarray_count = 0
+	} else {
+		binary.BigEndian.PutUint32(w.buf[w.resarrayCountOff:w.resarrayCountOff+4], w.resarrayCount)
+	}
 	return w.buf
 }
 
@@ -12995,7 +13010,12 @@ func (w *CBCOMPOUND4argsWriter) Resume(buf []byte) {
 }
 
 func (w *CBCOMPOUND4argsWriter) Finish() []byte {
-	binary.BigEndian.PutUint32(w.buf[w.argarrayCountOff:w.argarrayCountOff+4], w.argarrayCount)
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0) // argarray_count = 0
+	} else {
+		binary.BigEndian.PutUint32(w.buf[w.argarrayCountOff:w.argarrayCountOff+4], w.argarrayCount)
+	}
 	return w.buf
 }
 
@@ -13240,7 +13260,12 @@ func (w *CBCOMPOUND4resWriter) Resume(buf []byte) {
 }
 
 func (w *CBCOMPOUND4resWriter) Finish() []byte {
-	binary.BigEndian.PutUint32(w.buf[w.resarrayCountOff:w.resarrayCountOff+4], w.resarrayCount)
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0) // resarray_count = 0
+	} else {
+		binary.BigEndian.PutUint32(w.buf[w.resarrayCountOff:w.resarrayCountOff+4], w.resarrayCount)
+	}
 	return w.buf
 }
 

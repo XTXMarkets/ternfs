@@ -950,9 +950,15 @@ func (g *Generator) emitWriterFinish(ti *TypeInfo, writerName string, counts []w
 		p := g.fieldPrimInfo(va.CountField)
 		if c.deferred {
 			offName := c.goName + "Off"
-			g.p("\t%s\n", g.writePrim(p,
+			g.p("\tif w.%s == 0 {\n", offName)
+			g.p("\t\tw.%s = len(w.buf)\n", offName)
+			g.p("\t\tw.buf = %s(w.buf, 0) // %s = 0\n",
+				g.appendHelper(p), va.CountField.Name)
+			g.p("\t} else {\n")
+			g.p("\t\t%s\n", g.writePrim(p,
 				fmt.Sprintf("w.buf[w.%s:w.%s+%d]", offName, offName, p.Size),
 				fmt.Sprintf("w.%s", c.goName)))
+			g.p("\t}\n")
 		} else {
 			off := va.CountOff
 			if headerSize >= 8 {

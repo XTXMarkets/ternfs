@@ -85,20 +85,25 @@ func parseRPCReply(t *testing.T, reply []byte) []byte {
 	return reply[24:]
 }
 
-// sendCompound builds a compound, sends it, and returns the parsed COMPOUND4res.
-func sendCompound(t *testing.T, conn net.Conn, xid uint32, build func(w *COMPOUND4argsWriter)) COMPOUND4res {
-	t.Helper()
+func buildCompoundBody(tag []byte, build func(w *COMPOUND4argsWriter)) []byte {
 	var body []byte
 	w := StartCOMPOUND4args(body)
 	tagW := w.StartTag()
-	body = tagW.SetData(nil).Finish()
+	body = tagW.SetData(tag).Finish()
 	w.Resume(body)
 	w.SetMinorversion(0)
 
-	build(&w)
+	if build != nil {
+		build(&w)
+	}
 
-	body = w.Finish()
+	return w.Finish()
+}
 
+// sendCompound builds a compound, sends it, and returns the parsed COMPOUND4res.
+func sendCompound(t *testing.T, conn net.Conn, xid uint32, build func(w *COMPOUND4argsWriter)) COMPOUND4res {
+	t.Helper()
+	body := buildCompoundBody(nil, build)
 	reply, err := sendRPC(conn, xid, procCompound, body)
 	if err != nil {
 		t.Fatal(err)
@@ -109,6 +114,37 @@ func sendCompound(t *testing.T, conn net.Conn, xid uint32, build func(w *COMPOUN
 		t.Fatal("failed to parse COMPOUND4res")
 	}
 	return res
+}
+
+func TestEmptyCompound(t *testing.T) {
+	dir := t.TempDir()
+	addr, cleanup := startTestServer(t, dir)
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+
+	const xid = 12153
+	reply, err := sendRPC(conn, xid, procCompound, buildCompoundBody([]byte("empty"), nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := binary.BigEndian.Uint32(reply[:4]); got != xid {
+		t.Fatalf("reply xid = %d, want %d", got, xid)
+	}
+
+	res, ok := ReadCOMPOUND4res(parseRPCReply(t, reply))
+	if !ok {
+		t.Fatal("failed to parse COMPOUND4res")
+	}
+	if res.Status() != NFS4_OK {
+		t.Fatalf("status = %d, want NFS4_OK", res.Status())
+	}
+	if got := string(res.Tag().Data()); got != "empty" {
+		t.Fatalf("tag = %q, want %q", got, "empty")
+	}
+	if res.ResarrayCount() != 0 {
+		t.Fatalf("resarray count = %d, want 0", res.ResarrayCount())
+	}
 }
 
 // expectOK checks compound status is NFS4_OK and returns the resarray iterator.
