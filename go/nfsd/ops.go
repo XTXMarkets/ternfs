@@ -898,6 +898,12 @@ func (s *Server) opReaddir(args READDIR4args, st *compoundState, w *COMPOUND4res
 	}
 
 	reqMask := parseBitmap(args.AttrRequest())
+	if status := validateGetattrMask(reqMask); status != NFS4_OK {
+		ew := w.AppendResarray_Readdir()
+		ew.SetValue_Default(status)
+		w.Resume(ew.Finish())
+		return status
+	}
 	dirCount := args.Dircount()
 	if dirCount > 1<<20 {
 		dirCount = 1 << 20

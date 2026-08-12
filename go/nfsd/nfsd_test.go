@@ -3701,6 +3701,31 @@ func TestReaddirReservedCookies(t *testing.T) {
 	}
 }
 
+func TestReaddirWriteOnlyAttributesRejected(t *testing.T) {
+	dir := t.TempDir()
+	addr, cleanup := startTestServer(t, dir)
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+
+	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+		w.AppendArgarray_Putrootfh()
+		rw := w.AppendArgarray_Readdir()
+		rw.SetDircount(4096)
+		rw.SetMaxcount(8192)
+		bw := rw.StartAttrRequest()
+		bw.AppendData(0)
+		bw.AppendData(1 << (FATTR4_TIME_ACCESS_SET - 32))
+		buf := bw.Finish()
+		rw.Resume(buf)
+		w.Resume(rw.Finish())
+	})
+	if res.Status() != NFS4ERR_INVAL {
+		t.Fatalf("status = %s, want NFS4ERR_INVAL",
+			Nfsstat4Name(res.Status()))
+	}
+}
+
 func TestReaddirTooSmall(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("x"), 0644)
