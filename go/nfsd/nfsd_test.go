@@ -1964,6 +1964,93 @@ func TestGetattr_MultipleAttrs(t *testing.T) {
 	}
 }
 
+func TestGetattrWriteOnlyAttribute(t *testing.T) {
+	dir := t.TempDir()
+	addr, cleanup := startTestServer(t, dir)
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+
+	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+		w.AppendArgarray_Putrootfh()
+		gw := w.AppendArgarray_Getattr()
+		bw := gw.StartAttrRequest()
+		bw.AppendData(0)
+		bw.AppendData(1 << (FATTR4_TIME_ACCESS_SET - 32))
+		buf := bw.Finish()
+		gw.Resume(buf)
+		w.Resume(gw.Finish())
+	})
+
+	if res.Status() != NFS4ERR_INVAL {
+		t.Fatalf("status = %s, want NFS4ERR_INVAL", Nfsstat4Name(res.Status()))
+	}
+}
+
+func TestVerifyAttributeMaskValidation(t *testing.T) {
+	tests := []struct {
+		name       string
+		nverify    bool
+		mask       [2]uint32
+		values     []byte
+		wantStatus uint32
+	}{
+		{"verify type", false, [2]uint32{1 << FATTR4_TYPE, 0}, binary.BigEndian.AppendUint32(nil, NF4DIR), NFS4_OK},
+		{"nverify type", true, [2]uint32{1 << FATTR4_TYPE, 0}, binary.BigEndian.AppendUint32(nil, NF4REG), NFS4_OK},
+		{"verify rdattr_error", false, [2]uint32{1 << FATTR4_RDATTR_ERROR, 0}, make([]byte, 4), NFS4ERR_INVAL},
+		{"nverify rdattr_error", true, [2]uint32{1 << FATTR4_RDATTR_ERROR, 0}, make([]byte, 4), NFS4ERR_INVAL},
+		{"verify unsupported acl", false, [2]uint32{1 << FATTR4_ACL, 0}, make([]byte, 4), NFS4ERR_ATTRNOTSUPP},
+		{"nverify unsupported acl", true, [2]uint32{1 << FATTR4_ACL, 0}, make([]byte, 4), NFS4ERR_ATTRNOTSUPP},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			addr, cleanup := startTestServer(t, dir)
+			defer cleanup()
+			conn := dial(t, addr)
+			defer conn.Close()
+
+			res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+
+				if test.nverify {
+					vw := w.AppendArgarray_Nverify()
+					faw := vw.StartObjAttributes()
+					buf := finishTestFattr(faw, test.mask, test.values)
+					vw.Resume(buf)
+					w.Resume(vw.Finish())
+				} else {
+					vw := w.AppendArgarray_Verify()
+					faw := vw.StartObjAttributes()
+					buf := finishTestFattr(faw, test.mask, test.values)
+					vw.Resume(buf)
+					w.Resume(vw.Finish())
+				}
+			})
+
+			if res.Status() != test.wantStatus {
+				t.Fatalf("status = %s, want %s",
+					Nfsstat4Name(res.Status()), Nfsstat4Name(test.wantStatus))
+			}
+		})
+	}
+}
+
+func finishTestFattr(w Fattr4Writer, mask [2]uint32, values []byte) []byte {
+	bw := w.StartAttrmask()
+	bw.AppendData(mask[0])
+	if mask[1] != 0 {
+		bw.AppendData(mask[1])
+	}
+	buf := bw.Finish()
+	w.Resume(buf)
+	aw := w.StartAttrVals()
+	buf = aw.SetData(values).Finish()
+	w.Resume(buf)
+	return w.Finish()
+}
+
 func TestWriteAndRead(t *testing.T) {
 	dir := t.TempDir()
 	addr, cleanup := startTestServer(t, dir)

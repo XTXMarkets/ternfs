@@ -271,6 +271,12 @@ func (s *Server) opGetattr(args GETATTR4args, st *compoundState, w *COMPOUND4res
 	}
 
 	reqMask := parseBitmap(args.AttrRequest())
+	if status := validateGetattrMask(reqMask); status != NFS4_OK {
+		ew := w.AppendResarray_Getattr()
+		ew.SetValue_Default(status)
+		w.Resume(ew.Finish())
+		return status
+	}
 
 	ew := w.AppendResarray_Getattr()
 	okW := ew.SetValue_Nfs4Ok()
@@ -1256,10 +1262,9 @@ func (s *Server) verifyAttrs(id InodeID, supplied Fattr4) (bool, uint32) {
 	}
 
 	mask := parseBitmap(supplied.Attrmask())
-
-	// Only compare attributes we support.
-	mask[0] &= supportedAttrs0
-	mask[1] &= supportedAttrs1
+	if status := validateVerifyMask(mask); status != NFS4_OK {
+		return false, status
+	}
 
 	// Encode what we would return for these attributes.
 	expected := encodeAttrs(mask, id, ni)
