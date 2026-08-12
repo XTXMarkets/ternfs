@@ -1483,6 +1483,233 @@ func TestCreateFromNonDirectoryRejected(t *testing.T) {
 	}
 }
 
+func TestCurrentFilehandleTypeValidation(t *testing.T) {
+	tests := []struct {
+		name       string
+		object     string
+		operation  string
+		wantStatus uint32
+	}{
+		{"lookup from file", "file", "lookup", NFS4ERR_NOTDIR},
+		{"lookup from symlink", "link", "lookup", NFS4ERR_SYMLINK},
+		{"lookupp from file", "file", "lookupp", NFS4ERR_NOTDIR},
+		{"lookupp from symlink", "link", "lookupp", NFS4ERR_SYMLINK},
+		{"commit directory", "dir", "commit", NFS4ERR_ISDIR},
+		{"commit symlink", "link", "commit", NFS4ERR_INVAL},
+		{"read directory", "dir", "read", NFS4ERR_ISDIR},
+		{"read symlink", "link", "read", NFS4ERR_INVAL},
+		{"readdir file", "file", "readdir", NFS4ERR_NOTDIR},
+		{"readdir symlink", "link", "readdir", NFS4ERR_SYMLINK},
+		{"readlink file", "file", "readlink", NFS4ERR_INVAL},
+		{"readlink directory", "dir", "readlink", NFS4ERR_INVAL},
+		{"remove from file", "file", "remove", NFS4ERR_NOTDIR},
+		{"remove from symlink", "link", "remove", NFS4ERR_SYMLINK},
+		{"secinfo from file", "file", "secinfo", NFS4ERR_NOTDIR},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "file"), nil, 0644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(filepath.Join(dir, "dir"), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("file", filepath.Join(dir, "link")); err != nil {
+				t.Fatal(err)
+			}
+
+			addr, cleanup := startTestServer(t, dir)
+			defer cleanup()
+			conn := dial(t, addr)
+			defer conn.Close()
+
+			res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				lw := w.AppendArgarray_Lookup()
+				nw := lw.StartObjname()
+				buf := nw.SetData([]byte(test.object)).Finish()
+				lw.Resume(buf)
+				w.Resume(lw.Finish())
+
+				switch test.operation {
+				case "lookup":
+					lw := w.AppendArgarray_Lookup()
+					nw := lw.StartObjname()
+					buf := nw.SetData([]byte("child")).Finish()
+					lw.Resume(buf)
+					w.Resume(lw.Finish())
+				case "lookupp":
+					w.AppendArgarray_Lookupp()
+				case "commit":
+					w.AppendArgarray_Commit()
+				case "read":
+					rw := w.AppendArgarray_Read()
+					rw.SetCount(1)
+				case "readdir":
+					rw := w.AppendArgarray_Readdir()
+					rw.SetDircount(1024)
+					rw.SetMaxcount(1024)
+					bw := rw.StartAttrRequest()
+					buf := bw.Finish()
+					rw.Resume(buf)
+					w.Resume(rw.Finish())
+				case "readlink":
+					w.AppendArgarray_Readlink()
+				case "remove":
+					rw := w.AppendArgarray_Remove()
+					tw := rw.StartTarget()
+					buf := tw.SetData([]byte("child")).Finish()
+					rw.Resume(buf)
+					w.Resume(rw.Finish())
+				case "secinfo":
+					sw := w.AppendArgarray_Secinfo()
+					nw := sw.StartName()
+					buf := nw.SetData([]byte("child")).Finish()
+					sw.Resume(buf)
+					w.Resume(sw.Finish())
+				default:
+					t.Fatalf("unknown operation %q", test.operation)
+				}
+			})
+			if res.Status() != test.wantStatus {
+				t.Fatalf("status = %s, want %s",
+					Nfsstat4Name(res.Status()), Nfsstat4Name(test.wantStatus))
+			}
+		})
+	}
+}
+
+func TestRenameDirectoryFilehandlesValidated(t *testing.T) {
+	tests := []struct {
+		name       string
+		badSource  bool
+		object     string
+		wantStatus uint32
+	}{
+		{"file source", true, "file", NFS4ERR_NOTDIR},
+		{"symlink source", true, "link", NFS4ERR_SYMLINK},
+		{"file target", false, "file", NFS4ERR_NOTDIR},
+		{"symlink target", false, "link", NFS4ERR_SYMLINK},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "file"), nil, 0644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("file", filepath.Join(dir, "link")); err != nil {
+				t.Fatal(err)
+			}
+			addr, cleanup := startTestServer(t, dir)
+			defer cleanup()
+			conn := dial(t, addr)
+			defer conn.Close()
+
+			res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				if test.badSource {
+					lw := w.AppendArgarray_Lookup()
+					nw := lw.StartObjname()
+					buf := nw.SetData([]byte(test.object)).Finish()
+					lw.Resume(buf)
+					w.Resume(lw.Finish())
+					w.AppendArgarray_Savefh()
+					w.AppendArgarray_Putrootfh()
+				} else {
+					w.AppendArgarray_Savefh()
+					lw := w.AppendArgarray_Lookup()
+					nw := lw.StartObjname()
+					buf := nw.SetData([]byte(test.object)).Finish()
+					lw.Resume(buf)
+					w.Resume(lw.Finish())
+				}
+
+				rw := w.AppendArgarray_Rename()
+				ow := rw.StartOldname()
+				buf := ow.SetData([]byte("old")).Finish()
+				rw.Resume(buf)
+				nw := rw.StartNewname()
+				buf = nw.SetData([]byte("new")).Finish()
+				rw.Resume(buf)
+				w.Resume(rw.Finish())
+			})
+			if res.Status() != test.wantStatus {
+				t.Fatalf("status = %s, want %s",
+					Nfsstat4Name(res.Status()), Nfsstat4Name(test.wantStatus))
+			}
+		})
+	}
+}
+
+func TestOpenFilehandleTypesValidated(t *testing.T) {
+	tests := []struct {
+		name       string
+		current    string
+		target     string
+		wantStatus uint32
+	}{
+		{"file current filehandle", "file", "child", NFS4ERR_NOTDIR},
+		{"symlink current filehandle", "link", "child", NFS4ERR_SYMLINK},
+		{"directory target", "", "dir", NFS4ERR_ISDIR},
+		{"symlink target", "", "link", NFS4ERR_SYMLINK},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "file"), nil, 0644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(filepath.Join(dir, "dir"), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("file", filepath.Join(dir, "link")); err != nil {
+				t.Fatal(err)
+			}
+
+			addr, cleanup := startTestServer(t, dir)
+			defer cleanup()
+			conn := dial(t, addr)
+			defer conn.Close()
+			xid := uint32(1)
+			clientID := setupClient(t, conn, &xid)
+
+			res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				if test.current != "" {
+					lw := w.AppendArgarray_Lookup()
+					nw := lw.StartObjname()
+					buf := nw.SetData([]byte(test.current)).Finish()
+					lw.Resume(buf)
+					w.Resume(lw.Finish())
+				}
+
+				ow := w.AppendArgarray_Open()
+				ow.SetSeqid(1)
+				ow.SetShareAccess(OPEN4_SHARE_ACCESS_READ)
+				ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
+				owner := ow.StartOwner()
+				owner = owner.SetClientid(clientID)
+				owner = owner.SetOwner([]byte("type-test"))
+				buf := owner.Finish()
+				ow.Resume(buf)
+				ow.SetOpenhow_Default(OPEN4_NOCREATE)
+				claim := ow.SetClaim_Null()
+				buf = claim.SetData([]byte(test.target)).Finish()
+				ow.Resume(buf)
+				w.Resume(ow.Finish())
+			})
+			if res.Status() != test.wantStatus {
+				t.Fatalf("status = %s, want %s",
+					Nfsstat4Name(res.Status()), Nfsstat4Name(test.wantStatus))
+			}
+		})
+	}
+}
+
 func TestNoFilehandle(t *testing.T) {
 	dir := t.TempDir()
 	addr, cleanup := startTestServer(t, dir)

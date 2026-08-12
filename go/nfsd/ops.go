@@ -31,6 +31,28 @@ func ternNameUnsupported(name []byte) bool {
 		bytes.IndexByte(name, 0) >= 0
 }
 
+func requireDirectory(id InodeID) uint32 {
+	switch id.Type() {
+	case InodeTypeDir:
+		return NFS4_OK
+	case InodeTypeSymlink:
+		return NFS4ERR_SYMLINK
+	default:
+		return NFS4ERR_NOTDIR
+	}
+}
+
+func requireRegularFile(id InodeID) uint32 {
+	switch id.Type() {
+	case InodeTypeFile:
+		return NFS4_OK
+	case InodeTypeDir:
+		return NFS4ERR_ISDIR
+	default:
+		return NFS4ERR_INVAL
+	}
+}
+
 func (s *Server) opAccess(args ACCESS4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
 	if !st.currentIDSet {
 		ew := w.AppendResarray_Access()
@@ -117,6 +139,12 @@ func (s *Server) opCommit(st *compoundState, w *COMPOUND4resWriter) uint32 {
 		ew.SetValue_Default(NFS4ERR_NOFILEHANDLE)
 		w.Resume(ew.Finish())
 		return NFS4ERR_NOFILEHANDLE
+	}
+	if status := requireRegularFile(st.currentID); status != NFS4_OK {
+		ew := w.AppendResarray_Commit()
+		ew.SetValue_Default(status)
+		w.Resume(ew.Finish())
+		return status
 	}
 
 	// Sync the staging file for the current filehandle.
@@ -362,6 +390,11 @@ func (s *Server) opLookup(args LOOKUP4args, st *compoundState, w *COMPOUND4resWr
 		r.SetStatus(NFS4ERR_NOFILEHANDLE)
 		return NFS4ERR_NOFILEHANDLE
 	}
+	if status := requireDirectory(st.currentID); status != NFS4_OK {
+		r := w.AppendResarray_Lookup()
+		r.SetStatus(status)
+		return status
+	}
 	nameData := args.Objname().Data()
 	if ternNameTooLong(nameData) {
 		r := w.AppendResarray_Lookup()
@@ -394,6 +427,11 @@ func (s *Server) opLookupp(st *compoundState, w *COMPOUND4resWriter) uint32 {
 		r := w.AppendResarray_Lookupp()
 		r.SetStatus(NFS4ERR_NOFILEHANDLE)
 		return NFS4ERR_NOFILEHANDLE
+	}
+	if status := requireDirectory(st.currentID); status != NFS4_OK {
+		r := w.AppendResarray_Lookupp()
+		r.SetStatus(status)
+		return status
 	}
 	id, err := s.fs.LookupParent(st.currentID)
 	if err != nil {
@@ -460,6 +498,12 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 	switch claimType {
 	case CLAIM_NULL:
 		dirID := st.currentID
+		if status := requireDirectory(dirID); status != NFS4_OK {
+			ew := w.AppendResarray_Open()
+			ew.SetValue_Default(status)
+			w.Resume(ew.Finish())
+			return status
+		}
 		fileNameData := claim.AsNull().Data()
 		if ternNameTooLong(fileNameData) {
 			ew := w.AppendResarray_Open()
@@ -540,6 +584,16 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 		ew.SetValue_Default(NFS4ERR_NOTSUPP)
 		w.Resume(ew.Finish())
 		return NFS4ERR_NOTSUPP
+	}
+
+	if status := requireRegularFile(targetID); status != NFS4_OK {
+		ew := w.AppendResarray_Open()
+		if targetID.Type() == InodeTypeSymlink {
+			status = NFS4ERR_SYMLINK
+		}
+		ew.SetValue_Default(status)
+		w.Resume(ew.Finish())
+		return status
 	}
 
 	// For read opens, derive a deterministic stateid from the file and client.
@@ -664,6 +718,12 @@ func (s *Server) opRead(args READ4args, st *compoundState, w *COMPOUND4resWriter
 		w.Resume(ew.Finish())
 		return NFS4ERR_NOFILEHANDLE
 	}
+	if status := requireRegularFile(st.currentID); status != NFS4_OK {
+		ew := w.AppendResarray_Read()
+		ew.SetValue_Default(status)
+		w.Resume(ew.Finish())
+		return status
+	}
 
 	// Check if we should read from a staging buffer.
 	sf := s.stagingStore.Get(st.currentID)
@@ -710,6 +770,12 @@ func (s *Server) opReaddir(args READDIR4args, st *compoundState, w *COMPOUND4res
 		ew.SetValue_Default(NFS4ERR_NOFILEHANDLE)
 		w.Resume(ew.Finish())
 		return NFS4ERR_NOFILEHANDLE
+	}
+	if status := requireDirectory(st.currentID); status != NFS4_OK {
+		ew := w.AppendResarray_Readdir()
+		ew.SetValue_Default(status)
+		w.Resume(ew.Finish())
+		return status
 	}
 
 	cookie := args.Cookie()
@@ -873,6 +939,12 @@ func (s *Server) opReadlink(st *compoundState, w *COMPOUND4resWriter) uint32 {
 		w.Resume(ew.Finish())
 		return NFS4ERR_NOFILEHANDLE
 	}
+	if st.currentID.Type() != InodeTypeSymlink {
+		ew := w.AppendResarray_Readlink()
+		ew.SetValue_Default(NFS4ERR_INVAL)
+		w.Resume(ew.Finish())
+		return NFS4ERR_INVAL
+	}
 	target, err := s.fs.Readlink(st.currentID)
 	if err != nil {
 		ew := w.AppendResarray_Readlink()
@@ -898,6 +970,12 @@ func (s *Server) opRemove(args REMOVE4args, st *compoundState, w *COMPOUND4resWr
 		ew.SetValue_Default(NFS4ERR_NOFILEHANDLE)
 		w.Resume(ew.Finish())
 		return NFS4ERR_NOFILEHANDLE
+	}
+	if status := requireDirectory(st.currentID); status != NFS4_OK {
+		ew := w.AppendResarray_Remove()
+		ew.SetValue_Default(status)
+		w.Resume(ew.Finish())
+		return status
 	}
 	if s.stagingStore.ReadOnly() {
 		ew := w.AppendResarray_Remove()
@@ -941,6 +1019,18 @@ func (s *Server) opRename(args RENAME4args, st *compoundState, w *COMPOUND4resWr
 		ew.SetValue_Default(NFS4ERR_NOFILEHANDLE)
 		w.Resume(ew.Finish())
 		return NFS4ERR_NOFILEHANDLE
+	}
+	if status := requireDirectory(st.savedID); status != NFS4_OK {
+		ew := w.AppendResarray_Rename()
+		ew.SetValue_Default(status)
+		w.Resume(ew.Finish())
+		return status
+	}
+	if status := requireDirectory(st.currentID); status != NFS4_OK {
+		ew := w.AppendResarray_Rename()
+		ew.SetValue_Default(status)
+		w.Resume(ew.Finish())
+		return status
 	}
 	if s.stagingStore.ReadOnly() {
 		ew := w.AppendResarray_Rename()
@@ -1024,6 +1114,12 @@ func (s *Server) opSecinfo(st *compoundState, w *COMPOUND4resWriter) uint32 {
 		ew.SetValue_Default(NFS4ERR_NOFILEHANDLE)
 		w.Resume(ew.Finish())
 		return NFS4ERR_NOFILEHANDLE
+	}
+	if status := requireDirectory(st.currentID); status != NFS4_OK {
+		ew := w.AppendResarray_Secinfo()
+		ew.SetValue_Default(status)
+		w.Resume(ew.Finish())
+		return status
 	}
 	// Return AUTH_SYS (flavor 1) and AUTH_NONE (flavor 0).
 	ew := w.AppendResarray_Secinfo()
