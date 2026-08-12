@@ -3951,6 +3951,91 @@ func TestSetattrModeRejected(t *testing.T) {
 	}
 }
 
+func TestSetattrValidation(t *testing.T) {
+	invalidTime := make([]byte, 16)
+	binary.BigEndian.PutUint32(invalidTime[0:4], SET_TO_CLIENT_TIME4)
+	binary.BigEndian.PutUint32(invalidTime[12:16], 1_000_000_000)
+
+	maxSize := make([]byte, 8)
+	binary.BigEndian.PutUint64(maxSize, ^uint64(0))
+
+	tests := []struct {
+		name       string
+		mask       [2]uint32
+		attrData   []byte
+		wantStatus uint32
+	}{
+		{
+			name:       "read-only attribute",
+			mask:       [2]uint32{1 << FATTR4_SUPPORTED_ATTRS, 0},
+			wantStatus: NFS4ERR_INVAL,
+		},
+		{
+			name:       "mode missing data",
+			mask:       [2]uint32{0, 1 << (FATTR4_MODE - 32)},
+			wantStatus: NFS4ERR_BADXDR,
+		},
+		{
+			name:       "mode trailing data",
+			mask:       [2]uint32{0, 1 << (FATTR4_MODE - 32)},
+			attrData:   make([]byte, 8),
+			wantStatus: NFS4ERR_BADXDR,
+		},
+		{
+			name: "invalid time nanoseconds",
+			mask: [2]uint32{
+				0,
+				1 << (FATTR4_TIME_MODIFY_SET - 32),
+			},
+			attrData:   invalidTime,
+			wantStatus: NFS4ERR_INVAL,
+		},
+		{
+			name:       "size exceeds signed backend range",
+			mask:       [2]uint32{1 << FATTR4_SIZE, 0},
+			attrData:   maxSize,
+			wantStatus: NFS4ERR_FBIG,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			addr, cleanup := startTestServer(t, dir)
+			defer cleanup()
+			conn := dial(t, addr)
+			defer conn.Close()
+
+			res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+
+				saw := w.AppendArgarray_Setattr()
+				saw.Stateid().SetSeqid(0)
+				faw := saw.StartObjAttributes()
+				bmW := faw.StartAttrmask()
+				bmW.AppendData(test.mask[0])
+				if test.mask[1] != 0 {
+					bmW.AppendData(test.mask[1])
+				}
+				buf := bmW.Finish()
+				faw.Resume(buf)
+				alW := faw.StartAttrVals()
+				buf = alW.SetData(test.attrData).Finish()
+				faw.Resume(buf)
+				buf = faw.Finish()
+				saw.Resume(buf)
+				w.Resume(saw.Finish())
+			})
+
+			if res.Status() != test.wantStatus {
+				t.Fatalf("status = %s, want %s",
+					Nfsstat4Name(res.Status()),
+					Nfsstat4Name(test.wantStatus))
+			}
+		})
+	}
+}
+
 func TestSetattrSize(t *testing.T) {
 	dir := t.TempDir()
 	addr, cleanup := startTestServer(t, dir)
