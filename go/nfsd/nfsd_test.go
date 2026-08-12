@@ -1964,26 +1964,42 @@ func TestGetattr_MultipleAttrs(t *testing.T) {
 	}
 }
 
-func TestGetattrWriteOnlyAttribute(t *testing.T) {
-	dir := t.TempDir()
-	addr, cleanup := startTestServer(t, dir)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
+func TestGetattrAttributeMaskValidation(t *testing.T) {
+	tests := []struct {
+		name       string
+		mask       [2]uint32
+		wantStatus uint32
+	}{
+		{"write-only time_access_set", [2]uint32{0, 1 << (FATTR4_TIME_ACCESS_SET - 32)}, NFS4ERR_INVAL},
+		{"rdattr_error", [2]uint32{1 << FATTR4_RDATTR_ERROR, 0}, NFS4_OK},
+	}
 
-	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
-		w.AppendArgarray_Putrootfh()
-		gw := w.AppendArgarray_Getattr()
-		bw := gw.StartAttrRequest()
-		bw.AppendData(0)
-		bw.AppendData(1 << (FATTR4_TIME_ACCESS_SET - 32))
-		buf := bw.Finish()
-		gw.Resume(buf)
-		w.Resume(gw.Finish())
-	})
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			addr, cleanup := startTestServer(t, dir)
+			defer cleanup()
+			conn := dial(t, addr)
+			defer conn.Close()
 
-	if res.Status() != NFS4ERR_INVAL {
-		t.Fatalf("status = %s, want NFS4ERR_INVAL", Nfsstat4Name(res.Status()))
+			res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				gw := w.AppendArgarray_Getattr()
+				bw := gw.StartAttrRequest()
+				bw.AppendData(test.mask[0])
+				if test.mask[1] != 0 {
+					bw.AppendData(test.mask[1])
+				}
+				buf := bw.Finish()
+				gw.Resume(buf)
+				w.Resume(gw.Finish())
+			})
+
+			if res.Status() != test.wantStatus {
+				t.Fatalf("status = %s, want %s",
+					Nfsstat4Name(res.Status()), Nfsstat4Name(test.wantStatus))
+			}
+		})
 	}
 }
 

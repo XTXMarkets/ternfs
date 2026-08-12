@@ -62,10 +62,13 @@ const (
 	settableAttrs1 uint32 = (1 << (FATTR4_TIME_ACCESS_SET - 32)) |
 		(1 << (FATTR4_TIME_MODIFY_SET - 32))
 
-	// Attributes that cannot be read or compared. RDATTR_ERROR is only valid
-	// in attributes returned for a READDIR entry.
-	invalidReadAttrs0 = 1 << FATTR4_RDATTR_ERROR
-	invalidReadAttrs1 = settableAttrs1
+	// SETATTR-only attributes cannot be requested by GETATTR or compared by
+	// VERIFY/NVERIFY. RDATTR_ERROR may be returned by GETATTR, but cannot be
+	// compared.
+	invalidGetattrAttrs0 uint32 = 0
+	invalidGetattrAttrs1        = settableAttrs1
+	invalidVerifyAttrs0         = 1 << FATTR4_RDATTR_ERROR
+	invalidVerifyAttrs1         = settableAttrs1
 
 	// Fixed FSID for the entire export.
 	fsidMajor uint64 = 0x7E4F
@@ -88,15 +91,15 @@ func parseBitmap(bm Bitmap4) [2]uint32 {
 }
 
 func validateGetattrMask(mask [2]uint32) uint32 {
-	if mask[0]&invalidReadAttrs0 != 0 || mask[1]&invalidReadAttrs1 != 0 {
+	if mask[0]&invalidGetattrAttrs0 != 0 || mask[1]&invalidGetattrAttrs1 != 0 {
 		return NFS4ERR_INVAL
 	}
 	return NFS4_OK
 }
 
 func validateVerifyMask(mask [2]uint32) uint32 {
-	if status := validateGetattrMask(mask); status != NFS4_OK {
-		return status
+	if mask[0]&invalidVerifyAttrs0 != 0 || mask[1]&invalidVerifyAttrs1 != 0 {
+		return NFS4ERR_INVAL
 	}
 	if mask[0]&^uint32(supportedAttrs0) != 0 ||
 		mask[1]&^uint32(supportedAttrs1) != 0 {
