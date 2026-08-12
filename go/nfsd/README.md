@@ -123,6 +123,10 @@ temporary TernFS cluster and `nfsd`, runs pynfs with `--maketree --rundeps`,
 and reads pynfs's JSON results so protocol failures fail the Go test. Pynfs
 itself otherwise exits successfully when individual tests fail.
 
+The Make target writes the complete console output to `pynfs.out` while also
+displaying it. Set `PYNFS_OUTPUT` to use another path. The output file is not
+ignored by git, so completed runs remain visible during review.
+
 The standard suite includes behavior outside the TernFS contract, so an
 initial run is expected to expose unsupported operations as well as server
 bugs. Select flags or individual pynfs test codes with `PYNFS_TESTS`, and pass

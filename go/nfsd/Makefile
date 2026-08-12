@@ -2,6 +2,9 @@
 #
 # SPDX-License-Identifier: GPL-2.0-or-later
 
+SHELL := /bin/bash
+.SHELLFLAGS := -o pipefail -c
+
 LIBNFS_REPOSITORY := https://github.com/sahlberg/libnfs.git
 LIBNFS_VERSION := 5.0.2
 LIBNFS_REVISION := libnfs-$(LIBNFS_VERSION)
@@ -24,6 +27,7 @@ SS ?= ss
 PYNFS_PYTHON ?= python3
 PYNFS_TESTS ?= all
 PYNFS_ARGS ?=
+PYNFS_OUTPUT ?= $(CURDIR)/pynfs.out
 PYNFS_TIMEOUT ?= 1h
 TERNFS_REGISTRY_HOST ?= 127.0.0.1
 TERNFS_REGISTRY_PORT ?= 55556
@@ -49,7 +53,7 @@ help:
 		'' \
 		'Test targets ending in -cluster start a temporary TernFS cluster.' \
 		'Set GO_TEST_FLAGS to pass additional arguments to Go test targets.' \
-		'Set PYNFS_TESTS, PYNFS_ARGS and PYNFS_TIMEOUT to configure pynfs.'
+		'Set PYNFS_TESTS, PYNFS_ARGS, PYNFS_OUTPUT and PYNFS_TIMEOUT to configure pynfs.'
 
 test:
 	go test $(GO_TEST_FLAGS) .
@@ -113,7 +117,8 @@ test-pynfs-cluster: $(PYNFS_BUILT) check-cluster-port
 	PYNFS_TESTS="$(PYNFS_TESTS)" \
 	PYNFS_ARGS="$(PYNFS_ARGS)" \
 	go test -count=1 -v -timeout "$(PYNFS_TIMEOUT)" \
-		-tags 'ternnfs pynfs' -run '^TestPynfs$$' $(GO_TEST_FLAGS) .
+		-tags 'ternnfs pynfs' -run '^TestPynfs$$' $(GO_TEST_FLAGS) . \
+		2>&1 | tee "$(PYNFS_OUTPUT)"
 
 clean-pynfs:
 	rm -rf "$(PYNFS_SOURCE)"
