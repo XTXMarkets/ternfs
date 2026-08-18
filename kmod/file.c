@@ -1369,7 +1369,6 @@ retry:
 
     if (span->start%PAGE_SIZE != 0) {
         ternfs_error("file=%016lx offset=%llu span start not a multiple of page size", enode->inode.i_ino, span->start);
-        span = NULL;
         err = -EIO;
         goto out;
     }
@@ -1414,8 +1413,9 @@ retry:
             }
             if ((end_ts.tv_sec - last_span_refresh_ts.tv_sec) > ternfs_file_io_retry_refresh_span_interval_sec) {
                 ternfs_debug("file=%016lx refreshing span at offset=%lld", enode->inode.i_ino, off);
+                // Evict the stale span from the cache. We keep our own
+                // reference: the retry below puts it before fetching again.
                 ternfs_unlink_span(&enode->file.spans, span);
-                span = NULL; // unlink already reduced refcount
                 last_span_refresh_ts = end_ts;
             }
             goto retry;
@@ -1518,8 +1518,10 @@ static void file_readahead(struct readahead_control *rac)
         pages_allocated++;
     }
 
-    if (pages_allocated == 0)
-        return;
+    if (pages_allocated == 0) {
+        err = -ENOMEM;
+        goto out_err;
+    }
 
     // Process based on span type
     if (span->storage_class == TERNFS_INLINE_STORAGE) {
