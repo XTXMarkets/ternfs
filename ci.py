@@ -101,12 +101,12 @@ if args.integration:
 
 if args.prepare_image:
     bold_print('prepare kmod image')
-    wait_cmd(run_cmd(['./kmod/ci_prepare.sh', args.prepare_image]))
+    run_cmd_unbuffered(['./kmod/ci_prepare.sh', args.prepare_image])
 
 if args.kmod:
     bold_print('kmod tests')
-    wait_cmd(run_cmd(['./kmod/ci.sh'] + (['-short'] if args.short else []) + (['-leader-only'] if args.leader_only else []) + (['-filter', args.filter] if args.filter else [])))
+    run_cmd_unbuffered(['./kmod/ci.sh'] + (['-short'] if args.short else []) + (['-leader-only'] if args.leader_only else []) + (['-filter', args.filter] if args.filter else []))
 
 if args.nfs:
     bold_print('nfs tests')
-    wait_cmd(run_cmd(['./ci_nfs.sh'] + (['-short'] if args.short else []) + (['-leader-only'] if args.leader_only else []) + (['-filter', args.filter] if args.filter else [])))
+    run_cmd_unbuffered(['./ci_nfs.sh'] + (['-short'] if args.short else []) + (['-leader-only'] if args.leader_only else []) + (['-filter', args.filter] if args.filter else []))
