@@ -24,11 +24,12 @@ const nfsDirName = ".nfs"
 // nfsd fleet. A stable identity directory points at distinct incarnation
 // directories whose inode IDs are the clientids returned to clients.
 type ClientStore struct {
-	mu        sync.Mutex
-	fs        TernVFS
-	dirID     InodeID
-	leaseName string
-	now       func() time.Time
+	mu             sync.Mutex
+	fs             TernVFS
+	dirID          InodeID
+	leaseName      string
+	confirmingName string
+	now            func() time.Time
 }
 
 type rpcPrincipal struct {
@@ -67,18 +68,26 @@ type durableLease struct {
 	ExpiresUnixNano int64 `json:"expires_unix_nano"`
 }
 
+type durableGCCandidate struct {
+	CollectAfterUnixNano int64 `json:"collect_after_unix_nano"`
+}
+
 const (
 	confirmedName       = "confirmed"
 	pendingName         = "pending"
 	clientRecordName    = "client"
 	updateName          = "update"
 	rebootName          = "reboot"
+	gcCandidateName     = "gc"
 	incarnationPrefix   = "i."
 	activeOpenPrefix    = "o."
 	leasePrefix         = "lease."
+	confirmingPrefix    = "confirming."
 	tempPrefix          = "t."
 	maxClientRecordSize = 64 << 10
 	nfsLeaseTime        = 90 * time.Second
+	clientGCGrace       = nfsLeaseTime
+	maxClientGCRemovals = 8
 )
 
 func NewClientStore(fs TernVFS) (*ClientStore, error) {
@@ -97,10 +106,11 @@ func NewClientStore(fs TernVFS) (*ClientStore, error) {
 		return nil, fmt.Errorf("client store: generate nfsd id: %w", err)
 	}
 	return &ClientStore{
-		fs:        fs,
-		dirID:     clientsID,
-		leaseName: leasePrefix + nfsdID,
-		now:       time.Now,
+		fs:             fs,
+		dirID:          clientsID,
+		leaseName:      leasePrefix + nfsdID,
+		confirmingName: confirmingPrefix + nfsdID,
+		now:            time.Now,
 	}, nil
 }
 
@@ -233,6 +243,19 @@ func (cs *ClientStore) ConfirmClientID(
 
 	if pending && pendingID == incarnationID &&
 		bytes.Equal(record.Confirm, confirm[:]) {
+		// The claim keeps this incarnation alive while another nfsd may
+		// replace pending.
+		if err := cs.beginConfirmationLocked(incarnationID); err != nil {
+			return 0, err
+		}
+		pendingID, pending, err = cs.readPointerLocked(identityID, pendingName)
+		if err != nil {
+			return 0, err
+		}
+		if !pending || pendingID != incarnationID {
+			_ = cs.removeIfExistsLocked(incarnationID, cs.confirmingName)
+			return 0, nfsError(NFS4ERR_STALE_CLIENTID)
+		}
 		if !confirmed || confirmedID != incarnationID {
 			if confirmed {
 				if _, err := cs.replacePointerLocked(
@@ -247,7 +270,9 @@ func (cs *ClientStore) ConfirmClientID(
 				return 0, err
 			}
 		}
-		return cs.finishRebootLocked(incarnationID)
+		replacedID, err := cs.finishRebootLocked(incarnationID)
+		_ = cs.removeIfExistsLocked(incarnationID, cs.confirmingName)
+		return replacedID, err
 	}
 
 	if !confirmed || confirmedID != incarnationID {
@@ -273,6 +298,17 @@ func (cs *ClientStore) ConfirmClientID(
 		return 0, err
 	}
 	return 0, nil
+}
+
+func (cs *ClientStore) beginConfirmationLocked(incarnationID InodeID) error {
+	_, err := cs.replaceJSONLocked(
+		incarnationID,
+		cs.confirmingName,
+		durableLease{
+			ExpiresUnixNano: cs.now().Add(clientGCGrace).UnixNano(),
+		},
+	)
+	return err
 }
 
 func (cs *ClientStore) finishRebootLocked(incarnationID InodeID) (uint64, error) {
@@ -303,6 +339,194 @@ func (cs *ClientStore) purgeStateLocked(incarnationID InodeID) error {
 		}
 	}
 	return nil
+}
+
+func (cs *ClientStore) removeIncarnationLocked(
+	identityID InodeID,
+	incarnationID InodeID,
+) error {
+	name, found, err := cs.incarnationNameLocked(identityID, incarnationID)
+	if err != nil || !found {
+		return err
+	}
+	entries, err := cs.entriesLocked(incarnationID)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.Name == gcCandidateName {
+			continue
+		}
+		if err := cs.removeIfExistsLocked(incarnationID, entry.Name); err != nil {
+			return err
+		}
+	}
+	if err := cs.removeIfExistsLocked(incarnationID, gcCandidateName); err != nil {
+		return err
+	}
+	return cs.removeIfExistsLocked(identityID, name)
+}
+
+func (cs *ClientStore) incarnationNameLocked(
+	identityID InodeID,
+	incarnationID InodeID,
+) (string, bool, error) {
+	entries, err := cs.entriesLocked(identityID)
+	if err != nil {
+		return "", false, err
+	}
+	for _, entry := range entries {
+		if entry.ID == incarnationID && strings.HasPrefix(entry.Name, incarnationPrefix) {
+			return entry.Name, true, nil
+		}
+	}
+	return "", false, nil
+}
+
+func (cs *ClientStore) collectStaleForClient(clientID InodeID) error {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+
+	identityID, err := cs.fs.LookupParent(clientID)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return cs.collectStaleLocked(identityID)
+}
+
+func (cs *ClientStore) collectStaleLocked(identityID InodeID) error {
+	roots, err := cs.clientRootsLocked(identityID)
+	if err != nil {
+		return err
+	}
+	// One page bounds the work added to each client registration.
+	entries, _, err := cs.fs.Readdir(identityID, 0)
+	if err != nil {
+		return err
+	}
+
+	now := cs.now()
+	removed := 0
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name, incarnationPrefix) {
+			continue
+		}
+		if _, rooted := roots[entry.ID]; rooted {
+			if err := cs.removeIfExistsLocked(entry.ID, gcCandidateName); err != nil {
+				return err
+			}
+			continue
+		}
+		confirming, err := cs.hasLiveConfirmationLocked(entry.ID)
+		if err != nil {
+			return err
+		}
+		if confirming {
+			if err := cs.removeIfExistsLocked(entry.ID, gcCandidateName); err != nil {
+				return err
+			}
+			continue
+		}
+
+		var candidate durableGCCandidate
+		found, err := cs.readJSONLocked(entry.ID, gcCandidateName, &candidate)
+		if err != nil {
+			return err
+		}
+		if !found {
+			// Age the decision that this incarnation is unreachable, not the
+			// incarnation itself.
+			candidate.CollectAfterUnixNano = now.Add(clientGCGrace).UnixNano()
+			if _, err := cs.createJSONLocked(
+				entry.ID, gcCandidateName, candidate,
+			); err != nil && !errors.Is(err, os.ErrExist) {
+				return err
+			}
+			continue
+		}
+		if candidate.CollectAfterUnixNano <= 0 {
+			return fmt.Errorf("client store: invalid GC candidate")
+		}
+		if candidate.CollectAfterUnixNano > now.UnixNano() {
+			continue
+		}
+
+		roots, err = cs.clientRootsLocked(identityID)
+		if err != nil {
+			return err
+		}
+		if _, rooted := roots[entry.ID]; rooted {
+			if err := cs.removeIfExistsLocked(entry.ID, gcCandidateName); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := cs.removeIncarnationLocked(identityID, entry.ID); err != nil {
+			return err
+		}
+		removed++
+		if removed == maxClientGCRemovals {
+			return nil
+		}
+	}
+	return nil
+}
+
+func (cs *ClientStore) hasLiveConfirmationLocked(
+	incarnationID InodeID,
+) (bool, error) {
+	entries, err := cs.entriesLocked(incarnationID)
+	if err != nil {
+		return false, err
+	}
+	now := cs.now().UnixNano()
+	for _, entry := range entries {
+		if !isConfirmingName(entry.Name) {
+			continue
+		}
+		claim, err := cs.readLeaseLocked(entry.ID)
+		if err != nil {
+			return false, err
+		}
+		if claim.ExpiresUnixNano > now {
+			return true, nil
+		}
+		if err := cs.removeIfExistsLocked(incarnationID, entry.Name); err != nil {
+			return false, err
+		}
+	}
+	return false, nil
+}
+
+func (cs *ClientStore) clientRootsLocked(
+	identityID InodeID,
+) (map[InodeID]struct{}, error) {
+	roots := make(map[InodeID]struct{})
+	var primary []InodeID
+	for _, name := range []string{confirmedName, pendingName} {
+		id, found, err := cs.readPointerLocked(identityID, name)
+		if err != nil {
+			return nil, err
+		}
+		if found {
+			roots[id] = struct{}{}
+			primary = append(primary, id)
+		}
+	}
+	// A reboot target remains live until confirmation has purged its state.
+	for _, id := range primary {
+		rebootID, found, err := cs.readPointerLocked(id, rebootName)
+		if err != nil {
+			return nil, err
+		}
+		if found {
+			roots[rebootID] = struct{}{}
+		}
+	}
+	return roots, nil
 }
 
 func (cs *ClientStore) IsConfirmed(clientID uint64) (bool, error) {
@@ -717,4 +941,9 @@ func isActiveOpenName(name string) bool {
 func isLeaseName(name string) bool {
 	return strings.HasPrefix(name, leasePrefix) &&
 		len(name) > len(leasePrefix)
+}
+
+func isConfirmingName(name string) bool {
+	return strings.HasPrefix(name, confirmingPrefix) &&
+		len(name) > len(confirmingPrefix)
 }

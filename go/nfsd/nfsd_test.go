@@ -48,7 +48,10 @@ func serveTestServer(t *testing.T, srv *Server) (addr string, cleanup func()) {
 			go srv.handleConn(conn)
 		}
 	}()
-	return ln.Addr().String(), func() { ln.Close() }
+	return ln.Addr().String(), func() {
+		ln.Close()
+		srv.waitForClientGC()
+	}
 }
 
 func dial(t *testing.T, addr string) net.Conn {
@@ -1187,6 +1190,10 @@ func TestClientStoreDurableState(t *testing.T) {
 	if confirm == staleConfirm {
 		t.Fatal("repeated pending SETCLIENTID reused the previous confirm token")
 	}
+	if _, err := fs.Stat(InodeID(staleID)); err != nil {
+		t.Fatalf("superseded pending incarnation %d was removed synchronously: %v",
+			staleID, err)
+	}
 	if _, err := second.ConfirmClientID(
 		clientID, staleConfirm,
 	); nfsErrCode(err) != NFS4ERR_STALE_CLIENTID {
@@ -1296,6 +1303,33 @@ func TestClientStoreDurableState(t *testing.T) {
 	if err := first.Renew(rebootID); err != nil {
 		t.Fatalf("new client RENEW failed: %v", err)
 	}
+
+	if err := first.collectStaleForClient(InodeID(rebootID)); err != nil {
+		t.Fatal(err)
+	}
+	first.now = func() time.Time { return base.Add(clientGCGrace + time.Second) }
+	if err := first.collectStaleForClient(InodeID(rebootID)); err != nil {
+		t.Fatal(err)
+	}
+
+	identityID, err := fs.LookupParent(InodeID(rebootID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, _, err := fs.Readdir(identityID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	incarnations := 0
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name, incarnationPrefix) {
+			incarnations++
+		}
+	}
+	if incarnations != 1 {
+		t.Fatalf("incarnation directories after reboot = %d, want 1 (superseded incarnation leaked)",
+			incarnations)
+	}
 }
 
 func TestClientStoreLeaseSlotsDoNotShortenEachOther(t *testing.T) {
@@ -1392,6 +1426,192 @@ func (fs *removeFailureVFS) Remove(dirID InodeID, name string) error {
 	return fs.TernVFS.Remove(dirID, name)
 }
 
+type renameHookVFS struct {
+	TernVFS
+	dstName string
+	once    sync.Once
+	hook    func()
+}
+
+func (fs *renameHookVFS) Rename(
+	srcDirID InodeID,
+	srcName string,
+	dstDirID InodeID,
+	dstName string,
+) error {
+	if err := fs.TernVFS.Rename(srcDirID, srcName, dstDirID, dstName); err != nil {
+		return err
+	}
+	if dstName == fs.dstName {
+		fs.once.Do(fs.hook)
+	}
+	return nil
+}
+
+func TestClientStoreConfirmationRechecksPending(t *testing.T) {
+	baseFS := NewLocalTernVFS(t.TempDir())
+	hookFS := &renameHookVFS{TernVFS: baseFS}
+	first, err := NewClientStore(hookFS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := NewClientStore(baseFS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := clientOwner{principal: rpcPrincipal{flavor: authSys, body: "owner"}}
+	oldID, oldConfirm, err := first.SetClientID(
+		[8]byte{1}, []byte("client"), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var newID uint64
+	var newConfirm [8]byte
+	hookFS.dstName = first.confirmingName
+	hookFS.hook = func() {
+		newID, newConfirm, err = second.SetClientID(
+			[8]byte{2}, []byte("client"), owner)
+	}
+	_, confirmErr := first.ConfirmClientID(oldID, oldConfirm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nfsErrCode(confirmErr) != NFS4ERR_STALE_CLIENTID {
+		t.Fatalf("superseded confirmation error = %v, want NFS4ERR_STALE_CLIENTID",
+			confirmErr)
+	}
+	if _, err := second.ConfirmClientID(newID, newConfirm); err != nil {
+		t.Fatalf("replacement confirmation failed: %v", err)
+	}
+	if confirmed, err := first.IsConfirmed(oldID); err != nil {
+		t.Fatal(err)
+	} else if confirmed {
+		t.Fatal("superseded confirmation replaced the confirmed pointer")
+	}
+}
+
+func TestClientStoreGCHonorsConfirmationClaims(t *testing.T) {
+	fs := NewLocalTernVFS(t.TempDir())
+	first, err := NewClientStore(fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := NewClientStore(fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	collector, err := NewClientStore(fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Unix(1000, 0)
+	first.now = func() time.Time { return base }
+	second.now = func() time.Time { return base.Add(30 * time.Second) }
+	owner := clientOwner{principal: rpcPrincipal{flavor: authSys, body: "owner"}}
+	oldID, _, err := first.SetClientID(
+		[8]byte{1}, []byte("client"), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.mu.Lock()
+	err = first.beginConfirmationLocked(InodeID(oldID))
+	first.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second.mu.Lock()
+	err = second.beginConfirmationLocked(InodeID(oldID))
+	second.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientID, _, err := first.SetClientID(
+		[8]byte{2}, []byte("client"), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	collector.now = func() time.Time { return base.Add(100 * time.Second) }
+	if err := collector.collectStaleForClient(InodeID(clientID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fs.Lookup(InodeID(oldID), gcCandidateName); !os.IsNotExist(err) {
+		t.Fatalf("live confirmation claim did not protect incarnation: %v", err)
+	}
+
+	collector.now = func() time.Time { return base.Add(121 * time.Second) }
+	if err := collector.collectStaleForClient(InodeID(clientID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fs.Lookup(InodeID(oldID), gcCandidateName); err != nil {
+		t.Fatalf("expired confirmation claims still protected incarnation: %v", err)
+	}
+}
+
+// TestClientStoreGCRechecksConfirmationBeforeDeleting covers a confirmation
+// claim that appears only after an incarnation has already aged into a GC
+// candidate: collectStaleLocked checks hasLiveConfirmationLocked again on
+// every pass over every entry, before ever consulting the aged candidate's
+// due time, so a claim that shows up between the aging pass and the pass
+// that would otherwise delete it must still block the removal.
+func TestClientStoreGCRechecksConfirmationBeforeDeleting(t *testing.T) {
+	fs := NewLocalTernVFS(t.TempDir())
+	writer, err := NewClientStore(fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	confirmer, err := NewClientStore(fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	collector, err := NewClientStore(fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Unix(1000, 0)
+	writer.now = func() time.Time { return base }
+	owner := clientOwner{principal: rpcPrincipal{flavor: authSys, body: "owner"}}
+	oldID, _, err := writer.SetClientID(
+		[8]byte{1}, []byte("client"), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientID, _, err := writer.SetClientID(
+		[8]byte{2}, []byte("client"), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Age oldID into a GC candidate with no confirmation claim yet.
+	collector.now = func() time.Time { return base }
+	if err := collector.collectStaleForClient(InodeID(clientID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fs.Lookup(InodeID(oldID), gcCandidateName); err != nil {
+		t.Fatalf("incarnation was not aged into a GC candidate: %v", err)
+	}
+
+	// A confirmation claims oldID only after it was already aged.
+	confirmer.now = func() time.Time { return base.Add(30 * time.Second) }
+	confirmer.mu.Lock()
+	err = confirmer.beginConfirmationLocked(InodeID(oldID))
+	confirmer.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Once the candidate is due, the delete-time pass must recheck the live
+	// claim, not just the roots snapshot from before the claim existed.
+	collector.now = func() time.Time { return base.Add(nfsLeaseTime + time.Second) }
+	if err := collector.collectStaleForClient(InodeID(clientID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fs.Stat(InodeID(oldID)); err != nil {
+		t.Fatalf("GC removed an incarnation with a live confirmation claim: %v", err)
+	}
+}
+
 func TestClientStoreRebootCleanupIsRetryable(t *testing.T) {
 	baseFS := NewLocalTernVFS(t.TempDir())
 	first, err := NewClientStore(baseFS)
@@ -1437,6 +1657,12 @@ func TestClientStoreRebootCleanupIsRetryable(t *testing.T) {
 	} else if !confirmed {
 		t.Fatal("new client was not confirmed before cleanup retry")
 	}
+	if err := first.collectStaleForClient(InodeID(newID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := baseFS.Lookup(InodeID(oldID), gcCandidateName); !os.IsNotExist(err) {
+		t.Fatalf("in-progress reboot target was marked for collection: %v", err)
+	}
 
 	replacedID, err := second.ConfirmClientID(newID, confirm)
 	if err != nil {
@@ -1467,6 +1693,144 @@ func TestClientStoreRebootCleanupIsRetryable(t *testing.T) {
 	}
 	if replacedID != newID {
 		t.Fatalf("marker retry replaced clientid %d, want %d", replacedID, newID)
+	}
+}
+
+func TestClientStoreGCIsBoundedAndRetryable(t *testing.T) {
+	baseFS := NewLocalTernVFS(t.TempDir())
+	writer, err := NewClientStore(baseFS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failingFS := &removeFailureVFS{
+		TernVFS: baseFS,
+		name:    clientRecordName,
+	}
+	collector, err := NewClientStore(failingFS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Unix(1000, 0)
+	collector.now = func() time.Time { return base }
+	owner := clientOwner{principal: rpcPrincipal{flavor: authSys, body: "owner"}}
+
+	var clientID uint64
+	for i := 0; i < maxClientGCRemovals+3; i++ {
+		clientID, _, err = writer.SetClientID(
+			[8]byte{byte(i + 1)}, []byte("client"), owner)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	identityID, err := baseFS.LookupParent(InodeID(clientID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := collector.collectStaleForClient(InodeID(clientID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := baseFS.Lookup(InodeID(clientID), gcCandidateName); !os.IsNotExist(err) {
+		t.Fatalf("current incarnation has a GC candidate marker: %v", err)
+	}
+
+	collector.now = func() time.Time {
+		return base.Add(clientGCGrace + time.Second)
+	}
+	failingFS.remaining = 1
+	if err := collector.collectStaleForClient(InodeID(clientID)); err == nil {
+		t.Fatal("GC ignored an incarnation removal failure")
+	}
+	if got := countClientIncarnations(t, baseFS, identityID); got != maxClientGCRemovals+3 {
+		t.Fatalf("incarnations after failed GC = %d, want %d",
+			got, maxClientGCRemovals+3)
+	}
+
+	if err := collector.collectStaleForClient(InodeID(clientID)); err != nil {
+		t.Fatal(err)
+	}
+	if got := countClientIncarnations(t, baseFS, identityID); got != 3 {
+		t.Fatalf("incarnations after bounded GC = %d, want 3", got)
+	}
+	if err := collector.collectStaleForClient(InodeID(clientID)); err != nil {
+		t.Fatal(err)
+	}
+	if got := countClientIncarnations(t, baseFS, identityID); got != 1 {
+		t.Fatalf("incarnations after GC retry = %d, want 1", got)
+	}
+}
+
+func TestServerSchedulesClientGC(t *testing.T) {
+	fs := NewLocalTernVFS(t.TempDir())
+	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewServer(fs, staging, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Unix(1000, 0)
+	srv.clients.now = func() time.Time { return base }
+	owner := clientOwner{principal: rpcPrincipal{flavor: authSys, body: "owner"}}
+	oldID, _, err := srv.clients.SetClientID(
+		[8]byte{1}, []byte("client"), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientID, _, err := srv.clients.SetClientID(
+		[8]byte{2}, []byte("client"), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.clients.collectStaleForClient(InodeID(clientID)); err != nil {
+		t.Fatal(err)
+	}
+	srv.clients.now = func() time.Time {
+		return base.Add(clientGCGrace + time.Second)
+	}
+
+	for range 20 {
+		srv.scheduleClientGC(clientID)
+	}
+	srv.waitForClientGC()
+
+	if _, err := fs.Stat(InodeID(oldID)); !os.IsNotExist(err) {
+		t.Fatalf("scheduled GC did not remove stale incarnation: %v", err)
+	}
+	if _, err := fs.Stat(InodeID(clientID)); err != nil {
+		t.Fatalf("scheduled GC removed current incarnation: %v", err)
+	}
+	srv.clientGCMu.Lock()
+	running := srv.clientGCRunning
+	pending := len(srv.clientGCPending)
+	srv.clientGCMu.Unlock()
+	if running || pending != 0 {
+		t.Fatalf("client GC did not drain: running=%v pending=%d", running, pending)
+	}
+}
+
+func countClientIncarnations(
+	t *testing.T,
+	fs TernVFS,
+	identityID InodeID,
+) int {
+	t.Helper()
+	var count int
+	var cursor uint64
+	for {
+		entries, next, err := fs.Readdir(identityID, cursor)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, entry := range entries {
+			if strings.HasPrefix(entry.Name, incarnationPrefix) {
+				count++
+			}
+		}
+		if next == 0 {
+			return count
+		}
+		cursor = next
 	}
 }
 

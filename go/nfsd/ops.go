@@ -1678,6 +1678,7 @@ func (s *Server) opSetclientid(
 		confirmWriter.SetData(i, b)
 	}
 	w.Resume(ew.Finish())
+	s.scheduleClientGC(clid)
 	return NFS4_OK
 }
 
@@ -1701,6 +1702,7 @@ func (s *Server) opSetclientidConfirm(args SETCLIENTIDCONFIRM4args, w *COMPOUND4
 	}
 	r := w.AppendResarray_SetclientidConfirm()
 	r.SetStatus(NFS4_OK)
+	s.scheduleClientGC(clid)
 	return NFS4_OK
 }
 

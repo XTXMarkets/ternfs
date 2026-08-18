@@ -237,6 +237,7 @@ func startTernTestServer(t *testing.T) (addr string, cleanup func()) {
 	}()
 	return ln.Addr().String(), func() {
 		ln.Close()
+		srv.waitForClientGC()
 		c.Close()
 	}
 }
