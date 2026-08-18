@@ -16,15 +16,17 @@ type openOwnerKey struct {
 }
 
 type openState struct {
-	id                   StateID
-	fileID               InodeID
-	owner                openOwnerKey
-	write                bool
-	generation           uint32
-	confirmed            bool
-	closed               bool
-	closeSeq             uint32
-	closeInputGeneration uint32
+	id                     StateID
+	fileID                 InodeID
+	owner                  openOwnerKey
+	write                  bool
+	generation             uint32
+	confirmed              bool
+	confirmSeq             uint32
+	confirmInputGeneration uint32
+	closed                 bool
+	closeSeq               uint32
+	closeInputGeneration   uint32
 }
 
 type openOwnerState struct {
@@ -142,6 +144,12 @@ func (os *openStateStore) confirm(
 	os.mu.Lock()
 	defer os.mu.Unlock()
 
+	state := os.states[id]
+	if state != nil && state.fileID == fileID && state.confirmed &&
+		seq == state.confirmSeq &&
+		generation == state.confirmInputGeneration {
+		return *state, NFS4_OK
+	}
 	state, status := os.lookupLocked(id, generation, fileID)
 	if status != NFS4_OK {
 		return openState{}, status
@@ -154,6 +162,8 @@ func (os *openStateStore) confirm(
 		return openState{}, NFS4ERR_BAD_STATEID
 	}
 	state.confirmed = true
+	state.confirmSeq = seq
+	state.confirmInputGeneration = generation
 	state.generation++
 	owner.lastOpenID = StateID{}
 	owner.nextSeq++

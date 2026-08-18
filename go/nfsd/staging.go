@@ -16,15 +16,13 @@ import (
 	"sync"
 )
 
-// StagingMeta holds metadata for an in-progress write, persisted in a
-// sidecar file alongside the staging data. NFSStateID ties the persistent
-// staging record to the server's in-memory open state and permits a recovered
-// staging file to complete CLOSE after an nfsd restart.
+// StagingMeta contains the state needed to complete CLOSE after a restart.
 type StagingMeta struct {
 	DirID      InodeID // directory to link the file into on CLOSE
 	FileName   string  // name in directory
 	TernCookie Cookie  // cookie from VFS ConstructFile
 	NFSStateID StateID // random, returned to NFS client as stateid "other"
+	ClientID   uint64  // owning client; zero in sidecars written by older nfsd
 }
 
 // StagingFile is the interface for staged file data during NFS writes.
@@ -306,15 +304,17 @@ func (sf *localStagingFile) Reader() (io.ReadSeeker, error) {
 //   [12] NFSStateID
 //   [2]  FileNameLen
 //   [N]  FileName (UTF-8)
+//   [8]  ClientID (absent in sidecars written by older nfsd)
 
 func saveStagingMeta(path string, meta StagingMeta) error {
 	nameBytes := []byte(meta.FileName)
-	buf := make([]byte, 8+8+12+2+len(nameBytes))
+	buf := make([]byte, 8+8+12+2+len(nameBytes)+8)
 	binary.BigEndian.PutUint64(buf[0:8], uint64(meta.DirID))
 	copy(buf[8:16], meta.TernCookie[:])
 	copy(buf[16:28], meta.NFSStateID[:])
 	binary.BigEndian.PutUint16(buf[28:30], uint16(len(nameBytes)))
 	copy(buf[30:], nameBytes)
+	binary.BigEndian.PutUint64(buf[30+len(nameBytes):], meta.ClientID)
 	return os.WriteFile(path, buf, 0600)
 }
 
@@ -330,10 +330,17 @@ func loadStagingMeta(path string) (StagingMeta, error) {
 	meta.DirID = InodeID(binary.BigEndian.Uint64(data[0:8]))
 	copy(meta.TernCookie[:], data[8:16])
 	copy(meta.NFSStateID[:], data[16:28])
-	nameLen := binary.BigEndian.Uint16(data[28:30])
-	if len(data) < 30+int(nameLen) {
+	nameLen := int(binary.BigEndian.Uint16(data[28:30]))
+	nameEnd := 30 + nameLen
+	if len(data) < nameEnd {
 		return StagingMeta{}, fmt.Errorf("meta file truncated")
 	}
-	meta.FileName = string(data[30 : 30+nameLen])
+	meta.FileName = string(data[30:nameEnd])
+	if len(data) != nameEnd {
+		if len(data) < nameEnd+8 {
+			return StagingMeta{}, fmt.Errorf("meta file truncated")
+		}
+		meta.ClientID = binary.BigEndian.Uint64(data[nameEnd : nameEnd+8])
+	}
 	return meta, nil
 }

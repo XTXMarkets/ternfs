@@ -138,6 +138,7 @@ type compoundState struct {
 	currentIDSet bool
 	savedID      InodeID
 	savedIDSet   bool
+	principal    rpcPrincipal
 }
 
 const maxCompoundOperations = 128
@@ -198,7 +199,7 @@ func (s *Server) handleCompound(req *rpcRequest) []byte {
 		return w.Finish()
 	}
 
-	st := &compoundState{}
+	st := &compoundState{principal: req.principal()}
 	overallStatus := NFS4_OK
 	opCount := 0
 
@@ -277,7 +278,7 @@ func (s *Server) handleCompound(req *rpcRequest) []byte {
 		case OP_SETATTR:
 			opStatus = s.opSetattr(op.AsSETATTR4args(), st, &w)
 		case OP_SETCLIENTID:
-			opStatus = s.opSetclientid(op.AsSETCLIENTID4args(), &w)
+			opStatus = s.opSetclientid(op.AsSETCLIENTID4args(), st, &w)
 		case OP_SETCLIENTID_CONFIRM:
 			opStatus = s.opSetclientidConfirm(op.AsSETCLIENTIDCONFIRM4args(), &w)
 		case OP_VERIFY:

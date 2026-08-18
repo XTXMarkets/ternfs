@@ -6,184 +6,715 @@ package main
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
-// nfsDirName is the hidden directory under the VFS root used for NFS server
-// state. Currently contains "clients/" for persistent client ID assignment.
 const nfsDirName = ".nfs"
 
-// ClientStore manages persistent NFS client ID assignment backed by TernVFS.
-//
-// Client identities are stored as files in /.nfs/clients/. The filename is
-// the escaped client id string. The file contents are the 8-byte verifier.
-// The file's InodeID serves as the client's unique 64-bit clientid.
-//
-// Unconfirmed clients have a pending file named <escaped_id>.<verifier_hex>.
-// On confirmation, the pending file is renamed over the confirmed file,
-// atomically replacing the old verifier and producing a new InodeID (clientid).
+// ClientStore keeps client identity and lease decisions consistent across the
+// nfsd fleet. A stable identity directory points at distinct incarnation
+// directories whose inode IDs are the clientids returned to clients.
 type ClientStore struct {
 	mu        sync.Mutex
 	fs        TernVFS
 	dirID     InodeID
-	pending   map[uint64]pendingClient // clientID → pending info
-	confirmed map[uint64]bool          // set of known confirmed clientIDs
+	leaseName string
+	now       func() time.Time
 }
 
-type pendingClient struct {
-	name    string // escaped client id
-	verfHex string // hex-encoded verifier
+type rpcPrincipal struct {
+	flavor uint32
+	body   string
 }
 
-// NewClientStore creates a ClientStore, ensuring the /.nfs/clients/ directory
-// hierarchy exists in the VFS.
+type clientOwner struct {
+	principal rpcPrincipal
+	netid     string
+	addr      string
+}
+
+type clientInUseError struct {
+	owner clientOwner
+}
+
+func (e clientInUseError) Error() string {
+	return "NFS client identity is in use by another principal"
+}
+
+type durableClientRecord struct {
+	Verifier        []byte `json:"verifier"`
+	Confirm         []byte `json:"confirm"`
+	PrincipalFlavor uint32 `json:"principal_flavor"`
+	PrincipalBody   []byte `json:"principal_body"`
+	NetID           string `json:"netid"`
+	Addr            string `json:"addr"`
+}
+
+type durableClientPointer struct {
+	ClientID uint64 `json:"client_id"`
+}
+
+type durableLease struct {
+	ExpiresUnixNano int64 `json:"expires_unix_nano"`
+}
+
+const (
+	confirmedName       = "confirmed"
+	pendingName         = "pending"
+	clientRecordName    = "client"
+	updateName          = "update"
+	rebootName          = "reboot"
+	incarnationPrefix   = "i."
+	activeOpenPrefix    = "o."
+	leasePrefix         = "lease."
+	tempPrefix          = "t."
+	maxClientRecordSize = 64 << 10
+	nfsLeaseTime        = 90 * time.Second
+)
+
 func NewClientStore(fs TernVFS) (*ClientStore, error) {
-	rootID := fs.RootID()
-
-	// Ensure /.nfs/ directory exists.
-	nfsID, err := fs.Lookup(rootID, nfsDirName)
-	if errors.Is(err, os.ErrNotExist) {
-		nfsID, err = fs.Mkdir(rootID, nfsDirName)
-	}
+	nfsID, err := ensureDir(fs, fs.RootID(), nfsDirName)
 	if err != nil {
 		return nil, fmt.Errorf("client store: create %s dir: %w", nfsDirName, err)
 	}
 
-	// Ensure /.nfs/clients/ directory exists.
-	clientsID, err := fs.Lookup(nfsID, "clients")
-	if errors.Is(err, os.ErrNotExist) {
-		clientsID, err = fs.Mkdir(nfsID, "clients")
-	}
+	clientsID, err := ensureDir(fs, nfsID, "clients")
 	if err != nil {
 		return nil, fmt.Errorf("client store: create clients dir: %w", err)
 	}
 
+	nfsdID, err := randomHex(16)
+	if err != nil {
+		return nil, fmt.Errorf("client store: generate nfsd id: %w", err)
+	}
 	return &ClientStore{
 		fs:        fs,
 		dirID:     clientsID,
-		pending:   make(map[uint64]pendingClient),
-		confirmed: make(map[uint64]bool),
+		leaseName: leasePrefix + nfsdID,
+		now:       time.Now,
 	}, nil
 }
 
-// SetClientID assigns a persistent client ID for the given verifier and
-// identity string. If a confirmed file with a matching verifier already
-// exists, its InodeID is returned unchanged. Otherwise a pending file is
-// created; the caller must follow up with ConfirmClientID.
-func (cs *ClientStore) SetClientID(verifier [8]byte, id []byte) (uint64, error) {
-	cs.mu.Lock()
-	defer cs.mu.Unlock()
-
-	name := escapeClientID(id)
-	verfHex := hex.EncodeToString(verifier[:])
-
-	// Check if a confirmed file exists for this client id.
-	confirmedID, err := cs.fs.Lookup(cs.dirID, name)
+func ensureDir(fs TernVFS, parentID InodeID, name string) (InodeID, error) {
+	id, err := fs.Lookup(parentID, name)
 	if err == nil {
-		// File exists — read stored verifier.
-		var stored [8]byte
-		n, _, readErr := cs.fs.Read(confirmedID, 0, stored[:])
-		if readErr == nil && n == 8 && stored == verifier {
-			// Same verifier — return existing clientid.
-			cs.confirmed[uint64(confirmedID)] = true
-			return uint64(confirmedID), nil
-		}
-		// Different verifier — client reboot. Fall through to create pending.
+		return id, nil
 	}
-
-	// Check if a pending file already exists (retransmission).
-	pendingName := name + "." + verfHex
-	pendingID, err := cs.fs.Lookup(cs.dirID, pendingName)
-	if err == nil {
-		cs.pending[uint64(pendingID)] = pendingClient{name: name, verfHex: verfHex}
-		return uint64(pendingID), nil
+	if !errors.Is(err, os.ErrNotExist) {
+		return 0, err
 	}
-
-	// Create pending file with verifier as content.
-	newID, err := cs.fs.CreateFile(cs.dirID, pendingName, bytes.NewReader(verifier[:]))
-	if err != nil {
-		if errors.Is(err, os.ErrExist) {
-			// Race with another server — lookup the existing file.
-			newID, err = cs.fs.Lookup(cs.dirID, pendingName)
-			if err != nil {
-				return 0, err
-			}
-		} else {
-			return 0, err
-		}
+	id, err = fs.Mkdir(parentID, name)
+	if errors.Is(err, os.ErrExist) {
+		return fs.Lookup(parentID, name)
 	}
-
-	cs.pending[uint64(newID)] = pendingClient{name: name, verfHex: verfHex}
-	return uint64(newID), nil
+	return id, err
 }
 
-// ConfirmClientID confirms a pending client by renaming its pending file
-// over the confirmed file. Returns the old clientid that was replaced
-// (0 if none). The caller should purge any state associated with the old
-// clientid.
-func (cs *ClientStore) ConfirmClientID(clientID uint64) (uint64, error) {
+// SetClientID creates an unconfirmed incarnation, except when a matching
+// verifier denotes a callback update to the confirmed incarnation.
+func (cs *ClientStore) SetClientID(
+	verifier [8]byte,
+	id []byte,
+	owner clientOwner,
+) (uint64, [8]byte, error) {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 
-	p, ok := cs.pending[clientID]
-	if !ok {
-		// Not pending — might be already confirmed (no-op confirm).
-		if cs.confirmed[clientID] {
-			return 0, nil
+	identityID, err := cs.identityDirLocked(id)
+	if err != nil {
+		return 0, [8]byte{}, err
+	}
+
+	confirmedID, confirmed, err := cs.readPointerLocked(identityID, confirmedName)
+	if err != nil {
+		return 0, [8]byte{}, err
+	}
+	if confirmed {
+		record, found, err := cs.readRecordLocked(confirmedID, clientRecordName)
+		if err != nil {
+			return 0, [8]byte{}, err
 		}
+		if !found {
+			return 0, [8]byte{}, fmt.Errorf(
+				"client store: confirmed client %d has no record", confirmedID)
+		}
+		if bytes.Equal(record.Verifier, verifier[:]) {
+			if record.principal() != owner.principal {
+				active, err := cs.hasActiveOpenLocked(confirmedID)
+				if err != nil {
+					return 0, [8]byte{}, err
+				}
+				if active {
+					return 0, [8]byte{}, clientInUseError{owner: record.owner()}
+				}
+			}
+			confirm, err := newClientConfirmVerifier()
+			if err != nil {
+				return 0, [8]byte{}, err
+			}
+			update := newDurableClientRecord(verifier, confirm, owner)
+			if _, err := cs.replaceJSONLocked(confirmedID, updateName, update); err != nil {
+				return 0, [8]byte{}, err
+			}
+			// A callback update supersedes any earlier unconfirmed incarnation.
+			if _, err := cs.replacePointerLocked(
+				identityID, pendingName, confirmedID,
+			); err != nil {
+				return 0, [8]byte{}, err
+			}
+			return uint64(confirmedID), confirm, nil
+		}
+	}
+
+	confirm, err := newClientConfirmVerifier()
+	if err != nil {
+		return 0, [8]byte{}, err
+	}
+	incarnationID, err := cs.newIncarnationLocked(identityID)
+	if err != nil {
+		return 0, [8]byte{}, err
+	}
+	record := newDurableClientRecord(verifier, confirm, owner)
+	if _, err := cs.createJSONLocked(
+		incarnationID, clientRecordName, record,
+	); err != nil {
+		return 0, [8]byte{}, err
+	}
+	if _, err := cs.replacePointerLocked(
+		identityID, pendingName, incarnationID,
+	); err != nil {
+		return 0, [8]byte{}, err
+	}
+	return uint64(incarnationID), confirm, nil
+}
+
+// ConfirmClientID returns the clientid replaced by a newly confirmed
+// incarnation. Replays return zero once reboot cleanup has completed.
+func (cs *ClientStore) ConfirmClientID(
+	clientID uint64,
+	confirm [8]byte,
+) (uint64, error) {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+
+	incarnationID := InodeID(clientID)
+	if !isDirectoryInodeID(incarnationID) {
 		return 0, nfsError(NFS4ERR_STALE_CLIENTID)
 	}
-	delete(cs.pending, clientID)
-
-	// Check if there's an existing confirmed file (will be replaced).
-	var oldClientID uint64
-	oldID, err := cs.fs.Lookup(cs.dirID, p.name)
-	if err == nil {
-		oldClientID = uint64(oldID)
-		delete(cs.confirmed, oldClientID)
+	identityID, err := cs.fs.LookupParent(incarnationID)
+	if err != nil {
+		return 0, nfsError(NFS4ERR_STALE_CLIENTID)
+	}
+	record, found, err := cs.readRecordLocked(incarnationID, clientRecordName)
+	if err != nil {
+		return 0, err
+	}
+	if !found {
+		return 0, nfsError(NFS4ERR_STALE_CLIENTID)
 	}
 
-	// Rename pending file → confirmed file.
-	pendingName := p.name + "." + p.verfHex
-	if err := cs.fs.Rename(cs.dirID, pendingName, cs.dirID, p.name); err != nil {
+	pendingID, pending, err := cs.readPointerLocked(identityID, pendingName)
+	if err != nil {
+		return 0, err
+	}
+	confirmedID, confirmed, err := cs.readPointerLocked(identityID, confirmedName)
+	if err != nil {
 		return 0, err
 	}
 
-	cs.confirmed[clientID] = true
-	return oldClientID, nil
+	if pending && pendingID == incarnationID &&
+		bytes.Equal(record.Confirm, confirm[:]) {
+		if !confirmed || confirmedID != incarnationID {
+			if confirmed {
+				if _, err := cs.replacePointerLocked(
+					incarnationID, rebootName, confirmedID,
+				); err != nil {
+					return 0, err
+				}
+			}
+			if _, err := cs.replacePointerLocked(
+				identityID, confirmedName, incarnationID,
+			); err != nil {
+				return 0, err
+			}
+		}
+		return cs.finishRebootLocked(incarnationID)
+	}
+
+	if !confirmed || confirmedID != incarnationID {
+		return 0, nfsError(NFS4ERR_STALE_CLIENTID)
+	}
+	if bytes.Equal(record.Confirm, confirm[:]) {
+		return cs.finishRebootLocked(incarnationID)
+	}
+
+	update, updateFound, err := cs.readRecordLocked(incarnationID, updateName)
+	if err != nil {
+		return 0, err
+	}
+	if !updateFound || !bytes.Equal(update.Confirm, confirm[:]) {
+		return 0, nfsError(NFS4ERR_STALE_CLIENTID)
+	}
+	if _, err := cs.replaceJSONLocked(
+		incarnationID, clientRecordName, update,
+	); err != nil {
+		return 0, err
+	}
+	if err := cs.removeIfExistsLocked(incarnationID, updateName); err != nil {
+		return 0, err
+	}
+	return 0, nil
 }
 
-// maxClientIDName bounds the escaped client-id filename. It leaves headroom
-// under the advertised 255-char maxname for the ".<verifier-hex>" suffix
-// (17 chars) that pending files carry.
-const maxClientIDName = 255 - 17
-
-// escapeClientID produces a filesystem-safe filename from an NFS client id
-// string. Uses Go-style escaping: normal printable ASCII passes through,
-// control characters and non-printable bytes become \xNN or \t, \n, etc.
-// Forward slashes are additionally escaped since they are path separators.
-func escapeClientID(id []byte) string {
-	q := strconv.Quote(string(id))
-	// Strip surrounding double quotes added by Quote.
-	s := q[1 : len(q)-1]
-	// Escape / which is printable but invalid in filenames.
-	s = strings.ReplaceAll(s, "/", `\x2f`)
-	// Guard against pathological "." and ".." names.
-	if s == "." || s == ".." {
-		s = `\x2e` + s[1:]
+func (cs *ClientStore) finishRebootLocked(incarnationID InodeID) (uint64, error) {
+	oldID, found, err := cs.readPointerLocked(incarnationID, rebootName)
+	if err != nil || !found {
+		return 0, err
 	}
-
-	if len(s) > maxClientIDName {
-		sum := sha256.Sum256(id)
-		suffix := hex.EncodeToString(sum[:8])
-		s = s[:maxClientIDName-len(suffix)] + suffix
+	if err := cs.purgeStateLocked(oldID); err != nil {
+		return 0, err
 	}
-	return s
+	if err := cs.removeIfExistsLocked(incarnationID, rebootName); err != nil {
+		return 0, err
+	}
+	return uint64(oldID), nil
+}
+
+func (cs *ClientStore) purgeStateLocked(incarnationID InodeID) error {
+	entries, err := cs.entriesLocked(incarnationID)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if !isActiveOpenName(entry.Name) && !isLeaseName(entry.Name) {
+			continue
+		}
+		if err := cs.removeIfExistsLocked(incarnationID, entry.Name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (cs *ClientStore) IsConfirmed(clientID uint64) (bool, error) {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	return cs.isConfirmedLocked(InodeID(clientID))
+}
+
+func (cs *ClientStore) isConfirmedLocked(incarnationID InodeID) (bool, error) {
+	if !isDirectoryInodeID(incarnationID) {
+		return false, nil
+	}
+	identityID, err := cs.fs.LookupParent(incarnationID)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	confirmedID, found, err := cs.readPointerLocked(identityID, confirmedName)
+	return found && confirmedID == incarnationID, err
+}
+
+func (cs *ClientStore) Renew(clientID uint64) error {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+
+	incarnationID := InodeID(clientID)
+	confirmed, err := cs.isConfirmedLocked(incarnationID)
+	if err != nil {
+		return err
+	}
+	if !confirmed {
+		return nfsError(NFS4ERR_STALE_CLIENTID)
+	}
+	return cs.renewLocked(incarnationID)
+}
+
+func (cs *ClientStore) renewLocked(incarnationID InodeID) error {
+	lease := durableLease{
+		ExpiresUnixNano: cs.now().Add(nfsLeaseTime).UnixNano(),
+	}
+	_, err := cs.replaceJSONLocked(incarnationID, cs.leaseName, lease)
+	return err
+}
+
+func (cs *ClientStore) MarkOpen(clientID uint64, stateID StateID) error {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+
+	incarnationID := InodeID(clientID)
+	confirmed, err := cs.isConfirmedLocked(incarnationID)
+	if err != nil {
+		return err
+	}
+	if !confirmed {
+		return nfsError(NFS4ERR_STALE_CLIENTID)
+	}
+	if err := cs.ensureMarkerLocked(
+		incarnationID, activeOpenName(stateID),
+	); err != nil {
+		return err
+	}
+	return cs.renewLocked(incarnationID)
+}
+
+func (cs *ClientStore) RemoveOpen(clientID uint64, stateID StateID) error {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	return cs.removeIfExistsLocked(
+		InodeID(clientID), activeOpenName(stateID))
+}
+
+func (cs *ClientStore) HasOpen(clientID uint64, stateID StateID) (bool, error) {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+
+	incarnationID := InodeID(clientID)
+	confirmed, err := cs.isConfirmedLocked(incarnationID)
+	if err != nil || !confirmed {
+		return false, err
+	}
+	name := activeOpenName(stateID)
+	if _, err := cs.fs.Lookup(incarnationID, name); errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	live, err := cs.hasLiveLeaseLocked(incarnationID)
+	if err != nil {
+		return false, err
+	}
+	if !live {
+		_ = cs.removeIfExistsLocked(incarnationID, name)
+	}
+	return live, nil
+}
+
+func (cs *ClientStore) hasActiveOpenLocked(incarnationID InodeID) (bool, error) {
+	live, err := cs.hasLiveLeaseLocked(incarnationID)
+	if err != nil {
+		return false, err
+	}
+	entries, err := cs.entriesLocked(incarnationID)
+	if err != nil {
+		return false, err
+	}
+	active := false
+	for _, entry := range entries {
+		if !isActiveOpenName(entry.Name) {
+			continue
+		}
+		if live {
+			active = true
+			continue
+		}
+		_ = cs.removeIfExistsLocked(incarnationID, entry.Name)
+	}
+	return active, nil
+}
+
+// A lease is live while any nfsd process has renewed its own slot. Taking the
+// maximum prevents a slow writer from shortening another process's lease.
+func (cs *ClientStore) hasLiveLeaseLocked(incarnationID InodeID) (bool, error) {
+	entries, err := cs.entriesLocked(incarnationID)
+	if err != nil {
+		return false, err
+	}
+	now := cs.now().UnixNano()
+	live := false
+	for _, entry := range entries {
+		if !isLeaseName(entry.Name) {
+			continue
+		}
+		lease, err := cs.readLeaseLocked(entry.ID)
+		if err != nil {
+			return false, err
+		}
+		if lease.ExpiresUnixNano > now {
+			live = true
+			continue
+		}
+		_ = cs.removeIfExistsLocked(incarnationID, entry.Name)
+	}
+	return live, nil
+}
+
+func (cs *ClientStore) identityDirLocked(id []byte) (InodeID, error) {
+	return ensureDir(cs.fs, cs.dirID, clientIdentityKey(id))
+}
+
+func (cs *ClientStore) newIncarnationLocked(identityID InodeID) (InodeID, error) {
+	for {
+		suffix, err := randomHex(16)
+		if err != nil {
+			return 0, err
+		}
+		id, err := cs.fs.Mkdir(identityID, incarnationPrefix+suffix)
+		if errors.Is(err, os.ErrExist) {
+			continue
+		}
+		return id, err
+	}
+}
+
+func (cs *ClientStore) entriesLocked(dirID InodeID) ([]DirEntry, error) {
+	var result []DirEntry
+	var cursor uint64
+	for {
+		entries, next, err := cs.fs.Readdir(dirID, cursor)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, entries...)
+		if next == 0 {
+			return result, nil
+		}
+		if next == cursor {
+			return nil, fmt.Errorf("client store: readdir cursor did not advance")
+		}
+		cursor = next
+	}
+}
+
+func (cs *ClientStore) readRecordLocked(
+	incarnationID InodeID,
+	name string,
+) (durableClientRecord, bool, error) {
+	var record durableClientRecord
+	found, err := cs.readJSONLocked(incarnationID, name, &record)
+	if err != nil || !found {
+		return durableClientRecord{}, found, err
+	}
+	if len(record.Verifier) != 8 || len(record.Confirm) != 8 {
+		return durableClientRecord{}, false,
+			fmt.Errorf("client store: invalid client record")
+	}
+	return record, true, nil
+}
+
+func (cs *ClientStore) readPointerLocked(
+	dirID InodeID,
+	name string,
+) (InodeID, bool, error) {
+	var pointer durableClientPointer
+	found, err := cs.readJSONLocked(dirID, name, &pointer)
+	if err != nil || !found {
+		return 0, found, err
+	}
+	id := InodeID(pointer.ClientID)
+	if !isDirectoryInodeID(id) {
+		return 0, false, fmt.Errorf("client store: invalid client pointer")
+	}
+	return id, true, nil
+}
+
+func (cs *ClientStore) readLeaseLocked(id InodeID) (durableLease, error) {
+	data, err := cs.readFileLocked(id)
+	if err != nil {
+		return durableLease{}, err
+	}
+	var lease durableLease
+	if err := json.Unmarshal(data, &lease); err != nil {
+		return durableLease{}, fmt.Errorf("client store: decode lease: %w", err)
+	}
+	return lease, nil
+}
+
+func (cs *ClientStore) readJSONLocked(
+	dirID InodeID,
+	name string,
+	value any,
+) (bool, error) {
+	id, err := cs.fs.Lookup(dirID, name)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	data, err := cs.readFileLocked(id)
+	if err != nil {
+		return false, err
+	}
+	if err := json.Unmarshal(data, value); err != nil {
+		return false, fmt.Errorf("client store: decode %s: %w", name, err)
+	}
+	return true, nil
+}
+
+func (cs *ClientStore) readFileLocked(id InodeID) ([]byte, error) {
+	info, err := cs.fs.Stat(id)
+	if err != nil {
+		return nil, err
+	}
+	if info.Size > maxClientRecordSize {
+		return nil, fmt.Errorf("client store: record is too large: %d", info.Size)
+	}
+	data := make([]byte, info.Size)
+	n, _, err := cs.fs.Read(id, 0, data)
+	if err != nil {
+		return nil, err
+	}
+	if n != len(data) {
+		return nil, fmt.Errorf(
+			"client store: short record read: got %d, want %d", n, len(data))
+	}
+	return data, nil
+}
+
+func (cs *ClientStore) replacePointerLocked(
+	dirID InodeID,
+	name string,
+	clientID InodeID,
+) (InodeID, error) {
+	return cs.replaceJSONLocked(dirID, name, durableClientPointer{
+		ClientID: uint64(clientID),
+	})
+}
+
+func (cs *ClientStore) createJSONLocked(
+	dirID InodeID,
+	name string,
+	value any,
+) (InodeID, error) {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return 0, err
+	}
+	return cs.fs.CreateFile(dirID, name, bytes.NewReader(data))
+}
+
+func (cs *ClientStore) replaceJSONLocked(
+	dirID InodeID,
+	name string,
+	value any,
+) (InodeID, error) {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return 0, err
+	}
+	return cs.replaceBytesLocked(dirID, name, data)
+}
+
+func (cs *ClientStore) replaceBytesLocked(
+	dirID InodeID,
+	name string,
+	data []byte,
+) (InodeID, error) {
+	suffix, err := randomHex(8)
+	if err != nil {
+		return 0, err
+	}
+	tempName := tempPrefix + suffix
+	id, err := cs.fs.CreateFile(dirID, tempName, bytes.NewReader(data))
+	if err != nil {
+		return 0, err
+	}
+	if err := cs.fs.Rename(dirID, tempName, dirID, name); err != nil {
+		_ = cs.fs.Remove(dirID, tempName)
+		return 0, err
+	}
+	return id, nil
+}
+
+func (cs *ClientStore) ensureMarkerLocked(dirID InodeID, name string) error {
+	if _, err := cs.fs.Lookup(dirID, name); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	_, err := cs.fs.CreateFile(dirID, name, nil)
+	if errors.Is(err, os.ErrExist) {
+		return nil
+	}
+	return err
+}
+
+func (cs *ClientStore) removeIfExistsLocked(dirID InodeID, name string) error {
+	err := cs.fs.Remove(dirID, name)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
+func newDurableClientRecord(
+	verifier [8]byte,
+	confirm [8]byte,
+	owner clientOwner,
+) durableClientRecord {
+	return durableClientRecord{
+		Verifier:        append([]byte(nil), verifier[:]...),
+		Confirm:         append([]byte(nil), confirm[:]...),
+		PrincipalFlavor: owner.principal.flavor,
+		PrincipalBody:   []byte(owner.principal.body),
+		NetID:           owner.netid,
+		Addr:            owner.addr,
+	}
+}
+
+func (r durableClientRecord) owner() clientOwner {
+	return clientOwner{
+		principal: r.principal(),
+		netid:     r.NetID,
+		addr:      r.Addr,
+	}
+}
+
+func (r durableClientRecord) principal() rpcPrincipal {
+	return rpcPrincipal{flavor: r.PrincipalFlavor, body: string(r.PrincipalBody)}
+}
+
+func newClientConfirmVerifier() ([8]byte, error) {
+	for {
+		var confirm [8]byte
+		if _, err := rand.Read(confirm[:]); err != nil {
+			return [8]byte{}, err
+		}
+		if confirm != [8]byte{} {
+			return confirm, nil
+		}
+	}
+}
+
+func randomHex(size int) (string, error) {
+	data := make([]byte, size)
+	if _, err := rand.Read(data); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(data), nil
+}
+
+func clientIdentityKey(id []byte) string {
+	sum := sha256.Sum256(id)
+	return hex.EncodeToString(sum[:])
+}
+
+func isDirectoryInodeID(id InodeID) bool {
+	return id != 0 && id.Type() == InodeTypeDir
+}
+
+func activeOpenName(stateID StateID) string {
+	return activeOpenPrefix + hex.EncodeToString(stateID[:])
+}
+
+func isActiveOpenName(name string) bool {
+	return strings.HasPrefix(name, activeOpenPrefix) &&
+		len(name) > len(activeOpenPrefix)
+}
+
+func isLeaseName(name string) bool {
+	return strings.HasPrefix(name, leasePrefix) &&
+		len(name) > len(leasePrefix)
 }
