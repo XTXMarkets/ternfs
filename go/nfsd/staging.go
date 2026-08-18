@@ -5,7 +5,6 @@
 package main
 
 import (
-	"crypto/rand"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -18,9 +17,9 @@ import (
 )
 
 // StagingMeta holds metadata for an in-progress write, persisted in a
-// sidecar file alongside the staging data. This is the only persistent
-// record of an NFS write-open; the NFS server derives open stateids from
-// the NFSStateID stored here rather than keeping separate open state.
+// sidecar file alongside the staging data. NFSStateID ties the persistent
+// staging record to the server's in-memory open state and permits a recovered
+// staging file to complete CLOSE after an nfsd restart.
 type StagingMeta struct {
 	DirID      InodeID // directory to link the file into on CLOSE
 	FileName   string  // name in directory
@@ -337,11 +336,4 @@ func loadStagingMeta(path string) (StagingMeta, error) {
 	}
 	meta.FileName = string(data[30 : 30+nameLen])
 	return meta, nil
-}
-
-// newNFSStateID generates a random 12-byte NFS state ID for write opens.
-func newNFSStateID() StateID {
-	var sid StateID
-	rand.Read(sid[:])
-	return sid
 }
