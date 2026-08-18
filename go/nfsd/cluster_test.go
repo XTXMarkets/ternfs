@@ -249,6 +249,30 @@ func copyStateid(dst Stateid4, src Stateid4) {
 	}
 }
 
+func confirmClusterOpen(
+	t *testing.T,
+	conn net.Conn,
+	xid *uint32,
+	fh []byte,
+	stateid Stateid4,
+) Stateid4 {
+	t.Helper()
+	res := sendCompound(t, conn, *xid, func(w *COMPOUND4argsWriter) {
+		pw := w.AppendArgarray_Putfh()
+		buf := pw.StartObject().SetData(fh).Finish()
+		pw.Resume(buf)
+		w.Resume(pw.Finish())
+		confirmW := w.AppendArgarray_OpenConfirm()
+		copyStateid(confirmW.OpenStateid(), stateid)
+		confirmW.SetSeqid(2)
+	})
+	*xid++
+	iter := expectOK(t, res)
+	nextOp(t, &iter)
+	return nextOp(t, &iter).Value().AsOPENCONFIRM4resEntry().
+		Value().AsOPENCONFIRM4resok().OpenStateid()
+}
+
 // createFileViaNFS creates a file through the NFS protocol by doing
 // PUTROOTFH + OPEN(CREATE) + GETFH + OPEN_CONFIRM + WRITE + CLOSE.
 // Returns the file handle.
@@ -265,7 +289,7 @@ func createFileViaNFS(t *testing.T, conn net.Conn, xid *uint32, clientid uint64,
 		ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
 		ownerW := ow.StartOwner()
 		ownerW = ownerW.SetClientid(clientid)
-		ownerW = ownerW.SetOwner([]byte("nfstest"))
+		ownerW = ownerW.SetOwner([]byte("nfstest-" + name))
 		buf := ownerW.Finish()
 		ow.Resume(buf)
 		chw := ow.SetOpenhow_Create()
@@ -287,10 +311,6 @@ func createFileViaNFS(t *testing.T, conn net.Conn, xid *uint32, clientid uint64,
 		w.Resume(buf)
 
 		w.AppendArgarray_Getfh()
-
-		ocw := w.AppendArgarray_OpenConfirm()
-		ocw.OpenStateid().SetSeqid(1)
-		ocw.SetSeqid(2)
 	})
 	*xid++
 	iter := expectOK(t, res)
@@ -305,7 +325,7 @@ func createFileViaNFS(t *testing.T, conn net.Conn, xid *uint32, clientid uint64,
 	stateid := openOK.Stateid()
 
 	fh := append([]byte(nil), nextOp(t, &iter).Value().AsGETFH4resEntry().Value().AsGETFH4resok().Object().Data()...)
-	nextOp(t, &iter) // OPEN_CONFIRM
+	stateid = confirmClusterOpen(t, conn, xid, fh, stateid)
 
 	// WRITE
 	if len(data) > 0 {
@@ -923,10 +943,6 @@ func TestTernStagedFileGetattrAndRead(t *testing.T) {
 		w.Resume(buf)
 
 		w.AppendArgarray_Getfh()
-
-		ocw := w.AppendArgarray_OpenConfirm()
-		ocw.OpenStateid().SetSeqid(1)
-		ocw.SetSeqid(2)
 	})
 	xid++
 	iter := expectOK(t, res)
@@ -934,7 +950,7 @@ func TestTernStagedFileGetattrAndRead(t *testing.T) {
 	openOK := nextOp(t, &iter).Value().AsOPEN4resEntry().Value().AsOPEN4resok()
 	stateid := openOK.Stateid()
 	fh := append([]byte(nil), nextOp(t, &iter).Value().AsGETFH4resEntry().Value().AsGETFH4resok().Object().Data()...)
-	nextOp(t, &iter) // OPEN_CONFIRM
+	stateid = confirmClusterOpen(t, conn, &xid, fh, stateid)
 
 	// WRITE some data
 	testData := []byte("staged file content")
@@ -1285,9 +1301,6 @@ func TestTernLargeFile(t *testing.T) {
 		buf = ow.Finish()
 		w.Resume(buf)
 		w.AppendArgarray_Getfh()
-		ocw := w.AppendArgarray_OpenConfirm()
-		ocw.OpenStateid().SetSeqid(1)
-		ocw.SetSeqid(2)
 	})
 	xid++
 	iter := expectOK(t, res)
@@ -1295,7 +1308,7 @@ func TestTernLargeFile(t *testing.T) {
 	openOK := nextOp(t, &iter).Value().AsOPEN4resEntry().Value().AsOPEN4resok()
 	stateid := openOK.Stateid()
 	fh := append([]byte(nil), nextOp(t, &iter).Value().AsGETFH4resEntry().Value().AsGETFH4resok().Object().Data()...)
-	nextOp(t, &iter) // OPEN_CONFIRM
+	stateid = confirmClusterOpen(t, conn, &xid, fh, stateid)
 
 	// Write in chunks.
 	for off := 0; off < totalSize; off += chunkSize {
@@ -1597,10 +1610,6 @@ func TestTernNestedDirectories(t *testing.T) {
 		w.Resume(buf)
 
 		w.AppendArgarray_Getfh()
-
-		ocw := w.AppendArgarray_OpenConfirm()
-		ocw.OpenStateid().SetSeqid(1)
-		ocw.SetSeqid(2)
 	})
 	xid++
 	iter = expectOK(t, res)
@@ -1610,7 +1619,7 @@ func TestTernNestedDirectories(t *testing.T) {
 	openOK := nextOp(t, &iter).Value().AsOPEN4resEntry().Value().AsOPEN4resok()
 	stateid := openOK.Stateid()
 	fh := append([]byte(nil), nextOp(t, &iter).Value().AsGETFH4resEntry().Value().AsGETFH4resok().Object().Data()...)
-	nextOp(t, &iter) // OPEN_CONFIRM
+	stateid = confirmClusterOpen(t, conn, &xid, fh, stateid)
 
 	// Write data.
 	deepData := []byte("deep nested content")
@@ -1854,10 +1863,6 @@ func TestTernRemoveNonEmptyDir(t *testing.T) {
 		w.Resume(buf)
 
 		w.AppendArgarray_Getfh()
-
-		ocw := w.AppendArgarray_OpenConfirm()
-		ocw.OpenStateid().SetSeqid(1)
-		ocw.SetSeqid(2)
 	})
 	xid++
 	iter := expectOK(t, res)
@@ -1866,7 +1871,7 @@ func TestTernRemoveNonEmptyDir(t *testing.T) {
 	openOK := nextOp(t, &iter).Value().AsOPEN4resEntry().Value().AsOPEN4resok()
 	stateid := openOK.Stateid()
 	childFH := append([]byte(nil), nextOp(t, &iter).Value().AsGETFH4resEntry().Value().AsGETFH4resok().Object().Data()...)
-	nextOp(t, &iter) // OPEN_CONFIRM
+	stateid = confirmClusterOpen(t, conn, &xid, childFH, stateid)
 
 	// CLOSE the file.
 	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
@@ -1960,9 +1965,6 @@ func TestTernCommit(t *testing.T) {
 		buf = ow.Finish()
 		w.Resume(buf)
 		w.AppendArgarray_Getfh()
-		ocw := w.AppendArgarray_OpenConfirm()
-		ocw.OpenStateid().SetSeqid(1)
-		ocw.SetSeqid(2)
 	})
 	xid++
 	iter := expectOK(t, res)
@@ -1970,7 +1972,7 @@ func TestTernCommit(t *testing.T) {
 	openOK := nextOp(t, &iter).Value().AsOPEN4resEntry().Value().AsOPEN4resok()
 	stateid := openOK.Stateid()
 	fh := append([]byte(nil), nextOp(t, &iter).Value().AsGETFH4resEntry().Value().AsGETFH4resok().Object().Data()...)
-	nextOp(t, &iter) // OPEN_CONFIRM
+	stateid = confirmClusterOpen(t, conn, &xid, fh, stateid)
 
 	// WRITE with UNSTABLE4.
 	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
@@ -2210,9 +2212,6 @@ func TestTernCrossDirectoryRename(t *testing.T) {
 		w.Resume(buf)
 
 		w.AppendArgarray_Getfh()
-		ocw := w.AppendArgarray_OpenConfirm()
-		ocw.OpenStateid().SetSeqid(1)
-		ocw.SetSeqid(2)
 	})
 	xid++
 	iter := expectOK(t, res)
@@ -2221,7 +2220,7 @@ func TestTernCrossDirectoryRename(t *testing.T) {
 	openOK := nextOp(t, &iter).Value().AsOPEN4resEntry().Value().AsOPEN4resok()
 	stateid := openOK.Stateid()
 	fh := append([]byte(nil), nextOp(t, &iter).Value().AsGETFH4resEntry().Value().AsGETFH4resok().Object().Data()...)
-	nextOp(t, &iter) // OPEN_CONFIRM
+	stateid = confirmClusterOpen(t, conn, &xid, fh, stateid)
 
 	movedData := []byte("cross-dir rename data")
 	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
