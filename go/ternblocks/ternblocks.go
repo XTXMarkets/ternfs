@@ -1054,6 +1054,9 @@ func handleSingleRequest(
 			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, err)
 		}
 	case *msgs.WriteBlockReq:
+		if err := checkWriteCertificate(log, blockService.cipher, blockServiceId, whichReq, env.stats[blockServiceId]); err != nil {
+			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, err)
+		}
 		pastCutoffTime := msgs.TernTime(uint64(whichReq.BlockId)).Time().Add(-PAST_CUTOFF)
 		futureCutoffTime := msgs.TernTime(uint64(whichReq.BlockId)).Time().Add(WRITE_FUTURE_CUTOFF)
 		now := time.Now()
@@ -1064,9 +1067,6 @@ func handleSingleRequest(
 			log.ErrorNoAlert("block %v is too old to be written (now=%v, futureCutoffTime=%v)", whichReq.BlockId, now, futureCutoffTime)
 			atomic.AddUint64(&env.stats[blockServiceId].blockTooOldForWrite, 1)
 			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, msgs.BLOCK_TOO_OLD_FOR_WRITE)
-		}
-		if err := checkWriteCertificate(log, blockService.cipher, blockServiceId, whichReq, env.stats[blockServiceId]); err != nil {
-			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, err)
 		}
 		if whichReq.Size > MAX_OBJECT_SIZE {
 			log.RaiseAlert("block %v exceeds max object size: %v > %v", whichReq.BlockId, whichReq.Size, MAX_OBJECT_SIZE)
