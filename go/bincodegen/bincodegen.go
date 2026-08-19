@@ -821,6 +821,48 @@ func cppType(t reflect.Type) string {
 	}
 }
 
+func maxBincodeSize(t reflect.Type) uint64 {
+	switch t.Kind() {
+	case reflect.Bool, reflect.Uint8:
+		return 1
+	case reflect.Uint16:
+		return 2
+	case reflect.Uint32:
+		return 4
+	case reflect.Uint64:
+		return 8
+	case reflect.Array:
+		elem := sliceTypeElem(t)
+		if elem.Kind() != reflect.Uint8 {
+			panic(fmt.Sprintf("we only support arrays of bytes, got %v", elem.Kind()))
+		}
+		return uint64(t.Len())
+	case reflect.Slice, reflect.String:
+		elem := sliceTypeElem(t)
+		if elem.Kind() == reflect.Uint8 && t.Name() != "Blob" {
+			return 1 + uint64(^uint8(0))
+		}
+		elemSize := maxBincodeSize(elem)
+		maxLength := uint64(^uint16(0))
+		if elemSize > (^uint64(0)-2)/maxLength {
+			panic(fmt.Sprintf("maximum bincode size for %v overflows uint64", t))
+		}
+		return 2 + maxLength*elemSize
+	case reflect.Struct:
+		var size uint64
+		for i := 0; i < t.NumField(); i++ {
+			fieldSize := maxBincodeSize(t.Field(i).Type)
+			if fieldSize > ^uint64(0)-size {
+				panic(fmt.Sprintf("maximum bincode size for %v overflows uint64", t))
+			}
+			size += fieldSize
+		}
+		return size
+	default:
+		panic(fmt.Sprintf("unsupported type with kind %v", t.Kind()))
+	}
+}
+
 type cppCodegen struct {
 	pack           *bytes.Buffer
 	unpack         *bytes.Buffer
@@ -943,9 +985,12 @@ func cppFieldName(fld reflect.StructField) string {
 	return string(nameBytes)
 }
 
-func generateCppSingle(hpp io.Writer, cpp io.Writer, t reflect.Type) {
+func generateCppSingle(hpp io.Writer, cpp io.Writer, t reflect.Type, maxSizes ...uint64) {
 	if t.Kind() != reflect.Struct {
 		panic(fmt.Sprintf("type %v is not a struct", t))
+	}
+	if len(maxSizes) > 1 {
+		panic("generateCppSingle accepts at most one maximum size")
 	}
 
 	cg := cppCodegen{
@@ -999,6 +1044,9 @@ func generateCppSingle(hpp io.Writer, cpp io.Writer, t reflect.Type) {
 	}
 	fmt.Fprintf(hpp, "\n")
 	fmt.Fprintf(hpp, "    static constexpr uint16_t STATIC_SIZE = %s; // %s\n", strings.Join(cg.staticSize, " + "), strings.Join(cg.staticSizeInfo, " + "))
+	if len(maxSizes) == 1 {
+		fmt.Fprintf(hpp, "    static constexpr size_t MAX_SIZE = %d; // maximum encoded size\n", maxSizes[0])
+	}
 	fmt.Fprintf(hpp, "\n")
 	fmt.Fprintf(hpp, "    %s() { clear(); }\n", t.Name())
 	if len(ctorParams) > 0 {
@@ -1396,6 +1444,8 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 	fmt.Fprintln(hppOut, "#include <variant>")
 	fmt.Fprintln(hppOut, "#include \"Time.hpp\"")
 	fmt.Fprintln(hppOut)
+	fmt.Fprintln(hppOut, "inline constexpr size_t MAX_REGISTRY_REQUEST_SIZE = 32 * 1024 * 1024;")
+	fmt.Fprintln(hppOut)
 
 	fmt.Fprintln(cppOut, "// Copyright 2025 XTX Markets Technologies Limited")
 	fmt.Fprintln(cppOut, "//")
@@ -1434,7 +1484,13 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 		generateCppSingle(hppOut, cppOut, reqResp.resp)
 	}
 	for _, reqResp := range registryReqResps {
-		generateCppSingle(hppOut, cppOut, reqResp.req)
+		generateCppSingle(hppOut, cppOut, reqResp.req, maxBincodeSize(reqResp.req))
+		fmt.Fprintf(hppOut,
+			"static_assert(\n    sizeof(RegistryMessageKind) + %s::MAX_SIZE <=\n",
+			reqResp.req.Name())
+		fmt.Fprintf(hppOut,
+			"        MAX_REGISTRY_REQUEST_SIZE,\n    \"%s exceeds the registry request limit\");\n\n",
+			reqResp.req.Name())
 		generateCppSingle(hppOut, cppOut, reqResp.resp)
 	}
 	for _, reqResp := range blocksReqResps {
