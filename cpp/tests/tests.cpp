@@ -51,6 +51,38 @@ TEST_CASE("bincode u16") { bincodeTestScalar<uint16_t>(); }
 TEST_CASE("bincode u32") { bincodeTestScalar<uint32_t>(); }
 TEST_CASE("bincode u64") { bincodeTestScalar<uint64_t>(); }
 
+struct FourByteBincodeValue {
+    static inline size_t constructed = 0;
+
+    uint32_t value;
+
+    FourByteBincodeValue() {
+        constructed++;
+    }
+
+    void unpack(BincodeBuf& buf) {
+        value = buf.unpackScalar<uint32_t>();
+    }
+};
+
+TEST_CASE("bincode rejects trailing bytes") {
+    char buf[] = {'x'};
+    BincodeBuf bbuf(buf, sizeof(buf));
+
+    CHECK_THROWS_AS(bbuf.ensureFinished(), BincodeException);
+}
+
+TEST_CASE("bincode decodes complex lists without allocating from count") {
+    char buf[] = {-1, -1};
+    BincodeBuf bbuf(buf, sizeof(buf));
+    BincodeList<FourByteBincodeValue> values;
+    FourByteBincodeValue::constructed = 0;
+
+    CHECK_THROWS_AS(bbuf.unpackList(values), BincodeException);
+    CHECK(values.els.empty());
+    CHECK(FourByteBincodeValue::constructed == 1);
+}
+
 TEST_CASE("LeaderToken epoch encoding") {
     LeaderToken token(ReplicaId(3), Epoch(42));
 
