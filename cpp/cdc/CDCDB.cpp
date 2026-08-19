@@ -137,6 +137,27 @@ inline bool createCurrentLockedEdgeRetry(TernError err) {
 
 static constexpr InodeId MOVE_DIRECTORY_LOCK = InodeId::FromU64Unchecked(1ull<<63);
 
+static bool validCDCName(const BincodeBytes& name) {
+    if (name.size() == 0 || name.ref() == BincodeBytesRef(".") || name.ref() == BincodeBytesRef("..")) {
+        return false;
+    }
+    for (int i = 0; i < name.size(); ++i) {
+        if (name.data()[i] == '/' || name.data()[i] == 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool validDirectory(InodeId id) {
+    return id != NULL_INODE_ID && id.type() == InodeType::DIRECTORY;
+}
+
+static bool validFile(InodeId id) {
+    return id != NULL_INODE_ID &&
+        (id.type() == InodeType::FILE || id.type() == InodeType::SYMLINK);
+}
+
 struct DirectoriesNeedingLock {
 private:
     static constexpr int MAX_SIZE = 3;
@@ -279,6 +300,13 @@ enum MakeDirectoryStep : uint8_t {
     MAKE_DIRECTORY_UNLOCK_EDGE = 5,
     MAKE_DIRECTORY_ROLLBACK = 6,
 };
+
+static TernError validateRequest(const MakeDirectoryReq& req) {
+    if (req.ownerId == NULL_INODE_ID) return TernError::MALFORMED_REQUEST;
+    if (!validDirectory(req.ownerId)) return TernError::TYPE_IS_NOT_DIRECTORY;
+    if (!validCDCName(req.name)) return TernError::BAD_NAME;
+    return TernError::NO_ERROR;
+}
 
 // Steps:
 //
@@ -498,6 +526,13 @@ enum HardUnlinkDirectoryStep : uint8_t {
     HARD_UNLINK_DIRECTORY_REMOVE_INODE = 1,
 };
 
+static TernError validateRequest(const HardUnlinkDirectoryReq& req) {
+    if (req.dirId == NULL_INODE_ID) return TernError::MALFORMED_REQUEST;
+    if (!validDirectory(req.dirId)) return TernError::TYPE_IS_NOT_DIRECTORY;
+    if (req.dirId == ROOT_DIR_INODE_ID) return TernError::CANNOT_REMOVE_ROOT_DIRECTORY;
+    return TernError::NO_ERROR;
+}
+
 // The only reason we have this here is for possible conflicts with RemoveDirectoryOwner,
 // which might temporarily set the owner of a directory to NULL. Since in the current
 // implementation we only ever have one transaction in flight in the CDC, we can just
@@ -557,6 +592,18 @@ enum RenameFileStep : uint8_t {
     RENAME_FILE_UNLOCK_OLD_EDGE = 5,
     RENAME_FILE_ROLLBACK = 6,
 };
+
+static TernError validateRequest(const RenameFileReq& req) {
+    if (req.targetId == NULL_INODE_ID || req.oldOwnerId == NULL_INODE_ID || req.newOwnerId == NULL_INODE_ID) {
+        return TernError::MALFORMED_REQUEST;
+    }
+    if (!validDirectory(req.oldOwnerId) || !validDirectory(req.newOwnerId)) {
+        return TernError::TYPE_IS_NOT_DIRECTORY;
+    }
+    if (!validFile(req.targetId)) return TernError::TYPE_IS_NOT_DIRECTORY;
+    if (!validCDCName(req.oldName) || !validCDCName(req.newName)) return TernError::BAD_NAME;
+    return TernError::NO_ERROR;
+}
 
 // Steps:
 //
@@ -772,6 +819,17 @@ enum SoftUnlinkDirectoryStep : uint8_t {
     SOFT_UNLINK_DIRECTORY_ROLLBACK = 5,
 };
 
+static TernError validateRequest(const SoftUnlinkDirectoryReq& req) {
+    if (req.ownerId == NULL_INODE_ID || req.targetId == NULL_INODE_ID) {
+        return TernError::MALFORMED_REQUEST;
+    }
+    if (!validDirectory(req.ownerId) || !validDirectory(req.targetId)) {
+        return TernError::TYPE_IS_NOT_DIRECTORY;
+    }
+    if (!validCDCName(req.name)) return TernError::BAD_NAME;
+    return TernError::NO_ERROR;
+}
+
 // Steps:
 //
 // 1. Lock edge going into the directory to remove. This prevents things making
@@ -959,6 +1017,17 @@ enum RenameDirectoryStep : uint8_t {
     RENAME_DIRECTORY_SET_OWNER = 6,
     RENAME_DIRECTORY_ROLLBACK = 7,
 };
+
+static TernError validateRequest(const RenameDirectoryReq& req) {
+    if (req.targetId == NULL_INODE_ID || req.oldOwnerId == NULL_INODE_ID || req.newOwnerId == NULL_INODE_ID) {
+        return TernError::MALFORMED_REQUEST;
+    }
+    if (!validDirectory(req.targetId) || !validDirectory(req.oldOwnerId) || !validDirectory(req.newOwnerId)) {
+        return TernError::TYPE_IS_NOT_DIRECTORY;
+    }
+    if (!validCDCName(req.oldName) || !validCDCName(req.newName)) return TernError::BAD_NAME;
+    return TernError::NO_ERROR;
+}
 
 // Steps:
 //
@@ -1233,6 +1302,16 @@ enum CrossShardHardUnlinkFileStep : uint8_t {
     CROSS_SHARD_HARD_UNLINK_FILE_MAKE_TRANSIENT = 2,
 };
 
+static TernError validateRequest(const CrossShardHardUnlinkFileReq& req) {
+    if (req.ownerId == NULL_INODE_ID || req.targetId == NULL_INODE_ID) {
+        return TernError::MALFORMED_REQUEST;
+    }
+    if (!validDirectory(req.ownerId)) return TernError::TYPE_IS_NOT_DIRECTORY;
+    if (!validFile(req.targetId)) return TernError::TYPE_IS_DIRECTORY;
+    if (!validCDCName(req.name)) return TernError::BAD_NAME;
+    return TernError::NO_ERROR;
+}
+
 // Steps:
 //
 // 1. Remove owning edge in one shard
@@ -1315,6 +1394,29 @@ struct CrossShardHardUnlinkFileStateMachine {
     }
 };
 
+TernError validateCDCRequest(const CDCReqContainer& req) {
+    switch (req.kind()) {
+    case CDCMessageKind::MAKE_DIRECTORY:
+        return validateRequest(req.getMakeDirectory());
+    case CDCMessageKind::RENAME_FILE:
+        return validateRequest(req.getRenameFile());
+    case CDCMessageKind::SOFT_UNLINK_DIRECTORY:
+        return validateRequest(req.getSoftUnlinkDirectory());
+    case CDCMessageKind::RENAME_DIRECTORY:
+        return validateRequest(req.getRenameDirectory());
+    case CDCMessageKind::CROSS_SHARD_HARD_UNLINK_FILE:
+        return validateRequest(req.getCrossShardHardUnlinkFile());
+    case CDCMessageKind::HARD_UNLINK_DIRECTORY:
+        return validateRequest(req.getHardUnlinkDirectory());
+    case CDCMessageKind::CDC_SNAPSHOT:
+        return TernError::NO_ERROR;
+    case CDCMessageKind::ERROR:
+    case CDCMessageKind::EMPTY:
+        return TernError::MALFORMED_REQUEST;
+    }
+    return TernError::MALFORMED_REQUEST;
+}
+
 void CDCShardResp::pack(BincodeBuf& buf) const {
     buf.packScalar(txnId.x);
     checkPoint.pack(buf);
@@ -1336,7 +1438,7 @@ void CDCLogEntry::prepareLogEntries(std::vector<CDCReqContainer>& cdcReqs, std::
     CDCLogEntry* curEntry{nullptr};
     for (auto& shardResp : shardResps) {
         auto respSize = shardResp.packedSize();
-        ALWAYS_ASSERT(respSize < maxPackedSize);
+        ALWAYS_ASSERT(itemFits(respSize, maxPackedSize));
         if (unlikely(maxPackedSize - respSize < usedSize)) {
             curEntry = &entriesOut.emplace_back();
             usedSize = curEntry->packedSize();
@@ -1347,7 +1449,7 @@ void CDCLogEntry::prepareLogEntries(std::vector<CDCReqContainer>& cdcReqs, std::
     }
     for (auto& cdcReq : cdcReqs) {
         auto reqSize = cdcReq.packedSize();
-        ALWAYS_ASSERT(reqSize < maxPackedSize);
+        ALWAYS_ASSERT(itemFits(reqSize, maxPackedSize));
         if (unlikely(maxPackedSize - reqSize < usedSize)) {
             curEntry = &entriesOut.emplace_back();
             usedSize = curEntry->packedSize();
@@ -1391,7 +1493,7 @@ void CDCLogEntry::unpack(BincodeBuf& buf) {
 }
 
 size_t CDCLogEntry::packedSize() const {
-    size_t size{1 + 2 * sizeof(uint32_t)};
+    size_t size{FIXED_PACKED_SIZE};
     for (auto& cdcReq : _cdcReqs) {
         size += cdcReq.packedSize();
     }

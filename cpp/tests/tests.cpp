@@ -20,6 +20,7 @@
 #include "SharedRocksDB.hpp"
 #include "Time.hpp"
 #include "CDCKey.hpp"
+#include "CDCDB.hpp"
 #include "Random.hpp"
 
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
@@ -71,6 +72,43 @@ TEST_CASE("BincodeBytes") {
         CHECK(bytes.size() == i);
         CHECK(strncmp(bytes.data(), buf, bytes.size()) == 0);
     }
+}
+
+TEST_CASE("CDC log items leave room for their entry header") {
+    CHECK(CDCLogEntry::itemFits(91, 100));
+    CHECK_FALSE(CDCLogEntry::itemFits(92, 100));
+    CHECK_FALSE(CDCLogEntry::itemFits(0, 8));
+}
+
+TEST_CASE("CDC rejects malformed request fields before replication") {
+    const InodeId dir1(InodeType::DIRECTORY, ShardId(1), 1);
+    const InodeId dir2(InodeType::DIRECTORY, ShardId(2), 2);
+    const InodeId file(InodeType::FILE, ShardId(3), 3);
+
+    CDCReqContainer req;
+    auto& makeDirectory = req.setMakeDirectory();
+    makeDirectory.ownerId = NULL_INODE_ID;
+    makeDirectory.name = BincodeBytes("name");
+    CHECK(validateCDCRequest(req) == TernError::MALFORMED_REQUEST);
+
+    makeDirectory.ownerId = dir1;
+    makeDirectory.name = BincodeBytes("");
+    CHECK(validateCDCRequest(req) == TernError::BAD_NAME);
+
+    auto& renameFile = req.setRenameFile();
+    renameFile.targetId = file;
+    renameFile.oldOwnerId = dir1;
+    renameFile.oldName = BincodeBytes("old");
+    renameFile.newOwnerId = dir2;
+    renameFile.newName = BincodeBytes("new");
+    CHECK(validateCDCRequest(req) == TernError::NO_ERROR);
+
+    renameFile.newOwnerId = file;
+    CHECK(validateCDCRequest(req) == TernError::TYPE_IS_NOT_DIRECTORY);
+
+    auto& hardUnlink = req.setHardUnlinkDirectory();
+    hardUnlink.dirId = ROOT_DIR_INODE_ID;
+    CHECK(validateCDCRequest(req) == TernError::CANNOT_REMOVE_ROOT_DIRECTORY);
 }
 
 struct TempRocksDB {

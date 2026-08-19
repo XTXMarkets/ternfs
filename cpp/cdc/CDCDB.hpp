@@ -82,6 +82,13 @@ std::ostream& operator<<(std::ostream& out, const CDCShardResp& x);
 
 class CDCLogEntry {
 public:
+    static constexpr size_t FIXED_PACKED_SIZE = 1 + 2 * sizeof(uint32_t);
+
+    static constexpr bool itemFits(size_t itemPackedSize, size_t maxPackedSize) {
+        return maxPackedSize >= FIXED_PACKED_SIZE &&
+            itemPackedSize <= maxPackedSize - FIXED_PACKED_SIZE;
+    }
+
     static void prepareLogEntries(std::vector<CDCReqContainer>& cdcReqs, std::vector<CDCShardResp>& shardResps, size_t maxPackedSize, std::vector<CDCLogEntry>& entriesOut);
     static CDCLogEntry prepareBootstrapEntry();
 
@@ -119,6 +126,8 @@ private:
 };
 
 std::ostream& operator<<(std::ostream& out, const CDCLogEntry& x);
+
+TernError validateCDCRequest(const CDCReqContainer& req);
 
 struct CDCDB {
 private:
