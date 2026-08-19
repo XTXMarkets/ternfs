@@ -916,6 +916,9 @@ struct SoftUnlinkDirectoryStateMachine {
         auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : TernError::NO_ERROR;
         if (err == TernError::TIMEOUT) {
             stat(true); // retry
+        } else if (err == TernError::MALFORMED_RESPONSE) {
+            state.setExitError(err);
+            rollback();
         } else {
             ALWAYS_ASSERT(err == TernError::NO_ERROR);
             const auto& statResp = resp.getStatDirectory();
