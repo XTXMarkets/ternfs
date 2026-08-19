@@ -66,6 +66,8 @@ jobs:
     steps:
       - name: Install docker
         run: |
+          # Switch to archive.ubuntu.com.
+          sed -Ei 's|https?://[a-z0-9-]+\.ec2\.archive\.ubuntu\.com|http://archive.ubuntu.com|' /etc/apt/sources.list.d/ubuntu.sources
           # Use the other SSD for docker
           for dev in $(lsblk --raw -pno NAME,MOUNTPOINT | grep -P '^\/dev\/nvme[0-9]n[0-9] *$' | xargs); do
             if [[ $(lsblk --raw -pno NAME,MOUNTPOINT | grep -F $dev | wc -l) -eq 1 ]]; then
@@ -92,6 +94,29 @@ jobs:
           apt-get install -y docker-ce docker-ce-cli containerd.io
       - name: Checkout repository
         uses: actions/checkout@v4
+      - name: Compile kmod with Ubuntu 20.04 kernel headers
+        run: |
+          docker run --rm \
+            --volume "$PWD:/workspace:ro" \
+            ubuntu:20.04 \
+            bash -euxo pipefail -c '
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y \
+                build-essential \
+                ca-certificates \
+                git \
+                linux-headers-generic
+
+              cp -a /workspace /tmp/ternfs
+              git config --global --add safe.directory /tmp/ternfs
+              kernel_headers=$(find /usr/src -maxdepth 1 -type d \
+                -name "linux-headers-5.4.*-generic" | sort -V | tail -1)
+              test -n "$kernel_headers"
+              make -C /tmp/ternfs/kmod \
+                KDIR="$kernel_headers" \
+                -j"$(nproc)" \
+                ternfs-client-local
+            '
       - name: Log in to GitHub Container Registry
         run: echo "${{ secrets.REPO_GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
       - name: Install packages for CI
@@ -115,7 +140,9 @@ jobs:
         run: |
           sudo sed -Ei 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources
           apt-get update
-          apt-get install -y qemu-system-x86 cloud-image-utils
+          # --no-install-recommends keeps gtk/gstreamer/spice GUI deps out;
+          # we only ever run qemu headless in CI.
+          apt-get install -y --no-install-recommends qemu-system-x86 cloud-image-utils
           # build-dep only pulls the kernel build toolchain, which is the same
           # across kernel flavours.
           #
@@ -130,8 +157,8 @@ jobs:
           src_pkg=$(apt-cache show "$kpkg" | awk '/^Source:/ {print $2; exit}')
           if [ -z "$src_pkg" ]; then echo "could not resolve source package for $kpkg" >&2; exit 1; fi
           echo "kernel binary $kpkg -> source $src_pkg"
-          apt-get build-dep -y "$src_pkg"
-          apt-get install -y fakeroot llvm libncurses-dev dwarves
+          apt-get build-dep -y --no-install-recommends "$src_pkg"
+          apt-get install -y --no-install-recommends fakeroot llvm libncurses-dev dwarves
       - name: Download base qemu image
         run: curl -fsSL -O https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
       - name: Run kmod tests
