@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <array>
+#include <cstdio>
 #include <filesystem>
 #include <memory>
 #include <set>
@@ -30,7 +31,7 @@ namespace {
 
 struct AppenderTest {
     std::string dbDir{"temp-logs-appender.XXXXXX"};
-    Logger logger{LogLevel::LOG_ERROR, STDERR_FILENO, false, false};
+    Logger logger;
     std::shared_ptr<XmonAgent> xmon;
     Env env{logger, xmon, "AppenderTest"};
     std::unique_ptr<SharedRocksDB> sharedDB;
@@ -41,7 +42,11 @@ struct AppenderTest {
     std::unique_ptr<LeaderElection> leaderElection;
     std::unique_ptr<Appender> appender;
 
-    AppenderTest(bool noReplication = false) {
+    AppenderTest(
+            bool noReplication = false,
+            LogLevel logLevel = LogLevel::LOG_ERROR,
+            int logFd = STDERR_FILENO) :
+        logger(logLevel, logFd, false, false) {
         _setCurrentTime(TernTime(1));
         if (mkdtemp(dbDir.data()) == nullptr) {
             throw SYSCALL_EXCEPTION("mkdtemp");
@@ -360,4 +365,66 @@ TEST_CASE_FIXTURE(
     CHECK(
         appender->appendEntries(rejected) ==
         TernError::LEADER_PREEMPTED);
+}
+
+TEST_CASE_FIXTURE(
+        AppenderTest,
+        "accepting a foreign leader token clears local leadership") {
+    becomeLeader();
+    takeRequests();
+
+    std::vector<LogsDBLogEntry> pending{makeEntry("pending")};
+    REQUIRE(appender->appendEntries(pending) == TernError::NO_ERROR);
+    CHECK(appender->entriesInFlight() == 1);
+
+    auto foreignToken = LeaderToken(ReplicaId(1), Epoch(2));
+    std::vector<LogsDBLogEntry> foreignEntries;
+    REQUIRE(
+        leaderElection->writeLogEntries(
+            foreignToken,
+            metadata->getLastReleased(),
+            foreignEntries) ==
+        TernError::NO_ERROR);
+
+    CHECK_FALSE(leaderElection->isLeader());
+    CHECK(metadata->getLeaderToken() == foreignToken);
+
+    appender->maybeMoveRelease();
+    CHECK(appender->entriesInFlight() == 0);
+
+    std::vector<LogsDBLogEntry> rejected{makeEntry("rejected")};
+    CHECK(
+        appender->appendEntries(rejected) ==
+        TernError::LEADER_PREEMPTED);
+}
+
+TEST_CASE("accepting leader writes does not reset an existing follower") {
+    auto* logFile = tmpfile();
+    REQUIRE(logFile != nullptr);
+    {
+        AppenderTest test(
+            false,
+            LogLevel::LOG_INFO,
+            fileno(logFile));
+        auto foreignToken = LeaderToken(ReplicaId(1), Epoch(1));
+        std::vector<LogsDBLogEntry> entries;
+
+        REQUIRE(
+            test.leaderElection->writeLogEntries(
+                foreignToken,
+                test.metadata->getLastReleased(),
+                entries) ==
+            TernError::NO_ERROR);
+        CHECK_FALSE(test.leaderElection->isLeader());
+        CHECK(test.metadata->getLeaderToken() == foreignToken);
+    }
+
+    rewind(logFile);
+    std::string logs;
+    std::array<char, 1024> buffer;
+    while (fgets(buffer.data(), buffer.size(), logFile) != nullptr) {
+        logs += buffer.data();
+    }
+    CHECK(logs.find("Reseting leader election") == std::string::npos);
+    fclose(logFile);
 }

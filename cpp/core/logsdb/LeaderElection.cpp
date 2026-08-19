@@ -292,7 +292,11 @@ TernError LeaderElection::writeLogEntries(LeaderToken token, LogIdx newlastRelea
     if (err != TernError::NO_ERROR) {
         return err;
     }
-    _clearElectionState();
+    if (token.replica() != _replicaId && _state != LeadershipState::FOLLOWER) {
+        resetLeaderElection();
+    } else {
+        _clearElectionState();
+    }
     _data.writeLogEntries(entries);
     if (_metadata.getLastReleased() < newlastReleased) {
         _metadata.setLastReleased(newlastReleased);
