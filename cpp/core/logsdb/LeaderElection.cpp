@@ -227,6 +227,16 @@ void LeaderElection::proccessNewLeaderConfirmRequest(ReplicaId fromReplicaId, ui
     auto& response = _reqResp.newResponse(fromReplicaId, requestId);
     auto& newLeaderConfirmResponse = response.msg.body.setNewLeaderConfirm();
     if (_metadata.getNomineeToken() == request.nomineeToken) {
+        if (unlikely(request.releasedIdx < _metadata.getLastReleased())) {
+            LOG_ERROR(
+                _env,
+                "NEW_LEADER_CONFIRM from replica %s moves release point backwards from %s to %s",
+                fromReplicaId,
+                _metadata.getLastReleased(),
+                request.releasedIdx);
+            newLeaderConfirmResponse.result = TernError::MALFORMED_REQUEST;
+            return;
+        }
         _metadata.setLastReleased(request.releasedIdx);
     }
 

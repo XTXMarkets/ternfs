@@ -300,12 +300,29 @@ TEST_CASE("LeaderElection participant handles recovery and completion") {
         responses[1].msg.body.getLogRecoveryWrite().result ==
         TernError::NO_ERROR);
 
+    NewLeaderConfirmReq staleCompletion;
+    staleCompletion.nomineeToken = nomineeToken;
+    staleCompletion.releasedIdx = LogIdx(0);
+    election.proccessNewLeaderConfirmRequest(
+        ReplicaId(1),
+        14,
+        staleCompletion);
+
+    responses.clear();
+    reqResp.getResponsesToSend(responses);
+    REQUIRE(responses.size() == 1);
+    CHECK(
+        responses[0].msg.body.getNewLeaderConfirm().result ==
+        TernError::MALFORMED_REQUEST);
+    CHECK(metadata.getLastReleased() == LogIdx(1));
+    CHECK(metadata.getNomineeToken() == nomineeToken);
+
     NewLeaderConfirmReq completion;
     completion.nomineeToken = nomineeToken;
     completion.releasedIdx = LogIdx(2);
     election.proccessNewLeaderConfirmRequest(
         ReplicaId(1),
-        14,
+        15,
         completion);
 
     responses.clear();
@@ -323,7 +340,7 @@ TEST_CASE("LeaderElection participant handles recovery and completion") {
     CHECK(std::string(entry.value.begin(), entry.value.end()) == "two");
 
     nomination.nomineeToken = LeaderToken(ReplicaId(2), Epoch(1));
-    election.proccessNewLeaderRequest(ReplicaId(2), 15, nomination);
+    election.proccessNewLeaderRequest(ReplicaId(2), 16, nomination);
     responses.clear();
     reqResp.getResponsesToSend(responses);
     REQUIRE(responses.size() == 1);
