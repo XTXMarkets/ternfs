@@ -51,6 +51,20 @@ TEST_CASE("bincode u16") { bincodeTestScalar<uint16_t>(); }
 TEST_CASE("bincode u32") { bincodeTestScalar<uint32_t>(); }
 TEST_CASE("bincode u64") { bincodeTestScalar<uint64_t>(); }
 
+TEST_CASE("truncated persisted span fails before reading its body") {
+    std::string value(
+        SpanBody::MIN_SIZE + SpanBlocksBody::MIN_SIZE - 1,
+        '\0');
+    SpanBody span;
+    span._data = value.data();
+    span._setVersion(1);
+    span._setStorageClassOrLocationCount(1);
+
+    CHECK_THROWS_AS(
+        ExternalValue<SpanBody>{value},
+        AssertionException);
+}
+
 TEST_CASE("LeaderToken epoch encoding") {
     LeaderToken token(ReplicaId(3), Epoch(42));
 
