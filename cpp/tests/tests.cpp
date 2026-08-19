@@ -701,6 +701,37 @@ TEST_CASE("fullreaddir backwards without same_name") {
     }
 }
 
+TEST_CASE("fullreaddir wire validation returns errors") {
+    TempShardDB db(LogLevel::LOG_ERROR, ShardId(0));
+
+    SUBCASE("same name requires a name") {
+        ShardReqContainer reqContainer;
+        ShardRespContainer respContainer;
+        auto& req = reqContainer.setFullReadDir();
+        req.dirId = ROOT_DIR_INODE_ID;
+        req.flags = FULL_READ_DIR_SAME_NAME;
+
+        db->read(reqContainer, respContainer);
+
+        REQUIRE(respContainer.kind() == ShardMessageKind::ERROR);
+        CHECK(respContainer.getError() == TernError::MALFORMED_REQUEST);
+    }
+
+    SUBCASE("current cursor cannot have a start time") {
+        ShardReqContainer reqContainer;
+        ShardRespContainer respContainer;
+        auto& req = reqContainer.setFullReadDir();
+        req.dirId = ROOT_DIR_INODE_ID;
+        req.flags = FULL_READ_DIR_CURRENT;
+        req.startTime = TernTime(1);
+
+        db->read(reqContainer, respContainer);
+
+        REQUIRE(respContainer.kind() == ShardMessageKind::ERROR);
+        CHECK(respContainer.getError() == TernError::MALFORMED_REQUEST);
+    }
+}
+
 TEST_CASE("test fmt") {
     {
         std::stringstream ss;

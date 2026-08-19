@@ -613,9 +613,9 @@ struct ShardDBImpl {
         bool current = !!(req.flags&FULL_READ_DIR_CURRENT);
         bool forwards = !(req.flags&FULL_READ_DIR_BACKWARDS);
 
-        // TODO proper errors at validation
-        ALWAYS_ASSERT(!(sameName && req.startName.packedSize() == 0));
-        ALWAYS_ASSERT(!(current && req.startTime != 0));
+        if ((sameName && req.startName.size() == 0) || (current && req.startTime != 0)) {
+            return TernError::MALFORMED_REQUEST;
+        }
 
         HashMode hashMode;
         {

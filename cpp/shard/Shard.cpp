@@ -247,7 +247,10 @@ static void packShardResponse(
         LOG_DEBUG(env, "artificially dropping response %s", msg.id);
         return;
     }
-    ALWAYS_ASSERT(req.clientAddr.port != 0);
+    if (unlikely(req.clientAddr.port == 0)) {
+        LOG_ERROR(env, "cannot send response for request %s to a zero source port", msg.id);
+        return;
+    }
 
     if (respKind != ShardMessageKind::ERROR) {
         LOG_DEBUG(env, "successfully processed request %s with kind %s in %s", msg.id, reqKind, elapsed);
@@ -290,7 +293,10 @@ static void packCheckPointedShardResponse(
         LOG_DEBUG(env, "artificially dropping response %s", msg.id);
         return;
     }
-    ALWAYS_ASSERT(req.clientAddr.port != 0);
+    if (unlikely(req.clientAddr.port == 0)) {
+        LOG_ERROR(env, "cannot send response for request %s to a zero source port", msg.id);
+        return;
+    }
 
     if (respKind != ShardMessageKind::ERROR) {
         LOG_DEBUG(env, "successfully processed request %s with kind %s in %s", msg.id, reqKind, elapsed);
@@ -559,7 +565,11 @@ private:
             ShardResp& resp = _waitResponses.emplace_back();
             try {
                 resp.msg.unpack(msg.buf);
-                ALWAYS_ASSERT(resp.msg.body.kind() == ShardMessageKind::WAIT_STATE_APPLIED);
+                if (resp.msg.body.kind() != ShardMessageKind::WAIT_STATE_APPLIED) {
+                    LOG_ERROR(_env, "expected WAIT_STATE_APPLIED response from %s, got %s", msg.clientAddr, resp.msg.body.kind());
+                    _waitResponses.pop_back();
+                    return;
+                }
                 resp.clientAddr = msg.clientAddr;
             } catch (const BincodeException& err) {
                 LOG_ERROR(_env, "Could not parse: %s", err.what());
@@ -1189,7 +1199,8 @@ public:
                                             break;
                                         }
                                         default:
-                                            ALWAYS_ASSERT(false, "Unexpected reponse kind %s for requests kind %s", resp.body.kind(), request.msg.body.kind() );
+                                            LOG_ERROR(_env, "unexpected response kind %s for request kind %s", resp.body.kind(), request.msg.body.kind());
+                                            resp.body.setError() = TernError::MALFORMED_RESPONSE;
                                     }
                                 }
                                 packShardResponse(_env, _shared, _shared.sock().addr(), _sender, dropArtificially, request, resp);
@@ -1367,6 +1378,11 @@ public:
         auto mtu = std::min(reqBody.mtu == 0 ? (int)DEFAULT_UDP_MTU : (int)reqBody.mtu, (int)MAX_UDP_MTU);
 
         int budget = mtu - (int)ShardRespMsg::STATIC_SIZE - (int)GetLinkEntriesResp::STATIC_SIZE;
+        if (unlikely(budget < 0)) {
+            resp.body.setError() = TernError::MALFORMED_REQUEST;
+            packShardResponse(_env, _shared, _shared.sock().addr(), _sender, false, req, resp);
+            return;
+        }
 
         const size_t maxEntriesByMtu = budget / (int)LinkEntry::STATIC_SIZE;
         while (respBody.nextIdx < _logsDB.getLastReleased() && respBody.entries.els.size() < maxEntriesByMtu && processed < maxProcess) {
@@ -1780,7 +1796,8 @@ public:
                                 break;
                             }
                             default:
-                                ALWAYS_ASSERT(false, "Unexpected reponse kind %s for requests kind %s", forwarded_resp.body.kind(), req.msg.body.kind() );
+                                LOG_ERROR(_env, "unexpected response kind %s for request kind %s", forwarded_resp.body.kind(), req.msg.body.kind());
+                                forwarded_resp.body.setError() = TernError::MALFORMED_RESPONSE;
                         }
                     }
                     packShardResponse(_env, _shared, _shared.sock().addr(), _sender, dropArtificially, req, forwarded_resp);
