@@ -19,11 +19,12 @@ import (
 // Tag is an arbitrary string. When a rule fires, its tag selects the
 // output bucket; tag values have no built-in meaning here.
 //
-// AppliesTo is "file" (default) or "directory".
+// AppliesTo is "file" (default), "directory", or "symlink".
 type Rule struct {
 	Name                           string
 	Tag                            string
 	AppliesTo                      string
+	SymlinkTarget                  string
 	IncludePatterns                []*regexp.Regexp
 	ExcludePatterns                []*regexp.Regexp
 	SuffixPatterns                 []*regexp.Regexp
@@ -68,6 +69,7 @@ type ruleJSON struct {
 	Name                           string    `json:"name"`
 	Tag                            string    `json:"tag"`
 	AppliesTo                      string    `json:"applies_to"`
+	SymlinkTarget                  string    `json:"symlink_target"`
 	IncludePathMatch               []string  `json:"include_path_match"`
 	ExcludePathMatch               []string  `json:"exclude_path_match"`
 	FileSuffixMatch                []string  `json:"file_suffix_match"`
@@ -91,8 +93,14 @@ func LoadRules(data []byte) ([]*Rule, error) {
 		if appliesTo == "" {
 			appliesTo = "file"
 		}
-		if appliesTo != "file" && appliesTo != "directory" {
+		if appliesTo != "file" && appliesTo != "directory" && appliesTo != "symlink" {
 			return nil, fmt.Errorf("rule %q has invalid applies_to %q", r.Name, appliesTo)
+		}
+		if r.SymlinkTarget != "" && r.SymlinkTarget != "dangling" && r.SymlinkTarget != "not-dangling" {
+			return nil, fmt.Errorf("rule %q has invalid symlink_target %q", r.Name, r.SymlinkTarget)
+		}
+		if r.SymlinkTarget != "" && appliesTo != "symlink" {
+			return nil, fmt.Errorf("rule %q has symlink_target but applies_to is %q", r.Name, appliesTo)
 		}
 		inc, err := compileAll(r.IncludePathMatch)
 		if err != nil {
@@ -110,6 +118,7 @@ func LoadRules(data []byte) ([]*Rule, error) {
 			Name:                           r.Name,
 			Tag:                            r.Tag,
 			AppliesTo:                      appliesTo,
+			SymlinkTarget:                  r.SymlinkTarget,
 			IncludePatterns:                inc,
 			ExcludePatterns:                exc,
 			SuffixPatterns:                 suf,
@@ -163,6 +172,11 @@ func (r *Rule) Matches(path string, size uint64, atime, mtime, now msgs.TernTime
 			return false
 		}
 	}
+	return r.MatchesPath(path)
+}
+
+// MatchesPath reports whether the rule's path predicates hold.
+func (r *Rule) MatchesPath(path string) bool {
 	if !matchAny(r.IncludePatterns, path) {
 		return false
 	}
@@ -184,6 +198,15 @@ func FirstMatch(rules []*Rule, path string, size uint64, atime, mtime, now msgs.
 		}
 	}
 	return nil
+}
+
+func anyPathMatches(rules []*Rule, path string) bool {
+	for _, r := range rules {
+		if r.MatchesPath(path) {
+			return true
+		}
+	}
+	return false
 }
 
 // MaybeMatchesByCreationTime is a conservative prefilter: returns false
