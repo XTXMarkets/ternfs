@@ -1481,12 +1481,32 @@ void CDCLogEntry::pack(BincodeBuf& buf) const {
 }
 
 void CDCLogEntry::unpack(BincodeBuf& buf) {
-    _bootstrapEntry = buf.unpackScalar<bool>();
-    _cdcReqs.resize(buf.unpackScalar<uint32_t>());
+    auto bootstrapEntry = buf.unpackScalar<uint8_t>();
+    if (unlikely(bootstrapEntry > 1)) {
+        throw BINCODE_EXCEPTION(
+            "invalid CDC bootstrap entry flag %s",
+            bootstrapEntry);
+    }
+    _bootstrapEntry = bootstrapEntry;
+    auto cdcReqCount = buf.unpackScalar<uint32_t>();
+    if (unlikely(cdcReqCount > buf.remaining())) {
+        throw BINCODE_EXCEPTION(
+            "CDC request count %s cannot fit in %s remaining bytes",
+            cdcReqCount,
+            buf.remaining());
+    }
+    _cdcReqs.resize(cdcReqCount);
     for (auto& cdcReq : _cdcReqs) {
         cdcReq.unpack(buf);
     }
-    _shardResps.resize(buf.unpackScalar<uint32_t>());
+    auto shardRespCount = buf.unpackScalar<uint32_t>();
+    if (unlikely(shardRespCount > buf.remaining())) {
+        throw BINCODE_EXCEPTION(
+            "CDC shard response count %s cannot fit in %s remaining bytes",
+            shardRespCount,
+            buf.remaining());
+    }
+    _shardResps.resize(shardRespCount);
     for (auto& shardResp : _shardResps) {
         shardResp.unpack(buf);
     }

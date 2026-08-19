@@ -80,6 +80,32 @@ TEST_CASE("CDC log items leave room for their entry header") {
     CHECK_FALSE(CDCLogEntry::itemFits(0, 8));
 }
 
+TEST_CASE("CDC log entries reject corrupt fixed fields before allocation") {
+    SUBCASE("bootstrap flag") {
+        char buf[] = {2};
+        BincodeBuf bbuf(buf, sizeof(buf));
+        CDCLogEntry entry;
+
+        CHECK_THROWS_AS(entry.unpack(bbuf), BincodeException);
+    }
+
+    SUBCASE("request count") {
+        char buf[] = {0, 1, 0, 0, 0};
+        BincodeBuf bbuf(buf, sizeof(buf));
+        CDCLogEntry entry;
+
+        CHECK_THROWS_AS(entry.unpack(bbuf), BincodeException);
+    }
+
+    SUBCASE("shard response count") {
+        char buf[] = {0, 0, 0, 0, 0, 1, 0, 0, 0};
+        BincodeBuf bbuf(buf, sizeof(buf));
+        CDCLogEntry entry;
+
+        CHECK_THROWS_AS(entry.unpack(bbuf), BincodeException);
+    }
+}
+
 TEST_CASE("CDC rejects malformed request fields before replication") {
     const InodeId dir1(InodeType::DIRECTORY, ShardId(1), 1);
     const InodeId dir2(InodeType::DIRECTORY, ShardId(2), 2);
