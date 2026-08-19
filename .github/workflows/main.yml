@@ -66,10 +66,7 @@ jobs:
     steps:
       - name: Install docker
         run: |
-          # The EC2-local apt mirror (us-east-1.ec2.archive.ubuntu.com) is
-          # sometimes throttled to tens of kB/s; we've had CI runs where it
-          # cost almost 2 hours. archive.ubuntu.com has been reliable, so
-          # just use it everywhere.
+          # Switch to archive.ubuntu.com.
           sed -Ei 's|https?://[a-z0-9-]+\.ec2\.archive\.ubuntu\.com|http://archive.ubuntu.com|' /etc/apt/sources.list.d/ubuntu.sources
           # Use the other SSD for docker
           for dev in $(lsblk --raw -pno NAME,MOUNTPOINT | grep -P '^\/dev\/nvme[0-9]n[0-9] *$' | xargs); do
