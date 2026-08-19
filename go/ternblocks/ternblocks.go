@@ -1154,7 +1154,9 @@ func retrieveOrCreateKey(log *log.Logger, dir string) ([16]byte, error) {
 	if err != nil {
 		return [16]byte{}, fmt.Errorf("could not open or create key file %v: %v", keyFilePath, err)
 	}
-	keyFile.Seek(0, 0)
+	if _, err := keyFile.Seek(0, 0); err != nil {
+		return [16]byte{}, fmt.Errorf("could not seek key file %v: %w", keyFilePath, err)
+	}
 	if err := syscall.Flock(int(keyFile.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		return [16]byte{}, fmt.Errorf("could not lock key file %v: %v", keyFilePath, err)
 	}
@@ -1167,14 +1169,14 @@ func retrieveOrCreateKey(log *log.Logger, dir string) ([16]byte, error) {
 	if err == io.EOF {
 		log.Info("creating new secret key")
 		if _, err := crand.Read(key[:]); err != nil {
-			panic(err)
+			return [16]byte{}, fmt.Errorf("could not generate key for %v: %w", keyFilePath, err)
 		}
 		if _, err := keyFile.Write(key[:]); err != nil {
-			panic(err)
+			return [16]byte{}, fmt.Errorf("could not write key file %v: %w", keyFilePath, err)
 		}
 		keyCrc := crc32c.Sum(0, key[:])
 		if err := binary.Write(keyFile, binary.LittleEndian, keyCrc); err != nil {
-			panic(err)
+			return [16]byte{}, fmt.Errorf("could not write crc to key file %v: %w", keyFilePath, err)
 		}
 		log.Info("creating directory structure")
 		if err := os.Mkdir(path.Join(dir, "with_crc"), 0755); err != nil && !os.IsExist(err) {
