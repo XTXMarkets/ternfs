@@ -664,7 +664,7 @@ private:
             } catch (const BincodeException& err) {
                 LOG_ERROR(_env, "could not parse: %s", err.what());
                 RAISE_ALERT(_env, "could not parse LogsDBResponse from %s, dropping it.", msg.clientAddr);
-                requests.pop_back();
+                responses.pop_back();
                 continue;
             }
             LOG_DEBUG(_env, "Received response %s with requests id %s from replica id %s", resp.msg.body.kind(), resp.msg.id, resp.replicaId);
