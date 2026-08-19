@@ -240,6 +240,7 @@ func initBlockServicesInfo(
 	log.Info("initializing block services info")
 	var wg sync.WaitGroup
 	wg.Add(len(blockServices))
+	errs := make(chan error, len(blockServices))
 	alert := log.NewNCAlert(0)
 	log.RaiseNC(alert, "getting info for %v block services", len(blockServices))
 	for id, bs := range blockServices {
@@ -256,20 +257,35 @@ func initBlockServicesInfo(
 		}
 		closureBs := bs
 		go func() {
+			defer wg.Done()
 			// only update if it isn't filled it in already from registry
 			if closureBs.cachedInfo.Blocks == 0 {
 				if err := updateBlockServiceInfoCapacity(log, closureBs, reservedStorage); err != nil {
-					panic(err)
+					errs <- fmt.Errorf(
+						"could not read capacity for block service %v at %v: %w",
+						closureBs.cachedInfo.Id,
+						closureBs.path,
+						err,
+					)
+					return
 				}
 				if err := updateBlockServiceInfoBlocks(log, closureBs); err != nil {
-					panic(err)
+					errs <- fmt.Errorf(
+						"could not scan blocks for block service %v at %v: %w",
+						closureBs.cachedInfo.Id,
+						closureBs.path,
+						err,
+					)
 				}
 			}
-			wg.Done()
 		}()
 	}
 	wg.Wait()
+	close(errs)
 	log.ClearNC(alert)
+	for err := range errs {
+		return err
+	}
 	return nil
 }
 
@@ -1727,7 +1743,10 @@ func main() {
 		actualPort2 = uint16(listener2.Addr().(*net.TCPAddr).Port)
 	}
 
-	initBlockServicesInfo(env, l, msgs.Location(*locationId), msgs.AddrsInfo{Addr1: msgs.IpPort{Addrs: ownIp1, Port: actualPort1}, Addr2: msgs.IpPort{Addrs: ownIp2, Port: actualPort2}}, failureDomain, blockServices, *reservedStorage)
+	if err := initBlockServicesInfo(env, l, msgs.Location(*locationId), msgs.AddrsInfo{Addr1: msgs.IpPort{Addrs: ownIp1, Port: actualPort1}, Addr2: msgs.IpPort{Addrs: ownIp2, Port: actualPort2}}, failureDomain, blockServices, *reservedStorage); err != nil {
+		l.RaiseAlert("could not initialize block services: %v", err)
+		os.Exit(1)
+	}
 	l.Info("finished updating block service info, will now start")
 
 	terminateChan := make(chan any)
