@@ -187,6 +187,10 @@ func main() {
 	if err != nil {
 		panic(fmt.Errorf("failed to wait for registry replicas: %v", err))
 	}
+	err = client.WaitForRegistry(l, registryAddress, 10*time.Second)
+	if err != nil {
+		panic(fmt.Errorf("failed to wait for writable registry: %v", err))
+	}
 
 	registryLocationAddresses := []string{registryAddress}
 
@@ -262,12 +266,9 @@ func main() {
 		}
 	}
 
-	waitRegistryFor := 10 * time.Second
-	if *buildType == "valgrind" || *profile {
-		waitRegistryFor = 60 * time.Second
-	}
-	fmt.Printf("waiting for block services for %v...\n", waitRegistryFor)
-	_, err = client.WaitForBlockServices(l, registryAddress, int(*failureDomains*(*hddBlockServices+*flashBlockServices)*numLocations), waitRegistryFor)
+	waitForServices := 60 * time.Second
+	fmt.Printf("waiting for block services for %v...\n", waitForServices)
+	_, err = client.WaitForBlockServices(l, registryAddress, int(*failureDomains*(*hddBlockServices+*flashBlockServices)*numLocations), waitForServices)
 	if err != nil {
 		panic(fmt.Errorf("failed to wait for block services: %v", err))
 	}
@@ -339,8 +340,8 @@ func main() {
 		}
 	}
 
-	fmt.Printf("waiting for shards/cdc for %v...\n", waitRegistryFor)
-	client.WaitForClient(l, registryAddress, waitRegistryFor)
+	fmt.Printf("waiting for shards/cdc for %v...\n", waitForServices)
+	client.WaitForClient(l, registryAddress, waitForServices)
 
 	if !*noFuse {
 		for loc := uint(0); loc < numLocations; loc++ {
