@@ -7,11 +7,24 @@
 package main
 
 /*
-#cgo CFLAGS: -I/tmp/libnfs-install/include
-#cgo LDFLAGS: -L/tmp/libnfs-install/lib -lnfs -Wl,-rpath,/tmp/libnfs-install/lib
+#cgo CFLAGS: -I${SRCDIR}/.deps/libnfs-install/include
+#cgo LDFLAGS: -L${SRCDIR}/.deps/libnfs-install/lib -lnfs -Wl,-rpath,${SRCDIR}/.deps/libnfs-install/lib
 #include <stdlib.h>
 #include <fcntl.h>
 #include <nfsc/libnfs.h>
+
+static int tern_nfs_mount_url(struct nfs_context *nfs, const char *url)
+{
+	struct nfs_url *parsed = nfs_parse_url_dir(nfs, url);
+	int ret;
+
+	if (parsed == NULL) {
+		return -1;
+	}
+	ret = nfs_mount(nfs, parsed->server, parsed->path);
+	nfs_destroy_url(parsed);
+	return ret;
+}
 */
 import "C"
 
@@ -29,21 +42,23 @@ func libnfsConnect(host string, port int) (*libnfsClient, error) {
 	if nfs == nil {
 		return nil, fmt.Errorf("nfs_init_context failed")
 	}
-	C.nfs_set_version(nfs, 4)
-	C.nfs_set_nfsport(nfs, C.int(port))
+	if ret := C.nfs_set_version(nfs, 4); ret != 0 {
+		msg := C.GoString(C.nfs_get_error(nfs))
+		C.nfs_destroy_context(nfs)
+		return nil, fmt.Errorf("nfs_set_version: %s (ret=%d)", msg, ret)
+	}
 	C.nfs_set_timeout(nfs, 5000)
 	C.nfs_set_debug(nfs, 2)
 
-	chost := C.CString(host)
-	defer C.free(unsafe.Pointer(chost))
-	cexport := C.CString("/")
-	defer C.free(unsafe.Pointer(cexport))
+	mountURL := fmt.Sprintf("nfs://%s/?nfsport=%d", host, port)
+	curl := C.CString(mountURL)
+	defer C.free(unsafe.Pointer(curl))
 
-	ret := C.nfs_mount(nfs, chost, cexport)
+	ret := C.tern_nfs_mount_url(nfs, curl)
 	if ret != 0 {
 		msg := C.GoString(C.nfs_get_error(nfs))
 		C.nfs_destroy_context(nfs)
-		return nil, fmt.Errorf("nfs_mount: %s (ret=%d)", msg, ret)
+		return nil, fmt.Errorf("nfs_mount %q: %s (ret=%d)", mountURL, msg, ret)
 	}
 	return &libnfsClient{nfs: nfs}, nil
 }
@@ -91,7 +106,7 @@ func (c *libnfsClient) ReadFile(path string) ([]byte, error) {
 	var result []byte
 	buf := make([]byte, 64*1024)
 	for {
-		n := C.nfs_read(c.nfs, fh, unsafe.Pointer(&buf[0]), C.size_t(len(buf)))
+		n := C.nfs_read(c.nfs, fh, C.uint64_t(len(buf)), unsafe.Pointer(&buf[0]))
 		if n < 0 {
 			msg := C.GoString(C.nfs_get_error(c.nfs))
 			return nil, fmt.Errorf("nfs_read(%q): %s", path, msg)

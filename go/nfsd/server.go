@@ -7,8 +7,11 @@ package main
 import (
 	"crypto/rand"
 	"encoding/binary"
+	"errors"
+	"io"
 	"log/slog"
 	"net"
+	"syscall"
 	"time"
 )
 
@@ -87,6 +90,8 @@ func (s *Server) handleConn(conn net.Conn) {
 		if err != nil {
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
 				s.log.Info("client idle timeout", "remote", remote)
+			} else if errors.Is(err, io.EOF) || errors.Is(err, syscall.ECONNRESET) {
+				s.log.Info("client disconnected", "remote", remote)
 			} else {
 				s.log.Info("client disconnected", "remote", remote, "err", err)
 			}
