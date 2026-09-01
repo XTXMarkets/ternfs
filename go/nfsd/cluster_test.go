@@ -162,9 +162,18 @@ func TestMain(m *testing.M) {
 		}
 	}()
 
+	var closeProcs sync.Once
+	cleanupProcs := func() {
+		closeProcs.Do(procs.Close)
+	}
+	timeoutCleanup := cleanupBeforeTestTimeout(cleanupProcs)
+
 	code := m.Run()
 
-	procs.Close()
+	if timeoutCleanup != nil {
+		timeoutCleanup.Stop()
+	}
+	cleanupProcs()
 	logFile.Close()
 	if code == 0 {
 		os.RemoveAll(dataDir)
@@ -172,6 +181,24 @@ func TestMain(m *testing.M) {
 		fmt.Printf("test data preserved at %s\n", dataDir)
 	}
 	os.Exit(code)
+}
+
+func cleanupBeforeTestTimeout(cleanup func()) *time.Timer {
+	timeoutFlag := flag.Lookup("test.timeout")
+	if timeoutFlag == nil {
+		return nil
+	}
+	timeout, err := time.ParseDuration(timeoutFlag.Value.String())
+	if err != nil || timeout <= 0 {
+		return nil
+	}
+
+	const cleanupGrace = 30 * time.Second
+	grace := min(cleanupGrace, timeout/2)
+	return time.AfterFunc(timeout-grace, func() {
+		fmt.Fprintf(os.Stderr, "test timeout approaching; terminating cluster processes\n")
+		cleanup()
+	})
 }
 
 // startTernTestServer creates an NFS server backed by the shared TernFS cluster.
