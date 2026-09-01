@@ -15,6 +15,9 @@ between:
 - operations which the server must reject with the correct NFS status; and
 - NFS features which are outside the intended TernFS contract.
 
+The local and persistent state model is documented in
+[`docs/nfsd.md`](../../docs/nfsd.md).
+
 There are currently five test paths.
 
 Test targets ending in `-cluster` build and start a temporary TernFS cluster.

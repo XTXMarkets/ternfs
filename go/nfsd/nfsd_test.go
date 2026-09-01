@@ -6,11 +6,14 @@ package main
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -27,7 +30,11 @@ func startTestServer(t *testing.T, dir string) (addr string, cleanup func()) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return serveTestServer(t, srv)
+}
 
+func serveTestServer(t *testing.T, srv *Server) (addr string, cleanup func()) {
+	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -41,7 +48,10 @@ func startTestServer(t *testing.T, dir string) (addr string, cleanup func()) {
 			go srv.handleConn(conn)
 		}
 	}()
-	return ln.Addr().String(), func() { ln.Close() }
+	return ln.Addr().String(), func() {
+		ln.Close()
+		srv.waitForClientGC()
+	}
 }
 
 func dial(t *testing.T, addr string) net.Conn {
@@ -204,13 +214,33 @@ func getAttrData(t *testing.T, getattrOk GETATTR4resok) []byte {
 	return getattrOk.ObjAttributes().AttrVals().Data()
 }
 
-// setupClient runs SETCLIENTID + SETCLIENTID_CONFIRM and returns the assigned clientid.
-func setupClient(t *testing.T, conn net.Conn, xid *uint32) uint64 {
+func verifierBytes(verifier Verifier4) [8]byte {
+	var data [8]byte
+	for i := range data {
+		data[i] = verifier.Data(i)
+	}
+	return data
+}
+
+func setVerifier(verifier Verifier4, data [8]byte) {
+	for i, b := range data {
+		verifier.SetData(i, b)
+	}
+}
+
+func requestClientID(
+	t *testing.T,
+	conn net.Conn,
+	xid *uint32,
+	identity string,
+	verifier [8]byte,
+) (uint64, [8]byte) {
 	t.Helper()
 	res := sendCompound(t, conn, *xid, func(w *COMPOUND4argsWriter) {
 		scw := w.AppendArgarray_Setclientid()
 		clientW := scw.StartClient()
-		clientW = clientW.SetId([]byte("test-client"))
+		setVerifier(clientW.Verifier(), verifier)
+		clientW = clientW.SetId([]byte(identity))
 		buf := clientW.Finish()
 		scw.Resume(buf)
 		cbW := scw.StartCallback()
@@ -237,16 +267,35 @@ func setupClient(t *testing.T, conn net.Conn, xid *uint32) uint64 {
 	if scRes.Disc() != NFS4_OK {
 		t.Fatalf("SETCLIENTID status = %d", scRes.Disc())
 	}
-	clientid := scRes.Value().AsSETCLIENTID4resok().Clientid()
+	scOK := scRes.Value().AsSETCLIENTID4resok()
+	return scOK.Clientid(), verifierBytes(scOK.SetclientidConfirm())
+}
 
-	res = sendCompound(t, conn, *xid, func(w *COMPOUND4argsWriter) {
+func confirmClientID(
+	t *testing.T,
+	conn net.Conn,
+	xid *uint32,
+	clientid uint64,
+	confirm [8]byte,
+) uint32 {
+	t.Helper()
+	res := sendCompound(t, conn, *xid, func(w *COMPOUND4argsWriter) {
 		scw := w.AppendArgarray_SetclientidConfirm()
 		scw.SetClientid(clientid)
+		setVerifier(scw.SetclientidConfirm(), confirm)
 	})
 	*xid++
-	iter = expectOK(t, res)
-	entry = nextOp(t, &iter)
-	if entry.Value().AsSETCLIENTIDCONFIRM4res().Status() != NFS4_OK {
+	return res.Status()
+}
+
+// setupClient runs SETCLIENTID + SETCLIENTID_CONFIRM and returns the assigned clientid.
+func setupClient(t *testing.T, conn net.Conn, xid *uint32) uint64 {
+	t.Helper()
+	clientid, confirm := requestClientID(
+		t, conn, xid, "test-client", [8]byte{})
+	if status := confirmClientID(
+		t, conn, xid, clientid, confirm,
+	); status != NFS4_OK {
 		t.Fatal("SETCLIENTID_CONFIRM failed")
 	}
 	return clientid
@@ -1054,12 +1103,16 @@ func TestSetclientidFlow(t *testing.T) {
 	if clientid == 0 {
 		t.Fatal("SETCLIENTID returned clientid=0")
 	}
+	confirm := verifierBytes(scOk.SetclientidConfirm())
+	if confirm == [8]byte{} {
+		t.Fatal("SETCLIENTID returned an all-zero confirm verifier")
+	}
 
 	// SETCLIENTID_CONFIRM
 	res = sendCompound(t, conn, 2, func(w *COMPOUND4argsWriter) {
 		scw := w.AppendArgarray_SetclientidConfirm()
 		scw.SetClientid(clientid)
-		// Setclientid_confirm verifier — leave as zero.
+		setVerifier(scw.SetclientidConfirm(), confirm)
 	})
 
 	iter = expectOK(t, res)
@@ -1078,6 +1131,869 @@ func TestSetclientidFlow(t *testing.T) {
 	entry = nextOp(t, &iter)
 	if entry.Value().AsRENEW4res().Status() != NFS4_OK {
 		t.Fatal("RENEW failed")
+	}
+
+	res = sendCompound(t, conn, 4, func(w *COMPOUND4argsWriter) {
+		rw := w.AppendArgarray_Renew()
+		rw.SetClientid(0)
+	})
+	if res.Status() != NFS4ERR_STALE_CLIENTID {
+		t.Fatalf("RENEW unknown client status = %s, want NFS4ERR_STALE_CLIENTID",
+			Nfsstat4Name(res.Status()))
+	}
+}
+
+func TestClientStoreDurableState(t *testing.T) {
+	fs := NewLocalTernVFS(t.TempDir())
+	first, err := NewClientStore(fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := NewClientStore(fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	owner1 := clientOwner{
+		principal: rpcPrincipal{flavor: authSys, body: "owner-1"},
+		netid:     "tcp",
+		addr:      "127.0.0.1.1.2",
+	}
+	owner2 := clientOwner{
+		principal: rpcPrincipal{flavor: authSys, body: "owner-2"},
+		netid:     "tcp",
+		addr:      "127.0.0.2.1.2",
+	}
+	verifier := [8]byte{1}
+	base := time.Unix(1000, 0)
+	first.now = func() time.Time { return base }
+	second.now = func() time.Time { return base }
+
+	if _, err := first.ConfirmClientID(
+		0, [8]byte{},
+	); nfsErrCode(err) != NFS4ERR_STALE_CLIENTID {
+		t.Fatalf("zero clientid confirmation error = %v, want NFS4ERR_STALE_CLIENTID", err)
+	}
+	staleID, staleConfirm, err := first.SetClientID(
+		verifier, []byte("client"), owner1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientID, confirm, err := first.SetClientID(
+		verifier, []byte("client"), owner1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if clientID == staleID {
+		t.Fatal("replaced pending SETCLIENTID reused clientid")
+	}
+	if confirm == staleConfirm {
+		t.Fatal("repeated pending SETCLIENTID reused the previous confirm token")
+	}
+	if _, err := fs.Stat(InodeID(staleID)); err != nil {
+		t.Fatalf("superseded pending incarnation %d was removed synchronously: %v",
+			staleID, err)
+	}
+	if _, err := second.ConfirmClientID(
+		clientID, staleConfirm,
+	); nfsErrCode(err) != NFS4ERR_STALE_CLIENTID {
+		t.Fatalf("replaced confirmation error = %v, want NFS4ERR_STALE_CLIENTID", err)
+	}
+	if _, err := second.ConfirmClientID(clientID, confirm); err != nil {
+		t.Fatal(err)
+	}
+	confirmed, err := first.IsConfirmed(clientID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !confirmed {
+		t.Fatal("confirmed client is not visible to another ClientStore")
+	}
+
+	updateID, updateConfirm, err := second.SetClientID(
+		verifier, []byte("client"), owner1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updateID != clientID || updateConfirm == confirm {
+		t.Fatal("callback update did not retain clientid with a new token")
+	}
+	if _, err := first.ConfirmClientID(clientID, confirm); err != nil {
+		t.Fatalf("previous confirmed token should remain replayable: %v", err)
+	}
+	if _, err := first.ConfirmClientID(clientID, updateConfirm); err != nil {
+		t.Fatal(err)
+	}
+
+	var stateID StateID
+	stateID[0] = 1
+	if err := first.MarkOpen(clientID, stateID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := second.SetClientID(
+		verifier, []byte("client"), owner2,
+	); err == nil {
+		t.Fatal("conflicting owner with active state was accepted")
+	} else {
+		var inUse clientInUseError
+		if !errors.As(err, &inUse) || inUse.owner != owner1 {
+			t.Fatalf("active owner conflict = %v", err)
+		}
+	}
+	if err := first.RemoveOpen(clientID, stateID); err != nil {
+		t.Fatal(err)
+	}
+	_, takeoverConfirm, err := second.SetClientID(
+		verifier, []byte("client"), owner2)
+	if err != nil {
+		t.Fatalf("inactive owner takeover failed: %v", err)
+	}
+	if _, err := first.ConfirmClientID(clientID, takeoverConfirm); err != nil {
+		t.Fatal(err)
+	}
+
+	second.now = func() time.Time { return base.Add(nfsLeaseTime + time.Second) }
+	stateID[0] = 2
+	if err := first.MarkOpen(clientID, stateID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := second.SetClientID(
+		verifier, []byte("client"), owner1,
+	); err != nil {
+		t.Fatalf("expired active-open marker blocked takeover: %v", err)
+	}
+	active, err := second.HasOpen(clientID, stateID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active {
+		t.Fatal("expired active-open marker still reported as active")
+	}
+
+	second.now = func() time.Time { return base }
+	stateID[0] = 3
+	if err := second.MarkOpen(clientID, stateID); err != nil {
+		t.Fatal(err)
+	}
+	rebootID, rebootConfirm, err := first.SetClientID(
+		[8]byte{2}, []byte("client"), owner1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rebootID == clientID {
+		t.Fatal("client reboot reused clientid")
+	}
+	replacedID, err := second.ConfirmClientID(rebootID, rebootConfirm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replacedID != clientID {
+		t.Fatalf("reboot replaced clientid %d, want %d", replacedID, clientID)
+	}
+	active, err = first.HasOpen(clientID, stateID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active {
+		t.Fatal("reboot did not purge active-open record visible to another store")
+	}
+	if err := first.Renew(clientID); nfsErrCode(err) != NFS4ERR_STALE_CLIENTID {
+		t.Fatalf("old client RENEW error = %v, want NFS4ERR_STALE_CLIENTID", err)
+	}
+	if err := first.Renew(rebootID); err != nil {
+		t.Fatalf("new client RENEW failed: %v", err)
+	}
+
+	if err := first.collectStaleForClient(InodeID(rebootID)); err != nil {
+		t.Fatal(err)
+	}
+	first.now = func() time.Time { return base.Add(clientGCGrace + time.Second) }
+	if err := first.collectStaleForClient(InodeID(rebootID)); err != nil {
+		t.Fatal(err)
+	}
+
+	identityID, err := fs.LookupParent(InodeID(rebootID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, _, err := fs.Readdir(identityID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	incarnations := 0
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name, incarnationPrefix) {
+			incarnations++
+		}
+	}
+	if incarnations != 1 {
+		t.Fatalf("incarnation directories after reboot = %d, want 1 (superseded incarnation leaked)",
+			incarnations)
+	}
+}
+
+func TestClientStoreLeaseSlotsDoNotShortenEachOther(t *testing.T) {
+	fs := NewLocalTernVFS(t.TempDir())
+	first, err := NewClientStore(fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := NewClientStore(fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Unix(1000, 0)
+	first.now = func() time.Time { return base }
+	second.now = func() time.Time { return base }
+	owner := clientOwner{principal: rpcPrincipal{flavor: authSys, body: "owner"}}
+	clientID, confirm, err := first.SetClientID(
+		[8]byte{1}, []byte("client"), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := second.ConfirmClientID(clientID, confirm); err != nil {
+		t.Fatal(err)
+	}
+	var stateID StateID
+	stateID[0] = 1
+	if err := first.MarkOpen(clientID, stateID); err != nil {
+		t.Fatal(err)
+	}
+
+	first.now = func() time.Time { return base.Add(100 * time.Second) }
+	second.now = func() time.Time { return base.Add(10 * time.Second) }
+	var wg sync.WaitGroup
+	wg.Add(2)
+	for _, store := range []*ClientStore{first, second} {
+		go func() {
+			defer wg.Done()
+			for range 20 {
+				if err := store.Renew(clientID); err != nil {
+					t.Errorf("RENEW failed: %v", err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	entries, _, err := fs.Readdir(InodeID(clientID), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leases := 0
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name, leasePrefix) {
+			leases++
+		}
+	}
+	if leases != 2 {
+		t.Fatalf("lease slots = %d, want 2", leases)
+	}
+
+	second.now = func() time.Time { return base.Add(150 * time.Second) }
+	active, err := second.HasOpen(clientID, stateID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !active {
+		t.Fatal("shorter lease slot hid a longer lease")
+	}
+	second.now = func() time.Time { return base.Add(191 * time.Second) }
+	active, err = second.HasOpen(clientID, stateID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active {
+		t.Fatal("expired lease slots kept an open marker active")
+	}
+}
+
+type removeFailureVFS struct {
+	TernVFS
+	mu        sync.Mutex
+	name      string
+	remaining int
+}
+
+func (fs *removeFailureVFS) Remove(dirID InodeID, name string) error {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	if name == fs.name && fs.remaining > 0 {
+		fs.remaining--
+		return errors.New("injected remove failure")
+	}
+	return fs.TernVFS.Remove(dirID, name)
+}
+
+type renameHookVFS struct {
+	TernVFS
+	dstName string
+	once    sync.Once
+	hook    func()
+}
+
+func (fs *renameHookVFS) Rename(
+	srcDirID InodeID,
+	srcName string,
+	dstDirID InodeID,
+	dstName string,
+) error {
+	if err := fs.TernVFS.Rename(srcDirID, srcName, dstDirID, dstName); err != nil {
+		return err
+	}
+	if dstName == fs.dstName {
+		fs.once.Do(fs.hook)
+	}
+	return nil
+}
+
+func TestClientStoreConfirmationRechecksPending(t *testing.T) {
+	baseFS := NewLocalTernVFS(t.TempDir())
+	hookFS := &renameHookVFS{TernVFS: baseFS}
+	first, err := NewClientStore(hookFS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := NewClientStore(baseFS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := clientOwner{principal: rpcPrincipal{flavor: authSys, body: "owner"}}
+	oldID, oldConfirm, err := first.SetClientID(
+		[8]byte{1}, []byte("client"), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var newID uint64
+	var newConfirm [8]byte
+	hookFS.dstName = first.confirmingName
+	hookFS.hook = func() {
+		newID, newConfirm, err = second.SetClientID(
+			[8]byte{2}, []byte("client"), owner)
+	}
+	_, confirmErr := first.ConfirmClientID(oldID, oldConfirm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nfsErrCode(confirmErr) != NFS4ERR_STALE_CLIENTID {
+		t.Fatalf("superseded confirmation error = %v, want NFS4ERR_STALE_CLIENTID",
+			confirmErr)
+	}
+	if _, err := second.ConfirmClientID(newID, newConfirm); err != nil {
+		t.Fatalf("replacement confirmation failed: %v", err)
+	}
+	if confirmed, err := first.IsConfirmed(oldID); err != nil {
+		t.Fatal(err)
+	} else if confirmed {
+		t.Fatal("superseded confirmation replaced the confirmed pointer")
+	}
+}
+
+func TestClientStoreGCHonorsConfirmationClaims(t *testing.T) {
+	fs := NewLocalTernVFS(t.TempDir())
+	first, err := NewClientStore(fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := NewClientStore(fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	collector, err := NewClientStore(fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Unix(1000, 0)
+	first.now = func() time.Time { return base }
+	second.now = func() time.Time { return base.Add(30 * time.Second) }
+	owner := clientOwner{principal: rpcPrincipal{flavor: authSys, body: "owner"}}
+	oldID, _, err := first.SetClientID(
+		[8]byte{1}, []byte("client"), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.mu.Lock()
+	err = first.beginConfirmationLocked(InodeID(oldID))
+	first.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second.mu.Lock()
+	err = second.beginConfirmationLocked(InodeID(oldID))
+	second.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientID, _, err := first.SetClientID(
+		[8]byte{2}, []byte("client"), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	collector.now = func() time.Time { return base.Add(100 * time.Second) }
+	if err := collector.collectStaleForClient(InodeID(clientID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fs.Lookup(InodeID(oldID), gcCandidateName); !os.IsNotExist(err) {
+		t.Fatalf("live confirmation claim did not protect incarnation: %v", err)
+	}
+
+	collector.now = func() time.Time { return base.Add(121 * time.Second) }
+	if err := collector.collectStaleForClient(InodeID(clientID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fs.Lookup(InodeID(oldID), gcCandidateName); err != nil {
+		t.Fatalf("expired confirmation claims still protected incarnation: %v", err)
+	}
+}
+
+// TestClientStoreGCRechecksConfirmationBeforeDeleting covers a confirmation
+// claim that appears only after an incarnation has already aged into a GC
+// candidate: collectStaleLocked checks hasLiveConfirmationLocked again on
+// every pass over every entry, before ever consulting the aged candidate's
+// due time, so a claim that shows up between the aging pass and the pass
+// that would otherwise delete it must still block the removal.
+func TestClientStoreGCRechecksConfirmationBeforeDeleting(t *testing.T) {
+	fs := NewLocalTernVFS(t.TempDir())
+	writer, err := NewClientStore(fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	confirmer, err := NewClientStore(fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	collector, err := NewClientStore(fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Unix(1000, 0)
+	writer.now = func() time.Time { return base }
+	owner := clientOwner{principal: rpcPrincipal{flavor: authSys, body: "owner"}}
+	oldID, _, err := writer.SetClientID(
+		[8]byte{1}, []byte("client"), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientID, _, err := writer.SetClientID(
+		[8]byte{2}, []byte("client"), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Age oldID into a GC candidate with no confirmation claim yet.
+	collector.now = func() time.Time { return base }
+	if err := collector.collectStaleForClient(InodeID(clientID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fs.Lookup(InodeID(oldID), gcCandidateName); err != nil {
+		t.Fatalf("incarnation was not aged into a GC candidate: %v", err)
+	}
+
+	// A confirmation claims oldID only after it was already aged.
+	confirmer.now = func() time.Time { return base.Add(30 * time.Second) }
+	confirmer.mu.Lock()
+	err = confirmer.beginConfirmationLocked(InodeID(oldID))
+	confirmer.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Once the candidate is due, the delete-time pass must recheck the live
+	// claim, not just the roots snapshot from before the claim existed.
+	collector.now = func() time.Time { return base.Add(nfsLeaseTime + time.Second) }
+	if err := collector.collectStaleForClient(InodeID(clientID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fs.Stat(InodeID(oldID)); err != nil {
+		t.Fatalf("GC removed an incarnation with a live confirmation claim: %v", err)
+	}
+}
+
+func TestClientStoreRebootCleanupIsRetryable(t *testing.T) {
+	baseFS := NewLocalTernVFS(t.TempDir())
+	first, err := NewClientStore(baseFS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failingFS := &removeFailureVFS{TernVFS: baseFS, remaining: 1}
+	second, err := NewClientStore(failingFS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := clientOwner{principal: rpcPrincipal{flavor: authSys, body: "owner"}}
+	oldID, confirm, err := first.SetClientID(
+		[8]byte{1}, []byte("client"), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := first.ConfirmClientID(oldID, confirm); err != nil {
+		t.Fatal(err)
+	}
+	var stateID StateID
+	stateID[0] = 1
+	if err := first.MarkOpen(oldID, stateID); err != nil {
+		t.Fatal(err)
+	}
+	failingFS.name = activeOpenName(stateID)
+
+	newID, confirm, err := first.SetClientID(
+		[8]byte{2}, []byte("client"), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := second.ConfirmClientID(newID, confirm); err == nil {
+		t.Fatal("reboot confirmation ignored cleanup failure")
+	}
+	if confirmed, err := first.IsConfirmed(oldID); err != nil {
+		t.Fatal(err)
+	} else if confirmed {
+		t.Fatal("old client remained confirmed after pointer switch")
+	}
+	if confirmed, err := first.IsConfirmed(newID); err != nil {
+		t.Fatal(err)
+	} else if !confirmed {
+		t.Fatal("new client was not confirmed before cleanup retry")
+	}
+	if err := first.collectStaleForClient(InodeID(newID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := baseFS.Lookup(InodeID(oldID), gcCandidateName); !os.IsNotExist(err) {
+		t.Fatalf("in-progress reboot target was marked for collection: %v", err)
+	}
+
+	replacedID, err := second.ConfirmClientID(newID, confirm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replacedID != oldID {
+		t.Fatalf("cleanup retry replaced clientid %d, want %d", replacedID, oldID)
+	}
+	if active, err := first.HasOpen(oldID, stateID); err != nil {
+		t.Fatal(err)
+	} else if active {
+		t.Fatal("cleanup retry left old open active")
+	}
+
+	failingFS.name = rebootName
+	failingFS.remaining = 1
+	thirdID, confirm, err := first.SetClientID(
+		[8]byte{3}, []byte("client"), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := second.ConfirmClientID(thirdID, confirm); err == nil {
+		t.Fatal("reboot confirmation ignored marker removal failure")
+	}
+	replacedID, err = second.ConfirmClientID(thirdID, confirm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replacedID != newID {
+		t.Fatalf("marker retry replaced clientid %d, want %d", replacedID, newID)
+	}
+}
+
+func TestClientStoreGCIsBoundedAndRetryable(t *testing.T) {
+	baseFS := NewLocalTernVFS(t.TempDir())
+	writer, err := NewClientStore(baseFS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failingFS := &removeFailureVFS{
+		TernVFS: baseFS,
+		name:    clientRecordName,
+	}
+	collector, err := NewClientStore(failingFS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Unix(1000, 0)
+	collector.now = func() time.Time { return base }
+	owner := clientOwner{principal: rpcPrincipal{flavor: authSys, body: "owner"}}
+
+	var clientID uint64
+	for i := 0; i < maxClientGCRemovals+3; i++ {
+		clientID, _, err = writer.SetClientID(
+			[8]byte{byte(i + 1)}, []byte("client"), owner)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	identityID, err := baseFS.LookupParent(InodeID(clientID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := collector.collectStaleForClient(InodeID(clientID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := baseFS.Lookup(InodeID(clientID), gcCandidateName); !os.IsNotExist(err) {
+		t.Fatalf("current incarnation has a GC candidate marker: %v", err)
+	}
+
+	collector.now = func() time.Time {
+		return base.Add(clientGCGrace + time.Second)
+	}
+	failingFS.remaining = 1
+	if err := collector.collectStaleForClient(InodeID(clientID)); err == nil {
+		t.Fatal("GC ignored an incarnation removal failure")
+	}
+	if got := countClientIncarnations(t, baseFS, identityID); got != maxClientGCRemovals+3 {
+		t.Fatalf("incarnations after failed GC = %d, want %d",
+			got, maxClientGCRemovals+3)
+	}
+
+	if err := collector.collectStaleForClient(InodeID(clientID)); err != nil {
+		t.Fatal(err)
+	}
+	if got := countClientIncarnations(t, baseFS, identityID); got != 3 {
+		t.Fatalf("incarnations after bounded GC = %d, want 3", got)
+	}
+	if err := collector.collectStaleForClient(InodeID(clientID)); err != nil {
+		t.Fatal(err)
+	}
+	if got := countClientIncarnations(t, baseFS, identityID); got != 1 {
+		t.Fatalf("incarnations after GC retry = %d, want 1", got)
+	}
+}
+
+func TestServerSchedulesClientGC(t *testing.T) {
+	fs := NewLocalTernVFS(t.TempDir())
+	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewServer(fs, staging, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Unix(1000, 0)
+	srv.clients.now = func() time.Time { return base }
+	owner := clientOwner{principal: rpcPrincipal{flavor: authSys, body: "owner"}}
+	oldID, _, err := srv.clients.SetClientID(
+		[8]byte{1}, []byte("client"), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientID, _, err := srv.clients.SetClientID(
+		[8]byte{2}, []byte("client"), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.clients.collectStaleForClient(InodeID(clientID)); err != nil {
+		t.Fatal(err)
+	}
+	srv.clients.now = func() time.Time {
+		return base.Add(clientGCGrace + time.Second)
+	}
+
+	for range 20 {
+		srv.scheduleClientGC(clientID)
+	}
+	srv.waitForClientGC()
+
+	if _, err := fs.Stat(InodeID(oldID)); !os.IsNotExist(err) {
+		t.Fatalf("scheduled GC did not remove stale incarnation: %v", err)
+	}
+	if _, err := fs.Stat(InodeID(clientID)); err != nil {
+		t.Fatalf("scheduled GC removed current incarnation: %v", err)
+	}
+	srv.clientGCMu.Lock()
+	running := srv.clientGCRunning
+	pending := len(srv.clientGCPending)
+	srv.clientGCMu.Unlock()
+	if running || pending != 0 {
+		t.Fatalf("client GC did not drain: running=%v pending=%d", running, pending)
+	}
+}
+
+func countClientIncarnations(
+	t *testing.T,
+	fs TernVFS,
+	identityID InodeID,
+) int {
+	t.Helper()
+	var count int
+	var cursor uint64
+	for {
+		entries, next, err := fs.Readdir(identityID, cursor)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, entry := range entries {
+			if strings.HasPrefix(entry.Name, incarnationPrefix) {
+				count++
+			}
+		}
+		if next == 0 {
+			return count
+		}
+		cursor = next
+	}
+}
+
+func TestOpenRejectsUnconfirmedClient(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "file.txt"), nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	addr, cleanup := startTestServer(t, dir)
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+
+	xid := uint32(1)
+	clientID, _ := requestClientID(
+		t, conn, &xid, "unconfirmed-client", [8]byte{})
+	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+		w.AppendArgarray_Putrootfh()
+		ow := w.AppendArgarray_Open()
+		ow.SetSeqid(1)
+		ow.SetShareAccess(OPEN4_SHARE_ACCESS_READ)
+		ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
+		ownerW := ow.StartOwner()
+		ownerW = ownerW.SetClientid(clientID)
+		ownerW = ownerW.SetOwner([]byte("owner"))
+		buf := ownerW.Finish()
+		ow.Resume(buf)
+		ow.SetOpenhow_Default(OPEN4_NOCREATE)
+		claimW := ow.SetClaim_Null()
+		buf = claimW.SetData([]byte("file.txt")).Finish()
+		ow.Resume(buf)
+		w.Resume(ow.Finish())
+	})
+	if res.Status() != NFS4ERR_STALE_CLIENTID {
+		t.Fatalf("OPEN status = %s, want NFS4ERR_STALE_CLIENTID",
+			Nfsstat4Name(res.Status()))
+	}
+}
+
+func TestSetclientidPrincipalConflict(t *testing.T) {
+	fs := NewLocalTernVFS(t.TempDir())
+	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewServer(fs, staging, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	authSysCredential := func(stamp, uid, gid uint32) []byte {
+		var cred []byte
+		cred = binary.BigEndian.AppendUint32(cred, stamp)
+		cred = binary.BigEndian.AppendUint32(cred, 4)
+		cred = append(cred, "host"...)
+		cred = binary.BigEndian.AppendUint32(cred, uid)
+		cred = binary.BigEndian.AppendUint32(cred, gid)
+		cred = binary.BigEndian.AppendUint32(cred, 0)
+		return cred
+	}
+	compound := func(
+		xid uint32,
+		cred []byte,
+		build func(*COMPOUND4argsWriter),
+	) COMPOUND4res {
+		body := buildCompoundBody(nil, build)
+		reply := srv.handleCompound(&rpcRequest{
+			xid:        xid,
+			prog:       nfsProg,
+			vers:       nfsVersion,
+			proc:       procCompound,
+			credFlavor: authSys,
+			credBody:   cred,
+			body:       body,
+		})
+		res, ok := ReadCOMPOUND4res(parseRPCReply(t, reply))
+		if !ok {
+			t.Fatal("failed to parse COMPOUND4res")
+		}
+		return res
+	}
+	setclientid := func(w *COMPOUND4argsWriter) {
+		scw := w.AppendArgarray_Setclientid()
+		clientW := scw.StartClient()
+		setVerifier(clientW.Verifier(), [8]byte{1})
+		clientW = clientW.SetId([]byte("shared-client"))
+		buf := clientW.Finish()
+		scw.Resume(buf)
+		cbW := scw.StartCallback()
+		cbW.SetCbProgram(0x40000000)
+		locW := cbW.StartCbLocation()
+		netidW := locW.StartRNetid()
+		buf = netidW.SetData([]byte("tcp")).Finish()
+		locW.Resume(buf)
+		addrW := locW.StartRAddr()
+		buf = addrW.SetData([]byte("127.0.0.1.1.2")).Finish()
+		locW.Resume(buf)
+		buf = locW.Finish()
+		cbW.Resume(buf)
+		buf = cbW.Finish()
+		scw.Resume(buf)
+		scw.SetCallbackIdent(0)
+		w.Resume(scw.Finish())
+	}
+
+	firstCred := authSysCredential(1, 1000, 1000)
+	res := compound(1, firstCred, setclientid)
+	iter := expectOK(t, res)
+	entry := nextOp(t, &iter)
+	ok := entry.Value().AsSETCLIENTID4resEntry().
+		Value().AsSETCLIENTID4resok()
+	clientID := ok.Clientid()
+	confirm := verifierBytes(ok.SetclientidConfirm())
+
+	res = compound(2, authSysCredential(2, 1000, 1000),
+		func(w *COMPOUND4argsWriter) {
+			cw := w.AppendArgarray_SetclientidConfirm()
+			cw.SetClientid(clientID)
+			setVerifier(cw.SetclientidConfirm(), confirm)
+		})
+	if res.Status() != NFS4_OK {
+		t.Fatalf("SETCLIENTID_CONFIRM status = %s",
+			Nfsstat4Name(res.Status()))
+	}
+
+	open, status := srv.opens.addOpen(
+		openOwnerKey{clientID: clientID, owner: "owner"},
+		1, MakeInodeID(InodeTypeFile, 1), false, StateID{},
+	)
+	if status != NFS4_OK {
+		t.Fatalf("OPEN state setup status = %s", Nfsstat4Name(status))
+	}
+	if err := srv.clients.MarkOpen(clientID, open.id); err != nil {
+		t.Fatal(err)
+	}
+
+	secondCred := authSysCredential(3, 1001, 1001)
+	res = compound(3, secondCred, setclientid)
+	if res.Status() != NFS4ERR_CLID_INUSE {
+		t.Fatalf("conflicting SETCLIENTID status = %s, want %s",
+			Nfsstat4Name(res.Status()), Nfsstat4Name(NFS4ERR_CLID_INUSE))
+	}
+	iter = res.Resarray()
+	entry = nextOp(t, &iter)
+	location := entry.Value().AsSETCLIENTID4resEntry().
+		Value().AsClientaddr4()
+	if got := string(location.RNetid().Data()); got != "tcp" {
+		t.Fatalf("conflicting client netid = %q, want %q", got, "tcp")
+	}
+	if got := string(location.RAddr().Data()); got != "127.0.0.1.1.2" {
+		t.Fatalf("conflicting client address = %q", got)
+	}
+
+	if _, status := srv.opens.close(open.id, 2); status != NFS4_OK {
+		t.Fatalf("close state setup status = %s", Nfsstat4Name(status))
+	}
+	if err := srv.clients.RemoveOpen(clientID, open.id); err != nil {
+		t.Fatal(err)
+	}
+	res = compound(4, secondCred, setclientid)
+	if res.Status() != NFS4_OK {
+		t.Fatalf("inactive conflicting SETCLIENTID status = %s, want NFS4_OK",
+			Nfsstat4Name(res.Status()))
 	}
 }
 
@@ -2687,6 +3603,25 @@ func TestWriteAndRead(t *testing.T) {
 		t.Fatalf("WRITE count = %d, want %d", writeOk.Count(), len(writeData))
 	}
 
+	// The anonymous stateid is valid for WRITE as well as READ.
+	anonymousData := []byte(" anonymous")
+	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+		pw := w.AppendArgarray_Putfh()
+		buf := pw.StartObject().SetData(fh).Finish()
+		pw.Resume(buf)
+		w.Resume(pw.Finish())
+
+		ww := w.AppendArgarray_Write()
+		ww.Stateid().SetSeqid(0)
+		ww = ww.SetOffset(uint64(len(writeData)))
+		ww = ww.SetStable(2)
+		ww = ww.SetData(anonymousData)
+		w.Resume(ww.Finish())
+	})
+	xid++
+	expectOK(t, res)
+	writeData = append(writeData, anonymousData...)
+
 	closeFile(t, conn, &xid, fh, openStateid)
 
 	// Verify the file was written to disk.
@@ -3971,6 +4906,30 @@ func TestSetattrSize(t *testing.T) {
 		t.Fatalf("SETATTR status = %s", Nfsstat4Name(entry.Value().AsSETATTR4res().Status()))
 	}
 
+	// The anonymous stateid is also valid for a size-changing SETATTR.
+	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+		pw := w.AppendArgarray_Putfh()
+		buf := pw.StartObject().SetData(fh).Finish()
+		pw.Resume(buf)
+		w.Resume(pw.Finish())
+
+		saw := w.AppendArgarray_Setattr()
+		saw.Stateid().SetSeqid(0)
+		faw := saw.StartObjAttributes()
+		bmW := faw.StartAttrmask()
+		bmW.AppendData(1 << FATTR4_SIZE)
+		buf = bmW.Finish()
+		faw.Resume(buf)
+		attrData := make([]byte, 8)
+		binary.BigEndian.PutUint64(attrData, 5)
+		buf = faw.StartAttrVals().SetData(attrData).Finish()
+		faw.Resume(buf)
+		saw.Resume(faw.Finish())
+		w.Resume(saw.Finish())
+	})
+	xid++
+	expectOK(t, res)
+
 	// Close and verify.
 	closeFile(t, conn, &xid, fh, stateid)
 
@@ -3978,8 +4937,8 @@ func TestSetattrSize(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(data) != 10 {
-		t.Fatalf("file size = %d, want 10", len(data))
+	if len(data) != 5 {
+		t.Fatalf("file size = %d, want 5", len(data))
 	}
 }
 
@@ -4592,6 +5551,11 @@ func TestOpenStateStoreReplay(t *testing.T) {
 	if _, status = store.confirm(state.id, 1, fileID, 5); status != NFS4_OK {
 		t.Fatalf("OPEN_CONFIRM status = %s", Nfsstat4Name(status))
 	}
+	confirmed, status := store.confirm(state.id, 1, fileID, 5)
+	if status != NFS4_OK || confirmed.generation != 2 {
+		t.Fatalf("OPEN_CONFIRM replay status = %s, generation = %d",
+			Nfsstat4Name(status), confirmed.generation)
+	}
 	if _, replay, status = store.beginOpen(owner, 4); status != NFS4ERR_BAD_SEQID {
 		t.Fatalf("old OPEN seqid status = %s, replay = %t",
 			Nfsstat4Name(status), replay)
@@ -4633,71 +5597,132 @@ func TestOpenStateStoreRecoveredClose(t *testing.T) {
 
 func TestSetclientidReboot(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("content"), 0644)
-	addr, cleanup := startTestServer(t, dir)
+	fs := NewLocalTernVFS(dir)
+	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewServer(fs, staging, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr, cleanup := serveTestServer(t, srv)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
 
-	// First SETCLIENTID + CONFIRM.
 	xid := uint32(1)
 	clientid1 := setupClient(t, conn, &xid)
-	stateid, fh := openReadFile(t, conn, &xid, clientid1, "file.txt")
+	stateid, fh := openCreateFile(
+		t, conn, &xid, clientid1, "reboot.txt")
 
-	// Second SETCLIENTID with same identity but different verifier (simulating reboot).
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
-		scw := w.AppendArgarray_Setclientid()
-		clientW := scw.StartClient()
-		// Same identity string as setupClient.
-		clientW = clientW.SetId([]byte("test-client"))
-		// Different verifier (setupClient uses default zero verifier).
-		verf := clientW.Verifier()
-		for i := 0; i < 8; i++ {
-			verf.SetData(i, byte(i+1))
-		}
-		buf := clientW.Finish()
-		scw.Resume(buf)
-		cbW := scw.StartCallback()
-		cbW.SetCbProgram(0x40000000)
-		locW := cbW.StartCbLocation()
-		netidW := locW.StartRNetid()
-		buf = netidW.SetData([]byte("tcp")).Finish()
-		locW.Resume(buf)
-		addrW := locW.StartRAddr()
-		buf = addrW.SetData([]byte("0.0.0.0.0.0")).Finish()
-		locW.Resume(buf)
-		buf = locW.Finish()
-		cbW.Resume(buf)
-		buf = cbW.Finish()
-		scw.Resume(buf)
-		scw.SetCallbackIdent(0)
-		buf = scw.Finish()
-		w.Resume(buf)
-	})
-	xid++
-	iter := expectOK(t, res)
-	entry := nextOp(t, &iter)
-	scRes := entry.Value().AsSETCLIENTID4resEntry()
-	if scRes.Disc() != NFS4_OK {
-		t.Fatalf("SETCLIENTID reboot: status = %s", Nfsstat4Name(scRes.Disc()))
+	other, err := NewClientStore(fs)
+	if err != nil {
+		t.Fatal(err)
 	}
-	clientid2 := scRes.Value().AsSETCLIENTID4resok().Clientid()
+	clientid2, confirm2, err := other.SetClientID(
+		[8]byte{1}, []byte("test-client"), clientOwner{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if clientid2 == clientid1 {
+		t.Fatal("client reboot reused clientid")
+	}
+	if replaced, err := other.ConfirmClientID(
+		clientid2, confirm2,
+	); err != nil {
+		t.Fatal(err)
+	} else if replaced != clientid1 {
+		t.Fatalf("reboot replaced clientid %d, want %d", replaced, clientid1)
+	}
 
-	// CONFIRM.
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
-		scw := w.AppendArgarray_SetclientidConfirm()
-		scw.SetClientid(clientid2)
+	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+		rw := w.AppendArgarray_Renew()
+		rw.SetClientid(clientid1)
 	})
 	xid++
-	iter = expectOK(t, res)
-	entry = nextOp(t, &iter)
-	if entry.Value().AsSETCLIENTIDCONFIRM4res().Status() != NFS4_OK {
-		t.Fatal("SETCLIENTID_CONFIRM reboot failed")
+	if res.Status() != NFS4ERR_STALE_CLIENTID {
+		t.Fatalf("RENEW after remote reboot = %s, want NFS4ERR_STALE_CLIENTID",
+			Nfsstat4Name(res.Status()))
+	}
+
+	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+		w.AppendArgarray_Putrootfh()
+		ow := w.AppendArgarray_Open()
+		ow.SetSeqid(1)
+		ow.SetShareAccess(OPEN4_SHARE_ACCESS_BOTH)
+		ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
+		ownerW := ow.StartOwner()
+		ownerW = ownerW.SetClientid(clientid1)
+		ownerW = ownerW.SetOwner([]byte("test-owner-reboot.txt"))
+		buf := ownerW.Finish()
+		ow.Resume(buf)
+		chw := ow.SetOpenhow_Create()
+		faw := chw.SetValue_Unchecked4()
+		bmW := faw.StartAttrmask()
+		buf = bmW.Finish()
+		faw.Resume(buf)
+		alW := faw.StartAttrVals()
+		buf = alW.SetData(nil).Finish()
+		faw.Resume(buf)
+		chw.Resume(faw.Finish())
+		ow.Resume(chw.Finish())
+		cw := ow.SetClaim_Null()
+		buf = cw.SetData([]byte("reboot.txt")).Finish()
+		ow.Resume(buf)
+		w.Resume(ow.Finish())
+	})
+	xid++
+	if res.Status() != NFS4ERR_STALE_CLIENTID {
+		t.Fatalf("OPEN replay after remote reboot = %s, want NFS4ERR_STALE_CLIENTID",
+			Nfsstat4Name(res.Status()))
+	}
+
+	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+		pw := w.AppendArgarray_Putfh()
+		buf := pw.StartObject().SetData(fh).Finish()
+		pw.Resume(buf)
+		w.Resume(pw.Finish())
+		ww := w.AppendArgarray_Write()
+		sid := ww.Stateid()
+		sid.SetSeqid(binary.BigEndian.Uint32(stateid[0:4]))
+		for i := 0; i < 12; i++ {
+			sid.SetOther(i, stateid[4+i])
+		}
+		ww = ww.SetOffset(0)
+		ww = ww.SetStable(fileSync4)
+		ww = ww.SetData([]byte("stale"))
+		w.Resume(ww.Finish())
+	})
+	xid++
+	if res.Status() != NFS4ERR_EXPIRED {
+		t.Fatalf("WRITE after remote reboot = %s, want NFS4ERR_EXPIRED",
+			Nfsstat4Name(res.Status()))
+	}
+
+	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+		pw := w.AppendArgarray_Putfh()
+		buf := pw.StartObject().SetData(fh).Finish()
+		pw.Resume(buf)
+		w.Resume(pw.Finish())
+		rw := w.AppendArgarray_Read()
+		sid := rw.Stateid()
+		sid.SetSeqid(binary.BigEndian.Uint32(stateid[0:4]))
+		for i := 0; i < 12; i++ {
+			sid.SetOther(i, stateid[4+i])
+		}
+		rw.SetOffset(0)
+		rw.SetCount(1)
+	})
+	xid++
+	if res.Status() != NFS4ERR_EXPIRED {
+		t.Fatalf("READ after remote reboot = %s, want NFS4ERR_EXPIRED",
+			Nfsstat4Name(res.Status()))
 	}
 
 	status := closeFileExpectStatus(t, conn, &xid, fh, stateid)
 	if status != NFS4ERR_EXPIRED {
-		t.Fatalf("CLOSE after client reboot = %s, want NFS4ERR_EXPIRED",
+		t.Fatalf("CLOSE after remote reboot = %s, want NFS4ERR_EXPIRED",
 			Nfsstat4Name(status))
 	}
 }

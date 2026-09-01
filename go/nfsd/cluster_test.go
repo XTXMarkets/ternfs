@@ -237,6 +237,7 @@ func startTernTestServer(t *testing.T) (addr string, cleanup func()) {
 	}()
 	return ln.Addr().String(), func() {
 		ln.Close()
+		srv.waitForClientGC()
 		c.Close()
 	}
 }
@@ -1043,45 +1044,11 @@ func TestTernStagedFileGetattrAndRead(t *testing.T) {
 // setupNamedClient is like setupClient but with a custom identity string.
 func setupNamedClient(t *testing.T, conn net.Conn, xid *uint32, identity string) uint64 {
 	t.Helper()
-	res := sendCompound(t, conn, *xid, func(w *COMPOUND4argsWriter) {
-		scw := w.AppendArgarray_Setclientid()
-		clientW := scw.StartClient()
-		clientW = clientW.SetId([]byte(identity))
-		buf := clientW.Finish()
-		scw.Resume(buf)
-		cbW := scw.StartCallback()
-		cbW.SetCbProgram(0x40000000)
-		locW := cbW.StartCbLocation()
-		netidW := locW.StartRNetid()
-		buf = netidW.SetData([]byte("tcp")).Finish()
-		locW.Resume(buf)
-		addrW := locW.StartRAddr()
-		buf = addrW.SetData([]byte("0.0.0.0.0.0")).Finish()
-		locW.Resume(buf)
-		buf = locW.Finish()
-		cbW.Resume(buf)
-		buf = cbW.Finish()
-		scw.Resume(buf)
-		scw.SetCallbackIdent(0)
-		buf = scw.Finish()
-		w.Resume(buf)
-	})
-	*xid++
-	iter := expectOK(t, res)
-	entry := nextOp(t, &iter)
-	scRes := entry.Value().AsSETCLIENTID4resEntry()
-	if scRes.Disc() != NFS4_OK {
-		t.Fatalf("SETCLIENTID status = %d", scRes.Disc())
-	}
-	clientid := scRes.Value().AsSETCLIENTID4resok().Clientid()
-	res = sendCompound(t, conn, *xid, func(w *COMPOUND4argsWriter) {
-		scw := w.AppendArgarray_SetclientidConfirm()
-		scw.SetClientid(clientid)
-	})
-	*xid++
-	iter = expectOK(t, res)
-	entry = nextOp(t, &iter)
-	if entry.Value().AsSETCLIENTIDCONFIRM4res().Status() != NFS4_OK {
+	clientid, confirm := requestClientID(
+		t, conn, xid, identity, [8]byte{})
+	if status := confirmClientID(
+		t, conn, xid, clientid, confirm,
+	); status != NFS4_OK {
 		t.Fatal("SETCLIENTID_CONFIRM failed")
 	}
 	return clientid

@@ -6,6 +6,7 @@ package main
 
 import (
 	"encoding/binary"
+	"time"
 )
 
 // Supported attribute bitmasks.
@@ -202,7 +203,7 @@ func encodeAttrs(mask [2]uint32, id InodeID, ni NodeInfo) []byte {
 		buf = binary.BigEndian.AppendUint32(buf, TRUE)
 	}
 	if mask[0]&(1<<FATTR4_LEASE_TIME) != 0 {
-		buf = binary.BigEndian.AppendUint32(buf, 90) // 90 seconds
+		buf = binary.BigEndian.AppendUint32(buf, uint32(nfsLeaseTime/time.Second))
 	}
 	if mask[0]&(1<<FATTR4_RDATTR_ERROR) != 0 {
 		buf = binary.BigEndian.AppendUint32(buf, NFS4_OK)

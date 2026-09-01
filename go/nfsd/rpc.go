@@ -100,6 +100,16 @@ type rpcRequest struct {
 	body       []byte // remaining bytes after header
 }
 
+func (r *rpcRequest) principal() rpcPrincipal {
+	body := r.credBody
+	// AUTH_SYS starts with a caller-supplied timestamp. It is not part of
+	// the principal and may change between requests from the same caller.
+	if r.credFlavor == authSys && len(body) >= 4 {
+		body = body[4:]
+	}
+	return rpcPrincipal{flavor: r.credFlavor, body: string(body)}
+}
+
 // parseRPCCall parses an ONC RPC CALL message.
 func parseRPCCall(data []byte) (*rpcRequest, error) {
 	if len(data) < 40 {

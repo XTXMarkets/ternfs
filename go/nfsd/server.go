@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -40,7 +41,14 @@ type Server struct {
 	writeVerifier [8]byte       // random per server instance, changes on restart
 	idleTimeout   time.Duration // connection idle timeout
 	log           *slog.Logger
+
+	clientGCMu      sync.Mutex
+	clientGCPending map[InodeID]struct{}
+	clientGCRunning bool
+	clientGCDone    chan struct{}
 }
+
+const maxPendingClientGC = 256
 
 func NewServer(fs TernVFS, stagingStore StagingStore, logger *slog.Logger) (*Server, error) {
 	clients, err := NewClientStore(fs)
@@ -53,15 +61,71 @@ func NewServer(fs TernVFS, stagingStore StagingStore, logger *slog.Logger) (*Ser
 		logger = slog.Default()
 	}
 	s := &Server{
-		fs:            fs,
-		clients:       clients,
-		opens:         newOpenStateStore(),
-		stagingStore:  stagingStore,
-		writeVerifier: verf,
-		idleTimeout:   5 * time.Minute,
-		log:           logger,
+		fs:              fs,
+		clients:         clients,
+		opens:           newOpenStateStore(),
+		stagingStore:    stagingStore,
+		writeVerifier:   verf,
+		idleTimeout:     5 * time.Minute,
+		log:             logger,
+		clientGCPending: make(map[InodeID]struct{}),
 	}
 	return s, nil
+}
+
+func (s *Server) scheduleClientGC(clientID uint64) {
+	id := InodeID(clientID)
+	s.clientGCMu.Lock()
+	if _, pending := s.clientGCPending[id]; pending {
+		s.clientGCMu.Unlock()
+		return
+	}
+	if len(s.clientGCPending) == maxPendingClientGC {
+		s.clientGCMu.Unlock()
+		// Collection is opportunistic; a later login will enqueue it again.
+		s.log.Warn("client GC queue is full")
+		return
+	}
+	s.clientGCPending[id] = struct{}{}
+	if s.clientGCRunning {
+		s.clientGCMu.Unlock()
+		return
+	}
+	s.clientGCRunning = true
+	s.clientGCDone = make(chan struct{})
+	s.clientGCMu.Unlock()
+	go s.runClientGC()
+}
+
+func (s *Server) runClientGC() {
+	for {
+		s.clientGCMu.Lock()
+		var clientID InodeID
+		for clientID = range s.clientGCPending {
+			delete(s.clientGCPending, clientID)
+			break
+		}
+		if clientID == 0 {
+			s.clientGCRunning = false
+			close(s.clientGCDone)
+			s.clientGCMu.Unlock()
+			return
+		}
+		s.clientGCMu.Unlock()
+
+		if err := s.clients.collectStaleForClient(clientID); err != nil {
+			s.log.Warn("client GC failed", "clientid", uint64(clientID), "err", err)
+		}
+	}
+}
+
+func (s *Server) waitForClientGC() {
+	s.clientGCMu.Lock()
+	done := s.clientGCDone
+	s.clientGCMu.Unlock()
+	if done != nil {
+		<-done
+	}
 }
 
 func (s *Server) ListenAndServe(addr string) error {
@@ -138,6 +202,7 @@ type compoundState struct {
 	currentIDSet bool
 	savedID      InodeID
 	savedIDSet   bool
+	principal    rpcPrincipal
 }
 
 const maxCompoundOperations = 128
@@ -198,7 +263,7 @@ func (s *Server) handleCompound(req *rpcRequest) []byte {
 		return w.Finish()
 	}
 
-	st := &compoundState{}
+	st := &compoundState{principal: req.principal()}
 	overallStatus := NFS4_OK
 	opCount := 0
 
@@ -277,7 +342,7 @@ func (s *Server) handleCompound(req *rpcRequest) []byte {
 		case OP_SETATTR:
 			opStatus = s.opSetattr(op.AsSETATTR4args(), st, &w)
 		case OP_SETCLIENTID:
-			opStatus = s.opSetclientid(op.AsSETCLIENTID4args(), &w)
+			opStatus = s.opSetclientid(op.AsSETCLIENTID4args(), st, &w)
 		case OP_SETCLIENTID_CONFIRM:
 			opStatus = s.opSetclientidConfirm(op.AsSETCLIENTIDCONFIRM4args(), &w)
 		case OP_VERIFY:
