@@ -35,6 +35,7 @@ func peekCompoundHeader(body []byte) (tag []byte, minor uint32, ok bool) {
 type Server struct {
 	fs            TernVFS
 	clients       *ClientStore
+	opens         *openStateStore
 	stagingStore  StagingStore
 	writeVerifier [8]byte       // random per server instance, changes on restart
 	idleTimeout   time.Duration // connection idle timeout
@@ -54,6 +55,7 @@ func NewServer(fs TernVFS, stagingStore StagingStore, logger *slog.Logger) (*Ser
 	s := &Server{
 		fs:            fs,
 		clients:       clients,
+		opens:         newOpenStateStore(),
 		stagingStore:  stagingStore,
 		writeVerifier: verf,
 		idleTimeout:   5 * time.Minute,
