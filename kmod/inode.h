@@ -5,6 +5,7 @@
 #ifndef _TERNFS_INODE_H
 #define _TERNFS_INODE_H
 
+#include <linux/completion.h>
 #include <linux/fs.h>
 
 #include "bincode.h"
@@ -44,8 +45,11 @@ struct ternfs_inode_file {
     atomic_t transient_err;
     // Span we're currently writing to. Might be NULL.
     struct ternfs_transient_span* writing_span;
-    // Whether we're currently flushing a span (block write + add span certify)
-    struct semaphore flushing_span_sema;
+    // This completion is signalled whenever no detached span is flushing. It is
+    // reinitialized for each new flush. The detached span's final put signals
+    // it without holding the inode lock. The inode lock must be held both when
+    // waiting on this completion and when reinitializing it.
+    struct completion flushing_span_done;
     // We use this to track where we should close the file from.
     struct task_struct* owner;
     // We store these one separatedly from `owner` above because when a process exits

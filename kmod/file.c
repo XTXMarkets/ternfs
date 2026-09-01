@@ -64,7 +64,6 @@ struct ternfs_transient_span {
     u8 storage_class;
     u8 parity;
     u8 blacklist_length;
-    bool started_flushing;
 };
 // just a sanity check, this is just two per page rn
 static_assert(sizeof(struct ternfs_transient_span) < (2<<10));
@@ -129,7 +128,6 @@ static struct ternfs_transient_span* new_transient_span(struct ternfs_inode* eno
     // the pages, if any.
     span->parity = 0;
     span->blacklist_length = 0;
-    span->started_flushing = false;
     return span;
 }
 
@@ -168,9 +166,9 @@ static bool put_transient_span(struct ternfs_transient_span* span) {
 #else
         percpu_counter_add(&span->enode->file.mm->rss_stat[MM_FILEPAGES], -num_pages);
 #endif
-        if (span->started_flushing) {
-            up(&span->enode->file.flushing_span_sema);
-        }
+        // Signal that no span is flushing anymore. After this line, the file.mm
+        // may be freed.
+        complete_all(&span->enode->file.flushing_span_done);
         // Free the span itself
         kmem_cache_free(ternfs_transient_span_cachep, span);
         return true;
@@ -287,8 +285,9 @@ static void write_block_finalize(struct ternfs_transient_span* span, int b, u64 
 }
 
 static void write_block_done(void* data, struct list_head* pages, u64 block_id, u64 proof, int block_write_err) {
-    // We need to be careful with locking here: the writer waits on the
-    // flushing semaphore while holding the inode lock.
+    // We need to be careful with locking here: the writer may be blocked on the
+    // flushing_span_done completion while holding the inode lock, so we must not
+    // take the inode lock on this path.
 
     // we use 0 to mean "no proof yet"
     if (unlikely(block_write_err == 0 && proof == 0)) {
@@ -520,17 +519,14 @@ static int compute_span_parameters(
     return 0;
 }
 
-// To be called with the inode lock. Acquires the flushing sema.
+// To be called with the inode lock.
 static int wait_flushed(struct ternfs_inode* enode, bool non_blocking) {
     BUG_ON(!inode_is_locked(&enode->inode));
 
-    // make sure we're free to go
-    if (down_trylock(&enode->file.flushing_span_sema) == 1) {
-        if (non_blocking) {
-            return -EAGAIN;
-        }
-        down(&enode->file.flushing_span_sema);
+    if (non_blocking && !completion_done(&enode->file.flushing_span_done)) {
+        return -EAGAIN;
     }
+    wait_for_completion_io(&enode->file.flushing_span_done);
 
     return 0;
 }
@@ -668,15 +664,14 @@ static int start_flushing(struct ternfs_inode* enode, bool non_blocking) {
     struct ternfs_transient_span* span = enode->file.writing_span;
 
     if (span == NULL) {
-        up(&enode->file.flushing_span_sema);
         return 0;
     }
     enode->file.writing_span = NULL;
     // We should hold the only reference
     BUG_ON(atomic_read(&span->refcount) != 1);
-    // We mark span as started flushin so we know to wake up waiters on last reference going away.
-    // At that point operation is done in either failure or success.
-    span->started_flushing = true;
+    // reinitialize flushing_span_done so that the next call to wait_flushed
+    // blocks until `span` finishes flushing
+    reinit_completion(&enode->file.flushing_span_done);
     err = compute_span_parameters(
         enode->block_policy, enode->span_policy, enode->stripe_policy, span
     );
@@ -700,9 +695,7 @@ static int start_flushing(struct ternfs_inode* enode, bool non_blocking) {
         ));
         kunmap(page);
     } else if (span->storage_class != TERNFS_EMPTY_STORAGE) {
-        // The real deal, we need to write blocks. Note that
-        // this guy is tasked with releasing the flushing semaphore
-        // if things fail (otherwise we're not done yet).
+        // The real deal, we need to write blocks.
         err = write_blocks(span);
     }
 
@@ -877,8 +870,6 @@ static int flush_and_link(struct ternfs_inode *enode, struct dentry *parent, con
 
     int err = 0;
 
-    bool file_is_alive_and_flushing = false;
-
     // if we've errored out already, just exit
     err = atomic_read(&enode->file.transient_err);
     if (err < 0) { goto out; }
@@ -906,9 +897,8 @@ static int flush_and_link(struct ternfs_inode *enode, struct dentry *parent, con
     err = start_flushing(enode, false);
     if (err < 0) { goto out; }
 
-    down(&enode->file.flushing_span_sema);
-    up(&enode->file.flushing_span_sema);
-    file_is_alive_and_flushing = true;
+    // Wait for the current flush to complete
+    wait_for_completion_io(&enode->file.flushing_span_done);
 
     // the requests might have failed
     err = atomic_read(&enode->file.transient_err);
@@ -939,19 +929,8 @@ out:
     if (err) {
         atomic_cmpxchg(&enode->file.transient_err, 0, err);
     }
-    if (!file_is_alive_and_flushing) {
-        // The file is dead, we want to make sure that any in-flight flushings
-        // are gone. We might enter this function multiple times with a dead
-        // file: imagine for instance a process dying with many threads having
-        // the reference to the same file. This is why we also release the
-        // semaphore afterwards, so that after the first one that cleans up
-        // the others will not get stuck. So this section acts as a flushing
-        // barrier of sorts. Since the file is dead this should not cause problems
-        // (e.g. we should not get genuine flushes due to writes which then conflict
-        // with this logic).
-        down(&enode->file.flushing_span_sema);
-        up(&enode->file.flushing_span_sema);
-    }
+    // Wait for any in-flight flushes to complete.
+    wait_for_completion_io(&enode->file.flushing_span_done);
     // There are cases where we decide not to flush, we still need to free the writing span
     if (enode->file.writing_span != NULL) {
         // if writing_span is not NULL we should be the one holding last reference to it
