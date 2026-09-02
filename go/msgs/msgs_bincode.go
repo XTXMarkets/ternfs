@@ -5113,6 +5113,38 @@ func (v *FullShardInfo) Unpack(r io.Reader) error {
 	return nil
 }
 
+func (v *ShardReplicaAnnouncement) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint16(v.Shrid)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint8(v.Location)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, bool(v.IsLeader)); err != nil {
+		return err
+	}
+	if err := v.Addrs.Pack(w); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *ShardReplicaAnnouncement) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint16)(&v.Shrid)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint8)(&v.Location)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*bool)(&v.IsLeader)); err != nil {
+		return err
+	}
+	if err := v.Addrs.Unpack(r); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (v *RegisterBlockServiceInfo) Pack(w io.Writer) error {
 	if err := bincode.PackScalar(w, uint64(v.Id)); err != nil {
 		return err
