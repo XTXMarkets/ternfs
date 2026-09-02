@@ -2263,7 +2263,7 @@ public:
         {
             std::vector<FullShardInfo> allReplicas;
             bool isInitiated = _shared.isInitiated.load(std::memory_order_acquire);
-            bool needsWait = _shared.options.logsDBOptions.initialStart && !isInitiated && !_noReplication;
+            bool needsWait = _shared.options.logsDBOptions.initialStart && !isInitiated && !_noReplication && !_shared.options.replicaAnnouncements;
             uint8_t minKnown = 0;
             Duration timeout = 10_sec;
             if (needsWait) {
@@ -2299,7 +2299,7 @@ public:
                         ++emptyReplicas;
                     }
                 }
-                if (emptyReplicas > 0 && !_noReplication) {
+                if (emptyReplicas > 0 && !_noReplication && !_shared.options.replicaAnnouncements) {
                     _env.updateAlert(_alert, "Didn't get enough replicas with known addresses from registry");
                     return false;
                 }

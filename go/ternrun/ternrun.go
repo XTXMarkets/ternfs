@@ -327,6 +327,7 @@ func main() {
 					LogsDBFlags:               nil,
 					Addr1:                     "127.0.0.1:0",
 					BlockServiceWritableDelay: &noWritableDelay,
+					ReplicaAnnouncements:      true,
 				}
 				if r == 0 {
 					if *leaderOnly {

@@ -698,6 +698,7 @@ type ShardOpts struct {
 	LogsDBFlags               []string
 	NumReaders                uint16
 	BlockServiceWritableDelay *time.Duration
+	ReplicaAnnouncements      bool
 }
 
 func (procs *ManagedProcesses) StartShard(ll *log.Logger, repoDir string, opts *ShardOpts) {
@@ -726,6 +727,9 @@ func (procs *ManagedProcesses) StartShard(ll *log.Logger, repoDir string, opts *
 	}
 	if opts.BlockServiceWritableDelay != nil {
 		args = append(args, "-block-service-writable-delay", fmt.Sprintf("%dns", opts.BlockServiceWritableDelay.Nanoseconds()))
+	}
+	if opts.ReplicaAnnouncements {
+		args = append(args, "-replica-announcements")
 	}
 	if opts.Xmon != "" {
 		args = append(args, "-xmon", opts.Xmon)
