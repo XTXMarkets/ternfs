@@ -221,12 +221,39 @@ func (id InodeId) Type() InodeType {
 	return typ
 }
 
+func (id InodeId) IsDirectory() bool {
+	return id != NULL_INODE_ID && id.Type() == DIRECTORY
+}
+
+func (id InodeId) IsFile() bool {
+	return id != NULL_INODE_ID && id.Type() == FILE
+}
+
 func (id InodeId) Shard() ShardId {
 	return ShardId(id & 0xFF)
 }
 
 func (id InodeId) String() string {
 	return fmt.Sprintf("0x%016x", uint64(id))
+}
+
+// ParseInodeId parses both typed inode IDs and NULL_INODE_ID.
+func ParseInodeId(s string) (InodeId, error) {
+	value, err := strconv.ParseUint(strings.TrimPrefix(s, "0x"), 16, 63)
+	if err != nil {
+		return NULL_INODE_ID, fmt.Errorf("bad inode id %q: %w", s, err)
+	}
+	id := InodeId(value)
+	typ := InodeType((id >> 61) & 0x03)
+	if id != NULL_INODE_ID &&
+		typ != DIRECTORY && typ != FILE && typ != SYMLINK {
+		return NULL_INODE_ID, fmt.Errorf(
+			"bad inode id %q: invalid inode type %v",
+			s,
+			typ,
+		)
+	}
+	return id, nil
 }
 
 func marshalJSONId(id uint64) ([]byte, error) {
