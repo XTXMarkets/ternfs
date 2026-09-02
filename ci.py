@@ -48,7 +48,7 @@ def run_docker_unbuffered(docker_args, args):
     # for motivation for `--security-opt seccomp=unconfined`,
     # the `--pids-limit -1` is not something I hit but it seems
     # like a good idea.
-    container = 'ghcr.io/xtxmarkets/ternfs-ubuntu-build:2026-03-11'
+    container = 'ghcr.io/xtxmarkets/ternfs-ubuntu-build:2027-09-02'
     cmd = ['docker', 'run', '--ulimit', 'nofile=65536:65536', '--pids-limit', '-1', '--security-opt', 'seccomp=unconfined', '--mount', f'type=bind,src={script_dir},dst=/ternfs', '--cap-add', 'SYS_ADMIN', '--privileged', '--rm', '-i']
     if not is_rootless_docker():
         cmd += ['-e', f'UID={os.getuid()}', '-e', f'GID={os.getgid()}']
@@ -69,7 +69,7 @@ if args.functional:
     bold_print('functional tests')
     if args.docker:
         bold_print('starting functional tests in docker')
-        container = 'ghcr.io/xtxmarkets/ternfs-ubuntu-build:2026-03-11'
+        container = 'ghcr.io/xtxmarkets/ternfs-ubuntu-build:2027-09-02'
         run_docker_unbuffered(
             ['-w', '/ternfs'], ['./cpp/tests.sh']
         )
