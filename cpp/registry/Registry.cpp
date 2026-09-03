@@ -409,6 +409,7 @@ void Registry::start(const RegistryOptions& options, LoopThreads& threads) {
         LOG_INFO(_env, "    ownAddres = %s", options.serverOptions.addrs);
         LOG_INFO(_env, "    enforceStableIp = '%s'", (int)options.enforceStableIp);
         LOG_INFO(_env, "    enforceStableLeader = '%s'", (int)options.enforceStableLeader);
+        LOG_INFO(_env, "    enforceStableBlockServicePath = '%s'", (int)options.enforceStableBlockServicePath);
         LOG_INFO(_env, "    maxConnections = '%s'", options.maxConnections);
         LOG_INFO(_env, "    minAutoDecomInterval = '%s'", options.minDecomInterval);
         LOG_INFO(_env, "    alertAtUnavailableFailureDomains = '%s'", (int)options.alertAfterUnavailableFailureDomains);
