@@ -85,20 +85,25 @@ func parseRPCReply(t *testing.T, reply []byte) []byte {
 	return reply[24:]
 }
 
-// sendCompound builds a compound, sends it, and returns the parsed COMPOUND4res.
-func sendCompound(t *testing.T, conn net.Conn, xid uint32, build func(w *COMPOUND4argsWriter)) COMPOUND4res {
-	t.Helper()
+func buildCompoundBody(tag []byte, build func(w *COMPOUND4argsWriter)) []byte {
 	var body []byte
 	w := StartCOMPOUND4args(body)
 	tagW := w.StartTag()
-	body = tagW.SetData(nil).Finish()
+	body = tagW.SetData(tag).Finish()
 	w.Resume(body)
 	w.SetMinorversion(0)
 
-	build(&w)
+	if build != nil {
+		build(&w)
+	}
 
-	body = w.Finish()
+	return w.Finish()
+}
 
+// sendCompound builds a compound, sends it, and returns the parsed COMPOUND4res.
+func sendCompound(t *testing.T, conn net.Conn, xid uint32, build func(w *COMPOUND4argsWriter)) COMPOUND4res {
+	t.Helper()
+	body := buildCompoundBody(nil, build)
 	reply, err := sendRPC(conn, xid, procCompound, body)
 	if err != nil {
 		t.Fatal(err)
@@ -109,6 +114,68 @@ func sendCompound(t *testing.T, conn net.Conn, xid uint32, build func(w *COMPOUN
 		t.Fatal("failed to parse COMPOUND4res")
 	}
 	return res
+}
+
+func TestEmptyCompound(t *testing.T) {
+	dir := t.TempDir()
+	addr, cleanup := startTestServer(t, dir)
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+
+	const xid = 12153
+	reply, err := sendRPC(conn, xid, procCompound, buildCompoundBody([]byte("empty"), nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := binary.BigEndian.Uint32(reply[:4]); got != xid {
+		t.Fatalf("reply xid = %d, want %d", got, xid)
+	}
+
+	res, ok := ReadCOMPOUND4res(parseRPCReply(t, reply))
+	if !ok {
+		t.Fatal("failed to parse COMPOUND4res")
+	}
+	if res.Status() != NFS4_OK {
+		t.Fatalf("status = %d, want NFS4_OK", res.Status())
+	}
+	if got := string(res.Tag().Data()); got != "empty" {
+		t.Fatalf("tag = %q, want %q", got, "empty")
+	}
+	if res.ResarrayCount() != 0 {
+		t.Fatalf("resarray count = %d, want 0", res.ResarrayCount())
+	}
+}
+
+func TestCompoundOperationLimit(t *testing.T) {
+	dir := t.TempDir()
+	addr, cleanup := startTestServer(t, dir)
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+
+	body := buildCompoundBody([]byte("too-many"), func(w *COMPOUND4argsWriter) {
+		for range maxCompoundOperations + 1 {
+			w.AppendArgarray_Putrootfh()
+		}
+	})
+	reply, err := sendRPC(conn, 1, procCompound, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, ok := ReadCOMPOUND4res(parseRPCReply(t, reply))
+	if !ok {
+		t.Fatal("failed to parse COMPOUND4res")
+	}
+	if res.Status() != NFS4ERR_RESOURCE {
+		t.Fatalf("status = %d, want NFS4ERR_RESOURCE", res.Status())
+	}
+	if got := string(res.Tag().Data()); got != "too-many" {
+		t.Fatalf("tag = %q, want %q", got, "too-many")
+	}
+	if res.ResarrayCount() != 0 {
+		t.Fatalf("resarray count = %d, want 0", res.ResarrayCount())
+	}
 }
 
 // expectOK checks compound status is NFS4_OK and returns the resarray iterator.
@@ -830,6 +897,79 @@ func TestAccess(t *testing.T) {
 	}
 }
 
+func TestAccessMasksUnsupportedBitsByType(t *testing.T) {
+	const allAccess = ACCESS4_READ | ACCESS4_LOOKUP | ACCESS4_MODIFY |
+		ACCESS4_EXTEND | ACCESS4_DELETE | ACCESS4_EXECUTE
+	const unknownAccess = 0x40
+
+	tests := []struct {
+		name       string
+		object     string
+		wantAccess uint32
+	}{
+		{
+			name:       "directory",
+			object:     "dir",
+			wantAccess: allAccess &^ ACCESS4_EXECUTE,
+		},
+		{
+			name:       "file",
+			object:     "file",
+			wantAccess: allAccess &^ (ACCESS4_LOOKUP | ACCESS4_DELETE),
+		},
+		{
+			name:       "symlink",
+			object:     "link",
+			wantAccess: allAccess &^ (ACCESS4_LOOKUP | ACCESS4_DELETE),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.Mkdir(filepath.Join(dir, "dir"), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "file"), nil, 0644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("file", filepath.Join(dir, "link")); err != nil {
+				t.Fatal(err)
+			}
+			addr, cleanup := startTestServer(t, dir)
+			defer cleanup()
+			conn := dial(t, addr)
+			defer conn.Close()
+
+			res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				lw := w.AppendArgarray_Lookup()
+				nw := lw.StartObjname()
+				buf := nw.SetData([]byte(test.object)).Finish()
+				lw.Resume(buf)
+				w.Resume(lw.Finish())
+
+				aw := w.AppendArgarray_Access()
+				aw.SetAccess(allAccess | unknownAccess)
+			})
+			iter := expectOK(t, res)
+			nextOp(t, &iter)
+			nextOp(t, &iter)
+			entry := nextOp(t, &iter)
+			ok := entry.Value().AsACCESS4resEntry().
+				Value().AsACCESS4resok()
+			if ok.Supported() != test.wantAccess {
+				t.Errorf("supported = %#x, want %#x",
+					ok.Supported(), test.wantAccess)
+			}
+			if ok.Access() != test.wantAccess {
+				t.Errorf("access = %#x, want %#x",
+					ok.Access(), test.wantAccess)
+			}
+		})
+	}
+}
+
 func TestOpenConfirmClose(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("content"), 0644)
@@ -1074,6 +1214,41 @@ func TestIllegalOp(t *testing.T) {
 	}
 }
 
+func TestUnknownOp(t *testing.T) {
+	dir := t.TempDir()
+	addr, cleanup := startTestServer(t, dir)
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+
+	// Empty tag, minor version zero, one operation, and undefined operation zero.
+	body := make([]byte, 16)
+	binary.BigEndian.PutUint32(body[8:12], 1)
+
+	reply, err := sendRPC(conn, 1, procCompound, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, ok := ReadCOMPOUND4res(parseRPCReply(t, reply))
+	if !ok {
+		t.Fatal("failed to parse COMPOUND4res")
+	}
+	if res.Status() != NFS4ERR_OP_ILLEGAL {
+		t.Fatalf("status = %s, want NFS4ERR_OP_ILLEGAL", Nfsstat4Name(res.Status()))
+	}
+	if res.ResarrayCount() != 1 {
+		t.Fatalf("resarray count = %d, want 1", res.ResarrayCount())
+	}
+	iter := res.Resarray()
+	entry := nextOp(t, &iter)
+	if entry.Disc() != OP_ILLEGAL {
+		t.Fatalf("result operation = %s, want OP_ILLEGAL", NfsOpnum4Name(entry.Disc()))
+	}
+	if status := entry.Value().AsILLEGAL4res().Status(); status != NFS4ERR_OP_ILLEGAL {
+		t.Fatalf("operation status = %s, want NFS4ERR_OP_ILLEGAL", Nfsstat4Name(status))
+	}
+}
+
 func TestLookupNonExistent(t *testing.T) {
 	dir := t.TempDir()
 	addr, cleanup := startTestServer(t, dir)
@@ -1098,6 +1273,838 @@ func TestLookupNonExistent(t *testing.T) {
 	// Should have 2 ops: PUTROOTFH (success) + LOOKUP (failure).
 	if res.ResarrayCount() != 2 {
 		t.Fatalf("resarray count = %d, want 2", res.ResarrayCount())
+	}
+}
+
+func TestLongNamesRejected(t *testing.T) {
+	longName := make([]byte, maxTernNameLength+1)
+	for i := range longName {
+		longName[i] = 'a'
+	}
+
+	tests := []struct {
+		name  string
+		build func(*COMPOUND4argsWriter)
+	}{
+		{
+			name: "lookup",
+			build: func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				lw := w.AppendArgarray_Lookup()
+				nw := lw.StartObjname()
+				buf := nw.SetData(longName).Finish()
+				lw.Resume(buf)
+				w.Resume(lw.Finish())
+			},
+		},
+		{
+			name: "create",
+			build: func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				cw := w.AppendArgarray_Create()
+				cw.SetObjtype_Nf4dir()
+				nw := cw.StartObjname()
+				buf := nw.SetData(longName).Finish()
+				cw.Resume(buf)
+				faw := cw.StartCreateattrs()
+				bmw := faw.StartAttrmask()
+				buf = bmw.Finish()
+				faw.Resume(buf)
+				avw := faw.StartAttrVals()
+				buf = avw.SetData(nil).Finish()
+				faw.Resume(buf)
+				cw.Resume(faw.Finish())
+				w.Resume(cw.Finish())
+			},
+		},
+		{
+			name: "remove",
+			build: func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				rw := w.AppendArgarray_Remove()
+				tw := rw.StartTarget()
+				buf := tw.SetData(longName).Finish()
+				rw.Resume(buf)
+				w.Resume(rw.Finish())
+			},
+		},
+		{
+			name: "rename source",
+			build: func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				w.AppendArgarray_Savefh()
+				rw := w.AppendArgarray_Rename()
+				ow := rw.StartOldname()
+				buf := ow.SetData(longName).Finish()
+				rw.Resume(buf)
+				nw := rw.StartNewname()
+				buf = nw.SetData([]byte("new")).Finish()
+				rw.Resume(buf)
+				w.Resume(rw.Finish())
+			},
+		},
+		{
+			name: "rename target",
+			build: func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				w.AppendArgarray_Savefh()
+				rw := w.AppendArgarray_Rename()
+				ow := rw.StartOldname()
+				buf := ow.SetData([]byte("old")).Finish()
+				rw.Resume(buf)
+				nw := rw.StartNewname()
+				buf = nw.SetData(longName).Finish()
+				rw.Resume(buf)
+				w.Resume(rw.Finish())
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			addr, cleanup := startTestServer(t, dir)
+			defer cleanup()
+			conn := dial(t, addr)
+			defer conn.Close()
+
+			res := sendCompound(t, conn, 1, test.build)
+			if res.Status() != NFS4ERR_NAMETOOLONG {
+				t.Fatalf("status = %s, want NFS4ERR_NAMETOOLONG",
+					Nfsstat4Name(res.Status()))
+			}
+		})
+	}
+}
+
+func TestRenameInvalidNamesRejected(t *testing.T) {
+	tests := []struct {
+		name       string
+		oldName    []byte
+		newName    []byte
+		wantStatus uint32
+	}{
+		{"empty source", nil, []byte("new"), NFS4ERR_INVAL},
+		{"empty target", []byte("old"), nil, NFS4ERR_INVAL},
+		{"dot source", []byte("."), []byte("new"), NFS4ERR_BADNAME},
+		{"dot target", []byte("old"), []byte("."), NFS4ERR_BADNAME},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			addr, cleanup := startTestServer(t, dir)
+			defer cleanup()
+			conn := dial(t, addr)
+			defer conn.Close()
+
+			res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				w.AppendArgarray_Savefh()
+				rw := w.AppendArgarray_Rename()
+				ow := rw.StartOldname()
+				buf := ow.SetData(test.oldName).Finish()
+				rw.Resume(buf)
+				nw := rw.StartNewname()
+				buf = nw.SetData(test.newName).Finish()
+				rw.Resume(buf)
+				w.Resume(rw.Finish())
+			})
+			if res.Status() != test.wantStatus {
+				t.Fatalf("status = %s, want %s",
+					Nfsstat4Name(res.Status()), Nfsstat4Name(test.wantStatus))
+			}
+		})
+	}
+}
+
+func TestOpenInvalidNamesRejected(t *testing.T) {
+	longName := make([]byte, maxTernNameLength+1)
+	for i := range longName {
+		longName[i] = 'a'
+	}
+
+	tests := []struct {
+		name       string
+		component  []byte
+		wantStatus uint32
+	}{
+		{"empty", nil, NFS4ERR_INVAL},
+		{"too long", longName, NFS4ERR_NAMETOOLONG},
+		{"dot", []byte("."), NFS4ERR_BADNAME},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			addr, cleanup := startTestServer(t, dir)
+			defer cleanup()
+			conn := dial(t, addr)
+			defer conn.Close()
+
+			xid := uint32(1)
+			clientID := setupClient(t, conn, &xid)
+			res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				ow := w.AppendArgarray_Open()
+				ow.SetSeqid(1)
+				ow.SetShareAccess(OPEN4_SHARE_ACCESS_READ)
+				ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
+				owner := ow.StartOwner()
+				owner = owner.SetClientid(clientID)
+				owner = owner.SetOwner([]byte("name-test"))
+				buf := owner.Finish()
+				ow.Resume(buf)
+				ow.SetOpenhow_Default(OPEN4_NOCREATE)
+				claim := ow.SetClaim_Null()
+				buf = claim.SetData(test.component).Finish()
+				ow.Resume(buf)
+				w.Resume(ow.Finish())
+			})
+			if res.Status() != test.wantStatus {
+				t.Fatalf("status = %s, want %s",
+					Nfsstat4Name(res.Status()), Nfsstat4Name(test.wantStatus))
+			}
+		})
+	}
+}
+
+func TestEmptyComponentsRejected(t *testing.T) {
+	tests := []struct {
+		name  string
+		build func(*COMPOUND4argsWriter)
+	}{
+		{
+			name: "lookup",
+			build: func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				lw := w.AppendArgarray_Lookup()
+				nw := lw.StartObjname()
+				buf := nw.SetData(nil).Finish()
+				lw.Resume(buf)
+				w.Resume(lw.Finish())
+			},
+		},
+		{
+			name: "remove",
+			build: func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				rw := w.AppendArgarray_Remove()
+				tw := rw.StartTarget()
+				buf := tw.SetData(nil).Finish()
+				rw.Resume(buf)
+				w.Resume(rw.Finish())
+			},
+		},
+		{
+			name: "secinfo",
+			build: func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				sw := w.AppendArgarray_Secinfo()
+				nw := sw.StartName()
+				buf := nw.SetData(nil).Finish()
+				sw.Resume(buf)
+				w.Resume(sw.Finish())
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			addr, cleanup := startTestServer(t, dir)
+			defer cleanup()
+			conn := dial(t, addr)
+			defer conn.Close()
+
+			res := sendCompound(t, conn, 1, test.build)
+			if res.Status() != NFS4ERR_INVAL {
+				t.Fatalf("status = %s, want NFS4ERR_INVAL",
+					Nfsstat4Name(res.Status()))
+			}
+		})
+	}
+}
+
+func TestLookuppAtRootRejected(t *testing.T) {
+	dir := t.TempDir()
+	addr, cleanup := startTestServer(t, dir)
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+
+	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+		w.AppendArgarray_Putrootfh()
+		w.AppendArgarray_Lookupp()
+	})
+	if res.Status() != NFS4ERR_NOENT {
+		t.Fatalf("status = %s, want NFS4ERR_NOENT",
+			Nfsstat4Name(res.Status()))
+	}
+}
+
+func TestSecinfoRequiresExistingName(t *testing.T) {
+	dir := t.TempDir()
+	addr, cleanup := startTestServer(t, dir)
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+
+	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+		w.AppendArgarray_Putrootfh()
+		sw := w.AppendArgarray_Secinfo()
+		nw := sw.StartName()
+		buf := nw.SetData([]byte("missing")).Finish()
+		sw.Resume(buf)
+		w.Resume(sw.Finish())
+	})
+	if res.Status() != NFS4ERR_NOENT {
+		t.Fatalf("status = %s, want NFS4ERR_NOENT",
+			Nfsstat4Name(res.Status()))
+	}
+}
+
+func TestCreateInvalidFieldsRejected(t *testing.T) {
+	tests := []struct {
+		name          string
+		objname       []byte
+		symlink       bool
+		symlinkTarget []byte
+		wantStatus    uint32
+	}{
+		{
+			name:       "empty object name",
+			objname:    nil,
+			wantStatus: NFS4ERR_INVAL,
+		},
+		{
+			name:          "symlink target",
+			objname:       []byte("link"),
+			symlink:       true,
+			symlinkTarget: nil,
+			wantStatus:    NFS4ERR_INVAL,
+		},
+		{
+			name:       "dot",
+			objname:    []byte("."),
+			wantStatus: NFS4ERR_BADNAME,
+		},
+		{
+			name:       "dot dot",
+			objname:    []byte(".."),
+			wantStatus: NFS4ERR_BADNAME,
+		},
+		{
+			name:       "slash",
+			objname:    []byte("foo/bar"),
+			wantStatus: NFS4ERR_BADNAME,
+		},
+		{
+			name:       "nul",
+			objname:    []byte{'f', 'o', 'o', 0, 'b', 'a', 'r'},
+			wantStatus: NFS4ERR_BADNAME,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			addr, cleanup := startTestServer(t, dir)
+			defer cleanup()
+			conn := dial(t, addr)
+			defer conn.Close()
+
+			res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				cw := w.AppendArgarray_Create()
+				if test.symlink {
+					ltw := cw.SetObjtype_Nf4lnk()
+					buf := ltw.SetData(test.symlinkTarget).Finish()
+					cw.Resume(buf)
+				} else {
+					cw.SetObjtype_Nf4dir()
+				}
+				nw := cw.StartObjname()
+				buf := nw.SetData(test.objname).Finish()
+				cw.Resume(buf)
+				faw := cw.StartCreateattrs()
+				bmw := faw.StartAttrmask()
+				buf = bmw.Finish()
+				faw.Resume(buf)
+				avw := faw.StartAttrVals()
+				buf = avw.SetData(nil).Finish()
+				faw.Resume(buf)
+				cw.Resume(faw.Finish())
+				w.Resume(cw.Finish())
+			})
+			if res.Status() != test.wantStatus {
+				t.Fatalf("status = %s, want %s",
+					Nfsstat4Name(res.Status()), Nfsstat4Name(test.wantStatus))
+			}
+		})
+	}
+}
+
+func TestCreateTypeAndAttributesValidated(t *testing.T) {
+	tests := []struct {
+		name       string
+		objType    uint32
+		mask       [2]uint32
+		wantStatus uint32
+	}{
+		{
+			name:       "regular file type",
+			objType:    NF4REG,
+			wantStatus: NFS4ERR_BADTYPE,
+		},
+		{
+			name:       "read-only attribute",
+			objType:    NF4DIR,
+			mask:       [2]uint32{1 << FATTR4_LINK_SUPPORT, 0},
+			wantStatus: NFS4ERR_INVAL,
+		},
+		{
+			name:       "unsupported writable attribute",
+			objType:    NF4DIR,
+			mask:       [2]uint32{1 << FATTR4_ACL, 0},
+			wantStatus: NFS4ERR_ATTRNOTSUPP,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			addr, cleanup := startTestServer(t, dir)
+			defer cleanup()
+			conn := dial(t, addr)
+			defer conn.Close()
+
+			res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				cw := w.AppendArgarray_Create()
+				cw.SetObjtype_Default(test.objType)
+				nw := cw.StartObjname()
+				buf := nw.SetData([]byte("new")).Finish()
+				cw.Resume(buf)
+				faw := cw.StartCreateattrs()
+				buf = finishTestFattr(faw, test.mask, nil)
+				cw.Resume(buf)
+				w.Resume(cw.Finish())
+			})
+			if res.Status() != test.wantStatus {
+				t.Fatalf("status = %s, want %s",
+					Nfsstat4Name(res.Status()), Nfsstat4Name(test.wantStatus))
+			}
+		})
+	}
+}
+
+func TestCreateExistingNameRejected(t *testing.T) {
+	tests := []struct {
+		name    string
+		objType uint32
+		setup   func(string) error
+	}{
+		{
+			name:    "directory",
+			objType: NF4DIR,
+			setup: func(path string) error {
+				return os.Mkdir(path, 0755)
+			},
+		},
+		{
+			name:    "symlink",
+			objType: NF4LNK,
+			setup: func(path string) error {
+				return os.Symlink("target", path)
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := test.setup(filepath.Join(dir, "existing")); err != nil {
+				t.Fatal(err)
+			}
+			addr, cleanup := startTestServer(t, dir)
+			defer cleanup()
+			conn := dial(t, addr)
+			defer conn.Close()
+
+			res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				cw := w.AppendArgarray_Create()
+				if test.objType == NF4LNK {
+					tw := cw.SetObjtype_Nf4lnk()
+					buf := tw.SetData([]byte("target")).Finish()
+					cw.Resume(buf)
+				} else {
+					cw.SetObjtype_Nf4dir()
+				}
+				nw := cw.StartObjname()
+				buf := nw.SetData([]byte("existing")).Finish()
+				cw.Resume(buf)
+				faw := cw.StartCreateattrs()
+				buf = finishTestFattr(faw, [2]uint32{}, nil)
+				cw.Resume(buf)
+				w.Resume(cw.Finish())
+			})
+			if res.Status() != NFS4ERR_EXIST {
+				t.Fatalf("status = %s, want NFS4ERR_EXIST",
+					Nfsstat4Name(res.Status()))
+			}
+		})
+	}
+}
+
+func TestOpenCreateAttributesValidated(t *testing.T) {
+	tests := []struct {
+		name       string
+		mask       [2]uint32
+		wantStatus uint32
+	}{
+		{
+			name:       "read-only attribute",
+			mask:       [2]uint32{1 << FATTR4_LINK_SUPPORT, 0},
+			wantStatus: NFS4ERR_INVAL,
+		},
+		{
+			name:       "unsupported writable attribute",
+			mask:       [2]uint32{1 << FATTR4_ACL, 0},
+			wantStatus: NFS4ERR_ATTRNOTSUPP,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			addr, cleanup := startTestServer(t, dir)
+			defer cleanup()
+			conn := dial(t, addr)
+			defer conn.Close()
+			xid := uint32(1)
+			clientID := setupClient(t, conn, &xid)
+
+			res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				ow := w.AppendArgarray_Open()
+				ow.SetSeqid(1)
+				ow.SetShareAccess(OPEN4_SHARE_ACCESS_BOTH)
+				ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
+				owner := ow.StartOwner()
+				owner = owner.SetClientid(clientID)
+				owner = owner.SetOwner([]byte("attr-test"))
+				buf := owner.Finish()
+				ow.Resume(buf)
+				chw := ow.SetOpenhow_Create()
+				faw := chw.SetValue_Unchecked4()
+				buf = finishTestFattr(faw, test.mask, nil)
+				chw.Resume(buf)
+				ow.Resume(chw.Finish())
+				claim := ow.SetClaim_Null()
+				buf = claim.SetData([]byte("new")).Finish()
+				ow.Resume(buf)
+				w.Resume(ow.Finish())
+			})
+			if res.Status() != test.wantStatus {
+				t.Fatalf("status = %s, want %s",
+					Nfsstat4Name(res.Status()), Nfsstat4Name(test.wantStatus))
+			}
+		})
+	}
+}
+
+func TestCreateFromNonDirectoryRejected(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(string) error
+	}{
+		{
+			name: "file",
+			setup: func(path string) error {
+				return os.WriteFile(path, []byte("data"), 0644)
+			},
+		},
+		{
+			name: "symlink",
+			setup: func(path string) error {
+				return os.Symlink("target", path)
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := test.setup(filepath.Join(dir, "parent")); err != nil {
+				t.Fatal(err)
+			}
+			addr, cleanup := startTestServer(t, dir)
+			defer cleanup()
+			conn := dial(t, addr)
+			defer conn.Close()
+
+			res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				lw := w.AppendArgarray_Lookup()
+				nw := lw.StartObjname()
+				buf := nw.SetData([]byte("parent")).Finish()
+				lw.Resume(buf)
+				w.Resume(lw.Finish())
+
+				cw := w.AppendArgarray_Create()
+				cw.SetObjtype_Nf4dir()
+				nw = cw.StartObjname()
+				buf = nw.SetData([]byte("child")).Finish()
+				cw.Resume(buf)
+				faw := cw.StartCreateattrs()
+				bmw := faw.StartAttrmask()
+				buf = bmw.Finish()
+				faw.Resume(buf)
+				avw := faw.StartAttrVals()
+				buf = avw.SetData(nil).Finish()
+				faw.Resume(buf)
+				cw.Resume(faw.Finish())
+				w.Resume(cw.Finish())
+			})
+			if res.Status() != NFS4ERR_NOTDIR {
+				t.Fatalf("status = %s, want NFS4ERR_NOTDIR",
+					Nfsstat4Name(res.Status()))
+			}
+		})
+	}
+}
+
+func TestCurrentFilehandleTypeValidation(t *testing.T) {
+	tests := []struct {
+		name       string
+		object     string
+		operation  string
+		wantStatus uint32
+	}{
+		{"lookup from file", "file", "lookup", NFS4ERR_NOTDIR},
+		{"lookup from symlink", "link", "lookup", NFS4ERR_SYMLINK},
+		{"lookupp from file", "file", "lookupp", NFS4ERR_NOTDIR},
+		{"lookupp from symlink", "link", "lookupp", NFS4ERR_SYMLINK},
+		{"commit directory", "dir", "commit", NFS4ERR_ISDIR},
+		{"commit symlink", "link", "commit", NFS4ERR_INVAL},
+		{"read directory", "dir", "read", NFS4ERR_ISDIR},
+		{"read symlink", "link", "read", NFS4ERR_INVAL},
+		{"write directory", "dir", "write", NFS4ERR_ISDIR},
+		{"write symlink", "link", "write", NFS4ERR_INVAL},
+		{"readdir file", "file", "readdir", NFS4ERR_NOTDIR},
+		{"readdir symlink", "link", "readdir", NFS4ERR_SYMLINK},
+		{"readlink file", "file", "readlink", NFS4ERR_INVAL},
+		{"readlink directory", "dir", "readlink", NFS4ERR_INVAL},
+		{"remove from file", "file", "remove", NFS4ERR_NOTDIR},
+		{"remove from symlink", "link", "remove", NFS4ERR_SYMLINK},
+		{"secinfo from file", "file", "secinfo", NFS4ERR_NOTDIR},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "file"), nil, 0644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(filepath.Join(dir, "dir"), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("file", filepath.Join(dir, "link")); err != nil {
+				t.Fatal(err)
+			}
+
+			addr, cleanup := startTestServer(t, dir)
+			defer cleanup()
+			conn := dial(t, addr)
+			defer conn.Close()
+
+			res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				lw := w.AppendArgarray_Lookup()
+				nw := lw.StartObjname()
+				buf := nw.SetData([]byte(test.object)).Finish()
+				lw.Resume(buf)
+				w.Resume(lw.Finish())
+
+				switch test.operation {
+				case "lookup":
+					lw := w.AppendArgarray_Lookup()
+					nw := lw.StartObjname()
+					buf := nw.SetData([]byte("child")).Finish()
+					lw.Resume(buf)
+					w.Resume(lw.Finish())
+				case "lookupp":
+					w.AppendArgarray_Lookupp()
+				case "commit":
+					w.AppendArgarray_Commit()
+				case "read":
+					rw := w.AppendArgarray_Read()
+					rw.SetCount(1)
+				case "write":
+					ww := w.AppendArgarray_Write()
+					ww = ww.SetData(nil)
+					w.Resume(ww.Finish())
+				case "readdir":
+					rw := w.AppendArgarray_Readdir()
+					rw.SetDircount(1024)
+					rw.SetMaxcount(1024)
+					bw := rw.StartAttrRequest()
+					buf := bw.Finish()
+					rw.Resume(buf)
+					w.Resume(rw.Finish())
+				case "readlink":
+					w.AppendArgarray_Readlink()
+				case "remove":
+					rw := w.AppendArgarray_Remove()
+					tw := rw.StartTarget()
+					buf := tw.SetData([]byte("child")).Finish()
+					rw.Resume(buf)
+					w.Resume(rw.Finish())
+				case "secinfo":
+					sw := w.AppendArgarray_Secinfo()
+					nw := sw.StartName()
+					buf := nw.SetData([]byte("child")).Finish()
+					sw.Resume(buf)
+					w.Resume(sw.Finish())
+				default:
+					t.Fatalf("unknown operation %q", test.operation)
+				}
+			})
+			if res.Status() != test.wantStatus {
+				t.Fatalf("status = %s, want %s",
+					Nfsstat4Name(res.Status()), Nfsstat4Name(test.wantStatus))
+			}
+		})
+	}
+}
+
+func TestRenameDirectoryFilehandlesValidated(t *testing.T) {
+	tests := []struct {
+		name       string
+		badSource  bool
+		object     string
+		wantStatus uint32
+	}{
+		{"file source", true, "file", NFS4ERR_NOTDIR},
+		{"symlink source", true, "link", NFS4ERR_SYMLINK},
+		{"file target", false, "file", NFS4ERR_NOTDIR},
+		{"symlink target", false, "link", NFS4ERR_SYMLINK},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "file"), nil, 0644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("file", filepath.Join(dir, "link")); err != nil {
+				t.Fatal(err)
+			}
+			addr, cleanup := startTestServer(t, dir)
+			defer cleanup()
+			conn := dial(t, addr)
+			defer conn.Close()
+
+			res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				if test.badSource {
+					lw := w.AppendArgarray_Lookup()
+					nw := lw.StartObjname()
+					buf := nw.SetData([]byte(test.object)).Finish()
+					lw.Resume(buf)
+					w.Resume(lw.Finish())
+					w.AppendArgarray_Savefh()
+					w.AppendArgarray_Putrootfh()
+				} else {
+					w.AppendArgarray_Savefh()
+					lw := w.AppendArgarray_Lookup()
+					nw := lw.StartObjname()
+					buf := nw.SetData([]byte(test.object)).Finish()
+					lw.Resume(buf)
+					w.Resume(lw.Finish())
+				}
+
+				rw := w.AppendArgarray_Rename()
+				ow := rw.StartOldname()
+				buf := ow.SetData([]byte("old")).Finish()
+				rw.Resume(buf)
+				nw := rw.StartNewname()
+				buf = nw.SetData([]byte("new")).Finish()
+				rw.Resume(buf)
+				w.Resume(rw.Finish())
+			})
+			if res.Status() != test.wantStatus {
+				t.Fatalf("status = %s, want %s",
+					Nfsstat4Name(res.Status()), Nfsstat4Name(test.wantStatus))
+			}
+		})
+	}
+}
+
+func TestOpenFilehandleTypesValidated(t *testing.T) {
+	tests := []struct {
+		name       string
+		current    string
+		target     string
+		wantStatus uint32
+	}{
+		{"file current filehandle", "file", "child", NFS4ERR_NOTDIR},
+		{"symlink current filehandle", "link", "child", NFS4ERR_SYMLINK},
+		{"directory target", "", "dir", NFS4ERR_ISDIR},
+		{"symlink target", "", "link", NFS4ERR_SYMLINK},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "file"), nil, 0644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(filepath.Join(dir, "dir"), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("file", filepath.Join(dir, "link")); err != nil {
+				t.Fatal(err)
+			}
+
+			addr, cleanup := startTestServer(t, dir)
+			defer cleanup()
+			conn := dial(t, addr)
+			defer conn.Close()
+			xid := uint32(1)
+			clientID := setupClient(t, conn, &xid)
+
+			res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				if test.current != "" {
+					lw := w.AppendArgarray_Lookup()
+					nw := lw.StartObjname()
+					buf := nw.SetData([]byte(test.current)).Finish()
+					lw.Resume(buf)
+					w.Resume(lw.Finish())
+				}
+
+				ow := w.AppendArgarray_Open()
+				ow.SetSeqid(1)
+				ow.SetShareAccess(OPEN4_SHARE_ACCESS_READ)
+				ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
+				owner := ow.StartOwner()
+				owner = owner.SetClientid(clientID)
+				owner = owner.SetOwner([]byte("type-test"))
+				buf := owner.Finish()
+				ow.Resume(buf)
+				ow.SetOpenhow_Default(OPEN4_NOCREATE)
+				claim := ow.SetClaim_Null()
+				buf = claim.SetData([]byte(test.target)).Finish()
+				ow.Resume(buf)
+				w.Resume(ow.Finish())
+			})
+			if res.Status() != test.wantStatus {
+				t.Fatalf("status = %s, want %s",
+					Nfsstat4Name(res.Status()), Nfsstat4Name(test.wantStatus))
+			}
+		})
 	}
 }
 
@@ -1582,6 +2589,109 @@ func TestGetattr_MultipleAttrs(t *testing.T) {
 	}
 }
 
+func TestGetattrAttributeMaskValidation(t *testing.T) {
+	tests := []struct {
+		name       string
+		mask       [2]uint32
+		wantStatus uint32
+	}{
+		{"write-only time_access_set", [2]uint32{0, 1 << (FATTR4_TIME_ACCESS_SET - 32)}, NFS4ERR_INVAL},
+		{"rdattr_error", [2]uint32{1 << FATTR4_RDATTR_ERROR, 0}, NFS4_OK},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			addr, cleanup := startTestServer(t, dir)
+			defer cleanup()
+			conn := dial(t, addr)
+			defer conn.Close()
+
+			res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				gw := w.AppendArgarray_Getattr()
+				bw := gw.StartAttrRequest()
+				bw.AppendData(test.mask[0])
+				if test.mask[1] != 0 {
+					bw.AppendData(test.mask[1])
+				}
+				buf := bw.Finish()
+				gw.Resume(buf)
+				w.Resume(gw.Finish())
+			})
+
+			if res.Status() != test.wantStatus {
+				t.Fatalf("status = %s, want %s",
+					Nfsstat4Name(res.Status()), Nfsstat4Name(test.wantStatus))
+			}
+		})
+	}
+}
+
+func TestVerifyAttributeMaskValidation(t *testing.T) {
+	tests := []struct {
+		name       string
+		nverify    bool
+		mask       [2]uint32
+		values     []byte
+		wantStatus uint32
+	}{
+		{"verify type", false, [2]uint32{1 << FATTR4_TYPE, 0}, binary.BigEndian.AppendUint32(nil, NF4DIR), NFS4_OK},
+		{"nverify type", true, [2]uint32{1 << FATTR4_TYPE, 0}, binary.BigEndian.AppendUint32(nil, NF4REG), NFS4_OK},
+		{"verify rdattr_error", false, [2]uint32{1 << FATTR4_RDATTR_ERROR, 0}, make([]byte, 4), NFS4ERR_INVAL},
+		{"nverify rdattr_error", true, [2]uint32{1 << FATTR4_RDATTR_ERROR, 0}, make([]byte, 4), NFS4ERR_INVAL},
+		{"verify unsupported acl", false, [2]uint32{1 << FATTR4_ACL, 0}, make([]byte, 4), NFS4ERR_ATTRNOTSUPP},
+		{"nverify unsupported acl", true, [2]uint32{1 << FATTR4_ACL, 0}, make([]byte, 4), NFS4ERR_ATTRNOTSUPP},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			addr, cleanup := startTestServer(t, dir)
+			defer cleanup()
+			conn := dial(t, addr)
+			defer conn.Close()
+
+			res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+
+				if test.nverify {
+					vw := w.AppendArgarray_Nverify()
+					faw := vw.StartObjAttributes()
+					buf := finishTestFattr(faw, test.mask, test.values)
+					vw.Resume(buf)
+					w.Resume(vw.Finish())
+				} else {
+					vw := w.AppendArgarray_Verify()
+					faw := vw.StartObjAttributes()
+					buf := finishTestFattr(faw, test.mask, test.values)
+					vw.Resume(buf)
+					w.Resume(vw.Finish())
+				}
+			})
+
+			if res.Status() != test.wantStatus {
+				t.Fatalf("status = %s, want %s",
+					Nfsstat4Name(res.Status()), Nfsstat4Name(test.wantStatus))
+			}
+		})
+	}
+}
+
+func finishTestFattr(w Fattr4Writer, mask [2]uint32, values []byte) []byte {
+	bw := w.StartAttrmask()
+	bw.AppendData(mask[0])
+	if mask[1] != 0 {
+		bw.AppendData(mask[1])
+	}
+	buf := bw.Finish()
+	w.Resume(buf)
+	aw := w.StartAttrVals()
+	buf = aw.SetData(values).Finish()
+	w.Resume(buf)
+	return w.Finish()
+}
+
 func TestWriteAndRead(t *testing.T) {
 	dir := t.TempDir()
 	addr, cleanup := startTestServer(t, dir)
@@ -2051,6 +3161,43 @@ func TestRename(t *testing.T) {
 	}
 	if string(data) != "rename me" {
 		t.Fatalf("new.txt content = %q, want %q", data, "rename me")
+	}
+}
+
+func TestRenameToSameNameIsNoOp(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "same"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	addr, cleanup := startTestServer(t, dir)
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+
+	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+		w.AppendArgarray_Putrootfh()
+		w.AppendArgarray_Savefh()
+		rw := w.AppendArgarray_Rename()
+		ow := rw.StartOldname()
+		buf := ow.SetData([]byte("same")).Finish()
+		rw.Resume(buf)
+		nw := rw.StartNewname()
+		buf = nw.SetData([]byte("same")).Finish()
+		rw.Resume(buf)
+		w.Resume(rw.Finish())
+	})
+	iter := expectOK(t, res)
+	nextOp(t, &iter)
+	nextOp(t, &iter)
+	ok := nextOp(t, &iter).Value().AsRENAME4resEntry().
+		Value().AsRENAME4resok()
+	if got := ok.SourceCinfo(); got.Before() != got.After() {
+		t.Errorf("source cinfo changed: before=%d after=%d",
+			got.Before(), got.After())
+	}
+	if got := ok.TargetCinfo(); got.Before() != got.After() {
+		t.Errorf("target cinfo changed: before=%d after=%d",
+			got.Before(), got.After())
 	}
 }
 
@@ -2604,6 +3751,59 @@ func TestReaddirCookieverfMismatch(t *testing.T) {
 	}
 }
 
+func TestReaddirReservedCookies(t *testing.T) {
+	for _, cookie := range []uint64{1, 2} {
+		t.Run(fmt.Sprintf("cookie_%d", cookie), func(t *testing.T) {
+			dir := t.TempDir()
+			addr, cleanup := startTestServer(t, dir)
+			defer cleanup()
+			conn := dial(t, addr)
+			defer conn.Close()
+
+			res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				rw := w.AppendArgarray_Readdir()
+				rw.SetCookie(cookie)
+				rw.SetDircount(4096)
+				rw.SetMaxcount(8192)
+				bw := rw.StartAttrRequest()
+				buf := bw.Finish()
+				rw.Resume(buf)
+				w.Resume(rw.Finish())
+			})
+			if res.Status() != NFS4ERR_BAD_COOKIE {
+				t.Fatalf("status = %s, want NFS4ERR_BAD_COOKIE",
+					Nfsstat4Name(res.Status()))
+			}
+		})
+	}
+}
+
+func TestReaddirWriteOnlyAttributesRejected(t *testing.T) {
+	dir := t.TempDir()
+	addr, cleanup := startTestServer(t, dir)
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+
+	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+		w.AppendArgarray_Putrootfh()
+		rw := w.AppendArgarray_Readdir()
+		rw.SetDircount(4096)
+		rw.SetMaxcount(8192)
+		bw := rw.StartAttrRequest()
+		bw.AppendData(0)
+		bw.AppendData(1 << (FATTR4_TIME_ACCESS_SET - 32))
+		buf := bw.Finish()
+		rw.Resume(buf)
+		w.Resume(rw.Finish())
+	})
+	if res.Status() != NFS4ERR_INVAL {
+		t.Fatalf("status = %s, want NFS4ERR_INVAL",
+			Nfsstat4Name(res.Status()))
+	}
+}
+
 func TestReaddirTooSmall(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("x"), 0644)
@@ -2826,6 +4026,91 @@ func TestSetattrModeRejected(t *testing.T) {
 
 	if res.Status() != NFS4ERR_ATTRNOTSUPP {
 		t.Fatalf("expected NFS4ERR_ATTRNOTSUPP, got %s", Nfsstat4Name(res.Status()))
+	}
+}
+
+func TestSetattrValidation(t *testing.T) {
+	invalidTime := make([]byte, 16)
+	binary.BigEndian.PutUint32(invalidTime[0:4], SET_TO_CLIENT_TIME4)
+	binary.BigEndian.PutUint32(invalidTime[12:16], 1_000_000_000)
+
+	maxSize := make([]byte, 8)
+	binary.BigEndian.PutUint64(maxSize, ^uint64(0))
+
+	tests := []struct {
+		name       string
+		mask       [2]uint32
+		attrData   []byte
+		wantStatus uint32
+	}{
+		{
+			name:       "read-only attribute",
+			mask:       [2]uint32{1 << FATTR4_SUPPORTED_ATTRS, 0},
+			wantStatus: NFS4ERR_INVAL,
+		},
+		{
+			name:       "mode missing data",
+			mask:       [2]uint32{0, 1 << (FATTR4_MODE - 32)},
+			wantStatus: NFS4ERR_BADXDR,
+		},
+		{
+			name:       "mode trailing data",
+			mask:       [2]uint32{0, 1 << (FATTR4_MODE - 32)},
+			attrData:   make([]byte, 8),
+			wantStatus: NFS4ERR_BADXDR,
+		},
+		{
+			name: "invalid time nanoseconds",
+			mask: [2]uint32{
+				0,
+				1 << (FATTR4_TIME_MODIFY_SET - 32),
+			},
+			attrData:   invalidTime,
+			wantStatus: NFS4ERR_INVAL,
+		},
+		{
+			name:       "size exceeds signed backend range",
+			mask:       [2]uint32{1 << FATTR4_SIZE, 0},
+			attrData:   maxSize,
+			wantStatus: NFS4ERR_FBIG,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			addr, cleanup := startTestServer(t, dir)
+			defer cleanup()
+			conn := dial(t, addr)
+			defer conn.Close()
+
+			res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+
+				saw := w.AppendArgarray_Setattr()
+				saw.Stateid().SetSeqid(0)
+				faw := saw.StartObjAttributes()
+				bmW := faw.StartAttrmask()
+				bmW.AppendData(test.mask[0])
+				if test.mask[1] != 0 {
+					bmW.AppendData(test.mask[1])
+				}
+				buf := bmW.Finish()
+				faw.Resume(buf)
+				alW := faw.StartAttrVals()
+				buf = alW.SetData(test.attrData).Finish()
+				faw.Resume(buf)
+				buf = faw.Finish()
+				saw.Resume(buf)
+				w.Resume(saw.Finish())
+			})
+
+			if res.Status() != test.wantStatus {
+				t.Fatalf("status = %s, want %s",
+					Nfsstat4Name(res.Status()),
+					Nfsstat4Name(test.wantStatus))
+			}
+		})
 	}
 }
 

@@ -62,6 +62,28 @@ const (
 	settableAttrs1 uint32 = (1 << (FATTR4_TIME_ACCESS_SET - 32)) |
 		(1 << (FATTR4_TIME_MODIFY_SET - 32))
 
+	// SETATTR-only attributes cannot be requested by GETATTR or compared by
+	// VERIFY/NVERIFY. RDATTR_ERROR may be returned by GETATTR, but cannot be
+	// compared.
+	invalidGetattrAttrs0 uint32 = 0
+	invalidGetattrAttrs1        = settableAttrs1
+	invalidVerifyAttrs0         = 1 << FATTR4_RDATTR_ERROR
+	invalidVerifyAttrs1         = settableAttrs1
+
+	writableAttrs0 uint32 = (1 << FATTR4_SIZE) |
+		(1 << FATTR4_ACL) |
+		(1 << FATTR4_ARCHIVE) |
+		(1 << FATTR4_HIDDEN)
+	writableAttrs1 uint32 = (1 << (FATTR4_MIMETYPE - 32)) |
+		(1 << (FATTR4_MODE - 32)) |
+		(1 << (FATTR4_OWNER - 32)) |
+		(1 << (FATTR4_OWNER_GROUP - 32)) |
+		(1 << (FATTR4_SYSTEM - 32)) |
+		(1 << (FATTR4_TIME_ACCESS_SET - 32)) |
+		(1 << (FATTR4_TIME_BACKUP - 32)) |
+		(1 << (FATTR4_TIME_CREATE - 32)) |
+		(1 << (FATTR4_TIME_MODIFY_SET - 32))
+
 	// Fixed FSID for the entire export.
 	fsidMajor uint64 = 0x7E4F
 	fsidMinor uint64 = 0
@@ -80,6 +102,37 @@ func parseBitmap(bm Bitmap4) [2]uint32 {
 		mask[1] = bm.Data(1)
 	}
 	return mask
+}
+
+func validateGetattrMask(mask [2]uint32) uint32 {
+	if mask[0]&invalidGetattrAttrs0 != 0 || mask[1]&invalidGetattrAttrs1 != 0 {
+		return NFS4ERR_INVAL
+	}
+	return NFS4_OK
+}
+
+func validateVerifyMask(mask [2]uint32) uint32 {
+	if mask[0]&invalidVerifyAttrs0 != 0 || mask[1]&invalidVerifyAttrs1 != 0 {
+		return NFS4ERR_INVAL
+	}
+	if mask[0]&^uint32(supportedAttrs0) != 0 ||
+		mask[1]&^uint32(supportedAttrs1) != 0 {
+		return NFS4ERR_ATTRNOTSUPP
+	}
+	return NFS4_OK
+}
+
+func validateCreateAttrs(attrs Fattr4) uint32 {
+	mask := parseBitmap(attrs.Attrmask())
+	if mask[0]&^writableAttrs0 != 0 || mask[1]&^writableAttrs1 != 0 {
+		return NFS4ERR_INVAL
+	}
+	supported0 := (supportedAttrs0 | settableAttrs0) & writableAttrs0
+	supported1 := (supportedAttrs1 | settableAttrs1) & writableAttrs1
+	if mask[0]&^supported0 != 0 || mask[1]&^supported1 != 0 {
+		return NFS4ERR_ATTRNOTSUPP
+	}
+	return NFS4_OK
 }
 
 // inodeNFSType converts an InodeID type to NFSv4 type constant.
