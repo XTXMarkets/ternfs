@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"xtx/ternfs/client"
 	"xtx/ternfs/core/bufpool"
@@ -222,6 +223,53 @@ func (s *S3Server) recoverPanics(handler s3Handler) s3Handler {
 // FileEtag generates a consistent ETag for a given file ID.
 func FileEtag(id msgs.InodeId) string {
 	return fmt.Sprintf(`"%x"`, uint64(id))
+}
+
+// Modes echoed back on GET/HEAD/?attributes. TernFS has no per-inode
+// permission storage, so we emit fixed sensible defaults whose only
+// load-bearing bits are the file-type bits.
+const (
+	s3DefaultDirMode  = syscall.S_IFDIR | 0o755
+	s3DefaultFileMode = syscall.S_IFREG | 0o644
+	s3SymlinkMode     = syscall.S_IFLNK | 0o777
+)
+
+// parseAmzMetaMode reads the s3fs-fuse "x-amz-meta-mode" header and returns
+// the TernFS inode type implied by it: msgs.SYMLINK when the type bits are
+// S_IFLNK, msgs.FILE otherwise (including when the header is absent or
+// unparseable — we don't error on a malformed header). The header value is
+// parsed with base 0 (decimal, octal "0...", or hex "0x...") to match
+// s3fs-fuse's strtoll-with-base-0 reader.
+func parseAmzMetaMode(r *http.Request) msgs.InodeType {
+	v := r.Header.Get("X-Amz-Meta-Mode")
+	if v == "" {
+		return msgs.FILE
+	}
+	mode, err := strconv.ParseUint(strings.TrimSpace(v), 0, 32)
+	if err != nil {
+		return msgs.FILE
+	}
+	if mode&syscall.S_IFMT == syscall.S_IFLNK {
+		return msgs.SYMLINK
+	}
+	return msgs.FILE
+}
+
+// emitAmzMetaMode writes a fixed x-amz-meta-mode header for the given inode
+// type so s3fs-fuse can recognize the object's POSIX type on read. Without
+// this header s3fs falls back to mode 0640/0750 and would lose the symlink
+// type bit on round-trip.
+func emitAmzMetaMode(w http.ResponseWriter, typ msgs.InodeType) {
+	var mode uint32
+	switch typ {
+	case msgs.SYMLINK:
+		mode = s3SymlinkMode
+	case msgs.DIRECTORY:
+		mode = s3DefaultDirMode
+	default:
+		mode = s3DefaultFileMode
+	}
+	w.Header().Set("X-Amz-Meta-Mode", strconv.FormatUint(uint64(mode), 10))
 }
 
 // parseRange parses the HTTP Range header.
@@ -510,6 +558,7 @@ func (s *S3Server) handleGetObject(ctx context.Context, w http.ResponseWriter, r
 	} else {
 		w.Header().Set("Content-Type", "application/octet-stream")
 	}
+	emitAmzMetaMode(w, dentry.TargetId.Type())
 
 	if rangeHeader == "" {
 		w.Header().Set("Content-Length", strconv.FormatInt(int64(size), 10))
@@ -576,6 +625,7 @@ func (s *S3Server) handleGetObjectAttributes(ctx context.Context, w http.Respons
 	w.Header().Set("x-amz-object-attributes-last-modified", lastModified.Time().UTC().Format(http.TimeFormat))
 	w.Header().Set("x-amz-object-attributes-object-size", strconv.FormatInt(int64(size), 10))
 	w.Header().Set("x-amz-storage-class", "STANDARD")
+	emitAmzMetaMode(w, inode.Type())
 	w.WriteHeader(http.StatusOK)
 	return nil
 }
@@ -750,7 +800,7 @@ func (s *S3Server) handlePutObject(ctx context.Context, w http.ResponseWriter, r
 		}
 	} else {
 		fileResp := msgs.ConstructFileResp{}
-		if err := s.c.ShardRequest(s.log, ownerId.Shard(), &msgs.ConstructFileReq{Type: msgs.FILE}, &fileResp); err != nil {
+		if err := s.c.ShardRequest(s.log, ownerId.Shard(), &msgs.ConstructFileReq{Type: parseAmzMetaMode(r)}, &fileResp); err != nil {
 			return fmt.Errorf("failed to construct file: %w", err)
 		}
 		fileId := fileResp.Id
