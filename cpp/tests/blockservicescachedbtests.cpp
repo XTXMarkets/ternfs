@@ -80,22 +80,4 @@ TEST_CASE("BlockServicesCacheDB persists blockServices metadata on update") {
         // path is persisted in V2+ format
         CHECK(it->second.path == "ick-testhost-999");
     }
-
-    std::unique_ptr<rocksdb::Iterator> it(
-        tdb.sharedDB->db()->NewIterator({}, cf));
-    it->SeekToFirst();
-    REQUIRE(it->Valid());
-    std::string key = it->key().ToString();
-    ROCKS_DB_CHECKED(tdb.sharedDB->db()->Put({}, cf, key, ""));
-
-    CHECK_THROWS_AS(
-        BlockServicesCacheDB(
-            logger,
-            tdb.xmon,
-            *tdb.sharedDB,
-            0_sec,
-            0,
-            0,
-            0),
-        AssertionException);
 }

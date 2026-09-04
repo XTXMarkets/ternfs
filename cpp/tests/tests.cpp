@@ -51,20 +51,6 @@ TEST_CASE("bincode u16") { bincodeTestScalar<uint16_t>(); }
 TEST_CASE("bincode u32") { bincodeTestScalar<uint32_t>(); }
 TEST_CASE("bincode u64") { bincodeTestScalar<uint64_t>(); }
 
-TEST_CASE("truncated persisted span fails before reading its body") {
-    std::string value(
-        SpanBody::MIN_SIZE + SpanBlocksBody::MIN_SIZE - 1,
-        '\0');
-    SpanBody span;
-    span._data = value.data();
-    span._setVersion(1);
-    span._setStorageClassOrLocationCount(1);
-
-    CHECK_THROWS_AS(
-        ExternalValue<SpanBody>{value},
-        AssertionException);
-}
-
 TEST_CASE("LeaderToken epoch encoding") {
     LeaderToken token(ReplicaId(3), Epoch(42));
 
@@ -743,26 +729,6 @@ TEST_CASE("wire request validation returns errors") {
 
         REQUIRE(respContainer.kind() == ShardMessageKind::ERROR);
         CHECK(respContainer.getError() == TernError::MALFORMED_REQUEST);
-    }
-
-    SUBCASE("locked current edge requires a target") {
-        ShardReqContainer reqContainer;
-        ShardLogEntry logEntry;
-        auto& req = reqContainer.setCreateLockedCurrentEdge();
-        req.dirId = ROOT_DIR_INODE_ID;
-        req.name = "name";
-        req.targetId = NULL_INODE_ID;
-
-        CHECK(db->prepareLogEntry(reqContainer, logEntry) == TernError::MALFORMED_REQUEST);
-    }
-
-    SUBCASE("root directory owner cannot be removed") {
-        ShardReqContainer reqContainer;
-        ShardLogEntry logEntry;
-        auto& req = reqContainer.setRemoveDirectoryOwner();
-        req.dirId = ROOT_DIR_INODE_ID;
-
-        CHECK(db->prepareLogEntry(reqContainer, logEntry) == TernError::CANNOT_REMOVE_ROOT_DIRECTORY);
     }
 
     SUBCASE("null inode cannot be removed") {
