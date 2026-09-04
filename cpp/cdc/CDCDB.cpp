@@ -750,12 +750,12 @@ struct RenameFileStateMachine {
         shardReq.name = req.oldName;
         shardReq.targetId = req.targetId;
         shardReq.wasMoved = false;
-        shardReq.creationTime = state.newCreationTime();
+        shardReq.creationTime = req.oldCreationTime;
     }
 
     void afterRollback(const ShardRespContainer& resp) {
         auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : TernError::NO_ERROR;
-        if (err == TernError::TIMEOUT) {
+        if (err == TernError::TIMEOUT || err == TernError::MTIME_IS_TOO_RECENT) {
             rollback(true); // retry
         } else {
             ALWAYS_ASSERT(err == TernError::NO_ERROR);
@@ -1220,9 +1220,10 @@ struct RenameDirectoryStateMachine {
 
     void afterRollback(const ShardRespContainer& resp) {
         auto err = resp.kind() == ShardMessageKind::ERROR ? resp.getError() : TernError::NO_ERROR;
-        if (err == TernError::TIMEOUT) {
+        if (err == TernError::TIMEOUT || err == TernError::MTIME_IS_TOO_RECENT) {
             rollback(true);
         } else {
+            ALWAYS_ASSERT(err == TernError::NO_ERROR);
             env.finishWithError(state.exitError());
         }
     }

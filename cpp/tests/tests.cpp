@@ -19,6 +19,7 @@
 #include "RocksDBUtils.hpp"
 #include "SharedRocksDB.hpp"
 #include "Time.hpp"
+#include "CDCDB.hpp"
 #include "CDCKey.hpp"
 #include "Random.hpp"
 
@@ -448,6 +449,63 @@ struct TempShardDB {
     }
 };
 
+struct TempCDCDB {
+    std::string dbDir;
+    Logger logger{LogLevel::LOG_ERROR, STDERR_FILENO, false, false};
+    std::shared_ptr<XmonAgent> xmon;
+    std::unique_ptr<SharedRocksDB> sharedDB;
+    std::unique_ptr<CDCDB> db;
+    CDCStep step;
+    std::vector<CDCTxnId> txnIds;
+    uint64_t logIndex{0};
+
+    TempCDCDB() {
+        dbDir = std::string("temp-cdc-db.XXXXXX");
+        if (mkdtemp(dbDir.data()) == nullptr) {
+            throw SYSCALL_EXCEPTION("mkdtemp");
+        }
+        sharedDB = std::make_unique<SharedRocksDB>(
+            logger,
+            xmon,
+            dbDir + "/db",
+            dbDir + "/db-statistics.txt");
+        sharedDB->registerCFDescriptors(CDCDB::getColumnFamilyDescriptors());
+        rocksdb::Options options;
+        options.create_if_missing = true;
+        options.create_missing_column_families = true;
+        options.compression = rocksdb::kLZ4Compression;
+        sharedDB->openTransactionDB(options);
+        db = std::make_unique<CDCDB>(logger, xmon, *sharedDB);
+    }
+
+    ~TempCDCDB() {
+        db.reset();
+        sharedDB.reset();
+        std::error_code error;
+        std::filesystem::remove_all(dbDir, error);
+    }
+
+    void apply(
+        std::vector<CDCReqContainer>&& requests,
+        std::vector<CDCShardResp>&& responses
+    ) {
+        std::vector<CDCLogEntry> entries;
+        CDCLogEntry::prepareLogEntries(requests, responses, 1 << 20, entries);
+        ALWAYS_ASSERT(entries.size() == 1);
+        entries[0].logIdx(++logIndex);
+        db->applyLogEntry(false, entries[0], step, txnIds);
+    }
+
+    template<typename SetResponse>
+    void respond(CDCTxnId txnId, SetResponse setResponse) {
+        std::vector<CDCShardResp> responses(1);
+        responses[0].txnId = txnId;
+        responses[0].checkPoint = LogIdx(0);
+        setResponse(responses[0].resp);
+        apply({}, std::move(responses));
+    }
+};
+
 #define NO_TERN_ERROR(expr) \
     do { \
         TernError err = (expr); \
@@ -459,6 +517,101 @@ struct TempShardDB {
         (expr); \
         ALWAYS_ASSERT((int)((resp).kind()) != 0, #expr ", unexpected error %s", (resp).getError()); \
     } while(false)
+
+TEST_CASE("file rename rollback unlocks the source edge version") {
+    TempCDCDB db;
+    const InodeId oldOwner(InodeType::DIRECTORY, ShardId(1), 1);
+    const InodeId newOwner(InodeType::DIRECTORY, ShardId(2), 2);
+    const InodeId target(InodeType::FILE, ShardId(3), 3);
+    const TernTime oldCreationTime(123);
+
+    std::vector<CDCReqContainer> requests(1);
+    auto& rename = requests[0].setRenameFile();
+    rename.targetId = target;
+    rename.oldOwnerId = oldOwner;
+    rename.oldName = "old";
+    rename.oldCreationTime = oldCreationTime;
+    rename.newOwnerId = newOwner;
+    rename.newName = "new";
+    db.apply(std::move(requests), {});
+
+    REQUIRE(db.txnIds.size() == 1);
+    const auto txnId = db.txnIds[0];
+    REQUIRE(db.step.runningTxns.size() == 1);
+    CHECK(db.step.runningTxns[0].second.req.kind() == ShardMessageKind::LOCK_CURRENT_EDGE);
+
+    db.respond(txnId, [](ShardRespContainer& resp) {
+        resp.setLockCurrentEdge();
+    });
+    REQUIRE(db.step.runningTxns.size() == 1);
+    CHECK(db.step.runningTxns[0].second.req.kind() == ShardMessageKind::FULL_READ_DIR);
+
+    db.respond(txnId, [](ShardRespContainer& resp) {
+        resp.setError() = TernError::DIRECTORY_NOT_FOUND;
+    });
+    REQUIRE(db.step.runningTxns.size() == 1);
+    const auto& rollback = db.step.runningTxns[0].second.req.getUnlockCurrentEdge();
+    CHECK(rollback.dirId == oldOwner);
+    CHECK(rollback.name == BincodeBytes("old"));
+    CHECK(rollback.targetId == target);
+    CHECK(rollback.creationTime == oldCreationTime);
+    CHECK_FALSE(rollback.wasMoved);
+
+    db.respond(txnId, [](ShardRespContainer& resp) {
+        resp.setError() = TernError::MTIME_IS_TOO_RECENT;
+    });
+    REQUIRE(db.step.runningTxns.size() == 1);
+    CHECK(db.step.runningTxns[0].second.repeated);
+    CHECK(
+        db.step.runningTxns[0].second.req.getUnlockCurrentEdge().creationTime ==
+        oldCreationTime);
+
+    db.respond(txnId, [](ShardRespContainer& resp) {
+        resp.setUnlockCurrentEdge();
+    });
+    REQUIRE(db.step.finishedTxns.size() == 1);
+    CHECK(db.step.finishedTxns[0].second.kind() == CDCMessageKind::ERROR);
+    CHECK(db.step.finishedTxns[0].second.getError() == TernError::NEW_DIRECTORY_NOT_FOUND);
+}
+
+TEST_CASE("directory rename rollback failure is fatal") {
+    TempCDCDB db;
+    const InodeId oldOwner(InodeType::DIRECTORY, ShardId(1), 1);
+    const InodeId target(InodeType::DIRECTORY, ShardId(3), 3);
+
+    std::vector<CDCReqContainer> requests(1);
+    auto& rename = requests[0].setRenameDirectory();
+    rename.targetId = target;
+    rename.oldOwnerId = oldOwner;
+    rename.oldName = "old";
+    rename.oldCreationTime = TernTime(123);
+    rename.newOwnerId = ROOT_DIR_INODE_ID;
+    rename.newName = "new";
+    db.apply(std::move(requests), {});
+
+    REQUIRE(db.txnIds.size() == 1);
+    const auto txnId = db.txnIds[0];
+    db.respond(txnId, [](ShardRespContainer& resp) {
+        resp.setLockCurrentEdge();
+    });
+    db.respond(txnId, [](ShardRespContainer& resp) {
+        resp.setError() = TernError::DIRECTORY_NOT_FOUND;
+    });
+    REQUIRE(db.step.runningTxns.size() == 1);
+    CHECK(db.step.runningTxns[0].second.req.kind() == ShardMessageKind::UNLOCK_CURRENT_EDGE);
+
+    db.respond(txnId, [](ShardRespContainer& resp) {
+        resp.setError() = TernError::MTIME_IS_TOO_RECENT;
+    });
+    REQUIRE(db.step.runningTxns.size() == 1);
+    CHECK(db.step.runningTxns[0].second.repeated);
+
+    CHECK_THROWS_AS(
+        db.respond(txnId, [](ShardRespContainer& resp) {
+            resp.setError() = TernError::MISMATCHING_CREATION_TIME;
+        }),
+        AssertionException);
+}
 
 TEST_CASE("touch file") {
     TempShardDB db(LogLevel::LOG_ERROR, ShardId(0));
