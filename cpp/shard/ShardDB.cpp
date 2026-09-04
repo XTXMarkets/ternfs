@@ -1203,9 +1203,7 @@ struct ShardDBImpl {
         if (!validName(req.name.ref())) {
             return TernError::BAD_NAME;
         }
-        if (req.targetId == NULL_INODE_ID) {
-            return TernError::MALFORMED_REQUEST;
-        }
+        ALWAYS_ASSERT(req.targetId != NULL_INODE_ID);
         entry.dirId = req.dirId;
         entry.targetId = req.targetId;
         entry.name = req.name;
@@ -1249,9 +1247,7 @@ struct ShardDBImpl {
         if (req.dirId.shard() != _shid) {
             return TernError::BAD_SHARD;
         }
-        if (req.dirId == ROOT_DIR_INODE_ID) {
-            return TernError::CANNOT_REMOVE_ROOT_DIRECTORY;
-        }
+        ALWAYS_ASSERT(req.dirId != ROOT_DIR_INODE_ID);
         entry.dirId = req.dirId;
         entry.info = req.info;
         return TernError::NO_ERROR;
