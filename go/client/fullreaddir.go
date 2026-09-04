@@ -53,6 +53,7 @@ func (c *Client) fullReadDir(
 func dirEdgesPage(
 	resp *msgs.FullReadDirResp,
 	current bool,
+	cursor DirEdgesCursor,
 ) (*DirEdgesPage, error) {
 	end := len(resp.Results)
 	for i, edge := range resp.Results {
@@ -73,6 +74,9 @@ func dirEdgesPage(
 	}
 	if current && next.StartTime != 0 {
 		return nil, fmt.Errorf("current directory edge cursor has a snapshot time")
+	}
+	if next == cursor {
+		return nil, fmt.Errorf("FULL_READ_DIR cursor did not advance")
 	}
 	page.Next = &next
 	return page, nil
@@ -104,7 +108,7 @@ func (c *Client) readDirEdges(
 	if err != nil {
 		return nil, err
 	}
-	return dirEdgesPage(resp, current)
+	return dirEdgesPage(resp, current, cursor)
 }
 
 // ReadCurrentDirEdgesPage reads one MTU-bounded page of current directory edges.

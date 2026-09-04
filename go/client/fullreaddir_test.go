@@ -24,8 +24,15 @@ func TestDirEdgesPageStopsBeforeCurrentSection(t *testing.T) {
 		Name:     "current",
 	}
 	page, err := dirEdgesPage(
-		&msgs.FullReadDirResp{Results: []msgs.Edge{retained, current}},
+		&msgs.FullReadDirResp{
+			Next: msgs.FullReadDirCursor{
+				Current:   true,
+				StartName: "current",
+			},
+			Results: []msgs.Edge{retained, current},
+		},
 		false,
+		DirEdgesCursor{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -35,6 +42,43 @@ func TestDirEdgesPageStopsBeforeCurrentSection(t *testing.T) {
 	}
 	if page.Next != nil {
 		t.Fatalf("next = %#v, want nil", page.Next)
+	}
+}
+
+func TestDirEdgesPagePreservesSameSectionCursor(t *testing.T) {
+	page, err := dirEdgesPage(
+		&msgs.FullReadDirResp{
+			Next: msgs.FullReadDirCursor{
+				StartName: "next",
+				StartTime: 20,
+			},
+		},
+		false,
+		DirEdgesCursor{StartName: "previous", StartTime: 30},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := DirEdgesCursor{StartName: "next", StartTime: 20}
+	if page.Next == nil || *page.Next != want {
+		t.Fatalf("next = %#v, want %#v", page.Next, want)
+	}
+}
+
+func TestDirEdgesPageRejectsUnchangedCursor(t *testing.T) {
+	cursor := DirEdgesCursor{StartName: "name", StartTime: 20}
+	_, err := dirEdgesPage(
+		&msgs.FullReadDirResp{
+			Next: msgs.FullReadDirCursor{
+				StartName: cursor.StartName,
+				StartTime: cursor.StartTime,
+			},
+		},
+		false,
+		cursor,
+	)
+	if err == nil || err.Error() != "FULL_READ_DIR cursor did not advance" {
+		t.Fatalf("dirEdgesPage() error = %v", err)
 	}
 }
 
