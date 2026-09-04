@@ -213,6 +213,139 @@ func setupSpan(
 	return &SpanWithBlockServices{BlockServices: []msgs.BlockService{{}}, Span: span}, fetcher
 }
 
+func TestReadMirroredBoundaries(t *testing.T) {
+	const fileSize = 49_544
+	contents := make([]byte, fileSize)
+	for i := range contents {
+		contents[i] = byte(i)
+	}
+	block := append([]byte(nil), contents...)
+	block = append(block, make([]byte, 13*int(msgs.TERN_PAGE_SIZE)-len(block))...)
+	block = insertPageCrcs(block)
+
+	blockService := msgs.BlockService{
+		Id:    1,
+		Addrs: msgs.AddrsInfo{Addr1: msgs.IpPort{Port: 1}},
+	}
+	span := SpanWithBlockServices{
+		BlockServices: []msgs.BlockService{blockService},
+		Span: &msgs.FetchedSpan{
+			Header: msgs.FetchedSpanHeader{Size: fileSize},
+			Body: &msgs.FetchedBlocksSpan{
+				Parity:   parity.MkParity(1, 3),
+				Stripes:  1,
+				CellSize: 13 * msgs.TERN_PAGE_SIZE,
+				Blocks:   []msgs.FetchedBlock{{}},
+			},
+		},
+	}
+	reader := FileReader{
+		fileSize: fileSize,
+		spans:    []SpanWithBlockServices{span},
+	}
+	logger := log.NewLogger(os.Stderr, &log.LoggerOptions{PrintQuietAlerts: true})
+
+	tests := []struct {
+		name       string
+		offset     uint64
+		bufferSize int
+		wantN      int
+		wantErr    error
+	}{
+		{name: "zero-length read"},
+		{name: "small read", offset: 123, bufferSize: 100, wantN: 100},
+		{name: "whole file", bufferSize: fileSize, wantN: fileSize},
+		{name: "buffer extends one byte past EOF", bufferSize: fileSize + 1, wantN: fileSize},
+		{name: "read crosses EOF", offset: fileSize - 1, bufferSize: 2, wantN: 1},
+		{name: "oversized final read", offset: 45_056, bufferSize: 1 << 20, wantN: fileSize - 45_056},
+		{name: "read at EOF", offset: fileSize, bufferSize: 1, wantErr: io.EOF},
+		{name: "read entirely past EOF", offset: fileSize + 1, bufferSize: 1 << 20, wantErr: io.EOF},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			client := Client{}
+			client.fetchBlockProcessors.blockServiceBits = 5
+			proc := &blocksProcessor{reqChan: make(chan *clientBlockRequest, 1)}
+			client.fetchBlockProcessors.processors.Store(
+				blocksProcessorKey{
+					blockServiceKey: uint64(blockService.Id),
+					addrs:           blockService.Addrs,
+				},
+				proc,
+			)
+
+			fetchReqChan := make(chan *msgs.FetchBlockWithCrcReq, 1)
+			stop := make(chan struct{})
+			serverDone := make(chan struct{})
+			go func() {
+				defer close(serverDone)
+				select {
+				case req := <-proc.reqChan:
+					fetchReq := req.req.(*msgs.FetchBlockWithCrcReq)
+					fetchReqChan <- fetchReq
+					if fetchReq.Offset+fetchReq.Count > 13*msgs.TERN_PAGE_SIZE {
+						req.resp.done(logger, nil, nil, nil, msgs.BLOCK_FETCH_OUT_OF_BOUNDS)
+						return
+					}
+					from := fetchReq.Offset / msgs.TERN_PAGE_SIZE * msgs.TERN_PAGE_WITH_CRC_SIZE
+					count := fetchReq.Count / msgs.TERN_PAGE_SIZE * msgs.TERN_PAGE_WITH_CRC_SIZE
+					n, err := req.resp.additionalBodyWriter.ReadFrom(
+						bytes.NewReader(block[from : from+count]),
+					)
+					if err == nil && n != int64(count) {
+						err = io.ErrUnexpectedEOF
+					}
+					req.resp.done(logger, nil, nil, nil, err)
+				case <-stop:
+				}
+			}()
+
+			p := make([]byte, tc.bufferSize)
+			n, err := reader.Read(
+				logger,
+				&client,
+				nil,
+				bufpool.NewBufPool(),
+				tc.offset,
+				p,
+			)
+			close(stop)
+			<-serverDone
+
+			if n != tc.wantN || err != tc.wantErr {
+				t.Fatalf("read returned n=%d err=%v, want n=%d err=%v", n, err, tc.wantN, tc.wantErr)
+			}
+			if n > 0 && !bytes.Equal(p[:n], contents[int(tc.offset):int(tc.offset)+n]) {
+				t.Fatal("read returned incorrect contents")
+			}
+
+			var fetchReq *msgs.FetchBlockWithCrcReq
+			select {
+			case fetchReq = <-fetchReqChan:
+			default:
+			}
+			if (fetchReq != nil) != (tc.wantN > 0) {
+				t.Fatalf("fetch occurred=%v, want %v", fetchReq != nil, tc.wantN > 0)
+			}
+			if fetchReq != nil {
+				wantOffset := uint32(tc.offset / uint64(msgs.TERN_PAGE_SIZE) * uint64(msgs.TERN_PAGE_SIZE))
+				readEnd := tc.offset + uint64(tc.wantN)
+				wantEnd := uint32((readEnd + uint64(msgs.TERN_PAGE_SIZE) - 1) / uint64(msgs.TERN_PAGE_SIZE) * uint64(msgs.TERN_PAGE_SIZE))
+				if fetchReq.Offset != wantOffset || fetchReq.Count != wantEnd-wantOffset {
+					t.Fatalf(
+						"fetched offset=%d count=%d, want offset=%d count=%d",
+						fetchReq.Offset,
+						fetchReq.Count,
+						wantOffset,
+						wantEnd-wantOffset,
+					)
+				}
+			}
+		})
+	}
+}
+
 type flakyPageCache struct {
 	r wyhash.Rand
 	c PageCache
