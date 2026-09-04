@@ -83,8 +83,10 @@ func TestDirEdgesPageRejectsUnchangedCursor(t *testing.T) {
 }
 
 func TestSemanticDirEdgeAPIsRejectInvalidArguments(t *testing.T) {
-	_, err := (&Client{}).ReadCurrentDirEdgesPage(
+	client := &Client{}
+	_, err := ReadCurrentDirEdgesPage(
 		nil,
+		client,
 		msgs.ROOT_DIR_INODE_ID,
 		DirEdgesCursor{StartName: "name", StartTime: 1},
 	)
@@ -92,8 +94,9 @@ func TestSemanticDirEdgeAPIsRejectInvalidArguments(t *testing.T) {
 		t.Fatalf("ReadCurrentDirEdgesPage() error = %v", err)
 	}
 
-	err = (&Client{}).WalkDirNameHistory(
+	err = WalkDirNameHistory(
 		nil,
+		client,
 		msgs.ROOT_DIR_INODE_ID,
 		"",
 		func([]msgs.Edge) error { return nil },

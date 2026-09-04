@@ -112,29 +112,32 @@ func (c *Client) readDirEdges(
 }
 
 // ReadCurrentDirEdgesPage reads one MTU-bounded page of current directory edges.
-func (c *Client) ReadCurrentDirEdgesPage(
+func ReadCurrentDirEdgesPage(
 	logger *log.Logger,
+	client *Client,
 	dirId msgs.InodeId,
 	cursor DirEdgesCursor,
 ) (*DirEdgesPage, error) {
-	return c.readDirEdges(logger, dirId, true, cursor)
+	return client.readDirEdges(logger, dirId, true, cursor)
 }
 
 // ReadRetainedDirEdgesPage reads one MTU-bounded page of retained directory
 // edges. Tombstones and sentinel values are preserved for the caller to
 // interpret.
-func (c *Client) ReadRetainedDirEdgesPage(
+func ReadRetainedDirEdgesPage(
 	logger *log.Logger,
+	client *Client,
 	dirId msgs.InodeId,
 	cursor DirEdgesCursor,
 ) (*DirEdgesPage, error) {
-	return c.readDirEdges(logger, dirId, false, cursor)
+	return client.readDirEdges(logger, dirId, false, cursor)
 }
 
 // WalkDirNameHistory walks the current and retained edges for one name,
 // newest first. Tombstones and sentinel values are preserved.
-func (c *Client) WalkDirNameHistory(
+func WalkDirNameHistory(
 	logger *log.Logger,
+	client *Client,
 	dirId msgs.InodeId,
 	name string,
 	visit func([]msgs.Edge) error,
@@ -150,7 +153,7 @@ func (c *Client) WalkDirNameHistory(
 		if cursor.Current {
 			flags |= msgs.FULL_READ_DIR_CURRENT
 		}
-		resp, err := c.fullReadDir(
+		resp, err := client.fullReadDir(
 			logger,
 			dirId,
 			flags,
