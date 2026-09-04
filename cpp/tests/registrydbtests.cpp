@@ -623,6 +623,24 @@ TEST_CASE("RegisterBlockServices") {
     REQUIRE(writeResults.size() == 1);
     CHECK(writeResults[0].err == TernError::NO_ERROR);
 
+    auto heartbeat = [&](TernTime heartbeatTime) {
+        logEntries.clear();
+        writeResults.clear();
+
+        auto& entry = logEntries.emplace_back();
+        entry.idx = db->lastAppliedLogEntry() + 1;
+        RegistryDBLogEntry registryLogEntry;
+        registryLogEntry.entryTime = heartbeatTime;
+        registryLogEntry.requests.els.emplace_back().setRegisterBlockServices().blockServices.els.emplace_back(info);
+
+        entry.value.resize(registryLogEntry.packedSize());
+        BincodeBuf buf((char*)entry.value.data(), entry.value.size());
+        registryLogEntry.pack(buf);
+        buf.ensureFinished();
+
+        db->processLogEntries(logEntries, writeResults);
+    };
+
     SUBCASE("registerNew") {
         std::vector<FullBlockServiceInfo> services;
         db->blockServices(services);
@@ -647,6 +665,43 @@ TEST_CASE("RegisterBlockServices") {
             }
         }
         CHECK(found);
+    }
+
+    SUBCASE("updatePathOnHeartbeat") {
+        auto heartbeatTime = now + 1_sec;
+        info.path = "/test/new-path";
+        heartbeat(heartbeatTime);
+
+        REQUIRE(writeResults.size() == 1);
+        CHECK(writeResults[0].err == TernError::NO_ERROR);
+
+        std::vector<FullBlockServiceInfo> services;
+        db->blockServices(services);
+        auto service = std::find_if(services.begin(), services.end(),
+            [&](const FullBlockServiceInfo& candidate) { return candidate.id == info.id; });
+        REQUIRE(service != services.end());
+        CHECK(service->path == info.path);
+        CHECK(service->lastInfoChange == heartbeatTime);
+    }
+
+    SUBCASE("rejectPathChangeWhenStablePathEnforced") {
+        db.close();
+        options.enforceStableBlockServicePath = true;
+        db.open(options);
+
+        info.path = "/test/new-path";
+        heartbeat(now + 1_sec);
+
+        REQUIRE(writeResults.size() == 1);
+        CHECK(writeResults[0].err == TernError::INCONSISTENT_BLOCK_SERVICE_REGISTRATION);
+
+        std::vector<FullBlockServiceInfo> services;
+        db->blockServices(services);
+        auto service = std::find_if(services.begin(), services.end(),
+            [&](const FullBlockServiceInfo& candidate) { return candidate.id == info.id; });
+        REQUIRE(service != services.end());
+        CHECK(service->path == "/test/path");
+        CHECK(service->lastInfoChange == now);
     }
 }
 
@@ -1351,4 +1406,3 @@ TEST_CASE("CdcLeaderClearsOtherReplicas") {
         }
     }
 }
-

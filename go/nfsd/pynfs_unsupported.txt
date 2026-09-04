@@ -1,0 +1,193 @@
+# Byte-range locking is not supported. Using nolock would also exclude
+# tests of related state and error handling that remain useful.
+LKT1
+LKT2a
+LKT2d
+LKT3
+LKT4
+LKT5
+LKT6
+LKT7
+LKT8
+LKT9
+LKTOVER
+LKU1
+LKU2
+LKU3
+LKU4
+LKU5
+LKU6
+LKU6b
+LKU7
+LKU8
+LKU9
+LKU10
+LKUNONE
+LKUOVER
+LKUSPLIT
+LOCK1
+LOCK10
+LOCK11
+LOCK12a
+LOCK12b
+LOCK13
+LOCK14
+LOCK15
+LOCK16
+LOCK17
+LOCK20
+LOCK23
+LOCK24
+LOCK3
+LOCK4
+LOCK5
+LOCK6
+LOCK7
+LOCK8a
+LOCK8b
+LOCK9a
+LOCK9b
+LOCK9c
+LOCKCHGD
+LOCKCHGU
+LOCKHELD
+LOCKMRG
+LOCKRNG
+RLOWN1
+RLOWN2
+RLOWN3
+RPLY5
+RPLY6
+RPLY7
+RPLY8
+CLOSE9
+
+# OPEN_DOWNGRADE is not implemented because nfsd does not retain the
+# open share state needed to reduce an existing open. Keep the whole
+# operation together here rather than reporting NFS4ERR_NOTSUPP as ten
+# distinct protocol failures.
+OPDG1
+OPDG2
+OPDG3
+OPDG4
+OPDG5
+OPDG6
+OPDG7
+OPDG8
+OPDG10
+OPDG11
+
+# Hard links are not supported. Using nolink would also exclude tests of
+# related filehandle and error behavior that remain useful.
+LINK1a
+LINK1d
+LINK1r
+LINK2
+LINK3
+LINK4a
+LINK4r
+LINK5
+LINK6
+LINK7
+LINK9
+LINKS
+
+# TernFS does not support changing ownership or mode after creation.
+# These tests require those metadata updates either directly or as part
+# of a mixed SETATTR request.
+OPEN20
+SATT1d
+SATT1r
+SATT2a
+SATT2b
+SATT2c
+SATT13
+SATT14
+SATT15
+SATT16
+SATT17
+SATT18
+
+# NFS writes currently target a staging file for a newly created inode.
+# Existing files cannot be overwritten, requested stable-write modes are
+# not implemented, and the write path does not implement the full OPEN
+# state and share-deny model.
+OPEN2
+OPEN4
+WRT1
+WRT2
+WRT3
+WRT4
+WRT8
+WRT9
+WRT11
+WRT12
+WRT19
+
+# A newly created file is deliberately absent from its directory until
+# CLOSE streams and links the staged contents. Pynfs commonly creates a
+# file, leaves it open, and immediately resolves or mutates the
+# pathname. These tests then fail during setup with NFS4ERR_NOENT,
+# before reaching the behavior they were intended to test.
+CLOSE8
+OPEN3
+OPEN18
+OPEN21
+OPEN22
+OPEN24
+OPEN25
+OPEN26
+OPEN28
+OPEN29
+OPEN31
+RENEW3
+RDDR2
+RDDR3
+RM1r
+RNM1r
+RNM12
+RNM14
+RNM15
+RNM17
+RNM19
+RNM21
+SATT3d
+SATT6r
+SATT11r
+
+# TernFS rename primitives reject an existing destination. RNM13
+# requires atomically replacing an empty directory in the same parent.
+# Emulating that with separate REMOVE and RENAME requests could lose the
+# destination if the second request failed.
+RNM13
+
+# These retransmit the same RPC XID on the same still-open connection with
+# no intervening disconnect, and expect the original reply back from a
+# duplicate-request cache. st_replay.py's own _replay() helper says as
+# much: "no 4.0 client should really be replaying like this without
+# reconnecting first, so this test is really acting like a buggy client".
+# A real replay arrives on a new connection, quite possibly to a different
+# server behind a load balancer, so a same-connection or single-process
+# cache would not help a real client and we are not implementing one.
+# The mutations these tests replay (CREATE, CLOSE) are already idempotent
+# at the TernFS shard level independent of nfsd, which is what actually
+# protects a genuine reconnect-and-retry.
+RPLY11
+RPLY14
+
+# OPEN4_SHARE_ACCESS/DENY (share reservations) assume a single mutable
+# file that concurrent openers can contend over. TernFS has no such
+# object: a write-open constructs an independent transient file, and
+# whichever client's CLOSE (LinkFile) reaches the owning shard last wins
+# the name — see _createCurrentEdge's creation-time arbitration in
+# cpp/shard/ShardDB.cpp. There is no real conflict for share-deny bits to
+# protect, and enforcing them in nfsd's memory would only be correct on a
+# single process, which is worse than not enforcing them at all across a
+# fleet. OPEN30 verifies OPEN replay first, but its final assertion also
+# requires a new share-deny conflict, so the test cannot be separated from
+# this unsupported model. This is a permanent, deliberate gap, not a
+# backlog item.
+OPEN23
+OPEN23b
+OPEN27
+OPEN30

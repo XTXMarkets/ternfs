@@ -118,7 +118,9 @@ func TestMain(m *testing.M) {
 		})
 	}
 	fmt.Println("waiting for block services...")
-	client.WaitForBlockServices(ternLogger, registryAddr, failureDomains*servicesPerDomain, true, 30*time.Second)
+	if _, err := client.WaitForBlockServices(ternLogger, registryAddr, failureDomains*servicesPerDomain, 30*time.Second); err != nil {
+		panic(fmt.Errorf("failed to wait for block services: %w", err))
+	}
 
 	// Start CDC (single replica).
 	procs.StartCDC(ternLogger, *repoDir, &managedprocess.CDCOpts{
@@ -132,16 +134,18 @@ func TestMain(m *testing.M) {
 	})
 
 	// Start 256 shards (single replica each).
+	noWritableDelay := time.Duration(0)
 	for i := 0; i < 256; i++ {
 		shrid := msgs.MakeShardReplicaId(msgs.ShardId(i), 0)
 		procs.StartShard(ternLogger, *repoDir, &managedprocess.ShardOpts{
-			Exe:             cppExes.ShardExe,
-			Dir:             path.Join(dataDir, fmt.Sprintf("shard_%03d", i)),
-			LogLevel:        log.INFO,
-			Shrid:           shrid,
-			RegistryAddress: registryAddr,
-			Addr1:           "127.0.0.1:0",
-			LogsDBFlags:     []string{"-logsdb-leader", "-logsdb-no-replication", "-logsdb-initial-start"},
+			Exe:                       cppExes.ShardExe,
+			Dir:                       path.Join(dataDir, fmt.Sprintf("shard_%03d", i)),
+			LogLevel:                  log.INFO,
+			Shrid:                     shrid,
+			RegistryAddress:           registryAddr,
+			Addr1:                     "127.0.0.1:0",
+			BlockServiceWritableDelay: &noWritableDelay,
+			LogsDBFlags:               []string{"-logsdb-leader", "-logsdb-no-replication", "-logsdb-initial-start"},
 		})
 	}
 
@@ -158,9 +162,18 @@ func TestMain(m *testing.M) {
 		}
 	}()
 
+	var closeProcs sync.Once
+	cleanupProcs := func() {
+		closeProcs.Do(procs.Close)
+	}
+	timeoutCleanup := cleanupBeforeTestTimeout(cleanupProcs)
+
 	code := m.Run()
 
-	procs.Close()
+	if timeoutCleanup != nil {
+		timeoutCleanup.Stop()
+	}
+	cleanupProcs()
 	logFile.Close()
 	if code == 0 {
 		os.RemoveAll(dataDir)
@@ -168,6 +181,24 @@ func TestMain(m *testing.M) {
 		fmt.Printf("test data preserved at %s\n", dataDir)
 	}
 	os.Exit(code)
+}
+
+func cleanupBeforeTestTimeout(cleanup func()) *time.Timer {
+	timeoutFlag := flag.Lookup("test.timeout")
+	if timeoutFlag == nil {
+		return nil
+	}
+	timeout, err := time.ParseDuration(timeoutFlag.Value.String())
+	if err != nil || timeout <= 0 {
+		return nil
+	}
+
+	const cleanupGrace = 30 * time.Second
+	grace := min(cleanupGrace, timeout/2)
+	return time.AfterFunc(timeout-grace, func() {
+		fmt.Fprintf(os.Stderr, "test timeout approaching; terminating cluster processes\n")
+		cleanup()
+	})
 }
 
 // startTernTestServer creates an NFS server backed by the shared TernFS cluster.

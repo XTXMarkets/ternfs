@@ -943,7 +943,7 @@ public:
     }
 
     void _sendWaitStateAppliedResponses() {
-        auto lastApplied = _logsDB.getLastReleased();
+        auto lastApplied = _currentLogIndex;
         for(auto it = _waitStateRequests.begin(); it != _waitStateRequests.end(); ) {
             if (lastApplied < it->first.first.u64) {
                 break;

@@ -907,6 +907,7 @@ static int flush_and_link(struct ternfs_inode *enode, struct dentry *parent, con
     if (err < 0) { goto out; }
 
     down(&enode->file.flushing_span_sema);
+    up(&enode->file.flushing_span_sema);
     file_is_alive_and_flushing = true;
 
     // the requests might have failed
