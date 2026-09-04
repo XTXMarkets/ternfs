@@ -1199,8 +1199,7 @@ public:
                                             break;
                                         }
                                         default:
-                                            LOG_ERROR(_env, "unexpected response kind %s for request kind %s", resp.body.kind(), request.msg.body.kind());
-                                            resp.body.setError() = TernError::MALFORMED_RESPONSE;
+                                            ALWAYS_ASSERT(false, "Unexpected response kind %s for request kind %s", resp.body.kind(), request.msg.body.kind());
                                     }
                                 }
                                 packShardResponse(_env, _shared, _shared.sock().addr(), _sender, dropArtificially, request, resp);
@@ -1597,9 +1596,11 @@ public:
                 // clients will retry
                 continue;
             }
-            ShardLogEntry entry;
+            auto& entry = _shardEntries.emplace_back();
+
             auto err = _shared.shardDB.prepareLogEntry(req.msg.body, entry);
             if (unlikely(err != TernError::NO_ERROR)) {
+                _shardEntries.pop_back(); // back out the log entry
                 LOG_ERROR(_env, "error preparing log entry for request: %s from: %s err: %s", req.msg, req.clientAddr, err);
                 // depending on protocol we need different kind of responses
                 bool dropArtificially = _packetDropRand.generate64() % 10'000 < _outgoingPacketDropProbability;
@@ -1633,14 +1634,12 @@ public:
                 }
                 continue;
             }
-            entry.idx = _currentLogIndex + _inFlightEntries.size() + _shardEntries.size() + 1;
-            auto entryIdx = entry.idx;
-            _shardEntries.emplace_back(std::move(entry));
+            entry.idx = _currentLogIndex + _inFlightEntries.size() + _shardEntries.size();
             // requests with id 0 are "one off, don't want response, will not retry" so we assume that if we receive it twice we need to execute it twice
             if (req.msg.id != 0) {
                 _inFlightRequestKeys.insert(InFlightRequestKey{req.msg.id, req.clientAddr});
             }
-            _logIdToShardRequest.insert({entryIdx.u64, std::move(req)});
+            _logIdToShardRequest.insert({entry.idx.u64, std::move(req)});
         }
 
         for(auto& req : _strongConsistencyReadRequests) {
@@ -1797,8 +1796,7 @@ public:
                                 break;
                             }
                             default:
-                                LOG_ERROR(_env, "unexpected response kind %s for request kind %s", forwarded_resp.body.kind(), req.msg.body.kind());
-                                forwarded_resp.body.setError() = TernError::MALFORMED_RESPONSE;
+                                ALWAYS_ASSERT(false, "Unexpected response kind %s for request kind %s", forwarded_resp.body.kind(), req.msg.body.kind());
                         }
                     }
                     packShardResponse(_env, _shared, _shared.sock().addr(), _sender, dropArtificially, req, forwarded_resp);
