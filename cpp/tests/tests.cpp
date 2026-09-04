@@ -701,6 +701,76 @@ TEST_CASE("fullreaddir backwards without same_name") {
     }
 }
 
+TEST_CASE("wire request validation returns errors") {
+    TempShardDB db(LogLevel::LOG_ERROR, ShardId(0));
+
+    SUBCASE("fullreaddir same name requires a name") {
+        ShardReqContainer reqContainer;
+        ShardRespContainer respContainer;
+        auto& req = reqContainer.setFullReadDir();
+        req.dirId = ROOT_DIR_INODE_ID;
+        req.flags = FULL_READ_DIR_SAME_NAME;
+
+        db->read(reqContainer, respContainer);
+
+        REQUIRE(respContainer.kind() == ShardMessageKind::ERROR);
+        CHECK(respContainer.getError() == TernError::MALFORMED_REQUEST);
+    }
+
+    SUBCASE("fullreaddir current cursor cannot have a start time") {
+        ShardReqContainer reqContainer;
+        ShardRespContainer respContainer;
+        auto& req = reqContainer.setFullReadDir();
+        req.dirId = ROOT_DIR_INODE_ID;
+        req.flags = FULL_READ_DIR_CURRENT;
+        req.startTime = TernTime(1);
+
+        db->read(reqContainer, respContainer);
+
+        REQUIRE(respContainer.kind() == ShardMessageKind::ERROR);
+        CHECK(respContainer.getError() == TernError::MALFORMED_REQUEST);
+    }
+
+    SUBCASE("null inode cannot be removed") {
+        ShardReqContainer reqContainer;
+        ShardLogEntry logEntry;
+        auto& req = reqContainer.setRemoveInode();
+        req.id = NULL_INODE_ID;
+
+        CHECK(db->prepareLogEntry(reqContainer, logEntry) == TernError::MALFORMED_REQUEST);
+    }
+
+    SUBCASE("swap blocks requires distinct files") {
+        ShardReqContainer reqContainer;
+        ShardLogEntry logEntry;
+        auto& req = reqContainer.setSwapBlocks();
+        req.fileId1 = InodeId(InodeType::FILE, ShardId(0), 1);
+        req.fileId2 = req.fileId1;
+
+        CHECK(db->prepareLogEntry(reqContainer, logEntry) == TernError::SAME_SOURCE_AND_DESTINATION);
+    }
+
+    SUBCASE("swap spans requires distinct files") {
+        ShardReqContainer reqContainer;
+        ShardLogEntry logEntry;
+        auto& req = reqContainer.setSwapSpans();
+        req.fileId1 = InodeId(InodeType::FILE, ShardId(0), 1);
+        req.fileId2 = req.fileId1;
+
+        CHECK(db->prepareLogEntry(reqContainer, logEntry) == TernError::SAME_SOURCE_AND_DESTINATION);
+    }
+
+    SUBCASE("add span location requires distinct files") {
+        ShardReqContainer reqContainer;
+        ShardLogEntry logEntry;
+        auto& req = reqContainer.setAddSpanLocation();
+        req.fileId1 = InodeId(InodeType::FILE, ShardId(0), 1);
+        req.fileId2 = req.fileId1;
+
+        CHECK(db->prepareLogEntry(reqContainer, logEntry) == TernError::SAME_SOURCE_AND_DESTINATION);
+    }
+}
+
 TEST_CASE("test fmt") {
     {
         std::stringstream ss;
