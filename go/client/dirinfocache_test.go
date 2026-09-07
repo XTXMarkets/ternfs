@@ -5,9 +5,9 @@
 package client
 
 import (
+	"github.com/XTXMarkets/ternfs/go/core/assert"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"testing"
-	"xtx/ternfs/core/assert"
-	"xtx/ternfs/msgs"
 )
 
 func TestLRU(t *testing.T) {

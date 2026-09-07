@@ -18,6 +18,13 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/core/bincode"
+	"github.com/XTXMarkets/ternfs/go/core/bufpool"
+	"github.com/XTXMarkets/ternfs/go/core/crc32c"
+	"github.com/XTXMarkets/ternfs/go/core/log"
+	"github.com/XTXMarkets/ternfs/go/core/timing"
+	"github.com/XTXMarkets/ternfs/go/divide32"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"io"
 	"math/rand"
 	"net"
@@ -29,13 +36,6 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
-	"xtx/ternfs/core/bincode"
-	"xtx/ternfs/core/bufpool"
-	"xtx/ternfs/core/crc32c"
-	"xtx/ternfs/core/log"
-	"xtx/ternfs/core/timing"
-	"xtx/ternfs/divide32"
-	"xtx/ternfs/msgs"
 )
 
 type ReqCounters struct {

@@ -6,11 +6,11 @@ package scratch
 
 import (
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/client"
+	"github.com/XTXMarkets/ternfs/go/core/log"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"sync"
 	"time"
-	"xtx/ternfs/client"
-	"xtx/ternfs/core/log"
-	"xtx/ternfs/msgs"
 )
 
 type ScratchFile interface {

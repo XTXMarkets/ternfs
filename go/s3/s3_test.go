@@ -5,8 +5,8 @@
 package s3
 
 import (
+	"github.com/XTXMarkets/ternfs/go/core/assert"
 	"testing"
-	"xtx/ternfs/core/assert"
 )
 
 func TestIsDirectoryContentType(t *testing.T) {

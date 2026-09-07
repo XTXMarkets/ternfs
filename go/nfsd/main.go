@@ -6,13 +6,13 @@ package main
 
 import (
 	"flag"
+	"github.com/XTXMarkets/ternfs/go/client"
+	"github.com/XTXMarkets/ternfs/go/core/bufpool"
+	"github.com/XTXMarkets/ternfs/go/core/log"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"log/slog"
 	"os"
 	"path/filepath"
-	"xtx/ternfs/client"
-	"xtx/ternfs/core/bufpool"
-	"xtx/ternfs/core/log"
-	"xtx/ternfs/msgs"
 )
 
 func main() {
