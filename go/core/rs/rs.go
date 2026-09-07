@@ -10,8 +10,9 @@ import (
 	"xtx/ternfs/core/parity"
 )
 
-// #cgo LDFLAGS: -L${SRCDIR} -lrs
-// #include "../../../cpp/rs/rs.h"
+// #cgo CFLAGS: -march=skylake
+// #cgo CXXFLAGS: -std=c++20 -march=skylake
+// #include "rs.h"
 //
 // void set_ptr(uint8_t** ptrs, size_t i, uint8_t* ptr) {
 //     ptrs[i] = ptr;
