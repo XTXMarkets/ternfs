@@ -8,8 +8,8 @@ package msgs
 
 import (
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/core/bincode"
 	"io"
-	"xtx/ternfs/core/bincode"
 )
 
 // This file specifies

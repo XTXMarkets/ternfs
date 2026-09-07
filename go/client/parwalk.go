@@ -11,10 +11,10 @@ package client
 import (
 	"errors"
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/core/log"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"path"
 	"sync"
-	"xtx/ternfs/core/log"
-	"xtx/ternfs/msgs"
 )
 
 // ErrSkipSubtree, when returned from a Parwalk callback, tells Parwalk not to

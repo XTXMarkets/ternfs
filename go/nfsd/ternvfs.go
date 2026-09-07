@@ -6,15 +6,15 @@ package main
 
 import (
 	"errors"
+	"github.com/XTXMarkets/ternfs/go/client"
+	"github.com/XTXMarkets/ternfs/go/core/bufpool"
+	"github.com/XTXMarkets/ternfs/go/core/crc32c"
+	"github.com/XTXMarkets/ternfs/go/core/log"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"io"
 	"os"
 	"sync"
 	"time"
-	"xtx/ternfs/client"
-	"xtx/ternfs/core/bufpool"
-	"xtx/ternfs/core/crc32c"
-	"xtx/ternfs/core/log"
-	"xtx/ternfs/msgs"
 )
 
 // RemoteTernVFS implements TernVFS backed by a real TernFS cluster.

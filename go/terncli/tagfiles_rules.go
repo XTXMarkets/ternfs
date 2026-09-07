@@ -7,11 +7,11 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"math"
 	"path/filepath"
 	"regexp"
 	"time"
-	"xtx/ternfs/msgs"
 )
 
 // Rule is one entry in a tag-rules JSON file.

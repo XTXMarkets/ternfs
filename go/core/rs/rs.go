@@ -6,8 +6,8 @@ package rs
 
 import (
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/core/parity"
 	"unsafe"
-	"xtx/ternfs/core/parity"
 )
 
 // #cgo CFLAGS: -march=skylake

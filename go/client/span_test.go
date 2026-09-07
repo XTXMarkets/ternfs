@@ -4,6 +4,13 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/core/bufpool"
+	"github.com/XTXMarkets/ternfs/go/core/crc32c"
+	"github.com/XTXMarkets/ternfs/go/core/log"
+	"github.com/XTXMarkets/ternfs/go/core/parity"
+	"github.com/XTXMarkets/ternfs/go/core/rs"
+	"github.com/XTXMarkets/ternfs/go/core/wyhash"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"io"
 	"math/bits"
 	"os"
@@ -13,13 +20,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"xtx/ternfs/core/bufpool"
-	"xtx/ternfs/core/crc32c"
-	"xtx/ternfs/core/log"
-	"xtx/ternfs/core/parity"
-	"xtx/ternfs/core/rs"
-	"xtx/ternfs/core/wyhash"
-	"xtx/ternfs/msgs"
 )
 
 type errorWithStack struct {

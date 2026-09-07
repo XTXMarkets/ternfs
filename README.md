@@ -142,7 +142,7 @@ TernFS is actively used in production, but the project is still evolving quickly
   * **S3**
     * `terns3`, Go implementation of the S3 API
     * minimal example intended as a start point for a more serious implementation
-  * **`xtx/ternfs/client`**
+  * **`github.com/XTXMarkets/ternfs/go/client`**
     * A Go library to implement TernFS clients
     * Used by every client except the kmod
 * **daemons**, these also talk to all of the servers, and all live in `terngc`
@@ -173,12 +173,10 @@ The `go/` module owns the native CRC32C and Reed-Solomon sources, so consumers
 can build and vendor it without a separate TernFS build or native package.
 The C++ build copies the same sources into its build tree.
 
-Until the module path is changed from `xtx/ternfs`, external consumers can use
-the GitHub module through a Go module replacement:
+External consumers can depend on the GitHub module directly:
 
 ```
-go mod edit -require=xtx/ternfs@VERSION
-go mod edit -replace=xtx/ternfs=github.com/XTXMarkets/ternfs/go@VERSION
+go get github.com/XTXMarkets/ternfs/go@VERSION
 go mod vendor
 ```
 
