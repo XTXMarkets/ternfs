@@ -171,6 +171,9 @@ static void mark_bad_addr(__be32 ip, __be16 port) {
     bad_addrs_count++;
     atomic_inc(&bad_addrs_live);
     spin_unlock(&bad_addrs_lock);
+#ifdef TERNFS_FANALYZER
+    ternfs_fanalyzer_escape(new_entry);
+#endif
 }
 
 static void bad_addrs_clear(void) {

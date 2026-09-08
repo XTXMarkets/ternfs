@@ -42,14 +42,14 @@ int __init ternfs_debugfs_init(void) {
 
     // Headers
     shard_stats_header = kzalloc(sizeof(struct ternfs_stats_header), GFP_KERNEL);
-    if (IS_ERR(shard_stats_header)) {
-        err = PTR_ERR(shard_stats_header);
+    if (!shard_stats_header) {
+        err = -ENOMEM;
         goto out_shard_stats_header;
     }
 
     cdc_stats_header = kzalloc(sizeof(struct ternfs_stats_header), GFP_KERNEL);
-    if (IS_ERR(cdc_stats_header)) {
-        err = PTR_ERR(cdc_stats_header);
+    if (!cdc_stats_header) {
+        err = -ENOMEM;
         goto out_cdc_stats_header;
     }
 
@@ -73,41 +73,43 @@ int __init ternfs_debugfs_init(void) {
     // Metrics
 
     shard_counters = (u64 *)vzalloc(TERNFS_SHARD_COUNTERS_SIZE);
-    if (IS_ERR(shard_counters)) {
-        err = PTR_ERR(shard_counters);
+    if (!shard_counters) {
+        err = -ENOMEM;
         goto out_shard_counters;
     }
 
     cdc_counters = (u64 *)vzalloc(TERNFS_CDC_COUNTERS_SIZE);
-    if (IS_ERR(cdc_counters)) {
-        err = PTR_ERR(cdc_counters);
+    if (!cdc_counters) {
+        err = -ENOMEM;
         goto out_cdc_counters;
     }
 
     // Timings
     shard_latencies = vzalloc(TERNFS_SHARD_LATENCIES_SIZE);
-    if (IS_ERR(shard_latencies)) {
-        err = PTR_ERR(shard_latencies);
+    if (!shard_latencies) {
+        err = -ENOMEM;
         goto out_shard_latencies;
     }
 
     cdc_latencies = vzalloc(TERNFS_CDC_LATENCIES_SIZE);
-    if (IS_ERR(cdc_latencies)) {
-        err = PTR_ERR(cdc_latencies);
+    if (!cdc_latencies) {
+        err = -ENOMEM;
         goto out_cdc_latencies;
     }
 
     ternfs_debugfs_root = debugfs_create_dir(TERNFS_ROOT_DEBUGFS_NAME, NULL);
     if (IS_ERR(ternfs_debugfs_root)) {
         err = PTR_ERR(ternfs_debugfs_root);
-        goto out_err; // debugfs_remove_recursive handles NULL parameter value
+        ternfs_debugfs_root = NULL;
+        goto out_err;
     }
 
     struct dentry *d;
 #define TERNFS_DEBUGFS_FILE(_name, _size, _stat_name) ({ \
         debug_wrapper_##_name = kzalloc(sizeof(struct debugfs_blob_wrapper), GFP_KERNEL); \
-        if (IS_ERR(debug_wrapper_##_name)) { \
-            return PTR_ERR(debug_wrapper_##_name); \
+        if (!debug_wrapper_##_name) { \
+            err = -ENOMEM; \
+            goto out_err; \
         } \
         debug_wrapper_##_name->data = _name; \
         debug_wrapper_##_name->size = _size; \
@@ -163,4 +165,6 @@ void __cold ternfs_debugfs_exit(void) {
     kfree(debug_wrapper_shard_stats_header);
     kfree(debug_wrapper_cdc_counters);
     kfree(debug_wrapper_cdc_stats_header);
+    kfree(debug_wrapper_shard_latencies);
+    kfree(debug_wrapper_cdc_latencies);
 }

@@ -40,6 +40,10 @@ ternfs-client-objs += \
 	revision.o \
 	policy.o
 
+ifeq ($(TERNFS_FANALYZER_BUILD),1)
+ternfs-client-objs += fanalyzer.o
+endif
+
 HAVE_INODE_ATIME_ACCESSORS := $(shell grep -q inode_get_atime_sec \
     $(srctree)/include/linux/fs.h 2>/dev/null && echo 1)
 
@@ -47,6 +51,19 @@ EXTRA_CFLAGS = -I$(src) -g -DDEBUG -fdiagnostics-color=always -Wno-declaration-a
 ifeq ($(HAVE_INODE_ATIME_ACCESSORS),1)
   EXTRA_CFLAGS += -DHAVE_INODE_ATIME_ACCESSORS
 endif
+
+FANALYZER_CFLAGS := \
+	-fanalyzer \
+	-DTERNFS_FANALYZER \
+	-D__NO_FORTIFY \
+	-include $(CURDIR)/fanalyzer.h \
+	-Werror=analyzer-double-free \
+	-Werror=analyzer-free-of-non-heap \
+	-Werror=analyzer-malloc-leak \
+	-Werror=analyzer-mismatching-deallocation \
+	-Werror=analyzer-null-dereference \
+	-Wno-analyzer-use-of-uninitialized-value \
+	-Wno-analyzer-use-after-free
 
 export CF = -Wbitwise -Wcontext -Wcast_truncate -Wsparse-all -Wno-shadow -Wnopointer-arith -Wnosizeof-bool -DCONFIG_SPARSE_RCU_POINTER
 
@@ -104,5 +121,10 @@ ternfs-client:
 # We don't want sparse as a dependency.
 ternfs-client-local: revision.c extra-files
 	$(MAKE) -C $(KDIR) M=$(CURDIR) modules
+
+# GCC's analyzer is deliberately separate from normal builds because it is
+# substantially slower and its allocator model is only enabled by fanalyzer.h.
+ternfs-client-analyzer: revision.c extra-files
+	$(MAKE) -C $(KDIR) M=$(CURDIR) TERNFS_FANALYZER_BUILD=1 KCFLAGS="$(FANALYZER_CFLAGS)" modules
 
 clean: ternfs-client-clean bincode_tests-clean
