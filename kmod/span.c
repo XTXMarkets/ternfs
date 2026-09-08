@@ -563,14 +563,14 @@ int ternfs_span_get_pages(struct ternfs_block_span* block_span, struct address_s
         BUG_ON(curr_off > block_span->span.end);
 
         struct fetch_span_pages_state *st = new_fetch_span_pages_state(block_span);
-        if (IS_ERR(st)) {
-            err = PTR_ERR(st);
-            st = NULL;
+        if (!st) {
+            err = -ENOMEM;
             goto out;
         }
         stripe_ix = (curr_off - block_span->span.start) / stripe_size;
         BUG_ON(stripe_ix >= block_span->num_stripes);
         st->mapping = mapping;
+        fetches[stripe_ix] = st;
 
         u32 start_block_ix = stripe_offset/block_span->cell_size;
         u32 last_block_ix = start_block_ix;
@@ -679,7 +679,6 @@ int ternfs_span_get_pages(struct ternfs_block_span* block_span, struct address_s
         // fetch blocks from start_block_ix to last_block_ix - these will be our blocks we need when assembling the pages back, the rest will go to extra_pages.
         err = fetch_span_blocks(st);
         if (err) { goto out; }
-        fetches[stripe_ix] = st;
         // wait for the fetch to complete before kicking off next stripe
         down(&st->sema);
         if(remaining_pages == 0) {
