@@ -7,7 +7,8 @@ package client
 import (
 	"strings"
 	"testing"
-	"xtx/ternfs/msgs"
+
+	"github.com/XTXMarkets/ternfs/go/msgs"
 )
 
 func TestDirEdgesPageStopsBeforeCurrentSection(t *testing.T) {
@@ -84,9 +85,8 @@ func TestDirEdgesPageRejectsUnchangedCursor(t *testing.T) {
 
 func TestSemanticDirEdgeAPIsRejectInvalidArguments(t *testing.T) {
 	client := &Client{}
-	_, err := ReadCurrentDirEdgesPage(
+	_, err := client.ReadCurrentDirEdgesPage(
 		nil,
-		client,
 		msgs.ROOT_DIR_INODE_ID,
 		DirEdgesCursor{StartName: "name", StartTime: 1},
 	)
@@ -94,9 +94,8 @@ func TestSemanticDirEdgeAPIsRejectInvalidArguments(t *testing.T) {
 		t.Fatalf("ReadCurrentDirEdgesPage() error = %v", err)
 	}
 
-	err = WalkDirNameHistory(
+	err = client.WalkDirNameHistory(
 		nil,
-		client,
 		msgs.ROOT_DIR_INODE_ID,
 		"",
 		func([]msgs.Edge) error { return nil },
