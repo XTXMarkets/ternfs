@@ -7,11 +7,11 @@ package client
 import (
 	"encoding/binary"
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/core/log"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"io"
 	"math/rand"
 	"net"
-	"xtx/ternfs/core/log"
-	"xtx/ternfs/msgs"
 )
 
 // A low-level utility for directly communication with block services.

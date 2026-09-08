@@ -9,15 +9,15 @@ package main
 import (
 	"flag"
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/client"
+	"github.com/XTXMarkets/ternfs/go/core/log"
+	"github.com/XTXMarkets/ternfs/go/core/managedprocess"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"os"
 	"path"
 	"runtime"
 	"strings"
 	"time"
-	"xtx/ternfs/client"
-	"xtx/ternfs/core/log"
-	"xtx/ternfs/core/managedprocess"
-	"xtx/ternfs/msgs"
 )
 
 func noRunawayArgs() {

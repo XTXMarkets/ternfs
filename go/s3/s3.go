@@ -10,6 +10,10 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/client"
+	"github.com/XTXMarkets/ternfs/go/core/bufpool"
+	"github.com/XTXMarkets/ternfs/go/core/log"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"io"
 	"net/http"
 	"os"
@@ -18,10 +22,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"xtx/ternfs/client"
-	"xtx/ternfs/core/bufpool"
-	"xtx/ternfs/core/log"
-	"xtx/ternfs/msgs"
 
 	"golang.org/x/sync/errgroup"
 )

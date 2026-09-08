@@ -8,13 +8,13 @@ import (
 	"bytes"
 	_ "embed"
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"io"
 	"os"
 	"reflect"
 	"regexp"
 	"strings"
 	"unicode"
-	"xtx/ternfs/msgs"
 )
 
 type subexpr struct {

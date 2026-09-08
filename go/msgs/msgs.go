@@ -11,13 +11,13 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/core/bincode"
+	"github.com/XTXMarkets/ternfs/go/core/parity"
 	"io"
 	"path"
 	"strconv"
 	"strings"
 	"time"
-	"xtx/ternfs/core/bincode"
-	"xtx/ternfs/core/parity"
 )
 
 //go:generate go run ../bincodegen

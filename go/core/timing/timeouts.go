@@ -6,8 +6,8 @@ package timing
 
 import (
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/core/wyhash"
 	"time"
-	"xtx/ternfs/core/wyhash"
 )
 
 type ReqTimeouts struct {

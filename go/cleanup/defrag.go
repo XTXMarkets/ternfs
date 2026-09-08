@@ -9,15 +9,15 @@ package cleanup
 
 import (
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/cleanup/scratch"
+	"github.com/XTXMarkets/ternfs/go/client"
+	"github.com/XTXMarkets/ternfs/go/core/bufpool"
+	"github.com/XTXMarkets/ternfs/go/core/crc32c"
+	"github.com/XTXMarkets/ternfs/go/core/log"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"path"
 	"sync/atomic"
 	"time"
-	"xtx/ternfs/cleanup/scratch"
-	"xtx/ternfs/client"
-	"xtx/ternfs/core/bufpool"
-	"xtx/ternfs/core/crc32c"
-	"xtx/ternfs/core/log"
-	"xtx/ternfs/msgs"
 )
 
 type DefragStats struct {
