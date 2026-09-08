@@ -11,10 +11,11 @@ package client
 import (
 	"errors"
 	"fmt"
-	"github.com/XTXMarkets/ternfs/go/core/log"
-	"github.com/XTXMarkets/ternfs/go/msgs"
 	"path"
 	"sync"
+
+	"github.com/XTXMarkets/ternfs/go/core/log"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 )
 
 // ErrSkipSubtree, when returned from a Parwalk callback, tells Parwalk not to
@@ -93,12 +94,20 @@ func (env *parwalkEnv) process(
 		return env.processSnapshotLatest(log, homeShid, id, pathStr)
 	}
 	if env.snapshot {
-		req := &msgs.FullReadDirReq{
-			DirId: id,
-		}
-		resp := &msgs.FullReadDirResp{}
+		cursor := msgs.FullReadDirCursor{}
 		for {
-			if err := env.client.ShardRequest(log, id.Shard(), req, resp); err != nil {
+			flags := msgs.FullReadDirFlags(0)
+			if cursor.Current {
+				flags = msgs.FULL_READ_DIR_CURRENT
+			}
+			resp, err := env.client.fullReadDir(
+				log,
+				id,
+				flags,
+				cursor.StartName,
+				cursor.StartTime,
+			)
+			if err != nil {
 				log.Debug("failed to read dir %v at path %q, it might have been deleted in the meantime: %v", id, pathStr, err)
 				return nil
 			}
@@ -113,12 +122,7 @@ func (env *parwalkEnv) process(
 			if resp.Next.StartName == "" {
 				break
 			}
-			req.Flags = 0
-			if resp.Next.Current {
-				req.Flags = msgs.FULL_READ_DIR_CURRENT
-			}
-			req.StartName = resp.Next.StartName
-			req.StartTime = resp.Next.StartTime
+			cursor = resp.Next
 		}
 	} else {
 		readReq := &msgs.ReadDirReq{
@@ -159,13 +163,20 @@ func (env *parwalkEnv) processSnapshotLatest(
 		owned        bool
 	}
 	latest := map[string]latestEdge{}
-	req := &msgs.FullReadDirReq{
-		DirId: id,
-		Flags: msgs.FULL_READ_DIR_BACKWARDS,
-	}
+	cursor := msgs.FullReadDirCursor{}
 	for {
-		resp := &msgs.FullReadDirResp{}
-		if err := env.client.ShardRequest(log, id.Shard(), req, resp); err != nil {
+		flags := msgs.FULL_READ_DIR_BACKWARDS
+		if cursor.Current {
+			flags |= msgs.FULL_READ_DIR_CURRENT
+		}
+		resp, err := env.client.fullReadDir(
+			log,
+			id,
+			flags,
+			cursor.StartName,
+			cursor.StartTime,
+		)
+		if err != nil {
 			log.Debug("failed to read dir %v at path %q, it might have been deleted in the meantime: %v", id, pathStr, err)
 			return nil
 		}
@@ -186,12 +197,7 @@ func (env *parwalkEnv) processSnapshotLatest(
 		if resp.Next.StartName == "" {
 			break
 		}
-		req.Flags = msgs.FULL_READ_DIR_BACKWARDS
-		if resp.Next.Current {
-			req.Flags |= msgs.FULL_READ_DIR_CURRENT
-		}
-		req.StartName = resp.Next.StartName
-		req.StartTime = resp.Next.StartTime
+		cursor = resp.Next
 	}
 	for name, e := range latest {
 		if err := env.visit(log, homeShid, id, pathStr, name, e.creationTime, e.targetId, e.current, e.owned); err != nil {
