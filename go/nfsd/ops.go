@@ -165,10 +165,8 @@ func (s *Server) opCreate(args CREATE4args, st *compoundState, w *COMPOUND4resWr
 	ew := w.AppendResarray_Create()
 	okW := ew.SetValue_Nfs4Ok()
 	cinfo := okW.Cinfo()
-	cinfo.SetAtomic(TRUE)
 	now := uint64(time.Now().UnixNano())
-	cinfo.SetBefore(now - 1)
-	cinfo.SetAfter(now)
+	cinfo.SetValues(TRUE, now-1, now)
 
 	// attrset bitmap: empty (we don't apply createattrs).
 	bmW := okW.StartAttrset()
@@ -446,14 +444,11 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 	writeStateID(stid, nfsSID)
 
 	cinfo := okW.Cinfo()
-	cinfo.SetAtomic(TRUE)
 	now := uint64(time.Now().UnixNano())
 	if created {
-		cinfo.SetBefore(now - 1)
-		cinfo.SetAfter(now)
+		cinfo.SetValues(TRUE, now-1, now)
 	} else {
-		cinfo.SetBefore(now)
-		cinfo.SetAfter(now)
+		cinfo.SetValues(TRUE, now, now)
 	}
 
 	okW.SetRflags(OPEN4_RESULT_LOCKTYPE_POSIX)
@@ -770,10 +765,8 @@ func (s *Server) opRemove(args REMOVE4args, st *compoundState, w *COMPOUND4resWr
 	ew := w.AppendResarray_Remove()
 	okW := ew.SetValue_Nfs4Ok()
 	cinfo := okW.Cinfo()
-	cinfo.SetAtomic(TRUE)
 	now := uint64(time.Now().UnixNano())
-	cinfo.SetBefore(now - 1)
-	cinfo.SetAfter(now)
+	cinfo.SetValues(TRUE, now-1, now)
 	w.Resume(ew.Finish())
 	return NFS4_OK
 }
@@ -802,14 +795,8 @@ func (s *Server) opRename(args RENAME4args, st *compoundState, w *COMPOUND4resWr
 	ew := w.AppendResarray_Rename()
 	okW := ew.SetValue_Nfs4Ok()
 	now := uint64(time.Now().UnixNano())
-	srcInfo := okW.SourceCinfo()
-	srcInfo.SetAtomic(TRUE)
-	srcInfo.SetBefore(now - 1)
-	srcInfo.SetAfter(now)
-	tgtInfo := okW.TargetCinfo()
-	tgtInfo.SetAtomic(TRUE)
-	tgtInfo.SetBefore(now - 1)
-	tgtInfo.SetAfter(now)
+	okW.SourceCinfo().SetValues(TRUE, now-1, now)
+	okW.TargetCinfo().SetValues(TRUE, now-1, now)
 	w.Resume(ew.Finish())
 	return NFS4_OK
 }
@@ -1103,6 +1090,12 @@ func setData64(v Verifier4, data [8]byte) {
 	for i := range data {
 		v.SetData(i, data[i])
 	}
+}
+
+func (info ChangeInfo4) SetValues(atomic uint32, before, after uint64) {
+	info.SetAtomic(atomic)
+	info.SetBefore(before)
+	info.SetAfter(after)
 }
 
 // errToNFS converts a Go error to an NFS status code.
