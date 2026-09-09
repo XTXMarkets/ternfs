@@ -1258,8 +1258,12 @@ func (c *Client) Close() {
 
 // Not atomic between the read/write
 func (c *Client) MergeDirectoryInfo(log *log.Logger, id msgs.InodeId, entry msgs.IsDirectoryInfoEntry) error {
+	body, err := bincode.Pack(entry)
+	if err != nil {
+		return fmt.Errorf("could not pack directory info entry: %w", err)
+	}
 	packedEntry := msgs.DirectoryInfoEntry{
-		Body: bincode.Pack(entry),
+		Body: body,
 		Tag:  entry.Tag(),
 	}
 	statResp := msgs.StatDirectoryResp{}

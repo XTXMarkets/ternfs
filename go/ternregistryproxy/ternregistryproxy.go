@@ -205,7 +205,10 @@ func isBenignConnTermination(err error) bool {
 
 func writeRegistryResponse(log *log.Logger, w io.Writer, resp msgs.RegistryResponse) error {
 	// serialize
-	bytes := bincode.Pack(resp)
+	bytes, err := bincode.Pack(resp)
+	if err != nil {
+		return fmt.Errorf("could not pack registry response: %w", err)
+	}
 	// write out
 	if err := binary.Write(w, binary.LittleEndian, msgs.REGISTRY_RESP_PROTOCOL_VERSION); err != nil {
 		return err
