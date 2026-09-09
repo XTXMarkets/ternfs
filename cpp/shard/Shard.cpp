@@ -247,7 +247,10 @@ static void packShardResponse(
         LOG_DEBUG(env, "artificially dropping response %s", msg.id);
         return;
     }
-    ALWAYS_ASSERT(req.clientAddr.port != 0);
+    if (unlikely(req.clientAddr.port == 0)) {
+        LOG_ERROR(env, "cannot send response for request %s to a zero source port", msg.id);
+        return;
+    }
 
     if (respKind != ShardMessageKind::ERROR) {
         LOG_DEBUG(env, "successfully processed request %s with kind %s in %s", msg.id, reqKind, elapsed);
@@ -290,7 +293,10 @@ static void packCheckPointedShardResponse(
         LOG_DEBUG(env, "artificially dropping response %s", msg.id);
         return;
     }
-    ALWAYS_ASSERT(req.clientAddr.port != 0);
+    if (unlikely(req.clientAddr.port == 0)) {
+        LOG_ERROR(env, "cannot send response for request %s to a zero source port", msg.id);
+        return;
+    }
 
     if (respKind != ShardMessageKind::ERROR) {
         LOG_DEBUG(env, "successfully processed request %s with kind %s in %s", msg.id, reqKind, elapsed);
@@ -559,7 +565,11 @@ private:
             ShardResp& resp = _waitResponses.emplace_back();
             try {
                 resp.msg.unpack(msg.buf);
-                ALWAYS_ASSERT(resp.msg.body.kind() == ShardMessageKind::WAIT_STATE_APPLIED);
+                if (resp.msg.body.kind() != ShardMessageKind::WAIT_STATE_APPLIED) {
+                    LOG_ERROR(_env, "expected WAIT_STATE_APPLIED response from %s, got %s", msg.clientAddr, resp.msg.body.kind());
+                    _waitResponses.pop_back();
+                    return;
+                }
                 resp.clientAddr = msg.clientAddr;
             } catch (const BincodeException& err) {
                 LOG_ERROR(_env, "Could not parse: %s", err.what());
@@ -1189,7 +1199,7 @@ public:
                                             break;
                                         }
                                         default:
-                                            ALWAYS_ASSERT(false, "Unexpected reponse kind %s for requests kind %s", resp.body.kind(), request.msg.body.kind() );
+                                            ALWAYS_ASSERT(false, "Unexpected response kind %s for request kind %s", resp.body.kind(), request.msg.body.kind());
                                     }
                                 }
                                 packShardResponse(_env, _shared, _shared.sock().addr(), _sender, dropArtificially, request, resp);
@@ -1352,9 +1362,17 @@ public:
         }
         ShardRespMsg resp;
         resp.id = req.msg.id;
-        auto& respBody = resp.body.setGetLinkEntries();
         auto& reqBody = req.msg.body.getGetLinkEntries();
 
+        const int mtu = std::min(reqBody.mtu == 0 ? (int)DEFAULT_UDP_MTU : (int)reqBody.mtu, (int)MAX_UDP_MTU);
+        if (unlikely(mtu < (int)MIN_UDP_MTU)) {
+            LOG_WARN(_env, "GET_LINK_ENTRIES request %s from %s has mtu %s below minimum %s", req.msg.id, req.clientAddr, reqBody.mtu, MIN_UDP_MTU);
+            resp.body.setError() = TernError::MALFORMED_REQUEST;
+            packShardResponse(_env, _shared, _shared.sock().addr(), _sender, false, req, resp);
+            return;
+        }
+
+        auto& respBody = resp.body.setGetLinkEntries();
         respBody.nextIdx = std::max(reqBody.fromIdx, _logsDB.getHeadIdx());
         std::vector<LogIdx> indexes;
         std::vector<LogsDBLogEntry> readEntries;
@@ -1364,10 +1382,8 @@ public:
         size_t processed = 0;
         const size_t maxProcess = 1024;
 
-        auto mtu = std::min(reqBody.mtu == 0 ? (int)DEFAULT_UDP_MTU : (int)reqBody.mtu, (int)MAX_UDP_MTU);
-
-        int budget = mtu - (int)ShardRespMsg::STATIC_SIZE - (int)GetLinkEntriesResp::STATIC_SIZE;
-
+        static_assert(MIN_UDP_MTU >= ShardRespMsg::STATIC_SIZE + GetLinkEntriesResp::STATIC_SIZE);
+        const int budget = mtu - (int)ShardRespMsg::STATIC_SIZE - (int)GetLinkEntriesResp::STATIC_SIZE;
         const size_t maxEntriesByMtu = budget / (int)LinkEntry::STATIC_SIZE;
         while (respBody.nextIdx < _logsDB.getLastReleased() && respBody.entries.els.size() < maxEntriesByMtu && processed < maxProcess) {
             LogIdx startIdx = respBody.nextIdx;
@@ -1617,6 +1633,7 @@ public:
                         }
                         break;
                 }
+                continue;
             }
             entry.idx = _currentLogIndex + _inFlightEntries.size() + _shardEntries.size();
             // requests with id 0 are "one off, don't want response, will not retry" so we assume that if we receive it twice we need to execute it twice
@@ -1780,7 +1797,7 @@ public:
                                 break;
                             }
                             default:
-                                ALWAYS_ASSERT(false, "Unexpected reponse kind %s for requests kind %s", forwarded_resp.body.kind(), req.msg.body.kind() );
+                                ALWAYS_ASSERT(false, "Unexpected response kind %s for request kind %s", forwarded_resp.body.kind(), req.msg.body.kind());
                         }
                     }
                     packShardResponse(_env, _shared, _shared.sock().addr(), _sender, dropArtificially, req, forwarded_resp);

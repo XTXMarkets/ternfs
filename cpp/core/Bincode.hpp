@@ -484,8 +484,9 @@ std::ostream& operator<<(std::ostream& out, const SignedProtocolMessage<P,R, Che
     return out << msg.id << " : " << msg.body;
 }
 
-constexpr size_t DEFAULT_UDP_MTU = 1472; // 1500 - IP header - ICMP header
-constexpr size_t MAX_UDP_MTU = 8972;     // 9000 - IP header - ICMP header
+constexpr size_t MIN_UDP_MTU = 548;      // 576 - IPv4 header - UDP header
+constexpr size_t DEFAULT_UDP_MTU = 1472; // 1500 - IPv4 header - UDP header
+constexpr size_t MAX_UDP_MTU = 8972;     // 9000 - IPv4 header - UDP header
 
 constexpr uint8_t BLOCK_SERVICE_STALE          = 1u;
 constexpr uint8_t BLOCK_SERVICE_NO_READ        = 1u<<1;
