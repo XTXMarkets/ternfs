@@ -121,10 +121,7 @@ func (s *Server) opCommit(st *compoundState, w *COMPOUND4resWriter) uint32 {
 
 	ew := w.AppendResarray_Commit()
 	okW := ew.SetValue_Nfs4Ok()
-	verf := okW.Writeverf()
-	for i := 0; i < 8; i++ {
-		verf.SetData(i, s.writeVerifier[i])
-	}
+	setData64(okW.Writeverf(), s.writeVerifier)
 	w.Resume(ew.Finish())
 	return NFS4_OK
 }
@@ -718,9 +715,7 @@ func (s *Server) opReaddir(args READDIR4args, st *compoundState, w *COMPOUND4res
 	verf := okW.Cookieverf()
 	var mtimeBytes [8]byte
 	binary.BigEndian.PutUint64(mtimeBytes[:], uint64(ni.Mtime.UnixNano()))
-	for i := 0; i < 8; i++ {
-		verf.SetData(i, mtimeBytes[i])
-	}
+	setData64(verf, mtimeBytes)
 
 	dirW := okW.StartReply()
 	encodeDirEntries(&dirW, prepared, eof)
@@ -975,15 +970,9 @@ func (s *Server) opSetattr(args SETATTR4args, st *compoundState, w *COMPOUND4res
 
 func (s *Server) opSetclientid(args SETCLIENTID4args, w *COMPOUND4resWriter) uint32 {
 	clientID := args.Client()
-	verifier := clientID.Verifier()
 	idData := clientID.Id()
 
-	var verf [8]byte
-	for i := 0; i < 8; i++ {
-		verf[i] = verifier.Data(i)
-	}
-
-	clid, err := s.clients.SetClientID(verf, idData)
+	clid, err := s.clients.SetClientID(getData64(clientID.Verifier()), idData)
 	if err != nil {
 		ew := w.AppendResarray_Setclientid()
 		return finishDefaultResponse(w, &ew, nfsErrCode(err))
@@ -1053,10 +1042,7 @@ func (s *Server) opWrite(args WRITE4args, st *compoundState, w *COMPOUND4resWrit
 	okW := ew.SetValue_Nfs4Ok()
 	okW.SetCount(uint32(len(data)))
 	okW.SetCommitted(unstable4)
-	verf := okW.Writeverf()
-	for i := 0; i < 8; i++ {
-		verf.SetData(i, s.writeVerifier[i])
-	}
+	setData64(okW.Writeverf(), s.writeVerifier)
 	w.Resume(ew.Finish())
 	return NFS4_OK
 }
@@ -1103,6 +1089,19 @@ func extractStateID(s Stateid4) StateID {
 func writeStateID(s Stateid4, sid StateID) {
 	for i := 0; i < 12; i++ {
 		s.SetOther(i, sid[i])
+	}
+}
+
+func getData64(v Verifier4) (data [8]byte) {
+	for i := range data {
+		data[i] = v.Data(i)
+	}
+	return data
+}
+
+func setData64(v Verifier4, data [8]byte) {
+	for i := range data {
+		v.SetData(i, data[i])
 	}
 }
 
