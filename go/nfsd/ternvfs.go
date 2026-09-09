@@ -373,8 +373,8 @@ func (t *RemoteTernVFS) Rename(srcDirID InodeID, srcName string, dstDirID InodeI
 	}
 	targetId := lookupResp.TargetId
 	creationTime := lookupResp.CreationTime
-	if srcDirID == dstDirID && targetId.Type() != msgs.DIRECTORY {
-		// Same-directory file/symlink rename — shard-local.
+	if srcDirID == dstDirID {
+		// Same-directory renames are shard-local for every inode type.
 		if err := t.client.ShardRequest(t.log, srcMid.Shard(), &msgs.SameDirectoryRenameReq{
 			TargetId:        targetId,
 			DirId:           srcMid,
