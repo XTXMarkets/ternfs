@@ -246,7 +246,7 @@ func encodeAttrs(mask [2]uint32, id InodeID, ni NodeInfo) []byte {
 		buf = binary.BigEndian.AppendUint32(buf, 1) // no hard links
 	}
 	if mask[0]&(1<<FATTR4_MAXNAME) != 0 {
-		buf = binary.BigEndian.AppendUint32(buf, 255)
+		buf = binary.BigEndian.AppendUint32(buf, uint32(maxTernNameLength))
 	}
 	if mask[0]&(1<<FATTR4_MAXREAD) != 0 {
 		buf = binary.BigEndian.AppendUint64(buf, maxReadWrite)

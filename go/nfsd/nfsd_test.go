@@ -5,6 +5,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"net"
@@ -1564,6 +1565,8 @@ func TestSecinfoRequiresExistingName(t *testing.T) {
 }
 
 func TestCreateInvalidFieldsRejected(t *testing.T) {
+	maxSymlinkTarget := bytes.Repeat([]byte{'x'}, maxTernBytesLength)
+	longSymlinkTarget := bytes.Repeat([]byte{'x'}, maxTernBytesLength+1)
 	tests := []struct {
 		name          string
 		objname       []byte
@@ -1582,6 +1585,20 @@ func TestCreateInvalidFieldsRejected(t *testing.T) {
 			symlink:       true,
 			symlinkTarget: nil,
 			wantStatus:    NFS4ERR_INVAL,
+		},
+		{
+			name:          "maximum symlink target",
+			objname:       []byte("link"),
+			symlink:       true,
+			symlinkTarget: maxSymlinkTarget,
+			wantStatus:    NFS4_OK,
+		},
+		{
+			name:          "long symlink target",
+			objname:       []byte("link"),
+			symlink:       true,
+			symlinkTarget: longSymlinkTarget,
+			wantStatus:    NFS4ERR_NAMETOOLONG,
 		},
 		{
 			name:       "dot",
