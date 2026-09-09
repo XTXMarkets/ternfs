@@ -21,8 +21,8 @@ func PackScalar[V bool | uint8 | uint16 | uint32 | uint64](w io.Writer, x V) err
 }
 
 func PackBytes(w io.Writer, bs []byte) error {
-	if len(bs) > 255 {
-		panic(fmt.Sprintf("bytes length exceed 255: %v", len(bs)))
+	if len(bs) > math.MaxUint8 {
+		return fmt.Errorf("bytes length %d exceeds maximum %d", len(bs), math.MaxUint8)
 	}
 	if err := PackScalar(w, uint8(len(bs))); err != nil {
 		return err
@@ -42,8 +42,8 @@ func PackFixedBytes(w io.Writer, l int, bs []byte) error {
 }
 
 func PackLength(w io.Writer, l int) error {
-	if l > math.MaxUint16 {
-		panic(fmt.Sprintf("len %d exceeds max length %d", l, math.MaxUint16))
+	if l < 0 || l > math.MaxUint16 {
+		return fmt.Errorf("length %d is outside range 0..%d", l, math.MaxUint16)
 	}
 	return PackScalar(w, uint16(l))
 }
@@ -51,8 +51,8 @@ func PackLength(w io.Writer, l int) error {
 type Blob []byte
 
 func PackBlob(w io.Writer, bs Blob) error {
-	if len(bs) > int(^uint16(0)) {
-		panic(fmt.Sprintf("bytes length exceed %v: %v", ^uint16(0), len(bs)))
+	if len(bs) > math.MaxUint16 {
+		return fmt.Errorf("blob length %d exceeds maximum %d", len(bs), math.MaxUint16)
 	}
 	if err := PackScalar(w, uint16(len(bs))); err != nil {
 		return err
@@ -147,12 +147,12 @@ func EnsureLength[T any](xs *[]T, l int) {
 	}
 }
 
-func Pack(v Packable) []byte {
+func Pack(v Packable) ([]byte, error) {
 	buf := bytes.NewBuffer([]byte{})
 	if err := v.Pack(buf); err != nil {
-		panic(err)
+		return nil, err
 	}
-	return buf.Bytes()
+	return buf.Bytes(), nil
 }
 
 func Unpack(data []byte, v Unpackable) error {
