@@ -1362,9 +1362,17 @@ public:
         }
         ShardRespMsg resp;
         resp.id = req.msg.id;
-        auto& respBody = resp.body.setGetLinkEntries();
         auto& reqBody = req.msg.body.getGetLinkEntries();
 
+        const int mtu = std::min(reqBody.mtu == 0 ? (int)DEFAULT_UDP_MTU : (int)reqBody.mtu, (int)MAX_UDP_MTU);
+        if (unlikely(mtu < (int)MIN_UDP_MTU)) {
+            LOG_WARN(_env, "GET_LINK_ENTRIES request %s from %s has mtu %s below minimum %s", req.msg.id, req.clientAddr, reqBody.mtu, MIN_UDP_MTU);
+            resp.body.setError() = TernError::MALFORMED_REQUEST;
+            packShardResponse(_env, _shared, _shared.sock().addr(), _sender, false, req, resp);
+            return;
+        }
+
+        auto& respBody = resp.body.setGetLinkEntries();
         respBody.nextIdx = std::max(reqBody.fromIdx, _logsDB.getHeadIdx());
         std::vector<LogIdx> indexes;
         std::vector<LogsDBLogEntry> readEntries;
@@ -1374,15 +1382,8 @@ public:
         size_t processed = 0;
         const size_t maxProcess = 1024;
 
-        auto mtu = std::min(reqBody.mtu == 0 ? (int)DEFAULT_UDP_MTU : (int)reqBody.mtu, (int)MAX_UDP_MTU);
-
-        int budget = mtu - (int)ShardRespMsg::STATIC_SIZE - (int)GetLinkEntriesResp::STATIC_SIZE;
-        if (unlikely(budget < 0)) {
-            resp.body.setError() = TernError::MALFORMED_REQUEST;
-            packShardResponse(_env, _shared, _shared.sock().addr(), _sender, false, req, resp);
-            return;
-        }
-
+        static_assert(MIN_UDP_MTU >= ShardRespMsg::STATIC_SIZE + GetLinkEntriesResp::STATIC_SIZE);
+        const int budget = mtu - (int)ShardRespMsg::STATIC_SIZE - (int)GetLinkEntriesResp::STATIC_SIZE;
         const size_t maxEntriesByMtu = budget / (int)LinkEntry::STATIC_SIZE;
         while (respBody.nextIdx < _logsDB.getLastReleased() && respBody.entries.els.size() < maxEntriesByMtu && processed < maxProcess) {
             LogIdx startIdx = respBody.nextIdx;
