@@ -7,15 +7,15 @@ package client
 import (
 	"encoding/binary"
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/core/bincode"
+	"github.com/XTXMarkets/ternfs/go/core/log"
+	"github.com/XTXMarkets/ternfs/go/core/timing"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"io"
 	"net"
 	"os"
 	"syscall"
 	"time"
-	"xtx/ternfs/core/bincode"
-	"xtx/ternfs/core/log"
-	"xtx/ternfs/core/timing"
-	"xtx/ternfs/msgs"
 )
 
 func writeRegistryRequest(log *log.Logger, w io.Writer, req msgs.RegistryRequest) error {

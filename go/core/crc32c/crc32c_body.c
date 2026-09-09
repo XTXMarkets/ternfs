@@ -1,3 +1,5 @@
+//go:build ignore
+
 // Copyright 2025 XTX Markets Technologies Limited
 // crc32c_4k_fusion Copyright 2022 Peter Cawley <corsix@corsix.org>
 //

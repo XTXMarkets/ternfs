@@ -6,15 +6,15 @@ package cleanup
 
 import (
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/cleanup/scratch"
+	"github.com/XTXMarkets/ternfs/go/client"
+	"github.com/XTXMarkets/ternfs/go/core/bufpool"
+	"github.com/XTXMarkets/ternfs/go/core/log"
+	lrecover "github.com/XTXMarkets/ternfs/go/core/recover"
+	"github.com/XTXMarkets/ternfs/go/core/timing"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"sync"
 	"sync/atomic"
-	"xtx/ternfs/cleanup/scratch"
-	"xtx/ternfs/client"
-	"xtx/ternfs/core/bufpool"
-	"xtx/ternfs/core/log"
-	lrecover "xtx/ternfs/core/recover"
-	"xtx/ternfs/core/timing"
-	"xtx/ternfs/msgs"
 )
 
 type ScrubState struct {

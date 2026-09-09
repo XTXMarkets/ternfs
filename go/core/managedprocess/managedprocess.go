@@ -11,6 +11,9 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/core/log"
+	"github.com/XTXMarkets/ternfs/go/core/timing"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"io"
 	"os"
 	"os/exec"
@@ -21,9 +24,6 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
-	"xtx/ternfs/core/log"
-	"xtx/ternfs/core/timing"
-	"xtx/ternfs/msgs"
 )
 
 func goDir(repoDir string) string {

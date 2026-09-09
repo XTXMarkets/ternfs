@@ -8,8 +8,8 @@ import (
 	"bytes"
 	"crypto/cipher"
 	"encoding/binary"
-	"xtx/ternfs/core/cbcmac"
-	"xtx/ternfs/msgs"
+	"github.com/XTXMarkets/ternfs/go/core/cbcmac"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 )
 
 func BlockWriteCertificate(cipher cipher.Block, blockServiceId msgs.BlockServiceId, req *msgs.WriteBlockReq) [8]byte {

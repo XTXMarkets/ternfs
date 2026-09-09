@@ -7,13 +7,13 @@ package filesamples
 import (
 	"encoding/csv"
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/client"
+	"github.com/XTXMarkets/ternfs/go/core/log"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"io"
 	"path"
 	"strconv"
 	"sync"
-	"xtx/ternfs/client"
-	"xtx/ternfs/core/log"
-	"xtx/ternfs/msgs"
 )
 
 type PathResolver interface {

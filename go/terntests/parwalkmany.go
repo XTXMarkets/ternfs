@@ -6,12 +6,12 @@ package main
 
 import (
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/client"
+	"github.com/XTXMarkets/ternfs/go/core/log"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"sync"
 	"sync/atomic"
 	"time"
-	"xtx/ternfs/client"
-	"xtx/ternfs/core/log"
-	"xtx/ternfs/msgs"
 )
 
 type parwalkManyOpts struct {

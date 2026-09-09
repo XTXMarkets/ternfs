@@ -63,7 +63,7 @@ revision.c:
 	@test -f $@ || { echo "revision.c missing and not a git checkout" >&2; exit 1; }
 endif
 
-EXTRA_FILES := ../cpp/crc32c/crc32c_body.c ../cpp/rs/gf_tables.c ../cpp/rs/rs_core.c
+EXTRA_FILES := ../go/core/crc32c/crc32c_body.c ../go/core/rs/gf_tables.c ../go/core/rs/rs_core.c
 
 extra-files: $(EXTRA_FILES)
 	$(foreach file,$(EXTRA_FILES),cp $(file) .;)

@@ -5,11 +5,11 @@
 package client
 
 import (
+	"github.com/XTXMarkets/ternfs/go/core/bincode"
+	"github.com/XTXMarkets/ternfs/go/core/log"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"sync/atomic"
 	"time"
-	"xtx/ternfs/core/bincode"
-	"xtx/ternfs/core/log"
-	"xtx/ternfs/msgs"
 )
 
 // Starts from 1, we use 0 as a placeholder in `requestIds`

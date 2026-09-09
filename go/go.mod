@@ -1,4 +1,4 @@
-module xtx/ternfs
+module github.com/XTXMarkets/ternfs/go
 
 go 1.25.0
 

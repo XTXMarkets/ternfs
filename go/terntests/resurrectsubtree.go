@@ -8,6 +8,9 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/core/log"
+	"github.com/XTXMarkets/ternfs/go/core/wyhash"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"io"
 	"os"
 	"os/exec"
@@ -16,9 +19,6 @@ import (
 	"sort"
 	"strings"
 	"syscall"
-	"xtx/ternfs/core/log"
-	"xtx/ternfs/core/wyhash"
-	"xtx/ternfs/msgs"
 )
 
 type resurrectSubtreeTestOpts struct {
