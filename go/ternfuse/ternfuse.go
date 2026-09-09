@@ -1181,9 +1181,11 @@ func initializeCloseMap(closeTrackerObj string, mountPoint string) {
 	}
 
 	// Rewrite the 'target_dev' constant in the BPF program
-	if err := spec.RewriteConstants(map[string]interface{}{
-		"target_dev": uint32(stat.Dev),
-	}); err != nil {
+	targetDev, ok := spec.Variables["target_dev"]
+	if !ok {
+		panic(fmt.Errorf("BPF variable 'target_dev' not found"))
+	}
+	if err := targetDev.Set(uint32(stat.Dev)); err != nil {
 		panic(err)
 	}
 
