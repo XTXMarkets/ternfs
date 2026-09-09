@@ -29,6 +29,15 @@ func finishDefaultResponse(w *COMPOUND4resWriter, ew defaultResponseWriter, stat
 	return status
 }
 
+type statusResponseWriter interface {
+	SetStatus(uint32)
+}
+
+func finishStatusResponse(r statusResponseWriter, status uint32) uint32 {
+	r.SetStatus(status)
+	return status
+}
+
 func (s *Server) opAccess(args ACCESS4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
 	if !st.currentIDSet {
 		ew := w.AppendResarray_Access()
@@ -177,15 +186,13 @@ func (s *Server) opCreate(args CREATE4args, st *compoundState, w *COMPOUND4resWr
 
 func (s *Server) opDelegpurge(w *COMPOUND4resWriter) uint32 {
 	r := w.AppendResarray_Delegpurge()
-	r.SetStatus(NFS4ERR_NOTSUPP)
-	return NFS4ERR_NOTSUPP
+	return finishStatusResponse(&r, NFS4ERR_NOTSUPP)
 }
 
 func (s *Server) opDelegreturn(st *compoundState, w *COMPOUND4resWriter) uint32 {
 	// We never grant delegations, but accept returns gracefully.
 	r := w.AppendResarray_Delegreturn()
-	r.SetStatus(NFS4_OK)
-	return NFS4_OK
+	return finishStatusResponse(&r, NFS4_OK)
 }
 
 func (s *Server) opGetattr(args GETATTR4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
@@ -285,15 +292,13 @@ func (s *Server) opLocku(w *COMPOUND4resWriter) uint32 {
 func (s *Server) opLookup(args LOOKUP4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
 	if !st.currentIDSet {
 		r := w.AppendResarray_Lookup()
-		r.SetStatus(NFS4ERR_NOFILEHANDLE)
-		return NFS4ERR_NOFILEHANDLE
+		return finishStatusResponse(&r, NFS4ERR_NOFILEHANDLE)
 	}
 	name := string(args.Objname().Data())
 	// Hide the internal .nfs directory from client access.
 	if name == nfsDirName && st.currentID == s.fs.RootID() {
 		r := w.AppendResarray_Lookup()
-		r.SetStatus(NFS4ERR_NOENT)
-		return NFS4ERR_NOENT
+		return finishStatusResponse(&r, NFS4ERR_NOENT)
 	}
 	id, err := s.fs.Lookup(st.currentID, name)
 	if err != nil {
@@ -305,15 +310,13 @@ func (s *Server) opLookup(args LOOKUP4args, st *compoundState, w *COMPOUND4resWr
 	st.currentID = id
 	st.currentIDSet = true
 	r := w.AppendResarray_Lookup()
-	r.SetStatus(NFS4_OK)
-	return NFS4_OK
+	return finishStatusResponse(&r, NFS4_OK)
 }
 
 func (s *Server) opLookupp(st *compoundState, w *COMPOUND4resWriter) uint32 {
 	if !st.currentIDSet {
 		r := w.AppendResarray_Lookupp()
-		r.SetStatus(NFS4ERR_NOFILEHANDLE)
-		return NFS4ERR_NOFILEHANDLE
+		return finishStatusResponse(&r, NFS4ERR_NOFILEHANDLE)
 	}
 	id, err := s.fs.LookupParent(st.currentID)
 	if err != nil {
@@ -325,21 +328,18 @@ func (s *Server) opLookupp(st *compoundState, w *COMPOUND4resWriter) uint32 {
 	st.currentID = id
 	st.currentIDSet = true
 	r := w.AppendResarray_Lookupp()
-	r.SetStatus(NFS4_OK)
-	return NFS4_OK
+	return finishStatusResponse(&r, NFS4_OK)
 }
 
 func (s *Server) opNverify(args NVERIFY4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
 	if !st.currentIDSet {
 		r := w.AppendResarray_Nverify()
-		r.SetStatus(NFS4ERR_NOFILEHANDLE)
-		return NFS4ERR_NOFILEHANDLE
+		return finishStatusResponse(&r, NFS4ERR_NOFILEHANDLE)
 	}
 	same, status := s.verifyAttrs(st.currentID, args.ObjAttributes())
 	if status != NFS4_OK {
 		r := w.AppendResarray_Nverify()
-		r.SetStatus(status)
-		return status
+		return finishStatusResponse(&r, status)
 	}
 	r := w.AppendResarray_Nverify()
 	if same {
@@ -516,8 +516,7 @@ func (s *Server) opOpenDowngrade(st *compoundState, w *COMPOUND4resWriter) uint3
 
 func (s *Server) opOpenattr(w *COMPOUND4resWriter) uint32 {
 	r := w.AppendResarray_Openattr()
-	r.SetStatus(NFS4ERR_NOTSUPP)
-	return NFS4ERR_NOTSUPP
+	return finishStatusResponse(&r, NFS4ERR_NOTSUPP)
 }
 
 func (s *Server) opPutfh(args PUTFH4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
@@ -525,14 +524,12 @@ func (s *Server) opPutfh(args PUTFH4args, st *compoundState, w *COMPOUND4resWrit
 	id, ok := fhToInodeID(fhData)
 	if !ok {
 		r := w.AppendResarray_Putfh()
-		r.SetStatus(NFS4ERR_BADHANDLE)
-		return NFS4ERR_BADHANDLE
+		return finishStatusResponse(&r, NFS4ERR_BADHANDLE)
 	}
 	st.currentID = id
 	st.currentIDSet = true
 	r := w.AppendResarray_Putfh()
-	r.SetStatus(NFS4_OK)
-	return NFS4_OK
+	return finishStatusResponse(&r, NFS4_OK)
 }
 
 func (s *Server) opPutrootfh(st *compoundState, w *COMPOUND4resWriter, isPub bool) uint32 {
@@ -832,34 +829,29 @@ func (s *Server) opRenew(args RENEW4args, w *COMPOUND4resWriter) uint32 {
 	// No lease state — just accept the renewal.
 	_ = args.Clientid()
 	r := w.AppendResarray_Renew()
-	r.SetStatus(NFS4_OK)
-	return NFS4_OK
+	return finishStatusResponse(&r, NFS4_OK)
 }
 
 func (s *Server) opSavefh(st *compoundState, w *COMPOUND4resWriter) uint32 {
 	if !st.currentIDSet {
 		r := w.AppendResarray_Savefh()
-		r.SetStatus(NFS4ERR_NOFILEHANDLE)
-		return NFS4ERR_NOFILEHANDLE
+		return finishStatusResponse(&r, NFS4ERR_NOFILEHANDLE)
 	}
 	st.savedID = st.currentID
 	st.savedIDSet = true
 	r := w.AppendResarray_Savefh()
-	r.SetStatus(NFS4_OK)
-	return NFS4_OK
+	return finishStatusResponse(&r, NFS4_OK)
 }
 
 func (s *Server) opRestorefh(st *compoundState, w *COMPOUND4resWriter) uint32 {
 	if !st.savedIDSet {
 		r := w.AppendResarray_Restorefh()
-		r.SetStatus(NFS4ERR_RESTOREFH)
-		return NFS4ERR_RESTOREFH
+		return finishStatusResponse(&r, NFS4ERR_RESTOREFH)
 	}
 	st.currentID = st.savedID
 	st.currentIDSet = true
 	r := w.AppendResarray_Restorefh()
-	r.SetStatus(NFS4_OK)
-	return NFS4_OK
+	return finishStatusResponse(&r, NFS4_OK)
 }
 
 func (s *Server) opSecinfo(st *compoundState, w *COMPOUND4resWriter) uint32 {
@@ -1016,25 +1008,21 @@ func (s *Server) opSetclientidConfirm(args SETCLIENTIDCONFIRM4args, w *COMPOUND4
 	_, err := s.clients.ConfirmClientID(clid)
 	if err != nil {
 		r := w.AppendResarray_SetclientidConfirm()
-		r.SetStatus(nfsErrCode(err))
-		return nfsErrCode(err)
+		return finishStatusResponse(&r, nfsErrCode(err))
 	}
 	r := w.AppendResarray_SetclientidConfirm()
-	r.SetStatus(NFS4_OK)
-	return NFS4_OK
+	return finishStatusResponse(&r, NFS4_OK)
 }
 
 func (s *Server) opVerify(args VERIFY4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
 	if !st.currentIDSet {
 		r := w.AppendResarray_Verify()
-		r.SetStatus(NFS4ERR_NOFILEHANDLE)
-		return NFS4ERR_NOFILEHANDLE
+		return finishStatusResponse(&r, NFS4ERR_NOFILEHANDLE)
 	}
 	same, status := s.verifyAttrs(st.currentID, args.ObjAttributes())
 	if status != NFS4_OK {
 		r := w.AppendResarray_Verify()
-		r.SetStatus(status)
-		return status
+		return finishStatusResponse(&r, status)
 	}
 	r := w.AppendResarray_Verify()
 	if !same {
@@ -1083,8 +1071,7 @@ func (s *Server) opWrite(args WRITE4args, st *compoundState, w *COMPOUND4resWrit
 func (s *Server) opReleaseLockowner(w *COMPOUND4resWriter) uint32 {
 	// No lock state — always succeeds.
 	r := w.AppendResarray_ReleaseLockowner()
-	r.SetStatus(NFS4_OK)
-	return NFS4_OK
+	return finishStatusResponse(&r, NFS4_OK)
 }
 
 // verifyAttrs compares the supplied fattr4 against the current file's attributes.
