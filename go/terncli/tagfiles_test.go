@@ -5,13 +5,13 @@
 package main
 
 import (
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
 	"time"
-	"xtx/ternfs/msgs"
 )
 
 const oneRuleJSON = `[

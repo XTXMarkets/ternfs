@@ -371,6 +371,32 @@ void RegistryDB::processLogEntries(std::vector<LogsDBLogEntry>& logEntries, std:
             }
             case RegistryMessageKind::REGISTER_BLOCK_SERVICES: {
                 auto& req = reqContainer.getRegisterBlockServices();
+                if (_options.enforceStableBlockServicePath) {
+                    for (auto& newInfo : req.blockServices.els) {
+                        auto bsIt = updatedBlocks.find(newInfo.id.u64);
+                        FullBlockServiceInfo info;
+                        if (bsIt == updatedBlocks.end()) {
+                            StaticValue<BlockServiceInfoKey> key;
+                            key().setId(newInfo.id.u64);
+                            std::string value;
+                            auto status = _db->Get({}, _blockServicesCf, key.toSlice(), &value);
+                            if (status == rocksdb::Status::NotFound()) {
+                                continue;
+                            }
+                            ROCKS_DB_CHECKED(status);
+                            readBlockServiceInfo(key.toSlice(), value, info);
+                        } else {
+                            info = bsIt->second;
+                        }
+                        if (info.flags != BlockServiceFlags::DECOMMISSIONED && info.path != newInfo.path) {
+                            res.err = TernError::INCONSISTENT_BLOCK_SERVICE_REGISTRATION;
+                            break;
+                        }
+                    }
+                    if (res.err != TernError::NO_ERROR) {
+                        break;
+                    }
+                }
                 for(auto& newInfo : req.blockServices.els) {
                     auto bsIt = updatedBlocks.find(newInfo.id.u64);
                     FullBlockServiceInfo info;
@@ -417,6 +443,10 @@ void RegistryDB::processLogEntries(std::vector<LogsDBLogEntry>& logEntries, std:
                     }
                     if(info.addrs != newInfo.addrs) {
                         info.addrs = newInfo.addrs;
+                        info.lastInfoChange = requestTime;
+                    }
+                    if (info.path != newInfo.path) {
+                        info.path = newInfo.path;
                         info.lastInfoChange = requestTime;
                     }
                     if ((info.flags & BlockServiceFlags::STALE) != BlockServiceFlags::EMPTY ) {

@@ -6,12 +6,12 @@ package main
 
 import (
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"path"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
-	"xtx/ternfs/msgs"
 )
 
 type fakeSymlinkFilesystem struct {

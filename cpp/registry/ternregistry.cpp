@@ -34,6 +34,11 @@ static bool parseRegistryOptions(CommandLineArgs& args, RegistryOptions& options
             options.enforceStableLeader = true;
             continue;
         }
+        if (arg == "-enforce-stable-block-service-path") {
+            args.next();
+            options.enforceStableBlockServicePath = true;
+            continue;
+        }
         if (arg == "-max-connections") {
             options.maxConnections = parseUint32(args.next());
             continue;
@@ -97,6 +102,8 @@ static void printRegistryOptionsUsage() {
     fprintf(stderr, "       Don't allow both ip addresses to change at once on any service hearbeat.\n");
     fprintf(stderr, " -enforce-stable-leader\n");
     fprintf(stderr, "       Don't allow leader to implicitly change on heartbeat but require LeaderMoveReq.\n");
+    fprintf(stderr, " -enforce-stable-block-service-path\n");
+    fprintf(stderr, "       Don't allow a block service path to change on heartbeat; require UpdateBlockServicePathReq.\n");
     fprintf(stderr, " -max-connections\n");
     fprintf(stderr, "       Maximum number of connections to serve at the same time. Default is 4000\n");
     fprintf(stderr, " -connection-idle-timeout\n");

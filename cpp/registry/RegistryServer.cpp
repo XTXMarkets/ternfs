@@ -248,6 +248,11 @@ void RegistryServer::_readClient(int fd) {
             uint32_t len = buf.unpackScalar<uint32_t>();
             buf.ensureFinished();
             LOG_TRACE(_env, "Received message of length %s", len);
+            if (len == 0 || len > MAX_REGISTRY_REQUEST_SIZE) {
+                LOG_ERROR(_env, "Invalid registry request length: %s", len);
+                _removeClient(fd);
+                return;
+            }
             bytesToRead = len;
             client.readBuffer.resize(len + MESSAGE_HEADER_SIZE);
             LOG_TRACE(_env, "ReadBuffer new size %s", client.readBuffer.size());

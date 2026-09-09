@@ -11,6 +11,8 @@
 #include <variant>
 #include "Time.hpp"
 
+inline constexpr size_t MAX_REGISTRY_REQUEST_SIZE = 32 * 1024 * 1024;
+
 enum class TernError : uint16_t {
     NO_ERROR = 0,
     INTERNAL_ERROR = 10,
@@ -4536,6 +4538,7 @@ std::ostream& operator<<(std::ostream& out, const CdcSnapshotResp& x);
 struct LocalShardsReq {
 
     static constexpr uint16_t STATIC_SIZE = 0; // 
+    static constexpr size_t MAX_SIZE = 0; // maximum encoded size
 
     LocalShardsReq() { clear(); }
     LocalShardsReq(const LocalShardsReq&) = default;
@@ -4553,6 +4556,11 @@ struct LocalShardsReq {
 };
 
 std::ostream& operator<<(std::ostream& out, const LocalShardsReq& x);
+
+static_assert(
+    sizeof(RegistryMessageKind) + LocalShardsReq::MAX_SIZE <=
+        MAX_REGISTRY_REQUEST_SIZE,
+    "LocalShardsReq exceeds the registry request limit");
 
 struct LocalShardsResp {
     BincodeList<ShardInfo> shards;
@@ -4581,6 +4589,7 @@ std::ostream& operator<<(std::ostream& out, const LocalShardsResp& x);
 struct LocalCdcReq {
 
     static constexpr uint16_t STATIC_SIZE = 0; // 
+    static constexpr size_t MAX_SIZE = 0; // maximum encoded size
 
     LocalCdcReq() { clear(); }
     LocalCdcReq(const LocalCdcReq&) = default;
@@ -4598,6 +4607,11 @@ struct LocalCdcReq {
 };
 
 std::ostream& operator<<(std::ostream& out, const LocalCdcReq& x);
+
+static_assert(
+    sizeof(RegistryMessageKind) + LocalCdcReq::MAX_SIZE <=
+        MAX_REGISTRY_REQUEST_SIZE,
+    "LocalCdcReq exceeds the registry request limit");
 
 struct LocalCdcResp {
     AddrsInfo addrs;
@@ -4628,6 +4642,7 @@ std::ostream& operator<<(std::ostream& out, const LocalCdcResp& x);
 struct InfoReq {
 
     static constexpr uint16_t STATIC_SIZE = 0; // 
+    static constexpr size_t MAX_SIZE = 0; // maximum encoded size
 
     InfoReq() { clear(); }
     InfoReq(const InfoReq&) = default;
@@ -4645,6 +4660,11 @@ struct InfoReq {
 };
 
 std::ostream& operator<<(std::ostream& out, const InfoReq& x);
+
+static_assert(
+    sizeof(RegistryMessageKind) + InfoReq::MAX_SIZE <=
+        MAX_REGISTRY_REQUEST_SIZE,
+    "InfoReq exceeds the registry request limit");
 
 struct InfoResp {
     uint32_t numBlockServices;
@@ -4681,6 +4701,7 @@ std::ostream& operator<<(std::ostream& out, const InfoResp& x);
 struct RegistryReq {
 
     static constexpr uint16_t STATIC_SIZE = 0; // 
+    static constexpr size_t MAX_SIZE = 0; // maximum encoded size
 
     RegistryReq() { clear(); }
     RegistryReq(const RegistryReq&) = default;
@@ -4698,6 +4719,11 @@ struct RegistryReq {
 };
 
 std::ostream& operator<<(std::ostream& out, const RegistryReq& x);
+
+static_assert(
+    sizeof(RegistryMessageKind) + RegistryReq::MAX_SIZE <=
+        MAX_REGISTRY_REQUEST_SIZE,
+    "RegistryReq exceeds the registry request limit");
 
 struct RegistryResp {
     AddrsInfo addrs;
@@ -4727,6 +4753,7 @@ struct LocalChangedBlockServicesReq {
     TernTime changedSince;
 
     static constexpr uint16_t STATIC_SIZE = 8; // changedSince
+    static constexpr size_t MAX_SIZE = 8; // maximum encoded size
 
     LocalChangedBlockServicesReq() { clear(); }
     explicit LocalChangedBlockServicesReq(TernTime changedSince_) : changedSince(changedSince_) {}
@@ -4746,6 +4773,11 @@ struct LocalChangedBlockServicesReq {
 };
 
 std::ostream& operator<<(std::ostream& out, const LocalChangedBlockServicesReq& x);
+
+static_assert(
+    sizeof(RegistryMessageKind) + LocalChangedBlockServicesReq::MAX_SIZE <=
+        MAX_REGISTRY_REQUEST_SIZE,
+    "LocalChangedBlockServicesReq exceeds the registry request limit");
 
 struct LocalChangedBlockServicesResp {
     TernTime lastChange;
@@ -4778,6 +4810,7 @@ struct CreateLocationReq {
     BincodeBytes name;
 
     static constexpr uint16_t STATIC_SIZE = 1 + BincodeBytes::STATIC_SIZE; // id + name
+    static constexpr size_t MAX_SIZE = 257; // maximum encoded size
 
     CreateLocationReq() { clear(); }
     explicit CreateLocationReq(uint8_t id_, BincodeBytes&& name_) : id(id_), name(std::move(name_)) {}
@@ -4798,6 +4831,11 @@ struct CreateLocationReq {
 };
 
 std::ostream& operator<<(std::ostream& out, const CreateLocationReq& x);
+
+static_assert(
+    sizeof(RegistryMessageKind) + CreateLocationReq::MAX_SIZE <=
+        MAX_REGISTRY_REQUEST_SIZE,
+    "CreateLocationReq exceeds the registry request limit");
 
 struct CreateLocationResp {
 
@@ -4825,6 +4863,7 @@ struct RenameLocationReq {
     BincodeBytes name;
 
     static constexpr uint16_t STATIC_SIZE = 1 + BincodeBytes::STATIC_SIZE; // id + name
+    static constexpr size_t MAX_SIZE = 257; // maximum encoded size
 
     RenameLocationReq() { clear(); }
     explicit RenameLocationReq(uint8_t id_, BincodeBytes&& name_) : id(id_), name(std::move(name_)) {}
@@ -4845,6 +4884,11 @@ struct RenameLocationReq {
 };
 
 std::ostream& operator<<(std::ostream& out, const RenameLocationReq& x);
+
+static_assert(
+    sizeof(RegistryMessageKind) + RenameLocationReq::MAX_SIZE <=
+        MAX_REGISTRY_REQUEST_SIZE,
+    "RenameLocationReq exceeds the registry request limit");
 
 struct RenameLocationResp {
 
@@ -4874,6 +4918,7 @@ struct RegisterShardReq {
     uint8_t location;
 
     static constexpr uint16_t STATIC_SIZE = 2 + 1 + AddrsInfo::STATIC_SIZE + 1; // shrid + isLeader + addrs + location
+    static constexpr size_t MAX_SIZE = 16; // maximum encoded size
 
     RegisterShardReq() { clear(); }
     explicit RegisterShardReq(ShardReplicaId shrid_, bool isLeader_, AddrsInfo addrs_, uint8_t location_) : shrid(shrid_), isLeader(isLeader_), addrs(addrs_), location(location_) {}
@@ -4896,6 +4941,11 @@ struct RegisterShardReq {
 };
 
 std::ostream& operator<<(std::ostream& out, const RegisterShardReq& x);
+
+static_assert(
+    sizeof(RegistryMessageKind) + RegisterShardReq::MAX_SIZE <=
+        MAX_REGISTRY_REQUEST_SIZE,
+    "RegisterShardReq exceeds the registry request limit");
 
 struct RegisterShardResp {
 
@@ -4921,6 +4971,7 @@ std::ostream& operator<<(std::ostream& out, const RegisterShardResp& x);
 struct LocationsReq {
 
     static constexpr uint16_t STATIC_SIZE = 0; // 
+    static constexpr size_t MAX_SIZE = 0; // maximum encoded size
 
     LocationsReq() { clear(); }
     LocationsReq(const LocationsReq&) = default;
@@ -4938,6 +4989,11 @@ struct LocationsReq {
 };
 
 std::ostream& operator<<(std::ostream& out, const LocationsReq& x);
+
+static_assert(
+    sizeof(RegistryMessageKind) + LocationsReq::MAX_SIZE <=
+        MAX_REGISTRY_REQUEST_SIZE,
+    "LocationsReq exceeds the registry request limit");
 
 struct LocationsResp {
     BincodeList<LocationInfo> locations;
@@ -4970,6 +5026,7 @@ struct RegisterCdcReq {
     AddrsInfo addrs;
 
     static constexpr uint16_t STATIC_SIZE = 1 + 1 + 1 + AddrsInfo::STATIC_SIZE; // replica + location + isLeader + addrs
+    static constexpr size_t MAX_SIZE = 15; // maximum encoded size
 
     RegisterCdcReq() { clear(); }
     explicit RegisterCdcReq(ReplicaId replica_, uint8_t location_, bool isLeader_, AddrsInfo addrs_) : replica(replica_), location(location_), isLeader(isLeader_), addrs(addrs_) {}
@@ -4992,6 +5049,11 @@ struct RegisterCdcReq {
 };
 
 std::ostream& operator<<(std::ostream& out, const RegisterCdcReq& x);
+
+static_assert(
+    sizeof(RegistryMessageKind) + RegisterCdcReq::MAX_SIZE <=
+        MAX_REGISTRY_REQUEST_SIZE,
+    "RegisterCdcReq exceeds the registry request limit");
 
 struct RegisterCdcResp {
 
@@ -5020,6 +5082,7 @@ struct SetBlockServiceFlagsReq {
     uint8_t flagsMask;
 
     static constexpr uint16_t STATIC_SIZE = 8 + 1 + 1; // id + flags + flagsMask
+    static constexpr size_t MAX_SIZE = 10; // maximum encoded size
 
     SetBlockServiceFlagsReq() { clear(); }
     explicit SetBlockServiceFlagsReq(BlockServiceId id_, BlockServiceFlags flags_, uint8_t flagsMask_) : id(id_), flags(flags_), flagsMask(flagsMask_) {}
@@ -5041,6 +5104,11 @@ struct SetBlockServiceFlagsReq {
 };
 
 std::ostream& operator<<(std::ostream& out, const SetBlockServiceFlagsReq& x);
+
+static_assert(
+    sizeof(RegistryMessageKind) + SetBlockServiceFlagsReq::MAX_SIZE <=
+        MAX_REGISTRY_REQUEST_SIZE,
+    "SetBlockServiceFlagsReq exceeds the registry request limit");
 
 struct SetBlockServiceFlagsResp {
 
@@ -5067,6 +5135,7 @@ struct RegisterBlockServicesReq {
     BincodeList<RegisterBlockServiceInfo> blockServices;
 
     static constexpr uint16_t STATIC_SIZE = BincodeList<RegisterBlockServiceInfo>::STATIC_SIZE; // blockServices
+    static constexpr size_t MAX_SIZE = 22019762; // maximum encoded size
 
     RegisterBlockServicesReq() { clear(); }
     explicit RegisterBlockServicesReq(BincodeList<RegisterBlockServiceInfo>&& blockServices_) : blockServices(std::move(blockServices_)) {}
@@ -5086,6 +5155,11 @@ struct RegisterBlockServicesReq {
 };
 
 std::ostream& operator<<(std::ostream& out, const RegisterBlockServicesReq& x);
+
+static_assert(
+    sizeof(RegistryMessageKind) + RegisterBlockServicesReq::MAX_SIZE <=
+        MAX_REGISTRY_REQUEST_SIZE,
+    "RegisterBlockServicesReq exceeds the registry request limit");
 
 struct RegisterBlockServicesResp {
 
@@ -5113,6 +5187,7 @@ struct ChangedBlockServicesAtLocationReq {
     TernTime changedSince;
 
     static constexpr uint16_t STATIC_SIZE = 1 + 8; // locationId + changedSince
+    static constexpr size_t MAX_SIZE = 9; // maximum encoded size
 
     ChangedBlockServicesAtLocationReq() { clear(); }
     explicit ChangedBlockServicesAtLocationReq(uint8_t locationId_, TernTime changedSince_) : locationId(locationId_), changedSince(changedSince_) {}
@@ -5133,6 +5208,11 @@ struct ChangedBlockServicesAtLocationReq {
 };
 
 std::ostream& operator<<(std::ostream& out, const ChangedBlockServicesAtLocationReq& x);
+
+static_assert(
+    sizeof(RegistryMessageKind) + ChangedBlockServicesAtLocationReq::MAX_SIZE <=
+        MAX_REGISTRY_REQUEST_SIZE,
+    "ChangedBlockServicesAtLocationReq exceeds the registry request limit");
 
 struct ChangedBlockServicesAtLocationResp {
     TernTime lastChange;
@@ -5164,6 +5244,7 @@ struct ShardsAtLocationReq {
     uint8_t locationId;
 
     static constexpr uint16_t STATIC_SIZE = 1; // locationId
+    static constexpr size_t MAX_SIZE = 1; // maximum encoded size
 
     ShardsAtLocationReq() { clear(); }
     explicit ShardsAtLocationReq(uint8_t locationId_) : locationId(locationId_) {}
@@ -5183,6 +5264,11 @@ struct ShardsAtLocationReq {
 };
 
 std::ostream& operator<<(std::ostream& out, const ShardsAtLocationReq& x);
+
+static_assert(
+    sizeof(RegistryMessageKind) + ShardsAtLocationReq::MAX_SIZE <=
+        MAX_REGISTRY_REQUEST_SIZE,
+    "ShardsAtLocationReq exceeds the registry request limit");
 
 struct ShardsAtLocationResp {
     BincodeList<ShardInfo> shards;
@@ -5212,6 +5298,7 @@ struct CdcAtLocationReq {
     uint8_t locationId;
 
     static constexpr uint16_t STATIC_SIZE = 1; // locationId
+    static constexpr size_t MAX_SIZE = 1; // maximum encoded size
 
     CdcAtLocationReq() { clear(); }
     explicit CdcAtLocationReq(uint8_t locationId_) : locationId(locationId_) {}
@@ -5231,6 +5318,11 @@ struct CdcAtLocationReq {
 };
 
 std::ostream& operator<<(std::ostream& out, const CdcAtLocationReq& x);
+
+static_assert(
+    sizeof(RegistryMessageKind) + CdcAtLocationReq::MAX_SIZE <=
+        MAX_REGISTRY_REQUEST_SIZE,
+    "CdcAtLocationReq exceeds the registry request limit");
 
 struct CdcAtLocationResp {
     AddrsInfo addrs;
@@ -5266,6 +5358,7 @@ struct RegisterRegistryReq {
     bool bootstrap;
 
     static constexpr uint16_t STATIC_SIZE = 1 + 1 + 1 + AddrsInfo::STATIC_SIZE + 1; // replicaId + location + isLeader + addrs + bootstrap
+    static constexpr size_t MAX_SIZE = 16; // maximum encoded size
 
     RegisterRegistryReq() { clear(); }
     explicit RegisterRegistryReq(ReplicaId replicaId_, uint8_t location_, bool isLeader_, AddrsInfo addrs_, bool bootstrap_) : replicaId(replicaId_), location(location_), isLeader(isLeader_), addrs(addrs_), bootstrap(bootstrap_) {}
@@ -5289,6 +5382,11 @@ struct RegisterRegistryReq {
 };
 
 std::ostream& operator<<(std::ostream& out, const RegisterRegistryReq& x);
+
+static_assert(
+    sizeof(RegistryMessageKind) + RegisterRegistryReq::MAX_SIZE <=
+        MAX_REGISTRY_REQUEST_SIZE,
+    "RegisterRegistryReq exceeds the registry request limit");
 
 struct RegisterRegistryResp {
 
@@ -5314,6 +5412,7 @@ std::ostream& operator<<(std::ostream& out, const RegisterRegistryResp& x);
 struct AllRegistryReplicasDEPRECATEDReq {
 
     static constexpr uint16_t STATIC_SIZE = 0; // 
+    static constexpr size_t MAX_SIZE = 0; // maximum encoded size
 
     AllRegistryReplicasDEPRECATEDReq() { clear(); }
     AllRegistryReplicasDEPRECATEDReq(const AllRegistryReplicasDEPRECATEDReq&) = default;
@@ -5331,6 +5430,11 @@ struct AllRegistryReplicasDEPRECATEDReq {
 };
 
 std::ostream& operator<<(std::ostream& out, const AllRegistryReplicasDEPRECATEDReq& x);
+
+static_assert(
+    sizeof(RegistryMessageKind) + AllRegistryReplicasDEPRECATEDReq::MAX_SIZE <=
+        MAX_REGISTRY_REQUEST_SIZE,
+    "AllRegistryReplicasDEPRECATEDReq exceeds the registry request limit");
 
 struct AllRegistryReplicasDEPRECATEDResp {
     BincodeList<FullRegistryInfo> replicas;
@@ -5360,6 +5464,7 @@ struct ShardBlockServicesDEPRECATEDReq {
     ShardId shardId;
 
     static constexpr uint16_t STATIC_SIZE = 1; // shardId
+    static constexpr size_t MAX_SIZE = 1; // maximum encoded size
 
     ShardBlockServicesDEPRECATEDReq() { clear(); }
     explicit ShardBlockServicesDEPRECATEDReq(ShardId shardId_) : shardId(shardId_) {}
@@ -5379,6 +5484,11 @@ struct ShardBlockServicesDEPRECATEDReq {
 };
 
 std::ostream& operator<<(std::ostream& out, const ShardBlockServicesDEPRECATEDReq& x);
+
+static_assert(
+    sizeof(RegistryMessageKind) + ShardBlockServicesDEPRECATEDReq::MAX_SIZE <=
+        MAX_REGISTRY_REQUEST_SIZE,
+    "ShardBlockServicesDEPRECATEDReq exceeds the registry request limit");
 
 struct ShardBlockServicesDEPRECATEDResp {
     BincodeList<BlockServiceId> blockServices;
@@ -5407,6 +5517,7 @@ std::ostream& operator<<(std::ostream& out, const ShardBlockServicesDEPRECATEDRe
 struct CdcReplicasDEPRECATEDReq {
 
     static constexpr uint16_t STATIC_SIZE = 0; // 
+    static constexpr size_t MAX_SIZE = 0; // maximum encoded size
 
     CdcReplicasDEPRECATEDReq() { clear(); }
     CdcReplicasDEPRECATEDReq(const CdcReplicasDEPRECATEDReq&) = default;
@@ -5424,6 +5535,11 @@ struct CdcReplicasDEPRECATEDReq {
 };
 
 std::ostream& operator<<(std::ostream& out, const CdcReplicasDEPRECATEDReq& x);
+
+static_assert(
+    sizeof(RegistryMessageKind) + CdcReplicasDEPRECATEDReq::MAX_SIZE <=
+        MAX_REGISTRY_REQUEST_SIZE,
+    "CdcReplicasDEPRECATEDReq exceeds the registry request limit");
 
 struct CdcReplicasDEPRECATEDResp {
     BincodeList<AddrsInfo> replicas;
@@ -5452,6 +5568,7 @@ std::ostream& operator<<(std::ostream& out, const CdcReplicasDEPRECATEDResp& x);
 struct AllShardsDEPRECATEDReq {
 
     static constexpr uint16_t STATIC_SIZE = 0; // 
+    static constexpr size_t MAX_SIZE = 0; // maximum encoded size
 
     AllShardsDEPRECATEDReq() { clear(); }
     AllShardsDEPRECATEDReq(const AllShardsDEPRECATEDReq&) = default;
@@ -5469,6 +5586,11 @@ struct AllShardsDEPRECATEDReq {
 };
 
 std::ostream& operator<<(std::ostream& out, const AllShardsDEPRECATEDReq& x);
+
+static_assert(
+    sizeof(RegistryMessageKind) + AllShardsDEPRECATEDReq::MAX_SIZE <=
+        MAX_REGISTRY_REQUEST_SIZE,
+    "AllShardsDEPRECATEDReq exceeds the registry request limit");
 
 struct AllShardsDEPRECATEDResp {
     BincodeList<FullShardInfo> shards;
@@ -5498,6 +5620,7 @@ struct DecommissionBlockServiceReq {
     BlockServiceId id;
 
     static constexpr uint16_t STATIC_SIZE = 8; // id
+    static constexpr size_t MAX_SIZE = 8; // maximum encoded size
 
     DecommissionBlockServiceReq() { clear(); }
     explicit DecommissionBlockServiceReq(BlockServiceId id_) : id(id_) {}
@@ -5517,6 +5640,11 @@ struct DecommissionBlockServiceReq {
 };
 
 std::ostream& operator<<(std::ostream& out, const DecommissionBlockServiceReq& x);
+
+static_assert(
+    sizeof(RegistryMessageKind) + DecommissionBlockServiceReq::MAX_SIZE <=
+        MAX_REGISTRY_REQUEST_SIZE,
+    "DecommissionBlockServiceReq exceeds the registry request limit");
 
 struct DecommissionBlockServiceResp {
 
@@ -5544,6 +5672,7 @@ struct MoveShardLeaderReq {
     uint8_t location;
 
     static constexpr uint16_t STATIC_SIZE = 2 + 1; // shrid + location
+    static constexpr size_t MAX_SIZE = 3; // maximum encoded size
 
     MoveShardLeaderReq() { clear(); }
     explicit MoveShardLeaderReq(ShardReplicaId shrid_, uint8_t location_) : shrid(shrid_), location(location_) {}
@@ -5564,6 +5693,11 @@ struct MoveShardLeaderReq {
 };
 
 std::ostream& operator<<(std::ostream& out, const MoveShardLeaderReq& x);
+
+static_assert(
+    sizeof(RegistryMessageKind) + MoveShardLeaderReq::MAX_SIZE <=
+        MAX_REGISTRY_REQUEST_SIZE,
+    "MoveShardLeaderReq exceeds the registry request limit");
 
 struct MoveShardLeaderResp {
 
@@ -5591,6 +5725,7 @@ struct ClearShardInfoReq {
     uint8_t location;
 
     static constexpr uint16_t STATIC_SIZE = 2 + 1; // shrid + location
+    static constexpr size_t MAX_SIZE = 3; // maximum encoded size
 
     ClearShardInfoReq() { clear(); }
     explicit ClearShardInfoReq(ShardReplicaId shrid_, uint8_t location_) : shrid(shrid_), location(location_) {}
@@ -5611,6 +5746,11 @@ struct ClearShardInfoReq {
 };
 
 std::ostream& operator<<(std::ostream& out, const ClearShardInfoReq& x);
+
+static_assert(
+    sizeof(RegistryMessageKind) + ClearShardInfoReq::MAX_SIZE <=
+        MAX_REGISTRY_REQUEST_SIZE,
+    "ClearShardInfoReq exceeds the registry request limit");
 
 struct ClearShardInfoResp {
 
@@ -5637,6 +5777,7 @@ struct ShardBlockServicesReq {
     ShardId shardId;
 
     static constexpr uint16_t STATIC_SIZE = 1; // shardId
+    static constexpr size_t MAX_SIZE = 1; // maximum encoded size
 
     ShardBlockServicesReq() { clear(); }
     explicit ShardBlockServicesReq(ShardId shardId_) : shardId(shardId_) {}
@@ -5656,6 +5797,11 @@ struct ShardBlockServicesReq {
 };
 
 std::ostream& operator<<(std::ostream& out, const ShardBlockServicesReq& x);
+
+static_assert(
+    sizeof(RegistryMessageKind) + ShardBlockServicesReq::MAX_SIZE <=
+        MAX_REGISTRY_REQUEST_SIZE,
+    "ShardBlockServicesReq exceeds the registry request limit");
 
 struct ShardBlockServicesResp {
     BincodeList<BlockServiceInfoShort> blockServices;
@@ -5684,6 +5830,7 @@ std::ostream& operator<<(std::ostream& out, const ShardBlockServicesResp& x);
 struct AllCdcDEPRECATEDReq {
 
     static constexpr uint16_t STATIC_SIZE = 0; // 
+    static constexpr size_t MAX_SIZE = 0; // maximum encoded size
 
     AllCdcDEPRECATEDReq() { clear(); }
     AllCdcDEPRECATEDReq(const AllCdcDEPRECATEDReq&) = default;
@@ -5701,6 +5848,11 @@ struct AllCdcDEPRECATEDReq {
 };
 
 std::ostream& operator<<(std::ostream& out, const AllCdcDEPRECATEDReq& x);
+
+static_assert(
+    sizeof(RegistryMessageKind) + AllCdcDEPRECATEDReq::MAX_SIZE <=
+        MAX_REGISTRY_REQUEST_SIZE,
+    "AllCdcDEPRECATEDReq exceeds the registry request limit");
 
 struct AllCdcDEPRECATEDResp {
     BincodeList<CdcInfo> replicas;
@@ -5732,6 +5884,7 @@ struct EraseDecommissionedBlockReq {
     BincodeFixedBytes<8> certificate;
 
     static constexpr uint16_t STATIC_SIZE = 8 + 8 + BincodeFixedBytes<8>::STATIC_SIZE; // blockServiceId + blockId + certificate
+    static constexpr size_t MAX_SIZE = 24; // maximum encoded size
 
     EraseDecommissionedBlockReq() { clear(); }
     explicit EraseDecommissionedBlockReq(BlockServiceId blockServiceId_, uint64_t blockId_, BincodeFixedBytes<8>&& certificate_) : blockServiceId(blockServiceId_), blockId(blockId_), certificate(std::move(certificate_)) {}
@@ -5753,6 +5906,11 @@ struct EraseDecommissionedBlockReq {
 };
 
 std::ostream& operator<<(std::ostream& out, const EraseDecommissionedBlockReq& x);
+
+static_assert(
+    sizeof(RegistryMessageKind) + EraseDecommissionedBlockReq::MAX_SIZE <=
+        MAX_REGISTRY_REQUEST_SIZE,
+    "EraseDecommissionedBlockReq exceeds the registry request limit");
 
 struct EraseDecommissionedBlockResp {
     BincodeFixedBytes<8> proof;
@@ -5781,6 +5939,7 @@ std::ostream& operator<<(std::ostream& out, const EraseDecommissionedBlockResp& 
 struct AllBlockServicesDeprecatedReq {
 
     static constexpr uint16_t STATIC_SIZE = 0; // 
+    static constexpr size_t MAX_SIZE = 0; // maximum encoded size
 
     AllBlockServicesDeprecatedReq() { clear(); }
     AllBlockServicesDeprecatedReq(const AllBlockServicesDeprecatedReq&) = default;
@@ -5798,6 +5957,11 @@ struct AllBlockServicesDeprecatedReq {
 };
 
 std::ostream& operator<<(std::ostream& out, const AllBlockServicesDeprecatedReq& x);
+
+static_assert(
+    sizeof(RegistryMessageKind) + AllBlockServicesDeprecatedReq::MAX_SIZE <=
+        MAX_REGISTRY_REQUEST_SIZE,
+    "AllBlockServicesDeprecatedReq exceeds the registry request limit");
 
 struct AllBlockServicesDeprecatedResp {
     BincodeList<BlockServiceDeprecatedInfo> blockServices;
@@ -5826,6 +5990,7 @@ std::ostream& operator<<(std::ostream& out, const AllBlockServicesDeprecatedResp
 struct AllBlockServicesReq {
 
     static constexpr uint16_t STATIC_SIZE = 0; // 
+    static constexpr size_t MAX_SIZE = 0; // maximum encoded size
 
     AllBlockServicesReq() { clear(); }
     AllBlockServicesReq(const AllBlockServicesReq&) = default;
@@ -5843,6 +6008,11 @@ struct AllBlockServicesReq {
 };
 
 std::ostream& operator<<(std::ostream& out, const AllBlockServicesReq& x);
+
+static_assert(
+    sizeof(RegistryMessageKind) + AllBlockServicesReq::MAX_SIZE <=
+        MAX_REGISTRY_REQUEST_SIZE,
+    "AllBlockServicesReq exceeds the registry request limit");
 
 struct AllBlockServicesResp {
     BincodeList<FullBlockServiceInfo> blockServices;
@@ -5873,6 +6043,7 @@ struct MoveCdcLeaderReq {
     uint8_t location;
 
     static constexpr uint16_t STATIC_SIZE = 1 + 1; // replica + location
+    static constexpr size_t MAX_SIZE = 2; // maximum encoded size
 
     MoveCdcLeaderReq() { clear(); }
     explicit MoveCdcLeaderReq(ReplicaId replica_, uint8_t location_) : replica(replica_), location(location_) {}
@@ -5893,6 +6064,11 @@ struct MoveCdcLeaderReq {
 };
 
 std::ostream& operator<<(std::ostream& out, const MoveCdcLeaderReq& x);
+
+static_assert(
+    sizeof(RegistryMessageKind) + MoveCdcLeaderReq::MAX_SIZE <=
+        MAX_REGISTRY_REQUEST_SIZE,
+    "MoveCdcLeaderReq exceeds the registry request limit");
 
 struct MoveCdcLeaderResp {
 
@@ -5920,6 +6096,7 @@ struct ClearCdcInfoReq {
     uint8_t location;
 
     static constexpr uint16_t STATIC_SIZE = 1 + 1; // replica + location
+    static constexpr size_t MAX_SIZE = 2; // maximum encoded size
 
     ClearCdcInfoReq() { clear(); }
     explicit ClearCdcInfoReq(ReplicaId replica_, uint8_t location_) : replica(replica_), location(location_) {}
@@ -5940,6 +6117,11 @@ struct ClearCdcInfoReq {
 };
 
 std::ostream& operator<<(std::ostream& out, const ClearCdcInfoReq& x);
+
+static_assert(
+    sizeof(RegistryMessageKind) + ClearCdcInfoReq::MAX_SIZE <=
+        MAX_REGISTRY_REQUEST_SIZE,
+    "ClearCdcInfoReq exceeds the registry request limit");
 
 struct ClearCdcInfoResp {
 
@@ -5967,6 +6149,7 @@ struct UpdateBlockServicePathReq {
     BincodeBytes newPath;
 
     static constexpr uint16_t STATIC_SIZE = 8 + BincodeBytes::STATIC_SIZE; // id + newPath
+    static constexpr size_t MAX_SIZE = 264; // maximum encoded size
 
     UpdateBlockServicePathReq() { clear(); }
     explicit UpdateBlockServicePathReq(BlockServiceId id_, BincodeBytes&& newPath_) : id(id_), newPath(std::move(newPath_)) {}
@@ -5987,6 +6170,11 @@ struct UpdateBlockServicePathReq {
 };
 
 std::ostream& operator<<(std::ostream& out, const UpdateBlockServicePathReq& x);
+
+static_assert(
+    sizeof(RegistryMessageKind) + UpdateBlockServicePathReq::MAX_SIZE <=
+        MAX_REGISTRY_REQUEST_SIZE,
+    "UpdateBlockServicePathReq exceeds the registry request limit");
 
 struct UpdateBlockServicePathResp {
 
@@ -6014,6 +6202,7 @@ struct SetBlockServiceHasFilesReq {
     bool hasFiles;
 
     static constexpr uint16_t STATIC_SIZE = 8 + 1; // id + hasFiles
+    static constexpr size_t MAX_SIZE = 9; // maximum encoded size
 
     SetBlockServiceHasFilesReq() { clear(); }
     explicit SetBlockServiceHasFilesReq(BlockServiceId id_, bool hasFiles_) : id(id_), hasFiles(hasFiles_) {}
@@ -6034,6 +6223,11 @@ struct SetBlockServiceHasFilesReq {
 };
 
 std::ostream& operator<<(std::ostream& out, const SetBlockServiceHasFilesReq& x);
+
+static_assert(
+    sizeof(RegistryMessageKind) + SetBlockServiceHasFilesReq::MAX_SIZE <=
+        MAX_REGISTRY_REQUEST_SIZE,
+    "SetBlockServiceHasFilesReq exceeds the registry request limit");
 
 struct SetBlockServiceHasFilesResp {
 
@@ -6060,6 +6254,7 @@ struct BlockServicesNeedingMigrationReq {
     uint8_t locationId;
 
     static constexpr uint16_t STATIC_SIZE = 1; // locationId
+    static constexpr size_t MAX_SIZE = 1; // maximum encoded size
 
     BlockServicesNeedingMigrationReq() { clear(); }
     explicit BlockServicesNeedingMigrationReq(uint8_t locationId_) : locationId(locationId_) {}
@@ -6079,6 +6274,11 @@ struct BlockServicesNeedingMigrationReq {
 };
 
 std::ostream& operator<<(std::ostream& out, const BlockServicesNeedingMigrationReq& x);
+
+static_assert(
+    sizeof(RegistryMessageKind) + BlockServicesNeedingMigrationReq::MAX_SIZE <=
+        MAX_REGISTRY_REQUEST_SIZE,
+    "BlockServicesNeedingMigrationReq exceeds the registry request limit");
 
 struct BlockServicesNeedingMigrationResp {
     BincodeList<BlockServiceId> blockServices;
@@ -6109,6 +6309,7 @@ struct AllRegistryReplicasReq {
     uint8_t location;
 
     static constexpr uint16_t STATIC_SIZE = 1 + 1; // minKnownReplicas + location
+    static constexpr size_t MAX_SIZE = 2; // maximum encoded size
 
     AllRegistryReplicasReq() { clear(); }
     explicit AllRegistryReplicasReq(uint8_t minKnownReplicas_, uint8_t location_) : minKnownReplicas(minKnownReplicas_), location(location_) {}
@@ -6129,6 +6330,11 @@ struct AllRegistryReplicasReq {
 };
 
 std::ostream& operator<<(std::ostream& out, const AllRegistryReplicasReq& x);
+
+static_assert(
+    sizeof(RegistryMessageKind) + AllRegistryReplicasReq::MAX_SIZE <=
+        MAX_REGISTRY_REQUEST_SIZE,
+    "AllRegistryReplicasReq exceeds the registry request limit");
 
 struct AllRegistryReplicasResp {
     BincodeList<FullRegistryInfo> replicas;
@@ -6160,6 +6366,7 @@ struct AllShardsReq {
     ShardId shardId;
 
     static constexpr uint16_t STATIC_SIZE = 1 + 1 + 1; // minKnownReplicas + location + shardId
+    static constexpr size_t MAX_SIZE = 3; // maximum encoded size
 
     AllShardsReq() { clear(); }
     explicit AllShardsReq(uint8_t minKnownReplicas_, uint8_t location_, ShardId shardId_) : minKnownReplicas(minKnownReplicas_), location(location_), shardId(shardId_) {}
@@ -6181,6 +6388,11 @@ struct AllShardsReq {
 };
 
 std::ostream& operator<<(std::ostream& out, const AllShardsReq& x);
+
+static_assert(
+    sizeof(RegistryMessageKind) + AllShardsReq::MAX_SIZE <=
+        MAX_REGISTRY_REQUEST_SIZE,
+    "AllShardsReq exceeds the registry request limit");
 
 struct AllShardsResp {
     BincodeList<FullShardInfo> shards;
@@ -6211,6 +6423,7 @@ struct AllCdcReq {
     uint8_t location;
 
     static constexpr uint16_t STATIC_SIZE = 1 + 1; // minKnownReplicas + location
+    static constexpr size_t MAX_SIZE = 2; // maximum encoded size
 
     AllCdcReq() { clear(); }
     explicit AllCdcReq(uint8_t minKnownReplicas_, uint8_t location_) : minKnownReplicas(minKnownReplicas_), location(location_) {}
@@ -6231,6 +6444,11 @@ struct AllCdcReq {
 };
 
 std::ostream& operator<<(std::ostream& out, const AllCdcReq& x);
+
+static_assert(
+    sizeof(RegistryMessageKind) + AllCdcReq::MAX_SIZE <=
+        MAX_REGISTRY_REQUEST_SIZE,
+    "AllCdcReq exceeds the registry request limit");
 
 struct AllCdcResp {
     BincodeList<CdcInfo> replicas;
@@ -6260,6 +6478,7 @@ struct ChangedBlockServicesReq {
     TernTime since;
 
     static constexpr uint16_t STATIC_SIZE = 8; // since
+    static constexpr size_t MAX_SIZE = 8; // maximum encoded size
 
     ChangedBlockServicesReq() { clear(); }
     explicit ChangedBlockServicesReq(TernTime since_) : since(since_) {}
@@ -6279,6 +6498,11 @@ struct ChangedBlockServicesReq {
 };
 
 std::ostream& operator<<(std::ostream& out, const ChangedBlockServicesReq& x);
+
+static_assert(
+    sizeof(RegistryMessageKind) + ChangedBlockServicesReq::MAX_SIZE <=
+        MAX_REGISTRY_REQUEST_SIZE,
+    "ChangedBlockServicesReq exceeds the registry request limit");
 
 struct ChangedBlockServicesResp {
     TernTime lastChange;
@@ -6309,6 +6533,7 @@ std::ostream& operator<<(std::ostream& out, const ChangedBlockServicesResp& x);
 struct BlockServiceAvailableSpaceReq {
 
     static constexpr uint16_t STATIC_SIZE = 0; // 
+    static constexpr size_t MAX_SIZE = 0; // maximum encoded size
 
     BlockServiceAvailableSpaceReq() { clear(); }
     BlockServiceAvailableSpaceReq(const BlockServiceAvailableSpaceReq&) = default;
@@ -6326,6 +6551,11 @@ struct BlockServiceAvailableSpaceReq {
 };
 
 std::ostream& operator<<(std::ostream& out, const BlockServiceAvailableSpaceReq& x);
+
+static_assert(
+    sizeof(RegistryMessageKind) + BlockServiceAvailableSpaceReq::MAX_SIZE <=
+        MAX_REGISTRY_REQUEST_SIZE,
+    "BlockServiceAvailableSpaceReq exceeds the registry request limit");
 
 struct BlockServiceAvailableSpaceResp {
     BincodeList<BlockServiceSpace> blockServices;

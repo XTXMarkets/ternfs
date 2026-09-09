@@ -35,7 +35,9 @@ static bool rs_detect_valgrind() {
 }
 
 // This will emit vbroadcastb
+#ifdef __clang__
 __attribute__((no_sanitize("integer")))
+#endif
 static inline __m256i broadcast_u8(uint8_t x) {
     return _mm256_set_epi8(
         x, x, x, x, x, x, x, x,
@@ -130,7 +132,7 @@ static void rs_compute_parity_avx2_tmpl(struct rs* r, uint64_t size, const uint8
     rs_compute_parity_avx2(D, P, r, size, data, parity);
 }
 
-template<int D, int P> __attribute__((noinline))
+template<int D, int P> __attribute__((noinline, target("avx2,gfni")))
 static void rs_compute_parity_gfni_tmpl(struct rs* r, uint64_t size, const uint8_t** data, uint8_t** parity) {
     rs_compute_parity_gfni(D, P, r, size, data, parity);
 }
@@ -167,7 +169,7 @@ static void rs_recover_matmul_avx2_tmpl(uint64_t size, const uint8_t** have, uin
     rs_recover_matmul_avx2(D, size, have, want, mat);
 }
 
-template<int D> __attribute__((noinline))
+template<int D> __attribute__((noinline, target("avx2,gfni")))
 static void rs_recover_matmul_gfni_tmpl(uint64_t size, const uint8_t** have, uint8_t* want, const uint8_t* mat) {
     rs_recover_matmul_gfni(D, size, have, want, mat);
 }

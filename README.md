@@ -142,7 +142,7 @@ TernFS is actively used in production, but the project is still evolving quickly
   * **S3**
     * `terns3`, Go implementation of the S3 API
     * minimal example intended as a start point for a more serious implementation
-  * **`xtx/ternfs/client`**
+  * **`github.com/XTXMarkets/ternfs/go/client`**
     * A Go library to implement TernFS clients
     * Used by every client except the kmod
 * **daemons**, these also talk to all of the servers, and all live in `terngc`
@@ -166,6 +166,19 @@ TernFS is actively used in production, but the project is still evolving quickly
 Will build all the artifacts apart from the Kernel module. The output binaries will be in `build/alpine`. Things will be built in an Alpine Linux container, so that everything will be fully statically linked.
 
 There's also `./build.sh ubuntu` which will do the same but in a Ubuntu container, and `./build.sh release` which will build outside docker, which means that you'll have to install some dependencies in the host machine. Both of these build options will have glibc as the only dynamically linked dependency.
+
+### Using the Go client from another repository
+
+The `go/` module owns the native CRC32C and Reed-Solomon sources, so consumers
+can build and vendor it without a separate TernFS build or native package.
+The C++ build copies the same sources into its build tree.
+
+External consumers can depend on the GitHub module directly:
+
+```
+go get github.com/XTXMarkets/ternfs/go@VERSION
+go mod vendor
+```
 
 ## Testing
 

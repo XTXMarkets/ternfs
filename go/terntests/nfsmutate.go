@@ -13,7 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	"xtx/ternfs/core/log"
+	"github.com/XTXMarkets/ternfs/go/core/log"
 )
 
 func nfsMutationTest(l *log.Logger, mnt string) {
