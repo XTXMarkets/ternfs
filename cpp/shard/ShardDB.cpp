@@ -1129,6 +1129,9 @@ struct ShardDBImpl {
         if (req.ownerId.shard() != _shid || req.fileId.shard() != _shid) {
             return TernError::BAD_SHARD;
         }
+        if (!validName(req.name.ref())) {
+            return TernError::BAD_NAME;
+        }
         TernError err = _checkTransientFileCookie(req.fileId, req.cookie.data);
         if (err != TernError::NO_ERROR) {
             return err;

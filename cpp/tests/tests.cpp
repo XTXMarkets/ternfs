@@ -740,6 +740,26 @@ TEST_CASE("wire request validation returns errors") {
         CHECK(db->prepareLogEntry(reqContainer, logEntry) == TernError::MALFORMED_REQUEST);
     }
 
+    SUBCASE("link file requires a valid name") {
+        const std::vector<std::string> invalidNames{
+            "",
+            ".",
+            "..",
+            "bad/name",
+            std::string("bad\0name", 8),
+        };
+        for (const auto& name : invalidNames) {
+            ShardReqContainer reqContainer;
+            ShardLogEntry logEntry;
+            auto& req = reqContainer.setLinkFile();
+            req.ownerId = ROOT_DIR_INODE_ID;
+            req.fileId = InodeId(InodeType::FILE, ShardId(0), 1);
+            req.name = name;
+
+            CHECK(db->prepareLogEntry(reqContainer, logEntry) == TernError::BAD_NAME);
+        }
+    }
+
     SUBCASE("swap blocks requires distinct files") {
         ShardReqContainer reqContainer;
         ShardLogEntry logEntry;
