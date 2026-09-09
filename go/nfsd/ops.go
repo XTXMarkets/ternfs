@@ -163,8 +163,7 @@ func (s *Server) opCreate(args CREATE4args, st *compoundState, w *COMPOUND4resWr
 		return finishDefaultResponse(w, &ew, status)
 	}
 
-	st.currentID = newID
-	st.currentIDSet = true
+	st.setCurrent(newID)
 
 	ew := w.AppendResarray_Create()
 	okW := ew.SetValue_Nfs4Ok()
@@ -307,8 +306,7 @@ func (s *Server) opLookup(args LOOKUP4args, st *compoundState, w *COMPOUND4resWr
 		r.SetStatus(status)
 		return status
 	}
-	st.currentID = id
-	st.currentIDSet = true
+	st.setCurrent(id)
 	r := w.AppendResarray_Lookup()
 	return finishStatusResponse(&r, NFS4_OK)
 }
@@ -325,8 +323,7 @@ func (s *Server) opLookupp(st *compoundState, w *COMPOUND4resWriter) uint32 {
 		r.SetStatus(status)
 		return status
 	}
-	st.currentID = id
-	st.currentIDSet = true
+	st.setCurrent(id)
 	r := w.AppendResarray_Lookupp()
 	return finishStatusResponse(&r, NFS4_OK)
 }
@@ -442,8 +439,7 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 		nfsSID = deriveReadStateID(targetID, clientID)
 	}
 
-	st.currentID = targetID
-	st.currentIDSet = true
+	st.setCurrent(targetID)
 
 	ew := w.AppendResarray_Open()
 	okW := ew.SetValue_Nfs4Ok()
@@ -526,15 +522,13 @@ func (s *Server) opPutfh(args PUTFH4args, st *compoundState, w *COMPOUND4resWrit
 		r := w.AppendResarray_Putfh()
 		return finishStatusResponse(&r, NFS4ERR_BADHANDLE)
 	}
-	st.currentID = id
-	st.currentIDSet = true
+	st.setCurrent(id)
 	r := w.AppendResarray_Putfh()
 	return finishStatusResponse(&r, NFS4_OK)
 }
 
 func (s *Server) opPutrootfh(st *compoundState, w *COMPOUND4resWriter, isPub bool) uint32 {
-	st.currentID = s.fs.RootID()
-	st.currentIDSet = true
+	st.setCurrent(s.fs.RootID())
 	if isPub {
 		r := w.AppendResarray_Putpubfh()
 		r.SetStatus(NFS4_OK)
@@ -848,8 +842,7 @@ func (s *Server) opRestorefh(st *compoundState, w *COMPOUND4resWriter) uint32 {
 		r := w.AppendResarray_Restorefh()
 		return finishStatusResponse(&r, NFS4ERR_RESTOREFH)
 	}
-	st.currentID = st.savedID
-	st.currentIDSet = true
+	st.setCurrent(st.savedID)
 	r := w.AppendResarray_Restorefh()
 	return finishStatusResponse(&r, NFS4_OK)
 }

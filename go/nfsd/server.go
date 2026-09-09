@@ -138,6 +138,11 @@ type compoundState struct {
 	savedIDSet   bool
 }
 
+func (st *compoundState) setCurrent(id InodeID) {
+	st.currentID = id
+	st.currentIDSet = true
+}
+
 func (s *Server) safeHandleCompound(req *rpcRequest, remote string) (reply []byte) {
 	defer func() {
 		if r := recover(); r != nil {
