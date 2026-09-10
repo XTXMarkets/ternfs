@@ -2,15 +2,17 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-package filesamples
+package cmd
 
 import (
 	"encoding/csv"
+	"flag"
 	"fmt"
 	"github.com/XTXMarkets/ternfs/go/client"
 	"github.com/XTXMarkets/ternfs/go/core/log"
 	"github.com/XTXMarkets/ternfs/go/msgs"
 	"io"
+	"os"
 	"path"
 	"strconv"
 	"sync"
@@ -48,7 +50,7 @@ func (r *resolver) Resolve(ownerInode msgs.InodeId, filename string) (string, er
 	filepath := filename
 	currentDir := ownerInode
 	for {
-		// Get the next owner inode.
+
 		statReq := msgs.StatDirectoryReq{
 			Id: currentDir,
 		}
@@ -57,15 +59,15 @@ func (r *resolver) Resolve(ownerInode msgs.InodeId, filename string) (string, er
 			return "", fmt.Errorf("StatDirectoryReq to shard %v for inode %v failed: %w", currentDir.Shard(), currentDir, err)
 		}
 		owner := statResp.Owner
-		// If we're at the top level, then we're done.
+
 		if currentDir == msgs.ROOT_DIR_INODE_ID {
 			return path.Join("/", filepath), nil
 		}
-		// If we've found a null inode ID, then we won't be able to chase things any further.
+
 		if owner == msgs.NULL_INODE_ID {
 			return filepath, nil
 		}
-		// Get the name of the next node locally if possible.
+
 		if dirName, exists := r.getDirName(currentDir); exists {
 			filepath = path.Join(dirName, filepath)
 			currentDir = owner
@@ -84,7 +86,7 @@ func (r *resolver) Resolve(ownerInode msgs.InodeId, filename string) (string, er
 func (r *resolver) ResolveFilePaths(input io.Reader, output io.Writer) {
 	reader := csv.NewReader(input)
 	writer := csv.NewWriter(output)
-	// Start the workers going.
+
 	numWorkers := 100
 	workQueue := make(chan []string, numWorkers)
 	outputQueue := make(chan []string, 1000)
@@ -107,7 +109,7 @@ func (r *resolver) ResolveFilePaths(input io.Reader, output io.Writer) {
 				if err != nil {
 					r.logger.ErrorNoAlert("Failed to resolve file path: %v", err)
 				} else {
-					sample[0] = path // overwrite filename with resolved path
+					sample[0] = path
 				}
 				outputQueue <- sample
 			}
@@ -162,7 +164,7 @@ func (r *resolver) getNameFromShard(parentDir msgs.InodeId, target msgs.InodeId)
 			}
 			return result.Name, nil
 		}
-		// If the cursor doesn't have a start name, then we've seen everything.
+
 		if readDirResp.Next.StartName == "" {
 			break
 		}
@@ -191,4 +193,17 @@ func (r *resolver) setDirName(inode msgs.InodeId, name string) {
 	defer r.lock.Unlock()
 
 	r.inodeToDir[inode] = name
+}
+
+func NewResolveSamplePaths() SpecWithClient {
+	resolveSamplePathsCmd := flag.NewFlagSet("resolve-sample-paths", flag.ExitOnError)
+	resolveSamplePathsRun := func(runtime RuntimeWithClient) {
+		l := runtime.Log
+		resolver := NewPathResolver(runtime.Client, l)
+		resolver.ResolveFilePaths(os.Stdin, os.Stdout)
+	}
+	return SpecWithClient{
+		Flags: resolveSamplePathsCmd,
+		Run:   resolveSamplePathsRun,
+	}
 }

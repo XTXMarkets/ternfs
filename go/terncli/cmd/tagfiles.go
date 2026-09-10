@@ -2,12 +2,14 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-package main
+package cmd
 
 import (
+	"flag"
 	"fmt"
 	"github.com/XTXMarkets/ternfs/go/client"
 	"github.com/XTXMarkets/ternfs/go/core/bufpool"
+	"github.com/XTXMarkets/ternfs/go/core/flags"
 	"github.com/XTXMarkets/ternfs/go/core/log"
 	"github.com/XTXMarkets/ternfs/go/msgs"
 	"os"
@@ -173,8 +175,7 @@ func runTagFiles(l *log.Logger, c *client.Client, p *tagFilesParams) error {
 				stats.statErrors.Add(1)
 				return nil
 			}
-			// Directories have no atime; reuse mtime so workers can drift-
-			// check uniformly with file rows.
+
 			fired := FirstMatch(dirRules, fullPath, 0, statResp.Mtime, statResp.Mtime, now)
 			if fired == nil {
 				return nil
@@ -242,7 +243,6 @@ func runTagFiles(l *log.Logger, c *client.Client, p *tagFilesParams) error {
 			return nil
 		}
 
-		// Row schema: inode_hex \t size \t atime_ns \t mtime_ns \t rule \t path
 		row := fmt.Sprintf(
 			"%s\t%d\t%d\t%d\t%s\t%s",
 			id.String(),
@@ -302,4 +302,52 @@ func runTagFiles(l *log.Logger, c *client.Client, p *tagFilesParams) error {
 
 func fileRulesApplyTo(id msgs.InodeId) bool {
 	return id.Type() == msgs.FILE
+}
+
+func NewTagFiles() SpecWithClient {
+	tagFilesCmd := flag.NewFlagSet("tag-files", flag.ExitOnError)
+	tagFilesRules := tagFilesCmd.String("rules", "", "Path to tag-rules.json.")
+	var tagFilesRoots flags.StringArrayFlags
+	tagFilesCmd.Var(&tagFilesRoots, "root", "TernFS root path to walk. May be repeated; all roots share one worker pool.")
+	tagFilesOutput := tagFilesCmd.String("output", "", "Directory for per-(tag,shard) batch TSVs. Required unless -dry-run.")
+	tagFilesOnTernFS := tagFilesCmd.Bool("output-on-ternfs", false, "Output dir is on TernFS: rely on transient-file semantics (open files invisible until closed) instead of .tmp rename.")
+	tagFilesRotationRows := tagFilesCmd.Int("rotation-rows", 100000, "Roll a batch when it reaches this row count.")
+	tagFilesRotationInterval := tagFilesCmd.Duration("rotation-interval", 10*time.Minute, "Roll a batch when it has been open this long.")
+	tagFilesWorkersPerShard := tagFilesCmd.Int("workers-per-shard", 20, "Parwalk workers per shard.")
+	tagFilesDryRun := tagFilesCmd.Bool("dry-run", false, "Match and count, but do not write batch TSVs.")
+	tagFilesCreationTimePreskip := tagFilesCmd.Bool("creation-time-preskip", false, "Use the directory edge's creation time to short-circuit the stat call when no rule could possibly match. atime/mtime are >= creationTime, so if the rule's age window excludes creationTime it can't fire. Skips the stat for ~most files on a young tree.")
+	tagFilesRun := func(runtime RuntimeWithClient) {
+		l := runtime.Log
+		if *tagFilesRules == "" {
+			fmt.Fprintln(os.Stderr, "tag-files: -rules is required")
+			os.Exit(2)
+		}
+		if len(tagFilesRoots) == 0 {
+			fmt.Fprintln(os.Stderr, "tag-files: at least one -root is required")
+			os.Exit(2)
+		}
+		if *tagFilesOutput == "" && !*tagFilesDryRun {
+			fmt.Fprintln(os.Stderr, "tag-files: -output is required (use -dry-run to skip writing batches)")
+			os.Exit(2)
+		}
+		err := runTagFiles(l, runtime.Client, &tagFilesParams{
+			rulesPath:           *tagFilesRules,
+			roots:               []string(tagFilesRoots),
+			outputDir:           *tagFilesOutput,
+			outputOnTernFS:      *tagFilesOnTernFS,
+			rotationRows:        *tagFilesRotationRows,
+			rotationInterval:    *tagFilesRotationInterval,
+			workersPerShard:     *tagFilesWorkersPerShard,
+			dryRun:              *tagFilesDryRun,
+			creationTimePreskip: *tagFilesCreationTimePreskip,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "tag-files: %v\n", err)
+			os.Exit(2)
+		}
+	}
+	return SpecWithClient{
+		Flags: tagFilesCmd,
+		Run:   tagFilesRun,
+	}
 }
