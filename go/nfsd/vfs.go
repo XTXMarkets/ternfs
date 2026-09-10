@@ -95,6 +95,9 @@ type TernVFS interface {
 	// Matches TernFS ConstructFileReq semantics.
 	ConstructFile(dirID InodeID) (InodeID, Cookie, error)
 
+	// ScrapFile discards an unlinked transient file.
+	ScrapFile(fileID InodeID, cookie Cookie) error
+
 	// LinkFile links a transient file into a directory, making it visible.
 	// The correct cookie (from ConstructFile) must be provided. data is the
 	// file content; in real TernFS the data was already written via AddSpan,
@@ -427,6 +430,23 @@ func (lfs *LocalTernVFS) ConstructFile(dirID InodeID) (InodeID, Cookie, error) {
 	lfs.mu.Unlock()
 
 	return id, cookie, nil
+}
+
+func (lfs *LocalTernVFS) ScrapFile(fileID InodeID, cookie Cookie) error {
+	lfs.mu.Lock()
+	tf, ok := lfs.transient[fileID]
+	if !ok {
+		lfs.mu.Unlock()
+		return os.ErrNotExist
+	}
+	if tf.cookie != cookie {
+		lfs.mu.Unlock()
+		return os.ErrPermission
+	}
+	delete(lfs.transient, fileID)
+	delete(lfs.byID, fileID)
+	lfs.mu.Unlock()
+	return os.Remove(tf.path)
 }
 
 func (lfs *LocalTernVFS) LinkFile(fileID InodeID, cookie Cookie, dirID InodeID, name string, data io.Reader) error {
