@@ -136,6 +136,22 @@ func validateCreateAttrs(attrs Fattr4) uint32 {
 	return NFS4_OK
 }
 
+func createAttrSize(attrs Fattr4) (*uint64, uint32) {
+	mask := parseBitmap(attrs.Attrmask())
+	if mask[0]&(1<<FATTR4_SIZE) == 0 {
+		return nil, NFS4_OK
+	}
+	data := attrs.AttrVals().Data()
+	if len(data) < 8 {
+		return nil, NFS4ERR_BADXDR
+	}
+	size := binary.BigEndian.Uint64(data[:8])
+	if size > 1<<63-1 {
+		return nil, NFS4ERR_FBIG
+	}
+	return &size, NFS4_OK
+}
+
 // inodeNFSType converts an InodeID type to NFSv4 type constant.
 func inodeNFSType(id InodeID) uint32 {
 	switch id.Type() {

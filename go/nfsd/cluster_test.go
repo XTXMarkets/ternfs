@@ -290,7 +290,9 @@ func createFileViaNFS(t *testing.T, conn net.Conn, xid *uint32, clientid uint64,
 		ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
 		ownerW := ow.StartOwner()
 		ownerW = ownerW.SetClientid(clientid)
-		ownerW = ownerW.SetOwner([]byte("nfstest-" + name))
+		ownerW = ownerW.SetOwner([]byte(fmt.Sprintf(
+			"nfstest-%s-%d", name, *xid,
+		)))
 		buf := ownerW.Finish()
 		ow.Resume(buf)
 		chw := ow.SetOpenhow_Create()
@@ -1903,9 +1905,9 @@ func TestTernNestedDirectories(t *testing.T) {
 	cleanupViaNFS(t, conn, &xid, "nest_a")
 }
 
-// --- OPEN existing file for write → NFS4ERR_PERM ---
+// --- Mutable existing file ---
 
-func TestTernOpenExistingForWriteRejected(t *testing.T) {
+func TestTernOpenExistingForWrite(t *testing.T) {
 	addr, cleanup := startTernTestServer(t)
 	defer cleanup()
 	conn := dial(t, addr)
@@ -1917,30 +1919,22 @@ func TestTernOpenExistingForWriteRejected(t *testing.T) {
 	// Create a file first.
 	createFileViaNFS(t, conn, &xid, clientid, "existing.txt", []byte("original content"))
 
-	// Try to OPEN existing file for write (NOCREATE).
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
-		w.AppendArgarray_Putrootfh()
-		ow := w.AppendArgarray_Open()
-		ow.SetSeqid(1)
-		ow.SetShareAccess(OPEN4_SHARE_ACCESS_WRITE)
-		ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
-		ownerW := ow.StartOwner()
-		ownerW = ownerW.SetClientid(clientid)
-		ownerW = ownerW.SetOwner([]byte("nfstest"))
-		buf := ownerW.Finish()
-		ow.Resume(buf)
-		ow.SetOpenhow_Default(OPEN4_NOCREATE)
-		cw := ow.SetClaim_Null()
-		buf = cw.SetData([]byte("existing.txt")).Finish()
-		ow.Resume(buf)
-		buf = ow.Finish()
-		w.Resume(buf)
-	})
-	xid++
+	stateid, fh := openWriteFile(
+		t, conn, &xid, clientid, "existing.txt",
+	)
+	writeFileAt(t, conn, &xid, fh, stateid, 9, []byte("changed"))
+	closeFile(t, conn, &xid, fh, stateid)
 
-	if res.Status() != NFS4ERR_PERM {
-		t.Fatalf("OPEN existing for write: got status %s, want NFS4ERR_PERM",
-			Nfsstat4Name(res.Status()))
+	old, oldEOF := readFileData(t, conn, &xid, fh, 0, 4096)
+	if !oldEOF || string(old) != "original content" {
+		t.Fatalf("old filehandle read = (%q, eof=%t), want (%q, true)",
+			old, oldEOF, "original content")
+	}
+	replacementFH := lookupFH(t, conn, &xid, "existing.txt")
+	got, eof := readFileData(t, conn, &xid, replacementFH, 0, 4096)
+	if !eof || string(got) != "original changed" {
+		t.Fatalf("mutable file read = (%q, eof=%t), want (%q, true)",
+			got, eof, "original changed")
 	}
 
 	cleanupViaNFS(t, conn, &xid, "existing.txt")
