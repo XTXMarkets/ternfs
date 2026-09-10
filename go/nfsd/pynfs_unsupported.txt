@@ -108,10 +108,9 @@ SATT16
 SATT17
 SATT18
 
-# NFS writes currently target a staging file for a newly created inode.
-# Existing files cannot be overwritten, requested stable-write modes are
-# not implemented, and the write path does not implement the full OPEN
-# state and share-deny model.
+# Mutable and stable writes are supported through replacement staging, but
+# these cases also require OPEN/share-deny behavior or pathname visibility
+# for newly created files which is not yet implemented.
 OPEN2
 OPEN4
 WRT1
