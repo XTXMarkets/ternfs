@@ -8,9 +8,9 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path"
-	"syscall"
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/core/log"
@@ -27,7 +27,8 @@ func nfsMutationTest(l *log.Logger, mnt string) {
 	nfsRename(l, dir)
 	nfsDelete(l, dir)
 	nfsSetTimes(l, dir)
-	nfsRejectInPlaceModify(l, dir)
+	nfsModifyExisting(l, dir)
+	nfsFsyncFstatAppend(l, dir)
 }
 
 func nfsOutOfOrderWrites(l *log.Logger, dir string) {
@@ -138,33 +139,96 @@ func nfsSetTimes(l *log.Logger, dir string) {
 	}
 }
 
-func nfsRejectInPlaceModify(l *log.Logger, dir string) {
-	l.Info("nfs mutation: reject in-place modify")
-	p := path.Join(dir, "immutable.txt")
+func nfsModifyExisting(l *log.Logger, dir string) {
+	l.Info("nfs mutation: modify existing file")
+	p := path.Join(dir, "mutable.txt")
 	if err := os.WriteFile(p, []byte("original contents"), 0644); err != nil {
 		panic(fmt.Errorf("write %v: %w", p, err))
 	}
 
 	f, err := os.OpenFile(p, os.O_WRONLY, 0644)
 	if err != nil {
-		if isPermErr(err) {
-			return // rejected at open, as expected
-		}
-		panic(fmt.Errorf("unexpected open error for %v: %w", p, err))
+		panic(fmt.Errorf("open %v for update: %w", p, err))
 	}
-	_, werr := f.Write([]byte("OVERWRITTEN"))
-	cerr := f.Close()
-	if werr == nil && cerr == nil {
-		panic(fmt.Errorf("in-place modify of %v unexpectedly succeeded", p))
+	if _, err := f.WriteAt([]byte("updated"), 9); err != nil {
+		f.Close()
+		panic(fmt.Errorf("overwrite %v: %w", p, err))
 	}
-	if werr != nil && !isPermErr(werr) {
-		panic(fmt.Errorf("unexpected write error for %v: %w", p, werr))
+	if err := f.Truncate(int64(len("original updated"))); err != nil {
+		f.Close()
+		panic(fmt.Errorf("truncate %v: %w", p, err))
 	}
-	if werr == nil && cerr != nil && !isPermErr(cerr) {
-		panic(fmt.Errorf("unexpected close error for %v: %w", p, cerr))
+	if err := f.Close(); err != nil {
+		panic(fmt.Errorf("close %v: %w", p, err))
+	}
+	got, err := os.ReadFile(p)
+	if err != nil {
+		panic(fmt.Errorf("read %v: %w", p, err))
+	}
+	if string(got) != "original updated" {
+		panic(fmt.Errorf("updated data = %q, want %q",
+			got, "original updated"))
 	}
 }
 
-func isPermErr(err error) bool {
-	return errors.Is(err, os.ErrPermission) || errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES)
+func nfsFsyncFstatAppend(l *log.Logger, dir string) {
+	l.Info("nfs mutation: fsync+fstat+append")
+	p := path.Join(dir, "append.txt")
+	if err := os.WriteFile(p, []byte("12345678"), 0644); err != nil {
+		panic(fmt.Errorf("write %v: %w", p, err))
+	}
+
+	f, err := os.OpenFile(p, os.O_RDWR, 0644)
+	if err != nil {
+		panic(fmt.Errorf("open %v: %w", p, err))
+	}
+	if _, err := f.WriteAt([]byte("XYZ"), 8); err != nil {
+		f.Close()
+		panic(fmt.Errorf("extend %v: %w", p, err))
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		panic(fmt.Errorf("fsync %v: %w", p, err))
+	}
+	info, err := f.Stat()
+	if err != nil {
+		f.Close()
+		panic(fmt.Errorf("fstat %v: %w", p, err))
+	}
+	if info.Size() != 11 {
+		f.Close()
+		panic(fmt.Errorf("fstat size = %d, want 11", info.Size()))
+	}
+	end, err := f.Seek(0, io.SeekEnd)
+	if err != nil {
+		f.Close()
+		panic(fmt.Errorf("seek end %v: %w", p, err))
+	}
+	if end != 11 {
+		f.Close()
+		panic(fmt.Errorf("seek end = %d, want 11", end))
+	}
+	if err := f.Close(); err != nil {
+		panic(fmt.Errorf("close %v: %w", p, err))
+	}
+
+	f, err = os.OpenFile(p, os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		panic(fmt.Errorf("open append %v: %w", p, err))
+	}
+	if _, err := f.Write([]byte("Q")); err != nil {
+		f.Close()
+		panic(fmt.Errorf("append %v: %w", p, err))
+	}
+	if err := f.Close(); err != nil {
+		panic(fmt.Errorf("close append %v: %w", p, err))
+	}
+	got, err := os.ReadFile(p)
+	if err != nil {
+		panic(fmt.Errorf("read %v: %w", p, err))
+	}
+	if string(got) != "12345678XYZQ" {
+		panic(fmt.Errorf("append data = %q, want %q",
+			got, "12345678XYZQ"))
+	}
 }
