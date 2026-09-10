@@ -160,6 +160,12 @@ func (cs *ClientStore) ConfirmClientID(clientID uint64) (uint64, error) {
 	return oldClientID, nil
 }
 
+func (cs *ClientStore) IsConfirmed(clientID uint64) bool {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	return cs.confirmed[clientID]
+}
+
 // maxClientIDName bounds the escaped client-id filename. It leaves headroom
 // under the advertised 255-char maxname for the ".<verifier-hex>" suffix
 // (17 chars) that pending files carry.
