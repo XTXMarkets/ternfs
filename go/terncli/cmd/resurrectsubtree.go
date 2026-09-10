@@ -6,6 +6,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"flag"
 	"fmt"
 	"github.com/XTXMarkets/ternfs/go/client"
@@ -135,12 +136,16 @@ func NewResurrectSubtree() Command {
 		//    Parwalk descends, so children always find their parent.
 		var dstDirIds sync.Map
 		dstDirIds.Store(srcRootId, dstRootId)
-		err = client.ParwalkFromInode(
+		pool := client.NewParwalkPool(
 			l,
 			c,
+			*resurrectSubtreeWorkersPerShard,
+		)
+		defer pool.Close()
+		err = pool.WalkFromInode(
+			context.Background(),
 			&client.ParwalkOptions{
-				WorkersPerShard: *resurrectSubtreeWorkersPerShard,
-				SnapshotLatest:  true,
+				SnapshotLatest: true,
 			},
 			srcRootId,
 			dstRootPath,

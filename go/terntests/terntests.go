@@ -405,7 +405,7 @@ func (r *RunTests) run(
 	)
 
 	if !r.kmod {
-		// ParwalkMany exercises the Go client API directly (CDC + shard
+		// WalkMany exercises the Go client API directly (CDC + shard
 		// RPCs) and has nothing to do with the kmod mount, so skip it on
 		// kmod runs to keep that suite focused.
 		parwalkManyOpts := &parwalkManyOpts{
