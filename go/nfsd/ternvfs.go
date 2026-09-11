@@ -150,6 +150,16 @@ func (t *RemoteTernVFS) Read(fileID InodeID, offset uint64, dest []byte) (int, b
 	return n, eof, nil
 }
 
+func (t *RemoteTernVFS) ReadAll(fileID InodeID) ([]byte, error) {
+	buf, err := t.client.FetchFile(t.log, t.bufPool, msgs.InodeId(fileID))
+	if err != nil {
+		return nil, ternToOSError(err)
+	}
+	data := append([]byte(nil), buf.Bytes()...)
+	t.bufPool.Put(buf)
+	return data, nil
+}
+
 func (t *RemoteTernVFS) getOrCreateReader(mid msgs.InodeId) (*cachedReader, error) {
 	t.mu.Lock()
 	cr, ok := t.readers[mid]
@@ -286,6 +296,10 @@ func (t *RemoteTernVFS) LinkFile(fileID InodeID, cookie Cookie, dirID InodeID, n
 
 func (t *RemoteTernVFS) CreateFile(dirID InodeID, name string, data io.Reader) (InodeID, error) {
 	dirMid := msgs.InodeId(dirID)
+	overwrittenID, err := t.Lookup(dirID, name)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return 0, err
+	}
 	// ConstructFile on the same shard as the directory.
 	var constructResp msgs.ConstructFileResp
 	if err := t.client.ShardRequest(t.log, dirMid.Shard(), &msgs.ConstructFileReq{
@@ -313,6 +327,10 @@ func (t *RemoteTernVFS) CreateFile(dirID InodeID, name string, data io.Reader) (
 	}
 	childID := InodeID(fileId)
 	t.mu.Lock()
+	if overwrittenID != 0 && overwrittenID != childID {
+		delete(t.parents, overwrittenID)
+		delete(t.readers, msgs.InodeId(overwrittenID))
+	}
 	t.parents[childID] = dirID
 	t.mu.Unlock()
 	return childID, nil
@@ -363,6 +381,10 @@ func (t *RemoteTernVFS) Remove(dirID InodeID, name string) error {
 func (t *RemoteTernVFS) Rename(srcDirID InodeID, srcName string, dstDirID InodeID, dstName string) error {
 	srcMid := msgs.InodeId(srcDirID)
 	dstMid := msgs.InodeId(dstDirID)
+	overwrittenID, err := t.Lookup(dstDirID, dstName)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	// Lookup source to get target ID and creation time.
 	var lookupResp msgs.LookupResp
 	if err := t.client.ShardRequest(t.log, srcMid.Shard(), &msgs.LookupReq{
@@ -411,6 +433,10 @@ func (t *RemoteTernVFS) Rename(srcDirID InodeID, srcName string, dstDirID InodeI
 	}
 	// Update parent cache.
 	t.mu.Lock()
+	if overwrittenID != 0 && overwrittenID != InodeID(targetId) {
+		delete(t.parents, overwrittenID)
+		delete(t.readers, msgs.InodeId(overwrittenID))
+	}
 	t.parents[InodeID(targetId)] = dstDirID
 	t.mu.Unlock()
 	return nil
