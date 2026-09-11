@@ -36,14 +36,14 @@ func NewCpOutof() Command {
 			id = msgs.InodeId(*cpOutofId)
 		} else {
 			var err error
-			id, err = runtime.Client().ResolvePath(l, *cpOutofInput)
+			id, err = runtime.getClient().ResolvePath(l, *cpOutofInput)
 			if err != nil {
 				panic(err)
 			}
 		}
 
 		bufPool := bufpool.NewBufPool()
-		r, err := runtime.Client().FetchFile(l, bufPool, id)
+		r, err := runtime.getClient().FetchFile(l, bufPool, id)
 		if err != nil {
 			panic(err)
 		}

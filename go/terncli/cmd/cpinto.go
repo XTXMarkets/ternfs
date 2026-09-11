@@ -31,7 +31,7 @@ func NewCpInto() Command {
 			}
 		}
 		bufPool := bufpool.NewBufPool()
-		fileId, err := runtime.Client().CreateFile(l, bufPool, client.NewDirInfoCache(), path, input)
+		fileId, err := runtime.getClient().CreateFile(l, bufPool, client.NewDirInfoCache(), path, input)
 		if err != nil {
 			panic(err)
 		}

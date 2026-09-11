@@ -72,12 +72,12 @@ func NewDu() Command {
 			snapshot uint64
 		})
 		groupTotalsMutex := sync.Mutex{}
-		histogram := timing.NewHistogram(256, 255, 1.15)
+		histogram := timing.NewHistogram(256, 255, 1.15) // max: ~900PB
 		histoLogicalSizeBins := make([]uint64, 256)
 		histoPhysicalSizeBins := make([]uint64, 256)
 		histoCountBins := make([]uint64, 256)
 		startedAt := time.Now()
-		c := runtime.Client()
+		c := runtime.getClient()
 		printReport := func() {
 			if *duSnapshot {
 				if *duPhysical {

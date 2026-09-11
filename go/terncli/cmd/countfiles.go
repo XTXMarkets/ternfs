@@ -28,7 +28,7 @@ func NewCountFiles() Command {
 				req := msgs.VisitFilesReq{}
 				resp := msgs.VisitFilesResp{}
 				for {
-					if err := runtime.Client().ShardRequest(l, shid, &req, &resp); err != nil {
+					if err := runtime.getClient().ShardRequest(l, shid, &req, &resp); err != nil {
 						ch <- err
 						return
 					}

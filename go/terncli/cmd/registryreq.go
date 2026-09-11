@@ -41,7 +41,7 @@ func NewRegistryReq() Command {
 				}
 			}
 		}
-		if resp, err = runtime.Client().RegistryRequest(l, req); err != nil {
+		if resp, err = runtime.getClient().RegistryRequest(l, req); err != nil {
 			panic(err)
 		}
 		out, err := json.MarshalIndent(resp, "", "  ")

@@ -16,7 +16,7 @@ func NewRemoveDirInfo() Command {
 	removeDirInfoRun := func(runtime *Runtime) {
 		l := runtime.Log
 		id := msgs.InodeId(*removeDirInfoU64)
-		if err := runtime.Client().RemoveDirectoryInfoEntry(l, id, msgs.DirInfoTagFromName(*removeDirInfoTag)); err != nil {
+		if err := runtime.getClient().RemoveDirectoryInfoEntry(l, id, msgs.DirInfoTagFromName(*removeDirInfoTag)); err != nil {
 			panic(err)
 		}
 	}

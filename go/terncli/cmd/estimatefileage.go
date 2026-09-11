@@ -17,7 +17,7 @@ func NewEstimateFileAge() Command {
 	estimateFileAgePath := estimateFileAgeCmd.String("path", "", "Path of the file to estimate age for (alternative to -id)")
 	estimateFileAgeRun := func(runtime *Runtime) {
 		l := runtime.Log
-		c := runtime.Client()
+		c := runtime.getClient()
 		id := msgs.InodeId(*estimateFileAgeId)
 		if id == 0 {
 			if *estimateFileAgePath == "" {

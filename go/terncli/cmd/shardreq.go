@@ -43,7 +43,7 @@ func NewShardReq() Command {
 				}
 			}
 		}
-		if err := runtime.Client().ShardRequest(l, shard, req, resp); err != nil {
+		if err := runtime.getClient().ShardRequest(l, shard, req, resp); err != nil {
 			panic(err)
 		}
 		out, err := json.MarshalIndent(resp, "", "  ")

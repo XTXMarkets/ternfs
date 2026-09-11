@@ -199,7 +199,7 @@ func NewResolveSamplePaths() Command {
 	resolveSamplePathsCmd := flag.NewFlagSet("resolve-sample-paths", flag.ExitOnError)
 	resolveSamplePathsRun := func(runtime *Runtime) {
 		l := runtime.Log
-		resolver := NewPathResolver(runtime.Client(), l)
+		resolver := NewPathResolver(runtime.getClient(), l)
 		resolver.ResolveFilePaths(os.Stdin, os.Stdout)
 	}
 	return Command{

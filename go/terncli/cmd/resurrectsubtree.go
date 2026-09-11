@@ -43,7 +43,7 @@ func NewResurrectSubtree() Command {
 		if srcRootId.Type() != msgs.DIRECTORY {
 			panic(fmt.Errorf("-src-id %v is not a directory inode", srcRootId))
 		}
-		c := runtime.Client()
+		c := runtime.getClient()
 
 		// 1. Verify source is a deleted directory.
 		srcStat := msgs.StatDirectoryResp{}

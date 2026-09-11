@@ -56,7 +56,7 @@ func NewRm() Command {
 				}
 			}
 		}
-		c := runtime.Client()
+		c := runtime.getClient()
 		var numDeleted uint64
 		var numSkipped uint64
 		var numErrors uint64

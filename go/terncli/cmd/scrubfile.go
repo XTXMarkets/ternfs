@@ -17,7 +17,7 @@ func NewScrubFile() Command {
 		l := runtime.Log
 		file := msgs.InodeId(*scrubFileId)
 		stats := &cleanup.ScrubState{}
-		if err := cleanup.ScrubFile(l, runtime.Client(), stats, file); err != nil {
+		if err := cleanup.ScrubFile(l, runtime.getClient(), stats, file); err != nil {
 			panic(err)
 		}
 		l.Info("scrub stats: %+v", stats)

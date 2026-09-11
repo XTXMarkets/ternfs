@@ -14,7 +14,7 @@ func NewScrub() Command {
 	scrubRun := func(runtime *Runtime) {
 		l := runtime.Log
 		stats := cleanup.ScrubState{}
-		if err := cleanup.ScrubFilesInAllShards(l, runtime.Client(), &cleanup.ScrubOptions{NumWorkersPerShard: 10}, nil, &stats); err != nil {
+		if err := cleanup.ScrubFilesInAllShards(l, runtime.getClient(), &cleanup.ScrubOptions{NumWorkersPerShard: 10}, nil, &stats); err != nil {
 			panic(err)
 		}
 

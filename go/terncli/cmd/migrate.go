@@ -43,7 +43,7 @@ func NewMigrate() Command {
 			panic(err)
 		}
 		blockServices := blockServicesResp.(*msgs.ChangedBlockServicesResp)
-		blockServicesToMigrate := make(map[string]*[]msgs.BlockServiceId)
+		blockServicesToMigrate := make(map[string]*[]msgs.BlockServiceId) // by failure domain
 		numBlockServicesToMigrate := 0
 		for _, bs := range blockServices.BlockServices {
 			if bs.Id == msgs.BlockServiceId(*migrateId) || bs.FailureDomain.String() == *migrateFailureDomain || (bs.Flags&yesFlags != 0 && bs.Flags&noFlags == 0) {
@@ -91,17 +91,17 @@ func NewMigrate() Command {
 			for _, blockServiceId := range *bss {
 				l.Info("migrating block service %v, %v", blockServiceId, failureDomain)
 				if *migrateFileIdU64 == 0 && *migrateShard < 0 {
-					if err := cleanup.MigrateBlocksInAllShards(l, runtime.Client(), &stats, progressReportAlert, blockServiceId); err != nil {
+					if err := cleanup.MigrateBlocksInAllShards(l, runtime.getClient(), &stats, progressReportAlert, blockServiceId); err != nil {
 						panic(err)
 					}
 				} else if *migrateFileIdU64 != 0 {
 					fileId := msgs.InodeId(*migrateFileIdU64)
-					if err := cleanup.MigrateBlocksInFile(l, runtime.Client(), &stats, progressReportAlert, blockServiceId, fileId); err != nil {
+					if err := cleanup.MigrateBlocksInFile(l, runtime.getClient(), &stats, progressReportAlert, blockServiceId, fileId); err != nil {
 						panic(fmt.Errorf("error while migrating file %v away from block service %v: %v", fileId, blockServiceId, err))
 					}
 				} else {
 					shid := msgs.ShardId(*migrateShard)
-					if err := cleanup.MigrateBlocks(l, runtime.Client(), &stats, progressReportAlert, shid, blockServiceId); err != nil {
+					if err := cleanup.MigrateBlocks(l, runtime.getClient(), &stats, progressReportAlert, shid, blockServiceId); err != nil {
 						panic(err)
 					}
 				}

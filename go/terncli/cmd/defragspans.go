@@ -17,7 +17,7 @@ func NewDefragSpans() Command {
 	defragSpansPath := defragSpansCmd.String("path", "", "The directory or file to defrag")
 	defragSpansRun := func(runtime *Runtime) {
 		l := runtime.Log
-		c := runtime.Client()
+		c := runtime.getClient()
 		dirInfoCache := client.NewDirInfoCache()
 		bufPool := bufpool.NewBufPool()
 		stats := &cleanup.DefragSpansStats{}

@@ -32,7 +32,7 @@ func NewResurrect() Command {
 		if *resurrectFileWorkers < 1 {
 			panic(fmt.Errorf("workers must be > 0"))
 		}
-		c := runtime.Client()
+		c := runtime.getClient()
 		t0 := time.Now()
 		ch := make(chan string, *resurrectFileWorkers*4)
 		var wg sync.WaitGroup

@@ -62,7 +62,7 @@ func NewCollect() Command {
 			}()
 			err = client.Parwalk(
 				l,
-				runtime.Client(),
+				runtime.getClient(),
 				&client.ParwalkOptions{
 					WorkersPerShard: 100,
 					Snapshot:        *collectDirFollowSnapshot,
@@ -73,7 +73,7 @@ func NewCollect() Command {
 						return nil
 					}
 					var localStats cleanup.CollectDirectoriesStats
-					if err := cleanup.CollectDirectory(l, runtime.Client(), dirInfoCache, &localStats, id, *collectDirMinEdgeAge, forcePolicy); err != nil {
+					if err := cleanup.CollectDirectory(l, runtime.getClient(), dirInfoCache, &localStats, id, *collectDirMinEdgeAge, forcePolicy); err != nil {
 						print(fmt.Errorf("could not collect %v, err: %v", id, err))
 					} else {
 						atomic.AddUint64(&stats.VisitedDirectories, localStats.VisitedDirectories)
@@ -88,7 +88,7 @@ func NewCollect() Command {
 			l.Info("finished collecting %v, stats: %+v", *collectDirPath, stats)
 		} else {
 			dirId := msgs.InodeId(*collectDirId)
-			c := runtime.Client()
+			c := runtime.getClient()
 			if dirId == 0 {
 				if dirId, err = c.ResolvePath(l, *collectDirPath); err != nil {
 					panic(fmt.Errorf("could not resolve path %v: %v", *collectDirPath, err))
@@ -98,7 +98,7 @@ func NewCollect() Command {
 				panic(fmt.Errorf("inode id %v is not a directory", dirId))
 			}
 			var stats cleanup.CollectDirectoriesStats
-			if err := cleanup.CollectDirectory(l, runtime.Client(), dirInfoCache, &stats, dirId, *collectDirMinEdgeAge, forcePolicy); err != nil {
+			if err := cleanup.CollectDirectory(l, runtime.getClient(), dirInfoCache, &stats, dirId, *collectDirMinEdgeAge, forcePolicy); err != nil {
 				panic(fmt.Errorf("could not collect %v, stats: %+v, err: %v", dirId, stats, err))
 			}
 			l.Info("finished collecting %v, stats: %+v", dirId, stats)

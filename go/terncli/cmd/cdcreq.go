@@ -38,7 +38,7 @@ func NewCdcReq() Command {
 				os.Exit(0)
 			}
 		}
-		if err := runtime.Client().CDCRequest(l, req, resp); err != nil {
+		if err := runtime.getClient().CDCRequest(l, req, resp); err != nil {
 			panic(err)
 		}
 		out, err := json.MarshalIndent(resp, "", "  ")

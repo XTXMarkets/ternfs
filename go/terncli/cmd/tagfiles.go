@@ -185,7 +185,6 @@ func runTagFiles(l *log.Logger, c *client.Client, p *tagFilesParams) error {
 			if p.dryRun {
 				return nil
 			}
-			// Row schema: inode_hex \t size \t atime_ns \t mtime_ns \t rule \t path
 			row := fmt.Sprintf(
 				"%s\t%d\t%d\t%d\t%s\t%s",
 				id.String(),
@@ -245,6 +244,7 @@ func runTagFiles(l *log.Logger, c *client.Client, p *tagFilesParams) error {
 			return nil
 		}
 
+		// Row schema: inode_hex \t size \t atime_ns \t mtime_ns \t rule \t path
 		row := fmt.Sprintf(
 			"%s\t%d\t%d\t%d\t%s\t%s",
 			id.String(),
@@ -332,7 +332,7 @@ func NewTagFiles() Command {
 			fmt.Fprintln(os.Stderr, "tag-files: -output is required (use -dry-run to skip writing batches)")
 			os.Exit(2)
 		}
-		err := runTagFiles(l, runtime.Client(), &tagFilesParams{
+		err := runTagFiles(l, runtime.getClient(), &tagFilesParams{
 			rulesPath:           *tagFilesRules,
 			roots:               []string(tagFilesRoots),
 			outputDir:           *tagFilesOutput,

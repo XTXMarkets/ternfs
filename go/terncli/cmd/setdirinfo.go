@@ -38,7 +38,7 @@ func NewSetDirInfo() Command {
 				os.Exit(0)
 			}
 		}
-		if err := runtime.Client().MergeDirectoryInfo(l, id, entry); err != nil {
+		if err := runtime.getClient().MergeDirectoryInfo(l, id, entry); err != nil {
 			panic(err)
 		}
 	}

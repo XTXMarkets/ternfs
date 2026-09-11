@@ -15,7 +15,7 @@ func NewFileLocations() Command {
 	fileLocationsRun := func(runtime *Runtime) {
 		l := runtime.Log
 		id := msgs.InodeId(*fileLocationsId)
-		c := runtime.Client()
+		c := runtime.getClient()
 		fileSpansReq := msgs.FileSpansReq{
 			FileId:     id,
 			ByteOffset: 0,

@@ -16,6 +16,7 @@ type Runtime struct {
 	Log             *log.Logger
 	RegistryAddress string
 
+	// getClient returns the process-wide TernFS client, creating it on first use.
 	getClient func() *client.Client
 }
 
@@ -29,11 +30,6 @@ func NewRuntime(
 		RegistryAddress: registryAddress,
 		getClient:       getClient,
 	}
-}
-
-// Client returns the process-wide TernFS client, creating it on first use.
-func (runtime *Runtime) Client() *client.Client {
-	return runtime.getClient()
 }
 
 // Command contains one subcommand's flags and deferred implementation.

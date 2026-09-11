@@ -21,7 +21,7 @@ func NewDefrag() Command {
 	defragFileFrom := defragFileCmd.String("from", "", "If present, will not defrag files pointed at by edges created before this time.")
 	defragFileRun := func(runtime *Runtime) {
 		l := runtime.Log
-		c := runtime.Client()
+		c := runtime.getClient()
 		dirInfoCache := client.NewDirInfoCache()
 		bufPool := bufpool.NewBufPool()
 		stats := &cleanup.DefragStats{}

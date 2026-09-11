@@ -74,7 +74,7 @@ func outputFullFileSizes(log *log.Logger, c *client.Client) {
 }
 
 func outputBriefFileSizes(log *log.Logger, c *client.Client) {
-
+	// histogram
 	histoBins := 256
 	histo := timing.NewHistogram(histoBins, 1024, 1.1)
 	var histoSizes [256][]uint64
@@ -126,9 +126,9 @@ func NewFileSizes() Command {
 	fileSizesRun := func(runtime *Runtime) {
 		l := runtime.Log
 		if *fileSizesBrief {
-			outputBriefFileSizes(l, runtime.Client())
+			outputBriefFileSizes(l, runtime.getClient())
 		} else {
-			outputFullFileSizes(l, runtime.Client())
+			outputFullFileSizes(l, runtime.getClient())
 		}
 	}
 	return Command{

@@ -23,11 +23,11 @@ func NewDestruct() Command {
 			state := &cleanup.DestructFilesState{}
 			opts := &cleanup.DestructFilesOptions{NumWorkersPerShard: 10, WorkersQueueSize: 100}
 			if *destrutcFileShardId < 0 {
-				if err := cleanup.DestructFilesInAllShards(l, runtime.Client(), opts, state); err != nil {
+				if err := cleanup.DestructFilesInAllShards(l, runtime.getClient(), opts, state); err != nil {
 					panic(err)
 				}
 			} else {
-				if err := cleanup.DestructFiles(l, runtime.Client(), opts, state, msgs.ShardId(*destrutcFileShardId)); err != nil {
+				if err := cleanup.DestructFiles(l, runtime.getClient(), opts, state, msgs.ShardId(*destrutcFileShardId)); err != nil {
 					panic(err)
 				}
 			}
@@ -39,7 +39,7 @@ func NewDestruct() Command {
 			stats := cleanup.DestructFilesStats{}
 			var destructFileCookie [8]byte
 			binary.LittleEndian.PutUint64(destructFileCookie[:], *destructFileCookieU64)
-			if err := cleanup.DestructFile(l, runtime.Client(), &stats, fileId, 0, destructFileCookie); err != nil {
+			if err := cleanup.DestructFile(l, runtime.getClient(), &stats, fileId, 0, destructFileCookie); err != nil {
 				panic(fmt.Errorf("could not destruct %v, stats: %+v, err: %v", fileId, stats, err))
 			}
 			l.Info("finished destructing %v, stats: %+v", fileId, stats)

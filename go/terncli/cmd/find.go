@@ -45,7 +45,7 @@ func NewFind() Command {
 				findBefore = msgs.MakeTernTime(time.Now().Add(-d))
 			}
 		}
-		c := runtime.Client()
+		c := runtime.getClient()
 		err := client.Parwalk(
 			l,
 			c,
