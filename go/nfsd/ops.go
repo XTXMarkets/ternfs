@@ -624,8 +624,10 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 		return writeOpenError(w, status)
 	}
 	defer op.finishServerFaultIfNeeded()
-	for _, fileID := range op.abandoned {
-		s.stagingStore.Remove(fileID)
+	for _, state := range op.abandoned {
+		if state.write {
+			s.stagingStore.Remove(state.fileID)
+		}
 	}
 	fail := func(status uint32) uint32 {
 		response = op.finishError(status)
