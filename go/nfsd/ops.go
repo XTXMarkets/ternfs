@@ -199,11 +199,6 @@ func (s *Server) opClose(args CLOSE4args, st *compoundState, w *COMPOUND4resWrit
 			response = op.finishExpiredClose()
 			return writeCloseResponse(w, response)
 		}
-		if recovered != nil {
-			s.log.Error("close: recovered write staging missing",
-				"file_id", st.currentID, "stateid", sid)
-			return fail(NFS4ERR_EXPIRED)
-		}
 	}
 
 	if op != nil {
@@ -614,6 +609,9 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 	ownerKey := openOwnerKey{
 		clientID: clientID,
 		owner:    string(owner.Owner()),
+	}
+	if s.beforeStartOpen != nil {
+		s.beforeStartOpen()
 	}
 	op, response, replay, status := s.opens.startOpen(
 		ownerKey, args.Seqid())

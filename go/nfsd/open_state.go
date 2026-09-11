@@ -645,11 +645,6 @@ func (op *openOwnerOperation) finishExpiredClose() openOwnerResponse {
 	return response
 }
 
-func (op *openOwnerOperation) abort() {
-	op.finished = true
-	op.store.releaseOwner(op.owner)
-}
-
 // existingOpen reports the confirmed open this owner already holds for
 // fileID. The caller holds the owner operation, so the answer cannot change
 // before finishOpen.

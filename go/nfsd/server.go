@@ -40,6 +40,8 @@ type Server struct {
 	writeVerifier [8]byte       // random per server instance, changes on restart
 	idleTimeout   time.Duration // connection idle timeout
 	log           *slog.Logger
+
+	beforeStartOpen func()
 }
 
 func NewServer(fs TernVFS, stagingStore StagingStore, logger *slog.Logger) (*Server, error) {

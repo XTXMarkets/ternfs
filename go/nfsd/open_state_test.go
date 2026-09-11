@@ -9,17 +9,43 @@ import "testing"
 // These adapters keep focused store tests concise. Production operations use
 // start*/finish* directly so owner locks cover their filesystem side effects.
 
-func TestOpenOwnerSeqidWrapsToOne(t *testing.T) {
-	store := newOpenStateStore()
-	ownerKey := openOwnerKey{clientID: 1, owner: "owner"}
-	if _, status := store.addOpen(
-		ownerKey, ^uint32(0), MakeInodeID(InodeTypeFile, 1),
-		false, StateID{},
-	); status != NFS4_OK {
-		t.Fatal(Nfsstat4Name(status))
+func (op *openOwnerOperation) abort() {
+	op.finished = true
+	op.store.releaseOwner(op.owner)
+}
+
+func assertOpenStateIndex(t *testing.T, store *openStateStore) {
+	t.Helper()
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	indexed := 0
+	for key, owner := range store.owners {
+		for fileID, state := range owner.states {
+			indexed++
+			if state.owner != key {
+				t.Fatalf("owner index key = %#v, state owner = %#v",
+					key, state.owner)
+			}
+			if state.fileID != fileID {
+				t.Fatalf("owner index file = %v, state file = %v",
+					fileID, state.fileID)
+			}
+			if store.states[state.id] != state {
+				t.Fatalf("owner index state %x is absent from stateid index",
+					state.id)
+			}
+		}
 	}
-	if got := store.owners[ownerKey].nextSeq; got != 1 {
-		t.Fatalf("next seqid = %d, want 1", got)
+	if indexed != len(store.states) {
+		t.Fatalf("owner index has %d states, stateid index has %d",
+			indexed, len(store.states))
+	}
+	for id, state := range store.states {
+		owner := store.owners[state.owner]
+		if owner == nil || owner.states[state.fileID] != state {
+			t.Fatalf("stateid index state %x is absent from owner index", id)
+		}
 	}
 }
 
