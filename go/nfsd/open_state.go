@@ -73,11 +73,6 @@ type openOwnerState struct {
 	initialized  bool
 	confirmed    bool
 	lastResponse openOwnerResponse
-
-	// refs is protected by openStateStore.mu. It includes operations waiting
-	// for or holding mu, so a client reboot cannot remove an owner underneath
-	// a waiter.
-	refs int
 }
 
 type openStateStore struct {
@@ -213,13 +208,11 @@ func (os *openStateStore) acquireOwnerForOpen(
 		owner = &openOwnerState{}
 		os.owners[key] = owner
 	}
-	owner.refs++
 	os.mu.Unlock()
 
 	owner.mu.Lock()
 	os.mu.Lock()
 	if os.owners[key] != owner {
-		owner.refs--
 		os.mu.Unlock()
 		owner.mu.Unlock()
 		return nil, NFS4ERR_STALE_CLIENTID
@@ -244,14 +237,12 @@ func (os *openStateStore) acquireOwnerForState(
 		os.mu.Unlock()
 		return nil, openOwnerKey{}, nil, NFS4ERR_EXPIRED
 	}
-	owner.refs++
 	os.mu.Unlock()
 
 	owner.mu.Lock()
 	os.mu.Lock()
 	state = os.states[id]
 	if os.owners[key] != owner {
-		owner.refs--
 		os.mu.Unlock()
 		owner.mu.Unlock()
 		return nil, openOwnerKey{}, nil, NFS4ERR_EXPIRED
@@ -261,9 +252,6 @@ func (os *openStateStore) acquireOwnerForState(
 }
 
 func (os *openStateStore) releaseOwner(owner *openOwnerState) {
-	os.mu.Lock()
-	owner.refs--
-	os.mu.Unlock()
 	owner.mu.Unlock()
 }
 
@@ -381,12 +369,10 @@ func (os *openStateStore) startClose(
 	if os.states[id] == nil {
 		if owner := os.replayOwners[id]; owner != nil {
 			key := owner.lastResponse.state.owner
-			owner.refs++
 			os.mu.Unlock()
 			owner.mu.Lock()
 			os.mu.Lock()
 			if os.owners[key] != owner || os.replayOwners[id] != owner {
-				owner.refs--
 				os.mu.Unlock()
 				owner.mu.Unlock()
 				return nil, openState{}, openOwnerResponse{}, false,
@@ -816,7 +802,6 @@ func (os *openStateStore) purgeClient(clientID uint64) []InodeID {
 			if candidateKey.clientID == clientID {
 				key = candidateKey
 				owner = candidate
-				owner.refs++
 				break
 			}
 		}
@@ -841,7 +826,6 @@ func (os *openStateStore) purgeClient(clientID uint64) []InodeID {
 				}
 			}
 		}
-		owner.refs--
 		os.mu.Unlock()
 		owner.mu.Unlock()
 	}
