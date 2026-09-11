@@ -22,6 +22,15 @@ import (
 func startTestServer(
 	t *testing.T,
 	dir string,
+) (addr string, cleanup func()) {
+	t.Helper()
+	_, addr, cleanup = startTestServerWithServer(t, dir)
+	return addr, cleanup
+}
+
+func startTestServerWithServer(
+	t *testing.T,
+	dir string,
 ) (srv *Server, addr string, cleanup func()) {
 	t.Helper()
 	fs := NewLocalTernVFS(dir)
@@ -141,7 +150,7 @@ func sendCompound(t *testing.T, conn net.Conn, xid uint32, build func(w *COMPOUN
 
 func TestEmptyCompound(t *testing.T) {
 	dir := t.TempDir()
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -172,7 +181,7 @@ func TestEmptyCompound(t *testing.T) {
 
 func TestCompoundOperationLimit(t *testing.T) {
 	dir := t.TempDir()
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -325,7 +334,7 @@ func setupClientWithVerifier(
 
 func TestNullRPC(t *testing.T) {
 	dir := t.TempDir()
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -339,7 +348,7 @@ func TestNullRPC(t *testing.T) {
 
 func TestProgMismatch(t *testing.T) {
 	dir := t.TempDir()
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -376,7 +385,7 @@ func TestProgMismatch(t *testing.T) {
 
 func TestPutrootfhGetattr(t *testing.T) {
 	dir := t.TempDir()
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -420,7 +429,7 @@ func TestPutrootfhGetattr(t *testing.T) {
 
 func TestPutpubfh(t *testing.T) {
 	dir := t.TempDir()
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -447,7 +456,7 @@ func TestLookupAndRead(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("Hello, NFS!"), 0644)
 
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -509,7 +518,7 @@ func TestReadWithOffset(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "data.txt"), []byte("0123456789abcdef"), 0644)
 
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -578,7 +587,7 @@ func TestReadEmptyFile(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "empty.txt"), nil, 0644)
 
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -618,7 +627,7 @@ func TestReaddir(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "bbb.txt"), []byte("BB"), 0644)
 	os.Mkdir(filepath.Join(dir, "subdir"), 0755)
 
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -667,7 +676,7 @@ func TestReaddirEmpty(t *testing.T) {
 	dir := t.TempDir()
 	os.Mkdir(filepath.Join(dir, "empty"), 0755)
 
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -708,7 +717,7 @@ func TestPutfhRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("hello"), 0644)
 
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -759,7 +768,7 @@ func TestPutfhRoundTrip(t *testing.T) {
 
 func TestPutfhBadHandle(t *testing.T) {
 	dir := t.TempDir()
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -784,7 +793,7 @@ func TestSavefhRestorefh(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "a.txt"), []byte("aaa"), 0644)
 	os.WriteFile(filepath.Join(dir, "b.txt"), []byte("bbb"), 0644)
 
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -837,7 +846,7 @@ func TestSavefhRestorefh(t *testing.T) {
 
 func TestRestorefhWithoutSave(t *testing.T) {
 	dir := t.TempDir()
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -856,7 +865,7 @@ func TestLookupp(t *testing.T) {
 	os.MkdirAll(filepath.Join(dir, "sub"), 0755)
 	os.WriteFile(filepath.Join(dir, "root.txt"), []byte("at root"), 0644)
 
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -905,7 +914,7 @@ func TestReadlink(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "target.txt"), []byte("target"), 0644)
 	os.Symlink("target.txt", filepath.Join(dir, "link.txt"))
 
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -939,7 +948,7 @@ func TestReadlink(t *testing.T) {
 
 func TestAccess(t *testing.T) {
 	dir := t.TempDir()
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -1007,7 +1016,7 @@ func TestAccessMasksUnsupportedBitsByType(t *testing.T) {
 			if err := os.Symlink("file", filepath.Join(dir, "link")); err != nil {
 				t.Fatal(err)
 			}
-			_, addr, cleanup := startTestServer(t, dir)
+			addr, cleanup := startTestServer(t, dir)
 			defer cleanup()
 			conn := dial(t, addr)
 			defer conn.Close()
@@ -1045,7 +1054,7 @@ func TestOpenConfirmClose(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("content"), 0644)
 
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -1077,7 +1086,7 @@ func TestOpenConfirmClose(t *testing.T) {
 
 func TestSetclientidFlow(t *testing.T) {
 	dir := t.TempDir()
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -1174,7 +1183,7 @@ func TestClientStoreRecognizesConfirmedClientAfterRestart(t *testing.T) {
 
 func TestSetattr(t *testing.T) {
 	dir := t.TempDir()
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -1209,7 +1218,7 @@ func TestSetattr(t *testing.T) {
 
 func TestReleaseLockowner(t *testing.T) {
 	dir := t.TempDir()
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -1237,7 +1246,7 @@ func TestReleaseLockowner(t *testing.T) {
 
 func TestIllegalOp(t *testing.T) {
 	dir := t.TempDir()
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -1253,7 +1262,7 @@ func TestIllegalOp(t *testing.T) {
 
 func TestUnknownOp(t *testing.T) {
 	dir := t.TempDir()
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -1288,7 +1297,7 @@ func TestUnknownOp(t *testing.T) {
 
 func TestLookupNonExistent(t *testing.T) {
 	dir := t.TempDir()
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -1400,7 +1409,7 @@ func TestLongNamesRejected(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			dir := t.TempDir()
-			_, addr, cleanup := startTestServer(t, dir)
+			addr, cleanup := startTestServer(t, dir)
 			defer cleanup()
 			conn := dial(t, addr)
 			defer conn.Close()
@@ -1430,7 +1439,7 @@ func TestRenameInvalidNamesRejected(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			dir := t.TempDir()
-			_, addr, cleanup := startTestServer(t, dir)
+			addr, cleanup := startTestServer(t, dir)
 			defer cleanup()
 			conn := dial(t, addr)
 			defer conn.Close()
@@ -1473,7 +1482,7 @@ func TestOpenInvalidNamesRejected(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			dir := t.TempDir()
-			_, addr, cleanup := startTestServer(t, dir)
+			addr, cleanup := startTestServer(t, dir)
 			defer cleanup()
 			conn := dial(t, addr)
 			defer conn.Close()
@@ -1548,7 +1557,7 @@ func TestEmptyComponentsRejected(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			dir := t.TempDir()
-			_, addr, cleanup := startTestServer(t, dir)
+			addr, cleanup := startTestServer(t, dir)
 			defer cleanup()
 			conn := dial(t, addr)
 			defer conn.Close()
@@ -1564,7 +1573,7 @@ func TestEmptyComponentsRejected(t *testing.T) {
 
 func TestLookuppAtRootRejected(t *testing.T) {
 	dir := t.TempDir()
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -1581,7 +1590,7 @@ func TestLookuppAtRootRejected(t *testing.T) {
 
 func TestSecinfoRequiresExistingName(t *testing.T) {
 	dir := t.TempDir()
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -1661,7 +1670,7 @@ func TestCreateInvalidFieldsRejected(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			dir := t.TempDir()
-			_, addr, cleanup := startTestServer(t, dir)
+			addr, cleanup := startTestServer(t, dir)
 			defer cleanup()
 			conn := dial(t, addr)
 			defer conn.Close()
@@ -1726,7 +1735,7 @@ func TestCreateTypeAndAttributesValidated(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			dir := t.TempDir()
-			_, addr, cleanup := startTestServer(t, dir)
+			addr, cleanup := startTestServer(t, dir)
 			defer cleanup()
 			conn := dial(t, addr)
 			defer conn.Close()
@@ -1779,7 +1788,7 @@ func TestCreateExistingNameRejected(t *testing.T) {
 			if err := test.setup(filepath.Join(dir, "existing")); err != nil {
 				t.Fatal(err)
 			}
-			_, addr, cleanup := startTestServer(t, dir)
+			addr, cleanup := startTestServer(t, dir)
 			defer cleanup()
 			conn := dial(t, addr)
 			defer conn.Close()
@@ -1831,7 +1840,7 @@ func TestOpenCreateAttributesValidated(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			dir := t.TempDir()
-			_, addr, cleanup := startTestServer(t, dir)
+			addr, cleanup := startTestServer(t, dir)
 			defer cleanup()
 			conn := dial(t, addr)
 			defer conn.Close()
@@ -1892,7 +1901,7 @@ func TestCreateFromNonDirectoryRejected(t *testing.T) {
 			if err := test.setup(filepath.Join(dir, "parent")); err != nil {
 				t.Fatal(err)
 			}
-			_, addr, cleanup := startTestServer(t, dir)
+			addr, cleanup := startTestServer(t, dir)
 			defer cleanup()
 			conn := dial(t, addr)
 			defer conn.Close()
@@ -1967,7 +1976,7 @@ func TestCurrentFilehandleTypeValidation(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			_, addr, cleanup := startTestServer(t, dir)
+			addr, cleanup := startTestServer(t, dir)
 			defer cleanup()
 			conn := dial(t, addr)
 			defer conn.Close()
@@ -2054,7 +2063,7 @@ func TestRenameDirectoryFilehandlesValidated(t *testing.T) {
 			if err := os.Symlink("file", filepath.Join(dir, "link")); err != nil {
 				t.Fatal(err)
 			}
-			_, addr, cleanup := startTestServer(t, dir)
+			addr, cleanup := startTestServer(t, dir)
 			defer cleanup()
 			conn := dial(t, addr)
 			defer conn.Close()
@@ -2121,7 +2130,7 @@ func TestOpenFilehandleTypesValidated(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			_, addr, cleanup := startTestServer(t, dir)
+			addr, cleanup := startTestServer(t, dir)
 			defer cleanup()
 			conn := dial(t, addr)
 			defer conn.Close()
@@ -2163,7 +2172,7 @@ func TestOpenFilehandleTypesValidated(t *testing.T) {
 
 func TestNoFilehandle(t *testing.T) {
 	dir := t.TempDir()
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -2186,7 +2195,7 @@ func TestNoFilehandle(t *testing.T) {
 
 func TestCompoundStopsOnError(t *testing.T) {
 	dir := t.TempDir()
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -2220,7 +2229,7 @@ func TestSubdirNavigation(t *testing.T) {
 	os.MkdirAll(filepath.Join(dir, "a", "b", "c"), 0755)
 	os.WriteFile(filepath.Join(dir, "a", "b", "c", "deep.txt"), []byte("deep content"), 0644)
 
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -2257,7 +2266,7 @@ func TestSubdirNavigation(t *testing.T) {
 
 func TestGetattr_RootType(t *testing.T) {
 	dir := t.TempDir()
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -2299,7 +2308,7 @@ func TestGetattr_FileSize(t *testing.T) {
 	content := []byte("twelve chars")
 	os.WriteFile(filepath.Join(dir, "sized.txt"), content, 0644)
 
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -2343,7 +2352,7 @@ func TestGetattr_Mode(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "f.txt"), []byte("x"), 0644)
 	os.MkdirAll(filepath.Join(dir, "d"), 0755)
 
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -2410,7 +2419,7 @@ func TestGetattr_Symlink(t *testing.T) {
 	dir := t.TempDir()
 	os.Symlink("target", filepath.Join(dir, "link"))
 
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -2450,7 +2459,7 @@ func TestMultipleCompoundsOnConnection(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "a.txt"), []byte("aaa"), 0644)
 	os.WriteFile(filepath.Join(dir, "b.txt"), []byte("bbb"), 0644)
 
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -2493,7 +2502,7 @@ func TestLargeFileRead(t *testing.T) {
 	}
 	os.WriteFile(filepath.Join(dir, "large.bin"), content, 0644)
 
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -2532,7 +2541,7 @@ func TestLargeFileRead(t *testing.T) {
 
 func TestGetattr_SupportedAttrs(t *testing.T) {
 	dir := t.TempDir()
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -2581,7 +2590,7 @@ func TestGetattr_MultipleAttrs(t *testing.T) {
 	content := []byte("test content for multi attr")
 	os.WriteFile(filepath.Join(dir, "multi.txt"), content, 0644)
 
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -2655,7 +2664,7 @@ func TestGetattrAttributeMaskValidation(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			dir := t.TempDir()
-			_, addr, cleanup := startTestServer(t, dir)
+			addr, cleanup := startTestServer(t, dir)
 			defer cleanup()
 			conn := dial(t, addr)
 			defer conn.Close()
@@ -2700,7 +2709,7 @@ func TestVerifyAttributeMaskValidation(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			dir := t.TempDir()
-			_, addr, cleanup := startTestServer(t, dir)
+			addr, cleanup := startTestServer(t, dir)
 			defer cleanup()
 			conn := dial(t, addr)
 			defer conn.Close()
@@ -2747,7 +2756,7 @@ func finishTestFattr(w Fattr4Writer, mask [2]uint32, values []byte) []byte {
 
 func TestWriteAndRead(t *testing.T) {
 	dir := t.TempDir()
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -2804,7 +2813,7 @@ func TestWriteAndRead(t *testing.T) {
 
 func TestStagedFileGetattrAndRead(t *testing.T) {
 	dir := t.TempDir()
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -2904,7 +2913,7 @@ func TestOpenExistingForWriteRejected(t *testing.T) {
 	// Create an existing file.
 	os.WriteFile(filepath.Join(dir, "existing.txt"), []byte("original"), 0644)
 
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -2944,7 +2953,7 @@ func TestOpenExistingForWriteRejected(t *testing.T) {
 
 func TestCreateDirectory(t *testing.T) {
 	dir := t.TempDir()
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -2994,7 +3003,7 @@ func TestRemoveFile(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "victim.txt"), []byte("delete me"), 0644)
 
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -3029,7 +3038,7 @@ func TestRename(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "old.txt"), []byte("rename me"), 0644)
 
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -3078,7 +3087,7 @@ func TestRenameToSameNameIsNoOp(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(dir, "same"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -3112,7 +3121,7 @@ func TestRenameToSameNameIsNoOp(t *testing.T) {
 
 func TestDelegpurgeNotSupported(t *testing.T) {
 	dir := t.TempDir()
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -3131,7 +3140,7 @@ func TestLinkNotSupported(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("test"), 0644)
 
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -3157,7 +3166,7 @@ func TestCreateSymlink(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "target.txt"), []byte("target"), 0644)
 
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -3207,7 +3216,7 @@ func TestCreateSymlink(t *testing.T) {
 
 func TestMinorVersionMismatch(t *testing.T) {
 	dir := t.TempDir()
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -3239,7 +3248,7 @@ func TestMinorVersionMismatch(t *testing.T) {
 
 func TestCreateEmptyFile(t *testing.T) {
 	dir := t.TempDir()
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -3639,7 +3648,7 @@ func TestReaddirPagination(t *testing.T) {
 	}
 	sort.Strings(expected)
 
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -3674,7 +3683,7 @@ func TestReaddirCookieverfMismatch(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "a.txt"), []byte("a"), 0644)
 
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -3740,7 +3749,7 @@ func TestReaddirReservedCookies(t *testing.T) {
 	for _, cookie := range []uint64{1, 2} {
 		t.Run(fmt.Sprintf("cookie_%d", cookie), func(t *testing.T) {
 			dir := t.TempDir()
-			_, addr, cleanup := startTestServer(t, dir)
+			addr, cleanup := startTestServer(t, dir)
 			defer cleanup()
 			conn := dial(t, addr)
 			defer conn.Close()
@@ -3766,7 +3775,7 @@ func TestReaddirReservedCookies(t *testing.T) {
 
 func TestReaddirWriteOnlyAttributesRejected(t *testing.T) {
 	dir := t.TempDir()
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -3793,7 +3802,7 @@ func TestReaddirTooSmall(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("x"), 0644)
 
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -3822,7 +3831,7 @@ func TestReaddirNfsDirHidden(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "visible.txt"), []byte("x"), 0644)
 
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -3861,7 +3870,7 @@ func TestReaddirTransientNotVisible(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "existing.txt"), []byte("x"), 0644)
 
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -3911,7 +3920,7 @@ func TestSetattrTime(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("data"), 0644)
 
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -3975,7 +3984,7 @@ func TestSetattrModeRejected(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("data"), 0644)
 
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -4064,7 +4073,7 @@ func TestSetattrValidation(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			dir := t.TempDir()
-			_, addr, cleanup := startTestServer(t, dir)
+			addr, cleanup := startTestServer(t, dir)
 			defer cleanup()
 			conn := dial(t, addr)
 			defer conn.Close()
@@ -4101,7 +4110,7 @@ func TestSetattrValidation(t *testing.T) {
 
 func TestSetattrSize(t *testing.T) {
 	dir := t.TempDir()
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -4183,7 +4192,7 @@ func TestSetattrSize(t *testing.T) {
 func TestSetattrSizeRequiresWriteOpen(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("content"), 0644)
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -4220,7 +4229,7 @@ func TestSetattrSizeRequiresWriteOpen(t *testing.T) {
 
 func TestOpenExclusive4Rejected(t *testing.T) {
 	dir := t.TempDir()
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -4263,7 +4272,7 @@ func TestOpenClaimPrevious(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("data"), 0644)
 
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -4294,48 +4303,6 @@ func TestOpenClaimPrevious(t *testing.T) {
 	}
 }
 
-func TestOpenRflagsRequireConfirm(t *testing.T) {
-	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("data"), 0644)
-
-	_, addr, cleanup := startTestServer(t, dir)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-
-	xid := uint32(1)
-	clientid := setupClient(t, conn, &xid)
-
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
-		w.AppendArgarray_Putrootfh()
-		ow := w.AppendArgarray_Open()
-		ow.SetSeqid(1)
-		ow.SetShareAccess(OPEN4_SHARE_ACCESS_READ)
-		ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
-		ownerW := ow.StartOwner()
-		ownerW = ownerW.SetClientid(clientid)
-		ownerW = ownerW.SetOwner([]byte("test-owner"))
-		buf := ownerW.Finish()
-		ow.Resume(buf)
-		ow.SetOpenhow_Default(OPEN4_NOCREATE)
-		cw := ow.SetClaim_Null()
-		buf = cw.SetData([]byte("file.txt")).Finish()
-		ow.Resume(buf)
-		buf = ow.Finish()
-		w.Resume(buf)
-	})
-	xid++
-
-	iter := expectOK(t, res)
-	nextOp(t, &iter) // PUTROOTFH
-	entry := nextOp(t, &iter)
-	openOk := entry.Value().AsOPEN4resEntry().Value().AsOPEN4resok()
-	rflags := openOk.Rflags()
-	if rflags&OPEN4_RESULT_CONFIRM == 0 {
-		t.Fatal("OPEN4_RESULT_CONFIRM should be set")
-	}
-}
-
 func TestOpenConfirmReplay(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(
@@ -4343,7 +4310,7 @@ func TestOpenConfirmReplay(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -4376,7 +4343,7 @@ func TestOpenConfirmOldStateidAdvancesSeqid(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -4414,7 +4381,7 @@ func TestOpenConfirmOldStateidAdvancesSeqid(t *testing.T) {
 
 func TestCloseReplay(t *testing.T) {
 	dir := t.TempDir()
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -4453,7 +4420,7 @@ func TestFailedOpenAdvancesOwnerSeqid(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -4508,7 +4475,7 @@ func TestOnlyFirstOpenRequiresConfirmation(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -4555,7 +4522,7 @@ func TestReopenReusesState(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	srv, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -4615,22 +4582,6 @@ func TestReopenReusesState(t *testing.T) {
 	); status != NFS4_OK {
 		t.Fatalf("CLOSE status = %s", Nfsstat4Name(status))
 	}
-	srv.opens.mu.Lock()
-	defer srv.opens.mu.Unlock()
-	if len(srv.opens.states) != 0 {
-		t.Fatalf("states after CLOSE = %d, want 0", len(srv.opens.states))
-	}
-	owner := srv.opens.owners[openOwnerKey{
-		clientID: clientID,
-		owner:    "shared-owner",
-	}]
-	if owner == nil {
-		t.Fatal("open owner was removed after CLOSE")
-	}
-	if len(owner.states) != 0 {
-		t.Fatalf("owner states after CLOSE = %d, want 0",
-			len(owner.states))
-	}
 }
 
 func TestReadCloseAfterFileRemoval(t *testing.T) {
@@ -4639,7 +4590,7 @@ func TestReadCloseAfterFileRemoval(t *testing.T) {
 	if err := os.WriteFile(path, []byte("data"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	srv, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -4656,16 +4607,11 @@ func TestReadCloseAfterFileRemoval(t *testing.T) {
 		t.Fatalf("CLOSE after removal = %s, want NFS4_OK",
 			Nfsstat4Name(status))
 	}
-	srv.opens.mu.Lock()
-	defer srv.opens.mu.Unlock()
-	if len(srv.opens.states) != 0 {
-		t.Fatalf("states after CLOSE = %d, want 0", len(srv.opens.states))
-	}
 }
 
 func TestWriteCloseWithoutStagingExpiresAndDropsState(t *testing.T) {
 	dir := t.TempDir()
-	srv, addr, cleanup := startTestServer(t, dir)
+	srv, addr, cleanup := startTestServerWithServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -4685,143 +4631,83 @@ func TestWriteCloseWithoutStagingExpiresAndDropsState(t *testing.T) {
 		t.Fatalf("CLOSE without staging = %s, want NFS4ERR_EXPIRED",
 			Nfsstat4Name(status))
 	}
-
-	srv.opens.mu.Lock()
-	defer srv.opens.mu.Unlock()
-	if len(srv.opens.states) != 0 {
-		t.Fatalf("states after expired CLOSE = %d, want 0",
-			len(srv.opens.states))
-	}
-	owner := srv.opens.owners[openOwnerKey{
-		clientID: clientID,
-		owner:    "test-owner-lost.txt",
-	}]
-	if owner == nil {
-		t.Fatal("open owner was removed after expired CLOSE")
-	}
-	if len(owner.states) != 0 {
-		t.Fatalf("owner states after expired CLOSE = %d, want 0",
-			len(owner.states))
+	if status := closeFileWithSeqStatus(
+		t, conn, &xid, fh, stateid, 3,
+	); status != NFS4ERR_EXPIRED {
+		t.Fatalf("replayed CLOSE without staging = %s, want NFS4ERR_EXPIRED",
+			Nfsstat4Name(status))
 	}
 }
 
-func TestUnconfirmedOwnerOutOfSequenceOpen(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(
-		filepath.Join(dir, "second.txt"), []byte("data"), 0644,
-	); err != nil {
-		t.Fatal(err)
-	}
-	srv, addr, cleanup := startTestServer(t, dir)
-	staging := srv.stagingStore.(*LocalStagingStore)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
+func TestUnconfirmedOwnerReplacementOpen(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		seq  uint32
+	}{
+		{"in sequence", 2},
+		{"out of sequence", 7},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(
+				filepath.Join(dir, "second.txt"), []byte("data"), 0644,
+			); err != nil {
+				t.Fatal(err)
+			}
+			srv, addr, cleanup := startTestServerWithServer(t, dir)
+			staging := srv.stagingStore.(*LocalStagingStore)
+			defer cleanup()
+			conn := dial(t, addr)
+			defer conn.Close()
 
-	xid := uint32(1)
-	clientID := setupClient(t, conn, &xid)
-	status, first, firstFH, flags := openFileForOwner(
-		t, conn, &xid, clientID, "shared-owner", 1, "first.txt",
-		OPEN4_SHARE_ACCESS_BOTH, true, false,
-	)
-	if status != NFS4_OK || flags&OPEN4_RESULT_CONFIRM == 0 {
-		t.Fatalf("first OPEN status = %s, rflags = %#x",
-			Nfsstat4Name(status), flags)
-	}
-	firstID, ok := fhToInodeID(firstFH)
-	if !ok {
-		t.Fatal("invalid filehandle returned by first OPEN")
-	}
-	if staging.Get(firstID) == nil {
-		t.Fatal("first OPEN did not create staging")
-	}
+			xid := uint32(1)
+			clientID := setupClient(t, conn, &xid)
+			status, first, firstFH, flags := openFileForOwner(
+				t, conn, &xid, clientID, "shared-owner", 1, "first.txt",
+				OPEN4_SHARE_ACCESS_BOTH, true, false,
+			)
+			if status != NFS4_OK || flags&OPEN4_RESULT_CONFIRM == 0 {
+				t.Fatalf("first OPEN status = %s, rflags = %#x",
+					Nfsstat4Name(status), flags)
+			}
+			firstID, ok := fhToInodeID(firstFH)
+			if !ok {
+				t.Fatal("invalid filehandle returned by first OPEN")
+			}
+			if staging.Get(firstID) == nil {
+				t.Fatal("first OPEN did not create staging")
+			}
 
-	status, second, secondFH, flags := openFileForOwner(
-		t, conn, &xid, clientID, "shared-owner", 7, "second.txt",
-		OPEN4_SHARE_ACCESS_READ, false, false,
-	)
-	if status != NFS4_OK {
-		t.Fatalf("out-of-sequence OPEN = %s, want NFS4_OK",
-			Nfsstat4Name(status))
-	}
-	if flags&OPEN4_RESULT_CONFIRM == 0 {
-		t.Fatal("replacement OPEN did not require confirmation")
-	}
-	if staging.Get(firstID) != nil {
-		t.Fatal("replacement OPEN retained abandoned staging")
-	}
-	if status := closeFileWithSeqStatus(
-		t, conn, &xid, firstFH, first, 8,
-	); status != NFS4ERR_BAD_STATEID {
-		t.Fatalf("abandoned stateid CLOSE = %s, want NFS4ERR_BAD_STATEID",
-			Nfsstat4Name(status))
-	}
+			status, second, secondFH, flags := openFileForOwner(
+				t, conn, &xid, clientID, "shared-owner", test.seq, "second.txt",
+				OPEN4_SHARE_ACCESS_READ, false, false,
+			)
+			if status != NFS4_OK {
+				t.Fatalf("replacement OPEN = %s, want NFS4_OK",
+					Nfsstat4Name(status))
+			}
+			if flags&OPEN4_RESULT_CONFIRM == 0 {
+				t.Fatal("replacement OPEN did not require confirmation")
+			}
+			if staging.Get(firstID) != nil {
+				t.Fatal("replacement OPEN retained abandoned staging")
+			}
+			nextSeq := test.seq + 1
+			if status := closeFileWithSeqStatus(
+				t, conn, &xid, firstFH, first, nextSeq,
+			); status != NFS4ERR_BAD_STATEID {
+				t.Fatalf("abandoned stateid CLOSE = %s, want NFS4ERR_BAD_STATEID",
+					Nfsstat4Name(status))
+			}
 
-	second = confirmOpenState(t, conn, &xid, secondFH, 8, second)
-	if status := closeFileWithSeqStatus(
-		t, conn, &xid, secondFH, second, 9,
-	); status != NFS4_OK {
-		t.Fatalf("replacement CLOSE = %s", Nfsstat4Name(status))
-	}
-}
-
-func TestUnconfirmedOwnerInSequenceOpen(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(
-		filepath.Join(dir, "second.txt"), []byte("data"), 0644,
-	); err != nil {
-		t.Fatal(err)
-	}
-	srv, addr, cleanup := startTestServer(t, dir)
-	staging := srv.stagingStore.(*LocalStagingStore)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-
-	xid := uint32(1)
-	clientID := setupClient(t, conn, &xid)
-	status, first, firstFH, flags := openFileForOwner(
-		t, conn, &xid, clientID, "shared-owner", 1, "first.txt",
-		OPEN4_SHARE_ACCESS_BOTH, true, false,
-	)
-	if status != NFS4_OK || flags&OPEN4_RESULT_CONFIRM == 0 {
-		t.Fatalf("first OPEN status = %s, rflags = %#x",
-			Nfsstat4Name(status), flags)
-	}
-	firstID, ok := fhToInodeID(firstFH)
-	if !ok {
-		t.Fatal("invalid filehandle returned by first OPEN")
-	}
-	if staging.Get(firstID) == nil {
-		t.Fatal("first OPEN did not create staging")
-	}
-
-	status, second, secondFH, flags := openFileForOwner(
-		t, conn, &xid, clientID, "shared-owner", 2, "second.txt",
-		OPEN4_SHARE_ACCESS_READ, false, false,
-	)
-	if status != NFS4_OK {
-		t.Fatalf("in-sequence OPEN = %s, want NFS4_OK",
-			Nfsstat4Name(status))
-	}
-	if flags&OPEN4_RESULT_CONFIRM == 0 {
-		t.Fatal("replacement OPEN did not require confirmation")
-	}
-	if staging.Get(firstID) != nil {
-		t.Fatal("replacement OPEN retained abandoned staging")
-	}
-	if status := closeFileWithSeqStatus(
-		t, conn, &xid, firstFH, first, 3,
-	); status != NFS4ERR_BAD_STATEID {
-		t.Fatalf("abandoned stateid CLOSE = %s, want NFS4ERR_BAD_STATEID",
-			Nfsstat4Name(status))
-	}
-
-	second = confirmOpenState(t, conn, &xid, secondFH, 3, second)
-	if status := closeFileWithSeqStatus(
-		t, conn, &xid, secondFH, second, 4,
-	); status != NFS4_OK {
-		t.Fatalf("replacement CLOSE = %s", Nfsstat4Name(status))
+			second = confirmOpenState(
+				t, conn, &xid, secondFH, nextSeq, second)
+			if status := closeFileWithSeqStatus(
+				t, conn, &xid, secondFH, second, nextSeq+1,
+			); status != NFS4_OK {
+				t.Fatalf("replacement CLOSE = %s", Nfsstat4Name(status))
+			}
+		})
 	}
 }
 
@@ -5255,7 +5141,7 @@ func TestCloseUnknownStateid(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	srv, addr, cleanup := startTestServer(t, dir)
+	srv, addr, cleanup := startTestServerWithServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -5280,7 +5166,7 @@ func TestCloseUnknownStateid(t *testing.T) {
 
 func TestWriteBadStateid(t *testing.T) {
 	dir := t.TempDir()
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -5326,7 +5212,7 @@ func TestWriteBadStateid(t *testing.T) {
 // fallback — may legitimately omit a real stateid on WRITE.
 func TestWriteSpecialStateid(t *testing.T) {
 	dir := t.TempDir()
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -5372,7 +5258,7 @@ func TestWriteSpecialStateid(t *testing.T) {
 // nfs4lib.setattr default stateid is the anonymous one.
 func TestSetattrSizeSpecialStateid(t *testing.T) {
 	dir := t.TempDir()
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -5426,7 +5312,7 @@ func TestSetattrSizeSpecialStateid(t *testing.T) {
 
 func TestCommitVerifier(t *testing.T) {
 	dir := t.TempDir()
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -5556,7 +5442,7 @@ func TestLockNotSupported(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("data"), 0644)
 
-	_, addr, cleanup := startTestServer(t, dir)
+	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -5600,19 +5486,19 @@ func TestOpenOwnerSeqidWrapsToOne(t *testing.T) {
 	defer assertOpenStateIndex(t, store)
 	owner := openOwnerKey{clientID: 1, owner: "owner"}
 	fileID := MakeInodeID(InodeTypeFile, 1)
-	state, status := store.addOpen(
+	state, status := addOpenForTest(store,
 		owner, ^uint32(0), fileID, false, StateID{},
 	)
 	if status != NFS4_OK {
 		t.Fatalf("OPEN status = %s", Nfsstat4Name(status))
 	}
-	if _, status = store.confirm(
+	if _, status = confirmOpenForTest(store,
 		state.id, 1, fileID, 1,
 	); status != NFS4_OK {
 		t.Fatalf("OPEN_CONFIRM seqid 1 = %s, want NFS4_OK",
 			Nfsstat4Name(status))
 	}
-	if _, status = store.confirm(
+	if _, status = confirmOpenForTest(store,
 		state.id, 1, fileID, 0,
 	); status != NFS4ERR_BAD_SEQID {
 		t.Fatalf("OPEN_CONFIRM seqid 0 = %s, want NFS4ERR_BAD_SEQID",
@@ -5626,7 +5512,7 @@ func TestOpenStateStoreCloseChecksSeqidBeforeStateid(t *testing.T) {
 	owner := openOwnerKey{clientID: 7, owner: "owner"}
 	fileID := MakeInodeID(InodeTypeFile, 1)
 	state := addConfirmedOpen(t, store, owner, fileID)
-	if _, _, status := store.validateClose(
+	if _, _, status := validateCloseForTest(store,
 		state.id, 1, fileID, 50,
 	); status != NFS4ERR_BAD_SEQID {
 		t.Fatalf("CLOSE error priority status = %s, want NFS4ERR_BAD_SEQID",
@@ -5660,96 +5546,28 @@ func TestOpenStateStoreLookupClassifiesStateids(t *testing.T) {
 	}
 }
 
-func TestOpenStateStoreReplay(t *testing.T) {
-	store := newOpenStateStore()
-	defer assertOpenStateIndex(t, store)
-	fileID := MakeInodeID(InodeTypeFile, 1)
-	owner := openOwnerKey{clientID: 1, owner: "first"}
-	if _, replay, status := store.beginOpen(owner, 4); status != NFS4_OK || replay {
-		t.Fatalf("initial OPEN status = %s, replay = %t",
-			Nfsstat4Name(status), replay)
-	}
-	state, status := store.addOpen(
-		owner, 4, fileID, true, StateID{},
-	)
-	if status != NFS4_OK {
-		t.Fatalf("OPEN status = %s", Nfsstat4Name(status))
-	}
-	replayed, replay, status := store.beginOpen(owner, 4)
-	if status != NFS4_OK || !replay || replayed.id != state.id {
-		t.Fatalf("OPEN replay status = %s, replay = %t",
-			Nfsstat4Name(status), replay)
-	}
-	if _, status = store.confirm(state.id, 1, fileID, 5); status != NFS4_OK {
-		t.Fatalf("OPEN_CONFIRM status = %s", Nfsstat4Name(status))
-	}
-	if _, replay, status = store.beginOpen(owner, 4); status != NFS4ERR_BAD_SEQID {
-		t.Fatalf("old OPEN seqid status = %s, replay = %t",
-			Nfsstat4Name(status), replay)
-	}
-	secondOwner := openOwnerKey{clientID: 1, owner: "second"}
-	second, status := store.addOpen(
-		secondOwner, 1, fileID, false, StateID{},
-	)
-	if status != NFS4_OK {
-		t.Fatalf("second OPEN status = %s", Nfsstat4Name(status))
-	}
-	if second.id == state.id {
-		t.Fatalf("second owner replayed first owner stateid %x", state.id)
-	}
-	replayed, replay, status = store.beginOpen(secondOwner, 1)
-	if status != NFS4_OK || !replay || replayed.id != second.id {
-		t.Fatalf("second owner replay status = %s, replay = %t, stateid = %x",
-			Nfsstat4Name(status), replay, replayed.id)
-	}
-}
-
-func TestOpenStateStoreNonExemptCloseErrorAdvancesSeqid(t *testing.T) {
-	store := newOpenStateStore()
-	defer assertOpenStateIndex(t, store)
-	owner := openOwnerKey{clientID: 1, owner: "owner"}
-	fileID := MakeInodeID(InodeTypeFile, 1)
-	state := addConfirmedOpen(t, store, owner, fileID)
-	if _, _, status := store.validateClose(
-		state.id, 1, fileID, 3,
-	); status != NFS4ERR_OLD_STATEID {
-		t.Fatalf("old CLOSE stateid = %s, want NFS4ERR_OLD_STATEID",
-			Nfsstat4Name(status))
-	}
-	if _, _, status := store.validateClose(
-		state.id, 2, fileID, 3,
-	); status != NFS4ERR_BAD_SEQID {
-		t.Fatalf("reused CLOSE seqid = %s, want NFS4ERR_BAD_SEQID",
-			Nfsstat4Name(status))
-	}
-	if _, status := store.close(state.id, 4); status != NFS4_OK {
-		t.Fatalf("advanced CLOSE = %s, want NFS4_OK",
-			Nfsstat4Name(status))
-	}
-}
-
 func TestOpenStateStoreExemptErrorDoesNotAdvance(t *testing.T) {
 	store := newOpenStateStore()
 	defer assertOpenStateIndex(t, store)
 	owner := openOwnerKey{clientID: 1, owner: "owner"}
 	fileID := MakeInodeID(InodeTypeFile, 1)
-	state, status := store.addOpen(
+	state, status := addOpenForTest(store,
 		owner, 1, fileID, false, StateID{})
 	if status != NFS4_OK {
 		t.Fatal(Nfsstat4Name(status))
 	}
-	if _, status = store.confirm(
+	if _, status = confirmOpenForTest(store,
 		state.id, 2, fileID, 50,
 	); status != NFS4ERR_BAD_SEQID {
 		t.Fatalf("OPEN_CONFIRM error priority = %s, want NFS4ERR_BAD_SEQID",
 			Nfsstat4Name(status))
 	}
-	if _, status = store.confirm(
+	if _, status = confirmOpenForTest(store,
 		state.id, 2, fileID, 2,
 	); status != NFS4ERR_BAD_STATEID {
 		t.Fatalf("bad OPEN_CONFIRM stateid = %s", Nfsstat4Name(status))
 	}
-	if _, status = store.confirm(
+	if _, status = confirmOpenForTest(store,
 		state.id, 1, fileID, 2,
 	); status != NFS4_OK {
 		t.Fatalf("OPEN_CONFIRM after exempt error = %s",
@@ -5762,17 +5580,17 @@ func TestOpenStateStoreDisposesClosedStateAndBoundsOwnerReplay(t *testing.T) {
 	defer assertOpenStateIndex(t, store)
 	owner := openOwnerKey{clientID: 1, owner: "owner"}
 	fileID := MakeInodeID(InodeTypeFile, 1)
-	state, status := store.addOpen(
+	state, status := addOpenForTest(store,
 		owner, 1, fileID, false, StateID{})
 	if status != NFS4_OK {
 		t.Fatal(Nfsstat4Name(status))
 	}
-	if _, status = store.confirm(
+	if _, status = confirmOpenForTest(store,
 		state.id, 1, fileID, 2,
 	); status != NFS4_OK {
 		t.Fatal(Nfsstat4Name(status))
 	}
-	if _, status = store.close(state.id, 3); status != NFS4_OK {
+	if _, status = closeOpenForTest(store, state.id, 3); status != NFS4_OK {
 		t.Fatal(Nfsstat4Name(status))
 	}
 	if len(store.states) != 0 {
@@ -5784,7 +5602,7 @@ func TestOpenStateStoreDisposesClosedStateAndBoundsOwnerReplay(t *testing.T) {
 	}
 
 	secondFileID := MakeInodeID(InodeTypeFile, 2)
-	if _, status = store.addOpen(
+	if _, status = addOpenForTest(store,
 		owner, 4, secondFileID, false, StateID{},
 	); status != NFS4_OK {
 		t.Fatal(Nfsstat4Name(status))
@@ -5796,20 +5614,26 @@ func TestOpenStateStoreDisposesClosedStateAndBoundsOwnerReplay(t *testing.T) {
 	}
 }
 
-func TestOpenStateStoreKeepsAllClientOwnersUntilCloseOrReboot(t *testing.T) {
+func TestOpenStateStoreKeepsOtherOwnersUntilClientPurge(t *testing.T) {
 	store := newOpenStateStore()
 	defer assertOpenStateIndex(t, store)
 	clientID := uint64(1)
 	var states []openState
-	for i, name := range []string{"user-a", "user-b"} {
+	for i, test := range []struct {
+		owner string
+		write bool
+	}{
+		{"reader", false},
+		{"writer", true},
+	} {
 		fileID := MakeInodeID(InodeTypeFile, uint64(i+1))
-		state, status := store.addOpen(
-			openOwnerKey{clientID: clientID, owner: name},
-			1, fileID, false, StateID{})
+		state, status := addOpenForTest(store,
+			openOwnerKey{clientID: clientID, owner: test.owner},
+			1, fileID, test.write, StateID{})
 		if status != NFS4_OK {
 			t.Fatal(Nfsstat4Name(status))
 		}
-		if _, status = store.confirm(
+		if _, status = confirmOpenForTest(store,
 			state.id, 1, fileID, 2,
 		); status != NFS4_OK {
 			t.Fatal(Nfsstat4Name(status))
@@ -5817,7 +5641,7 @@ func TestOpenStateStoreKeepsAllClientOwnersUntilCloseOrReboot(t *testing.T) {
 		states = append(states, state)
 	}
 
-	if _, status := store.close(states[0].id, 3); status != NFS4_OK {
+	if _, status := closeOpenForTest(store, states[0].id, 3); status != NFS4_OK {
 		t.Fatalf("first owner CLOSE = %s", Nfsstat4Name(status))
 	}
 	if len(store.states) != 1 {
@@ -5830,48 +5654,14 @@ func TestOpenStateStoreKeepsAllClientOwnersUntilCloseOrReboot(t *testing.T) {
 			Nfsstat4Name(status))
 	}
 
-	store.purgeClient(clientID)
+	fileIDs := store.purgeClient(clientID)
+	if len(fileIDs) != 1 || fileIDs[0] != states[1].fileID {
+		t.Fatalf("purged staging file IDs = %v, want [%v]",
+			fileIDs, states[1].fileID)
+	}
 	if len(store.states) != 0 || len(store.owners) != 0 {
 		t.Fatalf("reboot retained states=%d owners=%d",
 			len(store.states), len(store.owners))
-	}
-}
-
-func TestPurgeClientReturnsOnlyWriteFiles(t *testing.T) {
-	store := newOpenStateStore()
-	defer assertOpenStateIndex(t, store)
-	clientID := uint64(1)
-	readID := MakeInodeID(InodeTypeFile, 1)
-	writeID := MakeInodeID(InodeTypeFile, 2)
-	readState, status := store.addOpen(
-		openOwnerKey{clientID: clientID, owner: "read"},
-		1, readID, false, StateID{},
-	)
-	if status != NFS4_OK {
-		t.Fatal(Nfsstat4Name(status))
-	}
-	if _, status = store.confirm(
-		readState.id, 1, readID, 2,
-	); status != NFS4_OK {
-		t.Fatal(Nfsstat4Name(status))
-	}
-	writeState, status := store.addOpen(
-		openOwnerKey{clientID: clientID, owner: "write"},
-		1, writeID, true, StateID{},
-	)
-	if status != NFS4_OK {
-		t.Fatal(Nfsstat4Name(status))
-	}
-	if _, status = store.confirm(
-		writeState.id, 1, writeID, 2,
-	); status != NFS4_OK {
-		t.Fatal(Nfsstat4Name(status))
-	}
-
-	fileIDs := store.purgeClient(clientID)
-	if len(fileIDs) != 1 || fileIDs[0] != writeID {
-		t.Fatalf("purged staging file IDs = %v, want [%v]",
-			fileIDs, writeID)
 	}
 }
 
@@ -5882,7 +5672,7 @@ func TestOpenStateStoreBoundsRebootTombstones(t *testing.T) {
 	var firstStateID StateID
 	for i := 0; i <= maxTombstones; i++ {
 		clientID := uint64(i + 1)
-		state, status := store.addOpen(
+		state, status := addOpenForTest(store,
 			openOwnerKey{clientID: clientID, owner: "owner"},
 			1, fileID, false, StateID{})
 		if status != NFS4_OK {
@@ -6047,107 +5837,88 @@ func restartWithStagedWrite(
 	}
 }
 
-func TestStagedWriteCloseAfterServerRestart(t *testing.T) {
-	data := []byte("staged across an nfsd restart")
-	restarted := restartWithStagedWrite(t, "recovered.txt", data)
-	status, first := closeFileWithSeqResult(
-		t, restarted.conn, &restarted.xid, restarted.fh,
-		restarted.stateid, 3,
-	)
-	if status != NFS4_OK {
-		t.Fatalf("recovered CLOSE = %s", Nfsstat4Name(status))
-	}
-	status, replay := closeFileWithSeqResult(
-		t, restarted.conn, &restarted.xid, restarted.fh,
-		restarted.stateid, 3,
-	)
-	if status != NFS4_OK {
-		t.Fatalf("recovered CLOSE replay = %s", Nfsstat4Name(status))
-	}
-	if replay != first {
-		t.Fatalf("recovered CLOSE replay stateid = %x, want %x",
-			replay, first)
-	}
-	got, err := os.ReadFile(filepath.Join(restarted.rootDir, "recovered.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(got, data) {
-		t.Fatalf("recovered file data = %q, want %q", got, data)
-	}
-	entries, err := os.ReadDir(restarted.stagingDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) != 0 {
-		t.Fatalf("recovered CLOSE retained staging files: %v", entries)
-	}
-}
-
 func TestStagedWriteOperationsAfterServerRestart(t *testing.T) {
-	for _, operation := range []string{"write", "read", "setattr-size"} {
+	for _, operation := range []string{"close", "write", "read", "setattr-size"} {
 		t.Run(operation, func(t *testing.T) {
 			initial := []byte("before restart")
 			restarted := restartWithStagedWrite(
 				t, operation+".txt", initial)
 
-			var expected []byte
-			res := sendCompound(
-				t, restarted.conn, restarted.xid,
-				func(w *COMPOUND4argsWriter) {
-					pw := w.AppendArgarray_Putfh()
-					buf := pw.StartObject().SetData(restarted.fh).Finish()
-					pw.Resume(buf)
-					w.Resume(pw.Finish())
-					switch operation {
-					case "write":
-						appended := []byte(" and after")
-						expected = append(append([]byte(nil), initial...), appended...)
-						ww := w.AppendArgarray_Write()
-						setStateid(ww.Stateid(), restarted.stateid)
-						ww = ww.SetOffset(uint64(len(initial)))
-						ww = ww.SetStable(fileSync4)
-						ww = ww.SetData(appended)
-						w.Resume(ww.Finish())
-					case "read":
-						expected = append([]byte(nil), initial...)
-						rw := w.AppendArgarray_Read()
-						setStateid(rw.Stateid(), restarted.stateid)
-						rw.SetOffset(0)
-						rw.SetCount(1024)
-					case "setattr-size":
-						expected = append([]byte(nil), initial[:6]...)
-						saw := w.AppendArgarray_Setattr()
-						setStateid(saw.Stateid(), restarted.stateid)
-						faw := saw.StartObjAttributes()
-						bmW := faw.StartAttrmask()
-						bmW.AppendData(1 << FATTR4_SIZE)
-						buf = bmW.Finish()
-						faw.Resume(buf)
-						attrData := make([]byte, 8)
-						binary.BigEndian.PutUint64(attrData, uint64(len(expected)))
-						alW := faw.StartAttrVals()
-						buf = alW.SetData(attrData).Finish()
-						faw.Resume(buf)
-						saw.Resume(faw.Finish())
-						w.Resume(saw.Finish())
+			expected := append([]byte(nil), initial...)
+			if operation != "close" {
+				res := sendCompound(
+					t, restarted.conn, restarted.xid,
+					func(w *COMPOUND4argsWriter) {
+						pw := w.AppendArgarray_Putfh()
+						buf := pw.StartObject().SetData(restarted.fh).Finish()
+						pw.Resume(buf)
+						w.Resume(pw.Finish())
+						switch operation {
+						case "write":
+							appended := []byte(" and after")
+							expected = append(expected, appended...)
+							ww := w.AppendArgarray_Write()
+							setStateid(ww.Stateid(), restarted.stateid)
+							ww = ww.SetOffset(uint64(len(initial)))
+							ww = ww.SetStable(fileSync4)
+							ww = ww.SetData(appended)
+							w.Resume(ww.Finish())
+						case "read":
+							rw := w.AppendArgarray_Read()
+							setStateid(rw.Stateid(), restarted.stateid)
+							rw.SetOffset(0)
+							rw.SetCount(1024)
+						case "setattr-size":
+							expected = expected[:6]
+							saw := w.AppendArgarray_Setattr()
+							setStateid(saw.Stateid(), restarted.stateid)
+							faw := saw.StartObjAttributes()
+							bmW := faw.StartAttrmask()
+							bmW.AppendData(1 << FATTR4_SIZE)
+							buf = bmW.Finish()
+							faw.Resume(buf)
+							attrData := make([]byte, 8)
+							binary.BigEndian.PutUint64(
+								attrData, uint64(len(expected)))
+							alW := faw.StartAttrVals()
+							buf = alW.SetData(attrData).Finish()
+							faw.Resume(buf)
+							saw.Resume(faw.Finish())
+							w.Resume(saw.Finish())
+						}
+					})
+				restarted.xid++
+				iter := expectOK(t, res)
+				nextOp(t, &iter)
+				entry := nextOp(t, &iter)
+				if operation == "read" {
+					got := entry.Value().AsREAD4resEntry().
+						Value().AsREAD4resok().Data()
+					if !bytes.Equal(got, expected) {
+						t.Fatalf("recovered READ = %q, want %q", got, expected)
 					}
-				})
-			restarted.xid++
-			iter := expectOK(t, res)
-			nextOp(t, &iter)
-			entry := nextOp(t, &iter)
-			if operation == "read" {
-				got := entry.Value().AsREAD4resEntry().
-					Value().AsREAD4resok().Data()
-				if !bytes.Equal(got, expected) {
-					t.Fatalf("recovered READ = %q, want %q", got, expected)
 				}
 			}
 
-			closeFile(
-				t, restarted.conn, &restarted.xid,
-				restarted.fh, restarted.stateid)
+			status, first := closeFileWithSeqResult(
+				t, restarted.conn, &restarted.xid, restarted.fh,
+				restarted.stateid, 3)
+			if status != NFS4_OK {
+				t.Fatalf("recovered CLOSE = %s", Nfsstat4Name(status))
+			}
+			if operation == "close" {
+				status, replay := closeFileWithSeqResult(
+					t, restarted.conn, &restarted.xid, restarted.fh,
+					restarted.stateid, 3)
+				if status != NFS4_OK {
+					t.Fatalf("recovered CLOSE replay = %s",
+						Nfsstat4Name(status))
+				}
+				if replay != first {
+					t.Fatalf("recovered CLOSE replay stateid = %x, want %x",
+						replay, first)
+				}
+			}
 			got, err := os.ReadFile(
 				filepath.Join(restarted.rootDir, operation+".txt"))
 			if err != nil {
@@ -6155,6 +5926,13 @@ func TestStagedWriteOperationsAfterServerRestart(t *testing.T) {
 			}
 			if !bytes.Equal(got, expected) {
 				t.Fatalf("recovered file data = %q, want %q", got, expected)
+			}
+			entries, err := os.ReadDir(restarted.stagingDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(entries) != 0 {
+				t.Fatalf("recovered CLOSE retained staging files: %v", entries)
 			}
 		})
 	}
@@ -6209,33 +5987,6 @@ func TestSetclientidRebootRemovesStagingFiles(t *testing.T) {
 		t, conn, &xid, fh, stateid, 3,
 	); status != NFS4ERR_EXPIRED {
 		t.Fatalf("CLOSE after reboot = %s, want NFS4ERR_EXPIRED",
-			Nfsstat4Name(status))
-	}
-}
-
-func TestSetclientidReboot(t *testing.T) {
-	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("content"), 0644)
-	_, addr, cleanup := startTestServer(t, dir)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-
-	// First SETCLIENTID + CONFIRM.
-	xid := uint32(1)
-	clientid1 := setupClient(t, conn, &xid)
-	stateid, fh := openReadFile(t, conn, &xid, clientid1, "file.txt")
-
-	// Repeat the identity with a different verifier to simulate a reboot.
-	var rebootVerifier [8]byte
-	for i := range rebootVerifier {
-		rebootVerifier[i] = byte(i + 1)
-	}
-	setupClientWithVerifier(t, conn, &xid, rebootVerifier)
-
-	status := closeFileWithSeqStatus(t, conn, &xid, fh, stateid, 3)
-	if status != NFS4ERR_EXPIRED {
-		t.Fatalf("CLOSE after client reboot = %s, want NFS4ERR_EXPIRED",
 			Nfsstat4Name(status))
 	}
 }
