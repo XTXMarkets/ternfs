@@ -59,6 +59,36 @@ func requireRegularFile(id InodeID) uint32 {
 	}
 }
 
+// lookupOpenOrRecover accepts normal in-memory open state. After a restart,
+// the staging sidecar is the durable proof that this stateid is the confirmed
+// write-open for this transient file.
+func (s *Server) lookupOpenOrRecover(
+	stateid Stateid4,
+	fileID InodeID,
+) (openState, uint32) {
+	state, status := s.opens.lookup(
+		extractStateID(stateid),
+		stateid.Seqid(),
+		fileID,
+	)
+	if status == NFS4_OK {
+		return state, status
+	}
+
+	id := extractStateID(stateid)
+	meta, hasMeta := s.stagingStore.GetMeta(fileID)
+	if !hasMeta || meta.NFSStateID != id || !s.opens.canRecover(id) {
+		return openState{}, status
+	}
+	return openState{
+		id:         id,
+		fileID:     fileID,
+		write:      true,
+		generation: stateid.Seqid(),
+		confirmed:  true,
+	}, NFS4_OK
+}
+
 func (s *Server) opAccess(args ACCESS4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
 	if !st.currentIDSet {
 		ew := w.AppendResarray_Access()
@@ -847,11 +877,7 @@ func (s *Server) opRead(args READ4args, st *compoundState, w *COMPOUND4resWriter
 	}
 
 	if !isSpecialStateID(args.Stateid()) {
-		_, status := s.opens.lookup(
-			extractStateID(args.Stateid()),
-			args.Stateid().Seqid(),
-			st.currentID,
-		)
+		_, status := s.lookupOpenOrRecover(args.Stateid(), st.currentID)
 		if status != NFS4_OK {
 			ew := w.AppendResarray_Read()
 			ew.SetValue_Default(status)
@@ -1241,8 +1267,7 @@ func (s *Server) opRename(args RENAME4args, st *compoundState, w *COMPOUND4resWr
 }
 
 func (s *Server) opRenew(args RENEW4args, w *COMPOUND4resWriter) uint32 {
-	// Client-wide lease tracking is implemented by the durable client store
-	// in pynfs4. Pynfs3 keeps only process-local open-owner sequencing state.
+	// This server keeps no client-wide lease state, so renewal is a no-op.
 	_ = args.Clientid()
 	r := w.AppendResarray_Renew()
 	r.SetStatus(NFS4_OK)
@@ -1430,11 +1455,8 @@ func (s *Server) opSetattr(args SETATTR4args, st *compoundState, w *COMPOUND4res
 
 	if newSize != nil {
 		if !isSpecialStateID(args.Stateid()) {
-			state, status := s.opens.lookup(
-				extractStateID(args.Stateid()),
-				args.Stateid().Seqid(),
-				st.currentID,
-			)
+			state, status := s.lookupOpenOrRecover(
+				args.Stateid(), st.currentID)
 			if status != NFS4_OK {
 				return setattrReply(status, [2]uint32{})
 			}
@@ -1544,11 +1566,7 @@ func (s *Server) opWrite(args WRITE4args, st *compoundState, w *COMPOUND4resWrit
 	}
 
 	if !isSpecialStateID(args.Stateid()) {
-		state, status := s.opens.lookup(
-			extractStateID(args.Stateid()),
-			args.Stateid().Seqid(),
-			st.currentID,
-		)
+		state, status := s.lookupOpenOrRecover(args.Stateid(), st.currentID)
 		if status != NFS4_OK {
 			ew := w.AppendResarray_Write()
 			ew.SetValue_Default(status)

@@ -1089,6 +1089,29 @@ func TestSetclientidFlow(t *testing.T) {
 	}
 }
 
+func TestClientStoreRecognizesConfirmedClientAfterRestart(t *testing.T) {
+	fs := NewLocalTernVFS(t.TempDir())
+	first, err := NewClientStore(fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientID, err := first.SetClientID([8]byte{}, []byte("test-client"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := first.ConfirmClientID(clientID); err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := NewClientStore(fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !second.IsConfirmed(clientID) {
+		t.Fatal("confirmed client was stale after ClientStore restart")
+	}
+}
+
 func TestSetattr(t *testing.T) {
 	dir := t.TempDir()
 	addr, cleanup := startTestServer(t, dir)
@@ -5288,6 +5311,48 @@ func TestOpenStateStoreRecoveredClose(t *testing.T) {
 	}
 }
 
+func TestRecoveredCloseOperationsAreStateidScoped(t *testing.T) {
+	store := newOpenStateStore()
+	var firstID, secondID StateID
+	binary.BigEndian.PutUint32(firstID[0:4], store.epoch+1)
+	binary.BigEndian.PutUint32(secondID[0:4], store.epoch+1)
+	firstID[11] = 1
+	secondID[11] = 2
+
+	first, _, _, status := store.startRecoveredClose(
+		firstID, MakeInodeID(InodeTypeFile, 1), 2, 3)
+	if status != NFS4_OK {
+		t.Fatalf("first recovered CLOSE = %s", Nfsstat4Name(status))
+	}
+
+	attempting := make(chan struct{})
+	started := make(chan *recoveredCloseOperation, 1)
+	go func() {
+		close(attempting)
+		second, _, _, status := store.startRecoveredClose(
+			secondID, MakeInodeID(InodeTypeFile, 2), 2, 3)
+		if status != NFS4_OK {
+			started <- nil
+			return
+		}
+		started <- second
+	}()
+	<-attempting
+
+	var second *recoveredCloseOperation
+	select {
+	case second = <-started:
+		if second == nil {
+			t.Fatal("second recovered CLOSE failed")
+		}
+	case <-time.After(time.Second):
+		first.finish(NFS4_OK)
+		t.Fatal("different recovered stateids were serialized")
+	}
+	first.finish(NFS4_OK)
+	second.finish(NFS4_OK)
+}
+
 func closeLocalStagingFiles(t *testing.T, store *LocalStagingStore) {
 	t.Helper()
 	store.mu.Lock()
@@ -5386,6 +5451,138 @@ func TestStagedWriteCloseAfterServerRestart(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("recovered CLOSE retained staging files: %v", entries)
+	}
+}
+
+func TestStagedWriteOperationsAfterServerRestart(t *testing.T) {
+	for _, operation := range []string{"write", "read", "setattr-size"} {
+		t.Run(operation, func(t *testing.T) {
+			rootDir := t.TempDir()
+			stagingDir := t.TempDir()
+			fs := NewLocalTernVFS(rootDir)
+			firstStaging, err := NewLocalStagingStore(stagingDir, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			first, err := NewServer(fs, firstStaging, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			addr, stopFirst := serveTestServer(t, first)
+			conn := dial(t, addr)
+			xid := uint32(1)
+			clientID := setupClient(t, conn, &xid)
+			stateid, fh := openCreateFile(
+				t, conn, &xid, clientID, operation+".txt")
+			initial := []byte("before restart")
+			res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+				pw := w.AppendArgarray_Putfh()
+				buf := pw.StartObject().SetData(fh).Finish()
+				pw.Resume(buf)
+				w.Resume(pw.Finish())
+				ww := w.AppendArgarray_Write()
+				sid := ww.Stateid()
+				sid.SetSeqid(binary.BigEndian.Uint32(stateid[:4]))
+				for i := 0; i < 12; i++ {
+					sid.SetOther(i, stateid[4+i])
+				}
+				ww = ww.SetOffset(0)
+				ww = ww.SetStable(fileSync4)
+				ww = ww.SetData(initial)
+				w.Resume(ww.Finish())
+			})
+			expectOK(t, res)
+			conn.Close()
+			stopFirst()
+			closeLocalStagingFiles(t, firstStaging)
+
+			recoveredStaging, err := NewLocalStagingStore(stagingDir, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			second, err := NewServer(fs, recoveredStaging, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			addr, stopSecond := serveTestServer(t, second)
+			defer stopSecond()
+			conn = dial(t, addr)
+			defer conn.Close()
+			xid = 100
+
+			var expected []byte
+			res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+				pw := w.AppendArgarray_Putfh()
+				buf := pw.StartObject().SetData(fh).Finish()
+				pw.Resume(buf)
+				w.Resume(pw.Finish())
+				switch operation {
+				case "write":
+					appended := []byte(" and after")
+					expected = append(append([]byte(nil), initial...), appended...)
+					ww := w.AppendArgarray_Write()
+					sid := ww.Stateid()
+					sid.SetSeqid(binary.BigEndian.Uint32(stateid[:4]))
+					for i := 0; i < 12; i++ {
+						sid.SetOther(i, stateid[4+i])
+					}
+					ww = ww.SetOffset(uint64(len(initial)))
+					ww = ww.SetStable(fileSync4)
+					ww = ww.SetData(appended)
+					w.Resume(ww.Finish())
+				case "read":
+					expected = append([]byte(nil), initial...)
+					rw := w.AppendArgarray_Read()
+					sid := rw.Stateid()
+					sid.SetSeqid(binary.BigEndian.Uint32(stateid[:4]))
+					for i := 0; i < 12; i++ {
+						sid.SetOther(i, stateid[4+i])
+					}
+					rw.SetOffset(0)
+					rw.SetCount(1024)
+				case "setattr-size":
+					expected = append([]byte(nil), initial[:6]...)
+					saw := w.AppendArgarray_Setattr()
+					sid := saw.Stateid()
+					sid.SetSeqid(binary.BigEndian.Uint32(stateid[:4]))
+					for i := 0; i < 12; i++ {
+						sid.SetOther(i, stateid[4+i])
+					}
+					faw := saw.StartObjAttributes()
+					bmW := faw.StartAttrmask()
+					bmW.AppendData(1 << FATTR4_SIZE)
+					buf = bmW.Finish()
+					faw.Resume(buf)
+					attrData := make([]byte, 8)
+					binary.BigEndian.PutUint64(attrData, uint64(len(expected)))
+					alW := faw.StartAttrVals()
+					buf = alW.SetData(attrData).Finish()
+					faw.Resume(buf)
+					saw.Resume(faw.Finish())
+					w.Resume(saw.Finish())
+				}
+			})
+			xid++
+			iter := expectOK(t, res)
+			nextOp(t, &iter)
+			entry := nextOp(t, &iter)
+			if operation == "read" {
+				got := entry.Value().AsREAD4resEntry().
+					Value().AsREAD4resok().Data()
+				if !bytes.Equal(got, expected) {
+					t.Fatalf("recovered READ = %q, want %q", got, expected)
+				}
+			}
+
+			closeFile(t, conn, &xid, fh, stateid)
+			got, err := os.ReadFile(filepath.Join(rootDir, operation+".txt"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(got, expected) {
+				t.Fatalf("recovered file data = %q, want %q", got, expected)
+			}
+		})
 	}
 }
 
