@@ -1699,6 +1699,7 @@ func (s *Server) opSetclientid(
 		confirmWriter.SetData(i, b)
 	}
 	w.Resume(ew.Finish())
+	s.scheduleClientGC(clid)
 	return NFS4_OK
 }
 

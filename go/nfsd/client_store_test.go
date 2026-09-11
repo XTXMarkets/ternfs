@@ -1598,3 +1598,130 @@ func TestClientStoreGCIsBoundedAndRetryable(t *testing.T) {
 		t.Fatalf("incarnations after GC retry = %d, want 1", got)
 	}
 }
+
+func TestServerSchedulesClientGC(t *testing.T) {
+	fs := NewLocalTernVFS(t.TempDir())
+	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewServer(fs, staging, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Unix(1000, 0)
+	srv.clients.now = func() time.Time { return base }
+	owner := clientOwner{principal: rpcPrincipal{flavor: authSys, body: "owner"}}
+	oldID, _, err := srv.clients.SetClientID(
+		[8]byte{1}, []byte("client"), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientID, _, err := srv.clients.SetClientID(
+		[8]byte{2}, []byte("client"), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.clients.collectStaleForClient(InodeID(clientID)); err != nil {
+		t.Fatal(err)
+	}
+	srv.clients.now = func() time.Time {
+		return base.Add(clientGCGrace + time.Second)
+	}
+
+	for range 20 {
+		srv.scheduleClientGC(clientID)
+	}
+	srv.waitForClientGC()
+
+	if _, err := fs.Stat(InodeID(oldID)); !os.IsNotExist(err) {
+		t.Fatalf("scheduled GC did not remove stale incarnation: %v", err)
+	}
+	if _, err := fs.Stat(InodeID(clientID)); err != nil {
+		t.Fatalf("scheduled GC removed current incarnation: %v", err)
+	}
+	srv.clientGCMu.Lock()
+	running := srv.clientGCRunning
+	pending := len(srv.clientGCPending)
+	srv.clientGCMu.Unlock()
+	if running || pending != 0 {
+		t.Fatalf("client GC did not drain: running=%v pending=%d", running, pending)
+	}
+}
+
+func TestScheduleClientGCRestartsForPendingWork(t *testing.T) {
+	fs := NewLocalTernVFS(t.TempDir())
+	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewServer(fs, staging, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientID, _, err := srv.clients.SetClientID(
+		[8]byte{1}, []byte("client"), clientOwner{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	identityID, err := fs.LookupParent(InodeID(clientID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock := srv.clients.lockIdentity(identityID)
+	srv.clientGCMu.Lock()
+	srv.clientGCPending[InodeID(clientID)] = struct{}{}
+	srv.clientGCRunning = false
+	srv.clientGCMu.Unlock()
+
+	srv.scheduleClientGC(clientID)
+	srv.clientGCMu.Lock()
+	running := srv.clientGCRunning
+	srv.clientGCMu.Unlock()
+	unlock()
+	if !running {
+		t.Fatal("pending client GC did not restart a stopped worker")
+	}
+	srv.waitForClientGC()
+}
+
+func TestClientGCContinuesAfterPanic(t *testing.T) {
+	baseFS := NewLocalTernVFS(t.TempDir())
+	fs := &lookupFailureVFS{TernVFS: baseFS}
+	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewServer(fs, staging, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var clientIDs []InodeID
+	for i := byte(1); i <= 2; i++ {
+		clientID, _, err := srv.clients.SetClientID(
+			[8]byte{i}, []byte{byte('a' + i)}, clientOwner{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		clientIDs = append(clientIDs, InodeID(clientID))
+	}
+	fs.name = confirmedName
+	fs.panicRemaining = 1
+	srv.clientGCMu.Lock()
+	for _, clientID := range clientIDs {
+		srv.clientGCPending[clientID] = struct{}{}
+	}
+	srv.clientGCRunning = true
+	srv.clientGCDone = make(chan struct{})
+	srv.clientGCMu.Unlock()
+
+	srv.runClientGC()
+	srv.clientGCMu.Lock()
+	running := srv.clientGCRunning
+	pending := len(srv.clientGCPending)
+	srv.clientGCMu.Unlock()
+	if running || pending != 0 {
+		t.Fatalf("GC after panic: running=%t pending=%d, want false, 0",
+			running, pending)
+	}
+}
