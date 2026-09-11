@@ -300,6 +300,14 @@ func (r *RunTests) run(
 	}
 	r.test(
 		log,
+		"scrub skips transient file",
+		"",
+		func(counters *client.ClientCounters) {
+			scrubTransientFileTest(log, r.registryAddress(), counters)
+		},
+	)
+	r.test(
+		log,
 		"file history",
 		fmt.Sprintf("%v threads, %v steps", fileHistoryOpts.threads, fileHistoryOpts.steps),
 		func(counters *client.ClientCounters) {

@@ -52,6 +52,15 @@ func scrubFileInternal(
 	badBlock := func(blockService *msgs.BlockService, blockSize uint32, block *msgs.FetchedBlock) (bool, error) {
 		err := c.CheckBlock(log, blockService, block.BlockId, blockSize, block.Crc)
 		if badBlockError(err) {
+			// The file can become transient after we fetched its spans, while
+			// destruct-files erases the blocks we are about to check. Stop at
+			// the first error in that case instead of reporting every erased
+			// block as bad.
+			if err == msgs.BLOCK_NOT_FOUND {
+				if _, statErr := c.StatFile(log, file); statErr == msgs.FILE_NOT_FOUND || statErr == msgs.FILE_IS_TRANSIENT {
+					return false, statErr
+				}
+			}
 			log.ErrorNoAlert("found bad block, block service %v, block %v: %v", blockService.Id, block.BlockId, err)
 			return true, nil
 		}

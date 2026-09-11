@@ -8,11 +8,61 @@ import (
 	"fmt"
 	"github.com/XTXMarkets/ternfs/go/cleanup"
 	"github.com/XTXMarkets/ternfs/go/client"
+	"github.com/XTXMarkets/ternfs/go/core/bufpool"
 	"github.com/XTXMarkets/ternfs/go/core/log"
 	"github.com/XTXMarkets/ternfs/go/msgs"
 	"sync"
 	"time"
 )
+
+func scrubTransientFileTest(log *log.Logger, registryAddress string, counters *client.ClientCounters) {
+	c := newTestClient(log, registryAddress, counters)
+	defer c.Close()
+
+	constructResp := msgs.ConstructFileResp{}
+	shardReq(log, c, msgs.ROOT_DIR_INODE_ID.Shard(), &msgs.ConstructFileReq{Type: msgs.FILE}, &constructResp)
+
+	dirInfoCache := client.NewDirInfoCache()
+	var spanPolicy msgs.SpanPolicy
+	if _, err := c.ResolveDirectoryInfoEntry(log, dirInfoCache, msgs.ROOT_DIR_INODE_ID, &spanPolicy); err != nil {
+		panic(err)
+	}
+	var blockPolicy msgs.BlockPolicy
+	if _, err := c.ResolveDirectoryInfoEntry(log, dirInfoCache, msgs.ROOT_DIR_INODE_ID, &blockPolicy); err != nil {
+		panic(err)
+	}
+	var stripePolicy msgs.StripePolicy
+	if _, err := c.ResolveDirectoryInfoEntry(log, dirInfoCache, msgs.ROOT_DIR_INODE_ID, &stripePolicy); err != nil {
+		panic(err)
+	}
+
+	bufPool := bufpool.NewBufPool()
+	spanBuf := bufPool.Get(1 << 20)
+	defer bufPool.Put(spanBuf)
+	if _, err := c.CreateSpan(
+		log,
+		nil,
+		&spanPolicy,
+		&blockPolicy,
+		&stripePolicy,
+		constructResp.Id,
+		msgs.NULL_INODE_ID,
+		constructResp.Cookie,
+		0,
+		uint32(len(spanBuf.Bytes())),
+		spanBuf.BytesPtr(),
+	); err != nil {
+		panic(err)
+	}
+
+	stats := cleanup.ScrubState{}
+	if err := cleanup.ScrubFile(log, c, &stats, constructResp.Id); err != nil {
+		panic(err)
+	}
+	if stats.Migrate.MigratedBlocks != 0 {
+		panic(fmt.Errorf("scrubbed %v blocks in transient file %v", stats.Migrate.MigratedBlocks, constructResp.Id))
+	}
+}
 
 func deleteDir(log *log.Logger, client *client.Client, ownerId msgs.InodeId, name string, creationTime msgs.TernTime, dirId msgs.InodeId) {
 	readDirReq := msgs.ReadDirReq{
