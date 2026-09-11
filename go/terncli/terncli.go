@@ -56,6 +56,7 @@ func newCommands() map[string]terncmd.Command {
 		terncmd.NewResurrectSubtree(),
 		terncmd.NewResolveSamplePaths(),
 		terncmd.NewTagFiles(),
+		terncmd.NewGrep(),
 	} {
 		result[command.FlagSet().Name()] = command
 	}
