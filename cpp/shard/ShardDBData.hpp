@@ -128,7 +128,7 @@ struct SpanBlocksBodyV0 {
     SpanBlocksBodyV0(char* data) : _data(data) {}
 
     static size_t calcSize(Parity parity, uint8_t stripes) {
-        ALWAYS_ASSERT(stripes > 0 && stripes < 16);
+        ALWAYS_ASSERT(stripes > 0 && stripes < MAX_STRIPES);
         ALWAYS_ASSERT(parity.dataBlocks() > 0);
         return MIN_SIZE + BlockBody::SIZE*parity.blocks() + sizeof(uint32_t)*stripes;
     }

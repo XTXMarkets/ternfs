@@ -1353,7 +1353,7 @@ struct ShardDBImpl {
             LOG_DEBUG(_env, "unsupported parity configuration %s", req.parity);
             return false;
         }
-        if (req.stripes == 0 || req.stripes > 15) {
+        if (req.stripes == 0 || req.stripes >= MAX_STRIPES) {
             LOG_DEBUG(_env, "unsupported stripe count %s", (int)req.stripes);
             return false;
         }

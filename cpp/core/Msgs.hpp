@@ -676,3 +676,5 @@ static std::array<uint8_t, 4> REQUIRED_DIR_INFO_TAGS = {SNAPSHOT_POLICY_TAG, SPA
 
 static constexpr uint8_t DEFAULT_LOCATION = 0;
 static constexpr uint8_t INVALID_LOCATION = 255;
+
+static constexpr uint8_t MAX_STRIPES = 16;
