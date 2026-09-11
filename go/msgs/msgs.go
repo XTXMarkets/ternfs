@@ -1959,7 +1959,7 @@ type AddSpanAtLocationInitiateEntry struct {
 	Crc           Crc
 	StorageClass  StorageClass
 	Parity        parity.Parity
-	Stripes       uint8 // [1, 16]
+	Stripes       uint8 // [1, 15]
 	CellSize      uint32
 	BodyBlocks    []EntryNewBlockInfo
 	BodyStripes   []Crc // the CRCs
@@ -1973,7 +1973,7 @@ type AddSpanInitiateEntry struct {
 	Crc           Crc
 	StorageClass  StorageClass
 	Parity        parity.Parity
-	Stripes       uint8 // [1, 16]
+	Stripes       uint8 // [1, 15]
 	CellSize      uint32
 	BodyBlocks    []EntryNewBlockInfo
 	BodyStripes   []Crc // the CRCs
