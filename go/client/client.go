@@ -256,8 +256,10 @@ func (cm *clientMetadata) init(log *log.Logger, client *Client) error {
 	}
 	cm.sock = sock.(*net.UDPConn)
 	// 10MiB/100byte ~ 100k requests in the pipe. 100byte is
-	// kinda conservative.
-	if err := cm.sock.SetReadBuffer(1 << 20); err != nil {
+	// kinda conservative. Note that the kernel silently clamps
+	// this to net.core.rmem_max, so the effective size may be
+	// much smaller than requested.
+	if err := cm.sock.SetReadBuffer(10 << 20); err != nil {
 		cm.sock.Close()
 		return err
 	}
