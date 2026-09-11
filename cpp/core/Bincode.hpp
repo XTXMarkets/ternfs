@@ -288,7 +288,11 @@ struct BincodeBuf {
     }
 
     void ensureFinished() const {
-        ALWAYS_ASSERT(remaining() == 0);
+        if (unlikely(remaining() != 0)) {
+            throw BINCODE_EXCEPTION(
+                "buffer has %s trailing bytes after decoding",
+                remaining());
+        }
     }
 
     void ensureSizeOrPanic(size_t sz) const {
@@ -372,23 +376,28 @@ struct BincodeBuf {
 
     template<typename A>
     void unpackList(BincodeList<A>& xs) {
-        xs.els.resize(unpackScalar<uint16_t>());
-        if (unlikely(xs.els.size() == 0)) {
+        size_t count = unpackScalar<uint16_t>();
+        if (unlikely(count == 0)) {
+            xs.els.clear();
             return;
         }
         // If it's a number of some sorts, just memcpy it
         if constexpr (std::is_integral_v<A> || std::is_enum_v<A>) {
             static_assert(std::endian::native == std::endian::little);
-            size_t sz = sizeof(A)*xs.els.size();
+            size_t sz = sizeof(A)*count;
             if (unlikely(remaining() < sz)) {
                 throw BINCODE_EXCEPTION("not enough bytes to unpack scalars (need %s, got %s)", sz, remaining());
             }
+            xs.els.resize(count);
             memcpy(xs.els.data(), cursor, sz);
             cursor += sz;
         } else {
-            for (int i = 0; i < xs.els.size(); i++) {
-                xs.els[i].unpack(*this);
+            std::vector<A> els;
+            for (size_t i = 0; i < count; i++) {
+                auto& el = els.emplace_back();
+                el.unpack(*this);
             }
+            xs.els = std::move(els);
         }
     }
 
