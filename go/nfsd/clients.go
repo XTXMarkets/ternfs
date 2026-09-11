@@ -160,6 +160,28 @@ func (cs *ClientStore) ConfirmClientID(clientID uint64) (uint64, error) {
 	return oldClientID, nil
 }
 
+func (cs *ClientStore) IsConfirmed(clientID uint64) bool {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	if cs.confirmed[clientID] {
+		return true
+	}
+
+	// The confirmed client file outlives this ClientStore. A successful stat
+	// restores the process-local cache after nfsd restarts. Reboot replaces
+	// and unlinks the old file, so its clientid no longer resolves.
+	id := InodeID(clientID)
+	if id.Type() != InodeTypeFile {
+		return false
+	}
+	info, err := cs.fs.Stat(id)
+	if err != nil || info.Size != 8 {
+		return false
+	}
+	cs.confirmed[clientID] = true
+	return true
+}
+
 // maxClientIDName bounds the escaped client-id filename. It leaves headroom
 // under the advertised 255-char maxname for the ".<verifier-hex>" suffix
 // (17 chars) that pending files carry.

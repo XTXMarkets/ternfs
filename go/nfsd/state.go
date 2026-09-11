@@ -7,6 +7,17 @@ package main
 // StateID is the 12-byte "other" field of an NFSv4 stateid4.
 type StateID [12]byte
 
+func isSpecialStateID(stateid Stateid4) bool {
+	seqid := stateid.Seqid()
+	allZero := seqid == 0
+	allOne := seqid == ^uint32(0)
+	for i := 0; i < 12; i++ {
+		allZero = allZero && stateid.Other(i) == 0
+		allOne = allOne && stateid.Other(i) == 0xff
+	}
+	return allZero || allOne
+}
+
 // nfsError is a simple error type that carries an NFS status code.
 type nfsError uint32
 

@@ -62,10 +62,10 @@ RPLY7
 RPLY8
 CLOSE9
 
-# OPEN_DOWNGRADE is not implemented because nfsd does not retain the
-# open share state needed to reduce an existing open. Keep the whole
-# operation together here rather than reporting NFS4ERR_NOTSUPP as ten
-# distinct protocol failures.
+# OPEN_DOWNGRADE is not implemented. Existing immutable files cannot be
+# upgraded from read to write, and no supported client has required a
+# downgrade. Keep the whole operation together here rather than reporting
+# NFS4ERR_NOTSUPP as ten distinct protocol failures.
 OPDG1
 OPDG2
 OPDG3

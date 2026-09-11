@@ -15,6 +15,10 @@ between:
 - operations which the server must reject with the correct NFS status; and
 - NFS features which are outside the intended TernFS contract.
 
+Repeated read OPENs by one open-owner on the same file share one stateid.
+Read-to-write upgrades cannot occur because write access to an existing
+immutable file is rejected. `OPEN_DOWNGRADE` is unsupported.
+
 There are currently five test paths.
 
 Test targets ending in `-cluster` build and start a temporary TernFS cluster.
