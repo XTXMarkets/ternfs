@@ -11,7 +11,10 @@ import (
 	"time"
 )
 
-const maxRecoveredCloseResponses = 1024
+const (
+	maxRecoveredCloseResponses = 1024
+	maxTombstones              = 1024
+)
 
 type openOwnerKey struct {
 	clientID uint64
@@ -107,6 +110,7 @@ type openOwnerOperation struct {
 	generation  uint32
 	fileID      InodeID
 	needConfirm bool
+	abandoned   []InodeID
 	finished    bool
 }
 
@@ -178,7 +182,7 @@ func (os *openStateStore) markExpiredLocked(id StateID) {
 	}
 	os.expired[id] = struct{}{}
 	os.expiredIDs = append(os.expiredIDs, id)
-	if len(os.expiredIDs) > maxRecoveredCloseResponses {
+	if len(os.expiredIDs) > maxTombstones {
 		oldest := os.expiredIDs[0]
 		os.expiredIDs = os.expiredIDs[1:]
 		delete(os.expired, oldest)
@@ -191,7 +195,7 @@ func (os *openStateStore) revokeClientLocked(clientID uint64) {
 	}
 	os.revoked[clientID] = struct{}{}
 	os.revokedIDs = append(os.revokedIDs, clientID)
-	if len(os.revokedIDs) > maxRecoveredCloseResponses {
+	if len(os.revokedIDs) > maxTombstones {
 		oldest := os.revokedIDs[0]
 		os.revokedIDs = os.revokedIDs[1:]
 		delete(os.revoked, oldest)
@@ -272,6 +276,32 @@ func (os *openStateStore) startOwnerOperation(
 		if response.matches(kind, seq, stateID, generation, fileID) {
 			os.releaseOwner(owner)
 			return nil, response, true, response.status
+		}
+		if !owner.confirmed && kind == openOwnerOperationOpen {
+			var abandoned []InodeID
+			os.mu.Lock()
+			for id, state := range os.states {
+				if state.owner != key {
+					continue
+				}
+				delete(os.states, id)
+				if state.write {
+					abandoned = append(abandoned, state.fileID)
+				}
+			}
+			os.mu.Unlock()
+			owner.initialized = false
+			owner.nextSeq = 0
+			owner.lastResponse = openOwnerResponse{}
+			return &openOwnerOperation{
+				store:       os,
+				key:         key,
+				owner:       owner,
+				kind:        kind,
+				seq:         seq,
+				needConfirm: true,
+				abandoned:   abandoned,
+			}, openOwnerResponse{}, false, NFS4_OK
 		}
 		os.releaseOwner(owner)
 		return nil, openOwnerResponse{}, false, NFS4ERR_BAD_SEQID
@@ -420,6 +450,9 @@ func (op *openOwnerOperation) finishLocked(response openOwnerResponse) {
 		}
 		owner.initialized = true
 		owner.nextSeq = op.seq + 1
+		if owner.nextSeq == 0 {
+			owner.nextSeq = 1
+		}
 		owner.lastResponse = response
 		if response.kind == openOwnerOperationClose &&
 			response.status == NFS4_OK {
@@ -453,6 +486,29 @@ func (op *openOwnerOperation) finishOpen(
 ) openOwnerResponse {
 	os := op.store
 	os.mu.Lock()
+	for _, state := range os.states {
+		if state.owner != op.key || state.fileID != fileID ||
+			!state.confirmed {
+			continue
+		}
+		// A read state cannot be upgraded to write here. TernFS files are
+		// immutable, so opOpen rejects write access to an existing file.
+		state.write = state.write || write
+		state.generation++
+		now := uint64(time.Now().UnixNano())
+		response := openOwnerResponse{
+			kind:         openOwnerOperationOpen,
+			seq:          op.seq,
+			status:       NFS4_OK,
+			state:        *state,
+			changeBefore: now,
+			changeAfter:  now,
+		}
+		op.finishLocked(response)
+		os.mu.Unlock()
+		os.releaseOwner(op.owner)
+		return response
+	}
 	if id == (StateID{}) {
 		id = os.newStateIDLocked()
 	}
@@ -534,6 +590,36 @@ func (op *openOwnerOperation) finishClose(
 	os.mu.Unlock()
 	os.releaseOwner(op.owner)
 	return response
+}
+
+func (op *openOwnerOperation) finishExpiredClose() openOwnerResponse {
+	os := op.store
+	os.mu.Lock()
+	state := os.states[op.stateID]
+	var expired openState
+	if state != nil {
+		expired = *state
+		delete(os.states, op.stateID)
+		os.markExpiredLocked(op.stateID)
+	}
+	response := openOwnerResponse{
+		kind:            openOwnerOperationClose,
+		seq:             op.seq,
+		status:          NFS4ERR_EXPIRED,
+		state:           expired,
+		inputStateID:    op.stateID,
+		inputGeneration: op.generation,
+		inputFileID:     op.fileID,
+	}
+	op.finishLocked(response)
+	os.mu.Unlock()
+	os.releaseOwner(op.owner)
+	return response
+}
+
+func (op *openOwnerOperation) abort() {
+	op.finished = true
+	op.store.releaseOwner(op.owner)
 }
 
 func (op *openOwnerOperation) finishServerFaultIfNeeded() {
@@ -744,7 +830,9 @@ func (os *openStateStore) purgeClient(clientID uint64) []InodeID {
 				if state.owner == key {
 					delete(os.states, id)
 					os.markExpiredLocked(id)
-					fileIDs[state.fileID] = struct{}{}
+					if state.write {
+						fileIDs[state.fileID] = struct{}{}
+					}
 				}
 			}
 		}

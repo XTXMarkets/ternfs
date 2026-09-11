@@ -121,7 +121,7 @@ func (s *Server) opClose(args CLOSE4args, st *compoundState, w *COMPOUND4resWrit
 
 	sid := extractStateID(args.OpenStateid())
 	meta, hasMeta := s.stagingStore.GetMeta(st.currentID)
-	op, _, response, replay, status := s.opens.startClose(
+	op, state, response, replay, status := s.opens.startClose(
 		sid,
 		args.OpenStateid().Seqid(),
 		st.currentID,
@@ -160,6 +160,11 @@ func (s *Server) opClose(args CLOSE4args, st *compoundState, w *COMPOUND4resWrit
 		return writeCloseResponse(w, response)
 	}
 
+	// GetMeta before startClose is only a hint for restart recovery. Re-read
+	// it after taking the owner operation so a waiting CLOSE cannot act on
+	// staging removed by the operation ahead of it.
+	meta, hasMeta = s.stagingStore.GetMeta(st.currentID)
+
 	// Check if there's a staging file for the current filehandle.
 	if hasMeta {
 		// First CLOSE for a write-open: link the transient file.
@@ -186,10 +191,17 @@ func (s *Server) opClose(args CLOSE4args, st *compoundState, w *COMPOUND4resWrit
 			return fail(status)
 		}
 	} else {
-		// No staging: either a read-close or a write CLOSE after staging was
-		// lost. A successful write CLOSE replay is served from the owner cache
-		// before reaching this path.
-		if _, err := s.fs.Stat(st.currentID); err != nil {
+		// Read CLOSE does not need the file to remain linked. A write CLOSE
+		// without staging has lost the data it was meant to publish.
+		if op != nil && state.write {
+			s.log.Error("close: write staging missing",
+				"file_id", st.currentID, "stateid", sid)
+			response = op.finishExpiredClose()
+			return writeCloseResponse(w, response)
+		}
+		if recovered != nil {
+			s.log.Error("close: recovered write staging missing",
+				"file_id", st.currentID, "stateid", sid)
 			return fail(NFS4ERR_EXPIRED)
 		}
 	}
@@ -612,6 +624,9 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 		return writeOpenError(w, status)
 	}
 	defer op.finishServerFaultIfNeeded()
+	for _, fileID := range op.abandoned {
+		s.stagingStore.Remove(fileID)
+	}
 	fail := func(status uint32) uint32 {
 		response = op.finishError(status)
 		return writeOpenResponse(w, st, response)
@@ -821,7 +836,8 @@ func writeOpenConfirmResponse(
 }
 
 func (s *Server) opOpenDowngrade(st *compoundState, w *COMPOUND4resWriter) uint32 {
-	// No persistent open state — downgrade is a no-op.
+	// Existing immutable files cannot be upgraded from read to write, and no
+	// supported client has required a downgrade.
 	ew := w.AppendResarray_OpenDowngrade()
 	ew.SetValue_Default(NFS4ERR_NOTSUPP)
 	w.Resume(ew.Finish())
