@@ -5,6 +5,7 @@
 include_directories(${ternfs_SOURCE_DIR}/core ${ternfs_SOURCE_DIR}/shard ${ternfs_SOURCE_DIR}/registry)
 
 add_executable(tests tests.cpp doctest.h)
+target_include_directories(tests PRIVATE ${ternfs_SOURCE_DIR}/cdc)
 target_link_libraries(tests PRIVATE core shard cdc)
 
 add_executable(logsdbtests logsdbtests.cpp doctest.h)
