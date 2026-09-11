@@ -219,6 +219,41 @@ func nextOp(t *testing.T, iter *NfsResop4EntryIter) NfsResop4Entry {
 	return iter.Resarray()
 }
 
+const testChannelTimeout = 5 * time.Second
+
+func awaitSignal(t *testing.T, ch <-chan struct{}, description string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(testChannelTimeout):
+		t.Fatalf("timed out waiting for %s", description)
+	}
+}
+
+func awaitValue[T any](
+	t *testing.T,
+	ch <-chan T,
+	description string,
+) T {
+	t.Helper()
+	select {
+	case value := <-ch:
+		return value
+	case <-time.After(testChannelTimeout):
+		t.Fatalf("timed out waiting for %s", description)
+		var zero T
+		return zero
+	}
+}
+
+func closeSignal(ch chan struct{}) {
+	select {
+	case <-ch:
+	default:
+		close(ch)
+	}
+}
+
 // getAttrData extracts attribute values from a GETATTR4resok fattr4.
 // Uses Fattr4.AttrVals().Data() which requires correct codegen for
 // sequential variable-size field getters (bitmap4 then attrlist4).
@@ -3425,10 +3460,27 @@ func openCreateFile(t *testing.T, conn net.Conn, xid *uint32, clientid uint64, f
 // closeFile sends CLOSE for the given filehandle and stateid.
 func closeFile(t *testing.T, conn net.Conn, xid *uint32, fh []byte, stateid [16]byte) {
 	t.Helper()
-	status := closeFileWithSeqStatus(t, conn, xid, fh, stateid, 3)
+	status, _ := closeFileWithSeqResult(t, conn, xid, fh, stateid, 3)
 	if status != NFS4_OK {
 		t.Fatalf("CLOSE status = %s", Nfsstat4Name(status))
 	}
+}
+
+func closeFileWithSeqResult(
+	t *testing.T,
+	conn net.Conn,
+	xid *uint32,
+	fh []byte,
+	stateid [16]byte,
+	seq uint32,
+) (uint32, [16]byte) {
+	t.Helper()
+	status, result, err := closeFileWithSeqResultE(
+		conn, xid, fh, stateid, seq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return status, result
 }
 
 func closeFileWithSeqStatus(
@@ -3440,20 +3492,18 @@ func closeFileWithSeqStatus(
 	seq uint32,
 ) uint32 {
 	t.Helper()
-	status, err := closeFileWithSeqStatusE(conn, xid, fh, stateid, seq)
-	if err != nil {
-		t.Fatal(err)
-	}
+	status, _ := closeFileWithSeqResult(t, conn, xid, fh, stateid, seq)
 	return status
 }
 
-func closeFileWithSeqStatusE(
+func closeFileWithSeqResultE(
 	conn net.Conn,
 	xid *uint32,
 	fh []byte,
 	stateid [16]byte,
 	seq uint32,
-) (uint32, error) {
+) (uint32, [16]byte, error) {
+	var result [16]byte
 	body := buildCompoundBody(nil, func(w *COMPOUND4argsWriter) {
 		pw := w.AppendArgarray_Putfh()
 		fhW := pw.StartObject()
@@ -3468,17 +3518,30 @@ func closeFileWithSeqStatusE(
 	reply, err := sendRPC(conn, *xid, procCompound, body)
 	*xid++
 	if err != nil {
-		return 0, err
+		return 0, result, err
 	}
 	nfsBody, err := parseRPCReply(reply)
 	if err != nil {
-		return 0, err
+		return 0, result, err
 	}
 	res, ok := ReadCOMPOUND4res(nfsBody)
 	if !ok {
-		return 0, errors.New("failed to parse COMPOUND4res")
+		return 0, result, errors.New("failed to parse COMPOUND4res")
 	}
-	return res.Status(), nil
+	if res.Status() == NFS4_OK {
+		iter := res.Resarray()
+		if !iter.Next() || !iter.Next() {
+			return 0, result, errors.New(
+				"CLOSE response is missing PUTFH or CLOSE")
+		}
+		sid := iter.Resarray().Value().AsCLOSE4resEntry().
+			Value().AsStateid4()
+		binary.BigEndian.PutUint32(result[:4], sid.Seqid())
+		for i := range 12 {
+			result[4+i] = sid.Other(i)
+		}
+	}
+	return res.Status(), result, nil
 }
 
 // collectReaddirNames issues READDIR calls to collect all names in a directory.
@@ -4361,7 +4424,11 @@ func TestCloseReplay(t *testing.T) {
 
 	// Create and close a file.
 	stateid, fh := openCreateFile(t, conn, &xid, clientid, "replay.txt")
-	closeFile(t, conn, &xid, fh, stateid)
+	status, first := closeFileWithSeqResult(
+		t, conn, &xid, fh, stateid, 3)
+	if status != NFS4_OK {
+		t.Fatalf("CLOSE status = %s", Nfsstat4Name(status))
+	}
 
 	// Verify file exists.
 	if _, err := os.Stat(filepath.Join(dir, "replay.txt")); err != nil {
@@ -4369,9 +4436,13 @@ func TestCloseReplay(t *testing.T) {
 	}
 
 	// Send CLOSE again (replay). Should succeed.
-	status := closeFileWithSeqStatus(t, conn, &xid, fh, stateid, 3)
+	status, replay := closeFileWithSeqResult(
+		t, conn, &xid, fh, stateid, 3)
 	if status != NFS4_OK {
 		t.Fatalf("CLOSE replay: expected NFS4_OK, got %s", Nfsstat4Name(status))
+	}
+	if replay != first {
+		t.Fatalf("CLOSE replay stateid = %x, want %x", replay, first)
 	}
 }
 
@@ -4761,15 +4832,20 @@ type blockingVFSGate struct {
 	releaseFirst chan struct{}
 }
 
-func (gate *blockingVFSGate) enter() {
+func (gate *blockingVFSGate) enter() error {
 	gate.mu.Lock()
 	gate.calls++
 	call := gate.calls
 	gate.mu.Unlock()
 	if call == 1 {
 		close(gate.firstEntered)
-		<-gate.releaseFirst
+		select {
+		case <-gate.releaseFirst:
+		case <-time.After(testChannelTimeout):
+			return errors.New("timed out waiting to release VFS gate")
+		}
 	}
+	return nil
 }
 
 func (gate *blockingVFSGate) callCount() int {
@@ -4786,11 +4862,13 @@ type blockingConstructVFS struct {
 func (fs *blockingConstructVFS) ConstructFile(
 	dirID InodeID,
 ) (InodeID, Cookie, error) {
-	fs.enter()
+	if err := fs.enter(); err != nil {
+		return 0, Cookie{}, err
+	}
 	return fs.TernVFS.ConstructFile(dirID)
 }
 
-func TestConcurrentOpenIsSerializedPerOwner(t *testing.T) {
+func TestConcurrentOpenIsAtMostOnceAndReplayed(t *testing.T) {
 	fs := &blockingConstructVFS{
 		TernVFS: NewLocalTernVFS(t.TempDir()),
 		blockingVFSGate: blockingVFSGate{
@@ -4798,6 +4876,7 @@ func TestConcurrentOpenIsSerializedPerOwner(t *testing.T) {
 			releaseFirst: make(chan struct{}),
 		},
 	}
+	defer closeSignal(fs.releaseFirst)
 	staging, err := NewLocalStagingStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -4814,17 +4893,6 @@ func TestConcurrentOpenIsSerializedPerOwner(t *testing.T) {
 	defer secondConn.Close()
 	xid := uint32(1)
 	clientID := setupClient(t, firstConn, &xid)
-	secondRequestEntered := make(chan struct{})
-	var startMu sync.Mutex
-	startCalls := 0
-	srv.beforeStartOpen = func() {
-		startMu.Lock()
-		defer startMu.Unlock()
-		startCalls++
-		if startCalls == 2 {
-			close(secondRequestEntered)
-		}
-	}
 
 	type result struct {
 		status  uint32
@@ -4843,12 +4911,11 @@ func TestConcurrentOpenIsSerializedPerOwner(t *testing.T) {
 		}
 	}
 	go open(firstConn, 100)
-	<-fs.firstEntered
+	awaitSignal(t, fs.firstEntered, "first OPEN entering ConstructFile")
 	go open(secondConn, 200)
-	<-secondRequestEntered
-	close(fs.releaseFirst)
-	first := <-results
-	second := <-results
+	closeSignal(fs.releaseFirst)
+	first := awaitValue(t, results, "first concurrent OPEN result")
+	second := awaitValue(t, results, "second concurrent OPEN result")
 
 	if first.err != nil || second.err != nil {
 		t.Fatalf("concurrent OPEN errors = %v, %v", first.err, second.err)
@@ -4873,8 +4940,9 @@ type failingLinkVFS struct {
 }
 
 type closeResult struct {
-	status uint32
-	err    error
+	status  uint32
+	stateid [16]byte
+	err     error
 }
 
 func (fs *failingLinkVFS) LinkFile(
@@ -4909,7 +4977,11 @@ func (fs *blockingFailingLinkVFS) LinkFile(
 	io.Reader,
 ) error {
 	fs.once.Do(func() { close(fs.entered) })
-	<-fs.release
+	select {
+	case <-fs.release:
+	case <-time.After(testChannelTimeout):
+		return errors.New("timed out waiting to release LinkFile")
+	}
 	return errors.New("injected LinkFile failure")
 }
 
@@ -4949,6 +5021,7 @@ func TestWaitingCloseRechecksStagingMeta(t *testing.T) {
 		entered: make(chan struct{}),
 		release: make(chan struct{}),
 	}
+	defer closeSignal(fs.release)
 	localStaging, err := NewLocalStagingStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -4979,24 +5052,28 @@ func TestWaitingCloseRechecksStagingMeta(t *testing.T) {
 	firstResult := make(chan closeResult, 1)
 	go func() {
 		closeXID := uint32(100)
-		status, err := closeFileWithSeqStatusE(
+		status, result, err := closeFileWithSeqResultE(
 			firstConn, &closeXID, fh, stateid, 3)
-		firstResult <- closeResult{status: status, err: err}
+		firstResult <- closeResult{
+			status: status, stateid: result, err: err,
+		}
 	}()
-	<-fs.entered
+	awaitSignal(t, fs.entered, "first CLOSE entering LinkFile")
 	secondRead := staging.notifyNextGetMeta()
 	secondResult := make(chan closeResult, 1)
 	go func() {
 		closeXID := uint32(200)
-		status, err := closeFileWithSeqStatusE(
+		status, result, err := closeFileWithSeqResultE(
 			secondConn, &closeXID, fh, stateid, 4)
-		secondResult <- closeResult{status: status, err: err}
+		secondResult <- closeResult{
+			status: status, stateid: result, err: err,
+		}
 	}()
-	<-secondRead
-	close(fs.release)
+	awaitSignal(t, secondRead, "second CLOSE reading staging metadata")
+	closeSignal(fs.release)
 
-	first := <-firstResult
-	second := <-secondResult
+	first := awaitValue(t, firstResult, "first racing CLOSE result")
+	second := awaitValue(t, secondResult, "second racing CLOSE result")
 	if first.err != nil || second.err != nil {
 		t.Fatalf("CLOSE errors = %v, %v", first.err, second.err)
 	}
@@ -5088,11 +5165,13 @@ func (fs *blockingLinkVFS) LinkFile(
 	name string,
 	data io.Reader,
 ) error {
-	fs.enter()
+	if err := fs.enter(); err != nil {
+		return err
+	}
 	return fs.TernVFS.LinkFile(fileID, cookie, dirID, name, data)
 }
 
-func TestConcurrentCloseIsSerializedPerOwner(t *testing.T) {
+func TestConcurrentCloseIsAtMostOnceAndReplayed(t *testing.T) {
 	fs := &blockingLinkVFS{
 		TernVFS: NewLocalTernVFS(t.TempDir()),
 		blockingVFSGate: blockingVFSGate{
@@ -5100,6 +5179,7 @@ func TestConcurrentCloseIsSerializedPerOwner(t *testing.T) {
 			releaseFirst: make(chan struct{}),
 		},
 	}
+	defer closeSignal(fs.releaseFirst)
 	localStaging, err := NewLocalStagingStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -5130,22 +5210,27 @@ func TestConcurrentCloseIsSerializedPerOwner(t *testing.T) {
 	results := make(chan closeResult, 2)
 	go func() {
 		closeXID := uint32(100)
-		status, err := closeFileWithSeqStatusE(
+		status, result, err := closeFileWithSeqResultE(
 			firstConn, &closeXID, fh, stateid, 3)
-		results <- closeResult{status: status, err: err}
+		results <- closeResult{
+			status: status, stateid: result, err: err,
+		}
 	}()
-	<-fs.firstEntered
+	awaitSignal(t, fs.firstEntered, "first CLOSE entering LinkFile")
 	secondRequestEntered := staging.notifyNextGetMeta()
 	go func() {
 		closeXID := uint32(200)
-		status, err := closeFileWithSeqStatusE(
+		status, result, err := closeFileWithSeqResultE(
 			secondConn, &closeXID, fh, stateid, 3)
-		results <- closeResult{status: status, err: err}
+		results <- closeResult{
+			status: status, stateid: result, err: err,
+		}
 	}()
-	<-secondRequestEntered
-	close(fs.releaseFirst)
-	first := <-results
-	second := <-results
+	awaitSignal(t, secondRequestEntered,
+		"second CLOSE reading staging metadata")
+	closeSignal(fs.releaseFirst)
+	first := awaitValue(t, results, "first concurrent CLOSE result")
+	second := awaitValue(t, results, "second concurrent CLOSE result")
 
 	if first.err != nil || second.err != nil {
 		t.Fatalf("concurrent CLOSE errors = %v, %v", first.err, second.err)
@@ -5154,6 +5239,10 @@ func TestConcurrentCloseIsSerializedPerOwner(t *testing.T) {
 		t.Fatalf("concurrent CLOSE statuses = %s, %s",
 			Nfsstat4Name(first.status), Nfsstat4Name(second.status))
 	}
+	if first.stateid != second.stateid {
+		t.Fatalf("concurrent CLOSE stateids = %x, %x",
+			first.stateid, second.stateid)
+	}
 	if calls := fs.callCount(); calls != 1 {
 		t.Fatalf("LinkFile calls = %d, want 1", calls)
 	}
@@ -5161,20 +5250,29 @@ func TestConcurrentCloseIsSerializedPerOwner(t *testing.T) {
 
 func TestCloseUnknownStateid(t *testing.T) {
 	dir := t.TempDir()
-	_, addr, cleanup := startTestServer(t, dir)
+	if err := os.WriteFile(
+		filepath.Join(dir, "file.txt"), []byte("data"), 0644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	srv, addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
 
-	// Construct a filehandle for a nonexistent inode. Use a type=file inode
-	// with a made-up number that doesn't correspond to any real file.
-	var fakeFH [8]byte
-	fakeID := MakeInodeID(InodeTypeFile, 0xDEADDEAD)
-	binary.BigEndian.PutUint64(fakeFH[:], uint64(fakeID))
-	var fakeStateid [16]byte // all zeros
+	fileID, err := srv.fs.Lookup(srv.fs.RootID(), "file.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fh := binary.BigEndian.AppendUint64(nil, uint64(fileID))
+	var unknown [16]byte
+	binary.BigEndian.PutUint32(unknown[:4], 1)
+	for i := 4; i < len(unknown); i++ {
+		unknown[i] = 0xa5
+	}
 
 	xid := uint32(1)
-	status := closeFileWithSeqStatus(t, conn, &xid, fakeFH[:], fakeStateid, 3)
+	status := closeFileWithSeqStatus(t, conn, &xid, fh, unknown, 1)
 	if status != NFS4ERR_BAD_STATEID {
 		t.Fatalf("expected NFS4ERR_BAD_STATEID, got %s", Nfsstat4Name(status))
 	}
@@ -5839,7 +5937,7 @@ func TestRecoveredCloseOperationsAreStateidScoped(t *testing.T) {
 		}
 		started <- second
 	}()
-	<-attempting
+	awaitSignal(t, attempting, "second recovered CLOSE attempt")
 
 	var second *recoveredCloseOperation
 	select {
@@ -5952,17 +6050,23 @@ func restartWithStagedWrite(
 func TestStagedWriteCloseAfterServerRestart(t *testing.T) {
 	data := []byte("staged across an nfsd restart")
 	restarted := restartWithStagedWrite(t, "recovered.txt", data)
-	if status := closeFileWithSeqStatus(
+	status, first := closeFileWithSeqResult(
 		t, restarted.conn, &restarted.xid, restarted.fh,
 		restarted.stateid, 3,
-	); status != NFS4_OK {
+	)
+	if status != NFS4_OK {
 		t.Fatalf("recovered CLOSE = %s", Nfsstat4Name(status))
 	}
-	if status := closeFileWithSeqStatus(
+	status, replay := closeFileWithSeqResult(
 		t, restarted.conn, &restarted.xid, restarted.fh,
 		restarted.stateid, 3,
-	); status != NFS4_OK {
+	)
+	if status != NFS4_OK {
 		t.Fatalf("recovered CLOSE replay = %s", Nfsstat4Name(status))
+	}
+	if replay != first {
+		t.Fatalf("recovered CLOSE replay stateid = %x, want %x",
+			replay, first)
 	}
 	got, err := os.ReadFile(filepath.Join(restarted.rootDir, "recovered.txt"))
 	if err != nil {

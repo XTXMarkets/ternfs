@@ -174,6 +174,12 @@ func (os *openStateStore) addStateLocked(
 	if owner.states == nil {
 		owner.states = make(map[InodeID]*openState)
 	}
+	if existing := os.states[state.id]; existing != nil {
+		panic("NFS stateid index slot is already occupied")
+	}
+	if existing := owner.states[state.fileID]; existing != nil {
+		panic("NFS open-owner file index slot is already occupied")
+	}
 	os.states[state.id] = state
 	owner.states[state.fileID] = state
 }
@@ -203,6 +209,14 @@ func openOwnerSeqidIsExempt(status uint32) bool {
 	default:
 		return false
 	}
+}
+
+func nextStateidGeneration(generation uint32) uint32 {
+	generation++
+	if generation == 0 {
+		return 1
+	}
+	return generation
 }
 
 func (os *openStateStore) markExpiredLocked(id StateID) {
@@ -518,11 +532,12 @@ func (op *openOwnerOperation) finishOpen(
 	os.mu.Lock()
 	if state := op.owner.states[fileID]; state != nil && state.confirmed {
 		if write {
-			panic("reopen upgraded immutable file to write")
+			os.mu.Unlock()
+			return op.finishError(NFS4ERR_PERM)
 		}
 		// Reopen. RFC 7530 §9.11 requires the same "other" with an
 		// incremented generation.
-		state.generation++
+		state.generation = nextStateidGeneration(state.generation)
 		now := uint64(time.Now().UnixNano())
 		response := openOwnerResponse{
 			kind:         openOwnerOperationOpen,
@@ -577,7 +592,7 @@ func (op *openOwnerOperation) finishConfirm(
 	os.mu.Lock()
 	state := os.states[id]
 	state.confirmed = true
-	state.generation++
+	state.generation = nextStateidGeneration(state.generation)
 	op.owner.confirmed = true
 	response := openOwnerResponse{
 		kind:            openOwnerOperationConfirm,
@@ -602,7 +617,7 @@ func (op *openOwnerOperation) finishClose(
 	os := op.store
 	os.mu.Lock()
 	state := os.states[id]
-	state.generation++
+	state.generation = nextStateidGeneration(state.generation)
 	closed := *state
 	os.removeStateLocked(op.owner, state)
 	response := openOwnerResponse{
@@ -793,7 +808,7 @@ func (op *recoveredCloseOperation) finish(status uint32) openOwnerResponse {
 	state := openState{
 		id:         op.stateID,
 		fileID:     op.fileID,
-		generation: op.inputGeneration + 1,
+		generation: nextStateidGeneration(op.inputGeneration),
 		confirmed:  true,
 	}
 	response := openOwnerResponse{

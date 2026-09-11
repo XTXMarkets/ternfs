@@ -610,9 +610,6 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 		clientID: clientID,
 		owner:    string(owner.Owner()),
 	}
-	if s.beforeStartOpen != nil {
-		s.beforeStartOpen()
-	}
 	op, response, replay, status := s.opens.startOpen(
 		ownerKey, args.Seqid())
 	if replay {
