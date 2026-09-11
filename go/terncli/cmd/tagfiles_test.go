@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-package main
+package cmd
 
 import (
 	"github.com/XTXMarkets/ternfs/go/msgs"

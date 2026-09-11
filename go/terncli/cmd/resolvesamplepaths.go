@@ -2,15 +2,17 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-package filesamples
+package cmd
 
 import (
 	"encoding/csv"
+	"flag"
 	"fmt"
 	"github.com/XTXMarkets/ternfs/go/client"
 	"github.com/XTXMarkets/ternfs/go/core/log"
 	"github.com/XTXMarkets/ternfs/go/msgs"
 	"io"
+	"os"
 	"path"
 	"strconv"
 	"sync"
@@ -191,4 +193,17 @@ func (r *resolver) setDirName(inode msgs.InodeId, name string) {
 	defer r.lock.Unlock()
 
 	r.inodeToDir[inode] = name
+}
+
+func NewResolveSamplePaths() Command {
+	resolveSamplePathsCmd := flag.NewFlagSet("resolve-sample-paths", flag.ExitOnError)
+	resolveSamplePathsRun := func(runtime *Runtime) {
+		l := runtime.Log
+		resolver := NewPathResolver(runtime.getClient(), l)
+		resolver.ResolveFilePaths(os.Stdin, os.Stdout)
+	}
+	return Command{
+		Flags: resolveSamplePathsCmd,
+		Run:   resolveSamplePathsRun,
+	}
 }
