@@ -67,7 +67,7 @@ func NewBlockserviceFlags() Command {
 		}
 		if *blockserviceFlagsFailureDomain != "" || *blockserviceFlagsPathPrefix != "" {
 			l.Info("requesting block services")
-			blockServicesResp, err := client.RegistryRequest(l, nil, *registryAddress, &msgs.ChangedBlockServicesReq{})
+			blockServicesResp, err := client.RegistryRequest(l, nil, registryAddress, &msgs.ChangedBlockServicesReq{})
 			if err != nil {
 				panic(err)
 			}
@@ -91,7 +91,7 @@ func NewBlockserviceFlags() Command {
 				}
 			}
 		}
-		conn := client.MakeRegistryConn(l, nil, *registryAddress, 1)
+		conn := client.MakeRegistryConn(l, nil, registryAddress, 1)
 		defer conn.Close()
 		for _, bsId := range blockServiceIds {
 			l.Info("setting flags %v with mask %v for block service %v", flag, mask, bsId)

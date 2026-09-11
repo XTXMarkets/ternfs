@@ -45,6 +45,7 @@ func NewResurrectSubtree() Command {
 		}
 		c := runtime.Client()
 
+		// 1. Verify source is a deleted directory.
 		srcStat := msgs.StatDirectoryResp{}
 		if err := c.ShardRequest(l, srcRootId.Shard(), &msgs.StatDirectoryReq{Id: srcRootId}, &srcStat); err != nil {
 			panic(fmt.Errorf("could not stat source directory %v: %w", srcRootId, err))
@@ -53,6 +54,7 @@ func NewResurrectSubtree() Command {
 			panic(fmt.Errorf("source directory %v is not deleted (owner=%v); resurrect-subtree only operates on snapshot directories", srcRootId, srcStat.Owner))
 		}
 
+		// 2. Resolve destination parent and create the root destination dir.
 		dstRootPath := filepath.Clean("/" + *resurrectSubtreeDst)
 		if dstRootPath == "/" {
 			panic(fmt.Errorf("-dst must not be the filesystem root"))
@@ -64,6 +66,7 @@ func NewResurrectSubtree() Command {
 			panic(fmt.Errorf("could not resolve destination parent %q: %w", dstParentPath, err))
 		}
 
+		// Refuse to proceed if the destination already exists.
 		lookupResp := msgs.LookupResp{}
 		if err := c.ShardRequest(l, dstParentId.Shard(), &msgs.LookupReq{DirId: dstParentId, Name: dstBase}, &lookupResp); err == nil {
 			panic(fmt.Errorf("destination %q already exists as inode %v", dstRootPath, lookupResp.TargetId))
@@ -143,7 +146,7 @@ func NewResurrectSubtree() Command {
 			dstRootPath,
 			func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error {
 				if parent == msgs.NULL_INODE_ID {
-
+					// Root: already created outside the walk.
 					return nil
 				}
 				dstParentAny, ok := dstDirIds.Load(parent)
@@ -153,7 +156,10 @@ func NewResurrectSubtree() Command {
 				dstParentDirId := dstParentAny.(msgs.InodeId)
 				childDstPath := path.Join(parentPath, name)
 				if id.Type() == msgs.DIRECTORY {
-
+					// Edge-level "owned" is unreliable for directories (a
+					// renamed dir leaves a non-owned snapshot behind but is
+					// still live elsewhere). Stat the target: restore only if
+					// it's itself orphaned.
 					childStat := msgs.StatDirectoryResp{}
 					if err := c.ShardRequest(l, id.Shard(), &msgs.StatDirectoryReq{Id: id}, &childStat); err != nil {
 						l.ErrorNoAlert("could not stat directory %v at %q, skipping subtree: %v", id, childDstPath, err)
@@ -173,7 +179,7 @@ func NewResurrectSubtree() Command {
 					dstDirIds.Store(id, childDstId)
 					return nil
 				}
-
+				// File entry.
 				if !owned {
 					l.Info("skipping %q: file %v is not owned by this directory", childDstPath, id)
 					return nil

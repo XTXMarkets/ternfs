@@ -38,7 +38,7 @@ func NewMigrate() Command {
 			os.Exit(2)
 		}
 		l.Info("requesting block services")
-		blockServicesResp, err := client.RegistryRequest(l, nil, *registryAddress, &msgs.ChangedBlockServicesReq{})
+		blockServicesResp, err := client.RegistryRequest(l, nil, registryAddress, &msgs.ChangedBlockServicesReq{})
 		if err != nil {
 			panic(err)
 		}

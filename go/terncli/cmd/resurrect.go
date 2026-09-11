@@ -62,12 +62,12 @@ func NewResurrect() Command {
 						l.Info("%q: found < 2 edges, skipping: %+v", p, resp.Results)
 						continue
 					}
-
+					// if we already have a current edge, no need to do anything
 					if resp.Results[0].Current {
 						l.Info("%q: a current edge already exists, skipping", p)
 						continue
 					}
-
+					// otherwise, we expect a deleted edge, and then an owned edge
 					if resp.Results[0].TargetId.Id() != msgs.NULL_INODE_ID {
 						l.Info("%q: last edge is not a deletion edge, skipping: %+v", p, resp.Results[0])
 						continue
@@ -76,7 +76,7 @@ func NewResurrect() Command {
 						l.Info("%q: second to last edge is not an owned edge, skipping: %+v", p, resp.Results[1])
 						continue
 					}
-
+					// We've got everything we need, do the resurrection
 					resurrectReq := msgs.SameDirectoryRenameSnapshotReq{
 						TargetId:        resp.Results[1].TargetId.Id(),
 						DirId:           dirId,

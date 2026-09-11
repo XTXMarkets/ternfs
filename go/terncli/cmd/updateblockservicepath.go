@@ -29,7 +29,7 @@ func NewUpdateBlockservicePath() Command {
 		}
 		bsId := msgs.BlockServiceId(*updateBlockservicePathId)
 		l.Info("setting path to %s for block service %v", *updateBlockserviceNewPath, bsId)
-		_, err := client.RegistryRequest(l, nil, *registryAddress, &msgs.UpdateBlockServicePathReq{
+		_, err := client.RegistryRequest(l, nil, registryAddress, &msgs.UpdateBlockServicePathReq{
 			Id:      bsId,
 			NewPath: *updateBlockserviceNewPath,
 		})

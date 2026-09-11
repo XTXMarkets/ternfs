@@ -14,14 +14,14 @@ import (
 // Runtime contains the process-wide dependencies shared by subcommands.
 type Runtime struct {
 	Log             *log.Logger
-	RegistryAddress *string
+	RegistryAddress string
 
 	getClient func() *client.Client
 }
 
 func NewRuntime(
 	l *log.Logger,
-	registryAddress *string,
+	registryAddress string,
 	getClient func() *client.Client,
 ) *Runtime {
 	return &Runtime{

@@ -25,7 +25,7 @@ func NewDecommissionBlockservice() Command {
 		}
 		bsId := msgs.BlockServiceId(*decommissionBlockserviceId)
 		l.Info("decommissioning block service %v using dedicated rate-limited endpoint", bsId)
-		_, err := client.RegistryRequest(l, nil, *registryAddress, &msgs.DecommissionBlockServiceReq{
+		_, err := client.RegistryRequest(l, nil, registryAddress, &msgs.DecommissionBlockServiceReq{
 			Id: bsId,
 		})
 		if err == nil {
@@ -34,7 +34,7 @@ func NewDecommissionBlockservice() Command {
 		if err == msgs.AUTO_DECOMMISSION_FORBIDDEN || err == msgs.AUTO_DECOMMISSION_RATE_LIMITED {
 			if *decommissionBlockserviceForce {
 				l.Info("registry refused decommission (%v); forcing DECOMMISSIONED flag via SetBlockServiceFlags", err)
-				conn := client.MakeRegistryConn(l, nil, *registryAddress, 1)
+				conn := client.MakeRegistryConn(l, nil, registryAddress, 1)
 				defer conn.Close()
 				if _, err = conn.Request(&msgs.SetBlockServiceFlagsReq{
 					Id:        bsId,

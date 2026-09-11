@@ -99,8 +99,6 @@ func main() {
 	verbose := flag.Bool("verbose", false, "")
 	trace := flag.Bool("trace", false, "")
 
-	var l *log.Logger
-
 	commands = newCommands()
 
 	flag.Parse()
@@ -149,7 +147,7 @@ func main() {
 	if *trace {
 		level = log.TRACE
 	}
-	l = log.NewLogger(os.Stderr, &log.LoggerOptions{Level: level})
+	l := log.NewLogger(os.Stderr, &log.LoggerOptions{Level: level})
 
 	spec, found := commands[flag.Args()[0]]
 	if !found {
@@ -221,6 +219,6 @@ func main() {
 		}
 	}()
 
-	runtime := terncmd.NewRuntime(l, registryAddress, getClient)
+	runtime := terncmd.NewRuntime(l, *registryAddress, getClient)
 	spec.Run(runtime)
 }

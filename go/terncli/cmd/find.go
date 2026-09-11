@@ -75,7 +75,7 @@ func NewFind() Command {
 					statResp := msgs.StatFileResp{}
 					if err := c.ShardRequest(l, id.Shard(), &statReq, &statResp); err != nil {
 						if err == msgs.FILE_NOT_FOUND {
-
+							// could get collected
 							l.Info("file %q disappeared", path.Join(parentPath, name))
 						} else {
 							return err

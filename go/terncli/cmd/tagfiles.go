@@ -175,7 +175,8 @@ func runTagFiles(l *log.Logger, c *client.Client, p *tagFilesParams) error {
 				stats.statErrors.Add(1)
 				return nil
 			}
-
+			// Directories have no atime; reuse mtime so workers can drift-
+			// check uniformly with file rows.
 			fired := FirstMatch(dirRules, fullPath, 0, statResp.Mtime, statResp.Mtime, now)
 			if fired == nil {
 				return nil
@@ -184,6 +185,7 @@ func runTagFiles(l *log.Logger, c *client.Client, p *tagFilesParams) error {
 			if p.dryRun {
 				return nil
 			}
+			// Row schema: inode_hex \t size \t atime_ns \t mtime_ns \t rule \t path
 			row := fmt.Sprintf(
 				"%s\t%d\t%d\t%d\t%s\t%s",
 				id.String(),

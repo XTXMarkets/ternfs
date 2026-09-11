@@ -24,7 +24,7 @@ func NewTestBlockWrite() Command {
 	testBlockWriteRun := func(runtime *Runtime) {
 		l := runtime.Log
 		registryAddress := runtime.RegistryAddress
-		resp, err := client.RegistryRequest(l, nil, *registryAddress, &msgs.ChangedBlockServicesReq{})
+		resp, err := client.RegistryRequest(l, nil, registryAddress, &msgs.ChangedBlockServicesReq{})
 		if err != nil {
 			panic(err)
 		}
