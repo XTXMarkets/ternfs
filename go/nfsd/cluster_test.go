@@ -237,6 +237,7 @@ func startTernTestServer(t *testing.T) (addr string, cleanup func()) {
 	}()
 	return ln.Addr().String(), func() {
 		ln.Close()
+		srv.waitForClientGC()
 		c.Close()
 	}
 }
@@ -902,6 +903,173 @@ func TestTernSetclientidAndRenew(t *testing.T) {
 	}
 }
 
+func TestTernClientIncarnationGC(t *testing.T) {
+	c, err := client.NewClient(
+		ternLogger, nil, registryAddr, msgs.AddrsInfo{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	fs := NewRemoteTernVFS(c, ternLogger, bufpool.NewBufPool())
+	cacheName := "client-store-cache-replacement"
+	firstCacheID, err := fs.CreateFile(fs.RootID(), cacheName, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fs.mu.Lock()
+	fs.readers[msgs.InodeId(firstCacheID)] = &cachedReader{}
+	fs.mu.Unlock()
+	secondCacheID, err := fs.CreateFile(fs.RootID(), cacheName, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fs.mu.Lock()
+	_, createOldParentCached := fs.parents[firstCacheID]
+	_, createOldReaderCached := fs.readers[msgs.InodeId(firstCacheID)]
+	createSecondParent := fs.parents[secondCacheID]
+	fs.mu.Unlock()
+	if createOldParentCached || createOldReaderCached {
+		t.Fatalf("CreateFile retained overwritten inode %d in VFS caches",
+			firstCacheID)
+	}
+	if createSecondParent != fs.RootID() {
+		t.Fatalf("replacement parent = %d, want %d",
+			createSecondParent, fs.RootID())
+	}
+	if err := fs.Remove(fs.RootID(), cacheName); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := NewClientStore(fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := NewClientStore(fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	collector, err := NewClientStore(fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	base := time.Unix(1000, 0)
+	first.now = func() time.Time { return base }
+	second.now = func() time.Time { return base }
+	collector.now = func() time.Time { return base }
+	owner := clientOwner{
+		principal: rpcPrincipal{flavor: authSys, body: t.Name()},
+	}
+	identity := []byte(t.Name())
+	oldID, confirm, err := first.SetClientID(
+		[8]byte{1}, identity, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := first.ConfirmClientID(
+		oldID, confirm, owner.principal,
+	); err != nil {
+		t.Fatal(err)
+	}
+	stateID := StateID{1}
+	if err := first.MarkOpen(oldID, stateID); err != nil {
+		t.Fatal(err)
+	}
+	identityID, err := fs.LookupParent(InodeID(oldID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaseID, err := fs.Lookup(InodeID(oldID), first.leaseName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= 3; i++ {
+		fs.mu.Lock()
+		fs.readers[msgs.InodeId(leaseID)] = &cachedReader{}
+		fs.mu.Unlock()
+
+		first.now = func() time.Time {
+			return base.Add(time.Duration(i) * time.Second)
+		}
+		if err := first.Renew(oldID); err != nil {
+			t.Fatal(err)
+		}
+		nextLeaseID, err := fs.Lookup(InodeID(oldID), first.leaseName)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fs.mu.Lock()
+		_, oldParentCached := fs.parents[leaseID]
+		_, oldReaderCached := fs.readers[msgs.InodeId(leaseID)]
+		nextParent := fs.parents[nextLeaseID]
+		fs.mu.Unlock()
+		if oldParentCached || oldReaderCached {
+			t.Fatalf("renewal retained overwritten inode %d in VFS caches",
+				leaseID)
+		}
+		if nextParent != InodeID(oldID) {
+			t.Fatalf("renewed lease parent = %d, want %d",
+				nextParent, oldID)
+		}
+		leaseID = nextLeaseID
+	}
+	oldName, found, err := first.incarnationName(
+		identityID, InodeID(oldID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Fatal("old incarnation has no directory entry")
+	}
+	confirmedSymlinkID, err := fs.Lookup(identityID, confirmedName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fs.mu.Lock()
+	fs.readers[msgs.InodeId(confirmedSymlinkID)] = &cachedReader{}
+	fs.mu.Unlock()
+
+	newID, confirm, err := first.SetClientID(
+		[8]byte{2}, identity, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := second.ConfirmClientID(
+		newID, confirm, owner.principal,
+	); err != nil {
+		t.Fatal(err)
+	}
+	nextConfirmedSymlinkID, err := fs.Lookup(identityID, confirmedName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fs.mu.Lock()
+	_, oldParentCached := fs.parents[confirmedSymlinkID]
+	_, oldReaderCached := fs.readers[msgs.InodeId(confirmedSymlinkID)]
+	nextParent := fs.parents[nextConfirmedSymlinkID]
+	fs.mu.Unlock()
+	if oldParentCached || oldReaderCached {
+		t.Fatalf("confirmation retained overwritten inode %d in VFS caches",
+			confirmedSymlinkID)
+	}
+	if nextParent != identityID {
+		t.Fatalf("confirmed symlink parent = %d, want %d",
+			nextParent, identityID)
+	}
+	if err := collector.collectStaleForClient(InodeID(newID)); err != nil {
+		t.Fatal(err)
+	}
+	collector.now = func() time.Time {
+		return base.Add(clientGCGrace + time.Second)
+	}
+	if err := collector.collectStaleForClient(InodeID(newID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fs.Lookup(identityID, oldName); !os.IsNotExist(err) {
+		t.Fatalf("old incarnation remains after collection: %v", err)
+	}
+}
+
 func TestTernStagedFileGetattrAndRead(t *testing.T) {
 	addr, cleanup := startTernTestServer(t)
 	defer cleanup()
@@ -1043,45 +1211,11 @@ func TestTernStagedFileGetattrAndRead(t *testing.T) {
 // setupNamedClient is like setupClient but with a custom identity string.
 func setupNamedClient(t *testing.T, conn net.Conn, xid *uint32, identity string) uint64 {
 	t.Helper()
-	res := sendCompound(t, conn, *xid, func(w *COMPOUND4argsWriter) {
-		scw := w.AppendArgarray_Setclientid()
-		clientW := scw.StartClient()
-		clientW = clientW.SetId([]byte(identity))
-		buf := clientW.Finish()
-		scw.Resume(buf)
-		cbW := scw.StartCallback()
-		cbW.SetCbProgram(0x40000000)
-		locW := cbW.StartCbLocation()
-		netidW := locW.StartRNetid()
-		buf = netidW.SetData([]byte("tcp")).Finish()
-		locW.Resume(buf)
-		addrW := locW.StartRAddr()
-		buf = addrW.SetData([]byte("0.0.0.0.0.0")).Finish()
-		locW.Resume(buf)
-		buf = locW.Finish()
-		cbW.Resume(buf)
-		buf = cbW.Finish()
-		scw.Resume(buf)
-		scw.SetCallbackIdent(0)
-		buf = scw.Finish()
-		w.Resume(buf)
-	})
-	*xid++
-	iter := expectOK(t, res)
-	entry := nextOp(t, &iter)
-	scRes := entry.Value().AsSETCLIENTID4resEntry()
-	if scRes.Disc() != NFS4_OK {
-		t.Fatalf("SETCLIENTID status = %d", scRes.Disc())
-	}
-	clientid := scRes.Value().AsSETCLIENTID4resok().Clientid()
-	res = sendCompound(t, conn, *xid, func(w *COMPOUND4argsWriter) {
-		scw := w.AppendArgarray_SetclientidConfirm()
-		scw.SetClientid(clientid)
-	})
-	*xid++
-	iter = expectOK(t, res)
-	entry = nextOp(t, &iter)
-	if entry.Value().AsSETCLIENTIDCONFIRM4res().Status() != NFS4_OK {
+	clientid, confirm := requestClientID(
+		t, conn, xid, identity, [8]byte{})
+	if status := confirmClientID(
+		t, conn, xid, clientid, confirm,
+	); status != NFS4_OK {
 		t.Fatal("SETCLIENTID_CONFIRM failed")
 	}
 	return clientid

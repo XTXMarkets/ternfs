@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -40,7 +41,16 @@ type Server struct {
 	writeVerifier [8]byte       // random per server instance, changes on restart
 	idleTimeout   time.Duration // connection idle timeout
 	log           *slog.Logger
+	startedAt     time.Time
+
+	clientGCMu      sync.Mutex
+	clientGCPending map[InodeID]struct{}
+	clientGCRecheck map[InodeID]struct{}
+	clientGCRunning bool
+	clientGCDone    chan struct{}
 }
+
+const maxPendingClientGC = 256
 
 func NewServer(fs TernVFS, stagingStore StagingStore, logger *slog.Logger) (*Server, error) {
 	clients, err := NewClientStore(fs)
@@ -53,15 +63,179 @@ func NewServer(fs TernVFS, stagingStore StagingStore, logger *slog.Logger) (*Ser
 		logger = slog.Default()
 	}
 	s := &Server{
-		fs:            fs,
-		clients:       clients,
-		opens:         newOpenStateStore(),
-		stagingStore:  stagingStore,
-		writeVerifier: verf,
-		idleTimeout:   5 * time.Minute,
-		log:           logger,
+		fs:              fs,
+		clients:         clients,
+		opens:           newOpenStateStore(),
+		stagingStore:    stagingStore,
+		writeVerifier:   verf,
+		idleTimeout:     5 * time.Minute,
+		log:             logger,
+		startedAt:       clients.now(),
+		clientGCPending: make(map[InodeID]struct{}),
+		clientGCRecheck: make(map[InodeID]struct{}),
 	}
+	s.opens.now = func() time.Time { return s.clients.now() }
 	return s, nil
+}
+
+func (s *Server) scheduleClientGC(clientID uint64) {
+	id := InodeID(clientID)
+	s.clientGCMu.Lock()
+	if _, pending := s.clientGCPending[id]; !pending {
+		if len(s.clientGCPending) == maxPendingClientGC {
+			s.clientGCMu.Unlock()
+			// Collection is opportunistic; a later login will enqueue it again.
+			s.log.Warn("client GC queue is full")
+			return
+		}
+		s.clientGCPending[id] = struct{}{}
+	}
+	if s.clientGCRunning {
+		s.clientGCMu.Unlock()
+		return
+	}
+	s.clientGCRunning = true
+	s.clientGCDone = make(chan struct{})
+	s.clientGCMu.Unlock()
+	go s.runClientGC()
+}
+
+func (s *Server) runClientGC() {
+	for {
+		s.clientGCMu.Lock()
+		var clientID InodeID
+		for clientID = range s.clientGCPending {
+			delete(s.clientGCPending, clientID)
+			break
+		}
+		if clientID == 0 {
+			s.clientGCRunning = false
+			close(s.clientGCDone)
+			s.clientGCMu.Unlock()
+			return
+		}
+		s.clientGCMu.Unlock()
+
+		recheck, err := s.collectClientSafely(clientID)
+		if err != nil {
+			s.log.Warn("client GC failed", "clientid", uint64(clientID), "err", err)
+			recheck = true
+		}
+		if recheck {
+			s.clientGCMu.Lock()
+			_, alreadyQueued := s.clientGCRecheck[clientID]
+			dropped := !alreadyQueued &&
+				len(s.clientGCRecheck) == maxPendingClientGC
+			if !dropped {
+				s.clientGCRecheck[clientID] = struct{}{}
+			}
+			s.clientGCMu.Unlock()
+			if dropped {
+				s.log.Warn("client GC recheck queue is full")
+			}
+		}
+	}
+}
+
+func (s *Server) collectClientSafely(
+	clientID InodeID,
+) (recheck bool, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			recheck = true
+			s.log.Error("panic in client GC",
+				"clientid", uint64(clientID), "panic", recovered)
+		}
+	}()
+	return s.clients.collectStaleForClientResult(clientID)
+}
+
+func (s *Server) scheduleClientGCRechecks() {
+	s.clientGCMu.Lock()
+	pending := s.clientGCRecheck
+	s.clientGCRecheck = make(map[InodeID]struct{})
+	s.clientGCMu.Unlock()
+	for clientID := range pending {
+		s.scheduleClientGC(uint64(clientID))
+	}
+}
+
+func (s *Server) removeExpiredStaging() {
+	if s.clients.now().Before(s.startedAt.Add(nfsLeaseTime)) {
+		return
+	}
+	byClient := make(map[uint64][]InodeID)
+	for fileID := range s.stagingStore.StagedSizes() {
+		meta, found := s.stagingStore.GetMeta(fileID)
+		if !found || meta.ClientID == 0 {
+			continue
+		}
+		byClient[meta.ClientID] = append(byClient[meta.ClientID], fileID)
+	}
+	for clientID, fileIDs := range byClient {
+		expired, err := s.clients.IsLeaseExpired(clientID)
+		if err != nil {
+			s.log.Warn("staging lease check failed",
+				"clientid", clientID, "err", err)
+			continue
+		}
+		if expired {
+			for _, fileID := range fileIDs {
+				s.stagingStore.Remove(fileID)
+			}
+		}
+	}
+}
+
+func (s *Server) sweepExpiredClientState() {
+	s.opens.evictIdleOwners(
+		s.clients.now().Add(-nfsLeaseTime))
+	clients := make(map[uint64]struct{})
+	for _, clientID := range s.opens.activeClientIDs() {
+		clients[clientID] = struct{}{}
+	}
+	for _, clientID := range s.clients.cachedClientIDs() {
+		clients[clientID] = struct{}{}
+	}
+	for clientID := range clients {
+		expired, err := s.clients.ExpireIfLeaseDead(clientID)
+		if err != nil {
+			s.log.Warn("client lease sweep failed",
+				"clientid", clientID, "err", err)
+			continue
+		}
+		if expired {
+			live, err := s.clients.HasLiveLease(clientID)
+			if err != nil {
+				s.log.Warn("client lease recheck failed",
+					"clientid", clientID, "err", err)
+				continue
+			}
+			if live {
+				continue
+			}
+			s.expireClientState(clientID)
+		}
+	}
+}
+
+func (s *Server) runLeaseSweep() {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			s.log.Error("panic in lease sweeper", "panic", recovered)
+		}
+	}()
+	s.scheduleClientGCRechecks()
+	s.removeExpiredStaging()
+	s.sweepExpiredClientState()
+}
+
+func (s *Server) runLeaseSweeper() {
+	ticker := time.NewTicker(nfsLeaseTime)
+	defer ticker.Stop()
+	for range ticker.C {
+		s.runLeaseSweep()
+	}
 }
 
 func (s *Server) ListenAndServe(addr string) error {
@@ -70,6 +244,7 @@ func (s *Server) ListenAndServe(addr string) error {
 		return err
 	}
 	defer ln.Close()
+	go s.runLeaseSweeper()
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -138,6 +313,7 @@ type compoundState struct {
 	currentIDSet bool
 	savedID      InodeID
 	savedIDSet   bool
+	principal    rpcPrincipal
 }
 
 const maxCompoundOperations = 128
@@ -198,7 +374,7 @@ func (s *Server) handleCompound(req *rpcRequest) []byte {
 		return w.Finish()
 	}
 
-	st := &compoundState{}
+	st := &compoundState{principal: req.principal()}
 	overallStatus := NFS4_OK
 	opCount := 0
 
@@ -277,9 +453,10 @@ func (s *Server) handleCompound(req *rpcRequest) []byte {
 		case OP_SETATTR:
 			opStatus = s.opSetattr(op.AsSETATTR4args(), st, &w)
 		case OP_SETCLIENTID:
-			opStatus = s.opSetclientid(op.AsSETCLIENTID4args(), &w)
+			opStatus = s.opSetclientid(op.AsSETCLIENTID4args(), st, &w)
 		case OP_SETCLIENTID_CONFIRM:
-			opStatus = s.opSetclientidConfirm(op.AsSETCLIENTIDCONFIRM4args(), &w)
+			opStatus = s.opSetclientidConfirm(
+				op.AsSETCLIENTIDCONFIRM4args(), st, &w)
 		case OP_VERIFY:
 			opStatus = s.opVerify(op.AsVERIFY4args(), st, &w)
 		case OP_WRITE:

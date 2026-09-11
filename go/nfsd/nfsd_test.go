@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -53,16 +54,52 @@ func serveTestServer(t *testing.T, srv *Server) (addr string, cleanup func()) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var mu sync.Mutex
+	conns := make(map[net.Conn]struct{})
+	var wg sync.WaitGroup
 	go func() {
 		for {
 			conn, err := ln.Accept()
 			if err != nil {
 				return
 			}
-			go srv.handleConn(conn)
+			mu.Lock()
+			conns[conn] = struct{}{}
+			wg.Add(1)
+			mu.Unlock()
+			go func() {
+				defer func() {
+					mu.Lock()
+					delete(conns, conn)
+					mu.Unlock()
+					wg.Done()
+				}()
+				srv.handleConn(conn)
+			}()
 		}
 	}()
-	return ln.Addr().String(), func() { ln.Close() }
+	var once sync.Once
+	return ln.Addr().String(), func() {
+		once.Do(func() {
+			ln.Close()
+			mu.Lock()
+			for conn := range conns {
+				conn.Close()
+			}
+			mu.Unlock()
+			wg.Wait()
+			srv.waitForClientGC()
+		})
+	}
+}
+
+func (s *Server) waitForClientGC() {
+	s.clientGCMu.Lock()
+	done := s.clientGCDone
+	s.clientGCMu.Unlock()
+	if done != nil {
+		<-done
+	}
 }
 
 func dial(t *testing.T, addr string) net.Conn {
@@ -179,6 +216,57 @@ func TestEmptyCompound(t *testing.T) {
 	}
 }
 
+func TestRPCPrincipalIgnoresAuthSysCallerFields(t *testing.T) {
+	authSysBody := func(stamp uint32, machine string, uid uint32) []byte {
+		body := binary.BigEndian.AppendUint32(nil, stamp)
+		body = binary.BigEndian.AppendUint32(body, uint32(len(machine)))
+		body = append(body, machine...)
+		body = append(body, make([]byte, (4-len(machine)%4)%4)...)
+		body = binary.BigEndian.AppendUint32(body, uid)
+		body = binary.BigEndian.AppendUint32(body, 100)
+		body = binary.BigEndian.AppendUint32(body, 2)
+		body = binary.BigEndian.AppendUint32(body, 10)
+		body = binary.BigEndian.AppendUint32(body, 20)
+		return body
+	}
+	first := &rpcRequest{
+		credFlavor: authSys,
+		credBody:   authSysBody(1, "first-host", 1000),
+	}
+	second := &rpcRequest{
+		credFlavor: authSys,
+		credBody:   authSysBody(2, "second-host", 1000),
+	}
+	if first.principal() != second.principal() {
+		t.Fatal("AUTH_SYS timestamp or machine name changed the RPC principal")
+	}
+	differentUID := &rpcRequest{
+		credFlavor: authSys,
+		credBody:   authSysBody(2, "second-host", 1001),
+	}
+	if first.principal() == differentUID.principal() {
+		t.Fatal("different AUTH_SYS uid produced the same RPC principal")
+	}
+	differentFlavor := &rpcRequest{
+		credFlavor: authNone,
+		credBody:   first.credBody,
+	}
+	if first.principal() == differentFlavor.principal() {
+		t.Fatal("different credential flavor produced the same RPC principal")
+	}
+	shortFirst := (&rpcRequest{
+		credFlavor: authSys,
+		credBody:   []byte{1, 2, 3},
+	}).principal()
+	shortSecond := (&rpcRequest{
+		credFlavor: authSys,
+		credBody:   []byte{1, 2, 4},
+	}).principal()
+	if shortFirst == shortSecond {
+		t.Fatal("short AUTH_SYS bodies collapsed to one RPC principal")
+	}
+}
+
 func TestCompoundOperationLimit(t *testing.T) {
 	dir := t.TempDir()
 	addr, cleanup := startTestServer(t, dir)
@@ -271,26 +359,33 @@ func getAttrData(t *testing.T, getattrOk GETATTR4resok) []byte {
 	return getattrOk.ObjAttributes().AttrVals().Data()
 }
 
-// setupClient runs SETCLIENTID + SETCLIENTID_CONFIRM with a zero verifier.
-func setupClient(t *testing.T, conn net.Conn, xid *uint32) uint64 {
-	t.Helper()
-	return setupClientWithVerifier(t, conn, xid, [8]byte{})
+func verifierBytes(verifier Verifier4) [8]byte {
+	var data [8]byte
+	for i := range data {
+		data[i] = verifier.Data(i)
+	}
+	return data
 }
 
-func setupClientWithVerifier(
+func setVerifier(verifier Verifier4, data [8]byte) {
+	for i, b := range data {
+		verifier.SetData(i, b)
+	}
+}
+
+func requestClientID(
 	t *testing.T,
 	conn net.Conn,
 	xid *uint32,
+	identity string,
 	verifier [8]byte,
-) uint64 {
+) (uint64, [8]byte) {
 	t.Helper()
 	res := sendCompound(t, conn, *xid, func(w *COMPOUND4argsWriter) {
 		scw := w.AppendArgarray_Setclientid()
 		clientW := scw.StartClient()
-		for i, value := range verifier {
-			clientW.Verifier().SetData(i, value)
-		}
-		clientW = clientW.SetId([]byte("test-client"))
+		setVerifier(clientW.Verifier(), verifier)
+		clientW = clientW.SetId([]byte(identity))
 		buf := clientW.Finish()
 		scw.Resume(buf)
 		cbW := scw.StartCallback()
@@ -317,17 +412,46 @@ func setupClientWithVerifier(
 	if scRes.Disc() != NFS4_OK {
 		t.Fatalf("SETCLIENTID status = %d", scRes.Disc())
 	}
-	clientid := scRes.Value().AsSETCLIENTID4resok().Clientid()
+	scOK := scRes.Value().AsSETCLIENTID4resok()
+	return scOK.Clientid(), verifierBytes(scOK.SetclientidConfirm())
+}
 
-	res = sendCompound(t, conn, *xid, func(w *COMPOUND4argsWriter) {
+func confirmClientID(
+	t *testing.T,
+	conn net.Conn,
+	xid *uint32,
+	clientid uint64,
+	confirm [8]byte,
+) uint32 {
+	t.Helper()
+	res := sendCompound(t, conn, *xid, func(w *COMPOUND4argsWriter) {
 		scw := w.AppendArgarray_SetclientidConfirm()
 		scw.SetClientid(clientid)
+		setVerifier(scw.SetclientidConfirm(), confirm)
 	})
 	*xid++
-	iter = expectOK(t, res)
-	entry = nextOp(t, &iter)
-	if entry.Value().AsSETCLIENTIDCONFIRM4res().Status() != NFS4_OK {
-		t.Fatal("SETCLIENTID_CONFIRM failed")
+	return res.Status()
+}
+
+// setupClient runs SETCLIENTID + SETCLIENTID_CONFIRM with a zero verifier.
+func setupClient(t *testing.T, conn net.Conn, xid *uint32) uint64 {
+	t.Helper()
+	return setupClientWithVerifier(t, conn, xid, [8]byte{})
+}
+
+func setupClientWithVerifier(
+	t *testing.T,
+	conn net.Conn,
+	xid *uint32,
+	verifier [8]byte,
+) uint64 {
+	t.Helper()
+	clientid, confirm := requestClientID(
+		t, conn, xid, "test-client", verifier)
+	if status := confirmClientID(
+		t, conn, xid, clientid, confirm,
+	); status != NFS4_OK {
+		t.Fatalf("SETCLIENTID_CONFIRM status = %s", Nfsstat4Name(status))
 	}
 	return clientid
 }
@@ -788,6 +912,171 @@ func TestPutfhBadHandle(t *testing.T) {
 	}
 }
 
+func TestPutfhRejectsClientStoreHandles(t *testing.T) {
+	dir := t.TempDir()
+	srv, addr, cleanup := startTestServerWithServer(t, dir)
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+
+	xid := uint32(1)
+	clientID := setupClient(t, conn, &xid)
+	recordID, err := srv.fs.Lookup(InodeID(clientID), clientRecordName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, id := range map[string]InodeID{
+		"nfs directory":     srv.clients.nfsDirID,
+		"clients directory": srv.clients.dirID,
+		"clientid":          InodeID(clientID),
+		"client record":     recordID,
+	} {
+		t.Run(name, func(t *testing.T) {
+			fh := binary.BigEndian.AppendUint64(nil, uint64(id))
+			res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+				pw := w.AppendArgarray_Putfh()
+				buf := pw.StartObject().SetData(fh).Finish()
+				pw.Resume(buf)
+				w.Resume(pw.Finish())
+			})
+			xid++
+			if res.Status() != NFS4ERR_BADHANDLE {
+				t.Fatalf("PUTFH status = %s, want NFS4ERR_BADHANDLE",
+					Nfsstat4Name(res.Status()))
+			}
+		})
+	}
+}
+
+func TestPutfhAllowsUncachedClientStoreFileHandles(t *testing.T) {
+	dir := t.TempDir()
+	firstFS := NewLocalTernVFS(dir)
+	owner := clientOwner{
+		principal: rpcPrincipal{flavor: authSys, body: "owner"},
+	}
+	store, clientID := newConfirmedStoreClient(
+		t, firstFS, []byte("client"), [8]byte{1}, owner)
+	stateID := StateID{1}
+	if err := store.MarkOpen(clientID, stateID); err != nil {
+		t.Fatal(err)
+	}
+	recordID, err := firstFS.Lookup(
+		InodeID(clientID), clientRecordName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaseID, err := firstFS.Lookup(
+		InodeID(clientID), store.leaseName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	markerID, err := firstFS.Lookup(
+		InodeID(clientID), activeOpenName(stateID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	externalID, err := firstFS.CreateFile(
+		firstFS.RootID(), "ordinary", bytes.NewReader([]byte("data")))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	secondFS := NewLocalTernVFS(dir)
+	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewServer(secondFS, staging, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondFS.mu.Lock()
+	for _, id := range []InodeID{
+		recordID, leaseID, markerID, externalID,
+	} {
+		delete(secondFS.parent, id)
+	}
+	secondFS.mu.Unlock()
+	addr, cleanup := serveTestServer(t, srv)
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+
+	xid := uint32(1)
+	for name, id := range map[string]InodeID{
+		"record": recordID,
+		"lease":  leaseID,
+		"marker": markerID,
+	} {
+		t.Run(name, func(t *testing.T) {
+			res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+				pw := w.AppendArgarray_Putfh()
+				buf := pw.StartObject().SetData(
+					inodeIDToFH(id)).Finish()
+				pw.Resume(buf)
+				w.Resume(pw.Finish())
+			})
+			xid++
+			if res.Status() != NFS4_OK {
+				t.Fatalf("PUTFH status = %s, want NFS4_OK",
+					Nfsstat4Name(res.Status()))
+			}
+		})
+	}
+	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+		pw := w.AppendArgarray_Putfh()
+		buf := pw.StartObject().SetData(
+			inodeIDToFH(recordID)).Finish()
+		pw.Resume(buf)
+		w.Resume(pw.Finish())
+		rw := w.AppendArgarray_Read()
+		rw.Stateid().SetSeqid(0)
+		rw.SetOffset(0)
+		rw.SetCount(4096)
+	})
+	xid++
+	if res.Status() != NFS4_OK {
+		t.Fatalf("uncached client record READ = %s, want NFS4_OK",
+			Nfsstat4Name(res.Status()))
+	}
+	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+		pw := w.AppendArgarray_Putfh()
+		buf := pw.StartObject().SetData(
+			inodeIDToFH(externalID)).Finish()
+		pw.Resume(buf)
+		w.Resume(pw.Finish())
+	})
+	if res.Status() != NFS4_OK {
+		t.Fatalf("ordinary PUTFH status = %s, want NFS4_OK",
+			Nfsstat4Name(res.Status()))
+	}
+}
+
+func TestLocalTernVFSCreateFileReplacesExistingFile(t *testing.T) {
+	fs := NewLocalTernVFS(t.TempDir())
+	firstID, err := fs.CreateFile(
+		fs.RootID(), "record", bytes.NewReader([]byte("first")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondID, err := fs.CreateFile(
+		fs.RootID(), "record", bytes.NewReader([]byte("second")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondID == firstID {
+		t.Fatalf("replacement retained inode %d", firstID)
+	}
+	if _, err := fs.Stat(firstID); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("replaced inode still resolves: %v", err)
+	}
+	if got, err := fs.ReadAll(secondID); err != nil {
+		t.Fatal(err)
+	} else if string(got) != "second" {
+		t.Fatalf("replacement data = %q, want second", got)
+	}
+}
+
 func TestSavefhRestorefh(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "a.txt"), []byte("aaa"), 0644)
@@ -1131,12 +1420,16 @@ func TestSetclientidFlow(t *testing.T) {
 	if clientid == 0 {
 		t.Fatal("SETCLIENTID returned clientid=0")
 	}
+	confirm := verifierBytes(scOk.SetclientidConfirm())
+	if confirm == [8]byte{} {
+		t.Fatal("SETCLIENTID returned an all-zero confirm verifier")
+	}
 
 	// SETCLIENTID_CONFIRM
 	res = sendCompound(t, conn, 2, func(w *COMPOUND4argsWriter) {
 		scw := w.AppendArgarray_SetclientidConfirm()
 		scw.SetClientid(clientid)
-		// Setclientid_confirm verifier — leave as zero.
+		setVerifier(scw.SetclientidConfirm(), confirm)
 	})
 
 	iter = expectOK(t, res)
@@ -1156,6 +1449,787 @@ func TestSetclientidFlow(t *testing.T) {
 	if entry.Value().AsRENEW4res().Status() != NFS4_OK {
 		t.Fatal("RENEW failed")
 	}
+
+	res = sendCompound(t, conn, 4, func(w *COMPOUND4argsWriter) {
+		rw := w.AppendArgarray_Renew()
+		rw.SetClientid(0)
+	})
+	if res.Status() != NFS4ERR_STALE_CLIENTID {
+		t.Fatalf("RENEW unknown client status = %s, want NFS4ERR_STALE_CLIENTID",
+			Nfsstat4Name(res.Status()))
+	}
+}
+
+func addConfirmedOpenForTest(
+	t *testing.T,
+	srv *Server,
+	clientID uint64,
+	owner string,
+	fileID InodeID,
+	write bool,
+) openState {
+	t.Helper()
+	state, status := addOpenForTest(srv.opens,
+		openOwnerKey{clientID: clientID, owner: owner},
+		1, fileID, write, StateID{},
+	)
+	if status != NFS4_OK {
+		t.Fatalf("OPEN state setup = %s", Nfsstat4Name(status))
+	}
+	state, status = confirmOpenForTest(srv.opens, state.id, 1, fileID, 2)
+	if status != NFS4_OK {
+		t.Fatalf("OPEN_CONFIRM state setup = %s", Nfsstat4Name(status))
+	}
+	if err := srv.clients.MarkOpen(clientID, state.id); err != nil {
+		t.Fatal(err)
+	}
+	return state
+}
+
+func newClientStoreTestServer(
+	t *testing.T,
+) (*lookupFailureVFS, *Server, net.Conn, *uint32, uint64) {
+	t.Helper()
+	fs := &lookupFailureVFS{
+		TernVFS: NewLocalTernVFS(t.TempDir()),
+	}
+	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewServer(fs, staging, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr, cleanup := serveTestServer(t, srv)
+	conn := dial(t, addr)
+	t.Cleanup(func() {
+		conn.Close()
+		cleanup()
+	})
+	xid := uint32(1)
+	clientID := setupClient(t, conn, &xid)
+	return fs, srv, conn, &xid, clientID
+}
+
+func TestLookupDurableOpenStorageErrorPreservesClientState(t *testing.T) {
+	baseFS := NewLocalTernVFS(t.TempDir())
+	fs := &lookupFailureVFS{TernVFS: baseFS}
+	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewServer(fs, staging, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Unix(1000, 0)
+	srv.clients.now = func() time.Time { return base }
+	owner := clientOwner{
+		principal: rpcPrincipal{flavor: authSys, body: "owner"},
+	}
+	clientID, confirm, err := srv.clients.SetClientID(
+		[8]byte{1}, []byte("client"), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.clients.ConfirmClientID(
+		clientID, confirm, owner.principal,
+	); err != nil {
+		t.Fatal(err)
+	}
+	readerID, _, err := fs.ConstructFile(fs.RootID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := addConfirmedOpenForTest(
+		t, srv, clientID, "reader", readerID, false)
+	writerID, cookie, err := fs.ConstructFile(fs.RootID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer := addConfirmedOpenForTest(
+		t, srv, clientID, "writer", writerID, true)
+	if _, err := staging.Create(writerID, StagingMeta{
+		DirID:      fs.RootID(),
+		FileName:   "writer",
+		TernCookie: cookie,
+		NFSStateID: writer.id,
+		ClientID:   clientID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	fs.name = confirmedName
+	fs.remaining = 1
+	_, stateid := StartStateid4(nil)
+	stateid.SetSeqid(reader.generation)
+	writeStateID(stateid, reader.id)
+	if _, status := srv.lookupDurableOpen(
+		stateid, readerID,
+	); status != NFS4ERR_DELAY {
+		t.Fatalf("lookup status = %s, want NFS4ERR_DELAY",
+			Nfsstat4Name(status))
+	}
+	if _, status := srv.opens.lookup(
+		writer.id, writer.generation, writerID,
+	); status != NFS4_OK {
+		t.Fatalf("unrelated state after lookup error = %s, want NFS4_OK",
+			Nfsstat4Name(status))
+	}
+	if staging.Get(writerID) == nil {
+		t.Fatal("lookup error removed unrelated staging")
+	}
+	if _, err := baseFS.Lookup(
+		InodeID(clientID), activeOpenName(writer.id),
+	); err != nil {
+		t.Fatalf("lookup error removed unrelated marker: %v", err)
+	}
+}
+
+func TestOwnerOperationsPreserveStateOnClientStoreError(t *testing.T) {
+	t.Run("close", func(t *testing.T) {
+		fs, _, conn, xid, clientID := newClientStoreTestServer(t)
+		stateid, fh := openCreateFile(
+			t, conn, xid, clientID, "close.txt")
+		fs.name = confirmedName
+		fs.remaining = 1
+		if status := closeFileWithSeqStatus(
+			t, conn, xid, fh, stateid, 3,
+		); status != NFS4ERR_DELAY {
+			t.Fatalf("CLOSE with store error = %s, want DELAY",
+				Nfsstat4Name(status))
+		}
+		if status := closeFileWithSeqStatus(
+			t, conn, xid, fh, stateid, 4,
+		); status != NFS4_OK {
+			t.Fatalf("retried CLOSE = %s, want OK",
+				Nfsstat4Name(status))
+		}
+	})
+
+	t.Run("open confirm", func(t *testing.T) {
+		fs, _, conn, xid, clientID := newClientStoreTestServer(t)
+		status, stateid, fh, flags := openFileForOwner(
+			t, conn, xid, clientID, "owner", 1, "confirm.txt",
+			OPEN4_SHARE_ACCESS_BOTH, true, false,
+		)
+		if status != NFS4_OK || flags&OPEN4_RESULT_CONFIRM == 0 {
+			t.Fatalf("OPEN = %s flags=%#x", Nfsstat4Name(status), flags)
+		}
+		fs.name = confirmedName
+		fs.remaining = 1
+		if status := openConfirmStatus(
+			t, conn, xid, fh, 2, stateid,
+		); status != NFS4ERR_DELAY {
+			t.Fatalf("OPEN_CONFIRM with store error = %s, want DELAY",
+				Nfsstat4Name(status))
+		}
+		if status := openConfirmStatus(
+			t, conn, xid, fh, 3, stateid,
+		); status != NFS4_OK {
+			t.Fatalf("retried OPEN_CONFIRM = %s, want OK",
+				Nfsstat4Name(status))
+		}
+	})
+}
+
+func TestExpireIfLeaseDeadKeepsClientWithoutSlot(t *testing.T) {
+	fs := NewLocalTernVFS(t.TempDir())
+	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewServer(fs, staging, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := clientOwner{
+		principal: rpcPrincipal{flavor: authSys, body: "owner"},
+	}
+	clientID, confirm, err := srv.clients.SetClientID(
+		[8]byte{1}, []byte("client"), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.clients.ConfirmClientID(
+		clientID, confirm, owner.principal,
+	); err != nil {
+		t.Fatal(err)
+	}
+	op, _, _, status := srv.opens.startOpen(
+		openOwnerKey{clientID: clientID, owner: "owner"}, 1)
+	if status != NFS4_OK {
+		t.Fatalf("start OPEN = %s", Nfsstat4Name(status))
+	}
+	defer op.finishError(NFS4ERR_SERVERFAULT)
+
+	expired, err := srv.clients.ExpireIfLeaseDead(clientID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if expired {
+		t.Fatal("client with an in-flight first OPEN was expired")
+	}
+}
+
+func TestStagingSweepKeepsClientWithoutLeaseSlot(t *testing.T) {
+	fs := NewLocalTernVFS(t.TempDir())
+	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewServer(fs, staging, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Unix(1000, 0)
+	srv.startedAt = base
+	srv.clients.now = func() time.Time {
+		return base.Add(nfsLeaseTime + time.Second)
+	}
+	owner := clientOwner{
+		principal: rpcPrincipal{flavor: authSys, body: "owner"},
+	}
+	clientID, confirm, err := srv.clients.SetClientID(
+		[8]byte{1}, []byte("client"), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.clients.ConfirmClientID(
+		clientID, confirm, owner.principal,
+	); err != nil {
+		t.Fatal(err)
+	}
+	fileID, cookie, err := fs.ConstructFile(fs.RootID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := staging.Create(fileID, StagingMeta{
+		DirID:      fs.RootID(),
+		FileName:   "opening.txt",
+		TernCookie: cookie,
+		NFSStateID: StateID{1},
+		ClientID:   clientID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	srv.removeExpiredStaging()
+	if staging.Get(fileID) == nil {
+		t.Fatal("staging sweep removed an in-flight first OPEN")
+	}
+}
+
+func TestServerLeaseSweepExpiresAbandonedStaging(t *testing.T) {
+	baseFS := NewLocalTernVFS(t.TempDir())
+	fs := &removeFailureVFS{TernVFS: baseFS}
+	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewServer(fs, staging, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Unix(1000, 0)
+	srv.clients.now = func() time.Time { return base }
+	owner := clientOwner{
+		principal: rpcPrincipal{flavor: authSys, body: "owner"},
+	}
+	clientID, confirm, err := srv.clients.SetClientID(
+		[8]byte{1}, []byte("client"), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.clients.ConfirmClientID(
+		clientID, confirm, owner.principal,
+	); err != nil {
+		t.Fatal(err)
+	}
+	fileID, cookie, err := fs.ConstructFile(fs.RootID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := addConfirmedOpenForTest(
+		t, srv, clientID, "writer", fileID, true)
+	if _, err := staging.Create(fileID, StagingMeta{
+		DirID:      fs.RootID(),
+		FileName:   "abandoned.txt",
+		TernCookie: cookie,
+		NFSStateID: state.id,
+		ClientID:   clientID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	srv.clients.now = func() time.Time {
+		return base.Add(nfsLeaseTime + time.Second)
+	}
+	fs.name = activeOpenName(state.id)
+	fs.remaining = 1
+	srv.sweepExpiredClientState()
+	if staging.Get(fileID) == nil {
+		t.Fatal("marker cleanup failure removed staging")
+	}
+	if _, status := srv.opens.lookup(
+		state.id, state.generation, fileID,
+	); status != NFS4_OK {
+		t.Fatalf("marker cleanup failure removed state = %s",
+			Nfsstat4Name(status))
+	}
+	srv.sweepExpiredClientState()
+	if staging.Get(fileID) != nil {
+		t.Fatal("lease sweep retained abandoned staging")
+	}
+	if _, status := srv.opens.lookup(
+		state.id, state.generation, fileID,
+	); status != NFS4ERR_EXPIRED {
+		t.Fatalf("lease sweep state = %s, want NFS4ERR_EXPIRED",
+			Nfsstat4Name(status))
+	}
+	if _, err := fs.Lookup(
+		InodeID(clientID), activeOpenName(state.id),
+	); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("lease sweep retained active-open marker: %v", err)
+	}
+	if active, err := srv.clients.HasOpen(
+		clientID, state.id,
+	); err != nil {
+		t.Fatal(err)
+	} else if active {
+		t.Fatal("expired fleet marker remained active")
+	}
+}
+
+func TestServerLeaseSweepKeepsClientRenewedByAnotherOwner(t *testing.T) {
+	fs := NewLocalTernVFS(t.TempDir())
+	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewServer(fs, staging, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Unix(1000, 0)
+	srv.clients.now = func() time.Time { return base }
+	owner := clientOwner{
+		principal: rpcPrincipal{flavor: authSys, body: "owner"},
+	}
+	clientID, confirm, err := srv.clients.SetClientID(
+		[8]byte{1}, []byte("client"), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.clients.ConfirmClientID(
+		clientID, confirm, owner.principal,
+	); err != nil {
+		t.Fatal(err)
+	}
+	writerID, cookie, err := fs.ConstructFile(fs.RootID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer := addConfirmedOpenForTest(
+		t, srv, clientID, "writer", writerID, true)
+	if _, err := staging.Create(writerID, StagingMeta{
+		DirID:      fs.RootID(),
+		FileName:   "active.txt",
+		TernCookie: cookie,
+		NFSStateID: writer.id,
+		ClientID:   clientID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	readerID, _, err := fs.ConstructFile(fs.RootID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := addConfirmedOpenForTest(
+		t, srv, clientID, "reader", readerID, false)
+
+	srv.clients.now = func() time.Time {
+		return base.Add(nfsLeaseRenewAfter + time.Second)
+	}
+	if active, err := srv.clients.HasOpen(
+		clientID, reader.id,
+	); err != nil {
+		t.Fatal(err)
+	} else if !active {
+		t.Fatal("second owner could not renew the client lease")
+	}
+	srv.clients.now = func() time.Time {
+		return base.Add(nfsLeaseTime + 10*time.Second)
+	}
+	srv.sweepExpiredClientState()
+	if staging.Get(writerID) == nil {
+		t.Fatal("lease sweep removed staging for a renewed client")
+	}
+	if _, status := srv.opens.lookup(
+		writer.id, writer.generation, writerID,
+	); status != NFS4_OK {
+		t.Fatalf("renewed writer state = %s, want NFS4_OK",
+			Nfsstat4Name(status))
+	}
+}
+
+func TestNewServerDelaysExpiredRecoveredStagingRemoval(t *testing.T) {
+	fs := NewLocalTernVFS(t.TempDir())
+	stagingDir := t.TempDir()
+	staging, err := NewLocalStagingStore(stagingDir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clients, err := NewClientStore(fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Unix(1000, 0)
+	clients.now = func() time.Time { return base }
+	owner := clientOwner{
+		principal: rpcPrincipal{flavor: authSys, body: "owner"},
+	}
+	clientID, confirm, err := clients.SetClientID(
+		[8]byte{1}, []byte("client"), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := clients.ConfirmClientID(
+		clientID, confirm, owner.principal,
+	); err != nil {
+		t.Fatal(err)
+	}
+	fileID, cookie, err := fs.ConstructFile(fs.RootID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateID := StateID{1}
+	if err := clients.MarkOpen(clientID, stateID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := staging.Create(fileID, StagingMeta{
+		DirID:      fs.RootID(),
+		FileName:   "expired.txt",
+		TernCookie: cookie,
+		NFSStateID: stateID,
+		ClientID:   clientID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	liveID, liveConfirm, err := clients.SetClientID(
+		[8]byte{2}, []byte("live-client"), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := clients.ConfirmClientID(
+		liveID, liveConfirm, owner.principal,
+	); err != nil {
+		t.Fatal(err)
+	}
+	clients.now = func() time.Time { return base.Add(250 * time.Second) }
+	liveStateID := StateID{2}
+	if err := clients.MarkOpen(liveID, liveStateID); err != nil {
+		t.Fatal(err)
+	}
+	liveFileID, liveCookie, err := fs.ConstructFile(fs.RootID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := staging.Create(liveFileID, StagingMeta{
+		DirID:      fs.RootID(),
+		FileName:   "live.txt",
+		TernCookie: liveCookie,
+		NFSStateID: liveStateID,
+		ClientID:   liveID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	closeLocalStagingFiles(t, staging)
+	recovered, err := NewLocalStagingStore(stagingDir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewServer(fs, recovered, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.startedAt = base.Add(200 * time.Second)
+	srv.clients.now = func() time.Time { return srv.startedAt }
+	srv.removeExpiredStaging()
+	if recovered.Get(fileID) == nil {
+		t.Fatal("startup grace removed expired staging early")
+	}
+	srv.clients.now = func() time.Time {
+		return srv.startedAt.Add(nfsLeaseTime + time.Second)
+	}
+	srv.removeExpiredStaging()
+	if recovered.Get(fileID) != nil {
+		t.Fatal("startup retained expired staging after grace")
+	}
+	if recovered.Get(liveFileID) == nil {
+		t.Fatal("startup removed staging with a live lease")
+	}
+}
+
+func TestClientStoreGCKeepsConfirmedIncarnation(t *testing.T) {
+	fs := NewLocalTernVFS(t.TempDir())
+	store, err := NewClientStore(fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Unix(1000, 0)
+	store.now = func() time.Time { return base }
+	owner := clientOwner{
+		principal: rpcPrincipal{flavor: authSys, body: "owner"},
+	}
+	clientID, confirm, err := store.SetClientID(
+		[8]byte{1}, []byte("client"), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ConfirmClientID(
+		clientID, confirm, owner.principal,
+	); err != nil {
+		t.Fatal(err)
+	}
+	stateID := StateID{1}
+	if err := store.MarkOpen(clientID, stateID); err != nil {
+		t.Fatal(err)
+	}
+	store.now = func() time.Time {
+		return base.Add(nfsLeaseTime + time.Second)
+	}
+	if err := store.collectStaleForClient(InodeID(clientID)); err != nil {
+		t.Fatal(err)
+	}
+	store.now = func() time.Time {
+		return base.Add(nfsLeaseTime + clientGCGrace + 2*time.Second)
+	}
+	if err := store.collectStaleForClient(InodeID(clientID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fs.Stat(InodeID(clientID)); err != nil {
+		t.Fatalf("confirmed incarnation was collected: %v", err)
+	}
+	if confirmed, err := store.IsConfirmed(clientID); err != nil {
+		t.Fatal(err)
+	} else if !confirmed {
+		t.Fatal("confirmed clientid lost its pointer")
+	}
+}
+
+func countClientIncarnations(
+	t *testing.T,
+	fs TernVFS,
+	identityID InodeID,
+) int {
+	t.Helper()
+	var count int
+	var cursor uint64
+	for {
+		entries, next, err := fs.Readdir(identityID, cursor)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, entry := range entries {
+			if strings.HasPrefix(entry.Name, incarnationPrefix) {
+				count++
+			}
+		}
+		if next == 0 {
+			return count
+		}
+		cursor = next
+	}
+}
+
+func TestOpenRejectsUnconfirmedClient(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "file.txt"), nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, addr, cleanup := startTestServerWithServer(t, dir)
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+
+	xid := uint32(1)
+	clientID, _ := requestClientID(
+		t, conn, &xid, "unconfirmed-client", [8]byte{})
+	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+		w.AppendArgarray_Putrootfh()
+		ow := w.AppendArgarray_Open()
+		ow.SetSeqid(1)
+		ow.SetShareAccess(OPEN4_SHARE_ACCESS_READ)
+		ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
+		ownerW := ow.StartOwner()
+		ownerW = ownerW.SetClientid(clientID)
+		ownerW = ownerW.SetOwner([]byte("owner"))
+		buf := ownerW.Finish()
+		ow.Resume(buf)
+		ow.SetOpenhow_Default(OPEN4_NOCREATE)
+		claimW := ow.SetClaim_Null()
+		buf = claimW.SetData([]byte("file.txt")).Finish()
+		ow.Resume(buf)
+		w.Resume(ow.Finish())
+	})
+	if res.Status() != NFS4ERR_STALE_CLIENTID {
+		t.Fatalf("OPEN status = %s, want NFS4ERR_STALE_CLIENTID",
+			Nfsstat4Name(res.Status()))
+	}
+}
+
+func TestSetclientidPrincipalConflict(t *testing.T) {
+	fs := NewLocalTernVFS(t.TempDir())
+	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewServer(fs, staging, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.waitForClientGC()
+
+	authSysCredential := func(stamp, uid, gid uint32) []byte {
+		var cred []byte
+		cred = binary.BigEndian.AppendUint32(cred, stamp)
+		cred = binary.BigEndian.AppendUint32(cred, 4)
+		cred = append(cred, "host"...)
+		cred = binary.BigEndian.AppendUint32(cred, uid)
+		cred = binary.BigEndian.AppendUint32(cred, gid)
+		cred = binary.BigEndian.AppendUint32(cred, 0)
+		return cred
+	}
+	compound := func(
+		xid uint32,
+		cred []byte,
+		build func(*COMPOUND4argsWriter),
+	) COMPOUND4res {
+		body := buildCompoundBody(nil, build)
+		reply := srv.handleCompound(&rpcRequest{
+			xid:        xid,
+			prog:       nfsProg,
+			vers:       nfsVersion,
+			proc:       procCompound,
+			credFlavor: authSys,
+			credBody:   cred,
+			body:       body,
+		})
+		res, ok := ReadCOMPOUND4res(mustParseRPCReply(t, reply))
+		if !ok {
+			t.Fatal("failed to parse COMPOUND4res")
+		}
+		return res
+	}
+	setclientid := func(w *COMPOUND4argsWriter) {
+		scw := w.AppendArgarray_Setclientid()
+		clientW := scw.StartClient()
+		setVerifier(clientW.Verifier(), [8]byte{1})
+		clientW = clientW.SetId([]byte("shared-client"))
+		buf := clientW.Finish()
+		scw.Resume(buf)
+		cbW := scw.StartCallback()
+		cbW.SetCbProgram(0x40000000)
+		locW := cbW.StartCbLocation()
+		netidW := locW.StartRNetid()
+		buf = netidW.SetData([]byte("tcp")).Finish()
+		locW.Resume(buf)
+		addrW := locW.StartRAddr()
+		buf = addrW.SetData([]byte("127.0.0.1.1.2")).Finish()
+		locW.Resume(buf)
+		buf = locW.Finish()
+		cbW.Resume(buf)
+		buf = cbW.Finish()
+		scw.Resume(buf)
+		scw.SetCallbackIdent(0)
+		w.Resume(scw.Finish())
+	}
+
+	firstCred := authSysCredential(1, 1000, 1000)
+	res := compound(1, firstCred, setclientid)
+	iter := expectOK(t, res)
+	entry := nextOp(t, &iter)
+	ok := entry.Value().AsSETCLIENTID4resEntry().
+		Value().AsSETCLIENTID4resok()
+	clientID := ok.Clientid()
+	confirm := verifierBytes(ok.SetclientidConfirm())
+
+	secondCred := authSysCredential(2, 1001, 1001)
+	t.Run("confirmation principal", func(t *testing.T) {
+		res = compound(2, secondCred,
+			func(w *COMPOUND4argsWriter) {
+				cw := w.AppendArgarray_SetclientidConfirm()
+				cw.SetClientid(clientID)
+				setVerifier(cw.SetclientidConfirm(), confirm)
+			})
+		if res.Status() != NFS4ERR_CLID_INUSE {
+			t.Fatalf("conflicting SETCLIENTID_CONFIRM status = %s, want %s",
+				Nfsstat4Name(res.Status()), Nfsstat4Name(NFS4ERR_CLID_INUSE))
+		}
+
+		res = compound(3, authSysCredential(3, 1000, 1000),
+			func(w *COMPOUND4argsWriter) {
+				cw := w.AppendArgarray_SetclientidConfirm()
+				cw.SetClientid(clientID)
+				setVerifier(cw.SetclientidConfirm(), confirm)
+			})
+		if res.Status() != NFS4_OK {
+			t.Fatalf("SETCLIENTID_CONFIRM status = %s",
+				Nfsstat4Name(res.Status()))
+		}
+	})
+
+	var open openState
+	t.Run("active state", func(t *testing.T) {
+		var status uint32
+		open, status = addOpenForTest(srv.opens,
+			openOwnerKey{clientID: clientID, owner: "owner"},
+			1, MakeInodeID(InodeTypeFile, 1), false, StateID{},
+		)
+		if status != NFS4_OK {
+			t.Fatalf("OPEN state setup status = %s", Nfsstat4Name(status))
+		}
+		if err := srv.clients.MarkOpen(clientID, open.id); err != nil {
+			t.Fatal(err)
+		}
+
+		res = compound(4, secondCred, setclientid)
+		if res.Status() != NFS4ERR_CLID_INUSE {
+			t.Fatalf("conflicting SETCLIENTID status = %s, want %s",
+				Nfsstat4Name(res.Status()), Nfsstat4Name(NFS4ERR_CLID_INUSE))
+		}
+		iter = res.Resarray()
+		entry = nextOp(t, &iter)
+		location := entry.Value().AsSETCLIENTID4resEntry().
+			Value().AsClientaddr4()
+		if got := string(location.RNetid().Data()); got != "tcp" {
+			t.Fatalf("conflicting client netid = %q, want %q", got, "tcp")
+		}
+		if got := string(location.RAddr().Data()); got != "127.0.0.1.1.2" {
+			t.Fatalf("conflicting client address = %q", got)
+		}
+	})
+
+	t.Run("inactive state", func(t *testing.T) {
+		if _, status := confirmOpenForTest(srv.opens,
+			open.id, 1, open.fileID, 2,
+		); status != NFS4_OK {
+			t.Fatalf("confirm state setup status = %s", Nfsstat4Name(status))
+		}
+		if _, status := closeOpenForTest(srv.opens, open.id, 3); status != NFS4_OK {
+			t.Fatalf("close state setup status = %s", Nfsstat4Name(status))
+		}
+		if err := srv.clients.RemoveOpen(clientID, open.id); err != nil {
+			t.Fatal(err)
+		}
+		res = compound(5, secondCred, setclientid)
+		if res.Status() != NFS4_OK {
+			t.Fatalf("inactive conflicting SETCLIENTID status = %s, want NFS4_OK",
+				Nfsstat4Name(res.Status()))
+		}
+	})
 }
 
 func TestClientStoreRecognizesConfirmedClientAfterRestart(t *testing.T) {
@@ -1164,11 +2238,14 @@ func TestClientStoreRecognizesConfirmedClientAfterRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	clientID, err := first.SetClientID([8]byte{}, []byte("test-client"))
+	clientID, confirm, err := first.SetClientID(
+		[8]byte{}, []byte("test-client"), clientOwner{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := first.ConfirmClientID(clientID); err != nil {
+	if _, err := first.ConfirmClientID(
+		clientID, confirm, rpcPrincipal{},
+	); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1176,7 +2253,11 @@ func TestClientStoreRecognizesConfirmedClientAfterRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !second.IsConfirmed(clientID) {
+	confirmed, err := second.IsConfirmed(clientID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !confirmed {
 		t.Fatal("confirmed client was stale after ClientStore restart")
 	}
 }
@@ -2799,6 +3880,25 @@ func TestWriteAndRead(t *testing.T) {
 		t.Fatalf("WRITE count = %d, want %d", writeOk.Count(), len(writeData))
 	}
 
+	// The anonymous stateid is valid for WRITE as well as READ.
+	anonymousData := []byte(" anonymous")
+	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+		pw := w.AppendArgarray_Putfh()
+		buf := pw.StartObject().SetData(fh).Finish()
+		pw.Resume(buf)
+		w.Resume(pw.Finish())
+
+		ww := w.AppendArgarray_Write()
+		ww.Stateid().SetSeqid(0)
+		ww = ww.SetOffset(uint64(len(writeData)))
+		ww = ww.SetStable(2)
+		ww = ww.SetData(anonymousData)
+		w.Resume(ww.Finish())
+	})
+	xid++
+	expectOK(t, res)
+	writeData = append(writeData, anonymousData...)
+
 	closeFile(t, conn, &xid, fh, openStateid)
 
 	// Verify the file was written to disk.
@@ -3322,6 +4422,34 @@ func openConfirmStatus(
 	})
 	*xid++
 	return res.Status()
+}
+
+func activeOpenMarkerCount(
+	t *testing.T,
+	srv *Server,
+	clientID uint64,
+) int {
+	t.Helper()
+	count := 0
+	var cursor uint64
+	for {
+		entries, next, err := srv.fs.Readdir(InodeID(clientID), cursor)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, entry := range entries {
+			if isActiveOpenName(entry.Name) {
+				count++
+			}
+		}
+		if next == 0 {
+			return count
+		}
+		if next == cursor {
+			t.Fatal("marker listing cursor did not advance")
+		}
+		cursor = next
+	}
 }
 
 func setStateid(dst Stateid4, stateid [16]byte) {
@@ -4177,6 +5305,30 @@ func TestSetattrSize(t *testing.T) {
 		t.Fatalf("SETATTR status = %s", Nfsstat4Name(entry.Value().AsSETATTR4res().Status()))
 	}
 
+	// The anonymous stateid is also valid for a size-changing SETATTR.
+	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+		pw := w.AppendArgarray_Putfh()
+		buf := pw.StartObject().SetData(fh).Finish()
+		pw.Resume(buf)
+		w.Resume(pw.Finish())
+
+		saw := w.AppendArgarray_Setattr()
+		saw.Stateid().SetSeqid(0)
+		faw := saw.StartObjAttributes()
+		bmW := faw.StartAttrmask()
+		bmW.AppendData(1 << FATTR4_SIZE)
+		buf = bmW.Finish()
+		faw.Resume(buf)
+		attrData := make([]byte, 8)
+		binary.BigEndian.PutUint64(attrData, 5)
+		buf = faw.StartAttrVals().SetData(attrData).Finish()
+		faw.Resume(buf)
+		saw.Resume(faw.Finish())
+		w.Resume(saw.Finish())
+	})
+	xid++
+	expectOK(t, res)
+
 	// Close and verify.
 	closeFile(t, conn, &xid, fh, stateid)
 
@@ -4184,8 +5336,8 @@ func TestSetattrSize(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(data) != 10 {
-		t.Fatalf("file size = %d, want 10", len(data))
+	if len(data) != 5 {
+		t.Fatalf("file size = %d, want 5", len(data))
 	}
 }
 
@@ -4381,7 +5533,7 @@ func TestOpenConfirmOldStateidAdvancesSeqid(t *testing.T) {
 
 func TestCloseReplay(t *testing.T) {
 	dir := t.TempDir()
-	addr, cleanup := startTestServer(t, dir)
+	srv, addr, cleanup := startTestServerWithServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -4410,6 +5562,13 @@ func TestCloseReplay(t *testing.T) {
 	}
 	if replay != first {
 		t.Fatalf("CLOSE replay stateid = %x, want %x", replay, first)
+	}
+	var localStateID StateID
+	copy(localStateID[:], stateid[4:])
+	if _, err := srv.fs.Lookup(
+		InodeID(clientid), activeOpenName(localStateID),
+	); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("CLOSE replay retained the open marker: %v", err)
 	}
 }
 
@@ -4522,7 +5681,7 @@ func TestReopenReusesState(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	addr, cleanup := startTestServer(t, dir)
+	srv, addr, cleanup := startTestServerWithServer(t, dir)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
@@ -4562,6 +5721,9 @@ func TestReopenReusesState(t *testing.T) {
 	if !bytes.Equal(upgradedFH, fh) {
 		t.Fatal("second OPEN returned a different filehandle")
 	}
+	if got := activeOpenMarkerCount(t, srv, clientID); got != 1 {
+		t.Fatalf("active-open markers after reopen = %d, want 1", got)
+	}
 	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
 		pw := w.AppendArgarray_Putfh()
 		buf := pw.StartObject().SetData(fh).Finish()
@@ -4581,6 +5743,9 @@ func TestReopenReusesState(t *testing.T) {
 		t, conn, &xid, fh, upgraded, 4,
 	); status != NFS4_OK {
 		t.Fatalf("CLOSE status = %s", Nfsstat4Name(status))
+	}
+	if got := activeOpenMarkerCount(t, srv, clientID); got != 0 {
+		t.Fatalf("active-open markers after CLOSE = %d, want 0", got)
 	}
 }
 
@@ -4636,6 +5801,9 @@ func TestWriteCloseWithoutStagingExpiresAndDropsState(t *testing.T) {
 	); status != NFS4ERR_EXPIRED {
 		t.Fatalf("replayed CLOSE without staging = %s, want NFS4ERR_EXPIRED",
 			Nfsstat4Name(status))
+	}
+	if got := activeOpenMarkerCount(t, srv, clientID); got != 0 {
+		t.Fatalf("active-open markers after expired CLOSE = %d, want 0", got)
 	}
 }
 
@@ -4706,6 +5874,9 @@ func TestUnconfirmedOwnerReplacementOpen(t *testing.T) {
 				t, conn, &xid, secondFH, second, nextSeq+1,
 			); status != NFS4_OK {
 				t.Fatalf("replacement CLOSE = %s", Nfsstat4Name(status))
+			}
+			if got := activeOpenMarkerCount(t, srv, clientID); got != 0 {
+				t.Fatalf("active-open markers after abandonment = %d, want 0", got)
 			}
 		})
 	}
@@ -5512,6 +6683,11 @@ func TestOpenStateStoreCloseChecksSeqidBeforeStateid(t *testing.T) {
 	owner := openOwnerKey{clientID: 7, owner: "owner"}
 	fileID := MakeInodeID(InodeTypeFile, 1)
 	state := addConfirmedOpen(t, store, owner, fileID)
+	if _, status := addOpenForTest(store,
+		owner, 50, fileID, false, StateID{},
+	); status != NFS4ERR_BAD_SEQID {
+		t.Fatalf("bad OPEN seqid status = %s", Nfsstat4Name(status))
+	}
 	if _, _, status := validateCloseForTest(store,
 		state.id, 1, fileID, 50,
 	); status != NFS4ERR_BAD_SEQID {
@@ -5543,6 +6719,48 @@ func TestOpenStateStoreLookupClassifiesStateids(t *testing.T) {
 		StateID{}, 0, fileID,
 	); status != NFS4ERR_BAD_STATEID {
 		t.Fatalf("unknown stateid status = %s", Nfsstat4Name(status))
+	}
+}
+
+func TestOpenStateStoreCloseClassifiesStateids(t *testing.T) {
+	cases := []struct {
+		name string
+		want uint32
+	}{
+		{"old generation", NFS4ERR_OLD_STATEID},
+		{"future generation", NFS4ERR_BAD_STATEID},
+		{"wrong file", NFS4ERR_BAD_STATEID},
+		{"stale epoch", NFS4ERR_STALE_STATEID},
+		{"unknown stateid", NFS4ERR_BAD_STATEID},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newOpenStateStore()
+			fileID := MakeInodeID(InodeTypeFile, 1)
+			state := addConfirmedOpen(
+				t, store, openOwnerKey{clientID: 8, owner: tc.name}, fileID)
+			id := state.id
+			generation := uint32(2)
+			switch tc.name {
+			case "old generation":
+				generation = 1
+			case "future generation":
+				generation = 3
+			case "wrong file":
+				fileID = MakeInodeID(InodeTypeFile, 2)
+			case "stale epoch":
+				binary.BigEndian.PutUint32(id[0:4], 1)
+			case "unknown stateid":
+				id = StateID{}
+				generation = 0
+			}
+			if _, _, status := validateCloseForTest(store,
+				id, generation, fileID, 3,
+			); status != tc.want {
+				t.Fatalf("status = %s, want %s",
+					Nfsstat4Name(status), Nfsstat4Name(tc.want))
+			}
+		})
 	}
 }
 
@@ -5654,18 +6872,25 @@ func TestOpenStateStoreKeepsOtherOwnersUntilClientPurge(t *testing.T) {
 			Nfsstat4Name(status))
 	}
 
-	fileIDs := store.purgeClient(clientID)
-	if len(fileIDs) != 1 || fileIDs[0] != states[1].fileID {
-		t.Fatalf("purged staging file IDs = %v, want [%v]",
-			fileIDs, states[1].fileID)
+	expired := store.expireClient(clientID)
+	if len(expired) != 1 || expired[0].id != states[1].id {
+		t.Fatalf("expired states = %v, want stateid %x",
+			expired, states[1].id)
 	}
 	if len(store.states) != 0 || len(store.owners) != 0 {
 		t.Fatalf("reboot retained states=%d owners=%d",
 			len(store.states), len(store.owners))
 	}
+	for _, state := range states {
+		if _, status := store.lookup(
+			state.id, 2, state.fileID,
+		); status != NFS4ERR_EXPIRED {
+			t.Fatalf("reboot-purged state = %s", Nfsstat4Name(status))
+		}
+	}
 }
 
-func TestOpenStateStoreBoundsRebootTombstones(t *testing.T) {
+func TestOpenStateStoreBoundsExpiredTombstones(t *testing.T) {
 	store := newOpenStateStore()
 	defer assertOpenStateIndex(t, store)
 	fileID := MakeInodeID(InodeTypeFile, 1)
@@ -5681,22 +6906,15 @@ func TestOpenStateStoreBoundsRebootTombstones(t *testing.T) {
 		if i == 0 {
 			firstStateID = state.id
 		}
-		store.purgeClient(clientID)
+		store.expireClient(clientID)
 	}
 
 	if len(store.expired) != maxTombstones {
 		t.Fatalf("expired stateids = %d, want %d",
 			len(store.expired), maxTombstones)
 	}
-	if len(store.revoked) != maxTombstones {
-		t.Fatalf("revoked clientids = %d, want %d",
-			len(store.revoked), maxTombstones)
-	}
 	if _, found := store.expired[firstStateID]; found {
 		t.Fatal("oldest expired stateid was not evicted")
-	}
-	if _, found := store.revoked[1]; found {
-		t.Fatal("oldest revoked clientid was not evicted")
 	}
 }
 
@@ -5747,6 +6965,7 @@ func closeLocalStagingFiles(t *testing.T, store *LocalStagingStore) {
 	t.Helper()
 	store.mu.Lock()
 	defer store.mu.Unlock()
+
 	for _, entry := range store.files {
 		if err := entry.file.f.Sync(); err != nil {
 			t.Fatal(err)
@@ -5760,6 +6979,10 @@ func closeLocalStagingFiles(t *testing.T, store *LocalStagingStore) {
 type restartedStagedWrite struct {
 	rootDir    string
 	stagingDir string
+	fs         TernVFS
+	srv        *Server
+	staging    *LocalStagingStore
+	clientID   uint64
 	conn       net.Conn
 	xid        uint32
 	stateid    [16]byte
@@ -5800,6 +7023,7 @@ func restartWithStagedWrite(
 		ww = ww.SetData(initial)
 		w.Resume(ww.Finish())
 	})
+	xid++
 	expectOK(t, res)
 	fileID, ok := fhToInodeID(fh)
 	if !ok {
@@ -5813,8 +7037,13 @@ func restartWithStagedWrite(
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, found := recoveredStaging.GetMeta(fileID); !found {
+	meta, found := recoveredStaging.GetMeta(fileID)
+	if !found {
 		t.Fatal("staging sidecar was not recovered")
+	}
+	if meta.ClientID != clientID {
+		t.Fatalf("recovered clientid = %d, want %d",
+			meta.ClientID, clientID)
 	}
 	second, err := NewServer(fs, recoveredStaging, nil)
 	if err != nil {
@@ -5830,10 +7059,45 @@ func restartWithStagedWrite(
 	return restartedStagedWrite{
 		rootDir:    rootDir,
 		stagingDir: stagingDir,
+		fs:         fs,
+		srv:        second,
+		staging:    recoveredStaging,
+		clientID:   clientID,
 		conn:       conn,
 		xid:        100,
 		stateid:    stateid,
 		fh:         fh,
+	}
+}
+
+func TestRecoveredStagedWriteWithDeadLeaseExpires(t *testing.T) {
+	restarted := restartWithStagedWrite(
+		t, "expired-lease.txt", []byte("staged data"))
+	restarted.srv.clients.now = func() time.Time {
+		return time.Now().Add(2 * nfsLeaseTime)
+	}
+	res := sendCompound(
+		t, restarted.conn, restarted.xid,
+		func(w *COMPOUND4argsWriter) {
+			pw := w.AppendArgarray_Putfh()
+			buf := pw.StartObject().SetData(restarted.fh).Finish()
+			pw.Resume(buf)
+			w.Resume(pw.Finish())
+			rw := w.AppendArgarray_Read()
+			setStateid(rw.Stateid(), restarted.stateid)
+			rw.SetOffset(0)
+			rw.SetCount(1)
+		})
+	if res.Status() != NFS4ERR_EXPIRED {
+		t.Fatalf("recovered READ with dead lease = %s, want EXPIRED",
+			Nfsstat4Name(res.Status()))
+	}
+	fileID, ok := fhToInodeID(restarted.fh)
+	if !ok {
+		t.Fatal("invalid recovered filehandle")
+	}
+	if restarted.staging.Get(fileID) != nil {
+		t.Fatal("dead recovered lease retained staging")
 	}
 }
 
@@ -5934,6 +7198,68 @@ func TestStagedWriteOperationsAfterServerRestart(t *testing.T) {
 			if len(entries) != 0 {
 				t.Fatalf("recovered CLOSE retained staging files: %v", entries)
 			}
+			var localStateID StateID
+			copy(localStateID[:], restarted.stateid[4:])
+			if _, err := restarted.fs.Lookup(
+				InodeID(restarted.clientID), activeOpenName(localStateID),
+			); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("recovered CLOSE retained the open marker: %v", err)
+			}
+		})
+	}
+}
+
+func TestRecoveredStagedWriteRequiresActiveMarker(t *testing.T) {
+	for _, operation := range []string{"read", "close"} {
+		t.Run(operation, func(t *testing.T) {
+			restarted := restartWithStagedWrite(
+				t, operation+".txt", []byte("staged data"))
+			var stateID StateID
+			copy(stateID[:], restarted.stateid[4:])
+			store, err := NewClientStore(restarted.fs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.RemoveOpen(
+				restarted.clientID, stateID,
+			); err != nil {
+				t.Fatal(err)
+			}
+
+			var status uint32
+			switch operation {
+			case "read":
+				res := sendCompound(
+					t, restarted.conn, restarted.xid,
+					func(w *COMPOUND4argsWriter) {
+						pw := w.AppendArgarray_Putfh()
+						buf := pw.StartObject().
+							SetData(restarted.fh).Finish()
+						pw.Resume(buf)
+						w.Resume(pw.Finish())
+						rw := w.AppendArgarray_Read()
+						setStateid(rw.Stateid(), restarted.stateid)
+						rw.SetOffset(0)
+						rw.SetCount(1)
+					})
+				status = res.Status()
+			case "close":
+				status = closeFileWithSeqStatus(
+					t, restarted.conn, &restarted.xid,
+					restarted.fh, restarted.stateid, 3)
+			}
+			if status != NFS4ERR_EXPIRED {
+				t.Fatalf("%s status = %s, want NFS4ERR_EXPIRED",
+					operation, Nfsstat4Name(status))
+			}
+			entries, err := os.ReadDir(restarted.stagingDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(entries) != 0 {
+				t.Fatalf("%s retained staging files: %v",
+					operation, entries)
+			}
 		})
 	}
 }
@@ -5989,6 +7315,200 @@ func TestSetclientidRebootRemovesStagingFiles(t *testing.T) {
 		t.Fatalf("CLOSE after reboot = %s, want NFS4ERR_EXPIRED",
 			Nfsstat4Name(status))
 	}
+}
+
+func TestLocalStagingStoreLoadsLegacySidecar(t *testing.T) {
+	dir := t.TempDir()
+	id := MakeInodeID(InodeTypeFile, 42)
+	data := []byte("legacy staged data")
+	if err := os.WriteFile(
+		filepath.Join(dir, fmt.Sprintf("%016x.staging", uint64(id))),
+		data, 0600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	meta := StagingMeta{
+		DirID:      MakeInodeID(InodeTypeDir, 7),
+		FileName:   "legacy.txt",
+		TernCookie: Cookie{1, 2, 3},
+		NFSStateID: StateID{4, 5, 6},
+		ClientID:   99,
+	}
+	metaPath := filepath.Join(
+		dir, fmt.Sprintf("%016x.meta", uint64(id)))
+	if err := saveStagingMeta(metaPath, meta); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := os.ReadFile(metaPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(metaPath, encoded[:len(encoded)-8], 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := NewLocalStagingStore(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeLocalStagingFiles(t, store)
+	gotMeta, found := store.GetMeta(id)
+	if !found {
+		t.Fatal("legacy staging sidecar was not loaded")
+	}
+	meta.ClientID = 0
+	if gotMeta != meta {
+		t.Fatalf("legacy staging metadata = %+v, want %+v", gotMeta, meta)
+	}
+	buf := make([]byte, len(data))
+	n, eof, err := store.Get(id).Read(0, buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != len(data) || !eof || !bytes.Equal(buf, data) {
+		t.Fatalf("legacy staging data = %q, n=%d eof=%t", buf, n, eof)
+	}
+}
+
+func TestLoadStagingMetaRejectsTrailingBytes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "staging.meta")
+	meta := StagingMeta{
+		DirID:      MakeInodeID(InodeTypeDir, 1),
+		FileName:   "file.txt",
+		TernCookie: Cookie{1},
+		NFSStateID: StateID{2},
+		ClientID:   3,
+	}
+	if err := saveStagingMeta(path, meta); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(data, 0), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadStagingMeta(path); err == nil {
+		t.Fatal("staging metadata with trailing bytes was accepted")
+	}
+}
+
+func TestSetclientidReboot(t *testing.T) {
+	dir := t.TempDir()
+	srv, addr, cleanup := startTestServerWithServer(t, dir)
+	fs := srv.fs
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+
+	xid := uint32(1)
+	clientid1 := setupClient(t, conn, &xid)
+	stateid, fh := openCreateFile(
+		t, conn, &xid, clientid1, "reboot.txt")
+
+	other, err := NewClientStore(fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientid2, confirm2, err := other.SetClientID(
+		[8]byte{1}, []byte("test-client"), clientOwner{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if clientid2 == clientid1 {
+		t.Fatal("client reboot reused clientid")
+	}
+	if replaced, err := other.ConfirmClientID(
+		clientid2, confirm2, rpcPrincipal{},
+	); err != nil {
+		t.Fatal(err)
+	} else if replaced != clientid1 {
+		t.Fatalf("reboot replaced clientid %d, want %d", replaced, clientid1)
+	}
+
+	t.Run("renew", func(t *testing.T) {
+		res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+			rw := w.AppendArgarray_Renew()
+			rw.SetClientid(clientid1)
+		})
+		xid++
+		if res.Status() != NFS4ERR_STALE_CLIENTID {
+			t.Fatalf("RENEW after remote reboot = %s, want NFS4ERR_STALE_CLIENTID",
+				Nfsstat4Name(res.Status()))
+		}
+	})
+
+	t.Run("open", func(t *testing.T) {
+		openStatus, _, _, _ := openFileForOwner(
+			t, conn, &xid, clientid1, "test-owner-reboot.txt", 3,
+			"reboot.txt", OPEN4_SHARE_ACCESS_BOTH, true, false,
+		)
+		if openStatus != NFS4ERR_STALE_CLIENTID {
+			t.Fatalf("OPEN after remote reboot = %s, want NFS4ERR_STALE_CLIENTID",
+				Nfsstat4Name(openStatus))
+		}
+	})
+
+	t.Run("state operations", func(t *testing.T) {
+		res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+			pw := w.AppendArgarray_Putfh()
+			buf := pw.StartObject().SetData(fh).Finish()
+			pw.Resume(buf)
+			w.Resume(pw.Finish())
+			ww := w.AppendArgarray_Write()
+			setStateid(ww.Stateid(), stateid)
+			ww = ww.SetOffset(0)
+			ww = ww.SetStable(fileSync4)
+			ww = ww.SetData([]byte("stale"))
+			w.Resume(ww.Finish())
+		})
+		xid++
+		if res.Status() != NFS4ERR_EXPIRED {
+			t.Fatalf("WRITE after remote reboot = %s, want NFS4ERR_EXPIRED",
+				Nfsstat4Name(res.Status()))
+		}
+		fileID, ok := fhToInodeID(fh)
+		if !ok {
+			t.Fatal("invalid filehandle returned by OPEN")
+		}
+		if srv.stagingStore.Get(fileID) != nil {
+			t.Fatal("remote reboot left the local staging file active")
+		}
+		var localStateID StateID
+		copy(localStateID[:], stateid[4:])
+		if _, status := srv.opens.lookup(
+			localStateID,
+			binary.BigEndian.Uint32(stateid[:4]),
+			fileID,
+		); status != NFS4ERR_EXPIRED {
+			t.Fatalf("local open after remote reboot = %s, want NFS4ERR_EXPIRED",
+				Nfsstat4Name(status))
+		}
+
+		res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+			pw := w.AppendArgarray_Putfh()
+			buf := pw.StartObject().SetData(fh).Finish()
+			pw.Resume(buf)
+			w.Resume(pw.Finish())
+			rw := w.AppendArgarray_Read()
+			setStateid(rw.Stateid(), stateid)
+			rw.SetOffset(0)
+			rw.SetCount(1)
+		})
+		xid++
+		if res.Status() != NFS4ERR_EXPIRED {
+			t.Fatalf("READ after remote reboot = %s, want NFS4ERR_EXPIRED",
+				Nfsstat4Name(res.Status()))
+		}
+
+		status := closeFileWithSeqStatus(
+			t, conn, &xid, fh, stateid, 3)
+		if status != NFS4ERR_EXPIRED {
+			t.Fatalf("CLOSE after remote reboot = %s, want NFS4ERR_EXPIRED",
+				Nfsstat4Name(status))
+		}
+	})
 }
 
 // TestReaddirEntryXDRSize verifies that the size prediction formula in
@@ -6051,5 +7571,354 @@ func TestReaddirEntryXDRSize(t *testing.T) {
 					predicted, expectedDirlist, actualDirlist)
 			}
 		})
+	}
+}
+
+func TestServerLeaseSweepExpiresButDoesNotRevokeConfirmedClient(t *testing.T) {
+	fs := NewLocalTernVFS(t.TempDir())
+	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewServer(fs, staging, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Unix(1000, 0)
+	srv.clients.now = func() time.Time { return base }
+	owner := clientOwner{
+		principal: rpcPrincipal{flavor: authSys, body: "owner"},
+	}
+	clientID, confirm, err := srv.clients.SetClientID(
+		[8]byte{1}, []byte("client"), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.clients.ConfirmClientID(
+		clientID, confirm, owner.principal,
+	); err != nil {
+		t.Fatal(err)
+	}
+	fileID, _, err := fs.ConstructFile(fs.RootID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := addConfirmedOpenForTest(
+		t, srv, clientID, "reader", fileID, false)
+
+	srv.clients.now = func() time.Time {
+		return base.Add(nfsLeaseTime + time.Second)
+	}
+	srv.sweepExpiredClientState()
+	if _, status := srv.opens.lookup(
+		state.id, state.generation, fileID,
+	); status != NFS4ERR_EXPIRED {
+		t.Fatalf("swept state = %s, want NFS4ERR_EXPIRED",
+			Nfsstat4Name(status))
+	}
+
+	if err := srv.clients.Renew(clientID); nfsErrCode(err) != NFS4ERR_EXPIRED {
+		t.Fatalf("RENEW after lease sweep = %v, want NFS4ERR_EXPIRED", err)
+	}
+	if err := srv.clients.MarkOpen(
+		clientID, StateID{2},
+	); nfsErrCode(err) != NFS4ERR_EXPIRED {
+		t.Fatalf("OPEN marker after lease sweep = %v, want NFS4ERR_EXPIRED",
+			err)
+	}
+	if confirmed, err := srv.clients.IsConfirmed(clientID); err != nil {
+		t.Fatal(err)
+	} else if !confirmed {
+		t.Fatal("lease sweep revoked a clientid that is still confirmed")
+	}
+}
+
+func TestServerLeaseSweepDropsRenewOnlyClientCache(t *testing.T) {
+	fs := NewLocalTernVFS(t.TempDir())
+	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewServer(fs, staging, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Unix(1000, 0)
+	srv.clients.now = func() time.Time { return base }
+	owner := clientOwner{
+		principal: rpcPrincipal{flavor: authSys, body: "owner"},
+	}
+	clientID, confirm, err := srv.clients.SetClientID(
+		[8]byte{1}, []byte("client"), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.clients.ConfirmClientID(
+		clientID, confirm, owner.principal,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.clients.Renew(clientID); err != nil {
+		t.Fatal(err)
+	}
+	if got := srv.clients.cachedClientIDs(); len(got) != 1 || got[0] != clientID {
+		t.Fatalf("cached clients after RENEW = %v, want [%d]", got, clientID)
+	}
+
+	srv.clients.now = func() time.Time {
+		return base.Add(nfsLeaseRenewAfter)
+	}
+	srv.sweepExpiredClientState()
+	if got := srv.clients.cachedClientIDs(); len(got) != 1 {
+		t.Fatalf("sweep dropped a client with a live lease: %v", got)
+	}
+
+	srv.clients.now = func() time.Time {
+		return base.Add(nfsLeaseTime + time.Second)
+	}
+	srv.sweepExpiredClientState()
+	if got := srv.clients.cachedClientIDs(); len(got) != 0 {
+		t.Fatalf("sweep retained cache for a dead lease: %v", got)
+	}
+}
+
+func TestClientStoreMarkOpenReusesFreshLease(t *testing.T) {
+	fs := &countingVFS{TernVFS: NewLocalTernVFS(t.TempDir())}
+	store, err := NewClientStore(fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Unix(1000, 0)
+	store.now = func() time.Time { return base }
+	owner := clientOwner{
+		principal: rpcPrincipal{flavor: authSys, body: "owner"},
+	}
+	clientID, confirm, err := store.SetClientID(
+		[8]byte{1}, []byte("client"), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ConfirmClientID(
+		clientID, confirm, owner.principal,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	// The first OPEN has no cached lease and must write one.
+	fs.reset()
+	if err := store.MarkOpen(clientID, StateID{1}); err != nil {
+		t.Fatal(err)
+	}
+	if fs.rename != 1 {
+		t.Fatalf("first MarkOpen lease writes = %d, want 1", fs.rename)
+	}
+	if err := store.RemoveOpen(clientID, StateID{1}); err != nil {
+		t.Fatal(err)
+	}
+
+	// An open-close loop within the renewal window creates only the marker.
+	for i := 2; i <= 4; i++ {
+		store.now = func() time.Time {
+			return base.Add(time.Duration(i) * time.Second)
+		}
+		fs.reset()
+		stateID := StateID{byte(i)}
+		if err := store.MarkOpen(clientID, stateID); err != nil {
+			t.Fatal(err)
+		}
+		if fs.createFile != 1 || fs.rename != 0 {
+			t.Fatalf("MarkOpen %d writes: create=%d rename=%d, want marker only",
+				i, fs.createFile, fs.rename)
+		}
+		if err := store.RemoveOpen(clientID, stateID); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Once the cached lease is a third of the way to expiry, OPEN renews it.
+	store.now = func() time.Time {
+		return base.Add(nfsLeaseRenewAfter + time.Second)
+	}
+	fs.reset()
+	if err := store.MarkOpen(clientID, StateID{5}); err != nil {
+		t.Fatal(err)
+	}
+	if fs.rename != 1 {
+		t.Fatalf("aged MarkOpen lease writes = %d, want 1", fs.rename)
+	}
+
+	// A replaced confirmed pointer forces a renewal even with a fresh lease.
+	other, err := NewClientStore(fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other.now = store.now
+	rebootID, rebootConfirm, err := other.SetClientID(
+		[8]byte{2}, []byte("client"), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := other.ConfirmClientID(
+		rebootID, rebootConfirm, owner.principal,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkOpen(clientID, StateID{6}); nfsErrCode(err) != NFS4ERR_STALE_CLIENTID {
+		t.Fatalf("MarkOpen on replaced clientid = %v, want NFS4ERR_STALE_CLIENTID", err)
+	}
+}
+
+func addClosedOwnerForTest(
+	t *testing.T,
+	store *openStateStore,
+	clientID uint64,
+	fileID InodeID,
+) (openOwnerKey, openState) {
+	t.Helper()
+	owner := openOwnerKey{clientID: clientID, owner: "owner"}
+	state, status := addOpenForTest(store, owner, 1, fileID, false, StateID{})
+	if status != NFS4_OK {
+		t.Fatalf("OPEN = %s", Nfsstat4Name(status))
+	}
+	if _, status := confirmOpenForTest(store, state.id, 1, fileID, 2); status != NFS4_OK {
+		t.Fatalf("OPEN_CONFIRM = %s", Nfsstat4Name(status))
+	}
+	if _, status := closeOpenForTest(store, state.id, 3); status != NFS4_OK {
+		t.Fatalf("CLOSE = %s", Nfsstat4Name(status))
+	}
+	return owner, state
+}
+
+func TestOpenStateStoreEvictsIdleOwnerAfterLease(t *testing.T) {
+	store := newOpenStateStore()
+	base := time.Unix(1000, 0)
+	store.now = func() time.Time { return base }
+	fileID := MakeInodeID(InodeTypeFile, 77)
+	owner, state := addClosedOwnerForTest(t, store, 42, fileID)
+	if len(store.states) != 0 {
+		t.Fatalf("open states after CLOSE = %d, want 0", len(store.states))
+	}
+	got := store.activeClientIDs()
+	if len(got) != 1 || got[0] != owner.clientID {
+		t.Fatalf("activeClientIDs = %v, want [%d] for owner without opens",
+			got, owner.clientID)
+	}
+	beforeExpiry := base.Add(nfsLeaseTime - time.Second)
+	store.now = func() time.Time { return beforeExpiry }
+	if got := store.evictIdleOwners(
+		store.now().Add(-nfsLeaseTime),
+	); got != 0 {
+		t.Fatalf("owners evicted before one lease = %d, want 0", got)
+	}
+	if _, replay, status := validateCloseForTest(
+		store, state.id, 2, fileID, 3,
+	); status != NFS4_OK || !replay {
+		t.Fatalf("CLOSE replay = %s, replay=%t", Nfsstat4Name(status), replay)
+	}
+	afterReplay := beforeExpiry.Add(nfsLeaseTime - time.Second)
+	store.now = func() time.Time { return afterReplay }
+	if got := store.evictIdleOwners(
+		store.now().Add(-nfsLeaseTime),
+	); got != 0 {
+		t.Fatalf("replayed owner evicted early = %d, want 0", got)
+	}
+	store.now = func() time.Time { return beforeExpiry.Add(nfsLeaseTime) }
+	if got := store.evictIdleOwners(
+		store.now().Add(-nfsLeaseTime),
+	); got != 1 {
+		t.Fatalf("evicted owners = %d, want 1", got)
+	}
+	if got := store.activeClientIDs(); len(got) != 0 {
+		t.Fatalf("activeClientIDs after idle eviction = %v, want none", got)
+	}
+	if _, _, status := validateCloseForTest(
+		store, state.id, 2, fileID, 3,
+	); status != NFS4ERR_BAD_STATEID {
+		t.Fatalf("CLOSE replay after eviction = %s, want BAD_STATEID",
+			Nfsstat4Name(status))
+	}
+	if _, _, status := beginOpenForTest(store, owner, 4); status != NFS4_OK {
+		t.Fatalf("OPEN after idle eviction = %s, want NFS4_OK",
+			Nfsstat4Name(status))
+	}
+}
+
+func TestServerLeaseSweepEvictsIdleOwner(t *testing.T) {
+	fs := NewLocalTernVFS(t.TempDir())
+	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewServer(fs, staging, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Unix(1000, 0)
+	srv.clients.now = func() time.Time { return base }
+	fileID := MakeInodeID(InodeTypeFile, 79)
+	addClosedOwnerForTest(t, srv.opens, 44, fileID)
+	srv.clients.now = func() time.Time { return base.Add(nfsLeaseTime) }
+	srv.sweepExpiredClientState()
+	if len(srv.opens.owners) != 0 {
+		t.Fatalf("owners after server sweep = %d, want 0",
+			len(srv.opens.owners))
+	}
+}
+
+func TestRunLeaseSweepContinuesAfterPanic(t *testing.T) {
+	fs := NewLocalTernVFS(t.TempDir())
+	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewServer(fs, staging, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Unix(1000, 0)
+	srv.clients.now = func() time.Time { return base }
+	fileID := MakeInodeID(InodeTypeFile, 80)
+	addClosedOwnerForTest(t, srv.opens, 45, fileID)
+	srv.clients.now = func() time.Time { return base.Add(nfsLeaseTime) }
+	srv.startedAt = base
+	srv.stagingStore = nil
+	srv.runLeaseSweep()
+	if len(srv.opens.owners) != 1 {
+		t.Fatal("panicking sweep unexpectedly reached owner eviction")
+	}
+	srv.stagingStore = staging
+	srv.runLeaseSweep()
+	if len(srv.opens.owners) != 0 {
+		t.Fatal("later sweep did not run after panic")
+	}
+}
+
+func TestOpenStateStoreDoesNotEvictOwnerWithState(t *testing.T) {
+	store := newOpenStateStore()
+	base := time.Unix(1000, 0)
+	store.now = func() time.Time { return base }
+	fileID := MakeInodeID(InodeTypeFile, 78)
+	owner := openOwnerKey{clientID: 43, owner: "owner"}
+	state, status := addOpenForTest(
+		store, owner, 1, fileID, false, StateID{})
+	if status != NFS4_OK {
+		t.Fatalf("OPEN = %s", Nfsstat4Name(status))
+	}
+	if _, status := confirmOpenForTest(
+		store, state.id, 1, fileID, 2,
+	); status != NFS4_OK {
+		t.Fatalf("OPEN_CONFIRM = %s", Nfsstat4Name(status))
+	}
+	store.now = func() time.Time { return base.Add(2 * nfsLeaseTime) }
+	if got := store.evictIdleOwners(
+		store.now().Add(-nfsLeaseTime),
+	); got != 0 {
+		t.Fatalf("evicted owners with state = %d, want 0", got)
+	}
+	if _, status := store.lookup(
+		state.id, 2, fileID,
+	); status != NFS4_OK {
+		t.Fatalf("state after owner eviction pass = %s, want OK",
+			Nfsstat4Name(status))
 	}
 }
