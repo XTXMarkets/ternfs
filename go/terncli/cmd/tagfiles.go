@@ -304,7 +304,7 @@ func fileRulesApplyTo(id msgs.InodeId) bool {
 	return id.Type() == msgs.FILE
 }
 
-func NewTagFiles() SpecWithClient {
+func NewTagFiles() Command {
 	tagFilesCmd := flag.NewFlagSet("tag-files", flag.ExitOnError)
 	tagFilesRules := tagFilesCmd.String("rules", "", "Path to tag-rules.json.")
 	var tagFilesRoots flags.StringArrayFlags
@@ -316,7 +316,7 @@ func NewTagFiles() SpecWithClient {
 	tagFilesWorkersPerShard := tagFilesCmd.Int("workers-per-shard", 20, "Parwalk workers per shard.")
 	tagFilesDryRun := tagFilesCmd.Bool("dry-run", false, "Match and count, but do not write batch TSVs.")
 	tagFilesCreationTimePreskip := tagFilesCmd.Bool("creation-time-preskip", false, "Use the directory edge's creation time to short-circuit the stat call when no rule could possibly match. atime/mtime are >= creationTime, so if the rule's age window excludes creationTime it can't fire. Skips the stat for ~most files on a young tree.")
-	tagFilesRun := func(runtime RuntimeWithClient) {
+	tagFilesRun := func(runtime *Runtime) {
 		l := runtime.Log
 		if *tagFilesRules == "" {
 			fmt.Fprintln(os.Stderr, "tag-files: -rules is required")
@@ -330,7 +330,7 @@ func NewTagFiles() SpecWithClient {
 			fmt.Fprintln(os.Stderr, "tag-files: -output is required (use -dry-run to skip writing batches)")
 			os.Exit(2)
 		}
-		err := runTagFiles(l, runtime.Client, &tagFilesParams{
+		err := runTagFiles(l, runtime.Client(), &tagFilesParams{
 			rulesPath:           *tagFilesRules,
 			roots:               []string(tagFilesRoots),
 			outputDir:           *tagFilesOutput,
@@ -346,7 +346,7 @@ func NewTagFiles() SpecWithClient {
 			os.Exit(2)
 		}
 	}
-	return SpecWithClient{
+	return Command{
 		Flags: tagFilesCmd,
 		Run:   tagFilesRun,
 	}

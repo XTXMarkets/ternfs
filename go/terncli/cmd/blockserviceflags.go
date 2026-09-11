@@ -13,14 +13,14 @@ import (
 	"strings"
 )
 
-func NewBlockserviceFlags() Spec {
+func NewBlockserviceFlags() Command {
 	blockserviceFlagsCmd := flag.NewFlagSet("blockservice-flags", flag.ExitOnError)
 	blockserviceFlagsId := blockserviceFlagsCmd.Int64("id", 0, "Block service id")
 	blockserviceFlagsFailureDomain := blockserviceFlagsCmd.String("failure-domain", "", "Failure domain -- if this is used all block services in a given failure domain will be affected.")
 	blockserviceFlagsPathPrefix := blockserviceFlagsCmd.String("path-prefix", "", "Path prefix -- if this is used all block services with a given path prefix will be affected.")
 	blockserviceFlagsSet := blockserviceFlagsCmd.String("set", "", "Flag to set")
 	blockserviceFlagsUnset := blockserviceFlagsCmd.String("unset", "", "Flag to unset")
-	blockserviceFlagsRun := func(runtime Runtime) {
+	blockserviceFlagsRun := func(runtime *Runtime) {
 		l := runtime.Log
 		registryAddress := runtime.RegistryAddress
 		var flagsToSet, flagsToClear msgs.BlockServiceFlags
@@ -105,7 +105,7 @@ func NewBlockserviceFlags() Spec {
 			}
 		}
 	}
-	return Spec{
+	return Command{
 		Flags: blockserviceFlagsCmd,
 		Run:   blockserviceFlagsRun,
 	}

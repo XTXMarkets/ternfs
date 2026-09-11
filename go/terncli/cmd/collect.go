@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-func NewCollect() SpecWithClient {
+func NewCollect() Command {
 	collectCmd := flag.NewFlagSet("collect", flag.ExitOnError)
 	collectDirPath := collectCmd.String("path", "", "Directory path to collect. If -follow-subdirs is set, all subdirectories will also be collected.")
 	collectDirId := collectCmd.Uint64("dir-id", 0, "Directory inode id to collect directly.")
@@ -22,7 +22,7 @@ func NewCollect() SpecWithClient {
 	collectDirForcePolicyStr := collectCmd.String("force-policy", "", "If set, will ignore existing directory info and use this SNAPSHOT policy for all directories")
 	collectDirFollowSnapshot := collectCmd.Bool("follow-snapshot", false, "Whether to follow snapshot edges. Use with care, it can follow moved directories")
 	collectDirFollowSubdirs := collectCmd.Bool("follow-subdirs", false, "Whether to also collect subdirectories.")
-	collectRun := func(runtime RuntimeWithClient) {
+	collectRun := func(runtime *Runtime) {
 		l := runtime.Log
 		if (*collectDirPath == "" && *collectDirId == 0) || (*collectDirPath != "" && *collectDirId != 0) {
 			panic("You need to specify -path xor -dir-id.\n")
@@ -62,7 +62,7 @@ func NewCollect() SpecWithClient {
 			}()
 			err = client.Parwalk(
 				l,
-				runtime.Client,
+				runtime.Client(),
 				&client.ParwalkOptions{
 					WorkersPerShard: 100,
 					Snapshot:        *collectDirFollowSnapshot,
@@ -73,7 +73,7 @@ func NewCollect() SpecWithClient {
 						return nil
 					}
 					var localStats cleanup.CollectDirectoriesStats
-					if err := cleanup.CollectDirectory(l, runtime.Client, dirInfoCache, &localStats, id, *collectDirMinEdgeAge, forcePolicy); err != nil {
+					if err := cleanup.CollectDirectory(l, runtime.Client(), dirInfoCache, &localStats, id, *collectDirMinEdgeAge, forcePolicy); err != nil {
 						print(fmt.Errorf("could not collect %v, err: %v", id, err))
 					} else {
 						atomic.AddUint64(&stats.VisitedDirectories, localStats.VisitedDirectories)
@@ -88,7 +88,7 @@ func NewCollect() SpecWithClient {
 			l.Info("finished collecting %v, stats: %+v", *collectDirPath, stats)
 		} else {
 			dirId := msgs.InodeId(*collectDirId)
-			c := runtime.Client
+			c := runtime.Client()
 			if dirId == 0 {
 				if dirId, err = c.ResolvePath(l, *collectDirPath); err != nil {
 					panic(fmt.Errorf("could not resolve path %v: %v", *collectDirPath, err))
@@ -98,7 +98,7 @@ func NewCollect() SpecWithClient {
 				panic(fmt.Errorf("inode id %v is not a directory", dirId))
 			}
 			var stats cleanup.CollectDirectoriesStats
-			if err := cleanup.CollectDirectory(l, runtime.Client, dirInfoCache, &stats, dirId, *collectDirMinEdgeAge, forcePolicy); err != nil {
+			if err := cleanup.CollectDirectory(l, runtime.Client(), dirInfoCache, &stats, dirId, *collectDirMinEdgeAge, forcePolicy); err != nil {
 				panic(fmt.Errorf("could not collect %v, stats: %+v, err: %v", dirId, stats, err))
 			}
 			l.Info("finished collecting %v, stats: %+v", dirId, stats)
@@ -108,7 +108,7 @@ func NewCollect() SpecWithClient {
 			panic(err)
 		}
 	}
-	return SpecWithClient{
+	return Command{
 		Flags: collectCmd,
 		Run:   collectRun,
 	}

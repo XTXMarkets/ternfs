@@ -9,18 +9,18 @@ import (
 	"github.com/XTXMarkets/ternfs/go/msgs"
 )
 
-func NewRemoveDirInfo() SpecWithClient {
+func NewRemoveDirInfo() Command {
 	removeDirInfoCmd := flag.NewFlagSet("remove-dir-info", flag.ExitOnError)
 	removeDirInfoU64 := removeDirInfoCmd.Uint64("id", 0, "InodeId for the directory to unset the policy of.")
 	removeDirInfoTag := removeDirInfoCmd.String("tag", "", "One of SNAPSHOT|SPAN|BLOCK")
-	removeDirInfoRun := func(runtime RuntimeWithClient) {
+	removeDirInfoRun := func(runtime *Runtime) {
 		l := runtime.Log
 		id := msgs.InodeId(*removeDirInfoU64)
-		if err := runtime.Client.RemoveDirectoryInfoEntry(l, id, msgs.DirInfoTagFromName(*removeDirInfoTag)); err != nil {
+		if err := runtime.Client().RemoveDirectoryInfoEntry(l, id, msgs.DirInfoTagFromName(*removeDirInfoTag)); err != nil {
 			panic(err)
 		}
 	}
-	return SpecWithClient{
+	return Command{
 		Flags: removeDirInfoCmd,
 		Run:   removeDirInfoRun,
 	}

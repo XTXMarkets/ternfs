@@ -12,11 +12,11 @@ import (
 	"os"
 )
 
-func NewDecommissionBlockservice() Spec {
+func NewDecommissionBlockservice() Command {
 	decommissionBlockserviceCmd := flag.NewFlagSet("decommission-blockservice", flag.ExitOnError)
 	decommissionBlockserviceId := decommissionBlockserviceCmd.Int64("id", 0, "Block service id")
 	decommissionBlockserviceForce := decommissionBlockserviceCmd.Bool("force", false, "If the rate-limited decommission endpoint refuses (AUTO_DECOMMISSION_FORBIDDEN or AUTO_DECOMMISSION_RATE_LIMITED), bypass it by directly setting the DECOMMISSIONED flag via SetBlockServiceFlags.")
-	decommissionBlockserviceRun := func(runtime Runtime) {
+	decommissionBlockserviceRun := func(runtime *Runtime) {
 		l := runtime.Log
 		registryAddress := runtime.RegistryAddress
 		if *decommissionBlockserviceId == 0 {
@@ -49,7 +49,7 @@ func NewDecommissionBlockservice() Spec {
 		}
 		panic(err)
 	}
-	return Spec{
+	return Command{
 		Flags: decommissionBlockserviceCmd,
 		Run:   decommissionBlockserviceRun,
 	}

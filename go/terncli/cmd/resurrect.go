@@ -16,12 +16,12 @@ import (
 	"time"
 )
 
-func NewResurrect() SpecWithClient {
+func NewResurrect() Command {
 	resurrectFileCmd := flag.NewFlagSet("resurrect", flag.ExitOnError)
 	resurrectFilePath := resurrectFileCmd.String("path", "", "The file to resurrect")
 	resurrectFileList := resurrectFileCmd.String("list", "", "File with files to resurrect (one per line)")
 	resurrectFileWorkers := resurrectFileCmd.Int("workers", 256, "")
-	resurrectFileRun := func(runtime RuntimeWithClient) {
+	resurrectFileRun := func(runtime *Runtime) {
 		l := runtime.Log
 		if (*resurrectFilePath == "" && *resurrectFileList == "") || (*resurrectFilePath != "" && *resurrectFileList != "") {
 			panic(fmt.Errorf("must provide -path or -list"))
@@ -32,7 +32,7 @@ func NewResurrect() SpecWithClient {
 		if *resurrectFileWorkers < 1 {
 			panic(fmt.Errorf("workers must be > 0"))
 		}
-		c := runtime.Client
+		c := runtime.Client()
 		t0 := time.Now()
 		ch := make(chan string, *resurrectFileWorkers*4)
 		var wg sync.WaitGroup
@@ -116,7 +116,7 @@ func NewResurrect() SpecWithClient {
 		close(ch)
 		wg.Wait()
 	}
-	return SpecWithClient{
+	return Command{
 		Flags: resurrectFileCmd,
 		Run:   resurrectFileRun,
 	}

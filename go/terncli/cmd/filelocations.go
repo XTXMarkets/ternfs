@@ -9,13 +9,13 @@ import (
 	"github.com/XTXMarkets/ternfs/go/msgs"
 )
 
-func NewFileLocations() SpecWithClient {
+func NewFileLocations() Command {
 	fileLocationsCmd := flag.NewFlagSet("file-locations", flag.ExitOnError)
 	fileLocationsId := fileLocationsCmd.Uint64("id", 0, "ID of the file to query")
-	fileLocationsRun := func(runtime RuntimeWithClient) {
+	fileLocationsRun := func(runtime *Runtime) {
 		l := runtime.Log
 		id := msgs.InodeId(*fileLocationsId)
-		c := runtime.Client
+		c := runtime.Client()
 		fileSpansReq := msgs.FileSpansReq{
 			FileId:     id,
 			ByteOffset: 0,
@@ -47,7 +47,7 @@ func NewFileLocations() SpecWithClient {
 			l.Info("Location %v has size %v", locId, size)
 		}
 	}
-	return SpecWithClient{
+	return Command{
 		Flags: fileLocationsCmd,
 		Run:   fileLocationsRun,
 	}

@@ -11,13 +11,13 @@ import (
 	"math"
 )
 
-func NewEstimateFileAge() SpecWithClient {
+func NewEstimateFileAge() Command {
 	estimateFileAgeCmd := flag.NewFlagSet("estimate-file-age", flag.ExitOnError)
 	estimateFileAgeId := estimateFileAgeCmd.Uint64("id", 0, "ID of the file to estimage age for")
 	estimateFileAgePath := estimateFileAgeCmd.String("path", "", "Path of the file to estimate age for (alternative to -id)")
-	estimateFileAgeRun := func(runtime RuntimeWithClient) {
+	estimateFileAgeRun := func(runtime *Runtime) {
 		l := runtime.Log
-		c := runtime.Client
+		c := runtime.Client()
 		id := msgs.InodeId(*estimateFileAgeId)
 		if id == 0 {
 			if *estimateFileAgePath == "" {
@@ -83,7 +83,7 @@ func NewEstimateFileAge() SpecWithClient {
 		}
 	}
 
-	return SpecWithClient{
+	return Command{
 		Flags: estimateFileAgeCmd,
 		Run:   estimateFileAgeRun,
 	}

@@ -16,13 +16,13 @@ import (
 	"time"
 )
 
-func NewRm() SpecWithClient {
+func NewRm() Command {
 	rmCmd := flag.NewFlagSet("rm", flag.ExitOnError)
 	rmPath := rmCmd.String("path", "", "The directory path to delete files from (recursively).")
 	rmFilter := rmCmd.String("filter", "", "Optional regex to match against the full file path. Only matching files will be deleted.")
 	rmWorkersPerShard := rmCmd.Int("workers-per-shard", 5, "Number of parallel workers per shard.")
 	rmDryRun := rmCmd.Bool("dry-run", false, "If set, will only print the files that would be deleted without actually deleting them.")
-	rmRun := func(runtime RuntimeWithClient) {
+	rmRun := func(runtime *Runtime) {
 		l := runtime.Log
 		if *rmPath == "" {
 			fmt.Fprintf(os.Stderr, "must provide -path\n")
@@ -56,7 +56,7 @@ func NewRm() SpecWithClient {
 				}
 			}
 		}
-		c := runtime.Client
+		c := runtime.Client()
 		var numDeleted uint64
 		var numSkipped uint64
 		var numErrors uint64
@@ -105,7 +105,7 @@ func NewRm() SpecWithClient {
 		}
 		l.Info("rm finished: deleted %v files, skipped %v, errors %v", numDeleted, numSkipped, numErrors)
 	}
-	return SpecWithClient{
+	return Command{
 		Flags: rmCmd,
 		Run:   rmRun,
 	}

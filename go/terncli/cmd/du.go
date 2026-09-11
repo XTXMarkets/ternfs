@@ -39,7 +39,7 @@ func formatSize(bytes uint64) string {
 	return fmt.Sprintf("%.2fPB", bytesf/1e15)
 }
 
-func NewDu() SpecWithClient {
+func NewDu() Command {
 	duCmd := flag.NewFlagSet("du", flag.ExitOnError)
 	duDir := duCmd.String("path", "/", "")
 	duHisto := duCmd.String("histogram", "", "Filepath in which to write size histogram (in CSV) to")
@@ -47,7 +47,7 @@ func NewDu() SpecWithClient {
 	duSnapshot := duCmd.Bool("snapshot", false, "Also count snapshot files")
 	duWorkersPerSshard := duCmd.Int("workers-per-shard", 5, "")
 	duPattern := duCmd.String("pattern", "", "If set only measure files matching this regex pattern")
-	duRun := func(runtime RuntimeWithClient) {
+	duRun := func(runtime *Runtime) {
 		l := runtime.Log
 		re, err := regexp.Compile(*duPattern)
 		if err != nil {
@@ -77,7 +77,7 @@ func NewDu() SpecWithClient {
 		histoPhysicalSizeBins := make([]uint64, 256)
 		histoCountBins := make([]uint64, 256)
 		startedAt := time.Now()
-		c := runtime.Client
+		c := runtime.Client()
 		printReport := func() {
 			if *duSnapshot {
 				if *duPhysical {
@@ -218,7 +218,7 @@ func NewDu() SpecWithClient {
 			}
 		}
 	}
-	return SpecWithClient{
+	return Command{
 		Flags: duCmd,
 		Run:   duRun,
 	}

@@ -10,9 +10,9 @@ import (
 	"time"
 )
 
-func NewKernelLatencies() Spec {
+func NewKernelLatencies() Command {
 	kernelLatenciesCmd := flag.NewFlagSet("kernel-latencies", flag.ExitOnError)
-	kernelLatenciesRun := func(runtime Runtime) {
+	kernelLatenciesRun := func(runtime *Runtime) {
 		l := runtime.Log
 		p := func(mh *kernelMetricsHeader, l *kernelLatencies, target float64) time.Duration {
 			totalCount := uint64(0)
@@ -60,7 +60,7 @@ func NewKernelLatencies() Spec {
 			}
 		}
 	}
-	return Spec{
+	return Command{
 		Flags: kernelLatenciesCmd,
 		Run:   kernelLatenciesRun,
 	}

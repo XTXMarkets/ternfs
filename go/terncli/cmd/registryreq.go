@@ -12,12 +12,12 @@ import (
 	"os"
 )
 
-func NewRegistryReq() SpecWithClient {
+func NewRegistryReq() Command {
 	registryReqCmd := flag.NewFlagSet("registry-req", flag.ExitOnError)
 	registryReqKind := registryReqCmd.String("kind", "", "")
 	registryReqReq := registryReqCmd.String("req", "", "Request body, in JSON")
 	registryReqYes := registryReqCmd.Bool("yes", false, "Do not ask for confirmation")
-	registryReqRun := func(runtime RuntimeWithClient) {
+	registryReqRun := func(runtime *Runtime) {
 		l := runtime.Log
 		req, resp, err := msgs.MkRegistryMessage(*registryReqKind)
 		if err != nil {
@@ -41,7 +41,7 @@ func NewRegistryReq() SpecWithClient {
 				}
 			}
 		}
-		if resp, err = runtime.Client.RegistryRequest(l, req); err != nil {
+		if resp, err = runtime.Client().RegistryRequest(l, req); err != nil {
 			panic(err)
 		}
 		out, err := json.MarshalIndent(resp, "", "  ")
@@ -51,7 +51,7 @@ func NewRegistryReq() SpecWithClient {
 		os.Stdout.Write(out)
 		fmt.Println()
 	}
-	return SpecWithClient{
+	return Command{
 		Flags: registryReqCmd,
 		Run:   registryReqRun,
 	}

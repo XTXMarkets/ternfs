@@ -10,6 +10,7 @@ import (
 	"os"
 	"slices"
 	"strconv"
+	"sync"
 
 	"github.com/XTXMarkets/ternfs/go/client"
 	"github.com/XTXMarkets/ternfs/go/core/flags"
@@ -100,9 +101,6 @@ func main() {
 
 	var l *log.Logger
 
-	runtime := terncmd.Runtime{
-		RegistryAddress: registryAddress,
-	}
 	commands = newCommands()
 
 	flag.Parse()
@@ -152,7 +150,6 @@ func main() {
 		level = log.TRACE
 	}
 	l = log.NewLogger(os.Stderr, &log.LoggerOptions{Level: level})
-	runtime.Log = l
 
 	spec, found := commands[flag.Args()[0]]
 	if !found {
@@ -164,57 +161,66 @@ func main() {
 	noRunawayArgs(spec.FlagSet())
 
 	var ternClient *client.Client
-	if spec.NeedsClient() {
-		if *registryAddress == "" {
-			panic("You need to specify -registry.\n")
-		}
-		var err error
-		ternClient, err = client.NewClient(
-			l,
-			nil,
-			*registryAddress,
-			localAddresses,
-		)
-		if err != nil {
-			panic(fmt.Errorf("could not create client: %v", err))
-		}
-		defer ternClient.Close()
-		ternClient.SetFetchBlockServices()
+	var clientOnce sync.Once
+	getClient := func() *client.Client {
+		clientOnce.Do(func() {
+			if *registryAddress == "" {
+				panic("You need to specify -registry.\n")
+			}
+			var err error
+			ternClient, err = client.NewClient(
+				l,
+				nil,
+				*registryAddress,
+				localAddresses,
+			)
+			if err != nil {
+				panic(fmt.Errorf("could not create client: %v", err))
+			}
+			ternClient.SetFetchBlockServices()
 
-		shardTimeouts := client.DefaultShardTimeout
-		printTimeouts := false
-		if *shardInitialTimeout > 0 {
-			printTimeouts = true
-			shardTimeouts.Initial = *shardInitialTimeout
-		}
-		if *shardMaxTimeout > 0 {
-			printTimeouts = true
-			shardTimeouts.Max = *shardMaxTimeout
-		}
-		if *shardOverallTimeout >= 0 {
-			printTimeouts = true
-			shardTimeouts.Overall = *shardOverallTimeout
-		}
-		ternClient.SetShardTimeouts(&shardTimeouts)
-		cdcTimeouts := client.DefaultCDCTimeout
-		if *cdcInitialTimeout > 0 {
-			printTimeouts = true
-			cdcTimeouts.Initial = *cdcInitialTimeout
-		}
-		if *cdcMaxTimeout > 0 {
-			printTimeouts = true
-			cdcTimeouts.Max = *cdcMaxTimeout
-		}
-		if *cdcOverallTimeout >= 0 {
-			printTimeouts = true
-			cdcTimeouts.Overall = *cdcOverallTimeout
-		}
-		ternClient.SetCDCTimeouts(&cdcTimeouts)
-		if printTimeouts {
-			l.Info("shard timeouts: %+v", shardTimeouts)
-			l.Info("CDC timeouts: %+v", cdcTimeouts)
-		}
+			shardTimeouts := client.DefaultShardTimeout
+			printTimeouts := false
+			if *shardInitialTimeout > 0 {
+				printTimeouts = true
+				shardTimeouts.Initial = *shardInitialTimeout
+			}
+			if *shardMaxTimeout > 0 {
+				printTimeouts = true
+				shardTimeouts.Max = *shardMaxTimeout
+			}
+			if *shardOverallTimeout >= 0 {
+				printTimeouts = true
+				shardTimeouts.Overall = *shardOverallTimeout
+			}
+			ternClient.SetShardTimeouts(&shardTimeouts)
+			cdcTimeouts := client.DefaultCDCTimeout
+			if *cdcInitialTimeout > 0 {
+				printTimeouts = true
+				cdcTimeouts.Initial = *cdcInitialTimeout
+			}
+			if *cdcMaxTimeout > 0 {
+				printTimeouts = true
+				cdcTimeouts.Max = *cdcMaxTimeout
+			}
+			if *cdcOverallTimeout >= 0 {
+				printTimeouts = true
+				cdcTimeouts.Overall = *cdcOverallTimeout
+			}
+			ternClient.SetCDCTimeouts(&cdcTimeouts)
+			if printTimeouts {
+				l.Info("shard timeouts: %+v", shardTimeouts)
+				l.Info("CDC timeouts: %+v", cdcTimeouts)
+			}
+		})
+		return ternClient
 	}
+	defer func() {
+		if ternClient != nil {
+			ternClient.Close()
+		}
+	}()
 
-	spec.Execute(runtime, ternClient)
+	runtime := terncmd.NewRuntime(l, registryAddress, getClient)
+	spec.Run(runtime)
 }

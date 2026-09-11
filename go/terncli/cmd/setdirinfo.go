@@ -12,12 +12,12 @@ import (
 	"os"
 )
 
-func NewSetDirInfo() SpecWithClient {
+func NewSetDirInfo() Command {
 	setDirInfoCmd := flag.NewFlagSet("set-dir-info", flag.ExitOnError)
 	setDirInfoIdU64 := setDirInfoCmd.Uint64("id", 0, "InodeId for the directory to set the policy of.")
 	setDirInfoIdTag := setDirInfoCmd.String("tag", "", "One of SNAPSHOT|SPAN|BLOCK|STRIPE")
 	setDirInfoPolicy := setDirInfoCmd.String("body", "", "Policy, in JSON")
-	setDirInfoRun := func(runtime RuntimeWithClient) {
+	setDirInfoRun := func(runtime *Runtime) {
 		l := runtime.Log
 		entry := msgs.TagToDirInfoEntry(msgs.DirInfoTagFromName(*setDirInfoIdTag))
 		if err := json.Unmarshal([]byte(*setDirInfoPolicy), entry); err != nil {
@@ -38,11 +38,11 @@ func NewSetDirInfo() SpecWithClient {
 				os.Exit(0)
 			}
 		}
-		if err := runtime.Client.MergeDirectoryInfo(l, id, entry); err != nil {
+		if err := runtime.Client().MergeDirectoryInfo(l, id, entry); err != nil {
 			panic(err)
 		}
 	}
-	return SpecWithClient{
+	return Command{
 		Flags: setDirInfoCmd,
 		Run:   setDirInfoRun,
 	}

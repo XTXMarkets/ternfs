@@ -14,12 +14,12 @@ import (
 	"io/ioutil"
 )
 
-func NewWriteBlockReq() Spec {
+func NewWriteBlockReq() Command {
 	blockReqCmd := flag.NewFlagSet("write-block-req", flag.ExitOnError)
 	blockReqBlockId := blockReqCmd.Uint64("b", 0, "Block id")
 	blockReqBlockService := blockReqCmd.Uint64("bs", 0, "Block service")
 	blockReqFile := blockReqCmd.String("file", "", "")
-	blockReqRun := func(runtime Runtime) {
+	blockReqRun := func(runtime *Runtime) {
 		l := runtime.Log
 		registryAddress := runtime.RegistryAddress
 		resp, err := client.RegistryRequest(l, nil, *registryAddress, &msgs.ChangedBlockServicesReq{})
@@ -50,7 +50,7 @@ func NewWriteBlockReq() Spec {
 		req.Certificate = certificate.BlockWriteCertificate(cipher, blockServiceInfo.Id, &req)
 		l.Info("request: %+v", req)
 	}
-	return Spec{
+	return Command{
 		Flags: blockReqCmd,
 		Run:   blockReqRun,
 	}

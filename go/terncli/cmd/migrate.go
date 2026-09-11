@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-func NewMigrate() SpecWithClient {
+func NewMigrate() Command {
 	migrateCmd := flag.NewFlagSet("migrate", flag.ExitOnError)
 	migrateId := migrateCmd.Int64("id", 0, "Block service id")
 	migrateFailureDomain := migrateCmd.String("failure-domain", "", "Failure domain -- if this is used all block services in a given failure domain will be affected.")
@@ -22,7 +22,7 @@ func NewMigrate() SpecWithClient {
 	migrateFailureNoFlagStr := migrateCmd.String("no-flags", "0", "Block services with the given flags will be excluded.")
 	migrateFileIdU64 := migrateCmd.Uint64("file", 0, "File in which to migrate blocks. If not present, all files will be migrated.")
 	migrateShard := migrateCmd.Int("shard", -1, "Shard to migrate into. If not present, all shards will be migrated")
-	migrateRun := func(runtime RuntimeWithClient) {
+	migrateRun := func(runtime *Runtime) {
 		l := runtime.Log
 		registryAddress := runtime.RegistryAddress
 		yesFlags, err := msgs.BlockServiceFlagsFromUnion(*migrateFailureFlagStr)
@@ -91,17 +91,17 @@ func NewMigrate() SpecWithClient {
 			for _, blockServiceId := range *bss {
 				l.Info("migrating block service %v, %v", blockServiceId, failureDomain)
 				if *migrateFileIdU64 == 0 && *migrateShard < 0 {
-					if err := cleanup.MigrateBlocksInAllShards(l, runtime.Client, &stats, progressReportAlert, blockServiceId); err != nil {
+					if err := cleanup.MigrateBlocksInAllShards(l, runtime.Client(), &stats, progressReportAlert, blockServiceId); err != nil {
 						panic(err)
 					}
 				} else if *migrateFileIdU64 != 0 {
 					fileId := msgs.InodeId(*migrateFileIdU64)
-					if err := cleanup.MigrateBlocksInFile(l, runtime.Client, &stats, progressReportAlert, blockServiceId, fileId); err != nil {
+					if err := cleanup.MigrateBlocksInFile(l, runtime.Client(), &stats, progressReportAlert, blockServiceId, fileId); err != nil {
 						panic(fmt.Errorf("error while migrating file %v away from block service %v: %v", fileId, blockServiceId, err))
 					}
 				} else {
 					shid := msgs.ShardId(*migrateShard)
-					if err := cleanup.MigrateBlocks(l, runtime.Client, &stats, progressReportAlert, shid, blockServiceId); err != nil {
+					if err := cleanup.MigrateBlocks(l, runtime.Client(), &stats, progressReportAlert, shid, blockServiceId); err != nil {
 						panic(err)
 					}
 				}
@@ -111,7 +111,7 @@ func NewMigrate() SpecWithClient {
 		l.Info("finished migrating away from all block services, stats: %+v", stats)
 		l.ClearNC(progressReportAlert)
 	}
-	return SpecWithClient{
+	return Command{
 		Flags: migrateCmd,
 		Run:   migrateRun,
 	}

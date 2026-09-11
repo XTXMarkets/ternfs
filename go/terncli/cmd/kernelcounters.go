@@ -9,9 +9,9 @@ import (
 	"github.com/XTXMarkets/ternfs/go/msgs"
 )
 
-func NewKernelCounters() Spec {
+func NewKernelCounters() Command {
 	kernelCountersCmd := flag.NewFlagSet("kernel-counters", flag.ExitOnError)
-	kernelCountersRun := func(runtime Runtime) {
+	kernelCountersRun := func(runtime *Runtime) {
 		l := runtime.Log
 		{
 			header, err := parseKernelMetricsHeader("shard")
@@ -40,7 +40,7 @@ func NewKernelCounters() Spec {
 			}
 		}
 	}
-	return Spec{
+	return Command{
 		Flags: kernelCountersCmd,
 		Run:   kernelCountersRun,
 	}

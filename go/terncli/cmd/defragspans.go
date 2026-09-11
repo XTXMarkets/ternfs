@@ -12,12 +12,12 @@ import (
 	"github.com/XTXMarkets/ternfs/go/core/log"
 )
 
-func NewDefragSpans() SpecWithClient {
+func NewDefragSpans() Command {
 	defragSpansCmd := flag.NewFlagSet("defrag-spans", flag.ExitOnError)
 	defragSpansPath := defragSpansCmd.String("path", "", "The directory or file to defrag")
-	defragSpansRun := func(runtime RuntimeWithClient) {
+	defragSpansRun := func(runtime *Runtime) {
 		l := runtime.Log
-		c := runtime.Client
+		c := runtime.Client()
 		dirInfoCache := client.NewDirInfoCache()
 		bufPool := bufpool.NewBufPool()
 		stats := &cleanup.DefragSpansStats{}
@@ -28,7 +28,7 @@ func NewDefragSpans() SpecWithClient {
 		}
 		l.Info("defrag stats: %+v", stats)
 	}
-	return SpecWithClient{
+	return Command{
 		Flags: defragSpansCmd,
 		Run:   defragSpansRun,
 	}

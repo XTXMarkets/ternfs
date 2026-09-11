@@ -195,14 +195,14 @@ func (r *resolver) setDirName(inode msgs.InodeId, name string) {
 	r.inodeToDir[inode] = name
 }
 
-func NewResolveSamplePaths() SpecWithClient {
+func NewResolveSamplePaths() Command {
 	resolveSamplePathsCmd := flag.NewFlagSet("resolve-sample-paths", flag.ExitOnError)
-	resolveSamplePathsRun := func(runtime RuntimeWithClient) {
+	resolveSamplePathsRun := func(runtime *Runtime) {
 		l := runtime.Log
-		resolver := NewPathResolver(runtime.Client, l)
+		resolver := NewPathResolver(runtime.Client(), l)
 		resolver.ResolveFilePaths(os.Stdin, os.Stdout)
 	}
-	return SpecWithClient{
+	return Command{
 		Flags: resolveSamplePathsCmd,
 		Run:   resolveSamplePathsRun,
 	}

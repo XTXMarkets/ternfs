@@ -17,11 +17,11 @@ import (
 	"time"
 )
 
-func NewTestBlockWrite() Spec {
+func NewTestBlockWrite() Command {
 	testBlockWriteCmd := flag.NewFlagSet("test-block-write", flag.ExitOnError)
 	testBlockWriteBlockService := testBlockWriteCmd.String("bs", "", "Block service. If comma-separated, they'll be written in parallel to the specified ones.")
 	testBlockWriteSize := testBlockWriteCmd.Uint("size", 0, "Size (must fit in u32)")
-	testBlockWriteRun := func(runtime Runtime) {
+	testBlockWriteRun := func(runtime *Runtime) {
 		l := runtime.Log
 		registryAddress := runtime.RegistryAddress
 		resp, err := client.RegistryRequest(l, nil, *registryAddress, &msgs.ChangedBlockServicesReq{})
@@ -77,7 +77,7 @@ func NewTestBlockWrite() Spec {
 		}
 		l.Info("writing %v bytes to %v block services took %v (%fGB/s)", *testBlockWriteSize, len(conns), time.Since(t), (float64(*testBlockWriteSize*uint(len(conns)))/1e9)/elapsed.Seconds())
 	}
-	return Spec{
+	return Command{
 		Flags: testBlockWriteCmd,
 		Run:   testBlockWriteRun,
 	}

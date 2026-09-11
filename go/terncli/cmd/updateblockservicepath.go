@@ -12,11 +12,11 @@ import (
 	"os"
 )
 
-func NewUpdateBlockservicePath() Spec {
+func NewUpdateBlockservicePath() Command {
 	updateBlockservicePathCmd := flag.NewFlagSet("update-blockservice-path", flag.ExitOnError)
 	updateBlockservicePathId := updateBlockservicePathCmd.Int64("id", 0, "Block service id")
 	updateBlockserviceNewPath := updateBlockservicePathCmd.String("new-path", "", "New block service path")
-	updateBlockservicePathRun := func(runtime Runtime) {
+	updateBlockservicePathRun := func(runtime *Runtime) {
 		l := runtime.Log
 		registryAddress := runtime.RegistryAddress
 		if *updateBlockservicePathId == 0 {
@@ -37,7 +37,7 @@ func NewUpdateBlockservicePath() Spec {
 			panic(err)
 		}
 	}
-	return Spec{
+	return Command{
 		Flags: updateBlockservicePathCmd,
 		Run:   updateBlockservicePathRun,
 	}

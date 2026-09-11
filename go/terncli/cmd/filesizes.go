@@ -120,18 +120,18 @@ func outputBriefFileSizes(log *log.Logger, c *client.Client) {
 	}
 }
 
-func NewFileSizes() SpecWithClient {
+func NewFileSizes() Command {
 	fileSizesCmd := flag.NewFlagSet("file-sizes", flag.ExitOnError)
 	fileSizesBrief := fileSizesCmd.Bool("brief", false, "")
-	fileSizesRun := func(runtime RuntimeWithClient) {
+	fileSizesRun := func(runtime *Runtime) {
 		l := runtime.Log
 		if *fileSizesBrief {
-			outputBriefFileSizes(l, runtime.Client)
+			outputBriefFileSizes(l, runtime.Client())
 		} else {
-			outputFullFileSizes(l, runtime.Client)
+			outputFullFileSizes(l, runtime.Client())
 		}
 	}
-	return SpecWithClient{
+	return Command{
 		Flags: fileSizesCmd,
 		Run:   fileSizesRun,
 	}

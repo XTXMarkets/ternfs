@@ -11,12 +11,12 @@ import (
 	"os"
 )
 
-func NewCpOutof() SpecWithClient {
+func NewCpOutof() Command {
 	cpOutofCmd := flag.NewFlagSet("cp-outof", flag.ExitOnError)
 	cpOutofInput := cpOutofCmd.String("i", "", "What to copy from TernFS.")
 	cpOutofId := cpOutofCmd.Uint64("id", 0, "The ID of the file to copy.")
 	cpOutofOut := cpOutofCmd.String("o", "", "Where to write the file to. Stdout if empty.")
-	cpOutofRun := func(runtime RuntimeWithClient) {
+	cpOutofRun := func(runtime *Runtime) {
 		l := runtime.Log
 		out := os.Stdout
 		if *cpOutofOut != "" {
@@ -36,14 +36,14 @@ func NewCpOutof() SpecWithClient {
 			id = msgs.InodeId(*cpOutofId)
 		} else {
 			var err error
-			id, err = runtime.Client.ResolvePath(l, *cpOutofInput)
+			id, err = runtime.Client().ResolvePath(l, *cpOutofInput)
 			if err != nil {
 				panic(err)
 			}
 		}
 
 		bufPool := bufpool.NewBufPool()
-		r, err := runtime.Client.FetchFile(l, bufPool, id)
+		r, err := runtime.Client().FetchFile(l, bufPool, id)
 		if err != nil {
 			panic(err)
 		}
@@ -52,7 +52,7 @@ func NewCpOutof() SpecWithClient {
 		}
 		out.Close()
 	}
-	return SpecWithClient{
+	return Command{
 		Flags: cpOutofCmd,
 		Run:   cpOutofRun,
 	}

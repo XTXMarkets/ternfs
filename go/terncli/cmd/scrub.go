@@ -9,17 +9,17 @@ import (
 	"github.com/XTXMarkets/ternfs/go/cleanup"
 )
 
-func NewScrub() SpecWithClient {
+func NewScrub() Command {
 	scrubCmd := flag.NewFlagSet("scrub", flag.ExitOnError)
-	scrubRun := func(runtime RuntimeWithClient) {
+	scrubRun := func(runtime *Runtime) {
 		l := runtime.Log
 		stats := cleanup.ScrubState{}
-		if err := cleanup.ScrubFilesInAllShards(l, runtime.Client, &cleanup.ScrubOptions{NumWorkersPerShard: 10}, nil, &stats); err != nil {
+		if err := cleanup.ScrubFilesInAllShards(l, runtime.Client(), &cleanup.ScrubOptions{NumWorkersPerShard: 10}, nil, &stats); err != nil {
 			panic(err)
 		}
 
 	}
-	return SpecWithClient{
+	return Command{
 		Flags: scrubCmd,
 		Run:   scrubRun,
 	}

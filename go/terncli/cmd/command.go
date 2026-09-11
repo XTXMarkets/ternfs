@@ -15,63 +15,33 @@ import (
 type Runtime struct {
 	Log             *log.Logger
 	RegistryAddress *string
+
+	getClient func() *client.Client
 }
 
-// RuntimeWithClient is provided only to commands which require the full
-// TernFS client.
-type RuntimeWithClient struct {
-	Runtime
-	Client *client.Client
-}
-
-// Command is the common interface used by terncli's dispatcher.
-type Command interface {
-	FlagSet() *flag.FlagSet
-	NeedsClient() bool
-	Execute(Runtime, *client.Client)
-}
-
-// Spec describes a command which does not require a TernFS client.
-type Spec struct {
-	Flags *flag.FlagSet
-	Run   func(Runtime)
-}
-
-func (spec Spec) FlagSet() *flag.FlagSet {
-	return spec.Flags
-}
-
-func (Spec) NeedsClient() bool {
-	return false
-}
-
-func (spec Spec) Execute(runtime Runtime, _ *client.Client) {
-	spec.Run(runtime)
-}
-
-// SpecWithClient describes a command which requires a TernFS client.
-type SpecWithClient struct {
-	Flags *flag.FlagSet
-	Run   func(RuntimeWithClient)
-}
-
-func (spec SpecWithClient) FlagSet() *flag.FlagSet {
-	return spec.Flags
-}
-
-func (SpecWithClient) NeedsClient() bool {
-	return true
-}
-
-func (spec SpecWithClient) Execute(
-	runtime Runtime,
-	ternClient *client.Client,
-) {
-	if ternClient == nil {
-		panic("client command executed without a client")
+func NewRuntime(
+	l *log.Logger,
+	registryAddress *string,
+	getClient func() *client.Client,
+) *Runtime {
+	return &Runtime{
+		Log:             l,
+		RegistryAddress: registryAddress,
+		getClient:       getClient,
 	}
-	spec.Run(RuntimeWithClient{
-		Runtime: runtime,
-		Client:  ternClient,
-	})
+}
+
+// Client returns the process-wide TernFS client, creating it on first use.
+func (runtime *Runtime) Client() *client.Client {
+	return runtime.getClient()
+}
+
+// Command contains one subcommand's flags and deferred implementation.
+type Command struct {
+	Flags *flag.FlagSet
+	Run   func(*Runtime)
+}
+
+func (command Command) FlagSet() *flag.FlagSet {
+	return command.Flags
 }

@@ -12,9 +12,9 @@ import (
 	"time"
 )
 
-func NewCountFiles() SpecWithClient {
+func NewCountFiles() Command {
 	countFilesCmd := flag.NewFlagSet("count-files", flag.ExitOnError)
-	countFilesRun := func(runtime RuntimeWithClient) {
+	countFilesRun := func(runtime *Runtime) {
 		l := runtime.Log
 		var wg sync.WaitGroup
 		ch := make(chan any)
@@ -28,7 +28,7 @@ func NewCountFiles() SpecWithClient {
 				req := msgs.VisitFilesReq{}
 				resp := msgs.VisitFilesResp{}
 				for {
-					if err := runtime.Client.ShardRequest(l, shid, &req, &resp); err != nil {
+					if err := runtime.Client().ShardRequest(l, shid, &req, &resp); err != nil {
 						ch <- err
 						return
 					}
@@ -54,7 +54,7 @@ func NewCountFiles() SpecWithClient {
 		}
 		l.Info("found %v files", numFiles)
 	}
-	return SpecWithClient{
+	return Command{
 		Flags: countFilesCmd,
 		Run:   countFilesRun,
 	}

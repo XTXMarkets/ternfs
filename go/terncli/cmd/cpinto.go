@@ -13,11 +13,11 @@ import (
 	"path/filepath"
 )
 
-func NewCpInto() SpecWithClient {
+func NewCpInto() Command {
 	cpIntoCmd := flag.NewFlagSet("cp-into", flag.ExitOnError)
 	cpIntoInput := cpIntoCmd.String("i", "", "What to copy, if empty stdin.")
 	cpIntoOut := cpIntoCmd.String("o", "", "Where to write the file to in TernFS")
-	cpIntoRun := func(runtime RuntimeWithClient) {
+	cpIntoRun := func(runtime *Runtime) {
 		l := runtime.Log
 		path := filepath.Clean("/" + *cpIntoOut)
 		var input io.Reader
@@ -31,13 +31,13 @@ func NewCpInto() SpecWithClient {
 			}
 		}
 		bufPool := bufpool.NewBufPool()
-		fileId, err := runtime.Client.CreateFile(l, bufPool, client.NewDirInfoCache(), path, input)
+		fileId, err := runtime.Client().CreateFile(l, bufPool, client.NewDirInfoCache(), path, input)
 		if err != nil {
 			panic(err)
 		}
 		l.Info("File created as %v", fileId)
 	}
-	return SpecWithClient{
+	return Command{
 		Flags: cpIntoCmd,
 		Run:   cpIntoRun,
 	}

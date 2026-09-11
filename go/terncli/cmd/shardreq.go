@@ -12,13 +12,13 @@ import (
 	"os"
 )
 
-func NewShardReq() SpecWithClient {
+func NewShardReq() Command {
 	shardReqCmd := flag.NewFlagSet("shard-req", flag.ExitOnError)
 	shardReqShard := shardReqCmd.Uint("shard", 0, "Shard to send the req too")
 	shardReqKind := shardReqCmd.String("kind", "", "")
 	shardReqReq := shardReqCmd.String("req", "", "Request body, in JSON")
 	shardReqYes := shardReqCmd.Bool("yes", false, "Do not ask for confirmation")
-	shardReqRun := func(runtime RuntimeWithClient) {
+	shardReqRun := func(runtime *Runtime) {
 		l := runtime.Log
 		req, resp, err := msgs.MkShardMessage(*shardReqKind)
 		if err != nil {
@@ -43,7 +43,7 @@ func NewShardReq() SpecWithClient {
 				}
 			}
 		}
-		if err := runtime.Client.ShardRequest(l, shard, req, resp); err != nil {
+		if err := runtime.Client().ShardRequest(l, shard, req, resp); err != nil {
 			panic(err)
 		}
 		out, err := json.MarshalIndent(resp, "", "  ")
@@ -53,7 +53,7 @@ func NewShardReq() SpecWithClient {
 		os.Stdout.Write(out)
 		fmt.Println()
 	}
-	return SpecWithClient{
+	return Command{
 		Flags: shardReqCmd,
 		Run:   shardReqRun,
 	}

@@ -12,11 +12,11 @@ import (
 	"os"
 )
 
-func NewCdcReq() SpecWithClient {
+func NewCdcReq() Command {
 	cdcReqCmd := flag.NewFlagSet("cdc-req", flag.ExitOnError)
 	cdcReqKind := cdcReqCmd.String("kind", "", "")
 	cdcReqReq := cdcReqCmd.String("req", "", "Request body, in JSON")
-	cdcReqRun := func(runtime RuntimeWithClient) {
+	cdcReqRun := func(runtime *Runtime) {
 		l := runtime.Log
 		req, resp, err := msgs.MkCDCMessage(*cdcReqKind)
 		if err != nil {
@@ -38,7 +38,7 @@ func NewCdcReq() SpecWithClient {
 				os.Exit(0)
 			}
 		}
-		if err := runtime.Client.CDCRequest(l, req, resp); err != nil {
+		if err := runtime.Client().CDCRequest(l, req, resp); err != nil {
 			panic(err)
 		}
 		out, err := json.MarshalIndent(resp, "", "  ")
@@ -48,7 +48,7 @@ func NewCdcReq() SpecWithClient {
 		os.Stdout.Write(out)
 		fmt.Println()
 	}
-	return SpecWithClient{
+	return Command{
 		Flags: cdcReqCmd,
 		Run:   cdcReqRun,
 	}

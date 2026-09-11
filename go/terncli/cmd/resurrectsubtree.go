@@ -18,14 +18,14 @@ import (
 	"time"
 )
 
-func NewResurrectSubtree() SpecWithClient {
+func NewResurrectSubtree() Command {
 	resurrectSubtreeCmd := flag.NewFlagSet("resurrect-subtree", flag.ExitOnError)
 	resurrectSubtreeSrcId := resurrectSubtreeCmd.Uint64("src-id", 0, "Inode id of the deleted source directory (required)")
 	resurrectSubtreeDst := resurrectSubtreeCmd.String("dst", "", "Destination path in TernFS; must not yet exist (required)")
 	resurrectSubtreeWorkersPerShard := resurrectSubtreeCmd.Int("workers-per-shard", 4, "Directory-walk concurrency per shard (see Parwalk)")
 	resurrectSubtreeFileWorkers := resurrectSubtreeCmd.Int("file-workers", 16, "Concurrency for copying file contents")
 	resurrectSubtreeDryRun := resurrectSubtreeCmd.Bool("dry-run", false, "Log what would happen without creating anything")
-	resurrectSubtreeRun := func(runtime RuntimeWithClient) {
+	resurrectSubtreeRun := func(runtime *Runtime) {
 		l := runtime.Log
 		if *resurrectSubtreeSrcId == 0 {
 			panic(fmt.Errorf("-src-id is required"))
@@ -43,7 +43,7 @@ func NewResurrectSubtree() SpecWithClient {
 		if srcRootId.Type() != msgs.DIRECTORY {
 			panic(fmt.Errorf("-src-id %v is not a directory inode", srcRootId))
 		}
-		c := runtime.Client
+		c := runtime.Client()
 
 		srcStat := msgs.StatDirectoryResp{}
 		if err := c.ShardRequest(l, srcRootId.Shard(), &msgs.StatDirectoryReq{Id: srcRootId}, &srcStat); err != nil {
@@ -195,7 +195,7 @@ func NewResurrectSubtree() SpecWithClient {
 		l.Info("resurrect-subtree done: %v files copied, %v directories created in %v",
 			atomic.LoadUint64(&copiedFiles), atomic.LoadUint64(&createdDirs), time.Since(t0))
 	}
-	return SpecWithClient{
+	return Command{
 		Flags: resurrectSubtreeCmd,
 		Run:   resurrectSubtreeRun,
 	}

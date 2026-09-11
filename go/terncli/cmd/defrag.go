@@ -15,13 +15,13 @@ import (
 	"time"
 )
 
-func NewDefrag() SpecWithClient {
+func NewDefrag() Command {
 	defragFileCmd := flag.NewFlagSet("defrag", flag.ExitOnError)
 	defragFilePath := defragFileCmd.String("path", "", "The directory or file to defrag")
 	defragFileFrom := defragFileCmd.String("from", "", "If present, will not defrag files pointed at by edges created before this time.")
-	defragFileRun := func(runtime RuntimeWithClient) {
+	defragFileRun := func(runtime *Runtime) {
 		l := runtime.Log
-		c := runtime.Client
+		c := runtime.Client()
 		dirInfoCache := client.NewDirInfoCache()
 		bufPool := bufpool.NewBufPool()
 		stats := &cleanup.DefragStats{}
@@ -57,7 +57,7 @@ func NewDefrag() SpecWithClient {
 		}
 		l.Info("defrag stats: %+v", stats)
 	}
-	return SpecWithClient{
+	return Command{
 		Flags: defragFileCmd,
 		Run:   defragFileRun,
 	}

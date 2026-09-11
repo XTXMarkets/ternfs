@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-func NewFind() SpecWithClient {
+func NewFind() Command {
 	findCmd := flag.NewFlagSet("find", flag.ExitOnError)
 	findDir := findCmd.String("path", "/", "")
 	findName := findCmd.String("name", "", "Regex to match the name against.")
@@ -26,7 +26,7 @@ func NewFind() SpecWithClient {
 	findMinSize := findCmd.Uint64("min-size", 0, "If specified, only files of at least this size will be returned.")
 	findCheckBlocks := findCmd.Bool("check-blocks", false, "If true check all blocks in file")
 	findWorkersPerShard := findCmd.Int("workers-per-shard", 5, "")
-	findRun := func(runtime RuntimeWithClient) {
+	findRun := func(runtime *Runtime) {
 		l := runtime.Log
 		re := regexp.MustCompile(`.*`)
 		if *findName != "" {
@@ -45,7 +45,7 @@ func NewFind() SpecWithClient {
 				findBefore = msgs.MakeTernTime(time.Now().Add(-d))
 			}
 		}
-		c := runtime.Client
+		c := runtime.Client()
 		err := client.Parwalk(
 			l,
 			c,
@@ -160,7 +160,7 @@ func NewFind() SpecWithClient {
 			panic(err)
 		}
 	}
-	return SpecWithClient{
+	return Command{
 		Flags: findCmd,
 		Run:   findRun,
 	}
