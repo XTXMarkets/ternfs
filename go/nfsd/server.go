@@ -45,6 +45,7 @@ type Server struct {
 
 	clientGCMu      sync.Mutex
 	clientGCPending map[InodeID]struct{}
+	clientGCRecheck map[InodeID]struct{}
 	clientGCRunning bool
 	clientGCDone    chan struct{}
 }
@@ -71,6 +72,7 @@ func NewServer(fs TernVFS, stagingStore StagingStore, logger *slog.Logger) (*Ser
 		log:             logger,
 		startedAt:       clients.now(),
 		clientGCPending: make(map[InodeID]struct{}),
+		clientGCRecheck: make(map[InodeID]struct{}),
 	}
 	s.opens.now = func() time.Time { return s.clients.now() }
 	return s, nil
@@ -114,23 +116,51 @@ func (s *Server) runClientGC() {
 		}
 		s.clientGCMu.Unlock()
 
-		if err := s.collectClientSafely(clientID); err != nil {
+		recheck, err := s.collectClientSafely(clientID)
+		if err != nil {
 			s.log.Warn("client GC failed", "clientid", uint64(clientID), "err", err)
+			recheck = true
+		}
+		if recheck {
+			s.clientGCMu.Lock()
+			_, alreadyQueued := s.clientGCRecheck[clientID]
+			dropped := !alreadyQueued &&
+				len(s.clientGCRecheck) == maxPendingClientGC
+			if !dropped {
+				s.clientGCRecheck[clientID] = struct{}{}
+			}
+			s.clientGCMu.Unlock()
+			if dropped {
+				s.log.Warn("client GC recheck queue is full")
+			}
 		}
 	}
 }
 
-func (s *Server) collectClientSafely(clientID InodeID) (err error) {
+func (s *Server) collectClientSafely(
+	clientID InodeID,
+) (recheck bool, err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
+			recheck = true
 			s.log.Error("panic in client GC",
 				"clientid", uint64(clientID), "panic", recovered)
 		}
 	}()
-	return s.clients.collectStaleForClient(clientID)
+	return s.clients.collectStaleForClientResult(clientID)
 }
 
-func (s *Server) removeExpiredRecoveredStaging() {
+func (s *Server) scheduleClientGCRechecks() {
+	s.clientGCMu.Lock()
+	pending := s.clientGCRecheck
+	s.clientGCRecheck = make(map[InodeID]struct{})
+	s.clientGCMu.Unlock()
+	for clientID := range pending {
+		s.scheduleClientGC(uint64(clientID))
+	}
+}
+
+func (s *Server) removeExpiredStaging() {
 	if s.clients.now().Before(s.startedAt.Add(nfsLeaseTime)) {
 		return
 	}
@@ -143,13 +173,13 @@ func (s *Server) removeExpiredRecoveredStaging() {
 		byClient[meta.ClientID] = append(byClient[meta.ClientID], fileID)
 	}
 	for clientID, fileIDs := range byClient {
-		live, err := s.clients.HasLiveLease(clientID)
+		expired, err := s.clients.IsLeaseExpired(clientID)
 		if err != nil {
 			s.log.Warn("staging lease check failed",
 				"clientid", clientID, "err", err)
 			continue
 		}
-		if !live {
+		if expired {
 			for _, fileID := range fileIDs {
 				s.stagingStore.Remove(fileID)
 			}
@@ -195,7 +225,8 @@ func (s *Server) runLeaseSweep() {
 			s.log.Error("panic in lease sweeper", "panic", recovered)
 		}
 	}()
-	s.removeExpiredRecoveredStaging()
+	s.scheduleClientGCRechecks()
+	s.removeExpiredStaging()
 	s.sweepExpiredClientState()
 }
 

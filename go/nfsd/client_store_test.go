@@ -48,8 +48,8 @@ func TestClientStoreErrToNFS(t *testing.T) {
 	}{
 		{"NFS status", nfsError(NFS4ERR_EXPIRED), NFS4ERR_EXPIRED},
 		{"missing object", fmt.Errorf("lookup: %w", os.ErrNotExist),
-			NFS4ERR_RESOURCE},
-		{"storage failure", errors.New("storage failed"), NFS4ERR_RESOURCE},
+			NFS4ERR_DELAY},
+		{"storage failure", errors.New("storage failed"), NFS4ERR_DELAY},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if got := clientStoreErrToNFS(test.err); got != test.want {
@@ -216,7 +216,7 @@ func TestClientStoreDurableState(t *testing.T) {
 		if err := first.MarkOpen(clientID, stateID); err != nil {
 			t.Fatal(err)
 		}
-		reregisterID, _, err := second.SetClientID(
+		reregisterID, reregisterConfirm, err := second.SetClientID(
 			verifier, []byte("client"), owner1,
 		)
 		if err != nil {
@@ -225,6 +225,11 @@ func TestClientStoreDurableState(t *testing.T) {
 		if reregisterID == clientID {
 			t.Fatal("registration after lease expiry reused clientid")
 		}
+		if _, err := second.ConfirmClientID(
+			reregisterID, reregisterConfirm, owner1.principal,
+		); err != nil {
+			t.Fatal(err)
+		}
 		active, err := second.HasOpen(clientID, stateID)
 		if err != nil {
 			t.Fatal(err)
@@ -232,6 +237,7 @@ func TestClientStoreDurableState(t *testing.T) {
 		if active {
 			t.Fatal("expired active-open marker still reported as active")
 		}
+		clientID = reregisterID
 	})
 
 	t.Run("reboot and collection", func(t *testing.T) {
@@ -241,7 +247,7 @@ func TestClientStoreDurableState(t *testing.T) {
 			t.Fatal(err)
 		}
 		rebootID, rebootConfirm, err := first.SetClientID(
-			[8]byte{2}, []byte("client"), owner2)
+			[8]byte{2}, []byte("client"), owner1)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -249,7 +255,7 @@ func TestClientStoreDurableState(t *testing.T) {
 			t.Fatal("client reboot reused clientid")
 		}
 		replacedID, err := second.ConfirmClientID(
-			rebootID, rebootConfirm, owner2.principal)
+			rebootID, rebootConfirm, owner1.principal)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -501,6 +507,130 @@ func TestClientStoreRemovesExpiredProcessSlots(t *testing.T) {
 	}
 }
 
+func TestClientStoreExpiredLeaseDoesNotReviveAfterSlotCleanup(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		use  func(*ClientStore, uint64) error
+	}{
+		{"RENEW", func(store *ClientStore, clientID uint64) error {
+			return store.Renew(clientID)
+		}},
+		{"OPEN", func(store *ClientStore, clientID uint64) error {
+			return store.MarkOpen(clientID, StateID{2})
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fs := NewLocalTernVFS(t.TempDir())
+			base := time.Unix(1000, 0)
+			owner := clientOwner{
+				principal: rpcPrincipal{flavor: authSys, body: "owner"},
+			}
+			first, clientID := newConfirmedStoreClient(
+				t, fs, []byte("client"), [8]byte{1}, owner)
+			first.now = func() time.Time { return base }
+			if err := first.MarkOpen(clientID, StateID{1}); err != nil {
+				t.Fatal(err)
+			}
+
+			collector, err := NewClientStore(fs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			collector.now = func() time.Time {
+				return base.Add(2*nfsLeaseTime + time.Second)
+			}
+			if _, _, err := collector.leaseStatus(
+				InodeID(clientID),
+			); err != nil {
+				t.Fatal(err)
+			}
+
+			restarted, err := NewClientStore(fs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			restarted.now = collector.now
+			if err := test.use(
+				restarted, clientID,
+			); nfsErrCode(err) != NFS4ERR_EXPIRED {
+				t.Fatalf("%s after slot cleanup = %v, want NFS4ERR_EXPIRED",
+					test.name, err)
+			}
+		})
+	}
+}
+
+func TestClientStoreCachedRenewSeesExpiredMarker(t *testing.T) {
+	fs := NewLocalTernVFS(t.TempDir())
+	base := time.Unix(1000, 0)
+	owner := clientOwner{
+		principal: rpcPrincipal{flavor: authSys, body: "owner"},
+	}
+	first, clientID := newConfirmedStoreClient(
+		t, fs, []byte("client"), [8]byte{1}, owner)
+	first.now = func() time.Time { return base }
+	stateID := StateID{1}
+	if err := first.MarkOpen(clientID, stateID); err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := NewClientStore(fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second.now = func() time.Time {
+		return base.Add(nfsLeaseTime + time.Second)
+	}
+	if live, found, err := second.leaseStatus(
+		InodeID(clientID),
+	); err != nil {
+		t.Fatal(err)
+	} else if live || !found {
+		t.Fatalf("expired lease status = live %t, found %t", live, found)
+	}
+
+	first.now = func() time.Time {
+		return base.Add(nfsLeaseRenewAfter + time.Second)
+	}
+	if active, err := first.HasOpen(
+		clientID, stateID,
+	); active || nfsErrCode(err) != NFS4ERR_EXPIRED {
+		t.Fatalf("cached renewal after fleet expiry = active %t, err %v",
+			active, err)
+	}
+}
+
+func TestClientStorePersistsExpiryBeforeSlotCleanup(t *testing.T) {
+	baseFS := NewLocalTernVFS(t.TempDir())
+	fs := &removeFailureVFS{TernVFS: baseFS}
+	base := time.Unix(1000, 0)
+	owner := clientOwner{
+		principal: rpcPrincipal{flavor: authSys, body: "owner"},
+	}
+	store, clientID := newConfirmedStoreClient(
+		t, fs, []byte("client"), [8]byte{1}, owner)
+	store.now = func() time.Time { return base }
+	if err := store.MarkOpen(clientID, StateID{1}); err != nil {
+		t.Fatal(err)
+	}
+
+	store.now = func() time.Time {
+		return base.Add(2*nfsLeaseTime + time.Second)
+	}
+	fs.name = store.leaseName
+	fs.remaining = 1
+	if _, _, err := store.leaseStatus(
+		InodeID(clientID),
+	); !errors.Is(err, errInjectedRemove) {
+		t.Fatalf("lease cleanup error = %v, want injected remove failure", err)
+	}
+	if _, err := baseFS.Lookup(
+		InodeID(clientID), expiredName,
+	); err != nil {
+		t.Fatalf("expiry was not durable before slot cleanup: %v", err)
+	}
+}
+
 type countingVFS struct {
 	TernVFS
 
@@ -695,6 +825,36 @@ func TestClientStoreHasOpenFastPathAndImplicitRenewal(t *testing.T) {
 			t.Fatalf("implicit renewal writes at %s: create=%d rename=%d",
 				elapsed, fs.createFile, fs.rename)
 		}
+	}
+}
+
+func TestClientStoreMarkOpenKeepsExistingMarkerInode(t *testing.T) {
+	fs := NewLocalTernVFS(t.TempDir())
+	store, clientID := newConfirmedStoreClient(
+		t,
+		fs,
+		[]byte("client"),
+		[8]byte{1},
+		clientOwner{principal: rpcPrincipal{flavor: authSys, body: "owner"}},
+	)
+	stateID := StateID{1}
+	if err := store.MarkOpen(clientID, stateID); err != nil {
+		t.Fatal(err)
+	}
+	before, err := fs.Lookup(InodeID(clientID), activeOpenName(stateID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkOpen(clientID, stateID); err != nil {
+		t.Fatal(err)
+	}
+	after, err := fs.Lookup(InodeID(clientID), activeOpenName(stateID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Fatalf("replayed OPEN replaced marker inode %d with %d",
+			before, after)
 	}
 }
 
@@ -1646,6 +1806,52 @@ func TestServerSchedulesClientGC(t *testing.T) {
 	srv.clientGCMu.Unlock()
 	if running || pending != 0 {
 		t.Fatalf("client GC did not drain: running=%v pending=%d", running, pending)
+	}
+}
+
+func TestConfirmedClientGCRechecksAfterLease(t *testing.T) {
+	fs := NewLocalTernVFS(t.TempDir())
+	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewServer(fs, staging, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Unix(1000, 0)
+	srv.clients.now = func() time.Time { return base }
+	addr, cleanup := serveTestServer(t, srv)
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+	xid := uint32(1)
+
+	oldID := setupClientWithVerifier(t, conn, &xid, [8]byte{1})
+	srv.waitForClientGC()
+	newID, confirm := requestClientID(
+		t, conn, &xid, "test-client", [8]byte{2})
+	srv.waitForClientGC()
+	if status := confirmClientID(
+		t, conn, &xid, newID, confirm,
+	); status != NFS4_OK {
+		t.Fatalf("SETCLIENTID_CONFIRM status = %s",
+			Nfsstat4Name(status))
+	}
+	srv.waitForClientGC()
+
+	if _, err := fs.Lookup(
+		InodeID(oldID), gcCandidateName,
+	); err != nil {
+		t.Fatalf("confirmation did not schedule first GC phase: %v", err)
+	}
+	srv.clients.now = func() time.Time {
+		return base.Add(clientGCGrace + time.Second)
+	}
+	srv.runLeaseSweep()
+	srv.waitForClientGC()
+	if _, err := fs.Stat(InodeID(oldID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("periodic GC recheck retained stale incarnation: %v", err)
 	}
 }
 

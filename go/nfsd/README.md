@@ -120,6 +120,7 @@ Client state has the following shape:
             reboot
             o.<state ID>
             lease.<nfsd ID>
+            expired
             confirming.<nfsd ID>
             gc
 ```
@@ -152,6 +153,10 @@ incarnation. The rest of the stateid and open-owner state remains local to the
 nfsd process.
 
 `lease.<nfsd ID>` contains the lease expiry written by one nfsd instance.
+
+`expired` is an empty marker recording that the fleet lease expired. It
+prevents the confirmed clientid from acquiring a new lease after old process
+slots have been collected.
 
 `confirming.<nfsd ID>` contains an expiry for a temporary claim which prevents
 collection while an nfsd is confirming the incarnation.
@@ -223,13 +228,23 @@ through a temporary file and rename. The first OPEN handled by one nfsd also
 has to resolve the durable client record; later OPENs reuse the cached identity
 and confirmed-pointer location.
 
+Client-store failures without a more specific NFS status return
+`NFS4ERR_DELAY`, allowing the client to retry without discarding local open
+state.
+
 If no lease is live, its open markers no longer represent active state. If the
 confirmed pointer names a different incarnation, the clientid is stale and its
 stateids are expired.
 
 Lease and confirmation slots use a random name per nfsd process. Scans remove
 slots which have been expired for a full additional lease, allowing for clock
-skew while preventing slots from accumulating across server restarts.
+skew while preventing slots from accumulating across server restarts. Before
+removing the last lease evidence, nfsd writes the `expired` marker. An expired
+clientid therefore cannot renew or create new open state even after all of its
+process slots have been removed.
+
+OPEN markers are create-if-absent records. Reopening or replaying an OPEN which
+already owns a marker reuses the existing TernFS inode.
 
 Each nfsd checks its local clients once per lease period. A client with no
 live fleet lease loses its process-local open state and any local staging
@@ -254,10 +269,13 @@ Linux client recovers by opening the file again by name.
 
 A write open is the exception because its local staging and sidecar files may
 still hold unpublished data. On startup nfsd discovers these files. The
-sidecar contains the state needed to complete the pending `CLOSE`. Staging
-whose recorded clientid no longer has a live lease is removed after one lease
-period of startup grace. This gives a client time to reclaim the write after a
-server outage.
+sidecar contains the state needed to complete the pending `CLOSE`.
+
+After one lease period of startup grace, the periodic sweep checks all local
+staging, including writes created since startup. Staging for an expired or
+stale clientid is removed. A confirmed client with no lease slot is retained
+because the first OPEN creates staging before it writes the slot. The startup
+grace gives a client time to reclaim a recovered write after a server outage.
 
 ## Incarnation collection
 
@@ -273,19 +291,24 @@ incarnation.
 
 An incarnation which is no longer reachable is first given a `gc` record. The
 record ages the observation that the incarnation is unreachable for one lease
-period. A later collection pass checks the roots and confirmation claims again
-before removing it.
+period. The next periodic lease sweep schedules another collection pass, which
+checks the roots and confirmation claims again before removing it.
 
 Collection is asynchronous and removes at most eight incarnations per pass.
 A pass still scans the identity and its incarnation directories. Failure does
-not affect the client operation, and a later registration schedules another
-attempt.
+not affect the client operation. Failed and incomplete passes are also retried
+by a later lease sweep.
 
 Temporary `t.*` files left by a crash become eligible for removal after they
 are one lease old. A later registration-triggered collection removes them
 from identity and incarnation directories. Younger temporary files may belong
 to an operation running on another nfsd and are not touched. Unconfirmed
 `update` records do not expire; the next callback update replaces them.
+
+The stable identity directory and its current confirmed incarnation are
+retained until the same identity registers again. Distinct one-off client
+identities therefore leave one identity directory and one current incarnation
+in `/.nfs/clients`.
 
 The client-store namespace is hidden from LOOKUP and READDIR. PUTFH rejects
 internal directories and files whose parent is already known to this nfsd.

@@ -1567,8 +1567,8 @@ func TestLookupDurableOpenStorageErrorPreservesClientState(t *testing.T) {
 	writeStateID(stateid, reader.id)
 	if _, status := srv.lookupDurableOpen(
 		stateid, readerID,
-	); status != NFS4ERR_RESOURCE {
-		t.Fatalf("lookup status = %s, want NFS4ERR_RESOURCE",
+	); status != NFS4ERR_DELAY {
+		t.Fatalf("lookup status = %s, want NFS4ERR_DELAY",
 			Nfsstat4Name(status))
 	}
 	if _, status := srv.opens.lookup(
@@ -1596,12 +1596,12 @@ func TestOwnerOperationsPreserveStateOnClientStoreError(t *testing.T) {
 		fs.remaining = 1
 		if status := closeFileWithSeqStatus(
 			t, conn, xid, fh, stateid, 3,
-		); status != NFS4ERR_RESOURCE {
-			t.Fatalf("CLOSE with store error = %s, want RESOURCE",
+		); status != NFS4ERR_DELAY {
+			t.Fatalf("CLOSE with store error = %s, want DELAY",
 				Nfsstat4Name(status))
 		}
 		if status := closeFileWithSeqStatus(
-			t, conn, xid, fh, stateid, 3,
+			t, conn, xid, fh, stateid, 4,
 		); status != NFS4_OK {
 			t.Fatalf("retried CLOSE = %s, want OK",
 				Nfsstat4Name(status))
@@ -1621,12 +1621,12 @@ func TestOwnerOperationsPreserveStateOnClientStoreError(t *testing.T) {
 		fs.remaining = 1
 		if status := openConfirmStatus(
 			t, conn, xid, fh, 2, stateid,
-		); status != NFS4ERR_RESOURCE {
-			t.Fatalf("OPEN_CONFIRM with store error = %s, want RESOURCE",
+		); status != NFS4ERR_DELAY {
+			t.Fatalf("OPEN_CONFIRM with store error = %s, want DELAY",
 				Nfsstat4Name(status))
 		}
 		if status := openConfirmStatus(
-			t, conn, xid, fh, 2, stateid,
+			t, conn, xid, fh, 3, stateid,
 		); status != NFS4_OK {
 			t.Fatalf("retried OPEN_CONFIRM = %s, want OK",
 				Nfsstat4Name(status))
@@ -1670,6 +1670,54 @@ func TestExpireIfLeaseDeadKeepsClientWithoutSlot(t *testing.T) {
 	}
 	if expired {
 		t.Fatal("client with an in-flight first OPEN was expired")
+	}
+}
+
+func TestStagingSweepKeepsClientWithoutLeaseSlot(t *testing.T) {
+	fs := NewLocalTernVFS(t.TempDir())
+	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewServer(fs, staging, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Unix(1000, 0)
+	srv.startedAt = base
+	srv.clients.now = func() time.Time {
+		return base.Add(nfsLeaseTime + time.Second)
+	}
+	owner := clientOwner{
+		principal: rpcPrincipal{flavor: authSys, body: "owner"},
+	}
+	clientID, confirm, err := srv.clients.SetClientID(
+		[8]byte{1}, []byte("client"), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.clients.ConfirmClientID(
+		clientID, confirm, owner.principal,
+	); err != nil {
+		t.Fatal(err)
+	}
+	fileID, cookie, err := fs.ConstructFile(fs.RootID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := staging.Create(fileID, StagingMeta{
+		DirID:      fs.RootID(),
+		FileName:   "opening.txt",
+		TernCookie: cookie,
+		NFSStateID: StateID{1},
+		ClientID:   clientID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	srv.removeExpiredStaging()
+	if staging.Get(fileID) == nil {
+		t.Fatal("staging sweep removed an in-flight first OPEN")
 	}
 }
 
@@ -1908,14 +1956,14 @@ func TestNewServerDelaysExpiredRecoveredStagingRemoval(t *testing.T) {
 	}
 	srv.startedAt = base.Add(200 * time.Second)
 	srv.clients.now = func() time.Time { return srv.startedAt }
-	srv.removeExpiredRecoveredStaging()
+	srv.removeExpiredStaging()
 	if recovered.Get(fileID) == nil {
 		t.Fatal("startup grace removed expired staging early")
 	}
 	srv.clients.now = func() time.Time {
 		return srv.startedAt.Add(nfsLeaseTime + time.Second)
 	}
-	srv.removeExpiredRecoveredStaging()
+	srv.removeExpiredStaging()
 	if recovered.Get(fileID) != nil {
 		t.Fatal("startup retained expired staging after grace")
 	}

@@ -1727,6 +1727,7 @@ func (s *Server) opSetclientidConfirm(
 	}
 	r := w.AppendResarray_SetclientidConfirm()
 	r.SetStatus(NFS4_OK)
+	s.scheduleClientGC(clid)
 	return NFS4_OK
 }
 

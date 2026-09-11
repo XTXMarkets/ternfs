@@ -108,6 +108,12 @@ type durableGCCandidate struct {
 	CollectAfterUnixNano int64 `json:"collect_after_unix_nano"`
 }
 
+type slotScan struct {
+	live         bool
+	found        bool
+	expiredNames []string
+}
+
 const (
 	nfsDirName          = ".nfs"
 	confirmedName       = "confirmed"
@@ -116,6 +122,7 @@ const (
 	updateName          = "update"
 	rebootName          = "reboot"
 	gcCandidateName     = "gc"
+	expiredName         = "expired"
 	incarnationPrefix   = "i."
 	activeOpenPrefix    = "o."
 	leasePrefix         = "lease."
@@ -487,36 +494,51 @@ func (cs *ClientStore) requireIncarnationName(
 }
 
 func (cs *ClientStore) collectStaleForClient(clientID InodeID) error {
+	_, err := cs.collectStaleForClientResult(clientID)
+	return err
+}
+
+func (cs *ClientStore) collectStaleForClientResult(
+	clientID InodeID,
+) (bool, error) {
 	identityID, err := cs.fs.LookupParent(clientID)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil
+		return false, nil
 	}
 	if err != nil {
-		return err
+		return false, err
 	}
 	unlock := cs.lockIdentity(identityID)
 	defer unlock()
-	return cs.collectStale(identityID)
+	return cs.collectStaleResult(identityID)
 }
 
 func (cs *ClientStore) collectStale(identityID InodeID) error {
+	_, err := cs.collectStaleResult(identityID)
+	return err
+}
+
+func (cs *ClientStore) collectStaleResult(
+	identityID InodeID,
+) (bool, error) {
 	roots, err := cs.clientRoots(identityID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	entries, err := cs.entries(identityID)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	now := cs.now()
 	removed := 0
+	recheck := false
 	for _, entry := range entries {
 		if strings.HasPrefix(entry.Name, tempPrefix) {
 			if err := cs.collectOldTemp(
 				identityID, entry, now,
 			); err != nil {
-				return err
+				return false, err
 			}
 			continue
 		}
@@ -524,21 +546,22 @@ func (cs *ClientStore) collectStale(identityID InodeID) error {
 			continue
 		}
 		if err := cs.collectOldTemps(entry.ID, now); err != nil {
-			return err
+			return false, err
 		}
 		if _, rooted := roots[entry.ID]; rooted {
 			if err := cs.removeIfExists(entry.ID, gcCandidateName); err != nil {
-				return err
+				return false, err
 			}
 			continue
 		}
 		confirming, err := cs.hasLiveConfirmation(entry.ID)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if confirming {
+			recheck = true
 			if err := cs.removeIfExists(entry.ID, gcCandidateName); err != nil {
-				return err
+				return false, err
 			}
 			continue
 		}
@@ -546,7 +569,7 @@ func (cs *ClientStore) collectStale(identityID InodeID) error {
 		var candidate durableGCCandidate
 		found, err := cs.readJSON(entry.ID, gcCandidateName, &candidate)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if !found {
 			// Age the decision that this incarnation is unreachable, not the
@@ -555,38 +578,40 @@ func (cs *ClientStore) collectStale(identityID InodeID) error {
 			if _, err := cs.createJSON(
 				entry.ID, gcCandidateName, candidate,
 			); err != nil {
-				return err
+				return false, err
 			}
+			recheck = true
 			continue
 		}
 		if candidate.CollectAfterUnixNano <= 0 {
-			return fmt.Errorf("client store: invalid GC candidate")
+			return false, fmt.Errorf("client store: invalid GC candidate")
 		}
 		if candidate.CollectAfterUnixNano > now.UnixNano() {
+			recheck = true
 			continue
 		}
 
 		roots, err = cs.clientRoots(identityID)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if _, rooted := roots[entry.ID]; rooted {
 			if err := cs.removeIfExists(entry.ID, gcCandidateName); err != nil {
-				return err
+				return false, err
 			}
 			continue
 		}
 		if err := cs.removeIncarnation(
 			identityID, entry.ID, entry.Name,
 		); err != nil {
-			return err
+			return false, err
 		}
 		removed++
 		if removed == maxClientGCRemovals {
-			return nil
+			return true, nil
 		}
 	}
-	return nil
+	return recheck, nil
 }
 
 func (cs *ClientStore) collectOldTemps(
@@ -713,6 +738,32 @@ func (cs *ClientStore) HasLiveLease(clientID uint64) (bool, error) {
 		return false, err
 	}
 	return cs.hasLiveLease(incarnationID)
+}
+
+func (cs *ClientStore) IsLeaseExpired(clientID uint64) (bool, error) {
+	incarnationID := InodeID(clientID)
+	identityID, valid, err := cs.identityForIncarnation(incarnationID)
+	if err != nil {
+		return false, err
+	}
+	if !valid {
+		return true, nil
+	}
+	unlock := cs.lockIdentity(identityID)
+	defer unlock()
+	_, confirmed, err := cs.confirmedLocationForIdentity(
+		incarnationID, identityID)
+	if err != nil {
+		return false, err
+	}
+	if !confirmed {
+		return true, nil
+	}
+	live, found, err := cs.leaseStatus(incarnationID)
+	if err != nil {
+		return false, err
+	}
+	return found && !live, nil
 }
 
 func (cs *ClientStore) ExpireIfLeaseDead(
@@ -857,12 +908,19 @@ func (cs *ClientStore) Renew(clientID uint64) error {
 }
 
 // renewConfirmed rewrites this nfsd's lease slot and then rechecks the
-// confirmed symlink. The caller serializes lease writes with localClientState.mu.
+// confirmed symlink. Concurrent replacements of the same slot are harmless.
 func (cs *ClientStore) renewConfirmed(
 	incarnationID InodeID,
 	identityID InodeID,
 	confirmedPointer InodeID,
 ) (int64, InodeID, error) {
+	expired, err := cs.hasExpiredMarker(incarnationID)
+	if err != nil {
+		return 0, 0, err
+	}
+	if expired {
+		return 0, 0, nfsError(NFS4ERR_EXPIRED)
+	}
 	lease := durableLease{
 		ExpiresUnixNano: cs.now().Add(nfsLeaseTime).UnixNano(),
 	}
@@ -1182,20 +1240,67 @@ func (cs *ClientStore) hasLiveLease(incarnationID InodeID) (bool, error) {
 func (cs *ClientStore) leaseStatus(
 	incarnationID InodeID,
 ) (bool, bool, error) {
-	return cs.liveSlots(incarnationID, leasePrefix)
+	expired, err := cs.hasExpiredMarker(incarnationID)
+	if err != nil {
+		return false, false, err
+	}
+	scan, err := cs.scanSlots(incarnationID, leasePrefix)
+	if err != nil {
+		return false, false, err
+	}
+	if !expired && !scan.live && scan.found {
+		if err := cs.ensureMarker(incarnationID, expiredName); err != nil {
+			return false, true, err
+		}
+		expired = true
+	}
+	if err := cs.removeExpiredSlots(
+		incarnationID, scan.expiredNames,
+	); err != nil {
+		return false, expired || scan.found, err
+	}
+	if expired {
+		return false, true, nil
+	}
+	return scan.live, scan.found, nil
+}
+
+func (cs *ClientStore) hasExpiredMarker(
+	incarnationID InodeID,
+) (bool, error) {
+	_, err := cs.fs.Lookup(incarnationID, expiredName)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 func (cs *ClientStore) liveSlots(
 	incarnationID InodeID,
 	prefix string,
 ) (bool, bool, error) {
-	entries, err := cs.entries(incarnationID)
+	scan, err := cs.scanSlots(incarnationID, prefix)
 	if err != nil {
 		return false, false, err
 	}
+	if err := cs.removeExpiredSlots(
+		incarnationID, scan.expiredNames,
+	); err != nil {
+		return false, scan.found, err
+	}
+	return scan.live, scan.found, nil
+}
+
+func (cs *ClientStore) scanSlots(
+	incarnationID InodeID,
+	prefix string,
+) (slotScan, error) {
+	entries, err := cs.entries(incarnationID)
+	if err != nil {
+		return slotScan{}, err
+	}
 	now := cs.now().UnixNano()
-	live := false
-	found := false
+	var scan slotScan
 	for _, entry := range entries {
 		if !strings.HasPrefix(entry.Name, prefix) ||
 			len(entry.Name) == len(prefix) {
@@ -1206,21 +1311,30 @@ func (cs *ClientStore) liveSlots(
 			continue
 		}
 		if err != nil {
-			return false, found, err
+			return slotScan{}, err
 		}
-		found = true
+		scan.found = true
 		if lease.ExpiresUnixNano > now {
-			live = true
+			scan.live = true
 			continue
 		}
 		if lease.ExpiresUnixNano <= now-nfsLeaseTime.Nanoseconds() {
-			if err := cs.removeIfExists(
-				incarnationID, entry.Name); err != nil {
-				return false, found, err
-			}
+			scan.expiredNames = append(scan.expiredNames, entry.Name)
 		}
 	}
-	return live, found, nil
+	return scan, nil
+}
+
+func (cs *ClientStore) removeExpiredSlots(
+	incarnationID InodeID,
+	names []string,
+) error {
+	for _, name := range names {
+		if err := cs.removeIfExists(incarnationID, name); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (cs *ClientStore) isInternalFilehandle(id InodeID) (bool, error) {
@@ -1529,6 +1643,11 @@ func (cs *ClientStore) replaceSymlink(
 }
 
 func (cs *ClientStore) ensureMarker(dirID InodeID, name string) error {
+	if _, err := cs.fs.Lookup(dirID, name); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	_, err := cs.fs.CreateFile(dirID, name, nil)
 	return err
 }
@@ -1546,7 +1665,7 @@ func clientStoreErrToNFS(err error) uint32 {
 	if errors.As(err, &nfs) {
 		return uint32(nfs)
 	}
-	return NFS4ERR_RESOURCE
+	return NFS4ERR_DELAY
 }
 
 func newDurableClientRecord(
