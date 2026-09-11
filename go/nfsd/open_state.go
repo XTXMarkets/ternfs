@@ -7,6 +7,7 @@ package main
 import (
 	"crypto/rand"
 	"encoding/binary"
+	"errors"
 	"sync"
 	"time"
 )
@@ -170,18 +171,21 @@ func (os *openStateStore) newStateID() StateID {
 func (os *openStateStore) addStateLocked(
 	owner *openOwnerState,
 	state *openState,
-) {
-	if owner.states == nil {
-		owner.states = make(map[InodeID]*openState)
-	}
+) error {
 	if existing := os.states[state.id]; existing != nil {
-		panic("NFS stateid index slot is already occupied")
+		return errors.New("NFS stateid index slot is already occupied")
 	}
-	if existing := owner.states[state.fileID]; existing != nil {
-		panic("NFS open-owner file index slot is already occupied")
+	if owner.states != nil {
+		if existing := owner.states[state.fileID]; existing != nil {
+			return errors.New(
+				"NFS open-owner file index slot is already occupied")
+		}
+	} else {
+		owner.states = make(map[InodeID]*openState)
 	}
 	os.states[state.id] = state
 	owner.states[state.fileID] = state
+	return nil
 }
 
 // removeStateLocked requires owner.mu and os.mu.
@@ -563,7 +567,10 @@ func (op *openOwnerOperation) finishOpen(
 		generation: 1,
 		confirmed:  !op.needConfirm,
 	}
-	os.addStateLocked(op.owner, state)
+	if err := os.addStateLocked(op.owner, state); err != nil {
+		os.mu.Unlock()
+		return op.finishError(NFS4ERR_SERVERFAULT)
+	}
 	now := uint64(time.Now().UnixNano())
 	response := openOwnerResponse{
 		kind:           openOwnerOperationOpen,

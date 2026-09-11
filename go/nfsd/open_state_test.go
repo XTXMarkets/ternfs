@@ -6,6 +6,7 @@ package main
 
 import (
 	"testing"
+	"time"
 )
 
 func assertOpenStateIndex(t *testing.T, store *openStateStore) {
@@ -78,17 +79,17 @@ func TestAddStateLockedRejectsOccupiedIndexSlot(t *testing.T) {
 				id:     StateID{1},
 				fileID: MakeInodeID(InodeTypeFile, 1),
 			}
-			add := func(state *openState) {
+			add := func(state *openState) error {
 				owner.mu.Lock()
 				defer owner.mu.Unlock()
 				store.mu.Lock()
 				defer store.mu.Unlock()
-				store.addStateLocked(owner, state)
+				return store.addStateLocked(owner, state)
 			}
-			add(first)
-			if recovered := panicValue(func() {
-				add(&test.second)
-			}); recovered == nil {
+			if err := add(first); err != nil {
+				t.Fatal(err)
+			}
+			if err := add(&test.second); err == nil {
 				t.Fatal("occupied index slot was overwritten")
 			}
 			if store.states[first.id] != first ||
@@ -97,6 +98,37 @@ func TestAddStateLockedRejectsOccupiedIndexSlot(t *testing.T) {
 				t.Fatal("index changed after rejected insertion")
 			}
 		})
+	}
+}
+
+func TestFinishOpenIndexConflictReturnsServerFault(t *testing.T) {
+	store := newOpenStateStore()
+	owner := openOwnerKey{clientID: 1, owner: "owner"}
+	op, _, _, status := store.startOpen(owner, 1)
+	if status != NFS4_OK {
+		t.Fatal(Nfsstat4Name(status))
+	}
+
+	id := StateID{1}
+	store.mu.Lock()
+	store.states[id] = &openState{id: id}
+	store.mu.Unlock()
+
+	finished := make(chan openOwnerResponse, 1)
+	go func() {
+		defer op.finishServerFaultIfNeeded()
+		finished <- op.finishOpen(
+			MakeInodeID(InodeTypeFile, 1), false, id, false)
+	}()
+
+	select {
+	case response := <-finished:
+		if response.status != NFS4ERR_SERVERFAULT {
+			t.Fatalf("OPEN status = %s, want NFS4ERR_SERVERFAULT",
+				Nfsstat4Name(response.status))
+		}
+	case <-time.After(testChannelTimeout):
+		t.Fatal("OPEN deadlocked after detecting an occupied index slot")
 	}
 }
 
