@@ -15,6 +15,18 @@ import (
 	"time"
 )
 
+// collectStaleForClient and collectStale run a collection pass and discard
+// the recheck flag. Production code uses collectStaleForClientResult.
+func (cs *ClientStore) collectStaleForClient(clientID InodeID) error {
+	_, err := cs.collectStaleForClientResult(clientID)
+	return err
+}
+
+func (cs *ClientStore) collectStale(identityID InodeID) error {
+	_, err := cs.collectStaleResult(identityID)
+	return err
+}
+
 func newConfirmedStoreClient(
 	t *testing.T,
 	fs TernVFS,

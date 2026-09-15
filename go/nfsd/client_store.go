@@ -494,11 +494,6 @@ func (cs *ClientStore) requireIncarnationName(
 	return name, nil
 }
 
-func (cs *ClientStore) collectStaleForClient(clientID InodeID) error {
-	_, err := cs.collectStaleForClientResult(clientID)
-	return err
-}
-
 func (cs *ClientStore) collectStaleForClientResult(
 	clientID InodeID,
 ) (bool, error) {
@@ -512,11 +507,6 @@ func (cs *ClientStore) collectStaleForClientResult(
 	unlock := cs.lockIdentity(identityID)
 	defer unlock()
 	return cs.collectStaleResult(identityID)
-}
-
-func (cs *ClientStore) collectStale(identityID InodeID) error {
-	_, err := cs.collectStaleResult(identityID)
-	return err
 }
 
 func (cs *ClientStore) collectStaleResult(
@@ -727,22 +717,6 @@ func (cs *ClientStore) IsConfirmed(clientID uint64) (bool, error) {
 	_, confirmed, err := cs.confirmedLocationForIdentity(
 		incarnationID, identityID)
 	return confirmed, err
-}
-
-func (cs *ClientStore) HasLiveLease(clientID uint64) (bool, error) {
-	incarnationID := InodeID(clientID)
-	identityID, valid, err := cs.identityForIncarnation(incarnationID)
-	if err != nil || !valid {
-		return false, err
-	}
-	unlock := cs.lockIdentity(identityID)
-	defer unlock()
-	_, confirmed, err := cs.confirmedLocationForIdentity(
-		incarnationID, identityID)
-	if err != nil || !confirmed {
-		return false, err
-	}
-	return cs.hasLiveLease(incarnationID)
 }
 
 func (cs *ClientStore) IsLeaseExpired(clientID uint64) (bool, error) {

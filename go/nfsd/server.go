@@ -205,15 +205,6 @@ func (s *Server) sweepExpiredClientState() {
 			continue
 		}
 		if expired {
-			live, err := s.clients.HasLiveLease(clientID)
-			if err != nil {
-				s.log.Warn("client lease recheck failed",
-					"clientid", clientID, "err", err)
-				continue
-			}
-			if live {
-				continue
-			}
 			s.expireClientState(clientID)
 		}
 	}
