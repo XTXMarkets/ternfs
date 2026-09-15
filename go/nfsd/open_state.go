@@ -77,6 +77,7 @@ type openOwnerState struct {
 	initialized  bool
 	confirmed    bool
 	lastResponse openOwnerResponse
+	lastUsed     time.Time
 
 	// states indexes this owner's open states by file. Protected by
 	// openStateStore.mu, like openStateStore.states. Every entry here is
@@ -102,9 +103,8 @@ type openStateStore struct {
 	expiredIDs    []StateID
 	recovered     map[StateID]openOwnerResponse
 	recoveredIDs  []StateID
-	revoked       map[uint64]struct{}
-	revokedIDs    []uint64
 	recoveryLocks map[StateID]*recoveredCloseLock
+	now           func() time.Time
 }
 
 type openOwnerOperation struct {
@@ -146,8 +146,8 @@ func newOpenStateStore() *openStateStore {
 				replayOwners:  make(map[StateID]*openOwnerState),
 				expired:       make(map[StateID]struct{}),
 				recovered:     make(map[StateID]openOwnerResponse),
-				revoked:       make(map[uint64]struct{}),
 				recoveryLocks: make(map[StateID]*recoveredCloseLock),
+				now:           time.Now,
 			}
 		}
 	}
@@ -236,27 +236,10 @@ func (os *openStateStore) markExpiredLocked(id StateID) {
 	}
 }
 
-func (os *openStateStore) revokeClientLocked(clientID uint64) {
-	if _, exists := os.revoked[clientID]; exists {
-		return
-	}
-	os.revoked[clientID] = struct{}{}
-	os.revokedIDs = append(os.revokedIDs, clientID)
-	if len(os.revokedIDs) > maxTombstones {
-		oldest := os.revokedIDs[0]
-		os.revokedIDs = os.revokedIDs[1:]
-		delete(os.revoked, oldest)
-	}
-}
-
 func (os *openStateStore) acquireOwnerForOpen(
 	key openOwnerKey,
 ) (*openOwnerState, uint32) {
 	os.mu.Lock()
-	if _, revoked := os.revoked[key.clientID]; revoked {
-		os.mu.Unlock()
-		return nil, NFS4ERR_STALE_CLIENTID
-	}
 	owner := os.owners[key]
 	if owner == nil {
 		owner = &openOwnerState{}
@@ -339,6 +322,7 @@ func (os *openStateStore) startOwnerOperation(
 	if owner.initialized && seq != owner.nextSeq {
 		response := owner.lastResponse
 		if response.matches(kind, seq, stateID, generation, fileID) {
+			owner.lastUsed = os.now()
 			os.releaseOwner(owner)
 			return nil, response, true, response.status
 		}
@@ -492,6 +476,7 @@ func (os *openStateStore) startClose(
 
 func (op *openOwnerOperation) finishLocked(response openOwnerResponse) {
 	owner := op.owner
+	owner.lastUsed = op.store.now()
 	if !openOwnerSeqidIsExempt(response.status) {
 		if owner.lastResponse.kind == openOwnerOperationClose {
 			delete(op.store.replayOwners, owner.lastResponse.inputStateID)
@@ -852,14 +837,13 @@ func (op *recoveredCloseOperation) finishServerFaultIfNeeded() {
 	}
 }
 
-func (os *openStateStore) purgeClient(clientID uint64) []InodeID {
+// expireClient drops process-local state. Persistent client-store checks
+// prevent a replaced clientid from opening new state.
+func (os *openStateStore) expireClient(clientID uint64) []openState {
 	if clientID == 0 {
 		return nil
 	}
-	fileIDs := make(map[InodeID]struct{})
-	os.mu.Lock()
-	os.revokeClientLocked(clientID)
-	os.mu.Unlock()
+	var expired []openState
 	for {
 		os.mu.Lock()
 		var key openOwnerKey
@@ -891,17 +875,80 @@ func (os *openStateStore) purgeClient(clientID uint64) []InodeID {
 			for _, state := range states {
 				os.removeStateLocked(owner, state)
 				os.markExpiredLocked(state.id)
-				if state.write {
-					fileIDs[state.fileID] = struct{}{}
-				}
+				expired = append(expired, *state)
 			}
 		}
 		os.mu.Unlock()
 		owner.mu.Unlock()
 	}
-	result := make([]InodeID, 0, len(fileIDs))
-	for fileID := range fileIDs {
-		result = append(result, fileID)
+	return expired
+}
+
+// activeClientIDs includes owners retained for seqid replay after CLOSE.
+func (os *openStateStore) activeClientIDs() []uint64 {
+	os.mu.Lock()
+	defer os.mu.Unlock()
+
+	clients := make(map[uint64]struct{})
+	for _, state := range os.states {
+		clients[state.owner.clientID] = struct{}{}
+	}
+	for key := range os.owners {
+		clients[key.clientID] = struct{}{}
+	}
+	result := make([]uint64, 0, len(clients))
+	for clientID := range clients {
+		result = append(result, clientID)
 	}
 	return result
+}
+
+func (os *openStateStore) clientStates(clientID uint64) []openState {
+	os.mu.Lock()
+	defer os.mu.Unlock()
+	var result []openState
+	for _, state := range os.states {
+		if state.owner.clientID == clientID {
+			result = append(result, *state)
+		}
+	}
+	return result
+}
+
+// evictIdleOwners drops replay-only owners after one lease of inactivity.
+// A retransmitted CLOSE after this retention period gets BAD_STATEID, as
+// permitted by RFC 7530 section 16.18.5.
+func (os *openStateStore) evictIdleOwners(cutoff time.Time) int {
+	os.mu.Lock()
+	keys := make([]openOwnerKey, 0, len(os.owners))
+	for key := range os.owners {
+		keys = append(keys, key)
+	}
+	os.mu.Unlock()
+
+	evicted := 0
+	for _, key := range keys {
+		os.mu.Lock()
+		owner := os.owners[key]
+		os.mu.Unlock()
+		if owner == nil {
+			continue
+		}
+
+		owner.mu.Lock()
+		os.mu.Lock()
+		if os.owners[key] == owner &&
+			len(owner.states) == 0 &&
+			!owner.lastUsed.IsZero() &&
+			!owner.lastUsed.After(cutoff) {
+			delete(os.owners, key)
+			if owner.lastResponse.kind == openOwnerOperationClose {
+				delete(os.replayOwners, owner.lastResponse.inputStateID)
+			}
+			evicted++
+		}
+		os.mu.Unlock()
+		owner.mu.Unlock()
+	}
+	return evicted
 }

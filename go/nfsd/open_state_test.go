@@ -180,6 +180,19 @@ func abortOwnerOperation(op *openOwnerOperation) {
 	op.store.releaseOwner(op.owner)
 }
 
+func beginOpenForTest(
+	os *openStateStore,
+	owner openOwnerKey,
+	seq uint32,
+) (openState, bool, uint32) {
+	op, response, replay, status := os.startOpen(owner, seq)
+	if op != nil {
+		abortOwnerOperation(op)
+		return openState{}, false, status
+	}
+	return response.state, replay, status
+}
+
 func addOpenForTest(
 	os *openStateStore,
 	owner openOwnerKey,
