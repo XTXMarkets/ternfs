@@ -228,6 +228,21 @@ through a temporary file and rename. The first OPEN handled by one nfsd also
 has to resolve the durable client record; later OPENs reuse the cached identity
 and confirmed-pointer location.
 
+These updates leave garbage behind in TernFS. A same-directory rename
+soft-unlinks the temporary edge and turns the replaced edge into a snapshot
+edge, so each lease renewal leaves two snapshot edges and one dead file inode.
+Each OPEN and CLOSE marker pair leaves one snapshot edge and one dead inode.
+Renewals are bounded to one per half lease for each nfsd and client, but
+markers scale with open activity. The shard garbage collector removes this
+under the snapshot policy in effect for `/.nfs`, so that tree should not keep
+the retention used for user data. A policy which deletes snapshots immediately
+is appropriate, for example:
+
+```
+terncli set-dir-info -id <inode of /.nfs> -tag SNAPSHOT \
+    -body '{"DeleteAfterVersions": 0}'
+```
+
 Client-store failures without a more specific NFS status return
 `NFS4ERR_DELAY`, allowing the client to retry without discarding local open
 state.

@@ -104,7 +104,17 @@ func (t *RemoteTernVFS) LookupParent(id InodeID) (InodeID, error) {
 			// Root directory or snapshot directory — parent is itself.
 			return id, nil
 		}
-		return InodeID(resp.Owner), nil
+		// Cache the owner like Lookup and Readdir do. PUTFH walks every
+		// directory filehandle up to the root, and a client which keeps
+		// using its filehandles after an nfsd restart never issues the
+		// LOOKUPs that would otherwise fill this cache.
+		parentID := InodeID(resp.Owner)
+
+		t.mu.Lock()
+		t.parents[id] = parentID
+		t.mu.Unlock()
+
+		return parentID, nil
 	}
 	// For files/symlinks without a cached parent, we have no way to find it.
 	return 0, os.ErrNotExist

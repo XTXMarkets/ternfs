@@ -1931,3 +1931,77 @@ func TestClientGCContinuesAfterPanic(t *testing.T) {
 			running, pending)
 	}
 }
+
+// The HasOpen slow path rewrites the lease in TernFS. That rewrite must not
+// hold state.mu, or every fast-path stateid check for the client waits on it.
+func TestClientStoreHasOpenSlowPathDoesNotBlockFastPath(t *testing.T) {
+	baseFS := NewLocalTernVFS(t.TempDir())
+	hookFS := &blockingRenameVFS{
+		TernVFS: baseFS,
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	defer closeSignal(hookFS.release)
+	owner := clientOwner{
+		principal: rpcPrincipal{flavor: authSys, body: "owner"},
+	}
+	first, clientID := newConfirmedStoreClient(
+		t, hookFS, []byte("client"), [8]byte{1}, owner)
+	second, err := NewClientStore(baseFS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Unix(1000, 0)
+	first.now = func() time.Time { return base }
+	second.now = func() time.Time { return base }
+
+	cachedState := StateID{1}
+	if err := first.MarkOpen(clientID, cachedState); err != nil {
+		t.Fatal(err)
+	}
+	// An open recorded by another nfsd is only visible to first through the
+	// durable marker, so HasOpen takes the slow path for it.
+	remoteState := StateID{2}
+	if err := second.MarkOpen(clientID, remoteState); err != nil {
+		t.Fatal(err)
+	}
+
+	// Age first's lease cache past the renewal point without expiring it.
+	first.now = func() time.Time {
+		return base.Add(nfsLeaseRenewAfter + time.Second)
+	}
+	hookFS.dstName = first.leaseName
+
+	type result struct {
+		open bool
+		err  error
+	}
+	slow := make(chan result, 1)
+	go func() {
+		open, err := first.HasOpen(clientID, remoteState)
+		slow <- result{open: open, err: err}
+	}()
+	awaitSignal(t, hookFS.entered, "slow-path lease rewrite")
+
+	fast := make(chan result, 1)
+	go func() {
+		open, err := first.HasOpen(clientID, cachedState)
+		fast <- result{open: open, err: err}
+	}()
+	got := awaitValue(t, fast, "fast-path HasOpen during slow-path renewal")
+	if got.err != nil {
+		t.Fatalf("fast-path HasOpen failed: %v", got.err)
+	}
+	if !got.open {
+		t.Fatal("fast-path HasOpen lost a cached open during renewal")
+	}
+
+	closeSignal(hookFS.release)
+	got = awaitValue(t, slow, "slow-path HasOpen")
+	if got.err != nil {
+		t.Fatalf("slow-path HasOpen failed: %v", got.err)
+	}
+	if !got.open {
+		t.Fatal("slow-path HasOpen did not find the durable marker")
+	}
+}

@@ -2674,3 +2674,42 @@ func TestTernCompoundChaining(t *testing.T) {
 	cleanupViaNFS(t, conn, &xid, "chain-a.txt")
 	cleanupViaNFS(t, conn, &xid, "chain-b.txt")
 }
+
+// PUTFH walks LookupParent from a directory filehandle up to the root. The
+// StatDirectory owner must be cached, or a client which keeps using its
+// filehandles after an nfsd restart pays that walk on every compound.
+func TestTernLookupParentCachesDirectoryOwner(t *testing.T) {
+	c, err := client.NewClient(
+		ternLogger, nil, registryAddr, msgs.AddrsInfo{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	fs := NewRemoteTernVFS(c, ternLogger, bufpool.NewBufPool())
+	dirID, err := ensureDir(fs, fs.RootID(), "lookup-parent-cache")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fs.mu.Lock()
+	delete(fs.parents, dirID)
+	fs.mu.Unlock()
+
+	parentID, err := fs.LookupParent(dirID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parentID != fs.RootID() {
+		t.Fatalf("LookupParent(%d) = %d, want root %d",
+			dirID, parentID, fs.RootID())
+	}
+
+	fs.mu.Lock()
+	cached, ok := fs.parents[dirID]
+	fs.mu.Unlock()
+
+	if !ok || cached != fs.RootID() {
+		t.Fatalf("LookupParent did not cache owner of %d: cached=%d ok=%v",
+			dirID, cached, ok)
+	}
+}

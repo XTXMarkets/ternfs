@@ -1673,6 +1673,75 @@ func TestExpireIfLeaseDeadKeepsClientWithoutSlot(t *testing.T) {
 	}
 }
 
+// A collected incarnation directory has no leases or markers left, so the
+// sweep must drop any process-local state which still names it.
+func TestExpireIfLeaseDeadExpiresCollectedIncarnation(t *testing.T) {
+	fs := NewLocalTernVFS(t.TempDir())
+	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewServer(fs, staging, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := clientOwner{
+		principal: rpcPrincipal{flavor: authSys, body: "owner"},
+	}
+	clientID, confirm, err := srv.clients.SetClientID(
+		[8]byte{1}, []byte("client"), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.clients.ConfirmClientID(
+		clientID, confirm, owner.principal,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.clients.MarkOpen(clientID, StateID{1}); err != nil {
+		t.Fatal(err)
+	}
+
+	identityID, err := fs.LookupParent(InodeID(clientID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	name, found, err := srv.clients.incarnationName(
+		identityID, InodeID(clientID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Fatal("confirmed incarnation is missing from its identity")
+	}
+	if err := srv.clients.removeIncarnation(
+		identityID, InodeID(clientID), name,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	expired, err := srv.clients.ExpireIfLeaseDead(clientID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !expired {
+		t.Fatal("collected incarnation was not expired")
+	}
+	for _, cached := range srv.clients.cachedClientIDs() {
+		if cached == clientID {
+			t.Fatal("collected incarnation remains in the local client cache")
+		}
+	}
+	if err := srv.clients.MarkOpen(
+		clientID, StateID{2},
+	); nfsErrCode(err) != NFS4ERR_STALE_CLIENTID {
+		t.Fatalf("MarkOpen on collected incarnation = %v, want NFS4ERR_STALE_CLIENTID",
+			err)
+	}
+	// The sweep itself must tolerate the missing incarnation.
+	srv.sweepExpiredClientState()
+}
+
 func TestStagingSweepKeepsClientWithoutLeaseSlot(t *testing.T) {
 	fs := NewLocalTernVFS(t.TempDir())
 	staging, err := NewLocalStagingStore(t.TempDir(), nil)

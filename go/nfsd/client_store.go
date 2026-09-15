@@ -189,6 +189,7 @@ func (cs *ClientStore) lockIdentity(identityID InodeID) func() {
 	lock.mu.Lock()
 	return func() {
 		lock.mu.Unlock()
+
 		cs.identityLocksMu.Lock()
 		lock.refs--
 		if lock.refs == 0 && cs.identityLocks[identityID] == lock {
@@ -700,10 +701,12 @@ func (cs *ClientStore) IsConfirmed(clientID uint64) (bool, error) {
 	incarnationID := InodeID(clientID)
 	if value, ok := cs.localClients.Load(incarnationID); ok {
 		state := value.(*localClientState)
+
 		state.mu.Lock()
 		identityID := state.identityID
 		pointerID := state.confirmedPointer
 		state.mu.Unlock()
+
 		currentPointer, err := cs.fs.Lookup(identityID, confirmedName)
 		if errors.Is(err, os.ErrNotExist) {
 			return false, nil
@@ -717,8 +720,10 @@ func (cs *ClientStore) IsConfirmed(clientID uint64) (bool, error) {
 	if err != nil || !valid {
 		return false, err
 	}
+
 	unlock := cs.lockIdentity(identityID)
 	defer unlock()
+
 	_, confirmed, err := cs.confirmedLocationForIdentity(
 		incarnationID, identityID)
 	return confirmed, err
@@ -771,8 +776,15 @@ func (cs *ClientStore) ExpireIfLeaseDead(
 ) (bool, error) {
 	incarnationID := InodeID(clientID)
 	identityID, valid, err := cs.identityForIncarnation(incarnationID)
-	if err != nil || !valid {
+	if err != nil {
 		return false, err
+	}
+	if !valid {
+		// The incarnation directory has been collected, so no lease or
+		// marker can be live. Expire the local state, as IsLeaseExpired
+		// already reports this case.
+		cs.localClients.Delete(incarnationID)
+		return true, nil
 	}
 	unlock := cs.lockIdentity(identityID)
 	defer unlock()
@@ -877,11 +889,13 @@ func (cs *ClientStore) Renew(clientID uint64) error {
 
 	state.renewMu.Lock()
 	defer state.renewMu.Unlock()
+
 	state.mu.Lock()
 	fresh := state.confirmedPointer == location.symlinkID &&
 		cs.leaseIsFresh(state.leaseExpiresNano)
 	hadLease := state.leaseExpiresNano != 0
 	state.mu.Unlock()
+
 	if fresh {
 		return nil
 	}
@@ -900,10 +914,12 @@ func (cs *ClientStore) Renew(clientID uint64) error {
 		}
 		return err
 	}
+
 	state.mu.Lock()
 	state.confirmedPointer = pointerID
 	state.leaseExpiresNano = expires
 	state.mu.Unlock()
+
 	return nil
 }
 
@@ -961,8 +977,10 @@ func (cs *ClientStore) MarkOpen(clientID uint64, stateID StateID) error {
 	if !valid {
 		return nfsError(NFS4ERR_STALE_CLIENTID)
 	}
+
 	unlock := cs.lockIdentity(identityID)
 	defer unlock()
+
 	location, confirmed, err := cs.confirmedLocationForIdentity(
 		incarnationID, identityID)
 	if err != nil {
@@ -976,20 +994,24 @@ func (cs *ClientStore) MarkOpen(clientID uint64, stateID StateID) error {
 
 	state.renewMu.Lock()
 	defer state.renewMu.Unlock()
+
 	state.mu.Lock()
 	// Reuse the current lease across open-close cycles.
 	fresh := state.confirmedPointer == location.symlinkID &&
 		cs.leaseIsFresh(state.leaseExpiresNano)
 	hadLease := state.leaseExpiresNano != 0
 	state.mu.Unlock()
+
 	if fresh {
 		if err := cs.ensureMarker(
 			incarnationID, activeOpenName(stateID)); err != nil {
 			return err
 		}
+
 		state.mu.Lock()
 		state.opens[stateID] = struct{}{}
 		state.mu.Unlock()
+
 		return nil
 	}
 	live, found, err := cs.leaseStatus(incarnationID)
@@ -1009,11 +1031,13 @@ func (cs *ClientStore) MarkOpen(clientID uint64, stateID StateID) error {
 		incarnationID, activeOpenName(stateID)); err != nil {
 		return err
 	}
+
 	state.mu.Lock()
 	state.confirmedPointer = pointerID
 	state.leaseExpiresNano = expires
 	state.opens[stateID] = struct{}{}
 	state.mu.Unlock()
+
 	return nil
 }
 
@@ -1128,17 +1152,36 @@ func (cs *ClientStore) HasOpen(clientID uint64, stateID StateID) (bool, error) {
 	state := cs.localClientState(
 		incarnationID, location.identityID, location.symlinkID)
 
-	state.mu.Lock()
-	defer state.mu.Unlock()
+	// Renew under renewMu like MarkOpen and renewCachedOpen. Holding
+	// state.mu across the lease rewrite would stall every concurrent
+	// stateid operation for this client on the fast path.
+	state.renewMu.Lock()
+	defer state.renewMu.Unlock()
 
+	state.mu.Lock()
+	fresh := state.confirmedPointer == location.symlinkID &&
+		cs.leaseIsFresh(state.leaseExpiresNano)
+	state.mu.Unlock()
+
+	if fresh {
+		state.mu.Lock()
+		state.opens[stateID] = struct{}{}
+		state.mu.Unlock()
+
+		return true, nil
+	}
 	expires, pointerID, err := cs.renewConfirmed(
 		incarnationID, location.identityID, location.symlinkID)
 	if err != nil {
 		return false, err
 	}
+
+	state.mu.Lock()
 	state.confirmedPointer = pointerID
 	state.leaseExpiresNano = expires
 	state.opens[stateID] = struct{}{}
+	state.mu.Unlock()
+
 	return true, nil
 }
 
@@ -1166,6 +1209,7 @@ func (cs *ClientStore) renewCachedOpen(
 		_, open := state.opens[stateID]
 		expires := state.leaseExpiresNano
 		state.mu.Unlock()
+
 		if open && expires > cs.now().UnixNano() {
 			return true, nil
 		}
@@ -1195,10 +1239,12 @@ func (cs *ClientStore) renewCachedOpen(
 		}
 		return false, err
 	}
+
 	state.mu.Lock()
 	state.confirmedPointer = pointerID
 	state.leaseExpiresNano = expires
 	state.mu.Unlock()
+
 	return true, nil
 }
 
