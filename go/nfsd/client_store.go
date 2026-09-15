@@ -26,6 +26,7 @@ type ClientStore struct {
 	fs             TernVFS
 	nfsDirID       InodeID
 	dirID          InodeID
+	nfsdID         string
 	leaseName      string
 	confirmingName string
 	now            func() time.Time
@@ -85,9 +86,12 @@ func (e clientInUseError) Error() string {
 }
 
 // durableClientRecord is the JSON body of the client and update files in an
-// incarnation directory. It holds the client verifier, the confirmation
-// verifier issued by nfsd, the RPC principal and the callback address.
+// incarnation directory. It holds the opaque SETCLIENTID identity, the client
+// verifier, the confirmation verifier issued by nfsd, the RPC principal and
+// the callback address. The identity is stored for inspection only: the
+// directory name is its hash and nfsd never reads it back.
 type durableClientRecord struct {
+	ID              []byte `json:"id,omitempty"`
 	Verifier        []byte `json:"verifier"`
 	Confirm         []byte `json:"confirm"`
 	PrincipalFlavor uint32 `json:"principal_flavor"`
@@ -154,6 +158,7 @@ func NewClientStore(fs TernVFS) (*ClientStore, error) {
 		fs:             fs,
 		nfsDirID:       nfsID,
 		dirID:          clientsID,
+		nfsdID:         nfsdID,
 		leaseName:      leasePrefix + nfsdID,
 		confirmingName: confirmingPrefix + nfsdID,
 		now:            time.Now,
@@ -248,7 +253,7 @@ func (cs *ClientStore) SetClientID(
 			if err != nil {
 				return 0, [8]byte{}, err
 			}
-			update := newDurableClientRecord(verifier, confirm, owner)
+			update := newDurableClientRecord(id, verifier, confirm, owner)
 			if _, err := cs.replaceJSON(confirmedID, updateName, update); err != nil {
 				return 0, [8]byte{}, err
 			}
@@ -270,7 +275,7 @@ func (cs *ClientStore) SetClientID(
 	if err != nil {
 		return 0, [8]byte{}, err
 	}
-	record := newDurableClientRecord(verifier, confirm, owner)
+	record := newDurableClientRecord(id, verifier, confirm, owner)
 	if _, err := cs.createJSON(
 		incarnationID, clientRecordName, record,
 	); err != nil {
@@ -1689,11 +1694,13 @@ func clientStoreErrToNFS(err error) uint32 {
 }
 
 func newDurableClientRecord(
+	id []byte,
 	verifier [8]byte,
 	confirm [8]byte,
 	owner clientOwner,
 ) durableClientRecord {
 	return durableClientRecord{
+		ID:              append([]byte(nil), id...),
 		Verifier:        append([]byte(nil), verifier[:]...),
 		Confirm:         append([]byte(nil), confirm[:]...),
 		PrincipalFlavor: owner.principal.flavor,
