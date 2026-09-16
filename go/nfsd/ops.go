@@ -270,6 +270,22 @@ func (s *Server) opClose(args CLOSE4args, st *compoundState, w *COMPOUND4resWrit
 			s.log.Error("close: link file", "err", linkErr, "status", Nfsstat4Name(status))
 			return fail(status)
 		}
+		if meta.HasAtime || meta.HasMtime {
+			var atime, mtime *time.Time
+			if meta.HasAtime {
+				t := time.Unix(0, meta.Atime)
+				atime = &t
+			}
+			if meta.HasMtime {
+				t := time.Unix(0, meta.Mtime)
+				mtime = &t
+			}
+			if err := s.fs.SetTime(st.currentID, mtime, atime); err != nil {
+				// The file is already published, so CLOSE still succeeds.
+				s.log.Warn("close: set times on linked file",
+					"file_id", st.currentID, "err", err)
+			}
+		}
 	} else {
 		// Read CLOSE does not need the file to remain linked. A write CLOSE
 		// without staging has lost the data it was meant to publish.
@@ -503,6 +519,15 @@ func (s *Server) opGetattr(args GETATTR4args, st *compoundState, w *COMPOUND4res
 		// If the file has an active staging buffer, use its size.
 		if sz, ok := s.stagingStore.StagedSize(st.currentID); ok {
 			ni.Size = sz
+		}
+	}
+	// Report deferred times while the file is staged.
+	if meta, ok := s.stagingStore.GetMeta(st.currentID); ok {
+		if meta.HasMtime {
+			ni.Mtime = time.Unix(0, meta.Mtime)
+		}
+		if meta.HasAtime {
+			ni.Atime = time.Unix(0, meta.Atime)
 		}
 	}
 
@@ -1680,8 +1705,15 @@ func (s *Server) opSetattr(args SETATTR4args, st *compoundState, w *COMPOUND4res
 		resultMask[0] |= 1 << FATTR4_SIZE
 	}
 	if setAtime != nil || setMtime != nil {
-		if err := s.fs.SetTime(st.currentID, setMtime, setAtime); err != nil {
-			return setattrReply(NFS4ERR_IO, [2]uint32{})
+		var err error
+		if staged {
+			// Transient inodes cannot take times until they are linked.
+			err = s.stagingStore.SetTimes(st.currentID, setAtime, setMtime)
+		} else {
+			err = s.fs.SetTime(st.currentID, setMtime, setAtime)
+		}
+		if err != nil {
+			return setattrReply(NFS4ERR_IO, resultMask)
 		}
 		if setAtime != nil {
 			resultMask[1] |= 1 << (FATTR4_TIME_ACCESS_SET - 32)

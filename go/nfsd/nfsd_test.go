@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -5636,6 +5637,145 @@ func TestOpenExclusive4(t *testing.T) {
 	}
 }
 
+func TestSetattrTimesOnStagedFile(t *testing.T) {
+	dir := t.TempDir()
+	addr, cleanup := startTestServer(t, dir)
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+
+	xid := uint32(1)
+	clientid := setupClient(t, conn, &xid)
+	stateid, fh := openCreateFile(t, conn, &xid, clientid, "timed.txt")
+
+	atime := time.Date(2019, 1, 2, 3, 4, 5, 0, time.UTC)
+	mtime := time.Date(2021, 3, 4, 5, 6, 7, 890, time.UTC)
+	timeSet := func(buf []byte, t time.Time) []byte {
+		buf = binary.BigEndian.AppendUint32(buf, SET_TO_CLIENT_TIME4)
+		buf = binary.BigEndian.AppendUint64(buf, uint64(t.Unix()))
+		return binary.BigEndian.AppendUint32(buf, uint32(t.Nanosecond()))
+	}
+	timeMask := uint32(1<<(FATTR4_TIME_ACCESS_SET-32) | 1<<(FATTR4_TIME_MODIFY_SET-32))
+
+	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+		pw := w.AppendArgarray_Putfh()
+		buf := pw.StartObject().SetData(fh).Finish()
+		pw.Resume(buf)
+		w.Resume(pw.Finish())
+		saw := w.AppendArgarray_Setattr()
+		setStateid(saw.Stateid(), stateid)
+		faw := saw.StartObjAttributes()
+		bmW := faw.StartAttrmask()
+		bmW.AppendData(0)
+		bmW.AppendData(timeMask)
+		buf = bmW.Finish()
+		faw.Resume(buf)
+		attrData := timeSet(nil, atime)
+		attrData = timeSet(attrData, mtime)
+		alW := faw.StartAttrVals()
+		buf = alW.SetData(attrData).Finish()
+		faw.Resume(buf)
+		saw.Resume(faw.Finish())
+		w.Resume(saw.Finish())
+	})
+	xid++
+	iter := expectOK(t, res)
+	nextOp(t, &iter) // PUTFH
+	setattrRes := nextOp(t, &iter).Value().AsSETATTR4res()
+	if setattrRes.Status() != NFS4_OK {
+		t.Fatalf("SETATTR times on staged file = %s", Nfsstat4Name(setattrRes.Status()))
+	}
+	if attrsset := parseBitmap(setattrRes.Attrsset()); attrsset[1] != timeMask {
+		t.Fatalf("SETATTR attrsset = %v, want both time bits", attrsset)
+	}
+
+	// GETATTR reports the recorded times while the file is still staged.
+	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+		pw := w.AppendArgarray_Putfh()
+		buf := pw.StartObject().SetData(fh).Finish()
+		pw.Resume(buf)
+		w.Resume(pw.Finish())
+		gw := w.AppendArgarray_Getattr()
+		bw := gw.StartAttrRequest()
+		bw.AppendData(0)
+		bw.AppendData(1<<(FATTR4_TIME_ACCESS-32) | 1<<(FATTR4_TIME_MODIFY-32))
+		buf = bw.Finish()
+		gw.Resume(buf)
+		w.Resume(gw.Finish())
+	})
+	xid++
+	iter = expectOK(t, res)
+	nextOp(t, &iter) // PUTFH
+	attrData := getAttrData(t, nextOp(t, &iter).Value().AsGETATTR4resEntry().Value().AsGETATTR4resok())
+	if len(attrData) != 24 {
+		t.Fatalf("GETATTR attr data = %d bytes, want 24", len(attrData))
+	}
+	gotAtime := time.Unix(int64(binary.BigEndian.Uint64(attrData[0:8])), int64(binary.BigEndian.Uint32(attrData[8:12])))
+	gotMtime := time.Unix(int64(binary.BigEndian.Uint64(attrData[12:20])), int64(binary.BigEndian.Uint32(attrData[20:24])))
+	if !gotAtime.Equal(atime) || !gotMtime.Equal(mtime) {
+		t.Fatalf("GETATTR times = %v %v, want %v %v", gotAtime, gotMtime, atime, mtime)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "timed.txt")); err == nil {
+		t.Fatal("staged file is visible before CLOSE")
+	}
+
+	// CLOSE links the file and applies the times.
+	closeFile(t, conn, &xid, fh, stateid)
+	info, err := os.Stat(filepath.Join(dir, "timed.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.ModTime().Equal(mtime) {
+		t.Fatalf("mtime on disk = %v, want %v", info.ModTime(), mtime)
+	}
+	st := info.Sys().(*syscall.Stat_t)
+	if got := time.Unix(st.Atim.Sec, st.Atim.Nsec); !got.Equal(atime) {
+		t.Fatalf("atime on disk = %v, want %v", got, atime)
+	}
+}
+
+func TestStagingStoreSetTimesPersists(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewLocalStagingStore(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := MakeInodeID(InodeTypeFile, 77)
+	meta := StagingMeta{
+		DirID:      MakeInodeID(InodeTypeDir, 1),
+		FileName:   "timed.txt",
+		TernCookie: Cookie{1},
+		NFSStateID: StateID{2},
+		ClientID:   3,
+	}
+	if _, err := store.Create(id, meta); err != nil {
+		t.Fatal(err)
+	}
+	mtime := time.Unix(1_700_000_000, 42)
+	if err := store.SetTimes(id, nil, &mtime); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetTimes(MakeInodeID(InodeTypeFile, 78), nil, &mtime); err == nil {
+		t.Fatal("SetTimes on an unknown file succeeded")
+	}
+	closeLocalStagingFiles(t, store)
+
+	recovered, err := NewLocalStagingStore(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeLocalStagingFiles(t, recovered)
+	got, found := recovered.GetMeta(id)
+	if !found {
+		t.Fatal("staging sidecar was not recovered")
+	}
+	meta.HasMtime = true
+	meta.Mtime = mtime.UnixNano()
+	if got != meta {
+		t.Fatalf("recovered metadata = %+v, want %+v", got, meta)
+	}
+}
+
 func TestStagingMetaExclusiveRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "staging.meta")
 	meta := StagingMeta{
@@ -5646,6 +5786,8 @@ func TestStagingMetaExclusiveRoundTrip(t *testing.T) {
 		ClientID:   3,
 		Exclusive:  true,
 		Verifier:   [8]byte{9, 8, 7, 6, 5, 4, 3, 2},
+		HasMtime:   true,
+		Mtime:      1_700_000_000_000_000_123,
 	}
 	if err := saveStagingMeta(path, meta); err != nil {
 		t.Fatal(err)
@@ -7582,7 +7724,7 @@ func TestLocalStagingStoreLoadsLegacySidecar(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(metaPath, encoded[:len(encoded)-17], 0600); err != nil {
+	if err := os.WriteFile(metaPath, encoded[:len(encoded)-34], 0600); err != nil {
 		t.Fatal(err)
 	}
 
