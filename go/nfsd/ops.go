@@ -742,6 +742,7 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 	var targetID InodeID
 	var nfsSID StateID
 	created := false
+	reused := false
 
 	switch claimType {
 	case CLAIM_NULL:
@@ -753,28 +754,46 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 		if status != NFS4_OK {
 			return fail(status)
 		}
-
 		// Check if this is a create.
 		if args.OpenhowType() == OPEN4_CREATE {
 			createHow := args.Openhow().AsCreatehow4Entry()
-			// EXCLUSIVE4 not supported — clients should fall back
-			// to GUARDED4 or UNCHECKED4.
-			if createHow.Disc() == EXCLUSIVE4 {
-				return fail(NFS4ERR_NOTSUPP)
-			}
 			var createAttrs Fattr4
+			exclusive := false
+			var verifier [8]byte
 			switch createHow.Disc() {
 			case UNCHECKED4:
 				createAttrs = createHow.Value().AsUnchecked4()
 			case GUARDED4:
 				createAttrs = createHow.Value().AsGuarded4()
+			case EXCLUSIVE4:
+				exclusive = true
+				v := createHow.Value().AsVerifier4()
+				for i := range verifier {
+					verifier[i] = v.Data(i)
+				}
 			}
-			if status := validateCreateAttrs(createAttrs); status != NFS4_OK {
-				return fail(status)
+			if !exclusive {
+				if status := validateCreateAttrs(createAttrs); status != NFS4_OK {
+					return fail(status)
+				}
 			}
 			// Try lookup first.
 			id, err := s.fs.Lookup(dirID, fileName)
 			if err != nil {
+				if exclusive {
+					// A duplicate may still exist in local staging.
+					stagedID, meta, staged := s.stagedFileByName(dirID, fileName)
+					if staged {
+						_, sameOwner := op.existingOpen(stagedID)
+						if !sameOwner || !meta.Exclusive || meta.Verifier != verifier {
+							return fail(NFS4ERR_EXIST)
+						}
+						id = stagedID
+						reused = true
+					}
+				}
+			}
+			if err != nil && !reused {
 				// File doesn't exist — construct a transient file.
 				var fileCookie Cookie
 				id, fileCookie, err = s.fs.ConstructFile(dirID)
@@ -789,13 +808,15 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 					TernCookie: fileCookie,
 					NFSStateID: nfsSID,
 					ClientID:   clientID,
+					Exclusive:  exclusive,
+					Verifier:   verifier,
 				}
 				if _, sfErr := s.stagingStore.Create(id, meta); sfErr != nil {
 					s.log.Error("staging create error", "err", sfErr)
 					return fail(NFS4ERR_IO)
 				}
 				created = true
-			} else if createHow.Disc() == GUARDED4 {
+			} else if err == nil && createHow.Disc() != UNCHECKED4 {
 				return fail(NFS4ERR_EXIST)
 			}
 			targetID = id
@@ -810,7 +831,7 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 
 		// Files are immutable: reject write access to existing files.
 		// To replace a file, clients must remove + create.
-		if !created && access&OPEN4_SHARE_ACCESS_WRITE != 0 {
+		if !created && !reused && access&OPEN4_SHARE_ACCESS_WRITE != 0 {
 			return fail(NFS4ERR_PERM)
 		}
 	case CLAIM_PREVIOUS:
@@ -848,6 +869,17 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 		created,
 	)
 	return writeOpenResponse(w, st, response)
+}
+
+// stagedFileByName finds an unlinked local staging file by target name.
+func (s *Server) stagedFileByName(dirID InodeID, name string) (InodeID, StagingMeta, bool) {
+	for id := range s.stagingStore.StagedSizes() {
+		meta, ok := s.stagingStore.GetMeta(id)
+		if ok && meta.DirID == dirID && meta.FileName == name {
+			return id, meta, true
+		}
+	}
+	return 0, StagingMeta{}, false
 }
 
 func writeOpenResponse(
@@ -1532,8 +1564,8 @@ func (s *Server) opSetattr(args SETATTR4args, st *compoundState, w *COMPOUND4res
 
 	// Supported writable attrs.
 	const supportedSet0 = 1 << FATTR4_SIZE
-	const supportedSet1 = (1 << (FATTR4_TIME_ACCESS_SET - 32)) |
-		(1 << (FATTR4_TIME_MODIFY_SET - 32))
+	supportedSet1 := uint32((1 << (FATTR4_TIME_ACCESS_SET - 32)) |
+		(1 << (FATTR4_TIME_MODIFY_SET - 32)))
 
 	// Validate fixed-width MODE data before reporting that MODE itself is not
 	// supported. RFC 7530 requires malformed attribute XDR to take precedence.
@@ -1542,11 +1574,18 @@ func (s *Server) opSetattr(args SETATTR4args, st *compoundState, w *COMPOUND4res
 		return setattrReply(NFS4ERR_BADXDR, [2]uint32{})
 	}
 
+	// EXCLUSIVE4 clients set mode in a separate SETATTR. TernFS has no
+	// per-file mode, so accept it while the file remains staged.
+	staged := s.stagingStore.Get(st.currentID) != nil
+	if staged {
+		supportedSet1 |= modeMask
+	}
+
 	if mask[0]&^writableAttrs0 != 0 || mask[1]&^writableAttrs1 != 0 {
 		return setattrReply(NFS4ERR_INVAL, [2]uint32{})
 	}
 	if mask[0]&^uint32(supportedSet0) != 0 ||
-		mask[1]&^uint32(supportedSet1) != 0 {
+		mask[1]&^supportedSet1 != 0 {
 		return setattrReply(NFS4ERR_ATTRNOTSUPP, [2]uint32{})
 	}
 
@@ -1563,6 +1602,13 @@ func (s *Server) opSetattr(args SETATTR4args, st *compoundState, w *COMPOUND4res
 			return setattrReply(NFS4ERR_FBIG, [2]uint32{})
 		}
 		newSize = &size
+	}
+	if mask[1]&modeMask != 0 {
+		if attrOff+4 > len(attrData) {
+			return setattrReply(NFS4ERR_BADXDR, [2]uint32{})
+		}
+		attrOff += 4
+		resultMask[1] |= modeMask
 	}
 
 	// parseTimeSet reads a SET_TO_CLIENT_TIME4 or SET_TO_SERVER_TIME4

@@ -113,7 +113,6 @@ SATT18
 # not implemented, and the write path does not implement the full OPEN
 # state and share-deny model.
 OPEN2
-OPEN4
 WRT1
 WRT2
 WRT3

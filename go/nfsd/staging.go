@@ -23,6 +23,9 @@ type StagingMeta struct {
 	TernCookie Cookie  // cookie from VFS ConstructFile
 	NFSStateID StateID // random, returned to NFS client as stateid "other"
 	ClientID   uint64  // owning client; zero in sidecars written by older nfsd
+	// Exclusive and Verifier identify duplicate EXCLUSIVE4 creates.
+	Exclusive bool
+	Verifier  [8]byte
 }
 
 // StagingFile is the interface for staged file data during NFS writes.
@@ -305,16 +308,23 @@ func (sf *localStagingFile) Reader() (io.ReadSeeker, error) {
 //   [2]  FileNameLen
 //   [N]  FileName (UTF-8)
 //   [8]  ClientID (absent in sidecars written by older nfsd)
+//   [8]  Verifier  (absent in sidecars written by older nfsd)
+//   [1]  Exclusive (absent in sidecars written by older nfsd)
 
 func saveStagingMeta(path string, meta StagingMeta) error {
 	nameBytes := []byte(meta.FileName)
-	buf := make([]byte, 8+8+12+2+len(nameBytes)+8)
+	buf := make([]byte, 8+8+12+2+len(nameBytes)+8+8+1)
 	binary.BigEndian.PutUint64(buf[0:8], uint64(meta.DirID))
 	copy(buf[8:16], meta.TernCookie[:])
 	copy(buf[16:28], meta.NFSStateID[:])
 	binary.BigEndian.PutUint16(buf[28:30], uint16(len(nameBytes)))
 	copy(buf[30:], nameBytes)
-	binary.BigEndian.PutUint64(buf[30+len(nameBytes):], meta.ClientID)
+	off := 30 + len(nameBytes)
+	binary.BigEndian.PutUint64(buf[off:off+8], meta.ClientID)
+	copy(buf[off+8:off+16], meta.Verifier[:])
+	if meta.Exclusive {
+		buf[off+16] = 1
+	}
 	return os.WriteFile(path, buf, 0600)
 }
 
@@ -340,6 +350,16 @@ func loadStagingMeta(path string) (StagingMeta, error) {
 	case nameEnd:
 	case nameEnd + 8:
 		meta.ClientID = binary.BigEndian.Uint64(data[nameEnd : nameEnd+8])
+	case nameEnd + 17:
+		meta.ClientID = binary.BigEndian.Uint64(data[nameEnd : nameEnd+8])
+		copy(meta.Verifier[:], data[nameEnd+8:nameEnd+16])
+		switch data[nameEnd+16] {
+		case 0:
+		case 1:
+			meta.Exclusive = true
+		default:
+			return StagingMeta{}, fmt.Errorf("invalid meta exclusive flag")
+		}
 	default:
 		return StagingMeta{}, fmt.Errorf("invalid meta file length")
 	}

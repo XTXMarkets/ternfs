@@ -4823,7 +4823,7 @@ func collectReaddirNames(t *testing.T, conn net.Conn, xid *uint32, dirFH []byte)
 // [x] TestSetattrTime — SET_TO_CLIENT_TIME4 and SET_TO_SERVER_TIME4
 // [x] TestSetattrModeRejected — mode/owner → NFS4ERR_ATTRNOTSUPP
 // [x] TestSetattrSize — truncate staging file via SETATTR
-// [x] TestOpenExclusive4Rejected — EXCLUSIVE4 → NFS4ERR_NOTSUPP
+// [x] TestOpenExclusive4 — EXCLUSIVE4 create, duplicate detection while staged
 // [x] TestOpenClaimPrevious — CLAIM_PREVIOUS → NFS4ERR_NO_GRACE
 // [x] TestOpenRflagsRequireConfirm — OPEN4_RESULT_CONFIRM present in rflags
 // [x] TestCloseReplay — CLOSE twice returns OK both times
@@ -5448,7 +5448,62 @@ func TestSetattrSizeRequiresWriteOpen(t *testing.T) {
 	}
 }
 
-func TestOpenExclusive4Rejected(t *testing.T) {
+func openExclusiveFile(
+	t *testing.T,
+	conn net.Conn,
+	xid *uint32,
+	clientid uint64,
+	owner string,
+	seq uint32,
+	filename string,
+	verifier [8]byte,
+) (status uint32, stateid [16]byte, fh []byte, rflags uint32) {
+	t.Helper()
+	res := sendCompound(t, conn, *xid, func(w *COMPOUND4argsWriter) {
+		w.AppendArgarray_Putrootfh()
+		ow := w.AppendArgarray_Open()
+		ow.SetSeqid(seq)
+		ow.SetShareAccess(OPEN4_SHARE_ACCESS_BOTH)
+		ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
+		ownerW := ow.StartOwner()
+		ownerW = ownerW.SetClientid(clientid)
+		ownerW = ownerW.SetOwner([]byte(owner))
+		buf := ownerW.Finish()
+		ow.Resume(buf)
+		chw := ow.SetOpenhow_Create()
+		verf := chw.SetValue_Exclusive4()
+		for i := range verifier {
+			verf.SetData(i, verifier[i])
+		}
+		buf = chw.Finish()
+		ow.Resume(buf)
+		cw := ow.SetClaim_Null()
+		buf = cw.SetData([]byte(filename)).Finish()
+		ow.Resume(buf)
+		buf = ow.Finish()
+		w.Resume(buf)
+		w.AppendArgarray_Getfh()
+	})
+	*xid++
+	if res.Status() != NFS4_OK {
+		return res.Status(), stateid, nil, 0
+	}
+	iter := res.Resarray()
+	nextOp(t, &iter) // PUTROOTFH
+	openEntry := nextOp(t, &iter)
+	openOK := openEntry.Value().AsOPEN4resEntry().Value().AsOPEN4resok()
+	sid := openOK.Stateid()
+	binary.BigEndian.PutUint32(stateid[:4], sid.Seqid())
+	for i := 0; i < 12; i++ {
+		stateid[4+i] = sid.Other(i)
+	}
+	fhEntry := nextOp(t, &iter)
+	fh = append([]byte(nil), fhEntry.Value().AsGETFH4resEntry().
+		Value().AsGETFH4resok().Object().Data()...)
+	return NFS4_OK, stateid, fh, openOK.Rflags()
+}
+
+func TestOpenExclusive4(t *testing.T) {
 	dir := t.TempDir()
 	addr, cleanup := startTestServer(t, dir)
 	defer cleanup()
@@ -5457,35 +5512,150 @@ func TestOpenExclusive4Rejected(t *testing.T) {
 
 	xid := uint32(1)
 	clientid := setupClient(t, conn, &xid)
+	verifierA := [8]byte{1, 2, 3, 4, 5, 6, 7, 8}
+	verifierB := [8]byte{8, 7, 6, 5, 4, 3, 2, 1}
 
+	status, stateid, fh, rflags := openExclusiveFile(
+		t, conn, &xid, clientid, "excl-owner", 1, "excl.txt", verifierA)
+	if status != NFS4_OK {
+		t.Fatalf("exclusive create status = %s", Nfsstat4Name(status))
+	}
+	if rflags&OPEN4_RESULT_CONFIRM == 0 {
+		t.Fatal("first open of a new owner did not require confirmation")
+	}
+	stateid = confirmOpenState(t, conn, &xid, fh, 2, stateid)
+
+	// A different verifier for a staged name is a conflicting create.
+	status, _, _, _ = openExclusiveFile(
+		t, conn, &xid, clientid, "excl-owner", 3, "excl.txt", verifierB)
+	if status != NFS4ERR_EXIST {
+		t.Fatalf("different verifier status = %s, want NFS4ERR_EXIST",
+			Nfsstat4Name(status))
+	}
+
+	// The original verifier returns the existing staged file.
+	status, dupStateid, dupFH, _ := openExclusiveFile(
+		t, conn, &xid, clientid, "excl-owner", 4, "excl.txt", verifierA)
+	if status != NFS4_OK {
+		t.Fatalf("duplicate exclusive create status = %s", Nfsstat4Name(status))
+	}
+	if !bytes.Equal(dupFH, fh) {
+		t.Fatalf("duplicate exclusive create fh = %x, want %x", dupFH, fh)
+	}
+	if !bytes.Equal(dupStateid[4:], stateid[4:]) {
+		t.Fatalf("duplicate exclusive create stateid = %x, want %x",
+			dupStateid[4:], stateid[4:])
+	}
+	// The reopen advanced the stateid generation.
+	stateid = dupStateid
+
+	// The same verifier from another owner cannot claim the staged file.
+	status, _, _, _ = openExclusiveFile(
+		t, conn, &xid, clientid, "other-owner", 1, "excl.txt", verifierA)
+	if status != NFS4ERR_EXIST {
+		t.Fatalf("other owner status = %s, want NFS4ERR_EXIST", Nfsstat4Name(status))
+	}
+
+	// EXCLUSIVE4 clients set mode in a follow-up SETATTR.
 	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
-		w.AppendArgarray_Putrootfh()
-		ow := w.AppendArgarray_Open()
-		ow.SetSeqid(1)
-		ow.SetShareAccess(OPEN4_SHARE_ACCESS_BOTH)
-		ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
-		ownerW := ow.StartOwner()
-		ownerW = ownerW.SetClientid(clientid)
-		ownerW = ownerW.SetOwner([]byte("test-owner"))
-		buf := ownerW.Finish()
-		ow.Resume(buf)
-		chw := ow.SetOpenhow_Create()
-		verf := chw.SetValue_Exclusive4()
-		for i := 0; i < 8; i++ {
-			verf.SetData(i, byte(i))
-		}
-		buf = chw.Finish()
-		ow.Resume(buf)
-		cw := ow.SetClaim_Null()
-		buf = cw.SetData([]byte("excl.txt")).Finish()
-		ow.Resume(buf)
-		buf = ow.Finish()
-		w.Resume(buf)
+		pw := w.AppendArgarray_Putfh()
+		buf := pw.StartObject().SetData(fh).Finish()
+		pw.Resume(buf)
+		w.Resume(pw.Finish())
+		saw := w.AppendArgarray_Setattr()
+		setStateid(saw.Stateid(), stateid)
+		faw := saw.StartObjAttributes()
+		bmW := faw.StartAttrmask()
+		bmW.AppendData(0)
+		bmW.AppendData(1 << (FATTR4_MODE - 32))
+		buf = bmW.Finish()
+		faw.Resume(buf)
+		mode := make([]byte, 4)
+		binary.BigEndian.PutUint32(mode, 0644)
+		alW := faw.StartAttrVals()
+		buf = alW.SetData(mode).Finish()
+		faw.Resume(buf)
+		saw.Resume(faw.Finish())
+		w.Resume(saw.Finish())
 	})
 	xid++
+	iter := expectOK(t, res)
+	nextOp(t, &iter) // PUTFH
+	setattrRes := nextOp(t, &iter).Value().AsSETATTR4res()
+	if setattrRes.Status() != NFS4_OK {
+		t.Fatalf("SETATTR mode on staged file = %s", Nfsstat4Name(setattrRes.Status()))
+	}
+	attrsset := parseBitmap(setattrRes.Attrsset())
+	if attrsset[1]&(1<<(FATTR4_MODE-32)) == 0 {
+		t.Fatalf("SETATTR attrsset = %v, want mode", attrsset)
+	}
 
-	if res.Status() != NFS4ERR_NOTSUPP {
-		t.Fatalf("expected NFS4ERR_NOTSUPP, got %s", Nfsstat4Name(res.Status()))
+	writeData := []byte("exclusive create data")
+	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+		pw := w.AppendArgarray_Putfh()
+		buf := pw.StartObject().SetData(fh).Finish()
+		pw.Resume(buf)
+		w.Resume(pw.Finish())
+		ww := w.AppendArgarray_Write()
+		setStateid(ww.Stateid(), stateid)
+		ww = ww.SetOffset(0)
+		ww = ww.SetStable(2)
+		ww = ww.SetData(writeData)
+		w.Resume(ww.Finish())
+	})
+	xid++
+	expectOK(t, res)
+
+	status, _ = closeFileWithSeqResult(t, conn, &xid, fh, stateid, 5)
+	if status != NFS4_OK {
+		t.Fatalf("CLOSE status = %s", Nfsstat4Name(status))
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "excl.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(data, writeData) {
+		t.Fatalf("file content = %q, want %q", data, writeData)
+	}
+
+	// The verifier is unavailable after the file is linked.
+	status, _, _, _ = openExclusiveFile(
+		t, conn, &xid, clientid, "excl-owner", 6, "excl.txt", verifierA)
+	if status != NFS4ERR_EXIST {
+		t.Fatalf("exclusive create of linked file status = %s, want NFS4ERR_EXIST",
+			Nfsstat4Name(status))
+	}
+
+	// An unchecked create staged by another owner blocks exclusive creates.
+	_, _ = openCreateFile(t, conn, &xid, clientid, "plain.txt")
+	status, _, _, _ = openExclusiveFile(
+		t, conn, &xid, clientid, "excl-owner", 7, "plain.txt", verifierA)
+	if status != NFS4ERR_EXIST {
+		t.Fatalf("exclusive create over staged unchecked create status = %s, want NFS4ERR_EXIST",
+			Nfsstat4Name(status))
+	}
+}
+
+func TestStagingMetaExclusiveRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "staging.meta")
+	meta := StagingMeta{
+		DirID:      MakeInodeID(InodeTypeDir, 1),
+		FileName:   "file.txt",
+		TernCookie: Cookie{1},
+		NFSStateID: StateID{2},
+		ClientID:   3,
+		Exclusive:  true,
+		Verifier:   [8]byte{9, 8, 7, 6, 5, 4, 3, 2},
+	}
+	if err := saveStagingMeta(path, meta); err != nil {
+		t.Fatal(err)
+	}
+	got, err := loadStagingMeta(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != meta {
+		t.Fatalf("staging metadata = %+v, want %+v", got, meta)
 	}
 }
 
@@ -7412,7 +7582,7 @@ func TestLocalStagingStoreLoadsLegacySidecar(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(metaPath, encoded[:len(encoded)-8], 0600); err != nil {
+	if err := os.WriteFile(metaPath, encoded[:len(encoded)-17], 0600); err != nil {
 		t.Fatal(err)
 	}
 
