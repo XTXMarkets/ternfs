@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -42,9 +43,11 @@ type Cookie [8]byte
 
 // NodeInfo holds metadata returned by Stat.
 type NodeInfo struct {
-	Size  uint64    // 0 for directories
-	Mtime time.Time // modification time
-	Atime time.Time // access time (same as Mtime for directories in TernFS)
+	Size   uint64    // 0 for directories
+	Mtime  time.Time // modification time
+	Atime  time.Time // access time (same as Mtime for directories in TernFS)
+	Ctime  time.Time // defaults to Mtime for immutable backend inodes
+	Change uint64    // defaults to Mtime.UnixNano for immutable backend inodes
 }
 
 // DirEntry is one entry from a directory listing.
@@ -168,6 +171,11 @@ func NewLocalTernVFS(root string) *LocalTernVFS {
 		lfs.byID[id] = rel
 		lfs.byPath[rel] = id
 		lfs.parent[id] = lfs.byPath[parentRel]
+		// Retained versions and private transients are user inodes.
+		if strings.HasPrefix(rel, filepath.Join(nfsDirName, "snapshots")+string(os.PathSeparator)) ||
+			strings.HasPrefix(rel, filepath.Join(nfsDirName, "transients")+string(os.PathSeparator)) {
+			lfs.parent[id] = rootID
+		}
 		return nil
 	})
 	return lfs
@@ -203,6 +211,8 @@ func (lfs *LocalTernVFS) resolve(id InodeID) (string, bool) {
 }
 
 func (lfs *LocalTernVFS) register(absPath string, parentID InodeID) InodeID {
+	lfs.mu.Lock()
+	defer lfs.mu.Unlock()
 	id := lfs.statInodeID(absPath)
 	if id == 0 {
 		return 0
@@ -211,21 +221,21 @@ func (lfs *LocalTernVFS) register(absPath string, parentID InodeID) InodeID {
 	if rel == "." {
 		rel = ""
 	}
-	lfs.mu.Lock()
 	lfs.byID[id] = rel
 	lfs.byPath[rel] = id
 	lfs.parent[id] = parentID
-	lfs.mu.Unlock()
 	return id
 }
 
 func (lfs *LocalTernVFS) Stat(id InodeID) (NodeInfo, error) {
-	path, ok := lfs.resolve(id)
+	lfs.mu.RLock()
+	defer lfs.mu.RUnlock()
+	rel, ok := lfs.byID[id]
 	if !ok {
 		return NodeInfo{}, os.ErrNotExist
 	}
 	var st syscall.Stat_t
-	if err := syscall.Lstat(path, &st); err != nil {
+	if err := syscall.Lstat(filepath.Join(lfs.root, rel), &st); err != nil {
 		return NodeInfo{}, err
 	}
 	return NodeInfo{
@@ -343,11 +353,14 @@ func hashName(name string) uint64 {
 }
 
 func (lfs *LocalTernVFS) Read(fileID InodeID, offset uint64, dest []byte) (int, bool, error) {
-	path, ok := lfs.resolve(fileID)
+	lfs.mu.RLock()
+	rel, ok := lfs.byID[fileID]
 	if !ok {
+		lfs.mu.RUnlock()
 		return 0, false, os.ErrNotExist
 	}
-	f, err := os.Open(path)
+	f, err := os.Open(filepath.Join(lfs.root, rel))
+	lfs.mu.RUnlock()
 	if err != nil {
 		return 0, false, err
 	}
@@ -406,8 +419,12 @@ func (lfs *LocalTernVFS) Symlink(dirID InodeID, name string, target string) (Ino
 }
 
 func (lfs *LocalTernVFS) ConstructFile(dirID InodeID) (InodeID, Cookie, error) {
-	// Create a temp file to simulate a transient TernFS file.
-	f, err := os.CreateTemp(lfs.root, ".transient-*")
+	// Transient inodes have no public pathname in TernFS.
+	transients := filepath.Join(lfs.root, nfsDirName, "transients")
+	if err := os.MkdirAll(transients, 0700); err != nil {
+		return 0, Cookie{}, err
+	}
+	f, err := os.CreateTemp(transients, "file-*")
 	if err != nil {
 		return 0, Cookie{}, err
 	}
@@ -466,34 +483,42 @@ func (lfs *LocalTernVFS) LinkFile(fileID InodeID, cookie Cookie, dirID InodeID, 
 	}
 	childPath := filepath.Join(dirPath, name)
 
-	// Write data to the destination file.
-	f, err := os.OpenFile(
-		childPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	// Build the new inode off-path and preserve the old inode as a snapshot,
+	// matching TernFS rather than mutating the published base in place.
+	f, err := os.OpenFile(tf.path, os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		return err
 	}
 	if data != nil {
 		if _, err := io.Copy(f, data); err != nil {
 			f.Close()
-			os.Remove(childPath)
 			return err
 		}
 	}
 	if err := f.Close(); err != nil {
-		os.Remove(childPath)
 		return err
 	}
-
-	// Remove the transient temp file and register the linked file.
-	os.Remove(tf.path)
-	rel, _ := filepath.Rel(lfs.root, childPath)
 	lfs.mu.Lock()
+	defer lfs.mu.Unlock()
+	if oldID := lfs.statInodeID(childPath); oldID != 0 {
+		snapshotRel := filepath.Join(nfsDirName, "snapshots", fmt.Sprintf("%016x", uint64(oldID)))
+		snapshotPath := filepath.Join(lfs.root, snapshotRel)
+		if err := os.MkdirAll(filepath.Dir(snapshotPath), 0700); err != nil {
+			return err
+		}
+		if err := os.Link(childPath, snapshotPath); err != nil && !os.IsExist(err) {
+			return err
+		}
+		lfs.byID[oldID] = snapshotRel
+	}
+	if err := os.Rename(tf.path, childPath); err != nil {
+		return err
+	}
+	rel, _ := filepath.Rel(lfs.root, childPath)
 	delete(lfs.transient, fileID)
-	// Re-register the original fileID to point to the linked path so that
-	// Stat(fileID) continues to work (needed for CLOSE replay detection).
 	lfs.byID[fileID] = rel
-	lfs.mu.Unlock()
-
+	lfs.byPath[rel] = fileID
+	lfs.parent[fileID] = dirID
 	return nil
 }
 
@@ -590,10 +615,13 @@ func (lfs *LocalTernVFS) Rename(srcDirID InodeID, srcName string, dstDirID Inode
 }
 
 func (lfs *LocalTernVFS) SetTime(id InodeID, mtime *time.Time, atime *time.Time) error {
-	path, ok := lfs.resolve(id)
+	lfs.mu.RLock()
+	defer lfs.mu.RUnlock()
+	rel, ok := lfs.byID[id]
 	if !ok {
 		return os.ErrNotExist
 	}
+	path := filepath.Join(lfs.root, rel)
 	// Read current times to preserve unchanged fields.
 	var st syscall.Stat_t
 	if err := syscall.Lstat(path, &st); err != nil {

@@ -94,7 +94,7 @@ func (s *Server) lookupDurableOpen(
 			id:         id,
 			fileID:     fileID,
 			owner:      openOwnerKey{clientID: meta.ClientID},
-			write:      true,
+			write:      !meta.ReadOnly,
 			generation: stateid.Seqid(),
 			confirmed:  true,
 		}, NFS4_OK
@@ -130,11 +130,9 @@ func (s *Server) expireClientState(clientID uint64) {
 		}
 	}
 	for _, state := range s.opens.expireClient(clientID) {
-		if state.write {
-			meta, ok := s.stagingStore.GetMeta(state.fileID)
-			if ok && meta.ClientID == clientID {
-				s.discardStaging(state.fileID)
-			}
+		meta, ok := s.stagingStore.GetMeta(state.fileID)
+		if ok && meta.ClientID == clientID && meta.NFSStateID == state.id {
+			s.discardStaging(state.fileID)
 		}
 	}
 }
@@ -247,7 +245,7 @@ func (s *Server) opClose(args CLOSE4args, st *compoundState, w *COMPOUND4resWrit
 		}
 	}
 	ownsStaging := hasMeta && (recovered != nil ||
-		op != nil && state.write &&
+		op != nil &&
 			sid == meta.NFSStateID &&
 			state.owner.clientID == meta.ClientID)
 	if !ownsStaging {
@@ -296,7 +294,14 @@ func (s *Server) opClose(args CLOSE4args, st *compoundState, w *COMPOUND4resWrit
 				s.log.Error("close: link file", "err", linkErr, "status", Nfsstat4Name(status))
 				return fail(status)
 			}
+			info := sf.Stat()
+			// LinkFile stamps the immutable inode with publication time.
+			// Restore the writer's times, including explicit SETATTR values.
+			timeErr := s.fs.SetTime(stagingID, &info.Mtime, &info.Atime)
 			s.stagingStore.Remove(st.currentID)
+			if timeErr != nil {
+				return fail(s.errToNFS(timeErr))
+			}
 		} else {
 			s.discardStaging(st.currentID)
 		}
@@ -538,25 +543,13 @@ func (s *Server) opGetattr(args GETATTR4args, st *compoundState, w *COMPOUND4res
 		w.Resume(ew.Finish())
 		return NFS4ERR_NOFILEHANDLE
 	}
-	ni, err := s.fs.Stat(st.currentID)
+	ni, err := s.stat(st.currentID)
 	if err != nil {
-		// If Stat fails but the file is being staged (transient file not yet
-		// linked), synthesize metadata from the staging store.
-		if sz, ok := s.stagingStore.StagedSize(st.currentID); ok {
-			now := time.Now()
-			ni = NodeInfo{Size: sz, Mtime: now, Atime: now}
-		} else {
-			ew := w.AppendResarray_Getattr()
-			status := s.errToNFS(err)
-			ew.SetValue_Default(status)
-			w.Resume(ew.Finish())
-			return status
-		}
-	} else {
-		// If the file has an active staging buffer, use its size.
-		if sz, ok := s.stagingStore.StagedSize(st.currentID); ok {
-			ni.Size = sz
-		}
+		ew := w.AppendResarray_Getattr()
+		status := s.errToNFS(err)
+		ew.SetValue_Default(status)
+		w.Resume(ew.Finish())
+		return status
 	}
 
 	reqMask := parseBitmap(args.AttrRequest())
@@ -774,8 +767,8 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 	}
 	defer op.finishServerFaultIfNeeded()
 	for _, state := range op.abandoned {
-		if state.write {
-			s.stagingStore.Remove(state.fileID)
+		if s.stagingOwnedBy(state.fileID, state) != nil {
+			s.discardStaging(state.fileID)
 		}
 		if err := s.clients.RemoveOpen(clientID, state.id); err != nil {
 			s.log.Error("open: remove abandoned marker", "err", err)
@@ -801,6 +794,18 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 	var recoveredStagingID InodeID
 	var recoveredStagingMeta StagingMeta
 	var hasRecoveredStaging bool
+	var placeholderID, placeholderDir InodeID
+	var placeholderCookie Cookie
+	var placeholderName string
+	placeholderPublished := false
+	defer func() {
+		if placeholderID != 0 && !placeholderPublished {
+			if err := s.fs.ScrapFile(placeholderID, placeholderCookie); err != nil &&
+				!os.IsNotExist(err) {
+				s.log.Warn("scrap unpublished empty file", "inode", placeholderID, "err", err)
+			}
+		}
+	}()
 	adoptRecoveredStaging := func() {
 		nfsSID = s.opens.newStateID()
 		reusedStaging = true
@@ -817,7 +822,7 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 		if status != NFS4_OK {
 			return fail(status)
 		}
-		if access&OPEN4_SHARE_ACCESS_WRITE != 0 {
+		if access&OPEN4_SHARE_ACCESS_WRITE != 0 || args.OpenhowType() == OPEN4_CREATE {
 			unlock := s.lockMutationTargets(mutationTarget{
 				dirID: dirID,
 				name:  fileName,
@@ -825,31 +830,15 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 			defer unlock()
 			recoveredStagingID, recoveredStagingMeta,
 				hasRecoveredStaging = s.recoveredStagingTarget(
-				dirID, fileName, clientID,
+				dirID, fileName, clientID, ownerKey.owner,
+				access&OPEN4_SHARE_ACCESS_WRITE != 0,
 			)
-			if !hasRecoveredStaging {
-				busy, err := s.stagingTargetBusy(dirID, fileName)
-				if err != nil {
-					ew := w.AppendResarray_Open()
-					status := s.errToNFS(err)
-					ew.SetValue_Default(status)
-					w.Resume(ew.Finish())
-					return status
-				}
-				if busy {
-					ew := w.AppendResarray_Open()
-					ew.SetValue_Default(NFS4ERR_SHARE_DENIED)
-					w.Resume(ew.Finish())
-					return NFS4ERR_SHARE_DENIED
-				}
-			}
 		}
 
 		// Check if this is a create.
 		if args.OpenhowType() == OPEN4_CREATE {
 			createHow := args.Openhow().AsCreatehow4Entry()
-			// EXCLUSIVE4 not supported — clients should fall back
-			// to GUARDED4 or UNCHECKED4.
+			// EXCLUSIVE4 verifier handling is not implemented.
 			if createHow.Disc() == EXCLUSIVE4 {
 				return fail(NFS4ERR_NOTSUPP)
 			}
@@ -878,25 +867,28 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 				if lookupStatus != NFS4ERR_NOENT {
 					return fail(lookupStatus)
 				}
+				if s.stagingStore.ReadOnly() {
+					return fail(NFS4ERR_ROFS)
+				}
 				if hasRecoveredStaging {
 					if recoveredStagingMeta.BaseID != 0 {
 						s.discardStaging(recoveredStagingID)
 						hasRecoveredStaging = false
 					}
 				}
+				// Keep the writer's transient distinct from the empty inode
+				// that LOOKUP and READDIR will expose when OPEN succeeds.
+				placeholderID, placeholderCookie, err = s.fs.ConstructFile(dirID)
+				if err != nil {
+					return fail(s.errToNFS(err))
+				}
+				id = placeholderID
 				if hasRecoveredStaging {
 					id = recoveredStagingID
 					adoptRecoveredStaging()
-				} else {
-					id, nfsSID, status = s.constructStaging(
-						dirID, fileName, clientID, 0, 0,
-					)
-					if status != NFS4_OK {
-						return fail(status)
-					}
 				}
+				placeholderDir, placeholderName = dirID, fileName
 				created = true
-				staged = true
 			} else if createHow.Disc() == GUARDED4 {
 				return fail(NFS4ERR_EXIST)
 			}
@@ -911,6 +903,11 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 					adoptRecoveredStaging()
 					targetID = recoveredStagingID
 					created = true
+					placeholderID, placeholderCookie, err = s.fs.ConstructFile(dirID)
+					if err != nil {
+						return fail(s.errToNFS(err))
+					}
+					placeholderDir, placeholderName = dirID, fileName
 				} else {
 					if lookupStatus == NFS4ERR_NOENT &&
 						hasRecoveredStaging {
@@ -923,7 +920,7 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 			}
 		}
 
-		if !created && access&OPEN4_SHARE_ACCESS_WRITE != 0 {
+		if !staged && (created || access&OPEN4_SHARE_ACCESS_WRITE != 0) {
 			if status := requireRegularFile(targetID); status != NFS4_OK {
 				if targetID.Type() == InodeTypeSymlink {
 					status = NFS4ERR_SYMLINK
@@ -932,25 +929,26 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 			}
 			baseID := targetID
 			if hasRecoveredStaging {
-				if recoveredStagingMeta.BaseID != baseID {
-					s.discardStaging(recoveredStagingID)
-					return fail(NFS4ERR_SHARE_DENIED)
-				}
+				// Another writer may have published since this session opened.
+				// Its immutable base and private edits still belong to this owner.
 				adoptRecoveredStaging()
-				targetID = baseID
+				targetID = recoveredStagingID
 			} else {
-				baseInfo, err := s.fs.Stat(baseID)
-				if err != nil {
-					status := s.errToNFS(err)
-					return fail(status)
+				var baseInfo NodeInfo
+				if baseID != placeholderID {
+					var err error
+					baseInfo, err = s.fs.Stat(baseID)
+					if err != nil {
+						return fail(s.errToNFS(err))
+					}
 				}
-				_, nfsSID, status = s.constructStaging(
-					dirID, fileName, clientID, baseID, baseInfo.Size,
+				targetID, nfsSID, status = s.constructStaging(
+					dirID, fileName, clientID, ownerKey.owner,
+					access&OPEN4_SHARE_ACCESS_WRITE != 0, baseID, baseInfo,
 				)
 				if status != NFS4_OK {
 					return fail(status)
 				}
-				targetID = baseID
 				staged = true
 			}
 		}
@@ -1022,6 +1020,18 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 		}
 		stagingRebound = true
 	}
+	if placeholderID != 0 {
+		if err := s.fs.LinkFile(
+			placeholderID, placeholderCookie, placeholderDir, placeholderName, nil,
+		); err != nil {
+			_ = s.clients.RemoveOpen(clientID, markID)
+			if staged {
+				cleanupStagedOpen()
+			}
+			return fail(s.errToNFS(err))
+		}
+		placeholderPublished = true
+	}
 	response = op.finishOpen(
 		targetID,
 		access&OPEN4_SHARE_ACCESS_WRITE != 0,
@@ -1050,8 +1060,10 @@ func (s *Server) constructStaging(
 	dirID InodeID,
 	fileName string,
 	clientID uint64,
+	openOwner string,
+	write bool,
 	baseID InodeID,
-	baseSize uint64,
+	baseInfo NodeInfo,
 ) (InodeID, StateID, uint32) {
 	id, cookie, err := s.fs.ConstructFile(dirID)
 	if err != nil {
@@ -1065,15 +1077,15 @@ func (s *Server) constructStaging(
 		NFSStateID: stateID,
 		ClientID:   clientID,
 		BaseID:     baseID,
-		BaseSize:   baseSize,
+		BaseSize:   baseInfo.Size,
+		Attrs:      baseInfo,
+		OpenOwner:  openOwner,
+		OwnerKnown: true,
+		ReadOnly:   !write,
 	}
 	if _, err := s.stagingStore.Create(id, meta); err != nil {
 		_ = s.fs.ScrapFile(id, cookie)
 		s.log.Error("staging create error", "err", err)
-		if errors.Is(err, errStagingBaseBusy) ||
-			errors.Is(err, errStagingTargetBusy) {
-			return 0, StateID{}, NFS4ERR_SHARE_DENIED
-		}
 		return 0, StateID{}, NFS4ERR_IO
 	}
 	return id, stateID, NFS4_OK
@@ -1429,12 +1441,9 @@ func (s *Server) opReaddir(args READDIR4args, st *compoundState, w *COMPOUND4res
 		allEntries = filtered
 	}
 
-	// Build staged sizes map for entries being written.
-	ss := stagedSizes(s.stagingStore.StagedSizes())
-
 	// Pre-compute attributes for each entry so we can calculate exact
 	// XDR sizes before encoding.
-	prepared := prepareReaddirEntries(allEntries, reqMask, s.fs, ss)
+	prepared := prepareReaddirEntries(allEntries, reqMask, s.stat)
 
 	// Enforce maxcount and dircount with exact XDR sizes.
 	// maxcount covers the entire READDIR4resok: cookieverf(8) +
@@ -1920,27 +1929,17 @@ func (s *Server) opSetattr(args SETATTR4args, st *compoundState, w *COMPOUND4res
 		if !isSpecialStateID(args.Stateid()) {
 			if state, status := s.lookupDurableOpen(
 				args.Stateid(), st.currentID,
-			); status == NFS4_OK && state.write {
+			); status == NFS4_OK {
 				sf = s.stagingOwnedBy(st.currentID, state)
 			}
 		} else {
 			sf = s.directStaging(st.currentID)
 		}
 		if sf != nil {
-			baseID, _ := sf.Base()
-			if baseID != 0 {
-				if err := s.fs.SetTime(baseID, setMtime, setAtime); err != nil {
-					return setattrReply(NFS4ERR_IO, [2]uint32{})
-				}
-				if stagingID, ok := s.stagingStore.ResolveID(st.currentID); ok &&
-					stagingID != baseID {
-					if err := s.fs.SetTime(stagingID, setMtime, setAtime); err != nil {
-						return setattrReply(NFS4ERR_IO, [2]uint32{})
-					}
-				}
-			} else if err := s.fs.SetTime(
-				st.currentID, setMtime, setAtime,
-			); err != nil {
+			if err := sf.SetTime(setMtime, setAtime); err != nil {
+				return setattrReply(NFS4ERR_IO, [2]uint32{})
+			}
+			if err := sf.Sync(); err != nil {
 				return setattrReply(NFS4ERR_IO, [2]uint32{})
 			}
 		} else if err := s.fs.SetTime(
@@ -2160,7 +2159,7 @@ func (s *Server) opReleaseLockowner(w *COMPOUND4resWriter) uint32 {
 // verifyAttrs compares the supplied fattr4 against the current file's attributes.
 // Returns (same bool, status uint32). If status != NFS4_OK, comparison failed.
 func (s *Server) verifyAttrs(id InodeID, supplied Fattr4) (bool, uint32) {
-	ni, err := s.fs.Stat(id)
+	ni, err := s.stat(id)
 	if err != nil {
 		return false, s.errToNFS(err)
 	}

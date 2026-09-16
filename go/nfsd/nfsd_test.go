@@ -4208,8 +4208,8 @@ func TestOpenExistingForWrite(t *testing.T) {
 	if !ok {
 		t.Fatalf("invalid filehandle %x", fh)
 	}
-	if want := MakeInodeID(InodeTypeFile, stat.Ino); fhID != want {
-		t.Fatalf("write-open filehandle = %v, want published inode %v",
+	if want := MakeInodeID(InodeTypeFile, stat.Ino); fhID == want {
+		t.Fatalf("write-open filehandle = %v exposes published inode %v",
 			fhID, want)
 	}
 	writeFileAt(t, conn, &xid, fh, stateid, 3, []byte("XYZ"))
@@ -4761,7 +4761,7 @@ func TestRecoveredMutableOpenCanBeReplayedByClient(t *testing.T) {
 	}
 }
 
-func TestRecoveredUnlinkedCreateCanBeReopenedWithoutCreate(t *testing.T) {
+func TestRecoveredNewFileCanBeReopenedWithoutCreate(t *testing.T) {
 	dir := t.TempDir()
 	fs := NewLocalTernVFS(dir)
 	stagingDir := t.TempDir()
@@ -4812,7 +4812,7 @@ func TestRecoveredUnlinkedCreateCanBeReopenedWithoutCreate(t *testing.T) {
 	}
 }
 
-func TestRecoveredMutableOpenRejectsChangedBase(t *testing.T) {
+func TestRecoveredMutableOpenKeepsOriginalBase(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "existing.txt")
 	if err := os.WriteFile(path, []byte("original"), 0644); err != nil {
@@ -4843,11 +4843,11 @@ func TestRecoveredMutableOpenRejectsChangedBase(t *testing.T) {
 	conn1.Close()
 	cleanup1()
 
-	replacementPath := filepath.Join(dir, "replacement.tmp")
-	if err := os.WriteFile(replacementPath, []byte("new base"), 0644); err != nil {
+	id, cookie, err := fs.ConstructFile(fs.RootID())
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Rename(replacementPath, path); err != nil {
+	if err := fs.LinkFile(id, cookie, fs.RootID(), "existing.txt", strings.NewReader("new base")); err != nil {
 		t.Fatal(err)
 	}
 	currentID, err := fs.Lookup(fs.RootID(), "existing.txt")
@@ -4870,36 +4870,20 @@ func TestRecoveredMutableOpenRejectsChangedBase(t *testing.T) {
 	conn2 := dial(t, addr2)
 	defer conn2.Close()
 
-	res := sendCompound(t, conn2, xid, func(w *COMPOUND4argsWriter) {
-		w.AppendArgarray_Putrootfh()
-		ow := w.AppendArgarray_Open()
-		ow.SetSeqid(1)
-		ow.SetShareAccess(OPEN4_SHARE_ACCESS_BOTH)
-		ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
-		owner := ow.StartOwner()
-		owner = owner.SetClientid(clientid)
-		owner = owner.SetOwner([]byte("recovery-owner"))
-		buf := owner.Finish()
-		ow.Resume(buf)
-		ow.SetOpenhow_Default(OPEN4_NOCREATE)
-		claim := ow.SetClaim_Null()
-		buf = claim.SetData([]byte("existing.txt")).Finish()
-		ow.Resume(buf)
-		w.Resume(ow.Finish())
-	})
-	if res.Status() != NFS4ERR_SHARE_DENIED {
-		t.Fatalf("OPEN changed base status = %s, want NFS4ERR_SHARE_DENIED",
-			Nfsstat4Name(res.Status()))
+	recoveredState, recoveredFH := openWriteFile(t, conn2, &xid, clientid, "existing.txt")
+	if !bytes.Equal(recoveredFH, fh) {
+		t.Fatal("recovered writer changed its private handle")
 	}
+	closeFile(t, conn2, &xid, recoveredFH, recoveredState)
 	if staging2.TargetBusy(fs.RootID(), "existing.txt") {
-		t.Fatal("changed-base rejection left staging target reserved")
+		t.Fatal("recovered publication left staging registered")
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != "new base" {
-		t.Fatalf("changed base was overwritten: %q", data)
+	if string(data) != "changedl" {
+		t.Fatalf("recovered publication = %q, want changedl", data)
 	}
 }
 
@@ -4955,7 +4939,14 @@ func TestRecoveredMissingBaseCreatesFreshFile(t *testing.T) {
 	newState, newFH := openCreateFile(
 		t, conn2, &xid, clientid, "existing.txt",
 	)
-	if staging2.Get(oldStagingID) != nil {
+	newID, _ := fhToInodeID(newFH)
+	newMeta, found := staging2.GetMeta(newID)
+	if !found || newMeta.BaseID == 0 || newMeta.BaseSize != 0 || newMeta.Size != 0 {
+		t.Fatal("fresh create did not allocate staging over a new empty version")
+	}
+	// The local backend's filesystem can immediately reuse the scrapped
+	// transient's inode number; its replacement session must still be fresh.
+	if oldStagingID != newID && staging2.Get(oldStagingID) != nil {
 		t.Fatal("fresh create retained stale replacement staging")
 	}
 	writeFileAt(t, conn2, &xid, newFH, newState, 0, []byte("fresh"))
@@ -5023,8 +5014,8 @@ func TestMutableOpenPreservesMetadataOnlySetattr(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !os.SameFile(before, after) {
-		t.Fatal("metadata-only update replaced the file")
+	if os.SameFile(before, after) {
+		t.Fatal("metadata-only update did not publish its private version")
 	}
 	if !after.ModTime().Equal(mtime) {
 		t.Fatalf("mtime = %v, want %v", after.ModTime(), mtime)
@@ -5759,12 +5750,26 @@ func openCreateFileWithSize(
 	filename string,
 	size *uint64,
 ) (stateid [16]byte, fh []byte) {
+	return openCreateFileWithSizeAndAccess(
+		t, conn, xid, clientid, filename, size, OPEN4_SHARE_ACCESS_BOTH,
+	)
+}
+
+func openCreateFileWithSizeAndAccess(
+	t *testing.T,
+	conn net.Conn,
+	xid *uint32,
+	clientid uint64,
+	filename string,
+	size *uint64,
+	access uint32,
+) (stateid [16]byte, fh []byte) {
 	t.Helper()
 	res := sendCompound(t, conn, *xid, func(w *COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		ow := w.AppendArgarray_Open()
 		ow.SetSeqid(1)
-		ow.SetShareAccess(OPEN4_SHARE_ACCESS_BOTH)
+		ow.SetShareAccess(access)
 		ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
 		ownerW := ow.StartOwner()
 		ownerW = ownerW.SetClientid(clientid)
@@ -6304,7 +6309,7 @@ func TestReaddirNfsDirHidden(t *testing.T) {
 	}
 }
 
-func TestReaddirTransientNotVisible(t *testing.T) {
+func TestReaddirNewFileVisibleBeforeClose(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "existing.txt"), []byte("x"), 0644)
 
@@ -6327,19 +6332,21 @@ func TestReaddirTransientNotVisible(t *testing.T) {
 	entry := nextOp(t, &iter)
 	rootFH := append([]byte(nil), entry.Value().AsGETFH4resEntry().Value().AsGETFH4resok().Object().Data()...)
 
-	// Create a file but don't close it yet (still transient).
+	// The new pathname is published empty while its creator keeps staging.
 	stateid, fh := openCreateFile(t, conn, &xid, clientid, "newfile.txt")
+	emptyFH := lookupFH(t, conn, &xid, "newfile.txt")
 
-	// READDIR should NOT show newfile.txt.
 	names := collectReaddirNames(t, conn, &xid, rootFH)
-	for _, name := range names {
-		if name == "newfile.txt" {
-			t.Fatal("transient file should not appear in READDIR before CLOSE")
-		}
+	sort.Strings(names)
+	if !reflect.DeepEqual(names, []string{"existing.txt", "newfile.txt"}) {
+		t.Fatalf("READDIR before CLOSE = %v", names)
 	}
 
-	// Close the file (links it into the directory).
+	// An unchanged CLOSE keeps the already-published empty file.
 	closeFile(t, conn, &xid, fh, stateid)
+	if got := lookupFH(t, conn, &xid, "newfile.txt"); !bytes.Equal(got, emptyFH) {
+		t.Fatal("unchanged creator replaced the empty published version")
+	}
 
 	// READDIR should now show newfile.txt.
 	names = collectReaddirNames(t, conn, &xid, rootFH)
@@ -7173,8 +7180,10 @@ func TestUnconfirmedOwnerReplacementOpen(t *testing.T) {
 			nextSeq := test.seq + 1
 			if status := closeFileWithSeqStatus(
 				t, conn, &xid, firstFH, first, nextSeq,
-			); status != NFS4ERR_BAD_STATEID {
-				t.Fatalf("abandoned stateid CLOSE = %s, want NFS4ERR_BAD_STATEID",
+			); status != NFS4ERR_BAD_STATEID && status != NFS4ERR_BADHANDLE {
+				// Scrapping the private inode can let the local backend reuse
+				// its number for an internal marker, making its handle invalid.
+				t.Fatalf("abandoned CLOSE = %s, want invalid stateid or handle",
 					Nfsstat4Name(status))
 			}
 
@@ -7294,8 +7303,8 @@ func TestConcurrentOpenIsAtMostOnceAndReplayed(t *testing.T) {
 	if first.stateid != second.stateid || !bytes.Equal(first.fh, second.fh) {
 		t.Fatal("OPEN replay returned different state")
 	}
-	if calls := fs.callCount(); calls != 1 {
-		t.Fatalf("ConstructFile calls = %d, want 1", calls)
+	if calls := fs.callCount(); calls != 2 {
+		t.Fatalf("ConstructFile calls = %d, want 2 (empty version and staging)", calls)
 	}
 }
 
@@ -7319,6 +7328,9 @@ func (fs *failingLinkVFS) LinkFile(
 	name string,
 	data io.Reader,
 ) error {
+	if data == nil {
+		return fs.TernVFS.LinkFile(fileID, cookie, dirID, name, nil)
+	}
 	fs.mu.Lock()
 	if fs.remaining > 0 {
 		fs.remaining--
@@ -7337,12 +7349,15 @@ type blockingFailingLinkVFS struct {
 }
 
 func (fs *blockingFailingLinkVFS) LinkFile(
-	InodeID,
-	Cookie,
-	InodeID,
-	string,
-	io.Reader,
+	fileID InodeID,
+	cookie Cookie,
+	dirID InodeID,
+	name string,
+	data io.Reader,
 ) error {
+	if data == nil {
+		return fs.TernVFS.LinkFile(fileID, cookie, dirID, name, nil)
+	}
 	fs.once.Do(func() { close(fs.entered) })
 	select {
 	case <-fs.release:
@@ -7416,6 +7431,7 @@ func TestWaitingCloseRechecksStagingMeta(t *testing.T) {
 	}
 	stateid = confirmOpenState(t, firstConn, &xid, fh, 2, stateid)
 
+	writeFileAt(t, firstConn, &xid, fh, stateid, 0, []byte("pending"))
 	firstResult := make(chan closeResult, 1)
 	go func() {
 		closeXID := uint32(100)
@@ -7494,6 +7510,7 @@ func TestFailedCloseAdvancesAndReplaysOwnerSeqid(t *testing.T) {
 		t.Fatalf("OPEN status = %s", Nfsstat4Name(status))
 	}
 	stateid = confirmOpenState(t, conn, &xid, fh, 2, stateid)
+	writeFileAt(t, conn, &xid, fh, stateid, 0, []byte("pending"))
 
 	if status := closeFileWithSeqStatus(
 		t, conn, &xid, fh, stateid, 3,
@@ -7532,6 +7549,9 @@ func (fs *blockingLinkVFS) LinkFile(
 	name string,
 	data io.Reader,
 ) error {
+	if data == nil {
+		return fs.TernVFS.LinkFile(fileID, cookie, dirID, name, nil)
+	}
 	if err := fs.enter(); err != nil {
 		return err
 	}
@@ -7573,6 +7593,7 @@ func TestConcurrentCloseIsAtMostOnceAndReplayed(t *testing.T) {
 		t.Fatalf("OPEN status = %s", Nfsstat4Name(status))
 	}
 	stateid = confirmOpenState(t, firstConn, &xid, fh, 2, stateid)
+	writeFileAt(t, firstConn, &xid, fh, stateid, 0, []byte("pending"))
 
 	results := make(chan closeResult, 2)
 	go func() {

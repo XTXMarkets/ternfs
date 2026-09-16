@@ -197,7 +197,11 @@ func encodeAttrs(mask [2]uint32, id InodeID, ni NodeInfo) []byte {
 		buf = binary.BigEndian.AppendUint32(buf, FH4_PERSISTENT)
 	}
 	if mask[0]&(1<<FATTR4_CHANGE) != 0 {
-		buf = binary.BigEndian.AppendUint64(buf, uint64(ni.Mtime.UnixNano()))
+		change := ni.Change
+		if change == 0 {
+			change = uint64(ni.Mtime.UnixNano())
+		}
+		buf = binary.BigEndian.AppendUint64(buf, change)
 	}
 	if mask[0]&(1<<FATTR4_SIZE) != 0 {
 		buf = binary.BigEndian.AppendUint64(buf, ni.Size)
@@ -314,8 +318,11 @@ func encodeAttrs(mask [2]uint32, id InodeID, ni NodeInfo) []byte {
 		buf = binary.BigEndian.AppendUint32(buf, 1)
 	}
 	if mask[1]&(1<<(FATTR4_TIME_METADATA-32)) != 0 {
-		// ctime = mtime (TernFS has no separate ctime)
-		sec, nsec := timeToNFS(ni.Mtime)
+		ctime := ni.Ctime
+		if ctime.IsZero() {
+			ctime = ni.Mtime
+		}
+		sec, nsec := timeToNFS(ctime)
 		buf = binary.BigEndian.AppendUint64(buf, uint64(sec))
 		buf = binary.BigEndian.AppendUint32(buf, nsec)
 	}
@@ -341,12 +348,16 @@ func encodeString(buf []byte, s string) []byte {
 	return buf
 }
 
-// stagedSizes maps InodeID to the staged size for files being written.
-// Passed through the dir entry encoding chain so READDIR reflects staged sizes.
-type stagedSizes map[InodeID]uint64
+// stat supplies one attribute view to GETATTR, VERIFY and READDIR. Published
+// handles never resolve to another open's private staging file.
+func (s *Server) stat(id InodeID) (NodeInfo, error) {
+	if sf := s.stagingStore.Get(id); sf != nil {
+		return sf.Stat(), nil
+	}
+	return s.fs.Stat(id)
+}
 
-// readdirEntry holds a directory entry with pre-computed attribute data
-// so that exact XDR sizes can be calculated before encoding.
+// readdirEntry holds attributes used to calculate exact XDR sizes.
 type readdirEntry struct {
 	DirEntry
 	respMask [2]uint32
@@ -354,7 +365,7 @@ type readdirEntry struct {
 }
 
 // prepareReaddirEntries pre-computes attribute data for each directory entry.
-func prepareReaddirEntries(entries []DirEntry, reqMask [2]uint32, vfs TernVFS, ss stagedSizes) []readdirEntry {
+func prepareReaddirEntries(entries []DirEntry, reqMask [2]uint32, stat func(InodeID) (NodeInfo, error)) []readdirEntry {
 	var respMask [2]uint32
 	respMask[0] = reqMask[0] & supportedAttrs0
 	respMask[1] = reqMask[1] & supportedAttrs1
@@ -363,12 +374,9 @@ func prepareReaddirEntries(entries []DirEntry, reqMask [2]uint32, vfs TernVFS, s
 	for i, e := range entries {
 		result[i].DirEntry = e
 		result[i].respMask = respMask
-		ni, err := vfs.Stat(e.ID)
+		ni, err := stat(e.ID)
 		if err != nil {
 			continue // attrData stays nil → empty attrs
-		}
-		if sz, ok := ss[e.ID]; ok {
-			ni.Size = sz
 		}
 		result[i].attrData = encodeAttrs(respMask, e.ID, ni)
 	}
