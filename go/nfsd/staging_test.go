@@ -444,7 +444,7 @@ func TestStagingRetainsUncommittedNewFileOnRestart(t *testing.T) {
 	}
 }
 
-func TestStagingRejectsConcurrentReplacementOfSameBase(t *testing.T) {
+func TestStagingAllowsIndependentReplacementsOfSameBase(t *testing.T) {
 	store, err := NewLocalStagingStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -461,11 +461,8 @@ func TestStagingRejectsConcurrentReplacementOfSameBase(t *testing.T) {
 	if _, err := store.Create(firstID, meta); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Create(secondID, meta); !errors.Is(
-		err, errStagingBaseBusy,
-	) {
-		t.Fatalf("second replacement error = %v, want %v",
-			err, errStagingBaseBusy)
+	if _, err := store.Create(secondID, meta); err != nil {
+		t.Fatalf("second replacement failed: %v", err)
 	}
 
 	store.Remove(firstID)
@@ -474,7 +471,7 @@ func TestStagingRejectsConcurrentReplacementOfSameBase(t *testing.T) {
 	}
 }
 
-func TestStagingResolvesBaseFilehandle(t *testing.T) {
+func TestStagingKeepsBaseFilehandlePrivate(t *testing.T) {
 	store, err := NewLocalStagingStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -490,17 +487,18 @@ func TestStagingResolvesBaseFilehandle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := store.Get(baseID); got != stage {
-		t.Fatal("base filehandle did not resolve to staging file")
+	if store.Get(baseID) != nil {
+		t.Fatal("published base handle exposes private staging")
 	}
-	if got, ok := store.ResolveID(baseID); !ok || got != stagingID {
-		t.Fatalf("resolved staging inode = (%v, %t), want (%v, true)",
-			got, ok, stagingID)
+	if _, ok := store.ResolveID(baseID); ok {
+		t.Fatal("base handle resolves to a writer")
 	}
 	store.Remove(baseID)
-	if store.Get(stagingID) != nil {
-		t.Fatal("removing the base alias left staging registered")
+	if store.Get(stagingID) != stage {
+		t.Fatal("removing the base handle discarded private staging")
 	}
+	store.Remove(stagingID)
+
 }
 
 func TestStagingRebindSurvivesRestart(t *testing.T) {
@@ -521,7 +519,7 @@ func TestStagingRebindSurvivesRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	stateID := StateID{1, 2, 3}
-	if err := store.Rebind(baseID, 2, stateID); err != nil {
+	if err := store.Rebind(stagingID, 2, stateID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -529,7 +527,7 @@ func TestStagingRebindSurvivesRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	meta, ok := recovered.GetMeta(baseID)
+	meta, ok := recovered.GetMeta(stagingID)
 	if !ok {
 		t.Fatal("rebound staging was not recovered")
 	}

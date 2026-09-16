@@ -61,13 +61,26 @@ func (s *Server) recoveredStagingTarget(
 	dirID InodeID,
 	name string,
 	clientID uint64,
+	openOwner string,
+	write bool,
 ) (InodeID, StagingMeta, bool) {
-	id, meta, ok := s.stagingStore.FindTarget(dirID, name)
-	if !ok || meta.ClientID != clientID ||
-		!s.opens.canRecover(meta.NFSStateID) {
-		return 0, StagingMeta{}, false
+	var foundID InodeID
+	var foundMeta StagingMeta
+	for id, meta := range s.stagingStore.Entries() {
+		if meta.DirID != dirID || meta.FileName != name ||
+			meta.ClientID != clientID || !s.opens.canRecover(meta.NFSStateID) ||
+			(meta.OwnerKnown && meta.OpenOwner != openOwner) ||
+			meta.ReadOnly == write {
+			continue
+		}
+		// Legacy sidecars have no open-owner identity. Never guess between
+		// multiple recovered sessions and hand one writer another's data.
+		if foundID != 0 {
+			return 0, StagingMeta{}, false
+		}
+		foundID, foundMeta = id, meta
 	}
-	return id, meta, true
+	return foundID, foundMeta, foundID != 0
 }
 
 func (s *Server) reapStaleStaging() {
