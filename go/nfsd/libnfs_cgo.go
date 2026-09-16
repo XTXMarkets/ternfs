@@ -106,7 +106,7 @@ func (c *libnfsClient) ReadFile(path string) ([]byte, error) {
 	var result []byte
 	buf := make([]byte, 64*1024)
 	for {
-		n := C.nfs_read(c.nfs, fh, C.uint64_t(len(buf)), unsafe.Pointer(&buf[0]))
+		n := C.nfs_read(c.nfs, fh, unsafe.Pointer(&buf[0]), C.size_t(len(buf)))
 		if n < 0 {
 			msg := C.GoString(C.nfs_get_error(c.nfs))
 			return nil, fmt.Errorf("nfs_read(%q): %s", path, msg)
