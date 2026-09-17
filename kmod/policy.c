@@ -47,7 +47,7 @@ static u64 policy_key(u64 inode, u8 tag) {
 static struct ternfs_policy* find_policy(u64 inode, u8 tag) {
     struct ternfs_policy* policy;
     hash_for_each_possible_rcu(policies, policy, hnode, policy_key(inode, tag)) {
-        if (likely(policy->inode && inode && policy->tag == tag)) {
+        if (likely(policy->inode == inode && policy->tag == tag)) {
             return policy;
         }
     }
