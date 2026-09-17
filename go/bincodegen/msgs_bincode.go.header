@@ -8,8 +8,8 @@ package msgs
 
 import (
 	"fmt"
-	"io"
 	"github.com/XTXMarkets/ternfs/go/core/bincode"
+	"io"
 )
 
 // This file specifies
@@ -160,4 +160,3 @@ func (fs *FetchedFullSpan) Unpack(r io.Reader) error {
 	}
 	return nil
 }
-
