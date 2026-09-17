@@ -68,3 +68,14 @@ through the production destructor:
 ./run_module_test.sh ./ternfs-symlink-test.ko \
     ternfs_symlink_test 'ternfs-symlink-test: PASS'
 ```
+
+The file-open test uses a real initialized inode mutex and snapshots all
+transient file fields around the production open callback. It covers NONE,
+READING and WRITING states with read-only, write-only and read/write modes,
+including repeated rejected read-only reopens followed by a writable reopen.
+Every return must preserve the expected state and leave the inode unlocked:
+
+```sh
+./run_module_test.sh ./ternfs-open-test.ko \
+    ternfs_open_test 'ternfs-open-test: PASS'
+```
