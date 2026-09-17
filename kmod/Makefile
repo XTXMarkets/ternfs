@@ -33,6 +33,7 @@ ternfs-client-objs += \
 	block.o \
 	file.o \
 	write.o \
+	symlink.o \
 	rs.o \
 	crc.o \
 	crc_fpu.o \

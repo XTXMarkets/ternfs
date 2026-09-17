@@ -11,6 +11,17 @@ TernFS cluster. Build against the kernel used by a disposable test VM:
 make -C /path/to/kernel/build M="$PWD/kmod/tests" modules
 ```
 
+Run a test module as root with the reusable log-checking wrapper:
+
+```sh
+./run_module_test.sh ./ternfs-policy-test.ko \
+    ternfs_policy_test 'ternfs-policy-test: PASS'
+```
+
+The wrapper records the current kernel-log length, loads and unloads the
+module, prints only new messages, requires the supplied success text, and
+fails if those messages contain a KASAN report or other kernel fault.
+
 Inside that VM, run the policy-cache test:
 
 ```sh
@@ -44,4 +55,16 @@ ensure shorter contents cannot expose bytes from an earlier fill:
 sudo insmod ternfs-inline-read-test.ko
 sudo dmesg | grep ternfs-inline-read-test
 sudo rmmod ternfs_inline_read_test
+```
+
+The symlink test includes the production read-link implementation while
+substituting metadata and span I/O at their external boundaries. It checks
+metadata, span lookup, buffer allocation, page allocation and page-fetch
+failures, including exact buffer, span and page cleanup. Empty, inline and
+block-backed successes must return terminated contents and release everything
+through the production destructor:
+
+```sh
+./run_module_test.sh ./ternfs-symlink-test.ko \
+    ternfs_symlink_test 'ternfs-symlink-test: PASS'
 ```
