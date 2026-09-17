@@ -79,3 +79,15 @@ Every return must preserve the expected state and leave the inode unlocked:
 ./run_module_test.sh ./ternfs-open-test.ko \
     ternfs_open_test 'ternfs-open-test: PASS'
 ```
+
+The transient-lifetime test includes the production span, cleanup and write
+page-accounting helpers. It uses real slab objects, pages, inode locking,
+semaphores and an `mm` reference to check span refcounts, current and
+per-block page cleanup, RSS balance, idempotent file cleanup, preserved
+errors, non-owner eviction, and waiting for an outstanding flush before
+dropping the writer's `mm`:
+
+```sh
+./run_module_test.sh ./ternfs-transient-test.ko \
+    ternfs_transient_test 'ternfs-transient-test: PASS'
+```

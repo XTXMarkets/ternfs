@@ -12,4 +12,6 @@ obj-m += ternfs-symlink-test.o
 ternfs-symlink-test-y := symlink_test.o
 obj-m += ternfs-open-test.o
 ternfs-open-test-y := open_test.o
+obj-m += ternfs-transient-test.o
+ternfs-transient-test-y := transient_test.o
 ccflags-y += -I$(src)/.. -Wno-declaration-after-statement
