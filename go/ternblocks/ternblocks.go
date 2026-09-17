@@ -131,11 +131,10 @@ type blockServiceStats struct {
 	badCertificate           uint64
 }
 type env struct {
-	bufPool  *bufpool.BufPool
-	stats    map[msgs.BlockServiceId]*blockServiceStats
-	counters map[msgs.BlocksMessageKind]*timing.Timings
-	// per block service: buffered to max-erases-per-block-service
-	eraseLimiters  map[msgs.BlockServiceId]chan struct{}
+	bufPool        *bufpool.BufPool
+	stats          map[msgs.BlockServiceId]*blockServiceStats
+	counters       map[msgs.BlocksMessageKind]*timing.Timings
+	ioLimiter      *diskIOLimiter
 	registryConn   *client.RegistryConn
 	failureDomain  string
 	hostname       string
@@ -363,9 +362,6 @@ func checkEraseCertificate(log *log.Logger, blockServiceId msgs.BlockServiceId, 
 }
 
 func eraseBlock(log *log.Logger, env *env, blockServiceId msgs.BlockServiceId, basePath string, blockId msgs.BlockId) error {
-	limiter := env.eraseLimiters[blockServiceId]
-	limiter <- struct{}{}
-	defer func() { <-limiter }()
 	blockPath := path.Join(basePath, blockId.Path())
 	log.Debug("deleting block %v at path %v", blockId, blockPath)
 	err := eraseFileIfExistsAndSyncDir(blockPath)
@@ -838,6 +834,16 @@ func handleRequestError(
 		*lastError = err
 	}()
 
+	if errors.Is(err, errDiskIOBusy) {
+		// Expected overload, not a disk fault. The write body may be unread,
+		// so always close the stream. Bound the error reply even if normal
+		// connection timeouts were disabled.
+		log.Debug("rejecting %v for block service %v: disk I/O admission limit", req, blockServiceId)
+		conn.SetWriteDeadline(time.Now().Add(time.Second))
+		writeBlocksResponseError(log, conn, msgs.TIMEOUT)
+		return false
+	}
+
 	if err == io.EOF {
 		log.Debug("got EOF from %v, terminating", conn.RemoteAddr())
 		return false
@@ -1008,16 +1014,12 @@ func handleSingleRequest(
 	log.Debug("servicing request of type %T from %v", req, conn.RemoteAddr())
 	log.Trace("req %+v", req)
 	defer log.Debug("serviced request of type %T from %v", req, conn.RemoteAddr())
+	var requestDeadline time.Time
 	if connectionTimeout != 0 {
-		// Reset timeout, with default settings this will give
-		// the request a minute to complete, given that the max
-		// block size is 10MiB, that is ~0.17MiB/s, so it should
-		// be plenty of time unless something is wrong.
-		//
-		// If we didn't reset this (or just remove the timeout)
-		// the previous timeout might very well trip the request
-		// because it might have been almost expired.
-		conn.SetDeadline(time.Now().Add(connectionTimeout))
+		// This deadline covers queueing and socket I/O, but cannot interrupt
+		// a blocked filesystem syscall. Its admission slot stays held.
+		requestDeadline = time.Now().Add(connectionTimeout)
+		conn.SetDeadline(requestDeadline)
 	}
 	blockService, found := blockServices[blockServiceId]
 	if !found {
@@ -1026,6 +1028,30 @@ func handleSingleRequest(
 		return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, msgs.BLOCK_SERVICE_NOT_FOUND)
 	}
 	atomic.AddUint64(&blockService.requests, 1)
+	keepConnection, err := env.ioLimiter.run(blockServiceId, kind, requestDeadline, func() bool {
+		return handleAdmittedRequest(log, env, lastError, blockServices, deadBlockServices, conn, futureCutoff, blockServiceId, blockService, req)
+	})
+	if err != nil {
+		return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, err)
+	}
+	return keepConnection
+}
+
+// Runs on a disk worker. Its assignment covers every filesystem access,
+// verification read and sync, as well as cleanup and the protocol response.
+func handleAdmittedRequest(
+	log *log.Logger,
+	env *env,
+	lastError *error,
+	blockServices map[msgs.BlockServiceId]*blockService,
+	deadBlockServices map[msgs.BlockServiceId]deadBlockService,
+	conn *net.TCPConn,
+	futureCutoff time.Duration,
+	blockServiceId msgs.BlockServiceId,
+	blockService *blockService,
+	req msgs.BlocksRequest,
+) bool {
+	kind := req.BlocksRequestKind()
 	switch whichReq := req.(type) {
 	case *msgs.EraseBlockReq:
 		if err := checkEraseCertificate(log, blockServiceId, blockService.cipher, whichReq, env.stats[blockServiceId]); err != nil {
@@ -1090,6 +1116,9 @@ func handleSingleRequest(
 			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, err)
 		}
 	case *msgs.TestWriteReq:
+		if whichReq.Size > uint64(MAX_OBJECT_SIZE) {
+			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, msgs.BLOCK_TOO_BIG)
+		}
 		if err := blockService.checkWriteSpace(); err != nil {
 			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, err)
 		}
@@ -1279,6 +1308,7 @@ func sendMetrics(l *log.Logger, env *env, influxDB *log.InfluxDB, blockServices 
 		l.Info("sending metrics")
 		metrics.Reset()
 		now := time.Now()
+		env.ioLimiter.appendMetrics(&metrics, failureDomainEscaped, env.pathPrefix, now)
 		for bsId, bsStats := range env.stats {
 			metrics.Measurement("eggsfs_blocks_write")
 			metrics.Tag("blockservice", bsId.String())
@@ -1433,10 +1463,15 @@ func main() {
 	ioAlertPercent := flag.Uint("io-alert-percent", 10, "Threshold percent of I/O errors over which we alert")
 	registryConnectionTimeout := flag.Duration("registry-connection-timeout", 10*time.Second, "")
 	dscp := flag.Uint("dscp", 0, "DSCP value to set on connections")
-	maxErasesPerBlockService := flag.Uint("max-erases-per-block-service", 10, "Maximum concurrent block erases per block service.")
+	ioLimits := defaultDiskIOLimitOptions()
+	ioLimits.registerFlags(flag.CommandLine)
 
 	flag.Parse()
 	flagErrors := false
+	if err := ioLimits.validate(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		flagErrors = true
+	}
 	if flag.NArg()%2 != 0 {
 		fmt.Fprintf(os.Stderr, "Malformed directory/storage class pairs.\n\n")
 		flagErrors = true
@@ -1598,13 +1633,13 @@ func main() {
 	l.Info("  connectionTimeout = %v", *connectionTimeout)
 	l.Info("  reservedStorage = %v", *reservedStorage)
 	l.Info("  reservedXfsMetadata = %v", *reservedXfsMetadata)
+	l.Info("  ioLimits = %+v", ioLimits)
 	l.Info("  registryConnectionTimeout = %v", *registryConnectionTimeout)
 
 	bufPool := bufpool.NewBufPool()
 	env := &env{
 		bufPool:        bufPool,
 		stats:          make(map[msgs.BlockServiceId]*blockServiceStats),
-		eraseLimiters:  make(map[msgs.BlockServiceId]chan struct{}),
 		failureDomain:  *failureDomainStr,
 		pathPrefix:     *pathPrefixStr,
 		ioAlertPercent: uint8(*ioAlertPercent),
@@ -1758,18 +1793,15 @@ func main() {
 
 	terminateChan := make(chan any)
 
-	eraseConcurrency := int(*maxErasesPerBlockService)
-	if eraseConcurrency < 1 {
-		eraseConcurrency = 1
-	}
+	ioServiceIDs := make([]msgs.BlockServiceId, 0, len(blockServices))
 	for bsId := range blockServices {
 		env.stats[bsId] = &blockServiceStats{}
-		env.eraseLimiters[bsId] = make(chan struct{}, eraseConcurrency)
+		ioServiceIDs = append(ioServiceIDs, bsId)
 	}
 	for bsId := range deadBlockServices {
 		env.stats[bsId] = &blockServiceStats{}
-		env.eraseLimiters[bsId] = make(chan struct{}, eraseConcurrency)
 	}
+	env.ioLimiter = newDiskIOLimiter(ioLimits, ioServiceIDs)
 	env.counters = make(map[msgs.BlocksMessageKind]*timing.Timings)
 	for _, k := range msgs.AllBlocksMessageKind {
 		env.counters[k] = timing.NewTimings(40, 100*time.Microsecond, 1.5)

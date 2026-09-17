@@ -121,6 +121,7 @@ TernFS is actively used in production, but the project is still evolving quickly
     * its entire job is efficiently streaming blobs of data from disks into TCP connections
     * communicates with registry to register itself and to update information about free space, number of blocks, etc.
     * [space accounting and XFS metadata reserves](docs/block-storage.md)
+    * [disk I/O concurrency limits](docs/block-io-limits.md)
 * **clients**, these all talk to all of the servers
   * **web**
     * 1 logical instance
