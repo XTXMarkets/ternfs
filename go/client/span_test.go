@@ -53,7 +53,7 @@ type blockFetcher struct {
 	read         uint64
 }
 
-func (bf *blockFetcher) StartFetchBlock(log *log.Logger, blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32, w io.ReaderFrom, extra any, completion chan *blockCompletion) error {
+func (bf *blockFetcher) StartFetchBlock(log *log.Logger, blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32, w io.ReaderFrom, extra any, completion chan *BlockCompletion) error {
 	blockIx := int(blockId)
 	if offset%msgs.TERN_PAGE_SIZE != 0 {
 		panic(fmt.Errorf("bad offset"))
@@ -71,7 +71,7 @@ func (bf *blockFetcher) StartFetchBlock(log *log.Logger, blockService *msgs.Bloc
 			handleRecover(bf.errorsChan, recover(), fmt.Sprintf("%s fetch block blockId=%v offset=%v count=%v", bf.info, blockId, offset, count))
 		}()
 		if bf.bad&(uint32(1)<<blockIx) != 0 {
-			completion <- &blockCompletion{
+			completion <- &BlockCompletion{
 				Extra: extra,
 				Error: fmt.Errorf("blockFetcher error"),
 			}
@@ -89,7 +89,7 @@ func (bf *blockFetcher) StartFetchBlock(log *log.Logger, blockService *msgs.Bloc
 		if n, err := w.ReadFrom(bytes.NewReader(block[actualOffset : actualOffset+actualCount])); err != nil || n != int64(actualCount) {
 			panic(fmt.Errorf("bad read"))
 		}
-		completion <- &blockCompletion{Extra: extra}
+		completion <- &BlockCompletion{Extra: extra}
 	}()
 	return nil
 }

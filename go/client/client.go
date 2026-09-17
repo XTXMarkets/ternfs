@@ -591,7 +591,7 @@ func (cm *clientMetadata) drainSocket(log *log.Logger) {
 	}
 }
 
-type blockCompletion struct {
+type BlockCompletion struct {
 	Resp  msgs.BlocksResponse
 	Extra any
 	Error error
@@ -606,7 +606,7 @@ type clientBlockResponse struct {
 	// stores the error, if any
 	err error
 	// called when we're done
-	completionChan chan *blockCompletion
+	completionChan chan *BlockCompletion
 }
 
 func (resp *clientBlockResponse) done(log *log.Logger, addr1 *net.TCPAddr, addr2 *net.TCPAddr, extra any, err error) {
@@ -614,7 +614,7 @@ func (resp *clientBlockResponse) done(log *log.Logger, addr1 *net.TCPAddr, addr2
 		log.InfoStack(1, "failing request %T %+v addr1=%+v addr2=%+v extra=%+v: %v", resp.req, resp.req, addr1, addr2, extra, err)
 		resp.err = err
 	}
-	completion := &blockCompletion{
+	completion := &BlockCompletion{
 		Resp:  resp.resp,
 		Error: resp.err,
 		Extra: resp.extra,
@@ -887,7 +887,7 @@ type sendArgs struct {
 func (procs *blocksProcessors) send(
 	log *log.Logger,
 	args *sendArgs,
-	completionChan chan *blockCompletion,
+	completionChan chan *BlockCompletion,
 ) error {
 	if args.addrs.Addr1.Port == 0 && args.addrs.Addr2.Port == 0 {
 		panic(fmt.Errorf("got zero ports for both addresses for block service %v: %v:%v %v:%v", args.blockService, args.addrs.Addr1.Addrs, args.addrs.Addr1.Port, args.addrs.Addr2.Addrs, args.addrs.Addr2.Port))
@@ -1399,7 +1399,7 @@ func writeBlockSendArgs(block *msgs.AddSpanInitiateBlockInfo, r io.ReadSeeker, s
 }
 
 // An asynchronous version of [StartBlock] that is currently unused.
-func (c *Client) StartWriteBlock(log *log.Logger, block *msgs.AddSpanInitiateBlockInfo, r io.ReadSeeker, size uint32, crc msgs.Crc, extra any, completion chan *blockCompletion) error {
+func (c *Client) StartWriteBlock(log *log.Logger, block *msgs.AddSpanInitiateBlockInfo, r io.ReadSeeker, size uint32, crc msgs.Crc, extra any, completion chan *BlockCompletion) error {
 	return c.writeBlockProcessors.send(log, writeBlockSendArgs(block, r, size, crc, extra), completion)
 }
 
@@ -1413,7 +1413,7 @@ func (c *Client) singleBlockReq(log *log.Logger, timeouts *timing.ReqTimeouts, p
 	}
 	startedAt := time.Now()
 	for attempt := 0; ; attempt++ {
-		ch := make(chan *blockCompletion, 1)
+		ch := make(chan *BlockCompletion, 1)
 		err := processor.send(log, args, ch)
 		if err != nil {
 			log.Debug("failed to send block request to %v:%v %v:%v: %v", net.IP(args.addrs.Addr1.Addrs[:]), args.addrs.Addr1.Port, net.IP(args.addrs.Addr2.Addrs[:]), args.addrs.Addr2.Port, err)
@@ -1478,7 +1478,7 @@ func fetchBlockSendArgs(blockService *msgs.BlockService, blockId msgs.BlockId, o
 }
 
 // An asynchronous version of [FetchBlock]
-func (c *Client) StartFetchBlock(log *log.Logger, blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32, w io.ReaderFrom, extra any, completion chan *blockCompletion) error {
+func (c *Client) StartFetchBlock(log *log.Logger, blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32, w io.ReaderFrom, extra any, completion chan *BlockCompletion) error {
 	return c.fetchBlockProcessors.send(log, fetchBlockSendArgs(blockService, blockId, offset, count, w, extra), completion)
 }
 
@@ -1633,8 +1633,8 @@ func eraseBlockSendArgs(block *msgs.RemoveSpanInitiateBlockInfo, extra any) *sen
 	}
 }
 
-// An asynchronous version of [EraseBlock] that is currently unused.
-func (c *Client) StartEraseBlock(log *log.Logger, block *msgs.RemoveSpanInitiateBlockInfo, extra any, completion chan *blockCompletion) error {
+// An asynchronous version of [EraseBlock].
+func (c *Client) StartEraseBlock(log *log.Logger, block *msgs.RemoveSpanInitiateBlockInfo, extra any, completion chan *BlockCompletion) error {
 	return c.eraseBlockProcessors.send(log, eraseBlockSendArgs(block, extra), completion)
 }
 
@@ -1675,7 +1675,7 @@ func checkBlockSendArgs(blockService *msgs.BlockService, blockId msgs.BlockId, s
 }
 
 // An asynchronous version of [CheckBlock] that is currently unused.
-func (c *Client) StartCheckBlock(log *log.Logger, blockService *msgs.BlockService, blockId msgs.BlockId, size uint32, crc msgs.Crc, extra any, completion chan *blockCompletion) error {
+func (c *Client) StartCheckBlock(log *log.Logger, blockService *msgs.BlockService, blockId msgs.BlockId, size uint32, crc msgs.Crc, extra any, completion chan *BlockCompletion) error {
 	return c.checkBlockProcessors.send(log, checkBlockSendArgs(blockService, blockId, size, crc, extra), completion)
 }
 
