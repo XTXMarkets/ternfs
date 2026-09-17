@@ -44,7 +44,8 @@ ternfs-client-objs += \
 	fetch_state.o \
 	bincode.o \
 	revision.o \
-	policy.o
+	policy.o \
+	policy_update.o
 
 HAVE_INODE_ATIME_ACCESSORS := $(shell grep -q inode_get_atime_sec \
     $(srctree)/include/linux/fs.h 2>/dev/null && echo 1)

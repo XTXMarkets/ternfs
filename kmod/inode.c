@@ -18,6 +18,7 @@
 #include "wq.h"
 #include "inode_compat.h"
 #include "getattr_completion.h"
+#include "policy_update.h"
 
 // Some services (samba) try to preallocate larger files, but can handle
 // the failure or absence of ftruncate().
@@ -205,18 +206,9 @@ static void getattr_async_complete(struct work_struct* work) {
             struct ternfs_policy_body snapshot_policy;
             err = ternfs_error_to_linux(ternfs_shard_parse_getattr_dir(skb, &mtime, &owner, &block_policy, &span_policy, &stripe_policy, &snapshot_policy));
             if (err == 0) {
-                if (block_policy.len) {
-                    enode->block_policy = ternfs_upsert_policy(enode->inode.i_ino, BLOCK_POLICY_TAG, block_policy.body, block_policy.len);
-                }
-                if (span_policy.len) {
-                    enode->span_policy = ternfs_upsert_policy(enode->inode.i_ino, SPAN_POLICY_TAG, span_policy.body, span_policy.len);
-                }
-                if (stripe_policy.len) {
-                    enode->stripe_policy = ternfs_upsert_policy(enode->inode.i_ino, STRIPE_POLICY_TAG, stripe_policy.body, stripe_policy.len);
-                }
-                if (snapshot_policy.len) {
-                    enode->snapshot_policy = ternfs_upsert_policy(enode->inode.i_ino, SNAPSHOT_POLICY_TAG, snapshot_policy.body, snapshot_policy.len);
-                }
+                err = ternfs_update_dir_policies(
+                    enode, &block_policy, &span_policy, &stripe_policy, &snapshot_policy
+                );
                 expiry = get_jiffies_64() + ternfs_dir_getattr_refresh_time_jiffies;
             }
         } else {
@@ -304,18 +296,9 @@ int ternfs_do_getattr(struct ternfs_inode* enode, int cache_timeout_type) {
                     &snapshot_policy
                 );
                 if (err == 0) {
-                    if (block_policy.len) {
-                        enode->block_policy = ternfs_upsert_policy(enode->inode.i_ino, BLOCK_POLICY_TAG, block_policy.body, block_policy.len);
-                    }
-                    if (span_policy.len) {
-                        enode->span_policy = ternfs_upsert_policy(enode->inode.i_ino, SPAN_POLICY_TAG, span_policy.body, span_policy.len);
-                    }
-                    if (stripe_policy.len) {
-                        enode->stripe_policy = ternfs_upsert_policy(enode->inode.i_ino, STRIPE_POLICY_TAG, stripe_policy.body, stripe_policy.len);
-                    }
-                    if (snapshot_policy.len) {
-                        enode->snapshot_policy = ternfs_upsert_policy(enode->inode.i_ino, SNAPSHOT_POLICY_TAG, snapshot_policy.body, snapshot_policy.len);
-                    }
+                    err = ternfs_update_dir_policies(
+                        enode, &block_policy, &span_policy, &stripe_policy, &snapshot_policy
+                    );
                     expiry = get_jiffies_64() + ternfs_dir_getattr_refresh_time_jiffies;
                 }
             } else {

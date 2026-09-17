@@ -20,6 +20,8 @@ obj-m += ternfs-fetch-state-test.o
 ternfs-fetch-state-test-y := fetch_state_test.o
 obj-m += ternfs-getattr-completion-test.o
 ternfs-getattr-completion-test-y := getattr_completion_test.o
+obj-m += ternfs-policy-update-test.o
+ternfs-policy-update-test-y := policy_update_test.o
 ccflags-y += -I$(src)/.. -Wno-declaration-after-statement
 ifneq ($(shell grep -l inode_get_atime_sec $(srctree)/include/linux/fs.h 2>/dev/null),)
 ccflags-y += -DHAVE_INODE_ATIME_ACCESSORS

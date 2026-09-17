@@ -132,3 +132,17 @@ sequence number before the old completion returns:
 ./run_module_test.sh ./ternfs-getattr-completion-test.ko \
     ternfs_getattr_completion_test 'ternfs-getattr-completion-test: PASS'
 ```
+
+The directory-policy update test includes the production policy cache and
+update helper with allocation failure injection scoped to the cache's
+`kmalloc` calls. Using real allocations, spinlocks and RCU callbacks, it checks
+object creation, body creation and existing-body replacement failures across
+all four policy slots. Failed and unvisited slots must retain valid inherited
+pointers, successful earlier slots remain valid, empty bodies allocate
+nothing, and retries publish the requested bodies without changing unrelated
+inode metadata:
+
+```sh
+./run_module_test.sh ./ternfs-policy-update-test.ko \
+    ternfs_policy_update_test 'ternfs-policy-update-test: PASS'
+```
