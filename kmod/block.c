@@ -37,6 +37,7 @@ int ternfs_block_service_connect_timeout_jiffies = MSECS_TO_JIFFIES(4 * 1000);
 int ternfs_block_service_bad_addr_cooldown_jiffies = MSECS_TO_JIFFIES(2 * 60 * 1000);
 
 static u64 WHICH_BLOCK_IP = 0;
+static bool block_stopping;
 
 // Bad-address cooldown table.
 //
@@ -324,6 +325,9 @@ struct block_socket {
     struct socket* sock;
     // to store in call_rcu
     struct rcu_head rcu_list;
+    // Drop the hash table's reference in process context after the RCU grace
+    // period: the final put releases a TCP socket and may sleep.
+    struct work_struct release_work;
     struct sockaddr_in addr;
     // We'll check that not more than `block_ops.timeout_jiffies` has passed since this.
     // For this reason, we set this timeout when:
@@ -479,10 +483,14 @@ inline void block_socket_put(struct block_socket* socket) {
     }
 }
 
+static void block_socket_release_work(struct work_struct* work) {
+    block_socket_put(container_of(work, struct block_socket, release_work));
+}
+
 static void rcu_block_socket_put(struct rcu_head* rcu) {
     struct block_socket* socket = container_of(rcu, struct block_socket, rcu_list);
     destroy_rcu_head(&socket->rcu_list);
-    block_socket_put(socket);
+    queue_work(ternfs_fast_wq, &socket->release_work);
 }
 
 // if cleanup was scheduled ref is passed to workqueue otherwise refcount is reduced
@@ -521,7 +529,8 @@ static void block_ops_exit(struct block_ops* ops) {
     }
     rcu_read_unlock();
 
-    // wait for all of them to be freed by work
+    // Wait for removal from the tables. Final RCU puts and request
+    // completions are drained by ternfs_block_exit afterward.
     for (bucket = 0; bucket < BLOCK_SOCKET_BUCKETS; bucket++) {
         ternfs_debug("waiting for bucket %d (len %d)", bucket, atomic_read(&ops->len[bucket]));
         wait_event(ops->wqs[bucket], atomic_read(&ops->len[bucket]) == 0);
@@ -658,7 +667,7 @@ static bool block_socket_cleanup(
     spin_lock(&ops->locks[bucket]);
     hash_del_rcu(&socket->hnode); // tied to atomic_dec below
     spin_unlock(&ops->locks[bucket]);
-    // The RCU callback will release the hash table's reference after the grace period
+    // After the grace period, release the hash reference from a worker.
     call_rcu(&socket->rcu_list, rcu_block_socket_put);
     ternfs_debug("socket(%p) %pI4:%d refcount %d removed from hashmap", socket, &socket->addr.sin_addr, ntohs(socket->addr.sin_port), atomic_read(&socket->refcount));
 
@@ -806,6 +815,7 @@ static struct block_socket*  get_block_socket(
 
     atomic_set(&sock->err, 0);
     init_rcu_head(&sock->rcu_list);
+    INIT_WORK(&sock->release_work, block_socket_release_work);
     spin_lock_init(&sock->list_lock);
     INIT_LIST_HEAD(&sock->write);
     INIT_WORK(&sock->write_work, ops->write_work);
@@ -1084,6 +1094,10 @@ static int block_socket_start_req(
 
 
 retry_get_socket:
+    if (unlikely(READ_ONCE(block_stopping))) {
+        err = -ESHUTDOWN;
+        goto out_err;
+    }
     // As the very last thing, try to get the socket with increased refcount.
     sock = get_blockservice_socket(ops, bs);
     if (IS_ERR(sock)) {
@@ -1831,6 +1845,7 @@ static void do_timeout_sockets(struct work_struct* w) {
 
 int __init ternfs_block_init(void) {
     int err;
+    WRITE_ONCE(block_stopping, false);
     fetch_request_cachep = kmem_cache_create(
         "ternfs_fetch_block_request_cache",
         sizeof(struct fetch_request),
@@ -1869,21 +1884,32 @@ out_err:
 void __cold ternfs_block_exit(void) {
     ternfs_debug("block exit");
 
+    // Completion callbacks can submit retries. Stop new socket creation and
+    // finish any submissions already running before enumerating the tables.
+    WRITE_ONCE(block_stopping, true);
+    flush_workqueue(ternfs_wq);
+
     // stop timing out sockets
     cancel_delayed_work_sync(&timeout_work);
     cancel_delayed_work_sync(&bad_addrs_reap_work);
 
-    // If we're here, it means that all requests
-    // must have finished. However we might still
-    // be getting data down the sockets. So we let
-    // the normal cleanup procedure run its course
-    // by erroring out each socket and waiting
-    // for all sockets to be released.
+    // Mount users are gone, but idle sockets and trailing request
+    // completions may remain. Start the normal socket winddown before
+    // releasing any callback dependencies.
 
     block_ops_exit(&fetch_block_pages_witch_crc_ops);
     block_ops_exit(&write_block_ops);
 
+    // All socket callbacks are detached and removals have queued their RCU
+    // puts. Wait for those puts to enqueue release_work before draining it.
+    // Only chained work can now remain; final socket puts can in turn queue
+    // request completions, which still need the request caches and callers.
+    rcu_barrier();
+    drain_workqueue(ternfs_fast_wq);
+    drain_workqueue(ternfs_wq);
+
     bad_addrs_clear();
+    rcu_barrier();
 
     // clear caches
     kmem_cache_destroy(fetch_request_cachep);

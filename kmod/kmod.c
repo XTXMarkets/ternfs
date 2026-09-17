@@ -109,17 +109,18 @@ out_fast_wq:
 }
 
 static void __exit ternfs_exit(void) {
-    ternfs_debugfs_exit();
     ternfs_fs_exit();
+    // Block completions still use span/inode caches, policies and metrics.
+    ternfs_block_exit();
     ternfs_file_exit();
     ternfs_dir_exit();
     ternfs_inode_exit();
     ternfs_span_exit();
-    ternfs_block_exit();
     ternfs_sysctl_exit();
     ternfs_sysfs_exit();
     ternfs_policy_exit();
     ternfs_rs_exit();
+    ternfs_debugfs_exit();
 
     // tracepoint_synchronize_unregister() must be called before the end of
     // the module exit function to make sure there is no caller left using
@@ -134,4 +135,3 @@ static void __exit ternfs_exit(void) {
 
 module_init(ternfs_init);
 module_exit(ternfs_exit);
-

@@ -146,3 +146,16 @@ inode metadata:
 ./run_module_test.sh ./ternfs-policy-update-test.ko \
     ternfs_policy_update_test 'ternfs-policy-update-test: PASS'
 ```
+
+The block teardown test includes production `block.c` with only its tracepoint
+boundary substituted. It uses real workqueues, RCU callbacks, slab caches and
+an unconnected kernel TCP socket. A synthetic pending request exercises hash
+removal, RCU handoff, process-context socket release, completion draining and
+cache-destruction ordering. It also checks allocation-failure unwind, stopped
+retry rejection, periodic-work cancellation, bad-address RCU cleanup and a
+second idle init/exit lifecycle:
+
+```sh
+./run_module_test.sh ./ternfs-block-teardown-test.ko \
+    ternfs_block_teardown_test 'ternfs-block-teardown-test: PASS'
+```
