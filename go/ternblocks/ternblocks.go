@@ -188,26 +188,15 @@ func updateBlockServiceInfoCapacity(
 	_ *log.Logger,
 	blockService *blockService,
 	reservedStorage uint64,
+	reservedXfsMetadata uint64,
 ) error {
-	var statfs unix.Statfs_t
-	if err := unix.Statfs(path.Join(blockService.path, "secret.key"), &statfs); err != nil {
+	storage, err := readBlockServiceStorage(blockService.path)
+	if err != nil {
+		blockService.storage.Store(nil)
 		return err
 	}
-
-	capacityBytes := statfs.Blocks * uint64(statfs.Bsize)
-	if capacityBytes < reservedStorage {
-		capacityBytes = 0
-	} else {
-		capacityBytes -= reservedStorage
-	}
-	availableBytes := statfs.Bavail * uint64(statfs.Bsize)
-	if availableBytes < reservedStorage {
-		availableBytes = 0
-	} else {
-		availableBytes -= reservedStorage
-	}
-	blockService.cachedInfo.CapacityBytes = capacityBytes
-	blockService.cachedInfo.AvailableBytes = availableBytes
+	storage.account(reservedStorage, reservedXfsMetadata)
+	blockService.storage.Store(storage)
 	return nil
 }
 
@@ -236,6 +225,7 @@ func initBlockServicesInfo(
 	failureDomain [16]byte,
 	blockServices map[msgs.BlockServiceId]*blockService,
 	reservedStorage uint64,
+	reservedXfsMetadata uint64,
 ) error {
 	log.Info("initializing block services info")
 	var wg sync.WaitGroup
@@ -256,11 +246,14 @@ func initBlockServicesInfo(
 		}
 		closureBs := bs
 		go func() {
+			// Always refresh space before the first registration, including
+			// services whose block counts were restored from the registry.
+			if err := updateBlockServiceInfoCapacity(log, closureBs, reservedStorage, reservedXfsMetadata); err != nil {
+				closureBs.couldNotUpdateInfoCapacity = true
+				log.RaiseNC(&closureBs.couldNotUpdateInfoCapacityAlert, "could not get capacity for block service %v: %v", closureBs.cachedInfo.Id, err)
+			}
 			// only update if it isn't filled it in already from registry
 			if closureBs.cachedInfo.Blocks == 0 {
-				if err := updateBlockServiceInfoCapacity(log, closureBs, reservedStorage); err != nil {
-					panic(err)
-				}
 				if err := updateBlockServiceInfoBlocks(log, closureBs); err != nil {
 					panic(err)
 				}
@@ -290,10 +283,14 @@ func registerPeriodically(
 	for {
 		req.BlockServices = req.BlockServices[:0]
 		for _, bs := range blockServices {
-			if bs.couldNotUpdateInfoBlocks || bs.couldNotUpdateInfoCapacity {
+			storage := bs.storage.Load()
+			if bs.couldNotUpdateInfoBlocks || storage == nil {
 				continue
 			}
-			req.BlockServices = append(req.BlockServices, bs.cachedInfo)
+			info := bs.cachedInfo
+			info.CapacityBytes = storage.reported.capacity
+			info.AvailableBytes = storage.reported.available
+			req.BlockServices = append(req.BlockServices, info)
 		}
 		log.Trace("registering with %+v", req)
 		_, err := env.registryConn.Request(&req)
@@ -339,10 +336,11 @@ func updateBlockServiceInfoCapacityForever(
 	log *log.Logger,
 	blockServices map[msgs.BlockServiceId]*blockService,
 	reservedStorage uint64,
+	reservedXfsMetadata uint64,
 ) {
 	for {
 		for _, bs := range blockServices {
-			if err := updateBlockServiceInfoCapacity(log, bs, reservedStorage); err != nil {
+			if err := updateBlockServiceInfoCapacity(log, bs, reservedStorage, reservedXfsMetadata); err != nil {
 				bs.couldNotUpdateInfoCapacity = true
 				log.RaiseNC(&bs.couldNotUpdateInfoCapacityAlert, "could not get capacity for block service %v: %v", bs.cachedInfo.Id, err)
 			} else {
@@ -869,6 +867,13 @@ func handleRequestError(
 		}
 	}
 
+	if errors.Is(err, syscall.ENOSPC) {
+		if bs := blockServices[blockServiceId]; bs != nil {
+			bs.recordNoSpace()
+			bs.noSpaceErrors.Add(1)
+		}
+	}
+
 	if errors.Is(err, syscall.EIO) && blockServiceId != 0 {
 		blockService := blockServices[blockServiceId]
 		if blockService.couldNotUpdateInfoBlocks || blockService.couldNotUpdateInfoCapacity {
@@ -1072,6 +1077,9 @@ func handleSingleRequest(
 			log.RaiseAlert("block %v exceeds max object size: %v > %v", whichReq.BlockId, whichReq.Size, MAX_OBJECT_SIZE)
 			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, msgs.BLOCK_TOO_BIG)
 		}
+		if err := blockService.checkWriteSpace(); err != nil {
+			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, err)
+		}
 		if err := writeBlock(log, env, blockServiceId, blockService.cipher, blockService.path, whichReq.BlockId, whichReq.Crc, whichReq.Size, conn); err != nil {
 			log.Info("could not write block: %v", err)
 			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, err)
@@ -1082,6 +1090,9 @@ func handleSingleRequest(
 			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, err)
 		}
 	case *msgs.TestWriteReq:
+		if err := blockService.checkWriteSpace(); err != nil {
+			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, err)
+		}
 		if err := testWrite(log, env, blockServiceId, blockService.path, whichReq.Size, conn); err != nil {
 			log.Info("could not perform test write: %v", err)
 			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, err)
@@ -1154,11 +1165,11 @@ func retrieveOrCreateKey(log *log.Logger, dir string) ([16]byte, error) {
 			panic(err)
 		}
 		if _, err := keyFile.Write(key[:]); err != nil {
-			panic(err)
+			return [16]byte{}, fmt.Errorf("could not write key file %v: %w", keyFilePath, err)
 		}
 		keyCrc := crc32c.Sum(0, key[:])
 		if err := binary.Write(keyFile, binary.LittleEndian, keyCrc); err != nil {
-			panic(err)
+			return [16]byte{}, fmt.Errorf("could not write key crc %v: %w", keyFilePath, err)
 		}
 		log.Info("creating directory structure")
 		if err := os.Mkdir(path.Join(dir, "with_crc"), 0755); err != nil && !os.IsExist(err) {
@@ -1316,10 +1327,20 @@ func sendMetrics(l *log.Logger, env *env, influxDB *log.InfluxDB, blockServices 
 			metrics.Tag("failuredomain", failureDomainEscaped)
 			metrics.Tag("pathprefix", env.pathPrefix)
 			metrics.Tag("storageclass", bsInfo.storageClass.String())
-			metrics.FieldU64("capacity", bsInfo.cachedInfo.CapacityBytes)
-			metrics.FieldU64("available", bsInfo.cachedInfo.AvailableBytes)
+			if storage := bsInfo.storage.Load(); storage != nil {
+				metrics.FieldU64("capacity", storage.reported.capacity)
+				metrics.FieldU64("available", storage.reported.available)
+				metrics.FieldU64("data_capacity", storage.data.capacity)
+				metrics.FieldU64("data_available", storage.data.available)
+				if storage.xfsRealtime {
+					metrics.FieldU64("xfs_metadata_capacity", storage.xfsMetadata.capacity)
+					metrics.FieldU64("xfs_metadata_available", storage.xfsMetadata.available)
+					metrics.FieldU64("xfs_metadata_reserved", storage.reservedXfsMetadata)
+				}
+			}
 			metrics.FieldU64("blocks", bsInfo.cachedInfo.Blocks)
 			metrics.FieldU64("io_errors", bsInfo.ioErrors)
+			metrics.FieldU64("no_space_errors", bsInfo.noSpaceErrors.Load())
 			dm, found := diskMetrics[bsInfo.devId]
 			if found {
 				metrics.FieldU64("read_ms", dm.readMs)
@@ -1348,6 +1369,8 @@ type blockService struct {
 	cipher                          cipher.Block
 	storageClass                    msgs.StorageClass
 	cachedInfo                      msgs.RegisterBlockServiceInfo
+	storage                         atomic.Pointer[blockServiceStorage]
+	noSpaceErrors                   atomic.Uint64
 	couldNotUpdateInfoBlocks        bool
 	couldNotUpdateInfoBlocksAlert   log.XmonNCAlert
 	couldNotUpdateInfoCapacity      bool
@@ -1402,6 +1425,7 @@ func main() {
 	syslog := flag.Bool("syslog", false, "")
 	connectionTimeout := flag.Duration("connection-idle-timeout", 10*time.Minute, "Close connections idle for this long. Keepalive probes are sent at half this interval.")
 	reservedStorage := flag.Uint64("reserved-storage", 0, "How many bytes to reserve and under-report capacity")
+	reservedXfsMetadata := flag.Uint64("reserved-xfs-metadata", 100_000_000, "Bytes to reserve on the XFS metadata device before accounting realtime storage capacity")
 	influxDBOrigin := flag.String("influx-db-origin", "", "Base URL to InfluxDB endpoint")
 	influxDBOrg := flag.String("influx-db-org", "", "InfluxDB org")
 	influxDBBucket := flag.String("influx-db-bucket", "", "InfluxDB bucket")
@@ -1536,6 +1560,7 @@ func main() {
 		AppInstance:            "eggsblocks",
 		AppType:                "restech_eggsfs.daytime",
 		PrintQuietAlerts:       true,
+		StderrOnNoSpace:        true,
 	})
 
 	if *profileFile != "" {
@@ -1572,6 +1597,7 @@ func main() {
 	l.Info("  registryAddress = '%v'", *registryAddress)
 	l.Info("  connectionTimeout = %v", *connectionTimeout)
 	l.Info("  reservedStorage = %v", *reservedStorage)
+	l.Info("  reservedXfsMetadata = %v", *reservedXfsMetadata)
 	l.Info("  registryConnectionTimeout = %v", *registryConnectionTimeout)
 
 	bufPool := bufpool.NewBufPool()
@@ -1727,7 +1753,7 @@ func main() {
 		actualPort2 = uint16(listener2.Addr().(*net.TCPAddr).Port)
 	}
 
-	initBlockServicesInfo(env, l, msgs.Location(*locationId), msgs.AddrsInfo{Addr1: msgs.IpPort{Addrs: ownIp1, Port: actualPort1}, Addr2: msgs.IpPort{Addrs: ownIp2, Port: actualPort2}}, failureDomain, blockServices, *reservedStorage)
+	initBlockServicesInfo(env, l, msgs.Location(*locationId), msgs.AddrsInfo{Addr1: msgs.IpPort{Addrs: ownIp1, Port: actualPort1}, Addr2: msgs.IpPort{Addrs: ownIp2, Port: actualPort2}}, failureDomain, blockServices, *reservedStorage, *reservedXfsMetadata)
 	l.Info("finished updating block service info, will now start")
 
 	terminateChan := make(chan any)
@@ -1761,7 +1787,7 @@ func main() {
 
 	go func() {
 		defer func() { lrecover.HandleRecoverChan(l, terminateChan, recover()) }()
-		updateBlockServiceInfoCapacityForever(l, blockServices, *reservedStorage)
+		updateBlockServiceInfoCapacityForever(l, blockServices, *reservedStorage, *reservedXfsMetadata)
 	}()
 
 	if influxDB != nil {
@@ -1844,7 +1870,7 @@ func eraseFileIfExistsAndSyncDir(path string) error {
 	return dir.Sync()
 }
 
-func writeBufToTemp(statBytes *uint64, basePath string, buf []byte) (string, error) {
+func writeBufToTemp(statBytes *uint64, basePath string, buf []byte) (_ string, err error) {
 	if err := os.Mkdir(basePath, 0777); err != nil && !os.IsExist(err) {
 		return "", err
 	}
@@ -1861,7 +1887,8 @@ func writeBufToTemp(statBytes *uint64, basePath string, buf []byte) (string, err
 	}()
 	bufSize := len(buf)
 	for len(buf) > 0 {
-		n, err := f.Write(buf)
+		var n int
+		n, err = f.Write(buf)
 		if err != nil {
 			return "", err
 		}
