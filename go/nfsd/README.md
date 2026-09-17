@@ -7,9 +7,8 @@ SPDX-License-Identifier: GPL-2.0-or-later
 # nfsd
 
 `nfsd` presents TernFS through NFSv4.0. It translates NFS filehandles and
-operations to the smaller TernFS interface, stages new files locally while
-they are writable, and implements the client and open state required by the
-NFS protocol.
+operations to the smaller TernFS interface, stages writable files locally,
+and implements the client and open state required by the NFS protocol.
 
 ## State overview
 
@@ -19,10 +18,11 @@ The design is constrained by two TernFS properties:
 - Several nfsd processes may serve the same namespace, and any process may
   restart.
 
-The first property means that nfsd stages a new file locally until its first
-`CLOSE`. The file is fully editable while it is staged and read-only once it
-has been published in TernFS. The second property means that client
-registration and lease decisions must be visible to every nfsd.
+The first property means that nfsd implements mutable NFS files with
+copy-on-write replacement. New and replacement files are staged locally while
+open for writing, then published as immutable TernFS inodes on `CLOSE`. The
+second property means that client registration and lease decisions must be
+visible to every nfsd.
 
 ## Namespace and filehandles
 
@@ -36,21 +36,28 @@ TernFS assigns every file and directory an inode ID. nfsd uses the eight-byte
 encoding of that ID as the NFS filehandle. The inode type is part of the ID, so
 many operation and attribute checks do not require another namespace lookup.
 
-Ownership and mode attributes are synthetic. File size and timestamps come
-from TernFS for linked files and from the local staging file while a new file
-is still open for writing.
+Ownership and mode attributes are synthetic. Each write-open receives its own
+transient filehandle. Reads and attributes through that handle describe the
+writer's private staging file. Published filehandles always describe their
+immutable version, including while writers are active and after they close.
+A fresh pathname lookup after publication finds the replacement inode.
+Old versions remain readable until the directory's configured snapshot
+retention and garbage collection remove them (commonly a week or longer).
 
 The `/.nfs` directory is reserved for nfsd state and hidden from NFS clients.
 
 ## Writes
 
-TernFS cannot modify the contents of a linked file. nfsd therefore only allows
-write access when it creates a new file. Replacing a file is a
-remove-and-create operation.
+TernFS cannot modify the contents of a linked file. nfsd presents mutable
+files by constructing a replacement inode and atomically publishing it over
+the current directory entry after all writes are complete.
 
-Creating a writable file allocates a transient TernFS inode which is not yet
-visible in the target directory. nfsd also creates these files on its local
-host:
+Opening a new or existing file for write allocates a private transient TernFS
+inode. For a new pathname, OPEN also publishes a separate empty inode before
+replying: LOOKUP and READDIR immediately see a regular file of size zero.
+The creator's open and local staging are prepared before this publication.
+Other writers start independent staging from the empty published version.
+nfsd creates these files on its local host:
 
 ```
 <staging directory>/
@@ -58,19 +65,56 @@ host:
     <inode id>.meta
 ```
 
-The NFS filehandle names the transient TernFS inode. The `.staging` file holds
-the mutable contents. The `.meta` sidecar identifies the target name and
-directory, the TernFS construction cookie and the NFS open. It contains
-enough information to finish `CLOSE` after an nfsd restart.
+The creator's filehandle names its private transient inode. `.staging` holds
+a sparse overlay over the immutable version observed at OPEN, which is the
+empty published inode for a newly created file. Exact dirty ranges are
+authoritative locally; clean ranges are read from that base until hydrated.
+Each writer has independent contents, size and timestamps; readers opening
+the pathname see the currently published version. Initial CREATE attributes,
+including size, apply privately until the creator closes, even for a read-only
+CREATE session; its share access still prohibits WRITE.
 
-On `CLOSE`, nfsd streams the staging file into the transient TernFS inode and
-links that inode into the target directory. It then removes the local staging
-file and sidecar. Once the link succeeds the file is immutable and can only be
-opened for reading.
+The first data or size mutation starts bounded low-priority hydration of clean
+base ranges. Foreground reads take priority, fetched chunks are installed only
+where the range is still clean, and fully overwritten or truncated ranges are
+not fetched.
+
+The `.meta` sidecar records the target, construction cookie, owning open, base
+inode and size, logical size, committed dirty ranges, open-owner identity and
+writer attributes. Stable writes, `COMMIT`, and size changes sync data before
+atomically checkpointing this metadata. The checkpoint file is synced before
+rename, and its directory is synced afterwards. A failed checkpoint remains
+pending for the next retry. The writer's change attribute advances on mutations
+and remains stable across GETATTR, VERIFY and recovery.
+
+On `CLOSE`, nfsd cancels speculative hydration, fetches remaining clean ranges
+with bounded parallel foreground reads, streams the complete staging file,
+and links the transient inode over the target. This publishes the complete
+private version atomically. Concurrent writers do not merge their edits:
+the last successful publishing CLOSE wins the pathname, on the same nfsd
+or across hosts. Earlier versions and outstanding writers retain their own
+contents. A write-open with no data, size or explicit timestamp changes
+scraps its transient without replacing the file. The initial empty version
+remains if the creator closes without changes or abandons its staging.
+New-file creation therefore adds one empty inode and publication operation.
 
 A staging file belongs to one nfsd host. Persistent client and lease state can
 invalidate an open across the fleet, but it does not make the staged data or
-the process-local open state movable to another nfsd.
+the process-local open state movable to another nfsd. Multiple writable OPEN
+sessions may target the same name. The process blocks namespace operations
+which would move or remove a target while any local staging session remains
+open. This namespace protection is not fleet-wide; GUARDED create's
+lookup-and-publish sequence is serialized only within one nfsd.
+
+`fsync` and `COMMIT` preserve unpublished data on the staging disk; they do
+not publish to TernFS or replicate the staging data. Keep that disk across
+process restarts and provision capacity for complete replacement files.
+Even a small edit can require reading and republishing the whole base at
+CLOSE. Monitor staging capacity, hydration traffic and CLOSE latency.
+
+The current sidecar format is NFS4; older formats remain readable. Drain
+active writes before upgrading from shared-base-filehandle versions or
+downgrading to binaries that cannot read NFS4 sidecars.
 
 The implementation is in [`staging.go`](staging.go) and [`ops.go`](ops.go).
 
@@ -86,8 +130,8 @@ state allows a client reboot confirmed on one nfsd to invalidate old state on
 the others.
 
 Repeated read OPENs by one open-owner on the same file share one stateid.
-Read-to-write upgrades cannot occur because write access to an existing
-immutable file is rejected. `OPEN_DOWNGRADE` is unsupported.
+Mutable write sessions use replacement staging. `OPEN_DOWNGRADE` is
+unsupported.
 
 The implementation is in [`open_state.go`](open_state.go).
 
@@ -284,7 +328,14 @@ Linux client recovers by opening the file again by name.
 
 A write open is the exception because its local staging and sidecar files may
 still hold unpublished data. On startup nfsd discovers these files. The
-sidecar contains the state needed to complete the pending `CLOSE`.
+sidecar contains the state needed to complete the pending `CLOSE` or rebind the
+staging to a replacement `OPEN` for the same client and open-owner. Multiple
+writers recover independently, including when another writer has published a
+newer version in the meantime. Ambiguous legacy sidecars without open-owner
+identity are not assigned to an arbitrary writer. Base-backed replacements
+recover only checkpointed dirty ranges, including new files backed by their
+empty published inode. Legacy staging without a base recovers the physical
+local file.
 
 After one lease period of startup grace, the periodic sweep checks all local
 staging, including writes created since startup. Staging for an expired or
@@ -472,12 +523,23 @@ by pynfs. The harness uses two mechanisms to exclude those tests:
 * The default `PYNFS_TESTS` value uses pynfs flag selectors to exclude broad
   capability classes such as FIFO, socket, GSS and ACL tests.
 * The [`pynfs_unsupported.txt`](pynfs_unsupported.txt) manifest lists
-  individual locking and hard-link cases. Using the broad `nolock` and
-  `nolink` selectors would also hide useful related tests.
+  individual cases requiring unsupported locking, hard links, share
+  reservations, metadata changes or access to another writer's private data.
+  Using broad `nolock` and `nolink` selectors would also hide useful related tests.
 
 Select flags or individual pynfs test codes with `PYNFS_TESTS`. The manifest
 exclusions are appended after `PYNFS_TESTS`, so set `PYNFS_SKIP_FILE=` to
 bypass this manifest.
+
+Mutable-write coverage includes `WRT1`–`WRT4` (unstable/stable writes and
+zero-length write timestamps), `WRT8` (read-only open state), and
+`WRT11`–`WRT12` (stale/old stateids). `OPEN23b` (READ with write-only access),
+`OPEN31` (bad OPEN sequence), `RNM19` (rename a file to itself), and `RPLY11`
+(replay of a CLOSE with a bad sequence number) are also enabled. `WRT18`
+already checks that successive writes update the change attribute.
+
+Immediate empty-file visibility also enables `OPEN3`, `OPEN24`, `OPEN29`,
+`RDDR2`, `RDDR3`, `SATT3d`, `SATT6r` and `SATT11r`.
 
 Set additional runner options with `PYNFS_ARGS`. The default Go test timeout is
 one hour because pynfs includes lease-expiry cases which deliberately sleep
@@ -525,6 +587,8 @@ That filter selects exactly two tests:
   mode this uses 10 directories and 500 files.
 - [`nfs mutations`](../terntests/nfsmutate.go) is the NFS-specific mutation
   suite. It checks create/write/readback, out-of-order writes, rename, delete,
-  timestamp updates, and rejection of in-place modification.
+  timestamp updates, existing-file overwrite/truncate, and coherent
+  fsync/fstat/append behavior, immediate empty-file visibility, private
+  concurrent writers and retained readers.
 
 This is the only current test path using a kernel NFS client.

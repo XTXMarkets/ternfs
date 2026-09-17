@@ -290,7 +290,9 @@ func createFileViaNFS(t *testing.T, conn net.Conn, xid *uint32, clientid uint64,
 		ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
 		ownerW := ow.StartOwner()
 		ownerW = ownerW.SetClientid(clientid)
-		ownerW = ownerW.SetOwner([]byte("nfstest-" + name))
+		ownerW = ownerW.SetOwner([]byte(fmt.Sprintf(
+			"nfstest-%s-%d", name, *xid,
+		)))
 		buf := ownerW.Finish()
 		ow.Resume(buf)
 		chw := ow.SetOpenhow_Create()
@@ -376,7 +378,9 @@ func createFileViaNFS(t *testing.T, conn net.Conn, xid *uint32, clientid uint64,
 		t.Fatalf("CLOSE status = %d", closeRes.Disc())
 	}
 
-	return fh
+	// An unchanged empty creator can discard its private transient on CLOSE.
+	// Readers discover the published version by pathname.
+	return lookupFH(t, conn, xid, name)
 }
 
 // cleanupViaNFS removes a file by name from the root directory.
@@ -1221,52 +1225,6 @@ func setupNamedClient(t *testing.T, conn net.Conn, xid *uint32, identity string)
 	return clientid
 }
 
-// lookupFH looks up a name in the root directory and returns the file handle.
-func lookupFH(t *testing.T, conn net.Conn, xid *uint32, name string) []byte {
-	t.Helper()
-	res := sendCompound(t, conn, *xid, func(w *COMPOUND4argsWriter) {
-		w.AppendArgarray_Putrootfh()
-		lw := w.AppendArgarray_Lookup()
-		nw := lw.StartObjname()
-		buf := nw.SetData([]byte(name)).Finish()
-		lw.Resume(buf)
-		buf = lw.Finish()
-		w.Resume(buf)
-		w.AppendArgarray_Getfh()
-	})
-	*xid++
-	iter := expectOK(t, res)
-	nextOp(t, &iter) // PUTROOTFH
-	nextOp(t, &iter) // LOOKUP
-	fh := append([]byte(nil), nextOp(t, &iter).Value().AsGETFH4resEntry().Value().AsGETFH4resok().Object().Data()...)
-	return fh
-}
-
-// readFileData reads a file by handle and returns the data.
-func readFileData(t *testing.T, conn net.Conn, xid *uint32, fh []byte, offset uint64, count uint32) (data []byte, eof bool) {
-	t.Helper()
-	res := sendCompound(t, conn, *xid, func(w *COMPOUND4argsWriter) {
-		pfW := w.AppendArgarray_Putfh()
-		buf := pfW.StartObject().SetData(fh).Finish()
-		pfW.Resume(buf)
-		buf = pfW.Finish()
-		w.Resume(buf)
-		rw := w.AppendArgarray_Read()
-		rw.Stateid().SetSeqid(0)
-		rw.SetOffset(offset)
-		rw.SetCount(count)
-	})
-	*xid++
-	iter := expectOK(t, res)
-	nextOp(t, &iter) // PUTFH
-	readRes := nextOp(t, &iter).Value().AsREAD4resEntry()
-	if readRes.Disc() != NFS4_OK {
-		t.Fatalf("READ status = %s", Nfsstat4Name(readRes.Disc()))
-	}
-	readOK := readRes.Value().AsREAD4resok()
-	return readOK.Data(), readOK.Eof() != 0
-}
-
 // getAttrSize gets the size attribute from a file handle.
 func getAttrSize(t *testing.T, conn net.Conn, xid *uint32, fh []byte) uint64 {
 	t.Helper()
@@ -1903,9 +1861,9 @@ func TestTernNestedDirectories(t *testing.T) {
 	cleanupViaNFS(t, conn, &xid, "nest_a")
 }
 
-// --- OPEN existing file for write → NFS4ERR_PERM ---
+// --- Mutable existing file ---
 
-func TestTernOpenExistingForWriteRejected(t *testing.T) {
+func TestTernOpenExistingForWrite(t *testing.T) {
 	addr, cleanup := startTernTestServer(t)
 	defer cleanup()
 	conn := dial(t, addr)
@@ -1917,30 +1875,23 @@ func TestTernOpenExistingForWriteRejected(t *testing.T) {
 	// Create a file first.
 	createFileViaNFS(t, conn, &xid, clientid, "existing.txt", []byte("original content"))
 
-	// Try to OPEN existing file for write (NOCREATE).
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
-		w.AppendArgarray_Putrootfh()
-		ow := w.AppendArgarray_Open()
-		ow.SetSeqid(1)
-		ow.SetShareAccess(OPEN4_SHARE_ACCESS_WRITE)
-		ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
-		ownerW := ow.StartOwner()
-		ownerW = ownerW.SetClientid(clientid)
-		ownerW = ownerW.SetOwner([]byte("nfstest"))
-		buf := ownerW.Finish()
-		ow.Resume(buf)
-		ow.SetOpenhow_Default(OPEN4_NOCREATE)
-		cw := ow.SetClaim_Null()
-		buf = cw.SetData([]byte("existing.txt")).Finish()
-		ow.Resume(buf)
-		buf = ow.Finish()
-		w.Resume(buf)
-	})
-	xid++
+	baseFH := lookupFH(t, conn, &xid, "existing.txt")
+	stateid, fh := openWriteFile(
+		t, conn, &xid, clientid, "existing.txt",
+	)
+	writeFileAt(t, conn, &xid, fh, stateid, 9, []byte("changed"))
+	closeFile(t, conn, &xid, fh, stateid)
 
-	if res.Status() != NFS4ERR_PERM {
-		t.Fatalf("OPEN existing for write: got status %s, want NFS4ERR_PERM",
-			Nfsstat4Name(res.Status()))
+	old, oldEOF := readFileData(t, conn, &xid, baseFH, 0, 4096)
+	if !oldEOF || string(old) != "original content" {
+		t.Fatalf("old filehandle read = (%q, eof=%t), want (%q, true)",
+			old, oldEOF, "original content")
+	}
+	replacementFH := lookupFH(t, conn, &xid, "existing.txt")
+	got, eof := readFileData(t, conn, &xid, replacementFH, 0, 4096)
+	if !eof || string(got) != "original changed" {
+		t.Fatalf("mutable file read = (%q, eof=%t), want (%q, true)",
+			got, eof, "original changed")
 	}
 
 	cleanupViaNFS(t, conn, &xid, "existing.txt")
@@ -2711,5 +2662,25 @@ func TestTernLookupParentCachesDirectoryOwner(t *testing.T) {
 	if !ok || cached != fs.RootID() {
 		t.Fatalf("LookupParent did not cache owner of %d: cached=%d ok=%v",
 			dirID, cached, ok)
+	}
+}
+
+func TestTernPrivateMutableWriters(t *testing.T) {
+	for _, reverse := range []bool{false, true} {
+		t.Run(fmt.Sprint(reverse), func(t *testing.T) {
+			addr, cleanup := startTernTestServer(t)
+			defer cleanup()
+			exercisePrivateMutableWriters(t, addr, fmt.Sprintf("private-%t.txt", reverse), reverse)
+		})
+	}
+}
+
+func TestTernVisibleCreation(t *testing.T) {
+	for _, reverse := range []bool{false, true} {
+		t.Run(fmt.Sprint(reverse), func(t *testing.T) {
+			addr, cleanup := startTernTestServer(t)
+			defer cleanup()
+			exerciseVisibleCreation(t, addr, fmt.Sprintf("visible-%t.txt", reverse), reverse)
+		})
 	}
 }

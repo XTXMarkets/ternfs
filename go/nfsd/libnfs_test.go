@@ -30,6 +30,70 @@ func connectLibnfs(t *testing.T, addr string) *libnfsClient {
 	return c
 }
 
+func TestLibnfs_PrivateMutableWriters(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "private.txt"), []byte("original"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	addr, cleanup := startTestServer(t, dir)
+	t.Cleanup(cleanup)
+	c := connectLibnfs(t, addr)
+	t.Cleanup(c.Close)
+	open := func(flags int) *libnfsFile {
+		f, err := c.OpenFile("/private.txt", flags)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = f.Close() })
+		return f
+	}
+	reader := open(os.O_RDONLY)
+	first := open(os.O_RDWR)
+	second := open(os.O_RDWR)
+	check := func(f *libnfsFile, want string) {
+		t.Helper()
+		got, err := f.Read()
+		if err != nil || string(got) != want {
+			t.Fatalf("read = %q, %v; want %q", got, err, want)
+		}
+	}
+	if err := first.WriteAt([]byte("XYZ"), 8); err != nil {
+		t.Fatal(err)
+	}
+	end, err := first.SyncSize()
+	if err != nil || end != 11 {
+		t.Fatalf("fsync/fstat size=%d err=%v", end, err)
+	}
+	if err := first.WriteAt([]byte("Q"), end); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.WriteAt([]byte("SECOND"), 0); err != nil {
+		t.Fatal(err)
+	}
+	check(reader, "original")
+	check(first, "originalXYZQ")
+	check(second, "SECONDal")
+	if err := second.Close(); err != nil {
+		t.Fatal(err)
+	}
+	check(reader, "original")
+	fresh := open(os.O_RDONLY)
+	check(fresh, "SECONDal")
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	check(reader, "original")
+	check(fresh, "SECONDal")
+	last := open(os.O_RDONLY)
+	check(last, "originalXYZQ")
+	// Close before destroying the libnfs context; Cleanup also handles failures.
+	for _, f := range []*libnfsFile{reader, fresh, last} {
+		if err := f.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestLibnfs_StatRoot(t *testing.T) {
 	dir := t.TempDir()
 	addr, cleanup := startTestServer(t, dir)

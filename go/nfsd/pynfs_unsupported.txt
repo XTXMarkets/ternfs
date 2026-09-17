@@ -62,9 +62,9 @@ RPLY7
 RPLY8
 CLOSE9
 
-# OPEN_DOWNGRADE is not implemented. Existing immutable files cannot be
-# upgraded from read to write, and no supported client has required a
-# downgrade. Keep the whole operation together here rather than reporting
+# OPEN_DOWNGRADE is not implemented. Writable opens have independent
+# staging sessions rather than upgrading the published reader's state.
+# Keep the whole operation together here rather than reporting
 # NFS4ERR_NOTSUPP as ten distinct protocol failures.
 OPDG1
 OPDG2
@@ -108,52 +108,35 @@ SATT16
 SATT17
 SATT18
 
-# NFS writes currently target a staging file for a newly created inode.
-# Existing files cannot be overwritten, requested stable-write modes are
-# not implemented, and the write path does not implement the full OPEN
-# state and share-deny model.
+# UNCHECKED creates allocate independent staging sessions. OPEN2 expects a
+# reopen to retain the original creator's private size.
 OPEN2
+
+# EXCLUSIVE4 create is not implemented.
 OPEN4
-WRT1
-WRT2
-WRT3
-WRT4
-WRT8
-WRT9
-WRT11
-WRT12
+
+# Unix mode/credential authorization is not implemented. This case changes
+# the RPC credentials while retaining another client's valid write stateid.
 WRT19
 
-# A newly created file is deliberately absent from its directory until
-# CLOSE streams and links the staged contents. Pynfs commonly creates a
-# file, leaves it open, and immediately resolves or mutates the
-# pathname. These tests then fail during setup with NFS4ERR_NOENT,
-# before reaching the behavior they were intended to test.
+# These lease-expiry cases need validation with the normal daemon's lease
+# sweeper; the cluster test helper currently serves RPCs without that loop.
 CLOSE8
-OPEN3
-OPEN18
-OPEN21
-OPEN22
-OPEN24
-OPEN25
-OPEN26
-OPEN28
-OPEN29
-OPEN31
 RENEW3
-RDDR2
-RDDR3
+
+# Readers of a new pathname see its empty published version, not another
+# writer's private data before CLOSE.
+OPEN28
+
+# Moving or removing the publication target of an active local staging
+# session is rejected with FILE_OPEN.
 RM1r
 RNM1r
 RNM12
 RNM14
 RNM15
 RNM17
-RNM19
 RNM21
-SATT3d
-SATT6r
-SATT11r
 
 # TernFS rename primitives reject an existing destination. RNM13
 # requires atomically replacing an empty directory in the same parent.
@@ -161,25 +144,16 @@ SATT11r
 # destination if the second request failed.
 RNM13
 
-# These retransmit the same RPC XID on the same still-open connection with
-# no intervening disconnect, and expect the original reply back from a
-# duplicate-request cache. st_replay.py's own _replay() helper says as
-# much: "no 4.0 client should really be replaying like this without
-# reconnecting first, so this test is really acting like a buggy client".
-# A real replay arrives on a new connection, quite possibly to a different
-# server behind a load balancer, so a same-connection or single-process
-# cache would not help a real client and we are not implementing one.
-# The mutations these tests replay (CREATE, CLOSE) are already idempotent
-# at the TernFS shard level independent of nfsd, which is what actually
-# protects a genuine reconnect-and-retry.
-RPLY11
+# Replaying a successful directory CREATE on the same connection requires
+# an RPC duplicate-request cache. RPLY11 remains enabled: repeating a CLOSE
+# with a bad sequence number returns BAD_SEQID without such a cache.
 RPLY14
 
 # OPEN4_SHARE_ACCESS/DENY (share reservations) assume a single mutable
 # file that concurrent openers can contend over. TernFS has no such
 # object: a write-open constructs an independent transient file, and
 # whichever client's CLOSE (LinkFile) reaches the owning shard last wins
-# the name — see _createCurrentEdge's creation-time arbitration in
+# the name — see _createCurrentEdge's publication-time arbitration in
 # cpp/shard/ShardDB.cpp. There is no real conflict for share-deny bits to
 # protect, and enforcing them in nfsd's memory would only be correct on a
 # single process, which is worse than not enforcing them at all across a
@@ -188,6 +162,11 @@ RPLY14
 # this unsupported model. This is a permanent, deliberate gap, not a
 # backlog item.
 OPEN23
-OPEN23b
 OPEN27
 OPEN30
+WRT9
+OPEN18
+OPEN21
+OPEN22
+OPEN25
+OPEN26
