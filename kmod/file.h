@@ -17,6 +17,7 @@ extern int ternfs_file_getattr_refresh_time_jiffies; // this is only relevant fo
 ssize_t ternfs_file_write(struct ternfs_inode* enode, int flags, loff_t* ppos, struct iov_iter* from);
 int ternfs_file_open(struct inode* inode, struct file* filp);
 int ternfs_file_flush(struct ternfs_inode* enode, struct dentry* dentry);
+void ternfs_file_discard(struct ternfs_inode* enode);
 int ternfs_link(struct dentry* old_dentry, struct inode* dir, struct dentry* new_dentry);
 
 // Also used in ternfs_do_ftruncate to fill the end of the file.
