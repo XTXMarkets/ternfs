@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // StagingMeta contains the state needed to complete CLOSE after a restart.
@@ -23,6 +24,14 @@ type StagingMeta struct {
 	TernCookie Cookie  // cookie from VFS ConstructFile
 	NFSStateID StateID // random, returned to NFS client as stateid "other"
 	ClientID   uint64  // owning client; zero in sidecars written by older nfsd
+	// Exclusive and Verifier identify duplicate EXCLUSIVE4 creates.
+	Exclusive bool
+	Verifier  [8]byte
+	// Times deferred until CLOSE, as Unix nanoseconds.
+	HasAtime bool
+	HasMtime bool
+	Atime    int64
+	Mtime    int64
 }
 
 // StagingFile is the interface for staged file data during NFS writes.
@@ -55,6 +64,8 @@ type StagingStore interface {
 	StagedSize(id InodeID) (uint64, bool)
 	// StagedSizes returns a snapshot of all staged InodeID → size.
 	StagedSizes() map[InodeID]uint64
+	// SetTimes records times to apply after linking.
+	SetTimes(id InodeID, atime *time.Time, mtime *time.Time) error
 }
 
 // LocalStagingStore manages staging files as local files in a directory.
@@ -199,6 +210,30 @@ func (s *LocalStagingStore) StagedSize(id InodeID) (uint64, bool) {
 	return entry.file.Size(), true
 }
 
+func (s *LocalStagingStore) SetTimes(id InodeID, atime *time.Time, mtime *time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entry, ok := s.files[id]
+	if !ok {
+		return os.ErrNotExist
+	}
+	meta := entry.meta
+	if atime != nil {
+		meta.HasAtime = true
+		meta.Atime = atime.UnixNano()
+	}
+	if mtime != nil {
+		meta.HasMtime = true
+		meta.Mtime = mtime.UnixNano()
+	}
+	metaPath := strings.TrimSuffix(entry.file.f.Name(), ".staging") + ".meta"
+	if err := saveStagingMeta(metaPath, meta); err != nil {
+		return err
+	}
+	entry.meta = meta
+	return nil
+}
+
 func (s *LocalStagingStore) StagedSizes() map[InodeID]uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -224,6 +259,9 @@ func (readOnlyStagingStore) GetMeta(InodeID) (StagingMeta, bool) { return Stagin
 func (readOnlyStagingStore) Remove(InodeID)                      {}
 func (readOnlyStagingStore) StagedSize(InodeID) (uint64, bool)   { return 0, false }
 func (readOnlyStagingStore) StagedSizes() map[InodeID]uint64     { return nil }
+func (readOnlyStagingStore) SetTimes(InodeID, *time.Time, *time.Time) error {
+	return os.ErrNotExist
+}
 
 // localStagingFile is a disk-backed staging file for new file creation.
 // mu guards f and size against concurrent WRITEs to the same file.
@@ -305,16 +343,34 @@ func (sf *localStagingFile) Reader() (io.ReadSeeker, error) {
 //   [2]  FileNameLen
 //   [N]  FileName (UTF-8)
 //   [8]  ClientID (absent in sidecars written by older nfsd)
+//   [8]  Verifier  (absent in sidecars written by older nfsd)
+//   [1]  Exclusive (absent in sidecars written by older nfsd)
+//   [1]  time flags: 1 = Atime set, 2 = Mtime set (absent in older sidecars)
+//   [8]  Atime, Unix nanoseconds (absent in older sidecars)
+//   [8]  Mtime, Unix nanoseconds (absent in older sidecars)
 
 func saveStagingMeta(path string, meta StagingMeta) error {
 	nameBytes := []byte(meta.FileName)
-	buf := make([]byte, 8+8+12+2+len(nameBytes)+8)
+	buf := make([]byte, 8+8+12+2+len(nameBytes)+8+8+1+1+8+8)
 	binary.BigEndian.PutUint64(buf[0:8], uint64(meta.DirID))
 	copy(buf[8:16], meta.TernCookie[:])
 	copy(buf[16:28], meta.NFSStateID[:])
 	binary.BigEndian.PutUint16(buf[28:30], uint16(len(nameBytes)))
 	copy(buf[30:], nameBytes)
-	binary.BigEndian.PutUint64(buf[30+len(nameBytes):], meta.ClientID)
+	off := 30 + len(nameBytes)
+	binary.BigEndian.PutUint64(buf[off:off+8], meta.ClientID)
+	copy(buf[off+8:off+16], meta.Verifier[:])
+	if meta.Exclusive {
+		buf[off+16] = 1
+	}
+	if meta.HasAtime {
+		buf[off+17] |= 1
+	}
+	if meta.HasMtime {
+		buf[off+17] |= 2
+	}
+	binary.BigEndian.PutUint64(buf[off+18:off+26], uint64(meta.Atime))
+	binary.BigEndian.PutUint64(buf[off+26:off+34], uint64(meta.Mtime))
 	return os.WriteFile(path, buf, 0600)
 }
 
@@ -340,6 +396,26 @@ func loadStagingMeta(path string) (StagingMeta, error) {
 	case nameEnd:
 	case nameEnd + 8:
 		meta.ClientID = binary.BigEndian.Uint64(data[nameEnd : nameEnd+8])
+	case nameEnd + 17, nameEnd + 34:
+		meta.ClientID = binary.BigEndian.Uint64(data[nameEnd : nameEnd+8])
+		copy(meta.Verifier[:], data[nameEnd+8:nameEnd+16])
+		switch data[nameEnd+16] {
+		case 0:
+		case 1:
+			meta.Exclusive = true
+		default:
+			return StagingMeta{}, fmt.Errorf("invalid meta exclusive flag")
+		}
+		if len(data) == nameEnd+34 {
+			flags := data[nameEnd+17]
+			if flags&^3 != 0 {
+				return StagingMeta{}, fmt.Errorf("invalid meta time flags")
+			}
+			meta.HasAtime = flags&1 != 0
+			meta.HasMtime = flags&2 != 0
+			meta.Atime = int64(binary.BigEndian.Uint64(data[nameEnd+18 : nameEnd+26]))
+			meta.Mtime = int64(binary.BigEndian.Uint64(data[nameEnd+26 : nameEnd+34]))
+		}
 	default:
 		return StagingMeta{}, fmt.Errorf("invalid meta file length")
 	}

@@ -94,7 +94,8 @@ LINKS
 
 # TernFS does not support changing ownership or mode after creation.
 # These tests require those metadata updates either directly or as part
-# of a mixed SETATTR request.
+# of a mixed SETATTR request. A SETATTR of mode on a file that is still
+# staged is accepted, which is why SATT14 and SATT15 are not listed.
 OPEN20
 SATT1d
 SATT1r
@@ -102,8 +103,6 @@ SATT2a
 SATT2b
 SATT2c
 SATT13
-SATT14
-SATT15
 SATT16
 SATT17
 SATT18
@@ -113,15 +112,11 @@ SATT18
 # not implemented, and the write path does not implement the full OPEN
 # state and share-deny model.
 OPEN2
-OPEN4
 WRT1
 WRT2
 WRT3
 WRT4
-WRT8
 WRT9
-WRT11
-WRT12
 WRT19
 
 # A newly created file is deliberately absent from its directory until
@@ -139,7 +134,6 @@ OPEN25
 OPEN26
 OPEN28
 OPEN29
-OPEN31
 RENEW3
 RDDR2
 RDDR3
@@ -149,7 +143,6 @@ RNM12
 RNM14
 RNM15
 RNM17
-RNM19
 RNM21
 SATT3d
 SATT6r
@@ -172,7 +165,6 @@ RNM13
 # The mutations these tests replay (CREATE, CLOSE) are already idempotent
 # at the TernFS shard level independent of nfsd, which is what actually
 # protects a genuine reconnect-and-retry.
-RPLY11
 RPLY14
 
 # OPEN4_SHARE_ACCESS/DENY (share reservations) assume a single mutable
@@ -188,6 +180,8 @@ RPLY14
 # this unsupported model. This is a permanent, deliberate gap, not a
 # backlog item.
 OPEN23
-OPEN23b
 OPEN27
 OPEN30
+
+# Uses only the anonymous stateid and runs past the client lease.
+WRT15

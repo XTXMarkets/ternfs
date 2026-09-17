@@ -414,7 +414,7 @@ Fetch the pinned libnfs source:
 make fetch-libnfs
 ```
 
-The pinned release is libnfs 5.0.2.
+The pinned release is libnfs 7.0.2.
 
 Run the tests:
 
