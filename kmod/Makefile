@@ -20,6 +20,7 @@ ternfs-client-objs += \
 	export.o \
 	debugfs.o \
 	file.o \
+	open.o \
 	inode.o \
 	kmod.o \
 	metadata.o \

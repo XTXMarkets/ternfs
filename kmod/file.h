@@ -15,6 +15,7 @@ extern unsigned ternfs_file_io_retry_refresh_span_interval_sec;
 extern int ternfs_file_getattr_refresh_time_jiffies; // this is only relevant for mtime/atime updates
 
 ssize_t ternfs_file_write(struct ternfs_inode* enode, int flags, loff_t* ppos, struct iov_iter* from);
+int ternfs_file_open(struct inode* inode, struct file* filp);
 int ternfs_file_flush(struct ternfs_inode* enode, struct dentry* dentry);
 int ternfs_link(struct dentry* old_dentry, struct inode* dir, struct dentry* new_dentry);
 

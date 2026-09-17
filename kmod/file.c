@@ -71,33 +71,6 @@ struct ternfs_transient_span {
 // just a sanity check, this is just two per page rn
 static_assert(sizeof(struct ternfs_transient_span) < (2<<10));
 
-// open_mutex held here
-// really want atomic open for this
-static int file_open(struct inode* inode, struct file* filp) {
-    trace_eggsfs_inode_lock(inode, TERNFS_INODE_LOCK, "file_open");
-    inode_lock(inode); // for the .status modification below
-
-    struct ternfs_inode* enode = TERNFS_I(inode);
-
-    ternfs_debug("enode=%p status=%d owner=%p", enode, enode->file.status, current->group_leader);
-
-    if ((filp->f_mode&FMODE_WRITE) && (enode->file.status == TERNFS_FILE_STATUS_WRITING)) {
-        // this is the "common" writing case, we've just created a file to write it.
-        // note that we never change the file owner, which might lead to confusing behavior
-        // but is probably the only sensible thing to do.
-    } else {
-        // otherwise, the file must be already there, we're very relaxed in what we allow
-        // in f_mode here and we just fail when operations that can't be done (e.g. writing
-        // to files) are attempted. the reason is that some workflows (such as open write +
-        // setattr) _will_ work.
-        enode->file.status = TERNFS_FILE_STATUS_READING;
-    }
-
-    inode_unlock(inode);
-    trace_eggsfs_inode_lock(inode, TERNFS_INODE_UNLOCK, "file_open");
-    return 0;
-}
-
 static void init_transient_span(void* p) {
     struct ternfs_transient_span* span = (struct ternfs_transient_span*)p;
     INIT_LIST_HEAD(&span->pages);
@@ -1114,7 +1087,7 @@ static int file_mmap(struct file* file, struct vm_area_struct* vma) {
 }
 
 const struct file_operations ternfs_file_operations = {
-    .open = file_open,
+    .open = ternfs_file_open,
     .read_iter = file_read_iter,
     .write_iter = file_write_iter,
     .flush = file_flush_internal,
