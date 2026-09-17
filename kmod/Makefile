@@ -35,6 +35,7 @@ ternfs-client-objs += \
 	file.o \
 	write.o \
 	symlink.o \
+	symlink_create.o \
 	transient.o \
 	rs.o \
 	crc.o \

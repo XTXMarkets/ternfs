@@ -91,3 +91,15 @@ dropping the writer's `mm`:
 ./run_module_test.sh ./ternfs-transient-test.ko \
     ternfs_transient_test 'ternfs-transient-test: PASS'
 ```
+
+The symlink-create test includes the production post-create helper with
+write, flush, trace and dentry-publication boundaries substituted. It uses a
+real initialized inode and `iput`, retaining one observer reference so error
+paths can verify exactly one reference drop without invoking fabricated VFS
+teardown. It checks original errors, ordering, path contents, link count,
+publication ownership and inode-lock release:
+
+```sh
+./run_module_test.sh ./ternfs-symlink-create-test.ko \
+    ternfs_symlink_create_test 'ternfs-symlink-create-test: PASS'
+```

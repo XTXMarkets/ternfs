@@ -25,6 +25,8 @@ ssize_t ternfs_file_write_internal(struct ternfs_inode* enode, int flags, loff_t
 
 void ternfs_link_destructor(void*);
 char* ternfs_read_link(struct ternfs_inode* enode);
+// Consumes the new inode reference: transfer to dentry on success, put on error.
+int ternfs_finish_symlink(struct ternfs_inode* enode, struct dentry* dentry, const char* path);
 
 extern const struct file_operations ternfs_file_operations;
 extern const struct address_space_operations ternfs_mmap_operations;

@@ -584,32 +584,7 @@ static int COMPAT_FUNC_UNS_IMP(ternfs_setattr, struct dentry* dentry, struct iat
 static int COMPAT_FUNC_UNS_IMP(ternfs_symlink, struct inode* dir, struct dentry* dentry, const char* path) {
     struct ternfs_inode* enode = ternfs_create_internal(dir, TERNFS_INODE_SYMLINK, dentry);
     if (IS_ERR(enode)) { return PTR_ERR(enode); }
-
-    enode->file.status = TERNFS_FILE_STATUS_WRITING; // needed for flush to flush below
-
-    size_t len = strlen(path);
-
-    // We now need to write out the symlink contents...
-    loff_t ppos = 0;
-    struct kvec vec;
-    struct iov_iter from;
-    vec.iov_base = (void*)path;
-    vec.iov_len = len;
-    iov_iter_kvec(&from, WRITE, &vec, 1, vec.iov_len);
-    trace_eggsfs_inode_lock(&enode->inode, TERNFS_INODE_LOCK, "symlink");
-    inode_lock(&enode->inode);
-    int err = ternfs_file_write(enode, 0, &ppos, &from);
-    inode_unlock(&enode->inode);
-    trace_eggsfs_inode_lock(&enode->inode, TERNFS_INODE_UNLOCK, "symlink");
-    if (err < 0) { return err; }
-    // ...and flush them
-    err = ternfs_file_flush(enode, dentry);
-    if (err < 0) { return err; }
-
-    // Now we link the dentry in
-    d_instantiate(dentry, &enode->inode);
-
-    return 0;
+    return ternfs_finish_symlink(enode, dentry, path);
 }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6,6,0)
