@@ -41,6 +41,7 @@ ternfs-client-objs += \
 	crc.o \
 	crc_fpu.o \
 	span.o \
+	fetch_state.o \
 	bincode.o \
 	revision.o \
 	policy.o
