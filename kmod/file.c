@@ -26,6 +26,7 @@
 #include "inode_compat.h"
 #include "page_compat.h"
 #include "write.h"
+#include "inline_read.h"
 
 unsigned ternfs_atime_update_interval_sec = 0;
 
@@ -1262,9 +1263,7 @@ static int file_readpages(struct file *filp, struct address_space *mapping, stru
         // return page back
         list_add_tail(&page->lru, pages);
         BUG_ON(page_offset(page) != span->start);
-        char* dst = kmap_atomic(page);
-        memcpy(dst, inline_span->body, inline_span->len);
-        kunmap_atomic(dst);
+        ternfs_fill_inline_page(page, inline_span->body, inline_span->len);
     } else {
         struct ternfs_block_span* block_span = TERNFS_BLOCK_SPAN(span);
         err = ternfs_span_get_pages(block_span, mapping, pages, nr_pages, &extra_pages);
@@ -1333,9 +1332,7 @@ retry:
         struct ternfs_inline_span* inline_span = TERNFS_INLINE_SPAN(span);
         size_t to_copy = inline_span->len - span_offset;
         BUG_ON(to_copy > PAGE_SIZE);
-        char* dst = kmap_atomic(page);
-        memcpy(dst, inline_span->body + span_offset, to_copy);
-        kunmap_atomic(dst);
+        ternfs_fill_inline_page(page, inline_span->body + span_offset, to_copy);
     } else {
         struct ternfs_block_span* block_span = TERNFS_BLOCK_SPAN(span);
         if (block_span->cell_size%PAGE_SIZE != 0) {
@@ -1496,11 +1493,7 @@ static void file_readahead(struct readahead_control *rac)
             }
 
             size_t to_copy = min((size_t)(inline_span->len - span_offset), (size_t)PAGE_SIZE);
-            char *dst = kmap_atomic(page);
-            memcpy(dst, inline_span->body + span_offset, to_copy);
-            if (to_copy < PAGE_SIZE)
-                memset(dst + to_copy, 0, PAGE_SIZE - to_copy);
-            kunmap_atomic(dst);
+            ternfs_fill_inline_page(page, inline_span->body + span_offset, to_copy);
         }
     } else {
         struct ternfs_block_span *block_span = TERNFS_BLOCK_SPAN(span);

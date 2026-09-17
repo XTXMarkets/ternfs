@@ -6,4 +6,6 @@ obj-m += ternfs-policy-test.o
 ternfs-policy-test-y := policy_test.o
 obj-m += ternfs-write-test.o
 ternfs-write-test-y := write_test.o
+obj-m += ternfs-inline-read-test.o
+ternfs-inline-read-test-y := inline_read_test.o
 ccflags-y += -I$(src)/.. -Wno-declaration-after-statement
