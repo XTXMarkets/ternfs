@@ -114,3 +114,14 @@ ordering, leftover-page release, semaphore reset and slab-object reuse:
 ./run_module_test.sh ./ternfs-fetch-state-test.ko \
     ternfs_fetch_state_test 'ternfs-fetch-state-test: PASS'
 ```
+
+The async-getattr completion test uses a real initialized inode reference,
+latch waitqueue, sleeping waiter and synchronous wake callback. It verifies
+that release advances the counter and notifies waiters before exactly one
+`iput`, including a wake-time latch reacquisition that changes the async
+sequence number before the old completion returns:
+
+```sh
+./run_module_test.sh ./ternfs-getattr-completion-test.ko \
+    ternfs_getattr_completion_test 'ternfs-getattr-completion-test: PASS'
+```

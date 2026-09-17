@@ -17,6 +17,7 @@
 #include "file.h"
 #include "wq.h"
 #include "inode_compat.h"
+#include "getattr_completion.h"
 
 // Some services (samba) try to preallocate larger files, but can handle
 // the failure or absence of ftruncate().
@@ -162,8 +163,7 @@ out:
         // releasing the latch.
         bool was_pending = cancel_delayed_work_sync(&enode->getattr_async_work);
         if (was_pending) {
-            iput(&enode->inode);
-            ternfs_latch_release(&enode->getattr_update_latch, enode->getattr_async_seqno);
+            ternfs_finish_async_getattr(enode);
         }
     }
     return ret;
@@ -250,9 +250,7 @@ static void getattr_async_complete(struct work_struct* work) {
         }
     }
 
-    // And put inode, release latch ordering is not important in this case but it's good practice to release references/locks in reverse order of acquisition
-    iput(&enode->inode);
-    ternfs_latch_release(&enode->getattr_update_latch, enode->getattr_async_seqno);
+    ternfs_finish_async_getattr(enode);
 }
 
 int ternfs_do_getattr(struct ternfs_inode* enode, int cache_timeout_type) {
