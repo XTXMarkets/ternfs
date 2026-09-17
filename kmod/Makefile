@@ -32,6 +32,7 @@ ternfs-client-objs += \
 	registry.o \
 	block.o \
 	file.o \
+	write.o \
 	rs.o \
 	crc.o \
 	crc_fpu.o \

@@ -25,6 +25,7 @@
 #include "dir.h"
 #include "inode_compat.h"
 #include "page_compat.h"
+#include "write.h"
 
 unsigned ternfs_atime_update_interval_sec = 0;
 
@@ -163,11 +164,7 @@ static bool put_transient_span(struct ternfs_transient_span* span) {
             FREE_PAGES(&span->blocks[b]);
         }
 #undef FREE_PAGES
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(6,2,0))
-        atomic_long_add_return(-num_pages, &span->enode->file.mm->rss_stat.count[MM_FILEPAGES]);
-#else
-        percpu_counter_add(&span->enode->file.mm->rss_stat[MM_FILEPAGES], -num_pages);
-#endif
+        ternfs_account_write_pages(span->enode->file.mm, -num_pages);
         if (span->started_flushing) {
             up(&span->enode->file.flushing_span_sema);
         }
@@ -409,19 +406,7 @@ static int add_span_initiate(struct ternfs_transient_span* span) {
 }
 
 static struct page* alloc_write_page(struct ternfs_inode_file* file) {
-    // The zeroing is to assume that in the blocks we have trailing zeros,
-    // and we also use this to just append zeros to the blocks without
-    // copying. The former is definitely not needed, but anyway, simpler
-    // for now.
-    struct page* p = alloc_page(GFP_KERNEL | __GFP_ZERO);
-    if (p == NULL) { return p; }
-    // This contributes to OOM score.
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(6,2,0))
-    atomic_long_inc_return(&file->mm->rss_stat.count[MM_FILEPAGES]);
-#else
-    percpu_counter_inc(&file->mm->rss_stat[MM_FILEPAGES]);
-#endif
-    return p;
+    return ternfs_alloc_write_page(file->mm);
 }
 
 static int compute_span_parameters(
@@ -770,48 +755,16 @@ ssize_t ternfs_file_write_internal(struct ternfs_inode* enode, int flags, loff_t
     ktime_get_real_ts64(&mtime);
     inode_set_mtime_to_ts(&enode->inode, mtime);
 
-    // We now start writing into the span, as much as we can anyway
-    while (span->written < max_span_size && count) {
-        // grab the page to write to
-        struct page* page = list_empty(&span->pages) ? NULL : list_last_entry(&span->pages, struct page, lru);
-        if (page == NULL || page->index == 0) { // we're the first ones to get here, or we need to switch to the next one
-            BUG_ON(page != NULL && page->index >= PAGE_SIZE);
-            page = alloc_write_page(&enode->file);
-            if (!page) {
-                err = -ENOMEM;
-                goto out_err; // we haven't corrupted anything, so no need to make it permanent
-            }
-            page->index = 0;
-            list_add_tail(&page->lru, &span->pages);
-        }
-
-        // copy stuff into page
-        int ret;
-        if (likely(from)) {
-            ret = copy_page_from_iter(page, page->index, PAGE_SIZE - page->index, from);
-        } else {
-            ret = min(count, PAGE_SIZE - page->index);
-        }
-        if (ret < 0) { err = ret; goto out_err_permanent; }
-        if (unlikely(ret == 0 && page->index == 0)) {
-            // if we just continue we will allocate another page in the list
-            // we should free the page we just allocated
-            // TODO: we could utilize page offset for this
-            list_del(&page->lru);
-            put_page(page);
-            #if (LINUX_VERSION_CODE < KERNEL_VERSION(6,2,0))
-                atomic_long_add_return(-1, &span->enode->file.mm->rss_stat.count[MM_FILEPAGES]);
-            #else
-                percpu_counter_add(&span->enode->file.mm->rss_stat[MM_FILEPAGES], -1);
-            #endif
-        }
-        ternfs_debug("written %d to page %p", ret, page);
-        enode->inode.i_size += ret;
-        span->written += ret;
-        page->index = (page->index + ret) % PAGE_SIZE;
-        *ppos += ret;
-        count -= ret;
+    size_t copy_count = span->written < max_span_size
+        ? min(count, (size_t)(max_span_size - span->written)) : 0;
+    ssize_t copied = ternfs_copy_write_pages(&span->pages, enode->file.mm, from, copy_count);
+    if (copied < 0) {
+        err = copied;
+        goto out_err;
     }
+    enode->inode.i_size += copied;
+    span->written += copied;
+    *ppos += copied;
 
     if (span->written >= max_span_size) { // we need to start flushing the span
         // this might block even if it says nonblock, which is unfortunate.
