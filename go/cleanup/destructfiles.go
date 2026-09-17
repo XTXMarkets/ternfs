@@ -78,37 +78,64 @@ func DestructFile(
 		if len(initResp.Blocks) > 0 {
 			certifyReq.ByteOffset = initResp.ByteOffset
 			certifyReq.Proofs = make([]msgs.BlockProof, len(initResp.Blocks))
-			var proof [8]byte
+			eraseCh := make(chan *client.BlockCompletion, len(initResp.Blocks))
+			startedErases := 0
+			decommissionedBlocks := make([]int, 0)
+			handleEraseFailure := func(block *msgs.RemoveSpanInitiateBlockInfo, err error) {
+				if errIsTolerable(c, block.BlockServiceId, err) {
+					log.Info("tolerable erase failure for block %v in block service %v while destructing file %v: %v", block.BlockId, block.BlockServiceId, id, err)
+				} else {
+					log.RaiseAlert("could not erase block in block service %v while destructing file %v: %v", block.BlockServiceId, id, err)
+				}
+				couldNotReachBlockServices = append(couldNotReachBlockServices, block.BlockServiceId)
+			}
 			for i := range initResp.Blocks {
 				block := &initResp.Blocks[i]
 				if block.BlockServiceFlags.HasAny(msgs.TERNFS_BLOCK_SERVICE_DECOMMISSIONED) {
-					proof, err = c.EraseDecommissionedBlock(block)
-					if err != nil {
-						return err
-					}
-				} else {
-					// There's no point trying to erase blocks for stale block services -- they're
-					// almost certainly temporarly offline, and we'll be stuck forever since in GC we run
-					// with infinite timeout. Just skip.
-					if block.BlockServiceFlags.HasAny(msgs.TERNFS_BLOCK_SERVICE_STALE) {
-						log.Debug("skipping block %v in file %v since its block service %v is stale", block.BlockId, id, block.BlockServiceId)
-						couldNotReachBlockServices = append(couldNotReachBlockServices, block.BlockServiceId)
-						continue
-					}
-					proof, err = c.EraseBlock(log, block)
-					if err != nil {
-						if errIsTolerable(c, block.BlockServiceId, err) {
-							log.Info("tolerable erase failure for block %v in block service %v while destructing file %v: %v", block.BlockId, block.BlockServiceId, id, err)
-						} else {
-							log.RaiseAlert("could not erase block in block service %v while destructing file %v: %v", block.BlockServiceId, id, err)
-						}
-						couldNotReachBlockServices = append(couldNotReachBlockServices, block.BlockServiceId)
-						continue
-					}
+					decommissionedBlocks = append(decommissionedBlocks, i)
+					continue
+				}
+				// There's no point trying to erase blocks for stale block services -- they're
+				// almost certainly temporarily offline. Just skip.
+				if block.BlockServiceFlags.HasAny(msgs.TERNFS_BLOCK_SERVICE_STALE) {
+					log.Debug("skipping block %v in file %v since its block service %v is stale", block.BlockId, id, block.BlockServiceId)
+					couldNotReachBlockServices = append(couldNotReachBlockServices, block.BlockServiceId)
+					continue
+				}
+				if err = c.StartEraseBlock(log, block, i, eraseCh); err != nil {
+					handleEraseFailure(block, err)
+					continue
+				}
+				startedErases++
+			}
+
+			var decommissionedErr error
+			for _, i := range decommissionedBlocks {
+				block := &initResp.Blocks[i]
+				proof, eraseErr := c.EraseDecommissionedBlock(block)
+				if eraseErr != nil {
+					decommissionedErr = eraseErr
+					break
 				}
 				certifyReq.Proofs[i].BlockId = block.BlockId
 				certifyReq.Proofs[i].Proof = proof
 				atomic.AddUint64(&stats.DestructedBlocks, 1)
+			}
+
+			for range startedErases {
+				result := <-eraseCh
+				i := result.Extra.(int)
+				block := &initResp.Blocks[i]
+				if result.Error != nil {
+					handleEraseFailure(block, result.Error)
+					continue
+				}
+				certifyReq.Proofs[i].BlockId = block.BlockId
+				certifyReq.Proofs[i].Proof = result.Resp.(*msgs.EraseBlockResp).Proof
+				atomic.AddUint64(&stats.DestructedBlocks, 1)
+			}
+			if decommissionedErr != nil {
+				return decommissionedErr
 			}
 			if len(couldNotReachBlockServices) == 0 {
 				err = c.ShardRequest(log, id.Shard(), &certifyReq, &certifyResp)

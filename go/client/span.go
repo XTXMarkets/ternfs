@@ -430,7 +430,7 @@ func (c *Client) writeSpanBlocks(
 			ByteOffset: offset,
 			Proofs:     make([]msgs.BlockProof, len(addSpanInitiateResp.Blocks)),
 		}
-		writeCh := make(chan *blockCompletion, len(addSpanInitiateResp.Blocks))
+		writeCh := make(chan *BlockCompletion, len(addSpanInitiateResp.Blocks))
 		for i, block := range addSpanInitiateResp.Blocks {
 			blockCrc, blockReader := mkBlockReader(addSpanInitiateReq, *data, i)
 			// Start writing block asynchronously
@@ -647,7 +647,7 @@ func fetchRsSpan(
 		cellsCrcs CellsCrcs
 	}
 
-	ch := make(chan *blockCompletion, dataBlocks)
+	ch := make(chan *BlockCompletion, dataBlocks)
 scheduleMoreBlocks:
 	for succeedBlocks+inFlightBlocks < dataBlocks && blockIdx < body.Parity.Blocks() {
 		block := body.Blocks[blockIdx]
@@ -857,7 +857,7 @@ type readRsStateRecover struct {
 	// Note that we might have to recover some blocks that we're
 	// also downloading because we need more of them.
 	blocks                 []BlockReader
-	blocksCh               chan *blockCompletion
+	blocksCh               chan *BlockCompletion
 	blocksPageCacheWriteCh chan struct{}
 	fetching               uint32
 	succeeded              uint32
@@ -876,7 +876,7 @@ type readRsState struct {
 	// Blocks we're downloading because we need the data.
 	// Lenght is D
 	blocks    []BlockReader
-	blocksCh  chan *blockCompletion
+	blocksCh  chan *BlockCompletion
 	fetching  uint32
 	succeeded uint32
 	failed    uint32
@@ -898,7 +898,7 @@ func (s *readRsState) writersToPageCache() uint32 {
 	return s.recover.writersToPageCache
 }
 
-func (s *readRsState) recoverBlocksCh() chan *blockCompletion {
+func (s *readRsState) recoverBlocksCh() chan *BlockCompletion {
 	if s.recover == nil {
 		return nil
 	}
@@ -1087,13 +1087,13 @@ func readRsStartFetchBlockWithCache(
 		reader.Advance(extra.readFromPageCache)
 		if extra.readFromPageCache == count { // we got everything from page cache
 			_, err := reader.ReadFrom(bytes.NewReader([]byte{})) // realign
-			state.recover.blocksCh <- &blockCompletion{
+			state.recover.blocksCh <- &BlockCompletion{
 				Error: err,
 				Extra: extra,
 			}
 		} else {
 			if err := startFetch.StartFetchBlock(log, &span.BlockServices[block.BlockServiceIx], block.BlockId, offset+extra.readFromPageCache, count-extra.readFromPageCache, reader, extra, state.recover.blocksCh); err != nil {
-				state.recover.blocksCh <- &blockCompletion{
+				state.recover.blocksCh <- &BlockCompletion{
 					Error: err,
 					Extra: extra,
 				}
@@ -1189,7 +1189,7 @@ func readRsRecover(
 	// will start.
 	state.recover = &readRsStateRecover{
 		blocks:                 make([]BlockReader, state.span.Parity.Blocks()),
-		blocksCh:               make(chan *blockCompletion, state.span.Parity.DataBlocks()),
+		blocksCh:               make(chan *BlockCompletion, state.span.Parity.DataBlocks()),
 		blocksPageCacheWriteCh: make(chan struct{}),
 	}
 	for blockIx := range uint32(state.span.Parity.DataBlocks()) {
@@ -1304,7 +1304,7 @@ func readRsRecover(
 }
 
 type startFetch interface {
-	StartFetchBlock(log *log.Logger, blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32, w io.ReaderFrom, extra any, completion chan *blockCompletion) error
+	StartFetchBlock(log *log.Logger, blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32, w io.ReaderFrom, extra any, completion chan *BlockCompletion) error
 }
 
 // The goal here is to read as little as possible (i.e. only the pages
@@ -1332,7 +1332,7 @@ func readRs(
 	}
 	state := readRsState{
 		span:     body,
-		blocksCh: make(chan *blockCompletion, body.Parity.DataBlocks()),
+		blocksCh: make(chan *BlockCompletion, body.Parity.DataBlocks()),
 		blocks:   make([]BlockReader, body.Parity.DataBlocks()),
 	}
 	state.spanStart = offset
