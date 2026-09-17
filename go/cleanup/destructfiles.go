@@ -6,12 +6,13 @@ package cleanup
 
 import (
 	"fmt"
+	"sync"
+	"sync/atomic"
+
 	"github.com/XTXMarkets/ternfs/go/client"
 	"github.com/XTXMarkets/ternfs/go/core/log"
 	lrecover "github.com/XTXMarkets/ternfs/go/core/recover"
 	"github.com/XTXMarkets/ternfs/go/msgs"
-	"sync"
-	"sync/atomic"
 )
 
 type DestructFilesStats struct {
@@ -78,14 +79,20 @@ func DestructFile(
 		if len(initResp.Blocks) > 0 {
 			certifyReq.ByteOffset = initResp.ByteOffset
 			certifyReq.Proofs = make([]msgs.BlockProof, len(initResp.Blocks))
-			var proof [8]byte
+			completionChan := make(chan *client.BlockCompletion, len(initResp.Blocks))
+			pending := 0
 			for i := range initResp.Blocks {
 				block := &initResp.Blocks[i]
 				if block.BlockServiceFlags.HasAny(msgs.TERNFS_BLOCK_SERVICE_DECOMMISSIONED) {
-					proof, err = c.EraseDecommissionedBlock(block)
-					if err != nil {
-						return err
-					}
+					pending++
+					go func() {
+						proof, err := c.EraseDecommissionedBlock(block)
+						completionChan <- &client.BlockCompletion{
+							Resp:  &msgs.EraseBlockResp{Proof: proof},
+							Extra: i,
+							Error: err,
+						}
+					}()
 				} else {
 					// There's no point trying to erase blocks for stale block services -- they're
 					// almost certainly temporarly offline, and we'll be stuck forever since in GC we run
@@ -95,19 +102,33 @@ func DestructFile(
 						couldNotReachBlockServices = append(couldNotReachBlockServices, block.BlockServiceId)
 						continue
 					}
-					proof, err = c.EraseBlock(log, block)
-					if err != nil {
-						if errIsTolerable(c, block.BlockServiceId, err) {
-							log.Info("tolerable erase failure for block %v in block service %v while destructing file %v: %v", block.BlockId, block.BlockServiceId, id, err)
-						} else {
-							log.RaiseAlert("could not erase block in block service %v while destructing file %v: %v", block.BlockServiceId, id, err)
-						}
-						couldNotReachBlockServices = append(couldNotReachBlockServices, block.BlockServiceId)
-						continue
+					pending++
+					if err := c.StartEraseBlock(log, block, i, completionChan); err != nil {
+						completionChan <- &client.BlockCompletion{Extra: i, Error: err}
 					}
 				}
+			}
+			completions := make([]*client.BlockCompletion, pending)
+			for i := range pending {
+				completions[i] = <-completionChan
+			}
+			for _, completion := range completions {
+				i := completion.Extra.(int)
+				block := &initResp.Blocks[i]
+				if completion.Error != nil {
+					if block.BlockServiceFlags.HasAny(msgs.TERNFS_BLOCK_SERVICE_DECOMMISSIONED) {
+						return completion.Error
+					}
+					if errIsTolerable(c, block.BlockServiceId, completion.Error) {
+						log.Info("tolerable erase failure for block %v in block service %v while destructing file %v: %v", block.BlockId, block.BlockServiceId, id, completion.Error)
+					} else {
+						log.RaiseAlert("could not erase block in block service %v while destructing file %v: %v", block.BlockServiceId, id, completion.Error)
+					}
+					couldNotReachBlockServices = append(couldNotReachBlockServices, block.BlockServiceId)
+					continue
+				}
 				certifyReq.Proofs[i].BlockId = block.BlockId
-				certifyReq.Proofs[i].Proof = proof
+				certifyReq.Proofs[i].Proof = completion.Resp.(*msgs.EraseBlockResp).Proof
 				atomic.AddUint64(&stats.DestructedBlocks, 1)
 			}
 			if len(couldNotReachBlockServices) == 0 {
