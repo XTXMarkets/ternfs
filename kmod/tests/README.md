@@ -34,3 +34,14 @@ sudo insmod ternfs-write-test.ko
 sudo dmesg | grep ternfs-write-test
 sudo rmmod ternfs_write_test
 ```
+
+The inline-read test poisons a real page before filling it through the
+production helper. It checks content preservation and zeroed tails for empty,
+one-byte, 255-byte and full-page inline data, then reuses the same page to
+ensure shorter contents cannot expose bytes from an earlier fill:
+
+```sh
+sudo insmod ternfs-inline-read-test.ko
+sudo dmesg | grep ternfs-inline-read-test
+sudo rmmod ternfs_inline_read_test
+```
