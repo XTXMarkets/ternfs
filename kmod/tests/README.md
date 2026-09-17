@@ -103,3 +103,14 @@ publication ownership and inode-lock release:
 ./run_module_test.sh ./ternfs-symlink-create-test.ko \
     ternfs_symlink_create_test 'ternfs-symlink-create-test: PASS'
 ```
+
+The fetch-state test includes the production callback-reference and cache
+implementation. With real slab objects, pages, spinlocks, waitqueues and
+controlled kthreads it checks immediate cleanup, pending and terminal-error
+callbacks, retry holds, borrowed span/mapping lifetime, final wake/free
+ordering, leftover-page release, semaphore reset and slab-object reuse:
+
+```sh
+./run_module_test.sh ./ternfs-fetch-state-test.ko \
+    ternfs_fetch_state_test 'ternfs-fetch-state-test: PASS'
+```
