@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -75,6 +76,13 @@ func NewServer(fs TernVFS, stagingStore StagingStore, logger *slog.Logger) (*Ser
 		clientGCRecheck: make(map[InodeID]struct{}),
 	}
 	s.opens.now = func() time.Time { return s.clients.now() }
+	// The nfsd ID names this process's lease and confirming slots in the
+	// client store. The epoch is the first four bytes of every stateid this
+	// process issues. Both are needed to attribute persisted state and wire
+	// stateids to an nfsd instance.
+	logger.Info("nfsd instance",
+		"nfsd_id", clients.nfsdID,
+		"stateid_epoch", fmt.Sprintf("%08x", s.opens.epoch))
 	return s, nil
 }
 
