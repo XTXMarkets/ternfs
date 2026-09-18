@@ -588,6 +588,9 @@ int __init ternfs_dir_init(void) {
 
 void __cold ternfs_dir_exit(void) {
     ternfs_debug("dir exit");
+    // Dropped directory caches release their final reference through RCU.
+    // Complete those callbacks while their slab and page owners still exist.
+    rcu_barrier();
     kmem_cache_destroy(ternfs_readdir_ctx_cachep);
     kmem_cache_destroy(ternfs_dirents_cachep);
 }

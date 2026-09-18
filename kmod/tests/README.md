@@ -159,3 +159,16 @@ second idle init/exit lifecycle:
 ./run_module_test.sh ./ternfs-block-teardown-test.ko \
     ternfs_block_teardown_test 'ternfs-block-teardown-test: PASS'
 ```
+
+The directory teardown test includes production `dir.c` with trace and
+metadata/inode lookup boundaries substituted. It assigns a real slab-backed
+cache with real pages to an inode, holds a non-sleeping RCU reader across the
+drop, and runs directory exit in a controlled thread. Exit must wait until the
+callback releases the cache and its page references before either slab is
+destroyed. Repeated and null drops must be harmless, while external page
+owners retain valid contents:
+
+```sh
+./run_module_test.sh ./ternfs-dir-teardown-test.ko \
+    ternfs_dir_teardown_test 'ternfs-dir-teardown-test: PASS'
+```
