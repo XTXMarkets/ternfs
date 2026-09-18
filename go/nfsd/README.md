@@ -522,6 +522,8 @@ nfsd processes on the test host. Relative paths are resolved from `go/nfsd`.
 make test-libnfs TEST_ARGS='-registry HOST:PORT' \
     GO_TEST_FLAGS=-short
 make test-libnfs TEST_ARGS='-registry HOST:PORT' \
+    GO_TEST_FLAGS='-run TestLibnfs/recovery'
+make test-libnfs TEST_ARGS='-registry HOST:PORT' \
     GO_TEST_FLAGS='-run TestLibnfs/ReadFile'
 ```
 

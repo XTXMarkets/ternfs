@@ -117,7 +117,7 @@ func TestLibnfsClientProcess(t *testing.T) {
 				files[nextHandle] = f
 				result.Handle = nextHandle
 			}
-		case "read", "write", "syncsize", "close":
+		case "read", "write", "sync", "syncsize", "close":
 			f := files[req.Handle]
 			if f == nil {
 				err = fmt.Errorf("unknown handle %d", req.Handle)
@@ -128,6 +128,8 @@ func TestLibnfsClientProcess(t *testing.T) {
 				result.Data, err = f.Read()
 			case "write":
 				err = f.WriteAt(req.Data, req.Offset)
+			case "sync":
+				err = f.Sync()
 			case "syncsize":
 				result.Size, err = f.SyncSize()
 			case "close":
@@ -142,11 +144,17 @@ func TestLibnfsClientProcess(t *testing.T) {
 }
 
 type libnfsProcessClient struct {
-	t       *testing.T
-	process *nfsTestProcess
-	input   *json.Encoder
-	stdin   io.Closer
-	output  *json.Decoder
+	t        *testing.T
+	process  *nfsTestProcess
+	input    *json.Encoder
+	stdin    io.Closer
+	output   *json.Decoder
+	identity string
+}
+
+func (s *nfsTestServer) client(t *testing.T) *libnfsProcessClient {
+	t.Helper()
+	return s.clientAt(t, "/")
 }
 
 func (s *nfsTestServer) clientAt(t *testing.T, root string) *libnfsProcessClient {
@@ -170,7 +178,7 @@ func (s *nfsTestServer) clientAt(t *testing.T, root string) *libnfsProcessClient
 	}
 	c := &libnfsProcessClient{
 		t: t, input: json.NewEncoder(input), stdin: input,
-		output: json.NewDecoder(output),
+		output: json.NewDecoder(output), identity: identity,
 	}
 	c.process = startNFSTestProcess(t, cmd, filepath.Join(s.Dir, identity+".log"))
 	t.Cleanup(c.Close)
@@ -219,6 +227,28 @@ func (c *libnfsProcessClient) call(t *testing.T, req libnfsRequest) libnfsReply 
 		t.Fatal(err)
 	}
 	return c.result(t)
+}
+
+func (c *libnfsProcessClient) must(t *testing.T, req libnfsRequest) libnfsReply {
+	t.Helper()
+	r := c.call(t, req)
+	if r.Error != "" {
+		t.Fatalf("%s: %s (errno %d; log: %s)", req.Op, r.Error, r.Errno, c.process.Log)
+	}
+	return r
+}
+
+func (c *libnfsProcessClient) open(t *testing.T, s *nfsTestServer, name string, flags int) int {
+	t.Helper()
+	return c.must(t, libnfsRequest{Op: "open", Path: "/" + s.Name + "/" + name, Flags: flags}).Handle
+}
+
+func (c *libnfsProcessClient) read(t *testing.T, handle int, want string) {
+	t.Helper()
+	r := c.must(t, libnfsRequest{Op: "read", Handle: handle})
+	if string(r.Data) != want {
+		t.Fatalf("read %q, want %q", r.Data, want)
+	}
 }
 
 func (c *libnfsProcessClient) Stat(path string) (libnfsStat, error) {
