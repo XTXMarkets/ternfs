@@ -8,8 +8,8 @@
 package wyhash
 
 import (
+	"encoding/binary"
 	"math/bits"
-	"unsafe"
 )
 
 type Rand struct {
@@ -39,20 +39,13 @@ func (r *Rand) Float64() float64 {
 }
 
 func (r *Rand) Read(p []byte) (int, error) {
-	if len(p) == 0 {
-		return 0, nil
+	n := len(p)
+	for len(p) >= 8 {
+		binary.LittleEndian.PutUint64(p, r.Uint64())
+		p = p[8:]
 	}
-	bytes := uintptr(unsafe.Pointer(&p[0]))
-	end := bytes + uintptr(len(p))
-	unalignedEnd := (bytes - 1 + 8) & ^uintptr(7)
-	for ; bytes < unalignedEnd; bytes++ {
-		*(*uint8)(unsafe.Pointer(bytes)) = uint8(r.Uint64())
+	for i := range p {
+		p[i] = uint8(r.Uint64())
 	}
-	for ; bytes+8 <= end; bytes += 8 {
-		*(*uint64)(unsafe.Pointer(bytes)) = r.Uint64()
-	}
-	for ; bytes < end; bytes++ {
-		*(*uint8)(unsafe.Pointer(bytes)) = uint8(r.Uint64())
-	}
-	return len(p), nil
+	return n, nil
 }
