@@ -23,6 +23,7 @@ ternfs-client-objs += \
 	open.o \
 	inode.o \
 	kmod.o \
+	wq.o \
 	metadata.o \
 	dentry.o \
 	net.o \

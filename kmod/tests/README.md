@@ -172,3 +172,15 @@ owners retain valid contents:
 ./run_module_test.sh ./ternfs-dir-teardown-test.ko \
     ternfs_dir_teardown_test 'ternfs-dir-teardown-test: PASS'
 ```
+
+The workqueue test includes production `wq.c` with allocation failure
+injection scoped to its two `alloc_workqueue` calls. Successful allocations
+use real kernel queues. It checks both failure positions and cleanup/nulling,
+preserved names and flags, queued work draining during destruction,
+fast-before-general destruction order, repeated cleanup and a second complete
+init/exit lifecycle:
+
+```sh
+./run_module_test.sh ./ternfs-wq-test.ko \
+    ternfs_wq_test 'ternfs-wq-test: PASS'
+```
