@@ -43,7 +43,7 @@ type inspectOptions struct {
 type inspectReport struct {
 	Now          time.Time             `json:"now"`
 	LeaseTime    time.Duration         `json:"lease_time"`
-	ClientsDirID InodeID               `json:"clients_dir_id"`
+	ClientsDirID inspectInode          `json:"clients_dir_id"`
 	Identities   []inspectIdentity     `json:"identities"`
 	Staging      []inspectStagingEntry `json:"staging,omitempty"`
 	Problems     []string              `json:"problems,omitempty"`
@@ -51,8 +51,8 @@ type inspectReport struct {
 
 type inspectIdentity struct {
 	Hash         string               `json:"hash"`
-	ID           InodeID              `json:"id"`
-	Identity     string               `json:"identity,omitempty"`
+	ID           inspectInode         `json:"id"`
+	Identity     []byte               `json:"identity,omitempty"`
 	Confirmed    *inspectPointer      `json:"confirmed,omitempty"`
 	Pending      *inspectPointer      `json:"pending,omitempty"`
 	Incarnations []inspectIncarnation `json:"incarnations"`
@@ -61,14 +61,15 @@ type inspectIdentity struct {
 }
 
 type inspectPointer struct {
-	Target   string  `json:"target"`
-	TargetID InodeID `json:"target_id,omitempty"`
-	Dangling bool    `json:"dangling,omitempty"`
+	Target   string       `json:"target"`
+	TargetID inspectInode `json:"target_id,omitempty"`
+	Dangling bool         `json:"dangling,omitempty"`
+	Problem  string       `json:"problem,omitempty"`
 }
 
 type inspectIncarnation struct {
-	Name     string  `json:"name"`
-	ClientID InodeID `json:"clientid"`
+	Name     string       `json:"name"`
+	ClientID inspectInode `json:"clientid"`
 	// Roles is any of confirmed, pending and reboot-target. An incarnation
 	// without a role is unreachable and will be collected.
 	Roles []string `json:"roles"`
@@ -92,7 +93,7 @@ type inspectIncarnation struct {
 }
 
 type inspectRecord struct {
-	Identity  string `json:"identity,omitempty"`
+	Identity  []byte `json:"identity,omitempty"`
 	Verifier  string `json:"verifier"`
 	Confirm   string `json:"confirm"`
 	Principal string `json:"principal"`
@@ -123,12 +124,12 @@ type inspectTemp struct {
 }
 
 type inspectStagingEntry struct {
-	FileID   InodeID `json:"file_id"`
-	DirID    InodeID `json:"dir_id"`
-	FileName string  `json:"file_name"`
-	StateID  string  `json:"stateid"`
-	ClientID InodeID `json:"clientid"`
-	Size     int64   `json:"size"`
+	FileID   inspectInode `json:"file_id"`
+	DirID    inspectInode `json:"dir_id"`
+	FileName string       `json:"file_name"`
+	StateID  string       `json:"stateid"`
+	ClientID inspectInode `json:"clientid"`
+	Size     int64        `json:"size"`
 	// Matched is set once the entry has been joined to an open marker.
 	Matched bool `json:"-"`
 }
@@ -160,13 +161,16 @@ func (cs *ClientStore) Inspect(opts inspectOptions) (*inspectReport, error) {
 	report := &inspectReport{
 		Now:          cs.now(),
 		LeaseTime:    nfsLeaseTime,
-		ClientsDirID: cs.dirID,
+		ClientsDirID: inspectInode(cs.dirID),
+		Identities:   []inspectIdentity{},
 	}
 
 	var staging []inspectStagingEntry
 	if opts.StagingDir != "" {
 		var err error
-		staging, err = readStagingSidecars(opts.StagingDir)
+		var problems []string
+		staging, problems, err = readStagingSidecars(opts.StagingDir)
+		report.Problems = append(report.Problems, problems...)
 		if err != nil {
 			return nil, err
 		}
@@ -241,7 +245,7 @@ func (cs *ClientStore) inspectSelectIdentities(
 		for _, entry := range staging {
 			if entry.StateID == want && entry.ClientID != 0 {
 				return cs.inspectIdentityForClientID(
-					entry.ClientID, report)
+					InodeID(entry.ClientID), report)
 			}
 		}
 	}
@@ -306,13 +310,18 @@ func (cs *ClientStore) inspectIdentity(
 	dir DirEntry,
 	staging []inspectStagingEntry,
 ) (inspectIdentity, error) {
-	identity := inspectIdentity{Hash: dir.Name, ID: dir.ID}
+	identity := inspectIdentity{Hash: dir.Name, ID: inspectInode(dir.ID)}
 	if !isDirectoryInodeID(dir.ID) {
 		identity.Problems = append(identity.Problems,
 			"identity entry is not a directory")
 		return identity, nil
 	}
 	entries, err := cs.entries(dir.ID)
+	if errors.Is(err, os.ErrNotExist) {
+		identity.Problems = append(identity.Problems,
+			"identity directory disappeared during inspection")
+		return identity, nil
+	}
 	if err != nil {
 		return identity, err
 	}
@@ -320,7 +329,7 @@ func (cs *ClientStore) inspectIdentity(
 
 	roles := make(map[InodeID][]string)
 	pointer := func(name string) (*inspectPointer, error) {
-		return cs.inspectPointer(dir.ID, name, dir.ID)
+		return cs.inspectPointer(dir.ID, name, false)
 	}
 	if identity.Confirmed, err = pointer(confirmedName); err != nil {
 		return identity, err
@@ -329,10 +338,10 @@ func (cs *ClientStore) inspectIdentity(
 		return identity, err
 	}
 	if p := identity.Confirmed; p != nil && p.TargetID != 0 {
-		roles[p.TargetID] = append(roles[p.TargetID], "confirmed")
+		roles[InodeID(p.TargetID)] = append(roles[InodeID(p.TargetID)], "confirmed")
 	}
 	if p := identity.Pending; p != nil && p.TargetID != 0 {
-		roles[p.TargetID] = append(roles[p.TargetID], "pending")
+		roles[InodeID(p.TargetID)] = append(roles[InodeID(p.TargetID)], "pending")
 	}
 
 	var incarnations []inspectIncarnation
@@ -360,17 +369,17 @@ func (cs *ClientStore) inspectIdentity(
 	// Reboot targets of the primary incarnations stay reachable until the
 	// confirmation has purged their state.
 	for _, inc := range incarnations {
-		if _, primary := roles[inc.ClientID]; !primary {
+		if _, primary := roles[InodeID(inc.ClientID)]; !primary {
 			continue
 		}
 		if inc.Reboot != nil && inc.Reboot.TargetID != 0 {
-			roles[inc.Reboot.TargetID] = append(
-				roles[inc.Reboot.TargetID], "reboot-target")
+			targetID := InodeID(inc.Reboot.TargetID)
+			roles[targetID] = append(roles[targetID], "reboot-target")
 		}
 	}
 	for i := range incarnations {
 		inc := &incarnations[i]
-		inc.Roles = roles[inc.ClientID]
+		inc.Roles = roles[InodeID(inc.ClientID)]
 		if inc.Roles == nil {
 			inc.Roles = []string{}
 		}
@@ -379,7 +388,7 @@ func (cs *ClientStore) inspectIdentity(
 			confirmed = confirmed || role == "confirmed"
 		}
 		inc.Usable = confirmed && inc.LeaseState == "live"
-		if inc.Record != nil && inc.Record.Identity != "" {
+		if inc.Record != nil && len(inc.Record.Identity) != 0 {
 			identity.Identity = inc.Record.Identity
 		}
 	}
@@ -396,7 +405,7 @@ func (cs *ClientStore) inspectIdentity(
 func (cs *ClientStore) inspectPointer(
 	dirID InodeID,
 	name string,
-	identityID InodeID,
+	parentRelative bool,
 ) (*inspectPointer, error) {
 	fileID, err := cs.fs.Lookup(dirID, name)
 	if errors.Is(err, os.ErrNotExist) {
@@ -408,15 +417,35 @@ func (cs *ClientStore) inspectPointer(
 	target, err := cs.fs.Readlink(fileID)
 	if err != nil {
 		return &inspectPointer{Target: "<unreadable: " + err.Error() + ">",
-			Dangling: true}, nil
+			Dangling: true, Problem: "cannot read pointer"}, nil
 	}
 	p := &inspectPointer{Target: target}
-	targetName := strings.TrimPrefix(target, "../")
-	if !isIncarnationName(targetName) {
+	targetName := target
+	targetDirID := dirID
+	if parentRelative {
+		if !strings.HasPrefix(target, "../") {
+			p.Dangling = true
+			p.Problem = "pointer must name ../i.<hex>"
+			return p, nil
+		}
+		targetName = strings.TrimPrefix(target, "../")
+		targetDirID, err = cs.fs.LookupParent(dirID)
+		if err != nil {
+			p.Dangling = true
+			p.Problem = "cannot find pointer parent: " + err.Error()
+			return p, nil
+		}
+	} else if strings.HasPrefix(target, "../") {
 		p.Dangling = true
+		p.Problem = "pointer must name bare i.<hex>"
 		return p, nil
 	}
-	id, err := cs.fs.Lookup(identityID, targetName)
+	if !isIncarnationName(targetName) {
+		p.Dangling = true
+		p.Problem = "invalid incarnation pointer"
+		return p, nil
+	}
+	id, err := cs.fs.Lookup(targetDirID, targetName)
 	if errors.Is(err, os.ErrNotExist) {
 		p.Dangling = true
 		return p, nil
@@ -424,7 +453,7 @@ func (cs *ClientStore) inspectPointer(
 	if err != nil {
 		return nil, err
 	}
-	p.TargetID = id
+	p.TargetID = inspectInode(id)
 	return p, nil
 }
 
@@ -452,10 +481,15 @@ func (cs *ClientStore) inspectIncarnation(
 ) (inspectIncarnation, error) {
 	inc := inspectIncarnation{
 		Name:       dir.Name,
-		ClientID:   dir.ID,
+		ClientID:   inspectInode(dir.ID),
 		LeaseState: "none",
 	}
 	entries, err := cs.entries(dir.ID)
+	if errors.Is(err, os.ErrNotExist) {
+		inc.Problems = append(inc.Problems,
+			"incarnation directory disappeared during inspection")
+		return inc, nil
+	}
 	if err != nil {
 		return inc, err
 	}
@@ -475,7 +509,7 @@ func (cs *ClientStore) inspectIncarnation(
 				inc.Update = record
 			}
 		case entry.Name == rebootName:
-			inc.Reboot, err = cs.inspectPointer(dir.ID, rebootName, identityID)
+			inc.Reboot, err = cs.inspectPointer(dir.ID, rebootName, true)
 			if err != nil {
 				return inc, err
 			}
@@ -539,6 +573,7 @@ func (cs *ClientStore) inspectIncarnation(
 	}
 	for _, entry := range staging {
 		if entry.ClientID == inc.ClientID && !entry.Matched {
+			entry.Matched = true
 			inc.Staging = append(inc.Staging, entry)
 		}
 	}
@@ -554,7 +589,7 @@ func (cs *ClientStore) inspectRecord(entry DirEntry) (*inspectRecord, error) {
 		return &inspectRecord{Principal: "<unreadable: " + err.Error() + ">"}, nil
 	}
 	return &inspectRecord{
-		Identity:  formatClientIdentity(record.ID),
+		Identity:  record.ID,
 		Verifier:  hex.EncodeToString(record.Verifier),
 		Confirm:   hex.EncodeToString(record.Confirm),
 		Principal: formatPrincipal(record.principal()),
@@ -603,36 +638,40 @@ func inspectOpenMarker(stateID string, staging []inspectStagingEntry) inspectOpe
 
 // readStagingSidecars loads every .meta sidecar in a local staging
 // directory.
-func readStagingSidecars(dir string) ([]inspectStagingEntry, error) {
+func readStagingSidecars(dir string) ([]inspectStagingEntry, []string, error) {
 	paths, err := filepath.Glob(filepath.Join(dir, "*.meta"))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var result []inspectStagingEntry
+	var problems []string
 	for _, metaPath := range paths {
 		meta, err := loadStagingMeta(metaPath)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", metaPath, err)
+			problems = append(problems, fmt.Sprintf("%s: %v", metaPath, err))
+			continue
 		}
 		// Sidecars are named by LocalStagingStore as %016x.meta.
 		base := strings.TrimSuffix(filepath.Base(metaPath), ".meta")
 		fileID, err := strconv.ParseUint(base, 16, 64)
 		if err != nil {
-			return nil, fmt.Errorf("%s: unexpected sidecar name", metaPath)
+			problems = append(problems,
+				fmt.Sprintf("%s: unexpected sidecar name", metaPath))
+			continue
 		}
 		entry := inspectStagingEntry{
-			FileID:   InodeID(fileID),
-			DirID:    meta.DirID,
+			FileID:   inspectInode(fileID),
+			DirID:    inspectInode(meta.DirID),
 			FileName: meta.FileName,
 			StateID:  hex.EncodeToString(meta.NFSStateID[:]),
-			ClientID: InodeID(meta.ClientID),
+			ClientID: inspectInode(meta.ClientID),
 		}
 		if info, err := os.Stat(filepath.Join(dir, base+".staging")); err == nil {
 			entry.Size = info.Size()
 		}
 		result = append(result, entry)
 	}
-	return result, nil
+	return result, problems, nil
 }
 
 func formatClientIdentity(id []byte) string {
@@ -708,8 +747,8 @@ func (r *inspectReport) WriteText(w io.Writer) {
 	}
 	for _, identity := range r.Identities {
 		fmt.Fprintf(w, "\nidentity %s %s\n", identity.Hash, inodeHex(identity.ID))
-		if identity.Identity != "" {
-			fmt.Fprintf(w, "  id        %s\n", identity.Identity)
+		if len(identity.Identity) != 0 {
+			fmt.Fprintf(w, "  id        %s\n", formatClientIdentity(identity.Identity))
 		}
 		writePointer := func(name string, p *inspectPointer) {
 			if p == nil {
@@ -721,6 +760,9 @@ func (r *inspectReport) WriteText(w io.Writer) {
 				fmt.Fprintf(w, " DANGLING")
 			} else {
 				fmt.Fprintf(w, " clientid %s", inodeHex(p.TargetID))
+			}
+			if p.Problem != "" {
+				fmt.Fprintf(w, " (%s)", p.Problem)
 			}
 			fmt.Fprintln(w)
 		}
@@ -741,6 +783,8 @@ func (r *inspectReport) WriteText(w io.Writer) {
 			state := "NOT USABLE"
 			if inc.Usable {
 				state = "USABLE"
+			} else if strings.Contains(roles, "confirmed") && inc.LeaseState == "none" {
+				state = "AWAITING FIRST RENEW"
 			}
 			fmt.Fprintf(w, "\n  incarnation %s clientid %s [%s, lease %s] %s\n",
 				inc.Name, inodeHex(inc.ClientID), roles, inc.LeaseState, state)
@@ -749,8 +793,8 @@ func (r *inspectReport) WriteText(w io.Writer) {
 					return
 				}
 				fmt.Fprintf(w, "    %-10s", name)
-				if rec.Identity != "" {
-					fmt.Fprintf(w, " id %s", rec.Identity)
+				if len(rec.Identity) != 0 {
+					fmt.Fprintf(w, " id %s", formatClientIdentity(rec.Identity))
 				}
 				fmt.Fprintf(w, " verifier %s confirm %s\n", rec.Verifier, rec.Confirm)
 				fmt.Fprintf(w, "    %-10s principal %s callback %s\n", "",
@@ -842,12 +886,13 @@ func collectableSuffix(collectable bool) string {
 }
 
 // inodeHex formats an inode ID the way terncli and the TernFS logs do.
-func inodeHex(id InodeID) string {
+func inodeHex[T ~uint64](id T) string {
 	return fmt.Sprintf("0x%016x", uint64(id))
 }
 
-// MarshalJSON renders inode IDs, and therefore clientids, in the same
-// hexadecimal form as the text report.
-func (id InodeID) MarshalJSON() ([]byte, error) {
+// inspectInode keeps inspector JSON formatting local to the report.
+type inspectInode InodeID
+
+func (id inspectInode) MarshalJSON() ([]byte, error) {
 	return json.Marshal(inodeHex(id))
 }

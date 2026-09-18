@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/XTXMarkets/ternfs/go/client"
 	"github.com/XTXMarkets/ternfs/go/core/bufpool"
@@ -46,8 +47,13 @@ func main() {
 	}
 	slogger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 
+	fs, err := openVFS(*root, *registry, *verbose)
+	if err != nil {
+		slogger.Error("opening filesystem", "err", err)
+		os.Exit(1)
+	}
+
 	var ss StagingStore
-	var err error
 	if *staging != "" {
 		ss, err = NewLocalStagingStore(*staging, slogger)
 		if err != nil {
@@ -60,11 +66,6 @@ func main() {
 		slogger.Info("no staging directory — read-only mode")
 	}
 
-	fs, err := openVFS(*root, *registry, *verbose)
-	if err != nil {
-		slogger.Error("opening filesystem", "err", err)
-		os.Exit(1)
-	}
 	if *root != "" {
 		slogger.Info("local VFS mode", "root", *root)
 	} else {
@@ -147,39 +148,9 @@ func runInspect(args []string) {
 		os.Exit(2)
 	}
 
-	var opts inspectOptions
-	filters := 0
-	if *identity != "" {
-		opts.Identity = []byte(*identity)
-		filters++
-	}
-	if *identityHash != "" {
-		opts.IdentityHash = *identityHash
-		filters++
-	}
-	if *clientID != "" {
-		id, err := strconv.ParseUint(*clientID, 0, 64)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "invalid -clientid %q: %v\n", *clientID, err)
-			os.Exit(2)
-		}
-		opts.ClientID = id
-		filters++
-	}
-	if *stateID != "" {
-		raw, err := hex.DecodeString(*stateID)
-		if err != nil || len(raw) != len(StateID{}) {
-			fmt.Fprintf(os.Stderr, "invalid -stateid %q: want %d hex digits\n",
-				*stateID, 2*len(StateID{}))
-			os.Exit(2)
-		}
-		var sid StateID
-		copy(sid[:], raw)
-		opts.StateID = &sid
-		filters++
-	}
-	if filters > 1 {
-		fmt.Fprintf(os.Stderr, "use at most one of -identity, -identity-hash, -clientid and -stateid\n")
+	opts, err := parseInspectOptions(*identity, *identityHash, *clientID, *stateID)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
 	opts.StagingDir = *staging
@@ -207,4 +178,50 @@ func runInspect(args []string) {
 		return
 	}
 	report.WriteText(os.Stdout)
+}
+
+func parseInspectOptions(identity, identityHash, clientID, stateID string) (
+	inspectOptions, error,
+) {
+	var opts inspectOptions
+	filters := 0
+	if identity != "" {
+		opts.Identity = []byte(identity)
+		filters++
+	}
+	if identityHash != "" {
+		raw, err := hex.DecodeString(identityHash)
+		if err != nil || len(raw) != 32 {
+			return opts, fmt.Errorf(
+				"invalid -identity-hash %q: want 64 hex digits", identityHash)
+		}
+		opts.IdentityHash = strings.ToLower(identityHash)
+		filters++
+	}
+	if clientID != "" {
+		id, err := strconv.ParseUint(clientID, 0, 64)
+		if err != nil || id == 0 {
+			return opts, fmt.Errorf(
+				"invalid -clientid %q: want a non-zero 0x-prefixed hex or decimal clientid",
+				clientID)
+		}
+		opts.ClientID = id
+		filters++
+	}
+	if stateID != "" {
+		raw, err := hex.DecodeString(stateID)
+		if err != nil || len(raw) != len(StateID{}) {
+			return opts, fmt.Errorf("invalid -stateid %q: want %d hex digits",
+				stateID, 2*len(StateID{}))
+		}
+		var sid StateID
+		copy(sid[:], raw)
+		opts.StateID = &sid
+		filters++
+	}
+	if filters > 1 {
+		return opts, fmt.Errorf(
+			"use at most one of -identity, -identity-hash, -clientid and -stateid")
+	}
+	return opts, nil
 }

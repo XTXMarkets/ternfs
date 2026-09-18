@@ -6,6 +6,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -188,10 +189,11 @@ func TestInspectReportsClientState(t *testing.T) {
 	if identity.Hash != clientIdentityKey(f.identity) {
 		t.Fatalf("identity hash = %s", identity.Hash)
 	}
-	if identity.Identity != `"Linux NFSv4.0 host-a/10.0.0.1"` {
-		t.Fatalf("identity string = %s", identity.Identity)
+	if string(identity.Identity) != "Linux NFSv4.0 host-a/10.0.0.1" {
+		t.Fatalf("identity = %q", identity.Identity)
 	}
-	if identity.Confirmed == nil || identity.Confirmed.TargetID != InodeID(f.clientID) {
+	if identity.Confirmed == nil ||
+		identity.Confirmed.TargetID != inspectInode(f.clientID) {
 		t.Fatalf("confirmed pointer = %+v", identity.Confirmed)
 	}
 	if strings.Join(current.Roles, ",") != "confirmed,pending" {
@@ -358,7 +360,7 @@ func TestInspectFilters(t *testing.T) {
 			t.Fatal(err)
 		}
 		if len(report.Identities) != 1 || len(report.Identities[0].Incarnations) != 1 ||
-			report.Identities[0].Incarnations[0].ClientID != InodeID(f.clientID) {
+			report.Identities[0].Incarnations[0].ClientID != inspectInode(f.clientID) {
 			t.Fatalf("report = %+v", report.Identities)
 		}
 		unknown := StateID{1}
@@ -435,6 +437,137 @@ func TestInspectOutput(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("JSON lacks usable clientid %s:\n%s", inodeHex(InodeID(f.clientID)), out.String())
+	}
+	var identityJSON struct {
+		Identities []struct {
+			Identity string `json:"identity"`
+		} `json:"identities"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &identityJSON); err != nil {
+		t.Fatal(err)
+	}
+	wantIdentity := base64.StdEncoding.EncodeToString(f.identity)
+	for _, identity := range identityJSON.Identities {
+		if identity.Identity == wantIdentity {
+			return
+		}
+	}
+	t.Fatalf("JSON lacks base64 identity %q:\n%s", wantIdentity, out.String())
+}
+
+func TestInspectJSONKeepsAnEmptyIdentityListAnArray(t *testing.T) {
+	f := newInspectFixture(t)
+	report, err := f.reader(t).Inspect(inspectOptions{
+		ClientID: uint64(MakeInodeID(InodeTypeDir, 0x123456)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := report.WriteJSON(&out); err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		Identities []json.RawMessage `json:"identities"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Identities == nil {
+		t.Fatalf("identities = null:\n%s", out.String())
+	}
+}
+
+func TestInspectReportsMalformedStagingAndPointers(t *testing.T) {
+	f := newInspectFixture(t)
+	if err := saveStagingMeta(filepath.Join(f.stagingDir, "not-an-inode.meta"),
+		StagingMeta{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.stagingDir, "broken.meta"),
+		[]byte("not json"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	identityID, err := f.fs.LookupParent(InodeID(f.clientID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	name, err := f.first.requireIncarnationName(identityID, InodeID(f.clientID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.fs.Remove(identityID, confirmedName); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.fs.Symlink(identityID, confirmedName, "../"+name); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := f.reader(t).Inspect(inspectOptions{StagingDir: f.stagingDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Problems) != 2 {
+		t.Fatalf("staging problems = %v", report.Problems)
+	}
+	for _, identity := range report.Identities {
+		if identity.ID != inspectInode(identityID) {
+			continue
+		}
+		if identity.Confirmed == nil || !identity.Confirmed.Dangling ||
+			identity.Confirmed.Problem == "" {
+			t.Fatalf("confirmed pointer = %+v", identity.Confirmed)
+		}
+		return
+	}
+	t.Fatalf("identity %s not found", inodeHex(identityID))
+}
+
+func TestInspectTextDescribesConfirmedClientWithoutLease(t *testing.T) {
+	f := newInspectFixture(t)
+	f.register(t, f.first, []byte("awaiting-renew"), [8]byte{5}, clientOwner{})
+	report, err := f.reader(t).Inspect(inspectOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var text bytes.Buffer
+	report.WriteText(&text)
+	if !strings.Contains(text.String(), "AWAITING FIRST RENEW") {
+		t.Fatalf("text report lacks awaiting-first-renew state:\n%s", text.String())
+	}
+}
+
+func TestParseInspectOptions(t *testing.T) {
+	hash := strings.Repeat("a", 64)
+	tests := []struct {
+		name                                      string
+		identity, identityHash, clientID, stateID string
+		wantErr                                   bool
+	}{
+		{name: "no filter"},
+		{name: "identity", identity: "client"},
+		{name: "identity hash", identityHash: hash},
+		{name: "uppercase identity hash", identityHash: strings.ToUpper(hash)},
+		{name: "clientid", clientID: "0x2000000000000001"},
+		{name: "stateid", stateID: strings.Repeat("0", 24)},
+		{name: "zero clientid", clientID: "0", wantErr: true},
+		{name: "short identity hash", identityHash: "abcd", wantErr: true},
+		{name: "invalid identity hash", identityHash: strings.Repeat("g", 64), wantErr: true},
+		{name: "two filters", identity: "client", clientID: "1", wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			opts, err := parseInspectOptions(
+				test.identity, test.identityHash, test.clientID, test.stateID)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("parseInspectOptions() error = %v, wantErr %v", err, test.wantErr)
+			}
+			if !test.wantErr && test.identityHash != "" &&
+				opts.IdentityHash != strings.ToLower(test.identityHash) {
+				t.Fatalf("identity hash = %q", opts.IdentityHash)
+			}
+		})
 	}
 }
 
