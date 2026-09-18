@@ -21,7 +21,10 @@ import (
 func writeRegistryRequest(log *log.Logger, w io.Writer, req msgs.RegistryRequest) error {
 	log.Debug("sending request %v to registry", req.RegistryRequestKind())
 	// serialize
-	bytes := bincode.Pack(req)
+	bytes, err := bincode.Pack(req)
+	if err != nil {
+		return fmt.Errorf("could not pack registry request: %w", err)
+	}
 	// write out
 	if err := binary.Write(w, binary.LittleEndian, msgs.REGISTRY_REQ_PROTOCOL_VERSION); err != nil {
 		return err
