@@ -1034,7 +1034,7 @@ static int file_readpages(struct file *filp, struct address_space *mapping, stru
         }
     }
 out:
-    ternfs_put_span(span);
+    if (span) { ternfs_put_span(span); }
     process_file_pages(mapping, pages, nr_pages);
     process_file_pages(mapping, &extra_pages, 0);
     trace_eggsfs_file_read_exit(enode->inode.i_ino, off, nr_pages, 0);
