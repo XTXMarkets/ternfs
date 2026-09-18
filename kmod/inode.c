@@ -428,7 +428,8 @@ static struct ternfs_inode* ternfs_create_internal(struct inode* parent, int ity
     enode->file.cookie = cookie;
     atomic_set(&enode->file.transient_err, 0);
     enode->file.writing_span = NULL;
-    sema_init(&enode->file.flushing_span_sema, 1); // 1 = free to flush
+    init_completion(&enode->file.flushing_span_done);
+    complete_all(&enode->file.flushing_span_done);
     enode->file.owner = owner;
     enode->file.mm = mm;
 
