@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"syscall"
 	"testing"
 )
 
@@ -21,6 +22,7 @@ func TestLibnfs(t *testing.T) {
 		run  func(*testing.T, *nfsTestSuite)
 	}{
 		{"PrivateMutableWriters", testLibnfsPrivateMutableWriters},
+		{"ExclusiveCreate", testLibnfsExclusiveCreate},
 		{"StatRoot", testLibnfsStatRoot},
 		{"ReadFile", testLibnfsReadFile},
 		{"ReadLargeFile", testLibnfsReadLargeFile},
@@ -36,6 +38,28 @@ func TestLibnfs(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) { tc.run(t, suite) })
 	}
+}
+
+func testLibnfsExclusiveCreate(t *testing.T, suite *nfsTestSuite) {
+	s := suite.server(t)
+	c := s.client(t)
+	flags := os.O_WRONLY | os.O_CREATE | os.O_EXCL
+	h := c.open(t, s, "exclusive", flags)
+	c.must(t, libnfsRequest{Op: "write", Handle: h, Data: []byte("exclusive data")})
+	other := s.client(t)
+	for _, client := range []*libnfsProcessClient{c, other} {
+		r := client.call(t, libnfsRequest{Op: "open", Path: "/" + s.Name + "/exclusive", Flags: flags})
+		if r.Errno != int(syscall.EEXIST) {
+			t.Fatalf("exclusive create while staged: %+v", r)
+		}
+	}
+	c.must(t, libnfsRequest{Op: "close", Handle: h})
+	s.published(t, "exclusive", "exclusive data")
+	r := other.call(t, libnfsRequest{Op: "open", Path: "/" + s.Name + "/exclusive", Flags: flags})
+	if r.Errno != int(syscall.EEXIST) {
+		t.Fatalf("exclusive create after close: %+v", r)
+	}
+	s.published(t, "exclusive", "exclusive data")
 }
 
 func connectLibnfs(t *testing.T, suite *nfsTestSuite, fixtureDir string) *libnfsProcessClient {

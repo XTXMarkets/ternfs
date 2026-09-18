@@ -169,9 +169,13 @@ func runLibnfsRecovery(t *testing.T, suite *nfsTestSuite) {
 		}
 	})
 	t.Run("CloseSyncedWriterAfterRestart", func(t *testing.T) {
-		for _, tc := range []struct{ name, base, want string }{
-			{"new", "", "new"},
-			{"replacement", "old tail", "new tail"},
+		for _, tc := range []struct {
+			name, base, want string
+			exclusive        bool
+		}{
+			{"new", "", "new", false},
+			{"replacement", "old tail", "new tail", false},
+			{"exclusive", "", "new", true},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				s := suite.server(t)
@@ -181,7 +185,11 @@ func runLibnfsRecovery(t *testing.T, suite *nfsTestSuite) {
 					c.must(t, libnfsRequest{Op: "write", Handle: h, Data: []byte(tc.base)})
 					c.must(t, libnfsRequest{Op: "close", Handle: h})
 				}
-				h := c.open(t, s, "file", os.O_CREATE|os.O_RDWR)
+				flags := os.O_CREATE | os.O_RDWR
+				if tc.exclusive {
+					flags |= os.O_EXCL
+				}
+				h := c.open(t, s, "file", flags)
 				c.must(t, libnfsRequest{Op: "write", Handle: h, Data: []byte("new")})
 				c.must(t, libnfsRequest{Op: "sync", Handle: h})
 				s.published(t, "file", tc.base)
@@ -230,7 +238,7 @@ func runLibnfsRecovery(t *testing.T, suite *nfsTestSuite) {
 			t.Fatalf("expected one live writer: %+v", before)
 		}
 		dead := s.client(t)
-		abandoned := dead.open(t, s, "dead-client", os.O_CREATE|os.O_RDWR)
+		abandoned := dead.open(t, s, "dead-client", os.O_CREATE|os.O_EXCL|os.O_RDWR)
 		dead.must(t, libnfsRequest{Op: "write", Handle: abandoned, Data: []byte("client died")})
 		dead.must(t, libnfsRequest{Op: "sync", Handle: abandoned})
 		if inc := recoveryConfirmed(t, s.inspect(t, dead)); !inc.Usable || len(inc.Opens) != 1 {
