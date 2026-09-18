@@ -184,3 +184,14 @@ init/exit lifecycle:
 ./run_module_test.sh ./ternfs-wq-test.ko \
     ternfs_wq_test 'ternfs-wq-test: PASS'
 ```
+
+The read-page completion test uses the production helper with a real locked
+page. Its unlock boundary calls the real kernel unlock after checking that the
+page is still locked, already uptodate, unchanged, and at the original
+reference count. A real page waiter must observe completed data after wake,
+and repeated reuse of the same page must preserve the same ordering:
+
+```sh
+./run_module_test.sh ./ternfs-read-page-test.ko \
+    ternfs_read_page_test 'ternfs-read-page-test: PASS'
+```

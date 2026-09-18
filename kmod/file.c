@@ -28,6 +28,7 @@
 #include "write.h"
 #include "inline_read.h"
 #include "transient.h"
+#include "read_page.h"
 
 unsigned ternfs_atime_update_interval_sec = 0;
 
@@ -974,8 +975,7 @@ static void process_file_pages(struct address_space *mapping, struct list_head *
         if (err != 0) {
             ternfs_debug("failed adding page at index=%ld, err=%d", page->index, err);
         } else {
-            unlock_page(page);
-            SetPageUptodate(page);
+            ternfs_complete_read_page(page);
         }
         put_page(page);
     }
@@ -1276,8 +1276,7 @@ out_process:
         memcpy(dest, src, PAGE_SIZE);
         kunmap_atomic(src);
         kunmap_atomic(dest);
-        SetPageUptodate(rac_page);
-        unlock_page(rac_page);
+        ternfs_complete_read_page(rac_page);
         put_page(rac_page);
     }
     // Process any extra pages
