@@ -5,6 +5,7 @@
 package cmd
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"github.com/XTXMarkets/ternfs/go/client"
@@ -19,12 +20,11 @@ import (
 func outputFullFileSizes(log *log.Logger, c *client.Client) {
 	var examinedDirs uint64
 	var examinedFiles uint64
-	err := client.Parwalk(
-		log,
-		c,
-		&client.ParwalkOptions{
-			WorkersPerShard: 1,
-		},
+	pool := client.NewParwalkPool(log, c, 1)
+	defer pool.Close()
+	err := pool.Walk(
+		context.Background(),
+		&client.ParwalkOptions{},
 		"/",
 		func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error {
 			if id.Type() == msgs.DIRECTORY {
