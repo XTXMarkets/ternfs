@@ -8,9 +8,9 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path"
-	"syscall"
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/core/log"
@@ -27,7 +27,10 @@ func nfsMutationTest(l *log.Logger, mnt string) {
 	nfsRename(l, dir)
 	nfsDelete(l, dir)
 	nfsSetTimes(l, dir)
-	nfsRejectInPlaceModify(l, dir)
+	nfsModifyExisting(l, dir)
+	nfsFsyncFstatAppend(l, dir)
+	nfsPrivateWriters(l, dir)
+	nfsVisibleCreation(l, dir)
 }
 
 func nfsOutOfOrderWrites(l *log.Logger, dir string) {
@@ -138,33 +141,221 @@ func nfsSetTimes(l *log.Logger, dir string) {
 	}
 }
 
-func nfsRejectInPlaceModify(l *log.Logger, dir string) {
-	l.Info("nfs mutation: reject in-place modify")
-	p := path.Join(dir, "immutable.txt")
+func nfsModifyExisting(l *log.Logger, dir string) {
+	l.Info("nfs mutation: modify existing file")
+	p := path.Join(dir, "mutable.txt")
 	if err := os.WriteFile(p, []byte("original contents"), 0644); err != nil {
 		panic(fmt.Errorf("write %v: %w", p, err))
 	}
 
 	f, err := os.OpenFile(p, os.O_WRONLY, 0644)
 	if err != nil {
-		if isPermErr(err) {
-			return // rejected at open, as expected
-		}
-		panic(fmt.Errorf("unexpected open error for %v: %w", p, err))
+		panic(fmt.Errorf("open %v for update: %w", p, err))
 	}
-	_, werr := f.Write([]byte("OVERWRITTEN"))
-	cerr := f.Close()
-	if werr == nil && cerr == nil {
-		panic(fmt.Errorf("in-place modify of %v unexpectedly succeeded", p))
+	if _, err := f.WriteAt([]byte("updated"), 9); err != nil {
+		f.Close()
+		panic(fmt.Errorf("overwrite %v: %w", p, err))
 	}
-	if werr != nil && !isPermErr(werr) {
-		panic(fmt.Errorf("unexpected write error for %v: %w", p, werr))
+	if err := f.Truncate(int64(len("original updated"))); err != nil {
+		f.Close()
+		panic(fmt.Errorf("truncate %v: %w", p, err))
 	}
-	if werr == nil && cerr != nil && !isPermErr(cerr) {
-		panic(fmt.Errorf("unexpected close error for %v: %w", p, cerr))
+	if err := f.Close(); err != nil {
+		panic(fmt.Errorf("close %v: %w", p, err))
+	}
+	got, err := os.ReadFile(p)
+	if err != nil {
+		panic(fmt.Errorf("read %v: %w", p, err))
+	}
+	if string(got) != "original updated" {
+		panic(fmt.Errorf("updated data = %q, want %q",
+			got, "original updated"))
 	}
 }
 
-func isPermErr(err error) bool {
-	return errors.Is(err, os.ErrPermission) || errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES)
+func nfsFsyncFstatAppend(l *log.Logger, dir string) {
+	l.Info("nfs mutation: fsync+fstat+append")
+	p := path.Join(dir, "append.txt")
+	if err := os.WriteFile(p, []byte("12345678"), 0644); err != nil {
+		panic(fmt.Errorf("write %v: %w", p, err))
+	}
+
+	f, err := os.OpenFile(p, os.O_RDWR|os.O_APPEND, 0644)
+	if err != nil {
+		panic(fmt.Errorf("open %v: %w", p, err))
+	}
+	if _, err := f.Write([]byte("XYZ")); err != nil {
+		f.Close()
+		panic(fmt.Errorf("extend %v: %w", p, err))
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		panic(fmt.Errorf("fsync %v: %w", p, err))
+	}
+	info, err := f.Stat()
+	if err != nil {
+		f.Close()
+		panic(fmt.Errorf("fstat %v: %w", p, err))
+	}
+	if info.Size() != 11 {
+		f.Close()
+		panic(fmt.Errorf("fstat size = %d, want 11", info.Size()))
+	}
+	end, err := f.Seek(0, io.SeekEnd)
+	if err != nil {
+		f.Close()
+		panic(fmt.Errorf("seek end %v: %w", p, err))
+	}
+	if end != 11 {
+		f.Close()
+		panic(fmt.Errorf("seek end = %d, want 11", end))
+	}
+	if _, err := f.Write([]byte("Q")); err != nil {
+		f.Close()
+		panic(fmt.Errorf("append after fsync %v: %w", p, err))
+	}
+	if err := f.Close(); err != nil {
+		panic(fmt.Errorf("close %v: %w", p, err))
+	}
+
+	f, err = os.OpenFile(p, os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		panic(fmt.Errorf("open append %v: %w", p, err))
+	}
+	if _, err := f.Write([]byte("R")); err != nil {
+		f.Close()
+		panic(fmt.Errorf("append %v: %w", p, err))
+	}
+	if err := f.Close(); err != nil {
+		panic(fmt.Errorf("close append %v: %w", p, err))
+	}
+	got, err := os.ReadFile(p)
+	if err != nil {
+		panic(fmt.Errorf("read %v: %w", p, err))
+	}
+	if string(got) != "12345678XYZQR" {
+		panic(fmt.Errorf("append data = %q, want %q",
+			got, "12345678XYZQR"))
+	}
+}
+
+func nfsPrivateWriters(l *log.Logger, dir string) {
+	l.Info("nfs mutation: private writers and retained readers")
+	p := path.Join(dir, "private.txt")
+	if err := os.WriteFile(p, []byte("original"), 0644); err != nil {
+		panic(err)
+	}
+	open := func(flags int) *os.File {
+		f, err := os.OpenFile(p, flags, 0644)
+		if err != nil {
+			panic(fmt.Errorf("open private writer test: %w", err))
+		}
+		return f
+	}
+	reader := open(os.O_RDONLY)
+	defer reader.Close()
+	first := open(os.O_RDWR)
+	defer first.Close()
+	second := open(os.O_RDWR)
+	defer second.Close()
+	write := func(f *os.File, data string, offset int64) {
+		if _, err := f.WriteAt([]byte(data), offset); err != nil {
+			panic(err)
+		}
+		if err := f.Sync(); err != nil {
+			panic(err)
+		}
+	}
+	check := func(f *os.File, want string) {
+		data := make([]byte, 1024)
+		n, err := f.ReadAt(data, 0)
+		if err != nil && err != io.EOF {
+			panic(err)
+		}
+		if string(data[:n]) != want {
+			panic(fmt.Errorf("private writer read = %q, want %q", data[:n], want))
+		}
+	}
+	write(first, "FIRST", 0)
+	write(second, "SECOND", 8)
+	check(reader, "original")
+	check(first, "FIRSTnal")
+	check(second, "originalSECOND")
+	if err := second.Close(); err != nil {
+		panic(err)
+	}
+	published := open(os.O_RDONLY)
+	defer published.Close()
+	check(published, "originalSECOND")
+	check(reader, "original")
+	if err := first.Close(); err != nil {
+		panic(err)
+	}
+	last := open(os.O_RDONLY)
+	defer last.Close()
+	check(last, "FIRSTnal")
+	check(published, "originalSECOND")
+	check(reader, "original")
+}
+
+func nfsVisibleCreation(l *log.Logger, dir string) {
+	l.Info("nfs mutation: empty published version before first close")
+	p := path.Join(dir, "visible.txt")
+	creator, err := os.OpenFile(p, os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		panic(err)
+	}
+	defer creator.Close()
+	if _, err := creator.Write([]byte("first")); err != nil {
+		panic(err)
+	}
+	if err := creator.Sync(); err != nil {
+		panic(err)
+	}
+	// A new read open discovers the published empty inode, even though the
+	// creator has already synced nonempty private data.
+	reader, err := os.Open(p)
+	if err != nil {
+		panic(fmt.Errorf("open new pathname before creator CLOSE: %w", err))
+	}
+	defer reader.Close()
+	info, err := reader.Stat()
+	if err != nil || info.Size() != 0 {
+		panic(fmt.Errorf("new published version must be empty: info=%v err=%v", info, err))
+	}
+	writer, err := os.OpenFile(p, os.O_RDWR, 0644)
+	if err != nil {
+		panic(err)
+	}
+	defer writer.Close()
+	info, err = writer.Stat()
+	if err != nil || info.Size() != 0 {
+		panic(fmt.Errorf("second writer must start empty: info=%v err=%v", info, err))
+	}
+	if _, err := writer.Write([]byte("second")); err != nil {
+		panic(err)
+	}
+	if err := writer.Sync(); err != nil {
+		panic(err)
+	}
+	checkPath := func(want string) {
+		got, err := os.ReadFile(p)
+		if err != nil || string(got) != want {
+			panic(fmt.Errorf("published data = %q, err=%v, want %q", got, err, want))
+		}
+	}
+	checkPath("")
+	if err := creator.Close(); err != nil {
+		panic(err)
+	}
+	checkPath("first")
+	if err := writer.Close(); err != nil {
+		panic(err)
+	}
+	checkPath("second")
+	buf := make([]byte, 16)
+	n, err := reader.Read(buf)
+	if n != 0 || err != io.EOF {
+		panic(fmt.Errorf("original reader changed: n=%d err=%v", n, err))
+	}
 }

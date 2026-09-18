@@ -2,40 +2,114 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//go:build libnfs
+//go:build linux && libnfs
 
-package main
+package libnfs
 
 import (
 	"fmt"
-	"net"
 	"os"
 	"path/filepath"
 	"sort"
 	"testing"
 )
 
-func connectLibnfs(t *testing.T, addr string) *libnfsClient {
-	t.Helper()
-	host, portStr, err := net.SplitHostPort(addr)
-	if err != nil {
-		t.Fatal(err)
+func TestLibnfs(t *testing.T) {
+	suite := newNFSTestSuite(t)
+	for _, tc := range []struct {
+		name string
+		run  func(*testing.T, *nfsTestSuite)
+	}{
+		{"PrivateMutableWriters", testLibnfsPrivateMutableWriters},
+		{"StatRoot", testLibnfsStatRoot},
+		{"ReadFile", testLibnfsReadFile},
+		{"ReadLargeFile", testLibnfsReadLargeFile},
+		{"ReadDir", testLibnfsReadDir},
+		{"SubdirNavigation", testLibnfsSubdirNavigation},
+		{"StatFile", testLibnfsStatFile},
+		{"Readlink", testLibnfsReadlink},
+		{"EmptyFile", testLibnfsEmptyFile},
+		{"EmptyDir", testLibnfsEmptyDir},
+		{"NonExistent", testLibnfsNonExistent},
+		{"ManyFiles", testLibnfsManyFiles},
+		{"recovery", runLibnfsRecovery},
+	} {
+		t.Run(tc.name, func(t *testing.T) { tc.run(t, suite) })
 	}
-	var port int
-	fmt.Sscanf(portStr, "%d", &port)
-	c, err := libnfsConnect(host, port)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return c
 }
 
-func TestLibnfs_StatRoot(t *testing.T) {
-	dir := t.TempDir()
-	addr, cleanup := startTestServer(t, dir)
-	defer cleanup()
+func connectLibnfs(t *testing.T, suite *nfsTestSuite, fixtureDir string) *libnfsProcessClient {
+	t.Helper()
+	server := suite.server(t)
+	server.seed(t, fixtureDir)
+	return server.clientAt(t, "/"+server.Name)
+}
 
-	c := connectLibnfs(t, addr)
+func testLibnfsPrivateMutableWriters(t *testing.T, suite *nfsTestSuite) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "private.txt"), []byte("original"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	c := connectLibnfs(t, suite, dir)
+	t.Cleanup(c.Close)
+	open := func(flags int) *libnfsProcessFile {
+		f, err := c.OpenFile("/private.txt", flags)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = f.Close() })
+		return f
+	}
+	reader := open(os.O_RDONLY)
+	first := open(os.O_RDWR)
+	second := open(os.O_RDWR)
+	check := func(f *libnfsProcessFile, want string) {
+		t.Helper()
+		got, err := f.Read()
+		if err != nil || string(got) != want {
+			t.Fatalf("read = %q, %v; want %q", got, err, want)
+		}
+	}
+	if err := first.WriteAt([]byte("XYZ"), 8); err != nil {
+		t.Fatal(err)
+	}
+	end, err := first.SyncSize()
+	if err != nil || end != 11 {
+		t.Fatalf("fsync/fstat size=%d err=%v", end, err)
+	}
+	if err := first.WriteAt([]byte("Q"), end); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.WriteAt([]byte("SECOND"), 0); err != nil {
+		t.Fatal(err)
+	}
+	check(reader, "original")
+	check(first, "originalXYZQ")
+	check(second, "SECONDal")
+	if err := second.Close(); err != nil {
+		t.Fatal(err)
+	}
+	check(reader, "original")
+	fresh := open(os.O_RDONLY)
+	check(fresh, "SECONDal")
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	check(reader, "original")
+	check(fresh, "SECONDal")
+	last := open(os.O_RDONLY)
+	check(last, "originalXYZQ")
+	// Close before destroying the libnfs context; Cleanup also handles failures.
+	for _, f := range []*libnfsProcessFile{reader, fresh, last} {
+		if err := f.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func testLibnfsStatRoot(t *testing.T, suite *nfsTestSuite) {
+	dir := t.TempDir()
+	c := connectLibnfs(t, suite, dir)
 	defer c.Close()
 
 	st, err := c.Stat("/")
@@ -47,15 +121,12 @@ func TestLibnfs_StatRoot(t *testing.T) {
 	}
 }
 
-func TestLibnfs_ReadFile(t *testing.T) {
+func testLibnfsReadFile(t *testing.T, suite *nfsTestSuite) {
 	dir := t.TempDir()
 	content := []byte("Hello from libnfs test!")
 	os.WriteFile(filepath.Join(dir, "test.txt"), content, 0644)
 
-	addr, cleanup := startTestServer(t, dir)
-	defer cleanup()
-
-	c := connectLibnfs(t, addr)
+	c := connectLibnfs(t, suite, dir)
 	defer c.Close()
 
 	data, err := c.ReadFile("/test.txt")
@@ -67,7 +138,7 @@ func TestLibnfs_ReadFile(t *testing.T) {
 	}
 }
 
-func TestLibnfs_ReadLargeFile(t *testing.T) {
+func testLibnfsReadLargeFile(t *testing.T, suite *nfsTestSuite) {
 	dir := t.TempDir()
 	content := make([]byte, 128*1024)
 	for i := range content {
@@ -75,10 +146,7 @@ func TestLibnfs_ReadLargeFile(t *testing.T) {
 	}
 	os.WriteFile(filepath.Join(dir, "large.bin"), content, 0644)
 
-	addr, cleanup := startTestServer(t, dir)
-	defer cleanup()
-
-	c := connectLibnfs(t, addr)
+	c := connectLibnfs(t, suite, dir)
 	defer c.Close()
 
 	data, err := c.ReadFile("/large.bin")
@@ -95,16 +163,13 @@ func TestLibnfs_ReadLargeFile(t *testing.T) {
 	}
 }
 
-func TestLibnfs_ReadDir(t *testing.T) {
+func testLibnfsReadDir(t *testing.T, suite *nfsTestSuite) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "aaa.txt"), []byte("A"), 0644)
 	os.WriteFile(filepath.Join(dir, "bbb.txt"), []byte("BB"), 0644)
 	os.Mkdir(filepath.Join(dir, "subdir"), 0755)
 
-	addr, cleanup := startTestServer(t, dir)
-	defer cleanup()
-
-	c := connectLibnfs(t, addr)
+	c := connectLibnfs(t, suite, dir)
 	defer c.Close()
 
 	names, err := c.ReadDir("/")
@@ -123,15 +188,12 @@ func TestLibnfs_ReadDir(t *testing.T) {
 	}
 }
 
-func TestLibnfs_SubdirNavigation(t *testing.T) {
+func testLibnfsSubdirNavigation(t *testing.T, suite *nfsTestSuite) {
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, "a", "b"), 0755)
 	os.WriteFile(filepath.Join(dir, "a", "b", "deep.txt"), []byte("deep"), 0644)
 
-	addr, cleanup := startTestServer(t, dir)
-	defer cleanup()
-
-	c := connectLibnfs(t, addr)
+	c := connectLibnfs(t, suite, dir)
 	defer c.Close()
 
 	data, err := c.ReadFile("/a/b/deep.txt")
@@ -151,15 +213,12 @@ func TestLibnfs_SubdirNavigation(t *testing.T) {
 	}
 }
 
-func TestLibnfs_StatFile(t *testing.T) {
+func testLibnfsStatFile(t *testing.T, suite *nfsTestSuite) {
 	dir := t.TempDir()
 	content := []byte("stat me")
 	os.WriteFile(filepath.Join(dir, "info.txt"), content, 0644)
 
-	addr, cleanup := startTestServer(t, dir)
-	defer cleanup()
-
-	c := connectLibnfs(t, addr)
+	c := connectLibnfs(t, suite, dir)
 	defer c.Close()
 
 	st, err := c.Stat("/info.txt")
@@ -174,15 +233,12 @@ func TestLibnfs_StatFile(t *testing.T) {
 	}
 }
 
-func TestLibnfs_Readlink(t *testing.T) {
+func testLibnfsReadlink(t *testing.T, suite *nfsTestSuite) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "target.txt"), []byte("target"), 0644)
 	os.Symlink("target.txt", filepath.Join(dir, "link.txt"))
 
-	addr, cleanup := startTestServer(t, dir)
-	defer cleanup()
-
-	c := connectLibnfs(t, addr)
+	c := connectLibnfs(t, suite, dir)
 	defer c.Close()
 
 	target, err := c.Readlink("/link.txt")
@@ -203,14 +259,11 @@ func TestLibnfs_Readlink(t *testing.T) {
 	}
 }
 
-func TestLibnfs_EmptyFile(t *testing.T) {
+func testLibnfsEmptyFile(t *testing.T, suite *nfsTestSuite) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "empty.txt"), nil, 0644)
 
-	addr, cleanup := startTestServer(t, dir)
-	defer cleanup()
-
-	c := connectLibnfs(t, addr)
+	c := connectLibnfs(t, suite, dir)
 	defer c.Close()
 
 	data, err := c.ReadFile("/empty.txt")
@@ -230,14 +283,11 @@ func TestLibnfs_EmptyFile(t *testing.T) {
 	}
 }
 
-func TestLibnfs_EmptyDir(t *testing.T) {
+func testLibnfsEmptyDir(t *testing.T, suite *nfsTestSuite) {
 	dir := t.TempDir()
 	os.Mkdir(filepath.Join(dir, "empty"), 0755)
 
-	addr, cleanup := startTestServer(t, dir)
-	defer cleanup()
-
-	c := connectLibnfs(t, addr)
+	c := connectLibnfs(t, suite, dir)
 	defer c.Close()
 
 	names, err := c.ReadDir("/empty")
@@ -249,12 +299,9 @@ func TestLibnfs_EmptyDir(t *testing.T) {
 	}
 }
 
-func TestLibnfs_NonExistent(t *testing.T) {
+func testLibnfsNonExistent(t *testing.T, suite *nfsTestSuite) {
 	dir := t.TempDir()
-	addr, cleanup := startTestServer(t, dir)
-	defer cleanup()
-
-	c := connectLibnfs(t, addr)
+	c := connectLibnfs(t, suite, dir)
 	defer c.Close()
 
 	_, err := c.Stat("/no-such-file.txt")
@@ -263,7 +310,7 @@ func TestLibnfs_NonExistent(t *testing.T) {
 	}
 }
 
-func TestLibnfs_ManyFiles(t *testing.T) {
+func testLibnfsManyFiles(t *testing.T, suite *nfsTestSuite) {
 	dir := t.TempDir()
 	var expected []string
 	for i := 0; i < 100; i++ {
@@ -273,10 +320,7 @@ func TestLibnfs_ManyFiles(t *testing.T) {
 	}
 	sort.Strings(expected)
 
-	addr, cleanup := startTestServer(t, dir)
-	defer cleanup()
-
-	c := connectLibnfs(t, addr)
+	c := connectLibnfs(t, suite, dir)
 	defer c.Close()
 
 	names, err := c.ReadDir("/")

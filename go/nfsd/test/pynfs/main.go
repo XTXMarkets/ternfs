@@ -2,23 +2,30 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//go:build ternnfs && pynfs
+//go:build linux
 
 package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
+	"errors"
+	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
-	"testing"
+	"syscall"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/test/internal/harness"
 )
 
 type pynfsCaseTiming struct {
@@ -65,15 +72,28 @@ func pynfsSkipSelectors(path string) ([]string, error) {
 	return selectors, nil
 }
 
-func TestPynfs(t *testing.T) {
+func main() {
+	var opts harness.Options
+	opts.Flags(flag.CommandLine)
+	short := flag.Bool("short", false, "skip pynfs timed cases")
+	timeout := flag.Duration("timeout", time.Hour, "overall run timeout")
+	flag.Parse()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	ctx, cancel := context.WithTimeout(ctx, *timeout)
+	defer cancel()
+	if err := run(ctx, opts, *short); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+func run(ctx context.Context, opts harness.Options, short bool) (err error) {
 	source := os.Getenv("PYNFS_SOURCE")
 	if source == "" {
 		source = filepath.Join(".deps", "pynfs")
 	}
-	source, err := filepath.Abs(source)
-	if err != nil {
-		t.Fatal(err)
-	}
+	source = harness.SourcePath(source)
 
 	python := os.Getenv("PYNFS_PYTHON")
 	if python == "" {
@@ -82,50 +102,73 @@ func TestPynfs(t *testing.T) {
 
 	testServer := filepath.Join(source, "nfs4.0", "testserver.py")
 	if _, err := os.Stat(testServer); err != nil {
-		t.Fatalf("pynfs runner not found: %v; run make fetch-pynfs", err)
+		return fmt.Errorf("pynfs runner not found: %w; run make fetch-pynfs", err)
 	}
 
-	addr, cleanup := startTernTestServer(t)
-	defer cleanup()
+	suite, err := harness.New(ctx, opts)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, suite.Close(err == nil)) }()
+	server, err := suite.Server(ctx)
+	if err != nil {
+		return err
+	}
 
-	resultsPath := filepath.Join(t.TempDir(), "pynfs-results.json")
+	resultsPath := filepath.Join(server.Dir, "pynfs-results.json")
 	args := []string{
 		"-u",
 		testServer,
-		fmt.Sprintf("nfs://%s/", addr),
+		fmt.Sprintf("nfs://%s/%s", server.Addr, server.Name),
 		"--maketree",
 		"--rundeps",
 		"--verbose",
-		"--jsonout", resultsPath,
 	}
 	args = append(args, strings.Fields(os.Getenv("PYNFS_ARGS"))...)
 
 	selectors := strings.Fields(os.Getenv("PYNFS_TESTS"))
 	if len(selectors) == 0 {
-		selectors = []string{"all"}
+		selectors = []string{"all", "noblock", "nochar", "nofifo", "nosocket", "nogss", "noacl", "nomode000"}
 	}
 	skipFile, configured := os.LookupEnv("PYNFS_SKIP_FILE")
 	if !configured {
-		skipFile = "pynfs_unsupported.txt"
+		skipFile = "test/pynfs/pynfs_unsupported.txt"
+	}
+	if skipFile != "" {
+		skipFile = harness.SourcePath(skipFile)
 	}
 	skipSelectors, err := pynfsSkipSelectors(skipFile)
 	if err != nil {
-		t.Fatalf("read pynfs unsupported-test manifest: %v", err)
+		return fmt.Errorf("read pynfs unsupported-test manifest: %w", err)
 	}
 	selectors = append(selectors, skipSelectors...)
+	if short {
+		selectors = append(selectors, "notimed")
+	}
+	// Keep failure evidence; the shared fixture removes this tree on success.
+	args = append(args, "--nocleanup", "--jsonout", resultsPath)
 	args = append(args, selectors...)
 
 	cmd := exec.Command(python, args...)
 	cmd.Dir = filepath.Join(source, "nfs4.0")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("pynfs runner failed: %v", err)
+	console, err := os.Create(filepath.Join(server.Dir, "pynfs.out"))
+	if err != nil {
+		return err
+	}
+	defer console.Close()
+	cmd.Stdout = io.MultiWriter(os.Stdout, console)
+	runner, err := harness.StartProcess(cmd, filepath.Join(server.Dir, "pynfs-stderr.log"))
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, runner.Stop(syscall.SIGTERM)) }()
+	if err := runner.Wait(ctx); err != nil {
+		return fmt.Errorf("pynfs runner failed: %w", err)
 	}
 
 	data, err := os.ReadFile(resultsPath)
 	if err != nil {
-		t.Fatalf("read pynfs results: %v", err)
+		return fmt.Errorf("read pynfs results: %w", err)
 	}
 	var results struct {
 		Tests    int `json:"tests"`
@@ -139,13 +182,13 @@ func TestPynfs(t *testing.T) {
 		} `json:"testcase"`
 	}
 	if err := json.Unmarshal(data, &results); err != nil {
-		t.Fatalf("decode pynfs results: %v", err)
+		return fmt.Errorf("decode pynfs results: %w", err)
 	}
 	var slowTests []pynfsCaseTiming
 	for _, testCase := range results.Testcase {
 		seconds, err := strconv.ParseFloat(testCase.Time, 64)
 		if err != nil {
-			t.Fatalf("decode duration for pynfs test %s: %v", testCase.Code, err)
+			return fmt.Errorf("decode duration for pynfs test %s: %w", testCase.Code, err)
 		}
 		duration := time.Duration(seconds * float64(time.Second))
 		if duration >= time.Second {
@@ -160,13 +203,17 @@ func TestPynfs(t *testing.T) {
 		return slowTests[i].duration > slowTests[j].duration
 	})
 	for _, testCase := range slowTests {
-		t.Logf("slow pynfs test: code=%s duration=%s name=%s",
+		fmt.Printf("slow pynfs test: code=%s duration=%s name=%s\n",
 			testCase.code, testCase.duration.Round(time.Millisecond), testCase.name)
 	}
-	t.Logf("pynfs results: tests=%d failures=%d errors=%d skipped=%d",
+	fmt.Printf("pynfs results: tests=%d failures=%d errors=%d skipped=%d\n",
 		results.Tests, results.Failures, results.Errors, results.Skipped)
+	if results.Tests <= results.Skipped {
+		return fmt.Errorf("pynfs ran no tests")
+	}
 	if results.Failures != 0 || results.Errors != 0 {
-		t.Fatalf("pynfs reported %d failures and %d errors",
+		return fmt.Errorf("pynfs reported %d failures and %d errors",
 			results.Failures, results.Errors)
 	}
+	return nil
 }
