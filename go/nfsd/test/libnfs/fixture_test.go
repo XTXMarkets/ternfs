@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/test/internal/harness"
 )
@@ -64,7 +65,9 @@ func (p *nfsTestProcess) alive(t *testing.T) {
 
 type nfsTestServer struct {
 	*harness.Server
-	clients int
+	process     *nfsTestProcess
+	clients     int
+	inspections int
 }
 
 func (s *nfsTestSuite) server(t *testing.T) *nfsTestServer {
@@ -78,12 +81,36 @@ func (s *nfsTestSuite) server(t *testing.T) *nfsTestServer {
 			t.Error(err)
 		}
 	})
-	return &nfsTestServer{Server: server}
+	return &nfsTestServer{Server: server, process: &nfsTestProcess{server.Process}}
 }
 
 func (s *nfsTestServer) seed(t *testing.T, dir string) {
 	t.Helper()
 	if err := s.Seed(dir); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (s *nfsTestServer) start(t *testing.T) {
+	t.Helper()
+	if err := s.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	s.process = &nfsTestProcess{s.Process}
+}
+
+func (s *nfsTestServer) restart(t *testing.T, sig syscall.Signal) {
+	t.Helper()
+	s.process.alive(t)
+	s.process.stop(t, sig)
+	s.start(t)
+}
+
+func waitForNFSTest(t *testing.T, what string, timeout time.Duration, ready func() bool) {
+	t.Helper()
+	if err := harness.WaitFor(t.Context(), what, timeout, func() (bool, error) {
+		return ready(), nil
+	}); err != nil {
 		t.Fatal(err)
 	}
 }

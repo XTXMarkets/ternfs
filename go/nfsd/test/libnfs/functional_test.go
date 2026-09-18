@@ -32,6 +32,7 @@ func TestLibnfs(t *testing.T) {
 		{"EmptyDir", testLibnfsEmptyDir},
 		{"NonExistent", testLibnfsNonExistent},
 		{"ManyFiles", testLibnfsManyFiles},
+		{"recovery", runLibnfsRecovery},
 	} {
 		t.Run(tc.name, func(t *testing.T) { tc.run(t, suite) })
 	}

@@ -88,9 +88,16 @@ func (f *libnfsFile) Read() ([]byte, error) {
 	return buf[:int(n)], nil
 }
 
-func (f *libnfsFile) SyncSize() (uint64, error) {
+func (f *libnfsFile) Sync() error {
 	if ret := C.nfs_fsync(f.client.nfs, f.fh); ret != 0 {
-		return 0, f.client.error("nfs_fsync", ret)
+		return f.client.error("nfs_fsync", ret)
+	}
+	return nil
+}
+
+func (f *libnfsFile) SyncSize() (uint64, error) {
+	if err := f.Sync(); err != nil {
+		return 0, err
 	}
 	var st C.struct_nfs_stat_64
 	if C.nfs_fstat64(f.client.nfs, f.fh, &st) != 0 {
