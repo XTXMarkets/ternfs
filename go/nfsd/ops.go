@@ -7,6 +7,7 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"os"
 	"time"
 )
@@ -16,6 +17,9 @@ const (
 	unstable4 = 0
 	dataSync4 = 1
 	fileSync4 = 2
+
+	maxTernBytesLength = 255
+	maxTernNameLength  = maxTernBytesLength
 )
 
 type defaultResponseWriter interface {
@@ -38,16 +42,136 @@ func finishStatusResponse(r statusResponseWriter, status uint32) uint32 {
 	return status
 }
 
+func toTernFSName(data []byte) (string, uint32) {
+	switch {
+	case len(data) == 0:
+		return "", NFS4ERR_INVAL
+	case len(data) > maxTernNameLength:
+		return "", NFS4ERR_NAMETOOLONG
+	case bytes.Equal(data, []byte(".")),
+		bytes.Equal(data, []byte("..")),
+		bytes.IndexByte(data, '/') >= 0,
+		bytes.IndexByte(data, 0) >= 0:
+		return "", NFS4ERR_BADNAME
+	default:
+		return string(data), NFS4_OK
+	}
+}
+
+func requireDirectory(id InodeID) uint32 {
+	switch id.Type() {
+	case InodeTypeDir:
+		return NFS4_OK
+	case InodeTypeSymlink:
+		return NFS4ERR_SYMLINK
+	default:
+		return NFS4ERR_NOTDIR
+	}
+}
+
+func requireRegularFile(id InodeID) uint32 {
+	switch id.Type() {
+	case InodeTypeFile:
+		return NFS4_OK
+	case InodeTypeDir:
+		return NFS4ERR_ISDIR
+	default:
+		return NFS4ERR_INVAL
+	}
+}
+
+// lookupDurableOpen requires valid local protocol state and a fleet-wide
+// lease. The lease invalidates stale local state after a reboot is confirmed.
+// After an nfsd restart there is no local state; the staging sidecar is then
+// the durable proof that this stateid is the confirmed write-open for this
+// transient file.
+func (s *Server) lookupDurableOpen(
+	stateid Stateid4,
+	fileID InodeID,
+) (openState, uint32) {
+	state, status := s.opens.lookup(
+		extractStateID(stateid),
+		stateid.Seqid(),
+		fileID,
+	)
+	if status != NFS4_OK {
+		id := extractStateID(stateid)
+		meta, hasMeta := s.stagingStore.GetMeta(fileID)
+		if !hasMeta || meta.NFSStateID != id || !s.opens.canRecover(id) {
+			return openState{}, status
+		}
+		if meta.ClientID != 0 {
+			active, err := s.clients.HasOpen(meta.ClientID, id)
+			if err != nil {
+				return openState{}, clientStoreErrToNFS(err)
+			}
+			if !active {
+				s.stagingStore.Remove(fileID)
+				return openState{}, NFS4ERR_EXPIRED
+			}
+		}
+		return openState{
+			id:         id,
+			fileID:     fileID,
+			owner:      openOwnerKey{clientID: meta.ClientID},
+			write:      true,
+			generation: stateid.Seqid(),
+			confirmed:  true,
+		}, NFS4_OK
+	}
+	if status := s.requireActiveOpen(state); status != NFS4_OK {
+		if status == NFS4ERR_EXPIRED {
+			s.expireClientState(state.owner.clientID)
+		}
+		return openState{}, status
+	}
+	return state, NFS4_OK
+}
+
+func (s *Server) requireActiveOpen(state openState) uint32 {
+	active, err := s.clients.HasOpen(state.owner.clientID, state.id)
+	if err != nil {
+		return clientStoreErrToNFS(err)
+	}
+	if !active {
+		return NFS4ERR_EXPIRED
+	}
+	return NFS4_OK
+}
+
+// expireClientState drops local state without revoking a confirmed clientid.
+func (s *Server) expireClientState(clientID uint64) {
+	for _, state := range s.opens.clientStates(clientID) {
+		if err := s.clients.RemoveOpen(clientID, state.id); err != nil &&
+			nfsErrCode(err) != NFS4ERR_STALE_CLIENTID {
+			s.log.Error("expire client: remove active-open record",
+				"clientid", clientID, "stateid", state.id, "err", err)
+			return
+		}
+	}
+	for _, state := range s.opens.expireClient(clientID) {
+		if state.write {
+			s.stagingStore.Remove(state.fileID)
+		}
+	}
+}
+
 func (s *Server) opAccess(args ACCESS4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
 	if !st.currentIDSet {
 		ew := w.AppendResarray_Access()
 		return finishDefaultResponse(w, &ew, NFS4ERR_NOFILEHANDLE)
 	}
-	requested := args.Access()
+	meaningful := uint32(ACCESS4_READ | ACCESS4_MODIFY | ACCESS4_EXTEND)
+	if st.currentID.Type() == InodeTypeDir {
+		meaningful |= ACCESS4_LOOKUP | ACCESS4_DELETE
+	} else {
+		meaningful |= ACCESS4_EXECUTE
+	}
+	requested := args.Access() & meaningful
 	ew := w.AppendResarray_Access()
 	ok := ew.SetValue_Nfs4Ok()
 	ok.SetSupported(requested)
-	ok.SetAccess(requested) // grant everything requested
+	ok.SetAccess(requested)
 	w.Resume(ew.Finish())
 	return NFS4_OK
 }
@@ -59,14 +183,89 @@ func (s *Server) opClose(args CLOSE4args, st *compoundState, w *COMPOUND4resWrit
 	}
 
 	sid := extractStateID(args.OpenStateid())
-
-	// Check if there's a staging file for the current filehandle.
 	meta, hasMeta := s.stagingStore.GetMeta(st.currentID)
+	op, state, response, replay, status := s.opens.startClose(
+		sid,
+		args.OpenStateid().Seqid(),
+		st.currentID,
+		args.Seqid(),
+	)
+	var recovered *recoveredCloseOperation
+	if op == nil && !replay && status != NFS4_OK &&
+		hasMeta && sid == meta.NFSStateID && s.opens.canRecover(sid) {
+		recovered, response, replay, status = s.opens.startRecoveredClose(
+			sid,
+			st.currentID,
+			args.OpenStateid().Seqid(),
+			args.Seqid(),
+		)
+	}
+	if op == nil && recovered == nil {
+		if replay {
+			if response.status == NFS4_OK &&
+				response.state.owner.clientID != 0 {
+				if err := s.clients.RemoveOpen(
+					response.state.owner.clientID, sid,
+				); err != nil {
+					s.log.Error("close: remove active-open record", "err", err)
+				}
+			}
+			return writeCloseResponse(w, response)
+		}
+		ew := w.AppendResarray_Close()
+		ew.SetValue_Default(status)
+		w.Resume(ew.Finish())
+		return status
+	}
+	if op != nil {
+		defer op.finishServerFaultIfNeeded()
+	} else {
+		defer recovered.finishServerFaultIfNeeded()
+	}
+	fail := func(status uint32) uint32 {
+		if op != nil {
+			response = op.finishError(status)
+		} else {
+			response = recovered.finish(status)
+		}
+		return writeCloseResponse(w, response)
+	}
+	if op != nil {
+		if status := s.requireActiveOpen(state); status != NFS4_OK {
+			response = op.finishError(status)
+			if status == NFS4ERR_EXPIRED {
+				s.expireClientState(state.owner.clientID)
+			}
+			return writeCloseResponse(w, response)
+		}
+	}
+
+	// GetMeta before startClose is only a hint for restart recovery. Re-read
+	// it after taking the owner operation so a waiting CLOSE cannot act on
+	// staging removed by the operation ahead of it.
+	meta, hasMeta = s.stagingStore.GetMeta(st.currentID)
+	if recovered != nil {
+		if !hasMeta {
+			return fail(NFS4ERR_EXPIRED)
+		}
+		if meta.ClientID != 0 {
+			active, err := s.clients.HasOpen(meta.ClientID, sid)
+			if err != nil {
+				return fail(clientStoreErrToNFS(err))
+			}
+			if !active {
+				s.stagingStore.Remove(st.currentID)
+				return fail(NFS4ERR_EXPIRED)
+			}
+		}
+	}
+
+	expiredClose := false
+	// Check if there's a staging file for the current filehandle.
 	if hasMeta {
 		// First CLOSE for a write-open: link the transient file.
 		if sid != meta.NFSStateID {
-			ew := w.AppendResarray_Close()
-			return finishDefaultResponse(w, &ew, NFS4ERR_BAD_STATEID)
+			return fail(NFS4ERR_BAD_STATEID)
 		}
 		sf := s.stagingStore.Get(st.currentID)
 		if sf == nil {
@@ -85,25 +284,57 @@ func (s *Server) opClose(args CLOSE4args, st *compoundState, w *COMPOUND4resWrit
 		if linkErr != nil {
 			status := s.errToNFS(linkErr)
 			s.log.Error("close: link file", "err", linkErr, "status", Nfsstat4Name(status))
-			ew := w.AppendResarray_Close()
-			return finishDefaultResponse(w, &ew, status)
+			return fail(status)
 		}
 	} else {
-		// No staging: either a read-close or a replay of a write-close.
-		// Check if the file still exists. For read opens the file is
-		// immutable and always exists. For write-close replays the file
-		// exists if LinkFile succeeded previously. If the transient was
-		// GC'd without being linked, Stat fails and we report expired.
-		if _, err := s.fs.Stat(st.currentID); err != nil {
-			ew := w.AppendResarray_Close()
-			return finishDefaultResponse(w, &ew, NFS4ERR_EXPIRED)
+		// Read CLOSE does not need the file to remain linked. A write CLOSE
+		// without staging has lost the data it was meant to publish.
+		if op != nil && state.write {
+			s.log.Error("close: write staging missing",
+				"file_id", st.currentID, "stateid", sid)
+			response = op.finishExpiredClose()
+			expiredClose = true
 		}
 	}
 
+	if !expiredClose {
+		if op != nil {
+			response = op.finishClose(
+				sid,
+				args.OpenStateid().Seqid(),
+				st.currentID,
+			)
+		} else {
+			response = recovered.finish(NFS4_OK)
+		}
+	}
+	openClientID := response.state.owner.clientID
+	if recovered != nil {
+		openClientID = meta.ClientID
+	}
+	if openClientID != 0 {
+		if err := s.clients.RemoveOpen(openClientID, sid); err != nil {
+			// A recovered-CLOSE replay does not retain the clientid, so it
+			// cannot retry this removal.
+			s.log.Error("close: remove active-open record", "err", err)
+		}
+	}
+	return writeCloseResponse(w, response)
+}
+
+func writeCloseResponse(
+	w *COMPOUND4resWriter,
+	response openOwnerResponse,
+) uint32 {
 	ew := w.AppendResarray_Close()
+	if response.status != NFS4_OK {
+		ew.SetValue_Default(response.status)
+		w.Resume(ew.Finish())
+		return response.status
+	}
 	stid := ew.SetValue_Nfs4Ok()
-	stid.SetSeqid(args.OpenStateid().Seqid() + 1)
-	writeStateID(stid, sid)
+	stid.SetSeqid(response.state.generation)
+	writeStateID(stid, response.state.id)
 	w.Resume(ew.Finish())
 	return NFS4_OK
 }
@@ -112,6 +343,12 @@ func (s *Server) opCommit(st *compoundState, w *COMPOUND4resWriter) uint32 {
 	if !st.currentIDSet {
 		ew := w.AppendResarray_Commit()
 		return finishDefaultResponse(w, &ew, NFS4ERR_NOFILEHANDLE)
+	}
+	if status := requireRegularFile(st.currentID); status != NFS4_OK {
+		ew := w.AppendResarray_Commit()
+		ew.SetValue_Default(status)
+		w.Resume(ew.Finish())
+		return status
 	}
 
 	// Sync the staging file for the current filehandle.
@@ -131,13 +368,56 @@ func (s *Server) opCreate(args CREATE4args, st *compoundState, w *COMPOUND4resWr
 		ew := w.AppendResarray_Create()
 		return finishDefaultResponse(w, &ew, NFS4ERR_NOFILEHANDLE)
 	}
+	if st.currentID.Type() != InodeTypeDir {
+		ew := w.AppendResarray_Create()
+		ew.SetValue_Default(NFS4ERR_NOTDIR)
+		w.Resume(ew.Finish())
+		return NFS4ERR_NOTDIR
+	}
 	if s.stagingStore.ReadOnly() {
 		ew := w.AppendResarray_Create()
 		return finishDefaultResponse(w, &ew, NFS4ERR_ROFS)
 	}
 
-	name := string(args.Objname().Data())
+	name, status := toTernFSName(args.Objname().Data())
+	if status != NFS4_OK {
+		ew := w.AppendResarray_Create()
+		ew.SetValue_Default(status)
+		w.Resume(ew.Finish())
+		return status
+	}
 	objType := args.ObjtypeType()
+	switch objType {
+	case NF4DIR, NF4LNK:
+	case NF4REG:
+		ew := w.AppendResarray_Create()
+		ew.SetValue_Default(NFS4ERR_BADTYPE)
+		w.Resume(ew.Finish())
+		return NFS4ERR_BADTYPE
+	default:
+		// We don't support creating block/char/socket/fifo devices.
+		ew := w.AppendResarray_Create()
+		ew.SetValue_Default(NFS4ERR_NOTSUPP)
+		w.Resume(ew.Finish())
+		return NFS4ERR_NOTSUPP
+	}
+	if status := validateCreateAttrs(args.Createattrs()); status != NFS4_OK {
+		ew := w.AppendResarray_Create()
+		ew.SetValue_Default(status)
+		w.Resume(ew.Finish())
+		return status
+	}
+	if _, err := s.fs.Lookup(st.currentID, name); err == nil {
+		ew := w.AppendResarray_Create()
+		ew.SetValue_Default(NFS4ERR_EXIST)
+		w.Resume(ew.Finish())
+		return NFS4ERR_EXIST
+	} else if status := s.errToNFS(err); status != NFS4ERR_NOENT {
+		ew := w.AppendResarray_Create()
+		ew.SetValue_Default(status)
+		w.Resume(ew.Finish())
+		return status
+	}
 
 	var newID InodeID
 	var err error
@@ -146,12 +426,21 @@ func (s *Server) opCreate(args CREATE4args, st *compoundState, w *COMPOUND4resWr
 	case NF4DIR:
 		newID, err = s.fs.Mkdir(st.currentID, name)
 	case NF4LNK:
-		target := string(args.Objtype().AsLinktext4().Data())
+		targetData := args.Objtype().AsLinktext4().Data()
+		if len(targetData) == 0 {
+			ew := w.AppendResarray_Create()
+			ew.SetValue_Default(NFS4ERR_INVAL)
+			w.Resume(ew.Finish())
+			return NFS4ERR_INVAL
+		}
+		if len(targetData) > maxTernBytesLength {
+			ew := w.AppendResarray_Create()
+			ew.SetValue_Default(NFS4ERR_NAMETOOLONG)
+			w.Resume(ew.Finish())
+			return NFS4ERR_NAMETOOLONG
+		}
+		target := string(targetData)
 		newID, err = s.fs.Symlink(st.currentID, name, target)
-	default:
-		// We don't support creating block/char/socket/fifo devices.
-		ew := w.AppendResarray_Create()
-		return finishDefaultResponse(w, &ew, NFS4ERR_NOTSUPP)
 	}
 
 	if err != nil {
@@ -214,6 +503,12 @@ func (s *Server) opGetattr(args GETATTR4args, st *compoundState, w *COMPOUND4res
 	}
 
 	reqMask := parseBitmap(args.AttrRequest())
+	if status := validateGetattrMask(reqMask); status != NFS4_OK {
+		ew := w.AppendResarray_Getattr()
+		ew.SetValue_Default(status)
+		w.Resume(ew.Finish())
+		return status
+	}
 
 	ew := w.AppendResarray_Getattr()
 	okW := ew.SetValue_Nfs4Ok()
@@ -288,7 +583,17 @@ func (s *Server) opLookup(args LOOKUP4args, st *compoundState, w *COMPOUND4resWr
 		r := w.AppendResarray_Lookup()
 		return finishStatusResponse(&r, NFS4ERR_NOFILEHANDLE)
 	}
-	name := string(args.Objname().Data())
+	if status := requireDirectory(st.currentID); status != NFS4_OK {
+		r := w.AppendResarray_Lookup()
+		r.SetStatus(status)
+		return status
+	}
+	name, status := toTernFSName(args.Objname().Data())
+	if status != NFS4_OK {
+		r := w.AppendResarray_Lookup()
+		r.SetStatus(status)
+		return status
+	}
 	// Hide the internal .nfs directory from client access.
 	if name == nfsDirName && st.currentID == s.fs.RootID() {
 		r := w.AppendResarray_Lookup()
@@ -310,6 +615,16 @@ func (s *Server) opLookupp(st *compoundState, w *COMPOUND4resWriter) uint32 {
 	if !st.currentIDSet {
 		r := w.AppendResarray_Lookupp()
 		return finishStatusResponse(&r, NFS4ERR_NOFILEHANDLE)
+	}
+	if status := requireDirectory(st.currentID); status != NFS4_OK {
+		r := w.AppendResarray_Lookupp()
+		r.SetStatus(status)
+		return status
+	}
+	if st.currentID == s.fs.RootID() {
+		r := w.AppendResarray_Lookupp()
+		r.SetStatus(NFS4ERR_NOENT)
+		return NFS4ERR_NOENT
 	}
 	id, err := s.fs.LookupParent(st.currentID)
 	if err != nil {
@@ -349,17 +664,55 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 		return finishDefaultResponse(w, &ew, NFS4ERR_NOFILEHANDLE)
 	}
 
-	// Reject all writes if read-only (no staging directory configured).
-	access := args.ShareAccess()
-	if s.stagingStore.ReadOnly() && access&OPEN4_SHARE_ACCESS_WRITE != 0 {
-		ew := w.AppendResarray_Open()
-		return finishDefaultResponse(w, &ew, NFS4ERR_ROFS)
-	}
-
 	claim := args.Claim()
 	claimType := args.ClaimType()
 	owner := args.Owner()
 	clientID := owner.Clientid()
+	confirmed, err := s.clients.IsConfirmed(clientID)
+	if err != nil {
+		return writeOpenError(w, clientStoreErrToNFS(err))
+	}
+	if !confirmed {
+		return writeOpenError(w, NFS4ERR_STALE_CLIENTID)
+	}
+	ownerKey := openOwnerKey{
+		clientID: clientID,
+		owner:    string(owner.Owner()),
+	}
+	op, response, replay, status := s.opens.startOpen(
+		ownerKey, args.Seqid())
+	if replay {
+		if response.status == NFS4_OK {
+			if err := s.clients.MarkOpen(
+				clientID, response.state.id,
+			); err != nil {
+				return writeOpenError(w, clientStoreErrToNFS(err))
+			}
+		}
+		return writeOpenResponse(w, st, response)
+	}
+	if op == nil {
+		return writeOpenError(w, status)
+	}
+	defer op.finishServerFaultIfNeeded()
+	for _, state := range op.abandoned {
+		if state.write {
+			s.stagingStore.Remove(state.fileID)
+		}
+		if err := s.clients.RemoveOpen(clientID, state.id); err != nil {
+			s.log.Error("open: remove abandoned marker", "err", err)
+		}
+	}
+	fail := func(status uint32) uint32 {
+		response = op.finishError(status)
+		return writeOpenResponse(w, st, response)
+	}
+
+	// Failures from this point participate in the open-owner sequence.
+	access := args.ShareAccess()
+	if s.stagingStore.ReadOnly() && access&OPEN4_SHARE_ACCESS_WRITE != 0 {
+		return fail(NFS4ERR_ROFS)
+	}
 
 	var targetID InodeID
 	var nfsSID StateID
@@ -368,15 +721,31 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 	switch claimType {
 	case CLAIM_NULL:
 		dirID := st.currentID
-		fileName := string(claim.AsNull().Data())
+		if status := requireDirectory(dirID); status != NFS4_OK {
+			return fail(status)
+		}
+		fileName, status := toTernFSName(claim.AsNull().Data())
+		if status != NFS4_OK {
+			return fail(status)
+		}
 
 		// Check if this is a create.
 		if args.OpenhowType() == OPEN4_CREATE {
+			createHow := args.Openhow().AsCreatehow4Entry()
 			// EXCLUSIVE4 not supported — clients should fall back
 			// to GUARDED4 or UNCHECKED4.
-			if args.Openhow().AsCreatehow4Entry().Disc() == EXCLUSIVE4 {
-				ew := w.AppendResarray_Open()
-				return finishDefaultResponse(w, &ew, NFS4ERR_NOTSUPP)
+			if createHow.Disc() == EXCLUSIVE4 {
+				return fail(NFS4ERR_NOTSUPP)
+			}
+			var createAttrs Fattr4
+			switch createHow.Disc() {
+			case UNCHECKED4:
+				createAttrs = createHow.Value().AsUnchecked4()
+			case GUARDED4:
+				createAttrs = createHow.Value().AsGuarded4()
+			}
+			if status := validateCreateAttrs(createAttrs); status != NFS4_OK {
+				return fail(status)
 			}
 			// Try lookup first.
 			id, err := s.fs.Lookup(dirID, fileName)
@@ -385,31 +754,31 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 				var fileCookie Cookie
 				id, fileCookie, err = s.fs.ConstructFile(dirID)
 				if err != nil {
-					ew := w.AppendResarray_Open()
-					return finishDefaultResponse(w, &ew, s.errToNFS(err))
+					return fail(s.errToNFS(err))
 				}
 				// Generate a random NFS stateid and create staging with metadata.
-				nfsSID = newNFSStateID()
+				nfsSID = s.opens.newStateID()
 				meta := StagingMeta{
 					DirID:      dirID,
 					FileName:   fileName,
 					TernCookie: fileCookie,
 					NFSStateID: nfsSID,
+					ClientID:   clientID,
 				}
 				if _, sfErr := s.stagingStore.Create(id, meta); sfErr != nil {
 					s.log.Error("staging create error", "err", sfErr)
-					ew := w.AppendResarray_Open()
-					return finishDefaultResponse(w, &ew, NFS4ERR_IO)
+					return fail(NFS4ERR_IO)
 				}
 				created = true
+			} else if createHow.Disc() == GUARDED4 {
+				return fail(NFS4ERR_EXIST)
 			}
 			targetID = id
 		} else {
 			id, err := s.fs.Lookup(dirID, fileName)
 			if err != nil {
-				ew := w.AppendResarray_Open()
 				status := s.errToNFS(err)
-				return finishDefaultResponse(w, &ew, status)
+				return fail(status)
 			}
 			targetID = id
 		}
@@ -417,41 +786,75 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 		// Files are immutable: reject write access to existing files.
 		// To replace a file, clients must remove + create.
 		if !created && access&OPEN4_SHARE_ACCESS_WRITE != 0 {
-			ew := w.AppendResarray_Open()
-			return finishDefaultResponse(w, &ew, NFS4ERR_PERM)
+			return fail(NFS4ERR_PERM)
 		}
 	case CLAIM_PREVIOUS:
 		// No grace period — there is no lock/open state to reclaim.
-		ew := w.AppendResarray_Open()
-		return finishDefaultResponse(w, &ew, NFS4ERR_NO_GRACE)
+		return fail(NFS4ERR_NO_GRACE)
 	default:
-		ew := w.AppendResarray_Open()
-		return finishDefaultResponse(w, &ew, NFS4ERR_NOTSUPP)
+		return fail(NFS4ERR_NOTSUPP)
 	}
 
-	// For read opens, derive a deterministic stateid from the file and client.
-	if !created {
-		nfsSID = deriveReadStateID(targetID, clientID)
+	if status := requireRegularFile(targetID); status != NFS4_OK {
+		if targetID.Type() == InodeTypeSymlink {
+			status = NFS4ERR_SYMLINK
+		}
+		return fail(status)
 	}
 
-	st.setCurrent(targetID)
+	markID := nfsSID
+	if existing, ok := op.existingOpen(targetID); ok {
+		markID = existing.id
+	}
+	if markID == (StateID{}) {
+		markID = s.opens.newStateID()
+		nfsSID = markID
+	}
+	if err := s.clients.MarkOpen(clientID, markID); err != nil {
+		if created {
+			s.stagingStore.Remove(targetID)
+		}
+		return fail(clientStoreErrToNFS(err))
+	}
+	response = op.finishOpen(
+		targetID,
+		access&OPEN4_SHARE_ACCESS_WRITE != 0,
+		nfsSID,
+		created,
+	)
+	return writeOpenResponse(w, st, response)
+}
 
+func writeOpenResponse(
+	w *COMPOUND4resWriter,
+	st *compoundState,
+	response openOwnerResponse,
+) uint32 {
 	ew := w.AppendResarray_Open()
+	if response.status != NFS4_OK {
+		ew.SetValue_Default(response.status)
+		w.Resume(ew.Finish())
+		return response.status
+	}
+	state := response.state
+	st.currentID = state.fileID
+	st.currentIDSet = true
 	okW := ew.SetValue_Nfs4Ok()
 
 	stid := okW.Stateid()
-	stid.SetSeqid(1)
-	writeStateID(stid, nfsSID)
+	stid.SetSeqid(state.generation)
+	writeStateID(stid, state.id)
 
 	cinfo := okW.Cinfo()
-	now := uint64(time.Now().UnixNano())
-	if created {
-		cinfo.SetValues(TRUE, now-1, now)
-	} else {
-		cinfo.SetValues(TRUE, now, now)
-	}
+	cinfo.SetAtomic(TRUE)
+	cinfo.SetBefore(response.changeBefore)
+	cinfo.SetAfter(response.changeAfter)
 
-	okW.SetRflags(OPEN4_RESULT_LOCKTYPE_POSIX)
+	rflags := uint32(OPEN4_RESULT_LOCKTYPE_POSIX)
+	if response.requireConfirm {
+		rflags |= OPEN4_RESULT_CONFIRM
+	}
+	okW.SetRflags(rflags)
 
 	bmW := okW.StartAttrset()
 	buf := bmW.Finish()
@@ -465,15 +868,11 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 	return NFS4_OK
 }
 
-// deriveReadStateID produces a deterministic stateid for read opens.
-// The stateid encodes the InodeID and a hash of the client ID, so any
-// server instance can recompute it without persistent state.
-func deriveReadStateID(fileID InodeID, clientID uint64) StateID {
-	var sid StateID
-	binary.BigEndian.PutUint64(sid[0:8], uint64(fileID))
-	// Mix in the client ID for basic validation.
-	binary.BigEndian.PutUint32(sid[8:12], uint32(clientID^(clientID>>32)))
-	return sid
+func writeOpenError(w *COMPOUND4resWriter, status uint32) uint32 {
+	ew := w.AppendResarray_Open()
+	ew.SetValue_Default(status)
+	w.Resume(ew.Finish())
+	return status
 }
 
 func (s *Server) opOpenConfirm(args OPENCONFIRM4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
@@ -483,21 +882,64 @@ func (s *Server) opOpenConfirm(args OPENCONFIRM4args, st *compoundState, w *COMP
 	}
 
 	sid := extractStateID(args.OpenStateid())
-	seqid := args.OpenStateid().Seqid()
+	op, state, response, replay, status := s.opens.startConfirm(
+		sid,
+		args.OpenStateid().Seqid(),
+		st.currentID,
+		args.Seqid(),
+	)
+	if replay {
+		if response.status == NFS4_OK {
+			response.status = s.requireActiveOpen(response.state)
+			if response.status == NFS4ERR_EXPIRED {
+				s.expireClientState(response.state.owner.clientID)
+			}
+		}
+		return writeOpenConfirmResponse(w, response)
+	}
+	if op == nil {
+		ew := w.AppendResarray_OpenConfirm()
+		ew.SetValue_Default(status)
+		w.Resume(ew.Finish())
+		return status
+	}
+	defer op.finishServerFaultIfNeeded()
+	if status := s.requireActiveOpen(state); status != NFS4_OK {
+		response = op.finishError(status)
+		if status == NFS4ERR_EXPIRED {
+			s.expireClientState(state.owner.clientID)
+		}
+		return writeOpenConfirmResponse(w, response)
+	}
+	response = op.finishConfirm(
+		sid,
+		args.OpenStateid().Seqid(),
+		st.currentID,
+	)
+	return writeOpenConfirmResponse(w, response)
+}
 
-	// No persistent open state to confirm — just echo the stateid
-	// with an incremented seqid.
+func writeOpenConfirmResponse(
+	w *COMPOUND4resWriter,
+	response openOwnerResponse,
+) uint32 {
 	ew := w.AppendResarray_OpenConfirm()
+	if response.status != NFS4_OK {
+		ew.SetValue_Default(response.status)
+		w.Resume(ew.Finish())
+		return response.status
+	}
 	ok := ew.SetValue_Nfs4Ok()
 	stid := ok.OpenStateid()
-	stid.SetSeqid(seqid + 1)
-	writeStateID(stid, sid)
+	stid.SetSeqid(response.state.generation)
+	writeStateID(stid, response.state.id)
 	w.Resume(ew.Finish())
 	return NFS4_OK
 }
 
 func (s *Server) opOpenDowngrade(st *compoundState, w *COMPOUND4resWriter) uint32 {
-	// No persistent open state — downgrade is a no-op.
+	// Existing immutable files cannot be upgraded from read to write, and no
+	// supported client has required a downgrade.
 	ew := w.AppendResarray_OpenDowngrade()
 	return finishDefaultResponse(w, &ew, NFS4ERR_NOTSUPP)
 }
@@ -513,6 +955,18 @@ func (s *Server) opPutfh(args PUTFH4args, st *compoundState, w *COMPOUND4resWrit
 	if !ok {
 		r := w.AppendResarray_Putfh()
 		return finishStatusResponse(&r, NFS4ERR_BADHANDLE)
+	}
+	internal, err := s.clients.isInternalFilehandle(id)
+	if err != nil {
+		r := w.AppendResarray_Putfh()
+		status := clientStoreErrToNFS(err)
+		r.SetStatus(status)
+		return status
+	}
+	if internal {
+		r := w.AppendResarray_Putfh()
+		r.SetStatus(NFS4ERR_BADHANDLE)
+		return NFS4ERR_BADHANDLE
 	}
 	st.setCurrent(id)
 	r := w.AppendResarray_Putfh()
@@ -535,6 +989,22 @@ func (s *Server) opRead(args READ4args, st *compoundState, w *COMPOUND4resWriter
 	if !st.currentIDSet {
 		ew := w.AppendResarray_Read()
 		return finishDefaultResponse(w, &ew, NFS4ERR_NOFILEHANDLE)
+	}
+	if status := requireRegularFile(st.currentID); status != NFS4_OK {
+		ew := w.AppendResarray_Read()
+		ew.SetValue_Default(status)
+		w.Resume(ew.Finish())
+		return status
+	}
+
+	if !isSpecialStateID(args.Stateid()) {
+		_, status := s.lookupDurableOpen(args.Stateid(), st.currentID)
+		if status != NFS4_OK {
+			ew := w.AppendResarray_Read()
+			ew.SetValue_Default(status)
+			w.Resume(ew.Finish())
+			return status
+		}
 	}
 
 	// Check if we should read from a staging buffer.
@@ -579,8 +1049,20 @@ func (s *Server) opReaddir(args READDIR4args, st *compoundState, w *COMPOUND4res
 		ew := w.AppendResarray_Readdir()
 		return finishDefaultResponse(w, &ew, NFS4ERR_NOFILEHANDLE)
 	}
+	if status := requireDirectory(st.currentID); status != NFS4_OK {
+		ew := w.AppendResarray_Readdir()
+		ew.SetValue_Default(status)
+		w.Resume(ew.Finish())
+		return status
+	}
 
 	cookie := args.Cookie()
+	if cookie == 1 || cookie == 2 {
+		ew := w.AppendResarray_Readdir()
+		ew.SetValue_Default(NFS4ERR_BAD_COOKIE)
+		w.Resume(ew.Finish())
+		return NFS4ERR_BAD_COOKIE
+	}
 	maxCount := args.Maxcount()
 	if maxCount > 1<<20 {
 		maxCount = 1 << 20
@@ -613,6 +1095,12 @@ func (s *Server) opReaddir(args READDIR4args, st *compoundState, w *COMPOUND4res
 	}
 
 	reqMask := parseBitmap(args.AttrRequest())
+	if status := validateGetattrMask(reqMask); status != NFS4_OK {
+		ew := w.AppendResarray_Readdir()
+		ew.SetValue_Default(status)
+		w.Resume(ew.Finish())
+		return status
+	}
 	dirCount := args.Dircount()
 	if dirCount > 1<<20 {
 		dirCount = 1 << 20
@@ -727,6 +1215,12 @@ func (s *Server) opReadlink(st *compoundState, w *COMPOUND4resWriter) uint32 {
 		ew := w.AppendResarray_Readlink()
 		return finishDefaultResponse(w, &ew, NFS4ERR_NOFILEHANDLE)
 	}
+	if st.currentID.Type() != InodeTypeSymlink {
+		ew := w.AppendResarray_Readlink()
+		ew.SetValue_Default(NFS4ERR_INVAL)
+		w.Resume(ew.Finish())
+		return NFS4ERR_INVAL
+	}
 	target, err := s.fs.Readlink(st.currentID)
 	if err != nil {
 		ew := w.AppendResarray_Readlink()
@@ -749,12 +1243,24 @@ func (s *Server) opRemove(args REMOVE4args, st *compoundState, w *COMPOUND4resWr
 		ew := w.AppendResarray_Remove()
 		return finishDefaultResponse(w, &ew, NFS4ERR_NOFILEHANDLE)
 	}
+	if status := requireDirectory(st.currentID); status != NFS4_OK {
+		ew := w.AppendResarray_Remove()
+		ew.SetValue_Default(status)
+		w.Resume(ew.Finish())
+		return status
+	}
 	if s.stagingStore.ReadOnly() {
 		ew := w.AppendResarray_Remove()
 		return finishDefaultResponse(w, &ew, NFS4ERR_ROFS)
 	}
 
-	name := string(args.Target().Data())
+	name, status := toTernFSName(args.Target().Data())
+	if status != NFS4_OK {
+		ew := w.AppendResarray_Remove()
+		ew.SetValue_Default(status)
+		w.Resume(ew.Finish())
+		return status
+	}
 	err := s.fs.Remove(st.currentID, name)
 	if err != nil {
 		ew := w.AppendResarray_Remove()
@@ -777,13 +1283,53 @@ func (s *Server) opRename(args RENAME4args, st *compoundState, w *COMPOUND4resWr
 		ew := w.AppendResarray_Rename()
 		return finishDefaultResponse(w, &ew, NFS4ERR_NOFILEHANDLE)
 	}
+	if status := requireDirectory(st.savedID); status != NFS4_OK {
+		ew := w.AppendResarray_Rename()
+		ew.SetValue_Default(status)
+		w.Resume(ew.Finish())
+		return status
+	}
+	if status := requireDirectory(st.currentID); status != NFS4_OK {
+		ew := w.AppendResarray_Rename()
+		ew.SetValue_Default(status)
+		w.Resume(ew.Finish())
+		return status
+	}
 	if s.stagingStore.ReadOnly() {
 		ew := w.AppendResarray_Rename()
 		return finishDefaultResponse(w, &ew, NFS4ERR_ROFS)
 	}
 
-	oldName := string(args.Oldname().Data())
-	newName := string(args.Newname().Data())
+	oldName, status := toTernFSName(args.Oldname().Data())
+	if status != NFS4_OK {
+		ew := w.AppendResarray_Rename()
+		ew.SetValue_Default(status)
+		w.Resume(ew.Finish())
+		return status
+	}
+	newName, status := toTernFSName(args.Newname().Data())
+	if status != NFS4_OK {
+		ew := w.AppendResarray_Rename()
+		ew.SetValue_Default(status)
+		w.Resume(ew.Finish())
+		return status
+	}
+
+	if st.savedID == st.currentID && oldName == newName {
+		ew := w.AppendResarray_Rename()
+		okW := ew.SetValue_Nfs4Ok()
+		now := uint64(time.Now().UnixNano())
+		srcInfo := okW.SourceCinfo()
+		srcInfo.SetAtomic(TRUE)
+		srcInfo.SetBefore(now)
+		srcInfo.SetAfter(now)
+		tgtInfo := okW.TargetCinfo()
+		tgtInfo.SetAtomic(TRUE)
+		tgtInfo.SetBefore(now)
+		tgtInfo.SetAfter(now)
+		w.Resume(ew.Finish())
+		return NFS4_OK
+	}
 
 	err := s.fs.Rename(st.savedID, oldName, st.currentID, newName)
 	if err != nil {
@@ -802,10 +1348,14 @@ func (s *Server) opRename(args RENAME4args, st *compoundState, w *COMPOUND4resWr
 }
 
 func (s *Server) opRenew(args RENEW4args, w *COMPOUND4resWriter) uint32 {
-	// No lease state — just accept the renewal.
-	_ = args.Clientid()
 	r := w.AppendResarray_Renew()
-	return finishStatusResponse(&r, NFS4_OK)
+	if err := s.clients.Renew(args.Clientid()); err != nil {
+		status := clientStoreErrToNFS(err)
+		r.SetStatus(status)
+		return status
+	}
+	r.SetStatus(NFS4_OK)
+	return NFS4_OK
 }
 
 func (s *Server) opSavefh(st *compoundState, w *COMPOUND4resWriter) uint32 {
@@ -829,10 +1379,36 @@ func (s *Server) opRestorefh(st *compoundState, w *COMPOUND4resWriter) uint32 {
 	return finishStatusResponse(&r, NFS4_OK)
 }
 
-func (s *Server) opSecinfo(st *compoundState, w *COMPOUND4resWriter) uint32 {
+func (s *Server) opSecinfo(args SECINFO4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
 	if !st.currentIDSet {
 		ew := w.AppendResarray_Secinfo()
 		return finishDefaultResponse(w, &ew, NFS4ERR_NOFILEHANDLE)
+	}
+	if status := requireDirectory(st.currentID); status != NFS4_OK {
+		ew := w.AppendResarray_Secinfo()
+		ew.SetValue_Default(status)
+		w.Resume(ew.Finish())
+		return status
+	}
+	name, status := toTernFSName(args.Name().Data())
+	if status != NFS4_OK {
+		ew := w.AppendResarray_Secinfo()
+		ew.SetValue_Default(status)
+		w.Resume(ew.Finish())
+		return status
+	}
+	if name == nfsDirName && st.currentID == s.fs.RootID() {
+		ew := w.AppendResarray_Secinfo()
+		ew.SetValue_Default(NFS4ERR_NOENT)
+		w.Resume(ew.Finish())
+		return NFS4ERR_NOENT
+	}
+	if _, err := s.fs.Lookup(st.currentID, name); err != nil {
+		ew := w.AppendResarray_Secinfo()
+		status := s.errToNFS(err)
+		ew.SetValue_Default(status)
+		w.Resume(ew.Finish())
+		return status
 	}
 	// Return AUTH_SYS (flavor 1) and AUTH_NONE (flavor 0).
 	ew := w.AppendResarray_Secinfo()
@@ -869,42 +1445,42 @@ func (s *Server) opSetattr(args SETATTR4args, st *compoundState, w *COMPOUND4res
 
 	fa := args.ObjAttributes()
 	mask := parseBitmap(fa.Attrmask())
+	attrData := fa.AttrVals().Data()
 
 	// Supported writable attrs.
 	const supportedSet0 = 1 << FATTR4_SIZE
 	const supportedSet1 = (1 << (FATTR4_TIME_ACCESS_SET - 32)) |
 		(1 << (FATTR4_TIME_MODIFY_SET - 32))
 
-	if mask[0] & ^uint32(supportedSet0) != 0 || mask[1] & ^uint32(supportedSet1) != 0 {
+	// Validate fixed-width MODE data before reporting that MODE itself is not
+	// supported. RFC 7530 requires malformed attribute XDR to take precedence.
+	const modeMask = 1 << (FATTR4_MODE - 32)
+	if mask[0] == 0 && mask[1] == modeMask && len(attrData) != 4 {
+		return setattrReply(NFS4ERR_BADXDR, [2]uint32{})
+	}
+
+	if mask[0]&^writableAttrs0 != 0 || mask[1]&^writableAttrs1 != 0 {
+		return setattrReply(NFS4ERR_INVAL, [2]uint32{})
+	}
+	if mask[0]&^uint32(supportedSet0) != 0 ||
+		mask[1]&^uint32(supportedSet1) != 0 {
 		return setattrReply(NFS4ERR_ATTRNOTSUPP, [2]uint32{})
 	}
 
 	var resultMask [2]uint32
-
-	if mask[0]&(1<<FATTR4_SIZE) != 0 {
-		attrData := fa.AttrVals().Data()
-		if len(attrData) < 8 {
-			return setattrReply(NFS4ERR_BADXDR, [2]uint32{})
-		}
-		newSize := binary.BigEndian.Uint64(attrData[0:8])
-
-		sf := s.stagingStore.Get(st.currentID)
-		if sf == nil {
-			return setattrReply(NFS4ERR_BAD_STATEID, [2]uint32{})
-		}
-
-		if err := sf.SetSize(newSize); err != nil {
-			return setattrReply(NFS4ERR_IO, [2]uint32{})
-		}
-		resultMask[0] |= 1 << FATTR4_SIZE
-	}
-
-	// Parse time values from the attribute data (after SIZE if present).
+	var newSize *uint64
 	attrOff := 0
 	if mask[0]&(1<<FATTR4_SIZE) != 0 {
-		attrOff = 8
+		if attrOff+8 > len(attrData) {
+			return setattrReply(NFS4ERR_BADXDR, [2]uint32{})
+		}
+		size := binary.BigEndian.Uint64(attrData[attrOff : attrOff+8])
+		attrOff += 8
+		if size > 1<<63-1 {
+			return setattrReply(NFS4ERR_FBIG, [2]uint32{})
+		}
+		newSize = &size
 	}
-	attrData := fa.AttrVals().Data()
 
 	// parseTimeSet reads a SET_TO_CLIENT_TIME4 or SET_TO_SERVER_TIME4
 	// value from attrData at the current offset.
@@ -921,11 +1497,17 @@ func (s *Server) opSetattr(args SETATTR4args, st *compoundState, w *COMPOUND4res
 			sec := int64(binary.BigEndian.Uint64(attrData[attrOff : attrOff+8]))
 			nsec := binary.BigEndian.Uint32(attrData[attrOff+8 : attrOff+12])
 			attrOff += 12
+			if nsec >= 1_000_000_000 {
+				return nil, NFS4ERR_INVAL
+			}
 			t := time.Unix(sec, int64(nsec))
 			return &t, NFS4_OK
 		}
-		t := time.Now()
-		return &t, NFS4_OK
+		if how == SET_TO_SERVER_TIME4 {
+			t := time.Now()
+			return &t, NFS4_OK
+		}
+		return nil, NFS4ERR_INVAL
 	}
 
 	var setAtime, setMtime *time.Time
@@ -935,7 +1517,6 @@ func (s *Server) opSetattr(args SETATTR4args, st *compoundState, w *COMPOUND4res
 			return setattrReply(status, [2]uint32{})
 		}
 		setAtime = t
-		resultMask[1] |= 1 << (FATTR4_TIME_ACCESS_SET - 32)
 	}
 	if mask[1]&(1<<(FATTR4_TIME_MODIFY_SET-32)) != 0 {
 		t, status := parseTimeSet()
@@ -943,44 +1524,122 @@ func (s *Server) opSetattr(args SETATTR4args, st *compoundState, w *COMPOUND4res
 			return setattrReply(status, [2]uint32{})
 		}
 		setMtime = t
-		resultMask[1] |= 1 << (FATTR4_TIME_MODIFY_SET - 32)
 	}
 
+	if attrOff != len(attrData) {
+		return setattrReply(NFS4ERR_BADXDR, [2]uint32{})
+	}
+
+	if newSize != nil {
+		if !isSpecialStateID(args.Stateid()) {
+			state, status := s.lookupDurableOpen(
+				args.Stateid(), st.currentID)
+			if status != NFS4_OK {
+				return setattrReply(status, [2]uint32{})
+			}
+			if !state.write {
+				return setattrReply(NFS4ERR_OPENMODE, [2]uint32{})
+			}
+		}
+		sf := s.stagingStore.Get(st.currentID)
+		if sf == nil {
+			return setattrReply(NFS4ERR_BAD_STATEID, [2]uint32{})
+		}
+		if err := sf.SetSize(*newSize); err != nil {
+			return setattrReply(NFS4ERR_IO, [2]uint32{})
+		}
+		resultMask[0] |= 1 << FATTR4_SIZE
+	}
 	if setAtime != nil || setMtime != nil {
 		if err := s.fs.SetTime(st.currentID, setMtime, setAtime); err != nil {
 			return setattrReply(NFS4ERR_IO, [2]uint32{})
+		}
+		if setAtime != nil {
+			resultMask[1] |= 1 << (FATTR4_TIME_ACCESS_SET - 32)
+		}
+		if setMtime != nil {
+			resultMask[1] |= 1 << (FATTR4_TIME_MODIFY_SET - 32)
 		}
 	}
 
 	return setattrReply(NFS4_OK, resultMask)
 }
 
-func (s *Server) opSetclientid(args SETCLIENTID4args, w *COMPOUND4resWriter) uint32 {
+func (s *Server) opSetclientid(
+	args SETCLIENTID4args,
+	st *compoundState,
+	w *COMPOUND4resWriter,
+) uint32 {
 	clientID := args.Client()
 	idData := clientID.Id()
+	location := args.Callback().CbLocation()
+	owner := clientOwner{
+		principal: st.principal,
+		netid:     string(location.RNetid().Data()),
+		addr:      string(location.RAddr().Data()),
+	}
 
-	clid, err := s.clients.SetClientID(getData64(clientID.Verifier()), idData)
+	clid, confirm, err := s.clients.SetClientID(getData64(clientID.Verifier()), idData, owner)
 	if err != nil {
 		ew := w.AppendResarray_Setclientid()
-		return finishDefaultResponse(w, &ew, nfsErrCode(err))
+		var inUse clientInUseError
+		if errors.As(err, &inUse) {
+			addrW := ew.SetValue_Nfs4errClidInuse()
+			netidW := addrW.StartRNetid()
+			buf := netidW.SetData([]byte(inUse.owner.netid)).Finish()
+			addrW.Resume(buf)
+			rAddrW := addrW.StartRAddr()
+			buf = rAddrW.SetData([]byte(inUse.owner.addr)).Finish()
+			addrW.Resume(buf)
+			buf = addrW.Finish()
+			ew.Resume(buf)
+			w.Resume(ew.Finish())
+			return NFS4ERR_CLID_INUSE
+		}
+		status := clientStoreErrToNFS(err)
+		ew.SetValue_Default(status)
+		w.Resume(ew.Finish())
+		return status
 	}
 
 	ew := w.AppendResarray_Setclientid()
 	ok := ew.SetValue_Nfs4Ok()
 	ok.SetClientid(clid)
+	confirmWriter := ok.SetclientidConfirm()
+	for i, b := range confirm {
+		confirmWriter.SetData(i, b)
+	}
 	w.Resume(ew.Finish())
+	s.scheduleClientGC(clid)
 	return NFS4_OK
 }
 
-func (s *Server) opSetclientidConfirm(args SETCLIENTIDCONFIRM4args, w *COMPOUND4resWriter) uint32 {
+func (s *Server) opSetclientidConfirm(
+	args SETCLIENTIDCONFIRM4args,
+	st *compoundState,
+	w *COMPOUND4resWriter,
+) uint32 {
 	clid := args.Clientid()
-	_, err := s.clients.ConfirmClientID(clid)
+	var confirm [8]byte
+	confirmReader := args.SetclientidConfirm()
+	for i := range confirm {
+		confirm[i] = confirmReader.Data(i)
+	}
+	replacedClientID, err := s.clients.ConfirmClientID(
+		clid, confirm, st.principal)
 	if err != nil {
 		r := w.AppendResarray_SetclientidConfirm()
-		return finishStatusResponse(&r, nfsErrCode(err))
+		status := clientStoreErrToNFS(err)
+		r.SetStatus(status)
+		return status
+	}
+	if replacedClientID != 0 {
+		s.expireClientState(replacedClientID)
 	}
 	r := w.AppendResarray_SetclientidConfirm()
-	return finishStatusResponse(&r, NFS4_OK)
+	r.SetStatus(NFS4_OK)
+	s.scheduleClientGC(clid)
+	return NFS4_OK
 }
 
 func (s *Server) opVerify(args VERIFY4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
@@ -1007,6 +1666,29 @@ func (s *Server) opWrite(args WRITE4args, st *compoundState, w *COMPOUND4resWrit
 	if !st.currentIDSet {
 		ew := w.AppendResarray_Write()
 		return finishDefaultResponse(w, &ew, NFS4ERR_NOFILEHANDLE)
+	}
+	if status := requireRegularFile(st.currentID); status != NFS4_OK {
+		ew := w.AppendResarray_Write()
+		ew.SetValue_Default(status)
+		w.Resume(ew.Finish())
+		return status
+	}
+
+	if !isSpecialStateID(args.Stateid()) {
+		state, status := s.lookupDurableOpen(
+			args.Stateid(), st.currentID)
+		if status != NFS4_OK {
+			ew := w.AppendResarray_Write()
+			ew.SetValue_Default(status)
+			w.Resume(ew.Finish())
+			return status
+		}
+		if !state.write {
+			ew := w.AppendResarray_Write()
+			ew.SetValue_Default(NFS4ERR_OPENMODE)
+			w.Resume(ew.Finish())
+			return NFS4ERR_OPENMODE
+		}
 	}
 
 	// Find the staging buffer for this file.
@@ -1049,10 +1731,9 @@ func (s *Server) verifyAttrs(id InodeID, supplied Fattr4) (bool, uint32) {
 	}
 
 	mask := parseBitmap(supplied.Attrmask())
-
-	// Only compare attributes we support.
-	mask[0] &= supportedAttrs0
-	mask[1] &= supportedAttrs1
+	if status := validateVerifyMask(mask); status != NFS4_OK {
+		return false, status
+	}
 
 	// Encode what we would return for these attributes.
 	expected := encodeAttrs(mask, id, ni)

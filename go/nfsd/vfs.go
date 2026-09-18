@@ -76,6 +76,9 @@ type TernVFS interface {
 	// Read reads file data into dest, returning bytes read and EOF flag.
 	Read(fileID InodeID, offset uint64, dest []byte) (n int, eof bool, err error)
 
+	// ReadAll reads a small internal file without retaining reader state.
+	ReadAll(fileID InodeID) ([]byte, error)
+
 	// Readlink reads the target of a symlink.
 	Readlink(fileID InodeID) (string, error)
 
@@ -98,9 +101,9 @@ type TernVFS interface {
 	// but LocalTernVFS writes it at link time.
 	LinkFile(fileID InodeID, cookie Cookie, dirID InodeID, name string, data io.Reader) error
 
-	// CreateFile creates a regular file with the given data in a single step.
-	// Used for internal bookkeeping files (e.g. client ID files), not for
-	// NFS file creation (which uses ConstructFile + LinkFile).
+	// CreateFile creates or replaces a regular file with the given data.
+	// This matches TernFS LinkFile semantics. It is used for internal
+	// bookkeeping files, not NFS file creation.
 	CreateFile(dirID InodeID, name string, data io.Reader) (InodeID, error)
 
 	// Remove removes a file, directory, or symlink by name from a directory.
@@ -359,6 +362,14 @@ func (lfs *LocalTernVFS) Read(fileID InodeID, offset uint64, dest []byte) (int, 
 	return n, eof, nil
 }
 
+func (lfs *LocalTernVFS) ReadAll(fileID InodeID) ([]byte, error) {
+	path, ok := lfs.resolve(fileID)
+	if !ok {
+		return nil, os.ErrNotExist
+	}
+	return os.ReadFile(path)
+}
+
 func (lfs *LocalTernVFS) Readlink(fileID InodeID) (string, error) {
 	path, ok := lfs.resolve(fileID)
 	if !ok {
@@ -436,7 +447,8 @@ func (lfs *LocalTernVFS) LinkFile(fileID InodeID, cookie Cookie, dirID InodeID, 
 	childPath := filepath.Join(dirPath, name)
 
 	// Write data to the destination file.
-	f, err := os.OpenFile(childPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	f, err := os.OpenFile(
+		childPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		return err
 	}
@@ -471,20 +483,32 @@ func (lfs *LocalTernVFS) CreateFile(dirID InodeID, name string, data io.Reader) 
 		return 0, os.ErrNotExist
 	}
 	childPath := filepath.Join(dirPath, name)
-	f, err := os.OpenFile(childPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	oldID := lfs.statInodeID(childPath)
+	f, err := os.CreateTemp(dirPath, ".nfsd-create-")
 	if err != nil {
 		return 0, err
 	}
+	tempPath := f.Name()
 	if data != nil {
 		if _, err := io.Copy(f, data); err != nil {
 			f.Close()
-			os.Remove(childPath)
+			os.Remove(tempPath)
 			return 0, err
 		}
 	}
 	if err := f.Close(); err != nil {
-		os.Remove(childPath)
+		os.Remove(tempPath)
 		return 0, err
+	}
+	if err := os.Rename(tempPath, childPath); err != nil {
+		os.Remove(tempPath)
+		return 0, err
+	}
+	if oldID != 0 {
+		lfs.mu.Lock()
+		delete(lfs.byID, oldID)
+		delete(lfs.parent, oldID)
+		lfs.mu.Unlock()
 	}
 	return lfs.register(childPath, dirID), nil
 }

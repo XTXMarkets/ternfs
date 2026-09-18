@@ -740,6 +740,26 @@ TEST_CASE("wire request validation returns errors") {
         CHECK(db->prepareLogEntry(reqContainer, logEntry) == TernError::MALFORMED_REQUEST);
     }
 
+    SUBCASE("link file requires a valid name") {
+        const std::vector<std::string> invalidNames{
+            "",
+            ".",
+            "..",
+            "bad/name",
+            std::string("bad\0name", 8),
+        };
+        for (const auto& name : invalidNames) {
+            ShardReqContainer reqContainer;
+            ShardLogEntry logEntry;
+            auto& req = reqContainer.setLinkFile();
+            req.ownerId = ROOT_DIR_INODE_ID;
+            req.fileId = InodeId(InodeType::FILE, ShardId(0), 1);
+            req.name = name;
+
+            CHECK(db->prepareLogEntry(reqContainer, logEntry) == TernError::BAD_NAME);
+        }
+    }
+
     SUBCASE("swap blocks requires distinct files") {
         ShardReqContainer reqContainer;
         ShardLogEntry logEntry;
@@ -768,6 +788,71 @@ TEST_CASE("wire request validation returns errors") {
         req.fileId2 = req.fileId1;
 
         CHECK(db->prepareLogEntry(reqContainer, logEntry) == TernError::SAME_SOURCE_AND_DESTINATION);
+    }
+}
+
+TEST_CASE("add span validates layout before preparing a log entry") {
+    TempShardDB db(LogLevel::LOG_ERROR, ShardId(0));
+
+    InodeId fileId;
+    BincodeFixedBytes<8> cookie;
+    {
+        ShardReqContainer reqContainer;
+        ShardRespContainer respContainer;
+        ShardLogEntry logEntry;
+        auto& req = reqContainer.setConstructFile();
+        req.type = (uint8_t)InodeType::FILE;
+
+        NO_TERN_ERROR(db->prepareLogEntry(reqContainer, logEntry));
+        NO_TERN_ERROR_IN_RESPONSE(respContainer, db->applyLogEntry(1, logEntry, respContainer));
+        db->flush(false);
+        fileId = respContainer.getConstructFile().id;
+        cookie = respContainer.getConstructFile().cookie;
+    }
+
+    const auto prepareAddSpan = [&](Parity parity, uint8_t stripes, size_t crcCount) {
+        ShardReqContainer reqContainer;
+        ShardLogEntry logEntry;
+        auto& req = reqContainer.setAddSpanInitiate();
+        req.fileId = fileId;
+        req.cookie = cookie;
+        req.storageClass = HDD_STORAGE;
+        req.parity = parity;
+        req.stripes = stripes;
+        req.crcs.els.resize(crcCount);
+        return db->prepareLogEntry(reqContainer, logEntry);
+    };
+
+    SUBCASE("zero data and parity blocks") {
+        CHECK(prepareAddSpan(Parity(0), 1, 0) == TernError::BAD_SPAN_BODY);
+    }
+
+    SUBCASE("multiple data blocks without parity") {
+        CHECK(prepareAddSpan(Parity(2), 1, 2) == TernError::BAD_SPAN_BODY);
+    }
+
+    SUBCASE("too many data blocks") {
+        CHECK(prepareAddSpan(Parity(0x1B), 1, 12) == TernError::BAD_SPAN_BODY);
+    }
+
+    SUBCASE("too many parity blocks") {
+        CHECK(prepareAddSpan(Parity(0x71), 1, 8) == TernError::BAD_SPAN_BODY);
+    }
+
+    SUBCASE("zero stripes") {
+        CHECK(prepareAddSpan(Parity(1, 1), 0, 0) == TernError::BAD_SPAN_BODY);
+    }
+
+    SUBCASE("too many stripes") {
+        CHECK(prepareAddSpan(Parity(1, 1), 16, 32) == TernError::BAD_SPAN_BODY);
+    }
+
+    SUBCASE("one data block without parity is supported") {
+        CHECK(prepareAddSpan(Parity(1), 1, 1) == TernError::COULD_NOT_PICK_BLOCK_SERVICES);
+    }
+
+    SUBCASE("production erasure coding configuration is supported") {
+        CHECK(prepareAddSpan(Parity(10, 4), 1, 14) == TernError::COULD_NOT_PICK_BLOCK_SERVICES);
     }
 }
 

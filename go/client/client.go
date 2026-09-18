@@ -25,6 +25,7 @@ import (
 	"github.com/XTXMarkets/ternfs/go/core/timing"
 	"github.com/XTXMarkets/ternfs/go/divide32"
 	"github.com/XTXMarkets/ternfs/go/msgs"
+	"golang.org/x/sys/unix"
 	"io"
 	"math/rand"
 	"net"
@@ -256,8 +257,10 @@ func (cm *clientMetadata) init(log *log.Logger, client *Client) error {
 	}
 	cm.sock = sock.(*net.UDPConn)
 	// 10MiB/100byte ~ 100k requests in the pipe. 100byte is
-	// kinda conservative.
-	if err := cm.sock.SetReadBuffer(1 << 20); err != nil {
+	// kinda conservative. Note that the kernel silently clamps
+	// this to net.core.rmem_max, so the effective size may be
+	// much smaller than requested.
+	if err := cm.sock.SetReadBuffer(10 << 20); err != nil {
 		cm.sock.Close()
 		return err
 	}
@@ -666,6 +669,16 @@ func (proc *blocksProcessor) storeConn(conn *net.TCPConn) *blocksProcessorConn {
 var whichBlockIp uint64
 var whichSourceIp uint64
 
+func bindAddressNoPort(_ string, _ string, conn syscall.RawConn) error {
+	var sockErr error
+	if err := conn.Control(func(fd uintptr) {
+		sockErr = unix.SetsockoptInt(int(fd), unix.IPPROTO_IP, unix.IP_BIND_ADDRESS_NO_PORT, 1)
+	}); err != nil {
+		return err
+	}
+	return sockErr
+}
+
 func (proc *blocksProcessor) connect(log *log.Logger) (*net.TCPConn, error) {
 	var err error
 	sourceIpSelector := atomic.AddUint64(&whichSourceIp, 1)
@@ -688,7 +701,11 @@ func (proc *blocksProcessor) connect(log *log.Logger) (*net.TCPConn, error) {
 			continue
 		}
 		log.Debug("trying to connect to block service %v", addr)
-		dialer := net.Dialer{LocalAddr: sourceAddr, Timeout: (*proc.timeout).Max}
+		dialer := net.Dialer{
+			LocalAddr: sourceAddr,
+			Timeout:   (*proc.timeout).Max,
+			Control:   bindAddressNoPort,
+		}
 		var conn net.Conn
 		conn, err = dialer.Dial("tcp4", addr.String())
 		if err == nil {

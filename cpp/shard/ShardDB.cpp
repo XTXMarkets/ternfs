@@ -1129,6 +1129,9 @@ struct ShardDBImpl {
         if (req.ownerId.shard() != _shid || req.fileId.shard() != _shid) {
             return TernError::BAD_SHARD;
         }
+        if (!validName(req.name.ref())) {
+            return TernError::BAD_NAME;
+        }
         TernError err = _checkTransientFileCookie(req.fileId, req.cookie.data);
         if (err != TernError::NO_ERROR) {
             return err;
@@ -1346,6 +1349,15 @@ struct ShardDBImpl {
         // Note that the span size might be bigger or smaller than
         // the data -- check comment on top of `AddSpanInitiateReq` in `msgs.go`
         // for details.
+        if (!req.parity.valid()) {
+            LOG_DEBUG(_env, "unsupported parity configuration %s", req.parity);
+            return false;
+        }
+        if (req.stripes == 0 || req.stripes >= MAX_STRIPES) {
+            LOG_DEBUG(_env, "unsupported stripe count %s", (int)req.stripes);
+            return false;
+        }
+
         if (req.size > MAXIMUM_SPAN_SIZE) {
             LOG_DEBUG(_env, "req.size=%s > MAXIMUM_SPAN_SIZE=%s", req.size, MAXIMUM_SPAN_SIZE);
             return false;
