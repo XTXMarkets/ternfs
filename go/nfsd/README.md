@@ -541,16 +541,11 @@ between:
 - operations which the server must reject with the correct NFS status; and
 - NFS features which are outside the intended TernFS contract.
 
-There are currently five test paths.
+The libnfs and pynfs tests use the same process helpers.
+Protocol unit tests and the kernel-client VM tests have separate runners.
 
-Test targets ending in `-cluster` build and start a temporary TernFS cluster.
-Test targets without that suffix do not use a TernFS cluster. For example,
-`test-libnfs` runs against the local filesystem backend. Pynfs only has a
-cluster-backed mode, so its target is `test-pynfs-cluster`; there is no
-`test-pynfs` target.
-
-Cluster-backed targets use `ss` to check the fixed registry UDP port
-`127.0.0.1:55556` before starting. They fail with an explicit error if another
+The raw-protocol `test-cluster` target uses `ss` to check the fixed registry
+UDP port `127.0.0.1:55556` before starting. It fails if another
 test cluster is already using that port. This check does not require root.
 Install `ss` (provided by the `iproute2` package on Debian and Ubuntu) before
 running these targets.
@@ -591,39 +586,49 @@ client.
 
 **This test is currently not run in any CI workflow.**
 
-### libnfs tests
+### Client integration tests
 
-[`libnfs_test.go`](libnfs_test.go) uses
-[libnfs](https://github.com/sahlberg/libnfs) as an independent NFS client. The
-tests are behind the `libnfs` build tag.
-
-Fetch the pinned libnfs source:
-
-```sh
-make fetch-libnfs
-```
-
-The pinned release is libnfs 7.0.2.
-
-Run the tests:
+The client harnesses live under [`test`](test) with their own
+[`Makefile`](test/Makefile); run the targets below from `go/nfsd/test`. Every
+libnfs and pynfs case runs with separate server and client processes. Targets
+ending in `-cluster` start a temporary `ternrun` backend; the others require
+an existing backend's registry address:
 
 ```sh
-make test-libnfs
+make test-libnfs-cluster
+make test-pynfs-cluster
+make test-libnfs TEST_ARGS='-registry HOST:PORT'
+make test-pynfs TEST_ARGS='-registry HOST:PORT'
 ```
 
-`test-libnfs` builds and installs libnfs under `.deps/libnfs-install` when
-needed, then runs the 11 `TestLibnfs_*` cases verbosely against a server with
-the local filesystem backend. It disables the Go test cache so that each
-invocation exercises the client and server. The downloaded source and
-installation are ignored by git. Use `make clean-libnfs` to remove them.
-Fetching requires git; building requires CMake and a C compiler.
+Use `TEST_ARGS='-binaries-dir /path/to/binaries'` with a cluster target to
+reuse prebuilt backend binaries. Otherwise `ternrun` builds them. Add
+`-nfsd /path/to/nfsd` to test a particular nfsd binary instead of building it.
+The registry address is the bincode endpoint. Both modes start their own
+nfsd processes on the test host. Relative paths are resolved from `go/nfsd/test`.
 
-**This test is currently not run in any CI workflow.**
+```sh
+make test-libnfs TEST_ARGS='-registry HOST:PORT' \
+    GO_TEST_FLAGS=-short
+make test-libnfs TEST_ARGS='-registry HOST:PORT' \
+    GO_TEST_FLAGS='-run TestLibnfs/ReadFile'
+```
+
+The Go tests live in [`test/libnfs`](test/libnfs); the pynfs runner is
+[`test/pynfs/main.go`](test/pynfs/main.go). To skip timed cases, use
+`GO_TEST_FLAGS=-short` for libnfs or add `-short` to `TEST_ARGS` for pynfs.
+Failed runs retain logs and test data;
+`-artifacts-dir DIR` selects their local parent directory. Pynfs should run
+serially per existing filesystem because some cases reuse client identities.
+
+The tests need Linux, Go and the selected client dependencies, with no kernel
+mount or root requirement. Make builds pinned libnfs 7.0.2 under `test/.deps`;
+this needs Git, CMake and a C/C++ toolchain. These suites are not yet run in CI.
 
 ### pynfs protocol tests
 
 [pynfs](https://github.com/linux-nfs/pynfs) is the Linux NFS project's
-protocol test suite. The Makefile pins release `pynfs-0.5` and uses its
+protocol test suite. `test/Makefile` pins release `pynfs-0.5` and uses its
 NFSv4.0 server tests.
 
 Fetch and build pynfs:
@@ -646,12 +651,12 @@ Run the standard pynfs suite:
 make test-pynfs-cluster
 ```
 
-[`pynfs_test.go`](pynfs_test.go) reuses the `ternnfs` test harness. It starts a
-temporary TernFS cluster and `nfsd`, runs pynfs with `--maketree --rundeps`,
-and reads pynfs's JSON results so protocol failures fail the Go test. Pynfs
-itself otherwise exits successfully when individual tests fail.
+The pynfs runner uses the shared process harness and runs Python against its
+nfsd subprocess with `--maketree --rundeps`. It reads JSON results so protocol
+failures fail the command. Pynfs itself otherwise exits successfully when
+individual tests fail. A failed run retains its test tree.
 
-The Make target writes the complete console output to `pynfs.out` while also
+The Make target writes the complete console output to `test/pynfs.out` while also
 displaying it. Set `PYNFS_OUTPUT` to use another path. The output file is not
 ignored by git, so completed runs remain visible during review.
 
@@ -660,7 +665,7 @@ by pynfs. The harness uses two mechanisms to exclude those tests:
 
 * The default `PYNFS_TESTS` value uses pynfs flag selectors to exclude broad
   capability classes such as FIFO, socket, GSS and ACL tests.
-* The [`pynfs_unsupported.txt`](pynfs_unsupported.txt) manifest lists
+* The [`pynfs_unsupported.txt`](test/pynfs/pynfs_unsupported.txt) manifest lists
   individual cases requiring unsupported locking, hard links, share
   reservations, metadata changes or access to another writer's private data.
   Using broad `nolock` and `nolink` selectors would also hide useful related tests.
@@ -685,7 +690,7 @@ for several minutes. Override it with `PYNFS_TIMEOUT`:
 
 ```sh
 make test-pynfs-cluster PYNFS_TESTS='putrootfh getattr'
-make test-pynfs-cluster PYNFS_TESTS='GETATTR1 GETATTR2' PYNFS_ARGS='--showtraffic'
+make test-pynfs-cluster PYNFS_TESTS='GATT1r GATT2' PYNFS_ARGS='--showtraffic'
 make test-pynfs-cluster PYNFS_TESTS='all notimed noblock nochar nofifo nosocket nogss noacl nomode000'
 make test-pynfs-cluster PYNFS_TESTS='all notimed' PYNFS_SKIP_FILE=
 make test-pynfs-cluster PYNFS_TIMEOUT=2h
