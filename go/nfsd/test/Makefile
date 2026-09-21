@@ -31,12 +31,13 @@ PYNFS_SKIP_FILE ?= $(CURDIR)/pynfs/pynfs_unsupported.txt
 PYNFS_OUTPUT ?= $(CURDIR)/pynfs.out
 PYNFS_TIMEOUT ?= 1h
 LIBNFS_TIMEOUT ?= 15m
+FUNCTIONAL_TEST_ROOT ?=
 
 .DEFAULT_GOAL := help
 
 .PHONY: help fetch-libnfs build-libnfs \
 	test-libnfs test-libnfs-cluster clean-libnfs fetch-pynfs build-pynfs \
-	test-pynfs test-pynfs-cluster clean-pynfs
+	test-pynfs test-pynfs-cluster clean-pynfs test-functional
 
 help:
 	@printf '%s\n' \
@@ -51,12 +52,14 @@ help:
 		'  test-pynfs       Run pynfs against an existing backend' \
 		'  test-pynfs-cluster  Run pynfs with a temporary ternrun cluster' \
 		'  clean-pynfs      Remove downloaded and built pynfs files' \
+		'  test-functional  Run common workflows on an existing NFS mount' \
 		'' \
 		'Targets ending in -cluster start their own backend.' \
 		'Other client targets require TEST_ARGS="-registry HOST:PORT".' \
 		'Use TEST_ARGS="-binaries-dir DIR" with -cluster targets for prebuilt backend binaries.' \
 		'Set GO_TEST_FLAGS to pass additional arguments to Go test invocations.' \
-		'Set PYNFS_TESTS, PYNFS_ARGS, PYNFS_SKIP_FILE, PYNFS_OUTPUT and PYNFS_TIMEOUT to configure pynfs.'
+		'Set PYNFS_TESTS, PYNFS_ARGS, PYNFS_SKIP_FILE, PYNFS_OUTPUT and PYNFS_TIMEOUT to configure pynfs.' \
+		'Set FUNCTIONAL_TEST_ROOT to an existing mounted test directory for test-functional.'
 
 fetch-libnfs: $(LIBNFS_FETCHED)
 
@@ -112,3 +115,10 @@ test-pynfs test-pynfs-cluster: $(PYNFS_BUILT)
 
 clean-pynfs:
 	rm -rf "$(PYNFS_SOURCE)"
+
+test-functional:
+	@test -n "$(FUNCTIONAL_TEST_ROOT)" || { \
+		echo "error: set FUNCTIONAL_TEST_ROOT to an existing mounted test directory" >&2; \
+		exit 1; \
+	}
+	./functional/run-all.sh "$(FUNCTIONAL_TEST_ROOT)"

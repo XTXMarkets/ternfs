@@ -706,6 +706,25 @@ duration, after pynfs writes its results.
 Use `make clean-pynfs` to remove the source and generated files. This suite is
 not currently run in CI.
 
+### Functional workflow tests
+
+[`test/functional`](test/functional) contains numbered, independently
+executable workflow tests for an existing mounted filesystem. From
+`go/nfsd/test`:
+
+```sh
+make test-functional FUNCTIONAL_TEST_ROOT=/mnt/qa-nfs/test
+```
+
+The [functional test catalog](test/functional/README.md) describes each case.
+Every test creates its own directory and preserves it on failure. A single
+case can be run directly or under `strace`:
+
+```sh
+strace -ff -o /tmp/0006.trace \
+  ./test/functional/0005-vim-edit.sh /mnt/qa-nfs/test
+```
+
 All Go test targets accept additional flags through `GO_TEST_FLAGS`. For
 example:
 
