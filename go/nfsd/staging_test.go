@@ -146,7 +146,7 @@ func TestStagingFinishRetriesFailedBackgroundHydration(t *testing.T) {
 		n := copy(dest, base[offset:end])
 		return n, end == uint64(len(base)), nil
 	}
-	stage.StartHydration(reader)
+	stage.StartHydration(hydrationReader(reader))
 	<-failed
 	if err := stage.FinishHydration(reader); err != nil {
 		t.Fatal(err)
@@ -178,7 +178,7 @@ func TestStagingHydrationSkipsFullyDirtyBase(t *testing.T) {
 		calls.Add(1)
 		return 0, false, errors.New("unexpected base read")
 	}
-	stage.StartHydration(reader)
+	stage.StartHydration(hydrationReader(reader))
 	if err := stage.FinishHydration(reader); err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +243,7 @@ func TestStagingRemoveCancelsHydration(t *testing.T) {
 		clear(dest)
 		return len(dest), false, nil
 	}
-	stage.StartHydration(reader)
+	stage.StartHydration(hydrationReader(reader))
 	<-started
 	done := make(chan struct{})
 	go func() {
@@ -490,7 +490,7 @@ func TestStagingKeepsBaseFilehandlePrivate(t *testing.T) {
 	if store.Get(baseID) != nil {
 		t.Fatal("published base handle exposes private staging")
 	}
-	if _, ok := store.ResolveID(baseID); ok {
+	if store.Get(baseID) != nil {
 		t.Fatal("base handle resolves to a writer")
 	}
 	store.Remove(baseID)
@@ -535,4 +535,17 @@ func TestStagingRebindSurvivesRestart(t *testing.T) {
 		t.Fatalf("recovered owner = (%d, %x), want (2, %x)",
 			meta.ClientID, meta.NFSStateID, stateID)
 	}
+}
+
+func hydrationReader(reader stagingBaseReader) stagingHydrationReader {
+	return func(_ <-chan struct{}, id InodeID, offset uint64, dest []byte) (int, bool, error) {
+		return reader(id, offset, dest)
+	}
+}
+
+func findStagingTarget(store StagingStore, dirID InodeID, name string) (InodeID, StagingMeta, bool) {
+	for id, meta := range store.FindTargets(dirID, name) {
+		return id, meta, true
+	}
+	return 0, StagingMeta{}, false
 }

@@ -341,50 +341,6 @@ func TestStagingCheckpointRetry(t *testing.T) {
 	}
 }
 
-func TestStagingReadsV3Checkpoint(t *testing.T) {
-	dir := t.TempDir()
-	store, id, stage := createOverlayStage(t, dir, MakeInodeID(InodeTypeFile, 10), []byte("original"))
-	defer store.Remove(id)
-	if err := stage.Write(0, []byte("X")); err != nil {
-		t.Fatal(err)
-	}
-	if err := stage.Sync(); err != nil {
-		t.Fatal(err)
-	}
-	metaPath := stage.(*localStagingFile).metaPath
-	data, err := os.ReadFile(metaPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// V3 has the same range checkpoint without the new attribute/owner trailer.
-	data = data[:len(data)-37]
-	off := 30 + int(binary.BigEndian.Uint16(data[28:30])) + 8
-	copy(data[off:off+4], stagingMetaV3Magic)
-	if err := os.WriteFile(metaPath, data, 0600); err != nil {
-		t.Fatal(err)
-	}
-	recovered, err := NewLocalStagingStore(dir, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer recovered.Remove(id)
-	buf := make([]byte, 8)
-	rs := recovered.Get(id)
-	if _, _, err := rs.Read(0, buf, sliceBaseReader([]byte("original"), nil)); err != nil {
-		t.Fatal(err)
-	}
-	if string(buf) != "Xriginal" {
-		t.Fatalf("V3 recovered %q", buf)
-	}
-	if err := rs.Sync(); err != nil {
-		t.Fatal(err)
-	}
-	meta, err := loadStagingMeta(metaPath)
-	if err != nil || meta.version != 4 {
-		t.Fatalf("V3 upgrade: version=%d err=%v", meta.version, err)
-	}
-}
-
 // lookupFH looks up a name in the root directory and returns the file handle.
 func lookupFH(t *testing.T, conn net.Conn, xid *uint32, name string) []byte {
 	t.Helper()

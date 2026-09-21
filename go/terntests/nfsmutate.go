@@ -18,19 +18,30 @@ import (
 
 func nfsMutationTest(l *log.Logger, mnt string) {
 	dir := path.Join(mnt, "nfs-mutations")
+	fmt.Printf("  nfs mutations: creating %s\n", dir)
 	if err := os.Mkdir(dir, 0755); err != nil {
 		panic(fmt.Errorf("mkdir %v: %w", dir, err))
 	}
 
-	nfsCreateWriteReadback(l, dir)
-	nfsOutOfOrderWrites(l, dir)
-	nfsRename(l, dir)
-	nfsDelete(l, dir)
-	nfsSetTimes(l, dir)
-	nfsModifyExisting(l, dir)
-	nfsFsyncFstatAppend(l, dir)
-	nfsPrivateWriters(l, dir)
-	nfsVisibleCreation(l, dir)
+	for _, test := range []struct {
+		name string
+		run  func(*log.Logger, string)
+	}{
+		{"create/write/readback", nfsCreateWriteReadback},
+		{"out-of-order writes", nfsOutOfOrderWrites},
+		{"rename", nfsRename},
+		{"delete", nfsDelete},
+		{"timestamps", nfsSetTimes},
+		{"modify existing", nfsModifyExisting},
+		{"fsync/fstat/append", nfsFsyncFstatAppend},
+		{"private writers", nfsPrivateWriters},
+		{"visible creation", nfsVisibleCreation},
+	} {
+		fmt.Printf("  nfs mutations: %s\n", test.name)
+		start := time.Now()
+		test.run(l, dir)
+		fmt.Printf("  nfs mutations: %s passed (%s)\n", test.name, time.Since(start))
+	}
 }
 
 func nfsOutOfOrderWrites(l *log.Logger, dir string) {

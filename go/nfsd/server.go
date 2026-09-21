@@ -235,12 +235,15 @@ func (s *Server) removeExpiredStaging() {
 	if s.clients.now().Before(s.startedAt.Add(nfsLeaseTime)) {
 		return
 	}
-	byClient := make(map[uint64][]InodeID)
+	byClient := make(map[uint64]map[InodeID]StagingMeta)
 	for fileID, meta := range s.stagingStore.Entries() {
 		if meta.ClientID == 0 {
 			continue
 		}
-		byClient[meta.ClientID] = append(byClient[meta.ClientID], fileID)
+		if byClient[meta.ClientID] == nil {
+			byClient[meta.ClientID] = make(map[InodeID]StagingMeta)
+		}
+		byClient[meta.ClientID][fileID] = meta
 	}
 	for clientID, fileIDs := range byClient {
 		expired, err := s.clients.IsLeaseExpired(clientID)
@@ -250,8 +253,8 @@ func (s *Server) removeExpiredStaging() {
 			continue
 		}
 		if expired {
-			for _, fileID := range fileIDs {
-				s.discardStaging(fileID)
+			for fileID, meta := range fileIDs {
+				s.retireStaging(fileID, meta)
 			}
 		}
 	}

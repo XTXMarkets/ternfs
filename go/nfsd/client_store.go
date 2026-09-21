@@ -1769,3 +1769,34 @@ func isLeaseName(name string) bool {
 	return strings.HasPrefix(name, leasePrefix) &&
 		len(name) > len(leasePrefix)
 }
+
+// stagingRecoveryKey identifies one client boot independently of the lease
+// incarnation. Hash the principal too so an identity takeover cannot recover
+// another principal's private bytes. The key survives incarnation GC.
+func (cs *ClientStore) stagingRecoveryKey(clientID uint64) ([32]byte, error) {
+	id := InodeID(clientID)
+	identity, valid, err := cs.identityForIncarnation(id)
+	if err != nil {
+		return [32]byte{}, err
+	}
+	if !valid {
+		return [32]byte{}, nfsError(NFS4ERR_STALE_CLIENTID)
+	}
+	record, found, err := cs.readRecord(id, clientRecordName)
+	if err != nil {
+		return [32]byte{}, err
+	}
+	if !found {
+		return [32]byte{}, fmt.Errorf("missing client record for %d", clientID)
+	}
+	data, err := json.Marshal(struct {
+		Identity  InodeID
+		Verifier  []byte
+		Flavor    uint32
+		Principal []byte
+	}{identity, record.Verifier, record.PrincipalFlavor, record.PrincipalBody})
+	if err != nil {
+		return [32]byte{}, err
+	}
+	return sha256.Sum256(data), nil
+}

@@ -1939,9 +1939,7 @@ func TestServerLeaseSweepExpiresAbandonedStaging(t *testing.T) {
 			Nfsstat4Name(status))
 	}
 	srv.sweepExpiredClientState()
-	if staging.Get(fileID) != nil {
-		t.Fatal("lease sweep retained abandoned staging")
-	}
+	assertRetiredStaging(t, staging, fileID)
 	if _, status := srv.opens.lookup(
 		state.id, state.generation, fileID,
 	); status != NFS4ERR_EXPIRED {
@@ -2124,9 +2122,7 @@ func TestNewServerDelaysExpiredRecoveredStagingRemoval(t *testing.T) {
 		return srv.startedAt.Add(nfsLeaseTime + time.Second)
 	}
 	srv.removeExpiredStaging()
-	if recovered.Get(fileID) != nil {
-		t.Fatal("startup retained expired staging after grace")
-	}
+	assertRetiredStaging(t, recovered, fileID)
 	if recovered.Get(liveFileID) == nil {
 		t.Fatal("startup removed staging with a live lease")
 	}
@@ -4401,7 +4397,7 @@ func TestBackgroundReadHasBoundedForegroundYield(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		buf := make([]byte, 4)
-		n, _, err := srv.readBaseBackground(id, 0, buf)
+		n, _, err := srv.readBaseBackground(nil, id, 0, buf)
 		if err == nil && (n != len(buf) || string(buf) != "data") {
 			err = fmt.Errorf("read = (%d, %q), want (4, %q)",
 				n, buf, "data")
@@ -4440,13 +4436,13 @@ func TestBackgroundReadReleasesSlotAfterPanic(t *testing.T) {
 				t.Fatal("background read did not panic")
 			}
 		}()
-		_, _, _ = srv.readBaseBackground(id, 0, make([]byte, 4))
+		_, _, _ = srv.readBaseBackground(nil, id, 0, make([]byte, 4))
 	}()
 
 	done := make(chan error, 1)
 	go func() {
 		buf := make([]byte, 4)
-		n, _, err := srv.readBaseBackground(id, 0, buf)
+		n, _, err := srv.readBaseBackground(nil, id, 0, buf)
 		if err == nil && (n != len(buf) || string(buf) != "data") {
 			err = fmt.Errorf("read = (%d, %q), want (4, %q)",
 				n, buf, "data")
@@ -4836,7 +4832,7 @@ func TestRecoveredMutableOpenKeepsOriginalBase(t *testing.T) {
 		t, conn1, &xid, clientid, "existing.txt",
 	)
 	writeFileAt(t, conn1, &xid, fh, stateid, 0, []byte("changed"))
-	_, oldMeta, ok := staging1.FindTarget(fs.RootID(), "existing.txt")
+	_, oldMeta, ok := findStagingTarget(staging1, fs.RootID(), "existing.txt")
 	if !ok {
 		t.Fatal("staging metadata not found")
 	}
@@ -4930,7 +4926,7 @@ func TestRecoveredMissingBaseCreatesFreshFile(t *testing.T) {
 	conn2 := dial(t, addr2)
 	defer conn2.Close()
 
-	oldStagingID, _, ok := staging2.FindTarget(
+	oldStagingID, _, ok := findStagingTarget(staging2,
 		fs.RootID(), "existing.txt",
 	)
 	if !ok {
@@ -5014,8 +5010,8 @@ func TestMutableOpenPreservesMetadataOnlySetattr(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if os.SameFile(before, after) {
-		t.Fatal("metadata-only update did not publish its private version")
+	if !os.SameFile(before, after) {
+		t.Fatal("metadata-only update replaced file contents")
 	}
 	if !after.ModTime().Equal(mtime) {
 		t.Fatalf("mtime = %v, want %v", after.ModTime(), mtime)
@@ -8427,9 +8423,7 @@ func TestRecoveredStagedWriteWithDeadLeaseExpires(t *testing.T) {
 	if !ok {
 		t.Fatal("invalid recovered filehandle")
 	}
-	if restarted.staging.Get(fileID) != nil {
-		t.Fatal("dead recovered lease retained staging")
-	}
+	assertRetiredStaging(t, restarted.staging, fileID)
 }
 
 func TestStagedWriteOperationsAfterServerRestart(t *testing.T) {
@@ -8587,15 +8581,16 @@ func TestRecoveredStagedWriteRequiresActiveMarker(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(entries) != 0 {
-				t.Fatalf("%s retained staging files: %v",
-					operation, entries)
+			if len(entries) != 2 {
+				t.Fatalf("%s lost recoverable staging: %v", operation, entries)
 			}
+			id, _ := fhToInodeID(restarted.fh)
+			assertRetiredStaging(t, restarted.staging, id)
 		})
 	}
 }
 
-func TestSetclientidRebootRemovesStagingFiles(t *testing.T) {
+func TestSetclientidRebootRetiresStagingFiles(t *testing.T) {
 	rootDir := t.TempDir()
 	stagingDir := t.TempDir()
 	fs := NewLocalTernVFS(rootDir)
@@ -8630,15 +8625,13 @@ func TestSetclientidRebootRemovesStagingFiles(t *testing.T) {
 	}
 	setupClientWithVerifier(t, conn, &xid, rebootVerifier)
 
-	if staging.Get(fileID) != nil {
-		t.Fatal("client reboot retained staging in memory")
-	}
+	assertRetiredStaging(t, staging, fileID)
 	entries, err := os.ReadDir(stagingDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 0 {
-		t.Fatalf("client reboot retained staging files: %v", entries)
+	if len(entries) != 2 {
+		t.Fatalf("client reboot lost recoverable staging: %v", entries)
 	}
 	if status := closeFileWithSeqStatus(
 		t, conn, &xid, fh, stateid, 3,
@@ -8803,9 +8796,7 @@ func TestSetclientidReboot(t *testing.T) {
 		if !ok {
 			t.Fatal("invalid filehandle returned by OPEN")
 		}
-		if srv.stagingStore.Get(fileID) != nil {
-			t.Fatal("remote reboot left the local staging file active")
-		}
+		assertRetiredStaging(t, srv.stagingStore, fileID)
 		var localStateID StateID
 		copy(localStateID[:], stateid[4:])
 		if _, status := srv.opens.lookup(

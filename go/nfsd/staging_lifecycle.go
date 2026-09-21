@@ -22,23 +22,11 @@ func (s *Server) stagingOwnedBy(
 }
 
 func (s *Server) directStaging(fileID InodeID) StagingFile {
-	stagingID, ok := s.stagingStore.ResolveID(fileID)
-	if !ok || stagingID != fileID {
-		return nil
-	}
 	return s.stagingStore.Get(fileID)
 }
 
-func (s *Server) stagingTargetBusy(
-	dirID InodeID,
-	name string,
-) (bool, error) {
-	for {
-		id, meta, ok := s.stagingStore.FindTarget(dirID, name)
-		if !ok {
-			return false, nil
-		}
-
+func (s *Server) stagingTargetBusy(dirID InodeID, name string) (bool, error) {
+	for id, meta := range s.stagingStore.FindTargets(dirID, name) {
 		if meta.ClientID != 0 {
 			active, err := s.clients.HasOpen(meta.ClientID, meta.NFSStateID)
 			if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -48,13 +36,9 @@ func (s *Server) stagingTargetBusy(
 				return true, nil
 			}
 		}
-
-		s.log.Info("discarding stale staging file",
-			"inode", id,
-			"clientid", meta.ClientID,
-			"target", name)
-		s.discardStaging(id)
+		s.retireStaging(id, meta)
 	}
+	return false, nil
 }
 
 func (s *Server) recoveredStagingTarget(
@@ -63,41 +47,41 @@ func (s *Server) recoveredStagingTarget(
 	clientID uint64,
 	openOwner string,
 	write bool,
-) (InodeID, StagingMeta, bool) {
+) (InodeID, StagingMeta, bool, error) {
+	key, err := s.clients.stagingRecoveryKey(clientID)
+	if err != nil {
+		return 0, StagingMeta{}, false, err
+	}
 	var foundID InodeID
 	var foundMeta StagingMeta
-	for id, meta := range s.stagingStore.Entries() {
+	for id, meta := range s.stagingStore.FindTargets(dirID, name) {
 		if meta.DirID != dirID || meta.FileName != name ||
-			meta.ClientID != clientID || !s.opens.canRecover(meta.NFSStateID) ||
 			(meta.OwnerKnown && meta.OpenOwner != openOwner) ||
 			meta.ReadOnly == write {
 			continue
 		}
+		if meta.ClientID == clientID {
+			if !s.opens.canRecover(meta.NFSStateID) {
+				continue
+			}
+		} else {
+			if !meta.OwnerKnown || key == ([32]byte{}) || meta.RecoveryKey != key {
+				continue
+			}
+			expired, err := s.clients.IsLeaseExpired(meta.ClientID)
+			if err != nil {
+				return 0, StagingMeta{}, false, err
+			}
+			if !expired {
+				continue
+			}
+		}
 		// Legacy sidecars have no open-owner identity. Never guess between
 		// multiple recovered sessions and hand one writer another's data.
 		if foundID != 0 {
-			return 0, StagingMeta{}, false
+			return 0, StagingMeta{}, false, nfsError(NFS4ERR_EXPIRED)
 		}
 		foundID, foundMeta = id, meta
 	}
-	return foundID, foundMeta, foundID != 0
-}
-
-func (s *Server) reapStaleStaging() {
-	for id, meta := range s.stagingStore.Entries() {
-		if meta.ClientID == 0 {
-			continue
-		}
-		active, err := s.clients.HasOpen(meta.ClientID, meta.NFSStateID)
-		if err != nil {
-			if !errors.Is(err, os.ErrNotExist) {
-				s.log.Warn("check recovered staging lease",
-					"inode", id, "err", err)
-			}
-			continue
-		}
-		if !active {
-			s.discardStaging(id)
-		}
-	}
+	return foundID, foundMeta, foundID != 0, nil
 }

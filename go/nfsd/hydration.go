@@ -5,8 +5,8 @@
 package main
 
 import (
+	"context"
 	"os"
-	"runtime"
 	"time"
 )
 
@@ -24,19 +24,34 @@ func (s *Server) readBaseForeground(
 }
 
 func (s *Server) readBaseBackground(
+	cancel <-chan struct{},
 	fileID InodeID,
 	offset uint64,
 	dest []byte,
 ) (int, bool, error) {
+	// Give foreground reads a short head start, capped so a steady stream
+	// of READs cannot starve background hydration. Both waits are cancellable.
 	deadline := time.Now().Add(maxBackgroundReadYield)
 	for s.foregroundReads.Load() != 0 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
+		timer := time.NewTimer(time.Millisecond)
+		select {
+		case <-cancel:
+			timer.Stop()
+			return 0, false, context.Canceled
+		case <-timer.C:
+		}
 	}
-	s.hydrationSlots <- struct{}{}
-	defer func() {
-		<-s.hydrationSlots
-		runtime.Gosched()
-	}()
+	select {
+	case <-cancel:
+		return 0, false, context.Canceled
+	case s.hydrationSlots <- struct{}{}:
+	}
+	defer func() { <-s.hydrationSlots }()
+	select {
+	case <-cancel:
+		return 0, false, context.Canceled
+	default:
+	}
 	return s.fs.Read(fileID, offset, dest)
 }
 
@@ -58,24 +73,30 @@ func (s *Server) setStagingSize(sf StagingFile, size uint64) error {
 }
 
 func (s *Server) discardStaging(id InodeID) {
-	stagingID, resolved := s.stagingStore.ResolveID(id)
 	meta, ok := s.stagingStore.GetMeta(id)
 	s.stagingStore.Remove(id)
 	if !ok {
 		return
 	}
-	if !resolved {
-		stagingID = id
-	}
-	if err := s.fs.ScrapFile(stagingID, meta.TernCookie); err != nil &&
+	if err := s.fs.ScrapFile(id, meta.TernCookie); err != nil &&
 		!os.IsNotExist(err) {
-		s.log.Warn("scrap transient staging file", "inode", stagingID, "err", err)
+		s.log.Warn("scrap transient staging file", "inode", id, "err", err)
 	}
 	if meta.ClientID != 0 {
 		if err := s.clients.RemoveOpen(meta.ClientID, meta.NFSStateID); err != nil &&
 			!os.IsNotExist(err) {
 			s.log.Warn("remove discarded staging open",
 				"clientid", meta.ClientID, "err", err)
+		}
+	}
+}
+
+// Lease expiry revokes access, not stable data. Retired staging remains on
+// disk for the original client to reclaim or an administrator to recover.
+func (s *Server) retireStaging(id InodeID, meta StagingMeta) {
+	if sf := s.stagingStore.Get(id); sf != nil {
+		if err := sf.Retire(meta.ClientID, meta.NFSStateID); err != nil {
+			s.log.Error("retain expired staging", "inode", id, "err", err)
 		}
 	}
 }

@@ -112,9 +112,16 @@ process restarts and provision capacity for complete replacement files.
 Even a small edit can require reading and republishing the whole base at
 CLOSE. Monitor staging capacity, hydration traffic and CLOSE latency.
 
-The current sidecar format is NFS4; older formats remain readable. Drain
-active writes before upgrading from shared-base-filehandle versions or
-downgrading to binaries that cannot read NFS4 sidecars.
+Timestamp-only CLOSE updates the current published inode without reading or
+republishing its contents. This preserves data published by a concurrent writer.
+After a data publication commits, failure to restore the writer's timestamps is
+logged and CLOSE succeeds; the data is already visible and cannot be rolled back.
+
+The current sidecar format is NFS4. Deployed write-once sidecars remain readable;
+development-only NFS2/NFS3 formats are unsupported. Missing or invalid sidecars
+cause their data to be moved under `quarantine/` for manual recovery, never
+registered as an open. Drain active writes before downgrading to a binary that
+cannot read the current format.
 
 The implementation is in [`staging.go`](staging.go) and [`ops.go`](ops.go).
 
@@ -306,11 +313,12 @@ OPEN markers are create-if-absent records. Reopening or replaying an OPEN which
 already owns a marker reuses the existing TernFS inode.
 
 Each nfsd checks its local clients once per lease period. A client with no
-live fleet lease loses its process-local open state and any local staging
-files. Its local open markers are removed at the same time. This bounds
-abandoned staging and markers even when the client never contacts the server
-again. The persistent client store is the authority for replaced clientids;
-the process-local open store does not keep a separate revoked set.
+live fleet lease loses its process-local open state and local open markers.
+Its staging is retired, preserving acknowledged bytes without reserving the
+pathname. Retired staging is retained until recovered and closed or explicitly
+removed by an administrator; provision and monitor disk space accordingly.
+The persistent client store is the authority for replaced clientids; the
+process-local open store does not keep a separate revoked set.
 
 An open-owner with no remaining open state is retained for replay for one
 lease after its last operation. It is then removed. A later CLOSE retransmit
@@ -337,9 +345,21 @@ recover only checkpointed dirty ranges, including new files backed by their
 empty published inode. Legacy staging without a base recovers the physical
 local file.
 
+A client reconnecting after lease expiry receives a new clientid. New sidecars
+also persist a recovery key derived from its stable client identity, boot
+verifier and RPC principal. Matching that key and the open owner allows the
+same client boot to reclaim its private filehandle and data after expiry,
+including across an nfsd restart or collection of the old incarnation.
+A changed boot verifier, different principal or different client cannot adopt
+that staging. Ambiguous recovery returns EXPIRED instead of silently opening a
+fresh version. Sidecars without a recovery key support same-clientid restart
+recovery only. Recovery requires returning to the host holding the staging disk.
+The immutable base and transient inode must also remain available under TernFS's
+retention policies; local staging retention does not extend those policies.
+
 After one lease period of startup grace, the periodic sweep checks all local
 staging, including writes created since startup. Staging for an expired or
-stale clientid is removed. A confirmed client with no lease slot is retained
+stale clientid is retired. A confirmed client with no lease slot is retained
 because the first OPEN creates staging before it writes the slot. The startup
 grace gives a client time to reclaim a recovered write after a server outage.
 
@@ -580,7 +600,7 @@ CI runs a separate NFS test in a QEMU Ubuntu VM:
 the VM. [`terntests`](../terntests) then mounts the server using the Linux
 NFSv4.0 client and runs `terntests -nfs -filter nfs`.
 
-That filter selects exactly two tests:
+That filter selects three tests:
 
 - [`nfs mounted fs`](../terntests/terntests.go) runs the existing `fsTest`
   workload through its `posixHarness`, with the NFS mount as its root. In short
@@ -590,5 +610,14 @@ That filter selects exactly two tests:
   timestamp updates, existing-file overwrite/truncate, and coherent
   fsync/fstat/append behavior, immediate empty-file visibility, private
   concurrent writers and retained readers.
+- [`nfs lease recovery`](../terntests/nfsoutage.go) disconnects the mount through
+  a TCP proxy for 100 seconds, exceeding the 90-second NFS lease. It then
+  appends and publishes both a new file and an existing-file replacement,
+  checking that all data acknowledged before the outage survives.
+
+Each workload starts its own nfsd and mount, then unmounts and stops nfsd
+before cleanup. Cleanup deletes the whole TernFS namespace, including `/.nfs`;
+a running server cannot retain client-state directory IDs across that deletion.
+Mutation sub-step progress is printed to the CI log.
 
 This is the only current test path using a kernel NFS client.
