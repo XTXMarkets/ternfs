@@ -106,7 +106,7 @@ func (s *Server) lookupDurableOpen(
 				return openState{}, clientStoreErrToNFS(err)
 			}
 			if !active {
-				s.stagingStore.Remove(fileID)
+				s.retireStaging(fileID, meta)
 				return openState{}, NFS4ERR_EXPIRED
 			}
 		}
@@ -114,7 +114,7 @@ func (s *Server) lookupDurableOpen(
 			id:         id,
 			fileID:     fileID,
 			owner:      openOwnerKey{clientID: meta.ClientID},
-			write:      true,
+			write:      !meta.ReadOnly,
 			generation: stateid.Seqid(),
 			confirmed:  true,
 		}, NFS4_OK
@@ -150,8 +150,9 @@ func (s *Server) expireClientState(clientID uint64) {
 		}
 	}
 	for _, state := range s.opens.expireClient(clientID) {
-		if state.write {
-			s.stagingStore.Remove(state.fileID)
+		meta, ok := s.stagingStore.GetMeta(state.fileID)
+		if ok && meta.ClientID == clientID && meta.NFSStateID == state.id {
+			s.retireStaging(state.fileID, meta)
 		}
 	}
 }
@@ -252,10 +253,18 @@ func (s *Server) opClose(args CLOSE4args, st *compoundState, w *COMPOUND4resWrit
 				return fail(clientStoreErrToNFS(err))
 			}
 			if !active {
-				s.stagingStore.Remove(st.currentID)
+				s.retireStaging(st.currentID, meta)
 				return fail(NFS4ERR_EXPIRED)
 			}
 		}
+	}
+	ownsStaging := hasMeta && (recovered != nil ||
+		op != nil &&
+			sid == meta.NFSStateID &&
+			state.owner.clientID == meta.ClientID)
+	if !ownsStaging {
+		hasMeta = false
+		meta = StagingMeta{}
 	}
 
 	expiredClose := false
@@ -270,19 +279,58 @@ func (s *Server) opClose(args CLOSE4args, st *compoundState, w *COMPOUND4resWrit
 			// Invariant: a staging entry always has both meta and a data file.
 			panic("close: staging meta present but no data file")
 		}
-		r, rErr := sf.Reader()
-		if rErr != nil {
-			// Seek on an open regular file cannot fail; broken invariant.
-			panic("close: staging Reader failed: " + rErr.Error())
-		}
-		linkErr := s.fs.LinkFile(st.currentID, meta.TernCookie, meta.DirID, meta.FileName, r)
-		// Any error here is terminal: transient failures are already retried
-		// below us, and the write phase isn't resumable. Drop staging either way.
-		s.stagingStore.Remove(st.currentID)
-		if linkErr != nil {
-			status := s.errToNFS(linkErr)
-			s.log.Error("close: link file", "err", linkErr, "status", Nfsstat4Name(status))
-			return fail(status)
+		stagingID := st.currentID
+		unlock := s.lockMutationTargets(mutationTarget{dirID: meta.DirID, name: meta.FileName})
+		defer unlock()
+		publish := meta.BaseID == 0 || sf.Dirty()
+		if publish && meta.BaseID != 0 && !sf.DataChanged() {
+			// A timestamp-only CLOSE updates the current published version,
+			// preserving any data published by another writer in the meantime.
+			currentID, err := s.fs.Lookup(meta.DirID, meta.FileName)
+			if err != nil {
+				return fail(s.errToNFS(err))
+			}
+			info := sf.Stat()
+			if err := s.fs.SetTime(currentID, &info.Mtime, &info.Atime); err != nil {
+				return fail(s.errToNFS(err))
+			}
+			s.discardStaging(st.currentID)
+		} else if publish {
+			if meta.BaseID != 0 {
+				s.startHydration(sf)
+				if err := sf.FinishHydration(s.readBaseForeground); err != nil {
+					s.discardStaging(st.currentID)
+					status := s.errToNFS(err)
+					s.log.Error("close: hydrate replacement", "err", err,
+						"status", Nfsstat4Name(status))
+					return fail(status)
+				}
+			}
+			r, rErr := sf.Reader()
+			if rErr != nil {
+				// Seek on an open regular file cannot fail; broken invariant.
+				panic("close: staging Reader failed: " + rErr.Error())
+			}
+			linkErr := s.fs.LinkFile(stagingID, meta.TernCookie, meta.DirID, meta.FileName, r)
+			if linkErr != nil {
+				// The write phase is not resumable after a partial LinkFile.
+				s.discardStaging(st.currentID)
+				status := s.errToNFS(linkErr)
+				s.log.Error("close: link file", "err", linkErr, "status", Nfsstat4Name(status))
+				return fail(status)
+			}
+			info := sf.Stat()
+			// LinkFile stamps the immutable inode with publication time.
+			// Restore the writer's times, including explicit SETATTR values.
+			timeErr := s.fs.SetTime(stagingID, &info.Mtime, &info.Atime)
+			s.stagingStore.Remove(st.currentID)
+			if timeErr != nil {
+				// Publication already committed. Complete CLOSE so a retry
+				// cannot turn the successful write into an expired open.
+				s.log.Warn("close: published file but could not restore timestamps", "inode", stagingID, "err", timeErr)
+			}
+		} else {
+			s.discardStaging(st.currentID)
 		}
 	} else {
 		// Read CLOSE does not need the file to remain linked. A write CLOSE
@@ -347,7 +395,12 @@ func (s *Server) opCommit(st *compoundState, w *COMPOUND4resWriter) uint32 {
 
 	// Sync the staging file for the current filehandle.
 	if sf := s.stagingStore.Get(st.currentID); sf != nil {
-		sf.Sync()
+		if err := sf.Sync(); err != nil {
+			ew := w.AppendResarray_Commit()
+			ew.SetValue_Default(NFS4ERR_IO)
+			w.Resume(ew.Finish())
+			return NFS4ERR_IO
+		}
 	}
 
 	ew := w.AppendResarray_Commit()
@@ -391,6 +444,25 @@ func (s *Server) opCreate(args CREATE4args, st *compoundState, w *COMPOUND4resWr
 		ew := w.AppendResarray_Create()
 		return finishDefaultResponse(w, &ew, status)
 	}
+	unlock := s.lockMutationTargets(mutationTarget{
+		dirID: st.currentID,
+		name:  name,
+	})
+	defer unlock()
+	busy, err := s.stagingTargetBusy(st.currentID, name)
+	if err != nil {
+		ew := w.AppendResarray_Create()
+		status := s.errToNFS(err)
+		ew.SetValue_Default(status)
+		w.Resume(ew.Finish())
+		return status
+	}
+	if busy {
+		ew := w.AppendResarray_Create()
+		ew.SetValue_Default(NFS4ERR_FILE_OPEN)
+		w.Resume(ew.Finish())
+		return NFS4ERR_FILE_OPEN
+	}
 	if _, err := s.fs.Lookup(st.currentID, name); err == nil {
 		ew := w.AppendResarray_Create()
 		return finishDefaultResponse(w, &ew, NFS4ERR_EXIST)
@@ -400,7 +472,6 @@ func (s *Server) opCreate(args CREATE4args, st *compoundState, w *COMPOUND4resWr
 	}
 
 	var newID InodeID
-	var err error
 
 	switch objType {
 	case NF4DIR:
@@ -459,23 +530,11 @@ func (s *Server) opGetattr(args GETATTR4args, st *compoundState, w *COMPOUND4res
 		ew := w.AppendResarray_Getattr()
 		return finishDefaultResponse(w, &ew, NFS4ERR_NOFILEHANDLE)
 	}
-	ni, err := s.fs.Stat(st.currentID)
+	ni, err := s.stat(st.currentID)
 	if err != nil {
-		// If Stat fails but the file is being staged (transient file not yet
-		// linked), synthesize metadata from the staging store.
-		if sz, ok := s.stagingStore.StagedSize(st.currentID); ok {
-			now := time.Now()
-			ni = NodeInfo{Size: sz, Mtime: now, Atime: now}
-		} else {
-			ew := w.AppendResarray_Getattr()
-			status := s.errToNFS(err)
-			return finishDefaultResponse(w, &ew, status)
-		}
-	} else {
-		// If the file has an active staging buffer, use its size.
-		if sz, ok := s.stagingStore.StagedSize(st.currentID); ok {
-			ni.Size = sz
-		}
+		ew := w.AppendResarray_Getattr()
+		status := s.errToNFS(err)
+		return finishDefaultResponse(w, &ew, status)
 	}
 
 	reqMask := parseBitmap(args.AttrRequest())
@@ -662,8 +721,8 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 	}
 	defer op.finishServerFaultIfNeeded()
 	for _, state := range op.abandoned {
-		if state.write {
-			s.stagingStore.Remove(state.fileID)
+		if s.stagingOwnedBy(state.fileID, state) != nil {
+			s.discardStaging(state.fileID)
 		}
 		if err := s.clients.RemoveOpen(clientID, state.id); err != nil {
 			s.log.Error("open: remove abandoned marker", "err", err)
@@ -683,6 +742,29 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 	var targetID InodeID
 	var nfsSID StateID
 	created := false
+	staged := false
+	reusedStaging := false
+	var openSize *uint64
+	var recoveredStagingID InodeID
+	var recoveredStagingMeta StagingMeta
+	var hasRecoveredStaging bool
+	var placeholderID, placeholderDir InodeID
+	var placeholderCookie Cookie
+	var placeholderName string
+	placeholderPublished := false
+	defer func() {
+		if placeholderID != 0 && !placeholderPublished {
+			if err := s.fs.ScrapFile(placeholderID, placeholderCookie); err != nil &&
+				!os.IsNotExist(err) {
+				s.log.Warn("scrap unpublished empty file", "inode", placeholderID, "err", err)
+			}
+		}
+	}()
+	adoptRecoveredStaging := func() {
+		nfsSID = s.opens.newStateID()
+		reusedStaging = true
+		staged = true
+	}
 
 	switch claimType {
 	case CLAIM_NULL:
@@ -694,12 +776,27 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 		if status != NFS4_OK {
 			return fail(status)
 		}
+		if access&OPEN4_SHARE_ACCESS_WRITE != 0 || args.OpenhowType() == OPEN4_CREATE {
+			unlock := s.lockMutationTargets(mutationTarget{
+				dirID: dirID,
+				name:  fileName,
+			})
+			defer unlock()
+			var recoveryErr error
+			recoveredStagingID, recoveredStagingMeta,
+				hasRecoveredStaging, recoveryErr = s.recoveredStagingTarget(
+				dirID, fileName, clientID, ownerKey.owner,
+				access&OPEN4_SHARE_ACCESS_WRITE != 0,
+			)
+			if recoveryErr != nil {
+				return fail(clientStoreErrToNFS(recoveryErr))
+			}
+		}
 
 		// Check if this is a create.
 		if args.OpenhowType() == OPEN4_CREATE {
 			createHow := args.Openhow().AsCreatehow4Entry()
-			// EXCLUSIVE4 not supported — clients should fall back
-			// to GUARDED4 or UNCHECKED4.
+			// EXCLUSIVE4 verifier handling is not implemented.
 			if createHow.Disc() == EXCLUSIVE4 {
 				return fail(NFS4ERR_NOTSUPP)
 			}
@@ -713,28 +810,39 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 			if status := validateCreateAttrs(createAttrs); status != NFS4_OK {
 				return fail(status)
 			}
+			var status uint32
+			openSize, status = createAttrSize(createAttrs)
+			if status != NFS4_OK {
+				return fail(status)
+			}
 			// Try lookup first.
 			id, err := s.fs.Lookup(dirID, fileName)
 			if err != nil {
-				// File doesn't exist — construct a transient file.
-				var fileCookie Cookie
-				id, fileCookie, err = s.fs.ConstructFile(dirID)
+				lookupStatus := s.errToNFS(err)
+				if lookupStatus != NFS4ERR_NOENT {
+					return fail(lookupStatus)
+				}
+				if s.stagingStore.ReadOnly() {
+					return fail(NFS4ERR_ROFS)
+				}
+				if hasRecoveredStaging {
+					if recoveredStagingMeta.BaseID != 0 {
+						s.discardStaging(recoveredStagingID)
+						hasRecoveredStaging = false
+					}
+				}
+				// Keep the writer's transient distinct from the empty inode
+				// that LOOKUP and READDIR will expose when OPEN succeeds.
+				placeholderID, placeholderCookie, err = s.fs.ConstructFile(dirID)
 				if err != nil {
 					return fail(s.errToNFS(err))
 				}
-				// Generate a random NFS stateid and create staging with metadata.
-				nfsSID = s.opens.newStateID()
-				meta := StagingMeta{
-					DirID:      dirID,
-					FileName:   fileName,
-					TernCookie: fileCookie,
-					NFSStateID: nfsSID,
-					ClientID:   clientID,
+				id = placeholderID
+				if hasRecoveredStaging {
+					id = recoveredStagingID
+					adoptRecoveredStaging()
 				}
-				if _, sfErr := s.stagingStore.Create(id, meta); sfErr != nil {
-					s.log.Error("staging create error", "err", sfErr)
-					return fail(NFS4ERR_IO)
-				}
+				placeholderDir, placeholderName = dirID, fileName
 				created = true
 			} else if createHow.Disc() == GUARDED4 {
 				return fail(NFS4ERR_EXIST)
@@ -743,22 +851,100 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 		} else {
 			id, err := s.fs.Lookup(dirID, fileName)
 			if err != nil {
-				status := s.errToNFS(err)
-				return fail(status)
+				lookupStatus := s.errToNFS(err)
+				if lookupStatus == NFS4ERR_NOENT &&
+					hasRecoveredStaging &&
+					recoveredStagingMeta.BaseID == 0 {
+					adoptRecoveredStaging()
+					targetID = recoveredStagingID
+					created = true
+					placeholderID, placeholderCookie, err = s.fs.ConstructFile(dirID)
+					if err != nil {
+						return fail(s.errToNFS(err))
+					}
+					placeholderDir, placeholderName = dirID, fileName
+				} else {
+					if lookupStatus == NFS4ERR_NOENT &&
+						hasRecoveredStaging {
+						s.discardStaging(recoveredStagingID)
+					}
+					return fail(lookupStatus)
+				}
+			} else {
+				targetID = id
 			}
-			targetID = id
 		}
 
-		// Files are immutable: reject write access to existing files.
-		// To replace a file, clients must remove + create.
-		if !created && access&OPEN4_SHARE_ACCESS_WRITE != 0 {
-			return fail(NFS4ERR_PERM)
+		if !staged && (created || access&OPEN4_SHARE_ACCESS_WRITE != 0) {
+			if status := requireRegularFile(targetID); status != NFS4_OK {
+				if targetID.Type() == InodeTypeSymlink {
+					status = NFS4ERR_SYMLINK
+				}
+				return fail(status)
+			}
+			baseID := targetID
+			if hasRecoveredStaging {
+				// Another writer may have published since this session opened.
+				// Its immutable base and private edits still belong to this owner.
+				adoptRecoveredStaging()
+				targetID = recoveredStagingID
+			} else {
+				var baseInfo NodeInfo
+				if baseID != placeholderID {
+					var err error
+					baseInfo, err = s.fs.Stat(baseID)
+					if err != nil {
+						return fail(s.errToNFS(err))
+					}
+				}
+				targetID, nfsSID, status = s.constructStaging(
+					dirID, fileName, clientID, ownerKey.owner,
+					access&OPEN4_SHARE_ACCESS_WRITE != 0, baseID, baseInfo,
+				)
+				if status != NFS4_OK {
+					return fail(status)
+				}
+				staged = true
+			}
 		}
 	case CLAIM_PREVIOUS:
 		// No grace period — there is no lock/open state to reclaim.
 		return fail(NFS4ERR_NO_GRACE)
 	default:
 		return fail(NFS4ERR_NOTSUPP)
+	}
+
+	stagingRebound := false
+	cleanupStagedOpen := func() {
+		if reusedStaging {
+			if stagingRebound {
+				if err := s.stagingStore.Rebind(
+					recoveredStagingID,
+					recoveredStagingMeta.ClientID,
+					recoveredStagingMeta.NFSStateID,
+				); err != nil {
+					s.log.Error("restore recovered staging owner", "err", err)
+				} else if recoveredStagingMeta.Retired {
+					s.retireStaging(recoveredStagingID, recoveredStagingMeta)
+				}
+			}
+			return
+		}
+		s.discardStaging(targetID)
+	}
+
+	applyOpenSize := func() error {
+		sf := s.stagingStore.Get(targetID)
+		if sf == nil {
+			panic("open: staged file has no staging data")
+		}
+		return s.setStagingSize(sf, *openSize)
+	}
+	if staged && openSize != nil && !reusedStaging {
+		if err := applyOpenSize(); err != nil {
+			cleanupStagedOpen()
+			return fail(NFS4ERR_IO)
+		}
 	}
 
 	if status := requireRegularFile(targetID); status != NFS4_OK {
@@ -777,10 +963,40 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 		nfsSID = markID
 	}
 	if err := s.clients.MarkOpen(clientID, markID); err != nil {
-		if created {
-			s.stagingStore.Remove(targetID)
+		if staged {
+			cleanupStagedOpen()
 		}
 		return fail(clientStoreErrToNFS(err))
+	}
+	if reusedStaging {
+		if err := s.stagingStore.Rebind(
+			recoveredStagingID, clientID, markID,
+		); err != nil {
+			_ = s.clients.RemoveOpen(clientID, markID)
+			return fail(NFS4ERR_IO)
+		}
+		stagingRebound = true
+		// Retired files release their descriptors; Rebind reopens them after
+		// the new durable marker exists. Apply CREATE size only then.
+		if openSize != nil {
+			if err := applyOpenSize(); err != nil {
+				_ = s.clients.RemoveOpen(clientID, markID)
+				cleanupStagedOpen()
+				return fail(NFS4ERR_IO)
+			}
+		}
+	}
+	if placeholderID != 0 {
+		if err := s.fs.LinkFile(
+			placeholderID, placeholderCookie, placeholderDir, placeholderName, nil,
+		); err != nil {
+			_ = s.clients.RemoveOpen(clientID, markID)
+			if staged {
+				cleanupStagedOpen()
+			}
+			return fail(s.errToNFS(err))
+		}
+		placeholderPublished = true
 	}
 	response = op.finishOpen(
 		targetID,
@@ -788,7 +1004,62 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 		nfsSID,
 		created,
 	)
+	if response.status != NFS4_OK {
+		_ = s.clients.RemoveOpen(clientID, markID)
+		if staged {
+			cleanupStagedOpen()
+		}
+	}
+	if response.status == NFS4_OK && reusedStaging &&
+		recoveredStagingMeta.NFSStateID != response.state.id {
+		if err := s.clients.RemoveOpen(
+			recoveredStagingMeta.ClientID,
+			recoveredStagingMeta.NFSStateID,
+		); err != nil && !os.IsNotExist(err) {
+			s.log.Warn("remove recovered staging open", "err", err)
+		}
+	}
 	return writeOpenResponse(w, st, response)
+}
+
+func (s *Server) constructStaging(
+	dirID InodeID,
+	fileName string,
+	clientID uint64,
+	openOwner string,
+	write bool,
+	baseID InodeID,
+	baseInfo NodeInfo,
+) (InodeID, StateID, uint32) {
+	recoveryKey, err := s.clients.stagingRecoveryKey(clientID)
+	if err != nil {
+		return 0, StateID{}, clientStoreErrToNFS(err)
+	}
+	id, cookie, err := s.fs.ConstructFile(dirID)
+	if err != nil {
+		return 0, StateID{}, s.errToNFS(err)
+	}
+	stateID := s.opens.newStateID()
+	meta := StagingMeta{
+		DirID:       dirID,
+		FileName:    fileName,
+		TernCookie:  cookie,
+		NFSStateID:  stateID,
+		ClientID:    clientID,
+		BaseID:      baseID,
+		BaseSize:    baseInfo.Size,
+		Attrs:       baseInfo,
+		OpenOwner:   openOwner,
+		OwnerKnown:  true,
+		ReadOnly:    !write,
+		RecoveryKey: recoveryKey,
+	}
+	if _, err := s.stagingStore.Create(id, meta); err != nil {
+		_ = s.fs.ScrapFile(id, cookie)
+		s.log.Error("staging create error", "err", err)
+		return 0, StateID{}, NFS4ERR_IO
+	}
+	return id, stateID, NFS4_OK
 }
 
 func writeOpenResponse(
@@ -954,8 +1225,6 @@ func (s *Server) opRead(args READ4args, st *compoundState, w *COMPOUND4resWriter
 			return finishDefaultResponse(w, &ew, status)
 		}
 	}
-
-	// Check if we should read from a staging buffer.
 	sf := s.stagingStore.Get(st.currentID)
 
 	offset := args.Offset()
@@ -968,9 +1237,14 @@ func (s *Server) opRead(args READ4args, st *compoundState, w *COMPOUND4resWriter
 	var err error
 
 	if sf != nil {
-		n, eof, err = sf.Read(offset, buf)
+		n, eof, err = sf.Read(offset, buf, s.readBaseForeground)
+		if errors.Is(err, errStagingRemoved) {
+			n, eof, err = s.readBaseForeground(
+				st.currentID, offset, buf,
+			)
+		}
 	} else {
-		n, eof, err = s.fs.Read(st.currentID, offset, buf)
+		n, eof, err = s.readBaseForeground(st.currentID, offset, buf)
 	}
 
 	if err != nil {
@@ -1089,12 +1363,9 @@ func (s *Server) opReaddir(args READDIR4args, st *compoundState, w *COMPOUND4res
 		allEntries = filtered
 	}
 
-	// Build staged sizes map for entries being written.
-	ss := stagedSizes(s.stagingStore.StagedSizes())
-
 	// Pre-compute attributes for each entry so we can calculate exact
 	// XDR sizes before encoding.
-	prepared := prepareReaddirEntries(allEntries, reqMask, s.fs, ss)
+	prepared := prepareReaddirEntries(allEntries, reqMask, s.stat)
 
 	// Enforce maxcount and dircount with exact XDR sizes.
 	// maxcount covers the entire READDIR4resok: cookieverf(8) +
@@ -1193,7 +1464,26 @@ func (s *Server) opRemove(args REMOVE4args, st *compoundState, w *COMPOUND4resWr
 		ew := w.AppendResarray_Remove()
 		return finishDefaultResponse(w, &ew, status)
 	}
-	err := s.fs.Remove(st.currentID, name)
+	unlock := s.lockMutationTargets(mutationTarget{
+		dirID: st.currentID,
+		name:  name,
+	})
+	defer unlock()
+	busy, err := s.stagingTargetBusy(st.currentID, name)
+	if err != nil {
+		ew := w.AppendResarray_Remove()
+		status := s.errToNFS(err)
+		ew.SetValue_Default(status)
+		w.Resume(ew.Finish())
+		return status
+	}
+	if busy {
+		ew := w.AppendResarray_Remove()
+		ew.SetValue_Default(NFS4ERR_FILE_OPEN)
+		w.Resume(ew.Finish())
+		return NFS4ERR_FILE_OPEN
+	}
+	err = s.fs.Remove(st.currentID, name)
 	if err != nil {
 		ew := w.AppendResarray_Remove()
 		status := s.errToNFS(err)
@@ -1238,6 +1528,11 @@ func (s *Server) opRename(args RENAME4args, st *compoundState, w *COMPOUND4resWr
 		ew := w.AppendResarray_Rename()
 		return finishDefaultResponse(w, &ew, status)
 	}
+	unlock := s.lockMutationTargets(
+		mutationTarget{dirID: st.savedID, name: oldName},
+		mutationTarget{dirID: st.currentID, name: newName},
+	)
+	defer unlock()
 
 	if st.savedID == st.currentID && oldName == newName {
 		ew := w.AppendResarray_Rename()
@@ -1249,7 +1544,30 @@ func (s *Server) opRename(args RENAME4args, st *compoundState, w *COMPOUND4resWr
 		return NFS4_OK
 	}
 
-	err := s.fs.Rename(st.savedID, oldName, st.currentID, newName)
+	sourceBusy, err := s.stagingTargetBusy(st.savedID, oldName)
+	if err != nil {
+		ew := w.AppendResarray_Rename()
+		status := s.errToNFS(err)
+		ew.SetValue_Default(status)
+		w.Resume(ew.Finish())
+		return status
+	}
+	targetBusy, err := s.stagingTargetBusy(st.currentID, newName)
+	if err != nil {
+		ew := w.AppendResarray_Rename()
+		status := s.errToNFS(err)
+		ew.SetValue_Default(status)
+		w.Resume(ew.Finish())
+		return status
+	}
+	if sourceBusy || targetBusy {
+		ew := w.AppendResarray_Rename()
+		ew.SetValue_Default(NFS4ERR_FILE_OPEN)
+		w.Resume(ew.Finish())
+		return NFS4ERR_FILE_OPEN
+	}
+
+	err = s.fs.Rename(st.savedID, oldName, st.currentID, newName)
 	if err != nil {
 		ew := w.AppendResarray_Rename()
 		status := s.errToNFS(err)
@@ -1439,6 +1757,7 @@ func (s *Server) opSetattr(args SETATTR4args, st *compoundState, w *COMPOUND4res
 	}
 
 	if newSize != nil {
+		var sf StagingFile
 		if !isSpecialStateID(args.Stateid()) {
 			state, status := s.lookupDurableOpen(
 				args.Stateid(), st.currentID)
@@ -1448,18 +1767,39 @@ func (s *Server) opSetattr(args SETATTR4args, st *compoundState, w *COMPOUND4res
 			if !state.write {
 				return setattrReply(NFS4ERR_OPENMODE, [2]uint32{})
 			}
+			sf = s.stagingOwnedBy(st.currentID, state)
+		} else {
+			sf = s.directStaging(st.currentID)
 		}
-		sf := s.stagingStore.Get(st.currentID)
 		if sf == nil {
 			return setattrReply(NFS4ERR_BAD_STATEID, [2]uint32{})
 		}
-		if err := sf.SetSize(*newSize); err != nil {
+		if err := s.setStagingSize(sf, *newSize); err != nil {
 			return setattrReply(NFS4ERR_IO, [2]uint32{})
 		}
 		resultMask[0] |= 1 << FATTR4_SIZE
 	}
 	if setAtime != nil || setMtime != nil {
-		if err := s.fs.SetTime(st.currentID, setMtime, setAtime); err != nil {
+		var sf StagingFile
+		if !isSpecialStateID(args.Stateid()) {
+			if state, status := s.lookupDurableOpen(
+				args.Stateid(), st.currentID,
+			); status == NFS4_OK {
+				sf = s.stagingOwnedBy(st.currentID, state)
+			}
+		} else {
+			sf = s.directStaging(st.currentID)
+		}
+		if sf != nil {
+			if err := sf.SetTime(setMtime, setAtime); err != nil {
+				return setattrReply(NFS4ERR_IO, [2]uint32{})
+			}
+			if err := sf.Sync(); err != nil {
+				return setattrReply(NFS4ERR_IO, [2]uint32{})
+			}
+		} else if err := s.fs.SetTime(
+			st.currentID, setMtime, setAtime,
+		); err != nil {
 			return setattrReply(NFS4ERR_IO, [2]uint32{})
 		}
 		if setAtime != nil {
@@ -1567,6 +1907,7 @@ func (s *Server) opWrite(args WRITE4args, st *compoundState, w *COMPOUND4resWrit
 		return finishDefaultResponse(w, &ew, status)
 	}
 
+	var sf StagingFile
 	if !isSpecialStateID(args.Stateid()) {
 		state, status := s.lookupDurableOpen(
 			args.Stateid(), st.currentID)
@@ -1578,10 +1919,12 @@ func (s *Server) opWrite(args WRITE4args, st *compoundState, w *COMPOUND4resWrit
 			ew := w.AppendResarray_Write()
 			return finishDefaultResponse(w, &ew, NFS4ERR_OPENMODE)
 		}
+		sf = s.stagingOwnedBy(st.currentID, state)
+	} else {
+		sf = s.directStaging(st.currentID)
 	}
 
 	// Find the staging buffer for this file.
-	sf := s.stagingStore.Get(st.currentID)
 	if sf == nil {
 		// No staging buffer — not opened for write.
 		ew := w.AppendResarray_Write()
@@ -1590,16 +1933,36 @@ func (s *Server) opWrite(args WRITE4args, st *compoundState, w *COMPOUND4resWrit
 
 	offset := args.Offset()
 	data := args.Data()
+	stable := args.Stable()
+	if stable > fileSync4 {
+		ew := w.AppendResarray_Write()
+		ew.SetValue_Default(NFS4ERR_INVAL)
+		w.Resume(ew.Finish())
+		return NFS4ERR_INVAL
+	}
 
 	if err := sf.Write(offset, data); err != nil {
 		ew := w.AppendResarray_Write()
 		return finishDefaultResponse(w, &ew, NFS4ERR_IO)
 	}
+	if sf.Dirty() {
+		s.startHydration(sf)
+	}
+	committed := uint32(unstable4)
+	if stable != unstable4 {
+		if err := sf.Sync(); err != nil {
+			ew := w.AppendResarray_Write()
+			ew.SetValue_Default(NFS4ERR_IO)
+			w.Resume(ew.Finish())
+			return NFS4ERR_IO
+		}
+		committed = stable
+	}
 
 	ew := w.AppendResarray_Write()
 	okW := ew.SetValue_Nfs4Ok()
 	okW.SetCount(uint32(len(data)))
-	okW.SetCommitted(unstable4)
+	okW.SetCommitted(committed)
 	setData64(okW.Writeverf(), s.writeVerifier)
 	w.Resume(ew.Finish())
 	return NFS4_OK
@@ -1614,7 +1977,7 @@ func (s *Server) opReleaseLockowner(w *COMPOUND4resWriter) uint32 {
 // verifyAttrs compares the supplied fattr4 against the current file's attributes.
 // Returns (same bool, status uint32). If status != NFS4_OK, comparison failed.
 func (s *Server) verifyAttrs(id InodeID, supplied Fattr4) (bool, uint32) {
-	ni, err := s.fs.Stat(id)
+	ni, err := s.stat(id)
 	if err != nil {
 		return false, s.errToNFS(err)
 	}
