@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -41,12 +42,37 @@ type inspectOptions struct {
 }
 
 type inspectReport struct {
-	Now          time.Time             `json:"now"`
-	LeaseTime    time.Duration         `json:"lease_time"`
-	ClientsDirID inspectInode          `json:"clients_dir_id"`
-	Identities   []inspectIdentity     `json:"identities"`
-	Staging      []inspectStagingEntry `json:"staging,omitempty"`
-	Problems     []string              `json:"problems,omitempty"`
+	Now            time.Time              `json:"now"`
+	LeaseTime      time.Duration          `json:"lease_time"`
+	ClientsDirID   inspectInode           `json:"clients_dir_id"`
+	Summary        inspectSummary         `json:"summary"`
+	Identities     []inspectIdentity      `json:"identities"`
+	StagingDir     string                 `json:"staging_dir,omitempty"`
+	StagingSummary *inspectStagingSummary `json:"staging_summary,omitempty"`
+	Staging        []*inspectStagingEntry `json:"staging,omitempty"`
+	Problems       []string               `json:"problems,omitempty"`
+}
+
+type inspectSummary struct {
+	Identities   int `json:"identities"`
+	Incarnations int `json:"incarnations"`
+	Active       int `json:"active"`
+	Expired      int `json:"expired"`
+	Unleased     int `json:"unleased"`
+	Pending      int `json:"pending"`
+	Replaced     int `json:"replaced"`
+	Unreachable  int `json:"unreachable"`
+	OpenMarkers  int `json:"open_markers"`
+	StaleOpens   int `json:"stale_open_markers"`
+}
+
+type inspectStagingSummary struct {
+	Entries        int   `json:"entries"`
+	Complete       int   `json:"complete"`
+	DataFiles      int   `json:"data_files"`
+	Sidecars       int   `json:"sidecars"`
+	DataBytes      int64 `json:"data_bytes"`
+	AllocatedBytes int64 `json:"allocated_bytes"`
 }
 
 type inspectIdentity struct {
@@ -75,21 +101,24 @@ type inspectIncarnation struct {
 	Roles []string `json:"roles"`
 	// LeaseState is live, expired or none.
 	LeaseState string `json:"lease_state"`
+	// Status is ACTIVE, EXPIRED, UNLEASED, PENDING, REPLACED or
+	// UNREACHABLE.
+	Status string `json:"status"`
 	// Usable reports whether stateids of this clientid are accepted: the
 	// incarnation is confirmed and its lease is live.
-	Usable        bool                  `json:"usable"`
-	Record        *inspectRecord        `json:"client,omitempty"`
-	Update        *inspectRecord        `json:"update,omitempty"`
-	Reboot        *inspectPointer       `json:"reboot,omitempty"`
-	Leases        []inspectSlot         `json:"leases,omitempty"`
-	Confirming    []inspectSlot         `json:"confirming,omitempty"`
-	ExpiredMarker bool                  `json:"expired_marker"`
-	GCAfter       *time.Time            `json:"gc_after,omitempty"`
-	Opens         []inspectOpen         `json:"opens,omitempty"`
-	Temps         []inspectTemp         `json:"temps,omitempty"`
-	Unknown       []string              `json:"unknown,omitempty"`
-	Problems      []string              `json:"problems,omitempty"`
-	Staging       []inspectStagingEntry `json:"staging,omitempty"`
+	Usable        bool                   `json:"usable"`
+	Record        *inspectRecord         `json:"client,omitempty"`
+	Update        *inspectRecord         `json:"update,omitempty"`
+	Reboot        *inspectPointer        `json:"reboot,omitempty"`
+	Leases        []inspectSlot          `json:"leases,omitempty"`
+	Confirming    []inspectSlot          `json:"confirming,omitempty"`
+	ExpiredMarker bool                   `json:"expired_marker"`
+	GCAfter       *time.Time             `json:"gc_after,omitempty"`
+	Opens         []inspectOpen          `json:"opens,omitempty"`
+	Temps         []inspectTemp          `json:"temps,omitempty"`
+	Unknown       []string               `json:"unknown,omitempty"`
+	Problems      []string               `json:"problems,omitempty"`
+	Staging       []*inspectStagingEntry `json:"staging,omitempty"`
 }
 
 type inspectRecord struct {
@@ -106,13 +135,14 @@ type inspectSlot struct {
 	Expires time.Time `json:"expires"`
 	Live    bool      `json:"live"`
 	// Collectable slots have been expired for a full extra lease and are
-	// removed by the next scan.
+	// removed by the next scan of this client.
 	Collectable bool `json:"collectable"`
 }
 
 type inspectOpen struct {
 	StateID string               `json:"stateid"`
 	Epoch   string               `json:"epoch"`
+	Active  bool                 `json:"active"`
 	Staging *inspectStagingEntry `json:"staging,omitempty"`
 }
 
@@ -124,15 +154,52 @@ type inspectTemp struct {
 }
 
 type inspectStagingEntry struct {
-	FileID   inspectInode `json:"file_id"`
-	DirID    inspectInode `json:"dir_id"`
-	FileName string       `json:"file_name"`
-	StateID  string       `json:"stateid"`
-	ClientID inspectInode `json:"clientid"`
-	Size     int64        `json:"size"`
-	// Matched is set once the entry has been joined to an open marker.
-	Matched bool `json:"-"`
+	FileID          inspectInode       `json:"file_id"`
+	DataPresent     bool               `json:"data_present"`
+	MetaPresent     bool               `json:"meta_present"`
+	Size            int64              `json:"size"`
+	AllocatedBytes  int64              `json:"allocated_bytes"`
+	DataMtime       *time.Time         `json:"data_mtime,omitempty"`
+	CheckpointTime  *time.Time         `json:"checkpoint_time,omitempty"`
+	Version         string             `json:"version,omitempty"`
+	DirID           inspectInode       `json:"dir_id"`
+	FileName        string             `json:"file_name,omitempty"`
+	Cookie          string             `json:"cookie,omitempty"`
+	StateID         string             `json:"stateid,omitempty"`
+	ClientID        inspectInode       `json:"clientid"`
+	OpenOwner       []byte             `json:"open_owner,omitempty"`
+	OwnerKnown      bool               `json:"owner_known"`
+	ReadOnly        bool               `json:"read_only"`
+	Exclusive       bool               `json:"exclusive,omitempty"`
+	Verifier        string             `json:"verifier,omitempty"`
+	BaseID          inspectInode       `json:"base_id"`
+	BaseSize        uint64             `json:"base_size"`
+	CheckpointSize  uint64             `json:"checkpoint_size"`
+	Dirty           []inspectByteRange `json:"dirty,omitempty"`
+	MetadataChanged bool               `json:"metadata_changed"`
+	Change          uint64             `json:"change,omitempty"`
+	Mtime           *time.Time         `json:"mtime,omitempty"`
+	Atime           *time.Time         `json:"atime,omitempty"`
+	Ctime           *time.Time         `json:"ctime,omitempty"`
+	Problems        []string           `json:"problems,omitempty"`
+	openMatched     bool
+	reported        bool
+	metaValid       bool
 }
+
+type inspectByteRange struct {
+	Start uint64 `json:"start"`
+	End   uint64 `json:"end"`
+}
+
+const (
+	inspectStatusActive      = "ACTIVE"
+	inspectStatusExpired     = "EXPIRED"
+	inspectStatusUnleased    = "UNLEASED"
+	inspectStatusPending     = "PENDING"
+	inspectStatusReplaced    = "REPLACED"
+	inspectStatusUnreachable = "UNREACHABLE"
+)
 
 // openClientStoreReader returns a ClientStore for inspection. Unlike
 // NewClientStore it does not create the store directories or a process
@@ -163,17 +230,20 @@ func (cs *ClientStore) Inspect(opts inspectOptions) (*inspectReport, error) {
 		LeaseTime:    nfsLeaseTime,
 		ClientsDirID: inspectInode(cs.dirID),
 		Identities:   []inspectIdentity{},
+		StagingDir:   opts.StagingDir,
 	}
 
-	var staging []inspectStagingEntry
+	var staging []*inspectStagingEntry
 	if opts.StagingDir != "" {
 		var err error
 		var problems []string
-		staging, problems, err = readStagingSidecars(opts.StagingDir)
+		var summary inspectStagingSummary
+		staging, summary, problems, err = readStagingDirectory(opts.StagingDir)
 		report.Problems = append(report.Problems, problems...)
 		if err != nil {
 			return nil, err
 		}
+		report.StagingSummary = &summary
 	}
 
 	identityIDs, err := cs.inspectSelectIdentities(opts, staging, report)
@@ -187,13 +257,26 @@ func (cs *ClientStore) Inspect(opts inspectOptions) (*inspectReport, error) {
 		}
 		if opts.StateID != nil {
 			want := activeOpenName(*opts.StateID)
+			wantStateID := hex.EncodeToString(opts.StateID[:])
 			var kept []inspectIncarnation
 			for _, inc := range identity.Incarnations {
+				matched := false
 				for _, open := range inc.Opens {
 					if activeOpenPrefix+open.StateID == want {
-						kept = append(kept, inc)
+						matched = true
 						break
 					}
+				}
+				if !matched {
+					for _, entry := range inc.Staging {
+						if entry.StateID == wantStateID {
+							matched = true
+							break
+						}
+					}
+				}
+				if matched {
+					kept = append(kept, inc)
 				}
 			}
 			if len(kept) == 0 {
@@ -201,16 +284,27 @@ func (cs *ClientStore) Inspect(opts inspectOptions) (*inspectReport, error) {
 			}
 			identity.Incarnations = kept
 		}
+		for _, inc := range identity.Incarnations {
+			for _, open := range inc.Opens {
+				if open.Staging != nil {
+					open.Staging.reported = true
+				}
+			}
+			for _, entry := range inc.Staging {
+				entry.reported = true
+			}
+		}
 		report.Identities = append(report.Identities, identity)
 	}
 	sort.Slice(report.Identities, func(i, j int) bool {
 		return report.Identities[i].Hash < report.Identities[j].Hash
 	})
 	for _, entry := range staging {
-		if !entry.Matched {
+		if !entry.reported {
 			report.Staging = append(report.Staging, entry)
 		}
 	}
+	report.summarize()
 	return report, nil
 }
 
@@ -219,7 +313,7 @@ func (cs *ClientStore) Inspect(opts inspectOptions) (*inspectReport, error) {
 // directory; a stateid without one requires a scan of every identity.
 func (cs *ClientStore) inspectSelectIdentities(
 	opts inspectOptions,
-	staging []inspectStagingEntry,
+	staging []*inspectStagingEntry,
 	report *inspectReport,
 ) ([]DirEntry, error) {
 	switch {
@@ -308,7 +402,7 @@ func (cs *ClientStore) inspectChildName(
 
 func (cs *ClientStore) inspectIdentity(
 	dir DirEntry,
-	staging []inspectStagingEntry,
+	staging []*inspectStagingEntry,
 ) (inspectIdentity, error) {
 	identity := inspectIdentity{Hash: dir.Name, ID: inspectInode(dir.ID)}
 	if !isDirectoryInodeID(dir.ID) {
@@ -383,11 +477,11 @@ func (cs *ClientStore) inspectIdentity(
 		if inc.Roles == nil {
 			inc.Roles = []string{}
 		}
-		confirmed := false
-		for _, role := range inc.Roles {
-			confirmed = confirmed || role == "confirmed"
+		inc.Status = inspectIncarnationStatus(inc.Roles, inc.LeaseState)
+		inc.Usable = inc.Status == inspectStatusActive
+		for j := range inc.Opens {
+			inc.Opens[j].Active = inc.Usable
 		}
-		inc.Usable = confirmed && inc.LeaseState == "live"
 		if inc.Record != nil && len(inc.Record.Identity) != 0 {
 			identity.Identity = inc.Record.Identity
 		}
@@ -400,6 +494,64 @@ func (cs *ClientStore) inspectIdentity(
 		identity.Incarnations = []inspectIncarnation{}
 	}
 	return identity, nil
+}
+
+func inspectIncarnationStatus(roles []string, leaseState string) string {
+	hasRole := func(want string) bool {
+		for _, role := range roles {
+			if role == want {
+				return true
+			}
+		}
+		return false
+	}
+	if hasRole("confirmed") {
+		switch leaseState {
+		case "live":
+			return inspectStatusActive
+		case "expired":
+			return inspectStatusExpired
+		default:
+			return inspectStatusUnleased
+		}
+	}
+	if hasRole("pending") {
+		return inspectStatusPending
+	}
+	if hasRole("reboot-target") {
+		return inspectStatusReplaced
+	}
+	return inspectStatusUnreachable
+}
+
+func (r *inspectReport) summarize() {
+	summary := inspectSummary{Identities: len(r.Identities)}
+	for _, identity := range r.Identities {
+		for _, inc := range identity.Incarnations {
+			summary.Incarnations++
+			switch inc.Status {
+			case inspectStatusActive:
+				summary.Active++
+			case inspectStatusExpired:
+				summary.Expired++
+			case inspectStatusUnleased:
+				summary.Unleased++
+			case inspectStatusPending:
+				summary.Pending++
+			case inspectStatusReplaced:
+				summary.Replaced++
+			case inspectStatusUnreachable:
+				summary.Unreachable++
+			}
+			summary.OpenMarkers += len(inc.Opens)
+			for _, open := range inc.Opens {
+				if !open.Active {
+					summary.StaleOpens++
+				}
+			}
+		}
+	}
+	r.Summary = summary
 }
 
 func (cs *ClientStore) inspectPointer(
@@ -477,7 +629,7 @@ func (cs *ClientStore) inspectTemp(
 func (cs *ClientStore) inspectIncarnation(
 	identityID InodeID,
 	dir DirEntry,
-	staging []inspectStagingEntry,
+	staging []*inspectStagingEntry,
 ) (inspectIncarnation, error) {
 	inc := inspectIncarnation{
 		Name:       dir.Name,
@@ -549,7 +701,8 @@ func (cs *ClientStore) inspectIncarnation(
 			}
 		case isActiveOpenName(entry.Name):
 			inc.Opens = append(inc.Opens, inspectOpenMarker(
-				strings.TrimPrefix(entry.Name, activeOpenPrefix), staging))
+				strings.TrimPrefix(entry.Name, activeOpenPrefix),
+				inspectInode(dir.ID), staging))
 		case strings.HasPrefix(entry.Name, tempPrefix):
 			temp, err := cs.inspectTemp(entry, now)
 			if err != nil {
@@ -572,8 +725,7 @@ func (cs *ClientStore) inspectIncarnation(
 		inc.Problems = append(inc.Problems, "no client record")
 	}
 	for _, entry := range staging {
-		if entry.ClientID == inc.ClientID && !entry.Matched {
-			entry.Matched = true
+		if entry.ClientID == inc.ClientID && !entry.openMatched {
 			inc.Staging = append(inc.Staging, entry)
 		}
 	}
@@ -620,58 +772,201 @@ func (cs *ClientStore) inspectSlot(
 	}, true, nil
 }
 
-func inspectOpenMarker(stateID string, staging []inspectStagingEntry) inspectOpen {
+func inspectOpenMarker(
+	stateID string,
+	clientID inspectInode,
+	staging []*inspectStagingEntry,
+) inspectOpen {
 	open := inspectOpen{StateID: stateID}
 	if len(stateID) >= 8 {
 		open.Epoch = stateID[:8]
 	}
-	for i := range staging {
-		if staging[i].StateID == stateID {
-			staging[i].Matched = true
-			entry := staging[i]
-			open.Staging = &entry
+	for _, entry := range staging {
+		if !entry.openMatched && entry.StateID == stateID &&
+			(entry.ClientID == 0 || entry.ClientID == clientID) {
+			entry.openMatched = true
+			open.Staging = entry
 			break
 		}
 	}
 	return open
 }
 
-// readStagingSidecars loads every .meta sidecar in a local staging
-// directory.
-func readStagingSidecars(dir string) ([]inspectStagingEntry, []string, error) {
-	paths, err := filepath.Glob(filepath.Join(dir, "*.meta"))
+// readStagingDirectory loads local staging data and sidecar files without
+// modifying them. It reports incomplete pairs because nfsd recovery starts
+// from .staging files while the old inspector started from .meta files.
+func readStagingDirectory(
+	dir string,
+) ([]*inspectStagingEntry, inspectStagingSummary, []string, error) {
+	var summary inspectStagingSummary
+	info, err := os.Stat(dir)
 	if err != nil {
-		return nil, nil, err
+		return nil, summary, nil, fmt.Errorf(
+			"staging directory %q: %w", dir, err)
 	}
-	var result []inspectStagingEntry
+	if !info.IsDir() {
+		return nil, summary, nil, fmt.Errorf(
+			"staging path %q is not a directory", dir)
+	}
+	dirEntries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, summary, nil, fmt.Errorf(
+			"read staging directory %q: %w", dir, err)
+	}
+
+	byID := make(map[uint64]*inspectStagingEntry)
 	var problems []string
-	for _, metaPath := range paths {
-		meta, err := loadStagingMeta(metaPath)
-		if err != nil {
-			problems = append(problems, fmt.Sprintf("%s: %v", metaPath, err))
-			continue
+	entryFor := func(id uint64) *inspectStagingEntry {
+		entry := byID[id]
+		if entry == nil {
+			entry = &inspectStagingEntry{FileID: inspectInode(id)}
+			byID[id] = entry
 		}
-		// Sidecars are named by LocalStagingStore as %016x.meta.
-		base := strings.TrimSuffix(filepath.Base(metaPath), ".meta")
-		fileID, err := strconv.ParseUint(base, 16, 64)
-		if err != nil {
+		return entry
+	}
+	parseName := func(name, suffix string) (uint64, bool) {
+		base := strings.TrimSuffix(name, suffix)
+		id, err := strconv.ParseUint(base, 16, 64)
+		return id, err == nil && base != ""
+	}
+
+	for _, dirEntry := range dirEntries {
+		name := dirEntry.Name()
+		path := filepath.Join(dir, name)
+		if dirEntry.IsDir() {
 			problems = append(problems,
-				fmt.Sprintf("%s: unexpected sidecar name", metaPath))
+				fmt.Sprintf("%s: unexpected directory", path))
 			continue
 		}
-		entry := inspectStagingEntry{
-			FileID:   inspectInode(fileID),
-			DirID:    inspectInode(meta.DirID),
-			FileName: meta.FileName,
-			StateID:  hex.EncodeToString(meta.NFSStateID[:]),
-			ClientID: inspectInode(meta.ClientID),
+		if strings.HasPrefix(name, ".") &&
+			strings.Contains(name, ".meta.tmp-") {
+			problems = append(problems,
+				fmt.Sprintf("%s: temporary metadata file present", path))
+			continue
 		}
-		if info, err := os.Stat(filepath.Join(dir, base+".staging")); err == nil {
-			entry.Size = info.Size()
+		switch {
+		case strings.HasSuffix(name, ".staging"):
+			id, ok := parseName(name, ".staging")
+			if !ok {
+				problems = append(problems,
+					fmt.Sprintf("%s: unexpected staging file name", path))
+				continue
+			}
+			entry := entryFor(id)
+			entry.DataPresent = true
+			summary.DataFiles++
+			fileInfo, err := dirEntry.Info()
+			if err != nil {
+				entry.Problems = append(entry.Problems,
+					"cannot stat staging data: "+err.Error())
+				continue
+			}
+			entry.Size = fileInfo.Size()
+			entry.DataMtime = inspectTime(fileInfo.ModTime())
+			if stat, ok := fileInfo.Sys().(*syscall.Stat_t); ok {
+				entry.AllocatedBytes = stat.Blocks * 512
+			}
+			summary.DataBytes += entry.Size
+			summary.AllocatedBytes += entry.AllocatedBytes
+
+		case strings.HasSuffix(name, ".meta"):
+			id, ok := parseName(name, ".meta")
+			if !ok {
+				problems = append(problems,
+					fmt.Sprintf("%s: unexpected sidecar name", path))
+				continue
+			}
+			entry := entryFor(id)
+			entry.MetaPresent = true
+			summary.Sidecars++
+			if fileInfo, err := dirEntry.Info(); err != nil {
+				entry.Problems = append(entry.Problems,
+					"cannot stat metadata sidecar: "+err.Error())
+			} else {
+				entry.CheckpointTime = inspectTime(fileInfo.ModTime())
+			}
+			meta, err := loadStagingMeta(path)
+			if err != nil {
+				entry.Problems = append(entry.Problems,
+					"cannot read metadata sidecar: "+err.Error())
+				continue
+			}
+			entry.setMeta(meta)
+
+		default:
+			problems = append(problems,
+				fmt.Sprintf("%s: unexpected staging directory entry", path))
+		}
+	}
+
+	ids := make([]uint64, 0, len(byID))
+	for id := range byID {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	result := make([]*inspectStagingEntry, 0, len(ids))
+	for _, id := range ids {
+		entry := byID[id]
+		switch {
+		case !entry.DataPresent:
+			entry.Problems = append(entry.Problems,
+				"staging data file is missing")
+		case !entry.MetaPresent:
+			entry.Problems = append(entry.Problems,
+				"metadata sidecar is missing")
+		}
+		if entry.DataPresent && entry.MetaPresent && entry.metaValid {
+			summary.Complete++
 		}
 		result = append(result, entry)
 	}
-	return result, problems, nil
+	summary.Entries = len(result)
+	return result, summary, problems, nil
+}
+
+func (entry *inspectStagingEntry) setMeta(meta StagingMeta) {
+	entry.metaValid = true
+	entry.Version = inspectStagingVersion(meta.version)
+	entry.DirID = inspectInode(meta.DirID)
+	entry.FileName = meta.FileName
+	entry.Cookie = hex.EncodeToString(meta.TernCookie[:])
+	entry.StateID = hex.EncodeToString(meta.NFSStateID[:])
+	entry.ClientID = inspectInode(meta.ClientID)
+	entry.OpenOwner = []byte(meta.OpenOwner)
+	entry.OwnerKnown = meta.OwnerKnown
+	entry.ReadOnly = meta.ReadOnly
+	entry.Exclusive = meta.Exclusive
+	if meta.Exclusive {
+		entry.Verifier = hex.EncodeToString(meta.Verifier[:])
+	}
+	entry.BaseID = inspectInode(meta.BaseID)
+	entry.BaseSize = meta.BaseSize
+	entry.CheckpointSize = meta.Size
+	for _, dirty := range meta.Dirty {
+		entry.Dirty = append(entry.Dirty, inspectByteRange{
+			Start: dirty.start,
+			End:   dirty.end,
+		})
+	}
+	entry.MetadataChanged = meta.MetadataChanged
+	entry.Change = meta.Attrs.Change
+	entry.Mtime = inspectTime(meta.Attrs.Mtime)
+	entry.Atime = inspectTime(meta.Attrs.Atime)
+	entry.Ctime = inspectTime(meta.Attrs.Ctime)
+}
+
+func inspectStagingVersion(version uint8) string {
+	if version == 0 {
+		return "legacy"
+	}
+	return fmt.Sprintf("NFS%d", version)
+}
+
+func inspectTime(value time.Time) *time.Time {
+	if value.IsZero() {
+		return nil
+	}
+	return &value
 }
 
 func formatClientIdentity(id []byte) string {
@@ -739,6 +1034,22 @@ func (r *inspectReport) WriteText(w io.Writer) {
 	}
 	fmt.Fprintf(w, "client store /%s/clients %s at %s, lease %s\n",
 		nfsDirName, inodeHex(r.ClientsDirID), r.Now.Format(time.RFC3339), r.LeaseTime)
+	fmt.Fprintf(w,
+		"summary identities %d incarnations %d: ACTIVE %d EXPIRED %d "+
+			"UNLEASED %d PENDING %d REPLACED %d UNREACHABLE %d; "+
+			"open markers %d, stale %d\n",
+		r.Summary.Identities, r.Summary.Incarnations,
+		r.Summary.Active, r.Summary.Expired, r.Summary.Unleased,
+		r.Summary.Pending, r.Summary.Replaced, r.Summary.Unreachable,
+		r.Summary.OpenMarkers, r.Summary.StaleOpens)
+	if summary := r.StagingSummary; summary != nil {
+		fmt.Fprintf(w,
+			"staging %q: entries %d complete %d data files %d sidecars %d, "+
+				"%d bytes (%d allocated)\n",
+			r.StagingDir, summary.Entries, summary.Complete,
+			summary.DataFiles, summary.Sidecars, summary.DataBytes,
+			summary.AllocatedBytes)
+	}
 	for _, problem := range r.Problems {
 		fmt.Fprintf(w, "problem: %s\n", problem)
 	}
@@ -780,14 +1091,9 @@ func (r *inspectReport) WriteText(w io.Writer) {
 			if roles == "" {
 				roles = "unreachable"
 			}
-			state := "NOT USABLE"
-			if inc.Usable {
-				state = "USABLE"
-			} else if strings.Contains(roles, "confirmed") && inc.LeaseState == "none" {
-				state = "AWAITING FIRST RENEW"
-			}
 			fmt.Fprintf(w, "\n  incarnation %s clientid %s [%s, lease %s] %s\n",
-				inc.Name, inodeHex(inc.ClientID), roles, inc.LeaseState, state)
+				inc.Name, inodeHex(inc.ClientID), roles, inc.LeaseState,
+				inc.Status)
 			writeRecord := func(name string, rec *inspectRecord) {
 				if rec == nil {
 					return
@@ -815,12 +1121,12 @@ func (r *inspectReport) WriteText(w io.Writer) {
 			for _, slot := range inc.Leases {
 				fmt.Fprintf(w, "    lease      nfsd %s expires %s %s%s\n",
 					slot.NfsdID, rel(slot.Expires), liveWord(slot.Live),
-					collectableSuffix(slot.Collectable))
+					collectableSlotSuffix(slot.Collectable))
 			}
 			for _, slot := range inc.Confirming {
 				fmt.Fprintf(w, "    confirming nfsd %s expires %s %s%s\n",
 					slot.NfsdID, rel(slot.Expires), liveWord(slot.Live),
-					collectableSuffix(slot.Collectable))
+					collectableSlotSuffix(slot.Collectable))
 			}
 			if inc.ExpiredMarker {
 				fmt.Fprintf(w, "    expired    marker present; clientid cannot renew\n")
@@ -830,18 +1136,19 @@ func (r *inspectReport) WriteText(w io.Writer) {
 					rel(*inc.GCAfter))
 			}
 			for _, open := range inc.Opens {
-				fmt.Fprintf(w, "    open       stateid %s epoch %s", open.StateID, open.Epoch)
-				if open.Staging != nil {
-					fmt.Fprintf(w, " staging file %s -> dir %s name %q (%d bytes)",
-						inodeHex(open.Staging.FileID), inodeHex(open.Staging.DirID),
-						open.Staging.FileName, open.Staging.Size)
+				state := "STALE"
+				if open.Active {
+					state = inspectStatusActive
 				}
-				fmt.Fprintln(w)
+				fmt.Fprintf(w, "    open       stateid %s epoch %s %s\n",
+					open.StateID, open.Epoch, state)
+				if open.Staging != nil {
+					writeInspectStagingEntry(w, "      ", open.Staging, rel)
+				}
 			}
 			for _, entry := range inc.Staging {
-				fmt.Fprintf(w, "    staging    file %s stateid %s -> dir %s name %q (%d bytes) NO OPEN MARKER\n",
-					inodeHex(entry.FileID), entry.StateID, inodeHex(entry.DirID),
-					entry.FileName, entry.Size)
+				fmt.Fprintf(w, "    staging    NO OPEN MARKER\n")
+				writeInspectStagingEntry(w, "      ", entry, rel)
 			}
 			for _, temp := range inc.Temps {
 				fmt.Fprintf(w, "    temp       %s mtime %s%s\n", temp.Name,
@@ -858,11 +1165,95 @@ func (r *inspectReport) WriteText(w io.Writer) {
 	if len(r.Staging) > 0 {
 		fmt.Fprintf(w, "\nstaging files not matched to a reported client\n")
 		for _, entry := range r.Staging {
-			fmt.Fprintf(w, "  file %s stateid %s clientid %s -> dir %s name %q (%d bytes)\n",
-				inodeHex(entry.FileID), entry.StateID, inodeHex(entry.ClientID),
-				inodeHex(entry.DirID), entry.FileName, entry.Size)
+			writeInspectStagingEntry(w, "  ", entry, rel)
 		}
 	}
+}
+
+func writeInspectStagingEntry(
+	w io.Writer,
+	indent string,
+	entry *inspectStagingEntry,
+	rel func(time.Time) string,
+) {
+	fmt.Fprintf(w, "%sfile %s", indent, inodeHex(entry.FileID))
+	if entry.DataPresent {
+		fmt.Fprintf(w, " data %d bytes (%d allocated)",
+			entry.Size, entry.AllocatedBytes)
+		if entry.DataMtime != nil {
+			fmt.Fprintf(w, " modified %s", rel(*entry.DataMtime))
+		}
+	} else {
+		fmt.Fprint(w, " data MISSING")
+	}
+	if entry.MetaPresent {
+		version := entry.Version
+		if version == "" {
+			version = "UNREADABLE"
+		}
+		fmt.Fprintf(w, " sidecar %s", version)
+	} else {
+		fmt.Fprint(w, " sidecar MISSING")
+	}
+	fmt.Fprintln(w)
+
+	if entry.metaValid {
+		fmt.Fprintf(w, "%starget dir %s name %q; clientid %s stateid %s\n",
+			indent, inodeHex(entry.DirID), entry.FileName,
+			inodeHex(entry.ClientID), entry.StateID)
+		access := "write"
+		if entry.ReadOnly {
+			access = "read-only"
+		}
+		owner := "(not recorded)"
+		if entry.OwnerKnown {
+			owner = fmt.Sprintf("%q", entry.OpenOwner)
+		}
+		fmt.Fprintf(w, "%sowner %s access %s", indent, owner, access)
+		if entry.Exclusive {
+			fmt.Fprintf(w, " EXCLUSIVE4 verifier %s", entry.Verifier)
+		}
+		fmt.Fprintln(w)
+		fmt.Fprintf(w,
+			"%sbase %s size %d; checkpoint size %d dirty %s\n",
+			indent, inodeHex(entry.BaseID), entry.BaseSize,
+			entry.CheckpointSize, formatInspectRanges(entry.Dirty))
+		if entry.Change != 0 {
+			fmt.Fprintf(w, "%sattrs change %d mtime %s atime %s ctime %s",
+				indent, entry.Change, inspectTimeText(entry.Mtime),
+				inspectTimeText(entry.Atime), inspectTimeText(entry.Ctime))
+			if entry.MetadataChanged {
+				fmt.Fprint(w, " METADATA CHANGED")
+			}
+			fmt.Fprintln(w)
+		}
+		fmt.Fprintf(w, "%scookie %s", indent, entry.Cookie)
+		if entry.CheckpointTime != nil {
+			fmt.Fprintf(w, "; checkpoint %s", rel(*entry.CheckpointTime))
+		}
+		fmt.Fprintln(w)
+	}
+	for _, problem := range entry.Problems {
+		fmt.Fprintf(w, "%sproblem: %s\n", indent, problem)
+	}
+}
+
+func formatInspectRanges(ranges []inspectByteRange) string {
+	if len(ranges) == 0 {
+		return "(none)"
+	}
+	parts := make([]string, 0, len(ranges))
+	for _, r := range ranges {
+		parts = append(parts, fmt.Sprintf("[%d,%d)", r.Start, r.End))
+	}
+	return strings.Join(parts, ",")
+}
+
+func inspectTimeText(value *time.Time) string {
+	if value == nil {
+		return "(not recorded)"
+	}
+	return value.Format(time.RFC3339Nano)
 }
 
 func (r *inspectReport) WriteJSON(w io.Writer) error {
@@ -876,6 +1267,13 @@ func liveWord(live bool) string {
 		return "LIVE"
 	}
 	return "EXPIRED"
+}
+
+func collectableSlotSuffix(collectable bool) string {
+	if collectable {
+		return " (collectable on next client scan)"
+	}
+	return ""
 }
 
 func collectableSuffix(collectable bool) string {

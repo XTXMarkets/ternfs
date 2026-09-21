@@ -104,25 +104,52 @@ func newInspectFixture(t *testing.T) *inspectFixture {
 	f.now = f.now.Add(50 * time.Second)
 
 	f.stagingDir = t.TempDir()
-	if err := saveStagingMeta(filepath.Join(f.stagingDir, "0000000000003039.meta"), StagingMeta{
-		DirID:      f.fs.RootID(),
-		FileName:   "upload.bin",
-		NFSStateID: f.stateID,
-		ClientID:   f.clientID,
+	uploadMeta := filepath.Join(f.stagingDir, "0000000000003039.meta")
+	if err := saveStagingMeta(uploadMeta, StagingMeta{
+		DirID:           f.fs.RootID(),
+		FileName:        "upload.bin",
+		TernCookie:      Cookie{1, 2, 3, 4, 5, 6, 7, 8},
+		NFSStateID:      f.stateID,
+		ClientID:        f.clientID,
+		OpenOwner:       "owner-a",
+		OwnerKnown:      true,
+		BaseID:          MakeInodeID(InodeTypeFile, 123),
+		BaseSize:        8192,
+		Size:            4096,
+		Dirty:           byteRangeSet{{start: 512, end: 1024}},
+		MetadataChanged: true,
+		Attrs: NodeInfo{
+			Mtime:  f.now.Add(-3 * time.Second),
+			Atime:  f.now.Add(-2 * time.Second),
+			Ctime:  f.now.Add(-time.Second),
+			Change: 99,
+		},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(f.stagingDir, "0000000000003039.staging"),
+	uploadData := filepath.Join(f.stagingDir, "0000000000003039.staging")
+	if err := os.WriteFile(uploadData,
 		bytes.Repeat([]byte{0}, 4096), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := saveStagingMeta(filepath.Join(f.stagingDir, "4000000000010932.meta"), StagingMeta{
+	orphanMeta := filepath.Join(f.stagingDir, "4000000000010932.meta")
+	if err := saveStagingMeta(orphanMeta, StagingMeta{
 		DirID:      f.fs.RootID(),
 		FileName:   "orphan.bin",
 		NFSStateID: StateID{9},
 		ClientID:   f.clientID,
+		Size:       512,
 	}); err != nil {
 		t.Fatal(err)
+	}
+	orphanData := filepath.Join(f.stagingDir, "4000000000010932.staging")
+	if err := os.WriteFile(orphanData, bytes.Repeat([]byte{1}, 512), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{uploadMeta, uploadData, orphanMeta, orphanData} {
+		if err := os.Chtimes(path, f.now, f.now); err != nil {
+			t.Fatal(err)
+		}
 	}
 	return f
 }
@@ -245,12 +272,24 @@ func TestInspectReportsClientState(t *testing.T) {
 	if len(current.Staging) != 1 || current.Staging[0].FileName != "orphan.bin" {
 		t.Fatalf("unmatched client staging = %+v", current.Staging)
 	}
-	if len(report.Staging) != 1 || report.Staging[0].FileName != "orphan.bin" {
+	if len(report.Staging) != 0 {
 		t.Fatalf("unmatched staging = %+v", report.Staging)
+	}
+	if report.StagingSummary == nil || report.StagingSummary.Entries != 2 ||
+		report.StagingSummary.Complete != 2 {
+		t.Fatalf("staging summary = %+v", report.StagingSummary)
+	}
+	if open.Staging.Version != "NFS4" ||
+		open.Staging.BaseID != inspectInode(MakeInodeID(InodeTypeFile, 123)) ||
+		open.Staging.BaseSize != 8192 || open.Staging.CheckpointSize != 4096 ||
+		len(open.Staging.Dirty) != 1 || !open.Staging.MetadataChanged ||
+		string(open.Staging.OpenOwner) != "owner-a" || !open.Staging.OwnerKnown {
+		t.Fatalf("open staging metadata = %+v", open.Staging)
 	}
 
 	_, replaced := findIncarnation(t, report, f.replacedID)
-	if len(replaced.Roles) != 0 || replaced.Usable {
+	if len(replaced.Roles) != 0 || replaced.Usable ||
+		replaced.Status != inspectStatusUnreachable {
 		t.Fatalf("replaced incarnation = %+v", replaced)
 	}
 
@@ -259,13 +298,23 @@ func TestInspectReportsClientState(t *testing.T) {
 		t.Fatalf("pending identity has confirmed pointer %+v", pendingIdentity.Confirmed)
 	}
 	if strings.Join(pending.Roles, ",") != "pending" || pending.LeaseState != "none" ||
-		pending.Usable {
+		pending.Usable || pending.Status != inspectStatusPending {
 		t.Fatalf("pending incarnation = %+v", pending)
 	}
 
 	_, expired := findIncarnation(t, report, f.expiredID)
-	if expired.LeaseState != "expired" || expired.Usable || expired.ExpiredMarker {
+	if expired.LeaseState != "expired" || expired.Usable || expired.ExpiredMarker ||
+		expired.Status != inspectStatusExpired {
 		t.Fatalf("expired incarnation = %+v", expired)
+	}
+	if current.Status != inspectStatusActive {
+		t.Fatalf("current status = %s", current.Status)
+	}
+	if report.Summary != (inspectSummary{
+		Identities: 3, Incarnations: 4, Active: 1, Expired: 1,
+		Pending: 1, Unreachable: 1, OpenMarkers: 1,
+	}) {
+		t.Fatalf("summary = %+v", report.Summary)
 	}
 }
 
@@ -385,6 +434,22 @@ func TestInspectFilters(t *testing.T) {
 			t.Fatalf("report = %+v", report.Identities)
 		}
 	})
+	t.Run("stateid with staging but no open marker", func(t *testing.T) {
+		sid := StateID{9}
+		report, err := reader.Inspect(inspectOptions{
+			StateID: &sid, StagingDir: f.stagingDir,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(report.Identities) != 1 ||
+			len(report.Identities[0].Incarnations) != 1 ||
+			len(report.Identities[0].Incarnations[0].Staging) != 1 ||
+			report.Identities[0].Incarnations[0].Staging[0].FileName !=
+				"orphan.bin" {
+			t.Fatalf("report = %+v", report.Identities)
+		}
+	})
 }
 
 func TestInspectOutput(t *testing.T) {
@@ -397,13 +462,22 @@ func TestInspectOutput(t *testing.T) {
 	var text bytes.Buffer
 	report.WriteText(&text)
 	for _, want := range []string{
+		"summary identities 3 incarnations 4: ACTIVE 1 EXPIRED 1 " +
+			"UNLEASED 0 PENDING 1 REPLACED 0 UNREACHABLE 1; " +
+			"open markers 1, stale 0",
 		"id        \"Linux NFSv4.0 host-a/10.0.0.1\"",
-		"[confirmed,pending, lease live] USABLE",
-		"[unreachable, lease none] NOT USABLE",
-		"[pending, lease none] NOT USABLE",
-		"[confirmed,pending, lease expired] NOT USABLE",
-		"open       stateid " + hex.EncodeToString(f.stateID[:]) + " epoch abcdef01 staging file 0x0000000000003039",
-		"name \"upload.bin\" (4096 bytes)",
+		"[confirmed,pending, lease live] ACTIVE",
+		"[unreachable, lease none] UNREACHABLE",
+		"[pending, lease none] PENDING",
+		"[confirmed,pending, lease expired] EXPIRED",
+		"open       stateid " + hex.EncodeToString(f.stateID[:]) +
+			" epoch abcdef01 ACTIVE",
+		"file 0x0000000000003039 data 4096 bytes",
+		"target dir " + inodeHex(f.fs.RootID()) + " name \"upload.bin\"",
+		"base " + inodeHex(MakeInodeID(InodeTypeFile, 123)) +
+			" size 8192; checkpoint size 4096 dirty [512,1024)",
+		"attrs change 99",
+		"owner \"owner-a\" access write",
 		"NO OPEN MARKER",
 		"principal AUTH_SYS uid=1000 gid=100 groups=[100,4] callback tcp 10.0.0.1:2049",
 	} {
@@ -411,16 +485,24 @@ func TestInspectOutput(t *testing.T) {
 			t.Errorf("text report lacks %q:\n%s", want, text.String())
 		}
 	}
+	if count := strings.Count(text.String(), "orphan.bin"); count != 1 {
+		t.Fatalf("orphan staging reported %d times:\n%s", count, text.String())
+	}
 
 	var out bytes.Buffer
 	if err := report.WriteJSON(&out); err != nil {
 		t.Fatal(err)
+	}
+	if !bytes.Contains(out.Bytes(), []byte(`"open_owner": "b3duZXItYQ=="`)) ||
+		!bytes.Contains(out.Bytes(), []byte(`"status": "ACTIVE"`)) {
+		t.Fatalf("JSON lacks staging owner or lifecycle status:\n%s", out.String())
 	}
 	var decoded struct {
 		Identities []struct {
 			Incarnations []struct {
 				ClientID string `json:"clientid"`
 				Usable   bool   `json:"usable"`
+				Status   string `json:"status"`
 			} `json:"incarnations"`
 		} `json:"identities"`
 	}
@@ -430,7 +512,8 @@ func TestInspectOutput(t *testing.T) {
 	found := false
 	for _, identity := range decoded.Identities {
 		for _, inc := range identity.Incarnations {
-			if inc.ClientID == inodeHex(InodeID(f.clientID)) && inc.Usable {
+			if inc.ClientID == inodeHex(InodeID(f.clientID)) && inc.Usable &&
+				inc.Status == inspectStatusActive {
 				found = true
 			}
 		}
@@ -533,8 +616,166 @@ func TestInspectTextDescribesConfirmedClientWithoutLease(t *testing.T) {
 	}
 	var text bytes.Buffer
 	report.WriteText(&text)
-	if !strings.Contains(text.String(), "AWAITING FIRST RENEW") {
-		t.Fatalf("text report lacks awaiting-first-renew state:\n%s", text.String())
+	if !strings.Contains(text.String(), "[confirmed,pending, lease none] UNLEASED") {
+		t.Fatalf("text report lacks unleased state:\n%s", text.String())
+	}
+}
+
+func TestInspectIncarnationStatus(t *testing.T) {
+	tests := []struct {
+		name       string
+		roles      []string
+		leaseState string
+		want       string
+	}{
+		{name: "active", roles: []string{"confirmed"}, leaseState: "live",
+			want: inspectStatusActive},
+		{name: "expired", roles: []string{"confirmed"}, leaseState: "expired",
+			want: inspectStatusExpired},
+		{name: "unleased", roles: []string{"confirmed"}, leaseState: "none",
+			want: inspectStatusUnleased},
+		{name: "pending", roles: []string{"pending"}, leaseState: "none",
+			want: inspectStatusPending},
+		{name: "replaced", roles: []string{"reboot-target"}, leaseState: "live",
+			want: inspectStatusReplaced},
+		{name: "unreachable", leaseState: "none",
+			want: inspectStatusUnreachable},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := inspectIncarnationStatus(
+				test.roles, test.leaseState,
+			); got != test.want {
+				t.Fatalf("status = %s, want %s", got, test.want)
+			}
+		})
+	}
+}
+
+func TestInspectMarksOpenUnderExpiredLeaseStale(t *testing.T) {
+	f := newInspectFixture(t)
+	f.now = f.now.Add(nfsLeaseTime)
+	report, err := f.reader(t).Inspect(inspectOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, current := findIncarnation(t, report, f.clientID)
+	if current.Status != inspectStatusExpired || len(current.Opens) != 1 ||
+		current.Opens[0].Active {
+		t.Fatalf("expired open = %+v", current)
+	}
+	if report.Summary.StaleOpens != 1 {
+		t.Fatalf("summary = %+v", report.Summary)
+	}
+	var text bytes.Buffer
+	report.WriteText(&text)
+	if !strings.Contains(text.String(),
+		"open       stateid "+hex.EncodeToString(f.stateID[:])+
+			" epoch abcdef01 STALE") {
+		t.Fatalf("text report lacks stale open:\n%s", text.String())
+	}
+}
+
+func TestInspectReportsStagingIntegrity(t *testing.T) {
+	f := newInspectFixture(t)
+	dir := t.TempDir()
+
+	dataOnly := filepath.Join(dir, "0000000000000001.staging")
+	if err := os.WriteFile(dataOnly, []byte("data"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	metaOnly := filepath.Join(dir, "0000000000000002.meta")
+	if err := saveStagingMeta(metaOnly, StagingMeta{
+		DirID: f.fs.RootID(), FileName: "meta-only",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	malformedData := filepath.Join(dir, "0000000000000003.staging")
+	if err := os.WriteFile(malformedData, []byte("data"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	malformedMeta := filepath.Join(dir, "0000000000000003.meta")
+	if err := os.WriteFile(malformedMeta, []byte("bad"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	completeData := filepath.Join(dir, "0000000000000004.staging")
+	if err := os.WriteFile(completeData, []byte("complete"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	completeMeta := filepath.Join(dir, "0000000000000004.meta")
+	if err := saveStagingMeta(completeMeta, StagingMeta{
+		DirID: f.fs.RootID(), FileName: "exclusive",
+		Exclusive: true, Verifier: [8]byte{1, 2, 3},
+		ReadOnly: true, Size: 8,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".0004.meta.tmp-left"),
+		[]byte("temporary"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "unexpected"), 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := f.reader(t).Inspect(inspectOptions{StagingDir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.StagingSummary == nil ||
+		report.StagingSummary.Entries != 4 ||
+		report.StagingSummary.Complete != 1 ||
+		report.StagingSummary.DataFiles != 3 ||
+		report.StagingSummary.Sidecars != 3 ||
+		report.StagingSummary.DataBytes != 16 {
+		t.Fatalf("staging summary = %+v", report.StagingSummary)
+	}
+	if len(report.Problems) != 2 {
+		t.Fatalf("problems = %v", report.Problems)
+	}
+	if len(report.Staging) != 4 {
+		t.Fatalf("unmatched staging = %+v", report.Staging)
+	}
+	byID := make(map[inspectInode]*inspectStagingEntry)
+	for _, entry := range report.Staging {
+		byID[entry.FileID] = entry
+	}
+	if got := byID[1]; got == nil || len(got.Problems) != 1 ||
+		got.Problems[0] != "metadata sidecar is missing" {
+		t.Fatalf("data-only entry = %+v", got)
+	}
+	if got := byID[2]; got == nil || len(got.Problems) != 1 ||
+		got.Problems[0] != "staging data file is missing" {
+		t.Fatalf("meta-only entry = %+v", got)
+	}
+	if got := byID[3]; got == nil || len(got.Problems) != 1 ||
+		!strings.Contains(got.Problems[0], "cannot read metadata sidecar") {
+		t.Fatalf("malformed entry = %+v", got)
+	}
+	if got := byID[4]; got == nil || got.Version != "NFS5" ||
+		!got.Exclusive || got.Verifier != "0102030000000000" ||
+		!got.ReadOnly || len(got.Problems) != 0 {
+		t.Fatalf("complete entry = %+v", got)
+	}
+}
+
+func TestInspectRejectsInvalidStagingPath(t *testing.T) {
+	f := newInspectFixture(t)
+	missing := filepath.Join(t.TempDir(), "missing")
+	if _, err := f.reader(t).Inspect(inspectOptions{
+		StagingDir: missing,
+	}); err == nil || !strings.Contains(err.Error(), "staging directory") {
+		t.Fatalf("missing staging path error = %v", err)
+	}
+
+	path := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(path, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.reader(t).Inspect(inspectOptions{
+		StagingDir: path,
+	}); err == nil || !strings.Contains(err.Error(), "is not a directory") {
+		t.Fatalf("file staging path error = %v", err)
 	}
 }
 

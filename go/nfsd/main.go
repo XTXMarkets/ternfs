@@ -129,7 +129,7 @@ func runInspect(args []string) {
 	stateID := fs.String("stateid", "",
 		"stateid \"other\" field as 24 hex digits")
 	staging := fs.String("staging", "",
-		"local staging directory; its sidecars are joined to open markers")
+		"local staging directory; report file integrity and join opens")
 	jsonOut := fs.Bool("json", false, "write the report as JSON")
 	verbose := fs.Bool("v", false, "verbose TernFS client logging")
 	fs.Usage = func() {

@@ -428,28 +428,46 @@ machine-readable form.
 
 For each identity, the report shows the stored identity string and its
 `confirmed` and `pending` pointers. It then shows every incarnation and its
-roles: `confirmed`, `pending`, `reboot-target` or `unreachable`. An
-incarnation is `USABLE` when it is confirmed, has no `expired` marker and has
-at least one live lease slot.
+roles: `confirmed`, `pending`, `reboot-target` or `unreachable`. The summary
+and each incarnation use distinct lifecycle states:
+
+- `ACTIVE` is confirmed and has a live lease.
+- `EXPIRED` had a lease which elapsed and cannot renew.
+- `UNLEASED` is confirmed but has never recorded a lease; it can still
+  acquire its first lease.
+- `PENDING` is waiting for `SETCLIENTID_CONFIRM`.
+- `REPLACED` is retained temporarily as a reboot target.
+- `UNREACHABLE` has no persistent pointer keeping it live.
 
 Each incarnation includes its client and update records, decoded principal
 and callback address, lease and confirming slots, expiry marker, GC deadline,
 open markers and temporary files. Lease slots name the nfsd which wrote them.
 The first four bytes of an open stateid identify the nfsd process which issued
-it.
+it. An open marker is `STALE` when its incarnation is not active.
 
 Expired slots and temporary files are marked `collectable` once they are old
-enough for collection. The inspector does not remove them. It also does not
-create the `expired` or `gc` records which a server scan may add. The report
-is a read-only view of the state at that point in time.
+enough for collection. An expired lease slot is only removed when a daemon
+next scans that client; the lease sweeper does not walk the entire shared
+store. The inspector does not remove anything. It also does not create the
+`expired` or `gc` records which a server scan may add. The report is a
+read-only view of the state at that point in time.
 
 Open markers do not say which file they belong to. That association lives in
 the process-local open state and, for write opens, in the staging sidecars on
 the nfsd host. `-staging` reads those sidecars and joins them to open markers
 by stateid. This adds the target directory, file name and staged size to the
-report. It also reports sidecars without an open marker and open markers
-without a sidecar. The staging directory is local, so this option must run on
-the nfsd host which owns it.
+report. It also reports the sidecar format, construction cookie, owning
+client and open owner, access mode, base inode and size, checkpointed logical
+size and dirty ranges, writer attributes and EXCLUSIVE4 verifier when
+present. The staging summary includes logical and allocated bytes.
+Uncheckpointed writes and in-memory hydration progress are not visible.
+
+The inspector reads the staging directory as `.staging` and `.meta` pairs. It
+reports missing or malformed files and metadata temporaries.
+Sidecars without an open marker are shown under their client when possible;
+entries with no reported client are shown once at the end. A missing staging
+path is an error rather than an empty report. The staging directory is local,
+so this option must run on the nfsd host which owns it.
 
 At startup each nfsd logs its `nfsd_id`, which names its `lease.` and
 `confirming.` slots, and its `stateid_epoch`. Grep the fleet's logs for these
