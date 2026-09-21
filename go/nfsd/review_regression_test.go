@@ -404,3 +404,60 @@ func TestStaleLeaseCheckCannotRetireRecoveredWriter(t *testing.T) {
 		t.Fatal("stale lease check retired the recovered writer")
 	}
 }
+
+func TestRetiredStagingReleasesDescriptorAndReopensOnRecovery(t *testing.T) {
+	dir := t.TempDir()
+	store, id, sf := createOverlayStage(t, dir, MakeInodeID(InodeTypeFile, 1), []byte("base"))
+	if err := sf.Write(0, []byte("kept")); err != nil {
+		t.Fatal(err)
+	}
+	meta, _ := store.GetMeta(id)
+	if err := sf.Retire(meta.ClientID, meta.NFSStateID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sf.(*localStagingFile).f.Stat(); !errors.Is(err, os.ErrClosed) {
+		t.Fatalf("retired file still has an open descriptor: %v", err)
+	}
+	recovered, err := NewLocalStagingStore(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer recovered.Remove(id)
+	recoveredFile := recovered.Get(id).(*localStagingFile)
+	if _, err := recoveredFile.f.Stat(); !errors.Is(err, os.ErrClosed) {
+		t.Fatalf("restart reopened a retired descriptor: %v", err)
+	}
+	if err := recovered.Rebind(id, 42, StateID{3}); err != nil {
+		t.Fatal(err)
+	}
+	data := make([]byte, 4)
+	if _, _, err := recoveredFile.Read(0, data, nil); err != nil || string(data) != "kept" {
+		t.Fatalf("recovered data = %q, err = %v", data, err)
+	}
+}
+
+func TestRecoveredRetiredCreateAppliesSize(t *testing.T) {
+	srv, addr, cleanup := startTestServerWithServer(t, t.TempDir())
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+	xid := uint32(1)
+	clientID := setupClient(t, conn, &xid)
+	state, fh := openCreateFile(t, conn, &xid, clientID, "file")
+	writeFileAt(t, conn, &xid, fh, state, 0, []byte("acknowledged"))
+	srv.waitForClientGC()
+	now := time.Now().Add(2 * nfsLeaseTime)
+	srv.clients.now = func() time.Time { return now }
+	srv.runLeaseSweep()
+	newClient := setupClient(t, conn, &xid)
+	size := uint64(3)
+	recovered, recoveredFH := openCreateFileWithSize(t, conn, &xid, newClient, "file", &size)
+	if !bytes.Equal(fh, recoveredFH) {
+		t.Fatal("CREATE did not rebind the retired file")
+	}
+	closeFile(t, conn, &xid, recoveredFH, recovered)
+	got, _ := readFileData(t, conn, &xid, lookupFH(t, conn, &xid, "file"), 0, 32)
+	if string(got) != "ack" {
+		t.Fatalf("recovered CREATE size was not applied: %q", got)
+	}
+}

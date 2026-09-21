@@ -225,6 +225,9 @@ func NewLocalStagingStore(dir string, logger *slog.Logger) (*LocalStagingStore, 
 			s.targets[target] = make(map[InodeID]struct{})
 		}
 		s.targets[target][id] = struct{}{}
+		if meta.Retired {
+			_ = f.Close()
+		}
 		s.log.Info("staging recover", "file", name, "inode", fmt.Sprintf("%016x", uint64(id)), "size", size)
 		s.files[id] = entry
 	}
@@ -526,7 +529,7 @@ func (sf *localStagingFile) Retire(clientID uint64, stateID StateID) error {
 		sf.meta = previous
 		return err
 	}
-	return nil
+	return sf.f.Close()
 }
 
 func (sf *localStagingFile) saveMetaLocked() error {
@@ -568,6 +571,13 @@ func (sf *localStagingFile) rebind(
 		return errStagingRemoved
 	}
 	oldMeta := sf.meta
+	if oldMeta.Retired {
+		f, err := os.OpenFile(sf.f.Name(), os.O_RDWR, 0600)
+		if err != nil {
+			return err
+		}
+		sf.f = f
+	}
 	sf.meta.ClientID = clientID
 	sf.meta.NFSStateID = stateID
 	sf.meta.Retired = false
@@ -577,6 +587,9 @@ func (sf *localStagingFile) rebind(
 	}
 
 	sf.meta = oldMeta
+	if oldMeta.Retired {
+		_ = sf.f.Close()
+	}
 	restoreErr := saveStagingMeta(sf.metaPath, oldMeta)
 	if restoreErr != nil {
 		restoreErr = fmt.Errorf(

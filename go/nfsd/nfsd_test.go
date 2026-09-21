@@ -8294,6 +8294,9 @@ func closeLocalStagingFiles(t *testing.T, store *LocalStagingStore) {
 	defer store.mu.Unlock()
 
 	for _, entry := range store.files {
+		if entry.file.Meta().Retired {
+			continue // retirement has already synced and closed this file
+		}
 		if err := entry.file.f.Sync(); err != nil {
 			t.Fatal(err)
 		}

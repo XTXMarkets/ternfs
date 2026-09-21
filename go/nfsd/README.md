@@ -315,8 +315,9 @@ already owns a marker reuses the existing TernFS inode.
 Each nfsd checks its local clients once per lease period. A client with no
 live fleet lease loses its process-local open state and local open markers.
 Its staging is retired, preserving acknowledged bytes without reserving the
-pathname. Retired staging is retained until recovered and closed or explicitly
-removed by an administrator; provision and monitor disk space accordingly.
+pathname or holding open file descriptors. Retired staging is retained until
+recovered and closed or explicitly removed by an administrator; provision and
+monitor disk space accordingly.
 The persistent client store is the authority for replaced clientids; the
 process-local open store does not keep a separate revoked set.
 

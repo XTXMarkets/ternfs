@@ -992,12 +992,15 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 		s.discardStaging(targetID)
 	}
 
-	if staged && openSize != nil {
+	applyOpenSize := func() error {
 		sf := s.stagingStore.Get(targetID)
 		if sf == nil {
 			panic("open: staged file has no staging data")
 		}
-		if err := s.setStagingSize(sf, *openSize); err != nil {
+		return s.setStagingSize(sf, *openSize)
+	}
+	if staged && openSize != nil && !reusedStaging {
+		if err := applyOpenSize(); err != nil {
 			cleanupStagedOpen()
 			return fail(NFS4ERR_IO)
 		}
@@ -1032,6 +1035,15 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 			return fail(NFS4ERR_IO)
 		}
 		stagingRebound = true
+		// Retired files release their descriptors; Rebind reopens them after
+		// the new durable marker exists. Apply CREATE size only then.
+		if openSize != nil {
+			if err := applyOpenSize(); err != nil {
+				_ = s.clients.RemoveOpen(clientID, markID)
+				cleanupStagedOpen()
+				return fail(NFS4ERR_IO)
+			}
+		}
 	}
 	if placeholderID != 0 {
 		if err := s.fs.LinkFile(
