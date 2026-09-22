@@ -32,12 +32,17 @@ PYNFS_OUTPUT ?= $(CURDIR)/pynfs.out
 PYNFS_TIMEOUT ?= 1h
 LIBNFS_TIMEOUT ?= 15m
 FUNCTIONAL_TEST_ROOT ?=
+FUNCTIONAL_TESTS ?= all
+FUNCTIONAL_TIMEOUT ?= 30m
+KERNEL_IMAGE_DIR := $(DEPS_DIR)/kernel
+KERNEL_IMAGE := $(KERNEL_IMAGE_DIR)/initrd.img
 
 .DEFAULT_GOAL := help
 
 .PHONY: help fetch-libnfs build-libnfs \
 	test-libnfs test-libnfs-cluster clean-libnfs fetch-pynfs build-pynfs \
-	test-pynfs test-pynfs-cluster clean-pynfs test-functional
+	test-pynfs test-pynfs-cluster clean-pynfs test-functional \
+	build-kernel-image test-functional-cluster clean-kernel-image
 
 help:
 	@printf '%s\n' \
@@ -53,13 +58,17 @@ help:
 		'  test-pynfs-cluster  Run pynfs with a temporary ternrun cluster' \
 		'  clean-pynfs      Remove downloaded and built pynfs files' \
 		'  test-functional  Run common workflows on an existing NFS mount' \
+		'  build-kernel-image  Build the qemu guest image from an installed kernel' \
+		'  test-functional-cluster  Run the workflows through a kernel NFS client in qemu' \
+		'  clean-kernel-image  Remove the qemu guest image' \
 		'' \
 		'Targets ending in -cluster start their own backend.' \
 		'Other client targets require TEST_ARGS="-registry HOST:PORT".' \
 		'Use TEST_ARGS="-binaries-dir DIR" with -cluster targets for prebuilt backend binaries.' \
 		'Set GO_TEST_FLAGS to pass additional arguments to Go test invocations.' \
 		'Set PYNFS_TESTS, PYNFS_ARGS, PYNFS_SKIP_FILE, PYNFS_OUTPUT and PYNFS_TIMEOUT to configure pynfs.' \
-		'Set FUNCTIONAL_TEST_ROOT to an existing mounted test directory for test-functional.'
+		'Set FUNCTIONAL_TEST_ROOT to an existing mounted test directory for test-functional.' \
+		'Set FUNCTIONAL_TESTS (case numbers, comma-separated) and FUNCTIONAL_TIMEOUT for test-functional-cluster.'
 
 fetch-libnfs: $(LIBNFS_FETCHED)
 
@@ -80,7 +89,7 @@ $(LIBNFS_BUILT): $(LIBNFS_FETCHED)
 	cmake --install "$(LIBNFS_BUILD)"
 	touch "$@"
 
-test-libnfs-cluster test-pynfs-cluster: CLUSTER_ARG = -cluster
+test-libnfs-cluster test-pynfs-cluster test-functional-cluster: CLUSTER_ARG = -cluster
 
 test-libnfs test-libnfs-cluster: $(LIBNFS_BUILT)
 	go test -count=1 -v -timeout "$(LIBNFS_TIMEOUT)" -tags libnfs \
@@ -122,3 +131,15 @@ test-functional:
 		exit 1; \
 	}
 	./functional/run-all.sh "$(FUNCTIONAL_TEST_ROOT)"
+
+build-kernel-image: $(KERNEL_IMAGE)
+
+$(KERNEL_IMAGE):
+	./internal/kernel/prepare-image.sh -o "$(KERNEL_IMAGE_DIR)"
+
+test-functional-cluster: $(KERNEL_IMAGE)
+	go run ./internal/kernel -image-dir "$(KERNEL_IMAGE_DIR)" -tests "$(FUNCTIONAL_TESTS)" \
+		-timeout "$(FUNCTIONAL_TIMEOUT)" $(TEST_ARGS) $(CLUSTER_ARG)
+
+clean-kernel-image:
+	rm -rf "$(KERNEL_IMAGE_DIR)"

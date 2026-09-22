@@ -725,6 +725,30 @@ strace -ff -o /tmp/0006.trace \
   ./test/functional/0005-vim-edit.sh /mnt/qa-nfs/test
 ```
 
+The same cases can run through the Linux kernel NFS client without a host
+mount. `test-functional-cluster` starts a temporary `ternrun` cluster and an
+nfsd through the shared harness, then boots a small qemu guest which mounts
+that nfsd's export and runs the suite:
+
+```sh
+make test-functional-cluster TEST_ARGS='-binaries-dir /path/to/binaries'
+make test-functional-cluster FUNCTIONAL_TESTS=0005,0009
+```
+
+The guest is a locally installed Debian kernel with a busybox initramfs
+([`test/internal/kernel/prepare-image.sh`](test/internal/kernel/prepare-image.sh)). It shares
+this host's root filesystem over virtio-9p, so the functional scripts and the
+tools they call run unchanged, and reaches nfsd on the host loopback through
+qemu user networking, so no root, KVM, tap or FUSE access is needed. It runs
+under TCG when `/dev/kvm` is absent; a full run then takes a few minutes.
+[`test/internal/kernel/main.go`](test/internal/kernel/main.go) is the driver and accepts the
+same `-registry`, `-binaries-dir`, `-nfsd` and `-artifacts-dir` arguments as
+the libnfs and pynfs targets; [`guest-init.sh`](test/internal/kernel/guest-init.sh) is
+PID 1 in the guest. Debian needs `qemu-system-x86 busybox-static cpio kmod
+linux-image-amd64 nfs-common`; `KERNEL_VERSION` selects among installed
+kernels. Each guest uses its own hostname as its NFSv4 client identity, since
+nfsd instances on one TernFS share the durable client store.
+
 All Go test targets accept additional flags through `GO_TEST_FLAGS`. For
 example:
 
