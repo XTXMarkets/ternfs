@@ -22,10 +22,6 @@ const (
 	maxTernNameLength  = maxTernBytesLength
 )
 
-// finishDefaultResponse completes a result whose union default arm is the
-// bare status: it appends the status to the entry buffer and hands the buffer
-// back to the compound writer. Taking the buffer rather than the entry writer
-// keeps the call inlinable and the writer on the stack.
 func finishDefaultResponse(w *COMPOUND4resWriter, buf []byte, status uint32) uint32 {
 	w.Resume(binary.BigEndian.AppendUint32(buf, status))
 	return status
@@ -124,6 +120,30 @@ func (s *Server) lookupDurableOpen(
 		return openState{}, status
 	}
 	return state, NFS4_OK
+}
+
+// lookupWriteStaging validates write access and finds the caller's staging
+// file. A file with no staging on this nfsd is not open for write here, so
+// that case reports NFS4ERR_OPENMODE, the same as a read-only open. On
+// NFS4_OK the returned staging file is never nil.
+func (s *Server) lookupWriteStaging(stateid Stateid4, fileID InodeID) (StagingFile, uint32) {
+	var sf StagingFile
+	if isSpecialStateID(stateid) {
+		sf = s.directStaging(fileID)
+	} else {
+		state, status := s.lookupDurableOpen(stateid, fileID)
+		if status != NFS4_OK {
+			return nil, status
+		}
+		if !state.write {
+			return nil, NFS4ERR_OPENMODE
+		}
+		sf = s.stagingOwnedBy(fileID, state)
+	}
+	if sf == nil {
+		return nil, NFS4ERR_OPENMODE
+	}
+	return sf, NFS4_OK
 }
 
 func (s *Server) requireActiveOpen(state openState) uint32 {
@@ -375,8 +395,7 @@ func writeCloseResponse(
 		return finishDefaultResponse(w, ew.Finish(), response.status)
 	}
 	stid := ew.SetValue_Nfs4Ok()
-	stid.SetSeqid(response.state.generation)
-	writeStateID(stid, response.state.id)
+	writeStateID(stid, response.state.generation, response.state.id)
 	w.Resume(ew.Finish())
 	return NFS4_OK
 }
@@ -538,29 +557,15 @@ func (s *Server) opGetattr(args GETATTR4args, st *compoundState, w *COMPOUND4res
 	ew := w.AppendResarray_Getattr()
 	okW := ew.SetValue_Nfs4Ok()
 
-	// Build fattr4: bitmap + attrlist.
-	faw := okW.StartObjAttributes()
-	bmW := faw.StartAttrmask()
-
 	// Compute response bitmap: intersection of requested and supported.
 	var respMask [2]uint32
 	respMask[0] = reqMask[0] & supportedAttrs0
 	respMask[1] = reqMask[1] & supportedAttrs1
 
-	bmW.AppendData(respMask[0])
-	bmW.AppendData(respMask[1])
-	buf := bmW.Finish()
-	faw.Resume(buf)
-
-	// Build attribute values.
-	alW := faw.StartAttrVals()
+	faw := okW.StartObjAttributes()
 	attrBuf := encodeAttrs(respMask, st.currentID, ni)
-	buf = alW.SetData(attrBuf).Finish()
-	faw.Resume(buf)
-	buf = faw.Finish()
-	okW.Resume(buf)
-	buf = okW.Finish()
-	ew.Resume(buf)
+	okW.Resume(writeFattr(&faw, respMask[:], attrBuf))
+	ew.Resume(okW.Finish())
 	w.Resume(ew.Finish())
 
 	return NFS4_OK
@@ -796,11 +801,8 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 			case GUARDED4:
 				createAttrs = createHow.Value().AsGuarded4()
 			case EXCLUSIVE4:
-				exclusiveVerifier = new([8]byte)
-				v := createHow.Value().AsVerifier4()
-				for i := range exclusiveVerifier {
-					exclusiveVerifier[i] = v.Data(i)
-				}
+				verifier := getData64(createHow.Value().AsVerifier4())
+				exclusiveVerifier = &verifier
 			}
 			// An exclusive create carries a verifier, not attributes.
 			if exclusiveVerifier == nil {
@@ -1097,9 +1099,7 @@ func writeOpenResponse(
 	st.setCurrent(state.fileID)
 	okW := ew.SetValue_Nfs4Ok()
 
-	stid := okW.Stateid()
-	stid.SetSeqid(state.generation)
-	writeStateID(stid, state.id)
+	writeStateID(okW.Stateid(), state.generation, state.id)
 
 	cinfo := okW.Cinfo()
 	setChangeInfo(cinfo, TRUE, response.changeBefore, response.changeAfter)
@@ -1178,9 +1178,7 @@ func writeOpenConfirmResponse(
 		return finishDefaultResponse(w, ew.Finish(), response.status)
 	}
 	ok := ew.SetValue_Nfs4Ok()
-	stid := ok.OpenStateid()
-	stid.SetSeqid(response.state.generation)
-	writeStateID(stid, response.state.id)
+	writeStateID(ok.OpenStateid(), response.state.generation, response.state.id)
 	w.Resume(ew.Finish())
 	return NFS4_OK
 }
@@ -1780,22 +1778,12 @@ func (s *Server) opSetattr(args SETATTR4args, st *compoundState, w *COMPOUND4res
 	}
 
 	if newSize != nil {
-		var sf StagingFile
-		if !isSpecialStateID(args.Stateid()) {
-			state, status := s.lookupDurableOpen(
-				args.Stateid(), st.currentID)
-			if status != NFS4_OK {
-				return setattrReply(status, [2]uint32{})
-			}
-			if !state.write {
-				return setattrReply(NFS4ERR_OPENMODE, [2]uint32{})
-			}
-			sf = s.stagingOwnedBy(st.currentID, state)
-		} else {
-			sf = s.directStaging(st.currentID)
+		if status := requireRegularFile(st.currentID); status != NFS4_OK {
+			return setattrReply(status, [2]uint32{})
 		}
-		if sf == nil {
-			return setattrReply(NFS4ERR_BAD_STATEID, [2]uint32{})
+		sf, status := s.lookupWriteStaging(args.Stateid(), st.currentID)
+		if status != NFS4_OK {
+			return setattrReply(status, [2]uint32{})
 		}
 		if err := s.setStagingSize(sf, *newSize); err != nil {
 			return setattrReply(NFS4ERR_IO, [2]uint32{})
@@ -1930,28 +1918,10 @@ func (s *Server) opWrite(args WRITE4args, st *compoundState, w *COMPOUND4resWrit
 		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 
-	var sf StagingFile
-	if !isSpecialStateID(args.Stateid()) {
-		state, status := s.lookupDurableOpen(
-			args.Stateid(), st.currentID)
-		if status != NFS4_OK {
-			ew := w.AppendResarray_Write()
-			return finishDefaultResponse(w, ew.Finish(), status)
-		}
-		if !state.write {
-			ew := w.AppendResarray_Write()
-			return finishDefaultResponse(w, ew.Finish(), NFS4ERR_OPENMODE)
-		}
-		sf = s.stagingOwnedBy(st.currentID, state)
-	} else {
-		sf = s.directStaging(st.currentID)
-	}
-
-	// Find the staging buffer for this file.
-	if sf == nil {
-		// No staging buffer — not opened for write.
+	sf, status := s.lookupWriteStaging(args.Stateid(), st.currentID)
+	if status != NFS4_OK {
 		ew := w.AppendResarray_Write()
-		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_OPENMODE)
+		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 
 	offset := args.Offset()
@@ -2024,8 +1994,9 @@ func extractStateID(s Stateid4) StateID {
 	return sid
 }
 
-// writeStateID writes a StateID into a Stateid4's "other" field.
-func writeStateID(s Stateid4, sid StateID) {
+// writeStateID writes the generation and opaque ID into a Stateid4.
+func writeStateID(s Stateid4, generation uint32, sid StateID) {
+	s.SetSeqid(generation)
 	for i := 0; i < 12; i++ {
 		s.SetOther(i, sid[i])
 	}

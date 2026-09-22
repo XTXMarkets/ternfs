@@ -1654,8 +1654,7 @@ func TestLookupDurableOpenStorageErrorPreservesClientState(t *testing.T) {
 	fs.name = confirmedName
 	fs.remaining = 1
 	_, stateid := StartStateid4(nil)
-	stateid.SetSeqid(reader.generation)
-	writeStateID(stateid, reader.id)
+	writeStateID(stateid, reader.generation, reader.id)
 	if _, status := srv.lookupDurableOpen(
 		stateid, readerID,
 	); status != NFS4ERR_DELAY {
@@ -7811,6 +7810,115 @@ func TestSetattrSizeSpecialStateid(t *testing.T) {
 	}
 	if info.Size() != 10 {
 		t.Fatalf("file size = %d, want 10", info.Size())
+	}
+}
+
+// TestWriteAndSetattrSizeNoStagingSameStatus checks that WRITE and SETATTR
+// size with the anonymous stateid on a file that has no staging on this nfsd
+// both report NFS4ERR_OPENMODE, the same status as a read-only open.
+func TestWriteAndSetattrSizeNoStagingSameStatus(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "nostaging.txt"), []byte("content"), 0644)
+	addr, cleanup := startTestServer(t, dir)
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+
+	xid := uint32(1)
+	setupClient(t, conn, &xid)
+	fh := lookupFH(t, conn, &xid, "nostaging.txt")
+
+	anonymous := func(sid Stateid4) {
+		sid.SetSeqid(0)
+		for i := 0; i < 12; i++ {
+			sid.SetOther(i, 0)
+		}
+	}
+
+	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+		pw := w.AppendArgarray_Putfh()
+		pw.Resume(pw.StartObject().SetData(fh).Finish())
+		w.Resume(pw.Finish())
+		ww := w.AppendArgarray_Write()
+		anonymous(ww.Stateid())
+		ww = ww.SetOffset(0)
+		ww = ww.SetStable(unstable4)
+		ww = ww.SetData([]byte("X"))
+		w.Resume(ww.Finish())
+	})
+	xid++
+	if res.Status() != NFS4ERR_OPENMODE {
+		t.Fatalf("WRITE without staging: status = %s, want NFS4ERR_OPENMODE",
+			Nfsstat4Name(res.Status()))
+	}
+
+	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+		pw := w.AppendArgarray_Putfh()
+		pw.Resume(pw.StartObject().SetData(fh).Finish())
+		w.Resume(pw.Finish())
+		saw := w.AppendArgarray_Setattr()
+		anonymous(saw.Stateid())
+		faw := saw.StartObjAttributes()
+		bmW := faw.StartAttrmask()
+		bmW.AppendData(1 << FATTR4_SIZE)
+		faw.Resume(bmW.Finish())
+		attrData := make([]byte, 8)
+		binary.BigEndian.PutUint64(attrData, 1)
+		faw.Resume(faw.StartAttrVals().SetData(attrData).Finish())
+		saw.Resume(faw.Finish())
+		w.Resume(saw.Finish())
+	})
+	xid++
+	if res.Status() != NFS4ERR_OPENMODE {
+		t.Fatalf("SETATTR size without staging: status = %s, want NFS4ERR_OPENMODE",
+			Nfsstat4Name(res.Status()))
+	}
+}
+
+func TestSetattrSizeRejectsNonRegularFiles(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "directory"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("destination", filepath.Join(dir, "symlink")); err != nil {
+		t.Fatal(err)
+	}
+	addr, cleanup := startTestServer(t, dir)
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+
+	xid := uint32(1)
+	for _, tc := range []struct {
+		name   string
+		status uint32
+	}{
+		{"directory", NFS4ERR_ISDIR},
+		{"symlink", NFS4ERR_INVAL},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fh := lookupFH(t, conn, &xid, tc.name)
+			res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+				pw := w.AppendArgarray_Putfh()
+				pw.Resume(pw.StartObject().SetData(fh).Finish())
+				w.Resume(pw.Finish())
+				saw := w.AppendArgarray_Setattr()
+				setStateid(saw.Stateid(), [16]byte{})
+				faw := saw.StartObjAttributes()
+				bmW := faw.StartAttrmask()
+				bmW.AppendData(1 << FATTR4_SIZE)
+				faw.Resume(bmW.Finish())
+				data := binary.BigEndian.AppendUint64(nil, 0)
+				faw.Resume(faw.StartAttrVals().SetData(data).Finish())
+				saw.Resume(faw.Finish())
+				w.Resume(saw.Finish())
+			})
+			xid++
+			if res.Status() != tc.status {
+				t.Fatalf("SETATTR size on %s: status = %s, want %s",
+					tc.name, Nfsstat4Name(res.Status()), Nfsstat4Name(tc.status))
+			}
+		})
 	}
 }
 
