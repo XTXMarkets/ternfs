@@ -149,7 +149,16 @@ func NewClientStore(fs TernVFS) (*ClientStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("client store: create clients dir: %w", err)
 	}
+	return newClientStoreAt(fs, nfsID, clientsID)
+}
 
+// newClientStoreAt builds a ClientStore over existing directories with a fresh
+// process identity.
+func newClientStoreAt(
+	fs TernVFS,
+	nfsID InodeID,
+	clientsID InodeID,
+) (*ClientStore, error) {
 	nfsdID, err := randomHex(16)
 	if err != nil {
 		return nil, fmt.Errorf("client store: generate nfsd id: %w", err)
@@ -1775,6 +1784,11 @@ func isActiveOpenName(name string) bool {
 func isLeaseName(name string) bool {
 	return strings.HasPrefix(name, leasePrefix) &&
 		len(name) > len(leasePrefix)
+}
+
+func isConfirmingName(name string) bool {
+	return strings.HasPrefix(name, confirmingPrefix) &&
+		len(name) > len(confirmingPrefix)
 }
 
 // stagingRecoveryKey identifies one client boot independently of the lease

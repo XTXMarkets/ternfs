@@ -456,18 +456,63 @@ Open markers do not say which file they belong to. That association lives in
 the process-local open state and, for write opens, in the staging sidecars on
 the nfsd host. `-staging` reads those sidecars and joins them to open markers
 by stateid. This adds the target directory, file name and staged size to the
-report. It also reports the sidecar format, construction cookie, owning
-client and open owner, access mode, base inode and size, checkpointed logical
-size and dirty ranges, writer attributes and EXCLUSIVE4 verifier when
-present. The staging summary includes logical and allocated bytes.
-Uncheckpointed writes and in-memory hydration progress are not visible.
+report. It also reports the sidecar format version, construction cookie,
+recovery key, owning client and open owner, access mode, base inode and size,
+checkpointed logical size and dirty ranges, and writer attributes. An entry is
+`RETIRED` when its lease expired and the acknowledged data is being held for
+the client to reclaim. The staging summary includes logical and allocated
+bytes. Uncheckpointed writes and in-memory hydration progress are not visible.
 
-The inspector reads the staging directory as `.staging` and `.meta` pairs. It
-reports missing or malformed files and metadata temporaries.
-Sidecars without an open marker are shown under their client when possible;
-entries with no reported client are shown once at the end. A missing staging
-path is an error rather than an empty report. The staging directory is local,
-so this option must run on the nfsd host which owns it.
+The reported sidecar version is the on-disk metadata layout, printed as `v4` or
+`legacy`. It is not an NFS protocol version.
+
+The inspector reads the staging directory as `.staging` and `.meta` pairs named
+with the file inode as sixteen hex digits, which is how recovery looks them up.
+It reports missing or malformed files, metadata temporaries and any name which
+does not match that spelling. Files under `quarantine/`, which recovery moved
+aside because their sidecar would not decode, are listed separately rather than
+treated as an unexpected directory. A missing staging path is an error rather
+than an empty report. The staging directory is local, so this option must run on
+the nfsd host which owns it.
+
+Sidecars without an open marker are shown under their client. In an unfiltered
+report, sidecars belonging to no client in the store are listed once at the end.
+A filtered report has not read the other identities, so it cannot tell an orphan
+from another client's file: it counts those sidecars instead of listing them, and
+says so. Rerun without a filter to see them.
+
+### Exit status
+
+The command is usable as a monitoring check without parsing its output:
+
+| status | meaning |
+| --- | --- |
+| 0 | the report was produced and found no problems |
+| 1 | the report could not be produced |
+| 2 | usage error |
+| 3 | the report was produced and found problems |
+
+A problem is a defect: an unreadable or missing record, a dangling `confirmed`,
+`pending` or `reboot` pointer, an unrecognized entry in an incarnation
+directory, a broken or unpaired staging file, or a quarantined checkpoint. The
+count appears as `problems` in the summary line, again at the end of the text
+report, and as `summary.problems` in the JSON.
+
+Expired leases, stale open markers, unreachable incarnations, collectable slots
+and temporaries, and retired staging entries are **not** problems. They are the
+states the lifecycle is meant to pass through, and a check which fired on them
+would fire constantly.
+
+A filter which selects nothing is also not a problem: a stale clientid, an
+unregistered identity, a stateid with no marker, or the `directory` inode
+pasted into `-clientid` by mistake. Those are answers to the question asked, so
+they are reported as a `note` and exit 0. Notes are collected under `notes` in
+the JSON.
+
+Because a filtered report only reads the selected clients, its exit status
+covers those clients and the layout of the staging directory; defects inside
+sidecars belonging to other clients are neither shown nor counted. Run without
+a filter to check the whole store.
 
 At startup each nfsd logs its `nfsd_id`, which names its `lease.` and
 `confirming.` slots, and its `stateid_epoch`. Grep the fleet's logs for these

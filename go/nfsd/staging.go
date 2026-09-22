@@ -26,6 +26,11 @@ const (
 const stagingHydrationChunk = 1 << 20
 const finishHydrationWorkers = 4
 
+// stagingQuarantineDirName is the subdirectory of the staging directory which
+// holds checkpoints whose metadata sidecar would not decode. Recovery moves
+// them aside rather than deleting them; nfsd inspect lists them.
+const stagingQuarantineDirName = "quarantine"
+
 var errStagingRemoved = errors.New("staging file was removed")
 
 type stagingTarget struct {
@@ -181,7 +186,7 @@ func NewLocalStagingStore(dir string, logger *slog.Logger) (*LocalStagingStore, 
 			f.Close()
 			// Invalid metadata cannot establish ownership or a publication
 			// target. Keep the bytes for manual recovery, outside the index.
-			quarantine := filepath.Join(dir, "quarantine")
+			quarantine := filepath.Join(dir, stagingQuarantineDirName)
 			if err := os.MkdirAll(quarantine, 0700); err != nil {
 				return nil, err
 			}
