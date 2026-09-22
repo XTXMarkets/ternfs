@@ -955,7 +955,7 @@ func TestClientStoreRejectsClientIDOutsideStateDirectory(t *testing.T) {
 	}
 	confirm := [8]byte{1}
 	record := newDurableClientRecord(
-		[8]byte{1}, confirm, clientOwner{})
+		[]byte("client"), [8]byte{1}, confirm, clientOwner{})
 	if _, err := store.createJSON(
 		incarnationID, clientRecordName, record,
 	); err != nil {
