@@ -12,6 +12,7 @@
 #include <rocksdb/slice.h>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #include "Assert.hpp"
@@ -188,6 +189,26 @@ static std::ostream& operator<<(std::ostream& out, const BincodeList<A>& x) {
     }
     out << "]";
     return out;
+}
+
+// Smallest number of bytes an encoded A can occupy. Every bincode type is one of:
+// - a primitive (integral or enum), exactly sizeof(A) bytes;
+// - a container (tagged union exposing kind()), at least the kind tag;
+// - a static type, whose STATIC_SIZE is the sum of its fields' static sizes.
+// Note that a container's STATIC_SIZE is the size of its largest variant, which
+// is why containers are checked first.
+template<typename A>
+constexpr size_t bincodeMinSize() {
+    if constexpr (std::is_integral_v<A> || std::is_enum_v<A>) {
+        return sizeof(A);
+    } else if constexpr (requires (const A& a) { a.kind(); }) {
+        return sizeof(std::declval<const A&>().kind());
+    } else if constexpr (requires { A::STATIC_SIZE; }) {
+        static_assert(A::STATIC_SIZE > 0);
+        return A::STATIC_SIZE;
+    } else {
+        static_assert(sizeof(A) == 0, "type A must be integral, a container, or statically sized");
+    }
 }
 
 template<uint16_t SZ>
@@ -375,25 +396,22 @@ struct BincodeBuf {
     template<typename A>
     void unpackList(BincodeList<A>& xs) {
         size_t count = unpackScalar<uint16_t>();
-        xs.els.clear();
+        constexpr size_t minSize = bincodeMinSize<A>();
+        if (unlikely(count > remaining() / minSize)) {
+            throw BINCODE_EXCEPTION("not enough bytes to unpack list (count %s, min element size %s, remaining %s)", count, minSize, remaining());
+        }
+        xs.els.resize(count);
         if (unlikely(count == 0)) {
             return;
         }
         // If it's a number of some sorts, just memcpy it
         if constexpr (std::is_integral_v<A> || std::is_enum_v<A>) {
             static_assert(std::endian::native == std::endian::little);
-            size_t sz = sizeof(A)*count;
-            if (unlikely(remaining() < sz)) {
-                throw BINCODE_EXCEPTION("not enough bytes to unpack scalars (need %s, got %s)", sz, remaining());
-            }
-            xs.els.resize(count);
-            memcpy(xs.els.data(), cursor, sz);
-            cursor += sz;
+            memcpy(xs.els.data(), cursor, sizeof(A)*count);
+            cursor += sizeof(A)*count;
         } else {
-            // Decode one element at a time so an untrusted count cannot
-            // trigger a bulk allocation before the payload is checked.
             for (size_t i = 0; i < count; i++) {
-                xs.els.emplace_back().unpack(*this);
+                xs.els[i].unpack(*this);
             }
         }
     }

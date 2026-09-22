@@ -51,12 +51,13 @@ TEST_CASE("bincode u16") { bincodeTestScalar<uint16_t>(); }
 TEST_CASE("bincode u32") { bincodeTestScalar<uint32_t>(); }
 TEST_CASE("bincode u64") { bincodeTestScalar<uint64_t>(); }
 
-struct FourByteBincodeValue {
+struct SizedBincodeValue {
+    static constexpr size_t STATIC_SIZE = sizeof(uint32_t);
     static inline size_t constructed = 0;
 
     uint32_t value;
 
-    FourByteBincodeValue() {
+    SizedBincodeValue() {
         constructed++;
     }
 
@@ -65,6 +66,13 @@ struct FourByteBincodeValue {
     }
 };
 
+static_assert(bincodeMinSize<uint64_t>() == 8);
+static_assert(bincodeMinSize<InodeId>() == 8);
+static_assert(bincodeMinSize<Edge>() == Edge::STATIC_SIZE);
+static_assert(bincodeMinSize<RegistryReqContainer>() == sizeof(RegistryMessageKind));
+static_assert(bincodeMinSize<ShardLogEntryContainer>() == sizeof(ShardLogEntryKind));
+static_assert(bincodeMinSize<SizedBincodeValue>() == 4);
+
 TEST_CASE("bincode rejects trailing bytes") {
     char buf[] = {'x'};
     BincodeBuf bbuf(buf, sizeof(buf));
@@ -72,14 +80,37 @@ TEST_CASE("bincode rejects trailing bytes") {
     CHECK_THROWS_AS(bbuf.ensureFinished(), BincodeException);
 }
 
-TEST_CASE("bincode decodes complex lists without allocating from count") {
-    char buf[] = {-1, -1};
+TEST_CASE("bincode checks list count before allocating") {
+    // count = 3, but only two 4-byte elements follow
+    char buf[] = {3, 0, 1, 0, 0, 0, 2, 0, 0, 0};
     BincodeBuf bbuf(buf, sizeof(buf));
-    BincodeList<FourByteBincodeValue> values;
-    FourByteBincodeValue::constructed = 0;
+    BincodeList<SizedBincodeValue> values;
+    SizedBincodeValue::constructed = 0;
 
     CHECK_THROWS_AS(bbuf.unpackList(values), BincodeException);
-    CHECK(FourByteBincodeValue::constructed == 1);
+    CHECK(values.els.empty());
+    CHECK(SizedBincodeValue::constructed == 0);
+}
+
+TEST_CASE("bincode checks container list count before allocating") {
+    char buf[] = {-1, -1};
+    BincodeBuf bbuf(buf, sizeof(buf));
+    BincodeList<RegistryReqContainer> values;
+
+    CHECK_THROWS_AS(bbuf.unpackList(values), BincodeException);
+    CHECK(values.els.empty());
+}
+
+TEST_CASE("bincode decodes lists") {
+    char buf[] = {2, 0, 1, 0, 0, 0, 2, 0, 0, 0};
+    BincodeBuf bbuf(buf, sizeof(buf));
+    BincodeList<SizedBincodeValue> values;
+
+    bbuf.unpackList(values);
+    bbuf.ensureFinished();
+    REQUIRE(values.els.size() == 2);
+    CHECK(values.els[0].value == 1);
+    CHECK(values.els[1].value == 2);
 }
 
 TEST_CASE("LeaderToken epoch encoding") {
