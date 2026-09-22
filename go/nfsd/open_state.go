@@ -514,7 +514,8 @@ func (op *openOwnerOperation) finishOpen(
 	os := op.store
 	os.mu.Lock()
 	if state := op.owner.states[fileID]; state != nil && state.confirmed {
-		if write {
+		// An existing read open cannot be upgraded to write.
+		if write && !state.write {
 			os.mu.Unlock()
 			return op.finishError(NFS4ERR_PERM)
 		}

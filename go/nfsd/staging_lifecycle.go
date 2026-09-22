@@ -76,12 +76,31 @@ func (s *Server) recoveredStagingTarget(
 				continue
 			}
 		}
-		// Legacy sidecars have no open-owner identity. Never guess between
-		// multiple recovered sessions and hand one writer another's data.
+		// Never guess between multiple recovered sessions and hand one
+		// writer another's data.
 		if foundID != 0 {
 			return 0, StagingMeta{}, false, nfsError(NFS4ERR_EXPIRED)
 		}
 		foundID, foundMeta = id, meta
 	}
 	return foundID, foundMeta, foundID != 0, nil
+}
+
+func (s *Server) exclusiveStagingTarget(
+	dirID InodeID,
+	name string,
+	publishedID InodeID,
+	owner openOwnerKey,
+	verifier [8]byte,
+) (InodeID, StagingMeta, bool) {
+	for id, meta := range s.stagingStore.FindTargets(dirID, name) {
+		// Another publication at this name invalidates the old create verifier.
+		if meta.BaseID == publishedID &&
+			meta.Exclusive && meta.Verifier == verifier &&
+			meta.ClientID == owner.clientID &&
+			meta.OwnerKnown && meta.OpenOwner == owner.owner {
+			return id, meta, true
+		}
+	}
+	return 0, StagingMeta{}, false
 }

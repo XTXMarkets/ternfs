@@ -159,7 +159,7 @@ func TestRemoveCancelsQueuedHydration(t *testing.T) {
 }
 
 func TestInvalidStagingIsQuarantined(t *testing.T) {
-	for _, format := range []string{"missing", "truncated", "NFS2", "NFS3"} {
+	for _, format := range []string{"missing", "truncated", "NFS2", "NFS3", "NFS4"} {
 		t.Run(format, func(t *testing.T) {
 			dir := t.TempDir()
 			store, id, sf := createOverlayStage(t, dir, MakeInodeID(InodeTypeFile, 1), []byte("base"))

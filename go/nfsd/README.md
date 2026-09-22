@@ -80,8 +80,8 @@ where the range is still clean, and fully overwritten or truncated ranges are
 not fetched.
 
 The `.meta` sidecar records the target, construction cookie, owning open, base
-inode and size, logical size, committed dirty ranges, open-owner identity and
-writer attributes. Stable writes, `COMMIT`, and size changes sync data before
+inode and size, logical size, committed dirty ranges, open-owner identity,
+writer attributes and the EXCLUSIVE4 verifier. Stable writes, `COMMIT`, and size changes sync data before
 atomically checkpointing this metadata. The checkpoint file is synced before
 rename, and its directory is synced afterwards. A failed checkpoint remains
 pending for the next retry. The writer's change attribute advances on mutations
@@ -103,8 +103,14 @@ invalidate an open across the fleet, but it does not make the staged data or
 the process-local open state movable to another nfsd. Multiple writable OPEN
 sessions may target the same name. The process blocks namespace operations
 which would move or remove a target while any local staging session remains
-open. This namespace protection is not fleet-wide; GUARDED create's
-lookup-and-publish sequence is serialized only within one nfsd.
+open. This namespace protection is not fleet-wide; the lookup-and-publish
+sequence for GUARDED and EXCLUSIVE4 creates is serialized only within one nfsd.
+
+EXCLUSIVE4 retries by the same client and open-owner reuse their staged
+writer when the verifier matches and the pathname still names its original
+empty inode. Other exclusive creates at that name return `NFS4ERR_EXIST`.
+The verifier is retained in staging until CLOSE; it does not reserve the
+name across hosts.
 
 `fsync` and `COMMIT` preserve unpublished data on the staging disk; they do
 not publish to TernFS or replicate the staging data. Keep that disk across
@@ -117,11 +123,10 @@ republishing its contents. This preserves data published by a concurrent writer.
 After a data publication commits, failure to restore the writer's timestamps is
 logged and CLOSE succeeds; the data is already visible and cannot be rolled back.
 
-The current sidecar format is NFS4. Deployed write-once sidecars remain readable;
-development-only NFS2/NFS3 formats are unsupported. Missing or invalid sidecars
-cause their data to be moved under `quarantine/` for manual recovery, never
-registered as an open. Drain active writes before downgrading to a binary that
-cannot read the current format.
+The current sidecar format is NFS5. Missing or invalid sidecars cause their data
+to be moved under `quarantine/` for manual recovery, never registered as an
+open. Drain active writes before downgrading to a binary that cannot read the
+current format.
 
 The implementation is in [`staging.go`](staging.go) and [`ops.go`](ops.go).
 
@@ -342,13 +347,10 @@ still hold unpublished data. On startup nfsd discovers these files. The
 sidecar contains the state needed to complete the pending `CLOSE` or rebind the
 staging to a replacement `OPEN` for the same client and open-owner. Multiple
 writers recover independently, including when another writer has published a
-newer version in the meantime. Ambiguous legacy sidecars without open-owner
-identity are not assigned to an arbitrary writer. Base-backed replacements
-recover only checkpointed dirty ranges, including new files backed by their
-empty published inode. Legacy staging without a base recovers the physical
-local file.
+newer version in the meantime. Replacements recover only checkpointed dirty
+ranges, including new files backed by their empty published inode.
 
-A client reconnecting after lease expiry receives a new clientid. New sidecars
+A client reconnecting after lease expiry receives a new clientid. Sidecars
 also persist a recovery key derived from its stable client identity, boot
 verifier and RPC principal. Matching that key and the open owner allows the
 same client boot to reclaim its private filehandle and data after expiry,
@@ -600,7 +602,7 @@ Fetch the pinned libnfs source:
 make fetch-libnfs
 ```
 
-The pinned release is libnfs 5.0.2.
+The pinned release is libnfs 7.0.2.
 
 Run the tests:
 

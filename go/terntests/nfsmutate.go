@@ -28,6 +28,7 @@ func nfsMutationTest(l *log.Logger, mnt string) {
 		run  func(*log.Logger, string)
 	}{
 		{"create/write/readback", nfsCreateWriteReadback},
+		{"exclusive create", nfsExclusiveCreate},
 		{"out-of-order writes", nfsOutOfOrderWrites},
 		{"rename", nfsRename},
 		{"delete", nfsDelete},
@@ -41,6 +42,40 @@ func nfsMutationTest(l *log.Logger, mnt string) {
 		start := time.Now()
 		test.run(l, dir)
 		fmt.Printf("  nfs mutations: %s passed (%s)\n", test.name, time.Since(start))
+	}
+}
+
+func nfsExclusiveCreate(l *log.Logger, dir string) {
+	l.Info("nfs mutation: exclusive create")
+	p := path.Join(dir, "exclusive.txt")
+	flags := os.O_WRONLY | os.O_CREATE | os.O_EXCL
+	f, err := os.OpenFile(p, flags, 0644)
+	if err != nil {
+		panic(fmt.Errorf("exclusive create %v: %w", p, err))
+	}
+	defer f.Close()
+	checkExists := func() {
+		other, err := os.OpenFile(p, flags, 0644)
+		if err == nil {
+			other.Close()
+			panic(fmt.Errorf("exclusive create replaced %v", p))
+		}
+		if !errors.Is(err, os.ErrExist) {
+			panic(fmt.Errorf("exclusive create %v: want EEXIST, got %w", p, err))
+		}
+	}
+	checkExists()
+	want := []byte("exclusive contents")
+	if _, err := f.Write(want); err != nil {
+		panic(err)
+	}
+	if err := f.Close(); err != nil {
+		panic(err)
+	}
+	checkExists()
+	got, err := os.ReadFile(p)
+	if err != nil || !bytes.Equal(got, want) {
+		panic(fmt.Errorf("exclusive readback %q, err=%v", got, err))
 	}
 }
 
