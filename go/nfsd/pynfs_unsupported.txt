@@ -94,7 +94,7 @@ LINKS
 
 # TernFS does not support changing ownership or mode after creation.
 # These tests require those metadata updates either directly or as part
-# of a mixed SETATTR request.
+# of a mixed SETATTR request. Mode is accepted while a file is staged.
 OPEN20
 SATT1d
 SATT1r
@@ -102,18 +102,17 @@ SATT2a
 SATT2b
 SATT2c
 SATT13
-SATT14
-SATT15
 SATT16
 SATT17
 SATT18
 
+# Mode SETATTR is an accepted no-op and does not advance the change attribute.
+SATT14
+SATT15
+
 # UNCHECKED creates allocate independent staging sessions. OPEN2 expects a
 # reopen to retain the original creator's private size.
 OPEN2
-
-# EXCLUSIVE4 create is not implemented.
-OPEN4
 
 # Unix mode/credential authorization is not implemented. This case changes
 # the RPC credentials while retaining another client's valid write stateid.
@@ -170,3 +169,6 @@ OPEN21
 OPEN22
 OPEN25
 OPEN26
+
+# Uses only the anonymous stateid and runs past the client lease.
+WRT15

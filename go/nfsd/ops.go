@@ -745,6 +745,7 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 	staged := false
 	reusedStaging := false
 	var openSize *uint64
+	var exclusiveVerifier *[8]byte
 	var recoveredStagingID InodeID
 	var recoveredStagingMeta StagingMeta
 	var hasRecoveredStaging bool
@@ -796,24 +797,29 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 		// Check if this is a create.
 		if args.OpenhowType() == OPEN4_CREATE {
 			createHow := args.Openhow().AsCreatehow4Entry()
-			// EXCLUSIVE4 verifier handling is not implemented.
-			if createHow.Disc() == EXCLUSIVE4 {
-				return fail(NFS4ERR_NOTSUPP)
-			}
 			var createAttrs Fattr4
 			switch createHow.Disc() {
 			case UNCHECKED4:
 				createAttrs = createHow.Value().AsUnchecked4()
 			case GUARDED4:
 				createAttrs = createHow.Value().AsGuarded4()
+			case EXCLUSIVE4:
+				exclusiveVerifier = new([8]byte)
+				v := createHow.Value().AsVerifier4()
+				for i := range exclusiveVerifier {
+					exclusiveVerifier[i] = v.Data(i)
+				}
 			}
-			if status := validateCreateAttrs(createAttrs); status != NFS4_OK {
-				return fail(status)
-			}
-			var status uint32
-			openSize, status = createAttrSize(createAttrs)
-			if status != NFS4_OK {
-				return fail(status)
+			// An exclusive create carries a verifier, not attributes.
+			if exclusiveVerifier == nil {
+				if status := validateCreateAttrs(createAttrs); status != NFS4_OK {
+					return fail(status)
+				}
+				var status uint32
+				openSize, status = createAttrSize(createAttrs)
+				if status != NFS4_OK {
+					return fail(status)
+				}
 			}
 			// Try lookup first.
 			id, err := s.fs.Lookup(dirID, fileName)
@@ -846,6 +852,24 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 				created = true
 			} else if createHow.Disc() == GUARDED4 {
 				return fail(NFS4ERR_EXIST)
+			} else if exclusiveVerifier != nil {
+				stagingID, meta, found := s.exclusiveStagingTarget(
+					dirID, fileName, id, ownerKey, *exclusiveVerifier,
+				)
+				if !found || meta.ReadOnly != (access&OPEN4_SHARE_ACCESS_WRITE == 0) {
+					return fail(NFS4ERR_EXIST)
+				}
+				existing, local := op.existingOpen(stagingID)
+				if local && existing.confirmed && existing.id == meta.NFSStateID {
+					nfsSID = existing.id
+					reusedStaging, staged = true, true
+				} else if s.opens.canRecover(meta.NFSStateID) {
+					adoptRecoveredStaging()
+				} else {
+					return fail(NFS4ERR_EXIST)
+				}
+				recoveredStagingID, recoveredStagingMeta = stagingID, meta
+				id = stagingID
 			}
 			targetID = id
 		} else {
@@ -900,6 +924,7 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 				targetID, nfsSID, status = s.constructStaging(
 					dirID, fileName, clientID, ownerKey.owner,
 					access&OPEN4_SHARE_ACCESS_WRITE != 0, baseID, baseInfo,
+					exclusiveVerifier,
 				)
 				if status != NFS4_OK {
 					return fail(status)
@@ -968,7 +993,7 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 		}
 		return fail(clientStoreErrToNFS(err))
 	}
-	if reusedStaging {
+	if reusedStaging && recoveredStagingMeta.NFSStateID != markID {
 		if err := s.stagingStore.Rebind(
 			recoveredStagingID, clientID, markID,
 		); err != nil {
@@ -1030,6 +1055,7 @@ func (s *Server) constructStaging(
 	write bool,
 	baseID InodeID,
 	baseInfo NodeInfo,
+	exclusiveVerifier *[8]byte,
 ) (InodeID, StateID, uint32) {
 	recoveryKey, err := s.clients.stagingRecoveryKey(clientID)
 	if err != nil {
@@ -1053,6 +1079,10 @@ func (s *Server) constructStaging(
 		OwnerKnown:  true,
 		ReadOnly:    !write,
 		RecoveryKey: recoveryKey,
+	}
+	if exclusiveVerifier != nil {
+		meta.Exclusive = true
+		meta.Verifier = *exclusiveVerifier
 	}
 	if _, err := s.stagingStore.Create(id, meta); err != nil {
 		_ = s.fs.ScrapFile(id, cookie)
@@ -1675,14 +1705,18 @@ func (s *Server) opSetattr(args SETATTR4args, st *compoundState, w *COMPOUND4res
 
 	// Supported writable attrs.
 	const supportedSet0 = 1 << FATTR4_SIZE
-	const supportedSet1 = (1 << (FATTR4_TIME_ACCESS_SET - 32)) |
-		(1 << (FATTR4_TIME_MODIFY_SET - 32))
+	supportedSet1 := uint32((1 << (FATTR4_TIME_ACCESS_SET - 32)) |
+		(1 << (FATTR4_TIME_MODIFY_SET - 32)))
 
 	// Validate fixed-width MODE data before reporting that MODE itself is not
 	// supported. RFC 7530 requires malformed attribute XDR to take precedence.
 	const modeMask = 1 << (FATTR4_MODE - 32)
 	if mask[0] == 0 && mask[1] == modeMask && len(attrData) != 4 {
 		return setattrReply(NFS4ERR_BADXDR, [2]uint32{})
+	}
+	// EXCLUSIVE4 clients send mode in a follow-up SETATTR. Modes are synthetic.
+	if s.directStaging(st.currentID) != nil {
+		supportedSet1 |= modeMask
 	}
 
 	if mask[0]&^writableAttrs0 != 0 || mask[1]&^writableAttrs1 != 0 {
@@ -1706,6 +1740,13 @@ func (s *Server) opSetattr(args SETATTR4args, st *compoundState, w *COMPOUND4res
 			return setattrReply(NFS4ERR_FBIG, [2]uint32{})
 		}
 		newSize = &size
+	}
+	if mask[1]&modeMask != 0 {
+		if attrOff+4 > len(attrData) {
+			return setattrReply(NFS4ERR_BADXDR, [2]uint32{})
+		}
+		attrOff += 4
+		resultMask[1] |= modeMask
 	}
 
 	// parseTimeSet reads a SET_TO_CLIENT_TIME4 or SET_TO_SERVER_TIME4

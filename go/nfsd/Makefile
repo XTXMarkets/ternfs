@@ -6,7 +6,7 @@ SHELL := /bin/bash
 .SHELLFLAGS := -o pipefail -c
 
 LIBNFS_REPOSITORY := https://github.com/sahlberg/libnfs.git
-LIBNFS_VERSION := 5.0.2
+LIBNFS_VERSION := 7.0.2
 LIBNFS_REVISION := libnfs-$(LIBNFS_VERSION)
 
 DEPS_DIR := $(CURDIR)/.deps
