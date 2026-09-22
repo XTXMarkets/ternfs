@@ -76,8 +76,8 @@ func (s *Server) recoveredStagingTarget(
 				continue
 			}
 		}
-		// Legacy sidecars have no open-owner identity. Never guess between
-		// multiple recovered sessions and hand one writer another's data.
+		// Never guess between multiple recovered sessions and hand one
+		// writer another's data.
 		if foundID != 0 {
 			return 0, StagingMeta{}, false, nfsError(NFS4ERR_EXPIRED)
 		}

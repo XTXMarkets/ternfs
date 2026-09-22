@@ -8650,16 +8650,9 @@ func TestSetclientidRebootRetiresStagingFiles(t *testing.T) {
 	}
 }
 
-func TestLocalStagingStoreLoadsLegacySidecar(t *testing.T) {
-	dir := t.TempDir()
-	id := MakeInodeID(InodeTypeFile, 42)
-	data := []byte("legacy staged data")
-	if err := os.WriteFile(
-		filepath.Join(dir, fmt.Sprintf("%016x.staging", uint64(id))),
-		data, 0600,
-	); err != nil {
-		t.Fatal(err)
-	}
+func TestLocalStagingStoreRejectsPreMagicSidecars(t *testing.T) {
+	// There are no deployed NFS servers, so nfsd reads one sidecar format.
+	// Sidecars from before the format marker are quarantined, not loaded.
 	meta := StagingMeta{
 		DirID:      MakeInodeID(InodeTypeDir, 7),
 		FileName:   "legacy.txt",
@@ -8667,39 +8660,56 @@ func TestLocalStagingStoreLoadsLegacySidecar(t *testing.T) {
 		NFSStateID: StateID{4, 5, 6},
 		ClientID:   99,
 	}
-	metaPath := filepath.Join(
-		dir, fmt.Sprintf("%016x.meta", uint64(id)))
 	name := []byte(meta.FileName)
-	encoded := make([]byte, 30+len(name))
-	binary.BigEndian.PutUint64(encoded[0:8], uint64(meta.DirID))
-	copy(encoded[8:16], meta.TernCookie[:])
-	copy(encoded[16:28], meta.NFSStateID[:])
-	binary.BigEndian.PutUint16(encoded[28:30], uint16(len(name)))
-	copy(encoded[30:], name)
-	if err := os.WriteFile(metaPath, encoded, 0600); err != nil {
-		t.Fatal(err)
-	}
+	header := make([]byte, 30+len(name))
+	binary.BigEndian.PutUint64(header[0:8], uint64(meta.DirID))
+	copy(header[8:16], meta.TernCookie[:])
+	copy(header[16:28], meta.NFSStateID[:])
+	binary.BigEndian.PutUint16(header[28:30], uint16(len(name)))
+	copy(header[30:], name)
+	withClientID := append(append([]byte(nil), header...), make([]byte, 8)...)
+	binary.BigEndian.PutUint64(withClientID[len(header):], meta.ClientID)
 
-	store, err := NewLocalStagingStore(dir, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer closeLocalStagingFiles(t, store)
-	gotMeta, found := store.GetMeta(id)
-	if !found {
-		t.Fatal("legacy staging sidecar was not loaded")
-	}
-	meta.ClientID = 0
-	if !reflect.DeepEqual(gotMeta, meta) {
-		t.Fatalf("legacy staging metadata = %+v, want %+v", gotMeta, meta)
-	}
-	buf := make([]byte, len(data))
-	n, eof, err := store.Get(id).Read(0, buf, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n != len(data) || !eof || !bytes.Equal(buf, data) {
-		t.Fatalf("legacy staging data = %q, n=%d eof=%t", buf, n, eof)
+	for _, sidecar := range []struct {
+		name    string
+		encoded []byte
+	}{
+		{"no-clientid", header},
+		{"clientid-only", withClientID},
+	} {
+		t.Run(sidecar.name, func(t *testing.T) {
+			dir := t.TempDir()
+			id := MakeInodeID(InodeTypeFile, 42)
+			data := []byte("legacy staged data")
+			if err := os.WriteFile(
+				filepath.Join(dir, fmt.Sprintf("%016x.staging", uint64(id))),
+				data, 0600,
+			); err != nil {
+				t.Fatal(err)
+			}
+			metaPath := filepath.Join(
+				dir, fmt.Sprintf("%016x.meta", uint64(id)))
+			if err := os.WriteFile(metaPath, sidecar.encoded, 0600); err != nil {
+				t.Fatal(err)
+			}
+			store, err := NewLocalStagingStore(dir, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer closeLocalStagingFiles(t, store)
+			if _, found := store.GetMeta(id); found || store.Get(id) != nil {
+				t.Fatal("pre-magic staging sidecar was loaded")
+			}
+			files, err := filepath.Glob(
+				filepath.Join(dir, "quarantine", "*", "*.staging"))
+			if err != nil || len(files) != 1 {
+				t.Fatalf("quarantine files = %v, err = %v", files, err)
+			}
+			if got, err := os.ReadFile(files[0]); err != nil ||
+				!bytes.Equal(got, data) {
+				t.Fatalf("quarantined data = %q, err = %v", got, err)
+			}
+		})
 	}
 }
 

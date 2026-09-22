@@ -41,9 +41,9 @@ type StagingMeta struct {
 	FileName        string   // name in directory
 	TernCookie      Cookie   // cookie from VFS ConstructFile
 	NFSStateID      StateID  // random, returned to NFS client as stateid "other"
-	ClientID        uint64   // owning client; zero in sidecars written by older nfsd
+	ClientID        uint64   // owning client
 	OpenOwner       string   // separates recovered writers belonging to the same client
-	OwnerKnown      bool     // an empty owner is valid; legacy sidecars have no identity
+	OwnerKnown      bool     // an empty owner is valid
 	RecoveryKey     [32]byte // stable client identity, boot verifier and principal
 	Retired         bool     // lease expired; retain acknowledged data for recovery
 	ReadOnly        bool     // CREATE may initialize size/times with read-only share access
@@ -54,7 +54,7 @@ type StagingMeta struct {
 	Size            uint64
 	Dirty           byteRangeSet
 	MetadataChanged bool
-	Attrs           NodeInfo // Size is stored separately; zero Change denotes legacy metadata
+	Attrs           NodeInfo // Size is stored separately
 	version         uint8
 }
 
@@ -995,8 +995,8 @@ func (sf *localStagingFile) Reader() (io.ReadSeeker, error) {
 //   [12] NFSStateID
 //   [2]  FileNameLen
 //   [N]  FileName (UTF-8)
-//   [8]  ClientID (absent in sidecars written by older nfsd)
-//   [4]  "NFS5" (absent in sidecars written by older nfsd)
+//   [8]  ClientID
+//   [4]  "NFS5"
 //   [8]  BaseID
 //   [8]  BaseSize
 //   [8]  LogicalSize
@@ -1114,20 +1114,11 @@ func loadStagingMeta(path string) (StagingMeta, error) {
 		return StagingMeta{}, fmt.Errorf("meta file truncated")
 	}
 	meta.FileName = string(data[30:nameEnd])
-	if len(data) == nameEnd {
-		return meta, nil
-	}
-	if len(data) < nameEnd+8 {
+	if len(data) < nameEnd+12 {
 		return StagingMeta{}, fmt.Errorf("meta file truncated")
 	}
 	meta.ClientID = binary.BigEndian.Uint64(data[nameEnd : nameEnd+8])
 	off := nameEnd + 8
-	if len(data) == off {
-		return meta, nil
-	}
-	if len(data) < off+4 {
-		return StagingMeta{}, fmt.Errorf("meta file truncated")
-	}
 	magic := string(data[off : off+4])
 	if magic != stagingMetaV5Magic {
 		return StagingMeta{}, fmt.Errorf("unknown meta file extension")

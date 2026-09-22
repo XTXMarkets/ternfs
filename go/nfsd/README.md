@@ -80,8 +80,8 @@ where the range is still clean, and fully overwritten or truncated ranges are
 not fetched.
 
 The `.meta` sidecar records the target, construction cookie, owning open, base
-inode and size, logical size, committed dirty ranges, open-owner identity and
-writer attributes. Stable writes, `COMMIT`, and size changes sync data before
+inode and size, logical size, committed dirty ranges, open-owner identity,
+writer attributes and the EXCLUSIVE4 verifier. Stable writes, `COMMIT`, and size changes sync data before
 atomically checkpointing this metadata. The checkpoint file is synced before
 rename, and its directory is synced afterwards. A failed checkpoint remains
 pending for the next retry. The writer's change attribute advances on mutations
@@ -345,13 +345,10 @@ still hold unpublished data. On startup nfsd discovers these files. The
 sidecar contains the state needed to complete the pending `CLOSE` or rebind the
 staging to a replacement `OPEN` for the same client and open-owner. Multiple
 writers recover independently, including when another writer has published a
-newer version in the meantime. Ambiguous legacy sidecars without open-owner
-identity are not assigned to an arbitrary writer. Base-backed replacements
-recover only checkpointed dirty ranges, including new files backed by their
-empty published inode. Legacy staging without a base recovers the physical
-local file.
+newer version in the meantime. Replacements recover only checkpointed dirty
+ranges, including new files backed by their empty published inode.
 
-A client reconnecting after lease expiry receives a new clientid. New sidecars
+A client reconnecting after lease expiry receives a new clientid. Sidecars
 also persist a recovery key derived from its stable client identity, boot
 verifier and RPC principal. Matching that key and the open owner allows the
 same client boot to reclaim its private filehandle and data after expiry,
