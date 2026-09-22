@@ -289,9 +289,7 @@ struct BincodeBuf {
 
     void ensureFinished() const {
         if (unlikely(remaining() != 0)) {
-            throw BINCODE_EXCEPTION(
-                "buffer has %s trailing bytes after decoding",
-                remaining());
+            throw BINCODE_EXCEPTION("buffer has %s trailing bytes after decoding", remaining());
         }
     }
 
@@ -377,8 +375,8 @@ struct BincodeBuf {
     template<typename A>
     void unpackList(BincodeList<A>& xs) {
         size_t count = unpackScalar<uint16_t>();
+        xs.els.clear();
         if (unlikely(count == 0)) {
-            xs.els.clear();
             return;
         }
         // If it's a number of some sorts, just memcpy it
@@ -392,12 +390,11 @@ struct BincodeBuf {
             memcpy(xs.els.data(), cursor, sz);
             cursor += sz;
         } else {
-            std::vector<A> els;
+            // Decode one element at a time so an untrusted count cannot
+            // trigger a bulk allocation before the payload is checked.
             for (size_t i = 0; i < count; i++) {
-                auto& el = els.emplace_back();
-                el.unpack(*this);
+                xs.els.emplace_back().unpack(*this);
             }
-            xs.els = std::move(els);
         }
     }
 

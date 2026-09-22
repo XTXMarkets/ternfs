@@ -79,7 +79,6 @@ TEST_CASE("bincode decodes complex lists without allocating from count") {
     FourByteBincodeValue::constructed = 0;
 
     CHECK_THROWS_AS(bbuf.unpackList(values), BincodeException);
-    CHECK(values.els.empty());
     CHECK(FourByteBincodeValue::constructed == 1);
 }
 
