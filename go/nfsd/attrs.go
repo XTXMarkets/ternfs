@@ -6,6 +6,7 @@ package main
 
 import (
 	"encoding/binary"
+	"time"
 )
 
 // Supported attribute bitmasks.
@@ -62,6 +63,28 @@ const (
 	settableAttrs1 uint32 = (1 << (FATTR4_TIME_ACCESS_SET - 32)) |
 		(1 << (FATTR4_TIME_MODIFY_SET - 32))
 
+	// SETATTR-only attributes cannot be requested by GETATTR or compared by
+	// VERIFY/NVERIFY. RDATTR_ERROR may be returned by GETATTR, but cannot be
+	// compared.
+	invalidGetattrAttrs0 uint32 = 0
+	invalidGetattrAttrs1        = settableAttrs1
+	invalidVerifyAttrs0         = 1 << FATTR4_RDATTR_ERROR
+	invalidVerifyAttrs1         = settableAttrs1
+
+	writableAttrs0 uint32 = (1 << FATTR4_SIZE) |
+		(1 << FATTR4_ACL) |
+		(1 << FATTR4_ARCHIVE) |
+		(1 << FATTR4_HIDDEN)
+	writableAttrs1 uint32 = (1 << (FATTR4_MIMETYPE - 32)) |
+		(1 << (FATTR4_MODE - 32)) |
+		(1 << (FATTR4_OWNER - 32)) |
+		(1 << (FATTR4_OWNER_GROUP - 32)) |
+		(1 << (FATTR4_SYSTEM - 32)) |
+		(1 << (FATTR4_TIME_ACCESS_SET - 32)) |
+		(1 << (FATTR4_TIME_BACKUP - 32)) |
+		(1 << (FATTR4_TIME_CREATE - 32)) |
+		(1 << (FATTR4_TIME_MODIFY_SET - 32))
+
 	// Fixed FSID for the entire export.
 	fsidMajor uint64 = 0x7E4F
 	fsidMinor uint64 = 0
@@ -80,6 +103,53 @@ func parseBitmap(bm Bitmap4) [2]uint32 {
 		mask[1] = bm.Data(1)
 	}
 	return mask
+}
+
+func validateGetattrMask(mask [2]uint32) uint32 {
+	if mask[0]&invalidGetattrAttrs0 != 0 || mask[1]&invalidGetattrAttrs1 != 0 {
+		return NFS4ERR_INVAL
+	}
+	return NFS4_OK
+}
+
+func validateVerifyMask(mask [2]uint32) uint32 {
+	if mask[0]&invalidVerifyAttrs0 != 0 || mask[1]&invalidVerifyAttrs1 != 0 {
+		return NFS4ERR_INVAL
+	}
+	if mask[0]&^uint32(supportedAttrs0) != 0 ||
+		mask[1]&^uint32(supportedAttrs1) != 0 {
+		return NFS4ERR_ATTRNOTSUPP
+	}
+	return NFS4_OK
+}
+
+func validateCreateAttrs(attrs Fattr4) uint32 {
+	mask := parseBitmap(attrs.Attrmask())
+	if mask[0]&^writableAttrs0 != 0 || mask[1]&^writableAttrs1 != 0 {
+		return NFS4ERR_INVAL
+	}
+	supported0 := (supportedAttrs0 | settableAttrs0) & writableAttrs0
+	supported1 := (supportedAttrs1 | settableAttrs1) & writableAttrs1
+	if mask[0]&^supported0 != 0 || mask[1]&^supported1 != 0 {
+		return NFS4ERR_ATTRNOTSUPP
+	}
+	return NFS4_OK
+}
+
+func createAttrSize(attrs Fattr4) (*uint64, uint32) {
+	mask := parseBitmap(attrs.Attrmask())
+	if mask[0]&(1<<FATTR4_SIZE) == 0 {
+		return nil, NFS4_OK
+	}
+	data := attrs.AttrVals().Data()
+	if len(data) < 8 {
+		return nil, NFS4ERR_BADXDR
+	}
+	size := binary.BigEndian.Uint64(data[:8])
+	if size > 1<<63-1 {
+		return nil, NFS4ERR_FBIG
+	}
+	return &size, NFS4_OK
 }
 
 // inodeNFSType converts an InodeID type to NFSv4 type constant.
@@ -127,7 +197,11 @@ func encodeAttrs(mask [2]uint32, id InodeID, ni NodeInfo) []byte {
 		buf = binary.BigEndian.AppendUint32(buf, FH4_PERSISTENT)
 	}
 	if mask[0]&(1<<FATTR4_CHANGE) != 0 {
-		buf = binary.BigEndian.AppendUint64(buf, uint64(ni.Mtime.UnixNano()))
+		change := ni.Change
+		if change == 0 {
+			change = uint64(ni.Mtime.UnixNano())
+		}
+		buf = binary.BigEndian.AppendUint64(buf, change)
 	}
 	if mask[0]&(1<<FATTR4_SIZE) != 0 {
 		buf = binary.BigEndian.AppendUint64(buf, ni.Size)
@@ -149,7 +223,7 @@ func encodeAttrs(mask [2]uint32, id InodeID, ni NodeInfo) []byte {
 		buf = binary.BigEndian.AppendUint32(buf, TRUE)
 	}
 	if mask[0]&(1<<FATTR4_LEASE_TIME) != 0 {
-		buf = binary.BigEndian.AppendUint32(buf, 90) // 90 seconds
+		buf = binary.BigEndian.AppendUint32(buf, uint32(nfsLeaseTime/time.Second))
 	}
 	if mask[0]&(1<<FATTR4_RDATTR_ERROR) != 0 {
 		buf = binary.BigEndian.AppendUint32(buf, NFS4_OK)
@@ -193,7 +267,7 @@ func encodeAttrs(mask [2]uint32, id InodeID, ni NodeInfo) []byte {
 		buf = binary.BigEndian.AppendUint32(buf, 1) // no hard links
 	}
 	if mask[0]&(1<<FATTR4_MAXNAME) != 0 {
-		buf = binary.BigEndian.AppendUint32(buf, 255)
+		buf = binary.BigEndian.AppendUint32(buf, uint32(maxTernNameLength))
 	}
 	if mask[0]&(1<<FATTR4_MAXREAD) != 0 {
 		buf = binary.BigEndian.AppendUint64(buf, maxReadWrite)
@@ -244,8 +318,11 @@ func encodeAttrs(mask [2]uint32, id InodeID, ni NodeInfo) []byte {
 		buf = binary.BigEndian.AppendUint32(buf, 1)
 	}
 	if mask[1]&(1<<(FATTR4_TIME_METADATA-32)) != 0 {
-		// ctime = mtime (TernFS has no separate ctime)
-		sec, nsec := timeToNFS(ni.Mtime)
+		ctime := ni.Ctime
+		if ctime.IsZero() {
+			ctime = ni.Mtime
+		}
+		sec, nsec := timeToNFS(ctime)
 		buf = binary.BigEndian.AppendUint64(buf, uint64(sec))
 		buf = binary.BigEndian.AppendUint32(buf, nsec)
 	}
@@ -271,12 +348,16 @@ func encodeString(buf []byte, s string) []byte {
 	return buf
 }
 
-// stagedSizes maps InodeID to the staged size for files being written.
-// Passed through the dir entry encoding chain so READDIR reflects staged sizes.
-type stagedSizes map[InodeID]uint64
+// stat supplies one attribute view to GETATTR, VERIFY and READDIR. Published
+// handles never resolve to another open's private staging file.
+func (s *Server) stat(id InodeID) (NodeInfo, error) {
+	if sf := s.stagingStore.Get(id); sf != nil {
+		return sf.Stat(), nil
+	}
+	return s.fs.Stat(id)
+}
 
-// readdirEntry holds a directory entry with pre-computed attribute data
-// so that exact XDR sizes can be calculated before encoding.
+// readdirEntry holds attributes used to calculate exact XDR sizes.
 type readdirEntry struct {
 	DirEntry
 	respMask [2]uint32
@@ -284,7 +365,7 @@ type readdirEntry struct {
 }
 
 // prepareReaddirEntries pre-computes attribute data for each directory entry.
-func prepareReaddirEntries(entries []DirEntry, reqMask [2]uint32, vfs TernVFS, ss stagedSizes) []readdirEntry {
+func prepareReaddirEntries(entries []DirEntry, reqMask [2]uint32, stat func(InodeID) (NodeInfo, error)) []readdirEntry {
 	var respMask [2]uint32
 	respMask[0] = reqMask[0] & supportedAttrs0
 	respMask[1] = reqMask[1] & supportedAttrs1
@@ -293,12 +374,9 @@ func prepareReaddirEntries(entries []DirEntry, reqMask [2]uint32, vfs TernVFS, s
 	for i, e := range entries {
 		result[i].DirEntry = e
 		result[i].respMask = respMask
-		ni, err := vfs.Stat(e.ID)
+		ni, err := stat(e.ID)
 		if err != nil {
 			continue // attrData stays nil → empty attrs
-		}
-		if sz, ok := ss[e.ID]; ok {
-			ni.Size = sz
 		}
 		result[i].attrData = encodeAttrs(respMask, e.ID, ni)
 	}

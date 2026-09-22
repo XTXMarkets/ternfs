@@ -5,10 +5,10 @@
 package timing
 
 import (
+	"github.com/XTXMarkets/ternfs/go/core/assert"
 	"math"
 	"testing"
 	"time"
-	"xtx/ternfs/core/assert"
 )
 
 func TestTimingsBins(t *testing.T) {

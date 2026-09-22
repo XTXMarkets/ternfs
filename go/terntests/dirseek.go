@@ -8,14 +8,14 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/core/log"
+	"github.com/XTXMarkets/ternfs/go/core/wyhash"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"io"
 	"os"
 	"path"
 	"sort"
 	"unsafe"
-	"xtx/ternfs/core/log"
-	"xtx/ternfs/core/wyhash"
-	"xtx/ternfs/msgs"
 )
 
 // #include <string.h>

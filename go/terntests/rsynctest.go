@@ -6,11 +6,11 @@ package main
 
 import (
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/core/log"
+	"github.com/XTXMarkets/ternfs/go/core/wyhash"
 	"os"
 	"os/exec"
 	"path"
-	"xtx/ternfs/core/log"
-	"xtx/ternfs/core/wyhash"
 )
 
 type rsyncTestOpts struct {

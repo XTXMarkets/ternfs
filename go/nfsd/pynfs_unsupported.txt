@@ -1,0 +1,174 @@
+# Byte-range locking is not supported. Using nolock would also exclude
+# tests of related state and error handling that remain useful.
+LKT1
+LKT2a
+LKT2d
+LKT3
+LKT4
+LKT5
+LKT6
+LKT7
+LKT8
+LKT9
+LKTOVER
+LKU1
+LKU2
+LKU3
+LKU4
+LKU5
+LKU6
+LKU6b
+LKU7
+LKU8
+LKU9
+LKU10
+LKUNONE
+LKUOVER
+LKUSPLIT
+LOCK1
+LOCK10
+LOCK11
+LOCK12a
+LOCK12b
+LOCK13
+LOCK14
+LOCK15
+LOCK16
+LOCK17
+LOCK20
+LOCK23
+LOCK24
+LOCK3
+LOCK4
+LOCK5
+LOCK6
+LOCK7
+LOCK8a
+LOCK8b
+LOCK9a
+LOCK9b
+LOCK9c
+LOCKCHGD
+LOCKCHGU
+LOCKHELD
+LOCKMRG
+LOCKRNG
+RLOWN1
+RLOWN2
+RLOWN3
+RPLY5
+RPLY6
+RPLY7
+RPLY8
+CLOSE9
+
+# OPEN_DOWNGRADE is not implemented. Writable opens have independent
+# staging sessions rather than upgrading the published reader's state.
+# Keep the whole operation together here rather than reporting
+# NFS4ERR_NOTSUPP as ten distinct protocol failures.
+OPDG1
+OPDG2
+OPDG3
+OPDG4
+OPDG5
+OPDG6
+OPDG7
+OPDG8
+OPDG10
+OPDG11
+
+# Hard links are not supported. Using nolink would also exclude tests of
+# related filehandle and error behavior that remain useful.
+LINK1a
+LINK1d
+LINK1r
+LINK2
+LINK3
+LINK4a
+LINK4r
+LINK5
+LINK6
+LINK7
+LINK9
+LINKS
+
+# TernFS does not support changing ownership or mode after creation.
+# These tests require those metadata updates either directly or as part
+# of a mixed SETATTR request. Mode is accepted while a file is staged.
+OPEN20
+SATT1d
+SATT1r
+SATT2a
+SATT2b
+SATT2c
+SATT13
+SATT16
+SATT17
+SATT18
+
+# Mode SETATTR is an accepted no-op and does not advance the change attribute.
+SATT14
+SATT15
+
+# UNCHECKED creates allocate independent staging sessions. OPEN2 expects a
+# reopen to retain the original creator's private size.
+OPEN2
+
+# Unix mode/credential authorization is not implemented. This case changes
+# the RPC credentials while retaining another client's valid write stateid.
+WRT19
+
+# These lease-expiry cases need validation with the normal daemon's lease
+# sweeper; the cluster test helper currently serves RPCs without that loop.
+CLOSE8
+RENEW3
+
+# Readers of a new pathname see its empty published version, not another
+# writer's private data before CLOSE.
+OPEN28
+
+# Moving or removing the publication target of an active local staging
+# session is rejected with FILE_OPEN.
+RM1r
+RNM1r
+RNM12
+RNM14
+RNM15
+RNM17
+RNM21
+
+# TernFS rename primitives reject an existing destination. RNM13
+# requires atomically replacing an empty directory in the same parent.
+# Emulating that with separate REMOVE and RENAME requests could lose the
+# destination if the second request failed.
+RNM13
+
+# Replaying a successful directory CREATE on the same connection requires
+# an RPC duplicate-request cache. RPLY11 remains enabled: repeating a CLOSE
+# with a bad sequence number returns BAD_SEQID without such a cache.
+RPLY14
+
+# OPEN4_SHARE_ACCESS/DENY (share reservations) assume a single mutable
+# file that concurrent openers can contend over. TernFS has no such
+# object: a write-open constructs an independent transient file, and
+# whichever client's CLOSE (LinkFile) reaches the owning shard last wins
+# the name — see _createCurrentEdge's publication-time arbitration in
+# cpp/shard/ShardDB.cpp. There is no real conflict for share-deny bits to
+# protect, and enforcing them in nfsd's memory would only be correct on a
+# single process, which is worse than not enforcing them at all across a
+# fleet. OPEN30 verifies OPEN replay first, but its final assertion also
+# requires a new share-deny conflict, so the test cannot be separated from
+# this unsupported model. This is a permanent, deliberate gap, not a
+# backlog item.
+OPEN23
+OPEN27
+OPEN30
+WRT9
+OPEN18
+OPEN21
+OPEN22
+OPEN25
+OPEN26
+
+# Uses only the anonymous stateid and runs past the client lease.
+WRT15

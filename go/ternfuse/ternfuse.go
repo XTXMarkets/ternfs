@@ -9,6 +9,12 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/cleanup"
+	"github.com/XTXMarkets/ternfs/go/client"
+	"github.com/XTXMarkets/ternfs/go/core/bufpool"
+	"github.com/XTXMarkets/ternfs/go/core/flags"
+	"github.com/XTXMarkets/ternfs/go/core/log"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"io"
 	golog "log"
 	"os"
@@ -19,12 +25,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-	"xtx/ternfs/cleanup"
-	"xtx/ternfs/client"
-	"xtx/ternfs/core/bufpool"
-	"xtx/ternfs/core/flags"
-	"xtx/ternfs/core/log"
-	"xtx/ternfs/msgs"
 
 	"golang.org/x/sys/unix"
 
@@ -1181,9 +1181,11 @@ func initializeCloseMap(closeTrackerObj string, mountPoint string) {
 	}
 
 	// Rewrite the 'target_dev' constant in the BPF program
-	if err := spec.RewriteConstants(map[string]interface{}{
-		"target_dev": uint32(stat.Dev),
-	}); err != nil {
+	targetDev, ok := spec.Variables["target_dev"]
+	if !ok {
+		panic(fmt.Errorf("BPF variable 'target_dev' not found"))
+	}
+	if err := targetDev.Set(uint32(stat.Dev)); err != nil {
 		panic(err)
 	}
 

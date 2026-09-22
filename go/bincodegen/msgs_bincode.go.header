@@ -9,7 +9,7 @@ package msgs
 import (
 	"fmt"
 	"io"
-	"xtx/ternfs/core/bincode"
+	"github.com/XTXMarkets/ternfs/go/core/bincode"
 )
 
 // This file specifies

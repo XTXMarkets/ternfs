@@ -8,18 +8,18 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/core/bufpool"
+	"github.com/XTXMarkets/ternfs/go/core/crc32c"
+	"github.com/XTXMarkets/ternfs/go/core/log"
+	"github.com/XTXMarkets/ternfs/go/core/parity"
+	"github.com/XTXMarkets/ternfs/go/core/rs"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"io"
 	"math/bits"
 	"path/filepath"
 	"sort"
 	"sync"
 	"syscall"
-	"xtx/ternfs/core/bufpool"
-	"xtx/ternfs/core/crc32c"
-	"xtx/ternfs/core/log"
-	"xtx/ternfs/core/parity"
-	"xtx/ternfs/core/rs"
-	"xtx/ternfs/msgs"
 )
 
 type blockReader struct {
@@ -817,6 +817,7 @@ func (f *FileReader) readMirrored(log *log.Logger, client *Client, bufPool *bufp
 	if spanDataSize < span.Span.Header.Size {
 		panic("unimplemented trailing zeros fetch")
 	}
+	p = p[:min(uint64(len(p)), span.Span.Header.ByteOffset+uint64(span.Span.Header.Size)-offset)]
 	fileStart := offset / uint64(msgs.TERN_PAGE_SIZE) * uint64(msgs.TERN_PAGE_SIZE)
 	fileEnd := ((offset + uint64(len(p)) + uint64(msgs.TERN_PAGE_SIZE) - 1) / uint64(msgs.TERN_PAGE_SIZE)) * uint64(msgs.TERN_PAGE_SIZE)
 	blockStart := uint32(fileStart - span.Span.Header.ByteOffset)

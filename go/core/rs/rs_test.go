@@ -5,11 +5,11 @@
 package rs
 
 import (
+	"github.com/XTXMarkets/ternfs/go/core/assert"
+	"github.com/XTXMarkets/ternfs/go/core/parity"
 	"math/rand"
 	"sort"
 	"testing"
-	"xtx/ternfs/core/assert"
-	"xtx/ternfs/core/parity"
 )
 
 func TestGet(t *testing.T) {

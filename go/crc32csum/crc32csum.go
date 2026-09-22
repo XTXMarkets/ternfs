@@ -6,10 +6,10 @@ package main
 
 import (
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/core/crc32c"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"io"
 	"os"
-	"xtx/ternfs/core/crc32c"
-	"xtx/ternfs/msgs"
 )
 
 var buf []byte

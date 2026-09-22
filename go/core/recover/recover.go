@@ -6,11 +6,11 @@ package recover
 
 import (
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/core/log"
 	"os"
 	"runtime/debug"
 	"strings"
 	"sync"
-	"xtx/ternfs/core/log"
 )
 
 var stacktraceLock sync.Mutex

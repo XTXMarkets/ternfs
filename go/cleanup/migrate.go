@@ -9,18 +9,18 @@ import (
 	"container/heap"
 	"errors"
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/cleanup/scratch"
+	"github.com/XTXMarkets/ternfs/go/client"
+	"github.com/XTXMarkets/ternfs/go/core/bufpool"
+	"github.com/XTXMarkets/ternfs/go/core/log"
+	"github.com/XTXMarkets/ternfs/go/core/parity"
+	"github.com/XTXMarkets/ternfs/go/core/rs"
+	"github.com/XTXMarkets/ternfs/go/core/timing"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"io"
 	"sync"
 	"sync/atomic"
 	"time"
-	"xtx/ternfs/cleanup/scratch"
-	"xtx/ternfs/client"
-	"xtx/ternfs/core/bufpool"
-	"xtx/ternfs/core/log"
-	"xtx/ternfs/core/parity"
-	"xtx/ternfs/core/rs"
-	"xtx/ternfs/core/timing"
-	"xtx/ternfs/msgs"
 )
 
 type MigrateStats struct {
@@ -387,6 +387,12 @@ func migrateBlocksInFileGeneric(
 					// other location (remote read, then remote reconstruct).
 					rb, err := recoverBlock(log, c, bufPool, fileId, scratchFile, fileSpansResp.BlockServices, blacklist, locationsBody.Locations, usableByLoc, locIx, blockToMigrateIx)
 					if err == errBlockUnrecoverable {
+						if _, statErr := c.StatFile(log, fileId); statErr == msgs.FILE_NOT_FOUND || statErr == msgs.FILE_IS_TRANSIENT {
+							log.Debug("not alerting about unrecoverable block %v because file %v is %v", blockToMigrateId, fileId, statErr)
+							return nil
+						} else if statErr != nil {
+							return statErr
+						}
 						// No location can produce this block: genuine data-loss risk.
 						// Don't fail the run (retrying won't help until blocks come
 						// back); alert and move on.

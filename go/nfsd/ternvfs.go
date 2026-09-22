@@ -6,15 +6,15 @@ package main
 
 import (
 	"errors"
+	"github.com/XTXMarkets/ternfs/go/client"
+	"github.com/XTXMarkets/ternfs/go/core/bufpool"
+	"github.com/XTXMarkets/ternfs/go/core/crc32c"
+	"github.com/XTXMarkets/ternfs/go/core/log"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"io"
 	"os"
 	"sync"
 	"time"
-	"xtx/ternfs/client"
-	"xtx/ternfs/core/bufpool"
-	"xtx/ternfs/core/crc32c"
-	"xtx/ternfs/core/log"
-	"xtx/ternfs/msgs"
 )
 
 // RemoteTernVFS implements TernVFS backed by a real TernFS cluster.
@@ -104,7 +104,17 @@ func (t *RemoteTernVFS) LookupParent(id InodeID) (InodeID, error) {
 			// Root directory or snapshot directory — parent is itself.
 			return id, nil
 		}
-		return InodeID(resp.Owner), nil
+		// Cache the owner like Lookup and Readdir do. PUTFH walks every
+		// directory filehandle up to the root, and a client which keeps
+		// using its filehandles after an nfsd restart never issues the
+		// LOOKUPs that would otherwise fill this cache.
+		parentID := InodeID(resp.Owner)
+
+		t.mu.Lock()
+		t.parents[id] = parentID
+		t.mu.Unlock()
+
+		return parentID, nil
 	}
 	// For files/symlinks without a cached parent, we have no way to find it.
 	return 0, os.ErrNotExist
@@ -148,6 +158,16 @@ func (t *RemoteTernVFS) Read(fileID InodeID, offset uint64, dest []byte) (int, b
 	}
 	eof := offset+uint64(n) >= cr.fileSize
 	return n, eof, nil
+}
+
+func (t *RemoteTernVFS) ReadAll(fileID InodeID) ([]byte, error) {
+	buf, err := t.client.FetchFile(t.log, t.bufPool, msgs.InodeId(fileID))
+	if err != nil {
+		return nil, ternToOSError(err)
+	}
+	data := append([]byte(nil), buf.Bytes()...)
+	t.bufPool.Put(buf)
+	return data, nil
 }
 
 func (t *RemoteTernVFS) getOrCreateReader(mid msgs.InodeId) (*cachedReader, error) {
@@ -259,6 +279,20 @@ func (t *RemoteTernVFS) ConstructFile(dirID InodeID) (InodeID, Cookie, error) {
 	return InodeID(resp.Id), Cookie(resp.Cookie), nil
 }
 
+func (t *RemoteTernVFS) ScrapFile(fileID InodeID, cookie Cookie) error {
+	mid := msgs.InodeId(fileID)
+	if err := t.client.ShardRequest(t.log, mid.Shard(),
+		&msgs.ScrapTransientFileReq{
+			Id:     mid,
+			Cookie: msgs.Cookie(cookie),
+		},
+		&msgs.ScrapTransientFileResp{},
+	); err != nil {
+		return ternToOSError(err)
+	}
+	return nil
+}
+
 func (t *RemoteTernVFS) LinkFile(fileID InodeID, cookie Cookie, dirID InodeID, name string, data io.Reader) error {
 	mid := msgs.InodeId(fileID)
 	dirMid := msgs.InodeId(dirID)
@@ -286,6 +320,10 @@ func (t *RemoteTernVFS) LinkFile(fileID InodeID, cookie Cookie, dirID InodeID, n
 
 func (t *RemoteTernVFS) CreateFile(dirID InodeID, name string, data io.Reader) (InodeID, error) {
 	dirMid := msgs.InodeId(dirID)
+	overwrittenID, err := t.Lookup(dirID, name)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return 0, err
+	}
 	// ConstructFile on the same shard as the directory.
 	var constructResp msgs.ConstructFileResp
 	if err := t.client.ShardRequest(t.log, dirMid.Shard(), &msgs.ConstructFileReq{
@@ -313,6 +351,10 @@ func (t *RemoteTernVFS) CreateFile(dirID InodeID, name string, data io.Reader) (
 	}
 	childID := InodeID(fileId)
 	t.mu.Lock()
+	if overwrittenID != 0 && overwrittenID != childID {
+		delete(t.parents, overwrittenID)
+		delete(t.readers, msgs.InodeId(overwrittenID))
+	}
 	t.parents[childID] = dirID
 	t.mu.Unlock()
 	return childID, nil
@@ -363,6 +405,10 @@ func (t *RemoteTernVFS) Remove(dirID InodeID, name string) error {
 func (t *RemoteTernVFS) Rename(srcDirID InodeID, srcName string, dstDirID InodeID, dstName string) error {
 	srcMid := msgs.InodeId(srcDirID)
 	dstMid := msgs.InodeId(dstDirID)
+	overwrittenID, err := t.Lookup(dstDirID, dstName)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	// Lookup source to get target ID and creation time.
 	var lookupResp msgs.LookupResp
 	if err := t.client.ShardRequest(t.log, srcMid.Shard(), &msgs.LookupReq{
@@ -373,8 +419,8 @@ func (t *RemoteTernVFS) Rename(srcDirID InodeID, srcName string, dstDirID InodeI
 	}
 	targetId := lookupResp.TargetId
 	creationTime := lookupResp.CreationTime
-	if srcDirID == dstDirID && targetId.Type() != msgs.DIRECTORY {
-		// Same-directory file/symlink rename — shard-local.
+	if srcDirID == dstDirID {
+		// Same-directory renames are shard-local for every inode type.
 		if err := t.client.ShardRequest(t.log, srcMid.Shard(), &msgs.SameDirectoryRenameReq{
 			TargetId:        targetId,
 			DirId:           srcMid,
@@ -411,6 +457,10 @@ func (t *RemoteTernVFS) Rename(srcDirID InodeID, srcName string, dstDirID InodeI
 	}
 	// Update parent cache.
 	t.mu.Lock()
+	if overwrittenID != 0 && overwrittenID != InodeID(targetId) {
+		delete(t.parents, overwrittenID)
+		delete(t.readers, msgs.InodeId(overwrittenID))
+	}
 	t.parents[InodeID(targetId)] = dstDirID
 	t.mu.Unlock()
 	return nil

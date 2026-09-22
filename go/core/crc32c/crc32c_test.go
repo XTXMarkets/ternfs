@@ -5,9 +5,9 @@
 package crc32c
 
 import (
+	"github.com/XTXMarkets/ternfs/go/core/assert"
 	"math/rand"
 	"testing"
-	"xtx/ternfs/core/assert"
 )
 
 func TestBasic(t *testing.T) {

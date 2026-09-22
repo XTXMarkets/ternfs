@@ -1493,7 +1493,12 @@ func (w *FsLocations4Writer) Resume(buf []byte) {
 }
 
 func (w *FsLocations4Writer) Finish() []byte {
-	binary.BigEndian.PutUint32(w.buf[w.locationsCountOff:w.locationsCountOff+4], w.locationsCount)
+	if w.locationsCountOff == 0 {
+		w.locationsCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0) // locations_count = 0
+	} else {
+		binary.BigEndian.PutUint32(w.buf[w.locationsCountOff:w.locationsCountOff+4], w.locationsCount)
+	}
 	return w.buf
 }
 
@@ -8055,7 +8060,7 @@ func readNfsArgop4(b *[]byte, nfsOpnum4 uint32) (NfsArgop4, bool) {
 	case OP_ILLEGAL:
 		return NfsArgop4{b: (*b)[:0], disc: nfsOpnum4}, true
 	default:
-		return NfsArgop4{}, false
+		return NfsArgop4{b: (*b)[:0], disc: nfsOpnum4}, true
 	}
 }
 
@@ -10409,6 +10414,10 @@ func (w *NfsArgop4EntryWriter) SetValue_Illegal() {
 	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_ILLEGAL)
 }
 
+func (w *NfsArgop4EntryWriter) SetValue_Default(nfsOpnum4 uint32) {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, nfsOpnum4)
+}
+
 func (w *NfsArgop4EntryWriter) Resume(buf []byte) {
 	w.buf = buf
 }
@@ -11160,6 +11169,20 @@ func (w *COMPOUND4argsWriter) AppendArgarray_Illegal() {
 	w.argarrayCount++
 }
 
+func (w *COMPOUND4argsWriter) AppendArgarray_Default(nfsOpnum4 uint32) {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = binary.BigEndian.AppendUint32(w.buf, nfsOpnum4)
+	w.argarrayCount++
+}
+
 func (w *COMPOUND4argsWriter) StartTag() Utf8strCsWriter {
 	if w.phase > 0 {
 		panic("writer fields called out of order")
@@ -11174,7 +11197,12 @@ func (w *COMPOUND4argsWriter) Resume(buf []byte) {
 }
 
 func (w *COMPOUND4argsWriter) Finish() []byte {
-	binary.BigEndian.PutUint32(w.buf[w.argarrayCountOff:w.argarrayCountOff+4], w.argarrayCount)
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0) // argarray_count = 0
+	} else {
+		binary.BigEndian.PutUint32(w.buf[w.argarrayCountOff:w.argarrayCountOff+4], w.argarrayCount)
+	}
 	return w.buf
 }
 
@@ -12263,7 +12291,12 @@ func (w *COMPOUND4resWriter) Resume(buf []byte) {
 }
 
 func (w *COMPOUND4resWriter) Finish() []byte {
-	binary.BigEndian.PutUint32(w.buf[w.resarrayCountOff:w.resarrayCountOff+4], w.resarrayCount)
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0) // resarray_count = 0
+	} else {
+		binary.BigEndian.PutUint32(w.buf[w.resarrayCountOff:w.resarrayCountOff+4], w.resarrayCount)
+	}
 	return w.buf
 }
 
@@ -12995,7 +13028,12 @@ func (w *CBCOMPOUND4argsWriter) Resume(buf []byte) {
 }
 
 func (w *CBCOMPOUND4argsWriter) Finish() []byte {
-	binary.BigEndian.PutUint32(w.buf[w.argarrayCountOff:w.argarrayCountOff+4], w.argarrayCount)
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0) // argarray_count = 0
+	} else {
+		binary.BigEndian.PutUint32(w.buf[w.argarrayCountOff:w.argarrayCountOff+4], w.argarrayCount)
+	}
 	return w.buf
 }
 
@@ -13240,7 +13278,12 @@ func (w *CBCOMPOUND4resWriter) Resume(buf []byte) {
 }
 
 func (w *CBCOMPOUND4resWriter) Finish() []byte {
-	binary.BigEndian.PutUint32(w.buf[w.resarrayCountOff:w.resarrayCountOff+4], w.resarrayCount)
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0) // resarray_count = 0
+	} else {
+		binary.BigEndian.PutUint32(w.buf[w.resarrayCountOff:w.resarrayCountOff+4], w.resarrayCount)
+	}
 	return w.buf
 }
 

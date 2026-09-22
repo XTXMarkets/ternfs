@@ -563,14 +563,14 @@ int ternfs_span_get_pages(struct ternfs_block_span* block_span, struct address_s
         BUG_ON(curr_off > block_span->span.end);
 
         struct fetch_span_pages_state *st = new_fetch_span_pages_state(block_span);
-        if (IS_ERR(st)) {
-            err = PTR_ERR(st);
-            st = NULL;
+        if (!st) {
+            err = -ENOMEM;
             goto out;
         }
         stripe_ix = (curr_off - block_span->span.start) / stripe_size;
         BUG_ON(stripe_ix >= block_span->num_stripes);
         st->mapping = mapping;
+        fetches[stripe_ix] = st;
 
         u32 start_block_ix = stripe_offset/block_span->cell_size;
         u32 last_block_ix = start_block_ix;
@@ -679,7 +679,6 @@ int ternfs_span_get_pages(struct ternfs_block_span* block_span, struct address_s
         // fetch blocks from start_block_ix to last_block_ix - these will be our blocks we need when assembling the pages back, the rest will go to extra_pages.
         err = fetch_span_blocks(st);
         if (err) { goto out; }
-        fetches[stripe_ix] = st;
         // wait for the fetch to complete before kicking off next stripe
         down(&st->sema);
         if(remaining_pages == 0) {
@@ -866,14 +865,16 @@ static void file_spans_cb_span(void* data, u64 offset, u32 size, u32 crc, u8 sto
     }
 
     struct ternfs_block_span* span = kmem_cache_alloc(ternfs_block_span_cachep, GFP_KERNEL);
-    if (!span) { ctx->err = -ENOMEM; return; }
+    if (!span) {
+        ctx->err = -ENOMEM;
+        return;
+    }
     atomic_set(&span->span.refcount, 1);
 
     if (ternfs_data_blocks(parity) > TERNFS_MAX_DATA || ternfs_parity_blocks(parity) > TERNFS_MAX_PARITY) {
         ternfs_error("file=%016llx offset=%llu invalid parity config D=%d (max=%d) P=%d (max=%d)", ctx->ino, offset, ternfs_data_blocks(parity), TERNFS_MAX_DATA, ternfs_parity_blocks(parity), TERNFS_MAX_PARITY);
         ctx->err = -EIO;
-        ternfs_put_span(&span->span);
-        return;
+        goto out_free;
     }
 
     span->span.ino = ctx->ino;
@@ -885,7 +886,16 @@ static void file_spans_cb_span(void* data, u64 offset, u32 size, u32 crc, u8 sto
     span->num_stripes = stripes;
     span->parity = parity;
     ternfs_debug("adding normal span");
-    insert_span(&ctx->spans, &span->span);
+    if (!insert_span(&ctx->spans, &span->span)) {
+        ctx->err = -EIO;
+        goto out_free;
+    }
+
+    return;
+
+out_free:
+    kmem_cache_free(ternfs_block_span_cachep, span);
+    return;
 }
 
 static void file_spans_cb_block(
@@ -925,7 +935,10 @@ static void file_spans_cb_inline_span(void* data, u64 offset, u32 size, u8 len, 
     }
 
     struct ternfs_inline_span* span = kmem_cache_alloc(ternfs_inline_span_cachep, GFP_KERNEL);
-    if (!span) { ctx->err = -ENOMEM; return; }
+    if (!span) {
+        ctx->err = -ENOMEM;
+        return;
+    }
     atomic_set(&span->span.refcount, 1);
 
     span->span.ino = ctx->ino;
@@ -938,7 +951,11 @@ static void file_spans_cb_inline_span(void* data, u64 offset, u32 size, u8 len, 
 
     ternfs_debug("adding inline span");
 
-    insert_span(&ctx->spans, &span->span);
+    if (!insert_span(&ctx->spans, &span->span)) {
+        ctx->err = -EIO;
+        kmem_cache_free(ternfs_inline_span_cachep, span);
+        return;
+    }
 }
 
 struct ternfs_span* ternfs_get_span(struct ternfs_fs_info* fs_info, struct ternfs_file_spans* spans, u64 offset) {
@@ -1082,7 +1099,7 @@ int ternfs_span_init(void) {
         sizeof(((struct ternfs_inline_span*)NULL)->body),
         NULL
     );
-    if (!ternfs_block_span_cachep) {
+    if (!ternfs_inline_span_cachep) {
         err = -ENOMEM;
         goto out_block;
     }

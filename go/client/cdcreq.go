@@ -6,9 +6,9 @@ package client
 
 import (
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/core/log"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"net"
-	"xtx/ternfs/core/log"
-	"xtx/ternfs/msgs"
 )
 
 func (c *Client) checkRepeatedCDCRequestError(

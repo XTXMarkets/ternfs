@@ -6,12 +6,12 @@ package main
 
 import (
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/cleanup"
+	"github.com/XTXMarkets/ternfs/go/client"
+	"github.com/XTXMarkets/ternfs/go/core/log"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"sync"
 	"time"
-	"xtx/ternfs/cleanup"
-	"xtx/ternfs/client"
-	"xtx/ternfs/core/log"
-	"xtx/ternfs/msgs"
 )
 
 func deleteDir(log *log.Logger, client *client.Client, ownerId msgs.InodeId, name string, creationTime msgs.TernTime, dirId msgs.InodeId) {

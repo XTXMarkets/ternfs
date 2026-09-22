@@ -7,11 +7,11 @@ package cleanup
 import (
 	"context"
 	"errors"
+	"github.com/XTXMarkets/ternfs/go/client"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"net"
 	"os"
 	"syscall"
-	"xtx/ternfs/client"
-	"xtx/ternfs/msgs"
 )
 
 // errIsTolerable reports whether a block-service error should be silently

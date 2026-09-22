@@ -6,10 +6,10 @@ package main
 
 import (
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/core/log"
 	"os"
 	"path"
 	"strconv"
-	"xtx/ternfs/core/log"
 )
 
 type preadddirOpts struct {

@@ -7,13 +7,13 @@ package main
 
 import (
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/client"
+	"github.com/XTXMarkets/ternfs/go/core/log"
+	lrecover "github.com/XTXMarkets/ternfs/go/core/recover"
+	"github.com/XTXMarkets/ternfs/go/core/wyhash"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"strings"
 	"sync"
-	"xtx/ternfs/client"
-	"xtx/ternfs/core/log"
-	lrecover "xtx/ternfs/core/recover"
-	"xtx/ternfs/core/wyhash"
-	"xtx/ternfs/msgs"
 )
 
 // actions

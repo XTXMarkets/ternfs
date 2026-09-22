@@ -6,12 +6,12 @@ package main
 
 import (
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/client"
+	"github.com/XTXMarkets/ternfs/go/core/bufpool"
+	"github.com/XTXMarkets/ternfs/go/core/log"
+	"github.com/XTXMarkets/ternfs/go/core/wyhash"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"io"
-	"xtx/ternfs/client"
-	"xtx/ternfs/core/bufpool"
-	"xtx/ternfs/core/log"
-	"xtx/ternfs/core/wyhash"
-	"xtx/ternfs/msgs"
 )
 
 type edge struct {

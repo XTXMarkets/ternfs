@@ -6,8 +6,8 @@ package cleanup
 
 import (
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"time"
-	"xtx/ternfs/msgs"
 )
 
 // Returns how many edges to remove according to the policy (as a prefix of the input).

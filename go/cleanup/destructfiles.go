@@ -6,12 +6,12 @@ package cleanup
 
 import (
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/client"
+	"github.com/XTXMarkets/ternfs/go/core/log"
+	lrecover "github.com/XTXMarkets/ternfs/go/core/recover"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"sync"
 	"sync/atomic"
-	"xtx/ternfs/client"
-	"xtx/ternfs/core/log"
-	lrecover "xtx/ternfs/core/recover"
-	"xtx/ternfs/msgs"
 )
 
 type DestructFilesStats struct {
