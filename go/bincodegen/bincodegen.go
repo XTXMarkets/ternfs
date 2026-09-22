@@ -309,6 +309,7 @@ func generateGo(errors []string, shardReqResps []reqRespType, cdcReqResps []reqR
 	out := new(bytes.Buffer)
 
 	out.Write([]byte(goHeader))
+	out.WriteByte('\n')
 
 	generateGoErrorCodes(out, errors)
 
