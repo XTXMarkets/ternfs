@@ -279,6 +279,20 @@ func (t *RemoteTernVFS) ConstructFile(dirID InodeID) (InodeID, Cookie, error) {
 	return InodeID(resp.Id), Cookie(resp.Cookie), nil
 }
 
+func (t *RemoteTernVFS) ScrapFile(fileID InodeID, cookie Cookie) error {
+	mid := msgs.InodeId(fileID)
+	if err := t.client.ShardRequest(t.log, mid.Shard(),
+		&msgs.ScrapTransientFileReq{
+			Id:     mid,
+			Cookie: msgs.Cookie(cookie),
+		},
+		&msgs.ScrapTransientFileResp{},
+	); err != nil {
+		return ternToOSError(err)
+	}
+	return nil
+}
+
 func (t *RemoteTernVFS) LinkFile(fileID InodeID, cookie Cookie, dirID InodeID, name string, data io.Reader) error {
 	mid := msgs.InodeId(fileID)
 	dirMid := msgs.InodeId(dirID)

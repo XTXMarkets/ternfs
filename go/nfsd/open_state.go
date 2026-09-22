@@ -86,11 +86,6 @@ type openOwnerState struct {
 	states map[InodeID]*openState
 }
 
-type recoveredCloseLock struct {
-	mu   sync.Mutex
-	refs int
-}
-
 type openStateStore struct {
 	mu sync.Mutex
 
@@ -103,7 +98,7 @@ type openStateStore struct {
 	expiredIDs    []StateID
 	recovered     map[StateID]openOwnerResponse
 	recoveredIDs  []StateID
-	recoveryLocks map[StateID]*recoveredCloseLock
+	recoveryLocks keyedLocker[StateID]
 	now           func() time.Time
 }
 
@@ -127,7 +122,7 @@ type recoveredCloseOperation struct {
 	inputGeneration uint32
 	fileID          InodeID
 	seq             uint32
-	lock            *recoveredCloseLock
+	unlock          func()
 	finished        bool
 }
 
@@ -140,14 +135,13 @@ func newOpenStateStore() *openStateStore {
 		epoch := binary.BigEndian.Uint32(epochBytes[:])
 		if epoch > 1 {
 			return &openStateStore{
-				epoch:         epoch,
-				states:        make(map[StateID]*openState),
-				owners:        make(map[openOwnerKey]*openOwnerState),
-				replayOwners:  make(map[StateID]*openOwnerState),
-				expired:       make(map[StateID]struct{}),
-				recovered:     make(map[StateID]openOwnerResponse),
-				recoveryLocks: make(map[StateID]*recoveredCloseLock),
-				now:           time.Now,
+				epoch:        epoch,
+				states:       make(map[StateID]*openState),
+				owners:       make(map[openOwnerKey]*openOwnerState),
+				replayOwners: make(map[StateID]*openOwnerState),
+				expired:      make(map[StateID]struct{}),
+				recovered:    make(map[StateID]openOwnerResponse),
+				now:          time.Now,
 			}
 		}
 	}
@@ -734,45 +728,17 @@ func (os *openStateStore) canRecover(id StateID) bool {
 	return binary.BigEndian.Uint32(id[0:4]) != os.epoch
 }
 
-func (os *openStateStore) acquireRecoveryLock(
-	id StateID,
-) *recoveredCloseLock {
-	os.mu.Lock()
-	lock := os.recoveryLocks[id]
-	if lock == nil {
-		lock = &recoveredCloseLock{}
-		os.recoveryLocks[id] = lock
-	}
-	lock.refs++
-	os.mu.Unlock()
-	lock.mu.Lock()
-	return lock
-}
-
-func (os *openStateStore) releaseRecoveryLock(
-	id StateID,
-	lock *recoveredCloseLock,
-) {
-	lock.mu.Unlock()
-	os.mu.Lock()
-	lock.refs--
-	if lock.refs == 0 && os.recoveryLocks[id] == lock {
-		delete(os.recoveryLocks, id)
-	}
-	os.mu.Unlock()
-}
-
 func (os *openStateStore) startRecoveredClose(
 	id StateID,
 	fileID InodeID,
 	generation uint32,
 	seq uint32,
 ) (*recoveredCloseOperation, openOwnerResponse, bool, uint32) {
-	lock := os.acquireRecoveryLock(id)
+	unlock := os.recoveryLocks.lock(id)
 	os.mu.Lock()
 	if response, ok := os.recovered[id]; ok {
 		os.mu.Unlock()
-		os.releaseRecoveryLock(id, lock)
+		unlock()
 		if response.matches(
 			openOwnerOperationClose, seq, id, generation, fileID,
 		) {
@@ -783,7 +749,7 @@ func (os *openStateStore) startRecoveredClose(
 	if _, expired := os.expired[id]; expired || os.states[id] != nil ||
 		binary.BigEndian.Uint32(id[0:4]) == os.epoch {
 		os.mu.Unlock()
-		os.releaseRecoveryLock(id, lock)
+		unlock()
 		return nil, openOwnerResponse{}, false, NFS4ERR_BAD_STATEID
 	}
 	os.mu.Unlock()
@@ -793,7 +759,7 @@ func (os *openStateStore) startRecoveredClose(
 		inputGeneration: generation,
 		fileID:          fileID,
 		seq:             seq,
-		lock:            lock,
+		unlock:          unlock,
 	}, openOwnerResponse{}, false, NFS4_OK
 }
 
@@ -828,7 +794,7 @@ func (op *recoveredCloseOperation) finish(status uint32) openOwnerResponse {
 		op.store.mu.Unlock()
 	}
 	op.finished = true
-	op.store.releaseRecoveryLock(op.stateID, op.lock)
+	op.unlock()
 	return response
 }
 

@@ -37,6 +37,61 @@ type libnfsClient struct {
 	nfs *C.struct_nfs_context
 }
 
+type libnfsFile struct {
+	client *libnfsClient
+	fh     *C.struct_nfsfh
+}
+
+func (c *libnfsClient) OpenFile(path string, flags int) (*libnfsFile, error) {
+	cpath := C.CString(path)
+	defer C.free(unsafe.Pointer(cpath))
+	var fh *C.struct_nfsfh
+	if C.nfs_open(c.nfs, cpath, C.int(flags), &fh) != 0 {
+		return nil, fmt.Errorf("nfs_open(%q): %s", path, C.GoString(C.nfs_get_error(c.nfs)))
+	}
+	return &libnfsFile{client: c, fh: fh}, nil
+}
+
+func (f *libnfsFile) Close() error {
+	if f.fh == nil {
+		return nil
+	}
+	fh := f.fh
+	f.fh = nil
+	if C.nfs_close(f.client.nfs, fh) != 0 {
+		return fmt.Errorf("nfs_close: %s", C.GoString(C.nfs_get_error(f.client.nfs)))
+	}
+	return nil
+}
+
+func (f *libnfsFile) WriteAt(data []byte, offset uint64) error {
+	n := C.nfs_pwrite(f.client.nfs, f.fh, C.uint64_t(offset), C.uint64_t(len(data)), unsafe.Pointer(&data[0]))
+	if int(n) != len(data) {
+		return fmt.Errorf("nfs_pwrite: count=%d: %s", n, C.GoString(C.nfs_get_error(f.client.nfs)))
+	}
+	return nil
+}
+
+func (f *libnfsFile) Read() ([]byte, error) {
+	buf := make([]byte, 4096)
+	n := C.nfs_pread(f.client.nfs, f.fh, 0, C.uint64_t(len(buf)), unsafe.Pointer(&buf[0]))
+	if n < 0 {
+		return nil, fmt.Errorf("nfs_pread: %s", C.GoString(C.nfs_get_error(f.client.nfs)))
+	}
+	return buf[:int(n)], nil
+}
+
+func (f *libnfsFile) SyncSize() (uint64, error) {
+	if C.nfs_fsync(f.client.nfs, f.fh) != 0 {
+		return 0, fmt.Errorf("nfs_fsync: %s", C.GoString(C.nfs_get_error(f.client.nfs)))
+	}
+	var st C.struct_nfs_stat_64
+	if C.nfs_fstat64(f.client.nfs, f.fh, &st) != 0 {
+		return 0, fmt.Errorf("nfs_fstat64: %s", C.GoString(C.nfs_get_error(f.client.nfs)))
+	}
+	return uint64(st.nfs_size), nil
+}
+
 func libnfsConnect(host string, port int) (*libnfsClient, error) {
 	nfs := C.nfs_init_context()
 	if nfs == nil {
