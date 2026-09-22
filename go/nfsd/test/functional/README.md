@@ -23,6 +23,16 @@ The suite contains positive workflow tests. An unsupported operation is a test
 failure rather than a skip; server fixes can be made independently and in any
 order.
 
+Overwriting a file replaces its inode: a writable OPEN constructs a new
+transient file, and CLOSE links that file into the directory. `fstat` on a
+write descriptor therefore reports the inode the pathname will have after
+CLOSE, not the one it had before. Tools which verify that identity across a
+write need to replace the file rather than write in place. Vim does that by
+default, but writes in place under a path matching its `backupskip` (which
+contains `/tmp/*`) or with `backupcopy=yes`, and then reports `E949: File
+changed while writing`. The Vim cases set both options explicitly so they do
+not depend on where the test root is.
+
 Concurrent append from separately opened writable file descriptors is not a
 supported workflow. Each writable OPEN has independent staging, and the last
 successful CLOSE publishes its complete private version.

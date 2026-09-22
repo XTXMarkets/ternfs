@@ -43,6 +43,18 @@ functional_test_require() {
 	fi
 }
 
+# Vim refuses to write a file whose inode changed since it was last stated,
+# reporting "E949: File changed while writing". Publication replaces the inode
+# on every overwrite here, so that check trips whenever vim writes in place.
+# Vim writes in place only when it makes no backup, which is what an empty
+# 'backupskip' prevents: its default value matches /tmp/*, so a test root below
+# /tmp would otherwise take that path. 'backupcopy' stays off so vim keeps
+# renaming the original aside instead of copying over it, which would also
+# write in place. See the catalog for the underlying semantics.
+functional_test_vim() {
+	vim -Nu NONE -i NONE -es -c 'set backupskip= backupcopy=no' "$@"
+}
+
 functional_test_assert_contents() {
 	local path=$1
 	local expected=$2

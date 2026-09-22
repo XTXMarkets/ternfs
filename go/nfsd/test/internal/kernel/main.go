@@ -33,6 +33,11 @@ import (
 
 var resultPattern = regexp.MustCompile(`(?m)^suite exit=(\d+)$`)
 
+// guestMountPoint is a guest-local tmpfs path. It is deliberately outside
+// /tmp since some tools (such as vim) change their behaviour there, and
+// nfsd is not designed for use there.
+const guestMountPoint = "/run/nfs"
+
 func main() {
 	var opts harness.Options
 	opts.Flags(flag.CommandLine)
@@ -102,7 +107,7 @@ func run(ctx context.Context, opts harness.Options, image, tests string,
 		"tests=" + tests,
 		"case_timeout=" + strconv.Itoa(int(caseTimeout/time.Second)),
 		"log=" + guestLog,
-		"mnt=" + filepath.Join(server.Dir, "mnt"),
+		"mnt=" + guestMountPoint,
 		"functional=" + functional,
 	}, " ")
 	accel := "tcg,thread=multi"

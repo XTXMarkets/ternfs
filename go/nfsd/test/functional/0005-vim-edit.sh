@@ -6,7 +6,7 @@ functional_test_require vim
 
 path="$FUNCTIONAL_TEST_DIR/vim-edit.txt"
 printf 'before\n' >"$path"
-vim -Nu NONE -i NONE -es \
+functional_test_vim \
 	-c '%s/before/after/' \
 	-c write -c quit "$path"
 
