@@ -19,8 +19,10 @@ import (
 	"time"
 )
 
+// The only sidecar format this nfsd reads or writes. There are no deployed NFS
+// servers, so earlier formats are rejected rather than carried forward.
 const (
-	stagingMetaV4Magic = "NFS4"
+	stagingMetaV5Magic = "NFS5"
 )
 
 const stagingHydrationChunk = 1 << 20
@@ -39,18 +41,20 @@ type StagingMeta struct {
 	FileName        string   // name in directory
 	TernCookie      Cookie   // cookie from VFS ConstructFile
 	NFSStateID      StateID  // random, returned to NFS client as stateid "other"
-	ClientID        uint64   // owning client; zero in sidecars written by older nfsd
+	ClientID        uint64   // owning client
 	OpenOwner       string   // separates recovered writers belonging to the same client
-	OwnerKnown      bool     // an empty owner is valid; legacy sidecars have no identity
+	OwnerKnown      bool     // an empty owner is valid
 	RecoveryKey     [32]byte // stable client identity, boot verifier and principal
 	Retired         bool     // lease expired; retain acknowledged data for recovery
 	ReadOnly        bool     // CREATE may initialize size/times with read-only share access
+	Exclusive       bool     // EXCLUSIVE4 create; persisted in NFS5 sidecars
+	Verifier        [8]byte  // EXCLUSIVE4 create verifier
 	BaseID          InodeID  // immutable file being replaced; zero for a new file
 	BaseSize        uint64
 	Size            uint64
 	Dirty           byteRangeSet
 	MetadataChanged bool
-	Attrs           NodeInfo // Size is stored separately; zero Change denotes legacy metadata
+	Attrs           NodeInfo // Size is stored separately
 	version         uint8
 }
 
@@ -199,7 +203,7 @@ func NewLocalStagingStore(dir string, logger *slog.Logger) (*LocalStagingStore, 
 			continue
 		}
 		size := uint64(info.Size())
-		if meta.version == 4 && meta.BaseID != 0 {
+		if meta.version == 5 && meta.BaseID != 0 {
 			size = meta.Size
 			if err := f.Truncate(int64(size)); err != nil {
 				f.Close()
@@ -244,7 +248,7 @@ func (s *LocalStagingStore) Create(id InodeID, meta StagingMeta) (StagingFile, e
 	}
 	target := stagingTarget{dirID: meta.DirID, name: meta.FileName}
 	meta.Size = meta.BaseSize
-	meta.version = 4
+	meta.version = 5
 	meta.Attrs = stagingAttributes(meta.Attrs, time.Now())
 	path := filepath.Join(s.dir, fmt.Sprintf("%016x.staging", uint64(id)))
 	f, err := os.Create(path)
@@ -538,7 +542,7 @@ func (sf *localStagingFile) saveMetaLocked() error {
 	meta.Size = sf.size
 	meta.Attrs = sf.attrs
 	meta.MetadataChanged = sf.metadataChanged
-	meta.version = 4
+	meta.version = 5
 	if err := saveStagingMeta(sf.metaPath, meta); err != nil {
 		return err
 	}
@@ -991,22 +995,26 @@ func (sf *localStagingFile) Reader() (io.ReadSeeker, error) {
 //   [12] NFSStateID
 //   [2]  FileNameLen
 //   [N]  FileName (UTF-8)
-//   [8]  ClientID (absent in sidecars written by older nfsd)
-//   [4]  "NFS4" (absent in sidecars written by older nfsd)
+//   [8]  ClientID
+//   [4]  "NFS5"
 //   [8]  BaseID
 //   [8]  BaseSize
 //   [8]  LogicalSize
 //   [4]  DirtyRangeCount
 //   [16 * count] Dirty ranges as start/end pairs
 //   [8] Change
-//   [8] Mtime, [8] Atime, [8] Ctime (Unix nanoseconds; absent before NFS4)
-//   [1] flags: bit 0 MetadataChanged, bit 1 OwnerKnown, bit 2 ReadOnly, bit 3 Retired
+//   [8] Mtime, [8] Atime, [8] Ctime (Unix nanoseconds)
+//   [1] flags: bit 0 MetadataChanged, bit 1 OwnerKnown, bit 2 ReadOnly,
+//       bit 3 Retired, bit 4 Exclusive
 //   [4] OpenOwnerLen, [N] OpenOwner (opaque bytes)
-//   [32] RecoveryKey (optional for older NFS4 checkpoints)
+//   [32] RecoveryKey
+//   [8] EXCLUSIVE4 verifier
 
 func saveStagingMeta(path string, meta StagingMeta) error {
 	nameBytes := []byte(meta.FileName)
-	buf := make([]byte, 8+8+12+2+len(nameBytes)+8+4+8+8+8+4+16*len(meta.Dirty)+32+1+4+len(meta.OpenOwner)+32)
+	buf := make([]byte, 8+8+12+2+len(nameBytes)+8+4+8+8+8+4+
+		16*len(meta.Dirty)+32+1+4+len(meta.OpenOwner)+
+		len(meta.RecoveryKey)+len(meta.Verifier))
 	binary.BigEndian.PutUint64(buf[0:8], uint64(meta.DirID))
 	copy(buf[8:16], meta.TernCookie[:])
 	copy(buf[16:28], meta.NFSStateID[:])
@@ -1015,7 +1023,7 @@ func saveStagingMeta(path string, meta StagingMeta) error {
 	off := 30 + len(nameBytes)
 	binary.BigEndian.PutUint64(buf[off:off+8], meta.ClientID)
 	off += 8
-	copy(buf[off:off+4], stagingMetaV4Magic)
+	copy(buf[off:off+4], stagingMetaV5Magic)
 	off += 4
 	binary.BigEndian.PutUint64(buf[off:off+8], uint64(meta.BaseID))
 	off += 8
@@ -1047,10 +1055,15 @@ func saveStagingMeta(path string, meta StagingMeta) error {
 	if meta.Retired {
 		buf[off] |= 8
 	}
+	if meta.Exclusive {
+		buf[off] |= 16
+	}
 	off++
 	binary.BigEndian.PutUint32(buf[off:off+4], uint32(len(meta.OpenOwner)))
 	copy(buf[off+4:], meta.OpenOwner)
-	copy(buf[off+4+len(meta.OpenOwner):], meta.RecoveryKey[:])
+	off += 4 + len(meta.OpenOwner)
+	copy(buf[off:], meta.RecoveryKey[:])
+	copy(buf[off+len(meta.RecoveryKey):], meta.Verifier[:])
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-")
 	if err != nil {
@@ -1101,22 +1114,13 @@ func loadStagingMeta(path string) (StagingMeta, error) {
 		return StagingMeta{}, fmt.Errorf("meta file truncated")
 	}
 	meta.FileName = string(data[30:nameEnd])
-	if len(data) == nameEnd {
-		return meta, nil
-	}
-	if len(data) < nameEnd+8 {
+	if len(data) < nameEnd+12 {
 		return StagingMeta{}, fmt.Errorf("meta file truncated")
 	}
 	meta.ClientID = binary.BigEndian.Uint64(data[nameEnd : nameEnd+8])
 	off := nameEnd + 8
-	if len(data) == off {
-		return meta, nil
-	}
-	if len(data) < off+4 {
-		return StagingMeta{}, fmt.Errorf("meta file truncated")
-	}
 	magic := string(data[off : off+4])
-	if magic != stagingMetaV4Magic {
+	if magic != stagingMetaV5Magic {
 		return StagingMeta{}, fmt.Errorf("unknown meta file extension")
 	}
 	off += 4
@@ -1131,7 +1135,7 @@ func loadStagingMeta(path string) (StagingMeta, error) {
 		return StagingMeta{}, fmt.Errorf("meta file truncated")
 	}
 	meta.Size = binary.BigEndian.Uint64(data[off : off+8])
-	meta.version = 4
+	meta.version = 5
 	off += 8
 	if len(data) < off+4 {
 		return StagingMeta{}, fmt.Errorf("meta file truncated")
@@ -1153,35 +1157,36 @@ func loadStagingMeta(path string) (StagingMeta, error) {
 		meta.Dirty = append(meta.Dirty, byteRange{start: start, end: end})
 		off += 16
 	}
-	if magic == stagingMetaV4Magic {
-		meta.version = 4
-		if len(data)-off < 37 {
-			return StagingMeta{}, fmt.Errorf("truncated staging attributes")
-		}
-		meta.Attrs.Change = binary.BigEndian.Uint64(data[off : off+8])
-		if meta.Attrs.Change != 0 {
-			meta.Attrs.Mtime = time.Unix(0, int64(binary.BigEndian.Uint64(data[off+8:off+16])))
-			meta.Attrs.Atime = time.Unix(0, int64(binary.BigEndian.Uint64(data[off+16:off+24])))
-			meta.Attrs.Ctime = time.Unix(0, int64(binary.BigEndian.Uint64(data[off+24:off+32])))
-		}
-		off += 32
-		if data[off]&^byte(15) != 0 {
-			return StagingMeta{}, fmt.Errorf("invalid metadata change flag")
-		}
-		meta.MetadataChanged = data[off]&1 != 0
-		meta.OwnerKnown = data[off]&2 != 0
-		meta.ReadOnly = data[off]&4 != 0
-		meta.Retired = data[off]&8 != 0
-		off++
-		ownerLen := uint64(binary.BigEndian.Uint32(data[off : off+4]))
-		off += 4
-		if ownerLen > uint64(len(data)-off) || (uint64(len(data)-off)-ownerLen != 0 && uint64(len(data)-off)-ownerLen != 32) {
-			return StagingMeta{}, fmt.Errorf("invalid staging owner length")
-		}
-		meta.OpenOwner = string(data[off : off+int(ownerLen)])
-		off += int(ownerLen)
-		copy(meta.RecoveryKey[:], data[off:])
+	if len(data)-off < 37 {
+		return StagingMeta{}, fmt.Errorf("truncated staging attributes")
 	}
+	meta.Attrs.Change = binary.BigEndian.Uint64(data[off : off+8])
+	if meta.Attrs.Change != 0 {
+		meta.Attrs.Mtime = time.Unix(0, int64(binary.BigEndian.Uint64(data[off+8:off+16])))
+		meta.Attrs.Atime = time.Unix(0, int64(binary.BigEndian.Uint64(data[off+16:off+24])))
+		meta.Attrs.Ctime = time.Unix(0, int64(binary.BigEndian.Uint64(data[off+24:off+32])))
+	}
+	off += 32
+	if data[off]&^byte(31) != 0 {
+		return StagingMeta{}, fmt.Errorf("invalid metadata change flag")
+	}
+	meta.MetadataChanged = data[off]&1 != 0
+	meta.OwnerKnown = data[off]&2 != 0
+	meta.ReadOnly = data[off]&4 != 0
+	meta.Retired = data[off]&8 != 0
+	meta.Exclusive = data[off]&16 != 0
+	off++
+	ownerLen := uint64(binary.BigEndian.Uint32(data[off : off+4]))
+	off += 4
+	// The recovery key and the EXCLUSIVE4 verifier close every sidecar.
+	tailLen := uint64(len(meta.RecoveryKey) + len(meta.Verifier))
+	if uint64(len(data)-off) != ownerLen+tailLen {
+		return StagingMeta{}, fmt.Errorf("invalid staging owner length")
+	}
+	meta.OpenOwner = string(data[off : off+int(ownerLen)])
+	off += int(ownerLen)
+	copy(meta.RecoveryKey[:], data[off:off+len(meta.RecoveryKey)])
+	copy(meta.Verifier[:], data[off+len(meta.RecoveryKey):])
 	if meta.Size > math.MaxInt64 || meta.BaseSize > math.MaxInt64 {
 		return StagingMeta{}, fmt.Errorf("staging size exceeds supported offset")
 	}

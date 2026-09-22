@@ -6065,7 +6065,7 @@ func collectReaddirNames(t *testing.T, conn net.Conn, xid *uint32, dirFH []byte)
 // [x] TestSetattrTime — SET_TO_CLIENT_TIME4 and SET_TO_SERVER_TIME4
 // [x] TestSetattrModeRejected — mode/owner → NFS4ERR_ATTRNOTSUPP
 // [x] TestSetattrSize — truncate staging file via SETATTR
-// [x] TestOpenExclusive4Rejected — EXCLUSIVE4 → NFS4ERR_NOTSUPP
+// [x] TestOpenExclusive4 — exclusive create and verifier replay
 // [x] TestOpenClaimPrevious — CLAIM_PREVIOUS → NFS4ERR_NO_GRACE
 // [x] TestOpenRflagsRequireConfirm — OPEN4_RESULT_CONFIRM present in rflags
 // [x] TestCloseReplay — CLOSE twice returns OK both times
@@ -6692,45 +6692,51 @@ func TestSetattrSizeRequiresWriteOpen(t *testing.T) {
 	}
 }
 
-func TestOpenExclusive4Rejected(t *testing.T) {
-	dir := t.TempDir()
-	addr, cleanup := startTestServer(t, dir)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-
-	xid := uint32(1)
-	clientid := setupClient(t, conn, &xid)
-
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+func openExclusiveFile(
+	t *testing.T, conn net.Conn, xid *uint32, clientid uint64,
+	owner string, seq uint32, filename string, verifier [8]byte,
+) (status uint32, stateid [16]byte, fh []byte, rflags uint32) {
+	t.Helper()
+	res := sendCompound(t, conn, *xid, func(w *COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		ow := w.AppendArgarray_Open()
-		ow.SetSeqid(1)
+		ow.SetSeqid(seq)
 		ow.SetShareAccess(OPEN4_SHARE_ACCESS_BOTH)
 		ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
 		ownerW := ow.StartOwner()
 		ownerW = ownerW.SetClientid(clientid)
-		ownerW = ownerW.SetOwner([]byte("test-owner"))
+		ownerW = ownerW.SetOwner([]byte(owner))
 		buf := ownerW.Finish()
 		ow.Resume(buf)
 		chw := ow.SetOpenhow_Create()
 		verf := chw.SetValue_Exclusive4()
-		for i := 0; i < 8; i++ {
-			verf.SetData(i, byte(i))
+		for i := range verifier {
+			verf.SetData(i, verifier[i])
 		}
 		buf = chw.Finish()
 		ow.Resume(buf)
 		cw := ow.SetClaim_Null()
-		buf = cw.SetData([]byte("excl.txt")).Finish()
+		buf = cw.SetData([]byte(filename)).Finish()
 		ow.Resume(buf)
 		buf = ow.Finish()
 		w.Resume(buf)
+		w.AppendArgarray_Getfh()
 	})
-	xid++
-
-	if res.Status() != NFS4ERR_NOTSUPP {
-		t.Fatalf("expected NFS4ERR_NOTSUPP, got %s", Nfsstat4Name(res.Status()))
+	*xid++
+	if res.Status() != NFS4_OK {
+		return res.Status(), stateid, nil, 0
 	}
+	iter := expectOK(t, res)
+	nextOp(t, &iter) // PUTROOTFH
+	openOK := nextOp(t, &iter).Value().AsOPEN4resEntry().Value().AsOPEN4resok()
+	sid := openOK.Stateid()
+	binary.BigEndian.PutUint32(stateid[:4], sid.Seqid())
+	for i := range 12 {
+		stateid[4+i] = sid.Other(i)
+	}
+	fh = append([]byte(nil), nextOp(t, &iter).Value().AsGETFH4resEntry().
+		Value().AsGETFH4resok().Object().Data()...)
+	return NFS4_OK, stateid, fh, openOK.Rflags()
 }
 
 func TestOpenClaimPrevious(t *testing.T) {
@@ -8644,16 +8650,9 @@ func TestSetclientidRebootRetiresStagingFiles(t *testing.T) {
 	}
 }
 
-func TestLocalStagingStoreLoadsLegacySidecar(t *testing.T) {
-	dir := t.TempDir()
-	id := MakeInodeID(InodeTypeFile, 42)
-	data := []byte("legacy staged data")
-	if err := os.WriteFile(
-		filepath.Join(dir, fmt.Sprintf("%016x.staging", uint64(id))),
-		data, 0600,
-	); err != nil {
-		t.Fatal(err)
-	}
+func TestLocalStagingStoreRejectsPreMagicSidecars(t *testing.T) {
+	// There are no deployed NFS servers, so nfsd reads one sidecar format.
+	// Sidecars from before the format marker are quarantined, not loaded.
 	meta := StagingMeta{
 		DirID:      MakeInodeID(InodeTypeDir, 7),
 		FileName:   "legacy.txt",
@@ -8661,39 +8660,56 @@ func TestLocalStagingStoreLoadsLegacySidecar(t *testing.T) {
 		NFSStateID: StateID{4, 5, 6},
 		ClientID:   99,
 	}
-	metaPath := filepath.Join(
-		dir, fmt.Sprintf("%016x.meta", uint64(id)))
 	name := []byte(meta.FileName)
-	encoded := make([]byte, 30+len(name))
-	binary.BigEndian.PutUint64(encoded[0:8], uint64(meta.DirID))
-	copy(encoded[8:16], meta.TernCookie[:])
-	copy(encoded[16:28], meta.NFSStateID[:])
-	binary.BigEndian.PutUint16(encoded[28:30], uint16(len(name)))
-	copy(encoded[30:], name)
-	if err := os.WriteFile(metaPath, encoded, 0600); err != nil {
-		t.Fatal(err)
-	}
+	header := make([]byte, 30+len(name))
+	binary.BigEndian.PutUint64(header[0:8], uint64(meta.DirID))
+	copy(header[8:16], meta.TernCookie[:])
+	copy(header[16:28], meta.NFSStateID[:])
+	binary.BigEndian.PutUint16(header[28:30], uint16(len(name)))
+	copy(header[30:], name)
+	withClientID := append(append([]byte(nil), header...), make([]byte, 8)...)
+	binary.BigEndian.PutUint64(withClientID[len(header):], meta.ClientID)
 
-	store, err := NewLocalStagingStore(dir, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer closeLocalStagingFiles(t, store)
-	gotMeta, found := store.GetMeta(id)
-	if !found {
-		t.Fatal("legacy staging sidecar was not loaded")
-	}
-	meta.ClientID = 0
-	if !reflect.DeepEqual(gotMeta, meta) {
-		t.Fatalf("legacy staging metadata = %+v, want %+v", gotMeta, meta)
-	}
-	buf := make([]byte, len(data))
-	n, eof, err := store.Get(id).Read(0, buf, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n != len(data) || !eof || !bytes.Equal(buf, data) {
-		t.Fatalf("legacy staging data = %q, n=%d eof=%t", buf, n, eof)
+	for _, sidecar := range []struct {
+		name    string
+		encoded []byte
+	}{
+		{"no-clientid", header},
+		{"clientid-only", withClientID},
+	} {
+		t.Run(sidecar.name, func(t *testing.T) {
+			dir := t.TempDir()
+			id := MakeInodeID(InodeTypeFile, 42)
+			data := []byte("legacy staged data")
+			if err := os.WriteFile(
+				filepath.Join(dir, fmt.Sprintf("%016x.staging", uint64(id))),
+				data, 0600,
+			); err != nil {
+				t.Fatal(err)
+			}
+			metaPath := filepath.Join(
+				dir, fmt.Sprintf("%016x.meta", uint64(id)))
+			if err := os.WriteFile(metaPath, sidecar.encoded, 0600); err != nil {
+				t.Fatal(err)
+			}
+			store, err := NewLocalStagingStore(dir, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer closeLocalStagingFiles(t, store)
+			if _, found := store.GetMeta(id); found || store.Get(id) != nil {
+				t.Fatal("pre-magic staging sidecar was loaded")
+			}
+			files, err := filepath.Glob(
+				filepath.Join(dir, "quarantine", "*", "*.staging"))
+			if err != nil || len(files) != 1 {
+				t.Fatalf("quarantine files = %v, err = %v", files, err)
+			}
+			if got, err := os.ReadFile(files[0]); err != nil ||
+				!bytes.Equal(got, data) {
+				t.Fatalf("quarantined data = %q, err = %v", got, err)
+			}
+		})
 	}
 }
 
