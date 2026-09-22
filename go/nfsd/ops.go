@@ -22,14 +22,12 @@ const (
 	maxTernNameLength  = maxTernBytesLength
 )
 
-type defaultResponseWriter interface {
-	SetValue_Default(uint32)
-	Finish() []byte
-}
-
-func finishDefaultResponse(w *COMPOUND4resWriter, ew defaultResponseWriter, status uint32) uint32 {
-	ew.SetValue_Default(status)
-	w.Resume(ew.Finish())
+// finishDefaultResponse completes a result whose union default arm is the
+// bare status: it appends the status to the entry buffer and hands the buffer
+// back to the compound writer. Taking the buffer rather than the entry writer
+// keeps the call inlinable and the writer on the stack.
+func finishDefaultResponse(w *COMPOUND4resWriter, buf []byte, status uint32) uint32 {
+	w.Resume(binary.BigEndian.AppendUint32(buf, status))
 	return status
 }
 
@@ -160,7 +158,7 @@ func (s *Server) expireClientState(clientID uint64) {
 func (s *Server) opAccess(args ACCESS4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
 	if !st.currentIDSet {
 		ew := w.AppendResarray_Access()
-		return finishDefaultResponse(w, &ew, NFS4ERR_NOFILEHANDLE)
+		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_NOFILEHANDLE)
 	}
 	meaningful := uint32(ACCESS4_READ | ACCESS4_MODIFY | ACCESS4_EXTEND)
 	if st.currentID.Type() == InodeTypeDir {
@@ -180,7 +178,7 @@ func (s *Server) opAccess(args ACCESS4args, st *compoundState, w *COMPOUND4resWr
 func (s *Server) opClose(args CLOSE4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
 	if !st.currentIDSet {
 		ew := w.AppendResarray_Close()
-		return finishDefaultResponse(w, &ew, NFS4ERR_NOFILEHANDLE)
+		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_NOFILEHANDLE)
 	}
 
 	sid := extractStateID(args.OpenStateid())
@@ -214,7 +212,7 @@ func (s *Server) opClose(args CLOSE4args, st *compoundState, w *COMPOUND4resWrit
 			return writeCloseResponse(w, response)
 		}
 		ew := w.AppendResarray_Close()
-		return finishDefaultResponse(w, &ew, status)
+		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 	if op != nil {
 		defer op.finishServerFaultIfNeeded()
@@ -374,7 +372,7 @@ func writeCloseResponse(
 ) uint32 {
 	ew := w.AppendResarray_Close()
 	if response.status != NFS4_OK {
-		return finishDefaultResponse(w, &ew, response.status)
+		return finishDefaultResponse(w, ew.Finish(), response.status)
 	}
 	stid := ew.SetValue_Nfs4Ok()
 	stid.SetSeqid(response.state.generation)
@@ -386,20 +384,18 @@ func writeCloseResponse(
 func (s *Server) opCommit(st *compoundState, w *COMPOUND4resWriter) uint32 {
 	if !st.currentIDSet {
 		ew := w.AppendResarray_Commit()
-		return finishDefaultResponse(w, &ew, NFS4ERR_NOFILEHANDLE)
+		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_NOFILEHANDLE)
 	}
 	if status := requireRegularFile(st.currentID); status != NFS4_OK {
 		ew := w.AppendResarray_Commit()
-		return finishDefaultResponse(w, &ew, status)
+		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 
 	// Sync the staging file for the current filehandle.
 	if sf := s.stagingStore.Get(st.currentID); sf != nil {
 		if err := sf.Sync(); err != nil {
 			ew := w.AppendResarray_Commit()
-			ew.SetValue_Default(NFS4ERR_IO)
-			w.Resume(ew.Finish())
-			return NFS4ERR_IO
+			return finishDefaultResponse(w, ew.Finish(), NFS4ERR_IO)
 		}
 	}
 
@@ -413,36 +409,36 @@ func (s *Server) opCommit(st *compoundState, w *COMPOUND4resWriter) uint32 {
 func (s *Server) opCreate(args CREATE4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
 	if !st.currentIDSet {
 		ew := w.AppendResarray_Create()
-		return finishDefaultResponse(w, &ew, NFS4ERR_NOFILEHANDLE)
+		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_NOFILEHANDLE)
 	}
 	if st.currentID.Type() != InodeTypeDir {
 		ew := w.AppendResarray_Create()
-		return finishDefaultResponse(w, &ew, NFS4ERR_NOTDIR)
+		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_NOTDIR)
 	}
 	if s.stagingStore.ReadOnly() {
 		ew := w.AppendResarray_Create()
-		return finishDefaultResponse(w, &ew, NFS4ERR_ROFS)
+		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_ROFS)
 	}
 
 	name, status := toTernFSName(args.Objname().Data())
 	if status != NFS4_OK {
 		ew := w.AppendResarray_Create()
-		return finishDefaultResponse(w, &ew, status)
+		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 	objType := args.ObjtypeType()
 	switch objType {
 	case NF4DIR, NF4LNK:
 	case NF4REG:
 		ew := w.AppendResarray_Create()
-		return finishDefaultResponse(w, &ew, NFS4ERR_BADTYPE)
+		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_BADTYPE)
 	default:
 		// We don't support creating block/char/socket/fifo devices.
 		ew := w.AppendResarray_Create()
-		return finishDefaultResponse(w, &ew, NFS4ERR_NOTSUPP)
+		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_NOTSUPP)
 	}
 	if status := validateCreateAttrs(args.Createattrs()); status != NFS4_OK {
 		ew := w.AppendResarray_Create()
-		return finishDefaultResponse(w, &ew, status)
+		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 	unlock := s.lockMutationTargets(mutationTarget{
 		dirID: st.currentID,
@@ -453,22 +449,18 @@ func (s *Server) opCreate(args CREATE4args, st *compoundState, w *COMPOUND4resWr
 	if err != nil {
 		ew := w.AppendResarray_Create()
 		status := s.errToNFS(err)
-		ew.SetValue_Default(status)
-		w.Resume(ew.Finish())
-		return status
+		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 	if busy {
 		ew := w.AppendResarray_Create()
-		ew.SetValue_Default(NFS4ERR_FILE_OPEN)
-		w.Resume(ew.Finish())
-		return NFS4ERR_FILE_OPEN
+		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_FILE_OPEN)
 	}
 	if _, err := s.fs.Lookup(st.currentID, name); err == nil {
 		ew := w.AppendResarray_Create()
-		return finishDefaultResponse(w, &ew, NFS4ERR_EXIST)
+		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_EXIST)
 	} else if status := s.errToNFS(err); status != NFS4ERR_NOENT {
 		ew := w.AppendResarray_Create()
-		return finishDefaultResponse(w, &ew, status)
+		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 
 	var newID InodeID
@@ -480,11 +472,11 @@ func (s *Server) opCreate(args CREATE4args, st *compoundState, w *COMPOUND4resWr
 		targetData := args.Objtype().AsLinktext4().Data()
 		if len(targetData) == 0 {
 			ew := w.AppendResarray_Create()
-			return finishDefaultResponse(w, &ew, NFS4ERR_INVAL)
+			return finishDefaultResponse(w, ew.Finish(), NFS4ERR_INVAL)
 		}
 		if len(targetData) > maxTernBytesLength {
 			ew := w.AppendResarray_Create()
-			return finishDefaultResponse(w, &ew, NFS4ERR_NAMETOOLONG)
+			return finishDefaultResponse(w, ew.Finish(), NFS4ERR_NAMETOOLONG)
 		}
 		target := string(targetData)
 		newID, err = s.fs.Symlink(st.currentID, name, target)
@@ -493,7 +485,7 @@ func (s *Server) opCreate(args CREATE4args, st *compoundState, w *COMPOUND4resWr
 	if err != nil {
 		ew := w.AppendResarray_Create()
 		status := s.errToNFS(err)
-		return finishDefaultResponse(w, &ew, status)
+		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 
 	st.setCurrent(newID)
@@ -528,19 +520,19 @@ func (s *Server) opDelegreturn(st *compoundState, w *COMPOUND4resWriter) uint32 
 func (s *Server) opGetattr(args GETATTR4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
 	if !st.currentIDSet {
 		ew := w.AppendResarray_Getattr()
-		return finishDefaultResponse(w, &ew, NFS4ERR_NOFILEHANDLE)
+		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_NOFILEHANDLE)
 	}
 	ni, err := s.stat(st.currentID)
 	if err != nil {
 		ew := w.AppendResarray_Getattr()
 		status := s.errToNFS(err)
-		return finishDefaultResponse(w, &ew, status)
+		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 
 	reqMask := parseBitmap(args.AttrRequest())
 	if status := validateGetattrMask(reqMask); status != NFS4_OK {
 		ew := w.AppendResarray_Getattr()
-		return finishDefaultResponse(w, &ew, status)
+		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 
 	ew := w.AppendResarray_Getattr()
@@ -577,7 +569,7 @@ func (s *Server) opGetattr(args GETATTR4args, st *compoundState, w *COMPOUND4res
 func (s *Server) opGetfh(st *compoundState, w *COMPOUND4resWriter) uint32 {
 	if !st.currentIDSet {
 		ew := w.AppendResarray_Getfh()
-		return finishDefaultResponse(w, &ew, NFS4ERR_NOFILEHANDLE)
+		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_NOFILEHANDLE)
 	}
 	ew := w.AppendResarray_Getfh()
 	okW := ew.SetValue_Nfs4Ok()
@@ -593,22 +585,22 @@ func (s *Server) opGetfh(st *compoundState, w *COMPOUND4resWriter) uint32 {
 func (s *Server) opLink(st *compoundState, w *COMPOUND4resWriter) uint32 {
 	// TernFS doesn't support hard links.
 	ew := w.AppendResarray_Link()
-	return finishDefaultResponse(w, &ew, NFS4ERR_NOTSUPP)
+	return finishDefaultResponse(w, ew.Finish(), NFS4ERR_NOTSUPP)
 }
 
 func (s *Server) opLock(w *COMPOUND4resWriter) uint32 {
 	ew := w.AppendResarray_Lock()
-	return finishDefaultResponse(w, &ew, NFS4ERR_NOTSUPP)
+	return finishDefaultResponse(w, ew.Finish(), NFS4ERR_NOTSUPP)
 }
 
 func (s *Server) opLockt(w *COMPOUND4resWriter) uint32 {
 	ew := w.AppendResarray_Lockt()
-	return finishDefaultResponse(w, &ew, NFS4ERR_NOTSUPP)
+	return finishDefaultResponse(w, ew.Finish(), NFS4ERR_NOTSUPP)
 }
 
 func (s *Server) opLocku(w *COMPOUND4resWriter) uint32 {
 	ew := w.AppendResarray_Locku()
-	return finishDefaultResponse(w, &ew, NFS4ERR_NOTSUPP)
+	return finishDefaultResponse(w, ew.Finish(), NFS4ERR_NOTSUPP)
 }
 
 func (s *Server) opLookup(args LOOKUP4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
@@ -686,7 +678,7 @@ func (s *Server) opNverify(args NVERIFY4args, st *compoundState, w *COMPOUND4res
 func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
 	if !st.currentIDSet {
 		ew := w.AppendResarray_Open()
-		return finishDefaultResponse(w, &ew, NFS4ERR_NOFILEHANDLE)
+		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_NOFILEHANDLE)
 	}
 
 	claim := args.Claim()
@@ -1099,7 +1091,7 @@ func writeOpenResponse(
 ) uint32 {
 	ew := w.AppendResarray_Open()
 	if response.status != NFS4_OK {
-		return finishDefaultResponse(w, &ew, response.status)
+		return finishDefaultResponse(w, ew.Finish(), response.status)
 	}
 	state := response.state
 	st.setCurrent(state.fileID)
@@ -1132,13 +1124,13 @@ func writeOpenResponse(
 
 func writeOpenError(w *COMPOUND4resWriter, status uint32) uint32 {
 	ew := w.AppendResarray_Open()
-	return finishDefaultResponse(w, &ew, status)
+	return finishDefaultResponse(w, ew.Finish(), status)
 }
 
 func (s *Server) opOpenConfirm(args OPENCONFIRM4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
 	if !st.currentIDSet {
 		ew := w.AppendResarray_OpenConfirm()
-		return finishDefaultResponse(w, &ew, NFS4ERR_NOFILEHANDLE)
+		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_NOFILEHANDLE)
 	}
 
 	sid := extractStateID(args.OpenStateid())
@@ -1159,7 +1151,7 @@ func (s *Server) opOpenConfirm(args OPENCONFIRM4args, st *compoundState, w *COMP
 	}
 	if op == nil {
 		ew := w.AppendResarray_OpenConfirm()
-		return finishDefaultResponse(w, &ew, status)
+		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 	defer op.finishServerFaultIfNeeded()
 	if status := s.requireActiveOpen(state); status != NFS4_OK {
@@ -1183,7 +1175,7 @@ func writeOpenConfirmResponse(
 ) uint32 {
 	ew := w.AppendResarray_OpenConfirm()
 	if response.status != NFS4_OK {
-		return finishDefaultResponse(w, &ew, response.status)
+		return finishDefaultResponse(w, ew.Finish(), response.status)
 	}
 	ok := ew.SetValue_Nfs4Ok()
 	stid := ok.OpenStateid()
@@ -1197,7 +1189,7 @@ func (s *Server) opOpenDowngrade(st *compoundState, w *COMPOUND4resWriter) uint3
 	// Existing immutable files cannot be upgraded from read to write, and no
 	// supported client has required a downgrade.
 	ew := w.AppendResarray_OpenDowngrade()
-	return finishDefaultResponse(w, &ew, NFS4ERR_NOTSUPP)
+	return finishDefaultResponse(w, ew.Finish(), NFS4ERR_NOTSUPP)
 }
 
 func (s *Server) opOpenattr(w *COMPOUND4resWriter) uint32 {
@@ -1241,18 +1233,18 @@ func (s *Server) opPutrootfh(st *compoundState, w *COMPOUND4resWriter, isPub boo
 func (s *Server) opRead(args READ4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
 	if !st.currentIDSet {
 		ew := w.AppendResarray_Read()
-		return finishDefaultResponse(w, &ew, NFS4ERR_NOFILEHANDLE)
+		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_NOFILEHANDLE)
 	}
 	if status := requireRegularFile(st.currentID); status != NFS4_OK {
 		ew := w.AppendResarray_Read()
-		return finishDefaultResponse(w, &ew, status)
+		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 
 	if !isSpecialStateID(args.Stateid()) {
 		_, status := s.lookupDurableOpen(args.Stateid(), st.currentID)
 		if status != NFS4_OK {
 			ew := w.AppendResarray_Read()
-			return finishDefaultResponse(w, &ew, status)
+			return finishDefaultResponse(w, ew.Finish(), status)
 		}
 	}
 	sf := s.stagingStore.Get(st.currentID)
@@ -1280,7 +1272,7 @@ func (s *Server) opRead(args READ4args, st *compoundState, w *COMPOUND4resWriter
 	if err != nil {
 		ew := w.AppendResarray_Read()
 		status := s.errToNFS(err)
-		return finishDefaultResponse(w, &ew, status)
+		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 	ew := w.AppendResarray_Read()
 	okW := ew.SetValue_Nfs4Ok()
@@ -1299,17 +1291,17 @@ func (s *Server) opRead(args READ4args, st *compoundState, w *COMPOUND4resWriter
 func (s *Server) opReaddir(args READDIR4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
 	if !st.currentIDSet {
 		ew := w.AppendResarray_Readdir()
-		return finishDefaultResponse(w, &ew, NFS4ERR_NOFILEHANDLE)
+		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_NOFILEHANDLE)
 	}
 	if status := requireDirectory(st.currentID); status != NFS4_OK {
 		ew := w.AppendResarray_Readdir()
-		return finishDefaultResponse(w, &ew, status)
+		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 
 	cookie := args.Cookie()
 	if cookie == 1 || cookie == 2 {
 		ew := w.AppendResarray_Readdir()
-		return finishDefaultResponse(w, &ew, NFS4ERR_BAD_COOKIE)
+		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_BAD_COOKIE)
 	}
 	maxCount := args.Maxcount()
 	if maxCount > 1<<20 {
@@ -1327,13 +1319,13 @@ func (s *Server) opReaddir(args READDIR4args, st *compoundState, w *COMPOUND4res
 			if err != nil {
 				ew := w.AppendResarray_Readdir()
 				status := s.errToNFS(err)
-				return finishDefaultResponse(w, &ew, status)
+				return finishDefaultResponse(w, ew.Finish(), status)
 			}
 			var expectedVerf [8]byte
 			binary.BigEndian.PutUint64(expectedVerf[:], uint64(ni.Mtime.UnixNano()))
 			if clientVerf != expectedVerf {
 				ew := w.AppendResarray_Readdir()
-				return finishDefaultResponse(w, &ew, NFS4ERR_NOT_SAME)
+				return finishDefaultResponse(w, ew.Finish(), NFS4ERR_NOT_SAME)
 			}
 		}
 	}
@@ -1341,7 +1333,7 @@ func (s *Server) opReaddir(args READDIR4args, st *compoundState, w *COMPOUND4res
 	reqMask := parseBitmap(args.AttrRequest())
 	if status := validateGetattrMask(reqMask); status != NFS4_OK {
 		ew := w.AppendResarray_Readdir()
-		return finishDefaultResponse(w, &ew, status)
+		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 	dirCount := args.Dircount()
 	if dirCount > 1<<20 {
@@ -1362,7 +1354,7 @@ func (s *Server) opReaddir(args READDIR4args, st *compoundState, w *COMPOUND4res
 		if err != nil {
 			ew := w.AppendResarray_Readdir()
 			status := s.errToNFS(err)
-			return finishDefaultResponse(w, &ew, status)
+			return finishDefaultResponse(w, ew.Finish(), status)
 		}
 		allEntries = append(allEntries, entries...)
 		if nextHash == 0 {
@@ -1407,7 +1399,7 @@ func (s *Server) opReaddir(args READDIR4args, st *compoundState, w *COMPOUND4res
 	dirBudget := int(dirCount)
 	if maxBudget < 0 {
 		ew := w.AppendResarray_Readdir()
-		return finishDefaultResponse(w, &ew, NFS4ERR_TOOSMALL)
+		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_TOOSMALL)
 	}
 	n := 0
 	predictedEntryBytes := 0
@@ -1418,7 +1410,7 @@ func (s *Server) opReaddir(args READDIR4args, st *compoundState, w *COMPOUND4res
 		if predictedEntryBytes+eSize > maxBudget || predictedDirBytes+dSize > dirBudget {
 			if i == 0 {
 				ew := w.AppendResarray_Readdir()
-				return finishDefaultResponse(w, &ew, NFS4ERR_TOOSMALL)
+				return finishDefaultResponse(w, ew.Finish(), NFS4ERR_TOOSMALL)
 			}
 			eof = false
 			break
@@ -1452,17 +1444,17 @@ func (s *Server) opReaddir(args READDIR4args, st *compoundState, w *COMPOUND4res
 func (s *Server) opReadlink(st *compoundState, w *COMPOUND4resWriter) uint32 {
 	if !st.currentIDSet {
 		ew := w.AppendResarray_Readlink()
-		return finishDefaultResponse(w, &ew, NFS4ERR_NOFILEHANDLE)
+		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_NOFILEHANDLE)
 	}
 	if st.currentID.Type() != InodeTypeSymlink {
 		ew := w.AppendResarray_Readlink()
-		return finishDefaultResponse(w, &ew, NFS4ERR_INVAL)
+		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_INVAL)
 	}
 	target, err := s.fs.Readlink(st.currentID)
 	if err != nil {
 		ew := w.AppendResarray_Readlink()
 		status := s.errToNFS(err)
-		return finishDefaultResponse(w, &ew, status)
+		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 	ew := w.AppendResarray_Readlink()
 	okW := ew.SetValue_Nfs4Ok()
@@ -1478,21 +1470,21 @@ func (s *Server) opReadlink(st *compoundState, w *COMPOUND4resWriter) uint32 {
 func (s *Server) opRemove(args REMOVE4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
 	if !st.currentIDSet {
 		ew := w.AppendResarray_Remove()
-		return finishDefaultResponse(w, &ew, NFS4ERR_NOFILEHANDLE)
+		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_NOFILEHANDLE)
 	}
 	if status := requireDirectory(st.currentID); status != NFS4_OK {
 		ew := w.AppendResarray_Remove()
-		return finishDefaultResponse(w, &ew, status)
+		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 	if s.stagingStore.ReadOnly() {
 		ew := w.AppendResarray_Remove()
-		return finishDefaultResponse(w, &ew, NFS4ERR_ROFS)
+		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_ROFS)
 	}
 
 	name, status := toTernFSName(args.Target().Data())
 	if status != NFS4_OK {
 		ew := w.AppendResarray_Remove()
-		return finishDefaultResponse(w, &ew, status)
+		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 	unlock := s.lockMutationTargets(mutationTarget{
 		dirID: st.currentID,
@@ -1503,21 +1495,17 @@ func (s *Server) opRemove(args REMOVE4args, st *compoundState, w *COMPOUND4resWr
 	if err != nil {
 		ew := w.AppendResarray_Remove()
 		status := s.errToNFS(err)
-		ew.SetValue_Default(status)
-		w.Resume(ew.Finish())
-		return status
+		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 	if busy {
 		ew := w.AppendResarray_Remove()
-		ew.SetValue_Default(NFS4ERR_FILE_OPEN)
-		w.Resume(ew.Finish())
-		return NFS4ERR_FILE_OPEN
+		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_FILE_OPEN)
 	}
 	err = s.fs.Remove(st.currentID, name)
 	if err != nil {
 		ew := w.AppendResarray_Remove()
 		status := s.errToNFS(err)
-		return finishDefaultResponse(w, &ew, status)
+		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 
 	ew := w.AppendResarray_Remove()
@@ -1533,30 +1521,30 @@ func (s *Server) opRename(args RENAME4args, st *compoundState, w *COMPOUND4resWr
 	// RENAME uses savedFH as source directory and currentFH as target directory.
 	if !st.currentIDSet || !st.savedIDSet {
 		ew := w.AppendResarray_Rename()
-		return finishDefaultResponse(w, &ew, NFS4ERR_NOFILEHANDLE)
+		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_NOFILEHANDLE)
 	}
 	if status := requireDirectory(st.savedID); status != NFS4_OK {
 		ew := w.AppendResarray_Rename()
-		return finishDefaultResponse(w, &ew, status)
+		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 	if status := requireDirectory(st.currentID); status != NFS4_OK {
 		ew := w.AppendResarray_Rename()
-		return finishDefaultResponse(w, &ew, status)
+		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 	if s.stagingStore.ReadOnly() {
 		ew := w.AppendResarray_Rename()
-		return finishDefaultResponse(w, &ew, NFS4ERR_ROFS)
+		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_ROFS)
 	}
 
 	oldName, status := toTernFSName(args.Oldname().Data())
 	if status != NFS4_OK {
 		ew := w.AppendResarray_Rename()
-		return finishDefaultResponse(w, &ew, status)
+		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 	newName, status := toTernFSName(args.Newname().Data())
 	if status != NFS4_OK {
 		ew := w.AppendResarray_Rename()
-		return finishDefaultResponse(w, &ew, status)
+		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 	unlock := s.lockMutationTargets(
 		mutationTarget{dirID: st.savedID, name: oldName},
@@ -1578,30 +1566,24 @@ func (s *Server) opRename(args RENAME4args, st *compoundState, w *COMPOUND4resWr
 	if err != nil {
 		ew := w.AppendResarray_Rename()
 		status := s.errToNFS(err)
-		ew.SetValue_Default(status)
-		w.Resume(ew.Finish())
-		return status
+		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 	targetBusy, err := s.stagingTargetBusy(st.currentID, newName)
 	if err != nil {
 		ew := w.AppendResarray_Rename()
 		status := s.errToNFS(err)
-		ew.SetValue_Default(status)
-		w.Resume(ew.Finish())
-		return status
+		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 	if sourceBusy || targetBusy {
 		ew := w.AppendResarray_Rename()
-		ew.SetValue_Default(NFS4ERR_FILE_OPEN)
-		w.Resume(ew.Finish())
-		return NFS4ERR_FILE_OPEN
+		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_FILE_OPEN)
 	}
 
 	err = s.fs.Rename(st.savedID, oldName, st.currentID, newName)
 	if err != nil {
 		ew := w.AppendResarray_Rename()
 		status := s.errToNFS(err)
-		return finishDefaultResponse(w, &ew, status)
+		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 
 	ew := w.AppendResarray_Rename()
@@ -1646,25 +1628,25 @@ func (s *Server) opRestorefh(st *compoundState, w *COMPOUND4resWriter) uint32 {
 func (s *Server) opSecinfo(args SECINFO4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
 	if !st.currentIDSet {
 		ew := w.AppendResarray_Secinfo()
-		return finishDefaultResponse(w, &ew, NFS4ERR_NOFILEHANDLE)
+		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_NOFILEHANDLE)
 	}
 	if status := requireDirectory(st.currentID); status != NFS4_OK {
 		ew := w.AppendResarray_Secinfo()
-		return finishDefaultResponse(w, &ew, status)
+		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 	name, status := toTernFSName(args.Name().Data())
 	if status != NFS4_OK {
 		ew := w.AppendResarray_Secinfo()
-		return finishDefaultResponse(w, &ew, status)
+		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 	if name == nfsDirName && st.currentID == s.fs.RootID() {
 		ew := w.AppendResarray_Secinfo()
-		return finishDefaultResponse(w, &ew, NFS4ERR_NOENT)
+		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_NOENT)
 	}
 	if _, err := s.fs.Lookup(st.currentID, name); err != nil {
 		ew := w.AppendResarray_Secinfo()
 		status := s.errToNFS(err)
-		return finishDefaultResponse(w, &ew, status)
+		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 	// Return AUTH_SYS (flavor 1) and AUTH_NONE (flavor 0).
 	ew := w.AppendResarray_Secinfo()
@@ -1886,7 +1868,7 @@ func (s *Server) opSetclientid(
 			return NFS4ERR_CLID_INUSE
 		}
 		status := clientStoreErrToNFS(err)
-		return finishDefaultResponse(w, &ew, status)
+		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 
 	ew := w.AppendResarray_Setclientid()
@@ -1941,11 +1923,11 @@ func (s *Server) opVerify(args VERIFY4args, st *compoundState, w *COMPOUND4resWr
 func (s *Server) opWrite(args WRITE4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
 	if !st.currentIDSet {
 		ew := w.AppendResarray_Write()
-		return finishDefaultResponse(w, &ew, NFS4ERR_NOFILEHANDLE)
+		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_NOFILEHANDLE)
 	}
 	if status := requireRegularFile(st.currentID); status != NFS4_OK {
 		ew := w.AppendResarray_Write()
-		return finishDefaultResponse(w, &ew, status)
+		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 
 	var sf StagingFile
@@ -1954,11 +1936,11 @@ func (s *Server) opWrite(args WRITE4args, st *compoundState, w *COMPOUND4resWrit
 			args.Stateid(), st.currentID)
 		if status != NFS4_OK {
 			ew := w.AppendResarray_Write()
-			return finishDefaultResponse(w, &ew, status)
+			return finishDefaultResponse(w, ew.Finish(), status)
 		}
 		if !state.write {
 			ew := w.AppendResarray_Write()
-			return finishDefaultResponse(w, &ew, NFS4ERR_OPENMODE)
+			return finishDefaultResponse(w, ew.Finish(), NFS4ERR_OPENMODE)
 		}
 		sf = s.stagingOwnedBy(st.currentID, state)
 	} else {
@@ -1969,7 +1951,7 @@ func (s *Server) opWrite(args WRITE4args, st *compoundState, w *COMPOUND4resWrit
 	if sf == nil {
 		// No staging buffer — not opened for write.
 		ew := w.AppendResarray_Write()
-		return finishDefaultResponse(w, &ew, NFS4ERR_OPENMODE)
+		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_OPENMODE)
 	}
 
 	offset := args.Offset()
@@ -1977,14 +1959,12 @@ func (s *Server) opWrite(args WRITE4args, st *compoundState, w *COMPOUND4resWrit
 	stable := args.Stable()
 	if stable > fileSync4 {
 		ew := w.AppendResarray_Write()
-		ew.SetValue_Default(NFS4ERR_INVAL)
-		w.Resume(ew.Finish())
-		return NFS4ERR_INVAL
+		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_INVAL)
 	}
 
 	if err := sf.Write(offset, data); err != nil {
 		ew := w.AppendResarray_Write()
-		return finishDefaultResponse(w, &ew, NFS4ERR_IO)
+		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_IO)
 	}
 	if sf.Dirty() {
 		s.startHydration(sf)
@@ -1993,9 +1973,7 @@ func (s *Server) opWrite(args WRITE4args, st *compoundState, w *COMPOUND4resWrit
 	if stable != unstable4 {
 		if err := sf.Sync(); err != nil {
 			ew := w.AppendResarray_Write()
-			ew.SetValue_Default(NFS4ERR_IO)
-			w.Resume(ew.Finish())
-			return NFS4ERR_IO
+			return finishDefaultResponse(w, ew.Finish(), NFS4ERR_IO)
 		}
 		committed = stable
 	}
