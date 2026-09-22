@@ -1634,9 +1634,19 @@ func eraseBlockSendArgs(block *msgs.RemoveSpanInitiateBlockInfo, extra any) *sen
 	}
 }
 
-// An asynchronous version of [EraseBlock].
+// StartEraseBlock is an asynchronous version of [EraseBlock]. It applies the
+// same retry policy and sends exactly one final result to completion.
 func (c *Client) StartEraseBlock(log *log.Logger, block *msgs.RemoveSpanInitiateBlockInfo, extra any, completion chan *BlockCompletion) error {
-	return c.eraseBlockProcessors.send(log, eraseBlockSendArgs(block, extra), completion)
+	args := eraseBlockSendArgs(block, extra)
+	go func() {
+		resp, err := c.singleBlockReq(log, nil, &c.eraseBlockProcessors, args)
+		completion <- &BlockCompletion{
+			Resp:  resp,
+			Extra: extra,
+			Error: err,
+		}
+	}()
+	return nil
 }
 
 func (c *Client) EraseBlock(log *log.Logger, block *msgs.RemoveSpanInitiateBlockInfo) (proof [8]byte, err error) {
