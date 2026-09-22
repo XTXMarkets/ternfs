@@ -12,7 +12,9 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"sort"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -44,11 +46,79 @@ type Server struct {
 	log           *slog.Logger
 	startedAt     time.Time
 
+	foregroundReads atomic.Int64
+	hydrationSlots  chan struct{}
+	mutationLocks   keyedLocker[mutationTarget]
+
 	clientGCMu      sync.Mutex
 	clientGCPending map[InodeID]struct{}
 	clientGCRecheck map[InodeID]struct{}
 	clientGCRunning bool
 	clientGCDone    chan struct{}
+}
+
+type keyedLockEntry struct {
+	mu   sync.Mutex
+	refs int
+}
+
+type keyedLocker[K comparable] struct {
+	mu      sync.Mutex
+	entries map[K]*keyedLockEntry
+}
+
+func (l *keyedLocker[K]) lock(key K) func() {
+	l.mu.Lock()
+	if l.entries == nil {
+		l.entries = make(map[K]*keyedLockEntry)
+	}
+	entry := l.entries[key]
+	if entry == nil {
+		entry = &keyedLockEntry{}
+		l.entries[key] = entry
+	}
+	entry.refs++
+	l.mu.Unlock()
+
+	entry.mu.Lock()
+	return func() {
+		entry.mu.Unlock()
+		l.mu.Lock()
+		entry.refs--
+		if entry.refs == 0 {
+			delete(l.entries, key)
+		}
+		l.mu.Unlock()
+	}
+}
+
+type mutationTarget struct {
+	dirID InodeID
+	name  string
+}
+
+func (s *Server) lockMutationTargets(targets ...mutationTarget) func() {
+	sort.Slice(targets, func(i, j int) bool {
+		if targets[i].dirID != targets[j].dirID {
+			return targets[i].dirID < targets[j].dirID
+		}
+		return targets[i].name < targets[j].name
+	})
+	unique := targets[:0]
+	for _, target := range targets {
+		if len(unique) == 0 || unique[len(unique)-1] != target {
+			unique = append(unique, target)
+		}
+	}
+	unlocks := make([]func(), 0, len(unique))
+	for _, target := range unique {
+		unlocks = append(unlocks, s.mutationLocks.lock(target))
+	}
+	return func() {
+		for i := len(unlocks) - 1; i >= 0; i-- {
+			unlocks[i]()
+		}
+	}
 }
 
 const maxPendingClientGC = 256
@@ -72,6 +142,7 @@ func NewServer(fs TernVFS, stagingStore StagingStore, logger *slog.Logger) (*Ser
 		idleTimeout:     5 * time.Minute,
 		log:             logger,
 		startedAt:       clients.now(),
+		hydrationSlots:  make(chan struct{}, maxConcurrentHydrations),
 		clientGCPending: make(map[InodeID]struct{}),
 		clientGCRecheck: make(map[InodeID]struct{}),
 	}
@@ -172,13 +243,15 @@ func (s *Server) removeExpiredStaging() {
 	if s.clients.now().Before(s.startedAt.Add(nfsLeaseTime)) {
 		return
 	}
-	byClient := make(map[uint64][]InodeID)
-	for fileID := range s.stagingStore.StagedSizes() {
-		meta, found := s.stagingStore.GetMeta(fileID)
-		if !found || meta.ClientID == 0 {
+	byClient := make(map[uint64]map[InodeID]StagingMeta)
+	for fileID, meta := range s.stagingStore.Entries() {
+		if meta.ClientID == 0 {
 			continue
 		}
-		byClient[meta.ClientID] = append(byClient[meta.ClientID], fileID)
+		if byClient[meta.ClientID] == nil {
+			byClient[meta.ClientID] = make(map[InodeID]StagingMeta)
+		}
+		byClient[meta.ClientID][fileID] = meta
 	}
 	for clientID, fileIDs := range byClient {
 		expired, err := s.clients.IsLeaseExpired(clientID)
@@ -188,8 +261,8 @@ func (s *Server) removeExpiredStaging() {
 			continue
 		}
 		if expired {
-			for _, fileID := range fileIDs {
-				s.stagingStore.Remove(fileID)
+			for fileID, meta := range fileIDs {
+				s.retireStaging(fileID, meta)
 			}
 		}
 	}

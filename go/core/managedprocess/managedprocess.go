@@ -653,6 +653,12 @@ type NfsOpts struct {
 }
 
 func (procs *ManagedProcesses) StartNfs(ll *log.Logger, opts *NfsOpts) string {
+	addr, _ := procs.StartNfsWithStop(ll, opts)
+	return addr
+}
+
+// StartNfsWithStop allows tests to stop the server before deleting its state.
+func (procs *ManagedProcesses) StartNfsWithStop(ll *log.Logger, opts *NfsOpts) (string, func()) {
 	createDataDir(opts.Path)
 	stagingDir := path.Join(opts.Path, "staging")
 	createDataDir(stagingDir)
@@ -664,7 +670,7 @@ func (procs *ManagedProcesses) StartNfs(ll *log.Logger, opts *NfsOpts) string {
 	if opts.LogLevel == log.DEBUG || opts.LogLevel == log.TRACE {
 		args = append(args, "-v")
 	}
-	procs.Start(ll, &ManagedProcessArgs{
+	id := procs.Start(ll, &ManagedProcessArgs{
 		Name:            "nfsd",
 		Exe:             opts.Exe,
 		Args:            args,
@@ -672,7 +678,7 @@ func (procs *ManagedProcesses) StartNfs(ll *log.Logger, opts *NfsOpts) string {
 		StderrFile:      path.Join(opts.Path, "stderr"),
 		TerminateOnExit: true,
 	})
-	return opts.Addr
+	return opts.Addr, func() { procs.Kill(id, syscall.SIGTERM) }
 }
 
 type ShardOpts struct {
