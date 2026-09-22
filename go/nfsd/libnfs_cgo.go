@@ -65,7 +65,7 @@ func (f *libnfsFile) Close() error {
 }
 
 func (f *libnfsFile) WriteAt(data []byte, offset uint64) error {
-	n := C.nfs_pwrite(f.client.nfs, f.fh, C.uint64_t(offset), C.uint64_t(len(data)), unsafe.Pointer(&data[0]))
+	n := C.nfs_pwrite(f.client.nfs, f.fh, unsafe.Pointer(&data[0]), C.size_t(len(data)), C.uint64_t(offset))
 	if int(n) != len(data) {
 		return fmt.Errorf("nfs_pwrite: count=%d: %s", n, C.GoString(C.nfs_get_error(f.client.nfs)))
 	}
@@ -74,7 +74,7 @@ func (f *libnfsFile) WriteAt(data []byte, offset uint64) error {
 
 func (f *libnfsFile) Read() ([]byte, error) {
 	buf := make([]byte, 4096)
-	n := C.nfs_pread(f.client.nfs, f.fh, 0, C.uint64_t(len(buf)), unsafe.Pointer(&buf[0]))
+	n := C.nfs_pread(f.client.nfs, f.fh, unsafe.Pointer(&buf[0]), C.size_t(len(buf)), 0)
 	if n < 0 {
 		return nil, fmt.Errorf("nfs_pread: %s", C.GoString(C.nfs_get_error(f.client.nfs)))
 	}

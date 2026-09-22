@@ -85,3 +85,22 @@ func (s *Server) recoveredStagingTarget(
 	}
 	return foundID, foundMeta, foundID != 0, nil
 }
+
+func (s *Server) exclusiveStagingTarget(
+	dirID InodeID,
+	name string,
+	publishedID InodeID,
+	owner openOwnerKey,
+	verifier [8]byte,
+) (InodeID, StagingMeta, bool) {
+	for id, meta := range s.stagingStore.FindTargets(dirID, name) {
+		// Another publication at this name invalidates the old create verifier.
+		if meta.BaseID == publishedID &&
+			meta.Exclusive && meta.Verifier == verifier &&
+			meta.ClientID == owner.clientID &&
+			meta.OwnerKnown && meta.OpenOwner == owner.owner {
+			return id, meta, true
+		}
+	}
+	return 0, StagingMeta{}, false
+}

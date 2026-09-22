@@ -103,8 +103,14 @@ invalidate an open across the fleet, but it does not make the staged data or
 the process-local open state movable to another nfsd. Multiple writable OPEN
 sessions may target the same name. The process blocks namespace operations
 which would move or remove a target while any local staging session remains
-open. This namespace protection is not fleet-wide; GUARDED create's
-lookup-and-publish sequence is serialized only within one nfsd.
+open. This namespace protection is not fleet-wide; the lookup-and-publish
+sequence for GUARDED and EXCLUSIVE4 creates is serialized only within one nfsd.
+
+EXCLUSIVE4 retries by the same client and open-owner reuse their staged
+writer when the verifier matches and the pathname still names its original
+empty inode. Other exclusive creates at that name return `NFS4ERR_EXIST`.
+The verifier is retained in staging until CLOSE; it does not reserve the
+name across hosts.
 
 `fsync` and `COMMIT` preserve unpublished data on the staging disk; they do
 not publish to TernFS or replicate the staging data. Keep that disk across
@@ -117,11 +123,10 @@ republishing its contents. This preserves data published by a concurrent writer.
 After a data publication commits, failure to restore the writer's timestamps is
 logged and CLOSE succeeds; the data is already visible and cannot be rolled back.
 
-The current sidecar format is NFS4. Deployed write-once sidecars remain readable;
-development-only NFS2/NFS3 formats are unsupported. Missing or invalid sidecars
-cause their data to be moved under `quarantine/` for manual recovery, never
-registered as an open. Drain active writes before downgrading to a binary that
-cannot read the current format.
+The current sidecar format is NFS5. Missing or invalid sidecars cause their data
+to be moved under `quarantine/` for manual recovery, never registered as an
+open. Drain active writes before downgrading to a binary that cannot read the
+current format.
 
 The implementation is in [`staging.go`](staging.go) and [`ops.go`](ops.go).
 

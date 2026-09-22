@@ -6065,7 +6065,7 @@ func collectReaddirNames(t *testing.T, conn net.Conn, xid *uint32, dirFH []byte)
 // [x] TestSetattrTime — SET_TO_CLIENT_TIME4 and SET_TO_SERVER_TIME4
 // [x] TestSetattrModeRejected — mode/owner → NFS4ERR_ATTRNOTSUPP
 // [x] TestSetattrSize — truncate staging file via SETATTR
-// [x] TestOpenExclusive4Rejected — EXCLUSIVE4 → NFS4ERR_NOTSUPP
+// [x] TestOpenExclusive4 — exclusive create and verifier replay
 // [x] TestOpenClaimPrevious — CLAIM_PREVIOUS → NFS4ERR_NO_GRACE
 // [x] TestOpenRflagsRequireConfirm — OPEN4_RESULT_CONFIRM present in rflags
 // [x] TestCloseReplay — CLOSE twice returns OK both times
@@ -6692,45 +6692,51 @@ func TestSetattrSizeRequiresWriteOpen(t *testing.T) {
 	}
 }
 
-func TestOpenExclusive4Rejected(t *testing.T) {
-	dir := t.TempDir()
-	addr, cleanup := startTestServer(t, dir)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-
-	xid := uint32(1)
-	clientid := setupClient(t, conn, &xid)
-
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+func openExclusiveFile(
+	t *testing.T, conn net.Conn, xid *uint32, clientid uint64,
+	owner string, seq uint32, filename string, verifier [8]byte,
+) (status uint32, stateid [16]byte, fh []byte, rflags uint32) {
+	t.Helper()
+	res := sendCompound(t, conn, *xid, func(w *COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		ow := w.AppendArgarray_Open()
-		ow.SetSeqid(1)
+		ow.SetSeqid(seq)
 		ow.SetShareAccess(OPEN4_SHARE_ACCESS_BOTH)
 		ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
 		ownerW := ow.StartOwner()
 		ownerW = ownerW.SetClientid(clientid)
-		ownerW = ownerW.SetOwner([]byte("test-owner"))
+		ownerW = ownerW.SetOwner([]byte(owner))
 		buf := ownerW.Finish()
 		ow.Resume(buf)
 		chw := ow.SetOpenhow_Create()
 		verf := chw.SetValue_Exclusive4()
-		for i := 0; i < 8; i++ {
-			verf.SetData(i, byte(i))
+		for i := range verifier {
+			verf.SetData(i, verifier[i])
 		}
 		buf = chw.Finish()
 		ow.Resume(buf)
 		cw := ow.SetClaim_Null()
-		buf = cw.SetData([]byte("excl.txt")).Finish()
+		buf = cw.SetData([]byte(filename)).Finish()
 		ow.Resume(buf)
 		buf = ow.Finish()
 		w.Resume(buf)
+		w.AppendArgarray_Getfh()
 	})
-	xid++
-
-	if res.Status() != NFS4ERR_NOTSUPP {
-		t.Fatalf("expected NFS4ERR_NOTSUPP, got %s", Nfsstat4Name(res.Status()))
+	*xid++
+	if res.Status() != NFS4_OK {
+		return res.Status(), stateid, nil, 0
 	}
+	iter := expectOK(t, res)
+	nextOp(t, &iter) // PUTROOTFH
+	openOK := nextOp(t, &iter).Value().AsOPEN4resEntry().Value().AsOPEN4resok()
+	sid := openOK.Stateid()
+	binary.BigEndian.PutUint32(stateid[:4], sid.Seqid())
+	for i := range 12 {
+		stateid[4+i] = sid.Other(i)
+	}
+	fh = append([]byte(nil), nextOp(t, &iter).Value().AsGETFH4resEntry().
+		Value().AsGETFH4resok().Object().Data()...)
+	return NFS4_OK, stateid, fh, openOK.Rflags()
 }
 
 func TestOpenClaimPrevious(t *testing.T) {
