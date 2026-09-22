@@ -460,13 +460,14 @@ the nfsd host. `-staging` reads those sidecars and joins them to open markers
 by stateid. This adds the target directory, file name and staged size to the
 report. It also reports the sidecar format version, construction cookie,
 recovery key, owning client and open owner, access mode, base inode and size,
-checkpointed logical size and dirty ranges, and writer attributes. An entry is
+checkpointed logical size and dirty ranges, writer attributes and the
+EXCLUSIVE4 verifier when present. An entry is
 `RETIRED` when its lease expired and the acknowledged data is being held for
 the client to reclaim. The staging summary includes logical and allocated
 bytes. Uncheckpointed writes and in-memory hydration progress are not visible.
 
-The reported sidecar version is the on-disk metadata layout, printed as `v4` or
-`legacy`. It is not an NFS protocol version.
+The reported sidecar version is the on-disk metadata layout, printed as `v5`.
+It is not an NFS protocol version.
 
 The inspector reads the staging directory as `.staging` and `.meta` pairs named
 with the file inode as sixteen hex digits, which is how recovery looks them up.

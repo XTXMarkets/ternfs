@@ -286,7 +286,7 @@ func TestInspectReportsClientState(t *testing.T) {
 		report.StagingSummary.Complete != 2 {
 		t.Fatalf("staging summary = %+v", report.StagingSummary)
 	}
-	if open.Staging.SidecarVersion != "v4" ||
+	if open.Staging.SidecarVersion != "v5" ||
 		open.Staging.BaseID != inspectInode(MakeInodeID(InodeTypeFile, 123)) ||
 		open.Staging.BaseSize != 8192 || open.Staging.CheckpointSize != 4096 ||
 		len(open.Staging.Dirty) != 1 || !open.Staging.MetadataChanged ||
@@ -858,7 +858,8 @@ func TestInspectReportsStagingIntegrity(t *testing.T) {
 	}
 	completeMeta := filepath.Join(dir, "0000000000000004.meta")
 	if err := saveStagingMeta(completeMeta, StagingMeta{
-		DirID: f.fs.RootID(), FileName: "retired",
+		DirID: f.fs.RootID(), FileName: "exclusive",
+		Exclusive: true, Verifier: [8]byte{1, 2, 3},
 		ReadOnly: true, Retired: true, Size: 8,
 		RecoveryKey: [32]byte{0xaa, 0xbb},
 	}); err != nil {
@@ -932,7 +933,8 @@ func TestInspectReportsStagingIntegrity(t *testing.T) {
 		!strings.Contains(got.Problems[0], "cannot read metadata sidecar") {
 		t.Fatalf("malformed entry = %+v", got)
 	}
-	if got := byID[4]; got == nil || got.SidecarVersion != "v4" ||
+	if got := byID[4]; got == nil || got.SidecarVersion != "v5" ||
+		!got.Exclusive || got.Verifier != "0102030000000000" ||
 		!got.ReadOnly || !got.Retired ||
 		!strings.HasPrefix(got.RecoveryKey, "aabb") ||
 		len(got.Problems) != 0 {
@@ -945,7 +947,8 @@ func TestInspectReportsStagingIntegrity(t *testing.T) {
 	var text bytes.Buffer
 	report.WriteText(&text)
 	for _, want := range []string{
-		"sidecar v4",
+		"sidecar v5",
+		"EXCLUSIVE4 verifier 0102030000000000",
 		"RETIRED (lease expired, held for reclaim)",
 		"quarantined checkpoints",
 		"attrs (no change counter recorded)",
@@ -954,7 +957,7 @@ func TestInspectReportsStagingIntegrity(t *testing.T) {
 			t.Errorf("text report lacks %q:\n%s", want, text.String())
 		}
 	}
-	if strings.Contains(text.String(), "NFS4") {
+	if strings.Contains(text.String(), "sidecar NFS") {
 		t.Errorf("sidecar version still rendered as an NFS version:\n%s", text.String())
 	}
 }

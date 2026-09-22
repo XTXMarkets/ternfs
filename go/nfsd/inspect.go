@@ -230,8 +230,6 @@ type inspectStagingEntry struct {
 	AllocatedBytes int64        `json:"allocated_bytes"`
 	DataMtime      *time.Time   `json:"data_mtime,omitempty"`
 	CheckpointTime *time.Time   `json:"checkpoint_time,omitempty"`
-	// SidecarVersion is the on-disk metadata format, "v4" or "legacy". It is
-	// not an NFS protocol version.
 	SidecarVersion string       `json:"sidecar_version,omitempty"`
 	DirID          inspectInode `json:"dir_id"`
 	FileName       string       `json:"file_name,omitempty"`
@@ -248,7 +246,11 @@ type inspectStagingEntry struct {
 	ReadOnly     bool   `json:"read_only"`
 	// Retired marks data kept after the owning lease expired, so that the
 	// client can reclaim it after a reboot.
-	Retired         bool               `json:"retired"`
+	Retired bool `json:"retired"`
+	// Exclusive marks an EXCLUSIVE4 create; Verifier is the client's create
+	// verifier, which a retry must match to reuse this writer.
+	Exclusive       bool               `json:"exclusive,omitempty"`
+	Verifier        string             `json:"verifier,omitempty"`
 	BaseID          inspectInode       `json:"base_id"`
 	BaseSize        uint64             `json:"base_size"`
 	CheckpointSize  uint64             `json:"checkpoint_size"`
@@ -1083,6 +1085,10 @@ func (entry *inspectStagingEntry) setMeta(meta StagingMeta) {
 	entry.OwnerKnown = meta.OwnerKnown
 	entry.ReadOnly = meta.ReadOnly
 	entry.Retired = meta.Retired
+	entry.Exclusive = meta.Exclusive
+	if meta.Exclusive {
+		entry.Verifier = hex.EncodeToString(meta.Verifier[:])
+	}
 	entry.BaseID = inspectInode(meta.BaseID)
 	entry.BaseSize = meta.BaseSize
 	entry.CheckpointSize = meta.Size
@@ -1102,9 +1108,6 @@ func (entry *inspectStagingEntry) setMeta(meta StagingMeta) {
 // inspectSidecarVersion names the on-disk metadata format. This is the
 // staging sidecar layout version, not an NFS protocol version.
 func inspectSidecarVersion(version uint8) string {
-	if version == 0 {
-		return "legacy"
-	}
 	return fmt.Sprintf("v%d", version)
 }
 
@@ -1397,6 +1400,9 @@ func writeInspectStagingEntry(
 			owner = fmt.Sprintf("%q", entry.OpenOwner)
 		}
 		fmt.Fprintf(w, "%sowner %s access %s", indent, owner, access)
+		if entry.Exclusive {
+			fmt.Fprintf(w, " EXCLUSIVE4 verifier %s", entry.Verifier)
+		}
 		if entry.Retired {
 			fmt.Fprint(w, " RETIRED (lease expired, held for reclaim)")
 		}
