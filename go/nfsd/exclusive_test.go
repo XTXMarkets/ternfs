@@ -206,7 +206,7 @@ func TestExclusiveStagingCheckpoint(t *testing.T) {
 	}
 	defer closeLocalStagingFiles(t, loaded)
 	got, ok := loaded.GetMeta(id)
-	if !ok || got.version != 5 || !got.Exclusive || got.Verifier != meta.Verifier ||
+	if !ok || got.version != 6 || !got.Exclusive || got.Verifier != meta.Verifier ||
 		got.BaseID != meta.BaseID || got.ClientID != 2 || got.NFSStateID != (StateID{2}) ||
 		!got.OwnerKnown || got.OpenOwner != "" || !got.Attrs.Mtime.Equal(stamp) ||
 		got.Size != 10 || len(got.Dirty) != 1 || got.Dirty[0] != (byteRange{2, 9}) {
@@ -221,7 +221,7 @@ func TestExclusiveSidecarRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	plain, err := loadStagingMeta(file)
-	if err != nil || plain.version != 5 || plain.Exclusive ||
+	if err != nil || plain.version != 6 || plain.Exclusive ||
 		plain.Verifier != ([8]byte{}) {
 		t.Fatalf("ordinary sidecar: %+v, %v", plain, err)
 	}

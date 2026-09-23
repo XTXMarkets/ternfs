@@ -94,9 +94,9 @@ The creator's open and local staging are prepared before this publication.
 
 Staging creation holds an inode-keyed lock while creating the local data file
 and saving its sidecar. The store-wide map lock only covers lookup and
-publication of a complete entry. Removal uses the same inode lock through
-filesystem cleanup, so independent creations can overlap without cleanup
-deleting a later creation's files.
+publication of a complete entry. Removal and quarantine use the same inode
+lock through filesystem cleanup, so independent creations can overlap
+without cleanup deleting a later creation's files.
 Other writers start independent staging from the empty published version.
 nfsd creates these files on its local host:
 
@@ -164,7 +164,7 @@ republishing its contents. This preserves data published by a concurrent writer.
 After a data publication commits, failure to restore the writer's timestamps is
 logged and CLOSE succeeds; the data is already visible and cannot be rolled back.
 
-The current sidecar format is NFS5. Missing or invalid sidecars cause their data
+The current sidecar format is NFS6. Missing or invalid sidecars cause their data
 to be moved under `quarantine/` for manual recovery, never registered as an
 open. Drain active writes before downgrading to a binary that cannot read the
 current format.

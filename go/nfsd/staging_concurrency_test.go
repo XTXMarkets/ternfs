@@ -5,6 +5,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -59,38 +60,53 @@ func TestStagingCreateConcurrency(t *testing.T) {
 }
 
 func TestStagingCleanupWaitsForCreation(t *testing.T) {
-	store, err := NewLocalStagingStore(t.TempDir(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	gate := newTestGate()
-	store.createFile = func(path string) (*os.File, error) {
-		gate.wait()
-		return os.Create(path)
-	}
-	created := make(chan error, 1)
-	go func() {
-		_, err := store.Create(1, StagingMeta{})
-		created <- err
-	}()
-	defer closeSignal(gate.release)
-	awaitSignal(t, gate.entered, "creation before cleanup")
-	cleaned := make(chan struct{})
-	go func() {
-		store.Remove(1)
-		close(cleaned)
-	}()
-	assertBlocked(t, cleaned, "cleanup during creation")
-	closeSignal(gate.release)
-	if err := awaitValue(t, created, "creation"); err != nil {
-		t.Fatal(err)
-	}
-	awaitSignal(t, cleaned, "cleanup")
-	if store.Get(1) != nil || len(store.Entries()) != 0 {
-		t.Fatal("cleanup left a published entry")
-	}
-	if _, err := os.Stat(filepath.Join(store.dir, "0000000000000001.staging")); !os.IsNotExist(err) {
-		t.Fatalf("staging file still present: %v", err)
+	for _, quarantine := range []bool{false, true} {
+		t.Run(map[bool]string{false: "remove", true: "quarantine"}[quarantine], func(t *testing.T) {
+			store, err := NewLocalStagingStore(t.TempDir(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			gate := newTestGate()
+			store.createFile = func(path string) (*os.File, error) {
+				gate.wait()
+				return os.Create(path)
+			}
+			created := make(chan error, 1)
+			go func() {
+				_, err := store.Create(1, StagingMeta{})
+				created <- err
+			}()
+			defer closeSignal(gate.release)
+			awaitSignal(t, gate.entered, "creation before cleanup")
+			cleaned := make(chan error, 1)
+			go func() {
+				if quarantine {
+					cleaned <- store.Quarantine(1)
+				} else {
+					store.Remove(1)
+					cleaned <- nil
+				}
+			}()
+			assertBlocked(t, cleaned, "cleanup during creation")
+			closeSignal(gate.release)
+			if err := awaitValue(t, created, "creation"); err != nil {
+				t.Fatal(err)
+			}
+			if err := awaitValue(t, cleaned, "cleanup"); err != nil {
+				t.Fatal(err)
+			}
+			if store.Get(1) != nil || len(store.Entries()) != 0 {
+				t.Fatal("cleanup left a published entry")
+			}
+			if quarantine {
+				if _, err := store.Create(1, StagingMeta{}); !errors.Is(err, errStagingRemoved) {
+					t.Fatalf("quarantined Create = %v", err)
+				}
+			}
+			if _, err := os.Stat(filepath.Join(store.dir, "0000000000000001.staging")); !os.IsNotExist(err) {
+				t.Fatalf("staging file still present: %v", err)
+			}
+		})
 	}
 }
 

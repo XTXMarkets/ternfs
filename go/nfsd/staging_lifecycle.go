@@ -36,9 +36,31 @@ func (s *Server) stagingTargetBusy(dirID InodeID, name string) (bool, error) {
 				return true, nil
 			}
 		}
-		s.retireStaging(id, meta)
+		s.retireStagingLocked(id, meta)
 	}
 	return false, nil
+}
+
+// lockStagingTarget waits for namespace operations on a writer's publication
+// target. A rename may move the target while we wait, so check it again.
+func (s *Server) lockStagingTarget(fileID InodeID) (StagingMeta, bool, func()) {
+	for {
+		meta, ok := s.stagingStore.GetMeta(fileID)
+		if !ok || meta.Unlinked {
+			return meta, ok, func() {}
+		}
+		target := mutationTarget{dirID: meta.DirID, name: meta.FileName}
+		unlock := s.lockMutationTargets(target)
+		current, ok := s.stagingStore.GetMeta(fileID)
+		if !ok || current.Unlinked {
+			unlock()
+			return current, ok, func() {}
+		}
+		if current.DirID == target.dirID && current.FileName == target.name {
+			return current, true, unlock
+		}
+		unlock()
+	}
 }
 
 func (s *Server) recoveredStagingTarget(
