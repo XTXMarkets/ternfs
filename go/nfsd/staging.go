@@ -570,6 +570,25 @@ func (sf *localStagingFile) checkpointChangedLocked() bool {
 	return false
 }
 
+// updateMetaLocked changes sidecar metadata without checkpointing unstable
+// data. The caller holds sf.mu.
+func (sf *localStagingFile) updateMetaLocked(meta StagingMeta) error {
+	if sf.removed {
+		return errStagingRemoved
+	}
+	previous := sf.meta
+	if err := saveStagingMeta(sf.metaPath, meta); err != nil {
+		// A directory sync can fail after the replacement was installed.
+		restoreErr := saveStagingMeta(sf.metaPath, previous)
+		if restoreErr != nil {
+			restoreErr = fmt.Errorf("restore previous staging metadata: %w", restoreErr)
+		}
+		return errors.Join(err, restoreErr)
+	}
+	sf.meta = meta
+	return nil
+}
+
 func (sf *localStagingFile) rebind(
 	clientID uint64,
 	stateID StateID,
@@ -587,25 +606,15 @@ func (sf *localStagingFile) rebind(
 		}
 		sf.f = f
 	}
-	sf.meta.ClientID = clientID
-	sf.meta.NFSStateID = stateID
-	sf.meta.Retired = false
-	err := saveStagingMeta(sf.metaPath, sf.meta)
-	if err == nil {
-		return nil
-	}
-
-	sf.meta = oldMeta
-	if oldMeta.Retired {
+	meta := oldMeta
+	meta.ClientID = clientID
+	meta.NFSStateID = stateID
+	meta.Retired = false
+	err := sf.updateMetaLocked(meta)
+	if err != nil && oldMeta.Retired {
 		_ = sf.f.Close()
 	}
-	restoreErr := saveStagingMeta(sf.metaPath, oldMeta)
-	if restoreErr != nil {
-		restoreErr = fmt.Errorf(
-			"restore previous staging owner: %w", restoreErr,
-		)
-	}
-	return errors.Join(err, restoreErr)
+	return err
 }
 
 func (sf *localStagingFile) SetSize(size uint64) error {

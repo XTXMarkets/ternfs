@@ -225,10 +225,11 @@ func (s *Server) opClose(args CLOSE4args, st *compoundState, w *COMPOUND4resWrit
 		}
 	}
 
-	// GetMeta before startClose is only a hint for restart recovery. Re-read
-	// it after taking the owner operation so a waiting CLOSE cannot act on
-	// staging removed by the operation ahead of it.
-	meta, hasMeta = s.stagingStore.GetMeta(st.currentID)
+	// The earlier GetMeta was only a hint for restart recovery. Namespace
+	// operations and other CLOSEs may have changed it while we waited.
+	var unlockTarget func()
+	meta, hasMeta, unlockTarget = s.lockStagingTarget(st.currentID)
+	defer unlockTarget()
 	if recovered != nil {
 		if !hasMeta {
 			return fail(NFS4ERR_EXPIRED)
@@ -266,8 +267,6 @@ func (s *Server) opClose(args CLOSE4args, st *compoundState, w *COMPOUND4resWrit
 			panic("close: staging meta present but no data file")
 		}
 		stagingID := st.currentID
-		unlock := s.lockMutationTargets(mutationTarget{dirID: meta.DirID, name: meta.FileName})
-		defer unlock()
 		publish := meta.BaseID == 0 || sf.Dirty()
 		if publish && meta.BaseID != 0 && !sf.DataChanged() {
 			// A timestamp-only CLOSE updates the current published version,
