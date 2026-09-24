@@ -14,9 +14,9 @@ make test-functional FUNCTIONAL_TEST_ROOT=/mnt/qa-nfs/test
 Run or trace one case directly:
 
 ```sh
-./test/functional/0007-dd-direct.sh /mnt/qa-nfs/test
+./functional/0007-dd-direct.sh /mnt/qa-nfs/test
 strace -ff -o /tmp/0007.trace \
-  ./test/functional/0007-dd-direct.sh /mnt/qa-nfs/test
+  ./functional/0007-dd-direct.sh /mnt/qa-nfs/test
 ```
 
 The suite contains positive workflow tests. An unsupported operation is a test

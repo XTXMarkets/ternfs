@@ -93,13 +93,36 @@ if ! mount -t nfs4 -o vers=4.0,proto=tcp,port="$nfsport",hard,timeo=600 "10.0.2.
 fi
 echo "MOUNT-OK $(grep " $mnt " /proc/mounts)"
 
-cd "$functional"
+if ! cd -- "$functional"; then
+	echo "suite exit=2"
+	exit 2
+fi
+shopt -s nullglob
+scripts=([0-9][0-9][0-9][0-9]-*.sh)
+if [[ $tests != all ]]; then
+	if [[ ! $tests =~ ^[0-9]{4}(,[0-9]{4})*$ ]]; then
+		echo "invalid functional case selection: $tests"
+		echo "suite exit=2"
+		exit 2
+	fi
+	IFS=, read -ra selectors <<< "$tests"
+	for selector in "${selectors[@]}"; do
+		matches=("$selector"-*.sh)
+		if (( ${#matches[@]} == 0 )); then
+			echo "no functional case matches: $selector"
+			echo "suite exit=2"
+			exit 2
+		fi
+	done
+fi
 status=0
-for script in [0-9][0-9][0-9][0-9]-*.sh; do
+ran=0
+for script in "${scripts[@]}"; do
 	number=${script%%-*}
 	if [[ $tests != all ]]; then
 		case ",$tests," in *",$number,"*) ;; *) continue ;; esac
 	fi
+	ran=$((ran + 1))
 	printf '%s: ' "$script"
 	# Detach stdin: tools such as vim -es wait on a terminal after errors.
 	if timeout -s KILL "$case_timeout" "./$script" "$mnt" < /dev/null; then
@@ -111,6 +134,10 @@ for script in [0-9][0-9][0-9][0-9]-*.sh; do
 		(( rc == 137 )) && diagnostics
 	fi
 done
+if (( ran == 0 )); then
+	echo "no functional cases ran for tests=$tests"
+	status=2
+fi
 echo "suite exit=$status"
 umount "$mnt" || umount -f "$mnt" || echo "umount failed"
 exit "$status"

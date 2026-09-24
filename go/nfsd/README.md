@@ -721,8 +721,8 @@ Every test creates its own directory and preserves it on failure. A single
 case can be run directly or under `strace`:
 
 ```sh
-strace -ff -o /tmp/0006.trace \
-  ./test/functional/0005-vim-edit.sh /mnt/qa-nfs/test
+strace -ff -o /tmp/0005.trace \
+  ./functional/0005-vim-edit.sh /mnt/qa-nfs/test
 ```
 
 The same cases can run through the Linux kernel NFS client without a host

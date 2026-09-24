@@ -36,6 +36,8 @@ type pynfsCaseTiming struct {
 
 var pynfsCodePattern = regexp.MustCompile(`^[A-Z][A-Z0-9]*[a-z]?$`)
 
+const defaultPynfsSkipFile = "pynfs/pynfs_unsupported.txt"
+
 func pynfsSkipSelectors(path string) ([]string, error) {
 	if path == "" {
 		return nil, nil
@@ -132,7 +134,7 @@ func run(ctx context.Context, opts harness.Options, short bool) (err error) {
 	}
 	skipFile, configured := os.LookupEnv("PYNFS_SKIP_FILE")
 	if !configured {
-		skipFile = "test/pynfs/pynfs_unsupported.txt"
+		skipFile = defaultPynfsSkipFile
 	}
 	if skipFile != "" {
 		skipFile = harness.SourcePath(skipFile)
