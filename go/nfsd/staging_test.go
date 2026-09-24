@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -250,6 +251,19 @@ func TestStagingRemoveCancelsHydration(t *testing.T) {
 		store.Remove(id)
 		close(done)
 	}()
+	// Remove requests cancellation, then waits for the hydration goroutine
+	// parked in the reader. Release the reader only once cancellation is
+	// visible, otherwise hydration may read further chunks first.
+	sf := stage.(*localStagingFile)
+	for {
+		sf.hydrateMu.Lock()
+		cancelled := sf.hydrateRemoved
+		sf.hydrateMu.Unlock()
+		if cancelled {
+			break
+		}
+		runtime.Gosched()
+	}
 	close(release)
 
 	select {
