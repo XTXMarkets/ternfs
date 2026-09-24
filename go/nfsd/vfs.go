@@ -7,6 +7,7 @@ package main
 import (
 	"crypto/rand"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -40,6 +41,23 @@ func MakeInodeID(typ uint64, ino uint64) InodeID {
 // semantics where the cookie prevents other clients from interfering with
 // an in-progress write).
 type Cookie [8]byte
+
+// Edge identifies a directory entry as LookupEdge observed it: the inode it
+// names and the creation time of the entry itself. TernFS pins a mutation to
+// both. The pin does not establish the outcome of a retransmitted request.
+type Edge struct {
+	ID           InodeID
+	CreationTime uint64
+}
+
+type mutationOutcome uint8
+
+const (
+	mutationApplied mutationOutcome = iota
+	mutationDetachOnly
+	mutationNotApplied
+	mutationUnknown
+)
 
 // NodeInfo holds metadata returned by Stat.
 type NodeInfo struct {
@@ -113,10 +131,27 @@ type TernVFS interface {
 	CreateFile(dirID InodeID, name string, data io.Reader) (InodeID, error)
 
 	// Remove removes a file, directory, or symlink by name from a directory.
+	// A removed file remains readable by inode until it is collected.
 	Remove(dirID InodeID, name string) error
 
-	// Rename moves/renames a directory entry.
+	// Rename moves/renames a directory entry. A replaced file remains
+	// readable by inode until it is collected.
 	Rename(srcDirID InodeID, srcName string, dstDirID InodeID, dstName string) error
+
+	// LookupEdge finds a child by name and returns the entry it was found
+	// through, so that a later mutation can be pinned to it.
+	LookupEdge(dirID InodeID, name string) (Edge, error)
+
+	// RemoveEdge removes the pinned entry and returns the raw backend error.
+	RemoveEdge(dirID InodeID, name string, edge Edge) error
+
+	// RenameEdge moves the entry only while srcName still refers to edge, with
+	// the same error contract as RemoveEdge.
+	RenameEdge(srcDirID InodeID, srcName string, edge Edge, dstDirID InodeID, dstName string) error
+
+	// ClassifyMutation describes the entire submitted call, including retries.
+	// The original error is mapped to the NFS reply separately.
+	ClassifyMutation(op uint32, err error) mutationOutcome
 
 	// SetTime sets the mtime and/or atime of a file or directory.
 	// A nil pointer means "don't change this field."
@@ -501,15 +536,9 @@ func (lfs *LocalTernVFS) LinkFile(fileID InodeID, cookie Cookie, dirID InodeID, 
 	lfs.mu.Lock()
 	defer lfs.mu.Unlock()
 	if oldID := lfs.statInodeID(childPath); oldID != 0 {
-		snapshotRel := filepath.Join(nfsDirName, "snapshots", fmt.Sprintf("%016x", uint64(oldID)))
-		snapshotPath := filepath.Join(lfs.root, snapshotRel)
-		if err := os.MkdirAll(filepath.Dir(snapshotPath), 0700); err != nil {
+		if err := lfs.snapshotLocked(childPath, oldID); err != nil {
 			return err
 		}
-		if err := os.Link(childPath, snapshotPath); err != nil && !os.IsExist(err) {
-			return err
-		}
-		lfs.byID[oldID] = snapshotRel
 	}
 	if err := os.Rename(tf.path, childPath); err != nil {
 		return err
@@ -558,30 +587,81 @@ func (lfs *LocalTernVFS) CreateFile(dirID InodeID, name string, data io.Reader) 
 	return lfs.register(childPath, dirID), nil
 }
 
+// snapshotLocked keeps a published inode readable by ID after its directory
+// entry is removed or replaced, as a TernFS snapshot edge does until it is
+// collected. The caller holds lfs.mu.
+func (lfs *LocalTernVFS) snapshotLocked(path string, id InodeID) error {
+	if id.Type() == InodeTypeDir {
+		return nil
+	}
+	snapshotRel := filepath.Join(nfsDirName, "snapshots", fmt.Sprintf("%016x", uint64(id)))
+	snapshotPath := filepath.Join(lfs.root, snapshotRel)
+	if err := os.MkdirAll(filepath.Dir(snapshotPath), 0700); err != nil {
+		return err
+	}
+	if err := os.Link(path, snapshotPath); err != nil && !os.IsExist(err) {
+		return err
+	}
+	lfs.byID[id] = snapshotRel
+	return nil
+}
+
+func (lfs *LocalTernVFS) LookupEdge(dirID InodeID, name string) (Edge, error) {
+	id, err := lfs.Lookup(dirID, name)
+	if err != nil {
+		return Edge{}, err
+	}
+	return Edge{ID: id}, nil
+}
+
 func (lfs *LocalTernVFS) Remove(dirID InodeID, name string) error {
+	return lfs.remove(dirID, name, nil)
+}
+
+func (lfs *LocalTernVFS) RemoveEdge(dirID InodeID, name string, edge Edge) error {
+	return lfs.remove(dirID, name, &edge)
+}
+
+func (lfs *LocalTernVFS) remove(dirID InodeID, name string, pin *Edge) error {
 	dirPath, ok := lfs.resolve(dirID)
 	if !ok {
 		return os.ErrNotExist
 	}
 	childPath := filepath.Join(dirPath, name)
+	lfs.mu.Lock()
+	defer lfs.mu.Unlock()
 	// Check what it is to update our maps.
 	childID := lfs.statInodeID(childPath)
+	if pin != nil && childID != pin.ID {
+		return os.ErrNotExist
+	}
 	if childID == 0 {
 		return os.ErrNotExist
 	}
-	if err := os.RemoveAll(childPath); err != nil {
+	if err := lfs.snapshotLocked(childPath, childID); err != nil {
+		return err
+	}
+	if err := os.Remove(childPath); err != nil {
 		return err
 	}
 	rel, _ := filepath.Rel(lfs.root, childPath)
-	lfs.mu.Lock()
-	delete(lfs.byID, childID)
+	if childID.Type() == InodeTypeDir {
+		delete(lfs.byID, childID)
+	}
 	delete(lfs.byPath, rel)
 	delete(lfs.parent, childID)
-	lfs.mu.Unlock()
 	return nil
 }
 
 func (lfs *LocalTernVFS) Rename(srcDirID InodeID, srcName string, dstDirID InodeID, dstName string) error {
+	return lfs.rename(srcDirID, srcName, nil, dstDirID, dstName)
+}
+
+func (lfs *LocalTernVFS) RenameEdge(srcDirID InodeID, srcName string, edge Edge, dstDirID InodeID, dstName string) error {
+	return lfs.rename(srcDirID, srcName, &edge, dstDirID, dstName)
+}
+
+func (lfs *LocalTernVFS) rename(srcDirID InodeID, srcName string, pin *Edge, dstDirID InodeID, dstName string) error {
 	srcDir, ok := lfs.resolve(srcDirID)
 	if !ok {
 		return os.ErrNotExist
@@ -593,18 +673,29 @@ func (lfs *LocalTernVFS) Rename(srcDirID InodeID, srcName string, dstDirID Inode
 	srcPath := filepath.Join(srcDir, srcName)
 	dstPath := filepath.Join(dstDir, dstName)
 
+	lfs.mu.Lock()
 	srcID := lfs.statInodeID(srcPath)
-	if srcID == 0 {
+	if pin != nil && srcID != pin.ID {
+		lfs.mu.Unlock()
 		return os.ErrNotExist
 	}
-
+	if srcID == 0 {
+		lfs.mu.Unlock()
+		return os.ErrNotExist
+	}
+	if dstID := lfs.statInodeID(dstPath); dstID != 0 && dstID != srcID {
+		if err := lfs.snapshotLocked(dstPath, dstID); err != nil {
+			lfs.mu.Unlock()
+			return err
+		}
+	}
 	if err := os.Rename(srcPath, dstPath); err != nil {
+		lfs.mu.Unlock()
 		return err
 	}
 
 	// Update maps: remove old path, register new path.
 	srcRel, _ := filepath.Rel(lfs.root, srcPath)
-	lfs.mu.Lock()
 	delete(lfs.byID, srcID)
 	delete(lfs.byPath, srcRel)
 	delete(lfs.parent, srcID)
@@ -651,4 +742,23 @@ func fhToInodeID(fh []byte) (InodeID, bool) {
 		return 0, false
 	}
 	return InodeID(binary.BigEndian.Uint64(fh)), true
+}
+
+func (lfs *LocalTernVFS) ClassifyMutation(op uint32, err error) mutationOutcome {
+	if err == nil {
+		return mutationApplied
+	}
+	if op == OP_REMOVE && errors.Is(err, os.ErrNotExist) {
+		return mutationDetachOnly
+	}
+	// Local syscalls are not retransmitted. Only their errors establish a
+	// definite rejection; injected transport or decoding errors do not.
+	var pathErr *os.PathError
+	var linkErr *os.LinkError
+	var errno syscall.Errno
+	if errors.As(err, &pathErr) || errors.As(err, &linkErr) || errors.As(err, &errno) ||
+		errors.Is(err, os.ErrNotExist) || errors.Is(err, os.ErrExist) || errors.Is(err, os.ErrPermission) {
+		return mutationNotApplied
+	}
+	return mutationUnknown
 }
