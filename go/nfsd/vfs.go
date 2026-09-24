@@ -113,9 +113,11 @@ type TernVFS interface {
 	CreateFile(dirID InodeID, name string, data io.Reader) (InodeID, error)
 
 	// Remove removes a file, directory, or symlink by name from a directory.
+	// A removed file remains readable by inode until it is collected.
 	Remove(dirID InodeID, name string) error
 
-	// Rename moves/renames a directory entry.
+	// Rename moves/renames a directory entry. A replaced file remains
+	// readable by inode until it is collected.
 	Rename(srcDirID InodeID, srcName string, dstDirID InodeID, dstName string) error
 
 	// SetTime sets the mtime and/or atime of a file or directory.
@@ -501,15 +503,9 @@ func (lfs *LocalTernVFS) LinkFile(fileID InodeID, cookie Cookie, dirID InodeID, 
 	lfs.mu.Lock()
 	defer lfs.mu.Unlock()
 	if oldID := lfs.statInodeID(childPath); oldID != 0 {
-		snapshotRel := filepath.Join(nfsDirName, "snapshots", fmt.Sprintf("%016x", uint64(oldID)))
-		snapshotPath := filepath.Join(lfs.root, snapshotRel)
-		if err := os.MkdirAll(filepath.Dir(snapshotPath), 0700); err != nil {
+		if err := lfs.snapshotLocked(childPath, oldID); err != nil {
 			return err
 		}
-		if err := os.Link(childPath, snapshotPath); err != nil && !os.IsExist(err) {
-			return err
-		}
-		lfs.byID[oldID] = snapshotRel
 	}
 	if err := os.Rename(tf.path, childPath); err != nil {
 		return err
@@ -558,26 +554,50 @@ func (lfs *LocalTernVFS) CreateFile(dirID InodeID, name string, data io.Reader) 
 	return lfs.register(childPath, dirID), nil
 }
 
+// snapshotLocked keeps a published inode readable by ID after its directory
+// entry is removed or replaced, as a TernFS snapshot edge does until it is
+// collected. The caller holds lfs.mu.
+func (lfs *LocalTernVFS) snapshotLocked(path string, id InodeID) error {
+	if id.Type() == InodeTypeDir {
+		return nil
+	}
+	snapshotRel := filepath.Join(nfsDirName, "snapshots", fmt.Sprintf("%016x", uint64(id)))
+	snapshotPath := filepath.Join(lfs.root, snapshotRel)
+	if err := os.MkdirAll(filepath.Dir(snapshotPath), 0700); err != nil {
+		return err
+	}
+	if err := os.Link(path, snapshotPath); err != nil && !os.IsExist(err) {
+		return err
+	}
+	lfs.byID[id] = snapshotRel
+	return nil
+}
+
 func (lfs *LocalTernVFS) Remove(dirID InodeID, name string) error {
 	dirPath, ok := lfs.resolve(dirID)
 	if !ok {
 		return os.ErrNotExist
 	}
 	childPath := filepath.Join(dirPath, name)
+	lfs.mu.Lock()
+	defer lfs.mu.Unlock()
 	// Check what it is to update our maps.
 	childID := lfs.statInodeID(childPath)
 	if childID == 0 {
 		return os.ErrNotExist
 	}
-	if err := os.RemoveAll(childPath); err != nil {
+	if err := lfs.snapshotLocked(childPath, childID); err != nil {
+		return err
+	}
+	if err := os.Remove(childPath); err != nil {
 		return err
 	}
 	rel, _ := filepath.Rel(lfs.root, childPath)
-	lfs.mu.Lock()
-	delete(lfs.byID, childID)
+	if childID.Type() == InodeTypeDir {
+		delete(lfs.byID, childID)
+	}
 	delete(lfs.byPath, rel)
 	delete(lfs.parent, childID)
-	lfs.mu.Unlock()
 	return nil
 }
 
@@ -593,18 +613,25 @@ func (lfs *LocalTernVFS) Rename(srcDirID InodeID, srcName string, dstDirID Inode
 	srcPath := filepath.Join(srcDir, srcName)
 	dstPath := filepath.Join(dstDir, dstName)
 
+	lfs.mu.Lock()
 	srcID := lfs.statInodeID(srcPath)
 	if srcID == 0 {
+		lfs.mu.Unlock()
 		return os.ErrNotExist
 	}
-
+	if dstID := lfs.statInodeID(dstPath); dstID != 0 && dstID != srcID {
+		if err := lfs.snapshotLocked(dstPath, dstID); err != nil {
+			lfs.mu.Unlock()
+			return err
+		}
+	}
 	if err := os.Rename(srcPath, dstPath); err != nil {
+		lfs.mu.Unlock()
 		return err
 	}
 
 	// Update maps: remove old path, register new path.
 	srcRel, _ := filepath.Rel(lfs.root, srcPath)
-	lfs.mu.Lock()
 	delete(lfs.byID, srcID)
 	delete(lfs.byPath, srcRel)
 	delete(lfs.parent, srcID)

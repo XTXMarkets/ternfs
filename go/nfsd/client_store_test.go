@@ -1278,8 +1278,10 @@ func TestClientStoreLiveSlotsSkipsRemovedEntry(t *testing.T) {
 	if hookErr != nil {
 		t.Fatal(hookErr)
 	}
-	if live || found {
-		t.Fatalf("raced slot scan = live %t, found %t; want false, false",
+	// TernFS keeps a removed file readable by inode until it is collected, so
+	// a scan racing the removal reads the stale slot rather than failing.
+	if !live || !found {
+		t.Fatalf("raced slot scan = live %t, found %t; want true, true",
 			live, found)
 	}
 	if _, err := store.replaceJSON(
