@@ -453,16 +453,18 @@ static int COMPAT_FUNC_UNS_IMP(ternfs_create, struct inode* parent, struct dentr
 static int COMPAT_FUNC_UNS_IMP(ternfs_getattr, const struct path* path, struct kstat* stat, u32 request_mask, unsigned int query_flags) {
     struct inode* inode = d_inode(path->dentry);
     struct ternfs_inode* enode = TERNFS_I(inode);
+    bool force_sync = query_flags & AT_STATX_FORCE_SYNC;
 
     trace_eggsfs_vfs_getattr_enter(inode);
 
-    // >= so that ternfs_dir_refresh_time=0 causes revalidation at every call to this function
-    if (get_jiffies_64() >= smp_load_acquire(&enode->getattr_expiry)) {
+    // AT_STATX_FORCE_SYNC (stat --cached=never) bypasses both cache checks.
+    // >= so that a zero refresh interval causes revalidation at every call.
+    if (force_sync || get_jiffies_64() >= smp_load_acquire(&enode->getattr_expiry)) {
         int err;
 
         // FIXME: symlinks
         // if requests_mask is 0 then this is originating from stat() call and not statx and we should fill in basic stats
-        if (request_mask && !(request_mask & STATX_MTIME) && (S_ISDIR(inode->i_mode) || !(request_mask & (STATX_ATIME | STATX_SIZE | STATX_BLOCKS)))) {
+        if (!force_sync && request_mask && !(request_mask & STATX_MTIME) && (S_ISDIR(inode->i_mode) || !(request_mask & (STATX_ATIME | STATX_SIZE | STATX_BLOCKS)))) {
             goto done;
         }
 
@@ -470,7 +472,7 @@ static int COMPAT_FUNC_UNS_IMP(ternfs_getattr, const struct path* path, struct k
 
         // dentry refcount also protects the inode (e.g. d_delete will not turn used dentry into a negative one),
         // so no need to grab anything before we start waiting for stuff
-        err = ternfs_do_getattr(enode, ATTR_CACHE_NORM_TIMEOUT);
+        err = ternfs_do_getattr(enode, force_sync ? ATTR_CACHE_NO_TIMEOUT : ATTR_CACHE_NORM_TIMEOUT);
         if (err) {
             trace_eggsfs_vfs_getattr_exit(inode, err);
             return err;
