@@ -19,9 +19,8 @@ strace -ff -o /tmp/0007.trace \
   ./functional/0007-dd-direct.sh /mnt/qa-nfs/test
 ```
 
-The suite contains positive workflow tests. An unsupported operation is a test
-failure rather than a skip; server fixes can be made independently and in any
-order.
+The suite checks supported workflows and explicitly rejected combinations.
+Unexpected failures are reported rather than skipped.
 
 Overwriting a file replaces its inode: a writable OPEN constructs a new
 transient file, and CLOSE links that file into the directory. `fstat` on a
@@ -36,6 +35,12 @@ not depend on where the test root is.
 Concurrent append from separately opened writable file descriptors is not a
 supported workflow. Each writable OPEN has independent staging, and the last
 successful CLOSE publishes its complete private version.
+
+Cases 0018, 0019 and 0023 unlink from the client which holds the open
+descriptor. Linux normally implements this with a `.nfs...` rename followed
+by CLOSE and REMOVE, so these cases exercise that client workflow. Direct
+REMOVE while another open handle remains usable is covered by the raw
+protocol tests, including the TernFS-backed namespace tests.
 
 | Case | Workflow |
 | --- | --- |
@@ -56,3 +61,10 @@ successful CLOSE publishes its complete private version.
 | `0015-gzip-round-trip.sh` | Compress and decompress a file in place. |
 | `0016-copy-sparse.sh` | Copy a sparse file without preserving metadata. |
 | `0017-find-delete.sh` | Delete a mixed tree with `find -depth -delete`. |
+| `0018-python-temporary-file.sh` | Use Python `TemporaryFile`. |
+| `0019-unlink-recreate.sh` | Unlink an open file, recreate its name, and keep writing. |
+| `0020-rename-file-open.sh` | Rename a new file while its descriptor remains open. |
+| `0021-log-rotation.sh` | Rename an open log, recreate its old name, and keep writing. |
+| `0022-rename-open-across-directories.sh` | Attempt to move an open file into another directory. |
+| `0023-read-unlinked-open-file.sh` | Read unwritten data through the descriptor of an unlinked file. |
+| `0024-rename-over-open-destination.sh` | Rename over a destination which remains open. |

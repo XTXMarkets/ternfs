@@ -463,6 +463,14 @@ func quarantineStagingFiles(dir string, id InodeID) error {
 	if err != nil {
 		return err
 	}
+	// Establish a durable destination path before removing either source
+	// name. A crash during the moves must not strand acknowledged bytes in
+	// a directory whose parent entry was never persisted.
+	for _, path := range []string{dst, root, dir} {
+		if err := syncStagingDir(path); err != nil {
+			return err
+		}
+	}
 	var errs []error
 	for _, ext := range []string{".staging", ".meta"} {
 		name := fmt.Sprintf("%016x%s", uint64(id), ext)

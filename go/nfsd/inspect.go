@@ -909,7 +909,7 @@ func inspectOpenMarker(
 // problems, and returns the entries for joining to open markers. It reports
 // incomplete pairs because nfsd recovery starts from .staging files. The
 // quarantine directory holds the checkpoints recovery moved aside because
-// their sidecar would not decode.
+// their checkpoint is invalid, guarded, or both unlinked and retired.
 func (r *inspectReport) readStaging(dir string) ([]*inspectStagingEntry, error) {
 	info, err := os.Stat(dir)
 	if err != nil {
@@ -1330,7 +1330,7 @@ func (r *inspectReport) WriteText(w io.Writer) {
 	}
 	if len(r.Quarantined) > 0 {
 		fmt.Fprintf(w,
-			"\nquarantined checkpoints (sidecar would not decode; "+
+			"\nquarantined checkpoints (excluded from automatic recovery; "+
 				"nfsd will not recover these)\n")
 		for _, name := range r.Quarantined {
 			fmt.Fprintf(w, "  %s\n", name)

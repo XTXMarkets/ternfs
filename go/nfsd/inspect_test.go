@@ -860,7 +860,7 @@ func TestInspectReportsStagingIntegrity(t *testing.T) {
 	if err := saveStagingMeta(completeMeta, StagingMeta{
 		DirID: f.fs.RootID(), FileName: "exclusive",
 		Exclusive: true, Verifier: [8]byte{1, 2, 3},
-		ReadOnly: true, Retired: true, Size: 8,
+		ReadOnly: true, Retired: true, Unlinked: true, Guarded: true, Size: 8,
 		RecoveryKey: [32]byte{0xaa, 0xbb},
 	}); err != nil {
 		t.Fatal(err)
@@ -935,7 +935,7 @@ func TestInspectReportsStagingIntegrity(t *testing.T) {
 	}
 	if got := byID[4]; got == nil || got.SidecarVersion != "v6" ||
 		!got.Exclusive || got.Verifier != "0102030000000000" ||
-		!got.ReadOnly || !got.Retired ||
+		!got.ReadOnly || !got.Retired || !got.Unlinked || !got.Guarded ||
 		!strings.HasPrefix(got.RecoveryKey, "aabb") ||
 		len(got.Problems) != 0 {
 		t.Fatalf("complete entry = %+v", got)
@@ -948,6 +948,7 @@ func TestInspectReportsStagingIntegrity(t *testing.T) {
 	report.WriteText(&text)
 	for _, want := range []string{
 		"sidecar v6",
+		"unlinked guarded",
 		"EXCLUSIVE4 verifier 0102030000000000",
 		"RETIRED (lease expired, held for reclaim)",
 		"quarantined checkpoints",
