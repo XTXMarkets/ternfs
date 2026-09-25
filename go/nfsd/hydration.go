@@ -102,20 +102,23 @@ func (s *Server) retireStaging(id InodeID, meta StagingMeta) {
 	s.retireStagingLocked(id, current)
 }
 
-func (s *Server) retireStagingLocked(id InodeID, meta StagingMeta) {
+func (s *Server) retireStagingLocked(id InodeID, meta StagingMeta) error {
 	if meta.Unlinked {
 		if meta.Retired {
 			if err := s.stagingStore.Quarantine(id); err != nil {
 				s.log.Warn("quarantine retired staging", "inode", id, "err", err)
+				return err
 			}
 		} else {
 			s.discardStaging(id)
 		}
-		return
+		return nil
 	}
 	if sf := s.stagingStore.Get(id); sf != nil {
 		if err := sf.Retire(meta.ClientID, meta.NFSStateID); err != nil {
 			s.log.Error("retain expired staging", "inode", id, "err", err)
+			return err
 		}
 	}
+	return nil
 }

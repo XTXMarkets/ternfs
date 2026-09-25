@@ -6,11 +6,14 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/XTXMarkets/ternfs/go/msgs"
 )
@@ -192,6 +195,88 @@ func TestNamespaceMutationClassification(t *testing.T) {
 		if local.ClassifyMutation(op, syscall.EISDIR) != mutationNotApplied ||
 			local.ClassifyMutation(op, errors.New("lost reply")) != mutationUnknown {
 			t.Fatal("local classification does not distinguish syscall rejection")
+		}
+	}
+}
+
+func TestNamespaceCheckpointDoesNotHoldStoreLock(t *testing.T) {
+	for _, finish := range []bool{false, true} {
+		t.Run(fmt.Sprintf("finish=%t", finish), func(t *testing.T) {
+			store, id, _ := createOverlayStage(t, t.TempDir(), 0, nil)
+			defer closeLocalStagingFiles(t, store)
+			dirID := MakeInodeID(InodeTypeDir, 1)
+			otherID := MakeInodeID(InodeTypeFile, 123)
+			if _, err := store.Create(otherID, StagingMeta{DirID: dirID, FileName: "other"}); err != nil {
+				t.Fatal(err)
+			}
+			if finish {
+				if err := store.SetGuard(id, true); err != nil {
+					t.Fatal(err)
+				}
+			}
+			sf := store.Get(id).(*localStagingFile)
+			sf.mu.Lock()
+			done := make(chan error, 1)
+			go func() {
+				if finish {
+					done <- store.Retarget(id, dirID, "target")
+				} else {
+					done <- store.SetGuard(id, true)
+				}
+			}()
+			// The file mutex also covers checkpoint I/O. A blocked writer
+			// must not block metadata/data access to another staged inode.
+			time.Sleep(20 * time.Millisecond)
+			read := make(chan bool, 1)
+			go func() {
+				_, ok := store.GetMeta(otherID)
+				read <- ok
+			}()
+			select {
+			case ok := <-read:
+				if !ok {
+					t.Error("unrelated writer disappeared")
+				}
+			case <-time.After(time.Second):
+				t.Error("one writer blocked the whole store")
+			}
+			sf.mu.Unlock()
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestRemovedNamespaceWriterIsNotReindexed(t *testing.T) {
+	store, id, _ := createOverlayStage(t, t.TempDir(), 0, nil)
+	defer closeLocalStagingFiles(t, store)
+	dirID := MakeInodeID(InodeTypeDir, 1)
+	if err := store.SetGuard(id, true); err != nil {
+		t.Fatal(err)
+	}
+	sf := store.Get(id).(*localStagingFile)
+	sf.mu.Lock()
+	done := make(chan error, 1)
+	go func() { done <- store.Retarget(id, dirID, "target") }()
+	removed := make(chan struct{})
+	go func() { store.Remove(id); close(removed) }()
+	deadline := time.After(time.Second)
+	for store.Get(id) != nil {
+		select {
+		case <-deadline:
+			sf.mu.Unlock()
+			t.Fatal("Remove waited while holding the store lock")
+		default:
+			runtime.Gosched()
+		}
+	}
+	sf.mu.Unlock()
+	<-done
+	<-removed
+	for _, name := range []string{"file", "target"} {
+		if len(store.FindTargets(dirID, name)) != 0 {
+			t.Fatalf("removed writer reindexed at %s", name)
 		}
 	}
 }
