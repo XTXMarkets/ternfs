@@ -360,18 +360,30 @@ func (t *RemoteTernVFS) CreateFile(dirID InodeID, name string, data io.Reader) (
 	return childID, nil
 }
 
-func (t *RemoteTernVFS) Remove(dirID InodeID, name string) error {
+func (t *RemoteTernVFS) LookupEdge(dirID InodeID, name string) (Edge, error) {
 	dirMid := msgs.InodeId(dirID)
-	// Lookup to get target ID and creation time.
-	var lookupResp msgs.LookupResp
+	var resp msgs.LookupResp
 	if err := t.client.ShardRequest(t.log, dirMid.Shard(), &msgs.LookupReq{
 		DirId: dirMid,
 		Name:  name,
-	}, &lookupResp); err != nil {
-		return ternToOSError(err)
+	}, &resp); err != nil {
+		return Edge{}, ternToOSError(err)
 	}
-	targetId := lookupResp.TargetId
-	creationTime := lookupResp.CreationTime
+	return Edge{ID: InodeID(resp.TargetId), CreationTime: uint64(resp.CreationTime)}, nil
+}
+
+func (t *RemoteTernVFS) Remove(dirID InodeID, name string) error {
+	edge, err := t.LookupEdge(dirID, name)
+	if err != nil {
+		return err
+	}
+	return ternToOSError(t.RemoveEdge(dirID, name, edge))
+}
+
+func (t *RemoteTernVFS) RemoveEdge(dirID InodeID, name string, edge Edge) error {
+	dirMid := msgs.InodeId(dirID)
+	targetId := msgs.InodeId(edge.ID)
+	creationTime := msgs.TernTime(edge.CreationTime)
 	switch targetId.Type() {
 	case msgs.DIRECTORY:
 		// Directory removal goes through CDC.
@@ -381,7 +393,7 @@ func (t *RemoteTernVFS) Remove(dirID InodeID, name string) error {
 			CreationTime: creationTime,
 			Name:         name,
 		}, &msgs.SoftUnlinkDirectoryResp{}); err != nil {
-			return ternToOSError(err)
+			return err
 		}
 	default:
 		// File/symlink removal is a shard-local operation.
@@ -391,7 +403,7 @@ func (t *RemoteTernVFS) Remove(dirID InodeID, name string) error {
 			Name:         name,
 			CreationTime: creationTime,
 		}, &msgs.SoftUnlinkFileResp{}); err != nil {
-			return ternToOSError(err)
+			return err
 		}
 	}
 	// Evict cached reader for removed files.
@@ -403,22 +415,23 @@ func (t *RemoteTernVFS) Remove(dirID InodeID, name string) error {
 }
 
 func (t *RemoteTernVFS) Rename(srcDirID InodeID, srcName string, dstDirID InodeID, dstName string) error {
+	edge, err := t.LookupEdge(srcDirID, srcName)
+	if err != nil {
+		return err
+	}
+	return ternToOSError(t.RenameEdge(srcDirID, srcName, edge, dstDirID, dstName))
+}
+
+func (t *RemoteTernVFS) RenameEdge(srcDirID InodeID, srcName string, edge Edge, dstDirID InodeID, dstName string) error {
 	srcMid := msgs.InodeId(srcDirID)
 	dstMid := msgs.InodeId(dstDirID)
+	// Nothing has been sent yet, so a failure here is definite.
 	overwrittenID, err := t.Lookup(dstDirID, dstName)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	// Lookup source to get target ID and creation time.
-	var lookupResp msgs.LookupResp
-	if err := t.client.ShardRequest(t.log, srcMid.Shard(), &msgs.LookupReq{
-		DirId: srcMid,
-		Name:  srcName,
-	}, &lookupResp); err != nil {
-		return ternToOSError(err)
-	}
-	targetId := lookupResp.TargetId
-	creationTime := lookupResp.CreationTime
+	targetId := msgs.InodeId(edge.ID)
+	creationTime := msgs.TernTime(edge.CreationTime)
 	if srcDirID == dstDirID {
 		// Same-directory renames are shard-local for every inode type.
 		if err := t.client.ShardRequest(t.log, srcMid.Shard(), &msgs.SameDirectoryRenameReq{
@@ -428,7 +441,7 @@ func (t *RemoteTernVFS) Rename(srcDirID InodeID, srcName string, dstDirID InodeI
 			OldCreationTime: creationTime,
 			NewName:         dstName,
 		}, &msgs.SameDirectoryRenameResp{}); err != nil {
-			return ternToOSError(err)
+			return err
 		}
 	} else if targetId.Type() == msgs.DIRECTORY {
 		// Directory rename — always through CDC.
@@ -440,7 +453,7 @@ func (t *RemoteTernVFS) Rename(srcDirID InodeID, srcName string, dstDirID InodeI
 			NewOwnerId:      dstMid,
 			NewName:         dstName,
 		}, &msgs.RenameDirectoryResp{}); err != nil {
-			return ternToOSError(err)
+			return err
 		}
 	} else {
 		// Cross-directory file rename — through CDC.
@@ -452,7 +465,7 @@ func (t *RemoteTernVFS) Rename(srcDirID InodeID, srcName string, dstDirID InodeI
 			NewOwnerId:      dstMid,
 			NewName:         dstName,
 		}, &msgs.RenameFileResp{}); err != nil {
-			return ternToOSError(err)
+			return err
 		}
 	}
 	// Update parent cache.

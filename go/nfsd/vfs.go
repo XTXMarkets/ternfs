@@ -41,6 +41,14 @@ func MakeInodeID(typ uint64, ino uint64) InodeID {
 // an in-progress write).
 type Cookie [8]byte
 
+// Edge identifies a directory entry as LookupEdge observed it: the inode it
+// names and the creation time of the entry itself. TernFS pins a mutation to
+// both. The pin does not establish the outcome of a retransmitted request.
+type Edge struct {
+	ID           InodeID
+	CreationTime uint64
+}
+
 // NodeInfo holds metadata returned by Stat.
 type NodeInfo struct {
 	Size   uint64    // 0 for directories
@@ -119,6 +127,17 @@ type TernVFS interface {
 	// Rename moves/renames a directory entry. A replaced file remains
 	// readable by inode until it is collected.
 	Rename(srcDirID InodeID, srcName string, dstDirID InodeID, dstName string) error
+
+	// LookupEdge finds a child by name and returns the entry it was found
+	// through, so that a later mutation can be pinned to it.
+	LookupEdge(dirID InodeID, name string) (Edge, error)
+
+	// RemoveEdge removes the pinned entry and returns the raw backend error.
+	RemoveEdge(dirID InodeID, name string, edge Edge) error
+
+	// RenameEdge moves the entry only while srcName still refers to edge, with
+	// the same error contract as RemoveEdge.
+	RenameEdge(srcDirID InodeID, srcName string, edge Edge, dstDirID InodeID, dstName string) error
 
 	// SetTime sets the mtime and/or atime of a file or directory.
 	// A nil pointer means "don't change this field."
@@ -573,7 +592,23 @@ func (lfs *LocalTernVFS) snapshotLocked(path string, id InodeID) error {
 	return nil
 }
 
+func (lfs *LocalTernVFS) LookupEdge(dirID InodeID, name string) (Edge, error) {
+	id, err := lfs.Lookup(dirID, name)
+	if err != nil {
+		return Edge{}, err
+	}
+	return Edge{ID: id}, nil
+}
+
 func (lfs *LocalTernVFS) Remove(dirID InodeID, name string) error {
+	return lfs.remove(dirID, name, nil)
+}
+
+func (lfs *LocalTernVFS) RemoveEdge(dirID InodeID, name string, edge Edge) error {
+	return lfs.remove(dirID, name, &edge)
+}
+
+func (lfs *LocalTernVFS) remove(dirID InodeID, name string, pin *Edge) error {
 	dirPath, ok := lfs.resolve(dirID)
 	if !ok {
 		return os.ErrNotExist
@@ -583,6 +618,9 @@ func (lfs *LocalTernVFS) Remove(dirID InodeID, name string) error {
 	defer lfs.mu.Unlock()
 	// Check what it is to update our maps.
 	childID := lfs.statInodeID(childPath)
+	if pin != nil && childID != pin.ID {
+		return os.ErrNotExist
+	}
 	if childID == 0 {
 		return os.ErrNotExist
 	}
@@ -602,6 +640,14 @@ func (lfs *LocalTernVFS) Remove(dirID InodeID, name string) error {
 }
 
 func (lfs *LocalTernVFS) Rename(srcDirID InodeID, srcName string, dstDirID InodeID, dstName string) error {
+	return lfs.rename(srcDirID, srcName, nil, dstDirID, dstName)
+}
+
+func (lfs *LocalTernVFS) RenameEdge(srcDirID InodeID, srcName string, edge Edge, dstDirID InodeID, dstName string) error {
+	return lfs.rename(srcDirID, srcName, &edge, dstDirID, dstName)
+}
+
+func (lfs *LocalTernVFS) rename(srcDirID InodeID, srcName string, pin *Edge, dstDirID InodeID, dstName string) error {
 	srcDir, ok := lfs.resolve(srcDirID)
 	if !ok {
 		return os.ErrNotExist
@@ -615,6 +661,10 @@ func (lfs *LocalTernVFS) Rename(srcDirID InodeID, srcName string, dstDirID Inode
 
 	lfs.mu.Lock()
 	srcID := lfs.statInodeID(srcPath)
+	if pin != nil && srcID != pin.ID {
+		lfs.mu.Unlock()
+		return os.ErrNotExist
+	}
 	if srcID == 0 {
 		lfs.mu.Unlock()
 		return os.ErrNotExist
