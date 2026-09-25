@@ -186,6 +186,12 @@ func beginOpenForTest(
 	seq uint32,
 ) (openState, bool, uint32) {
 	op, response, replay, status := os.startOpen(owner, seq)
+	if replay {
+		if op != nil {
+			abortOwnerOperation(op)
+		}
+		return response.state, true, status
+	}
 	if op != nil {
 		abortOwnerOperation(op)
 		return openState{}, false, status
@@ -202,6 +208,10 @@ func addOpenForTest(
 	id StateID,
 ) (openState, uint32) {
 	op, response, replay, status := os.startOpen(owner, seq)
+	if replay && op != nil {
+		abortOwnerOperation(op)
+		return response.state, response.status
+	}
 	if op == nil {
 		if replay {
 			return response.state, response.status

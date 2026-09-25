@@ -114,6 +114,7 @@ type openOwnerOperation struct {
 	needConfirm bool
 	abandoned   []openState
 	finished    bool
+	replay      bool
 }
 
 type recoveredCloseOperation struct {
@@ -317,6 +318,13 @@ func (os *openStateStore) startOwnerOperation(
 		response := owner.lastResponse
 		if response.matches(kind, seq, stateID, generation, fileID) {
 			owner.lastUsed = os.now()
+			if kind == openOwnerOperationOpen && response.status == NFS4_OK {
+				// OPEN replay renews its marker. Keep the owner until that
+				// finishes so CLOSE cannot remove it and then be overtaken.
+				return &openOwnerOperation{
+					store: os, key: key, owner: owner, replay: true,
+				}, response, true, response.status
+			}
 			os.releaseOwner(owner)
 			return nil, response, true, response.status
 		}
@@ -662,8 +670,21 @@ func (op *openOwnerOperation) existingOpen(fileID InodeID) (openState, bool) {
 
 func (op *openOwnerOperation) finishServerFaultIfNeeded() {
 	if !op.finished {
+		if op.replay {
+			op.finished = true
+			op.store.releaseOwner(op.owner)
+			return
+		}
 		op.finishError(NFS4ERR_SERVERFAULT)
 	}
+}
+
+func (op *openOwnerOperation) replayStateActive(id StateID) bool {
+	op.store.mu.Lock()
+	defer op.store.mu.Unlock()
+	state := op.store.states[id]
+	return state != nil && state.owner == op.key &&
+		op.store.owners[op.key] == op.owner
 }
 
 func (os *openStateStore) lookup(
