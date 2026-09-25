@@ -1681,7 +1681,11 @@ func (c *Client) RegistryAddress() string {
 }
 
 func (c *Client) EraseDecommissionedBlock(block *msgs.RemoveSpanInitiateBlockInfo) (proof [8]byte, err error) {
-	resp, err := c.registryConn.Request(&msgs.EraseDecommissionedBlockReq{block.BlockServiceId, block.BlockId, block.Certificate})
+	resp, err := c.registryConn.Request(&msgs.EraseDecommissionedBlockReq{
+		BlockServiceId: block.BlockServiceId,
+		BlockId:        block.BlockId,
+		Certificate:    block.Certificate,
+	})
 	if err != nil {
 		return [8]byte{}, err
 	}
