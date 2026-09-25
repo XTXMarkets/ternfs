@@ -31,6 +31,8 @@ func main() {
 	registry := flag.String("registry", "", "TernFS registry address (for production)")
 	staging := flag.String("staging", "", "staging directory for writes (omit for read-only)")
 	verbose := flag.Bool("v", false, "verbose logging of NFS requests/responses")
+	maxInFlight := flag.Int("max-in-flight-per-connection", defaultMaxInFlightPerConn,
+		"maximum requests admitted per TCP connection")
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(),
 			"Usage: %s [options]\n       %s inspect [options]\n\nOptions:\n",
@@ -40,6 +42,10 @@ func main() {
 			"\nRun %s inspect -h for the client store inspector.\n", os.Args[0])
 	}
 	flag.Parse()
+	if *maxInFlight <= 0 {
+		fmt.Fprintln(os.Stderr, "-max-in-flight-per-connection must be positive")
+		os.Exit(2)
+	}
 
 	level := slog.LevelInfo
 	if *verbose {
@@ -75,6 +81,7 @@ func main() {
 		slogger.Error("creating server", "err", err)
 		os.Exit(1)
 	}
+	srv.maxInFlightPerConn = *maxInFlight
 	slogger.Info("NFS server listening", "addr", *addr)
 	if err := srv.ListenAndServe(*addr); err != nil {
 		slogger.Error("server error", "err", err)

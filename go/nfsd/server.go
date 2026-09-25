@@ -5,6 +5,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/binary"
 	"errors"
@@ -37,14 +38,16 @@ func peekCompoundHeader(body []byte) (tag []byte, minor uint32, ok bool) {
 
 // Server is the NFSv4 server.
 type Server struct {
-	fs            TernVFS
-	clients       *ClientStore
-	opens         *openStateStore
-	stagingStore  StagingStore
-	writeVerifier [8]byte       // random per server instance, changes on restart
-	idleTimeout   time.Duration // connection idle timeout
-	log           *slog.Logger
-	startedAt     time.Time
+	fs                 TernVFS
+	clients            *ClientStore
+	opens              *openStateStore
+	stagingStore       StagingStore
+	writeVerifier      [8]byte       // random per server instance, changes on restart
+	idleTimeout        time.Duration // timeout reading the next request
+	writeTimeout       time.Duration // timeout writing one reply
+	maxInFlightPerConn int
+	log                *slog.Logger
+	startedAt          time.Time
 
 	foregroundReads atomic.Int64
 	hydrationSlots  chan struct{}
@@ -142,6 +145,7 @@ func (s *Server) lockMutationTargets(targets ...mutationTarget) func() {
 }
 
 const maxPendingClientGC = 256
+const defaultMaxInFlightPerConn = 64
 
 func NewServer(fs TernVFS, stagingStore StagingStore, logger *slog.Logger) (*Server, error) {
 	clients, err := NewClientStore(fs)
@@ -154,17 +158,19 @@ func NewServer(fs TernVFS, stagingStore StagingStore, logger *slog.Logger) (*Ser
 		logger = slog.Default()
 	}
 	s := &Server{
-		fs:              fs,
-		clients:         clients,
-		opens:           newOpenStateStore(),
-		stagingStore:    stagingStore,
-		writeVerifier:   verf,
-		idleTimeout:     5 * time.Minute,
-		log:             logger,
-		startedAt:       clients.now(),
-		hydrationSlots:  make(chan struct{}, maxConcurrentHydrations),
-		clientGCPending: make(map[InodeID]struct{}),
-		clientGCRecheck: make(map[InodeID]struct{}),
+		fs:                 fs,
+		clients:            clients,
+		opens:              newOpenStateStore(),
+		stagingStore:       stagingStore,
+		writeVerifier:      verf,
+		idleTimeout:        5 * time.Minute,
+		writeTimeout:       5 * time.Minute,
+		maxInFlightPerConn: defaultMaxInFlightPerConn,
+		log:                logger,
+		startedAt:          clients.now(),
+		hydrationSlots:     make(chan struct{}, maxConcurrentHydrations),
+		clientGCPending:    make(map[InodeID]struct{}),
+		clientGCRecheck:    make(map[InodeID]struct{}),
 	}
 	s.opens.now = func() time.Time { return s.clients.now() }
 	// The nfsd ID names this process's lease and confirming slots in the
@@ -348,15 +354,84 @@ func (s *Server) ListenAndServe(addr string) error {
 }
 
 func (s *Server) handleConn(conn net.Conn) {
-	defer conn.Close()
 	remote := conn.RemoteAddr().String()
 	s.log.Info("client connected", "remote", remote)
+	var closed atomic.Bool
+	done := make(chan struct{})
+	closeConnection := func() {
+		if closed.CompareAndSwap(false, true) {
+			close(done)
+			conn.Close()
+		}
+	}
+	defer closeConnection()
+	var workers sync.WaitGroup
+	// A read EOF may be a TCP half-close. Drain accepted replies before
+	// closing the write side. Backend operations are not cancelled.
+	defer workers.Wait()
+	limit := s.maxInFlightPerConn
+	if limit <= 0 {
+		limit = defaultMaxInFlightPerConn
+	}
+	slots := make(chan struct{}, limit)
+	var writeMu, requestsMu sync.Mutex
+	inFlight := make(map[uint32][]byte)
+	writeReply := func(reply []byte) {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		if closed.Load() {
+			return
+		}
+		var err error
+		if s.writeTimeout > 0 {
+			err = conn.SetWriteDeadline(time.Now().Add(s.writeTimeout))
+		}
+		if err == nil {
+			err = writeFrame(conn, reply)
+		}
+		if err != nil {
+			s.log.Debug("RPC reply failed", "remote", remote, "err", err)
+			// Wake a reader blocked either on the socket or on admission.
+			closeConnection()
+		}
+	}
+	run := func(req *rpcRequest) {
+		defer workers.Done()
+		defer func() {
+			requestsMu.Lock()
+			delete(inFlight, req.xid)
+			requestsMu.Unlock()
+			<-slots
+			if recovered := recover(); recovered != nil {
+				closeConnection()
+				s.log.Error("panic handling RPC", "remote", remote, "xid", req.xid, "panic", recovered)
+			}
+		}()
+		writeReply(s.handleRPC(req, remote))
+	}
 	for {
+		// Reserve memory and execution capacity before reading a full frame.
+		select {
+		case slots <- struct{}{}:
+		case <-done:
+			return
+		}
+		if closed.Load() {
+			<-slots
+			return
+		}
 		if s.idleTimeout > 0 {
-			conn.SetDeadline(time.Now().Add(s.idleTimeout))
+			if err := conn.SetReadDeadline(time.Now().Add(s.idleTimeout)); err != nil {
+				<-slots
+				return
+			}
 		}
 		frame, err := readFrame(conn)
 		if err != nil {
+			<-slots
+			if closed.Load() {
+				return
+			}
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
 				s.log.Info("client idle timeout", "remote", remote)
 			} else if errors.Is(err, io.EOF) || errors.Is(err, syscall.ECONNRESET) {
@@ -368,34 +443,50 @@ func (s *Server) handleConn(conn net.Conn) {
 		}
 		req, err := parseRPCCall(frame)
 		if err != nil {
-			// A parse error means the stream is likely desynced; close the
-			// connection rather than spin on garbage until the idle timeout.
+			<-slots
 			s.log.Warn("RPC parse error", "remote", remote, "err", err)
 			return
 		}
+		requestsMu.Lock()
+		previous, duplicate := inFlight[req.xid]
+		if !duplicate {
+			inFlight[req.xid] = frame
+		}
+		requestsMu.Unlock()
+		if duplicate {
+			<-slots
+			if !bytes.Equal(previous, frame) {
+				s.log.Warn("conflicting in-flight RPC xid", "remote", remote, "xid", req.xid)
+				closeConnection()
+				return
+			}
+			// The original request will send the one reply for this XID.
+			continue
+		}
 		s.log.Debug("RPC call", "remote", remote, "xid", req.xid,
 			"prog", req.prog, "vers", req.vers, "proc", req.proc)
-		var reply []byte
-		if req.prog != nfsProg || req.vers != nfsVersion {
-			s.log.Debug("prog/vers mismatch", "prog", req.prog, "vers", req.vers)
-			reply = buildRPCReply(req.xid, acceptProgMismatch)
-			reply = binary.BigEndian.AppendUint32(reply, nfsVersion)
-			reply = binary.BigEndian.AppendUint32(reply, nfsVersion)
+		workers.Add(1)
+		if req.prog == nfsProg && req.vers == nfsVersion && req.proc == procCompound {
+			go run(req)
 		} else {
-			switch req.proc {
-			case procNull:
-				s.log.Debug("NULL")
-				reply = buildRPCReply(req.xid, acceptSuccess)
-			case procCompound:
-				reply = s.safeHandleCompound(req, remote)
-			default:
-				s.log.Debug("unknown proc", "proc", req.proc)
-				reply = buildRPCReply(req.xid, acceptProcUnavail)
-			}
+			run(req)
 		}
-		if err := writeFrame(conn, reply); err != nil {
-			return
-		}
+	}
+}
+
+func (s *Server) handleRPC(req *rpcRequest, remote string) []byte {
+	if req.prog != nfsProg || req.vers != nfsVersion {
+		reply := buildRPCReply(req.xid, acceptProgMismatch)
+		reply = binary.BigEndian.AppendUint32(reply, nfsVersion)
+		return binary.BigEndian.AppendUint32(reply, nfsVersion)
+	}
+	switch req.proc {
+	case procNull:
+		return buildRPCReply(req.xid, acceptSuccess)
+	case procCompound:
+		return s.safeHandleCompound(req, remote)
+	default:
+		return buildRPCReply(req.xid, acceptProcUnavail)
 	}
 }
 

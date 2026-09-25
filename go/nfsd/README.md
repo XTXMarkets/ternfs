@@ -10,6 +10,41 @@ SPDX-License-Identifier: GPL-2.0-or-later
 operations to the smaller TernFS interface, stages writable files locally,
 and implements the client and open state required by the NFS protocol.
 
+## Request handling
+
+Each TCP connection has one reader and up to 64 admitted requests.
+`-max-in-flight-per-connection` sets that limit; it must be positive.
+The reader reserves capacity before reading a complete RPC frame.
+COMPOUNDs run concurrently, with operations inside each compound executed
+in order. Replies share one writer lock and may arrive out of request order;
+the RPC XID identifies each reply. Excess requests wait in socket buffers.
+
+Open-owner locks serialize owner operations and replay; seqid validation
+rejects invalid sequencing. They do not guarantee FIFO scheduling. OPEN
+replay retains the owner lock while renewing its marker so CLOSE cannot
+remove the marker and then be overtaken by replay. Pathname locks serialize
+namespace changes, and per-file locks protect staging data.
+
+The read timeout is five minutes from the start of each admitted frame
+read. The separate write timeout is five minutes for each reply once it
+acquires the writer lock. Read EOF or timeout stops admission and lets
+accepted requests finish, including after a TCP half-close. A write failure
+closes the socket and wakes the reader. Backend operations already in
+flight continue; a stuck backend can therefore retain a handler after its
+client disconnects.
+
+Identical requests reusing an in-flight XID on the same connection are
+dropped; the original request sends one reply. Reusing that XID with
+different request bytes closes the connection. This guard lasts through
+the reply write. It does not cache completed replies or cover reconnects.
+
+The admission limit bounds request count, not bytes or connections. One
+request is limited to 2 MiB, but a compound can contain up to 128 one-MiB
+READs. At the default concurrency this can retain roughly 8 GiB of reply
+payload on one connection, plus allocation overhead. Ordinary clients
+send much smaller compounds. Monitor RSS and tune the request limit for
+the workload; there is no aggregate byte budget.
+
 ## State overview
 
 The design is constrained by two TernFS properties:
@@ -710,6 +745,10 @@ not be visible across the nfsd fleet.
 Byte-range locking, delegations, grace-period reclaim, named attributes, hard
 links and special files are also not implemented. nfsd implements NFSv4.0
 only.
+
+There is no completed-reply or cross-connection duplicate-request cache.
+In-flight XID suppression on one connection does not provide general
+exactly-once execution of arbitrary compounds.
 
 ## Testing
 
