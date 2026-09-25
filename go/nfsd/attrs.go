@@ -455,28 +455,20 @@ func writeEntryChain(entW *Entry4Writer, dirW *Dirlist4Writer, entries []readdir
 func writeEntryAttrs(entW *Entry4Writer, re *readdirEntry) {
 	faw := entW.StartAttrs()
 	if re.attrData == nil {
-		writeEmptyAttrs(&faw, entW)
+		entW.Resume(writeFattr(&faw, nil, nil))
 		return
 	}
-	bmW := faw.StartAttrmask()
-	bmW.AppendData(re.respMask[0])
-	bmW.AppendData(re.respMask[1])
-	buf := bmW.Finish()
-	faw.Resume(buf)
-	alW := faw.StartAttrVals()
-	buf = alW.SetData(re.attrData).Finish()
-	faw.Resume(buf)
-	buf = faw.Finish()
-	entW.Resume(buf)
+	entW.Resume(writeFattr(&faw, re.respMask[:], re.attrData))
 }
 
-func writeEmptyAttrs(faw *Fattr4Writer, entW *Entry4Writer) {
+// writeFattr writes the supplied bitmap words and encoded attribute values.
+func writeFattr(faw *Fattr4Writer, mask []uint32, data []byte) []byte {
 	bmW := faw.StartAttrmask()
-	buf := bmW.Finish()
-	faw.Resume(buf)
+	for _, word := range mask {
+		bmW.AppendData(word)
+	}
+	faw.Resume(bmW.Finish())
 	alW := faw.StartAttrVals()
-	buf = alW.SetData(nil).Finish()
-	faw.Resume(buf)
-	buf = faw.Finish()
-	entW.Resume(buf)
+	faw.Resume(alW.SetData(data).Finish())
+	return faw.Finish()
 }

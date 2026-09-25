@@ -388,6 +388,11 @@ type compoundState struct {
 	principal    rpcPrincipal
 }
 
+func (st *compoundState) setCurrent(id InodeID) {
+	st.currentID = id
+	st.currentIDSet = true
+}
+
 const maxCompoundOperations = 128
 
 func (s *Server) safeHandleCompound(req *rpcRequest, remote string) (reply []byte) {
