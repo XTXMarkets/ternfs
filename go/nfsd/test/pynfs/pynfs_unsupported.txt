@@ -127,14 +127,8 @@ RENEW3
 # writer's private data before CLOSE.
 OPEN28
 
-# Moving or removing the publication target of an active local staging
-# session is rejected with FILE_OPEN.
+# Moving an active staged source across directories is rejected with FILE_OPEN.
 RNM1r
-RNM12
-RNM14
-RNM15
-RNM17
-RNM21
 
 # TernFS rename primitives reject an existing destination. RNM13
 # requires atomically replacing an empty directory in the same parent.

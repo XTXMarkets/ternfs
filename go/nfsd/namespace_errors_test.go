@@ -13,7 +13,7 @@ import (
 )
 
 func TestNamespaceUnstagedErrorOutcomes(t *testing.T) {
-	for _, operation := range []string{"remove"} {
+	for _, operation := range []string{"remove", "rename"} {
 		for _, tc := range []struct {
 			name   string
 			err    error

@@ -1743,12 +1743,6 @@ func (s *Server) opRename(args RENAME4args, st *compoundState, w *COMPOUND4resWr
 		w.Resume(ew.Finish())
 		return status
 	}
-	unlock := s.lockMutationTargets(
-		mutationTarget{dirID: st.savedID, name: oldName},
-		mutationTarget{dirID: st.currentID, name: newName},
-	)
-	defer unlock()
-
 	if st.savedID == st.currentID && oldName == newName {
 		ew := w.AppendResarray_Rename()
 		okW := ew.SetValue_Nfs4Ok()
@@ -1765,36 +1759,56 @@ func (s *Server) opRename(args RENAME4args, st *compoundState, w *COMPOUND4resWr
 		return NFS4_OK
 	}
 
-	sourceBusy, err := s.stagingTargetBusy(st.savedID, oldName)
-	if err != nil {
-		ew := w.AppendResarray_Rename()
-		status := s.errToNFS(err)
-		ew.SetValue_Default(status)
-		w.Resume(ew.Finish())
-		return status
-	}
-	targetBusy, err := s.stagingTargetBusy(st.currentID, newName)
-	if err != nil {
-		ew := w.AppendResarray_Rename()
-		status := s.errToNFS(err)
-		ew.SetValue_Default(status)
-		w.Resume(ew.Finish())
-		return status
-	}
-	if sourceBusy || targetBusy {
-		ew := w.AppendResarray_Rename()
-		ew.SetValue_Default(NFS4ERR_FILE_OPEN)
-		w.Resume(ew.Finish())
-		return NFS4ERR_FILE_OPEN
-	}
+	unlock := s.lockMutationTargets(
+		mutationTarget{dirID: st.savedID, name: oldName},
+		mutationTarget{dirID: st.currentID, name: newName},
+	)
+	defer unlock()
 
-	err = s.fs.Rename(st.savedID, oldName, st.currentID, newName)
-	if err != nil {
+	fail := func(status uint32) uint32 {
 		ew := w.AppendResarray_Rename()
-		status := s.errToNFS(err)
 		ew.SetValue_Default(status)
 		w.Resume(ew.Finish())
 		return status
+	}
+	sourceActive, err := s.retireInactiveStagingTarget(st.savedID, oldName)
+	if err != nil {
+		return fail(s.errToNFS(err))
+	}
+	if _, err := s.retireInactiveStagingTarget(st.currentID, newName); err != nil {
+		return fail(s.errToNFS(err))
+	}
+	if sourceActive && st.savedID != st.currentID {
+		// The transient inode belongs to its construction shard. Moving a live
+		// writer needs a copy into another inode, which this design leaves out.
+		return fail(NFS4ERR_FILE_OPEN)
+	}
+	var sourceTarget *mutationTarget
+	if st.savedID == st.currentID {
+		sourceTarget = &mutationTarget{dirID: st.currentID, name: newName}
+	}
+	writers := s.namespaceWriters(st.savedID, oldName, sourceTarget)
+	writers = append(writers, s.namespaceWriters(st.currentID, newName, nil)...)
+	edge, err := s.fs.LookupEdge(st.savedID, oldName)
+	if err != nil {
+		return fail(s.errToNFS(err))
+	}
+	dst, err := s.fs.Lookup(st.currentID, newName)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fail(s.errToNFS(err))
+	}
+	if err == nil && (edge.ID.Type() == InodeTypeDir) != (dst.Type() == InodeTypeDir) {
+		return fail(NFS4ERR_EXIST)
+	}
+	// Preflight cannot freeze the destination. A later type race is a
+	// submitted failure and can quarantine writers on the remote backend.
+	if err := s.guardNamespaceWriters(writers); err != nil {
+		s.log.Warn("cannot guard RENAME writers", "err", err)
+		return fail(NFS4ERR_IO)
+	}
+	err = s.fs.RenameEdge(st.savedID, oldName, edge, st.currentID, newName)
+	if status := s.finishNamespaceWriters(writers, OP_RENAME, err); status != NFS4_OK {
+		return fail(status)
 	}
 
 	ew := w.AppendResarray_Rename()

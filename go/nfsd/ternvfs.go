@@ -425,11 +425,6 @@ func (t *RemoteTernVFS) Rename(srcDirID InodeID, srcName string, dstDirID InodeI
 func (t *RemoteTernVFS) RenameEdge(srcDirID InodeID, srcName string, edge Edge, dstDirID InodeID, dstName string) error {
 	srcMid := msgs.InodeId(srcDirID)
 	dstMid := msgs.InodeId(dstDirID)
-	// Nothing has been sent yet, so a failure here is definite.
-	overwrittenID, err := t.Lookup(dstDirID, dstName)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
 	targetId := msgs.InodeId(edge.ID)
 	creationTime := msgs.TernTime(edge.CreationTime)
 	if srcDirID == dstDirID {
@@ -470,10 +465,9 @@ func (t *RemoteTernVFS) RenameEdge(srcDirID InodeID, srcName string, edge Edge, 
 	}
 	// Update parent cache.
 	t.mu.Lock()
-	if overwrittenID != 0 && overwrittenID != InodeID(targetId) {
-		delete(t.parents, overwrittenID)
-		delete(t.readers, msgs.InodeId(overwrittenID))
-	}
+	// Readers are keyed by immutable inode, so a displaced file's cached
+	// reader still describes its snapshot. Destination preflight belongs to
+	// the caller and must run before any writer is guarded.
 	t.parents[InodeID(targetId)] = dstDirID
 	t.mu.Unlock()
 	return nil
