@@ -664,7 +664,7 @@ private:
             } catch (const BincodeException& err) {
                 LOG_ERROR(_env, "could not parse: %s", err.what());
                 RAISE_ALERT(_env, "could not parse LogsDBResponse from %s, dropping it.", msg.clientAddr);
-                requests.pop_back();
+                responses.pop_back();
                 continue;
             }
             LOG_DEBUG(_env, "Received response %s with requests id %s from replica id %s", resp.msg.body.kind(), resp.msg.id, resp.replicaId);
@@ -687,6 +687,18 @@ private:
 
             LOG_DEBUG(_env, "received request id %s, kind %s", cdcMsg.id, cdcMsg.body.kind());
             auto receivedAt = ternNow();
+
+            auto validationError =
+                !CDCLogEntry::itemFits(cdcMsg.body.packedSize(), LogsDB::DEFAULT_UDP_ENTRY_SIZE)
+                ? TernError::MALFORMED_REQUEST
+                : validateCDCRequest(cdcMsg.body);
+            if (unlikely(validationError != TernError::NO_ERROR)) {
+                CDCRespMsg respMsg;
+                respMsg.id = cdcMsg.id;
+                respMsg.body.setError() = validationError;
+                _packCDCResponse(msg.socketIx, msg.clientAddr, cdcMsg.body.kind(), respMsg);
+                continue;
+            }
 
             if (unlikely(cdcMsg.body.kind() == CDCMessageKind::CDC_SNAPSHOT)) {
                 _processCDCSnapshotMessage(cdcMsg, msg);
@@ -749,6 +761,11 @@ private:
             }
             shardResp->checkPoint = respMsg.body.checkPointIdx;
             shardResp->resp = std::move(respMsg.body.resp);
+            if (unlikely(!CDCLogEntry::itemFits(shardResp->packedSize(), LogsDB::DEFAULT_UDP_ENTRY_SIZE))) {
+                RAISE_ALERT(_env, "shard response for request %s is too large to replicate, replacing it with MALFORMED_RESPONSE", respMsg.id);
+                shardResp->checkPoint = 0;
+                shardResp->resp.setError() = TernError::MALFORMED_RESPONSE;
+            }
 
             _recordCDCShardResp(respMsg.id, *shardResp);
         }
@@ -839,6 +856,10 @@ private:
     }
 
     void _packCDCResponse(int sockIx, const IpPort& clientAddr, CDCMessageKind reqKind, const CDCRespMsg& respMsg) {
+        if (unlikely(clientAddr.port == 0)) {
+            LOG_ERROR(_env, "cannot send CDC response for request %s to a zero source port", respMsg.id);
+            return;
+        }
         if (unlikely(respMsg.body.kind() == CDCMessageKind::ERROR)) {
             auto err = respMsg.body.getError();
             LOG_DEBUG(_env, "will send error %s to %s", err, clientAddr);
