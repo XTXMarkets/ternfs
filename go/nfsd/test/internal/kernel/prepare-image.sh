@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: GPL-2.0-or-later
 #
-# Build the guest kernel image used by run-qemu.sh: a copy of a locally
+# Build the guest kernel image used by main.go: a copy of a locally
 # installed Linux kernel and a busybox initramfs which loads the virtio and
 # 9p modules, mounts the host root filesystem over virtio-9p and switches to
 # guest-init.sh. The guest reuses the host's /lib/modules, so the kernel must
@@ -97,8 +97,8 @@ for m in $(cat /modules/order); do
 	insmod "/modules/$m.ko" || echo "insmod $m failed"
 done
 if mount -t 9p -o trans=virtio,version=9p2000.L,msize=1048576,cache=loose hostroot /newroot; then
-	init=/newroot/$(sed -n 's/.*guest_init=\([^ ]*\).*/\1/p' /proc/cmdline)
-	exec switch_root /newroot "${init#/newroot}"
+	# Linux passes guest_init from the kernel command line in the environment.
+	exec switch_root /newroot "$guest_init"
 fi
 echo "GUEST-ROOT-FAILED"
 dmesg | tail -20

@@ -35,7 +35,6 @@ FUNCTIONAL_TEST_ROOT ?=
 FUNCTIONAL_TESTS ?= all
 FUNCTIONAL_TIMEOUT ?= 30m
 KERNEL_IMAGE_DIR := $(DEPS_DIR)/kernel
-KERNEL_IMAGE := $(KERNEL_IMAGE_DIR)/initrd.img
 
 .DEFAULT_GOAL := help
 
@@ -132,12 +131,12 @@ test-functional:
 	}
 	./functional/run-all.sh "$(FUNCTIONAL_TEST_ROOT)"
 
-build-kernel-image: $(KERNEL_IMAGE)
+# Recreate the small initramfs so changes to the selected kernel, its modules
+# or prepare-image.sh are picked up on every run.
+build-kernel-image:
+	./internal/kernel/prepare-image.sh -o "$(KERNEL_IMAGE_DIR)" -k "$(KERNEL_VERSION)"
 
-$(KERNEL_IMAGE):
-	./internal/kernel/prepare-image.sh -o "$(KERNEL_IMAGE_DIR)"
-
-test-functional-cluster: $(KERNEL_IMAGE)
+test-functional-cluster: build-kernel-image
 	go run ./internal/kernel -image-dir "$(KERNEL_IMAGE_DIR)" -tests "$(FUNCTIONAL_TESTS)" \
 		-timeout "$(FUNCTIONAL_TIMEOUT)" $(TEST_ARGS) $(CLUSTER_ARG)
 

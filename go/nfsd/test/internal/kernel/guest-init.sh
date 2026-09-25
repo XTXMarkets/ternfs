@@ -21,26 +21,16 @@ mount -t devpts devpts /dev/pts
 mount -t tmpfs shm /dev/shm
 mount -t tmpfs run /run
 
-nfsport=""
-export_path=""
-hostname_arg=guest
-tests=all
-log=/dev/null
-mnt=""
-functional=""
-case_timeout=300
-for arg in $(< /proc/cmdline); do
-	case $arg in
-	nfsport=*) nfsport=${arg#*=} ;;
-	export=*) export_path=${arg#*=} ;;
-	host=*) hostname_arg=${arg#*=} ;;
-	tests=*) tests=${arg#*=} ;;
-	log=*) log=${arg#*=} ;;
-	mnt=*) mnt=${arg#*=} ;;
-	functional=*) functional=${arg#*=} ;;
-	case_timeout=*) case_timeout=${arg#*=} ;;
-	esac
-done
+# Linux parses the quoted kernel arguments and passes them to init in the
+# environment, which switch_root preserves.
+nfsport=${nfsport:-}
+export_path=${export:-}
+hostname_arg=${host:-guest}
+tests=${tests:-all}
+log=${log:-/dev/null}
+mnt=${mnt:-}
+functional=${functional:-}
+case_timeout=${case_timeout:-300}
 
 exec > >(tee -a "$log") 2>&1
 finish() {

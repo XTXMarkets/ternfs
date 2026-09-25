@@ -98,7 +98,8 @@ func run(ctx context.Context, opts harness.Options, image, tests string,
 	}
 	// The guest resolves these host paths through its 9p root. It mounts the
 	// server's own export so the harness can remove the run's data on success.
-	cmdline := strings.Join([]string{
+	// Linux passes these parameters to init as environment variables.
+	cmdline, err := kernelCommandLine([]string{
 		"console=ttyS0", "loglevel=4", "panic=-1",
 		"guest_init=" + filepath.Join(kernelDir, "guest-init.sh"),
 		"nfsport=" + port,
@@ -109,7 +110,10 @@ func run(ctx context.Context, opts harness.Options, image, tests string,
 		"log=" + guestLog,
 		"mnt=" + guestMountPoint,
 		"functional=" + functional,
-	}, " ")
+	})
+	if err != nil {
+		return err
+	}
 	accel := "tcg,thread=multi"
 	if f, err := os.OpenFile("/dev/kvm", os.O_RDWR, 0); err == nil {
 		f.Close()
@@ -158,6 +162,23 @@ func run(ctx context.Context, opts harness.Options, image, tests string,
 		return fmt.Errorf("functional cases failed (guest exit %d)", status)
 	}
 	return waitErr
+}
+
+// Linux accepts double-quoted values, but does not support escaping a double
+// quote within them. Backslashes and shell metacharacters are literal.
+func kernelCommandLine(args []string) (string, error) {
+	quoted := make([]string, len(args))
+	for i, arg := range args {
+		if strings.ContainsAny(arg, "\"\x00") {
+			return "", fmt.Errorf("kernel command line argument contains a double quote or NUL: %q", arg)
+		}
+		key, value, ok := strings.Cut(arg, "=")
+		if !ok {
+			return "", fmt.Errorf("kernel command line argument has no value: %q", arg)
+		}
+		quoted[i] = key + `="` + value + `"`
+	}
+	return strings.Join(quoted, " "), nil
 }
 
 // followFile prints data appended to path until ctx is cancelled, then drains
