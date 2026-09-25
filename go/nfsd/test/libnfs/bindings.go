@@ -4,11 +4,11 @@
 
 //go:build libnfs
 
-package main
+package libnfs
 
 /*
-#cgo CFLAGS: -I${SRCDIR}/.deps/libnfs-install/include
-#cgo LDFLAGS: -L${SRCDIR}/.deps/libnfs-install/lib -lnfs -Wl,-rpath,${SRCDIR}/.deps/libnfs-install/lib
+#cgo CFLAGS: -I${SRCDIR}/../.deps/libnfs-install/include
+#cgo LDFLAGS: -L${SRCDIR}/../.deps/libnfs-install/lib -lnfs -Wl,-rpath,${SRCDIR}/../.deps/libnfs-install/lib
 #include <stdlib.h>
 #include <fcntl.h>
 #include <nfsc/libnfs.h>
@@ -30,6 +30,7 @@ import "C"
 
 import (
 	"fmt"
+	"syscall"
 	"unsafe"
 )
 
@@ -46,8 +47,8 @@ func (c *libnfsClient) OpenFile(path string, flags int) (*libnfsFile, error) {
 	cpath := C.CString(path)
 	defer C.free(unsafe.Pointer(cpath))
 	var fh *C.struct_nfsfh
-	if C.nfs_open(c.nfs, cpath, C.int(flags), &fh) != 0 {
-		return nil, fmt.Errorf("nfs_open(%q): %s", path, C.GoString(C.nfs_get_error(c.nfs)))
+	if ret := C.nfs_open(c.nfs, cpath, C.int(flags), &fh); ret != 0 {
+		return nil, c.error("nfs_open", ret)
 	}
 	return &libnfsFile{client: c, fh: fh}, nil
 }
@@ -58,14 +59,20 @@ func (f *libnfsFile) Close() error {
 	}
 	fh := f.fh
 	f.fh = nil
-	if C.nfs_close(f.client.nfs, fh) != 0 {
-		return fmt.Errorf("nfs_close: %s", C.GoString(C.nfs_get_error(f.client.nfs)))
+	if ret := C.nfs_close(f.client.nfs, fh); ret != 0 {
+		return f.client.error("nfs_close", ret)
 	}
 	return nil
 }
 
 func (f *libnfsFile) WriteAt(data []byte, offset uint64) error {
+	if len(data) == 0 {
+		return nil
+	}
 	n := C.nfs_pwrite(f.client.nfs, f.fh, unsafe.Pointer(&data[0]), C.size_t(len(data)), C.uint64_t(offset))
+	if n < 0 {
+		return f.client.error("nfs_pwrite", n)
+	}
 	if int(n) != len(data) {
 		return fmt.Errorf("nfs_pwrite: count=%d: %s", n, C.GoString(C.nfs_get_error(f.client.nfs)))
 	}
@@ -76,14 +83,21 @@ func (f *libnfsFile) Read() ([]byte, error) {
 	buf := make([]byte, 4096)
 	n := C.nfs_pread(f.client.nfs, f.fh, unsafe.Pointer(&buf[0]), C.size_t(len(buf)), 0)
 	if n < 0 {
-		return nil, fmt.Errorf("nfs_pread: %s", C.GoString(C.nfs_get_error(f.client.nfs)))
+		return nil, f.client.error("nfs_pread", n)
 	}
 	return buf[:int(n)], nil
 }
 
+func (f *libnfsFile) Sync() error {
+	if ret := C.nfs_fsync(f.client.nfs, f.fh); ret != 0 {
+		return f.client.error("nfs_fsync", ret)
+	}
+	return nil
+}
+
 func (f *libnfsFile) SyncSize() (uint64, error) {
-	if C.nfs_fsync(f.client.nfs, f.fh) != 0 {
-		return 0, fmt.Errorf("nfs_fsync: %s", C.GoString(C.nfs_get_error(f.client.nfs)))
+	if err := f.Sync(); err != nil {
+		return 0, err
 	}
 	var st C.struct_nfs_stat_64
 	if C.nfs_fstat64(f.client.nfs, f.fh, &st) != 0 {
@@ -92,7 +106,7 @@ func (f *libnfsFile) SyncSize() (uint64, error) {
 	return uint64(st.nfs_size), nil
 }
 
-func libnfsConnect(host string, port int) (*libnfsClient, error) {
+func libnfsConnectAt(host string, port int, root, identity string) (*libnfsClient, error) {
 	nfs := C.nfs_init_context()
 	if nfs == nil {
 		return nil, fmt.Errorf("nfs_init_context failed")
@@ -104,8 +118,14 @@ func libnfsConnect(host string, port int) (*libnfsClient, error) {
 	}
 	C.nfs_set_timeout(nfs, 5000)
 	C.nfs_set_debug(nfs, 2)
+	if identity != "" {
+		id := C.CString(identity)
+		C.nfs4_set_client_name(nfs, id)
+		C.free(unsafe.Pointer(id))
+		C.nfs_set_autoreconnect(nfs, 2)
+	}
 
-	mountURL := fmt.Sprintf("nfs://%s/?nfsport=%d", host, port)
+	mountURL := fmt.Sprintf("nfs://%s%s?nfsport=%d", host, root, port)
 	curl := C.CString(mountURL)
 	defer C.free(unsafe.Pointer(curl))
 
@@ -116,6 +136,10 @@ func libnfsConnect(host string, port int) (*libnfsClient, error) {
 		return nil, fmt.Errorf("nfs_mount %q: %s (ret=%d)", mountURL, msg, ret)
 	}
 	return &libnfsClient{nfs: nfs}, nil
+}
+
+func (c *libnfsClient) error(op string, ret C.int) error {
+	return fmt.Errorf("%s: %s: %w", op, C.GoString(C.nfs_get_error(c.nfs)), syscall.Errno(-ret))
 }
 
 func (c *libnfsClient) Close() {
