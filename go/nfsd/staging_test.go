@@ -563,3 +563,12 @@ func findStagingTarget(store StagingStore, dirID InodeID, name string) (InodeID,
 	}
 	return 0, StagingMeta{}, false
 }
+
+func stagingTargetBusyForTest(store StagingStore, dirID InodeID, name string) bool {
+	for _, meta := range store.FindTargets(dirID, name) {
+		if !meta.Retired {
+			return true
+		}
+	}
+	return false
+}

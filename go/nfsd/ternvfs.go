@@ -504,7 +504,7 @@ func ternToOSError(err error) error {
 		return err
 	}
 	switch te {
-	case msgs.EDGE_NOT_FOUND, msgs.FILE_NOT_FOUND, msgs.DIRECTORY_NOT_FOUND,
+	case msgs.EDGE_NOT_FOUND, msgs.MISMATCHING_CREATION_TIME, msgs.FILE_NOT_FOUND, msgs.DIRECTORY_NOT_FOUND,
 		msgs.NAME_NOT_FOUND, msgs.OLD_DIRECTORY_NOT_FOUND, msgs.NEW_DIRECTORY_NOT_FOUND:
 		return os.ErrNotExist
 	case msgs.NOT_AUTHORISED:
@@ -518,4 +518,16 @@ func ternToOSError(err error) error {
 	default:
 		return err
 	}
+}
+
+func (t *RemoteTernVFS) ClassifyMutation(op uint32, err error) mutationOutcome {
+	if err == nil {
+		return mutationApplied
+	}
+	if op == OP_REMOVE && (errors.Is(err, msgs.EDGE_NOT_FOUND) || errors.Is(err, msgs.MISMATCHING_CREATION_TIME)) {
+		return mutationDetachOnly
+	}
+	// A rejection can arrive after another retransmitted copy applies.
+	// Without whole-call outcome evidence, it cannot prove non-application.
+	return mutationUnknown
 }

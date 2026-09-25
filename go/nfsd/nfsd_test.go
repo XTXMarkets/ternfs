@@ -4312,7 +4312,7 @@ func TestHydrationFailureDiscardsReplacement(t *testing.T) {
 			Nfsstat4Name(status))
 	}
 
-	if staging.TargetBusy(fs.RootID(), "existing.txt") {
+	if stagingTargetBusyForTest(staging, fs.RootID(), "existing.txt") {
 		t.Fatal("failed hydration left the publication target reserved")
 	}
 	data, err := os.ReadFile(path)
@@ -4594,7 +4594,7 @@ func TestClientRebootDoesNotDiscardOtherWriter(t *testing.T) {
 	); status != NFS4_OK {
 		t.Fatalf("reader reboot confirmation = %s", Nfsstat4Name(status))
 	}
-	if !staging.TargetBusy(fs.RootID(), "existing.txt") {
+	if !stagingTargetBusyForTest(staging, fs.RootID(), "existing.txt") {
 		t.Fatal("reader reboot discarded another client's staging")
 	}
 	closeFile(t, conn, &xid, writerFH, writerState)
@@ -4686,7 +4686,7 @@ func TestExpiredMutableOpenReleasesTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if busy || staging.TargetBusy(fs.RootID(), "existing.txt") {
+	if busy || stagingTargetBusyForTest(staging, fs.RootID(), "existing.txt") {
 		t.Fatal("expired mutable open still reserves its target")
 	}
 }
@@ -4733,7 +4733,7 @@ func TestRecoveredMutableOpenCanBeReplayedByClient(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkedStaging.clients = srv2.clients
-	if !staging2.TargetBusy(fs.RootID(), "existing.txt") {
+	if !stagingTargetBusyForTest(staging2, fs.RootID(), "existing.txt") {
 		t.Fatal("live recovered staging was discarded during startup")
 	}
 	addr2, cleanup2 := serveTestServer(t, srv2)
@@ -4871,7 +4871,7 @@ func TestRecoveredMutableOpenKeepsOriginalBase(t *testing.T) {
 		t.Fatal("recovered writer changed its private handle")
 	}
 	closeFile(t, conn2, &xid, recoveredFH, recoveredState)
-	if staging2.TargetBusy(fs.RootID(), "existing.txt") {
+	if stagingTargetBusyForTest(staging2, fs.RootID(), "existing.txt") {
 		t.Fatal("recovered publication left staging registered")
 	}
 	data, err := os.ReadFile(path)

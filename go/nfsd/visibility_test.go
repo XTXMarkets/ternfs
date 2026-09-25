@@ -182,7 +182,7 @@ func TestAbandonedCreationKeepsEmptyVersion(t *testing.T) {
 	now := time.Now().Add(2 * nfsLeaseTime)
 	srv.clients.now = func() time.Time { return now }
 	srv.runLeaseSweep()
-	if srv.stagingStore.TargetBusy(srv.fs.RootID(), "abandoned") {
+	if stagingTargetBusyForTest(srv.stagingStore, srv.fs.RootID(), "abandoned") {
 		t.Fatal("expired creator still holds staging")
 	}
 	if got := lookupFH(t, conn, &xid, "abandoned"); !bytes.Equal(got, baseFH) {

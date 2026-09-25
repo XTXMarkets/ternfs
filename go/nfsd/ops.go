@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"os"
+	"syscall"
 	"time"
 )
 
@@ -74,6 +75,14 @@ func (s *Server) lookupDurableOpen(
 		stateid.Seqid(),
 		fileID,
 	)
+	// A failed writer cannot recover from its old sidecar. Preserve ordinary
+	// stateid errors, then reject it locally without expiring healthy siblings.
+	if s.stagingStore.Failed(fileID) {
+		if status != NFS4_OK {
+			return openState{}, status
+		}
+		return openState{}, NFS4ERR_IO
+	}
 	if status != NFS4_OK {
 		id := extractStateID(stateid)
 		meta, hasMeta := s.stagingStore.GetMeta(fileID)
@@ -100,6 +109,11 @@ func (s *Server) lookupDurableOpen(
 		}, NFS4_OK
 	}
 	if status := s.requireActiveOpen(state); status != NFS4_OK {
+		// CLOSE can remove a failed writer's marker after the local lookup.
+		// Do not let that race expire the client's unrelated writers.
+		if s.stagingStore.Failed(fileID) {
+			return openState{}, NFS4ERR_IO
+		}
 		if status == NFS4ERR_EXPIRED {
 			s.expireClientState(state.owner.clientID)
 		}
@@ -240,7 +254,7 @@ func (s *Server) opClose(args CLOSE4args, st *compoundState, w *COMPOUND4resWrit
 				return fail(clientStoreErrToNFS(err))
 			}
 			if !active {
-				s.retireStaging(st.currentID, meta)
+				s.retireStagingLocked(st.currentID, meta)
 				return fail(NFS4ERR_EXPIRED)
 			}
 		}
@@ -254,6 +268,10 @@ func (s *Server) opClose(args CLOSE4args, st *compoundState, w *COMPOUND4resWrit
 		meta = StagingMeta{}
 	}
 
+	sf := s.stagingStore.Get(st.currentID)
+	if sf == nil {
+		hasMeta = false
+	}
 	expiredClose := false
 	// Check if there's a staging file for the current filehandle.
 	if hasMeta {
@@ -261,13 +279,8 @@ func (s *Server) opClose(args CLOSE4args, st *compoundState, w *COMPOUND4resWrit
 		if sid != meta.NFSStateID {
 			return fail(NFS4ERR_BAD_STATEID)
 		}
-		sf := s.stagingStore.Get(st.currentID)
-		if sf == nil {
-			// Invariant: a staging entry always has both meta and a data file.
-			panic("close: staging meta present but no data file")
-		}
 		stagingID := st.currentID
-		publish := meta.BaseID == 0 || sf.Dirty()
+		publish := !meta.Unlinked && (meta.BaseID == 0 || sf.Dirty())
 		if publish && meta.BaseID != 0 && !sf.DataChanged() {
 			// A timestamp-only CLOSE updates the current published version,
 			// preserving any data published by another writer in the meantime.
@@ -384,14 +397,29 @@ func (s *Server) opCommit(st *compoundState, w *COMPOUND4resWriter) uint32 {
 		return status
 	}
 
+	sf := s.stagingStore.Get(st.currentID)
+	if s.stagingStore.Failed(st.currentID) {
+		ew := w.AppendResarray_Commit()
+		ew.SetValue_Default(NFS4ERR_IO)
+		w.Resume(ew.Finish())
+		return NFS4ERR_IO
+	}
+
 	// Sync the staging file for the current filehandle.
-	if sf := s.stagingStore.Get(st.currentID); sf != nil {
+	if sf != nil {
 		if err := sf.Sync(); err != nil {
 			ew := w.AppendResarray_Commit()
 			ew.SetValue_Default(NFS4ERR_IO)
 			w.Resume(ew.Finish())
 			return NFS4ERR_IO
 		}
+	}
+
+	if s.stagingStore.Failed(st.currentID) {
+		ew := w.AppendResarray_Commit()
+		ew.SetValue_Default(NFS4ERR_IO)
+		w.Resume(ew.Finish())
+		return NFS4ERR_IO
 	}
 
 	ew := w.AppendResarray_Commit()
@@ -779,12 +807,14 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 	}
 	defer op.finishServerFaultIfNeeded()
 	for _, state := range op.abandoned {
-		if s.stagingOwnedBy(state.fileID, state) != nil {
+		meta, ok, unlock := s.lockStagingTarget(state.fileID)
+		if ok && meta.ClientID == state.owner.clientID && meta.NFSStateID == state.id {
 			s.discardStaging(state.fileID)
 		}
 		if err := s.clients.RemoveOpen(clientID, state.id); err != nil {
 			s.log.Error("open: remove abandoned marker", "err", err)
 		}
+		unlock()
 	}
 	fail := func(status uint32) uint32 {
 		response = op.finishError(status)
@@ -1008,7 +1038,7 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 				); err != nil {
 					s.log.Error("restore recovered staging owner", "err", err)
 				} else if recoveredStagingMeta.Retired {
-					s.retireStaging(recoveredStagingID, recoveredStagingMeta)
+					s.retireStagingLocked(recoveredStagingID, recoveredStagingMeta)
 				}
 			}
 			return
@@ -1343,6 +1373,12 @@ func (s *Server) opRead(args READ4args, st *compoundState, w *COMPOUND4resWriter
 		}
 	}
 	sf := s.stagingStore.Get(st.currentID)
+	if s.stagingStore.Failed(st.currentID) {
+		ew := w.AppendResarray_Read()
+		ew.SetValue_Default(NFS4ERR_IO)
+		w.Resume(ew.Finish())
+		return NFS4ERR_IO
+	}
 
 	offset := args.Offset()
 	count := min(args.Count(), maxReadWrite)
@@ -1355,7 +1391,7 @@ func (s *Server) opRead(args READ4args, st *compoundState, w *COMPOUND4resWriter
 
 	if sf != nil {
 		n, eof, err = sf.Read(offset, buf, s.readBaseForeground)
-		if errors.Is(err, errStagingRemoved) {
+		if errors.Is(err, errStagingRemoved) && !s.stagingStore.Failed(st.currentID) {
 			n, eof, err = s.readBaseForeground(
 				st.currentID, offset, buf,
 			)
@@ -1364,6 +1400,12 @@ func (s *Server) opRead(args READ4args, st *compoundState, w *COMPOUND4resWriter
 		n, eof, err = s.readBaseForeground(st.currentID, offset, buf)
 	}
 
+	if s.stagingStore.Failed(st.currentID) {
+		ew := w.AppendResarray_Read()
+		ew.SetValue_Default(NFS4ERR_IO)
+		w.Resume(ew.Finish())
+		return NFS4ERR_IO
+	}
 	if err != nil {
 		ew := w.AppendResarray_Read()
 		status := s.errToNFS(err)
@@ -1889,7 +1931,7 @@ func (s *Server) opSetattr(args SETATTR4args, st *compoundState, w *COMPOUND4res
 		return setattrReply(NFS4ERR_BADXDR, [2]uint32{})
 	}
 	// EXCLUSIVE4 clients send mode in a follow-up SETATTR. Modes are synthetic.
-	if s.directStaging(st.currentID) != nil {
+	if s.directStaging(st.currentID) != nil || s.stagingStore.Failed(st.currentID) {
 		supportedSet1 |= modeMask
 	}
 
@@ -1971,20 +2013,25 @@ func (s *Server) opSetattr(args SETATTR4args, st *compoundState, w *COMPOUND4res
 		return setattrReply(NFS4ERR_BADXDR, [2]uint32{})
 	}
 
-	if newSize != nil {
-		var sf StagingFile
-		if !isSpecialStateID(args.Stateid()) {
-			state, status := s.lookupDurableOpen(
-				args.Stateid(), st.currentID)
-			if status != NFS4_OK {
-				return setattrReply(status, [2]uint32{})
-			}
-			if !state.write {
-				return setattrReply(NFS4ERR_OPENMODE, [2]uint32{})
-			}
+	var sf StagingFile
+	var state openState
+	if !isSpecialStateID(args.Stateid()) {
+		var status uint32
+		state, status = s.lookupDurableOpen(args.Stateid(), st.currentID)
+		if status == NFS4_OK {
 			sf = s.stagingOwnedBy(st.currentID, state)
-		} else {
-			sf = s.directStaging(st.currentID)
+		} else if newSize != nil {
+			return setattrReply(status, [2]uint32{})
+		}
+	} else {
+		sf = s.directStaging(st.currentID)
+	}
+	if s.stagingStore.Failed(st.currentID) {
+		return setattrReply(NFS4ERR_IO, [2]uint32{})
+	}
+	if newSize != nil {
+		if !isSpecialStateID(args.Stateid()) && !state.write {
+			return setattrReply(NFS4ERR_OPENMODE, [2]uint32{})
 		}
 		if sf == nil {
 			return setattrReply(NFS4ERR_BAD_STATEID, [2]uint32{})
@@ -1995,16 +2042,6 @@ func (s *Server) opSetattr(args SETATTR4args, st *compoundState, w *COMPOUND4res
 		resultMask[0] |= 1 << FATTR4_SIZE
 	}
 	if setAtime != nil || setMtime != nil {
-		var sf StagingFile
-		if !isSpecialStateID(args.Stateid()) {
-			if state, status := s.lookupDurableOpen(
-				args.Stateid(), st.currentID,
-			); status == NFS4_OK {
-				sf = s.stagingOwnedBy(st.currentID, state)
-			}
-		} else {
-			sf = s.directStaging(st.currentID)
-		}
 		if sf != nil {
 			if err := sf.SetTime(setMtime, setAtime); err != nil {
 				return setattrReply(NFS4ERR_IO, [2]uint32{})
@@ -2023,6 +2060,10 @@ func (s *Server) opSetattr(args SETATTR4args, st *compoundState, w *COMPOUND4res
 		if setMtime != nil {
 			resultMask[1] |= 1 << (FATTR4_TIME_MODIFY_SET - 32)
 		}
+	}
+
+	if s.stagingStore.Failed(st.currentID) {
+		return setattrReply(NFS4ERR_IO, [2]uint32{})
 	}
 
 	return setattrReply(NFS4_OK, resultMask)
@@ -2168,6 +2209,13 @@ func (s *Server) opWrite(args WRITE4args, st *compoundState, w *COMPOUND4resWrit
 		sf = s.directStaging(st.currentID)
 	}
 
+	if s.stagingStore.Failed(st.currentID) {
+		ew := w.AppendResarray_Write()
+		ew.SetValue_Default(NFS4ERR_IO)
+		w.Resume(ew.Finish())
+		return NFS4ERR_IO
+	}
+
 	// Find the staging buffer for this file.
 	if sf == nil {
 		// No staging buffer — not opened for write.
@@ -2205,6 +2253,13 @@ func (s *Server) opWrite(args WRITE4args, st *compoundState, w *COMPOUND4resWrit
 			return NFS4ERR_IO
 		}
 		committed = stable
+	}
+
+	if s.stagingStore.Failed(st.currentID) {
+		ew := w.AppendResarray_Write()
+		ew.SetValue_Default(NFS4ERR_IO)
+		w.Resume(ew.Finish())
+		return NFS4ERR_IO
 	}
 
 	ew := w.AppendResarray_Write()
@@ -2266,6 +2321,18 @@ func writeStateID(s Stateid4, sid StateID) {
 
 // errToNFS converts a Go error to an NFS status code.
 func (s *Server) errToNFS(err error) uint32 {
+	if err == nil {
+		return NFS4_OK
+	}
+	err = ternToOSError(err)
+	switch {
+	case errors.Is(err, syscall.ENOTDIR):
+		return NFS4ERR_NOTDIR
+	case errors.Is(err, syscall.EISDIR):
+		return NFS4ERR_ISDIR
+	case errors.Is(err, syscall.ENOTEMPTY):
+		return NFS4ERR_NOTEMPTY
+	}
 	if e, ok := err.(nfsError); ok {
 		return uint32(e)
 	}

@@ -36,7 +36,7 @@ func (s *Server) stagingTargetBusy(dirID InodeID, name string) (bool, error) {
 				return true, nil
 			}
 		}
-		s.retireStaging(id, meta)
+		s.retireStagingLocked(id, meta)
 	}
 	return false, nil
 }
@@ -46,15 +46,15 @@ func (s *Server) stagingTargetBusy(dirID InodeID, name string) (bool, error) {
 func (s *Server) lockStagingTarget(fileID InodeID) (StagingMeta, bool, func()) {
 	for {
 		meta, ok := s.stagingStore.GetMeta(fileID)
-		if !ok {
-			return StagingMeta{}, false, func() {}
+		if !ok || meta.Unlinked {
+			return meta, ok, func() {}
 		}
 		target := mutationTarget{dirID: meta.DirID, name: meta.FileName}
 		unlock := s.lockMutationTargets(target)
 		current, ok := s.stagingStore.GetMeta(fileID)
-		if !ok {
+		if !ok || current.Unlinked {
 			unlock()
-			return StagingMeta{}, false, func() {}
+			return current, ok, func() {}
 		}
 		if current.DirID == target.dirID && current.FileName == target.name {
 			return current, true, unlock

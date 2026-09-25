@@ -23,7 +23,7 @@ func assertRetiredStaging(t *testing.T, store StagingStore, id InodeID) {
 	if !ok || !meta.Retired || store.Get(id) == nil {
 		t.Fatal("expired open did not retain its recoverable staging")
 	}
-	if store.TargetBusy(meta.DirID, meta.FileName) {
+	if stagingTargetBusyForTest(store, meta.DirID, meta.FileName) {
 		t.Fatal("retired staging still reserves its pathname")
 	}
 }
@@ -400,7 +400,7 @@ func TestStaleLeaseCheckCannotRetireRecoveredWriter(t *testing.T) {
 		t.Fatal(err)
 	}
 	meta, _ := store.GetMeta(id)
-	if meta.Retired || !store.TargetBusy(meta.DirID, meta.FileName) {
+	if meta.Retired || !stagingTargetBusyForTest(store, meta.DirID, meta.FileName) {
 		t.Fatal("stale lease check retired the recovered writer")
 	}
 }

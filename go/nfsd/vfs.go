@@ -7,6 +7,7 @@ package main
 import (
 	"crypto/rand"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -48,6 +49,15 @@ type Edge struct {
 	ID           InodeID
 	CreationTime uint64
 }
+
+type mutationOutcome uint8
+
+const (
+	mutationApplied mutationOutcome = iota
+	mutationDetachOnly
+	mutationNotApplied
+	mutationUnknown
+)
 
 // NodeInfo holds metadata returned by Stat.
 type NodeInfo struct {
@@ -138,6 +148,10 @@ type TernVFS interface {
 	// RenameEdge moves the entry only while srcName still refers to edge, with
 	// the same error contract as RemoveEdge.
 	RenameEdge(srcDirID InodeID, srcName string, edge Edge, dstDirID InodeID, dstName string) error
+
+	// ClassifyMutation describes the entire submitted call, including retries.
+	// The original error is mapped to the NFS reply separately.
+	ClassifyMutation(op uint32, err error) mutationOutcome
 
 	// SetTime sets the mtime and/or atime of a file or directory.
 	// A nil pointer means "don't change this field."
@@ -728,4 +742,23 @@ func fhToInodeID(fh []byte) (InodeID, bool) {
 		return 0, false
 	}
 	return InodeID(binary.BigEndian.Uint64(fh)), true
+}
+
+func (lfs *LocalTernVFS) ClassifyMutation(op uint32, err error) mutationOutcome {
+	if err == nil {
+		return mutationApplied
+	}
+	if op == OP_REMOVE && errors.Is(err, os.ErrNotExist) {
+		return mutationDetachOnly
+	}
+	// Local syscalls are not retransmitted. Only their errors establish a
+	// definite rejection; injected transport or decoding errors do not.
+	var pathErr *os.PathError
+	var linkErr *os.LinkError
+	var errno syscall.Errno
+	if errors.As(err, &pathErr) || errors.As(err, &linkErr) || errors.As(err, &errno) ||
+		errors.Is(err, os.ErrNotExist) || errors.Is(err, os.ErrExist) || errors.Is(err, os.ErrPermission) {
+		return mutationNotApplied
+	}
+	return mutationUnknown
 }
