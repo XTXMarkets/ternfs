@@ -142,11 +142,7 @@ func shardRequest(shid msgs.ShardId, req msgs.ShardRequest, resp msgs.ShardRespo
 
 func cdcRequest(req msgs.CDCRequest, resp msgs.CDCResponse) syscall.Errno {
 	if err := c.CDCRequest(logger, req, resp); err != nil {
-		switch ternErr := err.(type) {
-		case msgs.TernError:
-			return ternErrToErrno(ternErr)
-		}
-		panic(err)
+		return ternErrToErrno(err)
 	}
 
 	return 0

@@ -172,6 +172,8 @@ func (c *Client) shardRequestInternal(
 	return c.metadataRequest(logger, int16(shid), reqBody, respBody, counters, dontWait)
 }
 
+// ShardRequestDontWait queues one send attempt without waiting for a reply.
+// Packing and send errors are logged; this call does not retry them.
 func (c *Client) ShardRequestDontWait(
 	logger *log.Logger,
 	shid msgs.ShardId,
