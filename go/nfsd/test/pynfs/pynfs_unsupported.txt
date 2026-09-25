@@ -129,7 +129,6 @@ OPEN28
 
 # Moving or removing the publication target of an active local staging
 # session is rejected with FILE_OPEN.
-RM1r
 RNM1r
 RNM12
 RNM14

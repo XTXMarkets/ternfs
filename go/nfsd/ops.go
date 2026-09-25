@@ -1668,27 +1668,27 @@ func (s *Server) opRemove(args REMOVE4args, st *compoundState, w *COMPOUND4resWr
 		name:  name,
 	})
 	defer unlock()
-	busy, err := s.stagingTargetBusy(st.currentID, name)
-	if err != nil {
+	fail := func(status uint32) uint32 {
 		ew := w.AppendResarray_Remove()
-		status := s.errToNFS(err)
 		ew.SetValue_Default(status)
 		w.Resume(ew.Finish())
 		return status
 	}
-	if busy {
-		ew := w.AppendResarray_Remove()
-		ew.SetValue_Default(NFS4ERR_FILE_OPEN)
-		w.Resume(ew.Finish())
-		return NFS4ERR_FILE_OPEN
+	if _, err := s.retireInactiveStagingTarget(st.currentID, name); err != nil {
+		return fail(s.errToNFS(err))
 	}
-	err = s.fs.Remove(st.currentID, name)
+	writers := s.namespaceWriters(st.currentID, name, nil)
+	edge, err := s.fs.LookupEdge(st.currentID, name)
 	if err != nil {
-		ew := w.AppendResarray_Remove()
-		status := s.errToNFS(err)
-		ew.SetValue_Default(status)
-		w.Resume(ew.Finish())
-		return status
+		return fail(s.errToNFS(err))
+	}
+	if err := s.guardNamespaceWriters(writers); err != nil {
+		s.log.Warn("cannot guard REMOVE writers", "err", err)
+		return fail(NFS4ERR_IO)
+	}
+	err = s.fs.RemoveEdge(st.currentID, name, edge)
+	if status := s.finishNamespaceWriters(writers, OP_REMOVE, err); status != NFS4_OK {
+		return fail(status)
 	}
 
 	ew := w.AppendResarray_Remove()

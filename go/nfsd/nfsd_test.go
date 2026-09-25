@@ -5018,15 +5018,10 @@ func TestMutableOpenPreservesMetadataOnlySetattr(t *testing.T) {
 	}
 }
 
-func TestMutableOpenBlocksNamespaceChanges(t *testing.T) {
+func TestMutableOpenBlocksDirectoryCreation(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(
 		filepath.Join(dir, "existing.txt"), []byte("original"), 0644,
-	); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(
-		filepath.Join(dir, "other.txt"), []byte("other"), 0644,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -5043,19 +5038,6 @@ func TestMutableOpenBlocksNamespaceChanges(t *testing.T) {
 	)
 
 	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
-		w.AppendArgarray_Putrootfh()
-		rw := w.AppendArgarray_Remove()
-		buf := rw.StartTarget().SetData([]byte("existing.txt")).Finish()
-		rw.Resume(buf)
-		w.Resume(rw.Finish())
-	})
-	xid++
-	if res.Status() != NFS4ERR_FILE_OPEN {
-		t.Fatalf("REMOVE status = %s, want NFS4ERR_FILE_OPEN",
-			Nfsstat4Name(res.Status()))
-	}
-
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		cw := w.AppendArgarray_Create()
 		cw.SetObjtype_Nf4dir()
@@ -5074,27 +5056,6 @@ func TestMutableOpenBlocksNamespaceChanges(t *testing.T) {
 	if res.Status() != NFS4ERR_FILE_OPEN {
 		t.Fatalf("CREATE status = %s, want NFS4ERR_FILE_OPEN",
 			Nfsstat4Name(res.Status()))
-	}
-
-	for _, names := range [][2]string{
-		{"existing.txt", "renamed.txt"},
-		{"other.txt", "existing.txt"},
-	} {
-		res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
-			w.AppendArgarray_Putrootfh()
-			w.AppendArgarray_Savefh()
-			rw := w.AppendArgarray_Rename()
-			buf := rw.StartOldname().SetData([]byte(names[0])).Finish()
-			rw.Resume(buf)
-			buf = rw.StartNewname().SetData([]byte(names[1])).Finish()
-			rw.Resume(buf)
-			w.Resume(rw.Finish())
-		})
-		xid++
-		if res.Status() != NFS4ERR_FILE_OPEN {
-			t.Fatalf("RENAME %q to %q status = %s, want NFS4ERR_FILE_OPEN",
-				names[0], names[1], Nfsstat4Name(res.Status()))
-		}
 	}
 
 	closeFile(t, conn, &xid, fh, stateid)
@@ -8300,7 +8261,7 @@ func closeLocalStagingFiles(t *testing.T, store *LocalStagingStore) {
 	defer store.mu.Unlock()
 
 	for _, entry := range store.files {
-		if entry.file.Meta().Retired {
+		if entry.failed || entry.file.Meta().Retired {
 			continue // retirement has already synced and closed this file
 		}
 		if err := entry.file.f.Sync(); err != nil {

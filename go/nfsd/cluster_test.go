@@ -2684,3 +2684,89 @@ func TestTernVisibleCreation(t *testing.T) {
 		})
 	}
 }
+
+func TestTernCreatedOpenCanBeUnlinked(t *testing.T) {
+	addr, cleanup := startTernTestServer(t)
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+
+	xid := uint32(1)
+	clientID := setupClient(t, conn, &xid)
+	status, stateID, fh, _ := openExclusiveFile(
+		t, conn, &xid, clientID, "temporary-owner", 1,
+		"temporary", [8]byte{1, 2, 3, 4, 5, 6, 7, 8},
+	)
+	if status != NFS4_OK {
+		t.Fatalf("OPEN status = %s, want NFS4_OK", Nfsstat4Name(status))
+	}
+	stateID = confirmOpenState(t, conn, &xid, fh, 2, stateID)
+
+	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+		w.AppendArgarray_Putrootfh()
+		rw := w.AppendArgarray_Remove()
+		buf := rw.StartTarget().SetData([]byte("temporary")).Finish()
+		rw.Resume(buf)
+		w.Resume(rw.Finish())
+	})
+	xid++
+	if res.Status() != NFS4_OK {
+		t.Fatalf("REMOVE status = %s, want NFS4_OK",
+			Nfsstat4Name(res.Status()))
+	}
+
+	writeFileAt(t, conn, &xid, fh, stateID, 0, []byte("temporary data"))
+	data, _ := readFileData(t, conn, &xid, fh, 0, 1024)
+	if string(data) != "temporary data" {
+		t.Fatalf("unlinked open content = %q, want %q",
+			data, "temporary data")
+	}
+	closeFile(t, conn, &xid, fh, stateID)
+
+	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+		w.AppendArgarray_Putrootfh()
+		lw := w.AppendArgarray_Lookup()
+		buf := lw.StartObjname().SetData([]byte("temporary")).Finish()
+		lw.Resume(buf)
+		w.Resume(lw.Finish())
+	})
+	if res.Status() != NFS4ERR_NOENT {
+		t.Fatalf("LOOKUP after CLOSE status = %s, want NFS4ERR_NOENT",
+			Nfsstat4Name(res.Status()))
+	}
+}
+
+func TestTernDetachedWriterReadsBase(t *testing.T) {
+	addr, cleanup := startTernTestServer(t)
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+	xid := uint32(1)
+	clientID := setupClient(t, conn, &xid)
+	createFileViaNFS(t, conn, &xid, clientID, "detach-base", []byte("base bytes"))
+	stateID, fh := openWriteFile(t, conn, &xid, clientID, "detach-base")
+	writeFileAt(t, conn, &xid, fh, stateID, 0, []byte("B"))
+	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+		w.AppendArgarray_Putrootfh()
+		rw := w.AppendArgarray_Remove()
+		rw.Resume(rw.StartTarget().SetData([]byte("detach-base")).Finish())
+		w.Resume(rw.Finish())
+	})
+	xid++
+	expectOK(t, res)
+	data, _ := readFileData(t, conn, &xid, fh, 0, 128)
+	if string(data) != "Base bytes" {
+		t.Fatalf("detached read = %q, want %q", data, "Base bytes")
+	}
+	closeFile(t, conn, &xid, fh, stateID)
+	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+		w.AppendArgarray_Putrootfh()
+		lw := w.AppendArgarray_Lookup()
+		lw.Resume(lw.StartObjname().SetData([]byte("detach-base")).Finish())
+		w.Resume(lw.Finish())
+	})
+	xid++
+	if res.Status() != NFS4ERR_NOENT {
+		t.Fatalf("LOOKUP after CLOSE = %s, want NOENT", Nfsstat4Name(res.Status()))
+	}
+}
