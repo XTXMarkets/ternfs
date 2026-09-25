@@ -434,6 +434,20 @@ rewrites the immutable lease file at most once per half of the lease period
 while `OPEN` or stateid operations are active. The cache is retained across
 `CLOSE`, so a later `OPEN` can reuse the same lease.
 
+Marker creation, marker removal and explicit renewal share a per-identity
+read lock. Registration, confirmation, expiry decisions and collection take
+exclusive ownership. Independent markers can therefore overlap while client
+replacement still waits for marker work to finish. A waiting exclusive
+holder blocks new readers, so a sweep can temporarily delay new OPENs for
+that identity.
+
+A per-incarnation lease lock serializes renewal even if the local client
+cache entry is deleted and recreated. It is released before marker I/O.
+A separate per-marker lock covers the durable mutation and its local map
+update. Cached stateid renewal retains its existing identity-unlocked path
+and uses the same lease lock; a still-valid cached open can proceed while
+another operation renews.
+
 Every stateid operation checks the confirmed pointer, which costs one lookup
 but detects a replaced clientid immediately. It skips marker and lease scans
 while the local lease cache is fresh. Accepting up to the 45-second renewal

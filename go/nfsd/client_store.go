@@ -34,19 +34,25 @@ type ClientStore struct {
 
 	identityLocksMu sync.Mutex
 	identityLocks   map[InodeID]*clientIdentityLock
+	leaseLocks      keyedLocker[InodeID]
+	markerLocks     keyedLocker[clientOpenMarker]
 }
 
 type clientIdentityLock struct {
-	mu   sync.Mutex
+	mu   sync.RWMutex
 	refs int
+}
+
+type clientOpenMarker struct {
+	clientID uint64
+	stateID  StateID
 }
 
 type localClientState struct {
 	identityID       InodeID
 	confirmedPointer InodeID
 
-	mu      sync.Mutex
-	renewMu sync.Mutex
+	mu sync.Mutex
 
 	// Retained after the last CLOSE to throttle later OPEN renewal.
 	leaseExpiresNano int64
@@ -191,6 +197,14 @@ func ensureDir(fs TernVFS, parentID InodeID, name string) (InodeID, error) {
 }
 
 func (cs *ClientStore) lockIdentity(identityID InodeID) func() {
+	return cs.lockIdentityMode(identityID, false)
+}
+
+func (cs *ClientStore) readLockIdentity(identityID InodeID) func() {
+	return cs.lockIdentityMode(identityID, true)
+}
+
+func (cs *ClientStore) lockIdentityMode(identityID InodeID, shared bool) func() {
 	cs.identityLocksMu.Lock()
 	lock := cs.identityLocks[identityID]
 	if lock == nil {
@@ -200,9 +214,17 @@ func (cs *ClientStore) lockIdentity(identityID InodeID) func() {
 	lock.refs++
 	cs.identityLocksMu.Unlock()
 
-	lock.mu.Lock()
+	if shared {
+		lock.mu.RLock()
+	} else {
+		lock.mu.Lock()
+	}
 	return func() {
-		lock.mu.Unlock()
+		if shared {
+			lock.mu.RUnlock()
+		} else {
+			lock.mu.Unlock()
+		}
 
 		cs.identityLocksMu.Lock()
 		lock.refs--
@@ -862,7 +884,7 @@ func (cs *ClientStore) Renew(clientID uint64) error {
 	if !valid {
 		return nfsError(NFS4ERR_STALE_CLIENTID)
 	}
-	unlock := cs.lockIdentity(identityID)
+	unlock := cs.readLockIdentity(identityID)
 	defer unlock()
 	location, confirmed, err := cs.confirmedLocationForIdentity(
 		incarnationID, identityID)
@@ -875,8 +897,8 @@ func (cs *ClientStore) Renew(clientID uint64) error {
 	state := cs.localClientState(
 		incarnationID, location.identityID, location.symlinkID)
 
-	state.renewMu.Lock()
-	defer state.renewMu.Unlock()
+	unlockLease := cs.leaseLocks.lock(incarnationID)
+	defer unlockLease()
 
 	state.mu.Lock()
 	fresh := state.confirmedPointer == location.symlinkID &&
@@ -965,68 +987,67 @@ func (cs *ClientStore) MarkOpen(clientID uint64, stateID StateID) error {
 	if !valid {
 		return nfsError(NFS4ERR_STALE_CLIENTID)
 	}
-
-	unlock := cs.lockIdentity(identityID)
+	unlock := cs.readLockIdentity(identityID)
 	defer unlock()
+	unlockMarker := cs.markerLocks.lock(clientOpenMarker{clientID, stateID})
+	defer unlockMarker()
 
-	location, confirmed, err := cs.confirmedLocationForIdentity(
-		incarnationID, identityID)
+	location, confirmed, err := cs.confirmedLocationForIdentity(incarnationID, identityID)
 	if err != nil {
 		return err
 	}
 	if !confirmed {
 		return nfsError(NFS4ERR_STALE_CLIENTID)
 	}
-	state := cs.localClientState(
-		incarnationID, location.identityID, location.symlinkID)
-
-	state.renewMu.Lock()
-	defer state.renewMu.Unlock()
-
+	state, err := cs.renewOpenLease(incarnationID, location)
+	if err != nil {
+		return err
+	}
+	// Independent markers share identity ownership, but neither the lease
+	// lock nor the cache map lock is held across marker I/O.
+	if err := cs.ensureMarker(incarnationID, activeOpenName(stateID)); err != nil {
+		return err
+	}
 	state.mu.Lock()
-	// Reuse the current lease across open-close cycles.
+	state.opens[stateID] = struct{}{}
+	state.mu.Unlock()
+	return nil
+}
+
+// The caller holds shared identity ownership. Lease serialization is keyed
+// by incarnation, independently of the replaceable local-client cache entry.
+func (cs *ClientStore) renewOpenLease(
+	incarnationID InodeID, location confirmedClientLocation,
+) (*localClientState, error) {
+	unlock := cs.leaseLocks.lock(incarnationID)
+	defer unlock()
+	state := cs.localClientState(incarnationID, location.identityID, location.symlinkID)
+	state.mu.Lock()
 	fresh := state.confirmedPointer == location.symlinkID &&
 		cs.leaseIsFresh(state.leaseExpiresNano)
 	hadLease := state.leaseExpiresNano != 0
 	state.mu.Unlock()
-
 	if fresh {
-		if err := cs.ensureMarker(
-			incarnationID, activeOpenName(stateID)); err != nil {
-			return err
-		}
-
-		state.mu.Lock()
-		state.opens[stateID] = struct{}{}
-		state.mu.Unlock()
-
-		return nil
+		return state, nil
 	}
 	live, found, err := cs.leaseStatus(incarnationID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !live && (found || hadLease) {
-		return nfsError(NFS4ERR_EXPIRED)
+		return nil, nfsError(NFS4ERR_EXPIRED)
 	}
 	expires, pointerID, err := cs.renewConfirmed(
 		incarnationID, location.identityID, location.symlinkID)
 	if err != nil {
 		cs.localClients.Delete(incarnationID)
-		return err
+		return nil, err
 	}
-	if err := cs.ensureMarker(
-		incarnationID, activeOpenName(stateID)); err != nil {
-		return err
-	}
-
 	state.mu.Lock()
 	state.confirmedPointer = pointerID
 	state.leaseExpiresNano = expires
-	state.opens[stateID] = struct{}{}
 	state.mu.Unlock()
-
-	return nil
+	return state, nil
 }
 
 func (cs *ClientStore) leaseIsFresh(expiresNano int64) bool {
@@ -1042,8 +1063,10 @@ func (cs *ClientStore) RemoveOpen(clientID uint64, stateID StateID) error {
 	if !valid {
 		return nfsError(NFS4ERR_STALE_CLIENTID)
 	}
-	unlock := cs.lockIdentity(identityID)
+	unlock := cs.readLockIdentity(identityID)
 	defer unlock()
+	unlockMarker := cs.markerLocks.lock(clientOpenMarker{clientID, stateID})
+	defer unlockMarker()
 	err := cs.removeIfExists(incarnationID, activeOpenName(stateID))
 	if value, ok := cs.localClients.Load(incarnationID); ok {
 		state := value.(*localClientState)
@@ -1140,11 +1163,11 @@ func (cs *ClientStore) HasOpen(clientID uint64, stateID StateID) (bool, error) {
 	state := cs.localClientState(
 		incarnationID, location.identityID, location.symlinkID)
 
-	// Renew under renewMu like MarkOpen and renewCachedOpen. Holding
+	// Serialize lease writes with MarkOpen and renewCachedOpen. Holding
 	// state.mu across the lease rewrite would stall every concurrent
 	// stateid operation for this client on the fast path.
-	state.renewMu.Lock()
-	defer state.renewMu.Unlock()
+	unlockLease := cs.leaseLocks.lock(incarnationID)
+	defer unlockLease()
 
 	state.mu.Lock()
 	fresh := state.confirmedPointer == location.symlinkID &&
@@ -1192,7 +1215,8 @@ func (cs *ClientStore) renewCachedOpen(
 	state *localClientState,
 	stateID StateID,
 ) (bool, error) {
-	if !state.renewMu.TryLock() {
+	unlockLease, locked := cs.leaseLocks.tryLock(incarnationID)
+	if !locked {
 		state.mu.Lock()
 		_, open := state.opens[stateID]
 		expires := state.leaseExpiresNano
@@ -1201,9 +1225,9 @@ func (cs *ClientStore) renewCachedOpen(
 		if open && expires > cs.now().UnixNano() {
 			return true, nil
 		}
-		state.renewMu.Lock()
+		unlockLease = cs.leaseLocks.lock(incarnationID)
 	}
-	defer state.renewMu.Unlock()
+	defer unlockLease()
 
 	state.mu.Lock()
 	if _, open := state.opens[stateID]; !open {

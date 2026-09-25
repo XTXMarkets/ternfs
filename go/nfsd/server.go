@@ -67,7 +67,7 @@ type keyedLocker[K comparable] struct {
 	entries map[K]*keyedLockEntry
 }
 
-func (l *keyedLocker[K]) lock(key K) func() {
+func (l *keyedLocker[K]) ref(key K) *keyedLockEntry {
 	l.mu.Lock()
 	if l.entries == nil {
 		l.entries = make(map[K]*keyedLockEntry)
@@ -79,17 +79,37 @@ func (l *keyedLocker[K]) lock(key K) func() {
 	}
 	entry.refs++
 	l.mu.Unlock()
+	return entry
+}
 
+func (l *keyedLocker[K]) unref(key K, entry *keyedLockEntry) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	entry.refs--
+	if entry.refs == 0 {
+		delete(l.entries, key)
+	}
+}
+
+func (l *keyedLocker[K]) lock(key K) func() {
+	entry := l.ref(key)
 	entry.mu.Lock()
 	return func() {
 		entry.mu.Unlock()
-		l.mu.Lock()
-		entry.refs--
-		if entry.refs == 0 {
-			delete(l.entries, key)
-		}
-		l.mu.Unlock()
+		l.unref(key, entry)
 	}
+}
+
+func (l *keyedLocker[K]) tryLock(key K) (func(), bool) {
+	entry := l.ref(key)
+	if !entry.mu.TryLock() {
+		l.unref(key, entry)
+		return nil, false
+	}
+	return func() {
+		entry.mu.Unlock()
+		l.unref(key, entry)
+	}, true
 }
 
 type mutationTarget struct {
