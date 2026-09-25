@@ -101,10 +101,11 @@ New-file creation therefore adds one empty inode and publication operation.
 A staging file belongs to one nfsd host. Persistent client and lease state can
 invalidate an open across the fleet, but it does not make the staged data or
 the process-local open state movable to another nfsd. Multiple writable OPEN
-sessions may target the same name. The process blocks namespace operations
-which would move or remove a target while any local staging session remains
-open. This namespace protection is not fleet-wide; the lookup-and-publish
-sequence for GUARDED and EXCLUSIVE4 creates is serialized only within one nfsd.
+sessions may target the same name. REMOVE and RENAME update their publication
+targets as described under
+[Namespace changes with staged writers](#namespace-changes-with-staged-writers).
+The lookup-and-publish sequence for GUARDED and EXCLUSIVE4 creates is
+serialized only within one nfsd.
 
 EXCLUSIVE4 retries by the same client and open-owner reuse their staged
 writer when the verifier matches and the pathname still names its original
@@ -113,8 +114,17 @@ The verifier is retained in staging until CLOSE; it does not reserve the
 name across hosts.
 
 `fsync` and `COMMIT` preserve unpublished data on the staging disk; they do
-not publish to TernFS or replicate the staging data. Keep that disk across
-process restarts and provision capacity for complete replacement files.
+not publish to TernFS or replicate the staging data. The durability guarantee
+is therefore per host. Committed staging data survives an in-place restart.
+Writers interrupted during a namespace operation may be quarantined and
+require manual recovery. The client resends unstable writes after seeing the
+new write verifier.
+
+Moving a server address to a different host without its staging disk leaves
+the new host with the client's identity but none of its staged bytes. It
+cannot publish those bytes at CLOSE. Pin each nfsd instance's address to its
+host. If the host must be replaced, attach its staging disk to the replacement
+before moving the address. Provision the disk for complete replacement files.
 Even a small edit can require reading and republishing the whole base at
 CLOSE. Monitor staging capacity, hydration traffic and CLOSE latency.
 
@@ -123,12 +133,156 @@ republishing its contents. This preserves data published by a concurrent writer.
 After a data publication commits, failure to restore the writer's timestamps is
 logged and CLOSE succeeds; the data is already visible and cannot be rolled back.
 
-The current sidecar format is NFS5. Missing or invalid sidecars cause their data
-to be moved under `quarantine/` for manual recovery, never registered as an
-open. Drain active writes before downgrading to a binary that cannot read the
-current format.
+The current sidecar format is NFS6. It contains the data checkpoint and two
+namespace flags, `Unlinked` and `Guarded`. Decoding requires the exact layout
+and rejects unknown flag bits. Earlier formats are quarantined rather than
+recovered. Drain active writes before changing to a binary that cannot read
+the staging format on disk.
 
-The implementation is in [`staging.go`](staging.go) and [`ops.go`](ops.go).
+The implementation is in [`staging.go`](staging.go),
+[`staging_lifecycle.go`](staging_lifecycle.go) and [`ops.go`](ops.go).
+
+## Namespace changes with staged writers
+
+REMOVE and RENAME update staged writers so that a later CLOSE does not
+recreate a removed file or publish a renamed file under its old name. These
+updates apply only to writers on the nfsd handling the request.
+
+### REMOVE and RENAME
+
+Each writer is either linked or unlinked:
+
+- A linked writer publishes to the directory and name recorded in its sidecar
+  on CLOSE.
+- An unlinked writer has no publication target. Its handle stays usable for
+  READ and WRITE, but CLOSE discards its private version.
+
+A retired writer has lost its active open state. nfsd retains its staging
+data for recovery but releases its pathname reservation and file descriptors.
+An unlinked writer's staging is discarded when its lease expires. If an
+already retired writer becomes unlinked, its staging is quarantined because
+it can no longer be reclaimed.
+
+A successful REMOVE unlinks every writer at the name. RENAME handles source
+and destination writers as follows:
+
+| Source staging | Destination staging | Result |
+| --- | --- | --- |
+| Active or retired, same directory | None | Source writers follow the new name. |
+| Active or retired, same directory | Present | Destination writers become unlinked; source writers follow the new name. |
+| Active, another directory | Any | `NFS4ERR_FILE_OPEN`; nothing is submitted. |
+| Only retired, another directory | Any | Source and destination writers become unlinked. |
+| None | Present | Destination writers become unlinked. |
+
+The cross-directory restriction exists because an active writer's transient
+inode was constructed on the source directory's shard and can only be linked
+there. Identical source and destination names are a no-op.
+
+An operation through another nfsd does not update these writers. Their later
+CLOSE still publishes at the recorded target. Across hosts, the last
+successful publication wins the pathname, as described under [Writes](#writes).
+
+### Failed operations
+
+The TernFS client retransmits requests over UDP. A rejection may describe one
+copy of a request while another copy applied. After submitting a namespace
+operation, nfsd handles the reply as follows:
+
+| Reply | Affected writers | NFS status |
+| --- | --- | --- |
+| Success | Updated as described above. | `NFS4_OK` |
+| REMOVE: entry gone (`EDGE_NOT_FOUND`, `MISMATCHING_CREATION_TIME`) | Unlinked, so they cannot publish at the removed entry's name. | `NFS4ERR_NOENT` |
+| Any other error, with staged writers | Marked as failed. | `NFS4ERR_IO` |
+| Any other error, without staged writers | None. | Mapped backend error |
+
+The unknown outcomes include `TIMEOUT`, a locked edge, a malformed or lost
+reply, and `EDGE_NOT_FOUND` on RENAME. These fail the affected writers even
+when the request was actually rejected. A request which arrives late can
+still apply; failing the writers does not cancel it.
+
+READ, WRITE, COMMIT and SETATTR on a failed writer's handle return
+`NFS4ERR_IO`. Operations which carry a stateid validate it before checking for
+failure. CLOSE returns `NFS4ERR_EXPIRED` and removes the open marker. Other
+writers belonging to the same client remain usable.
+
+The failed writer's staging data and sidecar move under `quarantine/` for
+manual recovery. Looking up the current pathname cannot establish whether
+this operation applied or someone else changed the name, so nfsd cannot
+automatically choose a publication target.
+
+A retry after an applied first attempt returns `NFS4ERR_NOENT`, so `rm` or
+`mv` can report an error even though the operation happened.
+
+### Restart and quarantine
+
+The backend operation and the sidecar update cannot be made atomic. Before
+submitting an operation, nfsd sets the `Guarded` flag in each affected writer's
+sidecar. It clears the flag when recording the result. A guard left on disk
+means startup must quarantine that writer, even if the crash happened before
+the backend request was sent.
+
+At startup, nfsd quarantines sidecars which are guarded, or both unlinked and
+retired, before truncating staging data or registering recovered writers.
+If an entry cannot be recovered, nfsd logs the error, skips the entry and
+continues startup. This includes unreadable sidecars, unsupported formats,
+truncate failures and failed quarantine moves.
+
+A quarantined writer's `.staging` and `.meta` files are kept together in a
+directory under `quarantine/`. A partial move leaves each file where it
+reached and requires manual recovery. To list quarantined entries, run:
+
+```sh
+nfsd inspect -registry <addr> -staging <dir>
+```
+
+A staging file is a sparse overlay. The unwritten ranges of an unlinked or
+quarantined file remain in its immutable base inode. Those ranges are
+available only while the directory's snapshot retention preserves that inode.
+Keeping the local staging files does not extend that retention period.
+
+### Implementation
+
+Pathname locks serialize REMOVE and RENAME with CLOSE, reclaim and cleanup
+within one nfsd. The guard is used only during startup recovery; the running
+process relies on these locks.
+
+1. Lock the pathnames, retire inactive writers, and record the IDs of the
+   affected writers and their intended publication targets.
+2. Look up the source entry, its inode and edge creation time. For RENAME,
+   look up the destination as well. A file over a directory or a directory
+   over a file returns `NFS4ERR_EXIST`. A failure here returns the error
+   without changing any writer's publication target.
+3. Write `Guarded` for every affected writer. If a save fails, clear the
+   guards already attempted and return `NFS4ERR_IO` without calling the
+   backend. If clearing a guard cannot be checkpointed, the writer remains
+   usable, but a restart before checkpoint repair will quarantine it.
+4. Submit the operation with the source entry's identity, so it cannot apply
+   to a later file at the same name.
+5. Update the writers according to the backend reply. For a known outcome,
+   save the final namespace state and clear the guard.
+
+The local test backend does not retransmit. Its syscall rejections establish
+that the operation did not apply, so nfsd leaves the writers linked and clears
+their guards.
+
+Guard and final checkpoints update only the namespace fields of the current
+sidecar under the file lock. This preserves any data checkpoint advanced by
+a concurrent COMMIT. If saving the final namespace state fails, the writer
+remains usable with its updated in-memory state. The checkpoint is marked
+dirty so the next `Sync` retries the save. After a crash, a final checkpoint
+supplies the updated namespace state; a surviving guard causes quarantine.
+
+A failed writer stays in memory as a tombstone until the process exits,
+outside the pathname index. The tombstone outlives CLOSE because COMMIT
+carries no stateid: without it, nfsd could acknowledge failed writes with the
+current write verifier. Restarting changes the verifier, so the tombstone
+need not be persisted. The failure check in `lookupDurableOpen` runs before
+sidecar recovery and client-wide expiry, keeping the failure confined to
+that writer.
+
+Before moving files into quarantine, nfsd syncs the destination directory.
+It syncs both source and destination directories after the moves. A partial
+move is logged; nfsd does not delete files to finish it.
 
 ## Open state
 
@@ -321,10 +475,11 @@ already owns a marker reuses the existing TernFS inode.
 
 Each nfsd checks its local clients once per lease period. A client with no
 live fleet lease loses its process-local open state and local open markers.
-Its staging is retired, preserving acknowledged bytes without reserving the
-pathname or holding open file descriptors. Retired staging is retained until
-recovered and closed or explicitly removed by an administrator; provision and
-monitor disk space accordingly.
+Its linked staging is retired, preserving acknowledged bytes without reserving
+the pathname or holding open file descriptors. Unlinked staging is discarded;
+a writer already retired when unlinked is quarantined. Linked retired staging
+is retained until recovered and closed or explicitly removed by an
+administrator; provision and monitor disk space accordingly.
 The persistent client store is the authority for replaced clientids; the
 process-local open store does not keep a separate revoked set.
 
@@ -343,12 +498,14 @@ different nfsd gets `NFS4ERR_BAD_STATEID`, not `NFS4ERR_STALE_STATEID`. The
 Linux client recovers by opening the file again by name.
 
 A write open is the exception because its local staging and sidecar files may
-still hold unpublished data. On startup nfsd discovers these files. The
-sidecar contains the state needed to complete the pending `CLOSE` or rebind the
-staging to a replacement `OPEN` for the same client and open-owner. Multiple
-writers recover independently, including when another writer has published a
-newer version in the meantime. Replacements recover only checkpointed dirty
-ranges, including new files backed by their empty published inode.
+still hold unpublished data. On startup nfsd discovers these files and checks
+whether they can be recovered, as described under
+[Restart and quarantine](#restart-and-quarantine). An eligible sidecar contains
+the state needed to complete the pending `CLOSE` or rebind the staging to a
+replacement `OPEN` for the same client and open-owner. Multiple writers
+recover independently, including when another writer has published a newer
+version in the meantime. Replacements recover only checkpointed dirty ranges,
+including new files backed by their empty published inode.
 
 A client reconnecting after lease expiry receives a new clientid. Sidecars
 also persist a recovery key derived from its stable client identity, boot
@@ -364,9 +521,10 @@ retention policies; local staging retention does not extend those policies.
 
 After one lease period of startup grace, the periodic sweep checks all local
 staging, including writes created since startup. Staging for an expired or
-stale clientid is retired. A confirmed client with no lease slot is retained
-because the first OPEN creates staging before it writes the slot. The startup
-grace gives a client time to reclaim a recovered write after a server outage.
+stale clientid is retired if linked and discarded if unlinked. A confirmed
+client with no lease slot is retained because the first OPEN creates staging
+before it writes the slot. The startup grace gives a client time to reclaim a
+recovered write after a server outage.
 
 ## Incarnation collection
 
@@ -461,22 +619,23 @@ by stateid. This adds the target directory, file name and staged size to the
 report. It also reports the sidecar format version, construction cookie,
 recovery key, owning client and open owner, access mode, base inode and size,
 checkpointed logical size and dirty ranges, writer attributes and the
-EXCLUSIVE4 verifier when present. An entry is
-`RETIRED` when its lease expired and the acknowledged data is being held for
-the client to reclaim. The staging summary includes logical and allocated
-bytes. Uncheckpointed writes and in-memory hydration progress are not visible.
+EXCLUSIVE4 verifier when present, plus the `unlinked` and `guarded` namespace
+flags. An entry is `RETIRED` when its lease expired and the acknowledged data
+is being held for the client to reclaim. The staging summary includes logical
+and allocated bytes. Uncheckpointed writes and in-memory hydration progress
+are not visible.
 
-The reported sidecar version is the on-disk metadata layout, printed as `v5`.
+The reported sidecar version is the on-disk metadata layout, printed as `v6`.
 It is not an NFS protocol version.
 
 The inspector reads the staging directory as `.staging` and `.meta` pairs named
 with the file inode as sixteen hex digits, which is how recovery looks them up.
 It reports missing or malformed files, metadata temporaries and any name which
-does not match that spelling. Files under `quarantine/`, which recovery moved
-aside because their sidecar would not decode, are listed separately rather than
-treated as an unexpected directory. A missing staging path is an error rather
-than an empty report. The staging directory is local, so this option must run on
-the nfsd host which owns it.
+does not match that spelling. Quarantined files are listed separately; see
+[Restart and quarantine](#restart-and-quarantine) for the reasons an entry
+can be quarantined. A missing staging path is an error rather than an empty
+report. The staging directory is local, so this option must run on the nfsd
+host which owns it.
 
 Sidecars without an open marker are shown under their client. In an unfiltered
 report, sidecars belonging to no client in the store are listed once at the end.

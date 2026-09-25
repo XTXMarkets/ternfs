@@ -91,12 +91,34 @@ func (s *Server) discardStaging(id InodeID) {
 	}
 }
 
-// Lease expiry revokes access, not stable data. Retired staging remains on
-// disk for the original client to reclaim or an administrator to recover.
+// Recheck ownership under the target lock: the lease snapshot may predate a
+// reclaim or a namespace operation which detached this writer.
 func (s *Server) retireStaging(id InodeID, meta StagingMeta) {
+	current, ok, unlock := s.lockStagingTarget(id)
+	defer unlock()
+	if !ok || current.ClientID != meta.ClientID || current.NFSStateID != meta.NFSStateID {
+		return
+	}
+	s.retireStagingLocked(id, current)
+}
+
+func (s *Server) retireStagingLocked(id InodeID, meta StagingMeta) error {
+	if meta.Unlinked {
+		if meta.Retired {
+			if err := s.stagingStore.Quarantine(id); err != nil {
+				s.log.Warn("quarantine retired staging", "inode", id, "err", err)
+				return err
+			}
+		} else {
+			s.discardStaging(id)
+		}
+		return nil
+	}
 	if sf := s.stagingStore.Get(id); sf != nil {
 		if err := sf.Retire(meta.ClientID, meta.NFSStateID); err != nil {
 			s.log.Error("retain expired staging", "inode", id, "err", err)
+			return err
 		}
 	}
+	return nil
 }

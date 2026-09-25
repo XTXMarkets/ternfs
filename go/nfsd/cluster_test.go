@@ -205,6 +205,12 @@ func cleanupBeforeTestTimeout(cleanup func()) *time.Timer {
 // It creates a fresh RemoteTernVFS client and staging directory per test.
 func startTernTestServer(t *testing.T) (addr string, cleanup func()) {
 	t.Helper()
+	_, addr, cleanup = startTernTestServerState(t)
+	return addr, cleanup
+}
+
+func startTernTestServerState(t *testing.T) (*Server, string, func()) {
+	t.Helper()
 	c, err := client.NewClient(ternLogger, nil, registryAddr, msgs.AddrsInfo{})
 	if err != nil {
 		t.Fatal(err)
@@ -235,7 +241,7 @@ func startTernTestServer(t *testing.T) (addr string, cleanup func()) {
 			go srv.handleConn(conn)
 		}
 	}()
-	return ln.Addr().String(), func() {
+	return srv, ln.Addr().String(), func() {
 		ln.Close()
 		srv.waitForClientGC()
 		c.Close()
@@ -2683,4 +2689,278 @@ func TestTernVisibleCreation(t *testing.T) {
 			exerciseVisibleCreation(t, addr, fmt.Sprintf("visible-%t.txt", reverse), reverse)
 		})
 	}
+}
+
+func TestTernCreatedOpenCanBeUnlinked(t *testing.T) {
+	addr, cleanup := startTernTestServer(t)
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+
+	xid := uint32(1)
+	clientID := setupClient(t, conn, &xid)
+	status, stateID, fh, _ := openExclusiveFile(
+		t, conn, &xid, clientID, "temporary-owner", 1,
+		"temporary", [8]byte{1, 2, 3, 4, 5, 6, 7, 8},
+	)
+	if status != NFS4_OK {
+		t.Fatalf("OPEN status = %s, want NFS4_OK", Nfsstat4Name(status))
+	}
+	stateID = confirmOpenState(t, conn, &xid, fh, 2, stateID)
+
+	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+		w.AppendArgarray_Putrootfh()
+		rw := w.AppendArgarray_Remove()
+		buf := rw.StartTarget().SetData([]byte("temporary")).Finish()
+		rw.Resume(buf)
+		w.Resume(rw.Finish())
+	})
+	xid++
+	if res.Status() != NFS4_OK {
+		t.Fatalf("REMOVE status = %s, want NFS4_OK",
+			Nfsstat4Name(res.Status()))
+	}
+
+	writeFileAt(t, conn, &xid, fh, stateID, 0, []byte("temporary data"))
+	data, _ := readFileData(t, conn, &xid, fh, 0, 1024)
+	if string(data) != "temporary data" {
+		t.Fatalf("unlinked open content = %q, want %q",
+			data, "temporary data")
+	}
+	closeFile(t, conn, &xid, fh, stateID)
+
+	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+		w.AppendArgarray_Putrootfh()
+		lw := w.AppendArgarray_Lookup()
+		buf := lw.StartObjname().SetData([]byte("temporary")).Finish()
+		lw.Resume(buf)
+		w.Resume(lw.Finish())
+	})
+	if res.Status() != NFS4ERR_NOENT {
+		t.Fatalf("LOOKUP after CLOSE status = %s, want NFS4ERR_NOENT",
+			Nfsstat4Name(res.Status()))
+	}
+}
+
+func TestTernDetachedWriterReadsBase(t *testing.T) {
+	addr, cleanup := startTernTestServer(t)
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+	xid := uint32(1)
+	clientID := setupClient(t, conn, &xid)
+	createFileViaNFS(t, conn, &xid, clientID, "detach-base", []byte("base bytes"))
+	stateID, fh := openWriteFile(t, conn, &xid, clientID, "detach-base")
+	writeFileAt(t, conn, &xid, fh, stateID, 0, []byte("B"))
+	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+		w.AppendArgarray_Putrootfh()
+		rw := w.AppendArgarray_Remove()
+		rw.Resume(rw.StartTarget().SetData([]byte("detach-base")).Finish())
+		w.Resume(rw.Finish())
+	})
+	xid++
+	expectOK(t, res)
+	data, _ := readFileData(t, conn, &xid, fh, 0, 128)
+	if string(data) != "Base bytes" {
+		t.Fatalf("detached read = %q, want %q", data, "Base bytes")
+	}
+	closeFile(t, conn, &xid, fh, stateID)
+	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+		w.AppendArgarray_Putrootfh()
+		lw := w.AppendArgarray_Lookup()
+		lw.Resume(lw.StartObjname().SetData([]byte("detach-base")).Finish())
+		w.Resume(lw.Finish())
+	})
+	xid++
+	if res.Status() != NFS4ERR_NOENT {
+		t.Fatalf("LOOKUP after CLOSE = %s, want NOENT", Nfsstat4Name(res.Status()))
+	}
+}
+
+func TestTernRenameStagedSource(t *testing.T) {
+	addr, cleanup := startTernTestServer(t)
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+	xid := uint32(1)
+	clientID := setupClient(t, conn, &xid)
+	createFileViaNFS(t, conn, &xid, clientID, "rename-open", []byte("original"))
+	status, state, fh, _ := openFileForOwner(t, conn, &xid, clientID,
+		"renamed-writer", 1, "rename-open", OPEN4_SHARE_ACCESS_BOTH, false, false)
+	if status != NFS4_OK {
+		t.Fatalf("OPEN returned %s", Nfsstat4Name(status))
+	}
+	state = confirmOpenState(t, conn, &xid, fh, 2, state)
+	writeFileAt(t, conn, &xid, fh, state, 0, []byte("updated!"))
+	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+		w.AppendArgarray_Putrootfh()
+		w.AppendArgarray_Savefh()
+		rw := w.AppendArgarray_Rename()
+		rw.Resume(rw.StartOldname().SetData([]byte("rename-open")).Finish())
+		rw.Resume(rw.StartNewname().SetData([]byte("renamed-open")).Finish())
+		w.Resume(rw.Finish())
+	})
+	xid++
+	expectOK(t, res)
+	closeFile(t, conn, &xid, fh, state)
+	data, _ := readFileData(t, conn, &xid, lookupFH(t, conn, &xid, "renamed-open"), 0, 128)
+	if string(data) != "updated!" {
+		t.Fatalf("renamed content = %q", data)
+	}
+	cleanupViaNFS(t, conn, &xid, "renamed-open")
+}
+
+func TestTernRejectedRenameKeepsWriter(t *testing.T) {
+	addr, cleanup := startTernTestServer(t)
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+	xid := uint32(1)
+	clientID := setupClient(t, conn, &xid)
+	state, fh := openCreateFile(t, conn, &xid, clientID, "rejected-rename")
+	writeFileAt(t, conn, &xid, fh, state, 0, []byte("before"))
+	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+		w.AppendArgarray_Putrootfh()
+		cw := w.AppendArgarray_Create()
+		cw.SetObjtype_Nf4dir()
+		cw.Resume(cw.StartObjname().SetData([]byte("reject-directory")).Finish())
+		aw := cw.StartCreateattrs()
+		bw := aw.StartAttrmask()
+		aw.Resume(bw.Finish())
+		aw.Resume(aw.StartAttrVals().SetData(nil).Finish())
+		cw.Resume(aw.Finish())
+		w.Resume(cw.Finish())
+	})
+	xid++
+	expectOK(t, res)
+	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+		w.AppendArgarray_Putrootfh()
+		w.AppendArgarray_Savefh()
+		rw := w.AppendArgarray_Rename()
+		rw.Resume(rw.StartOldname().SetData([]byte("rejected-rename")).Finish())
+		rw.Resume(rw.StartNewname().SetData([]byte("reject-directory")).Finish())
+		w.Resume(rw.Finish())
+	})
+	xid++
+	if res.Status() != NFS4ERR_EXIST {
+		t.Fatalf("RENAME returned %s, want EXIST", Nfsstat4Name(res.Status()))
+	}
+	writeFileAt(t, conn, &xid, fh, state, 0, []byte("after!"))
+	closeFile(t, conn, &xid, fh, state)
+	data, _ := readFileData(t, conn, &xid, lookupFH(t, conn, &xid, "rejected-rename"), 0, 128)
+	if string(data) != "after!" {
+		t.Fatalf("rejected rename lost writer: %q", data)
+	}
+	cleanupViaNFS(t, conn, &xid, "rejected-rename")
+	cleanupViaNFS(t, conn, &xid, "reject-directory")
+}
+
+func TestTernRetiredSourceCanMoveAcrossDirectories(t *testing.T) {
+	srv, addr, cleanup := startTernTestServerState(t)
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+	xid := uint32(1)
+	clientID := setupClient(t, conn, &xid)
+	createFileViaNFS(t, conn, &xid, clientID, "retired-move", []byte("published"))
+	status, state, fh, _ := openFileForOwner(t, conn, &xid, clientID,
+		"retired-source", 1, "retired-move", OPEN4_SHARE_ACCESS_BOTH, false, false)
+	if status != NFS4_OK {
+		t.Fatal(Nfsstat4Name(status))
+	}
+	state = confirmOpenState(t, conn, &xid, fh, 2, state)
+	writeFileAt(t, conn, &xid, fh, state, 0, []byte("unpublished"))
+	id, _ := fhToInodeID(fh)
+	srv.waitForClientGC()
+	now := time.Now().Add(2 * nfsLeaseTime)
+	srv.clients.now = func() time.Time { return now }
+	srv.runLeaseSweep()
+	meta, ok := srv.stagingStore.GetMeta(id)
+	if !ok || !meta.Retired {
+		t.Fatal("source writer was not retired")
+	}
+	dir, err := srv.fs.Mkdir(srv.fs.RootID(), "retired-move-dir")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dirFH := lookupFH(t, conn, &xid, "retired-move-dir")
+	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+		w.AppendArgarray_Putrootfh()
+		w.AppendArgarray_Savefh()
+		pw := w.AppendArgarray_Putfh()
+		pw.Resume(pw.StartObject().SetData(dirFH).Finish())
+		w.Resume(pw.Finish())
+		rw := w.AppendArgarray_Rename()
+		rw.Resume(rw.StartOldname().SetData([]byte("retired-move")).Finish())
+		rw.Resume(rw.StartNewname().SetData([]byte("moved")).Finish())
+		w.Resume(rw.Finish())
+	})
+	xid++
+	expectOK(t, res)
+	// The retired source's private version is quarantined, not published.
+	if srv.stagingStore.Get(id) != nil {
+		t.Fatal("retired staging survived the move")
+	}
+	if _, err := srv.fs.Lookup(srv.fs.RootID(), "retired-move"); !os.IsNotExist(err) {
+		t.Fatalf("old source still exists: %v", err)
+	}
+	published, err := srv.fs.Lookup(dir, "moved")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := srv.fs.ReadAll(published)
+	if err != nil || string(data) != "published" {
+		t.Fatalf("move changed published bytes: %q, %v", data, err)
+	}
+	if err := srv.fs.Remove(dir, "moved"); err != nil {
+		t.Fatal(err)
+	}
+	cleanupViaNFS(t, conn, &xid, "retired-move-dir")
+}
+
+func TestTernRenameOverStagedDestination(t *testing.T) {
+	addr, cleanup := startTernTestServer(t)
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+
+	xid := uint32(1)
+	clientID := setupClient(t, conn, &xid)
+	createFileViaNFS(
+		t, conn, &xid, clientID, "source", []byte("replacement"),
+	)
+	createFileViaNFS(
+		t, conn, &xid, clientID, "target", []byte("old target"),
+	)
+	stateID, fh := openWriteFile(
+		t, conn, &xid, clientID, "target",
+	)
+	writeFileAt(t, conn, &xid, fh, stateID, 0, []byte("private"))
+
+	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+		w.AppendArgarray_Putrootfh()
+		w.AppendArgarray_Savefh()
+		rw := w.AppendArgarray_Rename()
+		buf := rw.StartOldname().SetData([]byte("source")).Finish()
+		rw.Resume(buf)
+		buf = rw.StartNewname().SetData([]byte("target")).Finish()
+		rw.Resume(buf)
+		w.Resume(rw.Finish())
+	})
+	xid++
+	if res.Status() != NFS4_OK {
+		t.Fatalf("RENAME status = %s, want NFS4_OK",
+			Nfsstat4Name(res.Status()))
+	}
+
+	writeFileAt(t, conn, &xid, fh, stateID, 7, []byte(" after"))
+	closeFile(t, conn, &xid, fh, stateID)
+
+	replacementFH := lookupFH(t, conn, &xid, "target")
+	data, _ := readFileData(t, conn, &xid, replacementFH, 0, 1024)
+	if string(data) != "replacement" {
+		t.Fatalf("replacement content = %q, want %q",
+			data, "replacement")
+	}
+	cleanupViaNFS(t, conn, &xid, "target")
 }

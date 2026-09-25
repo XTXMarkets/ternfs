@@ -4312,7 +4312,7 @@ func TestHydrationFailureDiscardsReplacement(t *testing.T) {
 			Nfsstat4Name(status))
 	}
 
-	if staging.TargetBusy(fs.RootID(), "existing.txt") {
+	if stagingTargetBusyForTest(staging, fs.RootID(), "existing.txt") {
 		t.Fatal("failed hydration left the publication target reserved")
 	}
 	data, err := os.ReadFile(path)
@@ -4594,7 +4594,7 @@ func TestClientRebootDoesNotDiscardOtherWriter(t *testing.T) {
 	); status != NFS4_OK {
 		t.Fatalf("reader reboot confirmation = %s", Nfsstat4Name(status))
 	}
-	if !staging.TargetBusy(fs.RootID(), "existing.txt") {
+	if !stagingTargetBusyForTest(staging, fs.RootID(), "existing.txt") {
 		t.Fatal("reader reboot discarded another client's staging")
 	}
 	closeFile(t, conn, &xid, writerFH, writerState)
@@ -4686,7 +4686,7 @@ func TestExpiredMutableOpenReleasesTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if busy || staging.TargetBusy(fs.RootID(), "existing.txt") {
+	if busy || stagingTargetBusyForTest(staging, fs.RootID(), "existing.txt") {
 		t.Fatal("expired mutable open still reserves its target")
 	}
 }
@@ -4733,7 +4733,7 @@ func TestRecoveredMutableOpenCanBeReplayedByClient(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkedStaging.clients = srv2.clients
-	if !staging2.TargetBusy(fs.RootID(), "existing.txt") {
+	if !stagingTargetBusyForTest(staging2, fs.RootID(), "existing.txt") {
 		t.Fatal("live recovered staging was discarded during startup")
 	}
 	addr2, cleanup2 := serveTestServer(t, srv2)
@@ -4871,7 +4871,7 @@ func TestRecoveredMutableOpenKeepsOriginalBase(t *testing.T) {
 		t.Fatal("recovered writer changed its private handle")
 	}
 	closeFile(t, conn2, &xid, recoveredFH, recoveredState)
-	if staging2.TargetBusy(fs.RootID(), "existing.txt") {
+	if stagingTargetBusyForTest(staging2, fs.RootID(), "existing.txt") {
 		t.Fatal("recovered publication left staging registered")
 	}
 	data, err := os.ReadFile(path)
@@ -5018,15 +5018,10 @@ func TestMutableOpenPreservesMetadataOnlySetattr(t *testing.T) {
 	}
 }
 
-func TestMutableOpenBlocksNamespaceChanges(t *testing.T) {
+func TestMutableOpenBlocksDirectoryCreation(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(
 		filepath.Join(dir, "existing.txt"), []byte("original"), 0644,
-	); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(
-		filepath.Join(dir, "other.txt"), []byte("other"), 0644,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -5043,19 +5038,6 @@ func TestMutableOpenBlocksNamespaceChanges(t *testing.T) {
 	)
 
 	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
-		w.AppendArgarray_Putrootfh()
-		rw := w.AppendArgarray_Remove()
-		buf := rw.StartTarget().SetData([]byte("existing.txt")).Finish()
-		rw.Resume(buf)
-		w.Resume(rw.Finish())
-	})
-	xid++
-	if res.Status() != NFS4ERR_FILE_OPEN {
-		t.Fatalf("REMOVE status = %s, want NFS4ERR_FILE_OPEN",
-			Nfsstat4Name(res.Status()))
-	}
-
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		cw := w.AppendArgarray_Create()
 		cw.SetObjtype_Nf4dir()
@@ -5074,27 +5056,6 @@ func TestMutableOpenBlocksNamespaceChanges(t *testing.T) {
 	if res.Status() != NFS4ERR_FILE_OPEN {
 		t.Fatalf("CREATE status = %s, want NFS4ERR_FILE_OPEN",
 			Nfsstat4Name(res.Status()))
-	}
-
-	for _, names := range [][2]string{
-		{"existing.txt", "renamed.txt"},
-		{"other.txt", "existing.txt"},
-	} {
-		res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
-			w.AppendArgarray_Putrootfh()
-			w.AppendArgarray_Savefh()
-			rw := w.AppendArgarray_Rename()
-			buf := rw.StartOldname().SetData([]byte(names[0])).Finish()
-			rw.Resume(buf)
-			buf = rw.StartNewname().SetData([]byte(names[1])).Finish()
-			rw.Resume(buf)
-			w.Resume(rw.Finish())
-		})
-		xid++
-		if res.Status() != NFS4ERR_FILE_OPEN {
-			t.Fatalf("RENAME %q to %q status = %s, want NFS4ERR_FILE_OPEN",
-				names[0], names[1], Nfsstat4Name(res.Status()))
-		}
 	}
 
 	closeFile(t, conn, &xid, fh, stateid)
@@ -8300,7 +8261,7 @@ func closeLocalStagingFiles(t *testing.T, store *LocalStagingStore) {
 	defer store.mu.Unlock()
 
 	for _, entry := range store.files {
-		if entry.file.Meta().Retired {
+		if entry.failed || entry.file.Meta().Retired {
 			continue // retirement has already synced and closed this file
 		}
 		if err := entry.file.f.Sync(); err != nil {

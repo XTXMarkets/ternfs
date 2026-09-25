@@ -263,7 +263,7 @@ func TestRecoveredPrivateWritersUseOpenOwner(t *testing.T) {
 		closeFile(t, conn, &xid, test.fh, test.sid)
 	}
 	got, _ := readFileData(t, conn, &xid, lookupFH(t, conn, &xid, "file"), 0, 1024)
-	if string(got) != "ONEginal" || recovered.TargetBusy(fs.RootID(), "file") {
+	if string(got) != "ONEginal" || stagingTargetBusyForTest(recovered, fs.RootID(), "file") {
 		t.Fatalf("last recovered CLOSE did not publish and release staging: %q", got)
 	}
 }

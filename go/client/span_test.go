@@ -370,18 +370,22 @@ func TestReadMirroredBoundaries(t *testing.T) {
 }
 
 type flakyPageCache struct {
-	r wyhash.Rand
-	c PageCache
+	mu sync.Mutex // protects the random generator, not the cache reads
+	r  wyhash.Rand
+	c  PageCache
 }
 
 func (fpc *flakyPageCache) ReadCache(offset uint64, dest []byte) (count int) {
+	fpc.mu.Lock()
 	x := fpc.r.Float64()
 	if x < 0.3 {
+		fpc.mu.Unlock()
 		return 0
 	}
 	if x < 0.6 {
 		dest = dest[:fpc.r.Uint64()%uint64(len(dest))]
 	}
+	fpc.mu.Unlock()
 	return fpc.c.ReadCache(offset, dest)
 }
 

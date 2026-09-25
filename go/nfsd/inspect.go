@@ -246,7 +246,9 @@ type inspectStagingEntry struct {
 	ReadOnly     bool   `json:"read_only"`
 	// Retired marks data kept after the owning lease expired, so that the
 	// client can reclaim it after a reboot.
-	Retired bool `json:"retired"`
+	Retired  bool `json:"retired"`
+	Unlinked bool `json:"unlinked"`
+	Guarded  bool `json:"guarded"`
 	// Exclusive marks an EXCLUSIVE4 create; Verifier is the client's create
 	// verifier, which a retry must match to reuse this writer.
 	Exclusive       bool               `json:"exclusive,omitempty"`
@@ -907,7 +909,7 @@ func inspectOpenMarker(
 // problems, and returns the entries for joining to open markers. It reports
 // incomplete pairs because nfsd recovery starts from .staging files. The
 // quarantine directory holds the checkpoints recovery moved aside because
-// their sidecar would not decode.
+// their checkpoint is invalid, guarded, or both unlinked and retired.
 func (r *inspectReport) readStaging(dir string) ([]*inspectStagingEntry, error) {
 	info, err := os.Stat(dir)
 	if err != nil {
@@ -1085,6 +1087,8 @@ func (entry *inspectStagingEntry) setMeta(meta StagingMeta) {
 	entry.OwnerKnown = meta.OwnerKnown
 	entry.ReadOnly = meta.ReadOnly
 	entry.Retired = meta.Retired
+	entry.Unlinked = meta.Unlinked
+	entry.Guarded = meta.Guarded
 	entry.Exclusive = meta.Exclusive
 	if meta.Exclusive {
 		entry.Verifier = hex.EncodeToString(meta.Verifier[:])
@@ -1326,7 +1330,7 @@ func (r *inspectReport) WriteText(w io.Writer) {
 	}
 	if len(r.Quarantined) > 0 {
 		fmt.Fprintf(w,
-			"\nquarantined checkpoints (sidecar would not decode; "+
+			"\nquarantined checkpoints (excluded from automatic recovery; "+
 				"nfsd will not recover these)\n")
 		for _, name := range r.Quarantined {
 			fmt.Fprintf(w, "  %s\n", name)
@@ -1402,6 +1406,12 @@ func writeInspectStagingEntry(
 		fmt.Fprintf(w, "%sowner %s access %s", indent, owner, access)
 		if entry.Exclusive {
 			fmt.Fprintf(w, " EXCLUSIVE4 verifier %s", entry.Verifier)
+		}
+		if entry.Unlinked {
+			fmt.Fprint(w, " unlinked")
+		}
+		if entry.Guarded {
+			fmt.Fprint(w, " guarded")
 		}
 		if entry.Retired {
 			fmt.Fprint(w, " RETIRED (lease expired, held for reclaim)")
