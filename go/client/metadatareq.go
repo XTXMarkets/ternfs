@@ -5,12 +5,30 @@
 package client
 
 import (
+	"errors"
 	"github.com/XTXMarkets/ternfs/go/core/bincode"
 	"github.com/XTXMarkets/ternfs/go/core/log"
 	"github.com/XTXMarkets/ternfs/go/msgs"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
+
+func retryableMetadataSendError(err error) bool {
+	var errno syscall.Errno
+	if !errors.As(err, &errno) {
+		return false
+	}
+	switch errno {
+	case syscall.EINTR, syscall.EAGAIN, syscall.ENOBUFS, syscall.ENOMEM,
+		syscall.ENETDOWN, syscall.ENETUNREACH, syscall.EHOSTUNREACH,
+		syscall.ECONNREFUSED, syscall.ECONNRESET, syscall.ETIMEDOUT,
+		syscall.EPERM: // Netfilter packet drops can return EPERM.
+		return true
+	default:
+		return false
+	}
+}
 
 // Starts from 1, we use 0 as a placeholder in `requestIds`
 func (c *Client) newRequestId() uint64 {
@@ -30,7 +48,7 @@ func (c *Client) metadataRequest(
 	timeouts := c.shardTimeout
 	startedAt := time.Now()
 	requestId := c.newRequestId()
-	// will keep trying as long as we get timeouts
+	// Missing replies and transient send failures use the same retry timeout.
 	timeoutAlertQuietPeriod := 10 * time.Second
 	if shid < 0 {
 		timeouts = c.cdcTimeout
@@ -46,6 +64,9 @@ func (c *Client) metadataRequest(
 			log.RaiseAlert("giving up on request to shard %v after waiting for %v max=%v", shid, now.Sub(startedAt), timeouts.Max)
 			return msgs.TIMEOUT
 		}
+		if timeouts.Overall > 0 {
+			timeout = min(timeout, timeouts.Overall-now.Sub(startedAt))
+		}
 		if counters != nil {
 			atomic.AddUint64(&counters.Attempts, 1)
 		}
@@ -59,7 +80,7 @@ func (c *Client) metadataRequest(
 			respCh:    respChan,
 		}
 		if dontWait {
-			log.Debug("dontWait is on, we've sent the request, goodbye")
+			log.Debug("dontWait is on, request queued")
 			return nil
 		}
 		log.DebugStack(1, "waiting for response for req id %v on channel", requestId)
@@ -68,7 +89,6 @@ func (c *Client) metadataRequest(
 			attempts++
 			continue
 		}
-		// At this point, we know we've got a response
 		elapsed := time.Since(startedAt)
 		if counters != nil {
 			counters.Timings.Add(elapsed)
@@ -78,6 +98,9 @@ func (c *Client) metadataRequest(
 		if resp.err != nil {
 			var isTernError bool
 			ternError, isTernError = resp.err.(msgs.TernError)
+			if !isTernError {
+				return resp.err
+			}
 			shouldCheckIdempotency := attempts > 0
 			if shid >= 0 {
 				if reqBody.(msgs.ShardRequest).ShardRequestKind() == msgs.SAME_DIRECTORY_RENAME {
@@ -88,7 +111,7 @@ func (c *Client) metadataRequest(
 					shouldCheckIdempotency = true
 				}
 			}
-			if isTernError && shouldCheckIdempotency {
+			if shouldCheckIdempotency {
 				if shid >= 0 {
 					ternError = c.checkRepeatedShardRequestError(log, reqBody.(msgs.ShardRequest), respBody.(msgs.ShardResponse), ternError)
 				} else {
