@@ -56,6 +56,12 @@ Opening a new or existing file for write allocates a private transient TernFS
 inode. For a new pathname, OPEN also publishes a separate empty inode before
 replying: LOOKUP and READDIR immediately see a regular file of size zero.
 The creator's open and local staging are prepared before this publication.
+
+Staging creation holds an inode-keyed lock while creating the local data file
+and saving its sidecar. The store-wide map lock only covers lookup and
+publication of a complete entry. Removal and quarantine use the same inode
+lock through filesystem cleanup, so independent creations can overlap
+without cleanup deleting a later creation's files.
 Other writers start independent staging from the empty published version.
 nfsd creates these files on its local host:
 
