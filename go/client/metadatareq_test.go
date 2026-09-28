@@ -102,6 +102,12 @@ func TestMetadataRequestProcessorErrors(t *testing.T) {
 					}
 					sock.Close()
 					c.clientMetadata.sock = sock
+					// Give the request somewhere to go, so it reaches the
+					// closed socket rather than waiting for an address.
+					addr := msgs.AddrsInfo{Addr1: msgs.IpPort{Addrs: [4]byte{127, 0, 0, 1}, Port: 1}}
+					var shardAddrs [256]msgs.AddrsInfo
+					shardAddrs[0] = addr
+					c.SetAddrs(addr, &shardAddrs)
 				}
 				done := make(chan struct{})
 				go func() {
