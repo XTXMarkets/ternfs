@@ -339,6 +339,19 @@ func (cm *clientMetadata) processRequests(log *log.Logger) {
 			addr = &addrs[0]
 		}
 		whichMetadatataAddr++
+		if addr.Port == 0 {
+			// The registry has not told us where this shard (or the CDC) is
+			// yet, which happens when requests are issued right after
+			// NewClient. Sending to 0.0.0.0:0 fails with EINVAL. Treat the
+			// attempt as lost instead: it times out and metadataRequest
+			// retries it until the address arrives or the budget expires.
+			log.Debug("no address yet for shard %v, holding req id %v until it times out", req.shard, req.requestId)
+			if !dontWait {
+				req.deadline = time.Now().Add(req.timeout)
+				cm.inFlight <- req
+			}
+			continue
+		}
 		written, err := cm.sock.WriteToUDP(buf.Bytes(), addr)
 		if err != nil {
 			log.RaiseAlert("could not send request %v to shard %v addr %v: %v", req.req, req.shard, addr, err)

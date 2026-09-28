@@ -51,6 +51,12 @@ func metadataRetryClient(t *testing.T, timeouts timing.ReqTimeouts, send func(*c
 	cm.sock = &metadataSendTestSocket{send: func(packet []byte, _ *net.UDPAddr) (int, error) {
 		return send(cm, packet)
 	}}
+	// Requests without an address are held rather than sent, so give the
+	// injected socket a destination.
+	addr := msgs.AddrsInfo{Addr1: msgs.IpPort{Addrs: [4]byte{127, 0, 0, 1}, Port: 1}}
+	var shardAddrs [256]msgs.AddrsInfo
+	shardAddrs[0] = addr
+	c.SetAddrs(addr, &shardAddrs)
 	logger := log.NewLogger(os.Stderr, &log.LoggerOptions{Level: log.ERROR})
 	sendDone, responsesDone, timerDone := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	stopTimer := make(chan struct{})
