@@ -69,8 +69,10 @@ func (s *metadataSendTestSocket) WriteToUDP(packet []byte, _ *net.UDPAddr) (int,
 	return len(packet), err
 }
 
+var metadataTestAddrs = msgs.AddrsInfo{Addr1: msgs.IpPort{Addrs: [4]byte{127, 0, 0, 1}, Port: 1}}
+
 // Inject send failures while replies and timeouts use the real socket reader.
-func metadataRetryClient(t *testing.T, timeouts timing.ReqTimeouts, send func([]byte) ([]byte, error)) (*Client, *log.Logger) {
+func metadataRetryClient(t *testing.T, timeouts timing.ReqTimeouts, addr msgs.AddrsInfo, send func([]byte) ([]byte, error)) (*Client, *log.Logger) {
 	t.Helper()
 	sock, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
@@ -78,10 +80,7 @@ func metadataRetryClient(t *testing.T, timeouts timing.ReqTimeouts, send func([]
 	}
 	shardTimeout, cdcTimeout := timeouts, timeouts
 	c := &Client{shardTimeout: &shardTimeout, cdcTimeout: &cdcTimeout}
-	addr := msgs.AddrsInfo{Addr1: msgs.IpPort{Addrs: [4]byte{127, 0, 0, 1}, Port: 1}}
-	var shards [256]msgs.AddrsInfo
-	shards[0] = addr
-	c.SetAddrs(addr, &shards)
+	c.SetAddrs(addr, &[256]msgs.AddrsInfo{addr})
 	logger := log.NewLogger(os.Stderr, &log.LoggerOptions{Level: log.ERROR})
 	c.clientMetadata.sock = &metadataSendTestSocket{UDPConn: sock, send: send}
 	if err := c.clientMetadata.init(logger, c); err != nil {
@@ -141,7 +140,7 @@ func TestMetadataTransientSendRetries(t *testing.T) {
 			}
 			sends := make(chan attempt, 4)
 			first := true
-			c, logger := metadataRetryClient(t, timeouts, func(packet []byte) ([]byte, error) {
+			c, logger := metadataRetryClient(t, timeouts, metadataTestAddrs, func(packet []byte) ([]byte, error) {
 				sends <- attempt{binary.LittleEndian.Uint64(packet[4:]), time.Now()}
 				if first {
 					first = false
@@ -162,7 +161,7 @@ func TestMetadataTransientSendRetries(t *testing.T) {
 
 func TestMetadataSendRetryExhaustion(t *testing.T) {
 	timeouts := *timing.NewReqTimeouts(10*time.Millisecond, 100*time.Millisecond, 100*time.Millisecond, 2, 0)
-	c, logger := metadataRetryClient(t, timeouts, func([]byte) ([]byte, error) { return nil, syscall.ENOBUFS })
+	c, logger := metadataRetryClient(t, timeouts, metadataTestAddrs, func([]byte) ([]byte, error) { return nil, syscall.ENOBUFS })
 	if err := receiveMetadata(t, testMetadataRequest(c, logger, "shard", "file")); err != msgs.TIMEOUT {
 		t.Fatalf("error = %v, want TIMEOUT", err)
 	}
@@ -173,7 +172,7 @@ func TestMetadataLateReplyAfterSendFailure(t *testing.T) {
 		t.Run(result.Error(), func(t *testing.T) {
 			timeouts := *timing.NewReqTimeouts(10*time.Millisecond, 100*time.Millisecond, time.Second, 2, 0)
 			var original []byte
-			c, logger := metadataRetryClient(t, timeouts, func(packet []byte) ([]byte, error) {
+			c, logger := metadataRetryClient(t, timeouts, metadataTestAddrs, func(packet []byte) ([]byte, error) {
 				if original == nil {
 					original = append([]byte(nil), packet...)
 					return nil, nil
@@ -193,7 +192,7 @@ func TestMetadataDontWaitDoesNotRetrySendErrors(t *testing.T) {
 	for _, sendErr := range []error{syscall.EPERM, syscall.EBADF} {
 		t.Run(sendErr.Error(), func(t *testing.T) {
 			kinds := make(chan uint8, 4)
-			c, logger := metadataRetryClient(t, DefaultShardTimeout, func(packet []byte) ([]byte, error) {
+			c, logger := metadataRetryClient(t, DefaultShardTimeout, metadataTestAddrs, func(packet []byte) ([]byte, error) {
 				kinds <- packet[12]
 				if packet[12] == uint8(msgs.SET_TIME) {
 					return nil, sendErr
@@ -218,7 +217,7 @@ func TestMetadataSendRetryDoesNotBlockOtherRequests(t *testing.T) {
 	timeouts := *timing.NewReqTimeouts(20*time.Millisecond, 100*time.Millisecond, time.Second, 2, 0)
 	names := make(chan string, 4)
 	first := true
-	c, logger := metadataRetryClient(t, timeouts, func(packet []byte) ([]byte, error) {
+	c, logger := metadataRetryClient(t, timeouts, metadataTestAddrs, func(packet []byte) ([]byte, error) {
 		var req msgs.LookupReq
 		if err := bincode.Unpack(packet[13:], &req); err != nil {
 			return nil, err
@@ -263,7 +262,7 @@ func (r *metadataPackErrorRequest) Pack(io.Writer) error { return r.err }
 
 func TestMetadataPackingErrorIsNotRetried(t *testing.T) {
 	want := &net.OpError{Op: "write", Net: "udp", Err: syscall.ENOBUFS}
-	c, logger := metadataRetryClient(t, DefaultShardTimeout, func([]byte) ([]byte, error) {
+	c, logger := metadataRetryClient(t, DefaultShardTimeout, metadataTestAddrs, func([]byte) ([]byte, error) {
 		t.Error("attempted a send after packing failed")
 		return nil, net.ErrClosed
 	})
