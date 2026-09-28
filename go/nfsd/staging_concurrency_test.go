@@ -7,9 +7,7 @@ package main
 import (
 	"os"
 	"path/filepath"
-	"sync/atomic"
 	"testing"
-	"time"
 )
 
 func TestStagingCreateConcurrency(t *testing.T) {
@@ -17,13 +15,9 @@ func TestStagingCreateConcurrency(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	entered, release := make(chan struct{}), make(chan struct{})
-	var calls atomic.Int32
+	gate := newTestGate()
 	store.createFile = func(path string) (*os.File, error) {
-		if calls.Add(1) == 1 {
-			close(entered)
-			<-release
-		}
+		gate.wait()
 		return os.Create(path)
 	}
 	type result struct {
@@ -35,8 +29,8 @@ func TestStagingCreateConcurrency(t *testing.T) {
 		f, err := store.Create(1, StagingMeta{})
 		first <- result{f, err}
 	}()
-	defer closeSignal(release)
-	awaitSignal(t, entered, "first staging creation")
+	defer closeSignal(gate.release)
+	awaitSignal(t, gate.entered, "first staging creation")
 	other := make(chan result, 1)
 	go func() {
 		f, err := store.Create(2, StagingMeta{})
@@ -53,12 +47,12 @@ func TestStagingCreateConcurrency(t *testing.T) {
 	if store.Get(1) != nil || len(store.Entries()) != 1 {
 		t.Fatal("unfinished creation was published")
 	}
-	closeSignal(release)
+	closeSignal(gate.release)
 	a := awaitValue(t, first, "first creation")
 	b := awaitValue(t, duplicate, "duplicate creation")
-	if a.err != nil || b.err != nil || a.file != b.file || calls.Load() != 2 {
+	if a.err != nil || b.err != nil || a.file != b.file || gate.calls.Load() != 2 {
 		t.Fatalf("duplicate creation: first=%v second=%v same=%v calls=%d",
-			a.err, b.err, a.file == b.file, calls.Load())
+			a.err, b.err, a.file == b.file, gate.calls.Load())
 	}
 	store.Remove(1)
 	store.Remove(2)
@@ -69,10 +63,9 @@ func TestStagingCleanupWaitsForCreation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	entered, release := make(chan struct{}), make(chan struct{})
+	gate := newTestGate()
 	store.createFile = func(path string) (*os.File, error) {
-		close(entered)
-		<-release
+		gate.wait()
 		return os.Create(path)
 	}
 	created := make(chan error, 1)
@@ -80,19 +73,15 @@ func TestStagingCleanupWaitsForCreation(t *testing.T) {
 		_, err := store.Create(1, StagingMeta{})
 		created <- err
 	}()
-	defer closeSignal(release)
-	awaitSignal(t, entered, "creation before cleanup")
+	defer closeSignal(gate.release)
+	awaitSignal(t, gate.entered, "creation before cleanup")
 	cleaned := make(chan struct{})
 	go func() {
 		store.Remove(1)
 		close(cleaned)
 	}()
-	select {
-	case <-cleaned:
-		t.Fatal("cleanup finished before creation")
-	case <-time.After(25 * time.Millisecond):
-	}
-	closeSignal(release)
+	assertBlocked(t, cleaned, "cleanup during creation")
+	closeSignal(gate.release)
 	if err := awaitValue(t, created, "creation"); err != nil {
 		t.Fatal(err)
 	}

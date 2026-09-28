@@ -683,8 +683,7 @@ func (op *openOwnerOperation) replayStateActive(id StateID) bool {
 	op.store.mu.Lock()
 	defer op.store.mu.Unlock()
 	state := op.store.states[id]
-	return state != nil && state.owner == op.key &&
-		op.store.owners[op.key] == op.owner
+	return state != nil && state.owner == op.key
 }
 
 func (os *openStateStore) lookup(

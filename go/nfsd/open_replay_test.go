@@ -8,21 +8,17 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 )
 
 type replayParentGateVFS struct {
 	TernVFS
-	id      atomic.Uint64
-	entered chan struct{}
-	release chan struct{}
-	calls   atomic.Int32
+	*testGate
+	id atomic.Uint64
 }
 
 func (fs *replayParentGateVFS) LookupParent(id InodeID) (InodeID, error) {
-	if id == InodeID(fs.id.Load()) && fs.calls.Add(1) == 1 {
-		close(fs.entered)
-		<-fs.release
+	if id == InodeID(fs.id.Load()) {
+		fs.wait()
 	}
 	return fs.TernVFS.LookupParent(id)
 }
@@ -33,7 +29,7 @@ func TestOpenReplayCannotRecreateClosedMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 	fs := &replayParentGateVFS{TernVFS: base,
-		entered: make(chan struct{}), release: make(chan struct{})}
+		testGate: newTestGate()}
 	store, err := NewLocalStagingStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -81,11 +77,7 @@ func TestOpenReplayCannotRecreateClosedMarker(t *testing.T) {
 		status, _, err := closeFileWithSeqResultE(b, &closeXID, fh, sid, 4)
 		closed <- closeResult{status: status, err: err}
 	}()
-	select {
-	case r := <-closed:
-		t.Fatalf("CLOSE overtook replay marker renewal: %d, %v", r.status, r.err)
-	case <-time.After(25 * time.Millisecond):
-	}
+	assertBlocked(t, closed, "CLOSE during replay marker renewal")
 	closeSignal(fs.release)
 	if err := awaitValue(t, replayed, "OPEN replay"); err != nil {
 		t.Fatal(err)

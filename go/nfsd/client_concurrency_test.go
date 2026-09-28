@@ -13,23 +13,20 @@ import (
 
 type markerGateVFS struct {
 	TernVFS
-	name    string
-	entered chan struct{}
-	release chan struct{}
-	calls   atomic.Int32
+	*testGate
+	name string
 }
 
 func (fs *markerGateVFS) CreateFile(dir InodeID, name string, data io.Reader) (InodeID, error) {
-	if name == fs.name && fs.calls.Add(1) == 1 {
-		close(fs.entered)
-		<-fs.release
+	if name == fs.name {
+		fs.wait()
 	}
 	return fs.TernVFS.CreateFile(dir, name, data)
 }
 
 func TestClientStoreIndependentMarkers(t *testing.T) {
 	fs := &markerGateVFS{TernVFS: NewLocalTernVFS(t.TempDir()),
-		name: activeOpenName(StateID{1}), entered: make(chan struct{}), release: make(chan struct{})}
+		name: activeOpenName(StateID{1}), testGate: newTestGate()}
 	store, id := newConfirmedStoreClient(t, fs, []byte("client"), [8]byte{1}, clientOwner{})
 	if err := store.MarkOpen(id, StateID{3}); err != nil {
 		t.Fatal(err)
@@ -72,7 +69,7 @@ func TestClientStoreIndependentMarkers(t *testing.T) {
 
 func TestClientStoreRemoveWaitsForSameMarker(t *testing.T) {
 	fs := &markerGateVFS{TernVFS: NewLocalTernVFS(t.TempDir()),
-		name: activeOpenName(StateID{1}), entered: make(chan struct{}), release: make(chan struct{})}
+		name: activeOpenName(StateID{1}), testGate: newTestGate()}
 	store, id := newConfirmedStoreClient(t, fs, []byte("client"), [8]byte{1}, clientOwner{})
 	first := make(chan error, 1)
 	go func() { first <- store.MarkOpen(id, StateID{1}) }()
@@ -80,11 +77,7 @@ func TestClientStoreRemoveWaitsForSameMarker(t *testing.T) {
 	awaitSignal(t, fs.entered, "marker creation")
 	removed := make(chan error, 1)
 	go func() { removed <- store.RemoveOpen(id, StateID{1}) }()
-	select {
-	case err := <-removed:
-		t.Fatalf("removal overtook creation: %v", err)
-	case <-time.After(25 * time.Millisecond):
-	}
+	assertBlocked(t, removed, "removal during creation")
 	closeSignal(fs.release)
 	for _, result := range []chan error{first, removed} {
 		if err := awaitValue(t, result, "marker operation"); err != nil {
@@ -105,7 +98,7 @@ func TestClientStoreMarkerExcludesLifecycle(t *testing.T) {
 	for _, action := range []string{"confirm", "expire", "collect"} {
 		t.Run(action, func(t *testing.T) {
 			fs := &markerGateVFS{TernVFS: NewLocalTernVFS(t.TempDir()),
-				name: activeOpenName(StateID{1}), entered: make(chan struct{}), release: make(chan struct{})}
+				name: activeOpenName(StateID{1}), testGate: newTestGate()}
 			store, id := newConfirmedStoreClient(t, fs, []byte("client"), [8]byte{1}, clientOwner{})
 			next, verifier, err := store.SetClientID([8]byte{2}, []byte("client"), clientOwner{})
 			if err != nil {
@@ -139,11 +132,7 @@ func TestClientStoreMarkerExcludesLifecycle(t *testing.T) {
 					done <- err
 				}
 			}()
-			select {
-			case err := <-done:
-				t.Fatalf("%s overtook marker creation: %v", action, err)
-			case <-time.After(25 * time.Millisecond):
-			}
+			assertBlocked(t, done, action+" during marker creation")
 			closeSignal(fs.release)
 			if err := awaitValue(t, created, "marker"); err != nil {
 				t.Fatal(err)
@@ -159,25 +148,82 @@ func TestClientStoreMarkerExcludesLifecycle(t *testing.T) {
 	}
 }
 
+type markerLookupGateVFS struct {
+	TernVFS
+	*testGate
+	name string
+}
+
+func (fs *markerLookupGateVFS) Lookup(dir InodeID, name string) (InodeID, error) {
+	id, err := fs.TernVFS.Lookup(dir, name)
+	if name == fs.name {
+		fs.wait()
+	}
+	return id, err
+}
+
+func TestClientStoreHasOpenSlowPathMarkerOrdering(t *testing.T) {
+	fs := &markerLookupGateVFS{
+		TernVFS: NewLocalTernVFS(t.TempDir()), testGate: newTestGate(),
+	}
+	store, id := newConfirmedStoreClient(t, fs, []byte("client"), [8]byte{1}, clientOwner{})
+	sid := StateID{1}
+	if err := store.MarkOpen(id, sid); err != nil {
+		t.Fatal(err)
+	}
+	store.localClients.Delete(InodeID(id))
+	fs.name = activeOpenName(sid)
+	found := make(chan error, 1)
+	go func() {
+		active, err := store.HasOpen(id, sid)
+		if err == nil && !active {
+			err = nfsError(NFS4ERR_BAD_STATEID)
+		}
+		found <- err
+	}()
+	defer closeSignal(fs.release)
+	awaitSignal(t, fs.entered, "durable marker lookup")
+
+	independent := make(chan error, 1)
+	go func() { independent <- store.MarkOpen(id, StateID{2}) }()
+	if err := awaitValue(t, independent, "independent marker during HasOpen"); err != nil {
+		t.Fatal(err)
+	}
+	removed := make(chan error, 1)
+	go func() { removed <- store.RemoveOpen(id, sid) }()
+	assertBlocked(t, removed, "same-marker removal during HasOpen")
+
+	closeSignal(fs.release)
+	for _, result := range []chan error{found, removed} {
+		if err := awaitValue(t, result, "marker operation"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Neither the cache nor the durable marker may survive the removal.
+	for i := 0; i < 2; i++ {
+		if active, err := store.HasOpen(id, sid); err != nil || active {
+			t.Fatalf("removed marker = %v, %v", active, err)
+		}
+		store.localClients.Delete(InodeID(id))
+	}
+}
+
 type leaseGateVFS struct {
 	TernVFS
-	name    string
-	entered chan struct{}
-	release chan struct{}
-	calls   atomic.Int32
+	*testGate
+	name string
 }
 
 func (fs *leaseGateVFS) Rename(src InodeID, old string, dst InodeID, name string) error {
-	if name == fs.name && fs.calls.Add(1) == 1 {
-		close(fs.entered)
-		<-fs.release
+	if name == fs.name {
+		fs.wait()
 	}
 	return fs.TernVFS.Rename(src, old, dst, name)
 }
 
 func TestClientStoreLeaseLockSurvivesCacheReplacement(t *testing.T) {
 	fs := &leaseGateVFS{TernVFS: NewLocalTernVFS(t.TempDir()),
-		entered: make(chan struct{}), release: make(chan struct{})}
+		testGate: newTestGate()}
 	store, id := newConfirmedStoreClient(t, fs, []byte("client"), [8]byte{1}, clientOwner{})
 	fs.name = store.leaseName
 	first := make(chan error, 1)
@@ -189,11 +235,7 @@ func TestClientStoreLeaseLockSurvivesCacheReplacement(t *testing.T) {
 	store.localClients.Delete(InodeID(id))
 	second := make(chan error, 1)
 	go func() { second <- store.MarkOpen(id, StateID{2}) }()
-	select {
-	case err := <-second:
-		t.Fatalf("replacement cache bypassed lease lock: %v", err)
-	case <-time.After(25 * time.Millisecond):
-	}
+	assertBlocked(t, second, "lease renewal after cache replacement")
 	if fs.calls.Load() != 1 {
 		t.Fatal("lease writes overlapped across cache replacement")
 	}

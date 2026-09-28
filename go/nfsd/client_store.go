@@ -894,43 +894,8 @@ func (cs *ClientStore) Renew(clientID uint64) error {
 	if !confirmed {
 		return nfsError(NFS4ERR_STALE_CLIENTID)
 	}
-	state := cs.localClientState(
-		incarnationID, location.identityID, location.symlinkID)
-
-	unlockLease := cs.leaseLocks.lock(incarnationID)
-	defer unlockLease()
-
-	state.mu.Lock()
-	fresh := state.confirmedPointer == location.symlinkID &&
-		cs.leaseIsFresh(state.leaseExpiresNano)
-	hadLease := state.leaseExpiresNano != 0
-	state.mu.Unlock()
-
-	if fresh {
-		return nil
-	}
-	live, found, err := cs.leaseStatus(incarnationID)
-	if err != nil {
-		return err
-	}
-	if !live && (found || hadLease) {
-		return nfsError(NFS4ERR_EXPIRED)
-	}
-	expires, pointerID, err := cs.renewConfirmed(
-		incarnationID, location.identityID, location.symlinkID)
-	if err != nil {
-		if nfsErrCode(err) == NFS4ERR_STALE_CLIENTID {
-			cs.localClients.Delete(incarnationID)
-		}
-		return err
-	}
-
-	state.mu.Lock()
-	state.confirmedPointer = pointerID
-	state.leaseExpiresNano = expires
-	state.mu.Unlock()
-
-	return nil
+	_, err = cs.renewLease(incarnationID, location, false)
+	return err
 }
 
 // renewConfirmed rewrites this nfsd's lease slot and then rechecks the
@@ -999,7 +964,7 @@ func (cs *ClientStore) MarkOpen(clientID uint64, stateID StateID) error {
 	if !confirmed {
 		return nfsError(NFS4ERR_STALE_CLIENTID)
 	}
-	state, err := cs.renewOpenLease(incarnationID, location)
+	state, err := cs.renewLease(incarnationID, location, false)
 	if err != nil {
 		return err
 	}
@@ -1016,8 +981,11 @@ func (cs *ClientStore) MarkOpen(clientID uint64, stateID StateID) error {
 
 // The caller holds shared identity ownership. Lease serialization is keyed
 // by incarnation, independently of the replaceable local-client cache entry.
-func (cs *ClientStore) renewOpenLease(
+// HasOpen requires a live durable lease before importing a marker into the
+// cache; RENEW and OPEN may establish the first lease for a confirmed client.
+func (cs *ClientStore) renewLease(
 	incarnationID InodeID, location confirmedClientLocation,
+	requireLiveLease bool,
 ) (*localClientState, error) {
 	unlock := cs.leaseLocks.lock(incarnationID)
 	defer unlock()
@@ -1027,20 +995,25 @@ func (cs *ClientStore) renewOpenLease(
 		cs.leaseIsFresh(state.leaseExpiresNano)
 	hadLease := state.leaseExpiresNano != 0
 	state.mu.Unlock()
-	if fresh {
+	if fresh && !requireLiveLease {
 		return state, nil
 	}
 	live, found, err := cs.leaseStatus(incarnationID)
 	if err != nil {
 		return nil, err
 	}
-	if !live && (found || hadLease) {
+	if !live && (requireLiveLease || found || hadLease) {
 		return nil, nfsError(NFS4ERR_EXPIRED)
+	}
+	if fresh {
+		return state, nil
 	}
 	expires, pointerID, err := cs.renewConfirmed(
 		incarnationID, location.identityID, location.symlinkID)
 	if err != nil {
-		cs.localClients.Delete(incarnationID)
+		if nfsErrCode(err) == NFS4ERR_STALE_CLIENTID {
+			cs.localClients.Delete(incarnationID)
+		}
 		return nil, err
 	}
 	state.mu.Lock()
@@ -1139,8 +1112,12 @@ func (cs *ClientStore) HasOpen(clientID uint64, stateID StateID) (bool, error) {
 	if err != nil || !valid {
 		return false, err
 	}
-	unlock := cs.lockIdentity(identityID)
+	unlock := cs.readLockIdentity(identityID)
 	defer unlock()
+	// Keep the durable lookup and cache insertion ordered with operations
+	// on this marker while allowing unrelated markers to proceed.
+	unlockMarker := cs.markerLocks.lock(clientOpenMarker{clientID, stateID})
+	defer unlockMarker()
 	location, confirmed, err := cs.confirmedLocationForIdentity(
 		incarnationID, identityID)
 	if err != nil || !confirmed {
@@ -1152,44 +1129,16 @@ func (cs *ClientStore) HasOpen(clientID uint64, stateID StateID) (bool, error) {
 	} else if err != nil {
 		return false, err
 	}
-	live, err := cs.hasLiveLease(incarnationID)
-	if err != nil {
-		return false, err
-	}
-	if !live {
+	state, err := cs.renewLease(incarnationID, location, true)
+	if nfsErrCode(err) == NFS4ERR_EXPIRED {
 		cs.localClients.Delete(incarnationID)
 		return false, nil
 	}
-	state := cs.localClientState(
-		incarnationID, location.identityID, location.symlinkID)
-
-	// Serialize lease writes with MarkOpen and renewCachedOpen. Holding
-	// state.mu across the lease rewrite would stall every concurrent
-	// stateid operation for this client on the fast path.
-	unlockLease := cs.leaseLocks.lock(incarnationID)
-	defer unlockLease()
-
-	state.mu.Lock()
-	fresh := state.confirmedPointer == location.symlinkID &&
-		cs.leaseIsFresh(state.leaseExpiresNano)
-	state.mu.Unlock()
-
-	if fresh {
-		state.mu.Lock()
-		state.opens[stateID] = struct{}{}
-		state.mu.Unlock()
-
-		return true, nil
-	}
-	expires, pointerID, err := cs.renewConfirmed(
-		incarnationID, location.identityID, location.symlinkID)
 	if err != nil {
 		return false, err
 	}
 
 	state.mu.Lock()
-	state.confirmedPointer = pointerID
-	state.leaseExpiresNano = expires
 	state.opens[stateID] = struct{}{}
 	state.mu.Unlock()
 
