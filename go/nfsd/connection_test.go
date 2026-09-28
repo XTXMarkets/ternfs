@@ -67,16 +67,12 @@ func readXIDForTest(t *testing.T, conn net.Conn) uint32 {
 
 type statGateVFS struct {
 	TernVFS
-	firstOnly bool
-	entered   chan struct{}
-	release   chan struct{}
-	calls     atomic.Int32
+	*testGate
 	active    atomic.Int32
 	maxActive atomic.Int32
 }
 
 func (fs *statGateVFS) Stat(id InodeID) (NodeInfo, error) {
-	call := fs.calls.Add(1)
 	active := fs.active.Add(1)
 	defer fs.active.Add(-1)
 	for old := fs.maxActive.Load(); active > old; old = fs.maxActive.Load() {
@@ -84,17 +80,15 @@ func (fs *statGateVFS) Stat(id InodeID) (NodeInfo, error) {
 			break
 		}
 	}
-	if !fs.firstOnly || call == 1 {
-		fs.entered <- struct{}{}
-		<-fs.release
-	}
+	fs.wait()
 	return fs.TernVFS.Stat(id)
 }
 
 func newConnectionTestServer(t *testing.T, limit int) (*Server, *statGateVFS) {
 	t.Helper()
 	fs := &statGateVFS{TernVFS: NewLocalTernVFS(t.TempDir()),
-		entered: make(chan struct{}, 32), release: make(chan struct{})}
+		testGate: newTestGate()}
+	fs.all = true
 	srv, err := NewServer(fs, readOnlyStagingStore{}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -108,7 +102,7 @@ func TestConnectionConcurrentCompounds(t *testing.T) {
 	for _, limit := range []int{1, 2} {
 		t.Run(fmt.Sprint(limit), func(t *testing.T) {
 			srv, fs := newConnectionTestServer(t, limit)
-			fs.firstOnly = true
+			fs.all = false
 			addr, cleanup := serveTestServer(t, srv)
 			defer cleanup()
 			defer closeSignal(fs.release)
@@ -156,11 +150,7 @@ func TestConnectionAdmissionBound(t *testing.T) {
 	for i := 0; i < limit; i++ {
 		awaitSignal(t, fs.entered, "admitted stat")
 	}
-	select {
-	case <-fs.entered:
-		t.Fatal("admitted more handlers than the limit")
-	case <-time.After(25 * time.Millisecond):
-	}
+	assertBlocked(t, fs.entered, "admission beyond the limit")
 	closeSignal(fs.release)
 	seen := make(map[uint32]bool)
 	for i := 0; i < count; i++ {
@@ -177,15 +167,12 @@ func TestConnectionAdmissionBound(t *testing.T) {
 
 type mkdirGateVFS struct {
 	TernVFS
-	entered chan struct{}
-	release chan struct{}
-	calls   atomic.Int32
+	*testGate
 }
 
 func (fs *mkdirGateVFS) Mkdir(dir InodeID, name string) (InodeID, error) {
-	if name == "once" && fs.calls.Add(1) == 1 {
-		close(fs.entered)
-		<-fs.release
+	if name == "once" {
+		fs.wait()
 	}
 	return fs.TernVFS.Mkdir(dir, name)
 }
@@ -194,7 +181,7 @@ func TestConnectionInFlightDuplicates(t *testing.T) {
 	for _, conflicting := range []bool{false, true} {
 		t.Run(fmt.Sprint(conflicting), func(t *testing.T) {
 			fs := &mkdirGateVFS{TernVFS: NewLocalTernVFS(t.TempDir()),
-				entered: make(chan struct{}), release: make(chan struct{})}
+				testGate: newTestGate()}
 			staging, err := NewLocalStagingStore(t.TempDir(), nil)
 			if err != nil {
 				t.Fatal(err)

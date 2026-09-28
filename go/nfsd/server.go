@@ -369,11 +369,7 @@ func (s *Server) handleConn(conn net.Conn) {
 	// A read EOF may be a TCP half-close. Drain accepted replies before
 	// closing the write side. Backend operations are not cancelled.
 	defer workers.Wait()
-	limit := s.maxInFlightPerConn
-	if limit <= 0 {
-		limit = defaultMaxInFlightPerConn
-	}
-	slots := make(chan struct{}, limit)
+	slots := make(chan struct{}, s.maxInFlightPerConn)
 	var writeMu, requestsMu sync.Mutex
 	inFlight := make(map[uint32][]byte)
 	writeReply := func(reply []byte) {
