@@ -132,6 +132,8 @@ func readRegistryResponse(
 		resp = &msgs.UpdateBlockServicePathResp{}
 	case msgs.SET_BLOCK_SERVICE_HAS_FILES:
 		resp = &msgs.SetBlockServiceHasFilesResp{}
+	case msgs.BLOCK_SERVICES_NEEDING_MIGRATION_DEPRECATED:
+		resp = &msgs.BlockServicesNeedingMigrationDeprecatedResp{}
 	case msgs.BLOCK_SERVICES_NEEDING_MIGRATION:
 		resp = &msgs.BlockServicesNeedingMigrationResp{}
 	case msgs.ALL_REGISTRY_REPLICAS:
@@ -140,8 +142,12 @@ func readRegistryResponse(
 		resp = &msgs.AllShardsResp{}
 	case msgs.ALL_CDC:
 		resp = &msgs.AllCdcResp{}
+	case msgs.CHANGED_BLOCK_SERVICES_DEPRECATED:
+		resp = &msgs.ChangedBlockServicesDeprecatedResp{}
 	case msgs.CHANGED_BLOCK_SERVICES:
 		resp = &msgs.ChangedBlockServicesResp{}
+	case msgs.BLOCK_SERVICE_AVAILABLE_SPACE_DEPRECATED:
+		resp = &msgs.BlockServiceAvailableSpaceDeprecatedResp{}
 	case msgs.BLOCK_SERVICE_AVAILABLE_SPACE:
 		resp = &msgs.BlockServiceAvailableSpaceResp{}
 	default:

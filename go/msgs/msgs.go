@@ -2149,12 +2149,20 @@ type AllBlockServicesResp struct {
 	BlockServices []FullBlockServiceInfo
 }
 
+type BlockServicesNeedingMigrationDeprecatedReq struct {
+	LocationId Location
+}
+
+type BlockServicesNeedingMigrationDeprecatedResp struct {
+	BlockServices []BlockServiceId
+}
+
 type BlockServicesNeedingMigrationReq struct {
 	LocationId Location
 }
 
 type BlockServicesNeedingMigrationResp struct {
-	BlockServices []BlockServiceId
+	BlockServices []BlockServiceId `bincode:"len32"`
 }
 
 type LocalChangedBlockServicesReq struct {
@@ -2176,13 +2184,22 @@ type ChangedBlockServicesAtLocationResp struct {
 	BlockServices []BlockService
 }
 
+type ChangedBlockServicesDeprecatedReq struct {
+	Since TernTime
+}
+
+type ChangedBlockServicesDeprecatedResp struct {
+	LastChange    TernTime // max lastInfoChange across all block services; pass back as Since in next request
+	BlockServices []FullBlockServiceInfo
+}
+
 type ChangedBlockServicesReq struct {
 	Since TernTime
 }
 
 type ChangedBlockServicesResp struct {
-	LastChange    TernTime // max lastInfoChange across all block services; pass back as Since in next request
-	BlockServices []FullBlockServiceInfo
+	LastChange    TernTime               // max lastInfoChange across all block services; pass back as Since in next request
+	BlockServices []FullBlockServiceInfo `bincode:"len32"`
 }
 
 type BlockServiceSpace struct {
@@ -2192,10 +2209,16 @@ type BlockServiceSpace struct {
 	Blocks         uint64
 }
 
+type BlockServiceAvailableSpaceDeprecatedReq struct{}
+
+type BlockServiceAvailableSpaceDeprecatedResp struct {
+	BlockServices []BlockServiceSpace
+}
+
 type BlockServiceAvailableSpaceReq struct{}
 
 type BlockServiceAvailableSpaceResp struct {
-	BlockServices []BlockServiceSpace
+	BlockServices []BlockServiceSpace `bincode:"len32"`
 }
 
 type RegisterBlockServiceInfo struct {

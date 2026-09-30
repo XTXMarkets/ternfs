@@ -172,6 +172,7 @@ void RegistryServer::sendRegistryResponses(std::vector<RegistryResponse>& respon
 
 static constexpr size_t MESSAGE_HEADER_SIZE = 8;
 static constexpr size_t MESSAGE_HEADER_LENGTH_OFFSET = 4;
+static constexpr size_t MAX_REGISTRY_REQUEST_SIZE = 32 * 1024 * 1024;
 
 void RegistryServer::_acceptConnection(int fd) {
     sockaddr_in clientAddr{};

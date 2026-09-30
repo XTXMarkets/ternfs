@@ -113,6 +113,29 @@ TEST_CASE("bincode decodes lists") {
     CHECK(values.els[1].value == 2);
 }
 
+TEST_CASE("bincode list length prefix") {
+    std::vector<char> buf(4 + 70000*8);
+
+    BincodeList<uint64_t> narrow;
+    narrow.els = {1, 2, 3};
+    BincodeBuf nbuf(buf.data(), buf.size());
+    nbuf.packList(narrow);
+    CHECK(nbuf.len() == narrow.packedSize());
+    CHECK(nbuf.len() == 2 + 3*8);
+
+    BincodeList<uint64_t, uint32_t> wide;
+    for (uint64_t i = 0; i < 70000; i++) { wide.els.push_back(i); }
+    BincodeBuf wbuf(buf.data(), buf.size());
+    wbuf.packList(wide);
+    CHECK(wbuf.len() == wide.packedSize());
+    CHECK(wbuf.len() == buf.size());
+    BincodeList<uint64_t, uint32_t> wideOut;
+    BincodeBuf rbuf(buf.data(), buf.size());
+    rbuf.unpackList(wideOut);
+    CHECK(wideOut == wide);
+    CHECK(rbuf.remaining() == 0);
+}
+
 TEST_CASE("LeaderToken epoch encoding") {
     LeaderToken token(ReplicaId(3), Epoch(42));
 

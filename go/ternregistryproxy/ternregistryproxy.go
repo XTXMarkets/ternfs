@@ -162,6 +162,8 @@ func handleRequestParsed(log *log.Logger, s *state, req msgs.RegistryRequest) (m
 		resp, err = handleProxyRequest(log, s, req)
 	case *msgs.ShardBlockServicesReq:
 		resp, err = handleProxyRequest(log, s, req)
+	case *msgs.BlockServicesNeedingMigrationDeprecatedReq:
+		resp, err = handleProxyRequest(log, s, req)
 	case *msgs.BlockServicesNeedingMigrationReq:
 		resp, err = handleProxyRequest(log, s, req)
 	case *msgs.AllBlockServicesReq:
@@ -172,7 +174,11 @@ func handleRequestParsed(log *log.Logger, s *state, req msgs.RegistryRequest) (m
 		resp, err = handleProxyRequest(log, s, req)
 	case *msgs.AllCdcReq:
 		resp, err = handleProxyRequest(log, s, req)
+	case *msgs.ChangedBlockServicesDeprecatedReq:
+		resp, err = handleProxyRequest(log, s, req)
 	case *msgs.ChangedBlockServicesReq:
+		resp, err = handleProxyRequest(log, s, req)
+	case *msgs.BlockServiceAvailableSpaceDeprecatedReq:
 		resp, err = handleProxyRequest(log, s, req)
 	case *msgs.BlockServiceAvailableSpaceReq:
 		resp, err = handleProxyRequest(log, s, req)
@@ -346,6 +352,8 @@ func readRegistryRequest(
 		req = &msgs.ShardsAtLocationReq{}
 	case msgs.SHARD_BLOCK_SERVICES:
 		req = &msgs.ShardBlockServicesReq{}
+	case msgs.BLOCK_SERVICES_NEEDING_MIGRATION_DEPRECATED:
+		req = &msgs.BlockServicesNeedingMigrationDeprecatedReq{}
 	case msgs.BLOCK_SERVICES_NEEDING_MIGRATION:
 		req = &msgs.BlockServicesNeedingMigrationReq{}
 	case msgs.ALL_BLOCK_SERVICES:
@@ -356,8 +364,12 @@ func readRegistryRequest(
 		req = &msgs.AllShardsReq{}
 	case msgs.ALL_CDC:
 		req = &msgs.AllCdcReq{}
+	case msgs.CHANGED_BLOCK_SERVICES_DEPRECATED:
+		req = &msgs.ChangedBlockServicesDeprecatedReq{}
 	case msgs.CHANGED_BLOCK_SERVICES:
 		req = &msgs.ChangedBlockServicesReq{}
+	case msgs.BLOCK_SERVICE_AVAILABLE_SPACE_DEPRECATED:
+		req = &msgs.BlockServiceAvailableSpaceDeprecatedReq{}
 	case msgs.BLOCK_SERVICE_AVAILABLE_SPACE:
 		req = &msgs.BlockServiceAvailableSpaceReq{}
 	default:

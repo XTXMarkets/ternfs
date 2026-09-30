@@ -894,7 +894,7 @@ func (k RegistryMessageKind) String() string {
 	case 38:
 		return "SET_BLOCK_SERVICE_HAS_FILES"
 	case 39:
-		return "BLOCK_SERVICES_NEEDING_MIGRATION"
+		return "BLOCK_SERVICES_NEEDING_MIGRATION_DEPRECATED"
 	case 41:
 		return "ALL_REGISTRY_REPLICAS"
 	case 42:
@@ -902,8 +902,14 @@ func (k RegistryMessageKind) String() string {
 	case 43:
 		return "ALL_CDC"
 	case 44:
-		return "CHANGED_BLOCK_SERVICES"
+		return "CHANGED_BLOCK_SERVICES_DEPRECATED"
 	case 45:
+		return "BLOCK_SERVICE_AVAILABLE_SPACE_DEPRECATED"
+	case 46:
+		return "CHANGED_BLOCK_SERVICES"
+	case 47:
+		return "BLOCK_SERVICES_NEEDING_MIGRATION"
+	case 48:
 		return "BLOCK_SERVICE_AVAILABLE_SPACE"
 	default:
 		return fmt.Sprintf("RegistryMessageKind(%d)", k)
@@ -911,44 +917,47 @@ func (k RegistryMessageKind) String() string {
 }
 
 const (
-	LOCAL_SHARDS                         RegistryMessageKind = 0x3
-	LOCAL_CDC                            RegistryMessageKind = 0x7
-	INFO                                 RegistryMessageKind = 0x8
-	REGISTRY                             RegistryMessageKind = 0xF
-	LOCAL_CHANGED_BLOCK_SERVICES         RegistryMessageKind = 0x22
-	CREATE_LOCATION                      RegistryMessageKind = 0x1
-	RENAME_LOCATION                      RegistryMessageKind = 0x2
-	REGISTER_SHARD                       RegistryMessageKind = 0x4
-	LOCATIONS                            RegistryMessageKind = 0x5
-	REGISTER_CDC                         RegistryMessageKind = 0x6
-	SET_BLOCK_SERVICE_FLAGS              RegistryMessageKind = 0x9
-	REGISTER_BLOCK_SERVICES              RegistryMessageKind = 0xA
-	CHANGED_BLOCK_SERVICES_AT_LOCATION   RegistryMessageKind = 0xB
-	SHARDS_AT_LOCATION                   RegistryMessageKind = 0xC
-	CDC_AT_LOCATION                      RegistryMessageKind = 0xD
-	REGISTER_REGISTRY                    RegistryMessageKind = 0xE
-	ALL_REGISTRY_REPLICAS_DE_PR_EC_AT_ED RegistryMessageKind = 0x10
-	SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED  RegistryMessageKind = 0x11
-	CDC_REPLICAS_DE_PR_EC_AT_ED          RegistryMessageKind = 0x13
-	ALL_SHARDS_DE_PR_EC_AT_ED            RegistryMessageKind = 0x14
-	DECOMMISSION_BLOCK_SERVICE           RegistryMessageKind = 0x15
-	MOVE_SHARD_LEADER                    RegistryMessageKind = 0x16
-	CLEAR_SHARD_INFO                     RegistryMessageKind = 0x17
-	SHARD_BLOCK_SERVICES                 RegistryMessageKind = 0x18
-	ALL_CDC_DE_PR_EC_AT_ED               RegistryMessageKind = 0x19
-	ERASE_DECOMMISSIONED_BLOCK           RegistryMessageKind = 0x20
-	ALL_BLOCK_SERVICES_DEPRECATED        RegistryMessageKind = 0x21
-	ALL_BLOCK_SERVICES                   RegistryMessageKind = 0x28
-	MOVE_CDC_LEADER                      RegistryMessageKind = 0x23
-	CLEAR_CDC_INFO                       RegistryMessageKind = 0x24
-	UPDATE_BLOCK_SERVICE_PATH            RegistryMessageKind = 0x25
-	SET_BLOCK_SERVICE_HAS_FILES          RegistryMessageKind = 0x26
-	BLOCK_SERVICES_NEEDING_MIGRATION     RegistryMessageKind = 0x27
-	ALL_REGISTRY_REPLICAS                RegistryMessageKind = 0x29
-	ALL_SHARDS                           RegistryMessageKind = 0x2A
-	ALL_CDC                              RegistryMessageKind = 0x2B
-	CHANGED_BLOCK_SERVICES               RegistryMessageKind = 0x2C
-	BLOCK_SERVICE_AVAILABLE_SPACE        RegistryMessageKind = 0x2D
+	LOCAL_SHARDS                                RegistryMessageKind = 0x3
+	LOCAL_CDC                                   RegistryMessageKind = 0x7
+	INFO                                        RegistryMessageKind = 0x8
+	REGISTRY                                    RegistryMessageKind = 0xF
+	LOCAL_CHANGED_BLOCK_SERVICES                RegistryMessageKind = 0x22
+	CREATE_LOCATION                             RegistryMessageKind = 0x1
+	RENAME_LOCATION                             RegistryMessageKind = 0x2
+	REGISTER_SHARD                              RegistryMessageKind = 0x4
+	LOCATIONS                                   RegistryMessageKind = 0x5
+	REGISTER_CDC                                RegistryMessageKind = 0x6
+	SET_BLOCK_SERVICE_FLAGS                     RegistryMessageKind = 0x9
+	REGISTER_BLOCK_SERVICES                     RegistryMessageKind = 0xA
+	CHANGED_BLOCK_SERVICES_AT_LOCATION          RegistryMessageKind = 0xB
+	SHARDS_AT_LOCATION                          RegistryMessageKind = 0xC
+	CDC_AT_LOCATION                             RegistryMessageKind = 0xD
+	REGISTER_REGISTRY                           RegistryMessageKind = 0xE
+	ALL_REGISTRY_REPLICAS_DE_PR_EC_AT_ED        RegistryMessageKind = 0x10
+	SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED         RegistryMessageKind = 0x11
+	CDC_REPLICAS_DE_PR_EC_AT_ED                 RegistryMessageKind = 0x13
+	ALL_SHARDS_DE_PR_EC_AT_ED                   RegistryMessageKind = 0x14
+	DECOMMISSION_BLOCK_SERVICE                  RegistryMessageKind = 0x15
+	MOVE_SHARD_LEADER                           RegistryMessageKind = 0x16
+	CLEAR_SHARD_INFO                            RegistryMessageKind = 0x17
+	SHARD_BLOCK_SERVICES                        RegistryMessageKind = 0x18
+	ALL_CDC_DE_PR_EC_AT_ED                      RegistryMessageKind = 0x19
+	ERASE_DECOMMISSIONED_BLOCK                  RegistryMessageKind = 0x20
+	ALL_BLOCK_SERVICES_DEPRECATED               RegistryMessageKind = 0x21
+	ALL_BLOCK_SERVICES                          RegistryMessageKind = 0x28
+	MOVE_CDC_LEADER                             RegistryMessageKind = 0x23
+	CLEAR_CDC_INFO                              RegistryMessageKind = 0x24
+	UPDATE_BLOCK_SERVICE_PATH                   RegistryMessageKind = 0x25
+	SET_BLOCK_SERVICE_HAS_FILES                 RegistryMessageKind = 0x26
+	BLOCK_SERVICES_NEEDING_MIGRATION_DEPRECATED RegistryMessageKind = 0x27
+	ALL_REGISTRY_REPLICAS                       RegistryMessageKind = 0x29
+	ALL_SHARDS                                  RegistryMessageKind = 0x2A
+	ALL_CDC                                     RegistryMessageKind = 0x2B
+	CHANGED_BLOCK_SERVICES_DEPRECATED           RegistryMessageKind = 0x2C
+	BLOCK_SERVICE_AVAILABLE_SPACE_DEPRECATED    RegistryMessageKind = 0x2D
+	CHANGED_BLOCK_SERVICES                      RegistryMessageKind = 0x2E
+	BLOCK_SERVICES_NEEDING_MIGRATION            RegistryMessageKind = 0x2F
+	BLOCK_SERVICE_AVAILABLE_SPACE               RegistryMessageKind = 0x30
 )
 
 var AllRegistryMessageKind = [...]RegistryMessageKind{
@@ -984,15 +993,18 @@ var AllRegistryMessageKind = [...]RegistryMessageKind{
 	CLEAR_CDC_INFO,
 	UPDATE_BLOCK_SERVICE_PATH,
 	SET_BLOCK_SERVICE_HAS_FILES,
-	BLOCK_SERVICES_NEEDING_MIGRATION,
+	BLOCK_SERVICES_NEEDING_MIGRATION_DEPRECATED,
 	ALL_REGISTRY_REPLICAS,
 	ALL_SHARDS,
 	ALL_CDC,
+	CHANGED_BLOCK_SERVICES_DEPRECATED,
+	BLOCK_SERVICE_AVAILABLE_SPACE_DEPRECATED,
 	CHANGED_BLOCK_SERVICES,
+	BLOCK_SERVICES_NEEDING_MIGRATION,
 	BLOCK_SERVICE_AVAILABLE_SPACE,
 }
 
-const MaxRegistryMessageKind RegistryMessageKind = 45
+const MaxRegistryMessageKind RegistryMessageKind = 48
 
 func MkRegistryMessage(k string) (RegistryRequest, RegistryResponse, error) {
 	switch {
@@ -1060,16 +1072,22 @@ func MkRegistryMessage(k string) (RegistryRequest, RegistryResponse, error) {
 		return &UpdateBlockServicePathReq{}, &UpdateBlockServicePathResp{}, nil
 	case k == "SET_BLOCK_SERVICE_HAS_FILES":
 		return &SetBlockServiceHasFilesReq{}, &SetBlockServiceHasFilesResp{}, nil
-	case k == "BLOCK_SERVICES_NEEDING_MIGRATION":
-		return &BlockServicesNeedingMigrationReq{}, &BlockServicesNeedingMigrationResp{}, nil
+	case k == "BLOCK_SERVICES_NEEDING_MIGRATION_DEPRECATED":
+		return &BlockServicesNeedingMigrationDeprecatedReq{}, &BlockServicesNeedingMigrationDeprecatedResp{}, nil
 	case k == "ALL_REGISTRY_REPLICAS":
 		return &AllRegistryReplicasReq{}, &AllRegistryReplicasResp{}, nil
 	case k == "ALL_SHARDS":
 		return &AllShardsReq{}, &AllShardsResp{}, nil
 	case k == "ALL_CDC":
 		return &AllCdcReq{}, &AllCdcResp{}, nil
+	case k == "CHANGED_BLOCK_SERVICES_DEPRECATED":
+		return &ChangedBlockServicesDeprecatedReq{}, &ChangedBlockServicesDeprecatedResp{}, nil
+	case k == "BLOCK_SERVICE_AVAILABLE_SPACE_DEPRECATED":
+		return &BlockServiceAvailableSpaceDeprecatedReq{}, &BlockServiceAvailableSpaceDeprecatedResp{}, nil
 	case k == "CHANGED_BLOCK_SERVICES":
 		return &ChangedBlockServicesReq{}, &ChangedBlockServicesResp{}, nil
+	case k == "BLOCK_SERVICES_NEEDING_MIGRATION":
+		return &BlockServicesNeedingMigrationReq{}, &BlockServicesNeedingMigrationResp{}, nil
 	case k == "BLOCK_SERVICE_AVAILABLE_SPACE":
 		return &BlockServiceAvailableSpaceReq{}, &BlockServiceAvailableSpaceResp{}, nil
 	default:
@@ -6767,29 +6785,29 @@ func (v *SetBlockServiceHasFilesResp) Unpack(r io.Reader) error {
 	return nil
 }
 
-func (v *BlockServicesNeedingMigrationReq) RegistryRequestKind() RegistryMessageKind {
-	return BLOCK_SERVICES_NEEDING_MIGRATION
+func (v *BlockServicesNeedingMigrationDeprecatedReq) RegistryRequestKind() RegistryMessageKind {
+	return BLOCK_SERVICES_NEEDING_MIGRATION_DEPRECATED
 }
 
-func (v *BlockServicesNeedingMigrationReq) Pack(w io.Writer) error {
+func (v *BlockServicesNeedingMigrationDeprecatedReq) Pack(w io.Writer) error {
 	if err := bincode.PackScalar(w, uint8(v.LocationId)); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (v *BlockServicesNeedingMigrationReq) Unpack(r io.Reader) error {
+func (v *BlockServicesNeedingMigrationDeprecatedReq) Unpack(r io.Reader) error {
 	if err := bincode.UnpackScalar(r, (*uint8)(&v.LocationId)); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (v *BlockServicesNeedingMigrationResp) RegistryResponseKind() RegistryMessageKind {
-	return BLOCK_SERVICES_NEEDING_MIGRATION
+func (v *BlockServicesNeedingMigrationDeprecatedResp) RegistryResponseKind() RegistryMessageKind {
+	return BLOCK_SERVICES_NEEDING_MIGRATION_DEPRECATED
 }
 
-func (v *BlockServicesNeedingMigrationResp) Pack(w io.Writer) error {
+func (v *BlockServicesNeedingMigrationDeprecatedResp) Pack(w io.Writer) error {
 	len1 := len(v.BlockServices)
 	if err := bincode.PackLength(w, len1); err != nil {
 		return err
@@ -6802,7 +6820,7 @@ func (v *BlockServicesNeedingMigrationResp) Pack(w io.Writer) error {
 	return nil
 }
 
-func (v *BlockServicesNeedingMigrationResp) Unpack(r io.Reader) error {
+func (v *BlockServicesNeedingMigrationDeprecatedResp) Unpack(r io.Reader) error {
 	var len1 int
 	if err := bincode.UnpackLength(r, &len1); err != nil {
 		return err
@@ -6987,6 +7005,104 @@ func (v *AllCdcResp) Unpack(r io.Reader) error {
 	return nil
 }
 
+func (v *ChangedBlockServicesDeprecatedReq) RegistryRequestKind() RegistryMessageKind {
+	return CHANGED_BLOCK_SERVICES_DEPRECATED
+}
+
+func (v *ChangedBlockServicesDeprecatedReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.Since)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *ChangedBlockServicesDeprecatedReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.Since)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *ChangedBlockServicesDeprecatedResp) RegistryResponseKind() RegistryMessageKind {
+	return CHANGED_BLOCK_SERVICES_DEPRECATED
+}
+
+func (v *ChangedBlockServicesDeprecatedResp) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.LastChange)); err != nil {
+		return err
+	}
+	len1 := len(v.BlockServices)
+	if err := bincode.PackLength(w, len1); err != nil {
+		return err
+	}
+	for i := 0; i < len1; i++ {
+		if err := v.BlockServices[i].Pack(w); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (v *ChangedBlockServicesDeprecatedResp) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.LastChange)); err != nil {
+		return err
+	}
+	var len1 int
+	if err := bincode.UnpackLength(r, &len1); err != nil {
+		return err
+	}
+	bincode.EnsureLength(&v.BlockServices, len1)
+	for i := 0; i < len1; i++ {
+		if err := v.BlockServices[i].Unpack(r); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (v *BlockServiceAvailableSpaceDeprecatedReq) RegistryRequestKind() RegistryMessageKind {
+	return BLOCK_SERVICE_AVAILABLE_SPACE_DEPRECATED
+}
+
+func (v *BlockServiceAvailableSpaceDeprecatedReq) Pack(w io.Writer) error {
+	return nil
+}
+
+func (v *BlockServiceAvailableSpaceDeprecatedReq) Unpack(r io.Reader) error {
+	return nil
+}
+
+func (v *BlockServiceAvailableSpaceDeprecatedResp) RegistryResponseKind() RegistryMessageKind {
+	return BLOCK_SERVICE_AVAILABLE_SPACE_DEPRECATED
+}
+
+func (v *BlockServiceAvailableSpaceDeprecatedResp) Pack(w io.Writer) error {
+	len1 := len(v.BlockServices)
+	if err := bincode.PackLength(w, len1); err != nil {
+		return err
+	}
+	for i := 0; i < len1; i++ {
+		if err := v.BlockServices[i].Pack(w); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (v *BlockServiceAvailableSpaceDeprecatedResp) Unpack(r io.Reader) error {
+	var len1 int
+	if err := bincode.UnpackLength(r, &len1); err != nil {
+		return err
+	}
+	bincode.EnsureLength(&v.BlockServices, len1)
+	for i := 0; i < len1; i++ {
+		if err := v.BlockServices[i].Unpack(r); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (v *ChangedBlockServicesReq) RegistryRequestKind() RegistryMessageKind {
 	return CHANGED_BLOCK_SERVICES
 }
@@ -7014,7 +7130,7 @@ func (v *ChangedBlockServicesResp) Pack(w io.Writer) error {
 		return err
 	}
 	len1 := len(v.BlockServices)
-	if err := bincode.PackLength(w, len1); err != nil {
+	if err := bincode.PackLength32(w, len1); err != nil {
 		return err
 	}
 	for i := 0; i < len1; i++ {
@@ -7030,12 +7146,61 @@ func (v *ChangedBlockServicesResp) Unpack(r io.Reader) error {
 		return err
 	}
 	var len1 int
-	if err := bincode.UnpackLength(r, &len1); err != nil {
+	if err := bincode.UnpackLength32(r, &len1); err != nil {
 		return err
 	}
 	bincode.EnsureLength(&v.BlockServices, len1)
 	for i := 0; i < len1; i++ {
 		if err := v.BlockServices[i].Unpack(r); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (v *BlockServicesNeedingMigrationReq) RegistryRequestKind() RegistryMessageKind {
+	return BLOCK_SERVICES_NEEDING_MIGRATION
+}
+
+func (v *BlockServicesNeedingMigrationReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint8(v.LocationId)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *BlockServicesNeedingMigrationReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint8)(&v.LocationId)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *BlockServicesNeedingMigrationResp) RegistryResponseKind() RegistryMessageKind {
+	return BLOCK_SERVICES_NEEDING_MIGRATION
+}
+
+func (v *BlockServicesNeedingMigrationResp) Pack(w io.Writer) error {
+	len1 := len(v.BlockServices)
+	if err := bincode.PackLength32(w, len1); err != nil {
+		return err
+	}
+	for i := 0; i < len1; i++ {
+		if err := bincode.PackScalar(w, uint64(v.BlockServices[i])); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (v *BlockServicesNeedingMigrationResp) Unpack(r io.Reader) error {
+	var len1 int
+	if err := bincode.UnpackLength32(r, &len1); err != nil {
+		return err
+	}
+	bincode.EnsureLength(&v.BlockServices, len1)
+	for i := 0; i < len1; i++ {
+		if err := bincode.UnpackScalar(r, (*uint64)(&v.BlockServices[i])); err != nil {
 			return err
 		}
 	}
@@ -7060,7 +7225,7 @@ func (v *BlockServiceAvailableSpaceResp) RegistryResponseKind() RegistryMessageK
 
 func (v *BlockServiceAvailableSpaceResp) Pack(w io.Writer) error {
 	len1 := len(v.BlockServices)
-	if err := bincode.PackLength(w, len1); err != nil {
+	if err := bincode.PackLength32(w, len1); err != nil {
 		return err
 	}
 	for i := 0; i < len1; i++ {
@@ -7073,7 +7238,7 @@ func (v *BlockServiceAvailableSpaceResp) Pack(w io.Writer) error {
 
 func (v *BlockServiceAvailableSpaceResp) Unpack(r io.Reader) error {
 	var len1 int
-	if err := bincode.UnpackLength(r, &len1); err != nil {
+	if err := bincode.UnpackLength32(r, &len1); err != nil {
 		return err
 	}
 	bincode.EnsureLength(&v.BlockServices, len1)

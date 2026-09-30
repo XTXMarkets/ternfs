@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <exception>
 #include <iomanip>
+#include <limits>
 #include <rocksdb/slice.h>
 #include <string>
 #include <type_traits>
@@ -145,16 +146,18 @@ public:
 
 std::ostream& operator<<(std::ostream& out, const BincodeBytes& x);
 
-template<typename A>
+template<typename A, typename LenType = uint16_t>
 struct BincodeList {
+    static_assert(std::is_same_v<LenType, uint16_t> || std::is_same_v<LenType, uint32_t>);
+
     std::vector<A> els;
 
-    static constexpr uint16_t STATIC_SIZE = 2; // length
+    static constexpr uint16_t STATIC_SIZE = sizeof(LenType); // length
 
     void clear() { els.resize(0); }
 
     size_t packedSize() const {
-        size_t sz = 2;
+        size_t sz = sizeof(LenType);
         if constexpr (std::is_integral_v<A> || std::is_enum_v<A>) {
             sz += els.size()*sizeof(A);
         } else {
@@ -165,11 +168,11 @@ struct BincodeList {
         return sz;
     }
 
-    bool operator==(const BincodeList<A>& rhs) const {
+    bool operator==(const BincodeList<A, LenType>& rhs) const {
         if (els.size() != rhs.els.size()) {
             return false;
         }
-        for (int i = 0; i < els.size(); i++) {
+        for (size_t i = 0; i < els.size(); i++) {
             if (els[i] != rhs.els[i]) {
                 return false;
             }
@@ -178,10 +181,10 @@ struct BincodeList {
     }
 };
 
-template<typename A>
-static std::ostream& operator<<(std::ostream& out, const BincodeList<A>& x) {
+template<typename A, typename LenType>
+static std::ostream& operator<<(std::ostream& out, const BincodeList<A, LenType>& x) {
     out << "[";
-    for (int i = 0; i < x.els.size(); i++) {
+    for (size_t i = 0; i < x.els.size(); i++) {
         if (i > 0) {
             out << ", ";
         }
@@ -341,10 +344,10 @@ struct BincodeBuf {
         cursor += x.size();
     }
 
-    template<typename A>
-    void packList(const BincodeList<A>& xs) {
-        ALWAYS_ASSERT(xs.els.size() < (1<<16));
-        packScalar<uint16_t>(xs.els.size());
+    template<typename A, typename LenType>
+    void packList(const BincodeList<A, LenType>& xs) {
+        ALWAYS_ASSERT(xs.els.size() <= std::numeric_limits<LenType>::max());
+        packScalar<LenType>(xs.els.size());
         if (unlikely(xs.els.size() == 0)) {
             return;
         }
@@ -393,9 +396,9 @@ struct BincodeBuf {
         cursor += len;
     }
 
-    template<typename A>
-    void unpackList(BincodeList<A>& xs) {
-        size_t count = unpackScalar<uint16_t>();
+    template<typename A, typename LenType>
+    void unpackList(BincodeList<A, LenType>& xs) {
+        size_t count = unpackScalar<LenType>();
         constexpr size_t minSize = bincodeMinSize<A>();
         if (unlikely(count > remaining() / minSize)) {
             throw BINCODE_EXCEPTION("not enough bytes to unpack list (count %s, min element size %s, remaining %s)", count, minSize, remaining());

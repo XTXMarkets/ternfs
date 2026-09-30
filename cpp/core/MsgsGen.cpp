@@ -602,8 +602,8 @@ std::ostream& operator<<(std::ostream& out, RegistryMessageKind kind) {
     case RegistryMessageKind::SET_BLOCK_SERVICE_HAS_FILES:
         out << "SET_BLOCK_SERVICE_HAS_FILES";
         break;
-    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION:
-        out << "BLOCK_SERVICES_NEEDING_MIGRATION";
+    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION_DEPRECATED:
+        out << "BLOCK_SERVICES_NEEDING_MIGRATION_DEPRECATED";
         break;
     case RegistryMessageKind::ALL_REGISTRY_REPLICAS:
         out << "ALL_REGISTRY_REPLICAS";
@@ -614,8 +614,17 @@ std::ostream& operator<<(std::ostream& out, RegistryMessageKind kind) {
     case RegistryMessageKind::ALL_CDC:
         out << "ALL_CDC";
         break;
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES_DEPRECATED:
+        out << "CHANGED_BLOCK_SERVICES_DEPRECATED";
+        break;
+    case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE_DEPRECATED:
+        out << "BLOCK_SERVICE_AVAILABLE_SPACE_DEPRECATED";
+        break;
     case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
         out << "CHANGED_BLOCK_SERVICES";
+        break;
+    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION:
+        out << "BLOCK_SERVICES_NEEDING_MIGRATION";
         break;
     case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
         out << "BLOCK_SERVICE_AVAILABLE_SPACE";
@@ -5361,39 +5370,39 @@ std::ostream& operator<<(std::ostream& out, const SetBlockServiceHasFilesResp& x
     return out;
 }
 
-void BlockServicesNeedingMigrationReq::pack(BincodeBuf& buf) const {
+void BlockServicesNeedingMigrationDeprecatedReq::pack(BincodeBuf& buf) const {
     buf.packScalar<uint8_t>(locationId);
 }
-void BlockServicesNeedingMigrationReq::unpack(BincodeBuf& buf) {
+void BlockServicesNeedingMigrationDeprecatedReq::unpack(BincodeBuf& buf) {
     locationId = buf.unpackScalar<uint8_t>();
 }
-void BlockServicesNeedingMigrationReq::clear() {
+void BlockServicesNeedingMigrationDeprecatedReq::clear() {
     locationId = uint8_t(0);
 }
-bool BlockServicesNeedingMigrationReq::operator==(const BlockServicesNeedingMigrationReq& rhs) const {
+bool BlockServicesNeedingMigrationDeprecatedReq::operator==(const BlockServicesNeedingMigrationDeprecatedReq& rhs) const {
     if ((uint8_t)this->locationId != (uint8_t)rhs.locationId) { return false; };
     return true;
 }
-std::ostream& operator<<(std::ostream& out, const BlockServicesNeedingMigrationReq& x) {
-    out << "BlockServicesNeedingMigrationReq(" << "LocationId=" << (int)x.locationId << ")";
+std::ostream& operator<<(std::ostream& out, const BlockServicesNeedingMigrationDeprecatedReq& x) {
+    out << "BlockServicesNeedingMigrationDeprecatedReq(" << "LocationId=" << (int)x.locationId << ")";
     return out;
 }
 
-void BlockServicesNeedingMigrationResp::pack(BincodeBuf& buf) const {
+void BlockServicesNeedingMigrationDeprecatedResp::pack(BincodeBuf& buf) const {
     buf.packList<BlockServiceId>(blockServices);
 }
-void BlockServicesNeedingMigrationResp::unpack(BincodeBuf& buf) {
+void BlockServicesNeedingMigrationDeprecatedResp::unpack(BincodeBuf& buf) {
     buf.unpackList<BlockServiceId>(blockServices);
 }
-void BlockServicesNeedingMigrationResp::clear() {
+void BlockServicesNeedingMigrationDeprecatedResp::clear() {
     blockServices.clear();
 }
-bool BlockServicesNeedingMigrationResp::operator==(const BlockServicesNeedingMigrationResp& rhs) const {
+bool BlockServicesNeedingMigrationDeprecatedResp::operator==(const BlockServicesNeedingMigrationDeprecatedResp& rhs) const {
     if (blockServices != rhs.blockServices) { return false; };
     return true;
 }
-std::ostream& operator<<(std::ostream& out, const BlockServicesNeedingMigrationResp& x) {
-    out << "BlockServicesNeedingMigrationResp(" << "BlockServices=" << x.blockServices << ")";
+std::ostream& operator<<(std::ostream& out, const BlockServicesNeedingMigrationDeprecatedResp& x) {
+    out << "BlockServicesNeedingMigrationDeprecatedResp(" << "BlockServices=" << x.blockServices << ")";
     return out;
 }
 
@@ -5521,6 +5530,78 @@ std::ostream& operator<<(std::ostream& out, const AllCdcResp& x) {
     return out;
 }
 
+void ChangedBlockServicesDeprecatedReq::pack(BincodeBuf& buf) const {
+    since.pack(buf);
+}
+void ChangedBlockServicesDeprecatedReq::unpack(BincodeBuf& buf) {
+    since.unpack(buf);
+}
+void ChangedBlockServicesDeprecatedReq::clear() {
+    since = TernTime();
+}
+bool ChangedBlockServicesDeprecatedReq::operator==(const ChangedBlockServicesDeprecatedReq& rhs) const {
+    if ((TernTime)this->since != (TernTime)rhs.since) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const ChangedBlockServicesDeprecatedReq& x) {
+    out << "ChangedBlockServicesDeprecatedReq(" << "Since=" << x.since << ")";
+    return out;
+}
+
+void ChangedBlockServicesDeprecatedResp::pack(BincodeBuf& buf) const {
+    lastChange.pack(buf);
+    buf.packList<FullBlockServiceInfo>(blockServices);
+}
+void ChangedBlockServicesDeprecatedResp::unpack(BincodeBuf& buf) {
+    lastChange.unpack(buf);
+    buf.unpackList<FullBlockServiceInfo>(blockServices);
+}
+void ChangedBlockServicesDeprecatedResp::clear() {
+    lastChange = TernTime();
+    blockServices.clear();
+}
+bool ChangedBlockServicesDeprecatedResp::operator==(const ChangedBlockServicesDeprecatedResp& rhs) const {
+    if ((TernTime)this->lastChange != (TernTime)rhs.lastChange) { return false; };
+    if (blockServices != rhs.blockServices) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const ChangedBlockServicesDeprecatedResp& x) {
+    out << "ChangedBlockServicesDeprecatedResp(" << "LastChange=" << x.lastChange << ", " << "BlockServices=" << x.blockServices << ")";
+    return out;
+}
+
+void BlockServiceAvailableSpaceDeprecatedReq::pack(BincodeBuf& buf) const {
+}
+void BlockServiceAvailableSpaceDeprecatedReq::unpack(BincodeBuf& buf) {
+}
+void BlockServiceAvailableSpaceDeprecatedReq::clear() {
+}
+bool BlockServiceAvailableSpaceDeprecatedReq::operator==(const BlockServiceAvailableSpaceDeprecatedReq& rhs) const {
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const BlockServiceAvailableSpaceDeprecatedReq& x) {
+    out << "BlockServiceAvailableSpaceDeprecatedReq(" << ")";
+    return out;
+}
+
+void BlockServiceAvailableSpaceDeprecatedResp::pack(BincodeBuf& buf) const {
+    buf.packList<BlockServiceSpace>(blockServices);
+}
+void BlockServiceAvailableSpaceDeprecatedResp::unpack(BincodeBuf& buf) {
+    buf.unpackList<BlockServiceSpace>(blockServices);
+}
+void BlockServiceAvailableSpaceDeprecatedResp::clear() {
+    blockServices.clear();
+}
+bool BlockServiceAvailableSpaceDeprecatedResp::operator==(const BlockServiceAvailableSpaceDeprecatedResp& rhs) const {
+    if (blockServices != rhs.blockServices) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const BlockServiceAvailableSpaceDeprecatedResp& x) {
+    out << "BlockServiceAvailableSpaceDeprecatedResp(" << "BlockServices=" << x.blockServices << ")";
+    return out;
+}
+
 void ChangedBlockServicesReq::pack(BincodeBuf& buf) const {
     since.pack(buf);
 }
@@ -5558,6 +5639,42 @@ bool ChangedBlockServicesResp::operator==(const ChangedBlockServicesResp& rhs) c
 }
 std::ostream& operator<<(std::ostream& out, const ChangedBlockServicesResp& x) {
     out << "ChangedBlockServicesResp(" << "LastChange=" << x.lastChange << ", " << "BlockServices=" << x.blockServices << ")";
+    return out;
+}
+
+void BlockServicesNeedingMigrationReq::pack(BincodeBuf& buf) const {
+    buf.packScalar<uint8_t>(locationId);
+}
+void BlockServicesNeedingMigrationReq::unpack(BincodeBuf& buf) {
+    locationId = buf.unpackScalar<uint8_t>();
+}
+void BlockServicesNeedingMigrationReq::clear() {
+    locationId = uint8_t(0);
+}
+bool BlockServicesNeedingMigrationReq::operator==(const BlockServicesNeedingMigrationReq& rhs) const {
+    if ((uint8_t)this->locationId != (uint8_t)rhs.locationId) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const BlockServicesNeedingMigrationReq& x) {
+    out << "BlockServicesNeedingMigrationReq(" << "LocationId=" << (int)x.locationId << ")";
+    return out;
+}
+
+void BlockServicesNeedingMigrationResp::pack(BincodeBuf& buf) const {
+    buf.packList<BlockServiceId>(blockServices);
+}
+void BlockServicesNeedingMigrationResp::unpack(BincodeBuf& buf) {
+    buf.unpackList<BlockServiceId>(blockServices);
+}
+void BlockServicesNeedingMigrationResp::clear() {
+    blockServices.clear();
+}
+bool BlockServicesNeedingMigrationResp::operator==(const BlockServicesNeedingMigrationResp& rhs) const {
+    if (blockServices != rhs.blockServices) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const BlockServicesNeedingMigrationResp& x) {
+    out << "BlockServicesNeedingMigrationResp(" << "BlockServices=" << x.blockServices << ")";
     return out;
 }
 
@@ -9409,12 +9526,12 @@ SetBlockServiceHasFilesReq& RegistryReqContainer::setSetBlockServiceHasFiles() {
     auto& x = _data.emplace<31>();
     return x;
 }
-const BlockServicesNeedingMigrationReq& RegistryReqContainer::getBlockServicesNeedingMigration() const {
-    ALWAYS_ASSERT(_kind == RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION, "%s != %s", _kind, RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION);
+const BlockServicesNeedingMigrationDeprecatedReq& RegistryReqContainer::getBlockServicesNeedingMigrationDeprecated() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION_DEPRECATED, "%s != %s", _kind, RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION_DEPRECATED);
     return std::get<32>(_data);
 }
-BlockServicesNeedingMigrationReq& RegistryReqContainer::setBlockServicesNeedingMigration() {
-    _kind = RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION;
+BlockServicesNeedingMigrationDeprecatedReq& RegistryReqContainer::setBlockServicesNeedingMigrationDeprecated() {
+    _kind = RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION_DEPRECATED;
     auto& x = _data.emplace<32>();
     return x;
 }
@@ -9445,22 +9562,49 @@ AllCdcReq& RegistryReqContainer::setAllCdc() {
     auto& x = _data.emplace<35>();
     return x;
 }
+const ChangedBlockServicesDeprecatedReq& RegistryReqContainer::getChangedBlockServicesDeprecated() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::CHANGED_BLOCK_SERVICES_DEPRECATED, "%s != %s", _kind, RegistryMessageKind::CHANGED_BLOCK_SERVICES_DEPRECATED);
+    return std::get<36>(_data);
+}
+ChangedBlockServicesDeprecatedReq& RegistryReqContainer::setChangedBlockServicesDeprecated() {
+    _kind = RegistryMessageKind::CHANGED_BLOCK_SERVICES_DEPRECATED;
+    auto& x = _data.emplace<36>();
+    return x;
+}
+const BlockServiceAvailableSpaceDeprecatedReq& RegistryReqContainer::getBlockServiceAvailableSpaceDeprecated() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE_DEPRECATED, "%s != %s", _kind, RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE_DEPRECATED);
+    return std::get<37>(_data);
+}
+BlockServiceAvailableSpaceDeprecatedReq& RegistryReqContainer::setBlockServiceAvailableSpaceDeprecated() {
+    _kind = RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE_DEPRECATED;
+    auto& x = _data.emplace<37>();
+    return x;
+}
 const ChangedBlockServicesReq& RegistryReqContainer::getChangedBlockServices() const {
     ALWAYS_ASSERT(_kind == RegistryMessageKind::CHANGED_BLOCK_SERVICES, "%s != %s", _kind, RegistryMessageKind::CHANGED_BLOCK_SERVICES);
-    return std::get<36>(_data);
+    return std::get<38>(_data);
 }
 ChangedBlockServicesReq& RegistryReqContainer::setChangedBlockServices() {
     _kind = RegistryMessageKind::CHANGED_BLOCK_SERVICES;
-    auto& x = _data.emplace<36>();
+    auto& x = _data.emplace<38>();
+    return x;
+}
+const BlockServicesNeedingMigrationReq& RegistryReqContainer::getBlockServicesNeedingMigration() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION, "%s != %s", _kind, RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION);
+    return std::get<39>(_data);
+}
+BlockServicesNeedingMigrationReq& RegistryReqContainer::setBlockServicesNeedingMigration() {
+    _kind = RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION;
+    auto& x = _data.emplace<39>();
     return x;
 }
 const BlockServiceAvailableSpaceReq& RegistryReqContainer::getBlockServiceAvailableSpace() const {
     ALWAYS_ASSERT(_kind == RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE, "%s != %s", _kind, RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE);
-    return std::get<37>(_data);
+    return std::get<40>(_data);
 }
 BlockServiceAvailableSpaceReq& RegistryReqContainer::setBlockServiceAvailableSpace() {
     _kind = RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE;
-    auto& x = _data.emplace<37>();
+    auto& x = _data.emplace<40>();
     return x;
 }
 RegistryReqContainer::RegistryReqContainer() {
@@ -9576,8 +9720,8 @@ void RegistryReqContainer::operator=(const RegistryReqContainer& other) {
     case RegistryMessageKind::SET_BLOCK_SERVICE_HAS_FILES:
         setSetBlockServiceHasFiles() = other.getSetBlockServiceHasFiles();
         break;
-    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION:
-        setBlockServicesNeedingMigration() = other.getBlockServicesNeedingMigration();
+    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION_DEPRECATED:
+        setBlockServicesNeedingMigrationDeprecated() = other.getBlockServicesNeedingMigrationDeprecated();
         break;
     case RegistryMessageKind::ALL_REGISTRY_REPLICAS:
         setAllRegistryReplicas() = other.getAllRegistryReplicas();
@@ -9588,8 +9732,17 @@ void RegistryReqContainer::operator=(const RegistryReqContainer& other) {
     case RegistryMessageKind::ALL_CDC:
         setAllCdc() = other.getAllCdc();
         break;
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES_DEPRECATED:
+        setChangedBlockServicesDeprecated() = other.getChangedBlockServicesDeprecated();
+        break;
+    case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE_DEPRECATED:
+        setBlockServiceAvailableSpaceDeprecated() = other.getBlockServiceAvailableSpaceDeprecated();
+        break;
     case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
         setChangedBlockServices() = other.getChangedBlockServices();
+        break;
+    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION:
+        setBlockServicesNeedingMigration() = other.getBlockServicesNeedingMigration();
         break;
     case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
         setBlockServiceAvailableSpace() = other.getBlockServiceAvailableSpace();
@@ -9671,7 +9824,7 @@ size_t RegistryReqContainer::packedSize() const {
         return sizeof(RegistryMessageKind) + std::get<30>(_data).packedSize();
     case RegistryMessageKind::SET_BLOCK_SERVICE_HAS_FILES:
         return sizeof(RegistryMessageKind) + std::get<31>(_data).packedSize();
-    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION:
+    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION_DEPRECATED:
         return sizeof(RegistryMessageKind) + std::get<32>(_data).packedSize();
     case RegistryMessageKind::ALL_REGISTRY_REPLICAS:
         return sizeof(RegistryMessageKind) + std::get<33>(_data).packedSize();
@@ -9679,10 +9832,16 @@ size_t RegistryReqContainer::packedSize() const {
         return sizeof(RegistryMessageKind) + std::get<34>(_data).packedSize();
     case RegistryMessageKind::ALL_CDC:
         return sizeof(RegistryMessageKind) + std::get<35>(_data).packedSize();
-    case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES_DEPRECATED:
         return sizeof(RegistryMessageKind) + std::get<36>(_data).packedSize();
-    case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
+    case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE_DEPRECATED:
         return sizeof(RegistryMessageKind) + std::get<37>(_data).packedSize();
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
+        return sizeof(RegistryMessageKind) + std::get<38>(_data).packedSize();
+    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION:
+        return sizeof(RegistryMessageKind) + std::get<39>(_data).packedSize();
+    case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
+        return sizeof(RegistryMessageKind) + std::get<40>(_data).packedSize();
     default:
         throw TERN_EXCEPTION("bad RegistryMessageKind kind %s", _kind);
     }
@@ -9787,7 +9946,7 @@ void RegistryReqContainer::pack(BincodeBuf& buf) const {
     case RegistryMessageKind::SET_BLOCK_SERVICE_HAS_FILES:
         std::get<31>(_data).pack(buf);
         break;
-    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION:
+    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION_DEPRECATED:
         std::get<32>(_data).pack(buf);
         break;
     case RegistryMessageKind::ALL_REGISTRY_REPLICAS:
@@ -9799,11 +9958,20 @@ void RegistryReqContainer::pack(BincodeBuf& buf) const {
     case RegistryMessageKind::ALL_CDC:
         std::get<35>(_data).pack(buf);
         break;
-    case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES_DEPRECATED:
         std::get<36>(_data).pack(buf);
         break;
-    case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
+    case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE_DEPRECATED:
         std::get<37>(_data).pack(buf);
+        break;
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
+        std::get<38>(_data).pack(buf);
+        break;
+    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION:
+        std::get<39>(_data).pack(buf);
+        break;
+    case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
+        std::get<40>(_data).pack(buf);
         break;
     default:
         throw TERN_EXCEPTION("bad RegistryMessageKind kind %s", _kind);
@@ -9909,7 +10077,7 @@ void RegistryReqContainer::unpack(BincodeBuf& buf) {
     case RegistryMessageKind::SET_BLOCK_SERVICE_HAS_FILES:
         _data.emplace<31>().unpack(buf);
         break;
-    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION:
+    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION_DEPRECATED:
         _data.emplace<32>().unpack(buf);
         break;
     case RegistryMessageKind::ALL_REGISTRY_REPLICAS:
@@ -9921,11 +10089,20 @@ void RegistryReqContainer::unpack(BincodeBuf& buf) {
     case RegistryMessageKind::ALL_CDC:
         _data.emplace<35>().unpack(buf);
         break;
-    case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES_DEPRECATED:
         _data.emplace<36>().unpack(buf);
         break;
-    case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
+    case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE_DEPRECATED:
         _data.emplace<37>().unpack(buf);
+        break;
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
+        _data.emplace<38>().unpack(buf);
+        break;
+    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION:
+        _data.emplace<39>().unpack(buf);
+        break;
+    case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
+        _data.emplace<40>().unpack(buf);
         break;
     default:
         throw BINCODE_EXCEPTION("bad RegistryMessageKind kind %s", _kind);
@@ -10000,16 +10177,22 @@ bool RegistryReqContainer::operator==(const RegistryReqContainer& other) const {
         return getUpdateBlockServicePath() == other.getUpdateBlockServicePath();
     case RegistryMessageKind::SET_BLOCK_SERVICE_HAS_FILES:
         return getSetBlockServiceHasFiles() == other.getSetBlockServiceHasFiles();
-    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION:
-        return getBlockServicesNeedingMigration() == other.getBlockServicesNeedingMigration();
+    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION_DEPRECATED:
+        return getBlockServicesNeedingMigrationDeprecated() == other.getBlockServicesNeedingMigrationDeprecated();
     case RegistryMessageKind::ALL_REGISTRY_REPLICAS:
         return getAllRegistryReplicas() == other.getAllRegistryReplicas();
     case RegistryMessageKind::ALL_SHARDS:
         return getAllShards() == other.getAllShards();
     case RegistryMessageKind::ALL_CDC:
         return getAllCdc() == other.getAllCdc();
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES_DEPRECATED:
+        return getChangedBlockServicesDeprecated() == other.getChangedBlockServicesDeprecated();
+    case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE_DEPRECATED:
+        return getBlockServiceAvailableSpaceDeprecated() == other.getBlockServiceAvailableSpaceDeprecated();
     case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
         return getChangedBlockServices() == other.getChangedBlockServices();
+    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION:
+        return getBlockServicesNeedingMigration() == other.getBlockServicesNeedingMigration();
     case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
         return getBlockServiceAvailableSpace() == other.getBlockServiceAvailableSpace();
     default:
@@ -10115,8 +10298,8 @@ std::ostream& operator<<(std::ostream& out, const RegistryReqContainer& x) {
     case RegistryMessageKind::SET_BLOCK_SERVICE_HAS_FILES:
         out << x.getSetBlockServiceHasFiles();
         break;
-    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION:
-        out << x.getBlockServicesNeedingMigration();
+    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION_DEPRECATED:
+        out << x.getBlockServicesNeedingMigrationDeprecated();
         break;
     case RegistryMessageKind::ALL_REGISTRY_REPLICAS:
         out << x.getAllRegistryReplicas();
@@ -10127,8 +10310,17 @@ std::ostream& operator<<(std::ostream& out, const RegistryReqContainer& x) {
     case RegistryMessageKind::ALL_CDC:
         out << x.getAllCdc();
         break;
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES_DEPRECATED:
+        out << x.getChangedBlockServicesDeprecated();
+        break;
+    case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE_DEPRECATED:
+        out << x.getBlockServiceAvailableSpaceDeprecated();
+        break;
     case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
         out << x.getChangedBlockServices();
+        break;
+    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION:
+        out << x.getBlockServicesNeedingMigration();
         break;
     case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
         out << x.getBlockServiceAvailableSpace();
@@ -10439,12 +10631,12 @@ SetBlockServiceHasFilesResp& RegistryRespContainer::setSetBlockServiceHasFiles()
     auto& x = _data.emplace<32>();
     return x;
 }
-const BlockServicesNeedingMigrationResp& RegistryRespContainer::getBlockServicesNeedingMigration() const {
-    ALWAYS_ASSERT(_kind == RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION, "%s != %s", _kind, RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION);
+const BlockServicesNeedingMigrationDeprecatedResp& RegistryRespContainer::getBlockServicesNeedingMigrationDeprecated() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION_DEPRECATED, "%s != %s", _kind, RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION_DEPRECATED);
     return std::get<33>(_data);
 }
-BlockServicesNeedingMigrationResp& RegistryRespContainer::setBlockServicesNeedingMigration() {
-    _kind = RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION;
+BlockServicesNeedingMigrationDeprecatedResp& RegistryRespContainer::setBlockServicesNeedingMigrationDeprecated() {
+    _kind = RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION_DEPRECATED;
     auto& x = _data.emplace<33>();
     return x;
 }
@@ -10475,22 +10667,49 @@ AllCdcResp& RegistryRespContainer::setAllCdc() {
     auto& x = _data.emplace<36>();
     return x;
 }
+const ChangedBlockServicesDeprecatedResp& RegistryRespContainer::getChangedBlockServicesDeprecated() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::CHANGED_BLOCK_SERVICES_DEPRECATED, "%s != %s", _kind, RegistryMessageKind::CHANGED_BLOCK_SERVICES_DEPRECATED);
+    return std::get<37>(_data);
+}
+ChangedBlockServicesDeprecatedResp& RegistryRespContainer::setChangedBlockServicesDeprecated() {
+    _kind = RegistryMessageKind::CHANGED_BLOCK_SERVICES_DEPRECATED;
+    auto& x = _data.emplace<37>();
+    return x;
+}
+const BlockServiceAvailableSpaceDeprecatedResp& RegistryRespContainer::getBlockServiceAvailableSpaceDeprecated() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE_DEPRECATED, "%s != %s", _kind, RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE_DEPRECATED);
+    return std::get<38>(_data);
+}
+BlockServiceAvailableSpaceDeprecatedResp& RegistryRespContainer::setBlockServiceAvailableSpaceDeprecated() {
+    _kind = RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE_DEPRECATED;
+    auto& x = _data.emplace<38>();
+    return x;
+}
 const ChangedBlockServicesResp& RegistryRespContainer::getChangedBlockServices() const {
     ALWAYS_ASSERT(_kind == RegistryMessageKind::CHANGED_BLOCK_SERVICES, "%s != %s", _kind, RegistryMessageKind::CHANGED_BLOCK_SERVICES);
-    return std::get<37>(_data);
+    return std::get<39>(_data);
 }
 ChangedBlockServicesResp& RegistryRespContainer::setChangedBlockServices() {
     _kind = RegistryMessageKind::CHANGED_BLOCK_SERVICES;
-    auto& x = _data.emplace<37>();
+    auto& x = _data.emplace<39>();
+    return x;
+}
+const BlockServicesNeedingMigrationResp& RegistryRespContainer::getBlockServicesNeedingMigration() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION, "%s != %s", _kind, RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION);
+    return std::get<40>(_data);
+}
+BlockServicesNeedingMigrationResp& RegistryRespContainer::setBlockServicesNeedingMigration() {
+    _kind = RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION;
+    auto& x = _data.emplace<40>();
     return x;
 }
 const BlockServiceAvailableSpaceResp& RegistryRespContainer::getBlockServiceAvailableSpace() const {
     ALWAYS_ASSERT(_kind == RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE, "%s != %s", _kind, RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE);
-    return std::get<38>(_data);
+    return std::get<41>(_data);
 }
 BlockServiceAvailableSpaceResp& RegistryRespContainer::setBlockServiceAvailableSpace() {
     _kind = RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE;
-    auto& x = _data.emplace<38>();
+    auto& x = _data.emplace<41>();
     return x;
 }
 RegistryRespContainer::RegistryRespContainer() {
@@ -10609,8 +10828,8 @@ void RegistryRespContainer::operator=(const RegistryRespContainer& other) {
     case RegistryMessageKind::SET_BLOCK_SERVICE_HAS_FILES:
         setSetBlockServiceHasFiles() = other.getSetBlockServiceHasFiles();
         break;
-    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION:
-        setBlockServicesNeedingMigration() = other.getBlockServicesNeedingMigration();
+    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION_DEPRECATED:
+        setBlockServicesNeedingMigrationDeprecated() = other.getBlockServicesNeedingMigrationDeprecated();
         break;
     case RegistryMessageKind::ALL_REGISTRY_REPLICAS:
         setAllRegistryReplicas() = other.getAllRegistryReplicas();
@@ -10621,8 +10840,17 @@ void RegistryRespContainer::operator=(const RegistryRespContainer& other) {
     case RegistryMessageKind::ALL_CDC:
         setAllCdc() = other.getAllCdc();
         break;
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES_DEPRECATED:
+        setChangedBlockServicesDeprecated() = other.getChangedBlockServicesDeprecated();
+        break;
+    case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE_DEPRECATED:
+        setBlockServiceAvailableSpaceDeprecated() = other.getBlockServiceAvailableSpaceDeprecated();
+        break;
     case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
         setChangedBlockServices() = other.getChangedBlockServices();
+        break;
+    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION:
+        setBlockServicesNeedingMigration() = other.getBlockServicesNeedingMigration();
         break;
     case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
         setBlockServiceAvailableSpace() = other.getBlockServiceAvailableSpace();
@@ -10706,7 +10934,7 @@ size_t RegistryRespContainer::packedSize() const {
         return sizeof(RegistryMessageKind) + std::get<31>(_data).packedSize();
     case RegistryMessageKind::SET_BLOCK_SERVICE_HAS_FILES:
         return sizeof(RegistryMessageKind) + std::get<32>(_data).packedSize();
-    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION:
+    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION_DEPRECATED:
         return sizeof(RegistryMessageKind) + std::get<33>(_data).packedSize();
     case RegistryMessageKind::ALL_REGISTRY_REPLICAS:
         return sizeof(RegistryMessageKind) + std::get<34>(_data).packedSize();
@@ -10714,10 +10942,16 @@ size_t RegistryRespContainer::packedSize() const {
         return sizeof(RegistryMessageKind) + std::get<35>(_data).packedSize();
     case RegistryMessageKind::ALL_CDC:
         return sizeof(RegistryMessageKind) + std::get<36>(_data).packedSize();
-    case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES_DEPRECATED:
         return sizeof(RegistryMessageKind) + std::get<37>(_data).packedSize();
-    case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
+    case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE_DEPRECATED:
         return sizeof(RegistryMessageKind) + std::get<38>(_data).packedSize();
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
+        return sizeof(RegistryMessageKind) + std::get<39>(_data).packedSize();
+    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION:
+        return sizeof(RegistryMessageKind) + std::get<40>(_data).packedSize();
+    case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
+        return sizeof(RegistryMessageKind) + std::get<41>(_data).packedSize();
     default:
         throw TERN_EXCEPTION("bad RegistryMessageKind kind %s", _kind);
     }
@@ -10825,7 +11059,7 @@ void RegistryRespContainer::pack(BincodeBuf& buf) const {
     case RegistryMessageKind::SET_BLOCK_SERVICE_HAS_FILES:
         std::get<32>(_data).pack(buf);
         break;
-    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION:
+    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION_DEPRECATED:
         std::get<33>(_data).pack(buf);
         break;
     case RegistryMessageKind::ALL_REGISTRY_REPLICAS:
@@ -10837,11 +11071,20 @@ void RegistryRespContainer::pack(BincodeBuf& buf) const {
     case RegistryMessageKind::ALL_CDC:
         std::get<36>(_data).pack(buf);
         break;
-    case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES_DEPRECATED:
         std::get<37>(_data).pack(buf);
         break;
-    case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
+    case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE_DEPRECATED:
         std::get<38>(_data).pack(buf);
+        break;
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
+        std::get<39>(_data).pack(buf);
+        break;
+    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION:
+        std::get<40>(_data).pack(buf);
+        break;
+    case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
+        std::get<41>(_data).pack(buf);
         break;
     default:
         throw TERN_EXCEPTION("bad RegistryMessageKind kind %s", _kind);
@@ -10950,7 +11193,7 @@ void RegistryRespContainer::unpack(BincodeBuf& buf) {
     case RegistryMessageKind::SET_BLOCK_SERVICE_HAS_FILES:
         _data.emplace<32>().unpack(buf);
         break;
-    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION:
+    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION_DEPRECATED:
         _data.emplace<33>().unpack(buf);
         break;
     case RegistryMessageKind::ALL_REGISTRY_REPLICAS:
@@ -10962,11 +11205,20 @@ void RegistryRespContainer::unpack(BincodeBuf& buf) {
     case RegistryMessageKind::ALL_CDC:
         _data.emplace<36>().unpack(buf);
         break;
-    case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES_DEPRECATED:
         _data.emplace<37>().unpack(buf);
         break;
-    case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
+    case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE_DEPRECATED:
         _data.emplace<38>().unpack(buf);
+        break;
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
+        _data.emplace<39>().unpack(buf);
+        break;
+    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION:
+        _data.emplace<40>().unpack(buf);
+        break;
+    case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
+        _data.emplace<41>().unpack(buf);
         break;
     default:
         throw BINCODE_EXCEPTION("bad RegistryMessageKind kind %s", _kind);
@@ -11043,16 +11295,22 @@ bool RegistryRespContainer::operator==(const RegistryRespContainer& other) const
         return getUpdateBlockServicePath() == other.getUpdateBlockServicePath();
     case RegistryMessageKind::SET_BLOCK_SERVICE_HAS_FILES:
         return getSetBlockServiceHasFiles() == other.getSetBlockServiceHasFiles();
-    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION:
-        return getBlockServicesNeedingMigration() == other.getBlockServicesNeedingMigration();
+    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION_DEPRECATED:
+        return getBlockServicesNeedingMigrationDeprecated() == other.getBlockServicesNeedingMigrationDeprecated();
     case RegistryMessageKind::ALL_REGISTRY_REPLICAS:
         return getAllRegistryReplicas() == other.getAllRegistryReplicas();
     case RegistryMessageKind::ALL_SHARDS:
         return getAllShards() == other.getAllShards();
     case RegistryMessageKind::ALL_CDC:
         return getAllCdc() == other.getAllCdc();
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES_DEPRECATED:
+        return getChangedBlockServicesDeprecated() == other.getChangedBlockServicesDeprecated();
+    case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE_DEPRECATED:
+        return getBlockServiceAvailableSpaceDeprecated() == other.getBlockServiceAvailableSpaceDeprecated();
     case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
         return getChangedBlockServices() == other.getChangedBlockServices();
+    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION:
+        return getBlockServicesNeedingMigration() == other.getBlockServicesNeedingMigration();
     case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
         return getBlockServiceAvailableSpace() == other.getBlockServiceAvailableSpace();
     default:
@@ -11161,8 +11419,8 @@ std::ostream& operator<<(std::ostream& out, const RegistryRespContainer& x) {
     case RegistryMessageKind::SET_BLOCK_SERVICE_HAS_FILES:
         out << x.getSetBlockServiceHasFiles();
         break;
-    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION:
-        out << x.getBlockServicesNeedingMigration();
+    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION_DEPRECATED:
+        out << x.getBlockServicesNeedingMigrationDeprecated();
         break;
     case RegistryMessageKind::ALL_REGISTRY_REPLICAS:
         out << x.getAllRegistryReplicas();
@@ -11173,8 +11431,17 @@ std::ostream& operator<<(std::ostream& out, const RegistryRespContainer& x) {
     case RegistryMessageKind::ALL_CDC:
         out << x.getAllCdc();
         break;
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES_DEPRECATED:
+        out << x.getChangedBlockServicesDeprecated();
+        break;
+    case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE_DEPRECATED:
+        out << x.getBlockServiceAvailableSpaceDeprecated();
+        break;
     case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
         out << x.getChangedBlockServices();
+        break;
+    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION:
+        out << x.getBlockServicesNeedingMigration();
         break;
     case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
         out << x.getBlockServiceAvailableSpace();

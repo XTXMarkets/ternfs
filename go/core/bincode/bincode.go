@@ -48,6 +48,13 @@ func PackLength(w io.Writer, l int) error {
 	return PackScalar(w, uint16(l))
 }
 
+func PackLength32(w io.Writer, l int) error {
+	if l < 0 || uint64(l) > math.MaxUint32 {
+		return fmt.Errorf("length %d is outside range 0..%d", l, uint64(math.MaxUint32))
+	}
+	return PackScalar(w, uint32(l))
+}
+
 type Blob []byte
 
 func PackBlob(w io.Writer, bs Blob) error {
@@ -55,6 +62,16 @@ func PackBlob(w io.Writer, bs Blob) error {
 		return fmt.Errorf("blob length %d exceeds maximum %d", len(bs), math.MaxUint16)
 	}
 	if err := PackScalar(w, uint16(len(bs))); err != nil {
+		return err
+	}
+	if _, err := w.Write(bs); err != nil {
+		return err
+	}
+	return nil
+}
+
+func PackBlob32(w io.Writer, bs Blob) error {
+	if err := PackLength32(w, len(bs)); err != nil {
 		return err
 	}
 	if _, err := w.Write(bs); err != nil {
@@ -122,12 +139,33 @@ func UnpackBlob(r io.Reader, data *Blob) error {
 	return nil
 }
 
+func UnpackBlob32(r io.Reader, data *Blob) error {
+	var l int
+	if err := UnpackLength32(r, &l); err != nil {
+		return err
+	}
+	*data = make([]byte, l)
+	if _, err := io.ReadFull(r, *data); err != nil {
+		return err
+	}
+	return nil
+}
+
 func UnpackLength(r io.Reader, l *int) error {
 	var l16 uint16
 	if err := UnpackScalar(r, &l16); err != nil {
 		return err
 	}
 	*l = int(l16)
+	return nil
+}
+
+func UnpackLength32(r io.Reader, l *int) error {
+	var l32 uint32
+	if err := UnpackScalar(r, &l32); err != nil {
+		return err
+	}
+	*l = int(l32)
 	return nil
 }
 

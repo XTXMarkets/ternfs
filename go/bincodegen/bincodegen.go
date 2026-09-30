@@ -33,6 +33,46 @@ func assertNoTag(e *subexpr) {
 	assertExpectedTag(e, "no tag")
 }
 
+// `bincode:"len32"` switches a list or Blob field from a 16-bit to a 32-bit length prefix.
+// It changes the wire and stored encoding, so only use it on new fields. kmod doesn't
+// support it.
+func isLen32(t reflect.Type, tag string) bool {
+	switch tag {
+	case "":
+		return false
+	case "len32":
+		if t.Kind() != reflect.Slice || (t.Elem().Kind() == reflect.Uint8 && t.Name() != "Blob") {
+			panic(fmt.Sprintf("len32 tag only applies to lists and Blobs, got %v", t))
+		}
+		return true
+	default:
+		panic(fmt.Sprintf("unknown bincode tag %q", tag))
+	}
+}
+
+func assertNonEmptyElem(t reflect.Type) {
+	if isZeroSized(t.Elem()) {
+		panic(fmt.Sprintf("list %v has zero-sized elements", t))
+	}
+}
+
+func isZeroSized(t reflect.Type) bool {
+	switch t.Kind() {
+	case reflect.Struct:
+		for i := 0; i < t.NumField(); i++ {
+			if !isZeroSized(t.Field(i).Type) {
+				return false
+			}
+		}
+		return true
+	case reflect.Array:
+		return t.Len() == 0
+	default:
+		// scalars, length-prefixed lists, and hand-written interface encodings
+		return false
+	}
+}
+
 type goCodegen struct {
 	pack   *bytes.Buffer
 	unpack *bytes.Buffer
@@ -95,9 +135,13 @@ func (cg *goCodegen) gen(expr *subexpr) {
 		cg.ustep(fmt.Sprintf("%v.Unpack(r)", expr.fld))
 	case reflect.Slice, reflect.String:
 		elem := sliceTypeElem(expr.typ)
+		lenSuffix := ""
+		if isLen32(t, expr.tag) {
+			lenSuffix = "32"
+		}
 		if elem.Kind() == reflect.Uint8 && t.Name() == "Blob" {
-			cg.pstep(fmt.Sprintf("bincode.PackBlob(w, %v)", expr.fld))
-			cg.ustep(fmt.Sprintf("bincode.UnpackBlob(r, &%v)", expr.fld))
+			cg.pstep(fmt.Sprintf("bincode.PackBlob%s(w, %v)", lenSuffix, expr.fld))
+			cg.ustep(fmt.Sprintf("bincode.UnpackBlob%s(r, &%v)", lenSuffix, expr.fld))
 		} else if elem.Kind() == reflect.Uint8 {
 			cg.pstep(fmt.Sprintf("bincode.PackBytes(w, []byte(%v))", expr.fld))
 			if expr.typ.Kind() == reflect.String {
@@ -106,12 +150,13 @@ func (cg *goCodegen) gen(expr *subexpr) {
 				cg.ustep(fmt.Sprintf("bincode.UnpackBytes(r, (*[]byte)(&%v))", expr.fld))
 			}
 		} else {
+			assertNonEmptyElem(t)
 			lenVar := cg.lenVar()
 			// handle length
 			cg.pline(fmt.Sprintf("%s := len(%s)", lenVar, expr.fld))
-			cg.pstep(fmt.Sprintf("bincode.PackLength(w, %s)", lenVar))
+			cg.pstep(fmt.Sprintf("bincode.PackLength%s(w, %s)", lenSuffix, lenVar))
 			cg.uline(fmt.Sprintf("var %s int", lenVar))
-			cg.ustep(fmt.Sprintf("bincode.UnpackLength(r, &%s)", lenVar))
+			cg.ustep(fmt.Sprintf("bincode.UnpackLength%s(r, &%s)", lenSuffix, lenVar))
 			// handle body
 			cg.uline(fmt.Sprintf("bincode.EnsureLength(&%s, %s)", expr.fld, lenVar))
 			loop := fmt.Sprintf("for i := 0; i < %s; i++ {", lenVar)
@@ -125,6 +170,7 @@ func (cg *goCodegen) gen(expr *subexpr) {
 			cg.uline("}")
 		}
 	case reflect.Array:
+		assertNoTag(expr)
 		elem := sliceTypeElem(expr.typ)
 		if elem.Kind() != reflect.Uint8 {
 			panic(fmt.Sprintf("we only support arrays of bytes, got %v", elem.Kind()))
@@ -504,6 +550,9 @@ func generateKmodGet(staticSizes map[string]int, h io.Writer, typ reflect.Type) 
 	prevType := fmt.Sprintf("struct %s_start*", kmodStructName(typ))
 	for i := 0; i < typ.NumField(); i++ {
 		fld := typ.Field(i)
+		if parseTag(fld.Tag) != "" {
+			panic(fmt.Sprintf("kmod does not support bincode tags, got %v.%v", typ, fld.Name))
+		}
 		fldK := fld.Type.Kind()
 		fldTyp := fld.Type
 		endianness := "le"
@@ -553,6 +602,7 @@ func generateKmodGet(staticSizes map[string]int, h io.Writer, typ reflect.Type) 
 				fmt.Fprintf(h, "    _%s_get_%s(ctx, &(prev), &(next))\n\n", kmodStructName(typ), fldName)
 				prevType = nextType
 			} else {
+				assertNonEmptyElem(fldTyp)
 				generateKmodStruct(h, typ, fldName, "u16 len")
 				nextType := fmt.Sprintf("struct %s_%s", kmodStructName(typ), fldName)
 				fmt.Fprintf(h, "static inline void _%s_get_%s(struct ternfs_bincode_get_ctx* ctx, %s* prev, %s* next) {\n", kmodStructName(typ), fldName, prevType, nextType)
@@ -620,6 +670,9 @@ func generateKmodPut(staticSizes map[string]int, h io.Writer, typ reflect.Type) 
 	prevType := fmt.Sprintf("struct %s_start*", kmodStructName(typ))
 	for i := 0; i < typ.NumField(); i++ {
 		fld := typ.Field(i)
+		if parseTag(fld.Tag) != "" {
+			panic(fmt.Sprintf("kmod does not support bincode tags, got %v.%v", typ, fld.Name))
+		}
 		fldK := fld.Type.Kind()
 		fldTyp := fld.Type
 		endianness := "le"
@@ -659,6 +712,7 @@ func generateKmodPut(staticSizes map[string]int, h io.Writer, typ reflect.Type) 
 				fmt.Fprintf(h, "    struct %s_%s next; \\\n", kmodStructName(typ), fldName)
 				fmt.Fprintf(h, "    _%s_put_%s(ctx, &(prev), &(next), str, str_len)\n\n", kmodStructName(typ), fldName)
 			} else {
+				assertNonEmptyElem(fldTyp)
 				fmt.Fprintf(h, "static inline void _%s_put_%s(struct ternfs_bincode_put_ctx* ctx, %s* prev, %s* next, int len) {\n", kmodStructName(typ), fldName, prevType, nextType)
 				fmt.Fprintf(h, "    next = NULL;\n")
 				fmt.Fprintf(h, "    BUG_ON(len < 0 || len >= 1<<16);\n")
@@ -822,46 +876,12 @@ func cppType(t reflect.Type) string {
 	}
 }
 
-func maxBincodeSize(t reflect.Type) uint64 {
-	switch t.Kind() {
-	case reflect.Bool, reflect.Uint8:
-		return 1
-	case reflect.Uint16:
-		return 2
-	case reflect.Uint32:
-		return 4
-	case reflect.Uint64:
-		return 8
-	case reflect.Array:
-		elem := sliceTypeElem(t)
-		if elem.Kind() != reflect.Uint8 {
-			panic(fmt.Sprintf("we only support arrays of bytes, got %v", elem.Kind()))
-		}
-		return uint64(t.Len())
-	case reflect.Slice, reflect.String:
-		elem := sliceTypeElem(t)
-		if elem.Kind() == reflect.Uint8 && t.Name() != "Blob" {
-			return 1 + uint64(^uint8(0))
-		}
-		elemSize := maxBincodeSize(elem)
-		maxLength := uint64(^uint16(0))
-		if elemSize > (^uint64(0)-2)/maxLength {
-			panic(fmt.Sprintf("maximum bincode size for %v overflows uint64", t))
-		}
-		return 2 + maxLength*elemSize
-	case reflect.Struct:
-		var size uint64
-		for i := 0; i < t.NumField(); i++ {
-			fieldSize := maxBincodeSize(t.Field(i).Type)
-			if fieldSize > ^uint64(0)-size {
-				panic(fmt.Sprintf("maximum bincode size for %v overflows uint64", t))
-			}
-			size += fieldSize
-		}
-		return size
-	default:
-		panic(fmt.Sprintf("unsupported type with kind %v", t.Kind()))
+// Type of a struct field, which unlike cppType depends on its tag.
+func cppFieldType(t reflect.Type, tag string) string {
+	if isLen32(t, tag) {
+		return fmt.Sprintf("BincodeList<%s, uint32_t>", cppType(t.Elem()))
 	}
+	return cppType(t)
 }
 
 type cppCodegen struct {
@@ -913,12 +933,15 @@ func (cg *cppCodegen) gen(expr *subexpr) {
 		expr.typ.Name() == "Crc" || expr.typ.Name() == "BlockServiceId" || expr.typ.Name() == "ReplicaId" ||
 		expr.typ.Name() == "ShardReplicaId" || expr.typ.Name() == "LogIdx" || expr.typ.Name() == "LeaderToken" ||
 		expr.typ.Name() == "Ip" || expr.typ.Name() == "IpPort" || expr.typ.Name() == "AddrsInfo" {
+		assertNoTag(expr)
 		cg.pline(fmt.Sprintf("%s.pack(buf)", expr.fld))
 		cg.uline(fmt.Sprintf("%s.unpack(buf)", expr.fld))
 	} else if k == reflect.Bool || k == reflect.Uint8 || k == reflect.Uint16 || k == reflect.Uint32 || k == reflect.Uint64 {
+		assertNoTag(expr)
 		cg.pline(fmt.Sprintf("buf.packScalar<%s>(%s)", cppType(expr.typ), expr.fld))
 		cg.uline(fmt.Sprintf("%s = buf.unpackScalar<%s>()", expr.fld, cppType(expr.typ)))
 	} else if k == reflect.Array {
+		assertNoTag(expr)
 		elem := sliceTypeElem(expr.typ)
 		if elem.Kind() != reflect.Uint8 {
 			panic(fmt.Sprintf("we only support arrays of bytes, got %v", elem.Kind()))
@@ -929,9 +952,11 @@ func (cg *cppCodegen) gen(expr *subexpr) {
 	} else if k == reflect.Slice || k == reflect.String {
 		elem := sliceTypeElem(expr.typ)
 		if elem.Kind() == reflect.Uint8 && expr.typ.Name() != "Blob" {
+			assertNoTag(expr)
 			cg.pline(fmt.Sprintf("buf.packBytes(%s)", expr.fld))
 			cg.uline(fmt.Sprintf("buf.unpackBytes(%s)", expr.fld))
 		} else {
+			assertNonEmptyElem(expr.typ)
 			cg.pline(fmt.Sprintf("buf.packList<%s>(%s)", cppType(elem), expr.fld))
 			cg.uline(fmt.Sprintf("buf.unpackList<%s>(%s)", cppType(elem), expr.fld))
 		}
@@ -960,7 +985,7 @@ func (cg *cppCodegen) gen(expr *subexpr) {
 	if k == reflect.Array {
 		cg.addStaticSize(expr.fld, fmt.Sprintf("%s::STATIC_SIZE", cppType(expr.typ)), true)
 	} else if k == reflect.Slice || k == reflect.Struct || k == reflect.String {
-		cg.addStaticSize(expr.fld, fmt.Sprintf("%s::STATIC_SIZE", cppType(expr.typ)), false)
+		cg.addStaticSize(expr.fld, fmt.Sprintf("%s::STATIC_SIZE", cppFieldType(expr.typ, expr.tag)), false)
 		cg.sline(expr.fld, fmt.Sprintf("%s.packedSize()", expr.fld))
 	} else {
 		var sz int
@@ -986,12 +1011,9 @@ func cppFieldName(fld reflect.StructField) string {
 	return string(nameBytes)
 }
 
-func generateCppSingle(hpp io.Writer, cpp io.Writer, t reflect.Type, maxSizes ...uint64) {
+func generateCppSingle(hpp io.Writer, cpp io.Writer, t reflect.Type) {
 	if t.Kind() != reflect.Struct {
 		panic(fmt.Sprintf("type %v is not a struct", t))
-	}
-	if len(maxSizes) > 1 {
-		panic("generateCppSingle accepts at most one maximum size")
 	}
 
 	cg := cppCodegen{
@@ -1023,7 +1045,7 @@ func generateCppSingle(hpp io.Writer, cpp io.Writer, t reflect.Type, maxSizes ..
 	for i := 0; i < t.NumField(); i++ {
 		fld := t.Field(i)
 		name := cppFieldName(fld)
-		ctype := cppType(fld.Type)
+		ctype := cppFieldType(fld.Type, parseTag(fld.Tag))
 		fmt.Fprintf(hpp, "    %s %s;\n", ctype, name)
 
 		if isScalar(fld.Type) {
@@ -1045,9 +1067,6 @@ func generateCppSingle(hpp io.Writer, cpp io.Writer, t reflect.Type, maxSizes ..
 	}
 	fmt.Fprintf(hpp, "\n")
 	fmt.Fprintf(hpp, "    static constexpr uint16_t STATIC_SIZE = %s; // %s\n", strings.Join(cg.staticSize, " + "), strings.Join(cg.staticSizeInfo, " + "))
-	if len(maxSizes) == 1 {
-		fmt.Fprintf(hpp, "    static constexpr size_t MAX_SIZE = %d; // maximum encoded size\n", maxSizes[0])
-	}
 	fmt.Fprintf(hpp, "\n")
 	fmt.Fprintf(hpp, "    %s() { clear(); }\n", t.Name())
 	if len(ctorParams) > 0 {
@@ -1445,8 +1464,6 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 	fmt.Fprintln(hppOut, "#include <variant>")
 	fmt.Fprintln(hppOut, "#include \"Time.hpp\"")
 	fmt.Fprintln(hppOut)
-	fmt.Fprintln(hppOut, "inline constexpr size_t MAX_REGISTRY_REQUEST_SIZE = 32 * 1024 * 1024;")
-	fmt.Fprintln(hppOut)
 
 	fmt.Fprintln(cppOut, "// Copyright 2025 XTX Markets Technologies Limited")
 	fmt.Fprintln(cppOut, "//")
@@ -1485,13 +1502,7 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 		generateCppSingle(hppOut, cppOut, reqResp.resp)
 	}
 	for _, reqResp := range registryReqResps {
-		generateCppSingle(hppOut, cppOut, reqResp.req, maxBincodeSize(reqResp.req))
-		fmt.Fprintf(hppOut,
-			"static_assert(\n    sizeof(RegistryMessageKind) + %s::MAX_SIZE <=\n",
-			reqResp.req.Name())
-		fmt.Fprintf(hppOut,
-			"        MAX_REGISTRY_REQUEST_SIZE,\n    \"%s exceeds the registry request limit\");\n\n",
-			reqResp.req.Name())
+		generateCppSingle(hppOut, cppOut, reqResp.req)
 		generateCppSingle(hppOut, cppOut, reqResp.resp)
 	}
 	for _, reqResp := range blocksReqResps {
@@ -2135,8 +2146,8 @@ func main() {
 		},
 		{
 			0x27,
-			reflect.TypeOf(msgs.BlockServicesNeedingMigrationReq{}),
-			reflect.TypeOf(msgs.BlockServicesNeedingMigrationResp{}),
+			reflect.TypeOf(msgs.BlockServicesNeedingMigrationDeprecatedReq{}),
+			reflect.TypeOf(msgs.BlockServicesNeedingMigrationDeprecatedResp{}),
 		},
 		{
 			0x29,
@@ -2155,11 +2166,26 @@ func main() {
 		},
 		{
 			0x2C,
+			reflect.TypeOf(msgs.ChangedBlockServicesDeprecatedReq{}),
+			reflect.TypeOf(msgs.ChangedBlockServicesDeprecatedResp{}),
+		},
+		{
+			0x2D,
+			reflect.TypeOf(msgs.BlockServiceAvailableSpaceDeprecatedReq{}),
+			reflect.TypeOf(msgs.BlockServiceAvailableSpaceDeprecatedResp{}),
+		},
+		{
+			0x2E,
 			reflect.TypeOf(msgs.ChangedBlockServicesReq{}),
 			reflect.TypeOf(msgs.ChangedBlockServicesResp{}),
 		},
 		{
-			0x2D,
+			0x2F,
+			reflect.TypeOf(msgs.BlockServicesNeedingMigrationReq{}),
+			reflect.TypeOf(msgs.BlockServicesNeedingMigrationResp{}),
+		},
+		{
+			0x30,
 			reflect.TypeOf(msgs.BlockServiceAvailableSpaceReq{}),
 			reflect.TypeOf(msgs.BlockServiceAvailableSpaceResp{}),
 		},
