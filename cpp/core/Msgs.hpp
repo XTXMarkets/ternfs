@@ -244,6 +244,7 @@ struct std::hash<ShardReplicaLocationKey> {
 // TTIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIISSSSSSSS
 struct InodeId {
     uint64_t u64;
+    static constexpr size_t STATIC_SIZE = sizeof(uint64_t);
 
     constexpr InodeId(): u64(0) {}
 
@@ -429,6 +430,7 @@ std::string storageClassName(uint8_t storageClass);
 
 struct Crc {
     uint32_t u32;
+    static constexpr size_t STATIC_SIZE = sizeof(uint32_t);
 
     Crc() : u32(0) {}
     Crc(uint32_t x) : u32(x) {}
@@ -454,6 +456,7 @@ std::ostream& operator<<(std::ostream& out, Crc crc);
 
 struct BlockServiceId {
     uint64_t u64;
+    static constexpr size_t STATIC_SIZE = sizeof(uint64_t);
 
     BlockServiceId(): u64(0) {}
     BlockServiceId(uint64_t x): u64(x) {}
