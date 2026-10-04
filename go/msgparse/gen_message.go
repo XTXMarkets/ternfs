@@ -1049,6 +1049,11 @@ func (g *Generator) isByteSliceMessage(ti *TypeInfo) bool {
 	if len(ti.VarArrays) != 1 || ti.HasVarSizeArrays || ti.HasExtent {
 		return false
 	}
+	// A variable-size field before the array (threshold_item4's bitmap4)
+	// moves the count, so the fixed-offset fast path does not apply.
+	if len(ti.VarSectionBoundaries) > 0 {
+		return false
+	}
 	if !isByteSliceType(ti.VarArrays[0].ArrayField.TypeName) {
 		return false
 	}

@@ -108,7 +108,10 @@ func (g *Generator) emitUnion(ti *TypeInfo) {
 			emittedDefault = true
 			payloadTi := g.a.Types[arm.Payload]
 			g.p("\nfunc (m %s) As%s() %s {\n", name, g.goName(payloadTi), g.goName(payloadTi))
-			if g.a.isStructReader(arm.Payload) {
+			if payloadTi.Decl.Kind == DeclStruct {
+				sizeConst := sizeConstName(arm.Payload)
+				g.p("\treturn %s{m: (*[%s]byte)(m.b)}\n}\n", g.goName(payloadTi), sizeConst)
+			} else if g.a.isStructReader(arm.Payload) {
 				g.p("\tv, _ := Read%s(m.b)\n\treturn v\n}\n", g.goName(payloadTi))
 			} else {
 				g.p("\treturn %s(m.b)\n}\n", g.goName(payloadTi))
