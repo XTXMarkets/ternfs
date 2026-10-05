@@ -54,7 +54,7 @@ func TestNamespacePreparationFailureKeepsWritersUsable(t *testing.T) {
 			// Source and destination writers exercise rollback of a successful
 			// guard as well as the writer whose own guard failed.
 			state, fh := openWriteFile(t, f.conn, &f.xid, f.clientID, "target")
-			dstID, _ := fhToInodeID(fh)
+			dstID := stagingIDForTest(t, f.store, state)
 			sf := f.store.Get(dstID).(*localStagingFile)
 			path := sf.metaPath
 			if installed {
@@ -206,7 +206,7 @@ func (store *pausedFailureCheckStore) Failed(id InodeID) bool {
 func TestFailedWriterCloseDoesNotExpireSiblingDuringLookup(t *testing.T) {
 	f := newNamespaceFixture(t)
 	siblingState, siblingFH := openWriteFile(t, f.conn, &f.xid, f.clientID, "target")
-	siblingID, _ := fhToInodeID(siblingFH)
+	siblingID := stagingIDForTest(t, f.store, siblingState)
 	store := &pausedFailureCheckStore{StagingStore: f.store, id: f.id,
 		entered: make(chan struct{}), release: make(chan struct{})}
 	f.server.stagingStore = store
@@ -231,7 +231,7 @@ func TestFailedWriterCloseDoesNotExpireSiblingDuringLookup(t *testing.T) {
 	if got := removeNamespaceFile(t, f, "source"); got != NFS4ERR_IO {
 		t.Fatal(Nfsstat4Name(got))
 	}
-	if got := closeFileWithSeqStatus(t, f.conn, &f.xid, f.fh, f.state, 3); got != NFS4ERR_EXPIRED {
+	if got := closeFileStatus(t, f.conn, &f.xid, f.fh, f.state); got != NFS4ERR_EXPIRED {
 		t.Fatal(Nfsstat4Name(got))
 	}
 	close(store.release)
@@ -242,7 +242,7 @@ func TestFailedWriterCloseDoesNotExpireSiblingDuringLookup(t *testing.T) {
 	if !ok || meta.Retired {
 		t.Fatal("failed writer expired its healthy sibling")
 	}
-	if active, err := f.server.clients.HasOpen(f.clientID, meta.NFSStateID); err != nil || !active {
+	if active, err := f.server.clients.HasOpen(incarnationForTest(t, f.server, f.clientID), meta.NFSStateID); err != nil || !active {
 		t.Fatalf("sibling marker was revoked: %t, %v", active, err)
 	}
 	writeFileAt(t, f.conn, &f.xid, siblingFH, siblingState, 0, []byte("healthy sibling"))
@@ -307,7 +307,7 @@ func TestStagingStartupExcludesEveryBadEntry(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				data = bytes.Replace(data, []byte("NFS6"), []byte("NFS7"), 1)
+				data = bytes.Replace(data, []byte("NFS8"), []byte("XFS8"), 1)
 				if err := os.WriteFile(path, data, 0600); err != nil {
 					t.Fatal(err)
 				}
@@ -370,13 +370,13 @@ func TestNamespaceSidecarStrictDecode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Fixed NFS6 layout, with no dirty ranges in this checkpoint.
+	// Fixed NFS8 layout, with no dirty ranges in this checkpoint.
 	flagOffset := 30 + len(meta.FileName) + 8 + 4 + 8 + 8 + 8 + 4 + 32
-	for _, kind := range []string{"NFS5", "NFS7", "trailer", "unknown flag", "truncated"} {
+	for _, kind := range []string{"NFS5", "NFS7", "NFS9", "trailer", "unknown flag", "truncated"} {
 		t.Run(kind, func(t *testing.T) {
 			bad := append([]byte(nil), data...)
 			switch kind {
-			case "NFS5", "NFS7":
+			case "NFS5", "NFS7", "NFS9":
 				magic := 30 + int(binary.BigEndian.Uint16(bad[28:30])) + 8
 				copy(bad[magic:], kind)
 			case "trailer":

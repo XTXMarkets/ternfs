@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-var mutableAttrMask = [2]uint32{
+var mutableAttrMask = attrMask{
 	1<<FATTR4_CHANGE | 1<<FATTR4_SIZE,
 	1<<(FATTR4_TIME_ACCESS-32) | 1<<(FATTR4_TIME_METADATA-32) | 1<<(FATTR4_TIME_MODIFY-32),
 }
@@ -70,130 +70,116 @@ func verifyMutableAttrs(t *testing.T, conn net.Conn, xid *uint32, fh, attrs []by
 
 // Used by both the local and real-TernFS suites. Every session uses a distinct
 // owner, including two writers from the same client.
+// exercisePrivateMutableWriters checks writer isolation across clients.
+// Writers on one client share a staging version, as they share that client's
+// page cache; another client's writer stays private until its CLOSE. A
+// reader keeps the version it opened.
 func exercisePrivateMutableWriters(t *testing.T, addr, name string, reverse bool) {
 	t.Helper()
 	conn := dial(t, addr)
 	defer conn.Close()
+	otherConn := dial(t, addr)
+	defer otherConn.Close()
 	xid := uint32(1)
 	clientID := setupClient(t, conn, &xid)
+	otherID, otherConfirm := requestClientID(t, otherConn, &xid, "other-"+name, [8]byte{2})
+	if status := confirmClientID(t, otherConn, &xid, otherID, otherConfirm); status != NFS4_OK {
+		t.Fatal(Nfsstat4Name(status))
+	}
 	createdState, createdFH := openCreateFile(t, conn, &xid, clientID, name)
 	writeFileAt(t, conn, &xid, createdFH, createdState, 0, []byte("original"))
 	closeFile(t, conn, &xid, createdFH, createdState)
-	open := func(owner string, access uint32) ([16]byte, []byte) {
-		status, sid, fh, flags := openFileForOwner(t, conn, &xid, clientID, owner, 1, name, access, false, false)
+	open := func(c net.Conn, client uint64, owner string, access uint32) ([16]byte, []byte) {
+		status, sid, fh, _ := openFileForOwner(t, c, &xid, client, owner, name, access, false, false)
 		if status != NFS4_OK {
 			t.Fatalf("OPEN %s: %s", owner, Nfsstat4Name(status))
 		}
-		if flags&OPEN4_RESULT_CONFIRM != 0 {
-			sid = confirmOpenState(t, conn, &xid, fh, 2, sid)
-		}
 		return sid, fh
 	}
-	reader, baseFH := open("reader", OPEN4_SHARE_ACCESS_READ)
-	first, firstFH := open("first", OPEN4_SHARE_ACCESS_BOTH)
-	second, secondFH := open("second", OPEN4_SHARE_ACCESS_BOTH)
-	if bytes.Equal(firstFH, secondFH) || bytes.Equal(firstFH, baseFH) || bytes.Equal(secondFH, baseFH) {
-		t.Fatal("writers and published reader must have distinct handles")
+	reader, baseFH := open(otherConn, otherID, "reader", OPEN4_SHARE_ACCESS_READ)
+	first, firstFH := open(conn, clientID, "first", OPEN4_SHARE_ACCESS_BOTH)
+	second, secondFH := open(otherConn, otherID, "second", OPEN4_SHARE_ACCESS_BOTH)
+	if !bytes.Equal(firstFH, baseFH) || !bytes.Equal(secondFH, baseFH) {
+		t.Fatal("write OPEN did not return the published filehandle")
 	}
-	baseAttrs := mutableAttrs(t, conn, &xid, baseFH)
-	firstAttrs := mutableAttrs(t, conn, &xid, firstFH)
+	baseAttrs := mutableAttrs(t, conn, &xid, lookupFH(t, conn, &xid, name))
 	writeFileAt(t, conn, &xid, firstFH, first, 0, []byte("FIRST"))
-	writeFileAt(t, conn, &xid, secondFH, second, 8, []byte("SECOND"))
+	writeFileAt(t, otherConn, &xid, secondFH, second, 8, []byte("SECOND"))
 	after := mutableAttrs(t, conn, &xid, firstFH)
-	if binary.BigEndian.Uint64(after) == binary.BigEndian.Uint64(firstAttrs) {
+	if binary.BigEndian.Uint64(after) == binary.BigEndian.Uint64(baseAttrs) {
 		t.Fatal("same-size overwrite did not change CHANGE")
 	}
 	if !bytes.Equal(after, mutableAttrs(t, conn, &xid, firstFH)) {
 		t.Fatal("GETATTR changed attributes without a mutation")
 	}
 	verifyMutableAttrs(t, conn, &xid, firstFH, after)
-	verifyMutableAttrs(t, conn, &xid, secondFH, mutableAttrs(t, conn, &xid, secondFH))
-	publishedAttrs := mutableAttrs(t, conn, &xid, baseFH)
-	// Hydration can update the local backend's access time; data, size,
-	// modification time and change token must remain published attributes.
+	// A third client sees the published attributes.
+	viewer := dial(t, addr)
+	defer viewer.Close()
+	viewerID, viewerConfirm := requestClientID(t, viewer, &xid, "viewer-"+name, [8]byte{3})
+	if status := confirmClientID(t, viewer, &xid, viewerID, viewerConfirm); status != NFS4_OK {
+		t.Fatal(Nfsstat4Name(status))
+	}
+	publishedAttrs := mutableAttrs(t, viewer, &xid, baseFH)
 	if !bytes.Equal(baseAttrs[:16], publishedAttrs[:16]) || !bytes.Equal(baseAttrs[28:], publishedAttrs[28:]) {
 		t.Fatal("writer changed published attributes")
 	}
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
-		w.AppendArgarray_Putrootfh()
-		rw := w.AppendArgarray_Readdir()
-		rw.SetDircount(4096)
-		rw.SetMaxcount(8192)
-		bw := rw.StartAttrRequest()
-		bw.AppendData(mutableAttrMask[0])
-		bw.AppendData(mutableAttrMask[1])
-		rw.Resume(bw.Finish())
-		w.Resume(rw.Finish())
-	})
-	xid++
-	iter := expectOK(t, res)
-	nextOp(t, &iter)
-	dir := nextOp(t, &iter).Value().AsREADDIR4resEntry().Value().AsREADDIR4resok().Reply()
-	found := false
-	if dir.EntriesPresent() == TRUE {
-		entry := dir.Entries().AsEntry4()
-		for {
-			if string(entry.Name().Data()) == name {
-				found = true
-				attrs := entry.Attrs().AttrVals().Data()
-				if len(attrs) < 16 || !bytes.Equal(attrs[:16], publishedAttrs[:16]) {
-					t.Fatal("READDIR exposes staged size or change token")
-				}
-			}
-			if entry.NextentryPresent() != TRUE {
-				break
-			}
-			entry = entry.Nextentry().AsEntry4()
+	readWith := func(c net.Conn, fh []byte, sid [16]byte, want string) {
+		t.Helper()
+		res := sendCompound(t, c, xid, func(w *COMPOUND4argsWriter) {
+			pw := w.AppendArgarray_Putfh()
+			pw.Resume(pw.StartObject().SetData(fh).Finish())
+			w.Resume(pw.Finish())
+			rw := w.AppendArgarray_Read()
+			setStateid(rw.Stateid(), sid)
+			rw.SetCount(1024)
+		})
+		xid++
+		iter := expectOK(t, res)
+		nextOp(t, &iter)
+		got := nextOp(t, &iter).Value().AsREAD4resEntry().Value().AsREAD4resok().Data()
+		if string(got) != want {
+			t.Fatalf("READ = %q, want %q", got, want)
 		}
 	}
-	if !found {
-		t.Fatal("published file missing from READDIR")
-	}
-	check := func(fh []byte, want string) {
+	check := func(c net.Conn, fh []byte, want string) {
 		t.Helper()
-		got, eof := readFileData(t, conn, &xid, fh, 0, 1024)
+		got, eof := readFileData(t, c, &xid, fh, 0, 1024)
 		if string(got) != want || !eof {
 			t.Fatalf("READ %x = (%q, %t), want (%q, true)", fh, got, eof, want)
 		}
 	}
-	check(baseFH, "original")
-	check(lookupFH(t, conn, &xid, name), "original")
-	check(firstFH, "FIRSTnal")
-	check(secondFH, "originalSECOND")
-	// A stateid for a published reader cannot be used on a private handle.
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
-		pw := w.AppendArgarray_Putfh()
-		pw.Resume(pw.StartObject().SetData(firstFH).Finish())
-		w.Resume(pw.Finish())
-		rw := w.AppendArgarray_Read()
-		rw.Stateid().SetSeqid(binary.BigEndian.Uint32(reader[:4]))
-		for i := range 12 {
-			rw.Stateid().SetOther(i, reader[4+i])
-		}
-		rw.SetCount(1024)
-	})
-	xid++
-	if res.Status() != NFS4ERR_BAD_STATEID {
-		t.Fatalf("reader state on writer handle: %s", Nfsstat4Name(res.Status()))
-	}
+	check(viewer, baseFH, "original")
+	readWith(otherConn, baseFH, reader, "original")
+	readWith(conn, firstFH, first, "FIRSTnal")
+	readWith(otherConn, secondFH, second, "originalSECOND")
+	// A second writer on the first client joins its staging.
+	joined, _ := open(conn, clientID, "joined", OPEN4_SHARE_ACCESS_BOTH)
+	readWith(conn, firstFH, joined, "FIRSTnal")
+	closeFile(t, conn, &xid, firstFH, joined)
+
+	firstConn, secondConn := conn, otherConn
 	firstWant, secondWant := "FIRSTnal", "originalSECOND"
 	if reverse {
 		first, second = second, first
-		firstFH, secondFH = secondFH, firstFH
+		firstConn, secondConn = secondConn, firstConn
 		firstWant, secondWant = secondWant, firstWant
 	}
-	closeFile(t, conn, &xid, firstFH, first)
-	check(lookupFH(t, conn, &xid, name), firstWant)
-	check(baseFH, "original")
-	check(secondFH, secondWant)
-	closeFile(t, conn, &xid, secondFH, second)
-	check(lookupFH(t, conn, &xid, name), secondWant)
-	check(firstFH, firstWant)
-	check(baseFH, "original")
-	closeFile(t, conn, &xid, baseFH, reader)
+	closeFile(t, firstConn, &xid, baseFH, first)
+	check(viewer, lookupFH(t, viewer, &xid, name), firstWant)
+	readWith(otherConn, baseFH, reader, "original")
+	readWith(secondConn, baseFH, second, secondWant)
+	closeFile(t, secondConn, &xid, baseFH, second)
+	check(viewer, lookupFH(t, viewer, &xid, name), secondWant)
+	// Each closing client sees its own publication through the handle.
+	check(secondConn, baseFH, secondWant)
+	readWith(otherConn, baseFH, reader, "original")
+	closeFile(t, otherConn, &xid, baseFH, reader)
 }
 
-func TestRecoveredPrivateWritersUseOpenOwner(t *testing.T) {
+// Writers on one client share staging. After a restart any of the client's
+// open owners reclaims it, and the last CLOSE publishes both owners' writes.
+func TestRecoveredSharedWriterAcrossOpenOwners(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "file"), []byte("original"), 0644); err != nil {
 		t.Fatal(err)
@@ -214,19 +200,19 @@ func TestRecoveredPrivateWritersUseOpenOwner(t *testing.T) {
 	clientID := setupClient(t, conn, &xid)
 	open := func(owner string) ([16]byte, []byte) {
 		t.Helper()
-		status, sid, fh, flags := openFileForOwner(t, conn, &xid, clientID, owner, 1, "file", OPEN4_SHARE_ACCESS_BOTH, false, false)
+		status, sid, fh, _ := openFileForOwner(t, conn, &xid, clientID, owner, "file", OPEN4_SHARE_ACCESS_BOTH, false, false)
 		if status != NFS4_OK {
 			t.Fatalf("OPEN %s: %s", owner, Nfsstat4Name(status))
 		}
-		if flags&OPEN4_RESULT_CONFIRM != 0 {
-			sid = confirmOpenState(t, conn, &xid, fh, 2, sid)
-		}
 		return sid, fh
 	}
-	first, firstFH := open("")
-	second, secondFH := open("second-owner")
-	writeFileAt(t, conn, &xid, firstFH, first, 0, []byte("ONE"))
-	writeFileAt(t, conn, &xid, secondFH, second, 0, []byte("TWO"))
+	first, fh := open("")
+	second, _ := open("second-owner")
+	writeFileAt(t, conn, &xid, fh, first, 0, []byte("ONE"))
+	writeFileAt(t, conn, &xid, fh, second, 3, []byte("TWO"))
+	if len(store.Entries()) != 1 {
+		t.Fatalf("one client's writers used %d staging files", len(store.Entries()))
+	}
 	conn.Close()
 	cleanup()
 	// Close descriptors without deleting durable sidecars, simulating restart.
@@ -245,25 +231,16 @@ func TestRecoveredPrivateWritersUseOpenOwner(t *testing.T) {
 	defer cleanup()
 	conn = dial(t, addr)
 	defer conn.Close()
-	// Recover in reverse order. Both share a client and target name.
-	second, gotSecondFH := open("second-owner")
-	first, gotFirstFH := open("")
-	if !bytes.Equal(firstFH, gotFirstFH) || !bytes.Equal(secondFH, gotSecondFH) {
-		t.Fatal("recovery rebound a writer to another session")
+	second, _ = open("second-owner")
+	first, _ = open("")
+	got, _ := readFileData(t, conn, &xid, fh, 0, 1024)
+	if string(got) != "ONETWOal" {
+		t.Fatalf("recovered %q, want %q", got, "ONETWOal")
 	}
-	for _, test := range []struct {
-		sid  [16]byte
-		fh   []byte
-		want string
-	}{{second, secondFH, "TWOginal"}, {first, firstFH, "ONEginal"}} {
-		got, _ := readFileData(t, conn, &xid, test.fh, 0, 1024)
-		if string(got) != test.want {
-			t.Fatalf("recovered %q, want %q", got, test.want)
-		}
-		closeFile(t, conn, &xid, test.fh, test.sid)
-	}
-	got, _ := readFileData(t, conn, &xid, lookupFH(t, conn, &xid, "file"), 0, 1024)
-	if string(got) != "ONEginal" || stagingTargetBusyForTest(recovered, fs.RootID(), "file") {
+	closeFile(t, conn, &xid, fh, second)
+	closeFile(t, conn, &xid, fh, first)
+	got, _ = readFileData(t, conn, &xid, lookupFH(t, conn, &xid, "file"), 0, 1024)
+	if string(got) != "ONETWOal" || stagingTargetBusyForTest(recovered, fs.RootID(), "file") {
 		t.Fatalf("last recovered CLOSE did not publish and release staging: %q", got)
 	}
 }

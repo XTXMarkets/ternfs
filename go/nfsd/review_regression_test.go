@@ -55,16 +55,15 @@ func TestExpiredWriterRecoversAcknowledgedData(t *testing.T) {
 				xid := uint32(1)
 				clientID := setupClient(t, conn, &xid)
 				status, state, fh, _ := openFileForOwner(t, conn, &xid, clientID,
-					"recovering-writer", 1, "file", OPEN4_SHARE_ACCESS_BOTH, !existing, false)
+					"recovering-writer", "file", OPEN4_SHARE_ACCESS_BOTH, !existing, false)
 				if status != NFS4_OK {
 					t.Fatal(Nfsstat4Name(status))
 				}
-				state = confirmOpenState(t, conn, &xid, fh, 2, state)
 				writeFileAt(t, conn, &xid, fh, state, 0, []byte("UPDATED!"))
-				id, _ := fhToInodeID(fh)
+				id := stagingIDForTest(t, srv.stagingStore, state)
 				srv.waitForClientGC()
 				now := time.Now().Add(2 * nfsLeaseTime)
-				srv.clients.now = func() time.Time { return now }
+				srv.clients.setClock(func() time.Time { return now })
 				srv.runLeaseSweep()
 				assertRetiredStaging(t, store, id)
 				if restart {
@@ -79,7 +78,7 @@ func TestExpiredWriterRecoversAcknowledgedData(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					srv.clients.now = func() time.Time { return now }
+					srv.clients.setClock(func() time.Time { return now })
 					addr, cleanup = serveTestServer(t, srv)
 					conn = dial(t, addr)
 				}
@@ -89,14 +88,13 @@ func TestExpiredWriterRecoversAcknowledgedData(t *testing.T) {
 				}
 				srv.waitForClientGC()
 				status, recovered, recoveredFH, _ := openFileForOwner(t, conn, &xid, newClient,
-					"recovering-writer", 1, "file", OPEN4_SHARE_ACCESS_BOTH, false, false)
+					"recovering-writer", "file", OPEN4_SHARE_ACCESS_BOTH, false, false)
 				if status != NFS4_OK {
 					t.Fatal(Nfsstat4Name(status))
 				}
 				if !bytes.Equal(fh, recoveredFH) {
 					t.Fatal("recovery changed the writer's filehandle")
 				}
-				recovered = confirmOpenState(t, conn, &xid, recoveredFH, 2, recovered)
 				got, _ := readFileData(t, conn, &xid, recoveredFH, 0, 32)
 				if string(got) != "UPDATED!" {
 					t.Fatalf("recovery lost acknowledged data: %q", got)
@@ -158,8 +156,40 @@ func TestRemoveCancelsQueuedHydration(t *testing.T) {
 	awaitSignal(t, done, "cancelled queued hydration")
 }
 
+// Sidecars from the NFSv4.0 server (NFS5 on main, NFS6 and NFS7 on its
+// branches) stop startup instead of being quarantined, so an upgrade with
+// undrained staging is noticed.
+func TestOlderStagingFormatFailsStartup(t *testing.T) {
+	for _, format := range []string{"NFS5", "NFS6", "NFS7"} {
+		t.Run(format, func(t *testing.T) {
+			dir := t.TempDir()
+			store, _, sf := createOverlayStage(t, dir, MakeInodeID(InodeTypeFile, 1), []byte("base"))
+			if err := sf.Sync(); err != nil {
+				t.Fatal(err)
+			}
+			metaPath := sf.(*localStagingFile).metaPath
+			data, err := os.ReadFile(metaPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			closeLocalStagingFiles(t, store)
+			copy(data[30+int(binary.BigEndian.Uint16(data[28:30]))+8:], format)
+			if err := os.WriteFile(metaPath, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			var formatErr errStagingFormat
+			if _, err := NewLocalStagingStore(dir, nil); !errors.As(err, &formatErr) {
+				t.Fatalf("startup with %s staging = %v", format, err)
+			}
+			if _, err := os.Stat(metaPath); err != nil {
+				t.Fatalf("older sidecar was moved: %v", err)
+			}
+		})
+	}
+}
+
 func TestInvalidStagingIsQuarantined(t *testing.T) {
-	for _, format := range []string{"missing", "truncated", "NFS2", "NFS3", "NFS4"} {
+	for _, format := range []string{"missing", "truncated", "XFS8"} {
 		t.Run(format, func(t *testing.T) {
 			dir := t.TempDir()
 			store, id, sf := createOverlayStage(t, dir, MakeInodeID(InodeTypeFile, 1), []byte("base"))
@@ -233,8 +263,11 @@ func TestPublishedCloseSurvivesTimestampFailure(t *testing.T) {
 	clientID := setupClient(t, conn, &xid)
 	state, fh := openCreateFile(t, conn, &xid, clientID, "file")
 	writeFileAt(t, conn, &xid, fh, state, 0, []byte("published"))
-	for range 2 {
-		if status := closeFileWithSeqStatus(t, conn, &xid, fh, state, 3); status != NFS4_OK {
+	for i := range 2 {
+		if i == 1 {
+			retransmitNext(conn)
+		}
+		if status := closeFileStatus(t, conn, &xid, fh, state); status != NFS4_OK {
 			t.Fatalf("CLOSE/replay = %s", Nfsstat4Name(status))
 		}
 	}
@@ -258,7 +291,10 @@ func (fs *metadataOnlyVFS) Read(InodeID, uint64, []byte) (int, bool, error) {
 	return 0, false, errors.New("metadata-only CLOSE must not read data")
 }
 
-func (fs *metadataOnlyVFS) LinkFile(InodeID, Cookie, InodeID, string, io.Reader) error {
+func (fs *metadataOnlyVFS) LinkFile(id InodeID, cookie Cookie, dir InodeID, name string, data io.Reader) error {
+	if leaseTemp(name) {
+		return fs.LocalTernVFS.LinkFile(id, cookie, dir, name, data)
+	}
 	fs.links.Add(1)
 	return errors.New("metadata-only CLOSE must not publish data")
 }
@@ -287,7 +323,7 @@ func TestMetadataOnlyCloseSkipsDataIO(t *testing.T) {
 			xid := uint32(1)
 			clientID := setupClient(t, conn, &xid)
 			state, fh := openWriteFile(t, conn, &xid, clientID, "file")
-			id, _ := fhToInodeID(fh)
+			id := stagingIDForTest(t, store, state)
 			stamp := time.Unix(1_600_000_000, 0)
 			if err := store.Get(id).SetTime(&stamp, nil); err != nil {
 				t.Fatal(err)
@@ -328,7 +364,6 @@ func createSizeStatus(t *testing.T, conn net.Conn, xid *uint32, clientID, size u
 	res := sendCompound(t, conn, *xid, func(w *COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		ow := w.AppendArgarray_Open()
-		ow.SetSeqid(1)
 		ow.SetShareAccess(OPEN4_SHARE_ACCESS_BOTH)
 		ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
 		owner := ow.StartOwner().SetClientid(clientID).SetOwner([]byte("size-error"))
@@ -336,7 +371,7 @@ func createSizeStatus(t *testing.T, conn net.Conn, xid *uint32, clientID, size u
 		create := ow.SetOpenhow_Create()
 		attrs := create.SetValue_Unchecked4()
 		data := binary.BigEndian.AppendUint64(nil, size)
-		create.Resume(finishTestFattr(attrs, [2]uint32{1 << FATTR4_SIZE}, data))
+		create.Resume(finishTestFattr(attrs, attrMask{1 << FATTR4_SIZE}, data))
 		ow.Resume(create.Finish())
 		claim := ow.SetClaim_Null()
 		ow.Resume(claim.SetData([]byte("file")).Finish())
@@ -447,7 +482,7 @@ func TestRecoveredRetiredCreateAppliesSize(t *testing.T) {
 	writeFileAt(t, conn, &xid, fh, state, 0, []byte("acknowledged"))
 	srv.waitForClientGC()
 	now := time.Now().Add(2 * nfsLeaseTime)
-	srv.clients.now = func() time.Time { return now }
+	srv.clients.setClock(func() time.Time { return now })
 	srv.runLeaseSweep()
 	newClient := setupClient(t, conn, &xid)
 	size := uint64(3)

@@ -6,11 +6,13 @@ SHELL := /bin/bash
 .SHELLFLAGS := -o pipefail -c
 
 LIBNFS_REPOSITORY := https://github.com/sahlberg/libnfs.git
-LIBNFS_VERSION := 7.0.2
+# 8.0.0 is the first release with sessions, offered as NFSv4.2. The tests
+# start nfsd with -allow-minor-version-2 to accept it.
+LIBNFS_VERSION := 8.0.0
 LIBNFS_REVISION := libnfs-$(LIBNFS_VERSION)
 
 DEPS_DIR := $(CURDIR)/.deps
-LIBNFS_SOURCE := $(DEPS_DIR)/libnfs-$(LIBNFS_VERSION)
+LIBNFS_SOURCE := $(DEPS_DIR)/libnfs-$(LIBNFS_REVISION)
 LIBNFS_BUILD := $(DEPS_DIR)/libnfs-build-$(LIBNFS_VERSION)
 LIBNFS_INSTALL := $(DEPS_DIR)/libnfs-install
 LIBNFS_FETCHED := $(LIBNFS_SOURCE)/.ternfs-fetched
@@ -25,7 +27,7 @@ PYNFS_BUILT := $(PYNFS_SOURCE)/.ternfs-built
 GO_TEST_FLAGS ?=
 TEST_ARGS ?=
 PYNFS_PYTHON ?= python3
-PYNFS_TESTS ?= all noblock nochar nofifo nosocket nogss noacl nomode000
+PYNFS_TESTS ?= all noblock nochar nofifo nosocket nodeleg
 PYNFS_ARGS ?=
 PYNFS_SKIP_FILE ?= $(CURDIR)/pynfs/pynfs_unsupported.txt
 PYNFS_OUTPUT ?= $(CURDIR)/pynfs.out
@@ -52,7 +54,7 @@ help:
 		'  test-libnfs-cluster  Run libnfs tests with a temporary ternrun cluster' \
 		'  clean-libnfs     Remove downloaded and built libnfs files' \
 		'  fetch-pynfs      Fetch the pinned pynfs source under .deps' \
-		'  build-pynfs      Generate the pynfs NFSv4.0 modules' \
+		'  build-pynfs      Generate the pynfs NFSv4.1 modules' \
 		'  test-pynfs       Run pynfs against an existing backend' \
 		'  test-pynfs-cluster  Run pynfs with a temporary ternrun cluster' \
 		'  clean-pynfs      Remove downloaded and built pynfs files' \
@@ -71,10 +73,16 @@ help:
 
 fetch-libnfs: $(LIBNFS_FETCHED)
 
+# A release tarball unpacked in .deps (libnfs-libnfs-$(LIBNFS_VERSION).tar.gz
+# from GitHub) is used when present; otherwise clone the tag.
 $(LIBNFS_FETCHED):
 	mkdir -p "$(DEPS_DIR)"
-	git clone --branch "$(LIBNFS_REVISION)" --depth 1 \
-		"$(LIBNFS_REPOSITORY)" "$(LIBNFS_SOURCE)"
+	if [[ -f "$(DEPS_DIR)/libnfs-$(LIBNFS_REVISION).tar.gz" ]]; then \
+		tar -C "$(DEPS_DIR)" -xzf "$(DEPS_DIR)/libnfs-$(LIBNFS_REVISION).tar.gz"; \
+	else \
+		git clone --branch "$(LIBNFS_REVISION)" --depth 1 \
+			"$(LIBNFS_REPOSITORY)" "$(LIBNFS_SOURCE)"; \
+	fi
 	touch "$@"
 
 build-libnfs: $(LIBNFS_BUILT)
@@ -107,9 +115,10 @@ $(PYNFS_FETCHED):
 
 build-pynfs: $(PYNFS_BUILT)
 
+# The NFSv4.1 tests need the generated xdr, rpc and nfs4.1 modules, which the
+# top-level setup.py builds in place.
 $(PYNFS_BUILT): $(PYNFS_FETCHED)
-	cd "$(PYNFS_SOURCE)/nfs4.0" && \
-		"$(PYNFS_PYTHON)" setup.py build_ext --inplace
+	cd "$(PYNFS_SOURCE)" && "$(PYNFS_PYTHON)" setup.py build
 	touch "$@"
 
 test-pynfs test-pynfs-cluster: $(PYNFS_BUILT)

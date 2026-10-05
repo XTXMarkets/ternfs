@@ -413,3 +413,333 @@ func TestRefresherRecordBudget(t *testing.T) {
 		t.Fatal("credit not returned after the worker exited")
 	}
 }
+
+// The lease gate: a read error returns it to live with nothing published;
+// an active or quiet group is never expired; expiry refuses admission.
+func TestLeaseGateDecisions(t *testing.T) {
+	fs := &admissionLeaseVFS{TernVFS: NewLocalTernVFS(t.TempDir())}
+	srv, err := NewServer(fs, readOnlyStagingStore{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(srv.clients.stopLeaseWorkers)
+	clientID, confirm, err := srv.clients.SetClientID([8]byte{1}, []byte("gate"), clientOwner{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.clients.ConfirmClientID(clientID, confirm, rpcPrincipal{}); err != nil {
+		t.Fatal(err)
+	}
+	ts := connectionSession(t, srv)
+	sess := srv.sessions.lookup(ts.id)
+	moveSessionForTest(srv.sessions, sess, clientID, sess.id)
+	srv.clients.pinLeaseForTest(clientID)
+	srv.clients.setClock(func() time.Time { return time.Now().Add(10 * nfsLeaseTime) })
+	gate := func() leaseGateState {
+		srv.sessions.mu.Lock()
+		defer srv.sessions.mu.Unlock()
+		return srv.sessions.groups[clientID].lease
+	}
+
+	// Active: no decision, no read.
+	hold, status := srv.sessions.holdRequest(sess)
+	if status != NFS4_OK {
+		t.Fatal(Nfsstat4Name(status))
+	}
+	hold.activate()
+	fs.fail = true
+	if expired, err := srv.decideExpired(clientID, true); expired || err != nil {
+		t.Fatalf("active client decided %t %v", expired, err)
+	}
+	// Released: quiet until nfsLeaseTime after the reply.
+	hold.release()
+	srv.sessions.mu.Lock()
+	quiet := srv.sessions.groups[clientID].quietUntil
+	srv.sessions.mu.Unlock()
+	if quiet.Before(srv.sessions.now().Add(nfsLeaseTime - time.Second)) {
+		t.Fatalf("quiet until %s", quiet)
+	}
+	if expired, _ := srv.decideExpired(clientID, true); expired {
+		t.Fatal("quiet client expired")
+	}
+	endQuietForTest(srv)
+	// A read error: live again, no marker, state kept.
+	if expired, err := srv.decideExpired(clientID, true); expired || err == nil {
+		t.Fatalf("read error decided %t %v", expired, err)
+	}
+	if gate() != gateLive {
+		t.Fatal("read error left the gate deciding")
+	}
+	fs.fail = false
+	if _, err := fs.Lookup(InodeID(clientID), expiredName); err == nil {
+		t.Fatal("marker published on a read error")
+	}
+	if srv.sessions.lookup(ts.id) == nil {
+		t.Fatal("read error retired the session")
+	}
+
+	// Expired: admission is refused.
+	srv.sessions.mu.Lock()
+	srv.sessions.groups[clientID].lease = gateExpired
+	srv.sessions.mu.Unlock()
+	if _, status := srv.sessions.holdRequest(sess); status != NFS4ERR_BADSESSION {
+		t.Fatalf("admission after expiry %s", Nfsstat4Name(status))
+	}
+	srv.sessions.mu.Lock()
+	srv.sessions.groups[clientID].lease = gateChecking
+	srv.sessions.mu.Unlock()
+	if _, status := srv.sessions.holdRequest(sess); status != NFS4ERR_DELAY {
+		t.Fatalf("admission while deciding %s", Nfsstat4Name(status))
+	}
+}
+
+// trapVFS blocks every backend call while armed.
+type trapVFS struct {
+	TernVFS
+	armed   bool
+	mu      sync.Mutex
+	calls   []string
+	release chan struct{}
+}
+
+func (fs *trapVFS) trap(name string) {
+	fs.mu.Lock()
+	armed := fs.armed
+	if armed {
+		fs.calls = append(fs.calls, name)
+	}
+	fs.mu.Unlock()
+	if armed {
+		<-fs.release
+	}
+}
+func (fs *trapVFS) Stat(id InodeID) (NodeInfo, error) { fs.trap("Stat"); return fs.TernVFS.Stat(id) }
+func (fs *trapVFS) Lookup(d InodeID, n string) (InodeID, error) {
+	fs.trap("Lookup")
+	return fs.TernVFS.Lookup(d, n)
+}
+func (fs *trapVFS) LookupParent(id InodeID) (InodeID, error) {
+	fs.trap("LookupParent")
+	return fs.TernVFS.LookupParent(id)
+}
+func (fs *trapVFS) Readdir(d InodeID, h uint64) ([]DirEntry, uint64, error) {
+	fs.trap("Readdir")
+	return fs.TernVFS.Readdir(d, h)
+}
+func (fs *trapVFS) ReadAll(id InodeID) ([]byte, error) {
+	fs.trap("ReadAll")
+	return fs.TernVFS.ReadAll(id)
+}
+func (fs *trapVFS) Readlink(id InodeID) (string, error) {
+	fs.trap("Readlink")
+	return fs.TernVFS.Readlink(id)
+}
+func (fs *trapVFS) LookupEdge(d InodeID, n string) (Edge, error) {
+	fs.trap("LookupEdge")
+	return fs.TernVFS.LookupEdge(d, n)
+}
+
+// SEQUENCE never calls the store: admission and its DELAY both answer from
+// memory while every backend call blocks.
+func TestSequenceAdmissionDoesNoStoreIO(t *testing.T) {
+	fs := &trapVFS{TernVFS: NewLocalTernVFS(t.TempDir()), release: make(chan struct{})}
+	srv, err := NewServer(fs, readOnlyStagingStore{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := connectionSession(t, srv)
+	sess := srv.sessions.lookup(ts.id)
+	body := buildCompoundBody(nil, func(*COMPOUND4argsWriter) {})
+	fs.mu.Lock()
+	fs.armed = true
+	fs.mu.Unlock()
+	defer close(fs.release)
+	done := make(chan uint32, 2)
+	go func() {
+		_, res := admissionRequest(t, srv, admissionSequence(body, ts, 0, 1, true), 1, nil)
+		done <- res.Status()
+		setLeaseForTest(srv, sess.clientID, func(r *leaseRefresher) { r.proven = 0 })
+		_, res = admissionRequest(t, srv, admissionSequence(body, ts, 0, 2, true), 2, nil)
+		done <- res.Status()
+	}()
+	for _, want := range []uint32{NFS4_OK, NFS4ERR_DELAY} {
+		if got := awaitValue(t, done, "SEQUENCE with a blocked store"); got != want {
+			t.Fatalf("SEQUENCE %s, want %s", Nfsstat4Name(got), Nfsstat4Name(want))
+		}
+	}
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	if len(fs.calls) != 0 {
+		t.Fatalf("SEQUENCE called the store: %v", fs.calls)
+	}
+}
+
+// Association tokens: a commit by BIND survives another request's abort,
+// a pending-only failure leaves nothing, and pending tokens count toward
+// the quota so SEQUENCE gets RESOURCE before any renewal work.
+func TestAssociationTokens(t *testing.T) {
+	srv, err := NewServer(NewLocalTernVFS(t.TempDir()), readOnlyStagingStore{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := connectionSession(t, srv)
+	conn := &rpcConnection{}
+	pending, ok := conn.reserve(srv, ts.id)
+	if !ok || !pending.new {
+		t.Fatal("reserve")
+	}
+	if !conn.bind(srv, ts.id) {
+		t.Fatal("bind")
+	}
+	pending.abort()
+	if !conn.associated(ts.id) {
+		t.Fatal("abort removed BIND's association")
+	}
+	other := connectionSession(t, srv)
+	failed, _ := conn.reserve(srv, other.id)
+	failed.abort()
+	failed.abort()
+	conn.mu.Lock()
+	if _, ok := conn.sessions[other.id]; ok || len(conn.pending) != 0 {
+		conn.mu.Unlock()
+		t.Fatal("pending-only failure left an association")
+	}
+	conn.mu.Unlock()
+
+	// Fill the quota with pending tokens.
+	var tokens []*associationToken
+	for len(tokens) < maxConnectionSessions-1 {
+		s := connectionSession(t, srv)
+		tok, ok := conn.reserve(srv, s.id)
+		if !ok {
+			t.Fatalf("reserve %d refused", len(tokens))
+		}
+		tokens = append(tokens, tok)
+	}
+	if _, ok := conn.reserve(srv, other.id); ok {
+		t.Fatal("pending tokens not counted against the quota")
+	}
+	// SEQUENCE on the full connection: RESOURCE, with no verify requested.
+	sess := srv.sessions.lookup(other.id)
+	setLeaseForTest(srv, sess.clientID, func(r *leaseRefresher) { r.proven = 0 })
+	body := buildCompoundBody(nil, func(*COMPOUND4argsWriter) {})
+	_, res := admissionRequest(t, srv, admissionSequence(body, other, 0, 1, true), 1, conn)
+	admissionStatus(t, res, NFS4ERR_RESOURCE, OP_SEQUENCE)
+	setLeaseForTest(srv, sess.clientID, func(r *leaseRefresher) {
+		if r.verify {
+			t.Error("RESOURCE admission requested a verify")
+		}
+	})
+	for _, tok := range tokens {
+		tok.abort()
+	}
+	conn.mu.Lock()
+	defer conn.mu.Unlock()
+	if len(conn.pending) != 0 || len(conn.sessions) != 1 {
+		t.Fatalf("pending %d sessions %d", len(conn.pending), len(conn.sessions))
+	}
+}
+
+// A replay renews: its commit activates a hold like a new request.
+func TestSequenceReplayRenews(t *testing.T) {
+	srv, err := NewServer(NewLocalTernVFS(t.TempDir()), readOnlyStagingStore{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := connectionSession(t, srv)
+	sess := srv.sessions.lookup(ts.id)
+	body := buildCompoundBody(nil, func(*COMPOUND4argsWriter) {})
+	wire := admissionSequence(body, ts, 0, 1, true)
+	admissionRequest(t, srv, wire, 1, nil)
+	endQuietForTest(srv)
+	admissionRequest(t, srv, wire, 2, nil)
+	srv.sessions.mu.Lock()
+	defer srv.sessions.mu.Unlock()
+	g := srv.sessions.groups[sess.clientID]
+	if g == nil || !g.quietUntil.After(time.Now()) {
+		t.Fatal("replay did not renew")
+	}
+}
+
+// An idle client's first SEQUENCE gets DELAY while a verify reads its
+// lease; the worker's read-only pass then admits the retry.
+func TestIdleClientResumesAfterVerify(t *testing.T) {
+	fs := &refresherFaultVFS{TernVFS: NewLocalTernVFS(t.TempDir())}
+	srv, err := NewServer(fs, readOnlyStagingStore{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr, stop := serveTestServer(t, srv)
+	defer stop()
+	conn := dial(t, addr)
+	defer conn.Close()
+	ts, err := createTestSession(conn, 1, "idle-client", [8]byte{1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientID := incarnationForTest(t, srv, ts.clientID)
+	setLeaseForTest(srv, clientID, func(r *leaseRefresher) { r.verifiedAt = 0 })
+	fs.set(func() { fs.constructs = 0 })
+	body := buildCompoundBody(nil, func(*COMPOUND4argsWriter) {})
+	reply, err := sendRawRPC(conn, 2, procCompound, withSequence(body, ts, 0, 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := sequenceStatus(reply); got != NFS4ERR_DELAY {
+		t.Fatalf("idle SEQUENCE %s, want DELAY", Nfsstat4Name(got))
+	}
+	for deadline := time.Now().Add(testChannelTimeout); ; time.Sleep(time.Millisecond) {
+		reply, err = sendRawRPC(conn, 3, procCompound, withSequence(body, ts, 0, 1))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if sequenceStatus(reply) == NFS4_OK {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("retry %s", Nfsstat4Name(sequenceStatus(reply)))
+		}
+	}
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	if fs.constructs != 0 {
+		t.Fatal("the verify wrote a lease")
+	}
+}
+
+// CREATE_SESSION replies once the worker has published the client's first
+// lease, so a client that treats DELAY as failure (libnfs at mount) gets OK
+// from its first SEQUENCE.
+func TestCreateSessionWaitsForFirstPublication(t *testing.T) {
+	srv, addr, cleanup := startTestServerWithServer(t, t.TempDir())
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+	clientID, seq, status, err := exchangeID(conn, 1, "first-sequence", [8]byte{6})
+	if err != nil || status != NFS4_OK {
+		t.Fatalf("EXCHANGE_ID %s %v", Nfsstat4Name(status), err)
+	}
+	reply, err := sendRawRPC(conn, 2, procCompound, backCreateSessionBody(clientID, seq, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := parseCompoundReply(reply)
+	if err != nil || res.Status() != NFS4_OK {
+		t.Fatalf("CREATE_SESSION %v %v", res.Status(), err)
+	}
+	it := res.Resarray()
+	it.Next()
+	ok := it.Resarray().Value().AsCREATESESSION4resEntry().Value().AsCREATESESSION4resok()
+	if !srv.clients.leaseProven(InodeID(incarnationForTest(t, srv, clientID))) {
+		t.Fatal("CREATE_SESSION replied before the first publication")
+	}
+	ts := newTestSession(readSessionID(ok.CsrSessionid()), clientID, ok.CsrForeChanAttrs().CaMaxrequests())
+	body := buildCompoundBody(nil, func(*COMPOUND4argsWriter) {})
+	reply, err = sendRawRPC(conn, 3, procCompound, withSequence(body, ts, 0, 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := sequenceStatus(reply); got != NFS4_OK {
+		t.Fatalf("first SEQUENCE %s", Nfsstat4Name(got))
+	}
+}

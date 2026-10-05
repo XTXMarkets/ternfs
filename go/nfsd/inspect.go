@@ -32,7 +32,7 @@ import (
 // field is set by the command line flag of the same name, and the report
 // labels the values it prints with those same names.
 type inspectOptions struct {
-	// Identity is the raw SETCLIENTID identity (-identity). Its SHA-256 names
+	// Identity is the raw EXCHANGE_ID identity (-identity). Its SHA-256 names
 	// the identity directory.
 	Identity []byte
 	// IdentityHash is the hexadecimal identity directory name
@@ -195,7 +195,6 @@ type inspectRecord struct {
 	Verifier    string `json:"verifier"`
 	Confirm     string `json:"confirm"`
 	Principal   string `json:"principal"`
-	Callback    string `json:"callback"`
 }
 
 type inspectSlot struct {
@@ -855,7 +854,6 @@ func (cs *ClientStore) inspectRecord(entry DirEntry) (*inspectRecord, error) {
 		Verifier:  hex.EncodeToString(record.Verifier),
 		Confirm:   hex.EncodeToString(record.Confirm),
 		Principal: formatPrincipal(record.principal()),
-		Callback:  formatCallback(record.NetID, record.Addr),
 	}
 	out.Identity, out.IdentityHex = inspectOpaque(record.ID)
 	return out, nil
@@ -1122,7 +1120,7 @@ func inspectTime(value time.Time) *time.Time {
 	return &value
 }
 
-// inspectOpaque renders client-supplied opaque bytes such as a SETCLIENTID
+// inspectOpaque renders client-supplied opaque bytes such as a EXCHANGE_ID
 // identity or an open owner. Clients send printable text in practice but
 // nothing requires it, so anything else is reported as hex rather than
 // mangled into replacement runes by the JSON encoder. The returned text is
@@ -1163,27 +1161,6 @@ func formatPrincipal(p rpcPrincipal) string {
 			uid, gid, strings.Join(gids, ","))
 	}
 	return fmt.Sprintf("flavor %d %s", p.flavor, hex.EncodeToString(body))
-}
-
-// formatCallback turns an RFC 5665 universal address such as
-// 10.1.2.3.8.1 into 10.1.2.3:2049.
-func formatCallback(netid string, addr string) string {
-	parts := strings.Split(addr, ".")
-	if (netid != "tcp" && netid != "udp") || len(parts) != 6 {
-		return netid + " " + addr
-	}
-	var octets [6]int
-	for i, part := range parts {
-		// strconv rejects trailing junk, which Sscanf would silently accept.
-		value, err := strconv.Atoi(part)
-		if err != nil || value < 0 || value > 255 {
-			return netid + " " + addr
-		}
-		octets[i] = value
-	}
-	return fmt.Sprintf("%s %d.%d.%d.%d:%d", netid,
-		octets[0], octets[1], octets[2], octets[3],
-		octets[4]<<8|octets[5])
 }
 
 // WriteText renders the report for a terminal.
@@ -1269,8 +1246,7 @@ func (r *inspectReport) WriteText(w io.Writer) {
 					fmt.Fprintf(w, " identity %s (not printable)", rec.IdentityHex)
 				}
 				fmt.Fprintf(w, " verifier %s confirm %s\n", rec.Verifier, rec.Confirm)
-				fmt.Fprintf(w, "    %-10s principal %s callback %s\n", "",
-					rec.Principal, rec.Callback)
+				fmt.Fprintf(w, "    %-10s principal %s\n", "", rec.Principal)
 			}
 			writeRecord("client", inc.Record)
 			writeRecord("update", inc.Update)

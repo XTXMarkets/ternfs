@@ -111,7 +111,7 @@ func TestNamespaceErrorOutcomes(t *testing.T) {
 					if got := commitNamespaceStatus(t, f); got != NFS4ERR_IO {
 						t.Fatalf("failed COMMIT = %s", Nfsstat4Name(got))
 					}
-					if got := closeFileWithSeqStatus(t, f.conn, &f.xid, f.fh, f.state, 3); got != NFS4ERR_EXPIRED {
+					if got := closeFileStatus(t, f.conn, &f.xid, f.fh, f.state); got != NFS4ERR_EXPIRED {
 						t.Fatalf("failed CLOSE = %s", Nfsstat4Name(got))
 					}
 					if got := commitNamespaceStatus(t, f); got != NFS4ERR_IO {
@@ -143,7 +143,7 @@ func TestRenameStagedSourceAndDestination(t *testing.T) {
 			t.Run(fmt.Sprintf("destination-first=%t/restart=%t", destinationFirst, restart), func(t *testing.T) {
 				f := newNamespaceFixture(t)
 				state, fh := openWriteFile(t, f.conn, &f.xid, f.clientID, "target")
-				destinationID, _ := fhToInodeID(fh)
+				destinationID := stagingIDForTest(t, f.store, state)
 				writeFileAt(t, f.conn, &f.xid, f.fh, f.state, 0, []byte("source writer"))
 				writeFileAt(t, f.conn, &f.xid, fh, state, 0, []byte("target writer"))
 				if status := renameNamespaceFile(t, f, "source", "target"); status != NFS4_OK {
@@ -224,7 +224,7 @@ func openNamespaceFixture(t *testing.T) *namespaceFixture {
 	t.Cleanup(func() { f.close(t) })
 	f.clientID = setupClient(t, f.conn, &f.xid)
 	f.state, f.fh = openWriteFile(t, f.conn, &f.xid, f.clientID, "source")
-	f.id, _ = fhToInodeID(f.fh)
+	f.id = stagingIDForTest(t, f.store, f.state)
 	return f
 }
 
@@ -258,7 +258,7 @@ func expireNamespaceClient(t *testing.T, f *namespaceFixture) {
 	t.Helper()
 	f.server.waitForClientGC()
 	now := time.Now().Add(2 * nfsLeaseTime)
-	f.server.clients.now = func() time.Time { return now }
+	f.server.clients.setClock(func() time.Time { return now })
 	f.server.runLeaseSweep()
 }
 
@@ -307,11 +307,10 @@ func TestRemoveOpenStaging(t *testing.T) {
 	}
 	// Recreate the pathname before closing the old descriptor.
 	status, state, fh, _ := openFileForOwner(t, f.conn, &f.xid, f.clientID,
-		"recreated", 1, "source", OPEN4_SHARE_ACCESS_BOTH, true, false)
+		"recreated", "source", OPEN4_SHARE_ACCESS_BOTH, true, false)
 	if status != NFS4_OK {
 		t.Fatalf("recreate returned %s", Nfsstat4Name(status))
 	}
-	state = confirmOpenState(t, f.conn, &f.xid, fh, 2, state)
 	writeFileAt(t, f.conn, &f.xid, fh, state, 0, []byte("new pathname"))
 	closeFile(t, f.conn, &f.xid, fh, state)
 	writeFileAt(t, f.conn, &f.xid, f.fh, f.state, 0, []byte("old descriptor"))
@@ -390,11 +389,10 @@ func TestRetiredWritersFollowNamespaceChanges(t *testing.T) {
 			}
 			clientID := setupClient(t, f.conn, &f.xid)
 			status, state, fh, _ := openFileForOwner(t, f.conn, &f.xid, clientID,
-				"test-owner-source", 1, "target", OPEN4_SHARE_ACCESS_BOTH, false, false)
+				"test-owner-source", "target", OPEN4_SHARE_ACCESS_BOTH, false, false)
 			if status != NFS4_OK {
 				t.Fatalf("reclaim returned %s", Nfsstat4Name(status))
 			}
-			state = confirmOpenState(t, f.conn, &f.xid, fh, 2, state)
 			closeFile(t, f.conn, &f.xid, fh, state)
 			if _, err := os.Stat(filepath.Join(f.root, "source")); !os.IsNotExist(err) {
 				t.Fatalf("reclaim resurrected old source: %v", err)
@@ -452,59 +450,6 @@ func TestDetachedCloseDoesNotLockOldName(t *testing.T) {
 	closeFile(t, f.conn, &f.xid, f.fh, f.state)
 }
 
-func TestAbandonedOpenWaitsForNamespaceChange(t *testing.T) {
-	f := newNamespaceFixture(t)
-	status, _, fh, _ := openFileForOwner(t, f.conn, &f.xid, f.clientID,
-		"unconfirmed", 1, "source", OPEN4_SHARE_ACCESS_BOTH, false, false)
-	if status != NFS4_OK {
-		t.Fatal(Nfsstat4Name(status))
-	}
-	abandonedID, _ := fhToInodeID(fh)
-	fs := blockingNamespaceRemove{TernVFS: f.fs, entered: make(chan struct{}), release: make(chan struct{})}
-	f.server.fs = fs
-	removeF := *f
-	removeF.conn = dial(t, f.conn.RemoteAddr().String())
-	defer removeF.conn.Close()
-	removeF.xid = 1000
-	removed := make(chan uint32, 1)
-	go func() { removed <- removeNamespaceFile(t, &removeF, "source") }()
-	awaitSignal(t, fs.entered, "backend REMOVE")
-	type openResult struct {
-		status uint32
-		err    error
-	}
-	opened := make(chan openResult, 1)
-	go func() {
-		status, _, _, _, err := openFileForOwnerE(f.conn, &f.xid, f.clientID,
-			"unconfirmed", 2, "next", OPEN4_SHARE_ACCESS_BOTH, true, false)
-		opened <- openResult{status, err}
-	}()
-	select {
-	case result := <-opened:
-		close(fs.release)
-		<-removed
-		t.Fatalf("abandoned-open cleanup did not wait: %+v", result)
-	case <-time.After(50 * time.Millisecond):
-	}
-	close(fs.release)
-	if status := <-removed; status != NFS4_OK {
-		t.Fatal(Nfsstat4Name(status))
-	}
-	result := <-opened
-	if result.err != nil || result.status != NFS4_OK {
-		t.Fatalf("replacement OPEN = %+v", result)
-	}
-	if f.store.Get(abandonedID) != nil {
-		t.Fatal("abandoned detached writer leaked")
-	}
-	for _, suffix := range []string{".meta", ".staging"} {
-		_, err := os.Stat(filepath.Join(f.disk, fmt.Sprintf("%016x%s", uint64(abandonedID), suffix)))
-		if !os.IsNotExist(err) {
-			t.Fatalf("abandoned sidecar/data remained: %v", err)
-		}
-	}
-}
-
 func (f *namespaceFixture) start(t *testing.T) {
 	t.Helper()
 	var err error
@@ -560,6 +505,7 @@ func TestRetiredSourceDoesNotBlockRename(t *testing.T) {
 	for _, destination := range []string{"absent", "retired", "active", "rejected", "checkpoint failure"} {
 		t.Run(destination, func(t *testing.T) {
 			f := newNamespaceFixture(t)
+			expiredIncarnation := incarnationForTest(t, f.server, f.clientID)
 			expireNamespaceClient(t, f)
 			dir, err := f.fs.Mkdir(f.fs.RootID(), "other")
 			if err != nil {
@@ -580,9 +526,9 @@ func TestRetiredSourceDoesNotBlockRename(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				clientID := f.clientID
+				clientID := expiredIncarnation
 				if destination == "active" {
-					clientID = setupClient(t, f.conn, &f.xid)
+					clientID = incarnationForTest(t, f.server, setupClient(t, f.conn, &f.xid))
 				}
 				stateID := f.server.opens.newStateID()
 				sf, err := f.store.Create(destinationID, StagingMeta{
@@ -665,11 +611,10 @@ func TestActiveSourceStillBlocksCrossDirectoryRename(t *testing.T) {
 	}
 	clientID := setupClient(t, f.conn, &f.xid)
 	status, state, fh, _ := openFileForOwner(t, f.conn, &f.xid, clientID,
-		"live-source", 1, "source", OPEN4_SHARE_ACCESS_BOTH, false, false)
+		"live-source", "source", OPEN4_SHARE_ACCESS_BOTH, false, false)
 	if status != NFS4_OK {
 		t.Fatal(Nfsstat4Name(status))
 	}
-	state = confirmOpenState(t, f.conn, &f.xid, fh, 2, state)
 	if status := renameNamespaceIntoDirectory(t, f); status != NFS4ERR_FILE_OPEN {
 		t.Fatalf("live source returned %s, want FILE_OPEN", Nfsstat4Name(status))
 	}
@@ -692,12 +637,11 @@ func TestRenameOpenStaging(t *testing.T) {
 		t.Fatal(err)
 	}
 	status, state, fh, _ := openFileForOwner(t, f.conn, &f.xid, f.clientID,
-		"second-owner", 1, "source", OPEN4_SHARE_ACCESS_BOTH, false, false)
+		"second-owner", "source", OPEN4_SHARE_ACCESS_BOTH, false, false)
 	if status != NFS4_OK {
 		t.Fatalf("second OPEN returned %s", Nfsstat4Name(status))
 	}
-	state = confirmOpenState(t, f.conn, &f.xid, fh, 2, state)
-	second, _ := fhToInodeID(fh)
+	second := stagingIDForTest(t, f.store, state)
 	meta, _ := f.store.GetMeta(second)
 	if meta.BaseID != other {
 		t.Fatal("fixture did not open a different base inode")
@@ -782,9 +726,8 @@ func TestCloseWaitsForStagedRename(t *testing.T) {
 		closeConn := dial(t, addr)
 		defer closeConn.Close()
 		closeXID := uint32(200)
-		closeDone <- closeFileWithSeqStatus(
-			t, closeConn, &closeXID, fh, stateID, 3,
-		)
+		closeDone <- closeFileStatus(
+			t, closeConn, &closeXID, fh, stateID)
 	}()
 	select {
 	case status := <-closeDone:

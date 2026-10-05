@@ -10,91 +10,99 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"testing"
 	"time"
 )
 
+// exerciseVisibleCreation checks that CREATE publishes an empty file at
+// once. The creator's client sees its staged contents through the empty
+// file's handle; other clients see the empty version until CLOSE.
 func exerciseVisibleCreation(t *testing.T, addr, name string, reverse bool) {
 	t.Helper()
 	conn := dial(t, addr)
 	defer conn.Close()
+	otherConn := dial(t, addr)
+	defer otherConn.Close()
 	xid := uint32(1)
 	clientID := setupClient(t, conn, &xid)
+	otherID, confirm := requestClientID(t, otherConn, &xid, "other-"+name, [8]byte{2})
+	if status := confirmClientID(t, otherConn, &xid, otherID, confirm); status != NFS4_OK {
+		t.Fatal(Nfsstat4Name(status))
+	}
 	size := uint64(5)
 	creator, creatorFH := openCreateFileWithSize(t, conn, &xid, clientID, name, &size)
-	emptyFH := lookupFH(t, conn, &xid, name)
-	if bytes.Equal(emptyFH, creatorFH) {
-		t.Fatal("creator must have a separate private handle")
+	emptyFH := lookupFH(t, otherConn, &xid, name)
+	if !bytes.Equal(emptyFH, creatorFH) {
+		t.Fatal("creator's handle is not the published empty file")
 	}
-	checkSize := func(fh []byte, want uint64) {
+	checkSize := func(c net.Conn, fh []byte, want uint64) {
 		t.Helper()
-		attrs := mutableAttrs(t, conn, &xid, fh)
+		attrs := mutableAttrs(t, c, &xid, fh)
 		if got := binary.BigEndian.Uint64(attrs[8:16]); got != want {
 			t.Fatalf("size of %x = %d, want %d", fh, got, want)
 		}
 	}
-	check := func(fh []byte, want string) {
+	check := func(c net.Conn, fh []byte, want string) {
 		t.Helper()
-		data, eof := readFileData(t, conn, &xid, fh, 0, 1024)
+		data, eof := readFileData(t, c, &xid, fh, 0, 1024)
 		if string(data) != want || !eof {
 			t.Fatalf("READ = (%q, %t), want (%q, true)", data, eof, want)
 		}
 	}
-	checkSize(emptyFH, 0)
-	checkSize(creatorFH, size)
+	checkSize(otherConn, emptyFH, 0)
+	checkSize(conn, creatorFH, size)
 	writeFileAt(t, conn, &xid, creatorFH, creator, 0, []byte("first"))
-	check(emptyFH, "")
-	check(lookupFH(t, conn, &xid, name), "")
+	check(otherConn, emptyFH, "")
+	check(conn, creatorFH, "first")
 	// A repeated guarded create now sees the published empty name.
 	status, _, _, _ := openFileForOwner(
-		t, conn, &xid, clientID, "guarded", 1, name,
+		t, otherConn, &xid, otherID, "guarded", name,
 		OPEN4_SHARE_ACCESS_BOTH, true, true,
 	)
 	if status != NFS4ERR_EXIST {
 		t.Fatalf("GUARDED create = %s, want EXIST", Nfsstat4Name(status))
 	}
 	status, reader, readerFH, _ := openFileForOwner(
-		t, conn, &xid, clientID, "reader", 1, name,
+		t, otherConn, &xid, otherID, "reader", name,
 		OPEN4_SHARE_ACCESS_READ, false, false,
 	)
-	if status != NFS4_OK {
-		t.Fatal(Nfsstat4Name(status))
-	}
-	reader = confirmOpenState(t, conn, &xid, readerFH, 2, reader)
-	if !bytes.Equal(readerFH, emptyFH) {
-		t.Fatal("reader did not open the empty published version")
+	if status != NFS4_OK || !bytes.Equal(readerFH, emptyFH) {
+		t.Fatalf("reader OPEN = %s", Nfsstat4Name(status))
 	}
 	status, writer, writerFH, _ := openFileForOwner(
-		t, conn, &xid, clientID, "writer", 1, name,
+		t, otherConn, &xid, otherID, "writer", name,
 		OPEN4_SHARE_ACCESS_BOTH, false, false,
 	)
 	if status != NFS4_OK {
 		t.Fatal(Nfsstat4Name(status))
 	}
-	writer = confirmOpenState(t, conn, &xid, writerFH, 2, writer)
-	if bytes.Equal(writerFH, creatorFH) || bytes.Equal(writerFH, emptyFH) {
-		t.Fatal("second writer did not get independent staging")
-	}
-	checkSize(writerFH, 0)
-	writeFileAt(t, conn, &xid, writerFH, writer, 0, []byte("second"))
-	check(creatorFH, "first")
-	check(writerFH, "second")
-	check(readerFH, "")
+	checkSize(otherConn, writerFH, 0)
+	writeFileAt(t, otherConn, &xid, writerFH, writer, 0, []byte("second"))
+	check(conn, creatorFH, "first")
+	check(otherConn, writerFH, "second")
 	firstWant, lastWant := "first", "second"
+	firstConn, lastConn := conn, otherConn
 	if reverse {
 		creator, writer = writer, creator
-		creatorFH, writerFH = writerFH, creatorFH
+		firstConn, lastConn = lastConn, firstConn
 		firstWant, lastWant = lastWant, firstWant
 	}
-	closeFile(t, conn, &xid, creatorFH, creator)
-	check(lookupFH(t, conn, &xid, name), firstWant)
-	check(readerFH, "")
-	check(writerFH, lastWant)
-	closeFile(t, conn, &xid, writerFH, writer)
-	check(lookupFH(t, conn, &xid, name), lastWant)
-	check(readerFH, "")
-	closeFile(t, conn, &xid, readerFH, reader)
+	viewer := dial(t, addr)
+	defer viewer.Close()
+	viewerID, viewerConfirm := requestClientID(t, viewer, &xid, "viewer-"+name, [8]byte{3})
+	if status := confirmClientID(t, viewer, &xid, viewerID, viewerConfirm); status != NFS4_OK {
+		t.Fatal(Nfsstat4Name(status))
+	}
+	closeFile(t, firstConn, &xid, emptyFH, creator)
+	check(viewer, lookupFH(t, viewer, &xid, name), firstWant)
+	check(viewer, emptyFH, "")
+	check(lastConn, emptyFH, lastWant)
+	closeFile(t, lastConn, &xid, emptyFH, writer)
+	check(viewer, lookupFH(t, viewer, &xid, name), lastWant)
+	check(viewer, emptyFH, "")
+	closeFile(t, otherConn, &xid, readerFH, reader)
 }
 
 func TestVisibleCreation(t *testing.T) {
@@ -136,7 +144,7 @@ func TestConcurrentGuardedCreationPublishesOnce(t *testing.T) {
 	go func() {
 		seq := uint32(100)
 		status, _, _, _, err := openFileForOwnerE(
-			firstConn, &seq, clientID, "first", 1, "guarded",
+			firstConn, &seq, clientID, "first", "guarded",
 			OPEN4_SHARE_ACCESS_BOTH, true, true,
 		)
 		if err != nil {
@@ -148,7 +156,7 @@ func TestConcurrentGuardedCreationPublishesOnce(t *testing.T) {
 	go func() {
 		seq := uint32(200)
 		status, _, _, _, err := openFileForOwnerE(
-			secondConn, &seq, clientID, "second", 1, "guarded",
+			secondConn, &seq, clientID, "second", "guarded",
 			OPEN4_SHARE_ACCESS_READ, true, true,
 		)
 		if err != nil {
@@ -180,7 +188,7 @@ func TestAbandonedCreationKeepsEmptyVersion(t *testing.T) {
 	writeFileAt(t, conn, &xid, fh, state, 0, []byte("unpublished"))
 	srv.waitForClientGC()
 	now := time.Now().Add(2 * nfsLeaseTime)
-	srv.clients.now = func() time.Time { return now }
+	srv.clients.setClock(func() time.Time { return now })
 	srv.runLeaseSweep()
 	if stagingTargetBusyForTest(srv.stagingStore, srv.fs.RootID(), "abandoned") {
 		t.Fatal("expired creator still holds staging")
@@ -251,9 +259,8 @@ func TestReadOnlyCreationSurvivesRestart(t *testing.T) {
 	if !bytes.Equal(data, make([]byte, 5)) {
 		t.Fatalf("initial CREATE size was lost: %q", data)
 	}
-	data, _ = readFileData(t, conn, &xid, emptyFH, 0, 1024)
-	if len(data) != 0 {
-		t.Fatal("original empty version changed")
+	if !bytes.Equal(emptyFH, fh) {
+		t.Fatal("creator's handle is not the published empty file")
 	}
 }
 
@@ -264,6 +271,9 @@ type visibilityFailureVFS struct {
 }
 
 func (fs *visibilityFailureVFS) ConstructFile(dirID InodeID) (InodeID, Cookie, error) {
+	if clientStoreDir(fs.LocalTernVFS, dirID) {
+		return fs.LocalTernVFS.ConstructFile(dirID)
+	}
 	fs.constructs++
 	if fs.failure == "staging" && fs.constructs == 2 {
 		return 0, Cookie{}, errors.New("injected staging construction failure")
@@ -308,7 +318,7 @@ func TestFailedCreationDoesNotPublishEmptyVersion(t *testing.T) {
 			clientID := setupClient(t, conn, &xid)
 			srv.waitForClientGC()
 			status, _, _, _ := openFileForOwner(
-				t, conn, &xid, clientID, "creator", 1, "failed",
+				t, conn, &xid, clientID, "creator", "failed",
 				OPEN4_SHARE_ACCESS_BOTH, true, false,
 			)
 			if status == NFS4_OK {

@@ -55,6 +55,10 @@ const (
 		(1 << (FATTR4_TIME_MODIFY - 32)) |
 		(1 << (FATTR4_MOUNTED_ON_FILEID - 32))
 
+	// SUPPATTR_EXCLCREAT reports the attributes EXCLUSIVE4_1 may set. It is
+	// empty: clients set attributes after an exclusive create with SETATTR.
+	supportedAttrs2 = 1 << (FATTR4_SUPPATTR_EXCLCREAT - 64)
+
 	// Settable, write-only attributes. These have no GETATTR value (they are
 	// not in supportedAttrs* and never encoded), but must be advertised in
 	// FATTR4_SUPPORTED_ATTRS or clients won't send them in SETATTR. SIZE is
@@ -93,31 +97,41 @@ const (
 	maxReadWrite = 1 << 20
 )
 
-// parseBitmap extracts up to two 32-bit words from a Bitmap4 into a fixed array.
-func parseBitmap(bm Bitmap4) [2]uint32 {
-	var mask [2]uint32
-	if bm.Count() > 0 {
-		mask[0] = bm.Data(0)
-	}
-	if bm.Count() > 1 {
-		mask[1] = bm.Data(1)
+// attrMask holds the three bitmap4 words used by NFSv4.1 attributes.
+type attrMask [3]uint32
+
+// parseBitmap extracts up to three 32-bit words from a Bitmap4. Later words
+// name no attribute nfsd knows.
+func parseBitmap(bm Bitmap4) attrMask {
+	var mask attrMask
+	for i := 0; i < len(mask) && i < int(bm.Count()); i++ {
+		mask[i] = bm.Data(i)
 	}
 	return mask
 }
 
-func validateGetattrMask(mask [2]uint32) uint32 {
+// appendBitmap writes all three words of mask. READDIR predicts reply
+// sizes from this fixed width.
+func appendBitmap(w *Bitmap4Writer, mask attrMask) {
+	for _, word := range mask {
+		w.AppendData(word)
+	}
+}
+
+func validateGetattrMask(mask attrMask) uint32 {
 	if mask[0]&invalidGetattrAttrs0 != 0 || mask[1]&invalidGetattrAttrs1 != 0 {
 		return NFS4ERR_INVAL
 	}
 	return NFS4_OK
 }
 
-func validateVerifyMask(mask [2]uint32) uint32 {
+func validateVerifyMask(mask attrMask) uint32 {
 	if mask[0]&invalidVerifyAttrs0 != 0 || mask[1]&invalidVerifyAttrs1 != 0 {
 		return NFS4ERR_INVAL
 	}
 	if mask[0]&^uint32(supportedAttrs0) != 0 ||
-		mask[1]&^uint32(supportedAttrs1) != 0 {
+		mask[1]&^uint32(supportedAttrs1) != 0 ||
+		mask[2]&^uint32(supportedAttrs2) != 0 {
 		return NFS4ERR_ATTRNOTSUPP
 	}
 	return NFS4_OK
@@ -125,7 +139,7 @@ func validateVerifyMask(mask [2]uint32) uint32 {
 
 func validateCreateAttrs(attrs Fattr4) uint32 {
 	mask := parseBitmap(attrs.Attrmask())
-	if mask[0]&^writableAttrs0 != 0 || mask[1]&^writableAttrs1 != 0 {
+	if mask[0]&^writableAttrs0 != 0 || mask[1]&^writableAttrs1 != 0 || mask[2] != 0 {
 		return NFS4ERR_INVAL
 	}
 	supported0 := (supportedAttrs0 | settableAttrs0) & writableAttrs0
@@ -178,17 +192,23 @@ func inodeNFSMode(id InodeID) uint32 {
 
 // encodeAttrs encodes the requested attributes into an XDR byte buffer.
 // Attributes MUST be encoded in order of their bit position.
-func encodeAttrs(mask [2]uint32, id InodeID, ni NodeInfo) []byte {
-	buf := make([]byte, 0, 256)
+func encodeAttrs(mask attrMask, id InodeID, ni NodeInfo) []byte {
+	return appendAttrs(make([]byte, 0, 256), mask, id, ni)
+}
+
+// appendAttrs appends encodeAttrs's encoding to buf. For a given mask the
+// encoding has a fixed length, so a buffer of that capacity never grows.
+func appendAttrs(buf []byte, mask attrMask, id InodeID, ni NodeInfo) []byte {
 
 	// Word 0 attributes (bits 0-31).
 	if mask[0]&(1<<FATTR4_SUPPORTED_ATTRS) != 0 {
 		// Advertise readable + settable attrs so clients will send SETATTR for
 		// the write-only ones (e.g. TIME_*_SET); these are never encoded as
 		// values below.
-		buf = binary.BigEndian.AppendUint32(buf, 2)
+		buf = binary.BigEndian.AppendUint32(buf, 3)
 		buf = binary.BigEndian.AppendUint32(buf, supportedAttrs0|settableAttrs0)
 		buf = binary.BigEndian.AppendUint32(buf, supportedAttrs1|settableAttrs1)
+		buf = binary.BigEndian.AppendUint32(buf, supportedAttrs2)
 	}
 	if mask[0]&(1<<FATTR4_TYPE) != 0 {
 		buf = binary.BigEndian.AppendUint32(buf, inodeNFSType(id))
@@ -334,6 +354,9 @@ func encodeAttrs(mask [2]uint32, id InodeID, ni NodeInfo) []byte {
 	if mask[1]&(1<<(FATTR4_MOUNTED_ON_FILEID-32)) != 0 {
 		buf = binary.BigEndian.AppendUint64(buf, id.Fileid())
 	}
+	if mask[2]&(1<<(FATTR4_SUPPATTR_EXCLCREAT-64)) != 0 {
+		buf = binary.BigEndian.AppendUint32(buf, 0) // empty bitmap4
+	}
 	return buf
 }
 
@@ -360,34 +383,15 @@ func (s *Server) stat(id InodeID) (NodeInfo, error) {
 // readdirEntry holds attributes used to calculate exact XDR sizes.
 type readdirEntry struct {
 	DirEntry
-	respMask [2]uint32
+	respMask attrMask
 	attrData []byte // nil means Stat failed; encode empty attrs
-}
-
-// prepareReaddirEntries pre-computes attribute data for each directory entry.
-func prepareReaddirEntries(entries []DirEntry, reqMask [2]uint32, stat func(InodeID) (NodeInfo, error)) []readdirEntry {
-	var respMask [2]uint32
-	respMask[0] = reqMask[0] & supportedAttrs0
-	respMask[1] = reqMask[1] & supportedAttrs1
-
-	result := make([]readdirEntry, len(entries))
-	for i, e := range entries {
-		result[i].DirEntry = e
-		result[i].respMask = respMask
-		ni, err := stat(e.ID)
-		if err != nil {
-			continue // attrData stays nil → empty attrs
-		}
-		result[i].attrData = encodeAttrs(respMask, e.ID, ni)
-	}
-	return result
 }
 
 // readdirEntryXDRSize returns the exact XDR byte count for one entry,
 // including the leading present=TRUE(4) that precedes it in the list.
 //
 //	present(4) + cookie(8) + name_len(4) + name_padded + bitmap_count(4)
-//	+ 2*bitmap_word(8) + attrvals_len(4) + attrdata + nextentry_present(4)
+//	+ 3*bitmap_word(12) + attrvals_len(4) + attrdata + nextentry_present(4)
 //
 // The nextentry_present at the end is this entry's "next" pointer (TRUE or
 // FALSE depending on whether another entry follows); its 4 bytes are included
@@ -396,8 +400,8 @@ func readdirEntryXDRSize(re *readdirEntry) int {
 	namePadded := (len(re.Name) + 3) &^ 3
 	var attrsSize int
 	if re.attrData != nil {
-		// bitmap: count(4) + 2 words(8) = 12; attrvals: len(4) + data
-		attrsSize = 12 + 4 + len(re.attrData)
+		// bitmap: count(4) + 3 words(12) = 16; attrvals: len(4) + data
+		attrsSize = 4 + 4*len(re.respMask) + 4 + len(re.attrData)
 	} else {
 		// Stat failed: empty bitmap count(4)=0 + empty attrvals len(4)=0
 		attrsSize = 4 + 4
@@ -417,39 +421,53 @@ func readdirEntryDirSize(re *readdirEntry) int {
 // cookieverf(8) + entries_present_or_terminal_FALSE(4) + eof(4).
 const readdirResokOverhead = 16
 
-// encodeDirEntries writes directory entries into a Dirlist4Writer.
-func encodeDirEntries(dirW *Dirlist4Writer, entries []readdirEntry, eof bool) {
-	if len(entries) == 0 {
-		dirW.SetEntries_Default(FALSE)
-	} else {
-		entW := dirW.SetEntries_True()
-		writeEntryChain(&entW, dirW, entries, 0)
-	}
-	if eof {
-		dirW.SetEof(TRUE)
-	} else {
-		dirW.SetEof(FALSE)
-	}
+// dirlistWriter streams entries into a dirlist4. Each entry's nextentry
+// discriminant is written with it, so the caller must know whether another
+// entry follows.
+type dirlistWriter struct {
+	dir     Dirlist4Writer
+	ent     Entry4Writer
+	entries int
+	name    []byte // reused for each entry's name
 }
 
-func writeEntryChain(entW *Entry4Writer, dirW *Dirlist4Writer, entries []readdirEntry, idx int) {
-	re := &entries[idx]
-	entW.SetCookie(re.NameHash)
-
-	nameW := entW.StartName()
-	buf := nameW.SetData([]byte(re.Name)).Finish()
-	entW.Resume(buf)
-
-	writeEntryAttrs(entW, re)
-
-	if idx+1 < len(entries) {
-		nextW := entW.SetNextentry_True()
-		writeEntryChain(&nextW, dirW, entries, idx+1)
-	} else {
-		entW.SetNextentry_Default(FALSE)
-		buf = entW.Finish()
-		dirW.Resume(buf)
+func (d *dirlistWriter) entry(re *readdirEntry, more bool) {
+	if d.entries == 0 {
+		d.ent = d.dir.SetEntries_True()
 	}
+	d.entries++
+	d.ent.SetCookie(re.NameHash)
+	d.name = append(d.name[:0], re.Name...)
+	nameW := d.ent.StartName()
+	d.ent.Resume(nameW.SetData(d.name).Finish())
+	writeEntryAttrs(&d.ent, re)
+	if more {
+		d.ent = d.ent.SetNextentry_True()
+		return
+	}
+	d.ent.SetNextentry_Default(FALSE)
+	d.dir.Resume(d.ent.Finish())
+}
+
+func (d *dirlistWriter) finish(eof bool) []byte {
+	if d.entries == 0 {
+		d.dir.SetEntries_Default(FALSE)
+	}
+	if eof {
+		d.dir.SetEof(TRUE)
+	} else {
+		d.dir.SetEof(FALSE)
+	}
+	return d.dir.Finish()
+}
+
+// encodeDirEntries writes directory entries into a Dirlist4Writer.
+func encodeDirEntries(dirW *Dirlist4Writer, entries []readdirEntry, eof bool) {
+	d := dirlistWriter{dir: *dirW}
+	for i := range entries {
+		d.entry(&entries[i], i+1 < len(entries))
+	}
+	dirW.Resume(d.finish(eof))
 }
 
 func writeEntryAttrs(entW *Entry4Writer, re *readdirEntry) {

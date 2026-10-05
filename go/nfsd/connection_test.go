@@ -22,8 +22,43 @@ func rpcCallForTest(xid, procedure uint32, body []byte) []byte {
 	return append(call, body...)
 }
 
-func statCallForTest(xid uint32) []byte {
-	return rpcCallForTest(xid, procCompound, buildCompoundBody([]byte(fmt.Sprint(xid)), func(w *COMPOUND4argsWriter) {
+// connectionSession is a session created directly in a server, so raw-frame
+// tests can send compounds without a client handshake.
+func connectionSession(t *testing.T, srv *Server) *testSession {
+	t.Helper()
+	// Compounds on the server may start lease workers; stop them before
+	// the test's directories go.
+	t.Cleanup(srv.clients.stopLeaseWorkers)
+	// Its client is not in the store: give it a fixed live lease.
+	srv.clients.pinLeaseForTest(1)
+	srv.sessions.mu.Lock()
+	defer srv.sessions.mu.Unlock()
+	sess := &session{
+		clientID:  1,
+		slots:     make([]sessionSlot, maxSessionSlots),
+		maxOps:    maxCompoundOperations,
+		maxReq:    maxRPCMessage,
+		maxResp:   maxRPCMessage,
+		maxCached: maxSessionReplyCached,
+	}
+	sess.id = srv.sessions.newSessionIDLocked(sess.clientID)
+	srv.sessions.insertSessionLocked(sess)
+	return newTestSession(sess.id, sess.clientID, maxSessionSlots)
+}
+
+// sessionCallForTest uses a slot per xid, so calls which are in flight
+// together do not share a slot.
+func sessionCallForTest(ts *testSession, xid uint32, body []byte) []byte {
+	slot := xid % uint32(len(ts.seqs))
+	ts.mu.Lock()
+	ts.seqs[slot]++
+	seq := ts.seqs[slot]
+	ts.mu.Unlock()
+	return rpcCallForTest(xid, procCompound, withSequence(body, ts, slot, seq))
+}
+
+func statCallForTest(ts *testSession, xid uint32) []byte {
+	return sessionCallForTest(ts, xid, buildCompoundBody([]byte(fmt.Sprint(xid)), func(w *COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		attr := w.AppendArgarray_Getattr()
 		bits := attr.StartAttrRequest()
@@ -95,6 +130,7 @@ func newConnectionTestServer(t *testing.T, limit int) (*Server, *statGateVFS) {
 	}
 	srv.maxInFlightPerConn = limit
 	srv.writeTimeout = time.Second
+	useTestWireEpoch(srv) // Some tests call handleConn directly.
 	return srv, fs
 }
 
@@ -102,15 +138,16 @@ func TestConnectionConcurrentCompounds(t *testing.T) {
 	for _, limit := range []int{1, 2} {
 		t.Run(fmt.Sprint(limit), func(t *testing.T) {
 			srv, fs := newConnectionTestServer(t, limit)
+			ts := connectionSession(t, srv)
 			fs.all = false
 			addr, cleanup := serveTestServer(t, srv)
 			defer cleanup()
 			defer closeSignal(fs.release)
 			conn := dial(t, addr)
 			defer conn.Close()
-			writeCallForTest(t, conn, statCallForTest(1))
+			writeCallForTest(t, conn, statCallForTest(ts, 1))
 			awaitSignal(t, fs.entered, "slow stat")
-			writeCallForTest(t, conn, statCallForTest(2))
+			writeCallForTest(t, conn, statCallForTest(ts, 2))
 			if limit == 1 {
 				conn.SetReadDeadline(time.Now().Add(25 * time.Millisecond))
 				if _, err := readFrame(conn); err == nil {
@@ -139,13 +176,14 @@ func TestConnectionConcurrentCompounds(t *testing.T) {
 func TestConnectionAdmissionBound(t *testing.T) {
 	const limit, count = 3, 12
 	srv, fs := newConnectionTestServer(t, limit)
+	ts := connectionSession(t, srv)
 	addr, cleanup := serveTestServer(t, srv)
 	defer cleanup()
 	defer closeSignal(fs.release)
 	conn := dial(t, addr)
 	defer conn.Close()
 	for i := 1; i <= count; i++ {
-		writeCallForTest(t, conn, statCallForTest(uint32(i)))
+		writeCallForTest(t, conn, statCallForTest(ts, uint32(i)))
 	}
 	for i := 0; i < limit; i++ {
 		awaitSignal(t, fs.entered, "admitted stat")
@@ -212,7 +250,7 @@ func TestConnectionInFlightDuplicates(t *testing.T) {
 				create.Resume(attrs.Finish())
 				w.Resume(create.Finish())
 			})
-			call := rpcCallForTest(1, procCompound, body)
+			call := sessionCallForTest(connectionSession(t, srv), 1, body)
 			writeCallForTest(t, conn, call)
 			awaitSignal(t, fs.entered, "directory creation")
 			if conflicting {
@@ -245,12 +283,13 @@ func TestConnectionInFlightDuplicates(t *testing.T) {
 
 func TestConnectionHalfCloseDrainsReply(t *testing.T) {
 	srv, fs := newConnectionTestServer(t, 2)
+	ts := connectionSession(t, srv)
 	addr, cleanup := serveTestServer(t, srv)
 	defer cleanup()
 	defer closeSignal(fs.release)
 	conn := dial(t, addr)
 	defer conn.Close()
-	writeCallForTest(t, conn, statCallForTest(1))
+	writeCallForTest(t, conn, statCallForTest(ts, 1))
 	awaitSignal(t, fs.entered, "stat before half-close")
 	if err := conn.(*net.TCPConn).CloseWrite(); err != nil {
 		t.Fatal(err)
@@ -282,6 +321,7 @@ func TestConnectionTermination(t *testing.T) {
 	for _, mode := range []string{"disconnect", "read-timeout", "write-timeout", "write-panic"} {
 		t.Run(mode, func(t *testing.T) {
 			srv, fs := newConnectionTestServer(t, 2)
+			ts := connectionSession(t, srv)
 			srv.idleTimeout = 0
 			srv.writeTimeout = 25 * time.Millisecond
 			if mode == "read-timeout" {
@@ -295,10 +335,10 @@ func TestConnectionTermination(t *testing.T) {
 			defer client.Close()
 			defer server.Close()
 			defer closeSignal(fs.release)
-			writeCallForTest(t, client, statCallForTest(1))
+			writeCallForTest(t, client, statCallForTest(ts, 1))
 			awaitSignal(t, fs.entered, "active stat")
 			if mode == "write-timeout" {
-				writeCallForTest(t, client, statCallForTest(2))
+				writeCallForTest(t, client, statCallForTest(ts, 2))
 				awaitSignal(t, fs.entered, "second active stat")
 			}
 			if mode == "disconnect" {

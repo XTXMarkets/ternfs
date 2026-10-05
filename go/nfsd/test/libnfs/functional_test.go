@@ -69,14 +69,21 @@ func connectLibnfs(t *testing.T, suite *nfsTestSuite, fixtureDir string) *libnfs
 	return server.clientAt(t, "/"+server.Name)
 }
 
+// Writers in one client share its staged version of a file; a writer in
+// another client stays private until its CLOSE. Readers keep the version
+// they opened.
 func testLibnfsPrivateMutableWriters(t *testing.T, suite *nfsTestSuite) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "private.txt"), []byte("original"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	c := connectLibnfs(t, suite, dir)
+	server := suite.server(t)
+	server.seed(t, dir)
+	c := server.clientAt(t, "/"+server.Name)
 	t.Cleanup(c.Close)
-	open := func(flags int) *libnfsProcessFile {
+	other := server.clientAt(t, "/"+server.Name)
+	t.Cleanup(other.Close)
+	open := func(c *libnfsProcessClient, flags int) *libnfsProcessFile {
 		f, err := c.OpenFile("/private.txt", flags)
 		if err != nil {
 			t.Fatal(err)
@@ -84,9 +91,10 @@ func testLibnfsPrivateMutableWriters(t *testing.T, suite *nfsTestSuite) {
 		t.Cleanup(func() { _ = f.Close() })
 		return f
 	}
-	reader := open(os.O_RDONLY)
-	first := open(os.O_RDWR)
-	second := open(os.O_RDWR)
+	reader := open(other, os.O_RDONLY)
+	first := open(c, os.O_RDWR)
+	joined := open(c, os.O_RDWR)
+	second := open(other, os.O_RDWR)
 	check := func(f *libnfsProcessFile, want string) {
 		t.Helper()
 		got, err := f.Read()
@@ -101,7 +109,7 @@ func testLibnfsPrivateMutableWriters(t *testing.T, suite *nfsTestSuite) {
 	if err != nil || end != 11 {
 		t.Fatalf("fsync/fstat size=%d err=%v", end, err)
 	}
-	if err := first.WriteAt([]byte("Q"), end); err != nil {
+	if err := joined.WriteAt([]byte("Q"), end); err != nil {
 		t.Fatal(err)
 	}
 	if err := second.WriteAt([]byte("SECOND"), 0); err != nil {
@@ -109,19 +117,25 @@ func testLibnfsPrivateMutableWriters(t *testing.T, suite *nfsTestSuite) {
 	}
 	check(reader, "original")
 	check(first, "originalXYZQ")
+	check(joined, "originalXYZQ")
 	check(second, "SECONDal")
 	if err := second.Close(); err != nil {
 		t.Fatal(err)
 	}
 	check(reader, "original")
-	fresh := open(os.O_RDONLY)
+	fresh := open(other, os.O_RDONLY)
 	check(fresh, "SECONDal")
+	// The first client's staging publishes at its last write CLOSE.
 	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	check(fresh, "SECONDal")
+	if err := joined.Close(); err != nil {
 		t.Fatal(err)
 	}
 	check(reader, "original")
 	check(fresh, "SECONDal")
-	last := open(os.O_RDONLY)
+	last := open(other, os.O_RDONLY)
 	check(last, "originalXYZQ")
 	// Close before destroying the libnfs context; Cleanup also handles failures.
 	for _, f := range []*libnfsProcessFile{reader, fresh, last} {
