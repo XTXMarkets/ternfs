@@ -482,10 +482,10 @@ func requestClientID(
 		cbW := scw.StartCallback()
 		cbW.SetCbProgram(0x40000000)
 		locW := cbW.StartCbLocation()
-		netidW := locW.StartRNetid()
+		netidW := locW.StartNaRNetid()
 		buf = netidW.SetData([]byte("tcp")).Finish()
 		locW.Resume(buf)
-		addrW := locW.StartRAddr()
+		addrW := locW.StartNaRAddr()
 		buf = addrW.SetData([]byte("0.0.0.0.0.0")).Finish()
 		locW.Resume(buf)
 		buf = locW.Finish()
@@ -1484,10 +1484,10 @@ func TestSetclientidFlow(t *testing.T) {
 		cbW := scw.StartCallback()
 		cbW.SetCbProgram(0x40000000)
 		locW := cbW.StartCbLocation()
-		netidW := locW.StartRNetid()
+		netidW := locW.StartNaRNetid()
 		buf = netidW.SetData([]byte("tcp")).Finish()
 		locW.Resume(buf)
-		addrW := locW.StartRAddr()
+		addrW := locW.StartNaRAddr()
 		buf = addrW.SetData([]byte("0.0.0.0.0.0")).Finish()
 		locW.Resume(buf)
 		buf = locW.Finish()
@@ -2288,10 +2288,10 @@ func TestSetclientidPrincipalConflict(t *testing.T) {
 		cbW := scw.StartCallback()
 		cbW.SetCbProgram(0x40000000)
 		locW := cbW.StartCbLocation()
-		netidW := locW.StartRNetid()
+		netidW := locW.StartNaRNetid()
 		buf = netidW.SetData([]byte("tcp")).Finish()
 		locW.Resume(buf)
-		addrW := locW.StartRAddr()
+		addrW := locW.StartNaRAddr()
 		buf = addrW.SetData([]byte("127.0.0.1.1.2")).Finish()
 		locW.Resume(buf)
 		buf = locW.Finish()
@@ -2358,11 +2358,11 @@ func TestSetclientidPrincipalConflict(t *testing.T) {
 		iter = res.Resarray()
 		entry = nextOp(t, &iter)
 		location := entry.Value().AsSETCLIENTID4resEntry().
-			Value().AsClientaddr4()
-		if got := string(location.RNetid().Data()); got != "tcp" {
+			Value().AsNetaddr4()
+		if got := string(location.NaRNetid().Data()); got != "tcp" {
 			t.Fatalf("conflicting client netid = %q, want %q", got, "tcp")
 		}
-		if got := string(location.RAddr().Data()); got != "127.0.0.1.1.2" {
+		if got := string(location.NaRAddr().Data()); got != "127.0.0.1.1.2" {
 			t.Fatalf("conflicting client address = %q", got)
 		}
 	})

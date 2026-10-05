@@ -1916,8 +1916,8 @@ func (s *Server) opSetclientid(
 	location := args.Callback().CbLocation()
 	owner := clientOwner{
 		principal: st.principal,
-		netid:     string(location.RNetid().Data()),
-		addr:      string(location.RAddr().Data()),
+		netid:     string(location.NaRNetid().Data()),
+		addr:      string(location.NaRAddr().Data()),
 	}
 
 	clid, confirm, err := s.clients.SetClientID(getData64(clientID.Verifier()), idData, owner)
@@ -1926,10 +1926,10 @@ func (s *Server) opSetclientid(
 		var inUse clientInUseError
 		if errors.As(err, &inUse) {
 			addrW := ew.SetValue_Nfs4errClidInuse()
-			netidW := addrW.StartRNetid()
+			netidW := addrW.StartNaRNetid()
 			buf := netidW.SetData([]byte(inUse.owner.netid)).Finish()
 			addrW.Resume(buf)
-			rAddrW := addrW.StartRAddr()
+			rAddrW := addrW.StartNaRAddr()
 			buf = rAddrW.SetData([]byte(inUse.owner.addr)).Finish()
 			addrW.Resume(buf)
 			buf = addrW.Finish()
