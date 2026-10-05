@@ -1230,10 +1230,14 @@ void RegistryDB::cdcs(std::vector<CdcInfo>& out) const {
 }
 
 void RegistryDB::blockServices(std::vector<FullBlockServiceInfo>& out) const{
+    auto decomissioned_old_cuttoff = ternNow() - 168_hours; // older than 1 week
     out.clear();
     auto *it = _db->NewIterator(rocksdb::ReadOptions(), _blockServicesCf);
     for (it->SeekToFirst(); it->Valid(); it->Next()) {
         readBlockServiceInfo(it->key(), it->value(), out.emplace_back());
+        if (out.back().flags == BlockServiceFlags::DECOMMISSIONED && out.back().hasFiles == false && out.back().lastInfoChange < decomissioned_old_cuttoff) {
+            out.pop_back();
+        }
     }
     ROCKS_DB_CHECKED(it->status());
     delete it;

@@ -2022,6 +2022,10 @@ public:
     }
 
     virtual void step() override {
+        if (unlikely(!_shared.isBlockServiceCacheInitiated.load(std::memory_order_acquire))) {
+            (100_ms).sleepRetry();
+            return;
+        }
         _logsDBRequests.clear();
         _logsDBResponses.clear();
         _logsDBOutRequests.clear();
