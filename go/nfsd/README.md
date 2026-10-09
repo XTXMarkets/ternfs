@@ -1305,6 +1305,14 @@ linux-image-amd64 nfs-common`; `KERNEL_VERSION` selects among installed
 kernels. Each guest uses its own hostname as its NFSv4 client identity, since
 nfsd instances on one TernFS share the durable client store.
 
+With `-restart-mid-write` the driver runs one restart check instead of the
+functional cases. The guest
+([`restart-writer.py`](test/internal/kernel/restart-writer.py)) holds a file
+open for writing and fsyncs part of it. The driver then kills nfsd and starts
+it again on the same address, staging directory and export. The guest writes
+the rest and closes, and the driver reads the published file back through
+the backend.
+
 All Go test targets accept additional flags through `GO_TEST_FLAGS`. For
 example:
 
