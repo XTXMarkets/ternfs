@@ -133,6 +133,7 @@ struct ShardShared {
     struct CrossLocationWaitStats {
         std::atomic<uint64_t> started{0};    // waits sent to the location
         std::atomic<uint64_t> skipped{0};    // not waited for, the location looked down
+        std::atomic<uint64_t> timedOut{0};   // given up mid-wait after -region-wait-timeout
         std::atomic<uint64_t> dropped{0};    // given up mid-wait, the location looked down or went missing
         std::atomic<uint64_t> finished{0};   // the location confirmed it applied the entry
         std::atomic<uint64_t> finishedNs{0}; // total time until those confirmations
@@ -895,6 +896,7 @@ private:
     // Cross-region wait tracking for CDC writes
     static constexpr Duration CROSS_REGION_WAIT_RETRY_INTERVAL = 200_ms;
     Duration _shardDownThreshold;
+    Duration _regionWaitTimeout;
     std::unordered_map<uint64_t, CrossRegionWaitInfo> _crossRegionWaitResponses; // wait req id -> info
     std::array<bool, 256> _publishedCrossLocationWaits{}; // locations with non-zero wait gauges published
     std::unordered_map<uint64_t, uint64_t> _waitReqIdToResponseId;
@@ -932,6 +934,7 @@ public:
         _nextTimeout(0),
         _catchupWindowIndex(0),
         _shardDownThreshold(shared.options.regionStalenessThreshold),
+        _regionWaitTimeout(shared.options.regionWaitTimeout),
         _requestIdCounter(RandomGenerator().generate64())
     {
         expandKey(ShardKey, _expandedShardKey);
@@ -1101,6 +1104,15 @@ public:
                     continue;
                 }
 
+                if (_regionWaitTimeout != 0 && now - waitInfo.createdAt >= _regionWaitTimeout) {
+                    LOG_DEBUG(_env, "Giving up waiting for location %s to apply LogIdx %s after %s",
+                            locationId, waitInfo.idx.u64, now - waitInfo.createdAt);
+                    _shared.crossLocationWaits[locationId].timedOut.fetch_add(1, std::memory_order_relaxed);
+                    _waitReqIdToResponseId.erase(locState.waitReqId);
+                    locIt = waitInfo.locationStates.erase(locIt);
+                    continue;
+                }
+
                 if (inFlight[locationId] == 0 || waitInfo.createdAt < oldest[locationId]) {
                     oldest[locationId] = waitInfo.createdAt;
                 }
@@ -1132,7 +1144,7 @@ public:
             }
 
             if (waitInfo.locationStates.empty()) {
-                LOG_DEBUG(_env, "All secondary locations have applied LogIdx %s, sending response for request %s",
+                LOG_DEBUG(_env, "Cross-location waits ended for LogIdx %s, sending response for request %s",
                          waitInfo.idx.u64, waitInfo.originalRequest.msg.id);
 
                 bool dropArtificially = _packetDropRand.generate64() % 10'000 < _outgoingPacketDropProbability;
@@ -1319,8 +1331,8 @@ public:
                                 _shared.shardDB.applyLogEntry(logsDBEntry.idx.u64, shardEntry,  resp.body.resp);
 
 
-                                // For CDC requests, wait for all secondary leaders to apply
-                                // before sending response
+                                // Delay CDC until the selected locations apply the entry
+                                // or their waits are abandoned.
                                 auto now = ternNow();
                                 auto leadersAtOtherLocations = _shared.getLeadersAtOtherLocations();
                                 bool needsCrossLocationWait = false;
@@ -1761,8 +1773,8 @@ public:
             resp.body.checkPointIdx = _shared.shardDB.read(req.msg.body, resp.body.resp);
             resp.id = req.msg.id;
 
-            // For CDC requests, wait for all secondary leaders to apply
-            // before sending response
+            // Delay CDC until the selected locations reach this checkpoint
+            // or their waits are abandoned.
             auto now = ternNow();
             auto leadersAtOtherLocations = _shared.getLeadersAtOtherLocations();
             bool shouldWait = false;
@@ -2680,6 +2692,7 @@ public:
             _metricsBuilder.fieldU64("started", started);
             _metricsBuilder.fieldU64("skipped", skipped);
             _metricsBuilder.fieldU64("dropped", stats.dropped.load(std::memory_order_relaxed));
+            _metricsBuilder.fieldU64("timed_out", stats.timedOut.load(std::memory_order_relaxed));
             _metricsBuilder.fieldU64("finished", stats.finished.load(std::memory_order_relaxed));
             _metricsBuilder.fieldU64("finished_ns", stats.finishedNs.load(std::memory_order_relaxed));
             _metricsBuilder.fieldU64("in_flight", stats.inFlight.load(std::memory_order_relaxed));
@@ -2785,6 +2798,8 @@ void runShard(ShardOptions& options) {
         LOG_INFO(env, "  simulateOutgoingPacketDrop = %s", options.serverOptions.simulateOutgoingPacketDrop);
         LOG_INFO(env, "  replicaAnnouncements = %s", options.replicaAnnouncements);
         LOG_INFO(env, "  syslog = %s", (int)options.logOptions.syslog);
+        LOG_INFO(env, "  regionStalenessThreshold = %s", options.regionStalenessThreshold);
+        LOG_INFO(env, "  regionWaitTimeout = %s", options.regionWaitTimeout);
         LOG_INFO(env, "Using LogsDB with options:");
         LOG_INFO(env, "    noReplication = '%s'", (int)options.logsDBOptions.noReplication);
         LOG_INFO(env, "    avoidBeingLeader = '%s'", (int)options.logsDBOptions.avoidBeingLeader);
