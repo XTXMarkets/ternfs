@@ -124,6 +124,10 @@ struct ShardShared {
     std::atomic<uint64_t> droppedReadReqs;
     std::atomic<uint64_t> gatedStaleReads;
 
+    // Highest release point known to the writer. Secondary followers learn it
+    // from their local leader.
+    std::atomic<uint64_t> knownLastReleased;
+
     // we should get up to date information from registry before we start serving any requests
     // this is populated by ShardRegisterer
     std::atomic<bool> isInitiated;
@@ -163,6 +167,7 @@ struct ShardShared {
         droppedProxyWriteResps(0),
         droppedReadReqs(0),
         gatedStaleReads(0),
+        knownLastReleased(0),
         isInitiated(false),
         isBlockServiceCacheInitiated(false),
         registryClient(logger, xmon, options_.registryClientOptions.host, options_.registryClientOptions.port, options_.registryClientOptions.timeout),
@@ -1997,6 +2002,8 @@ public:
 
         _shared.shardDB.flush(true);
 
+        _shared.knownLastReleased.store(_knownLastReleased.u64, std::memory_order_relaxed);
+
         for (auto& req : _linkReadRequests) {
             _processLinkReadRequest(req);
         }
@@ -2597,6 +2604,19 @@ public:
         {
             newMeassurement("eggsfs_shard_staleness_lag");
             _metricsBuilder.fieldU64("ns", (now - _shared.shardDB.lastAppliedEntryTime()).ns);
+            _metricsBuilder.timestamp(now);
+        }
+
+        {
+            // The backlog is how many entries we still have to apply. On a
+            // secondary location follower the release point is our own
+            // leader's, not the primary's.
+            const auto [lastApplied, lastAppliedTime] = _shared.shardDB.lastAppliedForReads();
+            const uint64_t knownLastReleased = _shared.knownLastReleased.load(std::memory_order_relaxed);
+            newMeassurement("eggsfs_shard_progress");
+            _metricsBuilder.fieldU64("last_applied", lastApplied.u64);
+            _metricsBuilder.fieldU64("known_last_released", knownLastReleased);
+            _metricsBuilder.fieldU64("backlog", knownLastReleased > lastApplied.u64 ? knownLastReleased - lastApplied.u64 : 0);
             _metricsBuilder.timestamp(now);
         }
 
