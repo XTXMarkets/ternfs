@@ -15,6 +15,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -23,9 +24,6 @@ import (
 // inode ID of each incarnation directory is returned to the client as a
 // clientid.
 type ClientStore struct {
-	// Nil until a server takes ownership of confirmation/purge exclusion.
-	beginPurge func(n, p InodeID) (func(), bool)
-
 	fs             TernVFS
 	nfsDirID       InodeID
 	dirID          InodeID
@@ -33,12 +31,47 @@ type ClientStore struct {
 	leaseName      string
 	confirmingName string
 	now            func() time.Time
-	localClients   sync.Map
+	// clock is what now reads; setClock swaps it while workers run.
+	clock        atomic.Pointer[func() time.Time]
+	localClients sync.Map
 
 	identityLocksMu sync.Mutex
 	identityLocks   map[InodeID]*clientIdentityLock
 	leaseLocks      keyedLocker[InodeID]
 	markerLocks     keyedLocker[clientOpenMarker]
+
+	// Set by the server (canonical r3 §5.4): publishing an expired marker
+	// for an incarnation and collecting an identity each hold a destruction
+	// hold for the whole action, refused while a confirmation protects it.
+	// A resumed replacement purge holds them on n and its selected target.
+	// Nil in store-only use.
+	beginMarker  func(InodeID) (func(), bool)
+	beginCollect func(InodeID) (func(), bool)
+	beginPurge   func(n, p InodeID) (func(), bool)
+
+	// The durable lease refresher's records (lease_refresher.go), under
+	// refreshMu, with their record and orphan credits.
+	refreshMu      sync.Mutex
+	refreshers     map[InodeID]*leaseRefresher
+	refresherLimit int
+	orphans        int
+	orphanLimit    int
+	// leaseStop ends the workers; leaseWorkers counts them.
+	leaseStop    chan struct{}
+	leaseStopped bool
+	leaseWorkers sync.WaitGroup
+	// Set by the server (canonical r3 §§8 and 9). leaseNeed reports the
+	// logical lease's refresh need; leaseTerminal retires an incarnation's
+	// sessions once its record is stale or fleet-expired, reporting false to
+	// be retried. With them set, records have workers and only the server's
+	// decideExpired publishes expired markers. Without them (store-only use)
+	// lease work runs inline in the caller and lease observations mark, as
+	// before.
+	leaseNeed     func(uint64) bool
+	leaseTerminal func(uint64, func()) bool
+	// leaseSessions reports that the incarnation has sessions here, which
+	// keeps its record (and its proven lease) between requests.
+	leaseSessions func(uint64) bool
 }
 
 type clientIdentityLock struct {
@@ -172,16 +205,22 @@ func newClientStoreAt(
 	if err != nil {
 		return nil, fmt.Errorf("client store: generate nfsd id: %w", err)
 	}
-	return &ClientStore{
+	cs := &ClientStore{
 		fs:             fs,
 		nfsDirID:       nfsID,
 		dirID:          clientsID,
 		nfsdID:         nfsdID,
 		leaseName:      leasePrefix + nfsdID,
 		confirmingName: confirmingPrefix + nfsdID,
-		now:            time.Now,
 		identityLocks:  make(map[InodeID]*clientIdentityLock),
-	}, nil
+		refreshers:     make(map[InodeID]*leaseRefresher),
+		refresherLimit: maxRefreshers,
+		orphanLimit:    maxRecordOrphans * maxRefreshers,
+		leaseStop:      make(chan struct{}),
+	}
+	cs.now = func() time.Time { return (*cs.clock.Load())() }
+	cs.setClock(time.Now)
+	return cs, nil
 }
 
 func ensureDir(fs TernVFS, parentID InodeID, name string) (InodeID, error) {
@@ -1797,3 +1836,13 @@ func (cs *ClientStore) stagingRecoveryKey(clientID uint64) ([32]byte, error) {
 	}
 	return sha256.Sum256(data), nil
 }
+
+// setClock replaces the store's clock; it is safe while workers and
+// connections read it.
+func (cs *ClientStore) setClock(now func() time.Time) { cs.clock.Store(&now) }
+
+// serverDecides reports that a server owns lease work and marker decisions.
+func (cs *ClientStore) serverDecides() bool { return cs.leaseNeed != nil }
+
+// maxRefreshers bounds lease refresher records (canonical r3 §9.4).
+const maxRefreshers = maxSessionRecords
