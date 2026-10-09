@@ -1194,6 +1194,50 @@ func TestClientStoreConfirmationRechecksPending(t *testing.T) {
 	}
 }
 
+func TestClientStoreHasOpenRequiresLiveDurableLease(t *testing.T) {
+	for _, cached := range []bool{false, true} {
+		for _, expired := range []bool{false, true} {
+			t.Run(fmt.Sprintf("cached=%t/expired=%t", cached, expired), func(t *testing.T) {
+				fs := NewLocalTernVFS(t.TempDir())
+				store, id := newConfirmedStoreClient(t, fs, []byte("client"), [8]byte{1}, clientOwner{})
+				now := time.Unix(1000, 0)
+				store.now = func() time.Time { return now }
+				sid := StateID{1}
+				if err := store.MarkOpen(id, sid); err != nil {
+					t.Fatal(err)
+				}
+				leaseID, err := fs.Lookup(InodeID(id), store.leaseName)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if cached {
+					state, _ := store.localClients.Load(InodeID(id))
+					delete(state.(*localClientState).opens, sid)
+				} else {
+					store.localClients.Delete(InodeID(id))
+				}
+				if expired {
+					now = now.Add(nfsLeaseTime + time.Second)
+				} else if err := fs.Remove(InodeID(id), store.leaseName); err != nil {
+					t.Fatal(err)
+				}
+				if active, err := store.HasOpen(id, sid); err != nil || active {
+					t.Fatalf("marker without live lease = %v, %v", active, err)
+				}
+				currentID, err := fs.Lookup(InodeID(id), store.leaseName)
+				if expired {
+					// The expired slot is still inside its cleanup grace period.
+					if err != nil || currentID != leaseID {
+						t.Fatalf("HasOpen replaced the expired lease: %v, %v", currentID, err)
+					}
+				} else if !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("HasOpen recreated the lease: %v", err)
+				}
+			})
+		}
+	}
+}
+
 func TestClientStoreMarkOpenKeepsExistingMarkerOnRenewFailure(t *testing.T) {
 	baseFS := NewLocalTernVFS(t.TempDir())
 	fs := &renameFailureVFS{TernVFS: baseFS}

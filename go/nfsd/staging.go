@@ -125,6 +125,9 @@ type LocalStagingStore struct {
 	files   map[InodeID]*localStagingEntry
 	targets map[stagingTarget]map[InodeID]struct{}
 	log     *slog.Logger
+
+	fileLocks  keyedLocker[InodeID]
+	createFile func(string) (*os.File, error)
 }
 
 type localStagingEntry struct {
@@ -140,10 +143,11 @@ func NewLocalStagingStore(dir string, logger *slog.Logger) (*LocalStagingStore, 
 		logger = slog.Default()
 	}
 	s := &LocalStagingStore{
-		dir:     dir,
-		files:   make(map[InodeID]*localStagingEntry),
-		targets: make(map[stagingTarget]map[InodeID]struct{}),
-		log:     logger,
+		dir:        dir,
+		files:      make(map[InodeID]*localStagingEntry),
+		targets:    make(map[stagingTarget]map[InodeID]struct{}),
+		log:        logger,
+		createFile: os.Create,
 	}
 	// Scan the staging directory and re-register any staging files
 	// left from a previous run.
@@ -246,9 +250,12 @@ func NewLocalStagingStore(dir string, logger *slog.Logger) (*LocalStagingStore, 
 func (s *LocalStagingStore) ReadOnly() bool { return false }
 
 func (s *LocalStagingStore) Create(id InodeID, meta StagingMeta) (StagingFile, error) {
+	unlock := s.fileLocks.lock(id)
+	defer unlock()
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if entry, ok := s.files[id]; ok {
+	entry := s.files[id]
+	s.mu.Unlock()
+	if entry != nil {
 		return entry.file, nil // already exists (recovered or duplicate create)
 	}
 	target := stagingTarget{dirID: meta.DirID, name: meta.FileName}
@@ -256,7 +263,7 @@ func (s *LocalStagingStore) Create(id InodeID, meta StagingMeta) (StagingFile, e
 	meta.version = 5
 	meta.Attrs = stagingAttributes(meta.Attrs, time.Now())
 	path := filepath.Join(s.dir, fmt.Sprintf("%016x.staging", uint64(id)))
-	f, err := os.Create(path)
+	f, err := s.createFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -283,6 +290,10 @@ func (s *LocalStagingStore) Create(id InodeID, meta StagingMeta) (StagingFile, e
 		dirty:    append(byteRangeSet(nil), meta.Dirty...),
 		attrs:    meta.Attrs,
 	}
+	// Readers only see complete entries. The inode lock excludes duplicate
+	// creation and cleanup while disk I/O runs without the store-wide lock.
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.files[id] = &localStagingEntry{
 		file:   sf,
 		target: target,
@@ -363,6 +374,8 @@ func (s *LocalStagingStore) TargetBusy(dirID InodeID, name string) bool {
 }
 
 func (s *LocalStagingStore) Remove(id InodeID) {
+	unlock := s.fileLocks.lock(id)
+	defer unlock()
 	s.mu.Lock()
 	entry := s.files[id]
 	delete(s.files, id)

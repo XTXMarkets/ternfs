@@ -703,8 +703,11 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 	}
 	op, response, replay, status := s.opens.startOpen(
 		ownerKey, args.Seqid())
+	if op != nil {
+		defer op.finishServerFaultIfNeeded()
+	}
 	if replay {
-		if response.status == NFS4_OK {
+		if response.status == NFS4_OK && op.replayStateActive(response.state.id) {
 			if err := s.clients.MarkOpen(
 				clientID, response.state.id,
 			); err != nil {
@@ -716,7 +719,6 @@ func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter
 	if op == nil {
 		return writeOpenError(w, status)
 	}
-	defer op.finishServerFaultIfNeeded()
 	for _, state := range op.abandoned {
 		if s.stagingOwnedBy(state.fileID, state) != nil {
 			s.discardStaging(state.fileID)
