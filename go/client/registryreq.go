@@ -100,14 +100,6 @@ func readRegistryResponse(
 		resp = &msgs.CdcAtLocationResp{}
 	case msgs.REGISTER_REGISTRY:
 		resp = &msgs.RegisterRegistryResp{}
-	case msgs.ALL_REGISTRY_REPLICAS_DE_PR_EC_AT_ED:
-		resp = &msgs.AllRegistryReplicasDEPRECATEDResp{}
-	case msgs.SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
-		resp = &msgs.ShardBlockServicesDEPRECATEDResp{}
-	case msgs.CDC_REPLICAS_DE_PR_EC_AT_ED:
-		resp = &msgs.CdcReplicasDEPRECATEDResp{}
-	case msgs.ALL_SHARDS_DE_PR_EC_AT_ED:
-		resp = &msgs.AllShardsDEPRECATEDResp{}
 	case msgs.DECOMMISSION_BLOCK_SERVICE:
 		resp = &msgs.DecommissionBlockServiceResp{}
 	case msgs.MOVE_SHARD_LEADER:
@@ -116,12 +108,8 @@ func readRegistryResponse(
 		resp = &msgs.ClearShardInfoResp{}
 	case msgs.SHARD_BLOCK_SERVICES:
 		resp = &msgs.ShardBlockServicesResp{}
-	case msgs.ALL_CDC_DE_PR_EC_AT_ED:
-		resp = &msgs.AllCdcDEPRECATEDResp{}
 	case msgs.ERASE_DECOMMISSIONED_BLOCK:
 		resp = &msgs.EraseDecommissionedBlockResp{}
-	case msgs.ALL_BLOCK_SERVICES_DEPRECATED:
-		resp = &msgs.AllBlockServicesDeprecatedResp{}
 	case msgs.ALL_BLOCK_SERVICES:
 		resp = &msgs.AllBlockServicesResp{}
 	case msgs.MOVE_CDC_LEADER:

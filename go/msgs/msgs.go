@@ -1929,22 +1929,6 @@ type AddInlineSpanEntry struct {
 	Body         []byte
 }
 
-type BlockServiceDeprecatedInfo struct {
-	Id               BlockServiceId
-	Addrs            AddrsInfo
-	StorageClass     StorageClass
-	FailureDomain    FailureDomain
-	SecretKey        [16]byte
-	Flags            BlockServiceFlags
-	CapacityBytes    uint64
-	AvailableBytes   uint64
-	Blocks           uint64 // how many blocks we have
-	Path             string
-	LastSeen         TernTime
-	HasFiles         bool
-	FlagsLastChanged TernTime
-}
-
 type EntryNewBlockInfo struct {
 	BlockServiceId BlockServiceId
 	Crc            Crc
@@ -2115,12 +2099,6 @@ type FullRegistryInfo struct {
 	LastSeen   TernTime
 }
 
-type AllRegistryReplicasDEPRECATEDReq struct{}
-
-type AllRegistryReplicasDEPRECATEDResp struct {
-	Replicas []FullRegistryInfo
-}
-
 type RegisterRegistryInstanceReplicaResp struct{}
 
 type DecommissionBlockServiceReq struct {
@@ -2136,12 +2114,6 @@ type SetBlockServiceFlagsReq struct {
 }
 
 type SetBlockServiceFlagsResp struct{}
-
-type AllBlockServicesDeprecatedReq struct{}
-
-type AllBlockServicesDeprecatedResp struct {
-	BlockServices []BlockServiceDeprecatedInfo
-}
 
 type AllBlockServicesReq struct{}
 
@@ -2310,18 +2282,12 @@ type ShardBlockServicesResp struct {
 	BlockServices []BlockServiceInfoShort
 }
 
-type AllShardsDEPRECATEDReq struct{}
-
 type FullShardInfo struct {
 	Id         ShardReplicaId
 	IsLeader   bool
 	Addrs      AddrsInfo
 	LastSeen   TernTime
 	LocationId Location
-}
-
-type AllShardsDEPRECATEDResp struct {
-	Shards []FullShardInfo
 }
 
 type MoveShardLeaderReq struct {
@@ -2363,18 +2329,12 @@ type CdcAtLocationResp struct {
 	LastSeen TernTime
 }
 
-type AllCdcDEPRECATEDReq struct{}
-
 type CdcInfo struct {
 	ReplicaId  ReplicaId
 	LocationId Location
 	IsLeader   bool
 	Addrs      AddrsInfo
 	LastSeen   TernTime
-}
-
-type AllCdcDEPRECATEDResp struct {
-	Replicas []CdcInfo
 }
 
 type AllRegistryReplicasReq struct {
@@ -2441,22 +2401,6 @@ type LocationInfo struct {
 }
 type LocationsResp struct {
 	Locations []LocationInfo
-}
-
-type CdcReplicasDEPRECATEDReq struct{}
-
-type CdcReplicasDEPRECATEDResp struct {
-	// Always 5 length. If we don't have info for some replicas, the AddrsInfo
-	// is zeroed.
-	Replicas []AddrsInfo
-}
-
-type ShardBlockServicesDEPRECATEDReq struct {
-	ShardId ShardId
-}
-
-type ShardBlockServicesDEPRECATEDResp struct {
-	BlockServices []BlockServiceId
 }
 
 // --------------------------------------------------------------------

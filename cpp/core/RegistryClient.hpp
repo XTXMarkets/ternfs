@@ -48,10 +48,6 @@ public:
     );
 
     std::pair<int, std::string> fetchRegistryReplicas(
-        std::vector<FullRegistryInfo>& replicas
-    );
-
-    std::pair<int, std::string> fetchRegistryReplicas(
         std::vector<FullRegistryInfo>& replicas,
         uint8_t minKnownReplicas,
         uint8_t location,
@@ -67,11 +63,6 @@ public:
 
     std::pair<int, std::string> fetchShardReplicas(
         ShardId shid,
-        std::vector<FullShardInfo>& replicas
-    );
-
-    std::pair<int, std::string> fetchShardReplicas(
-        ShardId shid,
         std::vector<FullShardInfo>& replicas,
         uint8_t minKnownReplicas,
         uint8_t location,
@@ -83,10 +74,6 @@ public:
         uint8_t location,
         bool isLeader,
         const AddrsInfo& addrs
-    );
-
-    std::pair<int, std::string> fetchCDCReplicas(
-        std::array<AddrsInfo, 5>& replicas
     );
 
     std::pair<int, std::string> fetchCDCReplicas(
