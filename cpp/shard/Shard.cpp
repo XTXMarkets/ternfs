@@ -128,6 +128,22 @@ struct ShardShared {
     // from their local leader.
     std::atomic<uint64_t> knownLastReleased;
 
+    // Waits for other locations to apply an entry before we respond, by the
+    // location waited for. Written by the writer, read by the metrics inserter.
+    struct CrossLocationWaitStats {
+        std::atomic<uint64_t> started{0};    // waits sent to the location
+        std::atomic<uint64_t> skipped{0};    // not waited for, the location looked down
+        std::atomic<uint64_t> dropped{0};    // given up mid-wait, the location looked down or went missing
+        std::atomic<uint64_t> finished{0};   // the location confirmed it applied the entry
+        std::atomic<uint64_t> finishedNs{0}; // total time until those confirmations
+        std::atomic<uint64_t> inFlight{0};   // waits outstanding now
+        std::atomic<uint64_t> oldestNs{0};   // age of the oldest outstanding wait
+    };
+    std::array<CrossLocationWaitStats, 256> crossLocationWaits;
+    // Responses delayed by cross-location waits, including waits we abandoned.
+    std::atomic<uint64_t> crossLocationHeldResponses{0};
+    std::atomic<uint64_t> crossLocationHeldNs{0};
+
     // we should get up to date information from registry before we start serving any requests
     // this is populated by ShardRegisterer
     std::atomic<bool> isInitiated;
@@ -880,6 +896,7 @@ private:
     static constexpr Duration CROSS_REGION_WAIT_RETRY_INTERVAL = 200_ms;
     Duration _shardDownThreshold;
     std::unordered_map<uint64_t, CrossRegionWaitInfo> _crossRegionWaitResponses; // wait req id -> info
+    std::array<bool, 256> _publishedCrossLocationWaits{}; // locations with non-zero wait gauges published
     std::unordered_map<uint64_t, uint64_t> _waitReqIdToResponseId;
 
     uint64_t _requestIdCounter;
@@ -1024,12 +1041,30 @@ public:
         }
     }
 
+    // Publishes how many waits are outstanding per location and how old the
+    // oldest is. Locations we published before but have nothing for now go
+    // back to zero.
+    void _publishCrossLocationWaitGauges(TernTime now, const std::array<uint64_t, 256>& inFlight, const std::array<TernTime, 256>& oldest) {
+        for (int loc = 0; loc < 256; ++loc) {
+            if (inFlight[loc] == 0 && !_publishedCrossLocationWaits[loc]) {
+                continue;
+            }
+            auto& stats = _shared.crossLocationWaits[loc];
+            stats.inFlight.store(inFlight[loc], std::memory_order_relaxed);
+            stats.oldestNs.store(inFlight[loc] == 0 ? 0 : (now - oldest[loc]).ns, std::memory_order_relaxed);
+            _publishedCrossLocationWaits[loc] = inFlight[loc] != 0;
+        }
+    }
+
     void _sendCrossRegionWaitResponses() {
+        auto now = ternNow();
+        std::array<uint64_t, 256> inFlight{};
+        std::array<TernTime, 256> oldest{};
         if (_crossRegionWaitResponses.empty()) {
+            _publishCrossLocationWaitGauges(now, inFlight, oldest);
             return;
         }
 
-        auto now = ternNow();
         auto leadersAtOtherLocations = _shared.getLeadersAtOtherLocations();
 
         for (auto it = _crossRegionWaitResponses.begin(); it != _crossRegionWaitResponses.end(); ) {
@@ -1060,10 +1095,16 @@ public:
                 }
 
                 if (!locationFound || locationDown) {
+                    _shared.crossLocationWaits[locationId].dropped.fetch_add(1, std::memory_order_relaxed);
                     _waitReqIdToResponseId.erase(locState.waitReqId);
                     locIt = waitInfo.locationStates.erase(locIt);
                     continue;
                 }
+
+                if (inFlight[locationId] == 0 || waitInfo.createdAt < oldest[locationId]) {
+                    oldest[locationId] = waitInfo.createdAt;
+                }
+                ++inFlight[locationId];
 
                 auto timeSinceLastSent = now - locState.lastSent;
                 if (timeSinceLastSent >= CROSS_REGION_WAIT_RETRY_INTERVAL) {
@@ -1101,11 +1142,14 @@ public:
 
                 ALWAYS_ASSERT(_inFlightRequestKeys.erase(InFlightRequestKey{waitInfo.originalRequest.msg.id,
                                                                             waitInfo.originalRequest.clientAddr}) == 1);
+                _shared.crossLocationHeldResponses.fetch_add(1, std::memory_order_relaxed);
+                _shared.crossLocationHeldNs.fetch_add((now - waitInfo.createdAt).ns, std::memory_order_relaxed);
                 it = _crossRegionWaitResponses.erase(it);
             } else {
                 ++it;
             }
         }
+        _publishCrossLocationWaitGauges(now, inFlight, oldest);
     }
 
     void _maybeEmitHeartbeat() {
@@ -1307,9 +1351,11 @@ public:
                                         if (timeSinceLastSeen >= _shardDownThreshold) {
                                             LOG_INFO(_env, "Skipping wait for secondary leader at location %s (down for %s)",
                                                     leader.locationId, timeSinceLastSeen);
+                                            _shared.crossLocationWaits[leader.locationId].skipped.fetch_add(1, std::memory_order_relaxed);
                                             continue;
                                         }
                                         shouldWait = true;
+                                        _shared.crossLocationWaits[leader.locationId].started.fetch_add(1, std::memory_order_relaxed);
 
                                         uint64_t waitReqId = ++_requestIdCounter;
                                         CrossRegionLocationState locState;
@@ -1734,9 +1780,11 @@ public:
                     if (timeSinceLastSeen >= _shardDownThreshold) {
                         LOG_INFO(_env, "Skipping wait for secondary leader at location %s (down for %s)",
                                 leader.locationId, timeSinceLastSeen);
+                        _shared.crossLocationWaits[leader.locationId].skipped.fetch_add(1, std::memory_order_relaxed);
                         continue;
                     }
                     shouldWait = true;
+                    _shared.crossLocationWaits[leader.locationId].started.fetch_add(1, std::memory_order_relaxed);
 
                     uint64_t waitReqId = ++_requestIdCounter;
                     CrossRegionLocationState locState;
@@ -1801,7 +1849,9 @@ public:
                         continue;
                     }
 
-                    auto& locState = locIt->second;
+                    auto& stats = _shared.crossLocationWaits[respondingLocationId];
+                    stats.finished.fetch_add(1, std::memory_order_relaxed);
+                    stats.finishedNs.fetch_add((now - waitIt->second.createdAt).ns, std::memory_order_relaxed);
                     waitIt->second.locationStates.erase(locIt);
                     LOG_DEBUG(_env, "Received WaitStateAppliedResp for LogIdx %s from location %s, %s locations remaining",
                                 waitIt->second.idx.u64, respondingLocationId,
@@ -2617,6 +2667,29 @@ public:
             _metricsBuilder.fieldU64("last_applied", lastApplied.u64);
             _metricsBuilder.fieldU64("known_last_released", knownLastReleased);
             _metricsBuilder.fieldU64("backlog", knownLastReleased > lastApplied.u64 ? knownLastReleased - lastApplied.u64 : 0);
+            _metricsBuilder.timestamp(now);
+        }
+
+        for (int loc = 0; loc < 256; ++loc) {
+            const auto& stats = _shared.crossLocationWaits[loc];
+            uint64_t started = stats.started.load(std::memory_order_relaxed);
+            uint64_t skipped = stats.skipped.load(std::memory_order_relaxed);
+            if (started == 0 && skipped == 0) { continue; }
+            newMeassurement("eggsfs_shard_cross_location_wait");
+            _metricsBuilder.tag("target_location", loc);
+            _metricsBuilder.fieldU64("started", started);
+            _metricsBuilder.fieldU64("skipped", skipped);
+            _metricsBuilder.fieldU64("dropped", stats.dropped.load(std::memory_order_relaxed));
+            _metricsBuilder.fieldU64("finished", stats.finished.load(std::memory_order_relaxed));
+            _metricsBuilder.fieldU64("finished_ns", stats.finishedNs.load(std::memory_order_relaxed));
+            _metricsBuilder.fieldU64("in_flight", stats.inFlight.load(std::memory_order_relaxed));
+            _metricsBuilder.fieldU64("oldest_ns", stats.oldestNs.load(std::memory_order_relaxed));
+            _metricsBuilder.timestamp(now);
+        }
+        if (uint64_t held = _shared.crossLocationHeldResponses.load(std::memory_order_relaxed); held > 0) {
+            newMeassurement("eggsfs_shard_cross_location_held");
+            _metricsBuilder.fieldU64("count", held);
+            _metricsBuilder.fieldU64("ns", _shared.crossLocationHeldNs.load(std::memory_order_relaxed));
             _metricsBuilder.timestamp(now);
         }
 
