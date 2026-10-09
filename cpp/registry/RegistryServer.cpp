@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <mutex>
 #include <shared_mutex>
+#include <sstream>
 #include <netinet/tcp.h>
 
 bool RegistryServer::init() {
@@ -173,6 +174,31 @@ void RegistryServer::sendRegistryResponses(std::vector<RegistryResponse>& respon
 static constexpr size_t MESSAGE_HEADER_SIZE = 8;
 static constexpr size_t MESSAGE_HEADER_LENGTH_OFFSET = 4;
 
+void RegistryServer::_initDeprecatedKinds() {
+    // Deprecated message types are renamed with a DEPRECATED or Deprecated
+    // suffix, which bincodegen turns into these kind names. Going by the name
+    // means a new deprecation is covered without anyone updating a list here.
+    for (RegistryMessageKind kind : allRegistryMessageKind) {
+        std::ostringstream name;
+        name << kind;
+        _deprecatedKinds[(int)kind] =
+            name.str().find("_DE_PR_EC_AT_ED") != std::string::npos ||
+            name.str().find("_DEPRECATED") != std::string::npos;
+    }
+}
+
+void RegistryServer::_countRequest(const Client& client, RegistryMessageKind kind) {
+    _receivedRequestCounts[(int)kind].fetch_add(1, std::memory_order_relaxed);
+    if (likely(!_deprecatedKinds[(int)kind])) {
+        return;
+    }
+    // Once per client ip and kind, so we can tell who to upgrade before
+    // removing the kind.
+    if (_loggedDeprecatedRequests.emplace(kind, client.addr.ip.data).second) {
+        LOG_INFO(_env, "client %s sent deprecated request %s", client.addr, kind);
+    }
+}
+
 void RegistryServer::_acceptConnection(int fd) {
     sockaddr_in clientAddr{};
     socklen_t clientAddrLen = sizeof(clientAddr);
@@ -202,7 +228,7 @@ void RegistryServer::_acceptConnection(int fd) {
     }
 
     auto now = ternNow();
-    auto client_it = _clients.emplace(clientFd, Client{clientFd, {}, {}, now,0,0}).first;
+    auto client_it = _clients.emplace(clientFd, Client{clientFd, IpPort::fromSockAddrIn(clientAddr), {}, {}, now,0,0}).first;
     client_it->second.readBuffer.resize(MESSAGE_HEADER_SIZE);
     _clientsByActivity.emplace(now, clientFd);
 
@@ -266,6 +292,7 @@ void RegistryServer::_readClient(int fd) {
                 req.req.unpack(buf);
                 buf.ensureFinished();
                 LOG_TRACE(_env, "Recieved request on fd %s, %s", fd, req.req);
+                _countRequest(client, req.req.kind());
                 // Remove read event from epoll after receiving complete request
                 epoll_event event{};
                 event.events =
