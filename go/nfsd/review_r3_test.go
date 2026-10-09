@@ -12,6 +12,86 @@ import (
 	"time"
 )
 
+// bindStatus runs one BIND_CONN_TO_SESSION on conn and returns its status
+// and, for OK, the direction granted. It reports a parse failure as an
+// error status rather than failing, so goroutines may call it.
+func bindStatus(srv *Server, conn *rpcConnection, id SessionID, dir uint32, xid uint32) (status, granted uint32) {
+	req, err := parseRPCCall(rpcCallForTest(xid, procCompound, admissionBind(id, dir, false)))
+	if err != nil {
+		return NFS4ERR_SERVERFAULT, 0
+	}
+	req.connection = conn
+	reply := bytes.Clone(srv.safeHandleCompound(req, "bind-race"))
+	req.releaseReply()
+	res, err := parseCompoundReply(reply)
+	if err != nil {
+		return NFS4ERR_SERVERFAULT, 0
+	}
+	if res.Status() != NFS4_OK {
+		return res.Status(), 0
+	}
+	it := res.Resarray()
+	it.Next()
+	return NFS4_OK, it.Resarray().Value().AsBINDCONNTOSESSION4resEntry().Value().AsBINDCONNTOSESSION4resok().BctsrDir()
+}
+
+// R2-BIND: two BINDs for one unassociated session on one connection, sent
+// at once, are decided as if one ran after the other. The second sees the
+// first's association, which it may not change: it gets INVAL, and the
+// connection never ends with both directions from two requests that each
+// asked for one.
+func TestConcurrentBindsSerialize(t *testing.T) {
+	srv := admissionWritableServer(t, NewLocalTernVFS(t.TempDir()))
+	pairs := [][2]uint32{
+		{CDFC4_FORE, CDFC4_BACK},
+		{CDFC4_FORE, CDFC4_BACK_OR_BOTH},
+		{CDFC4_FORE_OR_BOTH, CDFC4_BACK},
+	}
+	for _, pair := range pairs {
+		for round := range 300 {
+			sess := backSessionForTest(t, srv)
+			conn := testConnection(t)
+			var start sync.WaitGroup
+			start.Add(1)
+			var done sync.WaitGroup
+			status := make([]uint32, 2)
+			granted := make([]uint32, 2)
+			for i, dir := range pair {
+				done.Add(1)
+				go func() {
+					defer done.Done()
+					start.Wait()
+					status[i], granted[i] = bindStatus(srv, conn, sess.id, dir, uint32(i+1))
+				}()
+			}
+			start.Done()
+			done.Wait()
+			fore, back := conn.carriesFore(sess.id), conn.carriesBack(sess.id)
+			oks := 0
+			for i := range pair {
+				switch status[i] {
+				case NFS4_OK:
+					oks++
+					want := granted[i] == CDFS4_BOTH && fore && back ||
+						granted[i] == CDFS4_FORE && fore && !back ||
+						granted[i] == CDFS4_BACK && !fore && back
+					if !want {
+						t.Fatalf("dirs %v round %d: request %d granted %d but the connection has fore=%v back=%v",
+							pair, round, i, granted[i], fore, back)
+					}
+				case NFS4ERR_INVAL:
+				default:
+					t.Fatalf("dirs %v round %d: request %d got %s", pair, round, i, Nfsstat4Name(status[i]))
+				}
+			}
+			if oks != 1 {
+				t.Fatalf("dirs %v round %d: %d BINDs succeeded (%s, %s), fore=%v back=%v; want exactly one",
+					pair, round, oks, Nfsstat4Name(status[0]), Nfsstat4Name(status[1]), fore, back)
+			}
+		}
+	}
+}
+
 // leaseRemoveHold blocks the first RemoveEdge of the lease name once
 // armed: the terminal pass's cleanup of our lease.
 type leaseRemoveHold struct {
@@ -108,6 +188,97 @@ func TestTerminalAdmissionBeforeCleanup(t *testing.T) {
 func (fs *leaseRemoveHold) present(dir InodeID) bool {
 	_, err := fs.TernVFS.Lookup(dir, fs.leaseName)
 	return err == nil
+}
+
+// R2-PROBE: a back reservation still pending does not keep the probe of a
+// session that has gone. S0's CB_NULL is unanswered; S1's CREATE_SESSION
+// has reserved its back association and waits in its confirmation check;
+// S0 is destroyed. S0's probe is cancelled, by a prune meanwhile or at S1's
+// commit, and S1 gets its own CB_NULL.
+func TestPendingBackReservationDoesNotKeepOldProbe(t *testing.T) {
+	for _, prune := range []bool{true, false} {
+		t.Run(map[bool]string{true: "pruned meanwhile", false: "at commit"}[prune], func(t *testing.T) {
+			pendingBackProbe(t, prune)
+		})
+	}
+}
+
+func pendingBackProbe(t *testing.T, prune bool) {
+	fs := &confirmedLookupHold{TernVFS: NewLocalTernVFS(t.TempDir()),
+		entered: make(chan struct{}), release: make(chan struct{})}
+	srv, err := NewServer(fs, readOnlyStagingStore{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr, stop := serveTestServer(t, srv)
+	defer stop()
+	defer closeSignal(fs.release)
+	c := newCBTestClient(t, addr)
+	clientID, seq := exchangeOn(t, c, 1, "probe-owner")
+	s0, flags := createdSession(t, c.compound(2, backCreateSessionBody(clientID, seq,
+		CREATE_SESSION4_FLAG_CONN_BACK_CHAN, offerNone)))
+	if flags&CREATE_SESSION4_FLAG_CONN_BACK_CHAN == 0 {
+		t.Fatal("no backchannel granted")
+	}
+	if call, ok := c.nextCall(testChannelTimeout); !ok || cbProc(call) != cbProcNull {
+		t.Fatal("no CB_NULL for S0")
+	} // Left unanswered.
+	sess0 := srv.sessions.lookup(s0)
+	sess0.cb.mu.Lock()
+	conn := sess0.cb.conns[0]
+	sess0.cb.mu.Unlock()
+	if conn.outstandingCalls() != 1 {
+		t.Fatalf("%d outstanding calls, want S0's CB_NULL", conn.outstandingCalls())
+	}
+
+	// S1 reserves its back association, then waits in IsConfirmed.
+	srv.clients.stopLeaseWorkers() // no refresher reads the confirmed pointer
+	fs.mu.Lock()
+	fs.armed = true
+	fs.mu.Unlock()
+	s1Done := make(chan COMPOUND4res, 1)
+	go func() {
+		s1Done <- c.compound(3, backCreateSessionBody(clientID, seq+1,
+			CREATE_SESSION4_FLAG_CONN_BACK_CHAN, offerNone))
+	}()
+	awaitSignal(t, fs.entered, "S1's confirmation check")
+	conn.mu.Lock()
+	pending := len(conn.backPending)
+	conn.mu.Unlock()
+	if pending != 1 {
+		t.Fatalf("%d pending back reservations, want S1's", pending)
+	}
+
+	if res := c.compound(4, admissionDestroy(s0)); res.Status() != NFS4_OK {
+		t.Fatalf("DESTROY_SESSION S0 %s", Nfsstat4Name(res.Status()))
+	}
+	if prune {
+		// Another reservation prunes the connection, as any later
+		// CREATE_SESSION or BIND would.
+		bt, ok := conn.reserveBack(srv, SessionID{0xff})
+		if !ok {
+			t.Fatal("reserving")
+		}
+		bt.abort()
+		if n := conn.outstandingCalls(); n != 0 {
+			t.Fatalf("S0's CB_NULL is still outstanding (%d calls) with only S1 pending", n)
+		}
+	}
+
+	closeSignal(fs.release)
+	s1, flags := createdSession(t, awaitValue(t, s1Done, "S1's CREATE_SESSION"))
+	if flags&CREATE_SESSION4_FLAG_CONN_BACK_CHAN == 0 {
+		t.Fatal("no backchannel granted to S1")
+	}
+	call, ok := c.nextCall(testChannelTimeout)
+	if !ok || cbProc(call) != cbProcNull {
+		t.Fatal("no CB_NULL for S1's backchannel")
+	}
+	c.answer(call, nil)
+	waitFor(t, "S1's path up", func() bool { return conn.backPath() == cbPathUp })
+	if !conn.carriesBack(s1) || conn.carriesBack(s0) {
+		t.Fatal("the back associations are not S1's alone")
+	}
 }
 
 // fenceClockVFS is passCountVFS that also records when the first temp was

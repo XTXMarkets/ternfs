@@ -110,6 +110,72 @@ clientid has been replaced, SEQUENCE returns `NFS4ERR_BADSESSION`, and while
 expiry is being decided it returns `NFS4ERR_DELAY`. The client then has to
 establish a new clientid with EXCHANGE_ID.
 
+### Backchannel
+
+A session that sets `CREATE_SESSION4_FLAG_CONN_BACK_CHAN` on a connection
+that can carry callbacks is granted a backchannel there. The connection's
+back association is reserved with the session, before the creation slot,
+and also on the connection that replays a cached CREATE_SESSION or retries
+one held for confirmation; a connection full of back associations gets
+`NFS4ERR_RESOURCE` before anything is created. A connection carries the
+callbacks of at most 64 sessions, and retired sessions' associations are
+pruned.
+
+BIND_CONN_TO_SESSION returns the direction RFC 8881 section 18.34.3
+requires. An existing association that satisfies the request is returned
+unchanged; a request that would change it gets `NFS4ERR_INVAL`, as does a
+direction other than the four defined ones. The back direction needs a
+session that asked for a backchannel. The connection's existing
+association, the decision, both quotas and the new association are taken in
+one step, so concurrent BINDs are decided one after the other and
+`NFS4ERR_RESOURCE` changes nothing. BACKCHANNEL_CTL
+replaces the callback program and credential. The callback credential is
+the first `AUTH_NONE` or `AUTH_SYS` entry the client offers, sent verbatim;
+a list offering only `RPCSEC_GSS` gets `NFS4ERR_NOENT` and an empty one
+`NFS4ERR_INVAL`, both before the creation slot, and only when a backchannel
+is requested. `SET_SSV` returns `NFS4ERR_INVAL`, since only `SP4_NONE` is
+offered.
+
+Callbacks use ONC RPC version 2, the session's callback program, and
+program version 1, the `NFS_CB` version in the NFSv4.1 XDR, which Linux
+sends and accepts (RFC 8881 section 18.36.3's prose says 4). nfsd sends two.
+CB_NULL probes every new back connection, after the reply that bound it. A
+validated reply marks the path up. Until then, for at most the 10-second
+probe timeout, the path counts as up for the status flags only; once the
+timeout passes, `SEQ4_STATUS_CB_PATH_DOWN_SESSION` and
+`SEQ4_STATUS_CB_PATH_DOWN` are raised. The timed-out CB_NULL stays
+outstanding until a reply or a disconnect, or until the connection's last
+committed back association goes; a reservation still pending does not keep
+it, and the next backchannel committed on the connection is probed afresh.
+
+CB_COMPOUND, minor version 1, with CB_SEQUENCE on slot 0 and CB_RECALL_SLOT,
+is sent once per episode when the reply cache is three quarters full and a
+session is charged more than its share. Such a session is given half its
+slots as SEQUENCE's target highest slot until the cache is below half full;
+sessions without a usable backchannel (none requested, no back slot, or
+limits too small for the call) see only the target. A callback goes only to
+a connection whose path is up, one at a time per session, with a 10-second
+timeout and server-wide XIDs. An unanswered callback is never resent while
+its connection is up: after a disconnect it goes out with the same slot and
+sequence on another back connection that is up, or waits for a BIND. A
+late, validated reply marks a timed-out path up again. The frame actually
+sent is checked against the negotiated back limits each time; if the
+credential has since grown past them, the recall is dropped unsent.
+
+A reply is validated whole before anything in it is used. A valid
+CB_SEQUENCE OK consumes the sequence and renews the client's logical lease;
+a CB_RECALL_SLOT error after it is the client declining the recall, recorded
+and not retried. A `NFS4ERR_DELAY` from CB_SEQUENCE is retried with the same
+sequence up to three times. Any other error, or a malformed, truncated or
+inconsistent reply, sets `SEQ4_STATUS_BACKCHANNEL_FAULT` and stops callbacks
+for that session, without renewing. Replies with unknown XIDs are dropped
+and counted. Clients that never ask for a backchannel see no backchannel
+status flags.
+
+The implementation is in [`session.go`](session.go),
+[`backchannel.go`](backchannel.go) and
+[`backchannel_sender.go`](backchannel_sender.go).
+
 ## State overview
 
 The design is constrained by two TernFS properties:
@@ -610,7 +676,7 @@ unauthenticated AUTH_SYS data.
 
 A client has two leases here. The logical lease is this process's: it lives
 in memory, per incarnation, and is renewed whenever a request admitted by
-SEQUENCE ends. It stays held while a request is
+SEQUENCE, or a successful callback, ends. It stays held while a request is
 active and for one lease time after the last one. While it is held this
 process never expires the client. The durable lease is the lease file this
 process keeps in the client store, which other nfsd processes read.
@@ -664,7 +730,8 @@ the worker's pass inline; with a server it only reads the worker's record.
 An operation whose open turns out inactive gets `NFS4ERR_EXPIRED`, and only
 an open whose own marker is gone loses its entry; local expiry of the client
 is the lease gate's decision. When the gate expires a client, it retires
-the client's sessions and returns their credits, whether or not the expired marker could be written. A
+the client's sessions, cancelling their callbacks and returning their
+credits, whether or not the expired marker could be written. A
 CREATE_SESSION for an incarnation this process has expired gets
 `NFS4ERR_STALE_CLIENTID`; its cached CREATE_SESSION result still replays.
 This holds from the moment the terminal steps start, before their store
@@ -721,7 +788,8 @@ been expired for a full additional lease, allowing for clock skew while
 preventing slots from accumulating across server restarts. A process removes
 its own lease only after the client has an `expired` marker. Only one path
 writes that marker: the expiry decision, which needs the logical lease to be
-unheld, observes the durable lease, and gives way to a request renewal that arrives meanwhile. An expired clientid therefore cannot renew or
+unheld, observes the durable lease, and gives way to a renewal or callback
+reply that arrives meanwhile. An expired clientid therefore cannot renew or
 create new open state even after all of its process slots have been removed.
 
 OPEN markers are create-if-absent records. A repeated OPEN whose stateid
@@ -984,6 +1052,7 @@ process memory.
   its logical lease is held, but another process cannot be quiesced from
   here: if this process's store writes fail long enough, another process may
   mark the client expired after its last real durable publication.
+  Callbacks alone keep a client live in this process.
 - **Persistent LINK failure.** If LINK keeps failing with unknown outcomes,
   a client's durable refresh stops at its cap until a late LINK is found and
   removed, or the process restarts; SEQUENCE then gets `NFS4ERR_DELAY` once
@@ -1006,7 +1075,8 @@ TernFS does not hold deny reservations, and process-local reservations would
 not be visible across the nfsd fleet.
 
 Byte-range locking, delegations, pNFS, named attributes, hard links and
-special files and the backchannel are also not implemented. There is no grace
+special files are also not implemented. The backchannel carries only
+CB_NULL and CB_RECALL_SLOT. There is no grace
 period: `RECLAIM_COMPLETE` is accepted, and there is nothing to reclaim.
 OPEN never sets `OPEN4_RESULT_PRESERVE_UNLINKED`, so the Linux client still
 silly-renames a busy file instead of removing it. nfsd implements NFSv4.1

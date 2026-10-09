@@ -9,7 +9,8 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"net"
-
+	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -149,6 +150,181 @@ func TestAssociationQuotaCountsDistinctIDs(t *testing.T) {
 	y.abort()
 	if !conn.associated(x) {
 		t.Fatal("aborting the pending token removed X's committed association")
+	}
+}
+
+// backSessionForTest gives a connectionSession a backchannel request and a
+// sender, as CREATE_SESSION with CONN_BACK_CHAN would.
+func backSessionForTest(t *testing.T, srv *Server) *session {
+	t.Helper()
+	sess := srv.sessions.lookup(connectionSession(t, srv).id)
+	sess.backRequested = true
+	sess.cb = newCBSender(srv, sess, 0x40000001, callbackSec{flavor: authNone})
+	return sess
+}
+
+// testConnection is a transport whose writes vanish; its probes end when
+// the test does.
+func testConnection(t *testing.T) *rpcConnection {
+	closed := make(chan struct{})
+	t.Cleanup(func() { close(closed) })
+	return &rpcConnection{send: func([]byte) bool { return true }, closed: closed}
+}
+
+// A7: BIND_CONN_TO_SESSION over every existing association and requested
+// direction. An acceptable existing association comes back unchanged, any
+// other gets INVAL, invalid directions get INVAL, and nothing changes on a
+// refusal.
+func TestBindDirectionMatrix(t *testing.T) {
+	type set struct{ fore, back bool }
+	none, f, b, fb := set{}, set{fore: true}, set{back: true}, set{true, true}
+	inval := set{} // marker for INVAL in the table
+	want := map[uint32]map[set]set{
+		CDFC4_FORE:         {none: f, f: f, b: inval, fb: inval},
+		CDFC4_BACK:         {none: b, f: inval, b: b, fb: inval},
+		CDFC4_FORE_OR_BOTH: {none: fb, f: f, b: inval, fb: fb},
+		CDFC4_BACK_OR_BOTH: {none: fb, f: inval, b: b, fb: fb},
+	}
+	dirName := map[set]uint32{f: CDFS4_FORE, b: CDFS4_BACK, fb: CDFS4_BOTH}
+	srv := admissionWritableServer(t, NewLocalTernVFS(t.TempDir()))
+	for _, dir := range []uint32{0, CDFC4_FORE, CDFC4_BACK, CDFC4_FORE_OR_BOTH, 4, 5, 6, CDFC4_BACK_OR_BOTH} {
+		for _, existing := range []set{none, f, b, fb} {
+			sess := backSessionForTest(t, srv)
+			conn := testConnection(t)
+			if existing.fore && !conn.bind(srv, sess.id) || existing.back && !conn.bindBack(srv, sess.id) {
+				t.Fatal("setting up the existing association")
+			}
+			_, res := admissionRequest(t, srv, admissionBind(sess.id, dir, false), 1, conn)
+			expect, valid := want[dir][existing]
+			after := set{conn.carriesFore(sess.id), conn.carriesBack(sess.id)}
+			if !valid || expect == inval {
+				admissionStatus(t, res, NFS4ERR_INVAL, OP_BIND_CONN_TO_SESSION)
+				if after != existing {
+					t.Errorf("dir %d existing %+v: refusal changed the association to %+v", dir, existing, after)
+				}
+				continue
+			}
+			admissionStatus(t, res, NFS4_OK, OP_BIND_CONN_TO_SESSION)
+			it := res.Resarray()
+			it.Next()
+			got := it.Resarray().Value().AsBINDCONNTOSESSION4resEntry().Value().AsBINDCONNTOSESSION4resok().BctsrDir()
+			if got != dirName[expect] || after != expect {
+				t.Errorf("dir %d existing %+v: returned %d with %+v, want %+v", dir, existing, got, after, expect)
+			}
+		}
+	}
+
+	// A session that asked for no backchannel cannot gain one.
+	plain := srv.sessions.lookup(connectionSession(t, srv).id)
+	for dir, status := range map[uint32]uint32{CDFC4_BACK: NFS4ERR_INVAL, CDFC4_BACK_OR_BOTH: NFS4ERR_INVAL, CDFC4_FORE_OR_BOTH: NFS4_OK} {
+		conn := testConnection(t)
+		_, res := admissionRequest(t, srv, admissionBind(plain.id, dir, false), 1, conn)
+		admissionStatus(t, res, status, OP_BIND_CONN_TO_SESSION)
+		if conn.carriesBack(plain.id) {
+			t.Errorf("dir %d gave a back association", dir)
+		}
+	}
+
+	// Full quotas: RESOURCE, and neither direction is taken.
+	for _, full := range []string{"fore", "back"} {
+		sess := backSessionForTest(t, srv)
+		conn := testConnection(t)
+		for range maxConnectionSessions {
+			other := connectionSession(t, srv).id
+			if full == "fore" && !conn.bind(srv, other) || full == "back" && !conn.bindBack(srv, other) {
+				t.Fatal("filling the quota")
+			}
+		}
+		_, res := admissionRequest(t, srv, admissionBind(sess.id, CDFC4_FORE_OR_BOTH, false), 1, conn)
+		admissionStatus(t, res, NFS4ERR_RESOURCE, OP_BIND_CONN_TO_SESSION)
+		if conn.carriesFore(sess.id) || conn.carriesBack(sess.id) {
+			t.Errorf("%s quota full: a partial association was made", full)
+		}
+	}
+}
+
+// A2: local expiry retires the client's sessions itself, cancelling their
+// callbacks and returning their credits, even when no expired marker could
+// be written. It does not claim fleet expiry.
+func TestLocalExpiryDrainsSessionsWithoutMarker(t *testing.T) {
+	fs := &expiryGateVFS{TernVFS: NewLocalTernVFS(t.TempDir()), failMarker: true}
+	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewServer(fs, staging, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr, stop := serveTestServer(t, srv)
+	defer stop()
+	before := srv.sessions.accounting()
+	f := newCBSessionOn(t, srv, addr)
+	f.client.answerNull(t)
+	sess := f.session(t)
+	inc := sess.clientID
+	f.pressure(t, true)
+	f.sequence(t)
+	if _, ok := f.client.nextCall(testChannelTimeout); !ok {
+		t.Fatal("no recall outstanding")
+	}
+	f.pressure(t, false)
+
+	// The durable lease dies; the marker write fails.
+	srv.clients.stopLeaseWorkers()
+	later := time.Now().Add(10 * leaseWriteTerm)
+	srv.clients.setClock(func() time.Time { return later })
+	endQuietForTest(srv)
+	held := srv.sessions.accounting()
+	end, ok := srv.beginDestroy(inc)
+	if !ok {
+		t.Fatal("protected")
+	}
+	expired, err := srv.decideExpired(inc, true)
+	end()
+	if !expired || err != nil {
+		t.Fatalf("decideExpired %t %v", expired, err)
+	}
+	if _, err := fs.TernVFS.Lookup(InodeID(inc), expiredName); err == nil {
+		t.Fatal("the marker exists; the fixture should have failed it")
+	}
+	if srv.sessions.lookup(sess.id) != nil {
+		t.Fatal("expired client's session still attached")
+	}
+	waitFor(t, "callback sender exit", func() bool {
+		sess.cb.mu.Lock()
+		defer sess.cb.mu.Unlock()
+		return !sess.cb.running
+	})
+	// The session's record is returned only once its sender has exited;
+	// its cached replies go with it.
+	waitFor(t, "session credits", func() bool {
+		a := srv.sessions.accounting()
+		return a.Sessions == held.Sessions-1 && a.Records == held.Records-1 && a.CacheBytes < held.CacheBytes
+	})
+	_ = before
+	srv.sessions.mu.Lock()
+	for _, other := range srv.sessions.sessions {
+		if other.clientID == inc {
+			t.Error("a session of the expired client remains")
+		}
+	}
+	srv.sessions.mu.Unlock()
+	srv.clients.refreshMu.Lock()
+	r := srv.clients.refreshers[InodeID(inc)]
+	srv.clients.refreshMu.Unlock()
+	if r != nil {
+		r.mu.Lock()
+		state := r.state
+		r.mu.Unlock()
+		if state == leaseRecordFleetExpired {
+			t.Fatal("local expiry recorded fleet expiry without a marker")
+		}
+	}
+	// Later sweeps change nothing more and stay bounded.
+	srv.sweepExpiredClientState()
+	if _, err := fs.TernVFS.Lookup(InodeID(inc), expiredName); err == nil {
+		t.Fatal("marker appeared")
 	}
 }
 
@@ -330,6 +506,115 @@ func createdSession(t *testing.T, res COMPOUND4res) (SessionID, uint32) {
 	return readSessionID(ok.CsrSessionid()), ok.CsrFlags()
 }
 
+// A6: a cached CREATE_SESSION replayed on another connection binds the
+// backchannel there too, which then gets its own CB_NULL.
+func TestCreateSessionReplayBindsBackchannel(t *testing.T) {
+	_, addr, cleanup := startTestServerWithServer(t, t.TempDir())
+	defer cleanup()
+	first := newCBTestClient(t, addr)
+	clientID, seq := exchangeOn(t, first, 1, "replay-back")
+	body := backCreateSessionBody(clientID, seq, CREATE_SESSION4_FLAG_CONN_BACK_CHAN, offerNone)
+	id, flags := createdSession(t, first.compound(2, body))
+	if flags&CREATE_SESSION4_FLAG_CONN_BACK_CHAN == 0 {
+		t.Fatal("no backchannel granted")
+	}
+	first.answerNull(t)
+	second := newCBTestClient(t, addr)
+	replayed, flags := createdSession(t, second.compound(3, body))
+	if replayed != id || flags&CREATE_SESSION4_FLAG_CONN_BACK_CHAN == 0 {
+		t.Fatal("replay result differs")
+	}
+	second.answerNull(t)
+}
+
+// A6: a held confirmation's retry on a second connection binds the granted
+// backchannel to that connection.
+func TestHeldCreateSessionRetryBindsBackchannel(t *testing.T) {
+	f := newConfirmServer(t)
+	body := backCreateSessionBody(f.wireN, 1, CREATE_SESSION4_FLAG_CONN_BACK_CHAN, offerNone)
+	// D applies but reports failure: held, and settled by the retry.
+	f.arm(writeD, faultAppliedFail, nil)
+	if got := f.rawStatus(t, body); got != NFS4ERR_DELAY {
+		t.Fatalf("unresolved CREATE_SESSION %s", Nfsstat4Name(got))
+	}
+	f.disarm()
+	f.fs.set(writeD, faultNone, nil)
+	retry := newCBTestClient(t, addrOfTestServer(t, f.srv))
+	_, flags := createdSession(t, retry.compound(4000, body))
+	if flags&CREATE_SESSION4_FLAG_CONN_BACK_CHAN == 0 {
+		t.Fatal("no backchannel granted")
+	}
+	retry.answerNull(t)
+}
+
+// A6: with the connection's back quota full, CREATE_SESSION asking for a
+// backchannel gets RESOURCE before creating anything.
+func TestCreateSessionBackQuotaBeforeEffects(t *testing.T) {
+	srv := admissionWritableServer(t, NewLocalTernVFS(t.TempDir()))
+	conn := testConnection(t)
+	for range maxConnectionSessions {
+		if !conn.bindBack(srv, connectionSession(t, srv).id) {
+			t.Fatal("filling the back quota")
+		}
+	}
+	_, res := admissionRequest(t, srv, exchangeIDBody("back-quota", [8]byte{8}), 1, conn)
+	it := res.Resarray()
+	it.Next()
+	ex := it.Resarray().Value().AsEXCHANGEID4resEntry().Value().AsEXCHANGEID4resok()
+	before := srv.sessions.accounting()
+	_, res = admissionRequest(t, srv, backCreateSessionBody(ex.EirClientid(), ex.EirSequenceid(),
+		CREATE_SESSION4_FLAG_CONN_BACK_CHAN, offerNone), 2, conn)
+	admissionStatus(t, res, NFS4ERR_RESOURCE, OP_CREATE_SESSION)
+	after := srv.sessions.accounting()
+	if after.Sessions != before.Sessions || after.Records != before.Records ||
+		after.PendingSessions != before.PendingSessions || after.GroupCredits != before.GroupCredits {
+		t.Fatalf("refused CREATE_SESSION changed %+v to %+v", before, after)
+	}
+	// The slot was not consumed: without the backchannel it succeeds.
+	_, res = admissionRequest(t, srv, backCreateSessionBody(ex.EirClientid(), ex.EirSequenceid(), 0), 3, conn)
+	admissionStatus(t, res, NFS4_OK, OP_CREATE_SESSION)
+}
+
+// A6: more create/destroy cycles on one connection than its back quota,
+// half with the CB_NULL answered and half not. Every new backchannel is
+// probed: retired sessions' back associations are pruned, and an
+// unanswered probe of a connection left with none is cancelled, its
+// goroutine gone.
+func TestBackchannelCyclesReuseConnection(t *testing.T) {
+	_, addr, cleanup := startTestServerWithServer(t, t.TempDir())
+	defer cleanup()
+	c := newCBTestClient(t, addr)
+	clientID, seq := exchangeOn(t, c, 1, "cycles")
+	xid := uint32(10)
+	baseline := 0
+	for i := range maxConnectionSessions + 6 {
+		xid++
+		id, flags := createdSession(t, c.compound(xid, backCreateSessionBody(clientID, seq,
+			CREATE_SESSION4_FLAG_CONN_BACK_CHAN, offerNone)))
+		seq++
+		if flags&CREATE_SESSION4_FLAG_CONN_BACK_CHAN == 0 {
+			t.Fatalf("cycle %d: no backchannel granted", i)
+		}
+		call, ok := c.nextCall(testChannelTimeout)
+		if !ok || cbProc(call) != cbProcNull {
+			t.Fatalf("cycle %d: no CB_NULL for the new backchannel", i)
+		}
+		if i%2 == 0 {
+			c.answer(call, nil)
+		}
+		xid++
+		if res := c.compound(xid, admissionDestroy(id)); res.Status() != NFS4_OK {
+			t.Fatalf("cycle %d: DESTROY_SESSION %s", i, Nfsstat4Name(res.Status()))
+		}
+		if i == 4 {
+			baseline = runtime.NumGoroutine()
+		}
+	}
+	if grown := runtime.NumGoroutine() - baseline; grown > 8 {
+		t.Fatalf("goroutines grew by %d over the cycles", grown)
+	}
+}
+
 // recallReplyFrame builds a CB_COMPOUND reply with the given compound
 // status and raw result words.
 func recallReplyFrame(xid, compound uint32, results ...[]byte) []byte {
@@ -364,6 +649,43 @@ func recallResult(status uint32) []byte {
 	return binary.BigEndian.AppendUint32(binary.BigEndian.AppendUint32(nil, OP_CB_RECALL_SLOT), status)
 }
 
+// A9: the whole reply is validated before any of it is used.
+func TestRecallReplyValidation(t *testing.T) {
+	id := SessionID{7}
+	ok := seqResult(NFS4_OK, id, 3)
+	for _, c := range []struct {
+		name  string
+		frame []byte
+		want  cbOutcome
+		bad   bool
+	}{
+		{"success", recallReplyFrame(1, NFS4_OK, ok, recallResult(NFS4_OK)), cbDone, false},
+		{"recall error", recallReplyFrame(1, NFS4ERR_INVAL, ok, recallResult(NFS4ERR_INVAL)), cbRecallRefused, false},
+		{"delay", recallReplyFrame(1, NFS4ERR_DELAY, seqResult(NFS4ERR_DELAY, id, 3)), cbRetry, false},
+		{"misordered", recallReplyFrame(1, NFS4ERR_SEQ_MISORDERED, seqResult(NFS4ERR_SEQ_MISORDERED, id, 3)), cbFault, false},
+		{"truncated second result", recallReplyFrame(1, NFS4_OK, ok, recallResult(NFS4_OK)[:4]), cbFault, true},
+		{"count two, one present", recallReplyFrame(1, NFS4_OK, ok)[:0:0], cbFault, true},
+		{"only CB_SEQUENCE", recallReplyFrame(1, NFS4_OK, ok), cbFault, true},
+		{"compound status disagrees", recallReplyFrame(1, NFS4_OK, ok, recallResult(NFS4ERR_INVAL)), cbFault, true},
+		{"delay status disagrees", recallReplyFrame(1, NFS4_OK, seqResult(NFS4ERR_DELAY, id, 3)), cbFault, true},
+		{"wrong second opcode", recallReplyFrame(1, NFS4_OK, ok, binary.BigEndian.AppendUint32(binary.BigEndian.AppendUint32(nil, OP_CB_SEQUENCE), 0)), cbFault, true},
+		{"trailing bytes", append(recallReplyFrame(1, NFS4_OK, ok, recallResult(NFS4_OK)), 0, 0, 0, 0), cbFault, true},
+		{"wrong session", recallReplyFrame(1, NFS4_OK, seqResult(NFS4_OK, SessionID{8}, 3), recallResult(NFS4_OK)), cbFault, true},
+		{"wrong sequence", recallReplyFrame(1, NFS4_OK, seqResult(NFS4_OK, id, 4), recallResult(NFS4_OK)), cbFault, true},
+	} {
+		frame := c.frame
+		if c.name == "count two, one present" {
+			frame = recallReplyFrame(1, NFS4_OK, ok)
+			// Declare two results.
+			binary.BigEndian.PutUint32(frame[32:], 2)
+		}
+		r := parseRecallReply(frame, id, 3)
+		if r.malformed != c.bad || r.outcome() != c.want {
+			t.Errorf("%s: malformed %t outcome %d, want %t %d", c.name, r.malformed, r.outcome(), c.bad, c.want)
+		}
+	}
+}
+
 func groupQuiet(srv *Server, clientID uint64) time.Time {
 	srv.sessions.mu.Lock()
 	defer srv.sessions.mu.Unlock()
@@ -371,6 +693,157 @@ func groupQuiet(srv *Server, clientID uint64) time.Time {
 		return g.quietUntil
 	}
 	return time.Time{}
+}
+
+// A9: a malformed reply faults without renewing or advancing; a valid
+// CB_SEQUENCE OK with a CB_RECALL_SLOT error advances and renews, records
+// the error, and neither faults nor retries.
+func TestRecallReplyEffects(t *testing.T) {
+	t.Run("malformed", func(t *testing.T) {
+		f := newCBSession(t)
+		f.client.answerNull(t)
+		sess := f.session(t)
+		f.pressure(t, true)
+		f.sequence(t)
+		call, ok := f.client.nextCall(testChannelTimeout)
+		if !ok {
+			t.Fatal("no recall")
+		}
+		endQuietForTest(f.srv)
+		id, seq, _, _ := cbRecall(t, call)
+		frame := recallReplyFrame(binary.BigEndian.Uint32(call[:4]), NFS4_OK, seqResult(NFS4_OK, id, seq))
+		f.client.write(frame)
+		waitFor(t, "fault", func() bool { fault, _ := sess.cb.flags(); return fault })
+		if !groupQuiet(f.srv, sess.clientID).IsZero() {
+			t.Fatal("a malformed reply renewed the lease")
+		}
+		sess.cb.mu.Lock()
+		next := sess.cb.seq
+		sess.cb.mu.Unlock()
+		if next != seq {
+			t.Fatalf("a malformed reply advanced the sequence to %d", next)
+		}
+		f.pressure(t, false)
+	})
+	t.Run("recall-error", func(t *testing.T) {
+		f := newCBSession(t)
+		f.client.answerNull(t)
+		sess := f.session(t)
+		f.pressure(t, true)
+		f.sequence(t)
+		call, ok := f.client.nextCall(testChannelTimeout)
+		if !ok {
+			t.Fatal("no recall")
+		}
+		endQuietForTest(f.srv)
+		id, seq, _, _ := cbRecall(t, call)
+		f.client.write(recallReplyFrame(binary.BigEndian.Uint32(call[:4]), NFS4ERR_INVAL,
+			seqResult(NFS4_OK, id, seq), recallResult(NFS4ERR_INVAL)))
+		waitFor(t, "sequence advance", func() bool {
+			sess.cb.mu.Lock()
+			defer sess.cb.mu.Unlock()
+			return sess.cb.seq == seq+1 && !sess.cb.running
+		})
+		sess.cb.mu.Lock()
+		status, fault := sess.cb.lastRecallStatus, sess.cb.fault
+		sess.cb.mu.Unlock()
+		if status != NFS4ERR_INVAL || fault {
+			t.Fatalf("recall status %d fault %t", status, fault)
+		}
+		if groupQuiet(f.srv, sess.clientID).IsZero() {
+			t.Fatal("a validated CB_SEQUENCE did not renew")
+		}
+		if _, again := f.client.nextCall(100 * time.Millisecond); again {
+			t.Fatal("the refused recall was retried")
+		}
+		f.pressure(t, false)
+	})
+}
+
+// A8: callbacks go only to a connection that has answered: not while its
+// CB_NULL is unanswered, nor as a resend after a disconnect.
+func TestCallbacksWaitForAnsweredPath(t *testing.T) {
+	t.Run("probing", func(t *testing.T) {
+		f := newCBSession(t)
+		null, ok := f.client.nextCall(testChannelTimeout)
+		if !ok || cbProc(null) != cbProcNull {
+			t.Fatal("no CB_NULL")
+		}
+		f.pressure(t, true)
+		f.sequence(t)
+		if _, sent := f.client.nextCall(200 * time.Millisecond); sent {
+			t.Fatal("a recall went to a connection still being probed")
+		}
+		f.client.answer(null, nil)
+		call, ok := f.client.nextCall(testChannelTimeout)
+		if !ok || cbProc(call) != cbProcCompound {
+			t.Fatal("no recall once the path was up")
+		}
+		f.client.answerSequence(t, call, NFS4_OK)
+		f.pressure(t, false)
+	})
+	t.Run("resend", func(t *testing.T) {
+		f := newCBSession(t)
+		f.client.answerNull(t)
+		second := newCBTestClient(t, f.addr)
+		if res := second.compound(1000, admissionBind(f.ts.id, CDFC4_BACK_OR_BOTH, false)); res.Status() != NFS4_OK {
+			t.Fatalf("BIND %s", Nfsstat4Name(res.Status()))
+		}
+		null, ok := second.nextCall(testChannelTimeout)
+		if !ok || cbProc(null) != cbProcNull {
+			t.Fatal("no CB_NULL on the second connection")
+		}
+		f.pressure(t, true)
+		f.sequence(t)
+		call, ok := f.client.nextCall(testChannelTimeout)
+		if !ok {
+			t.Fatal("no recall")
+		}
+		_, seq, _, _ := cbRecall(t, call)
+		f.client.conn.Close()
+		if _, sent := second.nextCall(200 * time.Millisecond); sent {
+			t.Fatal("resent to a connection still being probed")
+		}
+		second.answer(null, nil)
+		call, ok = second.nextCall(testChannelTimeout)
+		if !ok {
+			t.Fatal("not resent once the second path was up")
+		}
+		if _, again, _, _ := cbRecall(t, call); again != seq {
+			t.Fatalf("resent with sequence %d, want %d", again, seq)
+		}
+		second.answerSequence(t, call, NFS4_OK)
+		f.pressure(t, false)
+	})
+}
+
+// A8: a callback that timed out marks the path unresponsive, but its late,
+// validated reply marks it up again, so later callbacks still go out.
+func TestLateCallbackReplyRestoresPath(t *testing.T) {
+	shortCallbackTimeout(t, 50*time.Millisecond)
+	f := newCBSession(t)
+	f.client.answerNull(t)
+	f.pressure(t, true)
+	f.sequence(t)
+	call, ok := f.client.nextCall(testChannelTimeout)
+	if !ok {
+		t.Fatal("no recall")
+	}
+	time.Sleep(4 * cbTimeout)
+	f.client.answerSequence(t, call, NFS4_OK)
+	f.pressure(t, false)
+	f.sequence(t)
+	f.pressure(t, true)
+	f.sequence(t)
+	call, ok = f.client.nextCall(testChannelTimeout)
+	if !ok {
+		t.Fatal("no recall after the late reply")
+	}
+	if _, seq, _, _ := cbRecall(t, call); seq != 2 {
+		t.Fatalf("sequence %d, want 2", seq)
+	}
+	f.client.answerSequence(t, call, NFS4_OK)
+	f.pressure(t, false)
 }
 
 // passCountVFS counts the refresher's calls: lease reads (one per pass's
@@ -558,6 +1031,77 @@ func TestVerifyPassIsReadOnly(t *testing.T) {
 	if _, err := fs.TernVFS.Lookup(InodeID(clientID), leasePrefix+"otherprocess"); err == nil {
 		t.Fatal("an authorized pass kept another process's long-dead slot")
 	}
+}
+
+// F-CB-LIMITS: a back channel offering no slots never gets a CB_COMPOUND;
+// the session still sees the halved target.
+func TestRecallNeedsABackSlot(t *testing.T) {
+	srv, addr, cleanup := startTestServerWithServer(t, t.TempDir())
+	defer cleanup()
+	f := newCBSessionLimits(t, srv, addr, maxRPCMessage, 0)
+	f.client.answerNull(t)
+	highest := uint32(len(f.session(t).slots) - 1)
+	f.pressure(t, true)
+	if _, target := f.sequence(t); target != highest/2 {
+		t.Fatalf("target %d, want %d", target, highest/2)
+	}
+	if _, sent := f.client.nextCall(200 * time.Millisecond); sent {
+		t.Fatal("a CB_COMPOUND went to a back channel with no slots")
+	}
+	f.pressure(t, false)
+}
+
+// F-CB-LIMITS: a recall queued while it fitted, whose credential then grows
+// past the back channel's request size, is dropped unsent: no CB_COMPOUND,
+// the sequence is not consumed, nothing renews, and the sender exits.
+func TestRecallDroppedWhenCredentialGrows(t *testing.T) {
+	srv, addr, cleanup := startTestServerWithServer(t, t.TempDir())
+	defer cleanup()
+	f := newCBSessionLimits(t, srv, addr, minSessionRequest, 1)
+	null, ok := f.client.nextCall(testChannelTimeout)
+	if !ok || cbProc(null) != cbProcNull {
+		t.Fatal("no CB_NULL")
+	}
+	sess := f.session(t)
+	f.pressure(t, true)
+	f.sequence(t) // queues the recall; the path is still being probed
+	f.slotSeq++
+	ctl := buildCompoundBody(nil, func(w *COMPOUND4argsWriter) {
+		bw := w.AppendArgarray_BackchannelCtl()
+		bw.SetBcaCbProgram(0x40000001)
+		aw := bw.AppendBcaSecParms_Sys()
+		aw.SetStamp(1)
+		aw.SetMachinename([]byte(strings.Repeat("h", 255)))
+		aw.SetUid(1)
+		aw.SetGid(1)
+		gw := aw.StartGids()
+		aw.Resume(gw.Finish())
+		bw.Resume(aw.Finish())
+		w.Resume(bw.Finish())
+	})
+	if res := f.client.compound(f.next(), withSequence(ctl, f.ts, 0, f.slotSeq)); res.Status() != NFS4_OK {
+		t.Fatalf("BACKCHANNEL_CTL %s", Nfsstat4Name(res.Status()))
+	}
+	endQuietForTest(srv)
+	f.client.answer(null, nil)
+	waitFor(t, "sender exit", func() bool {
+		sess.cb.mu.Lock()
+		defer sess.cb.mu.Unlock()
+		return !sess.cb.running && !sess.cb.recall
+	})
+	if _, sent := f.client.nextCall(200 * time.Millisecond); sent {
+		t.Fatal("an oversized CB_COMPOUND was sent")
+	}
+	sess.cb.mu.Lock()
+	seq, fault := sess.cb.seq, sess.cb.fault
+	sess.cb.mu.Unlock()
+	if seq != 1 || fault {
+		t.Fatalf("sequence %d fault %t after the unsent recall", seq, fault)
+	}
+	if !groupQuiet(srv, sess.clientID).IsZero() {
+		t.Fatal("the unsent recall renewed the lease")
+	}
+	f.pressure(t, false)
 }
 
 func setMtimeStatus(t *testing.T, conn net.Conn, xid *uint32, fh []byte, sid [16]byte, sec uint64) uint32 {

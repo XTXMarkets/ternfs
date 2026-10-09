@@ -194,6 +194,11 @@ func (req *rpcRequest) acquireReplyWork(s *Server) bool {
 // releaseReply runs once the reply is written or will never be: it ends the
 // request's hold on its incarnation and its reply work.
 func (req *rpcRequest) releaseReply() {
+	after := req.afterReply
+	req.afterReply = nil
+	for _, f := range after {
+		f()
+	}
 	req.hold.release()
 	req.hold = nil
 	work := req.replyWork
@@ -284,6 +289,9 @@ func (ss *sessionStore) detachSessionLocked(sess *session) bool {
 		return false
 	}
 	delete(ss.sessions, sess.id)
+	if sess.cb != nil {
+		sess.cb.cancelLocked()
+	}
 	if g := ss.groups[sess.clientID]; g != nil {
 		g.members--
 		ss.releaseGroupLocked(g)

@@ -35,6 +35,13 @@ type creation struct {
 	resume     bool // look for an unfinished replacement purge after commit
 	// leaseRecord releases the refresher record reserved before the slot.
 	leaseRecord func()
+	// backGrant: CONN_BACK_CHAN was asked for on a transport that can carry
+	// callbacks, so the result grants it.
+	backGrant bool
+	// The callback program and credential, for the session.
+	cbProgram     uint32
+	cbSec         callbackSec
+	backRequested bool
 }
 
 // cacheLocked records the slot's outcome for seq and releases the slot.
@@ -48,6 +55,8 @@ func (cr *creation) cacheLocked(status uint32, reply createSessionResult) {
 // nothing inserted, if the record was retired meanwhile.
 func (cr *creation) commitLocked() (createSessionResult, bool) {
 	ss, c := cr.s.sessions, cr.c
+	// A retired record, or an incarnation this process has expired (its
+	// wire record stays for cached replay), gets no new session.
 	if g := ss.groups[c.incarnation]; c.retired || g != nil && g.lease == gateExpired {
 		c.csBusy, cr.slot = false, false
 		return createSessionResult{}, false
@@ -60,7 +69,16 @@ func (cr *creation) commitLocked() (createSessionResult, bool) {
 		maxReq:    cr.fore.maxReq,
 		maxResp:   cr.fore.maxResp,
 		maxCached: cr.fore.maxCached,
+
+		cbProgram:     cr.cbProgram,
+		cbSec:         cr.cbSec,
+		backRequested: cr.backRequested,
+		backMaxReq:    cr.back.maxReq,
+		backMaxResp:   cr.back.maxResp,
+		backMaxOps:    cr.back.maxOps,
+		backMaxReqs:   cr.back.maxReqs,
 	}
+	sess.cb = newCBSender(cr.s, sess, cr.cbProgram, cr.cbSec)
 	ss.insertSessionLocked(sess)
 	cr.created = sess
 	ss.confirmWireLocked(c)
@@ -68,7 +86,7 @@ func (cr *creation) commitLocked() (createSessionResult, bool) {
 	// Every successful CREATE_SESSION of a confirmed incarnation finishes a
 	// replacement purge left by an earlier one, here or before a restart.
 	cr.resume = true
-	result := createSessionResult{id: cr.id, seq: cr.seq, foreAttrs: cr.fore, backAttr: cr.back}
+	result := createSessionResult{id: cr.id, seq: cr.seq, foreAttrs: cr.fore, backAttr: cr.back, back: cr.backGrant}
 	cr.cacheLocked(NFS4_OK, result)
 	return result, true
 }
@@ -618,11 +636,22 @@ func (s *Server) retryHeldConfirmation(e *confirmation, st *compoundState) (stat
 		return NFS4ERR_RESOURCE, reply, nil
 	}
 	defer token.abort()
+	// A granted backchannel goes to this connection too, reserved alike.
+	var bt *backToken
+	if e.cr.backGrant {
+		if bt, ok = st.connection.reserveBack(s, e.cr.id); !ok {
+			return NFS4ERR_RESOURCE, reply, nil
+		}
+		defer bt.abort()
+	}
 	status, reply, done = s.retryConfirmation(e)
 	// A committed creation whose record was retired meanwhile publishes no
 	// session; it keeps no association either.
-	if status == NFS4_OK && s.sessions.lookup(reply.id) != nil {
+	if sess := s.sessions.lookup(reply.id); status == NFS4_OK && sess != nil {
 		token.commit()
+		if reply.back {
+			s.commitBackChannel(st, bt, sess)
+		}
 	}
 	return status, reply, done
 }

@@ -59,6 +59,17 @@ type session struct {
 	maxReq    uint32
 	maxResp   uint32
 	maxCached uint32
+	// The callback program and credential CREATE_SESSION gave, kept for
+	// the backchannel; backRequested is CONN_BACK_CHAN in its flags.
+	cbProgram     uint32
+	cbSec         callbackSec
+	backRequested bool
+	// cb is the backchannel sender; backMax* are the negotiated back
+	// channel limits. recalled: the session was asked to use half its
+	// slots while the reply cache is under pressure.
+	cb                                               *cbSender
+	backMaxReq, backMaxResp, backMaxOps, backMaxReqs uint32
+	recalled                                         atomic.Bool
 
 	destroyed atomic.Bool
 	fatal     atomic.Bool
@@ -109,6 +120,7 @@ type createSessionResult struct {
 	id                  SessionID
 	seq                 uint32
 	foreAttrs, backAttr channelAttrs
+	back                bool // CONN_BACK_CHAN granted
 }
 
 type channelAttrs struct {
@@ -563,8 +575,8 @@ func (s *Server) writeSequenceOK(w *COMPOUND4resWriter, seq *sequenceResult) {
 	ok.SetSrSlotid(seq.slotID)
 	highest := uint32(len(seq.sess.slots) - 1)
 	ok.SetSrHighestSlotid(highest)
-	ok.SetSrTargetHighestSlotid(highest)
-	ok.SetSrStatusFlags(0)
+	ok.SetSrTargetHighestSlotid(s.slotTarget(seq.sess))
+	ok.SetSrStatusFlags(s.sequenceFlags(seq.sess))
 	w.Resume(ew.Finish())
 }
 
@@ -868,17 +880,30 @@ func (s *Server) opCreateSession(
 		fore.maxOps < 2 {
 		return fail(NFS4ERR_TOOSMALL)
 	}
+	// The callback credential is checked before the slot, and only when a
+	// backchannel is asked for: clients without one may offer none (libnfs
+	// sends an empty list).
+	backRequested := args.CsaFlags()&CREATE_SESSION4_FLAG_CONN_BACK_CHAN != 0
+	var cbSec callbackSec
+	if backRequested {
+		var status uint32
+		if cbSec, status = parseCallbackSec(args.CsaSecParms()); status != NFS4_OK {
+			return fail(status)
+		}
+	}
 
 	// This request's reservations are released when it returns. An
 	// unresolved confirmation takes them over instead. No connection lock is
 	// held across store calls: the association is a token, counted against
 	// the connection's quota from before the slot (canonical r3 §7.2).
-	cr := &creation{s: s, seq: seq, back: back}
+	cr := &creation{s: s, seq: seq, back: back, cbProgram: args.CsaCbProgram(), cbSec: cbSec, backRequested: backRequested}
 	handedOver := false
 	var settled func() // finishes an earlier confirmation this retry applied
 	var token *associationToken
+	var backTok *backToken
 	defer func() {
 		token.abort() // a no-op once committed
+		backTok.abort()
 		if settled != nil {
 			settled()
 		}
@@ -891,8 +916,11 @@ func (s *Server) opCreateSession(
 	// before the slot. A record retired meanwhile publishes no session and
 	// keeps no association.
 	associate := func(reply createSessionResult) uint32 {
-		if ss.lookup(reply.id) != nil {
+		if sess := ss.lookup(reply.id); sess != nil {
 			token.commit()
+			if reply.back {
+				s.commitBackChannel(st, backTok, sess)
+			}
 		}
 		return writeCreateSessionResult(w, reply)
 	}
@@ -906,7 +934,19 @@ func (s *Server) opCreateSession(
 		if !ok {
 			return NFS4ERR_RESOURCE
 		}
+		var bt *backToken
+		if reply.back {
+			if bt, ok = st.connection.reserveBack(s, reply.id); !ok {
+				t.abort()
+				return NFS4ERR_RESOURCE
+			}
+		}
 		t.commit()
+		if sess := ss.lookup(reply.id); sess != nil && reply.back {
+			s.commitBackChannel(st, bt, sess)
+		} else {
+			bt.abort()
+		}
 		return NFS4_OK
 	}
 	// The clientid is looked up only among this process's wire records:
@@ -994,9 +1034,17 @@ func (s *Server) opCreateSession(
 	if cr.leaseRecord, admitted = s.clients.reserveLeaseRecord(incarnation); !admitted {
 		return fail(NFS4ERR_DELAY)
 	}
-	// The new session's association on this connection.
+	// The new session's association on this connection, and its back
+	// association when a backchannel is asked for and this transport can
+	// carry one: both before the slot, so a full connection changes nothing.
 	if token, admitted = st.connection.reserve(s, id); !admitted {
 		return fail(NFS4ERR_RESOURCE)
+	}
+	cr.backGrant = backRequested && st.connection.carriesCallbacks()
+	if cr.backGrant {
+		if backTok, admitted = st.connection.reserveBack(s, id); !admitted {
+			return fail(NFS4ERR_RESOURCE)
+		}
 	}
 
 	// The creation slot, checked again now that the reservations are held:
@@ -1020,9 +1068,10 @@ func (s *Server) opCreateSession(
 		if cachedStatus != NFS4_OK {
 			return fail(cachedStatus)
 		}
-		// This request creates nothing: its own token goes, and the
+		// This request creates nothing: its own tokens go, and the
 		// cached result's association follows the replay rule.
 		token.abort()
+		backTok.abort()
 		if status := replayAssociation(reply); status != NFS4_OK {
 			return fail(status)
 		}
@@ -1037,7 +1086,6 @@ func (s *Server) opCreateSession(
 	confirmed, confirm, hasConfirm, principal := c.confirmed, c.confirm, c.hasConfirm, c.principal
 	ss.mu.Unlock()
 	cr.fore = s.negotiateForeChannel(fore)
-	// No backchannel is offered: nfsd grants no delegations or layouts.
 
 	if hasConfirm {
 		// A pending incarnation: closing its predecessor, the principal
@@ -1088,7 +1136,11 @@ func writeCreateSessionResult(w *COMPOUND4resWriter, r createSessionResult) uint
 	ok := ew.SetValue_Nfs4Ok()
 	writeSessionID(ok.CsrSessionid(), r.id)
 	ok.SetCsrSequence(r.seq)
-	ok.SetCsrFlags(0)
+	var flags uint32
+	if r.back {
+		flags = CREATE_SESSION4_FLAG_CONN_BACK_CHAN
+	}
+	ok.SetCsrFlags(flags)
 	ok.Resume(writeChannelAttrs(ok.StartCsrForeChanAttrs(), r.foreAttrs))
 	ok.Resume(writeChannelAttrs(ok.StartCsrBackChanAttrs(), r.backAttr))
 	ew.Resume(ok.Finish())
@@ -1169,8 +1221,9 @@ func (s *Server) opBindConnToSession(args BINDCONNTOSESSION4args, st *compoundSt
 		w.Resume(ew.Finish())
 		return NFS4ERR_BADSESSION
 	}
-	if args.BctsaUseConnInRdmaMode() != 0 ||
-		(args.BctsaDir() != CDFC4_FORE && args.BctsaDir() != CDFC4_FORE_OR_BOTH) {
+	dir := args.BctsaDir()
+	if args.BctsaUseConnInRdmaMode() != 0 || dir != CDFC4_FORE && dir != CDFC4_BACK &&
+		dir != CDFC4_FORE_OR_BOTH && dir != CDFC4_BACK_OR_BOTH {
 		ew.SetValue_Default(NFS4ERR_INVAL)
 		w.Resume(ew.Finish())
 		return NFS4ERR_INVAL
@@ -1186,19 +1239,108 @@ func (s *Server) opBindConnToSession(args BINDCONNTOSESSION4args, st *compoundSt
 		w.Resume(ew.Finish())
 		return status
 	}
-	if !st.connection.bind(s, id) {
-		ew.SetValue_Default(NFS4ERR_RESOURCE)
+	fore, back, status := s.bindDirections(st, sess, dir)
+	if status != NFS4_OK {
+		ew.SetValue_Default(status)
 		w.Resume(ew.Finish())
-		return NFS4ERR_RESOURCE
+		return status
 	}
 	// SP4_NONE permits any supported effective user; no registration-principal
-	// restriction applies here. Backchannel directions are not negotiated yet.
+	// restriction applies here.
+	result := uint32(CDFS4_FORE)
+	switch {
+	case fore && back:
+		result = CDFS4_BOTH
+	case back:
+		result = CDFS4_BACK
+	}
 	ok := ew.SetValue_Nfs4Ok()
 	writeSessionID(ok.BctsrSessid(), id)
-	ok.SetBctsrDir(CDFS4_FORE)
+	ok.SetBctsrDir(result)
 	ok.SetBctsrUseConnInRdmaMode(0)
 	w.Resume(ew.Finish())
 	return NFS4_OK
+}
+
+// bindDirections decides and applies a BIND_CONN_TO_SESSION (RFC 8881
+// section 18.34.3, canonical r3 §12). Each request accepts these channel
+// sets: FORE {fore}; BACK {back}; FORE_OR_BOTH {fore} or {fore, back};
+// BACK_OR_BOTH {back} or {fore, back}. An existing association that is
+// acceptable is returned unchanged, and one that is not gets INVAL: a BIND
+// never changes an existing association. With none, the preferred set is
+// established, both directions when the session asked for a backchannel and
+// the transport can carry one; the back direction needs both. The decision
+// and both quotas are taken with the publication, in one connection
+// section, so concurrent BINDs are ordered and RESOURCE changes nothing.
+func (s *Server) bindDirections(st *compoundState, sess *session, dir uint32) (fore, back bool, status uint32) {
+	conn := st.connection
+	if conn == nil {
+		// No transport: only the fore channel, which needs no association.
+		if !bindAcceptable(dir, true, false) {
+			return false, false, NFS4ERR_INVAL
+		}
+		return true, false, NFS4_OK
+	}
+	canBack := sess.backRequested && conn.carriesCallbacks() && sess.cb != nil
+	fore, back, added, status := conn.bindDirections(s, sess.id, dir, canBack)
+	if status == NFS4_OK && added {
+		// The new back connection is probed after this compound's reply.
+		if probe := sess.cb.addConn(conn); probe != nil {
+			st.later(probe)
+		}
+	}
+	return fore, back, status
+}
+
+// bindAcceptable reports whether the channel set (fore, back) satisfies a
+// BIND_CONN_TO_SESSION direction.
+func bindAcceptable(dir uint32, fore, back bool) bool {
+	switch dir {
+	case CDFC4_FORE:
+		return fore && !back
+	case CDFC4_BACK:
+		return !fore && back
+	case CDFC4_FORE_OR_BOTH:
+		return fore
+	default: // CDFC4_BACK_OR_BOTH
+		return back
+	}
+}
+
+// commitBackChannel commits a reserved back association for sess. The new
+// connection is probed after this compound's reply, so the client sees the
+// reply that bound it before any callback.
+func (s *Server) commitBackChannel(st *compoundState, bt *backToken, sess *session) {
+	if !bt.commit() || sess.cb == nil {
+		return
+	}
+	if probe := sess.cb.addConn(bt.conn); probe != nil {
+		st.later(probe)
+	}
+}
+
+// later runs f after the compound's reply is written, or at once for a
+// compound with no transport.
+func (st *compoundState) later(f func()) {
+	if st.afterReply == nil {
+		f()
+		return
+	}
+	*st.afterReply = append(*st.afterReply, f)
+}
+
+// opBackchannelCtl replaces the session's callback program and credential.
+func (s *Server) opBackchannelCtl(args BACKCHANNELCTL4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
+	r := w.AppendResarray_BackchannelCtl()
+	sec, status := parseCallbackSec(args.BcaSecParms())
+	if status == NFS4_OK && (st.session == nil || st.session.cb == nil) {
+		status = NFS4ERR_INVAL
+	}
+	if status == NFS4_OK {
+		st.session.cb.setProgram(args.BcaCbProgram(), sec)
+	}
+	r.SetBcrStatus(status)
+	return status
 }
 
 func (s *Server) opReclaimComplete(args RECLAIMCOMPLETE4args, st *compoundState, w *COMPOUND4resWriter) uint32 {

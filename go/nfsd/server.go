@@ -43,6 +43,8 @@ type Server struct {
 	clients            *ClientStore
 	opens              *openStateStore
 	sessions           *sessionStore
+	backchannel        backchannelStats
+	cbXIDs             atomic.Uint32
 	allowMinorVersion2 bool
 	views              viewStore
 	names              nameCache
@@ -446,7 +448,8 @@ func (s *Server) listen(addr string) (net.Listener, error) {
 
 func (s *Server) handleConn(conn net.Conn) {
 	remote := conn.RemoteAddr().String()
-	association := &rpcConnection{}
+	association := &rpcConnection{remote: remote}
+	defer s.disconnectBack(association)
 	s.log.Info("client connected", "remote", remote)
 	var closed atomic.Bool
 	done := make(chan struct{})
@@ -482,6 +485,11 @@ func (s *Server) handleConn(conn net.Conn) {
 			// Wake a reader blocked either on the socket or on admission.
 			closeConnection()
 		}
+	}
+	association.closed = done
+	association.send = func(frame []byte) bool {
+		writeReply(frame)
+		return !closed.Load()
 	}
 	run := func(req *rpcRequest) {
 		defer workers.Done()
@@ -535,6 +543,15 @@ func (s *Server) handleConn(conn net.Conn) {
 				s.log.Info("client disconnected", "remote", remote, "err", err)
 			}
 			return
+		}
+		if isRPCReply(frame) {
+			// A callback's REPLY: handed to its waiting sender, or dropped
+			// and counted. It takes no admission slot.
+			<-slots
+			if !association.deliverReply(frame) {
+				s.backchannel.strayReplies.Add(1)
+			}
+			continue
 		}
 		req, err := parseRPCCall(frame)
 		if err != nil {
@@ -603,6 +620,9 @@ type compoundState struct {
 	// session and clientID come from the compound's SEQUENCE.
 	session  *session
 	clientID uint64
+
+	// afterReply collects work for after the reply is written.
+	afterReply *[]func()
 
 	// currentStateID is the stateid returned by the last OPEN or CLOSE,
 	// substituted for the special current stateid (RFC 8881 section
@@ -709,7 +729,7 @@ func (s *Server) compoundBody(req *rpcRequest, args COMPOUND4args) (result []byt
 			break
 		}
 	}
-	st := &compoundState{principal: req.principal(), connection: req.connection}
+	st := &compoundState{principal: req.principal(), connection: req.connection, afterReply: &req.afterReply}
 	overallStatus := uint32(NFS4_OK)
 	opCount := 0
 	var seq sequenceResult
@@ -889,6 +909,8 @@ func (s *Server) compoundBody(req *rpcRequest, args COMPOUND4args) (result []byt
 			opStatus = s.opTestStateID(op.AsTESTSTATEID4args(), st, &w)
 		case OP_FREE_STATEID:
 			opStatus = s.opFreeStateID(op.AsFREESTATEID4args(), st, &w)
+		case OP_BACKCHANNEL_CTL:
+			opStatus = s.opBackchannelCtl(op.AsBACKCHANNELCTL4args(), st, &w)
 		case OP_SET_SSV:
 			// Only SP4_SSV state protection uses an SSV, and nfsd offers
 			// SP4_NONE (RFC 8881 section 18.47.3).

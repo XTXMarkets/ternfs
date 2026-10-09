@@ -108,6 +108,9 @@ type rpcRequest struct {
 	connection *rpcConnection
 	replyWork  *replyWork
 	hold       *requestHold // an admitted SEQUENCE's hold, until releaseReply
+	// afterReply runs once the reply is written or will never be: a new
+	// back connection is probed only after the reply that created it.
+	afterReply []func()
 }
 
 // Forechannel association belongs to the live TCP connection, not its remote
@@ -123,6 +126,18 @@ type rpcConnection struct {
 	mu       sync.Mutex
 	sessions map[SessionID]struct{}
 	pending  map[SessionID]int
+	// The backchannel side (backchannel.go): sessions whose callbacks this
+	// connection carries, and the callbacks waiting for a REPLY.
+	back        map[SessionID]struct{}
+	backPending map[SessionID]int
+	calls       map[uint32]*cbCall
+	nullCall    bool
+	path        cbPath
+	remote      string
+	// send writes one frame through the connection's writer; closed is
+	// closed when the connection ends. Both are set by handleConn.
+	send   func([]byte) bool
+	closed <-chan struct{}
 }
 
 const maxConnectionSessions = 64
