@@ -229,12 +229,20 @@ type rawMetadataResponse struct {
 	buf        *[]byte // the buf contains the header
 }
 
+type metadataSocket interface {
+	WriteToUDP([]byte, *net.UDPAddr) (int, error)
+	ReadFromUDP([]byte) (int, *net.UDPAddr, error)
+	SetReadBuffer(int) error
+	SetReadDeadline(time.Time) error
+	Close() error
+}
+
 type clientMetadata struct {
 	client *Client
-	sock   *net.UDPConn
+	sock   metadataSocket
 
-	requestsById                 map[uint64]*metadataProcessorRequest // requests we've sent, by req id
-	requestsByTimeout            metadataRequestsPQ                   // requests we've sent, by timeout (earlier first)
+	requestsById                 map[uint64]*metadataProcessorRequest // attempts awaiting a response or retry timeout
+	requestsByTimeout            metadataRequestsPQ                   // attempts by timeout (earlier first)
 	earlyRequests                map[uint64]rawMetadataResponse       // requests we've received a response for, but that we haven't seen that we've sent yet. should be uncommon.
 	lastCleanedUpEarlyRequestsAt time.Time
 
@@ -323,7 +331,7 @@ func (cm *clientMetadata) processRequests(log *log.Logger) {
 					resp:      nil,
 				}
 			}
-			// keep running even if the socket is totally broken to process all the requests
+			// Reject this request without stopping the shared sender.
 			continue
 		}
 		addr := &addrs[whichMetadatataAddr%2]
@@ -331,36 +339,25 @@ func (cm *clientMetadata) processRequests(log *log.Logger) {
 			addr = &addrs[0]
 		}
 		whichMetadatataAddr++
-		var written int
-		var err error
-		epermAlert := log.NewNCAlert(0)
-		for attempts := 0; ; attempts++ {
-			written, err = cm.sock.WriteToUDP(buf.Bytes(), addr)
-			var opError *net.OpError
-			// We get EPERM when nf drops packets, at least on fsf1/fsf2.
-			// This is rare.
-			if errors.As(err, &opError) && os.IsPermission(opError.Err) {
-				log.RaiseNC(epermAlert, "could not send metadata packet because of EPERM (attempt %v), will retry in 100ms: %v", attempts, err)
-				time.Sleep(100 * time.Millisecond)
-			} else {
-				log.ClearNC(epermAlert)
-				break
-			}
-		}
+		written, err := cm.sock.WriteToUDP(buf.Bytes(), addr)
 		if err != nil {
 			log.RaiseAlert("could not send request %v to shard %v addr %v: %v", req.req, req.shard, addr, err)
-			if !dontWait {
+			if dontWait {
+				continue
+			}
+			if !retryableMetadataSendError(err) {
 				req.respCh <- &metadataProcessorResponse{
 					requestId: req.requestId,
 					err:       err,
 					extra:     req.extra,
 					resp:      nil,
 				}
+				continue
 			}
-			// keep running even if the socket is totally broken to process all the requests
-			continue
-		}
-		if written != len(buf.Bytes()) {
+			// Wait for this attempt's timeout before retrying. A reply to an
+			// earlier transmission may still arrive in the meantime. Sleeping
+			// here would block every other metadata request on this client.
+		} else if written != len(buf.Bytes()) {
 			panic(fmt.Errorf("%v != %v", written, len(buf.Bytes())))
 		}
 		if !dontWait {
@@ -446,7 +443,7 @@ func (cm *clientMetadata) parseResponse(log *log.Logger, req *metadataProcessorR
 			log.RaiseAlert("could not unpack resp %T for request id %v, shard %v: %v", req.resp, req.requestId, req.shard, err)
 			req.respCh <- &metadataProcessorResponse{
 				requestId: req.requestId,
-				err:       err,
+				err:       msgs.MALFORMED_RESPONSE,
 				extra:     req.extra,
 				resp:      nil,
 			}
