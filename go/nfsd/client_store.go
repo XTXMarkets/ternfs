@@ -23,6 +23,9 @@ import (
 // inode ID of each incarnation directory is returned to the client as a
 // clientid.
 type ClientStore struct {
+	// Nil until a server takes ownership of confirmation/purge exclusion.
+	beginPurge func(n, p InodeID) (func(), bool)
+
 	fs             TernVFS
 	nfsDirID       InodeID
 	dirID          InodeID
