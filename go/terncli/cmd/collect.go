@@ -5,6 +5,7 @@
 package cmd
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"github.com/XTXMarkets/ternfs/go/cleanup"
@@ -60,12 +61,12 @@ func NewCollect() Command {
 					}
 				}
 			}()
-			err = client.Parwalk(
-				l,
-				runtime.getClient(),
+			pool := client.NewParwalkPool(l, runtime.getClient(), 100)
+			defer pool.Close()
+			err = pool.Walk(
+				context.Background(),
 				&client.ParwalkOptions{
-					WorkersPerShard: 100,
-					Snapshot:        *collectDirFollowSnapshot,
+					Snapshot: *collectDirFollowSnapshot,
 				},
 				*collectDirPath,
 				func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error {

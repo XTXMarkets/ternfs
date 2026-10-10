@@ -6,6 +6,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"flag"
 	"fmt"
 	"github.com/XTXMarkets/ternfs/go/client"
@@ -93,12 +94,12 @@ func NewDu() Command {
 				}
 			}
 		}
-		err = client.Parwalk(
-			l,
-			c,
+		pool := client.NewParwalkPool(l, c, *duWorkersPerSshard)
+		defer pool.Close()
+		err = pool.Walk(
+			context.Background(),
 			&client.ParwalkOptions{
-				WorkersPerShard: *duWorkersPerSshard,
-				Snapshot:        *duSnapshot,
+				Snapshot: *duSnapshot,
 			},
 			*duDir,
 			func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error {

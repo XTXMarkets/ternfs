@@ -5,6 +5,7 @@
 package cmd
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"github.com/XTXMarkets/ternfs/go/client"
@@ -61,12 +62,11 @@ func NewRm() Command {
 		var numSkipped uint64
 		var numErrors uint64
 		startedAt := time.Now()
-		err := client.Parwalk(
-			l,
-			c,
-			&client.ParwalkOptions{
-				WorkersPerShard: *rmWorkersPerShard,
-			},
+		pool := client.NewParwalkPool(l, c, *rmWorkersPerShard)
+		defer pool.Close()
+		err := pool.Walk(
+			context.Background(),
+			&client.ParwalkOptions{},
 			*rmPath,
 			func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error {
 				if id.Type() == msgs.DIRECTORY {
