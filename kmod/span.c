@@ -831,6 +831,12 @@ static void file_spans_cb_block(
     struct ternfs_span* span = rb_entry(rb_last(&ctx->spans), struct ternfs_span, node);
     struct ternfs_block_span* block_span = TERNFS_BLOCK_SPAN(span);
 
+    if (block_ix < 0 || block_ix >= TERNFS_MAX_BLOCKS) {
+        ternfs_error("file=%016llx block index %d out of range (max=%d)", ctx->ino, block_ix, TERNFS_MAX_BLOCKS);
+        ctx->err = -EIO;
+        return;
+    }
+
     struct ternfs_block* block = &block_span->blocks[block_ix];
     block->id = block_id;
     block->crc = crc;
