@@ -237,6 +237,9 @@ Inspecting [`ternrun.go`](https://github.com/XTXMarkets/ternfs/blob/main/go/tern
 
 ## Building the Kernel module
 
+See [kernel client access times](docs/kmod-atime.md) for the optional sysctl
+that updates atime on open, including through read-only mounts.
+
 ```
 % cd kmod
 % ./fetchlinux.sh # fetch linux sources

@@ -80,6 +80,13 @@ Every return must preserve the expected state and leave the inode unlocked:
     ternfs_open_test 'ternfs-open-test: PASS'
 ```
 
+It also exercises the production atime-on-open helper with metadata RPCs and
+time replaced at their boundaries. A read-only/noatime mount must still permit
+the opt-in update; disabling the sysctl, `O_NOATIME`, or a transient writer must
+skip it. Cases cover cached and peer-updated throttling, repeated opens reaching
+the update deadline, zero interval, future timestamps with nanosecond precision,
+metadata failures that leave the file readable, and unchanged mtime.
+
 The transient-lifetime test includes the production span, cleanup and write
 page-accounting helpers. It uses real slab objects, pages, inode locking,
 semaphores and an `mm` reference to check span refcounts, current and

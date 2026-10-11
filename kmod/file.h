@@ -8,6 +8,7 @@
 #include "inode.h"
 
 extern unsigned ternfs_atime_update_interval_sec;
+extern int ternfs_atime_on_open;
 extern unsigned ternfs_max_write_span_attempts;
 extern unsigned ternfs_file_io_timeout_sec;
 extern unsigned ternfs_file_io_retry_refresh_span_interval_sec;
