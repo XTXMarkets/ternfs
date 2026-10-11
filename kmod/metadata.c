@@ -1068,6 +1068,12 @@ int ternfs_shard_file_spans(
                 ternfs_fetched_blocks_span_get_stripes(&ctx, parity, stripes);
                 ternfs_fetched_blocks_span_get_cell_size(&ctx, stripes, cell_size);
                 ternfs_fetched_blocks_span_get_blocks(&ctx, cell_size, blocks);
+                // The shard always sends ternfs_blocks(parity) blocks per span, so any
+                // other count is malformed. Reject it before the loop below indexes past
+                // blocks[TERNFS_MAX_BLOCKS], mirroring the check in ternfs_add_span_initiate.
+                if (ctx.err == 0 && blocks.len != ternfs_blocks(parity.x)) {
+                    ctx.err = TERNFS_ERR_MALFORMED_RESPONSE;
+                }
                 struct ternfs_bincode_get_ctx blocks_ctx = ctx;
                 if (likely(ctx.err == 0)) {
                     ctx.buf += TERNFS_FETCHED_BLOCK_SIZE*blocks.len;
