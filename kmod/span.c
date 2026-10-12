@@ -767,6 +767,7 @@ void ternfs_put_span(struct ternfs_span* span) {
 struct get_span_ctx {
     u64 ino;
     struct rb_root spans;
+    struct ternfs_block_span* current_block_span;
     int err;
 };
 
@@ -774,14 +775,25 @@ static void file_spans_cb_span(void* data, u64 offset, u32 size, u32 crc, u8 sto
     ternfs_debug("offset=%llu size=%u crc=%08x storage_class=%d parity=%d stripes=%d cell_size=%u", offset, size, crc, storage_class, parity, stripes, cell_size);
 
     struct get_span_ctx* ctx = (struct get_span_ctx*)data;
+    ctx->current_block_span = NULL;
     if (ctx->err) { return; }
     if (offset % PAGE_SIZE) {
         ternfs_error("file=%016llx offset=%llu span start is not a multiple of page size", ctx->ino, offset);
         ctx->err = -EIO;
         return;
     }
-    if (cell_size % PAGE_SIZE) {
-        ternfs_error("file=%016llx offset=%llu cell_size=%u not multiple of page size", ctx->ino, offset, cell_size);
+    if (cell_size == 0 || cell_size % PAGE_SIZE) {
+        ternfs_error("file=%016llx offset=%llu invalid cell_size=%u", ctx->ino, offset, cell_size);
+        ctx->err = -EIO;
+        return;
+    }
+    if (ternfs_data_blocks(parity) == 0 || ternfs_data_blocks(parity) > TERNFS_MAX_DATA || ternfs_parity_blocks(parity) > TERNFS_MAX_PARITY) {
+        ternfs_error("file=%016llx offset=%llu invalid parity config D=%d (max=%d) P=%d (max=%d)", ctx->ino, offset, ternfs_data_blocks(parity), TERNFS_MAX_DATA, ternfs_parity_blocks(parity), TERNFS_MAX_PARITY);
+        ctx->err = -EIO;
+        return;
+    }
+    if (stripes == 0 || stripes > TERNFS_MAX_STRIPES) {
+        ternfs_error("file=%016llx offset=%llu invalid stripes=%u (max=%d)", ctx->ino, offset, stripes, TERNFS_MAX_STRIPES);
         ctx->err = -EIO;
         return;
     }
@@ -793,12 +805,6 @@ static void file_spans_cb_span(void* data, u64 offset, u32 size, u32 crc, u8 sto
     }
     atomic_set(&span->span.refcount, 1);
 
-    if (ternfs_data_blocks(parity) > TERNFS_MAX_DATA || ternfs_parity_blocks(parity) > TERNFS_MAX_PARITY) {
-        ternfs_error("file=%016llx offset=%llu invalid parity config D=%d (max=%d) P=%d (max=%d)", ctx->ino, offset, ternfs_data_blocks(parity), TERNFS_MAX_DATA, ternfs_parity_blocks(parity), TERNFS_MAX_PARITY);
-        ctx->err = -EIO;
-        goto out_free;
-    }
-
     span->span.ino = ctx->ino;
     span->span.start = offset;
     span->span.end = offset + size;
@@ -809,15 +815,12 @@ static void file_spans_cb_span(void* data, u64 offset, u32 size, u32 crc, u8 sto
     span->parity = parity;
     ternfs_debug("adding normal span");
     if (!insert_span(&ctx->spans, &span->span)) {
+        ternfs_error("file=%016llx offset=%llu duplicate or overlapping span", ctx->ino, offset);
         ctx->err = -EIO;
-        goto out_free;
+        kmem_cache_free(ternfs_block_span_cachep, span);
+        return;
     }
-
-    return;
-
-out_free:
-    kmem_cache_free(ternfs_block_span_cachep, span);
-    return;
+    ctx->current_block_span = span;
 }
 
 static void file_spans_cb_block(
@@ -828,11 +831,22 @@ static void file_spans_cb_block(
     struct get_span_ctx* ctx = (struct get_span_ctx*)data;
     if (ctx->err) { return; }
 
-    struct ternfs_span* span = rb_entry(rb_last(&ctx->spans), struct ternfs_span, node);
-    struct ternfs_block_span* block_span = TERNFS_BLOCK_SPAN(span);
+    struct ternfs_block_span* block_span = ctx->current_block_span;
+    if (unlikely(!block_span)) {
+        ternfs_error("file=%016llx got a block without a span", ctx->ino);
+        ctx->err = -EIO;
+        return;
+    }
 
     if (block_ix < 0 || block_ix >= TERNFS_MAX_BLOCKS) {
         ternfs_error("file=%016llx block index %d out of range (max=%d)", ctx->ino, block_ix, TERNFS_MAX_BLOCKS);
+        ctx->err = -EIO;
+        return;
+    }
+
+    struct ternfs_span* span = &block_span->span;
+    if (unlikely(block_ix >= ternfs_blocks(block_span->parity))) {
+        ternfs_error("file=%016llx offset=%llu block index=%d exceeds parity block count=%u", ctx->ino, span->start, block_ix, ternfs_blocks(block_span->parity));
         ctx->err = -EIO;
         return;
     }
@@ -854,6 +868,7 @@ static void file_spans_cb_inline_span(void* data, u64 offset, u32 size, u8 len, 
     ternfs_debug("offset=%llu size=%u len=%u body=%*pE", offset, size, len, len, body);
 
     struct get_span_ctx* ctx = (struct get_span_ctx*)data;
+    ctx->current_block_span = NULL;
     if (ctx->err) { return; }
 
     if (offset % PAGE_SIZE) {
@@ -880,9 +895,9 @@ static void file_spans_cb_inline_span(void* data, u64 offset, u32 size, u8 len, 
     ternfs_debug("adding inline span");
 
     if (!insert_span(&ctx->spans, &span->span)) {
+        ternfs_error("file=%016llx offset=%llu duplicate or overlapping inline span", ctx->ino, offset);
         ctx->err = -EIO;
         kmem_cache_free(ternfs_inline_span_cachep, span);
-        return;
     }
 }
 

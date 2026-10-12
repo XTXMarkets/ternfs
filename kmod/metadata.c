@@ -1037,12 +1037,10 @@ int ternfs_shard_file_spans(
         }
         ternfs_local_file_spans_resp_get_block_services(&ctx, resp_next_offset, block_services);
         char* bs_offset = ctx.buf;
-        if (likely(ctx.err == 0)) {
-            ctx.buf += TERNFS_BLOCK_SERVICE_SIZE*block_services.len;
-        }
+        ternfs_bincode_get_skip(&ctx, TERNFS_BLOCK_SERVICE_SIZE*block_services.len);
         ternfs_local_file_spans_resp_get_spans(&ctx, block_services, spans);
         int i;
-        for (i = 0; i < spans.len; i++) {
+        for (i = 0; likely(ctx.err == 0) && i < spans.len; i++) {
             ternfs_fetched_span_header_get_start(&ctx, header_start);
             ternfs_fetched_span_header_get_byte_offset(&ctx, header_start, byte_offset);
             ternfs_fetched_span_header_get_size(&ctx, byte_offset, size);
@@ -1050,7 +1048,10 @@ int ternfs_shard_file_spans(
             ternfs_fetched_span_header_get_storage_class(&ctx, crc, storage_class);
             ternfs_fetched_span_header_get_end(&ctx, storage_class, header_end);
             ternfs_bincode_get_finish_list_el(header_end);
-            if (ctx.err == 0 && storage_class.x == TERNFS_EMPTY_STORAGE) {
+            if (unlikely(ctx.err != 0)) {
+                break;
+            }
+            if (storage_class.x == TERNFS_EMPTY_STORAGE) {
                 ctx.err = TERNFS_ERR_MALFORMED_RESPONSE;
             }
             if (storage_class.x == TERNFS_INLINE_STORAGE) {
@@ -1068,6 +1069,16 @@ int ternfs_shard_file_spans(
                 ternfs_fetched_blocks_span_get_stripes(&ctx, parity, stripes);
                 ternfs_fetched_blocks_span_get_cell_size(&ctx, stripes, cell_size);
                 ternfs_fetched_blocks_span_get_blocks(&ctx, cell_size, blocks);
+                if (unlikely(
+                    ctx.err == 0 &&
+                    (
+                        ternfs_data_blocks(parity.x) == 0 ||
+                        ternfs_data_blocks(parity.x) > TERNFS_MAX_DATA ||
+                        ternfs_parity_blocks(parity.x) > TERNFS_MAX_PARITY
+                    )
+                )) {
+                    ctx.err = TERNFS_ERR_MALFORMED_RESPONSE;
+                }
                 // The shard always sends ternfs_blocks(parity) blocks per span, so any
                 // other count is malformed. Reject it before the loop below indexes past
                 // blocks[TERNFS_MAX_BLOCKS], mirroring the check in ternfs_add_span_initiate.
@@ -1075,16 +1086,12 @@ int ternfs_shard_file_spans(
                     ctx.err = TERNFS_ERR_MALFORMED_RESPONSE;
                 }
                 struct ternfs_bincode_get_ctx blocks_ctx = ctx;
-                if (likely(ctx.err == 0)) {
-                    ctx.buf += TERNFS_FETCHED_BLOCK_SIZE*blocks.len;
-                }
+                ternfs_bincode_get_skip(&ctx, TERNFS_FETCHED_BLOCK_SIZE*blocks.len);
                 blocks_ctx.end = ctx.buf;
 
                 // DEPRECATED stripes
                 ternfs_fetched_blocks_span_get_stripes_crc(&ctx, blocks, stripes_crc_resp);
-                if (likely(ctx.err == 0)) {
-                    ctx.buf += 4*stripes_crc_resp.len;
-                }
+                ternfs_bincode_get_skip(&ctx, 4*stripes_crc_resp.len);
                 // DEPRECATED_END stripes
                 ternfs_fetched_blocks_span_get_end(&ctx, stripes_crc_resp, end);
                 ternfs_bincode_get_finish_list_el(end);
@@ -1092,7 +1099,7 @@ int ternfs_shard_file_spans(
                     span_cb(cb_data, byte_offset.x, size.x, crc.x, storage_class.x, parity.x, stripes.x, cell_size.x);
                     blocks_ctx.err = ctx.err;
                     int j;
-                    for (j = 0; j < blocks.len; j++) {
+                    for (j = 0; likely(blocks_ctx.err == 0) && j < blocks.len; j++) {
                         ternfs_fetched_block_get_start(&blocks_ctx, start);
                         ternfs_fetched_block_get_block_service_ix(&blocks_ctx, start, block_service_ix);
                         ternfs_fetched_block_get_block_id(&blocks_ctx, block_service_ix, block_id);

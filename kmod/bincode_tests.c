@@ -74,7 +74,51 @@ static inline void put_unaligned_be32(u32 x, void* p) {
 
 #include "bincode.h"
 
+static int validate_fetched_blocks_span(char* buf, size_t len) {
+    struct ternfs_bincode_get_ctx ctx = {
+        .buf = buf,
+        .end = buf + len,
+        .err = 0,
+    };
+
+    ternfs_fetched_blocks_span_get_start(&ctx, start);
+    ternfs_fetched_blocks_span_get_parity(&ctx, start, parity);
+    ternfs_fetched_blocks_span_get_stripes(&ctx, parity, stripes);
+    ternfs_fetched_blocks_span_get_cell_size(&ctx, stripes, cell_size);
+    ternfs_fetched_blocks_span_get_blocks(&ctx, cell_size, blocks);
+    if (ctx.err == 0) {
+        u16 expected_blocks = (parity.x & 0x0F) + (parity.x >> 4);
+        if (blocks.len != expected_blocks) {
+            ctx.err = TERNFS_ERR_MALFORMED_RESPONSE;
+        }
+    }
+    ternfs_bincode_get_skip(&ctx, TERNFS_FETCHED_BLOCK_SIZE*blocks.len);
+    ternfs_fetched_blocks_span_get_stripes_crc(&ctx, blocks, stripes_crc);
+    ternfs_bincode_get_skip(&ctx, 4*stripes_crc.len);
+    ternfs_fetched_blocks_span_get_end(&ctx, stripes_crc, end);
+    ternfs_fetched_blocks_span_get_finish(&ctx, end);
+
+    return ctx.err;
+}
+
 int main(void) {
+    {
+        // parity=(D=10,P=6), stripes, cell_size, blocks.len, blocks, stripes_crc.len
+        char buf[10 + TERNFS_FETCHED_BLOCK_SIZE*16] = {0};
+        buf[0] = 0x6A;
+        buf[1] = 1;
+        put_unaligned_le32(4096, buf + 2);
+
+        put_unaligned_le16(16, buf + 6);
+        BUG_ON(validate_fetched_blocks_span(buf, sizeof(buf)) != 0);
+
+        put_unaligned_le16(17, buf + 6);
+        BUG_ON(validate_fetched_blocks_span(buf, sizeof(buf)) != TERNFS_ERR_MALFORMED_RESPONSE);
+
+        put_unaligned_le16(16, buf + 6);
+        BUG_ON(validate_fetched_blocks_span(buf, 10) != TERNFS_ERR_MALFORMED_RESPONSE);
+    }
+
     {
         char lookup_req[TERNFS_LOOKUP_REQ_MAX_SIZE];
         struct ternfs_bincode_put_ctx put_ctx = {
