@@ -5,16 +5,11 @@
 #include <linux/mm.h>
 #include <linux/sched/mm.h>
 #include <linux/uio.h>
-#include <linux/version.h>
 
 #include "write.h"
 
 void ternfs_account_write_pages(struct mm_struct* mm, long count) {
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(6,2,0))
-    atomic_long_add(count, &mm->rss_stat.count[MM_FILEPAGES]);
-#else
     percpu_counter_add(&mm->rss_stat[MM_FILEPAGES], count);
-#endif
 }
 
 struct page* ternfs_alloc_write_page(struct mm_struct* mm) {

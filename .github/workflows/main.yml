@@ -112,29 +112,6 @@ jobs:
           persist-credentials: false
           # Fork code runs on disposable EC2 with no secrets, OIDC token, or IAM role.
           allow-unsafe-pr-checkout: true
-      - name: Compile kmod with Ubuntu 20.04 kernel headers
-        run: |
-          docker run --rm \
-            --volume "$PWD:/workspace:ro" \
-            ubuntu:20.04 \
-            bash -euxo pipefail -c '
-              apt-get update
-              DEBIAN_FRONTEND=noninteractive apt-get install -y \
-                build-essential \
-                ca-certificates \
-                git \
-                linux-headers-generic
-
-              cp -a /workspace /tmp/ternfs
-              git config --global --add safe.directory /tmp/ternfs
-              kernel_headers=$(find /usr/src -maxdepth 1 -type d \
-                -name "linux-headers-5.4.*-generic" | sort -V | tail -1)
-              test -n "$kernel_headers"
-              make -C /tmp/ternfs/kmod \
-                KDIR="$kernel_headers" \
-                -j"$(nproc)" \
-                ternfs-client-local
-            '
       - name: Install packages for CI
         run: apt-get install -y build-essential
       - name: Run functional tests
@@ -175,6 +152,10 @@ jobs:
           echo "kernel binary $kpkg -> source $src_pkg"
           apt-get build-dep -y --no-install-recommends "$src_pkg"
           apt-get install -y --no-install-recommends fakeroot llvm libncurses-dev dwarves
+      - name: Compile kmod with Linux 6.12.44
+        run: |
+          (cd kmod && ./fetchlinux.sh 6.12.44)
+          make -C kmod -j"$(nproc)" compile-check COMPILE_KERNELS=6.12.44
       - name: Download base qemu image
         run: curl -fsSL -O https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
       - name: Run kmod tests
