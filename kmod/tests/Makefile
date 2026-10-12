@@ -31,6 +31,3 @@ ternfs-wq-test-y := wq_test.o
 obj-m += ternfs-read-page-test.o
 ternfs-read-page-test-y := read_page_test.o
 ccflags-y += -I$(src)/.. -Wno-declaration-after-statement
-ifneq ($(shell grep -l inode_get_atime_sec $(srctree)/include/linux/fs.h 2>/dev/null),)
-ccflags-y += -DHAVE_INODE_ATIME_ACCESSORS
-endif
