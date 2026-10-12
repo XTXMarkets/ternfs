@@ -4,7 +4,6 @@
 
 #include "net.h"
 
-
 #include "log.h"
 #include "super.h"
 #include "trace.h"
