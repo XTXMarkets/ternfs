@@ -660,7 +660,6 @@ static bool block_socket_cleanup(
     ternfs_debug("socket(%p) %pI4:%d refcount %d callbacks unlocked", socket, &socket->addr.sin_addr, ntohs(socket->addr.sin_port), atomic_read(&socket->refcount));
 
 
-
     u64 key = block_socket_key(&socket->addr);
     int bucket = hash_min(key, BLOCK_SOCKET_BITS);
 
@@ -1646,7 +1645,7 @@ static int write_block_write_req(struct block_socket* socket, struct block_reque
     // Write the pages out
     while (write_req_written < write_size) {
         struct page* page = list_first_entry(&req->pages, struct page, lru);
-        int sent = kernel_sendpage(
+        int sent = ternfs_sendpage(
             socket->sock, page,
             page->index,
             min((u32)(PAGE_SIZE - page->index), write_size - write_req_written),

@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "file.h"
-#include "inode_compat.h"
 #include "metadata.h"
 #include "trace.h"
 

@@ -7,7 +7,6 @@
 #include <linux/version.h>
 
 #include "bincode.h"
-#include "inode_compat.h"
 #include "log.h"
 #include "dir.h"
 #include "err.h"
@@ -223,7 +222,7 @@ out_err:
 }
 
 // vfs: exclusive dir.i_rwsem, lockref dentry
-int COMPAT_FUNC_UNS_IMP(ternfs_mkdir, struct inode* dir, struct dentry* dentry, umode_t mode) {
+int ternfs_mkdir(struct mnt_idmap* uns, struct inode* dir, struct dentry* dentry, umode_t mode) {
     int err;
 
     struct ternfs_inode* dir_enode = TERNFS_I(dir);
@@ -392,7 +391,7 @@ out_err:
 }
 
 // vfs: exclusive i_rwsem for all
-int COMPAT_FUNC_UNS_IMP(ternfs_rename, struct inode* old_dir, struct dentry* old_dentry, struct inode* new_dir, struct dentry* new_dentry, unsigned int flags) {
+int ternfs_rename(struct mnt_idmap* uns, struct inode* old_dir, struct dentry* old_dentry, struct inode* new_dir, struct dentry* new_dentry, unsigned int flags) {
     int err;
 
     trace_eggsfs_vfs_rename_enter(old_dir, old_dentry, new_dir, new_dentry);

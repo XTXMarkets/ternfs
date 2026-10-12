@@ -6,15 +6,15 @@
 #define _TERNFS_BINCODE_H
 
 #ifdef __KERNEL__
+#include <linux/version.h>
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0)
+#error "TernFS requires Linux 6.12 or newer"
+#endif
+
 #include <linux/kernel.h>
 #include <linux/string.h>
 #include <linux/bug.h>
-#include <linux/version.h>
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0))
-#include <asm/unaligned.h>
-#else
 #include <linux/unaligned.h>
-#endif
 #else
 #include <stddef.h>
 #endif

@@ -193,6 +193,10 @@ go mod vendor
 
 Will run the integration tests as CI would (inside the Ubuntu docker image). You can also run the tests outside docker by removing the `--docker` flag, but you might have to install some dependencies of the build process. These tests take roughly 30 minutes on our [build server](https://instances.vantage.sh/aws/ec2/m6id.metal?currency=USD).
 
+The kernel module requires Linux 6.12 or newer. The QEMU tests run on 6.14.9;
+6.12.44 has a compile-only check. See [kmod build instructions](kmod/BUILD.md)
+to prepare both trees and run `make -C kmod -j compile-check`.
+
 To work with the qemu kmod tests you'll first need to download the base Ubuntu image we use for testing:
 
 ```
@@ -202,7 +206,7 @@ To work with the qemu kmod tests you'll first need to download the base Ubuntu i
 Then you can run the CI tests in kmod like so:
 
 ```
-% ./ci.py --kmod --short --prepare-image=kmod/focal-server-cloudimg-amd64.img --leader-only
+% ./ci.py --kmod --short --prepare-image=kmod/noble-server-cloudimg-amd64.img --leader-only
 ```
 
 The tests redirect dmesg output to `kmod/dmesg`, event tracing output to `kmod/trace`, and the full test log to `kmod/test-out`.

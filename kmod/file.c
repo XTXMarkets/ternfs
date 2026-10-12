@@ -8,7 +8,6 @@
 #include <linux/sched/mm.h>
 #include <linux/mm.h>
 #include <linux/pagemap.h>
-#include <linux/version.h>
 
 #include "bincode.h"
 #include "inode.h"
@@ -23,7 +22,6 @@
 #include "wq.h"
 #include "bincode.h"
 #include "dir.h"
-#include "inode_compat.h"
 #include "page_compat.h"
 #include "write.h"
 #include "inline_read.h"
@@ -918,11 +916,6 @@ static loff_t file_lseek(struct file *file, loff_t offset, int whence) {
             goto out;
         }
         file->f_pos = ppos;
-        // See 3352633ce6b221d64bf40644d412d9670e7d56e3 in linux repo, f_version
-        // was not well defined before anyway and they removed it.
-        #if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0))
-        file->f_version = 0;
-        #endif
     }
 
 out:
@@ -980,81 +973,6 @@ static void process_file_pages(struct address_space *mapping, struct list_head *
         put_page(page);
     }
 }
-
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 18, 0))
-static int file_readpages(struct file *filp, struct address_space *mapping, struct list_head *pages, unsigned nr_pages) {
-    int err = 0;
-
-    struct inode* inode = file_inode(filp);
-    struct ternfs_inode* enode = TERNFS_I(inode);
-    loff_t off = page_offset(lru_to_page(pages));
-    trace_eggsfs_file_read_enter(enode->inode.i_ino, off, nr_pages);
-    ternfs_debug("enode=%p, ino=%ld, offset=%lld, nr_pages=%u", enode, inode->i_ino, off, nr_pages);
-
-    struct ternfs_span* span = NULL;
-    struct page *page;
-    LIST_HEAD(extra_pages);
-
-    if (off >= inode->i_size) { // out of bounds
-        list_for_each_entry(page, pages, lru) {
-            zero_user_segment(page, 0, PAGE_SIZE);
-        }
-        goto out;
-    }
-
-    span = ternfs_get_span((struct ternfs_fs_info*)enode->inode.i_sb->s_fs_info, &enode->file.spans, off);
-    if (IS_ERR(span)) {
-        ternfs_warn("file=%016lx get_span failed at offset=%lld", enode->inode.i_ino, off);
-        err = PTR_ERR(span);
-        span = NULL;
-        goto out_err;
-    }
-    if (span == NULL) {
-        list_for_each_entry(page, pages, lru) {
-            zero_user_segment(page, 0, PAGE_SIZE);
-        }
-        goto out;
-    }
-
-    if (span->storage_class == TERNFS_INLINE_STORAGE) {
-        struct ternfs_inline_span* inline_span = TERNFS_INLINE_SPAN(span);
-        page = lru_to_page(pages);
-        if (page == NULL) {
-            err = -EIO;
-            goto out_err;
-        }
-        list_del(&page->lru);
-        // rest is past end of file, just drop it
-        put_pages_list(pages);
-        // return page back
-        list_add_tail(&page->lru, pages);
-        BUG_ON(page_offset(page) != span->start);
-        ternfs_fill_inline_page(page, inline_span->body, inline_span->len);
-    } else {
-        struct ternfs_block_span* block_span = TERNFS_BLOCK_SPAN(span);
-        err = ternfs_span_get_pages(block_span, mapping, pages, nr_pages, &extra_pages);
-        if (err) {
-            ternfs_warn("file=%016lx readahead of nr_pages=%d at offset=%lld failed err=%d", enode->inode.i_ino, nr_pages, off, err);
-            put_pages_list(&extra_pages);
-            goto out_err;
-        }
-    }
-out:
-    if (span) { ternfs_put_span(span); }
-    process_file_pages(mapping, pages, nr_pages);
-    process_file_pages(mapping, &extra_pages, 0);
-    trace_eggsfs_file_read_exit(enode->inode.i_ino, off, nr_pages, 0);
-    return 0;
-
-out_err:
-    if (span != NULL) {
-        ternfs_put_span(span);
-    }
-    put_pages_list(pages);
-    trace_eggsfs_file_read_exit(enode->inode.i_ino, off, nr_pages, err);
-    return err;
-}
-#endif
 
 static int file_readpage(struct file* filp, struct page* page) {
     struct inode* inode = file_inode(filp);
@@ -1154,12 +1072,7 @@ retry:
     }
 
 out:
-    if (unlikely(err)) {
-        // SetPageError was removed because it was unused by that point
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0))
-        SetPageError(page);
-#endif
-    } else {
+    if (likely(!err)) {
         SetPageUptodate(page);
     }
     if (span != NULL) {
@@ -1170,7 +1083,6 @@ out:
     return err;
 }
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 18, 0))
 static void file_readahead(struct readahead_control *rac)
 {
     struct file *filp = rac->file;
@@ -1304,24 +1216,13 @@ out_err:
     trace_eggsfs_file_read_exit(enode->inode.i_ino, off, nr_pages, err);
     return;
 }
-#endif
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 18, 0))
 static int file_readfolio(struct file *filp, struct folio *folio) {
     BUG_ON(folio_nr_pages(folio) != 1);
     return file_readpage(filp, folio_page(folio, 0));
 }
-#endif
 
 const struct address_space_operations ternfs_mmap_operations = {
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 18, 0))
-    .readpages = file_readpages,
-#else
     .readahead = file_readahead,
-#endif
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 19, 0))
-    .readpage = file_readpage,
-#else
     .read_folio = file_readfolio,
-#endif
 };

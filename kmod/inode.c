@@ -16,7 +16,6 @@
 #include "err.h"
 #include "file.h"
 #include "wq.h"
-#include "inode_compat.h"
 #include "getattr_completion.h"
 #include "policy_update.h"
 
@@ -421,7 +420,7 @@ out_err:
     return ERR_PTR(err);
 }
 
-static int COMPAT_FUNC_UNS_IMP(ternfs_create, struct inode* parent, struct dentry* dentry, umode_t mode, bool excl) {
+static int ternfs_create(struct mnt_idmap* uns, struct inode* parent, struct dentry* dentry, umode_t mode, bool excl) {
     struct ternfs_inode* enode = ternfs_create_internal(parent, TERNFS_INODE_FILE, dentry);
     if (IS_ERR(enode)) { return PTR_ERR(enode); }
 
@@ -433,7 +432,7 @@ static int COMPAT_FUNC_UNS_IMP(ternfs_create, struct inode* parent, struct dentr
 }
 
 // vfs: refcount of path->dentry
-static int COMPAT_FUNC_UNS_IMP(ternfs_getattr, const struct path* path, struct kstat* stat, u32 request_mask, unsigned int query_flags) {
+static int ternfs_getattr(struct mnt_idmap* uns, const struct path* path, struct kstat* stat, u32 request_mask, unsigned int query_flags) {
     struct inode* inode = d_inode(path->dentry);
     struct ternfs_inode* enode = TERNFS_I(inode);
     bool force_sync = query_flags & AT_STATX_FORCE_SYNC;
@@ -463,11 +462,7 @@ static int COMPAT_FUNC_UNS_IMP(ternfs_getattr, const struct path* path, struct k
     }
 
 done:
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6,6,0)
-    COMPAT_FUNC_UNS_CALL(generic_fillattr, inode, stat);
-#else
-    COMPAT_FUNC_UNS_CALL(generic_fillattr, request_mask, inode, stat);
-#endif
+    generic_fillattr(uns, request_mask, inode, stat);
     trace_eggsfs_vfs_getattr_exit(inode, 0);
     return 0;
 }
@@ -508,7 +503,7 @@ static int ternfs_do_ftruncate(struct dentry* dentry, struct iattr* attr) {
     return 0;
 }
 
-static int COMPAT_FUNC_UNS_IMP(ternfs_setattr, struct dentry* dentry, struct iattr* attr) {
+static int ternfs_setattr(struct mnt_idmap* uns, struct dentry* dentry, struct iattr* attr) {
     // https://elixir.bootlin.com/linux/v5.4/source/fs/open.c#L49 is the only
     // place where ATTR_SIZE is set, which means only when truncating.
     if (attr->ia_valid & ATTR_SIZE) {
@@ -564,18 +559,14 @@ static int COMPAT_FUNC_UNS_IMP(ternfs_setattr, struct dentry* dentry, struct iat
     return 0;
 }
 
-static int COMPAT_FUNC_UNS_IMP(ternfs_symlink, struct inode* dir, struct dentry* dentry, const char* path) {
+static int ternfs_symlink(struct mnt_idmap* uns, struct inode* dir, struct dentry* dentry, const char* path) {
     struct ternfs_inode* enode = ternfs_create_internal(dir, TERNFS_INODE_SYMLINK, dentry);
     if (IS_ERR(enode)) { return PTR_ERR(enode); }
     return ternfs_finish_symlink(enode, dentry, path);
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,6,0)
-static int COMPAT_FUNC_UNS_IMP(ternfs_tmpfile, struct inode* dir, struct file* file, umode_t mode) {
+static int ternfs_tmpfile(struct mnt_idmap* uns, struct inode* dir, struct file* file, umode_t mode) {
     struct dentry* dentry = file->f_path.dentry; // dentry with a "fake" name
-#else
-static int COMPAT_FUNC_UNS_IMP(ternfs_tmpfile, struct inode* dir, struct dentry* dentry, umode_t mode) {
-#endif
     ternfs_debug("ternfs_tempfile: name: %s", dentry->d_name.name);
     struct ternfs_inode* enode = ternfs_create_internal(dir, TERNFS_INODE_FILE, dentry);
     if (IS_ERR(enode)) { return PTR_ERR(enode); }
@@ -584,15 +575,9 @@ static int COMPAT_FUNC_UNS_IMP(ternfs_tmpfile, struct inode* dir, struct dentry*
     // and it remains unlinked until linkat() is called
     // once link is called we can then assign a name
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,6,0)
     // we need d_tmpfile to instantiate dentry with our inode
     d_tmpfile(file, &enode->inode);
     return finish_open_simple(file, 0);
-#else
-    // for older kernels, we need to instantiate as unhashed
-    d_tmpfile(dentry, &enode->inode);
-    return 0;
-#endif
 }
 
 static const char* ternfs_get_link(struct dentry* dentry, struct inode* inode, struct delayed_call* destructor) {
@@ -620,16 +605,12 @@ static const char* ternfs_get_link(struct dentry* dentry, struct inode* inode, s
 // Only wired into ternfs_file_inode_ops: directory atime is TernFS-internal
 // state (dentry cache invalidation) and must not be touched by VFS access
 // paths -- SB_NODIRATIME keeps the VFS out.
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
-static int ternfs_update_time(struct inode* inode, struct timespec64* now, int flags) {
-#else
 static int ternfs_update_time(struct inode* inode, int flags) {
-#endif
     struct ternfs_inode* enode = TERNFS_I(inode);
 
     int non_atime = flags & ~S_ATIME;
     if (non_atime) {
-        ternfs_generic_update_time(inode, non_atime);
+        generic_update_time(inode, non_atime);
     }
     if (!(flags & S_ATIME)) { return 0; }
 
