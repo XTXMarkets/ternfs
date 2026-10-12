@@ -9,7 +9,6 @@
 #include <linux/timekeeping.h>
 
 #include "../file.h"
-#include "../inode_compat.h"
 #include "../metadata.h"
 
 MODULE_LICENSE("GPL");
