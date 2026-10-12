@@ -23,11 +23,19 @@ struct ShardOptions {
     int32_t rocksdbMaxBackgroundJobs = 4;
     int32_t rocksdbMaxSubcompactions = 4;
     Duration regionStalenessThreshold = 10_mins;
-    // A timeout lets CDC proceed without confirmation from every location.
+    // These limits let CDC proceed without confirmation from every location.
     // Read gating is independent: a secondary can still serve an older namespace,
     // including a mkdir or cross-shard rename that has only partly replicated.
-    // 0 disables this timeout.
+    // Set all three to 0 to disable these early-release limits.
+
+    // Maximum duration of an individual wait. 0 disables only this timeout.
     Duration regionWaitTimeout = 15_sec;
+    // Skip new waits after this long without an announcement. Requires
+    // -replica-announcements; 0 disables.
+    Duration regionSilenceThreshold = 5_sec;
+    // Skip new waits when the last announcement showed this much apply lag.
+    // Requires -replica-announcements; 0 disables.
+    Duration regionLagThreshold = 15_sec;
     // Stop serving reads when our newest applied log entry is older than this. 0 disables read gating.
     Duration readStalenessThreshold = 10_sec;
     // How often the primary leader emits a heartbeat log entry while otherwise idle. 0 disables emission.

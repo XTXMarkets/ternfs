@@ -134,6 +134,8 @@ struct ShardShared {
         std::atomic<uint64_t> started{0};    // waits sent to the location
         std::atomic<uint64_t> skipped{0};    // not waited for, the location looked down
         std::atomic<uint64_t> timedOut{0};   // given up mid-wait after -region-wait-timeout
+        std::atomic<uint64_t> silent{0};     // not waited for, no recent announcement received
+        std::atomic<uint64_t> lagging{0};    // not waited for, the location's leader announced being too far behind
         std::atomic<uint64_t> dropped{0};    // given up mid-wait, the location looked down or went missing
         std::atomic<uint64_t> finished{0};   // the location confirmed it applied the entry
         std::atomic<uint64_t> finishedNs{0}; // total time until those confirmations
@@ -898,6 +900,8 @@ private:
     static constexpr Duration CROSS_REGION_WAIT_RETRY_INTERVAL = 200_ms;
     Duration _shardDownThreshold;
     Duration _regionWaitTimeout;
+    Duration _regionSilenceThreshold;
+    Duration _regionLagThreshold;
     std::unordered_map<uint64_t, CrossRegionWaitInfo> _crossRegionWaitResponses; // wait req id -> info
     std::array<bool, 256> _publishedCrossLocationWaits{}; // locations with non-zero wait gauges published
     std::unordered_map<uint64_t, uint64_t> _waitReqIdToResponseId;
@@ -936,6 +940,8 @@ public:
         _catchupWindowIndex(0),
         _shardDownThreshold(shared.options.regionStalenessThreshold),
         _regionWaitTimeout(shared.options.regionWaitTimeout),
+        _regionSilenceThreshold(shared.options.regionSilenceThreshold),
+        _regionLagThreshold(shared.options.regionLagThreshold),
         _requestIdCounter(RandomGenerator().generate64())
     {
         expandKey(ShardKey, _expandedShardKey);
@@ -1043,6 +1049,31 @@ public:
             packShardResponse(_env, _shared, _shared.sock().addr(), _sender, dropArtificially, req, resp);
             it = _waitStateRequests.erase(it);
         }
+    }
+
+    // No progress for the selected address means these checks cannot skip it.
+    // Previously announced progress is retained when announcements go silent,
+    // even if the peer keeps registering.
+    bool _waitForLocation(uint8_t locationId, TernTime now) {
+        auto remoteProgress = _shared.replicaTracker.remoteProgress();
+        for (const auto& leader : *remoteProgress) {
+            if (leader.locationId != locationId) {
+                continue;
+            }
+            if (_regionSilenceThreshold != 0 && now - leader.lastHeard >= _regionSilenceThreshold) {
+                LOG_DEBUG(_env, "Skipping wait for location %s, not heard from for %s", locationId, now - leader.lastHeard);
+                _shared.crossLocationWaits[locationId].silent.fetch_add(1, std::memory_order_relaxed);
+                return false;
+            }
+            Duration lag = leader.lastHeard > leader.lastAppliedTime ? leader.lastHeard - leader.lastAppliedTime : Duration(0);
+            if (_regionLagThreshold != 0 && lag >= _regionLagThreshold) {
+                LOG_DEBUG(_env, "Skipping wait for location %s, it announced being %s behind", locationId, lag);
+                _shared.crossLocationWaits[locationId].lagging.fetch_add(1, std::memory_order_relaxed);
+                return false;
+            }
+            return true;
+        }
+        return true;
     }
 
     // Publishes how many waits are outstanding per location and how old the
@@ -1365,6 +1396,9 @@ public:
                                             LOG_INFO(_env, "Skipping wait for secondary leader at location %s (down for %s)",
                                                     leader.locationId, timeSinceLastSeen);
                                             _shared.crossLocationWaits[leader.locationId].skipped.fetch_add(1, std::memory_order_relaxed);
+                                            continue;
+                                        }
+                                        if (!_waitForLocation(leader.locationId, now)) {
                                             continue;
                                         }
                                         shouldWait = true;
@@ -1794,6 +1828,9 @@ public:
                         LOG_INFO(_env, "Skipping wait for secondary leader at location %s (down for %s)",
                                 leader.locationId, timeSinceLastSeen);
                         _shared.crossLocationWaits[leader.locationId].skipped.fetch_add(1, std::memory_order_relaxed);
+                        continue;
+                    }
+                    if (!_waitForLocation(leader.locationId, now)) {
                         continue;
                     }
                     shouldWait = true;
@@ -2687,11 +2724,15 @@ public:
             const auto& stats = _shared.crossLocationWaits[loc];
             uint64_t started = stats.started.load(std::memory_order_relaxed);
             uint64_t skipped = stats.skipped.load(std::memory_order_relaxed);
-            if (started == 0 && skipped == 0) { continue; }
+            uint64_t silent = stats.silent.load(std::memory_order_relaxed);
+            uint64_t lagging = stats.lagging.load(std::memory_order_relaxed);
+            if (started == 0 && skipped == 0 && silent == 0 && lagging == 0) { continue; }
             newMeassurement("eggsfs_shard_cross_location_wait");
             _metricsBuilder.tag("target_location", loc);
             _metricsBuilder.fieldU64("started", started);
             _metricsBuilder.fieldU64("skipped", skipped);
+            _metricsBuilder.fieldU64("silent", silent);
+            _metricsBuilder.fieldU64("lagging", lagging);
             _metricsBuilder.fieldU64("dropped", stats.dropped.load(std::memory_order_relaxed));
             _metricsBuilder.fieldU64("timed_out", stats.timedOut.load(std::memory_order_relaxed));
             _metricsBuilder.fieldU64("finished", stats.finished.load(std::memory_order_relaxed));
@@ -2814,6 +2855,8 @@ void runShard(ShardOptions& options) {
         LOG_INFO(env, "  syslog = %s", (int)options.logOptions.syslog);
         LOG_INFO(env, "  regionStalenessThreshold = %s", options.regionStalenessThreshold);
         LOG_INFO(env, "  regionWaitTimeout = %s", options.regionWaitTimeout);
+        LOG_INFO(env, "  regionSilenceThreshold = %s", options.regionSilenceThreshold);
+        LOG_INFO(env, "  regionLagThreshold = %s", options.regionLagThreshold);
         LOG_INFO(env, "Using LogsDB with options:");
         LOG_INFO(env, "    noReplication = '%s'", (int)options.logsDBOptions.noReplication);
         LOG_INFO(env, "    avoidBeingLeader = '%s'", (int)options.logsDBOptions.avoidBeingLeader);

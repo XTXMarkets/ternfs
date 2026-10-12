@@ -53,6 +53,14 @@ static bool parseShardOptions(CommandLineArgs& args, ShardOptions& options) {
             options.regionWaitTimeout = parseDuration(args.next());
             continue;
         }
+        if (arg == "-region-silence-threshold") {
+            options.regionSilenceThreshold = parseDuration(args.next());
+            continue;
+        }
+        if (arg == "-region-lag-threshold") {
+            options.regionLagThreshold = parseDuration(args.next());
+            continue;
+        }
         if (arg == "-read-staleness-threshold") {
             options.readStalenessThreshold = parseDuration(args.next());
             continue;
@@ -102,8 +110,12 @@ static void printShardOptionsUsage() {
     fprintf(stderr, " -region-staleness-threshold\n");
     fprintf(stderr, "    	Duration after which a cross-region shard is considered down. Default: 10m\n");
     fprintf(stderr, " -region-wait-timeout\n");
-    fprintf(stderr, "    	Stop waiting for a cross-region shard to apply an entry after this long. 0 disables this timeout. Default: 15s\n");
-    fprintf(stderr, "    \tTimed-out locations may still serve older or partly replicated namespace state.\n");
+    fprintf(stderr, "    	Stop waiting for a cross-region shard to apply an entry after this long. 0 disables only this timeout. Default: 15s\n");
+    fprintf(stderr, "    	Skipped or timed-out locations may still serve older or partly replicated namespace state. Set the wait, silence and lag limits to 0 to disable these limits.\n");
+    fprintf(stderr, " -region-silence-threshold\n");
+    fprintf(stderr, "    	Skip new waits for a previously announcing cross-region shard after this long without an announcement. Needs -replica-announcements. 0 disables. Default: 5s\n");
+    fprintf(stderr, " -region-lag-threshold\n");
+    fprintf(stderr, "    	Skip new waits for a cross-region shard whose last announcement showed it this far behind. Needs -replica-announcements. 0 disables. Default: 15s\n");
     fprintf(stderr, " -read-staleness-threshold\n");
     fprintf(stderr, "    	Stop serving reads when the newest applied log entry is older than this. 0 disables. Default: 10s\n");
     fprintf(stderr, " -heartbeat-emission-interval\n");
