@@ -31,3 +31,4 @@ ternfs-wq-test-y := wq_test.o
 obj-m += ternfs-read-page-test.o
 ternfs-read-page-test-y := read_page_test.o
 ccflags-y += -I$(src)/.. -Wno-declaration-after-statement
+ccflags-y += -include $(src)/../kernel_floor.h

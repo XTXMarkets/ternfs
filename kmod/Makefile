@@ -49,6 +49,7 @@ ternfs-client-objs += \
 	policy_update.o
 
 EXTRA_CFLAGS = -I$(src) -g -DDEBUG -fdiagnostics-color=always -Wno-declaration-after-statement
+EXTRA_CFLAGS += -include $(src)/kernel_floor.h
 
 export CF = -Wbitwise -Wcontext -Wcast_truncate -Wsparse-all -Wno-shadow -Wnopointer-arith -Wnosizeof-bool -DCONFIG_SPARSE_RCU_POINTER
 
@@ -119,7 +120,7 @@ ternfs-client-local: revision.c extra-files
 # modules_prepare has no Module.symvers, so stop before modpost.
 .PHONY: ternfs-client-compile
 ternfs-client-compile: revision.c extra-files
-	$(MAKE) -C $(KDIR) M=$(CURDIR) ternfs-client.o
+	$(MAKE) -C $(KDIR) M=$(CURDIR) KCFLAGS=-Werror ternfs-client.o
 
 COMPILE_KERNELS ?= 6.12.44 6.14.9
 .PHONY: compile-check
