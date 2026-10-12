@@ -37,6 +37,7 @@ ReplicaTracker::ReplicaTracker(Logger& logger, std::shared_ptr<XmonAgent>& xmon,
       _isLeader(isLeader),
       _localReplicas(std::make_shared<const LocalReplicas>()),
       _remoteLeaders(std::make_shared<const RemoteLeaders>()),
+      _remoteProgress(std::make_shared<const RemoteProgress>()),
       _announcementTargets(std::make_shared<const AnnouncementTargets>())
 {
     _peers.emplace(
@@ -44,6 +45,8 @@ ReplicaTracker::ReplicaTracker(Logger& logger, std::shared_ptr<XmonAgent>& xmon,
         PeerState{
             .registry = std::nullopt,
             .announced = View{.addrs = addrs, .isLeader = isLeader, .lastSeen = {}},
+            .lastApplied = {},
+            .lastAppliedTime = {},
         });
     _publishLocked(TernTime{});
 }
@@ -56,7 +59,7 @@ bool ReplicaTracker::_publishedDiffers(uint8_t location, const View& before, con
     if (before.addrs != after.addrs || before.isLeader != after.isLeader) {
         return true;
     }
-    // Remote leader timestamps affect leader selection and liveness.
+    // Remote leader timestamps affect leader selection, liveness and progress.
     const bool inRemoteLeaders = location != _location && before.isLeader;
     return inRemoteLeaders && before.lastSeen != after.lastSeen;
 }
@@ -78,6 +81,8 @@ void ReplicaTracker::seedRegistry(const std::vector<FullShardInfo>& replicas, Te
             PeerState{
                 .registry = View{.addrs = replica.addrs, .isLeader = replica.isLeader, .lastSeen = replica.lastSeen},
                 .announced = std::nullopt,
+                .lastApplied = {},
+                .lastAppliedTime = {},
             });
         if (inserted) {
             changed = true;
@@ -133,6 +138,8 @@ void ReplicaTracker::recordAnnouncement(const IpPort& source, const ShardReplica
     auto [it, inserted] = _peers.try_emplace(key, PeerState{
         .registry = std::nullopt,
         .announced = announced,
+        .lastApplied = announcement.lastApplied,
+        .lastAppliedTime = announcement.lastAppliedTime,
     });
     if (inserted) {
         changed = true;
@@ -142,6 +149,8 @@ void ReplicaTracker::recordAnnouncement(const IpPort& source, const ShardReplica
         // publishes it. Compare with the view that was actually published.
         const View before = peer.current(_publishedAt);
         peer.announced = announced;
+        peer.lastApplied = announcement.lastApplied;
+        peer.lastAppliedTime = announcement.lastAppliedTime;
         changed = changed || _publishedDiffers(announcement.location, before, peer.current(now));
     }
     if (changed || (announcement.location != _location && announcement.isLeader)) {
@@ -181,6 +190,11 @@ ReplicaTracker::remoteLeaders() const {
     return _remoteLeaders.load();
 }
 
+std::shared_ptr<const ReplicaTracker::RemoteProgress>
+ReplicaTracker::remoteProgress() const {
+    return _remoteProgress.load();
+}
+
 std::shared_ptr<const ReplicaTracker::AnnouncementTargets>
 ReplicaTracker::announcementTargets() const {
     return _announcementTargets.load();
@@ -200,6 +214,7 @@ void ReplicaTracker::_publishLocked(TernTime now) {
     _publishedAt = now;
     auto local = std::make_shared<LocalReplicas>();
     auto remote = std::make_shared<RemoteLeaders>();
+    auto progress = std::make_shared<RemoteProgress>();
     auto targets = std::make_shared<AnnouncementTargets>();
 
     // Prefer fresh announcements, then registry records, then announcements
@@ -241,7 +256,20 @@ void ReplicaTracker::_publishLocked(TernTime now) {
         }
     }
 
+    for (const auto& leader : *remote) {
+        const auto& peer = _peers.at(ShardReplicaLocationKey(leader.id, leader.locationId));
+        if (peer.announced.has_value() && peer.announced->addrs == leader.addrs) {
+            progress->push_back(RemoteLeaderProgress{
+                .locationId = leader.locationId,
+                .lastHeard = peer.announced->lastSeen,
+                .lastApplied = peer.lastApplied,
+                .lastAppliedTime = peer.lastAppliedTime,
+            });
+        }
+    }
+
     _localReplicas.store(std::move(local));
     _remoteLeaders.store(std::move(remote));
+    _remoteProgress.store(std::move(progress));
     _announcementTargets.store(std::move(targets));
 }

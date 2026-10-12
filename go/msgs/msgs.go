@@ -2356,6 +2356,10 @@ type ShardReplicaAnnouncement struct {
 	Location Location
 	IsLeader bool
 	Addrs    AddrsInfo
+	// The last entry the replica has applied to the state it serves reads
+	// from, and when the primary leader created that entry.
+	LastApplied     LogIdx
+	LastAppliedTime TernTime
 }
 
 type AllShardsDEPRECATEDResp struct {

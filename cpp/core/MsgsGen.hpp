@@ -1597,11 +1597,13 @@ struct ShardReplicaAnnouncement {
     uint8_t location;
     bool isLeader;
     AddrsInfo addrs;
+    LogIdx lastApplied;
+    TernTime lastAppliedTime;
 
-    static constexpr uint16_t STATIC_SIZE = 2 + 1 + 1 + AddrsInfo::STATIC_SIZE; // shrid + location + isLeader + addrs
+    static constexpr uint16_t STATIC_SIZE = 2 + 1 + 1 + AddrsInfo::STATIC_SIZE + 8 + 8; // shrid + location + isLeader + addrs + lastApplied + lastAppliedTime
 
     ShardReplicaAnnouncement() { clear(); }
-    explicit ShardReplicaAnnouncement(ShardReplicaId shrid_, uint8_t location_, bool isLeader_, AddrsInfo addrs_) : shrid(shrid_), location(location_), isLeader(isLeader_), addrs(addrs_) {}
+    explicit ShardReplicaAnnouncement(ShardReplicaId shrid_, uint8_t location_, bool isLeader_, AddrsInfo addrs_, LogIdx lastApplied_, TernTime lastAppliedTime_) : shrid(shrid_), location(location_), isLeader(isLeader_), addrs(addrs_), lastApplied(lastApplied_), lastAppliedTime(lastAppliedTime_) {}
     ShardReplicaAnnouncement(const ShardReplicaAnnouncement&) = default;
     ShardReplicaAnnouncement& operator=(const ShardReplicaAnnouncement&) = default;
     ShardReplicaAnnouncement(ShardReplicaAnnouncement&&) = default;
@@ -1612,6 +1614,8 @@ struct ShardReplicaAnnouncement {
         _size += 1; // location
         _size += 1; // isLeader
         _size += addrs.packedSize(); // addrs
+        _size += 8; // lastApplied
+        _size += 8; // lastAppliedTime
         return _size;
     }
     void pack(BincodeBuf& buf) const;

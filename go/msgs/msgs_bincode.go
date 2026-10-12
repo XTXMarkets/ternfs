@@ -5126,6 +5126,12 @@ func (v *ShardReplicaAnnouncement) Pack(w io.Writer) error {
 	if err := v.Addrs.Pack(w); err != nil {
 		return err
 	}
+	if err := bincode.PackScalar(w, uint64(v.LastApplied)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.LastAppliedTime)); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -5140,6 +5146,12 @@ func (v *ShardReplicaAnnouncement) Unpack(r io.Reader) error {
 		return err
 	}
 	if err := v.Addrs.Unpack(r); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.LastApplied)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.LastAppliedTime)); err != nil {
 		return err
 	}
 	return nil

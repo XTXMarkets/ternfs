@@ -26,7 +26,7 @@ static AddrsInfo addresses(uint8_t lastOctet, uint16_t port) {
 }
 
 static ShardReplicaAnnouncement announcement(ShardReplicaId id, uint8_t location, bool isLeader, const AddrsInfo& addrs) {
-    return ShardReplicaAnnouncement(id, location, isLeader, addrs);
+    return ShardReplicaAnnouncement(id, location, isLeader, addrs, LogIdx(), TernTime());
 }
 
 TEST_CASE("registry seeds local replicas and remote leaders") {
@@ -106,11 +106,13 @@ TEST_CASE("a fresh leader announcement takes precedence over stale registry poll
     remote = tracker.remoteLeaders();
     REQUIRE(remote->size() == 1);
     CHECK(remote->at(0).id == newLeader.shrid);
+    CHECK(tracker.remoteProgress()->size() == 1);
 
     tracker.expire(TernTime(20) + ReplicaTracker::PEER_EXPIRY);
     remote = tracker.remoteLeaders();
     REQUIRE(remote->size() == 1);
     CHECK(remote->at(0).id == registry[0].id);
+    CHECK(tracker.remoteProgress()->empty());
 }
 
 TEST_CASE("the most recently heard leader wins without changing other peers' records") {
@@ -118,11 +120,15 @@ TEST_CASE("the most recently heard leader wins without changing other peers' rec
     ReplicaTracker tracker(logger, xmon, self, 0, true, addresses(1, 10001));
     auto first = announcement(ShardReplicaId(ShardId(7), ReplicaId(4)), 1, true, addresses(2, 10002));
     auto second = announcement(ShardReplicaId(ShardId(7), ReplicaId(3)), 1, true, addresses(3, 10003));
+    first.lastApplied = LogIdx(40);
+    second.lastApplied = LogIdx(42);
 
     tracker.recordAnnouncement(address(2, 10002), first, TernTime(10));
     tracker.recordAnnouncement(address(3, 10003), second, TernTime(20));
     REQUIRE(tracker.remoteLeaders()->size() == 1);
     CHECK(tracker.remoteLeaders()->at(0).id == second.shrid);
+    REQUIRE(tracker.remoteProgress()->size() == 1);
+    CHECK(tracker.remoteProgress()->at(0).lastApplied == LogIdx(42));
     CHECK(tracker.peerState(first.shrid, 1)->announced->isLeader);
 
     // A delayed packet can temporarily change the winner; the next announcement
@@ -493,4 +499,100 @@ TEST_CASE("peers known only from the registry never expire") {
     registry[1].lastSeen = TernTime(3'000);
     tracker.seedRegistry(registry, TernTime(3'000));
     CHECK(tracker.remoteLeaders()->at(0).lastSeen == TernTime(3'000));
+}
+
+TEST_CASE("remote leaders publish the progress they announce") {
+    const auto self = ShardReplicaId(ShardId(7), ReplicaId(4));
+    ReplicaTracker tracker(logger, xmon, self, 0, true, addresses(1, 10001));
+
+    // Known only from the registry: no progress yet.
+    std::vector<FullShardInfo> seed{
+        FullShardInfo(ShardReplicaId(ShardId(7), ReplicaId(4)), true, addresses(3, 10003), 0, 1),
+    };
+    tracker.seedRegistry(seed, TernTime(10));
+    REQUIRE(tracker.remoteLeaders()->size() == 1);
+    CHECK(tracker.remoteProgress()->empty());
+
+    auto remoteLeader = announcement(ShardReplicaId(ShardId(7), ReplicaId(4)), 1, true, addresses(3, 10003));
+    remoteLeader.lastApplied = LogIdx(42);
+    remoteLeader.lastAppliedTime = TernTime(15);
+    tracker.recordAnnouncement(address(3, 10003), remoteLeader, TernTime(20));
+
+    // A follower at that location and a local replica don't count.
+    auto remoteFollower = announcement(ShardReplicaId(ShardId(7), ReplicaId(1)), 1, false, addresses(4, 10004));
+    remoteFollower.lastApplied = LogIdx(40);
+    tracker.recordAnnouncement(address(4, 10004), remoteFollower, TernTime(21));
+    auto localFollower = announcement(ShardReplicaId(ShardId(7), ReplicaId(0)), 0, false, addresses(5, 10005));
+    tracker.recordAnnouncement(address(5, 10005), localFollower, TernTime(22));
+
+    auto progress = tracker.remoteProgress();
+    REQUIRE(progress->size() == 1);
+    CHECK(progress->at(0).locationId == 1);
+    CHECK(progress->at(0).lastHeard == TernTime(20));
+    CHECK(progress->at(0).lastApplied == LogIdx(42));
+    CHECK(progress->at(0).lastAppliedTime == TernTime(15));
+
+    // Registration and announcements run independently. A registration between
+    // announcements must not discard the progress we just received.
+    seed[0].lastSeen = TernTime(20) + 10_ms;
+    tracker.seedRegistry(seed, TernTime(20) + 20_ms);
+    progress = tracker.remoteProgress();
+    REQUIRE(progress->size() == 1);
+    CHECK(progress->at(0).lastHeard == TernTime(20));
+    CHECK(progress->at(0).lastApplied == LogIdx(42));
+
+    // A quiet leader stays in the progress, with the time we last heard
+    // from it, so that the primary can see it has gone silent.
+    tracker.expire(TernTime(20) + ReplicaTracker::PEER_EXPIRY);
+    progress = tracker.remoteProgress();
+    REQUIRE(progress->size() == 1);
+    CHECK(progress->at(0).lastHeard == TernTime(20));
+
+    // Another poll with unchanged registration data must preserve silence too.
+    tracker.seedRegistry(seed, TernTime(20) + ReplicaTracker::PEER_EXPIRY);
+    CHECK(tracker.remoteProgress()->size() == 1);
+
+    // Registry access can remain healthy while inter-location traffic fails.
+    seed[0].lastSeen = TernTime(20) + ReplicaTracker::PEER_EXPIRY;
+    tracker.seedRegistry(seed, seed[0].lastSeen + 1_ns);
+    progress = tracker.remoteProgress();
+    REQUIRE(progress->size() == 1);
+    CHECK(progress->at(0).lastHeard == TernTime(20));
+    CHECK(tracker.remoteLeaders()->size() == 1);
+
+    remoteLeader.lastApplied = LogIdx(100);
+    remoteLeader.lastAppliedTime = seed[0].lastSeen;
+    tracker.recordAnnouncement(address(3, 10003), remoteLeader, seed[0].lastSeen + 100_ms);
+    progress = tracker.remoteProgress();
+    REQUIRE(progress->size() == 1);
+    CHECK(progress->at(0).lastHeard == seed[0].lastSeen + 100_ms);
+    CHECK(progress->at(0).lastApplied == LogIdx(100));
+}
+
+TEST_CASE("progress is not transferred to an address learned from the registry") {
+    const auto self = ShardReplicaId(ShardId(7), ReplicaId(4));
+    ReplicaTracker tracker(logger, xmon, self, 0, true, addresses(1, 10001));
+    auto leader = announcement(ShardReplicaId(ShardId(7), ReplicaId(4)), 1, true, addresses(2, 10002));
+    leader.lastApplied = LogIdx(42);
+    tracker.recordAnnouncement(address(2, 10002), leader, TernTime(10));
+
+    std::vector<FullShardInfo> registry{
+        FullShardInfo(leader.shrid, true, addresses(3, 10003), TernTime(20), 1),
+    };
+    tracker.seedRegistry(registry, TernTime(30));
+    REQUIRE(tracker.remoteLeaders()->size() == 1);
+    CHECK(tracker.remoteLeaders()->at(0).addrs == leader.addrs);
+    REQUIRE(tracker.remoteProgress()->size() == 1);
+    CHECK(tracker.remoteProgress()->at(0).lastApplied == LogIdx(42));
+
+    tracker.expire(TernTime(10) + ReplicaTracker::PEER_EXPIRY);
+    REQUIRE(tracker.remoteLeaders()->size() == 1);
+    CHECK(tracker.remoteLeaders()->at(0).addrs == registry[0].addrs);
+    CHECK(tracker.remoteProgress()->empty());
+
+    leader.addrs = registry[0].addrs;
+    leader.lastApplied = LogIdx(100);
+    tracker.recordAnnouncement(address(3, 10003), leader, TernTime(10) + ReplicaTracker::PEER_EXPIRY + 1_ns);
+    REQUIRE(tracker.remoteProgress()->size() == 1);
+    CHECK(tracker.remoteProgress()->at(0).lastApplied == LogIdx(100));
 }

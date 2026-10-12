@@ -36,10 +36,23 @@ public:
     struct PeerState {
         std::optional<View> registry;   // once a registry poll has described the peer
         std::optional<View> announced;  // once the peer has announced itself
+        // Progress from `announced`, valid only for the address it advertised.
+        // Registry registrations do not establish whether announcements stopped.
+        LogIdx lastApplied;
+        TernTime lastAppliedTime;
 
         bool hasFreshAnnouncement(TernTime now) const;
         View current(TernTime now) const;
     };
+
+    // Last announced progress of a published remote leader, retained during silence.
+    struct RemoteLeaderProgress {
+        uint8_t locationId;
+        TernTime lastHeard; // local receipt time
+        LogIdx lastApplied;
+        TernTime lastAppliedTime;
+    };
+    using RemoteProgress = std::vector<RemoteLeaderProgress>;
 
     using LocalReplicas = std::array<AddrsInfo, LogsDB::REPLICA_COUNT>;
     using RemoteLeaders = std::vector<FullShardInfo>;
@@ -53,6 +66,7 @@ public:
 
     std::shared_ptr<const LocalReplicas> localReplicas() const;
     std::shared_ptr<const RemoteLeaders> remoteLeaders() const;
+    std::shared_ptr<const RemoteProgress> remoteProgress() const;
     std::shared_ptr<const AnnouncementTargets> announcementTargets() const;
     std::optional<PeerState> peerState(ShardReplicaId id, uint8_t location) const;
 
@@ -65,6 +79,7 @@ private:
     std::unordered_map<ShardReplicaLocationKey, PeerState> _peers;
     std::atomic<std::shared_ptr<const LocalReplicas>> _localReplicas;
     std::atomic<std::shared_ptr<const RemoteLeaders>> _remoteLeaders;
+    std::atomic<std::shared_ptr<const RemoteProgress>> _remoteProgress;
     std::atomic<std::shared_ptr<const AnnouncementTargets>> _announcementTargets;
     TernTime _publishedAt; // the `now` the snapshots were last built for
 

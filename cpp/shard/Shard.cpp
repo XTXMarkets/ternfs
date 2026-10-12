@@ -762,6 +762,7 @@ public:
         announcement.body.location = _shared.options.logsDBOptions.location;
         announcement.body.isLeader = _shared.options.isLeader() && (_shared.options.logsDBOptions.noReplication || _shared.isInitiated.load(std::memory_order_acquire));
         announcement.body.addrs = _shared.sock().addr();
+        std::tie(announcement.body.lastApplied, announcement.body.lastAppliedTime) = _shared.shardDB.lastAppliedForReads();
 
         auto targets = _shared.replicaTracker.announcementTargets();
         for (const auto& target : *targets) {
@@ -2697,6 +2698,19 @@ public:
             _metricsBuilder.fieldU64("finished_ns", stats.finishedNs.load(std::memory_order_relaxed));
             _metricsBuilder.fieldU64("in_flight", stats.inFlight.load(std::memory_order_relaxed));
             _metricsBuilder.fieldU64("oldest_ns", stats.oldestNs.load(std::memory_order_relaxed));
+            _metricsBuilder.timestamp(now);
+        }
+        // How far each leader at another location had applied when we last
+        // heard from it directly. The lag is only meaningful on the primary
+        // location, where we created the entries ourselves.
+        // Hold the snapshot for the whole loop: a temporary in the range
+        // expression would be destroyed before the loop body runs.
+        auto remoteProgress = _shared.replicaTracker.remoteProgress();
+        for (const auto& leader : *remoteProgress) {
+            newMeassurement("eggsfs_shard_cross_location_view");
+            _metricsBuilder.tag("target_location", (int)leader.locationId);
+            _metricsBuilder.fieldU64("progress_age_ns", now > leader.lastHeard ? (now - leader.lastHeard).ns : 0);
+            _metricsBuilder.fieldU64("lag_ns", leader.lastHeard > leader.lastAppliedTime ? (leader.lastHeard - leader.lastAppliedTime).ns : 0);
             _metricsBuilder.timestamp(now);
         }
         if (uint64_t held = _shared.crossLocationHeldResponses.load(std::memory_order_relaxed); held > 0) {
