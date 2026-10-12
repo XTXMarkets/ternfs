@@ -349,7 +349,7 @@ TRACE_EVENT(eggsfs_dentry_handle_enoent,
     ),
     TP_fast_assign(
         __entry->ino = dentry->d_inode ? dentry->d_inode->i_ino : 0;
-        __assign_str(name);
+        __assign_str(parent);
         __assign_str(name);
     ),
     TP_printk("ino=%lld name=%s/%s", __entry->ino, __get_str(parent), __get_str(name))
