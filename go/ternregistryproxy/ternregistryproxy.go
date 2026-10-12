@@ -114,28 +114,18 @@ func handleRequestParsed(log *log.Logger, s *state, req msgs.RegistryRequest) (m
 		resp, err = handleProxyRequest(log, s, req)
 	case *msgs.LocalShardsReq:
 		resp, err = handleLocalShards(log, s, whichReq)
-	case *msgs.AllShardsDEPRECATEDReq:
-		resp, err = handleProxyRequest(log, s, req)
 	case *msgs.RegisterShardReq:
-		resp, err = handleProxyRequest(log, s, req)
-	case *msgs.AllBlockServicesDeprecatedReq:
 		resp, err = handleProxyRequest(log, s, req)
 	case *msgs.LocalChangedBlockServicesReq:
 		resp, err = handleLocalChangedBlockServices(log, s, whichReq)
 	case *msgs.LocalCdcReq:
 		resp, err = handleLocalCdc(log, s, whichReq)
-	case *msgs.AllCdcDEPRECATEDReq:
-		resp, err = handleProxyRequest(log, s, req)
-	case *msgs.CdcReplicasDEPRECATEDReq:
-		resp, err = handleProxyRequest(log, s, req)
 	case *msgs.RegisterCdcReq:
 		resp, err = handleProxyRequest(log, s, req)
 	case *msgs.InfoReq:
 		resp, err = handleProxyRequest(log, s, req)
 	case *msgs.RegistryReq:
 		resp, err = handleRegistry(log, s)
-	case *msgs.ShardBlockServicesDEPRECATEDReq:
-		resp, err = handleProxyRequest(log, s, req)
 	case *msgs.MoveShardLeaderReq:
 		resp, err = handleProxyRequest(log, s, req)
 	case *msgs.ClearShardInfoReq:
@@ -296,8 +286,6 @@ func readRegistryRequest(
 		req = &msgs.LocalShardsReq{}
 	case msgs.REGISTER_SHARD:
 		req = &msgs.RegisterShardReq{}
-	case msgs.ALL_BLOCK_SERVICES_DEPRECATED:
-		req = &msgs.AllBlockServicesDeprecatedReq{}
 	case msgs.LOCAL_CHANGED_BLOCK_SERVICES:
 		req = &msgs.LocalChangedBlockServicesReq{}
 	case msgs.DECOMMISSION_BLOCK_SERVICE:
@@ -308,24 +296,16 @@ func readRegistryRequest(
 		req = &msgs.RegisterCdcReq{}
 	case msgs.LOCAL_CDC:
 		req = &msgs.LocalCdcReq{}
-	case msgs.CDC_REPLICAS_DE_PR_EC_AT_ED:
-		req = &msgs.CdcReplicasDEPRECATEDReq{}
 	case msgs.INFO:
 		req = &msgs.InfoReq{}
 	case msgs.REGISTRY:
 		req = &msgs.RegistryReq{}
-	case msgs.SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
-		req = &msgs.ShardBlockServicesDEPRECATEDReq{}
 	case msgs.ERASE_DECOMMISSIONED_BLOCK:
 		req = &msgs.EraseDecommissionedBlockReq{}
-	case msgs.ALL_CDC_DE_PR_EC_AT_ED:
-		req = &msgs.AllCdcDEPRECATEDReq{}
 	case msgs.CLEAR_SHARD_INFO:
 		req = &msgs.ClearShardInfoReq{}
 	case msgs.MOVE_SHARD_LEADER:
 		req = &msgs.MoveShardLeaderReq{}
-	case msgs.ALL_SHARDS_DE_PR_EC_AT_ED:
-		req = &msgs.AllShardsDEPRECATEDReq{}
 	case msgs.MOVE_CDC_LEADER:
 		req = &msgs.MoveCdcLeaderReq{}
 	case msgs.CLEAR_CDC_INFO:

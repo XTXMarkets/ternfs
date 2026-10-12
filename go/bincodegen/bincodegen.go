@@ -2053,26 +2053,10 @@ func main() {
 			reflect.TypeOf(msgs.RegisterRegistryReq{}),
 			reflect.TypeOf(msgs.RegisterRegistryResp{}),
 		},
-		{
-			0x10,
-			reflect.TypeOf(msgs.AllRegistryReplicasDEPRECATEDReq{}),
-			reflect.TypeOf(msgs.AllRegistryReplicasDEPRECATEDResp{}),
-		},
-		{
-			0x11,
-			reflect.TypeOf(msgs.ShardBlockServicesDEPRECATEDReq{}),
-			reflect.TypeOf(msgs.ShardBlockServicesDEPRECATEDResp{}),
-		},
-		{
-			0x13,
-			reflect.TypeOf(msgs.CdcReplicasDEPRECATEDReq{}),
-			reflect.TypeOf(msgs.CdcReplicasDEPRECATEDResp{}),
-		},
-		{
-			0x14,
-			reflect.TypeOf(msgs.AllShardsDEPRECATEDReq{}),
-			reflect.TypeOf(msgs.AllShardsDEPRECATEDResp{}),
-		},
+		// 0x10 was AllRegistryReplicasDEPRECATED, replaced by AllRegistryReplicas (0x29) in fc747ae3. Removed, do not reuse.
+		// 0x11 was ShardBlockServicesDEPRECATED, replaced by ShardBlockServices (0x18) in 5726a2e3. Removed, do not reuse.
+		// 0x13 was CdcReplicasDEPRECATED, deprecated in 5f24b431. Removed, do not reuse.
+		// 0x14 was AllShardsDEPRECATED, replaced by AllShards (0x2A) in fc747ae3. Removed, do not reuse.
 		{
 			0x15,
 			reflect.TypeOf(msgs.DecommissionBlockServiceReq{}),
@@ -2093,21 +2077,13 @@ func main() {
 			reflect.TypeOf(msgs.ShardBlockServicesReq{}),
 			reflect.TypeOf(msgs.ShardBlockServicesResp{}),
 		},
-		{
-			0x19,
-			reflect.TypeOf(msgs.AllCdcDEPRECATEDReq{}),
-			reflect.TypeOf(msgs.AllCdcDEPRECATEDResp{}),
-		},
+		// 0x19 was AllCdcDEPRECATED, replaced by AllCdc (0x2B) in fc747ae3. Removed, do not reuse.
 		{
 			0x20,
 			reflect.TypeOf(msgs.EraseDecommissionedBlockReq{}),
 			reflect.TypeOf(msgs.EraseDecommissionedBlockResp{}),
 		},
-		{
-			0x21,
-			reflect.TypeOf(msgs.AllBlockServicesDeprecatedReq{}),
-			reflect.TypeOf(msgs.AllBlockServicesDeprecatedResp{}),
-		},
+		// 0x21 was AllBlockServicesDeprecated, replaced by AllBlockServices (0x28) in e7bba6b5. Removed, do not reuse.
 		{
 			0x28,
 			reflect.TypeOf(msgs.AllBlockServicesReq{}),
@@ -2272,7 +2248,6 @@ func main() {
 			reflect.TypeOf(msgs.FullRegistryInfo{}),
 			reflect.TypeOf(msgs.TransientFile{}),
 			reflect.TypeOf(msgs.EntryNewBlockInfo{}),
-			reflect.TypeOf(msgs.BlockServiceDeprecatedInfo{}),
 			reflect.TypeOf(msgs.BlockServiceInfoShort{}),
 			reflect.TypeOf(msgs.SpanPolicy{}),
 			reflect.TypeOf(msgs.BlockPolicy{}),

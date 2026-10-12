@@ -105,11 +105,6 @@ void RegistryReader::step() {
             }
             break;
         }
-        case RegistryMessageKind::ALL_REGISTRY_REPLICAS_DE_PR_EC_AT_ED: {
-            auto &allRegiResp = resp.resp.setAllRegistryReplicasDEPRECATED();
-            allRegiResp.replicas.els = _registries();
-            break;
-        }
         case RegistryMessageKind::ALL_REGISTRY_REPLICAS: {
             const auto& allRegiReq = req.req.getAllRegistryReplicas();
             if (allRegiReq.minKnownReplicas > 0) {
@@ -127,38 +122,10 @@ void RegistryReader::step() {
             allRegiResp.replicas.els = _registries();
             break;
         }
-        case RegistryMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED: {
-            auto& registryResp = resp.resp.setShardBlockServicesDEPRECATED();
-            auto& bsReq = req.req.getShardBlockServicesDEPRECATED();
-            std::vector<BlockServiceInfoShort> blockservices;
-            _registryDB.shardBlockServices(bsReq.shardId, blockservices);
-            for (auto& bs : blockservices) {
-                registryResp.blockServices.els.push_back(bs.id);
-            }
-            break;
-        }
-        case RegistryMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED: {
-            auto& registryResp = resp.resp.setCdcReplicasDEPRECATED();
-            registryResp.replicas.els = _cdcReplicas();
-            break;
-        }
-        case RegistryMessageKind::ALL_SHARDS_DE_PR_EC_AT_ED: {
-            auto& registryResp = resp.resp.setAllShardsDEPRECATED();
-            _populateShardCache();
-            registryResp.shards.els = _cachedShardInfo;
-            break;
-        }
-
         case RegistryMessageKind::SHARD_BLOCK_SERVICES: {
             auto& registryResp = resp.resp.setShardBlockServices();
             auto& bsReq = req.req.getShardBlockServices();
             _registryDB.shardBlockServices(bsReq.shardId, registryResp.blockServices.els);
-            break;
-        }
-        case RegistryMessageKind::ALL_CDC_DE_PR_EC_AT_ED: {
-            auto& registryResp = resp.resp.setAllCdcDEPRECATED();
-            _populateCdcCache();
-            registryResp.replicas.els = _cachedCdc;
             break;
         }
         case RegistryMessageKind::ALL_SHARDS: {
@@ -207,11 +174,6 @@ void RegistryReader::step() {
             }
             break;
         }
-        case RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED: {
-            auto &registryResp = resp.resp.setAllBlockServicesDeprecated();
-            registryResp.blockServices.els = _allBlockServices();
-            break;
-        }
         case RegistryMessageKind::ALL_BLOCK_SERVICES: {
             auto &registryResp = resp.resp.setAllBlockServices();
             registryResp.blockServices.els = _allBlockServicesFull();
@@ -253,7 +215,6 @@ void RegistryReader::_clearCaches() {
         loc.second.resize(256);
     }
     _cachedBlockServices.clear();
-    _cachedAllBlockServices.clear();
     _cachedInfo.clear();
     _cachedCdc.clear();
 }
@@ -318,19 +279,6 @@ CdcInfo RegistryReader::_cdcAtLocation(LocationId location) {
     return CdcInfo{};
 }
 
-std::vector<AddrsInfo> RegistryReader::_cdcReplicas() {
-    _populateCdcCache();
-    std::vector<AddrsInfo> res;
-    res.resize(LogsDB::REPLICA_COUNT);
-    for(const auto& cdc : _cachedCdc) {
-        if (cdc.locationId != 0) {
-            continue;
-        }
-        res[cdc.replicaId.u8] = cdc.addrs;
-    }
-    return res;
-}
-
 void RegistryReader::_populateBlockServiceCache() {
     if (!_cachedBlockServices.empty()) {
         return;
@@ -342,20 +290,6 @@ void RegistryReader::_populateBlockServiceCache() {
     });
 
     for (auto& bs : _cachedBlockServices) {
-        auto& infoDeprecated = _cachedAllBlockServices.emplace_back();
-        infoDeprecated.id = bs.id;
-        infoDeprecated.addrs = bs.addrs;
-        infoDeprecated.storageClass = bs.storageClass;
-        infoDeprecated.failureDomain = bs.failureDomain;
-        infoDeprecated.secretKey = bs.secretKey;
-        infoDeprecated.flags = bs.flags;
-        infoDeprecated.capacityBytes = bs.capacityBytes;
-        infoDeprecated.availableBytes = bs.availableBytes;
-        infoDeprecated.blocks = bs.blocks;
-        infoDeprecated.path = bs.path;
-        infoDeprecated.lastSeen = bs.lastSeen;
-        infoDeprecated.hasFiles = bs.hasFiles;
-        infoDeprecated.flagsLastChanged = bs.lastInfoChange;
         if (bs.flags == BlockServiceFlags::DECOMMISSIONED && !_decommissionedServices.contains(bs.id)) {
             auto it = _decommissionedServices.emplace(bs.id, AES128Key{}).first;
             expandKey(bs.secretKey.data, it->second);
@@ -372,11 +306,6 @@ void RegistryReader::_populateBlockServiceCache() {
 InfoResp RegistryReader::_info() {
     _populateBlockServiceCache();
     return _cachedInfo;
-}
-
-std::vector<BlockServiceDeprecatedInfo> RegistryReader::_allBlockServices() {
-    _populateBlockServiceCache();
-    return _cachedAllBlockServices;
 }
 
 std::vector<FullBlockServiceInfo> RegistryReader::_allBlockServicesFull() {

@@ -203,23 +203,6 @@ std::pair<int, std::string> RegistryClient::registerRegistry(
 }
 
 std::pair<int, std::string> RegistryClient::fetchRegistryReplicas(
-    std::vector<FullRegistryInfo>& replicas
-) {
-    std::scoped_lock lock(_mutex);
-
-    RegistryReqContainer reqContainer;
-    auto& req = reqContainer.setAllRegistryReplicasDEPRECATED();
-
-    RegistryRespContainer respContainer;
-    {
-        const auto [err, errStr] = _doRequest(reqContainer, respContainer);
-        if (err) { return {err, errStr}; }
-    }
-    replicas = respContainer.getAllRegistryReplicasDEPRECATED().replicas.els;
-    return {};
-}
-
-std::pair<int, std::string> RegistryClient::fetchRegistryReplicas(
     std::vector<FullRegistryInfo>& replicas,
     uint8_t minKnownReplicas,
     uint8_t location,
@@ -260,28 +243,6 @@ std::pair<int, std::string> RegistryClient::registerShard(
         if (err) { return {err, errStr}; }
     }
     respContainer.getRegisterShard(); // check that the response is of the right type
-    return {};
-}
-
-std::pair<int, std::string> RegistryClient::fetchShardReplicas(
-    ShardId shid, std::vector<FullShardInfo>& replicas
-) {
-    std::scoped_lock lock(_mutex);
-
-    RegistryReqContainer reqContainer;
-    auto& req = reqContainer.setAllShardsDEPRECATED();
-
-    RegistryRespContainer respContainer;
-    {
-        const auto [err, errStr] = _doRequest(reqContainer, respContainer);
-        if (err) { return {err, errStr}; }
-    }
-
-    for(auto& shard : respContainer.getAllShardsDEPRECATED().shards.els) {
-        if (shard.id.shardId() == shid) {
-            replicas.emplace_back(std::move(shard));
-        }
-    }
     return {};
 }
 
@@ -332,29 +293,6 @@ std::pair<int, std::string> RegistryClient::registerCDCReplica(
         if (err) { return {err, errStr}; }
     }
     respContainer.getRegisterCdc();
-    return {};
-}
-
-std::pair<int, std::string> RegistryClient::fetchCDCReplicas(
-    std::array<AddrsInfo, 5>& replicas
-) {
-    std::scoped_lock lock(_mutex);
-
-    RegistryReqContainer reqContainer;
-    auto& req = reqContainer.setCdcReplicasDEPRECATED();
-
-    RegistryRespContainer respContainer;
-    {
-        const auto [err, errStr] = _doRequest(reqContainer, respContainer);
-        if (err) { return {err, errStr}; }
-    }
-
-    if (respContainer.getCdcReplicasDEPRECATED().replicas.els.size() != replicas.size()) {
-        throw TERN_EXCEPTION("expecting %s replicas, got %s", replicas.size(), respContainer.getCdcReplicasDEPRECATED().replicas.els.size());
-    }
-    for (int i = 0; i < replicas.size(); i++) {
-        replicas[i] = respContainer.getCdcReplicasDEPRECATED().replicas.els[i];
-    }
     return {};
 }
 

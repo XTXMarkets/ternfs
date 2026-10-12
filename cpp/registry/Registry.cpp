@@ -110,8 +110,7 @@ public:
         for (auto &req : receivedRequests) {
             // Always serve registry replicas from in-memory state regardless of
             // bootstrap phase, so there is no data gap during the transition.
-            if (req.req.kind() == RegistryMessageKind::ALL_REGISTRY_REPLICAS_DE_PR_EC_AT_ED ||
-                req.req.kind() == RegistryMessageKind::ALL_REGISTRY_REPLICAS) {
+            if (req.req.kind() == RegistryMessageKind::ALL_REGISTRY_REPLICAS) {
                 _readRequests.emplace_back(std::move(req));
                 continue;
             }
@@ -143,13 +142,8 @@ public:
             case RegistryMessageKind::CHANGED_BLOCK_SERVICES_AT_LOCATION:
             case RegistryMessageKind::SHARDS_AT_LOCATION:
             case RegistryMessageKind::CDC_AT_LOCATION:
-            case RegistryMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
-            case RegistryMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
-            case RegistryMessageKind::ALL_SHARDS_DE_PR_EC_AT_ED:
             case RegistryMessageKind::SHARD_BLOCK_SERVICES:
-            case RegistryMessageKind::ALL_CDC_DE_PR_EC_AT_ED:
             case RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK:
-            case RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
             case RegistryMessageKind::ALL_BLOCK_SERVICES:
             case RegistryMessageKind::ALL_SHARDS:
             case RegistryMessageKind::ALL_CDC:
@@ -292,7 +286,6 @@ public:
                 _writeRequests.emplace_back(std::move(req));
                 break;
             }
-            case RegistryMessageKind::ALL_REGISTRY_REPLICAS_DE_PR_EC_AT_ED:
             case RegistryMessageKind::ALL_REGISTRY_REPLICAS:
                 ALWAYS_ASSERT(false, "ALL_REGISTRY_REPLICAS should be handled before bootstrap check");
             case RegistryMessageKind::EMPTY:

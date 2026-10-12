@@ -554,18 +554,6 @@ std::ostream& operator<<(std::ostream& out, RegistryMessageKind kind) {
     case RegistryMessageKind::REGISTER_REGISTRY:
         out << "REGISTER_REGISTRY";
         break;
-    case RegistryMessageKind::ALL_REGISTRY_REPLICAS_DE_PR_EC_AT_ED:
-        out << "ALL_REGISTRY_REPLICAS_DE_PR_EC_AT_ED";
-        break;
-    case RegistryMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
-        out << "SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED";
-        break;
-    case RegistryMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
-        out << "CDC_REPLICAS_DE_PR_EC_AT_ED";
-        break;
-    case RegistryMessageKind::ALL_SHARDS_DE_PR_EC_AT_ED:
-        out << "ALL_SHARDS_DE_PR_EC_AT_ED";
-        break;
     case RegistryMessageKind::DECOMMISSION_BLOCK_SERVICE:
         out << "DECOMMISSION_BLOCK_SERVICE";
         break;
@@ -578,14 +566,8 @@ std::ostream& operator<<(std::ostream& out, RegistryMessageKind kind) {
     case RegistryMessageKind::SHARD_BLOCK_SERVICES:
         out << "SHARD_BLOCK_SERVICES";
         break;
-    case RegistryMessageKind::ALL_CDC_DE_PR_EC_AT_ED:
-        out << "ALL_CDC_DE_PR_EC_AT_ED";
-        break;
     case RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         out << "ERASE_DECOMMISSIONED_BLOCK";
-        break;
-    case RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
-        out << "ALL_BLOCK_SERVICES_DEPRECATED";
         break;
     case RegistryMessageKind::ALL_BLOCK_SERVICES:
         out << "ALL_BLOCK_SERVICES";
@@ -1376,72 +1358,6 @@ bool EntryNewBlockInfo::operator==(const EntryNewBlockInfo& rhs) const {
 }
 std::ostream& operator<<(std::ostream& out, const EntryNewBlockInfo& x) {
     out << "EntryNewBlockInfo(" << "BlockServiceId=" << x.blockServiceId << ", " << "Crc=" << x.crc << ")";
-    return out;
-}
-
-void BlockServiceDeprecatedInfo::pack(BincodeBuf& buf) const {
-    id.pack(buf);
-    addrs.pack(buf);
-    buf.packScalar<uint8_t>(storageClass);
-    failureDomain.pack(buf);
-    buf.packFixedBytes<16>(secretKey);
-    buf.packScalar<BlockServiceFlags>(flags);
-    buf.packScalar<uint64_t>(capacityBytes);
-    buf.packScalar<uint64_t>(availableBytes);
-    buf.packScalar<uint64_t>(blocks);
-    buf.packBytes(path);
-    lastSeen.pack(buf);
-    buf.packScalar<bool>(hasFiles);
-    flagsLastChanged.pack(buf);
-}
-void BlockServiceDeprecatedInfo::unpack(BincodeBuf& buf) {
-    id.unpack(buf);
-    addrs.unpack(buf);
-    storageClass = buf.unpackScalar<uint8_t>();
-    failureDomain.unpack(buf);
-    buf.unpackFixedBytes<16>(secretKey);
-    flags = buf.unpackScalar<BlockServiceFlags>();
-    capacityBytes = buf.unpackScalar<uint64_t>();
-    availableBytes = buf.unpackScalar<uint64_t>();
-    blocks = buf.unpackScalar<uint64_t>();
-    buf.unpackBytes(path);
-    lastSeen.unpack(buf);
-    hasFiles = buf.unpackScalar<bool>();
-    flagsLastChanged.unpack(buf);
-}
-void BlockServiceDeprecatedInfo::clear() {
-    id = BlockServiceId(0);
-    addrs.clear();
-    storageClass = uint8_t(0);
-    failureDomain.clear();
-    secretKey.clear();
-    flags = BlockServiceFlags(0);
-    capacityBytes = uint64_t(0);
-    availableBytes = uint64_t(0);
-    blocks = uint64_t(0);
-    path.clear();
-    lastSeen = TernTime();
-    hasFiles = bool(0);
-    flagsLastChanged = TernTime();
-}
-bool BlockServiceDeprecatedInfo::operator==(const BlockServiceDeprecatedInfo& rhs) const {
-    if ((BlockServiceId)this->id != (BlockServiceId)rhs.id) { return false; };
-    if (addrs != rhs.addrs) { return false; };
-    if ((uint8_t)this->storageClass != (uint8_t)rhs.storageClass) { return false; };
-    if (failureDomain != rhs.failureDomain) { return false; };
-    if (secretKey != rhs.secretKey) { return false; };
-    if ((BlockServiceFlags)this->flags != (BlockServiceFlags)rhs.flags) { return false; };
-    if ((uint64_t)this->capacityBytes != (uint64_t)rhs.capacityBytes) { return false; };
-    if ((uint64_t)this->availableBytes != (uint64_t)rhs.availableBytes) { return false; };
-    if ((uint64_t)this->blocks != (uint64_t)rhs.blocks) { return false; };
-    if (path != rhs.path) { return false; };
-    if ((TernTime)this->lastSeen != (TernTime)rhs.lastSeen) { return false; };
-    if ((bool)this->hasFiles != (bool)rhs.hasFiles) { return false; };
-    if ((TernTime)this->flagsLastChanged != (TernTime)rhs.flagsLastChanged) { return false; };
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const BlockServiceDeprecatedInfo& x) {
-    out << "BlockServiceDeprecatedInfo(" << "Id=" << x.id << ", " << "Addrs=" << x.addrs << ", " << "StorageClass=" << (int)x.storageClass << ", " << "FailureDomain=" << x.failureDomain << ", " << "SecretKey=" << x.secretKey << ", " << "Flags=" << x.flags << ", " << "CapacityBytes=" << x.capacityBytes << ", " << "AvailableBytes=" << x.availableBytes << ", " << "Blocks=" << x.blocks << ", " << "Path=" << GoLangQuotedStringFmt(x.path.data(), x.path.size()) << ", " << "LastSeen=" << x.lastSeen << ", " << "HasFiles=" << x.hasFiles << ", " << "FlagsLastChanged=" << x.flagsLastChanged << ")";
     return out;
 }
 
@@ -4805,138 +4721,6 @@ std::ostream& operator<<(std::ostream& out, const RegisterRegistryResp& x) {
     return out;
 }
 
-void AllRegistryReplicasDEPRECATEDReq::pack(BincodeBuf& buf) const {
-}
-void AllRegistryReplicasDEPRECATEDReq::unpack(BincodeBuf& buf) {
-}
-void AllRegistryReplicasDEPRECATEDReq::clear() {
-}
-bool AllRegistryReplicasDEPRECATEDReq::operator==(const AllRegistryReplicasDEPRECATEDReq& rhs) const {
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const AllRegistryReplicasDEPRECATEDReq& x) {
-    out << "AllRegistryReplicasDEPRECATEDReq(" << ")";
-    return out;
-}
-
-void AllRegistryReplicasDEPRECATEDResp::pack(BincodeBuf& buf) const {
-    buf.packList<FullRegistryInfo>(replicas);
-}
-void AllRegistryReplicasDEPRECATEDResp::unpack(BincodeBuf& buf) {
-    buf.unpackList<FullRegistryInfo>(replicas);
-}
-void AllRegistryReplicasDEPRECATEDResp::clear() {
-    replicas.clear();
-}
-bool AllRegistryReplicasDEPRECATEDResp::operator==(const AllRegistryReplicasDEPRECATEDResp& rhs) const {
-    if (replicas != rhs.replicas) { return false; };
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const AllRegistryReplicasDEPRECATEDResp& x) {
-    out << "AllRegistryReplicasDEPRECATEDResp(" << "Replicas=" << x.replicas << ")";
-    return out;
-}
-
-void ShardBlockServicesDEPRECATEDReq::pack(BincodeBuf& buf) const {
-    shardId.pack(buf);
-}
-void ShardBlockServicesDEPRECATEDReq::unpack(BincodeBuf& buf) {
-    shardId.unpack(buf);
-}
-void ShardBlockServicesDEPRECATEDReq::clear() {
-    shardId = ShardId();
-}
-bool ShardBlockServicesDEPRECATEDReq::operator==(const ShardBlockServicesDEPRECATEDReq& rhs) const {
-    if ((ShardId)this->shardId != (ShardId)rhs.shardId) { return false; };
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const ShardBlockServicesDEPRECATEDReq& x) {
-    out << "ShardBlockServicesDEPRECATEDReq(" << "ShardId=" << x.shardId << ")";
-    return out;
-}
-
-void ShardBlockServicesDEPRECATEDResp::pack(BincodeBuf& buf) const {
-    buf.packList<BlockServiceId>(blockServices);
-}
-void ShardBlockServicesDEPRECATEDResp::unpack(BincodeBuf& buf) {
-    buf.unpackList<BlockServiceId>(blockServices);
-}
-void ShardBlockServicesDEPRECATEDResp::clear() {
-    blockServices.clear();
-}
-bool ShardBlockServicesDEPRECATEDResp::operator==(const ShardBlockServicesDEPRECATEDResp& rhs) const {
-    if (blockServices != rhs.blockServices) { return false; };
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const ShardBlockServicesDEPRECATEDResp& x) {
-    out << "ShardBlockServicesDEPRECATEDResp(" << "BlockServices=" << x.blockServices << ")";
-    return out;
-}
-
-void CdcReplicasDEPRECATEDReq::pack(BincodeBuf& buf) const {
-}
-void CdcReplicasDEPRECATEDReq::unpack(BincodeBuf& buf) {
-}
-void CdcReplicasDEPRECATEDReq::clear() {
-}
-bool CdcReplicasDEPRECATEDReq::operator==(const CdcReplicasDEPRECATEDReq& rhs) const {
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const CdcReplicasDEPRECATEDReq& x) {
-    out << "CdcReplicasDEPRECATEDReq(" << ")";
-    return out;
-}
-
-void CdcReplicasDEPRECATEDResp::pack(BincodeBuf& buf) const {
-    buf.packList<AddrsInfo>(replicas);
-}
-void CdcReplicasDEPRECATEDResp::unpack(BincodeBuf& buf) {
-    buf.unpackList<AddrsInfo>(replicas);
-}
-void CdcReplicasDEPRECATEDResp::clear() {
-    replicas.clear();
-}
-bool CdcReplicasDEPRECATEDResp::operator==(const CdcReplicasDEPRECATEDResp& rhs) const {
-    if (replicas != rhs.replicas) { return false; };
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const CdcReplicasDEPRECATEDResp& x) {
-    out << "CdcReplicasDEPRECATEDResp(" << "Replicas=" << x.replicas << ")";
-    return out;
-}
-
-void AllShardsDEPRECATEDReq::pack(BincodeBuf& buf) const {
-}
-void AllShardsDEPRECATEDReq::unpack(BincodeBuf& buf) {
-}
-void AllShardsDEPRECATEDReq::clear() {
-}
-bool AllShardsDEPRECATEDReq::operator==(const AllShardsDEPRECATEDReq& rhs) const {
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const AllShardsDEPRECATEDReq& x) {
-    out << "AllShardsDEPRECATEDReq(" << ")";
-    return out;
-}
-
-void AllShardsDEPRECATEDResp::pack(BincodeBuf& buf) const {
-    buf.packList<FullShardInfo>(shards);
-}
-void AllShardsDEPRECATEDResp::unpack(BincodeBuf& buf) {
-    buf.unpackList<FullShardInfo>(shards);
-}
-void AllShardsDEPRECATEDResp::clear() {
-    shards.clear();
-}
-bool AllShardsDEPRECATEDResp::operator==(const AllShardsDEPRECATEDResp& rhs) const {
-    if (shards != rhs.shards) { return false; };
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const AllShardsDEPRECATEDResp& x) {
-    out << "AllShardsDEPRECATEDResp(" << "Shards=" << x.shards << ")";
-    return out;
-}
-
 void DecommissionBlockServiceReq::pack(BincodeBuf& buf) const {
     id.pack(buf);
 }
@@ -5077,38 +4861,6 @@ std::ostream& operator<<(std::ostream& out, const ShardBlockServicesResp& x) {
     return out;
 }
 
-void AllCdcDEPRECATEDReq::pack(BincodeBuf& buf) const {
-}
-void AllCdcDEPRECATEDReq::unpack(BincodeBuf& buf) {
-}
-void AllCdcDEPRECATEDReq::clear() {
-}
-bool AllCdcDEPRECATEDReq::operator==(const AllCdcDEPRECATEDReq& rhs) const {
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const AllCdcDEPRECATEDReq& x) {
-    out << "AllCdcDEPRECATEDReq(" << ")";
-    return out;
-}
-
-void AllCdcDEPRECATEDResp::pack(BincodeBuf& buf) const {
-    buf.packList<CdcInfo>(replicas);
-}
-void AllCdcDEPRECATEDResp::unpack(BincodeBuf& buf) {
-    buf.unpackList<CdcInfo>(replicas);
-}
-void AllCdcDEPRECATEDResp::clear() {
-    replicas.clear();
-}
-bool AllCdcDEPRECATEDResp::operator==(const AllCdcDEPRECATEDResp& rhs) const {
-    if (replicas != rhs.replicas) { return false; };
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const AllCdcDEPRECATEDResp& x) {
-    out << "AllCdcDEPRECATEDResp(" << "Replicas=" << x.replicas << ")";
-    return out;
-}
-
 void EraseDecommissionedBlockReq::pack(BincodeBuf& buf) const {
     blockServiceId.pack(buf);
     buf.packScalar<uint64_t>(blockId);
@@ -5150,38 +4902,6 @@ bool EraseDecommissionedBlockResp::operator==(const EraseDecommissionedBlockResp
 }
 std::ostream& operator<<(std::ostream& out, const EraseDecommissionedBlockResp& x) {
     out << "EraseDecommissionedBlockResp(" << "Proof=" << x.proof << ")";
-    return out;
-}
-
-void AllBlockServicesDeprecatedReq::pack(BincodeBuf& buf) const {
-}
-void AllBlockServicesDeprecatedReq::unpack(BincodeBuf& buf) {
-}
-void AllBlockServicesDeprecatedReq::clear() {
-}
-bool AllBlockServicesDeprecatedReq::operator==(const AllBlockServicesDeprecatedReq& rhs) const {
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const AllBlockServicesDeprecatedReq& x) {
-    out << "AllBlockServicesDeprecatedReq(" << ")";
-    return out;
-}
-
-void AllBlockServicesDeprecatedResp::pack(BincodeBuf& buf) const {
-    buf.packList<BlockServiceDeprecatedInfo>(blockServices);
-}
-void AllBlockServicesDeprecatedResp::unpack(BincodeBuf& buf) {
-    buf.unpackList<BlockServiceDeprecatedInfo>(blockServices);
-}
-void AllBlockServicesDeprecatedResp::clear() {
-    blockServices.clear();
-}
-bool AllBlockServicesDeprecatedResp::operator==(const AllBlockServicesDeprecatedResp& rhs) const {
-    if (blockServices != rhs.blockServices) { return false; };
-    return true;
-}
-std::ostream& operator<<(std::ostream& out, const AllBlockServicesDeprecatedResp& x) {
-    out << "AllBlockServicesDeprecatedResp(" << "BlockServices=" << x.blockServices << ")";
     return out;
 }
 
@@ -9265,202 +8985,148 @@ RegisterRegistryReq& RegistryReqContainer::setRegisterRegistry() {
     auto& x = _data.emplace<15>();
     return x;
 }
-const AllRegistryReplicasDEPRECATEDReq& RegistryReqContainer::getAllRegistryReplicasDEPRECATED() const {
-    ALWAYS_ASSERT(_kind == RegistryMessageKind::ALL_REGISTRY_REPLICAS_DE_PR_EC_AT_ED, "%s != %s", _kind, RegistryMessageKind::ALL_REGISTRY_REPLICAS_DE_PR_EC_AT_ED);
-    return std::get<16>(_data);
-}
-AllRegistryReplicasDEPRECATEDReq& RegistryReqContainer::setAllRegistryReplicasDEPRECATED() {
-    _kind = RegistryMessageKind::ALL_REGISTRY_REPLICAS_DE_PR_EC_AT_ED;
-    auto& x = _data.emplace<16>();
-    return x;
-}
-const ShardBlockServicesDEPRECATEDReq& RegistryReqContainer::getShardBlockServicesDEPRECATED() const {
-    ALWAYS_ASSERT(_kind == RegistryMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED, "%s != %s", _kind, RegistryMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED);
-    return std::get<17>(_data);
-}
-ShardBlockServicesDEPRECATEDReq& RegistryReqContainer::setShardBlockServicesDEPRECATED() {
-    _kind = RegistryMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED;
-    auto& x = _data.emplace<17>();
-    return x;
-}
-const CdcReplicasDEPRECATEDReq& RegistryReqContainer::getCdcReplicasDEPRECATED() const {
-    ALWAYS_ASSERT(_kind == RegistryMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED, "%s != %s", _kind, RegistryMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED);
-    return std::get<18>(_data);
-}
-CdcReplicasDEPRECATEDReq& RegistryReqContainer::setCdcReplicasDEPRECATED() {
-    _kind = RegistryMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED;
-    auto& x = _data.emplace<18>();
-    return x;
-}
-const AllShardsDEPRECATEDReq& RegistryReqContainer::getAllShardsDEPRECATED() const {
-    ALWAYS_ASSERT(_kind == RegistryMessageKind::ALL_SHARDS_DE_PR_EC_AT_ED, "%s != %s", _kind, RegistryMessageKind::ALL_SHARDS_DE_PR_EC_AT_ED);
-    return std::get<19>(_data);
-}
-AllShardsDEPRECATEDReq& RegistryReqContainer::setAllShardsDEPRECATED() {
-    _kind = RegistryMessageKind::ALL_SHARDS_DE_PR_EC_AT_ED;
-    auto& x = _data.emplace<19>();
-    return x;
-}
 const DecommissionBlockServiceReq& RegistryReqContainer::getDecommissionBlockService() const {
     ALWAYS_ASSERT(_kind == RegistryMessageKind::DECOMMISSION_BLOCK_SERVICE, "%s != %s", _kind, RegistryMessageKind::DECOMMISSION_BLOCK_SERVICE);
-    return std::get<20>(_data);
+    return std::get<16>(_data);
 }
 DecommissionBlockServiceReq& RegistryReqContainer::setDecommissionBlockService() {
     _kind = RegistryMessageKind::DECOMMISSION_BLOCK_SERVICE;
-    auto& x = _data.emplace<20>();
+    auto& x = _data.emplace<16>();
     return x;
 }
 const MoveShardLeaderReq& RegistryReqContainer::getMoveShardLeader() const {
     ALWAYS_ASSERT(_kind == RegistryMessageKind::MOVE_SHARD_LEADER, "%s != %s", _kind, RegistryMessageKind::MOVE_SHARD_LEADER);
-    return std::get<21>(_data);
+    return std::get<17>(_data);
 }
 MoveShardLeaderReq& RegistryReqContainer::setMoveShardLeader() {
     _kind = RegistryMessageKind::MOVE_SHARD_LEADER;
-    auto& x = _data.emplace<21>();
+    auto& x = _data.emplace<17>();
     return x;
 }
 const ClearShardInfoReq& RegistryReqContainer::getClearShardInfo() const {
     ALWAYS_ASSERT(_kind == RegistryMessageKind::CLEAR_SHARD_INFO, "%s != %s", _kind, RegistryMessageKind::CLEAR_SHARD_INFO);
-    return std::get<22>(_data);
+    return std::get<18>(_data);
 }
 ClearShardInfoReq& RegistryReqContainer::setClearShardInfo() {
     _kind = RegistryMessageKind::CLEAR_SHARD_INFO;
-    auto& x = _data.emplace<22>();
+    auto& x = _data.emplace<18>();
     return x;
 }
 const ShardBlockServicesReq& RegistryReqContainer::getShardBlockServices() const {
     ALWAYS_ASSERT(_kind == RegistryMessageKind::SHARD_BLOCK_SERVICES, "%s != %s", _kind, RegistryMessageKind::SHARD_BLOCK_SERVICES);
-    return std::get<23>(_data);
+    return std::get<19>(_data);
 }
 ShardBlockServicesReq& RegistryReqContainer::setShardBlockServices() {
     _kind = RegistryMessageKind::SHARD_BLOCK_SERVICES;
-    auto& x = _data.emplace<23>();
-    return x;
-}
-const AllCdcDEPRECATEDReq& RegistryReqContainer::getAllCdcDEPRECATED() const {
-    ALWAYS_ASSERT(_kind == RegistryMessageKind::ALL_CDC_DE_PR_EC_AT_ED, "%s != %s", _kind, RegistryMessageKind::ALL_CDC_DE_PR_EC_AT_ED);
-    return std::get<24>(_data);
-}
-AllCdcDEPRECATEDReq& RegistryReqContainer::setAllCdcDEPRECATED() {
-    _kind = RegistryMessageKind::ALL_CDC_DE_PR_EC_AT_ED;
-    auto& x = _data.emplace<24>();
+    auto& x = _data.emplace<19>();
     return x;
 }
 const EraseDecommissionedBlockReq& RegistryReqContainer::getEraseDecommissionedBlock() const {
     ALWAYS_ASSERT(_kind == RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK, "%s != %s", _kind, RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK);
-    return std::get<25>(_data);
+    return std::get<20>(_data);
 }
 EraseDecommissionedBlockReq& RegistryReqContainer::setEraseDecommissionedBlock() {
     _kind = RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK;
-    auto& x = _data.emplace<25>();
-    return x;
-}
-const AllBlockServicesDeprecatedReq& RegistryReqContainer::getAllBlockServicesDeprecated() const {
-    ALWAYS_ASSERT(_kind == RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED, "%s != %s", _kind, RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED);
-    return std::get<26>(_data);
-}
-AllBlockServicesDeprecatedReq& RegistryReqContainer::setAllBlockServicesDeprecated() {
-    _kind = RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED;
-    auto& x = _data.emplace<26>();
+    auto& x = _data.emplace<20>();
     return x;
 }
 const AllBlockServicesReq& RegistryReqContainer::getAllBlockServices() const {
     ALWAYS_ASSERT(_kind == RegistryMessageKind::ALL_BLOCK_SERVICES, "%s != %s", _kind, RegistryMessageKind::ALL_BLOCK_SERVICES);
-    return std::get<27>(_data);
+    return std::get<21>(_data);
 }
 AllBlockServicesReq& RegistryReqContainer::setAllBlockServices() {
     _kind = RegistryMessageKind::ALL_BLOCK_SERVICES;
-    auto& x = _data.emplace<27>();
+    auto& x = _data.emplace<21>();
     return x;
 }
 const MoveCdcLeaderReq& RegistryReqContainer::getMoveCdcLeader() const {
     ALWAYS_ASSERT(_kind == RegistryMessageKind::MOVE_CDC_LEADER, "%s != %s", _kind, RegistryMessageKind::MOVE_CDC_LEADER);
-    return std::get<28>(_data);
+    return std::get<22>(_data);
 }
 MoveCdcLeaderReq& RegistryReqContainer::setMoveCdcLeader() {
     _kind = RegistryMessageKind::MOVE_CDC_LEADER;
-    auto& x = _data.emplace<28>();
+    auto& x = _data.emplace<22>();
     return x;
 }
 const ClearCdcInfoReq& RegistryReqContainer::getClearCdcInfo() const {
     ALWAYS_ASSERT(_kind == RegistryMessageKind::CLEAR_CDC_INFO, "%s != %s", _kind, RegistryMessageKind::CLEAR_CDC_INFO);
-    return std::get<29>(_data);
+    return std::get<23>(_data);
 }
 ClearCdcInfoReq& RegistryReqContainer::setClearCdcInfo() {
     _kind = RegistryMessageKind::CLEAR_CDC_INFO;
-    auto& x = _data.emplace<29>();
+    auto& x = _data.emplace<23>();
     return x;
 }
 const UpdateBlockServicePathReq& RegistryReqContainer::getUpdateBlockServicePath() const {
     ALWAYS_ASSERT(_kind == RegistryMessageKind::UPDATE_BLOCK_SERVICE_PATH, "%s != %s", _kind, RegistryMessageKind::UPDATE_BLOCK_SERVICE_PATH);
-    return std::get<30>(_data);
+    return std::get<24>(_data);
 }
 UpdateBlockServicePathReq& RegistryReqContainer::setUpdateBlockServicePath() {
     _kind = RegistryMessageKind::UPDATE_BLOCK_SERVICE_PATH;
-    auto& x = _data.emplace<30>();
+    auto& x = _data.emplace<24>();
     return x;
 }
 const SetBlockServiceHasFilesReq& RegistryReqContainer::getSetBlockServiceHasFiles() const {
     ALWAYS_ASSERT(_kind == RegistryMessageKind::SET_BLOCK_SERVICE_HAS_FILES, "%s != %s", _kind, RegistryMessageKind::SET_BLOCK_SERVICE_HAS_FILES);
-    return std::get<31>(_data);
+    return std::get<25>(_data);
 }
 SetBlockServiceHasFilesReq& RegistryReqContainer::setSetBlockServiceHasFiles() {
     _kind = RegistryMessageKind::SET_BLOCK_SERVICE_HAS_FILES;
-    auto& x = _data.emplace<31>();
+    auto& x = _data.emplace<25>();
     return x;
 }
 const BlockServicesNeedingMigrationReq& RegistryReqContainer::getBlockServicesNeedingMigration() const {
     ALWAYS_ASSERT(_kind == RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION, "%s != %s", _kind, RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION);
-    return std::get<32>(_data);
+    return std::get<26>(_data);
 }
 BlockServicesNeedingMigrationReq& RegistryReqContainer::setBlockServicesNeedingMigration() {
     _kind = RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION;
-    auto& x = _data.emplace<32>();
+    auto& x = _data.emplace<26>();
     return x;
 }
 const AllRegistryReplicasReq& RegistryReqContainer::getAllRegistryReplicas() const {
     ALWAYS_ASSERT(_kind == RegistryMessageKind::ALL_REGISTRY_REPLICAS, "%s != %s", _kind, RegistryMessageKind::ALL_REGISTRY_REPLICAS);
-    return std::get<33>(_data);
+    return std::get<27>(_data);
 }
 AllRegistryReplicasReq& RegistryReqContainer::setAllRegistryReplicas() {
     _kind = RegistryMessageKind::ALL_REGISTRY_REPLICAS;
-    auto& x = _data.emplace<33>();
+    auto& x = _data.emplace<27>();
     return x;
 }
 const AllShardsReq& RegistryReqContainer::getAllShards() const {
     ALWAYS_ASSERT(_kind == RegistryMessageKind::ALL_SHARDS, "%s != %s", _kind, RegistryMessageKind::ALL_SHARDS);
-    return std::get<34>(_data);
+    return std::get<28>(_data);
 }
 AllShardsReq& RegistryReqContainer::setAllShards() {
     _kind = RegistryMessageKind::ALL_SHARDS;
-    auto& x = _data.emplace<34>();
+    auto& x = _data.emplace<28>();
     return x;
 }
 const AllCdcReq& RegistryReqContainer::getAllCdc() const {
     ALWAYS_ASSERT(_kind == RegistryMessageKind::ALL_CDC, "%s != %s", _kind, RegistryMessageKind::ALL_CDC);
-    return std::get<35>(_data);
+    return std::get<29>(_data);
 }
 AllCdcReq& RegistryReqContainer::setAllCdc() {
     _kind = RegistryMessageKind::ALL_CDC;
-    auto& x = _data.emplace<35>();
+    auto& x = _data.emplace<29>();
     return x;
 }
 const ChangedBlockServicesReq& RegistryReqContainer::getChangedBlockServices() const {
     ALWAYS_ASSERT(_kind == RegistryMessageKind::CHANGED_BLOCK_SERVICES, "%s != %s", _kind, RegistryMessageKind::CHANGED_BLOCK_SERVICES);
-    return std::get<36>(_data);
+    return std::get<30>(_data);
 }
 ChangedBlockServicesReq& RegistryReqContainer::setChangedBlockServices() {
     _kind = RegistryMessageKind::CHANGED_BLOCK_SERVICES;
-    auto& x = _data.emplace<36>();
+    auto& x = _data.emplace<30>();
     return x;
 }
 const BlockServiceAvailableSpaceReq& RegistryReqContainer::getBlockServiceAvailableSpace() const {
     ALWAYS_ASSERT(_kind == RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE, "%s != %s", _kind, RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE);
-    return std::get<37>(_data);
+    return std::get<31>(_data);
 }
 BlockServiceAvailableSpaceReq& RegistryReqContainer::setBlockServiceAvailableSpace() {
     _kind = RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE;
-    auto& x = _data.emplace<37>();
+    auto& x = _data.emplace<31>();
     return x;
 }
 RegistryReqContainer::RegistryReqContainer() {
@@ -9528,18 +9194,6 @@ void RegistryReqContainer::operator=(const RegistryReqContainer& other) {
     case RegistryMessageKind::REGISTER_REGISTRY:
         setRegisterRegistry() = other.getRegisterRegistry();
         break;
-    case RegistryMessageKind::ALL_REGISTRY_REPLICAS_DE_PR_EC_AT_ED:
-        setAllRegistryReplicasDEPRECATED() = other.getAllRegistryReplicasDEPRECATED();
-        break;
-    case RegistryMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
-        setShardBlockServicesDEPRECATED() = other.getShardBlockServicesDEPRECATED();
-        break;
-    case RegistryMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
-        setCdcReplicasDEPRECATED() = other.getCdcReplicasDEPRECATED();
-        break;
-    case RegistryMessageKind::ALL_SHARDS_DE_PR_EC_AT_ED:
-        setAllShardsDEPRECATED() = other.getAllShardsDEPRECATED();
-        break;
     case RegistryMessageKind::DECOMMISSION_BLOCK_SERVICE:
         setDecommissionBlockService() = other.getDecommissionBlockService();
         break;
@@ -9552,14 +9206,8 @@ void RegistryReqContainer::operator=(const RegistryReqContainer& other) {
     case RegistryMessageKind::SHARD_BLOCK_SERVICES:
         setShardBlockServices() = other.getShardBlockServices();
         break;
-    case RegistryMessageKind::ALL_CDC_DE_PR_EC_AT_ED:
-        setAllCdcDEPRECATED() = other.getAllCdcDEPRECATED();
-        break;
     case RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         setEraseDecommissionedBlock() = other.getEraseDecommissionedBlock();
-        break;
-    case RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
-        setAllBlockServicesDeprecated() = other.getAllBlockServicesDeprecated();
         break;
     case RegistryMessageKind::ALL_BLOCK_SERVICES:
         setAllBlockServices() = other.getAllBlockServices();
@@ -9639,50 +9287,38 @@ size_t RegistryReqContainer::packedSize() const {
         return sizeof(RegistryMessageKind) + std::get<14>(_data).packedSize();
     case RegistryMessageKind::REGISTER_REGISTRY:
         return sizeof(RegistryMessageKind) + std::get<15>(_data).packedSize();
-    case RegistryMessageKind::ALL_REGISTRY_REPLICAS_DE_PR_EC_AT_ED:
-        return sizeof(RegistryMessageKind) + std::get<16>(_data).packedSize();
-    case RegistryMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
-        return sizeof(RegistryMessageKind) + std::get<17>(_data).packedSize();
-    case RegistryMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
-        return sizeof(RegistryMessageKind) + std::get<18>(_data).packedSize();
-    case RegistryMessageKind::ALL_SHARDS_DE_PR_EC_AT_ED:
-        return sizeof(RegistryMessageKind) + std::get<19>(_data).packedSize();
     case RegistryMessageKind::DECOMMISSION_BLOCK_SERVICE:
-        return sizeof(RegistryMessageKind) + std::get<20>(_data).packedSize();
+        return sizeof(RegistryMessageKind) + std::get<16>(_data).packedSize();
     case RegistryMessageKind::MOVE_SHARD_LEADER:
-        return sizeof(RegistryMessageKind) + std::get<21>(_data).packedSize();
+        return sizeof(RegistryMessageKind) + std::get<17>(_data).packedSize();
     case RegistryMessageKind::CLEAR_SHARD_INFO:
-        return sizeof(RegistryMessageKind) + std::get<22>(_data).packedSize();
+        return sizeof(RegistryMessageKind) + std::get<18>(_data).packedSize();
     case RegistryMessageKind::SHARD_BLOCK_SERVICES:
-        return sizeof(RegistryMessageKind) + std::get<23>(_data).packedSize();
-    case RegistryMessageKind::ALL_CDC_DE_PR_EC_AT_ED:
-        return sizeof(RegistryMessageKind) + std::get<24>(_data).packedSize();
+        return sizeof(RegistryMessageKind) + std::get<19>(_data).packedSize();
     case RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK:
-        return sizeof(RegistryMessageKind) + std::get<25>(_data).packedSize();
-    case RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
-        return sizeof(RegistryMessageKind) + std::get<26>(_data).packedSize();
+        return sizeof(RegistryMessageKind) + std::get<20>(_data).packedSize();
     case RegistryMessageKind::ALL_BLOCK_SERVICES:
-        return sizeof(RegistryMessageKind) + std::get<27>(_data).packedSize();
+        return sizeof(RegistryMessageKind) + std::get<21>(_data).packedSize();
     case RegistryMessageKind::MOVE_CDC_LEADER:
-        return sizeof(RegistryMessageKind) + std::get<28>(_data).packedSize();
+        return sizeof(RegistryMessageKind) + std::get<22>(_data).packedSize();
     case RegistryMessageKind::CLEAR_CDC_INFO:
-        return sizeof(RegistryMessageKind) + std::get<29>(_data).packedSize();
+        return sizeof(RegistryMessageKind) + std::get<23>(_data).packedSize();
     case RegistryMessageKind::UPDATE_BLOCK_SERVICE_PATH:
-        return sizeof(RegistryMessageKind) + std::get<30>(_data).packedSize();
+        return sizeof(RegistryMessageKind) + std::get<24>(_data).packedSize();
     case RegistryMessageKind::SET_BLOCK_SERVICE_HAS_FILES:
-        return sizeof(RegistryMessageKind) + std::get<31>(_data).packedSize();
+        return sizeof(RegistryMessageKind) + std::get<25>(_data).packedSize();
     case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION:
-        return sizeof(RegistryMessageKind) + std::get<32>(_data).packedSize();
+        return sizeof(RegistryMessageKind) + std::get<26>(_data).packedSize();
     case RegistryMessageKind::ALL_REGISTRY_REPLICAS:
-        return sizeof(RegistryMessageKind) + std::get<33>(_data).packedSize();
+        return sizeof(RegistryMessageKind) + std::get<27>(_data).packedSize();
     case RegistryMessageKind::ALL_SHARDS:
-        return sizeof(RegistryMessageKind) + std::get<34>(_data).packedSize();
+        return sizeof(RegistryMessageKind) + std::get<28>(_data).packedSize();
     case RegistryMessageKind::ALL_CDC:
-        return sizeof(RegistryMessageKind) + std::get<35>(_data).packedSize();
+        return sizeof(RegistryMessageKind) + std::get<29>(_data).packedSize();
     case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
-        return sizeof(RegistryMessageKind) + std::get<36>(_data).packedSize();
+        return sizeof(RegistryMessageKind) + std::get<30>(_data).packedSize();
     case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
-        return sizeof(RegistryMessageKind) + std::get<37>(_data).packedSize();
+        return sizeof(RegistryMessageKind) + std::get<31>(_data).packedSize();
     default:
         throw TERN_EXCEPTION("bad RegistryMessageKind kind %s", _kind);
     }
@@ -9739,71 +9375,53 @@ void RegistryReqContainer::pack(BincodeBuf& buf) const {
     case RegistryMessageKind::REGISTER_REGISTRY:
         std::get<15>(_data).pack(buf);
         break;
-    case RegistryMessageKind::ALL_REGISTRY_REPLICAS_DE_PR_EC_AT_ED:
+    case RegistryMessageKind::DECOMMISSION_BLOCK_SERVICE:
         std::get<16>(_data).pack(buf);
         break;
-    case RegistryMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
+    case RegistryMessageKind::MOVE_SHARD_LEADER:
         std::get<17>(_data).pack(buf);
         break;
-    case RegistryMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
+    case RegistryMessageKind::CLEAR_SHARD_INFO:
         std::get<18>(_data).pack(buf);
         break;
-    case RegistryMessageKind::ALL_SHARDS_DE_PR_EC_AT_ED:
+    case RegistryMessageKind::SHARD_BLOCK_SERVICES:
         std::get<19>(_data).pack(buf);
         break;
-    case RegistryMessageKind::DECOMMISSION_BLOCK_SERVICE:
+    case RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         std::get<20>(_data).pack(buf);
         break;
-    case RegistryMessageKind::MOVE_SHARD_LEADER:
+    case RegistryMessageKind::ALL_BLOCK_SERVICES:
         std::get<21>(_data).pack(buf);
         break;
-    case RegistryMessageKind::CLEAR_SHARD_INFO:
+    case RegistryMessageKind::MOVE_CDC_LEADER:
         std::get<22>(_data).pack(buf);
         break;
-    case RegistryMessageKind::SHARD_BLOCK_SERVICES:
+    case RegistryMessageKind::CLEAR_CDC_INFO:
         std::get<23>(_data).pack(buf);
         break;
-    case RegistryMessageKind::ALL_CDC_DE_PR_EC_AT_ED:
+    case RegistryMessageKind::UPDATE_BLOCK_SERVICE_PATH:
         std::get<24>(_data).pack(buf);
         break;
-    case RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK:
+    case RegistryMessageKind::SET_BLOCK_SERVICE_HAS_FILES:
         std::get<25>(_data).pack(buf);
         break;
-    case RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
+    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION:
         std::get<26>(_data).pack(buf);
         break;
-    case RegistryMessageKind::ALL_BLOCK_SERVICES:
+    case RegistryMessageKind::ALL_REGISTRY_REPLICAS:
         std::get<27>(_data).pack(buf);
         break;
-    case RegistryMessageKind::MOVE_CDC_LEADER:
+    case RegistryMessageKind::ALL_SHARDS:
         std::get<28>(_data).pack(buf);
         break;
-    case RegistryMessageKind::CLEAR_CDC_INFO:
+    case RegistryMessageKind::ALL_CDC:
         std::get<29>(_data).pack(buf);
         break;
-    case RegistryMessageKind::UPDATE_BLOCK_SERVICE_PATH:
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
         std::get<30>(_data).pack(buf);
         break;
-    case RegistryMessageKind::SET_BLOCK_SERVICE_HAS_FILES:
-        std::get<31>(_data).pack(buf);
-        break;
-    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION:
-        std::get<32>(_data).pack(buf);
-        break;
-    case RegistryMessageKind::ALL_REGISTRY_REPLICAS:
-        std::get<33>(_data).pack(buf);
-        break;
-    case RegistryMessageKind::ALL_SHARDS:
-        std::get<34>(_data).pack(buf);
-        break;
-    case RegistryMessageKind::ALL_CDC:
-        std::get<35>(_data).pack(buf);
-        break;
-    case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
-        std::get<36>(_data).pack(buf);
-        break;
     case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
-        std::get<37>(_data).pack(buf);
+        std::get<31>(_data).pack(buf);
         break;
     default:
         throw TERN_EXCEPTION("bad RegistryMessageKind kind %s", _kind);
@@ -9861,71 +9479,53 @@ void RegistryReqContainer::unpack(BincodeBuf& buf) {
     case RegistryMessageKind::REGISTER_REGISTRY:
         _data.emplace<15>().unpack(buf);
         break;
-    case RegistryMessageKind::ALL_REGISTRY_REPLICAS_DE_PR_EC_AT_ED:
+    case RegistryMessageKind::DECOMMISSION_BLOCK_SERVICE:
         _data.emplace<16>().unpack(buf);
         break;
-    case RegistryMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
+    case RegistryMessageKind::MOVE_SHARD_LEADER:
         _data.emplace<17>().unpack(buf);
         break;
-    case RegistryMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
+    case RegistryMessageKind::CLEAR_SHARD_INFO:
         _data.emplace<18>().unpack(buf);
         break;
-    case RegistryMessageKind::ALL_SHARDS_DE_PR_EC_AT_ED:
+    case RegistryMessageKind::SHARD_BLOCK_SERVICES:
         _data.emplace<19>().unpack(buf);
         break;
-    case RegistryMessageKind::DECOMMISSION_BLOCK_SERVICE:
+    case RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         _data.emplace<20>().unpack(buf);
         break;
-    case RegistryMessageKind::MOVE_SHARD_LEADER:
+    case RegistryMessageKind::ALL_BLOCK_SERVICES:
         _data.emplace<21>().unpack(buf);
         break;
-    case RegistryMessageKind::CLEAR_SHARD_INFO:
+    case RegistryMessageKind::MOVE_CDC_LEADER:
         _data.emplace<22>().unpack(buf);
         break;
-    case RegistryMessageKind::SHARD_BLOCK_SERVICES:
+    case RegistryMessageKind::CLEAR_CDC_INFO:
         _data.emplace<23>().unpack(buf);
         break;
-    case RegistryMessageKind::ALL_CDC_DE_PR_EC_AT_ED:
+    case RegistryMessageKind::UPDATE_BLOCK_SERVICE_PATH:
         _data.emplace<24>().unpack(buf);
         break;
-    case RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK:
+    case RegistryMessageKind::SET_BLOCK_SERVICE_HAS_FILES:
         _data.emplace<25>().unpack(buf);
         break;
-    case RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
+    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION:
         _data.emplace<26>().unpack(buf);
         break;
-    case RegistryMessageKind::ALL_BLOCK_SERVICES:
+    case RegistryMessageKind::ALL_REGISTRY_REPLICAS:
         _data.emplace<27>().unpack(buf);
         break;
-    case RegistryMessageKind::MOVE_CDC_LEADER:
+    case RegistryMessageKind::ALL_SHARDS:
         _data.emplace<28>().unpack(buf);
         break;
-    case RegistryMessageKind::CLEAR_CDC_INFO:
+    case RegistryMessageKind::ALL_CDC:
         _data.emplace<29>().unpack(buf);
         break;
-    case RegistryMessageKind::UPDATE_BLOCK_SERVICE_PATH:
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
         _data.emplace<30>().unpack(buf);
         break;
-    case RegistryMessageKind::SET_BLOCK_SERVICE_HAS_FILES:
-        _data.emplace<31>().unpack(buf);
-        break;
-    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION:
-        _data.emplace<32>().unpack(buf);
-        break;
-    case RegistryMessageKind::ALL_REGISTRY_REPLICAS:
-        _data.emplace<33>().unpack(buf);
-        break;
-    case RegistryMessageKind::ALL_SHARDS:
-        _data.emplace<34>().unpack(buf);
-        break;
-    case RegistryMessageKind::ALL_CDC:
-        _data.emplace<35>().unpack(buf);
-        break;
-    case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
-        _data.emplace<36>().unpack(buf);
-        break;
     case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
-        _data.emplace<37>().unpack(buf);
+        _data.emplace<31>().unpack(buf);
         break;
     default:
         throw BINCODE_EXCEPTION("bad RegistryMessageKind kind %s", _kind);
@@ -9968,14 +9568,6 @@ bool RegistryReqContainer::operator==(const RegistryReqContainer& other) const {
         return getCdcAtLocation() == other.getCdcAtLocation();
     case RegistryMessageKind::REGISTER_REGISTRY:
         return getRegisterRegistry() == other.getRegisterRegistry();
-    case RegistryMessageKind::ALL_REGISTRY_REPLICAS_DE_PR_EC_AT_ED:
-        return getAllRegistryReplicasDEPRECATED() == other.getAllRegistryReplicasDEPRECATED();
-    case RegistryMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
-        return getShardBlockServicesDEPRECATED() == other.getShardBlockServicesDEPRECATED();
-    case RegistryMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
-        return getCdcReplicasDEPRECATED() == other.getCdcReplicasDEPRECATED();
-    case RegistryMessageKind::ALL_SHARDS_DE_PR_EC_AT_ED:
-        return getAllShardsDEPRECATED() == other.getAllShardsDEPRECATED();
     case RegistryMessageKind::DECOMMISSION_BLOCK_SERVICE:
         return getDecommissionBlockService() == other.getDecommissionBlockService();
     case RegistryMessageKind::MOVE_SHARD_LEADER:
@@ -9984,12 +9576,8 @@ bool RegistryReqContainer::operator==(const RegistryReqContainer& other) const {
         return getClearShardInfo() == other.getClearShardInfo();
     case RegistryMessageKind::SHARD_BLOCK_SERVICES:
         return getShardBlockServices() == other.getShardBlockServices();
-    case RegistryMessageKind::ALL_CDC_DE_PR_EC_AT_ED:
-        return getAllCdcDEPRECATED() == other.getAllCdcDEPRECATED();
     case RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         return getEraseDecommissionedBlock() == other.getEraseDecommissionedBlock();
-    case RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
-        return getAllBlockServicesDeprecated() == other.getAllBlockServicesDeprecated();
     case RegistryMessageKind::ALL_BLOCK_SERVICES:
         return getAllBlockServices() == other.getAllBlockServices();
     case RegistryMessageKind::MOVE_CDC_LEADER:
@@ -10067,18 +9655,6 @@ std::ostream& operator<<(std::ostream& out, const RegistryReqContainer& x) {
     case RegistryMessageKind::REGISTER_REGISTRY:
         out << x.getRegisterRegistry();
         break;
-    case RegistryMessageKind::ALL_REGISTRY_REPLICAS_DE_PR_EC_AT_ED:
-        out << x.getAllRegistryReplicasDEPRECATED();
-        break;
-    case RegistryMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
-        out << x.getShardBlockServicesDEPRECATED();
-        break;
-    case RegistryMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
-        out << x.getCdcReplicasDEPRECATED();
-        break;
-    case RegistryMessageKind::ALL_SHARDS_DE_PR_EC_AT_ED:
-        out << x.getAllShardsDEPRECATED();
-        break;
     case RegistryMessageKind::DECOMMISSION_BLOCK_SERVICE:
         out << x.getDecommissionBlockService();
         break;
@@ -10091,14 +9667,8 @@ std::ostream& operator<<(std::ostream& out, const RegistryReqContainer& x) {
     case RegistryMessageKind::SHARD_BLOCK_SERVICES:
         out << x.getShardBlockServices();
         break;
-    case RegistryMessageKind::ALL_CDC_DE_PR_EC_AT_ED:
-        out << x.getAllCdcDEPRECATED();
-        break;
     case RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         out << x.getEraseDecommissionedBlock();
-        break;
-    case RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
-        out << x.getAllBlockServicesDeprecated();
         break;
     case RegistryMessageKind::ALL_BLOCK_SERVICES:
         out << x.getAllBlockServices();
@@ -10295,202 +9865,148 @@ RegisterRegistryResp& RegistryRespContainer::setRegisterRegistry() {
     auto& x = _data.emplace<16>();
     return x;
 }
-const AllRegistryReplicasDEPRECATEDResp& RegistryRespContainer::getAllRegistryReplicasDEPRECATED() const {
-    ALWAYS_ASSERT(_kind == RegistryMessageKind::ALL_REGISTRY_REPLICAS_DE_PR_EC_AT_ED, "%s != %s", _kind, RegistryMessageKind::ALL_REGISTRY_REPLICAS_DE_PR_EC_AT_ED);
-    return std::get<17>(_data);
-}
-AllRegistryReplicasDEPRECATEDResp& RegistryRespContainer::setAllRegistryReplicasDEPRECATED() {
-    _kind = RegistryMessageKind::ALL_REGISTRY_REPLICAS_DE_PR_EC_AT_ED;
-    auto& x = _data.emplace<17>();
-    return x;
-}
-const ShardBlockServicesDEPRECATEDResp& RegistryRespContainer::getShardBlockServicesDEPRECATED() const {
-    ALWAYS_ASSERT(_kind == RegistryMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED, "%s != %s", _kind, RegistryMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED);
-    return std::get<18>(_data);
-}
-ShardBlockServicesDEPRECATEDResp& RegistryRespContainer::setShardBlockServicesDEPRECATED() {
-    _kind = RegistryMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED;
-    auto& x = _data.emplace<18>();
-    return x;
-}
-const CdcReplicasDEPRECATEDResp& RegistryRespContainer::getCdcReplicasDEPRECATED() const {
-    ALWAYS_ASSERT(_kind == RegistryMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED, "%s != %s", _kind, RegistryMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED);
-    return std::get<19>(_data);
-}
-CdcReplicasDEPRECATEDResp& RegistryRespContainer::setCdcReplicasDEPRECATED() {
-    _kind = RegistryMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED;
-    auto& x = _data.emplace<19>();
-    return x;
-}
-const AllShardsDEPRECATEDResp& RegistryRespContainer::getAllShardsDEPRECATED() const {
-    ALWAYS_ASSERT(_kind == RegistryMessageKind::ALL_SHARDS_DE_PR_EC_AT_ED, "%s != %s", _kind, RegistryMessageKind::ALL_SHARDS_DE_PR_EC_AT_ED);
-    return std::get<20>(_data);
-}
-AllShardsDEPRECATEDResp& RegistryRespContainer::setAllShardsDEPRECATED() {
-    _kind = RegistryMessageKind::ALL_SHARDS_DE_PR_EC_AT_ED;
-    auto& x = _data.emplace<20>();
-    return x;
-}
 const DecommissionBlockServiceResp& RegistryRespContainer::getDecommissionBlockService() const {
     ALWAYS_ASSERT(_kind == RegistryMessageKind::DECOMMISSION_BLOCK_SERVICE, "%s != %s", _kind, RegistryMessageKind::DECOMMISSION_BLOCK_SERVICE);
-    return std::get<21>(_data);
+    return std::get<17>(_data);
 }
 DecommissionBlockServiceResp& RegistryRespContainer::setDecommissionBlockService() {
     _kind = RegistryMessageKind::DECOMMISSION_BLOCK_SERVICE;
-    auto& x = _data.emplace<21>();
+    auto& x = _data.emplace<17>();
     return x;
 }
 const MoveShardLeaderResp& RegistryRespContainer::getMoveShardLeader() const {
     ALWAYS_ASSERT(_kind == RegistryMessageKind::MOVE_SHARD_LEADER, "%s != %s", _kind, RegistryMessageKind::MOVE_SHARD_LEADER);
-    return std::get<22>(_data);
+    return std::get<18>(_data);
 }
 MoveShardLeaderResp& RegistryRespContainer::setMoveShardLeader() {
     _kind = RegistryMessageKind::MOVE_SHARD_LEADER;
-    auto& x = _data.emplace<22>();
+    auto& x = _data.emplace<18>();
     return x;
 }
 const ClearShardInfoResp& RegistryRespContainer::getClearShardInfo() const {
     ALWAYS_ASSERT(_kind == RegistryMessageKind::CLEAR_SHARD_INFO, "%s != %s", _kind, RegistryMessageKind::CLEAR_SHARD_INFO);
-    return std::get<23>(_data);
+    return std::get<19>(_data);
 }
 ClearShardInfoResp& RegistryRespContainer::setClearShardInfo() {
     _kind = RegistryMessageKind::CLEAR_SHARD_INFO;
-    auto& x = _data.emplace<23>();
+    auto& x = _data.emplace<19>();
     return x;
 }
 const ShardBlockServicesResp& RegistryRespContainer::getShardBlockServices() const {
     ALWAYS_ASSERT(_kind == RegistryMessageKind::SHARD_BLOCK_SERVICES, "%s != %s", _kind, RegistryMessageKind::SHARD_BLOCK_SERVICES);
-    return std::get<24>(_data);
+    return std::get<20>(_data);
 }
 ShardBlockServicesResp& RegistryRespContainer::setShardBlockServices() {
     _kind = RegistryMessageKind::SHARD_BLOCK_SERVICES;
-    auto& x = _data.emplace<24>();
-    return x;
-}
-const AllCdcDEPRECATEDResp& RegistryRespContainer::getAllCdcDEPRECATED() const {
-    ALWAYS_ASSERT(_kind == RegistryMessageKind::ALL_CDC_DE_PR_EC_AT_ED, "%s != %s", _kind, RegistryMessageKind::ALL_CDC_DE_PR_EC_AT_ED);
-    return std::get<25>(_data);
-}
-AllCdcDEPRECATEDResp& RegistryRespContainer::setAllCdcDEPRECATED() {
-    _kind = RegistryMessageKind::ALL_CDC_DE_PR_EC_AT_ED;
-    auto& x = _data.emplace<25>();
+    auto& x = _data.emplace<20>();
     return x;
 }
 const EraseDecommissionedBlockResp& RegistryRespContainer::getEraseDecommissionedBlock() const {
     ALWAYS_ASSERT(_kind == RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK, "%s != %s", _kind, RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK);
-    return std::get<26>(_data);
+    return std::get<21>(_data);
 }
 EraseDecommissionedBlockResp& RegistryRespContainer::setEraseDecommissionedBlock() {
     _kind = RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK;
-    auto& x = _data.emplace<26>();
-    return x;
-}
-const AllBlockServicesDeprecatedResp& RegistryRespContainer::getAllBlockServicesDeprecated() const {
-    ALWAYS_ASSERT(_kind == RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED, "%s != %s", _kind, RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED);
-    return std::get<27>(_data);
-}
-AllBlockServicesDeprecatedResp& RegistryRespContainer::setAllBlockServicesDeprecated() {
-    _kind = RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED;
-    auto& x = _data.emplace<27>();
+    auto& x = _data.emplace<21>();
     return x;
 }
 const AllBlockServicesResp& RegistryRespContainer::getAllBlockServices() const {
     ALWAYS_ASSERT(_kind == RegistryMessageKind::ALL_BLOCK_SERVICES, "%s != %s", _kind, RegistryMessageKind::ALL_BLOCK_SERVICES);
-    return std::get<28>(_data);
+    return std::get<22>(_data);
 }
 AllBlockServicesResp& RegistryRespContainer::setAllBlockServices() {
     _kind = RegistryMessageKind::ALL_BLOCK_SERVICES;
-    auto& x = _data.emplace<28>();
+    auto& x = _data.emplace<22>();
     return x;
 }
 const MoveCdcLeaderResp& RegistryRespContainer::getMoveCdcLeader() const {
     ALWAYS_ASSERT(_kind == RegistryMessageKind::MOVE_CDC_LEADER, "%s != %s", _kind, RegistryMessageKind::MOVE_CDC_LEADER);
-    return std::get<29>(_data);
+    return std::get<23>(_data);
 }
 MoveCdcLeaderResp& RegistryRespContainer::setMoveCdcLeader() {
     _kind = RegistryMessageKind::MOVE_CDC_LEADER;
-    auto& x = _data.emplace<29>();
+    auto& x = _data.emplace<23>();
     return x;
 }
 const ClearCdcInfoResp& RegistryRespContainer::getClearCdcInfo() const {
     ALWAYS_ASSERT(_kind == RegistryMessageKind::CLEAR_CDC_INFO, "%s != %s", _kind, RegistryMessageKind::CLEAR_CDC_INFO);
-    return std::get<30>(_data);
+    return std::get<24>(_data);
 }
 ClearCdcInfoResp& RegistryRespContainer::setClearCdcInfo() {
     _kind = RegistryMessageKind::CLEAR_CDC_INFO;
-    auto& x = _data.emplace<30>();
+    auto& x = _data.emplace<24>();
     return x;
 }
 const UpdateBlockServicePathResp& RegistryRespContainer::getUpdateBlockServicePath() const {
     ALWAYS_ASSERT(_kind == RegistryMessageKind::UPDATE_BLOCK_SERVICE_PATH, "%s != %s", _kind, RegistryMessageKind::UPDATE_BLOCK_SERVICE_PATH);
-    return std::get<31>(_data);
+    return std::get<25>(_data);
 }
 UpdateBlockServicePathResp& RegistryRespContainer::setUpdateBlockServicePath() {
     _kind = RegistryMessageKind::UPDATE_BLOCK_SERVICE_PATH;
-    auto& x = _data.emplace<31>();
+    auto& x = _data.emplace<25>();
     return x;
 }
 const SetBlockServiceHasFilesResp& RegistryRespContainer::getSetBlockServiceHasFiles() const {
     ALWAYS_ASSERT(_kind == RegistryMessageKind::SET_BLOCK_SERVICE_HAS_FILES, "%s != %s", _kind, RegistryMessageKind::SET_BLOCK_SERVICE_HAS_FILES);
-    return std::get<32>(_data);
+    return std::get<26>(_data);
 }
 SetBlockServiceHasFilesResp& RegistryRespContainer::setSetBlockServiceHasFiles() {
     _kind = RegistryMessageKind::SET_BLOCK_SERVICE_HAS_FILES;
-    auto& x = _data.emplace<32>();
+    auto& x = _data.emplace<26>();
     return x;
 }
 const BlockServicesNeedingMigrationResp& RegistryRespContainer::getBlockServicesNeedingMigration() const {
     ALWAYS_ASSERT(_kind == RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION, "%s != %s", _kind, RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION);
-    return std::get<33>(_data);
+    return std::get<27>(_data);
 }
 BlockServicesNeedingMigrationResp& RegistryRespContainer::setBlockServicesNeedingMigration() {
     _kind = RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION;
-    auto& x = _data.emplace<33>();
+    auto& x = _data.emplace<27>();
     return x;
 }
 const AllRegistryReplicasResp& RegistryRespContainer::getAllRegistryReplicas() const {
     ALWAYS_ASSERT(_kind == RegistryMessageKind::ALL_REGISTRY_REPLICAS, "%s != %s", _kind, RegistryMessageKind::ALL_REGISTRY_REPLICAS);
-    return std::get<34>(_data);
+    return std::get<28>(_data);
 }
 AllRegistryReplicasResp& RegistryRespContainer::setAllRegistryReplicas() {
     _kind = RegistryMessageKind::ALL_REGISTRY_REPLICAS;
-    auto& x = _data.emplace<34>();
+    auto& x = _data.emplace<28>();
     return x;
 }
 const AllShardsResp& RegistryRespContainer::getAllShards() const {
     ALWAYS_ASSERT(_kind == RegistryMessageKind::ALL_SHARDS, "%s != %s", _kind, RegistryMessageKind::ALL_SHARDS);
-    return std::get<35>(_data);
+    return std::get<29>(_data);
 }
 AllShardsResp& RegistryRespContainer::setAllShards() {
     _kind = RegistryMessageKind::ALL_SHARDS;
-    auto& x = _data.emplace<35>();
+    auto& x = _data.emplace<29>();
     return x;
 }
 const AllCdcResp& RegistryRespContainer::getAllCdc() const {
     ALWAYS_ASSERT(_kind == RegistryMessageKind::ALL_CDC, "%s != %s", _kind, RegistryMessageKind::ALL_CDC);
-    return std::get<36>(_data);
+    return std::get<30>(_data);
 }
 AllCdcResp& RegistryRespContainer::setAllCdc() {
     _kind = RegistryMessageKind::ALL_CDC;
-    auto& x = _data.emplace<36>();
+    auto& x = _data.emplace<30>();
     return x;
 }
 const ChangedBlockServicesResp& RegistryRespContainer::getChangedBlockServices() const {
     ALWAYS_ASSERT(_kind == RegistryMessageKind::CHANGED_BLOCK_SERVICES, "%s != %s", _kind, RegistryMessageKind::CHANGED_BLOCK_SERVICES);
-    return std::get<37>(_data);
+    return std::get<31>(_data);
 }
 ChangedBlockServicesResp& RegistryRespContainer::setChangedBlockServices() {
     _kind = RegistryMessageKind::CHANGED_BLOCK_SERVICES;
-    auto& x = _data.emplace<37>();
+    auto& x = _data.emplace<31>();
     return x;
 }
 const BlockServiceAvailableSpaceResp& RegistryRespContainer::getBlockServiceAvailableSpace() const {
     ALWAYS_ASSERT(_kind == RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE, "%s != %s", _kind, RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE);
-    return std::get<38>(_data);
+    return std::get<32>(_data);
 }
 BlockServiceAvailableSpaceResp& RegistryRespContainer::setBlockServiceAvailableSpace() {
     _kind = RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE;
-    auto& x = _data.emplace<38>();
+    auto& x = _data.emplace<32>();
     return x;
 }
 RegistryRespContainer::RegistryRespContainer() {
@@ -10561,18 +10077,6 @@ void RegistryRespContainer::operator=(const RegistryRespContainer& other) {
     case RegistryMessageKind::REGISTER_REGISTRY:
         setRegisterRegistry() = other.getRegisterRegistry();
         break;
-    case RegistryMessageKind::ALL_REGISTRY_REPLICAS_DE_PR_EC_AT_ED:
-        setAllRegistryReplicasDEPRECATED() = other.getAllRegistryReplicasDEPRECATED();
-        break;
-    case RegistryMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
-        setShardBlockServicesDEPRECATED() = other.getShardBlockServicesDEPRECATED();
-        break;
-    case RegistryMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
-        setCdcReplicasDEPRECATED() = other.getCdcReplicasDEPRECATED();
-        break;
-    case RegistryMessageKind::ALL_SHARDS_DE_PR_EC_AT_ED:
-        setAllShardsDEPRECATED() = other.getAllShardsDEPRECATED();
-        break;
     case RegistryMessageKind::DECOMMISSION_BLOCK_SERVICE:
         setDecommissionBlockService() = other.getDecommissionBlockService();
         break;
@@ -10585,14 +10089,8 @@ void RegistryRespContainer::operator=(const RegistryRespContainer& other) {
     case RegistryMessageKind::SHARD_BLOCK_SERVICES:
         setShardBlockServices() = other.getShardBlockServices();
         break;
-    case RegistryMessageKind::ALL_CDC_DE_PR_EC_AT_ED:
-        setAllCdcDEPRECATED() = other.getAllCdcDEPRECATED();
-        break;
     case RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         setEraseDecommissionedBlock() = other.getEraseDecommissionedBlock();
-        break;
-    case RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
-        setAllBlockServicesDeprecated() = other.getAllBlockServicesDeprecated();
         break;
     case RegistryMessageKind::ALL_BLOCK_SERVICES:
         setAllBlockServices() = other.getAllBlockServices();
@@ -10674,50 +10172,38 @@ size_t RegistryRespContainer::packedSize() const {
         return sizeof(RegistryMessageKind) + std::get<15>(_data).packedSize();
     case RegistryMessageKind::REGISTER_REGISTRY:
         return sizeof(RegistryMessageKind) + std::get<16>(_data).packedSize();
-    case RegistryMessageKind::ALL_REGISTRY_REPLICAS_DE_PR_EC_AT_ED:
-        return sizeof(RegistryMessageKind) + std::get<17>(_data).packedSize();
-    case RegistryMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
-        return sizeof(RegistryMessageKind) + std::get<18>(_data).packedSize();
-    case RegistryMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
-        return sizeof(RegistryMessageKind) + std::get<19>(_data).packedSize();
-    case RegistryMessageKind::ALL_SHARDS_DE_PR_EC_AT_ED:
-        return sizeof(RegistryMessageKind) + std::get<20>(_data).packedSize();
     case RegistryMessageKind::DECOMMISSION_BLOCK_SERVICE:
-        return sizeof(RegistryMessageKind) + std::get<21>(_data).packedSize();
+        return sizeof(RegistryMessageKind) + std::get<17>(_data).packedSize();
     case RegistryMessageKind::MOVE_SHARD_LEADER:
-        return sizeof(RegistryMessageKind) + std::get<22>(_data).packedSize();
+        return sizeof(RegistryMessageKind) + std::get<18>(_data).packedSize();
     case RegistryMessageKind::CLEAR_SHARD_INFO:
-        return sizeof(RegistryMessageKind) + std::get<23>(_data).packedSize();
+        return sizeof(RegistryMessageKind) + std::get<19>(_data).packedSize();
     case RegistryMessageKind::SHARD_BLOCK_SERVICES:
-        return sizeof(RegistryMessageKind) + std::get<24>(_data).packedSize();
-    case RegistryMessageKind::ALL_CDC_DE_PR_EC_AT_ED:
-        return sizeof(RegistryMessageKind) + std::get<25>(_data).packedSize();
+        return sizeof(RegistryMessageKind) + std::get<20>(_data).packedSize();
     case RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK:
-        return sizeof(RegistryMessageKind) + std::get<26>(_data).packedSize();
-    case RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
-        return sizeof(RegistryMessageKind) + std::get<27>(_data).packedSize();
+        return sizeof(RegistryMessageKind) + std::get<21>(_data).packedSize();
     case RegistryMessageKind::ALL_BLOCK_SERVICES:
-        return sizeof(RegistryMessageKind) + std::get<28>(_data).packedSize();
+        return sizeof(RegistryMessageKind) + std::get<22>(_data).packedSize();
     case RegistryMessageKind::MOVE_CDC_LEADER:
-        return sizeof(RegistryMessageKind) + std::get<29>(_data).packedSize();
+        return sizeof(RegistryMessageKind) + std::get<23>(_data).packedSize();
     case RegistryMessageKind::CLEAR_CDC_INFO:
-        return sizeof(RegistryMessageKind) + std::get<30>(_data).packedSize();
+        return sizeof(RegistryMessageKind) + std::get<24>(_data).packedSize();
     case RegistryMessageKind::UPDATE_BLOCK_SERVICE_PATH:
-        return sizeof(RegistryMessageKind) + std::get<31>(_data).packedSize();
+        return sizeof(RegistryMessageKind) + std::get<25>(_data).packedSize();
     case RegistryMessageKind::SET_BLOCK_SERVICE_HAS_FILES:
-        return sizeof(RegistryMessageKind) + std::get<32>(_data).packedSize();
+        return sizeof(RegistryMessageKind) + std::get<26>(_data).packedSize();
     case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION:
-        return sizeof(RegistryMessageKind) + std::get<33>(_data).packedSize();
+        return sizeof(RegistryMessageKind) + std::get<27>(_data).packedSize();
     case RegistryMessageKind::ALL_REGISTRY_REPLICAS:
-        return sizeof(RegistryMessageKind) + std::get<34>(_data).packedSize();
+        return sizeof(RegistryMessageKind) + std::get<28>(_data).packedSize();
     case RegistryMessageKind::ALL_SHARDS:
-        return sizeof(RegistryMessageKind) + std::get<35>(_data).packedSize();
+        return sizeof(RegistryMessageKind) + std::get<29>(_data).packedSize();
     case RegistryMessageKind::ALL_CDC:
-        return sizeof(RegistryMessageKind) + std::get<36>(_data).packedSize();
+        return sizeof(RegistryMessageKind) + std::get<30>(_data).packedSize();
     case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
-        return sizeof(RegistryMessageKind) + std::get<37>(_data).packedSize();
+        return sizeof(RegistryMessageKind) + std::get<31>(_data).packedSize();
     case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
-        return sizeof(RegistryMessageKind) + std::get<38>(_data).packedSize();
+        return sizeof(RegistryMessageKind) + std::get<32>(_data).packedSize();
     default:
         throw TERN_EXCEPTION("bad RegistryMessageKind kind %s", _kind);
     }
@@ -10777,71 +10263,53 @@ void RegistryRespContainer::pack(BincodeBuf& buf) const {
     case RegistryMessageKind::REGISTER_REGISTRY:
         std::get<16>(_data).pack(buf);
         break;
-    case RegistryMessageKind::ALL_REGISTRY_REPLICAS_DE_PR_EC_AT_ED:
+    case RegistryMessageKind::DECOMMISSION_BLOCK_SERVICE:
         std::get<17>(_data).pack(buf);
         break;
-    case RegistryMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
+    case RegistryMessageKind::MOVE_SHARD_LEADER:
         std::get<18>(_data).pack(buf);
         break;
-    case RegistryMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
+    case RegistryMessageKind::CLEAR_SHARD_INFO:
         std::get<19>(_data).pack(buf);
         break;
-    case RegistryMessageKind::ALL_SHARDS_DE_PR_EC_AT_ED:
+    case RegistryMessageKind::SHARD_BLOCK_SERVICES:
         std::get<20>(_data).pack(buf);
         break;
-    case RegistryMessageKind::DECOMMISSION_BLOCK_SERVICE:
+    case RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         std::get<21>(_data).pack(buf);
         break;
-    case RegistryMessageKind::MOVE_SHARD_LEADER:
+    case RegistryMessageKind::ALL_BLOCK_SERVICES:
         std::get<22>(_data).pack(buf);
         break;
-    case RegistryMessageKind::CLEAR_SHARD_INFO:
+    case RegistryMessageKind::MOVE_CDC_LEADER:
         std::get<23>(_data).pack(buf);
         break;
-    case RegistryMessageKind::SHARD_BLOCK_SERVICES:
+    case RegistryMessageKind::CLEAR_CDC_INFO:
         std::get<24>(_data).pack(buf);
         break;
-    case RegistryMessageKind::ALL_CDC_DE_PR_EC_AT_ED:
+    case RegistryMessageKind::UPDATE_BLOCK_SERVICE_PATH:
         std::get<25>(_data).pack(buf);
         break;
-    case RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK:
+    case RegistryMessageKind::SET_BLOCK_SERVICE_HAS_FILES:
         std::get<26>(_data).pack(buf);
         break;
-    case RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
+    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION:
         std::get<27>(_data).pack(buf);
         break;
-    case RegistryMessageKind::ALL_BLOCK_SERVICES:
+    case RegistryMessageKind::ALL_REGISTRY_REPLICAS:
         std::get<28>(_data).pack(buf);
         break;
-    case RegistryMessageKind::MOVE_CDC_LEADER:
+    case RegistryMessageKind::ALL_SHARDS:
         std::get<29>(_data).pack(buf);
         break;
-    case RegistryMessageKind::CLEAR_CDC_INFO:
+    case RegistryMessageKind::ALL_CDC:
         std::get<30>(_data).pack(buf);
         break;
-    case RegistryMessageKind::UPDATE_BLOCK_SERVICE_PATH:
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
         std::get<31>(_data).pack(buf);
         break;
-    case RegistryMessageKind::SET_BLOCK_SERVICE_HAS_FILES:
-        std::get<32>(_data).pack(buf);
-        break;
-    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION:
-        std::get<33>(_data).pack(buf);
-        break;
-    case RegistryMessageKind::ALL_REGISTRY_REPLICAS:
-        std::get<34>(_data).pack(buf);
-        break;
-    case RegistryMessageKind::ALL_SHARDS:
-        std::get<35>(_data).pack(buf);
-        break;
-    case RegistryMessageKind::ALL_CDC:
-        std::get<36>(_data).pack(buf);
-        break;
-    case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
-        std::get<37>(_data).pack(buf);
-        break;
     case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
-        std::get<38>(_data).pack(buf);
+        std::get<32>(_data).pack(buf);
         break;
     default:
         throw TERN_EXCEPTION("bad RegistryMessageKind kind %s", _kind);
@@ -10902,71 +10370,53 @@ void RegistryRespContainer::unpack(BincodeBuf& buf) {
     case RegistryMessageKind::REGISTER_REGISTRY:
         _data.emplace<16>().unpack(buf);
         break;
-    case RegistryMessageKind::ALL_REGISTRY_REPLICAS_DE_PR_EC_AT_ED:
+    case RegistryMessageKind::DECOMMISSION_BLOCK_SERVICE:
         _data.emplace<17>().unpack(buf);
         break;
-    case RegistryMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
+    case RegistryMessageKind::MOVE_SHARD_LEADER:
         _data.emplace<18>().unpack(buf);
         break;
-    case RegistryMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
+    case RegistryMessageKind::CLEAR_SHARD_INFO:
         _data.emplace<19>().unpack(buf);
         break;
-    case RegistryMessageKind::ALL_SHARDS_DE_PR_EC_AT_ED:
+    case RegistryMessageKind::SHARD_BLOCK_SERVICES:
         _data.emplace<20>().unpack(buf);
         break;
-    case RegistryMessageKind::DECOMMISSION_BLOCK_SERVICE:
+    case RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         _data.emplace<21>().unpack(buf);
         break;
-    case RegistryMessageKind::MOVE_SHARD_LEADER:
+    case RegistryMessageKind::ALL_BLOCK_SERVICES:
         _data.emplace<22>().unpack(buf);
         break;
-    case RegistryMessageKind::CLEAR_SHARD_INFO:
+    case RegistryMessageKind::MOVE_CDC_LEADER:
         _data.emplace<23>().unpack(buf);
         break;
-    case RegistryMessageKind::SHARD_BLOCK_SERVICES:
+    case RegistryMessageKind::CLEAR_CDC_INFO:
         _data.emplace<24>().unpack(buf);
         break;
-    case RegistryMessageKind::ALL_CDC_DE_PR_EC_AT_ED:
+    case RegistryMessageKind::UPDATE_BLOCK_SERVICE_PATH:
         _data.emplace<25>().unpack(buf);
         break;
-    case RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK:
+    case RegistryMessageKind::SET_BLOCK_SERVICE_HAS_FILES:
         _data.emplace<26>().unpack(buf);
         break;
-    case RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
+    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION:
         _data.emplace<27>().unpack(buf);
         break;
-    case RegistryMessageKind::ALL_BLOCK_SERVICES:
+    case RegistryMessageKind::ALL_REGISTRY_REPLICAS:
         _data.emplace<28>().unpack(buf);
         break;
-    case RegistryMessageKind::MOVE_CDC_LEADER:
+    case RegistryMessageKind::ALL_SHARDS:
         _data.emplace<29>().unpack(buf);
         break;
-    case RegistryMessageKind::CLEAR_CDC_INFO:
+    case RegistryMessageKind::ALL_CDC:
         _data.emplace<30>().unpack(buf);
         break;
-    case RegistryMessageKind::UPDATE_BLOCK_SERVICE_PATH:
+    case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
         _data.emplace<31>().unpack(buf);
         break;
-    case RegistryMessageKind::SET_BLOCK_SERVICE_HAS_FILES:
-        _data.emplace<32>().unpack(buf);
-        break;
-    case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION:
-        _data.emplace<33>().unpack(buf);
-        break;
-    case RegistryMessageKind::ALL_REGISTRY_REPLICAS:
-        _data.emplace<34>().unpack(buf);
-        break;
-    case RegistryMessageKind::ALL_SHARDS:
-        _data.emplace<35>().unpack(buf);
-        break;
-    case RegistryMessageKind::ALL_CDC:
-        _data.emplace<36>().unpack(buf);
-        break;
-    case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
-        _data.emplace<37>().unpack(buf);
-        break;
     case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
-        _data.emplace<38>().unpack(buf);
+        _data.emplace<32>().unpack(buf);
         break;
     default:
         throw BINCODE_EXCEPTION("bad RegistryMessageKind kind %s", _kind);
@@ -11011,14 +10461,6 @@ bool RegistryRespContainer::operator==(const RegistryRespContainer& other) const
         return getCdcAtLocation() == other.getCdcAtLocation();
     case RegistryMessageKind::REGISTER_REGISTRY:
         return getRegisterRegistry() == other.getRegisterRegistry();
-    case RegistryMessageKind::ALL_REGISTRY_REPLICAS_DE_PR_EC_AT_ED:
-        return getAllRegistryReplicasDEPRECATED() == other.getAllRegistryReplicasDEPRECATED();
-    case RegistryMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
-        return getShardBlockServicesDEPRECATED() == other.getShardBlockServicesDEPRECATED();
-    case RegistryMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
-        return getCdcReplicasDEPRECATED() == other.getCdcReplicasDEPRECATED();
-    case RegistryMessageKind::ALL_SHARDS_DE_PR_EC_AT_ED:
-        return getAllShardsDEPRECATED() == other.getAllShardsDEPRECATED();
     case RegistryMessageKind::DECOMMISSION_BLOCK_SERVICE:
         return getDecommissionBlockService() == other.getDecommissionBlockService();
     case RegistryMessageKind::MOVE_SHARD_LEADER:
@@ -11027,12 +10469,8 @@ bool RegistryRespContainer::operator==(const RegistryRespContainer& other) const
         return getClearShardInfo() == other.getClearShardInfo();
     case RegistryMessageKind::SHARD_BLOCK_SERVICES:
         return getShardBlockServices() == other.getShardBlockServices();
-    case RegistryMessageKind::ALL_CDC_DE_PR_EC_AT_ED:
-        return getAllCdcDEPRECATED() == other.getAllCdcDEPRECATED();
     case RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         return getEraseDecommissionedBlock() == other.getEraseDecommissionedBlock();
-    case RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
-        return getAllBlockServicesDeprecated() == other.getAllBlockServicesDeprecated();
     case RegistryMessageKind::ALL_BLOCK_SERVICES:
         return getAllBlockServices() == other.getAllBlockServices();
     case RegistryMessageKind::MOVE_CDC_LEADER:
@@ -11113,18 +10551,6 @@ std::ostream& operator<<(std::ostream& out, const RegistryRespContainer& x) {
     case RegistryMessageKind::REGISTER_REGISTRY:
         out << x.getRegisterRegistry();
         break;
-    case RegistryMessageKind::ALL_REGISTRY_REPLICAS_DE_PR_EC_AT_ED:
-        out << x.getAllRegistryReplicasDEPRECATED();
-        break;
-    case RegistryMessageKind::SHARD_BLOCK_SERVICES_DE_PR_EC_AT_ED:
-        out << x.getShardBlockServicesDEPRECATED();
-        break;
-    case RegistryMessageKind::CDC_REPLICAS_DE_PR_EC_AT_ED:
-        out << x.getCdcReplicasDEPRECATED();
-        break;
-    case RegistryMessageKind::ALL_SHARDS_DE_PR_EC_AT_ED:
-        out << x.getAllShardsDEPRECATED();
-        break;
     case RegistryMessageKind::DECOMMISSION_BLOCK_SERVICE:
         out << x.getDecommissionBlockService();
         break;
@@ -11137,14 +10563,8 @@ std::ostream& operator<<(std::ostream& out, const RegistryRespContainer& x) {
     case RegistryMessageKind::SHARD_BLOCK_SERVICES:
         out << x.getShardBlockServices();
         break;
-    case RegistryMessageKind::ALL_CDC_DE_PR_EC_AT_ED:
-        out << x.getAllCdcDEPRECATED();
-        break;
     case RegistryMessageKind::ERASE_DECOMMISSIONED_BLOCK:
         out << x.getEraseDecommissionedBlock();
-        break;
-    case RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED:
-        out << x.getAllBlockServicesDeprecated();
         break;
     case RegistryMessageKind::ALL_BLOCK_SERVICES:
         out << x.getAllBlockServices();
