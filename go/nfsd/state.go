@@ -4,12 +4,16 @@
 
 package main
 
+import (
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+)
+
 // StateID is the 12-byte "other" field of an NFSv4 stateid4.
 type StateID [12]byte
 
 // isCurrentStateID reports the special stateid meaning the compound's
 // current stateid: seqid 1, other all zero.
-func isCurrentStateID(stateid Stateid4) bool {
+func isCurrentStateID(stateid nfs4.Stateid4) bool {
 	if stateid.Seqid() != 1 {
 		return false
 	}
@@ -24,19 +28,19 @@ func isCurrentStateID(stateid Stateid4) bool {
 // resolveStateID substitutes the compound's current stateid for the special
 // current stateid. It returns the stateid to use and false if no current
 // stateid is set.
-func (st *compoundState) resolveStateID(stateid Stateid4) (Stateid4, bool) {
+func (st *compoundState) resolveStateID(stateid nfs4.Stateid4) (nfs4.Stateid4, bool) {
 	if !isCurrentStateID(stateid) {
 		return stateid, true
 	}
 	if !st.currentStateIDSet {
 		return stateid, false
 	}
-	_, resolved := StartStateid4(nil)
+	_, resolved := nfs4.StartStateid4(nil)
 	writeStateID(resolved, st.currentGeneration, st.currentStateID)
 	return resolved, true
 }
 
-func isSpecialStateID(stateid Stateid4) bool {
+func isSpecialStateID(stateid nfs4.Stateid4) bool {
 	seqid := stateid.Seqid()
 	allZero := seqid == 0
 	allOne := seqid == ^uint32(0)
@@ -58,5 +62,5 @@ func nfsErrCode(err error) uint32 {
 	if e, ok := err.(nfsError); ok {
 		return uint32(e)
 	}
-	return NFS4ERR_SERVERFAULT
+	return nfs4.NFS4ERR_SERVERFAULT
 }

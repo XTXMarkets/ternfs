@@ -2,9 +2,11 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-package main
+package nfs4
 
-import "encoding/binary"
+import (
+	"encoding/binary"
+)
 
 // Raw access the generated code in nfs.go does not provide.
 

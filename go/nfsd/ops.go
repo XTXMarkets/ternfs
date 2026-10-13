@@ -11,6 +11,8 @@ import (
 	"os"
 	"syscall"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 // Stable write modes.
@@ -23,7 +25,7 @@ const (
 	maxTernNameLength  = maxTernBytesLength
 )
 
-func finishDefaultResponse(w *COMPOUND4resWriter, buf []byte, status uint32) uint32 {
+func finishDefaultResponse(w *nfs4.COMPOUND4resWriter, buf []byte, status uint32) uint32 {
 	w.Resume(binary.BigEndian.AppendUint32(buf, status))
 	return status
 }
@@ -40,43 +42,43 @@ func finishStatusResponse(r statusResponseWriter, status uint32) uint32 {
 func toTernFSName(data []byte) (string, uint32) {
 	switch {
 	case len(data) == 0:
-		return "", NFS4ERR_INVAL
+		return "", nfs4.NFS4ERR_INVAL
 	case len(data) > maxTernNameLength:
-		return "", NFS4ERR_NAMETOOLONG
+		return "", nfs4.NFS4ERR_NAMETOOLONG
 	case bytes.Equal(data, []byte(".")),
 		bytes.Equal(data, []byte("..")),
 		bytes.IndexByte(data, '/') >= 0,
 		bytes.IndexByte(data, 0) >= 0:
-		return "", NFS4ERR_BADNAME
+		return "", nfs4.NFS4ERR_BADNAME
 	default:
-		return string(data), NFS4_OK
+		return string(data), nfs4.NFS4_OK
 	}
 }
 
 func requireDirectory(id InodeID) uint32 {
 	switch id.Type() {
 	case InodeTypeDir:
-		return NFS4_OK
+		return nfs4.NFS4_OK
 	case InodeTypeSymlink:
-		return NFS4ERR_SYMLINK
+		return nfs4.NFS4ERR_SYMLINK
 	default:
-		return NFS4ERR_NOTDIR
+		return nfs4.NFS4ERR_NOTDIR
 	}
 }
 
 func requireRegularFile(id InodeID) uint32 {
 	switch id.Type() {
 	case InodeTypeFile:
-		return NFS4_OK
+		return nfs4.NFS4_OK
 	case InodeTypeDir:
-		return NFS4ERR_ISDIR
+		return nfs4.NFS4ERR_ISDIR
 	default:
-		return NFS4ERR_INVAL
+		return nfs4.NFS4ERR_INVAL
 	}
 }
 
 // extractStateID reads the 12-byte "other" field from a Stateid4 into a StateID.
-func extractStateID(s Stateid4) StateID {
+func extractStateID(s nfs4.Stateid4) StateID {
 	var sid StateID
 	for i := 0; i < 12; i++ {
 		sid[i] = s.Other(i)
@@ -85,27 +87,27 @@ func extractStateID(s Stateid4) StateID {
 }
 
 // writeStateID writes the generation and opaque ID into a Stateid4.
-func writeStateID(s Stateid4, generation uint32, sid StateID) {
+func writeStateID(s nfs4.Stateid4, generation uint32, sid StateID) {
 	s.SetSeqid(generation)
 	for i := 0; i < 12; i++ {
 		s.SetOther(i, sid[i])
 	}
 }
 
-func getData64(v Verifier4) (data [8]byte) {
+func getData64(v nfs4.Verifier4) (data [8]byte) {
 	for i := range data {
 		data[i] = v.Data(i)
 	}
 	return data
 }
 
-func setData64(v Verifier4, data [8]byte) {
+func setData64(v nfs4.Verifier4, data [8]byte) {
 	for i := range data {
 		v.SetData(i, data[i])
 	}
 }
 
-func setChangeInfo(info ChangeInfo4, atomic uint32, before, after uint64) {
+func setChangeInfo(info nfs4.ChangeInfo4, atomic uint32, before, after uint64) {
 	info.SetAtomic(atomic)
 	info.SetBefore(before)
 	info.SetAfter(after)
@@ -114,31 +116,31 @@ func setChangeInfo(info ChangeInfo4, atomic uint32, before, after uint64) {
 // errToNFS converts a Go error to an NFS status code.
 func (s *Server) errToNFS(err error) uint32 {
 	if err == nil {
-		return NFS4_OK
+		return nfs4.NFS4_OK
 	}
 	err = ternToOSError(err)
 	switch {
 	case errors.Is(err, syscall.ENOTDIR):
-		return NFS4ERR_NOTDIR
+		return nfs4.NFS4ERR_NOTDIR
 	case errors.Is(err, syscall.EISDIR):
-		return NFS4ERR_ISDIR
+		return nfs4.NFS4ERR_ISDIR
 	case errors.Is(err, syscall.ENOTEMPTY):
-		return NFS4ERR_NOTEMPTY
+		return nfs4.NFS4ERR_NOTEMPTY
 	}
 	if e, ok := err.(nfsError); ok {
 		return uint32(e)
 	}
 	if os.IsNotExist(err) {
-		return NFS4ERR_NOENT
+		return nfs4.NFS4ERR_NOENT
 	}
 	if os.IsPermission(err) {
-		return NFS4ERR_ACCESS
+		return nfs4.NFS4ERR_ACCESS
 	}
 	if os.IsExist(err) {
-		return NFS4ERR_EXIST
+		return nfs4.NFS4ERR_EXIST
 	}
 	s.log.Warn("VFS error", "err", err)
-	return NFS4ERR_IO
+	return nfs4.NFS4ERR_IO
 }
 
 // Time helper.

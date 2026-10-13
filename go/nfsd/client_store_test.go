@@ -13,6 +13,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 // collectStaleForClient and collectStale run a collection pass and discard
@@ -58,15 +60,15 @@ func TestClientStoreErrToNFS(t *testing.T) {
 		err  error
 		want uint32
 	}{
-		{"NFS status", nfsError(NFS4ERR_EXPIRED), NFS4ERR_EXPIRED},
+		{"NFS status", nfsError(nfs4.NFS4ERR_EXPIRED), nfs4.NFS4ERR_EXPIRED},
 		{"missing object", fmt.Errorf("lookup: %w", os.ErrNotExist),
-			NFS4ERR_DELAY},
-		{"storage failure", errors.New("storage failed"), NFS4ERR_DELAY},
+			nfs4.NFS4ERR_DELAY},
+		{"storage failure", errors.New("storage failed"), nfs4.NFS4ERR_DELAY},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if got := clientStoreErrToNFS(test.err); got != test.want {
 				t.Fatalf("status = %s, want %s",
-					Nfsstat4Name(got), Nfsstat4Name(test.want))
+					nfs4.Nfsstat4Name(got), nfs4.Nfsstat4Name(test.want))
 			}
 		})
 	}
@@ -114,7 +116,7 @@ func TestClientStoreDurableState(t *testing.T) {
 	t.Run("registration and callback update", func(t *testing.T) {
 		if _, err := first.ConfirmClientID(
 			0, [8]byte{}, rpcPrincipal{},
-		); nfsErrCode(err) != NFS4ERR_STALE_CLIENTID {
+		); nfsErrCode(err) != nfs4.NFS4ERR_STALE_CLIENTID {
 			t.Fatalf("zero clientid confirmation error = %v, want NFS4ERR_STALE_CLIENTID", err)
 		}
 		staleID, staleConfirm, err := first.SetClientID(
@@ -139,7 +141,7 @@ func TestClientStoreDurableState(t *testing.T) {
 		}
 		if _, err := second.ConfirmClientID(
 			clientID, staleConfirm, owner1.principal,
-		); nfsErrCode(err) != NFS4ERR_STALE_CLIENTID {
+		); nfsErrCode(err) != nfs4.NFS4ERR_STALE_CLIENTID {
 			t.Fatalf("replaced confirmation error = %v, want NFS4ERR_STALE_CLIENTID", err)
 		}
 		if _, err := second.ConfirmClientID(
@@ -277,7 +279,7 @@ func TestClientStoreDurableState(t *testing.T) {
 		if active {
 			t.Fatal("reboot did not purge active-open record visible to another store")
 		}
-		if err := first.Renew(clientID); nfsErrCode(err) != NFS4ERR_STALE_CLIENTID {
+		if err := first.Renew(clientID); nfsErrCode(err) != nfs4.NFS4ERR_STALE_CLIENTID {
 			t.Fatalf("old client RENEW error = %v, want NFS4ERR_STALE_CLIENTID", err)
 		}
 		if err := first.Renew(rebootID); err != nil {
@@ -360,13 +362,13 @@ func TestClientStoreConfirmationReplayAndUpdateRejection(t *testing.T) {
 	wrongConfirm[0] ^= 0xff
 	if _, err := store.ConfirmClientID(
 		clientID, wrongConfirm, owner.principal,
-	); nfsErrCode(err) != NFS4ERR_STALE_CLIENTID {
+	); nfsErrCode(err) != nfs4.NFS4ERR_STALE_CLIENTID {
 		t.Fatalf("wrong callback-update token error = %v, want NFS4ERR_STALE_CLIENTID",
 			err)
 	}
 	if _, err := store.ConfirmClientID(
 		clientID, updateConfirm, otherPrincipal,
-	); nfsErrCode(err) != NFS4ERR_CLID_INUSE {
+	); nfsErrCode(err) != nfs4.NFS4ERR_CLID_INUSE {
 		t.Fatalf("callback-update principal error = %v, want NFS4ERR_CLID_INUSE",
 			err)
 	}
@@ -560,7 +562,7 @@ func TestClientStoreExpiredLeaseDoesNotReviveAfterSlotCleanup(t *testing.T) {
 			restarted.now = collector.now
 			if err := test.use(
 				restarted, clientID,
-			); nfsErrCode(err) != NFS4ERR_EXPIRED {
+			); nfsErrCode(err) != nfs4.NFS4ERR_EXPIRED {
 				t.Fatalf("%s after slot cleanup = %v, want NFS4ERR_EXPIRED",
 					test.name, err)
 			}
@@ -602,7 +604,7 @@ func TestClientStoreCachedRenewSeesExpiredMarker(t *testing.T) {
 	}
 	if active, err := first.HasOpen(
 		clientID, stateID,
-	); active || nfsErrCode(err) != NFS4ERR_EXPIRED {
+	); active || nfsErrCode(err) != nfs4.NFS4ERR_EXPIRED {
 		t.Fatalf("cached renewal after fleet expiry = active %t, err %v",
 			active, err)
 	}
@@ -971,14 +973,14 @@ func TestClientStoreRejectsClientIDOutsideStateDirectory(t *testing.T) {
 	}
 	if _, err := store.ConfirmClientID(
 		uint64(incarnationID), confirm, rpcPrincipal{},
-	); nfsErrCode(err) != NFS4ERR_STALE_CLIENTID {
+	); nfsErrCode(err) != nfs4.NFS4ERR_STALE_CLIENTID {
 		t.Fatalf("forged clientid confirmation error = %v, want NFS4ERR_STALE_CLIENTID",
 			err)
 	}
 	stateID := StateID{1}
 	if err := store.MarkOpen(
 		uint64(incarnationID), stateID,
-	); nfsErrCode(err) != NFS4ERR_STALE_CLIENTID {
+	); nfsErrCode(err) != nfs4.NFS4ERR_STALE_CLIENTID {
 		t.Fatalf("forged clientid MarkOpen error = %v, want NFS4ERR_STALE_CLIENTID",
 			err)
 	}
@@ -989,13 +991,13 @@ func TestClientStoreRejectsClientIDOutsideStateDirectory(t *testing.T) {
 	}
 	if err := store.RemoveOpen(
 		uint64(incarnationID), stateID,
-	); nfsErrCode(err) != NFS4ERR_STALE_CLIENTID {
+	); nfsErrCode(err) != nfs4.NFS4ERR_STALE_CLIENTID {
 		t.Fatalf("forged clientid RemoveOpen error = %v, want NFS4ERR_STALE_CLIENTID",
 			err)
 	}
 	if err := store.Renew(
 		uint64(incarnationID),
-	); nfsErrCode(err) != NFS4ERR_STALE_CLIENTID {
+	); nfsErrCode(err) != nfs4.NFS4ERR_STALE_CLIENTID {
 		t.Fatalf("forged clientid Renew error = %v, want NFS4ERR_STALE_CLIENTID",
 			err)
 	}
@@ -1203,7 +1205,7 @@ func TestClientStoreConfirmationRechecksPending(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if nfsErrCode(confirmErr) != NFS4ERR_STALE_CLIENTID {
+	if nfsErrCode(confirmErr) != nfs4.NFS4ERR_STALE_CLIENTID {
 		t.Fatalf("superseded confirmation error = %v, want NFS4ERR_STALE_CLIENTID",
 			confirmErr)
 	}
@@ -1304,7 +1306,7 @@ func TestClientStoreMarkOpenKeepsExistingMarkerOnRenewFailure(t *testing.T) {
 	newStateID := StateID{2}
 	if err := store.MarkOpen(
 		clientID, newStateID,
-	); nfsErrCode(err) != NFS4ERR_DELAY {
+	); nfsErrCode(err) != nfs4.NFS4ERR_DELAY {
 		t.Fatalf("new MarkOpen error = %v, want DELAY", err)
 	}
 	if _, err := baseFS.Lookup(
@@ -1919,9 +1921,9 @@ func TestConfirmedClientGCRechecksAfterLease(t *testing.T) {
 	srv.waitForClientGC()
 	if status := confirmClientID(
 		t, conn, &xid, newID, confirm,
-	); status != NFS4_OK {
+	); status != nfs4.NFS4_OK {
 		t.Fatalf("SETCLIENTID_CONFIRM status = %s",
-			Nfsstat4Name(status))
+			nfs4.Nfsstat4Name(status))
 	}
 	srv.waitForClientGC()
 

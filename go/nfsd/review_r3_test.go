@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 // bindStatus runs one BIND_CONN_TO_SESSION on conn and returns its status
@@ -18,21 +20,21 @@ import (
 func bindStatus(srv *Server, conn *rpcConnection, id SessionID, dir uint32, xid uint32) (status, granted uint32) {
 	req, err := parseRPCCall(rpcCallForTest(xid, procCompound, admissionBind(id, dir, false)))
 	if err != nil {
-		return NFS4ERR_SERVERFAULT, 0
+		return nfs4.NFS4ERR_SERVERFAULT, 0
 	}
 	req.connection = conn
 	reply := bytes.Clone(srv.safeHandleCompound(req, "bind-race"))
 	req.releaseReply()
 	res, err := parseCompoundReply(reply)
 	if err != nil {
-		return NFS4ERR_SERVERFAULT, 0
+		return nfs4.NFS4ERR_SERVERFAULT, 0
 	}
-	if res.Status() != NFS4_OK {
+	if res.Status() != nfs4.NFS4_OK {
 		return res.Status(), 0
 	}
 	it := res.Resarray()
 	it.Next()
-	return NFS4_OK, it.Resarray().Value().AsBINDCONNTOSESSION4resEntry().Value().AsBINDCONNTOSESSION4resok().BctsrDir()
+	return nfs4.NFS4_OK, it.Resarray().Value().AsBINDCONNTOSESSION4resEntry().Value().AsBINDCONNTOSESSION4resok().BctsrDir()
 }
 
 // R2-BIND: two BINDs for one unassociated session on one connection, sent
@@ -43,9 +45,9 @@ func bindStatus(srv *Server, conn *rpcConnection, id SessionID, dir uint32, xid 
 func TestConcurrentBindsSerialize(t *testing.T) {
 	srv := admissionWritableServer(t, NewLocalTernVFS(t.TempDir()))
 	pairs := [][2]uint32{
-		{CDFC4_FORE, CDFC4_BACK},
-		{CDFC4_FORE, CDFC4_BACK_OR_BOTH},
-		{CDFC4_FORE_OR_BOTH, CDFC4_BACK},
+		{nfs4.CDFC4_FORE, nfs4.CDFC4_BACK},
+		{nfs4.CDFC4_FORE, nfs4.CDFC4_BACK_OR_BOTH},
+		{nfs4.CDFC4_FORE_OR_BOTH, nfs4.CDFC4_BACK},
 	}
 	for _, pair := range pairs {
 		for round := range 300 {
@@ -70,23 +72,23 @@ func TestConcurrentBindsSerialize(t *testing.T) {
 			oks := 0
 			for i := range pair {
 				switch status[i] {
-				case NFS4_OK:
+				case nfs4.NFS4_OK:
 					oks++
-					want := granted[i] == CDFS4_BOTH && fore && back ||
-						granted[i] == CDFS4_FORE && fore && !back ||
-						granted[i] == CDFS4_BACK && !fore && back
+					want := granted[i] == nfs4.CDFS4_BOTH && fore && back ||
+						granted[i] == nfs4.CDFS4_FORE && fore && !back ||
+						granted[i] == nfs4.CDFS4_BACK && !fore && back
 					if !want {
 						t.Fatalf("dirs %v round %d: request %d granted %d but the connection has fore=%v back=%v",
 							pair, round, i, granted[i], fore, back)
 					}
-				case NFS4ERR_INVAL:
+				case nfs4.NFS4ERR_INVAL:
 				default:
-					t.Fatalf("dirs %v round %d: request %d got %s", pair, round, i, Nfsstat4Name(status[i]))
+					t.Fatalf("dirs %v round %d: request %d got %s", pair, round, i, nfs4.Nfsstat4Name(status[i]))
 				}
 			}
 			if oks != 1 {
 				t.Fatalf("dirs %v round %d: %d BINDs succeeded (%s, %s), fore=%v back=%v; want exactly one",
-					pair, round, oks, Nfsstat4Name(status[0]), Nfsstat4Name(status[1]), fore, back)
+					pair, round, oks, nfs4.Nfsstat4Name(status[0]), nfs4.Nfsstat4Name(status[1]), fore, back)
 			}
 		}
 	}
@@ -157,8 +159,8 @@ func TestTerminalAdmissionBeforeCleanup(t *testing.T) {
 	awaitSignal(t, fs.entered, "the terminal cleanup's RemoveEdge")
 
 	before := srv.sessions.accounting()
-	if res := c.compound(3, backCreateSessionBody(clientID, seq+1, 0)); res.Status() != NFS4ERR_STALE_CLIENTID {
-		t.Fatalf("CREATE_SESSION during terminal cleanup %s, want STALE_CLIENTID", Nfsstat4Name(res.Status()))
+	if res := c.compound(3, backCreateSessionBody(clientID, seq+1, 0)); res.Status() != nfs4.NFS4ERR_STALE_CLIENTID {
+		t.Fatalf("CREATE_SESSION during terminal cleanup %s, want STALE_CLIENTID", nfs4.Nfsstat4Name(res.Status()))
 	}
 	if after := srv.sessions.accounting(); after.Sessions != before.Sessions ||
 		after.Records != before.Records || after.PendingSessions != before.PendingSessions {
@@ -180,8 +182,8 @@ func TestTerminalAdmissionBeforeCleanup(t *testing.T) {
 	if replayed, _ := createdSession(t, c.compound(5, body)); replayed != id {
 		t.Fatal("the cached CREATE_SESSION did not replay after cleanup")
 	}
-	if res := c.compound(6, backCreateSessionBody(clientID, seq+1, 0)); res.Status() != NFS4ERR_STALE_CLIENTID {
-		t.Fatalf("CREATE_SESSION after terminal cleanup %s, want STALE_CLIENTID", Nfsstat4Name(res.Status()))
+	if res := c.compound(6, backCreateSessionBody(clientID, seq+1, 0)); res.Status() != nfs4.NFS4ERR_STALE_CLIENTID {
+		t.Fatalf("CREATE_SESSION after terminal cleanup %s, want STALE_CLIENTID", nfs4.Nfsstat4Name(res.Status()))
 	}
 }
 
@@ -216,8 +218,8 @@ func pendingBackProbe(t *testing.T, prune bool) {
 	c := newCBTestClient(t, addr)
 	clientID, seq := exchangeOn(t, c, 1, "probe-owner")
 	s0, flags := createdSession(t, c.compound(2, backCreateSessionBody(clientID, seq,
-		CREATE_SESSION4_FLAG_CONN_BACK_CHAN, offerNone)))
-	if flags&CREATE_SESSION4_FLAG_CONN_BACK_CHAN == 0 {
+		nfs4.CREATE_SESSION4_FLAG_CONN_BACK_CHAN, offerNone)))
+	if flags&nfs4.CREATE_SESSION4_FLAG_CONN_BACK_CHAN == 0 {
 		t.Fatal("no backchannel granted")
 	}
 	if call, ok := c.nextCall(testChannelTimeout); !ok || cbProc(call) != cbProcNull {
@@ -236,10 +238,10 @@ func pendingBackProbe(t *testing.T, prune bool) {
 	fs.mu.Lock()
 	fs.armed = true
 	fs.mu.Unlock()
-	s1Done := make(chan COMPOUND4res, 1)
+	s1Done := make(chan nfs4.COMPOUND4res, 1)
 	go func() {
 		s1Done <- c.compound(3, backCreateSessionBody(clientID, seq+1,
-			CREATE_SESSION4_FLAG_CONN_BACK_CHAN, offerNone))
+			nfs4.CREATE_SESSION4_FLAG_CONN_BACK_CHAN, offerNone))
 	}()
 	awaitSignal(t, fs.entered, "S1's confirmation check")
 	conn.mu.Lock()
@@ -249,8 +251,8 @@ func pendingBackProbe(t *testing.T, prune bool) {
 		t.Fatalf("%d pending back reservations, want S1's", pending)
 	}
 
-	if res := c.compound(4, admissionDestroy(s0)); res.Status() != NFS4_OK {
-		t.Fatalf("DESTROY_SESSION S0 %s", Nfsstat4Name(res.Status()))
+	if res := c.compound(4, admissionDestroy(s0)); res.Status() != nfs4.NFS4_OK {
+		t.Fatalf("DESTROY_SESSION S0 %s", nfs4.Nfsstat4Name(res.Status()))
 	}
 	if prune {
 		// Another reservation prunes the connection, as any later
@@ -267,7 +269,7 @@ func pendingBackProbe(t *testing.T, prune bool) {
 
 	closeSignal(fs.release)
 	s1, flags := createdSession(t, awaitValue(t, s1Done, "S1's CREATE_SESSION"))
-	if flags&CREATE_SESSION4_FLAG_CONN_BACK_CHAN == 0 {
+	if flags&nfs4.CREATE_SESSION4_FLAG_CONN_BACK_CHAN == 0 {
 		t.Fatal("no backchannel granted to S1")
 	}
 	call, ok := c.nextCall(testChannelTimeout)

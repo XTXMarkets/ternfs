@@ -11,6 +11,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 // NFSv4.1 sessions (RFC 8881 section 2.10).
@@ -36,7 +38,7 @@ const (
 	minSessionResponse = 128
 )
 
-type SessionID [NFS4_SESSIONID_SIZE]byte
+type SessionID [nfs4.NFS4_SESSIONID_SIZE]byte
 
 type sessionSlot struct {
 	mu       sync.Mutex
@@ -210,17 +212,17 @@ func (ss *sessionStore) destroyClientRecord(c *sessionClient) uint32 {
 	ss.mu.Lock()
 	if c.retired {
 		ss.mu.Unlock()
-		return NFS4ERR_STALE_CLIENTID
+		return nfs4.NFS4ERR_STALE_CLIENTID
 	}
 	// A closing incarnation is the predecessor of a confirmation in progress.
 	if g := ss.groups[c.incarnation]; c.csBusy || g != nil && (g.members > 0 || g.state == groupClosing) {
 		ss.mu.Unlock()
-		return NFS4ERR_CLIENTID_BUSY
+		return nfs4.NFS4ERR_CLIENTID_BUSY
 	}
 	retired := ss.dropClientLocked(c.incarnation)
 	ss.mu.Unlock()
 	ss.drainRetired(retired)
-	return NFS4_OK
+	return nfs4.NFS4_OK
 }
 
 // dropClientLocked detaches an incarnation's sessions and retires its wire
@@ -270,7 +272,7 @@ func (ss *sessionStore) destroySession(id SessionID) bool {
 	return true
 }
 
-func verifierBytes(verifier Verifier4) [8]byte {
+func verifierBytes(verifier nfs4.Verifier4) [8]byte {
 	var data [8]byte
 	for i := range data {
 		data[i] = verifier.Data(i)
@@ -278,7 +280,7 @@ func verifierBytes(verifier Verifier4) [8]byte {
 	return data
 }
 
-func readSessionID(m Sessionid4) SessionID {
+func readSessionID(m nfs4.Sessionid4) SessionID {
 	var id SessionID
 	for i := range id {
 		id[i] = m.Data(i)
@@ -286,7 +288,7 @@ func readSessionID(m Sessionid4) SessionID {
 	return id
 }
 
-func writeSessionID(m Sessionid4, id SessionID) {
+func writeSessionID(m nfs4.Sessionid4, id SessionID) {
 	for i, b := range id {
 		m.SetData(i, b)
 	}
@@ -296,8 +298,8 @@ func writeSessionID(m Sessionid4, id SessionID) {
 // SEQUENCE. Each must then be the only operation (RFC 8881 section 2.10.6.2).
 func sessionlessOp(opnum uint32) bool {
 	switch opnum {
-	case OP_EXCHANGE_ID, OP_CREATE_SESSION, OP_DESTROY_SESSION,
-		OP_DESTROY_CLIENTID, OP_BIND_CONN_TO_SESSION:
+	case nfs4.OP_EXCHANGE_ID, nfs4.OP_CREATE_SESSION, nfs4.OP_DESTROY_SESSION,
+		nfs4.OP_DESTROY_CLIENTID, nfs4.OP_BIND_CONN_TO_SESSION:
 		return true
 	}
 	return false
@@ -341,7 +343,7 @@ type sequenceAdmission struct {
 
 // startSequence validates SEQUENCE and claims its slot. The caller must
 // call finishSequence once the compound reply is complete.
-func (s *Server) startSequence(args SEQUENCE4args, admission ...sequenceAdmission) sequenceResult {
+func (s *Server) startSequence(args nfs4.SEQUENCE4args, admission ...sequenceAdmission) sequenceResult {
 	a := sequenceAdmission{digest: sha256.Sum256(args.Bytes()), operations: 1,
 		sequenceReplyBytes: rpcAcceptedHeaderSize + 12 + 44}
 	if len(admission) != 0 {
@@ -352,24 +354,24 @@ func (s *Server) startSequence(args SEQUENCE4args, admission ...sequenceAdmissio
 	// An unknown session, including one an earlier process issued, is never
 	// reconstructed (RFC 8881 §2.10.13.1.4).
 	if sess == nil || sess.destroyed.Load() || sess.fatal.Load() {
-		return sequenceResult{status: NFS4ERR_BADSESSION}
+		return sequenceResult{status: nfs4.NFS4ERR_BADSESSION}
 	}
 	slotID := args.SaSlotid()
 	if slotID >= uint32(len(sess.slots)) {
-		return sequenceResult{status: NFS4ERR_BADSLOT}
+		return sequenceResult{status: nfs4.NFS4ERR_BADSLOT}
 	}
 	if args.SaHighestSlotid() < slotID || args.SaHighestSlotid() >= uint32(len(sess.slots)) {
-		return sequenceResult{status: NFS4ERR_BAD_HIGH_SLOT}
+		return sequenceResult{status: nfs4.NFS4ERR_BAD_HIGH_SLOT}
 	}
 	switch {
 	case a.operations > min(sess.maxOps, uint32(maxCompoundOperations)):
-		return sequenceResult{status: NFS4ERR_TOO_MANY_OPS}
+		return sequenceResult{status: nfs4.NFS4ERR_TOO_MANY_OPS}
 	case a.requestBytes > sess.maxReq:
-		return sequenceResult{status: NFS4ERR_REQ_TOO_BIG}
+		return sequenceResult{status: nfs4.NFS4ERR_REQ_TOO_BIG}
 	case max(a.sequenceReplyBytes, a.uncachedBytes) > sess.maxResp:
-		return sequenceResult{status: NFS4ERR_REP_TOO_BIG}
+		return sequenceResult{status: nfs4.NFS4ERR_REP_TOO_BIG}
 	case args.SaCachethis() != 0 && max(a.sequenceReplyBytes, a.uncachedBytes) > sess.maxCached:
-		return sequenceResult{status: NFS4ERR_REP_TOO_BIG_TO_CACHE}
+		return sequenceResult{status: nfs4.NFS4ERR_REP_TOO_BIG_TO_CACHE}
 	}
 	slot := &sess.slots[slotID]
 	seq := args.SaSequenceid()
@@ -377,7 +379,7 @@ func (s *Server) startSequence(args SEQUENCE4args, admission ...sequenceAdmissio
 	// slot.seq is the sequence id of the request running or last completed
 	// on the slot.
 	if !slot.mu.TryLock() {
-		return sequenceResult{status: NFS4ERR_DELAY}
+		return sequenceResult{status: nfs4.NFS4ERR_DELAY}
 	}
 	defer slot.mu.Unlock()
 	replay := slot.occupied && seq == slot.seq
@@ -385,18 +387,18 @@ func (s *Server) startSequence(args SEQUENCE4args, admission ...sequenceAdmissio
 	case replay:
 		// Retransmission of the last request on this slot.
 		if slot.inUse {
-			return sequenceResult{status: NFS4ERR_DELAY}
+			return sequenceResult{status: nfs4.NFS4ERR_DELAY}
 		}
 		if slot.digest != a.digest || slot.user != a.user {
-			return sequenceResult{status: NFS4ERR_SEQ_FALSE_RETRY}
+			return sequenceResult{status: nfs4.NFS4ERR_SEQ_FALSE_RETRY}
 		}
 		if slot.buffer == nil {
-			return sequenceResult{status: NFS4ERR_BADSESSION}
+			return sequenceResult{status: nfs4.NFS4ERR_BADSESSION}
 		}
 	case !slot.inUse && (slot.occupied && seq == slot.seq+1 ||
 		!slot.occupied && seq == 1):
 	default:
-		return sequenceResult{status: NFS4ERR_SEQ_MISORDERED}
+		return sequenceResult{status: nfs4.NFS4ERR_SEQ_MISORDERED}
 	}
 
 	// Admission (canonical r3 §7.1) holds slot.mu throughout and does no
@@ -416,19 +418,19 @@ func (s *Server) startSequence(args SEQUENCE4args, admission ...sequenceAdmissio
 	// Lease gate: a provisional hold. DELAY while expiry is decided,
 	// BADSESSION once it was. Releasing it renews nothing.
 	hold, status := s.sessions.holdRequest(sess)
-	if status != NFS4_OK {
+	if status != nfs4.NFS4_OK {
 		return sequenceResult{status: status}
 	}
 	undo = append(undo, hold.release)
 	// Pin: while held, the session record cannot be released.
 	if !s.sessions.useSession(sess) {
-		return sequenceResult{status: NFS4ERR_BADSESSION}
+		return sequenceResult{status: nfs4.NFS4ERR_BADSESSION}
 	}
 	undo = append(undo, func() { s.sessions.releaseSessionUse(sess) })
 	// Association, counted against the connection's quota while pending.
 	token, ok := a.connection.reserve(s, id)
 	if !ok {
-		return sequenceResult{status: NFS4ERR_RESOURCE}
+		return sequenceResult{status: nfs4.NFS4ERR_RESOURCE}
 	}
 	undo = append(undo, token.abort)
 	// Reply reservation: a new request charges a new buffer while the old
@@ -444,16 +446,16 @@ func (s *Server) startSequence(args SEQUENCE4args, admission ...sequenceAdmissio
 			reservation = int(budget)
 		}
 		if reply, ok = s.sessions.reserveSlotReply(sess, slot, reservation); !ok {
-			return sequenceResult{status: NFS4ERR_RESOURCE}
+			return sequenceResult{status: nfs4.NFS4ERR_RESOURCE}
 		}
 		undo = append(undo, reply.release)
 	}
 	// Renewal check, from memory only.
-	if status := s.renewalCheck(hold, sess); status != NFS4_OK {
+	if status := s.renewalCheck(hold, sess); status != nfs4.NFS4_OK {
 		return sequenceResult{status: status}
 	}
 	if sess.destroyed.Load() || sess.fatal.Load() {
-		return sequenceResult{status: NFS4ERR_BADSESSION}
+		return sequenceResult{status: nfs4.NFS4ERR_BADSESSION}
 	}
 
 	// Commit, which cannot fail.
@@ -464,7 +466,7 @@ func (s *Server) startSequence(args SEQUENCE4args, admission ...sequenceAdmissio
 	if replay {
 		slot.buffer.retain()
 		s.sessions.releaseSessionUse(sess)
-		return sequenceResult{status: NFS4_OK, sess: sess, replay: slot.reply, view: slot.buffer, hold: hold}
+		return sequenceResult{status: nfs4.NFS4_OK, sess: sess, replay: slot.reply, view: slot.buffer, hold: hold}
 	}
 	s.sessions.installSlotReply(slot, reply)
 	slot.seq, slot.occupied, slot.inUse = seq, true, true
@@ -472,7 +474,7 @@ func (s *Server) startSequence(args SEQUENCE4args, admission ...sequenceAdmissio
 	slot.digest, slot.user = a.digest, a.user
 	return sequenceResult{
 		hold:   hold,
-		status: NFS4_OK,
+		status: nfs4.NFS4_OK,
 		sess:   sess,
 		slot:   slot,
 		slotID: slotID,
@@ -528,8 +530,8 @@ func (r *sequenceResult) finish(reply []byte) {
 		binary.BigEndian.PutUint32(saved[countOff:], 1)
 		if count > 1 {
 			op := binary.BigEndian.Uint32(reply[seqEnd:])
-			status := uint32(NFS4ERR_RETRY_UNCACHED_REP)
-			if op == OP_ILLEGAL || mandatoryUnsupported(op) {
+			status := uint32(nfs4.NFS4ERR_RETRY_UNCACHED_REP)
+			if op == nfs4.OP_ILLEGAL || mandatoryUnsupported(op) {
 				// RFC 8881 §2.10.6.1.3 forbids replacing these required errors.
 				status = binary.BigEndian.Uint32(reply[seqEnd+4:])
 			}
@@ -548,26 +550,26 @@ func (r *sequenceResult) finish(reply []byte) {
 // A lease this process cannot prove, or a confirmed pointer not read
 // recently, gives DELAY and asks the refresher to verify.
 func (s *Server) renewalCheck(hold *requestHold, sess *session) uint32 {
-	if status := hold.gateStatus(); status != NFS4_OK {
+	if status := hold.gateStatus(); status != nfs4.NFS4_OK {
 		return status
 	}
 	view, ok := s.clients.leaseView(sess.clientID)
 	if !ok {
 		// No refresher record credit.
-		return NFS4ERR_DELAY
+		return nfs4.NFS4ERR_DELAY
 	}
 	if view.state != leaseRecordLive {
-		return NFS4ERR_BADSESSION
+		return nfs4.NFS4ERR_BADSESSION
 	}
 	now := s.clients.now().UnixNano()
 	if view.proven <= now || view.verifiedAt < now-int64(nfsLeaseRenewAfter) {
 		s.clients.requestLeaseVerify(sess.clientID)
-		return NFS4ERR_DELAY
+		return nfs4.NFS4ERR_DELAY
 	}
-	return NFS4_OK
+	return nfs4.NFS4_OK
 }
 
-func (s *Server) writeSequenceOK(w *COMPOUND4resWriter, seq *sequenceResult) {
+func (s *Server) writeSequenceOK(w *nfs4.COMPOUND4resWriter, seq *sequenceResult) {
 	ew := w.AppendResarray_Sequence()
 	ok := ew.SetValue_Nfs4Ok()
 	writeSessionID(ok.SrSessionid(), seq.sess.id)
@@ -580,7 +582,7 @@ func (s *Server) writeSequenceOK(w *COMPOUND4resWriter, seq *sequenceResult) {
 	w.Resume(ew.Finish())
 }
 
-func writeSequenceError(w *COMPOUND4resWriter, status uint32) {
+func writeSequenceError(w *nfs4.COMPOUND4resWriter, status uint32) {
 	ew := w.AppendResarray_Sequence()
 	ew.SetValue_Default(status)
 	w.Resume(ew.Finish())
@@ -596,9 +598,9 @@ func (s *Server) serverOwnerMajor() []byte {
 var serverScope = []byte("ternfs")
 
 func (s *Server) opExchangeID(
-	args EXCHANGEID4args,
+	args nfs4.EXCHANGEID4args,
 	st *compoundState,
-	w *COMPOUND4resWriter,
+	w *nfs4.COMPOUND4resWriter,
 ) uint32 {
 	fail := func(status uint32) uint32 {
 		ew := w.AppendResarray_ExchangeId()
@@ -607,29 +609,29 @@ func (s *Server) opExchangeID(
 		return status
 	}
 	flags := args.EiaFlags()
-	if flags&^(EXCHGID4_FLAG_SUPP_MOVED_REFER|EXCHGID4_FLAG_SUPP_MOVED_MIGR|
-		EXCHGID4_FLAG_BIND_PRINC_STATEID|EXCHGID4_FLAG_MASK_PNFS|
-		EXCHGID4_FLAG_UPD_CONFIRMED_REC_A) != 0 {
-		return fail(NFS4ERR_INVAL)
+	if flags&^(nfs4.EXCHGID4_FLAG_SUPP_MOVED_REFER|nfs4.EXCHGID4_FLAG_SUPP_MOVED_MIGR|
+		nfs4.EXCHGID4_FLAG_BIND_PRINC_STATEID|nfs4.EXCHGID4_FLAG_MASK_PNFS|
+		nfs4.EXCHGID4_FLAG_UPD_CONFIRMED_REC_A) != 0 {
+		return fail(nfs4.NFS4ERR_INVAL)
 	}
 	if args.EiaClientImplIdCount() > 1 {
-		return fail(NFS4ERR_BADXDR)
+		return fail(nfs4.NFS4ERR_BADXDR)
 	}
-	if args.EiaStateProtectType() != SP4_NONE {
-		return fail(NFS4ERR_ENCR_ALG_UNSUPP)
+	if args.EiaStateProtectType() != nfs4.SP4_NONE {
+		return fail(nfs4.NFS4ERR_ENCR_ALG_UNSUPP)
 	}
 	owner := args.EiaClientowner()
 	ownerKey := string(owner.CoOwnerid())
 	verifier := verifierBytes(owner.CoVerifier())
 	ss := s.sessions
-	if flags&EXCHGID4_FLAG_UPD_CONFIRMED_REC_A != 0 {
+	if flags&nfs4.EXCHGID4_FLAG_UPD_CONFIRMED_REC_A != 0 {
 		// An update of a confirmed record (RFC 8881 section 18.35.5,
 		// cases 6-9). nfsd has no per-client properties for an update to
 		// change, so a valid update returns the record unchanged. It only
 		// reads, so it needs no ordering with a confirmation beyond waiting
 		// while one is in progress (§5.4).
 		if s.confirmingOwner(ownerKey) {
-			return fail(NFS4ERR_DELAY)
+			return fail(nfs4.NFS4ERR_DELAY)
 		}
 		ss.mu.Lock()
 		var c *sessionClient
@@ -638,15 +640,15 @@ func (s *Server) opExchangeID(
 		}
 		ss.mu.Unlock()
 		if c == nil {
-			return fail(NFS4ERR_NOENT)
+			return fail(nfs4.NFS4ERR_NOENT)
 		}
 		incarnation, status := s.clients.confirmedRecord(owner.CoOwnerid(), verifier, st.principal)
-		if status != NFS4_OK {
+		if status != nfs4.NFS4_OK {
 			return fail(status)
 		}
 		if incarnation != c.incarnation {
 			// This process's confirmed record is no longer the durable one.
-			return fail(NFS4ERR_NOENT)
+			return fail(nfs4.NFS4ERR_NOENT)
 		}
 		return s.writeExchangeIDResult(w, c, true)
 	}
@@ -662,7 +664,7 @@ func (s *Server) opExchangeID(
 	// publication finish before protection is installed, or it sees the
 	// owner confirming and waits (§5.4).
 	if s.confirmingOwner(ownerKey) {
-		return fail(NFS4ERR_DELAY)
+		return fail(nfs4.NFS4ERR_DELAY)
 	}
 
 	// Case 2: a retransmission or a client that already holds the record.
@@ -685,11 +687,11 @@ func (s *Server) opExchangeID(
 		// the store; while a confirmation protects it, the client waits.
 		if o.confirmed.confirming != nil {
 			ss.mu.Unlock()
-			return fail(NFS4ERR_DELAY)
+			return fail(nfs4.NFS4ERR_DELAY)
 		}
 		ss.retireWireLocked(o.confirmed)
 	}
-	if status := s.wireCapacityLocked(0); status != NFS4_OK {
+	if status := s.wireCapacityLocked(0); status != nfs4.NFS4_OK {
 		ss.mu.Unlock()
 		return fail(status)
 	}
@@ -700,7 +702,7 @@ func (s *Server) opExchangeID(
 	if err != nil {
 		var inUse clientInUseError
 		if errors.As(err, &inUse) {
-			return fail(NFS4ERR_CLID_INUSE)
+			return fail(nfs4.NFS4ERR_CLID_INUSE)
 		}
 		return fail(clientStoreErrToNFS(err))
 	}
@@ -717,12 +719,12 @@ func (s *Server) opExchangeID(
 	if g := ss.groups[incarnation]; g != nil && g.state == groupClosing {
 		// Another client is replacing this incarnation.
 		ss.mu.Unlock()
-		return fail(NFS4ERR_DELAY)
+		return fail(nfs4.NFS4ERR_DELAY)
 	}
 	if o != nil && o.unconfirmed != nil && o.unconfirmed.confirming != nil {
 		// The record is being confirmed: it is not superseded (§5.4).
 		ss.mu.Unlock()
-		return fail(NFS4ERR_DELAY)
+		return fail(nfs4.NFS4ERR_DELAY)
 	}
 	// Case 4: a new EXCHANGE_ID supersedes the owner's unconfirmed record,
 	// and an incarnation has one live record.
@@ -732,7 +734,7 @@ func (s *Server) opExchangeID(
 	if g := ss.groups[incarnation]; g != nil && g.wire != nil {
 		ss.retireWireLocked(g.wire)
 	}
-	if status := s.wireCapacityLocked(incarnation); status != NFS4_OK {
+	if status := s.wireCapacityLocked(incarnation); status != nfs4.NFS4_OK {
 		ss.mu.Unlock()
 		return fail(status)
 	}
@@ -740,7 +742,7 @@ func (s *Server) opExchangeID(
 	if err != nil {
 		ss.mu.Unlock()
 		s.log.Error("cannot issue an EXCHANGE_ID clientid", "err", err)
-		return fail(NFS4ERR_SERVERFAULT)
+		return fail(nfs4.NFS4ERR_SERVERFAULT)
 	}
 	// wireCapacityLocked checked the group credit under this lock.
 	g, _ := ss.groupLocked(incarnation)
@@ -774,7 +776,7 @@ func (s *Server) wireCapacityLocked(incarnation uint64) uint32 {
 	ss := s.sessions
 	if err := ss.wireIDs.available(); err != nil {
 		s.log.Error("cannot issue an EXCHANGE_ID clientid", "err", err)
-		return NFS4ERR_SERVERFAULT
+		return nfs4.NFS4ERR_SERVERFAULT
 	}
 	admits := func() bool {
 		return len(ss.clients) < ss.wireLimit && ss.groupAvailableLocked(incarnation)
@@ -783,12 +785,12 @@ func (s *Server) wireCapacityLocked(incarnation uint64) uint32 {
 		ss.reclaimUnconfirmedLocked(s.clients.now())
 	}
 	if !admits() {
-		return NFS4ERR_DELAY
+		return nfs4.NFS4ERR_DELAY
 	}
-	return NFS4_OK
+	return nfs4.NFS4_OK
 }
 
-func (s *Server) writeExchangeIDResult(w *COMPOUND4resWriter, c *sessionClient, confirmed bool) uint32 {
+func (s *Server) writeExchangeIDResult(w *nfs4.COMPOUND4resWriter, c *sessionClient, confirmed bool) uint32 {
 	s.sessions.mu.Lock()
 	nextSeq := c.csSeq + 1
 	s.sessions.mu.Unlock()
@@ -796,12 +798,12 @@ func (s *Server) writeExchangeIDResult(w *COMPOUND4resWriter, c *sessionClient, 
 	ok := ew.SetValue_Nfs4Ok()
 	ok.SetEirClientid(c.clientID)
 	ok.SetEirSequenceid(nextSeq)
-	resFlags := uint32(EXCHGID4_FLAG_USE_NON_PNFS)
+	resFlags := uint32(nfs4.EXCHGID4_FLAG_USE_NON_PNFS)
 	if confirmed {
-		resFlags |= EXCHGID4_FLAG_CONFIRMED_R
+		resFlags |= nfs4.EXCHGID4_FLAG_CONFIRMED_R
 	}
 	ok.SetEirFlags(resFlags)
-	ok.SetEirStateProtectType(SP4_NONE)
+	ok.SetEirStateProtectType(nfs4.SP4_NONE)
 	ok.SetEirStateProtect_None()
 	sow := ok.StartEirServerOwner()
 	sow.SetSoMinorId(0)
@@ -811,10 +813,10 @@ func (s *Server) writeExchangeIDResult(w *COMPOUND4resWriter, c *sessionClient, 
 	ok.Resume(impl.Finish())
 	ew.Resume(ok.Finish())
 	w.Resume(ew.Finish())
-	return NFS4_OK
+	return nfs4.NFS4_OK
 }
 
-func readChannelAttrs(m ChannelAttrs4) channelAttrs {
+func readChannelAttrs(m nfs4.ChannelAttrs4) channelAttrs {
 	return channelAttrs{
 		headerPad: m.CaHeaderpadsize(),
 		maxReq:    m.CaMaxrequestsize(),
@@ -825,7 +827,7 @@ func readChannelAttrs(m ChannelAttrs4) channelAttrs {
 	}
 }
 
-func writeChannelAttrs(w ChannelAttrs4Writer, a channelAttrs) []byte {
+func writeChannelAttrs(w nfs4.ChannelAttrs4Writer, a channelAttrs) []byte {
 	w.SetCaHeaderpadsize(a.headerPad)
 	w.SetCaMaxrequestsize(a.maxReq)
 	w.SetCaMaxresponsesize(a.maxResp)
@@ -853,9 +855,9 @@ func (s *Server) negotiateForeChannel(req channelAttrs) channelAttrs {
 }
 
 func (s *Server) opCreateSession(
-	args CREATESESSION4args,
+	args nfs4.CREATESESSION4args,
 	st *compoundState,
-	w *COMPOUND4resWriter,
+	w *nfs4.COMPOUND4resWriter,
 ) uint32 {
 	fail := func(status uint32) uint32 {
 		ew := w.AppendResarray_CreateSession()
@@ -865,29 +867,29 @@ func (s *Server) opCreateSession(
 	}
 	clientID := args.CsaClientid()
 	seq := args.CsaSequence()
-	if args.CsaFlags()&^(CREATE_SESSION4_FLAG_PERSIST|CREATE_SESSION4_FLAG_CONN_BACK_CHAN|
-		CREATE_SESSION4_FLAG_CONN_RDMA) != 0 {
-		return fail(NFS4ERR_INVAL)
+	if args.CsaFlags()&^(nfs4.CREATE_SESSION4_FLAG_PERSIST|nfs4.CREATE_SESSION4_FLAG_CONN_BACK_CHAN|
+		nfs4.CREATE_SESSION4_FLAG_CONN_RDMA) != 0 {
+		return fail(nfs4.NFS4ERR_INVAL)
 	}
 	fore := readChannelAttrs(args.CsaForeChanAttrs())
 	back := readChannelAttrs(args.CsaBackChanAttrs())
 	if args.CsaForeChanAttrs().CaRdmaIrdCount() > 1 ||
 		args.CsaBackChanAttrs().CaRdmaIrdCount() > 1 {
-		return fail(NFS4ERR_BADXDR)
+		return fail(nfs4.NFS4ERR_BADXDR)
 	}
 	if fore.maxReq < minSessionRequest || fore.maxResp < minSessionResponse ||
 		back.maxReq < minSessionRequest || back.maxResp < minSessionResponse ||
 		fore.maxOps < 2 {
-		return fail(NFS4ERR_TOOSMALL)
+		return fail(nfs4.NFS4ERR_TOOSMALL)
 	}
 	// The callback credential is checked before the slot, and only when a
 	// backchannel is asked for: clients without one may offer none (libnfs
 	// sends an empty list).
-	backRequested := args.CsaFlags()&CREATE_SESSION4_FLAG_CONN_BACK_CHAN != 0
+	backRequested := args.CsaFlags()&nfs4.CREATE_SESSION4_FLAG_CONN_BACK_CHAN != 0
 	var cbSec callbackSec
 	if backRequested {
 		var status uint32
-		if cbSec, status = parseCallbackSec(args.CsaSecParms()); status != NFS4_OK {
+		if cbSec, status = parseCallbackSec(args.CsaSecParms()); status != nfs4.NFS4_OK {
 			return fail(status)
 		}
 	}
@@ -928,17 +930,17 @@ func (s *Server) opCreateSession(
 	// costs nothing; a new association needs quota.
 	replayAssociation := func(reply createSessionResult) uint32 {
 		if ss.lookup(reply.id) == nil {
-			return NFS4_OK
+			return nfs4.NFS4_OK
 		}
 		t, ok := st.connection.reserve(s, reply.id)
 		if !ok {
-			return NFS4ERR_RESOURCE
+			return nfs4.NFS4ERR_RESOURCE
 		}
 		var bt *backToken
 		if reply.back {
 			if bt, ok = st.connection.reserveBack(s, reply.id); !ok {
 				t.abort()
-				return NFS4ERR_RESOURCE
+				return nfs4.NFS4ERR_RESOURCE
 			}
 		}
 		t.commit()
@@ -947,7 +949,7 @@ func (s *Server) opCreateSession(
 		} else {
 			bt.abort()
 		}
-		return NFS4_OK
+		return nfs4.NFS4_OK
 	}
 	// The clientid is looked up only among this process's wire records:
 	// never issued, from another epoch or retired is STALE_CLIENTID, before
@@ -956,7 +958,7 @@ func (s *Server) opCreateSession(
 	c := ss.wireRecordLocked(clientID)
 	if c == nil {
 		ss.mu.Unlock()
-		return fail(NFS4ERR_STALE_CLIENTID)
+		return fail(nfs4.NFS4ERR_STALE_CLIENTID)
 	}
 	// Outcomes that create nothing are decided from the slot before any
 	// reservation, so they need no group credit, session record or serial,
@@ -973,17 +975,17 @@ func (s *Server) opCreateSession(
 	case c.csBusy && seq == c.csBusySeq && c.confirming != nil:
 		held, early = c.confirming, true
 	case g != nil && g.state == groupClosing:
-		early, earlyStatus = true, NFS4ERR_DELAY
+		early, earlyStatus = true, nfs4.NFS4ERR_DELAY
 	case g != nil && g.state == groupReplaced:
-		early, earlyStatus = true, NFS4ERR_STALE_CLIENTID
+		early, earlyStatus = true, nfs4.NFS4ERR_STALE_CLIENTID
 	case c.csBusy && seq == c.csBusySeq:
-		early, earlyStatus = true, NFS4ERR_DELAY
+		early, earlyStatus = true, nfs4.NFS4ERR_DELAY
 	case c.csCached && seq == c.csSeq:
 		early, earlyStatus = true, c.csStatus
-		cached, reply = c.csStatus == NFS4_OK, c.csReply
+		cached, reply = c.csStatus == nfs4.NFS4_OK, c.csReply
 	case c.csBusy || seq != c.csSeq+1:
 		// Misordering never overwrites the cached outcome.
-		early, earlyStatus = true, NFS4ERR_SEQ_MISORDERED
+		early, earlyStatus = true, nfs4.NFS4ERR_SEQ_MISORDERED
 	}
 	ss.mu.Unlock()
 	switch {
@@ -993,7 +995,7 @@ func (s *Server) opCreateSession(
 		// at the record cap.
 		status, reply, done := s.retryHeldConfirmation(held, st)
 		settled = done
-		if status != NFS4_OK {
+		if status != nfs4.NFS4_OK {
 			return fail(status)
 		}
 		return writeCreateSessionResult(w, reply)
@@ -1002,7 +1004,7 @@ func (s *Server) opCreateSession(
 		// session stays BADSESSION and the connection gains nothing. A
 		// session already associated with the connection replays at the
 		// quota; only a new association is refused there.
-		if status := replayAssociation(reply); status != NFS4_OK {
+		if status := replayAssociation(reply); status != nfs4.NFS4_OK {
 			return fail(status)
 		}
 		return writeCreateSessionResult(w, reply)
@@ -1020,30 +1022,30 @@ func (s *Server) opCreateSession(
 	// Replacement of this incarnation waits until the session is inserted
 	// or this request fails.
 	end, status := ss.beginCreate(incarnation)
-	if status != NFS4_OK {
+	if status != nfs4.NFS4_OK {
 		return fail(status)
 	}
 	cr.endCreate = end
 	// The bounded volatile session record and a non-reused local serial.
 	id, admitted := ss.reserveSessionRecord(incarnation)
 	if !admitted {
-		return fail(NFS4ERR_DELAY)
+		return fail(nfs4.NFS4ERR_DELAY)
 	}
 	cr.id, cr.record = id, true
 	// The refresher record that bootstrap will use (canonical r3 §9.4).
 	if cr.leaseRecord, admitted = s.clients.reserveLeaseRecord(incarnation); !admitted {
-		return fail(NFS4ERR_DELAY)
+		return fail(nfs4.NFS4ERR_DELAY)
 	}
 	// The new session's association on this connection, and its back
 	// association when a backchannel is asked for and this transport can
 	// carry one: both before the slot, so a full connection changes nothing.
 	if token, admitted = st.connection.reserve(s, id); !admitted {
-		return fail(NFS4ERR_RESOURCE)
+		return fail(nfs4.NFS4ERR_RESOURCE)
 	}
 	cr.backGrant = backRequested && st.connection.carriesCallbacks()
 	if cr.backGrant {
 		if backTok, admitted = st.connection.reserveBack(s, id); !admitted {
-			return fail(NFS4ERR_RESOURCE)
+			return fail(nfs4.NFS4ERR_RESOURCE)
 		}
 	}
 
@@ -1054,32 +1056,32 @@ func (s *Server) opCreateSession(
 	ss.mu.Lock()
 	if c.retired {
 		ss.mu.Unlock()
-		return fail(NFS4ERR_STALE_CLIENTID)
+		return fail(nfs4.NFS4ERR_STALE_CLIENTID)
 	}
 	switch {
 	case c.csBusy && seq == c.csBusySeq:
 		// The request owning the slot is running, or a confirmation was
 		// registered since the check above; its retry settles it.
 		ss.mu.Unlock()
-		return fail(NFS4ERR_DELAY)
+		return fail(nfs4.NFS4ERR_DELAY)
 	case c.csCached && seq == c.csSeq:
 		reply, cachedStatus := c.csReply, c.csStatus
 		ss.mu.Unlock()
-		if cachedStatus != NFS4_OK {
+		if cachedStatus != nfs4.NFS4_OK {
 			return fail(cachedStatus)
 		}
 		// This request creates nothing: its own tokens go, and the
 		// cached result's association follows the replay rule.
 		token.abort()
 		backTok.abort()
-		if status := replayAssociation(reply); status != NFS4_OK {
+		if status := replayAssociation(reply); status != nfs4.NFS4_OK {
 			return fail(status)
 		}
 		return writeCreateSessionResult(w, reply)
 	case c.csBusy || seq != c.csSeq+1:
 		// Misordering never overwrites the cached outcome.
 		ss.mu.Unlock()
-		return fail(NFS4ERR_SEQ_MISORDERED)
+		return fail(nfs4.NFS4ERR_SEQ_MISORDERED)
 	}
 	c.csBusy, c.csBusySeq = true, seq
 	cr.slot = true // Any exit that caches no outcome rolls the slot back.
@@ -1092,7 +1094,7 @@ func (s *Server) opCreateSession(
 		// check, writes A, B and D, and acting on their result (§5.3).
 		status, reply, owned := s.confirmPending(cr, confirm, principal, st.principal)
 		handedOver = owned
-		if status != NFS4_OK {
+		if status != nfs4.NFS4_OK {
 			return fail(status)
 		}
 		return associate(reply)
@@ -1101,9 +1103,9 @@ func (s *Server) opCreateSession(
 		// An unconfirmed (adopted) record belongs to the principal that
 		// registered it.
 		ss.mu.Lock()
-		cr.cacheLocked(NFS4ERR_CLID_INUSE, createSessionResult{})
+		cr.cacheLocked(nfs4.NFS4ERR_CLID_INUSE, createSessionResult{})
 		ss.mu.Unlock()
-		return fail(NFS4ERR_CLID_INUSE)
+		return fail(nfs4.NFS4ERR_CLID_INUSE)
 	}
 	// An adopted or already confirmed record: check, without writing, that
 	// the incarnation is still the confirmed one (§5.2). If not,
@@ -1118,7 +1120,7 @@ func (s *Server) opCreateSession(
 		ss.mu.Lock()
 		ss.retireWireLocked(c)
 		ss.mu.Unlock()
-		return fail(NFS4ERR_STALE_CLIENTID)
+		return fail(nfs4.NFS4ERR_STALE_CLIENTID)
 	}
 	ss.mu.Lock()
 	// A later EXCHANGE_ID may have retired the record while this request
@@ -1126,55 +1128,55 @@ func (s *Server) opCreateSession(
 	reply, inserted := cr.commitLocked()
 	ss.mu.Unlock()
 	if !inserted {
-		return fail(NFS4ERR_STALE_CLIENTID)
+		return fail(nfs4.NFS4ERR_STALE_CLIENTID)
 	}
 	return associate(reply)
 }
 
-func writeCreateSessionResult(w *COMPOUND4resWriter, r createSessionResult) uint32 {
+func writeCreateSessionResult(w *nfs4.COMPOUND4resWriter, r createSessionResult) uint32 {
 	ew := w.AppendResarray_CreateSession()
 	ok := ew.SetValue_Nfs4Ok()
 	writeSessionID(ok.CsrSessionid(), r.id)
 	ok.SetCsrSequence(r.seq)
 	var flags uint32
 	if r.back {
-		flags = CREATE_SESSION4_FLAG_CONN_BACK_CHAN
+		flags = nfs4.CREATE_SESSION4_FLAG_CONN_BACK_CHAN
 	}
 	ok.SetCsrFlags(flags)
 	ok.Resume(writeChannelAttrs(ok.StartCsrForeChanAttrs(), r.foreAttrs))
 	ok.Resume(writeChannelAttrs(ok.StartCsrBackChanAttrs(), r.backAttr))
 	ew.Resume(ok.Finish())
 	w.Resume(ew.Finish())
-	return NFS4_OK
+	return nfs4.NFS4_OK
 }
 
-func (s *Server) opDestroySession(args DESTROYSESSION4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
+func (s *Server) opDestroySession(args nfs4.DESTROYSESSION4args, st *compoundState, w *nfs4.COMPOUND4resWriter) uint32 {
 	r := w.AppendResarray_DestroySession()
 	id := readSessionID(args.DsaSessionid())
 	if s.sessions.lookup(id) == nil {
-		r.SetDsrStatus(NFS4ERR_BADSESSION)
-		return NFS4ERR_BADSESSION
+		r.SetDsrStatus(nfs4.NFS4ERR_BADSESSION)
+		return nfs4.NFS4ERR_BADSESSION
 	}
 	if !st.connection.associated(id) {
-		r.SetDsrStatus(NFS4ERR_CONN_NOT_BOUND_TO_SESSION)
-		return NFS4ERR_CONN_NOT_BOUND_TO_SESSION
+		r.SetDsrStatus(nfs4.NFS4ERR_CONN_NOT_BOUND_TO_SESSION)
+		return nfs4.NFS4ERR_CONN_NOT_BOUND_TO_SESSION
 	}
 	if !s.sessions.destroySession(id) {
-		r.SetDsrStatus(NFS4ERR_BADSESSION)
-		return NFS4ERR_BADSESSION
+		r.SetDsrStatus(nfs4.NFS4ERR_BADSESSION)
+		return nfs4.NFS4ERR_BADSESSION
 	}
-	r.SetDsrStatus(NFS4_OK)
-	return NFS4_OK
+	r.SetDsrStatus(nfs4.NFS4_OK)
+	return nfs4.NFS4_OK
 }
 
-func (s *Server) opDestroyClientID(args DESTROYCLIENTID4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
+func (s *Server) opDestroyClientID(args nfs4.DESTROYCLIENTID4args, st *compoundState, w *nfs4.COMPOUND4resWriter) uint32 {
 	r := w.AppendResarray_DestroyClientid()
 	s.sessions.mu.Lock()
 	c := s.sessions.wireRecordLocked(args.DcaClientid())
 	s.sessions.mu.Unlock()
 	stale := func() uint32 {
-		r.SetDcrStatus(NFS4ERR_STALE_CLIENTID)
-		return NFS4ERR_STALE_CLIENTID
+		r.SetDcrStatus(nfs4.NFS4ERR_STALE_CLIENTID)
+		return nfs4.NFS4ERR_STALE_CLIENTID
 	}
 	if c == nil {
 		return stale()
@@ -1196,70 +1198,70 @@ func (s *Server) opDestroyClientID(args DESTROYCLIENTID4args, st *compoundState,
 	// Opens still make the client busy after its last session is destroyed.
 	busy = busy || len(s.opens.clientStates(incarnation)) != 0
 	if busy {
-		r.SetDcrStatus(NFS4ERR_CLIENTID_BUSY)
-		return NFS4ERR_CLIENTID_BUSY
+		r.SetDcrStatus(nfs4.NFS4ERR_CLIENTID_BUSY)
+		return nfs4.NFS4ERR_CLIENTID_BUSY
 	}
 	// The checks above can be overtaken by a CREATE_SESSION, which does not
 	// take the owner lock; the final step repeats them under the retirement
 	// lock.
-	if status := s.sessions.destroyClientRecord(c); status != NFS4_OK {
+	if status := s.sessions.destroyClientRecord(c); status != nfs4.NFS4_OK {
 		r.SetDcrStatus(status)
 		return status
 	}
 	s.expireClientState(incarnation)
-	r.SetDcrStatus(NFS4_OK)
-	return NFS4_OK
+	r.SetDcrStatus(nfs4.NFS4_OK)
+	return nfs4.NFS4_OK
 }
 
-func (s *Server) opBindConnToSession(args BINDCONNTOSESSION4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
+func (s *Server) opBindConnToSession(args nfs4.BINDCONNTOSESSION4args, st *compoundState, w *nfs4.COMPOUND4resWriter) uint32 {
 	ew := w.AppendResarray_BindConnToSession()
 	id := readSessionID(args.BctsaSessid())
 	if s.sessions.lookup(id) == nil {
 		// Unknown, including a session from before an nfsd restart: the
 		// client creates a new one.
-		ew.SetValue_Default(NFS4ERR_BADSESSION)
+		ew.SetValue_Default(nfs4.NFS4ERR_BADSESSION)
 		w.Resume(ew.Finish())
-		return NFS4ERR_BADSESSION
+		return nfs4.NFS4ERR_BADSESSION
 	}
 	dir := args.BctsaDir()
-	if args.BctsaUseConnInRdmaMode() != 0 || dir != CDFC4_FORE && dir != CDFC4_BACK &&
-		dir != CDFC4_FORE_OR_BOTH && dir != CDFC4_BACK_OR_BOTH {
-		ew.SetValue_Default(NFS4ERR_INVAL)
+	if args.BctsaUseConnInRdmaMode() != 0 || dir != nfs4.CDFC4_FORE && dir != nfs4.CDFC4_BACK &&
+		dir != nfs4.CDFC4_FORE_OR_BOTH && dir != nfs4.CDFC4_BACK_OR_BOTH {
+		ew.SetValue_Default(nfs4.NFS4ERR_INVAL)
 		w.Resume(ew.Finish())
-		return NFS4ERR_INVAL
+		return nfs4.NFS4ERR_INVAL
 	}
 	sess := s.sessions.lookup(id)
 	if sess == nil || sess.destroyed.Load() || sess.fatal.Load() {
-		ew.SetValue_Default(NFS4ERR_BADSESSION)
+		ew.SetValue_Default(nfs4.NFS4ERR_BADSESSION)
 		w.Resume(ew.Finish())
-		return NFS4ERR_BADSESSION
+		return nfs4.NFS4ERR_BADSESSION
 	}
-	if status := s.sessions.admissionStatus(sess.clientID); status != NFS4_OK {
+	if status := s.sessions.admissionStatus(sess.clientID); status != nfs4.NFS4_OK {
 		ew.SetValue_Default(status)
 		w.Resume(ew.Finish())
 		return status
 	}
 	fore, back, status := s.bindDirections(st, sess, dir)
-	if status != NFS4_OK {
+	if status != nfs4.NFS4_OK {
 		ew.SetValue_Default(status)
 		w.Resume(ew.Finish())
 		return status
 	}
 	// SP4_NONE permits any supported effective user; no registration-principal
 	// restriction applies here.
-	result := uint32(CDFS4_FORE)
+	result := uint32(nfs4.CDFS4_FORE)
 	switch {
 	case fore && back:
-		result = CDFS4_BOTH
+		result = nfs4.CDFS4_BOTH
 	case back:
-		result = CDFS4_BACK
+		result = nfs4.CDFS4_BACK
 	}
 	ok := ew.SetValue_Nfs4Ok()
 	writeSessionID(ok.BctsrSessid(), id)
 	ok.SetBctsrDir(result)
 	ok.SetBctsrUseConnInRdmaMode(0)
 	w.Resume(ew.Finish())
-	return NFS4_OK
+	return nfs4.NFS4_OK
 }
 
 // bindDirections decides and applies a BIND_CONN_TO_SESSION (RFC 8881
@@ -1277,13 +1279,13 @@ func (s *Server) bindDirections(st *compoundState, sess *session, dir uint32) (f
 	if conn == nil {
 		// No transport: only the fore channel, which needs no association.
 		if !bindAcceptable(dir, true, false) {
-			return false, false, NFS4ERR_INVAL
+			return false, false, nfs4.NFS4ERR_INVAL
 		}
-		return true, false, NFS4_OK
+		return true, false, nfs4.NFS4_OK
 	}
 	canBack := sess.backRequested && conn.carriesCallbacks() && sess.cb != nil
 	fore, back, added, status := conn.bindDirections(s, sess.id, dir, canBack)
-	if status == NFS4_OK && added {
+	if status == nfs4.NFS4_OK && added {
 		// The new back connection is probed after this compound's reply.
 		if probe := sess.cb.addConn(conn); probe != nil {
 			st.later(probe)
@@ -1296,11 +1298,11 @@ func (s *Server) bindDirections(st *compoundState, sess *session, dir uint32) (f
 // BIND_CONN_TO_SESSION direction.
 func bindAcceptable(dir uint32, fore, back bool) bool {
 	switch dir {
-	case CDFC4_FORE:
+	case nfs4.CDFC4_FORE:
 		return fore && !back
-	case CDFC4_BACK:
+	case nfs4.CDFC4_BACK:
 		return !fore && back
-	case CDFC4_FORE_OR_BOTH:
+	case nfs4.CDFC4_FORE_OR_BOTH:
 		return fore
 	default: // CDFC4_BACK_OR_BOTH
 		return back
@@ -1330,25 +1332,25 @@ func (st *compoundState) later(f func()) {
 }
 
 // opBackchannelCtl replaces the session's callback program and credential.
-func (s *Server) opBackchannelCtl(args BACKCHANNELCTL4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
+func (s *Server) opBackchannelCtl(args nfs4.BACKCHANNELCTL4args, st *compoundState, w *nfs4.COMPOUND4resWriter) uint32 {
 	r := w.AppendResarray_BackchannelCtl()
 	sec, status := parseCallbackSec(args.BcaSecParms())
-	if status == NFS4_OK && (st.session == nil || st.session.cb == nil) {
-		status = NFS4ERR_INVAL
+	if status == nfs4.NFS4_OK && (st.session == nil || st.session.cb == nil) {
+		status = nfs4.NFS4ERR_INVAL
 	}
-	if status == NFS4_OK {
+	if status == nfs4.NFS4_OK {
 		st.session.cb.setProgram(args.BcaCbProgram(), sec)
 	}
 	r.SetBcrStatus(status)
 	return status
 }
 
-func (s *Server) opReclaimComplete(args RECLAIMCOMPLETE4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
+func (s *Server) opReclaimComplete(args nfs4.RECLAIMCOMPLETE4args, st *compoundState, w *nfs4.COMPOUND4resWriter) uint32 {
 	r := w.AppendResarray_ReclaimComplete()
 	if args.RcaOneFs() != 0 {
 		// Per-filesystem completion is only meaningful for migration.
-		r.SetRcrStatus(NFS4_OK)
-		return NFS4_OK
+		r.SetRcrStatus(nfs4.NFS4_OK)
+		return nfs4.NFS4_OK
 	}
 	// nfsd offers no grace period, so there is never anything to reclaim.
 	s.sessions.mu.Lock()
@@ -1359,32 +1361,32 @@ func (s *Server) opReclaimComplete(args RECLAIMCOMPLETE4args, st *compoundState,
 	}
 	s.sessions.mu.Unlock()
 	if already {
-		r.SetRcrStatus(NFS4ERR_COMPLETE_ALREADY)
-		return NFS4ERR_COMPLETE_ALREADY
+		r.SetRcrStatus(nfs4.NFS4ERR_COMPLETE_ALREADY)
+		return nfs4.NFS4ERR_COMPLETE_ALREADY
 	}
-	r.SetRcrStatus(NFS4_OK)
-	return NFS4_OK
+	r.SetRcrStatus(nfs4.NFS4_OK)
+	return nfs4.NFS4_OK
 }
 
 // stateIDStatus is clientID's status for a stateid. Another client's
 // stateid, live, recovered or expired, is BAD_STATEID (canonical r3 §10).
-func (s *Server) stateIDStatus(clientID uint64, stateid Stateid4) uint32 {
+func (s *Server) stateIDStatus(clientID uint64, stateid nfs4.Stateid4) uint32 {
 	id := extractStateID(stateid)
-	if status := s.opens.status(clientID, id, stateid.Seqid()); status != NFS4ERR_BAD_STATEID {
+	if status := s.opens.status(clientID, id, stateid.Seqid()); status != nfs4.NFS4ERR_BAD_STATEID {
 		return status
 	}
 	// A write open from before a restart remains usable through its staging.
 	if s.opens.canRecover(id) {
 		for _, meta := range s.stagingStore.Entries() {
 			if meta.NFSStateID == id && meta.ClientID == clientID {
-				return NFS4_OK
+				return nfs4.NFS4_OK
 			}
 		}
 	}
-	return NFS4ERR_BAD_STATEID
+	return nfs4.NFS4ERR_BAD_STATEID
 }
 
-func (s *Server) opTestStateID(args TESTSTATEID4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
+func (s *Server) opTestStateID(args nfs4.TESTSTATEID4args, st *compoundState, w *nfs4.COMPOUND4resWriter) uint32 {
 	ew := w.AppendResarray_TestStateid()
 	ok := ew.SetValue_Nfs4Ok()
 	for i := 0; i < int(args.TsStateidsCount()); i++ {
@@ -1392,46 +1394,46 @@ func (s *Server) opTestStateID(args TESTSTATEID4args, st *compoundState, w *COMP
 	}
 	ew.Resume(ok.Finish())
 	w.Resume(ew.Finish())
-	return NFS4_OK
+	return nfs4.NFS4_OK
 }
 
-func (s *Server) opFreeStateID(args FREESTATEID4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
+func (s *Server) opFreeStateID(args nfs4.FREESTATEID4args, st *compoundState, w *nfs4.COMPOUND4resWriter) uint32 {
 	r := w.AppendResarray_FreeStateid()
 	stateid, ok := st.resolveStateID(args.FsaStateid())
 	if !ok {
-		r.SetFsrStatus(NFS4ERR_BAD_STATEID)
-		return NFS4ERR_BAD_STATEID
+		r.SetFsrStatus(nfs4.NFS4ERR_BAD_STATEID)
+		return nfs4.NFS4ERR_BAD_STATEID
 	}
 	// Live: open stateids are released by CLOSE. Expired and the caller's:
 	// forget it. Unknown or another client's: BAD_STATEID, with no effect.
 	status := s.stateIDStatus(st.clientID, stateid)
 	switch status {
-	case NFS4_OK:
-		status = NFS4ERR_LOCKS_HELD
-	case NFS4ERR_EXPIRED:
-		status = NFS4_OK
+	case nfs4.NFS4_OK:
+		status = nfs4.NFS4ERR_LOCKS_HELD
+	case nfs4.NFS4ERR_EXPIRED:
+		status = nfs4.NFS4_OK
 		if !s.opens.forget(st.clientID, extractStateID(stateid)) {
-			status = NFS4ERR_BAD_STATEID
+			status = nfs4.NFS4ERR_BAD_STATEID
 		}
-	case NFS4ERR_OLD_STATEID:
+	case nfs4.NFS4ERR_OLD_STATEID:
 	default:
-		status = NFS4ERR_BAD_STATEID
+		status = nfs4.NFS4ERR_BAD_STATEID
 	}
 	r.SetFsrStatus(status)
 	return status
 }
 
-func (s *Server) opSecinfoNoName(style uint32, st *compoundState, w *COMPOUND4resWriter) uint32 {
+func (s *Server) opSecinfoNoName(style uint32, st *compoundState, w *nfs4.COMPOUND4resWriter) uint32 {
 	ew := w.AppendResarray_SecinfoNoName()
 	if !st.currentIDSet {
-		ew.SetValue_Default(NFS4ERR_NOFILEHANDLE)
+		ew.SetValue_Default(nfs4.NFS4ERR_NOFILEHANDLE)
 		w.Resume(ew.Finish())
-		return NFS4ERR_NOFILEHANDLE
+		return nfs4.NFS4ERR_NOFILEHANDLE
 	}
-	if style == SECINFO_STYLE4_PARENT && st.currentID == s.fs.RootID() {
-		ew.SetValue_Default(NFS4ERR_NOENT)
+	if style == nfs4.SECINFO_STYLE4_PARENT && st.currentID == s.fs.RootID() {
+		ew.SetValue_Default(nfs4.NFS4ERR_NOENT)
 		w.Resume(ew.Finish())
-		return NFS4ERR_NOENT
+		return nfs4.NFS4ERR_NOENT
 	}
 	okW := ew.SetValue_Nfs4Ok()
 	okW.AppendData_Default(authSys)
@@ -1440,5 +1442,5 @@ func (s *Server) opSecinfoNoName(style uint32, st *compoundState, w *COMPOUND4re
 	w.Resume(ew.Finish())
 	// SECINFO consumes the current filehandle (RFC 8881 section 2.6.3.1.1.8).
 	st.currentIDSet = false
-	return NFS4_OK
+	return nfs4.NFS4_OK
 }

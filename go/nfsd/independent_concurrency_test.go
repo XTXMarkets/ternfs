@@ -13,6 +13,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 // peakVFS holds user-file ConstructFile and LinkFile calls at the TernVFS
@@ -98,11 +100,11 @@ func (fs *peakVFS) open() {
 
 // independentOpenBody is OPEN CREATE UNCHECKED of name for write, then GETFH.
 func independentOpenBody(clientID uint64, name string) []byte {
-	return buildCompoundBody(nil, func(w *COMPOUND4argsWriter) {
+	return buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		ow := w.AppendArgarray_Open()
-		ow.SetShareAccess(OPEN4_SHARE_ACCESS_BOTH)
-		ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
+		ow.SetShareAccess(nfs4.OPEN4_SHARE_ACCESS_BOTH)
+		ow.SetShareDeny(nfs4.OPEN4_SHARE_DENY_NONE)
 		ownerW := ow.StartOwner()
 		ownerW = ownerW.SetClientid(clientID)
 		ow.Resume(ownerW.SetOwner([]byte(name)).Finish())
@@ -146,8 +148,8 @@ func TestIndependentFilesRunConcurrently(t *testing.T) {
 	ex := it.Resarray().Value().AsEXCHANGEID4resEntry().Value().AsEXCHANGEID4resok()
 	clientID := ex.EirClientid()
 	res = client.compound(2, backCreateSessionBody(clientID, ex.EirSequenceid(), 0))
-	if res.Status() != NFS4_OK {
-		t.Fatalf("CREATE_SESSION %s", Nfsstat4Name(res.Status()))
+	if res.Status() != nfs4.NFS4_OK {
+		t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(res.Status()))
 	}
 	it = res.Resarray()
 	it.Next()
@@ -155,7 +157,7 @@ func TestIndependentFilesRunConcurrently(t *testing.T) {
 	ts := newTestSession(readSessionID(created.CsrSessionid()), clientID, created.CsrForeChanAttrs().CaMaxrequests())
 	var xids sync.Mutex
 	nextXID := uint32(10)
-	call := func(body []byte) COMPOUND4res {
+	call := func(body []byte) nfs4.COMPOUND4res {
 		xids.Lock()
 		nextXID++
 		xid := nextXID
@@ -190,8 +192,8 @@ func TestIndependentFilesRunConcurrently(t *testing.T) {
 	fs.arm("construct")
 	if peak := run("OPEN creates", func(i int) {
 		res := call(independentOpenBody(clientID, fmt.Sprintf("independent-%d", i)))
-		if res.Status() != NFS4_OK {
-			t.Errorf("OPEN %d %s", i, Nfsstat4Name(res.Status()))
+		if res.Status() != nfs4.NFS4_OK {
+			t.Errorf("OPEN %d %s", i, nfs4.Nfsstat4Name(res.Status()))
 			return
 		}
 		it := res.Resarray()
@@ -209,7 +211,7 @@ func TestIndependentFilesRunConcurrently(t *testing.T) {
 		t.Fatalf("OPEN creates peaked at %d of %d", peak, files)
 	}
 	for i := range files {
-		res := call(buildCompoundBody(nil, func(w *COMPOUND4argsWriter) {
+		res := call(buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
 			putfhOp(w, results[i].fh)
 			ww := w.AppendArgarray_Write()
 			setStateid(ww.Stateid(), results[i].sid)
@@ -218,19 +220,19 @@ func TestIndependentFilesRunConcurrently(t *testing.T) {
 			ww = ww.SetData([]byte("independent data"))
 			w.Resume(ww.Finish())
 		}))
-		if res.Status() != NFS4_OK {
-			t.Fatalf("WRITE %d %s", i, Nfsstat4Name(res.Status()))
+		if res.Status() != nfs4.NFS4_OK {
+			t.Fatalf("WRITE %d %s", i, nfs4.Nfsstat4Name(res.Status()))
 		}
 	}
 	fs.arm("link")
 	if peak := run("CLOSE publications", func(i int) {
-		res := call(buildCompoundBody(nil, func(w *COMPOUND4argsWriter) {
+		res := call(buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
 			putfhOp(w, results[i].fh)
 			cw := w.AppendArgarray_Close()
 			setStateid(cw.OpenStateid(), results[i].sid)
 		}))
-		if res.Status() != NFS4_OK {
-			t.Errorf("CLOSE %d %s", i, Nfsstat4Name(res.Status()))
+		if res.Status() != nfs4.NFS4_OK {
+			t.Errorf("CLOSE %d %s", i, nfs4.Nfsstat4Name(res.Status()))
 		}
 	}); peak != files {
 		t.Fatalf("CLOSE publications peaked at %d of %d", peak, files)

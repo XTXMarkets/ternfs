@@ -17,6 +17,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 // InodeID is a 64-bit inode identifier. Bits 62-61 encode the inode type
@@ -748,7 +750,7 @@ func (lfs *LocalTernVFS) ClassifyMutation(op uint32, err error) mutationOutcome 
 	if err == nil {
 		return mutationApplied
 	}
-	if op == OP_REMOVE && errors.Is(err, os.ErrNotExist) {
+	if op == nfs4.OP_REMOVE && errors.Is(err, os.ErrNotExist) {
 		return mutationDetachOnly
 	}
 	// Local syscalls are not retransmitted. Only their errors establish a

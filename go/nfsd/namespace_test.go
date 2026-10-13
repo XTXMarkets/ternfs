@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/msgs"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 type namespaceFaultVFS struct {
@@ -50,7 +51,7 @@ func (fs *namespaceFaultVFS) ClassifyMutation(op uint32, err error) mutationOutc
 
 func commitNamespaceStatus(t *testing.T, f *namespaceFixture) uint32 {
 	t.Helper()
-	res := sendCompound(t, f.conn, f.xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, f.conn, f.xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pw := w.AppendArgarray_Putfh()
 		pw.Resume(pw.StartObject().SetData(f.fh).Finish())
 		w.Resume(pw.Finish())
@@ -71,7 +72,7 @@ func namespaceOperation(t *testing.T, f *namespaceFixture, operation string) uin
 		return renameNamespaceFile(t, f, "target", "source")
 	default:
 		t.Fatalf("unknown operation %q", operation)
-		return NFS4ERR_IO
+		return nfs4.NFS4ERR_IO
 	}
 }
 
@@ -86,36 +87,36 @@ func TestNamespaceErrorOutcomes(t *testing.T) {
 			failed   bool
 			unlinked bool
 		}{
-			{"local rejection", os.ErrPermission, false, false, NFS4ERR_ACCESS, false, false},
-			{"lost reply", errors.New("lost reply"), true, false, NFS4ERR_IO, true, false},
-			{"send failure", errors.New("send failure"), false, false, NFS4ERR_IO, true, false},
-			{"submitted rejection", msgs.NOT_AUTHORISED, false, true, NFS4ERR_IO, true, false},
-			{"malformed response", msgs.MALFORMED_RESPONSE, true, true, NFS4ERR_IO, true, false},
-			{"edge gone", msgs.EDGE_NOT_FOUND, true, true, NFS4ERR_NOENT, false, true},
-			{"edge replaced", msgs.MISMATCHING_CREATION_TIME, true, true, NFS4ERR_NOENT, false, true},
+			{"local rejection", os.ErrPermission, false, false, nfs4.NFS4ERR_ACCESS, false, false},
+			{"lost reply", errors.New("lost reply"), true, false, nfs4.NFS4ERR_IO, true, false},
+			{"send failure", errors.New("send failure"), false, false, nfs4.NFS4ERR_IO, true, false},
+			{"submitted rejection", msgs.NOT_AUTHORISED, false, true, nfs4.NFS4ERR_IO, true, false},
+			{"malformed response", msgs.MALFORMED_RESPONSE, true, true, nfs4.NFS4ERR_IO, true, false},
+			{"edge gone", msgs.EDGE_NOT_FOUND, true, true, nfs4.NFS4ERR_NOENT, false, true},
+			{"edge replaced", msgs.MISMATCHING_CREATION_TIME, true, true, nfs4.NFS4ERR_NOENT, false, true},
 		} {
 			t.Run(operation+"/"+tc.name, func(t *testing.T) {
 				f := newNamespaceFixture(t)
 				f.server.fs = &namespaceFaultVFS{TernVFS: f.fs, err: tc.err, apply: tc.apply, remote: tc.remote}
 				if operation != "remove" && tc.unlinked {
-					tc.status, tc.failed, tc.unlinked = NFS4ERR_IO, true, false
+					tc.status, tc.failed, tc.unlinked = nfs4.NFS4ERR_IO, true, false
 				}
 				if got := namespaceOperation(t, f, operation); got != tc.status {
-					t.Fatalf("%s = %s, want %s", operation, Nfsstat4Name(got), Nfsstat4Name(tc.status))
+					t.Fatalf("%s = %s, want %s", operation, nfs4.Nfsstat4Name(got), nfs4.Nfsstat4Name(tc.status))
 				}
 				if tc.failed {
 					assertQuarantined(t, f, f.id)
 					if !f.store.Failed(f.id) {
 						t.Fatal("unknown outcome lost the tombstone")
 					}
-					if got := commitNamespaceStatus(t, f); got != NFS4ERR_IO {
-						t.Fatalf("failed COMMIT = %s", Nfsstat4Name(got))
+					if got := commitNamespaceStatus(t, f); got != nfs4.NFS4ERR_IO {
+						t.Fatalf("failed COMMIT = %s", nfs4.Nfsstat4Name(got))
 					}
-					if got := closeFileStatus(t, f.conn, &f.xid, f.fh, f.state); got != NFS4ERR_EXPIRED {
-						t.Fatalf("failed CLOSE = %s", Nfsstat4Name(got))
+					if got := closeFileStatus(t, f.conn, &f.xid, f.fh, f.state); got != nfs4.NFS4ERR_EXPIRED {
+						t.Fatalf("failed CLOSE = %s", nfs4.Nfsstat4Name(got))
 					}
-					if got := commitNamespaceStatus(t, f); got != NFS4ERR_IO {
-						t.Fatalf("COMMIT after failed CLOSE = %s", Nfsstat4Name(got))
+					if got := commitNamespaceStatus(t, f); got != nfs4.NFS4ERR_IO {
+						t.Fatalf("COMMIT after failed CLOSE = %s", nfs4.Nfsstat4Name(got))
 					}
 					return
 				}
@@ -146,8 +147,8 @@ func TestRenameStagedSourceAndDestination(t *testing.T) {
 				destinationID := stagingIDForTest(t, f.store, state)
 				writeFileAt(t, f.conn, &f.xid, f.fh, f.state, 0, []byte("source writer"))
 				writeFileAt(t, f.conn, &f.xid, fh, state, 0, []byte("target writer"))
-				if status := renameNamespaceFile(t, f, "source", "target"); status != NFS4_OK {
-					t.Fatalf("RENAME = %s", Nfsstat4Name(status))
+				if status := renameNamespaceFile(t, f, "source", "target"); status != nfs4.NFS4_OK {
+					t.Fatalf("RENAME = %s", nfs4.Nfsstat4Name(status))
 				}
 				src, _ := f.store.GetMeta(f.id)
 				dst, _ := f.store.GetMeta(destinationID)
@@ -230,7 +231,7 @@ func openNamespaceFixture(t *testing.T) *namespaceFixture {
 
 func removeNamespaceFile(t *testing.T, f *namespaceFixture, name string) uint32 {
 	t.Helper()
-	res := sendCompound(t, f.conn, f.xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, f.conn, f.xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		rw := w.AppendArgarray_Remove()
 		rw.Resume(rw.StartTarget().SetData([]byte(name)).Finish())
@@ -242,7 +243,7 @@ func removeNamespaceFile(t *testing.T, f *namespaceFixture, name string) uint32 
 
 func renameNamespaceFile(t *testing.T, f *namespaceFixture, from, to string) uint32 {
 	t.Helper()
-	res := sendCompound(t, f.conn, f.xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, f.conn, f.xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		w.AppendArgarray_Savefh()
 		rw := w.AppendArgarray_Rename()
@@ -297,8 +298,8 @@ func assertRejectedNamespaceWriter(t *testing.T, f *namespaceFixture) {
 
 func TestRemoveOpenStaging(t *testing.T) {
 	f := newNamespaceFixture(t)
-	if status := removeNamespaceFile(t, f, "source"); status != NFS4_OK {
-		t.Fatalf("REMOVE returned %s", Nfsstat4Name(status))
+	if status := removeNamespaceFile(t, f, "source"); status != nfs4.NFS4_OK {
+		t.Fatalf("REMOVE returned %s", nfs4.Nfsstat4Name(status))
 	}
 	meta, _ := f.store.GetMeta(f.id)
 	if !meta.Unlinked || meta.Guarded ||
@@ -307,9 +308,9 @@ func TestRemoveOpenStaging(t *testing.T) {
 	}
 	// Recreate the pathname before closing the old descriptor.
 	status, state, fh, _ := openFileForOwner(t, f.conn, &f.xid, f.clientID,
-		"recreated", "source", OPEN4_SHARE_ACCESS_BOTH, true, false)
-	if status != NFS4_OK {
-		t.Fatalf("recreate returned %s", Nfsstat4Name(status))
+		"recreated", "source", nfs4.OPEN4_SHARE_ACCESS_BOTH, true, false)
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("recreate returned %s", nfs4.Nfsstat4Name(status))
 	}
 	writeFileAt(t, f.conn, &f.xid, fh, state, 0, []byte("new pathname"))
 	closeFile(t, f.conn, &f.xid, fh, state)
@@ -335,8 +336,8 @@ func TestDetachedWriterReadsBaseSnapshot(t *testing.T) {
 			} else {
 				status = removeNamespaceFile(t, f, "source")
 			}
-			if status != NFS4_OK {
-				t.Fatalf("detach returned %s", Nfsstat4Name(status))
+			if status != nfs4.NFS4_OK {
+				t.Fatalf("detach returned %s", nfs4.Nfsstat4Name(status))
 			}
 			meta, _ := f.store.GetMeta(f.id)
 			if !meta.Unlinked || len(meta.Dirty) != 0 {
@@ -372,8 +373,8 @@ func TestRetiredWritersFollowNamespaceChanges(t *testing.T) {
 			case "replace":
 				status = renameNamespaceFile(t, f, "target", "source")
 			}
-			if status != NFS4_OK {
-				t.Fatalf("%s returned %s", operation, Nfsstat4Name(status))
+			if status != nfs4.NFS4_OK {
+				t.Fatalf("%s returned %s", operation, nfs4.Nfsstat4Name(status))
 			}
 			if operation != "rename" {
 				assertQuarantined(t, f, f.id)
@@ -389,9 +390,9 @@ func TestRetiredWritersFollowNamespaceChanges(t *testing.T) {
 			}
 			clientID := setupClient(t, f.conn, &f.xid)
 			status, state, fh, _ := openFileForOwner(t, f.conn, &f.xid, clientID,
-				"test-owner-source", "target", OPEN4_SHARE_ACCESS_BOTH, false, false)
-			if status != NFS4_OK {
-				t.Fatalf("reclaim returned %s", Nfsstat4Name(status))
+				"test-owner-source", "target", nfs4.OPEN4_SHARE_ACCESS_BOTH, false, false)
+			if status != nfs4.NFS4_OK {
+				t.Fatalf("reclaim returned %s", nfs4.Nfsstat4Name(status))
 			}
 			closeFile(t, f.conn, &f.xid, fh, state)
 			if _, err := os.Stat(filepath.Join(f.root, "source")); !os.IsNotExist(err) {
@@ -409,8 +410,8 @@ func TestExpiredDetachedWritersAreCollected(t *testing.T) {
 	for _, retiredBeforeRestart := range []bool{false, true} {
 		t.Run(fmt.Sprintf("already-retired=%t", retiredBeforeRestart), func(t *testing.T) {
 			f := newNamespaceFixture(t)
-			if status := removeNamespaceFile(t, f, "source"); status != NFS4_OK {
-				t.Fatal(Nfsstat4Name(status))
+			if status := removeNamespaceFile(t, f, "source"); status != nfs4.NFS4_OK {
+				t.Fatal(nfs4.Nfsstat4Name(status))
 			}
 			if retiredBeforeRestart {
 				meta, _ := f.store.GetMeta(f.id)
@@ -441,8 +442,8 @@ func TestExpiredDetachedWritersAreCollected(t *testing.T) {
 
 func TestDetachedCloseDoesNotLockOldName(t *testing.T) {
 	f := newNamespaceFixture(t)
-	if status := removeNamespaceFile(t, f, "source"); status != NFS4_OK {
-		t.Fatal(Nfsstat4Name(status))
+	if status := removeNamespaceFile(t, f, "source"); status != nfs4.NFS4_OK {
+		t.Fatal(nfs4.Nfsstat4Name(status))
 	}
 	unlock := f.server.lockMutationTargets(mutationTarget{dirID: f.fs.RootID(), name: "source"})
 	defer unlock()
@@ -486,7 +487,7 @@ func (f *namespaceFixture) restart(t *testing.T) {
 func renameNamespaceIntoDirectory(t *testing.T, f *namespaceFixture) uint32 {
 	t.Helper()
 	dirFH := lookupFH(t, f.conn, &f.xid, "other")
-	res := sendCompound(t, f.conn, f.xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, f.conn, f.xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		w.AppendArgarray_Savefh()
 		pw := w.AppendArgarray_Putfh()
@@ -557,8 +558,8 @@ func TestRetiredSourceDoesNotBlockRename(t *testing.T) {
 				f.store.Get(destinationID).(*localStagingFile).metaPath = savedMetaPath
 			}
 			if destination == "rejected" || destination == "checkpoint failure" {
-				if status == NFS4_OK || status == NFS4ERR_FILE_OPEN {
-					t.Fatalf("failed rename returned %s", Nfsstat4Name(status))
+				if status == nfs4.NFS4_OK || status == nfs4.NFS4ERR_FILE_OPEN {
+					t.Fatalf("failed rename returned %s", nfs4.Nfsstat4Name(status))
 				}
 				for _, id := range []InodeID{f.id, destinationID} {
 					if id == 0 {
@@ -574,8 +575,8 @@ func TestRetiredSourceDoesNotBlockRename(t *testing.T) {
 				}
 				return
 			}
-			if status != NFS4_OK {
-				t.Fatalf("retired-only source blocked rename: %s", Nfsstat4Name(status))
+			if status != nfs4.NFS4_OK {
+				t.Fatalf("retired-only source blocked rename: %s", nfs4.Nfsstat4Name(status))
 			}
 			assertQuarantined(t, f, f.id)
 			if destinationID != 0 {
@@ -611,20 +612,20 @@ func TestActiveSourceStillBlocksCrossDirectoryRename(t *testing.T) {
 	}
 	clientID := setupClient(t, f.conn, &f.xid)
 	status, state, fh, _ := openFileForOwner(t, f.conn, &f.xid, clientID,
-		"live-source", "source", OPEN4_SHARE_ACCESS_BOTH, false, false)
-	if status != NFS4_OK {
-		t.Fatal(Nfsstat4Name(status))
+		"live-source", "source", nfs4.OPEN4_SHARE_ACCESS_BOTH, false, false)
+	if status != nfs4.NFS4_OK {
+		t.Fatal(nfs4.Nfsstat4Name(status))
 	}
-	if status := renameNamespaceIntoDirectory(t, f); status != NFS4ERR_FILE_OPEN {
-		t.Fatalf("live source returned %s, want FILE_OPEN", Nfsstat4Name(status))
+	if status := renameNamespaceIntoDirectory(t, f); status != nfs4.NFS4ERR_FILE_OPEN {
+		t.Fatalf("live source returned %s, want FILE_OPEN", nfs4.Nfsstat4Name(status))
 	}
 	meta, _ := f.store.GetMeta(f.id)
 	if !meta.Retired || meta.Guarded || meta.Unlinked {
 		t.Fatalf("rejected move changed retired sibling: %+v", meta)
 	}
 	closeFile(t, f.conn, &f.xid, fh, state)
-	if status := renameNamespaceIntoDirectory(t, f); status != NFS4_OK {
-		t.Fatalf("closed source still blocked rename: %s", Nfsstat4Name(status))
+	if status := renameNamespaceIntoDirectory(t, f); status != nfs4.NFS4_OK {
+		t.Fatalf("closed source still blocked rename: %s", nfs4.Nfsstat4Name(status))
 	}
 }
 
@@ -637,17 +638,17 @@ func TestRenameOpenStaging(t *testing.T) {
 		t.Fatal(err)
 	}
 	status, state, fh, _ := openFileForOwner(t, f.conn, &f.xid, f.clientID,
-		"second-owner", "source", OPEN4_SHARE_ACCESS_BOTH, false, false)
-	if status != NFS4_OK {
-		t.Fatalf("second OPEN returned %s", Nfsstat4Name(status))
+		"second-owner", "source", nfs4.OPEN4_SHARE_ACCESS_BOTH, false, false)
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("second OPEN returned %s", nfs4.Nfsstat4Name(status))
 	}
 	second := stagingIDForTest(t, f.store, state)
 	meta, _ := f.store.GetMeta(second)
 	if meta.BaseID != other {
 		t.Fatal("fixture did not open a different base inode")
 	}
-	if status := renameNamespaceFile(t, f, "source", "target"); status != NFS4_OK {
-		t.Fatalf("RENAME returned %s", Nfsstat4Name(status))
+	if status := renameNamespaceFile(t, f, "source", "target"); status != nfs4.NFS4_OK {
+		t.Fatalf("RENAME returned %s", nfs4.Nfsstat4Name(status))
 	}
 	for _, id := range []InodeID{f.id, second} {
 		meta, _ := f.store.GetMeta(id)
@@ -707,7 +708,7 @@ func TestCloseWaitsForStagedRename(t *testing.T) {
 	go func() {
 		renameConn := dial(t, addr)
 		defer renameConn.Close()
-		res := sendCompound(t, renameConn, 100, func(w *COMPOUND4argsWriter) {
+		res := sendCompound(t, renameConn, 100, func(w *nfs4.COMPOUND4argsWriter) {
 			w.AppendArgarray_Putrootfh()
 			w.AppendArgarray_Savefh()
 			rw := w.AppendArgarray_Rename()
@@ -733,18 +734,18 @@ func TestCloseWaitsForStagedRename(t *testing.T) {
 	case status := <-closeDone:
 		close(fs.release)
 		t.Fatalf("CLOSE completed during RENAME with status %s",
-			Nfsstat4Name(status))
+			nfs4.Nfsstat4Name(status))
 	case <-time.After(100 * time.Millisecond):
 	}
 	close(fs.release)
 
-	if status := <-renameDone; status != NFS4_OK {
+	if status := <-renameDone; status != nfs4.NFS4_OK {
 		t.Fatalf("RENAME status = %s, want NFS4_OK",
-			Nfsstat4Name(status))
+			nfs4.Nfsstat4Name(status))
 	}
-	if status := <-closeDone; status != NFS4_OK {
+	if status := <-closeDone; status != nfs4.NFS4_OK {
 		t.Fatalf("CLOSE status = %s, want NFS4_OK",
-			Nfsstat4Name(status))
+			nfs4.Nfsstat4Name(status))
 	}
 	if _, err := os.Stat(filepath.Join(dir, "existing.txt")); !os.IsNotExist(err) {
 		t.Fatalf("old name exists after CLOSE: %v", err)
@@ -760,8 +761,8 @@ func TestCloseWaitsForStagedRename(t *testing.T) {
 
 func TestRenameOverOpenStaging(t *testing.T) {
 	f := newNamespaceFixture(t)
-	if status := renameNamespaceFile(t, f, "target", "source"); status != NFS4_OK {
-		t.Fatalf("RENAME returned %s", Nfsstat4Name(status))
+	if status := renameNamespaceFile(t, f, "target", "source"); status != nfs4.NFS4_OK {
+		t.Fatalf("RENAME returned %s", nfs4.Nfsstat4Name(status))
 	}
 	meta, _ := f.store.GetMeta(f.id)
 	if !meta.Unlinked || meta.Guarded {

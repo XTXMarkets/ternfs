@@ -6,15 +6,17 @@ package main
 
 import (
 	"errors"
+	"io"
+	"os"
+	"sync"
+	"time"
+
 	"github.com/XTXMarkets/ternfs/go/client"
 	"github.com/XTXMarkets/ternfs/go/core/bufpool"
 	"github.com/XTXMarkets/ternfs/go/core/crc32c"
 	"github.com/XTXMarkets/ternfs/go/core/log"
 	"github.com/XTXMarkets/ternfs/go/msgs"
-	"io"
-	"os"
-	"sync"
-	"time"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 // RemoteTernVFS implements TernVFS backed by a real TernFS cluster.
@@ -506,9 +508,9 @@ func ternToOSError(err error) error {
 	case msgs.CANNOT_OVERRIDE_NAME:
 		return os.ErrExist
 	case msgs.DIRECTORY_NOT_EMPTY:
-		return nfsError(NFS4ERR_NOTEMPTY)
+		return nfsError(nfs4.NFS4ERR_NOTEMPTY)
 	case msgs.EDGE_IS_LOCKED, msgs.NAME_IS_LOCKED:
-		return nfsError(NFS4ERR_LOCKED)
+		return nfsError(nfs4.NFS4ERR_LOCKED)
 	default:
 		return err
 	}
@@ -518,7 +520,7 @@ func (t *RemoteTernVFS) ClassifyMutation(op uint32, err error) mutationOutcome {
 	if err == nil {
 		return mutationApplied
 	}
-	if op == OP_REMOVE && (errors.Is(err, msgs.EDGE_NOT_FOUND) || errors.Is(err, msgs.MISMATCHING_CREATION_TIME)) {
+	if op == nfs4.OP_REMOVE && (errors.Is(err, msgs.EDGE_NOT_FOUND) || errors.Is(err, msgs.MISMATCHING_CREATION_TIME)) {
 		return mutationDetachOnly
 	}
 	// A rejection can arrive after another retransmitted copy applies.

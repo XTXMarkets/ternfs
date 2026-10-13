@@ -15,6 +15,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 // confirmedLookupHold blocks the first Lookup of the confirmed pointer once
@@ -91,8 +93,8 @@ func TestActiveCompoundDoesNotExpireClientState(t *testing.T) {
 	awaitSignal(t, fs.entered, "CLOSE's durable-open check")
 	skew.Store(int64(10 * leaseWriteTerm))
 	closeSignal(fs.release)
-	if got := awaitValue(t, closed, "CLOSE with a dead durable lease"); got != NFS4ERR_EXPIRED {
-		t.Fatalf("CLOSE %s, want EXPIRED", Nfsstat4Name(got))
+	if got := awaitValue(t, closed, "CLOSE with a dead durable lease"); got != nfs4.NFS4ERR_EXPIRED {
+		t.Fatalf("CLOSE %s, want EXPIRED", nfs4.Nfsstat4Name(got))
 	}
 
 	var bID StateID
@@ -180,14 +182,14 @@ func TestBindDirectionMatrix(t *testing.T) {
 	none, f, b, fb := set{}, set{fore: true}, set{back: true}, set{true, true}
 	inval := set{} // marker for INVAL in the table
 	want := map[uint32]map[set]set{
-		CDFC4_FORE:         {none: f, f: f, b: inval, fb: inval},
-		CDFC4_BACK:         {none: b, f: inval, b: b, fb: inval},
-		CDFC4_FORE_OR_BOTH: {none: fb, f: f, b: inval, fb: fb},
-		CDFC4_BACK_OR_BOTH: {none: fb, f: inval, b: b, fb: fb},
+		nfs4.CDFC4_FORE:         {none: f, f: f, b: inval, fb: inval},
+		nfs4.CDFC4_BACK:         {none: b, f: inval, b: b, fb: inval},
+		nfs4.CDFC4_FORE_OR_BOTH: {none: fb, f: f, b: inval, fb: fb},
+		nfs4.CDFC4_BACK_OR_BOTH: {none: fb, f: inval, b: b, fb: fb},
 	}
-	dirName := map[set]uint32{f: CDFS4_FORE, b: CDFS4_BACK, fb: CDFS4_BOTH}
+	dirName := map[set]uint32{f: nfs4.CDFS4_FORE, b: nfs4.CDFS4_BACK, fb: nfs4.CDFS4_BOTH}
 	srv := admissionWritableServer(t, NewLocalTernVFS(t.TempDir()))
-	for _, dir := range []uint32{0, CDFC4_FORE, CDFC4_BACK, CDFC4_FORE_OR_BOTH, 4, 5, 6, CDFC4_BACK_OR_BOTH} {
+	for _, dir := range []uint32{0, nfs4.CDFC4_FORE, nfs4.CDFC4_BACK, nfs4.CDFC4_FORE_OR_BOTH, 4, 5, 6, nfs4.CDFC4_BACK_OR_BOTH} {
 		for _, existing := range []set{none, f, b, fb} {
 			sess := backSessionForTest(t, srv)
 			conn := testConnection(t)
@@ -198,13 +200,13 @@ func TestBindDirectionMatrix(t *testing.T) {
 			expect, valid := want[dir][existing]
 			after := set{conn.carriesFore(sess.id), conn.carriesBack(sess.id)}
 			if !valid || expect == inval {
-				admissionStatus(t, res, NFS4ERR_INVAL, OP_BIND_CONN_TO_SESSION)
+				admissionStatus(t, res, nfs4.NFS4ERR_INVAL, nfs4.OP_BIND_CONN_TO_SESSION)
 				if after != existing {
 					t.Errorf("dir %d existing %+v: refusal changed the association to %+v", dir, existing, after)
 				}
 				continue
 			}
-			admissionStatus(t, res, NFS4_OK, OP_BIND_CONN_TO_SESSION)
+			admissionStatus(t, res, nfs4.NFS4_OK, nfs4.OP_BIND_CONN_TO_SESSION)
 			it := res.Resarray()
 			it.Next()
 			got := it.Resarray().Value().AsBINDCONNTOSESSION4resEntry().Value().AsBINDCONNTOSESSION4resok().BctsrDir()
@@ -216,10 +218,10 @@ func TestBindDirectionMatrix(t *testing.T) {
 
 	// A session that asked for no backchannel cannot gain one.
 	plain := srv.sessions.lookup(connectionSession(t, srv).id)
-	for dir, status := range map[uint32]uint32{CDFC4_BACK: NFS4ERR_INVAL, CDFC4_BACK_OR_BOTH: NFS4ERR_INVAL, CDFC4_FORE_OR_BOTH: NFS4_OK} {
+	for dir, status := range map[uint32]uint32{nfs4.CDFC4_BACK: nfs4.NFS4ERR_INVAL, nfs4.CDFC4_BACK_OR_BOTH: nfs4.NFS4ERR_INVAL, nfs4.CDFC4_FORE_OR_BOTH: nfs4.NFS4_OK} {
 		conn := testConnection(t)
 		_, res := admissionRequest(t, srv, admissionBind(plain.id, dir, false), 1, conn)
-		admissionStatus(t, res, status, OP_BIND_CONN_TO_SESSION)
+		admissionStatus(t, res, status, nfs4.OP_BIND_CONN_TO_SESSION)
 		if conn.carriesBack(plain.id) {
 			t.Errorf("dir %d gave a back association", dir)
 		}
@@ -235,8 +237,8 @@ func TestBindDirectionMatrix(t *testing.T) {
 				t.Fatal("filling the quota")
 			}
 		}
-		_, res := admissionRequest(t, srv, admissionBind(sess.id, CDFC4_FORE_OR_BOTH, false), 1, conn)
-		admissionStatus(t, res, NFS4ERR_RESOURCE, OP_BIND_CONN_TO_SESSION)
+		_, res := admissionRequest(t, srv, admissionBind(sess.id, nfs4.CDFC4_FORE_OR_BOTH, false), 1, conn)
+		admissionStatus(t, res, nfs4.NFS4ERR_RESOURCE, nfs4.OP_BIND_CONN_TO_SESSION)
 		if conn.carriesFore(sess.id) || conn.carriesBack(sess.id) {
 			t.Errorf("%s quota full: a partial association was made", full)
 		}
@@ -337,8 +339,8 @@ func TestRefresherTerminalRespectsConfirmationProtection(t *testing.T) {
 	srv := f.srv
 	srv.clients.stopLeaseWorkers()
 	f.arm(writeD, faultFenceErr, nil)
-	if got, _ := f.rawCreate(t, f.wireN, 1); got != NFS4ERR_DELAY {
-		t.Fatalf("CREATE_SESSION with an unfenceable D %s", Nfsstat4Name(got))
+	if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("CREATE_SESSION with an unfenceable D %s", nfs4.Nfsstat4Name(got))
 	}
 	f.disarm()
 	if !srv.protected(f.p) {
@@ -383,24 +385,24 @@ func TestRecoveredDowngradeKeepsItsGrant(t *testing.T) {
 	r := restartWithStagedWrite(t, name, []byte("staged data"))
 	conn, xid := r.conn, r.xid
 	stagingID := stagingIDForTest(t, r.staging, r.stateid)
-	status, write := downgradeResult(t, conn, &xid, r.fh, r.stateid, OPEN4_SHARE_ACCESS_WRITE, OPEN4_SHARE_DENY_NONE)
-	if status != NFS4_OK {
-		t.Fatalf("recovered BOTH to WRITE %s", Nfsstat4Name(status))
+	status, write := downgradeResult(t, conn, &xid, r.fh, r.stateid, nfs4.OPEN4_SHARE_ACCESS_WRITE, nfs4.OPEN4_SHARE_DENY_NONE)
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("recovered BOTH to WRITE %s", nfs4.Nfsstat4Name(status))
 	}
 	var id StateID
 	copy(id[:], write[4:])
 	if !r.srv.opens.live(id) {
 		t.Fatal("the downgrade installed no live state")
 	}
-	if got := stateidOpStatus(t, conn, &xid, "WRITE", r.fh, r.stateid); got != NFS4ERR_OLD_STATEID {
-		t.Fatalf("the old generation %s, want OLD_STATEID", Nfsstat4Name(got))
+	if got := stateidOpStatus(t, conn, &xid, "WRITE", r.fh, r.stateid); got != nfs4.NFS4ERR_OLD_STATEID {
+		t.Fatalf("the old generation %s, want OLD_STATEID", nfs4.Nfsstat4Name(got))
 	}
-	if got, _ := downgradeResult(t, conn, &xid, r.fh, write, OPEN4_SHARE_ACCESS_BOTH, OPEN4_SHARE_DENY_NONE); got != NFS4ERR_INVAL {
-		t.Fatalf("WRITE to BOTH %s, want INVAL", Nfsstat4Name(got))
+	if got, _ := downgradeResult(t, conn, &xid, r.fh, write, nfs4.OPEN4_SHARE_ACCESS_BOTH, nfs4.OPEN4_SHARE_DENY_NONE); got != nfs4.NFS4ERR_INVAL {
+		t.Fatalf("WRITE to BOTH %s, want INVAL", nfs4.Nfsstat4Name(got))
 	}
-	status, write2 := downgradeResult(t, conn, &xid, r.fh, write, OPEN4_SHARE_ACCESS_WRITE, OPEN4_SHARE_DENY_NONE)
-	if status != NFS4_OK {
-		t.Fatalf("same-value downgrade %s", Nfsstat4Name(status))
+	status, write2 := downgradeResult(t, conn, &xid, r.fh, write, nfs4.OPEN4_SHARE_ACCESS_WRITE, nfs4.OPEN4_SHARE_DENY_NONE)
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("same-value downgrade %s", nfs4.Nfsstat4Name(status))
 	}
 	if m, ok := r.staging.GetMeta(stagingID); !ok || m.Retired {
 		t.Fatal("the recovered staging was retired")
@@ -422,13 +424,13 @@ func TestRecoveredDowngradeCollisionWaits(t *testing.T) {
 	r := restartWithStagedWrite(t, name, []byte("staged data"))
 	conn, xid := r.conn, r.xid
 	stagingID := stagingIDForTest(t, r.staging, r.stateid)
-	status, live, _ := openByHandle(t, conn, &xid, r.clientID, "test-owner-"+name, r.fh, OPEN4_SHARE_ACCESS_READ)
-	if status != NFS4_OK {
-		t.Fatalf("the owner's live OPEN %s", Nfsstat4Name(status))
+	status, live, _ := openByHandle(t, conn, &xid, r.clientID, "test-owner-"+name, r.fh, nfs4.OPEN4_SHARE_ACCESS_READ)
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("the owner's live OPEN %s", nfs4.Nfsstat4Name(status))
 	}
 	before, _ := readPublished(r.fs, name)
-	if got, _ := downgradeResult(t, conn, &xid, r.fh, r.stateid, OPEN4_SHARE_ACCESS_READ, OPEN4_SHARE_DENY_NONE); got != NFS4ERR_DELAY {
-		t.Fatalf("colliding recovered downgrade %s, want DELAY", Nfsstat4Name(got))
+	if got, _ := downgradeResult(t, conn, &xid, r.fh, r.stateid, nfs4.OPEN4_SHARE_ACCESS_READ, nfs4.OPEN4_SHARE_DENY_NONE); got != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("colliding recovered downgrade %s, want DELAY", nfs4.Nfsstat4Name(got))
 	}
 	var recovered, liveID StateID
 	copy(recovered[:], r.stateid[4:])
@@ -446,9 +448,9 @@ func TestRecoveredDowngradeCollisionWaits(t *testing.T) {
 		t.Fatalf("the recovered writer's marker %t %v", open, err)
 	}
 	closeFile(t, conn, &xid, r.fh, live)
-	status, read := downgradeResult(t, conn, &xid, r.fh, r.stateid, OPEN4_SHARE_ACCESS_READ, OPEN4_SHARE_DENY_NONE)
-	if status != NFS4_OK {
-		t.Fatalf("retried downgrade %s", Nfsstat4Name(status))
+	status, read := downgradeResult(t, conn, &xid, r.fh, r.stateid, nfs4.OPEN4_SHARE_ACCESS_READ, nfs4.OPEN4_SHARE_DENY_NONE)
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("retried downgrade %s", nfs4.Nfsstat4Name(status))
 	}
 	if data, _ := readPublished(r.fs, name); string(data) != "staged data" {
 		t.Fatalf("published %q", data)
@@ -486,8 +488,8 @@ func addrOfTestServer(t *testing.T, srv *Server) string {
 func exchangeOn(t *testing.T, c *cbTestClient, xid uint32, owner string) (uint64, uint32) {
 	t.Helper()
 	res := c.compound(xid, exchangeIDBody(owner, [8]byte{9}))
-	if res.Status() != NFS4_OK {
-		t.Fatalf("EXCHANGE_ID %s", Nfsstat4Name(res.Status()))
+	if res.Status() != nfs4.NFS4_OK {
+		t.Fatalf("EXCHANGE_ID %s", nfs4.Nfsstat4Name(res.Status()))
 	}
 	it := res.Resarray()
 	it.Next()
@@ -495,10 +497,10 @@ func exchangeOn(t *testing.T, c *cbTestClient, xid uint32, owner string) (uint64
 	return ex.EirClientid(), ex.EirSequenceid()
 }
 
-func createdSession(t *testing.T, res COMPOUND4res) (SessionID, uint32) {
+func createdSession(t *testing.T, res nfs4.COMPOUND4res) (SessionID, uint32) {
 	t.Helper()
-	if res.Status() != NFS4_OK {
-		t.Fatalf("CREATE_SESSION %s", Nfsstat4Name(res.Status()))
+	if res.Status() != nfs4.NFS4_OK {
+		t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(res.Status()))
 	}
 	it := res.Resarray()
 	it.Next()
@@ -513,15 +515,15 @@ func TestCreateSessionReplayBindsBackchannel(t *testing.T) {
 	defer cleanup()
 	first := newCBTestClient(t, addr)
 	clientID, seq := exchangeOn(t, first, 1, "replay-back")
-	body := backCreateSessionBody(clientID, seq, CREATE_SESSION4_FLAG_CONN_BACK_CHAN, offerNone)
+	body := backCreateSessionBody(clientID, seq, nfs4.CREATE_SESSION4_FLAG_CONN_BACK_CHAN, offerNone)
 	id, flags := createdSession(t, first.compound(2, body))
-	if flags&CREATE_SESSION4_FLAG_CONN_BACK_CHAN == 0 {
+	if flags&nfs4.CREATE_SESSION4_FLAG_CONN_BACK_CHAN == 0 {
 		t.Fatal("no backchannel granted")
 	}
 	first.answerNull(t)
 	second := newCBTestClient(t, addr)
 	replayed, flags := createdSession(t, second.compound(3, body))
-	if replayed != id || flags&CREATE_SESSION4_FLAG_CONN_BACK_CHAN == 0 {
+	if replayed != id || flags&nfs4.CREATE_SESSION4_FLAG_CONN_BACK_CHAN == 0 {
 		t.Fatal("replay result differs")
 	}
 	second.answerNull(t)
@@ -531,17 +533,17 @@ func TestCreateSessionReplayBindsBackchannel(t *testing.T) {
 // backchannel to that connection.
 func TestHeldCreateSessionRetryBindsBackchannel(t *testing.T) {
 	f := newConfirmServer(t)
-	body := backCreateSessionBody(f.wireN, 1, CREATE_SESSION4_FLAG_CONN_BACK_CHAN, offerNone)
+	body := backCreateSessionBody(f.wireN, 1, nfs4.CREATE_SESSION4_FLAG_CONN_BACK_CHAN, offerNone)
 	// D applies but reports failure: held, and settled by the retry.
 	f.arm(writeD, faultAppliedFail, nil)
-	if got := f.rawStatus(t, body); got != NFS4ERR_DELAY {
-		t.Fatalf("unresolved CREATE_SESSION %s", Nfsstat4Name(got))
+	if got := f.rawStatus(t, body); got != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("unresolved CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 	}
 	f.disarm()
 	f.fs.set(writeD, faultNone, nil)
 	retry := newCBTestClient(t, addrOfTestServer(t, f.srv))
 	_, flags := createdSession(t, retry.compound(4000, body))
-	if flags&CREATE_SESSION4_FLAG_CONN_BACK_CHAN == 0 {
+	if flags&nfs4.CREATE_SESSION4_FLAG_CONN_BACK_CHAN == 0 {
 		t.Fatal("no backchannel granted")
 	}
 	retry.answerNull(t)
@@ -563,8 +565,8 @@ func TestCreateSessionBackQuotaBeforeEffects(t *testing.T) {
 	ex := it.Resarray().Value().AsEXCHANGEID4resEntry().Value().AsEXCHANGEID4resok()
 	before := srv.sessions.accounting()
 	_, res = admissionRequest(t, srv, backCreateSessionBody(ex.EirClientid(), ex.EirSequenceid(),
-		CREATE_SESSION4_FLAG_CONN_BACK_CHAN, offerNone), 2, conn)
-	admissionStatus(t, res, NFS4ERR_RESOURCE, OP_CREATE_SESSION)
+		nfs4.CREATE_SESSION4_FLAG_CONN_BACK_CHAN, offerNone), 2, conn)
+	admissionStatus(t, res, nfs4.NFS4ERR_RESOURCE, nfs4.OP_CREATE_SESSION)
 	after := srv.sessions.accounting()
 	if after.Sessions != before.Sessions || after.Records != before.Records ||
 		after.PendingSessions != before.PendingSessions || after.GroupCredits != before.GroupCredits {
@@ -572,7 +574,7 @@ func TestCreateSessionBackQuotaBeforeEffects(t *testing.T) {
 	}
 	// The slot was not consumed: without the backchannel it succeeds.
 	_, res = admissionRequest(t, srv, backCreateSessionBody(ex.EirClientid(), ex.EirSequenceid(), 0), 3, conn)
-	admissionStatus(t, res, NFS4_OK, OP_CREATE_SESSION)
+	admissionStatus(t, res, nfs4.NFS4_OK, nfs4.OP_CREATE_SESSION)
 }
 
 // A6: more create/destroy cycles on one connection than its back quota,
@@ -590,9 +592,9 @@ func TestBackchannelCyclesReuseConnection(t *testing.T) {
 	for i := range maxConnectionSessions + 6 {
 		xid++
 		id, flags := createdSession(t, c.compound(xid, backCreateSessionBody(clientID, seq,
-			CREATE_SESSION4_FLAG_CONN_BACK_CHAN, offerNone)))
+			nfs4.CREATE_SESSION4_FLAG_CONN_BACK_CHAN, offerNone)))
 		seq++
-		if flags&CREATE_SESSION4_FLAG_CONN_BACK_CHAN == 0 {
+		if flags&nfs4.CREATE_SESSION4_FLAG_CONN_BACK_CHAN == 0 {
 			t.Fatalf("cycle %d: no backchannel granted", i)
 		}
 		call, ok := c.nextCall(testChannelTimeout)
@@ -603,8 +605,8 @@ func TestBackchannelCyclesReuseConnection(t *testing.T) {
 			c.answer(call, nil)
 		}
 		xid++
-		if res := c.compound(xid, admissionDestroy(id)); res.Status() != NFS4_OK {
-			t.Fatalf("cycle %d: DESTROY_SESSION %s", i, Nfsstat4Name(res.Status()))
+		if res := c.compound(xid, admissionDestroy(id)); res.Status() != nfs4.NFS4_OK {
+			t.Fatalf("cycle %d: DESTROY_SESSION %s", i, nfs4.Nfsstat4Name(res.Status()))
 		}
 		if i == 4 {
 			baseline = runtime.NumGoroutine()
@@ -634,9 +636,9 @@ func recallReplyFrame(xid, compound uint32, results ...[]byte) []byte {
 }
 
 func seqResult(status uint32, id SessionID, seq uint32) []byte {
-	b := binary.BigEndian.AppendUint32(nil, OP_CB_SEQUENCE)
+	b := binary.BigEndian.AppendUint32(nil, nfs4.OP_CB_SEQUENCE)
 	b = binary.BigEndian.AppendUint32(b, status)
-	if status == NFS4_OK {
+	if status == nfs4.NFS4_OK {
 		b = append(b, id[:]...)
 		for _, v := range []uint32{seq, 0, 0, 0} {
 			b = binary.BigEndian.AppendUint32(b, v)
@@ -646,36 +648,36 @@ func seqResult(status uint32, id SessionID, seq uint32) []byte {
 }
 
 func recallResult(status uint32) []byte {
-	return binary.BigEndian.AppendUint32(binary.BigEndian.AppendUint32(nil, OP_CB_RECALL_SLOT), status)
+	return binary.BigEndian.AppendUint32(binary.BigEndian.AppendUint32(nil, nfs4.OP_CB_RECALL_SLOT), status)
 }
 
 // A9: the whole reply is validated before any of it is used.
 func TestRecallReplyValidation(t *testing.T) {
 	id := SessionID{7}
-	ok := seqResult(NFS4_OK, id, 3)
+	ok := seqResult(nfs4.NFS4_OK, id, 3)
 	for _, c := range []struct {
 		name  string
 		frame []byte
 		want  cbOutcome
 		bad   bool
 	}{
-		{"success", recallReplyFrame(1, NFS4_OK, ok, recallResult(NFS4_OK)), cbDone, false},
-		{"recall error", recallReplyFrame(1, NFS4ERR_INVAL, ok, recallResult(NFS4ERR_INVAL)), cbRecallRefused, false},
-		{"delay", recallReplyFrame(1, NFS4ERR_DELAY, seqResult(NFS4ERR_DELAY, id, 3)), cbRetry, false},
-		{"misordered", recallReplyFrame(1, NFS4ERR_SEQ_MISORDERED, seqResult(NFS4ERR_SEQ_MISORDERED, id, 3)), cbFault, false},
-		{"truncated second result", recallReplyFrame(1, NFS4_OK, ok, recallResult(NFS4_OK)[:4]), cbFault, true},
-		{"count two, one present", recallReplyFrame(1, NFS4_OK, ok)[:0:0], cbFault, true},
-		{"only CB_SEQUENCE", recallReplyFrame(1, NFS4_OK, ok), cbFault, true},
-		{"compound status disagrees", recallReplyFrame(1, NFS4_OK, ok, recallResult(NFS4ERR_INVAL)), cbFault, true},
-		{"delay status disagrees", recallReplyFrame(1, NFS4_OK, seqResult(NFS4ERR_DELAY, id, 3)), cbFault, true},
-		{"wrong second opcode", recallReplyFrame(1, NFS4_OK, ok, binary.BigEndian.AppendUint32(binary.BigEndian.AppendUint32(nil, OP_CB_SEQUENCE), 0)), cbFault, true},
-		{"trailing bytes", append(recallReplyFrame(1, NFS4_OK, ok, recallResult(NFS4_OK)), 0, 0, 0, 0), cbFault, true},
-		{"wrong session", recallReplyFrame(1, NFS4_OK, seqResult(NFS4_OK, SessionID{8}, 3), recallResult(NFS4_OK)), cbFault, true},
-		{"wrong sequence", recallReplyFrame(1, NFS4_OK, seqResult(NFS4_OK, id, 4), recallResult(NFS4_OK)), cbFault, true},
+		{"success", recallReplyFrame(1, nfs4.NFS4_OK, ok, recallResult(nfs4.NFS4_OK)), cbDone, false},
+		{"recall error", recallReplyFrame(1, nfs4.NFS4ERR_INVAL, ok, recallResult(nfs4.NFS4ERR_INVAL)), cbRecallRefused, false},
+		{"delay", recallReplyFrame(1, nfs4.NFS4ERR_DELAY, seqResult(nfs4.NFS4ERR_DELAY, id, 3)), cbRetry, false},
+		{"misordered", recallReplyFrame(1, nfs4.NFS4ERR_SEQ_MISORDERED, seqResult(nfs4.NFS4ERR_SEQ_MISORDERED, id, 3)), cbFault, false},
+		{"truncated second result", recallReplyFrame(1, nfs4.NFS4_OK, ok, recallResult(nfs4.NFS4_OK)[:4]), cbFault, true},
+		{"count two, one present", recallReplyFrame(1, nfs4.NFS4_OK, ok)[:0:0], cbFault, true},
+		{"only CB_SEQUENCE", recallReplyFrame(1, nfs4.NFS4_OK, ok), cbFault, true},
+		{"compound status disagrees", recallReplyFrame(1, nfs4.NFS4_OK, ok, recallResult(nfs4.NFS4ERR_INVAL)), cbFault, true},
+		{"delay status disagrees", recallReplyFrame(1, nfs4.NFS4_OK, seqResult(nfs4.NFS4ERR_DELAY, id, 3)), cbFault, true},
+		{"wrong second opcode", recallReplyFrame(1, nfs4.NFS4_OK, ok, binary.BigEndian.AppendUint32(binary.BigEndian.AppendUint32(nil, nfs4.OP_CB_SEQUENCE), 0)), cbFault, true},
+		{"trailing bytes", append(recallReplyFrame(1, nfs4.NFS4_OK, ok, recallResult(nfs4.NFS4_OK)), 0, 0, 0, 0), cbFault, true},
+		{"wrong session", recallReplyFrame(1, nfs4.NFS4_OK, seqResult(nfs4.NFS4_OK, SessionID{8}, 3), recallResult(nfs4.NFS4_OK)), cbFault, true},
+		{"wrong sequence", recallReplyFrame(1, nfs4.NFS4_OK, seqResult(nfs4.NFS4_OK, id, 4), recallResult(nfs4.NFS4_OK)), cbFault, true},
 	} {
 		frame := c.frame
 		if c.name == "count two, one present" {
-			frame = recallReplyFrame(1, NFS4_OK, ok)
+			frame = recallReplyFrame(1, nfs4.NFS4_OK, ok)
 			// Declare two results.
 			binary.BigEndian.PutUint32(frame[32:], 2)
 		}
@@ -711,7 +713,7 @@ func TestRecallReplyEffects(t *testing.T) {
 		}
 		endQuietForTest(f.srv)
 		id, seq, _, _ := cbRecall(t, call)
-		frame := recallReplyFrame(binary.BigEndian.Uint32(call[:4]), NFS4_OK, seqResult(NFS4_OK, id, seq))
+		frame := recallReplyFrame(binary.BigEndian.Uint32(call[:4]), nfs4.NFS4_OK, seqResult(nfs4.NFS4_OK, id, seq))
 		f.client.write(frame)
 		waitFor(t, "fault", func() bool { fault, _ := sess.cb.flags(); return fault })
 		if !groupQuiet(f.srv, sess.clientID).IsZero() {
@@ -737,8 +739,8 @@ func TestRecallReplyEffects(t *testing.T) {
 		}
 		endQuietForTest(f.srv)
 		id, seq, _, _ := cbRecall(t, call)
-		f.client.write(recallReplyFrame(binary.BigEndian.Uint32(call[:4]), NFS4ERR_INVAL,
-			seqResult(NFS4_OK, id, seq), recallResult(NFS4ERR_INVAL)))
+		f.client.write(recallReplyFrame(binary.BigEndian.Uint32(call[:4]), nfs4.NFS4ERR_INVAL,
+			seqResult(nfs4.NFS4_OK, id, seq), recallResult(nfs4.NFS4ERR_INVAL)))
 		waitFor(t, "sequence advance", func() bool {
 			sess.cb.mu.Lock()
 			defer sess.cb.mu.Unlock()
@@ -747,7 +749,7 @@ func TestRecallReplyEffects(t *testing.T) {
 		sess.cb.mu.Lock()
 		status, fault := sess.cb.lastRecallStatus, sess.cb.fault
 		sess.cb.mu.Unlock()
-		if status != NFS4ERR_INVAL || fault {
+		if status != nfs4.NFS4ERR_INVAL || fault {
 			t.Fatalf("recall status %d fault %t", status, fault)
 		}
 		if groupQuiet(f.srv, sess.clientID).IsZero() {
@@ -779,15 +781,15 @@ func TestCallbacksWaitForAnsweredPath(t *testing.T) {
 		if !ok || cbProc(call) != cbProcCompound {
 			t.Fatal("no recall once the path was up")
 		}
-		f.client.answerSequence(t, call, NFS4_OK)
+		f.client.answerSequence(t, call, nfs4.NFS4_OK)
 		f.pressure(t, false)
 	})
 	t.Run("resend", func(t *testing.T) {
 		f := newCBSession(t)
 		f.client.answerNull(t)
 		second := newCBTestClient(t, f.addr)
-		if res := second.compound(1000, admissionBind(f.ts.id, CDFC4_BACK_OR_BOTH, false)); res.Status() != NFS4_OK {
-			t.Fatalf("BIND %s", Nfsstat4Name(res.Status()))
+		if res := second.compound(1000, admissionBind(f.ts.id, nfs4.CDFC4_BACK_OR_BOTH, false)); res.Status() != nfs4.NFS4_OK {
+			t.Fatalf("BIND %s", nfs4.Nfsstat4Name(res.Status()))
 		}
 		null, ok := second.nextCall(testChannelTimeout)
 		if !ok || cbProc(null) != cbProcNull {
@@ -812,7 +814,7 @@ func TestCallbacksWaitForAnsweredPath(t *testing.T) {
 		if _, again, _, _ := cbRecall(t, call); again != seq {
 			t.Fatalf("resent with sequence %d, want %d", again, seq)
 		}
-		second.answerSequence(t, call, NFS4_OK)
+		second.answerSequence(t, call, nfs4.NFS4_OK)
 		f.pressure(t, false)
 	})
 }
@@ -830,7 +832,7 @@ func TestLateCallbackReplyRestoresPath(t *testing.T) {
 		t.Fatal("no recall")
 	}
 	time.Sleep(4 * cbTimeout)
-	f.client.answerSequence(t, call, NFS4_OK)
+	f.client.answerSequence(t, call, nfs4.NFS4_OK)
 	f.pressure(t, false)
 	f.sequence(t)
 	f.pressure(t, true)
@@ -842,7 +844,7 @@ func TestLateCallbackReplyRestoresPath(t *testing.T) {
 	if _, seq, _, _ := cbRecall(t, call); seq != 2 {
 		t.Fatalf("sequence %d, want 2", seq)
 	}
-	f.client.answerSequence(t, call, NFS4_OK)
+	f.client.answerSequence(t, call, nfs4.NFS4_OK)
 	f.pressure(t, false)
 }
 
@@ -927,16 +929,16 @@ func TestRequestsDoNotDriveRefresherPasses(t *testing.T) {
 	clientID, seq := exchangeOn(t, c, 1, "storm")
 	id, _ := createdSession(t, c.compound(2, backCreateSessionBody(clientID, seq, 0)))
 	ts := newTestSession(id, clientID, 16)
-	body := buildCompoundBody(nil, func(*COMPOUND4argsWriter) {})
+	body := buildCompoundBody(nil, func(*nfs4.COMPOUND4argsWriter) {})
 	// The first SEQUENCE turns need on; let its pass finish.
-	if res := c.compound(3, withSequence(body, ts, 0, 1)); res.Status() != NFS4_OK {
-		t.Fatalf("SEQUENCE %s", Nfsstat4Name(res.Status()))
+	if res := c.compound(3, withSequence(body, ts, 0, 1)); res.Status() != nfs4.NFS4_OK {
+		t.Fatalf("SEQUENCE %s", nfs4.Nfsstat4Name(res.Status()))
 	}
 	time.Sleep(100 * time.Millisecond)
 	fs.reset()
 	for i := uint32(2); i <= 201; i++ {
-		if res := c.compound(2+i, withSequence(body, ts, 0, i)); res.Status() != NFS4_OK {
-			t.Fatalf("SEQUENCE %d %s", i, Nfsstat4Name(res.Status()))
+		if res := c.compound(2+i, withSequence(body, ts, 0, i)); res.Status() != nfs4.NFS4_OK {
+			t.Fatalf("SEQUENCE %d %s", i, nfs4.Nfsstat4Name(res.Status()))
 		}
 	}
 	if reads, _, writes, _ := fs.counts(); reads > 1 || writes != 0 {
@@ -1066,7 +1068,7 @@ func TestRecallDroppedWhenCredentialGrows(t *testing.T) {
 	f.pressure(t, true)
 	f.sequence(t) // queues the recall; the path is still being probed
 	f.slotSeq++
-	ctl := buildCompoundBody(nil, func(w *COMPOUND4argsWriter) {
+	ctl := buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
 		bw := w.AppendArgarray_BackchannelCtl()
 		bw.SetBcaCbProgram(0x40000001)
 		aw := bw.AppendBcaSecParms_Sys()
@@ -1079,8 +1081,8 @@ func TestRecallDroppedWhenCredentialGrows(t *testing.T) {
 		bw.Resume(aw.Finish())
 		w.Resume(bw.Finish())
 	})
-	if res := f.client.compound(f.next(), withSequence(ctl, f.ts, 0, f.slotSeq)); res.Status() != NFS4_OK {
-		t.Fatalf("BACKCHANNEL_CTL %s", Nfsstat4Name(res.Status()))
+	if res := f.client.compound(f.next(), withSequence(ctl, f.ts, 0, f.slotSeq)); res.Status() != nfs4.NFS4_OK {
+		t.Fatalf("BACKCHANNEL_CTL %s", nfs4.Nfsstat4Name(res.Status()))
 	}
 	endQuietForTest(srv)
 	f.client.answer(null, nil)
@@ -1106,15 +1108,15 @@ func TestRecallDroppedWhenCredentialGrows(t *testing.T) {
 
 func setMtimeStatus(t *testing.T, conn net.Conn, xid *uint32, fh []byte, sid [16]byte, sec uint64) uint32 {
 	t.Helper()
-	res := sendCompound(t, conn, *xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, *xid, func(w *nfs4.COMPOUND4argsWriter) {
 		putfhOp(w, fh)
 		sw := w.AppendArgarray_Setattr()
 		setStateid(sw.Stateid(), sid)
 		aw := sw.StartObjAttributes()
-		value := binary.BigEndian.AppendUint32(nil, SET_TO_CLIENT_TIME4)
+		value := binary.BigEndian.AppendUint32(nil, nfs4.SET_TO_CLIENT_TIME4)
 		value = binary.BigEndian.AppendUint64(value, sec)
 		value = binary.BigEndian.AppendUint32(value, 0)
-		sw.Resume(finishTestFattr(aw, attrMask{0, 1 << (FATTR4_TIME_MODIFY_SET - 32)}, value))
+		sw.Resume(finishTestFattr(aw, attrMask{0, 1 << (nfs4.FATTR4_TIME_MODIFY_SET - 32)}, value))
 		w.Resume(sw.Finish())
 	})
 	*xid++
@@ -1145,8 +1147,8 @@ func TestForeignTimestampSetattrRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 	xidB := uint32(100)
-	if got := setMtimeStatus(t, connB, &xidB, fh, sid, 1_000_000); got != NFS4ERR_BAD_STATEID {
-		t.Fatalf("foreign timestamp SETATTR %s, want BAD_STATEID", Nfsstat4Name(got))
+	if got := setMtimeStatus(t, connB, &xidB, fh, sid, 1_000_000); got != nfs4.NFS4ERR_BAD_STATEID {
+		t.Fatalf("foreign timestamp SETATTR %s, want BAD_STATEID", nfs4.Nfsstat4Name(got))
 	}
 	if got := srv.stagingStore.Get(stagingID).Stat().Mtime; !got.Equal(stagedBefore) {
 		t.Fatal("the foreign SETATTR changed A's staged times")
@@ -1154,8 +1156,8 @@ func TestForeignTimestampSetattrRejected(t *testing.T) {
 	if got, _ := srv.fs.Stat(fileID); !got.Mtime.Equal(publishedBefore.Mtime) {
 		t.Fatal("the foreign SETATTR changed the published times")
 	}
-	if got := setMtimeStatus(t, connB, &xidB, fh, [16]byte{}, 2_000_000); got != NFS4_OK {
-		t.Fatalf("zero-stateid timestamp SETATTR %s", Nfsstat4Name(got))
+	if got := setMtimeStatus(t, connB, &xidB, fh, [16]byte{}, 2_000_000); got != nfs4.NFS4_OK {
+		t.Fatalf("zero-stateid timestamp SETATTR %s", nfs4.Nfsstat4Name(got))
 	}
 	if got, _ := srv.fs.Stat(fileID); got.Mtime.Unix() != 2_000_000 {
 		t.Fatalf("zero-stateid SETATTR left mtime %v", got.Mtime)
@@ -1183,8 +1185,8 @@ func TestNoNewSessionForExpiredIncarnation(t *testing.T) {
 	if replayed, _ := createdSession(t, c.compound(3, body)); replayed != id {
 		t.Fatal("the cached CREATE_SESSION did not replay")
 	}
-	if res := c.compound(4, backCreateSessionBody(clientID, seq+1, 0)); res.Status() != NFS4ERR_STALE_CLIENTID {
-		t.Fatalf("new CREATE_SESSION %s, want STALE_CLIENTID", Nfsstat4Name(res.Status()))
+	if res := c.compound(4, backCreateSessionBody(clientID, seq+1, 0)); res.Status() != nfs4.NFS4ERR_STALE_CLIENTID {
+		t.Fatalf("new CREATE_SESSION %s, want STALE_CLIENTID", nfs4.Nfsstat4Name(res.Status()))
 	}
 	after := srv.sessions.accounting()
 	if after.Sessions != before.Sessions || after.Records != before.Records || after.PendingSessions != before.PendingSessions {
@@ -1224,8 +1226,8 @@ func TestCreateSessionRacingExpiry(t *testing.T) {
 	srv.sessions.mu.Unlock()
 	before := srv.sessions.accounting()
 	closeSignal(fs.release)
-	if got := awaitValue(t, done, "CREATE_SESSION"); got != NFS4ERR_STALE_CLIENTID {
-		t.Fatalf("CREATE_SESSION racing expiry %s, want STALE_CLIENTID", Nfsstat4Name(got))
+	if got := awaitValue(t, done, "CREATE_SESSION"); got != nfs4.NFS4ERR_STALE_CLIENTID {
+		t.Fatalf("CREATE_SESSION racing expiry %s, want STALE_CLIENTID", nfs4.Nfsstat4Name(got))
 	}
 	if after := srv.sessions.accounting(); after.Sessions != before.Sessions {
 		t.Fatal("a session was inserted into the expired incarnation")
@@ -1262,12 +1264,12 @@ func TestLoneFailedWriterLeavesSiblingsAlone(t *testing.T) {
 	fs.mu.Unlock()
 	// The publication's error is the CLOSE's; the failed writer's open is
 	// then inactive, so its later operations get EXPIRED (README).
-	if status := closeFileStatus(t, conn, &xid, aFH, aSid); status != NFS4ERR_IO {
-		t.Fatalf("A's CLOSE with a LinkFile error %s, want NFS4ERR_IO", Nfsstat4Name(status))
+	if status := closeFileStatus(t, conn, &xid, aFH, aSid); status != nfs4.NFS4ERR_IO {
+		t.Fatalf("A's CLOSE with a LinkFile error %s, want NFS4ERR_IO", nfs4.Nfsstat4Name(status))
 	}
 	for _, op := range []string{"READ", "WRITE", "CLOSE"} {
-		if got := stateidOpStatus(t, conn, &xid, op, aFH, aSid); got != NFS4ERR_EXPIRED {
-			t.Errorf("%s on the failed writer %s, want NFS4ERR_EXPIRED", op, Nfsstat4Name(got))
+		if got := stateidOpStatus(t, conn, &xid, op, aFH, aSid); got != nfs4.NFS4ERR_EXPIRED {
+			t.Errorf("%s on the failed writer %s, want NFS4ERR_EXPIRED", op, nfs4.Nfsstat4Name(got))
 		}
 	}
 	var bID StateID
@@ -1346,8 +1348,8 @@ func TestExpiredRegistrationRecovers(t *testing.T) {
 	if replayed, _ := createdSession(t, c.compound(3, body)); replayed != oldID {
 		t.Fatal("the cached CREATE_SESSION did not replay")
 	}
-	if res := c.compound(4, backCreateSessionBody(oldWire, seq+1, 0)); res.Status() != NFS4ERR_STALE_CLIENTID {
-		t.Fatalf("new CREATE_SESSION %s, want STALE_CLIENTID", Nfsstat4Name(res.Status()))
+	if res := c.compound(4, backCreateSessionBody(oldWire, seq+1, 0)); res.Status() != nfs4.NFS4ERR_STALE_CLIENTID {
+		t.Fatalf("new CREATE_SESSION %s, want STALE_CLIENTID", nfs4.Nfsstat4Name(res.Status()))
 	}
 	newWire, newSeq := exchangeOn(t, c, 5, "expired-registration")
 	if newWire == oldWire {
@@ -1369,12 +1371,12 @@ func TestExpiredRegistrationRecovers(t *testing.T) {
 	}
 	r.safePass(true)
 	ts := newTestSession(newID, newWire, 16)
-	empty := buildCompoundBody(nil, func(*COMPOUND4argsWriter) {})
-	if res := c.compound(7, withSequence(empty, ts, 0, 1)); res.Status() != NFS4_OK {
-		t.Fatalf("first SEQUENCE on the new session %s", Nfsstat4Name(res.Status()))
+	empty := buildCompoundBody(nil, func(*nfs4.COMPOUND4argsWriter) {})
+	if res := c.compound(7, withSequence(empty, ts, 0, 1)); res.Status() != nfs4.NFS4_OK {
+		t.Fatalf("first SEQUENCE on the new session %s", nfs4.Nfsstat4Name(res.Status()))
 	}
 	old := newTestSession(oldID, oldWire, 16)
-	if res := c.compound(8, withSequence(empty, old, 0, 1)); res.Status() != NFS4ERR_BADSESSION {
-		t.Fatalf("old session %s, want BADSESSION", Nfsstat4Name(res.Status()))
+	if res := c.compound(8, withSequence(empty, old, 0, 1)); res.Status() != nfs4.NFS4ERR_BADSESSION {
+		t.Fatalf("old session %s, want BADSESSION", nfs4.Nfsstat4Name(res.Status()))
 	}
 }

@@ -10,11 +10,6 @@ import (
 	"encoding/binary"
 	"flag"
 	"fmt"
-	"github.com/XTXMarkets/ternfs/go/client"
-	"github.com/XTXMarkets/ternfs/go/core/bufpool"
-	"github.com/XTXMarkets/ternfs/go/core/log"
-	"github.com/XTXMarkets/ternfs/go/core/managedprocess"
-	"github.com/XTXMarkets/ternfs/go/msgs"
 	"net"
 	"os"
 	"path"
@@ -24,6 +19,13 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/client"
+	"github.com/XTXMarkets/ternfs/go/core/bufpool"
+	"github.com/XTXMarkets/ternfs/go/core/log"
+	"github.com/XTXMarkets/ternfs/go/core/managedprocess"
+	"github.com/XTXMarkets/ternfs/go/msgs"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 var (
@@ -251,7 +253,7 @@ func startTernTestServerState(t *testing.T) (*Server, string, func()) {
 }
 
 // copyStateid copies a stateid4 from src (read-only) to dst (writer).
-func copyStateid(dst Stateid4, src Stateid4) {
+func copyStateid(dst nfs4.Stateid4, src nfs4.Stateid4) {
 	dst.SetSeqid(src.Seqid())
 	for i := 0; i < 12; i++ {
 		dst.SetOther(i, src.Other(i))
@@ -259,9 +261,9 @@ func copyStateid(dst Stateid4, src Stateid4) {
 }
 
 // A session OPEN returns the usable stateid; v4.1 has no OPEN_CONFIRM step.
-func clusterOpenStateid(t *testing.T, openOK OPEN4resok) Stateid4 {
+func clusterOpenStateid(t *testing.T, openOK nfs4.OPEN4resok) nfs4.Stateid4 {
 	t.Helper()
-	if openOK.Rflags()&OPEN4_RESULT_CONFIRM != 0 {
+	if openOK.Rflags()&nfs4.OPEN4_RESULT_CONFIRM != 0 {
 		t.Fatal("session OPEN requested obsolete OPEN_CONFIRM")
 	}
 	stateid := openOK.Stateid()
@@ -278,12 +280,12 @@ func createFileViaNFS(t *testing.T, conn net.Conn, xid *uint32, clientid uint64,
 	t.Helper()
 
 	// Session OPEN CREATE + GETFH
-	res := sendCompound(t, conn, *xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, *xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 
 		ow := w.AppendArgarray_Open()
-		ow.SetShareAccess(OPEN4_SHARE_ACCESS_BOTH)
-		ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
+		ow.SetShareAccess(nfs4.OPEN4_SHARE_ACCESS_BOTH)
+		ow.SetShareDeny(nfs4.OPEN4_SHARE_DENY_NONE)
 		ownerW := ow.StartOwner()
 		ownerW = ownerW.SetClientid(clientid)
 		ownerW = ownerW.SetOwner([]byte(fmt.Sprintf(
@@ -317,7 +319,7 @@ func createFileViaNFS(t *testing.T, conn net.Conn, xid *uint32, clientid uint64,
 
 	openEntry := nextOp(t, &iter)
 	openRes := openEntry.Value().AsOPEN4resEntry()
-	if openRes.Disc() != NFS4_OK {
+	if openRes.Disc() != nfs4.NFS4_OK {
 		t.Fatalf("OPEN status = %d", openRes.Disc())
 	}
 	openOK := openRes.Value().AsOPEN4resok()
@@ -327,7 +329,7 @@ func createFileViaNFS(t *testing.T, conn net.Conn, xid *uint32, clientid uint64,
 
 	// WRITE
 	if len(data) > 0 {
-		res = sendCompound(t, conn, *xid, func(w *COMPOUND4argsWriter) {
+		res = sendCompound(t, conn, *xid, func(w *nfs4.COMPOUND4argsWriter) {
 			pfW := w.AppendArgarray_Putfh()
 			buf := pfW.StartObject().SetData(fh).Finish()
 			pfW.Resume(buf)
@@ -347,13 +349,13 @@ func createFileViaNFS(t *testing.T, conn net.Conn, xid *uint32, clientid uint64,
 		nextOp(t, &iter) // PUTFH
 		writeEntry := nextOp(t, &iter)
 		writeRes := writeEntry.Value().AsWRITE4resEntry()
-		if writeRes.Disc() != NFS4_OK {
+		if writeRes.Disc() != nfs4.NFS4_OK {
 			t.Fatalf("WRITE status = %d", writeRes.Disc())
 		}
 	}
 
 	// CLOSE
-	res = sendCompound(t, conn, *xid, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, *xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pfW := w.AppendArgarray_Putfh()
 		buf := pfW.StartObject().SetData(fh).Finish()
 		pfW.Resume(buf)
@@ -368,7 +370,7 @@ func createFileViaNFS(t *testing.T, conn net.Conn, xid *uint32, clientid uint64,
 	nextOp(t, &iter) // PUTFH
 	closeEntry := nextOp(t, &iter)
 	closeRes := closeEntry.Value().AsCLOSE4resEntry()
-	if closeRes.Disc() != NFS4_OK {
+	if closeRes.Disc() != nfs4.NFS4_OK {
 		t.Fatalf("CLOSE status = %d", closeRes.Disc())
 	}
 
@@ -380,7 +382,7 @@ func createFileViaNFS(t *testing.T, conn net.Conn, xid *uint32, clientid uint64,
 // cleanupViaNFS removes a file by name from the root directory.
 func cleanupViaNFS(t *testing.T, conn net.Conn, xid *uint32, name string) {
 	t.Helper()
-	res := sendCompound(t, conn, *xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, *xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		rw := w.AppendArgarray_Remove()
 		tw := rw.StartTarget()
@@ -400,12 +402,12 @@ func TestTernPutrootfhGetattr(t *testing.T) {
 	conn := dial(t, addr)
 	defer conn.Close()
 
-	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 
 		gw := w.AppendArgarray_Getattr()
 		bw := gw.StartAttrRequest()
-		bw.AppendData(1<<FATTR4_TYPE | 1<<FATTR4_FILEID)
+		bw.AppendData(1<<nfs4.FATTR4_TYPE | 1<<nfs4.FATTR4_FILEID)
 		buf := bw.Finish()
 		gw.Resume(buf)
 		buf = gw.Finish()
@@ -414,12 +416,12 @@ func TestTernPutrootfhGetattr(t *testing.T) {
 
 	iter := expectOK(t, res)
 	entry := nextOp(t, &iter)
-	if entry.Value().AsPUTROOTFH4res().Status() != NFS4_OK {
+	if entry.Value().AsPUTROOTFH4res().Status() != nfs4.NFS4_OK {
 		t.Fatal("PUTROOTFH failed")
 	}
 	entry = nextOp(t, &iter)
 	getattrRes := entry.Value().AsGETATTR4resEntry()
-	if getattrRes.Disc() != NFS4_OK {
+	if getattrRes.Disc() != nfs4.NFS4_OK {
 		t.Fatalf("GETATTR status = %d", getattrRes.Disc())
 	}
 }
@@ -437,7 +439,7 @@ func TestTernCreateAndRead(t *testing.T) {
 	fh := createFileViaNFS(t, conn, &xid, clientid, "test-create.txt", testData)
 
 	// READ the file back.
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pfW := w.AppendArgarray_Putfh()
 		buf := pfW.StartObject().SetData(fh).Finish()
 		pfW.Resume(buf)
@@ -455,7 +457,7 @@ func TestTernCreateAndRead(t *testing.T) {
 	nextOp(t, &iter) // PUTFH
 	readEntry := nextOp(t, &iter)
 	readRes := readEntry.Value().AsREAD4resEntry()
-	if readRes.Disc() != NFS4_OK {
+	if readRes.Disc() != nfs4.NFS4_OK {
 		t.Fatalf("READ status = %d", readRes.Disc())
 	}
 	readOK := readRes.Value().AsREAD4resok()
@@ -483,7 +485,7 @@ func TestTernLookupAndStat(t *testing.T) {
 	createFileViaNFS(t, conn, &xid, clientid, "stat-test.txt", testData)
 
 	// PUTROOTFH + LOOKUP + GETATTR
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 
 		lw := w.AppendArgarray_Lookup()
@@ -495,7 +497,7 @@ func TestTernLookupAndStat(t *testing.T) {
 
 		gw := w.AppendArgarray_Getattr()
 		bw := gw.StartAttrRequest()
-		bw.AppendData(1<<FATTR4_TYPE | 1<<FATTR4_SIZE)
+		bw.AppendData(1<<nfs4.FATTR4_TYPE | 1<<nfs4.FATTR4_SIZE)
 		buf = bw.Finish()
 		gw.Resume(buf)
 		buf = gw.Finish()
@@ -506,12 +508,12 @@ func TestTernLookupAndStat(t *testing.T) {
 	iter := expectOK(t, res)
 	nextOp(t, &iter) // PUTROOTFH
 	lookupEntry := nextOp(t, &iter)
-	if lookupEntry.Value().AsLOOKUP4res().Status() != NFS4_OK {
+	if lookupEntry.Value().AsLOOKUP4res().Status() != nfs4.NFS4_OK {
 		t.Fatal("LOOKUP failed")
 	}
 	getattrEntry := nextOp(t, &iter)
 	getattrRes := getattrEntry.Value().AsGETATTR4resEntry()
-	if getattrRes.Disc() != NFS4_OK {
+	if getattrRes.Disc() != nfs4.NFS4_OK {
 		t.Fatalf("GETATTR status = %d", getattrRes.Disc())
 	}
 
@@ -522,8 +524,8 @@ func TestTernLookupAndStat(t *testing.T) {
 		t.Fatalf("attr data too short: %d", len(attrData))
 	}
 	ftype := binary.BigEndian.Uint32(attrData[:4])
-	if ftype != uint32(NF4REG) {
-		t.Fatalf("type = %d, want NF4REG (%d)", ftype, NF4REG)
+	if ftype != uint32(nfs4.NF4REG) {
+		t.Fatalf("type = %d, want NF4REG (%d)", ftype, nfs4.NF4REG)
 	}
 
 	cleanupViaNFS(t, conn, &xid, "stat-test.txt")
@@ -545,7 +547,7 @@ func TestTernReaddir(t *testing.T) {
 	}
 
 	// READDIR
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 
 		rdw := w.AppendArgarray_Readdir()
@@ -553,7 +555,7 @@ func TestTernReaddir(t *testing.T) {
 		rdw.SetDircount(4096)
 		rdw.SetMaxcount(32768)
 		bw := rdw.StartAttrRequest()
-		bw.AppendData(1 << FATTR4_TYPE)
+		bw.AppendData(1 << nfs4.FATTR4_TYPE)
 		buf := bw.Finish()
 		rdw.Resume(buf)
 		buf = rdw.Finish()
@@ -565,7 +567,7 @@ func TestTernReaddir(t *testing.T) {
 	nextOp(t, &iter) // PUTROOTFH
 	rdEntry := nextOp(t, &iter)
 	rdRes := rdEntry.Value().AsREADDIR4resEntry()
-	if rdRes.Disc() != NFS4_OK {
+	if rdRes.Disc() != nfs4.NFS4_OK {
 		t.Fatalf("READDIR status = %d", rdRes.Disc())
 	}
 
@@ -573,12 +575,12 @@ func TestTernReaddir(t *testing.T) {
 	rdOK := rdRes.Value().AsREADDIR4resok()
 	found := make(map[string]bool)
 	reply := rdOK.Reply()
-	if reply.EntriesPresent() == TRUE {
+	if reply.EntriesPresent() == nfs4.TRUE {
 		entOpt := reply.Entries()
 		for {
 			ent := entOpt.AsEntry4()
 			found[string(ent.Name().Data())] = true
-			if ent.NextentryPresent() != TRUE {
+			if ent.NextentryPresent() != nfs4.TRUE {
 				break
 			}
 			entOpt = ent.Nextentry()
@@ -606,7 +608,7 @@ func TestTernMkdirAndRemove(t *testing.T) {
 	xid := uint32(1)
 
 	// CREATE directory
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 
 		cw := w.AppendArgarray_Create()
@@ -631,12 +633,12 @@ func TestTernMkdirAndRemove(t *testing.T) {
 	nextOp(t, &iter) // PUTROOTFH
 	createEntry := nextOp(t, &iter)
 	createRes := createEntry.Value().AsCREATE4resEntry()
-	if createRes.Disc() != NFS4_OK {
+	if createRes.Disc() != nfs4.NFS4_OK {
 		t.Fatalf("CREATE dir status = %d", createRes.Disc())
 	}
 
 	// LOOKUP the directory
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		lw := w.AppendArgarray_Lookup()
 		nw := lw.StartObjname()
@@ -647,7 +649,7 @@ func TestTernMkdirAndRemove(t *testing.T) {
 
 		gw := w.AppendArgarray_Getattr()
 		bw := gw.StartAttrRequest()
-		bw.AppendData(1 << FATTR4_TYPE)
+		bw.AppendData(1 << nfs4.FATTR4_TYPE)
 		buf = bw.Finish()
 		gw.Resume(buf)
 		buf = gw.Finish()
@@ -657,7 +659,7 @@ func TestTernMkdirAndRemove(t *testing.T) {
 	iter = expectOK(t, res)
 	nextOp(t, &iter) // PUTROOTFH
 	lookupEntry := nextOp(t, &iter)
-	if lookupEntry.Value().AsLOOKUP4res().Status() != NFS4_OK {
+	if lookupEntry.Value().AsLOOKUP4res().Status() != nfs4.NFS4_OK {
 		t.Fatal("LOOKUP dir failed")
 	}
 	getattrEntry := nextOp(t, &iter)
@@ -666,7 +668,7 @@ func TestTernMkdirAndRemove(t *testing.T) {
 		t.Fatal("attr data too short")
 	}
 	ftype := binary.BigEndian.Uint32(attrData[:4])
-	if ftype != uint32(NF4DIR) {
+	if ftype != uint32(nfs4.NF4DIR) {
 		t.Fatalf("type = %d, want NF4DIR", ftype)
 	}
 
@@ -676,13 +678,13 @@ func TestTernMkdirAndRemove(t *testing.T) {
 
 // These large read-only requests exceed the negotiated 64 KiB reply cache.
 // Request caching explicitly remains enabled for all other fixture compounds.
-func sendUncachedTernRead(t *testing.T, conn net.Conn, xid uint32, fh []byte, offset uint64, count uint32) COMPOUND4res {
+func sendUncachedTernRead(t *testing.T, conn net.Conn, xid uint32, fh []byte, offset uint64, count uint32) nfs4.COMPOUND4res {
 	t.Helper()
 	ts := testSessionForConn(conn)
 	if ts == nil {
 		t.Fatal("large read fixture has no session")
 	}
-	body := buildCompoundBody(nil, func(w *COMPOUND4argsWriter) {
+	body := buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
 		p := w.AppendArgarray_Putfh()
 		p.Resume(p.StartObject().SetData(fh).Finish())
 		w.Resume(p.Finish())
@@ -732,7 +734,7 @@ func TestTernWriteAndRead(t *testing.T) {
 	nextOp(t, &iter) // PUTFH
 	readEntry := nextOp(t, &iter)
 	readRes := readEntry.Value().AsREAD4resEntry()
-	if readRes.Disc() != NFS4_OK {
+	if readRes.Disc() != nfs4.NFS4_OK {
 		t.Fatalf("READ status = %d", readRes.Disc())
 	}
 	got := readRes.Value().AsREAD4resok().Data()
@@ -757,7 +759,7 @@ func TestTernSymlink(t *testing.T) {
 	xid := uint32(1)
 
 	// CREATE symlink: "test-link" -> "symlink-target"
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 
 		cw := w.AppendArgarray_Create()
@@ -783,12 +785,12 @@ func TestTernSymlink(t *testing.T) {
 	iter := expectOK(t, res)
 	nextOp(t, &iter) // PUTROOTFH
 	createRes := nextOp(t, &iter).Value().AsCREATE4resEntry()
-	if createRes.Disc() != NFS4_OK {
+	if createRes.Disc() != nfs4.NFS4_OK {
 		t.Fatalf("CREATE symlink status = %d", createRes.Disc())
 	}
 
 	// READLINK to verify target.
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 
 		lw := w.AppendArgarray_Lookup()
@@ -806,7 +808,7 @@ func TestTernSymlink(t *testing.T) {
 	nextOp(t, &iter) // LOOKUP
 	rlEntry := nextOp(t, &iter)
 	rlRes := rlEntry.Value().AsREADLINK4resEntry()
-	if rlRes.Disc() != NFS4_OK {
+	if rlRes.Disc() != nfs4.NFS4_OK {
 		t.Fatalf("READLINK status = %d", rlRes.Disc())
 	}
 	target := string(rlRes.Value().AsREADLINK4resok().Link().Data())
@@ -829,7 +831,7 @@ func TestTernRename(t *testing.T) {
 	createFileViaNFS(t, conn, &xid, clientid, "rename-src.txt", []byte("rename data"))
 
 	// RENAME: PUTROOTFH + SAVEFH + PUTROOTFH + RENAME
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		w.AppendArgarray_Savefh()
 		w.AppendArgarray_Putrootfh() // same dir rename
@@ -851,12 +853,12 @@ func TestTernRename(t *testing.T) {
 	nextOp(t, &iter) // PUTROOTFH
 	renameEntry := nextOp(t, &iter)
 	renameRes := renameEntry.Value().AsRENAME4resEntry()
-	if renameRes.Disc() != NFS4_OK {
+	if renameRes.Disc() != nfs4.NFS4_OK {
 		t.Fatalf("RENAME status = %d", renameRes.Disc())
 	}
 
 	// Verify old name is gone.
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		lw := w.AppendArgarray_Lookup()
 		nw := lw.StartObjname()
@@ -866,12 +868,12 @@ func TestTernRename(t *testing.T) {
 		w.Resume(buf)
 	})
 	xid++
-	if res.Status() == NFS4_OK {
+	if res.Status() == nfs4.NFS4_OK {
 		t.Fatal("expected old name to be gone after rename")
 	}
 
 	// Verify new name exists and has correct data.
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		lw := w.AppendArgarray_Lookup()
 		nw := lw.StartObjname()
@@ -891,7 +893,7 @@ func TestTernRename(t *testing.T) {
 	nextOp(t, &iter) // LOOKUP
 	readEntry := nextOp(t, &iter)
 	readRes := readEntry.Value().AsREAD4resEntry()
-	if readRes.Disc() != NFS4_OK {
+	if readRes.Disc() != nfs4.NFS4_OK {
 		t.Fatalf("READ after rename status = %d", readRes.Disc())
 	}
 	got := string(readRes.Value().AsREAD4resok().Data())
@@ -919,7 +921,7 @@ func TestTernExchangeIDAndSequence(t *testing.T) {
 	}
 	slot, seq := ts.acquire()
 	defer ts.release(slot)
-	body := buildCompoundBody(nil, func(*COMPOUND4argsWriter) {})
+	body := buildCompoundBody(nil, func(*nfs4.COMPOUND4argsWriter) {})
 	// The first SEQUENCE may get DELAY until the client's first lease is
 	// published (canonical r3 §9.1); sendWarming retries it as a client
 	// would, on the same slot and sequence.
@@ -937,12 +939,12 @@ func TestTernExchangeIDAndSequence(t *testing.T) {
 		t.Fatalf("SEQUENCE result count = %d, want 1", res.ResarrayCount())
 	}
 	entry := nextOp(t, &iter)
-	if entry.Disc() != OP_SEQUENCE {
+	if entry.Disc() != nfs4.OP_SEQUENCE {
 		t.Fatalf("response operation = %d, want SEQUENCE", entry.Disc())
 	}
 	sequence := entry.Value().AsSEQUENCE4resEntry()
-	if sequence.Disc() != NFS4_OK {
-		t.Fatalf("SEQUENCE status = %s", Nfsstat4Name(sequence.Disc()))
+	if sequence.Disc() != nfs4.NFS4_OK {
+		t.Fatalf("SEQUENCE status = %s", nfs4.Nfsstat4Name(sequence.Disc()))
 	}
 	ok := sequence.Value().AsSEQUENCE4resok()
 	if readSessionID(ok.SrSessionid()) != ts.id || ok.SrSequenceid() != seq || ok.SrSlotid() != slot {
@@ -1156,12 +1158,12 @@ func TestTernStagedFileGetattrAndRead(t *testing.T) {
 	clientid := setupClient(t, conn, &xid)
 
 	// Session OPEN CREATE + GETFH
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 
 		ow := w.AppendArgarray_Open()
-		ow.SetShareAccess(OPEN4_SHARE_ACCESS_BOTH)
-		ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
+		ow.SetShareAccess(nfs4.OPEN4_SHARE_ACCESS_BOTH)
+		ow.SetShareDeny(nfs4.OPEN4_SHARE_DENY_NONE)
 		ownerW := ow.StartOwner()
 		ownerW = ownerW.SetClientid(clientid)
 		ownerW = ownerW.SetOwner([]byte("nfstest"))
@@ -1196,7 +1198,7 @@ func TestTernStagedFileGetattrAndRead(t *testing.T) {
 
 	// WRITE some data
 	testData := []byte("staged file content")
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pfW := w.AppendArgarray_Putfh()
 		buf := pfW.StartObject().SetData(fh).Finish()
 		pfW.Resume(buf)
@@ -1215,7 +1217,7 @@ func TestTernStagedFileGetattrAndRead(t *testing.T) {
 	expectOK(t, res)
 
 	// GETATTR should return staged size (before CLOSE).
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pfW := w.AppendArgarray_Putfh()
 		buf := pfW.StartObject().SetData(fh).Finish()
 		pfW.Resume(buf)
@@ -1224,7 +1226,7 @@ func TestTernStagedFileGetattrAndRead(t *testing.T) {
 
 		gw := w.AppendArgarray_Getattr()
 		bw := gw.StartAttrRequest()
-		bw.AppendData(1 << FATTR4_SIZE)
+		bw.AppendData(1 << nfs4.FATTR4_SIZE)
 		buf = bw.Finish()
 		gw.Resume(buf)
 		buf = gw.Finish()
@@ -1243,7 +1245,7 @@ func TestTernStagedFileGetattrAndRead(t *testing.T) {
 	}
 
 	// READ should return staged data (before CLOSE).
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pfW := w.AppendArgarray_Putfh()
 		buf := pfW.StartObject().SetData(fh).Finish()
 		pfW.Resume(buf)
@@ -1265,7 +1267,7 @@ func TestTernStagedFileGetattrAndRead(t *testing.T) {
 	}
 
 	// CLOSE to commit.
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pfW := w.AppendArgarray_Putfh()
 		buf := pfW.StartObject().SetData(fh).Finish()
 		pfW.Resume(buf)
@@ -1288,7 +1290,7 @@ func setupNamedClient(t *testing.T, conn net.Conn, xid *uint32, identity string)
 		t, conn, xid, identity, [8]byte{})
 	if status := confirmClientID(
 		t, conn, xid, clientid, confirm,
-	); status != NFS4_OK {
+	); status != nfs4.NFS4_OK {
 		t.Fatal("SETCLIENTID_CONFIRM failed")
 	}
 	return clientid
@@ -1297,7 +1299,7 @@ func setupNamedClient(t *testing.T, conn net.Conn, xid *uint32, identity string)
 // getAttrSize gets the size attribute from a file handle.
 func getAttrSize(t *testing.T, conn net.Conn, xid *uint32, fh []byte) uint64 {
 	t.Helper()
-	res := sendCompound(t, conn, *xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, *xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pfW := w.AppendArgarray_Putfh()
 		buf := pfW.StartObject().SetData(fh).Finish()
 		pfW.Resume(buf)
@@ -1305,7 +1307,7 @@ func getAttrSize(t *testing.T, conn net.Conn, xid *uint32, fh []byte) uint64 {
 		w.Resume(buf)
 		gw := w.AppendArgarray_Getattr()
 		bw := gw.StartAttrRequest()
-		bw.AppendData(1 << FATTR4_SIZE)
+		bw.AppendData(1 << nfs4.FATTR4_SIZE)
 		buf = bw.Finish()
 		gw.Resume(buf)
 		buf = gw.Finish()
@@ -1328,7 +1330,7 @@ func collectTernReaddirNames(t *testing.T, conn net.Conn, xid *uint32, dirFH []b
 	cookie := uint64(0)
 	var cookieVerf [8]byte
 	for {
-		res := sendCompound(t, conn, *xid, func(w *COMPOUND4argsWriter) {
+		res := sendCompound(t, conn, *xid, func(w *nfs4.COMPOUND4argsWriter) {
 			pfW := w.AppendArgarray_Putfh()
 			buf := pfW.StartObject().SetData(dirFH).Finish()
 			pfW.Resume(buf)
@@ -1343,7 +1345,7 @@ func collectTernReaddirNames(t *testing.T, conn net.Conn, xid *uint32, dirFH []b
 			rdw.SetDircount(4096)
 			rdw.SetMaxcount(32768)
 			bmW := rdw.StartAttrRequest()
-			bmW.AppendData(1 << FATTR4_TYPE)
+			bmW.AppendData(1 << nfs4.FATTR4_TYPE)
 			buf = bmW.Finish()
 			rdw.Resume(buf)
 			buf = rdw.Finish()
@@ -1353,8 +1355,8 @@ func collectTernReaddirNames(t *testing.T, conn net.Conn, xid *uint32, dirFH []b
 		iter := expectOK(t, res)
 		nextOp(t, &iter) // PUTFH
 		readdirRes := nextOp(t, &iter).Value().AsREADDIR4resEntry()
-		if readdirRes.Disc() != NFS4_OK {
-			t.Fatalf("READDIR status = %s", Nfsstat4Name(readdirRes.Disc()))
+		if readdirRes.Disc() != nfs4.NFS4_OK {
+			t.Fatalf("READDIR status = %s", nfs4.Nfsstat4Name(readdirRes.Disc()))
 		}
 		okRes := readdirRes.Value().AsREADDIR4resok()
 		cv := okRes.Cookieverf()
@@ -1362,19 +1364,19 @@ func collectTernReaddirNames(t *testing.T, conn net.Conn, xid *uint32, dirFH []b
 			cookieVerf[i] = cv.Data(i)
 		}
 		reply := okRes.Reply()
-		if reply.EntriesPresent() == TRUE {
+		if reply.EntriesPresent() == nfs4.TRUE {
 			entOpt := reply.Entries()
 			for {
 				ent := entOpt.AsEntry4()
 				allNames = append(allNames, string(ent.Name().Data()))
 				cookie = ent.Cookie()
-				if ent.NextentryPresent() != TRUE {
+				if ent.NextentryPresent() != nfs4.TRUE {
 					break
 				}
 				entOpt = ent.Nextentry()
 			}
 		}
-		if reply.Eof() == TRUE {
+		if reply.Eof() == nfs4.TRUE {
 			break
 		}
 	}
@@ -1384,7 +1386,7 @@ func collectTernReaddirNames(t *testing.T, conn net.Conn, xid *uint32, dirFH []b
 // mkdirViaNFS creates a directory via NFS CREATE.
 func mkdirViaNFS(t *testing.T, conn net.Conn, xid *uint32, name string) {
 	t.Helper()
-	res := sendCompound(t, conn, *xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, *xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		cw := w.AppendArgarray_Create()
 		cw.SetObjtype_Nf4dir()
@@ -1407,8 +1409,8 @@ func mkdirViaNFS(t *testing.T, conn net.Conn, xid *uint32, name string) {
 	iter := expectOK(t, res)
 	nextOp(t, &iter) // PUTROOTFH
 	createRes := nextOp(t, &iter).Value().AsCREATE4resEntry()
-	if createRes.Disc() != NFS4_OK {
-		t.Fatalf("CREATE dir %q status = %s", name, Nfsstat4Name(createRes.Disc()))
+	if createRes.Disc() != nfs4.NFS4_OK {
+		t.Fatalf("CREATE dir %q status = %s", name, nfs4.Nfsstat4Name(createRes.Disc()))
 	}
 }
 
@@ -1433,11 +1435,11 @@ func TestTernLargeFile(t *testing.T) {
 	}
 
 	// Session OPEN CREATE + GETFH
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		ow := w.AppendArgarray_Open()
-		ow.SetShareAccess(OPEN4_SHARE_ACCESS_BOTH)
-		ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
+		ow.SetShareAccess(nfs4.OPEN4_SHARE_ACCESS_BOTH)
+		ow.SetShareDeny(nfs4.OPEN4_SHARE_DENY_NONE)
 		ownerW := ow.StartOwner()
 		ownerW = ownerW.SetClientid(clientid)
 		ownerW = ownerW.SetOwner([]byte("nfstest"))
@@ -1476,7 +1478,7 @@ func TestTernLargeFile(t *testing.T) {
 			end = totalSize
 		}
 		chunk := data[off:end]
-		res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+		res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 			pfW := w.AppendArgarray_Putfh()
 			buf := pfW.StartObject().SetData(fh).Finish()
 			pfW.Resume(buf)
@@ -1495,7 +1497,7 @@ func TestTernLargeFile(t *testing.T) {
 	}
 
 	// CLOSE.
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pfW := w.AppendArgarray_Putfh()
 		buf := pfW.StartObject().SetData(fh).Finish()
 		pfW.Resume(buf)
@@ -1515,8 +1517,8 @@ func TestTernLargeFile(t *testing.T) {
 		iter := expectOK(t, res)
 		nextOp(t, &iter) // PUTFH
 		readRes := nextOp(t, &iter).Value().AsREAD4resEntry()
-		if readRes.Disc() != NFS4_OK {
-			t.Fatalf("READ status = %s", Nfsstat4Name(readRes.Disc()))
+		if readRes.Disc() != nfs4.NFS4_OK {
+			t.Fatalf("READ status = %s", nfs4.Nfsstat4Name(readRes.Disc()))
 		}
 		readOK := readRes.Value().AsREAD4resok()
 		chunk, eof := readOK.Data(), readOK.Eof() != 0
@@ -1653,7 +1655,7 @@ func TestTernReaddirPagination(t *testing.T) {
 	sort.Strings(expected)
 
 	// Get root FH for paginated readdir.
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		w.AppendArgarray_Getfh()
 	})
@@ -1702,7 +1704,7 @@ func TestTernNestedDirectories(t *testing.T) {
 	mkdirViaNFS(t, conn, &xid, "nest_a")
 
 	// Create "nest_a/b" — need to LOOKUP nest_a first, then CREATE inside it.
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		lw := w.AppendArgarray_Lookup()
 		nw := lw.StartObjname()
@@ -1733,12 +1735,12 @@ func TestTernNestedDirectories(t *testing.T) {
 	nextOp(t, &iter) // PUTROOTFH
 	nextOp(t, &iter) // LOOKUP
 	createRes := nextOp(t, &iter).Value().AsCREATE4resEntry()
-	if createRes.Disc() != NFS4_OK {
-		t.Fatalf("CREATE nest_a/b status = %s", Nfsstat4Name(createRes.Disc()))
+	if createRes.Disc() != nfs4.NFS4_OK {
+		t.Fatalf("CREATE nest_a/b status = %s", nfs4.Nfsstat4Name(createRes.Disc()))
 	}
 
 	// Create a file inside nest_a/b via OPEN.
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		for _, name := range []string{"nest_a", "b"} {
 			lw := w.AppendArgarray_Lookup()
@@ -1750,8 +1752,8 @@ func TestTernNestedDirectories(t *testing.T) {
 		}
 
 		ow := w.AppendArgarray_Open()
-		ow.SetShareAccess(OPEN4_SHARE_ACCESS_BOTH)
-		ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
+		ow.SetShareAccess(nfs4.OPEN4_SHARE_ACCESS_BOTH)
+		ow.SetShareDeny(nfs4.OPEN4_SHARE_DENY_NONE)
 		ownerW := ow.StartOwner()
 		ownerW = ownerW.SetClientid(clientid)
 		ownerW = ownerW.SetOwner([]byte("nfstest"))
@@ -1788,7 +1790,7 @@ func TestTernNestedDirectories(t *testing.T) {
 
 	// Write data.
 	deepData := []byte("deep nested content")
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pfW := w.AppendArgarray_Putfh()
 		buf := pfW.StartObject().SetData(fh).Finish()
 		pfW.Resume(buf)
@@ -1806,7 +1808,7 @@ func TestTernNestedDirectories(t *testing.T) {
 	expectOK(t, res)
 
 	// CLOSE.
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pfW := w.AppendArgarray_Putfh()
 		buf := pfW.StartObject().SetData(fh).Finish()
 		pfW.Resume(buf)
@@ -1819,7 +1821,7 @@ func TestTernNestedDirectories(t *testing.T) {
 	expectOK(t, res)
 
 	// Navigate root → nest_a → b → deep.txt and read.
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		for _, name := range []string{"nest_a", "b", "deep.txt"} {
 			lw := w.AppendArgarray_Lookup()
@@ -1846,7 +1848,7 @@ func TestTernNestedDirectories(t *testing.T) {
 	}
 
 	// LOOKUPP from b should go back to nest_a, then LOOKUPP again to root.
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		lw := w.AppendArgarray_Lookup()
 		nw := lw.StartObjname()
@@ -1867,7 +1869,7 @@ func TestTernNestedDirectories(t *testing.T) {
 
 		gw := w.AppendArgarray_Getattr()
 		bw := gw.StartAttrRequest()
-		bw.AppendData(1 << FATTR4_TYPE)
+		bw.AppendData(1 << nfs4.FATTR4_TYPE)
 		buf = bw.Finish()
 		gw.Resume(buf)
 		buf = gw.Finish()
@@ -1885,13 +1887,13 @@ func TestTernNestedDirectories(t *testing.T) {
 		t.Fatal("attr data too short")
 	}
 	ftype := binary.BigEndian.Uint32(attrData[:4])
-	if ftype != uint32(NF4DIR) {
+	if ftype != uint32(nfs4.NF4DIR) {
 		t.Fatalf("LOOKUPP result type = %d, want NF4DIR", ftype)
 	}
 
 	// Cleanup: remove deep.txt, b, nest_a.
 	// Remove deep.txt from nest_a/b.
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		for _, name := range []string{"nest_a", "b"} {
 			lw := w.AppendArgarray_Lookup()
@@ -1912,7 +1914,7 @@ func TestTernNestedDirectories(t *testing.T) {
 	expectOK(t, res)
 
 	// Remove b from nest_a.
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		lw := w.AppendArgarray_Lookup()
 		nw := lw.StartObjname()
@@ -1983,7 +1985,7 @@ func TestTernRemoveNonEmptyDir(t *testing.T) {
 	mkdirViaNFS(t, conn, &xid, "notempty_dir")
 
 	// Create a file inside the directory.
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		lw := w.AppendArgarray_Lookup()
 		nw := lw.StartObjname()
@@ -1993,8 +1995,8 @@ func TestTernRemoveNonEmptyDir(t *testing.T) {
 		w.Resume(buf)
 
 		ow := w.AppendArgarray_Open()
-		ow.SetShareAccess(OPEN4_SHARE_ACCESS_BOTH)
-		ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
+		ow.SetShareAccess(nfs4.OPEN4_SHARE_ACCESS_BOTH)
+		ow.SetShareDeny(nfs4.OPEN4_SHARE_DENY_NONE)
 		ownerW := ow.StartOwner()
 		ownerW = ownerW.SetClientid(clientid)
 		ownerW = ownerW.SetOwner([]byte("nfstest"))
@@ -2029,7 +2031,7 @@ func TestTernRemoveNonEmptyDir(t *testing.T) {
 	childFH := append([]byte(nil), nextOp(t, &iter).Value().AsGETFH4resEntry().Value().AsGETFH4resok().Object().Data()...)
 
 	// CLOSE the file.
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pfW := w.AppendArgarray_Putfh()
 		buf := pfW.StartObject().SetData(childFH).Finish()
 		pfW.Resume(buf)
@@ -2042,7 +2044,7 @@ func TestTernRemoveNonEmptyDir(t *testing.T) {
 	expectOK(t, res)
 
 	// Try to remove non-empty directory.
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		rw := w.AppendArgarray_Remove()
 		tw := rw.StartTarget()
@@ -2052,13 +2054,13 @@ func TestTernRemoveNonEmptyDir(t *testing.T) {
 		w.Resume(buf)
 	})
 	xid++
-	if res.Status() != NFS4ERR_NOTEMPTY {
+	if res.Status() != nfs4.NFS4ERR_NOTEMPTY {
 		t.Fatalf("REMOVE non-empty dir: got status %s, want NFS4ERR_NOTEMPTY",
-			Nfsstat4Name(res.Status()))
+			nfs4.Nfsstat4Name(res.Status()))
 	}
 
 	// Clean up: remove child, then directory.
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		lw := w.AppendArgarray_Lookup()
 		nw := lw.StartObjname()
@@ -2090,11 +2092,11 @@ func TestTernCommit(t *testing.T) {
 	clientid := setupClient(t, conn, &xid)
 
 	// Session OPEN CREATE + GETFH
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		ow := w.AppendArgarray_Open()
-		ow.SetShareAccess(OPEN4_SHARE_ACCESS_BOTH)
-		ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
+		ow.SetShareAccess(nfs4.OPEN4_SHARE_ACCESS_BOTH)
+		ow.SetShareDeny(nfs4.OPEN4_SHARE_DENY_NONE)
 		ownerW := ow.StartOwner()
 		ownerW = ownerW.SetClientid(clientid)
 		ownerW = ownerW.SetOwner([]byte("nfstest"))
@@ -2127,7 +2129,7 @@ func TestTernCommit(t *testing.T) {
 	fh := append([]byte(nil), nextOp(t, &iter).Value().AsGETFH4resEntry().Value().AsGETFH4resok().Object().Data()...)
 
 	// WRITE with UNSTABLE4.
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pfW := w.AppendArgarray_Putfh()
 		buf := pfW.StartObject().SetData(fh).Finish()
 		pfW.Resume(buf)
@@ -2145,7 +2147,7 @@ func TestTernCommit(t *testing.T) {
 	expectOK(t, res)
 
 	// COMMIT — should succeed and return a non-zero verifier.
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pfW := w.AppendArgarray_Putfh()
 		buf := pfW.StartObject().SetData(fh).Finish()
 		pfW.Resume(buf)
@@ -2170,7 +2172,7 @@ func TestTernCommit(t *testing.T) {
 	}
 
 	// CLOSE.
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pfW := w.AppendArgarray_Putfh()
 		buf := pfW.StartObject().SetData(fh).Finish()
 		pfW.Resume(buf)
@@ -2203,7 +2205,7 @@ func TestTernSetattr(t *testing.T) {
 	targetTime := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
 	targetSec := targetTime.Unix()
 
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pfW := w.AppendArgarray_Putfh()
 		buf := pfW.StartObject().SetData(fh).Finish()
 		pfW.Resume(buf)
@@ -2215,11 +2217,11 @@ func TestTernSetattr(t *testing.T) {
 		faw := saw.StartObjAttributes()
 		bmW := faw.StartAttrmask()
 		bmW.AppendData(0) // word 0: nothing
-		bmW.AppendData(1 << (FATTR4_TIME_MODIFY_SET - 32))
+		bmW.AppendData(1 << (nfs4.FATTR4_TIME_MODIFY_SET - 32))
 		buf = bmW.Finish()
 		faw.Resume(buf)
 		attrData := make([]byte, 4+8+4)
-		binary.BigEndian.PutUint32(attrData[0:4], SET_TO_CLIENT_TIME4)
+		binary.BigEndian.PutUint32(attrData[0:4], nfs4.SET_TO_CLIENT_TIME4)
 		binary.BigEndian.PutUint64(attrData[4:12], uint64(targetSec))
 		binary.BigEndian.PutUint32(attrData[12:16], 0)
 		alW := faw.StartAttrVals()
@@ -2234,12 +2236,12 @@ func TestTernSetattr(t *testing.T) {
 	iter := expectOK(t, res)
 	nextOp(t, &iter) // PUTFH
 	entry := nextOp(t, &iter)
-	if entry.Value().AsSETATTR4res().Status() != NFS4_OK {
-		t.Fatalf("SETATTR status = %s", Nfsstat4Name(entry.Value().AsSETATTR4res().Status()))
+	if entry.Value().AsSETATTR4res().Status() != nfs4.NFS4_OK {
+		t.Fatalf("SETATTR status = %s", nfs4.Nfsstat4Name(entry.Value().AsSETATTR4res().Status()))
 	}
 
 	// Verify mtime via GETATTR.
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pfW := w.AppendArgarray_Putfh()
 		buf := pfW.StartObject().SetData(fh).Finish()
 		pfW.Resume(buf)
@@ -2249,7 +2251,7 @@ func TestTernSetattr(t *testing.T) {
 		gw := w.AppendArgarray_Getattr()
 		bw := gw.StartAttrRequest()
 		bw.AppendData(0) // word 0
-		bw.AppendData(1 << (FATTR4_TIME_MODIFY - 32))
+		bw.AppendData(1 << (nfs4.FATTR4_TIME_MODIFY - 32))
 		buf = bw.Finish()
 		gw.Resume(buf)
 		buf = gw.Finish()
@@ -2326,7 +2328,7 @@ func TestTernCrossDirectoryRename(t *testing.T) {
 	mkdirViaNFS(t, conn, &xid, "dstdir")
 
 	// Create a file in srcdir.
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		lw := w.AppendArgarray_Lookup()
 		nw := lw.StartObjname()
@@ -2336,8 +2338,8 @@ func TestTernCrossDirectoryRename(t *testing.T) {
 		w.Resume(buf)
 
 		ow := w.AppendArgarray_Open()
-		ow.SetShareAccess(OPEN4_SHARE_ACCESS_BOTH)
-		ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
+		ow.SetShareAccess(nfs4.OPEN4_SHARE_ACCESS_BOTH)
+		ow.SetShareDeny(nfs4.OPEN4_SHARE_DENY_NONE)
 		ownerW := ow.StartOwner()
 		ownerW = ownerW.SetClientid(clientid)
 		ownerW = ownerW.SetOwner([]byte("nfstest"))
@@ -2372,7 +2374,7 @@ func TestTernCrossDirectoryRename(t *testing.T) {
 	fh := append([]byte(nil), nextOp(t, &iter).Value().AsGETFH4resEntry().Value().AsGETFH4resok().Object().Data()...)
 
 	movedData := []byte("cross-dir rename data")
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pfW := w.AppendArgarray_Putfh()
 		buf := pfW.StartObject().SetData(fh).Finish()
 		pfW.Resume(buf)
@@ -2389,7 +2391,7 @@ func TestTernCrossDirectoryRename(t *testing.T) {
 	xid++
 	expectOK(t, res)
 
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pfW := w.AppendArgarray_Putfh()
 		buf := pfW.StartObject().SetData(fh).Finish()
 		pfW.Resume(buf)
@@ -2402,7 +2404,7 @@ func TestTernCrossDirectoryRename(t *testing.T) {
 	expectOK(t, res)
 
 	// RENAME: PUTROOTFH + LOOKUP(srcdir) + SAVEFH + PUTROOTFH + LOOKUP(dstdir) + RENAME
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		lw := w.AppendArgarray_Lookup()
 		nw := lw.StartObjname()
@@ -2439,12 +2441,12 @@ func TestTernCrossDirectoryRename(t *testing.T) {
 	nextOp(t, &iter) // PUTROOTFH
 	nextOp(t, &iter) // LOOKUP dstdir
 	renameRes := nextOp(t, &iter).Value().AsRENAME4resEntry()
-	if renameRes.Disc() != NFS4_OK {
-		t.Fatalf("RENAME status = %s", Nfsstat4Name(renameRes.Disc()))
+	if renameRes.Disc() != nfs4.NFS4_OK {
+		t.Fatalf("RENAME status = %s", nfs4.Nfsstat4Name(renameRes.Disc()))
 	}
 
 	// Verify file is in dstdir.
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		lw := w.AppendArgarray_Lookup()
 		nw := lw.StartObjname()
@@ -2474,7 +2476,7 @@ func TestTernCrossDirectoryRename(t *testing.T) {
 	}
 
 	// Cleanup.
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		lw := w.AppendArgarray_Lookup()
 		nw := lw.StartObjname()
@@ -2555,7 +2557,7 @@ func TestTernNfsDirHidden(t *testing.T) {
 	xid := uint32(1)
 
 	// Get root FH.
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		w.AppendArgarray_Getfh()
 	})
@@ -2582,7 +2584,7 @@ func TestTernLookupNonExistent(t *testing.T) {
 
 	xid := uint32(1)
 
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		lw := w.AppendArgarray_Lookup()
 		nw := lw.StartObjname()
@@ -2593,9 +2595,9 @@ func TestTernLookupNonExistent(t *testing.T) {
 	})
 	xid++
 
-	if res.Status() != NFS4ERR_NOENT {
+	if res.Status() != nfs4.NFS4ERR_NOENT {
 		t.Fatalf("LOOKUP non-existent: got status %s, want NFS4ERR_NOENT",
-			Nfsstat4Name(res.Status()))
+			nfs4.Nfsstat4Name(res.Status()))
 	}
 }
 
@@ -2645,7 +2647,7 @@ func TestTernCompoundChaining(t *testing.T) {
 	createFileViaNFS(t, conn, &xid, clientid, "chain-b.txt", []byte("bbb"))
 
 	// Single compound: PUTROOTFH + LOOKUP(a) + READ + PUTROOTFH + LOOKUP(b) + READ
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		lw := w.AppendArgarray_Lookup()
 		nw := lw.StartObjname()
@@ -2760,11 +2762,11 @@ func TestTernCreatedOpenCanBeUnlinked(t *testing.T) {
 		t, conn, &xid, clientID, "temporary-owner",
 		"temporary", [8]byte{1, 2, 3, 4, 5, 6, 7, 8},
 	)
-	if status != NFS4_OK {
-		t.Fatalf("OPEN status = %s, want NFS4_OK", Nfsstat4Name(status))
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("OPEN status = %s, want NFS4_OK", nfs4.Nfsstat4Name(status))
 	}
 
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		rw := w.AppendArgarray_Remove()
 		buf := rw.StartTarget().SetData([]byte("temporary")).Finish()
@@ -2772,9 +2774,9 @@ func TestTernCreatedOpenCanBeUnlinked(t *testing.T) {
 		w.Resume(rw.Finish())
 	})
 	xid++
-	if res.Status() != NFS4_OK {
+	if res.Status() != nfs4.NFS4_OK {
 		t.Fatalf("REMOVE status = %s, want NFS4_OK",
-			Nfsstat4Name(res.Status()))
+			nfs4.Nfsstat4Name(res.Status()))
 	}
 
 	writeFileAt(t, conn, &xid, fh, stateID, 0, []byte("temporary data"))
@@ -2785,16 +2787,16 @@ func TestTernCreatedOpenCanBeUnlinked(t *testing.T) {
 	}
 	closeFile(t, conn, &xid, fh, stateID)
 
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		lw := w.AppendArgarray_Lookup()
 		buf := lw.StartObjname().SetData([]byte("temporary")).Finish()
 		lw.Resume(buf)
 		w.Resume(lw.Finish())
 	})
-	if res.Status() != NFS4ERR_NOENT {
+	if res.Status() != nfs4.NFS4ERR_NOENT {
 		t.Fatalf("LOOKUP after CLOSE status = %s, want NFS4ERR_NOENT",
-			Nfsstat4Name(res.Status()))
+			nfs4.Nfsstat4Name(res.Status()))
 	}
 }
 
@@ -2808,7 +2810,7 @@ func TestTernDetachedWriterReadsBase(t *testing.T) {
 	createFileViaNFS(t, conn, &xid, clientID, "detach-base", []byte("base bytes"))
 	stateID, fh := openWriteFile(t, conn, &xid, clientID, "detach-base")
 	writeFileAt(t, conn, &xid, fh, stateID, 0, []byte("B"))
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		rw := w.AppendArgarray_Remove()
 		rw.Resume(rw.StartTarget().SetData([]byte("detach-base")).Finish())
@@ -2821,15 +2823,15 @@ func TestTernDetachedWriterReadsBase(t *testing.T) {
 		t.Fatalf("detached read = %q, want %q", data, "Base bytes")
 	}
 	closeFile(t, conn, &xid, fh, stateID)
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		lw := w.AppendArgarray_Lookup()
 		lw.Resume(lw.StartObjname().SetData([]byte("detach-base")).Finish())
 		w.Resume(lw.Finish())
 	})
 	xid++
-	if res.Status() != NFS4ERR_NOENT {
-		t.Fatalf("LOOKUP after CLOSE = %s, want NOENT", Nfsstat4Name(res.Status()))
+	if res.Status() != nfs4.NFS4ERR_NOENT {
+		t.Fatalf("LOOKUP after CLOSE = %s, want NOENT", nfs4.Nfsstat4Name(res.Status()))
 	}
 }
 
@@ -2842,12 +2844,12 @@ func TestTernRenameStagedSource(t *testing.T) {
 	clientID := setupClient(t, conn, &xid)
 	createFileViaNFS(t, conn, &xid, clientID, "rename-open", []byte("original"))
 	status, state, fh, _ := openFileForOwner(t, conn, &xid, clientID,
-		"renamed-writer", "rename-open", OPEN4_SHARE_ACCESS_BOTH, false, false)
-	if status != NFS4_OK {
-		t.Fatalf("OPEN returned %s", Nfsstat4Name(status))
+		"renamed-writer", "rename-open", nfs4.OPEN4_SHARE_ACCESS_BOTH, false, false)
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("OPEN returned %s", nfs4.Nfsstat4Name(status))
 	}
 	writeFileAt(t, conn, &xid, fh, state, 0, []byte("updated!"))
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		w.AppendArgarray_Savefh()
 		rw := w.AppendArgarray_Rename()
@@ -2874,7 +2876,7 @@ func TestTernRejectedRenameKeepsWriter(t *testing.T) {
 	clientID := setupClient(t, conn, &xid)
 	state, fh := openCreateFile(t, conn, &xid, clientID, "rejected-rename")
 	writeFileAt(t, conn, &xid, fh, state, 0, []byte("before"))
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		cw := w.AppendArgarray_Create()
 		cw.SetObjtype_Nf4dir()
@@ -2888,7 +2890,7 @@ func TestTernRejectedRenameKeepsWriter(t *testing.T) {
 	})
 	xid++
 	expectOK(t, res)
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		w.AppendArgarray_Savefh()
 		rw := w.AppendArgarray_Rename()
@@ -2897,8 +2899,8 @@ func TestTernRejectedRenameKeepsWriter(t *testing.T) {
 		w.Resume(rw.Finish())
 	})
 	xid++
-	if res.Status() != NFS4ERR_EXIST {
-		t.Fatalf("RENAME returned %s, want EXIST", Nfsstat4Name(res.Status()))
+	if res.Status() != nfs4.NFS4ERR_EXIST {
+		t.Fatalf("RENAME returned %s, want EXIST", nfs4.Nfsstat4Name(res.Status()))
 	}
 	writeFileAt(t, conn, &xid, fh, state, 0, []byte("after!"))
 	closeFile(t, conn, &xid, fh, state)
@@ -2919,9 +2921,9 @@ func TestTernRetiredSourceCanMoveAcrossDirectories(t *testing.T) {
 	clientID := setupClient(t, conn, &xid)
 	createFileViaNFS(t, conn, &xid, clientID, "retired-move", []byte("published"))
 	status, state, fh, _ := openFileForOwner(t, conn, &xid, clientID,
-		"retired-source", "retired-move", OPEN4_SHARE_ACCESS_BOTH, false, false)
-	if status != NFS4_OK {
-		t.Fatal(Nfsstat4Name(status))
+		"retired-source", "retired-move", nfs4.OPEN4_SHARE_ACCESS_BOTH, false, false)
+	if status != nfs4.NFS4_OK {
+		t.Fatal(nfs4.Nfsstat4Name(status))
 	}
 	writeFileAt(t, conn, &xid, fh, state, 0, []byte("unpublished"))
 	id := stagingIDForTest(t, srv.stagingStore, state)
@@ -2938,7 +2940,7 @@ func TestTernRetiredSourceCanMoveAcrossDirectories(t *testing.T) {
 		t.Fatal(err)
 	}
 	dirFH := lookupFH(t, conn, &xid, "retired-move-dir")
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		w.AppendArgarray_Savefh()
 		pw := w.AppendArgarray_Putfh()
@@ -2991,7 +2993,7 @@ func TestTernRenameOverStagedDestination(t *testing.T) {
 	)
 	writeFileAt(t, conn, &xid, fh, stateID, 0, []byte("private"))
 
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		w.AppendArgarray_Savefh()
 		rw := w.AppendArgarray_Rename()
@@ -3002,9 +3004,9 @@ func TestTernRenameOverStagedDestination(t *testing.T) {
 		w.Resume(rw.Finish())
 	})
 	xid++
-	if res.Status() != NFS4_OK {
+	if res.Status() != nfs4.NFS4_OK {
 		t.Fatalf("RENAME status = %s, want NFS4_OK",
-			Nfsstat4Name(res.Status()))
+			nfs4.Nfsstat4Name(res.Status()))
 	}
 
 	writeFileAt(t, conn, &xid, fh, stateID, 7, []byte(" after"))

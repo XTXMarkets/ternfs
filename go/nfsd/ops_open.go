@@ -8,6 +8,8 @@ import (
 	"errors"
 	"os"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 // lookupDurableOpen requires valid local protocol state and a fleet-wide
@@ -21,7 +23,7 @@ import (
 // expired, gets BAD_STATEID before any effect (canonical r3 §10).
 func (s *Server) lookupDurableOpen(
 	clientID uint64,
-	stateid Stateid4,
+	stateid nfs4.Stateid4,
 	fileID InodeID,
 ) (openState, uint32) {
 	state, status := s.opens.lookup(
@@ -30,22 +32,22 @@ func (s *Server) lookupDurableOpen(
 		stateid.Seqid(),
 		fileID,
 	)
-	if status == NFS4_OK {
+	if status == nfs4.NFS4_OK {
 		fileID = state.dataID
 	} else if dataID, ok := s.recoveredDataID(clientID, extractStateID(stateid), fileID); ok {
 		fileID = dataID
-	} else if status == NFS4ERR_BAD_STATEID {
+	} else if status == nfs4.NFS4ERR_BAD_STATEID {
 		return openState{}, status
 	}
 	// A failed writer cannot recover from its old sidecar. Preserve ordinary
 	// stateid errors, then reject it locally without expiring healthy siblings.
 	if s.stagingStore.Failed(fileID) {
-		if status != NFS4_OK {
+		if status != nfs4.NFS4_OK {
 			return openState{}, status
 		}
-		return openState{}, NFS4ERR_IO
+		return openState{}, nfs4.NFS4ERR_IO
 	}
-	if status != NFS4_OK {
+	if status != nfs4.NFS4_OK {
 		id := extractStateID(stateid)
 		meta, hasMeta := s.stagingStore.GetMeta(fileID)
 		if !hasMeta || meta.NFSStateID != id || meta.ClientID != clientID || !s.opens.canRecover(id) {
@@ -54,7 +56,7 @@ func (s *Server) lookupDurableOpen(
 		if meta.ClientID != 0 {
 			if status := s.retireInactiveRecovered(meta.ClientID, id, func() {
 				s.retireStaging(fileID, meta)
-			}); status != NFS4_OK {
+			}); status != nfs4.NFS4_OK {
 				return openState{}, status
 			}
 		}
@@ -65,14 +67,14 @@ func (s *Server) lookupDurableOpen(
 			owner:      openOwnerKey{clientID: meta.ClientID},
 			access:     recoveredAccess(meta),
 			generation: stateid.Seqid(),
-		}, NFS4_OK
+		}, nfs4.NFS4_OK
 	}
 	// CLOSE can remove a failed writer's marker after the local lookup. Do
 	// not let that race expire the client's unrelated writers.
-	if status := s.expireInactiveOpen(state, func() bool { return s.stagingStore.Failed(fileID) }); status != NFS4_OK {
+	if status := s.expireInactiveOpen(state, func() bool { return s.stagingStore.Failed(fileID) }); status != nfs4.NFS4_OK {
 		return openState{}, status
 	}
-	return state, NFS4_OK
+	return state, nfs4.NFS4_OK
 }
 
 // expireInactiveOpen requires state's open to be active. When it is not, the
@@ -84,21 +86,21 @@ func (s *Server) lookupDurableOpen(
 // gives IO.
 func (s *Server) expireInactiveOpen(state openState, failed func() bool) uint32 {
 	status := s.requireActiveOpen(state)
-	if status != NFS4ERR_EXPIRED {
-		if status != NFS4_OK && failed != nil && failed() {
-			return NFS4ERR_IO
+	if status != nfs4.NFS4ERR_EXPIRED {
+		if status != nfs4.NFS4_OK && failed != nil && failed() {
+			return nfs4.NFS4ERR_IO
 		}
 		return status
 	}
 	end, ok := s.beginDestroy(state.owner.clientID)
 	if !ok {
-		return NFS4ERR_DELAY // Not while confirming.
+		return nfs4.NFS4ERR_DELAY // Not while confirming.
 	}
 	defer end()
-	if status = s.requireActiveOpen(state); status != NFS4_OK && failed != nil && failed() {
-		return NFS4ERR_IO
+	if status = s.requireActiveOpen(state); status != nfs4.NFS4_OK && failed != nil && failed() {
+		return nfs4.NFS4ERR_IO
 	}
-	if status == NFS4ERR_EXPIRED && s.clients.MarkerGone(state.owner.clientID, state.id) {
+	if status == nfs4.NFS4ERR_EXPIRED && s.clients.MarkerGone(state.owner.clientID, state.id) {
 		// This open itself is gone, as after a CLOSE that discarded its
 		// writer: only its own local entry goes.
 		s.opens.expire(state.id)
@@ -116,21 +118,21 @@ func (s *Server) retireInactiveRecovered(clientID uint64, id StateID, retire fun
 		return clientStoreErrToNFS(err)
 	}
 	if active {
-		return NFS4_OK
+		return nfs4.NFS4_OK
 	}
 	end, ok := s.beginDestroy(clientID)
 	if !ok {
-		return NFS4ERR_DELAY // Not while confirming.
+		return nfs4.NFS4ERR_DELAY // Not while confirming.
 	}
 	defer end()
 	if active, err = s.clients.HasOpen(clientID, id); err != nil {
 		return clientStoreErrToNFS(err)
 	}
 	if active {
-		return NFS4_OK
+		return nfs4.NFS4_OK
 	}
 	retire()
-	return NFS4ERR_EXPIRED
+	return nfs4.NFS4ERR_EXPIRED
 }
 
 // recoveredDataID finds the staging of clientID's write open issued by an
@@ -158,16 +160,16 @@ func (s *Server) requireActiveOpen(state openState) uint32 {
 		return clientStoreErrToNFS(err)
 	}
 	if !active {
-		return NFS4ERR_EXPIRED
+		return nfs4.NFS4ERR_EXPIRED
 	}
-	return NFS4_OK
+	return nfs4.NFS4_OK
 }
 
 // expireClientState drops local state without revoking a confirmed clientid.
 func (s *Server) expireClientState(clientID uint64) {
 	for _, state := range s.opens.clientStates(clientID) {
 		if err := s.clients.RemoveOpen(clientID, state.id); err != nil &&
-			nfsErrCode(err) != NFS4ERR_STALE_CLIENTID {
+			nfsErrCode(err) != nfs4.NFS4ERR_STALE_CLIENTID {
 			s.log.Error("expire client: remove active-open record",
 				"clientid", clientID, "stateid", state.id, "err", err)
 			return
@@ -181,19 +183,19 @@ func (s *Server) expireClientState(clientID uint64) {
 	}
 }
 
-func (s *Server) opClose(args CLOSE4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
+func (s *Server) opClose(args nfs4.CLOSE4args, st *compoundState, w *nfs4.COMPOUND4resWriter) uint32 {
 	if !st.currentIDSet {
-		return writeCloseError(w, NFS4ERR_NOFILEHANDLE)
+		return writeCloseError(w, nfs4.NFS4ERR_NOFILEHANDLE)
 	}
 	state, status := s.releaseWrite(args.OpenStateid(), st, true, nil)
-	if status != NFS4_OK {
+	if status != nfs4.NFS4_OK {
 		return writeCloseError(w, status)
 	}
 	st.setCurrentStateID(state.id, state.generation)
 	return writeCloseResponse(w, state)
 }
 
-func (s *Server) opOpenDowngrade(args OPENDOWNGRADE4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
+func (s *Server) opOpenDowngrade(args nfs4.OPENDOWNGRADE4args, st *compoundState, w *nfs4.COMPOUND4resWriter) uint32 {
 	ew := w.AppendResarray_OpenDowngrade()
 	fail := func(status uint32) uint32 {
 		ew.SetValue_Default(status)
@@ -201,61 +203,61 @@ func (s *Server) opOpenDowngrade(args OPENDOWNGRADE4args, st *compoundState, w *
 		return status
 	}
 	if !st.currentIDSet {
-		return fail(NFS4ERR_NOFILEHANDLE)
+		return fail(nfs4.NFS4ERR_NOFILEHANDLE)
 	}
 	// The target must be a valid share value, a subset of the open's
 	// grants, and the union of the values recorded inside it (canonical r3
 	// §11). Deny is validated, not enforced. Narrowing BOTH to READ ends the
 	// open's writer as CLOSE would; narrowing BOTH to WRITE drops READ and
 	// keeps the writer.
-	g := grant{access: args.ShareAccess() &^ OPEN4_SHARE_ACCESS_WANT_DELEG_MASK, deny: args.ShareDeny()}
-	if g.access == 0 || g.access > OPEN4_SHARE_ACCESS_BOTH || g.deny > OPEN4_SHARE_DENY_BOTH {
-		return fail(NFS4ERR_INVAL)
+	g := grant{access: args.ShareAccess() &^ nfs4.OPEN4_SHARE_ACCESS_WANT_DELEG_MASK, deny: args.ShareDeny()}
+	if g.access == 0 || g.access > nfs4.OPEN4_SHARE_ACCESS_BOTH || g.deny > nfs4.OPEN4_SHARE_DENY_BOTH {
+		return fail(nfs4.NFS4ERR_INVAL)
 	}
 	stateid, resolved := st.resolveStateID(args.OpenStateid())
 	if !resolved {
-		return fail(NFS4ERR_BAD_STATEID)
+		return fail(nfs4.NFS4ERR_BAD_STATEID)
 	}
 	state, status := s.lookupDurableOpen(st.clientID, stateid, st.currentID)
-	if status != NFS4_OK {
+	if status != nfs4.NFS4_OK {
 		return fail(status)
 	}
 	recovered := !s.opens.live(state.id)
-	if status := state.downgradeStatus(g, recovered); status != NFS4_OK {
+	if status := state.downgradeStatus(g, recovered); status != nfs4.NFS4_OK {
 		return fail(status)
 	}
 	switch {
-	case state.writes() && g.access == OPEN4_SHARE_ACCESS_READ:
+	case state.writes() && g.access == nfs4.OPEN4_SHARE_ACCESS_READ:
 		state, status = s.releaseWrite(args.OpenStateid(), st, false, &g)
 	case recovered:
 		state, status = s.adoptRecovered(st, stateid, g)
 	default:
 		state, status = s.regrant(st, stateid, g)
 	}
-	if status != NFS4_OK {
+	if status != nfs4.NFS4_OK {
 		return fail(status)
 	}
 	ok := ew.SetValue_Nfs4Ok()
 	writeStateID(ok.OpenStateid(), state.generation, state.id)
 	w.Resume(ew.Finish())
 	st.setCurrentStateID(state.id, state.generation)
-	return NFS4_OK
+	return nfs4.NFS4_OK
 }
 
 // releaseWrite ends an open's writer: the last writer of a staging file
 // publishes it. With closing set the open is removed (CLOSE); otherwise it
 // continues as a read open of the published version (OPEN_DOWNGRADE).
 // to is OPEN_DOWNGRADE's target, checked again under the file lock.
-func (s *Server) releaseWrite(openStateid Stateid4, st *compoundState, closing bool, to *grant) (openState, uint32) {
+func (s *Server) releaseWrite(openStateid nfs4.Stateid4, st *compoundState, closing bool, to *grant) (openState, uint32) {
 	stateid, ok := st.resolveStateID(openStateid)
 	if !ok {
-		return openState{}, NFS4ERR_BAD_STATEID
+		return openState{}, nfs4.NFS4ERR_BAD_STATEID
 	}
 	sid := extractStateID(stateid)
 	generation := stateid.Seqid()
 	state, status := s.opens.lookup(st.clientID, sid, generation, st.currentID)
 	recovered := false
-	if status != NFS4_OK {
+	if status != nfs4.NFS4_OK {
 		// A write open issued by an earlier nfsd process is closed through
 		// its staging sidecar.
 		dataID, ok := s.recoveredDataID(st.clientID, sid, st.currentID)
@@ -285,7 +287,7 @@ func (s *Server) releaseWrite(openStateid Stateid4, st *compoundState, closing b
 	}()
 	if !recovered {
 		current, status := s.opens.lookup(st.clientID, sid, generation, st.currentID)
-		if status != NFS4_OK {
+		if status != nfs4.NFS4_OK {
 			return openState{}, status
 		}
 		if current.dataID != dataID {
@@ -296,7 +298,7 @@ func (s *Server) releaseWrite(openStateid Stateid4, st *compoundState, closing b
 		}
 		state = current
 		if to != nil {
-			if status := state.downgradeStatus(*to, false); status != NFS4_OK {
+			if status := state.downgradeStatus(*to, false); status != nfs4.NFS4_OK {
 				return openState{}, status
 			}
 		}
@@ -305,25 +307,25 @@ func (s *Server) releaseWrite(openStateid Stateid4, st *compoundState, closing b
 		return openState{}, status
 	}
 	if !recovered {
-		if status := s.expireInactiveOpen(state, nil); status != NFS4_OK {
+		if status := s.expireInactiveOpen(state, nil); status != nfs4.NFS4_OK {
 			return fail(status)
 		}
 	}
 
 	if recovered {
 		if !hasMeta {
-			return fail(NFS4ERR_EXPIRED)
+			return fail(nfs4.NFS4ERR_EXPIRED)
 		}
 		if !closing && !s.opens.adoptable(recoveredOwner(meta), st.currentID, sid) {
 			// The owner already has a live open of the file: the downgrade
 			// could not continue as a read open, so it waits, before any
 			// publication. Both opens are kept.
-			return fail(NFS4ERR_DELAY)
+			return fail(nfs4.NFS4ERR_DELAY)
 		}
 		if meta.ClientID != 0 {
 			if status := s.retireInactiveRecovered(meta.ClientID, sid, func() {
 				s.retireStagingLocked(dataID, meta)
-			}); status != NFS4_OK {
+			}); status != nfs4.NFS4_OK {
 				return fail(status)
 			}
 		}
@@ -346,7 +348,7 @@ func (s *Server) releaseWrite(openStateid Stateid4, st *compoundState, closing b
 	if !closing && !state.writes() && !recovered {
 		// Already read-only.
 		state, _ = s.opens.downgrade(sid, state.dataID, *to)
-		return state, NFS4_OK
+		return state, nfs4.NFS4_OK
 	}
 	if hasMeta && !recovered {
 		if next, ok := s.opens.otherWriter(sid, dataID); ok {
@@ -355,12 +357,12 @@ func (s *Server) releaseWrite(openStateid Stateid4, st *compoundState, closing b
 			// ownership to that open so recovery and expiry follow it.
 			if meta.NFSStateID == sid {
 				if err := s.stagingStore.Rebind(dataID, next.owner.clientID, next.id); err != nil {
-					return fail(NFS4ERR_IO)
+					return fail(nfs4.NFS4ERR_IO)
 				}
 			}
 			hasMeta = false
 			sf = nil
-			state.access &^= OPEN4_SHARE_ACCESS_WRITE
+			state.access &^= nfs4.OPEN4_SHARE_ACCESS_WRITE
 		}
 	}
 	// Check if there's a staging file for the current filehandle.
@@ -377,7 +379,7 @@ func (s *Server) releaseWrite(openStateid Stateid4, st *compoundState, closing b
 			}
 			info := sf.Stat()
 			if err := s.fs.SetTime(currentID, &info.Mtime, &info.Atime); err != nil {
-				st.observeMutation(s.fs, OP_CLOSE, err)
+				st.observeMutation(s.fs, nfs4.OP_CLOSE, err)
 				return fail(s.errToNFS(err))
 			}
 			published = currentID
@@ -391,7 +393,7 @@ func (s *Server) releaseWrite(openStateid Stateid4, st *compoundState, closing b
 					s.discardStaging(dataID)
 					status := s.errToNFS(err)
 					s.log.Error("close: hydrate replacement", "err", err,
-						"status", Nfsstat4Name(status))
+						"status", nfs4.Nfsstat4Name(status))
 					return fail(status)
 				}
 			}
@@ -402,12 +404,12 @@ func (s *Server) releaseWrite(openStateid Stateid4, st *compoundState, closing b
 			}
 			linkErr := s.fs.LinkFile(stagingID, meta.TernCookie, meta.DirID, meta.FileName, r)
 			if linkErr != nil {
-				st.observeMutation(s.fs, OP_CLOSE, linkErr)
+				st.observeMutation(s.fs, nfs4.OP_CLOSE, linkErr)
 				// The write phase is not resumable after a partial LinkFile.
 				s.failForReaders(dataID, sid)
 				s.discardStaging(dataID)
 				status := s.errToNFS(linkErr)
-				s.log.Error("close: link file", "err", linkErr, "status", Nfsstat4Name(status))
+				s.log.Error("close: link file", "err", linkErr, "status", nfs4.Nfsstat4Name(status))
 				return fail(status)
 			}
 			info := sf.Stat()
@@ -449,13 +451,13 @@ func (s *Server) releaseWrite(openStateid Stateid4, st *compoundState, closing b
 		}
 		if !recovered {
 			state, _ = s.opens.downgrade(sid, readID, *to)
-			return state, NFS4_OK
+			return state, nfs4.NFS4_OK
 		}
 		// A recovered writer downgraded to READ continues as a live read
 		// open under its stateid, keeping its marker. Adoption was checked
 		// before publication, under the same file lock.
 		if adopted, ok := s.opens.adopt(recoveredOwner(meta), st.currentID, readID, *to, sid, nextStateidGeneration(generation)); ok {
-			return adopted, NFS4_OK
+			return adopted, nfs4.NFS4_OK
 		}
 		panic("recovered downgrade: adoption checked under lockFile failed")
 	}
@@ -472,9 +474,9 @@ func (s *Server) releaseWrite(openStateid Stateid4, st *compoundState, closing b
 		}
 	}
 	if expiredClose {
-		return fail(NFS4ERR_EXPIRED)
+		return fail(nfs4.NFS4ERR_EXPIRED)
 	}
-	return state, NFS4_OK
+	return state, nfs4.NFS4_OK
 }
 
 // failForReaders marks a staging failed, when opens other than the closing
@@ -540,89 +542,89 @@ func recoveredOwner(meta StagingMeta) openOwnerKey {
 // than a writer rebuilt from its sidecar. If the owner already has a live
 // open of the file, it gets DELAY and nothing changes. Lock order is
 // pathname, then file.
-func (s *Server) adoptRecovered(st *compoundState, stateid Stateid4, g grant) (openState, uint32) {
+func (s *Server) adoptRecovered(st *compoundState, stateid nfs4.Stateid4, g grant) (openState, uint32) {
 	sid := extractStateID(stateid)
 	dataID, ok := s.recoveredDataID(st.clientID, sid, st.currentID)
 	if !ok {
-		return openState{}, NFS4ERR_BAD_STATEID
+		return openState{}, nfs4.NFS4ERR_BAD_STATEID
 	}
 	meta, hasMeta, unlockTarget := s.lockStagingTarget(dataID)
 	defer unlockTarget()
 	unlockOpen := s.opens.lockFile(st.currentID)
 	defer unlockOpen()
 	if !hasMeta || meta.NFSStateID != sid || meta.ClientID != st.clientID {
-		return openState{}, NFS4ERR_BAD_STATEID
+		return openState{}, nfs4.NFS4ERR_BAD_STATEID
 	}
 	if s.opens.live(sid) {
 		// Adopted meanwhile: the stateid is now ordinary live state.
-		return openState{}, NFS4ERR_DELAY
+		return openState{}, nfs4.NFS4ERR_DELAY
 	}
 	owner := recoveredOwner(meta)
 	state, ok := s.opens.adopt(owner, st.currentID, dataID, g, sid, nextStateidGeneration(stateid.Seqid()))
 	if !ok {
-		return openState{}, NFS4ERR_DELAY
+		return openState{}, nfs4.NFS4ERR_DELAY
 	}
 	s.views.addWriter(viewKey{st.clientID, st.currentID}, dataID)
-	return state, NFS4_OK
+	return state, nfs4.NFS4_OK
 }
 
 // recoveredAccess is a recovered open's access: its writer's original
 // grant is unknown, so a writer may keep or drop READ.
 func recoveredAccess(meta StagingMeta) uint32 {
 	if meta.ReadOnly {
-		return OPEN4_SHARE_ACCESS_READ
+		return nfs4.OPEN4_SHARE_ACCESS_READ
 	}
-	return OPEN4_SHARE_ACCESS_BOTH
+	return nfs4.OPEN4_SHARE_ACCESS_BOTH
 }
 
 // regrant applies an OPEN_DOWNGRADE that keeps the open's writer, or
 // narrows a read open, under the file lock: it checks the target again
 // against the current grants and advances the generation.
-func (s *Server) regrant(st *compoundState, stateid Stateid4, g grant) (openState, uint32) {
+func (s *Server) regrant(st *compoundState, stateid nfs4.Stateid4, g grant) (openState, uint32) {
 	unlock := s.opens.lockFile(st.currentID)
 	defer unlock()
 	sid := extractStateID(stateid)
 	current, status := s.opens.lookup(st.clientID, sid, stateid.Seqid(), st.currentID)
-	if status != NFS4_OK {
+	if status != nfs4.NFS4_OK {
 		return openState{}, status
 	}
-	if status := current.downgradeStatus(g, false); status != NFS4_OK {
+	if status := current.downgradeStatus(g, false); status != nfs4.NFS4_OK {
 		return openState{}, status
 	}
-	if current.writes() && g.access == OPEN4_SHARE_ACCESS_READ {
+	if current.writes() && g.access == nfs4.OPEN4_SHARE_ACCESS_READ {
 		// An upgrade raced in; the caller's path no longer applies.
-		return openState{}, NFS4ERR_DELAY
+		return openState{}, nfs4.NFS4ERR_DELAY
 	}
 	state, ok := s.opens.downgrade(sid, current.dataID, g)
 	if !ok {
-		return openState{}, NFS4ERR_BAD_STATEID
+		return openState{}, nfs4.NFS4ERR_BAD_STATEID
 	}
-	return state, NFS4_OK
+	return state, nfs4.NFS4_OK
 }
 
-func writeCloseError(w *COMPOUND4resWriter, status uint32) uint32 {
+func writeCloseError(w *nfs4.COMPOUND4resWriter, status uint32) uint32 {
 	ew := w.AppendResarray_Close()
 	ew.SetValue_Default(status)
 	w.Resume(ew.Finish())
 	return status
 }
 
-func writeCloseResponse(w *COMPOUND4resWriter, state openState) uint32 {
+func writeCloseResponse(w *nfs4.COMPOUND4resWriter, state openState) uint32 {
 	ew := w.AppendResarray_Close()
 	stid := ew.SetValue_Nfs4Ok()
 	writeStateID(stid, state.generation, state.id)
 	w.Resume(ew.Finish())
-	return NFS4_OK
+	return nfs4.NFS4_OK
 }
 
-func (s *Server) opOpen(args OPEN4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
+func (s *Server) opOpen(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPOUND4resWriter) uint32 {
 	return s.openRetry(args, st, w, 0)
 }
 
-func (s *Server) openRetry(args OPEN4args, st *compoundState, w *COMPOUND4resWriter, retries int) uint32 {
+func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPOUND4resWriter, retries int) uint32 {
 	if !st.currentIDSet {
 		ew := w.AppendResarray_Open()
-		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_NOFILEHANDLE)
+		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_NOFILEHANDLE)
 	}
 
 	claim := args.Claim()
@@ -638,9 +640,9 @@ func (s *Server) openRetry(args OPEN4args, st *compoundState, w *COMPOUND4resWri
 		return writeOpenError(w, status)
 	}
 
-	access := args.ShareAccess() & OPEN4_SHARE_ACCESS_BOTH
-	if s.stagingStore.ReadOnly() && access&OPEN4_SHARE_ACCESS_WRITE != 0 {
-		return fail(NFS4ERR_ROFS)
+	access := args.ShareAccess() & nfs4.OPEN4_SHARE_ACCESS_BOTH
+	if s.stagingStore.ReadOnly() && access&nfs4.OPEN4_SHARE_ACCESS_WRITE != 0 {
+		return fail(nfs4.NFS4ERR_ROFS)
 	}
 
 	// targetID is the inode the open's I/O uses; publishedID is the inode
@@ -685,26 +687,26 @@ func (s *Server) openRetry(args OPEN4args, st *compoundState, w *COMPOUND4resWri
 	var recoverID InodeID
 	var recoverMeta StagingMeta
 	switch claimType {
-	case CLAIM_NULL, CLAIM_FH:
+	case nfs4.CLAIM_NULL, nfs4.CLAIM_FH:
 		var dirID InodeID
 		var fileName string
-		if claimType == CLAIM_FH {
+		if claimType == nfs4.CLAIM_FH {
 			// Open the file the client already holds. A read open needs
 			// no name. A write publishes at the file's name, which TernFS
 			// cannot derive from the inode.
 			fileID := st.currentID
-			if status := requireRegularFile(fileID); status != NFS4_OK {
+			if status := requireRegularFile(fileID); status != nfs4.NFS4_OK {
 				if fileID.Type() == InodeTypeSymlink {
-					status = NFS4ERR_SYMLINK
+					status = nfs4.NFS4ERR_SYMLINK
 				} else if fileID.Type() == InodeTypeDir {
-					status = NFS4ERR_ISDIR
+					status = nfs4.NFS4ERR_ISDIR
 				}
 				return fail(status)
 			}
-			if args.OpenhowType() == OPEN4_CREATE {
-				return fail(NFS4ERR_INVAL)
+			if args.OpenhowType() == nfs4.OPEN4_CREATE {
+				return fail(nfs4.NFS4ERR_INVAL)
 			}
-			if access&OPEN4_SHARE_ACCESS_WRITE == 0 {
+			if access&nfs4.OPEN4_SHARE_ACCESS_WRITE == 0 {
 				if _, err := s.fs.Stat(fileID); err != nil {
 					return fail(s.errToNFS(err))
 				}
@@ -721,7 +723,7 @@ func (s *Server) openRetry(args OPEN4args, st *compoundState, w *COMPOUND4resWri
 				// CLAIM_FH.
 				var status uint32
 				recoverID, recoverMeta, status = s.claimFHRecoveryCandidate(fileID, clientID, ownerKey.owner)
-				if status != NFS4_OK {
+				if status != nfs4.NFS4_OK {
 					return fail(status)
 				}
 				dirID, fileName = recoverMeta.DirID, recoverMeta.FileName
@@ -729,17 +731,17 @@ func (s *Server) openRetry(args OPEN4args, st *compoundState, w *COMPOUND4resWri
 			}
 		} else {
 			dirID = st.currentID
-			if status := requireDirectory(dirID); status != NFS4_OK {
+			if status := requireDirectory(dirID); status != nfs4.NFS4_OK {
 				return fail(status)
 			}
 			var status uint32
 			fileName, status = toTernFSName(claim.AsNull().Data())
-			if status != NFS4_OK {
+			if status != nfs4.NFS4_OK {
 				return fail(status)
 			}
 		}
 		openDir, openName = dirID, fileName
-		if access&OPEN4_SHARE_ACCESS_WRITE != 0 || args.OpenhowType() == OPEN4_CREATE {
+		if access&nfs4.OPEN4_SHARE_ACCESS_WRITE != 0 || args.OpenhowType() == nfs4.OPEN4_CREATE {
 			unlock := s.lockMutationTargets(mutationTarget{
 				dirID: dirID,
 				name:  fileName,
@@ -750,14 +752,14 @@ func (s *Server) openRetry(args OPEN4args, st *compoundState, w *COMPOUND4resWri
 			recoveredStagingID, recoveredStagingMeta,
 				hasRecoveredStaging, releaseRecovery, recoveryErr = s.recoveredStagingTarget(
 				dirID, fileName, clientID, ownerKey.owner,
-				access&OPEN4_SHARE_ACCESS_WRITE != 0,
+				access&nfs4.OPEN4_SHARE_ACCESS_WRITE != 0,
 			)
 			// Taking an expired incarnation's staging is destructive for it:
 			// its hold lasts, with the pathname lock, until OPEN returns.
 			defer releaseRecovery()
-			if recovering && errors.Is(recoveryErr, nfsError(NFS4ERR_EXPIRED)) {
+			if recovering && errors.Is(recoveryErr, nfsError(nfs4.NFS4ERR_EXPIRED)) {
 				// Another staging became selectable since preselection.
-				return fail(NFS4ERR_STALE)
+				return fail(nfs4.NFS4ERR_STALE)
 			}
 			if recoveryErr != nil {
 				return fail(clientStoreErrToNFS(recoveryErr))
@@ -766,23 +768,23 @@ func (s *Server) openRetry(args OPEN4args, st *compoundState, w *COMPOUND4resWri
 				recoveredStagingID, recoveredStagingMeta, hasRecoveredStaging) {
 				// The preselected staging was rebound, removed or failed, or
 				// another one is selected now: adopt nothing.
-				return fail(NFS4ERR_STALE)
+				return fail(nfs4.NFS4ERR_STALE)
 			}
 		}
 
 		// Check if this is a create.
-		if args.OpenhowType() == OPEN4_CREATE {
+		if args.OpenhowType() == nfs4.OPEN4_CREATE {
 			createHow := args.Openhow().AsCreatehow4Entry()
-			var createAttrs Fattr4
+			var createAttrs nfs4.Fattr4
 			switch createHow.Disc() {
-			case UNCHECKED4:
+			case nfs4.UNCHECKED4:
 				createAttrs = createHow.Value().AsUnchecked4()
-			case GUARDED4:
+			case nfs4.GUARDED4:
 				createAttrs = createHow.Value().AsGuarded4()
-			case EXCLUSIVE4:
+			case nfs4.EXCLUSIVE4:
 				exclusiveVerifier = new([8]byte)
 				*exclusiveVerifier = verifierBytes(createHow.Value().AsVerifier4())
-			case EXCLUSIVE4_1:
+			case nfs4.EXCLUSIVE4_1:
 				// SUPPATTR_EXCLCREAT is empty: nfsd sets none of the
 				// attributes and reports an empty attrset, so the client
 				// sets them with a later SETATTR.
@@ -792,12 +794,12 @@ func (s *Server) openRetry(args OPEN4args, st *compoundState, w *COMPOUND4resWri
 			}
 			// An exclusive create carries a verifier, not attributes.
 			if exclusiveVerifier == nil {
-				if status := validateCreateAttrs(createAttrs); status != NFS4_OK {
+				if status := validateCreateAttrs(createAttrs); status != nfs4.NFS4_OK {
 					return fail(status)
 				}
 				var status uint32
 				openSize, status = createAttrSize(createAttrs)
-				if status != NFS4_OK {
+				if status != nfs4.NFS4_OK {
 					return fail(status)
 				}
 			}
@@ -806,11 +808,11 @@ func (s *Server) openRetry(args OPEN4args, st *compoundState, w *COMPOUND4resWri
 			publishedID = id
 			if err != nil {
 				lookupStatus := s.errToNFS(err)
-				if lookupStatus != NFS4ERR_NOENT {
+				if lookupStatus != nfs4.NFS4ERR_NOENT {
 					return fail(lookupStatus)
 				}
 				if s.stagingStore.ReadOnly() {
-					return fail(NFS4ERR_ROFS)
+					return fail(nfs4.NFS4ERR_ROFS)
 				}
 				if hasRecoveredStaging {
 					if recoveredStagingMeta.BaseID != 0 {
@@ -822,7 +824,7 @@ func (s *Server) openRetry(args OPEN4args, st *compoundState, w *COMPOUND4resWri
 				// that LOOKUP and READDIR will expose when OPEN succeeds.
 				placeholderID, placeholderCookie, err = s.fs.ConstructFile(dirID)
 				if err != nil {
-					st.observeMutation(s.fs, OP_OPEN, err)
+					st.observeMutation(s.fs, nfs4.OP_OPEN, err)
 					return fail(s.errToNFS(err))
 				}
 				id = placeholderID
@@ -833,14 +835,14 @@ func (s *Server) openRetry(args OPEN4args, st *compoundState, w *COMPOUND4resWri
 				}
 				placeholderDir, placeholderName = dirID, fileName
 				created = true
-			} else if createHow.Disc() == GUARDED4 {
-				return fail(NFS4ERR_EXIST)
+			} else if createHow.Disc() == nfs4.GUARDED4 {
+				return fail(nfs4.NFS4ERR_EXIST)
 			} else if exclusiveVerifier != nil {
 				stagingID, meta, found := s.exclusiveStagingTarget(
 					dirID, fileName, id, ownerKey, *exclusiveVerifier,
 				)
-				if !found || meta.ReadOnly != (access&OPEN4_SHARE_ACCESS_WRITE == 0) {
-					return fail(NFS4ERR_EXIST)
+				if !found || meta.ReadOnly != (access&nfs4.OPEN4_SHARE_ACCESS_WRITE == 0) {
+					return fail(nfs4.NFS4ERR_EXIST)
 				}
 				existing, local := s.opens.existingOpen(ownerKey, publishedID)
 				if local && existing.id == meta.NFSStateID {
@@ -849,7 +851,7 @@ func (s *Server) openRetry(args OPEN4args, st *compoundState, w *COMPOUND4resWri
 				} else if s.opens.canRecover(meta.NFSStateID) {
 					adoptRecoveredStaging()
 				} else {
-					return fail(NFS4ERR_EXIST)
+					return fail(nfs4.NFS4ERR_EXIST)
 				}
 				recoveredStagingID, recoveredStagingMeta = stagingID, meta
 				id = stagingID
@@ -860,11 +862,11 @@ func (s *Server) openRetry(args OPEN4args, st *compoundState, w *COMPOUND4resWri
 			publishedID = id
 			if err != nil {
 				lookupStatus := s.errToNFS(err)
-				if recovering && lookupStatus == NFS4ERR_NOENT {
+				if recovering && lookupStatus == nfs4.NFS4ERR_NOENT {
 					// The name no longer holds the client's handle.
-					return fail(NFS4ERR_STALE)
+					return fail(nfs4.NFS4ERR_STALE)
 				}
-				if lookupStatus == NFS4ERR_NOENT &&
+				if lookupStatus == nfs4.NFS4ERR_NOENT &&
 					hasRecoveredStaging &&
 					recoveredStagingMeta.BaseID == 0 {
 					adoptRecoveredStaging()
@@ -872,28 +874,28 @@ func (s *Server) openRetry(args OPEN4args, st *compoundState, w *COMPOUND4resWri
 					created = true
 					placeholderID, placeholderCookie, err = s.fs.ConstructFile(dirID)
 					if err != nil {
-						st.observeMutation(s.fs, OP_OPEN, err)
+						st.observeMutation(s.fs, nfs4.OP_OPEN, err)
 						return fail(s.errToNFS(err))
 					}
 					publishedID = placeholderID
 					placeholderDir, placeholderName = dirID, fileName
 				} else {
-					if lookupStatus == NFS4ERR_NOENT &&
+					if lookupStatus == nfs4.NFS4ERR_NOENT &&
 						hasRecoveredStaging {
 						s.discardStaging(recoveredStagingID)
 					}
 					return fail(lookupStatus)
 				}
-			} else if claimType == CLAIM_FH && id != st.currentID {
+			} else if claimType == nfs4.CLAIM_FH && id != st.currentID {
 				// Replaced since the name was checked.
-				return fail(NFS4ERR_STALE)
+				return fail(nfs4.NFS4ERR_STALE)
 			} else {
 				// A read sees this client's own writes to the file.
 				targetID = s.clientView(clientID, id)
 			}
 		}
 
-		if !staged && access&OPEN4_SHARE_ACCESS_WRITE != 0 {
+		if !staged && access&nfs4.OPEN4_SHARE_ACCESS_WRITE != 0 {
 			// Join this client's writer of the same file.
 			if writer, ok := s.opens.writerOf(clientID, publishedID); ok {
 				targetID = writer.dataID
@@ -903,10 +905,10 @@ func (s *Server) openRetry(args OPEN4args, st *compoundState, w *COMPOUND4resWri
 				}
 			}
 		}
-		if !staged && (created || access&OPEN4_SHARE_ACCESS_WRITE != 0) {
-			if status := requireRegularFile(targetID); status != NFS4_OK {
+		if !staged && (created || access&nfs4.OPEN4_SHARE_ACCESS_WRITE != 0) {
+			if status := requireRegularFile(targetID); status != nfs4.NFS4_OK {
 				if targetID.Type() == InodeTypeSymlink {
-					status = NFS4ERR_SYMLINK
+					status = nfs4.NFS4ERR_SYMLINK
 				}
 				return fail(status)
 			}
@@ -928,20 +930,20 @@ func (s *Server) openRetry(args OPEN4args, st *compoundState, w *COMPOUND4resWri
 				var status uint32
 				targetID, nfsSID, status = s.constructStaging(
 					st, dirID, fileName, clientID, ownerKey.owner,
-					access&OPEN4_SHARE_ACCESS_WRITE != 0, baseID, baseInfo,
+					access&nfs4.OPEN4_SHARE_ACCESS_WRITE != 0, baseID, baseInfo,
 					exclusiveVerifier,
 				)
-				if status != NFS4_OK {
+				if status != nfs4.NFS4_OK {
 					return fail(status)
 				}
 				staged = true
 			}
 		}
-	case CLAIM_PREVIOUS:
+	case nfs4.CLAIM_PREVIOUS:
 		// No grace period — there is no lock/open state to reclaim.
-		return fail(NFS4ERR_NO_GRACE)
+		return fail(nfs4.NFS4ERR_NO_GRACE)
 	default:
-		return fail(NFS4ERR_NOTSUPP)
+		return fail(nfs4.NFS4ERR_NOTSUPP)
 	}
 
 	stagingRebound := false
@@ -982,24 +984,24 @@ func (s *Server) openRetry(args OPEN4args, st *compoundState, w *COMPOUND4resWri
 		// truncating open through the client's cache would.
 		if err := applyOpenSize(); err != nil {
 			cleanupStagedOpen()
-			return fail(NFS4ERR_IO)
+			return fail(nfs4.NFS4ERR_IO)
 		}
 	}
 
-	if status := requireRegularFile(targetID); status != NFS4_OK {
+	if status := requireRegularFile(targetID); status != nfs4.NFS4_OK {
 		if targetID.Type() == InodeTypeSymlink {
-			status = NFS4ERR_SYMLINK
+			status = nfs4.NFS4ERR_SYMLINK
 		}
 		return fail(status)
 	}
 
 	unlockOpen := s.opens.lockFile(publishedID)
-	if !staged && !created && access&OPEN4_SHARE_ACCESS_WRITE == 0 {
+	if !staged && !created && access&nfs4.OPEN4_SHARE_ACCESS_WRITE == 0 {
 		// A writer's CLOSE may have ended the staging this read selected
 		// while it waited for the file (canonical r3 §11).
 		targetID = s.readSource(clientID, publishedID)
 	}
-	if !staged && claimType == CLAIM_NULL && openDir != 0 && retries < 3 {
+	if !staged && claimType == nfs4.CLAIM_NULL && openDir != 0 && retries < 3 {
 		// A CLOSE may have published over the name while we waited. Open
 		// what the name holds now. Writers hold the pathname lock already.
 		if current, err := s.fs.Lookup(openDir, openName); err == nil &&
@@ -1017,7 +1019,7 @@ func (s *Server) openRetry(args OPEN4args, st *compoundState, w *COMPOUND4resWri
 			// staging records it.
 			if err := s.stagingStore.Rebind(targetID, clientID, markID); err != nil {
 				cleanupStagedOpen()
-				return fail(NFS4ERR_IO)
+				return fail(nfs4.NFS4ERR_IO)
 			}
 			nfsSID = markID
 		}
@@ -1037,7 +1039,7 @@ func (s *Server) openRetry(args OPEN4args, st *compoundState, w *COMPOUND4resWri
 			recoveredStagingID, clientID, markID,
 		); err != nil {
 			_ = s.clients.RemoveOpen(clientID, markID)
-			return fail(NFS4ERR_IO)
+			return fail(nfs4.NFS4ERR_IO)
 		}
 		stagingRebound = true
 		// Retired files release their descriptors; Rebind reopens them after
@@ -1046,7 +1048,7 @@ func (s *Server) openRetry(args OPEN4args, st *compoundState, w *COMPOUND4resWri
 			if err := applyOpenSize(); err != nil {
 				_ = s.clients.RemoveOpen(clientID, markID)
 				cleanupStagedOpen()
-				return fail(NFS4ERR_IO)
+				return fail(nfs4.NFS4ERR_IO)
 			}
 		}
 	}
@@ -1054,7 +1056,7 @@ func (s *Server) openRetry(args OPEN4args, st *compoundState, w *COMPOUND4resWri
 		if err := s.fs.LinkFile(
 			placeholderID, placeholderCookie, placeholderDir, placeholderName, nil,
 		); err != nil {
-			st.observeMutation(s.fs, OP_OPEN, err)
+			st.observeMutation(s.fs, nfs4.OP_OPEN, err)
 			_ = s.clients.RemoveOpen(clientID, markID)
 			if staged {
 				cleanupStagedOpen()
@@ -1075,7 +1077,7 @@ func (s *Server) openRetry(args OPEN4args, st *compoundState, w *COMPOUND4resWri
 		if staged {
 			cleanupStagedOpen()
 		}
-		return fail(NFS4ERR_SERVERFAULT)
+		return fail(nfs4.NFS4ERR_SERVERFAULT)
 	}
 	if state.writes() {
 		s.views.addWriter(viewKey{clientID, publishedID}, state.dataID)
@@ -1115,7 +1117,7 @@ func (s *Server) constructStaging(
 	}
 	id, cookie, err := s.fs.ConstructFile(dirID)
 	if err != nil {
-		st.observeMutation(s.fs, OP_OPEN, err)
+		st.observeMutation(s.fs, nfs4.OP_OPEN, err)
 		return 0, StateID{}, s.errToNFS(err)
 	}
 	stateID := s.opens.newStateID()
@@ -1140,9 +1142,9 @@ func (s *Server) constructStaging(
 	if _, err := s.stagingStore.Create(id, meta); err != nil {
 		_ = s.fs.ScrapFile(id, cookie)
 		s.log.Error("staging create error", "err", err)
-		return 0, StateID{}, NFS4ERR_IO
+		return 0, StateID{}, nfs4.NFS4ERR_IO
 	}
-	return id, stateID, NFS4_OK
+	return id, stateID, nfs4.NFS4_OK
 }
 
 type openResponse struct {
@@ -1151,7 +1153,7 @@ type openResponse struct {
 }
 
 func writeOpenResponse(
-	w *COMPOUND4resWriter,
+	w *nfs4.COMPOUND4resWriter,
 	st *compoundState,
 	response openResponse,
 ) uint32 {
@@ -1165,7 +1167,7 @@ func writeOpenResponse(
 
 	now := uint64(time.Now().UnixNano())
 	cinfo := okW.Cinfo()
-	cinfo.SetAtomic(TRUE)
+	cinfo.SetAtomic(nfs4.TRUE)
 	if response.created {
 		cinfo.SetBefore(now - 1)
 	} else {
@@ -1173,7 +1175,7 @@ func writeOpenResponse(
 	}
 	cinfo.SetAfter(now)
 
-	okW.SetRflags(OPEN4_RESULT_LOCKTYPE_POSIX)
+	okW.SetRflags(nfs4.OPEN4_RESULT_LOCKTYPE_POSIX)
 
 	bmW := okW.StartAttrset()
 	buf := bmW.Finish()
@@ -1184,10 +1186,10 @@ func writeOpenResponse(
 	buf = okW.Finish()
 	ew.Resume(buf)
 	w.Resume(ew.Finish())
-	return NFS4_OK
+	return nfs4.NFS4_OK
 }
 
-func writeOpenError(w *COMPOUND4resWriter, status uint32) uint32 {
+func writeOpenError(w *nfs4.COMPOUND4resWriter, status uint32) uint32 {
 	ew := w.AppendResarray_Open()
 	return finishDefaultResponse(w, ew.Finish(), status)
 }

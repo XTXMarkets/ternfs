@@ -11,6 +11,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 // NFSv4.1 open state.
@@ -52,7 +54,7 @@ type openState struct {
 }
 
 // writes reports write access: the open has a writer.
-func (s openState) writes() bool { return s.access&OPEN4_SHARE_ACCESS_WRITE != 0 }
+func (s openState) writes() bool { return s.access&nfs4.OPEN4_SHARE_ACCESS_WRITE != 0 }
 
 // grant is one OPEN or OPEN_DOWNGRADE's share access and deny.
 type grant struct {
@@ -74,15 +76,15 @@ func (s openState) downgradeStatus(g grant, recovered bool) uint32 {
 		return u
 	}
 	if g.access&^s.access != 0 || g.deny&^union(s.denyModes, 3) != 0 {
-		return NFS4ERR_INVAL
+		return nfs4.NFS4ERR_INVAL
 	}
 	if recovered {
-		return NFS4_OK
+		return nfs4.NFS4_OK
 	}
 	if union(s.modes, g.access) != g.access || union(s.denyModes, g.deny) != g.deny {
-		return NFS4ERR_INVAL
+		return nfs4.NFS4ERR_INVAL
 	}
-	return NFS4_OK
+	return nfs4.NFS4_OK
 }
 
 // narrowLocked applies an accepted downgrade to g: the recorded values
@@ -213,7 +215,7 @@ func (os *openStateStore) open(
 	key := openFileKey{owner: owner, fileID: fileID}
 	os.nextSeq++
 	if state := os.byFile[key]; state != nil {
-		if g.access&OPEN4_SHARE_ACCESS_WRITE != 0 && !state.writes() {
+		if g.access&nfs4.OPEN4_SHARE_ACCESS_WRITE != 0 && !state.writes() {
 			state.dataID = dataID
 		}
 		state.access |= g.access
@@ -298,17 +300,17 @@ func (os *openStateStore) lookup(
 	os.mu.Lock()
 	defer os.mu.Unlock()
 	state, status := os.lookupLocked(clientID, id, generation, fileID)
-	if status != NFS4_OK {
+	if status != nfs4.NFS4_OK {
 		return openState{}, status
 	}
-	return *state, NFS4_OK
+	return *state, nfs4.NFS4_OK
 }
 
 func (os *openStateStore) unknownStateStatusLocked(clientID uint64, id StateID) uint32 {
 	if owner, ok := os.expired[id]; ok && owner == clientID {
-		return NFS4ERR_EXPIRED
+		return nfs4.NFS4ERR_EXPIRED
 	}
-	return NFS4ERR_BAD_STATEID
+	return nfs4.NFS4ERR_BAD_STATEID
 }
 
 func (os *openStateStore) lookupLocked(
@@ -322,15 +324,15 @@ func (os *openStateStore) lookupLocked(
 		return nil, os.unknownStateStatusLocked(clientID, id)
 	}
 	if state.owner.clientID != clientID || state.fileID != fileID {
-		return nil, NFS4ERR_BAD_STATEID
+		return nil, nfs4.NFS4ERR_BAD_STATEID
 	}
 	if generation != 0 && generation < state.generation {
-		return nil, NFS4ERR_OLD_STATEID
+		return nil, nfs4.NFS4ERR_OLD_STATEID
 	}
 	if generation > state.generation {
-		return nil, NFS4ERR_BAD_STATEID
+		return nil, nfs4.NFS4ERR_BAD_STATEID
 	}
-	return state, NFS4_OK
+	return state, nfs4.NFS4_OK
 }
 
 // status answers TEST_STATEID for clientID without a filehandle.
@@ -342,15 +344,15 @@ func (os *openStateStore) status(clientID uint64, id StateID, generation uint32)
 		return os.unknownStateStatusLocked(clientID, id)
 	}
 	if state.owner.clientID != clientID {
-		return NFS4ERR_BAD_STATEID
+		return nfs4.NFS4ERR_BAD_STATEID
 	}
 	if generation != 0 && generation < state.generation {
-		return NFS4ERR_OLD_STATEID
+		return nfs4.NFS4ERR_OLD_STATEID
 	}
 	if generation > state.generation {
-		return NFS4ERR_BAD_STATEID
+		return nfs4.NFS4ERR_BAD_STATEID
 	}
-	return NFS4_OK
+	return nfs4.NFS4_OK
 }
 
 // downgrade narrows an open to g with I/O on dataID: for a write open

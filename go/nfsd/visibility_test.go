@@ -14,6 +14,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 // exerciseVisibleCreation checks that CREATE publishes an empty file at
@@ -28,8 +30,8 @@ func exerciseVisibleCreation(t *testing.T, addr, name string, reverse bool) {
 	xid := uint32(1)
 	clientID := setupClient(t, conn, &xid)
 	otherID, confirm := requestClientID(t, otherConn, &xid, "other-"+name, [8]byte{2})
-	if status := confirmClientID(t, otherConn, &xid, otherID, confirm); status != NFS4_OK {
-		t.Fatal(Nfsstat4Name(status))
+	if status := confirmClientID(t, otherConn, &xid, otherID, confirm); status != nfs4.NFS4_OK {
+		t.Fatal(nfs4.Nfsstat4Name(status))
 	}
 	size := uint64(5)
 	creator, creatorFH := openCreateFileWithSize(t, conn, &xid, clientID, name, &size)
@@ -59,24 +61,24 @@ func exerciseVisibleCreation(t *testing.T, addr, name string, reverse bool) {
 	// A repeated guarded create now sees the published empty name.
 	status, _, _, _ := openFileForOwner(
 		t, otherConn, &xid, otherID, "guarded", name,
-		OPEN4_SHARE_ACCESS_BOTH, true, true,
+		nfs4.OPEN4_SHARE_ACCESS_BOTH, true, true,
 	)
-	if status != NFS4ERR_EXIST {
-		t.Fatalf("GUARDED create = %s, want EXIST", Nfsstat4Name(status))
+	if status != nfs4.NFS4ERR_EXIST {
+		t.Fatalf("GUARDED create = %s, want EXIST", nfs4.Nfsstat4Name(status))
 	}
 	status, reader, readerFH, _ := openFileForOwner(
 		t, otherConn, &xid, otherID, "reader", name,
-		OPEN4_SHARE_ACCESS_READ, false, false,
+		nfs4.OPEN4_SHARE_ACCESS_READ, false, false,
 	)
-	if status != NFS4_OK || !bytes.Equal(readerFH, emptyFH) {
-		t.Fatalf("reader OPEN = %s", Nfsstat4Name(status))
+	if status != nfs4.NFS4_OK || !bytes.Equal(readerFH, emptyFH) {
+		t.Fatalf("reader OPEN = %s", nfs4.Nfsstat4Name(status))
 	}
 	status, writer, writerFH, _ := openFileForOwner(
 		t, otherConn, &xid, otherID, "writer", name,
-		OPEN4_SHARE_ACCESS_BOTH, false, false,
+		nfs4.OPEN4_SHARE_ACCESS_BOTH, false, false,
 	)
-	if status != NFS4_OK {
-		t.Fatal(Nfsstat4Name(status))
+	if status != nfs4.NFS4_OK {
+		t.Fatal(nfs4.Nfsstat4Name(status))
 	}
 	checkSize(otherConn, writerFH, 0)
 	writeFileAt(t, otherConn, &xid, writerFH, writer, 0, []byte("second"))
@@ -92,8 +94,8 @@ func exerciseVisibleCreation(t *testing.T, addr, name string, reverse bool) {
 	viewer := dial(t, addr)
 	defer viewer.Close()
 	viewerID, viewerConfirm := requestClientID(t, viewer, &xid, "viewer-"+name, [8]byte{3})
-	if status := confirmClientID(t, viewer, &xid, viewerID, viewerConfirm); status != NFS4_OK {
-		t.Fatal(Nfsstat4Name(status))
+	if status := confirmClientID(t, viewer, &xid, viewerID, viewerConfirm); status != nfs4.NFS4_OK {
+		t.Fatal(nfs4.Nfsstat4Name(status))
 	}
 	closeFile(t, firstConn, &xid, emptyFH, creator)
 	check(viewer, lookupFH(t, viewer, &xid, name), firstWant)
@@ -145,10 +147,10 @@ func TestConcurrentGuardedCreationPublishesOnce(t *testing.T) {
 		seq := uint32(100)
 		status, _, _, _, err := openFileForOwnerE(
 			firstConn, &seq, clientID, "first", "guarded",
-			OPEN4_SHARE_ACCESS_BOTH, true, true,
+			nfs4.OPEN4_SHARE_ACCESS_BOTH, true, true,
 		)
 		if err != nil {
-			status = NFS4ERR_SERVERFAULT
+			status = nfs4.NFS4ERR_SERVERFAULT
 		}
 		results <- status
 	}()
@@ -157,19 +159,19 @@ func TestConcurrentGuardedCreationPublishesOnce(t *testing.T) {
 		seq := uint32(200)
 		status, _, _, _, err := openFileForOwnerE(
 			secondConn, &seq, clientID, "second", "guarded",
-			OPEN4_SHARE_ACCESS_READ, true, true,
+			nfs4.OPEN4_SHARE_ACCESS_READ, true, true,
 		)
 		if err != nil {
-			status = NFS4ERR_SERVERFAULT
+			status = nfs4.NFS4ERR_SERVERFAULT
 		}
 		results <- status
 	}()
 	closeSignal(fs.releaseFirst)
 	first := awaitValue(t, results, "first guarded create result")
 	second := awaitValue(t, results, "second guarded create result")
-	if !(first == NFS4_OK && second == NFS4ERR_EXIST ||
-		first == NFS4ERR_EXIST && second == NFS4_OK) {
-		t.Fatalf("guarded creates returned %s and %s", Nfsstat4Name(first), Nfsstat4Name(second))
+	if !(first == nfs4.NFS4_OK && second == nfs4.NFS4ERR_EXIST ||
+		first == nfs4.NFS4ERR_EXIST && second == nfs4.NFS4_OK) {
+		t.Fatalf("guarded creates returned %s and %s", nfs4.Nfsstat4Name(first), nfs4.Nfsstat4Name(second))
 	}
 	if fs.callCount() != 2 {
 		t.Fatalf("constructed %d inodes, want one empty version and one staging inode", fs.callCount())
@@ -219,7 +221,7 @@ func TestReadOnlyCreationSurvivesRestart(t *testing.T) {
 	clientID := setupClient(t, conn, &xid)
 	size := uint64(5)
 	state, fh := openCreateFileWithSizeAndAccess(
-		t, conn, &xid, clientID, "readonly", &size, OPEN4_SHARE_ACCESS_READ,
+		t, conn, &xid, clientID, "readonly", &size, nfs4.OPEN4_SHARE_ACCESS_READ,
 	)
 	emptyFH := lookupFH(t, conn, &xid, "readonly")
 	conn.Close()
@@ -239,7 +241,7 @@ func TestReadOnlyCreationSurvivesRestart(t *testing.T) {
 	defer cleanup()
 	conn = dial(t, addr)
 	defer conn.Close()
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pw := w.AppendArgarray_Putfh()
 		pw.Resume(pw.StartObject().SetData(fh).Finish())
 		w.Resume(pw.Finish())
@@ -251,8 +253,8 @@ func TestReadOnlyCreationSurvivesRestart(t *testing.T) {
 		w.Resume(ww.Finish())
 	})
 	xid++
-	if res.Status() != NFS4ERR_OPENMODE {
-		t.Fatalf("recovered read-only WRITE = %s", Nfsstat4Name(res.Status()))
+	if res.Status() != nfs4.NFS4ERR_OPENMODE {
+		t.Fatalf("recovered read-only WRITE = %s", nfs4.Nfsstat4Name(res.Status()))
 	}
 	closeFile(t, conn, &xid, fh, state)
 	data, _ := readFileData(t, conn, &xid, lookupFH(t, conn, &xid, "readonly"), 0, 1024)
@@ -319,9 +321,9 @@ func TestFailedCreationDoesNotPublishEmptyVersion(t *testing.T) {
 			srv.waitForClientGC()
 			status, _, _, _ := openFileForOwner(
 				t, conn, &xid, clientID, "creator", "failed",
-				OPEN4_SHARE_ACCESS_BOTH, true, false,
+				nfs4.OPEN4_SHARE_ACCESS_BOTH, true, false,
 			)
-			if status == NFS4_OK {
+			if status == nfs4.NFS4_OK {
 				t.Fatal("injected failure did not fail OPEN")
 			}
 			if _, err := fs.Lookup(fs.RootID(), "failed"); !os.IsNotExist(err) {

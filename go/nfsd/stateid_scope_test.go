@@ -8,6 +8,8 @@ import (
 	"encoding/binary"
 	"net"
 	"testing"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 func scopedStateid(seqid uint32, id StateID) [16]byte {
@@ -17,7 +19,7 @@ func scopedStateid(seqid uint32, id StateID) [16]byte {
 	return wire
 }
 
-func putfhOp(w *COMPOUND4argsWriter, fh []byte) {
+func putfhOp(w *nfs4.COMPOUND4argsWriter, fh []byte) {
 	pw := w.AppendArgarray_Putfh()
 	pw.Resume(pw.StartObject().SetData(fh).Finish())
 	w.Resume(pw.Finish())
@@ -26,7 +28,7 @@ func putfhOp(w *COMPOUND4argsWriter, fh []byte) {
 // stateidOpStatus sends one stateid operation on fh and returns its status.
 func stateidOpStatus(t *testing.T, conn net.Conn, xid *uint32, op string, fh []byte, sid [16]byte) uint32 {
 	t.Helper()
-	res := sendCompound(t, conn, *xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, *xid, func(w *nfs4.COMPOUND4argsWriter) {
 		putfhOp(w, fh)
 		switch op {
 		case "READ":
@@ -45,16 +47,16 @@ func stateidOpStatus(t *testing.T, conn net.Conn, xid *uint32, op string, fh []b
 			sw := w.AppendArgarray_Setattr()
 			setStateid(sw.Stateid(), sid)
 			aw := sw.StartObjAttributes()
-			sw.Resume(finishTestFattr(aw, attrMask{1 << FATTR4_SIZE}, binary.BigEndian.AppendUint64(nil, 0)))
+			sw.Resume(finishTestFattr(aw, attrMask{1 << nfs4.FATTR4_SIZE}, binary.BigEndian.AppendUint64(nil, 0)))
 			w.Resume(sw.Finish())
 		case "SETATTR-TIMES":
 			sw := w.AppendArgarray_Setattr()
 			setStateid(sw.Stateid(), sid)
 			aw := sw.StartObjAttributes()
-			value := binary.BigEndian.AppendUint32(nil, SET_TO_CLIENT_TIME4)
+			value := binary.BigEndian.AppendUint32(nil, nfs4.SET_TO_CLIENT_TIME4)
 			value = binary.BigEndian.AppendUint64(value, 1_000_000)
 			value = binary.BigEndian.AppendUint32(value, 0)
-			sw.Resume(finishTestFattr(aw, attrMask{0, 1 << (FATTR4_TIME_MODIFY_SET - 32)}, value))
+			sw.Resume(finishTestFattr(aw, attrMask{0, 1 << (nfs4.FATTR4_TIME_MODIFY_SET - 32)}, value))
 			w.Resume(sw.Finish())
 		case "CLOSE":
 			cw := w.AppendArgarray_Close()
@@ -62,12 +64,12 @@ func stateidOpStatus(t *testing.T, conn net.Conn, xid *uint32, op string, fh []b
 		case "DOWNGRADE-READ", "DOWNGRADE-WRITE":
 			dw := w.AppendArgarray_OpenDowngrade()
 			setStateid(dw.OpenStateid(), sid)
-			access := uint32(OPEN4_SHARE_ACCESS_READ)
+			access := uint32(nfs4.OPEN4_SHARE_ACCESS_READ)
 			if op == "DOWNGRADE-WRITE" {
-				access = OPEN4_SHARE_ACCESS_WRITE
+				access = nfs4.OPEN4_SHARE_ACCESS_WRITE
 			}
 			dw.SetShareAccess(access)
-			dw.SetShareDeny(OPEN4_SHARE_DENY_NONE)
+			dw.SetShareDeny(nfs4.OPEN4_SHARE_DENY_NONE)
 		case "FREE_STATEID":
 			fw := w.AppendArgarray_FreeStateid()
 			setStateid(fw.FsaStateid(), sid)
@@ -83,8 +85,8 @@ func stateidOpStatus(t *testing.T, conn net.Conn, xid *uint32, op string, fh []b
 	if op != "TEST_STATEID" {
 		return res.Status()
 	}
-	if res.Status() != NFS4_OK {
-		t.Fatalf("TEST_STATEID %s", Nfsstat4Name(res.Status()))
+	if res.Status() != nfs4.NFS4_OK {
+		t.Fatalf("TEST_STATEID %s", nfs4.Nfsstat4Name(res.Status()))
 	}
 	iter := res.Resarray()
 	iter.Next()
@@ -150,8 +152,8 @@ func TestForeignStateidsAreBadStateid(t *testing.T) {
 		{"expired", expFH, expSid},
 	} {
 		for _, op := range []string{"READ", "WRITE", "SETATTR", "SETATTR-TIMES", "CLOSE", "DOWNGRADE-READ", "DOWNGRADE-WRITE", "TEST_STATEID", "FREE_STATEID"} {
-			if got := stateidOpStatus(t, connB, &xidB, op, target.fh, target.sid); got != NFS4ERR_BAD_STATEID {
-				t.Errorf("B's %s of A's %s stateid = %s, want BAD_STATEID", op, target.name, Nfsstat4Name(got))
+			if got := stateidOpStatus(t, connB, &xidB, op, target.fh, target.sid); got != nfs4.NFS4ERR_BAD_STATEID {
+				t.Errorf("B's %s of A's %s stateid = %s, want BAD_STATEID", op, target.name, nfs4.Nfsstat4Name(got))
 			}
 		}
 	}
@@ -161,8 +163,8 @@ func TestForeignStateidsAreBadStateid(t *testing.T) {
 	copy(liveID[:], liveSid[4:])
 	liveFile, _ := fhToInodeID(liveFH)
 	state, status := srv.opens.lookup(incA, liveID, 0, liveFile)
-	if status != NFS4_OK {
-		t.Fatalf("A's live open %s", Nfsstat4Name(status))
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("A's live open %s", nfs4.Nfsstat4Name(status))
 	}
 	for _, id := range []InodeID{state.dataID, recStaging} {
 		if m, ok := srv.stagingStore.GetMeta(id); !ok || m.Retired {
@@ -179,12 +181,12 @@ func TestForeignStateidsAreBadStateid(t *testing.T) {
 		sid  [16]byte
 		want uint32
 	}{
-		{liveFH, liveSid, NFS4_OK},
-		{recFH, recSid, NFS4_OK},
-		{expFH, expSid, NFS4ERR_EXPIRED},
+		{liveFH, liveSid, nfs4.NFS4_OK},
+		{recFH, recSid, nfs4.NFS4_OK},
+		{expFH, expSid, nfs4.NFS4ERR_EXPIRED},
 	} {
 		if got := stateidOpStatus(t, connA, &xidA, "TEST_STATEID", check.fh, check.sid); got != check.want {
-			t.Fatalf("A's TEST_STATEID %s, want %s", Nfsstat4Name(got), Nfsstat4Name(check.want))
+			t.Fatalf("A's TEST_STATEID %s, want %s", nfs4.Nfsstat4Name(got), nfs4.Nfsstat4Name(check.want))
 		}
 	}
 	if data, _ := readFileData(t, connA, &xidA, liveFH, 0, 64); string(data) != "A's bytes" {
@@ -193,17 +195,17 @@ func TestForeignStateidsAreBadStateid(t *testing.T) {
 
 	// FREE_STATEID: A's own expired stateid is forgotten; an unknown one is
 	// BAD_STATEID; a live one is LOCKS_HELD.
-	if got := stateidOpStatus(t, connA, &xidA, "FREE_STATEID", expFH, expSid); got != NFS4_OK {
-		t.Fatalf("A's FREE_STATEID of its expired stateid %s", Nfsstat4Name(got))
+	if got := stateidOpStatus(t, connA, &xidA, "FREE_STATEID", expFH, expSid); got != nfs4.NFS4_OK {
+		t.Fatalf("A's FREE_STATEID of its expired stateid %s", nfs4.Nfsstat4Name(got))
 	}
-	if got := stateidOpStatus(t, connA, &xidA, "TEST_STATEID", expFH, expSid); got != NFS4ERR_BAD_STATEID {
-		t.Fatalf("freed stateid %s", Nfsstat4Name(got))
+	if got := stateidOpStatus(t, connA, &xidA, "TEST_STATEID", expFH, expSid); got != nfs4.NFS4ERR_BAD_STATEID {
+		t.Fatalf("freed stateid %s", nfs4.Nfsstat4Name(got))
 	}
 	unknown := scopedStateid(1, StateID{9, 9, 9, 9})
-	if got := stateidOpStatus(t, connA, &xidA, "FREE_STATEID", liveFH, unknown); got != NFS4ERR_BAD_STATEID {
-		t.Fatalf("FREE_STATEID of an unknown stateid %s", Nfsstat4Name(got))
+	if got := stateidOpStatus(t, connA, &xidA, "FREE_STATEID", liveFH, unknown); got != nfs4.NFS4ERR_BAD_STATEID {
+		t.Fatalf("FREE_STATEID of an unknown stateid %s", nfs4.Nfsstat4Name(got))
 	}
-	if got := stateidOpStatus(t, connA, &xidA, "FREE_STATEID", liveFH, liveSid); got != NFS4ERR_LOCKS_HELD {
-		t.Fatalf("FREE_STATEID of a live stateid %s", Nfsstat4Name(got))
+	if got := stateidOpStatus(t, connA, &xidA, "FREE_STATEID", liveFH, liveSid); got != nfs4.NFS4ERR_LOCKS_HELD {
+		t.Fatalf("FREE_STATEID of a live stateid %s", nfs4.Nfsstat4Name(got))
 	}
 }

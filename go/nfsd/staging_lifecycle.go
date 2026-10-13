@@ -8,6 +8,8 @@ import (
 	"errors"
 	"os"
 	"slices"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 func (s *Server) stagingOwnedBy(
@@ -150,7 +152,7 @@ func (s *Server) finishNamespaceWriters(writers []namespaceWriter, op uint32, ba
 	}
 	if len(writers) > 0 && outcome == mutationUnknown {
 		s.log.Warn("namespace outcome unknown; captured writers failed", "err", backendErr)
-		return NFS4ERR_IO
+		return nfs4.NFS4ERR_IO
 	}
 	return s.errToNFS(backendErr)
 }
@@ -233,7 +235,7 @@ func (s *Server) recoveredStagingTarget(
 			end, ok := s.beginDestroy(meta.ClientID)
 			if !ok {
 				// The other incarnation's expiry waits for its confirmation.
-				return 0, StagingMeta{}, false, release, nfsError(NFS4ERR_DELAY)
+				return 0, StagingMeta{}, false, release, nfsError(nfs4.NFS4ERR_DELAY)
 			}
 			holds[id] = end
 			// The expiry decision is the gate's (canonical r3 §8); this
@@ -251,7 +253,7 @@ func (s *Server) recoveredStagingTarget(
 		// Never guess between multiple recovered sessions and hand one
 		// writer another's data.
 		if foundID != 0 {
-			return 0, StagingMeta{}, false, release, nfsError(NFS4ERR_EXPIRED)
+			return 0, StagingMeta{}, false, release, nfsError(nfs4.NFS4ERR_EXPIRED)
 		}
 		foundID, foundMeta = id, meta
 	}
@@ -311,7 +313,7 @@ func (s *Server) claimFHRecoveryCandidate(
 		}
 		current, err := s.fs.Lookup(meta.DirID, meta.FileName)
 		if err != nil {
-			if s.errToNFS(err) == NFS4ERR_NOENT {
+			if s.errToNFS(err) == nfs4.NFS4ERR_NOENT {
 				continue
 			}
 			return 0, StagingMeta{}, s.errToNFS(err)
@@ -321,7 +323,7 @@ func (s *Server) claimFHRecoveryCandidate(
 		}
 		if crossIncarnation {
 			expired, status := s.recoveryLeaseExpired(meta.ClientID)
-			if status != NFS4_OK {
+			if status != nfs4.NFS4_OK {
 				return 0, StagingMeta{}, status
 			}
 			if !expired {
@@ -330,14 +332,14 @@ func (s *Server) claimFHRecoveryCandidate(
 		}
 		if foundID != 0 {
 			// Never guess which writer's data the client meant.
-			return 0, StagingMeta{}, NFS4ERR_EXPIRED
+			return 0, StagingMeta{}, nfs4.NFS4ERR_EXPIRED
 		}
 		foundID, foundMeta = id, meta
 	}
 	if foundID == 0 {
-		return 0, StagingMeta{}, NFS4ERR_STALE
+		return 0, StagingMeta{}, nfs4.NFS4ERR_STALE
 	}
-	return foundID, foundMeta, NFS4_OK
+	return foundID, foundMeta, nfs4.NFS4_OK
 }
 
 // recoveryLeaseExpired checks another incarnation's lease for preselection,
@@ -348,14 +350,14 @@ func (s *Server) claimFHRecoveryCandidate(
 func (s *Server) recoveryLeaseExpired(clientID uint64) (bool, uint32) {
 	end, ok := s.beginDestroy(clientID)
 	if !ok {
-		return false, NFS4ERR_DELAY
+		return false, nfs4.NFS4ERR_DELAY
 	}
 	defer end()
 	expired, err := s.decideExpired(clientID, false)
 	if err != nil {
 		return false, clientStoreErrToNFS(err)
 	}
-	return expired, NFS4_OK
+	return expired, nfs4.NFS4_OK
 }
 
 // sameRecoveryCandidate reports whether recoveredStagingTarget, under the

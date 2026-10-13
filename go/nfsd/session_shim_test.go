@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 // The protocol tests build COMPOUNDs as an NFSv4.0 client would. sendRPC
@@ -107,11 +109,11 @@ func noteOpenStateids(conn net.Conn, clientID uint64, reply []byte) {
 	iter := res.Resarray()
 	for iter.Next() {
 		entry := iter.Resarray()
-		if entry.Disc() != OP_OPEN {
+		if entry.Disc() != nfs4.OP_OPEN {
 			continue
 		}
 		open := entry.Value().AsOPEN4resEntry()
-		if open.Disc() != NFS4_OK {
+		if open.Disc() != nfs4.NFS4_OK {
 			continue
 		}
 		owners := testSessions.stateids[conn]
@@ -127,7 +129,7 @@ func noteOpenStateids(conn net.Conn, clientID uint64, reply []byte) {
 // of body's operations presents, read from the operations' stateid fields
 // rather than from the raw bytes.
 func stateidOwner(conn net.Conn, body []byte) (uint64, bool) {
-	args, ok := ReadCOMPOUND4args(body)
+	args, ok := nfs4.ReadCOMPOUND4args(body)
 	if !ok {
 		return 0, false
 	}
@@ -136,19 +138,19 @@ func stateidOwner(conn net.Conn, body []byte) (uint64, bool) {
 	for it.Next() {
 		op := it.Argarray().Value()
 		switch op.Disc() {
-		case OP_READ:
+		case nfs4.OP_READ:
 			presented = append(presented, extractStateID(op.AsREAD4args().Stateid()))
-		case OP_WRITE:
+		case nfs4.OP_WRITE:
 			presented = append(presented, extractStateID(op.AsWRITE4args().Stateid()))
-		case OP_SETATTR:
+		case nfs4.OP_SETATTR:
 			presented = append(presented, extractStateID(op.AsSETATTR4args().Stateid()))
-		case OP_CLOSE:
+		case nfs4.OP_CLOSE:
 			presented = append(presented, extractStateID(op.AsCLOSE4args().OpenStateid()))
-		case OP_OPEN_DOWNGRADE:
+		case nfs4.OP_OPEN_DOWNGRADE:
 			presented = append(presented, extractStateID(op.AsOPENDOWNGRADE4args().OpenStateid()))
-		case OP_FREE_STATEID:
+		case nfs4.OP_FREE_STATEID:
 			presented = append(presented, extractStateID(op.AsFREESTATEID4args().FsaStateid()))
-		case OP_TEST_STATEID:
+		case nfs4.OP_TEST_STATEID:
 			ts := op.AsTESTSTATEID4args()
 			for i := 0; i < int(ts.TsStateidsCount()); i++ {
 				presented = append(presented, extractStateID(ts.TsStateids(i)))
@@ -222,14 +224,14 @@ func compoundArgLayout(body []byte) (countOff int, firstOp uint32, ok bool) {
 
 // openOwnerClientID finds the clientid named by an OPEN in the compound.
 func openOwnerClientID(body []byte) (uint64, bool) {
-	args, ok := ReadCOMPOUND4args(body)
+	args, ok := nfs4.ReadCOMPOUND4args(body)
 	if !ok {
 		return 0, false
 	}
 	iter := args.Argarray()
 	for iter.Next() {
 		entry := iter.Argarray()
-		if entry.Disc() == OP_OPEN {
+		if entry.Disc() == nfs4.OP_OPEN {
 			return entry.Value().AsOPEN4args().Owner().Clientid(), true
 		}
 	}
@@ -239,12 +241,12 @@ func openOwnerClientID(body []byte) (uint64, bool) {
 func withSequence(body []byte, ts *testSession, slot, seq uint32) []byte {
 	countOff, _, _ := compoundArgLayout(body)
 	var op []byte
-	op = binary.BigEndian.AppendUint32(op, OP_SEQUENCE)
+	op = binary.BigEndian.AppendUint32(op, nfs4.OP_SEQUENCE)
 	op = append(op, ts.id[:]...)
 	op = binary.BigEndian.AppendUint32(op, seq)
 	op = binary.BigEndian.AppendUint32(op, slot)
 	op = binary.BigEndian.AppendUint32(op, uint32(len(ts.seqs)-1))
-	op = binary.BigEndian.AppendUint32(op, TRUE) // cachethis
+	op = binary.BigEndian.AppendUint32(op, nfs4.TRUE) // cachethis
 	out := make([]byte, 0, len(body)+len(op))
 	out = append(out, body[:countOff]...)
 	out = binary.BigEndian.AppendUint32(out, binary.BigEndian.Uint32(body[countOff:])+1)
@@ -264,11 +266,11 @@ func withoutSequenceResult(reply []byte) []byte {
 		return reply
 	}
 	count := binary.BigEndian.Uint32(res[countOff:])
-	if count == 0 || binary.BigEndian.Uint32(res[countOff+4:]) != OP_SEQUENCE {
+	if count == 0 || binary.BigEndian.Uint32(res[countOff+4:]) != nfs4.OP_SEQUENCE {
 		return reply
 	}
 	size := 8
-	if binary.BigEndian.Uint32(res[countOff+8:]) == NFS4_OK {
+	if binary.BigEndian.Uint32(res[countOff+8:]) == nfs4.NFS4_OK {
 		size += 36 // SEQUENCE4resok
 	}
 	out := make([]byte, 0, len(reply)-size)
@@ -280,7 +282,7 @@ func withoutSequenceResult(reply []byte) []byte {
 // sendSessionRPC sends a COMPOUND under the appropriate test session.
 func sendSessionRPC(conn net.Conn, xid uint32, body []byte) ([]byte, error) {
 	countOff, firstOp, ok := compoundArgLayout(body)
-	if !ok || firstOp == OP_SEQUENCE || sessionlessOp(firstOp) ||
+	if !ok || firstOp == nfs4.OP_SEQUENCE || sessionlessOp(firstOp) ||
 		binary.BigEndian.Uint32(body[countOff-4:]) != nfsMinorVersion {
 		return sendRawRPC(conn, xid, procCompound, body)
 	}
@@ -318,7 +320,7 @@ func sendSessionRPC(conn net.Conn, xid uint32, body []byte) ([]byte, error) {
 		return nil, err
 	}
 	noteOpenStateids(conn, ts.clientID, withoutSequenceResult(reply))
-	if sequenceStatus(reply) == NFS4ERR_BADSESSION {
+	if sequenceStatus(reply) == nfs4.NFS4ERR_BADSESSION {
 		// The server restarted or the lease expired. Recover as the Linux
 		// client does: a new session for the clientid, or else a new
 		// clientid, then resend.
@@ -350,8 +352,8 @@ func sendWarming(conn net.Conn, xid uint32, body []byte, ts *testSession, slot, 
 			return nil, err
 		}
 		status := sequenceStatus(reply)
-		if status != NFS4ERR_DELAY || ts.warm.Load() || time.Now().After(deadline) {
-			if status == NFS4_OK {
+		if status != nfs4.NFS4ERR_DELAY || ts.warm.Load() || time.Now().After(deadline) {
+			if status == nfs4.NFS4_OK {
 				ts.warm.Store(true)
 			}
 			return reply, nil
@@ -372,10 +374,10 @@ func recoverTestSession(conn net.Conn, xid uint32, ts *testSession) (*testSessio
 		return nil, err
 	}
 	switch status {
-	case NFS4_OK:
+	case nfs4.NFS4_OK:
 		replacement.identity, replacement.verifier = ts.identity, ts.verifier
 		return replacement, nil
-	case NFS4ERR_STALE_CLIENTID, NFS4ERR_EXPIRED, NFS4ERR_SEQ_MISORDERED:
+	case nfs4.NFS4ERR_STALE_CLIENTID, nfs4.NFS4ERR_EXPIRED, nfs4.NFS4ERR_SEQ_MISORDERED:
 	default:
 		return nil, nil
 	}
@@ -388,13 +390,13 @@ func recoverTestSession(conn net.Conn, xid uint32, ts *testSession) (*testSessio
 // sequenceStatus returns the status of the SEQUENCE result in a reply.
 func sequenceStatus(reply []byte) uint32 {
 	if len(reply) < 24+8 {
-		return NFS4_OK
+		return nfs4.NFS4_OK
 	}
 	res := reply[24:]
 	tagLen := int(binary.BigEndian.Uint32(res[4:]))
 	countOff := 8 + (tagLen+3)&^3
-	if countOff+12 > len(res) || binary.BigEndian.Uint32(res[countOff+4:]) != OP_SEQUENCE {
-		return NFS4_OK
+	if countOff+12 > len(res) || binary.BigEndian.Uint32(res[countOff+4:]) != nfs4.OP_SEQUENCE {
+		return nfs4.NFS4_OK
 	}
 	return binary.BigEndian.Uint32(res[countOff+8:])
 }
@@ -424,7 +426,7 @@ func (ts *testSession) acquireLast() (slot, seq uint32) {
 }
 
 func exchangeIDBody(identity string, verifier [8]byte) []byte {
-	return buildCompoundBody(nil, func(w *COMPOUND4argsWriter) {
+	return buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
 		ew := w.AppendArgarray_ExchangeId()
 		cw := ew.StartEiaClientowner()
 		setVerifier(cw.CoVerifier(), verifier)
@@ -436,12 +438,12 @@ func exchangeIDBody(identity string, verifier [8]byte) []byte {
 }
 
 func createSessionBody(clientID uint64, seq uint32) []byte {
-	return buildCompoundBody(nil, func(w *COMPOUND4argsWriter) {
+	return buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
 		cw := w.AppendArgarray_CreateSession()
 		cw.SetCsaClientid(clientID)
 		cw.SetCsaSequence(seq)
 		cw.SetCsaFlags(0)
-		attrs := func(a ChannelAttrs4Writer) []byte {
+		attrs := func(a nfs4.ChannelAttrs4Writer) []byte {
 			a.SetCaMaxrequestsize(maxRPCMessage)
 			a.SetCaMaxresponsesize(maxRPCMessage)
 			a.SetCaMaxresponsesizeCached(maxSessionReplyCached)
@@ -457,14 +459,14 @@ func createSessionBody(clientID uint64, seq uint32) []byte {
 	})
 }
 
-func parseCompoundReply(reply []byte) (COMPOUND4res, error) {
+func parseCompoundReply(reply []byte) (nfs4.COMPOUND4res, error) {
 	body, err := parseRPCReply(reply)
 	if err != nil {
-		return COMPOUND4res{}, err
+		return nfs4.COMPOUND4res{}, err
 	}
-	res, ok := ReadCOMPOUND4res(body)
+	res, ok := nfs4.ReadCOMPOUND4res(body)
 	if !ok {
-		return COMPOUND4res{}, errors.New("failed to parse COMPOUND4res")
+		return nfs4.COMPOUND4res{}, errors.New("failed to parse COMPOUND4res")
 	}
 	return res, nil
 }
@@ -479,13 +481,13 @@ func exchangeID(conn net.Conn, xid uint32, identity string, verifier [8]byte) (u
 	if err != nil {
 		return 0, 0, 0, err
 	}
-	if res.Status() != NFS4_OK {
+	if res.Status() != nfs4.NFS4_OK {
 		return 0, 0, res.Status(), nil
 	}
 	iter := res.Resarray()
 	iter.Next()
 	ok := iter.Resarray().Value().AsEXCHANGEID4resEntry().Value().AsEXCHANGEID4resok()
-	return ok.EirClientid(), ok.EirSequenceid(), NFS4_OK, nil
+	return ok.EirClientid(), ok.EirSequenceid(), nfs4.NFS4_OK, nil
 }
 
 func createSession(conn net.Conn, xid uint32, clientID uint64, seq uint32) (*testSession, uint32, error) {
@@ -497,7 +499,7 @@ func createSession(conn net.Conn, xid uint32, clientID uint64, seq uint32) (*tes
 	if err != nil {
 		return nil, 0, err
 	}
-	if res.Status() != NFS4_OK {
+	if res.Status() != nfs4.NFS4_OK {
 		return nil, res.Status(), nil
 	}
 	iter := res.Resarray()
@@ -512,7 +514,7 @@ func createSession(conn net.Conn, xid uint32, clientID uint64, seq uint32) (*tes
 	}
 	registerTestSession(conn, ts)
 	awaitShimLease(conn, clientID)
-	return ts, NFS4_OK, nil
+	return ts, nfs4.NFS4_OK, nil
 }
 
 func createTestSession(conn net.Conn, xid uint32, identity string, verifier [8]byte) (*testSession, error) {
@@ -520,15 +522,15 @@ func createTestSession(conn net.Conn, xid uint32, identity string, verifier [8]b
 	if err != nil {
 		return nil, err
 	}
-	if status != NFS4_OK {
-		return nil, fmt.Errorf("EXCHANGE_ID status = %s", Nfsstat4Name(status))
+	if status != nfs4.NFS4_OK {
+		return nil, fmt.Errorf("EXCHANGE_ID status = %s", nfs4.Nfsstat4Name(status))
 	}
 	ts, status, err := createSession(conn, shimXIDs.Add(1), clientID, seq)
 	if err != nil {
 		return nil, err
 	}
-	if status != NFS4_OK {
-		return nil, fmt.Errorf("CREATE_SESSION status = %s", Nfsstat4Name(status))
+	if status != nfs4.NFS4_OK {
+		return nil, fmt.Errorf("CREATE_SESSION status = %s", nfs4.Nfsstat4Name(status))
 	}
 	ts.identity, ts.verifier = identity, verifier
 	return ts, nil

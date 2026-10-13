@@ -7,6 +7,8 @@ package main
 import (
 	"encoding/binary"
 	"sync/atomic"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 // The backchannel (canonical r3 §12): callbacks the server sends on a
@@ -26,23 +28,23 @@ type callbackSec struct {
 // BACKCHANNEL_CTL list, in the client's order. A list offering only
 // RPCSEC_GSS gets NOENT, and one with no usable entry INVAL. CREATE_SESSION
 // checks it before its slot.
-func parseCallbackSec(it CallbackSecParms4EntryIter) (callbackSec, uint32) {
+func parseCallbackSec(it nfs4.CallbackSecParms4EntryIter) (callbackSec, uint32) {
 	gss := false
 	for it.Next() {
 		entry := it.BcaSecParm()
 		switch entry.Disc() {
-		case AUTH_NONE:
-			return callbackSec{flavor: authNone}, NFS4_OK
-		case AUTH_SYS:
-			return callbackSec{flavor: authSys, body: append([]byte(nil), entry.Value().Bytes()...)}, NFS4_OK
-		case RPCSEC_GSS:
+		case nfs4.AUTH_NONE:
+			return callbackSec{flavor: authNone}, nfs4.NFS4_OK
+		case nfs4.AUTH_SYS:
+			return callbackSec{flavor: authSys, body: append([]byte(nil), entry.Value().Bytes()...)}, nfs4.NFS4_OK
+		case nfs4.RPCSEC_GSS:
 			gss = true
 		}
 	}
 	if gss {
-		return callbackSec{}, NFS4ERR_NOENT
+		return callbackSec{}, nfs4.NFS4ERR_NOENT
 	}
-	return callbackSec{}, NFS4ERR_INVAL
+	return callbackSec{}, nfs4.NFS4ERR_INVAL
 }
 
 // cbCall is one outstanding callback on a connection, waiting for its
@@ -215,26 +217,26 @@ func (c *rpcConnection) bindDirections(s *Server, id SessionID, dir uint32, canB
 	_, hasBack := c.back[id]
 	if hasFore || hasBack {
 		if !bindAcceptable(dir, hasFore, hasBack) {
-			return false, false, false, NFS4ERR_INVAL
+			return false, false, false, nfs4.NFS4ERR_INVAL
 		}
-		return hasFore, hasBack, false, NFS4_OK
+		return hasFore, hasBack, false, nfs4.NFS4_OK
 	}
 	switch dir {
-	case CDFC4_FORE:
+	case nfs4.CDFC4_FORE:
 		fore = true
-	case CDFC4_BACK:
+	case nfs4.CDFC4_BACK:
 		back = true
-	case CDFC4_FORE_OR_BOTH:
+	case nfs4.CDFC4_FORE_OR_BOTH:
 		fore, back = true, canBack
 	default:
 		fore, back = canBack, true
 	}
 	if back && !canBack {
-		return false, false, false, NFS4ERR_INVAL
+		return false, false, false, nfs4.NFS4ERR_INVAL
 	}
 	if fore && c.pending[id] == 0 && c.associationsLocked() >= maxConnectionSessions ||
 		back && c.backPending[id] == 0 && c.backAssociationsLocked() >= maxConnectionSessions {
-		return false, false, false, NFS4ERR_RESOURCE
+		return false, false, false, nfs4.NFS4ERR_RESOURCE
 	}
 	if fore {
 		c.sessions[id] = struct{}{}
@@ -242,7 +244,7 @@ func (c *rpcConnection) bindDirections(s *Server, id SessionID, dir uint32, canB
 	if back {
 		c.publishBackLocked(id)
 	}
-	return fore, back, back, NFS4_OK
+	return fore, back, back, nfs4.NFS4_OK
 }
 
 // bindBack reserves and commits a back association in one step.

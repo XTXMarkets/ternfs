@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/XTXMarkets/ternfs/go/msgs"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 func TestNamespaceUnstagedErrorOutcomes(t *testing.T) {
@@ -19,8 +20,8 @@ func TestNamespaceUnstagedErrorOutcomes(t *testing.T) {
 			err    error
 			status uint32
 		}{
-			{"nonempty directory", msgs.DIRECTORY_NOT_EMPTY, NFS4ERR_NOTEMPTY},
-			{"permission denied", msgs.NOT_AUTHORISED, NFS4ERR_ACCESS},
+			{"nonempty directory", msgs.DIRECTORY_NOT_EMPTY, nfs4.NFS4ERR_NOTEMPTY},
+			{"permission denied", msgs.NOT_AUTHORISED, nfs4.NFS4ERR_ACCESS},
 		} {
 			t.Run(operation+"/"+tc.name, func(t *testing.T) {
 				root := t.TempDir()
@@ -47,7 +48,7 @@ func TestNamespaceUnstagedErrorOutcomes(t *testing.T) {
 				defer stop()
 				conn := dial(t, addr)
 				defer conn.Close()
-				res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+				res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 					w.AppendArgarray_Putrootfh()
 					if operation == "remove" {
 						rw := w.AppendArgarray_Remove()
@@ -62,7 +63,7 @@ func TestNamespaceUnstagedErrorOutcomes(t *testing.T) {
 					}
 				})
 				if got := res.Status(); got != tc.status {
-					t.Fatalf("%s = %s, want %s", operation, Nfsstat4Name(got), Nfsstat4Name(tc.status))
+					t.Fatalf("%s = %s, want %s", operation, nfs4.Nfsstat4Name(got), nfs4.Nfsstat4Name(tc.status))
 				}
 				if _, err := os.Stat(filepath.Join(root, "source", "child")); err != nil {
 					t.Fatalf("rejected mutation changed the source: %v", err)
@@ -75,8 +76,8 @@ func TestNamespaceUnstagedErrorOutcomes(t *testing.T) {
 func TestRemoveLocalEdgeGone(t *testing.T) {
 	f := newNamespaceFixture(t)
 	f.server.fs = &namespaceFaultVFS{TernVFS: f.fs, err: os.ErrNotExist, apply: true}
-	if got := removeNamespaceFile(t, f, "source"); got != NFS4ERR_NOENT {
-		t.Fatalf("REMOVE = %s, want NOENT", Nfsstat4Name(got))
+	if got := removeNamespaceFile(t, f, "source"); got != nfs4.NFS4ERR_NOENT {
+		t.Fatalf("REMOVE = %s, want NOENT", nfs4.Nfsstat4Name(got))
 	}
 	meta, ok := f.store.GetMeta(f.id)
 	if !ok || !meta.Unlinked || meta.Guarded || f.store.Failed(f.id) {

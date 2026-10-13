@@ -6,6 +6,8 @@ package main
 
 import (
 	"testing"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 func assertOpenStateIndex(t *testing.T, store *openStateStore) {
@@ -81,9 +83,9 @@ func TestStateidGenerationWrapsToOne(t *testing.T) {
 // testGrant is the grant of a test's read or write OPEN.
 func testGrant(write bool) grant {
 	if write {
-		return grant{access: OPEN4_SHARE_ACCESS_BOTH}
+		return grant{access: nfs4.OPEN4_SHARE_ACCESS_BOTH}
 	}
-	return grant{access: OPEN4_SHARE_ACCESS_READ}
+	return grant{access: nfs4.OPEN4_SHARE_ACCESS_READ}
 }
 
 func addOpenForTest(
@@ -95,9 +97,9 @@ func addOpenForTest(
 ) (openState, uint32) {
 	state, err := os.open(owner, fileID, fileID, testGrant(write), id)
 	if err != nil {
-		return openState{}, NFS4ERR_SERVERFAULT
+		return openState{}, nfs4.NFS4ERR_SERVERFAULT
 	}
-	return state, NFS4_OK
+	return state, nfs4.NFS4_OK
 }
 
 func addConfirmedOpen(
@@ -108,8 +110,8 @@ func addConfirmedOpen(
 ) openState {
 	t.Helper()
 	state, status := addOpenForTest(store, owner, fileID, false, StateID{})
-	if status != NFS4_OK {
-		t.Fatalf("OPEN status = %s", Nfsstat4Name(status))
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("OPEN status = %s", nfs4.Nfsstat4Name(status))
 	}
 	return state
 }
@@ -124,11 +126,11 @@ func TestReopenAdvancesGeneration(t *testing.T) {
 	if second.id != first.id || second.generation != first.generation+1 {
 		t.Fatalf("reopen = %+v after %+v", second, first)
 	}
-	if _, status := store.lookup(owner.clientID, first.id, first.generation, fileID); status != NFS4ERR_OLD_STATEID {
-		t.Fatalf("old generation = %s", Nfsstat4Name(status))
+	if _, status := store.lookup(owner.clientID, first.id, first.generation, fileID); status != nfs4.NFS4ERR_OLD_STATEID {
+		t.Fatalf("old generation = %s", nfs4.Nfsstat4Name(status))
 	}
-	if _, status := store.lookup(owner.clientID, first.id, 0, fileID); status != NFS4_OK {
-		t.Fatalf("current-generation seqid 0 = %s", Nfsstat4Name(status))
+	if _, status := store.lookup(owner.clientID, first.id, 0, fileID); status != nfs4.NFS4_OK {
+		t.Fatalf("current-generation seqid 0 = %s", nfs4.Nfsstat4Name(status))
 	}
 }
 
@@ -145,26 +147,26 @@ func TestOpenStateStoreLookupClassifiesStateids(t *testing.T) {
 		fileID     InodeID
 		want       uint32
 	}{
-		{"current", state.id, 1, fileID, NFS4_OK},
-		{"future generation", state.id, 2, fileID, NFS4ERR_BAD_STATEID},
-		{"wrong file", state.id, 1, MakeInodeID(InodeTypeFile, 2), NFS4ERR_BAD_STATEID},
-		{"unknown", StateID{}, 0, fileID, NFS4ERR_BAD_STATEID},
+		{"current", state.id, 1, fileID, nfs4.NFS4_OK},
+		{"future generation", state.id, 2, fileID, nfs4.NFS4ERR_BAD_STATEID},
+		{"wrong file", state.id, 1, MakeInodeID(InodeTypeFile, 2), nfs4.NFS4ERR_BAD_STATEID},
+		{"unknown", StateID{}, 0, fileID, nfs4.NFS4ERR_BAD_STATEID},
 	} {
 		if _, status := store.lookup(owner.clientID, test.id, test.generation, test.fileID); status != test.want {
 			t.Errorf("%s: status = %s, want %s", test.name,
-				Nfsstat4Name(status), Nfsstat4Name(test.want))
+				nfs4.Nfsstat4Name(status), nfs4.Nfsstat4Name(test.want))
 		}
 	}
 	closed, ok := store.close(state.id)
 	if !ok || closed.generation != 2 {
 		t.Fatalf("close = %+v, %v", closed, ok)
 	}
-	if _, status := store.lookup(owner.clientID, state.id, 1, fileID); status != NFS4ERR_BAD_STATEID {
-		t.Fatalf("closed stateid = %s", Nfsstat4Name(status))
+	if _, status := store.lookup(owner.clientID, state.id, 1, fileID); status != nfs4.NFS4ERR_BAD_STATEID {
+		t.Fatalf("closed stateid = %s", nfs4.Nfsstat4Name(status))
 	}
 	other := addConfirmedOpen(t, store, owner, fileID)
 	store.expire(other.id)
-	if _, status := store.lookup(owner.clientID, other.id, 1, fileID); status != NFS4ERR_EXPIRED {
-		t.Fatalf("expired stateid = %s", Nfsstat4Name(status))
+	if _, status := store.lookup(owner.clientID, other.id, 1, fileID); status != nfs4.NFS4ERR_EXPIRED {
+		t.Fatalf("expired stateid = %s", nfs4.Nfsstat4Name(status))
 	}
 }

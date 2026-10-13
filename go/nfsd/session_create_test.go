@@ -10,15 +10,17 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 func createSessionBodyWith(clientID uint64, seq, flags, maxRequest uint32) []byte {
-	return buildCompoundBody(nil, func(w *COMPOUND4argsWriter) {
+	return buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
 		cw := w.AppendArgarray_CreateSession()
 		cw.SetCsaClientid(clientID)
 		cw.SetCsaSequence(seq)
 		cw.SetCsaFlags(flags)
-		attrs := func(a ChannelAttrs4Writer) []byte {
+		attrs := func(a nfs4.ChannelAttrs4Writer) []byte {
 			a.SetCaMaxrequestsize(maxRequest)
 			a.SetCaMaxresponsesize(maxRPCMessage)
 			a.SetCaMaxresponsesizeCached(maxSessionReplyCached)
@@ -39,12 +41,12 @@ func createSessionBodyWith(clientID uint64, seq, flags, maxRequest uint32) []byt
 func createResult(t *testing.T, srv *Server, uid uint32, clientID uint64, seq uint32) (uint32, SessionID) {
 	t.Helper()
 	res := identityCall(t, srv, uid, createSessionBody(clientID, seq))
-	if res.Status() != NFS4_OK {
+	if res.Status() != nfs4.NFS4_OK {
 		return res.Status(), SessionID{}
 	}
 	it := res.Resarray()
 	it.Next()
-	return NFS4_OK, readSessionID(it.Resarray().Value().AsCREATESESSION4resEntry().Value().AsCREATESESSION4resok().CsrSessionid())
+	return nfs4.NFS4_OK, readSessionID(it.Resarray().Value().AsCREATESESSION4resEntry().Value().AsCREATESESSION4resok().CsrSessionid())
 }
 
 func creationSlot(srv *Server, clientID uint64) (seq uint32, cached, busy bool) {
@@ -78,14 +80,14 @@ func TestCreateSessionOutcomeTable(t *testing.T) {
 		body []byte
 		want uint32
 	}{
-		{"flags", createSessionBodyWith(wire, 1, 0x80, maxRPCMessage), NFS4ERR_INVAL},
-		{"too small", createSessionBodyWith(wire, 1, 0, minSessionRequest-1), NFS4ERR_TOOSMALL},
-		{"ahead", createSessionBody(wire, 2), NFS4ERR_SEQ_MISORDERED},
-		{"slot sequence with nothing cached", createSessionBody(wire, 0), NFS4ERR_SEQ_MISORDERED},
-		{"unknown clientid", createSessionBody(wire+1000, 1), NFS4ERR_STALE_CLIENTID},
+		{"flags", createSessionBodyWith(wire, 1, 0x80, maxRPCMessage), nfs4.NFS4ERR_INVAL},
+		{"too small", createSessionBodyWith(wire, 1, 0, minSessionRequest-1), nfs4.NFS4ERR_TOOSMALL},
+		{"ahead", createSessionBody(wire, 2), nfs4.NFS4ERR_SEQ_MISORDERED},
+		{"slot sequence with nothing cached", createSessionBody(wire, 0), nfs4.NFS4ERR_SEQ_MISORDERED},
+		{"unknown clientid", createSessionBody(wire+1000, 1), nfs4.NFS4ERR_STALE_CLIENTID},
 	} {
 		if got := identityCall(t, srv, 1, c.body).Status(); got != c.want {
-			t.Fatalf("%s: %s, want %s", c.name, Nfsstat4Name(got), Nfsstat4Name(c.want))
+			t.Fatalf("%s: %s, want %s", c.name, nfs4.Nfsstat4Name(got), nfs4.Nfsstat4Name(c.want))
 		}
 		unchanged(c.name)
 	}
@@ -93,8 +95,8 @@ func TestCreateSessionOutcomeTable(t *testing.T) {
 	srv.sessions.mu.Lock()
 	srv.sessions.recordLimit = srv.sessions.records
 	srv.sessions.mu.Unlock()
-	if got, _ := createResult(t, srv, 1, wire, 1); got != NFS4ERR_DELAY {
-		t.Fatalf("reservation failure %s", Nfsstat4Name(got))
+	if got, _ := createResult(t, srv, 1, wire, 1); got != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("reservation failure %s", nfs4.Nfsstat4Name(got))
 	}
 	unchanged("reservation failure")
 	srv.sessions.mu.Lock()
@@ -104,34 +106,34 @@ func TestCreateSessionOutcomeTable(t *testing.T) {
 	// Another principal on an unconfirmed record: CLID_INUSE, cached. Its
 	// replay returns it to anyone; the next sequence proceeds.
 	for _, uid := range []uint32{2, 2, 1} {
-		if got, _ := createResult(t, srv, uid, wire, 1); got != NFS4ERR_CLID_INUSE {
-			t.Fatalf("uid %d CREATE_SESSION 1 %s", uid, Nfsstat4Name(got))
+		if got, _ := createResult(t, srv, uid, wire, 1); got != nfs4.NFS4ERR_CLID_INUSE {
+			t.Fatalf("uid %d CREATE_SESSION 1 %s", uid, nfs4.Nfsstat4Name(got))
 		}
 	}
 	if seq, cached, busy := creationSlot(srv, wire); seq != 1 || !cached || busy {
 		t.Fatalf("CLID_INUSE slot %d %t %t", seq, cached, busy)
 	}
 	status, first := createResult(t, srv, 1, wire, 2)
-	if status != NFS4_OK {
-		t.Fatalf("CREATE_SESSION 2 %s", Nfsstat4Name(status))
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("CREATE_SESSION 2 %s", nfs4.Nfsstat4Name(status))
 	}
 	// Replay returns the cached result; misordering does not overwrite it.
 	for _, seq := range []uint32{1, 4, 2} {
 		got, id := createResult(t, srv, 1, wire, seq)
 		if seq == 2 {
-			if got != NFS4_OK || id != first {
-				t.Fatalf("replay %s %x, want %x", Nfsstat4Name(got), id, first)
+			if got != nfs4.NFS4_OK || id != first {
+				t.Fatalf("replay %s %x, want %x", nfs4.Nfsstat4Name(got), id, first)
 			}
-		} else if got != NFS4ERR_SEQ_MISORDERED {
-			t.Fatalf("CREATE_SESSION %d %s", seq, Nfsstat4Name(got))
+		} else if got != nfs4.NFS4ERR_SEQ_MISORDERED {
+			t.Fatalf("CREATE_SESSION %d %s", seq, nfs4.Nfsstat4Name(got))
 		}
 	}
 	if a := srv.sessions.accounting(); a.Sessions != 1 {
 		t.Fatalf("replays created sessions: %+v", a)
 	}
 	// A confirmed record serves any principal under SP4_NONE.
-	if got, id := createResult(t, srv, 2, wire, 3); got != NFS4_OK || id == first {
-		t.Fatalf("CREATE_SESSION 3 by another principal %s", Nfsstat4Name(got))
+	if got, id := createResult(t, srv, 2, wire, 3); got != nfs4.NFS4_OK || id == first {
+		t.Fatalf("CREATE_SESSION 3 by another principal %s", nfs4.Nfsstat4Name(got))
 	}
 	if got := identityExchange(t, srv, 1, "client", [8]byte{1}, false); got.clientID != wire || got.seq != 4 {
 		t.Fatalf("warm EXCHANGE_ID %+v", got)
@@ -144,26 +146,26 @@ func TestCreateSessionReplayOfDestroyedSession(t *testing.T) {
 	srv := identityServer(t, NewLocalTernVFS(t.TempDir()))
 	wire := identityExchange(t, srv, 1, "client", [8]byte{1}, false).clientID
 	status, id := createResult(t, srv, 1, wire, 1)
-	if status != NFS4_OK || !srv.sessions.destroySession(id) {
-		t.Fatalf("CREATE_SESSION %s", Nfsstat4Name(status))
+	if status != nfs4.NFS4_OK || !srv.sessions.destroySession(id) {
+		t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(status))
 	}
 	conn := &rpcConnection{}
 	res := identityCallOn(t, srv, 1, conn, createSessionBody(wire, 1))
 	it := res.Resarray()
-	if res.Status() != NFS4_OK || !it.Next() ||
+	if res.Status() != nfs4.NFS4_OK || !it.Next() ||
 		readSessionID(it.Resarray().Value().AsCREATESESSION4resEntry().Value().AsCREATESESSION4resok().CsrSessionid()) != id {
-		t.Fatalf("replay %s", Nfsstat4Name(res.Status()))
+		t.Fatalf("replay %s", nfs4.Nfsstat4Name(res.Status()))
 	}
 	if srv.sessions.lookup(id) != nil || conn.associated(id) {
 		t.Fatal("replay rebuilt or associated the destroyed session")
 	}
-	if got := sequenceStatusForTest(t, srv, id); got != NFS4ERR_BADSESSION {
-		t.Fatalf("SEQUENCE on the destroyed session %s", Nfsstat4Name(got))
+	if got := sequenceStatusForTest(t, srv, id); got != nfs4.NFS4ERR_BADSESSION {
+		t.Fatalf("SEQUENCE on the destroyed session %s", nfs4.Nfsstat4Name(got))
 	}
 }
 
 // identityCallOn is identityCall on a transport connection.
-func identityCallOn(t *testing.T, srv *Server, uid uint32, conn *rpcConnection, body []byte) COMPOUND4res {
+func identityCallOn(t *testing.T, srv *Server, uid uint32, conn *rpcConnection, body []byte) nfs4.COMPOUND4res {
 	t.Helper()
 	req, err := parseRPCCall(rpcCallForTest(1, procCompound, body))
 	if err != nil {
@@ -183,8 +185,8 @@ func identityCallOn(t *testing.T, srv *Server, uid uint32, conn *rpcConnection, 
 func TestCreateSessionSequenceWraps(t *testing.T) {
 	srv := identityServer(t, NewLocalTernVFS(t.TempDir()))
 	wire := identityExchange(t, srv, 1, "client", [8]byte{1}, false).clientID
-	if got, _ := createResult(t, srv, 1, wire, 1); got != NFS4_OK {
-		t.Fatal(Nfsstat4Name(got))
+	if got, _ := createResult(t, srv, 1, wire, 1); got != nfs4.NFS4_OK {
+		t.Fatal(nfs4.Nfsstat4Name(got))
 	}
 	srv.sessions.mu.Lock()
 	srv.sessions.wireRecordLocked(wire).csSeq = 0xfffffffe
@@ -193,8 +195,8 @@ func TestCreateSessionSequenceWraps(t *testing.T) {
 		t.Fatalf("warm EXCHANGE_ID sequence %#x", got.seq)
 	}
 	for _, seq := range []uint32{0xffffffff, 0} {
-		if got, _ := createResult(t, srv, 1, wire, seq); got != NFS4_OK {
-			t.Fatalf("CREATE_SESSION %#x %s", seq, Nfsstat4Name(got))
+		if got, _ := createResult(t, srv, 1, wire, seq); got != nfs4.NFS4_OK {
+			t.Fatalf("CREATE_SESSION %#x %s", seq, nfs4.Nfsstat4Name(got))
 		}
 	}
 	if got := identityExchange(t, srv, 1, "client", [8]byte{1}, false); got.seq != 1 {
@@ -212,8 +214,8 @@ func TestCreateSessionConcurrentSameSequence(t *testing.T) {
 	defer closeSignal(fs.release)
 	wire := identityExchange(t, srv, 1, "client", [8]byte{1}, false).clientID
 	status, previous := createResult(t, srv, 1, wire, 1)
-	if status != NFS4_OK {
-		t.Fatal(Nfsstat4Name(status))
+	if status != nfs4.NFS4_OK {
+		t.Fatal(nfs4.Nfsstat4Name(status))
 	}
 	srv.waitForClientGC()
 	fs.armed.Store(true)
@@ -227,25 +229,25 @@ func TestCreateSessionConcurrentSameSequence(t *testing.T) {
 		running <- result{status, id}
 	}()
 	awaitSignal(t, fs.entered, "CREATE_SESSION 2 checking the store")
-	if got, _ := createResult(t, srv, 1, wire, 2); got != NFS4ERR_DELAY {
-		t.Fatalf("same sequence while running %s", Nfsstat4Name(got))
+	if got, _ := createResult(t, srv, 1, wire, 2); got != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("same sequence while running %s", nfs4.Nfsstat4Name(got))
 	}
-	if got, id := createResult(t, srv, 1, wire, 1); got != NFS4_OK || id != previous {
-		t.Fatalf("cached sequence while running %s", Nfsstat4Name(got))
+	if got, id := createResult(t, srv, 1, wire, 1); got != nfs4.NFS4_OK || id != previous {
+		t.Fatalf("cached sequence while running %s", nfs4.Nfsstat4Name(got))
 	}
-	if got, _ := createResult(t, srv, 1, wire, 3); got != NFS4ERR_SEQ_MISORDERED {
-		t.Fatalf("other sequence while running %s", Nfsstat4Name(got))
+	if got, _ := createResult(t, srv, 1, wire, 3); got != nfs4.NFS4ERR_SEQ_MISORDERED {
+		t.Fatalf("other sequence while running %s", nfs4.Nfsstat4Name(got))
 	}
-	if got := identityDestroy(t, srv, wire); got != NFS4ERR_CLIENTID_BUSY {
-		t.Fatalf("DESTROY_CLIENTID while running %s", Nfsstat4Name(got))
+	if got := identityDestroy(t, srv, wire); got != nfs4.NFS4ERR_CLIENTID_BUSY {
+		t.Fatalf("DESTROY_CLIENTID while running %s", nfs4.Nfsstat4Name(got))
 	}
 	closeSignal(fs.release)
 	r := awaitValue(t, running, "CREATE_SESSION 2")
-	if r.status != NFS4_OK {
-		t.Fatal(Nfsstat4Name(r.status))
+	if r.status != nfs4.NFS4_OK {
+		t.Fatal(nfs4.Nfsstat4Name(r.status))
 	}
-	if got, id := createResult(t, srv, 1, wire, 2); got != NFS4_OK || id != r.id {
-		t.Fatalf("replay of 2 %s", Nfsstat4Name(got))
+	if got, id := createResult(t, srv, 1, wire, 2); got != nfs4.NFS4_OK || id != r.id {
+		t.Fatalf("replay of 2 %s", nfs4.Nfsstat4Name(got))
 	}
 	if a := srv.sessions.accounting(); a.Sessions != 2 {
 		t.Fatalf("sessions %+v", a)
@@ -258,8 +260,8 @@ func TestCreateSessionInProgressRecordNotReclaimed(t *testing.T) {
 	local := NewLocalTernVFS(t.TempDir())
 	first := identityServer(t, local)
 	p := identityExchange(t, first, 1, "client", [8]byte{1}, false)
-	if got, _ := createResult(t, first, 1, p.clientID, 1); got != NFS4_OK {
-		t.Fatal(Nfsstat4Name(got))
+	if got, _ := createResult(t, first, 1, p.clientID, 1); got != nfs4.NFS4_OK {
+		t.Fatal(nfs4.Nfsstat4Name(got))
 	}
 	fs := &confirmedLookupGateVFS{TernVFS: local, entered: make(chan struct{}), release: make(chan struct{})}
 	srv := identityServer(t, fs)
@@ -279,12 +281,12 @@ func TestCreateSessionInProgressRecordNotReclaimed(t *testing.T) {
 	awaitSignal(t, fs.entered, "adopted confirmation")
 	clock.Store(start.Add(nfsLeaseTime).UnixNano())
 	srv.sessions.wireLimit = 1
-	if got := identityExchange(t, srv, 1, "other", [8]byte{1}, false); got.status != NFS4ERR_DELAY {
-		t.Fatalf("EXCHANGE_ID at the cap %s", Nfsstat4Name(got.status))
+	if got := identityExchange(t, srv, 1, "other", [8]byte{1}, false); got.status != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("EXCHANGE_ID at the cap %s", nfs4.Nfsstat4Name(got.status))
 	}
 	closeSignal(fs.release)
-	if got := awaitValue(t, running, "adopted CREATE_SESSION"); got != NFS4_OK {
-		t.Fatalf("adopted CREATE_SESSION %s", Nfsstat4Name(got))
+	if got := awaitValue(t, running, "adopted CREATE_SESSION"); got != nfs4.NFS4_OK {
+		t.Fatalf("adopted CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 	}
 }
 
@@ -314,22 +316,22 @@ func TestCreateSessionBootstrap(t *testing.T) {
 		incarnation := incarnationForTest(t, srv, wire)
 		fs.armed.Store(true)
 		status, id := createResult(t, srv, 1, wire, 1)
-		if status != NFS4_OK || srv.sessions.lookup(id) == nil {
-			t.Fatalf("CREATE_SESSION with failing publication %s", Nfsstat4Name(status))
+		if status != nfs4.NFS4_OK || srv.sessions.lookup(id) == nil {
+			t.Fatalf("CREATE_SESSION with failing publication %s", nfs4.Nfsstat4Name(status))
 		}
 		leasePassForTest(t, srv, incarnation)
-		if got := sequenceStatusForTest(t, srv, id); got != NFS4ERR_DELAY {
-			t.Fatalf("SEQUENCE before the first publication %s", Nfsstat4Name(got))
+		if got := sequenceStatusForTest(t, srv, id); got != nfs4.NFS4ERR_DELAY {
+			t.Fatalf("SEQUENCE before the first publication %s", nfs4.Nfsstat4Name(got))
 		}
-		if got, replay := createResult(t, srv, 1, wire, 1); got != NFS4_OK || replay != id {
-			t.Fatalf("replay %s", Nfsstat4Name(got))
+		if got, replay := createResult(t, srv, 1, wire, 1); got != nfs4.NFS4_OK || replay != id {
+			t.Fatalf("replay %s", nfs4.Nfsstat4Name(got))
 		}
 		// The store recovers: the attempt is fenced, then published.
 		fs.armed.Store(false)
 		leasePassForTest(t, srv, incarnation)
 		awaitLeaseProven(t, srv, incarnation)
-		if got := sequenceStatusForTest(t, srv, id); got != NFS4_OK {
-			t.Fatalf("SEQUENCE after the publication %s", Nfsstat4Name(got))
+		if got := sequenceStatusForTest(t, srv, id); got != nfs4.NFS4_OK {
+			t.Fatalf("SEQUENCE after the publication %s", nfs4.Nfsstat4Name(got))
 		}
 	})
 	t.Run("expired", func(t *testing.T) {
@@ -344,18 +346,18 @@ func TestCreateSessionBootstrap(t *testing.T) {
 			t.Fatal(err)
 		}
 		status, id := createResult(t, srv, 1, wire, 1)
-		if status != NFS4_OK {
-			t.Fatalf("committed CREATE_SESSION became %s", Nfsstat4Name(status))
+		if status != nfs4.NFS4_OK {
+			t.Fatalf("committed CREATE_SESSION became %s", nfs4.Nfsstat4Name(status))
 		}
 		leasePassForTest(t, srv, uint64(incarnation))
 		if srv.sessions.lookup(id) != nil {
 			t.Fatal("expired client's session stayed usable")
 		}
-		if got := sequenceStatusForTest(t, srv, id); got != NFS4ERR_BADSESSION {
-			t.Fatalf("SEQUENCE %s", Nfsstat4Name(got))
+		if got := sequenceStatusForTest(t, srv, id); got != nfs4.NFS4ERR_BADSESSION {
+			t.Fatalf("SEQUENCE %s", nfs4.Nfsstat4Name(got))
 		}
-		if got, replay := createResult(t, srv, 1, wire, 1); got != NFS4_OK || replay != id {
-			t.Fatalf("committed result lost: %s", Nfsstat4Name(got))
+		if got, replay := createResult(t, srv, 1, wire, 1); got != nfs4.NFS4_OK || replay != id {
+			t.Fatalf("committed result lost: %s", nfs4.Nfsstat4Name(got))
 		}
 	})
 	t.Run("record credit", func(t *testing.T) {
@@ -364,8 +366,8 @@ func TestCreateSessionBootstrap(t *testing.T) {
 		srv.clients.refreshMu.Lock()
 		srv.clients.refresherLimit = len(srv.clients.refreshers)
 		srv.clients.refreshMu.Unlock()
-		if got, _ := createResult(t, srv, 1, wire, 1); got != NFS4ERR_DELAY {
-			t.Fatalf("CREATE_SESSION without a refresher credit %s", Nfsstat4Name(got))
+		if got, _ := createResult(t, srv, 1, wire, 1); got != nfs4.NFS4ERR_DELAY {
+			t.Fatalf("CREATE_SESSION without a refresher credit %s", nfs4.Nfsstat4Name(got))
 		}
 		if seq, cached, busy := creationSlot(srv, wire); seq != 0 || cached || busy {
 			t.Fatalf("refused creation changed the slot: %d %t %t", seq, cached, busy)
@@ -391,8 +393,8 @@ func TestCachedReplayAtRecordLimit(t *testing.T) {
 	fs.mu.Lock()
 	fs.armed = true
 	fs.mu.Unlock()
-	if got, _ := createResult(t, srv, 1, wire, 1); got != NFS4ERR_DELAY {
-		t.Fatalf("CREATE_SESSION with an unfenceable D %s", Nfsstat4Name(got))
+	if got, _ := createResult(t, srv, 1, wire, 1); got != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("CREATE_SESSION with an unfenceable D %s", nfs4.Nfsstat4Name(got))
 	}
 	fs.set(writeD, faultNone, nil)
 	srv.settleConfirmations()
@@ -409,9 +411,9 @@ func TestCachedReplayAtRecordLimit(t *testing.T) {
 	conn := &rpcConnection{}
 	res := identityCallOn(t, srv, 1, conn, createSessionBody(wire, 1))
 	it := res.Resarray()
-	if res.Status() != NFS4_OK || !it.Next() ||
+	if res.Status() != nfs4.NFS4_OK || !it.Next() ||
 		readSessionID(it.Resarray().Value().AsCREATESESSION4resEntry().Value().AsCREATESESSION4resok().CsrSessionid()) != committed {
-		t.Fatalf("retry after the sweeper's commit %s", Nfsstat4Name(res.Status()))
+		t.Fatalf("retry after the sweeper's commit %s", nfs4.Nfsstat4Name(res.Status()))
 	}
 	if !conn.associated(committed) {
 		t.Fatal("replay not associated")
@@ -420,8 +422,8 @@ func TestCachedReplayAtRecordLimit(t *testing.T) {
 		t.Fatalf("replay allocated %+v", a)
 	}
 	// A genuinely new creation is still refused at the limit.
-	if got, _ := createResult(t, srv, 1, wire, 2); got != NFS4ERR_DELAY {
-		t.Fatalf("new CREATE_SESSION at the limit %s", Nfsstat4Name(got))
+	if got, _ := createResult(t, srv, 1, wire, 2); got != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("new CREATE_SESSION at the limit %s", nfs4.Nfsstat4Name(got))
 	}
 	// A destroyed session's replay returns its result and rebuilds nothing.
 	if !ss.destroySession(committed) {
@@ -431,9 +433,9 @@ func TestCachedReplayAtRecordLimit(t *testing.T) {
 	ss.recordLimit = ss.records + ss.pendingSessions
 	ss.mu.Unlock()
 	fresh := &rpcConnection{}
-	if got := identityCallOn(t, srv, 1, fresh, createSessionBody(wire, 1)).Status(); got != NFS4_OK ||
+	if got := identityCallOn(t, srv, 1, fresh, createSessionBody(wire, 1)).Status(); got != nfs4.NFS4_OK ||
 		fresh.associated(committed) || ss.lookup(committed) != nil {
-		t.Fatalf("destroyed replay %s", Nfsstat4Name(got))
+		t.Fatalf("destroyed replay %s", nfs4.Nfsstat4Name(got))
 	}
 }
 
@@ -445,27 +447,27 @@ func TestCachedReplayAtSerialExhaustion(t *testing.T) {
 	ss := srv.sessions
 	wire := identityExchange(t, srv, 1, "client", [8]byte{1}, false).clientID
 	status, first := createResult(t, srv, 1, wire, 1)
-	if status != NFS4_OK {
-		t.Fatal(Nfsstat4Name(status))
+	if status != nfs4.NFS4_OK {
+		t.Fatal(nfs4.Nfsstat4Name(status))
 	}
 	other := identityExchange(t, srv, 1, "other", [8]byte{1}, false).clientID
-	if got, _ := createResult(t, srv, 2, other, 1); got != NFS4ERR_CLID_INUSE {
-		t.Fatalf("CREATE_SESSION by another principal %s", Nfsstat4Name(got))
+	if got, _ := createResult(t, srv, 2, other, 1); got != nfs4.NFS4ERR_CLID_INUSE {
+		t.Fatalf("CREATE_SESSION by another principal %s", nfs4.Nfsstat4Name(got))
 	}
 	ss.mu.Lock()
 	ss.next = uint64(^uint32(0))
 	ss.mu.Unlock()
-	if got, id := createResult(t, srv, 1, wire, 1); got != NFS4_OK || id != first {
-		t.Fatalf("replay at serial exhaustion %s", Nfsstat4Name(got))
+	if got, id := createResult(t, srv, 1, wire, 1); got != nfs4.NFS4_OK || id != first {
+		t.Fatalf("replay at serial exhaustion %s", nfs4.Nfsstat4Name(got))
 	}
-	if got, _ := createResult(t, srv, 2, other, 1); got != NFS4ERR_CLID_INUSE {
-		t.Fatalf("cached CLID_INUSE at serial exhaustion %s", Nfsstat4Name(got))
+	if got, _ := createResult(t, srv, 2, other, 1); got != nfs4.NFS4ERR_CLID_INUSE {
+		t.Fatalf("cached CLID_INUSE at serial exhaustion %s", nfs4.Nfsstat4Name(got))
 	}
-	if got, _ := createResult(t, srv, 1, wire, 5); got != NFS4ERR_SEQ_MISORDERED {
-		t.Fatalf("misordered at serial exhaustion %s", Nfsstat4Name(got))
+	if got, _ := createResult(t, srv, 1, wire, 5); got != nfs4.NFS4ERR_SEQ_MISORDERED {
+		t.Fatalf("misordered at serial exhaustion %s", nfs4.Nfsstat4Name(got))
 	}
-	if got, _ := createResult(t, srv, 1, wire, 2); got != NFS4ERR_DELAY {
-		t.Fatalf("new CREATE_SESSION at serial exhaustion %s", Nfsstat4Name(got))
+	if got, _ := createResult(t, srv, 1, wire, 2); got != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("new CREATE_SESSION at serial exhaustion %s", nfs4.Nfsstat4Name(got))
 	}
 	if seq, cached, busy := creationSlot(srv, wire); seq != 1 || !cached || busy {
 		t.Fatalf("refused creation changed the slot: %d %t %t", seq, cached, busy)
@@ -488,8 +490,8 @@ func TestDestroyClientIDFinalCheckSeesCreation(t *testing.T) {
 	ss := srv.sessions
 	wire := identityExchange(t, srv, 1, "client", [8]byte{1}, false).clientID
 	status, first := createResult(t, srv, 1, wire, 1)
-	if status != NFS4_OK || !ss.destroySession(first) {
-		t.Fatalf("CREATE_SESSION %s", Nfsstat4Name(status))
+	if status != nfs4.NFS4_OK || !ss.destroySession(first) {
+		t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(status))
 	}
 	// The record is idle: DESTROY_CLIENTID's earlier checks would pass now.
 	ss.mu.Lock()
@@ -510,16 +512,16 @@ func TestDestroyClientIDFinalCheckSeesCreation(t *testing.T) {
 		created <- status
 	}()
 	awaitSignal(t, fs.entered, "CREATE_SESSION in the store")
-	if got := ss.destroyClientRecord(c); got != NFS4ERR_CLIENTID_BUSY {
-		t.Fatalf("destruction while creating %s", Nfsstat4Name(got))
+	if got := ss.destroyClientRecord(c); got != nfs4.NFS4ERR_CLIENTID_BUSY {
+		t.Fatalf("destruction while creating %s", nfs4.Nfsstat4Name(got))
 	}
 	closeSignal(fs.release)
-	if got := awaitValue(t, created, "CREATE_SESSION"); got != NFS4_OK {
-		t.Fatalf("CREATE_SESSION %s", Nfsstat4Name(got))
+	if got := awaitValue(t, created, "CREATE_SESSION"); got != nfs4.NFS4_OK {
+		t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 	}
 	// The creator has inserted its session.
-	if got := ss.destroyClientRecord(c); got != NFS4ERR_CLIENTID_BUSY {
-		t.Fatalf("destruction after creation %s", Nfsstat4Name(got))
+	if got := ss.destroyClientRecord(c); got != nfs4.NFS4ERR_CLIENTID_BUSY {
+		t.Fatalf("destruction after creation %s", nfs4.Nfsstat4Name(got))
 	}
 	if got := identityExchange(t, srv, 1, "client", [8]byte{1}, false); got.clientID != wire || !got.confirmed {
 		t.Fatalf("record destroyed: %+v", got)
@@ -550,15 +552,15 @@ func TestCreateSessionBootstrapPanicKeepsOK(t *testing.T) {
 	incarnation := incarnationForTest(t, srv, wire)
 	fs.armed.Store(true)
 	status, id := createResult(t, srv, 1, wire, 1)
-	if status != NFS4_OK || ss.lookup(id) == nil {
-		t.Fatalf("CREATE_SESSION with a publication panic %s", Nfsstat4Name(status))
+	if status != nfs4.NFS4_OK || ss.lookup(id) == nil {
+		t.Fatalf("CREATE_SESSION with a publication panic %s", nfs4.Nfsstat4Name(status))
 	}
 	leasePassForTest(t, srv, incarnation)
 	if fs.armed.Load() {
 		t.Fatal("publication did not reach the injected panic")
 	}
-	if got, replay := createResult(t, srv, 1, wire, 1); got != NFS4_OK || replay != id {
-		t.Fatalf("replay after a publication panic %s", Nfsstat4Name(got))
+	if got, replay := createResult(t, srv, 1, wire, 1); got != nfs4.NFS4_OK || replay != id {
+		t.Fatalf("replay after a publication panic %s", nfs4.Nfsstat4Name(got))
 	}
 	// The creation's group hold is gone.
 	if !ss.closeForReplacement(incarnation) {
@@ -583,25 +585,25 @@ func TestCreateSessionReplayAtConnectionQuota(t *testing.T) {
 	var last SessionID
 	for seq := uint32(1); seq <= maxConnectionSessions; seq++ {
 		res := identityCallOn(t, srv, 1, conn, createSessionBody(wire, seq))
-		if res.Status() != NFS4_OK {
-			t.Fatalf("CREATE_SESSION %d %s", seq, Nfsstat4Name(res.Status()))
+		if res.Status() != nfs4.NFS4_OK {
+			t.Fatalf("CREATE_SESSION %d %s", seq, nfs4.Nfsstat4Name(res.Status()))
 		}
 		it := res.Resarray()
 		it.Next()
 		last = readSessionID(it.Resarray().Value().AsCREATESESSION4resEntry().Value().AsCREATESESSION4resok().CsrSessionid())
 	}
 	replay := identityCallOn(t, srv, 1, conn, createSessionBody(wire, maxConnectionSessions))
-	if replay.Status() != NFS4_OK || !conn.associated(last) {
-		t.Fatalf("replay of an associated session at the quota %s", Nfsstat4Name(replay.Status()))
+	if replay.Status() != nfs4.NFS4_OK || !conn.associated(last) {
+		t.Fatalf("replay of an associated session at the quota %s", nfs4.Nfsstat4Name(replay.Status()))
 	}
-	if got := identityCallOn(t, srv, 1, conn, createSessionBody(wire, maxConnectionSessions+1)).Status(); got != NFS4ERR_RESOURCE {
-		t.Fatalf("new session at the quota %s", Nfsstat4Name(got))
+	if got := identityCallOn(t, srv, 1, conn, createSessionBody(wire, maxConnectionSessions+1)).Status(); got != nfs4.NFS4ERR_RESOURCE {
+		t.Fatalf("new session at the quota %s", nfs4.Nfsstat4Name(got))
 	}
 	if seq, cached, busy := creationSlot(srv, wire); seq != maxConnectionSessions || !cached || busy {
 		t.Fatalf("refused creation changed the slot: %d %t %t", seq, cached, busy)
 	}
 	// Another connection can still create it.
-	if got := identityCallOn(t, srv, 1, &rpcConnection{}, createSessionBody(wire, maxConnectionSessions+1)).Status(); got != NFS4_OK {
-		t.Fatalf("CREATE_SESSION on another connection %s", Nfsstat4Name(got))
+	if got := identityCallOn(t, srv, 1, &rpcConnection{}, createSessionBody(wire, maxConnectionSessions+1)).Status(); got != nfs4.NFS4_OK {
+		t.Fatalf("CREATE_SESSION on another connection %s", nfs4.Nfsstat4Name(got))
 	}
 }

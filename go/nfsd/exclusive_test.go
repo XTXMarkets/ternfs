@@ -12,6 +12,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 func TestOpenExclusive4(t *testing.T) {
@@ -24,13 +26,13 @@ func TestOpenExclusive4(t *testing.T) {
 	clientID := setupClient(t, conn, &xid)
 	verifier := [8]byte{1, 2, 3, 4, 5, 6, 7, 8}
 	status, state, fh, flags := openExclusiveFile(t, conn, &xid, clientID, "owner", "file", verifier)
-	if status != NFS4_OK || flags&OPEN4_RESULT_CONFIRM != 0 {
-		t.Fatalf("create: %s, flags=%x", Nfsstat4Name(status), flags)
+	if status != nfs4.NFS4_OK || flags&nfs4.OPEN4_RESULT_CONFIRM != 0 {
+		t.Fatalf("create: %s, flags=%x", nfs4.Nfsstat4Name(status), flags)
 	}
 	retransmitNext(conn)
 	status, replayState, replayFH, _ := openExclusiveFile(t, conn, &xid, clientID, "owner", "file", verifier)
-	if status != NFS4_OK || replayState != state || !bytes.Equal(replayFH, fh) {
-		t.Fatalf("OPEN replay changed its result: %s", Nfsstat4Name(status))
+	if status != nfs4.NFS4_OK || replayState != state || !bytes.Equal(replayFH, fh) {
+		t.Fatalf("OPEN replay changed its result: %s", nfs4.Nfsstat4Name(status))
 	}
 	publishedFH := lookupFH(t, conn, &xid, "file")
 	if !bytes.Equal(publishedFH, fh) {
@@ -41,40 +43,40 @@ func TestOpenExclusive4(t *testing.T) {
 		t.Fatalf("published private bytes before CLOSE: %q, %v", data, err)
 	}
 	status, _, _, _ = openExclusiveFile(t, conn, &xid, clientID, "owner", "file", [8]byte{9})
-	if status != NFS4ERR_EXIST {
-		t.Fatalf("changed verifier: %s", Nfsstat4Name(status))
+	if status != nfs4.NFS4ERR_EXIST {
+		t.Fatalf("changed verifier: %s", nfs4.Nfsstat4Name(status))
 	}
 	status, dup, dupFH, _ := openExclusiveFile(t, conn, &xid, clientID, "owner", "file", verifier)
-	if status != NFS4_OK || !bytes.Equal(dup[4:], state[4:]) || !bytes.Equal(dupFH, fh) ||
+	if status != nfs4.NFS4_OK || !bytes.Equal(dup[4:], state[4:]) || !bytes.Equal(dupFH, fh) ||
 		binary.BigEndian.Uint32(dup[:4]) <= binary.BigEndian.Uint32(state[:4]) {
-		t.Fatalf("duplicate create: %s, state=%x, fh=%x", Nfsstat4Name(status), dup, dupFH)
+		t.Fatalf("duplicate create: %s, state=%x, fh=%x", nfs4.Nfsstat4Name(status), dup, dupFH)
 	}
 	state = dup
 	if len(srv.stagingStore.Entries()) != 1 {
 		t.Fatal("duplicate create allocated another writer")
 	}
 	status, _, _, _ = openExclusiveFile(t, conn, &xid, clientID, "other-owner", "file", verifier)
-	if status != NFS4ERR_EXIST {
-		t.Fatalf("another owner reused verifier: %s", Nfsstat4Name(status))
+	if status != nfs4.NFS4ERR_EXIST {
+		t.Fatalf("another owner reused verifier: %s", nfs4.Nfsstat4Name(status))
 	}
 	if data, _ := readFileData(t, conn, &xid, fh, 0, 1024); string(data) != "private" {
 		t.Fatalf("duplicate create lost private data: %q", data)
 	}
 	status, _ = closeFileResult(t, conn, &xid, fh, state)
-	if status != NFS4_OK {
-		t.Fatalf("CLOSE: %s", Nfsstat4Name(status))
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("CLOSE: %s", nfs4.Nfsstat4Name(status))
 	}
 	if data, err := os.ReadFile(filepath.Join(root, "file")); err != nil || string(data) != "private" {
 		t.Fatalf("published data: %q, %v", data, err)
 	}
 	status, _, _, _ = openExclusiveFile(t, conn, &xid, clientID, "owner", "file", verifier)
-	if status != NFS4ERR_EXIST {
-		t.Fatalf("create after publication: %s", Nfsstat4Name(status))
+	if status != nfs4.NFS4ERR_EXIST {
+		t.Fatalf("create after publication: %s", nfs4.Nfsstat4Name(status))
 	}
 	_, _ = openCreateFile(t, conn, &xid, clientID, "ordinary")
 	status, _, _, _ = openExclusiveFile(t, conn, &xid, clientID, "owner", "ordinary", verifier)
-	if status != NFS4ERR_EXIST {
-		t.Fatalf("create over ordinary writer: %s", Nfsstat4Name(status))
+	if status != nfs4.NFS4ERR_EXIST {
+		t.Fatalf("create over ordinary writer: %s", nfs4.Nfsstat4Name(status))
 	}
 }
 
@@ -87,33 +89,33 @@ func TestExclusiveVerifierDoesNotFollowReplacement(t *testing.T) {
 	clientID := setupClient(t, conn, &xid)
 	verifier := [8]byte{1}
 	status, state, fh, _ := openExclusiveFile(t, conn, &xid, clientID, "exclusive", "file", verifier)
-	if status != NFS4_OK {
-		t.Fatal(Nfsstat4Name(status))
+	if status != nfs4.NFS4_OK {
+		t.Fatal(nfs4.Nfsstat4Name(status))
 	}
 	// Writers on one client share staging, so the replacement comes from
 	// another client.
 	otherConn := dial(t, addr)
 	defer otherConn.Close()
 	otherID, confirm := requestClientID(t, otherConn, &xid, "replacement-client", [8]byte{2})
-	if status := confirmClientID(t, otherConn, &xid, otherID, confirm); status != NFS4_OK {
-		t.Fatal(Nfsstat4Name(status))
+	if status := confirmClientID(t, otherConn, &xid, otherID, confirm); status != nfs4.NFS4_OK {
+		t.Fatal(nfs4.Nfsstat4Name(status))
 	}
 	status, other, otherFH, _ := openFileForOwner(t, otherConn, &xid, otherID, "replacement", "file",
-		OPEN4_SHARE_ACCESS_BOTH, false, false)
-	if status != NFS4_OK {
-		t.Fatal(Nfsstat4Name(status))
+		nfs4.OPEN4_SHARE_ACCESS_BOTH, false, false)
+	if status != nfs4.NFS4_OK {
+		t.Fatal(nfs4.Nfsstat4Name(status))
 	}
 	writeFileAt(t, otherConn, &xid, otherFH, other, 0, []byte("replacement"))
 	closeFile(t, otherConn, &xid, otherFH, other)
 	status, _, _, _ = openExclusiveFile(t, conn, &xid, clientID, "exclusive", "file", verifier)
-	if status != NFS4ERR_EXIST {
-		t.Fatalf("verifier matched a replacement: %s", Nfsstat4Name(status))
+	if status != nfs4.NFS4ERR_EXIST {
+		t.Fatalf("verifier matched a replacement: %s", nfs4.Nfsstat4Name(status))
 	}
 	if data, _ := readFileData(t, conn, &xid, lookupFH(t, conn, &xid, "file"), 0, 1024); string(data) != "replacement" {
 		t.Fatalf("retry altered the replacement: %q", data)
 	}
-	if status, _ := closeFileResult(t, conn, &xid, fh, state); status != NFS4_OK {
-		t.Fatal(Nfsstat4Name(status))
+	if status, _ := closeFileResult(t, conn, &xid, fh, state); status != nfs4.NFS4_OK {
+		t.Fatal(nfs4.Nfsstat4Name(status))
 	}
 }
 
@@ -134,8 +136,8 @@ func TestExclusiveCreateRecovery(t *testing.T) {
 	clientID := setupClient(t, conn, &xid)
 	verifier := [8]byte{8, 7, 6}
 	status, state, fh, _ := openExclusiveFile(t, conn, &xid, clientID, "owner", "file", verifier)
-	if status != NFS4_OK {
-		t.Fatal(Nfsstat4Name(status))
+	if status != nfs4.NFS4_OK {
+		t.Fatal(nfs4.Nfsstat4Name(status))
 	}
 	writeFileAt(t, conn, &xid, fh, state, 0, []byte("checkpoint"))
 	conn.Close()
@@ -156,19 +158,19 @@ func TestExclusiveCreateRecovery(t *testing.T) {
 	conn = dial(t, addr)
 	defer conn.Close()
 	status, _, _, _ = openExclusiveFile(t, conn, &xid, clientID, "owner", "file", [8]byte{9})
-	if status != NFS4ERR_EXIST {
-		t.Fatalf("changed verifier after restart: %s", Nfsstat4Name(status))
+	if status != nfs4.NFS4ERR_EXIST {
+		t.Fatalf("changed verifier after restart: %s", nfs4.Nfsstat4Name(status))
 	}
 	status, state, restoredFH, flags := openExclusiveFile(t, conn, &xid, clientID, "owner", "file", verifier)
-	if status != NFS4_OK || !bytes.Equal(restoredFH, fh) {
-		t.Fatalf("recovery: %s, fh=%x, want %x", Nfsstat4Name(status), restoredFH, fh)
+	if status != nfs4.NFS4_OK || !bytes.Equal(restoredFH, fh) {
+		t.Fatalf("recovery: %s, fh=%x, want %x", nfs4.Nfsstat4Name(status), restoredFH, fh)
 	}
 	_ = flags
 	if data, _ := readFileData(t, conn, &xid, fh, 0, 1024); string(data) != "checkpoint" {
 		t.Fatalf("recovered data = %q", data)
 	}
-	if status, _ := closeFileResult(t, conn, &xid, fh, state); status != NFS4_OK {
-		t.Fatal(Nfsstat4Name(status))
+	if status, _ := closeFileResult(t, conn, &xid, fh, state); status != nfs4.NFS4_OK {
+		t.Fatal(nfs4.Nfsstat4Name(status))
 	}
 }
 
@@ -288,21 +290,21 @@ func TestExclusiveSetattr(t *testing.T) {
 			xid := uint32(1)
 			clientID := setupClient(t, conn, &xid)
 			status, state, fh, _ := openExclusiveFile(t, conn, &xid, clientID, "owner", "file", [8]byte{1})
-			if status != NFS4_OK {
-				t.Fatal(Nfsstat4Name(status))
+			if status != nfs4.NFS4_OK {
+				t.Fatal(nfs4.Nfsstat4Name(status))
 			}
 			writeFileAt(t, conn, &xid, fh, state, 0, []byte("payload"))
 			atime, mtime := time.Unix(1_600_000_000, 123), time.Unix(1_700_000_000, 456)
-			mask := attrMask{1 << FATTR4_SIZE,
-				1<<(FATTR4_MODE-32) | 1<<(FATTR4_TIME_ACCESS_SET-32) | 1<<(FATTR4_TIME_MODIFY_SET-32)}
+			mask := attrMask{1 << nfs4.FATTR4_SIZE,
+				1<<(nfs4.FATTR4_MODE-32) | 1<<(nfs4.FATTR4_TIME_ACCESS_SET-32) | 1<<(nfs4.FATTR4_TIME_MODIFY_SET-32)}
 			data := binary.BigEndian.AppendUint64(nil, 4)
 			data = binary.BigEndian.AppendUint32(data, 0644)
 			for _, stamp := range []time.Time{atime, mtime} {
-				data = binary.BigEndian.AppendUint32(data, SET_TO_CLIENT_TIME4)
+				data = binary.BigEndian.AppendUint32(data, nfs4.SET_TO_CLIENT_TIME4)
 				data = binary.BigEndian.AppendUint64(data, uint64(stamp.Unix()))
 				data = binary.BigEndian.AppendUint32(data, uint32(stamp.Nanosecond()))
 			}
-			res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+			res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 				pw := w.AppendArgarray_Putfh()
 				pw.Resume(pw.StartObject().SetData(fh).Finish())
 				w.Resume(pw.Finish())
@@ -327,8 +329,8 @@ func TestExclusiveSetattr(t *testing.T) {
 				t.Fatalf("staged attrs=%x", attrs)
 			}
 			// This succeeds even when the backend rejects the post-publication times.
-			if status, _ := closeFileResult(t, conn, &xid, fh, state); status != NFS4_OK {
-				t.Fatalf("CLOSE: %s", Nfsstat4Name(status))
+			if status, _ := closeFileResult(t, conn, &xid, fh, state); status != nfs4.NFS4_OK {
+				t.Fatalf("CLOSE: %s", nfs4.Nfsstat4Name(status))
 			}
 			info, err := os.Stat(filepath.Join(root, "file"))
 			if err != nil {

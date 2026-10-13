@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 func TestSetattrTimeWithInvalidStateID(t *testing.T) {
@@ -35,7 +37,7 @@ func TestSetattrTimeWithInvalidStateID(t *testing.T) {
 			xid := uint32(1)
 			fh := lookupFH(t, conn, &xid, "file")
 			target := time.Unix(1_600_000_000, 0)
-			res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+			res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 				pw := w.AppendArgarray_Putfh()
 				pw.Resume(pw.StartObject().SetData(fh).Finish())
 				w.Resume(pw.Finish())
@@ -48,28 +50,28 @@ func TestSetattrTimeWithInvalidStateID(t *testing.T) {
 				bw := aw.StartAttrmask()
 				var data []byte
 				if withSize {
-					bw.AppendData(1 << FATTR4_SIZE)
+					bw.AppendData(1 << nfs4.FATTR4_SIZE)
 					data = binary.BigEndian.AppendUint64(data, 1)
 				} else {
 					bw.AppendData(0)
 				}
-				bw.AppendData(1 << (FATTR4_TIME_MODIFY_SET - 32))
+				bw.AppendData(1 << (nfs4.FATTR4_TIME_MODIFY_SET - 32))
 				aw.Resume(bw.Finish())
-				data = binary.BigEndian.AppendUint32(data, SET_TO_CLIENT_TIME4)
+				data = binary.BigEndian.AppendUint32(data, nfs4.SET_TO_CLIENT_TIME4)
 				data = binary.BigEndian.AppendUint64(data, uint64(target.Unix()))
 				data = binary.BigEndian.AppendUint32(data, 0)
 				aw.Resume(aw.StartAttrVals().SetData(data).Finish())
 				sw.Resume(aw.Finish())
 				w.Resume(sw.Finish())
 			})
-			wantStatus := uint32(NFS4_OK)
+			wantStatus := uint32(nfs4.NFS4_OK)
 			wantTime := target
 			if withSize {
-				wantStatus = NFS4ERR_BAD_STATEID
+				wantStatus = nfs4.NFS4ERR_BAD_STATEID
 				wantTime = before.ModTime()
 			}
 			if res.Status() != wantStatus {
-				t.Fatalf("SETATTR = %s, want %s", Nfsstat4Name(res.Status()), Nfsstat4Name(wantStatus))
+				t.Fatalf("SETATTR = %s, want %s", nfs4.Nfsstat4Name(res.Status()), nfs4.Nfsstat4Name(wantStatus))
 			}
 			after, err := os.Stat(path)
 			if err != nil {

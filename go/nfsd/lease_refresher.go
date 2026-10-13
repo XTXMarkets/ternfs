@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"sync"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 // The durable lease refresher (canonical r3 §9). This process's lease file,
@@ -1022,7 +1024,7 @@ func (cs *ClientStore) refreshInline(clientID uint64) (leaseView, error) {
 	r, ok := cs.recordLocked(InodeID(clientID), true)
 	cs.refreshMu.Unlock()
 	if !ok {
-		return leaseView{}, nfsError(NFS4ERR_DELAY)
+		return leaseView{}, nfsError(nfs4.NFS4ERR_DELAY)
 	}
 	if cs.serverDecides() {
 		view, _ := cs.leaseView(clientID)
@@ -1041,11 +1043,11 @@ func (cs *ClientStore) refreshInline(clientID uint64) (leaseView, error) {
 func (cs *ClientStore) leaseStatusError(view leaseView) error {
 	switch {
 	case view.state == leaseRecordStale:
-		return nfsError(NFS4ERR_STALE_CLIENTID)
+		return nfsError(nfs4.NFS4ERR_STALE_CLIENTID)
 	case view.state == leaseRecordFleetExpired:
-		return nfsError(NFS4ERR_EXPIRED)
+		return nfsError(nfs4.NFS4ERR_EXPIRED)
 	case view.proven <= cs.now().UnixNano():
-		return nfsError(NFS4ERR_DELAY)
+		return nfsError(nfs4.NFS4ERR_DELAY)
 	}
 	return nil
 }

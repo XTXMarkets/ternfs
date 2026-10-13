@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/XTXMarkets/ternfs/go/msgs"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 type confirmFault uint8
@@ -911,11 +912,11 @@ func TestConfirmationRequiresPending(t *testing.T) {
 	if _, _, err := f.store.SetClientID([8]byte{3}, []byte("client"), clientOwner{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.store.PrepareConfirmation(uint64(f.n), f.confirm); nfsErrCode(err) != NFS4ERR_STALE_CLIENTID {
+	if _, err := f.store.PrepareConfirmation(uint64(f.n), f.confirm); nfsErrCode(err) != nfs4.NFS4ERR_STALE_CLIENTID {
 		t.Fatalf("prepare %v", err)
 	}
 	a := f.store.CommitConfirmation(f.target, f.confirm)
-	if nfsErrCode(a.preWrite) != NFS4ERR_STALE_CLIENTID || a.Result() != confirmRolledBack || a.writes != [3]*edgeWrite{} {
+	if nfsErrCode(a.preWrite) != nfs4.NFS4ERR_STALE_CLIENTID || a.Result() != confirmRolledBack || a.writes != [3]*edgeWrite{} {
 		t.Fatalf("commit %v %s", a.preWrite, confirmResultName(a.Result()))
 	}
 	if f.confirmedIs(t) != f.p {

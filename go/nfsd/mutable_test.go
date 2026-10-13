@@ -13,16 +13,18 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 var mutableAttrMask = attrMask{
-	1<<FATTR4_CHANGE | 1<<FATTR4_SIZE,
-	1<<(FATTR4_TIME_ACCESS-32) | 1<<(FATTR4_TIME_METADATA-32) | 1<<(FATTR4_TIME_MODIFY-32),
+	1<<nfs4.FATTR4_CHANGE | 1<<nfs4.FATTR4_SIZE,
+	1<<(nfs4.FATTR4_TIME_ACCESS-32) | 1<<(nfs4.FATTR4_TIME_METADATA-32) | 1<<(nfs4.FATTR4_TIME_MODIFY-32),
 }
 
 func mutableAttrs(t *testing.T, conn net.Conn, xid *uint32, fh []byte) []byte {
 	t.Helper()
-	res := sendCompound(t, conn, *xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, *xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pw := w.AppendArgarray_Putfh()
 		pw.Resume(pw.StartObject().SetData(fh).Finish())
 		w.Resume(pw.Finish())
@@ -43,7 +45,7 @@ func mutableAttrs(t *testing.T, conn net.Conn, xid *uint32, fh []byte) []byte {
 func verifyMutableAttrs(t *testing.T, conn net.Conn, xid *uint32, fh, attrs []byte) {
 	t.Helper()
 	for _, negate := range []bool{false, true} {
-		res := sendCompound(t, conn, *xid, func(w *COMPOUND4argsWriter) {
+		res := sendCompound(t, conn, *xid, func(w *nfs4.COMPOUND4argsWriter) {
 			pw := w.AppendArgarray_Putfh()
 			pw.Resume(pw.StartObject().SetData(fh).Finish())
 			w.Resume(pw.Finish())
@@ -58,12 +60,12 @@ func verifyMutableAttrs(t *testing.T, conn net.Conn, xid *uint32, fh, attrs []by
 			}
 		})
 		*xid++
-		want := uint32(NFS4_OK)
+		want := uint32(nfs4.NFS4_OK)
 		if negate {
-			want = NFS4ERR_SAME
+			want = nfs4.NFS4ERR_SAME
 		}
 		if res.Status() != want {
-			t.Fatalf("NVERIFY=%t status %s, want %s", negate, Nfsstat4Name(res.Status()), Nfsstat4Name(want))
+			t.Fatalf("NVERIFY=%t status %s, want %s", negate, nfs4.Nfsstat4Name(res.Status()), nfs4.Nfsstat4Name(want))
 		}
 	}
 }
@@ -83,22 +85,22 @@ func exercisePrivateMutableWriters(t *testing.T, addr, name string, reverse bool
 	xid := uint32(1)
 	clientID := setupClient(t, conn, &xid)
 	otherID, otherConfirm := requestClientID(t, otherConn, &xid, "other-"+name, [8]byte{2})
-	if status := confirmClientID(t, otherConn, &xid, otherID, otherConfirm); status != NFS4_OK {
-		t.Fatal(Nfsstat4Name(status))
+	if status := confirmClientID(t, otherConn, &xid, otherID, otherConfirm); status != nfs4.NFS4_OK {
+		t.Fatal(nfs4.Nfsstat4Name(status))
 	}
 	createdState, createdFH := openCreateFile(t, conn, &xid, clientID, name)
 	writeFileAt(t, conn, &xid, createdFH, createdState, 0, []byte("original"))
 	closeFile(t, conn, &xid, createdFH, createdState)
 	open := func(c net.Conn, client uint64, owner string, access uint32) ([16]byte, []byte) {
 		status, sid, fh, _ := openFileForOwner(t, c, &xid, client, owner, name, access, false, false)
-		if status != NFS4_OK {
-			t.Fatalf("OPEN %s: %s", owner, Nfsstat4Name(status))
+		if status != nfs4.NFS4_OK {
+			t.Fatalf("OPEN %s: %s", owner, nfs4.Nfsstat4Name(status))
 		}
 		return sid, fh
 	}
-	reader, baseFH := open(otherConn, otherID, "reader", OPEN4_SHARE_ACCESS_READ)
-	first, firstFH := open(conn, clientID, "first", OPEN4_SHARE_ACCESS_BOTH)
-	second, secondFH := open(otherConn, otherID, "second", OPEN4_SHARE_ACCESS_BOTH)
+	reader, baseFH := open(otherConn, otherID, "reader", nfs4.OPEN4_SHARE_ACCESS_READ)
+	first, firstFH := open(conn, clientID, "first", nfs4.OPEN4_SHARE_ACCESS_BOTH)
+	second, secondFH := open(otherConn, otherID, "second", nfs4.OPEN4_SHARE_ACCESS_BOTH)
 	if !bytes.Equal(firstFH, baseFH) || !bytes.Equal(secondFH, baseFH) {
 		t.Fatal("write OPEN did not return the published filehandle")
 	}
@@ -117,8 +119,8 @@ func exercisePrivateMutableWriters(t *testing.T, addr, name string, reverse bool
 	viewer := dial(t, addr)
 	defer viewer.Close()
 	viewerID, viewerConfirm := requestClientID(t, viewer, &xid, "viewer-"+name, [8]byte{3})
-	if status := confirmClientID(t, viewer, &xid, viewerID, viewerConfirm); status != NFS4_OK {
-		t.Fatal(Nfsstat4Name(status))
+	if status := confirmClientID(t, viewer, &xid, viewerID, viewerConfirm); status != nfs4.NFS4_OK {
+		t.Fatal(nfs4.Nfsstat4Name(status))
 	}
 	publishedAttrs := mutableAttrs(t, viewer, &xid, baseFH)
 	if !bytes.Equal(baseAttrs[:16], publishedAttrs[:16]) || !bytes.Equal(baseAttrs[28:], publishedAttrs[28:]) {
@@ -126,7 +128,7 @@ func exercisePrivateMutableWriters(t *testing.T, addr, name string, reverse bool
 	}
 	readWith := func(c net.Conn, fh []byte, sid [16]byte, want string) {
 		t.Helper()
-		res := sendCompound(t, c, xid, func(w *COMPOUND4argsWriter) {
+		res := sendCompound(t, c, xid, func(w *nfs4.COMPOUND4argsWriter) {
 			pw := w.AppendArgarray_Putfh()
 			pw.Resume(pw.StartObject().SetData(fh).Finish())
 			w.Resume(pw.Finish())
@@ -154,7 +156,7 @@ func exercisePrivateMutableWriters(t *testing.T, addr, name string, reverse bool
 	readWith(conn, firstFH, first, "FIRSTnal")
 	readWith(otherConn, secondFH, second, "originalSECOND")
 	// A second writer on the first client joins its staging.
-	joined, _ := open(conn, clientID, "joined", OPEN4_SHARE_ACCESS_BOTH)
+	joined, _ := open(conn, clientID, "joined", nfs4.OPEN4_SHARE_ACCESS_BOTH)
 	readWith(conn, firstFH, joined, "FIRSTnal")
 	closeFile(t, conn, &xid, firstFH, joined)
 
@@ -200,9 +202,9 @@ func TestRecoveredSharedWriterAcrossOpenOwners(t *testing.T) {
 	clientID := setupClient(t, conn, &xid)
 	open := func(owner string) ([16]byte, []byte) {
 		t.Helper()
-		status, sid, fh, _ := openFileForOwner(t, conn, &xid, clientID, owner, "file", OPEN4_SHARE_ACCESS_BOTH, false, false)
-		if status != NFS4_OK {
-			t.Fatalf("OPEN %s: %s", owner, Nfsstat4Name(status))
+		status, sid, fh, _ := openFileForOwner(t, conn, &xid, clientID, owner, "file", nfs4.OPEN4_SHARE_ACCESS_BOTH, false, false)
+		if status != nfs4.NFS4_OK {
+			t.Fatalf("OPEN %s: %s", owner, nfs4.Nfsstat4Name(status))
 		}
 		return sid, fh
 	}
@@ -321,7 +323,7 @@ func TestStagingCheckpointRetry(t *testing.T) {
 // lookupFH looks up a name in the root directory and returns the file handle.
 func lookupFH(t *testing.T, conn net.Conn, xid *uint32, name string) []byte {
 	t.Helper()
-	res := sendCompound(t, conn, *xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, *xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		lw := w.AppendArgarray_Lookup()
 		nw := lw.StartObjname()
@@ -342,7 +344,7 @@ func lookupFH(t *testing.T, conn net.Conn, xid *uint32, name string) []byte {
 // readFileData reads a file by handle and returns the data.
 func readFileData(t *testing.T, conn net.Conn, xid *uint32, fh []byte, offset uint64, count uint32) (data []byte, eof bool) {
 	t.Helper()
-	res := sendCompound(t, conn, *xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, *xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pfW := w.AppendArgarray_Putfh()
 		buf := pfW.StartObject().SetData(fh).Finish()
 		pfW.Resume(buf)
@@ -357,8 +359,8 @@ func readFileData(t *testing.T, conn net.Conn, xid *uint32, fh []byte, offset ui
 	iter := expectOK(t, res)
 	nextOp(t, &iter) // PUTFH
 	readRes := nextOp(t, &iter).Value().AsREAD4resEntry()
-	if readRes.Disc() != NFS4_OK {
-		t.Fatalf("READ status = %s", Nfsstat4Name(readRes.Disc()))
+	if readRes.Disc() != nfs4.NFS4_OK {
+		t.Fatalf("READ status = %s", nfs4.Nfsstat4Name(readRes.Disc()))
 	}
 	readOK := readRes.Value().AsREAD4resok()
 	return readOK.Data(), readOK.Eof() != 0

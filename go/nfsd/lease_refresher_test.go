@@ -12,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 var errInjectedLease = errors.New("injected lease fault")
@@ -443,8 +445,8 @@ func TestLeaseGateDecisions(t *testing.T) {
 
 	// Active: no decision, no read.
 	hold, status := srv.sessions.holdRequest(sess)
-	if status != NFS4_OK {
-		t.Fatal(Nfsstat4Name(status))
+	if status != nfs4.NFS4_OK {
+		t.Fatal(nfs4.Nfsstat4Name(status))
 	}
 	hold.activate()
 	fs.fail = true
@@ -482,14 +484,14 @@ func TestLeaseGateDecisions(t *testing.T) {
 	srv.sessions.mu.Lock()
 	srv.sessions.groups[clientID].lease = gateExpired
 	srv.sessions.mu.Unlock()
-	if _, status := srv.sessions.holdRequest(sess); status != NFS4ERR_BADSESSION {
-		t.Fatalf("admission after expiry %s", Nfsstat4Name(status))
+	if _, status := srv.sessions.holdRequest(sess); status != nfs4.NFS4ERR_BADSESSION {
+		t.Fatalf("admission after expiry %s", nfs4.Nfsstat4Name(status))
 	}
 	srv.sessions.mu.Lock()
 	srv.sessions.groups[clientID].lease = gateChecking
 	srv.sessions.mu.Unlock()
-	if _, status := srv.sessions.holdRequest(sess); status != NFS4ERR_DELAY {
-		t.Fatalf("admission while deciding %s", Nfsstat4Name(status))
+	if _, status := srv.sessions.holdRequest(sess); status != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("admission while deciding %s", nfs4.Nfsstat4Name(status))
 	}
 }
 
@@ -549,7 +551,7 @@ func TestSequenceAdmissionDoesNoStoreIO(t *testing.T) {
 	}
 	ts := connectionSession(t, srv)
 	sess := srv.sessions.lookup(ts.id)
-	body := buildCompoundBody(nil, func(*COMPOUND4argsWriter) {})
+	body := buildCompoundBody(nil, func(*nfs4.COMPOUND4argsWriter) {})
 	fs.mu.Lock()
 	fs.armed = true
 	fs.mu.Unlock()
@@ -562,9 +564,9 @@ func TestSequenceAdmissionDoesNoStoreIO(t *testing.T) {
 		_, res = admissionRequest(t, srv, admissionSequence(body, ts, 0, 2, true), 2, nil)
 		done <- res.Status()
 	}()
-	for _, want := range []uint32{NFS4_OK, NFS4ERR_DELAY} {
+	for _, want := range []uint32{nfs4.NFS4_OK, nfs4.NFS4ERR_DELAY} {
 		if got := awaitValue(t, done, "SEQUENCE with a blocked store"); got != want {
-			t.Fatalf("SEQUENCE %s, want %s", Nfsstat4Name(got), Nfsstat4Name(want))
+			t.Fatalf("SEQUENCE %s, want %s", nfs4.Nfsstat4Name(got), nfs4.Nfsstat4Name(want))
 		}
 	}
 	fs.mu.Lock()
@@ -622,9 +624,9 @@ func TestAssociationTokens(t *testing.T) {
 	// SEQUENCE on the full connection: RESOURCE, with no verify requested.
 	sess := srv.sessions.lookup(other.id)
 	setLeaseForTest(srv, sess.clientID, func(r *leaseRefresher) { r.proven = 0 })
-	body := buildCompoundBody(nil, func(*COMPOUND4argsWriter) {})
+	body := buildCompoundBody(nil, func(*nfs4.COMPOUND4argsWriter) {})
 	_, res := admissionRequest(t, srv, admissionSequence(body, other, 0, 1, true), 1, conn)
-	admissionStatus(t, res, NFS4ERR_RESOURCE, OP_SEQUENCE)
+	admissionStatus(t, res, nfs4.NFS4ERR_RESOURCE, nfs4.OP_SEQUENCE)
 	setLeaseForTest(srv, sess.clientID, func(r *leaseRefresher) {
 		if r.verify {
 			t.Error("RESOURCE admission requested a verify")
@@ -648,7 +650,7 @@ func TestSequenceReplayRenews(t *testing.T) {
 	}
 	ts := connectionSession(t, srv)
 	sess := srv.sessions.lookup(ts.id)
-	body := buildCompoundBody(nil, func(*COMPOUND4argsWriter) {})
+	body := buildCompoundBody(nil, func(*nfs4.COMPOUND4argsWriter) {})
 	wire := admissionSequence(body, ts, 0, 1, true)
 	admissionRequest(t, srv, wire, 1, nil)
 	endQuietForTest(srv)
@@ -680,24 +682,24 @@ func TestIdleClientResumesAfterVerify(t *testing.T) {
 	clientID := incarnationForTest(t, srv, ts.clientID)
 	setLeaseForTest(srv, clientID, func(r *leaseRefresher) { r.verifiedAt = 0 })
 	fs.set(func() { fs.constructs = 0 })
-	body := buildCompoundBody(nil, func(*COMPOUND4argsWriter) {})
+	body := buildCompoundBody(nil, func(*nfs4.COMPOUND4argsWriter) {})
 	reply, err := sendRawRPC(conn, 2, procCompound, withSequence(body, ts, 0, 1))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := sequenceStatus(reply); got != NFS4ERR_DELAY {
-		t.Fatalf("idle SEQUENCE %s, want DELAY", Nfsstat4Name(got))
+	if got := sequenceStatus(reply); got != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("idle SEQUENCE %s, want DELAY", nfs4.Nfsstat4Name(got))
 	}
 	for deadline := time.Now().Add(testChannelTimeout); ; time.Sleep(time.Millisecond) {
 		reply, err = sendRawRPC(conn, 3, procCompound, withSequence(body, ts, 0, 1))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if sequenceStatus(reply) == NFS4_OK {
+		if sequenceStatus(reply) == nfs4.NFS4_OK {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("retry %s", Nfsstat4Name(sequenceStatus(reply)))
+			t.Fatalf("retry %s", nfs4.Nfsstat4Name(sequenceStatus(reply)))
 		}
 	}
 	fs.mu.Lock()
@@ -716,15 +718,15 @@ func TestCreateSessionWaitsForFirstPublication(t *testing.T) {
 	conn := dial(t, addr)
 	defer conn.Close()
 	clientID, seq, status, err := exchangeID(conn, 1, "first-sequence", [8]byte{6})
-	if err != nil || status != NFS4_OK {
-		t.Fatalf("EXCHANGE_ID %s %v", Nfsstat4Name(status), err)
+	if err != nil || status != nfs4.NFS4_OK {
+		t.Fatalf("EXCHANGE_ID %s %v", nfs4.Nfsstat4Name(status), err)
 	}
 	reply, err := sendRawRPC(conn, 2, procCompound, backCreateSessionBody(clientID, seq, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
 	res, err := parseCompoundReply(reply)
-	if err != nil || res.Status() != NFS4_OK {
+	if err != nil || res.Status() != nfs4.NFS4_OK {
 		t.Fatalf("CREATE_SESSION %v %v", res.Status(), err)
 	}
 	it := res.Resarray()
@@ -734,12 +736,12 @@ func TestCreateSessionWaitsForFirstPublication(t *testing.T) {
 		t.Fatal("CREATE_SESSION replied before the first publication")
 	}
 	ts := newTestSession(readSessionID(ok.CsrSessionid()), clientID, ok.CsrForeChanAttrs().CaMaxrequests())
-	body := buildCompoundBody(nil, func(*COMPOUND4argsWriter) {})
+	body := buildCompoundBody(nil, func(*nfs4.COMPOUND4argsWriter) {})
 	reply, err = sendRawRPC(conn, 3, procCompound, withSequence(body, ts, 0, 1))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := sequenceStatus(reply); got != NFS4_OK {
-		t.Fatalf("first SEQUENCE %s", Nfsstat4Name(got))
+	if got := sequenceStatus(reply); got != nfs4.NFS4_OK {
+		t.Fatalf("first SEQUENCE %s", nfs4.Nfsstat4Name(got))
 	}
 }

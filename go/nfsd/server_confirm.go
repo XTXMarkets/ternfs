@@ -4,7 +4,11 @@
 
 package main
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+)
 
 // Confirmation of a pending incarnation N over its predecessor P, on the
 // server side (canonical r3 §5.3, §5.4). The client store makes writes A, B
@@ -87,7 +91,7 @@ func (cr *creation) commitLocked() (createSessionResult, bool) {
 	// replacement purge left by an earlier one, here or before a restart.
 	cr.resume = true
 	result := createSessionResult{id: cr.id, seq: cr.seq, foreAttrs: cr.fore, backAttr: cr.back, back: cr.backGrant}
-	cr.cacheLocked(NFS4_OK, result)
+	cr.cacheLocked(nfs4.NFS4_OK, result)
 	return result, true
 }
 
@@ -450,7 +454,7 @@ func (s *Server) applyConfirmation(e *confirmation, result confirmResult) (statu
 		if recovered := recover(); recovered != nil {
 			s.log.Error("panic applying a client confirmation; it stays protected and resumes",
 				"clientid", e.n, "panic", recovered)
-			status, reply, complete = NFS4ERR_DELAY, createSessionResult{}, false
+			status, reply, complete = nfs4.NFS4ERR_DELAY, createSessionResult{}, false
 			if e.published {
 				status, reply = e.status, e.reply
 			}
@@ -479,9 +483,9 @@ func (s *Server) applyConfirmation(e *confirmation, result confirmResult) (statu
 				// This creation's own purge is FinishReplacement's, on
 				// B's evidence; a failure there is resumed later.
 				cr.resume = false
-				e.status, e.reply = NFS4_OK, reply
+				e.status, e.reply = nfs4.NFS4_OK, reply
 				if !inserted {
-					e.status = NFS4ERR_STALE_CLIENTID
+					e.status = nfs4.NFS4ERR_STALE_CLIENTID
 				}
 				e.published = true
 			})
@@ -500,7 +504,7 @@ func (s *Server) applyConfirmation(e *confirmation, result confirmResult) (statu
 			e.pClosedEnded = true
 		}
 		s.unregisterConfirmation(e)
-		return NFS4ERR_DELAY, createSessionResult{}, true
+		return nfs4.NFS4ERR_DELAY, createSessionResult{}, true
 	case confirmConservative:
 		// Neither committed nor proved unchanged: P is replaced in this
 		// process only, keeping its durable state, and N's record ends. A
@@ -517,10 +521,10 @@ func (s *Server) applyConfirmation(e *confirmation, result confirmResult) (statu
 			ss.retireWireLocked(cr.c)
 		})
 		s.unregisterConfirmation(e)
-		return NFS4ERR_STALE_CLIENTID, createSessionResult{}, true
+		return nfs4.NFS4ERR_STALE_CLIENTID, createSessionResult{}, true
 	}
 	// Unresolved: protection, P's closing and N's slot all stay.
-	return NFS4ERR_DELAY, createSessionResult{}, false
+	return nfs4.NFS4ERR_DELAY, createSessionResult{}, false
 }
 
 // finishReplacement purges P on B's evidence. A failure or a panic leaves
@@ -560,7 +564,7 @@ func (s *Server) confirmPending(cr *creation, confirm [8]byte, principal, caller
 	target, err := s.clients.PrepareConfirmation(c.incarnation, confirm)
 	if err != nil {
 		status := clientStoreErrToNFS(err)
-		if status == NFS4ERR_STALE_CLIENTID {
+		if status == nfs4.NFS4ERR_STALE_CLIENTID {
 			retire()
 		}
 		return status, reply, false
@@ -571,7 +575,7 @@ func (s *Server) confirmPending(cr *creation, confirm [8]byte, principal, caller
 	if target.p != 0 && target.p != target.n {
 		p = uint64(target.p)
 		if !ss.closeForReplacement(p) {
-			return NFS4ERR_DELAY, reply, false
+			return nfs4.NFS4ERR_DELAY, reply, false
 		}
 	}
 	if principal != caller {
@@ -579,16 +583,16 @@ func (s *Server) confirmPending(cr *creation, confirm [8]byte, principal, caller
 			ss.reopen(p)
 		}
 		ss.mu.Lock()
-		cr.cacheLocked(NFS4ERR_CLID_INUSE, createSessionResult{})
+		cr.cacheLocked(nfs4.NFS4ERR_CLID_INUSE, createSessionResult{})
 		ss.mu.Unlock()
-		return NFS4ERR_CLID_INUSE, reply, false
+		return nfs4.NFS4ERR_CLID_INUSE, reply, false
 	}
 	e := &confirmation{identity: target.identity, owner: c.owner, n: c.incarnation, p: p, cr: cr}
 	if !s.registerConfirmation(e) {
 		if p != 0 {
 			ss.reopen(p)
 		}
-		return NFS4ERR_DELAY, reply, false
+		return nfs4.NFS4ERR_DELAY, reply, false
 	}
 	// From registration, e owns cr unless its result is fully applied, and
 	// application is released on every return. A panic here leaves e
@@ -597,7 +601,7 @@ func (s *Server) confirmPending(cr *creation, confirm [8]byte, principal, caller
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			s.log.Error("panic confirming a client; it stays protected and resumes", "clientid", e.n, "panic", recovered)
-			status, reply, handedOver = NFS4ERR_DELAY, createSessionResult{}, true
+			status, reply, handedOver = nfs4.NFS4ERR_DELAY, createSessionResult{}, true
 		}
 		if !complete {
 			s.releaseConfirmation(e)
@@ -633,21 +637,21 @@ func (s *Server) confirmPending(cr *creation, confirm [8]byte, principal, caller
 func (s *Server) retryHeldConfirmation(e *confirmation, st *compoundState) (status uint32, reply createSessionResult, done func()) {
 	token, ok := st.connection.reserve(s, e.cr.id)
 	if !ok {
-		return NFS4ERR_RESOURCE, reply, nil
+		return nfs4.NFS4ERR_RESOURCE, reply, nil
 	}
 	defer token.abort()
 	// A granted backchannel goes to this connection too, reserved alike.
 	var bt *backToken
 	if e.cr.backGrant {
 		if bt, ok = st.connection.reserveBack(s, e.cr.id); !ok {
-			return NFS4ERR_RESOURCE, reply, nil
+			return nfs4.NFS4ERR_RESOURCE, reply, nil
 		}
 		defer bt.abort()
 	}
 	status, reply, done = s.retryConfirmation(e)
 	// A committed creation whose record was retired meanwhile publishes no
 	// session; it keeps no association either.
-	if sess := s.sessions.lookup(reply.id); status == NFS4_OK && sess != nil {
+	if sess := s.sessions.lookup(reply.id); status == nfs4.NFS4_OK && sess != nil {
 		token.commit()
 		if reply.back {
 			s.commitBackChannel(st, bt, sess)
@@ -663,7 +667,7 @@ func (s *Server) retryHeldConfirmation(e *confirmation, st *compoundState) (stat
 // Application is released on every return, panics included.
 func (s *Server) retryConfirmation(e *confirmation) (status uint32, reply createSessionResult, done func()) {
 	if !s.acquireConfirmation(e) {
-		return NFS4ERR_DELAY, reply, nil
+		return nfs4.NFS4ERR_DELAY, reply, nil
 	}
 	complete := false
 	defer func() {

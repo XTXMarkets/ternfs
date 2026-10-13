@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 // moveSessionForTest gives an inserted session another incarnation and ID.
@@ -51,10 +53,10 @@ func waitForAccounting(t *testing.T, ss *sessionStore, what string, cond func(re
 func TestGroupHoldLastsThroughReplayTransport(t *testing.T) {
 	srv, _ := newConnectionTestServer(t, 2)
 	ts := connectionSession(t, srv)
-	body := buildCompoundBody(nil, func(w *COMPOUND4argsWriter) { w.AppendArgarray_Putrootfh() })
+	body := buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) { w.AppendArgarray_Putrootfh() })
 	wire := admissionSequence(body, ts, 0, 1, true)
 	_, res := admissionRequest(t, srv, wire, 1, nil)
-	admissionStatus(t, res, NFS4_OK, OP_SEQUENCE, OP_PUTROOTFH)
+	admissionStatus(t, res, nfs4.NFS4_OK, nfs4.OP_SEQUENCE, nfs4.OP_PUTROOTFH)
 	if a := srv.sessions.accounting(); a.ActiveRequests != 0 || a.ProvisionalRequests != 0 || a.Groups != 1 {
 		t.Fatalf("completed request kept a hold %+v", a)
 	}
@@ -110,7 +112,7 @@ func TestGroupHoldReleasedOnTransportFailure(t *testing.T) {
 			conn := &replyConn{Conn: server, panicWrite: mode == "write-panic"}
 			done := make(chan struct{})
 			go func() { srv.handleConn(conn); close(done) }()
-			body := buildCompoundBody(nil, func(w *COMPOUND4argsWriter) { w.AppendArgarray_Putrootfh() })
+			body := buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) { w.AppendArgarray_Putrootfh() })
 			writeCallForTest(t, client, rpcCallForTest(1, procCompound, admissionSequence(body, ts, 0, 1, true)))
 			// The client never reads, so the reply cannot be delivered.
 			awaitSignal(t, done, "failed connection")
@@ -138,7 +140,7 @@ func TestGroupHoldReleasedAfterCompoundPanic(t *testing.T) {
 	srv := admissionWritableServer(t, &admissionPanicVFS{TernVFS: NewLocalTernVFS(root)})
 	ts := connectionSession(t, srv)
 	req, err := parseRPCCall(rpcCallForTest(1, procCompound, admissionSequence(
-		buildCompoundBody(nil, func(w *COMPOUND4argsWriter) {
+		buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
 			w.AppendArgarray_Putrootfh()
 			admissionRemove(w, "victim")
 		}), ts, 0, 1, true)))
@@ -149,7 +151,7 @@ func TestGroupHoldReleasedAfterCompoundPanic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	admissionStatus(t, res, NFS4ERR_SERVERFAULT, OP_SEQUENCE, OP_PUTROOTFH, OP_REMOVE)
+	admissionStatus(t, res, nfs4.NFS4ERR_SERVERFAULT, nfs4.OP_SEQUENCE, nfs4.OP_PUTROOTFH, nfs4.OP_REMOVE)
 	if a := srv.sessions.accounting(); a.Sessions != 0 || a.Groups != 1 || a.ActiveRequests != 1 {
 		t.Fatalf("panicked request released its hold before the reply %+v", a)
 	}
@@ -175,8 +177,8 @@ func TestGroupClosingAndReplacedAdmission(t *testing.T) {
 	body := buildCompoundBody(nil, nil)
 
 	seq := srv.startSequence(ReadCOMPOUND4argsForTest(t, admissionSequence(body, ts, 0, 1, true)))
-	if seq.status != NFS4_OK {
-		t.Fatalf("admission %s", Nfsstat4Name(seq.status))
+	if seq.status != nfs4.NFS4_OK {
+		t.Fatalf("admission %s", nfs4.Nfsstat4Name(seq.status))
 	}
 	if ss.closeForReplacement(inc) {
 		t.Fatal("replacement overtook an admitted request")
@@ -187,8 +189,8 @@ func TestGroupClosingAndReplacedAdmission(t *testing.T) {
 	}
 	seq.hold.release()
 	endCreate, status := ss.beginCreate(inc)
-	if status != NFS4_OK {
-		t.Fatalf("CREATE_SESSION %s", Nfsstat4Name(status))
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(status))
 	}
 	if ss.closeForReplacement(inc) {
 		t.Fatal("replacement overtook a CREATE_SESSION")
@@ -202,8 +204,8 @@ func TestGroupClosingAndReplacedAdmission(t *testing.T) {
 	slot := &ss.lookup(ts.id).slots[1]
 	before := admissionImage(slot)
 	next := admissionSequence(body, ts, 1, 1, true)
-	if seq := srv.startSequence(ReadCOMPOUND4argsForTest(t, next)); seq.status != NFS4ERR_DELAY {
-		t.Fatalf("SEQUENCE while closing %s", Nfsstat4Name(seq.status))
+	if seq := srv.startSequence(ReadCOMPOUND4argsForTest(t, next)); seq.status != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("SEQUENCE while closing %s", nfs4.Nfsstat4Name(seq.status))
 	}
 	if after := admissionImage(slot); !reflect.DeepEqual(after, before) {
 		t.Fatal("waiting admission changed its slot")
@@ -211,16 +213,16 @@ func TestGroupClosingAndReplacedAdmission(t *testing.T) {
 	if a := ss.accounting(); a.ProvisionalRequests != 0 || a.ActiveRequests != 0 {
 		t.Fatalf("waiting admission kept a hold %+v", a)
 	}
-	if status := ss.admissionStatus(inc); status != NFS4ERR_DELAY {
-		t.Fatalf("BIND while closing %s", Nfsstat4Name(status))
+	if status := ss.admissionStatus(inc); status != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("BIND while closing %s", nfs4.Nfsstat4Name(status))
 	}
-	if _, status := ss.beginCreate(inc); status != NFS4ERR_DELAY {
-		t.Fatalf("CREATE_SESSION while closing %s", Nfsstat4Name(status))
+	if _, status := ss.beginCreate(inc); status != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("CREATE_SESSION while closing %s", nfs4.Nfsstat4Name(status))
 	}
 	ss.reopen(inc)
 	seq = srv.startSequence(ReadCOMPOUND4argsForTest(t, next))
-	if seq.status != NFS4_OK {
-		t.Fatalf("SEQUENCE after reopen %s", Nfsstat4Name(seq.status))
+	if seq.status != nfs4.NFS4_OK {
+		t.Fatalf("SEQUENCE after reopen %s", nfs4.Nfsstat4Name(seq.status))
 	}
 	seq.finish(nil)
 	seq.hold.release()
@@ -230,11 +232,11 @@ func TestGroupClosingAndReplacedAdmission(t *testing.T) {
 		t.Fatal("reopened incarnation cannot be replaced")
 	}
 	ss.replaced(inc)
-	if seq := srv.startSequence(ReadCOMPOUND4argsForTest(t, admissionSequence(body, ts, 2, 1, true))); seq.status != NFS4ERR_BADSESSION {
-		t.Fatalf("SEQUENCE after replacement %s", Nfsstat4Name(seq.status))
+	if seq := srv.startSequence(ReadCOMPOUND4argsForTest(t, admissionSequence(body, ts, 2, 1, true))); seq.status != nfs4.NFS4ERR_BADSESSION {
+		t.Fatalf("SEQUENCE after replacement %s", nfs4.Nfsstat4Name(seq.status))
 	}
-	if _, status := ss.beginCreate(inc); status != NFS4ERR_STALE_CLIENTID {
-		t.Fatalf("CREATE_SESSION after replacement %s", Nfsstat4Name(status))
+	if _, status := ss.beginCreate(inc); status != nfs4.NFS4ERR_STALE_CLIENTID {
+		t.Fatalf("CREATE_SESSION after replacement %s", nfs4.Nfsstat4Name(status))
 	}
 }
 
@@ -268,7 +270,7 @@ func TestGroupStandaloneCreateSessionExcludesReplacement(t *testing.T) {
 
 	fs.armed.Store(true)
 	defer closeSignal(fs.release)
-	result := make(chan COMPOUND4res, 1)
+	result := make(chan nfs4.COMPOUND4res, 1)
 	go func() {
 		_, res := admissionRequest(t, srv, createSessionBody(client, ts.nextCSSeq), 100, nil)
 		result <- res
@@ -279,7 +281,7 @@ func TestGroupStandaloneCreateSessionExcludesReplacement(t *testing.T) {
 		t.Fatal("replacement overtook an in-progress CREATE_SESSION")
 	}
 	closeSignal(fs.release)
-	admissionStatus(t, awaitValue(t, result, "CREATE_SESSION"), NFS4_OK, OP_CREATE_SESSION)
+	admissionStatus(t, awaitValue(t, result, "CREATE_SESSION"), nfs4.NFS4_OK, nfs4.OP_CREATE_SESSION)
 	if !srv.sessions.closeForReplacement(incarnation) {
 		t.Fatal("finished CREATE_SESSION still blocks replacement")
 	}
@@ -290,8 +292,8 @@ func TestGroupStandaloneCreateSessionExcludesReplacement(t *testing.T) {
 func registerForTest(t *testing.T, srv *Server, owner string, seq uint32) (uint64, *testSession) {
 	t.Helper()
 	ex := identityExchange(t, srv, 1, owner, [8]byte{1}, false)
-	if ex.status != NFS4_OK {
-		t.Fatalf("EXCHANGE_ID %s", Nfsstat4Name(ex.status))
+	if ex.status != nfs4.NFS4_OK {
+		t.Fatalf("EXCHANGE_ID %s", nfs4.Nfsstat4Name(ex.status))
 	}
 	return ex.clientID, createForTest(t, srv, ex.clientID, seq)
 }
@@ -299,8 +301,8 @@ func registerForTest(t *testing.T, srv *Server, owner string, seq uint32) (uint6
 func createForTest(t *testing.T, srv *Server, clientID uint64, seq uint32) *testSession {
 	t.Helper()
 	res := identityCall(t, srv, 1, createSessionBody(clientID, seq))
-	if res.Status() != NFS4_OK {
-		t.Fatalf("CREATE_SESSION %s", Nfsstat4Name(res.Status()))
+	if res.Status() != nfs4.NFS4_OK {
+		t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(res.Status()))
 	}
 	it := res.Resarray()
 	it.Next()
@@ -343,10 +345,10 @@ func TestGroupCreditHeldUntilFinalHold(t *testing.T) {
 	second := createForTest(t, srv, wire, 2)
 	_, other := registerForTest(t, srv, "other", 1)
 
-	body := buildCompoundBody(nil, func(w *COMPOUND4argsWriter) { w.AppendArgarray_Putrootfh() })
+	body := buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) { w.AppendArgarray_Putrootfh() })
 	replayed := admissionSequence(body, ts, 1, 1, true)
 	_, res := admissionRequest(t, srv, replayed, 1, nil)
-	admissionStatus(t, res, NFS4_OK, OP_SEQUENCE, OP_PUTROOTFH)
+	admissionStatus(t, res, nfs4.NFS4_OK, nfs4.OP_SEQUENCE, nfs4.OP_PUTROOTFH)
 	finishNormal := heldReply(t, srv, rpcCallForTest(2, procCompound, admissionSequence(body, ts, 0, 1, true)))
 	finishReplay := heldReply(t, srv, rpcCallForTest(3, procCompound, replayed))
 	if a := ss.accounting(); a.ActiveRequests != 2 || a.GroupCredits != 2 {
@@ -368,11 +370,11 @@ func TestGroupCreditHeldUntilFinalHold(t *testing.T) {
 	}
 	assertNoGroupCredit := func(when string) {
 		t.Helper()
-		if got := identityExchange(t, srv, 1, "new", [8]byte{1}, false); got.status != NFS4ERR_DELAY {
-			t.Fatalf("EXCHANGE_ID %s: %s", when, Nfsstat4Name(got.status))
+		if got := identityExchange(t, srv, 1, "new", [8]byte{1}, false); got.status != nfs4.NFS4ERR_DELAY {
+			t.Fatalf("EXCHANGE_ID %s: %s", when, nfs4.Nfsstat4Name(got.status))
 		}
-		if _, status := ss.beginCreate(incarnation + 1); status != NFS4ERR_DELAY {
-			t.Fatalf("CREATE_SESSION %s: %s", when, Nfsstat4Name(status))
+		if _, status := ss.beginCreate(incarnation + 1); status != nfs4.NFS4ERR_DELAY {
+			t.Fatalf("CREATE_SESSION %s: %s", when, nfs4.Nfsstat4Name(status))
 		}
 		if ss.closeForReplacement(incarnation + 1) {
 			t.Fatalf("replacement %s took a group", when)
@@ -391,8 +393,8 @@ func TestGroupCreditHeldUntilFinalHold(t *testing.T) {
 	waitForAccounting(t, ss, "final reply done", func(a replyAccounting) bool {
 		return a.ActiveRequests == 0 && a.Groups == 1 && a.GroupCredits == 1
 	})
-	if got := identityExchange(t, srv, 1, "new", [8]byte{1}, false); got.status != NFS4_OK {
-		t.Fatalf("EXCHANGE_ID after the final release %s", Nfsstat4Name(got.status))
+	if got := identityExchange(t, srv, 1, "new", [8]byte{1}, false); got.status != nfs4.NFS4_OK {
+		t.Fatalf("EXCHANGE_ID after the final release %s", nfs4.Nfsstat4Name(got.status))
 	}
 }
 
@@ -404,27 +406,27 @@ func TestGroupBindWhileReplacing(t *testing.T) {
 	incarnation := incarnationForTest(t, srv, wire)
 	bind := func() uint32 {
 		t.Helper()
-		_, res := admissionRequest(t, srv, admissionBind(ts.id, CDFC4_FORE, false), 1, &rpcConnection{})
+		_, res := admissionRequest(t, srv, admissionBind(ts.id, nfs4.CDFC4_FORE, false), 1, &rpcConnection{})
 		return res.Status()
 	}
-	if got := bind(); got != NFS4_OK {
-		t.Fatalf("BIND %s", Nfsstat4Name(got))
+	if got := bind(); got != nfs4.NFS4_OK {
+		t.Fatalf("BIND %s", nfs4.Nfsstat4Name(got))
 	}
 	if !srv.sessions.closeForReplacement(incarnation) {
 		t.Fatal("cannot close")
 	}
-	if got := bind(); got != NFS4ERR_DELAY {
-		t.Fatalf("BIND while closing %s", Nfsstat4Name(got))
+	if got := bind(); got != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("BIND while closing %s", nfs4.Nfsstat4Name(got))
 	}
 	srv.sessions.reopen(incarnation)
-	if got := bind(); got != NFS4_OK {
-		t.Fatalf("BIND after reopen %s", Nfsstat4Name(got))
+	if got := bind(); got != nfs4.NFS4_OK {
+		t.Fatalf("BIND after reopen %s", nfs4.Nfsstat4Name(got))
 	}
 	if !srv.sessions.closeForReplacement(incarnation) {
 		t.Fatal("cannot close again")
 	}
 	srv.sessions.replaced(incarnation)
-	if got := bind(); got != NFS4ERR_BADSESSION {
-		t.Fatalf("BIND after replacement %s", Nfsstat4Name(got))
+	if got := bind(); got != nfs4.NFS4ERR_BADSESSION {
+		t.Fatalf("BIND after replacement %s", nfs4.Nfsstat4Name(got))
 	}
 }

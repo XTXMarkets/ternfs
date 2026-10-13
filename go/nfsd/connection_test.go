@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 func rpcCallForTest(xid, procedure uint32, body []byte) []byte {
@@ -58,11 +60,11 @@ func sessionCallForTest(ts *testSession, xid uint32, body []byte) []byte {
 }
 
 func statCallForTest(ts *testSession, xid uint32) []byte {
-	return sessionCallForTest(ts, xid, buildCompoundBody([]byte(fmt.Sprint(xid)), func(w *COMPOUND4argsWriter) {
+	return sessionCallForTest(ts, xid, buildCompoundBody([]byte(fmt.Sprint(xid)), func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		attr := w.AppendArgarray_Getattr()
 		bits := attr.StartAttrRequest()
-		bits.AppendData(1 << FATTR4_TYPE)
+		bits.AppendData(1 << nfs4.FATTR4_TYPE)
 		buf := bits.Finish()
 		attr.Resume(buf)
 		w.Resume(attr.Finish())
@@ -92,8 +94,8 @@ func readXIDForTest(t *testing.T, conn net.Conn) uint32 {
 		t.Fatalf("RPC failed: %x", reply)
 	}
 	if len(reply) > 24 {
-		res, ok := ReadCOMPOUND4res(reply[24:])
-		if !ok || res.Status() != NFS4_OK {
+		res, ok := nfs4.ReadCOMPOUND4res(reply[24:])
+		if !ok || res.Status() != nfs4.NFS4_OK {
 			t.Fatalf("COMPOUND failed: %x", reply)
 		}
 	}
@@ -233,7 +235,7 @@ func TestConnectionInFlightDuplicates(t *testing.T) {
 			defer closeSignal(fs.release)
 			conn := dial(t, addr)
 			defer conn.Close()
-			body := buildCompoundBody(nil, func(w *COMPOUND4argsWriter) {
+			body := buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
 				w.AppendArgarray_Putrootfh()
 				create := w.AppendArgarray_Create()
 				create.SetObjtype_Nf4dir()

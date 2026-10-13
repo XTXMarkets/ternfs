@@ -13,6 +13,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 // claimHookVFS runs a hook once, after the next Lookup of name returns. A
@@ -149,7 +151,7 @@ func (f *claimFHRestart) handleID(t *testing.T) InodeID {
 
 func (f *claimFHRestart) claimFH(t *testing.T, owner string) (uint32, [16]byte, []byte) {
 	t.Helper()
-	return openByHandle(t, f.conn, &f.xid, f.wire, owner, f.fh, OPEN4_SHARE_ACCESS_BOTH)
+	return openByHandle(t, f.conn, &f.xid, f.wire, owner, f.fh, nfs4.OPEN4_SHARE_ACCESS_BOTH)
 }
 
 func (f *claimFHRestart) meta(t *testing.T) StagingMeta {
@@ -211,8 +213,8 @@ func TestClaimFHRecoversStagedWriter(t *testing.T) {
 			f := newClaimFHRestart(t, "file", replacement, nil)
 			old := f.meta(t).NFSStateID
 			status, sid, fh := f.claimFH(t, f.owner)
-			if status != NFS4_OK || !bytes.Equal(fh, f.fh) {
-				t.Fatalf("CLAIM_FH = %s", Nfsstat4Name(status))
+			if status != nfs4.NFS4_OK || !bytes.Equal(fh, f.fh) {
+				t.Fatalf("CLAIM_FH = %s", nfs4.Nfsstat4Name(status))
 			}
 			if meta := f.meta(t); meta.NFSStateID == old || meta.ClientID != incarnationForTest(t, f.srv, f.wire) {
 				t.Fatal("staging not rebound to the new open")
@@ -240,8 +242,8 @@ func TestClaimFHRecoversAfterExpiry(t *testing.T) {
 		t.Fatal("expired incarnation was adopted")
 	}
 	status, sid, _ := f.claimFH(t, f.owner)
-	if status != NFS4_OK {
-		t.Fatalf("CLAIM_FH after expiry = %s", Nfsstat4Name(status))
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("CLAIM_FH after expiry = %s", nfs4.Nfsstat4Name(status))
 	}
 	if f.meta(t).ClientID == f.incarnation {
 		t.Fatal("staging still owned by the expired incarnation")
@@ -257,8 +259,8 @@ func TestClaimFHRecoveryRefusals(t *testing.T) {
 	t.Run("wrong owner", func(t *testing.T) {
 		f := newClaimFHRestart(t, "file", false, nil)
 		before := f.meta(t)
-		if status, _, _ := f.claimFH(t, "another-owner"); status != NFS4ERR_STALE {
-			t.Fatalf("CLAIM_FH by another owner = %s", Nfsstat4Name(status))
+		if status, _, _ := f.claimFH(t, "another-owner"); status != nfs4.NFS4ERR_STALE {
+			t.Fatalf("CLAIM_FH by another owner = %s", nfs4.Nfsstat4Name(status))
 		}
 		f.assertNothingAdopted(t, before)
 	})
@@ -268,11 +270,11 @@ func TestClaimFHRecoveryRefusals(t *testing.T) {
 		other := dial(t, f.conn.RemoteAddr().String())
 		defer other.Close()
 		otherWire, confirm := requestClientID(t, other, &f.xid, "other-client", [8]byte{2})
-		if status := confirmClientID(t, other, &f.xid, otherWire, confirm); status != NFS4_OK {
-			t.Fatal(Nfsstat4Name(status))
+		if status := confirmClientID(t, other, &f.xid, otherWire, confirm); status != nfs4.NFS4_OK {
+			t.Fatal(nfs4.Nfsstat4Name(status))
 		}
-		if status, _, _ := openByHandle(t, other, &f.xid, otherWire, f.owner, f.fh, OPEN4_SHARE_ACCESS_BOTH); status != NFS4ERR_STALE {
-			t.Fatalf("CLAIM_FH by another client = %s", Nfsstat4Name(status))
+		if status, _, _ := openByHandle(t, other, &f.xid, otherWire, f.owner, f.fh, nfs4.OPEN4_SHARE_ACCESS_BOTH); status != nfs4.NFS4ERR_STALE {
+			t.Fatalf("CLAIM_FH by another client = %s", nfs4.Nfsstat4Name(status))
 		}
 		f.assertNothingAdopted(t, before)
 	})
@@ -282,8 +284,8 @@ func TestClaimFHRecoveryRefusals(t *testing.T) {
 		if err := os.Rename(filepath.Join(f.root, f.name), filepath.Join(f.root, "moved")); err != nil {
 			t.Fatal(err)
 		}
-		if status, _, _ := f.claimFH(t, f.owner); status != NFS4ERR_STALE {
-			t.Fatalf("CLAIM_FH of a renamed-away target = %s", Nfsstat4Name(status))
+		if status, _, _ := f.claimFH(t, f.owner); status != nfs4.NFS4ERR_STALE {
+			t.Fatalf("CLAIM_FH of a renamed-away target = %s", nfs4.Nfsstat4Name(status))
 		}
 		f.assertNothingAdopted(t, before)
 	})
@@ -291,8 +293,8 @@ func TestClaimFHRecoveryRefusals(t *testing.T) {
 		f := newClaimFHRestart(t, "file", true, nil)
 		before := f.meta(t)
 		replaceLocalFile(t, f.root, f.name)
-		if status, _, _ := f.claimFH(t, f.owner); status != NFS4ERR_STALE {
-			t.Fatalf("CLAIM_FH of a replaced target = %s", Nfsstat4Name(status))
+		if status, _, _ := f.claimFH(t, f.owner); status != nfs4.NFS4ERR_STALE {
+			t.Fatalf("CLAIM_FH of a replaced target = %s", nfs4.Nfsstat4Name(status))
 		}
 		f.assertNothingAdopted(t, before)
 	})
@@ -300,27 +302,27 @@ func TestClaimFHRecoveryRefusals(t *testing.T) {
 		f := newClaimFHRestart(t, "file", false, nil)
 		before := f.meta(t)
 		f.injectWriter(t)
-		if status, _, _ := f.claimFH(t, f.owner); status != NFS4ERR_EXPIRED {
-			t.Fatalf("CLAIM_FH with two candidates = %s", Nfsstat4Name(status))
+		if status, _, _ := f.claimFH(t, f.owner); status != nfs4.NFS4ERR_EXPIRED {
+			t.Fatalf("CLAIM_FH with two candidates = %s", nfs4.Nfsstat4Name(status))
 		}
 		f.assertNothingAdopted(t, before)
 	})
 	t.Run("healthy handle", func(t *testing.T) {
 		f := newClaimFHRestart(t, "file", false, nil)
-		if status, _, _ := openByHandle(t, f.conn, &f.xid, f.wire, "healthy-owner", f.healthyFH, OPEN4_SHARE_ACCESS_BOTH); status != NFS4ERR_STALE {
-			t.Fatalf("writable CLAIM_FH of a healthy cold handle = %s", Nfsstat4Name(status))
+		if status, _, _ := openByHandle(t, f.conn, &f.xid, f.wire, "healthy-owner", f.healthyFH, nfs4.OPEN4_SHARE_ACCESS_BOTH); status != nfs4.NFS4ERR_STALE {
+			t.Fatalf("writable CLAIM_FH of a healthy cold handle = %s", nfs4.Nfsstat4Name(status))
 		}
 	})
 	t.Run("CREATE", func(t *testing.T) {
 		f := newClaimFHRestart(t, "file", false, nil)
 		before := f.meta(t)
-		res := sendCompound(t, f.conn, f.xid, func(w *COMPOUND4argsWriter) {
+		res := sendCompound(t, f.conn, f.xid, func(w *nfs4.COMPOUND4argsWriter) {
 			pw := w.AppendArgarray_Putfh()
 			pw.Resume(pw.StartObject().SetData(f.fh).Finish())
 			w.Resume(pw.Finish())
 			ow := w.AppendArgarray_Open()
-			ow.SetShareAccess(OPEN4_SHARE_ACCESS_BOTH)
-			ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
+			ow.SetShareAccess(nfs4.OPEN4_SHARE_ACCESS_BOTH)
+			ow.SetShareDeny(nfs4.OPEN4_SHARE_DENY_NONE)
 			ownerW := ow.StartOwner().SetClientid(f.wire)
 			ow.Resume(ownerW.SetOwner([]byte(f.owner)).Finish())
 			chw := ow.SetOpenhow_Create()
@@ -339,8 +341,8 @@ func TestClaimFHRecoveryRefusals(t *testing.T) {
 			w.Resume(ow.Finish())
 		})
 		f.xid++
-		if res.Status() != NFS4ERR_INVAL {
-			t.Fatalf("CLAIM_FH with CREATE = %s", Nfsstat4Name(res.Status()))
+		if res.Status() != nfs4.NFS4ERR_INVAL {
+			t.Fatalf("CLAIM_FH with CREATE = %s", nfs4.Nfsstat4Name(res.Status()))
 		}
 		f.assertNothingAdopted(t, before)
 	})
@@ -405,8 +407,8 @@ func TestClaimFHRecoveryRevalidation(t *testing.T) {
 					changed = f.meta(t)
 				}
 			})
-			if status, _, _ := f.claimFH(t, f.owner); status != NFS4ERR_STALE {
-				t.Fatalf("CLAIM_FH = %s, want STALE", Nfsstat4Name(status))
+			if status, _, _ := f.claimFH(t, f.owner); status != nfs4.NFS4ERR_STALE {
+				t.Fatalf("CLAIM_FH = %s, want STALE", nfs4.Nfsstat4Name(status))
 			}
 			if !ran {
 				t.Fatal("the change did not run between preselection and the lock")

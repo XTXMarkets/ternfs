@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 // leaseRecordForTest returns the incarnation's record, or nil.
@@ -20,7 +22,7 @@ func leaseRecordForTest(srv *Server, inc uint64) *leaseRefresher {
 }
 
 func destroyClientBody(clientID uint64) []byte {
-	return buildCompoundBody(nil, func(w *COMPOUND4argsWriter) {
+	return buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_DestroyClientid().SetDcaClientid(clientID)
 	})
 }
@@ -41,8 +43,8 @@ func TestIdleRecordReclaimedForNextClient(t *testing.T) {
 		c := newCBTestClient(t, addr)
 		clientID, seq := exchangeOn(t, c, xid, fmt.Sprintf("idle-%d", cycle))
 		res := c.compound(xid+1, backCreateSessionBody(clientID, seq, 0))
-		if res.Status() != NFS4_OK {
-			t.Fatalf("cycle %d: CREATE_SESSION %s with no other client", cycle, Nfsstat4Name(res.Status()))
+		if res.Status() != nfs4.NFS4_OK {
+			t.Fatalf("cycle %d: CREATE_SESSION %s with no other client", cycle, nfs4.Nfsstat4Name(res.Status()))
 		}
 		id, _ := createdSession(t, res)
 		inc := incarnationForTest(t, srv, clientID)
@@ -52,11 +54,11 @@ func TestIdleRecordReclaimedForNextClient(t *testing.T) {
 			defer r.mu.Unlock()
 			return r.idleWaiting && r.proven > 0 && !r.inCall
 		})
-		if res := c.compound(xid+2, admissionDestroy(id)); res.Status() != NFS4_OK {
-			t.Fatalf("cycle %d: DESTROY_SESSION %s", cycle, Nfsstat4Name(res.Status()))
+		if res := c.compound(xid+2, admissionDestroy(id)); res.Status() != nfs4.NFS4_OK {
+			t.Fatalf("cycle %d: DESTROY_SESSION %s", cycle, nfs4.Nfsstat4Name(res.Status()))
 		}
-		if res := c.compound(xid+3, destroyClientBody(clientID)); res.Status() != NFS4_OK {
-			t.Fatalf("cycle %d: DESTROY_CLIENTID %s", cycle, Nfsstat4Name(res.Status()))
+		if res := c.compound(xid+3, destroyClientBody(clientID)); res.Status() != nfs4.NFS4_OK {
+			t.Fatalf("cycle %d: DESTROY_CLIENTID %s", cycle, nfs4.Nfsstat4Name(res.Status()))
 		}
 		srv.runLeaseSweep()
 		waitFor(t, fmt.Sprintf("cycle %d: the idle record to be reclaimed", cycle), func() bool {
@@ -78,12 +80,12 @@ func TestIdleReclaimWaitsForQuietAndReservation(t *testing.T) {
 	clientID, seq := exchangeOn(t, c, 1, "idle-quiet")
 	id, _ := createdSession(t, c.compound(2, backCreateSessionBody(clientID, seq, 0)))
 	ts := newTestSession(id, clientID, 16)
-	body := buildCompoundBody(nil, func(*COMPOUND4argsWriter) {})
-	if res := c.compound(3, withSequence(body, ts, 0, 1)); res.Status() != NFS4_OK {
-		t.Fatalf("SEQUENCE %s", Nfsstat4Name(res.Status()))
+	body := buildCompoundBody(nil, func(*nfs4.COMPOUND4argsWriter) {})
+	if res := c.compound(3, withSequence(body, ts, 0, 1)); res.Status() != nfs4.NFS4_OK {
+		t.Fatalf("SEQUENCE %s", nfs4.Nfsstat4Name(res.Status()))
 	}
-	if res := c.compound(4, admissionDestroy(id)); res.Status() != NFS4_OK {
-		t.Fatalf("DESTROY_SESSION %s", Nfsstat4Name(res.Status()))
+	if res := c.compound(4, admissionDestroy(id)); res.Status() != nfs4.NFS4_OK {
+		t.Fatalf("DESTROY_SESSION %s", nfs4.Nfsstat4Name(res.Status()))
 	}
 	inc := incarnationForTest(t, srv, clientID)
 	if !srv.sessions.leaseNeed(inc) {

@@ -8,39 +8,41 @@ import (
 	"errors"
 	"os"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
-func (s *Server) opCreate(args CREATE4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
+func (s *Server) opCreate(args nfs4.CREATE4args, st *compoundState, w *nfs4.COMPOUND4resWriter) uint32 {
 	if !st.currentIDSet {
 		ew := w.AppendResarray_Create()
-		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_NOFILEHANDLE)
+		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_NOFILEHANDLE)
 	}
 	if st.currentID.Type() != InodeTypeDir {
 		ew := w.AppendResarray_Create()
-		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_NOTDIR)
+		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_NOTDIR)
 	}
 	if s.stagingStore.ReadOnly() {
 		ew := w.AppendResarray_Create()
-		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_ROFS)
+		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_ROFS)
 	}
 
 	name, status := toTernFSName(args.Objname().Data())
-	if status != NFS4_OK {
+	if status != nfs4.NFS4_OK {
 		ew := w.AppendResarray_Create()
 		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 	objType := args.ObjtypeType()
 	switch objType {
-	case NF4DIR, NF4LNK:
-	case NF4REG:
+	case nfs4.NF4DIR, nfs4.NF4LNK:
+	case nfs4.NF4REG:
 		ew := w.AppendResarray_Create()
-		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_BADTYPE)
+		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_BADTYPE)
 	default:
 		// We don't support creating block/char/socket/fifo devices.
 		ew := w.AppendResarray_Create()
-		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_NOTSUPP)
+		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_NOTSUPP)
 	}
-	if status := validateCreateAttrs(args.Createattrs()); status != NFS4_OK {
+	if status := validateCreateAttrs(args.Createattrs()); status != nfs4.NFS4_OK {
 		ew := w.AppendResarray_Create()
 		return finishDefaultResponse(w, ew.Finish(), status)
 	}
@@ -57,12 +59,12 @@ func (s *Server) opCreate(args CREATE4args, st *compoundState, w *COMPOUND4resWr
 	}
 	if busy {
 		ew := w.AppendResarray_Create()
-		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_FILE_OPEN)
+		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_FILE_OPEN)
 	}
 	if _, err := s.fs.Lookup(st.currentID, name); err == nil {
 		ew := w.AppendResarray_Create()
-		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_EXIST)
-	} else if status := s.errToNFS(err); status != NFS4ERR_NOENT {
+		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_EXIST)
+	} else if status := s.errToNFS(err); status != nfs4.NFS4ERR_NOENT {
 		ew := w.AppendResarray_Create()
 		return finishDefaultResponse(w, ew.Finish(), status)
 	}
@@ -70,24 +72,24 @@ func (s *Server) opCreate(args CREATE4args, st *compoundState, w *COMPOUND4resWr
 	var newID InodeID
 
 	switch objType {
-	case NF4DIR:
+	case nfs4.NF4DIR:
 		newID, err = s.fs.Mkdir(st.currentID, name)
-	case NF4LNK:
+	case nfs4.NF4LNK:
 		targetData := args.Objtype().AsLinktext4().Data()
 		if len(targetData) == 0 {
 			ew := w.AppendResarray_Create()
-			return finishDefaultResponse(w, ew.Finish(), NFS4ERR_INVAL)
+			return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_INVAL)
 		}
 		if len(targetData) > maxTernBytesLength {
 			ew := w.AppendResarray_Create()
-			return finishDefaultResponse(w, ew.Finish(), NFS4ERR_NAMETOOLONG)
+			return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_NAMETOOLONG)
 		}
 		target := string(targetData)
 		newID, err = s.fs.Symlink(st.currentID, name, target)
 	}
 
 	if err != nil {
-		st.observeMutation(s.fs, OP_CREATE, err)
+		st.observeMutation(s.fs, nfs4.OP_CREATE, err)
 		ew := w.AppendResarray_Create()
 		status := s.errToNFS(err)
 		return finishDefaultResponse(w, ew.Finish(), status)
@@ -99,7 +101,7 @@ func (s *Server) opCreate(args CREATE4args, st *compoundState, w *COMPOUND4resWr
 	okW := ew.SetValue_Nfs4Ok()
 	cinfo := okW.Cinfo()
 	now := uint64(time.Now().UnixNano())
-	setChangeInfo(cinfo, TRUE, now-1, now)
+	setChangeInfo(cinfo, nfs4.TRUE, now-1, now)
 
 	// attrset bitmap: empty (we don't apply createattrs).
 	bmW := okW.StartAttrset()
@@ -108,13 +110,13 @@ func (s *Server) opCreate(args CREATE4args, st *compoundState, w *COMPOUND4resWr
 	buf = okW.Finish()
 	ew.Resume(buf)
 	w.Resume(ew.Finish())
-	return NFS4_OK
+	return nfs4.NFS4_OK
 }
 
-func (s *Server) opGetfh(st *compoundState, w *COMPOUND4resWriter) uint32 {
+func (s *Server) opGetfh(st *compoundState, w *nfs4.COMPOUND4resWriter) uint32 {
 	if !st.currentIDSet {
 		ew := w.AppendResarray_Getfh()
-		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_NOFILEHANDLE)
+		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_NOFILEHANDLE)
 	}
 	ew := w.AppendResarray_Getfh()
 	okW := ew.SetValue_Nfs4Ok()
@@ -124,27 +126,27 @@ func (s *Server) opGetfh(st *compoundState, w *COMPOUND4resWriter) uint32 {
 	buf = okW.Finish()
 	ew.Resume(buf)
 	w.Resume(ew.Finish())
-	return NFS4_OK
+	return nfs4.NFS4_OK
 }
 
-func (s *Server) opLookup(args LOOKUP4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
+func (s *Server) opLookup(args nfs4.LOOKUP4args, st *compoundState, w *nfs4.COMPOUND4resWriter) uint32 {
 	if !st.currentIDSet {
 		r := w.AppendResarray_Lookup()
-		return finishStatusResponse(&r, NFS4ERR_NOFILEHANDLE)
+		return finishStatusResponse(&r, nfs4.NFS4ERR_NOFILEHANDLE)
 	}
-	if status := requireDirectory(st.currentID); status != NFS4_OK {
+	if status := requireDirectory(st.currentID); status != nfs4.NFS4_OK {
 		r := w.AppendResarray_Lookup()
 		return finishStatusResponse(&r, status)
 	}
 	name, status := toTernFSName(args.Objname().Data())
-	if status != NFS4_OK {
+	if status != nfs4.NFS4_OK {
 		r := w.AppendResarray_Lookup()
 		return finishStatusResponse(&r, status)
 	}
 	// Hide the internal .nfs directory from client access.
 	if name == nfsDirName && st.currentID == s.fs.RootID() {
 		r := w.AppendResarray_Lookup()
-		return finishStatusResponse(&r, NFS4ERR_NOENT)
+		return finishStatusResponse(&r, nfs4.NFS4ERR_NOENT)
 	}
 	id, err := s.fs.Lookup(st.currentID, name)
 	if err != nil {
@@ -155,21 +157,21 @@ func (s *Server) opLookup(args LOOKUP4args, st *compoundState, w *COMPOUND4resWr
 	s.names.remember(id, st.currentID, name)
 	st.setCurrentFH(id)
 	r := w.AppendResarray_Lookup()
-	return finishStatusResponse(&r, NFS4_OK)
+	return finishStatusResponse(&r, nfs4.NFS4_OK)
 }
 
-func (s *Server) opLookupp(st *compoundState, w *COMPOUND4resWriter) uint32 {
+func (s *Server) opLookupp(st *compoundState, w *nfs4.COMPOUND4resWriter) uint32 {
 	if !st.currentIDSet {
 		r := w.AppendResarray_Lookupp()
-		return finishStatusResponse(&r, NFS4ERR_NOFILEHANDLE)
+		return finishStatusResponse(&r, nfs4.NFS4ERR_NOFILEHANDLE)
 	}
-	if status := requireDirectory(st.currentID); status != NFS4_OK {
+	if status := requireDirectory(st.currentID); status != nfs4.NFS4_OK {
 		r := w.AppendResarray_Lookupp()
 		return finishStatusResponse(&r, status)
 	}
 	if st.currentID == s.fs.RootID() {
 		r := w.AppendResarray_Lookupp()
-		return finishStatusResponse(&r, NFS4ERR_NOENT)
+		return finishStatusResponse(&r, nfs4.NFS4ERR_NOENT)
 	}
 	id, err := s.fs.LookupParent(st.currentID)
 	if err != nil {
@@ -179,15 +181,15 @@ func (s *Server) opLookupp(st *compoundState, w *COMPOUND4resWriter) uint32 {
 	}
 	st.setCurrentFH(id)
 	r := w.AppendResarray_Lookupp()
-	return finishStatusResponse(&r, NFS4_OK)
+	return finishStatusResponse(&r, nfs4.NFS4_OK)
 }
 
-func (s *Server) opPutfh(args PUTFH4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
+func (s *Server) opPutfh(args nfs4.PUTFH4args, st *compoundState, w *nfs4.COMPOUND4resWriter) uint32 {
 	fhData := args.Object().Data()
 	id, ok := fhToInodeID(fhData)
 	if !ok {
 		r := w.AppendResarray_Putfh()
-		return finishStatusResponse(&r, NFS4ERR_BADHANDLE)
+		return finishStatusResponse(&r, nfs4.NFS4ERR_BADHANDLE)
 	}
 	internal, err := s.clients.isInternalFilehandle(id)
 	if err != nil {
@@ -197,40 +199,40 @@ func (s *Server) opPutfh(args PUTFH4args, st *compoundState, w *COMPOUND4resWrit
 	}
 	if internal {
 		r := w.AppendResarray_Putfh()
-		return finishStatusResponse(&r, NFS4ERR_BADHANDLE)
+		return finishStatusResponse(&r, nfs4.NFS4ERR_BADHANDLE)
 	}
 	st.setCurrentFH(id)
 	r := w.AppendResarray_Putfh()
-	return finishStatusResponse(&r, NFS4_OK)
+	return finishStatusResponse(&r, nfs4.NFS4_OK)
 }
 
-func (s *Server) opPutrootfh(st *compoundState, w *COMPOUND4resWriter, isPub bool) uint32 {
+func (s *Server) opPutrootfh(st *compoundState, w *nfs4.COMPOUND4resWriter, isPub bool) uint32 {
 	st.setCurrentFH(s.fs.RootID())
 	if isPub {
 		r := w.AppendResarray_Putpubfh()
-		return finishStatusResponse(&r, NFS4_OK)
+		return finishStatusResponse(&r, nfs4.NFS4_OK)
 	} else {
 		r := w.AppendResarray_Putrootfh()
-		return finishStatusResponse(&r, NFS4_OK)
+		return finishStatusResponse(&r, nfs4.NFS4_OK)
 	}
 }
 
-func (s *Server) opRemove(args REMOVE4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
+func (s *Server) opRemove(args nfs4.REMOVE4args, st *compoundState, w *nfs4.COMPOUND4resWriter) uint32 {
 	if !st.currentIDSet {
 		ew := w.AppendResarray_Remove()
-		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_NOFILEHANDLE)
+		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_NOFILEHANDLE)
 	}
-	if status := requireDirectory(st.currentID); status != NFS4_OK {
+	if status := requireDirectory(st.currentID); status != nfs4.NFS4_OK {
 		ew := w.AppendResarray_Remove()
 		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 	if s.stagingStore.ReadOnly() {
 		ew := w.AppendResarray_Remove()
-		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_ROFS)
+		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_ROFS)
 	}
 
 	name, status := toTernFSName(args.Target().Data())
-	if status != NFS4_OK {
+	if status != nfs4.NFS4_OK {
 		ew := w.AppendResarray_Remove()
 		return finishDefaultResponse(w, ew.Finish(), status)
 	}
@@ -253,11 +255,11 @@ func (s *Server) opRemove(args REMOVE4args, st *compoundState, w *COMPOUND4resWr
 	}
 	if err := s.guardNamespaceWriters(writers); err != nil {
 		s.log.Warn("cannot guard REMOVE writers", "err", err)
-		return fail(NFS4ERR_IO)
+		return fail(nfs4.NFS4ERR_IO)
 	}
 	err = s.fs.RemoveEdge(st.currentID, name, edge)
-	st.observeMutation(s.fs, OP_REMOVE, err)
-	if status := s.finishNamespaceWriters(writers, OP_REMOVE, err); status != NFS4_OK {
+	st.observeMutation(s.fs, nfs4.OP_REMOVE, err)
+	if status := s.finishNamespaceWriters(writers, nfs4.OP_REMOVE, err); status != nfs4.NFS4_OK {
 		return fail(status)
 	}
 
@@ -265,37 +267,37 @@ func (s *Server) opRemove(args REMOVE4args, st *compoundState, w *COMPOUND4resWr
 	okW := ew.SetValue_Nfs4Ok()
 	cinfo := okW.Cinfo()
 	now := uint64(time.Now().UnixNano())
-	setChangeInfo(cinfo, TRUE, now-1, now)
+	setChangeInfo(cinfo, nfs4.TRUE, now-1, now)
 	w.Resume(ew.Finish())
-	return NFS4_OK
+	return nfs4.NFS4_OK
 }
 
-func (s *Server) opRename(args RENAME4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
+func (s *Server) opRename(args nfs4.RENAME4args, st *compoundState, w *nfs4.COMPOUND4resWriter) uint32 {
 	// RENAME uses savedFH as source directory and currentFH as target directory.
 	if !st.currentIDSet || !st.savedIDSet {
 		ew := w.AppendResarray_Rename()
-		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_NOFILEHANDLE)
+		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_NOFILEHANDLE)
 	}
-	if status := requireDirectory(st.savedID); status != NFS4_OK {
+	if status := requireDirectory(st.savedID); status != nfs4.NFS4_OK {
 		ew := w.AppendResarray_Rename()
 		return finishDefaultResponse(w, ew.Finish(), status)
 	}
-	if status := requireDirectory(st.currentID); status != NFS4_OK {
+	if status := requireDirectory(st.currentID); status != nfs4.NFS4_OK {
 		ew := w.AppendResarray_Rename()
 		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 	if s.stagingStore.ReadOnly() {
 		ew := w.AppendResarray_Rename()
-		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_ROFS)
+		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_ROFS)
 	}
 
 	oldName, status := toTernFSName(args.Oldname().Data())
-	if status != NFS4_OK {
+	if status != nfs4.NFS4_OK {
 		ew := w.AppendResarray_Rename()
 		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 	newName, status := toTernFSName(args.Newname().Data())
-	if status != NFS4_OK {
+	if status != nfs4.NFS4_OK {
 		ew := w.AppendResarray_Rename()
 		return finishDefaultResponse(w, ew.Finish(), status)
 	}
@@ -303,10 +305,10 @@ func (s *Server) opRename(args RENAME4args, st *compoundState, w *COMPOUND4resWr
 		ew := w.AppendResarray_Rename()
 		okW := ew.SetValue_Nfs4Ok()
 		now := uint64(time.Now().UnixNano())
-		setChangeInfo(okW.SourceCinfo(), TRUE, now, now)
-		setChangeInfo(okW.TargetCinfo(), TRUE, now, now)
+		setChangeInfo(okW.SourceCinfo(), nfs4.TRUE, now, now)
+		setChangeInfo(okW.TargetCinfo(), nfs4.TRUE, now, now)
 		w.Resume(ew.Finish())
-		return NFS4_OK
+		return nfs4.NFS4_OK
 	}
 
 	unlock := s.lockMutationTargets(
@@ -329,7 +331,7 @@ func (s *Server) opRename(args RENAME4args, st *compoundState, w *COMPOUND4resWr
 	if sourceActive && st.savedID != st.currentID {
 		// The transient inode belongs to its construction shard. Moving a live
 		// writer needs a copy into another inode, which this design leaves out.
-		return fail(NFS4ERR_FILE_OPEN)
+		return fail(nfs4.NFS4ERR_FILE_OPEN)
 	}
 	var sourceTarget *mutationTarget
 	if st.savedID == st.currentID {
@@ -346,71 +348,71 @@ func (s *Server) opRename(args RENAME4args, st *compoundState, w *COMPOUND4resWr
 		return fail(s.errToNFS(err))
 	}
 	if err == nil && (edge.ID.Type() == InodeTypeDir) != (dst.Type() == InodeTypeDir) {
-		return fail(NFS4ERR_EXIST)
+		return fail(nfs4.NFS4ERR_EXIST)
 	}
 	// Preflight cannot freeze the destination. A later type race is a
 	// submitted failure and can quarantine writers on the remote backend.
 	if err := s.guardNamespaceWriters(writers); err != nil {
 		s.log.Warn("cannot guard RENAME writers", "err", err)
-		return fail(NFS4ERR_IO)
+		return fail(nfs4.NFS4ERR_IO)
 	}
 	err = s.fs.RenameEdge(st.savedID, oldName, edge, st.currentID, newName)
-	st.observeMutation(s.fs, OP_RENAME, err)
-	if status := s.finishNamespaceWriters(writers, OP_RENAME, err); status != NFS4_OK {
+	st.observeMutation(s.fs, nfs4.OP_RENAME, err)
+	if status := s.finishNamespaceWriters(writers, nfs4.OP_RENAME, err); status != nfs4.NFS4_OK {
 		return fail(status)
 	}
 
 	ew := w.AppendResarray_Rename()
 	okW := ew.SetValue_Nfs4Ok()
 	now := uint64(time.Now().UnixNano())
-	setChangeInfo(okW.SourceCinfo(), TRUE, now-1, now)
-	setChangeInfo(okW.TargetCinfo(), TRUE, now-1, now)
+	setChangeInfo(okW.SourceCinfo(), nfs4.TRUE, now-1, now)
+	setChangeInfo(okW.TargetCinfo(), nfs4.TRUE, now-1, now)
 	w.Resume(ew.Finish())
-	return NFS4_OK
+	return nfs4.NFS4_OK
 }
 
-func (s *Server) opSavefh(st *compoundState, w *COMPOUND4resWriter) uint32 {
+func (s *Server) opSavefh(st *compoundState, w *nfs4.COMPOUND4resWriter) uint32 {
 	if !st.currentIDSet {
 		r := w.AppendResarray_Savefh()
-		return finishStatusResponse(&r, NFS4ERR_NOFILEHANDLE)
+		return finishStatusResponse(&r, nfs4.NFS4ERR_NOFILEHANDLE)
 	}
 	st.savedID = st.currentID
 	st.savedIDSet = true
 	st.savedStateID, st.savedGeneration, st.savedStateIDSet =
 		st.currentStateID, st.currentGeneration, st.currentStateIDSet
 	r := w.AppendResarray_Savefh()
-	return finishStatusResponse(&r, NFS4_OK)
+	return finishStatusResponse(&r, nfs4.NFS4_OK)
 }
 
-func (s *Server) opRestorefh(st *compoundState, w *COMPOUND4resWriter) uint32 {
+func (s *Server) opRestorefh(st *compoundState, w *nfs4.COMPOUND4resWriter) uint32 {
 	if !st.savedIDSet {
 		r := w.AppendResarray_Restorefh()
-		return finishStatusResponse(&r, NFS4ERR_RESTOREFH)
+		return finishStatusResponse(&r, nfs4.NFS4ERR_RESTOREFH)
 	}
 	st.setCurrentFH(st.savedID)
 	st.currentStateID, st.currentGeneration, st.currentStateIDSet =
 		st.savedStateID, st.savedGeneration, st.savedStateIDSet
 	r := w.AppendResarray_Restorefh()
-	return finishStatusResponse(&r, NFS4_OK)
+	return finishStatusResponse(&r, nfs4.NFS4_OK)
 }
 
-func (s *Server) opSecinfo(args SECINFO4args, st *compoundState, w *COMPOUND4resWriter) uint32 {
+func (s *Server) opSecinfo(args nfs4.SECINFO4args, st *compoundState, w *nfs4.COMPOUND4resWriter) uint32 {
 	if !st.currentIDSet {
 		ew := w.AppendResarray_Secinfo()
-		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_NOFILEHANDLE)
+		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_NOFILEHANDLE)
 	}
-	if status := requireDirectory(st.currentID); status != NFS4_OK {
+	if status := requireDirectory(st.currentID); status != nfs4.NFS4_OK {
 		ew := w.AppendResarray_Secinfo()
 		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 	name, status := toTernFSName(args.Name().Data())
-	if status != NFS4_OK {
+	if status != nfs4.NFS4_OK {
 		ew := w.AppendResarray_Secinfo()
 		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 	if name == nfsDirName && st.currentID == s.fs.RootID() {
 		ew := w.AppendResarray_Secinfo()
-		return finishDefaultResponse(w, ew.Finish(), NFS4ERR_NOENT)
+		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_NOENT)
 	}
 	if _, err := s.fs.Lookup(st.currentID, name); err != nil {
 		ew := w.AppendResarray_Secinfo()
@@ -427,5 +429,5 @@ func (s *Server) opSecinfo(args SECINFO4args, st *compoundState, w *COMPOUND4res
 	w.Resume(ew.Finish())
 	// SECINFO consumes the current filehandle (RFC 8881 section 2.6.3.1.1.8).
 	st.currentIDSet = false
-	return NFS4_OK
+	return nfs4.NFS4_OK
 }

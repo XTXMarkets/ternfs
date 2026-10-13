@@ -19,6 +19,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 // peekCompoundHeader extracts the tag and minor version from COMPOUND4args
@@ -665,7 +667,7 @@ func (s *Server) safeHandleCompound(req *rpcRequest, remote string) (reply []byt
 		if r := recover(); r != nil {
 			s.log.Error("panic handling COMPOUND", "remote", remote, "xid", req.xid, "panic", r)
 			reply = buildRPCReply(req.xid, acceptSuccess)
-			reply = binary.BigEndian.AppendUint32(reply, NFS4ERR_SERVERFAULT)
+			reply = binary.BigEndian.AppendUint32(reply, nfs4.NFS4ERR_SERVERFAULT)
 			reply = binary.BigEndian.AppendUint32(reply, 0) // empty tag
 			reply = binary.BigEndian.AppendUint32(reply, 0) // resarray count
 		}
@@ -680,7 +682,7 @@ func (s *Server) handleCompound(req *rpcRequest) []byte {
 		s.log.Debug("minor version not supported", "minor", minor)
 		reply := buildRPCReply(req.xid, acceptSuccess)
 		// Build COMPOUND4res: status + echoed tag + 0 ops.
-		reply = binary.BigEndian.AppendUint32(reply, NFS4ERR_MINOR_VERS_MISMATCH)
+		reply = binary.BigEndian.AppendUint32(reply, nfs4.NFS4ERR_MINOR_VERS_MISMATCH)
 		// Echo tag as XDR opaque (u32 len + data + padding).
 		reply = binary.BigEndian.AppendUint32(reply, uint32(len(tag)))
 		reply = append(reply, tag...)
@@ -691,7 +693,7 @@ func (s *Server) handleCompound(req *rpcRequest) []byte {
 		return reply
 	}
 
-	args, ok := ReadCOMPOUND4args(req.body)
+	args, ok := nfs4.ReadCOMPOUND4args(req.body)
 	if !ok {
 		s.log.Debug("COMPOUND: garbage args")
 		reply := buildRPCReply(req.xid, acceptGarbageArgs)
@@ -708,11 +710,11 @@ func (s *Server) handleCompound(req *rpcRequest) []byte {
 // compoundBody runs a COMPOUND and returns the COMPOUND4res body. Replies to
 // requests on a session slot are cached by body, so a retransmission with a
 // new XID returns the same results.
-func (s *Server) compoundBody(req *rpcRequest, args COMPOUND4args) (result []byte) {
+func (s *Server) compoundBody(req *rpcRequest, args nfs4.COMPOUND4args) (result []byte) {
 	// Bound the initial writer allocation; the work lease also covers variable
 	// result temporaries and checkpoints retained through result construction.
-	w := StartCOMPOUND4res(make([]byte, 0, req.replyWork.capacity))
-	w.SetStatus(NFS4_OK)
+	w := nfs4.StartCOMPOUND4res(make([]byte, 0, req.replyWork.capacity))
+	w.SetStatus(nfs4.NFS4_OK)
 
 	// Echo the tag.
 	tagW := w.StartTag()
@@ -721,7 +723,7 @@ func (s *Server) compoundBody(req *rpcRequest, args COMPOUND4args) (result []byt
 	w.Resume(reply)
 
 	w.Finish() // Materialize the count so every prefix has an exact byte size.
-	ops := make([]NfsArgop4, 0, min(args.ArgarrayCount(), maxCompoundOperations+1))
+	ops := make([]nfs4.NfsArgop4, 0, min(args.ArgarrayCount(), maxCompoundOperations+1))
 	iter := args.Argarray()
 	for iter.Next() {
 		ops = append(ops, iter.Argarray().Value())
@@ -730,11 +732,11 @@ func (s *Server) compoundBody(req *rpcRequest, args COMPOUND4args) (result []byt
 		}
 	}
 	st := &compoundState{principal: req.principal(), connection: req.connection, afterReply: &req.afterReply}
-	overallStatus := uint32(NFS4_OK)
+	overallStatus := uint32(nfs4.NFS4_OK)
 	opCount := 0
 	var seq sequenceResult
 	checkpoint := w
-	currentOp := uint32(OP_ILLEGAL)
+	currentOp := uint32(nfs4.OP_ILLEGAL)
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			s.log.Error("panic handling admitted compound", "xid", req.xid, "panic", recovered)
@@ -742,8 +744,8 @@ func (s *Server) compoundBody(req *rpcRequest, args COMPOUND4args) (result []byt
 				s.sessions.retireSession(seq.sess, true)
 			}
 			w = checkpoint
-			writeOperationError(&w, currentOp, NFS4ERR_SERVERFAULT)
-			w.SetStatus(NFS4ERR_SERVERFAULT)
+			writeOperationError(&w, currentOp, nfs4.NFS4ERR_SERVERFAULT)
+			w.SetStatus(nfs4.NFS4ERR_SERVERFAULT)
 			result = w.Finish()
 			if seq.slot != nil {
 				seq.finish(result)
@@ -754,15 +756,15 @@ func (s *Server) compoundBody(req *rpcRequest, args COMPOUND4args) (result []byt
 	for index, op := range ops {
 		opnum := op.Disc()
 		currentOp, checkpoint = opnum, w
-		s.log.Debug("op", "opnum", NfsOpnum4Name(opnum))
+		s.log.Debug("op", "opnum", nfs4.NfsOpnum4Name(opnum))
 		if userErr != nil {
-			writeOperationError(&w, opnum, NFS4ERR_WRONGSEC)
-			overallStatus = NFS4ERR_WRONGSEC
+			writeOperationError(&w, opnum, nfs4.NFS4ERR_WRONGSEC)
+			overallStatus = nfs4.NFS4ERR_WRONGSEC
 			goto done
 		}
 		if index == 0 {
 			switch {
-			case opnum == OP_SEQUENCE:
+			case opnum == nfs4.OP_SEQUENCE:
 				prefixBytes := uint32(rpcAcceptedHeaderSize + w.Len() + 44)
 				uncachedBytes := prefixBytes
 				if len(ops) > 1 {
@@ -774,7 +776,7 @@ func (s *Server) compoundBody(req *rpcRequest, args COMPOUND4args) (result []byt
 					uncachedBytes: uncachedBytes, connection: req.connection,
 				})
 				opCount++
-				if seq.status != NFS4_OK {
+				if seq.status != nfs4.NFS4_OK {
 					writeSequenceError(&w, seq.status)
 					overallStatus = seq.status
 					goto done
@@ -790,22 +792,22 @@ func (s *Server) compoundBody(req *rpcRequest, args COMPOUND4args) (result []byt
 				continue
 			case sessionlessOp(opnum):
 			default:
-				status := uint32(NFS4ERR_OP_NOT_IN_SESSION)
+				status := uint32(nfs4.NFS4ERR_OP_NOT_IN_SESSION)
 				if !knownOperation(opnum) {
-					status = NFS4ERR_OP_ILLEGAL
+					status = nfs4.NFS4ERR_OP_ILLEGAL
 				}
 				writeOperationError(&w, opnum, status)
 				overallStatus = status
 				opCount++
 				goto done
 			}
-		} else if opnum == OP_SEQUENCE {
-			writeOperationError(&w, opnum, NFS4ERR_SEQUENCE_POS)
-			overallStatus = NFS4ERR_SEQUENCE_POS
+		} else if opnum == nfs4.OP_SEQUENCE {
+			writeOperationError(&w, opnum, nfs4.NFS4ERR_SEQUENCE_POS)
+			overallStatus = nfs4.NFS4ERR_SEQUENCE_POS
 			opCount++
 			break
 		}
-		if status := maintenancePosition(op, st, index, len(ops)); status != NFS4_OK {
+		if status := maintenancePosition(op, st, index, len(ops)); status != nfs4.NFS4_OK {
 			writeOperationError(&w, opnum, status)
 			overallStatus = status
 			opCount++
@@ -822,7 +824,7 @@ func (s *Server) compoundBody(req *rpcRequest, args COMPOUND4args) (result []byt
 		}
 		bound := s.operationReplyBound(op)
 		handleBytes, handleStatus := s.handleReplyObligation(ops, index)
-		if handleStatus != NFS4_OK {
+		if handleStatus != nfs4.NFS4_OK {
 			writeOperationError(&w, opnum, handleStatus)
 			overallStatus = handleStatus
 			opCount++
@@ -830,7 +832,7 @@ func (s *Server) compoundBody(req *rpcRequest, args COMPOUND4args) (result []byt
 		}
 		obligation := max(suffix, handleBytes)
 		if used > limit || uint64(used)+uint64(bound)+uint64(obligation) > uint64(limit) {
-			status := uint32(NFS4ERR_REP_TOO_BIG)
+			status := uint32(nfs4.NFS4ERR_REP_TOO_BIG)
 			if st.session != nil {
 				status = resultLimitStatus(&seq)
 			}
@@ -843,89 +845,89 @@ func (s *Server) compoundBody(req *rpcRequest, args COMPOUND4args) (result []byt
 
 		var opStatus uint32
 		switch opnum {
-		case OP_ACCESS:
+		case nfs4.OP_ACCESS:
 			opStatus = s.opAccess(op.AsACCESS4args(), st, &w)
-		case OP_CLOSE:
+		case nfs4.OP_CLOSE:
 			opStatus = s.opClose(op.AsCLOSE4args(), st, &w)
-		case OP_COMMIT:
+		case nfs4.OP_COMMIT:
 			opStatus = s.opCommit(st, &w)
-		case OP_CREATE:
+		case nfs4.OP_CREATE:
 			opStatus = s.opCreate(op.AsCREATE4args(), st, &w)
-		case OP_GETATTR:
+		case nfs4.OP_GETATTR:
 			opStatus = s.opGetattr(op.AsGETATTR4args(), st, &w)
-		case OP_GETFH:
+		case nfs4.OP_GETFH:
 			opStatus = s.opGetfh(st, &w)
-		case OP_LOOKUP:
+		case nfs4.OP_LOOKUP:
 			opStatus = s.opLookup(op.AsLOOKUP4args(), st, &w)
-		case OP_LOOKUPP:
+		case nfs4.OP_LOOKUPP:
 			opStatus = s.opLookupp(st, &w)
-		case OP_NVERIFY:
+		case nfs4.OP_NVERIFY:
 			opStatus = s.opNverify(op.AsNVERIFY4args(), st, &w)
-		case OP_OPEN:
+		case nfs4.OP_OPEN:
 			opStatus = s.opOpen(op.AsOPEN4args(), st, &w)
-		case OP_OPEN_DOWNGRADE:
+		case nfs4.OP_OPEN_DOWNGRADE:
 			opStatus = s.opOpenDowngrade(op.AsOPENDOWNGRADE4args(), st, &w)
-		case OP_PUTFH:
+		case nfs4.OP_PUTFH:
 			opStatus = s.opPutfh(op.AsPUTFH4args(), st, &w)
-		case OP_PUTPUBFH:
+		case nfs4.OP_PUTPUBFH:
 			opStatus = s.opPutrootfh(st, &w, true)
-		case OP_PUTROOTFH:
+		case nfs4.OP_PUTROOTFH:
 			opStatus = s.opPutrootfh(st, &w, false)
-		case OP_READ:
+		case nfs4.OP_READ:
 			opStatus = s.opRead(op.AsREAD4args(), st, &w)
-		case OP_READDIR:
+		case nfs4.OP_READDIR:
 			opStatus = s.opReaddir(op.AsREADDIR4args(), st, &w)
-		case OP_READLINK:
+		case nfs4.OP_READLINK:
 			opStatus = s.opReadlink(st, &w)
-		case OP_REMOVE:
+		case nfs4.OP_REMOVE:
 			opStatus = s.opRemove(op.AsREMOVE4args(), st, &w)
-		case OP_RENAME:
+		case nfs4.OP_RENAME:
 			opStatus = s.opRename(op.AsRENAME4args(), st, &w)
-		case OP_RESTOREFH:
+		case nfs4.OP_RESTOREFH:
 			opStatus = s.opRestorefh(st, &w)
-		case OP_SAVEFH:
+		case nfs4.OP_SAVEFH:
 			opStatus = s.opSavefh(st, &w)
-		case OP_SECINFO:
+		case nfs4.OP_SECINFO:
 			opStatus = s.opSecinfo(op.AsSECINFO4args(), st, &w)
-		case OP_SETATTR:
+		case nfs4.OP_SETATTR:
 			opStatus = s.opSetattr(op.AsSETATTR4args(), st, &w)
-		case OP_VERIFY:
+		case nfs4.OP_VERIFY:
 			opStatus = s.opVerify(op.AsVERIFY4args(), st, &w)
-		case OP_WRITE:
+		case nfs4.OP_WRITE:
 			opStatus = s.opWrite(op.AsWRITE4args(), st, &w)
-		case OP_EXCHANGE_ID:
+		case nfs4.OP_EXCHANGE_ID:
 			opStatus = s.opExchangeID(op.AsEXCHANGEID4args(), st, &w)
-		case OP_CREATE_SESSION:
+		case nfs4.OP_CREATE_SESSION:
 			opStatus = s.opCreateSession(op.AsCREATESESSION4args(), st, &w)
-		case OP_DESTROY_SESSION:
+		case nfs4.OP_DESTROY_SESSION:
 			opStatus = s.opDestroySession(op.AsDESTROYSESSION4args(), st, &w)
-		case OP_DESTROY_CLIENTID:
+		case nfs4.OP_DESTROY_CLIENTID:
 			opStatus = s.opDestroyClientID(op.AsDESTROYCLIENTID4args(), st, &w)
-		case OP_BIND_CONN_TO_SESSION:
+		case nfs4.OP_BIND_CONN_TO_SESSION:
 			opStatus = s.opBindConnToSession(op.AsBINDCONNTOSESSION4args(), st, &w)
-		case OP_RECLAIM_COMPLETE:
+		case nfs4.OP_RECLAIM_COMPLETE:
 			opStatus = s.opReclaimComplete(op.AsRECLAIMCOMPLETE4args(), st, &w)
-		case OP_TEST_STATEID:
+		case nfs4.OP_TEST_STATEID:
 			opStatus = s.opTestStateID(op.AsTESTSTATEID4args(), st, &w)
-		case OP_FREE_STATEID:
+		case nfs4.OP_FREE_STATEID:
 			opStatus = s.opFreeStateID(op.AsFREESTATEID4args(), st, &w)
-		case OP_BACKCHANNEL_CTL:
+		case nfs4.OP_BACKCHANNEL_CTL:
 			opStatus = s.opBackchannelCtl(op.AsBACKCHANNELCTL4args(), st, &w)
-		case OP_SET_SSV:
+		case nfs4.OP_SET_SSV:
 			// Only SP4_SSV state protection uses an SSV, and nfsd offers
 			// SP4_NONE (RFC 8881 section 18.47.3).
-			writeOperationError(&w, opnum, NFS4ERR_INVAL)
-			opStatus = NFS4ERR_INVAL
-		case OP_SECINFO_NO_NAME:
+			writeOperationError(&w, opnum, nfs4.NFS4ERR_INVAL)
+			opStatus = nfs4.NFS4ERR_INVAL
+		case nfs4.OP_SECINFO_NO_NAME:
 			opStatus = s.opSecinfoNoName(op.AsNfsArgop4OPSECINFONONAME().Value(), st, &w)
 		default:
 			// Every other operation is removed from NFSv4.1 (RFC 8881
 			// section 18), optional (locks, delegations, pNFS, 4.2), or
 			// unsupported by TernFS (LINK, OPENATTR). nfsd grants no
 			// delegations, so DELEGRETURN is NOTSUPP too.
-			status := uint32(NFS4ERR_NOTSUPP)
+			status := uint32(nfs4.NFS4ERR_NOTSUPP)
 			if !knownOperation(opnum) {
-				status = NFS4ERR_OP_ILLEGAL
+				status = nfs4.NFS4ERR_OP_ILLEGAL
 			}
 			writeOperationError(&w, opnum, status)
 			opStatus = status
@@ -946,22 +948,22 @@ func (s *Server) compoundBody(req *rpcRequest, args COMPOUND4args) (result []byt
 				return nil
 			}
 			w = checkpoint
-			opStatus = NFS4ERR_REP_TOO_BIG
+			opStatus = nfs4.NFS4ERR_REP_TOO_BIG
 			if seq.sess != nil {
 				opStatus = resultLimitStatus(&seq)
 			}
 			writeOperationError(&w, opnum, opStatus)
 		}
 
-		if opStatus != NFS4_OK {
-			s.log.Debug("op failed", "op", NfsOpnum4Name(opnum), "status", Nfsstat4Name(opStatus))
+		if opStatus != nfs4.NFS4_OK {
+			s.log.Debug("op failed", "op", nfs4.NfsOpnum4Name(opnum), "status", nfs4.Nfsstat4Name(opStatus))
 			overallStatus = opStatus
 			break
 		}
 	}
 
 done:
-	s.log.Debug("COMPOUND done", "status", Nfsstat4Name(overallStatus), "ops", opCount)
+	s.log.Debug("COMPOUND done", "status", nfs4.Nfsstat4Name(overallStatus), "ops", opCount)
 
 	w.SetStatus(overallStatus)
 	body := w.Finish()
@@ -984,5 +986,5 @@ func (s *Server) acceptsMinorVersion(minor uint32) bool {
 // knownOperation reports opcodes defined by the XDR. OP_ILLEGAL is not one:
 // a client sends it to provoke NFS4ERR_OP_ILLEGAL.
 func knownOperation(opnum uint32) bool {
-	return opnum >= OP_ACCESS && opnum <= OP_REMOVEXATTR
+	return opnum >= nfs4.OP_ACCESS && opnum <= nfs4.OP_REMOVEXATTR
 }

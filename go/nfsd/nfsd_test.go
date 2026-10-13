@@ -20,6 +20,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 type readErrorVFS struct {
@@ -256,9 +258,9 @@ func mustParseRPCReply(t *testing.T, reply []byte) []byte {
 	return body
 }
 
-func buildCompoundBody(tag []byte, build func(w *COMPOUND4argsWriter)) []byte {
+func buildCompoundBody(tag []byte, build func(w *nfs4.COMPOUND4argsWriter)) []byte {
 	var body []byte
-	w := StartCOMPOUND4args(body)
+	w := nfs4.StartCOMPOUND4args(body)
 	tagW := w.StartTag()
 	body = tagW.SetData(tag).Finish()
 	w.Resume(body)
@@ -272,7 +274,7 @@ func buildCompoundBody(tag []byte, build func(w *COMPOUND4argsWriter)) []byte {
 }
 
 // sendCompound builds a compound, sends it, and returns the parsed COMPOUND4res.
-func sendCompound(t *testing.T, conn net.Conn, xid uint32, build func(w *COMPOUND4argsWriter)) COMPOUND4res {
+func sendCompound(t *testing.T, conn net.Conn, xid uint32, build func(w *nfs4.COMPOUND4argsWriter)) nfs4.COMPOUND4res {
 	t.Helper()
 	body := buildCompoundBody(nil, build)
 	reply, err := sendRPC(conn, xid, procCompound, body)
@@ -283,7 +285,7 @@ func sendCompound(t *testing.T, conn net.Conn, xid uint32, build func(w *COMPOUN
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, ok := ReadCOMPOUND4res(nfsBody)
+	res, ok := nfs4.ReadCOMPOUND4res(nfsBody)
 	if !ok {
 		t.Fatal("failed to parse COMPOUND4res")
 	}
@@ -306,11 +308,11 @@ func TestEmptyCompound(t *testing.T) {
 		t.Fatalf("reply xid = %d, want %d", got, xid)
 	}
 
-	res, ok := ReadCOMPOUND4res(mustParseRPCReply(t, reply))
+	res, ok := nfs4.ReadCOMPOUND4res(mustParseRPCReply(t, reply))
 	if !ok {
 		t.Fatal("failed to parse COMPOUND4res")
 	}
-	if res.Status() != NFS4_OK {
+	if res.Status() != nfs4.NFS4_OK {
 		t.Fatalf("status = %d, want NFS4_OK", res.Status())
 	}
 	if got := string(res.Tag().Data()); got != "empty" {
@@ -379,7 +381,7 @@ func TestCompoundOperationLimit(t *testing.T) {
 	conn := dial(t, addr)
 	defer conn.Close()
 
-	body := buildCompoundBody([]byte("too-many"), func(w *COMPOUND4argsWriter) {
+	body := buildCompoundBody([]byte("too-many"), func(w *nfs4.COMPOUND4argsWriter) {
 		for range maxCompoundOperations + 1 {
 			w.AppendArgarray_Putrootfh()
 		}
@@ -388,11 +390,11 @@ func TestCompoundOperationLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, ok := ReadCOMPOUND4res(mustParseRPCReply(t, reply))
+	res, ok := nfs4.ReadCOMPOUND4res(mustParseRPCReply(t, reply))
 	if !ok {
 		t.Fatal("failed to parse COMPOUND4res")
 	}
-	if res.Status() != NFS4ERR_TOO_MANY_OPS {
+	if res.Status() != nfs4.NFS4ERR_TOO_MANY_OPS {
 		t.Fatalf("status = %d, want NFS4ERR_TOO_MANY_OPS", res.Status())
 	}
 	if got := string(res.Tag().Data()); got != "too-many" {
@@ -404,16 +406,16 @@ func TestCompoundOperationLimit(t *testing.T) {
 }
 
 // expectOK checks compound status is NFS4_OK and returns the resarray iterator.
-func expectOK(t *testing.T, res COMPOUND4res) NfsResop4EntryIter {
+func expectOK(t *testing.T, res nfs4.COMPOUND4res) nfs4.NfsResop4EntryIter {
 	t.Helper()
-	if res.Status() != NFS4_OK {
+	if res.Status() != nfs4.NFS4_OK {
 		t.Fatalf("compound status = %d, want NFS4_OK", res.Status())
 	}
 	return res.Resarray()
 }
 
 // nextOp advances the iterator and returns the entry.
-func nextOp(t *testing.T, iter *NfsResop4EntryIter) NfsResop4Entry {
+func nextOp(t *testing.T, iter *nfs4.NfsResop4EntryIter) nfs4.NfsResop4Entry {
 	t.Helper()
 	if !iter.Next() {
 		t.Fatal("expected another op in resarray")
@@ -459,12 +461,12 @@ func closeSignal(ch chan struct{}) {
 // getAttrData extracts attribute values from a GETATTR4resok fattr4.
 // Uses Fattr4.AttrVals().Data() which requires correct codegen for
 // sequential variable-size field getters (bitmap4 then attrlist4).
-func getAttrData(t *testing.T, getattrOk GETATTR4resok) []byte {
+func getAttrData(t *testing.T, getattrOk nfs4.GETATTR4resok) []byte {
 	t.Helper()
 	return getattrOk.ObjAttributes().AttrVals().Data()
 }
 
-func setVerifier(verifier Verifier4, data [8]byte) {
+func setVerifier(verifier nfs4.Verifier4, data [8]byte) {
 	for i, b := range data {
 		verifier.SetData(i, b)
 	}
@@ -485,8 +487,8 @@ func requestClientID(
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status != NFS4_OK {
-		t.Fatalf("EXCHANGE_ID status = %s", Nfsstat4Name(status))
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("EXCHANGE_ID status = %s", nfs4.Nfsstat4Name(status))
 	}
 	testIdentities.set(clientID, identity, verifier)
 	return clientID, encodeConfirm(seq)
@@ -529,8 +531,8 @@ func setupClientWithVerifier(
 		t, conn, xid, "test-client", verifier)
 	if status := confirmClientID(
 		t, conn, xid, clientid, confirm,
-	); status != NFS4_OK {
-		t.Fatalf("CREATE_SESSION status = %s", Nfsstat4Name(status))
+	); status != nfs4.NFS4_OK {
+		t.Fatalf("CREATE_SESSION status = %s", nfs4.Nfsstat4Name(status))
 	}
 	return clientid
 }
@@ -593,12 +595,12 @@ func TestPutrootfhGetattr(t *testing.T) {
 	conn := dial(t, addr)
 	defer conn.Close()
 
-	res := sendCompound(t, conn, 2, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, 2, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 
 		gw := w.AppendArgarray_Getattr()
 		bw := gw.StartAttrRequest()
-		bw.AppendData(1<<FATTR4_TYPE | 1<<FATTR4_FILEID)
+		bw.AppendData(1<<nfs4.FATTR4_TYPE | 1<<nfs4.FATTR4_FILEID)
 		buf := bw.Finish()
 		gw.Resume(buf)
 		buf = gw.Finish()
@@ -612,20 +614,20 @@ func TestPutrootfhGetattr(t *testing.T) {
 
 	// PUTROOTFH
 	entry := nextOp(t, &iter)
-	if entry.Disc() != OP_PUTROOTFH {
+	if entry.Disc() != nfs4.OP_PUTROOTFH {
 		t.Fatalf("op[0] = %d, want OP_PUTROOTFH", entry.Disc())
 	}
-	if entry.Value().AsPUTROOTFH4res().Status() != NFS4_OK {
+	if entry.Value().AsPUTROOTFH4res().Status() != nfs4.NFS4_OK {
 		t.Fatal("PUTROOTFH failed")
 	}
 
 	// GETATTR
 	entry = nextOp(t, &iter)
-	if entry.Disc() != OP_GETATTR {
+	if entry.Disc() != nfs4.OP_GETATTR {
 		t.Fatalf("op[1] = %d, want OP_GETATTR", entry.Disc())
 	}
 	getattrRes := entry.Value().AsGETATTR4resEntry()
-	if getattrRes.Disc() != NFS4_OK {
+	if getattrRes.Disc() != nfs4.NFS4_OK {
 		t.Fatalf("GETATTR status = %d", getattrRes.Disc())
 	}
 }
@@ -637,7 +639,7 @@ func TestPutpubfh(t *testing.T) {
 	conn := dial(t, addr)
 	defer conn.Close()
 
-	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putpubfh()
 		w.AppendArgarray_Getfh()
 	})
@@ -646,7 +648,7 @@ func TestPutpubfh(t *testing.T) {
 	nextOp(t, &iter) // PUTPUBFH
 	entry := nextOp(t, &iter)
 	getfhRes := entry.Value().AsGETFH4resEntry()
-	if getfhRes.Disc() != NFS4_OK {
+	if getfhRes.Disc() != nfs4.NFS4_OK {
 		t.Fatalf("GETFH status = %d", getfhRes.Disc())
 	}
 	fh := getfhRes.Value().AsGETFH4resok().Object().Data()
@@ -664,7 +666,7 @@ func TestLookupAndRead(t *testing.T) {
 	conn := dial(t, addr)
 	defer conn.Close()
 
-	res := sendCompound(t, conn, 3, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, 3, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 
 		lw := w.AppendArgarray_Lookup()
@@ -693,7 +695,7 @@ func TestLookupAndRead(t *testing.T) {
 	// GETFH — validate 8-byte file handle.
 	entry := nextOp(t, &iter)
 	getfhRes := entry.Value().AsGETFH4resEntry()
-	if getfhRes.Disc() != NFS4_OK {
+	if getfhRes.Disc() != nfs4.NFS4_OK {
 		t.Fatalf("GETFH status = %d", getfhRes.Disc())
 	}
 	fhData := getfhRes.Value().AsGETFH4resok().Object().Data()
@@ -704,7 +706,7 @@ func TestLookupAndRead(t *testing.T) {
 	// READ — validate data and EOF.
 	entry = nextOp(t, &iter)
 	readRes := entry.Value().AsREAD4resEntry()
-	if readRes.Disc() != NFS4_OK {
+	if readRes.Disc() != nfs4.NFS4_OK {
 		t.Fatalf("READ status = %d", readRes.Disc())
 	}
 	readOk := readRes.Value().AsREAD4resok()
@@ -712,7 +714,7 @@ func TestLookupAndRead(t *testing.T) {
 	if string(data) != "Hello, NFS!" {
 		t.Fatalf("READ data = %q, want %q", data, "Hello, NFS!")
 	}
-	if readOk.Eof() != TRUE {
+	if readOk.Eof() != nfs4.TRUE {
 		t.Fatalf("READ eof = %d, want TRUE", readOk.Eof())
 	}
 }
@@ -727,7 +729,7 @@ func TestReadWithOffset(t *testing.T) {
 	defer conn.Close()
 
 	// Read 4 bytes at offset 10 — should get "abcd", not EOF.
-	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 
 		lw := w.AppendArgarray_Lookup()
@@ -752,12 +754,12 @@ func TestReadWithOffset(t *testing.T) {
 	if string(readOk.Data()) != "abcd" {
 		t.Fatalf("READ data = %q, want %q", readOk.Data(), "abcd")
 	}
-	if readOk.Eof() != FALSE {
+	if readOk.Eof() != nfs4.FALSE {
 		t.Fatalf("READ eof = TRUE, want FALSE (not at end of file)")
 	}
 
 	// Read past end — should get remaining data with EOF.
-	res = sendCompound(t, conn, 2, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, 2, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 
 		lw := w.AppendArgarray_Lookup()
@@ -781,7 +783,7 @@ func TestReadWithOffset(t *testing.T) {
 	if string(readOk.Data()) != "ef" {
 		t.Fatalf("READ data = %q, want %q", readOk.Data(), "ef")
 	}
-	if readOk.Eof() != TRUE {
+	if readOk.Eof() != nfs4.TRUE {
 		t.Fatal("READ eof = FALSE, want TRUE")
 	}
 }
@@ -795,7 +797,7 @@ func TestReadEmptyFile(t *testing.T) {
 	conn := dial(t, addr)
 	defer conn.Close()
 
-	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 
 		lw := w.AppendArgarray_Lookup()
@@ -819,7 +821,7 @@ func TestReadEmptyFile(t *testing.T) {
 	if len(readOk.Data()) != 0 {
 		t.Fatalf("expected 0 bytes, got %d", len(readOk.Data()))
 	}
-	if readOk.Eof() != TRUE {
+	if readOk.Eof() != nfs4.TRUE {
 		t.Fatal("expected EOF for empty file")
 	}
 }
@@ -835,7 +837,7 @@ func TestReaddir(t *testing.T) {
 	conn := dial(t, addr)
 	defer conn.Close()
 
-	res := sendCompound(t, conn, 4, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, 4, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 
 		rdw := w.AppendArgarray_Readdir()
@@ -843,7 +845,7 @@ func TestReaddir(t *testing.T) {
 		rdw.SetDircount(4096)
 		rdw.SetMaxcount(8192)
 		bmW := rdw.StartAttrRequest()
-		bmW.AppendData(1<<FATTR4_TYPE | 1<<FATTR4_FILEID)
+		bmW.AppendData(1<<nfs4.FATTR4_TYPE | 1<<nfs4.FATTR4_FILEID)
 		buf := bmW.Finish()
 		rdw.Resume(buf)
 		buf = rdw.Finish()
@@ -857,7 +859,7 @@ func TestReaddir(t *testing.T) {
 	nextOp(t, &iter) // PUTROOTFH
 	entry := nextOp(t, &iter)
 	readdirRes := entry.Value().AsREADDIR4resEntry()
-	if readdirRes.Disc() != NFS4_OK {
+	if readdirRes.Disc() != nfs4.NFS4_OK {
 		t.Fatalf("READDIR status = %d", readdirRes.Disc())
 	}
 	// Verify cookieverf is non-zero in the response.
@@ -884,7 +886,7 @@ func TestReaddirEmpty(t *testing.T) {
 	conn := dial(t, addr)
 	defer conn.Close()
 
-	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 
 		lw := w.AppendArgarray_Lookup()
@@ -911,7 +913,7 @@ func TestReaddirEmpty(t *testing.T) {
 	nextOp(t, &iter) // LOOKUP
 	entry := nextOp(t, &iter)
 	readdirRes := entry.Value().AsREADDIR4resEntry()
-	if readdirRes.Disc() != NFS4_OK {
+	if readdirRes.Disc() != nfs4.NFS4_OK {
 		t.Fatalf("READDIR status = %d", readdirRes.Disc())
 	}
 }
@@ -926,7 +928,7 @@ func TestPutfhRoundTrip(t *testing.T) {
 	defer conn.Close()
 
 	// First: PUTROOTFH + LOOKUP + GETFH to get a file handle.
-	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 
 		lw := w.AppendArgarray_Lookup()
@@ -946,7 +948,7 @@ func TestPutfhRoundTrip(t *testing.T) {
 	fh := append([]byte(nil), entry.Value().AsGETFH4resEntry().Value().AsGETFH4resok().Object().Data()...)
 
 	// Second: PUTFH(fh) + READ to read via the file handle.
-	res = sendCompound(t, conn, 2, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, 2, func(w *nfs4.COMPOUND4argsWriter) {
 		pw := w.AppendArgarray_Putfh()
 		fhW := pw.StartObject()
 		buf := fhW.SetData(fh).Finish()
@@ -977,7 +979,7 @@ func TestPutfhBadHandle(t *testing.T) {
 	defer conn.Close()
 
 	// Send a PUTFH with wrong-sized handle (4 bytes instead of 8).
-	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 		pw := w.AppendArgarray_Putfh()
 		fhW := pw.StartObject()
 		buf := fhW.SetData([]byte{1, 2, 3, 4}).Finish()
@@ -986,8 +988,8 @@ func TestPutfhBadHandle(t *testing.T) {
 		w.Resume(buf)
 	})
 
-	if res.Status() != NFS4ERR_BADHANDLE {
-		t.Fatalf("compound status = %d, want NFS4ERR_BADHANDLE (%d)", res.Status(), NFS4ERR_BADHANDLE)
+	if res.Status() != nfs4.NFS4ERR_BADHANDLE {
+		t.Fatalf("compound status = %d, want NFS4ERR_BADHANDLE (%d)", res.Status(), nfs4.NFS4ERR_BADHANDLE)
 	}
 }
 
@@ -1012,16 +1014,16 @@ func TestPutfhRejectsClientStoreHandles(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			fh := binary.BigEndian.AppendUint64(nil, uint64(id))
-			res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+			res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 				pw := w.AppendArgarray_Putfh()
 				buf := pw.StartObject().SetData(fh).Finish()
 				pw.Resume(buf)
 				w.Resume(pw.Finish())
 			})
 			xid++
-			if res.Status() != NFS4ERR_BADHANDLE {
+			if res.Status() != nfs4.NFS4ERR_BADHANDLE {
 				t.Fatalf("PUTFH status = %s, want NFS4ERR_BADHANDLE",
-					Nfsstat4Name(res.Status()))
+					nfs4.Nfsstat4Name(res.Status()))
 			}
 		})
 	}
@@ -1088,7 +1090,7 @@ func TestPutfhAllowsUncachedClientStoreFileHandles(t *testing.T) {
 		"marker": markerID,
 	} {
 		t.Run(name, func(t *testing.T) {
-			res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+			res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 				pw := w.AppendArgarray_Putfh()
 				buf := pw.StartObject().SetData(
 					inodeIDToFH(id)).Finish()
@@ -1096,13 +1098,13 @@ func TestPutfhAllowsUncachedClientStoreFileHandles(t *testing.T) {
 				w.Resume(pw.Finish())
 			})
 			xid++
-			if res.Status() != NFS4_OK {
+			if res.Status() != nfs4.NFS4_OK {
 				t.Fatalf("PUTFH status = %s, want NFS4_OK",
-					Nfsstat4Name(res.Status()))
+					nfs4.Nfsstat4Name(res.Status()))
 			}
 		})
 	}
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pw := w.AppendArgarray_Putfh()
 		buf := pw.StartObject().SetData(
 			inodeIDToFH(recordID)).Finish()
@@ -1114,20 +1116,20 @@ func TestPutfhAllowsUncachedClientStoreFileHandles(t *testing.T) {
 		rw.SetCount(4096)
 	})
 	xid++
-	if res.Status() != NFS4_OK {
+	if res.Status() != nfs4.NFS4_OK {
 		t.Fatalf("uncached client record READ = %s, want NFS4_OK",
-			Nfsstat4Name(res.Status()))
+			nfs4.Nfsstat4Name(res.Status()))
 	}
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pw := w.AppendArgarray_Putfh()
 		buf := pw.StartObject().SetData(
 			inodeIDToFH(externalID)).Finish()
 		pw.Resume(buf)
 		w.Resume(pw.Finish())
 	})
-	if res.Status() != NFS4_OK {
+	if res.Status() != nfs4.NFS4_OK {
 		t.Fatalf("ordinary PUTFH status = %s, want NFS4_OK",
-			Nfsstat4Name(res.Status()))
+			nfs4.Nfsstat4Name(res.Status()))
 	}
 }
 
@@ -1168,7 +1170,7 @@ func TestSavefhRestorefh(t *testing.T) {
 
 	// PUTROOTFH + LOOKUP(a.txt) + SAVEFH + LOOKUP(../b.txt via putrootfh) + RESTOREFH + READ
 	// This tests: save file A's handle, navigate to B, restore A, read A.
-	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 
 		lw := w.AppendArgarray_Lookup()
@@ -1219,12 +1221,12 @@ func TestRestorefhWithoutSave(t *testing.T) {
 	conn := dial(t, addr)
 	defer conn.Close()
 
-	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Restorefh()
 	})
 
-	if res.Status() != NFS4ERR_RESTOREFH {
-		t.Fatalf("status = %d, want NFS4ERR_RESTOREFH (%d)", res.Status(), NFS4ERR_RESTOREFH)
+	if res.Status() != nfs4.NFS4ERR_RESTOREFH {
+		t.Fatalf("status = %d, want NFS4ERR_RESTOREFH (%d)", res.Status(), nfs4.NFS4ERR_RESTOREFH)
 	}
 }
 
@@ -1239,7 +1241,7 @@ func TestLookupp(t *testing.T) {
 	defer conn.Close()
 
 	// PUTROOTFH + LOOKUP(sub) + LOOKUPP + LOOKUP(root.txt) + READ
-	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 
 		lw := w.AppendArgarray_Lookup()
@@ -1287,7 +1289,7 @@ func TestReadlink(t *testing.T) {
 	conn := dial(t, addr)
 	defer conn.Close()
 
-	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 
 		lw := w.AppendArgarray_Lookup()
@@ -1305,7 +1307,7 @@ func TestReadlink(t *testing.T) {
 	nextOp(t, &iter) // LOOKUP
 	entry := nextOp(t, &iter)
 	readlinkRes := entry.Value().AsREADLINK4resEntry()
-	if readlinkRes.Disc() != NFS4_OK {
+	if readlinkRes.Disc() != nfs4.NFS4_OK {
 		t.Fatalf("READLINK status = %d", readlinkRes.Disc())
 	}
 	target := string(readlinkRes.Value().AsREADLINK4resok().Link().Data())
@@ -1321,22 +1323,22 @@ func TestAccess(t *testing.T) {
 	conn := dial(t, addr)
 	defer conn.Close()
 
-	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 
 		aw := w.AppendArgarray_Access()
-		aw.SetAccess(ACCESS4_READ | ACCESS4_LOOKUP)
+		aw.SetAccess(nfs4.ACCESS4_READ | nfs4.ACCESS4_LOOKUP)
 	})
 
 	iter := expectOK(t, res)
 	nextOp(t, &iter) // PUTROOTFH
 	entry := nextOp(t, &iter)
 	accessRes := entry.Value().AsACCESS4resEntry()
-	if accessRes.Disc() != NFS4_OK {
+	if accessRes.Disc() != nfs4.NFS4_OK {
 		t.Fatalf("ACCESS status = %d", accessRes.Disc())
 	}
 	accessOk := accessRes.Value().AsACCESS4resok()
-	requested := uint32(ACCESS4_READ | ACCESS4_LOOKUP)
+	requested := uint32(nfs4.ACCESS4_READ | nfs4.ACCESS4_LOOKUP)
 	if accessOk.Supported() != requested {
 		t.Fatalf("supported = %d, want %d", accessOk.Supported(), requested)
 	}
@@ -1346,8 +1348,8 @@ func TestAccess(t *testing.T) {
 }
 
 func TestAccessMasksUnsupportedBitsByType(t *testing.T) {
-	const allAccess = ACCESS4_READ | ACCESS4_LOOKUP | ACCESS4_MODIFY |
-		ACCESS4_EXTEND | ACCESS4_DELETE | ACCESS4_EXECUTE
+	const allAccess = nfs4.ACCESS4_READ | nfs4.ACCESS4_LOOKUP | nfs4.ACCESS4_MODIFY |
+		nfs4.ACCESS4_EXTEND | nfs4.ACCESS4_DELETE | nfs4.ACCESS4_EXECUTE
 	const unknownAccess = 0x40
 
 	tests := []struct {
@@ -1358,17 +1360,17 @@ func TestAccessMasksUnsupportedBitsByType(t *testing.T) {
 		{
 			name:       "directory",
 			object:     "dir",
-			wantAccess: allAccess &^ ACCESS4_EXECUTE,
+			wantAccess: allAccess &^ nfs4.ACCESS4_EXECUTE,
 		},
 		{
 			name:       "file",
 			object:     "file",
-			wantAccess: allAccess &^ (ACCESS4_LOOKUP | ACCESS4_DELETE),
+			wantAccess: allAccess &^ (nfs4.ACCESS4_LOOKUP | nfs4.ACCESS4_DELETE),
 		},
 		{
 			name:       "symlink",
 			object:     "link",
-			wantAccess: allAccess &^ (ACCESS4_LOOKUP | ACCESS4_DELETE),
+			wantAccess: allAccess &^ (nfs4.ACCESS4_LOOKUP | nfs4.ACCESS4_DELETE),
 		},
 	}
 
@@ -1389,7 +1391,7 @@ func TestAccessMasksUnsupportedBitsByType(t *testing.T) {
 			conn := dial(t, addr)
 			defer conn.Close()
 
-			res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+			res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 				w.AppendArgarray_Putrootfh()
 				lw := w.AppendArgarray_Lookup()
 				nw := lw.StartObjname()
@@ -1431,7 +1433,7 @@ func TestOpenConfirmClose(t *testing.T) {
 	clientid := setupClient(t, conn, &xid)
 	stateid, fh := openReadFile(t, conn, &xid, clientid, "file.txt")
 
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pw := w.AppendArgarray_Putfh()
 		buf := pw.StartObject().SetData(fh).Finish()
 		pw.Resume(buf)
@@ -1465,8 +1467,8 @@ func addConfirmedOpenForTest(
 		openOwnerKey{clientID: clientID, owner: owner},
 		fileID, write, StateID{},
 	)
-	if status != NFS4_OK {
-		t.Fatalf("OPEN state setup = %s", Nfsstat4Name(status))
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("OPEN state setup = %s", nfs4.Nfsstat4Name(status))
 	}
 	if err := srv.clients.MarkOpen(clientID, state.id); err != nil {
 		t.Fatal(err)
@@ -1552,19 +1554,19 @@ func TestLookupDurableOpenStorageErrorPreservesClientState(t *testing.T) {
 	srv.clients.stopLeaseWorkers()
 	fs.name = confirmedName
 	fs.remaining = 1
-	_, stateid := StartStateid4(nil)
+	_, stateid := nfs4.StartStateid4(nil)
 	writeStateID(stateid, reader.generation, reader.id)
 	if _, status := srv.lookupDurableOpen(
 		clientID, stateid, readerID,
-	); status != NFS4ERR_DELAY {
+	); status != nfs4.NFS4ERR_DELAY {
 		t.Fatalf("lookup status = %s, want NFS4ERR_DELAY",
-			Nfsstat4Name(status))
+			nfs4.Nfsstat4Name(status))
 	}
 	if _, status := srv.opens.lookup(
 		writer.owner.clientID, writer.id, writer.generation, writerID,
-	); status != NFS4_OK {
+	); status != nfs4.NFS4_OK {
 		t.Fatalf("unrelated state after lookup error = %s, want NFS4_OK",
-			Nfsstat4Name(status))
+			nfs4.Nfsstat4Name(status))
 	}
 	if staging.Get(writerID) == nil {
 		t.Fatal("lookup error removed unrelated staging")
@@ -1586,14 +1588,14 @@ func TestOwnerOperationsPreserveStateOnClientStoreError(t *testing.T) {
 		fs.name = confirmedName
 		fs.remaining = 1
 		if status := closeFileStatus(
-			t, conn, xid, fh, stateid); status != NFS4ERR_DELAY {
+			t, conn, xid, fh, stateid); status != nfs4.NFS4ERR_DELAY {
 			t.Fatalf("CLOSE with store error = %s, want DELAY",
-				Nfsstat4Name(status))
+				nfs4.Nfsstat4Name(status))
 		}
 		if status := closeFileStatus(
-			t, conn, xid, fh, stateid); status != NFS4_OK {
+			t, conn, xid, fh, stateid); status != nfs4.NFS4_OK {
 			t.Fatalf("retried CLOSE = %s, want OK",
-				Nfsstat4Name(status))
+				nfs4.Nfsstat4Name(status))
 		}
 	})
 
@@ -1625,8 +1627,8 @@ func TestExpireIfLeaseDeadKeepsClientWithoutSlot(t *testing.T) {
 	if _, status := addOpenForTest(srv.opens,
 		openOwnerKey{clientID: clientID, owner: "owner"},
 		MakeInodeID(InodeTypeFile, 1), false, StateID{},
-	); status != NFS4_OK {
-		t.Fatalf("OPEN = %s", Nfsstat4Name(status))
+	); status != nfs4.NFS4_OK {
+		t.Fatalf("OPEN = %s", nfs4.Nfsstat4Name(status))
 	}
 
 	expired, err := srv.clients.ExpireIfLeaseDead(clientID)
@@ -1700,7 +1702,7 @@ func TestExpireIfLeaseDeadExpiresCollectedIncarnation(t *testing.T) {
 	}
 	if err := srv.clients.MarkOpen(
 		clientID, StateID{2},
-	); nfsErrCode(err) != NFS4ERR_STALE_CLIENTID {
+	); nfsErrCode(err) != nfs4.NFS4ERR_STALE_CLIENTID {
 		t.Fatalf("MarkOpen on collected incarnation = %v, want NFS4ERR_STALE_CLIENTID",
 			err)
 	}
@@ -1810,17 +1812,17 @@ func TestServerLeaseSweepExpiresAbandonedStaging(t *testing.T) {
 	}
 	if _, status := srv.opens.lookup(
 		state.owner.clientID, state.id, state.generation, fileID,
-	); status != NFS4_OK {
+	); status != nfs4.NFS4_OK {
 		t.Fatalf("marker cleanup failure removed state = %s",
-			Nfsstat4Name(status))
+			nfs4.Nfsstat4Name(status))
 	}
 	srv.sweepExpiredClientState()
 	assertRetiredStaging(t, staging, fileID)
 	if _, status := srv.opens.lookup(
 		state.owner.clientID, state.id, state.generation, fileID,
-	); status != NFS4ERR_EXPIRED {
+	); status != nfs4.NFS4ERR_EXPIRED {
 		t.Fatalf("lease sweep state = %s, want NFS4ERR_EXPIRED",
-			Nfsstat4Name(status))
+			nfs4.Nfsstat4Name(status))
 	}
 	if _, err := fs.Lookup(
 		InodeID(clientID), activeOpenName(state.id),
@@ -1903,9 +1905,9 @@ func TestServerLeaseSweepKeepsClientRenewedByAnotherOwner(t *testing.T) {
 	}
 	if _, status := srv.opens.lookup(
 		writer.owner.clientID, writer.id, writer.generation, writerID,
-	); status != NFS4_OK {
+	); status != nfs4.NFS4_OK {
 		t.Fatalf("renewed writer state = %s, want NFS4_OK",
-			Nfsstat4Name(status))
+			nfs4.Nfsstat4Name(status))
 	}
 }
 
@@ -2114,7 +2116,7 @@ func TestSetattr(t *testing.T) {
 	conn := dial(t, addr)
 	defer conn.Close()
 
-	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 
 		saw := w.AppendArgarray_Setattr()
@@ -2137,7 +2139,7 @@ func TestSetattr(t *testing.T) {
 	iter := expectOK(t, res)
 	nextOp(t, &iter) // PUTROOTFH
 	entry := nextOp(t, &iter)
-	if entry.Value().AsSETATTR4res().Status() != NFS4_OK {
+	if entry.Value().AsSETATTR4res().Status() != nfs4.NFS4_OK {
 		t.Fatal("SETATTR failed")
 	}
 }
@@ -2155,9 +2157,9 @@ func TestRemovedOperationsNotSupported(t *testing.T) {
 
 	for _, test := range []struct {
 		name  string
-		build func(w *COMPOUND4argsWriter)
+		build func(w *nfs4.COMPOUND4argsWriter)
 	}{
-		{"RELEASE_LOCKOWNER", func(w *COMPOUND4argsWriter) {
+		{"RELEASE_LOCKOWNER", func(w *nfs4.COMPOUND4argsWriter) {
 			rlw := w.AppendArgarray_ReleaseLockowner()
 			loW := rlw.StartLockOwner()
 			loW = loW.SetClientid(clientid)
@@ -2165,19 +2167,19 @@ func TestRemovedOperationsNotSupported(t *testing.T) {
 			rlw.Resume(loW.Finish())
 			w.Resume(rlw.Finish())
 		}},
-		{"RENEW", func(w *COMPOUND4argsWriter) {
+		{"RENEW", func(w *nfs4.COMPOUND4argsWriter) {
 			w.AppendArgarray_Renew().SetClientid(clientid)
 		}},
-		{"OPEN_CONFIRM", func(w *COMPOUND4argsWriter) {
+		{"OPEN_CONFIRM", func(w *nfs4.COMPOUND4argsWriter) {
 			w.AppendArgarray_Putrootfh()
 			w.AppendArgarray_OpenConfirm()
 		}},
 	} {
 		res := sendCompound(t, conn, xid, test.build)
 		xid++
-		if res.Status() != NFS4ERR_NOTSUPP {
+		if res.Status() != nfs4.NFS4ERR_NOTSUPP {
 			t.Errorf("%s status = %s, want NFS4ERR_NOTSUPP",
-				test.name, Nfsstat4Name(res.Status()))
+				test.name, nfs4.Nfsstat4Name(res.Status()))
 		}
 	}
 }
@@ -2190,7 +2192,7 @@ func TestCompoundRequiresSequence(t *testing.T) {
 	conn := dial(t, addr)
 	defer conn.Close()
 
-	body := buildCompoundBody(nil, func(w *COMPOUND4argsWriter) {
+	body := buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 	})
 	reply, err := sendRawRPC(conn, 1, procCompound, body)
@@ -2201,9 +2203,9 @@ func TestCompoundRequiresSequence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Status() != NFS4ERR_OP_NOT_IN_SESSION {
+	if res.Status() != nfs4.NFS4ERR_OP_NOT_IN_SESSION {
 		t.Fatalf("status = %s, want NFS4ERR_OP_NOT_IN_SESSION",
-			Nfsstat4Name(res.Status()))
+			nfs4.Nfsstat4Name(res.Status()))
 	}
 }
 
@@ -2214,12 +2216,12 @@ func TestIllegalOp(t *testing.T) {
 	conn := dial(t, addr)
 	defer conn.Close()
 
-	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Illegal()
 	})
 
-	if res.Status() != NFS4ERR_OP_ILLEGAL {
-		t.Fatalf("status = %d, want NFS4ERR_OP_ILLEGAL (%d)", res.Status(), NFS4ERR_OP_ILLEGAL)
+	if res.Status() != nfs4.NFS4ERR_OP_ILLEGAL {
+		t.Fatalf("status = %d, want NFS4ERR_OP_ILLEGAL (%d)", res.Status(), nfs4.NFS4ERR_OP_ILLEGAL)
 	}
 }
 
@@ -2239,23 +2241,23 @@ func TestUnknownOp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, ok := ReadCOMPOUND4res(mustParseRPCReply(t, reply))
+	res, ok := nfs4.ReadCOMPOUND4res(mustParseRPCReply(t, reply))
 	if !ok {
 		t.Fatal("failed to parse COMPOUND4res")
 	}
-	if res.Status() != NFS4ERR_OP_ILLEGAL {
-		t.Fatalf("status = %s, want NFS4ERR_OP_ILLEGAL", Nfsstat4Name(res.Status()))
+	if res.Status() != nfs4.NFS4ERR_OP_ILLEGAL {
+		t.Fatalf("status = %s, want NFS4ERR_OP_ILLEGAL", nfs4.Nfsstat4Name(res.Status()))
 	}
 	if res.ResarrayCount() != 1 {
 		t.Fatalf("resarray count = %d, want 1", res.ResarrayCount())
 	}
 	iter := res.Resarray()
 	entry := nextOp(t, &iter)
-	if entry.Disc() != OP_ILLEGAL {
-		t.Fatalf("result operation = %s, want OP_ILLEGAL", NfsOpnum4Name(entry.Disc()))
+	if entry.Disc() != nfs4.OP_ILLEGAL {
+		t.Fatalf("result operation = %s, want OP_ILLEGAL", nfs4.NfsOpnum4Name(entry.Disc()))
 	}
-	if status := entry.Value().AsILLEGAL4res().Status(); status != NFS4ERR_OP_ILLEGAL {
-		t.Fatalf("operation status = %s, want NFS4ERR_OP_ILLEGAL", Nfsstat4Name(status))
+	if status := entry.Value().AsILLEGAL4res().Status(); status != nfs4.NFS4ERR_OP_ILLEGAL {
+		t.Fatalf("operation status = %s, want NFS4ERR_OP_ILLEGAL", nfs4.Nfsstat4Name(status))
 	}
 }
 
@@ -2266,7 +2268,7 @@ func TestLookupNonExistent(t *testing.T) {
 	conn := dial(t, addr)
 	defer conn.Close()
 
-	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 
 		lw := w.AppendArgarray_Lookup()
@@ -2277,8 +2279,8 @@ func TestLookupNonExistent(t *testing.T) {
 		w.Resume(buf)
 	})
 
-	if res.Status() != NFS4ERR_NOENT {
-		t.Fatalf("status = %d, want NFS4ERR_NOENT (%d)", res.Status(), NFS4ERR_NOENT)
+	if res.Status() != nfs4.NFS4ERR_NOENT {
+		t.Fatalf("status = %d, want NFS4ERR_NOENT (%d)", res.Status(), nfs4.NFS4ERR_NOENT)
 	}
 	// Should have 2 ops: PUTROOTFH (success) + LOOKUP (failure).
 	if res.ResarrayCount() != 2 {
@@ -2294,11 +2296,11 @@ func TestLongNamesRejected(t *testing.T) {
 
 	tests := []struct {
 		name  string
-		build func(*COMPOUND4argsWriter)
+		build func(*nfs4.COMPOUND4argsWriter)
 	}{
 		{
 			name: "lookup",
-			build: func(w *COMPOUND4argsWriter) {
+			build: func(w *nfs4.COMPOUND4argsWriter) {
 				w.AppendArgarray_Putrootfh()
 				lw := w.AppendArgarray_Lookup()
 				nw := lw.StartObjname()
@@ -2309,7 +2311,7 @@ func TestLongNamesRejected(t *testing.T) {
 		},
 		{
 			name: "create",
-			build: func(w *COMPOUND4argsWriter) {
+			build: func(w *nfs4.COMPOUND4argsWriter) {
 				w.AppendArgarray_Putrootfh()
 				cw := w.AppendArgarray_Create()
 				cw.SetObjtype_Nf4dir()
@@ -2329,7 +2331,7 @@ func TestLongNamesRejected(t *testing.T) {
 		},
 		{
 			name: "remove",
-			build: func(w *COMPOUND4argsWriter) {
+			build: func(w *nfs4.COMPOUND4argsWriter) {
 				w.AppendArgarray_Putrootfh()
 				rw := w.AppendArgarray_Remove()
 				tw := rw.StartTarget()
@@ -2340,7 +2342,7 @@ func TestLongNamesRejected(t *testing.T) {
 		},
 		{
 			name: "rename source",
-			build: func(w *COMPOUND4argsWriter) {
+			build: func(w *nfs4.COMPOUND4argsWriter) {
 				w.AppendArgarray_Putrootfh()
 				w.AppendArgarray_Savefh()
 				rw := w.AppendArgarray_Rename()
@@ -2355,7 +2357,7 @@ func TestLongNamesRejected(t *testing.T) {
 		},
 		{
 			name: "rename target",
-			build: func(w *COMPOUND4argsWriter) {
+			build: func(w *nfs4.COMPOUND4argsWriter) {
 				w.AppendArgarray_Putrootfh()
 				w.AppendArgarray_Savefh()
 				rw := w.AppendArgarray_Rename()
@@ -2379,9 +2381,9 @@ func TestLongNamesRejected(t *testing.T) {
 			defer conn.Close()
 
 			res := sendCompound(t, conn, 1, test.build)
-			if res.Status() != NFS4ERR_NAMETOOLONG {
+			if res.Status() != nfs4.NFS4ERR_NAMETOOLONG {
 				t.Fatalf("status = %s, want NFS4ERR_NAMETOOLONG",
-					Nfsstat4Name(res.Status()))
+					nfs4.Nfsstat4Name(res.Status()))
 			}
 		})
 	}
@@ -2394,10 +2396,10 @@ func TestRenameInvalidNamesRejected(t *testing.T) {
 		newName    []byte
 		wantStatus uint32
 	}{
-		{"empty source", nil, []byte("new"), NFS4ERR_INVAL},
-		{"empty target", []byte("old"), nil, NFS4ERR_INVAL},
-		{"dot source", []byte("."), []byte("new"), NFS4ERR_BADNAME},
-		{"dot target", []byte("old"), []byte("."), NFS4ERR_BADNAME},
+		{"empty source", nil, []byte("new"), nfs4.NFS4ERR_INVAL},
+		{"empty target", []byte("old"), nil, nfs4.NFS4ERR_INVAL},
+		{"dot source", []byte("."), []byte("new"), nfs4.NFS4ERR_BADNAME},
+		{"dot target", []byte("old"), []byte("."), nfs4.NFS4ERR_BADNAME},
 	}
 
 	for _, test := range tests {
@@ -2408,7 +2410,7 @@ func TestRenameInvalidNamesRejected(t *testing.T) {
 			conn := dial(t, addr)
 			defer conn.Close()
 
-			res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+			res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 				w.AppendArgarray_Putrootfh()
 				w.AppendArgarray_Savefh()
 				rw := w.AppendArgarray_Rename()
@@ -2422,7 +2424,7 @@ func TestRenameInvalidNamesRejected(t *testing.T) {
 			})
 			if res.Status() != test.wantStatus {
 				t.Fatalf("status = %s, want %s",
-					Nfsstat4Name(res.Status()), Nfsstat4Name(test.wantStatus))
+					nfs4.Nfsstat4Name(res.Status()), nfs4.Nfsstat4Name(test.wantStatus))
 			}
 		})
 	}
@@ -2439,9 +2441,9 @@ func TestOpenInvalidNamesRejected(t *testing.T) {
 		component  []byte
 		wantStatus uint32
 	}{
-		{"empty", nil, NFS4ERR_INVAL},
-		{"too long", longName, NFS4ERR_NAMETOOLONG},
-		{"dot", []byte("."), NFS4ERR_BADNAME},
+		{"empty", nil, nfs4.NFS4ERR_INVAL},
+		{"too long", longName, nfs4.NFS4ERR_NAMETOOLONG},
+		{"dot", []byte("."), nfs4.NFS4ERR_BADNAME},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -2453,17 +2455,17 @@ func TestOpenInvalidNamesRejected(t *testing.T) {
 
 			xid := uint32(1)
 			clientID := setupClient(t, conn, &xid)
-			res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+			res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 				w.AppendArgarray_Putrootfh()
 				ow := w.AppendArgarray_Open()
-				ow.SetShareAccess(OPEN4_SHARE_ACCESS_READ)
-				ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
+				ow.SetShareAccess(nfs4.OPEN4_SHARE_ACCESS_READ)
+				ow.SetShareDeny(nfs4.OPEN4_SHARE_DENY_NONE)
 				owner := ow.StartOwner()
 				owner = owner.SetClientid(clientID)
 				owner = owner.SetOwner([]byte("name-test"))
 				buf := owner.Finish()
 				ow.Resume(buf)
-				ow.SetOpenhow_Default(OPEN4_NOCREATE)
+				ow.SetOpenhow_Default(nfs4.OPEN4_NOCREATE)
 				claim := ow.SetClaim_Null()
 				buf = claim.SetData(test.component).Finish()
 				ow.Resume(buf)
@@ -2471,7 +2473,7 @@ func TestOpenInvalidNamesRejected(t *testing.T) {
 			})
 			if res.Status() != test.wantStatus {
 				t.Fatalf("status = %s, want %s",
-					Nfsstat4Name(res.Status()), Nfsstat4Name(test.wantStatus))
+					nfs4.Nfsstat4Name(res.Status()), nfs4.Nfsstat4Name(test.wantStatus))
 			}
 		})
 	}
@@ -2480,11 +2482,11 @@ func TestOpenInvalidNamesRejected(t *testing.T) {
 func TestEmptyComponentsRejected(t *testing.T) {
 	tests := []struct {
 		name  string
-		build func(*COMPOUND4argsWriter)
+		build func(*nfs4.COMPOUND4argsWriter)
 	}{
 		{
 			name: "lookup",
-			build: func(w *COMPOUND4argsWriter) {
+			build: func(w *nfs4.COMPOUND4argsWriter) {
 				w.AppendArgarray_Putrootfh()
 				lw := w.AppendArgarray_Lookup()
 				nw := lw.StartObjname()
@@ -2495,7 +2497,7 @@ func TestEmptyComponentsRejected(t *testing.T) {
 		},
 		{
 			name: "remove",
-			build: func(w *COMPOUND4argsWriter) {
+			build: func(w *nfs4.COMPOUND4argsWriter) {
 				w.AppendArgarray_Putrootfh()
 				rw := w.AppendArgarray_Remove()
 				tw := rw.StartTarget()
@@ -2506,7 +2508,7 @@ func TestEmptyComponentsRejected(t *testing.T) {
 		},
 		{
 			name: "secinfo",
-			build: func(w *COMPOUND4argsWriter) {
+			build: func(w *nfs4.COMPOUND4argsWriter) {
 				w.AppendArgarray_Putrootfh()
 				sw := w.AppendArgarray_Secinfo()
 				nw := sw.StartName()
@@ -2526,9 +2528,9 @@ func TestEmptyComponentsRejected(t *testing.T) {
 			defer conn.Close()
 
 			res := sendCompound(t, conn, 1, test.build)
-			if res.Status() != NFS4ERR_INVAL {
+			if res.Status() != nfs4.NFS4ERR_INVAL {
 				t.Fatalf("status = %s, want NFS4ERR_INVAL",
-					Nfsstat4Name(res.Status()))
+					nfs4.Nfsstat4Name(res.Status()))
 			}
 		})
 	}
@@ -2541,13 +2543,13 @@ func TestLookuppAtRootRejected(t *testing.T) {
 	conn := dial(t, addr)
 	defer conn.Close()
 
-	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		w.AppendArgarray_Lookupp()
 	})
-	if res.Status() != NFS4ERR_NOENT {
+	if res.Status() != nfs4.NFS4ERR_NOENT {
 		t.Fatalf("status = %s, want NFS4ERR_NOENT",
-			Nfsstat4Name(res.Status()))
+			nfs4.Nfsstat4Name(res.Status()))
 	}
 }
 
@@ -2558,7 +2560,7 @@ func TestSecinfoRequiresExistingName(t *testing.T) {
 	conn := dial(t, addr)
 	defer conn.Close()
 
-	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		sw := w.AppendArgarray_Secinfo()
 		nw := sw.StartName()
@@ -2566,9 +2568,9 @@ func TestSecinfoRequiresExistingName(t *testing.T) {
 		sw.Resume(buf)
 		w.Resume(sw.Finish())
 	})
-	if res.Status() != NFS4ERR_NOENT {
+	if res.Status() != nfs4.NFS4ERR_NOENT {
 		t.Fatalf("status = %s, want NFS4ERR_NOENT",
-			Nfsstat4Name(res.Status()))
+			nfs4.Nfsstat4Name(res.Status()))
 	}
 }
 
@@ -2585,48 +2587,48 @@ func TestCreateInvalidFieldsRejected(t *testing.T) {
 		{
 			name:       "empty object name",
 			objname:    nil,
-			wantStatus: NFS4ERR_INVAL,
+			wantStatus: nfs4.NFS4ERR_INVAL,
 		},
 		{
 			name:          "symlink target",
 			objname:       []byte("link"),
 			symlink:       true,
 			symlinkTarget: nil,
-			wantStatus:    NFS4ERR_INVAL,
+			wantStatus:    nfs4.NFS4ERR_INVAL,
 		},
 		{
 			name:          "maximum symlink target",
 			objname:       []byte("link"),
 			symlink:       true,
 			symlinkTarget: maxSymlinkTarget,
-			wantStatus:    NFS4_OK,
+			wantStatus:    nfs4.NFS4_OK,
 		},
 		{
 			name:          "long symlink target",
 			objname:       []byte("link"),
 			symlink:       true,
 			symlinkTarget: longSymlinkTarget,
-			wantStatus:    NFS4ERR_NAMETOOLONG,
+			wantStatus:    nfs4.NFS4ERR_NAMETOOLONG,
 		},
 		{
 			name:       "dot",
 			objname:    []byte("."),
-			wantStatus: NFS4ERR_BADNAME,
+			wantStatus: nfs4.NFS4ERR_BADNAME,
 		},
 		{
 			name:       "dot dot",
 			objname:    []byte(".."),
-			wantStatus: NFS4ERR_BADNAME,
+			wantStatus: nfs4.NFS4ERR_BADNAME,
 		},
 		{
 			name:       "slash",
 			objname:    []byte("foo/bar"),
-			wantStatus: NFS4ERR_BADNAME,
+			wantStatus: nfs4.NFS4ERR_BADNAME,
 		},
 		{
 			name:       "nul",
 			objname:    []byte{'f', 'o', 'o', 0, 'b', 'a', 'r'},
-			wantStatus: NFS4ERR_BADNAME,
+			wantStatus: nfs4.NFS4ERR_BADNAME,
 		},
 	}
 
@@ -2638,7 +2640,7 @@ func TestCreateInvalidFieldsRejected(t *testing.T) {
 			conn := dial(t, addr)
 			defer conn.Close()
 
-			res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+			res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 				w.AppendArgarray_Putrootfh()
 				cw := w.AppendArgarray_Create()
 				if test.symlink {
@@ -2663,7 +2665,7 @@ func TestCreateInvalidFieldsRejected(t *testing.T) {
 			})
 			if res.Status() != test.wantStatus {
 				t.Fatalf("status = %s, want %s",
-					Nfsstat4Name(res.Status()), Nfsstat4Name(test.wantStatus))
+					nfs4.Nfsstat4Name(res.Status()), nfs4.Nfsstat4Name(test.wantStatus))
 			}
 		})
 	}
@@ -2678,20 +2680,20 @@ func TestCreateTypeAndAttributesValidated(t *testing.T) {
 	}{
 		{
 			name:       "regular file type",
-			objType:    NF4REG,
-			wantStatus: NFS4ERR_BADTYPE,
+			objType:    nfs4.NF4REG,
+			wantStatus: nfs4.NFS4ERR_BADTYPE,
 		},
 		{
 			name:       "read-only attribute",
-			objType:    NF4DIR,
-			mask:       attrMask{1 << FATTR4_LINK_SUPPORT, 0},
-			wantStatus: NFS4ERR_INVAL,
+			objType:    nfs4.NF4DIR,
+			mask:       attrMask{1 << nfs4.FATTR4_LINK_SUPPORT, 0},
+			wantStatus: nfs4.NFS4ERR_INVAL,
 		},
 		{
 			name:       "unsupported writable attribute",
-			objType:    NF4DIR,
-			mask:       attrMask{1 << FATTR4_ACL, 0},
-			wantStatus: NFS4ERR_ATTRNOTSUPP,
+			objType:    nfs4.NF4DIR,
+			mask:       attrMask{1 << nfs4.FATTR4_ACL, 0},
+			wantStatus: nfs4.NFS4ERR_ATTRNOTSUPP,
 		},
 	}
 
@@ -2703,7 +2705,7 @@ func TestCreateTypeAndAttributesValidated(t *testing.T) {
 			conn := dial(t, addr)
 			defer conn.Close()
 
-			res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+			res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 				w.AppendArgarray_Putrootfh()
 				cw := w.AppendArgarray_Create()
 				cw.SetObjtype_Default(test.objType)
@@ -2717,7 +2719,7 @@ func TestCreateTypeAndAttributesValidated(t *testing.T) {
 			})
 			if res.Status() != test.wantStatus {
 				t.Fatalf("status = %s, want %s",
-					Nfsstat4Name(res.Status()), Nfsstat4Name(test.wantStatus))
+					nfs4.Nfsstat4Name(res.Status()), nfs4.Nfsstat4Name(test.wantStatus))
 			}
 		})
 	}
@@ -2731,14 +2733,14 @@ func TestCreateExistingNameRejected(t *testing.T) {
 	}{
 		{
 			name:    "directory",
-			objType: NF4DIR,
+			objType: nfs4.NF4DIR,
 			setup: func(path string) error {
 				return os.Mkdir(path, 0755)
 			},
 		},
 		{
 			name:    "symlink",
-			objType: NF4LNK,
+			objType: nfs4.NF4LNK,
 			setup: func(path string) error {
 				return os.Symlink("target", path)
 			},
@@ -2756,10 +2758,10 @@ func TestCreateExistingNameRejected(t *testing.T) {
 			conn := dial(t, addr)
 			defer conn.Close()
 
-			res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+			res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 				w.AppendArgarray_Putrootfh()
 				cw := w.AppendArgarray_Create()
-				if test.objType == NF4LNK {
+				if test.objType == nfs4.NF4LNK {
 					tw := cw.SetObjtype_Nf4lnk()
 					buf := tw.SetData([]byte("target")).Finish()
 					cw.Resume(buf)
@@ -2774,9 +2776,9 @@ func TestCreateExistingNameRejected(t *testing.T) {
 				cw.Resume(buf)
 				w.Resume(cw.Finish())
 			})
-			if res.Status() != NFS4ERR_EXIST {
+			if res.Status() != nfs4.NFS4ERR_EXIST {
 				t.Fatalf("status = %s, want NFS4ERR_EXIST",
-					Nfsstat4Name(res.Status()))
+					nfs4.Nfsstat4Name(res.Status()))
 			}
 		})
 	}
@@ -2791,24 +2793,24 @@ func TestOpenCreateAttributesValidated(t *testing.T) {
 	}{
 		{
 			name:       "read-only attribute",
-			mask:       attrMask{1 << FATTR4_LINK_SUPPORT, 0},
-			wantStatus: NFS4ERR_INVAL,
+			mask:       attrMask{1 << nfs4.FATTR4_LINK_SUPPORT, 0},
+			wantStatus: nfs4.NFS4ERR_INVAL,
 		},
 		{
 			name:       "unsupported writable attribute",
-			mask:       attrMask{1 << FATTR4_ACL, 0},
-			wantStatus: NFS4ERR_ATTRNOTSUPP,
+			mask:       attrMask{1 << nfs4.FATTR4_ACL, 0},
+			wantStatus: nfs4.NFS4ERR_ATTRNOTSUPP,
 		},
 		{
 			name:       "size missing data",
-			mask:       attrMask{1 << FATTR4_SIZE, 0},
-			wantStatus: NFS4ERR_BADXDR,
+			mask:       attrMask{1 << nfs4.FATTR4_SIZE, 0},
+			wantStatus: nfs4.NFS4ERR_BADXDR,
 		},
 		{
 			name:       "size exceeds signed backend range",
-			mask:       attrMask{1 << FATTR4_SIZE, 0},
+			mask:       attrMask{1 << nfs4.FATTR4_SIZE, 0},
 			attrData:   []byte{0x80, 0, 0, 0, 0, 0, 0, 0},
-			wantStatus: NFS4ERR_FBIG,
+			wantStatus: nfs4.NFS4ERR_FBIG,
 		},
 	}
 
@@ -2822,11 +2824,11 @@ func TestOpenCreateAttributesValidated(t *testing.T) {
 			xid := uint32(1)
 			clientID := setupClient(t, conn, &xid)
 
-			res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+			res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 				w.AppendArgarray_Putrootfh()
 				ow := w.AppendArgarray_Open()
-				ow.SetShareAccess(OPEN4_SHARE_ACCESS_BOTH)
-				ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
+				ow.SetShareAccess(nfs4.OPEN4_SHARE_ACCESS_BOTH)
+				ow.SetShareDeny(nfs4.OPEN4_SHARE_DENY_NONE)
 				owner := ow.StartOwner()
 				owner = owner.SetClientid(clientID)
 				owner = owner.SetOwner([]byte("attr-test"))
@@ -2844,7 +2846,7 @@ func TestOpenCreateAttributesValidated(t *testing.T) {
 			})
 			if res.Status() != test.wantStatus {
 				t.Fatalf("status = %s, want %s",
-					Nfsstat4Name(res.Status()), Nfsstat4Name(test.wantStatus))
+					nfs4.Nfsstat4Name(res.Status()), nfs4.Nfsstat4Name(test.wantStatus))
 			}
 		})
 	}
@@ -2880,7 +2882,7 @@ func TestCreateFromNonDirectoryRejected(t *testing.T) {
 			conn := dial(t, addr)
 			defer conn.Close()
 
-			res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+			res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 				w.AppendArgarray_Putrootfh()
 				lw := w.AppendArgarray_Lookup()
 				nw := lw.StartObjname()
@@ -2903,9 +2905,9 @@ func TestCreateFromNonDirectoryRejected(t *testing.T) {
 				cw.Resume(faw.Finish())
 				w.Resume(cw.Finish())
 			})
-			if res.Status() != NFS4ERR_NOTDIR {
+			if res.Status() != nfs4.NFS4ERR_NOTDIR {
 				t.Fatalf("status = %s, want NFS4ERR_NOTDIR",
-					Nfsstat4Name(res.Status()))
+					nfs4.Nfsstat4Name(res.Status()))
 			}
 		})
 	}
@@ -2918,23 +2920,23 @@ func TestCurrentFilehandleTypeValidation(t *testing.T) {
 		operation  string
 		wantStatus uint32
 	}{
-		{"lookup from file", "file", "lookup", NFS4ERR_NOTDIR},
-		{"lookup from symlink", "link", "lookup", NFS4ERR_SYMLINK},
-		{"lookupp from file", "file", "lookupp", NFS4ERR_NOTDIR},
-		{"lookupp from symlink", "link", "lookupp", NFS4ERR_SYMLINK},
-		{"commit directory", "dir", "commit", NFS4ERR_ISDIR},
-		{"commit symlink", "link", "commit", NFS4ERR_INVAL},
-		{"read directory", "dir", "read", NFS4ERR_ISDIR},
-		{"read symlink", "link", "read", NFS4ERR_INVAL},
-		{"write directory", "dir", "write", NFS4ERR_ISDIR},
-		{"write symlink", "link", "write", NFS4ERR_INVAL},
-		{"readdir file", "file", "readdir", NFS4ERR_NOTDIR},
-		{"readdir symlink", "link", "readdir", NFS4ERR_SYMLINK},
-		{"readlink file", "file", "readlink", NFS4ERR_INVAL},
-		{"readlink directory", "dir", "readlink", NFS4ERR_INVAL},
-		{"remove from file", "file", "remove", NFS4ERR_NOTDIR},
-		{"remove from symlink", "link", "remove", NFS4ERR_SYMLINK},
-		{"secinfo from file", "file", "secinfo", NFS4ERR_NOTDIR},
+		{"lookup from file", "file", "lookup", nfs4.NFS4ERR_NOTDIR},
+		{"lookup from symlink", "link", "lookup", nfs4.NFS4ERR_SYMLINK},
+		{"lookupp from file", "file", "lookupp", nfs4.NFS4ERR_NOTDIR},
+		{"lookupp from symlink", "link", "lookupp", nfs4.NFS4ERR_SYMLINK},
+		{"commit directory", "dir", "commit", nfs4.NFS4ERR_ISDIR},
+		{"commit symlink", "link", "commit", nfs4.NFS4ERR_INVAL},
+		{"read directory", "dir", "read", nfs4.NFS4ERR_ISDIR},
+		{"read symlink", "link", "read", nfs4.NFS4ERR_INVAL},
+		{"write directory", "dir", "write", nfs4.NFS4ERR_ISDIR},
+		{"write symlink", "link", "write", nfs4.NFS4ERR_INVAL},
+		{"readdir file", "file", "readdir", nfs4.NFS4ERR_NOTDIR},
+		{"readdir symlink", "link", "readdir", nfs4.NFS4ERR_SYMLINK},
+		{"readlink file", "file", "readlink", nfs4.NFS4ERR_INVAL},
+		{"readlink directory", "dir", "readlink", nfs4.NFS4ERR_INVAL},
+		{"remove from file", "file", "remove", nfs4.NFS4ERR_NOTDIR},
+		{"remove from symlink", "link", "remove", nfs4.NFS4ERR_SYMLINK},
+		{"secinfo from file", "file", "secinfo", nfs4.NFS4ERR_NOTDIR},
 	}
 
 	for _, test := range tests {
@@ -2955,7 +2957,7 @@ func TestCurrentFilehandleTypeValidation(t *testing.T) {
 			conn := dial(t, addr)
 			defer conn.Close()
 
-			res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+			res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 				w.AppendArgarray_Putrootfh()
 				lw := w.AppendArgarray_Lookup()
 				nw := lw.StartObjname()
@@ -3009,7 +3011,7 @@ func TestCurrentFilehandleTypeValidation(t *testing.T) {
 			})
 			if res.Status() != test.wantStatus {
 				t.Fatalf("status = %s, want %s",
-					Nfsstat4Name(res.Status()), Nfsstat4Name(test.wantStatus))
+					nfs4.Nfsstat4Name(res.Status()), nfs4.Nfsstat4Name(test.wantStatus))
 			}
 		})
 	}
@@ -3022,10 +3024,10 @@ func TestRenameDirectoryFilehandlesValidated(t *testing.T) {
 		object     string
 		wantStatus uint32
 	}{
-		{"file source", true, "file", NFS4ERR_NOTDIR},
-		{"symlink source", true, "link", NFS4ERR_SYMLINK},
-		{"file target", false, "file", NFS4ERR_NOTDIR},
-		{"symlink target", false, "link", NFS4ERR_SYMLINK},
+		{"file source", true, "file", nfs4.NFS4ERR_NOTDIR},
+		{"symlink source", true, "link", nfs4.NFS4ERR_SYMLINK},
+		{"file target", false, "file", nfs4.NFS4ERR_NOTDIR},
+		{"symlink target", false, "link", nfs4.NFS4ERR_SYMLINK},
 	}
 
 	for _, test := range tests {
@@ -3042,7 +3044,7 @@ func TestRenameDirectoryFilehandlesValidated(t *testing.T) {
 			conn := dial(t, addr)
 			defer conn.Close()
 
-			res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+			res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 				w.AppendArgarray_Putrootfh()
 				if test.badSource {
 					lw := w.AppendArgarray_Lookup()
@@ -3072,7 +3074,7 @@ func TestRenameDirectoryFilehandlesValidated(t *testing.T) {
 			})
 			if res.Status() != test.wantStatus {
 				t.Fatalf("status = %s, want %s",
-					Nfsstat4Name(res.Status()), Nfsstat4Name(test.wantStatus))
+					nfs4.Nfsstat4Name(res.Status()), nfs4.Nfsstat4Name(test.wantStatus))
 			}
 		})
 	}
@@ -3085,10 +3087,10 @@ func TestOpenFilehandleTypesValidated(t *testing.T) {
 		target     string
 		wantStatus uint32
 	}{
-		{"file current filehandle", "file", "child", NFS4ERR_NOTDIR},
-		{"symlink current filehandle", "link", "child", NFS4ERR_SYMLINK},
-		{"directory target", "", "dir", NFS4ERR_ISDIR},
-		{"symlink target", "", "link", NFS4ERR_SYMLINK},
+		{"file current filehandle", "file", "child", nfs4.NFS4ERR_NOTDIR},
+		{"symlink current filehandle", "link", "child", nfs4.NFS4ERR_SYMLINK},
+		{"directory target", "", "dir", nfs4.NFS4ERR_ISDIR},
+		{"symlink target", "", "link", nfs4.NFS4ERR_SYMLINK},
 	}
 
 	for _, test := range tests {
@@ -3111,7 +3113,7 @@ func TestOpenFilehandleTypesValidated(t *testing.T) {
 			xid := uint32(1)
 			clientID := setupClient(t, conn, &xid)
 
-			res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+			res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 				w.AppendArgarray_Putrootfh()
 				if test.current != "" {
 					lw := w.AppendArgarray_Lookup()
@@ -3122,14 +3124,14 @@ func TestOpenFilehandleTypesValidated(t *testing.T) {
 				}
 
 				ow := w.AppendArgarray_Open()
-				ow.SetShareAccess(OPEN4_SHARE_ACCESS_READ)
-				ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
+				ow.SetShareAccess(nfs4.OPEN4_SHARE_ACCESS_READ)
+				ow.SetShareDeny(nfs4.OPEN4_SHARE_DENY_NONE)
 				owner := ow.StartOwner()
 				owner = owner.SetClientid(clientID)
 				owner = owner.SetOwner([]byte("type-test"))
 				buf := owner.Finish()
 				ow.Resume(buf)
-				ow.SetOpenhow_Default(OPEN4_NOCREATE)
+				ow.SetOpenhow_Default(nfs4.OPEN4_NOCREATE)
 				claim := ow.SetClaim_Null()
 				buf = claim.SetData([]byte(test.target)).Finish()
 				ow.Resume(buf)
@@ -3137,7 +3139,7 @@ func TestOpenFilehandleTypesValidated(t *testing.T) {
 			})
 			if res.Status() != test.wantStatus {
 				t.Fatalf("status = %s, want %s",
-					Nfsstat4Name(res.Status()), Nfsstat4Name(test.wantStatus))
+					nfs4.Nfsstat4Name(res.Status()), nfs4.Nfsstat4Name(test.wantStatus))
 			}
 		})
 	}
@@ -3151,18 +3153,18 @@ func TestNoFilehandle(t *testing.T) {
 	defer conn.Close()
 
 	// GETATTR without setting a filehandle first.
-	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 		gw := w.AppendArgarray_Getattr()
 		bw := gw.StartAttrRequest()
-		bw.AppendData(1 << FATTR4_TYPE)
+		bw.AppendData(1 << nfs4.FATTR4_TYPE)
 		buf := bw.Finish()
 		gw.Resume(buf)
 		buf = gw.Finish()
 		w.Resume(buf)
 	})
 
-	if res.Status() != NFS4ERR_NOFILEHANDLE {
-		t.Fatalf("status = %d, want NFS4ERR_NOFILEHANDLE (%d)", res.Status(), NFS4ERR_NOFILEHANDLE)
+	if res.Status() != nfs4.NFS4ERR_NOFILEHANDLE {
+		t.Fatalf("status = %d, want NFS4ERR_NOFILEHANDLE (%d)", res.Status(), nfs4.NFS4ERR_NOFILEHANDLE)
 	}
 }
 
@@ -3175,7 +3177,7 @@ func TestCompoundStopsOnError(t *testing.T) {
 
 	// PUTROOTFH + LOOKUP(nonexistent) + GETFH
 	// The GETFH should NOT execute because LOOKUP fails.
-	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 
 		lw := w.AppendArgarray_Lookup()
@@ -3188,7 +3190,7 @@ func TestCompoundStopsOnError(t *testing.T) {
 		w.AppendArgarray_Getfh()
 	})
 
-	if res.Status() != NFS4ERR_NOENT {
+	if res.Status() != nfs4.NFS4ERR_NOENT {
 		t.Fatalf("status = %d, want NFS4ERR_NOENT", res.Status())
 	}
 	// Only PUTROOTFH + LOOKUP should be in the result (GETFH skipped).
@@ -3207,7 +3209,7 @@ func TestSubdirNavigation(t *testing.T) {
 	conn := dial(t, addr)
 	defer conn.Close()
 
-	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 
 		for _, name := range []string{"a", "b", "c", "deep.txt"} {
@@ -3245,12 +3247,12 @@ func TestGetattr_RootType(t *testing.T) {
 	defer conn.Close()
 
 	// Request type attribute for root — should be NF4DIR (2).
-	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 
 		gw := w.AppendArgarray_Getattr()
 		bw := gw.StartAttrRequest()
-		bw.AppendData(1 << FATTR4_TYPE)
+		bw.AppendData(1 << nfs4.FATTR4_TYPE)
 		buf := bw.Finish()
 		gw.Resume(buf)
 		buf = gw.Finish()
@@ -3261,7 +3263,7 @@ func TestGetattr_RootType(t *testing.T) {
 	nextOp(t, &iter) // PUTROOTFH
 	entry := nextOp(t, &iter)
 	getattrRes := entry.Value().AsGETATTR4resEntry()
-	if getattrRes.Disc() != NFS4_OK {
+	if getattrRes.Disc() != nfs4.NFS4_OK {
 		t.Fatalf("GETATTR status = %d", getattrRes.Disc())
 	}
 	// Parse the attribute data manually.
@@ -3286,7 +3288,7 @@ func TestGetattr_FileSize(t *testing.T) {
 	conn := dial(t, addr)
 	defer conn.Close()
 
-	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 
 		lw := w.AppendArgarray_Lookup()
@@ -3298,7 +3300,7 @@ func TestGetattr_FileSize(t *testing.T) {
 
 		gw := w.AppendArgarray_Getattr()
 		bw := gw.StartAttrRequest()
-		bw.AppendData(1 << FATTR4_SIZE)
+		bw.AppendData(1 << nfs4.FATTR4_SIZE)
 		buf = bw.Finish()
 		gw.Resume(buf)
 		buf = gw.Finish()
@@ -3331,7 +3333,7 @@ func TestGetattr_Mode(t *testing.T) {
 	defer conn.Close()
 
 	// Check file mode = 0444.
-	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 
 		lw := w.AppendArgarray_Lookup()
@@ -3344,7 +3346,7 @@ func TestGetattr_Mode(t *testing.T) {
 		gw := w.AppendArgarray_Getattr()
 		bw := gw.StartAttrRequest()
 		bw.AppendData(0)
-		bw.AppendData(1 << (FATTR4_MODE - 32))
+		bw.AppendData(1 << (nfs4.FATTR4_MODE - 32))
 		buf = bw.Finish()
 		gw.Resume(buf)
 		buf = gw.Finish()
@@ -3365,13 +3367,13 @@ func TestGetattr_Mode(t *testing.T) {
 	}
 
 	// Check dir mode = 0555.
-	res = sendCompound(t, conn, 2, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, 2, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 
 		gw := w.AppendArgarray_Getattr()
 		bw := gw.StartAttrRequest()
 		bw.AppendData(0)
-		bw.AppendData(1 << (FATTR4_MODE - 32))
+		bw.AppendData(1 << (nfs4.FATTR4_MODE - 32))
 		buf := bw.Finish()
 		gw.Resume(buf)
 		buf = gw.Finish()
@@ -3397,7 +3399,7 @@ func TestGetattr_Symlink(t *testing.T) {
 	conn := dial(t, addr)
 	defer conn.Close()
 
-	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 
 		lw := w.AppendArgarray_Lookup()
@@ -3409,7 +3411,7 @@ func TestGetattr_Symlink(t *testing.T) {
 
 		gw := w.AppendArgarray_Getattr()
 		bw := gw.StartAttrRequest()
-		bw.AppendData(1 << FATTR4_TYPE)
+		bw.AppendData(1 << nfs4.FATTR4_TYPE)
 		buf = bw.Finish()
 		gw.Resume(buf)
 		buf = gw.Finish()
@@ -3440,7 +3442,7 @@ func TestMultipleCompoundsOnConnection(t *testing.T) {
 	// Send multiple compounds on the same connection.
 	for i, name := range []string{"a.txt", "b.txt"} {
 		expected := string(name[0]) + string(name[0]) + string(name[0])
-		res := sendCompound(t, conn, uint32(i+1), func(w *COMPOUND4argsWriter) {
+		res := sendCompound(t, conn, uint32(i+1), func(w *nfs4.COMPOUND4argsWriter) {
 			w.AppendArgarray_Putrootfh()
 
 			lw := w.AppendArgarray_Lookup()
@@ -3485,7 +3487,7 @@ func TestLargeFileRead(t *testing.T) {
 	setupXID := uint32(1)
 	setupClient(t, conn, &setupXID)
 	ts := testSessionForConn(conn)
-	body := buildCompoundBody(nil, func(w *COMPOUND4argsWriter) {
+	body := buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 
 		lw := w.AppendArgarray_Lookup()
@@ -3535,12 +3537,12 @@ func TestGetattr_SupportedAttrs(t *testing.T) {
 	defer conn.Close()
 
 	// Request supported_attrs — verify bitmap is returned.
-	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 
 		gw := w.AppendArgarray_Getattr()
 		bw := gw.StartAttrRequest()
-		bw.AppendData(1 << FATTR4_SUPPORTED_ATTRS)
+		bw.AppendData(1 << nfs4.FATTR4_SUPPORTED_ATTRS)
 		buf := bw.Finish()
 		gw.Resume(buf)
 		buf = gw.Finish()
@@ -3587,7 +3589,7 @@ func TestGetattr_MultipleAttrs(t *testing.T) {
 	defer conn.Close()
 
 	// Request type + size + change + fileid — verify all are present.
-	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 
 		lw := w.AppendArgarray_Lookup()
@@ -3599,7 +3601,7 @@ func TestGetattr_MultipleAttrs(t *testing.T) {
 
 		gw := w.AppendArgarray_Getattr()
 		bw := gw.StartAttrRequest()
-		bw.AppendData(1<<FATTR4_TYPE | 1<<FATTR4_SIZE | 1<<FATTR4_CHANGE | 1<<FATTR4_FILEID)
+		bw.AppendData(1<<nfs4.FATTR4_TYPE | 1<<nfs4.FATTR4_SIZE | 1<<nfs4.FATTR4_CHANGE | 1<<nfs4.FATTR4_FILEID)
 		buf = bw.Finish()
 		gw.Resume(buf)
 		buf = gw.Finish()
@@ -3648,8 +3650,8 @@ func TestGetattrAttributeMaskValidation(t *testing.T) {
 		mask       attrMask
 		wantStatus uint32
 	}{
-		{"write-only time_access_set", attrMask{0, 1 << (FATTR4_TIME_ACCESS_SET - 32)}, NFS4ERR_INVAL},
-		{"rdattr_error", attrMask{1 << FATTR4_RDATTR_ERROR, 0}, NFS4_OK},
+		{"write-only time_access_set", attrMask{0, 1 << (nfs4.FATTR4_TIME_ACCESS_SET - 32)}, nfs4.NFS4ERR_INVAL},
+		{"rdattr_error", attrMask{1 << nfs4.FATTR4_RDATTR_ERROR, 0}, nfs4.NFS4_OK},
 	}
 
 	for _, test := range tests {
@@ -3660,7 +3662,7 @@ func TestGetattrAttributeMaskValidation(t *testing.T) {
 			conn := dial(t, addr)
 			defer conn.Close()
 
-			res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+			res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 				w.AppendArgarray_Putrootfh()
 				gw := w.AppendArgarray_Getattr()
 				bw := gw.StartAttrRequest()
@@ -3675,7 +3677,7 @@ func TestGetattrAttributeMaskValidation(t *testing.T) {
 
 			if res.Status() != test.wantStatus {
 				t.Fatalf("status = %s, want %s",
-					Nfsstat4Name(res.Status()), Nfsstat4Name(test.wantStatus))
+					nfs4.Nfsstat4Name(res.Status()), nfs4.Nfsstat4Name(test.wantStatus))
 			}
 		})
 	}
@@ -3689,12 +3691,12 @@ func TestVerifyAttributeMaskValidation(t *testing.T) {
 		values     []byte
 		wantStatus uint32
 	}{
-		{"verify type", false, attrMask{1 << FATTR4_TYPE, 0}, binary.BigEndian.AppendUint32(nil, NF4DIR), NFS4_OK},
-		{"nverify type", true, attrMask{1 << FATTR4_TYPE, 0}, binary.BigEndian.AppendUint32(nil, NF4REG), NFS4_OK},
-		{"verify rdattr_error", false, attrMask{1 << FATTR4_RDATTR_ERROR, 0}, make([]byte, 4), NFS4ERR_INVAL},
-		{"nverify rdattr_error", true, attrMask{1 << FATTR4_RDATTR_ERROR, 0}, make([]byte, 4), NFS4ERR_INVAL},
-		{"verify unsupported acl", false, attrMask{1 << FATTR4_ACL, 0}, make([]byte, 4), NFS4ERR_ATTRNOTSUPP},
-		{"nverify unsupported acl", true, attrMask{1 << FATTR4_ACL, 0}, make([]byte, 4), NFS4ERR_ATTRNOTSUPP},
+		{"verify type", false, attrMask{1 << nfs4.FATTR4_TYPE, 0}, binary.BigEndian.AppendUint32(nil, nfs4.NF4DIR), nfs4.NFS4_OK},
+		{"nverify type", true, attrMask{1 << nfs4.FATTR4_TYPE, 0}, binary.BigEndian.AppendUint32(nil, nfs4.NF4REG), nfs4.NFS4_OK},
+		{"verify rdattr_error", false, attrMask{1 << nfs4.FATTR4_RDATTR_ERROR, 0}, make([]byte, 4), nfs4.NFS4ERR_INVAL},
+		{"nverify rdattr_error", true, attrMask{1 << nfs4.FATTR4_RDATTR_ERROR, 0}, make([]byte, 4), nfs4.NFS4ERR_INVAL},
+		{"verify unsupported acl", false, attrMask{1 << nfs4.FATTR4_ACL, 0}, make([]byte, 4), nfs4.NFS4ERR_ATTRNOTSUPP},
+		{"nverify unsupported acl", true, attrMask{1 << nfs4.FATTR4_ACL, 0}, make([]byte, 4), nfs4.NFS4ERR_ATTRNOTSUPP},
 	}
 
 	for _, test := range tests {
@@ -3705,7 +3707,7 @@ func TestVerifyAttributeMaskValidation(t *testing.T) {
 			conn := dial(t, addr)
 			defer conn.Close()
 
-			res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+			res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 				w.AppendArgarray_Putrootfh()
 
 				if test.nverify {
@@ -3725,13 +3727,13 @@ func TestVerifyAttributeMaskValidation(t *testing.T) {
 
 			if res.Status() != test.wantStatus {
 				t.Fatalf("status = %s, want %s",
-					Nfsstat4Name(res.Status()), Nfsstat4Name(test.wantStatus))
+					nfs4.Nfsstat4Name(res.Status()), nfs4.Nfsstat4Name(test.wantStatus))
 			}
 		})
 	}
 }
 
-func finishTestFattr(w Fattr4Writer, mask attrMask, values []byte) []byte {
+func finishTestFattr(w nfs4.Fattr4Writer, mask attrMask, values []byte) []byte {
 	bw := w.StartAttrmask()
 	bw.AppendData(mask[0])
 	if mask[1] != 0 {
@@ -3760,7 +3762,7 @@ func TestWriteAndRead(t *testing.T) {
 
 	// WRITE to the file.
 	writeData := []byte("hello world from NFS write!")
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pw := w.AppendArgarray_Putfh()
 		fhW := pw.StartObject()
 		buf := fhW.SetData(fh).Finish()
@@ -3782,7 +3784,7 @@ func TestWriteAndRead(t *testing.T) {
 	nextOp(t, &iter) // PUTFH
 	entry := nextOp(t, &iter)
 	writeRes := entry.Value().AsWRITE4resEntry()
-	if writeRes.Disc() != NFS4_OK {
+	if writeRes.Disc() != nfs4.NFS4_OK {
 		t.Fatalf("WRITE status = %d", writeRes.Disc())
 	}
 	writeOk := writeRes.Value().AsWRITE4resok()
@@ -3795,7 +3797,7 @@ func TestWriteAndRead(t *testing.T) {
 
 	// The anonymous stateid is valid for WRITE as well as READ.
 	anonymousData := []byte(" anonymous")
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pw := w.AppendArgarray_Putfh()
 		buf := pw.StartObject().SetData(fh).Finish()
 		pw.Resume(buf)
@@ -3839,7 +3841,7 @@ func TestStagedFileGetattrAndRead(t *testing.T) {
 
 	// Write some data using the open stateid.
 	writeData := []byte("staged content here!")
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pw := w.AppendArgarray_Putfh()
 		fhW := pw.StartObject()
 		buf := fhW.SetData(fh).Finish()
@@ -3859,7 +3861,7 @@ func TestStagedFileGetattrAndRead(t *testing.T) {
 	expectOK(t, res)
 
 	// GETATTR should reflect the staged size, not the empty VFS file.
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pw := w.AppendArgarray_Putfh()
 		fhW := pw.StartObject()
 		buf := fhW.SetData(fh).Finish()
@@ -3869,7 +3871,7 @@ func TestStagedFileGetattrAndRead(t *testing.T) {
 
 		gw := w.AppendArgarray_Getattr()
 		bw := gw.StartAttrRequest()
-		bw.AppendData(1 << FATTR4_SIZE)
+		bw.AppendData(1 << nfs4.FATTR4_SIZE)
 		buf = bw.Finish()
 		gw.Resume(buf)
 		buf = gw.Finish()
@@ -3891,7 +3893,7 @@ func TestStagedFileGetattrAndRead(t *testing.T) {
 	}
 
 	// READ with anonymous stateid should return staged data.
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pw := w.AppendArgarray_Putfh()
 		fhW := pw.StartObject()
 		buf := fhW.SetData(fh).Finish()
@@ -3910,8 +3912,8 @@ func TestStagedFileGetattrAndRead(t *testing.T) {
 	nextOp(t, &iter) // PUTFH
 	entry = nextOp(t, &iter)
 	readRes := entry.Value().AsREAD4resEntry()
-	if readRes.Disc() != NFS4_OK {
-		t.Fatalf("READ status = %s", Nfsstat4Name(readRes.Disc()))
+	if readRes.Disc() != nfs4.NFS4_OK {
+		t.Fatalf("READ status = %s", nfs4.Nfsstat4Name(readRes.Disc()))
 	}
 	readData := readRes.Value().AsREAD4resok().Data()
 	if string(readData) != string(writeData) {
@@ -3960,7 +3962,7 @@ func TestOpenExistingForWrite(t *testing.T) {
 		t.Fatalf("published file changed before CLOSE: %q", data)
 	}
 
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pw := w.AppendArgarray_Putfh()
 		buf := pw.StartObject().SetData(fh).Finish()
 		pw.Resume(buf)
@@ -3982,7 +3984,7 @@ func TestOpenExistingForWrite(t *testing.T) {
 			readData, "oriXYZal")
 	}
 
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pw := w.AppendArgarray_Putfh()
 		buf := pw.StartObject().SetData(fh).Finish()
 		pw.Resume(buf)
@@ -4048,9 +4050,9 @@ func TestHydrationFailureDiscardsReplacement(t *testing.T) {
 	)
 	writeFileAt(t, conn, &xid, fh, stateid, 0, []byte("changed"))
 	if status := closeFileStatus(
-		t, conn, &xid, fh, stateid); status != NFS4ERR_IO {
+		t, conn, &xid, fh, stateid); status != nfs4.NFS4ERR_IO {
 		t.Fatalf("CLOSE status = %s, want NFS4ERR_IO",
-			Nfsstat4Name(status))
+			nfs4.Nfsstat4Name(status))
 	}
 
 	if stagingTargetBusyForTest(staging, fs.RootID(), "existing.txt") {
@@ -4111,7 +4113,7 @@ func TestConcurrentClosePublishesOnce(t *testing.T) {
 		ts.mu.Lock()
 		slot, seq := ts.lastSlot, ts.lastSeq
 		ts.mu.Unlock()
-		body := buildCompoundBody(nil, func(w *COMPOUND4argsWriter) {
+		body := buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
 			pw := w.AppendArgarray_Putfh()
 			pw.Resume(pw.StartObject().SetData(fh).Finish())
 			w.Resume(pw.Finish())
@@ -4129,17 +4131,17 @@ func TestConcurrentClosePublishesOnce(t *testing.T) {
 		}
 		return res.Status()
 	}
-	if status := retransmit(200); status != NFS4ERR_DELAY {
+	if status := retransmit(200); status != nfs4.NFS4ERR_DELAY {
 		t.Fatalf("retransmitted CLOSE during publication = %s, want NFS4ERR_DELAY",
-			Nfsstat4Name(status))
+			nfs4.Nfsstat4Name(status))
 	}
 	close(fs.release)
-	if status := <-statuses; status != NFS4_OK {
-		t.Fatalf("CLOSE status = %s, want NFS4_OK", Nfsstat4Name(status))
+	if status := <-statuses; status != nfs4.NFS4_OK {
+		t.Fatalf("CLOSE status = %s, want NFS4_OK", nfs4.Nfsstat4Name(status))
 	}
-	if status := retransmit(201); status != NFS4_OK {
+	if status := retransmit(201); status != nfs4.NFS4_OK {
 		t.Fatalf("retransmitted CLOSE = %s, want cached NFS4_OK",
-			Nfsstat4Name(status))
+			nfs4.Nfsstat4Name(status))
 	}
 	if got := fs.linkCount(); got != 1 {
 		t.Fatalf("LinkFile calls = %d, want 1", got)
@@ -4245,14 +4247,14 @@ func TestMutableGetattrReportsStagedSize(t *testing.T) {
 	)
 	writeFileAt(t, conn, &xid, fh, stateid, 8, []byte("XYZ"))
 
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pw := w.AppendArgarray_Putfh()
 		buf := pw.StartObject().SetData(fh).Finish()
 		pw.Resume(buf)
 		w.Resume(pw.Finish())
 		gw := w.AppendArgarray_Getattr()
 		bw := gw.StartAttrRequest()
-		bw.AppendData(1 << FATTR4_SIZE)
+		bw.AppendData(1 << nfs4.FATTR4_SIZE)
 		buf = bw.Finish()
 		gw.Resume(buf)
 		w.Resume(gw.Finish())
@@ -4291,7 +4293,7 @@ func TestReadCloseIgnoresOtherWriterStaging(t *testing.T) {
 	)
 	if status := confirmClientID(
 		t, conn, &xid, writerClient, confirm,
-	); status != NFS4_OK {
+	); status != nfs4.NFS4_OK {
 		t.Fatal("writer SETCLIENTID_CONFIRM failed")
 	}
 	readerState, readerFH := openReadFile(
@@ -4305,9 +4307,9 @@ func TestReadCloseIgnoresOtherWriterStaging(t *testing.T) {
 	)
 
 	if status := closeFileStatus(
-		t, conn, &xid, readerFH, readerState); status != NFS4_OK {
+		t, conn, &xid, readerFH, readerState); status != nfs4.NFS4_OK {
 		t.Fatalf("reader CLOSE status = %s, want NFS4_OK",
-			Nfsstat4Name(status))
+			nfs4.Nfsstat4Name(status))
 	}
 	closeFile(t, conn, &xid, writerFH, writerState)
 }
@@ -4339,7 +4341,7 @@ func TestClientRebootDoesNotDiscardOtherWriter(t *testing.T) {
 	)
 	if status := confirmClientID(
 		t, conn, &xid, writerClient, confirm,
-	); status != NFS4_OK {
+	); status != nfs4.NFS4_OK {
 		t.Fatal("writer SETCLIENTID_CONFIRM failed")
 	}
 	_, _ = openReadFile(
@@ -4357,8 +4359,8 @@ func TestClientRebootDoesNotDiscardOtherWriter(t *testing.T) {
 	)
 	if status := confirmClientID(
 		t, conn, &xid, rebootedClient, rebootConfirm,
-	); status != NFS4_OK {
-		t.Fatalf("reader reboot confirmation = %s", Nfsstat4Name(status))
+	); status != nfs4.NFS4_OK {
+		t.Fatalf("reader reboot confirmation = %s", nfs4.Nfsstat4Name(status))
 	}
 	if !stagingTargetBusyForTest(staging, fs.RootID(), "existing.txt") {
 		t.Fatal("reader reboot discarded another client's staging")
@@ -4745,7 +4747,7 @@ func TestMutableOpenPreservesMetadataOnlySetattr(t *testing.T) {
 		t, conn, &xid, clientid, "existing.txt",
 	)
 	mtime := time.Unix(1_600_000_000, 0)
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pw := w.AppendArgarray_Putfh()
 		buf := pw.StartObject().SetData(fh).Finish()
 		pw.Resume(buf)
@@ -4759,11 +4761,11 @@ func TestMutableOpenPreservesMetadataOnlySetattr(t *testing.T) {
 		faw := saw.StartObjAttributes()
 		bmW := faw.StartAttrmask()
 		bmW.AppendData(0)
-		bmW.AppendData(1 << (FATTR4_TIME_MODIFY_SET - 32))
+		bmW.AppendData(1 << (nfs4.FATTR4_TIME_MODIFY_SET - 32))
 		buf = bmW.Finish()
 		faw.Resume(buf)
 		attrData := make([]byte, 16)
-		binary.BigEndian.PutUint32(attrData[0:4], SET_TO_CLIENT_TIME4)
+		binary.BigEndian.PutUint32(attrData[0:4], nfs4.SET_TO_CLIENT_TIME4)
 		binary.BigEndian.PutUint64(attrData[4:12], uint64(mtime.Unix()))
 		buf = faw.StartAttrVals().SetData(attrData).Finish()
 		faw.Resume(buf)
@@ -4805,7 +4807,7 @@ func TestMutableOpenBlocksDirectoryCreation(t *testing.T) {
 		t, conn, &xid, clientid, "existing.txt",
 	)
 
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		cw := w.AppendArgarray_Create()
 		cw.SetObjtype_Nf4dir()
@@ -4821,9 +4823,9 @@ func TestMutableOpenBlocksDirectoryCreation(t *testing.T) {
 		w.Resume(cw.Finish())
 	})
 	xid++
-	if res.Status() != NFS4ERR_FILE_OPEN {
+	if res.Status() != nfs4.NFS4ERR_FILE_OPEN {
 		t.Fatalf("CREATE status = %s, want NFS4ERR_FILE_OPEN",
-			Nfsstat4Name(res.Status()))
+			nfs4.Nfsstat4Name(res.Status()))
 	}
 
 	closeFile(t, conn, &xid, fh, stateid)
@@ -4897,7 +4899,7 @@ func TestCreateDirectory(t *testing.T) {
 	defer conn.Close()
 
 	// PUTROOTFH + CREATE(NF4DIR, "subdir")
-	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 
 		cw := w.AppendArgarray_Create()
@@ -4923,7 +4925,7 @@ func TestCreateDirectory(t *testing.T) {
 	nextOp(t, &iter) // PUTROOTFH
 	entry := nextOp(t, &iter)
 	createRes := entry.Value().AsCREATE4resEntry()
-	if createRes.Disc() != NFS4_OK {
+	if createRes.Disc() != nfs4.NFS4_OK {
 		t.Fatalf("CREATE status = %d", createRes.Disc())
 	}
 
@@ -4947,7 +4949,7 @@ func TestRemoveFile(t *testing.T) {
 	defer conn.Close()
 
 	// PUTROOTFH + REMOVE("victim.txt")
-	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 
 		rw := w.AppendArgarray_Remove()
@@ -4962,7 +4964,7 @@ func TestRemoveFile(t *testing.T) {
 	nextOp(t, &iter) // PUTROOTFH
 	entry := nextOp(t, &iter)
 	removeRes := entry.Value().AsREMOVE4resEntry()
-	if removeRes.Disc() != NFS4_OK {
+	if removeRes.Disc() != nfs4.NFS4_OK {
 		t.Fatalf("REMOVE status = %d", removeRes.Disc())
 	}
 
@@ -4983,7 +4985,7 @@ func TestRename(t *testing.T) {
 
 	// PUTROOTFH + SAVEFH + RENAME(old.txt -> new.txt)
 	// savedFH = source dir, currentFH = target dir (both root here).
-	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		w.AppendArgarray_Savefh()
 
@@ -5003,7 +5005,7 @@ func TestRename(t *testing.T) {
 	nextOp(t, &iter) // SAVEFH
 	entry := nextOp(t, &iter)
 	renameRes := entry.Value().AsRENAME4resEntry()
-	if renameRes.Disc() != NFS4_OK {
+	if renameRes.Disc() != nfs4.NFS4_OK {
 		t.Fatalf("RENAME status = %d", renameRes.Disc())
 	}
 
@@ -5030,7 +5032,7 @@ func TestRenameToSameNameIsNoOp(t *testing.T) {
 	conn := dial(t, addr)
 	defer conn.Close()
 
-	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		w.AppendArgarray_Savefh()
 		rw := w.AppendArgarray_Rename()
@@ -5064,12 +5066,12 @@ func TestDelegpurgeNotSupported(t *testing.T) {
 	conn := dial(t, addr)
 	defer conn.Close()
 
-	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 		dw := w.AppendArgarray_Delegpurge()
 		dw.SetClientid(1)
 	})
 
-	if res.Status() != NFS4ERR_NOTSUPP {
+	if res.Status() != nfs4.NFS4ERR_NOTSUPP {
 		t.Fatalf("DELEGPURGE status = %d, want NFS4ERR_NOTSUPP", res.Status())
 	}
 }
@@ -5083,7 +5085,7 @@ func TestLinkNotSupported(t *testing.T) {
 	conn := dial(t, addr)
 	defer conn.Close()
 
-	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		w.AppendArgarray_Savefh()
 
@@ -5095,7 +5097,7 @@ func TestLinkNotSupported(t *testing.T) {
 		w.Resume(buf)
 	})
 
-	if res.Status() != NFS4ERR_NOTSUPP {
+	if res.Status() != nfs4.NFS4ERR_NOTSUPP {
 		t.Fatalf("LINK status = %d, want NFS4ERR_NOTSUPP", res.Status())
 	}
 }
@@ -5110,7 +5112,7 @@ func TestCreateSymlink(t *testing.T) {
 	defer conn.Close()
 
 	// PUTROOTFH + CREATE(NF4LNK, "link" -> "target.txt")
-	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 
 		cw := w.AppendArgarray_Create()
@@ -5138,7 +5140,7 @@ func TestCreateSymlink(t *testing.T) {
 	nextOp(t, &iter) // PUTROOTFH
 	entry := nextOp(t, &iter)
 	createRes := entry.Value().AsCREATE4resEntry()
-	if createRes.Disc() != NFS4_OK {
+	if createRes.Disc() != nfs4.NFS4_OK {
 		t.Fatalf("CREATE symlink status = %d", createRes.Disc())
 	}
 
@@ -5171,7 +5173,7 @@ func TestMinorVersion2WhenAllowed(t *testing.T) {
 	srv.allowMinorVersion2 = true
 	conn := dial(t, addr)
 	defer conn.Close()
-	body := buildCompoundBody(nil, func(w *COMPOUND4argsWriter) {
+	body := buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 	})
 	binary.BigEndian.PutUint32(body[4:8], 2)
@@ -5180,8 +5182,8 @@ func TestMinorVersion2WhenAllowed(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Accepted as a minor version, so the missing SEQUENCE is what fails.
-	if res.Status() != NFS4ERR_OP_NOT_IN_SESSION {
-		t.Fatalf("minor version 2 = %s", Nfsstat4Name(res.Status()))
+	if res.Status() != nfs4.NFS4ERR_OP_NOT_IN_SESSION {
+		t.Fatalf("minor version 2 = %s", nfs4.Nfsstat4Name(res.Status()))
 	}
 	testMinorVersionMismatch(t, conn, 0)
 }
@@ -5196,7 +5198,7 @@ func must[T any](v T, err error) T {
 func testMinorVersionMismatch(t *testing.T, conn net.Conn, minor uint32) {
 	t.Helper()
 	var body []byte
-	w := StartCOMPOUND4args(body)
+	w := nfs4.StartCOMPOUND4args(body)
 	tagW := w.StartTag()
 	body = tagW.SetData(nil).Finish()
 	w.Resume(body)
@@ -5209,13 +5211,13 @@ func testMinorVersionMismatch(t *testing.T, conn net.Conn, minor uint32) {
 		t.Fatal(err)
 	}
 	nfsBody := mustParseRPCReply(t, reply)
-	res, ok := ReadCOMPOUND4res(nfsBody)
+	res, ok := nfs4.ReadCOMPOUND4res(nfsBody)
 	if !ok {
 		t.Fatal("failed to parse COMPOUND4res")
 	}
-	if res.Status() != NFS4ERR_MINOR_VERS_MISMATCH {
+	if res.Status() != nfs4.NFS4ERR_MINOR_VERS_MISMATCH {
 		t.Fatalf("status = %s, want NFS4ERR_MINOR_VERS_MISMATCH",
-			Nfsstat4Name(res.Status()))
+			nfs4.Nfsstat4Name(res.Status()))
 	}
 }
 
@@ -5274,7 +5276,7 @@ func activeOpenMarkerCount(
 	}
 }
 
-func setStateid(dst Stateid4, stateid [16]byte) {
+func setStateid(dst nfs4.Stateid4, stateid [16]byte) {
 	dst.SetSeqid(binary.BigEndian.Uint32(stateid[:4]))
 	for i := range 12 {
 		dst.SetOther(i, stateid[4+i])
@@ -5311,11 +5313,11 @@ func openFileForOwnerE(
 	create bool,
 	guarded bool,
 ) (status uint32, stateid [16]byte, fh []byte, rflags uint32, err error) {
-	body := buildCompoundBody(nil, func(w *COMPOUND4argsWriter) {
+	body := buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		ow := w.AppendArgarray_Open()
 		ow.SetShareAccess(access)
-		ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
+		ow.SetShareDeny(nfs4.OPEN4_SHARE_DENY_NONE)
 		ownerW := ow.StartOwner()
 		ownerW = ownerW.SetClientid(clientID)
 		ownerW = ownerW.SetOwner([]byte(owner))
@@ -5323,7 +5325,7 @@ func openFileForOwnerE(
 		ow.Resume(buf)
 		if create {
 			chw := ow.SetOpenhow_Create()
-			var faw Fattr4Writer
+			var faw nfs4.Fattr4Writer
 			if guarded {
 				faw = chw.SetValue_Guarded4()
 			} else {
@@ -5338,7 +5340,7 @@ func openFileForOwnerE(
 			chw.Resume(faw.Finish())
 			ow.Resume(chw.Finish())
 		} else {
-			ow.SetOpenhow_Default(OPEN4_NOCREATE)
+			ow.SetOpenhow_Default(nfs4.OPEN4_NOCREATE)
 		}
 		cw := ow.SetClaim_Null()
 		buf = cw.SetData([]byte(filename)).Finish()
@@ -5355,12 +5357,12 @@ func openFileForOwnerE(
 	if err != nil {
 		return 0, stateid, nil, 0, err
 	}
-	res, ok := ReadCOMPOUND4res(nfsBody)
+	res, ok := nfs4.ReadCOMPOUND4res(nfsBody)
 	if !ok {
 		return 0, stateid, nil, 0,
 			errors.New("failed to parse COMPOUND4res")
 	}
-	if res.Status() != NFS4_OK {
+	if res.Status() != nfs4.NFS4_OK {
 		return res.Status(), stateid, nil, 0, nil
 	}
 	iter := res.Resarray()
@@ -5382,7 +5384,7 @@ func openFileForOwnerE(
 	fhEntry := iter.Resarray()
 	fh = append([]byte(nil), fhEntry.Value().AsGETFH4resEntry().
 		Value().AsGETFH4resok().Object().Data()...)
-	return NFS4_OK, stateid, fh, openOK.Rflags(), nil
+	return nfs4.NFS4_OK, stateid, fh, openOK.Rflags(), nil
 }
 
 // openReadFile opens a file for read and returns the open stateid and filehandle.
@@ -5390,10 +5392,10 @@ func openReadFile(t *testing.T, conn net.Conn, xid *uint32, clientid uint64, fil
 	t.Helper()
 	status, stateid, fh, _ := openFileForOwner(
 		t, conn, xid, clientid, "test-owner-"+filename, filename,
-		OPEN4_SHARE_ACCESS_READ, false, false,
+		nfs4.OPEN4_SHARE_ACCESS_READ, false, false,
 	)
-	if status != NFS4_OK {
-		t.Fatalf("OPEN status = %s", Nfsstat4Name(status))
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("OPEN status = %s", nfs4.Nfsstat4Name(status))
 	}
 	return stateid, fh
 }
@@ -5402,17 +5404,17 @@ func openReadFile(t *testing.T, conn net.Conn, xid *uint32, clientid uint64, fil
 // stateid and filehandle.
 func openWriteFile(t *testing.T, conn net.Conn, xid *uint32, clientid uint64, filename string) (stateid [16]byte, fh []byte) {
 	t.Helper()
-	res := sendCompound(t, conn, *xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, *xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		ow := w.AppendArgarray_Open()
-		ow.SetShareAccess(OPEN4_SHARE_ACCESS_BOTH)
-		ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
+		ow.SetShareAccess(nfs4.OPEN4_SHARE_ACCESS_BOTH)
+		ow.SetShareDeny(nfs4.OPEN4_SHARE_DENY_NONE)
 		ownerW := ow.StartOwner()
 		ownerW = ownerW.SetClientid(clientid)
 		ownerW = ownerW.SetOwner([]byte("test-owner-" + filename))
 		buf := ownerW.Finish()
 		ow.Resume(buf)
-		ow.SetOpenhow_Default(OPEN4_NOCREATE)
+		ow.SetOpenhow_Default(nfs4.OPEN4_NOCREATE)
 		cw := ow.SetClaim_Null()
 		buf = cw.SetData([]byte(filename)).Finish()
 		ow.Resume(buf)
@@ -5424,8 +5426,8 @@ func openWriteFile(t *testing.T, conn net.Conn, xid *uint32, clientid uint64, fi
 	nextOp(t, &iter)
 	entry := nextOp(t, &iter)
 	openRes := entry.Value().AsOPEN4resEntry()
-	if openRes.Disc() != NFS4_OK {
-		t.Fatalf("OPEN for write status = %s", Nfsstat4Name(openRes.Disc()))
+	if openRes.Disc() != nfs4.NFS4_OK {
+		t.Fatalf("OPEN for write status = %s", nfs4.Nfsstat4Name(openRes.Disc()))
 	}
 	sid := openRes.Value().AsOPEN4resok().Stateid()
 	binary.BigEndian.PutUint32(stateid[0:4], sid.Seqid())
@@ -5454,7 +5456,7 @@ func openCreateFileWithSize(
 	size *uint64,
 ) (stateid [16]byte, fh []byte) {
 	return openCreateFileWithSizeAndAccess(
-		t, conn, xid, clientid, filename, size, OPEN4_SHARE_ACCESS_BOTH,
+		t, conn, xid, clientid, filename, size, nfs4.OPEN4_SHARE_ACCESS_BOTH,
 	)
 }
 
@@ -5468,11 +5470,11 @@ func openCreateFileWithSizeAndAccess(
 	access uint32,
 ) (stateid [16]byte, fh []byte) {
 	t.Helper()
-	res := sendCompound(t, conn, *xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, *xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		ow := w.AppendArgarray_Open()
 		ow.SetShareAccess(access)
-		ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
+		ow.SetShareDeny(nfs4.OPEN4_SHARE_DENY_NONE)
 		ownerW := ow.StartOwner()
 		ownerW = ownerW.SetClientid(clientid)
 		ownerW = ownerW.SetOwner([]byte("test-owner-" + filename))
@@ -5482,7 +5484,7 @@ func openCreateFileWithSizeAndAccess(
 		faw := chw.SetValue_Unchecked4()
 		bmW := faw.StartAttrmask()
 		if size != nil {
-			bmW.AppendData(1 << FATTR4_SIZE)
+			bmW.AppendData(1 << nfs4.FATTR4_SIZE)
 		}
 		buf = bmW.Finish()
 		faw.Resume(buf)
@@ -5506,7 +5508,7 @@ func openCreateFileWithSizeAndAccess(
 		if size != nil {
 			gw := w.AppendArgarray_Getattr()
 			bw := gw.StartAttrRequest()
-			bw.AppendData(1 << FATTR4_SIZE)
+			bw.AppendData(1 << nfs4.FATTR4_SIZE)
 			buf = bw.Finish()
 			gw.Resume(buf)
 			w.Resume(gw.Finish())
@@ -5518,8 +5520,8 @@ func openCreateFileWithSizeAndAccess(
 	nextOp(t, &iter) // PUTROOTFH
 	entry := nextOp(t, &iter)
 	openRes := entry.Value().AsOPEN4resEntry()
-	if openRes.Disc() != NFS4_OK {
-		t.Fatalf("OPEN CREATE status = %s", Nfsstat4Name(openRes.Disc()))
+	if openRes.Disc() != nfs4.NFS4_OK {
+		t.Fatalf("OPEN CREATE status = %s", nfs4.Nfsstat4Name(openRes.Disc()))
 	}
 	openOk := openRes.Value().AsOPEN4resok()
 	sid := openOk.Stateid()
@@ -5554,7 +5556,7 @@ func writeFileAt(
 	data []byte,
 ) {
 	t.Helper()
-	res := sendCompound(t, conn, *xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, *xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pw := w.AppendArgarray_Putfh()
 		buf := pw.StartObject().SetData(fh).Finish()
 		pw.Resume(buf)
@@ -5583,7 +5585,7 @@ func setFileSize(
 	size uint64,
 ) {
 	t.Helper()
-	res := sendCompound(t, conn, *xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, *xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pw := w.AppendArgarray_Putfh()
 		buf := pw.StartObject().SetData(fh).Finish()
 		pw.Resume(buf)
@@ -5596,7 +5598,7 @@ func setFileSize(
 		}
 		faw := saw.StartObjAttributes()
 		bmW := faw.StartAttrmask()
-		bmW.AppendData(1 << FATTR4_SIZE)
+		bmW.AppendData(1 << nfs4.FATTR4_SIZE)
 		buf = bmW.Finish()
 		faw.Resume(buf)
 		attrData := make([]byte, 8)
@@ -5614,8 +5616,8 @@ func setFileSize(
 func closeFile(t *testing.T, conn net.Conn, xid *uint32, fh []byte, stateid [16]byte) {
 	t.Helper()
 	status, _ := closeFileResult(t, conn, xid, fh, stateid)
-	if status != NFS4_OK {
-		t.Fatalf("CLOSE status = %s", Nfsstat4Name(status))
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("CLOSE status = %s", nfs4.Nfsstat4Name(status))
 	}
 }
 
@@ -5654,7 +5656,7 @@ func closeFileResultE(
 	stateid [16]byte,
 ) (uint32, [16]byte, error) {
 	var result [16]byte
-	body := buildCompoundBody(nil, func(w *COMPOUND4argsWriter) {
+	body := buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
 		pw := w.AppendArgarray_Putfh()
 		fhW := pw.StartObject()
 		buf := fhW.SetData(fh).Finish()
@@ -5673,11 +5675,11 @@ func closeFileResultE(
 	if err != nil {
 		return 0, result, err
 	}
-	res, ok := ReadCOMPOUND4res(nfsBody)
+	res, ok := nfs4.ReadCOMPOUND4res(nfsBody)
 	if !ok {
 		return 0, result, errors.New("failed to parse COMPOUND4res")
 	}
-	if res.Status() == NFS4_OK {
+	if res.Status() == nfs4.NFS4_OK {
 		iter := res.Resarray()
 		if !iter.Next() || !iter.Next() {
 			return 0, result, errors.New(
@@ -5700,7 +5702,7 @@ func collectReaddirNames(t *testing.T, conn net.Conn, xid *uint32, dirFH []byte)
 	cookie := uint64(0)
 	var cookieVerf [8]byte
 	for {
-		res := sendCompound(t, conn, *xid, func(w *COMPOUND4argsWriter) {
+		res := sendCompound(t, conn, *xid, func(w *nfs4.COMPOUND4argsWriter) {
 			pw := w.AppendArgarray_Putfh()
 			fhW := pw.StartObject()
 			buf := fhW.SetData(dirFH).Finish()
@@ -5717,7 +5719,7 @@ func collectReaddirNames(t *testing.T, conn net.Conn, xid *uint32, dirFH []byte)
 			rdw.SetDircount(4096)
 			rdw.SetMaxcount(8192)
 			bmW := rdw.StartAttrRequest()
-			bmW.AppendData(1 << FATTR4_TYPE)
+			bmW.AppendData(1 << nfs4.FATTR4_TYPE)
 			buf = bmW.Finish()
 			rdw.Resume(buf)
 			buf = rdw.Finish()
@@ -5728,8 +5730,8 @@ func collectReaddirNames(t *testing.T, conn net.Conn, xid *uint32, dirFH []byte)
 		nextOp(t, &iter) // PUTFH
 		entry := nextOp(t, &iter)
 		readdirRes := entry.Value().AsREADDIR4resEntry()
-		if readdirRes.Disc() != NFS4_OK {
-			t.Fatalf("READDIR status = %s", Nfsstat4Name(readdirRes.Disc()))
+		if readdirRes.Disc() != nfs4.NFS4_OK {
+			t.Fatalf("READDIR status = %s", nfs4.Nfsstat4Name(readdirRes.Disc()))
 		}
 		okRes := readdirRes.Value().AsREADDIR4resok()
 		// Save cookieverf for next request.
@@ -5738,19 +5740,19 @@ func collectReaddirNames(t *testing.T, conn net.Conn, xid *uint32, dirFH []byte)
 			cookieVerf[i] = cv.Data(i)
 		}
 		reply := okRes.Reply()
-		if reply.EntriesPresent() == TRUE {
+		if reply.EntriesPresent() == nfs4.TRUE {
 			entOpt := reply.Entries()
 			for {
 				ent := entOpt.AsEntry4()
 				allNames = append(allNames, string(ent.Name().Data()))
 				cookie = ent.Cookie()
-				if ent.NextentryPresent() != TRUE {
+				if ent.NextentryPresent() != nfs4.TRUE {
 					break
 				}
 				entOpt = ent.Nextentry()
 			}
 		}
-		if reply.Eof() == TRUE {
+		if reply.Eof() == nfs4.TRUE {
 			break
 		}
 	}
@@ -5795,7 +5797,7 @@ func TestReaddirPagination(t *testing.T) {
 	xid := uint32(1)
 
 	// Get root FH.
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		w.AppendArgarray_Getfh()
 	})
@@ -5829,14 +5831,14 @@ func TestReaddirCookieverfMismatch(t *testing.T) {
 
 	xid := uint32(1)
 	// First READDIR to get a valid cookie.
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		rdw := w.AppendArgarray_Readdir()
 		rdw.SetCookie(0)
 		rdw.SetDircount(4096)
 		rdw.SetMaxcount(8192)
 		bmW := rdw.StartAttrRequest()
-		bmW.AppendData(1 << FATTR4_TYPE)
+		bmW.AppendData(1 << nfs4.FATTR4_TYPE)
 		buf := bmW.Finish()
 		rdw.Resume(buf)
 		buf = rdw.Finish()
@@ -5853,7 +5855,7 @@ func TestReaddirCookieverfMismatch(t *testing.T) {
 	validCookie := entOpt.AsEntry4().Cookie()
 
 	// Send continuation with a bogus non-zero cookieverf.
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		rdw := w.AppendArgarray_Readdir()
 		rdw.SetCookie(validCookie)
@@ -5870,7 +5872,7 @@ func TestReaddirCookieverfMismatch(t *testing.T) {
 		rdw.SetDircount(4096)
 		rdw.SetMaxcount(8192)
 		bmW := rdw.StartAttrRequest()
-		bmW.AppendData(1 << FATTR4_TYPE)
+		bmW.AppendData(1 << nfs4.FATTR4_TYPE)
 		buf := bmW.Finish()
 		rdw.Resume(buf)
 		buf = rdw.Finish()
@@ -5879,8 +5881,8 @@ func TestReaddirCookieverfMismatch(t *testing.T) {
 	xid++
 
 	// Compound should report the READDIR error.
-	if res.Status() != NFS4ERR_NOT_SAME {
-		t.Fatalf("expected NFS4ERR_NOT_SAME, got %s", Nfsstat4Name(res.Status()))
+	if res.Status() != nfs4.NFS4ERR_NOT_SAME {
+		t.Fatalf("expected NFS4ERR_NOT_SAME, got %s", nfs4.Nfsstat4Name(res.Status()))
 	}
 }
 
@@ -5893,7 +5895,7 @@ func TestReaddirReservedCookies(t *testing.T) {
 			conn := dial(t, addr)
 			defer conn.Close()
 
-			res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+			res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 				w.AppendArgarray_Putrootfh()
 				rw := w.AppendArgarray_Readdir()
 				rw.SetCookie(cookie)
@@ -5904,9 +5906,9 @@ func TestReaddirReservedCookies(t *testing.T) {
 				rw.Resume(buf)
 				w.Resume(rw.Finish())
 			})
-			if res.Status() != NFS4ERR_BAD_COOKIE {
+			if res.Status() != nfs4.NFS4ERR_BAD_COOKIE {
 				t.Fatalf("status = %s, want NFS4ERR_BAD_COOKIE",
-					Nfsstat4Name(res.Status()))
+					nfs4.Nfsstat4Name(res.Status()))
 			}
 		})
 	}
@@ -5919,21 +5921,21 @@ func TestReaddirWriteOnlyAttributesRejected(t *testing.T) {
 	conn := dial(t, addr)
 	defer conn.Close()
 
-	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		rw := w.AppendArgarray_Readdir()
 		rw.SetDircount(4096)
 		rw.SetMaxcount(8192)
 		bw := rw.StartAttrRequest()
 		bw.AppendData(0)
-		bw.AppendData(1 << (FATTR4_TIME_ACCESS_SET - 32))
+		bw.AppendData(1 << (nfs4.FATTR4_TIME_ACCESS_SET - 32))
 		buf := bw.Finish()
 		rw.Resume(buf)
 		w.Resume(rw.Finish())
 	})
-	if res.Status() != NFS4ERR_INVAL {
+	if res.Status() != nfs4.NFS4ERR_INVAL {
 		t.Fatalf("status = %s, want NFS4ERR_INVAL",
-			Nfsstat4Name(res.Status()))
+			nfs4.Nfsstat4Name(res.Status()))
 	}
 }
 
@@ -5947,22 +5949,22 @@ func TestReaddirTooSmall(t *testing.T) {
 	defer conn.Close()
 
 	// Send READDIR with maxcount too small to fit any entry.
-	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		rdw := w.AppendArgarray_Readdir()
 		rdw.SetCookie(0)
 		rdw.SetDircount(4096)
 		rdw.SetMaxcount(10) // Way too small.
 		bmW := rdw.StartAttrRequest()
-		bmW.AppendData(1 << FATTR4_TYPE)
+		bmW.AppendData(1 << nfs4.FATTR4_TYPE)
 		buf := bmW.Finish()
 		rdw.Resume(buf)
 		buf = rdw.Finish()
 		w.Resume(buf)
 	})
 
-	if res.Status() != NFS4ERR_TOOSMALL {
-		t.Fatalf("expected NFS4ERR_TOOSMALL, got %s", Nfsstat4Name(res.Status()))
+	if res.Status() != nfs4.NFS4ERR_TOOSMALL {
+		t.Fatalf("expected NFS4ERR_TOOSMALL, got %s", nfs4.Nfsstat4Name(res.Status()))
 	}
 }
 
@@ -5978,7 +5980,7 @@ func TestReaddirNfsDirHidden(t *testing.T) {
 	xid := uint32(1)
 
 	// Get root FH.
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		w.AppendArgarray_Getfh()
 	})
@@ -6018,7 +6020,7 @@ func TestReaddirNewFileVisibleBeforeClose(t *testing.T) {
 	clientid := setupClient(t, conn, &xid)
 
 	// Get root FH.
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		w.AppendArgarray_Getfh()
 	})
@@ -6071,7 +6073,7 @@ func TestSetattrTime(t *testing.T) {
 	targetSec := targetTime.Unix()
 	targetNsec := uint32(0)
 
-	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 
 		lw := w.AppendArgarray_Lookup()
@@ -6086,12 +6088,12 @@ func TestSetattrTime(t *testing.T) {
 		faw := saw.StartObjAttributes()
 		bmW := faw.StartAttrmask()
 		bmW.AppendData(0) // word 0: nothing
-		bmW.AppendData(1 << (FATTR4_TIME_MODIFY_SET - 32))
+		bmW.AppendData(1 << (nfs4.FATTR4_TIME_MODIFY_SET - 32))
 		buf = bmW.Finish()
 		faw.Resume(buf)
 		// Attr data: SET_TO_CLIENT_TIME4(1) + nfstime4(sec:8 + nsec:4)
 		attrData := make([]byte, 4+8+4)
-		binary.BigEndian.PutUint32(attrData[0:4], SET_TO_CLIENT_TIME4)
+		binary.BigEndian.PutUint32(attrData[0:4], nfs4.SET_TO_CLIENT_TIME4)
 		binary.BigEndian.PutUint64(attrData[4:12], uint64(targetSec))
 		binary.BigEndian.PutUint32(attrData[12:16], targetNsec)
 		alW := faw.StartAttrVals()
@@ -6107,8 +6109,8 @@ func TestSetattrTime(t *testing.T) {
 	nextOp(t, &iter) // PUTROOTFH
 	nextOp(t, &iter) // LOOKUP
 	entry := nextOp(t, &iter)
-	if entry.Value().AsSETATTR4res().Status() != NFS4_OK {
-		t.Fatalf("SETATTR status = %s", Nfsstat4Name(entry.Value().AsSETATTR4res().Status()))
+	if entry.Value().AsSETATTR4res().Status() != nfs4.NFS4_OK {
+		t.Fatalf("SETATTR status = %s", nfs4.Nfsstat4Name(entry.Value().AsSETATTR4res().Status()))
 	}
 
 	// Verify mtime was set on disk.
@@ -6130,7 +6132,7 @@ func TestSetattrModeRejected(t *testing.T) {
 	conn := dial(t, addr)
 	defer conn.Close()
 
-	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 
 		lw := w.AppendArgarray_Lookup()
@@ -6145,7 +6147,7 @@ func TestSetattrModeRejected(t *testing.T) {
 		faw := saw.StartObjAttributes()
 		bmW := faw.StartAttrmask()
 		bmW.AppendData(0)
-		bmW.AppendData(1 << (FATTR4_MODE - 32)) // mode is not supported
+		bmW.AppendData(1 << (nfs4.FATTR4_MODE - 32)) // mode is not supported
 		buf = bmW.Finish()
 		faw.Resume(buf)
 		attrData := make([]byte, 4)
@@ -6159,14 +6161,14 @@ func TestSetattrModeRejected(t *testing.T) {
 		w.Resume(buf)
 	})
 
-	if res.Status() != NFS4ERR_ATTRNOTSUPP {
-		t.Fatalf("expected NFS4ERR_ATTRNOTSUPP, got %s", Nfsstat4Name(res.Status()))
+	if res.Status() != nfs4.NFS4ERR_ATTRNOTSUPP {
+		t.Fatalf("expected NFS4ERR_ATTRNOTSUPP, got %s", nfs4.Nfsstat4Name(res.Status()))
 	}
 }
 
 func TestSetattrValidation(t *testing.T) {
 	invalidTime := make([]byte, 16)
-	binary.BigEndian.PutUint32(invalidTime[0:4], SET_TO_CLIENT_TIME4)
+	binary.BigEndian.PutUint32(invalidTime[0:4], nfs4.SET_TO_CLIENT_TIME4)
 	binary.BigEndian.PutUint32(invalidTime[12:16], 1_000_000_000)
 
 	maxSize := make([]byte, 8)
@@ -6180,34 +6182,34 @@ func TestSetattrValidation(t *testing.T) {
 	}{
 		{
 			name:       "read-only attribute",
-			mask:       attrMask{1 << FATTR4_SUPPORTED_ATTRS, 0},
-			wantStatus: NFS4ERR_INVAL,
+			mask:       attrMask{1 << nfs4.FATTR4_SUPPORTED_ATTRS, 0},
+			wantStatus: nfs4.NFS4ERR_INVAL,
 		},
 		{
 			name:       "mode missing data",
-			mask:       attrMask{0, 1 << (FATTR4_MODE - 32)},
-			wantStatus: NFS4ERR_BADXDR,
+			mask:       attrMask{0, 1 << (nfs4.FATTR4_MODE - 32)},
+			wantStatus: nfs4.NFS4ERR_BADXDR,
 		},
 		{
 			name:       "mode trailing data",
-			mask:       attrMask{0, 1 << (FATTR4_MODE - 32)},
+			mask:       attrMask{0, 1 << (nfs4.FATTR4_MODE - 32)},
 			attrData:   make([]byte, 8),
-			wantStatus: NFS4ERR_BADXDR,
+			wantStatus: nfs4.NFS4ERR_BADXDR,
 		},
 		{
 			name: "invalid time nanoseconds",
 			mask: attrMask{
 				0,
-				1 << (FATTR4_TIME_MODIFY_SET - 32),
+				1 << (nfs4.FATTR4_TIME_MODIFY_SET - 32),
 			},
 			attrData:   invalidTime,
-			wantStatus: NFS4ERR_INVAL,
+			wantStatus: nfs4.NFS4ERR_INVAL,
 		},
 		{
 			name:       "size exceeds signed backend range",
-			mask:       attrMask{1 << FATTR4_SIZE, 0},
+			mask:       attrMask{1 << nfs4.FATTR4_SIZE, 0},
 			attrData:   maxSize,
-			wantStatus: NFS4ERR_FBIG,
+			wantStatus: nfs4.NFS4ERR_FBIG,
 		},
 	}
 
@@ -6219,7 +6221,7 @@ func TestSetattrValidation(t *testing.T) {
 			conn := dial(t, addr)
 			defer conn.Close()
 
-			res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+			res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 				w.AppendArgarray_Putrootfh()
 
 				saw := w.AppendArgarray_Setattr()
@@ -6242,8 +6244,8 @@ func TestSetattrValidation(t *testing.T) {
 
 			if res.Status() != test.wantStatus {
 				t.Fatalf("status = %s, want %s",
-					Nfsstat4Name(res.Status()),
-					Nfsstat4Name(test.wantStatus))
+					nfs4.Nfsstat4Name(res.Status()),
+					nfs4.Nfsstat4Name(test.wantStatus))
 			}
 		})
 	}
@@ -6267,7 +6269,7 @@ func TestSetattrSize(t *testing.T) {
 	for i := range writeData {
 		writeData[i] = byte(i)
 	}
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pw := w.AppendArgarray_Putfh()
 		fhW := pw.StartObject()
 		buf := fhW.SetData(fh).Finish()
@@ -6286,7 +6288,7 @@ func TestSetattrSize(t *testing.T) {
 	expectOK(t, res)
 
 	// SETATTR to truncate to 10 bytes.
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pw := w.AppendArgarray_Putfh()
 		fhW := pw.StartObject()
 		buf := fhW.SetData(fh).Finish()
@@ -6297,7 +6299,7 @@ func TestSetattrSize(t *testing.T) {
 		setStateid(saw.Stateid(), stateid)
 		faw := saw.StartObjAttributes()
 		bmW := faw.StartAttrmask()
-		bmW.AppendData(1 << FATTR4_SIZE)
+		bmW.AppendData(1 << nfs4.FATTR4_SIZE)
 		buf = bmW.Finish()
 		faw.Resume(buf)
 		attrData := make([]byte, 8)
@@ -6314,12 +6316,12 @@ func TestSetattrSize(t *testing.T) {
 	iter := expectOK(t, res)
 	nextOp(t, &iter) // PUTFH
 	entry := nextOp(t, &iter)
-	if entry.Value().AsSETATTR4res().Status() != NFS4_OK {
-		t.Fatalf("SETATTR status = %s", Nfsstat4Name(entry.Value().AsSETATTR4res().Status()))
+	if entry.Value().AsSETATTR4res().Status() != nfs4.NFS4_OK {
+		t.Fatalf("SETATTR status = %s", nfs4.Nfsstat4Name(entry.Value().AsSETATTR4res().Status()))
 	}
 
 	// The anonymous stateid is also valid for a size-changing SETATTR.
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pw := w.AppendArgarray_Putfh()
 		buf := pw.StartObject().SetData(fh).Finish()
 		pw.Resume(buf)
@@ -6329,7 +6331,7 @@ func TestSetattrSize(t *testing.T) {
 		saw.Stateid().SetSeqid(0)
 		faw := saw.StartObjAttributes()
 		bmW := faw.StartAttrmask()
-		bmW.AppendData(1 << FATTR4_SIZE)
+		bmW.AppendData(1 << nfs4.FATTR4_SIZE)
 		buf = bmW.Finish()
 		faw.Resume(buf)
 		attrData := make([]byte, 8)
@@ -6366,7 +6368,7 @@ func TestSetattrSizeRequiresWriteOpen(t *testing.T) {
 	clientid := setupClient(t, conn, &xid)
 	stateid, fh := openReadFile(t, conn, &xid, clientid, "file.txt")
 
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pw := w.AppendArgarray_Putfh()
 		buf := pw.StartObject().SetData(fh).Finish()
 		pw.Resume(buf)
@@ -6376,7 +6378,7 @@ func TestSetattrSizeRequiresWriteOpen(t *testing.T) {
 		setStateid(saw.Stateid(), stateid)
 		faw := saw.StartObjAttributes()
 		bmW := faw.StartAttrmask()
-		bmW.AppendData(1 << FATTR4_SIZE)
+		bmW.AppendData(1 << nfs4.FATTR4_SIZE)
 		buf = bmW.Finish()
 		faw.Resume(buf)
 		attrData := make([]byte, 8)
@@ -6386,9 +6388,9 @@ func TestSetattrSizeRequiresWriteOpen(t *testing.T) {
 		saw.Resume(faw.Finish())
 		w.Resume(saw.Finish())
 	})
-	if res.Status() != NFS4ERR_OPENMODE {
+	if res.Status() != nfs4.NFS4ERR_OPENMODE {
 		t.Fatalf("SETATTR size status = %s, want NFS4ERR_OPENMODE",
-			Nfsstat4Name(res.Status()))
+			nfs4.Nfsstat4Name(res.Status()))
 	}
 }
 
@@ -6397,11 +6399,11 @@ func openExclusiveFile(
 	owner string, filename string, verifier [8]byte,
 ) (status uint32, stateid [16]byte, fh []byte, rflags uint32) {
 	t.Helper()
-	res := sendCompound(t, conn, *xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, *xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		ow := w.AppendArgarray_Open()
-		ow.SetShareAccess(OPEN4_SHARE_ACCESS_BOTH)
-		ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
+		ow.SetShareAccess(nfs4.OPEN4_SHARE_ACCESS_BOTH)
+		ow.SetShareDeny(nfs4.OPEN4_SHARE_DENY_NONE)
 		ownerW := ow.StartOwner()
 		ownerW = ownerW.SetClientid(clientid)
 		ownerW = ownerW.SetOwner([]byte(owner))
@@ -6422,7 +6424,7 @@ func openExclusiveFile(
 		w.AppendArgarray_Getfh()
 	})
 	*xid++
-	if res.Status() != NFS4_OK {
+	if res.Status() != nfs4.NFS4_OK {
 		return res.Status(), stateid, nil, 0
 	}
 	iter := expectOK(t, res)
@@ -6435,7 +6437,7 @@ func openExclusiveFile(
 	}
 	fh = append([]byte(nil), nextOp(t, &iter).Value().AsGETFH4resEntry().
 		Value().AsGETFH4resok().Object().Data()...)
-	return NFS4_OK, stateid, fh, openOK.Rflags()
+	return nfs4.NFS4_OK, stateid, fh, openOK.Rflags()
 }
 
 func TestOpenClaimPrevious(t *testing.T) {
@@ -6450,25 +6452,25 @@ func TestOpenClaimPrevious(t *testing.T) {
 	xid := uint32(1)
 	clientid := setupClient(t, conn, &xid)
 
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		ow := w.AppendArgarray_Open()
-		ow.SetShareAccess(OPEN4_SHARE_ACCESS_READ)
-		ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
+		ow.SetShareAccess(nfs4.OPEN4_SHARE_ACCESS_READ)
+		ow.SetShareDeny(nfs4.OPEN4_SHARE_DENY_NONE)
 		ownerW := ow.StartOwner()
 		ownerW = ownerW.SetClientid(clientid)
 		ownerW = ownerW.SetOwner([]byte("test-owner"))
 		buf := ownerW.Finish()
 		ow.Resume(buf)
-		ow.SetOpenhow_Default(OPEN4_NOCREATE)
+		ow.SetOpenhow_Default(nfs4.OPEN4_NOCREATE)
 		ow.SetClaim_Previous()
 		buf = ow.Finish()
 		w.Resume(buf)
 	})
 	xid++
 
-	if res.Status() != NFS4ERR_NO_GRACE {
-		t.Fatalf("expected NFS4ERR_NO_GRACE, got %s", Nfsstat4Name(res.Status()))
+	if res.Status() != nfs4.NFS4ERR_NO_GRACE {
+		t.Fatalf("expected NFS4ERR_NO_GRACE, got %s", nfs4.Nfsstat4Name(res.Status()))
 	}
 }
 
@@ -6486,8 +6488,8 @@ func TestCloseReplay(t *testing.T) {
 	stateid, fh := openCreateFile(t, conn, &xid, clientid, "replay.txt")
 	status, first := closeFileResult(
 		t, conn, &xid, fh, stateid)
-	if status != NFS4_OK {
-		t.Fatalf("CLOSE status = %s", Nfsstat4Name(status))
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("CLOSE status = %s", nfs4.Nfsstat4Name(status))
 	}
 
 	// Verify file exists.
@@ -6499,8 +6501,8 @@ func TestCloseReplay(t *testing.T) {
 	retransmitNext(conn)
 	status, replay := closeFileResult(
 		t, conn, &xid, fh, stateid)
-	if status != NFS4_OK {
-		t.Fatalf("CLOSE replay: expected NFS4_OK, got %s", Nfsstat4Name(status))
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("CLOSE replay: expected NFS4_OK, got %s", nfs4.Nfsstat4Name(status))
 	}
 	if replay != first {
 		t.Fatalf("CLOSE replay stateid = %x, want %x", replay, first)
@@ -6530,11 +6532,11 @@ func TestReopenReusesState(t *testing.T) {
 	clientID := setupClient(t, conn, &xid)
 	status, first, fh, flags := openFileForOwner(
 		t, conn, &xid, clientID, "shared-owner", "file.txt",
-		OPEN4_SHARE_ACCESS_READ, false, false,
+		nfs4.OPEN4_SHARE_ACCESS_READ, false, false,
 	)
-	if status != NFS4_OK || flags&OPEN4_RESULT_CONFIRM != 0 {
+	if status != nfs4.NFS4_OK || flags&nfs4.OPEN4_RESULT_CONFIRM != 0 {
 		t.Fatalf("first OPEN status = %s, rflags = %#x",
-			Nfsstat4Name(status), flags)
+			nfs4.Nfsstat4Name(status), flags)
 	}
 	if got := binary.BigEndian.Uint32(first[:4]); got != 1 {
 		t.Fatalf("first OPEN generation = %d, want 1", got)
@@ -6542,10 +6544,10 @@ func TestReopenReusesState(t *testing.T) {
 
 	status, upgraded, upgradedFH, flags := openFileForOwner(
 		t, conn, &xid, clientID, "shared-owner", "file.txt",
-		OPEN4_SHARE_ACCESS_READ, false, false,
+		nfs4.OPEN4_SHARE_ACCESS_READ, false, false,
 	)
-	if status != NFS4_OK {
-		t.Fatalf("second OPEN status = %s", Nfsstat4Name(status))
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("second OPEN status = %s", nfs4.Nfsstat4Name(status))
 	}
 
 	if !bytes.Equal(first[4:], upgraded[4:]) {
@@ -6561,7 +6563,7 @@ func TestReopenReusesState(t *testing.T) {
 	if got := activeOpenMarkerCount(t, srv, clientID); got != 1 {
 		t.Fatalf("active-open markers after reopen = %d, want 1", got)
 	}
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pw := w.AppendArgarray_Putfh()
 		buf := pw.StartObject().SetData(fh).Finish()
 		pw.Resume(buf)
@@ -6572,13 +6574,13 @@ func TestReopenReusesState(t *testing.T) {
 		rw.SetCount(1)
 	})
 	xid++
-	if res.Status() != NFS4ERR_OLD_STATEID {
+	if res.Status() != nfs4.NFS4ERR_OLD_STATEID {
 		t.Fatalf("READ with generation 1 = %s, want NFS4ERR_OLD_STATEID",
-			Nfsstat4Name(res.Status()))
+			nfs4.Nfsstat4Name(res.Status()))
 	}
 	if status := closeFileStatus(
-		t, conn, &xid, fh, upgraded); status != NFS4_OK {
-		t.Fatalf("CLOSE status = %s", Nfsstat4Name(status))
+		t, conn, &xid, fh, upgraded); status != nfs4.NFS4_OK {
+		t.Fatalf("CLOSE status = %s", nfs4.Nfsstat4Name(status))
 	}
 	if got := activeOpenMarkerCount(t, srv, clientID); got != 0 {
 		t.Fatalf("active-open markers after CLOSE = %d, want 0", got)
@@ -6603,9 +6605,9 @@ func TestReadCloseAfterFileRemoval(t *testing.T) {
 		t.Fatal(err)
 	}
 	if status := closeFileStatus(
-		t, conn, &xid, fh, stateid); status != NFS4_OK {
+		t, conn, &xid, fh, stateid); status != nfs4.NFS4_OK {
 		t.Fatalf("CLOSE after removal = %s, want NFS4_OK",
-			Nfsstat4Name(status))
+			nfs4.Nfsstat4Name(status))
 	}
 }
 
@@ -6622,14 +6624,14 @@ func TestWriteCloseWithoutStagingExpiresAndDropsState(t *testing.T) {
 		t, conn, &xid, clientID, "lost.txt")
 	srv.stagingStore.Remove(stagingIDForTest(t, srv.stagingStore, stateid))
 	if status := closeFileStatus(
-		t, conn, &xid, fh, stateid); status != NFS4ERR_EXPIRED {
+		t, conn, &xid, fh, stateid); status != nfs4.NFS4ERR_EXPIRED {
 		t.Fatalf("CLOSE without staging = %s, want NFS4ERR_EXPIRED",
-			Nfsstat4Name(status))
+			nfs4.Nfsstat4Name(status))
 	}
 	if status := closeFileStatus(
-		t, conn, &xid, fh, stateid); status != NFS4ERR_EXPIRED {
+		t, conn, &xid, fh, stateid); status != nfs4.NFS4ERR_EXPIRED {
 		t.Fatalf("replayed CLOSE without staging = %s, want NFS4ERR_EXPIRED",
-			Nfsstat4Name(status))
+			nfs4.Nfsstat4Name(status))
 	}
 	if got := activeOpenMarkerCount(t, srv, clientID); got != 0 {
 		t.Fatalf("active-open markers after expired CLOSE = %d, want 0", got)
@@ -6718,7 +6720,7 @@ func TestConcurrentOpenSharesOwnerState(t *testing.T) {
 	open := func(conn net.Conn, xid uint32) {
 		status, stateid, fh, _, err := openFileForOwnerE(
 			conn, &xid, clientID, "shared-owner", "race.txt",
-			OPEN4_SHARE_ACCESS_BOTH, true, false,
+			nfs4.OPEN4_SHARE_ACCESS_BOTH, true, false,
 		)
 		results <- result{
 			status: status, stateid: stateid, fh: fh, err: err,
@@ -6734,9 +6736,9 @@ func TestConcurrentOpenSharesOwnerState(t *testing.T) {
 	if first.err != nil || second.err != nil {
 		t.Fatalf("concurrent OPEN errors = %v, %v", first.err, second.err)
 	}
-	if first.status != NFS4_OK || second.status != NFS4_OK {
+	if first.status != nfs4.NFS4_OK || second.status != nfs4.NFS4_OK {
 		t.Fatalf("concurrent OPEN statuses = %s, %s",
-			Nfsstat4Name(first.status), Nfsstat4Name(second.status))
+			nfs4.Nfsstat4Name(first.status), nfs4.Nfsstat4Name(second.status))
 	}
 	// Two OPENs by one owner on different session slots are separate
 	// requests. Each creates its own writer; the second is serialized on
@@ -6864,10 +6866,10 @@ func TestWaitingCloseRechecksStagingMeta(t *testing.T) {
 	clientID := setupClient(t, firstConn, &xid)
 	status, stateid, fh, _ := openFileForOwner(
 		t, firstConn, &xid, clientID, "shared-owner", "race.txt",
-		OPEN4_SHARE_ACCESS_BOTH, true, false,
+		nfs4.OPEN4_SHARE_ACCESS_BOTH, true, false,
 	)
-	if status != NFS4_OK {
-		t.Fatalf("OPEN status = %s", Nfsstat4Name(status))
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("OPEN status = %s", nfs4.Nfsstat4Name(status))
 	}
 
 	writeFileAt(t, firstConn, &xid, fh, stateid, 0, []byte("pending"))
@@ -6899,13 +6901,13 @@ func TestWaitingCloseRechecksStagingMeta(t *testing.T) {
 	if first.err != nil || second.err != nil {
 		t.Fatalf("CLOSE errors = %v, %v", first.err, second.err)
 	}
-	if first.status != NFS4ERR_IO {
+	if first.status != nfs4.NFS4ERR_IO {
 		t.Fatalf("first CLOSE = %s, want NFS4ERR_IO",
-			Nfsstat4Name(first.status))
+			nfs4.Nfsstat4Name(first.status))
 	}
-	if second.status != NFS4ERR_EXPIRED {
+	if second.status != nfs4.NFS4ERR_EXPIRED {
 		t.Fatalf("second CLOSE = %s, want NFS4ERR_EXPIRED",
-			Nfsstat4Name(second.status))
+			nfs4.Nfsstat4Name(second.status))
 	}
 	srv.opens.mu.Lock()
 	defer srv.opens.mu.Unlock()
@@ -6943,31 +6945,31 @@ func TestFailedCloseReplaysFromSlot(t *testing.T) {
 	clientID := setupClient(t, conn, &xid)
 	status, stateid, fh, _ := openFileForOwner(
 		t, conn, &xid, clientID, "shared-owner", "write.txt",
-		OPEN4_SHARE_ACCESS_BOTH, true, false,
+		nfs4.OPEN4_SHARE_ACCESS_BOTH, true, false,
 	)
-	if status != NFS4_OK {
-		t.Fatalf("OPEN status = %s", Nfsstat4Name(status))
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("OPEN status = %s", nfs4.Nfsstat4Name(status))
 	}
 	writeFileAt(t, conn, &xid, fh, stateid, 0, []byte("pending"))
 
 	if status := closeFileStatus(
-		t, conn, &xid, fh, stateid); status != NFS4ERR_IO {
+		t, conn, &xid, fh, stateid); status != nfs4.NFS4ERR_IO {
 		t.Fatalf("failed CLOSE status = %s, want NFS4ERR_IO",
-			Nfsstat4Name(status))
+			nfs4.Nfsstat4Name(status))
 	}
 	retransmitNext(conn)
 	if status := closeFileStatus(
-		t, conn, &xid, fh, stateid); status != NFS4ERR_IO {
+		t, conn, &xid, fh, stateid); status != nfs4.NFS4ERR_IO {
 		t.Fatalf("failed CLOSE replay = %s, want NFS4ERR_IO",
-			Nfsstat4Name(status))
+			nfs4.Nfsstat4Name(status))
 	}
 	status, _, _, flags := openFileForOwner(
 		t, conn, &xid, clientID, "shared-owner", "read.txt",
-		OPEN4_SHARE_ACCESS_READ, false, false,
+		nfs4.OPEN4_SHARE_ACCESS_READ, false, false,
 	)
-	if status != NFS4_OK {
+	if status != nfs4.NFS4_OK {
 		t.Fatalf("OPEN after failed CLOSE = %s, want NFS4_OK",
-			Nfsstat4Name(status))
+			nfs4.Nfsstat4Name(status))
 	}
 	_ = flags
 }
@@ -7022,10 +7024,10 @@ func TestConcurrentClosePublishesAtMostOnce(t *testing.T) {
 	clientID := setupClient(t, firstConn, &xid)
 	status, stateid, fh, _ := openFileForOwner(
 		t, firstConn, &xid, clientID, "shared-owner", "race.txt",
-		OPEN4_SHARE_ACCESS_BOTH, true, false,
+		nfs4.OPEN4_SHARE_ACCESS_BOTH, true, false,
 	)
-	if status != NFS4_OK {
-		t.Fatalf("OPEN status = %s", Nfsstat4Name(status))
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("OPEN status = %s", nfs4.Nfsstat4Name(status))
 	}
 	writeFileAt(t, firstConn, &xid, fh, stateid, 0, []byte("pending"))
 
@@ -7059,9 +7061,9 @@ func TestConcurrentClosePublishesAtMostOnce(t *testing.T) {
 	}
 	// Different slots are different requests: the second CLOSE waits for
 	// the first and then finds the stateid closed.
-	if first.status != NFS4_OK || second.status != NFS4ERR_BAD_STATEID {
+	if first.status != nfs4.NFS4_OK || second.status != nfs4.NFS4ERR_BAD_STATEID {
 		t.Fatalf("concurrent CLOSE statuses = %s, %s",
-			Nfsstat4Name(first.status), Nfsstat4Name(second.status))
+			nfs4.Nfsstat4Name(first.status), nfs4.Nfsstat4Name(second.status))
 	}
 	if calls := fs.callCount(); calls != 1 {
 		t.Fatalf("LinkFile calls = %d, want 1", calls)
@@ -7093,8 +7095,8 @@ func TestCloseUnknownStateid(t *testing.T) {
 
 	xid := uint32(1)
 	status := closeFileStatus(t, conn, &xid, fh, unknown)
-	if status != NFS4ERR_BAD_STATEID {
-		t.Fatalf("expected NFS4ERR_BAD_STATEID, got %s", Nfsstat4Name(status))
+	if status != nfs4.NFS4ERR_BAD_STATEID {
+		t.Fatalf("expected NFS4ERR_BAD_STATEID, got %s", nfs4.Nfsstat4Name(status))
 	}
 }
 
@@ -7112,7 +7114,7 @@ func TestWriteBadStateid(t *testing.T) {
 	_, fh := openCreateFile(t, conn, &xid, clientid, "badwrite.txt")
 
 	// WRITE with a wrong stateid.
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pw := w.AppendArgarray_Putfh()
 		fhW := pw.StartObject()
 		buf := fhW.SetData(fh).Finish()
@@ -7133,9 +7135,9 @@ func TestWriteBadStateid(t *testing.T) {
 	})
 	xid++
 
-	if res.Status() != NFS4ERR_BAD_STATEID {
+	if res.Status() != nfs4.NFS4ERR_BAD_STATEID {
 		t.Fatalf("WRITE with bad stateid: status = %s, want NFS4ERR_BAD_STATEID",
-			Nfsstat4Name(res.Status()))
+			nfs4.Nfsstat4Name(res.Status()))
 	}
 }
 
@@ -7156,7 +7158,7 @@ func TestWriteSpecialStateid(t *testing.T) {
 	stateid, fh := openCreateFile(
 		t, conn, &xid, clientid, "specialwrite.txt")
 
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pw := w.AppendArgarray_Putfh()
 		buf := pw.StartObject().SetData(fh).Finish()
 		pw.Resume(buf)
@@ -7202,7 +7204,7 @@ func TestSetattrSizeSpecialStateid(t *testing.T) {
 	stateid, fh := openCreateFile(
 		t, conn, &xid, clientid, "specialsetattr.txt")
 
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pw := w.AppendArgarray_Putfh()
 		buf := pw.StartObject().SetData(fh).Finish()
 		pw.Resume(buf)
@@ -7215,7 +7217,7 @@ func TestSetattrSizeSpecialStateid(t *testing.T) {
 		}
 		faw := saw.StartObjAttributes()
 		bmW := faw.StartAttrmask()
-		bmW.AppendData(1 << FATTR4_SIZE)
+		bmW.AppendData(1 << nfs4.FATTR4_SIZE)
 		buf = bmW.Finish()
 		faw.Resume(buf)
 		attrData := make([]byte, 8)
@@ -7230,9 +7232,9 @@ func TestSetattrSizeSpecialStateid(t *testing.T) {
 	})
 	xid++
 
-	if res.Status() != NFS4_OK {
+	if res.Status() != nfs4.NFS4_OK {
 		t.Fatalf("SETATTR(SIZE) with special stateid: status = %s, want NFS4_OK",
-			Nfsstat4Name(res.Status()))
+			nfs4.Nfsstat4Name(res.Status()))
 	}
 	closeFile(t, conn, &xid, fh, stateid)
 	info, err := os.Stat(filepath.Join(dir, "specialsetattr.txt"))
@@ -7259,14 +7261,14 @@ func TestWriteAndSetattrSizeNoStagingSameStatus(t *testing.T) {
 	setupClient(t, conn, &xid)
 	fh := lookupFH(t, conn, &xid, "nostaging.txt")
 
-	anonymous := func(sid Stateid4) {
+	anonymous := func(sid nfs4.Stateid4) {
 		sid.SetSeqid(0)
 		for i := 0; i < 12; i++ {
 			sid.SetOther(i, 0)
 		}
 	}
 
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pw := w.AppendArgarray_Putfh()
 		pw.Resume(pw.StartObject().SetData(fh).Finish())
 		w.Resume(pw.Finish())
@@ -7278,12 +7280,12 @@ func TestWriteAndSetattrSizeNoStagingSameStatus(t *testing.T) {
 		w.Resume(ww.Finish())
 	})
 	xid++
-	if res.Status() != NFS4ERR_OPENMODE {
+	if res.Status() != nfs4.NFS4ERR_OPENMODE {
 		t.Fatalf("WRITE without staging: status = %s, want NFS4ERR_OPENMODE",
-			Nfsstat4Name(res.Status()))
+			nfs4.Nfsstat4Name(res.Status()))
 	}
 
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pw := w.AppendArgarray_Putfh()
 		pw.Resume(pw.StartObject().SetData(fh).Finish())
 		w.Resume(pw.Finish())
@@ -7291,7 +7293,7 @@ func TestWriteAndSetattrSizeNoStagingSameStatus(t *testing.T) {
 		anonymous(saw.Stateid())
 		faw := saw.StartObjAttributes()
 		bmW := faw.StartAttrmask()
-		bmW.AppendData(1 << FATTR4_SIZE)
+		bmW.AppendData(1 << nfs4.FATTR4_SIZE)
 		faw.Resume(bmW.Finish())
 		attrData := make([]byte, 8)
 		binary.BigEndian.PutUint64(attrData, 1)
@@ -7300,9 +7302,9 @@ func TestWriteAndSetattrSizeNoStagingSameStatus(t *testing.T) {
 		w.Resume(saw.Finish())
 	})
 	xid++
-	if res.Status() != NFS4ERR_OPENMODE {
+	if res.Status() != nfs4.NFS4ERR_OPENMODE {
 		t.Fatalf("SETATTR size without staging: status = %s, want NFS4ERR_OPENMODE",
-			Nfsstat4Name(res.Status()))
+			nfs4.Nfsstat4Name(res.Status()))
 	}
 }
 
@@ -7324,12 +7326,12 @@ func TestSetattrSizeRejectsNonRegularFiles(t *testing.T) {
 		name   string
 		status uint32
 	}{
-		{"directory", NFS4ERR_ISDIR},
-		{"symlink", NFS4ERR_INVAL},
+		{"directory", nfs4.NFS4ERR_ISDIR},
+		{"symlink", nfs4.NFS4ERR_INVAL},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fh := lookupFH(t, conn, &xid, tc.name)
-			res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+			res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 				pw := w.AppendArgarray_Putfh()
 				pw.Resume(pw.StartObject().SetData(fh).Finish())
 				w.Resume(pw.Finish())
@@ -7337,7 +7339,7 @@ func TestSetattrSizeRejectsNonRegularFiles(t *testing.T) {
 				setStateid(saw.Stateid(), [16]byte{})
 				faw := saw.StartObjAttributes()
 				bmW := faw.StartAttrmask()
-				bmW.AppendData(1 << FATTR4_SIZE)
+				bmW.AppendData(1 << nfs4.FATTR4_SIZE)
 				faw.Resume(bmW.Finish())
 				data := binary.BigEndian.AppendUint64(nil, 0)
 				faw.Resume(faw.StartAttrVals().SetData(data).Finish())
@@ -7347,7 +7349,7 @@ func TestSetattrSizeRejectsNonRegularFiles(t *testing.T) {
 			xid++
 			if res.Status() != tc.status {
 				t.Fatalf("SETATTR size on %s: status = %s, want %s",
-					tc.name, Nfsstat4Name(res.Status()), Nfsstat4Name(tc.status))
+					tc.name, nfs4.Nfsstat4Name(res.Status()), nfs4.Nfsstat4Name(tc.status))
 			}
 		})
 	}
@@ -7366,7 +7368,7 @@ func TestCommitVerifier(t *testing.T) {
 	stateid, fh := openCreateFile(t, conn, &xid, clientid, "commit.txt")
 
 	// WRITE some data.
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pw := w.AppendArgarray_Putfh()
 		fhW := pw.StartObject()
 		buf := fhW.SetData(fh).Finish()
@@ -7385,7 +7387,7 @@ func TestCommitVerifier(t *testing.T) {
 	expectOK(t, res)
 
 	// COMMIT and check the write verifier is non-zero.
-	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pw := w.AppendArgarray_Putfh()
 		fhW := pw.StartObject()
 		buf := fhW.SetData(fh).Finish()
@@ -7446,11 +7448,11 @@ func TestReadOnlyMode(t *testing.T) {
 	clientid := setupClient(t, conn, &xid)
 
 	// OPEN with CREATE should fail with NFS4ERR_ROFS.
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		ow := w.AppendArgarray_Open()
-		ow.SetShareAccess(OPEN4_SHARE_ACCESS_BOTH)
-		ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
+		ow.SetShareAccess(nfs4.OPEN4_SHARE_ACCESS_BOTH)
+		ow.SetShareDeny(nfs4.OPEN4_SHARE_DENY_NONE)
 		ownerW := ow.StartOwner()
 		ownerW = ownerW.SetClientid(clientid)
 		ownerW = ownerW.SetOwner([]byte("test-owner"))
@@ -7476,8 +7478,8 @@ func TestReadOnlyMode(t *testing.T) {
 	})
 	xid++
 
-	if res.Status() != NFS4ERR_ROFS {
-		t.Fatalf("expected NFS4ERR_ROFS, got %s", Nfsstat4Name(res.Status()))
+	if res.Status() != nfs4.NFS4ERR_ROFS {
+		t.Fatalf("expected NFS4ERR_ROFS, got %s", nfs4.Nfsstat4Name(res.Status()))
 	}
 }
 
@@ -7491,18 +7493,18 @@ func TestLockNotSupported(t *testing.T) {
 	defer conn.Close()
 
 	// LOCK — variable-size writer, need to finish it properly.
-	res := sendCompound(t, conn, 1, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		lw := w.AppendArgarray_Lock()
 		lw.SetLocker_False()
 		w.Resume(lw.Finish())
 	})
-	if res.Status() != NFS4ERR_NOTSUPP {
-		t.Fatalf("LOCK: expected NFS4ERR_NOTSUPP, got %s", Nfsstat4Name(res.Status()))
+	if res.Status() != nfs4.NFS4ERR_NOTSUPP {
+		t.Fatalf("LOCK: expected NFS4ERR_NOTSUPP, got %s", nfs4.Nfsstat4Name(res.Status()))
 	}
 
 	// LOCKT — variable-size writer.
-	res = sendCompound(t, conn, 2, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, 2, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		lw := w.AppendArgarray_Lockt()
 		ow := lw.StartOwner()
@@ -7510,17 +7512,17 @@ func TestLockNotSupported(t *testing.T) {
 		lw.Resume(ow.Finish())
 		w.Resume(lw.Finish())
 	})
-	if res.Status() != NFS4ERR_NOTSUPP {
-		t.Fatalf("LOCKT: expected NFS4ERR_NOTSUPP, got %s", Nfsstat4Name(res.Status()))
+	if res.Status() != nfs4.NFS4ERR_NOTSUPP {
+		t.Fatalf("LOCKT: expected NFS4ERR_NOTSUPP, got %s", nfs4.Nfsstat4Name(res.Status()))
 	}
 
 	// LOCKU — fixed-size, no finish needed.
-	res = sendCompound(t, conn, 3, func(w *COMPOUND4argsWriter) {
+	res = sendCompound(t, conn, 3, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		w.AppendArgarray_Locku()
 	})
-	if res.Status() != NFS4ERR_NOTSUPP {
-		t.Fatalf("LOCKU: expected NFS4ERR_NOTSUPP, got %s", Nfsstat4Name(res.Status()))
+	if res.Status() != nfs4.NFS4ERR_NOTSUPP {
+		t.Fatalf("LOCKU: expected NFS4ERR_NOTSUPP, got %s", nfs4.Nfsstat4Name(res.Status()))
 	}
 }
 
@@ -7540,8 +7542,8 @@ func TestOpenStateStoreKeepsOtherOwnersUntilClientPurge(t *testing.T) {
 		state, status := addOpenForTest(store,
 			openOwnerKey{clientID: clientID, owner: test.owner},
 			fileID, test.write, StateID{})
-		if status != NFS4_OK {
-			t.Fatal(Nfsstat4Name(status))
+		if status != nfs4.NFS4_OK {
+			t.Fatal(nfs4.Nfsstat4Name(status))
 		}
 		states = append(states, state)
 	}
@@ -7554,9 +7556,9 @@ func TestOpenStateStoreKeepsOtherOwnersUntilClientPurge(t *testing.T) {
 	}
 	if _, status := store.lookup(
 		clientID, states[1].id, 1, states[1].fileID,
-	); status != NFS4_OK {
+	); status != nfs4.NFS4_OK {
 		t.Fatalf("activity by one owner invalidated another: %s",
-			Nfsstat4Name(status))
+			nfs4.Nfsstat4Name(status))
 	}
 
 	expired := store.expireClient(clientID)
@@ -7570,8 +7572,8 @@ func TestOpenStateStoreKeepsOtherOwnersUntilClientPurge(t *testing.T) {
 	}
 	if _, status := store.lookup(
 		clientID, states[1].id, 1, states[1].fileID,
-	); status != NFS4ERR_EXPIRED {
-		t.Fatalf("reboot-purged state = %s", Nfsstat4Name(status))
+	); status != nfs4.NFS4ERR_EXPIRED {
+		t.Fatalf("reboot-purged state = %s", nfs4.Nfsstat4Name(status))
 	}
 }
 
@@ -7585,8 +7587,8 @@ func TestOpenStateStoreBoundsExpiredTombstones(t *testing.T) {
 		state, status := addOpenForTest(store,
 			openOwnerKey{clientID: clientID, owner: "owner"},
 			fileID, false, StateID{})
-		if status != NFS4_OK {
-			t.Fatal(Nfsstat4Name(status))
+		if status != nfs4.NFS4_OK {
+			t.Fatal(nfs4.Nfsstat4Name(status))
 		}
 		if i == 0 {
 			firstStateID = state.id
@@ -7657,7 +7659,7 @@ func restartWithStagedWrite(
 	clientID := incarnationForTest(t, first, wireID)
 	stateid, fh := openCreateFile(
 		t, conn, &xid, wireID, name)
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pw := w.AppendArgarray_Putfh()
 		buf := pw.StartObject().SetData(fh).Finish()
 		pw.Resume(buf)
@@ -7721,7 +7723,7 @@ func TestRecoveredStagedWriteWithDeadLeaseExpires(t *testing.T) {
 	})
 	res := sendCompound(
 		t, restarted.conn, restarted.xid,
-		func(w *COMPOUND4argsWriter) {
+		func(w *nfs4.COMPOUND4argsWriter) {
 			pw := w.AppendArgarray_Putfh()
 			buf := pw.StartObject().SetData(restarted.fh).Finish()
 			pw.Resume(buf)
@@ -7734,9 +7736,9 @@ func TestRecoveredStagedWriteWithDeadLeaseExpires(t *testing.T) {
 	// With its lease dead the client registers a new incarnation, whose
 	// session the old stateid does not belong to (canonical r3 §10). The
 	// predecessor's staging is retired by its expiry, not by the READ.
-	if res.Status() != NFS4ERR_BAD_STATEID {
+	if res.Status() != nfs4.NFS4ERR_BAD_STATEID {
 		t.Fatalf("recovered READ with dead lease = %s, want BAD_STATEID",
-			Nfsstat4Name(res.Status()))
+			nfs4.Nfsstat4Name(res.Status()))
 	}
 	fileID := stagingIDForTest(t, restarted.staging, restarted.stateid)
 	if m, ok := restarted.staging.GetMeta(fileID); !ok || m.Retired {
@@ -7757,7 +7759,7 @@ func TestStagedWriteOperationsAfterServerRestart(t *testing.T) {
 			if operation != "close" {
 				res := sendCompound(
 					t, restarted.conn, restarted.xid,
-					func(w *COMPOUND4argsWriter) {
+					func(w *nfs4.COMPOUND4argsWriter) {
 						pw := w.AppendArgarray_Putfh()
 						buf := pw.StartObject().SetData(restarted.fh).Finish()
 						pw.Resume(buf)
@@ -7783,7 +7785,7 @@ func TestStagedWriteOperationsAfterServerRestart(t *testing.T) {
 							setStateid(saw.Stateid(), restarted.stateid)
 							faw := saw.StartObjAttributes()
 							bmW := faw.StartAttrmask()
-							bmW.AppendData(1 << FATTR4_SIZE)
+							bmW.AppendData(1 << nfs4.FATTR4_SIZE)
 							buf = bmW.Finish()
 							faw.Resume(buf)
 							attrData := make([]byte, 8)
@@ -7812,17 +7814,17 @@ func TestStagedWriteOperationsAfterServerRestart(t *testing.T) {
 			status, first := closeFileResult(
 				t, restarted.conn, &restarted.xid, restarted.fh,
 				restarted.stateid)
-			if status != NFS4_OK {
-				t.Fatalf("recovered CLOSE = %s", Nfsstat4Name(status))
+			if status != nfs4.NFS4_OK {
+				t.Fatalf("recovered CLOSE = %s", nfs4.Nfsstat4Name(status))
 			}
 			if operation == "close" {
 				retransmitNext(restarted.conn)
 				status, replay := closeFileResult(
 					t, restarted.conn, &restarted.xid, restarted.fh,
 					restarted.stateid)
-				if status != NFS4_OK {
+				if status != nfs4.NFS4_OK {
 					t.Fatalf("recovered CLOSE replay = %s",
-						Nfsstat4Name(status))
+						nfs4.Nfsstat4Name(status))
 				}
 				if replay != first {
 					t.Fatalf("recovered CLOSE replay stateid = %x, want %x",
@@ -7877,7 +7879,7 @@ func TestRecoveredStagedWriteRequiresActiveMarker(t *testing.T) {
 			case "read":
 				res := sendCompound(
 					t, restarted.conn, restarted.xid,
-					func(w *COMPOUND4argsWriter) {
+					func(w *nfs4.COMPOUND4argsWriter) {
 						pw := w.AppendArgarray_Putfh()
 						buf := pw.StartObject().
 							SetData(restarted.fh).Finish()
@@ -7894,9 +7896,9 @@ func TestRecoveredStagedWriteRequiresActiveMarker(t *testing.T) {
 					t, restarted.conn, &restarted.xid,
 					restarted.fh, restarted.stateid)
 			}
-			if status != NFS4ERR_EXPIRED {
+			if status != nfs4.NFS4ERR_EXPIRED {
 				t.Fatalf("%s status = %s, want NFS4ERR_EXPIRED",
-					operation, Nfsstat4Name(status))
+					operation, nfs4.Nfsstat4Name(status))
 			}
 			entries, err := os.ReadDir(restarted.stagingDir)
 			if err != nil {
@@ -7954,9 +7956,9 @@ func TestSetclientidRebootRetiresStagingFiles(t *testing.T) {
 	// The rebooted client is a new incarnation: its predecessor's stateid
 	// is not its own (canonical r3 §10).
 	if status := closeFileStatus(
-		t, conn, &xid, fh, stateid); status != NFS4ERR_BAD_STATEID {
+		t, conn, &xid, fh, stateid); status != nfs4.NFS4ERR_BAD_STATEID {
 		t.Fatalf("CLOSE after reboot = %s, want NFS4ERR_BAD_STATEID",
-			Nfsstat4Name(status))
+			nfs4.Nfsstat4Name(status))
 	}
 }
 
@@ -8089,7 +8091,7 @@ func TestSetclientidReboot(t *testing.T) {
 		leasePassForTest(t, srv, incarnation1)
 		slot, seq := ts.acquire()
 		defer ts.release(slot)
-		body := buildCompoundBody(nil, func(w *COMPOUND4argsWriter) {
+		body := buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
 			w.AppendArgarray_Putrootfh()
 		})
 		reply, err := sendRawRPC(conn, xid, procCompound, withSequence(body, ts, slot, seq))
@@ -8101,9 +8103,9 @@ func TestSetclientidReboot(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if res.Status() != NFS4ERR_BADSESSION {
+		if res.Status() != nfs4.NFS4ERR_BADSESSION {
 			t.Fatalf("SEQUENCE after remote reboot = %s, want NFS4ERR_BADSESSION",
-				Nfsstat4Name(res.Status()))
+				nfs4.Nfsstat4Name(res.Status()))
 		}
 		ts.mu.Lock()
 		ts.seqs[slot]--
@@ -8117,9 +8119,9 @@ func TestSetclientidReboot(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if status != NFS4ERR_STALE_CLIENTID {
+		if status != nfs4.NFS4ERR_STALE_CLIENTID {
 			t.Fatalf("CREATE_SESSION after remote reboot = %s, want NFS4ERR_STALE_CLIENTID",
-				Nfsstat4Name(status))
+				nfs4.Nfsstat4Name(status))
 		}
 	})
 
@@ -8127,7 +8129,7 @@ func TestSetclientidReboot(t *testing.T) {
 	// session for the new incarnation. Old stateids are then another
 	// incarnation's and report BAD_STATEID (canonical r3 §10).
 	t.Run("state operations", func(t *testing.T) {
-		res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+		res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 			pw := w.AppendArgarray_Putfh()
 			buf := pw.StartObject().SetData(fh).Finish()
 			pw.Resume(buf)
@@ -8140,9 +8142,9 @@ func TestSetclientidReboot(t *testing.T) {
 			w.Resume(ww.Finish())
 		})
 		xid++
-		if res.Status() != NFS4ERR_BAD_STATEID {
+		if res.Status() != nfs4.NFS4ERR_BAD_STATEID {
 			t.Fatalf("WRITE after remote reboot = %s, want NFS4ERR_BAD_STATEID",
-				Nfsstat4Name(res.Status()))
+				nfs4.Nfsstat4Name(res.Status()))
 		}
 		fileID := stagingIDForTest(t, srv.stagingStore, stateid)
 		assertRetiredStaging(t, srv.stagingStore, fileID)
@@ -8154,12 +8156,12 @@ func TestSetclientidReboot(t *testing.T) {
 			localStateID,
 			binary.BigEndian.Uint32(stateid[:4]),
 			fhID,
-		); status != NFS4ERR_EXPIRED {
+		); status != nfs4.NFS4ERR_EXPIRED {
 			t.Fatalf("local open after remote reboot = %s, want NFS4ERR_EXPIRED",
-				Nfsstat4Name(status))
+				nfs4.Nfsstat4Name(status))
 		}
 
-		res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
+		res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 			pw := w.AppendArgarray_Putfh()
 			buf := pw.StartObject().SetData(fh).Finish()
 			pw.Resume(buf)
@@ -8170,16 +8172,16 @@ func TestSetclientidReboot(t *testing.T) {
 			rw.SetCount(1)
 		})
 		xid++
-		if res.Status() != NFS4ERR_BAD_STATEID {
+		if res.Status() != nfs4.NFS4ERR_BAD_STATEID {
 			t.Fatalf("READ after remote reboot = %s, want NFS4ERR_BAD_STATEID",
-				Nfsstat4Name(res.Status()))
+				nfs4.Nfsstat4Name(res.Status()))
 		}
 
 		status := closeFileStatus(
 			t, conn, &xid, fh, stateid)
-		if status != NFS4ERR_BAD_STATEID {
+		if status != nfs4.NFS4ERR_BAD_STATEID {
 			t.Fatalf("CLOSE after remote reboot = %s, want NFS4ERR_BAD_STATEID",
-				Nfsstat4Name(status))
+				nfs4.Nfsstat4Name(status))
 		}
 	})
 }
@@ -8198,13 +8200,13 @@ func TestReaddirEntryXDRSize(t *testing.T) {
 		statOK bool
 	}{
 		{"no_attrs", attrMask{0, 0}, "file.txt", true},
-		{"type_only", attrMask{1 << FATTR4_TYPE, 0}, "file.txt", true},
-		{"size_and_type", attrMask{(1 << FATTR4_TYPE) | (1 << FATTR4_SIZE), 0}, "file.txt", true},
+		{"type_only", attrMask{1 << nfs4.FATTR4_TYPE, 0}, "file.txt", true},
+		{"size_and_type", attrMask{(1 << nfs4.FATTR4_TYPE) | (1 << nfs4.FATTR4_SIZE), 0}, "file.txt", true},
 		{"full_attrs", attrMask{supportedAttrs0, supportedAttrs1}, "file.txt", true},
-		{"short_name", attrMask{1 << FATTR4_TYPE, 0}, "a", true},
-		{"padded_name", attrMask{1 << FATTR4_TYPE, 0}, "ab", true},  // 2 bytes, pads to 4
-		{"exact_4", attrMask{1 << FATTR4_TYPE, 0}, "abcd", true},    // 4 bytes, no pad
-		{"needs_pad", attrMask{1 << FATTR4_TYPE, 0}, "abcde", true}, // 5 bytes, pads to 8
+		{"short_name", attrMask{1 << nfs4.FATTR4_TYPE, 0}, "a", true},
+		{"padded_name", attrMask{1 << nfs4.FATTR4_TYPE, 0}, "ab", true},  // 2 bytes, pads to 4
+		{"exact_4", attrMask{1 << nfs4.FATTR4_TYPE, 0}, "abcd", true},    // 4 bytes, no pad
+		{"needs_pad", attrMask{1 << nfs4.FATTR4_TYPE, 0}, "abcde", true}, // 5 bytes, pads to 8
 		{"stat_failed", attrMask{supportedAttrs0, supportedAttrs1}, "file.txt", false},
 	}
 
@@ -8229,7 +8231,7 @@ func TestReaddirEntryXDRSize(t *testing.T) {
 			predicted := readdirEntryXDRSize(&re)
 
 			// Encode one entry into a dirlist4 and measure.
-			dirW := StartDirlist4(nil)
+			dirW := nfs4.StartDirlist4(nil)
 			encodeDirEntries(&dirW, []readdirEntry{re}, true)
 			buf := dirW.Finish()
 			// dirlist4 = entries_present(4) + entry_bytes + eof(4)
@@ -8286,17 +8288,17 @@ func TestServerLeaseSweepExpiresButDoesNotRevokeConfirmedClient(t *testing.T) {
 	srv.sweepExpiredClientState()
 	if _, status := srv.opens.lookup(
 		state.owner.clientID, state.id, state.generation, fileID,
-	); status != NFS4ERR_EXPIRED {
+	); status != nfs4.NFS4ERR_EXPIRED {
 		t.Fatalf("swept state = %s, want NFS4ERR_EXPIRED",
-			Nfsstat4Name(status))
+			nfs4.Nfsstat4Name(status))
 	}
 
-	if err := srv.clients.Renew(clientID); nfsErrCode(err) != NFS4ERR_EXPIRED {
+	if err := srv.clients.Renew(clientID); nfsErrCode(err) != nfs4.NFS4ERR_EXPIRED {
 		t.Fatalf("RENEW after lease sweep = %v, want NFS4ERR_EXPIRED", err)
 	}
 	if err := srv.clients.MarkOpen(
 		clientID, StateID{2},
-	); nfsErrCode(err) != NFS4ERR_EXPIRED {
+	); nfsErrCode(err) != nfs4.NFS4ERR_EXPIRED {
 		t.Fatalf("OPEN marker after lease sweep = %v, want NFS4ERR_EXPIRED",
 			err)
 	}
@@ -8433,7 +8435,7 @@ func TestClientStoreMarkOpenReusesFreshLease(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.MarkOpen(clientID, StateID{6}); nfsErrCode(err) != NFS4ERR_STALE_CLIENTID {
+	if err := store.MarkOpen(clientID, StateID{6}); nfsErrCode(err) != nfs4.NFS4ERR_STALE_CLIENTID {
 		t.Fatalf("MarkOpen on replaced clientid = %v, want NFS4ERR_STALE_CLIENTID", err)
 	}
 }
@@ -8465,12 +8467,12 @@ func TestRunLeaseSweepContinuesAfterPanic(t *testing.T) {
 	srv.startedAt = base
 	srv.stagingStore = nil
 	srv.runLeaseSweep()
-	if _, status := srv.opens.lookup(state.owner.clientID, state.id, 0, state.fileID); status != NFS4_OK {
+	if _, status := srv.opens.lookup(state.owner.clientID, state.id, 0, state.fileID); status != nfs4.NFS4_OK {
 		t.Fatal("panicking sweep unexpectedly reached client expiry")
 	}
 	srv.stagingStore = staging
 	srv.runLeaseSweep()
-	if _, status := srv.opens.lookup(state.owner.clientID, state.id, 0, state.fileID); status != NFS4ERR_EXPIRED {
-		t.Fatalf("later sweep did not expire the client: %s", Nfsstat4Name(status))
+	if _, status := srv.opens.lookup(state.owner.clientID, state.id, 0, state.fileID); status != nfs4.NFS4ERR_EXPIRED {
+		t.Fatalf("later sweep did not expire the client: %s", nfs4.Nfsstat4Name(status))
 	}
 }

@@ -4,7 +4,11 @@
 
 package main
 
-import "time"
+import (
+	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+)
 
 // groupState is a client incarnation's admission state while a newly
 // confirmed incarnation replaces it.
@@ -152,11 +156,11 @@ func (ss *sessionStore) leaseNeed(incarnation uint64) bool {
 func admissionStatusLocked(g *clientGroup) uint32 {
 	switch g.state {
 	case groupClosing:
-		return NFS4ERR_DELAY
+		return nfs4.NFS4ERR_DELAY
 	case groupReplaced:
-		return NFS4ERR_BADSESSION
+		return nfs4.NFS4ERR_BADSESSION
 	}
-	return NFS4_OK
+	return nfs4.NFS4_OK
 }
 
 func (ss *sessionStore) admissionStatus(incarnation uint64) uint32 {
@@ -165,7 +169,7 @@ func (ss *sessionStore) admissionStatus(incarnation uint64) uint32 {
 	if g := ss.groups[incarnation]; g != nil {
 		return admissionStatusLocked(g)
 	}
-	return NFS4_OK
+	return nfs4.NFS4_OK
 }
 
 // requestHold is one request's hold on its incarnation group.
@@ -184,19 +188,19 @@ func (ss *sessionStore) holdRequest(sess *session) (*requestHold, uint32) {
 	defer ss.mu.Unlock()
 	g := ss.groups[sess.clientID]
 	if g == nil || ss.sessions[sess.id] != sess {
-		return nil, NFS4ERR_BADSESSION
+		return nil, nfs4.NFS4ERR_BADSESSION
 	}
-	if status := admissionStatusLocked(g); status != NFS4_OK {
+	if status := admissionStatusLocked(g); status != nfs4.NFS4_OK {
 		return nil, status
 	}
 	switch g.lease {
 	case gateChecking:
-		return nil, NFS4ERR_DELAY
+		return nil, nfs4.NFS4ERR_DELAY
 	case gateExpired:
-		return nil, NFS4ERR_BADSESSION
+		return nil, nfs4.NFS4ERR_BADSESSION
 	}
 	g.provisional++
-	return &requestHold{store: ss, group: g}, NFS4_OK
+	return &requestHold{store: ss, group: g}, nfs4.NFS4_OK
 }
 
 // gateStatus is the gate's status for an admission holding a provisional
@@ -206,11 +210,11 @@ func (h *requestHold) gateStatus() uint32 {
 	defer h.store.mu.Unlock()
 	switch h.group.lease {
 	case gateChecking:
-		return NFS4ERR_DELAY
+		return nfs4.NFS4ERR_DELAY
 	case gateExpired:
-		return NFS4ERR_BADSESSION
+		return nfs4.NFS4ERR_BADSESSION
 	}
-	return NFS4_OK
+	return nfs4.NFS4_OK
 }
 
 // activate turns an admitted request's provisional hold into an active one.
@@ -256,15 +260,15 @@ func (ss *sessionStore) beginCreate(incarnation uint64) (func(), uint32) {
 	defer ss.mu.Unlock()
 	g, ok := ss.groupLocked(incarnation)
 	if !ok {
-		return nil, NFS4ERR_DELAY
+		return nil, nfs4.NFS4ERR_DELAY
 	}
 	switch g.state {
 	case groupClosing:
 		ss.releaseGroupLocked(g)
-		return nil, NFS4ERR_DELAY
+		return nil, nfs4.NFS4ERR_DELAY
 	case groupReplaced:
 		ss.releaseGroupLocked(g)
-		return nil, NFS4ERR_STALE_CLIENTID
+		return nil, nfs4.NFS4ERR_STALE_CLIENTID
 	}
 	g.creating++
 	return func() {
@@ -272,7 +276,7 @@ func (ss *sessionStore) beginCreate(incarnation uint64) (func(), uint32) {
 		defer ss.mu.Unlock()
 		g.creating--
 		ss.releaseGroupLocked(g)
-	}, NFS4_OK
+	}, nfs4.NFS4_OK
 }
 
 // closeForReplacement starts replacing an incarnation. It fails while any

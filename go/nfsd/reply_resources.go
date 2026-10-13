@@ -8,6 +8,7 @@ import (
 	"unsafe"
 
 	"github.com/XTXMarkets/ternfs/go/msgs"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 const (
@@ -153,9 +154,9 @@ func (req *rpcRequest) acquireReplyWork(s *Server) bool {
 	capacity := maxRPCMessage
 	readdir := false
 	if req.proc == procCompound {
-		if args, ok := ReadCOMPOUND4args(req.body); ok {
+		if args, ok := nfs4.ReadCOMPOUND4args(req.body); ok {
 			it := args.Argarray()
-			if it.Next() && it.Argarray().Disc() == OP_SEQUENCE {
+			if it.Next() && it.Argarray().Disc() == nfs4.OP_SEQUENCE {
 				a := it.Argarray().Value().AsSEQUENCE4args()
 				if sess := s.sessions.lookup(readSessionID(a.SaSessionid())); sess != nil {
 					capacity = int(sess.maxResp)
@@ -166,7 +167,7 @@ func (req *rpcRequest) acquireReplyWork(s *Server) bool {
 			}
 			// Operations past the limit are never executed.
 			for n := 1; !readdir && n <= maxCompoundOperations && it.Next(); n++ {
-				readdir = it.Argarray().Disc() == OP_READDIR
+				readdir = it.Argarray().Disc() == nfs4.OP_READDIR
 			}
 			// A failed SEQUENCE still echoes its tag without consuming a slot.
 			capacity = max(capacity, rpcAcceptedHeaderSize+12+((len(args.Tag().Data())+3)&^3)+8)

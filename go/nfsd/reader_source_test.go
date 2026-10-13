@@ -12,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 var errInjectedReader = errors.New("injected reader-source fault")
@@ -97,24 +99,24 @@ func newReaderFixture(t *testing.T, content string) *readerFixture {
 func (f *readerFixture) openReader(t *testing.T, claimFH bool) [16]byte {
 	t.Helper()
 	if claimFH {
-		status, sid, _ := openByHandle(t, f.conn, &f.xid, f.clientID, "r", f.fh, OPEN4_SHARE_ACCESS_READ)
-		if status != NFS4_OK {
-			t.Fatalf("reader OPEN by handle %s", Nfsstat4Name(status))
+		status, sid, _ := openByHandle(t, f.conn, &f.xid, f.clientID, "r", f.fh, nfs4.OPEN4_SHARE_ACCESS_READ)
+		if status != nfs4.NFS4_OK {
+			t.Fatalf("reader OPEN by handle %s", nfs4.Nfsstat4Name(status))
 		}
 		return sid
 	}
-	status, sid, _, _ := openFileForOwner(t, f.conn, &f.xid, f.clientID, "r", "f", OPEN4_SHARE_ACCESS_READ, false, false)
-	if status != NFS4_OK {
-		t.Fatalf("reader OPEN by name %s", Nfsstat4Name(status))
+	status, sid, _, _ := openFileForOwner(t, f.conn, &f.xid, f.clientID, "r", "f", nfs4.OPEN4_SHARE_ACCESS_READ, false, false)
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("reader OPEN by name %s", nfs4.Nfsstat4Name(status))
 	}
 	return sid
 }
 
 func (f *readerFixture) openWriter(t *testing.T) [16]byte {
 	t.Helper()
-	status, sid, _ := openByHandle(t, f.conn, &f.xid, f.clientID, "w", f.fh, OPEN4_SHARE_ACCESS_WRITE)
-	if status != NFS4_OK {
-		t.Fatalf("writer OPEN %s", Nfsstat4Name(status))
+	status, sid, _ := openByHandle(t, f.conn, &f.xid, f.clientID, "w", f.fh, nfs4.OPEN4_SHARE_ACCESS_WRITE)
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("writer OPEN %s", nfs4.Nfsstat4Name(status))
 	}
 	return sid
 }
@@ -122,7 +124,7 @@ func (f *readerFixture) openWriter(t *testing.T) [16]byte {
 // read reads through sid and returns the status and data.
 func (f *readerFixture) read(t *testing.T, sid [16]byte) (uint32, string) {
 	t.Helper()
-	res := sendCompound(t, f.conn, f.xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, f.conn, f.xid, func(w *nfs4.COMPOUND4argsWriter) {
 		putfhOp(w, f.fh)
 		rw := w.AppendArgarray_Read()
 		setStateid(rw.Stateid(), sid)
@@ -130,13 +132,13 @@ func (f *readerFixture) read(t *testing.T, sid [16]byte) (uint32, string) {
 		rw.SetCount(64)
 	})
 	f.xid++
-	if res.Status() != NFS4_OK {
+	if res.Status() != nfs4.NFS4_OK {
 		return res.Status(), ""
 	}
 	iter := res.Resarray()
 	iter.Next()
 	iter.Next()
-	return NFS4_OK, string(iter.Resarray().Value().AsREAD4resEntry().Value().AsREAD4resok().Data())
+	return nfs4.NFS4_OK, string(iter.Resarray().Value().AsREAD4resEntry().Value().AsREAD4resok().Data())
 }
 
 func (f *readerFixture) dataID(t *testing.T, sid [16]byte) InodeID {
@@ -144,8 +146,8 @@ func (f *readerFixture) dataID(t *testing.T, sid [16]byte) InodeID {
 	var id StateID
 	copy(id[:], sid[4:])
 	state, status := f.srv.opens.lookup(incarnationForTest(t, f.srv, f.clientID), id, 0, f.fileID)
-	if status != NFS4_OK {
-		t.Fatalf("reader state %s", Nfsstat4Name(status))
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("reader state %s", nfs4.Nfsstat4Name(status))
 	}
 	return state.dataID
 }
@@ -163,12 +165,12 @@ func TestAssessmentReadSurvivesCleanWriterClose(t *testing.T) {
 			f := newReaderFixture(t, "original")
 			writer := f.openWriter(t)
 			reader := f.openReader(t, claimFH)
-			if status, data := f.read(t, reader); status != NFS4_OK || data != "original" {
-				t.Fatalf("reader before CLOSE %s %q", Nfsstat4Name(status), data)
+			if status, data := f.read(t, reader); status != nfs4.NFS4_OK || data != "original" {
+				t.Fatalf("reader before CLOSE %s %q", nfs4.Nfsstat4Name(status), data)
 			}
 			closeFile(t, f.conn, &f.xid, f.fh, writer)
-			if status, data := f.read(t, reader); status != NFS4_OK || data != "original" {
-				t.Fatalf("reader after clean CLOSE %s %q", Nfsstat4Name(status), data)
+			if status, data := f.read(t, reader); status != nfs4.NFS4_OK || data != "original" {
+				t.Fatalf("reader after clean CLOSE %s %q", nfs4.Nfsstat4Name(status), data)
 			}
 			if got := f.dataID(t, reader); got != f.fileID {
 				t.Fatalf("reader source %d, want the published %d", got, f.fileID)
@@ -183,24 +185,24 @@ func TestReaderSurvivesTimestampOnlyClose(t *testing.T) {
 	f := newReaderFixture(t, "original")
 	writer := f.openWriter(t)
 	reader := f.openReader(t, true)
-	res := sendCompound(t, f.conn, f.xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, f.conn, f.xid, func(w *nfs4.COMPOUND4argsWriter) {
 		putfhOp(w, f.fh)
 		sw := w.AppendArgarray_Setattr()
 		setStateid(sw.Stateid(), writer)
 		aw := sw.StartObjAttributes()
-		value := binary.BigEndian.AppendUint32(nil, SET_TO_CLIENT_TIME4)
+		value := binary.BigEndian.AppendUint32(nil, nfs4.SET_TO_CLIENT_TIME4)
 		value = binary.BigEndian.AppendUint64(value, 1_000_000)
 		value = binary.BigEndian.AppendUint32(value, 0)
-		sw.Resume(finishTestFattr(aw, attrMask{0, 1 << (FATTR4_TIME_MODIFY_SET - 32)}, value))
+		sw.Resume(finishTestFattr(aw, attrMask{0, 1 << (nfs4.FATTR4_TIME_MODIFY_SET - 32)}, value))
 		w.Resume(sw.Finish())
 	})
 	f.xid++
-	if res.Status() != NFS4_OK {
-		t.Fatalf("SETATTR mtime %s", Nfsstat4Name(res.Status()))
+	if res.Status() != nfs4.NFS4_OK {
+		t.Fatalf("SETATTR mtime %s", nfs4.Nfsstat4Name(res.Status()))
 	}
 	closeFile(t, f.conn, &f.xid, f.fh, writer)
-	if status, data := f.read(t, reader); status != NFS4_OK || data != "original" {
-		t.Fatalf("reader after timestamp-only CLOSE %s %q", Nfsstat4Name(status), data)
+	if status, data := f.read(t, reader); status != nfs4.NFS4_OK || data != "original" {
+		t.Fatalf("reader after timestamp-only CLOSE %s %q", nfs4.Nfsstat4Name(status), data)
 	}
 	if got := f.dataID(t, reader); got != f.fileID {
 		t.Fatalf("reader source %d, want %d", got, f.fileID)
@@ -218,8 +220,8 @@ func TestReaderReadsPublishedVersion(t *testing.T) {
 	reader := f.openReader(t, true)
 	writeFileAt(t, f.conn, &f.xid, f.fh, writer, 0, []byte("CHANGED!"))
 	closeFile(t, f.conn, &f.xid, f.fh, writer)
-	if status, data := f.read(t, reader); status != NFS4_OK || data != "CHANGED!" {
-		t.Fatalf("reader after publishing CLOSE %s %q", Nfsstat4Name(status), data)
+	if status, data := f.read(t, reader); status != nfs4.NFS4_OK || data != "CHANGED!" {
+		t.Fatalf("reader after publishing CLOSE %s %q", nfs4.Nfsstat4Name(status), data)
 	}
 }
 
@@ -234,11 +236,11 @@ func TestReaderGetsIOAfterFailedPublication(t *testing.T) {
 		f.fs.mu.Lock()
 		f.fs.failLink = "f"
 		f.fs.mu.Unlock()
-		if status := closeFileStatus(t, f.conn, &f.xid, f.fh, writer); status == NFS4_OK {
+		if status := closeFileStatus(t, f.conn, &f.xid, f.fh, writer); status == nfs4.NFS4_OK {
 			t.Fatal("CLOSE succeeded despite the LinkFile error")
 		}
-		if status, data := f.read(t, reader); status != NFS4ERR_IO {
-			t.Fatalf("reader after LinkFile error %s %q, want IO", Nfsstat4Name(status), data)
+		if status, data := f.read(t, reader); status != nfs4.NFS4ERR_IO {
+			t.Fatalf("reader after LinkFile error %s %q, want IO", nfs4.Nfsstat4Name(status), data)
 		}
 	})
 	t.Run("hydration", func(t *testing.T) {
@@ -251,14 +253,14 @@ func TestReaderGetsIOAfterFailedPublication(t *testing.T) {
 		f.fs.failRead = f.fileID
 		f.fs.mu.Unlock()
 		writeFileAt(t, f.conn, &f.xid, f.fh, writer, 0, []byte("X"))
-		if status := closeFileStatus(t, f.conn, &f.xid, f.fh, writer); status == NFS4_OK {
+		if status := closeFileStatus(t, f.conn, &f.xid, f.fh, writer); status == nfs4.NFS4_OK {
 			t.Fatal("CLOSE succeeded despite the hydration failure")
 		}
 		f.fs.mu.Lock()
 		f.fs.failRead = 0
 		f.fs.mu.Unlock()
-		if status, data := f.read(t, reader); status != NFS4ERR_IO {
-			t.Fatalf("reader after hydration failure %s %q, want IO", Nfsstat4Name(status), data)
+		if status, data := f.read(t, reader); status != nfs4.NFS4ERR_IO {
+			t.Fatalf("reader after hydration failure %s %q, want IO", nfs4.Nfsstat4Name(status), data)
 		}
 	})
 }
@@ -281,9 +283,9 @@ func TestReadOpenBehindCleanCloseEndsOnFile(t *testing.T) {
 	opened := make(chan [16]byte, 1)
 	go func() {
 		xid := uint32(6000)
-		status, sid, _ := openByHandle(t, f.conn, &xid, f.clientID, "r", f.fh, OPEN4_SHARE_ACCESS_READ)
-		if status != NFS4_OK {
-			t.Errorf("reader OPEN %s", Nfsstat4Name(status))
+		status, sid, _ := openByHandle(t, f.conn, &xid, f.clientID, "r", f.fh, nfs4.OPEN4_SHARE_ACCESS_READ)
+		if status != nfs4.NFS4_OK {
+			t.Errorf("reader OPEN %s", nfs4.Nfsstat4Name(status))
 		}
 		opened <- sid
 	}()
@@ -293,14 +295,14 @@ func TestReadOpenBehindCleanCloseEndsOnFile(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 	close(hold)
-	if status := awaitValue(t, closed, "clean CLOSE"); status != NFS4_OK {
-		t.Fatalf("CLOSE %s", Nfsstat4Name(status))
+	if status := awaitValue(t, closed, "clean CLOSE"); status != nfs4.NFS4_OK {
+		t.Fatalf("CLOSE %s", nfs4.Nfsstat4Name(status))
 	}
 	reader := awaitValue(t, opened, "read OPEN")
 	if got := f.dataID(t, reader); got != f.fileID {
 		t.Fatalf("reader source %d, want %d", got, f.fileID)
 	}
-	if status, data := f.read(t, reader); status != NFS4_OK || data != "original" {
-		t.Fatalf("reader %s %q", Nfsstat4Name(status), data)
+	if status, data := f.read(t, reader); status != nfs4.NFS4_OK || data != "original" {
+		t.Fatalf("reader %s %q", nfs4.Nfsstat4Name(status), data)
 	}
 }

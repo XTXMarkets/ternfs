@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 type markerGateVFS struct {
@@ -124,7 +126,7 @@ func TestClientStoreMarkerExcludesLifecycle(t *testing.T) {
 					now.Add(int64(2 * nfsLeaseTime))
 					expired, err := store.ExpireIfLeaseDead(id)
 					if err == nil && !expired {
-						err = nfsError(NFS4ERR_SERVERFAULT)
+						err = nfsError(nfs4.NFS4ERR_SERVERFAULT)
 					}
 					done <- err
 				case "collect":
@@ -177,7 +179,7 @@ func TestClientStoreHasOpenSlowPathMarkerOrdering(t *testing.T) {
 	go func() {
 		active, err := store.HasOpen(id, sid)
 		if err == nil && !active {
-			err = nfsError(NFS4ERR_BAD_STATEID)
+			err = nfsError(nfs4.NFS4ERR_BAD_STATEID)
 		}
 		found <- err
 	}()

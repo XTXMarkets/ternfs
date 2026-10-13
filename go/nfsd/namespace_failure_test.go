@@ -15,6 +15,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 type namespaceProbeVFS struct {
@@ -62,8 +64,8 @@ func TestNamespacePreparationFailureKeepsWritersUsable(t *testing.T) {
 			} else {
 				sf.metaPath = filepath.Join(f.disk, "missing", "checkpoint.meta")
 			}
-			if got := renameNamespaceFile(t, f, "source", "target"); got != NFS4ERR_IO {
-				t.Fatalf("preparation failure = %s", Nfsstat4Name(got))
+			if got := renameNamespaceFile(t, f, "source", "target"); got != nfs4.NFS4ERR_IO {
+				t.Fatalf("preparation failure = %s", nfs4.Nfsstat4Name(got))
 			}
 			sf.metaPath = path
 			if fs.mutations.Load() != 0 {
@@ -112,8 +114,8 @@ func TestNamespaceFinalSaveFailureKeepsBackendResult(t *testing.T) {
 				sf.metaPath = filepath.Join(f.disk, "missing", "checkpoint.meta")
 				sf.mu.Unlock()
 			}}
-			if got := namespaceOperation(t, f, operation); got != NFS4_OK {
-				t.Fatalf("known outcome changed to %s", Nfsstat4Name(got))
+			if got := namespaceOperation(t, f, operation); got != nfs4.NFS4_OK {
+				t.Fatalf("known outcome changed to %s", nfs4.Nfsstat4Name(got))
 			}
 			sf.metaPath = path
 			meta, ok := f.store.GetMeta(f.id)
@@ -124,8 +126,8 @@ func TestNamespaceFinalSaveFailureKeepsBackendResult(t *testing.T) {
 			if err != nil || !disk.Guarded {
 				t.Fatalf("failed save lost durable guard: %+v, %v", disk, err)
 			}
-			if got := commitNamespaceStatus(t, f); got != NFS4_OK {
-				t.Fatalf("repair COMMIT = %s", Nfsstat4Name(got))
+			if got := commitNamespaceStatus(t, f); got != nfs4.NFS4_OK {
+				t.Fatalf("repair COMMIT = %s", nfs4.Nfsstat4Name(got))
 			}
 			disk, err = loadStagingMeta(path)
 			if err != nil || disk.Guarded || disk.Unlinked != meta.Unlinked || disk.FileName != meta.FileName {
@@ -166,8 +168,8 @@ func TestNamespaceFinalDirectorySyncFailureIsSafe(t *testing.T) {
 	}}
 	f.server.fs = fs
 	defer os.Chmod(f.disk, 0700)
-	if got := renameNamespaceFile(t, f, "source", "target"); got != NFS4_OK {
-		t.Fatalf("installed final checkpoint returned %s", Nfsstat4Name(got))
+	if got := renameNamespaceFile(t, f, "source", "target"); got != nfs4.NFS4_OK {
+		t.Fatalf("installed final checkpoint returned %s", nfs4.Nfsstat4Name(got))
 	}
 	if err := os.Chmod(f.disk, 0700); err != nil {
 		t.Fatal(err)
@@ -176,8 +178,8 @@ func TestNamespaceFinalDirectorySyncFailureIsSafe(t *testing.T) {
 	if meta.Guarded || meta.FileName != "target" || !f.store.Get(f.id).(*localStagingFile).checkpointDirty {
 		t.Fatalf("installed final checkpoint was not retained for repair: %+v", meta)
 	}
-	if got := commitNamespaceStatus(t, f); got != NFS4_OK {
-		t.Fatal(Nfsstat4Name(got))
+	if got := commitNamespaceStatus(t, f); got != nfs4.NFS4_OK {
+		t.Fatal(nfs4.Nfsstat4Name(got))
 	}
 	f.restart(t)
 	closeFile(t, f.conn, &f.xid, f.fh, f.state)
@@ -214,7 +216,7 @@ func TestFailedWriterCloseDoesNotExpireSiblingDuringLookup(t *testing.T) {
 	defer readConn.Close()
 	done := make(chan uint32, 1)
 	go func() {
-		res := sendCompound(t, readConn, 1000, func(w *COMPOUND4argsWriter) {
+		res := sendCompound(t, readConn, 1000, func(w *nfs4.COMPOUND4argsWriter) {
 			pw := w.AppendArgarray_Putfh()
 			pw.Resume(pw.StartObject().SetData(f.fh).Finish())
 			w.Resume(pw.Finish())
@@ -228,15 +230,15 @@ func TestFailedWriterCloseDoesNotExpireSiblingDuringLookup(t *testing.T) {
 	// The READ has copied valid local state and observed no tombstone.
 	// Fail W1, then let CLOSE remove its marker before READ checks it.
 	f.server.fs = &namespaceFaultVFS{TernVFS: f.fs, err: errors.New("lost reply")}
-	if got := removeNamespaceFile(t, f, "source"); got != NFS4ERR_IO {
-		t.Fatal(Nfsstat4Name(got))
+	if got := removeNamespaceFile(t, f, "source"); got != nfs4.NFS4ERR_IO {
+		t.Fatal(nfs4.Nfsstat4Name(got))
 	}
-	if got := closeFileStatus(t, f.conn, &f.xid, f.fh, f.state); got != NFS4ERR_EXPIRED {
-		t.Fatal(Nfsstat4Name(got))
+	if got := closeFileStatus(t, f.conn, &f.xid, f.fh, f.state); got != nfs4.NFS4ERR_EXPIRED {
+		t.Fatal(nfs4.Nfsstat4Name(got))
 	}
 	close(store.release)
-	if got := awaitValue(t, done, "READ after failed CLOSE"); got != NFS4ERR_IO {
-		t.Fatalf("racing READ = %s", Nfsstat4Name(got))
+	if got := awaitValue(t, done, "READ after failed CLOSE"); got != nfs4.NFS4ERR_IO {
+		t.Fatalf("racing READ = %s", nfs4.Nfsstat4Name(got))
 	}
 	meta, ok := f.store.GetMeta(siblingID)
 	if !ok || meta.Retired {
@@ -409,8 +411,8 @@ func TestNamespacePreflightRejectionDoesNotGuard(t *testing.T) {
 	// EXIST response, even if the operation later tried to clear its guard.
 	sf.metaPath = filepath.Join(f.disk, "missing", "checkpoint.meta")
 	defer func() { sf.metaPath = path }()
-	if got := renameNamespaceFile(t, f, "source", "directory"); got != NFS4ERR_EXIST {
-		t.Fatalf("type rejection = %s", Nfsstat4Name(got))
+	if got := renameNamespaceFile(t, f, "source", "directory"); got != nfs4.NFS4ERR_EXIST {
+		t.Fatalf("type rejection = %s", nfs4.Nfsstat4Name(got))
 	}
 	if probe.mutations.Load() != 0 {
 		t.Fatal("type rejection submitted a mutation")
@@ -430,8 +432,8 @@ func TestUnknownNamespaceQuarantineFailureSurvivesRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.server.fs = &namespaceFaultVFS{TernVFS: f.fs, err: errors.New("lost reply"), apply: true}
-	if got := removeNamespaceFile(t, f, "source"); got != NFS4ERR_IO || !f.store.Failed(f.id) {
-		t.Fatalf("unknown outcome did not fail writer: %s", Nfsstat4Name(got))
+	if got := removeNamespaceFile(t, f, "source"); got != nfs4.NFS4ERR_IO || !f.store.Failed(f.id) {
+		t.Fatalf("unknown outcome did not fail writer: %s", nfs4.Nfsstat4Name(got))
 	}
 	f.restart(t) // still cannot move it, but must start and exclude it
 	if f.store.Get(f.id) != nil {
@@ -489,16 +491,16 @@ func TestNamespacePrivateIODoesNotWaitForGuard(t *testing.T) {
 	awaitSignal(t, fs.entered, "guarded REMOVE")
 	f.conn.SetDeadline(time.Now().Add(time.Second))
 	writeFileAt(t, f.conn, &f.xid, f.fh, f.state, 0, []byte("new private data"))
-	if got := commitNamespaceStatus(t, f); got != NFS4_OK {
-		t.Fatal(Nfsstat4Name(got))
+	if got := commitNamespaceStatus(t, f); got != nfs4.NFS4_OK {
+		t.Fatal(nfs4.Nfsstat4Name(got))
 	}
 	data, _ := readFileData(t, f.conn, &f.xid, f.fh, 0, 128)
 	if string(data) != "new private data" {
 		t.Fatalf("guarded private read = %q", data)
 	}
 	close(fs.release)
-	if got := awaitValue(t, done, "completed REMOVE"); got != NFS4_OK {
-		t.Fatal(Nfsstat4Name(got))
+	if got := awaitValue(t, done, "completed REMOVE"); got != nfs4.NFS4_OK {
+		t.Fatal(nfs4.Nfsstat4Name(got))
 	}
 }
 
@@ -508,21 +510,21 @@ func TestFailedNamespaceWriterIOAndStateidValidation(t *testing.T) {
 			t.Run(operation+"/"+stateKind, func(t *testing.T) {
 				f := newNamespaceFixture(t)
 				f.server.fs = &namespaceFaultVFS{TernVFS: f.fs, err: errors.New("lost reply")}
-				if got := removeNamespaceFile(t, f, "source"); got != NFS4ERR_IO {
-					t.Fatal(Nfsstat4Name(got))
+				if got := removeNamespaceFile(t, f, "source"); got != nfs4.NFS4ERR_IO {
+					t.Fatal(nfs4.Nfsstat4Name(got))
 				}
 				state := f.state
-				want := uint32(NFS4ERR_IO)
+				want := uint32(nfs4.NFS4ERR_IO)
 				switch stateKind {
 				case "special":
 					state = [16]byte{}
 				case "invalid":
 					state[15] ^= 128
 					if operation != "time" {
-						want = NFS4ERR_BAD_STATEID
+						want = nfs4.NFS4ERR_BAD_STATEID
 					}
 				}
-				res := sendCompound(t, f.conn, f.xid, func(w *COMPOUND4argsWriter) {
+				res := sendCompound(t, f.conn, f.xid, func(w *nfs4.COMPOUND4argsWriter) {
 					pw := w.AppendArgarray_Putfh()
 					pw.Resume(pw.StartObject().SetData(f.fh).Finish())
 					w.Resume(pw.Finish())
@@ -543,12 +545,12 @@ func TestFailedNamespaceWriterIOAndStateidValidation(t *testing.T) {
 						bw := aw.StartAttrmask()
 						var data []byte
 						if operation == "size" {
-							bw.AppendData(1 << FATTR4_SIZE)
+							bw.AppendData(1 << nfs4.FATTR4_SIZE)
 							data = binary.BigEndian.AppendUint64(nil, 1)
 						} else {
 							bw.AppendData(0)
-							bw.AppendData(1 << (FATTR4_TIME_MODIFY_SET - 32))
-							data = binary.BigEndian.AppendUint32(nil, SET_TO_SERVER_TIME4)
+							bw.AppendData(1 << (nfs4.FATTR4_TIME_MODIFY_SET - 32))
+							data = binary.BigEndian.AppendUint32(nil, nfs4.SET_TO_SERVER_TIME4)
 						}
 						aw.Resume(bw.Finish())
 						aw.Resume(aw.StartAttrVals().SetData(data).Finish())
@@ -557,7 +559,7 @@ func TestFailedNamespaceWriterIOAndStateidValidation(t *testing.T) {
 					}
 				})
 				if got := res.Status(); got != want {
-					t.Fatalf("%s = %s, want %s", operation, Nfsstat4Name(got), Nfsstat4Name(want))
+					t.Fatalf("%s = %s, want %s", operation, nfs4.Nfsstat4Name(got), nfs4.Nfsstat4Name(want))
 				}
 			})
 		}

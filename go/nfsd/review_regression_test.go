@@ -15,6 +15,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 func assertRetiredStaging(t *testing.T, store StagingStore, id InodeID) {
@@ -55,9 +57,9 @@ func TestExpiredWriterRecoversAcknowledgedData(t *testing.T) {
 				xid := uint32(1)
 				clientID := setupClient(t, conn, &xid)
 				status, state, fh, _ := openFileForOwner(t, conn, &xid, clientID,
-					"recovering-writer", "file", OPEN4_SHARE_ACCESS_BOTH, !existing, false)
-				if status != NFS4_OK {
-					t.Fatal(Nfsstat4Name(status))
+					"recovering-writer", "file", nfs4.OPEN4_SHARE_ACCESS_BOTH, !existing, false)
+				if status != nfs4.NFS4_OK {
+					t.Fatal(nfs4.Nfsstat4Name(status))
 				}
 				writeFileAt(t, conn, &xid, fh, state, 0, []byte("UPDATED!"))
 				id := stagingIDForTest(t, srv.stagingStore, state)
@@ -88,9 +90,9 @@ func TestExpiredWriterRecoversAcknowledgedData(t *testing.T) {
 				}
 				srv.waitForClientGC()
 				status, recovered, recoveredFH, _ := openFileForOwner(t, conn, &xid, newClient,
-					"recovering-writer", "file", OPEN4_SHARE_ACCESS_BOTH, false, false)
-				if status != NFS4_OK {
-					t.Fatal(Nfsstat4Name(status))
+					"recovering-writer", "file", nfs4.OPEN4_SHARE_ACCESS_BOTH, false, false)
+				if status != nfs4.NFS4_OK {
+					t.Fatal(nfs4.Nfsstat4Name(status))
 				}
 				if !bytes.Equal(fh, recoveredFH) {
 					t.Fatal("recovery changed the writer's filehandle")
@@ -267,8 +269,8 @@ func TestPublishedCloseSurvivesTimestampFailure(t *testing.T) {
 		if i == 1 {
 			retransmitNext(conn)
 		}
-		if status := closeFileStatus(t, conn, &xid, fh, state); status != NFS4_OK {
-			t.Fatalf("CLOSE/replay = %s", Nfsstat4Name(status))
+		if status := closeFileStatus(t, conn, &xid, fh, state); status != nfs4.NFS4_OK {
+			t.Fatalf("CLOSE/replay = %s", nfs4.Nfsstat4Name(status))
 		}
 	}
 	if len(store.Entries()) != 0 || activeOpenMarkerCount(t, srv, clientID) != 0 {
@@ -361,17 +363,17 @@ func TestMetadataOnlyCloseSkipsDataIO(t *testing.T) {
 
 func createSizeStatus(t *testing.T, conn net.Conn, xid *uint32, clientID, size uint64) uint32 {
 	t.Helper()
-	res := sendCompound(t, conn, *xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, *xid, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		ow := w.AppendArgarray_Open()
-		ow.SetShareAccess(OPEN4_SHARE_ACCESS_BOTH)
-		ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
+		ow.SetShareAccess(nfs4.OPEN4_SHARE_ACCESS_BOTH)
+		ow.SetShareDeny(nfs4.OPEN4_SHARE_DENY_NONE)
 		owner := ow.StartOwner().SetClientid(clientID).SetOwner([]byte("size-error"))
 		ow.Resume(owner.Finish())
 		create := ow.SetOpenhow_Create()
 		attrs := create.SetValue_Unchecked4()
 		data := binary.BigEndian.AppendUint64(nil, size)
-		create.Resume(finishTestFattr(attrs, attrMask{1 << FATTR4_SIZE}, data))
+		create.Resume(finishTestFattr(attrs, attrMask{1 << nfs4.FATTR4_SIZE}, data))
 		ow.Resume(create.Finish())
 		claim := ow.SetClaim_Null()
 		ow.Resume(claim.SetData([]byte("file")).Finish())
@@ -401,9 +403,9 @@ func TestOpenSizeErrorReplay(t *testing.T) {
 				t.Fatal(err)
 			}
 			var ss StagingStore = store
-			size, want := uint64(1<<63), uint32(NFS4ERR_FBIG)
+			size, want := uint64(1<<63), uint32(nfs4.NFS4ERR_FBIG)
 			if ioFailure {
-				ss, size, want = sizeErrorStore{store}, 1, NFS4ERR_IO
+				ss, size, want = sizeErrorStore{store}, 1, nfs4.NFS4ERR_IO
 			}
 			srv, err := NewServer(NewLocalTernVFS(t.TempDir()), ss, nil)
 			if err != nil {
@@ -417,7 +419,7 @@ func TestOpenSizeErrorReplay(t *testing.T) {
 			clientID := setupClient(t, conn, &xid)
 			for range 2 {
 				if got := createSizeStatus(t, conn, &xid, clientID, size); got != want {
-					t.Fatalf("OPEN/replay = %s, want %s", Nfsstat4Name(got), Nfsstat4Name(want))
+					t.Fatalf("OPEN/replay = %s, want %s", nfs4.Nfsstat4Name(got), nfs4.Nfsstat4Name(want))
 				}
 			}
 		})

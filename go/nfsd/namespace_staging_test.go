@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/msgs"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 func TestNamespaceChangePreservesDataCheckpoint(t *testing.T) {
@@ -171,7 +172,7 @@ func TestNamespaceGuardRecoveryPreservesUncheckpointedTail(t *testing.T) {
 func TestNamespaceMutationClassification(t *testing.T) {
 	remote := &RemoteTernVFS{}
 	local := &LocalTernVFS{}
-	for _, op := range []uint32{OP_REMOVE, OP_RENAME} {
+	for _, op := range []uint32{nfs4.OP_REMOVE, nfs4.OP_RENAME} {
 		for _, err := range []error{msgs.TIMEOUT, msgs.EDGE_IS_LOCKED, msgs.NAME_IS_LOCKED,
 			msgs.MALFORMED_RESPONSE, msgs.CANNOT_OVERRIDE_NAME, msgs.NOT_AUTHORISED,
 			msgs.DIRECTORY_NOT_EMPTY, errors.New("lost reply"), syscall.EEXIST} {
@@ -181,7 +182,7 @@ func TestNamespaceMutationClassification(t *testing.T) {
 		}
 		for _, err := range []error{msgs.EDGE_NOT_FOUND, msgs.MISMATCHING_CREATION_TIME} {
 			want := mutationUnknown
-			if op == OP_REMOVE {
+			if op == nfs4.OP_REMOVE {
 				want = mutationDetachOnly
 			}
 			if got := remote.ClassifyMutation(op, err); got != want {

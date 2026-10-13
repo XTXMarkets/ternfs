@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 // confirmServer is a served nfsd over the edge-aware fault VFS. P is the
@@ -53,8 +55,8 @@ func newConfirmServer(t *testing.T) *confirmServer {
 	writeFileAt(t, f.conn, &f.xid, f.fh, f.state, 0, []byte("P's bytes"))
 	wire, seq, status, err := exchangeID(f.conn, f.xid, "test-client", [8]byte{9})
 	f.xid++
-	if err != nil || status != NFS4_OK || seq != 1 {
-		t.Fatalf("EXCHANGE_ID for N %s %v", Nfsstat4Name(status), err)
+	if err != nil || status != nfs4.NFS4_OK || seq != 1 {
+		t.Fatalf("EXCHANGE_ID for N %s %v", nfs4.Nfsstat4Name(status), err)
 	}
 	f.wireN, f.n = wire, incarnationForTest(t, f.srv, wire)
 	if f.identity, err = f.fs.TernVFS.LookupParent(InodeID(f.n)); err != nil {
@@ -93,12 +95,12 @@ func (f *confirmServer) rawCreate(t *testing.T, wire uint64, seq uint32) (uint32
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Status() != NFS4_OK {
+	if res.Status() != nfs4.NFS4_OK {
 		return res.Status(), SessionID{}
 	}
 	it := res.Resarray()
 	it.Next()
-	return NFS4_OK, readSessionID(it.Resarray().Value().AsCREATESESSION4resEntry().Value().AsCREATESESSION4resok().CsrSessionid())
+	return nfs4.NFS4_OK, readSessionID(it.Resarray().Value().AsCREATESESSION4resEntry().Value().AsCREATESESSION4resok().CsrSessionid())
 }
 
 func (f *confirmServer) rawStatus(t *testing.T, body []byte) uint32 {
@@ -122,8 +124,8 @@ func (f *confirmServer) pSequence(t *testing.T) uint32 {
 	ts := testSessionForClient(f.conn, f.wireP)
 	slot, seq := ts.acquire()
 	defer ts.release(slot)
-	status := sequenceStatusOf(t, f, withSequence(buildCompoundBody(nil, func(w *COMPOUND4argsWriter) { w.AppendArgarray_Putrootfh() }), ts, slot, seq))
-	if status != NFS4_OK {
+	status := sequenceStatusOf(t, f, withSequence(buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) { w.AppendArgarray_Putrootfh() }), ts, slot, seq))
+	if status != nfs4.NFS4_OK {
 		ts.mu.Lock()
 		ts.seqs[slot]--
 		ts.mu.Unlock()
@@ -189,36 +191,36 @@ func (f *confirmServer) nSessions() int {
 func TestConfirmationUnresolvedAdmission(t *testing.T) {
 	f := newConfirmServer(t)
 	f.arm(writeD, faultFenceErr, nil)
-	if got, _ := f.rawCreate(t, f.wireN, 1); got != NFS4ERR_DELAY {
-		t.Fatalf("CREATE_SESSION with an unfenceable D %s", Nfsstat4Name(got))
+	if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("CREATE_SESSION with an unfenceable D %s", nfs4.Nfsstat4Name(got))
 	}
 	f.disarm()
 	if !f.srv.protected(f.n) || !f.srv.protected(f.p) {
 		t.Fatal("N and P are not protected")
 	}
-	if got := f.pSequence(t); got != NFS4ERR_DELAY {
-		t.Fatalf("P's SEQUENCE %s", Nfsstat4Name(got))
+	if got := f.pSequence(t); got != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("P's SEQUENCE %s", nfs4.Nfsstat4Name(got))
 	}
-	if got := f.rawStatus(t, admissionBind(f.pSession(t), CDFC4_FORE, false)); got != NFS4ERR_DELAY {
-		t.Fatalf("P's BIND %s", Nfsstat4Name(got))
+	if got := f.rawStatus(t, admissionBind(f.pSession(t), nfs4.CDFC4_FORE, false)); got != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("P's BIND %s", nfs4.Nfsstat4Name(got))
 	}
-	if got, _ := f.rawCreate(t, f.wireP, testSessionForClient(f.conn, f.wireP).nextCSSeq); got != NFS4ERR_DELAY {
-		t.Fatalf("P's CREATE_SESSION %s", Nfsstat4Name(got))
+	if got, _ := f.rawCreate(t, f.wireP, testSessionForClient(f.conn, f.wireP).nextCSSeq); got != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("P's CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 	}
 	for _, wire := range []uint64{f.wireN, f.wireP} {
-		if got := f.rawStatus(t, buildCompoundBody(nil, func(w *COMPOUND4argsWriter) {
+		if got := f.rawStatus(t, buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
 			w.AppendArgarray_DestroyClientid().SetDcaClientid(wire)
-		})); got != NFS4ERR_CLIENTID_BUSY {
-			t.Fatalf("DESTROY_CLIENTID %#x %s", wire, Nfsstat4Name(got))
+		})); got != nfs4.NFS4ERR_CLIENTID_BUSY {
+			t.Fatalf("DESTROY_CLIENTID %#x %s", wire, nfs4.Nfsstat4Name(got))
 		}
 	}
-	if _, _, status, _ := exchangeID(f.conn, f.xid, "test-client", [8]byte{10}); status != NFS4ERR_DELAY {
-		t.Fatalf("EXCHANGE_ID for the identity %s", Nfsstat4Name(status))
+	if _, _, status, _ := exchangeID(f.conn, f.xid, "test-client", [8]byte{10}); status != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("EXCHANGE_ID for the identity %s", nfs4.Nfsstat4Name(status))
 	}
 	f.xid++
 	// The same sequence retries the fence; it still fails.
-	if got, _ := f.rawCreate(t, f.wireN, 1); got != NFS4ERR_DELAY {
-		t.Fatalf("retry %s", Nfsstat4Name(got))
+	if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("retry %s", nfs4.Nfsstat4Name(got))
 	}
 
 	// Another client opens, writes and closes normally meanwhile.
@@ -240,22 +242,22 @@ func TestConfirmationUnresolvedAdmission(t *testing.T) {
 	// Fenced, D never applied and confirmed is still P through Sp: the
 	// retry rolls back and P reopens.
 	f.fs.set(writeD, faultNone, nil)
-	if got, _ := f.rawCreate(t, f.wireN, 1); got != NFS4ERR_DELAY {
-		t.Fatalf("rolled-back retry %s", Nfsstat4Name(got))
+	if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("rolled-back retry %s", nfs4.Nfsstat4Name(got))
 	}
 	if f.srv.protected(f.n) || f.srv.protected(f.p) {
 		t.Fatal("rollback kept the protection")
 	}
-	if got := f.pSequence(t); got != NFS4_OK {
-		t.Fatalf("P's SEQUENCE after rollback %s", Nfsstat4Name(got))
+	if got := f.pSequence(t); got != nfs4.NFS4_OK {
+		t.Fatalf("P's SEQUENCE after rollback %s", nfs4.Nfsstat4Name(got))
 	}
 	// The next attempt commits: P is replaced and purged, N has its session.
 	status, id := f.rawCreate(t, f.wireN, 1)
-	if status != NFS4_OK || f.srv.sessions.lookup(id) == nil {
-		t.Fatalf("CREATE_SESSION %s", Nfsstat4Name(status))
+	if status != nfs4.NFS4_OK || f.srv.sessions.lookup(id) == nil {
+		t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(status))
 	}
-	if got := f.pSequence(t); got != NFS4ERR_BADSESSION {
-		t.Fatalf("P's SEQUENCE after replacement %s", Nfsstat4Name(got))
+	if got := f.pSequence(t); got != nfs4.NFS4ERR_BADSESSION {
+		t.Fatalf("P's SEQUENCE after replacement %s", nfs4.Nfsstat4Name(got))
 	}
 	if f.pMarker(t) || f.present(t, InodeID(f.n), rebootName) {
 		t.Fatal("P not purged")
@@ -275,9 +277,9 @@ func identityConfirmed(t *testing.T, f *confirmServer) InodeID {
 }
 
 // stateid4For gives the wire Stateid4 of a 16-byte stateid.
-func stateid4For(t *testing.T, stateid [16]byte) Stateid4 {
+func stateid4For(t *testing.T, stateid [16]byte) nfs4.Stateid4 {
 	t.Helper()
-	args, ok := ReadCOMPOUND4args(buildCompoundBody(nil, func(w *COMPOUND4argsWriter) {
+	args, ok := nfs4.ReadCOMPOUND4args(buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
 		rw := w.AppendArgarray_Read()
 		setStateid(rw.Stateid(), stateid)
 		rw.SetCount(1)
@@ -334,8 +336,8 @@ func TestConfirmationProtectsDestructivePaths(t *testing.T) {
 	}
 
 	f.arm(writeD, faultFenceErr, nil)
-	if got, _ := f.rawCreate(t, f.wireN, 1); got != NFS4ERR_DELAY {
-		t.Fatalf("CREATE_SESSION %s", Nfsstat4Name(got))
+	if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 	}
 	f.disarm()
 	// P's lease and the confirming claim expire, and P's open marker goes.
@@ -362,18 +364,18 @@ func TestConfirmationProtectsDestructivePaths(t *testing.T) {
 	}
 	st := &compoundState{currentID: base, currentIDSet: true, clientID: f.p}
 	fileID, _ := fhToInodeID(f.fh)
-	if _, status := srv.lookupDurableOpen(f.p, stateid4For(t, f.state), fileID); status != NFS4ERR_DELAY {
-		t.Fatalf("requireActiveOpen expiry %s", Nfsstat4Name(status))
+	if _, status := srv.lookupDurableOpen(f.p, stateid4For(t, f.state), fileID); status != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("requireActiveOpen expiry %s", nfs4.Nfsstat4Name(status))
 	}
 	var oldWire [16]byte
 	copy(oldWire[4:], old[:])
-	if _, status := srv.lookupDurableOpen(f.p, stateid4For(t, oldWire), base); status != NFS4ERR_DELAY {
-		t.Fatalf("recovered READ %s", Nfsstat4Name(status))
+	if _, status := srv.lookupDurableOpen(f.p, stateid4For(t, oldWire), base); status != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("recovered READ %s", nfs4.Nfsstat4Name(status))
 	}
-	if _, status := srv.releaseWrite(stateid4For(t, oldWire), st, true, nil); status != NFS4ERR_DELAY {
-		t.Fatalf("recovered CLOSE %s", Nfsstat4Name(status))
+	if _, status := srv.releaseWrite(stateid4For(t, oldWire), st, true, nil); status != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("recovered CLOSE %s", nfs4.Nfsstat4Name(status))
 	}
-	if _, _, _, release, err := srv.recoveredStagingTarget(f.fs.RootID(), "kfile", f.n, "owner", true); nfsErrCode(err) != NFS4ERR_DELAY {
+	if _, _, _, release, err := srv.recoveredStagingTarget(f.fs.RootID(), "kfile", f.n, "owner", true); nfsErrCode(err) != nfs4.NFS4ERR_DELAY {
 		t.Fatalf("expired-lease recovery rule %v", err)
 	} else {
 		release()
@@ -411,8 +413,8 @@ func TestConfirmationProtectsDestructivePaths(t *testing.T) {
 func TestConfirmationSettledOnce(t *testing.T) {
 	f := newConfirmServer(t)
 	f.arm(writeD, faultAppliedFail, nil)
-	if got, _ := f.rawCreate(t, f.wireN, 1); got != NFS4ERR_DELAY {
-		t.Fatalf("CREATE_SESSION %s", Nfsstat4Name(got))
+	if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 	}
 	f.fs.set(writeD, faultNone, nil)
 	var wg sync.WaitGroup
@@ -427,15 +429,15 @@ func TestConfirmationSettledOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res, err := parseCompoundReply(reply); err != nil || res.Status() != NFS4_OK && res.Status() != NFS4ERR_DELAY {
+	if res, err := parseCompoundReply(reply); err != nil || res.Status() != nfs4.NFS4_OK && res.Status() != nfs4.NFS4ERR_DELAY {
 		t.Fatalf("concurrent retry %v %v", res.Status(), err)
 	}
 	wg.Wait()
 	status, id := f.rawCreate(t, f.wireN, 1)
-	if status != NFS4_OK || f.nSessions() != 1 || f.srv.sessions.lookup(id) == nil {
-		t.Fatalf("replay %s, %d sessions", Nfsstat4Name(status), f.nSessions())
+	if status != nfs4.NFS4_OK || f.nSessions() != 1 || f.srv.sessions.lookup(id) == nil {
+		t.Fatalf("replay %s, %d sessions", nfs4.Nfsstat4Name(status), f.nSessions())
 	}
-	if f.srv.protected(f.n) || f.pMarker(t) || f.pSequence(t) != NFS4ERR_BADSESSION {
+	if f.srv.protected(f.n) || f.pMarker(t) || f.pSequence(t) != nfs4.NFS4ERR_BADSESSION {
 		t.Fatal("commit not applied")
 	}
 }
@@ -446,14 +448,14 @@ func TestConfirmationSettledOnce(t *testing.T) {
 func TestConfirmationConservative(t *testing.T) {
 	check := func(t *testing.T, f *confirmServer) {
 		t.Helper()
-		if got, _ := f.rawCreate(t, f.wireN, 1); got != NFS4ERR_STALE_CLIENTID {
-			t.Fatalf("N's record survived: %s", Nfsstat4Name(got))
+		if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4ERR_STALE_CLIENTID {
+			t.Fatalf("N's record survived: %s", nfs4.Nfsstat4Name(got))
 		}
 		if f.srv.protected(f.n) || f.srv.protected(f.p) {
 			t.Fatal("conservative result kept the protection")
 		}
-		if got := f.pSequence(t); got != NFS4ERR_BADSESSION {
-			t.Fatalf("P's SEQUENCE %s", Nfsstat4Name(got))
+		if got := f.pSequence(t); got != nfs4.NFS4ERR_BADSESSION {
+			t.Fatalf("P's SEQUENCE %s", nfs4.Nfsstat4Name(got))
 		}
 		if !f.pMarker(t) || f.pStaging(t).Retired || f.present(t, InodeID(f.p), expiredName) {
 			t.Fatal("P's durable state changed")
@@ -466,8 +468,8 @@ func TestConfirmationConservative(t *testing.T) {
 			t.Fatal(err)
 		}
 		f.arm(writeD, faultNotApplied, func() { pointConfirmed(t, f, m) })
-		if got, _ := f.rawCreate(t, f.wireN, 1); got != NFS4ERR_STALE_CLIENTID {
-			t.Fatalf("CREATE_SESSION %s", Nfsstat4Name(got))
+		if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4ERR_STALE_CLIENTID {
+			t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 		}
 		check(t, f)
 	})
@@ -479,8 +481,8 @@ func TestConfirmationConservative(t *testing.T) {
 		f.fs.lookupHook.dir, f.fs.lookupHook.name, f.fs.lookupHook.skip = InodeID(f.n), clientRecordName, 1
 		f.fs.lookupHook.fn = func() { pointConfirmed(t, f, InodeID(f.p)) }
 		f.fs.mu.Unlock()
-		if got, _ := f.rawCreate(t, f.wireN, 1); got != NFS4ERR_STALE_CLIENTID {
-			t.Fatalf("CREATE_SESSION %s", Nfsstat4Name(got))
+		if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4ERR_STALE_CLIENTID {
+			t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 		}
 		if f.present(t, InodeID(f.n), f.srv.clients.confirmingName) {
 			t.Fatal("write A made after the predecessor changed")
@@ -517,8 +519,8 @@ func TestConfirmationFirstWithoutPredecessor(t *testing.T) {
 	fs.mu.Lock()
 	fs.armed = true
 	fs.mu.Unlock()
-	if got, _ := createResult(t, srv, 1, wire, 1); got != NFS4ERR_STALE_CLIENTID {
-		t.Fatalf("CREATE_SESSION %s", Nfsstat4Name(got))
+	if got, _ := createResult(t, srv, 1, wire, 1); got != nfs4.NFS4ERR_STALE_CLIENTID {
+		t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 	}
 	if wireRecords(srv) != 0 || srv.protected(incarnation) {
 		t.Fatal("record or protection left")
@@ -526,8 +528,8 @@ func TestConfirmationFirstWithoutPredecessor(t *testing.T) {
 	// The client starts again and confirms.
 	fs.set(writeD, faultNone, nil)
 	again := identityExchange(t, srv, 1, "first", [8]byte{1}, false)
-	if got, _ := createResult(t, srv, 1, again.clientID, 1); got != NFS4_OK {
-		t.Fatalf("second attempt %s", Nfsstat4Name(got))
+	if got, _ := createResult(t, srv, 1, again.clientID, 1); got != nfs4.NFS4_OK {
+		t.Fatalf("second attempt %s", nfs4.Nfsstat4Name(got))
 	}
 }
 
@@ -538,14 +540,14 @@ func TestConfirmationPurgeRetry(t *testing.T) {
 	f.fs.mu.Lock()
 	f.fs.failLeaseRemove = InodeID(f.p)
 	f.fs.mu.Unlock()
-	if got, _ := f.rawCreate(t, f.wireN, 1); got != NFS4_OK {
-		t.Fatalf("CREATE_SESSION %s", Nfsstat4Name(got))
+	if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4_OK {
+		t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 	}
 	if !f.present(t, InodeID(f.n), rebootName) {
 		t.Fatal("reboot evidence lost after a failed purge")
 	}
-	if _, _, status, _ := exchangeID(f.conn, f.xid, "test-client", [8]byte{9}); status != NFS4_OK {
-		t.Fatalf("warm EXCHANGE_ID %s", Nfsstat4Name(status))
+	if _, _, status, _ := exchangeID(f.conn, f.xid, "test-client", [8]byte{9}); status != nfs4.NFS4_OK {
+		t.Fatalf("warm EXCHANGE_ID %s", nfs4.Nfsstat4Name(status))
 	}
 	f.xid++
 	if f.present(t, InodeID(f.n), rebootName) || f.present(t, InodeID(f.p), f.srv.clients.leaseName) {
@@ -583,18 +585,18 @@ func TestConfirmationProtectedWhileInFlight(t *testing.T) {
 	if !f.srv.protected(f.n) || !f.srv.protected(f.p) {
 		t.Fatal("not protected while the first write is in flight")
 	}
-	if got, _ := f.rawCreate(t, f.wireN, 1); got != NFS4ERR_DELAY {
-		t.Fatalf("retry while in flight %s", Nfsstat4Name(got))
+	if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("retry while in flight %s", nfs4.Nfsstat4Name(got))
 	}
-	if got := f.pSequence(t); got != NFS4ERR_DELAY {
-		t.Fatalf("P's SEQUENCE while in flight %s", Nfsstat4Name(got))
+	if got := f.pSequence(t); got != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("P's SEQUENCE while in flight %s", nfs4.Nfsstat4Name(got))
 	}
 	closeSignal(release)
 	// D never applied and confirmed is still P through Sp: rolled back.
-	if got := awaitValue(t, result, "first CREATE_SESSION"); got != NFS4ERR_DELAY {
-		t.Fatalf("first CREATE_SESSION %s", Nfsstat4Name(got))
+	if got := awaitValue(t, result, "first CREATE_SESSION"); got != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("first CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 	}
-	if f.srv.protected(f.n) || f.pSequence(t) != NFS4_OK {
+	if f.srv.protected(f.n) || f.pSequence(t) != nfs4.NFS4_OK {
 		t.Fatal("rollback did not reopen P")
 	}
 }
@@ -632,14 +634,14 @@ func TestConfirmationPreWriteReadError(t *testing.T) {
 				t.Fatal(err)
 			}
 			f.afterPrepare(func() { f.setFailLookup(true) })
-			if got, _ := f.rawCreate(t, f.wireN, 1); got != NFS4ERR_DELAY {
-				t.Fatalf("CREATE_SESSION with an unreadable pointer %s", Nfsstat4Name(got))
+			if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4ERR_DELAY {
+				t.Fatalf("CREATE_SESSION with an unreadable pointer %s", nfs4.Nfsstat4Name(got))
 			}
-			if got, _ := f.rawCreate(t, f.wireN, 1); got != NFS4ERR_DELAY {
-				t.Fatalf("retry while unreadable %s", Nfsstat4Name(got))
+			if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4ERR_DELAY {
+				t.Fatalf("retry while unreadable %s", nfs4.Nfsstat4Name(got))
 			}
 			f.srv.runLeaseSweep()
-			if !f.srv.protected(f.n) || !f.srv.protected(f.p) || f.pSequence(t) != NFS4ERR_DELAY {
+			if !f.srv.protected(f.n) || !f.srv.protected(f.p) || f.pSequence(t) != nfs4.NFS4ERR_DELAY {
 				t.Fatal("protection or P's closing lost on a read error")
 			}
 			if changed {
@@ -650,18 +652,18 @@ func TestConfirmationPreWriteReadError(t *testing.T) {
 				t.Fatal("a write was made")
 			}
 			if !changed {
-				if got, _ := f.rawCreate(t, f.wireN, 1); got != NFS4ERR_DELAY {
-					t.Fatalf("retry after the read recovers %s", Nfsstat4Name(got))
+				if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4ERR_DELAY {
+					t.Fatalf("retry after the read recovers %s", nfs4.Nfsstat4Name(got))
 				}
-				if f.srv.protected(f.p) || f.pSequence(t) != NFS4_OK {
+				if f.srv.protected(f.p) || f.pSequence(t) != nfs4.NFS4_OK {
 					t.Fatal("unchanged P not reopened")
 				}
 				return
 			}
-			if got, _ := f.rawCreate(t, f.wireN, 1); got != NFS4ERR_STALE_CLIENTID {
-				t.Fatalf("retry after another process changed P %s", Nfsstat4Name(got))
+			if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4ERR_STALE_CLIENTID {
+				t.Fatalf("retry after another process changed P %s", nfs4.Nfsstat4Name(got))
 			}
-			if f.srv.protected(f.p) || f.pSequence(t) != NFS4ERR_BADSESSION {
+			if f.srv.protected(f.p) || f.pSequence(t) != nfs4.NFS4ERR_BADSESSION {
 				t.Fatal("changed P not invalidated locally")
 			}
 			if !f.pMarker(t) || f.pStaging(t).Retired || f.present(t, InodeID(f.p), expiredName) {
@@ -685,15 +687,15 @@ func TestConfirmationPendingMoved(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	if got, _ := f.rawCreate(t, f.wireN, 1); got != NFS4ERR_DELAY {
-		t.Fatalf("CREATE_SESSION %s", Nfsstat4Name(got))
+	if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 	}
-	if f.srv.protected(f.p) || f.pSequence(t) != NFS4_OK {
+	if f.srv.protected(f.p) || f.pSequence(t) != nfs4.NFS4_OK {
 		t.Fatal("unchanged P not reopened")
 	}
 	for range 2 {
-		if got, _ := f.rawCreate(t, f.wireN, 1); got != NFS4ERR_STALE_CLIENTID {
-			t.Fatalf("retry %s", Nfsstat4Name(got))
+		if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4ERR_STALE_CLIENTID {
+			t.Fatalf("retry %s", nfs4.Nfsstat4Name(got))
 		}
 	}
 	if identityConfirmed(t, f) != InodeID(f.p) || !f.pMarker(t) {
@@ -707,10 +709,10 @@ func TestConfirmationPendingMoved(t *testing.T) {
 func TestConfirmationCommittedElsewhere(t *testing.T) {
 	f := newConfirmServer(t)
 	f.afterPrepare(func() { pointConfirmed(t, f, InodeID(f.n)) })
-	if got, _ := f.rawCreate(t, f.wireN, 1); got != NFS4_OK {
-		t.Fatalf("CREATE_SESSION %s", Nfsstat4Name(got))
+	if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4_OK {
+		t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 	}
-	if f.pSequence(t) != NFS4ERR_BADSESSION || f.nSessions() != 1 {
+	if f.pSequence(t) != nfs4.NFS4ERR_BADSESSION || f.nSessions() != 1 {
 		t.Fatal("commit not applied")
 	}
 	if !f.present(t, InodeID(f.p), f.srv.clients.leaseName) || f.present(t, InodeID(f.n), rebootName) {
@@ -730,8 +732,8 @@ func TestConfirmationApplyPanic(t *testing.T) {
 			f.fs.mu.Lock()
 			f.fs.panicRemove.dir = InodeID(f.p)
 			f.fs.mu.Unlock()
-			if got, _ := f.rawCreate(t, f.wireN, 1); got != NFS4ERR_DELAY {
-				t.Fatalf("CREATE_SESSION %s", Nfsstat4Name(got))
+			if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4ERR_DELAY {
+				t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 			}
 			if !f.srv.protected(f.n) || !f.srv.protected(f.p) || f.nSessions() != 0 {
 				t.Fatal("interrupted application lost its protection or published")
@@ -743,10 +745,10 @@ func TestConfirmationApplyPanic(t *testing.T) {
 				}
 			}
 			status, id := f.rawCreate(t, f.wireN, 1)
-			if status != NFS4_OK || f.nSessions() != 1 || f.srv.sessions.lookup(id) == nil {
-				t.Fatalf("resumed %s with %d sessions", Nfsstat4Name(status), f.nSessions())
+			if status != nfs4.NFS4_OK || f.nSessions() != 1 || f.srv.sessions.lookup(id) == nil {
+				t.Fatalf("resumed %s with %d sessions", nfs4.Nfsstat4Name(status), f.nSessions())
 			}
-			if f.srv.protected(f.n) || f.pSequence(t) != NFS4ERR_BADSESSION || f.pMarker(t) {
+			if f.srv.protected(f.n) || f.pSequence(t) != nfs4.NFS4ERR_BADSESSION || f.pMarker(t) {
 				t.Fatal("commit not fully applied")
 			}
 			if f.present(t, InodeID(f.n), rebootName) {
@@ -761,17 +763,17 @@ func TestConfirmationApplyPanic(t *testing.T) {
 		f.fs.panicRemove.dir, f.fs.panicRemove.skip = InodeID(f.p), 1
 		f.fs.mu.Unlock()
 		status, id := f.rawCreate(t, f.wireN, 1)
-		if status != NFS4_OK || f.srv.protected(f.n) || f.nSessions() != 1 {
-			t.Fatalf("CREATE_SESSION %s", Nfsstat4Name(status))
+		if status != nfs4.NFS4_OK || f.srv.protected(f.n) || f.nSessions() != 1 {
+			t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(status))
 		}
 		if !f.present(t, InodeID(f.n), rebootName) {
 			t.Fatal("interrupted purge lost its evidence")
 		}
-		if got, replay := f.rawCreate(t, f.wireN, 1); got != NFS4_OK || replay != id {
-			t.Fatalf("replay %s", Nfsstat4Name(got))
+		if got, replay := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4_OK || replay != id {
+			t.Fatalf("replay %s", nfs4.Nfsstat4Name(got))
 		}
-		if _, _, status, _ := exchangeID(f.conn, f.xid, "test-client", [8]byte{9}); status != NFS4_OK {
-			t.Fatalf("warm EXCHANGE_ID %s", Nfsstat4Name(status))
+		if _, _, status, _ := exchangeID(f.conn, f.xid, "test-client", [8]byte{9}); status != nfs4.NFS4_OK {
+			t.Fatalf("warm EXCHANGE_ID %s", nfs4.Nfsstat4Name(status))
 		}
 		f.xid++
 		if f.present(t, InodeID(f.n), rebootName) || f.present(t, InodeID(f.p), f.srv.clients.leaseName) {
@@ -835,7 +837,7 @@ func notYet(t *testing.T, result <-chan uint32, what string) {
 	time.Sleep(20 * time.Millisecond)
 	select {
 	case got := <-result:
-		t.Fatalf("%s did not wait: %s", what, Nfsstat4Name(got))
+		t.Fatalf("%s did not wait: %s", what, nfs4.Nfsstat4Name(got))
 	default:
 	}
 }
@@ -899,8 +901,8 @@ func TestProtectionOrdering(t *testing.T) {
 		notYet(t, result, "confirmation")
 		// Another client makes progress.
 		unrelated := identityExchange(t, f.srv, 1, "other", [8]byte{1}, false)
-		if got, _ := createResult(t, f.srv, 1, unrelated.clientID, 1); got != NFS4_OK {
-			t.Fatalf("other client %s", Nfsstat4Name(got))
+		if got, _ := createResult(t, f.srv, 1, unrelated.clientID, 1); got != nfs4.NFS4_OK {
+			t.Fatalf("other client %s", nfs4.Nfsstat4Name(got))
 		}
 		closeSignal(g.release)
 		if recheck := awaitValue(t, collected, "admitted GC"); recheck {
@@ -909,11 +911,11 @@ func TestProtectionOrdering(t *testing.T) {
 		// It gets DELAY while the confirmation is protected, or runs after
 		// it has finished; it never rewrites N's pending pointer under
 		// protection, which would have failed the commit's pending check.
-		if got := awaitValue(t, exchanged, "EXCHANGE_ID during registration"); got != NFS4ERR_DELAY && got != NFS4_OK {
-			t.Fatalf("EXCHANGE_ID during registration %s", Nfsstat4Name(got))
+		if got := awaitValue(t, exchanged, "EXCHANGE_ID during registration"); got != nfs4.NFS4ERR_DELAY && got != nfs4.NFS4_OK {
+			t.Fatalf("EXCHANGE_ID during registration %s", nfs4.Nfsstat4Name(got))
 		}
-		if got := awaitValue(t, result, "confirmation"); got != NFS4_OK || identityConfirmed(t, f) != InodeID(f.n) {
-			t.Fatalf("confirmation %s", Nfsstat4Name(got))
+		if got := awaitValue(t, result, "confirmation"); got != nfs4.NFS4_OK || identityConfirmed(t, f) != InodeID(f.n) {
+			t.Fatalf("confirmation %s", nfs4.Nfsstat4Name(got))
 		}
 	})
 	t.Run("expired marker", func(t *testing.T) {
@@ -986,7 +988,7 @@ func TestProtectionOrdering(t *testing.T) {
 		exchanged := make(chan uint64, 1)
 		go func() {
 			wire, _, status, _ := exchangeID(other, 9300, "test-client", [8]byte{12})
-			if status != NFS4_OK {
+			if status != nfs4.NFS4_OK {
 				wire = 0
 			}
 			exchanged <- wire
@@ -1003,16 +1005,16 @@ func TestProtectionOrdering(t *testing.T) {
 		}
 		// The new registration superseded N before protection: nothing was
 		// written for N, and N's record is gone.
-		if got := awaitValue(t, result, "confirmation"); got != NFS4ERR_DELAY && got != NFS4ERR_STALE_CLIENTID {
-			t.Fatalf("superseded confirmation %s", Nfsstat4Name(got))
+		if got := awaitValue(t, result, "confirmation"); got != nfs4.NFS4ERR_DELAY && got != nfs4.NFS4ERR_STALE_CLIENTID {
+			t.Fatalf("superseded confirmation %s", nfs4.Nfsstat4Name(got))
 		}
 		if f.present(t, InodeID(f.n), f.srv.clients.confirmingName) || identityConfirmed(t, f) != InodeID(f.p) {
 			t.Fatal("superseded N was written")
 		}
-		if got, _ := f.rawCreate(t, f.wireN, 1); got != NFS4ERR_STALE_CLIENTID {
-			t.Fatalf("superseded record %s", Nfsstat4Name(got))
+		if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4ERR_STALE_CLIENTID {
+			t.Fatalf("superseded record %s", nfs4.Nfsstat4Name(got))
 		}
-		if f.srv.protected(f.n) || f.srv.protected(f.p) || f.pSequence(t) != NFS4_OK {
+		if f.srv.protected(f.n) || f.srv.protected(f.p) || f.pSequence(t) != nfs4.NFS4_OK {
 			t.Fatal("P left closed or protected")
 		}
 	})
@@ -1028,8 +1030,8 @@ func TestHeldRetryAdmission(t *testing.T) {
 		t.Helper()
 		f := newConfirmServer(t)
 		f.arm(writeD, faultAppliedFail, nil)
-		if got, _ := f.rawCreate(t, f.wireN, 1); got != NFS4ERR_DELAY {
-			t.Fatalf("CREATE_SESSION %s", Nfsstat4Name(got))
+		if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4ERR_DELAY {
+			t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 		}
 		f.disarm()
 		f.fs.set(writeD, faultNone, nil)
@@ -1042,12 +1044,12 @@ func TestHeldRetryAdmission(t *testing.T) {
 		ss.recordLimit = ss.records + ss.pendingSessions
 		ss.mu.Unlock()
 		other := identityExchange(t, f.srv, 1, "other", [8]byte{1}, false)
-		if got, _ := createResult(t, f.srv, 1, other.clientID, 1); got != NFS4ERR_DELAY {
-			t.Fatalf("new CREATE_SESSION at the cap %s", Nfsstat4Name(got))
+		if got, _ := createResult(t, f.srv, 1, other.clientID, 1); got != nfs4.NFS4ERR_DELAY {
+			t.Fatalf("new CREATE_SESSION at the cap %s", nfs4.Nfsstat4Name(got))
 		}
 		status, id := f.rawCreate(t, f.wireN, 1)
-		if status != NFS4_OK || f.srv.sessions.lookup(id) == nil || f.nSessions() != 1 || f.srv.protected(f.n) {
-			t.Fatalf("held retry at the cap %s", Nfsstat4Name(status))
+		if status != nfs4.NFS4_OK || f.srv.sessions.lookup(id) == nil || f.nSessions() != 1 || f.srv.protected(f.n) {
+			t.Fatalf("held retry at the cap %s", nfs4.Nfsstat4Name(status))
 		}
 	})
 	t.Run("full connection", func(t *testing.T) {
@@ -1055,21 +1057,21 @@ func TestHeldRetryAdmission(t *testing.T) {
 		other := identityExchange(t, f.srv, 1, "other", [8]byte{1}, false)
 		full := &rpcConnection{}
 		for seq := uint32(1); seq <= maxConnectionSessions; seq++ {
-			if got := identityCallOn(t, f.srv, 1, full, createSessionBody(other.clientID, seq)).Status(); got != NFS4_OK {
-				t.Fatalf("filling the connection %s", Nfsstat4Name(got))
+			if got := identityCallOn(t, f.srv, 1, full, createSessionBody(other.clientID, seq)).Status(); got != nfs4.NFS4_OK {
+				t.Fatalf("filling the connection %s", nfs4.Nfsstat4Name(got))
 			}
 		}
 		retry := func(conn *rpcConnection) (uint32, SessionID) {
 			res := identityCallOn(t, f.srv, 1, conn, createSessionBody(f.wireN, 1))
-			if res.Status() != NFS4_OK {
+			if res.Status() != nfs4.NFS4_OK {
 				return res.Status(), SessionID{}
 			}
 			it := res.Resarray()
 			it.Next()
-			return NFS4_OK, readSessionID(it.Resarray().Value().AsCREATESESSION4resEntry().Value().AsCREATESESSION4resok().CsrSessionid())
+			return nfs4.NFS4_OK, readSessionID(it.Resarray().Value().AsCREATESESSION4resEntry().Value().AsCREATESESSION4resok().CsrSessionid())
 		}
-		if got, _ := retry(full); got != NFS4ERR_RESOURCE {
-			t.Fatalf("retry on a full connection %s", Nfsstat4Name(got))
+		if got, _ := retry(full); got != nfs4.NFS4ERR_RESOURCE {
+			t.Fatalf("retry on a full connection %s", nfs4.Nfsstat4Name(got))
 		}
 		full.mu.Lock()
 		size := len(full.sessions)
@@ -1079,16 +1081,16 @@ func TestHeldRetryAdmission(t *testing.T) {
 		}
 		fresh := &rpcConnection{}
 		status, id := retry(fresh)
-		if status != NFS4_OK || !fresh.associated(id) || f.nSessions() != 1 || f.srv.protected(f.n) {
-			t.Fatalf("retry on another connection %s", Nfsstat4Name(status))
+		if status != nfs4.NFS4_OK || !fresh.associated(id) || f.nSessions() != 1 || f.srv.protected(f.n) {
+			t.Fatalf("retry on another connection %s", nfs4.Nfsstat4Name(status))
 		}
 		// The connection that has it replays at no cost; the full one
 		// still has no room for it.
-		if got, replay := retry(fresh); got != NFS4_OK || replay != id {
-			t.Fatalf("replay on the associated connection %s", Nfsstat4Name(got))
+		if got, replay := retry(fresh); got != nfs4.NFS4_OK || replay != id {
+			t.Fatalf("replay on the associated connection %s", nfs4.Nfsstat4Name(got))
 		}
-		if got, _ := retry(full); got != NFS4ERR_RESOURCE {
-			t.Fatalf("replay needing a new association %s", Nfsstat4Name(got))
+		if got, _ := retry(full); got != nfs4.NFS4ERR_RESOURCE {
+			t.Fatalf("replay needing a new association %s", nfs4.Nfsstat4Name(got))
 		}
 	})
 }
@@ -1118,15 +1120,15 @@ func TestPurgeRetryPanic(t *testing.T) {
 	f.fs.mu.Lock()
 	f.fs.failLeaseRemove = InodeID(f.p)
 	f.fs.mu.Unlock()
-	if got, _ := f.rawCreate(t, f.wireN, 1); got != NFS4_OK || !f.replacementHeld() {
-		t.Fatalf("CREATE_SESSION %s", Nfsstat4Name(got))
+	if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4_OK || !f.replacementHeld() {
+		t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 	}
 
 	// A later CREATE_SESSION retries the purge, which panics.
 	f.panicNextRemoveInP()
 	status, id := f.rawCreate(t, f.wireN, 2)
-	if status != NFS4_OK || ss.lookup(id) == nil {
-		t.Fatalf("CREATE_SESSION with a panicking purge retry %s", Nfsstat4Name(status))
+	if status != nfs4.NFS4_OK || ss.lookup(id) == nil {
+		t.Fatalf("CREATE_SESSION with a panicking purge retry %s", nfs4.Nfsstat4Name(status))
 	}
 	if a := ss.accounting(); a.PendingSessions != 0 {
 		t.Fatalf("reservation leaked %+v", a)
@@ -1138,14 +1140,14 @@ func TestPurgeRetryPanic(t *testing.T) {
 	if !f.replacementHeld() || !f.present(t, InodeID(f.n), rebootName) {
 		t.Fatal("purge obligation lost")
 	}
-	if got, replay := f.rawCreate(t, f.wireN, 2); got != NFS4_OK || replay != id {
-		t.Fatalf("replay %s", Nfsstat4Name(got))
+	if got, replay := f.rawCreate(t, f.wireN, 2); got != nfs4.NFS4_OK || replay != id {
+		t.Fatalf("replay %s", nfs4.Nfsstat4Name(got))
 	}
 
 	// A warm EXCHANGE_ID retries it, and panics too.
 	f.panicNextRemoveInP()
-	if wire, _, status, _ := exchangeID(f.conn, f.xid, "test-client", [8]byte{9}); status != NFS4_OK || wire != f.wireN {
-		t.Fatalf("warm EXCHANGE_ID with a panicking purge retry %s", Nfsstat4Name(status))
+	if wire, _, status, _ := exchangeID(f.conn, f.xid, "test-client", [8]byte{9}); status != nfs4.NFS4_OK || wire != f.wireN {
+		t.Fatalf("warm EXCHANGE_ID with a panicking purge retry %s", nfs4.Nfsstat4Name(status))
 	}
 	f.xid++
 	if !f.replacementHeld() || !f.present(t, InodeID(f.n), rebootName) {
@@ -1153,8 +1155,8 @@ func TestPurgeRetryPanic(t *testing.T) {
 	}
 
 	// The next warm EXCHANGE_ID completes it.
-	if _, _, status, _ := exchangeID(f.conn, f.xid, "test-client", [8]byte{9}); status != NFS4_OK {
-		t.Fatalf("warm EXCHANGE_ID %s", Nfsstat4Name(status))
+	if _, _, status, _ := exchangeID(f.conn, f.xid, "test-client", [8]byte{9}); status != nfs4.NFS4_OK {
+		t.Fatalf("warm EXCHANGE_ID %s", nfs4.Nfsstat4Name(status))
 	}
 	f.xid++
 	if f.replacementHeld() || f.present(t, InodeID(f.n), rebootName) || f.present(t, InodeID(f.p), f.srv.clients.leaseName) {
@@ -1176,8 +1178,8 @@ func (f *confirmServer) failPurgeOnce() {
 func (f *confirmServer) commitWithFailedPurge(t *testing.T) {
 	t.Helper()
 	f.failPurgeOnce()
-	if got, _ := f.rawCreate(t, f.wireN, 1); got != NFS4_OK {
-		t.Fatalf("CREATE_SESSION %s", Nfsstat4Name(got))
+	if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4_OK {
+		t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 	}
 	f.assertPurgePending(t)
 }
@@ -1213,10 +1215,10 @@ func (f *confirmServer) destroyN(t *testing.T) {
 	for _, id := range ids {
 		ss.destroySession(id)
 	}
-	if got := f.rawStatus(t, buildCompoundBody(nil, func(w *COMPOUND4argsWriter) {
+	if got := f.rawStatus(t, buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_DestroyClientid().SetDcaClientid(f.wireN)
-	})); got != NFS4_OK {
-		t.Fatalf("DESTROY_CLIENTID %s", Nfsstat4Name(got))
+	})); got != nfs4.NFS4_OK {
+		t.Fatalf("DESTROY_CLIENTID %s", nfs4.Nfsstat4Name(got))
 	}
 }
 
@@ -1226,8 +1228,8 @@ func (f *confirmServer) adoptN(t *testing.T, conn net.Conn) uint64 {
 	t.Helper()
 	wire, seq, status, err := exchangeID(conn, f.xid, "test-client", [8]byte{9})
 	f.xid++
-	if err != nil || status != NFS4_OK || seq != 1 || wire == f.wireN {
-		t.Fatalf("cold EXCHANGE_ID %#x %d %s %v", wire, seq, Nfsstat4Name(status), err)
+	if err != nil || status != nfs4.NFS4_OK || seq != 1 || wire == f.wireN {
+		t.Fatalf("cold EXCHANGE_ID %#x %d %s %v", wire, seq, nfs4.Nfsstat4Name(status), err)
 	}
 	return wire
 }
@@ -1247,8 +1249,8 @@ func TestPurgeOwnership(t *testing.T) {
 		}
 		wire := f.adoptN(t, f.conn)
 		f.assertPurgePending(t) // cold adoption wrote nothing
-		if got, _ := f.rawCreate(t, wire, 1); got != NFS4_OK {
-			t.Fatalf("CREATE_SESSION after adoption %s", Nfsstat4Name(got))
+		if got, _ := f.rawCreate(t, wire, 1); got != nfs4.NFS4_OK {
+			t.Fatalf("CREATE_SESSION after adoption %s", nfs4.Nfsstat4Name(got))
 		}
 		f.assertPurged(t)
 		if f.replacementHeld() {
@@ -1261,12 +1263,12 @@ func TestPurgeOwnership(t *testing.T) {
 		f.destroyN(t)
 		wire := f.adoptN(t, f.conn)
 		f.failPurgeOnce()
-		if got, _ := f.rawCreate(t, wire, 1); got != NFS4_OK {
-			t.Fatalf("CREATE_SESSION %s", Nfsstat4Name(got))
+		if got, _ := f.rawCreate(t, wire, 1); got != nfs4.NFS4_OK {
+			t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 		}
 		f.assertPurgePending(t)
-		if got, _, status, _ := exchangeID(f.conn, f.xid, "test-client", [8]byte{9}); status != NFS4_OK || got != wire {
-			t.Fatalf("warm EXCHANGE_ID %s", Nfsstat4Name(status))
+		if got, _, status, _ := exchangeID(f.conn, f.xid, "test-client", [8]byte{9}); status != nfs4.NFS4_OK || got != wire {
+			t.Fatalf("warm EXCHANGE_ID %s", nfs4.Nfsstat4Name(status))
 		}
 		f.xid++
 		f.assertPurged(t)
@@ -1294,7 +1296,7 @@ func TestPurgeOwnership(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if res, err := parseCompoundReply(reply); err != nil || res.Status() != NFS4_OK {
+		if res, err := parseCompoundReply(reply); err != nil || res.Status() != nfs4.NFS4_OK {
 			t.Fatalf("CREATE_SESSION after restart %v %v", res.Status(), err)
 		}
 		f.assertPurged(t)
@@ -1318,8 +1320,8 @@ func TestPurgeOwnership(t *testing.T) {
 		if err := f.fs.TernVFS.Rename(InodeID(f.n), "t.hook", InodeID(f.n), rebootName); err != nil {
 			t.Fatal(err)
 		}
-		if got, _ := f.rawCreate(t, f.wireN, 2); got != NFS4_OK {
-			t.Fatalf("CREATE_SESSION %s", Nfsstat4Name(got))
+		if got, _ := f.rawCreate(t, f.wireN, 2); got != nfs4.NFS4_OK {
+			t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 		}
 		if f.present(t, m, activeOpenName(StateID{2})) || f.present(t, InodeID(f.n), rebootName) {
 			t.Fatal("the incarnation the evidence names was not purged")
@@ -1339,14 +1341,14 @@ func TestPurgeOwnership(t *testing.T) {
 			t.Fatal("hint stored beyond its limit")
 		}
 		// Without the hint, warm EXCHANGE_ID makes no store call...
-		if _, _, status, _ := exchangeID(f.conn, f.xid, "test-client", [8]byte{9}); status != NFS4_OK {
-			t.Fatalf("warm EXCHANGE_ID %s", Nfsstat4Name(status))
+		if _, _, status, _ := exchangeID(f.conn, f.xid, "test-client", [8]byte{9}); status != nfs4.NFS4_OK {
+			t.Fatalf("warm EXCHANGE_ID %s", nfs4.Nfsstat4Name(status))
 		}
 		f.xid++
 		f.assertPurgePending(t)
 		// ...and the next CREATE_SESSION completes the purge from the evidence.
-		if got, _ := f.rawCreate(t, f.wireN, 2); got != NFS4_OK {
-			t.Fatalf("CREATE_SESSION %s", Nfsstat4Name(got))
+		if got, _ := f.rawCreate(t, f.wireN, 2); got != nfs4.NFS4_OK {
+			t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 		}
 		f.assertPurged(t)
 		f.srv.confirmMu.Lock()
@@ -1361,16 +1363,16 @@ func TestPurgeOwnership(t *testing.T) {
 		f.commitWithFailedPurge(t)
 		for seq := uint32(2); seq <= 3; seq++ {
 			f.failPurgeOnce()
-			if got, _ := f.rawCreate(t, f.wireN, seq); got != NFS4_OK {
-				t.Fatalf("CREATE_SESSION %d %s", seq, Nfsstat4Name(got))
+			if got, _ := f.rawCreate(t, f.wireN, seq); got != nfs4.NFS4_OK {
+				t.Fatalf("CREATE_SESSION %d %s", seq, nfs4.Nfsstat4Name(got))
 			}
 			f.assertPurgePending(t)
 			if !f.replacementHeld() {
 				t.Fatal("hint dropped by a failed retry")
 			}
 		}
-		if got, _ := f.rawCreate(t, f.wireN, 4); got != NFS4_OK {
-			t.Fatalf("CREATE_SESSION %s", Nfsstat4Name(got))
+		if got, _ := f.rawCreate(t, f.wireN, 4); got != nfs4.NFS4_OK {
+			t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 		}
 		f.assertPurged(t)
 	})
@@ -1382,8 +1384,8 @@ func (f *confirmServer) rebootN(t *testing.T) (wire, r uint64) {
 	t.Helper()
 	wire, seq, status, err := exchangeID(f.conn, f.xid, "test-client", [8]byte{10})
 	f.xid++
-	if err != nil || status != NFS4_OK || seq != 1 {
-		t.Fatalf("EXCHANGE_ID for R %s %v", Nfsstat4Name(status), err)
+	if err != nil || status != nfs4.NFS4_OK || seq != 1 {
+		t.Fatalf("EXCHANGE_ID for R %s %v", nfs4.Nfsstat4Name(status), err)
 	}
 	f.srv.waitForClientGC()
 	return wire, incarnationForTest(t, f.srv, wire)
@@ -1408,8 +1410,8 @@ func TestPurgeProtectionOrdering(t *testing.T) {
 		wireR, _ := f.rebootN(t)
 		// R's confirmation over N stays unresolved: N is protected.
 		f.arm(writeD, faultFenceErr, nil)
-		if got, _ := f.rawCreate(t, wireR, 1); got != NFS4ERR_DELAY || !f.srv.protected(f.n) {
-			t.Fatalf("R's CREATE_SESSION %s", Nfsstat4Name(got))
+		if got, _ := f.rawCreate(t, wireR, 1); got != nfs4.NFS4ERR_DELAY || !f.srv.protected(f.n) {
+			t.Fatalf("R's CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 		}
 		f.disarm()
 		f.srv.resumeReplacementPurge(f.n)
@@ -1486,8 +1488,8 @@ func TestPurgeProtectionOrdering(t *testing.T) {
 		if f.replacementHeld() {
 			t.Fatal("hint kept after the purge")
 		}
-		if got := awaitValue(t, result, "R's confirmation"); got != NFS4_OK || identityConfirmed(t, f) != InodeID(r) {
-			t.Fatalf("R's confirmation %s", Nfsstat4Name(got))
+		if got := awaitValue(t, result, "R's confirmation"); got != nfs4.NFS4_OK || identityConfirmed(t, f) != InodeID(r) {
+			t.Fatalf("R's confirmation %s", nfs4.Nfsstat4Name(got))
 		}
 	})
 	t.Run("error and panic release the holds", func(t *testing.T) {
@@ -1506,8 +1508,8 @@ func TestPurgeProtectionOrdering(t *testing.T) {
 		}
 		// No hold is left to wait for: R's confirmation registers and commits.
 		wireR, r := f.rebootN(t)
-		if got := awaitValue(t, f.createAsyncFor(t, wireR), "R's confirmation"); got != NFS4_OK || identityConfirmed(t, f) != InodeID(r) {
-			t.Fatalf("R's confirmation %s", Nfsstat4Name(got))
+		if got := awaitValue(t, f.createAsyncFor(t, wireR), "R's confirmation"); got != nfs4.NFS4_OK || identityConfirmed(t, f) != InodeID(r) {
+			t.Fatalf("R's confirmation %s", nfs4.Nfsstat4Name(got))
 		}
 	})
 }
@@ -1555,8 +1557,8 @@ func TestRecoveryHoldReleasedOnPanic(t *testing.T) {
 		t.Fatalf("%d destruction holds left after the panic", residual)
 	}
 	result := f.createAsync(t)
-	if got := awaitValue(t, result, "confirmation after the panic"); got != NFS4_OK {
-		t.Fatalf("confirmation %s", Nfsstat4Name(got))
+	if got := awaitValue(t, result, "confirmation after the panic"); got != nfs4.NFS4_OK {
+		t.Fatalf("confirmation %s", nfs4.Nfsstat4Name(got))
 	}
 }
 
@@ -1565,17 +1567,17 @@ func TestRecoveryHoldReleasedOnPanic(t *testing.T) {
 func TestConfirmationPanicRetained(t *testing.T) {
 	f := newConfirmServer(t)
 	f.arm(writeD, faultAppliedPanic, nil)
-	if got, _ := f.rawCreate(t, f.wireN, 1); got != NFS4ERR_DELAY {
-		t.Fatalf("CREATE_SESSION after a panic %s", Nfsstat4Name(got))
+	if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("CREATE_SESSION after a panic %s", nfs4.Nfsstat4Name(got))
 	}
 	if !f.srv.protected(f.n) {
 		t.Fatal("panic dropped the protection")
 	}
 	f.fs.set(writeD, faultNone, nil)
-	if got, _ := f.rawCreate(t, f.wireN, 1); got != NFS4_OK {
-		t.Fatalf("retry %s", Nfsstat4Name(got))
+	if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4_OK {
+		t.Fatalf("retry %s", nfs4.Nfsstat4Name(got))
 	}
-	if f.nSessions() != 1 || f.pSequence(t) != NFS4ERR_BADSESSION {
+	if f.nSessions() != 1 || f.pSequence(t) != nfs4.NFS4ERR_BADSESSION {
 		t.Fatal("commit not applied once")
 	}
 }

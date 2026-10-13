@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 // countingWriteVFS counts mutations that changed the store.
@@ -76,7 +78,7 @@ func authSysCredForTest(uid uint32) []byte {
 }
 
 // identityCall runs one sessionless compound as AUTH_SYS uid.
-func identityCall(t *testing.T, srv *Server, uid uint32, body []byte) COMPOUND4res {
+func identityCall(t *testing.T, srv *Server, uid uint32, body []byte) nfs4.COMPOUND4res {
 	t.Helper()
 	req, err := parseRPCCall(rpcCallForTest(1, procCompound, body))
 	if err != nil {
@@ -100,28 +102,28 @@ type exchangeResult struct {
 
 func identityExchange(t *testing.T, srv *Server, uid uint32, owner string, verifier [8]byte, update bool) exchangeResult {
 	t.Helper()
-	body := buildCompoundBody(nil, func(w *COMPOUND4argsWriter) {
+	body := buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
 		ew := w.AppendArgarray_ExchangeId()
 		cw := ew.StartEiaClientowner()
 		setVerifier(cw.CoVerifier(), verifier)
 		ew.Resume(cw.SetCoOwnerid([]byte(owner)).Finish())
 		flags := uint32(0)
 		if update {
-			flags = EXCHGID4_FLAG_UPD_CONFIRMED_REC_A
+			flags = nfs4.EXCHGID4_FLAG_UPD_CONFIRMED_REC_A
 		}
 		ew.SetEiaFlags(flags)
 		ew.SetEiaStateProtect_None()
 		w.Resume(ew.Finish())
 	})
 	res := identityCall(t, srv, uid, body)
-	if res.Status() != NFS4_OK {
+	if res.Status() != nfs4.NFS4_OK {
 		return exchangeResult{status: res.Status()}
 	}
 	it := res.Resarray()
 	it.Next()
 	ok := it.Resarray().Value().AsEXCHANGEID4resEntry().Value().AsEXCHANGEID4resok()
-	return exchangeResult{status: NFS4_OK, clientID: ok.EirClientid(), seq: ok.EirSequenceid(),
-		confirmed: ok.EirFlags()&EXCHGID4_FLAG_CONFIRMED_R != 0}
+	return exchangeResult{status: nfs4.NFS4_OK, clientID: ok.EirClientid(), seq: ok.EirSequenceid(),
+		confirmed: ok.EirFlags()&nfs4.EXCHGID4_FLAG_CONFIRMED_R != 0}
 }
 
 func identityCreate(t *testing.T, srv *Server, uid uint32, clientID uint64, seq uint32) uint32 {
@@ -131,7 +133,7 @@ func identityCreate(t *testing.T, srv *Server, uid uint32, clientID uint64, seq 
 
 func identityDestroy(t *testing.T, srv *Server, clientID uint64) uint32 {
 	t.Helper()
-	return identityCall(t, srv, 0, buildCompoundBody(nil, func(w *COMPOUND4argsWriter) {
+	return identityCall(t, srv, 0, buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_DestroyClientid().SetDcaClientid(clientID)
 	})).Status()
 }
@@ -161,12 +163,12 @@ func TestExchangeIDCases(t *testing.T) {
 	epoch := uint64(srv.sessions.wireIDs.epoch)
 
 	// Case 7: an update needs a confirmed record.
-	if got := identityExchange(t, srv, 1, "client", [8]byte{1}, true); got.status != NFS4ERR_NOENT {
-		t.Fatalf("update without record %s", Nfsstat4Name(got.status))
+	if got := identityExchange(t, srv, 1, "client", [8]byte{1}, true); got.status != nfs4.NFS4ERR_NOENT {
+		t.Fatalf("update without record %s", nfs4.Nfsstat4Name(got.status))
 	}
 	// Case 1: a fresh wire clientid, not confirmed, creation sequence 1.
 	first := identityExchange(t, srv, 1, "client", [8]byte{1}, false)
-	if first.status != NFS4_OK || first.confirmed || first.seq != 1 || first.clientID>>32 != epoch {
+	if first.status != nfs4.NFS4_OK || first.confirmed || first.seq != 1 || first.clientID>>32 != epoch {
 		t.Fatalf("cold EXCHANGE_ID %+v", first)
 	}
 	incarnation := incarnationForTest(t, srv, first.clientID)
@@ -175,21 +177,21 @@ func TestExchangeIDCases(t *testing.T) {
 	}
 	// Case 4: an unconfirmed record is replaced, and its clientid retired.
 	second := identityExchange(t, srv, 1, "client", [8]byte{1}, false)
-	if second.status != NFS4_OK || second.clientID == first.clientID || second.confirmed || second.seq != 1 {
+	if second.status != nfs4.NFS4_OK || second.clientID == first.clientID || second.confirmed || second.seq != 1 {
 		t.Fatalf("EXCHANGE_ID over unconfirmed record %+v", second)
 	}
-	if got := identityCreate(t, srv, 1, first.clientID, 1); got != NFS4ERR_STALE_CLIENTID {
-		t.Fatalf("CREATE_SESSION on superseded clientid %s", Nfsstat4Name(got))
+	if got := identityCreate(t, srv, 1, first.clientID, 1); got != nfs4.NFS4ERR_STALE_CLIENTID {
+		t.Fatalf("CREATE_SESSION on superseded clientid %s", nfs4.Nfsstat4Name(got))
 	}
-	if got := identityDestroy(t, srv, first.clientID); got != NFS4ERR_STALE_CLIENTID {
-		t.Fatalf("DESTROY_CLIENTID on superseded clientid %s", Nfsstat4Name(got))
+	if got := identityDestroy(t, srv, first.clientID); got != nfs4.NFS4ERR_STALE_CLIENTID {
+		t.Fatalf("DESTROY_CLIENTID on superseded clientid %s", nfs4.Nfsstat4Name(got))
 	}
 	if wireRecords(srv) != 1 {
 		t.Fatalf("%d wire records", wireRecords(srv))
 	}
 	for seq := uint32(1); seq <= 3; seq++ {
-		if got := identityCreate(t, srv, 1, second.clientID, seq); got != NFS4_OK {
-			t.Fatalf("CREATE_SESSION %d %s", seq, Nfsstat4Name(got))
+		if got := identityCreate(t, srv, 1, second.clientID, seq); got != nfs4.NFS4_OK {
+			t.Fatalf("CREATE_SESSION %d %s", seq, nfs4.Nfsstat4Name(got))
 		}
 	}
 	confirmedIncarnation := incarnationForTest(t, srv, second.clientID)
@@ -198,7 +200,7 @@ func TestExchangeIDCases(t *testing.T) {
 	srv.waitForClientGC()
 	before := fs.writes.Load()
 	warm := identityExchange(t, srv, 1, "client", [8]byte{1}, false)
-	if warm.status != NFS4_OK || warm.clientID != second.clientID || !warm.confirmed || warm.seq != 4 {
+	if warm.status != nfs4.NFS4_OK || warm.clientID != second.clientID || !warm.confirmed || warm.seq != 4 {
 		t.Fatalf("warm EXCHANGE_ID %+v", warm)
 	}
 	srv.waitForClientGC()
@@ -206,21 +208,21 @@ func TestExchangeIDCases(t *testing.T) {
 		t.Fatal("warm EXCHANGE_ID wrote to the store")
 	}
 	// Case 6 returns the record unchanged; cases 8 and 9 refuse.
-	if got := identityExchange(t, srv, 1, "client", [8]byte{1}, true); got.status != NFS4_OK ||
+	if got := identityExchange(t, srv, 1, "client", [8]byte{1}, true); got.status != nfs4.NFS4_OK ||
 		got.clientID != second.clientID || !got.confirmed || got.seq != 4 {
 		t.Fatalf("update with the same verifier %+v", got)
 	}
-	if got := identityExchange(t, srv, 1, "client", [8]byte{2}, true); got.status != NFS4ERR_NOT_SAME {
-		t.Fatalf("update with a new verifier %s", Nfsstat4Name(got.status))
+	if got := identityExchange(t, srv, 1, "client", [8]byte{2}, true); got.status != nfs4.NFS4ERR_NOT_SAME {
+		t.Fatalf("update with a new verifier %s", nfs4.Nfsstat4Name(got.status))
 	}
-	if got := identityExchange(t, srv, 2, "client", [8]byte{1}, true); got.status != NFS4ERR_PERM {
-		t.Fatalf("update by another principal %s", Nfsstat4Name(got.status))
+	if got := identityExchange(t, srv, 2, "client", [8]byte{1}, true); got.status != nfs4.NFS4ERR_PERM {
+		t.Fatalf("update by another principal %s", nfs4.Nfsstat4Name(got.status))
 	}
 
 	// Case 5: a rebooted client gets a new record and a new incarnation; the
 	// confirmed record stays until confirmation replaces it.
 	reboot := identityExchange(t, srv, 1, "client", [8]byte{3}, false)
-	if reboot.status != NFS4_OK || reboot.clientID == second.clientID || reboot.confirmed || reboot.seq != 1 {
+	if reboot.status != nfs4.NFS4_OK || reboot.clientID == second.clientID || reboot.confirmed || reboot.seq != 1 {
 		t.Fatalf("rebooted client %+v", reboot)
 	}
 	if incarnationForTest(t, srv, reboot.clientID) == confirmedIncarnation {
@@ -232,19 +234,19 @@ func TestExchangeIDCases(t *testing.T) {
 
 	// Clientids never issued or from another epoch are stale.
 	for _, id := range []uint64{epoch<<32 | 0xffff, (epoch+1)<<32 | 1, confirmedIncarnation} {
-		if got := identityCreate(t, srv, 1, id, 1); got != NFS4ERR_STALE_CLIENTID {
-			t.Fatalf("CREATE_SESSION %#x %s", id, Nfsstat4Name(got))
+		if got := identityCreate(t, srv, 1, id, 1); got != nfs4.NFS4ERR_STALE_CLIENTID {
+			t.Fatalf("CREATE_SESSION %#x %s", id, nfs4.Nfsstat4Name(got))
 		}
-		if got := identityDestroy(t, srv, id); got != NFS4ERR_STALE_CLIENTID {
-			t.Fatalf("DESTROY_CLIENTID %#x %s", id, Nfsstat4Name(got))
+		if got := identityDestroy(t, srv, id); got != nfs4.NFS4ERR_STALE_CLIENTID {
+			t.Fatalf("DESTROY_CLIENTID %#x %s", id, nfs4.Nfsstat4Name(got))
 		}
 	}
 	// DESTROY_CLIENTID retires the record; its clientid is then stale.
-	if got := identityDestroy(t, srv, reboot.clientID); got != NFS4_OK {
-		t.Fatalf("DESTROY_CLIENTID %s", Nfsstat4Name(got))
+	if got := identityDestroy(t, srv, reboot.clientID); got != nfs4.NFS4_OK {
+		t.Fatalf("DESTROY_CLIENTID %s", nfs4.Nfsstat4Name(got))
 	}
-	if got := identityCreate(t, srv, 1, reboot.clientID, 1); got != NFS4ERR_STALE_CLIENTID {
-		t.Fatalf("CREATE_SESSION after DESTROY_CLIENTID %s", Nfsstat4Name(got))
+	if got := identityCreate(t, srv, 1, reboot.clientID, 1); got != nfs4.NFS4ERR_STALE_CLIENTID {
+		t.Fatalf("CREATE_SESSION after DESTROY_CLIENTID %s", nfs4.Nfsstat4Name(got))
 	}
 }
 
@@ -255,7 +257,7 @@ func TestExchangeIDProcessesKeepIndependentClientIDs(t *testing.T) {
 	local := NewLocalTernVFS(t.TempDir())
 	first := identityServer(t, local)
 	a := identityExchange(t, first, 1, "client", [8]byte{1}, false)
-	if a.status != NFS4_OK || identityCreate(t, first, 1, a.clientID, 1) != NFS4_OK {
+	if a.status != nfs4.NFS4_OK || identityCreate(t, first, 1, a.clientID, 1) != nfs4.NFS4_OK {
 		t.Fatalf("first process registration %+v", a)
 	}
 	incarnation := incarnationForTest(t, first, a.clientID)
@@ -267,7 +269,7 @@ func TestExchangeIDProcessesKeepIndependentClientIDs(t *testing.T) {
 	before := fs.writes.Load()
 	b := identityExchange(t, second, 1, "client", [8]byte{1}, false)
 	second.waitForClientGC()
-	if b.status != NFS4_OK || b.confirmed || b.seq != 1 || b.clientID == a.clientID ||
+	if b.status != nfs4.NFS4_OK || b.confirmed || b.seq != 1 || b.clientID == a.clientID ||
 		b.clientID>>32 == a.clientID>>32 {
 		t.Fatalf("second process EXCHANGE_ID %+v, first %#x", b, a.clientID)
 	}
@@ -281,16 +283,16 @@ func TestExchangeIDProcessesKeepIndependentClientIDs(t *testing.T) {
 		srv *Server
 		id  uint64
 	}{{second, a.clientID}, {first, b.clientID}} {
-		if got := identityCreate(t, check.srv, 1, check.id, 1); got != NFS4ERR_STALE_CLIENTID {
-			t.Fatalf("CREATE_SESSION with another process's clientid %s", Nfsstat4Name(got))
+		if got := identityCreate(t, check.srv, 1, check.id, 1); got != nfs4.NFS4ERR_STALE_CLIENTID {
+			t.Fatalf("CREATE_SESSION with another process's clientid %s", nfs4.Nfsstat4Name(got))
 		}
-		if got := identityDestroy(t, check.srv, check.id); got != NFS4ERR_STALE_CLIENTID {
-			t.Fatalf("DESTROY_CLIENTID with another process's clientid %s", Nfsstat4Name(got))
+		if got := identityDestroy(t, check.srv, check.id); got != nfs4.NFS4ERR_STALE_CLIENTID {
+			t.Fatalf("DESTROY_CLIENTID with another process's clientid %s", nfs4.Nfsstat4Name(got))
 		}
 	}
 	// The adopted record confirms by checking the durable state.
-	if got := identityCreate(t, second, 1, b.clientID, 1); got != NFS4_OK {
-		t.Fatalf("CREATE_SESSION on adopted record %s", Nfsstat4Name(got))
+	if got := identityCreate(t, second, 1, b.clientID, 1); got != nfs4.NFS4_OK {
+		t.Fatalf("CREATE_SESSION on adopted record %s", nfs4.Nfsstat4Name(got))
 	}
 	if got := identityExchange(t, second, 1, "client", [8]byte{1}, false); !got.confirmed || got.clientID != b.clientID || got.seq != 2 {
 		t.Fatalf("warm EXCHANGE_ID after adoption %+v", got)
@@ -308,7 +310,7 @@ func TestExchangeIDBoundsAndRetirement(t *testing.T) {
 	setNow(created)
 	srv.clients.setClock(func() time.Time { return time.Unix(0, clock.Load()) })
 	confirmed := identityExchange(t, srv, 1, "confirmed", [8]byte{1}, false)
-	if identityCreate(t, srv, 1, confirmed.clientID, 1) != NFS4_OK {
+	if identityCreate(t, srv, 1, confirmed.clientID, 1) != nfs4.NFS4_OK {
 		t.Fatal("registration")
 	}
 
@@ -318,19 +320,19 @@ func TestExchangeIDBoundsAndRetirement(t *testing.T) {
 	setNow(created.Add(-nfsLeaseTime / 2))
 	waiting := identityExchange(t, srv, 1, "waiting", [8]byte{1}, false)
 	setNow(created)
-	if got := identityExchange(t, srv, 1, "new", [8]byte{1}, false); got.status != NFS4ERR_DELAY {
-		t.Fatalf("EXCHANGE_ID at the cap %s", Nfsstat4Name(got.status))
+	if got := identityExchange(t, srv, 1, "new", [8]byte{1}, false); got.status != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("EXCHANGE_ID at the cap %s", nfs4.Nfsstat4Name(got.status))
 	}
 	setNow(created.Add(nfsLeaseTime / 2))
 	admitted := identityExchange(t, srv, 1, "new", [8]byte{1}, false)
-	if admitted.status != NFS4_OK || wireRecords(srv) != 2 {
+	if admitted.status != nfs4.NFS4_OK || wireRecords(srv) != 2 {
 		t.Fatalf("EXCHANGE_ID after reclamation %+v, %d records", admitted, wireRecords(srv))
 	}
-	if got := identityCreate(t, srv, 1, waiting.clientID, 1); got != NFS4ERR_STALE_CLIENTID {
-		t.Fatalf("CREATE_SESSION on reclaimed record %s", Nfsstat4Name(got))
+	if got := identityCreate(t, srv, 1, waiting.clientID, 1); got != nfs4.NFS4ERR_STALE_CLIENTID {
+		t.Fatalf("CREATE_SESSION on reclaimed record %s", nfs4.Nfsstat4Name(got))
 	}
-	if got := identityCreate(t, srv, 1, confirmed.clientID, 2); got != NFS4_OK {
-		t.Fatalf("confirmed record reclaimed: %s", Nfsstat4Name(got))
+	if got := identityCreate(t, srv, 1, confirmed.clientID, 2); got != nfs4.NFS4_OK {
+		t.Fatalf("confirmed record reclaimed: %s", nfs4.Nfsstat4Name(got))
 	}
 	srv.sessions.wireLimit = maxSessionRecords
 
@@ -338,15 +340,15 @@ func TestExchangeIDBoundsAndRetirement(t *testing.T) {
 	srv.sessions.wireIDs.mu.Lock()
 	srv.sessions.wireIDs.last = maxWireCounter
 	srv.sessions.wireIDs.mu.Unlock()
-	if got := identityExchange(t, srv, 1, "late", [8]byte{1}, false); got.status != NFS4ERR_SERVERFAULT {
-		t.Fatalf("EXCHANGE_ID after exhaustion %s", Nfsstat4Name(got.status))
+	if got := identityExchange(t, srv, 1, "late", [8]byte{1}, false); got.status != nfs4.NFS4ERR_SERVERFAULT {
+		t.Fatalf("EXCHANGE_ID after exhaustion %s", nfs4.Nfsstat4Name(got.status))
 	}
-	if got := identityExchange(t, srv, 1, "confirmed", [8]byte{1}, false); got.status != NFS4_OK ||
+	if got := identityExchange(t, srv, 1, "confirmed", [8]byte{1}, false); got.status != nfs4.NFS4_OK ||
 		got.clientID != confirmed.clientID || got.seq != 3 {
 		t.Fatalf("warm EXCHANGE_ID after exhaustion %+v", got)
 	}
-	if got := identityCreate(t, srv, 1, admitted.clientID, 1); got != NFS4_OK {
-		t.Fatalf("CREATE_SESSION after exhaustion %s", Nfsstat4Name(got))
+	if got := identityCreate(t, srv, 1, admitted.clientID, 1); got != nfs4.NFS4_OK {
+		t.Fatalf("CREATE_SESSION after exhaustion %s", nfs4.Nfsstat4Name(got))
 	}
 	srv.sessions.wireIDs.mu.Lock()
 	srv.sessions.wireIDs.last = 100
@@ -355,11 +357,11 @@ func TestExchangeIDBoundsAndRetirement(t *testing.T) {
 	// Expiry ends the record: the client starts again from the store.
 	setNow(created.Add(nfsLeaseTime/2 + 3*nfsLeaseTime))
 	srv.runLeaseSweep()
-	if got := identityCreate(t, srv, 1, confirmed.clientID, 3); got != NFS4ERR_STALE_CLIENTID {
-		t.Fatalf("CREATE_SESSION on expired client %s", Nfsstat4Name(got))
+	if got := identityCreate(t, srv, 1, confirmed.clientID, 3); got != nfs4.NFS4ERR_STALE_CLIENTID {
+		t.Fatalf("CREATE_SESSION on expired client %s", nfs4.Nfsstat4Name(got))
 	}
 	again := identityExchange(t, srv, 1, "confirmed", [8]byte{1}, false)
-	if again.status != NFS4_OK || again.clientID == confirmed.clientID || again.confirmed || again.seq != 1 {
+	if again.status != nfs4.NFS4_OK || again.clientID == confirmed.clientID || again.confirmed || again.seq != 1 {
 		t.Fatalf("EXCHANGE_ID after expiry %+v", again)
 	}
 }
@@ -407,14 +409,14 @@ func TestExchangeIDSameOwnerRegistersInOrder(t *testing.T) {
 	closeSignal(fs.release)
 	a := awaitValue(t, first, "first registration")
 	b := awaitValue(t, second, "second registration")
-	if a.status != NFS4_OK || b.status != NFS4_OK || a.clientID == b.clientID {
+	if a.status != nfs4.NFS4_OK || b.status != nfs4.NFS4_OK || a.clientID == b.clientID {
 		t.Fatalf("registrations %+v, %+v", a, b)
 	}
-	if got := identityCreate(t, srv, 1, a.clientID, 1); got != NFS4ERR_STALE_CLIENTID {
-		t.Fatalf("CREATE_SESSION on superseded registration %s", Nfsstat4Name(got))
+	if got := identityCreate(t, srv, 1, a.clientID, 1); got != nfs4.NFS4ERR_STALE_CLIENTID {
+		t.Fatalf("CREATE_SESSION on superseded registration %s", nfs4.Nfsstat4Name(got))
 	}
-	if got := identityCreate(t, srv, 1, b.clientID, 1); got != NFS4_OK {
-		t.Fatalf("CREATE_SESSION on latest registration %s", Nfsstat4Name(got))
+	if got := identityCreate(t, srv, 1, b.clientID, 1); got != nfs4.NFS4_OK {
+		t.Fatalf("CREATE_SESSION on latest registration %s", nfs4.Nfsstat4Name(got))
 	}
 }
 
@@ -424,7 +426,7 @@ func TestDestroyClientIDRetiresOnlyItsRecord(t *testing.T) {
 	local := NewLocalTernVFS(t.TempDir())
 	first := identityServer(t, local)
 	p := identityExchange(t, first, 1, "client", [8]byte{1}, false)
-	if identityCreate(t, first, 1, p.clientID, 1) != NFS4_OK {
+	if identityCreate(t, first, 1, p.clientID, 1) != nfs4.NFS4_OK {
 		t.Fatal("registration")
 	}
 	fs := &confirmedLookupGateVFS{TernVFS: local, entered: make(chan struct{}), release: make(chan struct{})}
@@ -450,21 +452,21 @@ func TestDestroyClientIDRetiresOnlyItsRecord(t *testing.T) {
 	awaitOwnerWaiter(t, ss, "client")
 	closeSignal(fs.release)
 	b := awaitValue(t, exchanged, "second adoption")
-	if b.status != NFS4_OK || b.clientID == a.clientID || incarnationForTest(t, srv, b.clientID) != recordA.incarnation {
+	if b.status != nfs4.NFS4_OK || b.clientID == a.clientID || incarnationForTest(t, srv, b.clientID) != recordA.incarnation {
 		t.Fatalf("second adoption %+v", b)
 	}
-	if got := awaitValue(t, destroyed, "delayed DESTROY_CLIENTID"); got != NFS4ERR_STALE_CLIENTID {
-		t.Fatalf("DESTROY_CLIENTID of a superseded record %s", Nfsstat4Name(got))
+	if got := awaitValue(t, destroyed, "delayed DESTROY_CLIENTID"); got != nfs4.NFS4ERR_STALE_CLIENTID {
+		t.Fatalf("DESTROY_CLIENTID of a superseded record %s", nfs4.Nfsstat4Name(got))
 	}
 	// The same holds for a destruction already past its checks.
-	if got := ss.destroyClientRecord(recordA); got != NFS4ERR_STALE_CLIENTID {
-		t.Fatalf("stale record destruction %s", Nfsstat4Name(got))
+	if got := ss.destroyClientRecord(recordA); got != nfs4.NFS4ERR_STALE_CLIENTID {
+		t.Fatalf("stale record destruction %s", nfs4.Nfsstat4Name(got))
 	}
 	if wireRecords(srv) != 1 {
 		t.Fatalf("%d wire records", wireRecords(srv))
 	}
-	if got := identityCreate(t, srv, 1, b.clientID, 1); got != NFS4_OK {
-		t.Fatalf("CREATE_SESSION on the newer record %s", Nfsstat4Name(got))
+	if got := identityCreate(t, srv, 1, b.clientID, 1); got != nfs4.NFS4_OK {
+		t.Fatalf("CREATE_SESSION on the newer record %s", nfs4.Nfsstat4Name(got))
 	}
 }
 

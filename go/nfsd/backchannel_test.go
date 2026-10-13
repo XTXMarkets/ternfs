@@ -9,6 +9,8 @@ import (
 	"encoding/binary"
 	"net"
 	"testing"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 type cbSecOffer uint8
@@ -28,12 +30,12 @@ func backCreateSessionBody(clientID uint64, seq, flags uint32, offers ...cbSecOf
 // backCreateSessionBodyLimits is backCreateSessionBody with the back
 // channel's request size and slot count given.
 func backCreateSessionBodyLimits(clientID uint64, seq, flags, backReq, backReqs uint32, offers ...cbSecOffer) []byte {
-	return buildCompoundBody(nil, func(w *COMPOUND4argsWriter) {
+	return buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
 		cw := w.AppendArgarray_CreateSession()
 		cw.SetCsaClientid(clientID)
 		cw.SetCsaSequence(seq)
 		cw.SetCsaFlags(flags)
-		attrs := func(a ChannelAttrs4Writer, req, reqs uint32) []byte {
+		attrs := func(a nfs4.ChannelAttrs4Writer, req, reqs uint32) []byte {
 			a.SetCaMaxrequestsize(req)
 			a.SetCaMaxresponsesize(maxRPCMessage)
 			a.SetCaMaxresponsesizeCached(maxSessionReplyCached)
@@ -71,7 +73,7 @@ func backCreateSessionBodyLimits(clientID uint64, seq, flags, backReq, backReqs 
 	})
 }
 
-func createWith(t *testing.T, conn net.Conn, xid *uint32, body []byte) (uint32, CREATESESSION4resok) {
+func createWith(t *testing.T, conn net.Conn, xid *uint32, body []byte) (uint32, nfs4.CREATESESSION4resok) {
 	t.Helper()
 	reply, err := sendRawRPC(conn, *xid, procCompound, body)
 	*xid++
@@ -82,12 +84,12 @@ func createWith(t *testing.T, conn net.Conn, xid *uint32, body []byte) (uint32, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Status() != NFS4_OK {
-		return res.Status(), CREATESESSION4resok{}
+	if res.Status() != nfs4.NFS4_OK {
+		return res.Status(), nfs4.CREATESESSION4resok{}
 	}
 	iter := res.Resarray()
 	iter.Next()
-	return NFS4_OK, iter.Resarray().Value().AsCREATESESSION4resEntry().Value().AsCREATESESSION4resok()
+	return nfs4.NFS4_OK, iter.Resarray().Value().AsCREATESESSION4resEntry().Value().AsCREATESESSION4resok()
 }
 
 // The callback credential is checked before the creation slot, and only
@@ -100,29 +102,29 @@ func TestCreateSessionCallbackSecurity(t *testing.T) {
 	xid := uint32(1)
 	clientID, seq, status, err := exchangeID(conn, xid, "cb-client", [8]byte{3})
 	xid++
-	if err != nil || status != NFS4_OK {
-		t.Fatalf("EXCHANGE_ID %s %v", Nfsstat4Name(status), err)
+	if err != nil || status != nfs4.NFS4_OK {
+		t.Fatalf("EXCHANGE_ID %s %v", nfs4.Nfsstat4Name(status), err)
 	}
-	back := uint32(CREATE_SESSION4_FLAG_CONN_BACK_CHAN)
+	back := uint32(nfs4.CREATE_SESSION4_FLAG_CONN_BACK_CHAN)
 	for _, c := range []struct {
 		name   string
 		offers []cbSecOffer
 		want   uint32
 	}{
-		{"only RPCSEC_GSS", []cbSecOffer{offerGSS}, NFS4ERR_NOENT},
-		{"none offered", nil, NFS4ERR_INVAL},
+		{"only RPCSEC_GSS", []cbSecOffer{offerGSS}, nfs4.NFS4ERR_NOENT},
+		{"none offered", nil, nfs4.NFS4ERR_INVAL},
 	} {
 		if got, _ := createWith(t, conn, &xid, backCreateSessionBody(clientID, seq, back, c.offers...)); got != c.want {
-			t.Fatalf("%s: %s, want %s", c.name, Nfsstat4Name(got), Nfsstat4Name(c.want))
+			t.Fatalf("%s: %s, want %s", c.name, nfs4.Nfsstat4Name(got), nfs4.Nfsstat4Name(c.want))
 		}
 	}
 	// The slot was not consumed: the same sequence now succeeds, choosing
 	// the first usable entry in the client's order.
 	got, ok := createWith(t, conn, &xid, backCreateSessionBody(clientID, seq, back, offerGSS, offerSys, offerNone))
-	if got != NFS4_OK {
-		t.Fatalf("CREATE_SESSION %s", Nfsstat4Name(got))
+	if got != nfs4.NFS4_OK {
+		t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 	}
-	if ok.CsrFlags()&CREATE_SESSION4_FLAG_CONN_BACK_CHAN == 0 {
+	if ok.CsrFlags()&nfs4.CREATE_SESSION4_FLAG_CONN_BACK_CHAN == 0 {
 		t.Fatal("requested backchannel not granted")
 	}
 	sess := srv.sessions.lookup(readSessionID(ok.CsrSessionid()))
@@ -146,8 +148,8 @@ func TestCreateSessionCallbackSecurity(t *testing.T) {
 	defer conn.Close()
 	clientID, seq, _, _ = exchangeID(conn, xid, "cb-less-client", [8]byte{4})
 	xid++
-	if got, _ := createWith(t, conn, &xid, backCreateSessionBody(clientID, seq, 0)); got != NFS4_OK {
-		t.Fatalf("CREATE_SESSION without a backchannel %s", Nfsstat4Name(got))
+	if got, _ := createWith(t, conn, &xid, backCreateSessionBody(clientID, seq, 0)); got != nfs4.NFS4_OK {
+		t.Fatalf("CREATE_SESSION without a backchannel %s", nfs4.Nfsstat4Name(got))
 	}
 }
 
@@ -158,31 +160,31 @@ func TestBackchannelOperationsWithoutBackchannel(t *testing.T) {
 	srv := admissionWritableServer(t, NewLocalTernVFS(t.TempDir()))
 	ts := connectionSession(t, srv)
 	conn := &rpcConnection{}
-	for _, dir := range []uint32{CDFC4_BACK, CDFC4_BACK_OR_BOTH} {
+	for _, dir := range []uint32{nfs4.CDFC4_BACK, nfs4.CDFC4_BACK_OR_BOTH} {
 		_, res := admissionRequest(t, srv, admissionBind(ts.id, dir, false), 1, conn)
-		admissionStatus(t, res, NFS4ERR_INVAL, OP_BIND_CONN_TO_SESSION)
+		admissionStatus(t, res, nfs4.NFS4ERR_INVAL, nfs4.OP_BIND_CONN_TO_SESSION)
 	}
-	_, res := admissionRequest(t, srv, admissionBind(ts.id, CDFC4_FORE_OR_BOTH, false), 2, conn)
-	admissionStatus(t, res, NFS4_OK, OP_BIND_CONN_TO_SESSION)
+	_, res := admissionRequest(t, srv, admissionBind(ts.id, nfs4.CDFC4_FORE_OR_BOTH, false), 2, conn)
+	admissionStatus(t, res, nfs4.NFS4_OK, nfs4.OP_BIND_CONN_TO_SESSION)
 	it := res.Resarray()
 	it.Next()
-	if dir := it.Resarray().Value().AsBINDCONNTOSESSION4resEntry().Value().AsBINDCONNTOSESSION4resok().BctsrDir(); dir != CDFS4_FORE {
+	if dir := it.Resarray().Value().AsBINDCONNTOSESSION4resEntry().Value().AsBINDCONNTOSESSION4resok().BctsrDir(); dir != nfs4.CDFS4_FORE {
 		t.Fatalf("BIND direction %d", dir)
 	}
 	if conn.carriesBack(ts.id) {
 		t.Fatal("BIND made a back association")
 	}
 
-	ctl := admissionSequence(buildCompoundBody(nil, func(w *COMPOUND4argsWriter) {
+	ctl := admissionSequence(buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
 		bw := w.AppendArgarray_BackchannelCtl()
 		bw.SetBcaCbProgram(1)
 		bw.AppendBcaSecParms_None()
 		w.Resume(bw.Finish())
 	}), ts, 0, 1, true)
 	_, res = admissionRequest(t, srv, ctl, 3, nil)
-	admissionStatus(t, res, NFS4ERR_INVAL, OP_SEQUENCE, OP_BACKCHANNEL_CTL)
+	admissionStatus(t, res, nfs4.NFS4ERR_INVAL, nfs4.OP_SEQUENCE, nfs4.OP_BACKCHANNEL_CTL)
 
-	ssv := admissionSequence(buildCompoundBody(nil, func(w *COMPOUND4argsWriter) {
+	ssv := admissionSequence(buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
 		sw := w.AppendArgarray_SetSsv()
 		ow := sw.StartSsaSsv()
 		sw.Resume(ow.SetData([]byte("ssv")).Finish())
@@ -191,7 +193,7 @@ func TestBackchannelOperationsWithoutBackchannel(t *testing.T) {
 		w.Resume(sw.Finish())
 	}), ts, 0, 2, true)
 	_, res = admissionRequest(t, srv, ssv, 4, nil)
-	admissionStatus(t, res, NFS4ERR_INVAL, OP_SEQUENCE, OP_SET_SSV)
+	admissionStatus(t, res, nfs4.NFS4ERR_INVAL, nfs4.OP_SEQUENCE, nfs4.OP_SET_SSV)
 }
 
 // A REPLY from the client with no callback waiting is dropped and counted;

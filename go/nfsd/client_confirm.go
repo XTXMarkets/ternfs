@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"github.com/XTXMarkets/ternfs/go/msgs"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 // Confirmation of a pending incarnation N over the identity's confirmed
@@ -163,7 +164,7 @@ func (cs *ClientStore) PrepareConfirmation(n uint64, confirm [8]byte) (confirmTa
 		return confirmTarget{}, err
 	}
 	if !valid {
-		return confirmTarget{}, nfsError(NFS4ERR_STALE_CLIENTID)
+		return confirmTarget{}, nfsError(nfs4.NFS4ERR_STALE_CLIENTID)
 	}
 	unlock := cs.readLockIdentity(identityID)
 	defer unlock()
@@ -192,14 +193,14 @@ func (cs *ClientStore) checkPendingLocked(identityID, n InodeID, confirm [8]byte
 		return err
 	}
 	if !found || !bytes.Equal(record.Confirm, confirm[:]) {
-		return nfsError(NFS4ERR_STALE_CLIENTID)
+		return nfsError(nfs4.NFS4ERR_STALE_CLIENTID)
 	}
 	pending, isPending, err := cs.readIdentitySymlink(identityID, pendingName)
 	if err != nil {
 		return err
 	}
 	if !isPending || pending != n {
-		return nfsError(NFS4ERR_STALE_CLIENTID)
+		return nfsError(nfs4.NFS4ERR_STALE_CLIENTID)
 	}
 	return nil
 }

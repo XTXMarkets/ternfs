@@ -8,12 +8,14 @@ import (
 	"encoding/binary"
 	"net"
 	"testing"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 // downgradeResult sends OPEN_DOWNGRADE and returns its status and stateid.
 func downgradeResult(t *testing.T, conn net.Conn, xid *uint32, fh []byte, sid [16]byte, access, deny uint32) (uint32, [16]byte) {
 	t.Helper()
-	res := sendCompound(t, conn, *xid, func(w *COMPOUND4argsWriter) {
+	res := sendCompound(t, conn, *xid, func(w *nfs4.COMPOUND4argsWriter) {
 		putfhOp(w, fh)
 		dw := w.AppendArgarray_OpenDowngrade()
 		setStateid(dw.OpenStateid(), sid)
@@ -22,7 +24,7 @@ func downgradeResult(t *testing.T, conn net.Conn, xid *uint32, fh []byte, sid [1
 	})
 	*xid++
 	var out [16]byte
-	if res.Status() != NFS4_OK {
+	if res.Status() != nfs4.NFS4_OK {
 		return res.Status(), out
 	}
 	iter := res.Resarray()
@@ -33,7 +35,7 @@ func downgradeResult(t *testing.T, conn net.Conn, xid *uint32, fh []byte, sid [1
 	for i := range 12 {
 		out[4+i] = got.Other(i)
 	}
-	return NFS4_OK, out
+	return nfs4.NFS4_OK, out
 }
 
 func openGrantFixture(t *testing.T, content string) (*Server, net.Conn, *uint32, uint64, []byte) {
@@ -71,17 +73,17 @@ func publishedData(t *testing.T, srv *Server) string {
 func TestOpenDowngradeFromSeparateGrants(t *testing.T) {
 	t.Run("to-read-publishes", func(t *testing.T) {
 		srv, conn, xid, clientID, fh := openGrantFixture(t, "old")
-		if status, _, _ := openByHandle(t, conn, xid, clientID, "o", fh, OPEN4_SHARE_ACCESS_READ); status != NFS4_OK {
-			t.Fatal(Nfsstat4Name(status))
+		if status, _, _ := openByHandle(t, conn, xid, clientID, "o", fh, nfs4.OPEN4_SHARE_ACCESS_READ); status != nfs4.NFS4_OK {
+			t.Fatal(nfs4.Nfsstat4Name(status))
 		}
-		status, both, _ := openByHandle(t, conn, xid, clientID, "o", fh, OPEN4_SHARE_ACCESS_WRITE)
-		if status != NFS4_OK {
-			t.Fatal(Nfsstat4Name(status))
+		status, both, _ := openByHandle(t, conn, xid, clientID, "o", fh, nfs4.OPEN4_SHARE_ACCESS_WRITE)
+		if status != nfs4.NFS4_OK {
+			t.Fatal(nfs4.Nfsstat4Name(status))
 		}
 		writeFileAt(t, conn, xid, fh, both, 0, []byte("new"))
-		status, read := downgradeResult(t, conn, xid, fh, both, OPEN4_SHARE_ACCESS_READ, OPEN4_SHARE_DENY_NONE)
-		if status != NFS4_OK {
-			t.Fatalf("downgrade to READ %s", Nfsstat4Name(status))
+		status, read := downgradeResult(t, conn, xid, fh, both, nfs4.OPEN4_SHARE_ACCESS_READ, nfs4.OPEN4_SHARE_DENY_NONE)
+		if status != nfs4.NFS4_OK {
+			t.Fatalf("downgrade to READ %s", nfs4.Nfsstat4Name(status))
 		}
 		if binary.BigEndian.Uint32(read[:4]) != binary.BigEndian.Uint32(both[:4])+1 {
 			t.Fatalf("seqid %d after %d", binary.BigEndian.Uint32(read[:4]), binary.BigEndian.Uint32(both[:4]))
@@ -89,30 +91,30 @@ func TestOpenDowngradeFromSeparateGrants(t *testing.T) {
 		if got := publishedData(t, srv); got != "new" {
 			t.Fatalf("published %q after downgrade to READ", got)
 		}
-		if got := stateidOpStatus(t, conn, xid, "READ", fh, both); got != NFS4ERR_OLD_STATEID {
-			t.Fatalf("old seqid %s", Nfsstat4Name(got))
+		if got := stateidOpStatus(t, conn, xid, "READ", fh, both); got != nfs4.NFS4ERR_OLD_STATEID {
+			t.Fatalf("old seqid %s", nfs4.Nfsstat4Name(got))
 		}
-		if got := stateidOpStatus(t, conn, xid, "WRITE", fh, read); got != NFS4ERR_OPENMODE {
-			t.Fatalf("WRITE after downgrade to READ %s", Nfsstat4Name(got))
+		if got := stateidOpStatus(t, conn, xid, "WRITE", fh, read); got != nfs4.NFS4ERR_OPENMODE {
+			t.Fatalf("WRITE after downgrade to READ %s", nfs4.Nfsstat4Name(got))
 		}
 		closeFile(t, conn, xid, fh, read)
 	})
 	t.Run("to-write-keeps-writer", func(t *testing.T) {
 		srv, conn, xid, clientID, fh := openGrantFixture(t, "old")
-		openByHandle(t, conn, xid, clientID, "o", fh, OPEN4_SHARE_ACCESS_READ)
-		_, both, _ := openByHandle(t, conn, xid, clientID, "o", fh, OPEN4_SHARE_ACCESS_WRITE)
+		openByHandle(t, conn, xid, clientID, "o", fh, nfs4.OPEN4_SHARE_ACCESS_READ)
+		_, both, _ := openByHandle(t, conn, xid, clientID, "o", fh, nfs4.OPEN4_SHARE_ACCESS_WRITE)
 		writeFileAt(t, conn, xid, fh, both, 0, []byte("abc"))
-		status, write := downgradeResult(t, conn, xid, fh, both, OPEN4_SHARE_ACCESS_WRITE, OPEN4_SHARE_DENY_NONE)
-		if status != NFS4_OK {
-			t.Fatalf("downgrade to WRITE %s", Nfsstat4Name(status))
+		status, write := downgradeResult(t, conn, xid, fh, both, nfs4.OPEN4_SHARE_ACCESS_WRITE, nfs4.OPEN4_SHARE_DENY_NONE)
+		if status != nfs4.NFS4_OK {
+			t.Fatalf("downgrade to WRITE %s", nfs4.Nfsstat4Name(status))
 		}
 		if got := publishedData(t, srv); got != "old" {
 			t.Fatalf("downgrade to WRITE published %q", got)
 		}
 		writeFileAt(t, conn, xid, fh, write, 3, []byte("def"))
 		// READ with a write-only open stays allowed.
-		if got := stateidOpStatus(t, conn, xid, "READ", fh, write); got != NFS4_OK {
-			t.Fatalf("READ with a write-only open %s", Nfsstat4Name(got))
+		if got := stateidOpStatus(t, conn, xid, "READ", fh, write); got != nfs4.NFS4_OK {
+			t.Fatalf("READ with a write-only open %s", nfs4.Nfsstat4Name(got))
 		}
 		closeFile(t, conn, xid, fh, write)
 		if got := publishedData(t, srv); got != "abcdef" {
@@ -125,41 +127,41 @@ func TestOpenDowngradeFromSeparateGrants(t *testing.T) {
 // grants, and the union of the recorded values inside it.
 func TestOpenDowngradeInvalidTargets(t *testing.T) {
 	_, conn, xid, clientID, fh := openGrantFixture(t, "old")
-	status, both, _ := openByHandle(t, conn, xid, clientID, "both", fh, OPEN4_SHARE_ACCESS_BOTH)
-	if status != NFS4_OK {
-		t.Fatal(Nfsstat4Name(status))
+	status, both, _ := openByHandle(t, conn, xid, clientID, "both", fh, nfs4.OPEN4_SHARE_ACCESS_BOTH)
+	if status != nfs4.NFS4_OK {
+		t.Fatal(nfs4.Nfsstat4Name(status))
 	}
-	status, read, _ := openByHandle(t, conn, xid, clientID, "read", fh, OPEN4_SHARE_ACCESS_READ)
-	if status != NFS4_OK {
-		t.Fatal(Nfsstat4Name(status))
+	status, read, _ := openByHandle(t, conn, xid, clientID, "read", fh, nfs4.OPEN4_SHARE_ACCESS_READ)
+	if status != nfs4.NFS4_OK {
+		t.Fatal(nfs4.Nfsstat4Name(status))
 	}
 	for _, c := range []struct {
 		name         string
 		sid          [16]byte
 		access, deny uint32
 	}{
-		{"BOTH to READ, never granted alone", both, OPEN4_SHARE_ACCESS_READ, OPEN4_SHARE_DENY_NONE},
-		{"BOTH to WRITE, never granted alone", both, OPEN4_SHARE_ACCESS_WRITE, OPEN4_SHARE_DENY_NONE},
-		{"upgrade", read, OPEN4_SHARE_ACCESS_BOTH, OPEN4_SHARE_DENY_NONE},
-		{"no access", both, 0, OPEN4_SHARE_DENY_NONE},
-		{"bad access", both, 4, OPEN4_SHARE_DENY_NONE},
-		{"bad deny", both, OPEN4_SHARE_ACCESS_BOTH, 4},
-		{"deny never requested", both, OPEN4_SHARE_ACCESS_BOTH, OPEN4_SHARE_DENY_READ},
+		{"BOTH to READ, never granted alone", both, nfs4.OPEN4_SHARE_ACCESS_READ, nfs4.OPEN4_SHARE_DENY_NONE},
+		{"BOTH to WRITE, never granted alone", both, nfs4.OPEN4_SHARE_ACCESS_WRITE, nfs4.OPEN4_SHARE_DENY_NONE},
+		{"upgrade", read, nfs4.OPEN4_SHARE_ACCESS_BOTH, nfs4.OPEN4_SHARE_DENY_NONE},
+		{"no access", both, 0, nfs4.OPEN4_SHARE_DENY_NONE},
+		{"bad access", both, 4, nfs4.OPEN4_SHARE_DENY_NONE},
+		{"bad deny", both, nfs4.OPEN4_SHARE_ACCESS_BOTH, 4},
+		{"deny never requested", both, nfs4.OPEN4_SHARE_ACCESS_BOTH, nfs4.OPEN4_SHARE_DENY_READ},
 	} {
-		if got, _ := downgradeResult(t, conn, xid, fh, c.sid, c.access, c.deny); got != NFS4ERR_INVAL {
-			t.Errorf("%s: %s, want INVAL", c.name, Nfsstat4Name(got))
+		if got, _ := downgradeResult(t, conn, xid, fh, c.sid, c.access, c.deny); got != nfs4.NFS4ERR_INVAL {
+			t.Errorf("%s: %s, want INVAL", c.name, nfs4.Nfsstat4Name(got))
 		}
 	}
 	// The same value changes nothing but the seqid.
-	status, same := downgradeResult(t, conn, xid, fh, both, OPEN4_SHARE_ACCESS_BOTH|OPEN4_SHARE_ACCESS_WANT_NO_DELEG, OPEN4_SHARE_DENY_NONE)
-	if status != NFS4_OK {
-		t.Fatalf("same-value downgrade %s", Nfsstat4Name(status))
+	status, same := downgradeResult(t, conn, xid, fh, both, nfs4.OPEN4_SHARE_ACCESS_BOTH|nfs4.OPEN4_SHARE_ACCESS_WANT_NO_DELEG, nfs4.OPEN4_SHARE_DENY_NONE)
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("same-value downgrade %s", nfs4.Nfsstat4Name(status))
 	}
 	if binary.BigEndian.Uint32(same[:4]) != binary.BigEndian.Uint32(both[:4])+1 {
 		t.Fatal("same-value downgrade kept the seqid")
 	}
-	if got, _ := downgradeResult(t, conn, xid, fh, both, OPEN4_SHARE_ACCESS_BOTH, OPEN4_SHARE_DENY_NONE); got != NFS4ERR_OLD_STATEID {
-		t.Fatalf("downgrade with the old seqid %s", Nfsstat4Name(got))
+	if got, _ := downgradeResult(t, conn, xid, fh, both, nfs4.OPEN4_SHARE_ACCESS_BOTH, nfs4.OPEN4_SHARE_DENY_NONE); got != nfs4.NFS4ERR_OLD_STATEID {
+		t.Fatalf("downgrade with the old seqid %s", nfs4.Nfsstat4Name(got))
 	}
 }
 
@@ -168,9 +170,9 @@ func TestOpenDowngradeInvalidTargets(t *testing.T) {
 func TestOpenDowngradeRecoveredWriterToRead(t *testing.T) {
 	restarted := restartWithStagedWrite(t, "recovered-downgrade.txt", []byte("staged data"))
 	conn, xid := restarted.conn, restarted.xid
-	status, read := downgradeResult(t, conn, &xid, restarted.fh, restarted.stateid, OPEN4_SHARE_ACCESS_READ, OPEN4_SHARE_DENY_NONE)
-	if status != NFS4_OK {
-		t.Fatalf("recovered downgrade to READ %s", Nfsstat4Name(status))
+	status, read := downgradeResult(t, conn, &xid, restarted.fh, restarted.stateid, nfs4.OPEN4_SHARE_ACCESS_READ, nfs4.OPEN4_SHARE_DENY_NONE)
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("recovered downgrade to READ %s", nfs4.Nfsstat4Name(status))
 	}
 	var id StateID
 	copy(id[:], read[4:])
@@ -180,8 +182,8 @@ func TestOpenDowngradeRecoveredWriterToRead(t *testing.T) {
 	if data, _ := readFileData(t, conn, &xid, lookupFH(t, conn, &xid, "recovered-downgrade.txt"), 0, 64); string(data) != "staged data" {
 		t.Fatalf("published %q", data)
 	}
-	if got := stateidOpStatus(t, conn, &xid, "READ", restarted.fh, read); got != NFS4_OK {
-		t.Fatalf("READ through the adopted open %s", Nfsstat4Name(got))
+	if got := stateidOpStatus(t, conn, &xid, "READ", restarted.fh, read); got != nfs4.NFS4_OK {
+		t.Fatalf("READ through the adopted open %s", nfs4.Nfsstat4Name(got))
 	}
 	closeFile(t, conn, &xid, restarted.fh, read)
 }

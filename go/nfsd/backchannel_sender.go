@@ -8,6 +8,8 @@ import (
 	"encoding/binary"
 	"sync"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 // The backchannel sender (canonical r3 §12). nfsd sends only CB_NULL, to
@@ -444,14 +446,14 @@ func cbRecallSlotArgs(id SessionID, seq, target uint32) []byte {
 	b = binary.BigEndian.AppendUint32(b, 1)    // minor version
 	b = binary.BigEndian.AppendUint32(b, 0)    // callback_ident, unused in 4.1
 	b = binary.BigEndian.AppendUint32(b, 2)
-	b = binary.BigEndian.AppendUint32(b, OP_CB_SEQUENCE)
+	b = binary.BigEndian.AppendUint32(b, nfs4.OP_CB_SEQUENCE)
 	b = append(b, id[:]...)
 	b = binary.BigEndian.AppendUint32(b, seq)
 	b = binary.BigEndian.AppendUint32(b, 0) // slot
 	b = binary.BigEndian.AppendUint32(b, 0) // highest slot
 	b = binary.BigEndian.AppendUint32(b, 0) // cachethis
 	b = binary.BigEndian.AppendUint32(b, 0) // referring call lists
-	b = binary.BigEndian.AppendUint32(b, OP_CB_RECALL_SLOT)
+	b = binary.BigEndian.AppendUint32(b, nfs4.OP_CB_RECALL_SLOT)
 	return binary.BigEndian.AppendUint32(b, target)
 }
 
@@ -524,12 +526,12 @@ func parseRecallReply(frame []byte, id SessionID, seq uint32) recallReply {
 	}
 	op, ok1 := u32(off + 4)
 	seqStatus, ok2 := u32(off + 8)
-	if !ok1 || !ok2 || op != OP_CB_SEQUENCE {
+	if !ok1 || !ok2 || op != nfs4.OP_CB_SEQUENCE {
 		return bad
 	}
 	off += 12
 	r := recallReply{seqStatus: seqStatus}
-	if seqStatus != NFS4_OK {
+	if seqStatus != nfs4.NFS4_OK {
 		// Processing stops at the failing operation.
 		if count != 1 || compound != seqStatus || len(body) != off {
 			return bad
@@ -552,7 +554,7 @@ func parseRecallReply(frame []byte, id SessionID, seq uint32) recallReply {
 	}
 	op, ok1 = u32(off)
 	recallStatus, ok2 := u32(off + 4)
-	if !ok1 || !ok2 || op != OP_CB_RECALL_SLOT || len(body) != off+8 || compound != recallStatus {
+	if !ok1 || !ok2 || op != nfs4.OP_CB_RECALL_SLOT || len(body) != off+8 || compound != recallStatus {
 		return bad
 	}
 	r.recallStatus = recallStatus
@@ -564,11 +566,11 @@ func (r recallReply) outcome() cbOutcome {
 	switch {
 	case r.malformed:
 		return cbFault
-	case r.seqStatus == NFS4ERR_DELAY:
+	case r.seqStatus == nfs4.NFS4ERR_DELAY:
 		return cbRetry
-	case r.seqStatus != NFS4_OK:
+	case r.seqStatus != nfs4.NFS4_OK:
 		return cbFault
-	case r.recallStatus != NFS4_OK:
+	case r.recallStatus != nfs4.NFS4_OK:
 		return cbRecallRefused
 	}
 	return cbDone
@@ -606,14 +608,14 @@ func (s *Server) sequenceFlags(sess *session) uint32 {
 	var flags uint32
 	fault, pending := cb.flags()
 	if fault {
-		flags |= SEQ4_STATUS_BACKCHANNEL_FAULT
+		flags |= nfs4.SEQ4_STATUS_BACKCHANNEL_FAULT
 	}
 	up := cb.pathUp()
 	if (sess.backRequested || pending) && !up {
-		flags |= SEQ4_STATUS_CB_PATH_DOWN_SESSION
+		flags |= nfs4.SEQ4_STATUS_CB_PATH_DOWN_SESSION
 	}
 	if !up && s.sessions.clientPathDown(sess.clientID) {
-		flags |= SEQ4_STATUS_CB_PATH_DOWN
+		flags |= nfs4.SEQ4_STATUS_CB_PATH_DOWN
 	}
 	return flags
 }

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/msgs"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 func TestReviewN08R1PopulatedTerminalSlotsRemainCharged(t *testing.T) {
@@ -31,13 +32,13 @@ func TestReviewN08R1PopulatedTerminalSlotsRemainCharged(t *testing.T) {
 	ts := connectionSession(t, srv)
 	sess := srv.sessions.lookup(ts.id)
 	for slot := uint32(0); slot < 3; slot++ {
-		wire := admissionSequence(buildCompoundBody(nil, func(w *COMPOUND4argsWriter) { w.AppendArgarray_Putrootfh() }), ts, slot, 1, true)
+		wire := admissionSequence(buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) { w.AppendArgarray_Putrootfh() }), ts, slot, 1, true)
 		_, res := admissionRequest(t, srv, wire, slot+1, nil)
-		admissionStatus(t, res, NFS4_OK, OP_SEQUENCE, OP_PUTROOTFH)
+		admissionStatus(t, res, nfs4.NFS4_OK, nfs4.OP_SEQUENCE, nfs4.OP_PUTROOTFH)
 	}
-	wire := admissionSequence(buildCompoundBody(nil, func(w *COMPOUND4argsWriter) { w.AppendArgarray_Putrootfh(); admissionRemove(w, "victim") }), ts, 3, 1, true)
+	wire := admissionSequence(buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) { w.AppendArgarray_Putrootfh(); admissionRemove(w, "victim") }), ts, 3, 1, true)
 	_, res := admissionRequest(t, srv, wire, 10, nil)
-	admissionStatus(t, res, NFS4ERR_SERVERFAULT, OP_SEQUENCE, OP_PUTROOTFH, OP_REMOVE)
+	admissionStatus(t, res, nfs4.NFS4ERR_SERVERFAULT, nfs4.OP_SEQUENCE, nfs4.OP_PUTROOTFH, nfs4.OP_REMOVE)
 	retained := 0
 	for i := range sess.slots {
 		retained += cap(sess.slots[i].reply)
@@ -46,10 +47,10 @@ func TestReviewN08R1PopulatedTerminalSlotsRemainCharged(t *testing.T) {
 		t.Fatalf("uncharged terminal arrays: retained=%d charged=%d", retained, srv.sessions.cachedBytes)
 	}
 	_, res = admissionRequest(t, srv, wire, 11, nil)
-	admissionStatus(t, res, NFS4ERR_BADSESSION, OP_SEQUENCE)
+	admissionStatus(t, res, nfs4.NFS4ERR_BADSESSION, nfs4.OP_SEQUENCE)
 }
 
-func reviewEmptySetattr(w *COMPOUND4argsWriter) {
+func reviewEmptySetattr(w *nfs4.COMPOUND4argsWriter) {
 	op := w.AppendArgarray_Setattr()
 	attrs := op.StartObjAttributes()
 	mask := attrs.StartAttrmask()
@@ -66,7 +67,7 @@ func TestReviewN08R2GetfhFollowingErrorBoundary(t *testing.T) {
 			srv := admissionWritableServer(t, fs)
 			ts := connectionSession(t, srv)
 			srv.sessions.lookup(ts.id).maxCached = limit
-			wire := admissionSequence(buildCompoundBody(nil, func(w *COMPOUND4argsWriter) {
+			wire := admissionSequence(buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
 				w.AppendArgarray_Putrootfh()
 				admissionCreate(w, "born")
 				w.AppendArgarray_Getfh()
@@ -78,9 +79,9 @@ func TestReviewN08R2GetfhFollowingErrorBoundary(t *testing.T) {
 			iter.Next()
 			iter.Next()
 			create := iter.Resarray().Value().AsCREATE4resEntry()
-			if create.Disc() == NFS4_OK {
-				if !iter.Next() || iter.Resarray().Disc() != OP_GETFH || iter.Resarray().Value().AsGETFH4resEntry().Disc() != NFS4_OK {
-					t.Fatalf("CREATE ran without promised GETFH: status=%s bytes=%d", Nfsstat4Name(res.Status()), len(reply))
+			if create.Disc() == nfs4.NFS4_OK {
+				if !iter.Next() || iter.Resarray().Disc() != nfs4.OP_GETFH || iter.Resarray().Value().AsGETFH4resEntry().Disc() != nfs4.NFS4_OK {
+					t.Fatalf("CREATE ran without promised GETFH: status=%s bytes=%d", nfs4.Nfsstat4Name(res.Status()), len(reply))
 				}
 			} else {
 				if _, err := fs.Lookup(fs.RootID(), "born"); !os.IsNotExist(err) {
@@ -100,7 +101,7 @@ func TestReviewN08R2VariableBeforeGetfh(t *testing.T) {
 	srv := admissionWritableServer(t, fs)
 	ts := connectionSession(t, srv)
 	srv.sessions.lookup(ts.id).maxCached = 160
-	wire := admissionSequence(buildCompoundBody(nil, func(w *COMPOUND4argsWriter) {
+	wire := admissionSequence(buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		c := w.AppendArgarray_Create()
 		c.Resume(c.SetObjtype_Nf4lnk().SetData(bytes.Repeat([]byte("x"), 128)).Finish())
@@ -116,13 +117,13 @@ func TestReviewN08R2VariableBeforeGetfh(t *testing.T) {
 	}), ts, 0, 1, true)
 	_, res := admissionRequest(t, srv, wire, 1, nil)
 	if _, err := fs.Lookup(fs.RootID(), "link"); !os.IsNotExist(err) {
-		t.Fatalf("unsafe variable path created link: %v, status=%s", err, Nfsstat4Name(res.Status()))
+		t.Fatalf("unsafe variable path created link: %v, status=%s", err, nfs4.Nfsstat4Name(res.Status()))
 	}
-	admissionStatus(t, res, NFS4ERR_UNSAFE_COMPOUND, OP_SEQUENCE, OP_PUTROOTFH, OP_CREATE)
+	admissionStatus(t, res, nfs4.NFS4ERR_UNSAFE_COMPOUND, nfs4.OP_SEQUENCE, nfs4.OP_PUTROOTFH, nfs4.OP_CREATE)
 }
 
 func TestReviewN08R3UncachedRequiredErrors(t *testing.T) {
-	for _, opcode := range []uint32{9999, OP_OPEN_CONFIRM, OP_RENEW, OP_RELEASE_LOCKOWNER, OP_SETCLIENTID_CONFIRM} {
+	for _, opcode := range []uint32{9999, nfs4.OP_OPEN_CONFIRM, nfs4.OP_RENEW, nfs4.OP_RELEASE_LOCKOWNER, nfs4.OP_SETCLIENTID_CONFIRM} {
 		t.Run(fmt.Sprint(opcode), func(t *testing.T) {
 			srv, _ := newConnectionTestServer(t, 2)
 			ts := connectionSession(t, srv)
@@ -130,25 +131,25 @@ func TestReviewN08R3UncachedRequiredErrors(t *testing.T) {
 			binary.BigEndian.PutUint32(body[8:], 1)
 			body = binary.BigEndian.AppendUint32(body, opcode)
 			switch opcode {
-			case OP_OPEN_CONFIRM:
+			case nfs4.OP_OPEN_CONFIRM:
 				body = append(body, make([]byte, 20)...)
-			case OP_RENEW:
+			case nfs4.OP_RENEW:
 				body = append(body, make([]byte, 8)...)
-			case OP_RELEASE_LOCKOWNER:
+			case nfs4.OP_RELEASE_LOCKOWNER:
 				body = append(body, make([]byte, 12)...)
-			case OP_SETCLIENTID_CONFIRM:
+			case nfs4.OP_SETCLIENTID_CONFIRM:
 				body = append(body, make([]byte, 16)...)
 			}
 			wire := admissionSequence(body, ts, 0, 1, false)
 			reply, res := admissionRequest(t, srv, wire, 1, nil)
-			expected, disc := uint32(NFS4ERR_NOTSUPP), opcode
+			expected, disc := uint32(nfs4.NFS4ERR_NOTSUPP), opcode
 			if !knownOperation(opcode) {
-				expected, disc = NFS4ERR_OP_ILLEGAL, OP_ILLEGAL
+				expected, disc = nfs4.NFS4ERR_OP_ILLEGAL, nfs4.OP_ILLEGAL
 			}
-			admissionStatus(t, res, expected, OP_SEQUENCE, disc)
+			admissionStatus(t, res, expected, nfs4.OP_SEQUENCE, disc)
 			before := admissionImage(&srv.sessions.lookup(ts.id).slots[0])
 			retry, res := admissionRequest(t, srv, wire, 1001, nil)
-			admissionStatus(t, res, expected, OP_SEQUENCE, disc)
+			admissionStatus(t, res, expected, nfs4.OP_SEQUENCE, disc)
 			if !bytes.Equal(reply[24:], retry[24:]) || !reflect.DeepEqual(before, admissionImage(&srv.sessions.lookup(ts.id).slots[0])) {
 				t.Fatal("mandatory error replay changed identity/prefix")
 			}
@@ -170,18 +171,18 @@ func (s *reviewSyncFailStore) Get(id InodeID) StagingFile {
 	return f
 }
 func (f *reviewSyncFailFile) Sync() error { return syscall.EIO }
-func reviewOpenSize(w *COMPOUND4argsWriter, client uint64, name, owner string, size uint64) {
+func reviewOpenSize(w *nfs4.COMPOUND4argsWriter, client uint64, name, owner string, size uint64) {
 	w.AppendArgarray_Putrootfh()
 	op := w.AppendArgarray_Open()
-	op.SetShareAccess(OPEN4_SHARE_ACCESS_BOTH)
-	op.SetShareDeny(OPEN4_SHARE_DENY_NONE)
+	op.SetShareAccess(nfs4.OPEN4_SHARE_ACCESS_BOTH)
+	op.SetShareDeny(nfs4.OPEN4_SHARE_DENY_NONE)
 	o := op.StartOwner()
 	o.SetClientid(client)
 	op.Resume(o.SetOwner([]byte(owner)).Finish())
 	how := op.SetOpenhow_Create()
 	attrs := how.SetValue_Unchecked4()
 	mask := attrs.StartAttrmask()
-	mask.AppendData(1 << FATTR4_SIZE)
+	mask.AppendData(1 << nfs4.FATTR4_SIZE)
 	attrs.Resume(mask.Finish())
 	attrs.Resume(attrs.StartAttrVals().SetData(binary.BigEndian.AppendUint64(nil, size)).Finish())
 	how.Resume(attrs.Finish())
@@ -215,9 +216,9 @@ func TestReviewN08R4JoinedOpenSizeSyncFailure(t *testing.T) {
 	ts := testSessionForClient(conn, client)
 	slot, seq := ts.acquire()
 	defer ts.release(slot)
-	wire := admissionSequence(buildCompoundBody(nil, func(w *COMPOUND4argsWriter) { reviewOpenSize(w, client, "joined", "second", 3) }), ts, slot, seq, true)
+	wire := admissionSequence(buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) { reviewOpenSize(w, client, "joined", "second", 3) }), ts, slot, seq, true)
 	store.armed = true
-	send := func() COMPOUND4res {
+	send := func() nfs4.COMPOUND4res {
 		t.Helper()
 		reply, err := sendRawRPC(conn, xid, procCompound, wire)
 		xid++
@@ -230,12 +231,12 @@ func TestReviewN08R4JoinedOpenSizeSyncFailure(t *testing.T) {
 		}
 		return res
 	}
-	admissionStatus(t, send(), NFS4ERR_IO, OP_SEQUENCE, OP_PUTROOTFH, OP_OPEN)
+	admissionStatus(t, send(), nfs4.NFS4ERR_IO, nfs4.OP_SEQUENCE, nfs4.OP_PUTROOTFH, nfs4.OP_OPEN)
 	info, err := os.Stat(path)
 	if err != nil || info.Size() != 3 {
 		t.Fatalf("shared real staging not truncated: %v %v", info, err)
 	}
-	admissionStatus(t, send(), NFS4ERR_BADSESSION, OP_SEQUENCE)
+	admissionStatus(t, send(), nfs4.NFS4ERR_BADSESSION, nfs4.OP_SEQUENCE)
 }
 
 func reviewHeldReply(t *testing.T, srv *Server, wire []byte, xid uint32) (*rpcRequest, []byte) {
@@ -255,10 +256,10 @@ func TestReviewN08R1ReplaySuccessorDestructionOwnership(t *testing.T) {
 	srv, _ := newConnectionTestServer(t, 2)
 	ts := connectionSession(t, srv)
 	sess := srv.sessions.lookup(ts.id)
-	body := buildCompoundBody(nil, func(w *COMPOUND4argsWriter) { w.AppendArgarray_Putrootfh() })
+	body := buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) { w.AppendArgarray_Putrootfh() })
 	wire := admissionSequence(body, ts, 0, 1, true)
 	_, res := admissionRequest(t, srv, wire, 1, nil)
-	admissionStatus(t, res, NFS4_OK, OP_SEQUENCE, OP_PUTROOTFH)
+	admissionStatus(t, res, nfs4.NFS4_OK, nfs4.OP_SEQUENCE, nfs4.OP_PUTROOTFH)
 	old := sess.slots[0].buffer
 	oldCharge := old.charge
 	req, held := reviewHeldReply(t, srv, wire, 2)
@@ -271,13 +272,13 @@ func TestReviewN08R1ReplaySuccessorDestructionOwnership(t *testing.T) {
 	before := admissionImage(&sess.slots[0])
 	next := admissionSequence(body, ts, 0, 2, true)
 	_, res = admissionRequest(t, srv, next, 3, nil)
-	admissionStatus(t, res, NFS4ERR_RESOURCE, OP_SEQUENCE)
+	admissionStatus(t, res, nfs4.NFS4ERR_RESOURCE, nfs4.OP_SEQUENCE)
 	if !reflect.DeepEqual(before, admissionImage(&sess.slots[0])) {
 		t.Fatal("overlap quota failure changed slot")
 	}
 	srv.sessions.cacheLimit = maxSessionCacheBytes
 	_, res = admissionRequest(t, srv, next, 4, nil)
-	admissionStatus(t, res, NFS4_OK, OP_SEQUENCE, OP_PUTROOTFH)
+	admissionStatus(t, res, nfs4.NFS4_OK, nfs4.OP_SEQUENCE, nfs4.OP_PUTROOTFH)
 	if a := srv.sessions.accounting(); a.CacheBuffers != 2 || a.CacheBytes != oldCharge+sess.slots[0].buffer.charge || a.WorkReplies != 1 {
 		t.Fatalf("successor lost old view charge %+v", a)
 	}
@@ -299,14 +300,14 @@ func TestReviewN08R1UncachedOutputAndExclusiveTransfer(t *testing.T) {
 	srv, _ := newConnectionTestServer(t, 2)
 	ts := connectionSession(t, srv)
 	sess := srv.sessions.lookup(ts.id)
-	body := buildCompoundBody(nil, func(w *COMPOUND4argsWriter) { w.AppendArgarray_Putrootfh() })
+	body := buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) { w.AppendArgarray_Putrootfh() })
 	first := admissionSequence(body, ts, 0, 1, true)
 	_, res := admissionRequest(t, srv, first, 1, nil)
-	admissionStatus(t, res, NFS4_OK, OP_SEQUENCE, OP_PUTROOTFH)
+	admissionStatus(t, res, nfs4.NFS4_OK, nfs4.OP_SEQUENCE, nfs4.OP_PUTROOTFH)
 	srv.sessions.cacheLimit = int(sess.maxCached) + cachedReplyOverhead // Exclusive credit fits.
 	second := admissionSequence(body, ts, 0, 2, true)
 	_, res = admissionRequest(t, srv, second, 2, nil)
-	admissionStatus(t, res, NFS4_OK, OP_SEQUENCE, OP_PUTROOTFH)
+	admissionStatus(t, res, nfs4.NFS4_OK, nfs4.OP_SEQUENCE, nfs4.OP_PUTROOTFH)
 	uncached := admissionSequence(body, ts, 0, 3, false)
 	req, output := reviewHeldReply(t, srv, uncached, 3)
 	defer req.releaseReply()
@@ -347,7 +348,7 @@ func TestReviewN08R1StalledTransportRetainsOutput(t *testing.T) {
 		server.Close()
 		awaitSignal(t, done, "transport worker cleanup")
 	}()
-	body := buildCompoundBody(nil, func(w *COMPOUND4argsWriter) { w.AppendArgarray_Putrootfh() })
+	body := buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) { w.AppendArgarray_Putrootfh() })
 	wire := admissionSequence(body, ts, 0, 1, false)
 	writeCallForTest(t, client, rpcCallForTest(1, procCompound, wire))
 	awaitSignal(t, gate.entered, "stalled response")
@@ -356,7 +357,7 @@ func TestReviewN08R1StalledTransportRetainsOutput(t *testing.T) {
 	}
 	next := admissionSequence(body, ts, 0, 2, true)
 	_, res := admissionRequest(t, srv, next, 2, nil)
-	admissionStatus(t, res, NFS4_OK, OP_SEQUENCE, OP_PUTROOTFH)
+	admissionStatus(t, res, nfs4.NFS4_OK, nfs4.OP_SEQUENCE, nfs4.OP_PUTROOTFH)
 	srv.sessions.destroySession(ts.id)
 	if a := srv.sessions.accounting(); a.CacheBytes != 0 || a.WorkReplies != 1 || a.WorkBytes == 0 {
 		t.Fatalf("stalled output released before write %+v", a)
@@ -403,19 +404,19 @@ func TestReviewN08R1RetiredSessionIDsStayBadSession(t *testing.T) {
 	}
 	for i, id := range retired {
 		ts := newTestSession(id, client, maxSessionSlots)
-		if seq := srv.startSequence(ReadCOMPOUND4argsForTest(t, admissionSequence(buildCompoundBody(nil, nil), ts, 0, 1, true))); seq.status != NFS4ERR_BADSESSION {
-			t.Fatalf("SEQUENCE on a retired ID %s", Nfsstat4Name(seq.status))
+		if seq := srv.startSequence(ReadCOMPOUND4argsForTest(t, admissionSequence(buildCompoundBody(nil, nil), ts, 0, 1, true))); seq.status != nfs4.NFS4ERR_BADSESSION {
+			t.Fatalf("SEQUENCE on a retired ID %s", nfs4.Nfsstat4Name(seq.status))
 		}
-		_, res := admissionRequest(t, srv, admissionBind(id, CDFC4_FORE, false), uint32(100+i), &rpcConnection{})
-		admissionStatus(t, res, NFS4ERR_BADSESSION, OP_BIND_CONN_TO_SESSION)
+		_, res := admissionRequest(t, srv, admissionBind(id, nfs4.CDFC4_FORE, false), uint32(100+i), &rpcConnection{})
+		admissionStatus(t, res, nfs4.NFS4ERR_BADSESSION, nfs4.OP_BIND_CONN_TO_SESSION)
 	}
 	if a := ss.accounting(); a.Sessions != 1 || a.Records != 1 {
 		t.Fatalf("retired IDs rebuilt state %+v", a)
 	}
 	current := testSessionForClient(conn, client)
 	_, status, err := createSession(conn, xid, client, current.nextCSSeq)
-	if err != nil || status != NFS4_OK {
-		t.Fatalf("current-epoch creation blocked %s %v", Nfsstat4Name(status), err)
+	if err != nil || status != nfs4.NFS4_OK {
+		t.Fatalf("current-epoch creation blocked %s %v", nfs4.Nfsstat4Name(status), err)
 	}
 }
 
@@ -433,13 +434,13 @@ func TestReviewN08R1SessionAndWorkCapacityBeforeEffects(t *testing.T) {
 	// A failed pre-slot reservation is DELAY and leaves the creation slot
 	// unchanged (canonical r3 §5.1).
 	_, res := admissionRequest(t, srv, createSessionBody(client, ts.nextCSSeq), 100, nil)
-	admissionStatus(t, res, NFS4ERR_DELAY, OP_CREATE_SESSION)
+	admissionStatus(t, res, nfs4.NFS4ERR_DELAY, nfs4.OP_CREATE_SESSION)
 	if a := ss.accounting(); a.Sessions != 1 || a.PendingSessions != 0 {
 		t.Fatalf("record admission changed state %+v", a)
 	}
 	sess := ss.lookup(ts.id)
 	before := admissionImage(&sess.slots[0])
-	wire := admissionSequence(buildCompoundBody(nil, func(w *COMPOUND4argsWriter) { w.AppendArgarray_Putrootfh() }), ts, 0, 1, true)
+	wire := admissionSequence(buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) { w.AppendArgarray_Putrootfh() }), ts, 0, 1, true)
 	req, err := parseRPCCall(rpcCallForTest(1, procCompound, wire))
 	if err != nil {
 		t.Fatal(err)
@@ -461,7 +462,7 @@ func TestReviewN08R1SessionAndWorkCapacityBeforeEffects(t *testing.T) {
 	ss.next = uint64(^uint32(0))
 	ss.mu.Unlock()
 	_, res = admissionRequest(t, srv, createSessionBody(client, ts.nextCSSeq), 101, nil)
-	admissionStatus(t, res, NFS4ERR_DELAY, OP_CREATE_SESSION)
+	admissionStatus(t, res, nfs4.NFS4ERR_DELAY, nfs4.OP_CREATE_SESSION)
 	if a := ss.accounting(); a.PendingSessions != 0 || a.Sessions != 1 {
 		t.Fatalf("serial exhaustion changed records %+v", a)
 	}
@@ -481,7 +482,7 @@ func TestReviewN08R2OpenFollowingGetfhBoundary(t *testing.T) {
 			ts := testSessionForClient(conn, client)
 			sess := srv.sessions.lookup(ts.id)
 			sess.maxCached = limit
-			wire := admissionSequence(buildCompoundBody(nil, func(w *COMPOUND4argsWriter) {
+			wire := admissionSequence(buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
 				w.AppendArgarray_Putrootfh()
 				admissionOpen(w, client, "created")
 				w.AppendArgarray_Getfh()
@@ -493,8 +494,8 @@ func TestReviewN08R2OpenFollowingGetfhBoundary(t *testing.T) {
 			it.Next()
 			it.Next()
 			open := it.Resarray().Value().AsOPEN4resEntry()
-			if open.Disc() == NFS4_OK {
-				if !it.Next() || it.Resarray().Value().AsGETFH4resEntry().Disc() != NFS4_OK {
+			if open.Disc() == nfs4.NFS4_OK {
+				if !it.Next() || it.Resarray().Value().AsGETFH4resEntry().Disc() != nfs4.NFS4_OK {
 					t.Fatal("OPEN lost admitted handle")
 				}
 			} else {
@@ -525,22 +526,22 @@ func TestReviewN08R4DefiniteOpenErrorStaysReplayable(t *testing.T) {
 	ts.clientID = client
 	moveSessionForTest(srv.sessions, srv.sessions.lookup(ts.id), client, ts.id)
 	srv.clients.pinLeaseForTest(client)
-	body := buildCompoundBody(nil, func(w *COMPOUND4argsWriter) {
+	body := buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		op := w.AppendArgarray_Open()
-		op.SetShareAccess(OPEN4_SHARE_ACCESS_BOTH)
+		op.SetShareAccess(nfs4.OPEN4_SHARE_ACCESS_BOTH)
 		o := op.StartOwner()
 		o.SetClientid(ts.clientID)
 		op.Resume(o.SetOwner([]byte("rejected")).Finish())
-		op.SetOpenhow_Default(OPEN4_NOCREATE)
+		op.SetOpenhow_Default(nfs4.OPEN4_NOCREATE)
 		op.Resume(op.SetClaim_Null().SetData([]byte("missing")).Finish())
 		w.Resume(op.Finish())
 	})
 	wire := admissionSequence(body, ts, 0, 1, true)
 	first, res := admissionRequest(t, srv, wire, 1, nil)
-	admissionStatus(t, res, NFS4ERR_NOENT, OP_SEQUENCE, OP_PUTROOTFH, OP_OPEN)
+	admissionStatus(t, res, nfs4.NFS4ERR_NOENT, nfs4.OP_SEQUENCE, nfs4.OP_PUTROOTFH, nfs4.OP_OPEN)
 	replay, res := admissionRequest(t, srv, wire, 2, nil)
-	admissionStatus(t, res, NFS4ERR_NOENT, OP_SEQUENCE, OP_PUTROOTFH, OP_OPEN)
+	admissionStatus(t, res, nfs4.NFS4ERR_NOENT, nfs4.OP_SEQUENCE, nfs4.OP_PUTROOTFH, nfs4.OP_OPEN)
 	if !bytes.Equal(first[24:], replay[24:]) || srv.sessions.lookup(ts.id) == nil {
 		t.Fatal("definite pre-effect OPEN failure poisoned session")
 	}
@@ -593,8 +594,8 @@ func TestReviewN08R1aReaddirPreparationWithinReservation(t *testing.T) {
 	ts := connectionSession(t, srv)
 	sess := srv.sessions.lookup(ts.id)
 	sess.maxResp = 1 << 20
-	readdir := func(cookie uint64) func(w *COMPOUND4argsWriter) {
-		return func(w *COMPOUND4argsWriter) {
+	readdir := func(cookie uint64) func(w *nfs4.COMPOUND4argsWriter) {
+		return func(w *nfs4.COMPOUND4argsWriter) {
 			w.AppendArgarray_Putrootfh()
 			r := w.AppendArgarray_Readdir()
 			r.SetCookie(cookie)
@@ -635,7 +636,7 @@ func TestReviewN08R1aReaddirPreparationWithinReservation(t *testing.T) {
 	}
 	reply = nil
 	req.releaseReply()
-	admissionStatus(t, res, NFS4_OK, OP_SEQUENCE, OP_PUTROOTFH, OP_READDIR)
+	admissionStatus(t, res, nfs4.NFS4_OK, nfs4.OP_SEQUENCE, nfs4.OP_PUTROOTFH, nfs4.OP_READDIR)
 	if peak == 0 || peak > work {
 		t.Fatalf("READDIR preparation retained %d bytes, reservation %d", peak, work)
 	}
@@ -655,10 +656,10 @@ func TestReviewN08R1aReaddirPreparationWithinReservation(t *testing.T) {
 	entrySize := 4 + 8 + 4 + maxTernNameLength + 1 + 16 + 4 + 312 + 4
 	want := (min(1<<20, int(sess.maxResp)-rpcAcceptedHeaderSize-8-60-8-8) - readdirResokOverhead) / entrySize
 	got, last := 0, uint64(0)
-	if ok.Reply().Eof() != FALSE {
+	if ok.Reply().Eof() != nfs4.FALSE {
 		t.Fatal("partial page reported EOF")
 	}
-	for e := ok.Reply().Entries(); e.Disc() == TRUE; {
+	for e := ok.Reply().Entries(); e.Disc() == nfs4.TRUE; {
 		entry := e.AsEntry4()
 		if entry.Cookie() != uint64(got+3) || len(entry.Name().Data()) != maxTernNameLength {
 			t.Fatalf("entry %d cookie %d", got, entry.Cookie())
@@ -672,13 +673,13 @@ func TestReviewN08R1aReaddirPreparationWithinReservation(t *testing.T) {
 	}
 	wire = admissionSequence(buildCompoundBody(nil, readdir(last)), ts, 0, 2, false)
 	_, res = admissionRequest(t, srv, wire, 2, nil)
-	admissionStatus(t, res, NFS4_OK, OP_SEQUENCE, OP_PUTROOTFH, OP_READDIR)
+	admissionStatus(t, res, nfs4.NFS4_OK, nfs4.OP_SEQUENCE, nfs4.OP_PUTROOTFH, nfs4.OP_READDIR)
 	it = res.Resarray()
 	it.Next()
 	it.Next()
 	it.Next()
 	ok = it.Resarray().Value().AsREADDIR4resEntry().Value().AsREADDIR4resok()
-	if e := ok.Reply().Entries(); e.Disc() != TRUE || e.AsEntry4().Cookie() != last+1 {
+	if e := ok.Reply().Entries(); e.Disc() != nfs4.TRUE || e.AsEntry4().Cookie() != last+1 {
 		t.Fatal("continuation did not resume after the last cookie")
 	}
 	if a := srv.sessions.accounting(); a.WorkBytes != 0 || a.WorkReplies != 0 {
@@ -707,8 +708,8 @@ func TestReviewN08R1bClientRetirementHoldsRecords(t *testing.T) {
 	user := batch[count-1]
 	ts := newTestSession(user.id, client, maxSessionSlots)
 	seq := srv.startSequence(ReadCOMPOUND4argsForTest(t, admissionSequence(buildCompoundBody(nil, nil), ts, 1, 1, true)))
-	if seq.status != NFS4_OK || seq.slot == nil {
-		t.Fatalf("admission %s", Nfsstat4Name(seq.status))
+	if seq.status != nfs4.NFS4_OK || seq.slot == nil {
+		t.Fatalf("admission %s", nfs4.Nfsstat4Name(seq.status))
 	}
 	// Pause every session's slot so the bulk retirement stalls wherever it starts.
 	for _, sess := range batch {
@@ -742,8 +743,8 @@ func TestReviewN08R1bClientRetirementHoldsRecords(t *testing.T) {
 		t.Fatal("new record admitted against a stalled retiring batch")
 	}
 	if seq := srv.startSequence(ReadCOMPOUND4argsForTest(t, admissionSequence(buildCompoundBody(nil, nil),
-		newTestSession(SessionID{0xff}, client, maxSessionSlots), 0, 1, true))); seq.status != NFS4ERR_BADSESSION {
-		t.Fatalf("unknown session %s", Nfsstat4Name(seq.status))
+		newTestSession(SessionID{0xff}, client, maxSessionSlots), 0, 1, true))); seq.status != nfs4.NFS4ERR_BADSESSION {
+		t.Fatalf("unknown session %s", nfs4.Nfsstat4Name(seq.status))
 	}
 	// Retirement drains in map order. Each released slot can return at most its
 	// own session's record, and never the continuing user's.
@@ -778,14 +779,14 @@ func TestReviewN08R1bClientRetirementHoldsRecords(t *testing.T) {
 	}
 	ss.releaseSessionRecord()
 	// A retired session cannot be re-admitted after its last use ended.
-	if seq := srv.startSequence(ReadCOMPOUND4argsForTest(t, admissionSequence(buildCompoundBody(nil, nil), ts, 2, 1, true))); seq.status != NFS4ERR_BADSESSION {
-		t.Fatalf("retired session admitted %s", Nfsstat4Name(seq.status))
+	if seq := srv.startSequence(ReadCOMPOUND4argsForTest(t, admissionSequence(buildCompoundBody(nil, nil), ts, 2, 1, true))); seq.status != nfs4.NFS4ERR_BADSESSION {
+		t.Fatalf("retired session admitted %s", nfs4.Nfsstat4Name(seq.status))
 	}
 }
 
-func ReadCOMPOUND4argsForTest(t *testing.T, wire []byte) SEQUENCE4args {
+func ReadCOMPOUND4argsForTest(t *testing.T, wire []byte) nfs4.SEQUENCE4args {
 	t.Helper()
-	args, ok := ReadCOMPOUND4args(wire)
+	args, ok := nfs4.ReadCOMPOUND4args(wire)
 	it := args.Argarray()
 	if !ok || !it.Next() {
 		t.Fatal("SEQUENCE arguments")

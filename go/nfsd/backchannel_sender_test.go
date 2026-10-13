@@ -13,6 +13,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 // cbTestClient is a client connection that also serves callbacks: its
@@ -108,7 +110,7 @@ func (c *cbTestClient) write(frame []byte) {
 	}
 }
 
-func (c *cbTestClient) compound(xid uint32, body []byte) COMPOUND4res {
+func (c *cbTestClient) compound(xid uint32, body []byte) nfs4.COMPOUND4res {
 	c.t.Helper()
 	ch := make(chan []byte, 1)
 	c.mu.Lock()
@@ -150,12 +152,12 @@ func cbRecall(t *testing.T, call []byte) (id SessionID, seq, slot, target uint32
 	t.Helper()
 	args := cbArgs(call)
 	if cbProc(call) != cbProcCompound || binary.BigEndian.Uint32(args[4:]) != 1 ||
-		binary.BigEndian.Uint32(args[12:]) != 2 || binary.BigEndian.Uint32(args[16:]) != OP_CB_SEQUENCE {
+		binary.BigEndian.Uint32(args[12:]) != 2 || binary.BigEndian.Uint32(args[16:]) != nfs4.OP_CB_SEQUENCE {
 		t.Fatalf("not a CB_SEQUENCE+CB_RECALL_SLOT compound: %x", args)
 	}
 	copy(id[:], args[20:36])
 	seq, slot = binary.BigEndian.Uint32(args[36:]), binary.BigEndian.Uint32(args[40:])
-	if binary.BigEndian.Uint32(args[56:]) != OP_CB_RECALL_SLOT {
+	if binary.BigEndian.Uint32(args[56:]) != nfs4.OP_CB_RECALL_SLOT {
 		t.Fatal("second operation is not CB_RECALL_SLOT")
 	}
 	return id, seq, slot, binary.BigEndian.Uint32(args[60:])
@@ -178,22 +180,22 @@ func (c *cbTestClient) answerSequence(t *testing.T, call []byte, status uint32) 
 	id, seq, slot, _ := cbRecall(t, call)
 	b := binary.BigEndian.AppendUint32(nil, status)
 	b = binary.BigEndian.AppendUint32(b, 0) // tag
-	if status != NFS4_OK {
+	if status != nfs4.NFS4_OK {
 		b = binary.BigEndian.AppendUint32(b, 1)
-		b = binary.BigEndian.AppendUint32(b, OP_CB_SEQUENCE)
+		b = binary.BigEndian.AppendUint32(b, nfs4.OP_CB_SEQUENCE)
 		c.answer(call, binary.BigEndian.AppendUint32(b, status))
 		return
 	}
 	b = binary.BigEndian.AppendUint32(b, 2)
-	b = binary.BigEndian.AppendUint32(b, OP_CB_SEQUENCE)
-	b = binary.BigEndian.AppendUint32(b, NFS4_OK)
+	b = binary.BigEndian.AppendUint32(b, nfs4.OP_CB_SEQUENCE)
+	b = binary.BigEndian.AppendUint32(b, nfs4.NFS4_OK)
 	b = append(b, id[:]...)
 	b = binary.BigEndian.AppendUint32(b, seq)
 	b = binary.BigEndian.AppendUint32(b, slot)
 	b = binary.BigEndian.AppendUint32(b, 0)
 	b = binary.BigEndian.AppendUint32(b, 0)
-	b = binary.BigEndian.AppendUint32(b, OP_CB_RECALL_SLOT)
-	c.answer(call, binary.BigEndian.AppendUint32(b, NFS4_OK))
+	b = binary.BigEndian.AppendUint32(b, nfs4.OP_CB_RECALL_SLOT)
+	c.answer(call, binary.BigEndian.AppendUint32(b, nfs4.NFS4_OK))
 }
 
 // answerNull answers the next callback, which must be CB_NULL.
@@ -243,9 +245,9 @@ func newCBSessionLimits(t *testing.T, srv *Server, addr string, backReq, backReq
 	f.clientID = ex.EirClientid()
 	createXID := f.next()
 	res = f.client.compound(createXID, backCreateSessionBodyLimits(f.clientID, ex.EirSequenceid(),
-		CREATE_SESSION4_FLAG_CONN_BACK_CHAN, backReq, backReqs, offerNone))
-	if res.Status() != NFS4_OK {
-		t.Fatalf("CREATE_SESSION %s", Nfsstat4Name(res.Status()))
+		nfs4.CREATE_SESSION4_FLAG_CONN_BACK_CHAN, backReq, backReqs, offerNone))
+	if res.Status() != nfs4.NFS4_OK {
+		t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(res.Status()))
 	}
 	f.client.mu.Lock()
 	for _, xid := range f.client.order {
@@ -260,7 +262,7 @@ func newCBSessionLimits(t *testing.T, srv *Server, addr string, backReq, backReq
 	it = res.Resarray()
 	it.Next()
 	ok := it.Resarray().Value().AsCREATESESSION4resEntry().Value().AsCREATESESSION4resok()
-	if ok.CsrFlags()&CREATE_SESSION4_FLAG_CONN_BACK_CHAN == 0 {
+	if ok.CsrFlags()&nfs4.CREATE_SESSION4_FLAG_CONN_BACK_CHAN == 0 {
 		t.Fatal("backchannel not granted")
 	}
 	f.ts = newTestSession(readSessionID(ok.CsrSessionid()), f.clientID, ok.CsrForeChanAttrs().CaMaxrequests())
@@ -283,10 +285,10 @@ func (f *cbSessionFixture) session(t *testing.T) *session {
 func (f *cbSessionFixture) sequence(t *testing.T) (flags, target uint32) {
 	t.Helper()
 	f.slotSeq++
-	body := buildCompoundBody(nil, func(*COMPOUND4argsWriter) {})
+	body := buildCompoundBody(nil, func(*nfs4.COMPOUND4argsWriter) {})
 	res := f.client.compound(f.next(), withSequence(body, f.ts, 0, f.slotSeq))
-	if res.Status() != NFS4_OK {
-		t.Fatalf("SEQUENCE %s", Nfsstat4Name(res.Status()))
+	if res.Status() != nfs4.NFS4_OK {
+		t.Fatalf("SEQUENCE %s", nfs4.Nfsstat4Name(res.Status()))
 	}
 	it := res.Resarray()
 	it.Next()
@@ -347,7 +349,7 @@ func TestCBNullMarksPath(t *testing.T) {
 		t.Fatalf("flags %#x while probing", flags)
 	}
 	time.Sleep(3 * cbTimeout)
-	if flags, _ := f.sequence(t); flags != SEQ4_STATUS_CB_PATH_DOWN_SESSION|SEQ4_STATUS_CB_PATH_DOWN {
+	if flags, _ := f.sequence(t); flags != nfs4.SEQ4_STATUS_CB_PATH_DOWN_SESSION|nfs4.SEQ4_STATUS_CB_PATH_DOWN {
 		t.Fatalf("flags %#x after a lost CB_NULL", flags)
 	}
 	f.client.answer(call, nil)
@@ -384,7 +386,7 @@ func TestCBRecallSlotOncePerPressure(t *testing.T) {
 		t.Fatalf("recall %x seq %d slot %d target %d", id, seq, slot, target)
 	}
 	before := time.Now()
-	f.client.answerSequence(t, call, NFS4_OK)
+	f.client.answerSequence(t, call, nfs4.NFS4_OK)
 	f.sequence(t)
 	if _, again := f.client.nextCall(100 * time.Millisecond); again {
 		t.Fatal("recalled twice in one episode")
@@ -410,7 +412,7 @@ func TestCBRecallSlotOncePerPressure(t *testing.T) {
 	if _, seq, _, _ := cbRecall(t, call); seq != 2 {
 		t.Fatalf("second recall sequence %d, want 2", seq)
 	}
-	f.client.answerSequence(t, call, NFS4_OK)
+	f.client.answerSequence(t, call, nfs4.NFS4_OK)
 	f.pressure(t, false)
 }
 
@@ -423,13 +425,13 @@ func TestCBResendOnlyAfterDisconnect(t *testing.T) {
 		f := newCBSession(t)
 		f.client.answerNull(t)
 		second := newCBTestClient(t, f.addr)
-		res := second.compound(1000, admissionBind(f.ts.id, CDFC4_BACK_OR_BOTH, false))
-		if res.Status() != NFS4_OK {
-			t.Fatalf("BIND %s", Nfsstat4Name(res.Status()))
+		res := second.compound(1000, admissionBind(f.ts.id, nfs4.CDFC4_BACK_OR_BOTH, false))
+		if res.Status() != nfs4.NFS4_OK {
+			t.Fatalf("BIND %s", nfs4.Nfsstat4Name(res.Status()))
 		}
 		it := res.Resarray()
 		it.Next()
-		if dir := it.Resarray().Value().AsBINDCONNTOSESSION4resEntry().Value().AsBINDCONNTOSESSION4resok().BctsrDir(); dir != CDFS4_BOTH {
+		if dir := it.Resarray().Value().AsBINDCONNTOSESSION4resEntry().Value().AsBINDCONNTOSESSION4resok().BctsrDir(); dir != nfs4.CDFS4_BOTH {
 			t.Fatalf("BIND direction %d", dir)
 		}
 		second.answerNull(t)
@@ -454,7 +456,7 @@ func TestCBResendOnlyAfterDisconnect(t *testing.T) {
 		if _, again, _, _ := cbRecall(t, call); again != seq {
 			t.Fatalf("resent with sequence %d, want %d", again, seq)
 		}
-		second.answerSequence(t, call, NFS4_OK)
+		second.answerSequence(t, call, nfs4.NFS4_OK)
 		f.pressure(t, false)
 	})
 	t.Run("bind", func(t *testing.T) {
@@ -469,8 +471,8 @@ func TestCBResendOnlyAfterDisconnect(t *testing.T) {
 		_, seq, _, _ := cbRecall(t, call)
 		f.client.conn.Close()
 		third := newCBTestClient(t, f.addr)
-		if res := third.compound(2000, admissionBind(f.ts.id, CDFC4_BACK, false)); res.Status() != NFS4_OK {
-			t.Fatalf("BIND %s", Nfsstat4Name(res.Status()))
+		if res := third.compound(2000, admissionBind(f.ts.id, nfs4.CDFC4_BACK, false)); res.Status() != nfs4.NFS4_OK {
+			t.Fatalf("BIND %s", nfs4.Nfsstat4Name(res.Status()))
 		}
 		for {
 			call, ok = third.nextCall(testChannelTimeout)
@@ -486,7 +488,7 @@ func TestCBResendOnlyAfterDisconnect(t *testing.T) {
 		if _, again, _, _ := cbRecall(t, call); again != seq {
 			t.Fatalf("resent with sequence %d, want %d", again, seq)
 		}
-		third.answerSequence(t, call, NFS4_OK)
+		third.answerSequence(t, call, nfs4.NFS4_OK)
 		f.pressure(t, false)
 	})
 }
@@ -508,7 +510,7 @@ func TestCBSequenceReplies(t *testing.T) {
 			}
 			_, seq, _, _ := cbRecall(t, call)
 			seqs = append(seqs, seq)
-			f.client.answerSequence(t, call, NFS4ERR_DELAY)
+			f.client.answerSequence(t, call, nfs4.NFS4ERR_DELAY)
 		}
 		if len(seqs) != 1+cbMaxDelays {
 			t.Fatalf("sent %d times, want %d", len(seqs), 1+cbMaxDelays)
@@ -529,10 +531,10 @@ func TestCBSequenceReplies(t *testing.T) {
 		if !ok {
 			t.Fatal("no recall")
 		}
-		f.client.answerSequence(t, call, NFS4ERR_SEQ_MISORDERED)
+		f.client.answerSequence(t, call, nfs4.NFS4ERR_SEQ_MISORDERED)
 		waitFor(t, "BACKCHANNEL_FAULT", func() bool {
 			flags, _ := f.sequence(t)
-			return flags&SEQ4_STATUS_BACKCHANNEL_FAULT != 0
+			return flags&nfs4.SEQ4_STATUS_BACKCHANNEL_FAULT != 0
 		})
 		f.pressure(t, false)
 		f.pressure(t, true)
@@ -560,8 +562,8 @@ func TestCBWorkerHoldsSessionUntilExit(t *testing.T) {
 	sess := f.session(t)
 	records := f.srv.sessions.accounting().Records
 	res := f.client.compound(f.next(), withSequence(admissionDestroy(f.ts.id), f.ts, 0, f.slotSeq+1))
-	if res.Status() != NFS4_OK {
-		t.Fatalf("DESTROY_SESSION %s", Nfsstat4Name(res.Status()))
+	if res.Status() != nfs4.NFS4_OK {
+		t.Fatalf("DESTROY_SESSION %s", nfs4.Nfsstat4Name(res.Status()))
 	}
 	waitFor(t, "sender exit", func() bool {
 		sess.cb.mu.Lock()
@@ -570,7 +572,7 @@ func TestCBWorkerHoldsSessionUntilExit(t *testing.T) {
 	})
 	waitFor(t, "record credit", func() bool { return f.srv.sessions.accounting().Records < records })
 	strays := f.srv.backchannel.strayReplies.Load()
-	f.client.answerSequence(t, call, NFS4_OK)
+	f.client.answerSequence(t, call, nfs4.NFS4_OK)
 	waitFor(t, "late reply dropped", func() bool { return f.srv.backchannel.strayReplies.Load() == strays+1 })
 }
 
