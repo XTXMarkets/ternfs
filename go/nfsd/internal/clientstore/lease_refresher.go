@@ -48,7 +48,7 @@ const (
 // maxRecordOrphans bounds one record's open temp obligations.
 const maxRecordOrphans = 4
 
-// leaseWriteTerm is how far ahead a publication's expiry is written
+// LeaseWriteTerm is how far ahead a publication's expiry is written
 // (canonical r3 §9.2 step 3): a refresh is due once the proven lease is
 // less than LeaseTime + LeaseRenewAfter/2 ahead.
 const LeaseWriteTerm = LeaseTime + LeaseRenewAfter
@@ -278,7 +278,7 @@ func (cs *Store) NoteFleetExpired(clientID uint64) {
 	r.kickLocked()
 }
 
-// bootstrapWait bounds how long CREATE_SESSION waits for the first
+// BootstrapWait bounds how long CREATE_SESSION waits for the first
 // publication before replying. A variable so tests can shorten it.
 var BootstrapWait = 2 * time.Second
 
@@ -429,7 +429,7 @@ func (r *LeaseRefresher) await(wait time.Duration) bool {
 }
 
 // wakeDue is the earliest pass the worker's current requests allow: a
-// verify no sooner than leaseVerifySpacing after the last pass, read-only
+// verify no sooner than LeaseVerifySpacing after the last pass, read-only
 // before the maintenance deadline. Bootstrap, a need arriving while the
 // worker was idle, or a terminal state not yet acted on makes maintenance
 // due, no sooner than the failure deadline.

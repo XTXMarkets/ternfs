@@ -147,7 +147,7 @@ func (cr *creation) release() {
 
 // An unfinished replacement purge is owned by durable evidence: N confirmed,
 // and N's reboot symlink naming the predecessor
-// (ClientStore.ResumeReplacementPurge). That evidence outlives wire records,
+// (clientstore.Store.ResumeReplacementPurge). That evidence outlives wire records,
 // sessions and restarts, so the obligation cannot be lost.
 //
 // The server keeps only a hint: purgePending names the incarnations whose

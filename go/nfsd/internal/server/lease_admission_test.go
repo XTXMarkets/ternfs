@@ -52,7 +52,7 @@ func TestLeaseGateDecisions(t *testing.T) {
 	if expired, err := srv.decideExpired(clientID, true); expired || err != nil {
 		t.Fatalf("active client decided %t %v", expired, err)
 	}
-	// Released: quiet until nfsLeaseTime after the reply.
+	// Released: quiet until clientstore.LeaseTime after the reply.
 	hold.release()
 	srv.sessions.mu.Lock()
 	quiet := srv.sessions.groups[clientID].quietUntil

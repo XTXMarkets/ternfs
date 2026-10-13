@@ -34,7 +34,7 @@ func useTestWireEpoch(srv *Server) {
 }
 
 // incarnationForTest maps a live wire clientid, as EXCHANGE_ID returned it,
-// to the durable incarnation that ClientStore, open state and staging use.
+// to the durable incarnation that clientstore.Store, open state and staging use.
 func incarnationForTest(t *testing.T, srv *Server, wireID uint64) uint64 {
 	t.Helper()
 	srv.sessions.mu.Lock()

@@ -555,7 +555,7 @@ func (fs *BlockingRenameVFS) RenameEdge(
 
 var ErrInjectedLease = errors.New("injected lease fault")
 
-// refresherFaultVFS controls the refresher's temp protocol. A failed LINK
+// RefresherFaultVFS controls the refresher's temp protocol. A failed LINK
 // is held, unapplied, until applyLate links it, as a backend that applied
 // it after the error would.
 type RefresherFaultVFS struct {
@@ -672,7 +672,7 @@ func RecordImage(r *LeaseRefresher) (attempt bool, orphans int, proven int64, bo
 	return r.Attempt != nil, len(r.orphans), r.Proven, r.bootstrap
 }
 
-// trapVFS blocks every backend call while armed.
+// TrapVFS blocks every backend call while armed.
 type TrapVFS struct {
 	vfs.TernVFS
 	Armed   bool

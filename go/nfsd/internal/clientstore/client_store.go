@@ -116,12 +116,12 @@ type RPCPrincipal struct {
 	Body   string
 }
 
-// clientOwner is the principal recorded for a client registration.
+// ClientOwner is the principal recorded for a client registration.
 type ClientOwner struct {
 	Principal RPCPrincipal
 }
 
-// clientInUseError reports that a client identity with live state belongs to
+// ClientInUseError reports that a client identity with live state belongs to
 // a different principal.
 type ClientInUseError struct{}
 
@@ -142,7 +142,7 @@ type durableClientRecord struct {
 	PrincipalBody   []byte `json:"principal_body"`
 }
 
-// durableLease is the JSON body of a lease or confirming file. It records
+// DurableLease is the JSON body of a lease or confirming file. It records
 // when the lease or claim written by one nfsd expires.
 type DurableLease struct {
 	ExpiresUnixNano int64 `json:"expires_unix_nano"`
@@ -222,7 +222,7 @@ func NewStoreAt(
 	return cs, nil
 }
 
-// maxSessionRecords bounds the session store's wire clientids and sessions.
+// MaxSessionRecords bounds the session store's wire clientids and sessions.
 const MaxSessionRecords = 4096
 
 // maxRefreshers bounds lease refresher records (canonical r3 §9.4).

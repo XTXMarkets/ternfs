@@ -33,7 +33,7 @@ import (
 // rules as the nfsd fleet, but never writes: it does not create the expired
 // marker, remove collectable slots or age GC candidates.
 
-// inspectOptions selects which part of the client store to report. Each
+// InspectOptions selects which part of the client store to report. Each
 // field is set by the command line flag of the same name, and the report
 // labels the values it prints with those same names.
 type InspectOptions struct {

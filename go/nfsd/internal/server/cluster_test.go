@@ -1041,7 +1041,7 @@ func TestTernClientIncarnationGC(t *testing.T) {
 	}
 	// A renewal below the coalescing threshold must not rewrite the lease.
 	// The refresher rewrites once the published lease is less than
-	// nfsLeaseTime + nfsLeaseRenewAfter/2 ahead (canonical r3 §9.2).
+	// clientstore.LeaseTime + clientstore.LeaseRenewAfter/2 ahead (canonical r3 §9.2).
 	clock.Store(base.Add(clientstore.LeaseRenewAfter/2 - time.Nanosecond).UnixNano())
 	if err := first.Renew(oldID); err != nil {
 		t.Fatal(err)

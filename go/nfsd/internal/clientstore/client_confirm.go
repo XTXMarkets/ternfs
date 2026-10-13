@@ -30,7 +30,7 @@ import (
 // The result is then decided by reading the confirmed pointer back. Ordinary
 // lease writes keep using replaceBytes.
 //
-// Ownership: a confirmAttempt's mutex serializes SettleConfirmation,
+// Ownership: a ConfirmAttempt's mutex serializes SettleConfirmation,
 // FinishReplacement and Result on it, and is taken
 // before the identity lock. CommitConfirmation takes the identity lock first
 // and then the mutex of the attempt it creates, which is not yet published
@@ -46,7 +46,7 @@ var (
 	// errOutcomeUnknown marks a backend call whose result was never
 	// returned: a rename that may have applied, or a fence that may have.
 	errOutcomeUnknown = errors.New("client store: backend call outcome unknown")
-	// errPurgeProtected: a resumed purge was deferred because a
+	// ErrPurgeProtected: a resumed purge was deferred because a
 	// confirmation in this process protects n or its selected target.
 	// Nothing was removed.
 	ErrPurgeProtected = errors.New("client store: replacement purge deferred by a confirmation")
@@ -117,18 +117,18 @@ const (
 	// confirmUnresolved: a fence or the read-back failed. All evidence is
 	// kept; nothing about N or P may be destroyed until a later settle.
 	confirmUnresolved ConfirmResult = iota
-	// confirmCommitted: confirmed names N. Only now may P be replaced.
+	// ConfirmCommitted: confirmed names N. Only now may P be replaced.
 	ConfirmCommitted
-	// confirmRolledBack: D never applied and confirmed is still P with
+	// ConfirmRolledBack: D never applied and confirmed is still P with
 	// symlink Sp. P is unchanged.
 	ConfirmRolledBack
-	// confirmConservative: neither committed nor provably unchanged. P is
+	// ConfirmConservative: neither committed nor provably unchanged. P is
 	// treated as replaced locally and N's record is dropped; nothing durable
 	// is deleted.
 	ConfirmConservative
 )
 
-// confirmAttempt holds the evidence of one CommitConfirmation until it is
+// ConfirmAttempt holds the evidence of one CommitConfirmation until it is
 // settled. Its methods are called with no session-store lock held.
 type ConfirmAttempt struct {
 	mu       sync.Mutex
@@ -437,7 +437,7 @@ func (cs *Store) FinishReplacement(a *ConfirmAttempt) (uint64, error) {
 // Locally, the purge is ordered with confirmation protection: once p is
 // selected, beginPurge holds destruction holds on n and p through the purge
 // and the edge removal, and a protected n or p defers it with
-// errPurgeProtected, evidence unchanged.
+// ErrPurgeProtected, evidence unchanged.
 //
 // It returns the purged incarnation, or zero when there is nothing to do.
 func (cs *Store) ResumeReplacementPurge(n uint64) (uint64, error) {

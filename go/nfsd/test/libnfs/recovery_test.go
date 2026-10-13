@@ -400,7 +400,7 @@ func runLibnfsRecovery(t *testing.T, suite *nfsTestSuite) {
 		// precede this wait (canonical r3 §§8-9), for a healthy backend:
 		//   lease      the logical lease's quiet period after the last reply;
 		//   1.5*lease  the durable lease the refresher wrote last, during
-		//              that period (leaseWriteTerm = lease + lease/2);
+		//              that period (clientstore.LeaseWriteTerm = lease + lease/2);
 		//   0.5*lease  the sweeper's tick, which makes the decision and
 		//              retires the staging;
 		//   0.5*lease  margin for scheduling, the inspector's polling and

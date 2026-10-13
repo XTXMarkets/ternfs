@@ -950,7 +950,7 @@ func TestRequestsDoNotDriveRefresherPasses(t *testing.T) {
 	}
 }
 
-// refresherWorkerForTest is refresherForTest with server hooks, so the
+// refresherWorkerForTest is clientstore.RefresherForTest with server hooks, so the
 // record has a worker that wakes are delivered to.
 func refresherWorkerForTest(t *testing.T, fs *passCountVFS) (*clientstore.Store, uint64, *clientstore.LeaseRefresher) {
 	t.Helper()
@@ -968,7 +968,7 @@ func refresherWorkerForTest(t *testing.T, fs *passCountVFS) (*clientstore.Store,
 
 // A10: a failed pass's backoff is a lower bound for settlement and writes,
 // whatever wakes the worker. Verify requests are coalesced, at least
-// leaseVerifySpacing apart, and before the deadline only read.
+// clientstore.LeaseVerifySpacing apart, and before the deadline only read.
 func TestWakesDoNotShortenBackoff(t *testing.T) {
 	fs := &passCountVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
 	cs, clientID, r := refresherWorkerForTest(t, fs)
