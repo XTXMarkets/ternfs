@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 // Stable write modes.
@@ -55,22 +56,22 @@ func toTernFSName(data []byte) (string, uint32) {
 	}
 }
 
-func requireDirectory(id InodeID) uint32 {
+func requireDirectory(id vfs.InodeID) uint32 {
 	switch id.Type() {
-	case InodeTypeDir:
+	case vfs.InodeTypeDir:
 		return nfs4.NFS4_OK
-	case InodeTypeSymlink:
+	case vfs.InodeTypeSymlink:
 		return nfs4.NFS4ERR_SYMLINK
 	default:
 		return nfs4.NFS4ERR_NOTDIR
 	}
 }
 
-func requireRegularFile(id InodeID) uint32 {
+func requireRegularFile(id vfs.InodeID) uint32 {
 	switch id.Type() {
-	case InodeTypeFile:
+	case vfs.InodeTypeFile:
 		return nfs4.NFS4_OK
-	case InodeTypeDir:
+	case vfs.InodeTypeDir:
 		return nfs4.NFS4ERR_ISDIR
 	default:
 		return nfs4.NFS4ERR_INVAL
@@ -118,7 +119,7 @@ func (s *Server) errToNFS(err error) uint32 {
 	if err == nil {
 		return nfs4.NFS4_OK
 	}
-	err = ternToOSError(err)
+	err = vfs.TernToOSError(err)
 	switch {
 	case errors.Is(err, syscall.ENOTDIR):
 		return nfs4.NFS4ERR_NOTDIR

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 func assertOpenStateIndex(t *testing.T, store *openStateStore) {
@@ -32,12 +33,12 @@ func assertOpenStateIndex(t *testing.T, store *openStateStore) {
 func TestOpenRejectsOccupiedStateID(t *testing.T) {
 	store := newOpenStateStore()
 	owner := openOwnerKey{clientID: 1, owner: "owner"}
-	first, err := store.open(owner, MakeInodeID(InodeTypeFile, 1), MakeInodeID(InodeTypeFile, 1), testGrant(false), StateID{})
+	first, err := store.open(owner, vfs.MakeInodeID(vfs.InodeTypeFile, 1), vfs.MakeInodeID(vfs.InodeTypeFile, 1), testGrant(false), StateID{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.open(
-		owner, MakeInodeID(InodeTypeFile, 2), MakeInodeID(InodeTypeFile, 2), testGrant(false), first.id,
+		owner, vfs.MakeInodeID(vfs.InodeTypeFile, 2), vfs.MakeInodeID(vfs.InodeTypeFile, 2), testGrant(false), first.id,
 	); err == nil {
 		t.Fatal("occupied stateid was reused for another file")
 	}
@@ -49,8 +50,8 @@ func TestOpenRejectsOccupiedStateID(t *testing.T) {
 func TestWriteReopenUpgrades(t *testing.T) {
 	store := newOpenStateStore()
 	owner := openOwnerKey{clientID: 1, owner: "owner"}
-	fileID := MakeInodeID(InodeTypeFile, 1)
-	stagingID := MakeInodeID(InodeTypeFile, 2)
+	fileID := vfs.MakeInodeID(vfs.InodeTypeFile, 1)
+	stagingID := vfs.MakeInodeID(vfs.InodeTypeFile, 2)
 	state := addConfirmedOpen(t, store, owner, fileID)
 	upgraded, err := store.open(owner, fileID, stagingID, testGrant(true), StateID{})
 	if err != nil {
@@ -91,7 +92,7 @@ func testGrant(write bool) grant {
 func addOpenForTest(
 	os *openStateStore,
 	owner openOwnerKey,
-	fileID InodeID,
+	fileID vfs.InodeID,
 	write bool,
 	id StateID,
 ) (openState, uint32) {
@@ -106,7 +107,7 @@ func addConfirmedOpen(
 	t *testing.T,
 	store *openStateStore,
 	owner openOwnerKey,
-	fileID InodeID,
+	fileID vfs.InodeID,
 ) openState {
 	t.Helper()
 	state, status := addOpenForTest(store, owner, fileID, false, StateID{})
@@ -120,7 +121,7 @@ func TestReopenAdvancesGeneration(t *testing.T) {
 	store := newOpenStateStore()
 	defer assertOpenStateIndex(t, store)
 	owner := openOwnerKey{clientID: 1, owner: "owner"}
-	fileID := MakeInodeID(InodeTypeFile, 1)
+	fileID := vfs.MakeInodeID(vfs.InodeTypeFile, 1)
 	first := addConfirmedOpen(t, store, owner, fileID)
 	second := addConfirmedOpen(t, store, owner, fileID)
 	if second.id != first.id || second.generation != first.generation+1 {
@@ -138,18 +139,18 @@ func TestOpenStateStoreLookupClassifiesStateids(t *testing.T) {
 	store := newOpenStateStore()
 	defer assertOpenStateIndex(t, store)
 	owner := openOwnerKey{clientID: 7, owner: "owner"}
-	fileID := MakeInodeID(InodeTypeFile, 1)
+	fileID := vfs.MakeInodeID(vfs.InodeTypeFile, 1)
 	state := addConfirmedOpen(t, store, owner, fileID)
 	for _, test := range []struct {
 		name       string
 		id         StateID
 		generation uint32
-		fileID     InodeID
+		fileID     vfs.InodeID
 		want       uint32
 	}{
 		{"current", state.id, 1, fileID, nfs4.NFS4_OK},
 		{"future generation", state.id, 2, fileID, nfs4.NFS4ERR_BAD_STATEID},
-		{"wrong file", state.id, 1, MakeInodeID(InodeTypeFile, 2), nfs4.NFS4ERR_BAD_STATEID},
+		{"wrong file", state.id, 1, vfs.MakeInodeID(vfs.InodeTypeFile, 2), nfs4.NFS4ERR_BAD_STATEID},
 		{"unknown", StateID{}, 0, fileID, nfs4.NFS4ERR_BAD_STATEID},
 	} {
 		if _, status := store.lookup(owner.clientID, test.id, test.generation, test.fileID); status != test.want {

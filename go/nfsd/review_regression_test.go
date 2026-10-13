@@ -17,9 +17,10 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
-func assertRetiredStaging(t *testing.T, store StagingStore, id InodeID) {
+func assertRetiredStaging(t *testing.T, store StagingStore, id vfs.InodeID) {
 	t.Helper()
 	meta, ok := store.GetMeta(id)
 	if !ok || !meta.Retired || store.Get(id) == nil {
@@ -35,7 +36,7 @@ func TestExpiredWriterRecoversAcknowledgedData(t *testing.T) {
 		for _, restart := range []bool{false, true} {
 			t.Run(map[bool]string{false: "new", true: "existing"}[existing]+
 				map[bool]string{false: "/same-server", true: "/restart"}[restart], func(t *testing.T) {
-				fs := NewLocalTernVFS(t.TempDir())
+				fs := vfs.NewLocalTernVFS(t.TempDir())
 				if existing {
 					if _, err := fs.CreateFile(fs.RootID(), "file", bytes.NewBufferString("original")); err != nil {
 						t.Fatal(err)
@@ -112,7 +113,7 @@ func TestExpiredWriterRecoversAcknowledgedData(t *testing.T) {
 }
 
 func TestStagingRecoveryKeySeparatesBootsAndPrincipals(t *testing.T) {
-	fs := NewLocalTernVFS(t.TempDir())
+	fs := vfs.NewLocalTernVFS(t.TempDir())
 	cs, err := NewClientStore(fs)
 	if err != nil {
 		t.Fatal(err)
@@ -144,11 +145,11 @@ func TestStagingRecoveryKeySeparatesBootsAndPrincipals(t *testing.T) {
 }
 
 func TestRemoveCancelsQueuedHydration(t *testing.T) {
-	store, id, sf := createOverlayStage(t, t.TempDir(), MakeInodeID(InodeTypeFile, 1), []byte("base"))
+	store, id, sf := createOverlayStage(t, t.TempDir(), vfs.MakeInodeID(vfs.InodeTypeFile, 1), []byte("base"))
 	srv := &Server{hydrationSlots: make(chan struct{}, 1)}
 	srv.hydrationSlots <- struct{}{}
 	entered := make(chan struct{})
-	sf.StartHydration(func(cancel <-chan struct{}, id InodeID, offset uint64, dest []byte) (int, bool, error) {
+	sf.StartHydration(func(cancel <-chan struct{}, id vfs.InodeID, offset uint64, dest []byte) (int, bool, error) {
 		close(entered)
 		return srv.readBaseBackground(cancel, id, offset, dest)
 	})
@@ -165,7 +166,7 @@ func TestOlderStagingFormatFailsStartup(t *testing.T) {
 	for _, format := range []string{"NFS5", "NFS6", "NFS7"} {
 		t.Run(format, func(t *testing.T) {
 			dir := t.TempDir()
-			store, _, sf := createOverlayStage(t, dir, MakeInodeID(InodeTypeFile, 1), []byte("base"))
+			store, _, sf := createOverlayStage(t, dir, vfs.MakeInodeID(vfs.InodeTypeFile, 1), []byte("base"))
 			if err := sf.Sync(); err != nil {
 				t.Fatal(err)
 			}
@@ -194,7 +195,7 @@ func TestInvalidStagingIsQuarantined(t *testing.T) {
 	for _, format := range []string{"missing", "truncated", "XFS8"} {
 		t.Run(format, func(t *testing.T) {
 			dir := t.TempDir()
-			store, id, sf := createOverlayStage(t, dir, MakeInodeID(InodeTypeFile, 1), []byte("base"))
+			store, id, sf := createOverlayStage(t, dir, vfs.MakeInodeID(vfs.InodeTypeFile, 1), []byte("base"))
 			if err := sf.Write(0, []byte("keep")); err != nil {
 				t.Fatal(err)
 			}
@@ -240,15 +241,15 @@ func TestInvalidStagingIsQuarantined(t *testing.T) {
 }
 
 type closeTimeErrorVFS struct {
-	*LocalTernVFS
+	*vfs.LocalTernVFS
 }
 
-func (fs *closeTimeErrorVFS) SetTime(InodeID, *time.Time, *time.Time) error {
+func (fs *closeTimeErrorVFS) SetTime(vfs.InodeID, *time.Time, *time.Time) error {
 	return errors.New("injected timestamp failure")
 }
 
 func TestPublishedCloseSurvivesTimestampFailure(t *testing.T) {
-	fs := &closeTimeErrorVFS{NewLocalTernVFS(t.TempDir())}
+	fs := &closeTimeErrorVFS{vfs.NewLocalTernVFS(t.TempDir())}
 	store, err := NewLocalStagingStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -283,17 +284,17 @@ func TestPublishedCloseSurvivesTimestampFailure(t *testing.T) {
 }
 
 type metadataOnlyVFS struct {
-	*LocalTernVFS
+	*vfs.LocalTernVFS
 	reads atomic.Int32
 	links atomic.Int32
 }
 
-func (fs *metadataOnlyVFS) Read(InodeID, uint64, []byte) (int, bool, error) {
+func (fs *metadataOnlyVFS) Read(vfs.InodeID, uint64, []byte) (int, bool, error) {
 	fs.reads.Add(1)
 	return 0, false, errors.New("metadata-only CLOSE must not read data")
 }
 
-func (fs *metadataOnlyVFS) LinkFile(id InodeID, cookie Cookie, dir InodeID, name string, data io.Reader) error {
+func (fs *metadataOnlyVFS) LinkFile(id vfs.InodeID, cookie vfs.Cookie, dir vfs.InodeID, name string, data io.Reader) error {
 	if leaseTemp(name) {
 		return fs.LocalTernVFS.LinkFile(id, cookie, dir, name, data)
 	}
@@ -304,7 +305,7 @@ func (fs *metadataOnlyVFS) LinkFile(id InodeID, cookie Cookie, dir InodeID, name
 func TestMetadataOnlyCloseSkipsDataIO(t *testing.T) {
 	for _, concurrentPublish := range []bool{false, true} {
 		t.Run(map[bool]string{false: "same-version", true: "newer-version"}[concurrentPublish], func(t *testing.T) {
-			base := NewLocalTernVFS(t.TempDir())
+			base := vfs.NewLocalTernVFS(t.TempDir())
 			published, err := base.CreateFile(base.RootID(), "file", bytes.NewBufferString("original"))
 			if err != nil {
 				t.Fatal(err)
@@ -386,7 +387,7 @@ func createSizeStatus(t *testing.T, conn net.Conn, xid *uint32, clientID, size u
 type sizeErrorStore struct{ StagingStore }
 type sizeErrorFile struct{ StagingFile }
 
-func (s sizeErrorStore) Get(id InodeID) StagingFile {
+func (s sizeErrorStore) Get(id vfs.InodeID) StagingFile {
 	sf := s.StagingStore.Get(id)
 	if sf == nil {
 		return nil
@@ -407,7 +408,7 @@ func TestOpenSizeErrorReplay(t *testing.T) {
 			if ioFailure {
 				ss, size, want = sizeErrorStore{store}, 1, nfs4.NFS4ERR_IO
 			}
-			srv, err := NewServer(NewLocalTernVFS(t.TempDir()), ss, nil)
+			srv, err := NewServer(vfs.NewLocalTernVFS(t.TempDir()), ss, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -427,7 +428,7 @@ func TestOpenSizeErrorReplay(t *testing.T) {
 }
 
 func TestStaleLeaseCheckCannotRetireRecoveredWriter(t *testing.T) {
-	store, id, sf := createOverlayStage(t, t.TempDir(), MakeInodeID(InodeTypeFile, 1), []byte("base"))
+	store, id, sf := createOverlayStage(t, t.TempDir(), vfs.MakeInodeID(vfs.InodeTypeFile, 1), []byte("base"))
 	defer store.Remove(id)
 	old, _ := store.GetMeta(id)
 	if err := store.Rebind(id, 42, StateID{3}); err != nil {
@@ -444,7 +445,7 @@ func TestStaleLeaseCheckCannotRetireRecoveredWriter(t *testing.T) {
 
 func TestRetiredStagingReleasesDescriptorAndReopensOnRecovery(t *testing.T) {
 	dir := t.TempDir()
-	store, id, sf := createOverlayStage(t, dir, MakeInodeID(InodeTypeFile, 1), []byte("base"))
+	store, id, sf := createOverlayStage(t, dir, vfs.MakeInodeID(vfs.InodeTypeFile, 1), []byte("base"))
 	if err := sf.Write(0, []byte("kept")); err != nil {
 		t.Fatal(err)
 	}

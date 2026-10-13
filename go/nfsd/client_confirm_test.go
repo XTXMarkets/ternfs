@@ -14,6 +14,7 @@ import (
 
 	"github.com/XTXMarkets/ternfs/go/msgs"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 type confirmFault uint8
@@ -32,7 +33,7 @@ const (
 var errInjectedConfirm = errors.New("injected confirmation failure")
 
 type edgeKey struct {
-	dir  InodeID
+	dir  vfs.InodeID
 	name string
 }
 
@@ -42,7 +43,7 @@ type edgeKey struct {
 // when the edge is gone. Faults apply per write, recognised by the temp it
 // creates: a file is A, a "../" symlink is B, any other symlink is D.
 type confirmFaultVFS struct {
-	TernVFS
+	vfs.TernVFS
 	mu         sync.Mutex
 	next       uint64
 	creation   map[edgeKey]uint64
@@ -52,34 +53,34 @@ type confirmFaultVFS struct {
 	hooks      map[writeID]func() // run inside the faulted call
 	failLookup bool               // the confirmed read-back fails
 	panicRead  bool               // the confirmed read-back panics, once
-	failRemove InodeID            // one Remove in this directory fails
+	failRemove vfs.InodeID        // one Remove in this directory fails
 	// onReaddir and onRemove run once, before the first Readdir or Remove
 	// in their directory.
-	onReaddir, onRemove map[InodeID]func()
+	onReaddir, onRemove map[vfs.InodeID]func()
 	fences              int // RemoveEdge calls on armed temps
 	// lookupHook runs once, before the skip+1th Lookup of name in dir.
 	lookupHook struct {
-		dir  InodeID
+		dir  vfs.InodeID
 		name string
 		skip int
 		fn   func()
 	}
 	// failLeaseRemove fails one removal of a lease slot in this directory.
-	failLeaseRemove InodeID
+	failLeaseRemove vfs.InodeID
 	// panicRemove panics once, at the skip+1th Remove in dir.
 	panicRemove struct {
-		dir  InodeID
+		dir  vfs.InodeID
 		skip int
 	}
 	// createHook runs once, before CreateFile of name in dir.
 	createHook struct {
-		dir  InodeID
+		dir  vfs.InodeID
 		name string
 		fn   func()
 	}
 }
 
-func (fs *confirmFaultVFS) once(hooks map[InodeID]func(), dir InodeID) {
+func (fs *confirmFaultVFS) once(hooks map[vfs.InodeID]func(), dir vfs.InodeID) {
 	fs.mu.Lock()
 	hook := hooks[dir]
 	delete(hooks, dir)
@@ -89,19 +90,19 @@ func (fs *confirmFaultVFS) once(hooks map[InodeID]func(), dir InodeID) {
 	}
 }
 
-func (fs *confirmFaultVFS) Readdir(dir InodeID, cursor uint64) ([]DirEntry, uint64, error) {
+func (fs *confirmFaultVFS) Readdir(dir vfs.InodeID, cursor uint64) ([]vfs.DirEntry, uint64, error) {
 	fs.once(fs.onReaddir, dir)
 	return fs.TernVFS.Readdir(dir, cursor)
 }
 
 func newConfirmFaultVFS(t *testing.T) *confirmFaultVFS {
-	return &confirmFaultVFS{TernVFS: NewLocalTernVFS(t.TempDir()),
+	return &confirmFaultVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
 		creation: make(map[edgeKey]uint64), kinds: make(map[edgeKey]writeID),
 		faults: make(map[writeID]confirmFault), hooks: make(map[writeID]func()),
-		onReaddir: make(map[InodeID]func()), onRemove: make(map[InodeID]func())}
+		onReaddir: make(map[vfs.InodeID]func()), onRemove: make(map[vfs.InodeID]func())}
 }
 
-func (fs *confirmFaultVFS) record(dir InodeID, name string, kind writeID) {
+func (fs *confirmFaultVFS) record(dir vfs.InodeID, name string, kind writeID) {
 	if !strings.HasPrefix(name, tempPrefix) {
 		return
 	}
@@ -116,7 +117,7 @@ func (fs *confirmFaultVFS) record(dir InodeID, name string, kind writeID) {
 }
 
 // fault returns the write's fault and hook, if it is one of the armed temps.
-func (fs *confirmFaultVFS) fault(dir InodeID, name string) (confirmFault, func()) {
+func (fs *confirmFaultVFS) fault(dir vfs.InodeID, name string) (confirmFault, func()) {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 	kind, ok := fs.kinds[edgeKey{dir, name}]
@@ -126,7 +127,7 @@ func (fs *confirmFaultVFS) fault(dir InodeID, name string) (confirmFault, func()
 	return fs.faults[kind], fs.hooks[kind]
 }
 
-func (fs *confirmFaultVFS) CreateFile(dir InodeID, name string, data io.Reader) (InodeID, error) {
+func (fs *confirmFaultVFS) CreateFile(dir vfs.InodeID, name string, data io.Reader) (vfs.InodeID, error) {
 	fs.mu.Lock()
 	var hook func()
 	if h := &fs.createHook; h.fn != nil && h.dir == dir && h.name == name {
@@ -147,7 +148,7 @@ func (fs *confirmFaultVFS) CreateFile(dir InodeID, name string, data io.Reader) 
 // No fault is ever set for it.
 const writeLeaseTemp writeID = 99
 
-func (fs *confirmFaultVFS) LinkFile(id InodeID, cookie Cookie, dir InodeID, name string, data io.Reader) error {
+func (fs *confirmFaultVFS) LinkFile(id vfs.InodeID, cookie vfs.Cookie, dir vfs.InodeID, name string, data io.Reader) error {
 	if err := fs.TernVFS.LinkFile(id, cookie, dir, name, data); err != nil {
 		return err
 	}
@@ -155,7 +156,7 @@ func (fs *confirmFaultVFS) LinkFile(id InodeID, cookie Cookie, dir InodeID, name
 	return nil
 }
 
-func (fs *confirmFaultVFS) Symlink(dir InodeID, name, target string) (InodeID, error) {
+func (fs *confirmFaultVFS) Symlink(dir vfs.InodeID, name, target string) (vfs.InodeID, error) {
 	id, err := fs.TernVFS.Symlink(dir, name, target)
 	if err == nil {
 		kind := writeD
@@ -167,7 +168,7 @@ func (fs *confirmFaultVFS) Symlink(dir InodeID, name, target string) (InodeID, e
 	return id, err
 }
 
-func (fs *confirmFaultVFS) Lookup(dir InodeID, name string) (InodeID, error) {
+func (fs *confirmFaultVFS) Lookup(dir vfs.InodeID, name string) (vfs.InodeID, error) {
 	fs.mu.Lock()
 	fail := fs.failLookup && name == confirmedName
 	panicking := fs.panicRead && name == confirmedName
@@ -195,7 +196,7 @@ func (fs *confirmFaultVFS) Lookup(dir InodeID, name string) (InodeID, error) {
 	return fs.TernVFS.Lookup(dir, name)
 }
 
-func (fs *confirmFaultVFS) Remove(dir InodeID, name string) error {
+func (fs *confirmFaultVFS) Remove(dir vfs.InodeID, name string) error {
 	fs.once(fs.onRemove, dir)
 	fs.mu.Lock()
 	fail := fs.failRemove == dir
@@ -225,25 +226,25 @@ func (fs *confirmFaultVFS) Remove(dir InodeID, name string) error {
 
 // LookupEdge is overridden itself: LocalTernVFS.LookupEdge calls its own
 // Lookup and has no creation times.
-func (fs *confirmFaultVFS) LookupEdge(dir InodeID, name string) (Edge, error) {
+func (fs *confirmFaultVFS) LookupEdge(dir vfs.InodeID, name string) (vfs.Edge, error) {
 	fault, hook := fs.fault(dir, name)
 	if fault == faultPreSend {
 		if hook != nil {
 			hook()
 		}
-		return Edge{}, errInjectedConfirm
+		return vfs.Edge{}, errInjectedConfirm
 	}
 	id, err := fs.TernVFS.Lookup(dir, name)
 	if err != nil {
-		return Edge{}, err
+		return vfs.Edge{}, err
 	}
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
-	return Edge{ID: id, CreationTime: fs.creation[edgeKey{dir, name}]}, nil
+	return vfs.Edge{ID: id, CreationTime: fs.creation[edgeKey{dir, name}]}, nil
 }
 
 // checkEdge reports the remote backend's error for a stale temp edge.
-func (fs *confirmFaultVFS) checkEdge(dir InodeID, name string, edge Edge) error {
+func (fs *confirmFaultVFS) checkEdge(dir vfs.InodeID, name string, edge vfs.Edge) error {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 	if !strings.HasPrefix(name, tempPrefix) {
@@ -259,13 +260,13 @@ func (fs *confirmFaultVFS) checkEdge(dir InodeID, name string, edge Edge) error 
 	return nil
 }
 
-func (fs *confirmFaultVFS) forget(dir InodeID, name string) {
+func (fs *confirmFaultVFS) forget(dir vfs.InodeID, name string) {
 	fs.mu.Lock()
 	delete(fs.creation, edgeKey{dir, name})
 	fs.mu.Unlock()
 }
 
-func (fs *confirmFaultVFS) RenameEdge(src InodeID, name string, edge Edge, dst InodeID, newName string) error {
+func (fs *confirmFaultVFS) RenameEdge(src vfs.InodeID, name string, edge vfs.Edge, dst vfs.InodeID, newName string) error {
 	if err := fs.checkEdge(src, name, edge); err != nil {
 		return err
 	}
@@ -293,7 +294,7 @@ func (fs *confirmFaultVFS) RenameEdge(src InodeID, name string, edge Edge, dst I
 	return nil
 }
 
-func (fs *confirmFaultVFS) RemoveEdge(dir InodeID, name string, edge Edge) error {
+func (fs *confirmFaultVFS) RemoveEdge(dir vfs.InodeID, name string, edge vfs.Edge) error {
 	fault, _ := fs.fault(dir, name)
 	fs.mu.Lock()
 	if _, armed := fs.kinds[edgeKey{dir, name}]; armed {
@@ -324,9 +325,9 @@ func (fs *confirmFaultVFS) set(w writeID, fault confirmFault, hook func()) {
 
 type confirmFixture struct {
 	fs                *confirmFaultVFS
-	local             TernVFS
+	local             vfs.TernVFS
 	store             *ClientStore
-	identity, p, n, m InodeID
+	identity, p, n, m vfs.InodeID
 	confirm           [8]byte
 	target            confirmTarget
 }
@@ -353,13 +354,13 @@ func newConfirmFixture(t *testing.T, withP bool) *confirmFixture {
 		if err := store.MarkOpen(p, StateID{1}); err != nil {
 			t.Fatal(err)
 		}
-		f.p = InodeID(p)
+		f.p = vfs.InodeID(p)
 	}
 	n, confirm, err := store.SetClientID([8]byte{2}, []byte("client"), clientOwner{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.n, f.confirm = InodeID(n), confirm
+	f.n, f.confirm = vfs.InodeID(n), confirm
 	if f.identity, err = f.local.LookupParent(f.n); err != nil {
 		t.Fatal(err)
 	}
@@ -377,7 +378,7 @@ func newConfirmFixture(t *testing.T, withP bool) *confirmFixture {
 
 // point replaces identity/confirmed, through the base VFS, with a new
 // symlink to incarnation id, or removes it when id is zero.
-func (f *confirmFixture) point(t *testing.T, id InodeID) {
+func (f *confirmFixture) point(t *testing.T, id vfs.InodeID) {
 	t.Helper()
 	if id == 0 {
 		if err := f.local.Remove(f.identity, confirmedName); err != nil {
@@ -405,7 +406,7 @@ func (f *confirmFixture) commit(t *testing.T) *confirmAttempt {
 	return f.store.CommitConfirmation(f.target, f.confirm)
 }
 
-func (f *confirmFixture) confirmedIs(t *testing.T) InodeID {
+func (f *confirmFixture) confirmedIs(t *testing.T) vfs.InodeID {
 	t.Helper()
 	id, found, err := f.store.readIdentitySymlink(f.identity, confirmedName)
 	if err != nil {
@@ -489,17 +490,17 @@ func TestConfirmationObservation(t *testing.T) {
 	for _, c := range []struct {
 		name  string
 		fault confirmFault
-		to    func(f *confirmFixture) InodeID
+		to    func(f *confirmFixture) vfs.InodeID
 		want  confirmResult
 	}{
-		{"never applied, P through another symlink", faultNotApplied, func(f *confirmFixture) InodeID { return f.p }, confirmConservative},
-		{"never applied, another incarnation M", faultNotApplied, func(f *confirmFixture) InodeID { return f.m }, confirmConservative},
-		{"never applied, absent", faultNotApplied, func(f *confirmFixture) InodeID { return 0 }, confirmConservative},
-		{"never applied, N through another symlink", faultNotApplied, func(f *confirmFixture) InodeID { return f.n }, confirmCommitted},
-		{"edge gone, P", faultAppliedErr, func(f *confirmFixture) InodeID { return f.p }, confirmConservative},
-		{"edge gone, M", faultAppliedErr, func(f *confirmFixture) InodeID { return f.m }, confirmConservative},
-		{"edge gone, absent", faultAppliedErr, func(f *confirmFixture) InodeID { return 0 }, confirmConservative},
-		{"edge gone, N through another symlink", faultAppliedErr, func(f *confirmFixture) InodeID { return f.n }, confirmCommitted},
+		{"never applied, P through another symlink", faultNotApplied, func(f *confirmFixture) vfs.InodeID { return f.p }, confirmConservative},
+		{"never applied, another incarnation M", faultNotApplied, func(f *confirmFixture) vfs.InodeID { return f.m }, confirmConservative},
+		{"never applied, absent", faultNotApplied, func(f *confirmFixture) vfs.InodeID { return 0 }, confirmConservative},
+		{"never applied, N through another symlink", faultNotApplied, func(f *confirmFixture) vfs.InodeID { return f.n }, confirmCommitted},
+		{"edge gone, P", faultAppliedErr, func(f *confirmFixture) vfs.InodeID { return f.p }, confirmConservative},
+		{"edge gone, M", faultAppliedErr, func(f *confirmFixture) vfs.InodeID { return f.m }, confirmConservative},
+		{"edge gone, absent", faultAppliedErr, func(f *confirmFixture) vfs.InodeID { return 0 }, confirmConservative},
+		{"edge gone, N through another symlink", faultAppliedErr, func(f *confirmFixture) vfs.InodeID { return f.n }, confirmCommitted},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			f := newConfirmFixture(t, true)
@@ -623,7 +624,7 @@ func TestConfirmationFinishReplacement(t *testing.T) {
 
 // pointReboot replaces N/reboot, through the base VFS, with a new symlink to
 // incarnation id.
-func (f *confirmFixture) pointReboot(t *testing.T, id InodeID) {
+func (f *confirmFixture) pointReboot(t *testing.T, id vfs.InodeID) {
 	t.Helper()
 	name, found, err := f.store.incarnationName(f.identity, id)
 	if err != nil || !found {
@@ -637,7 +638,7 @@ func (f *confirmFixture) pointReboot(t *testing.T, id InodeID) {
 	}
 }
 
-func markerIn(t *testing.T, fs TernVFS, dir InodeID, stateID StateID) bool {
+func markerIn(t *testing.T, fs vfs.TernVFS, dir vfs.InodeID, stateID StateID) bool {
 	t.Helper()
 	_, err := fs.Lookup(dir, activeOpenName(stateID))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -887,7 +888,7 @@ func TestConfirmationEdgeGoneErrors(t *testing.T) {
 		}
 	}
 	// The local VFS's own answer to fencing a temp that was renamed away.
-	local := NewLocalTernVFS(t.TempDir())
+	local := vfs.NewLocalTernVFS(t.TempDir())
 	id, err := local.CreateFile(local.RootID(), "t.x", strings.NewReader("x"))
 	if err != nil {
 		t.Fatal(err)
@@ -965,7 +966,7 @@ func TestConfirmationStorePreWriteReadError(t *testing.T) {
 	}
 }
 
-func (f *confirmFixture) present(t *testing.T, dir InodeID, name string) bool {
+func (f *confirmFixture) present(t *testing.T, dir vfs.InodeID, name string) bool {
 	t.Helper()
 	_, err := f.local.Lookup(dir, name)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {

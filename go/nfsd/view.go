@@ -7,6 +7,8 @@ package main
 import (
 	"sync"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 // Filehandles name the published inode a client looked up. A client's
@@ -25,11 +27,11 @@ import (
 
 type viewKey struct {
 	clientID uint64
-	fileID   InodeID
+	fileID   vfs.InodeID
 }
 
 type publishedAlias struct {
-	dataID  InodeID
+	dataID  vfs.InodeID
 	expires time.Time
 }
 
@@ -40,15 +42,15 @@ type viewStore struct {
 	// COMMIT, which has no stateid, still finds a failed writer's tombstone
 	// after its CLOSE. Entries live as long as the process, like the
 	// tombstones (bounded by maxTombstones).
-	writers   map[viewKey][]InodeID
+	writers   map[viewKey][]vfs.InodeID
 	writerIDs []viewKey
 }
 
-func (vs *viewStore) addWriter(key viewKey, dataID InodeID) {
+func (vs *viewStore) addWriter(key viewKey, dataID vfs.InodeID) {
 	vs.mu.Lock()
 	defer vs.mu.Unlock()
 	if vs.writers == nil {
-		vs.writers = make(map[viewKey][]InodeID)
+		vs.writers = make(map[viewKey][]vfs.InodeID)
 	}
 	for _, id := range vs.writers[key] {
 		if id == dataID {
@@ -68,13 +70,13 @@ func (vs *viewStore) addWriter(key viewKey, dataID InodeID) {
 	}
 }
 
-func (vs *viewStore) writersOf(key viewKey) []InodeID {
+func (vs *viewStore) writersOf(key viewKey) []vfs.InodeID {
 	vs.mu.Lock()
 	defer vs.mu.Unlock()
-	return append([]InodeID(nil), vs.writers[key]...)
+	return append([]vfs.InodeID(nil), vs.writers[key]...)
 }
 
-func (vs *viewStore) set(key viewKey, dataID InodeID, expires time.Time) {
+func (vs *viewStore) set(key viewKey, dataID vfs.InodeID, expires time.Time) {
 	vs.mu.Lock()
 	defer vs.mu.Unlock()
 	if vs.aliases == nil {
@@ -83,7 +85,7 @@ func (vs *viewStore) set(key viewKey, dataID InodeID, expires time.Time) {
 	vs.aliases[key] = publishedAlias{dataID: dataID, expires: expires}
 }
 
-func (vs *viewStore) get(key viewKey) (InodeID, bool) {
+func (vs *viewStore) get(key viewKey) (vfs.InodeID, bool) {
 	vs.mu.Lock()
 	defer vs.mu.Unlock()
 	alias, ok := vs.aliases[key]
@@ -105,7 +107,7 @@ func (vs *viewStore) sweep(now time.Time, open func(viewKey) bool) {
 // clientWriter returns the staging inode of clientID's most recent write
 // open of fileID, or fileID itself. Restart-recovered writers present
 // their staging inode as the handle.
-func (s *Server) clientWriter(clientID uint64, fileID InodeID) InodeID {
+func (s *Server) clientWriter(clientID uint64, fileID vfs.InodeID) vfs.InodeID {
 	for _, state := range s.opens.clientOpens(clientID, fileID) {
 		if state.writes() {
 			return state.dataID
@@ -115,7 +117,7 @@ func (s *Server) clientWriter(clientID uint64, fileID InodeID) InodeID {
 }
 
 // clientView returns the inode clientID sees through handle fileID.
-func (s *Server) clientView(clientID uint64, fileID InodeID) InodeID {
+func (s *Server) clientView(clientID uint64, fileID vfs.InodeID) vfs.InodeID {
 	opens := s.opens.clientOpens(clientID, fileID)
 	for _, state := range opens {
 		if state.writes() {
@@ -132,7 +134,7 @@ func (s *Server) clientView(clientID uint64, fileID InodeID) InodeID {
 }
 
 // publishedAs records that clientID's CLOSE published dataID over fileID.
-func (s *Server) publishedAs(clientID uint64, fileID, dataID InodeID) {
+func (s *Server) publishedAs(clientID uint64, fileID, dataID vfs.InodeID) {
 	if fileID == dataID {
 		return
 	}
@@ -147,7 +149,7 @@ func (s *Server) sweepViews() {
 
 // failedWriter reports whether a writer clientID used through fileID has
 // failed. Operations without a usable stateid report its failure.
-func (s *Server) failedWriter(clientID uint64, fileID InodeID) bool {
+func (s *Server) failedWriter(clientID uint64, fileID vfs.InodeID) bool {
 	for _, id := range s.views.writersOf(viewKey{clientID, fileID}) {
 		if s.stagingStore.Failed(id) {
 			return true
@@ -162,20 +164,20 @@ func (s *Server) failedWriter(clientID uint64, fileID InodeID) bool {
 // the directory before use, and bounded.
 type nameCache struct {
 	mu      sync.Mutex
-	entries map[InodeID]mutationTarget
-	order   []InodeID
+	entries map[vfs.InodeID]mutationTarget
+	order   []vfs.InodeID
 }
 
 const maxNameCache = 1 << 16
 
-func (nc *nameCache) remember(id InodeID, dirID InodeID, name string) {
-	if id.Type() == InodeTypeDir {
+func (nc *nameCache) remember(id vfs.InodeID, dirID vfs.InodeID, name string) {
+	if id.Type() == vfs.InodeTypeDir {
 		return
 	}
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
 	if nc.entries == nil {
-		nc.entries = make(map[InodeID]mutationTarget)
+		nc.entries = make(map[vfs.InodeID]mutationTarget)
 	}
 	if _, ok := nc.entries[id]; !ok {
 		nc.order = append(nc.order, id)
@@ -187,7 +189,7 @@ func (nc *nameCache) remember(id InodeID, dirID InodeID, name string) {
 	nc.entries[id] = mutationTarget{dirID: dirID, name: name}
 }
 
-func (nc *nameCache) lookup(id InodeID) (mutationTarget, bool) {
+func (nc *nameCache) lookup(id vfs.InodeID) (mutationTarget, bool) {
 	nc.mu.Lock()
 	defer nc.mu.Unlock()
 	target, ok := nc.entries[id]
@@ -196,7 +198,7 @@ func (nc *nameCache) lookup(id InodeID) (mutationTarget, bool) {
 
 // nameOf returns the directory and name at which fileID is currently
 // linked, if this nfsd has seen it there.
-func (s *Server) nameOf(fileID InodeID) (InodeID, string, bool) {
+func (s *Server) nameOf(fileID vfs.InodeID) (vfs.InodeID, string, bool) {
 	target, ok := s.names.lookup(fileID)
 	if !ok {
 		return 0, "", false

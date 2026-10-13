@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 func (s *Server) opAccess(args nfs4.ACCESS4args, st *compoundState, w *nfs4.COMPOUND4resWriter) uint32 {
@@ -18,7 +19,7 @@ func (s *Server) opAccess(args nfs4.ACCESS4args, st *compoundState, w *nfs4.COMP
 		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_NOFILEHANDLE)
 	}
 	meaningful := uint32(nfs4.ACCESS4_READ | nfs4.ACCESS4_MODIFY | nfs4.ACCESS4_EXTEND)
-	if st.currentID.Type() == InodeTypeDir {
+	if st.currentID.Type() == vfs.InodeTypeDir {
 		meaningful |= nfs4.ACCESS4_LOOKUP | nfs4.ACCESS4_DELETE
 	} else {
 		meaningful |= nfs4.ACCESS4_EXECUTE
@@ -305,7 +306,7 @@ func (s *Server) opVerify(args nfs4.VERIFY4args, st *compoundState, w *nfs4.COMP
 // Returns (same bool, status uint32). If status != NFS4_OK, comparison failed.
 // verifyAttrs compares supplied against the attributes of handle id as
 // seen through dataID.
-func (s *Server) verifyAttrs(id, dataID InodeID, supplied nfs4.Fattr4) (bool, uint32) {
+func (s *Server) verifyAttrs(id, dataID vfs.InodeID, supplied nfs4.Fattr4) (bool, uint32) {
 	ni, err := s.stat(dataID)
 	if err != nil {
 		return false, s.errToNFS(err)

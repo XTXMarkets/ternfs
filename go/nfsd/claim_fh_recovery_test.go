@@ -15,19 +15,20 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 // claimHookVFS runs a hook once, after the next Lookup of name returns. A
 // writable CLAIM_FH on a cold name cache first looks the name up in its
 // lockless preselection, so the hook runs before the pathname lock.
 type claimHookVFS struct {
-	TernVFS
+	vfs.TernVFS
 	mu    sync.Mutex
 	name  string
 	after func()
 }
 
-func (fs *claimHookVFS) Lookup(dir InodeID, name string) (InodeID, error) {
+func (fs *claimHookVFS) Lookup(dir vfs.InodeID, name string) (vfs.InodeID, error) {
 	id, err := fs.TernVFS.Lookup(dir, name)
 	fs.mu.Lock()
 	var hook func()
@@ -62,7 +63,7 @@ type claimFHRestart struct {
 	incarnation uint64 // the writer's incarnation, from the first process
 	name, owner string
 	fh          []byte // the handle the client holds: H
-	stagingID   InodeID
+	stagingID   vfs.InodeID
 	data        []byte
 	healthyFH   []byte // a closed file with no staging
 }
@@ -86,7 +87,7 @@ func newRestartedWriter(t *testing.T, name string, replacement bool, now func() 
 	t.Helper()
 	f := &claimFHRestart{root: t.TempDir(), name: name, owner: "test-owner-" + name,
 		data: []byte("staged before restart")}
-	f.fs = &claimHookVFS{TernVFS: NewLocalTernVFS(f.root)}
+	f.fs = &claimHookVFS{TernVFS: vfs.NewLocalTernVFS(f.root)}
 	stagingDir := t.TempDir()
 	firstStaging, err := NewLocalStagingStore(stagingDir, nil)
 	if err != nil {
@@ -140,9 +141,9 @@ func newRestartedWriter(t *testing.T, name string, replacement bool, now func() 
 	return f
 }
 
-func (f *claimFHRestart) handleID(t *testing.T) InodeID {
+func (f *claimFHRestart) handleID(t *testing.T) vfs.InodeID {
 	t.Helper()
-	id, ok := fhToInodeID(f.fh)
+	id, ok := vfs.FHToInodeID(f.fh)
 	if !ok {
 		t.Fatal("bad handle")
 	}

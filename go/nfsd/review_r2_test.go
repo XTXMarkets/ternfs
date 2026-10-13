@@ -17,20 +17,21 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 // confirmedLookupHold blocks the first Lookup of the confirmed pointer once
 // armed: in HasOpen that is the first read of an operation's durable-open
 // check.
 type confirmedLookupHold struct {
-	TernVFS
+	vfs.TernVFS
 	mu      sync.Mutex
 	armed   bool
 	entered chan struct{}
 	release chan struct{}
 }
 
-func (fs *confirmedLookupHold) Lookup(dir InodeID, name string) (InodeID, error) {
+func (fs *confirmedLookupHold) Lookup(dir vfs.InodeID, name string) (vfs.InodeID, error) {
 	fs.mu.Lock()
 	hold := fs.armed && name == confirmedName
 	if hold {
@@ -50,7 +51,7 @@ func (fs *confirmedLookupHold) Lookup(dir InodeID, name string) (InodeID, error)
 // decision. (Before, the operation expired the client itself, re-entering
 // the staging pathname lock CLOSE holds.)
 func TestActiveCompoundDoesNotExpireClientState(t *testing.T) {
-	fs := &confirmedLookupHold{TernVFS: NewLocalTernVFS(t.TempDir()),
+	fs := &confirmedLookupHold{TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
 		entered: make(chan struct{}), release: make(chan struct{})}
 	staging, err := NewLocalStagingStore(t.TempDir(), nil)
 	if err != nil {
@@ -105,7 +106,7 @@ func TestActiveCompoundDoesNotExpireClientState(t *testing.T) {
 	if m, ok := staging.GetMeta(bStaging); !ok || m.Retired {
 		t.Fatal("the operation retired the client's other staging")
 	}
-	if _, err := fs.TernVFS.Lookup(InodeID(inc), activeOpenName(bID)); err != nil {
+	if _, err := fs.TernVFS.Lookup(vfs.InodeID(inc), activeOpenName(bID)); err != nil {
 		t.Fatalf("the operation removed the other open's marker: %v", err)
 	}
 	// The gate decides: not while the logical lease is held...
@@ -127,7 +128,7 @@ func TestActiveCompoundDoesNotExpireClientState(t *testing.T) {
 // token while another for it is still pending counts once, so the 64th
 // distinct ID is admitted.
 func TestAssociationQuotaCountsDistinctIDs(t *testing.T) {
-	srv := admissionWritableServer(t, NewLocalTernVFS(t.TempDir()))
+	srv := admissionWritableServer(t, vfs.NewLocalTernVFS(t.TempDir()))
 	conn := &rpcConnection{}
 	for range maxConnectionSessions - 2 {
 		if !conn.bind(srv, connectionSession(t, srv).id) {
@@ -188,7 +189,7 @@ func TestBindDirectionMatrix(t *testing.T) {
 		nfs4.CDFC4_BACK_OR_BOTH: {none: fb, f: inval, b: b, fb: fb},
 	}
 	dirName := map[set]uint32{f: nfs4.CDFS4_FORE, b: nfs4.CDFS4_BACK, fb: nfs4.CDFS4_BOTH}
-	srv := admissionWritableServer(t, NewLocalTernVFS(t.TempDir()))
+	srv := admissionWritableServer(t, vfs.NewLocalTernVFS(t.TempDir()))
 	for _, dir := range []uint32{0, nfs4.CDFC4_FORE, nfs4.CDFC4_BACK, nfs4.CDFC4_FORE_OR_BOTH, 4, 5, 6, nfs4.CDFC4_BACK_OR_BOTH} {
 		for _, existing := range []set{none, f, b, fb} {
 			sess := backSessionForTest(t, srv)
@@ -249,7 +250,7 @@ func TestBindDirectionMatrix(t *testing.T) {
 // callbacks and returning their credits, even when no expired marker could
 // be written. It does not claim fleet expiry.
 func TestLocalExpiryDrainsSessionsWithoutMarker(t *testing.T) {
-	fs := &expiryGateVFS{TernVFS: NewLocalTernVFS(t.TempDir()), failMarker: true}
+	fs := &expiryGateVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir()), failMarker: true}
 	staging, err := NewLocalStagingStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -287,7 +288,7 @@ func TestLocalExpiryDrainsSessionsWithoutMarker(t *testing.T) {
 	if !expired || err != nil {
 		t.Fatalf("decideExpired %t %v", expired, err)
 	}
-	if _, err := fs.TernVFS.Lookup(InodeID(inc), expiredName); err == nil {
+	if _, err := fs.TernVFS.Lookup(vfs.InodeID(inc), expiredName); err == nil {
 		t.Fatal("the marker exists; the fixture should have failed it")
 	}
 	if srv.sessions.lookup(sess.id) != nil {
@@ -313,7 +314,7 @@ func TestLocalExpiryDrainsSessionsWithoutMarker(t *testing.T) {
 	}
 	srv.sessions.mu.Unlock()
 	srv.clients.refreshMu.Lock()
-	r := srv.clients.refreshers[InodeID(inc)]
+	r := srv.clients.refreshers[vfs.InodeID(inc)]
 	srv.clients.refreshMu.Unlock()
 	if r != nil {
 		r.mu.Lock()
@@ -325,7 +326,7 @@ func TestLocalExpiryDrainsSessionsWithoutMarker(t *testing.T) {
 	}
 	// Later sweeps change nothing more and stay bounded.
 	srv.sweepExpiredClientState()
-	if _, err := fs.TernVFS.Lookup(InodeID(inc), expiredName); err == nil {
+	if _, err := fs.TernVFS.Lookup(vfs.InodeID(inc), expiredName); err == nil {
 		t.Fatal("marker appeared")
 	}
 }
@@ -346,14 +347,14 @@ func TestRefresherTerminalRespectsConfirmationProtection(t *testing.T) {
 	if !srv.protected(f.p) {
 		t.Fatal("P is not protected")
 	}
-	if !f.present(t, InodeID(f.p), srv.clients.leaseName) {
+	if !f.present(t, vfs.InodeID(f.p), srv.clients.leaseName) {
 		t.Fatal("P has no lease to protect")
 	}
 	pSession := f.pSession(t)
 	// P's refresher finds it stale, as after D applied.
 	setLeaseForTest(srv, f.p, func(r *leaseRefresher) { r.state = leaseRecordStale })
 	leasePassForTest(t, srv, f.p)
-	if !f.present(t, InodeID(f.p), srv.clients.leaseName) {
+	if !f.present(t, vfs.InodeID(f.p), srv.clients.leaseName) {
 		t.Fatal("terminal cleanup removed P's lease while it was protected")
 	}
 	if srv.sessions.lookup(pSession) == nil || len(srv.opens.clientStates(f.p)) == 0 {
@@ -369,7 +370,7 @@ func TestRefresherTerminalRespectsConfirmationProtection(t *testing.T) {
 		r.state, r.notBefore = leaseRecordStale, time.Time{}
 	})
 	leasePassForTest(t, srv, f.p)
-	if f.present(t, InodeID(f.p), srv.clients.leaseName) {
+	if f.present(t, vfs.InodeID(f.p), srv.clients.leaseName) {
 		t.Fatal("terminal cleanup did not remove the lease once permitted")
 	}
 	if srv.sessions.lookup(pSession) != nil {
@@ -458,7 +459,7 @@ func TestRecoveredDowngradeCollisionWaits(t *testing.T) {
 	closeFile(t, conn, &xid, r.fh, read)
 }
 
-func readPublished(fs TernVFS, name string) ([]byte, error) {
+func readPublished(fs vfs.TernVFS, name string) ([]byte, error) {
 	id, err := fs.Lookup(fs.RootID(), name)
 	if err != nil {
 		return nil, err
@@ -552,7 +553,7 @@ func TestHeldCreateSessionRetryBindsBackchannel(t *testing.T) {
 // A6: with the connection's back quota full, CREATE_SESSION asking for a
 // backchannel gets RESOURCE before creating anything.
 func TestCreateSessionBackQuotaBeforeEffects(t *testing.T) {
-	srv := admissionWritableServer(t, NewLocalTernVFS(t.TempDir()))
+	srv := admissionWritableServer(t, vfs.NewLocalTernVFS(t.TempDir()))
 	conn := testConnection(t)
 	for range maxConnectionSessions {
 		if !conn.bindBack(srv, connectionSession(t, srv).id) {
@@ -851,14 +852,14 @@ func TestLateCallbackReplyRestoresPath(t *testing.T) {
 // passCountVFS counts the refresher's calls: lease reads (one per pass's
 // evidence), fences and writes. Fences of temps can be made to fail.
 type passCountVFS struct {
-	TernVFS
+	vfs.TernVFS
 	mu                                  sync.Mutex
 	leaseName                           string
 	leaseReads, fences, writes, removes int
 	failRename, failFence               bool
 }
 
-func (fs *passCountVFS) Lookup(dir InodeID, name string) (InodeID, error) {
+func (fs *passCountVFS) Lookup(dir vfs.InodeID, name string) (vfs.InodeID, error) {
 	fs.mu.Lock()
 	if name != "" && name == fs.leaseName {
 		fs.leaseReads++
@@ -866,13 +867,13 @@ func (fs *passCountVFS) Lookup(dir InodeID, name string) (InodeID, error) {
 	fs.mu.Unlock()
 	return fs.TernVFS.Lookup(dir, name)
 }
-func (fs *passCountVFS) ConstructFile(dir InodeID) (InodeID, Cookie, error) {
+func (fs *passCountVFS) ConstructFile(dir vfs.InodeID) (vfs.InodeID, vfs.Cookie, error) {
 	fs.mu.Lock()
 	fs.writes++
 	fs.mu.Unlock()
 	return fs.TernVFS.ConstructFile(dir)
 }
-func (fs *passCountVFS) RenameEdge(src InodeID, old string, edge Edge, dst InodeID, name string) error {
+func (fs *passCountVFS) RenameEdge(src vfs.InodeID, old string, edge vfs.Edge, dst vfs.InodeID, name string) error {
 	fs.mu.Lock()
 	fs.writes++
 	fail := fs.failRename && leaseTemp(old)
@@ -882,7 +883,7 @@ func (fs *passCountVFS) RenameEdge(src InodeID, old string, edge Edge, dst Inode
 	}
 	return fs.TernVFS.RenameEdge(src, old, edge, dst, name)
 }
-func (fs *passCountVFS) RemoveEdge(dir InodeID, name string, edge Edge) error {
+func (fs *passCountVFS) RemoveEdge(dir vfs.InodeID, name string, edge vfs.Edge) error {
 	fs.mu.Lock()
 	temp := leaseTemp(name)
 	if temp {
@@ -896,7 +897,7 @@ func (fs *passCountVFS) RemoveEdge(dir InodeID, name string, edge Edge) error {
 	}
 	return fs.TernVFS.RemoveEdge(dir, name, edge)
 }
-func (fs *passCountVFS) Remove(dir InodeID, name string) error {
+func (fs *passCountVFS) Remove(dir vfs.InodeID, name string) error {
 	fs.mu.Lock()
 	fs.removes++
 	fs.mu.Unlock()
@@ -917,7 +918,7 @@ func (fs *passCountVFS) reset() {
 // SEQUENCE notes the need, but while a refresh is scheduled a wake changes
 // nothing.
 func TestRequestsDoNotDriveRefresherPasses(t *testing.T) {
-	fs := &passCountVFS{TernVFS: NewLocalTernVFS(t.TempDir())}
+	fs := &passCountVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
 	srv, err := NewServer(fs, readOnlyStagingStore{}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -966,7 +967,7 @@ func refresherWorkerForTest(t *testing.T, fs *passCountVFS) (*ClientStore, uint6
 // whatever wakes the worker. Verify requests are coalesced, at least
 // leaseVerifySpacing apart, and before the deadline only read.
 func TestWakesDoNotShortenBackoff(t *testing.T) {
-	fs := &passCountVFS{TernVFS: NewLocalTernVFS(t.TempDir())}
+	fs := &passCountVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
 	cs, clientID, r := refresherWorkerForTest(t, fs)
 	// The publication's rename fails, and so does its fence.
 	fs.mu.Lock()
@@ -1002,14 +1003,14 @@ func TestWakesDoNotShortenBackoff(t *testing.T) {
 // even another process's long-dead lease slot, which only an authorized
 // pass prunes.
 func TestVerifyPassIsReadOnly(t *testing.T) {
-	fs := &passCountVFS{TernVFS: NewLocalTernVFS(t.TempDir())}
+	fs := &passCountVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
 	cs, clientID, r := refresherWorkerForTest(t, fs)
 	r.safePass(true) // publish a fresh lease
 	dead, err := json.Marshal(durableLease{ExpiresUnixNano: time.Now().Add(-10 * nfsLeaseTime).UnixNano()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fs.TernVFS.CreateFile(InodeID(clientID), leasePrefix+"otherprocess", bytes.NewReader(dead)); err != nil {
+	if _, err := fs.TernVFS.CreateFile(vfs.InodeID(clientID), leasePrefix+"otherprocess", bytes.NewReader(dead)); err != nil {
 		t.Fatal(err)
 	}
 	cs.leaseNeed = func(uint64) bool { return false }
@@ -1025,12 +1026,12 @@ func TestVerifyPassIsReadOnly(t *testing.T) {
 	if fences != 0 || writes != 0 || removes != 0 {
 		t.Fatalf("verify passes wrote: fences %d writes %d removes %d", fences, writes, removes)
 	}
-	if _, err := fs.TernVFS.Lookup(InodeID(clientID), leasePrefix+"otherprocess"); err != nil {
+	if _, err := fs.TernVFS.Lookup(vfs.InodeID(clientID), leasePrefix+"otherprocess"); err != nil {
 		t.Fatal("a verify pass removed another process's slot")
 	}
 	// An authorized pass, with our lease live, prunes it.
 	r.safePass(true)
-	if _, err := fs.TernVFS.Lookup(InodeID(clientID), leasePrefix+"otherprocess"); err == nil {
+	if _, err := fs.TernVFS.Lookup(vfs.InodeID(clientID), leasePrefix+"otherprocess"); err == nil {
 		t.Fatal("an authorized pass kept another process's long-dead slot")
 	}
 }
@@ -1136,7 +1137,7 @@ func TestForeignTimestampSetattrRejected(t *testing.T) {
 	writeFileAt(t, connA, &xidA, fh, sid, 0, []byte("A"))
 	stagingID := stagingIDForTest(t, srv.stagingStore, sid)
 	stagedBefore := srv.stagingStore.Get(stagingID).Stat().Mtime
-	fileID, _ := fhToInodeID(fh)
+	fileID, _ := vfs.FHToInodeID(fh)
 	publishedBefore, err := srv.fs.Stat(fileID)
 	if err != nil {
 		t.Fatal(err)
@@ -1201,7 +1202,7 @@ func TestNoNewSessionForExpiredIncarnation(t *testing.T) {
 // F-LEASE1, race: expiry decided while a CREATE_SESSION is past its slot
 // reservation and before its commit; the commit sees it.
 func TestCreateSessionRacingExpiry(t *testing.T) {
-	fs := &confirmedLookupHold{TernVFS: NewLocalTernVFS(t.TempDir()),
+	fs := &confirmedLookupHold{TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
 		entered: make(chan struct{}), release: make(chan struct{})}
 	srv, err := NewServer(fs, readOnlyStagingStore{}, nil)
 	if err != nil {
@@ -1238,7 +1239,7 @@ func TestCreateSessionRacingExpiry(t *testing.T) {
 // errors on its later operations, but they touch only its own state: the
 // client's other writer keeps its open, marker and staging, and publishes.
 func TestLoneFailedWriterLeavesSiblingsAlone(t *testing.T) {
-	fs := &readerSourceVFS{TernVFS: NewLocalTernVFS(t.TempDir())}
+	fs := &readerSourceVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
 	staging, err := NewLocalStagingStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -1280,7 +1281,7 @@ func TestLoneFailedWriterLeavesSiblingsAlone(t *testing.T) {
 	if m, ok := staging.GetMeta(bStaging); !ok || m.Retired {
 		t.Fatal("the failed writer's operations retired the sibling staging")
 	}
-	if _, err := fs.TernVFS.Lookup(InodeID(inc), activeOpenName(bID)); err != nil {
+	if _, err := fs.TernVFS.Lookup(vfs.InodeID(inc), activeOpenName(bID)); err != nil {
 		t.Fatalf("the sibling's marker: %v", err)
 	}
 	closeFile(t, conn, &xid, bFH, bSid)
@@ -1293,7 +1294,7 @@ func TestLoneFailedWriterLeavesSiblingsAlone(t *testing.T) {
 // (the worker owns every pass and a server's terminal steps take identity
 // ownership under leaseLocks); it reads the record and writes nothing.
 func TestRenewWithServerHooksDoesNotPass(t *testing.T) {
-	fs := &passCountVFS{TernVFS: NewLocalTernVFS(t.TempDir())}
+	fs := &passCountVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
 	srv, err := NewServer(fs, readOnlyStagingStore{}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -1364,7 +1365,7 @@ func TestExpiredRegistrationRecovers(t *testing.T) {
 		t.Fatal("the fleet-expired incarnation was adopted again")
 	}
 	srv.clients.refreshMu.Lock()
-	r, ok := srv.clients.recordLocked(InodeID(newInc), true)
+	r, ok := srv.clients.recordLocked(vfs.InodeID(newInc), true)
 	srv.clients.refreshMu.Unlock()
 	if !ok {
 		t.Fatal("no record")

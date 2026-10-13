@@ -14,6 +14,7 @@ import (
 
 	"github.com/XTXMarkets/ternfs/go/msgs"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 // Confirmation of a pending incarnation N over the identity's confirmed
@@ -53,10 +54,10 @@ var (
 
 // confirmTarget is what PrepareConfirmation read, without writing.
 type confirmTarget struct {
-	identity, n InodeID
+	identity, n vfs.InodeID
 	// p is the confirmed incarnation and sp its confirmed symlink's inode,
 	// both zero when the identity has no confirmed incarnation.
-	p, sp InodeID
+	p, sp vfs.InodeID
 }
 
 type writeID int
@@ -79,12 +80,12 @@ const (
 // edgeWrite is the attempt record of one write. It is part of its attempt
 // before any backend call, so a panic cannot lose a submitted write.
 type edgeWrite struct {
-	dir        InodeID
+	dir        vfs.InodeID
 	temp, name string
-	edge       Edge
-	inode      InodeID // the temp's inode
-	submitted  bool    // RenameEdge was called
-	err        error   // the pre-send or RenameEdge error, or errOutcomeUnknown
+	edge       vfs.Edge
+	inode      vfs.InodeID // the temp's inode
+	submitted  bool        // RenameEdge was called
+	err        error       // the pre-send or RenameEdge error, or errOutcomeUnknown
 	fence      fenceState
 	fenceErr   error
 }
@@ -134,7 +135,7 @@ type confirmAttempt struct {
 	target   confirmTarget
 	writes   [3]*edgeWrite
 	observed struct {
-		id, file InodeID
+		id, file vfs.InodeID
 		found    bool
 	}
 	result confirmResult
@@ -158,7 +159,7 @@ func (a *confirmAttempt) Result() confirmResult {
 // predecessor's confirmed symlink inode. It does not write. The caller then
 // closes the predecessor; CommitConfirmation revalidates both afterwards.
 func (cs *ClientStore) PrepareConfirmation(n uint64, confirm [8]byte) (confirmTarget, error) {
-	incarnationID := InodeID(n)
+	incarnationID := vfs.InodeID(n)
 	identityID, valid, err := cs.identityForIncarnation(incarnationID)
 	if err != nil {
 		return confirmTarget{}, err
@@ -178,7 +179,7 @@ func (cs *ClientStore) PrepareConfirmation(n uint64, confirm [8]byte) (confirmTa
 	return target, nil
 }
 
-func (cs *ClientStore) readPredecessorLocked(identityID InodeID) (InodeID, InodeID, error) {
+func (cs *ClientStore) readPredecessorLocked(identityID vfs.InodeID) (vfs.InodeID, vfs.InodeID, error) {
 	p, sp, found, err := cs.readIdentitySymlinkWithFile(identityID, confirmedName)
 	if err != nil || !found {
 		return 0, 0, err
@@ -187,7 +188,7 @@ func (cs *ClientStore) readPredecessorLocked(identityID InodeID) (InodeID, Inode
 }
 
 // checkPendingLocked requires n to be pending with the given verifier.
-func (cs *ClientStore) checkPendingLocked(identityID, n InodeID, confirm [8]byte) error {
+func (cs *ClientStore) checkPendingLocked(identityID, n vfs.InodeID, confirm [8]byte) error {
 	record, found, err := cs.readRecord(n, clientRecordName)
 	if err != nil {
 		return err
@@ -253,7 +254,7 @@ func (cs *ClientStore) CommitConfirmation(t confirmTarget, confirm [8]byte) (a *
 	}
 	ok := func(w *edgeWrite) bool { return w.submitted && w.err == nil }
 	a.writes[writeA] = &edgeWrite{dir: t.n, name: cs.confirmingName}
-	cs.edgeReplace(a.writes[writeA], func(temp string) (InodeID, error) {
+	cs.edgeReplace(a.writes[writeA], func(temp string) (vfs.InodeID, error) {
 		return cs.fs.CreateFile(t.n, temp, bytes.NewReader(claim))
 	})
 	if ok(a.writes[writeA]) && t.p != 0 && t.p != t.n {
@@ -270,7 +271,7 @@ func (cs *ClientStore) CommitConfirmation(t confirmTarget, confirm [8]byte) (a *
 
 // writePointer writes w.dir/w.name as a symlink to prefix+(target's name
 // below the identity).
-func (cs *ClientStore) writePointer(w *edgeWrite, identityID, target InodeID, prefix string) {
+func (cs *ClientStore) writePointer(w *edgeWrite, identityID, target vfs.InodeID, prefix string) {
 	targetName, found, err := cs.incarnationName(identityID, target)
 	if err == nil && !found {
 		err = fmt.Errorf("client store: incarnation %d is not below identity %d", target, identityID)
@@ -279,14 +280,14 @@ func (cs *ClientStore) writePointer(w *edgeWrite, identityID, target InodeID, pr
 		w.err = err
 		return
 	}
-	cs.edgeReplace(w, func(temp string) (InodeID, error) {
+	cs.edgeReplace(w, func(temp string) (vfs.InodeID, error) {
 		return cs.fs.Symlink(w.dir, temp, prefix+targetName)
 	})
 }
 
 // edgeReplace replaces w.dir/w.name with a new temp through its exact edge,
 // recording each step in w as it goes.
-func (cs *ClientStore) edgeReplace(w *edgeWrite, create func(string) (InodeID, error)) {
+func (cs *ClientStore) edgeReplace(w *edgeWrite, create func(string) (vfs.InodeID, error)) {
 	suffix, err := randomHex(8)
 	if err != nil {
 		w.err = err
@@ -364,7 +365,7 @@ func (cs *ClientStore) settleLocked(a *confirmAttempt) {
 // classifyConfirmation is the observation table of canonical r3 §5.3.
 // Missing data never proves a rollback: only D never applied and confirmed
 // still P through Sp does.
-func classifyConfirmation(t confirmTarget, d *edgeWrite, id, file InodeID, found bool) confirmResult {
+func classifyConfirmation(t confirmTarget, d *edgeWrite, id, file vfs.InodeID, found bool) confirmResult {
 	outcome := d.outcome()
 	switch {
 	case found && id == t.n && d != nil && file == d.inode && (outcome == writeApplied || outcome == writeMaybe):
@@ -440,7 +441,7 @@ func (cs *ClientStore) FinishReplacement(a *confirmAttempt) (uint64, error) {
 //
 // It returns the purged incarnation, or zero when there is nothing to do.
 func (cs *ClientStore) ResumeReplacementPurge(n uint64) (uint64, error) {
-	incarnationID := InodeID(n)
+	incarnationID := vfs.InodeID(n)
 	identityID, valid, err := cs.identityForIncarnation(incarnationID)
 	if err != nil || !valid {
 		return 0, err
@@ -461,7 +462,7 @@ func (cs *ClientStore) ResumeReplacementPurge(n uint64) (uint64, error) {
 // one purged, for ResumeReplacementPurge's durable evidence. A non-nil begin
 // admits the purge of the selected target, and its release runs when the
 // purge returns or unwinds.
-func (cs *ClientStore) purgeReplacedLocked(n, p InodeID, begin func(n, p InodeID) (func(), bool)) (uint64, error) {
+func (cs *ClientStore) purgeReplacedLocked(n, p vfs.InodeID, begin func(n, p vfs.InodeID) (func(), bool)) (uint64, error) {
 	edge, err := cs.fs.LookupEdge(n, rebootName)
 	if errors.Is(err, os.ErrNotExist) {
 		return 0, nil

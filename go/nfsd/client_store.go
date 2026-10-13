@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 // ClientStore persists client identity and lease decisions for the nfsd fleet.
@@ -26,9 +27,9 @@ import (
 // inode ID of each incarnation directory is returned to the client as a
 // clientid.
 type ClientStore struct {
-	fs             TernVFS
-	nfsDirID       InodeID
-	dirID          InodeID
+	fs             vfs.TernVFS
+	nfsDirID       vfs.InodeID
+	dirID          vfs.InodeID
 	nfsdID         string
 	leaseName      string
 	confirmingName string
@@ -38,8 +39,8 @@ type ClientStore struct {
 	localClients sync.Map
 
 	identityLocksMu sync.Mutex
-	identityLocks   map[InodeID]*clientIdentityLock
-	leaseLocks      keyedLocker[InodeID]
+	identityLocks   map[vfs.InodeID]*clientIdentityLock
+	leaseLocks      keyedLocker[vfs.InodeID]
 	markerLocks     keyedLocker[clientOpenMarker]
 
 	// Set by the server (canonical r3 §5.4): publishing an expired marker
@@ -47,14 +48,14 @@ type ClientStore struct {
 	// hold for the whole action, refused while a confirmation protects it.
 	// A resumed replacement purge holds them on n and its selected target.
 	// Nil in store-only use.
-	beginMarker  func(InodeID) (func(), bool)
-	beginCollect func(InodeID) (func(), bool)
-	beginPurge   func(n, p InodeID) (func(), bool)
+	beginMarker  func(vfs.InodeID) (func(), bool)
+	beginCollect func(vfs.InodeID) (func(), bool)
+	beginPurge   func(n, p vfs.InodeID) (func(), bool)
 
 	// The durable lease refresher's records (lease_refresher.go), under
 	// refreshMu, with their record and orphan credits.
 	refreshMu      sync.Mutex
-	refreshers     map[InodeID]*leaseRefresher
+	refreshers     map[vfs.InodeID]*leaseRefresher
 	refresherLimit int
 	orphans        int
 	orphanLimit    int
@@ -94,16 +95,16 @@ type clientOpenMarker struct {
 }
 
 type localClientState struct {
-	identityID       InodeID
-	confirmedPointer InodeID
+	identityID       vfs.InodeID
+	confirmedPointer vfs.InodeID
 
 	mu    sync.Mutex
 	opens map[StateID]struct{}
 }
 
 type confirmedClientLocation struct {
-	identityID InodeID
-	symlinkID  InodeID
+	identityID vfs.InodeID
+	symlinkID  vfs.InodeID
 }
 
 // rpcPrincipal identifies the caller of an RPC by its credential flavor and
@@ -178,10 +179,10 @@ const (
 	maxClientGCRemovals = 8
 )
 
-func NewClientStore(fs TernVFS) (*ClientStore, error) {
-	nfsID, err := ensureDir(fs, fs.RootID(), nfsDirName)
+func NewClientStore(fs vfs.TernVFS) (*ClientStore, error) {
+	nfsID, err := ensureDir(fs, fs.RootID(), vfs.NFSDirName)
 	if err != nil {
-		return nil, fmt.Errorf("client store: create %s dir: %w", nfsDirName, err)
+		return nil, fmt.Errorf("client store: create %s dir: %w", vfs.NFSDirName, err)
 	}
 
 	clientsID, err := ensureDir(fs, nfsID, "clients")
@@ -194,9 +195,9 @@ func NewClientStore(fs TernVFS) (*ClientStore, error) {
 // newClientStoreAt builds a ClientStore over existing directories with a fresh
 // process identity.
 func newClientStoreAt(
-	fs TernVFS,
-	nfsID InodeID,
-	clientsID InodeID,
+	fs vfs.TernVFS,
+	nfsID vfs.InodeID,
+	clientsID vfs.InodeID,
 ) (*ClientStore, error) {
 	nfsdID, err := randomHex(16)
 	if err != nil {
@@ -209,8 +210,8 @@ func newClientStoreAt(
 		nfsdID:         nfsdID,
 		leaseName:      leasePrefix + nfsdID,
 		confirmingName: confirmingPrefix + nfsdID,
-		identityLocks:  make(map[InodeID]*clientIdentityLock),
-		refreshers:     make(map[InodeID]*leaseRefresher),
+		identityLocks:  make(map[vfs.InodeID]*clientIdentityLock),
+		refreshers:     make(map[vfs.InodeID]*leaseRefresher),
 		refresherLimit: maxRefreshers,
 		orphanLimit:    maxRecordOrphans * maxRefreshers,
 		leaseStop:      make(chan struct{}),
@@ -223,7 +224,7 @@ func newClientStoreAt(
 // maxRefreshers bounds lease refresher records (canonical r3 §9.4).
 const maxRefreshers = maxSessionRecords
 
-func ensureDir(fs TernVFS, parentID InodeID, name string) (InodeID, error) {
+func ensureDir(fs vfs.TernVFS, parentID vfs.InodeID, name string) (vfs.InodeID, error) {
 	id, err := fs.Lookup(parentID, name)
 	if err == nil {
 		return id, nil
@@ -238,15 +239,15 @@ func ensureDir(fs TernVFS, parentID InodeID, name string) (InodeID, error) {
 	return id, err
 }
 
-func (cs *ClientStore) lockIdentity(identityID InodeID) func() {
+func (cs *ClientStore) lockIdentity(identityID vfs.InodeID) func() {
 	return cs.lockIdentityMode(identityID, false)
 }
 
-func (cs *ClientStore) readLockIdentity(identityID InodeID) func() {
+func (cs *ClientStore) readLockIdentity(identityID vfs.InodeID) func() {
 	return cs.lockIdentityMode(identityID, true)
 }
 
-func (cs *ClientStore) lockIdentityMode(identityID InodeID, shared bool) func() {
+func (cs *ClientStore) lockIdentityMode(identityID vfs.InodeID, shared bool) func() {
 	cs.identityLocksMu.Lock()
 	lock := cs.identityLocks[identityID]
 	if lock == nil {
@@ -410,7 +411,7 @@ func (cs *ClientStore) ExchangeID(
 // createPending creates an unconfirmed incarnation and points the identity's
 // pending symlink at it. The caller holds the identity lock.
 func (cs *ClientStore) createPending(
-	identityID InodeID,
+	identityID vfs.InodeID,
 	verifier [8]byte,
 	id []byte,
 	owner clientOwner,
@@ -444,7 +445,7 @@ func (cs *ClientStore) ConfirmClientID(
 	confirm [8]byte,
 	principal rpcPrincipal,
 ) (uint64, error) {
-	incarnationID := InodeID(clientID)
+	incarnationID := vfs.InodeID(clientID)
 	identityID, valid, err := cs.identityForIncarnation(incarnationID)
 	if err != nil {
 		return 0, err
@@ -542,16 +543,16 @@ func (cs *ClientStore) ConfirmClientID(
 }
 
 func (cs *ClientStore) finishConfirmed(
-	incarnationID InodeID,
+	incarnationID vfs.InodeID,
 ) (uint64, error) {
 	replacedID, err := cs.finishReboot(incarnationID)
 	if replacedID != 0 {
-		cs.localClients.Delete(InodeID(replacedID))
+		cs.localClients.Delete(vfs.InodeID(replacedID))
 	}
 	return replacedID, err
 }
 
-func (cs *ClientStore) beginConfirmation(incarnationID InodeID) error {
+func (cs *ClientStore) beginConfirmation(incarnationID vfs.InodeID) error {
 	_, err := cs.replaceJSON(
 		incarnationID,
 		cs.confirmingName,
@@ -562,7 +563,7 @@ func (cs *ClientStore) beginConfirmation(incarnationID InodeID) error {
 	return err
 }
 
-func (cs *ClientStore) finishReboot(incarnationID InodeID) (uint64, error) {
+func (cs *ClientStore) finishReboot(incarnationID vfs.InodeID) (uint64, error) {
 	oldID, found, err := cs.readRebootSymlink(incarnationID)
 	if err != nil || !found {
 		return 0, err
@@ -576,7 +577,7 @@ func (cs *ClientStore) finishReboot(incarnationID InodeID) (uint64, error) {
 	return uint64(oldID), nil
 }
 
-func (cs *ClientStore) purgeState(incarnationID InodeID) error {
+func (cs *ClientStore) purgeState(incarnationID vfs.InodeID) error {
 	entries, err := cs.entries(incarnationID)
 	if err != nil {
 		return err
@@ -593,8 +594,8 @@ func (cs *ClientStore) purgeState(incarnationID InodeID) error {
 }
 
 func (cs *ClientStore) removeIncarnation(
-	identityID InodeID,
-	incarnationID InodeID,
+	identityID vfs.InodeID,
+	incarnationID vfs.InodeID,
 	name string,
 ) error {
 	entries, err := cs.entries(incarnationID)
@@ -616,8 +617,8 @@ func (cs *ClientStore) removeIncarnation(
 }
 
 func (cs *ClientStore) incarnationName(
-	identityID InodeID,
-	incarnationID InodeID,
+	identityID vfs.InodeID,
+	incarnationID vfs.InodeID,
 ) (string, bool, error) {
 	entries, err := cs.entries(identityID)
 	if err != nil {
@@ -632,8 +633,8 @@ func (cs *ClientStore) incarnationName(
 }
 
 func (cs *ClientStore) requireIncarnationName(
-	identityID InodeID,
-	incarnationID InodeID,
+	identityID vfs.InodeID,
+	incarnationID vfs.InodeID,
 ) (string, error) {
 	name, found, err := cs.incarnationName(identityID, incarnationID)
 	if err != nil {
@@ -648,7 +649,7 @@ func (cs *ClientStore) requireIncarnationName(
 }
 
 func (cs *ClientStore) collectStaleForClientResult(
-	clientID InodeID,
+	clientID vfs.InodeID,
 ) (bool, error) {
 	identityID, err := cs.fs.LookupParent(clientID)
 	if errors.Is(err, os.ErrNotExist) {
@@ -672,7 +673,7 @@ func (cs *ClientStore) collectStaleForClientResult(
 }
 
 func (cs *ClientStore) collectStaleResult(
-	identityID InodeID,
+	identityID vfs.InodeID,
 ) (bool, error) {
 	roots, err := cs.clientRoots(identityID)
 	if err != nil {
@@ -768,7 +769,7 @@ func (cs *ClientStore) collectStaleResult(
 }
 
 func (cs *ClientStore) collectOldTemps(
-	dirID InodeID,
+	dirID vfs.InodeID,
 	now time.Time,
 ) error {
 	entries, err := cs.entries(dirID)
@@ -787,8 +788,8 @@ func (cs *ClientStore) collectOldTemps(
 }
 
 func (cs *ClientStore) collectOldTemp(
-	dirID InodeID,
-	entry DirEntry,
+	dirID vfs.InodeID,
+	entry vfs.DirEntry,
 	now time.Time,
 ) error {
 	info, err := cs.fs.Stat(entry.ID)
@@ -805,17 +806,17 @@ func (cs *ClientStore) collectOldTemp(
 }
 
 func (cs *ClientStore) hasLiveConfirmation(
-	incarnationID InodeID,
+	incarnationID vfs.InodeID,
 ) (bool, error) {
 	live, _, err := cs.liveSlots(incarnationID, confirmingPrefix)
 	return live, err
 }
 
 func (cs *ClientStore) clientRoots(
-	identityID InodeID,
-) (map[InodeID]struct{}, error) {
-	roots := make(map[InodeID]struct{})
-	var primary []InodeID
+	identityID vfs.InodeID,
+) (map[vfs.InodeID]struct{}, error) {
+	roots := make(map[vfs.InodeID]struct{})
+	var primary []vfs.InodeID
 	confirmedID, confirmed, err := cs.readIdentitySymlink(
 		identityID, confirmedName)
 	if err != nil {
@@ -850,7 +851,7 @@ func (cs *ClientStore) clientRoots(
 }
 
 func (cs *ClientStore) IsConfirmed(clientID uint64) (bool, error) {
-	incarnationID := InodeID(clientID)
+	incarnationID := vfs.InodeID(clientID)
 	if value, ok := cs.localClients.Load(incarnationID); ok {
 		state := value.(*localClientState)
 
@@ -882,7 +883,7 @@ func (cs *ClientStore) IsConfirmed(clientID uint64) (bool, error) {
 }
 
 func (cs *ClientStore) IsLeaseExpired(clientID uint64) (bool, error) {
-	incarnationID := InodeID(clientID)
+	incarnationID := vfs.InodeID(clientID)
 	identityID, valid, err := cs.identityForIncarnation(incarnationID)
 	if err != nil {
 		return false, err
@@ -910,7 +911,7 @@ func (cs *ClientStore) IsLeaseExpired(clientID uint64) (bool, error) {
 func (cs *ClientStore) ExpireIfLeaseDead(
 	clientID uint64,
 ) (bool, error) {
-	incarnationID := InodeID(clientID)
+	incarnationID := vfs.InodeID(clientID)
 	identityID, valid, err := cs.identityForIncarnation(incarnationID)
 	if err != nil {
 		return false, err
@@ -958,8 +959,8 @@ func (cs *ClientStore) ExpireIfLeaseDead(
 // directory below /.nfs/clients, then returns its identity directory. This
 // prevents wire-supplied directory inode IDs from escaping the client store.
 func (cs *ClientStore) identityForIncarnation(
-	incarnationID InodeID,
-) (InodeID, bool, error) {
+	incarnationID vfs.InodeID,
+) (vfs.InodeID, bool, error) {
 	if !isDirectoryInodeID(incarnationID) {
 		return 0, false, nil
 	}
@@ -987,8 +988,8 @@ func (cs *ClientStore) identityForIncarnation(
 // identity's confirmed symlink still names this incarnation. The symlink inode
 // is returned so callers can detect an atomic pointer replacement cheaply.
 func (cs *ClientStore) confirmedLocationForIdentity(
-	incarnationID InodeID,
-	identityID InodeID,
+	incarnationID vfs.InodeID,
+	identityID vfs.InodeID,
 ) (confirmedClientLocation, bool, error) {
 	confirmedID, pointerID, found, err := cs.readIdentitySymlinkWithFile(
 		identityID, confirmedName)
@@ -1005,7 +1006,7 @@ func (cs *ClientStore) confirmedLocationForIdentity(
 // reports its lease: it publishes through the record like the worker. No
 // serving path uses it; SEQUENCE renews from memory (canonical r3 §7.1).
 func (cs *ClientStore) Renew(clientID uint64) error {
-	incarnationID := InodeID(clientID)
+	incarnationID := vfs.InodeID(clientID)
 	identityID, valid, err := cs.identityForIncarnation(incarnationID)
 	if err != nil {
 		return err
@@ -1041,7 +1042,7 @@ func (cs *ClientStore) Renew(clientID uint64) error {
 }
 
 func (cs *ClientStore) MarkOpen(clientID uint64, stateID StateID) error {
-	incarnationID := InodeID(clientID)
+	incarnationID := vfs.InodeID(clientID)
 	identityID, valid, err := cs.identityForIncarnation(incarnationID)
 	if err != nil {
 		return err
@@ -1084,7 +1085,7 @@ func (cs *ClientStore) MarkOpen(clientID uint64, stateID StateID) error {
 // another process's, and gets EXPIRED when it is dead. The caller holds
 // shared identity ownership.
 func (cs *ClientStore) renewLease(
-	incarnationID InodeID, location confirmedClientLocation,
+	incarnationID vfs.InodeID, location confirmedClientLocation,
 	requireLiveLease bool,
 ) (*localClientState, error) {
 	state := cs.localClientState(incarnationID, location.identityID, location.symlinkID)
@@ -1133,7 +1134,7 @@ func (cs *ClientStore) renewLease(
 
 // leaseProven reports whether this process's refresher has published a
 // lease for the client that is still in the future.
-func (cs *ClientStore) leaseProven(incarnationID InodeID) bool {
+func (cs *ClientStore) leaseProven(incarnationID vfs.InodeID) bool {
 	cs.refreshMu.Lock()
 	r := cs.refreshers[incarnationID]
 	cs.refreshMu.Unlock()
@@ -1148,12 +1149,12 @@ func (cs *ClientStore) leaseProven(incarnationID InodeID) bool {
 // MarkerGone reports that the open's durable marker is definitely absent:
 // the open no longer exists, whatever the client's lease.
 func (cs *ClientStore) MarkerGone(clientID uint64, stateID StateID) bool {
-	_, err := cs.fs.Lookup(InodeID(clientID), activeOpenName(stateID))
+	_, err := cs.fs.Lookup(vfs.InodeID(clientID), activeOpenName(stateID))
 	return errors.Is(err, os.ErrNotExist)
 }
 
 func (cs *ClientStore) RemoveOpen(clientID uint64, stateID StateID) error {
-	incarnationID := InodeID(clientID)
+	incarnationID := vfs.InodeID(clientID)
 	identityID, valid, lockErr := cs.identityForIncarnation(incarnationID)
 	if lockErr != nil {
 		return lockErr
@@ -1180,14 +1181,14 @@ func (cs *ClientStore) RemoveOpen(clientID uint64, stateID StateID) error {
 func (cs *ClientStore) cachedClientIDs() []uint64 {
 	var result []uint64
 	cs.localClients.Range(func(key, _ any) bool {
-		result = append(result, uint64(key.(InodeID)))
+		result = append(result, uint64(key.(vfs.InodeID)))
 		return true
 	})
 	return result
 }
 
 func (cs *ClientStore) HasOpen(clientID uint64, stateID StateID) (bool, error) {
-	incarnationID := InodeID(clientID)
+	incarnationID := vfs.InodeID(clientID)
 	if value, ok := cs.localClients.Load(incarnationID); ok {
 		state := value.(*localClientState)
 
@@ -1278,9 +1279,9 @@ func (cs *ClientStore) HasOpen(clientID uint64, stateID StateID) (bool, error) {
 }
 
 func (cs *ClientStore) localClientState(
-	incarnationID InodeID,
-	identityID InodeID,
-	confirmedPointer InodeID,
+	incarnationID vfs.InodeID,
+	identityID vfs.InodeID,
+	confirmedPointer vfs.InodeID,
 ) *localClientState {
 	state := &localClientState{
 		identityID:       identityID,
@@ -1291,7 +1292,7 @@ func (cs *ClientStore) localClientState(
 	return value.(*localClientState)
 }
 
-func (cs *ClientStore) hasActiveOpen(incarnationID InodeID) (bool, error) {
+func (cs *ClientStore) hasActiveOpen(incarnationID vfs.InodeID) (bool, error) {
 	entries, err := cs.entries(incarnationID)
 	if err != nil {
 		return false, err
@@ -1321,7 +1322,7 @@ func (cs *ClientStore) hasActiveOpen(incarnationID InodeID) (bool, error) {
 
 // A lease is live while any nfsd process has renewed its own slot. Taking the
 // maximum prevents a slow writer from shortening another process's lease.
-func (cs *ClientStore) hasLiveLease(incarnationID InodeID) (bool, error) {
+func (cs *ClientStore) hasLiveLease(incarnationID vfs.InodeID) (bool, error) {
 	live, _, err := cs.leaseStatus(incarnationID)
 	return live, err
 }
@@ -1329,7 +1330,7 @@ func (cs *ClientStore) hasLiveLease(incarnationID InodeID) (bool, error) {
 // observeLeaseStatus reports whether the client's durable lease is live
 // (any process's slot) and whether any slot was found, without writing:
 // leaseStatus(mark=false). An expired marker reads as dead.
-func (cs *ClientStore) observeLeaseStatus(incarnationID InodeID) (bool, bool, error) {
+func (cs *ClientStore) observeLeaseStatus(incarnationID vfs.InodeID) (bool, bool, error) {
 	expired, err := cs.hasExpiredMarker(incarnationID)
 	if err != nil {
 		return false, false, err
@@ -1356,7 +1357,7 @@ type leaseObservation struct {
 
 // observeLease reads an incarnation's lease state without writing.
 func (cs *ClientStore) observeLease(clientID uint64) (leaseObservation, error) {
-	incarnationID := InodeID(clientID)
+	incarnationID := vfs.InodeID(clientID)
 	identityID, valid, err := cs.identityForIncarnation(incarnationID)
 	if err != nil {
 		return leaseObservation{}, err
@@ -1387,13 +1388,13 @@ func (cs *ClientStore) observeLease(clientID uint64) (leaseObservation, error) {
 // publishExpiredMarker is decideExpired's only write: the marker, after
 // arbitration (canonical r3 §8 step 3).
 func (cs *ClientStore) publishExpiredMarker(clientID uint64) error {
-	return cs.ensureMarker(InodeID(clientID), expiredName)
+	return cs.ensureMarker(vfs.InodeID(clientID), expiredName)
 }
 
 // forgetUnconfirmed ends an incarnation that is no longer confirmed: its
 // markers and leases are purged, as ExpireIfLeaseDead does.
 func (cs *ClientStore) forgetUnconfirmed(clientID uint64) error {
-	incarnationID := InodeID(clientID)
+	incarnationID := vfs.InodeID(clientID)
 	if err := cs.purgeState(incarnationID); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
@@ -1406,7 +1407,7 @@ func (cs *ClientStore) forgetUnconfirmed(clientID uint64) error {
 // server, only decideExpired publishes markers and the refresher removes
 // slots, so this only observes.
 func (cs *ClientStore) leaseStatus(
-	incarnationID InodeID,
+	incarnationID vfs.InodeID,
 ) (bool, bool, error) {
 	if cs.serverDecides() {
 		return cs.observeLeaseStatus(incarnationID)
@@ -1445,7 +1446,7 @@ func (cs *ClientStore) leaseStatus(
 }
 
 func (cs *ClientStore) hasExpiredMarker(
-	incarnationID InodeID,
+	incarnationID vfs.InodeID,
 ) (bool, error) {
 	_, err := cs.fs.Lookup(incarnationID, expiredName)
 	if errors.Is(err, os.ErrNotExist) {
@@ -1455,7 +1456,7 @@ func (cs *ClientStore) hasExpiredMarker(
 }
 
 func (cs *ClientStore) liveSlots(
-	incarnationID InodeID,
+	incarnationID vfs.InodeID,
 	prefix string,
 ) (bool, bool, error) {
 	scan, err := cs.scanSlots(incarnationID, prefix)
@@ -1471,7 +1472,7 @@ func (cs *ClientStore) liveSlots(
 }
 
 func (cs *ClientStore) scanSlots(
-	incarnationID InodeID,
+	incarnationID vfs.InodeID,
 	prefix string,
 ) (slotScan, error) {
 	entries, err := cs.entries(incarnationID)
@@ -1505,7 +1506,7 @@ func (cs *ClientStore) scanSlots(
 }
 
 func (cs *ClientStore) removeExpiredSlots(
-	incarnationID InodeID,
+	incarnationID vfs.InodeID,
 	names []string,
 ) error {
 	for _, name := range names {
@@ -1516,7 +1517,7 @@ func (cs *ClientStore) removeExpiredSlots(
 	return nil
 }
 
-func (cs *ClientStore) isInternalFilehandle(id InodeID) (bool, error) {
+func (cs *ClientStore) isInternalFilehandle(id vfs.InodeID) (bool, error) {
 	for id != cs.fs.RootID() {
 		if id == cs.nfsDirID {
 			return true, nil
@@ -1536,11 +1537,11 @@ func (cs *ClientStore) isInternalFilehandle(id InodeID) (bool, error) {
 	return false, nil
 }
 
-func (cs *ClientStore) identityDir(id []byte) (InodeID, error) {
+func (cs *ClientStore) identityDir(id []byte) (vfs.InodeID, error) {
 	return ensureDir(cs.fs, cs.dirID, clientIdentityKey(id))
 }
 
-func (cs *ClientStore) newIncarnation(identityID InodeID) (InodeID, error) {
+func (cs *ClientStore) newIncarnation(identityID vfs.InodeID) (vfs.InodeID, error) {
 	for {
 		suffix, err := randomHex(16)
 		if err != nil {
@@ -1554,8 +1555,8 @@ func (cs *ClientStore) newIncarnation(identityID InodeID) (InodeID, error) {
 	}
 }
 
-func (cs *ClientStore) entries(dirID InodeID) ([]DirEntry, error) {
-	var result []DirEntry
+func (cs *ClientStore) entries(dirID vfs.InodeID) ([]vfs.DirEntry, error) {
+	var result []vfs.DirEntry
 	var cursor uint64
 	for {
 		entries, next, err := cs.fs.Readdir(dirID, cursor)
@@ -1574,7 +1575,7 @@ func (cs *ClientStore) entries(dirID InodeID) ([]DirEntry, error) {
 }
 
 func (cs *ClientStore) readRecord(
-	incarnationID InodeID,
+	incarnationID vfs.InodeID,
 	name string,
 ) (durableClientRecord, bool, error) {
 	var record durableClientRecord
@@ -1590,26 +1591,26 @@ func (cs *ClientStore) readRecord(
 }
 
 func (cs *ClientStore) readIdentitySymlink(
-	identityID InodeID,
+	identityID vfs.InodeID,
 	name string,
-) (InodeID, bool, error) {
+) (vfs.InodeID, bool, error) {
 	id, _, found, err := cs.readIdentitySymlinkWithFile(
 		identityID, name)
 	return id, found, err
 }
 
 func (cs *ClientStore) readIdentitySymlinkWithFile(
-	identityID InodeID,
+	identityID vfs.InodeID,
 	name string,
-) (InodeID, InodeID, bool, error) {
+) (vfs.InodeID, vfs.InodeID, bool, error) {
 	return cs.readPointer(identityID, name, false)
 }
 
 func (cs *ClientStore) readPointer(
-	dirID InodeID,
+	dirID vfs.InodeID,
 	name string,
 	parentRelative bool,
-) (InodeID, InodeID, bool, error) {
+) (vfs.InodeID, vfs.InodeID, bool, error) {
 	fileID, err := cs.fs.Lookup(dirID, name)
 	if errors.Is(err, os.ErrNotExist) {
 		return 0, 0, false, nil
@@ -1628,18 +1629,18 @@ func (cs *ClientStore) readPointer(
 }
 
 func (cs *ClientStore) readRebootSymlink(
-	incarnationID InodeID,
-) (InodeID, bool, error) {
+	incarnationID vfs.InodeID,
+) (vfs.InodeID, bool, error) {
 	id, _, found, err := cs.readPointer(
 		incarnationID, rebootName, true)
 	return id, found, err
 }
 
 func (cs *ClientStore) resolvePointer(
-	dirID InodeID,
-	fileID InodeID,
+	dirID vfs.InodeID,
+	fileID vfs.InodeID,
 	parentRelative bool,
-) (InodeID, error) {
+) (vfs.InodeID, error) {
 	target, err := cs.fs.Readlink(fileID)
 	if err != nil {
 		return 0, err
@@ -1659,16 +1660,16 @@ func (cs *ClientStore) resolvePointer(
 }
 
 func (cs *ClientStore) resolveIdentitySymlink(
-	identityID InodeID,
-	fileID InodeID,
-) (InodeID, error) {
+	identityID vfs.InodeID,
+	fileID vfs.InodeID,
+) (vfs.InodeID, error) {
 	return cs.resolvePointer(identityID, fileID, false)
 }
 
 func (cs *ClientStore) resolveIncarnationName(
-	identityID InodeID,
+	identityID vfs.InodeID,
 	name string,
-) (InodeID, error) {
+) (vfs.InodeID, error) {
 	if !isIncarnationName(name) {
 		return 0, fmt.Errorf("client store: invalid incarnation pointer")
 	}
@@ -1682,7 +1683,7 @@ func (cs *ClientStore) resolveIncarnationName(
 	return id, nil
 }
 
-func (cs *ClientStore) readLease(id InodeID) (durableLease, error) {
+func (cs *ClientStore) readLease(id vfs.InodeID) (durableLease, error) {
 	var lease durableLease
 	if err := cs.readJSONFile(id, "lease", &lease); err != nil {
 		return durableLease{}, err
@@ -1691,7 +1692,7 @@ func (cs *ClientStore) readLease(id InodeID) (durableLease, error) {
 }
 
 func (cs *ClientStore) readJSON(
-	dirID InodeID,
+	dirID vfs.InodeID,
 	name string,
 	value any,
 ) (bool, error) {
@@ -1709,7 +1710,7 @@ func (cs *ClientStore) readJSON(
 }
 
 func (cs *ClientStore) readJSONFile(
-	id InodeID,
+	id vfs.InodeID,
 	name string,
 	value any,
 ) error {
@@ -1728,10 +1729,10 @@ func (cs *ClientStore) readJSONFile(
 }
 
 func (cs *ClientStore) replaceIdentitySymlink(
-	identityID InodeID,
+	identityID vfs.InodeID,
 	name string,
-	clientID InodeID,
-) (InodeID, error) {
+	clientID vfs.InodeID,
+) (vfs.InodeID, error) {
 	targetName, err := cs.requireIncarnationName(identityID, clientID)
 	if err != nil {
 		return 0, err
@@ -1740,9 +1741,9 @@ func (cs *ClientStore) replaceIdentitySymlink(
 }
 
 func (cs *ClientStore) replaceRebootSymlink(
-	incarnationID InodeID,
-	clientID InodeID,
-) (InodeID, error) {
+	incarnationID vfs.InodeID,
+	clientID vfs.InodeID,
+) (vfs.InodeID, error) {
 	identityID, err := cs.fs.LookupParent(incarnationID)
 	if err != nil {
 		return 0, err
@@ -1756,10 +1757,10 @@ func (cs *ClientStore) replaceRebootSymlink(
 }
 
 func (cs *ClientStore) createJSON(
-	dirID InodeID,
+	dirID vfs.InodeID,
 	name string,
 	value any,
-) (InodeID, error) {
+) (vfs.InodeID, error) {
 	data, err := json.Marshal(value)
 	if err != nil {
 		return 0, err
@@ -1768,10 +1769,10 @@ func (cs *ClientStore) createJSON(
 }
 
 func (cs *ClientStore) replaceJSON(
-	dirID InodeID,
+	dirID vfs.InodeID,
 	name string,
 	value any,
-) (InodeID, error) {
+) (vfs.InodeID, error) {
 	data, err := json.Marshal(value)
 	if err != nil {
 		return 0, err
@@ -1780,10 +1781,10 @@ func (cs *ClientStore) replaceJSON(
 }
 
 func (cs *ClientStore) replaceBytes(
-	dirID InodeID,
+	dirID vfs.InodeID,
 	name string,
 	data []byte,
-) (InodeID, error) {
+) (vfs.InodeID, error) {
 	suffix, err := randomHex(8)
 	if err != nil {
 		return 0, err
@@ -1801,10 +1802,10 @@ func (cs *ClientStore) replaceBytes(
 }
 
 func (cs *ClientStore) replaceSymlink(
-	dirID InodeID,
+	dirID vfs.InodeID,
 	name string,
 	target string,
-) (InodeID, error) {
+) (vfs.InodeID, error) {
 	suffix, err := randomHex(8)
 	if err != nil {
 		return 0, err
@@ -1821,7 +1822,7 @@ func (cs *ClientStore) replaceSymlink(
 	return id, nil
 }
 
-func (cs *ClientStore) ensureMarker(dirID InodeID, name string) error {
+func (cs *ClientStore) ensureMarker(dirID vfs.InodeID, name string) error {
 	if _, err := cs.fs.Lookup(dirID, name); err == nil {
 		return nil
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -1831,7 +1832,7 @@ func (cs *ClientStore) ensureMarker(dirID InodeID, name string) error {
 	return err
 }
 
-func (cs *ClientStore) removeIfExists(dirID InodeID, name string) error {
+func (cs *ClientStore) removeIfExists(dirID vfs.InodeID, name string) error {
 	err := cs.fs.Remove(dirID, name)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -1891,8 +1892,8 @@ func clientIdentityKey(id []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func isDirectoryInodeID(id InodeID) bool {
-	return id != 0 && id.Type() == InodeTypeDir
+func isDirectoryInodeID(id vfs.InodeID) bool {
+	return id != 0 && id.Type() == vfs.InodeTypeDir
 }
 
 func isIncarnationName(name string) bool {
@@ -1930,7 +1931,7 @@ func isConfirmingName(name string) bool {
 // incarnation. Hash the principal too so an identity takeover cannot recover
 // another principal's private bytes. The key survives incarnation GC.
 func (cs *ClientStore) stagingRecoveryKey(clientID uint64) ([32]byte, error) {
-	id := InodeID(clientID)
+	id := vfs.InodeID(clientID)
 	identity, valid, err := cs.identityForIncarnation(id)
 	if err != nil {
 		return [32]byte{}, err
@@ -1946,7 +1947,7 @@ func (cs *ClientStore) stagingRecoveryKey(clientID uint64) ([32]byte, error) {
 		return [32]byte{}, fmt.Errorf("missing client record for %d", clientID)
 	}
 	data, err := json.Marshal(struct {
-		Identity  InodeID
+		Identity  vfs.InodeID
 		Verifier  []byte
 		Flavor    uint32
 		Principal []byte

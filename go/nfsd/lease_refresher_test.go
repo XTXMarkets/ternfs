@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 var errInjectedLease = errors.New("injected lease fault")
@@ -22,7 +23,7 @@ var errInjectedLease = errors.New("injected lease fault")
 // is held, unapplied, until applyLate links it, as a backend that applied
 // it after the error would.
 type refresherFaultVFS struct {
-	TernVFS
+	vfs.TernVFS
 	mu          sync.Mutex
 	constructFn func() error
 	linkFail    bool
@@ -35,27 +36,27 @@ type refresherFaultVFS struct {
 }
 
 type lateLink struct {
-	id     InodeID
-	cookie Cookie
-	dir    InodeID
+	id     vfs.InodeID
+	cookie vfs.Cookie
+	dir    vfs.InodeID
 	name   string
 	data   []byte
 }
 
-func (fs *refresherFaultVFS) ConstructFile(dir InodeID) (InodeID, Cookie, error) {
+func (fs *refresherFaultVFS) ConstructFile(dir vfs.InodeID) (vfs.InodeID, vfs.Cookie, error) {
 	fs.mu.Lock()
 	fn := fs.constructFn
 	fs.constructs++
 	fs.mu.Unlock()
 	if fn != nil {
 		if err := fn(); err != nil {
-			return 0, Cookie{}, err
+			return 0, vfs.Cookie{}, err
 		}
 	}
 	return fs.TernVFS.ConstructFile(dir)
 }
 
-func (fs *refresherFaultVFS) LinkFile(id InodeID, cookie Cookie, dir InodeID, name string, data io.Reader) error {
+func (fs *refresherFaultVFS) LinkFile(id vfs.InodeID, cookie vfs.Cookie, dir vfs.InodeID, name string, data io.Reader) error {
 	fs.mu.Lock()
 	fs.links = append(fs.links, name)
 	fail := fs.linkFail && leaseTemp(name)
@@ -70,14 +71,14 @@ func (fs *refresherFaultVFS) LinkFile(id InodeID, cookie Cookie, dir InodeID, na
 	return fs.TernVFS.LinkFile(id, cookie, dir, name, data)
 }
 
-func (fs *refresherFaultVFS) ScrapFile(id InodeID, cookie Cookie) error {
+func (fs *refresherFaultVFS) ScrapFile(id vfs.InodeID, cookie vfs.Cookie) error {
 	fs.mu.Lock()
 	fs.scraps++
 	fs.mu.Unlock()
 	return fs.TernVFS.ScrapFile(id, cookie)
 }
 
-func (fs *refresherFaultVFS) RenameEdge(src InodeID, old string, edge Edge, dst InodeID, name string) error {
+func (fs *refresherFaultVFS) RenameEdge(src vfs.InodeID, old string, edge vfs.Edge, dst vfs.InodeID, name string) error {
 	fs.mu.Lock()
 	fail := fs.renameFail > 0 && leaseTemp(old)
 	if fail {
@@ -90,7 +91,7 @@ func (fs *refresherFaultVFS) RenameEdge(src InodeID, old string, edge Edge, dst 
 	return fs.TernVFS.RenameEdge(src, old, edge, dst, name)
 }
 
-func (fs *refresherFaultVFS) RemoveEdge(dir InodeID, name string, edge Edge) error {
+func (fs *refresherFaultVFS) RemoveEdge(dir vfs.InodeID, name string, edge vfs.Edge) error {
 	fs.mu.Lock()
 	err := fs.fenceErr
 	fs.mu.Unlock()
@@ -121,7 +122,7 @@ func (fs *refresherFaultVFS) set(fn func()) {
 
 // refresherForTest returns a store-only client's record, kept by a
 // reservation, and a clock the test moves.
-func refresherForTest(t *testing.T, fs TernVFS) (*ClientStore, uint64, *leaseRefresher, *time.Time) {
+func refresherForTest(t *testing.T, fs vfs.TernVFS) (*ClientStore, uint64, *leaseRefresher, *time.Time) {
 	t.Helper()
 	store, clientID := newConfirmedStoreClient(t, fs, []byte("client"), [8]byte{1}, clientOwner{})
 	clock := time.Unix(1000, 0)
@@ -132,14 +133,14 @@ func refresherForTest(t *testing.T, fs TernVFS) (*ClientStore, uint64, *leaseRef
 	}
 	t.Cleanup(release)
 	store.refreshMu.Lock()
-	r := store.refreshers[InodeID(clientID)]
+	r := store.refreshers[vfs.InodeID(clientID)]
 	store.refreshMu.Unlock()
 	return store, clientID, r, &clock
 }
 
 func publishedExpiry(t *testing.T, cs *ClientStore, clientID uint64) int64 {
 	t.Helper()
-	id, err := cs.fs.Lookup(InodeID(clientID), cs.leaseName)
+	id, err := cs.fs.Lookup(vfs.InodeID(clientID), cs.leaseName)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +160,7 @@ func recordImage(r *leaseRefresher) (attempt bool, orphans int, proven int64, bo
 // An unsettled publication RENAME blocks every later publication until it
 // is fenced, and lease content only grows.
 func TestRefresherUnsettledAttemptBlocksPublication(t *testing.T) {
-	fs := &refresherFaultVFS{TernVFS: NewLocalTernVFS(t.TempDir())}
+	fs := &refresherFaultVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
 	cs, clientID, r, clock := refresherForTest(t, fs)
 	r.safePass(true)
 	first := publishedExpiry(t, cs, clientID)
@@ -197,7 +198,7 @@ func TestRefresherUnsettledAttemptBlocksPublication(t *testing.T) {
 // An attempt settled because its edge is gone raises proven only from
 // lease content read as evidence, never from the attempt's own expiry.
 func TestRefresherEdgeGoneDoesNotRaiseProven(t *testing.T) {
-	fs := &refresherFaultVFS{TernVFS: NewLocalTernVFS(t.TempDir())}
+	fs := &refresherFaultVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
 	cs, clientID, r, clock := refresherForTest(t, fs)
 	r.safePass(true)
 	first := publishedExpiry(t, cs, clientID)
@@ -223,7 +224,7 @@ func TestRefresherEdgeGoneDoesNotRaiseProven(t *testing.T) {
 // at four, nothing is scrapped or released on time or absence, and a late
 // LINK then consumed settles every obligation.
 func TestRefresherPersistentLinkFailure(t *testing.T) {
-	fs := &refresherFaultVFS{TernVFS: NewLocalTernVFS(t.TempDir()), linkFail: true}
+	fs := &refresherFaultVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir()), linkFail: true}
 	cs, _, r, clock := refresherForTest(t, fs)
 	for range maxRecordOrphans + 3 {
 		r.safePass(true)
@@ -286,7 +287,7 @@ func TestRefresherPersistentLinkFailure(t *testing.T) {
 // The process cap pauses temp creation for every record, and a
 // ConstructFile error settles its obligation at once.
 func TestRefresherGlobalCapAndConstructError(t *testing.T) {
-	fs := &refresherFaultVFS{TernVFS: NewLocalTernVFS(t.TempDir())}
+	fs := &refresherFaultVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
 	cs, _, r, _ := refresherForTest(t, fs)
 	cs.refreshMu.Lock()
 	cs.orphans = cs.orphanLimit
@@ -314,7 +315,7 @@ func TestRefresherGlobalCapAndConstructError(t *testing.T) {
 // Only need or bootstrap authorizes a write. Bootstrap survives failed
 // publication and clears on success; a verify pass only reads.
 func TestRefresherBootstrapAndVerify(t *testing.T) {
-	fs := &refresherFaultVFS{TernVFS: NewLocalTernVFS(t.TempDir())}
+	fs := &refresherFaultVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
 	cs, clientID, r, _ := refresherForTest(t, fs)
 	need := false
 	cs.leaseNeed = func(uint64) bool { return need }
@@ -377,7 +378,7 @@ func TestRefresherBootstrapAndVerify(t *testing.T) {
 
 // Records are bounded; a record with a worker is not freed.
 func TestRefresherRecordBudget(t *testing.T) {
-	fs := NewLocalTernVFS(t.TempDir())
+	fs := vfs.NewLocalTernVFS(t.TempDir())
 	cs, err := NewClientStore(fs)
 	if err != nil {
 		t.Fatal(err)
@@ -419,7 +420,7 @@ func TestRefresherRecordBudget(t *testing.T) {
 // The lease gate: a read error returns it to live with nothing published;
 // an active or quiet group is never expired; expiry refuses admission.
 func TestLeaseGateDecisions(t *testing.T) {
-	fs := &admissionLeaseVFS{TernVFS: NewLocalTernVFS(t.TempDir())}
+	fs := &admissionLeaseVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
 	srv, err := NewServer(fs, readOnlyStagingStore{}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -473,7 +474,7 @@ func TestLeaseGateDecisions(t *testing.T) {
 		t.Fatal("read error left the gate deciding")
 	}
 	fs.fail = false
-	if _, err := fs.Lookup(InodeID(clientID), expiredName); err == nil {
+	if _, err := fs.Lookup(vfs.InodeID(clientID), expiredName); err == nil {
 		t.Fatal("marker published on a read error")
 	}
 	if srv.sessions.lookup(ts.id) == nil {
@@ -497,7 +498,7 @@ func TestLeaseGateDecisions(t *testing.T) {
 
 // trapVFS blocks every backend call while armed.
 type trapVFS struct {
-	TernVFS
+	vfs.TernVFS
 	armed   bool
 	mu      sync.Mutex
 	calls   []string
@@ -515,28 +516,31 @@ func (fs *trapVFS) trap(name string) {
 		<-fs.release
 	}
 }
-func (fs *trapVFS) Stat(id InodeID) (NodeInfo, error) { fs.trap("Stat"); return fs.TernVFS.Stat(id) }
-func (fs *trapVFS) Lookup(d InodeID, n string) (InodeID, error) {
+func (fs *trapVFS) Stat(id vfs.InodeID) (vfs.NodeInfo, error) {
+	fs.trap("Stat")
+	return fs.TernVFS.Stat(id)
+}
+func (fs *trapVFS) Lookup(d vfs.InodeID, n string) (vfs.InodeID, error) {
 	fs.trap("Lookup")
 	return fs.TernVFS.Lookup(d, n)
 }
-func (fs *trapVFS) LookupParent(id InodeID) (InodeID, error) {
+func (fs *trapVFS) LookupParent(id vfs.InodeID) (vfs.InodeID, error) {
 	fs.trap("LookupParent")
 	return fs.TernVFS.LookupParent(id)
 }
-func (fs *trapVFS) Readdir(d InodeID, h uint64) ([]DirEntry, uint64, error) {
+func (fs *trapVFS) Readdir(d vfs.InodeID, h uint64) ([]vfs.DirEntry, uint64, error) {
 	fs.trap("Readdir")
 	return fs.TernVFS.Readdir(d, h)
 }
-func (fs *trapVFS) ReadAll(id InodeID) ([]byte, error) {
+func (fs *trapVFS) ReadAll(id vfs.InodeID) ([]byte, error) {
 	fs.trap("ReadAll")
 	return fs.TernVFS.ReadAll(id)
 }
-func (fs *trapVFS) Readlink(id InodeID) (string, error) {
+func (fs *trapVFS) Readlink(id vfs.InodeID) (string, error) {
 	fs.trap("Readlink")
 	return fs.TernVFS.Readlink(id)
 }
-func (fs *trapVFS) LookupEdge(d InodeID, n string) (Edge, error) {
+func (fs *trapVFS) LookupEdge(d vfs.InodeID, n string) (vfs.Edge, error) {
 	fs.trap("LookupEdge")
 	return fs.TernVFS.LookupEdge(d, n)
 }
@@ -544,7 +548,7 @@ func (fs *trapVFS) LookupEdge(d InodeID, n string) (Edge, error) {
 // SEQUENCE never calls the store: admission and its DELAY both answer from
 // memory while every backend call blocks.
 func TestSequenceAdmissionDoesNoStoreIO(t *testing.T) {
-	fs := &trapVFS{TernVFS: NewLocalTernVFS(t.TempDir()), release: make(chan struct{})}
+	fs := &trapVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir()), release: make(chan struct{})}
 	srv, err := NewServer(fs, readOnlyStagingStore{}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -580,7 +584,7 @@ func TestSequenceAdmissionDoesNoStoreIO(t *testing.T) {
 // a pending-only failure leaves nothing, and pending tokens count toward
 // the quota so SEQUENCE gets RESOURCE before any renewal work.
 func TestAssociationTokens(t *testing.T) {
-	srv, err := NewServer(NewLocalTernVFS(t.TempDir()), readOnlyStagingStore{}, nil)
+	srv, err := NewServer(vfs.NewLocalTernVFS(t.TempDir()), readOnlyStagingStore{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -644,7 +648,7 @@ func TestAssociationTokens(t *testing.T) {
 
 // A replay renews: its commit activates a hold like a new request.
 func TestSequenceReplayRenews(t *testing.T) {
-	srv, err := NewServer(NewLocalTernVFS(t.TempDir()), readOnlyStagingStore{}, nil)
+	srv, err := NewServer(vfs.NewLocalTernVFS(t.TempDir()), readOnlyStagingStore{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -666,7 +670,7 @@ func TestSequenceReplayRenews(t *testing.T) {
 // An idle client's first SEQUENCE gets DELAY while a verify reads its
 // lease; the worker's read-only pass then admits the retry.
 func TestIdleClientResumesAfterVerify(t *testing.T) {
-	fs := &refresherFaultVFS{TernVFS: NewLocalTernVFS(t.TempDir())}
+	fs := &refresherFaultVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
 	srv, err := NewServer(fs, readOnlyStagingStore{}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -732,7 +736,7 @@ func TestCreateSessionWaitsForFirstPublication(t *testing.T) {
 	it := res.Resarray()
 	it.Next()
 	ok := it.Resarray().Value().AsCREATESESSION4resEntry().Value().AsCREATESESSION4resok()
-	if !srv.clients.leaseProven(InodeID(incarnationForTest(t, srv, clientID))) {
+	if !srv.clients.leaseProven(vfs.InodeID(incarnationForTest(t, srv, clientID))) {
 		t.Fatal("CREATE_SESSION replied before the first publication")
 	}
 	ts := newTestSession(readSessionID(ok.CsrSessionid()), clientID, ok.CsrForeChanAttrs().CaMaxrequests())

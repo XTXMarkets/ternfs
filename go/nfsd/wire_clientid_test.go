@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 // testWireEpochs gives every test server its own epoch, so a server built
@@ -45,7 +47,7 @@ func incarnationForTest(t *testing.T, srv *Server, wireID uint64) uint64 {
 
 func wireTestServer(t *testing.T) *Server {
 	t.Helper()
-	srv, err := NewServer(NewLocalTernVFS(t.TempDir()), readOnlyStagingStore{}, nil)
+	srv, err := NewServer(vfs.NewLocalTernVFS(t.TempDir()), readOnlyStagingStore{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

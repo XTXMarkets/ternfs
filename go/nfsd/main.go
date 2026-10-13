@@ -18,6 +18,7 @@ import (
 	"github.com/XTXMarkets/ternfs/go/core/bufpool"
 	"github.com/XTXMarkets/ternfs/go/core/log"
 	"github.com/XTXMarkets/ternfs/go/msgs"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 func main() {
@@ -95,7 +96,7 @@ func main() {
 // openVFS opens the local directory or the TernFS cluster named by exactly
 // one of root and registry. It also returns a description of what it opened,
 // with a local root resolved to an absolute path.
-func openVFS(root string, registry string, verbose bool) (TernVFS, string, error) {
+func openVFS(root string, registry string, verbose bool) (vfs.TernVFS, string, error) {
 	if (root == "") == (registry == "") {
 		return nil, "", fmt.Errorf(
 			"exactly one of -root (local) or -registry (TernFS) must be specified")
@@ -109,7 +110,7 @@ func openVFS(root string, registry string, verbose bool) (TernVFS, string, error
 		if err != nil || !info.IsDir() {
 			return nil, "", fmt.Errorf("root must be a directory: %s", absRoot)
 		}
-		return NewLocalTernVFS(absRoot), "local root " + absRoot, nil
+		return vfs.NewLocalTernVFS(absRoot), "local root " + absRoot, nil
 	}
 	logLevel := log.INFO
 	if verbose {
@@ -120,7 +121,7 @@ func openVFS(root string, registry string, verbose bool) (TernVFS, string, error
 	if err != nil {
 		return nil, "", fmt.Errorf("connecting to TernFS registry: %w", err)
 	}
-	return NewRemoteTernVFS(c, ternLogger, bufpool.NewBufPool()),
+	return vfs.NewRemoteTernVFS(c, ternLogger, bufpool.NewBufPool()),
 		"TernFS registry " + registry, nil
 }
 
@@ -163,7 +164,7 @@ func runInspect(args []string) {
 				"-identity, -identity-hash, -clientid or -stateid. It never modifies the\n"+
 				"store. Each field the report prints is labelled with the flag which\n"+
 				"selects it, so any value in the output can be pasted back here.\n\n",
-			nfsDirName)
+			vfs.NFSDirName)
 		fs.PrintDefaults()
 		fmt.Fprintf(fs.Output(),
 			"\nExit status: 0 if the report found no problems, %d if it found any,\n"+
@@ -233,7 +234,7 @@ func parseInspectOptions(identity, identityHash, clientID, stateID string) (
 	}
 	if clientID != "" {
 		id, err := strconv.ParseUint(clientID, 0, 64)
-		if err != nil || !isDirectoryInodeID(InodeID(id)) {
+		if err != nil || !isDirectoryInodeID(vfs.InodeID(id)) {
 			return opts, fmt.Errorf(
 				"invalid -clientid %q: want a 0x-prefixed hex or decimal "+
 					"directory inode", clientID)

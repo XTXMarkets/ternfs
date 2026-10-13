@@ -8,6 +8,7 @@ import (
 	"errors"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 // Confirmation of a pending incarnation N over its predecessor P, on the
@@ -210,7 +211,7 @@ func (s *Server) resumeReplacementPurge(n uint64) {
 
 // confirmation is one identity's confirmation in this process.
 type confirmation struct {
-	identity InodeID
+	identity vfs.InodeID
 	owner    string
 	n, p     uint64 // p is zero without a predecessor
 	cr       *creation
@@ -268,7 +269,7 @@ func (s *Server) beginDestroy(incarnation uint64) (func(), bool) {
 }
 
 // beginDestroyIdentity admits client GC of an identity.
-func (s *Server) beginDestroyIdentity(identity InodeID) (func(), bool) {
+func (s *Server) beginDestroyIdentity(identity vfs.InodeID) (func(), bool) {
 	s.confirmMu.Lock()
 	defer s.confirmMu.Unlock()
 	if _, ok := s.confirmingIdentity[identity]; ok {
@@ -289,7 +290,7 @@ func (s *Server) beginDestroyIdentity(identity InodeID) (func(), bool) {
 // n's reboot edge, so it holds destruction holds on both. The client store
 // calls it under the identity lock, after selecting p and before any
 // removal; neither hold waits.
-func (s *Server) beginPurge(n, p InodeID) (func(), bool) {
+func (s *Server) beginPurge(n, p vfs.InodeID) (func(), bool) {
 	endN, ok := s.beginDestroy(uint64(n))
 	if !ok {
 		return nil, false

@@ -192,10 +192,10 @@ visible to every nfsd.
 
 ## Namespace and filehandles
 
-The [`TernVFS`](vfs.go) interface is the boundary between the NFS protocol
-implementation and TernFS. The production implementation in
-[`ternvfs.go`](ternvfs.go) maps namespace operations, reads and file
-construction to TernFS requests. Tests can use a local implementation of the
+The [`TernVFS`](internal/vfs/vfs.go) interface is the boundary between the
+NFS protocol implementation and TernFS. The production implementation in
+[`internal/vfs/ternvfs.go`](internal/vfs/ternvfs.go) maps namespace
+operations, reads and file construction to TernFS requests. Tests can use a local implementation of the
 same interface.
 
 TernFS assigns every file and directory an inode ID. nfsd uses the eight-byte

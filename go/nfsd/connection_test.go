@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 func rpcCallForTest(xid, procedure uint32, body []byte) []byte {
@@ -103,13 +104,13 @@ func readXIDForTest(t *testing.T, conn net.Conn) uint32 {
 }
 
 type statGateVFS struct {
-	TernVFS
+	vfs.TernVFS
 	*testGate
 	active    atomic.Int32
 	maxActive atomic.Int32
 }
 
-func (fs *statGateVFS) Stat(id InodeID) (NodeInfo, error) {
+func (fs *statGateVFS) Stat(id vfs.InodeID) (vfs.NodeInfo, error) {
 	active := fs.active.Add(1)
 	defer fs.active.Add(-1)
 	for old := fs.maxActive.Load(); active > old; old = fs.maxActive.Load() {
@@ -123,7 +124,7 @@ func (fs *statGateVFS) Stat(id InodeID) (NodeInfo, error) {
 
 func newConnectionTestServer(t *testing.T, limit int) (*Server, *statGateVFS) {
 	t.Helper()
-	fs := &statGateVFS{TernVFS: NewLocalTernVFS(t.TempDir()),
+	fs := &statGateVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
 		testGate: newTestGate()}
 	fs.all = true
 	srv, err := NewServer(fs, readOnlyStagingStore{}, nil)
@@ -206,11 +207,11 @@ func TestConnectionAdmissionBound(t *testing.T) {
 }
 
 type mkdirGateVFS struct {
-	TernVFS
+	vfs.TernVFS
 	*testGate
 }
 
-func (fs *mkdirGateVFS) Mkdir(dir InodeID, name string) (InodeID, error) {
+func (fs *mkdirGateVFS) Mkdir(dir vfs.InodeID, name string) (vfs.InodeID, error) {
 	if name == "once" {
 		fs.wait()
 	}
@@ -220,7 +221,7 @@ func (fs *mkdirGateVFS) Mkdir(dir InodeID, name string) (InodeID, error) {
 func TestConnectionInFlightDuplicates(t *testing.T) {
 	for _, conflicting := range []bool{false, true} {
 		t.Run(fmt.Sprint(conflicting), func(t *testing.T) {
-			fs := &mkdirGateVFS{TernVFS: NewLocalTernVFS(t.TempDir()),
+			fs := &mkdirGateVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
 				testGate: newTestGate()}
 			staging, err := NewLocalStagingStore(t.TempDir(), nil)
 			if err != nil {

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 // moveSessionForTest gives an inserted session another incarnation and ID.
@@ -137,7 +138,7 @@ func TestGroupHoldReleasedAfterCompoundPanic(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "victim"), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	srv := admissionWritableServer(t, &admissionPanicVFS{TernVFS: NewLocalTernVFS(root)})
+	srv := admissionWritableServer(t, &admissionPanicVFS{TernVFS: vfs.NewLocalTernVFS(root)})
 	ts := connectionSession(t, srv)
 	req, err := parseRPCCall(rpcCallForTest(1, procCompound, admissionSequence(
 		buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
@@ -241,12 +242,12 @@ func TestGroupClosingAndReplacedAdmission(t *testing.T) {
 }
 
 type confirmedLookupGateVFS struct {
-	TernVFS
+	vfs.TernVFS
 	armed            atomic.Bool
 	entered, release chan struct{}
 }
 
-func (fs *confirmedLookupGateVFS) Lookup(dir InodeID, name string) (InodeID, error) {
+func (fs *confirmedLookupGateVFS) Lookup(dir vfs.InodeID, name string) (vfs.InodeID, error) {
 	if name == confirmedName && fs.armed.CompareAndSwap(true, false) {
 		close(fs.entered)
 		<-fs.release
@@ -257,7 +258,7 @@ func (fs *confirmedLookupGateVFS) Lookup(dir InodeID, name string) (InodeID, err
 // A standalone CREATE_SESSION blocked in the store keeps replacement out
 // until it has inserted its session.
 func TestGroupStandaloneCreateSessionExcludesReplacement(t *testing.T) {
-	fs := &confirmedLookupGateVFS{TernVFS: NewLocalTernVFS(t.TempDir()),
+	fs := &confirmedLookupGateVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
 		entered: make(chan struct{}), release: make(chan struct{})}
 	srv := admissionWritableServer(t, fs)
 	addr, stop := serveTestServer(t, srv)
@@ -338,7 +339,7 @@ func heldReply(t *testing.T, srv *Server, call []byte) func() {
 // sessions, session records and wire record are gone; nothing else can use
 // that credit meanwhile.
 func TestGroupCreditHeldUntilFinalHold(t *testing.T) {
-	srv := identityServer(t, NewLocalTernVFS(t.TempDir()))
+	srv := identityServer(t, vfs.NewLocalTernVFS(t.TempDir()))
 	ss := srv.sessions
 	wire, ts := registerForTest(t, srv, "held", 1)
 	incarnation := incarnationForTest(t, srv, wire)
@@ -401,7 +402,7 @@ func TestGroupCreditHeldUntilFinalHold(t *testing.T) {
 // BIND_CONN_TO_SESSION waits while its incarnation is being replaced and
 // fails once it has been.
 func TestGroupBindWhileReplacing(t *testing.T) {
-	srv := identityServer(t, NewLocalTernVFS(t.TempDir()))
+	srv := identityServer(t, vfs.NewLocalTernVFS(t.TempDir()))
 	wire, ts := registerForTest(t, srv, "bind", 1)
 	incarnation := incarnationForTest(t, srv, wire)
 	bind := func() uint32 {

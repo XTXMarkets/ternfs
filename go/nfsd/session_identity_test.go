@@ -15,11 +15,12 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 // countingWriteVFS counts mutations that changed the store.
 type countingWriteVFS struct {
-	TernVFS
+	vfs.TernVFS
 	writes atomic.Int64
 }
 
@@ -29,40 +30,40 @@ func (fs *countingWriteVFS) count(err error) error {
 	}
 	return err
 }
-func (fs *countingWriteVFS) Mkdir(dir InodeID, name string) (InodeID, error) {
+func (fs *countingWriteVFS) Mkdir(dir vfs.InodeID, name string) (vfs.InodeID, error) {
 	id, err := fs.TernVFS.Mkdir(dir, name)
 	return id, fs.count(err)
 }
-func (fs *countingWriteVFS) Symlink(dir InodeID, name, target string) (InodeID, error) {
+func (fs *countingWriteVFS) Symlink(dir vfs.InodeID, name, target string) (vfs.InodeID, error) {
 	id, err := fs.TernVFS.Symlink(dir, name, target)
 	return id, fs.count(err)
 }
-func (fs *countingWriteVFS) CreateFile(dir InodeID, name string, data io.Reader) (InodeID, error) {
+func (fs *countingWriteVFS) CreateFile(dir vfs.InodeID, name string, data io.Reader) (vfs.InodeID, error) {
 	id, err := fs.TernVFS.CreateFile(dir, name, data)
 	return id, fs.count(err)
 }
 
 // The refresher's own lease writes (its temps and lease.<nfsdID>) run in
 // the background for every client and are not counted.
-func (fs *countingWriteVFS) LinkFile(id InodeID, cookie Cookie, dir InodeID, name string, data io.Reader) error {
+func (fs *countingWriteVFS) LinkFile(id vfs.InodeID, cookie vfs.Cookie, dir vfs.InodeID, name string, data io.Reader) error {
 	if leaseTemp(name) {
 		return fs.TernVFS.LinkFile(id, cookie, dir, name, data)
 	}
 	return fs.count(fs.TernVFS.LinkFile(id, cookie, dir, name, data))
 }
-func (fs *countingWriteVFS) Remove(dir InodeID, name string) error {
+func (fs *countingWriteVFS) Remove(dir vfs.InodeID, name string) error {
 	return fs.count(fs.TernVFS.Remove(dir, name))
 }
-func (fs *countingWriteVFS) RemoveEdge(dir InodeID, name string, edge Edge) error {
+func (fs *countingWriteVFS) RemoveEdge(dir vfs.InodeID, name string, edge vfs.Edge) error {
 	if leaseTemp(name) || strings.HasPrefix(name, leasePrefix) {
 		return fs.TernVFS.RemoveEdge(dir, name, edge)
 	}
 	return fs.count(fs.TernVFS.RemoveEdge(dir, name, edge))
 }
-func (fs *countingWriteVFS) Rename(src InodeID, name string, dst InodeID, newName string) error {
+func (fs *countingWriteVFS) Rename(src vfs.InodeID, name string, dst vfs.InodeID, newName string) error {
 	return fs.count(fs.TernVFS.Rename(src, name, dst, newName))
 }
-func (fs *countingWriteVFS) RenameEdge(src InodeID, name string, edge Edge, dst InodeID, newName string) error {
+func (fs *countingWriteVFS) RenameEdge(src vfs.InodeID, name string, edge vfs.Edge, dst vfs.InodeID, newName string) error {
 	if strings.HasPrefix(newName, leasePrefix) {
 		return fs.TernVFS.RenameEdge(src, name, edge, dst, newName)
 	}
@@ -138,7 +139,7 @@ func identityDestroy(t *testing.T, srv *Server, clientID uint64) uint32 {
 	})).Status()
 }
 
-func identityServer(t *testing.T, fs TernVFS) *Server {
+func identityServer(t *testing.T, fs vfs.TernVFS) *Server {
 	t.Helper()
 	srv, err := NewServer(fs, readOnlyStagingStore{}, nil)
 	if err != nil {
@@ -158,7 +159,7 @@ func wireRecords(srv *Server) int {
 
 // The EXCHANGE_ID case table, RFC 8881 section 18.35.5, over wire records.
 func TestExchangeIDCases(t *testing.T) {
-	fs := &countingWriteVFS{TernVFS: NewLocalTernVFS(t.TempDir())}
+	fs := &countingWriteVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
 	srv := identityServer(t, fs)
 	epoch := uint64(srv.sessions.wireIDs.epoch)
 
@@ -254,7 +255,7 @@ func TestExchangeIDCases(t *testing.T) {
 // cold EXCHANGE_ID adopts a confirmed incarnation without writing, and no
 // process accepts another's clientid.
 func TestExchangeIDProcessesKeepIndependentClientIDs(t *testing.T) {
-	local := NewLocalTernVFS(t.TempDir())
+	local := vfs.NewLocalTernVFS(t.TempDir())
 	first := identityServer(t, local)
 	a := identityExchange(t, first, 1, "client", [8]byte{1}, false)
 	if a.status != nfs4.NFS4_OK || identityCreate(t, first, 1, a.clientID, 1) != nfs4.NFS4_OK {
@@ -302,7 +303,7 @@ func TestExchangeIDProcessesKeepIndependentClientIDs(t *testing.T) {
 // Wire records are bounded, the allocator never wraps, and a record ends
 // with its client.
 func TestExchangeIDBoundsAndRetirement(t *testing.T) {
-	srv := identityServer(t, NewLocalTernVFS(t.TempDir()))
+	srv := identityServer(t, vfs.NewLocalTernVFS(t.TempDir()))
 	// Client GC reads the clock from its own goroutine.
 	var clock atomic.Int64
 	setNow := func(t time.Time) { clock.Store(t.UnixNano()) }
@@ -391,7 +392,7 @@ func awaitOwnerWaiter(t *testing.T, ss *sessionStore, owner string) {
 // clientid is usable. Without that order, the first could publish a pending
 // incarnation the second had already replaced, leaving neither usable.
 func TestExchangeIDSameOwnerRegistersInOrder(t *testing.T) {
-	fs := &confirmedLookupGateVFS{TernVFS: NewLocalTernVFS(t.TempDir()),
+	fs := &confirmedLookupGateVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
 		entered: make(chan struct{}), release: make(chan struct{})}
 	srv := identityServer(t, fs)
 	defer closeSignal(fs.release)
@@ -423,7 +424,7 @@ func TestExchangeIDSameOwnerRegistersInOrder(t *testing.T) {
 // A DESTROY_CLIENTID admitted for one record never destroys a newer record
 // of the same incarnation.
 func TestDestroyClientIDRetiresOnlyItsRecord(t *testing.T) {
-	local := NewLocalTernVFS(t.TempDir())
+	local := vfs.NewLocalTernVFS(t.TempDir())
 	first := identityServer(t, local)
 	p := identityExchange(t, first, 1, "client", [8]byte{1}, false)
 	if identityCreate(t, first, 1, p.clientID, 1) != nfs4.NFS4_OK {
@@ -499,12 +500,12 @@ func TestClientStoreExchangeIDAdoptionObservation(t *testing.T) {
 			wantErr: true, wantInUse: true, zeroWrites: true, keepSlots: true, noMarker: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			failing := &lookupFailureVFS{TernVFS: NewLocalTernVFS(t.TempDir())}
+			failing := &lookupFailureVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
 			fs := &countingWriteVFS{TernVFS: failing}
 			store, id := newConfirmedStoreClient(t, fs, []byte("adopt"), [8]byte{verifier}, clientOwner{})
 			now := time.Now()
 			store.now = func() time.Time { return now }
-			incarnation := InodeID(id)
+			incarnation := vfs.InodeID(id)
 			for name, expiry := range test.leases {
 				if _, err := store.createJSON(incarnation, name, durableLease{ExpiresUnixNano: now.Add(expiry).UnixNano()}); err != nil {
 					t.Fatal(err)

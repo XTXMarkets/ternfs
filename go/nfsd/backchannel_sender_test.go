@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 // cbTestClient is a client connection that also serves callbacks: its
@@ -614,15 +615,15 @@ func TestCallbackRenewalUnderGate(t *testing.T) {
 // expiryGateVFS blocks the lease observation's directory read, and can
 // fail the expired marker's creation.
 type expiryGateVFS struct {
-	TernVFS
+	vfs.TernVFS
 	mu         sync.Mutex
-	dir        InodeID
+	dir        vfs.InodeID
 	entered    chan struct{}
 	release    chan struct{}
 	failMarker bool
 }
 
-func (fs *expiryGateVFS) Readdir(dir InodeID, start uint64) ([]DirEntry, uint64, error) {
+func (fs *expiryGateVFS) Readdir(dir vfs.InodeID, start uint64) ([]vfs.DirEntry, uint64, error) {
 	fs.mu.Lock()
 	block := fs.dir != 0 && dir == fs.dir
 	if block {
@@ -636,7 +637,7 @@ func (fs *expiryGateVFS) Readdir(dir InodeID, start uint64) ([]DirEntry, uint64,
 	return fs.TernVFS.Readdir(dir, start)
 }
 
-func (fs *expiryGateVFS) CreateFile(dir InodeID, name string, data io.Reader) (InodeID, error) {
+func (fs *expiryGateVFS) CreateFile(dir vfs.InodeID, name string, data io.Reader) (vfs.InodeID, error) {
 	fs.mu.Lock()
 	fail := fs.failMarker && name == expiredName
 	fs.mu.Unlock()
@@ -655,7 +656,7 @@ var errInjectedExpiry = errors.New("injected marker failure")
 func TestCallbackArbitratesExpiry(t *testing.T) {
 	for _, c := range []string{"reply-during-check", "no-reply", "marker-error"} {
 		t.Run(c, func(t *testing.T) {
-			fs := &expiryGateVFS{TernVFS: NewLocalTernVFS(t.TempDir())}
+			fs := &expiryGateVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
 			srv, err := NewServer(fs, readOnlyStagingStore{}, nil)
 			if err != nil {
 				t.Fatal(err)
@@ -674,7 +675,7 @@ func TestCallbackArbitratesExpiry(t *testing.T) {
 			later := time.Now().Add(10 * leaseWriteTerm)
 			srv.clients.setClock(func() time.Time { return later })
 			fs.mu.Lock()
-			fs.dir, fs.entered, fs.release = InodeID(clientID), make(chan struct{}), make(chan struct{})
+			fs.dir, fs.entered, fs.release = vfs.InodeID(clientID), make(chan struct{}), make(chan struct{})
 			fs.failMarker = c == "marker-error"
 			fs.mu.Unlock()
 			srv.sessions.mu.Lock()
@@ -694,7 +695,7 @@ func TestCallbackArbitratesExpiry(t *testing.T) {
 			if want := c != "reply-during-check"; expired != want {
 				t.Fatalf("expired %t, want %t", expired, want)
 			}
-			_, markerErr := fs.TernVFS.Lookup(InodeID(clientID), expiredName)
+			_, markerErr := fs.TernVFS.Lookup(vfs.InodeID(clientID), expiredName)
 			if marked := markerErr == nil; marked != (c == "no-reply") {
 				t.Fatalf("marker present %t", marked)
 			}

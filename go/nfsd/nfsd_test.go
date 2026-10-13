@@ -22,15 +22,16 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 type readErrorVFS struct {
-	*LocalTernVFS
-	failID InodeID
+	*vfs.LocalTernVFS
+	failID vfs.InodeID
 }
 
 func (v *readErrorVFS) Read(
-	id InodeID,
+	id vfs.InodeID,
 	offset uint64,
 	dest []byte,
 ) (int, bool, error) {
@@ -41,12 +42,12 @@ func (v *readErrorVFS) Read(
 }
 
 type panicOnceReadVFS struct {
-	*LocalTernVFS
+	*vfs.LocalTernVFS
 	panic bool
 }
 
 type mutableBlockingLinkVFS struct {
-	*LocalTernVFS
+	*vfs.LocalTernVFS
 	once    sync.Once
 	started chan struct{}
 	release chan struct{}
@@ -61,7 +62,7 @@ type markerCheckingStagingStore struct {
 }
 
 func (s *markerCheckingStagingStore) Rebind(
-	id InodeID,
+	id vfs.InodeID,
 	clientID uint64,
 	stateID StateID,
 ) error {
@@ -77,9 +78,9 @@ func (s *markerCheckingStagingStore) Rebind(
 }
 
 func (v *mutableBlockingLinkVFS) LinkFile(
-	fileID InodeID,
-	cookie Cookie,
-	dirID InodeID,
+	fileID vfs.InodeID,
+	cookie vfs.Cookie,
+	dirID vfs.InodeID,
 	name string,
 	data io.Reader,
 ) error {
@@ -105,7 +106,7 @@ func (v *mutableBlockingLinkVFS) linkCount() int {
 }
 
 func (v *panicOnceReadVFS) Read(
-	id InodeID,
+	id vfs.InodeID,
 	offset uint64,
 	dest []byte,
 ) (int, bool, error) {
@@ -130,7 +131,7 @@ func startTestServerWithServer(
 	dir string,
 ) (srv *Server, addr string, cleanup func()) {
 	t.Helper()
-	fs := NewLocalTernVFS(dir)
+	fs := vfs.NewLocalTernVFS(dir)
 	stagingDir := t.TempDir()
 	ss, err := NewLocalStagingStore(stagingDir, nil)
 	if err != nil {
@@ -1002,14 +1003,14 @@ func TestPutfhRejectsClientStoreHandles(t *testing.T) {
 
 	xid := uint32(1)
 	clientID := incarnationForTest(t, srv, setupClient(t, conn, &xid))
-	recordID, err := srv.fs.Lookup(InodeID(clientID), clientRecordName)
+	recordID, err := srv.fs.Lookup(vfs.InodeID(clientID), clientRecordName)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for name, id := range map[string]InodeID{
+	for name, id := range map[string]vfs.InodeID{
 		"nfs directory":     srv.clients.nfsDirID,
 		"clients directory": srv.clients.dirID,
-		"clientid":          InodeID(clientID),
+		"clientid":          vfs.InodeID(clientID),
 		"client record":     recordID,
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -1031,7 +1032,7 @@ func TestPutfhRejectsClientStoreHandles(t *testing.T) {
 
 func TestPutfhAllowsUncachedClientStoreFileHandles(t *testing.T) {
 	dir := t.TempDir()
-	firstFS := NewLocalTernVFS(dir)
+	firstFS := vfs.NewLocalTernVFS(dir)
 	owner := clientOwner{
 		principal: rpcPrincipal{flavor: authSys, body: "owner"},
 	}
@@ -1042,17 +1043,17 @@ func TestPutfhAllowsUncachedClientStoreFileHandles(t *testing.T) {
 		t.Fatal(err)
 	}
 	recordID, err := firstFS.Lookup(
-		InodeID(clientID), clientRecordName)
+		vfs.InodeID(clientID), clientRecordName)
 	if err != nil {
 		t.Fatal(err)
 	}
 	leaseID, err := firstFS.Lookup(
-		InodeID(clientID), store.leaseName)
+		vfs.InodeID(clientID), store.leaseName)
 	if err != nil {
 		t.Fatal(err)
 	}
 	markerID, err := firstFS.Lookup(
-		InodeID(clientID), activeOpenName(stateID))
+		vfs.InodeID(clientID), activeOpenName(stateID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1062,7 +1063,7 @@ func TestPutfhAllowsUncachedClientStoreFileHandles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	secondFS := NewLocalTernVFS(dir)
+	secondFS := vfs.NewLocalTernVFS(dir)
 	staging, err := NewLocalStagingStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -1071,20 +1072,18 @@ func TestPutfhAllowsUncachedClientStoreFileHandles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	secondFS.mu.Lock()
-	for _, id := range []InodeID{
+	for _, id := range []vfs.InodeID{
 		recordID, leaseID, markerID, externalID,
 	} {
-		delete(secondFS.parent, id)
+		secondFS.ForgetParent(id)
 	}
-	secondFS.mu.Unlock()
 	addr, cleanup := serveTestServer(t, srv)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
 
 	xid := uint32(1)
-	for name, id := range map[string]InodeID{
+	for name, id := range map[string]vfs.InodeID{
 		"record": recordID,
 		"lease":  leaseID,
 		"marker": markerID,
@@ -1093,7 +1092,7 @@ func TestPutfhAllowsUncachedClientStoreFileHandles(t *testing.T) {
 			res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 				pw := w.AppendArgarray_Putfh()
 				buf := pw.StartObject().SetData(
-					inodeIDToFH(id)).Finish()
+					vfs.InodeIDToFH(id)).Finish()
 				pw.Resume(buf)
 				w.Resume(pw.Finish())
 			})
@@ -1107,7 +1106,7 @@ func TestPutfhAllowsUncachedClientStoreFileHandles(t *testing.T) {
 	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pw := w.AppendArgarray_Putfh()
 		buf := pw.StartObject().SetData(
-			inodeIDToFH(recordID)).Finish()
+			vfs.InodeIDToFH(recordID)).Finish()
 		pw.Resume(buf)
 		w.Resume(pw.Finish())
 		rw := w.AppendArgarray_Read()
@@ -1123,7 +1122,7 @@ func TestPutfhAllowsUncachedClientStoreFileHandles(t *testing.T) {
 	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pw := w.AppendArgarray_Putfh()
 		buf := pw.StartObject().SetData(
-			inodeIDToFH(externalID)).Finish()
+			vfs.InodeIDToFH(externalID)).Finish()
 		pw.Resume(buf)
 		w.Resume(pw.Finish())
 	})
@@ -1134,7 +1133,7 @@ func TestPutfhAllowsUncachedClientStoreFileHandles(t *testing.T) {
 }
 
 func TestLocalTernVFSCreateFileReplacesExistingFile(t *testing.T) {
-	fs := NewLocalTernVFS(t.TempDir())
+	fs := vfs.NewLocalTernVFS(t.TempDir())
 	firstID, err := fs.CreateFile(
 		fs.RootID(), "record", bytes.NewReader([]byte("first")))
 	if err != nil {
@@ -1459,7 +1458,7 @@ func addConfirmedOpenForTest(
 	srv *Server,
 	clientID uint64,
 	owner string,
-	fileID InodeID,
+	fileID vfs.InodeID,
 	write bool,
 ) openState {
 	t.Helper()
@@ -1481,7 +1480,7 @@ func newClientStoreTestServer(
 ) (*lookupFailureVFS, *Server, net.Conn, *uint32, uint64) {
 	t.Helper()
 	fs := &lookupFailureVFS{
-		TernVFS: NewLocalTernVFS(t.TempDir()),
+		TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
 	}
 	staging, err := NewLocalStagingStore(t.TempDir(), nil)
 	if err != nil {
@@ -1503,7 +1502,7 @@ func newClientStoreTestServer(
 }
 
 func TestLookupDurableOpenStorageErrorPreservesClientState(t *testing.T) {
-	baseFS := NewLocalTernVFS(t.TempDir())
+	baseFS := vfs.NewLocalTernVFS(t.TempDir())
 	fs := &lookupFailureVFS{TernVFS: baseFS}
 	staging, err := NewLocalStagingStore(t.TempDir(), nil)
 	if err != nil {
@@ -1572,7 +1571,7 @@ func TestLookupDurableOpenStorageErrorPreservesClientState(t *testing.T) {
 		t.Fatal("lookup error removed unrelated staging")
 	}
 	if _, err := baseFS.Lookup(
-		InodeID(clientID), activeOpenName(writer.id),
+		vfs.InodeID(clientID), activeOpenName(writer.id),
 	); err != nil {
 		t.Fatalf("lookup error removed unrelated marker: %v", err)
 	}
@@ -1602,7 +1601,7 @@ func TestOwnerOperationsPreserveStateOnClientStoreError(t *testing.T) {
 }
 
 func TestExpireIfLeaseDeadKeepsClientWithoutSlot(t *testing.T) {
-	fs := NewLocalTernVFS(t.TempDir())
+	fs := vfs.NewLocalTernVFS(t.TempDir())
 	staging, err := NewLocalStagingStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -1626,7 +1625,7 @@ func TestExpireIfLeaseDeadKeepsClientWithoutSlot(t *testing.T) {
 	}
 	if _, status := addOpenForTest(srv.opens,
 		openOwnerKey{clientID: clientID, owner: "owner"},
-		MakeInodeID(InodeTypeFile, 1), false, StateID{},
+		vfs.MakeInodeID(vfs.InodeTypeFile, 1), false, StateID{},
 	); status != nfs4.NFS4_OK {
 		t.Fatalf("OPEN = %s", nfs4.Nfsstat4Name(status))
 	}
@@ -1643,7 +1642,7 @@ func TestExpireIfLeaseDeadKeepsClientWithoutSlot(t *testing.T) {
 // A collected incarnation directory has no leases or markers left, so the
 // sweep must drop any process-local state which still names it.
 func TestExpireIfLeaseDeadExpiresCollectedIncarnation(t *testing.T) {
-	fs := NewLocalTernVFS(t.TempDir())
+	fs := vfs.NewLocalTernVFS(t.TempDir())
 	staging, err := NewLocalStagingStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -1670,12 +1669,12 @@ func TestExpireIfLeaseDeadExpiresCollectedIncarnation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	identityID, err := fs.LookupParent(InodeID(clientID))
+	identityID, err := fs.LookupParent(vfs.InodeID(clientID))
 	if err != nil {
 		t.Fatal(err)
 	}
 	name, found, err := srv.clients.incarnationName(
-		identityID, InodeID(clientID))
+		identityID, vfs.InodeID(clientID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1683,7 +1682,7 @@ func TestExpireIfLeaseDeadExpiresCollectedIncarnation(t *testing.T) {
 		t.Fatal("confirmed incarnation is missing from its identity")
 	}
 	if err := srv.clients.removeIncarnation(
-		identityID, InodeID(clientID), name,
+		identityID, vfs.InodeID(clientID), name,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -1711,7 +1710,7 @@ func TestExpireIfLeaseDeadExpiresCollectedIncarnation(t *testing.T) {
 }
 
 func TestStagingSweepKeepsClientWithoutLeaseSlot(t *testing.T) {
-	fs := NewLocalTernVFS(t.TempDir())
+	fs := vfs.NewLocalTernVFS(t.TempDir())
 	staging, err := NewLocalStagingStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -1759,7 +1758,7 @@ func TestStagingSweepKeepsClientWithoutLeaseSlot(t *testing.T) {
 }
 
 func TestServerLeaseSweepExpiresAbandonedStaging(t *testing.T) {
-	baseFS := NewLocalTernVFS(t.TempDir())
+	baseFS := vfs.NewLocalTernVFS(t.TempDir())
 	fs := &removeFailureVFS{TernVFS: baseFS}
 	staging, err := NewLocalStagingStore(t.TempDir(), nil)
 	if err != nil {
@@ -1825,7 +1824,7 @@ func TestServerLeaseSweepExpiresAbandonedStaging(t *testing.T) {
 			nfs4.Nfsstat4Name(status))
 	}
 	if _, err := fs.Lookup(
-		InodeID(clientID), activeOpenName(state.id),
+		vfs.InodeID(clientID), activeOpenName(state.id),
 	); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("lease sweep retained active-open marker: %v", err)
 	}
@@ -1839,7 +1838,7 @@ func TestServerLeaseSweepExpiresAbandonedStaging(t *testing.T) {
 }
 
 func TestServerLeaseSweepKeepsClientRenewedByAnotherOwner(t *testing.T) {
-	fs := NewLocalTernVFS(t.TempDir())
+	fs := vfs.NewLocalTernVFS(t.TempDir())
 	staging, err := NewLocalStagingStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -1912,7 +1911,7 @@ func TestServerLeaseSweepKeepsClientRenewedByAnotherOwner(t *testing.T) {
 }
 
 func TestNewServerDelaysExpiredRecoveredStagingRemoval(t *testing.T) {
-	fs := NewLocalTernVFS(t.TempDir())
+	fs := vfs.NewLocalTernVFS(t.TempDir())
 	stagingDir := t.TempDir()
 	staging, err := NewLocalStagingStore(stagingDir, nil)
 	if err != nil {
@@ -2008,7 +2007,7 @@ func TestNewServerDelaysExpiredRecoveredStagingRemoval(t *testing.T) {
 }
 
 func TestClientStoreGCKeepsConfirmedIncarnation(t *testing.T) {
-	fs := NewLocalTernVFS(t.TempDir())
+	fs := vfs.NewLocalTernVFS(t.TempDir())
 	store, err := NewClientStore(fs)
 	if err != nil {
 		t.Fatal(err)
@@ -2035,16 +2034,16 @@ func TestClientStoreGCKeepsConfirmedIncarnation(t *testing.T) {
 	store.now = func() time.Time {
 		return base.Add(nfsLeaseTime + time.Second)
 	}
-	if err := store.collectStaleForClient(InodeID(clientID)); err != nil {
+	if err := store.collectStaleForClient(vfs.InodeID(clientID)); err != nil {
 		t.Fatal(err)
 	}
 	store.now = func() time.Time {
 		return base.Add(nfsLeaseTime + clientGCGrace + 2*time.Second)
 	}
-	if err := store.collectStaleForClient(InodeID(clientID)); err != nil {
+	if err := store.collectStaleForClient(vfs.InodeID(clientID)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fs.Stat(InodeID(clientID)); err != nil {
+	if _, err := fs.Stat(vfs.InodeID(clientID)); err != nil {
 		t.Fatalf("confirmed incarnation was collected: %v", err)
 	}
 	if confirmed, err := store.IsConfirmed(clientID); err != nil {
@@ -2056,8 +2055,8 @@ func TestClientStoreGCKeepsConfirmedIncarnation(t *testing.T) {
 
 func countClientIncarnations(
 	t *testing.T,
-	fs TernVFS,
-	identityID InodeID,
+	fs vfs.TernVFS,
+	identityID vfs.InodeID,
 ) int {
 	t.Helper()
 	var count int
@@ -2080,7 +2079,7 @@ func countClientIncarnations(
 }
 
 func TestClientStoreRecognizesConfirmedClientAfterRestart(t *testing.T) {
-	fs := NewLocalTernVFS(t.TempDir())
+	fs := vfs.NewLocalTernVFS(t.TempDir())
 	first, err := NewClientStore(fs)
 	if err != nil {
 		t.Fatal(err)
@@ -3944,11 +3943,11 @@ func TestOpenExistingForWrite(t *testing.T) {
 	if err := syscall.Stat(path, &stat); err != nil {
 		t.Fatal(err)
 	}
-	fhID, ok := fhToInodeID(fh)
+	fhID, ok := vfs.FHToInodeID(fh)
 	if !ok {
 		t.Fatalf("invalid filehandle %x", fh)
 	}
-	if want := MakeInodeID(InodeTypeFile, stat.Ino); fhID != want {
+	if want := vfs.MakeInodeID(vfs.InodeTypeFile, stat.Ino); fhID != want {
 		t.Fatalf("write-open filehandle = %v, want published inode %v",
 			fhID, want)
 	}
@@ -4024,7 +4023,7 @@ func TestHydrationFailureDiscardsReplacement(t *testing.T) {
 	if err := os.WriteFile(path, []byte("original"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	local := NewLocalTernVFS(dir)
+	local := vfs.NewLocalTernVFS(dir)
 	failID, err := local.Lookup(local.RootID(), "existing.txt")
 	if err != nil {
 		t.Fatal(err)
@@ -4074,7 +4073,7 @@ func TestConcurrentClosePublishesOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	fs := &mutableBlockingLinkVFS{
-		LocalTernVFS: NewLocalTernVFS(dir),
+		LocalTernVFS: vfs.NewLocalTernVFS(dir),
 		started:      make(chan struct{}),
 		release:      make(chan struct{}),
 	}
@@ -4153,7 +4152,7 @@ func TestBackgroundReadHasBoundedForegroundYield(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "file"), []byte("data"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	fs := NewLocalTernVFS(dir)
+	fs := vfs.NewLocalTernVFS(dir)
 	id, err := fs.Lookup(fs.RootID(), "file")
 	if err != nil {
 		t.Fatal(err)
@@ -4189,7 +4188,7 @@ func TestBackgroundReadReleasesSlotAfterPanic(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "file"), []byte("data"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	local := NewLocalTernVFS(dir)
+	local := vfs.NewLocalTernVFS(dir)
 	id, err := local.Lookup(local.RootID(), "file")
 	if err != nil {
 		t.Fatal(err)
@@ -4320,7 +4319,7 @@ func TestClientRebootDoesNotDiscardOtherWriter(t *testing.T) {
 	if err := os.WriteFile(path, []byte("original"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	fs := NewLocalTernVFS(dir)
+	fs := vfs.NewLocalTernVFS(dir)
 	staging, err := NewLocalStagingStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -4420,7 +4419,7 @@ func TestExpiredMutableOpenReleasesTarget(t *testing.T) {
 	if err := os.WriteFile(path, []byte("original"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	fs := NewLocalTernVFS(dir)
+	fs := vfs.NewLocalTernVFS(dir)
 	staging, err := NewLocalStagingStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -4466,7 +4465,7 @@ func TestRecoveredMutableOpenCanBeReplayedByClient(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	fs := NewLocalTernVFS(dir)
+	fs := vfs.NewLocalTernVFS(dir)
 	stagingDir := t.TempDir()
 	staging1, err := NewLocalStagingStore(stagingDir, nil)
 	if err != nil {
@@ -4527,7 +4526,7 @@ func TestRecoveredMutableOpenCanBeReplayedByClient(t *testing.T) {
 
 func TestRecoveredNewFileCanBeReopenedWithoutCreate(t *testing.T) {
 	dir := t.TempDir()
-	fs := NewLocalTernVFS(dir)
+	fs := vfs.NewLocalTernVFS(dir)
 	stagingDir := t.TempDir()
 	staging1, err := NewLocalStagingStore(stagingDir, nil)
 	if err != nil {
@@ -4582,7 +4581,7 @@ func TestRecoveredMutableOpenKeepsOriginalBase(t *testing.T) {
 	if err := os.WriteFile(path, []byte("original"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	fs := NewLocalTernVFS(dir)
+	fs := vfs.NewLocalTernVFS(dir)
 	stagingDir := t.TempDir()
 	staging1, err := NewLocalStagingStore(stagingDir, nil)
 	if err != nil {
@@ -4637,7 +4636,7 @@ func TestRecoveredMutableOpenKeepsOriginalBase(t *testing.T) {
 	recoveredState, recoveredFH := openWriteFile(t, conn2, &xid, clientid, "existing.txt")
 	// Reopening by name returns the handle the name has now; the recovered
 	// staging keeps its own base.
-	if !bytes.Equal(recoveredFH, inodeIDToFH(currentID)) {
+	if !bytes.Equal(recoveredFH, vfs.InodeIDToFH(currentID)) {
 		t.Fatal("recovered OPEN did not return the current published handle")
 	}
 	closeFile(t, conn2, &xid, recoveredFH, recoveredState)
@@ -4659,7 +4658,7 @@ func TestRecoveredMissingBaseCreatesFreshFile(t *testing.T) {
 	if err := os.WriteFile(path, []byte("original"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	fs := NewLocalTernVFS(dir)
+	fs := vfs.NewLocalTernVFS(dir)
 	stagingDir := t.TempDir()
 	staging1, err := NewLocalStagingStore(stagingDir, nil)
 	if err != nil {
@@ -5253,7 +5252,7 @@ func activeOpenMarkerCount(
 	wireID uint64,
 ) int {
 	t.Helper()
-	incarnation := InodeID(incarnationForTest(t, srv, wireID))
+	incarnation := vfs.InodeID(incarnationForTest(t, srv, wireID))
 	count := 0
 	var cursor uint64
 	for {
@@ -6510,7 +6509,7 @@ func TestCloseReplay(t *testing.T) {
 	var localStateID StateID
 	copy(localStateID[:], stateid[4:])
 	if _, err := srv.fs.Lookup(
-		InodeID(clientid), activeOpenName(localStateID),
+		vfs.InodeID(clientid), activeOpenName(localStateID),
 	); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("CLOSE replay retained the open marker: %v", err)
 	}
@@ -6668,25 +6667,25 @@ func (gate *blockingVFSGate) callCount() int {
 }
 
 type blockingConstructVFS struct {
-	TernVFS
+	vfs.TernVFS
 	blockingVFSGate
 }
 
 func (fs *blockingConstructVFS) ConstructFile(
-	dirID InodeID,
-) (InodeID, Cookie, error) {
+	dirID vfs.InodeID,
+) (vfs.InodeID, vfs.Cookie, error) {
 	if clientStoreDir(fs.TernVFS, dirID) {
 		return fs.TernVFS.ConstructFile(dirID)
 	}
 	if err := fs.enter(); err != nil {
-		return 0, Cookie{}, err
+		return 0, vfs.Cookie{}, err
 	}
 	return fs.TernVFS.ConstructFile(dirID)
 }
 
 func TestConcurrentOpenSharesOwnerState(t *testing.T) {
 	fs := &blockingConstructVFS{
-		TernVFS: NewLocalTernVFS(t.TempDir()),
+		TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
 		blockingVFSGate: blockingVFSGate{
 			firstEntered: make(chan struct{}),
 			releaseFirst: make(chan struct{}),
@@ -6749,7 +6748,7 @@ func TestConcurrentOpenSharesOwnerState(t *testing.T) {
 }
 
 type failingLinkVFS struct {
-	TernVFS
+	vfs.TernVFS
 
 	mu        sync.Mutex
 	remaining int
@@ -6762,9 +6761,9 @@ type closeResult struct {
 }
 
 func (fs *failingLinkVFS) LinkFile(
-	fileID InodeID,
-	cookie Cookie,
-	dirID InodeID,
+	fileID vfs.InodeID,
+	cookie vfs.Cookie,
+	dirID vfs.InodeID,
 	name string,
 	data io.Reader,
 ) error {
@@ -6784,16 +6783,16 @@ func (fs *failingLinkVFS) LinkFile(
 }
 
 type blockingFailingLinkVFS struct {
-	TernVFS
+	vfs.TernVFS
 	entered chan struct{}
 	release chan struct{}
 	once    sync.Once
 }
 
 func (fs *blockingFailingLinkVFS) LinkFile(
-	fileID InodeID,
-	cookie Cookie,
-	dirID InodeID,
+	fileID vfs.InodeID,
+	cookie vfs.Cookie,
+	dirID vfs.InodeID,
 	name string,
 	data io.Reader,
 ) error {
@@ -6819,7 +6818,7 @@ type notifyingStagingStore struct {
 }
 
 func (store *notifyingStagingStore) GetMeta(
-	id InodeID,
+	id vfs.InodeID,
 ) (StagingMeta, bool) {
 	store.mu.Lock()
 	store.calls++
@@ -6841,7 +6840,7 @@ func (store *notifyingStagingStore) notifyNextGetMeta() <-chan struct{} {
 
 func TestWaitingCloseRechecksStagingMeta(t *testing.T) {
 	fs := &blockingFailingLinkVFS{
-		TernVFS: NewLocalTernVFS(t.TempDir()),
+		TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
 		entered: make(chan struct{}),
 		release: make(chan struct{}),
 	}
@@ -6925,7 +6924,7 @@ func TestFailedCloseReplaysFromSlot(t *testing.T) {
 		t.Fatal(err)
 	}
 	fs := &failingLinkVFS{
-		TernVFS:   NewLocalTernVFS(dir),
+		TernVFS:   vfs.NewLocalTernVFS(dir),
 		remaining: 1,
 	}
 	staging, err := NewLocalStagingStore(t.TempDir(), nil)
@@ -6975,14 +6974,14 @@ func TestFailedCloseReplaysFromSlot(t *testing.T) {
 }
 
 type blockingLinkVFS struct {
-	TernVFS
+	vfs.TernVFS
 	blockingVFSGate
 }
 
 func (fs *blockingLinkVFS) LinkFile(
-	fileID InodeID,
-	cookie Cookie,
-	dirID InodeID,
+	fileID vfs.InodeID,
+	cookie vfs.Cookie,
+	dirID vfs.InodeID,
 	name string,
 	data io.Reader,
 ) error {
@@ -6997,7 +6996,7 @@ func (fs *blockingLinkVFS) LinkFile(
 
 func TestConcurrentClosePublishesAtMostOnce(t *testing.T) {
 	fs := &blockingLinkVFS{
-		TernVFS: NewLocalTernVFS(t.TempDir()),
+		TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
 		blockingVFSGate: blockingVFSGate{
 			firstEntered: make(chan struct{}),
 			releaseFirst: make(chan struct{}),
@@ -7418,7 +7417,7 @@ func TestCommitVerifier(t *testing.T) {
 
 func TestReadOnlyMode(t *testing.T) {
 	dir := t.TempDir()
-	fs := NewLocalTernVFS(dir)
+	fs := vfs.NewLocalTernVFS(dir)
 	ss := readOnlyStagingStore{}
 	srv, err := NewServer(fs, ss, nil)
 	if err != nil {
@@ -7538,7 +7537,7 @@ func TestOpenStateStoreKeepsOtherOwnersUntilClientPurge(t *testing.T) {
 		{"reader", false},
 		{"writer", true},
 	} {
-		fileID := MakeInodeID(InodeTypeFile, uint64(i+1))
+		fileID := vfs.MakeInodeID(vfs.InodeTypeFile, uint64(i+1))
 		state, status := addOpenForTest(store,
 			openOwnerKey{clientID: clientID, owner: test.owner},
 			fileID, test.write, StateID{})
@@ -7580,7 +7579,7 @@ func TestOpenStateStoreKeepsOtherOwnersUntilClientPurge(t *testing.T) {
 func TestOpenStateStoreBoundsExpiredTombstones(t *testing.T) {
 	store := newOpenStateStore()
 	defer assertOpenStateIndex(t, store)
-	fileID := MakeInodeID(InodeTypeFile, 1)
+	fileID := vfs.MakeInodeID(vfs.InodeTypeFile, 1)
 	var firstStateID StateID
 	for i := 0; i <= maxTombstones; i++ {
 		clientID := uint64(i + 1)
@@ -7626,7 +7625,7 @@ func closeLocalStagingFiles(t *testing.T, store *LocalStagingStore) {
 type restartedStagedWrite struct {
 	rootDir    string
 	stagingDir string
-	fs         TernVFS
+	fs         vfs.TernVFS
 	srv        *Server
 	staging    *LocalStagingStore
 	clientID   uint64
@@ -7643,7 +7642,7 @@ func restartWithStagedWrite(
 ) restartedStagedWrite {
 	t.Helper()
 	rootDir, stagingDir := t.TempDir(), t.TempDir()
-	fs := NewLocalTernVFS(rootDir)
+	fs := vfs.NewLocalTernVFS(rootDir)
 	firstStaging, err := NewLocalStagingStore(stagingDir, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -7849,7 +7848,7 @@ func TestStagedWriteOperationsAfterServerRestart(t *testing.T) {
 			var localStateID StateID
 			copy(localStateID[:], restarted.stateid[4:])
 			if _, err := restarted.fs.Lookup(
-				InodeID(restarted.clientID), activeOpenName(localStateID),
+				vfs.InodeID(restarted.clientID), activeOpenName(localStateID),
 			); !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("recovered CLOSE retained the open marker: %v", err)
 			}
@@ -7916,7 +7915,7 @@ func TestRecoveredStagedWriteRequiresActiveMarker(t *testing.T) {
 func TestSetclientidRebootRetiresStagingFiles(t *testing.T) {
 	rootDir := t.TempDir()
 	stagingDir := t.TempDir()
-	fs := NewLocalTernVFS(rootDir)
+	fs := vfs.NewLocalTernVFS(rootDir)
 	staging, err := NewLocalStagingStore(stagingDir, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -7966,9 +7965,9 @@ func TestLocalStagingStoreRejectsPreMagicSidecars(t *testing.T) {
 	// There are no deployed NFS servers, so nfsd reads one sidecar format.
 	// Sidecars from before the format marker are quarantined, not loaded.
 	meta := StagingMeta{
-		DirID:      MakeInodeID(InodeTypeDir, 7),
+		DirID:      vfs.MakeInodeID(vfs.InodeTypeDir, 7),
 		FileName:   "legacy.txt",
-		TernCookie: Cookie{1, 2, 3},
+		TernCookie: vfs.Cookie{1, 2, 3},
 		NFSStateID: StateID{4, 5, 6},
 		ClientID:   99,
 	}
@@ -7991,7 +7990,7 @@ func TestLocalStagingStoreRejectsPreMagicSidecars(t *testing.T) {
 	} {
 		t.Run(sidecar.name, func(t *testing.T) {
 			dir := t.TempDir()
-			id := MakeInodeID(InodeTypeFile, 42)
+			id := vfs.MakeInodeID(vfs.InodeTypeFile, 42)
 			data := []byte("legacy staged data")
 			if err := os.WriteFile(
 				filepath.Join(dir, fmt.Sprintf("%016x.staging", uint64(id))),
@@ -8028,9 +8027,9 @@ func TestLocalStagingStoreRejectsPreMagicSidecars(t *testing.T) {
 func TestLoadStagingMetaRejectsTrailingBytes(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "staging.meta")
 	meta := StagingMeta{
-		DirID:      MakeInodeID(InodeTypeDir, 1),
+		DirID:      vfs.MakeInodeID(vfs.InodeTypeDir, 1),
 		FileName:   "file.txt",
-		TernCookie: Cookie{1},
+		TernCookie: vfs.Cookie{1},
 		NFSStateID: StateID{2},
 		ClientID:   3,
 	}
@@ -8148,7 +8147,7 @@ func TestSetclientidReboot(t *testing.T) {
 		}
 		fileID := stagingIDForTest(t, srv.stagingStore, stateid)
 		assertRetiredStaging(t, srv.stagingStore, fileID)
-		fhID, _ := fhToInodeID(fh)
+		fhID, _ := vfs.FHToInodeID(fh)
 		var localStateID StateID
 		copy(localStateID[:], stateid[4:])
 		if _, status := srv.opens.lookup(
@@ -8190,8 +8189,8 @@ func TestSetclientidReboot(t *testing.T) {
 // readdirEntryXDRSize exactly matches the actual encoded XDR output for
 // various attribute masks and name lengths.
 func TestReaddirEntryXDRSize(t *testing.T) {
-	id := MakeInodeID(InodeTypeFile, 42)
-	ni := NodeInfo{Size: 1024}
+	id := vfs.MakeInodeID(vfs.InodeTypeFile, 42)
+	ni := vfs.NodeInfo{Size: 1024}
 
 	cases := []struct {
 		name   string
@@ -8217,7 +8216,7 @@ func TestReaddirEntryXDRSize(t *testing.T) {
 			respMask[1] = tc.mask[1] & supportedAttrs1
 
 			re := readdirEntry{
-				DirEntry: DirEntry{
+				DirEntry: vfs.DirEntry{
 					ID:       id,
 					Name:     tc.fname,
 					NameHash: 12345,
@@ -8250,7 +8249,7 @@ func TestReaddirEntryXDRSize(t *testing.T) {
 }
 
 func TestServerLeaseSweepExpiresButDoesNotRevokeConfirmedClient(t *testing.T) {
-	fs := NewLocalTernVFS(t.TempDir())
+	fs := vfs.NewLocalTernVFS(t.TempDir())
 	staging, err := NewLocalStagingStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -8310,7 +8309,7 @@ func TestServerLeaseSweepExpiresButDoesNotRevokeConfirmedClient(t *testing.T) {
 }
 
 func TestServerLeaseSweepDropsRenewOnlyClientCache(t *testing.T) {
-	fs := NewLocalTernVFS(t.TempDir())
+	fs := vfs.NewLocalTernVFS(t.TempDir())
 	staging, err := NewLocalStagingStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -8355,7 +8354,7 @@ func TestServerLeaseSweepDropsRenewOnlyClientCache(t *testing.T) {
 }
 
 func TestClientStoreMarkOpenReusesFreshLease(t *testing.T) {
-	fs := &countingVFS{TernVFS: NewLocalTernVFS(t.TempDir())}
+	fs := &countingVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
 	store, err := NewClientStore(fs)
 	if err != nil {
 		t.Fatal(err)
@@ -8441,7 +8440,7 @@ func TestClientStoreMarkOpenReusesFreshLease(t *testing.T) {
 }
 
 func TestRunLeaseSweepContinuesAfterPanic(t *testing.T) {
-	fs := NewLocalTernVFS(t.TempDir())
+	fs := vfs.NewLocalTernVFS(t.TempDir())
 	staging, err := NewLocalStagingStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -8462,7 +8461,7 @@ func TestRunLeaseSweepContinuesAfterPanic(t *testing.T) {
 	}
 	publishLeaseForTest(t, srv, clientID)
 	state := addConfirmedOpenForTest(t, srv, clientID, "owner",
-		MakeInodeID(InodeTypeFile, 80), false)
+		vfs.MakeInodeID(vfs.InodeTypeFile, 80), false)
 	srv.clients.setClock(func() time.Time { return base.Add(3 * nfsLeaseTime) })
 	srv.startedAt = base
 	srv.stagingStore = nil

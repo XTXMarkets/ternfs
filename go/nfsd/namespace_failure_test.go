@@ -17,21 +17,22 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 type namespaceProbeVFS struct {
-	TernVFS
+	vfs.TernVFS
 	mutations atomic.Int32
 	lookups   atomic.Int32
 	before    func()
 }
 
-func (fs *namespaceProbeVFS) LookupEdge(dir InodeID, name string) (Edge, error) {
+func (fs *namespaceProbeVFS) LookupEdge(dir vfs.InodeID, name string) (vfs.Edge, error) {
 	fs.lookups.Add(1)
 	return fs.TernVFS.LookupEdge(dir, name)
 }
 
-func (fs *namespaceProbeVFS) RemoveEdge(dir InodeID, name string, edge Edge) error {
+func (fs *namespaceProbeVFS) RemoveEdge(dir vfs.InodeID, name string, edge vfs.Edge) error {
 	fs.mutations.Add(1)
 	if fs.before != nil {
 		fs.before()
@@ -39,7 +40,7 @@ func (fs *namespaceProbeVFS) RemoveEdge(dir InodeID, name string, edge Edge) err
 	return fs.TernVFS.RemoveEdge(dir, name, edge)
 }
 
-func (fs *namespaceProbeVFS) RenameEdge(dir InodeID, name string, edge Edge, dst InodeID, newName string) error {
+func (fs *namespaceProbeVFS) RenameEdge(dir vfs.InodeID, name string, edge vfs.Edge, dst vfs.InodeID, newName string) error {
 	fs.mutations.Add(1)
 	if fs.before != nil {
 		fs.before()
@@ -71,7 +72,7 @@ func TestNamespacePreparationFailureKeepsWritersUsable(t *testing.T) {
 			if fs.mutations.Load() != 0 {
 				t.Fatal("preparation failure submitted a backend mutation")
 			}
-			for _, id := range []InodeID{f.id, dstID} {
+			for _, id := range []vfs.InodeID{f.id, dstID} {
 				meta, ok := f.store.GetMeta(id)
 				if !ok || meta.Guarded || meta.Unlinked || f.store.Failed(id) {
 					t.Fatalf("preparation failure excluded a writer: %+v", meta)
@@ -92,10 +93,10 @@ func TestNamespacePreparationFailureKeepsWritersUsable(t *testing.T) {
 
 type installedGuardFailureStore struct {
 	StagingStore
-	id InodeID
+	id vfs.InodeID
 }
 
-func (store *installedGuardFailureStore) SetGuard(id InodeID, guarded bool) error {
+func (store *installedGuardFailureStore) SetGuard(id vfs.InodeID, guarded bool) error {
 	err := store.StagingStore.SetGuard(id, guarded)
 	if err == nil && id == store.id && guarded {
 		return errors.New("guard installed but directory sync failed")
@@ -191,12 +192,12 @@ func TestNamespaceFinalDirectorySyncFailureIsSafe(t *testing.T) {
 
 type pausedFailureCheckStore struct {
 	StagingStore
-	id               InodeID
+	id               vfs.InodeID
 	paused           atomic.Bool
 	entered, release chan struct{}
 }
 
-func (store *pausedFailureCheckStore) Failed(id InodeID) bool {
+func (store *pausedFailureCheckStore) Failed(id vfs.InodeID) bool {
 	failed := store.StagingStore.Failed(id)
 	if id == store.id && store.paused.CompareAndSwap(false, true) {
 		close(store.entered)
@@ -347,7 +348,7 @@ func TestStagingStartupExcludesEveryBadEntry(t *testing.T) {
 			if recovered.Get(id) != nil || recovered.Get(healthy) == nil {
 				t.Fatal("startup did not isolate just the bad entry")
 			}
-			srv, err := NewServer(NewLocalTernVFS(t.TempDir()), recovered, nil)
+			srv, err := NewServer(vfs.NewLocalTernVFS(t.TempDir()), recovered, nil)
 			if err != nil {
 				t.Fatalf("excluded entry prevented server startup: %v", err)
 			}

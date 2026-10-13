@@ -9,6 +9,7 @@ import (
 
 	"github.com/XTXMarkets/ternfs/go/msgs"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 const (
@@ -142,7 +143,7 @@ type replyWork struct {
 // hash order, so its temporaries are directory-sized and not covered.
 const (
 	readdirPageEdges    = msgs.MAX_UDP_MTU / (8 + 8 + 1 + 1 + 8)
-	readdirPageBytes    = readdirPageEdges*int(unsafe.Sizeof(msgs.CurrentEdge{})+unsafe.Sizeof(DirEntry{}))*5/4 + 2*(msgs.MAX_UDP_MTU+16*readdirPageEdges) + 4<<10
+	readdirPageBytes    = readdirPageEdges*int(unsafe.Sizeof(msgs.CurrentEdge{})+unsafe.Sizeof(vfs.DirEntry{}))*5/4 + 2*(msgs.MAX_UDP_MTU+16*readdirPageEdges) + 4<<10
 	readdirAttrCapacity = 512 // A full supported-attribute encoding is 312 bytes.
 	readdirPrepareBytes = readdirPageBytes + 3*readdirAttrCapacity + 3*(maxTernNameLength+16)
 )

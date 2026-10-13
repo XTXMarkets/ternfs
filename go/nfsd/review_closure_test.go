@@ -21,6 +21,7 @@ import (
 
 	"github.com/XTXMarkets/ternfs/go/msgs"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 func TestReviewN08R1PopulatedTerminalSlotsRemainCharged(t *testing.T) {
@@ -28,7 +29,7 @@ func TestReviewN08R1PopulatedTerminalSlotsRemainCharged(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "victim"), []byte("data"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	srv := admissionWritableServer(t, &admissionPanicVFS{TernVFS: NewLocalTernVFS(root)})
+	srv := admissionWritableServer(t, &admissionPanicVFS{TernVFS: vfs.NewLocalTernVFS(root)})
 	ts := connectionSession(t, srv)
 	sess := srv.sessions.lookup(ts.id)
 	for slot := uint32(0); slot < 3; slot++ {
@@ -63,7 +64,7 @@ func TestReviewN08R2GetfhFollowingErrorBoundary(t *testing.T) {
 	for _, limit := range []uint32{140, 152} {
 		t.Run(fmt.Sprint(limit), func(t *testing.T) {
 			root := t.TempDir()
-			fs := NewLocalTernVFS(root)
+			fs := vfs.NewLocalTernVFS(root)
 			srv := admissionWritableServer(t, fs)
 			ts := connectionSession(t, srv)
 			srv.sessions.lookup(ts.id).maxCached = limit
@@ -97,7 +98,7 @@ func TestReviewN08R2GetfhFollowingErrorBoundary(t *testing.T) {
 }
 func TestReviewN08R2VariableBeforeGetfh(t *testing.T) {
 	root := t.TempDir()
-	fs := NewLocalTernVFS(root)
+	fs := vfs.NewLocalTernVFS(root)
 	srv := admissionWritableServer(t, fs)
 	ts := connectionSession(t, srv)
 	srv.sessions.lookup(ts.id).maxCached = 160
@@ -163,7 +164,7 @@ type reviewSyncFailStore struct {
 }
 type reviewSyncFailFile struct{ StagingFile }
 
-func (s *reviewSyncFailStore) Get(id InodeID) StagingFile {
+func (s *reviewSyncFailStore) Get(id vfs.InodeID) StagingFile {
 	f := s.StagingStore.Get(id)
 	if f != nil && s.armed {
 		return &reviewSyncFailFile{f}
@@ -199,7 +200,7 @@ func TestReviewN08R4JoinedOpenSizeSyncFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := &reviewSyncFailStore{StagingStore: base}
-	srv, err := NewServer(NewLocalTernVFS(root), store, nil)
+	srv, err := NewServer(vfs.NewLocalTernVFS(root), store, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -379,7 +380,7 @@ func TestReviewN08R1StalledTransportRetainsOutput(t *testing.T) {
 // revival there is nothing to deny (canonical r3 §6). Fresh sessions are
 // unaffected.
 func TestReviewN08R1RetiredSessionIDsStayBadSession(t *testing.T) {
-	srv := admissionWritableServer(t, NewLocalTernVFS(t.TempDir()))
+	srv := admissionWritableServer(t, vfs.NewLocalTernVFS(t.TempDir()))
 	addr, stop := serveTestServer(t, srv)
 	defer stop()
 	conn := dial(t, addr)
@@ -421,7 +422,7 @@ func TestReviewN08R1RetiredSessionIDsStayBadSession(t *testing.T) {
 }
 
 func TestReviewN08R1SessionAndWorkCapacityBeforeEffects(t *testing.T) {
-	srv := admissionWritableServer(t, NewLocalTernVFS(t.TempDir()))
+	srv := admissionWritableServer(t, vfs.NewLocalTernVFS(t.TempDir()))
 	addr, stop := serveTestServer(t, srv)
 	defer stop()
 	conn := dial(t, addr)
@@ -472,7 +473,7 @@ func TestReviewN08R2OpenFollowingGetfhBoundary(t *testing.T) {
 	for _, limit := range []uint32{164, 176} {
 		t.Run(fmt.Sprint(limit), func(t *testing.T) {
 			root := t.TempDir()
-			srv := admissionWritableServer(t, NewLocalTernVFS(root))
+			srv := admissionWritableServer(t, vfs.NewLocalTernVFS(root))
 			addr, stop := serveTestServer(t, srv)
 			defer stop()
 			conn := dial(t, addr)
@@ -514,7 +515,7 @@ func TestReviewN08R2OpenFollowingGetfhBoundary(t *testing.T) {
 	}
 }
 func TestReviewN08R4DefiniteOpenErrorStaysReplayable(t *testing.T) {
-	srv := admissionWritableServer(t, NewLocalTernVFS(t.TempDir()))
+	srv := admissionWritableServer(t, vfs.NewLocalTernVFS(t.TempDir()))
 	client, confirm, err := srv.clients.SetClientID([8]byte{}, []byte("definite-open"), clientOwner{})
 	if err != nil {
 		t.Fatal(err)
@@ -551,23 +552,23 @@ func TestReviewN08R4DefiniteOpenErrorStaysReplayable(t *testing.T) {
 // RemoteTernVFS: each page decodes fresh names, and every entry has a name of
 // the maximum length.
 type reviewPagedVFS struct {
-	TernVFS
+	vfs.TernVFS
 	entries int
 	sample  func()
 	stats   atomic.Int32
 }
 
-func (fs *reviewPagedVFS) Readdir(dir InodeID, start uint64) ([]DirEntry, uint64, error) {
+func (fs *reviewPagedVFS) Readdir(dir vfs.InodeID, start uint64) ([]vfs.DirEntry, uint64, error) {
 	if dir != fs.RootID() {
 		return fs.TernVFS.Readdir(dir, start)
 	}
 	fs.sample()
 	per := msgs.MAX_UDP_MTU / (8 + 8 + 1 + maxTernNameLength + 8)
 	first := max(int(start), 3)
-	var page []DirEntry
+	var page []vfs.DirEntry
 	for hash := first; hash < first+per && hash < fs.entries+3; hash++ {
 		name := fmt.Sprintf("%0*d", maxTernNameLength, hash)
-		page = append(page, DirEntry{Name: name, ID: MakeInodeID(InodeTypeFile, uint64(hash)), NameHash: uint64(hash)})
+		page = append(page, vfs.DirEntry{Name: name, ID: vfs.MakeInodeID(vfs.InodeTypeFile, uint64(hash)), NameHash: uint64(hash)})
 	}
 	next := uint64(first + per)
 	if int(next) >= fs.entries+3 {
@@ -575,18 +576,18 @@ func (fs *reviewPagedVFS) Readdir(dir InodeID, start uint64) ([]DirEntry, uint64
 	}
 	return page, next, nil
 }
-func (fs *reviewPagedVFS) Stat(id InodeID) (NodeInfo, error) {
-	if id.Type() != InodeTypeFile {
+func (fs *reviewPagedVFS) Stat(id vfs.InodeID) (vfs.NodeInfo, error) {
+	if id.Type() != vfs.InodeTypeFile {
 		return fs.TernVFS.Stat(id)
 	}
 	if fs.stats.Add(1)%16 == 0 {
 		fs.sample()
 	}
-	return NodeInfo{Size: uint64(id)}, nil
+	return vfs.NodeInfo{Size: uint64(id)}, nil
 }
 
 func TestReviewN08R1aReaddirPreparationWithinReservation(t *testing.T) {
-	fs := &reviewPagedVFS{TernVFS: NewLocalTernVFS(t.TempDir()), entries: 12000}
+	fs := &reviewPagedVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir()), entries: 12000}
 	srv, err := NewServer(fs, readOnlyStagingStore{}, nil)
 	if err != nil {
 		t.Fatal(err)

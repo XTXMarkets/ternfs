@@ -4,6 +4,10 @@
 
 package main
 
+import (
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
+)
+
 // The logical lease and its expiry (canonical r3 §8). Each process is its
 // own server owner, so the RFC lease is this process's logical lease, kept
 // per incarnation in the group's gate. Expiry needs both the lease-hold
@@ -57,7 +61,7 @@ func (s *Server) decideExpired(clientID uint64, expireState bool) (bool, error) 
 		live()
 		return false, err
 	case obs.collected:
-		s.clients.localClients.Delete(InodeID(clientID))
+		s.clients.localClients.Delete(vfs.InodeID(clientID))
 	case obs.unconfirmed:
 		// Replaced: nothing to mark; its durable state is purged.
 		if err := s.clients.forgetUnconfirmed(clientID); err != nil {
@@ -94,7 +98,7 @@ func (s *Server) decideExpired(clientID uint64, expireState bool) (bool, error) 
 	ss.mu.Lock()
 	g.lease, g.markerPhase = gateExpired, markerNone
 	ss.mu.Unlock()
-	s.clients.localClients.Delete(InodeID(clientID))
+	s.clients.localClients.Delete(vfs.InodeID(clientID))
 	if expireState {
 		s.expireLocally(clientID)
 	}

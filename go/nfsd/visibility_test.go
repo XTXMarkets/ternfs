@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 // exerciseVisibleCreation checks that CREATE publishes an empty file at
@@ -119,7 +120,7 @@ func TestVisibleCreation(t *testing.T) {
 
 func TestConcurrentGuardedCreationPublishesOnce(t *testing.T) {
 	fs := &blockingConstructVFS{
-		TernVFS: NewLocalTernVFS(t.TempDir()),
+		TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
 		blockingVFSGate: blockingVFSGate{
 			firstEntered: make(chan struct{}),
 			releaseFirst: make(chan struct{}),
@@ -205,7 +206,7 @@ func TestAbandonedCreationKeepsEmptyVersion(t *testing.T) {
 }
 
 func TestReadOnlyCreationSurvivesRestart(t *testing.T) {
-	fs := NewLocalTernVFS(t.TempDir())
+	fs := vfs.NewLocalTernVFS(t.TempDir())
 	stagingDir := t.TempDir()
 	store, err := NewLocalStagingStore(stagingDir, nil)
 	if err != nil {
@@ -267,30 +268,30 @@ func TestReadOnlyCreationSurvivesRestart(t *testing.T) {
 }
 
 type visibilityFailureVFS struct {
-	*LocalTernVFS
+	*vfs.LocalTernVFS
 	failure    string
 	constructs int
 }
 
-func (fs *visibilityFailureVFS) ConstructFile(dirID InodeID) (InodeID, Cookie, error) {
+func (fs *visibilityFailureVFS) ConstructFile(dirID vfs.InodeID) (vfs.InodeID, vfs.Cookie, error) {
 	if clientStoreDir(fs.LocalTernVFS, dirID) {
 		return fs.LocalTernVFS.ConstructFile(dirID)
 	}
 	fs.constructs++
 	if fs.failure == "staging" && fs.constructs == 2 {
-		return 0, Cookie{}, errors.New("injected staging construction failure")
+		return 0, vfs.Cookie{}, errors.New("injected staging construction failure")
 	}
 	return fs.LocalTernVFS.ConstructFile(dirID)
 }
 
-func (fs *visibilityFailureVFS) CreateFile(dirID InodeID, name string, data io.Reader) (InodeID, error) {
+func (fs *visibilityFailureVFS) CreateFile(dirID vfs.InodeID, name string, data io.Reader) (vfs.InodeID, error) {
 	if fs.failure == "marker" && isActiveOpenName(name) {
 		return 0, errors.New("injected open marker failure")
 	}
 	return fs.LocalTernVFS.CreateFile(dirID, name, data)
 }
 
-func (fs *visibilityFailureVFS) LinkFile(id InodeID, cookie Cookie, dirID InodeID, name string, data io.Reader) error {
+func (fs *visibilityFailureVFS) LinkFile(id vfs.InodeID, cookie vfs.Cookie, dirID vfs.InodeID, name string, data io.Reader) error {
 	if fs.failure == "link" && data == nil {
 		return errors.New("injected empty publication failure")
 	}
@@ -301,7 +302,7 @@ func TestFailedCreationDoesNotPublishEmptyVersion(t *testing.T) {
 	for _, failure := range []string{"staging", "marker", "link"} {
 		t.Run(failure, func(t *testing.T) {
 			fs := &visibilityFailureVFS{
-				LocalTernVFS: NewLocalTernVFS(t.TempDir()),
+				LocalTernVFS: vfs.NewLocalTernVFS(t.TempDir()),
 				failure:      failure,
 			}
 			store, err := NewLocalStagingStore(t.TempDir(), nil)
@@ -329,9 +330,7 @@ func TestFailedCreationDoesNotPublishEmptyVersion(t *testing.T) {
 			if _, err := fs.Lookup(fs.RootID(), "failed"); !os.IsNotExist(err) {
 				t.Fatalf("failed creation exposed a pathname: %v", err)
 			}
-			fs.mu.RLock()
-			transients := len(fs.transient)
-			fs.mu.RUnlock()
+			transients := fs.TransientCount()
 			if len(store.Entries()) != 0 || transients != 0 {
 				t.Fatal("failed creation leaked staging or transient inodes")
 			}

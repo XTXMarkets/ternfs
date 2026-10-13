@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 // lookupDurableOpen requires valid local protocol state and a fleet-wide
@@ -24,7 +25,7 @@ import (
 func (s *Server) lookupDurableOpen(
 	clientID uint64,
 	stateid nfs4.Stateid4,
-	fileID InodeID,
+	fileID vfs.InodeID,
 ) (openState, uint32) {
 	state, status := s.opens.lookup(
 		clientID,
@@ -139,7 +140,7 @@ func (s *Server) retireInactiveRecovered(clientID uint64, id StateID, retire fun
 // earlier nfsd process. Its client may present the staging inode as the
 // handle (as before this process), or the base inode the staging replaces.
 // Another client's staging is not found.
-func (s *Server) recoveredDataID(clientID uint64, id StateID, fileID InodeID) (InodeID, bool) {
+func (s *Server) recoveredDataID(clientID uint64, id StateID, fileID vfs.InodeID) (vfs.InodeID, bool) {
 	if !s.opens.canRecover(id) {
 		return 0, false
 	}
@@ -343,7 +344,7 @@ func (s *Server) releaseWrite(openStateid nfs4.Stateid4, st *compoundState, clos
 		hasMeta = false
 	}
 	// published is the version this open's writer leaves at the name.
-	published := InodeID(0)
+	published := vfs.InodeID(0)
 	expiredClose := false
 	if !closing && !state.writes() && !recovered {
 		// Already read-only.
@@ -482,7 +483,7 @@ func (s *Server) releaseWrite(openStateid nfs4.Stateid4, st *compoundState, clos
 // failForReaders marks a staging failed, when opens other than the closing
 // one read it, before a failed CLOSE discards it: its readers then get IO,
 // never the old bytes or NOENT (canonical r3 §11).
-func (s *Server) failForReaders(dataID InodeID, closing StateID) {
+func (s *Server) failForReaders(dataID vfs.InodeID, closing StateID) {
 	if !s.opens.readers(dataID, closing) {
 		return
 	}
@@ -494,7 +495,7 @@ func (s *Server) failForReaders(dataID InodeID, closing StateID) {
 // readSource is the inode a read OPEN by clientID of fileID uses, chosen
 // under the file lock: this client's view, unless that is a staging which
 // is gone or failed.
-func (s *Server) readSource(clientID uint64, fileID InodeID) InodeID {
+func (s *Server) readSource(clientID uint64, fileID vfs.InodeID) vfs.InodeID {
 	id := s.clientView(clientID, fileID)
 	if id == fileID {
 		return id
@@ -647,7 +648,7 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 
 	// targetID is the inode the open's I/O uses; publishedID is the inode
 	// the name resolves to, which is the filehandle OPEN returns.
-	var targetID, publishedID InodeID
+	var targetID, publishedID vfs.InodeID
 	var nfsSID StateID
 	joined := false
 	created := false
@@ -655,11 +656,11 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 	reusedStaging := false
 	var openSize *uint64
 	var exclusiveVerifier *[8]byte
-	var recoveredStagingID InodeID
+	var recoveredStagingID vfs.InodeID
 	var recoveredStagingMeta StagingMeta
 	var hasRecoveredStaging bool
-	var placeholderID, placeholderDir InodeID
-	var placeholderCookie Cookie
+	var placeholderID, placeholderDir vfs.InodeID
+	var placeholderCookie vfs.Cookie
 	var placeholderName string
 	placeholderPublished := false
 	defer func() {
@@ -678,17 +679,17 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 
 	// openDir and openName are where the file is opened, remembered for
 	// later opens by filehandle.
-	var openDir InodeID
+	var openDir vfs.InodeID
 	var openName string
 	// A writable CLAIM_FH this nfsd cannot name may recover a staged writer
 	// (canonical r3 §6): the preselected staging, which the pathname lock
 	// must confirm.
 	var recovering bool
-	var recoverID InodeID
+	var recoverID vfs.InodeID
 	var recoverMeta StagingMeta
 	switch claimType {
 	case nfs4.CLAIM_NULL, nfs4.CLAIM_FH:
-		var dirID InodeID
+		var dirID vfs.InodeID
 		var fileName string
 		if claimType == nfs4.CLAIM_FH {
 			// Open the file the client already holds. A read open needs
@@ -696,9 +697,9 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 			// cannot derive from the inode.
 			fileID := st.currentID
 			if status := requireRegularFile(fileID); status != nfs4.NFS4_OK {
-				if fileID.Type() == InodeTypeSymlink {
+				if fileID.Type() == vfs.InodeTypeSymlink {
 					status = nfs4.NFS4ERR_SYMLINK
-				} else if fileID.Type() == InodeTypeDir {
+				} else if fileID.Type() == vfs.InodeTypeDir {
 					status = nfs4.NFS4ERR_ISDIR
 				}
 				return fail(status)
@@ -907,7 +908,7 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 		}
 		if !staged && (created || access&nfs4.OPEN4_SHARE_ACCESS_WRITE != 0) {
 			if status := requireRegularFile(targetID); status != nfs4.NFS4_OK {
-				if targetID.Type() == InodeTypeSymlink {
+				if targetID.Type() == vfs.InodeTypeSymlink {
 					status = nfs4.NFS4ERR_SYMLINK
 				}
 				return fail(status)
@@ -919,7 +920,7 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 				adoptRecoveredStaging()
 				targetID = recoveredStagingID
 			} else {
-				var baseInfo NodeInfo
+				var baseInfo vfs.NodeInfo
 				if baseID != placeholderID {
 					var err error
 					baseInfo, err = s.fs.Stat(baseID)
@@ -989,7 +990,7 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 	}
 
 	if status := requireRegularFile(targetID); status != nfs4.NFS4_OK {
-		if targetID.Type() == InodeTypeSymlink {
+		if targetID.Type() == vfs.InodeTypeSymlink {
 			status = nfs4.NFS4ERR_SYMLINK
 		}
 		return fail(status)
@@ -1102,15 +1103,15 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 
 func (s *Server) constructStaging(
 	st *compoundState,
-	dirID InodeID,
+	dirID vfs.InodeID,
 	fileName string,
 	clientID uint64,
 	openOwner string,
 	write bool,
-	baseID InodeID,
-	baseInfo NodeInfo,
+	baseID vfs.InodeID,
+	baseInfo vfs.NodeInfo,
 	exclusiveVerifier *[8]byte,
-) (InodeID, StateID, uint32) {
+) (vfs.InodeID, StateID, uint32) {
 	recoveryKey, err := s.clients.stagingRecoveryKey(clientID)
 	if err != nil {
 		return 0, StateID{}, clientStoreErrToNFS(err)

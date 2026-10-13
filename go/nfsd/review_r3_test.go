@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 // bindStatus runs one BIND_CONN_TO_SESSION on conn and returns its status
@@ -43,7 +44,7 @@ func bindStatus(srv *Server, conn *rpcConnection, id SessionID, dir uint32, xid 
 // connection never ends with both directions from two requests that each
 // asked for one.
 func TestConcurrentBindsSerialize(t *testing.T) {
-	srv := admissionWritableServer(t, NewLocalTernVFS(t.TempDir()))
+	srv := admissionWritableServer(t, vfs.NewLocalTernVFS(t.TempDir()))
 	pairs := [][2]uint32{
 		{nfs4.CDFC4_FORE, nfs4.CDFC4_BACK},
 		{nfs4.CDFC4_FORE, nfs4.CDFC4_BACK_OR_BOTH},
@@ -97,7 +98,7 @@ func TestConcurrentBindsSerialize(t *testing.T) {
 // leaseRemoveHold blocks the first RemoveEdge of the lease name once
 // armed: the terminal pass's cleanup of our lease.
 type leaseRemoveHold struct {
-	TernVFS
+	vfs.TernVFS
 	mu        sync.Mutex
 	leaseName string
 	armed     bool
@@ -105,7 +106,7 @@ type leaseRemoveHold struct {
 	release   chan struct{}
 }
 
-func (fs *leaseRemoveHold) RemoveEdge(dir InodeID, name string, edge Edge) error {
+func (fs *leaseRemoveHold) RemoveEdge(dir vfs.InodeID, name string, edge vfs.Edge) error {
 	fs.mu.Lock()
 	hold := fs.armed && name == fs.leaseName
 	if hold {
@@ -124,7 +125,7 @@ func (fs *leaseRemoveHold) RemoveEdge(dir InodeID, name string, edge Edge) error
 // I/O is blocked. The cached CREATE_SESSION still replays, and the slot
 // does not move.
 func TestTerminalAdmissionBeforeCleanup(t *testing.T) {
-	fs := &leaseRemoveHold{TernVFS: NewLocalTernVFS(t.TempDir()),
+	fs := &leaseRemoveHold{TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
 		entered: make(chan struct{}), release: make(chan struct{})}
 	srv, err := NewServer(fs, readOnlyStagingStore{}, nil)
 	if err != nil {
@@ -140,7 +141,7 @@ func TestTerminalAdmissionBeforeCleanup(t *testing.T) {
 	id, _ := createdSession(t, c.compound(2, body))
 	inc := incarnationForTest(t, srv, clientID)
 	srv.clients.stopLeaseWorkers()
-	if !fs.present(InodeID(inc)) {
+	if !fs.present(vfs.InodeID(inc)) {
 		t.Fatal("no published lease to clean up")
 	}
 	setLeaseForTest(srv, inc, func(r *leaseRefresher) { r.state = leaseRecordStale })
@@ -149,7 +150,7 @@ func TestTerminalAdmissionBeforeCleanup(t *testing.T) {
 	fs.mu.Unlock()
 	cs := srv.clients
 	cs.refreshMu.Lock()
-	r, _ := cs.recordLocked(InodeID(inc), true)
+	r, _ := cs.recordLocked(vfs.InodeID(inc), true)
 	cs.refreshMu.Unlock()
 	passed := make(chan struct{})
 	go func() {
@@ -172,7 +173,7 @@ func TestTerminalAdmissionBeforeCleanup(t *testing.T) {
 
 	closeSignal(fs.release)
 	awaitSignal(t, passed, "the terminal pass")
-	if fs.present(InodeID(inc)) {
+	if fs.present(vfs.InodeID(inc)) {
 		t.Fatal("the terminal pass left our lease")
 	}
 	if srv.sessions.lookup(id) != nil {
@@ -187,7 +188,7 @@ func TestTerminalAdmissionBeforeCleanup(t *testing.T) {
 	}
 }
 
-func (fs *leaseRemoveHold) present(dir InodeID) bool {
+func (fs *leaseRemoveHold) present(dir vfs.InodeID) bool {
 	_, err := fs.TernVFS.Lookup(dir, fs.leaseName)
 	return err == nil
 }
@@ -206,7 +207,7 @@ func TestPendingBackReservationDoesNotKeepOldProbe(t *testing.T) {
 }
 
 func pendingBackProbe(t *testing.T, prune bool) {
-	fs := &confirmedLookupHold{TernVFS: NewLocalTernVFS(t.TempDir()),
+	fs := &confirmedLookupHold{TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
 		entered: make(chan struct{}), release: make(chan struct{})}
 	srv, err := NewServer(fs, readOnlyStagingStore{}, nil)
 	if err != nil {
@@ -290,7 +291,7 @@ type fenceClockVFS struct {
 	at time.Time
 }
 
-func (fs *fenceClockVFS) RemoveEdge(dir InodeID, name string, edge Edge) error {
+func (fs *fenceClockVFS) RemoveEdge(dir vfs.InodeID, name string, edge vfs.Edge) error {
 	if leaseTemp(name) {
 		fs.mu.Lock()
 		if fs.at.IsZero() {
@@ -313,7 +314,7 @@ func (fs *fenceClockVFS) firstFence() time.Time {
 // before it only read: the orphan is not consumed and the deadline does not
 // move. When it is due, maintenance runs with no further request.
 func TestVerifyDoesNotRunMaintenance(t *testing.T) {
-	counts := &passCountVFS{TernVFS: NewLocalTernVFS(t.TempDir())}
+	counts := &passCountVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
 	fs := &fenceClockVFS{passCountVFS: counts}
 	cs, clientID, r, _ := refresherForTest(t, fs)
 	counts.leaseName = cs.leaseName
@@ -321,7 +322,7 @@ func TestVerifyDoesNotRunMaintenance(t *testing.T) {
 	cs.leaseNeed = func(uint64) bool { return true }
 	cs.leaseSessions = func(uint64) bool { return true }
 	t.Cleanup(cs.stopLeaseWorkers)
-	dir := InodeID(clientID)
+	dir := vfs.InodeID(clientID)
 
 	// A LINK whose outcome was unknown: its orphan is recorded, unresolved,
 	// and its temp is not visible yet.
@@ -392,7 +393,7 @@ func TestVerifyDoesNotRunMaintenance(t *testing.T) {
 // the terminal steps, which then run as a maintenance pass: the record is
 // finished and our lease removed, without waiting for the next refresh.
 func TestVerifySchedulesTerminalWork(t *testing.T) {
-	fs := &passCountVFS{TernVFS: NewLocalTernVFS(t.TempDir())}
+	fs := &passCountVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
 	cs, clientID, r := refresherWorkerForTest(t, fs)
 	cs.startLeaseBootstrap(clientID)
 	waitFor(t, "the publication", func() bool { _, _, proven, _ := recordImage(r); return proven > 0 })
@@ -405,7 +406,7 @@ func TestVerifySchedulesTerminalWork(t *testing.T) {
 		defer r.mu.Unlock()
 		return r.finished && r.state == leaseRecordFleetExpired
 	})
-	if _, err := fs.TernVFS.Lookup(InodeID(clientID), cs.leaseName); err == nil {
+	if _, err := fs.TernVFS.Lookup(vfs.InodeID(clientID), cs.leaseName); err == nil {
 		t.Fatal("the terminal steps left our lease")
 	}
 }
@@ -413,7 +414,7 @@ func TestVerifySchedulesTerminalWork(t *testing.T) {
 // R2-VERIFY: an expiry this process notes (noteFleetExpired) makes the
 // terminal steps due at once, rather than at the next scheduled refresh.
 func TestNotedExpiryRunsTerminalSteps(t *testing.T) {
-	fs := &passCountVFS{TernVFS: NewLocalTernVFS(t.TempDir())}
+	fs := &passCountVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
 	cs, clientID, r := refresherWorkerForTest(t, fs)
 	cs.startLeaseBootstrap(clientID)
 	waitFor(t, "the publication", func() bool { _, _, proven, _ := recordImage(r); return proven > 0 })

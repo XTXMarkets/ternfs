@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 // leaseTemp reports a refresher lease temp: the publication of this
@@ -19,8 +21,8 @@ func leaseTemp(name string) bool { return strings.HasPrefix(name, tempPrefix) }
 
 // clientStoreDir reports whether dir is inside the client store (.nfs), where
 // the refresher constructs its temps.
-func clientStoreDir(fs TernVFS, dir InodeID) bool {
-	nfsDir, err := fs.Lookup(fs.RootID(), nfsDirName)
+func clientStoreDir(fs vfs.TernVFS, dir vfs.InodeID) bool {
+	nfsDir, err := fs.Lookup(fs.RootID(), vfs.NFSDirName)
 	if err != nil {
 		return false
 	}
@@ -59,7 +61,7 @@ func awaitShimLease(conn net.Conn, wireID uint64) {
 		return
 	}
 	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
-		if srv.clients.leaseProven(InodeID(c.incarnation)) {
+		if srv.clients.leaseProven(vfs.InodeID(c.incarnation)) {
 			return
 		}
 	}
@@ -69,7 +71,7 @@ func awaitShimLease(conn net.Conn, wireID uint64) {
 func setLeaseForTest(srv *Server, clientID uint64, mutate func(r *leaseRefresher)) {
 	cs := srv.clients
 	cs.refreshMu.Lock()
-	r, _ := cs.recordLocked(InodeID(clientID), true)
+	r, _ := cs.recordLocked(vfs.InodeID(clientID), true)
 	cs.refreshMu.Unlock()
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -95,7 +97,7 @@ func leasePassForTest(t *testing.T, srv *Server, clientID uint64) {
 	t.Helper()
 	cs := srv.clients
 	cs.refreshMu.Lock()
-	r, ok := cs.recordLocked(InodeID(clientID), true)
+	r, ok := cs.recordLocked(vfs.InodeID(clientID), true)
 	cs.refreshMu.Unlock()
 	if !ok {
 		t.Fatal("no refresher record credit")
@@ -107,7 +109,7 @@ func leasePassForTest(t *testing.T, srv *Server, clientID uint64) {
 // lease, as a client's first SEQUENCE after CREATE_SESSION waits out DELAY.
 func awaitLeaseProven(t *testing.T, srv *Server, clientID uint64) {
 	t.Helper()
-	for deadline := time.Now().Add(testChannelTimeout); !srv.clients.leaseProven(InodeID(clientID)); {
+	for deadline := time.Now().Add(testChannelTimeout); !srv.clients.leaseProven(vfs.InodeID(clientID)); {
 		if time.Now().After(deadline) {
 			t.Fatalf("lease of %d never published", clientID)
 		}

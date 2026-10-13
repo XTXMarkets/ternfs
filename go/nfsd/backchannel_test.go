@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 type cbSecOffer uint8
@@ -157,7 +158,7 @@ func TestCreateSessionCallbackSecurity(t *testing.T) {
 // direction and gives FORE for FORE_OR_BOTH, BACKCHANNEL_CTL is INVAL, and
 // SET_SSV is INVAL.
 func TestBackchannelOperationsWithoutBackchannel(t *testing.T) {
-	srv := admissionWritableServer(t, NewLocalTernVFS(t.TempDir()))
+	srv := admissionWritableServer(t, vfs.NewLocalTernVFS(t.TempDir()))
 	ts := connectionSession(t, srv)
 	conn := &rpcConnection{}
 	for _, dir := range []uint32{nfs4.CDFC4_BACK, nfs4.CDFC4_BACK_OR_BOTH} {
@@ -225,7 +226,7 @@ func TestStrayRepliesDropped(t *testing.T) {
 // A connection holds at most one CB_COMPOUND per session it carries
 // callbacks for and one CB_NULL; replies are delivered once, by XID.
 func TestCallbackMapsBounded(t *testing.T) {
-	srv := admissionWritableServer(t, NewLocalTernVFS(t.TempDir()))
+	srv := admissionWritableServer(t, vfs.NewLocalTernVFS(t.TempDir()))
 	c := &rpcConnection{send: func([]byte) bool { return true }}
 	a, b := connectionSession(t, srv).id, connectionSession(t, srv).id
 	call := func(xid uint32, id SessionID, null bool) *cbCall {

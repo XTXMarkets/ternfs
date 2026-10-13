@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 // NFSv4.1 open state.
@@ -37,8 +38,8 @@ type openOwnerKey struct {
 // published inode current at OPEN.
 type openState struct {
 	id     StateID
-	fileID InodeID
-	dataID InodeID
+	fileID vfs.InodeID
+	dataID vfs.InodeID
 	owner  openOwnerKey
 	// access is the READ/WRITE share access granted. modes holds bit v for
 	// each distinct share_access value v the open was granted, and
@@ -105,7 +106,7 @@ func (s *openState) narrowLocked(g grant) {
 
 type openFileKey struct {
 	owner  openOwnerKey
-	fileID InodeID
+	fileID vfs.InodeID
 }
 
 type openStateStore struct {
@@ -121,7 +122,7 @@ type openStateStore struct {
 	expired map[StateID]uint64
 	// expiredIDs bounds expired.
 	expiredIDs []StateID
-	fileLocks  keyedLocker[InodeID]
+	fileLocks  keyedLocker[vfs.InodeID]
 	now        func() time.Time
 }
 
@@ -182,13 +183,13 @@ func (os *openStateStore) markExpiredLocked(id StateID, owner uint64) {
 // lockFile serializes OPEN, CLOSE and OPEN_DOWNGRADE of one file, named by
 // the filehandle clients hold. A caller which needs the file's pathname
 // lock takes it first.
-func (os *openStateStore) lockFile(fileID InodeID) func() {
+func (os *openStateStore) lockFile(fileID vfs.InodeID) func() {
 	return os.fileLocks.lock(fileID)
 }
 
 // existingOpen returns the owner's open of fileID. The caller holds
 // lockFile for the pair.
-func (os *openStateStore) existingOpen(owner openOwnerKey, fileID InodeID) (openState, bool) {
+func (os *openStateStore) existingOpen(owner openOwnerKey, fileID vfs.InodeID) (openState, bool) {
 	os.mu.Lock()
 	defer os.mu.Unlock()
 	state := os.byFile[openFileKey{owner: owner, fileID: fileID}]
@@ -205,8 +206,8 @@ func (os *openStateStore) existingOpen(owner openOwnerKey, fileID InodeID) (open
 // dataID, the new writer's staging. The caller holds lockFile for the pair.
 func (os *openStateStore) open(
 	owner openOwnerKey,
-	fileID InodeID,
-	dataID InodeID,
+	fileID vfs.InodeID,
+	dataID vfs.InodeID,
 	g grant,
 	id StateID,
 ) (openState, error) {
@@ -260,7 +261,7 @@ func (os *openStateStore) ownerOf(id StateID) (uint64, bool) {
 
 // adoptable reports that adopt would succeed: no live open has the stateid,
 // and the owner has no live open of fileID. The caller holds lockFile.
-func (os *openStateStore) adoptable(owner openOwnerKey, fileID InodeID, id StateID) bool {
+func (os *openStateStore) adoptable(owner openOwnerKey, fileID vfs.InodeID, id StateID) bool {
 	os.mu.Lock()
 	defer os.mu.Unlock()
 	return os.states[id] == nil && os.byFile[openFileKey{owner: owner, fileID: fileID}] == nil
@@ -269,7 +270,7 @@ func (os *openStateStore) adoptable(owner openOwnerKey, fileID InodeID, id State
 // adopt installs a recovered open as a live one under its stateid, at
 // generation, after OPEN_DOWNGRADE published its writer. The caller holds
 // lockFile for the pair.
-func (os *openStateStore) adopt(owner openOwnerKey, fileID, dataID InodeID, g grant, id StateID, generation uint32) (openState, bool) {
+func (os *openStateStore) adopt(owner openOwnerKey, fileID, dataID vfs.InodeID, g grant, id StateID, generation uint32) (openState, bool) {
 	os.mu.Lock()
 	defer os.mu.Unlock()
 	key := openFileKey{owner: owner, fileID: fileID}
@@ -295,7 +296,7 @@ func (os *openStateStore) lookup(
 	clientID uint64,
 	id StateID,
 	generation uint32,
-	fileID InodeID,
+	fileID vfs.InodeID,
 ) (openState, uint32) {
 	os.mu.Lock()
 	defer os.mu.Unlock()
@@ -317,7 +318,7 @@ func (os *openStateStore) lookupLocked(
 	clientID uint64,
 	id StateID,
 	generation uint32,
-	fileID InodeID,
+	fileID vfs.InodeID,
 ) (*openState, uint32) {
 	state := os.states[id]
 	if state == nil {
@@ -358,7 +359,7 @@ func (os *openStateStore) status(clientID uint64, id StateID, generation uint32)
 // downgrade narrows an open to g with I/O on dataID: for a write open
 // downgraded to READ, the version its writer published. It advances the
 // generation. The caller holds lockFile for the pair and has checked g.
-func (os *openStateStore) downgrade(id StateID, dataID InodeID, g grant) (openState, bool) {
+func (os *openStateStore) downgrade(id StateID, dataID vfs.InodeID, g grant) (openState, bool) {
 	os.mu.Lock()
 	defer os.mu.Unlock()
 	state := os.states[id]
@@ -372,7 +373,7 @@ func (os *openStateStore) downgrade(id StateID, dataID InodeID, g grant) (openSt
 }
 
 // clientOpens returns clientID's opens of fileID, most recent first.
-func (os *openStateStore) clientOpens(clientID uint64, fileID InodeID) []openState {
+func (os *openStateStore) clientOpens(clientID uint64, fileID vfs.InodeID) []openState {
 	os.mu.Lock()
 	defer os.mu.Unlock()
 	var result []openState
@@ -388,7 +389,7 @@ func (os *openStateStore) clientOpens(clientID uint64, fileID InodeID) []openSta
 // writerOf returns a write open by clientID of fileID, if any. Opens by one
 // client of one handle share the client's page cache, so they share one
 // staging writer.
-func (os *openStateStore) writerOf(clientID uint64, fileID InodeID) (openState, bool) {
+func (os *openStateStore) writerOf(clientID uint64, fileID vfs.InodeID) (openState, bool) {
 	os.mu.Lock()
 	defer os.mu.Unlock()
 	for key, state := range os.byFile {
@@ -400,7 +401,7 @@ func (os *openStateStore) writerOf(clientID uint64, fileID InodeID) (openState, 
 }
 
 // otherWriter returns an open other than id which writes to dataID.
-func (os *openStateStore) otherWriter(id StateID, dataID InodeID) (openState, bool) {
+func (os *openStateStore) otherWriter(id StateID, dataID vfs.InodeID) (openState, bool) {
 	os.mu.Lock()
 	defer os.mu.Unlock()
 	for other, state := range os.states {
@@ -461,7 +462,7 @@ func (os *openStateStore) expire(id StateID) {
 // retarget points the opens whose I/O uses stagingID, a staging a clean or
 // timestamp-only CLOSE is discarding, back to their own fileID (canonical
 // r3 §11). The caller holds lockFile.
-func (os *openStateStore) retarget(stagingID InodeID) {
+func (os *openStateStore) retarget(stagingID vfs.InodeID) {
 	os.mu.Lock()
 	defer os.mu.Unlock()
 	for _, state := range os.states {
@@ -472,7 +473,7 @@ func (os *openStateStore) retarget(stagingID InodeID) {
 }
 
 // readers reports opens other than id whose I/O uses dataID.
-func (os *openStateStore) readers(dataID InodeID, id StateID) bool {
+func (os *openStateStore) readers(dataID vfs.InodeID, id StateID) bool {
 	os.mu.Lock()
 	defer os.mu.Unlock()
 	for other, state := range os.states {

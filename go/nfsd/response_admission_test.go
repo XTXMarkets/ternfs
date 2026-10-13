@@ -15,9 +15,10 @@ import (
 	"testing"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
-func admissionWritableServer(t *testing.T, fs TernVFS) *Server {
+func admissionWritableServer(t *testing.T, fs vfs.TernVFS) *Server {
 	t.Helper()
 	staging, err := NewLocalStagingStore(t.TempDir(), nil)
 	if err != nil {
@@ -80,7 +81,7 @@ func TestResponseAdmissionReadFullRPCBoundary(t *testing.T) {
 				if err := os.WriteFile(filepath.Join(root, "file"), []byte("12345"), 0600); err != nil {
 					t.Fatal(err)
 				}
-				srv, err := NewServer(NewLocalTernVFS(root), readOnlyStagingStore{}, nil)
+				srv, err := NewServer(vfs.NewLocalTernVFS(root), readOnlyStagingStore{}, nil)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -135,7 +136,7 @@ func TestResponseAdmissionMutationThenOversizedRead(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "old"), []byte("data"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	srv := admissionWritableServer(t, NewLocalTernVFS(root))
+	srv := admissionWritableServer(t, vfs.NewLocalTernVFS(root))
 	ts := connectionSession(t, srv)
 	sess := srv.sessions.lookup(ts.id)
 	sess.maxCached = 160
@@ -183,7 +184,7 @@ func TestResponseAdmissionHandleBeforeEffect(t *testing.T) {
 		for _, fits := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/fits=%t", nfs4.NfsOpnum4Name(opnum), fits), func(t *testing.T) {
 				root := t.TempDir()
-				fs := NewLocalTernVFS(root)
+				fs := vfs.NewLocalTernVFS(root)
 				staging, err := NewLocalStagingStore(t.TempDir(), nil)
 				if err != nil {
 					t.Fatal(err)
@@ -253,11 +254,11 @@ func TestResponseAdmissionHandleBeforeEffect(t *testing.T) {
 }
 
 type admissionPanicVFS struct {
-	TernVFS
+	vfs.TernVFS
 	calls int
 }
 
-func (fs *admissionPanicVFS) RemoveEdge(id InodeID, name string, edge Edge) error {
+func (fs *admissionPanicVFS) RemoveEdge(id vfs.InodeID, name string, edge vfs.Edge) error {
 	err := fs.TernVFS.RemoveEdge(id, name, edge)
 	fs.calls++
 	if err == nil {
@@ -270,7 +271,7 @@ func TestResponseAdmissionPanicRetainsTerminalAuthority(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "victim"), []byte("original"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	fs := &admissionPanicVFS{TernVFS: NewLocalTernVFS(root)}
+	fs := &admissionPanicVFS{TernVFS: vfs.NewLocalTernVFS(root)}
 	srv := admissionWritableServer(t, fs)
 	ts := connectionSession(t, srv)
 	wire := admissionSequence(buildCompoundBody([]byte("effect"), func(w *nfs4.COMPOUND4argsWriter) {
@@ -384,9 +385,9 @@ func TestResponseAdmissionErrorDiscriminants(t *testing.T) {
 	admissionStatus(t, res, nfs4.NFS4ERR_OP_NOT_IN_SESSION, nfs4.OP_GETFH)
 }
 
-type admissionPanicReadVFS struct{ TernVFS }
+type admissionPanicReadVFS struct{ vfs.TernVFS }
 
-func (fs *admissionPanicReadVFS) Read(id InodeID, offset uint64, buf []byte) (int, bool, error) {
+func (fs *admissionPanicReadVFS) Read(id vfs.InodeID, offset uint64, buf []byte) (int, bool, error) {
 	panic("injected READ panic after prior REMOVE")
 }
 func TestResponseAdmissionPanicPreservesEarlierMutation(t *testing.T) {
@@ -396,7 +397,7 @@ func TestResponseAdmissionPanicPreservesEarlierMutation(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	srv := admissionWritableServer(t, &admissionPanicReadVFS{TernVFS: NewLocalTernVFS(root)})
+	srv := admissionWritableServer(t, &admissionPanicReadVFS{TernVFS: vfs.NewLocalTernVFS(root)})
 	ts := connectionSession(t, srv)
 	wire := admissionSequence(buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
@@ -430,7 +431,7 @@ func TestResponseAdmissionUnknownNamespaceEffect(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(root, "victim"), []byte("original"), 0600); err != nil {
 				t.Fatal(err)
 			}
-			fs := &namespaceFaultVFS{TernVFS: NewLocalTernVFS(root), err: errors.New("lost whole-call outcome"), apply: applied}
+			fs := &namespaceFaultVFS{TernVFS: vfs.NewLocalTernVFS(root), err: errors.New("lost whole-call outcome"), apply: applied}
 			srv := admissionWritableServer(t, fs)
 			ts := connectionSession(t, srv)
 			wire := admissionSequence(buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) { w.AppendArgarray_Putrootfh(); admissionRemove(w, "victim") }), ts, 0, 1, false)
@@ -506,12 +507,12 @@ func TestResponseAdmissionSetattrBudgetErrorCompleteXDR(t *testing.T) {
 }
 
 type admissionLinkFaultVFS struct {
-	TernVFS
+	vfs.TernVFS
 	fail, apply bool
 	submissions int
 }
 
-func (fs *admissionLinkFaultVFS) LinkFile(id InodeID, cookie Cookie, dir InodeID, name string, data io.Reader) error {
+func (fs *admissionLinkFaultVFS) LinkFile(id vfs.InodeID, cookie vfs.Cookie, dir vfs.InodeID, name string, data io.Reader) error {
 	if !fs.fail || data == nil || leaseTemp(name) {
 		return fs.TernVFS.LinkFile(id, cookie, dir, name, data)
 	}
@@ -527,7 +528,7 @@ func TestResponseAdmissionUnknownCloseEffect(t *testing.T) {
 	for _, applied := range []bool{false, true} {
 		t.Run(fmt.Sprint(applied), func(t *testing.T) {
 			root := t.TempDir()
-			fs := &admissionLinkFaultVFS{TernVFS: NewLocalTernVFS(root), apply: applied}
+			fs := &admissionLinkFaultVFS{TernVFS: vfs.NewLocalTernVFS(root), apply: applied}
 			srv := admissionWritableServer(t, fs)
 			addr, stop := serveTestServer(t, srv)
 			defer stop()

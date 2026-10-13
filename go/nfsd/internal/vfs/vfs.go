@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-package main
+package vfs
 
 import (
 	"crypto/rand"
@@ -31,8 +31,8 @@ const (
 	InodeTypeSymlink = 3
 )
 
-// nfsDirName is the directory under the root that holds nfsd's own state.
-const nfsDirName = ".nfs"
+// NFSDirName is the directory under the root that holds nfsd's own state.
+const NFSDirName = ".nfs"
 
 func (id InodeID) Type() uint64   { return (uint64(id) >> 61) & 0x3 }
 func (id InodeID) Fileid() uint64 { return uint64(id) & ((1 << 61) - 1) }
@@ -55,13 +55,13 @@ type Edge struct {
 	CreationTime uint64
 }
 
-type mutationOutcome uint8
+type MutationOutcome uint8
 
 const (
-	mutationApplied mutationOutcome = iota
-	mutationDetachOnly
-	mutationNotApplied
-	mutationUnknown
+	MutationApplied MutationOutcome = iota
+	MutationDetachOnly
+	MutationNotApplied
+	MutationUnknown
 )
 
 // NodeInfo holds metadata returned by Stat.
@@ -156,7 +156,7 @@ type TernVFS interface {
 
 	// ClassifyMutation describes the entire submitted call, including retries.
 	// The original error is mapped to the NFS reply separately.
-	ClassifyMutation(op uint32, err error) mutationOutcome
+	ClassifyMutation(op uint32, err error) MutationOutcome
 
 	// SetTime sets the mtime and/or atime of a file or directory.
 	// A nil pointer means "don't change this field."
@@ -212,8 +212,8 @@ func NewLocalTernVFS(root string) *LocalTernVFS {
 		lfs.byPath[rel] = id
 		lfs.parent[id] = lfs.byPath[parentRel]
 		// Retained versions and private transients are user inodes.
-		if strings.HasPrefix(rel, filepath.Join(nfsDirName, "snapshots")+string(os.PathSeparator)) ||
-			strings.HasPrefix(rel, filepath.Join(nfsDirName, "transients")+string(os.PathSeparator)) {
+		if strings.HasPrefix(rel, filepath.Join(NFSDirName, "snapshots")+string(os.PathSeparator)) ||
+			strings.HasPrefix(rel, filepath.Join(NFSDirName, "transients")+string(os.PathSeparator)) {
 			lfs.parent[id] = rootID
 		}
 		return nil
@@ -460,7 +460,7 @@ func (lfs *LocalTernVFS) Symlink(dirID InodeID, name string, target string) (Ino
 
 func (lfs *LocalTernVFS) ConstructFile(dirID InodeID) (InodeID, Cookie, error) {
 	// Transient inodes have no public pathname in TernFS.
-	transients := filepath.Join(lfs.root, nfsDirName, "transients")
+	transients := filepath.Join(lfs.root, NFSDirName, "transients")
 	if err := os.MkdirAll(transients, 0700); err != nil {
 		return 0, Cookie{}, err
 	}
@@ -599,7 +599,7 @@ func (lfs *LocalTernVFS) snapshotLocked(path string, id InodeID) error {
 	if id.Type() == InodeTypeDir {
 		return nil
 	}
-	snapshotRel := filepath.Join(nfsDirName, "snapshots", fmt.Sprintf("%016x", uint64(id)))
+	snapshotRel := filepath.Join(NFSDirName, "snapshots", fmt.Sprintf("%016x", uint64(id)))
 	snapshotPath := filepath.Join(lfs.root, snapshotRel)
 	if err := os.MkdirAll(filepath.Dir(snapshotPath), 0700); err != nil {
 		return err
@@ -734,27 +734,27 @@ func (lfs *LocalTernVFS) SetTime(id InodeID, mtime *time.Time, atime *time.Time)
 	return os.Chtimes(path, at, mt)
 }
 
-// inodeIDToFH converts an InodeID to an 8-byte NFS file handle.
-func inodeIDToFH(id InodeID) []byte {
+// InodeIDToFH converts an InodeID to an 8-byte NFS file handle.
+func InodeIDToFH(id InodeID) []byte {
 	var fh [8]byte
 	binary.BigEndian.PutUint64(fh[:], uint64(id))
 	return fh[:]
 }
 
-// fhToInodeID converts an 8-byte NFS file handle back to an InodeID.
-func fhToInodeID(fh []byte) (InodeID, bool) {
+// FHToInodeID converts an 8-byte NFS file handle back to an InodeID.
+func FHToInodeID(fh []byte) (InodeID, bool) {
 	if len(fh) != 8 {
 		return 0, false
 	}
 	return InodeID(binary.BigEndian.Uint64(fh)), true
 }
 
-func (lfs *LocalTernVFS) ClassifyMutation(op uint32, err error) mutationOutcome {
+func (lfs *LocalTernVFS) ClassifyMutation(op uint32, err error) MutationOutcome {
 	if err == nil {
-		return mutationApplied
+		return MutationApplied
 	}
 	if op == nfs4.OP_REMOVE && errors.Is(err, os.ErrNotExist) {
-		return mutationDetachOnly
+		return MutationDetachOnly
 	}
 	// Local syscalls are not retransmitted. Only their errors establish a
 	// definite rejection; injected transport or decoding errors do not.
@@ -763,7 +763,7 @@ func (lfs *LocalTernVFS) ClassifyMutation(op uint32, err error) mutationOutcome 
 	var errno syscall.Errno
 	if errors.As(err, &pathErr) || errors.As(err, &linkErr) || errors.As(err, &errno) ||
 		errors.Is(err, os.ErrNotExist) || errors.Is(err, os.ErrExist) || errors.Is(err, os.ErrPermission) {
-		return mutationNotApplied
+		return MutationNotApplied
 	}
-	return mutationUnknown
+	return MutationUnknown
 }

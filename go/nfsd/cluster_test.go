@@ -26,6 +26,7 @@ import (
 	"github.com/XTXMarkets/ternfs/go/core/managedprocess"
 	"github.com/XTXMarkets/ternfs/go/msgs"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 var (
@@ -219,7 +220,7 @@ func startTernTestServerState(t *testing.T) (*Server, string, func()) {
 		t.Fatal(err)
 	}
 	bp := bufpool.NewBufPool()
-	fs := NewRemoteTernVFS(c, ternLogger, bp)
+	fs := vfs.NewRemoteTernVFS(c, ternLogger, bp)
 
 	stagingDir := t.TempDir()
 	ss, err := NewLocalStagingStore(stagingDir, nil)
@@ -962,24 +963,20 @@ func TestTernClientIncarnationGC(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Close()
-	fs := NewRemoteTernVFS(c, ternLogger, bufpool.NewBufPool())
+	fs := vfs.NewRemoteTernVFS(c, ternLogger, bufpool.NewBufPool())
 	cacheName := "client-store-cache-replacement"
 	firstCacheID, err := fs.CreateFile(fs.RootID(), cacheName, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	fs.mu.Lock()
-	fs.readers[msgs.InodeId(firstCacheID)] = &cachedReader{}
-	fs.mu.Unlock()
+	fs.CacheEmptyReader(firstCacheID)
 	secondCacheID, err := fs.CreateFile(fs.RootID(), cacheName, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	fs.mu.Lock()
-	_, createOldParentCached := fs.parents[firstCacheID]
-	_, createOldReaderCached := fs.readers[msgs.InodeId(firstCacheID)]
-	createSecondParent := fs.parents[secondCacheID]
-	fs.mu.Unlock()
+	_, createOldParentCached := fs.CachedParent(firstCacheID)
+	createOldReaderCached := fs.ReaderCached(firstCacheID)
+	createSecondParent, _ := fs.CachedParent(secondCacheID)
 	if createOldParentCached || createOldReaderCached {
 		t.Fatalf("CreateFile retained overwritten inode %d in VFS caches",
 			firstCacheID)
@@ -1032,11 +1029,11 @@ func TestTernClientIncarnationGC(t *testing.T) {
 	if err := first.MarkOpen(oldID, stateID); err != nil {
 		t.Fatal(err)
 	}
-	identityID, err := fs.LookupParent(InodeID(oldID))
+	identityID, err := fs.LookupParent(vfs.InodeID(oldID))
 	if err != nil {
 		t.Fatal(err)
 	}
-	leaseID, err := fs.Lookup(InodeID(oldID), first.leaseName)
+	leaseID, err := fs.Lookup(vfs.InodeID(oldID), first.leaseName)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1047,7 +1044,7 @@ func TestTernClientIncarnationGC(t *testing.T) {
 	if err := first.Renew(oldID); err != nil {
 		t.Fatal(err)
 	}
-	coalescedLeaseID, err := fs.Lookup(InodeID(oldID), first.leaseName)
+	coalescedLeaseID, err := fs.Lookup(vfs.InodeID(oldID), first.leaseName)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1056,9 +1053,7 @@ func TestTernClientIncarnationGC(t *testing.T) {
 			leaseID, coalescedLeaseID)
 	}
 	for i := 1; i <= 3; i++ {
-		fs.mu.Lock()
-		fs.readers[msgs.InodeId(leaseID)] = &cachedReader{}
-		fs.mu.Unlock()
+		fs.CacheEmptyReader(leaseID)
 
 		// Each rewrite is beyond the threshold from the previous durable
 		// renewal, but before that lease expires.
@@ -1066,30 +1061,28 @@ func TestTernClientIncarnationGC(t *testing.T) {
 		if err := first.Renew(oldID); err != nil {
 			t.Fatal(err)
 		}
-		nextLeaseID, err := fs.Lookup(InodeID(oldID), first.leaseName)
+		nextLeaseID, err := fs.Lookup(vfs.InodeID(oldID), first.leaseName)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if nextLeaseID == leaseID {
 			t.Fatalf("above-threshold renewal retained lease inode %d", leaseID)
 		}
-		fs.mu.Lock()
-		_, oldParentCached := fs.parents[leaseID]
-		_, oldReaderCached := fs.readers[msgs.InodeId(leaseID)]
-		nextParent := fs.parents[nextLeaseID]
-		fs.mu.Unlock()
+		_, oldParentCached := fs.CachedParent(leaseID)
+		oldReaderCached := fs.ReaderCached(leaseID)
+		nextParent, _ := fs.CachedParent(nextLeaseID)
 		if oldParentCached || oldReaderCached {
 			t.Errorf("renewal retained overwritten inode %d in VFS caches",
 				leaseID)
 		}
-		if nextParent != InodeID(oldID) {
+		if nextParent != vfs.InodeID(oldID) {
 			t.Fatalf("renewed lease parent = %d, want %d",
 				nextParent, oldID)
 		}
 		leaseID = nextLeaseID
 	}
 	oldName, found, err := first.incarnationName(
-		identityID, InodeID(oldID))
+		identityID, vfs.InodeID(oldID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1100,9 +1093,7 @@ func TestTernClientIncarnationGC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fs.mu.Lock()
-	fs.readers[msgs.InodeId(confirmedSymlinkID)] = &cachedReader{}
-	fs.mu.Unlock()
+	fs.CacheEmptyReader(confirmedSymlinkID)
 
 	newID, confirm, err := first.SetClientID(
 		[8]byte{2}, identity, owner)
@@ -1118,11 +1109,9 @@ func TestTernClientIncarnationGC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fs.mu.Lock()
-	_, oldParentCached := fs.parents[confirmedSymlinkID]
-	_, oldReaderCached := fs.readers[msgs.InodeId(confirmedSymlinkID)]
-	nextParent := fs.parents[nextConfirmedSymlinkID]
-	fs.mu.Unlock()
+	_, oldParentCached := fs.CachedParent(confirmedSymlinkID)
+	oldReaderCached := fs.ReaderCached(confirmedSymlinkID)
+	nextParent, _ := fs.CachedParent(nextConfirmedSymlinkID)
 	if oldParentCached || oldReaderCached {
 		t.Errorf("confirmation retained overwritten inode %d in VFS caches",
 			confirmedSymlinkID)
@@ -1131,7 +1120,7 @@ func TestTernClientIncarnationGC(t *testing.T) {
 		t.Fatalf("confirmed symlink parent = %d, want %d",
 			nextParent, identityID)
 	}
-	if err := collector.collectStaleForClient(InodeID(newID)); err != nil {
+	if err := collector.collectStaleForClient(vfs.InodeID(newID)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := fs.Lookup(identityID, oldName); err != nil {
@@ -1140,7 +1129,7 @@ func TestTernClientIncarnationGC(t *testing.T) {
 	// The first collection marks a candidate relative to the current shared
 	// clock, after the renewals and replacement, not the original base.
 	clock.Add(int64(clientGCGrace + time.Second))
-	if err := collector.collectStaleForClient(InodeID(newID)); err != nil {
+	if err := collector.collectStaleForClient(vfs.InodeID(newID)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := fs.Lookup(identityID, oldName); !os.IsNotExist(err) {
@@ -2701,15 +2690,13 @@ func TestTernLookupParentCachesDirectoryOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Close()
-	fs := NewRemoteTernVFS(c, ternLogger, bufpool.NewBufPool())
+	fs := vfs.NewRemoteTernVFS(c, ternLogger, bufpool.NewBufPool())
 	dirID, err := ensureDir(fs, fs.RootID(), "lookup-parent-cache")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	fs.mu.Lock()
-	delete(fs.parents, dirID)
-	fs.mu.Unlock()
+	fs.ForgetParent(dirID)
 
 	parentID, err := fs.LookupParent(dirID)
 	if err != nil {
@@ -2720,9 +2707,7 @@ func TestTernLookupParentCachesDirectoryOwner(t *testing.T) {
 			dirID, parentID, fs.RootID())
 	}
 
-	fs.mu.Lock()
-	cached, ok := fs.parents[dirID]
-	fs.mu.Unlock()
+	cached, ok := fs.CachedParent(dirID)
 
 	if !ok || cached != fs.RootID() {
 		t.Fatalf("LookupParent did not cache owner of %d: cached=%d ok=%v",

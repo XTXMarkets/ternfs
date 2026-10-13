@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 func TestOpenExclusive4(t *testing.T) {
@@ -120,7 +121,7 @@ func TestExclusiveVerifierDoesNotFollowReplacement(t *testing.T) {
 }
 
 func TestExclusiveCreateRecovery(t *testing.T) {
-	fs := NewLocalTernVFS(t.TempDir())
+	fs := vfs.NewLocalTernVFS(t.TempDir())
 	stagingDir := t.TempDir()
 	store, err := NewLocalStagingStore(stagingDir, nil)
 	if err != nil {
@@ -180,10 +181,10 @@ func TestExclusiveStagingCheckpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id := MakeInodeID(InodeTypeFile, 17)
+	id := vfs.MakeInodeID(vfs.InodeTypeFile, 17)
 	meta := StagingMeta{
-		DirID: MakeInodeID(InodeTypeDir, 1), FileName: "file",
-		BaseID: MakeInodeID(InodeTypeFile, 18), BaseSize: 10,
+		DirID: vfs.MakeInodeID(vfs.InodeTypeDir, 1), FileName: "file",
+		BaseID: vfs.MakeInodeID(vfs.InodeTypeFile, 18), BaseSize: 10,
 		ClientID: 1, NFSStateID: StateID{1}, OpenOwner: "", OwnerKnown: true,
 		Exclusive: true, Verifier: [8]byte{0, 1, 2, 3, 4, 5, 6, 7},
 	}
@@ -258,11 +259,11 @@ func TestExclusiveSidecarRoundTrip(t *testing.T) {
 }
 
 type exclusiveTimeVFS struct {
-	TernVFS
+	vfs.TernVFS
 	fail bool
 }
 
-func (fs *exclusiveTimeVFS) SetTime(id InodeID, mtime, atime *time.Time) error {
+func (fs *exclusiveTimeVFS) SetTime(id vfs.InodeID, mtime, atime *time.Time) error {
 	if fs.fail {
 		return os.ErrPermission
 	}
@@ -273,7 +274,7 @@ func TestExclusiveSetattr(t *testing.T) {
 	for _, failTimes := range []bool{false, true} {
 		t.Run(map[bool]string{false: "times", true: "published-before-time-error"}[failTimes], func(t *testing.T) {
 			root := t.TempDir()
-			fs := &exclusiveTimeVFS{TernVFS: NewLocalTernVFS(root), fail: failTimes}
+			fs := &exclusiveTimeVFS{TernVFS: vfs.NewLocalTernVFS(root), fail: failTimes}
 			store, err := NewLocalStagingStore(t.TempDir(), nil)
 			if err != nil {
 				t.Fatal(err)

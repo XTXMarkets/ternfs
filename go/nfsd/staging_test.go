@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 func TestStagingRecoveryRemovesTemporaryMetadata(t *testing.T) {
@@ -32,17 +34,17 @@ func TestStagingRecoveryRemovesTemporaryMetadata(t *testing.T) {
 func createOverlayStage(
 	t *testing.T,
 	dir string,
-	baseID InodeID,
+	baseID vfs.InodeID,
 	base []byte,
-) (*LocalStagingStore, InodeID, StagingFile) {
+) (*LocalStagingStore, vfs.InodeID, StagingFile) {
 	t.Helper()
 	store, err := NewLocalStagingStore(dir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	id := MakeInodeID(InodeTypeFile, 100)
+	id := vfs.MakeInodeID(vfs.InodeTypeFile, 100)
 	stage, err := store.Create(id, StagingMeta{
-		DirID:    MakeInodeID(InodeTypeDir, 1),
+		DirID:    vfs.MakeInodeID(vfs.InodeTypeDir, 1),
 		FileName: "file",
 		BaseID:   baseID,
 		BaseSize: uint64(len(base)),
@@ -54,7 +56,7 @@ func createOverlayStage(
 }
 
 func sliceBaseReader(base []byte, calls *[]byteRange) stagingBaseReader {
-	return func(_ InodeID, offset uint64, dest []byte) (int, bool, error) {
+	return func(_ vfs.InodeID, offset uint64, dest []byte) (int, bool, error) {
 		end := min(offset+uint64(len(dest)), uint64(len(base)))
 		if calls != nil {
 			*calls = append(*calls, byteRange{start: offset, end: end})
@@ -69,7 +71,7 @@ func sliceBaseReader(base []byte, calls *[]byteRange) stagingBaseReader {
 
 func TestStagingOverlayReadAndCache(t *testing.T) {
 	base := []byte("abcdefghij")
-	baseID := MakeInodeID(InodeTypeFile, 10)
+	baseID := vfs.MakeInodeID(vfs.InodeTypeFile, 10)
 	_, _, stage := createOverlayStage(t, t.TempDir(), baseID, base)
 
 	if err := stage.Write(3, []byte("XYZ")); err != nil {
@@ -90,7 +92,7 @@ func TestStagingOverlayReadAndCache(t *testing.T) {
 		t.Fatalf("base reads = %#v, want %#v", calls, wantCalls)
 	}
 
-	failReader := func(InodeID, uint64, []byte) (int, bool, error) {
+	failReader := func(vfs.InodeID, uint64, []byte) (int, bool, error) {
 		return 0, false, errors.New("unexpected base read")
 	}
 	clear(buf)
@@ -105,7 +107,7 @@ func TestStagingOverlayReadAndCache(t *testing.T) {
 
 func TestStagingCacheDoesNotOverwriteDirtyData(t *testing.T) {
 	base := []byte("abcdefghij")
-	baseID := MakeInodeID(InodeTypeFile, 10)
+	baseID := vfs.MakeInodeID(vfs.InodeTypeFile, 10)
 	_, _, stage := createOverlayStage(t, t.TempDir(), baseID, base)
 
 	if err := stage.Write(3, []byte("XYZ")); err != nil {
@@ -126,7 +128,7 @@ func TestStagingCacheDoesNotOverwriteDirtyData(t *testing.T) {
 
 func TestStagingFinishRetriesFailedBackgroundHydration(t *testing.T) {
 	base := []byte("abcdefghij")
-	baseID := MakeInodeID(InodeTypeFile, 10)
+	baseID := vfs.MakeInodeID(vfs.InodeTypeFile, 10)
 	_, _, stage := createOverlayStage(t, t.TempDir(), baseID, base)
 	if err := stage.Write(3, []byte("XYZ")); err != nil {
 		t.Fatal(err)
@@ -135,7 +137,7 @@ func TestStagingFinishRetriesFailedBackgroundHydration(t *testing.T) {
 	var calls atomic.Int32
 	failed := make(chan struct{})
 	reader := func(
-		_ InodeID,
+		_ vfs.InodeID,
 		offset uint64,
 		dest []byte,
 	) (int, bool, error) {
@@ -164,7 +166,7 @@ func TestStagingFinishRetriesFailedBackgroundHydration(t *testing.T) {
 
 func TestStagingHydrationSkipsFullyDirtyBase(t *testing.T) {
 	base := []byte("abcdefghij")
-	baseID := MakeInodeID(InodeTypeFile, 10)
+	baseID := vfs.MakeInodeID(vfs.InodeTypeFile, 10)
 	_, _, stage := createOverlayStage(t, t.TempDir(), baseID, base)
 	if err := stage.Write(0, []byte("0123456789")); err != nil {
 		t.Fatal(err)
@@ -172,7 +174,7 @@ func TestStagingHydrationSkipsFullyDirtyBase(t *testing.T) {
 
 	var calls atomic.Int32
 	reader := func(
-		InodeID,
+		vfs.InodeID,
 		uint64,
 		[]byte,
 	) (int, bool, error) {
@@ -190,14 +192,14 @@ func TestStagingHydrationSkipsFullyDirtyBase(t *testing.T) {
 
 func TestStagingFinishHydratesInParallel(t *testing.T) {
 	const baseSize = 4 * stagingHydrationChunk
-	baseID := MakeInodeID(InodeTypeFile, 10)
+	baseID := vfs.MakeInodeID(vfs.InodeTypeFile, 10)
 	_, _, stage := createOverlayStage(
 		t, t.TempDir(), baseID, make([]byte, baseSize),
 	)
 	var active atomic.Int32
 	var maximum atomic.Int32
 	reader := func(
-		_ InodeID,
+		_ vfs.InodeID,
 		_ uint64,
 		dest []byte,
 	) (int, bool, error) {
@@ -224,7 +226,7 @@ func TestStagingFinishHydratesInParallel(t *testing.T) {
 
 func TestStagingRemoveCancelsHydration(t *testing.T) {
 	const baseSize = 3 * stagingHydrationChunk
-	baseID := MakeInodeID(InodeTypeFile, 10)
+	baseID := vfs.MakeInodeID(vfs.InodeTypeFile, 10)
 	store, id, stage := createOverlayStage(
 		t, t.TempDir(), baseID, make([]byte, baseSize),
 	)
@@ -233,7 +235,7 @@ func TestStagingRemoveCancelsHydration(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
 	reader := func(
-		_ InodeID,
+		_ vfs.InodeID,
 		_ uint64,
 		dest []byte,
 	) (int, bool, error) {
@@ -278,14 +280,14 @@ func TestStagingRemoveCancelsHydration(t *testing.T) {
 
 func TestStagingReadRaceReturnsRemoved(t *testing.T) {
 	base := []byte("abcdefghij")
-	baseID := MakeInodeID(InodeTypeFile, 10)
+	baseID := vfs.MakeInodeID(vfs.InodeTypeFile, 10)
 	store, id, stage := createOverlayStage(
 		t, t.TempDir(), baseID, base,
 	)
 	started := make(chan struct{})
 	release := make(chan struct{})
 	reader := func(
-		_ InodeID,
+		_ vfs.InodeID,
 		offset uint64,
 		dest []byte,
 	) (int, bool, error) {
@@ -311,7 +313,7 @@ func TestStagingReadRaceReturnsRemoved(t *testing.T) {
 
 func TestStagingTruncateThenRegrowReturnsZeros(t *testing.T) {
 	base := []byte("abcdefghij")
-	baseID := MakeInodeID(InodeTypeFile, 10)
+	baseID := vfs.MakeInodeID(vfs.InodeTypeFile, 10)
 	_, _, stage := createOverlayStage(t, t.TempDir(), baseID, base)
 
 	if err := stage.SetSize(5); err != nil {
@@ -335,7 +337,7 @@ func TestStagingTruncateThenRegrowReturnsZeros(t *testing.T) {
 func TestStagingDirtyRangesSurviveRestart(t *testing.T) {
 	dir := t.TempDir()
 	base := []byte("abcdefghij")
-	baseID := MakeInodeID(InodeTypeFile, 10)
+	baseID := vfs.MakeInodeID(vfs.InodeTypeFile, 10)
 	_, id, stage := createOverlayStage(t, dir, baseID, base)
 	if err := stage.Write(3, []byte("XYZ")); err != nil {
 		t.Fatal(err)
@@ -376,7 +378,7 @@ func TestStagingDirtyRangesSurviveRestart(t *testing.T) {
 func TestStagingDropsUncommittedChangesOnRestart(t *testing.T) {
 	dir := t.TempDir()
 	base := []byte("abcdefghij")
-	baseID := MakeInodeID(InodeTypeFile, 10)
+	baseID := vfs.MakeInodeID(vfs.InodeTypeFile, 10)
 	_, id, stage := createOverlayStage(t, dir, baseID, base)
 	if err := stage.Write(3, []byte("XYZ")); err != nil {
 		t.Fatal(err)
@@ -422,9 +424,9 @@ func TestStagingRetainsUncommittedNewFileOnRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id := MakeInodeID(InodeTypeFile, 100)
+	id := vfs.MakeInodeID(vfs.InodeTypeFile, 100)
 	stage, err := store.Create(id, StagingMeta{
-		DirID:    MakeInodeID(InodeTypeDir, 1),
+		DirID:    vfs.MakeInodeID(vfs.InodeTypeDir, 1),
 		FileName: "new",
 	})
 	if err != nil {
@@ -463,11 +465,11 @@ func TestStagingAllowsIndependentReplacementsOfSameBase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	baseID := MakeInodeID(InodeTypeFile, 10)
-	firstID := MakeInodeID(InodeTypeFile, 100)
-	secondID := MakeInodeID(InodeTypeFile, 101)
+	baseID := vfs.MakeInodeID(vfs.InodeTypeFile, 10)
+	firstID := vfs.MakeInodeID(vfs.InodeTypeFile, 100)
+	secondID := vfs.MakeInodeID(vfs.InodeTypeFile, 101)
 	meta := StagingMeta{
-		DirID:    MakeInodeID(InodeTypeDir, 1),
+		DirID:    vfs.MakeInodeID(vfs.InodeTypeDir, 1),
 		FileName: "file",
 		BaseID:   baseID,
 		BaseSize: 10,
@@ -490,10 +492,10 @@ func TestStagingKeepsBaseFilehandlePrivate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	baseID := MakeInodeID(InodeTypeFile, 10)
-	stagingID := MakeInodeID(InodeTypeFile, 100)
+	baseID := vfs.MakeInodeID(vfs.InodeTypeFile, 10)
+	stagingID := vfs.MakeInodeID(vfs.InodeTypeFile, 100)
 	stage, err := store.Create(stagingID, StagingMeta{
-		DirID:    MakeInodeID(InodeTypeDir, 1),
+		DirID:    vfs.MakeInodeID(vfs.InodeTypeDir, 1),
 		FileName: "file",
 		BaseID:   baseID,
 		BaseSize: 10,
@@ -521,10 +523,10 @@ func TestStagingRebindSurvivesRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	baseID := MakeInodeID(InodeTypeFile, 10)
-	stagingID := MakeInodeID(InodeTypeFile, 100)
+	baseID := vfs.MakeInodeID(vfs.InodeTypeFile, 10)
+	stagingID := vfs.MakeInodeID(vfs.InodeTypeFile, 100)
 	if _, err := store.Create(stagingID, StagingMeta{
-		DirID:    MakeInodeID(InodeTypeDir, 1),
+		DirID:    vfs.MakeInodeID(vfs.InodeTypeDir, 1),
 		FileName: "file",
 		BaseID:   baseID,
 		BaseSize: 10,
@@ -552,19 +554,19 @@ func TestStagingRebindSurvivesRestart(t *testing.T) {
 }
 
 func hydrationReader(reader stagingBaseReader) stagingHydrationReader {
-	return func(_ <-chan struct{}, id InodeID, offset uint64, dest []byte) (int, bool, error) {
+	return func(_ <-chan struct{}, id vfs.InodeID, offset uint64, dest []byte) (int, bool, error) {
 		return reader(id, offset, dest)
 	}
 }
 
-func findStagingTarget(store StagingStore, dirID InodeID, name string) (InodeID, StagingMeta, bool) {
+func findStagingTarget(store StagingStore, dirID vfs.InodeID, name string) (vfs.InodeID, StagingMeta, bool) {
 	for id, meta := range store.FindTargets(dirID, name) {
 		return id, meta, true
 	}
 	return 0, StagingMeta{}, false
 }
 
-func stagingTargetBusyForTest(store StagingStore, dirID InodeID, name string) bool {
+func stagingTargetBusyForTest(store StagingStore, dirID vfs.InodeID, name string) bool {
 	for _, meta := range store.FindTargets(dirID, name) {
 		if !meta.Retired {
 			return true

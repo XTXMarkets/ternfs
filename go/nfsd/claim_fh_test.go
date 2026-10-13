@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 func openByHandle(
@@ -226,7 +227,7 @@ func setSizeForTest(t *testing.T, conn net.Conn, xid *uint32, fh []byte, sid [16
 func TestOpenWaitsForPublishingClose(t *testing.T) {
 	root := t.TempDir()
 	fs := &mutableBlockingLinkVFS{
-		LocalTernVFS: NewLocalTernVFS(root),
+		LocalTernVFS: vfs.NewLocalTernVFS(root),
 		started:      make(chan struct{}),
 		release:      make(chan struct{}),
 	}

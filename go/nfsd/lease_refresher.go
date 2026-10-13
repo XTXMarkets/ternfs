@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 // The durable lease refresher (canonical r3 §9). This process's lease file,
@@ -56,14 +57,14 @@ const leaseWriteTerm = nfsLeaseTime + nfsLeaseRenewAfter
 // its edge is consumed.
 type leaseOrphan struct {
 	temp  string
-	inode InodeID
+	inode vfs.InodeID
 	phase orphanPhase
 }
 
 // leaseAttempt is the one unsettled publication RENAME a record may have.
 type leaseAttempt struct {
 	orphan *leaseOrphan
-	edge   Edge
+	edge   vfs.Edge
 	expiry int64
 }
 
@@ -76,13 +77,13 @@ type leaseView struct {
 
 type leaseRefresher struct {
 	cs          *ClientStore
-	incarnation InodeID
+	incarnation vfs.InodeID
 
 	// mu is never held across I/O. The worker's own fields (attempt,
 	// orphans, identity, lastExpiry, backoff) change only in the worker,
 	// which holds leaseLocks; mu orders them with readers.
 	mu         sync.Mutex
-	identity   InodeID
+	identity   vfs.InodeID
 	proven     int64
 	verifiedAt int64
 	state      leaseRecordState
@@ -135,7 +136,7 @@ var (
 
 // recordLocked returns the incarnation's record, creating it when create is
 // set and a credit is free. The caller holds cs.refreshMu.
-func (cs *ClientStore) recordLocked(id InodeID, create bool) (*leaseRefresher, bool) {
+func (cs *ClientStore) recordLocked(id vfs.InodeID, create bool) (*leaseRefresher, bool) {
 	if r := cs.refreshers[id]; r != nil {
 		return r, true
 	}
@@ -174,7 +175,7 @@ func (r *leaseRefresher) kickLocked() {
 func (cs *ClientStore) leaseView(clientID uint64) (leaseView, bool) {
 	cs.refreshMu.Lock()
 	defer cs.refreshMu.Unlock()
-	r, ok := cs.recordLocked(InodeID(clientID), true)
+	r, ok := cs.recordLocked(vfs.InodeID(clientID), true)
 	if !ok {
 		return leaseView{}, false
 	}
@@ -193,7 +194,7 @@ func (cs *ClientStore) leaseView(clientID uint64) (leaseView, bool) {
 func (cs *ClientStore) requestLeaseVerify(clientID uint64) {
 	cs.refreshMu.Lock()
 	defer cs.refreshMu.Unlock()
-	if r, ok := cs.recordLocked(InodeID(clientID), true); ok {
+	if r, ok := cs.recordLocked(vfs.InodeID(clientID), true); ok {
 		cs.requestVerifyLocked(r)
 	}
 }
@@ -210,7 +211,7 @@ func (cs *ClientStore) requestVerifyLocked(r *leaseRefresher) {
 func (cs *ClientStore) noteLeaseNeed(clientID uint64) {
 	cs.refreshMu.Lock()
 	defer cs.refreshMu.Unlock()
-	if r, ok := cs.recordLocked(InodeID(clientID), true); ok {
+	if r, ok := cs.recordLocked(vfs.InodeID(clientID), true); ok {
 		r.kickLocked()
 	}
 }
@@ -220,7 +221,7 @@ func (cs *ClientStore) noteLeaseNeed(clientID uint64) {
 func (cs *ClientStore) reserveLeaseRecord(clientID uint64) (func(), bool) {
 	cs.refreshMu.Lock()
 	defer cs.refreshMu.Unlock()
-	r, ok := cs.recordLocked(InodeID(clientID), true)
+	r, ok := cs.recordLocked(vfs.InodeID(clientID), true)
 	if !ok {
 		return nil, false
 	}
@@ -248,7 +249,7 @@ func (cs *ClientStore) reserveLeaseRecord(clientID uint64) (func(), bool) {
 func (cs *ClientStore) startLeaseBootstrap(clientID uint64) {
 	cs.refreshMu.Lock()
 	defer cs.refreshMu.Unlock()
-	r, ok := cs.recordLocked(InodeID(clientID), true)
+	r, ok := cs.recordLocked(vfs.InodeID(clientID), true)
 	if !ok {
 		return
 	}
@@ -266,7 +267,7 @@ func (cs *ClientStore) startLeaseBootstrap(clientID uint64) {
 func (cs *ClientStore) noteFleetExpired(clientID uint64) {
 	cs.refreshMu.Lock()
 	defer cs.refreshMu.Unlock()
-	r := cs.refreshers[InodeID(clientID)]
+	r := cs.refreshers[vfs.InodeID(clientID)]
 	if r == nil {
 		return
 	}
@@ -291,7 +292,7 @@ func (cs *ClientStore) awaitLeasePublished(clientID uint64, wait time.Duration) 
 	defer deadline.Stop()
 	for {
 		cs.refreshMu.Lock()
-		r := cs.refreshers[InodeID(clientID)]
+		r := cs.refreshers[vfs.InodeID(clientID)]
 		cs.refreshMu.Unlock()
 		if r == nil {
 			return false
@@ -323,7 +324,7 @@ func (cs *ClientStore) awaitLeasePublished(clientID uint64, wait time.Duration) 
 func (cs *ClientStore) pinLeaseForTest(clientID uint64) {
 	cs.refreshMu.Lock()
 	defer cs.refreshMu.Unlock()
-	r, _ := cs.recordLocked(InodeID(clientID), true)
+	r, _ := cs.recordLocked(vfs.InodeID(clientID), true)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.pinned = true
@@ -579,7 +580,7 @@ func (r *leaseRefresher) pass(authorize bool) (time.Duration, bool) {
 
 	failed := false
 	if r.identity == 0 {
-		var identity InodeID
+		var identity vfs.InodeID
 		var valid bool
 		var err error
 		r.call(func() { identity, valid, err = cs.identityForIncarnation(r.incarnation) })
@@ -640,7 +641,7 @@ func (r *leaseRefresher) settle() bool {
 		if o.phase != orphanLinked && o.phase != orphanUnresolved || o.inode == 0 {
 			continue
 		}
-		var edge Edge
+		var edge vfs.Edge
 		var err error
 		r.call(func() { edge, err = cs.fs.LookupEdge(dir, o.temp) })
 		if err != nil || edge.ID != o.inode {
@@ -681,7 +682,7 @@ func (r *leaseRefresher) evidence() {
 	var lease durableLease
 	var leaseErr error
 	r.call(func() {
-		var id InodeID
+		var id vfs.InodeID
 		if id, leaseErr = cs.fs.Lookup(dir, cs.leaseName); leaseErr == nil {
 			lease, leaseErr = cs.readLease(id)
 		}
@@ -689,7 +690,7 @@ func (r *leaseRefresher) evidence() {
 	var marked bool
 	var markErr error
 	r.call(func() { marked, markErr = cs.hasExpiredMarker(dir) })
-	var target InodeID
+	var target vfs.InodeID
 	var found bool
 	var ptrErr error
 	r.call(func() { target, found, ptrErr = cs.readIdentitySymlink(r.identity, confirmedName) })
@@ -770,8 +771,8 @@ func (r *leaseRefresher) refresh() bool {
 		r.consume(o)
 		return false
 	}
-	var id InodeID
-	var cookie Cookie
+	var id vfs.InodeID
+	var cookie vfs.Cookie
 	r.call(func() { id, cookie, err = cs.fs.ConstructFile(dir) })
 	if err != nil {
 		// No LINK was sent for this never-reused name.
@@ -791,7 +792,7 @@ func (r *leaseRefresher) refresh() bool {
 	}
 	o.phase = orphanLinked
 	r.mu.Unlock()
-	var edge Edge
+	var edge vfs.Edge
 	r.call(func() { edge, err = cs.fs.LookupEdge(dir, o.temp) })
 	if err != nil || edge.ID != id {
 		return false
@@ -1021,7 +1022,7 @@ func (cs *ClientStore) sweepLeaseRecords() {
 // only reads the record instead, and asks for a verify.
 func (cs *ClientStore) refreshInline(clientID uint64) (leaseView, error) {
 	cs.refreshMu.Lock()
-	r, ok := cs.recordLocked(InodeID(clientID), true)
+	r, ok := cs.recordLocked(vfs.InodeID(clientID), true)
 	cs.refreshMu.Unlock()
 	if !ok {
 		return leaseView{}, nfs4.Error(nfs4.NFS4ERR_DELAY)

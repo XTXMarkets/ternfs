@@ -16,10 +16,11 @@ import (
 
 	"github.com/XTXMarkets/ternfs/go/msgs"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 type namespaceFaultVFS struct {
-	TernVFS
+	vfs.TernVFS
 	err    error
 	apply  bool
 	remote bool
@@ -34,17 +35,17 @@ func (fs *namespaceFaultVFS) fault(mutate func() error) error {
 	return fs.err
 }
 
-func (fs *namespaceFaultVFS) RemoveEdge(dir InodeID, name string, edge Edge) error {
+func (fs *namespaceFaultVFS) RemoveEdge(dir vfs.InodeID, name string, edge vfs.Edge) error {
 	return fs.fault(func() error { return fs.TernVFS.RemoveEdge(dir, name, edge) })
 }
 
-func (fs *namespaceFaultVFS) RenameEdge(dir InodeID, name string, edge Edge, dst InodeID, newName string) error {
+func (fs *namespaceFaultVFS) RenameEdge(dir vfs.InodeID, name string, edge vfs.Edge, dst vfs.InodeID, newName string) error {
 	return fs.fault(func() error { return fs.TernVFS.RenameEdge(dir, name, edge, dst, newName) })
 }
 
-func (fs *namespaceFaultVFS) ClassifyMutation(op uint32, err error) mutationOutcome {
+func (fs *namespaceFaultVFS) ClassifyMutation(op uint32, err error) vfs.MutationOutcome {
 	if fs.remote {
-		return (&RemoteTernVFS{}).ClassifyMutation(op, err)
+		return (&vfs.RemoteTernVFS{}).ClassifyMutation(op, err)
 	}
 	return fs.TernVFS.ClassifyMutation(op, err)
 }
@@ -179,25 +180,25 @@ func TestRenameStagedSourceAndDestination(t *testing.T) {
 
 type namespaceFixture struct {
 	root, disk string
-	fs         *LocalTernVFS
-	backend    TernVFS // serves in place of fs when set, including after restart
+	fs         *vfs.LocalTernVFS
+	backend    vfs.TernVFS // serves in place of fs when set, including after restart
 	store      *LocalStagingStore
 	server     *Server
 	conn       net.Conn
 	stop       func()
 	xid        uint32
 	clientID   uint64
-	id         InodeID
+	id         vfs.InodeID
 	state      [16]byte
 	fh         []byte
 }
 
 type blockingNamespaceRemove struct {
-	TernVFS
+	vfs.TernVFS
 	entered, release chan struct{}
 }
 
-func (fs blockingNamespaceRemove) RemoveEdge(dirID InodeID, name string, edge Edge) error {
+func (fs blockingNamespaceRemove) RemoveEdge(dirID vfs.InodeID, name string, edge vfs.Edge) error {
 	if name == "source" {
 		close(fs.entered)
 		<-fs.release
@@ -220,7 +221,7 @@ func openNamespaceFixture(t *testing.T) *namespaceFixture {
 			t.Fatal(err)
 		}
 	}
-	f.fs = NewLocalTernVFS(f.root)
+	f.fs = vfs.NewLocalTernVFS(f.root)
 	f.start(t)
 	t.Cleanup(func() { f.close(t) })
 	f.clientID = setupClient(t, f.conn, &f.xid)
@@ -263,7 +264,7 @@ func expireNamespaceClient(t *testing.T, f *namespaceFixture) {
 	f.server.runLeaseSweep()
 }
 
-func assertQuarantined(t *testing.T, f *namespaceFixture, id InodeID) {
+func assertQuarantined(t *testing.T, f *namespaceFixture, id vfs.InodeID) {
 	t.Helper()
 	if f.store.Get(id) != nil {
 		t.Fatal("quarantined writer is still indexed")
@@ -458,7 +459,7 @@ func (f *namespaceFixture) start(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	backend := TernVFS(f.fs)
+	backend := vfs.TernVFS(f.fs)
 	if f.backend != nil {
 		backend = f.backend
 	}
@@ -512,7 +513,7 @@ func TestRetiredSourceDoesNotBlockRename(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			var destinationID InodeID
+			var destinationID vfs.InodeID
 			if destination == "rejected" {
 				if _, err := f.fs.Mkdir(dir, "moved"); err != nil {
 					t.Fatal(err)
@@ -522,7 +523,7 @@ func TestRetiredSourceDoesNotBlockRename(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				var cookie Cookie
+				var cookie vfs.Cookie
 				destinationID, cookie, err = f.fs.ConstructFile(dir)
 				if err != nil {
 					t.Fatal(err)
@@ -561,7 +562,7 @@ func TestRetiredSourceDoesNotBlockRename(t *testing.T) {
 				if status == nfs4.NFS4_OK || status == nfs4.NFS4ERR_FILE_OPEN {
 					t.Fatalf("failed rename returned %s", nfs4.Nfsstat4Name(status))
 				}
-				for _, id := range []InodeID{f.id, destinationID} {
+				for _, id := range []vfs.InodeID{f.id, destinationID} {
 					if id == 0 {
 						continue
 					}
@@ -650,7 +651,7 @@ func TestRenameOpenStaging(t *testing.T) {
 	if status := renameNamespaceFile(t, f, "source", "target"); status != nfs4.NFS4_OK {
 		t.Fatalf("RENAME returned %s", nfs4.Nfsstat4Name(status))
 	}
-	for _, id := range []InodeID{f.id, second} {
+	for _, id := range []vfs.InodeID{f.id, second} {
 		meta, _ := f.store.GetMeta(id)
 		if meta.Guarded || meta.FileName != "target" {
 			t.Fatalf("writer did not follow rename: %+v", meta)
@@ -677,7 +678,7 @@ func TestCloseWaitsForStagedRename(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	baseFS := NewLocalTernVFS(dir)
+	baseFS := vfs.NewLocalTernVFS(dir)
 	fs := &blockingRenameVFS{
 		TernVFS: baseFS,
 		dstName: "renamed.txt",

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 var errInjectedReader = errors.New("injected reader-source fault")
@@ -21,15 +22,15 @@ var errInjectedReader = errors.New("injected reader-source fault")
 // readerSourceVFS fails LinkFile of a name, fails reads of one inode, and
 // can hold ScrapFile, the last step of a clean CLOSE under the file lock.
 type readerSourceVFS struct {
-	TernVFS
+	vfs.TernVFS
 	mu        sync.Mutex
 	failLink  string
-	failRead  InodeID
+	failRead  vfs.InodeID
 	holdScrap chan struct{}
 	scrapping chan struct{}
 }
 
-func (fs *readerSourceVFS) LinkFile(id InodeID, cookie Cookie, dir InodeID, name string, data io.Reader) error {
+func (fs *readerSourceVFS) LinkFile(id vfs.InodeID, cookie vfs.Cookie, dir vfs.InodeID, name string, data io.Reader) error {
 	fs.mu.Lock()
 	fail := name != "" && name == fs.failLink
 	fs.mu.Unlock()
@@ -39,7 +40,7 @@ func (fs *readerSourceVFS) LinkFile(id InodeID, cookie Cookie, dir InodeID, name
 	return fs.TernVFS.LinkFile(id, cookie, dir, name, data)
 }
 
-func (fs *readerSourceVFS) Read(id InodeID, offset uint64, dest []byte) (int, bool, error) {
+func (fs *readerSourceVFS) Read(id vfs.InodeID, offset uint64, dest []byte) (int, bool, error) {
 	fs.mu.Lock()
 	fail := id != 0 && id == fs.failRead
 	fs.mu.Unlock()
@@ -49,7 +50,7 @@ func (fs *readerSourceVFS) Read(id InodeID, offset uint64, dest []byte) (int, bo
 	return fs.TernVFS.Read(id, offset, dest)
 }
 
-func (fs *readerSourceVFS) ScrapFile(id InodeID, cookie Cookie) error {
+func (fs *readerSourceVFS) ScrapFile(id vfs.InodeID, cookie vfs.Cookie) error {
 	fs.mu.Lock()
 	hold, scrapping := fs.holdScrap, fs.scrapping
 	fs.holdScrap = nil
@@ -67,13 +68,13 @@ type readerFixture struct {
 	conn     net.Conn
 	xid      uint32
 	clientID uint64
-	fileID   InodeID
+	fileID   vfs.InodeID
 	fh       []byte
 }
 
 func newReaderFixture(t *testing.T, content string) *readerFixture {
 	t.Helper()
-	fs := &readerSourceVFS{TernVFS: NewLocalTernVFS(t.TempDir())}
+	fs := &readerSourceVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
 	staging, err := NewLocalStagingStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -91,7 +92,7 @@ func newReaderFixture(t *testing.T, content string) *readerFixture {
 	writeFileAt(t, f.conn, &f.xid, fh, sid, 0, []byte(content))
 	closeFile(t, f.conn, &f.xid, fh, sid)
 	f.fh = lookupFH(t, f.conn, &f.xid, "f")
-	f.fileID, _ = fhToInodeID(f.fh)
+	f.fileID, _ = vfs.FHToInodeID(f.fh)
 	return f
 }
 
@@ -141,7 +142,7 @@ func (f *readerFixture) read(t *testing.T, sid [16]byte) (uint32, string) {
 	return nfs4.NFS4_OK, string(iter.Resarray().Value().AsREAD4resEntry().Value().AsREAD4resok().Data())
 }
 
-func (f *readerFixture) dataID(t *testing.T, sid [16]byte) InodeID {
+func (f *readerFixture) dataID(t *testing.T, sid [16]byte) vfs.InodeID {
 	t.Helper()
 	var id StateID
 	copy(id[:], sid[4:])

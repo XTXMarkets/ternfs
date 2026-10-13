@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 // peakVFS holds user-file ConstructFile and LinkFile calls at the TernVFS
@@ -23,7 +24,7 @@ import (
 // This measures nfsd's own concurrency up to the VFS; it says nothing about
 // concurrency inside the storage backend, native RPCs or throughput.
 type peakVFS struct {
-	TernVFS
+	vfs.TernVFS
 	mu      sync.Mutex
 	gate    string // "construct" or "link"
 	now     int
@@ -31,7 +32,7 @@ type peakVFS struct {
 	release chan struct{}
 }
 
-func (fs *peakVFS) hold(kind string, dir InodeID) func() {
+func (fs *peakVFS) hold(kind string, dir vfs.InodeID) func() {
 	if clientStoreDir(fs.TernVFS, dir) {
 		return func() {}
 	}
@@ -52,12 +53,12 @@ func (fs *peakVFS) hold(kind string, dir InodeID) func() {
 	}
 }
 
-func (fs *peakVFS) ConstructFile(dir InodeID) (InodeID, Cookie, error) {
+func (fs *peakVFS) ConstructFile(dir vfs.InodeID) (vfs.InodeID, vfs.Cookie, error) {
 	defer fs.hold("construct", dir)()
 	return fs.TernVFS.ConstructFile(dir)
 }
 
-func (fs *peakVFS) LinkFile(id InodeID, cookie Cookie, dir InodeID, name string, data io.Reader) error {
+func (fs *peakVFS) LinkFile(id vfs.InodeID, cookie vfs.Cookie, dir vfs.InodeID, name string, data io.Reader) error {
 	if !strings.HasPrefix(name, "independent-") {
 		return fs.TernVFS.LinkFile(id, cookie, dir, name, data)
 	}
@@ -130,7 +131,7 @@ func independentOpenBody(clientID uint64, name string) []byte {
 // The peak is measured with every call held at the boundary.
 func TestIndependentFilesRunConcurrently(t *testing.T) {
 	const files = 8
-	fs := &peakVFS{TernVFS: NewLocalTernVFS(t.TempDir())}
+	fs := &peakVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
 	staging, err := NewLocalStagingStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)

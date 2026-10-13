@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 // The protocol tests build COMPOUNDs as an NFSv4.0 client would. sendRPC
@@ -552,7 +553,7 @@ func decodeConfirm(confirm [8]byte) uint32 {
 // waitForOpenFileWaiter signals once a second request waits on the file's
 // open lock or on a pathname lock.
 func (s *Server) waitForOpenFileWaiter(clientID uint64, fh []byte) <-chan struct{} {
-	fileID, _ := fhToInodeID(fh)
+	fileID, _ := vfs.FHToInodeID(fh)
 	ch := make(chan struct{})
 	go func() {
 		defer close(ch)
@@ -606,7 +607,7 @@ func (im *identityMap) get(clientID uint64) (string, [8]byte) {
 
 // stagingIDForTest returns the staging inode of the writer with stateid. A
 // write OPEN returns the published filehandle, not its staging inode.
-func stagingIDForTest(t *testing.T, store StagingStore, stateid [16]byte) InodeID {
+func stagingIDForTest(t *testing.T, store StagingStore, stateid [16]byte) vfs.InodeID {
 	t.Helper()
 	var other StateID
 	copy(other[:], stateid[4:])

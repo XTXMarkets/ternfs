@@ -17,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 // The only sidecar format this nfsd reads or writes. NFS8 is the NFSv4.1
@@ -50,39 +52,39 @@ const stagingQuarantineDirName = "quarantine"
 var errStagingRemoved = errors.New("staging file was removed")
 
 type stagingTarget struct {
-	dirID InodeID
+	dirID vfs.InodeID
 	name  string
 }
 
 // StagingMeta contains the state needed to complete CLOSE after a restart.
 type StagingMeta struct {
-	DirID           InodeID  // directory to link the file into on CLOSE
-	FileName        string   // name in directory
-	TernCookie      Cookie   // cookie from VFS ConstructFile
-	NFSStateID      StateID  // random, returned to NFS client as stateid "other"
-	ClientID        uint64   // owning client
-	OpenOwner       string   // separates recovered writers belonging to the same client
-	OwnerKnown      bool     // an empty owner is valid
-	RecoveryKey     [32]byte // stable client identity, boot verifier and principal
-	Unlinked        bool     // detached from its publication target
-	Guarded         bool     // interrupted namespace operations quarantine at startup
-	Retired         bool     // lease expired; retain acknowledged data for recovery
-	ReadOnly        bool     // CREATE may initialize size/times with read-only share access
-	Exclusive       bool     // EXCLUSIVE4 create
-	Verifier        [8]byte  // EXCLUSIVE4 create verifier
-	BaseID          InodeID  // immutable file being replaced; zero for a new file
+	DirID           vfs.InodeID // directory to link the file into on CLOSE
+	FileName        string      // name in directory
+	TernCookie      vfs.Cookie  // cookie from VFS ConstructFile
+	NFSStateID      StateID     // random, returned to NFS client as stateid "other"
+	ClientID        uint64      // owning client
+	OpenOwner       string      // separates recovered writers belonging to the same client
+	OwnerKnown      bool        // an empty owner is valid
+	RecoveryKey     [32]byte    // stable client identity, boot verifier and principal
+	Unlinked        bool        // detached from its publication target
+	Guarded         bool        // interrupted namespace operations quarantine at startup
+	Retired         bool        // lease expired; retain acknowledged data for recovery
+	ReadOnly        bool        // CREATE may initialize size/times with read-only share access
+	Exclusive       bool        // EXCLUSIVE4 create
+	Verifier        [8]byte     // EXCLUSIVE4 create verifier
+	BaseID          vfs.InodeID // immutable file being replaced; zero for a new file
 	BaseSize        uint64
 	Size            uint64
 	Dirty           byteRangeSet
 	MetadataChanged bool
-	Attrs           NodeInfo // Size is stored separately
+	Attrs           vfs.NodeInfo // Size is stored separately
 	version         uint8
 }
 
-type stagingHydrationReader func(cancel <-chan struct{}, fileID InodeID, offset uint64, dest []byte) (int, bool, error)
+type stagingHydrationReader func(cancel <-chan struct{}, fileID vfs.InodeID, offset uint64, dest []byte) (int, bool, error)
 
 type stagingBaseReader func(
-	fileID InodeID,
+	fileID vfs.InodeID,
 	offset uint64,
 	dest []byte,
 ) (n int, eof bool, err error)
@@ -90,13 +92,13 @@ type stagingBaseReader func(
 // StagingFile is the interface for locally staged file data during NFS writes.
 // The store owns the file lifecycle; there is no Close method.
 type StagingFile interface {
-	Stat() NodeInfo
+	Stat() vfs.NodeInfo
 	SetTime(mtime, atime *time.Time) error
 	SetSize(size uint64) error
 	Write(offset uint64, data []byte) error
 	Read(offset uint64, dest []byte, readBase stagingBaseReader) (n int, eof bool, err error)
 	Cache(offset uint64, data []byte) error
-	Base() (id InodeID, size uint64)
+	Base() (id vfs.InodeID, size uint64)
 	Dirty() bool
 	DataChanged() bool
 	Retire(clientID uint64, stateID StateID) error
@@ -113,29 +115,29 @@ type StagingStore interface {
 	// ReadOnly returns true if no staging directory is configured.
 	ReadOnly() bool
 	// Create creates a new staging file with associated metadata.
-	Create(id InodeID, meta StagingMeta) (StagingFile, error)
+	Create(id vfs.InodeID, meta StagingMeta) (StagingFile, error)
 	// Get returns the staging file for the given inode, or nil.
-	Get(id InodeID) StagingFile
+	Get(id vfs.InodeID) StagingFile
 	// GetMeta returns the metadata sidecar for the given inode.
-	GetMeta(id InodeID) (StagingMeta, bool)
+	GetMeta(id vfs.InodeID) (StagingMeta, bool)
 	// FindTargets returns the staging sessions indexed by dirID/name.
-	FindTargets(dirID InodeID, name string) map[InodeID]StagingMeta
+	FindTargets(dirID vfs.InodeID, name string) map[vfs.InodeID]StagingMeta
 	// Entries returns a snapshot of all staging metadata keyed by staging inode.
-	Entries() map[InodeID]StagingMeta
+	Entries() map[vfs.InodeID]StagingMeta
 	// Rebind updates the owning client and stateid of a recovered staging file.
-	Rebind(id InodeID, clientID uint64, stateID StateID) error
+	Rebind(id vfs.InodeID, clientID uint64, stateID StateID) error
 	// Namespace updates preserve the current durable data checkpoint.
-	SetGuard(id InodeID, guarded bool) error
-	Detach(id InodeID) error
-	Retarget(id InodeID, dirID InodeID, name string) error
+	SetGuard(id vfs.InodeID, guarded bool) error
+	Detach(id vfs.InodeID) error
+	Retarget(id vfs.InodeID, dirID vfs.InodeID, name string) error
 	// Quarantine excludes an entry for the process lifetime and preserves its files.
-	Quarantine(id InodeID) error
-	Failed(id InodeID) bool
+	Quarantine(id vfs.InodeID) error
+	Failed(id vfs.InodeID) bool
 	// Remove closes and removes the staging file and sidecar for the given inode.
-	Remove(id InodeID)
+	Remove(id vfs.InodeID)
 	// StagedSize returns the staged size for the given inode.
 	// Returns (0, false) if the inode has no staging file.
-	StagedSize(id InodeID) (uint64, bool)
+	StagedSize(id vfs.InodeID) (uint64, bool)
 }
 
 // LocalStagingStore manages staging files as local files in a directory.
@@ -143,11 +145,11 @@ type StagingStore interface {
 type LocalStagingStore struct {
 	mu      sync.Mutex
 	dir     string
-	files   map[InodeID]*localStagingEntry
-	targets map[stagingTarget]map[InodeID]struct{}
+	files   map[vfs.InodeID]*localStagingEntry
+	targets map[stagingTarget]map[vfs.InodeID]struct{}
 	log     *slog.Logger
 
-	fileLocks  keyedLocker[InodeID]
+	fileLocks  keyedLocker[vfs.InodeID]
 	createFile func(string) (*os.File, error)
 }
 
@@ -166,8 +168,8 @@ func NewLocalStagingStore(dir string, logger *slog.Logger) (*LocalStagingStore, 
 	}
 	s := &LocalStagingStore{
 		dir:        dir,
-		files:      make(map[InodeID]*localStagingEntry),
-		targets:    make(map[stagingTarget]map[InodeID]struct{}),
+		files:      make(map[vfs.InodeID]*localStagingEntry),
+		targets:    make(map[stagingTarget]map[vfs.InodeID]struct{}),
 		log:        logger,
 		createFile: os.Create,
 	}
@@ -198,7 +200,7 @@ func NewLocalStagingStore(dir string, logger *slog.Logger) (*LocalStagingStore, 
 		if err != nil {
 			continue
 		}
-		id := InodeID(idVal)
+		id := vfs.InodeID(idVal)
 		path := filepath.Join(dir, name)
 		f, err := os.OpenFile(path, os.O_RDWR, 0644)
 		if err != nil {
@@ -275,7 +277,7 @@ func (s *LocalStagingStore) closeAll() {
 
 func (s *LocalStagingStore) ReadOnly() bool { return false }
 
-func (s *LocalStagingStore) Create(id InodeID, meta StagingMeta) (StagingFile, error) {
+func (s *LocalStagingStore) Create(id vfs.InodeID, meta StagingMeta) (StagingFile, error) {
 	unlock := s.fileLocks.lock(id)
 	defer unlock()
 	s.mu.Lock()
@@ -333,7 +335,7 @@ func (s *LocalStagingStore) Create(id InodeID, meta StagingMeta) (StagingFile, e
 	return sf, nil
 }
 
-func (s *LocalStagingStore) Get(id InodeID) StagingFile {
+func (s *LocalStagingStore) Get(id vfs.InodeID) StagingFile {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	entry := s.files[id]
@@ -343,14 +345,14 @@ func (s *LocalStagingStore) Get(id InodeID) StagingFile {
 	return entry.file
 }
 
-func (s *LocalStagingStore) Failed(id InodeID) bool {
+func (s *LocalStagingStore) Failed(id vfs.InodeID) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	entry := s.files[id]
 	return entry != nil && entry.failed
 }
 
-func (s *LocalStagingStore) GetMeta(id InodeID) (StagingMeta, bool) {
+func (s *LocalStagingStore) GetMeta(id vfs.InodeID) (StagingMeta, bool) {
 	file := s.Get(id)
 	if file == nil {
 		return StagingMeta{}, false
@@ -358,30 +360,30 @@ func (s *LocalStagingStore) GetMeta(id InodeID) (StagingMeta, bool) {
 	return file.(*localStagingFile).Meta(), true
 }
 
-func (s *LocalStagingStore) FindTargets(dirID InodeID, name string) map[InodeID]StagingMeta {
+func (s *LocalStagingStore) FindTargets(dirID vfs.InodeID, name string) map[vfs.InodeID]StagingMeta {
 	s.mu.Lock()
-	files := make(map[InodeID]*localStagingFile)
+	files := make(map[vfs.InodeID]*localStagingFile)
 	for id := range s.targets[stagingTarget{dirID: dirID, name: name}] {
 		files[id] = s.files[id].file
 	}
 	s.mu.Unlock()
-	result := make(map[InodeID]StagingMeta, len(files))
+	result := make(map[vfs.InodeID]StagingMeta, len(files))
 	for id, file := range files {
 		result[id] = file.Meta()
 	}
 	return result
 }
 
-func (s *LocalStagingStore) Entries() map[InodeID]StagingMeta {
+func (s *LocalStagingStore) Entries() map[vfs.InodeID]StagingMeta {
 	s.mu.Lock()
-	files := make(map[InodeID]*localStagingFile)
+	files := make(map[vfs.InodeID]*localStagingFile)
 	for id, entry := range s.files {
 		if !entry.failed {
 			files[id] = entry.file
 		}
 	}
 	s.mu.Unlock()
-	entries := make(map[InodeID]StagingMeta, len(files))
+	entries := make(map[vfs.InodeID]StagingMeta, len(files))
 	for id, file := range files {
 		entries[id] = file.Meta()
 	}
@@ -389,7 +391,7 @@ func (s *LocalStagingStore) Entries() map[InodeID]StagingMeta {
 }
 
 func (s *LocalStagingStore) Rebind(
-	id InodeID,
+	id vfs.InodeID,
 	clientID uint64,
 	stateID StateID,
 ) error {
@@ -404,14 +406,14 @@ func (s *LocalStagingStore) Rebind(
 	return file.rebind(clientID, stateID)
 }
 
-func (s *LocalStagingStore) addTargetLocked(id InodeID, target stagingTarget) {
+func (s *LocalStagingStore) addTargetLocked(id vfs.InodeID, target stagingTarget) {
 	if s.targets[target] == nil {
-		s.targets[target] = make(map[InodeID]struct{})
+		s.targets[target] = make(map[vfs.InodeID]struct{})
 	}
 	s.targets[target][id] = struct{}{}
 }
 
-func (s *LocalStagingStore) removeTargetLocked(id InodeID, entry *localStagingEntry) {
+func (s *LocalStagingStore) removeTargetLocked(id vfs.InodeID, entry *localStagingEntry) {
 	delete(s.targets[entry.target], id)
 	if len(s.targets[entry.target]) == 0 {
 		delete(s.targets, entry.target)
@@ -420,7 +422,7 @@ func (s *LocalStagingStore) removeTargetLocked(id InodeID, entry *localStagingEn
 
 // The pathname lock serializes namespace callers. File checkpoint I/O takes
 // only sf.mu; reindexing rechecks the entry because removal can overlap it.
-func (s *LocalStagingStore) updateNamespace(id InodeID, update func(*StagingMeta)) error {
+func (s *LocalStagingStore) updateNamespace(id vfs.InodeID, update func(*StagingMeta)) error {
 	s.mu.Lock()
 	entry := s.files[id]
 	if entry == nil || entry.failed {
@@ -457,24 +459,24 @@ func (s *LocalStagingStore) updateNamespace(id InodeID, update func(*StagingMeta
 	return err
 }
 
-func (s *LocalStagingStore) SetGuard(id InodeID, guarded bool) error {
+func (s *LocalStagingStore) SetGuard(id vfs.InodeID, guarded bool) error {
 	return s.updateNamespace(id, func(meta *StagingMeta) { meta.Guarded = guarded })
 }
 
-func (s *LocalStagingStore) Detach(id InodeID) error {
+func (s *LocalStagingStore) Detach(id vfs.InodeID) error {
 	return s.updateNamespace(id, func(meta *StagingMeta) {
 		meta.Unlinked, meta.Guarded = true, false
 	})
 }
 
-func (s *LocalStagingStore) Retarget(id InodeID, dirID InodeID, name string) error {
+func (s *LocalStagingStore) Retarget(id vfs.InodeID, dirID vfs.InodeID, name string) error {
 	return s.updateNamespace(id, func(meta *StagingMeta) {
 		meta.DirID, meta.FileName = dirID, name
 		meta.Unlinked, meta.Guarded = false, false
 	})
 }
 
-func (s *LocalStagingStore) Quarantine(id InodeID) error {
+func (s *LocalStagingStore) Quarantine(id vfs.InodeID) error {
 	unlock := s.fileLocks.lock(id)
 	defer unlock()
 	s.mu.Lock()
@@ -495,7 +497,7 @@ func (s *LocalStagingStore) Quarantine(id InodeID) error {
 // Preserve both halves at whichever locations they reach. Sync the source,
 // destination and the directory which names the quarantine subdirectory even
 // on a partial move, and report every failure to the caller.
-func quarantineStagingFiles(dir string, id InodeID) error {
+func quarantineStagingFiles(dir string, id vfs.InodeID) error {
 	root := filepath.Join(dir, stagingQuarantineDirName)
 	if err := os.MkdirAll(root, 0700); err != nil {
 		return err
@@ -529,7 +531,7 @@ func quarantineStagingFiles(dir string, id InodeID) error {
 	return errors.Join(errs...)
 }
 
-func (s *LocalStagingStore) Remove(id InodeID) {
+func (s *LocalStagingStore) Remove(id vfs.InodeID) {
 	unlock := s.fileLocks.lock(id)
 	defer unlock()
 	s.mu.Lock()
@@ -547,7 +549,7 @@ func (s *LocalStagingStore) Remove(id InodeID) {
 	os.Remove(strings.TrimSuffix(name, ".staging") + ".meta")
 }
 
-func (s *LocalStagingStore) StagedSize(id InodeID) (uint64, bool) {
+func (s *LocalStagingStore) StagedSize(id vfs.InodeID) (uint64, bool) {
 	file := s.Get(id)
 	if file == nil {
 		return 0, false
@@ -559,23 +561,23 @@ func (s *LocalStagingStore) StagedSize(id InodeID) (uint64, bool) {
 type readOnlyStagingStore struct{}
 
 func (readOnlyStagingStore) ReadOnly() bool { return true }
-func (readOnlyStagingStore) Create(InodeID, StagingMeta) (StagingFile, error) {
+func (readOnlyStagingStore) Create(vfs.InodeID, StagingMeta) (StagingFile, error) {
 	return nil, os.ErrPermission
 }
-func (readOnlyStagingStore) Get(InodeID) StagingFile                             { return nil }
-func (readOnlyStagingStore) GetMeta(InodeID) (StagingMeta, bool)                 { return StagingMeta{}, false }
-func (readOnlyStagingStore) FindTargets(InodeID, string) map[InodeID]StagingMeta { return nil }
-func (readOnlyStagingStore) Entries() map[InodeID]StagingMeta                    { return nil }
-func (readOnlyStagingStore) Rebind(InodeID, uint64, StateID) error {
+func (readOnlyStagingStore) Get(vfs.InodeID) StagingFile                                 { return nil }
+func (readOnlyStagingStore) GetMeta(vfs.InodeID) (StagingMeta, bool)                     { return StagingMeta{}, false }
+func (readOnlyStagingStore) FindTargets(vfs.InodeID, string) map[vfs.InodeID]StagingMeta { return nil }
+func (readOnlyStagingStore) Entries() map[vfs.InodeID]StagingMeta                        { return nil }
+func (readOnlyStagingStore) Rebind(vfs.InodeID, uint64, StateID) error {
 	return os.ErrPermission
 }
-func (readOnlyStagingStore) SetGuard(InodeID, bool) error            { return os.ErrPermission }
-func (readOnlyStagingStore) Detach(InodeID) error                    { return os.ErrPermission }
-func (readOnlyStagingStore) Retarget(InodeID, InodeID, string) error { return os.ErrPermission }
-func (readOnlyStagingStore) Quarantine(InodeID) error                { return nil }
-func (readOnlyStagingStore) Failed(InodeID) bool                     { return false }
-func (readOnlyStagingStore) Remove(InodeID)                          {}
-func (readOnlyStagingStore) StagedSize(InodeID) (uint64, bool)       { return 0, false }
+func (readOnlyStagingStore) SetGuard(vfs.InodeID, bool) error                { return os.ErrPermission }
+func (readOnlyStagingStore) Detach(vfs.InodeID) error                        { return os.ErrPermission }
+func (readOnlyStagingStore) Retarget(vfs.InodeID, vfs.InodeID, string) error { return os.ErrPermission }
+func (readOnlyStagingStore) Quarantine(vfs.InodeID) error                    { return nil }
+func (readOnlyStagingStore) Failed(vfs.InodeID) bool                         { return false }
+func (readOnlyStagingStore) Remove(vfs.InodeID)                              {}
+func (readOnlyStagingStore) StagedSize(vfs.InodeID) (uint64, bool)           { return 0, false }
 
 // localStagingFile is a disk-backed staging file. For replacement files,
 // dirty identifies authoritative local bytes and hydrated identifies clean
@@ -587,7 +589,7 @@ type localStagingFile struct {
 	meta            StagingMeta
 	metaPath        string
 	dirty           byteRangeSet
-	attrs           NodeInfo
+	attrs           vfs.NodeInfo
 	metadataChanged bool
 	hydrated        byteRangeSet
 	checkpointDirty bool
@@ -599,7 +601,7 @@ type localStagingFile struct {
 	hydrateRemoved bool
 }
 
-func stagingAttributes(info NodeInfo, fallback time.Time) NodeInfo {
+func stagingAttributes(info vfs.NodeInfo, fallback time.Time) vfs.NodeInfo {
 	info.Size = 0
 	if info.Mtime.IsZero() {
 		info.Mtime = fallback
@@ -616,7 +618,7 @@ func stagingAttributes(info NodeInfo, fallback time.Time) NodeInfo {
 	return info
 }
 
-func (sf *localStagingFile) Stat() NodeInfo {
+func (sf *localStagingFile) Stat() vfs.NodeInfo {
 	sf.mu.Lock()
 	defer sf.mu.Unlock()
 	info := sf.attrs
@@ -661,7 +663,7 @@ func (sf *localStagingFile) Meta() StagingMeta {
 	return meta
 }
 
-func (sf *localStagingFile) Base() (InodeID, uint64) {
+func (sf *localStagingFile) Base() (vfs.InodeID, uint64) {
 	sf.mu.Lock()
 	defer sf.mu.Unlock()
 	return sf.meta.BaseID, sf.meta.BaseSize
@@ -915,7 +917,7 @@ func (sf *localStagingFile) Read(
 
 func readStagingBase(
 	readBase stagingBaseReader,
-	baseID InodeID,
+	baseID vfs.InodeID,
 	offset uint64,
 	dest []byte,
 ) error {
@@ -1001,7 +1003,7 @@ func (sf *localStagingFile) StartHydration(readBase stagingHydrationReader) {
 	sf.hydrateMu.Unlock()
 
 	go func() {
-		_ = sf.hydrate(func(id InodeID, offset uint64, dest []byte) (int, bool, error) {
+		_ = sf.hydrate(func(id vfs.InodeID, offset uint64, dest []byte) (int, bool, error) {
 			return readBase(cancel, id, offset, dest)
 		}, cancel)
 		close(done)
@@ -1294,7 +1296,7 @@ func loadStagingMeta(path string) (StagingMeta, error) {
 		return StagingMeta{}, fmt.Errorf("meta file too short")
 	}
 	var meta StagingMeta
-	meta.DirID = InodeID(binary.BigEndian.Uint64(data[0:8]))
+	meta.DirID = vfs.InodeID(binary.BigEndian.Uint64(data[0:8]))
 	copy(meta.TernCookie[:], data[8:16])
 	copy(meta.NFSStateID[:], data[16:28])
 	nameLen := int(binary.BigEndian.Uint16(data[28:30]))
@@ -1319,7 +1321,7 @@ func loadStagingMeta(path string) (StagingMeta, error) {
 	if len(data) < off+20 {
 		return StagingMeta{}, fmt.Errorf("meta file truncated")
 	}
-	meta.BaseID = InodeID(binary.BigEndian.Uint64(data[off : off+8]))
+	meta.BaseID = vfs.InodeID(binary.BigEndian.Uint64(data[off : off+8]))
 	off += 8
 	meta.BaseSize = binary.BigEndian.Uint64(data[off : off+8])
 	off += 8

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 // Supported attribute bitmasks.
@@ -169,11 +170,11 @@ func createAttrSize(attrs nfs4.Fattr4) (*uint64, uint32) {
 }
 
 // inodeNFSType converts an InodeID type to NFSv4 type constant.
-func inodeNFSType(id InodeID) uint32 {
+func inodeNFSType(id vfs.InodeID) uint32 {
 	switch id.Type() {
-	case InodeTypeDir:
+	case vfs.InodeTypeDir:
 		return 2 // NF4DIR
-	case InodeTypeSymlink:
+	case vfs.InodeTypeSymlink:
 		return 5 // NF4LNK
 	default:
 		return 1 // NF4REG
@@ -181,11 +182,11 @@ func inodeNFSType(id InodeID) uint32 {
 }
 
 // inodeNFSMode returns the NFS permission mode for an inode.
-func inodeNFSMode(id InodeID) uint32 {
+func inodeNFSMode(id vfs.InodeID) uint32 {
 	switch id.Type() {
-	case InodeTypeDir:
+	case vfs.InodeTypeDir:
 		return 0755
-	case InodeTypeSymlink:
+	case vfs.InodeTypeSymlink:
 		return 0777
 	default:
 		return 0644
@@ -194,13 +195,13 @@ func inodeNFSMode(id InodeID) uint32 {
 
 // encodeAttrs encodes the requested attributes into an XDR byte buffer.
 // Attributes MUST be encoded in order of their bit position.
-func encodeAttrs(mask attrMask, id InodeID, ni NodeInfo) []byte {
+func encodeAttrs(mask attrMask, id vfs.InodeID, ni vfs.NodeInfo) []byte {
 	return appendAttrs(make([]byte, 0, 256), mask, id, ni)
 }
 
 // appendAttrs appends encodeAttrs's encoding to buf. For a given mask the
 // encoding has a fixed length, so a buffer of that capacity never grows.
-func appendAttrs(buf []byte, mask attrMask, id InodeID, ni NodeInfo) []byte {
+func appendAttrs(buf []byte, mask attrMask, id vfs.InodeID, ni vfs.NodeInfo) []byte {
 
 	// Word 0 attributes (bits 0-31).
 	if mask[0]&(1<<nfs4.FATTR4_SUPPORTED_ATTRS) != 0 {
@@ -265,7 +266,7 @@ func appendAttrs(buf []byte, mask attrMask, id InodeID, ni NodeInfo) []byte {
 	if mask[0]&(1<<nfs4.FATTR4_FILEHANDLE) != 0 {
 		// opaque<NFS4_FHSIZE>: length + data
 		buf = binary.BigEndian.AppendUint32(buf, 8)
-		buf = append(buf, inodeIDToFH(id)...)
+		buf = append(buf, vfs.InodeIDToFH(id)...)
 	}
 	if mask[0]&(1<<nfs4.FATTR4_FILEID) != 0 {
 		buf = binary.BigEndian.AppendUint64(buf, id.Fileid())
@@ -375,7 +376,7 @@ func encodeString(buf []byte, s string) []byte {
 
 // stat supplies one attribute view to GETATTR, VERIFY and READDIR. Published
 // handles never resolve to another open's private staging file.
-func (s *Server) stat(id InodeID) (NodeInfo, error) {
+func (s *Server) stat(id vfs.InodeID) (vfs.NodeInfo, error) {
 	if sf := s.stagingStore.Get(id); sf != nil {
 		return sf.Stat(), nil
 	}
@@ -384,7 +385,7 @@ func (s *Server) stat(id InodeID) (NodeInfo, error) {
 
 // readdirEntry holds attributes used to calculate exact XDR sizes.
 type readdirEntry struct {
-	DirEntry
+	vfs.DirEntry
 	respMask attrMask
 	attrData []byte // nil means Stat failed; encode empty attrs
 }

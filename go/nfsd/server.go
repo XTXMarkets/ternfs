@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 // peekCompoundHeader extracts the tag and minor version from COMPOUND4args
@@ -41,7 +42,7 @@ func peekCompoundHeader(body []byte) (tag []byte, minor uint32, ok bool) {
 
 // Server is the NFSv4 server.
 type Server struct {
-	fs                 TernVFS
+	fs                 vfs.TernVFS
 	clients            *ClientStore
 	opens              *openStateStore
 	sessions           *sessionStore
@@ -63,8 +64,8 @@ type Server struct {
 	mutationLocks   keyedLocker[mutationTarget]
 
 	clientGCMu      sync.Mutex
-	clientGCPending map[InodeID]struct{}
-	clientGCRecheck map[InodeID]struct{}
+	clientGCPending map[vfs.InodeID]struct{}
+	clientGCRecheck map[vfs.InodeID]struct{}
 	clientGCRunning bool
 	clientGCDone    chan struct{}
 
@@ -74,12 +75,12 @@ type Server struct {
 	// held only for map access.
 	confirmMu          sync.Mutex
 	confirming         map[uint64]*confirmation
-	confirmingIdentity map[InodeID]*confirmation
+	confirmingIdentity map[vfs.InodeID]*confirmation
 	confirmingOwners   map[string]*confirmation
 	// Destruction holds in flight, by incarnation and by identity
 	// (server_confirm.go), under confirmMu.
 	destroying         map[uint64]int
-	destroyingIdentity map[InodeID]int
+	destroyingIdentity map[vfs.InodeID]int
 	destroyEnded       *sync.Cond // on confirmMu
 	// Incarnations whose replacement purge is known to be unfinished, a
 	// hint for warm EXCHANGE_ID (server_confirm.go), under confirmMu.
@@ -143,7 +144,7 @@ func (l *keyedLocker[K]) tryLock(key K) (func(), bool) {
 }
 
 type mutationTarget struct {
-	dirID InodeID
+	dirID vfs.InodeID
 	name  string
 }
 
@@ -174,7 +175,7 @@ func (s *Server) lockMutationTargets(targets ...mutationTarget) func() {
 const maxPendingClientGC = 256
 const defaultMaxInFlightPerConn = 64
 
-func NewServer(fs TernVFS, stagingStore StagingStore, logger *slog.Logger) (*Server, error) {
+func NewServer(fs vfs.TernVFS, stagingStore StagingStore, logger *slog.Logger) (*Server, error) {
 	clients, err := NewClientStore(fs)
 	if err != nil {
 		return nil, err
@@ -196,13 +197,13 @@ func NewServer(fs TernVFS, stagingStore StagingStore, logger *slog.Logger) (*Ser
 		log:                logger,
 		startedAt:          clients.now(),
 		hydrationSlots:     make(chan struct{}, maxConcurrentHydrations),
-		clientGCPending:    make(map[InodeID]struct{}),
-		clientGCRecheck:    make(map[InodeID]struct{}),
+		clientGCPending:    make(map[vfs.InodeID]struct{}),
+		clientGCRecheck:    make(map[vfs.InodeID]struct{}),
 		confirming:         make(map[uint64]*confirmation),
-		confirmingIdentity: make(map[InodeID]*confirmation),
+		confirmingIdentity: make(map[vfs.InodeID]*confirmation),
 		confirmingOwners:   make(map[string]*confirmation),
 		destroying:         make(map[uint64]int),
-		destroyingIdentity: make(map[InodeID]int),
+		destroyingIdentity: make(map[vfs.InodeID]int),
 		purgePending:       make(map[uint64]struct{}),
 		purgeLimit:         maxSessionRecords,
 	}
@@ -210,7 +211,7 @@ func NewServer(fs TernVFS, stagingStore StagingStore, logger *slog.Logger) (*Ser
 	s.opens.now = func() time.Time { return s.clients.now() }
 	// The client store's expired marker, its client GC and a resumed
 	// replacement purge hold destruction holds for their whole action.
-	clients.beginMarker = func(id InodeID) (func(), bool) { return s.beginDestroy(uint64(id)) }
+	clients.beginMarker = func(id vfs.InodeID) (func(), bool) { return s.beginDestroy(uint64(id)) }
 	clients.beginCollect = s.beginDestroyIdentity
 	clients.beginPurge = s.beginPurge
 	s.sessions = newSessionStore(s.opens.epoch)
@@ -231,7 +232,7 @@ func NewServer(fs TernVFS, stagingStore StagingStore, logger *slog.Logger) (*Ser
 }
 
 func (s *Server) scheduleClientGC(clientID uint64) {
-	id := InodeID(clientID)
+	id := vfs.InodeID(clientID)
 	s.clientGCMu.Lock()
 	if _, pending := s.clientGCPending[id]; !pending {
 		if len(s.clientGCPending) == maxPendingClientGC {
@@ -255,7 +256,7 @@ func (s *Server) scheduleClientGC(clientID uint64) {
 func (s *Server) runClientGC() {
 	for {
 		s.clientGCMu.Lock()
-		var clientID InodeID
+		var clientID vfs.InodeID
 		for clientID = range s.clientGCPending {
 			delete(s.clientGCPending, clientID)
 			break
@@ -290,7 +291,7 @@ func (s *Server) runClientGC() {
 }
 
 func (s *Server) collectClientSafely(
-	clientID InodeID,
+	clientID vfs.InodeID,
 ) (recheck bool, err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -305,7 +306,7 @@ func (s *Server) collectClientSafely(
 func (s *Server) scheduleClientGCRechecks() {
 	s.clientGCMu.Lock()
 	pending := s.clientGCRecheck
-	s.clientGCRecheck = make(map[InodeID]struct{})
+	s.clientGCRecheck = make(map[vfs.InodeID]struct{})
 	s.clientGCMu.Unlock()
 	for clientID := range pending {
 		s.scheduleClientGC(uint64(clientID))
@@ -316,13 +317,13 @@ func (s *Server) removeExpiredStaging() {
 	if s.clients.now().Before(s.startedAt.Add(nfsLeaseTime)) {
 		return
 	}
-	byClient := make(map[uint64]map[InodeID]StagingMeta)
+	byClient := make(map[uint64]map[vfs.InodeID]StagingMeta)
 	for fileID, meta := range s.stagingStore.Entries() {
 		if meta.ClientID == 0 {
 			continue
 		}
 		if byClient[meta.ClientID] == nil {
-			byClient[meta.ClientID] = make(map[InodeID]StagingMeta)
+			byClient[meta.ClientID] = make(map[vfs.InodeID]StagingMeta)
 		}
 		byClient[meta.ClientID][fileID] = meta
 	}
@@ -334,7 +335,7 @@ func (s *Server) removeExpiredStaging() {
 // removeClientExpiredStaging retires an expired client's staging, holding a
 // destruction hold from the lease check through the last retirement. A
 // confirmation protecting the client keeps its staging.
-func (s *Server) removeClientExpiredStaging(clientID uint64, fileIDs map[InodeID]StagingMeta) {
+func (s *Server) removeClientExpiredStaging(clientID uint64, fileIDs map[vfs.InodeID]StagingMeta) {
 	end, ok := s.beginDestroy(clientID)
 	if !ok {
 		return
@@ -610,9 +611,9 @@ func (s *Server) handleRPC(req *rpcRequest, remote string) []byte {
 
 // compoundState tracks the current/saved filehandle during COMPOUND execution.
 type compoundState struct {
-	currentID     InodeID
+	currentID     vfs.InodeID
 	currentIDSet  bool
-	savedID       InodeID
+	savedID       vfs.InodeID
 	savedIDSet    bool
 	principal     rpcPrincipal
 	connection    *rpcConnection
@@ -639,7 +640,7 @@ type compoundState struct {
 
 // setCurrentFH changes the current filehandle. Operations which do so
 // without producing a stateid invalidate the current stateid.
-func (st *compoundState) setCurrentFH(id InodeID) {
+func (st *compoundState) setCurrentFH(id vfs.InodeID) {
 	st.currentID = id
 	st.currentIDSet = true
 	st.currentStateIDSet = false
@@ -651,8 +652,8 @@ func (st *compoundState) setCurrentStateID(id StateID, generation uint32) {
 	st.currentStateIDSet = true
 }
 
-func (st *compoundState) observeMutation(fs TernVFS, op uint32, err error) {
-	if err != nil && fs.ClassifyMutation(op, err) == mutationUnknown {
+func (st *compoundState) observeMutation(fs vfs.TernVFS, op uint32, err error) {
+	if err != nil && fs.ClassifyMutation(op, err) == vfs.MutationUnknown {
 		st.effectUnknown = true
 	}
 }

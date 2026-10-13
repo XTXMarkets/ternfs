@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 // Sessions end with their nfsd process (canonical r3 §6). A retransmission
@@ -24,7 +25,7 @@ func TestRestartRetransmissionGetsBadSession(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		srv, err := NewServer(NewLocalTernVFS(root), staging, nil)
+		srv, err := NewServer(vfs.NewLocalTernVFS(root), staging, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

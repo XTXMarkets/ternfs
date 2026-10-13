@@ -17,6 +17,7 @@ import (
 
 	"github.com/XTXMarkets/ternfs/go/msgs"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 func TestNamespaceChangePreservesDataCheckpoint(t *testing.T) {
@@ -170,31 +171,31 @@ func TestNamespaceGuardRecoveryPreservesUncheckpointedTail(t *testing.T) {
 }
 
 func TestNamespaceMutationClassification(t *testing.T) {
-	remote := &RemoteTernVFS{}
-	local := &LocalTernVFS{}
+	remote := &vfs.RemoteTernVFS{}
+	local := &vfs.LocalTernVFS{}
 	for _, op := range []uint32{nfs4.OP_REMOVE, nfs4.OP_RENAME} {
 		for _, err := range []error{msgs.TIMEOUT, msgs.EDGE_IS_LOCKED, msgs.NAME_IS_LOCKED,
 			msgs.MALFORMED_RESPONSE, msgs.CANNOT_OVERRIDE_NAME, msgs.NOT_AUTHORISED,
 			msgs.DIRECTORY_NOT_EMPTY, errors.New("lost reply"), syscall.EEXIST} {
-			if got := remote.ClassifyMutation(op, err); got != mutationUnknown {
+			if got := remote.ClassifyMutation(op, err); got != vfs.MutationUnknown {
 				t.Fatalf("remote classification of %v = %v", err, got)
 			}
 		}
 		for _, err := range []error{msgs.EDGE_NOT_FOUND, msgs.MISMATCHING_CREATION_TIME} {
-			want := mutationUnknown
+			want := vfs.MutationUnknown
 			if op == nfs4.OP_REMOVE {
-				want = mutationDetachOnly
+				want = vfs.MutationDetachOnly
 			}
 			if got := remote.ClassifyMutation(op, err); got != want {
 				t.Fatalf("remote edge-gone classification = %v, want %v", got, want)
 			}
 		}
-		if remote.ClassifyMutation(op, nil) != mutationApplied ||
-			local.ClassifyMutation(op, nil) != mutationApplied {
+		if remote.ClassifyMutation(op, nil) != vfs.MutationApplied ||
+			local.ClassifyMutation(op, nil) != vfs.MutationApplied {
 			t.Fatal("nil mutation was not applied")
 		}
-		if local.ClassifyMutation(op, syscall.EISDIR) != mutationNotApplied ||
-			local.ClassifyMutation(op, errors.New("lost reply")) != mutationUnknown {
+		if local.ClassifyMutation(op, syscall.EISDIR) != vfs.MutationNotApplied ||
+			local.ClassifyMutation(op, errors.New("lost reply")) != vfs.MutationUnknown {
 			t.Fatal("local classification does not distinguish syscall rejection")
 		}
 	}
@@ -205,8 +206,8 @@ func TestNamespaceCheckpointDoesNotHoldStoreLock(t *testing.T) {
 		t.Run(fmt.Sprintf("finish=%t", finish), func(t *testing.T) {
 			store, id, _ := createOverlayStage(t, t.TempDir(), 0, nil)
 			defer closeLocalStagingFiles(t, store)
-			dirID := MakeInodeID(InodeTypeDir, 1)
-			otherID := MakeInodeID(InodeTypeFile, 123)
+			dirID := vfs.MakeInodeID(vfs.InodeTypeDir, 1)
+			otherID := vfs.MakeInodeID(vfs.InodeTypeFile, 123)
 			if _, err := store.Create(otherID, StagingMeta{DirID: dirID, FileName: "other"}); err != nil {
 				t.Fatal(err)
 			}
@@ -252,7 +253,7 @@ func TestNamespaceCheckpointDoesNotHoldStoreLock(t *testing.T) {
 func TestRemovedNamespaceWriterIsNotReindexed(t *testing.T) {
 	store, id, _ := createOverlayStage(t, t.TempDir(), 0, nil)
 	defer closeLocalStagingFiles(t, store)
-	dirID := MakeInodeID(InodeTypeDir, 1)
+	dirID := vfs.MakeInodeID(vfs.InodeTypeDir, 1)
 	if err := store.SetGuard(id, true); err != nil {
 		t.Fatal(err)
 	}

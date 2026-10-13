@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 func scopedStateid(seqid uint32, id StateID) [16]byte {
@@ -134,7 +135,7 @@ func TestForeignStateidsAreBadStateid(t *testing.T) {
 	if err := srv.clients.MarkOpen(incA, recID); err != nil {
 		t.Fatal(err)
 	}
-	recSid, recFH := scopedStateid(1, recID), inodeIDToFH(recStaging)
+	recSid, recFH := scopedStateid(1, recID), vfs.InodeIDToFH(recStaging)
 
 	connB := dial(t, addr)
 	defer connB.Close()
@@ -161,12 +162,12 @@ func TestForeignStateidsAreBadStateid(t *testing.T) {
 	// A's state survived.
 	var liveID StateID
 	copy(liveID[:], liveSid[4:])
-	liveFile, _ := fhToInodeID(liveFH)
+	liveFile, _ := vfs.FHToInodeID(liveFH)
 	state, status := srv.opens.lookup(incA, liveID, 0, liveFile)
 	if status != nfs4.NFS4_OK {
 		t.Fatalf("A's live open %s", nfs4.Nfsstat4Name(status))
 	}
-	for _, id := range []InodeID{state.dataID, recStaging} {
+	for _, id := range []vfs.InodeID{state.dataID, recStaging} {
 		if m, ok := srv.stagingStore.GetMeta(id); !ok || m.Retired {
 			t.Fatalf("A's staging %d retired", id)
 		}

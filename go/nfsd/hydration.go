@@ -8,13 +8,15 @@ import (
 	"context"
 	"os"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 const maxBackgroundReadYield = 10 * time.Millisecond
 const maxConcurrentHydrations = 2
 
 func (s *Server) readBaseForeground(
-	fileID InodeID,
+	fileID vfs.InodeID,
 	offset uint64,
 	dest []byte,
 ) (int, bool, error) {
@@ -25,7 +27,7 @@ func (s *Server) readBaseForeground(
 
 func (s *Server) readBaseBackground(
 	cancel <-chan struct{},
-	fileID InodeID,
+	fileID vfs.InodeID,
 	offset uint64,
 	dest []byte,
 ) (int, bool, error) {
@@ -72,7 +74,7 @@ func (s *Server) setStagingSize(sf StagingFile, size uint64) error {
 	return sf.Sync()
 }
 
-func (s *Server) discardStaging(id InodeID) {
+func (s *Server) discardStaging(id vfs.InodeID) {
 	meta, ok := s.stagingStore.GetMeta(id)
 	s.stagingStore.Remove(id)
 	if !ok {
@@ -93,7 +95,7 @@ func (s *Server) discardStaging(id InodeID) {
 
 // Recheck ownership under the target lock: the lease snapshot may predate a
 // reclaim or a namespace operation which detached this writer.
-func (s *Server) retireStaging(id InodeID, meta StagingMeta) {
+func (s *Server) retireStaging(id vfs.InodeID, meta StagingMeta) {
 	current, ok, unlock := s.lockStagingTarget(id)
 	defer unlock()
 	if !ok || current.ClientID != meta.ClientID || current.NFSStateID != meta.NFSStateID {
@@ -102,7 +104,7 @@ func (s *Server) retireStaging(id InodeID, meta StagingMeta) {
 	s.retireStagingLocked(id, current)
 }
 
-func (s *Server) retireStagingLocked(id InodeID, meta StagingMeta) error {
+func (s *Server) retireStagingLocked(id vfs.InodeID, meta StagingMeta) error {
 	if meta.Unlinked {
 		if meta.Retired {
 			if err := s.stagingStore.Quarantine(id); err != nil {

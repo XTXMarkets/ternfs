@@ -10,10 +10,11 @@ import (
 	"slices"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 func (s *Server) stagingOwnedBy(
-	fileID InodeID,
+	fileID vfs.InodeID,
 	state openState,
 ) StagingFile {
 	meta, ok := s.stagingStore.GetMeta(fileID)
@@ -24,17 +25,17 @@ func (s *Server) stagingOwnedBy(
 	return s.stagingStore.Get(fileID)
 }
 
-func (s *Server) directStaging(fileID InodeID) StagingFile {
+func (s *Server) directStaging(fileID vfs.InodeID) StagingFile {
 	return s.stagingStore.Get(fileID)
 }
 
-func (s *Server) stagingTargetBusy(dirID InodeID, name string) (bool, error) {
+func (s *Server) stagingTargetBusy(dirID vfs.InodeID, name string) (bool, error) {
 	return s.retireInactiveStagingTarget(dirID, name)
 }
 
 // The caller holds the pathname lock. Visit every writer, including inactive
 // siblings of an active writer, before capturing roles for a mutation.
-func (s *Server) retireInactiveStagingTarget(dirID InodeID, name string) (bool, error) {
+func (s *Server) retireInactiveStagingTarget(dirID vfs.InodeID, name string) (bool, error) {
 	activeWriter := false
 	for id, meta := range s.stagingStore.FindTargets(dirID, name) {
 		if meta.Retired {
@@ -52,7 +53,7 @@ func (s *Server) retireInactiveStagingTarget(dirID InodeID, name string) (bool, 
 // retireIfInactiveWriter retires one writer whose open is gone. The check and
 // the retirement run under one destruction hold on its client; a writer
 // whose client a confirmation protects counts as active and is kept.
-func (s *Server) retireIfInactiveWriter(id InodeID, meta StagingMeta) (bool, error) {
+func (s *Server) retireIfInactiveWriter(id vfs.InodeID, meta StagingMeta) (bool, error) {
 	end, ok := s.beginDestroy(meta.ClientID)
 	if !ok {
 		return true, nil
@@ -76,11 +77,11 @@ func (s *Server) retireIfInactiveWriter(id InodeID, meta StagingMeta) (bool, err
 // Only IDs and final namespace roles are captured. Data checkpoints may keep
 // advancing while the mutation runs and must never be restored from a snapshot.
 type namespaceWriter struct {
-	id     InodeID
+	id     vfs.InodeID
 	target *mutationTarget // nil means detach on success
 }
 
-func (s *Server) namespaceWriters(dirID InodeID, name string, target *mutationTarget) []namespaceWriter {
+func (s *Server) namespaceWriters(dirID vfs.InodeID, name string, target *mutationTarget) []namespaceWriter {
 	var writers []namespaceWriter
 	for id := range s.stagingStore.FindTargets(dirID, name) {
 		writers = append(writers, namespaceWriter{id: id, target: target})
@@ -125,15 +126,15 @@ func (s *Server) finishNamespaceWriters(writers []namespaceWriter, op uint32, ba
 	for _, writer := range writers {
 		var err error
 		switch outcome {
-		case mutationApplied, mutationDetachOnly:
+		case vfs.MutationApplied, vfs.MutationDetachOnly:
 			if writer.target == nil {
 				err = s.stagingStore.Detach(writer.id)
 			} else {
 				err = s.stagingStore.Retarget(writer.id, writer.target.dirID, writer.target.name)
 			}
-		case mutationNotApplied:
+		case vfs.MutationNotApplied:
 			err = s.stagingStore.SetGuard(writer.id, false)
-		case mutationUnknown:
+		case vfs.MutationUnknown:
 			// We cannot learn whether this mutation applied. Fail the captured
 			// writer rather than guess a target or replay an uncertain request.
 			err = s.stagingStore.Quarantine(writer.id)
@@ -150,7 +151,7 @@ func (s *Server) finishNamespaceWriters(writers []namespaceWriter, op uint32, ba
 			}
 		}
 	}
-	if len(writers) > 0 && outcome == mutationUnknown {
+	if len(writers) > 0 && outcome == vfs.MutationUnknown {
 		s.log.Warn("namespace outcome unknown; captured writers failed", "err", backendErr)
 		return nfs4.NFS4ERR_IO
 	}
@@ -159,7 +160,7 @@ func (s *Server) finishNamespaceWriters(writers []namespaceWriter, op uint32, ba
 
 // lockStagingTarget waits for namespace operations on a writer's publication
 // target. A rename may move the target while we wait, so check it again.
-func (s *Server) lockStagingTarget(fileID InodeID) (StagingMeta, bool, func()) {
+func (s *Server) lockStagingTarget(fileID vfs.InodeID) (StagingMeta, bool, func()) {
 	for {
 		meta, ok := s.stagingStore.GetMeta(fileID)
 		if !ok || meta.Unlinked {
@@ -186,13 +187,13 @@ func (s *Server) lockStagingTarget(fileID InodeID) (StagingMeta, bool, func()) {
 // While a confirmation protects that incarnation, the OPEN gets DELAY.
 // release is never nil.
 func (s *Server) recoveredStagingTarget(
-	dirID InodeID,
+	dirID vfs.InodeID,
 	name string,
 	clientID uint64,
 	openOwner string,
 	write bool,
-) (_ InodeID, _ StagingMeta, _ bool, release func(), err error) {
-	holds := make(map[InodeID]func()) // by candidate staging
+) (_ vfs.InodeID, _ StagingMeta, _ bool, release func(), err error) {
+	holds := make(map[vfs.InodeID]func()) // by candidate staging
 	release = func() {
 		for id, end := range holds {
 			end()
@@ -211,7 +212,7 @@ func (s *Server) recoveredStagingTarget(
 	if err != nil {
 		return 0, StagingMeta{}, false, release, err
 	}
-	var foundID InodeID
+	var foundID vfs.InodeID
 	var foundMeta StagingMeta
 	// Writers on one client share staging, so any of the client's open
 	// owners may reclaim it after a server restart. Reclaim after lease
@@ -276,13 +277,13 @@ func (s *Server) recoveredStagingTarget(
 // caller opens at the candidate's name, still as CLAIM_FH, and checks under
 // the pathname lock that recoveredStagingTarget selects exactly this entry.
 func (s *Server) claimFHRecoveryCandidate(
-	fileID InodeID,
+	fileID vfs.InodeID,
 	clientID uint64,
 	openOwner string,
-) (InodeID, StagingMeta, uint32) {
+) (vfs.InodeID, StagingMeta, uint32) {
 	var key [32]byte
 	keyRead := false
-	var foundID InodeID
+	var foundID vfs.InodeID
 	var foundMeta StagingMeta
 	for id, meta := range s.stagingStore.Entries() {
 		if meta.ReadOnly || meta.Unlinked || s.stagingStore.Failed(id) {
@@ -364,8 +365,8 @@ func (s *Server) recoveryLeaseExpired(clientID uint64) (bool, uint32) {
 // pathname lock, selected exactly the preselected staging, unchanged in its
 // stateid, incarnation and owner, and still linked and healthy.
 func (s *Server) sameRecoveryCandidate(
-	wantID InodeID, want StagingMeta,
-	gotID InodeID, got StagingMeta, found bool,
+	wantID vfs.InodeID, want StagingMeta,
+	gotID vfs.InodeID, got StagingMeta, found bool,
 ) bool {
 	return found && gotID == wantID &&
 		got.NFSStateID == want.NFSStateID && got.ClientID == want.ClientID &&
@@ -375,12 +376,12 @@ func (s *Server) sameRecoveryCandidate(
 }
 
 func (s *Server) exclusiveStagingTarget(
-	dirID InodeID,
+	dirID vfs.InodeID,
 	name string,
-	publishedID InodeID,
+	publishedID vfs.InodeID,
 	owner openOwnerKey,
 	verifier [8]byte,
-) (InodeID, StagingMeta, bool) {
+) (vfs.InodeID, StagingMeta, bool) {
 	for id, meta := range s.stagingStore.FindTargets(dirID, name) {
 		// Another publication at this name invalidates the old create verifier.
 		if meta.BaseID == publishedID &&

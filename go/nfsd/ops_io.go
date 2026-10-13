@@ -9,6 +9,7 @@ import (
 	"errors"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 func (s *Server) opCommit(st *compoundState, w *nfs4.COMPOUND4resWriter) uint32 {
@@ -23,7 +24,7 @@ func (s *Server) opCommit(st *compoundState, w *nfs4.COMPOUND4resWriter) uint32 
 
 	// COMMIT carries no stateid. Sync every writer this client has open
 	// through the handle, and the handle's own staging after a restart.
-	writers := append([]InodeID{st.currentID},
+	writers := append([]vfs.InodeID{st.currentID},
 		s.views.writersOf(viewKey{st.clientID, st.currentID})...)
 	failed := func() bool {
 		for _, id := range writers {
@@ -211,10 +212,10 @@ func (s *Server) opReaddir(args nfs4.READDIR4args, st *compoundState, w *nfs4.CO
 	// and including X". Skip entries with NameHash <= cookie on continuations,
 	// since VFS Readdir returns entries with hash >= startHash (inclusive).
 	// Also hide the internal .nfs directory from client directory listings.
-	var page []DirEntry
+	var page []vfs.DirEntry
 	startHash := cookie
 	lastPage := false
-	nextEntry := func() (DirEntry, bool, error) {
+	nextEntry := func() (vfs.DirEntry, bool, error) {
 		for {
 			for len(page) > 0 {
 				e := page[0]
@@ -222,18 +223,18 @@ func (s *Server) opReaddir(args nfs4.READDIR4args, st *compoundState, w *nfs4.CO
 				if cookie != 0 && e.NameHash <= cookie {
 					continue
 				}
-				if st.currentID == s.fs.RootID() && e.Name == nfsDirName {
+				if st.currentID == s.fs.RootID() && e.Name == vfs.NFSDirName {
 					continue
 				}
 				return e, true, nil
 			}
 			if lastPage {
-				return DirEntry{}, false, nil
+				return vfs.DirEntry{}, false, nil
 			}
 			page = nil // Drop the consumed page before fetching the next.
 			entries, nextHash, err := s.fs.Readdir(st.currentID, startHash)
 			if err != nil {
-				return DirEntry{}, false, err
+				return vfs.DirEntry{}, false, err
 			}
 			page = entries
 			lastPage = nextHash == 0
@@ -251,7 +252,7 @@ func (s *Server) opReaddir(args nfs4.READDIR4args, st *compoundState, w *nfs4.CO
 	respMask[0] = reqMask[0] & supportedAttrs0
 	respMask[1] = reqMask[1] & supportedAttrs1
 	respMask[2] = reqMask[2] & supportedAttrs2
-	attrSize := len(encodeAttrs(respMask, 0, NodeInfo{}))
+	attrSize := len(encodeAttrs(respMask, 0, vfs.NodeInfo{}))
 	// Two candidates alternate: the one being written and its successor,
 	// whose size decides the written entry's nextentry discriminant.
 	candidates := [2]readdirEntry{
@@ -259,7 +260,7 @@ func (s *Server) opReaddir(args nfs4.READDIR4args, st *compoundState, w *nfs4.CO
 		{respMask: respMask, attrData: make([]byte, 0, attrSize)},
 	}
 	scratch := [2][]byte{candidates[0].attrData, candidates[1].attrData}
-	prepare := func(i int, e DirEntry) {
+	prepare := func(i int, e vfs.DirEntry) {
 		re := &candidates[i]
 		re.DirEntry = e
 		re.attrData = nil // Stat failed: encode empty attrs.
@@ -345,7 +346,7 @@ func (s *Server) opReadlink(st *compoundState, w *nfs4.COMPOUND4resWriter) uint3
 		ew := w.AppendResarray_Readlink()
 		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_NOFILEHANDLE)
 	}
-	if st.currentID.Type() != InodeTypeSymlink {
+	if st.currentID.Type() != vfs.InodeTypeSymlink {
 		ew := w.AppendResarray_Readlink()
 		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_INVAL)
 	}

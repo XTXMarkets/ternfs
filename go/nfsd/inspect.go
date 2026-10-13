@@ -21,6 +21,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 // This file implements a read-only inspector over the persistent client
@@ -284,15 +286,15 @@ const (
 // openClientStoreReader returns a ClientStore for inspection. Unlike
 // NewClientStore it does not create the store directories or a process
 // identity.
-func openClientStoreReader(fs TernVFS) (*ClientStore, error) {
-	nfsID, err := fs.Lookup(fs.RootID(), nfsDirName)
+func openClientStoreReader(fs vfs.TernVFS) (*ClientStore, error) {
+	nfsID, err := fs.Lookup(fs.RootID(), vfs.NFSDirName)
 	if err != nil {
-		return nil, fmt.Errorf("client store: lookup /%s: %w", nfsDirName, err)
+		return nil, fmt.Errorf("client store: lookup /%s: %w", vfs.NFSDirName, err)
 	}
 	clientsID, err := fs.Lookup(nfsID, "clients")
 	if err != nil {
 		return nil, fmt.Errorf(
-			"client store: lookup /%s/clients: %w", nfsDirName, err)
+			"client store: lookup /%s/clients: %w", vfs.NFSDirName, err)
 	}
 	return newClientStoreAt(fs, nfsID, clientsID)
 }
@@ -398,7 +400,7 @@ func (cs *ClientStore) inspectSelectIdentities(
 	opts inspectOptions,
 	staging []*inspectStagingEntry,
 	report *inspectReport,
-) ([]DirEntry, error) {
+) ([]vfs.DirEntry, error) {
 	switch {
 	case len(opts.Identity) != 0 || opts.IdentityHash != "":
 		name := opts.IdentityHash
@@ -414,9 +416,9 @@ func (cs *ClientStore) inspectSelectIdentities(
 		if err != nil {
 			return nil, err
 		}
-		return []DirEntry{{Name: name, ID: id}}, nil
+		return []vfs.DirEntry{{Name: name, ID: id}}, nil
 	case opts.ClientID != 0:
-		return cs.inspectIdentityForClientID(InodeID(opts.ClientID), report)
+		return cs.inspectIdentityForClientID(vfs.InodeID(opts.ClientID), report)
 	case opts.StateID != nil:
 		// A sidecar names the clientid directly. Without one there is nothing
 		// to resolve against, so fall through and scan every identity for an
@@ -425,7 +427,7 @@ func (cs *ClientStore) inspectSelectIdentities(
 		for _, entry := range staging {
 			if entry.StateID == want && entry.ClientID != 0 {
 				return cs.inspectIdentityForClientID(
-					InodeID(entry.ClientID), report)
+					vfs.InodeID(entry.ClientID), report)
 			}
 		}
 	}
@@ -438,10 +440,10 @@ func (cs *ClientStore) inspectSelectIdentities(
 // pasting the identity directory inode, which the report prints next to the
 // clientid, so that case gets its own message.
 func (cs *ClientStore) inspectIdentityForClientID(
-	clientID InodeID,
+	clientID vfs.InodeID,
 	report *inspectReport,
-) ([]DirEntry, error) {
-	note := func(format string, args ...any) ([]DirEntry, error) {
+) ([]vfs.DirEntry, error) {
+	note := func(format string, args ...any) ([]vfs.DirEntry, error) {
 		report.Notes = append(report.Notes, fmt.Sprintf(format, args...))
 		return nil, nil
 	}
@@ -463,14 +465,14 @@ func (cs *ClientStore) inspectIdentityForClientID(
 	}
 	if name == "" {
 		return note("clientid %s is not under /%s/clients",
-			inodeHex(clientID), nfsDirName)
+			inodeHex(clientID), vfs.NFSDirName)
 	}
-	return []DirEntry{{Name: name, ID: identityID}}, nil
+	return []vfs.DirEntry{{Name: name, ID: identityID}}, nil
 }
 
 func (cs *ClientStore) inspectChildName(
-	dirID InodeID,
-	childID InodeID,
+	dirID vfs.InodeID,
+	childID vfs.InodeID,
 ) (string, error) {
 	entries, err := cs.entries(dirID)
 	if err != nil {
@@ -485,7 +487,7 @@ func (cs *ClientStore) inspectChildName(
 }
 
 func (cs *ClientStore) inspectIdentity(
-	dir DirEntry,
+	dir vfs.DirEntry,
 	staging []*inspectStagingEntry,
 	now time.Time,
 ) (inspectIdentity, error) {
@@ -508,7 +510,7 @@ func (cs *ClientStore) inspectIdentity(
 		return identity, err
 	}
 
-	roles := make(map[InodeID][]string)
+	roles := make(map[vfs.InodeID][]string)
 	pointer := func(name string) (*inspectPointer, error) {
 		return cs.inspectPointer(dir.ID, name, false)
 	}
@@ -519,10 +521,10 @@ func (cs *ClientStore) inspectIdentity(
 		return identity, err
 	}
 	if p := identity.Confirmed; p != nil && p.TargetID != 0 {
-		roles[InodeID(p.TargetID)] = append(roles[InodeID(p.TargetID)], "confirmed")
+		roles[vfs.InodeID(p.TargetID)] = append(roles[vfs.InodeID(p.TargetID)], "confirmed")
 	}
 	if p := identity.Pending; p != nil && p.TargetID != 0 {
-		roles[InodeID(p.TargetID)] = append(roles[InodeID(p.TargetID)], "pending")
+		roles[vfs.InodeID(p.TargetID)] = append(roles[vfs.InodeID(p.TargetID)], "pending")
 	}
 
 	var incarnations []inspectIncarnation
@@ -550,11 +552,11 @@ func (cs *ClientStore) inspectIdentity(
 	// Reboot targets of the primary incarnations stay reachable until the
 	// confirmation has purged their state.
 	for _, inc := range incarnations {
-		if _, primary := roles[InodeID(inc.ClientID)]; !primary {
+		if _, primary := roles[vfs.InodeID(inc.ClientID)]; !primary {
 			continue
 		}
 		if inc.Reboot != nil && inc.Reboot.TargetID != 0 {
-			targetID := InodeID(inc.Reboot.TargetID)
+			targetID := vfs.InodeID(inc.Reboot.TargetID)
 			roles[targetID] = append(roles[targetID], "reboot-target")
 		}
 	}
@@ -563,7 +565,7 @@ func (cs *ClientStore) inspectIdentity(
 	})
 	for i := range incarnations {
 		inc := &incarnations[i]
-		inc.Roles = roles[InodeID(inc.ClientID)]
+		inc.Roles = roles[vfs.InodeID(inc.ClientID)]
 		if inc.Roles == nil {
 			inc.Roles = []string{}
 		}
@@ -664,7 +666,7 @@ func (r *inspectReport) summarize() {
 }
 
 func (cs *ClientStore) inspectPointer(
-	dirID InodeID,
+	dirID vfs.InodeID,
 	name string,
 	parentRelative bool,
 ) (*inspectPointer, error) {
@@ -719,7 +721,7 @@ func (cs *ClientStore) inspectPointer(
 }
 
 func (cs *ClientStore) inspectTemp(
-	entry DirEntry,
+	entry vfs.DirEntry,
 	now time.Time,
 ) (inspectTemp, error) {
 	temp := inspectTemp{Name: entry.Name}
@@ -736,7 +738,7 @@ func (cs *ClientStore) inspectTemp(
 }
 
 func (cs *ClientStore) inspectIncarnation(
-	dir DirEntry,
+	dir vfs.DirEntry,
 	staging []*inspectStagingEntry,
 	now time.Time,
 ) (inspectIncarnation, error) {
@@ -845,7 +847,7 @@ func (cs *ClientStore) inspectIncarnation(
 
 // inspectRecord decodes a client or update record. An unreadable record is a
 // defect in the store, so the error is returned for the caller to report.
-func (cs *ClientStore) inspectRecord(entry DirEntry) (*inspectRecord, error) {
+func (cs *ClientStore) inspectRecord(entry vfs.DirEntry) (*inspectRecord, error) {
 	var record durableClientRecord
 	if err := cs.readJSONFile(entry.ID, entry.Name, &record); err != nil {
 		return nil, err
@@ -860,7 +862,7 @@ func (cs *ClientStore) inspectRecord(entry DirEntry) (*inspectRecord, error) {
 }
 
 func (cs *ClientStore) inspectSlot(
-	entry DirEntry,
+	entry vfs.DirEntry,
 	prefix string,
 	now time.Time,
 ) (inspectSlot, bool, error) {
@@ -1173,7 +1175,7 @@ func (r *inspectReport) WriteText(w io.Writer) {
 		return fmt.Sprintf("%s (%s ago)", t.Format(time.RFC3339), -d)
 	}
 	fmt.Fprintf(w, "client store /%s/clients %s at %s, lease %s\n",
-		nfsDirName, inodeHex(r.ClientsDirID), r.Now.Format(time.RFC3339), r.LeaseTime)
+		vfs.NFSDirName, inodeHex(r.ClientsDirID), r.Now.Format(time.RFC3339), r.LeaseTime)
 	fmt.Fprintf(w,
 		"summary identities %d incarnations %d: ACTIVE %d EXPIRED %d "+
 			"UNLEASED %d PENDING %d REPLACED %d UNREACHABLE %d; "+
@@ -1466,7 +1468,7 @@ func inodeHex[T ~uint64](id T) string {
 }
 
 // inspectInode keeps inspector JSON formatting local to the report.
-type inspectInode InodeID
+type inspectInode vfs.InodeID
 
 func (id inspectInode) MarshalJSON() ([]byte, error) {
 	return json.Marshal(inodeHex(id))

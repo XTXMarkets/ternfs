@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 // leaseRecordForTest returns the incarnation's record, or nil.
@@ -18,7 +19,7 @@ func leaseRecordForTest(srv *Server, inc uint64) *leaseRefresher {
 	cs := srv.clients
 	cs.refreshMu.Lock()
 	defer cs.refreshMu.Unlock()
-	return cs.refreshers[InodeID(inc)]
+	return cs.refreshers[vfs.InodeID(inc)]
 }
 
 func destroyClientBody(clientID uint64) []byte {
@@ -137,7 +138,7 @@ func TestIdleReclaimWaitsForQuietAndReservation(t *testing.T) {
 // before its deadline, and its deadline does not move. After the deadline
 // the attempt is fenced, and only then is the record freed.
 func TestIdleReclaimKeepsObligations(t *testing.T) {
-	counts := &passCountVFS{TernVFS: NewLocalTernVFS(t.TempDir())}
+	counts := &passCountVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
 	fs := &fenceClockVFS{passCountVFS: counts}
 	cs, clientID := newConfirmedStoreClient(t, fs, []byte("client"), [8]byte{1}, clientOwner{})
 	counts.leaseName = cs.leaseName
@@ -152,7 +153,7 @@ func TestIdleReclaimKeepsObligations(t *testing.T) {
 		t.Fatal("no record credit")
 	}
 	cs.refreshMu.Lock()
-	r := cs.refreshers[InodeID(clientID)]
+	r := cs.refreshers[vfs.InodeID(clientID)]
 	cs.refreshMu.Unlock()
 	// The publication's rename fails, and so does the first fence.
 	counts.mu.Lock()
@@ -187,7 +188,7 @@ func TestIdleReclaimKeepsObligations(t *testing.T) {
 		t.Fatalf("sweeps inside the backoff drove %d fences and %d writes", fences-fences0, writes-writes0)
 	}
 	cs.refreshMu.Lock()
-	kept := cs.refreshers[InodeID(clientID)] == r
+	kept := cs.refreshers[vfs.InodeID(clientID)] == r
 	cs.refreshMu.Unlock()
 	if !attempt || !kept {
 		t.Fatalf("the sweeps released the obligation: attempt %v, record kept %v", attempt, kept)
@@ -198,7 +199,7 @@ func TestIdleReclaimKeepsObligations(t *testing.T) {
 	// After the deadline the worker fences the attempt, then frees the record.
 	for limit := time.Now().Add(deadline.Sub(time.Now()) + testChannelTimeout); ; time.Sleep(10 * time.Millisecond) {
 		cs.refreshMu.Lock()
-		freed := cs.refreshers[InodeID(clientID)] == nil
+		freed := cs.refreshers[vfs.InodeID(clientID)] == nil
 		cs.refreshMu.Unlock()
 		if freed {
 			break

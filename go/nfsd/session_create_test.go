@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 func createSessionBodyWith(clientID uint64, seq, flags, maxRequest uint32) []byte {
@@ -65,7 +66,7 @@ func sequenceStatusForTest(t *testing.T, srv *Server, id SessionID) uint32 {
 
 // The CREATE_SESSION outcome table, canonical r3 §5.1.
 func TestCreateSessionOutcomeTable(t *testing.T) {
-	srv := identityServer(t, NewLocalTernVFS(t.TempDir()))
+	srv := identityServer(t, vfs.NewLocalTernVFS(t.TempDir()))
 	ex := identityExchange(t, srv, 1, "client", [8]byte{1}, false)
 	wire := ex.clientID
 	unchanged := func(what string) {
@@ -143,7 +144,7 @@ func TestCreateSessionOutcomeTable(t *testing.T) {
 // A destroyed session's cached creation result still replays, and the
 // session stays destroyed.
 func TestCreateSessionReplayOfDestroyedSession(t *testing.T) {
-	srv := identityServer(t, NewLocalTernVFS(t.TempDir()))
+	srv := identityServer(t, vfs.NewLocalTernVFS(t.TempDir()))
 	wire := identityExchange(t, srv, 1, "client", [8]byte{1}, false).clientID
 	status, id := createResult(t, srv, 1, wire, 1)
 	if status != nfs4.NFS4_OK || !srv.sessions.destroySession(id) {
@@ -183,7 +184,7 @@ func identityCallOn(t *testing.T, srv *Server, uid uint32, conn *rpcConnection, 
 
 // The creation sequence wraps with uint32 arithmetic.
 func TestCreateSessionSequenceWraps(t *testing.T) {
-	srv := identityServer(t, NewLocalTernVFS(t.TempDir()))
+	srv := identityServer(t, vfs.NewLocalTernVFS(t.TempDir()))
 	wire := identityExchange(t, srv, 1, "client", [8]byte{1}, false).clientID
 	if got, _ := createResult(t, srv, 1, wire, 1); got != nfs4.NFS4_OK {
 		t.Fatal(nfs4.Nfsstat4Name(got))
@@ -208,7 +209,7 @@ func TestCreateSessionSequenceWraps(t *testing.T) {
 // sequence replays, any other is misordered and DESTROY_CLIENTID is busy.
 // Exactly one session results.
 func TestCreateSessionConcurrentSameSequence(t *testing.T) {
-	fs := &confirmedLookupGateVFS{TernVFS: NewLocalTernVFS(t.TempDir()),
+	fs := &confirmedLookupGateVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
 		entered: make(chan struct{}), release: make(chan struct{})}
 	srv := identityServer(t, fs)
 	defer closeSignal(fs.release)
@@ -257,7 +258,7 @@ func TestCreateSessionConcurrentSameSequence(t *testing.T) {
 // An unconfirmed record whose CREATE_SESSION is in progress is not
 // reclaimed at the record cap.
 func TestCreateSessionInProgressRecordNotReclaimed(t *testing.T) {
-	local := NewLocalTernVFS(t.TempDir())
+	local := vfs.NewLocalTernVFS(t.TempDir())
 	first := identityServer(t, local)
 	p := identityExchange(t, first, 1, "client", [8]byte{1}, false)
 	if got, _ := createResult(t, first, 1, p.clientID, 1); got != nfs4.NFS4_OK {
@@ -293,11 +294,11 @@ func TestCreateSessionInProgressRecordNotReclaimed(t *testing.T) {
 // leaseRenameFailureVFS fails the publication renames into lease slots
 // while armed.
 type leaseRenameFailureVFS struct {
-	TernVFS
+	vfs.TernVFS
 	armed atomic.Bool
 }
 
-func (fs *leaseRenameFailureVFS) RenameEdge(src InodeID, name string, edge Edge, dst InodeID, newName string) error {
+func (fs *leaseRenameFailureVFS) RenameEdge(src vfs.InodeID, name string, edge vfs.Edge, dst vfs.InodeID, newName string) error {
 	if fs.armed.Load() && strings.HasPrefix(newName, leasePrefix) {
 		return errInjectedLookup
 	}
@@ -310,7 +311,7 @@ func (fs *leaseRenameFailureVFS) RenameEdge(src InodeID, name string, edge Edge,
 // makes the session unusable while its cached result still replays.
 func TestCreateSessionBootstrap(t *testing.T) {
 	t.Run("publication failing", func(t *testing.T) {
-		fs := &leaseRenameFailureVFS{TernVFS: NewLocalTernVFS(t.TempDir())}
+		fs := &leaseRenameFailureVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
 		srv := identityServer(t, fs)
 		wire := identityExchange(t, srv, 1, "client", [8]byte{1}, false).clientID
 		incarnation := incarnationForTest(t, srv, wire)
@@ -335,10 +336,10 @@ func TestCreateSessionBootstrap(t *testing.T) {
 		}
 	})
 	t.Run("expired", func(t *testing.T) {
-		local := NewLocalTernVFS(t.TempDir())
+		local := vfs.NewLocalTernVFS(t.TempDir())
 		srv := identityServer(t, local)
 		wire := identityExchange(t, srv, 1, "client", [8]byte{1}, false).clientID
-		incarnation := InodeID(incarnationForTest(t, srv, wire))
+		incarnation := vfs.InodeID(incarnationForTest(t, srv, wire))
 		// Another process expired the client; the store check still passes,
 		// so the creation commits and bootstrap then finds the marker.
 		srv.waitForClientGC()
@@ -361,7 +362,7 @@ func TestCreateSessionBootstrap(t *testing.T) {
 		}
 	})
 	t.Run("record credit", func(t *testing.T) {
-		srv := identityServer(t, NewLocalTernVFS(t.TempDir()))
+		srv := identityServer(t, vfs.NewLocalTernVFS(t.TempDir()))
 		wire := identityExchange(t, srv, 1, "client", [8]byte{1}, false).clientID
 		srv.clients.refreshMu.Lock()
 		srv.clients.refresherLimit = len(srv.clients.refreshers)
@@ -443,7 +444,7 @@ func TestCachedReplayAtRecordLimit(t *testing.T) {
 // CLID_INUSE) and misordering is still reported, while a new creation is
 // refused before its slot.
 func TestCachedReplayAtSerialExhaustion(t *testing.T) {
-	srv := identityServer(t, NewLocalTernVFS(t.TempDir()))
+	srv := identityServer(t, vfs.NewLocalTernVFS(t.TempDir()))
 	ss := srv.sessions
 	wire := identityExchange(t, srv, 1, "client", [8]byte{1}, false).clientID
 	status, first := createResult(t, srv, 1, wire, 1)
@@ -483,7 +484,7 @@ func TestCachedReplayAtSerialExhaustion(t *testing.T) {
 // a creator that started, or finished, after the earlier checks is never
 // destroyed.
 func TestDestroyClientIDFinalCheckSeesCreation(t *testing.T) {
-	fs := &confirmedLookupGateVFS{TernVFS: NewLocalTernVFS(t.TempDir()),
+	fs := &confirmedLookupGateVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
 		entered: make(chan struct{}), release: make(chan struct{})}
 	srv := identityServer(t, fs)
 	defer closeSignal(fs.release)
@@ -530,11 +531,11 @@ func TestDestroyClientIDFinalCheckSeesCreation(t *testing.T) {
 
 // leaseLinkPanicVFS panics in the LINK of lease temps while armed.
 type leaseLinkPanicVFS struct {
-	TernVFS
+	vfs.TernVFS
 	armed atomic.Bool
 }
 
-func (fs *leaseLinkPanicVFS) LinkFile(id InodeID, cookie Cookie, dir InodeID, name string, data io.Reader) error {
+func (fs *leaseLinkPanicVFS) LinkFile(id vfs.InodeID, cookie vfs.Cookie, dir vfs.InodeID, name string, data io.Reader) error {
 	if strings.HasPrefix(name, tempPrefix) && fs.armed.CompareAndSwap(true, false) {
 		panic("injected publication panic")
 	}
@@ -545,7 +546,7 @@ func (fs *leaseLinkPanicVFS) LinkFile(id InodeID, cookie Cookie, dir InodeID, na
 // committed OK stands, in the reply and its replay, every hold and charge is
 // released, and a later pass publishes.
 func TestCreateSessionBootstrapPanicKeepsOK(t *testing.T) {
-	fs := &leaseLinkPanicVFS{TernVFS: NewLocalTernVFS(t.TempDir())}
+	fs := &leaseLinkPanicVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
 	srv := identityServer(t, fs)
 	ss := srv.sessions
 	wire := identityExchange(t, srv, 1, "client", [8]byte{1}, false).clientID
@@ -579,7 +580,7 @@ func TestCreateSessionBootstrapPanicKeepsOK(t *testing.T) {
 // connection already has needs no new association; a new session is
 // refused there, before the slot.
 func TestCreateSessionReplayAtConnectionQuota(t *testing.T) {
-	srv := identityServer(t, NewLocalTernVFS(t.TempDir()))
+	srv := identityServer(t, vfs.NewLocalTernVFS(t.TempDir()))
 	wire := identityExchange(t, srv, 1, "client", [8]byte{1}, false).clientID
 	conn := &rpcConnection{}
 	var last SessionID

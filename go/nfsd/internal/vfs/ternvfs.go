@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-package main
+package vfs
 
 import (
 	"errors"
@@ -57,14 +57,14 @@ func (t *RemoteTernVFS) Stat(id InodeID) (NodeInfo, error) {
 	case msgs.DIRECTORY:
 		var resp msgs.StatDirectoryResp
 		if err := t.client.ShardRequest(t.log, mid.Shard(), &msgs.StatDirectoryReq{Id: mid}, &resp); err != nil {
-			return NodeInfo{}, ternToOSError(err)
+			return NodeInfo{}, TernToOSError(err)
 		}
 		mt := resp.Mtime.Time()
 		return NodeInfo{Size: 0, Mtime: mt, Atime: mt}, nil
 	default:
 		var resp msgs.StatFileResp
 		if err := t.client.ShardRequest(t.log, mid.Shard(), &msgs.StatFileReq{Id: mid}, &resp); err != nil {
-			return NodeInfo{}, ternToOSError(err)
+			return NodeInfo{}, TernToOSError(err)
 		}
 		return NodeInfo{
 			Size:  resp.Size,
@@ -78,7 +78,7 @@ func (t *RemoteTernVFS) Lookup(dirID InodeID, name string) (InodeID, error) {
 	mid := msgs.InodeId(dirID)
 	var resp msgs.LookupResp
 	if err := t.client.ShardRequest(t.log, mid.Shard(), &msgs.LookupReq{DirId: mid, Name: name}, &resp); err != nil {
-		return 0, ternToOSError(err)
+		return 0, TernToOSError(err)
 	}
 	childID := InodeID(resp.TargetId)
 	t.mu.Lock()
@@ -100,7 +100,7 @@ func (t *RemoteTernVFS) LookupParent(id InodeID) (InodeID, error) {
 	if mid.Type() == msgs.DIRECTORY {
 		var resp msgs.StatDirectoryResp
 		if err := t.client.ShardRequest(t.log, mid.Shard(), &msgs.StatDirectoryReq{Id: mid}, &resp); err != nil {
-			return 0, ternToOSError(err)
+			return 0, TernToOSError(err)
 		}
 		if resp.Owner == msgs.NULL_INODE_ID {
 			// Root directory or snapshot directory — parent is itself.
@@ -129,7 +129,7 @@ func (t *RemoteTernVFS) Readdir(dirID InodeID, startHash uint64) ([]DirEntry, ui
 		DirId:     mid,
 		StartHash: msgs.NameHash(startHash),
 	}, &resp); err != nil {
-		return nil, 0, ternToOSError(err)
+		return nil, 0, TernToOSError(err)
 	}
 	entries := make([]DirEntry, len(resp.Results))
 	t.mu.Lock()
@@ -149,7 +149,7 @@ func (t *RemoteTernVFS) Read(fileID InodeID, offset uint64, dest []byte) (int, b
 	mid := msgs.InodeId(fileID)
 	cr, err := t.getOrCreateReader(mid)
 	if err != nil {
-		return 0, false, ternToOSError(err)
+		return 0, false, TernToOSError(err)
 	}
 	n, err := cr.reader.Read(t.log, t.client, nil, t.bufPool, offset, dest)
 	if errors.Is(err, io.EOF) {
@@ -165,7 +165,7 @@ func (t *RemoteTernVFS) Read(fileID InodeID, offset uint64, dest []byte) (int, b
 func (t *RemoteTernVFS) ReadAll(fileID InodeID) ([]byte, error) {
 	buf, err := t.client.FetchFile(t.log, t.bufPool, msgs.InodeId(fileID))
 	if err != nil {
-		return nil, ternToOSError(err)
+		return nil, TernToOSError(err)
 	}
 	data := append([]byte(nil), buf.Bytes()...)
 	t.bufPool.Put(buf)
@@ -205,7 +205,7 @@ func (t *RemoteTernVFS) Readlink(fileID InodeID) (string, error) {
 	mid := msgs.InodeId(fileID)
 	buf, err := t.client.FetchFile(t.log, t.bufPool, mid)
 	if err != nil {
-		return "", ternToOSError(err)
+		return "", TernToOSError(err)
 	}
 	target := string(buf.Bytes())
 	t.bufPool.Put(buf)
@@ -219,7 +219,7 @@ func (t *RemoteTernVFS) Mkdir(dirID InodeID, name string) (InodeID, error) {
 		OwnerId: mid,
 		Name:    name,
 	}, &resp); err != nil {
-		return 0, ternToOSError(err)
+		return 0, TernToOSError(err)
 	}
 	childID := InodeID(resp.Id)
 	t.mu.Lock()
@@ -236,7 +236,7 @@ func (t *RemoteTernVFS) Symlink(dirID InodeID, name string, target string) (Inod
 		Type: msgs.SYMLINK,
 		Note: name,
 	}, &constructResp); err != nil {
-		return 0, ternToOSError(err)
+		return 0, TernToOSError(err)
 	}
 	fileId := constructResp.Id
 	cookie := constructResp.Cookie
@@ -252,7 +252,7 @@ func (t *RemoteTernVFS) Symlink(dirID InodeID, name string, target string) (Inod
 		Crc:          crc,
 		Body:         body,
 	}, &msgs.AddInlineSpanResp{}); err != nil {
-		return 0, ternToOSError(err)
+		return 0, TernToOSError(err)
 	}
 	// Link into directory.
 	if err := t.client.ShardRequest(t.log, mid.Shard(), &msgs.LinkFileReq{
@@ -261,7 +261,7 @@ func (t *RemoteTernVFS) Symlink(dirID InodeID, name string, target string) (Inod
 		OwnerId: mid,
 		Name:    name,
 	}, &msgs.LinkFileResp{}); err != nil {
-		return 0, ternToOSError(err)
+		return 0, TernToOSError(err)
 	}
 	childID := InodeID(fileId)
 	t.mu.Lock()
@@ -276,7 +276,7 @@ func (t *RemoteTernVFS) ConstructFile(dirID InodeID) (InodeID, Cookie, error) {
 	if err := t.client.ShardRequest(t.log, dirMid.Shard(), &msgs.ConstructFileReq{
 		Type: msgs.FILE,
 	}, &resp); err != nil {
-		return 0, Cookie{}, ternToOSError(err)
+		return 0, Cookie{}, TernToOSError(err)
 	}
 	return InodeID(resp.Id), Cookie(resp.Cookie), nil
 }
@@ -290,7 +290,7 @@ func (t *RemoteTernVFS) ScrapFile(fileID InodeID, cookie Cookie) error {
 		},
 		&msgs.ScrapTransientFileResp{},
 	); err != nil {
-		return ternToOSError(err)
+		return TernToOSError(err)
 	}
 	return nil
 }
@@ -301,7 +301,7 @@ func (t *RemoteTernVFS) LinkFile(fileID InodeID, cookie Cookie, dirID InodeID, n
 	// Write file data as spans.
 	if data != nil {
 		if err := t.client.WriteFile(t.log, t.bufPool, t.dirInfoCache, dirMid, mid, msgs.Cookie(cookie), data); err != nil {
-			return ternToOSError(err)
+			return TernToOSError(err)
 		}
 	}
 	// Link the file into the directory.
@@ -311,7 +311,7 @@ func (t *RemoteTernVFS) LinkFile(fileID InodeID, cookie Cookie, dirID InodeID, n
 		OwnerId: dirMid,
 		Name:    name,
 	}, &msgs.LinkFileResp{}); err != nil {
-		return ternToOSError(err)
+		return TernToOSError(err)
 	}
 	childID := InodeID(mid)
 	t.mu.Lock()
@@ -332,14 +332,14 @@ func (t *RemoteTernVFS) CreateFile(dirID InodeID, name string, data io.Reader) (
 		Type: msgs.FILE,
 		Note: name,
 	}, &constructResp); err != nil {
-		return 0, ternToOSError(err)
+		return 0, TernToOSError(err)
 	}
 	fileId := constructResp.Id
 	cookie := constructResp.Cookie
 	// Write data.
 	if data != nil {
 		if err := t.client.WriteFile(t.log, t.bufPool, t.dirInfoCache, dirMid, fileId, cookie, data); err != nil {
-			return 0, ternToOSError(err)
+			return 0, TernToOSError(err)
 		}
 	}
 	// Link.
@@ -349,7 +349,7 @@ func (t *RemoteTernVFS) CreateFile(dirID InodeID, name string, data io.Reader) (
 		OwnerId: dirMid,
 		Name:    name,
 	}, &msgs.LinkFileResp{}); err != nil {
-		return 0, ternToOSError(err)
+		return 0, TernToOSError(err)
 	}
 	childID := InodeID(fileId)
 	t.mu.Lock()
@@ -369,7 +369,7 @@ func (t *RemoteTernVFS) LookupEdge(dirID InodeID, name string) (Edge, error) {
 		DirId: dirMid,
 		Name:  name,
 	}, &resp); err != nil {
-		return Edge{}, ternToOSError(err)
+		return Edge{}, TernToOSError(err)
 	}
 	return Edge{ID: InodeID(resp.TargetId), CreationTime: uint64(resp.CreationTime)}, nil
 }
@@ -379,7 +379,7 @@ func (t *RemoteTernVFS) Remove(dirID InodeID, name string) error {
 	if err != nil {
 		return err
 	}
-	return ternToOSError(t.RemoveEdge(dirID, name, edge))
+	return TernToOSError(t.RemoveEdge(dirID, name, edge))
 }
 
 func (t *RemoteTernVFS) RemoveEdge(dirID InodeID, name string, edge Edge) error {
@@ -421,7 +421,7 @@ func (t *RemoteTernVFS) Rename(srcDirID InodeID, srcName string, dstDirID InodeI
 	if err != nil {
 		return err
 	}
-	return ternToOSError(t.RenameEdge(srcDirID, srcName, edge, dstDirID, dstName))
+	return TernToOSError(t.RenameEdge(srcDirID, srcName, edge, dstDirID, dstName))
 }
 
 func (t *RemoteTernVFS) RenameEdge(srcDirID InodeID, srcName string, edge Edge, dstDirID InodeID, dstName string) error {
@@ -487,14 +487,14 @@ func (t *RemoteTernVFS) SetTime(id InodeID, mtime *time.Time, atime *time.Time) 
 		req.Atime = (1 << 63) | uint64(atime.UnixNano())
 	}
 	if err := t.client.ShardRequest(t.log, mid.Shard(), &req, &msgs.SetTimeResp{}); err != nil {
-		return ternToOSError(err)
+		return TernToOSError(err)
 	}
 	return nil
 }
 
-// ternToOSError maps TernFS errors to os-level errors so that the NFS
+// TernToOSError maps TernFS errors to os-level errors so that the NFS
 // server's errToNFS can translate them to NFS status codes.
-func ternToOSError(err error) error {
+func TernToOSError(err error) error {
 	var te msgs.TernError
 	if !errors.As(err, &te) {
 		return err
@@ -516,14 +516,14 @@ func ternToOSError(err error) error {
 	}
 }
 
-func (t *RemoteTernVFS) ClassifyMutation(op uint32, err error) mutationOutcome {
+func (t *RemoteTernVFS) ClassifyMutation(op uint32, err error) MutationOutcome {
 	if err == nil {
-		return mutationApplied
+		return MutationApplied
 	}
 	if op == nfs4.OP_REMOVE && (errors.Is(err, msgs.EDGE_NOT_FOUND) || errors.Is(err, msgs.MISMATCHING_CREATION_TIME)) {
-		return mutationDetachOnly
+		return MutationDetachOnly
 	}
 	// A rejection can arrive after another retransmitted copy applies.
 	// Without whole-call outcome evidence, it cannot prove non-application.
-	return mutationUnknown
+	return MutationUnknown
 }

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 func admissionSequence(body []byte, ts *testSession, slot, seq uint32, cache bool) []byte {
@@ -76,11 +77,11 @@ func admissionImage(slot *sessionSlot) admissionSlotImage {
 }
 
 type admissionLeaseVFS struct {
-	TernVFS
+	vfs.TernVFS
 	fail bool
 }
 
-func (fs *admissionLeaseVFS) Lookup(id InodeID, name string) (InodeID, error) {
+func (fs *admissionLeaseVFS) Lookup(id vfs.InodeID, name string) (vfs.InodeID, error) {
 	if fs.fail {
 		return 0, syscall.EIO
 	}
@@ -91,7 +92,7 @@ func TestAdmissionFailedSequencePreservesCache(t *testing.T) {
 	cases := []string{"bad-session", "bad-slot", "bad-highest", "highest-below-slot", "misordered", "too-many-ops", "full-request", "response", "cache", "quota", "association", "renewal", "missing-client"}
 	for _, name := range cases {
 		t.Run(name, func(t *testing.T) {
-			fs := &admissionLeaseVFS{TernVFS: NewLocalTernVFS(t.TempDir())}
+			fs := &admissionLeaseVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
 			srv, err := NewServer(fs, readOnlyStagingStore{}, nil)
 			if err != nil {
 				t.Fatal(err)
@@ -460,7 +461,7 @@ func admissionJoin(bodies ...[]byte) []byte {
 }
 
 func TestAdmissionSP4NoneAndMaintenancePositions(t *testing.T) {
-	srv := admissionWritableServer(t, NewLocalTernVFS(t.TempDir()))
+	srv := admissionWritableServer(t, vfs.NewLocalTernVFS(t.TempDir()))
 	ts := connectionSession(t, srv)
 	conn := &rpcConnection{}
 	_, res := admissionRequest(t, srv, admissionDestroy(ts.id), 1, conn)
@@ -522,7 +523,7 @@ func TestAdmissionSP4NoneAndMaintenancePositions(t *testing.T) {
 }
 
 func TestAdmissionMaintenanceExplicitOtherClient(t *testing.T) {
-	srv := admissionWritableServer(t, NewLocalTernVFS(t.TempDir()))
+	srv := admissionWritableServer(t, vfs.NewLocalTernVFS(t.TempDir()))
 	ts := connectionSession(t, srv)
 	conn := &rpcConnection{}
 	wire := admissionSequence(exchangeIDBody("other-client", [8]byte{}), ts, 0, 1, true)

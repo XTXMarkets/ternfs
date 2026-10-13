@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 var mutableAttrMask = attrMask{
@@ -186,7 +187,7 @@ func TestRecoveredSharedWriterAcrossOpenOwners(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "file"), []byte("original"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	fs := NewLocalTernVFS(root)
+	fs := vfs.NewLocalTernVFS(root)
 	dir := t.TempDir()
 	store, err := NewLocalStagingStore(dir, nil)
 	if err != nil {
@@ -262,7 +263,7 @@ func TestStagingCheckpointRetry(t *testing.T) {
 		t.Run(mutation, func(t *testing.T) {
 			dir := t.TempDir()
 			base := []byte("original")
-			store, id, stage := createOverlayStage(t, dir, MakeInodeID(InodeTypeFile, 10), base)
+			store, id, stage := createOverlayStage(t, dir, vfs.MakeInodeID(vfs.InodeTypeFile, 10), base)
 			defer store.Remove(id)
 			if err := stage.Write(0, []byte("O")); err != nil {
 				t.Fatal(err)

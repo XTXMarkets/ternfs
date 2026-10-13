@@ -15,6 +15,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 func authSysBody(uid uint32, gid uint32, groups ...uint32) string {
@@ -30,7 +32,7 @@ func authSysBody(uid uint32, gid uint32, groups ...uint32) string {
 // inspectFixture holds a client store with two nfsd processes and three
 // client identities in different states.
 type inspectFixture struct {
-	fs         TernVFS
+	fs         vfs.TernVFS
 	first      *ClientStore
 	second     *ClientStore
 	now        time.Time
@@ -42,14 +44,14 @@ type inspectFixture struct {
 	expiredID  uint64
 	// identityDirID is the identity directory inode of clientID. It is not a
 	// clientid, and the report must not label it as one.
-	identityDirID InodeID
+	identityDirID vfs.InodeID
 	stagingDir    string
 }
 
 func newInspectFixture(t *testing.T) *inspectFixture {
 	t.Helper()
 	f := &inspectFixture{
-		fs:       NewLocalTernVFS(t.TempDir()),
+		fs:       vfs.NewLocalTernVFS(t.TempDir()),
 		now:      time.Unix(1_700_000_000, 0),
 		identity: []byte("Linux NFSv4.1 host-a/10.0.0.1"),
 	}
@@ -83,7 +85,7 @@ func newInspectFixture(t *testing.T) *inspectFixture {
 	if f.clientID == f.replacedID {
 		t.Fatal("new verifier did not create a new incarnation")
 	}
-	f.identityDirID, err = f.fs.LookupParent(InodeID(f.clientID))
+	f.identityDirID, err = f.fs.LookupParent(vfs.InodeID(f.clientID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,17 +114,17 @@ func newInspectFixture(t *testing.T) *inspectFixture {
 	if err := saveStagingMeta(uploadMeta, StagingMeta{
 		DirID:           f.fs.RootID(),
 		FileName:        "upload.bin",
-		TernCookie:      Cookie{1, 2, 3, 4, 5, 6, 7, 8},
+		TernCookie:      vfs.Cookie{1, 2, 3, 4, 5, 6, 7, 8},
 		NFSStateID:      f.stateID,
 		ClientID:        f.clientID,
 		OpenOwner:       "owner-a",
 		OwnerKnown:      true,
-		BaseID:          MakeInodeID(InodeTypeFile, 123),
+		BaseID:          vfs.MakeInodeID(vfs.InodeTypeFile, 123),
 		BaseSize:        8192,
 		Size:            4096,
 		Dirty:           byteRangeSet{{start: 512, end: 1024}},
 		MetadataChanged: true,
-		Attrs: NodeInfo{
+		Attrs: vfs.NodeInfo{
 			Mtime:  f.now.Add(-3 * time.Second),
 			Atime:  f.now.Add(-2 * time.Second),
 			Ctime:  f.now.Add(-time.Second),
@@ -282,7 +284,7 @@ func TestInspectReportsClientState(t *testing.T) {
 		t.Fatalf("staging summary = %+v", report.StagingSummary)
 	}
 	if open.Staging.SidecarVersion != "v8" ||
-		open.Staging.BaseID != inspectInode(MakeInodeID(InodeTypeFile, 123)) ||
+		open.Staging.BaseID != inspectInode(vfs.MakeInodeID(vfs.InodeTypeFile, 123)) ||
 		open.Staging.BaseSize != 8192 || open.Staging.CheckpointSize != 4096 ||
 		len(open.Staging.Dirty) != 1 || !open.Staging.MetadataChanged ||
 		open.Staging.OpenOwner != "owner-a" || !open.Staging.OwnerKnown {
@@ -350,10 +352,10 @@ func TestInspectCountsNoProblemsForOrdinaryLifecycleStates(t *testing.T) {
 // the principal field where nothing looks for it.
 func TestInspectCountsUnreadableRecord(t *testing.T) {
 	f := newInspectFixture(t)
-	if err := f.fs.Remove(InodeID(f.clientID), clientRecordName); err != nil {
+	if err := f.fs.Remove(vfs.InodeID(f.clientID), clientRecordName); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.fs.Symlink(InodeID(f.clientID), clientRecordName, "nowhere"); err != nil {
+	if _, err := f.fs.Symlink(vfs.InodeID(f.clientID), clientRecordName, "nowhere"); err != nil {
 		t.Fatal(err)
 	}
 	report, err := f.reader(t).Inspect(inspectOptions{ClientID: f.clientID})
@@ -373,7 +375,7 @@ func TestInspectCountsProblems(t *testing.T) {
 	f := newInspectFixture(t)
 
 	// A dangling confirmed pointer.
-	identityID, err := f.fs.LookupParent(InodeID(f.clientID))
+	identityID, err := f.fs.LookupParent(vfs.InodeID(f.clientID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -386,7 +388,7 @@ func TestInspectCountsProblems(t *testing.T) {
 		t.Fatal(err)
 	}
 	// An unrecognized entry in an incarnation directory.
-	if _, err := f.fs.Symlink(InodeID(f.clientID), "junk", "elsewhere"); err != nil {
+	if _, err := f.fs.Symlink(vfs.InodeID(f.clientID), "junk", "elsewhere"); err != nil {
 		t.Fatal(err)
 	}
 	// A staging data file with no sidecar.
@@ -442,7 +444,7 @@ func TestInspectDoesNotModifyStore(t *testing.T) {
 	if len(expired.Leases) != 1 || !expired.Leases[0].Collectable {
 		t.Fatalf("expired leases = %+v", expired.Leases)
 	}
-	if _, err := f.fs.Lookup(InodeID(f.expiredID), expiredName); !errors.Is(err, os.ErrNotExist) {
+	if _, err := f.fs.Lookup(vfs.InodeID(f.expiredID), expiredName); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expired marker lookup = %v", err)
 	}
 	_, replaced := findIncarnation(t, report, f.replacedID)
@@ -469,7 +471,7 @@ func TestInspectFilters(t *testing.T) {
 	// a monitoring check fire.
 	t.Run("stale clientid", func(t *testing.T) {
 		report, err := reader.Inspect(inspectOptions{
-			ClientID: uint64(MakeInodeID(InodeTypeDir, 0x123456)),
+			ClientID: uint64(vfs.MakeInodeID(vfs.InodeTypeDir, 0x123456)),
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -591,8 +593,8 @@ func TestInspectOutput(t *testing.T) {
 		// Every label matches the flag which selects it.
 		"identity-hash " + clientIdentityKey(f.identity),
 		"identity  \"Linux NFSv4.1 host-a/10.0.0.1\"",
-		"directory " + inodeHex(InodeID(f.identityDirID)),
-		"confirmed clientid " + inodeHex(InodeID(f.clientID)),
+		"directory " + inodeHex(vfs.InodeID(f.identityDirID)),
+		"confirmed clientid " + inodeHex(vfs.InodeID(f.clientID)),
 		"[confirmed,pending, lease live] ACTIVE",
 		"[unreachable, lease none] UNREACHABLE",
 		"[pending, lease none] PENDING",
@@ -601,7 +603,7 @@ func TestInspectOutput(t *testing.T) {
 			" epoch abcdef01 ACTIVE",
 		"file 0x0000000000003039 data 4096 bytes",
 		"target dir " + inodeHex(f.fs.RootID()) + " name \"upload.bin\"",
-		"base " + inodeHex(MakeInodeID(InodeTypeFile, 123)) +
+		"base " + inodeHex(vfs.MakeInodeID(vfs.InodeTypeFile, 123)) +
 			" size 8192; checkpoint size 4096 dirty [512,1024)",
 		"attrs change 99",
 		"owner \"owner-a\" access write",
@@ -616,7 +618,7 @@ func TestInspectOutput(t *testing.T) {
 	// The identity directory inode is not a clientid and must not be labelled
 	// as one: pasting it into -clientid does not work.
 	if strings.Contains(text.String(),
-		"clientid "+inodeHex(InodeID(f.identityDirID))) {
+		"clientid "+inodeHex(vfs.InodeID(f.identityDirID))) {
 		t.Errorf("identity directory inode labelled as a clientid:\n%s", text.String())
 	}
 	if count := strings.Count(text.String(), "orphan.bin"); count != 1 {
@@ -651,14 +653,14 @@ func TestInspectOutput(t *testing.T) {
 	found := false
 	for _, identity := range decoded.Identities {
 		for _, inc := range identity.Incarnations {
-			if inc.ClientID == inodeHex(InodeID(f.clientID)) && inc.Usable &&
+			if inc.ClientID == inodeHex(vfs.InodeID(f.clientID)) && inc.Usable &&
 				inc.Status == inspectStatusActive {
 				found = true
 			}
 		}
 	}
 	if !found {
-		t.Fatalf("JSON lacks usable clientid %s:\n%s", inodeHex(InodeID(f.clientID)), out.String())
+		t.Fatalf("JSON lacks usable clientid %s:\n%s", inodeHex(vfs.InodeID(f.clientID)), out.String())
 	}
 	// The JSON keys are the flag names, and the values are what those flags
 	// accept: -identity takes identity, -identity-hash takes identity_hash.
@@ -679,7 +681,7 @@ func TestInspectOutput(t *testing.T) {
 		if identity.IdentityHash != clientIdentityKey(f.identity) {
 			t.Fatalf("identity_hash = %q", identity.IdentityHash)
 		}
-		if identity.DirectoryID != inodeHex(InodeID(f.identityDirID)) {
+		if identity.DirectoryID != inodeHex(vfs.InodeID(f.identityDirID)) {
 			t.Fatalf("directory_id = %q", identity.DirectoryID)
 		}
 		return
@@ -690,7 +692,7 @@ func TestInspectOutput(t *testing.T) {
 func TestInspectJSONKeepsAnEmptyIdentityListAnArray(t *testing.T) {
 	f := newInspectFixture(t)
 	report, err := f.reader(t).Inspect(inspectOptions{
-		ClientID: uint64(MakeInodeID(InodeTypeDir, 0x123456)),
+		ClientID: uint64(vfs.MakeInodeID(vfs.InodeTypeDir, 0x123456)),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -721,11 +723,11 @@ func TestInspectReportsMalformedStagingAndPointers(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	identityID, err := f.fs.LookupParent(InodeID(f.clientID))
+	identityID, err := f.fs.LookupParent(vfs.InodeID(f.clientID))
 	if err != nil {
 		t.Fatal(err)
 	}
-	name, err := f.first.requireIncarnationName(identityID, InodeID(f.clientID))
+	name, err := f.first.requireIncarnationName(identityID, vfs.InodeID(f.clientID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1047,7 +1049,7 @@ func TestParseInspectOptions(t *testing.T) {
 }
 
 func TestInspectWithoutStore(t *testing.T) {
-	if _, err := openClientStoreReader(NewLocalTernVFS(t.TempDir())); err == nil {
+	if _, err := openClientStoreReader(vfs.NewLocalTernVFS(t.TempDir())); err == nil {
 		t.Fatal("reader opened a filesystem without a client store")
 	}
 }
@@ -1064,7 +1066,7 @@ func TestFormatPrincipal(t *testing.T) {
 	}
 }
 
-func listTree(t *testing.T, fs TernVFS, dirID InodeID, prefix string) []string {
+func listTree(t *testing.T, fs vfs.TernVFS, dirID vfs.InodeID, prefix string) []string {
 	t.Helper()
 	var result []string
 	var cursor uint64

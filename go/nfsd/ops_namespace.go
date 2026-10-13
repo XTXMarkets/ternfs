@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 func (s *Server) opCreate(args nfs4.CREATE4args, st *compoundState, w *nfs4.COMPOUND4resWriter) uint32 {
@@ -17,7 +18,7 @@ func (s *Server) opCreate(args nfs4.CREATE4args, st *compoundState, w *nfs4.COMP
 		ew := w.AppendResarray_Create()
 		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_NOFILEHANDLE)
 	}
-	if st.currentID.Type() != InodeTypeDir {
+	if st.currentID.Type() != vfs.InodeTypeDir {
 		ew := w.AppendResarray_Create()
 		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_NOTDIR)
 	}
@@ -69,7 +70,7 @@ func (s *Server) opCreate(args nfs4.CREATE4args, st *compoundState, w *nfs4.COMP
 		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 
-	var newID InodeID
+	var newID vfs.InodeID
 
 	switch objType {
 	case nfs4.NF4DIR:
@@ -121,7 +122,7 @@ func (s *Server) opGetfh(st *compoundState, w *nfs4.COMPOUND4resWriter) uint32 {
 	ew := w.AppendResarray_Getfh()
 	okW := ew.SetValue_Nfs4Ok()
 	fhW := okW.StartObject()
-	buf := fhW.SetData(inodeIDToFH(st.currentID)).Finish()
+	buf := fhW.SetData(vfs.InodeIDToFH(st.currentID)).Finish()
 	okW.Resume(buf)
 	buf = okW.Finish()
 	ew.Resume(buf)
@@ -144,7 +145,7 @@ func (s *Server) opLookup(args nfs4.LOOKUP4args, st *compoundState, w *nfs4.COMP
 		return finishStatusResponse(&r, status)
 	}
 	// Hide the internal .nfs directory from client access.
-	if name == nfsDirName && st.currentID == s.fs.RootID() {
+	if name == vfs.NFSDirName && st.currentID == s.fs.RootID() {
 		r := w.AppendResarray_Lookup()
 		return finishStatusResponse(&r, nfs4.NFS4ERR_NOENT)
 	}
@@ -186,7 +187,7 @@ func (s *Server) opLookupp(st *compoundState, w *nfs4.COMPOUND4resWriter) uint32
 
 func (s *Server) opPutfh(args nfs4.PUTFH4args, st *compoundState, w *nfs4.COMPOUND4resWriter) uint32 {
 	fhData := args.Object().Data()
-	id, ok := fhToInodeID(fhData)
+	id, ok := vfs.FHToInodeID(fhData)
 	if !ok {
 		r := w.AppendResarray_Putfh()
 		return finishStatusResponse(&r, nfs4.NFS4ERR_BADHANDLE)
@@ -347,7 +348,7 @@ func (s *Server) opRename(args nfs4.RENAME4args, st *compoundState, w *nfs4.COMP
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fail(s.errToNFS(err))
 	}
-	if err == nil && (edge.ID.Type() == InodeTypeDir) != (dst.Type() == InodeTypeDir) {
+	if err == nil && (edge.ID.Type() == vfs.InodeTypeDir) != (dst.Type() == vfs.InodeTypeDir) {
 		return fail(nfs4.NFS4ERR_EXIST)
 	}
 	// Preflight cannot freeze the destination. A later type race is a
@@ -410,7 +411,7 @@ func (s *Server) opSecinfo(args nfs4.SECINFO4args, st *compoundState, w *nfs4.CO
 		ew := w.AppendResarray_Secinfo()
 		return finishDefaultResponse(w, ew.Finish(), status)
 	}
-	if name == nfsDirName && st.currentID == s.fs.RootID() {
+	if name == vfs.NFSDirName && st.currentID == s.fs.RootID() {
 		ew := w.AppendResarray_Secinfo()
 		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_NOENT)
 	}
