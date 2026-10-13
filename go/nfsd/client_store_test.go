@@ -100,13 +100,9 @@ func TestClientStoreDurableState(t *testing.T) {
 
 	owner1 := clientOwner{
 		principal: rpcPrincipal{flavor: authSys, body: "owner-1"},
-		netid:     "tcp",
-		addr:      "127.0.0.1.1.2",
 	}
 	owner2 := clientOwner{
 		principal: rpcPrincipal{flavor: authSys, body: "owner-2"},
-		netid:     "tcp",
-		addr:      "127.0.0.2.1.2",
 	}
 	verifier := [8]byte{1}
 	base := time.Unix(1000, 0)
@@ -191,7 +187,7 @@ func TestClientStoreDurableState(t *testing.T) {
 			t.Fatal("different-verifier owner conflict with active state was accepted")
 		} else {
 			var inUse clientInUseError
-			if !errors.As(err, &inUse) || inUse.owner != owner1 {
+			if !errors.As(err, &inUse) {
 				t.Fatalf("different-verifier owner conflict = %v", err)
 			}
 		}
@@ -201,7 +197,7 @@ func TestClientStoreDurableState(t *testing.T) {
 			t.Fatal("conflicting owner with active state was accepted")
 		} else {
 			var inUse clientInUseError
-			if !errors.As(err, &inUse) || inUse.owner != owner1 {
+			if !errors.As(err, &inUse) {
 				t.Fatalf("active owner conflict = %v", err)
 			}
 		}
@@ -223,7 +219,7 @@ func TestClientStoreDurableState(t *testing.T) {
 		}
 		clientID = takeoverID
 
-		second.now = func() time.Time { return base.Add(nfsLeaseTime + time.Second) }
+		second.now = func() time.Time { return base.Add(leaseWriteTerm + time.Second) }
 		stateID[0] = 2
 		if err := first.MarkOpen(clientID, stateID); err != nil {
 			t.Fatal(err)
@@ -416,13 +412,13 @@ func TestClientStoreLeaseSlotsDoNotShortenEachOther(t *testing.T) {
 	if err := second.Renew(clientID); err != nil {
 		t.Fatal(err)
 	}
-	secondExpiry := secondRenewAt.Add(nfsLeaseTime)
+	secondExpiry := secondRenewAt.Add(leaseWriteTerm)
 	firstRenewAt := secondExpiry.Add(-time.Second)
 	first.now = func() time.Time { return firstRenewAt }
 	if err := first.Renew(clientID); err != nil {
 		t.Fatal(err)
 	}
-	firstExpiry := firstRenewAt.Add(nfsLeaseTime)
+	firstExpiry := firstRenewAt.Add(leaseWriteTerm)
 
 	entries, _, err := fs.Readdir(InodeID(clientID), 0)
 	if err != nil {
@@ -481,7 +477,7 @@ func TestClientStoreRemovesExpiredProcessSlots(t *testing.T) {
 		t.Fatal(err)
 	}
 	observer.now = func() time.Time {
-		return base.Add(nfsLeaseTime + time.Second)
+		return base.Add(leaseWriteTerm + time.Second)
 	}
 	if _, _, err := observer.leaseStatus(InodeID(clientID)); err != nil {
 		t.Fatal(err)
@@ -501,7 +497,7 @@ func TestClientStoreRemovesExpiredProcessSlots(t *testing.T) {
 		t.Fatal(err)
 	}
 	collector.now = func() time.Time {
-		return base.Add(2*nfsLeaseTime + time.Second)
+		return base.Add(leaseWriteTerm + nfsLeaseTime + time.Second)
 	}
 	if _, _, err := collector.leaseStatus(InodeID(clientID)); err != nil {
 		t.Fatal(err)
@@ -549,7 +545,7 @@ func TestClientStoreExpiredLeaseDoesNotReviveAfterSlotCleanup(t *testing.T) {
 				t.Fatal(err)
 			}
 			collector.now = func() time.Time {
-				return base.Add(2*nfsLeaseTime + time.Second)
+				return base.Add(leaseWriteTerm + nfsLeaseTime + time.Second)
 			}
 			if _, _, err := collector.leaseStatus(
 				InodeID(clientID),
@@ -591,7 +587,7 @@ func TestClientStoreCachedRenewSeesExpiredMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 	second.now = func() time.Time {
-		return base.Add(nfsLeaseTime + time.Second)
+		return base.Add(leaseWriteTerm + time.Second)
 	}
 	if live, found, err := second.leaseStatus(
 		InodeID(clientID),
@@ -627,7 +623,7 @@ func TestClientStorePersistsExpiryBeforeSlotCleanup(t *testing.T) {
 	}
 
 	store.now = func() time.Time {
-		return base.Add(2*nfsLeaseTime + time.Second)
+		return base.Add(leaseWriteTerm + nfsLeaseTime + time.Second)
 	}
 	fs.name = store.leaseName
 	fs.remaining = 1
@@ -729,6 +725,22 @@ func (fs *countingVFS) Rename(
 	return fs.TernVFS.Rename(srcDirID, srcName, dstDirID, dstName)
 }
 
+// The refresher's lease publication counts as a create (its LINK) and a
+// rename.
+func (fs *countingVFS) LinkFile(id InodeID, cookie Cookie, dirID InodeID, name string, data io.Reader) error {
+	fs.mu.Lock()
+	fs.createFile++
+	fs.mu.Unlock()
+	return fs.TernVFS.LinkFile(id, cookie, dirID, name, data)
+}
+
+func (fs *countingVFS) RenameEdge(srcDirID InodeID, srcName string, edge Edge, dstDirID InodeID, dstName string) error {
+	fs.mu.Lock()
+	fs.rename++
+	fs.mu.Unlock()
+	return fs.TernVFS.RenameEdge(srcDirID, srcName, edge, dstDirID, dstName)
+}
+
 func (fs *countingVFS) reset() {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
@@ -796,47 +808,40 @@ func TestClientStoreHasOpenFastPathAndImplicitRenewal(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store.now = func() time.Time { return base.Add(time.Second) }
-	fs.reset()
-	active, err := store.HasOpen(clientID, stateID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !active {
-		t.Fatal("fresh open was not active")
-	}
-	if fs.lookup != 1 || fs.lookupParent != 0 || fs.readdir != 0 ||
-		fs.stat != 0 || fs.read != 0 || fs.readlink != 0 ||
-		fs.createFile != 0 || fs.rename != 0 {
-		t.Fatalf("fast HasOpen calls: lookup=%d parent=%d readdir=%d stat=%d read=%d readlink=%d create=%d rename=%d",
-			fs.lookup, fs.lookupParent, fs.readdir, fs.stat, fs.read,
-			fs.readlink, fs.createFile, fs.rename)
-	}
-
+	// The fast path, while this process's published lease lasts: the
+	// confirmed pointer and the expired marker, and no lease write. Lease
+	// writes are the refresher's alone (canonical r3 §9.1).
 	for _, elapsed := range []time.Duration{
+		time.Second,
 		nfsLeaseRenewAfter + time.Second,
 		2 * (nfsLeaseRenewAfter + time.Second),
-		3 * (nfsLeaseRenewAfter + time.Second),
-		4 * (nfsLeaseRenewAfter + time.Second),
 	} {
 		store.now = func() time.Time { return base.Add(elapsed) }
 		fs.reset()
-		active, err = store.HasOpen(clientID, stateID)
+		active, err := store.HasOpen(clientID, stateID)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if !active {
-			t.Fatalf("active traffic did not renew lease at %s", elapsed)
+			t.Fatalf("fresh open was not active at %s", elapsed)
 		}
-		if fs.readdir != 0 || fs.stat != 0 || fs.read != 0 ||
-			fs.readlink != 0 {
-			t.Fatalf("implicit renewal used slow metadata path at %s: readdir=%d stat=%d read=%d readlink=%d",
-				elapsed, fs.readdir, fs.stat, fs.read, fs.readlink)
+		if fs.lookup != 2 || fs.lookupParent != 0 || fs.readdir != 0 ||
+			fs.stat != 0 || fs.read != 0 || fs.readlink != 0 ||
+			fs.createFile != 0 || fs.rename != 0 {
+			t.Fatalf("fast HasOpen calls at %s: lookup=%d parent=%d readdir=%d stat=%d read=%d readlink=%d create=%d rename=%d",
+				elapsed, fs.lookup, fs.lookupParent, fs.readdir, fs.stat, fs.read,
+				fs.readlink, fs.createFile, fs.rename)
 		}
-		if fs.createFile != 1 || fs.rename != 1 {
-			t.Fatalf("implicit renewal writes at %s: create=%d rename=%d",
-				elapsed, fs.createFile, fs.rename)
-		}
+	}
+	// Past the published lease, HasOpen reads the durable lease, finds it
+	// dead and writes nothing.
+	store.now = func() time.Time { return base.Add(leaseWriteTerm + time.Second) }
+	fs.reset()
+	if active, err := store.HasOpen(clientID, stateID); err != nil || active {
+		t.Fatalf("open past the lease %t %v", active, err)
+	}
+	if fs.createFile != 0 || fs.rename != 0 {
+		t.Fatalf("HasOpen wrote: create=%d rename=%d", fs.createFile, fs.rename)
 	}
 }
 
@@ -907,11 +912,11 @@ func TestClientStoreImplicitRenewalRechecksReboot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var confirmErr error
-	hookFS.dstName = first.leaseName
-	hookFS.hook = func() {
-		_, confirmErr = second.ConfirmClientID(
-			newID, confirm, owner.principal)
+	// HasOpen writes no lease (canonical r3 §9.1), so a reboot confirmed by
+	// another process cannot be raced by a renewal: the cached open sees the
+	// confirmed pointer move and reports nothing.
+	if _, err := second.ConfirmClientID(newID, confirm, owner.principal); err != nil {
+		t.Fatalf("reboot confirmation failed: %v", err)
 	}
 	first.now = func() time.Time {
 		return base.Add(nfsLeaseRenewAfter + time.Second)
@@ -920,17 +925,15 @@ func TestClientStoreImplicitRenewalRechecksReboot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if confirmErr != nil {
-		t.Fatalf("reboot confirmation failed: %v", confirmErr)
-	}
 	if active {
-		t.Fatal("implicit renewal resurrected state after reboot confirmation")
+		t.Fatal("cached open survived reboot confirmation")
 	}
 	if _, err := baseFS.Lookup(
 		InodeID(oldID), first.leaseName,
 	); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("implicit renewal left a stale lease: %v", err)
+		t.Fatalf("reboot confirmation left a stale lease: %v", err)
 	}
+	_ = hookFS
 	if _, err := baseFS.Lookup(
 		InodeID(oldID), activeOpenName(stateID),
 	); !errors.Is(err, os.ErrNotExist) {
@@ -1108,6 +1111,14 @@ func (fs *renameFailureVFS) Rename(
 	return fs.TernVFS.Rename(srcDirID, srcName, dstDirID, dstName)
 }
 
+func (fs *renameFailureVFS) RenameEdge(srcDirID InodeID, srcName string, edge Edge, dstDirID InodeID, dstName string) error {
+	if dstName == fs.dstName && fs.remaining > 0 {
+		fs.remaining--
+		return errInjectedRename
+	}
+	return fs.TernVFS.RenameEdge(srcDirID, srcName, edge, dstDirID, dstName)
+}
+
 func (fs *renameHookVFS) Rename(
 	srcDirID InodeID,
 	srcName string,
@@ -1231,7 +1242,7 @@ func TestClientStoreHasOpenRequiresLiveDurableLease(t *testing.T) {
 					store.localClients.Delete(InodeID(id))
 				}
 				if expired {
-					now = now.Add(nfsLeaseTime + time.Second)
+					now = now.Add(leaseWriteTerm + time.Second)
 				} else if err := fs.Remove(InodeID(id), store.leaseName); err != nil {
 					t.Fatal(err)
 				}
@@ -1267,42 +1278,44 @@ func TestClientStoreMarkOpenKeepsExistingMarkerOnRenewFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// A refresh that fails while the published lease still lasts does not
+	// fail MarkOpen: the lease it relies on is proven (canonical r3 §9.1).
 	store.now = func() time.Time {
 		return base.Add(nfsLeaseRenewAfter + time.Second)
 	}
 	fs.dstName = store.leaseName
 	fs.remaining = 1
-	if _, err := baseFS.Lookup(
-		InodeID(clientID), activeOpenName(stateID),
-	); err != nil {
-		t.Fatalf("initial marker is missing: %v", err)
+	if err := store.MarkOpen(clientID, stateID); err != nil {
+		t.Fatalf("MarkOpen within the proven lease = %v", err)
 	}
-	if err := store.ensureMarker(
-		InodeID(clientID), activeOpenName(stateID)); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.MarkOpen(
-		clientID, stateID,
-	); !errors.Is(err, errInjectedRename) {
-		t.Fatalf("MarkOpen error = %v, want injected renewal failure", err)
+	if fs.remaining != 0 {
+		t.Fatal("the due refresh was not attempted")
 	}
 	if _, err := baseFS.Lookup(
 		InodeID(clientID), activeOpenName(stateID),
 	); err != nil {
-		t.Fatalf("renewal failure removed existing marker: %v", err)
+		t.Fatalf("refresh failure removed existing marker: %v", err)
 	}
 
+	// Past the proven lease, with publication still failing, MarkOpen gets
+	// DELAY and creates no marker.
+	store.now = func() time.Time { return base.Add(leaseWriteTerm + time.Second) }
+	fs.remaining = 100
 	newStateID := StateID{2}
-	fs.remaining = 1
 	if err := store.MarkOpen(
 		clientID, newStateID,
-	); !errors.Is(err, errInjectedRename) {
-		t.Fatalf("new MarkOpen error = %v, want injected renewal failure", err)
+	); nfsErrCode(err) != NFS4ERR_DELAY {
+		t.Fatalf("new MarkOpen error = %v, want DELAY", err)
 	}
 	if _, err := baseFS.Lookup(
 		InodeID(clientID), activeOpenName(newStateID),
 	); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("failed renewal created a new marker: %v", err)
+		t.Fatalf("failed refresh created a new marker: %v", err)
+	}
+	if _, err := baseFS.Lookup(
+		InodeID(clientID), activeOpenName(stateID),
+	); err != nil {
+		t.Fatalf("refresh failure removed existing marker: %v", err)
 	}
 }
 
@@ -1842,7 +1855,7 @@ func TestServerSchedulesClientGC(t *testing.T) {
 		t.Fatal(err)
 	}
 	base := time.Unix(1000, 0)
-	srv.clients.now = func() time.Time { return base }
+	srv.clients.setClock(func() time.Time { return base })
 	owner := clientOwner{principal: rpcPrincipal{flavor: authSys, body: "owner"}}
 	oldID, _, err := srv.clients.SetClientID(
 		[8]byte{1}, []byte("client"), owner)
@@ -1857,9 +1870,9 @@ func TestServerSchedulesClientGC(t *testing.T) {
 	if err := srv.clients.collectStaleForClient(InodeID(clientID)); err != nil {
 		t.Fatal(err)
 	}
-	srv.clients.now = func() time.Time {
+	srv.clients.setClock(func() time.Time {
 		return base.Add(clientGCGrace + time.Second)
-	}
+	})
 
 	for range 20 {
 		srv.scheduleClientGC(clientID)
@@ -1892,14 +1905,14 @@ func TestConfirmedClientGCRechecksAfterLease(t *testing.T) {
 		t.Fatal(err)
 	}
 	base := time.Unix(1000, 0)
-	srv.clients.now = func() time.Time { return base }
+	srv.clients.setClock(func() time.Time { return base })
 	addr, cleanup := serveTestServer(t, srv)
 	defer cleanup()
 	conn := dial(t, addr)
 	defer conn.Close()
 	xid := uint32(1)
 
-	oldID := setupClientWithVerifier(t, conn, &xid, [8]byte{1})
+	oldID := incarnationForTest(t, srv, setupClientWithVerifier(t, conn, &xid, [8]byte{1}))
 	srv.waitForClientGC()
 	newID, confirm := requestClientID(
 		t, conn, &xid, "test-client", [8]byte{2})
@@ -1917,9 +1930,9 @@ func TestConfirmedClientGCRechecksAfterLease(t *testing.T) {
 	); err != nil {
 		t.Fatalf("confirmation did not schedule first GC phase: %v", err)
 	}
-	srv.clients.now = func() time.Time {
+	srv.clients.setClock(func() time.Time {
 		return base.Add(clientGCGrace + time.Second)
-	}
+	})
 	srv.runLeaseSweep()
 	srv.waitForClientGC()
 	if _, err := fs.Stat(InodeID(oldID)); !errors.Is(err, os.ErrNotExist) {
@@ -2008,11 +2021,7 @@ func TestClientGCContinuesAfterPanic(t *testing.T) {
 // hold state.mu, or every fast-path stateid check for the client waits on it.
 func TestClientStoreHasOpenSlowPathDoesNotBlockFastPath(t *testing.T) {
 	baseFS := NewLocalTernVFS(t.TempDir())
-	hookFS := &blockingRenameVFS{
-		TernVFS: baseFS,
-		entered: make(chan struct{}),
-		release: make(chan struct{}),
-	}
+	hookFS := &markerLookupGateVFS{TernVFS: baseFS, testGate: newTestGate()}
 	defer closeSignal(hookFS.release)
 	owner := clientOwner{
 		principal: rpcPrincipal{flavor: authSys, body: "owner"},
@@ -2023,9 +2032,6 @@ func TestClientStoreHasOpenSlowPathDoesNotBlockFastPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	base := time.Unix(1000, 0)
-	first.now = func() time.Time { return base }
-	second.now = func() time.Time { return base }
 
 	cachedState := StateID{1}
 	if err := first.MarkOpen(clientID, cachedState); err != nil {
@@ -2037,12 +2043,7 @@ func TestClientStoreHasOpenSlowPathDoesNotBlockFastPath(t *testing.T) {
 	if err := second.MarkOpen(clientID, remoteState); err != nil {
 		t.Fatal(err)
 	}
-
-	// Age first's lease cache past the renewal point without expiring it.
-	first.now = func() time.Time {
-		return base.Add(nfsLeaseRenewAfter + time.Second)
-	}
-	hookFS.dstName = first.leaseName
+	hookFS.name = activeOpenName(remoteState)
 
 	type result struct {
 		open bool
@@ -2053,19 +2054,19 @@ func TestClientStoreHasOpenSlowPathDoesNotBlockFastPath(t *testing.T) {
 		open, err := first.HasOpen(clientID, remoteState)
 		slow <- result{open: open, err: err}
 	}()
-	awaitSignal(t, hookFS.entered, "slow-path lease rewrite")
+	awaitSignal(t, hookFS.entered, "slow-path marker lookup")
 
 	fast := make(chan result, 1)
 	go func() {
 		open, err := first.HasOpen(clientID, cachedState)
 		fast <- result{open: open, err: err}
 	}()
-	got := awaitValue(t, fast, "fast-path HasOpen during slow-path renewal")
+	got := awaitValue(t, fast, "fast-path HasOpen during the slow path")
 	if got.err != nil {
 		t.Fatalf("fast-path HasOpen failed: %v", got.err)
 	}
 	if !got.open {
-		t.Fatal("fast-path HasOpen lost a cached open during renewal")
+		t.Fatal("fast-path HasOpen lost a cached open during the slow path")
 	}
 
 	closeSignal(hookFS.release)

@@ -7,6 +7,7 @@ package main
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -41,6 +42,12 @@ type Server struct {
 	fs                 TernVFS
 	clients            *ClientStore
 	opens              *openStateStore
+	sessions           *sessionStore
+	backchannel        backchannelStats
+	cbXIDs             atomic.Uint32
+	allowMinorVersion2 bool
+	views              viewStore
+	names              nameCache
 	stagingStore       StagingStore
 	writeVerifier      [8]byte       // random per server instance, changes on restart
 	idleTimeout        time.Duration // timeout reading the next request
@@ -58,6 +65,24 @@ type Server struct {
 	clientGCRecheck map[InodeID]struct{}
 	clientGCRunning bool
 	clientGCDone    chan struct{}
+
+	// Confirmations in progress or unresolved (server_confirm.go), by N and
+	// P, by identity and by EXCHANGE_ID owner. At most one per identity.
+	// confirmMu is taken after any other lock, sessions.mu included, and
+	// held only for map access.
+	confirmMu          sync.Mutex
+	confirming         map[uint64]*confirmation
+	confirmingIdentity map[InodeID]*confirmation
+	confirmingOwners   map[string]*confirmation
+	// Destruction holds in flight, by incarnation and by identity
+	// (server_confirm.go), under confirmMu.
+	destroying         map[uint64]int
+	destroyingIdentity map[InodeID]int
+	destroyEnded       *sync.Cond // on confirmMu
+	// Incarnations whose replacement purge is known to be unfinished, a
+	// hint for warm EXCHANGE_ID (server_confirm.go), under confirmMu.
+	purgePending map[uint64]struct{}
+	purgeLimit   int
 }
 
 type keyedLockEntry struct {
@@ -171,8 +196,28 @@ func NewServer(fs TernVFS, stagingStore StagingStore, logger *slog.Logger) (*Ser
 		hydrationSlots:     make(chan struct{}, maxConcurrentHydrations),
 		clientGCPending:    make(map[InodeID]struct{}),
 		clientGCRecheck:    make(map[InodeID]struct{}),
+		confirming:         make(map[uint64]*confirmation),
+		confirmingIdentity: make(map[InodeID]*confirmation),
+		confirmingOwners:   make(map[string]*confirmation),
+		destroying:         make(map[uint64]int),
+		destroyingIdentity: make(map[InodeID]int),
+		purgePending:       make(map[uint64]struct{}),
+		purgeLimit:         maxSessionRecords,
 	}
+	s.destroyEnded = sync.NewCond(&s.confirmMu)
 	s.opens.now = func() time.Time { return s.clients.now() }
+	// The client store's expired marker, its client GC and a resumed
+	// replacement purge hold destruction holds for their whole action.
+	clients.beginMarker = func(id InodeID) (func(), bool) { return s.beginDestroy(uint64(id)) }
+	clients.beginCollect = s.beginDestroyIdentity
+	clients.beginPurge = s.beginPurge
+	s.sessions = newSessionStore(s.opens.epoch)
+	s.sessions.now = func() time.Time { return s.clients.now() }
+	// The durable lease refresher reads the logical lease's need, and
+	// retires an incarnation whose record turns stale or fleet-expired.
+	clients.leaseNeed = s.sessions.leaseNeed
+	clients.leaseTerminal = s.leaseTerminal
+	clients.leaseSessions = s.sessions.hasSessions
 	// The nfsd ID names this process's lease and confirming slots in the
 	// client store. The epoch is the first four bytes of every stateid this
 	// process issues. Both are needed to attribute persisted state and wire
@@ -280,23 +325,33 @@ func (s *Server) removeExpiredStaging() {
 		byClient[meta.ClientID][fileID] = meta
 	}
 	for clientID, fileIDs := range byClient {
-		expired, err := s.clients.IsLeaseExpired(clientID)
-		if err != nil {
-			s.log.Warn("staging lease check failed",
-				"clientid", clientID, "err", err)
-			continue
-		}
-		if expired {
-			for fileID, meta := range fileIDs {
-				s.retireStaging(fileID, meta)
-			}
+		s.removeClientExpiredStaging(clientID, fileIDs)
+	}
+}
+
+// removeClientExpiredStaging retires an expired client's staging, holding a
+// destruction hold from the lease check through the last retirement. A
+// confirmation protecting the client keeps its staging.
+func (s *Server) removeClientExpiredStaging(clientID uint64, fileIDs map[InodeID]StagingMeta) {
+	end, ok := s.beginDestroy(clientID)
+	if !ok {
+		return
+	}
+	defer end()
+	expired, err := s.decideExpired(clientID, true)
+	if err != nil {
+		s.log.Warn("staging lease check failed",
+			"clientid", clientID, "err", err)
+		return
+	}
+	if expired {
+		for fileID, meta := range fileIDs {
+			s.retireStaging(fileID, meta)
 		}
 	}
 }
 
 func (s *Server) sweepExpiredClientState() {
-	s.opens.evictIdleOwners(
-		s.clients.now().Add(-nfsLeaseTime))
 	clients := make(map[uint64]struct{})
 	for _, clientID := range s.opens.activeClientIDs() {
 		clients[clientID] = struct{}{}
@@ -304,32 +359,52 @@ func (s *Server) sweepExpiredClientState() {
 	for _, clientID := range s.clients.cachedClientIDs() {
 		clients[clientID] = struct{}{}
 	}
+	s.sessions.mu.Lock()
+	for clientID := range s.sessions.groups {
+		clients[clientID] = struct{}{}
+	}
+	s.sessions.mu.Unlock()
 	for clientID := range clients {
-		expired, err := s.clients.ExpireIfLeaseDead(clientID)
-		if err != nil {
-			s.log.Warn("client lease sweep failed",
-				"clientid", clientID, "err", err)
-			continue
-		}
-		if expired {
-			s.expireClientState(clientID)
-		}
+		s.expireClientIfDead(clientID)
 	}
 }
 
+// expireClientIfDead expires one client whose lease is dead, holding a
+// destruction hold from the decision through the last local effect. Expiry
+// waits while a confirmation protects the client.
+func (s *Server) expireClientIfDead(clientID uint64) {
+	end, ok := s.beginDestroy(clientID)
+	if !ok {
+		return
+	}
+	defer end()
+	if _, err := s.decideExpired(clientID, true); err != nil {
+		s.log.Warn("client lease sweep failed",
+			"clientid", clientID, "err", err)
+	}
+}
+
+// runLeaseSweep is the sweeper's tick. It writes no lease: every durable
+// lease write belongs to the refresher (canonical r3 §8).
 func (s *Server) runLeaseSweep() {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			s.log.Error("panic in lease sweeper", "panic", recovered)
 		}
 	}()
+	s.settleConfirmations()
 	s.scheduleClientGCRechecks()
 	s.removeExpiredStaging()
 	s.sweepExpiredClientState()
+	s.sweepViews()
+	s.sessions.mu.Lock()
+	s.sessions.pruneGroupsLocked()
+	s.sessions.mu.Unlock()
+	s.clients.sweepLeaseRecords()
 }
 
 func (s *Server) runLeaseSweeper() {
-	ticker := time.NewTicker(nfsLeaseTime)
+	ticker := time.NewTicker(nfsLeaseRenewAfter)
 	defer ticker.Stop()
 	for range ticker.C {
 		s.runLeaseSweep()
@@ -337,7 +412,7 @@ func (s *Server) runLeaseSweeper() {
 }
 
 func (s *Server) ListenAndServe(addr string) error {
-	ln, err := net.Listen("tcp", addr)
+	ln, err := s.listen(addr)
 	if err != nil {
 		return err
 	}
@@ -353,8 +428,28 @@ func (s *Server) ListenAndServe(addr string) error {
 	}
 }
 
+// listen binds addr, then chooses the wire clientid epoch. A successful bind
+// makes this process the endpoint's only owner, so any earlier owner chose
+// its epoch no later than the bind second. A process that cannot bind
+// chooses no epoch.
+func (s *Server) listen(addr string) (net.Listener, error) {
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+	epoch := wireEpochAfter(time.Now(), time.Now, time.Sleep)
+	if err := s.sessions.wireIDs.start(epoch); err != nil {
+		ln.Close()
+		return nil, err
+	}
+	s.log.Info("wire clientid epoch", "epoch", epoch)
+	return ln, nil
+}
+
 func (s *Server) handleConn(conn net.Conn) {
 	remote := conn.RemoteAddr().String()
+	association := &rpcConnection{remote: remote}
+	defer s.disconnectBack(association)
 	s.log.Info("client connected", "remote", remote)
 	var closed atomic.Bool
 	done := make(chan struct{})
@@ -391,8 +486,14 @@ func (s *Server) handleConn(conn net.Conn) {
 			closeConnection()
 		}
 	}
+	association.closed = done
+	association.send = func(frame []byte) bool {
+		writeReply(frame)
+		return !closed.Load()
+	}
 	run := func(req *rpcRequest) {
 		defer workers.Done()
+		defer req.releaseReply()
 		defer func() {
 			requestsMu.Lock()
 			delete(inFlight, req.xid)
@@ -403,7 +504,13 @@ func (s *Server) handleConn(conn net.Conn) {
 				s.log.Error("panic handling RPC", "remote", remote, "xid", req.xid, "panic", recovered)
 			}
 		}()
-		writeReply(s.handleRPC(req, remote))
+		reply := s.handleRPC(req, remote)
+		if reply == nil {
+			closeConnection()
+			return
+		}
+		writeReply(reply)
+		reply = nil // Drop the output allocation before releasing its obligation.
 	}
 	for {
 		// Reserve memory and execution capacity before reading a full frame.
@@ -437,12 +544,22 @@ func (s *Server) handleConn(conn net.Conn) {
 			}
 			return
 		}
+		if isRPCReply(frame) {
+			// A callback's REPLY: handed to its waiting sender, or dropped
+			// and counted. It takes no admission slot.
+			<-slots
+			if !association.deliverReply(frame) {
+				s.backchannel.strayReplies.Add(1)
+			}
+			continue
+		}
 		req, err := parseRPCCall(frame)
 		if err != nil {
 			<-slots
 			s.log.Warn("RPC parse error", "remote", remote, "err", err)
 			return
 		}
+		req.connection = association
 		requestsMu.Lock()
 		previous, duplicate := inFlight[req.xid]
 		if !duplicate {
@@ -471,6 +588,9 @@ func (s *Server) handleConn(conn net.Conn) {
 }
 
 func (s *Server) handleRPC(req *rpcRequest, remote string) []byte {
+	if !req.acquireReplyWork(s) {
+		return nil
+	} // Transport overload, before effects.
 	if req.prog != nfsProg || req.vers != nfsVersion {
 		reply := buildRPCReply(req.xid, acceptProgMismatch)
 		reply = binary.BigEndian.AppendUint32(reply, nfsVersion)
@@ -488,21 +608,59 @@ func (s *Server) handleRPC(req *rpcRequest, remote string) []byte {
 
 // compoundState tracks the current/saved filehandle during COMPOUND execution.
 type compoundState struct {
-	currentID    InodeID
-	currentIDSet bool
-	savedID      InodeID
-	savedIDSet   bool
-	principal    rpcPrincipal
+	currentID     InodeID
+	currentIDSet  bool
+	savedID       InodeID
+	savedIDSet    bool
+	principal     rpcPrincipal
+	connection    *rpcConnection
+	replyBudget   uint32
+	effectUnknown bool // Submitted mutation lacks whole-call outcome proof.
+
+	// session and clientID come from the compound's SEQUENCE.
+	session  *session
+	clientID uint64
+
+	// afterReply collects work for after the reply is written.
+	afterReply *[]func()
+
+	// currentStateID is the stateid returned by the last OPEN or CLOSE,
+	// substituted for the special current stateid (RFC 8881 section
+	// 16.2.3.1.2). Changing the current filehandle clears it.
+	currentStateID    StateID
+	currentGeneration uint32
+	currentStateIDSet bool
+	savedStateID      StateID
+	savedGeneration   uint32
+	savedStateIDSet   bool
 }
 
-func (st *compoundState) setCurrent(id InodeID) {
+// setCurrentFH changes the current filehandle. Operations which do so
+// without producing a stateid invalidate the current stateid.
+func (st *compoundState) setCurrentFH(id InodeID) {
 	st.currentID = id
 	st.currentIDSet = true
+	st.currentStateIDSet = false
+}
+
+func (st *compoundState) setCurrentStateID(id StateID, generation uint32) {
+	st.currentStateID = id
+	st.currentGeneration = generation
+	st.currentStateIDSet = true
+}
+
+func (st *compoundState) observeMutation(fs TernVFS, op uint32, err error) {
+	if err != nil && fs.ClassifyMutation(op, err) == mutationUnknown {
+		st.effectUnknown = true
+	}
 }
 
 const maxCompoundOperations = 128
 
 func (s *Server) safeHandleCompound(req *rpcRequest, remote string) (reply []byte) {
+	if !req.acquireReplyWork(s) {
+		return nil
+	}
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic handling COMPOUND", "remote", remote, "xid", req.xid, "panic", r)
@@ -516,9 +674,9 @@ func (s *Server) safeHandleCompound(req *rpcRequest, remote string) (reply []byt
 }
 
 func (s *Server) handleCompound(req *rpcRequest) []byte {
-	// Pre-check minor version before full parse, since ReadCOMPOUND4args
-	// eagerly walks the argarray and will fail on unknown v4.1+ opcodes.
-	if tag, minor, ok := peekCompoundHeader(req.body); ok && minor != 0 {
+	// Pre-check minor version before full parse, since an unknown version
+	// may use operations this XDR does not describe.
+	if tag, minor, ok := peekCompoundHeader(req.body); ok && !s.acceptsMinorVersion(minor) {
 		s.log.Debug("minor version not supported", "minor", minor)
 		reply := buildRPCReply(req.xid, acceptSuccess)
 		// Build COMPOUND4res: status + echoed tag + 0 ops.
@@ -540,35 +698,148 @@ func (s *Server) handleCompound(req *rpcRequest) []byte {
 		return reply
 	}
 
-	reply := buildRPCReply(req.xid, acceptSuccess)
+	body := s.compoundBody(req, args)
+	if body == nil {
+		return nil
+	}
+	return req.joinRPCBody(body)
+}
 
-	w := StartCOMPOUND4res(reply)
+// compoundBody runs a COMPOUND and returns the COMPOUND4res body. Replies to
+// requests on a session slot are cached by body, so a retransmission with a
+// new XID returns the same results.
+func (s *Server) compoundBody(req *rpcRequest, args COMPOUND4args) (result []byte) {
+	// Bound the initial writer allocation; the work lease also covers variable
+	// result temporaries and checkpoints retained through result construction.
+	w := StartCOMPOUND4res(make([]byte, 0, req.replyWork.capacity))
 	w.SetStatus(NFS4_OK)
 
 	// Echo the tag.
 	tagW := w.StartTag()
 	tagData := args.Tag().Data()
-	reply = tagW.SetData(tagData).Finish()
+	reply := tagW.SetData(tagData).Finish()
 	w.Resume(reply)
 
-	if args.ArgarrayCount() > maxCompoundOperations {
-		s.log.Debug("COMPOUND has too many operations",
-			"ops", args.ArgarrayCount(), "max", maxCompoundOperations)
-		w.SetStatus(NFS4ERR_RESOURCE)
-		return w.Finish()
-	}
-
-	st := &compoundState{principal: req.principal()}
-	overallStatus := NFS4_OK
-	opCount := 0
-
+	w.Finish() // Materialize the count so every prefix has an exact byte size.
+	ops := make([]NfsArgop4, 0, min(args.ArgarrayCount(), maxCompoundOperations+1))
 	iter := args.Argarray()
 	for iter.Next() {
-		entry := iter.Argarray()
-		opnum := entry.Disc()
-		op := entry.Value()
-
+		ops = append(ops, iter.Argarray().Value())
+		if len(ops) > maxCompoundOperations {
+			break
+		}
+	}
+	st := &compoundState{principal: req.principal(), connection: req.connection, afterReply: &req.afterReply}
+	overallStatus := uint32(NFS4_OK)
+	opCount := 0
+	var seq sequenceResult
+	checkpoint := w
+	currentOp := uint32(OP_ILLEGAL)
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			s.log.Error("panic handling admitted compound", "xid", req.xid, "panic", recovered)
+			if seq.slot != nil {
+				s.sessions.retireSession(seq.sess, true)
+			}
+			w = checkpoint
+			writeOperationError(&w, currentOp, NFS4ERR_SERVERFAULT)
+			w.SetStatus(NFS4ERR_SERVERFAULT)
+			result = w.Finish()
+			if seq.slot != nil {
+				seq.finish(result)
+			}
+		}
+	}()
+	user, userErr := req.effectiveUser()
+	for index, op := range ops {
+		opnum := op.disc
+		currentOp, checkpoint = opnum, w
 		s.log.Debug("op", "opnum", NfsOpnum4Name(opnum))
+		if userErr != nil {
+			writeOperationError(&w, opnum, NFS4ERR_WRONGSEC)
+			overallStatus = NFS4ERR_WRONGSEC
+			goto done
+		}
+		if index == 0 {
+			switch {
+			case opnum == OP_SEQUENCE:
+				prefixBytes := uint32(rpcAcceptedHeaderSize + len(w.buf) + 44)
+				uncachedBytes := prefixBytes
+				if len(ops) > 1 {
+					uncachedBytes += resultErrorSize(ops[1].disc)
+				}
+				seq = s.startSequence(op.AsSEQUENCE4args(), sequenceAdmission{
+					digest: sha256.Sum256(req.body), user: user, requestBytes: uint32(req.fullSize()),
+					operations: args.ArgarrayCount(), sequenceReplyBytes: prefixBytes,
+					uncachedBytes: uncachedBytes, connection: req.connection,
+				})
+				opCount++
+				if seq.status != NFS4_OK {
+					writeSequenceError(&w, seq.status)
+					overallStatus = seq.status
+					goto done
+				}
+				// The hold lasts until the transport is done with the reply.
+				req.hold, seq.hold = seq.hold, nil
+				if seq.replay != nil {
+					req.replyWork.view = seq.view
+					return seq.replay
+				}
+				st.session, st.clientID = seq.sess, seq.sess.clientID
+				s.writeSequenceOK(&w, &seq)
+				continue
+			case sessionlessOp(opnum):
+			default:
+				status := uint32(NFS4ERR_OP_NOT_IN_SESSION)
+				if !knownOperation(opnum) {
+					status = NFS4ERR_OP_ILLEGAL
+				}
+				writeOperationError(&w, opnum, status)
+				overallStatus = status
+				opCount++
+				goto done
+			}
+		} else if opnum == OP_SEQUENCE {
+			writeOperationError(&w, opnum, NFS4ERR_SEQUENCE_POS)
+			overallStatus = NFS4ERR_SEQUENCE_POS
+			opCount++
+			break
+		}
+		if status := maintenancePosition(op, st, index, len(ops)); status != NFS4_OK {
+			writeOperationError(&w, opnum, status)
+			overallStatus = status
+			opCount++
+			break
+		}
+		limit := uint32(maxRPCMessage)
+		if st.session != nil {
+			limit = seq.budget
+		}
+		used := uint32(rpcAcceptedHeaderSize + len(w.buf))
+		suffix := uint32(0)
+		if index+1 < len(ops) {
+			suffix = resultErrorSize(ops[index+1].disc)
+		}
+		bound := s.operationReplyBound(op)
+		handleBytes, handleStatus := s.handleReplyObligation(ops, index)
+		if handleStatus != NFS4_OK {
+			writeOperationError(&w, opnum, handleStatus)
+			overallStatus = handleStatus
+			opCount++
+			break
+		}
+		obligation := max(suffix, handleBytes)
+		if used > limit || uint64(used)+uint64(bound)+uint64(obligation) > uint64(limit) {
+			status := uint32(NFS4ERR_REP_TOO_BIG)
+			if st.session != nil {
+				status = resultLimitStatus(&seq)
+			}
+			writeOperationError(&w, opnum, status)
+			overallStatus = status
+			opCount++
+			break
+		}
+		st.replyBudget = limit - used - suffix
 
 		var opStatus uint32
 		switch opnum {
@@ -580,22 +851,10 @@ func (s *Server) handleCompound(req *rpcRequest) []byte {
 			opStatus = s.opCommit(st, &w)
 		case OP_CREATE:
 			opStatus = s.opCreate(op.AsCREATE4args(), st, &w)
-		case OP_DELEGPURGE:
-			opStatus = s.opDelegpurge(&w)
-		case OP_DELEGRETURN:
-			opStatus = s.opDelegreturn(st, &w)
 		case OP_GETATTR:
 			opStatus = s.opGetattr(op.AsGETATTR4args(), st, &w)
 		case OP_GETFH:
 			opStatus = s.opGetfh(st, &w)
-		case OP_LINK:
-			opStatus = s.opLink(st, &w)
-		case OP_LOCK:
-			opStatus = s.opLock(&w)
-		case OP_LOCKT:
-			opStatus = s.opLockt(&w)
-		case OP_LOCKU:
-			opStatus = s.opLocku(&w)
 		case OP_LOOKUP:
 			opStatus = s.opLookup(op.AsLOOKUP4args(), st, &w)
 		case OP_LOOKUPP:
@@ -604,12 +863,8 @@ func (s *Server) handleCompound(req *rpcRequest) []byte {
 			opStatus = s.opNverify(op.AsNVERIFY4args(), st, &w)
 		case OP_OPEN:
 			opStatus = s.opOpen(op.AsOPEN4args(), st, &w)
-		case OP_OPEN_CONFIRM:
-			opStatus = s.opOpenConfirm(op.AsOPENCONFIRM4args(), st, &w)
 		case OP_OPEN_DOWNGRADE:
-			opStatus = s.opOpenDowngrade(st, &w)
-		case OP_OPENATTR:
-			opStatus = s.opOpenattr(&w)
+			opStatus = s.opOpenDowngrade(op.AsOPENDOWNGRADE4args(), st, &w)
 		case OP_PUTFH:
 			opStatus = s.opPutfh(op.AsPUTFH4args(), st, &w)
 		case OP_PUTPUBFH:
@@ -626,8 +881,6 @@ func (s *Server) handleCompound(req *rpcRequest) []byte {
 			opStatus = s.opRemove(op.AsREMOVE4args(), st, &w)
 		case OP_RENAME:
 			opStatus = s.opRename(op.AsRENAME4args(), st, &w)
-		case OP_RENEW:
-			opStatus = s.opRenew(op.AsRENEW4args(), &w)
 		case OP_RESTOREFH:
 			opStatus = s.opRestorefh(st, &w)
 		case OP_SAVEFH:
@@ -636,24 +889,69 @@ func (s *Server) handleCompound(req *rpcRequest) []byte {
 			opStatus = s.opSecinfo(op.AsSECINFO4args(), st, &w)
 		case OP_SETATTR:
 			opStatus = s.opSetattr(op.AsSETATTR4args(), st, &w)
-		case OP_SETCLIENTID:
-			opStatus = s.opSetclientid(op.AsSETCLIENTID4args(), st, &w)
-		case OP_SETCLIENTID_CONFIRM:
-			opStatus = s.opSetclientidConfirm(
-				op.AsSETCLIENTIDCONFIRM4args(), st, &w)
 		case OP_VERIFY:
 			opStatus = s.opVerify(op.AsVERIFY4args(), st, &w)
 		case OP_WRITE:
 			opStatus = s.opWrite(op.AsWRITE4args(), st, &w)
-		case OP_RELEASE_LOCKOWNER:
-			opStatus = s.opReleaseLockowner(&w)
+		case OP_EXCHANGE_ID:
+			opStatus = s.opExchangeID(op.AsEXCHANGEID4args(), st, &w)
+		case OP_CREATE_SESSION:
+			opStatus = s.opCreateSession(op.AsCREATESESSION4args(), st, &w)
+		case OP_DESTROY_SESSION:
+			opStatus = s.opDestroySession(op.AsDESTROYSESSION4args(), st, &w)
+		case OP_DESTROY_CLIENTID:
+			opStatus = s.opDestroyClientID(op.AsDESTROYCLIENTID4args(), st, &w)
+		case OP_BIND_CONN_TO_SESSION:
+			opStatus = s.opBindConnToSession(op.AsBINDCONNTOSESSION4args(), st, &w)
+		case OP_RECLAIM_COMPLETE:
+			opStatus = s.opReclaimComplete(op.AsRECLAIMCOMPLETE4args(), st, &w)
+		case OP_TEST_STATEID:
+			opStatus = s.opTestStateID(op.AsTESTSTATEID4args(), st, &w)
+		case OP_FREE_STATEID:
+			opStatus = s.opFreeStateID(op.AsFREESTATEID4args(), st, &w)
+		case OP_BACKCHANNEL_CTL:
+			opStatus = s.opBackchannelCtl(op.AsBACKCHANNELCTL4args(), st, &w)
+		case OP_SET_SSV:
+			// Only SP4_SSV state protection uses an SSV, and nfsd offers
+			// SP4_NONE (RFC 8881 section 18.47.3).
+			writeOperationError(&w, opnum, NFS4ERR_INVAL)
+			opStatus = NFS4ERR_INVAL
+		case OP_SECINFO_NO_NAME:
+			opStatus = s.opSecinfoNoName(op.AsNfsArgop4OPSECINFONONAME().Value(), st, &w)
 		default:
-			ew := w.AppendResarray_Illegal()
-			ew.SetStatus(NFS4ERR_OP_ILLEGAL)
-			opStatus = NFS4ERR_OP_ILLEGAL
+			// Every other operation is removed from NFSv4.1 (RFC 8881
+			// section 18), optional (locks, delegations, pNFS, 4.2), or
+			// unsupported by TernFS (LINK, OPENATTR). nfsd grants no
+			// delegations, so DELEGRETURN is NOTSUPP too.
+			status := uint32(NFS4ERR_NOTSUPP)
+			if !knownOperation(opnum) {
+				status = NFS4ERR_OP_ILLEGAL
+			}
+			writeOperationError(&w, opnum, status)
+			opStatus = status
 		}
 
 		opCount++
+		if st.effectUnknown && seq.sess != nil {
+			s.sessions.retireSession(seq.sess, true)
+		}
+		if uint64(rpcAcceptedHeaderSize+len(w.buf))+uint64(suffix) > uint64(limit) {
+			if operationMutates(opnum) {
+				// A violated fixed bound after a known effect cannot be recast as
+				// a pre-effect failure. Retain terminal slot authority and close.
+				if seq.sess != nil {
+					s.sessions.retireSession(seq.sess, true)
+				}
+				seq.releaseUse()
+				return nil
+			}
+			w = checkpoint
+			opStatus = NFS4ERR_REP_TOO_BIG
+			if seq.sess != nil {
+				opStatus = resultLimitStatus(&seq)
+			}
+			writeOperationError(&w, opnum, opStatus)
+		}
 
 		if opStatus != NFS4_OK {
 			s.log.Debug("op failed", "op", NfsOpnum4Name(opnum), "status", Nfsstat4Name(opStatus))
@@ -662,8 +960,29 @@ func (s *Server) handleCompound(req *rpcRequest) []byte {
 		}
 	}
 
+done:
 	s.log.Debug("COMPOUND done", "status", Nfsstat4Name(overallStatus), "ops", opCount)
 
 	w.SetStatus(overallStatus)
-	return w.Finish()
+	body := w.Finish()
+
+	if seq.slot != nil {
+		seq.finish(body)
+	}
+	return body
+}
+
+// acceptsMinorVersion reports whether nfsd serves a COMPOUND of this minor
+// version. With allowMinorVersion2, NFSv4.2 is served as NFSv4.1: every
+// operation new in 4.2 is optional (RFC 7862 section 1.4) and returns
+// NFS4ERR_NOTSUPP. This exists for clients, such as libnfs 8, which offer
+// sessions only as 4.2.
+func (s *Server) acceptsMinorVersion(minor uint32) bool {
+	return minor == nfsMinorVersion || minor == 2 && s.allowMinorVersion2
+}
+
+// knownOperation reports opcodes defined by the XDR. OP_ILLEGAL is not one:
+// a client sends it to provoke NFS4ERR_OP_ILLEGAL.
+func knownOperation(opnum uint32) bool {
+	return opnum >= OP_ACCESS && opnum <= OP_REMOVEXATTR
 }

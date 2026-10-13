@@ -15,6 +15,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -30,13 +31,55 @@ type ClientStore struct {
 	leaseName      string
 	confirmingName string
 	now            func() time.Time
-	localClients   sync.Map
+	// clock is what now reads; setClock swaps it while workers run.
+	clock        atomic.Pointer[func() time.Time]
+	localClients sync.Map
 
 	identityLocksMu sync.Mutex
 	identityLocks   map[InodeID]*clientIdentityLock
 	leaseLocks      keyedLocker[InodeID]
 	markerLocks     keyedLocker[clientOpenMarker]
+
+	// Set by the server (canonical r3 §5.4): publishing an expired marker
+	// for an incarnation and collecting an identity each hold a destruction
+	// hold for the whole action, refused while a confirmation protects it.
+	// A resumed replacement purge holds them on n and its selected target.
+	// Nil in store-only use.
+	beginMarker  func(InodeID) (func(), bool)
+	beginCollect func(InodeID) (func(), bool)
+	beginPurge   func(n, p InodeID) (func(), bool)
+
+	// The durable lease refresher's records (lease_refresher.go), under
+	// refreshMu, with their record and orphan credits.
+	refreshMu      sync.Mutex
+	refreshers     map[InodeID]*leaseRefresher
+	refresherLimit int
+	orphans        int
+	orphanLimit    int
+	// leaseStop ends the workers; leaseWorkers counts them.
+	leaseStop    chan struct{}
+	leaseStopped bool
+	leaseWorkers sync.WaitGroup
+	// Set by the server (canonical r3 §§8 and 9). leaseNeed reports the
+	// logical lease's refresh need; leaseTerminal retires an incarnation's
+	// sessions once its record is stale or fleet-expired, reporting false to
+	// be retried. With them set, records have workers and only the server's
+	// decideExpired publishes expired markers. Without them (store-only use)
+	// lease work runs inline in the caller and lease observations mark, as
+	// before.
+	leaseNeed     func(uint64) bool
+	leaseTerminal func(uint64, func()) bool
+	// leaseSessions reports that the incarnation has sessions here, which
+	// keeps its record (and its proven lease) between requests.
+	leaseSessions func(uint64) bool
 }
+
+// setClock replaces the store's clock; it is safe while workers and
+// connections read it.
+func (cs *ClientStore) setClock(now func() time.Time) { cs.clock.Store(&now) }
+
+// serverDecides reports that a server owns lease work and marker decisions.
+func (cs *ClientStore) serverDecides() bool { return cs.leaseNeed != nil }
 
 type clientIdentityLock struct {
 	mu   sync.RWMutex
@@ -52,11 +95,8 @@ type localClientState struct {
 	identityID       InodeID
 	confirmedPointer InodeID
 
-	mu sync.Mutex
-
-	// Retained after the last CLOSE to throttle later OPEN renewal.
-	leaseExpiresNano int64
-	opens            map[StateID]struct{}
+	mu    sync.Mutex
+	opens map[StateID]struct{}
 }
 
 type confirmedClientLocation struct {
@@ -72,38 +112,30 @@ type rpcPrincipal struct {
 	body   string
 }
 
-// clientOwner is the principal and callback address recorded for a client
-// registration. It is returned in NFS4ERR_CLID_INUSE so the caller can see
-// who holds the identity.
+// clientOwner is the principal recorded for a client registration.
 type clientOwner struct {
 	principal rpcPrincipal
-	netid     string
-	addr      string
 }
 
 // clientInUseError reports that a client identity with live state belongs to
 // a different principal.
-type clientInUseError struct {
-	owner clientOwner
-}
+type clientInUseError struct{}
 
 func (e clientInUseError) Error() string {
 	return "NFS client identity is in use by another principal"
 }
 
 // durableClientRecord is the JSON body of the client and update files in an
-// incarnation directory. It holds the opaque SETCLIENTID identity, the client
-// verifier, the confirmation verifier issued by nfsd, the RPC principal and
-// the callback address. The identity is stored for inspection only: the
-// directory name is its hash and nfsd never reads it back.
+// incarnation directory. It holds the opaque EXCHANGE_ID client owner, the
+// client verifier, the confirmation verifier issued by nfsd and the RPC
+// principal. The owner is stored for inspection only: the directory name is
+// its hash and nfsd never reads it back.
 type durableClientRecord struct {
 	ID              []byte `json:"id,omitempty"`
 	Verifier        []byte `json:"verifier"`
 	Confirm         []byte `json:"confirm"`
 	PrincipalFlavor uint32 `json:"principal_flavor"`
 	PrincipalBody   []byte `json:"principal_body"`
-	NetID           string `json:"netid"`
-	Addr            string `json:"addr"`
 }
 
 // durableLease is the JSON body of a lease or confirming file. It records
@@ -169,17 +201,26 @@ func newClientStoreAt(
 	if err != nil {
 		return nil, fmt.Errorf("client store: generate nfsd id: %w", err)
 	}
-	return &ClientStore{
+	cs := &ClientStore{
 		fs:             fs,
 		nfsDirID:       nfsID,
 		dirID:          clientsID,
 		nfsdID:         nfsdID,
 		leaseName:      leasePrefix + nfsdID,
 		confirmingName: confirmingPrefix + nfsdID,
-		now:            time.Now,
 		identityLocks:  make(map[InodeID]*clientIdentityLock),
-	}, nil
+		refreshers:     make(map[InodeID]*leaseRefresher),
+		refresherLimit: maxRefreshers,
+		orphanLimit:    maxRecordOrphans * maxRefreshers,
+		leaseStop:      make(chan struct{}),
+	}
+	cs.now = func() time.Time { return (*cs.clock.Load())() }
+	cs.setClock(time.Now)
+	return cs, nil
 }
+
+// maxRefreshers bounds lease refresher records (canonical r3 §9.4).
+const maxRefreshers = maxSessionRecords
 
 func ensureDir(fs TernVFS, parentID InodeID, name string) (InodeID, error) {
 	id, err := fs.Lookup(parentID, name)
@@ -270,7 +311,7 @@ func (cs *ClientStore) SetClientID(
 				return 0, [8]byte{}, err
 			}
 			if active {
-				return 0, [8]byte{}, clientInUseError{owner: record.owner()}
+				return 0, [8]byte{}, clientInUseError{}
 			}
 		}
 		leaseLive, leaseFound, err := cs.leaseStatus(confirmedID)
@@ -298,6 +339,81 @@ func (cs *ClientStore) SetClientID(
 		}
 	}
 
+	return cs.createPending(identityID, verifier, id, owner)
+}
+
+// ExchangeID binds an NFSv4.1 EXCHANGE_ID to a durable incarnation. It
+// follows SetClientID, except that a matching verifier and principal never
+// update the confirmed record: they adopt it without any write, as the
+// incarnation a restarted client already holds. Otherwise it creates a
+// pending incarnation for CREATE_SESSION to confirm.
+//
+// Adoption needs no expired marker and either no lease or a live one, as
+// SetClientID decides. Unlike SetClientID, the observation only reads: it
+// publishes no marker and removes no lease slot, even when every lease is
+// dead. A read error is an error, never evidence of absence.
+func (cs *ClientStore) ExchangeID(
+	verifier [8]byte,
+	id []byte,
+	owner clientOwner,
+) (incarnation uint64, confirm [8]byte, adopted bool, err error) {
+	identityID, err := cs.identityDir(id)
+	if err != nil {
+		return 0, [8]byte{}, false, err
+	}
+	unlock := cs.lockIdentity(identityID)
+	defer unlock()
+
+	confirmedID, confirmed, err := cs.readIdentitySymlink(
+		identityID, confirmedName)
+	if err != nil {
+		return 0, [8]byte{}, false, err
+	}
+	if confirmed {
+		record, found, err := cs.readRecord(confirmedID, clientRecordName)
+		if err != nil {
+			return 0, [8]byte{}, false, err
+		}
+		if !found {
+			return 0, [8]byte{}, false, fmt.Errorf(
+				"client store: confirmed client %d has no record", confirmedID)
+		}
+		samePrincipal := record.principal() == owner.principal
+		if !samePrincipal {
+			active, err := cs.hasActiveOpen(confirmedID)
+			if err != nil {
+				return 0, [8]byte{}, false, err
+			}
+			if active {
+				return 0, [8]byte{}, false, clientInUseError{}
+			}
+		}
+		marked, err := cs.hasExpiredMarker(confirmedID)
+		if err != nil {
+			return 0, [8]byte{}, false, err
+		}
+		leases, err := cs.scanSlots(confirmedID, leasePrefix)
+		if err != nil {
+			return 0, [8]byte{}, false, err
+		}
+		expired := marked || leases.found && !leases.live
+		if samePrincipal && !expired &&
+			bytes.Equal(record.Verifier, verifier[:]) {
+			return uint64(confirmedID), [8]byte{}, true, nil
+		}
+	}
+	incarnation, confirm, err = cs.createPending(identityID, verifier, id, owner)
+	return incarnation, confirm, false, err
+}
+
+// createPending creates an unconfirmed incarnation and points the identity's
+// pending symlink at it. The caller holds the identity lock.
+func (cs *ClientStore) createPending(
+	identityID InodeID,
+	verifier [8]byte,
+	id []byte,
+	owner clientOwner,
+) (uint64, [8]byte, error) {
 	confirm, err := newClientConfirmVerifier()
 	if err != nil {
 		return 0, [8]byte{}, err
@@ -539,6 +655,15 @@ func (cs *ClientStore) collectStaleForClientResult(
 	}
 	if err != nil {
 		return false, err
+	}
+	if cs.beginCollect != nil {
+		// Held through the identity lock wait and the whole collection.
+		end, ok := cs.beginCollect(identityID)
+		if !ok {
+			// A confirmation may still leave N or P unrooted; check again later.
+			return true, nil
+		}
+		defer end()
 	}
 	unlock := cs.lockIdentity(identityID)
 	defer unlock()
@@ -875,6 +1000,9 @@ func (cs *ClientStore) confirmedLocationForIdentity(
 	}, confirmedID == incarnationID, nil
 }
 
+// Renew runs one refresher cycle for a confirmed client in the caller and
+// reports its lease: it publishes through the record like the worker. No
+// serving path uses it; SEQUENCE renews from memory (canonical r3 §7.1).
 func (cs *ClientStore) Renew(clientID uint64) error {
 	incarnationID := InodeID(clientID)
 	identityID, valid, err := cs.identityForIncarnation(incarnationID)
@@ -886,7 +1014,7 @@ func (cs *ClientStore) Renew(clientID uint64) error {
 	}
 	unlock := cs.readLockIdentity(identityID)
 	defer unlock()
-	location, confirmed, err := cs.confirmedLocationForIdentity(
+	_, confirmed, err := cs.confirmedLocationForIdentity(
 		incarnationID, identityID)
 	if err != nil {
 		return err
@@ -894,53 +1022,21 @@ func (cs *ClientStore) Renew(clientID uint64) error {
 	if !confirmed {
 		return nfsError(NFS4ERR_STALE_CLIENTID)
 	}
-	_, err = cs.renewLease(incarnationID, location, false)
-	return err
-}
-
-// renewConfirmed rewrites this nfsd's lease slot and then rechecks the
-// confirmed symlink. Concurrent replacements of the same slot are harmless.
-func (cs *ClientStore) renewConfirmed(
-	incarnationID InodeID,
-	identityID InodeID,
-	confirmedPointer InodeID,
-) (int64, InodeID, error) {
-	expired, err := cs.hasExpiredMarker(incarnationID)
+	marked, err := cs.hasExpiredMarker(incarnationID)
 	if err != nil {
-		return 0, 0, err
+		return err
 	}
-	if expired {
-		return 0, 0, nfsError(NFS4ERR_EXPIRED)
+	if marked {
+		return nfsError(NFS4ERR_EXPIRED)
 	}
-	lease := durableLease{
-		ExpiresUnixNano: cs.now().Add(nfsLeaseTime).UnixNano(),
-	}
-	if _, err := cs.replaceJSON(
-		incarnationID, cs.leaseName, lease,
-	); err != nil {
-		return 0, 0, err
-	}
-
-	currentPointer, err := cs.fs.Lookup(identityID, confirmedName)
+	view, err := cs.refreshInline(clientID)
 	if err != nil {
-		_ = cs.removeIfExists(incarnationID, cs.leaseName)
-		if errors.Is(err, os.ErrNotExist) {
-			return 0, 0, nfsError(NFS4ERR_STALE_CLIENTID)
-		}
-		return 0, 0, err
+		return err
 	}
-	if currentPointer != confirmedPointer {
-		confirmedID, err := cs.resolveIdentitySymlink(
-			identityID, currentPointer)
-		if err != nil {
-			return 0, 0, err
-		}
-		if confirmedID != incarnationID {
-			_ = cs.removeIfExists(incarnationID, cs.leaseName)
-			return 0, 0, nfsError(NFS4ERR_STALE_CLIENTID)
-		}
+	if err := cs.leaseStatusError(view); err != nil {
+		return err
 	}
-	return lease.ExpiresUnixNano, currentPointer, nil
+	return nil
 }
 
 func (cs *ClientStore) MarkOpen(clientID uint64, stateID StateID) error {
@@ -979,52 +1075,80 @@ func (cs *ClientStore) MarkOpen(clientID uint64, stateID StateID) error {
 	return nil
 }
 
-// The caller holds shared identity ownership. Lease serialization is keyed
-// by incarnation, independently of the replaceable local-client cache entry.
-// HasOpen requires a live durable lease before importing a marker into the
-// cache; RENEW and OPEN may establish the first lease for a confirmed client.
+// renewLease checks a confirmed client's lease for MarkOpen and HasOpen. It
+// writes nothing: every lease write belongs to the refresher (canonical r3
+// §9.1). MarkOpen (requireLiveLease false) needs a live record whose proven
+// lease is in the future, else DELAY while a verify runs. HasOpen with
+// requireLiveLease reads the durable lease, which after a restart may be
+// another process's, and gets EXPIRED when it is dead. The caller holds
+// shared identity ownership.
 func (cs *ClientStore) renewLease(
 	incarnationID InodeID, location confirmedClientLocation,
 	requireLiveLease bool,
 ) (*localClientState, error) {
-	unlock := cs.leaseLocks.lock(incarnationID)
-	defer unlock()
 	state := cs.localClientState(incarnationID, location.identityID, location.symlinkID)
-	state.mu.Lock()
-	fresh := state.confirmedPointer == location.symlinkID &&
-		cs.leaseIsFresh(state.leaseExpiresNano)
-	hadLease := state.leaseExpiresNano != 0
-	state.mu.Unlock()
-	if fresh && !requireLiveLease {
-		return state, nil
-	}
-	live, found, err := cs.leaseStatus(incarnationID)
-	if err != nil {
-		return nil, err
-	}
-	if !live && (requireLiveLease || found || hadLease) {
-		return nil, nfsError(NFS4ERR_EXPIRED)
-	}
-	if fresh {
-		return state, nil
-	}
-	expires, pointerID, err := cs.renewConfirmed(
-		incarnationID, location.identityID, location.symlinkID)
-	if err != nil {
-		if nfsErrCode(err) == NFS4ERR_STALE_CLIENTID {
-			cs.localClients.Delete(incarnationID)
+	if requireLiveLease {
+		live, _, err := cs.observeLeaseStatus(incarnationID)
+		if err != nil {
+			return nil, err
 		}
-		return nil, err
+		if !live {
+			return nil, nfsError(NFS4ERR_EXPIRED)
+		}
+	} else {
+		var view leaseView
+		if cs.serverDecides() {
+			var ok bool
+			if view, ok = cs.leaseView(uint64(incarnationID)); !ok {
+				return nil, nfsError(NFS4ERR_DELAY)
+			}
+		} else {
+			marked, err := cs.hasExpiredMarker(incarnationID)
+			if err != nil {
+				return nil, err
+			}
+			if marked {
+				return nil, nfsError(NFS4ERR_EXPIRED)
+			}
+			if view, err = cs.refreshInline(uint64(incarnationID)); err != nil {
+				return nil, err
+			}
+		}
+		if err := cs.leaseStatusError(view); err != nil {
+			switch nfsErrCode(err) {
+			case NFS4ERR_DELAY:
+				cs.requestLeaseVerify(uint64(incarnationID))
+			case NFS4ERR_STALE_CLIENTID:
+				cs.localClients.Delete(incarnationID)
+			}
+			return nil, err
+		}
 	}
 	state.mu.Lock()
-	state.confirmedPointer = pointerID
-	state.leaseExpiresNano = expires
+	state.confirmedPointer = location.symlinkID
 	state.mu.Unlock()
 	return state, nil
 }
 
-func (cs *ClientStore) leaseIsFresh(expiresNano int64) bool {
-	return expiresNano > cs.now().Add(nfsLeaseTime-nfsLeaseRenewAfter).UnixNano()
+// leaseProven reports whether this process's refresher has published a
+// lease for the client that is still in the future.
+func (cs *ClientStore) leaseProven(incarnationID InodeID) bool {
+	cs.refreshMu.Lock()
+	r := cs.refreshers[incarnationID]
+	cs.refreshMu.Unlock()
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.state == leaseRecordLive && r.proven > cs.now().UnixNano()
+}
+
+// MarkerGone reports that the open's durable marker is definitely absent:
+// the open no longer exists, whatever the client's lease.
+func (cs *ClientStore) MarkerGone(clientID uint64, stateID StateID) bool {
+	_, err := cs.fs.Lookup(InodeID(clientID), activeOpenName(stateID))
+	return errors.Is(err, os.ErrNotExist)
 }
 
 func (cs *ClientStore) RemoveOpen(clientID uint64, stateID StateID) error {
@@ -1051,7 +1175,7 @@ func (cs *ClientStore) RemoveOpen(clientID uint64, stateID StateID) error {
 	return err
 }
 
-// cachedClientIDs includes RENEW-only clients with no open state.
+// cachedClientIDs includes clients which only renew and have no open state.
 func (cs *ClientStore) cachedClientIDs() []uint64 {
 	var result []uint64
 	cs.localClients.Range(func(key, _ any) bool {
@@ -1070,7 +1194,6 @@ func (cs *ClientStore) HasOpen(clientID uint64, stateID StateID) (bool, error) {
 		_, open := state.opens[stateID]
 		identityID := state.identityID
 		pointerID := state.confirmedPointer
-		expires := state.leaseExpiresNano
 		state.mu.Unlock()
 
 		if open {
@@ -1099,11 +1222,19 @@ func (cs *ClientStore) HasOpen(clientID uint64, stateID StateID) (bool, error) {
 
 			}
 
-			if expires > cs.now().UnixNano() {
-				if cs.leaseIsFresh(expires) {
-					return true, nil
+			// Our own published lease answers without reading the lease,
+			// unless the client has been expired; otherwise the durable
+			// path below reads it.
+			if cs.leaseProven(incarnationID) {
+				marked, err := cs.hasExpiredMarker(incarnationID)
+				if err != nil {
+					return false, err
 				}
-				return cs.renewCachedOpen(incarnationID, state, stateID)
+				if marked {
+					cs.localClients.Delete(incarnationID)
+					return false, nfsError(NFS4ERR_EXPIRED)
+				}
+				return true, nil
 			}
 		}
 	}
@@ -1159,56 +1290,6 @@ func (cs *ClientStore) localClientState(
 	return value.(*localClientState)
 }
 
-func (cs *ClientStore) renewCachedOpen(
-	incarnationID InodeID,
-	state *localClientState,
-	stateID StateID,
-) (bool, error) {
-	unlockLease, locked := cs.leaseLocks.tryLock(incarnationID)
-	if !locked {
-		state.mu.Lock()
-		_, open := state.opens[stateID]
-		expires := state.leaseExpiresNano
-		state.mu.Unlock()
-
-		if open && expires > cs.now().UnixNano() {
-			return true, nil
-		}
-		unlockLease = cs.leaseLocks.lock(incarnationID)
-	}
-	defer unlockLease()
-
-	state.mu.Lock()
-	if _, open := state.opens[stateID]; !open {
-		state.mu.Unlock()
-		return false, nil
-	}
-	if cs.leaseIsFresh(state.leaseExpiresNano) {
-		state.mu.Unlock()
-		return true, nil
-	}
-	identityID := state.identityID
-	confirmedPointer := state.confirmedPointer
-	state.mu.Unlock()
-
-	expires, pointerID, err := cs.renewConfirmed(
-		incarnationID, identityID, confirmedPointer)
-	if err != nil {
-		if nfsErrCode(err) == NFS4ERR_STALE_CLIENTID {
-			cs.localClients.Delete(incarnationID)
-			return false, nil
-		}
-		return false, err
-	}
-
-	state.mu.Lock()
-	state.confirmedPointer = pointerID
-	state.leaseExpiresNano = expires
-	state.mu.Unlock()
-
-	return true, nil
-}
-
 func (cs *ClientStore) hasActiveOpen(incarnationID InodeID) (bool, error) {
 	entries, err := cs.entries(incarnationID)
 	if err != nil {
@@ -1244,9 +1325,91 @@ func (cs *ClientStore) hasLiveLease(incarnationID InodeID) (bool, error) {
 	return live, err
 }
 
+// observeLeaseStatus reports whether the client's durable lease is live
+// (any process's slot) and whether any slot was found, without writing:
+// leaseStatus(mark=false). An expired marker reads as dead.
+func (cs *ClientStore) observeLeaseStatus(incarnationID InodeID) (bool, bool, error) {
+	expired, err := cs.hasExpiredMarker(incarnationID)
+	if err != nil {
+		return false, false, err
+	}
+	scan, err := cs.scanSlots(incarnationID, leasePrefix)
+	if err != nil {
+		return false, false, err
+	}
+	if expired {
+		return false, true, nil
+	}
+	return scan.live, scan.found, nil
+}
+
+// leaseObservation is decideExpired's read-only observation (canonical r3
+// §8 step 2).
+type leaseObservation struct {
+	collected   bool // the incarnation directory is gone
+	unconfirmed bool // the identity's confirmed pointer names another
+	marked      bool // an expired marker exists
+	live        bool // some process's lease is live
+	found       bool // some lease slot exists
+}
+
+// observeLease reads an incarnation's lease state without writing.
+func (cs *ClientStore) observeLease(clientID uint64) (leaseObservation, error) {
+	incarnationID := InodeID(clientID)
+	identityID, valid, err := cs.identityForIncarnation(incarnationID)
+	if err != nil {
+		return leaseObservation{}, err
+	}
+	if !valid {
+		return leaseObservation{collected: true}, nil
+	}
+	unlock := cs.readLockIdentity(identityID)
+	defer unlock()
+	_, confirmed, err := cs.confirmedLocationForIdentity(incarnationID, identityID)
+	if err != nil {
+		return leaseObservation{}, err
+	}
+	if !confirmed {
+		return leaseObservation{unconfirmed: true}, nil
+	}
+	marked, err := cs.hasExpiredMarker(incarnationID)
+	if err != nil {
+		return leaseObservation{}, err
+	}
+	scan, err := cs.scanSlots(incarnationID, leasePrefix)
+	if err != nil {
+		return leaseObservation{}, err
+	}
+	return leaseObservation{marked: marked, live: scan.live && !marked, found: scan.found}, nil
+}
+
+// publishExpiredMarker is decideExpired's only write: the marker, after
+// arbitration (canonical r3 §8 step 3).
+func (cs *ClientStore) publishExpiredMarker(clientID uint64) error {
+	return cs.ensureMarker(InodeID(clientID), expiredName)
+}
+
+// forgetUnconfirmed ends an incarnation that is no longer confirmed: its
+// markers and leases are purged, as ExpireIfLeaseDead does.
+func (cs *ClientStore) forgetUnconfirmed(clientID uint64) error {
+	incarnationID := InodeID(clientID)
+	if err := cs.purgeState(incarnationID); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	cs.localClients.Delete(incarnationID)
+	return nil
+}
+
+// leaseStatus observes the lease and, in store-only use, publishes the
+// expired marker for a dead one and removes long-expired slots. With a
+// server, only decideExpired publishes markers and the refresher removes
+// slots, so this only observes.
 func (cs *ClientStore) leaseStatus(
 	incarnationID InodeID,
 ) (bool, bool, error) {
+	if cs.serverDecides() {
+		return cs.observeLeaseStatus(incarnationID)
+	}
 	expired, err := cs.hasExpiredMarker(incarnationID)
 	if err != nil {
 		return false, false, err
@@ -1256,6 +1419,14 @@ func (cs *ClientStore) leaseStatus(
 		return false, false, err
 	}
 	if !expired && !scan.live && scan.found {
+		if cs.beginMarker != nil {
+			end, ok := cs.beginMarker(incarnationID)
+			if !ok {
+				// Deferred until the confirmation settles; the caller retries.
+				return false, true, nfsError(NFS4ERR_DELAY)
+			}
+			defer end()
+		}
 		if err := cs.ensureMarker(incarnationID, expiredName); err != nil {
 			return false, true, err
 		}
@@ -1687,16 +1858,6 @@ func newDurableClientRecord(
 		Confirm:         append([]byte(nil), confirm[:]...),
 		PrincipalFlavor: owner.principal.flavor,
 		PrincipalBody:   []byte(owner.principal.body),
-		NetID:           owner.netid,
-		Addr:            owner.addr,
-	}
-}
-
-func (r durableClientRecord) owner() clientOwner {
-	return clientOwner{
-		principal: r.principal(),
-		netid:     r.NetID,
-		addr:      r.Addr,
 	}
 }
 
@@ -1793,4 +1954,44 @@ func (cs *ClientStore) stagingRecoveryKey(clientID uint64) ([32]byte, error) {
 		return [32]byte{}, err
 	}
 	return sha256.Sum256(data), nil
+}
+
+// confirmedRecord answers an EXCHANGE_ID update (EXCHGID4_FLAG_UPD_CONFIRMED_REC_A)
+// without changing the store. RFC 8881 section 18.35.5 cases 6-8 require a
+// confirmed record with the same verifier and principal.
+func (cs *ClientStore) confirmedRecord(
+	id []byte,
+	verifier [8]byte,
+	principal rpcPrincipal,
+) (uint64, uint32) {
+	identityID, err := cs.fs.Lookup(cs.dirID, clientIdentityKey(id))
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, NFS4ERR_NOENT
+	}
+	if err != nil {
+		return 0, clientStoreErrToNFS(err)
+	}
+	unlock := cs.readLockIdentity(identityID)
+	defer unlock()
+	confirmedID, confirmed, err := cs.readIdentitySymlink(identityID, confirmedName)
+	if err != nil {
+		return 0, clientStoreErrToNFS(err)
+	}
+	if !confirmed {
+		return 0, NFS4ERR_NOENT
+	}
+	record, found, err := cs.readRecord(confirmedID, clientRecordName)
+	if err != nil {
+		return 0, clientStoreErrToNFS(err)
+	}
+	if !found {
+		return 0, NFS4ERR_NOENT
+	}
+	if !bytes.Equal(record.Verifier, verifier[:]) {
+		return 0, NFS4ERR_NOT_SAME
+	}
+	if record.principal() != principal {
+		return 0, NFS4ERR_PERM
+	}
+	return uint64(confirmedID), NFS4_OK
 }

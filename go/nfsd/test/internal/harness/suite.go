@@ -190,7 +190,10 @@ func (s *Suite) Server(ctx context.Context) (*Server, error) {
 
 func (s *Server) Start(ctx context.Context) error {
 	s.epoch++
-	args := []string{"-addr", s.Addr, "-staging", s.Staging, "-registry", s.Suite.Registry, "-v"}
+	// libnfs offers sessions only as NFSv4.2. The kernel guest and pynfs
+	// ask for 4.1 explicitly, so accepting 4.2 does not change what they use.
+	args := []string{"-addr", s.Addr, "-staging", s.Staging, "-registry", s.Suite.Registry,
+		"-allow-minor-version-2", "-v"}
 	var err error
 	s.Process, err = StartProcess(exec.Command(s.Suite.Binary, args...),
 		filepath.Join(s.Dir, fmt.Sprintf("nfsd-%d.log", s.epoch)))

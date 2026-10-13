@@ -21,6 +21,7 @@ import (
 	"runtime"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -227,6 +228,7 @@ func startTernTestServerState(t *testing.T) (*Server, string, func()) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	useTestWireEpoch(srv)
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -256,42 +258,30 @@ func copyStateid(dst Stateid4, src Stateid4) {
 	}
 }
 
-func confirmClusterOpen(
-	t *testing.T,
-	conn net.Conn,
-	xid *uint32,
-	fh []byte,
-	stateid Stateid4,
-) Stateid4 {
+// A session OPEN returns the usable stateid; v4.1 has no OPEN_CONFIRM step.
+func clusterOpenStateid(t *testing.T, openOK OPEN4resok) Stateid4 {
 	t.Helper()
-	res := sendCompound(t, conn, *xid, func(w *COMPOUND4argsWriter) {
-		pw := w.AppendArgarray_Putfh()
-		buf := pw.StartObject().SetData(fh).Finish()
-		pw.Resume(buf)
-		w.Resume(pw.Finish())
-		confirmW := w.AppendArgarray_OpenConfirm()
-		copyStateid(confirmW.OpenStateid(), stateid)
-		confirmW.SetSeqid(2)
-	})
-	*xid++
-	iter := expectOK(t, res)
-	nextOp(t, &iter)
-	return nextOp(t, &iter).Value().AsOPENCONFIRM4resEntry().
-		Value().AsOPENCONFIRM4resok().OpenStateid()
+	if openOK.Rflags()&OPEN4_RESULT_CONFIRM != 0 {
+		t.Fatal("session OPEN requested obsolete OPEN_CONFIRM")
+	}
+	stateid := openOK.Stateid()
+	if stateid.Seqid() == 0 || isSpecialStateID(stateid) {
+		t.Fatal("session OPEN did not return a regular stateid with a nonzero generation")
+	}
+	return stateid
 }
 
 // createFileViaNFS creates a file through the NFS protocol by doing
-// PUTROOTFH + OPEN(CREATE) + GETFH + OPEN_CONFIRM + WRITE + CLOSE.
+// PUTROOTFH + OPEN(CREATE) + GETFH, then WRITE and CLOSE under the session.
 // Returns the file handle.
 func createFileViaNFS(t *testing.T, conn net.Conn, xid *uint32, clientid uint64, name string, data []byte) []byte {
 	t.Helper()
 
-	// OPEN CREATE + GETFH + OPEN_CONFIRM
+	// Session OPEN CREATE + GETFH
 	res := sendCompound(t, conn, *xid, func(w *COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 
 		ow := w.AppendArgarray_Open()
-		ow.SetSeqid(1)
 		ow.SetShareAccess(OPEN4_SHARE_ACCESS_BOTH)
 		ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
 		ownerW := ow.StartOwner()
@@ -331,10 +321,9 @@ func createFileViaNFS(t *testing.T, conn net.Conn, xid *uint32, clientid uint64,
 		t.Fatalf("OPEN status = %d", openRes.Disc())
 	}
 	openOK := openRes.Value().AsOPEN4resok()
-	stateid := openOK.Stateid()
+	stateid := clusterOpenStateid(t, openOK)
 
 	fh := append([]byte(nil), nextOp(t, &iter).Value().AsGETFH4resEntry().Value().AsGETFH4resok().Object().Data()...)
-	stateid = confirmClusterOpen(t, conn, xid, fh, stateid)
 
 	// WRITE
 	if len(data) > 0 {
@@ -372,7 +361,6 @@ func createFileViaNFS(t *testing.T, conn net.Conn, xid *uint32, clientid uint64,
 		w.Resume(buf)
 
 		caw := w.AppendArgarray_Close()
-		caw.SetSeqid(3)
 		copyStateid(caw.OpenStateid(), stateid)
 	})
 	*xid++
@@ -686,6 +674,40 @@ func TestTernMkdirAndRemove(t *testing.T) {
 	cleanupViaNFS(t, conn, &xid, "test-dir")
 }
 
+// These large read-only requests exceed the negotiated 64 KiB reply cache.
+// Request caching explicitly remains enabled for all other fixture compounds.
+func sendUncachedTernRead(t *testing.T, conn net.Conn, xid uint32, fh []byte, offset uint64, count uint32) COMPOUND4res {
+	t.Helper()
+	ts := testSessionForConn(conn)
+	if ts == nil {
+		t.Fatal("large read fixture has no session")
+	}
+	body := buildCompoundBody(nil, func(w *COMPOUND4argsWriter) {
+		p := w.AppendArgarray_Putfh()
+		p.Resume(p.StartObject().SetData(fh).Finish())
+		w.Resume(p.Finish())
+		r := w.AppendArgarray_Read()
+		r.Stateid().SetSeqid(0)
+		r.SetOffset(offset)
+		r.SetCount(count)
+	})
+	slot, seq := ts.acquire()
+	defer ts.release(slot)
+	ts.mu.Lock()
+	ts.lastSlot, ts.lastSeq = slot, seq
+	ts.mu.Unlock()
+	wire := admissionSequence(body, ts, slot, seq, false)
+	reply, err := sendRawRPC(conn, xid, procCompound, wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := parseCompoundReply(withoutSequenceResult(reply))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return res
+}
+
 func TestTernWriteAndRead(t *testing.T) {
 	addr, cleanup := startTernTestServer(t)
 	defer cleanup()
@@ -703,19 +725,8 @@ func TestTernWriteAndRead(t *testing.T) {
 
 	fh := createFileViaNFS(t, conn, &xid, clientid, "large-write.txt", data)
 
-	// Read back in one shot.
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
-		pfW := w.AppendArgarray_Putfh()
-		buf := pfW.StartObject().SetData(fh).Finish()
-		pfW.Resume(buf)
-		buf = pfW.Finish()
-		w.Resume(buf)
-
-		rw := w.AppendArgarray_Read()
-		rw.Stateid().SetSeqid(0)
-		rw.SetOffset(0)
-		rw.SetCount(uint32(len(data)))
-	})
+	// Read back in one shot with cachethis=false.
+	res := sendUncachedTernRead(t, conn, xid, fh, 0, uint32(len(data)))
 	xid++
 	iter := expectOK(t, res)
 	nextOp(t, &iter) // PUTFH
@@ -891,7 +902,7 @@ func TestTernRename(t *testing.T) {
 	cleanupViaNFS(t, conn, &xid, "rename-dst.txt")
 }
 
-func TestTernSetclientidAndRenew(t *testing.T) {
+func TestTernExchangeIDAndSequence(t *testing.T) {
 	addr, cleanup := startTernTestServer(t)
 	defer cleanup()
 	conn := dial(t, addr)
@@ -900,16 +911,45 @@ func TestTernSetclientidAndRenew(t *testing.T) {
 	xid := uint32(1)
 	clientid := setupClient(t, conn, &xid)
 
-	// RENEW
-	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
-		rw := w.AppendArgarray_Renew()
-		rw.SetClientid(clientid)
-	})
+	// SEQUENCE renews the session's client lease in v4.1. Send it explicitly
+	// so the shared shim neither hides the result nor recovers a failed call.
+	ts := testSessionForClient(conn, clientid)
+	if ts == nil || ts.clientID != clientid {
+		t.Fatal("EXCHANGE_ID/CREATE_SESSION did not establish the client's session")
+	}
+	slot, seq := ts.acquire()
+	defer ts.release(slot)
+	body := buildCompoundBody(nil, func(*COMPOUND4argsWriter) {})
+	// The first SEQUENCE may get DELAY until the client's first lease is
+	// published (canonical r3 §9.1); sendWarming retries it as a client
+	// would, on the same slot and sequence.
+	reply, err := sendWarming(conn, xid, body, ts, slot, seq)
 	xid++
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := parseCompoundReply(reply)
+	if err != nil {
+		t.Fatal(err)
+	}
 	iter := expectOK(t, res)
+	if res.ResarrayCount() != 1 {
+		t.Fatalf("SEQUENCE result count = %d, want 1", res.ResarrayCount())
+	}
 	entry := nextOp(t, &iter)
-	if entry.Value().AsRENEW4res().Status() != NFS4_OK {
-		t.Fatal("RENEW failed")
+	if entry.Disc() != OP_SEQUENCE {
+		t.Fatalf("response operation = %d, want SEQUENCE", entry.Disc())
+	}
+	sequence := entry.Value().AsSEQUENCE4resEntry()
+	if sequence.Disc() != NFS4_OK {
+		t.Fatalf("SEQUENCE status = %s", Nfsstat4Name(sequence.Disc()))
+	}
+	ok := sequence.Value().AsSEQUENCE4resok()
+	if readSessionID(ok.SrSessionid()) != ts.id || ok.SrSequenceid() != seq || ok.SrSlotid() != slot {
+		t.Fatal("SEQUENCE did not echo the established session, sequence and slot")
+	}
+	if ok.SrStatusFlags() != 0 {
+		t.Fatalf("fresh session SEQUENCE status flags = %#x, want 0", ok.SrStatusFlags())
 	}
 }
 
@@ -964,9 +1004,14 @@ func TestTernClientIncarnationGC(t *testing.T) {
 	}
 
 	base := time.Unix(1000, 0)
-	first.now = func() time.Time { return base }
-	second.now = func() time.Time { return base }
-	collector.now = func() time.Time { return base }
+	var clock atomic.Int64
+	clock.Store(base.UnixNano())
+	now := func() time.Time { return time.Unix(0, clock.Load()) }
+	// Install once before using the stores. All three observe the same clock;
+	// advancing time does not replace functions or mutate captured variables.
+	first.now = now
+	second.now = now
+	collector.now = now
 	owner := clientOwner{
 		principal: rpcPrincipal{flavor: authSys, body: t.Name()},
 	}
@@ -993,14 +1038,29 @@ func TestTernClientIncarnationGC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A renewal below the coalescing threshold must not rewrite the lease.
+	// The refresher rewrites once the published lease is less than
+	// nfsLeaseTime + nfsLeaseRenewAfter/2 ahead (canonical r3 §9.2).
+	clock.Store(base.Add(nfsLeaseRenewAfter/2 - time.Nanosecond).UnixNano())
+	if err := first.Renew(oldID); err != nil {
+		t.Fatal(err)
+	}
+	coalescedLeaseID, err := fs.Lookup(InodeID(oldID), first.leaseName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if coalescedLeaseID != leaseID {
+		t.Fatalf("below-threshold renewal replaced inode %d with %d",
+			leaseID, coalescedLeaseID)
+	}
 	for i := 1; i <= 3; i++ {
 		fs.mu.Lock()
 		fs.readers[msgs.InodeId(leaseID)] = &cachedReader{}
 		fs.mu.Unlock()
 
-		first.now = func() time.Time {
-			return base.Add(time.Duration(i) * time.Second)
-		}
+		// Each rewrite is beyond the threshold from the previous durable
+		// renewal, but before that lease expires.
+		clock.Store(base.Add(time.Duration(i) * (nfsLeaseRenewAfter + time.Second)).UnixNano())
 		if err := first.Renew(oldID); err != nil {
 			t.Fatal(err)
 		}
@@ -1008,13 +1068,16 @@ func TestTernClientIncarnationGC(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		if nextLeaseID == leaseID {
+			t.Fatalf("above-threshold renewal retained lease inode %d", leaseID)
+		}
 		fs.mu.Lock()
 		_, oldParentCached := fs.parents[leaseID]
 		_, oldReaderCached := fs.readers[msgs.InodeId(leaseID)]
 		nextParent := fs.parents[nextLeaseID]
 		fs.mu.Unlock()
 		if oldParentCached || oldReaderCached {
-			t.Fatalf("renewal retained overwritten inode %d in VFS caches",
+			t.Errorf("renewal retained overwritten inode %d in VFS caches",
 				leaseID)
 		}
 		if nextParent != InodeID(oldID) {
@@ -1059,7 +1122,7 @@ func TestTernClientIncarnationGC(t *testing.T) {
 	nextParent := fs.parents[nextConfirmedSymlinkID]
 	fs.mu.Unlock()
 	if oldParentCached || oldReaderCached {
-		t.Fatalf("confirmation retained overwritten inode %d in VFS caches",
+		t.Errorf("confirmation retained overwritten inode %d in VFS caches",
 			confirmedSymlinkID)
 	}
 	if nextParent != identityID {
@@ -1069,9 +1132,12 @@ func TestTernClientIncarnationGC(t *testing.T) {
 	if err := collector.collectStaleForClient(InodeID(newID)); err != nil {
 		t.Fatal(err)
 	}
-	collector.now = func() time.Time {
-		return base.Add(clientGCGrace + time.Second)
+	if _, err := fs.Lookup(identityID, oldName); err != nil {
+		t.Fatalf("old incarnation removed before GC grace: %v", err)
 	}
+	// The first collection marks a candidate relative to the current shared
+	// clock, after the renewals and replacement, not the original base.
+	clock.Add(int64(clientGCGrace + time.Second))
 	if err := collector.collectStaleForClient(InodeID(newID)); err != nil {
 		t.Fatal(err)
 	}
@@ -1089,12 +1155,11 @@ func TestTernStagedFileGetattrAndRead(t *testing.T) {
 	xid := uint32(1)
 	clientid := setupClient(t, conn, &xid)
 
-	// OPEN CREATE + GETFH + OPEN_CONFIRM
+	// Session OPEN CREATE + GETFH
 	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 
 		ow := w.AppendArgarray_Open()
-		ow.SetSeqid(1)
 		ow.SetShareAccess(OPEN4_SHARE_ACCESS_BOTH)
 		ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
 		ownerW := ow.StartOwner()
@@ -1126,9 +1191,8 @@ func TestTernStagedFileGetattrAndRead(t *testing.T) {
 	iter := expectOK(t, res)
 	nextOp(t, &iter) // PUTROOTFH
 	openOK := nextOp(t, &iter).Value().AsOPEN4resEntry().Value().AsOPEN4resok()
-	stateid := openOK.Stateid()
+	stateid := clusterOpenStateid(t, openOK)
 	fh := append([]byte(nil), nextOp(t, &iter).Value().AsGETFH4resEntry().Value().AsGETFH4resok().Object().Data()...)
-	stateid = confirmClusterOpen(t, conn, &xid, fh, stateid)
 
 	// WRITE some data
 	testData := []byte("staged file content")
@@ -1209,7 +1273,6 @@ func TestTernStagedFileGetattrAndRead(t *testing.T) {
 		w.Resume(buf)
 
 		caw := w.AppendArgarray_Close()
-		caw.SetSeqid(3)
 		copyStateid(caw.OpenStateid(), stateid)
 	})
 	xid++
@@ -1369,11 +1432,10 @@ func TestTernLargeFile(t *testing.T) {
 		data[i] = byte((i*7 + i/256) % 251)
 	}
 
-	// OPEN CREATE + GETFH + OPEN_CONFIRM
+	// Session OPEN CREATE + GETFH
 	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		ow := w.AppendArgarray_Open()
-		ow.SetSeqid(1)
 		ow.SetShareAccess(OPEN4_SHARE_ACCESS_BOTH)
 		ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
 		ownerW := ow.StartOwner()
@@ -1404,9 +1466,8 @@ func TestTernLargeFile(t *testing.T) {
 	iter := expectOK(t, res)
 	nextOp(t, &iter) // PUTROOTFH
 	openOK := nextOp(t, &iter).Value().AsOPEN4resEntry().Value().AsOPEN4resok()
-	stateid := openOK.Stateid()
+	stateid := clusterOpenStateid(t, openOK)
 	fh := append([]byte(nil), nextOp(t, &iter).Value().AsGETFH4resEntry().Value().AsGETFH4resok().Object().Data()...)
-	stateid = confirmClusterOpen(t, conn, &xid, fh, stateid)
 
 	// Write in chunks.
 	for off := 0; off < totalSize; off += chunkSize {
@@ -1441,7 +1502,6 @@ func TestTernLargeFile(t *testing.T) {
 		buf = pfW.Finish()
 		w.Resume(buf)
 		caw := w.AppendArgarray_Close()
-		caw.SetSeqid(3)
 		copyStateid(caw.OpenStateid(), stateid)
 	})
 	xid++
@@ -1450,7 +1510,16 @@ func TestTernLargeFile(t *testing.T) {
 	// Read back in chunks and verify.
 	var got []byte
 	for off := 0; off < totalSize; {
-		chunk, eof := readFileData(t, conn, &xid, fh, uint64(off), uint32(chunkSize))
+		res := sendUncachedTernRead(t, conn, xid, fh, uint64(off), uint32(chunkSize))
+		xid++
+		iter := expectOK(t, res)
+		nextOp(t, &iter) // PUTFH
+		readRes := nextOp(t, &iter).Value().AsREAD4resEntry()
+		if readRes.Disc() != NFS4_OK {
+			t.Fatalf("READ status = %s", Nfsstat4Name(readRes.Disc()))
+		}
+		readOK := readRes.Value().AsREAD4resok()
+		chunk, eof := readOK.Data(), readOK.Eof() != 0
 		got = append(got, chunk...)
 		off += len(chunk)
 		if eof {
@@ -1681,7 +1750,6 @@ func TestTernNestedDirectories(t *testing.T) {
 		}
 
 		ow := w.AppendArgarray_Open()
-		ow.SetSeqid(1)
 		ow.SetShareAccess(OPEN4_SHARE_ACCESS_BOTH)
 		ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
 		ownerW := ow.StartOwner()
@@ -1715,9 +1783,8 @@ func TestTernNestedDirectories(t *testing.T) {
 	nextOp(t, &iter) // LOOKUP nest_a
 	nextOp(t, &iter) // LOOKUP b
 	openOK := nextOp(t, &iter).Value().AsOPEN4resEntry().Value().AsOPEN4resok()
-	stateid := openOK.Stateid()
+	stateid := clusterOpenStateid(t, openOK)
 	fh := append([]byte(nil), nextOp(t, &iter).Value().AsGETFH4resEntry().Value().AsGETFH4resok().Object().Data()...)
-	stateid = confirmClusterOpen(t, conn, &xid, fh, stateid)
 
 	// Write data.
 	deepData := []byte("deep nested content")
@@ -1746,7 +1813,6 @@ func TestTernNestedDirectories(t *testing.T) {
 		buf = pfW.Finish()
 		w.Resume(buf)
 		caw := w.AppendArgarray_Close()
-		caw.SetSeqid(3)
 		copyStateid(caw.OpenStateid(), stateid)
 	})
 	xid++
@@ -1927,7 +1993,6 @@ func TestTernRemoveNonEmptyDir(t *testing.T) {
 		w.Resume(buf)
 
 		ow := w.AppendArgarray_Open()
-		ow.SetSeqid(1)
 		ow.SetShareAccess(OPEN4_SHARE_ACCESS_BOTH)
 		ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
 		ownerW := ow.StartOwner()
@@ -1960,9 +2025,8 @@ func TestTernRemoveNonEmptyDir(t *testing.T) {
 	nextOp(t, &iter) // PUTROOTFH
 	nextOp(t, &iter) // LOOKUP
 	openOK := nextOp(t, &iter).Value().AsOPEN4resEntry().Value().AsOPEN4resok()
-	stateid := openOK.Stateid()
+	stateid := clusterOpenStateid(t, openOK)
 	childFH := append([]byte(nil), nextOp(t, &iter).Value().AsGETFH4resEntry().Value().AsGETFH4resok().Object().Data()...)
-	stateid = confirmClusterOpen(t, conn, &xid, childFH, stateid)
 
 	// CLOSE the file.
 	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
@@ -1972,7 +2036,6 @@ func TestTernRemoveNonEmptyDir(t *testing.T) {
 		buf = pfW.Finish()
 		w.Resume(buf)
 		caw := w.AppendArgarray_Close()
-		caw.SetSeqid(3)
 		copyStateid(caw.OpenStateid(), stateid)
 	})
 	xid++
@@ -2026,11 +2089,10 @@ func TestTernCommit(t *testing.T) {
 	xid := uint32(1)
 	clientid := setupClient(t, conn, &xid)
 
-	// OPEN CREATE + GETFH + OPEN_CONFIRM
+	// Session OPEN CREATE + GETFH
 	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		ow := w.AppendArgarray_Open()
-		ow.SetSeqid(1)
 		ow.SetShareAccess(OPEN4_SHARE_ACCESS_BOTH)
 		ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
 		ownerW := ow.StartOwner()
@@ -2061,9 +2123,8 @@ func TestTernCommit(t *testing.T) {
 	iter := expectOK(t, res)
 	nextOp(t, &iter) // PUTROOTFH
 	openOK := nextOp(t, &iter).Value().AsOPEN4resEntry().Value().AsOPEN4resok()
-	stateid := openOK.Stateid()
+	stateid := clusterOpenStateid(t, openOK)
 	fh := append([]byte(nil), nextOp(t, &iter).Value().AsGETFH4resEntry().Value().AsGETFH4resok().Object().Data()...)
-	stateid = confirmClusterOpen(t, conn, &xid, fh, stateid)
 
 	// WRITE with UNSTABLE4.
 	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
@@ -2116,7 +2177,6 @@ func TestTernCommit(t *testing.T) {
 		buf = pfW.Finish()
 		w.Resume(buf)
 		caw := w.AppendArgarray_Close()
-		caw.SetSeqid(3)
 		copyStateid(caw.OpenStateid(), stateid)
 	})
 	xid++
@@ -2276,7 +2336,6 @@ func TestTernCrossDirectoryRename(t *testing.T) {
 		w.Resume(buf)
 
 		ow := w.AppendArgarray_Open()
-		ow.SetSeqid(1)
 		ow.SetShareAccess(OPEN4_SHARE_ACCESS_BOTH)
 		ow.SetShareDeny(OPEN4_SHARE_DENY_NONE)
 		ownerW := ow.StartOwner()
@@ -2309,9 +2368,8 @@ func TestTernCrossDirectoryRename(t *testing.T) {
 	nextOp(t, &iter) // PUTROOTFH
 	nextOp(t, &iter) // LOOKUP srcdir
 	openOK := nextOp(t, &iter).Value().AsOPEN4resEntry().Value().AsOPEN4resok()
-	stateid := openOK.Stateid()
+	stateid := clusterOpenStateid(t, openOK)
 	fh := append([]byte(nil), nextOp(t, &iter).Value().AsGETFH4resEntry().Value().AsGETFH4resok().Object().Data()...)
-	stateid = confirmClusterOpen(t, conn, &xid, fh, stateid)
 
 	movedData := []byte("cross-dir rename data")
 	res = sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
@@ -2338,7 +2396,6 @@ func TestTernCrossDirectoryRename(t *testing.T) {
 		buf = pfW.Finish()
 		w.Resume(buf)
 		caw := w.AppendArgarray_Close()
-		caw.SetSeqid(3)
 		copyStateid(caw.OpenStateid(), stateid)
 	})
 	xid++
@@ -2700,13 +2757,12 @@ func TestTernCreatedOpenCanBeUnlinked(t *testing.T) {
 	xid := uint32(1)
 	clientID := setupClient(t, conn, &xid)
 	status, stateID, fh, _ := openExclusiveFile(
-		t, conn, &xid, clientID, "temporary-owner", 1,
+		t, conn, &xid, clientID, "temporary-owner",
 		"temporary", [8]byte{1, 2, 3, 4, 5, 6, 7, 8},
 	)
 	if status != NFS4_OK {
 		t.Fatalf("OPEN status = %s, want NFS4_OK", Nfsstat4Name(status))
 	}
-	stateID = confirmOpenState(t, conn, &xid, fh, 2, stateID)
 
 	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
@@ -2786,11 +2842,10 @@ func TestTernRenameStagedSource(t *testing.T) {
 	clientID := setupClient(t, conn, &xid)
 	createFileViaNFS(t, conn, &xid, clientID, "rename-open", []byte("original"))
 	status, state, fh, _ := openFileForOwner(t, conn, &xid, clientID,
-		"renamed-writer", 1, "rename-open", OPEN4_SHARE_ACCESS_BOTH, false, false)
+		"renamed-writer", "rename-open", OPEN4_SHARE_ACCESS_BOTH, false, false)
 	if status != NFS4_OK {
 		t.Fatalf("OPEN returned %s", Nfsstat4Name(status))
 	}
-	state = confirmOpenState(t, conn, &xid, fh, 2, state)
 	writeFileAt(t, conn, &xid, fh, state, 0, []byte("updated!"))
 	res := sendCompound(t, conn, xid, func(w *COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
@@ -2864,16 +2919,15 @@ func TestTernRetiredSourceCanMoveAcrossDirectories(t *testing.T) {
 	clientID := setupClient(t, conn, &xid)
 	createFileViaNFS(t, conn, &xid, clientID, "retired-move", []byte("published"))
 	status, state, fh, _ := openFileForOwner(t, conn, &xid, clientID,
-		"retired-source", 1, "retired-move", OPEN4_SHARE_ACCESS_BOTH, false, false)
+		"retired-source", "retired-move", OPEN4_SHARE_ACCESS_BOTH, false, false)
 	if status != NFS4_OK {
 		t.Fatal(Nfsstat4Name(status))
 	}
-	state = confirmOpenState(t, conn, &xid, fh, 2, state)
 	writeFileAt(t, conn, &xid, fh, state, 0, []byte("unpublished"))
-	id, _ := fhToInodeID(fh)
+	id := stagingIDForTest(t, srv.stagingStore, state)
 	srv.waitForClientGC()
 	now := time.Now().Add(2 * nfsLeaseTime)
-	srv.clients.now = func() time.Time { return now }
+	srv.clients.setClock(func() time.Time { return now })
 	srv.runLeaseSweep()
 	meta, ok := srv.stagingStore.GetMeta(id)
 	if !ok || !meta.Retired {

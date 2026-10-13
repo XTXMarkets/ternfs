@@ -19,11 +19,25 @@ import (
 	"time"
 )
 
-// The only sidecar format this nfsd reads or writes. There are no deployed NFS
-// servers, so earlier formats are rejected rather than carried forward.
+// The only sidecar format this nfsd reads or writes. NFS8 is the NFSv4.1
+// server: one writer per client and file, found by stateid. Earlier formats
+// belong to the NFSv4.0 server and make startup fail; drain or remove the
+// staging directory before upgrading.
 const (
-	stagingMetaV6Magic = "NFS6"
+	stagingMetaMagic   = "NFS8"
+	stagingMetaVersion = 8
 )
+
+// errStagingFormat reports a sidecar written by an incompatible nfsd.
+type errStagingFormat struct {
+	path  string
+	magic string
+}
+
+func (e errStagingFormat) Error() string {
+	return fmt.Sprintf("staging sidecar %s has format %q, want %q; drain or remove the staging directory written by the older nfsd",
+		e.path, e.magic, stagingMetaMagic)
+}
 
 const stagingHydrationChunk = 1 << 20
 const finishHydrationWorkers = 4
@@ -54,7 +68,7 @@ type StagingMeta struct {
 	Guarded         bool     // interrupted namespace operations quarantine at startup
 	Retired         bool     // lease expired; retain acknowledged data for recovery
 	ReadOnly        bool     // CREATE may initialize size/times with read-only share access
-	Exclusive       bool     // EXCLUSIVE4 create; persisted in NFS6 sidecars
+	Exclusive       bool     // EXCLUSIVE4 create
 	Verifier        [8]byte  // EXCLUSIVE4 create verifier
 	BaseID          InodeID  // immutable file being replaced; zero for a new file
 	BaseSize        uint64
@@ -199,6 +213,12 @@ func NewLocalStagingStore(dir string, logger *slog.Logger) (*LocalStagingStore, 
 		}
 		metaPath := filepath.Join(dir, fmt.Sprintf("%016x.meta", uint64(id)))
 		meta, metaErr := loadStagingMeta(metaPath)
+		var formatErr errStagingFormat
+		if errors.As(metaErr, &formatErr) {
+			f.Close()
+			s.closeAll()
+			return nil, formatErr
+		}
 		if metaErr != nil || meta.Guarded || meta.Unlinked && meta.Retired {
 			// Quarantine a guard without querying the backend to infer its outcome.
 			// Even a failed quarantine must exclude only this entry, not stop nfsd.
@@ -245,6 +265,14 @@ func NewLocalStagingStore(dir string, logger *slog.Logger) (*LocalStagingStore, 
 	return s, nil
 }
 
+// closeAll releases descriptors opened during a failed startup.
+func (s *LocalStagingStore) closeAll() {
+	for _, entry := range s.files {
+		entry.file.prepareRemove()
+	}
+	s.files = nil
+}
+
 func (s *LocalStagingStore) ReadOnly() bool { return false }
 
 func (s *LocalStagingStore) Create(id InodeID, meta StagingMeta) (StagingFile, error) {
@@ -261,7 +289,7 @@ func (s *LocalStagingStore) Create(id InodeID, meta StagingMeta) (StagingFile, e
 	}
 	target := stagingTarget{dirID: meta.DirID, name: meta.FileName}
 	meta.Size = meta.BaseSize
-	meta.version = 6
+	meta.version = stagingMetaVersion
 	meta.Attrs = stagingAttributes(meta.Attrs, time.Now())
 	path := filepath.Join(s.dir, fmt.Sprintf("%016x.staging", uint64(id)))
 	f, err := s.createFile(path)
@@ -685,7 +713,7 @@ func (sf *localStagingFile) saveMetaLocked() error {
 	meta.Size = sf.size
 	meta.Attrs = sf.attrs
 	meta.MetadataChanged = sf.metadataChanged
-	meta.version = 6
+	meta.version = stagingMetaVersion
 	if err := saveStagingMeta(sf.metaPath, meta); err != nil {
 		return err
 	}
@@ -1151,7 +1179,7 @@ func (sf *localStagingFile) Reader() (io.ReadSeeker, error) {
 //   [2]  FileNameLen
 //   [N]  FileName (UTF-8)
 //   [8]  ClientID
-//   [4]  "NFS6"
+//   [4]  "NFS8"
 //   [8]  BaseID
 //   [8]  BaseSize
 //   [8]  LogicalSize
@@ -1178,7 +1206,7 @@ func saveStagingMeta(path string, meta StagingMeta) error {
 	off := 30 + len(nameBytes)
 	binary.BigEndian.PutUint64(buf[off:off+8], meta.ClientID)
 	off += 8
-	copy(buf[off:off+4], stagingMetaV6Magic)
+	copy(buf[off:off+4], stagingMetaMagic)
 	off += 4
 	binary.BigEndian.PutUint64(buf[off:off+8], uint64(meta.BaseID))
 	off += 8
@@ -1281,7 +1309,10 @@ func loadStagingMeta(path string) (StagingMeta, error) {
 	meta.ClientID = binary.BigEndian.Uint64(data[nameEnd : nameEnd+8])
 	off := nameEnd + 8
 	magic := string(data[off : off+4])
-	if magic != stagingMetaV6Magic {
+	if magic != stagingMetaMagic {
+		if strings.HasPrefix(magic, "NFS") {
+			return StagingMeta{}, errStagingFormat{path: path, magic: magic}
+		}
 		return StagingMeta{}, fmt.Errorf("unknown meta file extension")
 	}
 	off += 4
@@ -1296,7 +1327,7 @@ func loadStagingMeta(path string) (StagingMeta, error) {
 		return StagingMeta{}, fmt.Errorf("meta file truncated")
 	}
 	meta.Size = binary.BigEndian.Uint64(data[off : off+8])
-	meta.version = 6
+	meta.version = stagingMetaVersion
 	off += 8
 	if len(data) < off+4 {
 		return StagingMeta{}, fmt.Errorf("meta file truncated")

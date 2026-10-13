@@ -31,6 +31,8 @@ func main() {
 	registry := flag.String("registry", "", "TernFS registry address (for production)")
 	staging := flag.String("staging", "", "staging directory for writes (omit for read-only)")
 	verbose := flag.Bool("v", false, "verbose logging of NFS requests/responses")
+	allowMinor2 := flag.Bool("allow-minor-version-2", false,
+		"also accept NFSv4.2 COMPOUNDs, served as NFSv4.1 with every 4.2 operation unsupported")
 	maxInFlight := flag.Int("max-in-flight-per-connection", defaultMaxInFlightPerConn,
 		"maximum requests admitted per TCP connection")
 	flag.Usage = func() {
@@ -82,6 +84,7 @@ func main() {
 		os.Exit(1)
 	}
 	srv.maxInFlightPerConn = *maxInFlight
+	srv.allowMinorVersion2 = *allowMinor2
 	slogger.Info("NFS server listening", "addr", *addr)
 	if err := srv.ListenAndServe(*addr); err != nil {
 		slogger.Error("server error", "err", err)
@@ -136,8 +139,8 @@ func runInspect(args []string) {
 	root := fs.String("root", "", "local root directory (for testing)")
 	registry := fs.String("registry", "", "TernFS registry address")
 	identity := fs.String("identity", "",
-		"the report's `identity` field: the raw SETCLIENTID identity,\n"+
-			"for example \"Linux NFSv4.0 host/10.0.0.1\"")
+		"the report's `identity` field: the raw EXCHANGE_ID identity,\n"+
+			"for example \"Linux NFSv4.1 host/10.0.0.1\"")
 	identityHash := fs.String("identity-hash", "",
 		"the report's `identity-hash` field: 64 hex digits naming the\n"+
 			"identity directory (SHA-256 of the identity)")

@@ -111,7 +111,9 @@ func libnfsConnectAt(host string, port int, root, identity string) (*libnfsClien
 	if nfs == nil {
 		return nil, fmt.Errorf("nfs_init_context failed")
 	}
-	if ret := C.nfs_set_version(nfs, 4); ret != 0 {
+	// NFS_V4_2 is the only libnfs dialect with sessions; nfsd serves it as
+	// NFSv4.1 when started with -allow-minor-version-2.
+	if ret := C.nfs_set_version(nfs, C.NFS_V4_2); ret != 0 {
 		msg := C.GoString(C.nfs_get_error(nfs))
 		C.nfs_destroy_context(nfs)
 		return nil, fmt.Errorf("nfs_set_version: %s (ret=%d)", msg, ret)

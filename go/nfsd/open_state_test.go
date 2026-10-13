@@ -6,7 +6,6 @@ package main
 
 import (
 	"testing"
-	"time"
 )
 
 func assertOpenStateIndex(t *testing.T, store *openStateStore) {
@@ -14,146 +13,50 @@ func assertOpenStateIndex(t *testing.T, store *openStateStore) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 
-	indexed := 0
-	for key, owner := range store.owners {
-		for fileID, state := range owner.states {
-			indexed++
-			if state.owner != key {
-				t.Fatalf("owner index key = %#v, state owner = %#v",
-					key, state.owner)
-			}
-			if state.fileID != fileID {
-				t.Fatalf("owner index file = %v, state file = %v",
-					fileID, state.fileID)
-			}
-			if store.states[state.id] != state {
-				t.Fatalf("owner index state %x is absent from stateid index",
-					state.id)
-			}
+	for key, state := range store.byFile {
+		if state.owner != key.owner || state.fileID != key.fileID {
+			t.Fatalf("file index key = %#v, state = %#v", key, state)
+		}
+		if store.states[state.id] != state {
+			t.Fatalf("file index state %x is absent from stateid index", state.id)
 		}
 	}
-	if indexed != len(store.states) {
-		t.Fatalf("owner index has %d states, stateid index has %d",
-			indexed, len(store.states))
-	}
-	for id, state := range store.states {
-		owner := store.owners[state.owner]
-		if owner == nil || owner.states[state.fileID] != state {
-			t.Fatalf("stateid index state %x is absent from owner index", id)
-		}
+	if len(store.byFile) != len(store.states) {
+		t.Fatalf("file index has %d states, stateid index has %d",
+			len(store.byFile), len(store.states))
 	}
 }
 
-func panicValue(fn func()) (value any) {
-	defer func() {
-		value = recover()
-	}()
-	fn()
-	return nil
-}
-
-func TestAddStateLockedRejectsOccupiedIndexSlot(t *testing.T) {
-	for _, test := range []struct {
-		name   string
-		second openState
-	}{
-		{
-			name: "owner file",
-			second: openState{
-				id:     StateID{2},
-				fileID: MakeInodeID(InodeTypeFile, 1),
-			},
-		},
-		{
-			name: "stateid",
-			second: openState{
-				id:     StateID{1},
-				fileID: MakeInodeID(InodeTypeFile, 2),
-			},
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			store := newOpenStateStore()
-			owner := &openOwnerState{}
-			first := &openState{
-				id:     StateID{1},
-				fileID: MakeInodeID(InodeTypeFile, 1),
-			}
-			add := func(state *openState) error {
-				owner.mu.Lock()
-				defer owner.mu.Unlock()
-				store.mu.Lock()
-				defer store.mu.Unlock()
-				return store.addStateLocked(owner, state)
-			}
-			if err := add(first); err != nil {
-				t.Fatal(err)
-			}
-			if err := add(&test.second); err == nil {
-				t.Fatal("occupied index slot was overwritten")
-			}
-			if store.states[first.id] != first ||
-				owner.states[first.fileID] != first ||
-				len(store.states) != 1 || len(owner.states) != 1 {
-				t.Fatal("index changed after rejected insertion")
-			}
-		})
-	}
-}
-
-func TestFinishOpenIndexConflictReturnsServerFault(t *testing.T) {
+func TestOpenRejectsOccupiedStateID(t *testing.T) {
 	store := newOpenStateStore()
 	owner := openOwnerKey{clientID: 1, owner: "owner"}
-	op, _, _, status := store.startOpen(owner, 1)
-	if status != NFS4_OK {
-		t.Fatal(Nfsstat4Name(status))
+	first, err := store.open(owner, MakeInodeID(InodeTypeFile, 1), MakeInodeID(InodeTypeFile, 1), testGrant(false), StateID{})
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	id := StateID{1}
-	store.mu.Lock()
-	store.states[id] = &openState{id: id}
-	store.mu.Unlock()
-
-	finished := make(chan openOwnerResponse, 1)
-	go func() {
-		defer op.finishServerFaultIfNeeded()
-		finished <- op.finishOpen(
-			MakeInodeID(InodeTypeFile, 1), false, id, false)
-	}()
-
-	select {
-	case response := <-finished:
-		if response.status != NFS4ERR_SERVERFAULT {
-			t.Fatalf("OPEN status = %s, want NFS4ERR_SERVERFAULT",
-				Nfsstat4Name(response.status))
-		}
-	case <-time.After(testChannelTimeout):
-		t.Fatal("OPEN deadlocked after detecting an occupied index slot")
+	if _, err := store.open(
+		owner, MakeInodeID(InodeTypeFile, 2), MakeInodeID(InodeTypeFile, 2), testGrant(false), first.id,
+	); err == nil {
+		t.Fatal("occupied stateid was reused for another file")
 	}
+	assertOpenStateIndex(t, store)
 }
 
-func TestWriteReopenReturnsPerm(t *testing.T) {
+// A write OPEN by an owner that holds a read open upgrades the same
+// stateid to the new writer's staging (RFC 8881 section 18.16.3).
+func TestWriteReopenUpgrades(t *testing.T) {
 	store := newOpenStateStore()
 	owner := openOwnerKey{clientID: 1, owner: "owner"}
 	fileID := MakeInodeID(InodeTypeFile, 1)
+	stagingID := MakeInodeID(InodeTypeFile, 2)
 	state := addConfirmedOpen(t, store, owner, fileID)
-
-	var status uint32
-	if recovered := panicValue(func() {
-		_, status = addOpenForTest(store,
-			owner, 3, fileID, true, StateID{})
-	}); recovered != nil {
-		t.Fatalf("write reopen panicked: %v", recovered)
+	upgraded, err := store.open(owner, fileID, stagingID, testGrant(true), StateID{})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if status != NFS4ERR_PERM {
-		t.Fatalf("write reopen = %s, want NFS4ERR_PERM",
-			Nfsstat4Name(status))
-	}
-	if got, status := store.lookup(
-		state.id, state.generation, fileID,
-	); status != NFS4_OK || got.write {
-		t.Fatalf("original read state after write reopen = %+v, %s",
-			got, Nfsstat4Name(status))
+	if upgraded.id != state.id || !upgraded.writes() || upgraded.dataID != stagingID ||
+		upgraded.generation != state.generation+1 {
+		t.Fatalf("upgrade = %+v from %+v", upgraded, state)
 	}
 	assertOpenStateIndex(t, store)
 }
@@ -175,113 +78,26 @@ func TestStateidGenerationWrapsToOne(t *testing.T) {
 	}
 }
 
-func abortOwnerOperation(op *openOwnerOperation) {
-	op.finished = true
-	op.store.releaseOwner(op.owner)
-}
-
-func beginOpenForTest(
-	os *openStateStore,
-	owner openOwnerKey,
-	seq uint32,
-) (openState, bool, uint32) {
-	op, response, replay, status := os.startOpen(owner, seq)
-	if replay {
-		if op != nil {
-			abortOwnerOperation(op)
-		}
-		return response.state, true, status
+// testGrant is the grant of a test's read or write OPEN.
+func testGrant(write bool) grant {
+	if write {
+		return grant{access: OPEN4_SHARE_ACCESS_BOTH}
 	}
-	if op != nil {
-		abortOwnerOperation(op)
-		return openState{}, false, status
-	}
-	return response.state, replay, status
+	return grant{access: OPEN4_SHARE_ACCESS_READ}
 }
 
 func addOpenForTest(
 	os *openStateStore,
 	owner openOwnerKey,
-	seq uint32,
 	fileID InodeID,
 	write bool,
 	id StateID,
 ) (openState, uint32) {
-	op, response, replay, status := os.startOpen(owner, seq)
-	if replay && op != nil {
-		abortOwnerOperation(op)
-		return response.state, response.status
+	state, err := os.open(owner, fileID, fileID, testGrant(write), id)
+	if err != nil {
+		return openState{}, NFS4ERR_SERVERFAULT
 	}
-	if op == nil {
-		if replay {
-			return response.state, response.status
-		}
-		return openState{}, status
-	}
-	response = op.finishOpen(fileID, write, id, false)
-	return response.state, response.status
-}
-
-func confirmOpenForTest(
-	os *openStateStore,
-	id StateID,
-	generation uint32,
-	fileID InodeID,
-	seq uint32,
-) (openState, uint32) {
-	op, state, response, replay, status := os.startConfirm(
-		id, generation, fileID, seq)
-	if op == nil {
-		if replay {
-			return response.state, response.status
-		}
-		return state, status
-	}
-	response = op.finishConfirm(id, generation, fileID)
-	return response.state, response.status
-}
-
-func validateCloseForTest(
-	os *openStateStore,
-	id StateID,
-	generation uint32,
-	fileID InodeID,
-	seq uint32,
-) (openState, bool, uint32) {
-	op, state, response, replay, status := os.startClose(
-		id, generation, fileID, seq)
-	if op != nil {
-		abortOwnerOperation(op)
-	}
-	if replay {
-		return response.state, true, response.status
-	}
-	return state, false, status
-}
-
-func closeOpenForTest(
-	os *openStateStore,
-	id StateID,
-	seq uint32,
-) (openState, uint32) {
-	os.mu.Lock()
-	stored := os.states[id]
-	if stored == nil {
-		os.mu.Unlock()
-		return openState{}, NFS4ERR_BAD_STATEID
-	}
-	state := *stored
-	os.mu.Unlock()
-	op, _, response, replay, status := os.startClose(
-		id, state.generation, state.fileID, seq)
-	if op == nil {
-		if replay {
-			return response.state, response.status
-		}
-		return openState{}, status
-	}
-	response = op.finishClose(id, state.generation, state.fileID)
-	return response.state, response.status
+	return state, NFS4_OK
 }
 
 func addConfirmedOpen(
@@ -291,13 +107,64 @@ func addConfirmedOpen(
 	fileID InodeID,
 ) openState {
 	t.Helper()
-	state, status := addOpenForTest(store, owner, 1, fileID, false, StateID{})
+	state, status := addOpenForTest(store, owner, fileID, false, StateID{})
 	if status != NFS4_OK {
 		t.Fatalf("OPEN status = %s", Nfsstat4Name(status))
 	}
-	confirmed, status := confirmOpenForTest(store, state.id, 1, fileID, 2)
-	if status != NFS4_OK {
-		t.Fatalf("OPEN_CONFIRM status = %s", Nfsstat4Name(status))
+	return state
+}
+
+func TestReopenAdvancesGeneration(t *testing.T) {
+	store := newOpenStateStore()
+	defer assertOpenStateIndex(t, store)
+	owner := openOwnerKey{clientID: 1, owner: "owner"}
+	fileID := MakeInodeID(InodeTypeFile, 1)
+	first := addConfirmedOpen(t, store, owner, fileID)
+	second := addConfirmedOpen(t, store, owner, fileID)
+	if second.id != first.id || second.generation != first.generation+1 {
+		t.Fatalf("reopen = %+v after %+v", second, first)
 	}
-	return confirmed
+	if _, status := store.lookup(owner.clientID, first.id, first.generation, fileID); status != NFS4ERR_OLD_STATEID {
+		t.Fatalf("old generation = %s", Nfsstat4Name(status))
+	}
+	if _, status := store.lookup(owner.clientID, first.id, 0, fileID); status != NFS4_OK {
+		t.Fatalf("current-generation seqid 0 = %s", Nfsstat4Name(status))
+	}
+}
+
+func TestOpenStateStoreLookupClassifiesStateids(t *testing.T) {
+	store := newOpenStateStore()
+	defer assertOpenStateIndex(t, store)
+	owner := openOwnerKey{clientID: 7, owner: "owner"}
+	fileID := MakeInodeID(InodeTypeFile, 1)
+	state := addConfirmedOpen(t, store, owner, fileID)
+	for _, test := range []struct {
+		name       string
+		id         StateID
+		generation uint32
+		fileID     InodeID
+		want       uint32
+	}{
+		{"current", state.id, 1, fileID, NFS4_OK},
+		{"future generation", state.id, 2, fileID, NFS4ERR_BAD_STATEID},
+		{"wrong file", state.id, 1, MakeInodeID(InodeTypeFile, 2), NFS4ERR_BAD_STATEID},
+		{"unknown", StateID{}, 0, fileID, NFS4ERR_BAD_STATEID},
+	} {
+		if _, status := store.lookup(owner.clientID, test.id, test.generation, test.fileID); status != test.want {
+			t.Errorf("%s: status = %s, want %s", test.name,
+				Nfsstat4Name(status), Nfsstat4Name(test.want))
+		}
+	}
+	closed, ok := store.close(state.id)
+	if !ok || closed.generation != 2 {
+		t.Fatalf("close = %+v, %v", closed, ok)
+	}
+	if _, status := store.lookup(owner.clientID, state.id, 1, fileID); status != NFS4ERR_BAD_STATEID {
+		t.Fatalf("closed stateid = %s", Nfsstat4Name(status))
+	}
+	other := addConfirmedOpen(t, store, owner, fileID)
+	store.expire(other.id)
+	if _, status := store.lookup(owner.clientID, other.id, 1, fileID); status != NFS4ERR_EXPIRED {
+		t.Fatalf("expired stateid = %s", Nfsstat4Name(status))
+	}
 }

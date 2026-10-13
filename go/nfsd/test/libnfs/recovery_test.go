@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"syscall"
 	"testing"
@@ -107,16 +108,103 @@ func recoveryConfirmed(t *testing.T, report *recoveryReport) recoveryIncarnation
 	return recoveryIncarnation{}
 }
 
-func requireRecoveryError(t *testing.T, r libnfsReply, status string) {
+// requireRecoveryError requires r to have failed with one of statuses.
+func requireRecoveryError(t *testing.T, r libnfsReply, statuses ...string) {
 	t.Helper()
-	if r.Error == "" || !strings.Contains(r.Error, status) {
-		t.Fatalf("got error %q (errno %d), want %s", r.Error, r.Errno, status)
+	for _, status := range statuses {
+		if r.Error != "" && strings.Contains(r.Error, status) {
+			t.Logf("libnfs reported %s (errno %d)", r.Error, r.Errno)
+			return
+		}
 	}
-	t.Logf("libnfs reported %s (errno %d)", r.Error, r.Errno)
+	t.Fatalf("got error %q (errno %d), want one of %v", r.Error, r.Errno, statuses)
 }
 
+// stagedWriter is the inspector's report of one open's staging, without the
+// fields a checkpoint may change (times, allocation).
+type stagedWriter struct {
+	FileID      string `json:"file_id"`
+	DataPresent bool   `json:"data_present"`
+	MetaPresent bool   `json:"meta_present"`
+	Size        int64  `json:"size"`
+	DirID       string `json:"dir_id"`
+	FileName    string `json:"file_name"`
+	RecoveryKey string `json:"recovery_key"`
+	StateID     string `json:"stateid"`
+	ClientID    string `json:"clientid"`
+	OpenOwner   string `json:"open_owner"`
+	OwnerKnown  bool   `json:"owner_known"`
+	ReadOnly    bool   `json:"read_only"`
+	Retired     bool   `json:"retired"`
+	Unlinked    bool   `json:"unlinked"`
+	Guarded     bool   `json:"guarded"`
+	Exclusive   bool   `json:"exclusive"`
+	Verifier    string `json:"verifier"`
+	BaseID      string `json:"base_id"`
+	BaseSize    uint64 `json:"base_size"`
+	Dirty       []struct {
+		Start uint64 `json:"start"`
+		End   uint64 `json:"end"`
+	} `json:"dirty"`
+	Problems []string `json:"problems"`
+}
+
+// retainedWriter checks that the incarnation's only open still has its
+// staging, and reads its synced range [0, len(synced)) from the one staging
+// data file in the server's staging directory. The file is tied to the
+// inspector's entry by being the only one there and by its size.
+func (s *nfsTestServer) retainedWriter(t *testing.T, inc recoveryIncarnation, synced string) (string, stagedWriter) {
+	t.Helper()
+	if len(inc.Opens) != 1 || inc.Opens[0].Staging == nil {
+		t.Fatalf("expected one open with staging: %+v", inc)
+	}
+	var w stagedWriter
+	if err := json.Unmarshal(inc.Opens[0].Staging, &w); err != nil {
+		t.Fatal(err)
+	}
+	if !w.DataPresent || !w.MetaPresent || w.Retired || w.Unlinked || w.Guarded || len(w.Problems) != 0 ||
+		w.ReadOnly || !w.OwnerKnown || w.RecoveryKey == "" || w.StateID != inc.Opens[0].StateID {
+		t.Fatalf("staging not intact for its open %s: %+v", inc.Opens[0].StateID, w)
+	}
+	covered := false
+	for _, r := range w.Dirty {
+		covered = covered || r.Start == 0 && r.End >= uint64(len(synced))
+	}
+	if !covered {
+		t.Fatalf("synced range not recorded as written: %+v", w.Dirty)
+	}
+	files, err := filepath.Glob(filepath.Join(s.Staging, "*.staging"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("staging data files %v, want exactly the writer's", files)
+	}
+	f, err := os.Open(files[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if info, err := f.Stat(); err != nil || info.Size() != w.Size {
+		t.Fatalf("staging data file %s does not match the inspector's entry: %v %v", files[0], info, err)
+	}
+	data := make([]byte, len(synced))
+	if _, err := f.ReadAt(data, 0); err != nil || string(data) != synced {
+		t.Fatalf("staged bytes %q, %v; want %q", data, err, synced)
+	}
+	return inc.Opens[0].StateID, w
+}
+
+// Sessions end with the nfsd process (canonical r3 §6). The libnfs build
+// these tests were run with (the Makefile's libnfs-8.0.0 pin, whose source
+// declares version 18.0.0) does not recover a session: after a restart it
+// reconnects and sends SEQUENCE and BIND_CONN_TO_SESSION on its old session,
+// gets NFS4ERR_BADSESSION and reports it, without EXCHANGE_ID or
+// CREATE_SESSION. Each restart case below records that, and checks that
+// nothing published or staged is lost and that a new libnfs context works. A
+// client that re-registers recovers; these cases do not show that.
 func runLibnfsRecovery(t *testing.T, suite *nfsTestSuite) {
-	t.Log("libnfs=7.0.2 timeout=5s reconnects=2")
+	t.Log("libnfs=8.0.0 timeout=5s reconnects=2")
 	t.Run("OpenCloseAcrossRestart", func(t *testing.T) {
 		s := suite.server(t)
 		c := s.client(t)
@@ -126,6 +214,9 @@ func runLibnfsRecovery(t *testing.T, suite *nfsTestSuite) {
 			c.must(t, libnfsRequest{Op: "close", Handle: h})
 			s.published(t, "file", "published")
 			s.restart(t, sig)
+			requireRecoveryError(t, c.call(t, libnfsRequest{Op: "open", Path: "/" + s.Name + "/file", Flags: os.O_RDONLY}), "NFS4ERR_BADSESSION")
+			c.process.stop(t, syscall.SIGKILL)
+			c = s.client(t)
 			h = c.open(t, s, "file", os.O_RDONLY)
 			c.read(t, h, "published")
 			c.must(t, libnfsRequest{Op: "close", Handle: h})
@@ -170,12 +261,12 @@ func runLibnfsRecovery(t *testing.T, suite *nfsTestSuite) {
 	})
 	t.Run("CloseSyncedWriterAfterRestart", func(t *testing.T) {
 		for _, tc := range []struct {
-			name, base, want string
-			exclusive        bool
+			name, base string
+			exclusive  bool
 		}{
-			{"new", "", "new", false},
-			{"replacement", "old tail", "new tail", false},
-			{"exclusive", "", "new", true},
+			{"new", "", false},
+			{"replacement", "old tail", false},
+			{"exclusive", "", true},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				s := suite.server(t)
@@ -194,19 +285,43 @@ func runLibnfsRecovery(t *testing.T, suite *nfsTestSuite) {
 				c.must(t, libnfsRequest{Op: "sync", Handle: h})
 				s.published(t, "file", tc.base)
 				before := recoveryConfirmed(t, s.inspect(t, c))
-				if !before.Usable || len(before.Opens) != 1 || before.Opens[0].Staging == nil {
+				if !before.Usable {
 					t.Fatalf("writer not durably registered: %+v", before)
 				}
+				stateID, staged := s.retainedWriter(t, before, "new")
+				if staged.Exclusive != tc.exclusive || (tc.base == "") != (staged.BaseSize == 0) {
+					t.Fatalf("staging does not describe this writer: %+v", staged)
+				}
+				// retained checks that the same staging, tied to the original
+				// open, still holds the synced bytes.
+				retained := func(when string) recoveryIncarnation {
+					t.Helper()
+					inc := recoveryConfirmed(t, s.inspect(t, c))
+					if inc.ClientID != before.ClientID {
+						t.Fatalf("%s: client re-registered: %s -> %s", when, before.ClientID, inc.ClientID)
+					}
+					gotState, got := s.retainedWriter(t, inc, "new")
+					if gotState != stateID || !reflect.DeepEqual(got, staged) {
+						t.Fatalf("%s: staging changed:\n%s %+v\nwant\n%s %+v", when, gotState, got, stateID, staged)
+					}
+					return inc
+				}
 				s.restart(t, syscall.SIGKILL)
-				c.must(t, libnfsRequest{Op: "close", Handle: h})
-				s.published(t, "file", tc.want)
-				after := recoveryConfirmed(t, s.inspect(t, c))
-				if before.ClientID != after.ClientID {
-					t.Fatalf("client re-registered during close recovery: %s -> %s", before.ClientID, after.ClientID)
-				}
-				if len(after.Opens) != 0 {
-					t.Fatalf("open markers remain after recovered close: %+v", after.Opens)
-				}
+				retained("after restart")
+				// The tested libnfs cannot close on its pre-restart session,
+				// so the synced data is not published. It is not lost either:
+				// the original open's staging stays, with its bytes, for a
+				// client that recovers it (old stateid or CLAIM_FH) or for
+				// lease expiry to retire.
+				requireRecoveryError(t, c.call(t, libnfsRequest{Op: "close", Handle: h}), "NFS4ERR_BADSESSION")
+				s.published(t, "file", tc.base)
+				retained("after the rejected CLOSE")
+				t.Logf("synced writer retained, unpublished: open %s, staging %s", stateID, staged.FileID)
+				c.process.stop(t, syscall.SIGKILL)
+				fresh := s.client(t)
+				h = fresh.open(t, s, "file", os.O_RDONLY)
+				fresh.read(t, h, tc.base)
+				fresh.must(t, libnfsRequest{Op: "close", Handle: h})
 			})
 		}
 	})
@@ -218,8 +333,17 @@ func runLibnfsRecovery(t *testing.T, suite *nfsTestSuite) {
 		c.must(t, libnfsRequest{Op: "close", Handle: h})
 		h = c.open(t, s, "file", os.O_RDONLY)
 		s.restart(t, syscall.SIGKILL)
-		requireRecoveryError(t, c.call(t, libnfsRequest{Op: "read", Handle: h}), "NFS4ERR_BAD_STATEID")
-		requireRecoveryError(t, c.call(t, libnfsRequest{Op: "close", Handle: h}), "NFS4ERR_BAD_STATEID")
+		// The SEQUENCE in front of the request fails before the read
+		// stateid, which is not recovered, is examined.
+		requireRecoveryError(t, c.call(t, libnfsRequest{Op: "read", Handle: h}), "NFS4ERR_BADSESSION")
+		// The tested libnfs then sends CLOSE either on the old session, which
+		// gets NFS4ERR_BADSESSION, or after dropping it, without SEQUENCE,
+		// which gets NFS4ERR_OP_NOT_IN_SESSION. Both were observed. Neither
+		// says anything about the read stateid.
+		requireRecoveryError(t, c.call(t, libnfsRequest{Op: "close", Handle: h}),
+			"NFS4ERR_BADSESSION", "NFS4ERR_OP_NOT_IN_SESSION")
+		c.process.stop(t, syscall.SIGKILL)
+		c = s.client(t)
 		h = c.open(t, s, "file", os.O_RDONLY)
 		c.read(t, h, "retained")
 		c.must(t, libnfsRequest{Op: "close", Handle: h})
@@ -272,7 +396,18 @@ func runLibnfsRecovery(t *testing.T, suite *nfsTestSuite) {
 			}
 			return len(staging) == 2 && len(sidecars) == 2
 		}
-		waitForNFSTest(t, "lease expiration and staging retirement", 3*lease, func() bool {
+		// The server's expiry horizon from the clients' last requests, which
+		// precede this wait (canonical r3 §§8-9), for a healthy backend:
+		//   lease      the logical lease's quiet period after the last reply;
+		//   1.5*lease  the durable lease the refresher wrote last, during
+		//              that period (leaseWriteTerm = lease + lease/2);
+		//   0.5*lease  the sweeper's tick, which makes the decision and
+		//              retires the staging;
+		//   0.5*lease  margin for scheduling, the inspector's polling and
+		//              the sweep's own run time.
+		// It is not a bound under arbitrarily slow backend calls.
+		expiryHorizon := lease + lease*3/2 + lease/2 + lease/2
+		waitForNFSTest(t, "lease expiration and staging retirement", expiryHorizon, func() bool {
 			c.process.alive(t)
 			s.process.alive(t)
 			inc := recoveryConfirmed(t, s.inspect(t, c))
@@ -281,13 +416,11 @@ func runLibnfsRecovery(t *testing.T, suite *nfsTestSuite) {
 				!deadInc.Usable && len(deadInc.Opens) == 0 && retiredStaging(deadInc) &&
 				retainedStaging()
 		})
-		requireRecoveryError(t, c.call(t, libnfsRequest{Op: "write", Handle: h, Data: []byte("late")}), "NFS4ERR_EXPIRED")
-		// libnfs commits before it closes. COMMIT carries no stateid, and on
-		// retired staging it fails with IO because the descriptor was released
-		// at expiry; a CLOSE which reaches the server fails with EXPIRED.
-		if late := c.call(t, libnfsRequest{Op: "close", Handle: h}); late.Error == "" ||
-			!strings.Contains(late.Error, "NFS4ERR_EXPIRED") && !strings.Contains(late.Error, "NFS4ERR_IO") {
-			t.Fatalf("late close: got error %q (errno %d), want NFS4ERR_EXPIRED or NFS4ERR_IO", late.Error, late.Errno)
+		// An expired clientid ends its sessions: the SEQUENCE in front of
+		// any later request fails before the stateid is examined.
+		requireRecoveryError(t, c.call(t, libnfsRequest{Op: "write", Handle: h, Data: []byte("late")}), "NFS4ERR_BADSESSION")
+		if late := c.call(t, libnfsRequest{Op: "close", Handle: h}); late.Error == "" {
+			t.Fatal("late close succeeded after lease expiry")
 		} else {
 			t.Logf("libnfs reported %s (errno %d)", late.Error, late.Errno)
 		}

@@ -7,6 +7,36 @@ package main
 // StateID is the 12-byte "other" field of an NFSv4 stateid4.
 type StateID [12]byte
 
+// isCurrentStateID reports the special stateid meaning the compound's
+// current stateid: seqid 1, other all zero.
+func isCurrentStateID(stateid Stateid4) bool {
+	if stateid.Seqid() != 1 {
+		return false
+	}
+	for i := 0; i < 12; i++ {
+		if stateid.Other(i) != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// resolveStateID substitutes the compound's current stateid for the special
+// current stateid. It returns the stateid to use and false if no current
+// stateid is set.
+func (st *compoundState) resolveStateID(stateid Stateid4) (Stateid4, bool) {
+	if !isCurrentStateID(stateid) {
+		return stateid, true
+	}
+	if !st.currentStateIDSet {
+		return stateid, false
+	}
+	var buf [16]byte
+	resolved := Stateid4{m: &buf}
+	writeStateID(resolved, st.currentGeneration, st.currentStateID)
+	return resolved, true
+}
+
 func isSpecialStateID(stateid Stateid4) bool {
 	seqid := stateid.Seqid()
 	allZero := seqid == 0

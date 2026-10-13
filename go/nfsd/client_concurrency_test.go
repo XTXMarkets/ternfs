@@ -221,11 +221,21 @@ func (fs *leaseGateVFS) Rename(src InodeID, old string, dst InodeID, name string
 	return fs.TernVFS.Rename(src, old, dst, name)
 }
 
+func (fs *leaseGateVFS) RenameEdge(src InodeID, old string, edge Edge, dst InodeID, name string) error {
+	if name == fs.name {
+		fs.wait()
+	}
+	return fs.TernVFS.RenameEdge(src, old, edge, dst, name)
+}
+
 func TestClientStoreLeaseLockSurvivesCacheReplacement(t *testing.T) {
 	fs := &leaseGateVFS{TernVFS: NewLocalTernVFS(t.TempDir()),
 		testGate: newTestGate()}
 	store, id := newConfirmedStoreClient(t, fs, []byte("client"), [8]byte{1}, clientOwner{})
 	fs.name = store.leaseName
+	// Due for a refresh, so the first MarkOpen publishes.
+	base := time.Now()
+	store.now = func() time.Time { return base.Add(nfsLeaseRenewAfter + time.Second) }
 	first := make(chan error, 1)
 	go func() { first <- store.MarkOpen(id, StateID{1}) }()
 	defer closeSignal(fs.release)

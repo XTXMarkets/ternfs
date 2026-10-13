@@ -15,8 +15,8 @@ func (s *Server) stagingOwnedBy(
 	state openState,
 ) StagingFile {
 	meta, ok := s.stagingStore.GetMeta(fileID)
-	if !ok || meta.NFSStateID != state.id ||
-		meta.ClientID != state.owner.clientID {
+	if !ok || meta.ClientID != state.owner.clientID ||
+		meta.NFSStateID != state.id && state.dataID != fileID {
 		return nil
 	}
 	return s.stagingStore.Get(fileID)
@@ -38,21 +38,37 @@ func (s *Server) retireInactiveStagingTarget(dirID InodeID, name string) (bool, 
 		if meta.Retired {
 			continue
 		}
-		if meta.ClientID != 0 {
-			active, err := s.clients.HasOpen(meta.ClientID, meta.NFSStateID)
-			if err != nil && !errors.Is(err, os.ErrNotExist) {
-				return true, err
-			}
-			if active {
-				activeWriter = true
-				continue
-			}
-		}
-		if err := s.retireStagingLocked(id, meta); err != nil && !errors.Is(err, errStagingRemoved) {
+		active, err := s.retireIfInactiveWriter(id, meta)
+		if err != nil {
 			return true, err
 		}
+		activeWriter = activeWriter || active
 	}
 	return activeWriter, nil
+}
+
+// retireIfInactiveWriter retires one writer whose open is gone. The check and
+// the retirement run under one destruction hold on its client; a writer
+// whose client a confirmation protects counts as active and is kept.
+func (s *Server) retireIfInactiveWriter(id InodeID, meta StagingMeta) (bool, error) {
+	end, ok := s.beginDestroy(meta.ClientID)
+	if !ok {
+		return true, nil
+	}
+	defer end()
+	if meta.ClientID != 0 {
+		active, err := s.clients.HasOpen(meta.ClientID, meta.NFSStateID)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return true, err
+		}
+		if active {
+			return true, nil
+		}
+	}
+	if err := s.retireStagingLocked(id, meta); err != nil && !errors.Is(err, errStagingRemoved) {
+		return true, err
+	}
+	return false, nil
 }
 
 // Only IDs and final namespace roles are captured. Data checkpoints may keep
@@ -161,23 +177,49 @@ func (s *Server) lockStagingTarget(fileID InodeID) (StagingMeta, bool, func()) {
 	}
 }
 
+// recoveredStagingTarget selects the staging a recovering OPEN adopts. Taking
+// another incarnation's staging after its lease expired is destructive for
+// that incarnation, so its destruction hold is taken before the lease check
+// and returned in release, for the caller to call once the adoption is done.
+// While a confirmation protects that incarnation, the OPEN gets DELAY.
+// release is never nil.
 func (s *Server) recoveredStagingTarget(
 	dirID InodeID,
 	name string,
 	clientID uint64,
 	openOwner string,
 	write bool,
-) (InodeID, StagingMeta, bool, error) {
+) (_ InodeID, _ StagingMeta, _ bool, release func(), err error) {
+	holds := make(map[InodeID]func()) // by candidate staging
+	release = func() {
+		for id, end := range holds {
+			end()
+			delete(holds, id)
+		}
+	}
+	// The holds stay this function's until it returns successfully: an
+	// error or a panic (in a backend call or anywhere else) releases them.
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			release()
+		}
+	}()
 	key, err := s.clients.stagingRecoveryKey(clientID)
 	if err != nil {
-		return 0, StagingMeta{}, false, err
+		return 0, StagingMeta{}, false, release, err
 	}
 	var foundID InodeID
 	var foundMeta StagingMeta
+	// Writers on one client share staging, so any of the client's open
+	// owners may reclaim it after a server restart. Reclaim after lease
+	// expiry, by a new incarnation, still requires the original owner.
 	for id, meta := range s.stagingStore.FindTargets(dirID, name) {
 		if meta.DirID != dirID || meta.FileName != name ||
-			(meta.OwnerKnown && meta.OpenOwner != openOwner) ||
 			meta.ReadOnly == write {
+			continue
+		}
+		if meta.ClientID != clientID && meta.OwnerKnown && meta.OpenOwner != openOwner {
 			continue
 		}
 		if meta.ClientID == clientID {
@@ -188,22 +230,146 @@ func (s *Server) recoveredStagingTarget(
 			if !meta.OwnerKnown || key == ([32]byte{}) || meta.RecoveryKey != key {
 				continue
 			}
-			expired, err := s.clients.IsLeaseExpired(meta.ClientID)
+			end, ok := s.beginDestroy(meta.ClientID)
+			if !ok {
+				// The other incarnation's expiry waits for its confirmation.
+				return 0, StagingMeta{}, false, release, nfsError(NFS4ERR_DELAY)
+			}
+			holds[id] = end
+			// The expiry decision is the gate's (canonical r3 §8); this
+			// OPEN holds the pathname lock, so local expiry is the sweeper's.
+			expired, err := s.decideExpired(meta.ClientID, false)
 			if err != nil {
-				return 0, StagingMeta{}, false, err
+				return 0, StagingMeta{}, false, release, err
 			}
 			if !expired {
+				end()
+				delete(holds, id)
 				continue
 			}
 		}
 		// Never guess between multiple recovered sessions and hand one
 		// writer another's data.
 		if foundID != 0 {
-			return 0, StagingMeta{}, false, nfsError(NFS4ERR_EXPIRED)
+			return 0, StagingMeta{}, false, release, nfsError(NFS4ERR_EXPIRED)
 		}
 		foundID, foundMeta = id, meta
 	}
-	return foundID, foundMeta, foundID != 0, nil
+	// Only the selected staging can still hold one: every other expired
+	// candidate made this return an error above.
+	handedOff = true
+	return foundID, foundMeta, foundID != 0, release, nil
+}
+
+// claimFHRecoveryCandidate preselects, without locks, the staged writer a
+// writable CLAIM_FH of fileID recovers when this nfsd has no name for it
+// (canonical r3 §6): typically the first OPEN after a restart. A candidate
+// is a writable, linked, healthy staging entry of this incarnation whose
+// stateid an earlier process issued, or another incarnation's with this
+// client's RecoveryKey whose lease has expired, as recoveredStagingTarget
+// accepts. A known owner must match. Its name must currently hold fileID.
+//
+// Exactly one candidate is returned with NFS4_OK; none gives STALE, as for
+// any handle this nfsd cannot name, and more than one gives EXPIRED. The
+// caller opens at the candidate's name, still as CLAIM_FH, and checks under
+// the pathname lock that recoveredStagingTarget selects exactly this entry.
+func (s *Server) claimFHRecoveryCandidate(
+	fileID InodeID,
+	clientID uint64,
+	openOwner string,
+) (InodeID, StagingMeta, uint32) {
+	var key [32]byte
+	keyRead := false
+	var foundID InodeID
+	var foundMeta StagingMeta
+	for id, meta := range s.stagingStore.Entries() {
+		if meta.ReadOnly || meta.Unlinked || s.stagingStore.Failed(id) {
+			continue
+		}
+		if meta.OwnerKnown && meta.OpenOwner != openOwner {
+			continue
+		}
+		crossIncarnation := meta.ClientID != clientID
+		if !crossIncarnation {
+			if !s.opens.canRecover(meta.NFSStateID) {
+				continue
+			}
+		} else {
+			if !meta.OwnerKnown {
+				continue
+			}
+			if !keyRead {
+				var err error
+				if key, err = s.clients.stagingRecoveryKey(clientID); err != nil {
+					return 0, StagingMeta{}, clientStoreErrToNFS(err)
+				}
+				keyRead = true
+			}
+			if key == ([32]byte{}) || meta.RecoveryKey != key {
+				continue
+			}
+		}
+		current, err := s.fs.Lookup(meta.DirID, meta.FileName)
+		if err != nil {
+			if s.errToNFS(err) == NFS4ERR_NOENT {
+				continue
+			}
+			return 0, StagingMeta{}, s.errToNFS(err)
+		}
+		if current != fileID {
+			continue
+		}
+		if crossIncarnation {
+			expired, status := s.recoveryLeaseExpired(meta.ClientID)
+			if status != NFS4_OK {
+				return 0, StagingMeta{}, status
+			}
+			if !expired {
+				continue
+			}
+		}
+		if foundID != 0 {
+			// Never guess which writer's data the client meant.
+			return 0, StagingMeta{}, NFS4ERR_EXPIRED
+		}
+		foundID, foundMeta = id, meta
+	}
+	if foundID == 0 {
+		return 0, StagingMeta{}, NFS4ERR_STALE
+	}
+	return foundID, foundMeta, NFS4_OK
+}
+
+// recoveryLeaseExpired checks another incarnation's lease for preselection,
+// through the same expiry decision as recoveredStagingTarget. The decision
+// may publish its expired marker, so it holds a destruction hold, released
+// when the check returns; a confirmation protecting the incarnation gives
+// DELAY.
+func (s *Server) recoveryLeaseExpired(clientID uint64) (bool, uint32) {
+	end, ok := s.beginDestroy(clientID)
+	if !ok {
+		return false, NFS4ERR_DELAY
+	}
+	defer end()
+	expired, err := s.decideExpired(clientID, false)
+	if err != nil {
+		return false, clientStoreErrToNFS(err)
+	}
+	return expired, NFS4_OK
+}
+
+// sameRecoveryCandidate reports whether recoveredStagingTarget, under the
+// pathname lock, selected exactly the preselected staging, unchanged in its
+// stateid, incarnation and owner, and still linked and healthy.
+func (s *Server) sameRecoveryCandidate(
+	wantID InodeID, want StagingMeta,
+	gotID InodeID, got StagingMeta, found bool,
+) bool {
+	return found && gotID == wantID &&
+		got.NFSStateID == want.NFSStateID && got.ClientID == want.ClientID &&
+		got.OwnerKnown == want.OwnerKnown && got.OpenOwner == want.OpenOwner &&
+		got.DirID == want.DirID && got.FileName == want.FileName &&
+		!got.Unlinked && !s.stagingStore.Failed(gotID)
 }
 
 func (s *Server) exclusiveStagingTarget(

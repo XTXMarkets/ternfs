@@ -30,17 +30,19 @@ func TestNamespaceUnstagedErrorOutcomes(t *testing.T) {
 				if err := os.WriteFile(filepath.Join(root, "source", "child"), nil, 0600); err != nil {
 					t.Fatal(err)
 				}
-				fs := &namespaceFaultVFS{
-					TernVFS: NewLocalTernVFS(root), err: tc.err, remote: true,
-				}
+				base := NewLocalTernVFS(root)
 				store, err := NewLocalStagingStore(t.TempDir(), nil)
 				if err != nil {
 					t.Fatal(err)
 				}
-				server, err := NewServer(fs, store, nil)
+				server, err := NewServer(base, store, nil)
 				if err != nil {
 					t.Fatal(err)
 				}
+				// The fault applies to namespace operations only, as in the
+				// other namespace fixtures; the client store's confirmation
+				// writes also use explicit edges.
+				server.fs = &namespaceFaultVFS{TernVFS: base, err: tc.err, remote: true}
 				addr, stop := serveTestServer(t, server)
 				defer stop()
 				conn := dial(t, addr)

@@ -11,137 +11,263 @@ import (
 // -------------------------------------------------------
 
 const (
-	NFS4_FHSIZE                     = 128
-	NFS4_VERIFIER_SIZE              = 8
-	NFS4_OTHER_SIZE                 = 12
-	NFS4_OPAQUE_LIMIT               = 1024
-	NFS4_INT64_MAX                  = 0x7fffffffffffffff
-	NFS4_UINT64_MAX                 = 0xffffffffffffffff
-	NFS4_INT32_MAX                  = 0x7fffffff
-	NFS4_UINT32_MAX                 = 0xffffffff
-	ACL4_SUPPORT_ALLOW_ACL          = 0x00000001
-	ACL4_SUPPORT_DENY_ACL           = 0x00000002
-	ACL4_SUPPORT_AUDIT_ACL          = 0x00000004
-	ACL4_SUPPORT_ALARM_ACL          = 0x00000008
-	ACE4_ACCESS_ALLOWED_ACE_TYPE    = 0x00000000
-	ACE4_ACCESS_DENIED_ACE_TYPE     = 0x00000001
-	ACE4_SYSTEM_AUDIT_ACE_TYPE      = 0x00000002
-	ACE4_SYSTEM_ALARM_ACE_TYPE      = 0x00000003
-	ACE4_FILE_INHERIT_ACE           = 0x00000001
-	ACE4_DIRECTORY_INHERIT_ACE      = 0x00000002
-	ACE4_NO_PROPAGATE_INHERIT_ACE   = 0x00000004
-	ACE4_INHERIT_ONLY_ACE           = 0x00000008
-	ACE4_SUCCESSFUL_ACCESS_ACE_FLAG = 0x00000010
-	ACE4_FAILED_ACCESS_ACE_FLAG     = 0x00000020
-	ACE4_IDENTIFIER_GROUP           = 0x00000040
-	ACE4_READ_DATA                  = 0x00000001
-	ACE4_LIST_DIRECTORY             = 0x00000001
-	ACE4_WRITE_DATA                 = 0x00000002
-	ACE4_ADD_FILE                   = 0x00000002
-	ACE4_APPEND_DATA                = 0x00000004
-	ACE4_ADD_SUBDIRECTORY           = 0x00000004
-	ACE4_READ_NAMED_ATTRS           = 0x00000008
-	ACE4_WRITE_NAMED_ATTRS          = 0x00000010
-	ACE4_EXECUTE                    = 0x00000020
-	ACE4_DELETE_CHILD               = 0x00000040
-	ACE4_READ_ATTRIBUTES            = 0x00000080
-	ACE4_WRITE_ATTRIBUTES           = 0x00000100
-	ACE4_DELETE                     = 0x00010000
-	ACE4_READ_ACL                   = 0x00020000
-	ACE4_WRITE_ACL                  = 0x00040000
-	ACE4_WRITE_OWNER                = 0x00080000
-	ACE4_SYNCHRONIZE                = 0x00100000
-	ACE4_GENERIC_READ               = 0x00120081
-	ACE4_GENERIC_WRITE              = 0x00160106
-	ACE4_GENERIC_EXECUTE            = 0x001200A0
-	MODE4_SUID                      = 0x800
-	MODE4_SGID                      = 0x400
-	MODE4_SVTX                      = 0x200
-	MODE4_RUSR                      = 0x100
-	MODE4_WUSR                      = 0x080
-	MODE4_XUSR                      = 0x040
-	MODE4_RGRP                      = 0x020
-	MODE4_WGRP                      = 0x010
-	MODE4_XGRP                      = 0x008
-	MODE4_ROTH                      = 0x004
-	MODE4_WOTH                      = 0x002
-	MODE4_XOTH                      = 0x001
-	FH4_PERSISTENT                  = 0x00000000
-	FH4_NOEXPIRE_WITH_OPEN          = 0x00000001
-	FH4_VOLATILE_ANY                = 0x00000002
-	FH4_VOL_MIGRATION               = 0x00000004
-	FH4_VOL_RENAME                  = 0x00000008
-	FATTR4_SUPPORTED_ATTRS          = 0
-	FATTR4_TYPE                     = 1
-	FATTR4_FH_EXPIRE_TYPE           = 2
-	FATTR4_CHANGE                   = 3
-	FATTR4_SIZE                     = 4
-	FATTR4_LINK_SUPPORT             = 5
-	FATTR4_SYMLINK_SUPPORT          = 6
-	FATTR4_NAMED_ATTR               = 7
-	FATTR4_FSID                     = 8
-	FATTR4_UNIQUE_HANDLES           = 9
-	FATTR4_LEASE_TIME               = 10
-	FATTR4_RDATTR_ERROR             = 11
-	FATTR4_FILEHANDLE               = 19
-	FATTR4_ACL                      = 12
-	FATTR4_ACLSUPPORT               = 13
-	FATTR4_ARCHIVE                  = 14
-	FATTR4_CANSETTIME               = 15
-	FATTR4_CASE_INSENSITIVE         = 16
-	FATTR4_CASE_PRESERVING          = 17
-	FATTR4_CHOWN_RESTRICTED         = 18
-	FATTR4_FILEID                   = 20
-	FATTR4_FILES_AVAIL              = 21
-	FATTR4_FILES_FREE               = 22
-	FATTR4_FILES_TOTAL              = 23
-	FATTR4_FS_LOCATIONS             = 24
-	FATTR4_HIDDEN                   = 25
-	FATTR4_HOMOGENEOUS              = 26
-	FATTR4_MAXFILESIZE              = 27
-	FATTR4_MAXLINK                  = 28
-	FATTR4_MAXNAME                  = 29
-	FATTR4_MAXREAD                  = 30
-	FATTR4_MAXWRITE                 = 31
-	FATTR4_MIMETYPE                 = 32
-	FATTR4_MODE                     = 33
-	FATTR4_NO_TRUNC                 = 34
-	FATTR4_NUMLINKS                 = 35
-	FATTR4_OWNER                    = 36
-	FATTR4_OWNER_GROUP              = 37
-	FATTR4_QUOTA_AVAIL_HARD         = 38
-	FATTR4_QUOTA_AVAIL_SOFT         = 39
-	FATTR4_QUOTA_USED               = 40
-	FATTR4_RAWDEV                   = 41
-	FATTR4_SPACE_AVAIL              = 42
-	FATTR4_SPACE_FREE               = 43
-	FATTR4_SPACE_TOTAL              = 44
-	FATTR4_SPACE_USED               = 45
-	FATTR4_SYSTEM                   = 46
-	FATTR4_TIME_ACCESS              = 47
-	FATTR4_TIME_ACCESS_SET          = 48
-	FATTR4_TIME_BACKUP              = 49
-	FATTR4_TIME_CREATE              = 50
-	FATTR4_TIME_DELTA               = 51
-	FATTR4_TIME_METADATA            = 52
-	FATTR4_TIME_MODIFY              = 53
-	FATTR4_TIME_MODIFY_SET          = 54
-	FATTR4_MOUNTED_ON_FILEID        = 55
-	ACCESS4_READ                    = 0x00000001
-	ACCESS4_LOOKUP                  = 0x00000002
-	ACCESS4_MODIFY                  = 0x00000004
-	ACCESS4_EXTEND                  = 0x00000008
-	ACCESS4_DELETE                  = 0x00000010
-	ACCESS4_EXECUTE                 = 0x00000020
-	OPEN4_SHARE_ACCESS_READ         = 0x00000001
-	OPEN4_SHARE_ACCESS_WRITE        = 0x00000002
-	OPEN4_SHARE_ACCESS_BOTH         = 0x00000003
-	OPEN4_SHARE_DENY_NONE           = 0x00000000
-	OPEN4_SHARE_DENY_READ           = 0x00000001
-	OPEN4_SHARE_DENY_WRITE          = 0x00000002
-	OPEN4_SHARE_DENY_BOTH           = 0x00000003
-	OPEN4_RESULT_CONFIRM            = 0x00000002
-	OPEN4_RESULT_LOCKTYPE_POSIX     = 0x00000004
+	NFS4_FHSIZE                                           = 128
+	NFS4_VERIFIER_SIZE                                    = 8
+	NFS4_OTHER_SIZE                                       = 12
+	NFS4_OPAQUE_LIMIT                                     = 1024
+	NFS4_SESSIONID_SIZE                                   = 16
+	NFS4_INT64_MAX                                        = 0x7fffffffffffffff
+	NFS4_UINT64_MAX                                       = 0xffffffffffffffff
+	NFS4_INT32_MAX                                        = 0x7fffffff
+	NFS4_UINT32_MAX                                       = 0xffffffff
+	NFS4_MAXFILELEN                                       = 0xffffffffffffffff
+	NFS4_MAXFILEOFF                                       = 0xfffffffffffffffe
+	ACL4_SUPPORT_ALLOW_ACL                                = 0x00000001
+	ACL4_SUPPORT_DENY_ACL                                 = 0x00000002
+	ACL4_SUPPORT_AUDIT_ACL                                = 0x00000004
+	ACL4_SUPPORT_ALARM_ACL                                = 0x00000008
+	ACE4_ACCESS_ALLOWED_ACE_TYPE                          = 0x00000000
+	ACE4_ACCESS_DENIED_ACE_TYPE                           = 0x00000001
+	ACE4_SYSTEM_AUDIT_ACE_TYPE                            = 0x00000002
+	ACE4_SYSTEM_ALARM_ACE_TYPE                            = 0x00000003
+	ACE4_FILE_INHERIT_ACE                                 = 0x00000001
+	ACE4_DIRECTORY_INHERIT_ACE                            = 0x00000002
+	ACE4_NO_PROPAGATE_INHERIT_ACE                         = 0x00000004
+	ACE4_INHERIT_ONLY_ACE                                 = 0x00000008
+	ACE4_SUCCESSFUL_ACCESS_ACE_FLAG                       = 0x00000010
+	ACE4_FAILED_ACCESS_ACE_FLAG                           = 0x00000020
+	ACE4_IDENTIFIER_GROUP                                 = 0x00000040
+	ACE4_INHERITED_ACE                                    = 0x00000080
+	ACE4_READ_DATA                                        = 0x00000001
+	ACE4_LIST_DIRECTORY                                   = 0x00000001
+	ACE4_WRITE_DATA                                       = 0x00000002
+	ACE4_ADD_FILE                                         = 0x00000002
+	ACE4_APPEND_DATA                                      = 0x00000004
+	ACE4_ADD_SUBDIRECTORY                                 = 0x00000004
+	ACE4_READ_NAMED_ATTRS                                 = 0x00000008
+	ACE4_WRITE_NAMED_ATTRS                                = 0x00000010
+	ACE4_EXECUTE                                          = 0x00000020
+	ACE4_DELETE_CHILD                                     = 0x00000040
+	ACE4_READ_ATTRIBUTES                                  = 0x00000080
+	ACE4_WRITE_ATTRIBUTES                                 = 0x00000100
+	ACE4_WRITE_RETENTION                                  = 0x00000200
+	ACE4_WRITE_RETENTION_HOLD                             = 0x00000400
+	ACE4_DELETE                                           = 0x00010000
+	ACE4_READ_ACL                                         = 0x00020000
+	ACE4_WRITE_ACL                                        = 0x00040000
+	ACE4_WRITE_OWNER                                      = 0x00080000
+	ACE4_SYNCHRONIZE                                      = 0x00100000
+	ACE4_GENERIC_READ                                     = 0x00120081
+	ACE4_GENERIC_WRITE                                    = 0x00160106
+	ACE4_GENERIC_EXECUTE                                  = 0x001200A0
+	ACL4_AUTO_INHERIT                                     = 0x00000001
+	ACL4_PROTECTED                                        = 0x00000002
+	ACL4_DEFAULTED                                        = 0x00000004
+	MODE4_SUID                                            = 0x800
+	MODE4_SGID                                            = 0x400
+	MODE4_SVTX                                            = 0x200
+	MODE4_RUSR                                            = 0x100
+	MODE4_WUSR                                            = 0x080
+	MODE4_XUSR                                            = 0x040
+	MODE4_RGRP                                            = 0x020
+	MODE4_WGRP                                            = 0x010
+	MODE4_XGRP                                            = 0x008
+	MODE4_ROTH                                            = 0x004
+	MODE4_WOTH                                            = 0x002
+	MODE4_XOTH                                            = 0x001
+	FH4_PERSISTENT                                        = 0x00000000
+	FH4_NOEXPIRE_WITH_OPEN                                = 0x00000001
+	FH4_VOLATILE_ANY                                      = 0x00000002
+	FH4_VOL_MIGRATION                                     = 0x00000004
+	FH4_VOL_RENAME                                        = 0x00000008
+	NFS4_DEVICEID4_SIZE                                   = 16
+	LAYOUT4_RET_REC_FILE                                  = 1
+	LAYOUT4_RET_REC_FSID                                  = 2
+	LAYOUT4_RET_REC_ALL                                   = 3
+	TH4_READ_SIZE                                         = 0
+	TH4_WRITE_SIZE                                        = 1
+	TH4_READ_IOSIZE                                       = 2
+	TH4_WRITE_IOSIZE                                      = 3
+	RET4_DURATION_INFINITE                                = 0xffffffffffffffff
+	FSCHARSET_CAP4_CONTAINS_NON_UTF8                      = 0x1
+	FSCHARSET_CAP4_ALLOWS_ONLY_UTF8                       = 0x2
+	FATTR4_SUPPORTED_ATTRS                                = 0
+	FATTR4_TYPE                                           = 1
+	FATTR4_FH_EXPIRE_TYPE                                 = 2
+	FATTR4_CHANGE                                         = 3
+	FATTR4_SIZE                                           = 4
+	FATTR4_LINK_SUPPORT                                   = 5
+	FATTR4_SYMLINK_SUPPORT                                = 6
+	FATTR4_NAMED_ATTR                                     = 7
+	FATTR4_FSID                                           = 8
+	FATTR4_UNIQUE_HANDLES                                 = 9
+	FATTR4_LEASE_TIME                                     = 10
+	FATTR4_RDATTR_ERROR                                   = 11
+	FATTR4_FILEHANDLE                                     = 19
+	FATTR4_SUPPATTR_EXCLCREAT                             = 75
+	FATTR4_ACL                                            = 12
+	FATTR4_ACLSUPPORT                                     = 13
+	FATTR4_ARCHIVE                                        = 14
+	FATTR4_CANSETTIME                                     = 15
+	FATTR4_CASE_INSENSITIVE                               = 16
+	FATTR4_CASE_PRESERVING                                = 17
+	FATTR4_CHOWN_RESTRICTED                               = 18
+	FATTR4_FILEID                                         = 20
+	FATTR4_FILES_AVAIL                                    = 21
+	FATTR4_FILES_FREE                                     = 22
+	FATTR4_FILES_TOTAL                                    = 23
+	FATTR4_FS_LOCATIONS                                   = 24
+	FATTR4_HIDDEN                                         = 25
+	FATTR4_HOMOGENEOUS                                    = 26
+	FATTR4_MAXFILESIZE                                    = 27
+	FATTR4_MAXLINK                                        = 28
+	FATTR4_MAXNAME                                        = 29
+	FATTR4_MAXREAD                                        = 30
+	FATTR4_MAXWRITE                                       = 31
+	FATTR4_MIMETYPE                                       = 32
+	FATTR4_MODE                                           = 33
+	FATTR4_NO_TRUNC                                       = 34
+	FATTR4_NUMLINKS                                       = 35
+	FATTR4_OWNER                                          = 36
+	FATTR4_OWNER_GROUP                                    = 37
+	FATTR4_QUOTA_AVAIL_HARD                               = 38
+	FATTR4_QUOTA_AVAIL_SOFT                               = 39
+	FATTR4_QUOTA_USED                                     = 40
+	FATTR4_RAWDEV                                         = 41
+	FATTR4_SPACE_AVAIL                                    = 42
+	FATTR4_SPACE_FREE                                     = 43
+	FATTR4_SPACE_TOTAL                                    = 44
+	FATTR4_SPACE_USED                                     = 45
+	FATTR4_SYSTEM                                         = 46
+	FATTR4_TIME_ACCESS                                    = 47
+	FATTR4_TIME_ACCESS_SET                                = 48
+	FATTR4_TIME_BACKUP                                    = 49
+	FATTR4_TIME_CREATE                                    = 50
+	FATTR4_TIME_DELTA                                     = 51
+	FATTR4_TIME_METADATA                                  = 52
+	FATTR4_TIME_MODIFY                                    = 53
+	FATTR4_TIME_MODIFY_SET                                = 54
+	FATTR4_MOUNTED_ON_FILEID                              = 55
+	FATTR4_DIR_NOTIF_DELAY                                = 56
+	FATTR4_DIRENT_NOTIF_DELAY                             = 57
+	FATTR4_DACL                                           = 58
+	FATTR4_SACL                                           = 59
+	FATTR4_CHANGE_POLICY                                  = 60
+	FATTR4_FS_STATUS                                      = 61
+	FATTR4_FS_LAYOUT_TYPES                                = 62
+	FATTR4_LAYOUT_HINT                                    = 63
+	FATTR4_LAYOUT_TYPES                                   = 64
+	FATTR4_LAYOUT_BLKSIZE                                 = 65
+	FATTR4_LAYOUT_ALIGNMENT                               = 66
+	FATTR4_FS_LOCATIONS_INFO                              = 67
+	FATTR4_MDSTHRESHOLD                                   = 68
+	FATTR4_RETENTION_GET                                  = 69
+	FATTR4_RETENTION_SET                                  = 70
+	FATTR4_RETENTEVT_GET                                  = 71
+	FATTR4_RETENTEVT_SET                                  = 72
+	FATTR4_RETENTION_HOLD                                 = 73
+	FATTR4_MODE_SET_MASKED                                = 74
+	FATTR4_FS_CHARSET_CAP                                 = 76
+	FATTR4_CLONE_BLKSIZE                                  = 77
+	FATTR4_SPACE_FREED                                    = 78
+	FATTR4_CHANGE_ATTR_TYPE                               = 79
+	FATTR4_SEC_LABEL                                      = 80
+	FATTR4_XATTR_SUPPORT                                  = 82
+	FSLI4BX_GFLAGS                                        = 0
+	FSLI4BX_TFLAGS                                        = 1
+	FSLI4BX_CLSIMUL                                       = 2
+	FSLI4BX_CLHANDLE                                      = 3
+	FSLI4BX_CLFILEID                                      = 4
+	FSLI4BX_CLWRITEVER                                    = 5
+	FSLI4BX_CLCHANGE                                      = 6
+	FSLI4BX_CLREADDIR                                     = 7
+	FSLI4BX_READRANK                                      = 8
+	FSLI4BX_WRITERANK                                     = 9
+	FSLI4BX_READORDER                                     = 10
+	FSLI4BX_WRITEORDER                                    = 11
+	FSLI4GF_WRITABLE                                      = 0x01
+	FSLI4GF_CUR_REQ                                       = 0x02
+	FSLI4GF_ABSENT                                        = 0x04
+	FSLI4GF_GOING                                         = 0x08
+	FSLI4GF_SPLIT                                         = 0x10
+	FSLI4TF_RDMA                                          = 0x01
+	FSLI4IF_VAR_SUB                                       = 0x00000001
+	NFL4_UFLG_MASK                                        = 0x0000003F
+	NFL4_UFLG_DENSE                                       = 0x00000001
+	NFL4_UFLG_COMMIT_THRU_MDS                             = 0x00000002
+	NFL42_UFLG_IO_ADVISE_THRU_MDS                         = 0x00000004
+	NFL4_UFLG_STRIPE_UNIT_SIZE_MASK                       = 0xFFFFFFC0
+	ACCESS4_READ                                          = 0x00000001
+	ACCESS4_LOOKUP                                        = 0x00000002
+	ACCESS4_MODIFY                                        = 0x00000004
+	ACCESS4_EXTEND                                        = 0x00000008
+	ACCESS4_DELETE                                        = 0x00000010
+	ACCESS4_EXECUTE                                       = 0x00000020
+	OPEN4_SHARE_ACCESS_READ                               = 0x00000001
+	OPEN4_SHARE_ACCESS_WRITE                              = 0x00000002
+	OPEN4_SHARE_ACCESS_BOTH                               = 0x00000003
+	OPEN4_SHARE_DENY_NONE                                 = 0x00000000
+	OPEN4_SHARE_DENY_READ                                 = 0x00000001
+	OPEN4_SHARE_DENY_WRITE                                = 0x00000002
+	OPEN4_SHARE_DENY_BOTH                                 = 0x00000003
+	OPEN4_SHARE_ACCESS_WANT_DELEG_MASK                    = 0xFF00
+	OPEN4_SHARE_ACCESS_WANT_NO_PREFERENCE                 = 0x0000
+	OPEN4_SHARE_ACCESS_WANT_READ_DELEG                    = 0x0100
+	OPEN4_SHARE_ACCESS_WANT_WRITE_DELEG                   = 0x0200
+	OPEN4_SHARE_ACCESS_WANT_ANY_DELEG                     = 0x0300
+	OPEN4_SHARE_ACCESS_WANT_NO_DELEG                      = 0x0400
+	OPEN4_SHARE_ACCESS_WANT_CANCEL                        = 0x0500
+	OPEN4_SHARE_ACCESS_WANT_SIGNAL_DELEG_WHEN_RESRC_AVAIL = 0x10000
+	OPEN4_SHARE_ACCESS_WANT_PUSH_DELEG_WHEN_UNCONTENDED   = 0x20000
+	OPEN4_RESULT_CONFIRM                                  = 0x00000002
+	OPEN4_RESULT_LOCKTYPE_POSIX                           = 0x00000004
+	OPEN4_RESULT_PRESERVE_UNLINKED                        = 0x00000008
+	OPEN4_RESULT_MAY_NOTIFY_LOCK                          = 0x00000020
+	EXCHGID4_FLAG_SUPP_MOVED_REFER                        = 0x00000001
+	EXCHGID4_FLAG_SUPP_MOVED_MIGR                         = 0x00000002
+	EXCHGID4_FLAG_SUPP_FENCE_OPS                          = 0x00000004
+	EXCHGID4_FLAG_BIND_PRINC_STATEID                      = 0x00000100
+	EXCHGID4_FLAG_USE_NON_PNFS                            = 0x00010000
+	EXCHGID4_FLAG_USE_PNFS_MDS                            = 0x00020000
+	EXCHGID4_FLAG_USE_PNFS_DS                             = 0x00040000
+	EXCHGID4_FLAG_MASK_PNFS                               = 0x00070000
+	EXCHGID4_FLAG_UPD_CONFIRMED_REC_A                     = 0x40000000
+	EXCHGID4_FLAG_CONFIRMED_R                             = 0x80000000
+	CREATE_SESSION4_FLAG_PERSIST                          = 0x00000001
+	CREATE_SESSION4_FLAG_CONN_BACK_CHAN                   = 0x00000002
+	CREATE_SESSION4_FLAG_CONN_RDMA                        = 0x00000004
+	SEQ4_STATUS_CB_PATH_DOWN                              = 0x00000001
+	SEQ4_STATUS_CB_GSS_CONTEXTS_EXPIRING                  = 0x00000002
+	SEQ4_STATUS_CB_GSS_CONTEXTS_EXPIRED                   = 0x00000004
+	SEQ4_STATUS_EXPIRED_ALL_STATE_REVOKED                 = 0x00000008
+	SEQ4_STATUS_EXPIRED_SOME_STATE_REVOKED                = 0x00000010
+	SEQ4_STATUS_ADMIN_STATE_REVOKED                       = 0x00000020
+	SEQ4_STATUS_RECALLABLE_STATE_REVOKED                  = 0x00000040
+	SEQ4_STATUS_LEASE_MOVED                               = 0x00000080
+	SEQ4_STATUS_RESTART_RECLAIM_NEEDED                    = 0x00000100
+	SEQ4_STATUS_CB_PATH_DOWN_SESSION                      = 0x00000200
+	SEQ4_STATUS_BACKCHANNEL_FAULT                         = 0x00000400
+	SEQ4_STATUS_DEVID_CHANGED                             = 0x00000800
+	SEQ4_STATUS_DEVID_DELETED                             = 0x00001000
+	FF_FLAGS_NO_LAYOUTCOMMIT                              = 0x00000001
+	FF_FLAGS_NO_IO_THRU_MDS                               = 0x00000002
+	FF_FLAGS_NO_READ_IO                                   = 0x00000004
+	RCA4_TYPE_MASK_RDATA_DLG                              = 0
+	RCA4_TYPE_MASK_WDATA_DLG                              = 1
+	RCA4_TYPE_MASK_DIR_DLG                                = 2
+	RCA4_TYPE_MASK_FILE_LAYOUT                            = 3
+	RCA4_TYPE_MASK_BLK_LAYOUT                             = 4
+	RCA4_TYPE_MASK_OBJ_LAYOUT_MIN                         = 8
+	RCA4_TYPE_MASK_OBJ_LAYOUT_MAX                         = 9
+	RCA4_TYPE_MASK_OTHER_LAYOUT_MIN                       = 12
+	RCA4_TYPE_MASK_OTHER_LAYOUT_MAX                       = 15
+	FATTR4_OFFLINE                                        = 83
+	FATTR4_OPEN_ARGUMENTS                                 = 86
+	OPEN4_SHARE_ACCESS_WANT_OPEN_XOR_DELEGATION           = 0x200000
+	OPEN4_RESULT_NO_OPEN_STATEID                          = 0x00000010
+	FATTR4_TIME_DELEG_ACCESS                              = 84
+	FATTR4_TIME_DELEG_MODIFY                              = 85
+	OPEN4_SHARE_ACCESS_WANT_DELEG_TIMESTAMPS              = 0x100000
 )
 
 // nfs_ftype4 constants (beu32)
@@ -159,78 +285,185 @@ const (
 
 // nfsstat4 constants (beu32)
 const (
-	NFS4_OK                     uint32 = 0
-	NFS4ERR_PERM                uint32 = 1
-	NFS4ERR_NOENT               uint32 = 2
-	NFS4ERR_IO                  uint32 = 5
-	NFS4ERR_NXIO                uint32 = 6
-	NFS4ERR_ACCESS              uint32 = 13
-	NFS4ERR_EXIST               uint32 = 17
-	NFS4ERR_XDEV                uint32 = 18
-	NFS4ERR_NOTDIR              uint32 = 20
-	NFS4ERR_ISDIR               uint32 = 21
-	NFS4ERR_INVAL               uint32 = 22
-	NFS4ERR_FBIG                uint32 = 27
-	NFS4ERR_NOSPC               uint32 = 28
-	NFS4ERR_ROFS                uint32 = 30
-	NFS4ERR_MLINK               uint32 = 31
-	NFS4ERR_NAMETOOLONG         uint32 = 63
-	NFS4ERR_NOTEMPTY            uint32 = 66
-	NFS4ERR_DQUOT               uint32 = 69
-	NFS4ERR_STALE               uint32 = 70
-	NFS4ERR_BADHANDLE           uint32 = 10001
-	NFS4ERR_BAD_COOKIE          uint32 = 10003
-	NFS4ERR_NOTSUPP             uint32 = 10004
-	NFS4ERR_TOOSMALL            uint32 = 10005
-	NFS4ERR_SERVERFAULT         uint32 = 10006
-	NFS4ERR_BADTYPE             uint32 = 10007
-	NFS4ERR_DELAY               uint32 = 10008
-	NFS4ERR_SAME                uint32 = 10009
-	NFS4ERR_DENIED              uint32 = 10010
-	NFS4ERR_EXPIRED             uint32 = 10011
-	NFS4ERR_LOCKED              uint32 = 10012
-	NFS4ERR_GRACE               uint32 = 10013
-	NFS4ERR_FHEXPIRED           uint32 = 10014
-	NFS4ERR_SHARE_DENIED        uint32 = 10015
-	NFS4ERR_WRONGSEC            uint32 = 10016
-	NFS4ERR_CLID_INUSE          uint32 = 10017
-	NFS4ERR_RESOURCE            uint32 = 10018
-	NFS4ERR_MOVED               uint32 = 10019
-	NFS4ERR_NOFILEHANDLE        uint32 = 10020
-	NFS4ERR_MINOR_VERS_MISMATCH uint32 = 10021
-	NFS4ERR_STALE_CLIENTID      uint32 = 10022
-	NFS4ERR_STALE_STATEID       uint32 = 10023
-	NFS4ERR_OLD_STATEID         uint32 = 10024
-	NFS4ERR_BAD_STATEID         uint32 = 10025
-	NFS4ERR_BAD_SEQID           uint32 = 10026
-	NFS4ERR_NOT_SAME            uint32 = 10027
-	NFS4ERR_LOCK_RANGE          uint32 = 10028
-	NFS4ERR_SYMLINK             uint32 = 10029
-	NFS4ERR_RESTOREFH           uint32 = 10030
-	NFS4ERR_LEASE_MOVED         uint32 = 10031
-	NFS4ERR_ATTRNOTSUPP         uint32 = 10032
-	NFS4ERR_NO_GRACE            uint32 = 10033
-	NFS4ERR_RECLAIM_BAD         uint32 = 10034
-	NFS4ERR_RECLAIM_CONFLICT    uint32 = 10035
-	NFS4ERR_BADXDR              uint32 = 10036
-	NFS4ERR_LOCKS_HELD          uint32 = 10037
-	NFS4ERR_OPENMODE            uint32 = 10038
-	NFS4ERR_BADOWNER            uint32 = 10039
-	NFS4ERR_BADCHAR             uint32 = 10040
-	NFS4ERR_BADNAME             uint32 = 10041
-	NFS4ERR_BAD_RANGE           uint32 = 10042
-	NFS4ERR_LOCK_NOTSUPP        uint32 = 10043
-	NFS4ERR_OP_ILLEGAL          uint32 = 10044
-	NFS4ERR_DEADLOCK            uint32 = 10045
-	NFS4ERR_FILE_OPEN           uint32 = 10046
-	NFS4ERR_ADMIN_REVOKED       uint32 = 10047
-	NFS4ERR_CB_PATH_DOWN        uint32 = 10048
+	NFS4_OK                           uint32 = 0
+	NFS4ERR_PERM                      uint32 = 1
+	NFS4ERR_NOENT                     uint32 = 2
+	NFS4ERR_IO                        uint32 = 5
+	NFS4ERR_NXIO                      uint32 = 6
+	NFS4ERR_ACCESS                    uint32 = 13
+	NFS4ERR_EXIST                     uint32 = 17
+	NFS4ERR_XDEV                      uint32 = 18
+	NFS4ERR_NOTDIR                    uint32 = 20
+	NFS4ERR_ISDIR                     uint32 = 21
+	NFS4ERR_INVAL                     uint32 = 22
+	NFS4ERR_FBIG                      uint32 = 27
+	NFS4ERR_NOSPC                     uint32 = 28
+	NFS4ERR_ROFS                      uint32 = 30
+	NFS4ERR_MLINK                     uint32 = 31
+	NFS4ERR_NAMETOOLONG               uint32 = 63
+	NFS4ERR_NOTEMPTY                  uint32 = 66
+	NFS4ERR_DQUOT                     uint32 = 69
+	NFS4ERR_STALE                     uint32 = 70
+	NFS4ERR_BADHANDLE                 uint32 = 10001
+	NFS4ERR_BAD_COOKIE                uint32 = 10003
+	NFS4ERR_NOTSUPP                   uint32 = 10004
+	NFS4ERR_TOOSMALL                  uint32 = 10005
+	NFS4ERR_SERVERFAULT               uint32 = 10006
+	NFS4ERR_BADTYPE                   uint32 = 10007
+	NFS4ERR_DELAY                     uint32 = 10008
+	NFS4ERR_SAME                      uint32 = 10009
+	NFS4ERR_DENIED                    uint32 = 10010
+	NFS4ERR_EXPIRED                   uint32 = 10011
+	NFS4ERR_LOCKED                    uint32 = 10012
+	NFS4ERR_GRACE                     uint32 = 10013
+	NFS4ERR_FHEXPIRED                 uint32 = 10014
+	NFS4ERR_SHARE_DENIED              uint32 = 10015
+	NFS4ERR_WRONGSEC                  uint32 = 10016
+	NFS4ERR_CLID_INUSE                uint32 = 10017
+	NFS4ERR_RESOURCE                  uint32 = 10018
+	NFS4ERR_MOVED                     uint32 = 10019
+	NFS4ERR_NOFILEHANDLE              uint32 = 10020
+	NFS4ERR_MINOR_VERS_MISMATCH       uint32 = 10021
+	NFS4ERR_STALE_CLIENTID            uint32 = 10022
+	NFS4ERR_STALE_STATEID             uint32 = 10023
+	NFS4ERR_OLD_STATEID               uint32 = 10024
+	NFS4ERR_BAD_STATEID               uint32 = 10025
+	NFS4ERR_BAD_SEQID                 uint32 = 10026
+	NFS4ERR_NOT_SAME                  uint32 = 10027
+	NFS4ERR_LOCK_RANGE                uint32 = 10028
+	NFS4ERR_SYMLINK                   uint32 = 10029
+	NFS4ERR_RESTOREFH                 uint32 = 10030
+	NFS4ERR_LEASE_MOVED               uint32 = 10031
+	NFS4ERR_ATTRNOTSUPP               uint32 = 10032
+	NFS4ERR_NO_GRACE                  uint32 = 10033
+	NFS4ERR_RECLAIM_BAD               uint32 = 10034
+	NFS4ERR_RECLAIM_CONFLICT          uint32 = 10035
+	NFS4ERR_BADXDR                    uint32 = 10036
+	NFS4ERR_LOCKS_HELD                uint32 = 10037
+	NFS4ERR_OPENMODE                  uint32 = 10038
+	NFS4ERR_BADOWNER                  uint32 = 10039
+	NFS4ERR_BADCHAR                   uint32 = 10040
+	NFS4ERR_BADNAME                   uint32 = 10041
+	NFS4ERR_BAD_RANGE                 uint32 = 10042
+	NFS4ERR_LOCK_NOTSUPP              uint32 = 10043
+	NFS4ERR_OP_ILLEGAL                uint32 = 10044
+	NFS4ERR_DEADLOCK                  uint32 = 10045
+	NFS4ERR_FILE_OPEN                 uint32 = 10046
+	NFS4ERR_ADMIN_REVOKED             uint32 = 10047
+	NFS4ERR_CB_PATH_DOWN              uint32 = 10048
+	NFS4ERR_BADIOMODE                 uint32 = 10049
+	NFS4ERR_BADLAYOUT                 uint32 = 10050
+	NFS4ERR_BAD_SESSION_DIGEST        uint32 = 10051
+	NFS4ERR_BADSESSION                uint32 = 10052
+	NFS4ERR_BADSLOT                   uint32 = 10053
+	NFS4ERR_COMPLETE_ALREADY          uint32 = 10054
+	NFS4ERR_CONN_NOT_BOUND_TO_SESSION uint32 = 10055
+	NFS4ERR_DELEG_ALREADY_WANTED      uint32 = 10056
+	NFS4ERR_BACK_CHAN_BUSY            uint32 = 10057
+	NFS4ERR_LAYOUTTRYLATER            uint32 = 10058
+	NFS4ERR_LAYOUTUNAVAILABLE         uint32 = 10059
+	NFS4ERR_NOMATCHING_LAYOUT         uint32 = 10060
+	NFS4ERR_RECALLCONFLICT            uint32 = 10061
+	NFS4ERR_UNKNOWN_LAYOUTTYPE        uint32 = 10062
+	NFS4ERR_SEQ_MISORDERED            uint32 = 10063
+	NFS4ERR_SEQUENCE_POS              uint32 = 10064
+	NFS4ERR_REQ_TOO_BIG               uint32 = 10065
+	NFS4ERR_REP_TOO_BIG               uint32 = 10066
+	NFS4ERR_REP_TOO_BIG_TO_CACHE      uint32 = 10067
+	NFS4ERR_RETRY_UNCACHED_REP        uint32 = 10068
+	NFS4ERR_UNSAFE_COMPOUND           uint32 = 10069
+	NFS4ERR_TOO_MANY_OPS              uint32 = 10070
+	NFS4ERR_OP_NOT_IN_SESSION         uint32 = 10071
+	NFS4ERR_HASH_ALG_UNSUPP           uint32 = 10072
+	NFS4ERR_CLIENTID_BUSY             uint32 = 10074
+	NFS4ERR_PNFS_IO_HOLE              uint32 = 10075
+	NFS4ERR_SEQ_FALSE_RETRY           uint32 = 10076
+	NFS4ERR_BAD_HIGH_SLOT             uint32 = 10077
+	NFS4ERR_DEADSESSION               uint32 = 10078
+	NFS4ERR_ENCR_ALG_UNSUPP           uint32 = 10079
+	NFS4ERR_PNFS_NO_LAYOUT            uint32 = 10080
+	NFS4ERR_NOT_ONLY_OP               uint32 = 10081
+	NFS4ERR_WRONG_CRED                uint32 = 10082
+	NFS4ERR_WRONG_TYPE                uint32 = 10083
+	NFS4ERR_DIRDELEG_UNAVAIL          uint32 = 10084
+	NFS4ERR_REJECT_DELEG              uint32 = 10085
+	NFS4ERR_RETURNCONFLICT            uint32 = 10086
+	NFS4ERR_DELEG_REVOKED             uint32 = 10087
+	NFS4ERR_PARTNER_NOTSUPP           uint32 = 10088
+	NFS4ERR_PARTNER_NO_AUTH           uint32 = 10089
+	NFS4ERR_UNION_NOTSUPP             uint32 = 10090
+	NFS4ERR_OFFLOAD_DENIED            uint32 = 10091
+	NFS4ERR_WRONG_LFS                 uint32 = 10092
+	NFS4ERR_BADLABEL                  uint32 = 10093
+	NFS4ERR_OFFLOAD_NO_REQS           uint32 = 10094
+	NFS4ERR_NOXATTR                   uint32 = 10095
+	NFS4ERR_XATTR2BIG                 uint32 = 10096
 )
 
 // time_how4 constants (beu32)
 const (
 	SET_TO_SERVER_TIME4 uint32 = 0
 	SET_TO_CLIENT_TIME4 uint32 = 1
+)
+
+// layouttype4 constants (beu32)
+const (
+	LAYOUT4_NFSV4_1_FILES uint32 = 0x1
+	LAYOUT4_OSD2_OBJECTS  uint32 = 0x2
+	LAYOUT4_BLOCK_VOLUME  uint32 = 0x3
+	LAYOUT4_FLEX_FILES    uint32 = 0x4
+)
+
+// layoutiomode4 constants (beu32)
+const (
+	LAYOUTIOMODE4_READ uint32 = 1
+	LAYOUTIOMODE4_RW   uint32 = 2
+	LAYOUTIOMODE4_ANY  uint32 = 3
+)
+
+// layoutreturn_type4 constants (beu32)
+const (
+	LAYOUTRETURN4_FILE uint32 = 1
+	LAYOUTRETURN4_FSID uint32 = 2
+	LAYOUTRETURN4_ALL  uint32 = 3
+)
+
+// fs4_status_type constants (beu32)
+const (
+	STATUS4_FIXED     uint32 = 1
+	STATUS4_UPDATED   uint32 = 2
+	STATUS4_VERSIONED uint32 = 3
+	STATUS4_WRITABLE  uint32 = 4
+	STATUS4_REFERRAL  uint32 = 5
+)
+
+// netloc_type4 constants (beu32)
+const (
+	NL4_NAME    uint32 = 1
+	NL4_URL     uint32 = 2
+	NL4_NETADDR uint32 = 3
+)
+
+// change_attr_type4 constants (beu32)
+const (
+	NFS4_CHANGE_TYPE_IS_MONOTONIC_INCR         uint32 = 0
+	NFS4_CHANGE_TYPE_IS_VERSION_COUNTER        uint32 = 1
+	NFS4_CHANGE_TYPE_IS_VERSION_COUNTER_NOPNFS uint32 = 2
+	NFS4_CHANGE_TYPE_IS_TIME_METADATA          uint32 = 3
+	NFS4_CHANGE_TYPE_IS_UNDEFINED              uint32 = 4
+)
+
+// data_content4 constants (beu32)
+const (
+	NFS4_CONTENT_DATA uint32 = 0
+	NFS4_CONTENT_HOLE uint32 = 1
+)
+
+// stable_how4 constants (beu32)
+const (
+	UNSTABLE4  uint32 = 0
+	DATA_SYNC4 uint32 = 1
+	FILE_SYNC4 uint32 = 2
 )
 
 // nfs_lock_type4 constants (beu32)
@@ -241,6 +474,101 @@ const (
 	WRITEW_LT uint32 = 4
 )
 
+// ssv_subkey4 constants (beu32)
+const (
+	SSV4_SUBKEY_MIC_I2T  uint32 = 1
+	SSV4_SUBKEY_MIC_T2I  uint32 = 2
+	SSV4_SUBKEY_SEAL_I2T uint32 = 3
+	SSV4_SUBKEY_SEAL_T2I uint32 = 4
+)
+
+// filelayout_hint_care4 constants (beu32)
+const (
+	NFLH4_CARE_DENSE              uint32 = 0x00000001
+	NFLH4_CARE_COMMIT_THRU_MDS    uint32 = 0x00000002
+	NFL42_CARE_IO_ADVISE_THRU_MDS uint32 = 0x00000004
+	NFLH4_CARE_STRIPE_UNIT_SIZE   uint32 = 0x00000040
+	NFLH4_CARE_STRIPE_COUNT       uint32 = 0x00000080
+)
+
+// nfs_opnum4 constants (beu32)
+const (
+	OP_ACCESS               uint32 = 3
+	OP_CLOSE                uint32 = 4
+	OP_COMMIT               uint32 = 5
+	OP_CREATE               uint32 = 6
+	OP_DELEGPURGE           uint32 = 7
+	OP_DELEGRETURN          uint32 = 8
+	OP_GETATTR              uint32 = 9
+	OP_GETFH                uint32 = 10
+	OP_LINK                 uint32 = 11
+	OP_LOCK                 uint32 = 12
+	OP_LOCKT                uint32 = 13
+	OP_LOCKU                uint32 = 14
+	OP_LOOKUP               uint32 = 15
+	OP_LOOKUPP              uint32 = 16
+	OP_NVERIFY              uint32 = 17
+	OP_OPEN                 uint32 = 18
+	OP_OPENATTR             uint32 = 19
+	OP_OPEN_CONFIRM         uint32 = 20
+	OP_OPEN_DOWNGRADE       uint32 = 21
+	OP_PUTFH                uint32 = 22
+	OP_PUTPUBFH             uint32 = 23
+	OP_PUTROOTFH            uint32 = 24
+	OP_READ                 uint32 = 25
+	OP_READDIR              uint32 = 26
+	OP_READLINK             uint32 = 27
+	OP_REMOVE               uint32 = 28
+	OP_RENAME               uint32 = 29
+	OP_RENEW                uint32 = 30
+	OP_RESTOREFH            uint32 = 31
+	OP_SAVEFH               uint32 = 32
+	OP_SECINFO              uint32 = 33
+	OP_SETATTR              uint32 = 34
+	OP_SETCLIENTID          uint32 = 35
+	OP_SETCLIENTID_CONFIRM  uint32 = 36
+	OP_VERIFY               uint32 = 37
+	OP_WRITE                uint32 = 38
+	OP_RELEASE_LOCKOWNER    uint32 = 39
+	OP_BACKCHANNEL_CTL      uint32 = 40
+	OP_BIND_CONN_TO_SESSION uint32 = 41
+	OP_EXCHANGE_ID          uint32 = 42
+	OP_CREATE_SESSION       uint32 = 43
+	OP_DESTROY_SESSION      uint32 = 44
+	OP_FREE_STATEID         uint32 = 45
+	OP_GET_DIR_DELEGATION   uint32 = 46
+	OP_GETDEVICEINFO        uint32 = 47
+	OP_GETDEVICELIST        uint32 = 48
+	OP_LAYOUTCOMMIT         uint32 = 49
+	OP_LAYOUTGET            uint32 = 50
+	OP_LAYOUTRETURN         uint32 = 51
+	OP_SECINFO_NO_NAME      uint32 = 52
+	OP_SEQUENCE             uint32 = 53
+	OP_SET_SSV              uint32 = 54
+	OP_TEST_STATEID         uint32 = 55
+	OP_WANT_DELEGATION      uint32 = 56
+	OP_DESTROY_CLIENTID     uint32 = 57
+	OP_RECLAIM_COMPLETE     uint32 = 58
+	OP_ALLOCATE             uint32 = 59
+	OP_COPY                 uint32 = 60
+	OP_COPY_NOTIFY          uint32 = 61
+	OP_DEALLOCATE           uint32 = 62
+	OP_IO_ADVISE            uint32 = 63
+	OP_LAYOUTERROR          uint32 = 64
+	OP_LAYOUTSTATS          uint32 = 65
+	OP_OFFLOAD_CANCEL       uint32 = 66
+	OP_OFFLOAD_STATUS       uint32 = 67
+	OP_READ_PLUS            uint32 = 68
+	OP_SEEK                 uint32 = 69
+	OP_WRITE_SAME           uint32 = 70
+	OP_CLONE                uint32 = 71
+	OP_GETXATTR             uint32 = 72
+	OP_SETXATTR             uint32 = 73
+	OP_LISTXATTRS           uint32 = 74
+	OP_REMOVEXATTR          uint32 = 75
+	OP_ILLEGAL              uint32 = 10044
+)
+
 // xdr_bool constants (beu32)
 const (
 	FALSE uint32 = 0
@@ -249,9 +577,10 @@ const (
 
 // createmode4 constants (beu32)
 const (
-	UNCHECKED4 uint32 = 0
-	GUARDED4   uint32 = 1
-	EXCLUSIVE4 uint32 = 2
+	UNCHECKED4   uint32 = 0
+	GUARDED4     uint32 = 1
+	EXCLUSIVE4   uint32 = 2
+	EXCLUSIVE4_1 uint32 = 3
 )
 
 // opentype4 constants (beu32)
@@ -268,9 +597,12 @@ const (
 
 // open_delegation_type4 constants (beu32)
 const (
-	OPEN_DELEGATE_NONE  uint32 = 0
-	OPEN_DELEGATE_READ  uint32 = 1
-	OPEN_DELEGATE_WRITE uint32 = 2
+	OPEN_DELEGATE_NONE              uint32 = 0
+	OPEN_DELEGATE_READ              uint32 = 1
+	OPEN_DELEGATE_WRITE             uint32 = 2
+	OPEN_DELEGATE_NONE_EXT          uint32 = 3
+	OPEN_DELEGATE_READ_ATTRS_DELEG  uint32 = 4
+	OPEN_DELEGATE_WRITE_ATTRS_DELEG uint32 = 5
 )
 
 // open_claim_type4 constants (beu32)
@@ -279,6 +611,22 @@ const (
 	CLAIM_PREVIOUS      uint32 = 1
 	CLAIM_DELEGATE_CUR  uint32 = 2
 	CLAIM_DELEGATE_PREV uint32 = 3
+	CLAIM_FH            uint32 = 4
+	CLAIM_DELEG_CUR_FH  uint32 = 5
+	CLAIM_DELEG_PREV_FH uint32 = 6
+)
+
+// why_no_delegation4 constants (beu32)
+const (
+	WND4_NOT_WANTED                 uint32 = 0
+	WND4_CONTENTION                 uint32 = 1
+	WND4_RESOURCE                   uint32 = 2
+	WND4_NOT_SUPP_FTYPE             uint32 = 3
+	WND4_WRITE_DELEG_NOT_SUPP_FTYPE uint32 = 4
+	WND4_NOT_SUPP_UPGRADE           uint32 = 5
+	WND4_NOT_SUPP_DOWNGRADE         uint32 = 6
+	WND4_CANCELLED                  uint32 = 7
+	WND4_IS_DIR                     uint32 = 8
 )
 
 // rpc_gss_svc_t constants (beu32)
@@ -293,61 +641,355 @@ const (
 	RPCSEC_GSS uint32 = 6
 )
 
-// stable_how4 constants (beu32)
+// disc_callback_sec_parms4 constants (beu32)
 const (
-	UNSTABLE4  uint32 = 0
-	DATA_SYNC4 uint32 = 1
-	FILE_SYNC4 uint32 = 2
+	AUTH_NONE uint32 = 0
+	AUTH_SYS  uint32 = 1
 )
 
-// nfs_opnum4 constants (beu32)
+// channel_dir_from_client4 constants (beu32)
 const (
-	OP_ACCESS              uint32 = 3
-	OP_CLOSE               uint32 = 4
-	OP_COMMIT              uint32 = 5
-	OP_CREATE              uint32 = 6
-	OP_DELEGPURGE          uint32 = 7
-	OP_DELEGRETURN         uint32 = 8
-	OP_GETATTR             uint32 = 9
-	OP_GETFH               uint32 = 10
-	OP_LINK                uint32 = 11
-	OP_LOCK                uint32 = 12
-	OP_LOCKT               uint32 = 13
-	OP_LOCKU               uint32 = 14
-	OP_LOOKUP              uint32 = 15
-	OP_LOOKUPP             uint32 = 16
-	OP_NVERIFY             uint32 = 17
-	OP_OPEN                uint32 = 18
-	OP_OPENATTR            uint32 = 19
-	OP_OPEN_CONFIRM        uint32 = 20
-	OP_OPEN_DOWNGRADE      uint32 = 21
-	OP_PUTFH               uint32 = 22
-	OP_PUTPUBFH            uint32 = 23
-	OP_PUTROOTFH           uint32 = 24
-	OP_READ                uint32 = 25
-	OP_READDIR             uint32 = 26
-	OP_READLINK            uint32 = 27
-	OP_REMOVE              uint32 = 28
-	OP_RENAME              uint32 = 29
-	OP_RENEW               uint32 = 30
-	OP_RESTOREFH           uint32 = 31
-	OP_SAVEFH              uint32 = 32
-	OP_SECINFO             uint32 = 33
-	OP_SETATTR             uint32 = 34
-	OP_SETCLIENTID         uint32 = 35
-	OP_SETCLIENTID_CONFIRM uint32 = 36
-	OP_VERIFY              uint32 = 37
-	OP_WRITE               uint32 = 38
-	OP_RELEASE_LOCKOWNER   uint32 = 39
-	OP_ILLEGAL             uint32 = 10044
+	CDFC4_FORE         uint32 = 0x1
+	CDFC4_BACK         uint32 = 0x2
+	CDFC4_FORE_OR_BOTH uint32 = 0x3
+	CDFC4_BACK_OR_BOTH uint32 = 0x7
+)
+
+// channel_dir_from_server4 constants (beu32)
+const (
+	CDFS4_FORE uint32 = 0x1
+	CDFS4_BACK uint32 = 0x2
+	CDFS4_BOTH uint32 = 0x3
+)
+
+// state_protect_how4 constants (beu32)
+const (
+	SP4_NONE      uint32 = 0
+	SP4_MACH_CRED uint32 = 1
+	SP4_SSV       uint32 = 2
+)
+
+// gddrnf4_status constants (beu32)
+const (
+	GDD4_OK      uint32 = 0
+	GDD4_UNAVAIL uint32 = 1
+)
+
+// secinfo_style4 constants (beu32)
+const (
+	SECINFO_STYLE4_CURRENT_FH uint32 = 0
+	SECINFO_STYLE4_PARENT     uint32 = 1
+)
+
+// IO_ADVISE_type4 constants (beu32)
+const (
+	IO_ADVISE4_NORMAL                 uint32 = 0
+	IO_ADVISE4_SEQUENTIAL             uint32 = 1
+	IO_ADVISE4_SEQUENTIAL_BACKWARDS   uint32 = 2
+	IO_ADVISE4_RANDOM                 uint32 = 3
+	IO_ADVISE4_WILLNEED               uint32 = 4
+	IO_ADVISE4_WILLNEED_OPPORTUNISTIC uint32 = 5
+	IO_ADVISE4_DONTNEED               uint32 = 6
+	IO_ADVISE4_NOREUSE                uint32 = 7
+	IO_ADVISE4_READ                   uint32 = 8
+	IO_ADVISE4_WRITE                  uint32 = 9
+	IO_ADVISE4_INIT_PROXIMITY         uint32 = 10
+)
+
+// ff_cb_recall_any_mask constants (beu32)
+const (
+	FF_RCA4_TYPE_MASK_READ uint32 = 2
+	FF_RCA4_TYPE_MASK_RW   uint32 = 1
+)
+
+// setxattr_option4 constants (beu32)
+const (
+	SETXATTR4_EITHER  uint32 = 0
+	SETXATTR4_CREATE  uint32 = 1
+	SETXATTR4_REPLACE uint32 = 2
+)
+
+// layoutrecall_type4 constants (beu32)
+const (
+	LAYOUTRECALL4_FILE uint32 = 1
+	LAYOUTRECALL4_FSID uint32 = 2
+	LAYOUTRECALL4_ALL  uint32 = 3
+)
+
+// notify_type4 constants (beu32)
+const (
+	NOTIFY4_CHANGE_CHILD_ATTRS     uint32 = 0
+	NOTIFY4_CHANGE_DIR_ATTRS       uint32 = 1
+	NOTIFY4_REMOVE_ENTRY           uint32 = 2
+	NOTIFY4_ADD_ENTRY              uint32 = 3
+	NOTIFY4_RENAME_ENTRY           uint32 = 4
+	NOTIFY4_CHANGE_COOKIE_VERIFIER uint32 = 5
+)
+
+// notify_deviceid_type4 constants (beu32)
+const (
+	NOTIFY_DEVICEID4_CHANGE uint32 = 1
+	NOTIFY_DEVICEID4_DELETE uint32 = 2
 )
 
 // nfs_cb_opnum4 constants (beu32)
 const (
-	OP_CB_GETATTR uint32 = 3
-	OP_CB_RECALL  uint32 = 4
-	OP_CB_ILLEGAL uint32 = 10044
+	OP_CB_GETATTR              uint32 = 3
+	OP_CB_RECALL               uint32 = 4
+	OP_CB_LAYOUTRECALL         uint32 = 5
+	OP_CB_NOTIFY               uint32 = 6
+	OP_CB_PUSH_DELEG           uint32 = 7
+	OP_CB_RECALL_ANY           uint32 = 8
+	OP_CB_RECALLABLE_OBJ_AVAIL uint32 = 9
+	OP_CB_RECALL_SLOT          uint32 = 10
+	OP_CB_SEQUENCE             uint32 = 11
+	OP_CB_WANTS_CANCELLED      uint32 = 12
+	OP_CB_NOTIFY_LOCK          uint32 = 13
+	OP_CB_NOTIFY_DEVICEID      uint32 = 14
+	OP_CB_OFFLOAD              uint32 = 15
+	OP_CB_ILLEGAL              uint32 = 10044
 )
+
+// open_args_share_access4 constants (beu32)
+const (
+	OPEN_ARGS_SHARE_ACCESS_READ  uint32 = 1
+	OPEN_ARGS_SHARE_ACCESS_WRITE uint32 = 2
+	OPEN_ARGS_SHARE_ACCESS_BOTH  uint32 = 3
+)
+
+// open_args_share_deny4 constants (beu32)
+const (
+	OPEN_ARGS_SHARE_DENY_NONE  uint32 = 0
+	OPEN_ARGS_SHARE_DENY_READ  uint32 = 1
+	OPEN_ARGS_SHARE_DENY_WRITE uint32 = 2
+	OPEN_ARGS_SHARE_DENY_BOTH  uint32 = 3
+)
+
+// open_args_share_access_want4 constants (beu32)
+const (
+	OPEN_ARGS_SHARE_ACCESS_WANT_ANY_DELEG                     uint32 = 3
+	OPEN_ARGS_SHARE_ACCESS_WANT_NO_DELEG                      uint32 = 4
+	OPEN_ARGS_SHARE_ACCESS_WANT_CANCEL                        uint32 = 5
+	OPEN_ARGS_SHARE_ACCESS_WANT_SIGNAL_DELEG_WHEN_RESRC_AVAIL uint32 = 17
+	OPEN_ARGS_SHARE_ACCESS_WANT_PUSH_DELEG_WHEN_UNCONTENDED   uint32 = 18
+	OPEN_ARGS_SHARE_ACCESS_WANT_DELEG_TIMESTAMPS              uint32 = 20
+	OPEN_ARGS_SHARE_ACCESS_WANT_OPEN_XOR_DELEGATION           uint32 = 21
+)
+
+// open_args_open_claim4 constants (beu32)
+const (
+	OPEN_ARGS_OPEN_CLAIM_NULL          uint32 = 0
+	OPEN_ARGS_OPEN_CLAIM_PREVIOUS      uint32 = 1
+	OPEN_ARGS_OPEN_CLAIM_DELEGATE_CUR  uint32 = 2
+	OPEN_ARGS_OPEN_CLAIM_DELEGATE_PREV uint32 = 3
+	OPEN_ARGS_OPEN_CLAIM_FH            uint32 = 4
+	OPEN_ARGS_OPEN_CLAIM_DELEG_CUR_FH  uint32 = 5
+	OPEN_ARGS_OPEN_CLAIM_DELEG_PREV_FH uint32 = 6
+)
+
+// open_args_createmode4 constants (beu32)
+const (
+	OPEN_ARGS_CREATEMODE_UNCHECKED4    uint32 = 0
+	OPEN_ARGS_CREATE_MODE_GUARDED      uint32 = 1
+	OPEN_ARGS_CREATEMODE_EXCLUSIVE4    uint32 = 2
+	OPEN_ARGS_CREATE_MODE_EXCLUSIVE4_1 uint32 = 3
+)
+
+// -------------------------------------------------------
+// AuthsysParmsGids — variable: count(4) + beu32 data[count]
+// -------------------------------------------------------
+
+type AuthsysParmsGids []byte
+
+func readAuthsysParmsGids(b *[]byte) (AuthsysParmsGids, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	c_count := int(binary.BigEndian.Uint32((*b)[0:4]))
+	*b = (*b)[4:]
+	if len(*b) < c_count*4 {
+		return nil, false
+	}
+	*b = (*b)[c_count*4:]
+	total := startLen - len(*b)
+	return AuthsysParmsGids(start[:total]), true
+}
+
+func ReadAuthsysParmsGids(b []byte) (AuthsysParmsGids, bool) {
+	if len(b) < 4 {
+		return nil, false
+	}
+	count := int(binary.BigEndian.Uint32(b[0:4]))
+	total := 4 + count*4
+	if len(b) < total {
+		return nil, false
+	}
+	return AuthsysParmsGids(b[:total]), true
+}
+
+func (m AuthsysParmsGids) Count() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m AuthsysParmsGids) Data(i int) uint32 {
+	off := 4 + i*4
+	return binary.BigEndian.Uint32(m[off : off+4])
+}
+
+// AuthsysParmsGidsWriter writes a authsys_parms_gids:
+//
+//	count + beu32 data[count]
+type AuthsysParmsGidsWriter struct {
+	buf   []byte
+	off   int
+	count uint32
+}
+
+func StartAuthsysParmsGids(buf []byte) AuthsysParmsGidsWriter {
+	off := len(buf)
+	buf = binary.BigEndian.AppendUint32(buf, 0) // count placeholder
+	return AuthsysParmsGidsWriter{buf: buf, off: off}
+}
+
+func (w *AuthsysParmsGidsWriter) AppendData(v uint32) {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, v)
+	w.count++
+}
+
+func (w *AuthsysParmsGidsWriter) Finish() []byte {
+	binary.BigEndian.PutUint32(w.buf[w.off:w.off+4], w.count)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// AuthsysParms — variable:
+//   stamp(4) + machinename_len(4) + u8 machinename[machinename_len] + align(4) + uid(4) + gid(4) + gids
+// -------------------------------------------------------
+
+type AuthsysParms struct {
+	data []byte
+	off1 int // byte offset within data where uid starts
+}
+
+func readAuthsysParms(b *[]byte) (AuthsysParms, bool) {
+	if len(*b) < 8 {
+		return AuthsysParms{}, false
+	}
+	start := *b
+	startLen := len(start)
+	c_machinename_len := int(binary.BigEndian.Uint32((*b)[4:8]))
+	*b = (*b)[8:]
+	if len(*b) < c_machinename_len*1 {
+		return AuthsysParms{}, false
+	}
+	*b = (*b)[c_machinename_len*1:]
+	off1 := startLen - len(*b)
+	{
+		off := startLen - len(*b)
+		aligned := (off + 3) &^ 3
+		if aligned > startLen {
+			return AuthsysParms{}, false
+		}
+		*b = start[aligned:]
+	}
+	if len(*b) < 4 {
+		return AuthsysParms{}, false
+	}
+	*b = (*b)[4:]
+	if len(*b) < 4 {
+		return AuthsysParms{}, false
+	}
+	*b = (*b)[4:]
+	if _, ok := readAuthsysParmsGids(b); !ok {
+		return AuthsysParms{}, false
+	}
+	total := startLen - len(*b)
+	return AuthsysParms{data: start[:total], off1: off1}, true
+}
+
+func ReadAuthsysParms(b []byte) (AuthsysParms, bool) {
+	return readAuthsysParms(&b)
+}
+
+func (m AuthsysParms) Stamp() uint32 {
+	return binary.BigEndian.Uint32(m.data[0:4])
+}
+
+func (m AuthsysParms) Machinename() []byte {
+	n := int(binary.BigEndian.Uint32(m.data[4:8]))
+	o := 8
+	return m.data[o : o+n]
+}
+
+func (m AuthsysParms) MachinenameLen() uint32 {
+	return binary.BigEndian.Uint32(m.data[4:8])
+}
+
+func (m AuthsysParms) Uid() uint32 {
+	o := m.off1
+	return binary.BigEndian.Uint32(m.data[o : o+4])
+}
+
+func (m AuthsysParms) Gid() uint32 {
+	o := m.off1 + 4
+	return binary.BigEndian.Uint32(m.data[o : o+4])
+}
+
+func (m AuthsysParms) Gids() AuthsysParmsGids {
+	return AuthsysParmsGids(m.data[m.off1+8:])
+}
+
+// AuthsysParmsWriter writes a authsys_parms:
+//
+//	stamp + machinename_len + u8 machinename[machinename_len] + align(4) + uid + gid + gids
+type AuthsysParmsWriter struct {
+	buf            []byte
+	off            int
+	machinenameLen uint32
+}
+
+func StartAuthsysParms(buf []byte) AuthsysParmsWriter {
+	off := len(buf)
+	buf = append(buf, make([]byte, 8)...) // stamp(4) + machinename_len(4)
+	return AuthsysParmsWriter{buf: buf, off: off}
+}
+
+func (w *AuthsysParmsWriter) SetStamp(v uint32) {
+	binary.BigEndian.PutUint32((*[8]byte)(w.buf[w.off:])[0:4], v)
+}
+
+func (w *AuthsysParmsWriter) SetUid(v uint32) {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, v)
+}
+
+func (w *AuthsysParmsWriter) SetGid(v uint32) {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, v)
+}
+
+func (w *AuthsysParmsWriter) SetMachinename(data []byte) {
+	n := len(data)
+	padded := (n + 3) &^ 3
+	w.buf = append(w.buf, make([]byte, padded)...)
+	copy(w.buf[len(w.buf)-padded:], data)
+	w.machinenameLen = uint32(n)
+}
+
+func (w *AuthsysParmsWriter) StartGids() AuthsysParmsGidsWriter {
+	child := StartAuthsysParmsGids(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *AuthsysParmsWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *AuthsysParmsWriter) Finish() []byte {
+	binary.BigEndian.PutUint32((*[8]byte)(w.buf[w.off:])[4:8], w.machinenameLen)
+	return w.buf
+}
 
 // -------------------------------------------------------
 // Attrlist4 — variable: data_len(4) + u8 data[data_len] + align(4)
@@ -625,6 +1267,38 @@ func (w SecOid4Writer) SetData(data []byte) SecOid4Writer {
 
 func (w SecOid4Writer) Finish() []byte {
 	return w.buf
+}
+
+// -------------------------------------------------------
+// Sessionid4 — fixed 16 bytes: data(u8[16])
+// -------------------------------------------------------
+
+type Sessionid4 struct {
+	m *[sessionid4Size]byte
+}
+
+const sessionid4Size = 16
+
+func ReadSessionid4(b []byte) (Sessionid4, bool) {
+	if len(b) < sessionid4Size {
+		return Sessionid4{}, false
+	}
+	return Sessionid4{m: (*[sessionid4Size]byte)(b)}, true
+}
+
+func StartSessionid4(buf []byte) ([]byte, Sessionid4) {
+	buf = append(buf, make([]byte, sessionid4Size)...)
+	return buf, Sessionid4{m: (*[sessionid4Size]byte)(buf[len(buf)-sessionid4Size:])}
+}
+
+func (m Sessionid4) Data(i int) uint8 {
+	off := 0 + i*1
+	return m.m[off : off+1][0]
+}
+
+func (m Sessionid4) SetData(i int, v uint8) {
+	off := 0 + i*1
+	m.m[off : off+1][0] = v
 }
 
 // -------------------------------------------------------
@@ -1130,6 +1804,76 @@ func (m Verifier4) SetData(i int, v uint8) {
 }
 
 // -------------------------------------------------------
+// Secret4 — variable: data_len(4) + u8 data[data_len] + align(4)
+// -------------------------------------------------------
+
+type Secret4 []byte
+
+func readSecret4(b *[]byte) (Secret4, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	n := int(binary.BigEndian.Uint32((*b)[0:4]))
+	padded := (n + 3) &^ 3
+	total := 4 + padded
+	if len(*b) < total {
+		return nil, false
+	}
+	result := Secret4((*b)[:total])
+	*b = (*b)[total:]
+	return result, true
+}
+
+func ReadSecret4(b []byte) (Secret4, bool) {
+	if len(b) < 4 {
+		return nil, false
+	}
+	count := int(binary.BigEndian.Uint32(b[0:4]))
+	padded := (count + 3) &^ 3
+	total := 4 + padded
+	if len(b) < total {
+		return nil, false
+	}
+	return Secret4(b[:total]), true
+}
+
+func (m Secret4) DataLen() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m Secret4) Data() []byte {
+	n := int(binary.BigEndian.Uint32(m[0:4]))
+	return m[4 : 4+n]
+}
+
+// Secret4Writer writes a secret4:
+//
+//	data_len + u8 data[data_len] + align(4)
+type Secret4Writer struct {
+	buf []byte
+	off int
+}
+
+func StartSecret4(buf []byte) Secret4Writer {
+	off := len(buf)
+	return Secret4Writer{buf: buf, off: off}
+}
+
+func (w Secret4Writer) SetData(data []byte) Secret4Writer {
+	n := len(data)
+	padded := (n + 3) &^ 3
+	total := 4 + padded
+	w.buf = append(w.buf, make([]byte, total)...)
+	binary.BigEndian.PutUint32(w.buf[w.off:w.off+4], uint32(n))
+	copy(w.buf[w.off+4:], data)
+	return w
+}
+
+func (w Secret4Writer) Finish() []byte {
+	return w.buf
+}
+
+// -------------------------------------------------------
 // Nfstime4 — fixed 12 bytes: seconds(8, bei64) + nseconds(4, beu32)
 // -------------------------------------------------------
 
@@ -1212,11 +1956,17 @@ type Fsid4 struct {
 
 const fsid4Size = 16
 
-func ReadFsid4(b []byte) (Fsid4, bool) {
-	if len(b) < fsid4Size {
+func readFsid4(b *[]byte) (Fsid4, bool) {
+	if len(*b) < fsid4Size {
 		return Fsid4{}, false
 	}
-	return Fsid4{m: (*[fsid4Size]byte)(b)}, true
+	result := Fsid4{m: (*[fsid4Size]byte)(*b)}
+	*b = (*b)[fsid4Size:]
+	return result, true
+}
+
+func ReadFsid4(b []byte) (Fsid4, bool) {
+	return readFsid4(&b)
 }
 
 func StartFsid4(buf []byte) ([]byte, Fsid4) {
@@ -1237,6 +1987,44 @@ func (m Fsid4) SetMajor(v uint64) {
 }
 
 func (m Fsid4) SetMinor(v uint64) {
+	binary.BigEndian.PutUint64(m.m[8:16], v)
+}
+
+// -------------------------------------------------------
+// ChangePolicy4 — fixed 16 bytes: cp_major(8, beu64) + cp_minor(8, beu64)
+// -------------------------------------------------------
+
+type ChangePolicy4 struct {
+	m *[changePolicy4Size]byte
+}
+
+const changePolicy4Size = 16
+
+func ReadChangePolicy4(b []byte) (ChangePolicy4, bool) {
+	if len(b) < changePolicy4Size {
+		return ChangePolicy4{}, false
+	}
+	return ChangePolicy4{m: (*[changePolicy4Size]byte)(b)}, true
+}
+
+func StartChangePolicy4(buf []byte) ([]byte, ChangePolicy4) {
+	buf = append(buf, make([]byte, changePolicy4Size)...)
+	return buf, ChangePolicy4{m: (*[changePolicy4Size]byte)(buf[len(buf)-changePolicy4Size:])}
+}
+
+func (m ChangePolicy4) CpMajor() uint64 {
+	return binary.BigEndian.Uint64(m.m[0:8])
+}
+
+func (m ChangePolicy4) CpMinor() uint64 {
+	return binary.BigEndian.Uint64(m.m[8:16])
+}
+
+func (m ChangePolicy4) SetCpMajor(v uint64) {
+	binary.BigEndian.PutUint64(m.m[0:8], v)
+}
+
+func (m ChangePolicy4) SetCpMinor(v uint64) {
 	binary.BigEndian.PutUint64(m.m[8:16], v)
 }
 
@@ -1584,6 +2372,153 @@ func (w *Nfsace4Writer) Finish() []byte {
 }
 
 // -------------------------------------------------------
+// Nfsacl41 — variable:
+//   na41_flag(4) + na41_aces_count(4) + nfsace4 na41_aces[na41_aces_count]
+// -------------------------------------------------------
+
+type Nfsacl41 []byte
+
+func readNfsacl41(b *[]byte) (Nfsacl41, bool) {
+	if len(*b) < 8 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	c_na41_aces_count := int(binary.BigEndian.Uint32((*b)[4:8]))
+	*b = (*b)[8:]
+	for i := 0; i < c_na41_aces_count; i++ {
+		if _, ok := readNfsace4(b); !ok {
+			return nil, false
+		}
+	}
+	total := startLen - len(*b)
+	return Nfsacl41(start[:total]), true
+}
+
+func ReadNfsacl41(b []byte) (Nfsacl41, bool) {
+	if len(b) < 8 {
+		return nil, false
+	}
+	return Nfsacl41(b), true
+}
+
+func (m Nfsacl41) Na41Flag() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m Nfsacl41) Na41AcesCount() uint32 {
+	return binary.BigEndian.Uint32(m[4:8])
+}
+
+func (m Nfsacl41) Na41Aces() Nfsace4Iter {
+	na41_aces_count := int(binary.BigEndian.Uint32(m[4:8]))
+	return Nfsace4Iter{
+		b:     []byte(m[8:]),
+		count: na41_aces_count,
+	}
+}
+
+// Nfsace4Iter iterates over variable-size Nfsace4 entries.
+type Nfsace4Iter struct {
+	b     []byte
+	count int
+	i     int
+	cur   Nfsace4
+}
+
+func (it *Nfsace4Iter) Next() bool {
+	if it.i >= it.count {
+		return false
+	}
+	var ok bool
+	it.cur, ok = readNfsace4(&it.b)
+	if !ok {
+		return false
+	}
+	it.i++
+	return true
+}
+
+func (it *Nfsace4Iter) Na41Ace() Nfsace4 {
+	return it.cur
+}
+
+// Nfsacl41Writer writes a nfsacl41:
+//
+//	na41_flag + na41_aces_count + nfsace4 na41_aces[na41_aces_count]
+type Nfsacl41Writer struct {
+	buf           []byte
+	off           int
+	na41AcesCount uint32
+}
+
+func StartNfsacl41(buf []byte) Nfsacl41Writer {
+	off := len(buf)
+	buf = append(buf, make([]byte, 8)...) // na41_flag(4) + na41_aces_count(4)
+	return Nfsacl41Writer{buf: buf, off: off}
+}
+
+func (w *Nfsacl41Writer) SetNa41Flag(v uint32) {
+	binary.BigEndian.PutUint32((*[8]byte)(w.buf[w.off:])[0:4], v)
+}
+
+func (w *Nfsacl41Writer) AppendNa41Aces() Nfsace4Writer {
+	_ = w.buf[:1]
+	w.na41AcesCount++
+	child := StartNfsace4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *Nfsacl41Writer) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *Nfsacl41Writer) Finish() []byte {
+	binary.BigEndian.PutUint32((*[8]byte)(w.buf[w.off:])[4:8], w.na41AcesCount)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// ModeMasked4 — fixed 8 bytes:
+//   mm_value_to_set(4, beu32) + mm_mask_bits(4, beu32)
+// -------------------------------------------------------
+
+type ModeMasked4 struct {
+	m *[modeMasked4Size]byte
+}
+
+const modeMasked4Size = 8
+
+func ReadModeMasked4(b []byte) (ModeMasked4, bool) {
+	if len(b) < modeMasked4Size {
+		return ModeMasked4{}, false
+	}
+	return ModeMasked4{m: (*[modeMasked4Size]byte)(b)}, true
+}
+
+func StartModeMasked4(buf []byte) ([]byte, ModeMasked4) {
+	buf = append(buf, make([]byte, modeMasked4Size)...)
+	return buf, ModeMasked4{m: (*[modeMasked4Size]byte)(buf[len(buf)-modeMasked4Size:])}
+}
+
+func (m ModeMasked4) MmValueToSet() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m ModeMasked4) MmMaskBits() uint32 {
+	return binary.BigEndian.Uint32(m.m[4:8])
+}
+
+func (m ModeMasked4) SetMmValueToSet(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+func (m ModeMasked4) SetMmMaskBits(v uint32) {
+	binary.BigEndian.PutUint32(m.m[4:8], v)
+}
+
+// -------------------------------------------------------
 // Specdata4 — fixed 8 bytes: specdata1(4, beu32) + specdata2(4, beu32)
 // -------------------------------------------------------
 
@@ -1625,6 +2560,2581 @@ func (m Specdata4) SetSpecdata1(v uint32) {
 
 func (m Specdata4) SetSpecdata2(v uint32) {
 	binary.BigEndian.PutUint32(m.m[4:8], v)
+}
+
+// -------------------------------------------------------
+// XdrOpaque — variable: data_len(4) + u8 data[data_len] + align(4)
+// -------------------------------------------------------
+
+type XdrOpaque []byte
+
+func readXdrOpaque(b *[]byte) (XdrOpaque, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	n := int(binary.BigEndian.Uint32((*b)[0:4]))
+	padded := (n + 3) &^ 3
+	total := 4 + padded
+	if len(*b) < total {
+		return nil, false
+	}
+	result := XdrOpaque((*b)[:total])
+	*b = (*b)[total:]
+	return result, true
+}
+
+func ReadXdrOpaque(b []byte) (XdrOpaque, bool) {
+	if len(b) < 4 {
+		return nil, false
+	}
+	count := int(binary.BigEndian.Uint32(b[0:4]))
+	padded := (count + 3) &^ 3
+	total := 4 + padded
+	if len(b) < total {
+		return nil, false
+	}
+	return XdrOpaque(b[:total]), true
+}
+
+func (m XdrOpaque) DataLen() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m XdrOpaque) Data() []byte {
+	n := int(binary.BigEndian.Uint32(m[0:4]))
+	return m[4 : 4+n]
+}
+
+// XdrOpaqueWriter writes a xdr_opaque:
+//
+//	data_len + u8 data[data_len] + align(4)
+type XdrOpaqueWriter struct {
+	buf []byte
+	off int
+}
+
+func StartXdrOpaque(buf []byte) XdrOpaqueWriter {
+	off := len(buf)
+	return XdrOpaqueWriter{buf: buf, off: off}
+}
+
+func (w XdrOpaqueWriter) SetData(data []byte) XdrOpaqueWriter {
+	n := len(data)
+	padded := (n + 3) &^ 3
+	total := 4 + padded
+	w.buf = append(w.buf, make([]byte, total)...)
+	binary.BigEndian.PutUint32(w.buf[w.off:w.off+4], uint32(n))
+	copy(w.buf[w.off+4:], data)
+	return w
+}
+
+func (w XdrOpaqueWriter) Finish() []byte {
+	return w.buf
+}
+
+// -------------------------------------------------------
+// Netaddr4 — variable: na_r_netid + na_r_addr
+// -------------------------------------------------------
+
+type Netaddr4 struct {
+	data []byte
+	off1 int // byte offset within data where na_r_addr starts
+}
+
+func readNetaddr4(b *[]byte) (Netaddr4, bool) {
+	start := *b
+	startLen := len(start)
+	if _, ok := readXdrOpaque(b); !ok {
+		return Netaddr4{}, false
+	}
+	off1 := startLen - len(*b)
+	if _, ok := readXdrOpaque(b); !ok {
+		return Netaddr4{}, false
+	}
+	total := startLen - len(*b)
+	return Netaddr4{data: start[:total], off1: off1}, true
+}
+
+func ReadNetaddr4(b []byte) (Netaddr4, bool) {
+	return readNetaddr4(&b)
+}
+
+func (m Netaddr4) NaRNetid() XdrOpaque {
+	return XdrOpaque(m.data[0:m.off1])
+}
+
+func (m Netaddr4) NaRAddr() XdrOpaque {
+	return XdrOpaque(m.data[m.off1:])
+}
+
+// Netaddr4Writer writes a netaddr4:
+//
+//	na_r_netid + na_r_addr
+type Netaddr4Writer struct {
+	buf   []byte
+	off   int
+	phase uint8
+}
+
+func StartNetaddr4(buf []byte) Netaddr4Writer {
+	off := len(buf)
+	return Netaddr4Writer{buf: buf, off: off}
+}
+
+func (w *Netaddr4Writer) StartNaRNetid() XdrOpaqueWriter {
+	if w.phase > 0 {
+		panic("writer fields called out of order")
+	}
+	child := StartXdrOpaque(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *Netaddr4Writer) StartNaRAddr() XdrOpaqueWriter {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	child := StartXdrOpaque(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *Netaddr4Writer) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *Netaddr4Writer) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// NfsImplId4 — variable: nii_domain + nii_name + nii_date(12)
+// -------------------------------------------------------
+
+type NfsImplId4 struct {
+	data []byte
+	off1 int // byte offset within data where nii_name starts
+	off2 int // byte offset within data where nii_date starts
+}
+
+func readNfsImplId4(b *[]byte) (NfsImplId4, bool) {
+	start := *b
+	startLen := len(start)
+	if _, ok := readUtf8strCis(b); !ok {
+		return NfsImplId4{}, false
+	}
+	off1 := startLen - len(*b)
+	if _, ok := readUtf8strCs(b); !ok {
+		return NfsImplId4{}, false
+	}
+	off2 := startLen - len(*b)
+	if len(*b) < 12 {
+		return NfsImplId4{}, false
+	}
+	*b = (*b)[12:]
+	total := startLen - len(*b)
+	return NfsImplId4{data: start[:total], off1: off1, off2: off2}, true
+}
+
+func ReadNfsImplId4(b []byte) (NfsImplId4, bool) {
+	return readNfsImplId4(&b)
+}
+
+func (m NfsImplId4) NiiDomain() Utf8strCis {
+	return Utf8strCis(m.data[0:m.off1])
+}
+
+func (m NfsImplId4) NiiName() Utf8strCs {
+	return Utf8strCs(m.data[m.off1:m.off2])
+}
+
+func (m NfsImplId4) NiiDate() Nfstime4 {
+	o := m.off2
+	return Nfstime4{m: (*[nfstime4Size]byte)(m.data[o : o+nfstime4Size])}
+}
+
+// NfsImplId4Writer writes a nfs_impl_id4:
+//
+//	nii_domain + nii_name + nii_date
+type NfsImplId4Writer struct {
+	buf   []byte
+	off   int
+	phase uint8
+}
+
+func StartNfsImplId4(buf []byte) NfsImplId4Writer {
+	off := len(buf)
+	return NfsImplId4Writer{buf: buf, off: off}
+}
+
+func (w *NfsImplId4Writer) StartNiiDomain() Utf8strCisWriter {
+	if w.phase > 0 {
+		panic("writer fields called out of order")
+	}
+	child := StartUtf8strCis(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NfsImplId4Writer) StartNiiName() Utf8strCsWriter {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	child := StartUtf8strCs(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NfsImplId4Writer) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *NfsImplId4Writer) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// Stateid4 — fixed 16 bytes: seqid(4, beu32) + other(u8[12])
+// -------------------------------------------------------
+
+type Stateid4 struct {
+	m *[stateid4Size]byte
+}
+
+const stateid4Size = 16
+
+func readStateid4(b *[]byte) (Stateid4, bool) {
+	if len(*b) < stateid4Size {
+		return Stateid4{}, false
+	}
+	result := Stateid4{m: (*[stateid4Size]byte)(*b)}
+	*b = (*b)[stateid4Size:]
+	return result, true
+}
+
+func ReadStateid4(b []byte) (Stateid4, bool) {
+	return readStateid4(&b)
+}
+
+func StartStateid4(buf []byte) ([]byte, Stateid4) {
+	buf = append(buf, make([]byte, stateid4Size)...)
+	return buf, Stateid4{m: (*[stateid4Size]byte)(buf[len(buf)-stateid4Size:])}
+}
+
+func (m Stateid4) Seqid() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m Stateid4) Other(i int) uint8 {
+	off := 4 + i*1
+	return m.m[off : off+1][0]
+}
+
+func (m Stateid4) SetSeqid(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+func (m Stateid4) SetOther(i int, v uint8) {
+	off := 4 + i*1
+	m.m[off : off+1][0] = v
+}
+
+// -------------------------------------------------------
+// LayoutContent4 — variable:
+//   loc_type(4) + loc_body_len(4) + u8 loc_body[loc_body_len] + align(4)
+// -------------------------------------------------------
+
+type LayoutContent4 []byte
+
+func readLayoutContent4(b *[]byte) (LayoutContent4, bool) {
+	if len(*b) < 8 {
+		return nil, false
+	}
+	n := int(binary.BigEndian.Uint32((*b)[4:8]))
+	padded := (n + 3) &^ 3
+	total := 8 + padded
+	if len(*b) < total {
+		return nil, false
+	}
+	result := LayoutContent4((*b)[:total])
+	*b = (*b)[total:]
+	return result, true
+}
+
+func ReadLayoutContent4(b []byte) (LayoutContent4, bool) {
+	if len(b) < 8 {
+		return nil, false
+	}
+	count := int(binary.BigEndian.Uint32(b[4:8]))
+	padded := (count + 3) &^ 3
+	total := 8 + padded
+	if len(b) < total {
+		return nil, false
+	}
+	return LayoutContent4(b[:total]), true
+}
+
+func (m LayoutContent4) LocType() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m LayoutContent4) LocBodyLen() uint32 {
+	return binary.BigEndian.Uint32(m[4:8])
+}
+
+func (m LayoutContent4) LocBody() []byte {
+	n := int(binary.BigEndian.Uint32(m[4:8]))
+	return m[8 : 8+n]
+}
+
+// LayoutContent4Writer writes a layout_content4:
+//
+//	loc_type + loc_body_len + u8 loc_body[loc_body_len] + align(4)
+type LayoutContent4Writer struct {
+	buf        []byte
+	off        int
+	locBodyLen uint32
+}
+
+func StartLayoutContent4(buf []byte) LayoutContent4Writer {
+	off := len(buf)
+	buf = append(buf, make([]byte, 8)...) // loc_type(4) + loc_body_len(4)
+	return LayoutContent4Writer{buf: buf, off: off}
+}
+
+func (w LayoutContent4Writer) SetLocType(v uint32) LayoutContent4Writer {
+	binary.BigEndian.PutUint32((*[8]byte)(w.buf[w.off:])[0:4], v)
+	return w
+}
+
+func (w LayoutContent4Writer) SetLocBody(data []byte) LayoutContent4Writer {
+	n := len(data)
+	padded := (n + 3) &^ 3
+	w.buf = append(w.buf, make([]byte, padded)...)
+	copy(w.buf[len(w.buf)-padded:], data)
+	w.locBodyLen = uint32(n)
+	return w
+}
+
+func (w LayoutContent4Writer) Finish() []byte {
+	binary.BigEndian.PutUint32((*[8]byte)(w.buf[w.off:])[4:8], w.locBodyLen)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// Layouthint4 — variable:
+//   loh_type(4) + loh_body_len(4) + u8 loh_body[loh_body_len] + align(4)
+// -------------------------------------------------------
+
+type Layouthint4 []byte
+
+func ReadLayouthint4(b []byte) (Layouthint4, bool) {
+	if len(b) < 8 {
+		return nil, false
+	}
+	count := int(binary.BigEndian.Uint32(b[4:8]))
+	padded := (count + 3) &^ 3
+	total := 8 + padded
+	if len(b) < total {
+		return nil, false
+	}
+	return Layouthint4(b[:total]), true
+}
+
+func (m Layouthint4) LohType() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m Layouthint4) LohBodyLen() uint32 {
+	return binary.BigEndian.Uint32(m[4:8])
+}
+
+func (m Layouthint4) LohBody() []byte {
+	n := int(binary.BigEndian.Uint32(m[4:8]))
+	return m[8 : 8+n]
+}
+
+// Layouthint4Writer writes a layouthint4:
+//
+//	loh_type + loh_body_len + u8 loh_body[loh_body_len] + align(4)
+type Layouthint4Writer struct {
+	buf        []byte
+	off        int
+	lohBodyLen uint32
+}
+
+func StartLayouthint4(buf []byte) Layouthint4Writer {
+	off := len(buf)
+	buf = append(buf, make([]byte, 8)...) // loh_type(4) + loh_body_len(4)
+	return Layouthint4Writer{buf: buf, off: off}
+}
+
+func (w Layouthint4Writer) SetLohType(v uint32) Layouthint4Writer {
+	binary.BigEndian.PutUint32((*[8]byte)(w.buf[w.off:])[0:4], v)
+	return w
+}
+
+func (w Layouthint4Writer) SetLohBody(data []byte) Layouthint4Writer {
+	n := len(data)
+	padded := (n + 3) &^ 3
+	w.buf = append(w.buf, make([]byte, padded)...)
+	copy(w.buf[len(w.buf)-padded:], data)
+	w.lohBodyLen = uint32(n)
+	return w
+}
+
+func (w Layouthint4Writer) Finish() []byte {
+	binary.BigEndian.PutUint32((*[8]byte)(w.buf[w.off:])[4:8], w.lohBodyLen)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// Layout4 — variable: lo_offset(8) + lo_length(8) + lo_iomode(4) + lo_content
+// -------------------------------------------------------
+
+type Layout4 []byte
+
+func readLayout4(b *[]byte) (Layout4, bool) {
+	if len(*b) < 20 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[20:]
+	if _, ok := readLayoutContent4(b); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return Layout4(start[:total]), true
+}
+
+func ReadLayout4(b []byte) (Layout4, bool) {
+	return readLayout4(&b)
+}
+
+func (m Layout4) LoOffset() uint64 {
+	return binary.BigEndian.Uint64(m[0:8])
+}
+
+func (m Layout4) LoLength() uint64 {
+	return binary.BigEndian.Uint64(m[8:16])
+}
+
+func (m Layout4) LoIomode() uint32 {
+	return binary.BigEndian.Uint32(m[16:20])
+}
+
+func (m Layout4) LoContent() LayoutContent4 {
+	return LayoutContent4(m[20:])
+}
+
+// Layout4Writer writes a layout4:
+//
+//	lo_offset + lo_length + lo_iomode + lo_content
+type Layout4Writer struct {
+	buf    []byte
+	header *[20]byte
+}
+
+func StartLayout4(buf []byte) Layout4Writer {
+	buf = append(buf, make([]byte, 20)...) // lo_offset(8) + lo_length(8) + lo_iomode(4)
+	return Layout4Writer{buf: buf, header: (*[20]byte)(buf[len(buf)-20:])}
+}
+
+func (w *Layout4Writer) SetLoOffset(v uint64) {
+	binary.BigEndian.PutUint64(w.header[0:8], v)
+}
+
+func (w *Layout4Writer) SetLoLength(v uint64) {
+	binary.BigEndian.PutUint64(w.header[8:16], v)
+}
+
+func (w *Layout4Writer) SetLoIomode(v uint32) {
+	binary.BigEndian.PutUint32(w.header[16:20], v)
+}
+
+func (w *Layout4Writer) StartLoContent() LayoutContent4Writer {
+	child := StartLayoutContent4(w.buf)
+	w.buf = nil
+	w.header = nil
+	return child
+}
+
+func (w *Layout4Writer) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *Layout4Writer) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// Deviceid4 — fixed 16 bytes: data(u8[16])
+// -------------------------------------------------------
+
+type Deviceid4 struct {
+	m *[deviceid4Size]byte
+}
+
+const deviceid4Size = 16
+
+func ReadDeviceid4(b []byte) (Deviceid4, bool) {
+	if len(b) < deviceid4Size {
+		return Deviceid4{}, false
+	}
+	return Deviceid4{m: (*[deviceid4Size]byte)(b)}, true
+}
+
+func StartDeviceid4(buf []byte) ([]byte, Deviceid4) {
+	buf = append(buf, make([]byte, deviceid4Size)...)
+	return buf, Deviceid4{m: (*[deviceid4Size]byte)(buf[len(buf)-deviceid4Size:])}
+}
+
+func (m Deviceid4) Data(i int) uint8 {
+	off := 0 + i*1
+	return m.m[off : off+1][0]
+}
+
+func (m Deviceid4) SetData(i int, v uint8) {
+	off := 0 + i*1
+	m.m[off : off+1][0] = v
+}
+
+// -------------------------------------------------------
+// DeviceAddr4 — variable:
+//   da_layout_type(4) + da_addr_body_len(4) + u8 da_addr_body[da_addr_body_len] + align(4)
+// -------------------------------------------------------
+
+type DeviceAddr4 []byte
+
+func readDeviceAddr4(b *[]byte) (DeviceAddr4, bool) {
+	if len(*b) < 8 {
+		return nil, false
+	}
+	n := int(binary.BigEndian.Uint32((*b)[4:8]))
+	padded := (n + 3) &^ 3
+	total := 8 + padded
+	if len(*b) < total {
+		return nil, false
+	}
+	result := DeviceAddr4((*b)[:total])
+	*b = (*b)[total:]
+	return result, true
+}
+
+func ReadDeviceAddr4(b []byte) (DeviceAddr4, bool) {
+	if len(b) < 8 {
+		return nil, false
+	}
+	count := int(binary.BigEndian.Uint32(b[4:8]))
+	padded := (count + 3) &^ 3
+	total := 8 + padded
+	if len(b) < total {
+		return nil, false
+	}
+	return DeviceAddr4(b[:total]), true
+}
+
+func (m DeviceAddr4) DaLayoutType() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m DeviceAddr4) DaAddrBodyLen() uint32 {
+	return binary.BigEndian.Uint32(m[4:8])
+}
+
+func (m DeviceAddr4) DaAddrBody() []byte {
+	n := int(binary.BigEndian.Uint32(m[4:8]))
+	return m[8 : 8+n]
+}
+
+// DeviceAddr4Writer writes a device_addr4:
+//
+//	da_layout_type + da_addr_body_len + u8 da_addr_body[da_addr_body_len] + align(4)
+type DeviceAddr4Writer struct {
+	buf           []byte
+	off           int
+	daAddrBodyLen uint32
+}
+
+func StartDeviceAddr4(buf []byte) DeviceAddr4Writer {
+	off := len(buf)
+	buf = append(buf, make([]byte, 8)...) // da_layout_type(4) + da_addr_body_len(4)
+	return DeviceAddr4Writer{buf: buf, off: off}
+}
+
+func (w DeviceAddr4Writer) SetDaLayoutType(v uint32) DeviceAddr4Writer {
+	binary.BigEndian.PutUint32((*[8]byte)(w.buf[w.off:])[0:4], v)
+	return w
+}
+
+func (w DeviceAddr4Writer) SetDaAddrBody(data []byte) DeviceAddr4Writer {
+	n := len(data)
+	padded := (n + 3) &^ 3
+	w.buf = append(w.buf, make([]byte, padded)...)
+	copy(w.buf[len(w.buf)-padded:], data)
+	w.daAddrBodyLen = uint32(n)
+	return w
+}
+
+func (w DeviceAddr4Writer) Finish() []byte {
+	binary.BigEndian.PutUint32((*[8]byte)(w.buf[w.off:])[4:8], w.daAddrBodyLen)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// Layoutupdate4 — variable:
+//   lou_type(4) + lou_body_len(4) + u8 lou_body[lou_body_len] + align(4)
+// -------------------------------------------------------
+
+type Layoutupdate4 []byte
+
+func readLayoutupdate4(b *[]byte) (Layoutupdate4, bool) {
+	if len(*b) < 8 {
+		return nil, false
+	}
+	n := int(binary.BigEndian.Uint32((*b)[4:8]))
+	padded := (n + 3) &^ 3
+	total := 8 + padded
+	if len(*b) < total {
+		return nil, false
+	}
+	result := Layoutupdate4((*b)[:total])
+	*b = (*b)[total:]
+	return result, true
+}
+
+func ReadLayoutupdate4(b []byte) (Layoutupdate4, bool) {
+	if len(b) < 8 {
+		return nil, false
+	}
+	count := int(binary.BigEndian.Uint32(b[4:8]))
+	padded := (count + 3) &^ 3
+	total := 8 + padded
+	if len(b) < total {
+		return nil, false
+	}
+	return Layoutupdate4(b[:total]), true
+}
+
+func (m Layoutupdate4) LouType() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m Layoutupdate4) LouBodyLen() uint32 {
+	return binary.BigEndian.Uint32(m[4:8])
+}
+
+func (m Layoutupdate4) LouBody() []byte {
+	n := int(binary.BigEndian.Uint32(m[4:8]))
+	return m[8 : 8+n]
+}
+
+// Layoutupdate4Writer writes a layoutupdate4:
+//
+//	lou_type + lou_body_len + u8 lou_body[lou_body_len] + align(4)
+type Layoutupdate4Writer struct {
+	buf        []byte
+	off        int
+	louBodyLen uint32
+}
+
+func StartLayoutupdate4(buf []byte) Layoutupdate4Writer {
+	off := len(buf)
+	buf = append(buf, make([]byte, 8)...) // lou_type(4) + lou_body_len(4)
+	return Layoutupdate4Writer{buf: buf, off: off}
+}
+
+func (w Layoutupdate4Writer) SetLouType(v uint32) Layoutupdate4Writer {
+	binary.BigEndian.PutUint32((*[8]byte)(w.buf[w.off:])[0:4], v)
+	return w
+}
+
+func (w Layoutupdate4Writer) SetLouBody(data []byte) Layoutupdate4Writer {
+	n := len(data)
+	padded := (n + 3) &^ 3
+	w.buf = append(w.buf, make([]byte, padded)...)
+	copy(w.buf[len(w.buf)-padded:], data)
+	w.louBodyLen = uint32(n)
+	return w
+}
+
+func (w Layoutupdate4Writer) Finish() []byte {
+	binary.BigEndian.PutUint32((*[8]byte)(w.buf[w.off:])[4:8], w.louBodyLen)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// LayoutreturnFile4 — variable:
+//   lrf_offset(8) + lrf_length(8) + lrf_stateid(16) + lrf_body_len(4) + u8 lrf_body[lrf_body_len] + align(4)
+// -------------------------------------------------------
+
+type LayoutreturnFile4 []byte
+
+func readLayoutreturnFile4(b *[]byte) (LayoutreturnFile4, bool) {
+	if len(*b) < 36 {
+		return nil, false
+	}
+	n := int(binary.BigEndian.Uint32((*b)[32:36]))
+	padded := (n + 3) &^ 3
+	total := 36 + padded
+	if len(*b) < total {
+		return nil, false
+	}
+	result := LayoutreturnFile4((*b)[:total])
+	*b = (*b)[total:]
+	return result, true
+}
+
+func ReadLayoutreturnFile4(b []byte) (LayoutreturnFile4, bool) {
+	if len(b) < 36 {
+		return nil, false
+	}
+	count := int(binary.BigEndian.Uint32(b[32:36]))
+	padded := (count + 3) &^ 3
+	total := 36 + padded
+	if len(b) < total {
+		return nil, false
+	}
+	return LayoutreturnFile4(b[:total]), true
+}
+
+func (m LayoutreturnFile4) LrfOffset() uint64 {
+	return binary.BigEndian.Uint64(m[0:8])
+}
+
+func (m LayoutreturnFile4) LrfLength() uint64 {
+	return binary.BigEndian.Uint64(m[8:16])
+}
+
+func (m LayoutreturnFile4) LrfStateid() Stateid4 {
+	return Stateid4{m: (*[stateid4Size]byte)(m[16 : 16+stateid4Size])}
+}
+
+func (m LayoutreturnFile4) LrfBodyLen() uint32 {
+	return binary.BigEndian.Uint32(m[32:36])
+}
+
+func (m LayoutreturnFile4) LrfBody() []byte {
+	n := int(binary.BigEndian.Uint32(m[32:36]))
+	return m[36 : 36+n]
+}
+
+// LayoutreturnFile4Writer writes a layoutreturn_file4:
+//
+//	lrf_offset + lrf_length + lrf_stateid + lrf_body_len + u8 lrf_body[lrf_body_len] + align(4)
+type LayoutreturnFile4Writer struct {
+	buf        []byte
+	off        int
+	lrfBodyLen uint32
+}
+
+func StartLayoutreturnFile4(buf []byte) LayoutreturnFile4Writer {
+	off := len(buf)
+	buf = append(buf, make([]byte, 36)...) // lrf_offset(8) + lrf_length(8) + lrf_stateid(16) + lrf_body_len(4)
+	return LayoutreturnFile4Writer{buf: buf, off: off}
+}
+
+func (w LayoutreturnFile4Writer) SetLrfOffset(v uint64) LayoutreturnFile4Writer {
+	binary.BigEndian.PutUint64((*[36]byte)(w.buf[w.off:])[0:8], v)
+	return w
+}
+
+func (w LayoutreturnFile4Writer) SetLrfLength(v uint64) LayoutreturnFile4Writer {
+	binary.BigEndian.PutUint64((*[36]byte)(w.buf[w.off:])[8:16], v)
+	return w
+}
+
+func (w *LayoutreturnFile4Writer) LrfStateid() Stateid4 {
+	return Stateid4{m: (*[stateid4Size]byte)(w.buf[w.off+16:])}
+}
+
+func (w LayoutreturnFile4Writer) SetLrfBody(data []byte) LayoutreturnFile4Writer {
+	n := len(data)
+	padded := (n + 3) &^ 3
+	w.buf = append(w.buf, make([]byte, padded)...)
+	copy(w.buf[len(w.buf)-padded:], data)
+	w.lrfBodyLen = uint32(n)
+	return w
+}
+
+func (w LayoutreturnFile4Writer) Finish() []byte {
+	binary.BigEndian.PutUint32((*[36]byte)(w.buf[w.off:])[32:36], w.lrfBodyLen)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// Layoutreturn4 — union on layoutreturn_type4 (external discriminant)
+// -------------------------------------------------------
+
+type Layoutreturn4 struct {
+	b    []byte
+	disc uint32
+}
+
+func readLayoutreturn4(b *[]byte, layoutreturnType4 uint32) (Layoutreturn4, bool) {
+	switch layoutreturnType4 {
+	case LAYOUTRETURN4_FILE:
+		r, ok := readLayoutreturnFile4(b)
+		if !ok {
+			return Layoutreturn4{}, false
+		}
+		return Layoutreturn4{b: []byte(r), disc: layoutreturnType4}, true
+	default:
+		return Layoutreturn4{b: (*b)[:0], disc: layoutreturnType4}, true
+	}
+}
+
+func (m Layoutreturn4) AsLayoutreturnFile4() LayoutreturnFile4 {
+	if m.disc != LAYOUTRETURN4_FILE {
+		panic("wrong union discriminant")
+	}
+	return LayoutreturnFile4(m.b)
+}
+
+// -------------------------------------------------------
+// Fs4Status — variable:
+//   fss_absent(4) + fss_type(4) + fss_source + fss_current + fss_age(4) + fss_version(12)
+// -------------------------------------------------------
+
+type Fs4Status struct {
+	data []byte
+	off1 int // byte offset within data where fss_current starts
+	off2 int // byte offset within data where fss_age starts
+}
+
+func readFs4Status(b *[]byte) (Fs4Status, bool) {
+	if len(*b) < 8 {
+		return Fs4Status{}, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[8:]
+	if _, ok := readUtf8strCs(b); !ok {
+		return Fs4Status{}, false
+	}
+	off1 := startLen - len(*b)
+	if _, ok := readUtf8strCs(b); !ok {
+		return Fs4Status{}, false
+	}
+	off2 := startLen - len(*b)
+	if len(*b) < 4 {
+		return Fs4Status{}, false
+	}
+	*b = (*b)[4:]
+	if len(*b) < 12 {
+		return Fs4Status{}, false
+	}
+	*b = (*b)[12:]
+	total := startLen - len(*b)
+	return Fs4Status{data: start[:total], off1: off1, off2: off2}, true
+}
+
+func ReadFs4Status(b []byte) (Fs4Status, bool) {
+	return readFs4Status(&b)
+}
+
+func (m Fs4Status) FssAbsent() uint32 {
+	return binary.BigEndian.Uint32(m.data[0:4])
+}
+
+func (m Fs4Status) FssType() uint32 {
+	return binary.BigEndian.Uint32(m.data[4:8])
+}
+
+func (m Fs4Status) FssSource() Utf8strCs {
+	return Utf8strCs(m.data[8:m.off1])
+}
+
+func (m Fs4Status) FssCurrent() Utf8strCs {
+	return Utf8strCs(m.data[m.off1:m.off2])
+}
+
+func (m Fs4Status) FssAge() int32 {
+	o := m.off2
+	return int32(binary.BigEndian.Uint32(m.data[o : o+4]))
+}
+
+func (m Fs4Status) FssVersion() Nfstime4 {
+	o := m.off2 + 4
+	return Nfstime4{m: (*[nfstime4Size]byte)(m.data[o : o+nfstime4Size])}
+}
+
+// Fs4StatusWriter writes a fs4_status:
+//
+//	fss_absent + fss_type + fss_source + fss_current + fss_age + fss_version
+type Fs4StatusWriter struct {
+	buf    []byte
+	header *[8]byte
+	phase  uint8
+}
+
+func StartFs4Status(buf []byte) Fs4StatusWriter {
+	buf = append(buf, make([]byte, 8)...) // fss_absent(4) + fss_type(4)
+	return Fs4StatusWriter{buf: buf, header: (*[8]byte)(buf[len(buf)-8:])}
+}
+
+func (w *Fs4StatusWriter) SetFssAbsent(v uint32) {
+	binary.BigEndian.PutUint32(w.header[0:4], v)
+}
+
+func (w *Fs4StatusWriter) SetFssType(v uint32) {
+	binary.BigEndian.PutUint32(w.header[4:8], v)
+}
+
+func (w *Fs4StatusWriter) SetFssAge(v int32) {
+	if w.phase > 2 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 2
+	w.buf = binary.BigEndian.AppendUint32(w.buf, uint32(v))
+}
+
+func (w *Fs4StatusWriter) StartFssSource() Utf8strCsWriter {
+	if w.phase > 0 {
+		panic("writer fields called out of order")
+	}
+	child := StartUtf8strCs(w.buf)
+	w.buf = nil
+	w.header = nil
+	return child
+}
+
+func (w *Fs4StatusWriter) StartFssCurrent() Utf8strCsWriter {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	child := StartUtf8strCs(w.buf)
+	w.buf = nil
+	w.header = nil
+	return child
+}
+
+func (w *Fs4StatusWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *Fs4StatusWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// ThresholdItem4 — variable:
+//   thi_layout_type(4) + thi_hintset + thi_hintlist_len(4) + u8 thi_hintlist[thi_hintlist_len] + align(4)
+// -------------------------------------------------------
+
+type ThresholdItem4 struct {
+	data []byte
+	off1 int // byte offset within data where thi_hintlist_len starts
+}
+
+func readThresholdItem4(b *[]byte) (ThresholdItem4, bool) {
+	if len(*b) < 4 {
+		return ThresholdItem4{}, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[4:]
+	if _, ok := readBitmap4(b); !ok {
+		return ThresholdItem4{}, false
+	}
+	off1 := startLen - len(*b)
+	if len(*b) < 4 {
+		return ThresholdItem4{}, false
+	}
+	c_thi_hintlist_len := int(binary.BigEndian.Uint32((*b)[:4]))
+	*b = (*b)[4:]
+	if len(*b) < c_thi_hintlist_len*1 {
+		return ThresholdItem4{}, false
+	}
+	*b = (*b)[c_thi_hintlist_len*1:]
+	{
+		off := startLen - len(*b)
+		aligned := (off + 3) &^ 3
+		if aligned > startLen {
+			return ThresholdItem4{}, false
+		}
+		*b = start[aligned:]
+	}
+	total := startLen - len(*b)
+	return ThresholdItem4{data: start[:total], off1: off1}, true
+}
+
+func ReadThresholdItem4(b []byte) (ThresholdItem4, bool) {
+	return readThresholdItem4(&b)
+}
+
+func (m ThresholdItem4) ThiLayoutType() uint32 {
+	return binary.BigEndian.Uint32(m.data[0:4])
+}
+
+func (m ThresholdItem4) ThiHintset() Bitmap4 {
+	return Bitmap4(m.data[4:m.off1])
+}
+
+func (m ThresholdItem4) ThiHintlist() []byte {
+	n := int(binary.BigEndian.Uint32(m.data[m.off1 : m.off1+4]))
+	o := m.off1 + 4
+	return m.data[o : o+n]
+}
+
+func (m ThresholdItem4) ThiHintlistLen() uint32 {
+	return binary.BigEndian.Uint32(m.data[m.off1 : m.off1+4])
+}
+
+// ThresholdItem4Writer writes a threshold_item4:
+//
+//	thi_layout_type + thi_hintset + thi_hintlist_len + u8 thi_hintlist[thi_hintlist_len] + align(4)
+type ThresholdItem4Writer struct {
+	buf               []byte
+	off               int
+	thiHintlistLen    uint32
+	thiHintlistLenOff int
+}
+
+func StartThresholdItem4(buf []byte) ThresholdItem4Writer {
+	off := len(buf)
+	buf = append(buf, make([]byte, 4)...) // thi_layout_type(4)
+	return ThresholdItem4Writer{buf: buf, off: off}
+}
+
+func (w *ThresholdItem4Writer) SetThiLayoutType(v uint32) {
+	binary.BigEndian.PutUint32(w.buf[w.off:w.off+4], v)
+}
+
+func (w *ThresholdItem4Writer) SetThiHintlist(data []byte) {
+	if w.thiHintlistLenOff == 0 {
+		w.thiHintlistLenOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	n := len(data)
+	padded := (n + 3) &^ 3
+	w.buf = append(w.buf, make([]byte, padded)...)
+	copy(w.buf[len(w.buf)-padded:], data)
+	w.thiHintlistLen = uint32(n)
+}
+
+func (w *ThresholdItem4Writer) StartThiHintset() Bitmap4Writer {
+	child := StartBitmap4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *ThresholdItem4Writer) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *ThresholdItem4Writer) Finish() []byte {
+	if w.thiHintlistLenOff == 0 {
+		w.thiHintlistLenOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0) // thi_hintlist_len = 0
+	} else {
+		binary.BigEndian.PutUint32(w.buf[w.thiHintlistLenOff:w.thiHintlistLenOff+4], w.thiHintlistLen)
+	}
+	return w.buf
+}
+
+// -------------------------------------------------------
+// Mdsthreshold4 — variable:
+//   mth_hints_count(4) + threshold_item4 mth_hints[mth_hints_count]
+// -------------------------------------------------------
+
+type Mdsthreshold4 []byte
+
+func readMdsthreshold4(b *[]byte) (Mdsthreshold4, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	c_mth_hints_count := int(binary.BigEndian.Uint32((*b)[0:4]))
+	*b = (*b)[4:]
+	for i := 0; i < c_mth_hints_count; i++ {
+		if _, ok := readThresholdItem4(b); !ok {
+			return nil, false
+		}
+	}
+	total := startLen - len(*b)
+	return Mdsthreshold4(start[:total]), true
+}
+
+func ReadMdsthreshold4(b []byte) (Mdsthreshold4, bool) {
+	if len(b) < 4 {
+		return nil, false
+	}
+	return Mdsthreshold4(b), true
+}
+
+func (m Mdsthreshold4) MthHintsCount() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m Mdsthreshold4) MthHints() ThresholdItem4Iter {
+	mth_hints_count := int(binary.BigEndian.Uint32(m[0:4]))
+	return ThresholdItem4Iter{
+		b:     []byte(m[4:]),
+		count: mth_hints_count,
+	}
+}
+
+// ThresholdItem4Iter iterates over variable-size ThresholdItem4 entries.
+type ThresholdItem4Iter struct {
+	b     []byte
+	count int
+	i     int
+	cur   ThresholdItem4
+}
+
+func (it *ThresholdItem4Iter) Next() bool {
+	if it.i >= it.count {
+		return false
+	}
+	var ok bool
+	it.cur, ok = readThresholdItem4(&it.b)
+	if !ok {
+		return false
+	}
+	it.i++
+	return true
+}
+
+func (it *ThresholdItem4Iter) MthHint() ThresholdItem4 {
+	return it.cur
+}
+
+// Mdsthreshold4Writer writes a mdsthreshold4:
+//
+//	mth_hints_count + threshold_item4 mth_hints[mth_hints_count]
+type Mdsthreshold4Writer struct {
+	buf           []byte
+	off           int
+	mthHintsCount uint32
+}
+
+func StartMdsthreshold4(buf []byte) Mdsthreshold4Writer {
+	off := len(buf)
+	buf = binary.BigEndian.AppendUint32(buf, 0) // mth_hints_count placeholder
+	return Mdsthreshold4Writer{buf: buf, off: off}
+}
+
+func (w *Mdsthreshold4Writer) AppendMthHints() ThresholdItem4Writer {
+	_ = w.buf[:1]
+	w.mthHintsCount++
+	child := StartThresholdItem4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *Mdsthreshold4Writer) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *Mdsthreshold4Writer) Finish() []byte {
+	binary.BigEndian.PutUint32(w.buf[w.off:w.off+4], w.mthHintsCount)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// RetentionGet4 — variable:
+//   rg_duration(8) + rg_begin_time_count(4) + nfstime4 rg_begin_time[rg_begin_time_count]
+// -------------------------------------------------------
+
+type RetentionGet4 []byte
+
+func ReadRetentionGet4(b []byte) (RetentionGet4, bool) {
+	if len(b) < 12 {
+		return nil, false
+	}
+	count := int(binary.BigEndian.Uint32(b[8:12]))
+	total := 12 + count*nfstime4Size
+	if len(b) < total {
+		return nil, false
+	}
+	return RetentionGet4(b[:total]), true
+}
+
+func (m RetentionGet4) RgDuration() uint64 {
+	return binary.BigEndian.Uint64(m[0:8])
+}
+
+func (m RetentionGet4) RgBeginTimeCount() uint32 {
+	return binary.BigEndian.Uint32(m[8:12])
+}
+
+func (m RetentionGet4) RgBeginTime(i int) Nfstime4 {
+	off := 12 + i*nfstime4Size
+	return Nfstime4{m: (*[nfstime4Size]byte)(m[off : off+nfstime4Size])}
+}
+
+// RetentionGet4Writer writes a retention_get4:
+//
+//	rg_duration + rg_begin_time_count + nfstime4 rg_begin_time[rg_begin_time_count]
+type RetentionGet4Writer struct {
+	buf              []byte
+	off              int
+	rgBeginTimeCount uint32
+}
+
+func StartRetentionGet4(buf []byte) RetentionGet4Writer {
+	off := len(buf)
+	buf = append(buf, make([]byte, 12)...) // rg_duration(8) + rg_begin_time_count(4)
+	return RetentionGet4Writer{buf: buf, off: off}
+}
+
+func (w *RetentionGet4Writer) SetRgDuration(v uint64) {
+	binary.BigEndian.PutUint64((*[12]byte)(w.buf[w.off:])[0:8], v)
+}
+
+func (w *RetentionGet4Writer) AppendRgBeginTime() Nfstime4 {
+	w.buf = append(w.buf, make([]byte, nfstime4Size)...)
+	w.rgBeginTimeCount++
+	return Nfstime4{m: (*[nfstime4Size]byte)(w.buf[len(w.buf)-nfstime4Size:])}
+}
+
+func (w *RetentionGet4Writer) Finish() []byte {
+	binary.BigEndian.PutUint32((*[12]byte)(w.buf[w.off:])[8:12], w.rgBeginTimeCount)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// RetentionSet4 — variable:
+//   rs_enable(4) + rs_duration_count(4) + beu64 rs_duration[rs_duration_count]
+// -------------------------------------------------------
+
+type RetentionSet4 []byte
+
+func ReadRetentionSet4(b []byte) (RetentionSet4, bool) {
+	if len(b) < 8 {
+		return nil, false
+	}
+	count := int(binary.BigEndian.Uint32(b[4:8]))
+	total := 8 + count*8
+	if len(b) < total {
+		return nil, false
+	}
+	return RetentionSet4(b[:total]), true
+}
+
+func (m RetentionSet4) RsEnable() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m RetentionSet4) RsDurationCount() uint32 {
+	return binary.BigEndian.Uint32(m[4:8])
+}
+
+func (m RetentionSet4) RsDuration(i int) uint64 {
+	off := 8 + i*8
+	return binary.BigEndian.Uint64(m[off : off+8])
+}
+
+// RetentionSet4Writer writes a retention_set4:
+//
+//	rs_enable + rs_duration_count + beu64 rs_duration[rs_duration_count]
+type RetentionSet4Writer struct {
+	buf             []byte
+	off             int
+	rsDurationCount uint32
+}
+
+func StartRetentionSet4(buf []byte) RetentionSet4Writer {
+	off := len(buf)
+	buf = append(buf, make([]byte, 8)...) // rs_enable(4) + rs_duration_count(4)
+	return RetentionSet4Writer{buf: buf, off: off}
+}
+
+func (w *RetentionSet4Writer) SetRsEnable(v uint32) {
+	binary.BigEndian.PutUint32((*[8]byte)(w.buf[w.off:])[0:4], v)
+}
+
+func (w *RetentionSet4Writer) AppendRsDuration(v uint64) {
+	w.buf = binary.BigEndian.AppendUint64(w.buf, v)
+	w.rsDurationCount++
+}
+
+func (w *RetentionSet4Writer) Finish() []byte {
+	binary.BigEndian.PutUint32((*[8]byte)(w.buf[w.off:])[4:8], w.rsDurationCount)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// Netloc4 — union on netloc_type4 (external discriminant)
+// -------------------------------------------------------
+
+type Netloc4 struct {
+	b    []byte
+	disc uint32
+}
+
+func readNetloc4(b *[]byte, netlocType4 uint32) (Netloc4, bool) {
+	switch netlocType4 {
+	case NL4_NAME:
+		r, ok := readUtf8strCis(b)
+		if !ok {
+			return Netloc4{}, false
+		}
+		return Netloc4{b: []byte(r), disc: netlocType4}, true
+	case NL4_URL:
+		r, ok := readUtf8strCis(b)
+		if !ok {
+			return Netloc4{}, false
+		}
+		return Netloc4{b: []byte(r), disc: netlocType4}, true
+	case NL4_NETADDR:
+		r, ok := readNetaddr4(b)
+		if !ok {
+			return Netloc4{}, false
+		}
+		return Netloc4{b: r.data, disc: netlocType4}, true
+	default:
+		return Netloc4{}, false
+	}
+}
+
+func (m Netloc4) AsName() Utf8strCis {
+	if m.disc != NL4_NAME {
+		panic("wrong union discriminant")
+	}
+	return Utf8strCis(m.b)
+}
+
+func (m Netloc4) AsUrl() Utf8strCis {
+	if m.disc != NL4_URL {
+		panic("wrong union discriminant")
+	}
+	return Utf8strCis(m.b)
+}
+
+func (m Netloc4) AsNetaddr4() Netaddr4 {
+	if m.disc != NL4_NETADDR {
+		panic("wrong union discriminant")
+	}
+	v, _ := ReadNetaddr4(m.b)
+	return v
+}
+
+// -------------------------------------------------------
+// LabelformatSpec4 — fixed 8 bytes: lfs_lfs(4, beu32) + lfs_pi(4, beu32)
+// -------------------------------------------------------
+
+type LabelformatSpec4 struct {
+	m *[labelformatSpec4Size]byte
+}
+
+const labelformatSpec4Size = 8
+
+func ReadLabelformatSpec4(b []byte) (LabelformatSpec4, bool) {
+	if len(b) < labelformatSpec4Size {
+		return LabelformatSpec4{}, false
+	}
+	return LabelformatSpec4{m: (*[labelformatSpec4Size]byte)(b)}, true
+}
+
+func StartLabelformatSpec4(buf []byte) ([]byte, LabelformatSpec4) {
+	buf = append(buf, make([]byte, labelformatSpec4Size)...)
+	return buf, LabelformatSpec4{m: (*[labelformatSpec4Size]byte)(buf[len(buf)-labelformatSpec4Size:])}
+}
+
+func (m LabelformatSpec4) LfsLfs() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m LabelformatSpec4) LfsPi() uint32 {
+	return binary.BigEndian.Uint32(m.m[4:8])
+}
+
+func (m LabelformatSpec4) SetLfsLfs(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+func (m LabelformatSpec4) SetLfsPi(v uint32) {
+	binary.BigEndian.PutUint32(m.m[4:8], v)
+}
+
+// -------------------------------------------------------
+// SecLabel4 — variable:
+//   slai_lfs(8) + slai_data_len(4) + u8 slai_data[slai_data_len] + align(4)
+// -------------------------------------------------------
+
+type SecLabel4 []byte
+
+func ReadSecLabel4(b []byte) (SecLabel4, bool) {
+	if len(b) < 12 {
+		return nil, false
+	}
+	count := int(binary.BigEndian.Uint32(b[8:12]))
+	padded := (count + 3) &^ 3
+	total := 12 + padded
+	if len(b) < total {
+		return nil, false
+	}
+	return SecLabel4(b[:total]), true
+}
+
+func (m SecLabel4) SlaiLfs() LabelformatSpec4 {
+	return LabelformatSpec4{m: (*[labelformatSpec4Size]byte)(m[0 : 0+labelformatSpec4Size])}
+}
+
+func (m SecLabel4) SlaiDataLen() uint32 {
+	return binary.BigEndian.Uint32(m[8:12])
+}
+
+func (m SecLabel4) SlaiData() []byte {
+	n := int(binary.BigEndian.Uint32(m[8:12]))
+	return m[12 : 12+n]
+}
+
+// SecLabel4Writer writes a sec_label4:
+//
+//	slai_lfs + slai_data_len + u8 slai_data[slai_data_len] + align(4)
+type SecLabel4Writer struct {
+	buf         []byte
+	off         int
+	slaiDataLen uint32
+}
+
+func StartSecLabel4(buf []byte) SecLabel4Writer {
+	off := len(buf)
+	buf = append(buf, make([]byte, 12)...) // slai_lfs(8) + slai_data_len(4)
+	return SecLabel4Writer{buf: buf, off: off}
+}
+
+func (w *SecLabel4Writer) SlaiLfs() LabelformatSpec4 {
+	return LabelformatSpec4{m: (*[labelformatSpec4Size]byte)(w.buf[w.off:])}
+}
+
+func (w SecLabel4Writer) SetSlaiData(data []byte) SecLabel4Writer {
+	n := len(data)
+	padded := (n + 3) &^ 3
+	w.buf = append(w.buf, make([]byte, padded)...)
+	copy(w.buf[len(w.buf)-padded:], data)
+	w.slaiDataLen = uint32(n)
+	return w
+}
+
+func (w SecLabel4Writer) Finish() []byte {
+	binary.BigEndian.PutUint32((*[12]byte)(w.buf[w.off:])[8:12], w.slaiDataLen)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// CopyFromAuthPriv — variable:
+//   cfap_shared_secret + cfap_destination_type(4) + netloc4 cfap_destination + cfap_username
+// -------------------------------------------------------
+
+type CopyFromAuthPriv struct {
+	data []byte
+	off1 int // byte offset within data where cfap_destination_type starts
+	off2 int // byte offset within data where cfap_username starts
+}
+
+func readCopyFromAuthPriv(b *[]byte) (CopyFromAuthPriv, bool) {
+	start := *b
+	startLen := len(start)
+	if _, ok := readSecret4(b); !ok {
+		return CopyFromAuthPriv{}, false
+	}
+	off1 := startLen - len(*b)
+	if len(*b) < 4 {
+		return CopyFromAuthPriv{}, false
+	}
+	c_cfap_destination_type := binary.BigEndian.Uint32((*b)[:4])
+	*b = (*b)[4:]
+	if _, ok := readNetloc4(b, c_cfap_destination_type); !ok {
+		return CopyFromAuthPriv{}, false
+	}
+	off2 := startLen - len(*b)
+	if _, ok := readUtf8strMixed(b); !ok {
+		return CopyFromAuthPriv{}, false
+	}
+	total := startLen - len(*b)
+	return CopyFromAuthPriv{data: start[:total], off1: off1, off2: off2}, true
+}
+
+func ReadCopyFromAuthPriv(b []byte) (CopyFromAuthPriv, bool) {
+	return readCopyFromAuthPriv(&b)
+}
+
+func (m CopyFromAuthPriv) CfapSharedSecret() Secret4 {
+	return Secret4(m.data[0:m.off1])
+}
+
+func (m CopyFromAuthPriv) CfapDestinationType() uint32 {
+	o := m.off1
+	return binary.BigEndian.Uint32(m.data[o : o+4])
+}
+
+func (m CopyFromAuthPriv) CfapDestination() Netloc4 {
+	return Netloc4{b: m.data[m.off1+4 : m.off2], disc: binary.BigEndian.Uint32(m.data[m.off1 : m.off1+4])}
+}
+
+func (m CopyFromAuthPriv) CfapUsername() Utf8strMixed {
+	return Utf8strMixed(m.data[m.off2:])
+}
+
+// CopyFromAuthPrivWriter writes a copy_from_auth_priv:
+//
+//	cfap_shared_secret + cfap_destination_type + cfap_destination(cfap_destination_type) + cfap_username
+type CopyFromAuthPrivWriter struct {
+	buf   []byte
+	off   int
+	phase uint8
+}
+
+func StartCopyFromAuthPriv(buf []byte) CopyFromAuthPrivWriter {
+	off := len(buf)
+	return CopyFromAuthPrivWriter{buf: buf, off: off}
+}
+
+func (w *CopyFromAuthPrivWriter) SetCfapDestination_Name() Utf8strCisWriter {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	w.buf = binary.BigEndian.AppendUint32(w.buf, NL4_NAME)
+	child := StartUtf8strCis(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *CopyFromAuthPrivWriter) SetCfapDestination_Url() Utf8strCisWriter {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	w.buf = binary.BigEndian.AppendUint32(w.buf, NL4_URL)
+	child := StartUtf8strCis(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *CopyFromAuthPrivWriter) SetCfapDestination_Netaddr() Netaddr4Writer {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	w.buf = binary.BigEndian.AppendUint32(w.buf, NL4_NETADDR)
+	child := StartNetaddr4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *CopyFromAuthPrivWriter) StartCfapSharedSecret() Secret4Writer {
+	if w.phase > 0 {
+		panic("writer fields called out of order")
+	}
+	child := StartSecret4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *CopyFromAuthPrivWriter) StartCfapUsername() Utf8strMixedWriter {
+	if w.phase > 2 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 2
+	child := StartUtf8strMixed(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *CopyFromAuthPrivWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *CopyFromAuthPrivWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// Netloc4Entry — variable: disc(4) + netloc4 value
+// -------------------------------------------------------
+
+type Netloc4Entry []byte
+
+func readNetloc4Entry(b *[]byte) (Netloc4Entry, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[4:]
+	if _, ok := readNetloc4(b, binary.BigEndian.Uint32(start[0:4])); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return Netloc4Entry(start[:total]), true
+}
+
+func ReadNetloc4Entry(b []byte) (Netloc4Entry, bool) {
+	return readNetloc4Entry(&b)
+}
+
+func (m Netloc4Entry) Disc() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m Netloc4Entry) Value() Netloc4 {
+	return Netloc4{b: m[4:], disc: binary.BigEndian.Uint32(m[0:4])}
+}
+
+// Netloc4EntryWriter writes a netloc4_entry:
+//
+//	disc + value(disc)
+type Netloc4EntryWriter struct {
+	buf []byte
+	off int
+}
+
+func StartNetloc4Entry(buf []byte) Netloc4EntryWriter {
+	return Netloc4EntryWriter{buf: buf, off: len(buf)}
+}
+
+func (w *Netloc4EntryWriter) SetValue_Name() Utf8strCisWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, NL4_NAME)
+	child := StartUtf8strCis(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *Netloc4EntryWriter) SetValue_Url() Utf8strCisWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, NL4_URL)
+	child := StartUtf8strCis(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *Netloc4EntryWriter) SetValue_Netaddr() Netaddr4Writer {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, NL4_NETADDR)
+	child := StartNetaddr4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *Netloc4EntryWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *Netloc4EntryWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// CopyToAuthPriv — variable:
+//   ctap_shared_secret + ctap_source_count(4) + netloc4_entry ctap_source[ctap_source_count] + ctap_username
+// -------------------------------------------------------
+
+type CopyToAuthPriv struct {
+	data []byte
+	off1 int // byte offset within data where ctap_source_count starts
+	off2 int // byte offset within data where ctap_username starts
+}
+
+func readCopyToAuthPriv(b *[]byte) (CopyToAuthPriv, bool) {
+	start := *b
+	startLen := len(start)
+	if _, ok := readSecret4(b); !ok {
+		return CopyToAuthPriv{}, false
+	}
+	off1 := startLen - len(*b)
+	if len(*b) < 4 {
+		return CopyToAuthPriv{}, false
+	}
+	c_ctap_source_count := int(binary.BigEndian.Uint32((*b)[:4]))
+	*b = (*b)[4:]
+	for i := 0; i < c_ctap_source_count; i++ {
+		if _, ok := readNetloc4Entry(b); !ok {
+			return CopyToAuthPriv{}, false
+		}
+	}
+	off2 := startLen - len(*b)
+	if _, ok := readUtf8strMixed(b); !ok {
+		return CopyToAuthPriv{}, false
+	}
+	total := startLen - len(*b)
+	return CopyToAuthPriv{data: start[:total], off1: off1, off2: off2}, true
+}
+
+func ReadCopyToAuthPriv(b []byte) (CopyToAuthPriv, bool) {
+	return readCopyToAuthPriv(&b)
+}
+
+func (m CopyToAuthPriv) CtapSharedSecret() Secret4 {
+	return Secret4(m.data[0:m.off1])
+}
+
+func (m CopyToAuthPriv) CtapSource() Netloc4EntryIter {
+	ctap_source_count := int(binary.BigEndian.Uint32(m.data[m.off1 : m.off1+4]))
+	return Netloc4EntryIter{b: m.data[m.off1+4:], count: ctap_source_count}
+}
+
+func (m CopyToAuthPriv) CtapSourceCount() uint32 {
+	return binary.BigEndian.Uint32(m.data[m.off1 : m.off1+4])
+}
+
+func (m CopyToAuthPriv) CtapUsername() Utf8strMixed {
+	return Utf8strMixed(m.data[m.off2:])
+}
+
+// Netloc4EntryIter iterates over variable-size Netloc4Entry entries.
+type Netloc4EntryIter struct {
+	b     []byte
+	count int
+	i     int
+	cur   Netloc4Entry
+}
+
+func (it *Netloc4EntryIter) Next() bool {
+	if it.i >= it.count {
+		return false
+	}
+	var ok bool
+	it.cur, ok = readNetloc4Entry(&it.b)
+	if !ok {
+		return false
+	}
+	it.i++
+	return true
+}
+
+func (it *Netloc4EntryIter) CtapSource() Netloc4Entry {
+	return it.cur
+}
+
+// CopyToAuthPrivWriter writes a copy_to_auth_priv:
+//
+//	ctap_shared_secret + ctap_source_count + netloc4_entry ctap_source[ctap_source_count] + ctap_username
+type CopyToAuthPrivWriter struct {
+	buf                []byte
+	off                int
+	ctapSourceCount    uint32
+	ctapSourceCountOff int
+	phase              uint8
+}
+
+func StartCopyToAuthPriv(buf []byte) CopyToAuthPrivWriter {
+	off := len(buf)
+	return CopyToAuthPrivWriter{buf: buf, off: off}
+}
+
+func (w *CopyToAuthPrivWriter) AppendCtapSource_Name() Utf8strCisWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.ctapSourceCountOff == 0 {
+		w.ctapSourceCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = binary.BigEndian.AppendUint32(w.buf, NL4_NAME)
+	w.ctapSourceCount++
+	child := StartUtf8strCis(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *CopyToAuthPrivWriter) AppendCtapSource_Url() Utf8strCisWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.ctapSourceCountOff == 0 {
+		w.ctapSourceCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = binary.BigEndian.AppendUint32(w.buf, NL4_URL)
+	w.ctapSourceCount++
+	child := StartUtf8strCis(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *CopyToAuthPrivWriter) AppendCtapSource_Netaddr() Netaddr4Writer {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.ctapSourceCountOff == 0 {
+		w.ctapSourceCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = binary.BigEndian.AppendUint32(w.buf, NL4_NETADDR)
+	w.ctapSourceCount++
+	child := StartNetaddr4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *CopyToAuthPrivWriter) StartCtapSharedSecret() Secret4Writer {
+	if w.phase > 0 {
+		panic("writer fields called out of order")
+	}
+	child := StartSecret4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *CopyToAuthPrivWriter) StartCtapUsername() Utf8strMixedWriter {
+	if w.phase > 2 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 2
+	child := StartUtf8strMixed(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *CopyToAuthPrivWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *CopyToAuthPrivWriter) Finish() []byte {
+	if w.ctapSourceCountOff == 0 {
+		w.ctapSourceCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0) // ctap_source_count = 0
+	} else {
+		binary.BigEndian.PutUint32(w.buf[w.ctapSourceCountOff:w.ctapSourceCountOff+4], w.ctapSourceCount)
+	}
+	return w.buf
+}
+
+// -------------------------------------------------------
+// CopyConfirmAuthPriv — variable:
+//   ccap_shared_secret_mic_len(4) + u8 ccap_shared_secret_mic[ccap_shared_secret_mic_len] + align(4) + ccap_username
+// -------------------------------------------------------
+
+type CopyConfirmAuthPriv struct {
+	data []byte
+	off1 int // byte offset within data where ccap_username starts
+}
+
+func readCopyConfirmAuthPriv(b *[]byte) (CopyConfirmAuthPriv, bool) {
+	if len(*b) < 4 {
+		return CopyConfirmAuthPriv{}, false
+	}
+	start := *b
+	startLen := len(start)
+	c_ccap_shared_secret_mic_len := int(binary.BigEndian.Uint32((*b)[0:4]))
+	*b = (*b)[4:]
+	if len(*b) < c_ccap_shared_secret_mic_len*1 {
+		return CopyConfirmAuthPriv{}, false
+	}
+	*b = (*b)[c_ccap_shared_secret_mic_len*1:]
+	off1 := startLen - len(*b)
+	{
+		off := startLen - len(*b)
+		aligned := (off + 3) &^ 3
+		if aligned > startLen {
+			return CopyConfirmAuthPriv{}, false
+		}
+		*b = start[aligned:]
+	}
+	if _, ok := readUtf8strMixed(b); !ok {
+		return CopyConfirmAuthPriv{}, false
+	}
+	total := startLen - len(*b)
+	return CopyConfirmAuthPriv{data: start[:total], off1: off1}, true
+}
+
+func ReadCopyConfirmAuthPriv(b []byte) (CopyConfirmAuthPriv, bool) {
+	return readCopyConfirmAuthPriv(&b)
+}
+
+func (m CopyConfirmAuthPriv) CcapSharedSecretMic() []byte {
+	n := int(binary.BigEndian.Uint32(m.data[0:4]))
+	o := 4
+	return m.data[o : o+n]
+}
+
+func (m CopyConfirmAuthPriv) CcapSharedSecretMicLen() uint32 {
+	return binary.BigEndian.Uint32(m.data[0:4])
+}
+
+func (m CopyConfirmAuthPriv) CcapUsername() Utf8strMixed {
+	return Utf8strMixed(m.data[m.off1:])
+}
+
+// CopyConfirmAuthPrivWriter writes a copy_confirm_auth_priv:
+//
+//	ccap_shared_secret_mic_len + u8 ccap_shared_secret_mic[ccap_shared_secret_mic_len] + align(4) + ccap_username
+type CopyConfirmAuthPrivWriter struct {
+	buf []byte
+	off int
+}
+
+func StartCopyConfirmAuthPriv(buf []byte) CopyConfirmAuthPrivWriter {
+	off := len(buf)
+	return CopyConfirmAuthPrivWriter{buf: buf, off: off}
+}
+
+func (w CopyConfirmAuthPrivWriter) SetCcapSharedSecretMic(data []byte) CopyConfirmAuthPrivWriter {
+	n := len(data)
+	padded := (n + 3) &^ 3
+	total := 4 + padded
+	w.buf = append(w.buf, make([]byte, total)...)
+	binary.BigEndian.PutUint32(w.buf[w.off:w.off+4], uint32(n))
+	copy(w.buf[w.off+4:], data)
+	return w
+}
+
+func (w *CopyConfirmAuthPrivWriter) StartCcapUsername() Utf8strMixedWriter {
+	child := StartUtf8strMixed(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *CopyConfirmAuthPrivWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *CopyConfirmAuthPrivWriter) Finish() []byte {
+	return w.buf
+}
+
+// -------------------------------------------------------
+// AppDataBlock4 — variable:
+//   adb_offset(8) + adb_block_size(8) + adb_block_count(8) + adb_reloff_blocknum(8) + adb_block_num(4) + adb_reloff_pattern(8) + adb_pattern_len(4) + u8 adb_pattern[adb_pattern_len] + align(4)
+// -------------------------------------------------------
+
+type AppDataBlock4 []byte
+
+func readAppDataBlock4(b *[]byte) (AppDataBlock4, bool) {
+	if len(*b) < 48 {
+		return nil, false
+	}
+	n := int(binary.BigEndian.Uint32((*b)[44:48]))
+	padded := (n + 3) &^ 3
+	total := 48 + padded
+	if len(*b) < total {
+		return nil, false
+	}
+	result := AppDataBlock4((*b)[:total])
+	*b = (*b)[total:]
+	return result, true
+}
+
+func ReadAppDataBlock4(b []byte) (AppDataBlock4, bool) {
+	if len(b) < 48 {
+		return nil, false
+	}
+	count := int(binary.BigEndian.Uint32(b[44:48]))
+	padded := (count + 3) &^ 3
+	total := 48 + padded
+	if len(b) < total {
+		return nil, false
+	}
+	return AppDataBlock4(b[:total]), true
+}
+
+func (m AppDataBlock4) AdbOffset() uint64 {
+	return binary.BigEndian.Uint64(m[0:8])
+}
+
+func (m AppDataBlock4) AdbBlockSize() uint64 {
+	return binary.BigEndian.Uint64(m[8:16])
+}
+
+func (m AppDataBlock4) AdbBlockCount() uint64 {
+	return binary.BigEndian.Uint64(m[16:24])
+}
+
+func (m AppDataBlock4) AdbReloffBlocknum() uint64 {
+	return binary.BigEndian.Uint64(m[24:32])
+}
+
+func (m AppDataBlock4) AdbBlockNum() uint32 {
+	return binary.BigEndian.Uint32(m[32:36])
+}
+
+func (m AppDataBlock4) AdbReloffPattern() uint64 {
+	return binary.BigEndian.Uint64(m[36:44])
+}
+
+func (m AppDataBlock4) AdbPatternLen() uint32 {
+	return binary.BigEndian.Uint32(m[44:48])
+}
+
+func (m AppDataBlock4) AdbPattern() []byte {
+	n := int(binary.BigEndian.Uint32(m[44:48]))
+	return m[48 : 48+n]
+}
+
+// AppDataBlock4Writer writes a app_data_block4:
+//
+//	adb_offset + adb_block_size + adb_block_count + adb_reloff_blocknum + adb_block_num + adb_reloff_pattern + adb_pattern_len + u8 adb_pattern[adb_pattern_len] + align(4)
+type AppDataBlock4Writer struct {
+	buf           []byte
+	off           int
+	adbPatternLen uint32
+}
+
+func StartAppDataBlock4(buf []byte) AppDataBlock4Writer {
+	off := len(buf)
+	buf = append(buf, make([]byte, 48)...) // adb_offset(8) + adb_block_size(8) + adb_block_count(8) + adb_reloff_blocknum(8) + adb_block_num(4) + adb_reloff_pattern(8) + adb_pattern_len(4)
+	return AppDataBlock4Writer{buf: buf, off: off}
+}
+
+func (w AppDataBlock4Writer) SetAdbOffset(v uint64) AppDataBlock4Writer {
+	binary.BigEndian.PutUint64((*[48]byte)(w.buf[w.off:])[0:8], v)
+	return w
+}
+
+func (w AppDataBlock4Writer) SetAdbBlockSize(v uint64) AppDataBlock4Writer {
+	binary.BigEndian.PutUint64((*[48]byte)(w.buf[w.off:])[8:16], v)
+	return w
+}
+
+func (w AppDataBlock4Writer) SetAdbBlockCount(v uint64) AppDataBlock4Writer {
+	binary.BigEndian.PutUint64((*[48]byte)(w.buf[w.off:])[16:24], v)
+	return w
+}
+
+func (w AppDataBlock4Writer) SetAdbReloffBlocknum(v uint64) AppDataBlock4Writer {
+	binary.BigEndian.PutUint64((*[48]byte)(w.buf[w.off:])[24:32], v)
+	return w
+}
+
+func (w AppDataBlock4Writer) SetAdbBlockNum(v uint32) AppDataBlock4Writer {
+	binary.BigEndian.PutUint32((*[48]byte)(w.buf[w.off:])[32:36], v)
+	return w
+}
+
+func (w AppDataBlock4Writer) SetAdbReloffPattern(v uint64) AppDataBlock4Writer {
+	binary.BigEndian.PutUint64((*[48]byte)(w.buf[w.off:])[36:44], v)
+	return w
+}
+
+func (w AppDataBlock4Writer) SetAdbPattern(data []byte) AppDataBlock4Writer {
+	n := len(data)
+	padded := (n + 3) &^ 3
+	w.buf = append(w.buf, make([]byte, padded)...)
+	copy(w.buf[len(w.buf)-padded:], data)
+	w.adbPatternLen = uint32(n)
+	return w
+}
+
+func (w AppDataBlock4Writer) Finish() []byte {
+	binary.BigEndian.PutUint32((*[48]byte)(w.buf[w.off:])[44:48], w.adbPatternLen)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// Data4 — variable:
+//   d_offset(8) + d_data_len(4) + u8 d_data[d_data_len] + align(4)
+// -------------------------------------------------------
+
+type Data4 []byte
+
+func readData4(b *[]byte) (Data4, bool) {
+	if len(*b) < 12 {
+		return nil, false
+	}
+	n := int(binary.BigEndian.Uint32((*b)[8:12]))
+	padded := (n + 3) &^ 3
+	total := 12 + padded
+	if len(*b) < total {
+		return nil, false
+	}
+	result := Data4((*b)[:total])
+	*b = (*b)[total:]
+	return result, true
+}
+
+func ReadData4(b []byte) (Data4, bool) {
+	if len(b) < 12 {
+		return nil, false
+	}
+	count := int(binary.BigEndian.Uint32(b[8:12]))
+	padded := (count + 3) &^ 3
+	total := 12 + padded
+	if len(b) < total {
+		return nil, false
+	}
+	return Data4(b[:total]), true
+}
+
+func (m Data4) DOffset() uint64 {
+	return binary.BigEndian.Uint64(m[0:8])
+}
+
+func (m Data4) DDataLen() uint32 {
+	return binary.BigEndian.Uint32(m[8:12])
+}
+
+func (m Data4) DData() []byte {
+	n := int(binary.BigEndian.Uint32(m[8:12]))
+	return m[12 : 12+n]
+}
+
+// Data4Writer writes a data4:
+//
+//	d_offset + d_data_len + u8 d_data[d_data_len] + align(4)
+type Data4Writer struct {
+	buf      []byte
+	off      int
+	dDataLen uint32
+}
+
+func StartData4(buf []byte) Data4Writer {
+	off := len(buf)
+	buf = append(buf, make([]byte, 12)...) // d_offset(8) + d_data_len(4)
+	return Data4Writer{buf: buf, off: off}
+}
+
+func (w Data4Writer) SetDOffset(v uint64) Data4Writer {
+	binary.BigEndian.PutUint64((*[12]byte)(w.buf[w.off:])[0:8], v)
+	return w
+}
+
+func (w Data4Writer) SetDData(data []byte) Data4Writer {
+	n := len(data)
+	padded := (n + 3) &^ 3
+	w.buf = append(w.buf, make([]byte, padded)...)
+	copy(w.buf[len(w.buf)-padded:], data)
+	w.dDataLen = uint32(n)
+	return w
+}
+
+func (w Data4Writer) Finish() []byte {
+	binary.BigEndian.PutUint32((*[12]byte)(w.buf[w.off:])[8:12], w.dDataLen)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// DataInfo4 — fixed 16 bytes: di_offset(8, beu64) + di_length(8, beu64)
+// -------------------------------------------------------
+
+type DataInfo4 struct {
+	m *[dataInfo4Size]byte
+}
+
+const dataInfo4Size = 16
+
+func readDataInfo4(b *[]byte) (DataInfo4, bool) {
+	if len(*b) < dataInfo4Size {
+		return DataInfo4{}, false
+	}
+	result := DataInfo4{m: (*[dataInfo4Size]byte)(*b)}
+	*b = (*b)[dataInfo4Size:]
+	return result, true
+}
+
+func ReadDataInfo4(b []byte) (DataInfo4, bool) {
+	return readDataInfo4(&b)
+}
+
+func StartDataInfo4(buf []byte) ([]byte, DataInfo4) {
+	buf = append(buf, make([]byte, dataInfo4Size)...)
+	return buf, DataInfo4{m: (*[dataInfo4Size]byte)(buf[len(buf)-dataInfo4Size:])}
+}
+
+func (m DataInfo4) DiOffset() uint64 {
+	return binary.BigEndian.Uint64(m.m[0:8])
+}
+
+func (m DataInfo4) DiLength() uint64 {
+	return binary.BigEndian.Uint64(m.m[8:16])
+}
+
+func (m DataInfo4) SetDiOffset(v uint64) {
+	binary.BigEndian.PutUint64(m.m[0:8], v)
+}
+
+func (m DataInfo4) SetDiLength(v uint64) {
+	binary.BigEndian.PutUint64(m.m[8:16], v)
+}
+
+// -------------------------------------------------------
+// WriteResponse4 — variable:
+//   wr_callback_id_count(4) + stateid4 wr_callback_id[wr_callback_id_count] + wr_count(8) + wr_committed(4) + wr_writeverf(8)
+// -------------------------------------------------------
+
+type WriteResponse4 struct {
+	data []byte
+	off1 int // byte offset within data where wr_count starts
+}
+
+func readWriteResponse4(b *[]byte) (WriteResponse4, bool) {
+	if len(*b) < 4 {
+		return WriteResponse4{}, false
+	}
+	start := *b
+	startLen := len(start)
+	c_wr_callback_id_count := int(binary.BigEndian.Uint32((*b)[0:4]))
+	*b = (*b)[4:]
+	if len(*b) < c_wr_callback_id_count*16 {
+		return WriteResponse4{}, false
+	}
+	*b = (*b)[c_wr_callback_id_count*16:]
+	off1 := startLen - len(*b)
+	if len(*b) < 8 {
+		return WriteResponse4{}, false
+	}
+	*b = (*b)[8:]
+	if len(*b) < 4 {
+		return WriteResponse4{}, false
+	}
+	*b = (*b)[4:]
+	if len(*b) < 8 {
+		return WriteResponse4{}, false
+	}
+	*b = (*b)[8:]
+	total := startLen - len(*b)
+	return WriteResponse4{data: start[:total], off1: off1}, true
+}
+
+func ReadWriteResponse4(b []byte) (WriteResponse4, bool) {
+	return readWriteResponse4(&b)
+}
+
+func (m WriteResponse4) WrCallbackId(i int) Stateid4 {
+	off := 4 + i*stateid4Size
+	return Stateid4{m: (*[stateid4Size]byte)(m.data[off : off+stateid4Size])}
+}
+
+func (m WriteResponse4) WrCallbackIdCount() uint32 {
+	return binary.BigEndian.Uint32(m.data[0:4])
+}
+
+func (m WriteResponse4) WrCount() uint64 {
+	o := m.off1
+	return binary.BigEndian.Uint64(m.data[o : o+8])
+}
+
+func (m WriteResponse4) WrCommitted() uint32 {
+	o := m.off1 + 8
+	return binary.BigEndian.Uint32(m.data[o : o+4])
+}
+
+func (m WriteResponse4) WrWriteverf() Verifier4 {
+	o := m.off1 + 12
+	return Verifier4{m: (*[verifier4Size]byte)(m.data[o : o+verifier4Size])}
+}
+
+// WriteResponse4Writer writes a write_response4:
+//
+//	wr_callback_id_count + stateid4 wr_callback_id[wr_callback_id_count] + wr_count + wr_committed + wr_writeverf
+type WriteResponse4Writer struct {
+	buf               []byte
+	off               int
+	wrCallbackIdCount uint32
+}
+
+func StartWriteResponse4(buf []byte) WriteResponse4Writer {
+	off := len(buf)
+	buf = binary.BigEndian.AppendUint32(buf, 0) // wr_callback_id_count placeholder
+	return WriteResponse4Writer{buf: buf, off: off}
+}
+
+func (w *WriteResponse4Writer) SetWrCount(v uint64) {
+	w.buf = binary.BigEndian.AppendUint64(w.buf, v)
+}
+
+func (w *WriteResponse4Writer) SetWrCommitted(v uint32) {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, v)
+}
+
+func (w *WriteResponse4Writer) AppendWrCallbackId() Stateid4 {
+	w.buf = append(w.buf, make([]byte, stateid4Size)...)
+	w.wrCallbackIdCount++
+	return Stateid4{m: (*[stateid4Size]byte)(w.buf[len(w.buf)-stateid4Size:])}
+}
+
+func (w *WriteResponse4Writer) Finish() []byte {
+	binary.BigEndian.PutUint32(w.buf[w.off:w.off+4], w.wrCallbackIdCount)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// Xattrkey4 — variable: data_len(4) + u8 data[data_len] + align(4)
+// -------------------------------------------------------
+
+type Xattrkey4 []byte
+
+func readXattrkey4(b *[]byte) (Xattrkey4, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	n := int(binary.BigEndian.Uint32((*b)[0:4]))
+	padded := (n + 3) &^ 3
+	total := 4 + padded
+	if len(*b) < total {
+		return nil, false
+	}
+	result := Xattrkey4((*b)[:total])
+	*b = (*b)[total:]
+	return result, true
+}
+
+func ReadXattrkey4(b []byte) (Xattrkey4, bool) {
+	if len(b) < 4 {
+		return nil, false
+	}
+	count := int(binary.BigEndian.Uint32(b[0:4]))
+	padded := (count + 3) &^ 3
+	total := 4 + padded
+	if len(b) < total {
+		return nil, false
+	}
+	return Xattrkey4(b[:total]), true
+}
+
+func (m Xattrkey4) DataLen() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m Xattrkey4) Data() []byte {
+	n := int(binary.BigEndian.Uint32(m[0:4]))
+	return m[4 : 4+n]
+}
+
+// Xattrkey4Writer writes a xattrkey4:
+//
+//	data_len + u8 data[data_len] + align(4)
+type Xattrkey4Writer struct {
+	buf []byte
+	off int
+}
+
+func StartXattrkey4(buf []byte) Xattrkey4Writer {
+	off := len(buf)
+	return Xattrkey4Writer{buf: buf, off: off}
+}
+
+func (w Xattrkey4Writer) SetData(data []byte) Xattrkey4Writer {
+	n := len(data)
+	padded := (n + 3) &^ 3
+	total := 4 + padded
+	w.buf = append(w.buf, make([]byte, total)...)
+	binary.BigEndian.PutUint32(w.buf[w.off:w.off+4], uint32(n))
+	copy(w.buf[w.off+4:], data)
+	return w
+}
+
+func (w Xattrkey4Writer) Finish() []byte {
+	return w.buf
+}
+
+// -------------------------------------------------------
+// Xattrvalue4 — variable: data_len(4) + u8 data[data_len] + align(4)
+// -------------------------------------------------------
+
+type Xattrvalue4 []byte
+
+func readXattrvalue4(b *[]byte) (Xattrvalue4, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	n := int(binary.BigEndian.Uint32((*b)[0:4]))
+	padded := (n + 3) &^ 3
+	total := 4 + padded
+	if len(*b) < total {
+		return nil, false
+	}
+	result := Xattrvalue4((*b)[:total])
+	*b = (*b)[total:]
+	return result, true
+}
+
+func ReadXattrvalue4(b []byte) (Xattrvalue4, bool) {
+	if len(b) < 4 {
+		return nil, false
+	}
+	count := int(binary.BigEndian.Uint32(b[0:4]))
+	padded := (count + 3) &^ 3
+	total := 4 + padded
+	if len(b) < total {
+		return nil, false
+	}
+	return Xattrvalue4(b[:total]), true
+}
+
+func (m Xattrvalue4) DataLen() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m Xattrvalue4) Data() []byte {
+	n := int(binary.BigEndian.Uint32(m[0:4]))
+	return m[4 : 4+n]
+}
+
+// Xattrvalue4Writer writes a xattrvalue4:
+//
+//	data_len + u8 data[data_len] + align(4)
+type Xattrvalue4Writer struct {
+	buf []byte
+	off int
+}
+
+func StartXattrvalue4(buf []byte) Xattrvalue4Writer {
+	off := len(buf)
+	return Xattrvalue4Writer{buf: buf, off: off}
+}
+
+func (w Xattrvalue4Writer) SetData(data []byte) Xattrvalue4Writer {
+	n := len(data)
+	padded := (n + 3) &^ 3
+	total := 4 + padded
+	w.buf = append(w.buf, make([]byte, total)...)
+	binary.BigEndian.PutUint32(w.buf[w.off:w.off+4], uint32(n))
+	copy(w.buf[w.off+4:], data)
+	return w
+}
+
+func (w Xattrvalue4Writer) Finish() []byte {
+	return w.buf
+}
+
+// -------------------------------------------------------
+// Fattr4Owner — variable: data_len(4) + u8 data[data_len] + align(4)
+// -------------------------------------------------------
+
+type Fattr4Owner []byte
+
+func readFattr4Owner(b *[]byte) (Fattr4Owner, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	n := int(binary.BigEndian.Uint32((*b)[0:4]))
+	padded := (n + 3) &^ 3
+	total := 4 + padded
+	if len(*b) < total {
+		return nil, false
+	}
+	result := Fattr4Owner((*b)[:total])
+	*b = (*b)[total:]
+	return result, true
+}
+
+func ReadFattr4Owner(b []byte) (Fattr4Owner, bool) {
+	if len(b) < 4 {
+		return nil, false
+	}
+	count := int(binary.BigEndian.Uint32(b[0:4]))
+	padded := (count + 3) &^ 3
+	total := 4 + padded
+	if len(b) < total {
+		return nil, false
+	}
+	return Fattr4Owner(b[:total]), true
+}
+
+func (m Fattr4Owner) DataLen() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m Fattr4Owner) Data() []byte {
+	n := int(binary.BigEndian.Uint32(m[0:4]))
+	return m[4 : 4+n]
+}
+
+// Fattr4OwnerWriter writes a fattr4_owner:
+//
+//	data_len + u8 data[data_len] + align(4)
+type Fattr4OwnerWriter struct {
+	buf []byte
+	off int
+}
+
+func StartFattr4Owner(buf []byte) Fattr4OwnerWriter {
+	off := len(buf)
+	return Fattr4OwnerWriter{buf: buf, off: off}
+}
+
+func (w Fattr4OwnerWriter) SetData(data []byte) Fattr4OwnerWriter {
+	n := len(data)
+	padded := (n + 3) &^ 3
+	total := 4 + padded
+	w.buf = append(w.buf, make([]byte, total)...)
+	binary.BigEndian.PutUint32(w.buf[w.off:w.off+4], uint32(n))
+	copy(w.buf[w.off+4:], data)
+	return w
+}
+
+func (w Fattr4OwnerWriter) Finish() []byte {
+	return w.buf
+}
+
+// -------------------------------------------------------
+// Fattr4OwnerGroup — variable: data_len(4) + u8 data[data_len] + align(4)
+// -------------------------------------------------------
+
+type Fattr4OwnerGroup []byte
+
+func readFattr4OwnerGroup(b *[]byte) (Fattr4OwnerGroup, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	n := int(binary.BigEndian.Uint32((*b)[0:4]))
+	padded := (n + 3) &^ 3
+	total := 4 + padded
+	if len(*b) < total {
+		return nil, false
+	}
+	result := Fattr4OwnerGroup((*b)[:total])
+	*b = (*b)[total:]
+	return result, true
+}
+
+func ReadFattr4OwnerGroup(b []byte) (Fattr4OwnerGroup, bool) {
+	if len(b) < 4 {
+		return nil, false
+	}
+	count := int(binary.BigEndian.Uint32(b[0:4]))
+	padded := (count + 3) &^ 3
+	total := 4 + padded
+	if len(b) < total {
+		return nil, false
+	}
+	return Fattr4OwnerGroup(b[:total]), true
+}
+
+func (m Fattr4OwnerGroup) DataLen() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m Fattr4OwnerGroup) Data() []byte {
+	n := int(binary.BigEndian.Uint32(m[0:4]))
+	return m[4 : 4+n]
+}
+
+// Fattr4OwnerGroupWriter writes a fattr4_owner_group:
+//
+//	data_len + u8 data[data_len] + align(4)
+type Fattr4OwnerGroupWriter struct {
+	buf []byte
+	off int
+}
+
+func StartFattr4OwnerGroup(buf []byte) Fattr4OwnerGroupWriter {
+	off := len(buf)
+	return Fattr4OwnerGroupWriter{buf: buf, off: off}
+}
+
+func (w Fattr4OwnerGroupWriter) SetData(data []byte) Fattr4OwnerGroupWriter {
+	n := len(data)
+	padded := (n + 3) &^ 3
+	total := 4 + padded
+	w.buf = append(w.buf, make([]byte, total)...)
+	binary.BigEndian.PutUint32(w.buf[w.off:w.off+4], uint32(n))
+	copy(w.buf[w.off+4:], data)
+	return w
+}
+
+func (w Fattr4OwnerGroupWriter) Finish() []byte {
+	return w.buf
 }
 
 // -------------------------------------------------------
@@ -1715,11 +5225,17 @@ type ChangeInfo4 struct {
 
 const changeInfo4Size = 20
 
-func ReadChangeInfo4(b []byte) (ChangeInfo4, bool) {
-	if len(b) < changeInfo4Size {
+func readChangeInfo4(b *[]byte) (ChangeInfo4, bool) {
+	if len(*b) < changeInfo4Size {
 		return ChangeInfo4{}, false
 	}
-	return ChangeInfo4{m: (*[changeInfo4Size]byte)(b)}, true
+	result := ChangeInfo4{m: (*[changeInfo4Size]byte)(*b)}
+	*b = (*b)[changeInfo4Size:]
+	return result, true
+}
+
+func ReadChangeInfo4(b []byte) (ChangeInfo4, bool) {
+	return readChangeInfo4(&b)
 }
 
 func StartChangeInfo4(buf []byte) ([]byte, ChangeInfo4) {
@@ -1752,153 +5268,6 @@ func (m ChangeInfo4) SetAfter(v uint64) {
 }
 
 // -------------------------------------------------------
-// XdrOpaque — variable: data_len(4) + u8 data[data_len] + align(4)
-// -------------------------------------------------------
-
-type XdrOpaque []byte
-
-func readXdrOpaque(b *[]byte) (XdrOpaque, bool) {
-	if len(*b) < 4 {
-		return nil, false
-	}
-	n := int(binary.BigEndian.Uint32((*b)[0:4]))
-	padded := (n + 3) &^ 3
-	total := 4 + padded
-	if len(*b) < total {
-		return nil, false
-	}
-	result := XdrOpaque((*b)[:total])
-	*b = (*b)[total:]
-	return result, true
-}
-
-func ReadXdrOpaque(b []byte) (XdrOpaque, bool) {
-	if len(b) < 4 {
-		return nil, false
-	}
-	count := int(binary.BigEndian.Uint32(b[0:4]))
-	padded := (count + 3) &^ 3
-	total := 4 + padded
-	if len(b) < total {
-		return nil, false
-	}
-	return XdrOpaque(b[:total]), true
-}
-
-func (m XdrOpaque) DataLen() uint32 {
-	return binary.BigEndian.Uint32(m[0:4])
-}
-
-func (m XdrOpaque) Data() []byte {
-	n := int(binary.BigEndian.Uint32(m[0:4]))
-	return m[4 : 4+n]
-}
-
-// XdrOpaqueWriter writes a xdr_opaque:
-//
-//	data_len + u8 data[data_len] + align(4)
-type XdrOpaqueWriter struct {
-	buf []byte
-	off int
-}
-
-func StartXdrOpaque(buf []byte) XdrOpaqueWriter {
-	off := len(buf)
-	return XdrOpaqueWriter{buf: buf, off: off}
-}
-
-func (w XdrOpaqueWriter) SetData(data []byte) XdrOpaqueWriter {
-	n := len(data)
-	padded := (n + 3) &^ 3
-	total := 4 + padded
-	w.buf = append(w.buf, make([]byte, total)...)
-	binary.BigEndian.PutUint32(w.buf[w.off:w.off+4], uint32(n))
-	copy(w.buf[w.off+4:], data)
-	return w
-}
-
-func (w XdrOpaqueWriter) Finish() []byte {
-	return w.buf
-}
-
-// -------------------------------------------------------
-// Clientaddr4 — variable: r_netid + r_addr
-// -------------------------------------------------------
-
-type Clientaddr4 struct {
-	data []byte
-	off1 int // byte offset within data where r_addr starts
-}
-
-func readClientaddr4(b *[]byte) (Clientaddr4, bool) {
-	start := *b
-	startLen := len(start)
-	if _, ok := readXdrOpaque(b); !ok {
-		return Clientaddr4{}, false
-	}
-	off1 := startLen - len(*b)
-	if _, ok := readXdrOpaque(b); !ok {
-		return Clientaddr4{}, false
-	}
-	total := startLen - len(*b)
-	return Clientaddr4{data: start[:total], off1: off1}, true
-}
-
-func ReadClientaddr4(b []byte) (Clientaddr4, bool) {
-	return readClientaddr4(&b)
-}
-
-func (m Clientaddr4) RNetid() XdrOpaque {
-	return XdrOpaque(m.data[0:m.off1])
-}
-
-func (m Clientaddr4) RAddr() XdrOpaque {
-	return XdrOpaque(m.data[m.off1:])
-}
-
-// Clientaddr4Writer writes a clientaddr4:
-//
-//	r_netid + r_addr
-type Clientaddr4Writer struct {
-	buf   []byte
-	off   int
-	phase uint8
-}
-
-func StartClientaddr4(buf []byte) Clientaddr4Writer {
-	off := len(buf)
-	return Clientaddr4Writer{buf: buf, off: off}
-}
-
-func (w *Clientaddr4Writer) StartRNetid() XdrOpaqueWriter {
-	if w.phase > 0 {
-		panic("writer fields called out of order")
-	}
-	child := StartXdrOpaque(w.buf)
-	w.buf = nil
-	return child
-}
-
-func (w *Clientaddr4Writer) StartRAddr() XdrOpaqueWriter {
-	if w.phase > 1 {
-		panic("writer fields called out of order")
-	}
-	w.phase = 1
-	child := StartXdrOpaque(w.buf)
-	w.buf = nil
-	return child
-}
-
-func (w *Clientaddr4Writer) Resume(buf []byte) {
-	w.buf = buf
-}
-
-func (w *Clientaddr4Writer) Finish() []byte {
-	_ = w.buf[:1]
-	return w.buf
-}
-
-// -------------------------------------------------------
 // CbClient4 — variable: cb_program(4) + cb_location
 // -------------------------------------------------------
 
@@ -1911,7 +5280,7 @@ func readCbClient4(b *[]byte) (CbClient4, bool) {
 	start := *b
 	startLen := len(start)
 	*b = (*b)[4:]
-	if _, ok := readClientaddr4(b); !ok {
+	if _, ok := readNetaddr4(b); !ok {
 		return nil, false
 	}
 	total := startLen - len(*b)
@@ -1926,8 +5295,8 @@ func (m CbClient4) CbProgram() uint32 {
 	return binary.BigEndian.Uint32(m[0:4])
 }
 
-func (m CbClient4) CbLocation() Clientaddr4 {
-	v, _ := ReadClientaddr4(m[4:])
+func (m CbClient4) CbLocation() Netaddr4 {
+	v, _ := ReadNetaddr4(m[4:])
 	return v
 }
 
@@ -1948,8 +5317,8 @@ func (w *CbClient4Writer) SetCbProgram(v uint32) {
 	binary.BigEndian.PutUint32(w.header[0:4], v)
 }
 
-func (w *CbClient4Writer) StartCbLocation() Clientaddr4Writer {
-	child := StartClientaddr4(w.buf)
+func (w *CbClient4Writer) StartCbLocation() Netaddr4Writer {
+	child := StartNetaddr4(w.buf)
 	w.buf = nil
 	w.header = nil
 	return child
@@ -1962,52 +5331,6 @@ func (w *CbClient4Writer) Resume(buf []byte) {
 func (w *CbClient4Writer) Finish() []byte {
 	_ = w.buf[:1]
 	return w.buf
-}
-
-// -------------------------------------------------------
-// Stateid4 — fixed 16 bytes: seqid(4, beu32) + other(u8[12])
-// -------------------------------------------------------
-
-type Stateid4 struct {
-	m *[stateid4Size]byte
-}
-
-const stateid4Size = 16
-
-func readStateid4(b *[]byte) (Stateid4, bool) {
-	if len(*b) < stateid4Size {
-		return Stateid4{}, false
-	}
-	result := Stateid4{m: (*[stateid4Size]byte)(*b)}
-	*b = (*b)[stateid4Size:]
-	return result, true
-}
-
-func ReadStateid4(b []byte) (Stateid4, bool) {
-	return readStateid4(&b)
-}
-
-func StartStateid4(buf []byte) ([]byte, Stateid4) {
-	buf = append(buf, make([]byte, stateid4Size)...)
-	return buf, Stateid4{m: (*[stateid4Size]byte)(buf[len(buf)-stateid4Size:])}
-}
-
-func (m Stateid4) Seqid() uint32 {
-	return binary.BigEndian.Uint32(m.m[0:4])
-}
-
-func (m Stateid4) Other(i int) uint8 {
-	off := 4 + i*1
-	return m.m[off : off+1][0]
-}
-
-func (m Stateid4) SetSeqid(v uint32) {
-	binary.BigEndian.PutUint32(m.m[0:4], v)
-}
-
-func (m Stateid4) SetOther(i int, v uint8) {
-	off := 4 + i*1
-	m.m[off : off+1][0] = v
 }
 
 // -------------------------------------------------------
@@ -2091,13 +5414,13 @@ func (w NfsClientId4Writer) Finish() []byte {
 }
 
 // -------------------------------------------------------
-// OpenOwner4 — variable:
-//   clientid(8) + owner_len(4) + u8 owner[owner_len] + align(4)
+// ClientOwner4 — variable:
+//   co_verifier(8) + co_ownerid_len(4) + u8 co_ownerid[co_ownerid_len] + align(4)
 // -------------------------------------------------------
 
-type OpenOwner4 []byte
+type ClientOwner4 []byte
 
-func readOpenOwner4(b *[]byte) (OpenOwner4, bool) {
+func readClientOwner4(b *[]byte) (ClientOwner4, bool) {
 	if len(*b) < 12 {
 		return nil, false
 	}
@@ -2107,12 +5430,12 @@ func readOpenOwner4(b *[]byte) (OpenOwner4, bool) {
 	if len(*b) < total {
 		return nil, false
 	}
-	result := OpenOwner4((*b)[:total])
+	result := ClientOwner4((*b)[:total])
 	*b = (*b)[total:]
 	return result, true
 }
 
-func ReadOpenOwner4(b []byte) (OpenOwner4, bool) {
+func ReadClientOwner4(b []byte) (ClientOwner4, bool) {
 	if len(b) < 12 {
 		return nil, false
 	}
@@ -2122,43 +5445,206 @@ func ReadOpenOwner4(b []byte) (OpenOwner4, bool) {
 	if len(b) < total {
 		return nil, false
 	}
-	return OpenOwner4(b[:total]), true
+	return ClientOwner4(b[:total]), true
 }
 
-func (m OpenOwner4) Clientid() uint64 {
-	return binary.BigEndian.Uint64(m[0:8])
+func (m ClientOwner4) CoVerifier() Verifier4 {
+	return Verifier4{m: (*[verifier4Size]byte)(m[0 : 0+verifier4Size])}
 }
 
-func (m OpenOwner4) OwnerLen() uint32 {
+func (m ClientOwner4) CoOwneridLen() uint32 {
 	return binary.BigEndian.Uint32(m[8:12])
 }
 
-func (m OpenOwner4) Owner() []byte {
+func (m ClientOwner4) CoOwnerid() []byte {
 	n := int(binary.BigEndian.Uint32(m[8:12]))
 	return m[12 : 12+n]
 }
 
-// OpenOwner4Writer writes a open_owner4:
+// ClientOwner4Writer writes a client_owner4:
+//
+//	co_verifier + co_ownerid_len + u8 co_ownerid[co_ownerid_len] + align(4)
+type ClientOwner4Writer struct {
+	buf          []byte
+	off          int
+	coOwneridLen uint32
+}
+
+func StartClientOwner4(buf []byte) ClientOwner4Writer {
+	off := len(buf)
+	buf = append(buf, make([]byte, 12)...) // co_verifier(8) + co_ownerid_len(4)
+	return ClientOwner4Writer{buf: buf, off: off}
+}
+
+func (w *ClientOwner4Writer) CoVerifier() Verifier4 {
+	return Verifier4{m: (*[verifier4Size]byte)(w.buf[w.off:])}
+}
+
+func (w ClientOwner4Writer) SetCoOwnerid(data []byte) ClientOwner4Writer {
+	n := len(data)
+	padded := (n + 3) &^ 3
+	w.buf = append(w.buf, make([]byte, padded)...)
+	copy(w.buf[len(w.buf)-padded:], data)
+	w.coOwneridLen = uint32(n)
+	return w
+}
+
+func (w ClientOwner4Writer) Finish() []byte {
+	binary.BigEndian.PutUint32((*[12]byte)(w.buf[w.off:])[8:12], w.coOwneridLen)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// ServerOwner4 — variable:
+//   so_minor_id(8) + so_major_id_len(4) + u8 so_major_id[so_major_id_len] + align(4)
+// -------------------------------------------------------
+
+type ServerOwner4 []byte
+
+func readServerOwner4(b *[]byte) (ServerOwner4, bool) {
+	if len(*b) < 12 {
+		return nil, false
+	}
+	n := int(binary.BigEndian.Uint32((*b)[8:12]))
+	padded := (n + 3) &^ 3
+	total := 12 + padded
+	if len(*b) < total {
+		return nil, false
+	}
+	result := ServerOwner4((*b)[:total])
+	*b = (*b)[total:]
+	return result, true
+}
+
+func ReadServerOwner4(b []byte) (ServerOwner4, bool) {
+	if len(b) < 12 {
+		return nil, false
+	}
+	count := int(binary.BigEndian.Uint32(b[8:12]))
+	padded := (count + 3) &^ 3
+	total := 12 + padded
+	if len(b) < total {
+		return nil, false
+	}
+	return ServerOwner4(b[:total]), true
+}
+
+func (m ServerOwner4) SoMinorId() uint64 {
+	return binary.BigEndian.Uint64(m[0:8])
+}
+
+func (m ServerOwner4) SoMajorIdLen() uint32 {
+	return binary.BigEndian.Uint32(m[8:12])
+}
+
+func (m ServerOwner4) SoMajorId() []byte {
+	n := int(binary.BigEndian.Uint32(m[8:12]))
+	return m[12 : 12+n]
+}
+
+// ServerOwner4Writer writes a server_owner4:
+//
+//	so_minor_id + so_major_id_len + u8 so_major_id[so_major_id_len] + align(4)
+type ServerOwner4Writer struct {
+	buf          []byte
+	off          int
+	soMajorIdLen uint32
+}
+
+func StartServerOwner4(buf []byte) ServerOwner4Writer {
+	off := len(buf)
+	buf = append(buf, make([]byte, 12)...) // so_minor_id(8) + so_major_id_len(4)
+	return ServerOwner4Writer{buf: buf, off: off}
+}
+
+func (w ServerOwner4Writer) SetSoMinorId(v uint64) ServerOwner4Writer {
+	binary.BigEndian.PutUint64((*[12]byte)(w.buf[w.off:])[0:8], v)
+	return w
+}
+
+func (w ServerOwner4Writer) SetSoMajorId(data []byte) ServerOwner4Writer {
+	n := len(data)
+	padded := (n + 3) &^ 3
+	w.buf = append(w.buf, make([]byte, padded)...)
+	copy(w.buf[len(w.buf)-padded:], data)
+	w.soMajorIdLen = uint32(n)
+	return w
+}
+
+func (w ServerOwner4Writer) Finish() []byte {
+	binary.BigEndian.PutUint32((*[12]byte)(w.buf[w.off:])[8:12], w.soMajorIdLen)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// StateOwner4 — variable:
+//   clientid(8) + owner_len(4) + u8 owner[owner_len] + align(4)
+// -------------------------------------------------------
+
+type StateOwner4 []byte
+
+func readStateOwner4(b *[]byte) (StateOwner4, bool) {
+	if len(*b) < 12 {
+		return nil, false
+	}
+	n := int(binary.BigEndian.Uint32((*b)[8:12]))
+	padded := (n + 3) &^ 3
+	total := 12 + padded
+	if len(*b) < total {
+		return nil, false
+	}
+	result := StateOwner4((*b)[:total])
+	*b = (*b)[total:]
+	return result, true
+}
+
+func ReadStateOwner4(b []byte) (StateOwner4, bool) {
+	if len(b) < 12 {
+		return nil, false
+	}
+	count := int(binary.BigEndian.Uint32(b[8:12]))
+	padded := (count + 3) &^ 3
+	total := 12 + padded
+	if len(b) < total {
+		return nil, false
+	}
+	return StateOwner4(b[:total]), true
+}
+
+func (m StateOwner4) Clientid() uint64 {
+	return binary.BigEndian.Uint64(m[0:8])
+}
+
+func (m StateOwner4) OwnerLen() uint32 {
+	return binary.BigEndian.Uint32(m[8:12])
+}
+
+func (m StateOwner4) Owner() []byte {
+	n := int(binary.BigEndian.Uint32(m[8:12]))
+	return m[12 : 12+n]
+}
+
+// StateOwner4Writer writes a state_owner4:
 //
 //	clientid + owner_len + u8 owner[owner_len] + align(4)
-type OpenOwner4Writer struct {
+type StateOwner4Writer struct {
 	buf      []byte
 	off      int
 	ownerLen uint32
 }
 
-func StartOpenOwner4(buf []byte) OpenOwner4Writer {
+func StartStateOwner4(buf []byte) StateOwner4Writer {
 	off := len(buf)
 	buf = append(buf, make([]byte, 12)...) // clientid(8) + owner_len(4)
-	return OpenOwner4Writer{buf: buf, off: off}
+	return StateOwner4Writer{buf: buf, off: off}
 }
 
-func (w OpenOwner4Writer) SetClientid(v uint64) OpenOwner4Writer {
+func (w StateOwner4Writer) SetClientid(v uint64) StateOwner4Writer {
 	binary.BigEndian.PutUint64((*[12]byte)(w.buf[w.off:])[0:8], v)
 	return w
 }
 
-func (w OpenOwner4Writer) SetOwner(data []byte) OpenOwner4Writer {
+func (w StateOwner4Writer) SetOwner(data []byte) StateOwner4Writer {
 	n := len(data)
 	padded := (n + 3) &^ 3
 	w.buf = append(w.buf, make([]byte, padded)...)
@@ -2167,90 +5653,1213 @@ func (w OpenOwner4Writer) SetOwner(data []byte) OpenOwner4Writer {
 	return w
 }
 
-func (w OpenOwner4Writer) Finish() []byte {
+func (w StateOwner4Writer) Finish() []byte {
 	binary.BigEndian.PutUint32((*[12]byte)(w.buf[w.off:])[8:12], w.ownerLen)
 	return w.buf
 }
 
 // -------------------------------------------------------
-// LockOwner4 — variable:
-//   clientid(8) + owner_len(4) + u8 owner[owner_len] + align(4)
+// SsvMicPlainTkn4 — variable:
+//   smpt_ssv_seq(4) + smpt_orig_plain_len(4) + u8 smpt_orig_plain[smpt_orig_plain_len] + align(4)
 // -------------------------------------------------------
 
-type LockOwner4 []byte
+type SsvMicPlainTkn4 []byte
 
-func readLockOwner4(b *[]byte) (LockOwner4, bool) {
-	if len(*b) < 12 {
+func ReadSsvMicPlainTkn4(b []byte) (SsvMicPlainTkn4, bool) {
+	if len(b) < 8 {
 		return nil, false
 	}
-	n := int(binary.BigEndian.Uint32((*b)[8:12]))
-	padded := (n + 3) &^ 3
-	total := 12 + padded
-	if len(*b) < total {
-		return nil, false
-	}
-	result := LockOwner4((*b)[:total])
-	*b = (*b)[total:]
-	return result, true
-}
-
-func ReadLockOwner4(b []byte) (LockOwner4, bool) {
-	if len(b) < 12 {
-		return nil, false
-	}
-	count := int(binary.BigEndian.Uint32(b[8:12]))
+	count := int(binary.BigEndian.Uint32(b[4:8]))
 	padded := (count + 3) &^ 3
-	total := 12 + padded
+	total := 8 + padded
 	if len(b) < total {
 		return nil, false
 	}
-	return LockOwner4(b[:total]), true
+	return SsvMicPlainTkn4(b[:total]), true
 }
 
-func (m LockOwner4) Clientid() uint64 {
-	return binary.BigEndian.Uint64(m[0:8])
+func (m SsvMicPlainTkn4) SmptSsvSeq() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
 }
 
-func (m LockOwner4) OwnerLen() uint32 {
-	return binary.BigEndian.Uint32(m[8:12])
+func (m SsvMicPlainTkn4) SmptOrigPlainLen() uint32 {
+	return binary.BigEndian.Uint32(m[4:8])
 }
 
-func (m LockOwner4) Owner() []byte {
-	n := int(binary.BigEndian.Uint32(m[8:12]))
-	return m[12 : 12+n]
+func (m SsvMicPlainTkn4) SmptOrigPlain() []byte {
+	n := int(binary.BigEndian.Uint32(m[4:8]))
+	return m[8 : 8+n]
 }
 
-// LockOwner4Writer writes a lock_owner4:
+// SsvMicPlainTkn4Writer writes a ssv_mic_plain_tkn4:
 //
-//	clientid + owner_len + u8 owner[owner_len] + align(4)
-type LockOwner4Writer struct {
-	buf      []byte
-	off      int
-	ownerLen uint32
+//	smpt_ssv_seq + smpt_orig_plain_len + u8 smpt_orig_plain[smpt_orig_plain_len] + align(4)
+type SsvMicPlainTkn4Writer struct {
+	buf              []byte
+	off              int
+	smptOrigPlainLen uint32
 }
 
-func StartLockOwner4(buf []byte) LockOwner4Writer {
+func StartSsvMicPlainTkn4(buf []byte) SsvMicPlainTkn4Writer {
 	off := len(buf)
-	buf = append(buf, make([]byte, 12)...) // clientid(8) + owner_len(4)
-	return LockOwner4Writer{buf: buf, off: off}
+	buf = append(buf, make([]byte, 8)...) // smpt_ssv_seq(4) + smpt_orig_plain_len(4)
+	return SsvMicPlainTkn4Writer{buf: buf, off: off}
 }
 
-func (w LockOwner4Writer) SetClientid(v uint64) LockOwner4Writer {
-	binary.BigEndian.PutUint64((*[12]byte)(w.buf[w.off:])[0:8], v)
+func (w SsvMicPlainTkn4Writer) SetSmptSsvSeq(v uint32) SsvMicPlainTkn4Writer {
+	binary.BigEndian.PutUint32((*[8]byte)(w.buf[w.off:])[0:4], v)
 	return w
 }
 
-func (w LockOwner4Writer) SetOwner(data []byte) LockOwner4Writer {
+func (w SsvMicPlainTkn4Writer) SetSmptOrigPlain(data []byte) SsvMicPlainTkn4Writer {
 	n := len(data)
 	padded := (n + 3) &^ 3
 	w.buf = append(w.buf, make([]byte, padded)...)
 	copy(w.buf[len(w.buf)-padded:], data)
-	w.ownerLen = uint32(n)
+	w.smptOrigPlainLen = uint32(n)
 	return w
 }
 
-func (w LockOwner4Writer) Finish() []byte {
-	binary.BigEndian.PutUint32((*[12]byte)(w.buf[w.off:])[8:12], w.ownerLen)
+func (w SsvMicPlainTkn4Writer) Finish() []byte {
+	binary.BigEndian.PutUint32((*[8]byte)(w.buf[w.off:])[4:8], w.smptOrigPlainLen)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// SsvMicTkn4 — variable:
+//   smt_ssv_seq(4) + smt_hmac_len(4) + u8 smt_hmac[smt_hmac_len] + align(4)
+// -------------------------------------------------------
+
+type SsvMicTkn4 []byte
+
+func ReadSsvMicTkn4(b []byte) (SsvMicTkn4, bool) {
+	if len(b) < 8 {
+		return nil, false
+	}
+	count := int(binary.BigEndian.Uint32(b[4:8]))
+	padded := (count + 3) &^ 3
+	total := 8 + padded
+	if len(b) < total {
+		return nil, false
+	}
+	return SsvMicTkn4(b[:total]), true
+}
+
+func (m SsvMicTkn4) SmtSsvSeq() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m SsvMicTkn4) SmtHmacLen() uint32 {
+	return binary.BigEndian.Uint32(m[4:8])
+}
+
+func (m SsvMicTkn4) SmtHmac() []byte {
+	n := int(binary.BigEndian.Uint32(m[4:8]))
+	return m[8 : 8+n]
+}
+
+// SsvMicTkn4Writer writes a ssv_mic_tkn4:
+//
+//	smt_ssv_seq + smt_hmac_len + u8 smt_hmac[smt_hmac_len] + align(4)
+type SsvMicTkn4Writer struct {
+	buf        []byte
+	off        int
+	smtHmacLen uint32
+}
+
+func StartSsvMicTkn4(buf []byte) SsvMicTkn4Writer {
+	off := len(buf)
+	buf = append(buf, make([]byte, 8)...) // smt_ssv_seq(4) + smt_hmac_len(4)
+	return SsvMicTkn4Writer{buf: buf, off: off}
+}
+
+func (w SsvMicTkn4Writer) SetSmtSsvSeq(v uint32) SsvMicTkn4Writer {
+	binary.BigEndian.PutUint32((*[8]byte)(w.buf[w.off:])[0:4], v)
+	return w
+}
+
+func (w SsvMicTkn4Writer) SetSmtHmac(data []byte) SsvMicTkn4Writer {
+	n := len(data)
+	padded := (n + 3) &^ 3
+	w.buf = append(w.buf, make([]byte, padded)...)
+	copy(w.buf[len(w.buf)-padded:], data)
+	w.smtHmacLen = uint32(n)
+	return w
+}
+
+func (w SsvMicTkn4Writer) Finish() []byte {
+	binary.BigEndian.PutUint32((*[8]byte)(w.buf[w.off:])[4:8], w.smtHmacLen)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// SsvSealPlainTkn4 — variable:
+//   sspt_confounder + sspt_ssv_seq(4) + sspt_orig_plain + sspt_pad
+// -------------------------------------------------------
+
+type SsvSealPlainTkn4 struct {
+	data []byte
+	off1 int // byte offset within data where sspt_ssv_seq starts
+	off2 int // byte offset within data where sspt_pad starts
+}
+
+func readSsvSealPlainTkn4(b *[]byte) (SsvSealPlainTkn4, bool) {
+	start := *b
+	startLen := len(start)
+	if _, ok := readXdrOpaque(b); !ok {
+		return SsvSealPlainTkn4{}, false
+	}
+	off1 := startLen - len(*b)
+	if len(*b) < 4 {
+		return SsvSealPlainTkn4{}, false
+	}
+	*b = (*b)[4:]
+	if _, ok := readXdrOpaque(b); !ok {
+		return SsvSealPlainTkn4{}, false
+	}
+	off2 := startLen - len(*b)
+	if _, ok := readXdrOpaque(b); !ok {
+		return SsvSealPlainTkn4{}, false
+	}
+	total := startLen - len(*b)
+	return SsvSealPlainTkn4{data: start[:total], off1: off1, off2: off2}, true
+}
+
+func ReadSsvSealPlainTkn4(b []byte) (SsvSealPlainTkn4, bool) {
+	return readSsvSealPlainTkn4(&b)
+}
+
+func (m SsvSealPlainTkn4) SsptConfounder() XdrOpaque {
+	return XdrOpaque(m.data[0:m.off1])
+}
+
+func (m SsvSealPlainTkn4) SsptSsvSeq() uint32 {
+	o := m.off1
+	return binary.BigEndian.Uint32(m.data[o : o+4])
+}
+
+func (m SsvSealPlainTkn4) SsptOrigPlain() XdrOpaque {
+	return XdrOpaque(m.data[m.off1+4 : m.off2])
+}
+
+func (m SsvSealPlainTkn4) SsptPad() XdrOpaque {
+	return XdrOpaque(m.data[m.off2:])
+}
+
+// SsvSealPlainTkn4Writer writes a ssv_seal_plain_tkn4:
+//
+//	sspt_confounder + sspt_ssv_seq + sspt_orig_plain + sspt_pad
+type SsvSealPlainTkn4Writer struct {
+	buf   []byte
+	off   int
+	phase uint8
+}
+
+func StartSsvSealPlainTkn4(buf []byte) SsvSealPlainTkn4Writer {
+	off := len(buf)
+	return SsvSealPlainTkn4Writer{buf: buf, off: off}
+}
+
+func (w *SsvSealPlainTkn4Writer) SetSsptSsvSeq(v uint32) {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	w.buf = binary.BigEndian.AppendUint32(w.buf, v)
+}
+
+func (w *SsvSealPlainTkn4Writer) StartSsptConfounder() XdrOpaqueWriter {
+	if w.phase > 0 {
+		panic("writer fields called out of order")
+	}
+	child := StartXdrOpaque(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *SsvSealPlainTkn4Writer) StartSsptOrigPlain() XdrOpaqueWriter {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	child := StartXdrOpaque(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *SsvSealPlainTkn4Writer) StartSsptPad() XdrOpaqueWriter {
+	if w.phase > 2 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 2
+	child := StartXdrOpaque(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *SsvSealPlainTkn4Writer) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *SsvSealPlainTkn4Writer) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// SsvSealCipherTkn4 — variable:
+//   ssct_ssv_seq(4) + ssct_iv + ssct_encr_data + ssct_hmac
+// -------------------------------------------------------
+
+type SsvSealCipherTkn4 struct {
+	data []byte
+	off1 int // byte offset within data where ssct_encr_data starts
+	off2 int // byte offset within data where ssct_hmac starts
+}
+
+func readSsvSealCipherTkn4(b *[]byte) (SsvSealCipherTkn4, bool) {
+	if len(*b) < 4 {
+		return SsvSealCipherTkn4{}, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[4:]
+	if _, ok := readXdrOpaque(b); !ok {
+		return SsvSealCipherTkn4{}, false
+	}
+	off1 := startLen - len(*b)
+	if _, ok := readXdrOpaque(b); !ok {
+		return SsvSealCipherTkn4{}, false
+	}
+	off2 := startLen - len(*b)
+	if _, ok := readXdrOpaque(b); !ok {
+		return SsvSealCipherTkn4{}, false
+	}
+	total := startLen - len(*b)
+	return SsvSealCipherTkn4{data: start[:total], off1: off1, off2: off2}, true
+}
+
+func ReadSsvSealCipherTkn4(b []byte) (SsvSealCipherTkn4, bool) {
+	return readSsvSealCipherTkn4(&b)
+}
+
+func (m SsvSealCipherTkn4) SsctSsvSeq() uint32 {
+	return binary.BigEndian.Uint32(m.data[0:4])
+}
+
+func (m SsvSealCipherTkn4) SsctIv() XdrOpaque {
+	return XdrOpaque(m.data[4:m.off1])
+}
+
+func (m SsvSealCipherTkn4) SsctEncrData() XdrOpaque {
+	return XdrOpaque(m.data[m.off1:m.off2])
+}
+
+func (m SsvSealCipherTkn4) SsctHmac() XdrOpaque {
+	return XdrOpaque(m.data[m.off2:])
+}
+
+// SsvSealCipherTkn4Writer writes a ssv_seal_cipher_tkn4:
+//
+//	ssct_ssv_seq + ssct_iv + ssct_encr_data + ssct_hmac
+type SsvSealCipherTkn4Writer struct {
+	buf    []byte
+	header *[4]byte
+	phase  uint8
+}
+
+func StartSsvSealCipherTkn4(buf []byte) SsvSealCipherTkn4Writer {
+	buf = append(buf, make([]byte, 4)...) // ssct_ssv_seq(4)
+	return SsvSealCipherTkn4Writer{buf: buf, header: (*[4]byte)(buf[len(buf)-4:])}
+}
+
+func (w *SsvSealCipherTkn4Writer) SetSsctSsvSeq(v uint32) {
+	binary.BigEndian.PutUint32(w.header[0:4], v)
+}
+
+func (w *SsvSealCipherTkn4Writer) StartSsctIv() XdrOpaqueWriter {
+	if w.phase > 0 {
+		panic("writer fields called out of order")
+	}
+	child := StartXdrOpaque(w.buf)
+	w.buf = nil
+	w.header = nil
+	return child
+}
+
+func (w *SsvSealCipherTkn4Writer) StartSsctEncrData() XdrOpaqueWriter {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	child := StartXdrOpaque(w.buf)
+	w.buf = nil
+	w.header = nil
+	return child
+}
+
+func (w *SsvSealCipherTkn4Writer) StartSsctHmac() XdrOpaqueWriter {
+	if w.phase > 2 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 2
+	child := StartXdrOpaque(w.buf)
+	w.buf = nil
+	w.header = nil
+	return child
+}
+
+func (w *SsvSealCipherTkn4Writer) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *SsvSealCipherTkn4Writer) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// FsLocationsServer4 — variable:
+//   fls_currency(4) + fls_info_len(4) + u8 fls_info[fls_info_len] + align(4) + fls_server
+// -------------------------------------------------------
+
+type FsLocationsServer4 struct {
+	data []byte
+	off1 int // byte offset within data where fls_server starts
+}
+
+func readFsLocationsServer4(b *[]byte) (FsLocationsServer4, bool) {
+	if len(*b) < 8 {
+		return FsLocationsServer4{}, false
+	}
+	start := *b
+	startLen := len(start)
+	c_fls_info_len := int(binary.BigEndian.Uint32((*b)[4:8]))
+	*b = (*b)[8:]
+	if len(*b) < c_fls_info_len*1 {
+		return FsLocationsServer4{}, false
+	}
+	*b = (*b)[c_fls_info_len*1:]
+	off1 := startLen - len(*b)
+	{
+		off := startLen - len(*b)
+		aligned := (off + 3) &^ 3
+		if aligned > startLen {
+			return FsLocationsServer4{}, false
+		}
+		*b = start[aligned:]
+	}
+	if _, ok := readUtf8strCis(b); !ok {
+		return FsLocationsServer4{}, false
+	}
+	total := startLen - len(*b)
+	return FsLocationsServer4{data: start[:total], off1: off1}, true
+}
+
+func ReadFsLocationsServer4(b []byte) (FsLocationsServer4, bool) {
+	return readFsLocationsServer4(&b)
+}
+
+func (m FsLocationsServer4) FlsCurrency() int32 {
+	return int32(binary.BigEndian.Uint32(m.data[0:4]))
+}
+
+func (m FsLocationsServer4) FlsInfo() []byte {
+	n := int(binary.BigEndian.Uint32(m.data[4:8]))
+	o := 8
+	return m.data[o : o+n]
+}
+
+func (m FsLocationsServer4) FlsInfoLen() uint32 {
+	return binary.BigEndian.Uint32(m.data[4:8])
+}
+
+func (m FsLocationsServer4) FlsServer() Utf8strCis {
+	return Utf8strCis(m.data[m.off1:])
+}
+
+// FsLocationsServer4Writer writes a fs_locations_server4:
+//
+//	fls_currency + fls_info_len + u8 fls_info[fls_info_len] + align(4) + fls_server
+type FsLocationsServer4Writer struct {
+	buf        []byte
+	off        int
+	flsInfoLen uint32
+}
+
+func StartFsLocationsServer4(buf []byte) FsLocationsServer4Writer {
+	off := len(buf)
+	buf = append(buf, make([]byte, 8)...) // fls_currency(4) + fls_info_len(4)
+	return FsLocationsServer4Writer{buf: buf, off: off}
+}
+
+func (w *FsLocationsServer4Writer) SetFlsCurrency(v int32) {
+	binary.BigEndian.PutUint32((*[8]byte)(w.buf[w.off:])[0:4], uint32(v))
+}
+
+func (w *FsLocationsServer4Writer) SetFlsInfo(data []byte) {
+	n := len(data)
+	padded := (n + 3) &^ 3
+	w.buf = append(w.buf, make([]byte, padded)...)
+	copy(w.buf[len(w.buf)-padded:], data)
+	w.flsInfoLen = uint32(n)
+}
+
+func (w *FsLocationsServer4Writer) StartFlsServer() Utf8strCisWriter {
+	child := StartUtf8strCis(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *FsLocationsServer4Writer) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *FsLocationsServer4Writer) Finish() []byte {
+	binary.BigEndian.PutUint32((*[8]byte)(w.buf[w.off:])[4:8], w.flsInfoLen)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// FsLocationsItem4 — variable:
+//   fli_entries_count(4) + fs_locations_server4 fli_entries[fli_entries_count] + fli_rootpath
+// -------------------------------------------------------
+
+type FsLocationsItem4 struct {
+	data []byte
+	off1 int // byte offset within data where fli_rootpath starts
+}
+
+func readFsLocationsItem4(b *[]byte) (FsLocationsItem4, bool) {
+	if len(*b) < 4 {
+		return FsLocationsItem4{}, false
+	}
+	start := *b
+	startLen := len(start)
+	c_fli_entries_count := int(binary.BigEndian.Uint32((*b)[0:4]))
+	*b = (*b)[4:]
+	for i := 0; i < c_fli_entries_count; i++ {
+		if _, ok := readFsLocationsServer4(b); !ok {
+			return FsLocationsItem4{}, false
+		}
+	}
+	off1 := startLen - len(*b)
+	if _, ok := readPathname4(b); !ok {
+		return FsLocationsItem4{}, false
+	}
+	total := startLen - len(*b)
+	return FsLocationsItem4{data: start[:total], off1: off1}, true
+}
+
+func ReadFsLocationsItem4(b []byte) (FsLocationsItem4, bool) {
+	return readFsLocationsItem4(&b)
+}
+
+func (m FsLocationsItem4) FliEntries() FsLocationsServer4Iter {
+	fli_entries_count := int(binary.BigEndian.Uint32(m.data[0:4]))
+	return FsLocationsServer4Iter{b: m.data[4:], count: fli_entries_count}
+}
+
+func (m FsLocationsItem4) FliEntriesCount() uint32 {
+	return binary.BigEndian.Uint32(m.data[0:4])
+}
+
+func (m FsLocationsItem4) FliRootpath() Pathname4 {
+	return Pathname4(m.data[m.off1:])
+}
+
+// FsLocationsServer4Iter iterates over variable-size FsLocationsServer4 entries.
+type FsLocationsServer4Iter struct {
+	b     []byte
+	count int
+	i     int
+	cur   FsLocationsServer4
+}
+
+func (it *FsLocationsServer4Iter) Next() bool {
+	if it.i >= it.count {
+		return false
+	}
+	var ok bool
+	it.cur, ok = readFsLocationsServer4(&it.b)
+	if !ok {
+		return false
+	}
+	it.i++
+	return true
+}
+
+func (it *FsLocationsServer4Iter) FliEntry() FsLocationsServer4 {
+	return it.cur
+}
+
+// FsLocationsItem4Writer writes a fs_locations_item4:
+//
+//	fli_entries_count + fs_locations_server4 fli_entries[fli_entries_count] + fli_rootpath
+type FsLocationsItem4Writer struct {
+	buf             []byte
+	off             int
+	fliEntriesCount uint32
+	phase           uint8
+}
+
+func StartFsLocationsItem4(buf []byte) FsLocationsItem4Writer {
+	off := len(buf)
+	buf = binary.BigEndian.AppendUint32(buf, 0) // fli_entries_count placeholder
+	return FsLocationsItem4Writer{buf: buf, off: off}
+}
+
+func (w *FsLocationsItem4Writer) AppendFliEntries() FsLocationsServer4Writer {
+	_ = w.buf[:1]
+	if w.phase > 0 {
+		panic("writer fields called out of order")
+	}
+	w.fliEntriesCount++
+	child := StartFsLocationsServer4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *FsLocationsItem4Writer) StartFliRootpath() Pathname4Writer {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	child := StartPathname4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *FsLocationsItem4Writer) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *FsLocationsItem4Writer) Finish() []byte {
+	binary.BigEndian.PutUint32(w.buf[w.off:w.off+4], w.fliEntriesCount)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// FsLocationsInfo4 — variable:
+//   fli_flags(4) + fli_valid_for(4) + fli_fs_root + fli_items_count(4) + fs_locations_item4 fli_items[fli_items_count]
+// -------------------------------------------------------
+
+type FsLocationsInfo4 struct {
+	data []byte
+	off1 int // byte offset within data where fli_items_count starts
+}
+
+func readFsLocationsInfo4(b *[]byte) (FsLocationsInfo4, bool) {
+	if len(*b) < 8 {
+		return FsLocationsInfo4{}, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[8:]
+	if _, ok := readPathname4(b); !ok {
+		return FsLocationsInfo4{}, false
+	}
+	off1 := startLen - len(*b)
+	if len(*b) < 4 {
+		return FsLocationsInfo4{}, false
+	}
+	c_fli_items_count := int(binary.BigEndian.Uint32((*b)[:4]))
+	*b = (*b)[4:]
+	for i := 0; i < c_fli_items_count; i++ {
+		if _, ok := readFsLocationsItem4(b); !ok {
+			return FsLocationsInfo4{}, false
+		}
+	}
+	total := startLen - len(*b)
+	return FsLocationsInfo4{data: start[:total], off1: off1}, true
+}
+
+func ReadFsLocationsInfo4(b []byte) (FsLocationsInfo4, bool) {
+	return readFsLocationsInfo4(&b)
+}
+
+func (m FsLocationsInfo4) FliFlags() uint32 {
+	return binary.BigEndian.Uint32(m.data[0:4])
+}
+
+func (m FsLocationsInfo4) FliValidFor() int32 {
+	return int32(binary.BigEndian.Uint32(m.data[4:8]))
+}
+
+func (m FsLocationsInfo4) FliFsRoot() Pathname4 {
+	return Pathname4(m.data[8:m.off1])
+}
+
+func (m FsLocationsInfo4) FliItems() FsLocationsItem4Iter {
+	fli_items_count := int(binary.BigEndian.Uint32(m.data[m.off1 : m.off1+4]))
+	return FsLocationsItem4Iter{b: m.data[m.off1+4:], count: fli_items_count}
+}
+
+func (m FsLocationsInfo4) FliItemsCount() uint32 {
+	return binary.BigEndian.Uint32(m.data[m.off1 : m.off1+4])
+}
+
+// FsLocationsItem4Iter iterates over variable-size FsLocationsItem4 entries.
+type FsLocationsItem4Iter struct {
+	b     []byte
+	count int
+	i     int
+	cur   FsLocationsItem4
+}
+
+func (it *FsLocationsItem4Iter) Next() bool {
+	if it.i >= it.count {
+		return false
+	}
+	var ok bool
+	it.cur, ok = readFsLocationsItem4(&it.b)
+	if !ok {
+		return false
+	}
+	it.i++
+	return true
+}
+
+func (it *FsLocationsItem4Iter) FliItem() FsLocationsItem4 {
+	return it.cur
+}
+
+// FsLocationsInfo4Writer writes a fs_locations_info4:
+//
+//	fli_flags + fli_valid_for + fli_fs_root + fli_items_count + fs_locations_item4 fli_items[fli_items_count]
+type FsLocationsInfo4Writer struct {
+	buf              []byte
+	off              int
+	fliItemsCount    uint32
+	fliItemsCountOff int
+	phase            uint8
+}
+
+func StartFsLocationsInfo4(buf []byte) FsLocationsInfo4Writer {
+	off := len(buf)
+	buf = append(buf, make([]byte, 8)...) // fli_flags(4) + fli_valid_for(4)
+	return FsLocationsInfo4Writer{buf: buf, off: off}
+}
+
+func (w *FsLocationsInfo4Writer) SetFliFlags(v uint32) {
+	binary.BigEndian.PutUint32((*[8]byte)(w.buf[w.off:])[0:4], v)
+}
+
+func (w *FsLocationsInfo4Writer) SetFliValidFor(v int32) {
+	binary.BigEndian.PutUint32((*[8]byte)(w.buf[w.off:])[4:8], uint32(v))
+}
+
+func (w *FsLocationsInfo4Writer) AppendFliItems() FsLocationsItem4Writer {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.fliItemsCountOff == 0 {
+		w.fliItemsCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.fliItemsCount++
+	child := StartFsLocationsItem4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *FsLocationsInfo4Writer) StartFliFsRoot() Pathname4Writer {
+	if w.phase > 0 {
+		panic("writer fields called out of order")
+	}
+	child := StartPathname4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *FsLocationsInfo4Writer) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *FsLocationsInfo4Writer) Finish() []byte {
+	if w.fliItemsCountOff == 0 {
+		w.fliItemsCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0) // fli_items_count = 0
+	} else {
+		binary.BigEndian.PutUint32(w.buf[w.fliItemsCountOff:w.fliItemsCountOff+4], w.fliItemsCount)
+	}
+	return w.buf
+}
+
+// -------------------------------------------------------
+// Nfsv41FileLayouthint4 — fixed 12 bytes:
+//   nflh_care(4, beu32) + nflh_util(4, beu32) + nflh_stripe_count(4, beu32)
+// -------------------------------------------------------
+
+type Nfsv41FileLayouthint4 struct {
+	m *[nfsv41FileLayouthint4Size]byte
+}
+
+const nfsv41FileLayouthint4Size = 12
+
+func ReadNfsv41FileLayouthint4(b []byte) (Nfsv41FileLayouthint4, bool) {
+	if len(b) < nfsv41FileLayouthint4Size {
+		return Nfsv41FileLayouthint4{}, false
+	}
+	return Nfsv41FileLayouthint4{m: (*[nfsv41FileLayouthint4Size]byte)(b)}, true
+}
+
+func StartNfsv41FileLayouthint4(buf []byte) ([]byte, Nfsv41FileLayouthint4) {
+	buf = append(buf, make([]byte, nfsv41FileLayouthint4Size)...)
+	return buf, Nfsv41FileLayouthint4{m: (*[nfsv41FileLayouthint4Size]byte)(buf[len(buf)-nfsv41FileLayouthint4Size:])}
+}
+
+func (m Nfsv41FileLayouthint4) NflhCare() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m Nfsv41FileLayouthint4) NflhUtil() uint32 {
+	return binary.BigEndian.Uint32(m.m[4:8])
+}
+
+func (m Nfsv41FileLayouthint4) NflhStripeCount() uint32 {
+	return binary.BigEndian.Uint32(m.m[8:12])
+}
+
+func (m Nfsv41FileLayouthint4) SetNflhCare(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+func (m Nfsv41FileLayouthint4) SetNflhUtil(v uint32) {
+	binary.BigEndian.PutUint32(m.m[4:8], v)
+}
+
+func (m Nfsv41FileLayouthint4) SetNflhStripeCount(v uint32) {
+	binary.BigEndian.PutUint32(m.m[8:12], v)
+}
+
+// -------------------------------------------------------
+// MultipathList4 — variable: count(4) + netaddr4 data[count]
+// -------------------------------------------------------
+
+type MultipathList4 []byte
+
+func readMultipathList4(b *[]byte) (MultipathList4, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	c_count := int(binary.BigEndian.Uint32((*b)[0:4]))
+	*b = (*b)[4:]
+	for i := 0; i < c_count; i++ {
+		if _, ok := readNetaddr4(b); !ok {
+			return nil, false
+		}
+	}
+	total := startLen - len(*b)
+	return MultipathList4(start[:total]), true
+}
+
+func ReadMultipathList4(b []byte) (MultipathList4, bool) {
+	if len(b) < 4 {
+		return nil, false
+	}
+	return MultipathList4(b), true
+}
+
+func (m MultipathList4) Count() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m MultipathList4) Data() Netaddr4Iter {
+	count := int(binary.BigEndian.Uint32(m[0:4]))
+	return Netaddr4Iter{
+		b:     []byte(m[4:]),
+		count: count,
+	}
+}
+
+// Netaddr4Iter iterates over variable-size Netaddr4 entries.
+type Netaddr4Iter struct {
+	b     []byte
+	count int
+	i     int
+	cur   Netaddr4
+}
+
+func (it *Netaddr4Iter) Next() bool {
+	if it.i >= it.count {
+		return false
+	}
+	var ok bool
+	it.cur, ok = readNetaddr4(&it.b)
+	if !ok {
+		return false
+	}
+	it.i++
+	return true
+}
+
+func (it *Netaddr4Iter) Data() Netaddr4 {
+	return it.cur
+}
+
+// MultipathList4Writer writes a multipath_list4:
+//
+//	count + netaddr4 data[count]
+type MultipathList4Writer struct {
+	buf   []byte
+	off   int
+	count uint32
+}
+
+func StartMultipathList4(buf []byte) MultipathList4Writer {
+	off := len(buf)
+	buf = binary.BigEndian.AppendUint32(buf, 0) // count placeholder
+	return MultipathList4Writer{buf: buf, off: off}
+}
+
+func (w *MultipathList4Writer) AppendData() Netaddr4Writer {
+	_ = w.buf[:1]
+	w.count++
+	child := StartNetaddr4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *MultipathList4Writer) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *MultipathList4Writer) Finish() []byte {
+	binary.BigEndian.PutUint32(w.buf[w.off:w.off+4], w.count)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// Nfsv41FileLayoutDsAddr4NfldaMultipathDsList — variable:
+//   count(4) + multipath_list4 data[count]
+// -------------------------------------------------------
+
+type Nfsv41FileLayoutDsAddr4NfldaMultipathDsList []byte
+
+func readNfsv41FileLayoutDsAddr4NfldaMultipathDsList(b *[]byte) (Nfsv41FileLayoutDsAddr4NfldaMultipathDsList, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	c_count := int(binary.BigEndian.Uint32((*b)[0:4]))
+	*b = (*b)[4:]
+	for i := 0; i < c_count; i++ {
+		if _, ok := readMultipathList4(b); !ok {
+			return nil, false
+		}
+	}
+	total := startLen - len(*b)
+	return Nfsv41FileLayoutDsAddr4NfldaMultipathDsList(start[:total]), true
+}
+
+func ReadNfsv41FileLayoutDsAddr4NfldaMultipathDsList(b []byte) (Nfsv41FileLayoutDsAddr4NfldaMultipathDsList, bool) {
+	if len(b) < 4 {
+		return nil, false
+	}
+	return Nfsv41FileLayoutDsAddr4NfldaMultipathDsList(b), true
+}
+
+func (m Nfsv41FileLayoutDsAddr4NfldaMultipathDsList) Count() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m Nfsv41FileLayoutDsAddr4NfldaMultipathDsList) Data() MultipathList4Iter {
+	count := int(binary.BigEndian.Uint32(m[0:4]))
+	return MultipathList4Iter{
+		b:     []byte(m[4:]),
+		count: count,
+	}
+}
+
+// MultipathList4Iter iterates over variable-size MultipathList4 entries.
+type MultipathList4Iter struct {
+	b     []byte
+	count int
+	i     int
+	cur   MultipathList4
+}
+
+func (it *MultipathList4Iter) Next() bool {
+	if it.i >= it.count {
+		return false
+	}
+	var ok bool
+	it.cur, ok = readMultipathList4(&it.b)
+	if !ok {
+		return false
+	}
+	it.i++
+	return true
+}
+
+func (it *MultipathList4Iter) Data() MultipathList4 {
+	return it.cur
+}
+
+// Nfsv41FileLayoutDsAddr4NfldaMultipathDsListWriter writes a nfsv4_1_file_layout_ds_addr4_nflda_multipath_ds_list:
+//
+//	count + multipath_list4 data[count]
+type Nfsv41FileLayoutDsAddr4NfldaMultipathDsListWriter struct {
+	buf   []byte
+	off   int
+	count uint32
+}
+
+func StartNfsv41FileLayoutDsAddr4NfldaMultipathDsList(buf []byte) Nfsv41FileLayoutDsAddr4NfldaMultipathDsListWriter {
+	off := len(buf)
+	buf = binary.BigEndian.AppendUint32(buf, 0) // count placeholder
+	return Nfsv41FileLayoutDsAddr4NfldaMultipathDsListWriter{buf: buf, off: off}
+}
+
+func (w *Nfsv41FileLayoutDsAddr4NfldaMultipathDsListWriter) AppendData() MultipathList4Writer {
+	_ = w.buf[:1]
+	w.count++
+	child := StartMultipathList4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *Nfsv41FileLayoutDsAddr4NfldaMultipathDsListWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *Nfsv41FileLayoutDsAddr4NfldaMultipathDsListWriter) Finish() []byte {
+	binary.BigEndian.PutUint32(w.buf[w.off:w.off+4], w.count)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// Nfsv41FileLayoutDsAddr4 — variable:
+//   nflda_stripe_indices_count(4) + beu32 nflda_stripe_indices[nflda_stripe_indices_count] + nflda_multipath_ds_list
+// -------------------------------------------------------
+
+type Nfsv41FileLayoutDsAddr4 struct {
+	data []byte
+	off1 int // byte offset within data where nflda_multipath_ds_list starts
+}
+
+func readNfsv41FileLayoutDsAddr4(b *[]byte) (Nfsv41FileLayoutDsAddr4, bool) {
+	if len(*b) < 4 {
+		return Nfsv41FileLayoutDsAddr4{}, false
+	}
+	start := *b
+	startLen := len(start)
+	c_nflda_stripe_indices_count := int(binary.BigEndian.Uint32((*b)[0:4]))
+	*b = (*b)[4:]
+	if len(*b) < c_nflda_stripe_indices_count*4 {
+		return Nfsv41FileLayoutDsAddr4{}, false
+	}
+	*b = (*b)[c_nflda_stripe_indices_count*4:]
+	off1 := startLen - len(*b)
+	if _, ok := readNfsv41FileLayoutDsAddr4NfldaMultipathDsList(b); !ok {
+		return Nfsv41FileLayoutDsAddr4{}, false
+	}
+	total := startLen - len(*b)
+	return Nfsv41FileLayoutDsAddr4{data: start[:total], off1: off1}, true
+}
+
+func ReadNfsv41FileLayoutDsAddr4(b []byte) (Nfsv41FileLayoutDsAddr4, bool) {
+	return readNfsv41FileLayoutDsAddr4(&b)
+}
+
+func (m Nfsv41FileLayoutDsAddr4) NfldaStripeIndices(i int) uint32 {
+	off := 4 + i*4
+	return binary.BigEndian.Uint32(m.data[off : off+4])
+}
+
+func (m Nfsv41FileLayoutDsAddr4) NfldaStripeIndicesCount() uint32 {
+	return binary.BigEndian.Uint32(m.data[0:4])
+}
+
+func (m Nfsv41FileLayoutDsAddr4) NfldaMultipathDsList() Nfsv41FileLayoutDsAddr4NfldaMultipathDsList {
+	return Nfsv41FileLayoutDsAddr4NfldaMultipathDsList(m.data[m.off1:])
+}
+
+// Nfsv41FileLayoutDsAddr4Writer writes a nfsv4_1_file_layout_ds_addr4:
+//
+//	nflda_stripe_indices_count + beu32 nflda_stripe_indices[nflda_stripe_indices_count] + nflda_multipath_ds_list
+type Nfsv41FileLayoutDsAddr4Writer struct {
+	buf                     []byte
+	off                     int
+	nfldaStripeIndicesCount uint32
+}
+
+func StartNfsv41FileLayoutDsAddr4(buf []byte) Nfsv41FileLayoutDsAddr4Writer {
+	off := len(buf)
+	buf = binary.BigEndian.AppendUint32(buf, 0) // nflda_stripe_indices_count placeholder
+	return Nfsv41FileLayoutDsAddr4Writer{buf: buf, off: off}
+}
+
+func (w *Nfsv41FileLayoutDsAddr4Writer) AppendNfldaStripeIndices(v uint32) {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, v)
+	w.nfldaStripeIndicesCount++
+}
+
+func (w *Nfsv41FileLayoutDsAddr4Writer) StartNfldaMultipathDsList() Nfsv41FileLayoutDsAddr4NfldaMultipathDsListWriter {
+	child := StartNfsv41FileLayoutDsAddr4NfldaMultipathDsList(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *Nfsv41FileLayoutDsAddr4Writer) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *Nfsv41FileLayoutDsAddr4Writer) Finish() []byte {
+	binary.BigEndian.PutUint32(w.buf[w.off:w.off+4], w.nfldaStripeIndicesCount)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// Nfsv41FileLayout4 — variable:
+//   nfl_deviceid(16) + nfl_util(4) + nfl_first_stripe_index(4) + nfl_pattern_offset(8) + nfl_fh_list_count(4) + nfs_fh4 nfl_fh_list[nfl_fh_list_count]
+// -------------------------------------------------------
+
+type Nfsv41FileLayout4 []byte
+
+func readNfsv41FileLayout4(b *[]byte) (Nfsv41FileLayout4, bool) {
+	if len(*b) < 36 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	c_nfl_fh_list_count := int(binary.BigEndian.Uint32((*b)[32:36]))
+	*b = (*b)[36:]
+	for i := 0; i < c_nfl_fh_list_count; i++ {
+		if _, ok := readNfsFh4(b); !ok {
+			return nil, false
+		}
+	}
+	total := startLen - len(*b)
+	return Nfsv41FileLayout4(start[:total]), true
+}
+
+func ReadNfsv41FileLayout4(b []byte) (Nfsv41FileLayout4, bool) {
+	if len(b) < 36 {
+		return nil, false
+	}
+	return Nfsv41FileLayout4(b), true
+}
+
+func (m Nfsv41FileLayout4) NflDeviceid() Deviceid4 {
+	return Deviceid4{m: (*[deviceid4Size]byte)(m[0 : 0+deviceid4Size])}
+}
+
+func (m Nfsv41FileLayout4) NflUtil() uint32 {
+	return binary.BigEndian.Uint32(m[16:20])
+}
+
+func (m Nfsv41FileLayout4) NflFirstStripeIndex() uint32 {
+	return binary.BigEndian.Uint32(m[20:24])
+}
+
+func (m Nfsv41FileLayout4) NflPatternOffset() uint64 {
+	return binary.BigEndian.Uint64(m[24:32])
+}
+
+func (m Nfsv41FileLayout4) NflFhListCount() uint32 {
+	return binary.BigEndian.Uint32(m[32:36])
+}
+
+func (m Nfsv41FileLayout4) NflFhList() NfsFh4Iter {
+	nfl_fh_list_count := int(binary.BigEndian.Uint32(m[32:36]))
+	return NfsFh4Iter{
+		b:     []byte(m[36:]),
+		count: nfl_fh_list_count,
+	}
+}
+
+// NfsFh4Iter iterates over variable-size NfsFh4 entries.
+type NfsFh4Iter struct {
+	b      []byte
+	count  int
+	i      int
+	curLen int
+}
+
+func (it *NfsFh4Iter) Next() bool {
+	b := it.b
+	if it.curLen > 0 {
+		if len(b) < it.curLen {
+			return false
+		}
+		b = b[it.curLen:]
+		it.curLen = 0
+	}
+	if it.i >= it.count {
+		it.b = b
+		return false
+	}
+	if len(b) < 4 {
+		return false
+	}
+	n := int(binary.BigEndian.Uint32(b[0:4]))
+	padded := (n + 3) &^ 3
+	total := 4 + padded
+	if len(b) < total {
+		return false
+	}
+	it.b = b
+	it.curLen = total
+	it.i++
+	return true
+}
+
+func (it *NfsFh4Iter) NflFhList() NfsFh4 {
+	return NfsFh4(it.b)
+}
+
+// Nfsv41FileLayout4Writer writes a nfsv4_1_file_layout4:
+//
+//	nfl_deviceid + nfl_util + nfl_first_stripe_index + nfl_pattern_offset + nfl_fh_list_count + nfs_fh4 nfl_fh_list[nfl_fh_list_count]
+type Nfsv41FileLayout4Writer struct {
+	buf            []byte
+	off            int
+	nflFhListCount uint32
+}
+
+func StartNfsv41FileLayout4(buf []byte) Nfsv41FileLayout4Writer {
+	off := len(buf)
+	buf = append(buf, make([]byte, 36)...) // nfl_deviceid(16) + nfl_util(4) + nfl_first_stripe_index(4) + nfl_pattern_offset(8) + nfl_fh_list_count(4)
+	return Nfsv41FileLayout4Writer{buf: buf, off: off}
+}
+
+func (w *Nfsv41FileLayout4Writer) NflDeviceid() Deviceid4 {
+	return Deviceid4{m: (*[deviceid4Size]byte)(w.buf[w.off:])}
+}
+
+func (w *Nfsv41FileLayout4Writer) SetNflUtil(v uint32) {
+	binary.BigEndian.PutUint32((*[36]byte)(w.buf[w.off:])[16:20], v)
+}
+
+func (w *Nfsv41FileLayout4Writer) SetNflFirstStripeIndex(v uint32) {
+	binary.BigEndian.PutUint32((*[36]byte)(w.buf[w.off:])[20:24], v)
+}
+
+func (w *Nfsv41FileLayout4Writer) SetNflPatternOffset(v uint64) {
+	binary.BigEndian.PutUint64((*[36]byte)(w.buf[w.off:])[24:32], v)
+}
+
+func (w *Nfsv41FileLayout4Writer) AppendNflFhList() NfsFh4Writer {
+	_ = w.buf[:1]
+	w.nflFhListCount++
+	child := StartNfsFh4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *Nfsv41FileLayout4Writer) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *Nfsv41FileLayout4Writer) Finish() []byte {
+	binary.BigEndian.PutUint32((*[36]byte)(w.buf[w.off:])[32:36], w.nflFhListCount)
 	return w.buf
 }
 
@@ -2361,6 +6970,103 @@ func (m ACCESS4res) AsACCESS4resok() ACCESS4resok {
 		panic("wrong union discriminant")
 	}
 	return ACCESS4resok{m: (*[aCCESS4resokSize]byte)(m.b)}
+}
+
+// -------------------------------------------------------
+// CLONE4args — fixed 56 bytes:
+//   stateid4(16) + stateid4(16) + cl_src_offset(8, beu64) + cl_dst_offset(8, beu64) + cl_count(8, beu64)
+// -------------------------------------------------------
+
+type CLONE4args struct {
+	m *[cLONE4argsSize]byte
+}
+
+const cLONE4argsSize = 56
+
+func readCLONE4args(b *[]byte) (CLONE4args, bool) {
+	if len(*b) < cLONE4argsSize {
+		return CLONE4args{}, false
+	}
+	result := CLONE4args{m: (*[cLONE4argsSize]byte)(*b)}
+	*b = (*b)[cLONE4argsSize:]
+	return result, true
+}
+
+func ReadCLONE4args(b []byte) (CLONE4args, bool) {
+	return readCLONE4args(&b)
+}
+
+func StartCLONE4args(buf []byte) ([]byte, CLONE4args) {
+	buf = append(buf, make([]byte, cLONE4argsSize)...)
+	return buf, CLONE4args{m: (*[cLONE4argsSize]byte)(buf[len(buf)-cLONE4argsSize:])}
+}
+
+func (m CLONE4args) ClSrcStateid() Stateid4 {
+	return Stateid4{m: (*[stateid4Size]byte)(m.m[0:16])}
+}
+
+func (m CLONE4args) ClDstStateid() Stateid4 {
+	return Stateid4{m: (*[stateid4Size]byte)(m.m[16:32])}
+}
+
+func (m CLONE4args) ClSrcOffset() uint64 {
+	return binary.BigEndian.Uint64(m.m[32:40])
+}
+
+func (m CLONE4args) ClDstOffset() uint64 {
+	return binary.BigEndian.Uint64(m.m[40:48])
+}
+
+func (m CLONE4args) ClCount() uint64 {
+	return binary.BigEndian.Uint64(m.m[48:56])
+}
+
+func (m CLONE4args) SetClSrcOffset(v uint64) {
+	binary.BigEndian.PutUint64(m.m[32:40], v)
+}
+
+func (m CLONE4args) SetClDstOffset(v uint64) {
+	binary.BigEndian.PutUint64(m.m[40:48], v)
+}
+
+func (m CLONE4args) SetClCount(v uint64) {
+	binary.BigEndian.PutUint64(m.m[48:56], v)
+}
+
+// -------------------------------------------------------
+// CLONE4res — fixed 4 bytes: cl_status(4, beu32)
+// -------------------------------------------------------
+
+type CLONE4res struct {
+	m *[cLONE4resSize]byte
+}
+
+const cLONE4resSize = 4
+
+func readCLONE4res(b *[]byte) (CLONE4res, bool) {
+	if len(*b) < cLONE4resSize {
+		return CLONE4res{}, false
+	}
+	result := CLONE4res{m: (*[cLONE4resSize]byte)(*b)}
+	*b = (*b)[cLONE4resSize:]
+	return result, true
+}
+
+func ReadCLONE4res(b []byte) (CLONE4res, bool) {
+	return readCLONE4res(&b)
+}
+
+func StartCLONE4res(buf []byte) ([]byte, CLONE4res) {
+	buf = append(buf, make([]byte, cLONE4resSize)...)
+	return buf, CLONE4res{m: (*[cLONE4resSize]byte)(buf[len(buf)-cLONE4resSize:])}
+}
+
+func (m CLONE4res) ClStatus() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m CLONE4res) SetClStatus(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
 }
 
 // -------------------------------------------------------
@@ -3322,7 +8028,7 @@ func readOpenToLockOwner4(b *[]byte) (OpenToLockOwner4, bool) {
 	start := *b
 	startLen := len(start)
 	*b = (*b)[24:]
-	if _, ok := readLockOwner4(b); !ok {
+	if _, ok := readStateOwner4(b); !ok {
 		return nil, false
 	}
 	total := startLen - len(*b)
@@ -3345,8 +8051,8 @@ func (m OpenToLockOwner4) LockSeqid() uint32 {
 	return binary.BigEndian.Uint32(m[20:24])
 }
 
-func (m OpenToLockOwner4) LockOwner() LockOwner4 {
-	return LockOwner4(m[24:])
+func (m OpenToLockOwner4) LockOwner() StateOwner4 {
+	return StateOwner4(m[24:])
 }
 
 // OpenToLockOwner4Writer writes a open_to_lock_owner4:
@@ -3374,8 +8080,8 @@ func (w *OpenToLockOwner4Writer) SetLockSeqid(v uint32) {
 	binary.BigEndian.PutUint32(w.header[20:24], v)
 }
 
-func (w *OpenToLockOwner4Writer) StartLockOwner() LockOwner4Writer {
-	child := StartLockOwner4(w.buf)
+func (w *OpenToLockOwner4Writer) StartLockOwner() StateOwner4Writer {
+	child := StartStateOwner4(w.buf)
 	w.buf = nil
 	w.header = nil
 	return child
@@ -3590,7 +8296,7 @@ func readLOCK4denied(b *[]byte) (LOCK4denied, bool) {
 	start := *b
 	startLen := len(start)
 	*b = (*b)[20:]
-	if _, ok := readLockOwner4(b); !ok {
+	if _, ok := readStateOwner4(b); !ok {
 		return nil, false
 	}
 	total := startLen - len(*b)
@@ -3613,8 +8319,8 @@ func (m LOCK4denied) Locktype() uint32 {
 	return binary.BigEndian.Uint32(m[16:20])
 }
 
-func (m LOCK4denied) Owner() LockOwner4 {
-	return LockOwner4(m[20:])
+func (m LOCK4denied) Owner() StateOwner4 {
+	return StateOwner4(m[20:])
 }
 
 // LOCK4deniedWriter writes a LOCK4denied:
@@ -3642,8 +8348,8 @@ func (w *LOCK4deniedWriter) SetLocktype(v uint32) {
 	binary.BigEndian.PutUint32(w.header[16:20], v)
 }
 
-func (w *LOCK4deniedWriter) StartOwner() LockOwner4Writer {
-	child := StartLockOwner4(w.buf)
+func (w *LOCK4deniedWriter) StartOwner() StateOwner4Writer {
+	child := StartStateOwner4(w.buf)
 	w.buf = nil
 	w.header = nil
 	return child
@@ -3745,7 +8451,7 @@ func readLOCKT4args(b *[]byte) (LOCKT4args, bool) {
 	start := *b
 	startLen := len(start)
 	*b = (*b)[20:]
-	if _, ok := readLockOwner4(b); !ok {
+	if _, ok := readStateOwner4(b); !ok {
 		return nil, false
 	}
 	total := startLen - len(*b)
@@ -3768,8 +8474,8 @@ func (m LOCKT4args) Length() uint64 {
 	return binary.BigEndian.Uint64(m[12:20])
 }
 
-func (m LOCKT4args) Owner() LockOwner4 {
-	return LockOwner4(m[20:])
+func (m LOCKT4args) Owner() StateOwner4 {
+	return StateOwner4(m[20:])
 }
 
 // LOCKT4argsWriter writes a LOCKT4args:
@@ -3797,8 +8503,8 @@ func (w *LOCKT4argsWriter) SetLength(v uint64) {
 	binary.BigEndian.PutUint64(w.header[12:20], v)
 }
 
-func (w *LOCKT4argsWriter) StartOwner() LockOwner4Writer {
-	child := StartLockOwner4(w.buf)
+func (w *LOCKT4argsWriter) StartOwner() StateOwner4Writer {
+	child := StartStateOwner4(w.buf)
 	w.buf = nil
 	w.header = nil
 	return child
@@ -4152,6 +8858,72 @@ func (m NVERIFY4res) SetStatus(v uint32) {
 }
 
 // -------------------------------------------------------
+// Creatverfattr — variable: cva_verf(8) + cva_attrs
+// -------------------------------------------------------
+
+type Creatverfattr []byte
+
+func readCreatverfattr(b *[]byte) (Creatverfattr, bool) {
+	if len(*b) < 8 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[8:]
+	if _, ok := readFattr4(b); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return Creatverfattr(start[:total]), true
+}
+
+func ReadCreatverfattr(b []byte) (Creatverfattr, bool) {
+	return readCreatverfattr(&b)
+}
+
+func (m Creatverfattr) CvaVerf() Verifier4 {
+	return Verifier4{m: (*[verifier4Size]byte)(m[0 : 0+verifier4Size])}
+}
+
+func (m Creatverfattr) CvaAttrs() Fattr4 {
+	v, _ := ReadFattr4(m[8:])
+	return v
+}
+
+// CreatverfattrWriter writes a creatverfattr:
+//
+//	cva_verf + cva_attrs
+type CreatverfattrWriter struct {
+	buf    []byte
+	header *[8]byte
+}
+
+func StartCreatverfattr(buf []byte) CreatverfattrWriter {
+	buf = append(buf, make([]byte, 8)...) // cva_verf(8)
+	return CreatverfattrWriter{buf: buf, header: (*[8]byte)(buf[len(buf)-8:])}
+}
+
+func (w *CreatverfattrWriter) CvaVerf() Verifier4 {
+	return Verifier4{m: (*[verifier4Size]byte)(w.header[0:])}
+}
+
+func (w *CreatverfattrWriter) StartCvaAttrs() Fattr4Writer {
+	child := StartFattr4(w.buf)
+	w.buf = nil
+	w.header = nil
+	return child
+}
+
+func (w *CreatverfattrWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *CreatverfattrWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
 // Createhow4 — union on createmode4 (external discriminant)
 // -------------------------------------------------------
 
@@ -4180,6 +8952,12 @@ func readCreatehow4(b *[]byte, createmode4 uint32) (Createhow4, bool) {
 			return Createhow4{}, false
 		}
 		return Createhow4{b: r.m[:], disc: createmode4}, true
+	case EXCLUSIVE4_1:
+		r, ok := readCreatverfattr(b)
+		if !ok {
+			return Createhow4{}, false
+		}
+		return Createhow4{b: []byte(r), disc: createmode4}, true
 	default:
 		return Createhow4{}, false
 	}
@@ -4206,6 +8984,13 @@ func (m Createhow4) AsVerifier4() Verifier4 {
 		panic("wrong union discriminant")
 	}
 	return Verifier4{m: (*[verifier4Size]byte)(m.b)}
+}
+
+func (m Createhow4) AsCreatverfattr() Creatverfattr {
+	if m.disc != EXCLUSIVE4_1 {
+		panic("wrong union discriminant")
+	}
+	return Creatverfattr(m.b)
 }
 
 // -------------------------------------------------------
@@ -4271,6 +9056,15 @@ func (w *Createhow4EntryWriter) SetValue_Exclusive4() Verifier4 {
 	p := (*[4 + verifier4Size]byte)(w.buf[len(w.buf)-4-verifier4Size:])
 	binary.BigEndian.PutUint32(p[:4], EXCLUSIVE4)
 	return Verifier4{m: (*[verifier4Size]byte)(p[4:])}
+}
+
+func (w *Createhow4EntryWriter) SetValue_Exclusive41() CreatverfattrWriter {
+	w.buf = append(w.buf, make([]byte, 4+8)...)
+	off := len(w.buf) - 4 - 8
+	binary.BigEndian.PutUint32((*[4 + 8]byte)(w.buf[off:])[:4], EXCLUSIVE4_1)
+	buf := w.buf
+	w.buf = nil
+	return CreatverfattrWriter{buf: buf, header: (*[8]byte)(buf[off+4:])}
 }
 
 func (w *Createhow4EntryWriter) Resume(buf []byte) {
@@ -4570,6 +9364,16 @@ func readOpenClaim4(b *[]byte, openClaimType4 uint32) (OpenClaim4, bool) {
 			return OpenClaim4{}, false
 		}
 		return OpenClaim4{b: []byte(r), disc: openClaimType4}, true
+	case CLAIM_FH:
+		return OpenClaim4{b: (*b)[:0], disc: openClaimType4}, true
+	case CLAIM_DELEG_PREV_FH:
+		return OpenClaim4{b: (*b)[:0], disc: openClaimType4}, true
+	case CLAIM_DELEG_CUR_FH:
+		r, ok := readStateid4(b)
+		if !ok {
+			return OpenClaim4{}, false
+		}
+		return OpenClaim4{b: r.m[:], disc: openClaimType4}, true
 	default:
 		return OpenClaim4{}, false
 	}
@@ -4603,6 +9407,13 @@ func (m OpenClaim4) AsDelegatePrev() Component4 {
 	return Component4(m.b)
 }
 
+func (m OpenClaim4) AsStateid4() Stateid4 {
+	if m.disc != CLAIM_DELEG_CUR_FH {
+		panic("wrong union discriminant")
+	}
+	return Stateid4{m: (*[stateid4Size]byte)(m.b)}
+}
+
 // -------------------------------------------------------
 // OPEN4args — variable:
 //   seqid(4) + share_access(4) + share_deny(4) + owner + openhow_type(4) + openflag4 openhow + claim_type(4) + open_claim4 claim
@@ -4621,7 +9432,7 @@ func readOPEN4args(b *[]byte) (OPEN4args, bool) {
 	start := *b
 	startLen := len(start)
 	*b = (*b)[12:]
-	if _, ok := readOpenOwner4(b); !ok {
+	if _, ok := readStateOwner4(b); !ok {
 		return OPEN4args{}, false
 	}
 	off1 := startLen - len(*b)
@@ -4662,8 +9473,8 @@ func (m OPEN4args) ShareDeny() uint32 {
 	return binary.BigEndian.Uint32(m.data[8:12])
 }
 
-func (m OPEN4args) Owner() OpenOwner4 {
-	return OpenOwner4(m.data[12:m.off1])
+func (m OPEN4args) Owner() StateOwner4 {
+	return StateOwner4(m.data[12:m.off1])
 }
 
 func (m OPEN4args) OpenhowType() uint32 {
@@ -4775,11 +9586,38 @@ func (w *OPEN4argsWriter) SetClaim_DelegatePrev() Component4Writer {
 	return child
 }
 
-func (w *OPEN4argsWriter) StartOwner() OpenOwner4Writer {
+func (w *OPEN4argsWriter) SetClaim_Fh() {
+	if w.phase > 2 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 2
+	w.buf = binary.BigEndian.AppendUint32(w.buf, CLAIM_FH)
+}
+
+func (w *OPEN4argsWriter) SetClaim_DelegPrevFh() {
+	if w.phase > 2 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 2
+	w.buf = binary.BigEndian.AppendUint32(w.buf, CLAIM_DELEG_PREV_FH)
+}
+
+func (w *OPEN4argsWriter) SetClaim_DelegCurFh() Stateid4 {
+	if w.phase > 2 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 2
+	w.buf = append(w.buf, make([]byte, 4+stateid4Size)...)
+	p := (*[4 + stateid4Size]byte)(w.buf[len(w.buf)-4-stateid4Size:])
+	binary.BigEndian.PutUint32(p[:4], CLAIM_DELEG_CUR_FH)
+	return Stateid4{m: (*[stateid4Size]byte)(p[4:])}
+}
+
+func (w *OPEN4argsWriter) StartOwner() StateOwner4Writer {
 	if w.phase > 0 {
 		panic("writer fields called out of order")
 	}
-	child := StartOpenOwner4(w.buf)
+	child := StartStateOwner4(w.buf)
 	w.buf = nil
 	w.header = nil
 	return child
@@ -4973,6 +9811,186 @@ func (w *OpenWriteDelegation4Writer) Finish() []byte {
 }
 
 // -------------------------------------------------------
+// OpenNoneDelegation4WND4CONTENTION — fixed 4 bytes: value(4, beu32)
+// -------------------------------------------------------
+
+type OpenNoneDelegation4WND4CONTENTION struct {
+	m *[openNoneDelegation4WND4CONTENTIONSize]byte
+}
+
+const openNoneDelegation4WND4CONTENTIONSize = 4
+
+func readOpenNoneDelegation4WND4CONTENTION(b *[]byte) (OpenNoneDelegation4WND4CONTENTION, bool) {
+	if len(*b) < openNoneDelegation4WND4CONTENTIONSize {
+		return OpenNoneDelegation4WND4CONTENTION{}, false
+	}
+	result := OpenNoneDelegation4WND4CONTENTION{m: (*[openNoneDelegation4WND4CONTENTIONSize]byte)(*b)}
+	*b = (*b)[openNoneDelegation4WND4CONTENTIONSize:]
+	return result, true
+}
+
+func ReadOpenNoneDelegation4WND4CONTENTION(b []byte) (OpenNoneDelegation4WND4CONTENTION, bool) {
+	return readOpenNoneDelegation4WND4CONTENTION(&b)
+}
+
+func StartOpenNoneDelegation4WND4CONTENTION(buf []byte) ([]byte, OpenNoneDelegation4WND4CONTENTION) {
+	buf = append(buf, make([]byte, openNoneDelegation4WND4CONTENTIONSize)...)
+	return buf, OpenNoneDelegation4WND4CONTENTION{m: (*[openNoneDelegation4WND4CONTENTIONSize]byte)(buf[len(buf)-openNoneDelegation4WND4CONTENTIONSize:])}
+}
+
+func (m OpenNoneDelegation4WND4CONTENTION) Value() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m OpenNoneDelegation4WND4CONTENTION) SetValue(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+// -------------------------------------------------------
+// OpenNoneDelegation4WND4RESOURCE — fixed 4 bytes: value(4, beu32)
+// -------------------------------------------------------
+
+type OpenNoneDelegation4WND4RESOURCE struct {
+	m *[openNoneDelegation4WND4RESOURCESize]byte
+}
+
+const openNoneDelegation4WND4RESOURCESize = 4
+
+func readOpenNoneDelegation4WND4RESOURCE(b *[]byte) (OpenNoneDelegation4WND4RESOURCE, bool) {
+	if len(*b) < openNoneDelegation4WND4RESOURCESize {
+		return OpenNoneDelegation4WND4RESOURCE{}, false
+	}
+	result := OpenNoneDelegation4WND4RESOURCE{m: (*[openNoneDelegation4WND4RESOURCESize]byte)(*b)}
+	*b = (*b)[openNoneDelegation4WND4RESOURCESize:]
+	return result, true
+}
+
+func ReadOpenNoneDelegation4WND4RESOURCE(b []byte) (OpenNoneDelegation4WND4RESOURCE, bool) {
+	return readOpenNoneDelegation4WND4RESOURCE(&b)
+}
+
+func StartOpenNoneDelegation4WND4RESOURCE(buf []byte) ([]byte, OpenNoneDelegation4WND4RESOURCE) {
+	buf = append(buf, make([]byte, openNoneDelegation4WND4RESOURCESize)...)
+	return buf, OpenNoneDelegation4WND4RESOURCE{m: (*[openNoneDelegation4WND4RESOURCESize]byte)(buf[len(buf)-openNoneDelegation4WND4RESOURCESize:])}
+}
+
+func (m OpenNoneDelegation4WND4RESOURCE) Value() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m OpenNoneDelegation4WND4RESOURCE) SetValue(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+// -------------------------------------------------------
+// OpenNoneDelegation4 — union on why_no_delegation4 (external discriminant)
+// -------------------------------------------------------
+
+type OpenNoneDelegation4 struct {
+	b    []byte
+	disc uint32
+}
+
+func readOpenNoneDelegation4(b *[]byte, whyNoDelegation4 uint32) (OpenNoneDelegation4, bool) {
+	switch whyNoDelegation4 {
+	case WND4_CONTENTION:
+		r, ok := readOpenNoneDelegation4WND4CONTENTION(b)
+		if !ok {
+			return OpenNoneDelegation4{}, false
+		}
+		return OpenNoneDelegation4{b: r.m[:], disc: whyNoDelegation4}, true
+	case WND4_RESOURCE:
+		r, ok := readOpenNoneDelegation4WND4RESOURCE(b)
+		if !ok {
+			return OpenNoneDelegation4{}, false
+		}
+		return OpenNoneDelegation4{b: r.m[:], disc: whyNoDelegation4}, true
+	default:
+		return OpenNoneDelegation4{b: (*b)[:0], disc: whyNoDelegation4}, true
+	}
+}
+
+func (m OpenNoneDelegation4) AsOpenNoneDelegation4WND4CONTENTION() OpenNoneDelegation4WND4CONTENTION {
+	if m.disc != WND4_CONTENTION {
+		panic("wrong union discriminant")
+	}
+	return OpenNoneDelegation4WND4CONTENTION{m: (*[openNoneDelegation4WND4CONTENTIONSize]byte)(m.b)}
+}
+
+func (m OpenNoneDelegation4) AsOpenNoneDelegation4WND4RESOURCE() OpenNoneDelegation4WND4RESOURCE {
+	if m.disc != WND4_RESOURCE {
+		panic("wrong union discriminant")
+	}
+	return OpenNoneDelegation4WND4RESOURCE{m: (*[openNoneDelegation4WND4RESOURCESize]byte)(m.b)}
+}
+
+// -------------------------------------------------------
+// OpenNoneDelegation4Entry — variable: disc(4) + open_none_delegation4 value
+// -------------------------------------------------------
+
+type OpenNoneDelegation4Entry []byte
+
+func readOpenNoneDelegation4Entry(b *[]byte) (OpenNoneDelegation4Entry, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[4:]
+	if _, ok := readOpenNoneDelegation4(b, binary.BigEndian.Uint32(start[0:4])); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return OpenNoneDelegation4Entry(start[:total]), true
+}
+
+func ReadOpenNoneDelegation4Entry(b []byte) (OpenNoneDelegation4Entry, bool) {
+	return readOpenNoneDelegation4Entry(&b)
+}
+
+func (m OpenNoneDelegation4Entry) Disc() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m OpenNoneDelegation4Entry) Value() OpenNoneDelegation4 {
+	return OpenNoneDelegation4{b: m[4:], disc: binary.BigEndian.Uint32(m[0:4])}
+}
+
+// OpenNoneDelegation4EntryWriter writes a open_none_delegation4_entry:
+//
+//	disc + value(disc)
+type OpenNoneDelegation4EntryWriter struct {
+	buf []byte
+	off int
+}
+
+func StartOpenNoneDelegation4Entry(buf []byte) OpenNoneDelegation4EntryWriter {
+	return OpenNoneDelegation4EntryWriter{buf: buf, off: len(buf)}
+}
+
+func (w *OpenNoneDelegation4EntryWriter) SetValue_Contention() OpenNoneDelegation4WND4CONTENTION {
+	w.buf = append(w.buf, make([]byte, 4+openNoneDelegation4WND4CONTENTIONSize)...)
+	p := (*[4 + openNoneDelegation4WND4CONTENTIONSize]byte)(w.buf[len(w.buf)-4-openNoneDelegation4WND4CONTENTIONSize:])
+	binary.BigEndian.PutUint32(p[:4], WND4_CONTENTION)
+	return OpenNoneDelegation4WND4CONTENTION{m: (*[openNoneDelegation4WND4CONTENTIONSize]byte)(p[4:])}
+}
+
+func (w *OpenNoneDelegation4EntryWriter) SetValue_Resource() OpenNoneDelegation4WND4RESOURCE {
+	w.buf = append(w.buf, make([]byte, 4+openNoneDelegation4WND4RESOURCESize)...)
+	p := (*[4 + openNoneDelegation4WND4RESOURCESize]byte)(w.buf[len(w.buf)-4-openNoneDelegation4WND4RESOURCESize:])
+	binary.BigEndian.PutUint32(p[:4], WND4_RESOURCE)
+	return OpenNoneDelegation4WND4RESOURCE{m: (*[openNoneDelegation4WND4RESOURCESize]byte)(p[4:])}
+}
+
+func (w *OpenNoneDelegation4EntryWriter) SetValue_Default(whyNoDelegation4 uint32) {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, whyNoDelegation4)
+}
+
+func (w *OpenNoneDelegation4EntryWriter) Finish() []byte {
+	return w.buf
+}
+
+// -------------------------------------------------------
 // OpenDelegation4 — union on open_delegation_type4 (external discriminant)
 // -------------------------------------------------------
 
@@ -4991,30 +10009,70 @@ func readOpenDelegation4(b *[]byte, openDelegationType4 uint32) (OpenDelegation4
 			return OpenDelegation4{}, false
 		}
 		return OpenDelegation4{b: []byte(r), disc: openDelegationType4}, true
+	case OPEN_DELEGATE_READ_ATTRS_DELEG:
+		r, ok := readOpenReadDelegation4(b)
+		if !ok {
+			return OpenDelegation4{}, false
+		}
+		return OpenDelegation4{b: []byte(r), disc: openDelegationType4}, true
 	case OPEN_DELEGATE_WRITE:
 		r, ok := readOpenWriteDelegation4(b)
 		if !ok {
 			return OpenDelegation4{}, false
 		}
 		return OpenDelegation4{b: r.data, disc: openDelegationType4}, true
+	case OPEN_DELEGATE_WRITE_ATTRS_DELEG:
+		r, ok := readOpenWriteDelegation4(b)
+		if !ok {
+			return OpenDelegation4{}, false
+		}
+		return OpenDelegation4{b: r.data, disc: openDelegationType4}, true
+	case OPEN_DELEGATE_NONE_EXT:
+		r, ok := readOpenNoneDelegation4Entry(b)
+		if !ok {
+			return OpenDelegation4{}, false
+		}
+		return OpenDelegation4{b: []byte(r), disc: openDelegationType4}, true
 	default:
 		return OpenDelegation4{}, false
 	}
 }
 
-func (m OpenDelegation4) AsOpenReadDelegation4() OpenReadDelegation4 {
+func (m OpenDelegation4) AsRead() OpenReadDelegation4 {
 	if m.disc != OPEN_DELEGATE_READ {
 		panic("wrong union discriminant")
 	}
 	return OpenReadDelegation4(m.b)
 }
 
-func (m OpenDelegation4) AsOpenWriteDelegation4() OpenWriteDelegation4 {
+func (m OpenDelegation4) AsReadAttrsDeleg() OpenReadDelegation4 {
+	if m.disc != OPEN_DELEGATE_READ_ATTRS_DELEG {
+		panic("wrong union discriminant")
+	}
+	return OpenReadDelegation4(m.b)
+}
+
+func (m OpenDelegation4) AsWrite() OpenWriteDelegation4 {
 	if m.disc != OPEN_DELEGATE_WRITE {
 		panic("wrong union discriminant")
 	}
 	v, _ := ReadOpenWriteDelegation4(m.b)
 	return v
+}
+
+func (m OpenDelegation4) AsWriteAttrsDeleg() OpenWriteDelegation4 {
+	if m.disc != OPEN_DELEGATE_WRITE_ATTRS_DELEG {
+		panic("wrong union discriminant")
+	}
+	v, _ := ReadOpenWriteDelegation4(m.b)
+	return v
+}
+
+func (m OpenDelegation4) AsOpenNoneDelegation4Entry() OpenNoneDelegation4Entry {
+	if m.disc != OPEN_DELEGATE_NONE_EXT {
+		panic("wrong union discriminant")
+	}
+	return OpenNoneDelegation4Entry(m.b)
 }
 
 // -------------------------------------------------------
@@ -5126,6 +10184,19 @@ func (w *OPEN4resokWriter) SetDelegation_Read() OpenReadDelegation4Writer {
 	return OpenReadDelegation4Writer{buf: buf, header: (*[20]byte)(buf[off+4:])}
 }
 
+func (w *OPEN4resokWriter) SetDelegation_ReadAttrsDeleg() OpenReadDelegation4Writer {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	w.buf = append(w.buf, make([]byte, 4+20)...)
+	off := len(w.buf) - 4 - 20
+	binary.BigEndian.PutUint32((*[4 + 20]byte)(w.buf[off:])[:4], OPEN_DELEGATE_READ_ATTRS_DELEG)
+	buf := w.buf
+	w.buf = nil
+	return OpenReadDelegation4Writer{buf: buf, header: (*[20]byte)(buf[off+4:])}
+}
+
 func (w *OPEN4resokWriter) SetDelegation_Write() OpenWriteDelegation4Writer {
 	if w.phase > 1 {
 		panic("writer fields called out of order")
@@ -5137,6 +10208,30 @@ func (w *OPEN4resokWriter) SetDelegation_Write() OpenWriteDelegation4Writer {
 	buf := w.buf
 	w.buf = nil
 	return OpenWriteDelegation4Writer{buf: buf, header: (*[24]byte)(buf[off+4:])}
+}
+
+func (w *OPEN4resokWriter) SetDelegation_WriteAttrsDeleg() OpenWriteDelegation4Writer {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	w.buf = append(w.buf, make([]byte, 4+24)...)
+	off := len(w.buf) - 4 - 24
+	binary.BigEndian.PutUint32((*[4 + 24]byte)(w.buf[off:])[:4], OPEN_DELEGATE_WRITE_ATTRS_DELEG)
+	buf := w.buf
+	w.buf = nil
+	return OpenWriteDelegation4Writer{buf: buf, header: (*[24]byte)(buf[off+4:])}
+}
+
+func (w *OPEN4resokWriter) SetDelegation_NoneExt() OpenNoneDelegation4EntryWriter {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OPEN_DELEGATE_NONE_EXT)
+	child := StartOpenNoneDelegation4Entry(w.buf)
+	w.buf = nil
+	return child
 }
 
 func (w *OPEN4resokWriter) StartAttrset() Bitmap4Writer {
@@ -7361,7 +12456,7 @@ func readSETCLIENTID4res(b *[]byte, nfsstat4 uint32) (SETCLIENTID4res, bool) {
 		}
 		return SETCLIENTID4res{b: r.m[:], disc: nfsstat4}, true
 	case NFS4ERR_CLID_INUSE:
-		r, ok := readClientaddr4(b)
+		r, ok := readNetaddr4(b)
 		if !ok {
 			return SETCLIENTID4res{}, false
 		}
@@ -7378,11 +12473,11 @@ func (m SETCLIENTID4res) AsSETCLIENTID4resok() SETCLIENTID4resok {
 	return SETCLIENTID4resok{m: (*[sETCLIENTID4resokSize]byte)(m.b)}
 }
 
-func (m SETCLIENTID4res) AsClientaddr4() Clientaddr4 {
+func (m SETCLIENTID4res) AsNetaddr4() Netaddr4 {
 	if m.disc != NFS4ERR_CLID_INUSE {
 		panic("wrong union discriminant")
 	}
-	v, _ := ReadClientaddr4(m.b)
+	v, _ := ReadNetaddr4(m.b)
 	return v
 }
 
@@ -7737,7 +12832,7 @@ type RELEASELOCKOWNER4args []byte
 func readRELEASELOCKOWNER4args(b *[]byte) (RELEASELOCKOWNER4args, bool) {
 	start := *b
 	startLen := len(start)
-	if _, ok := readLockOwner4(b); !ok {
+	if _, ok := readStateOwner4(b); !ok {
 		return nil, false
 	}
 	total := startLen - len(*b)
@@ -7748,8 +12843,8 @@ func ReadRELEASELOCKOWNER4args(b []byte) (RELEASELOCKOWNER4args, bool) {
 	return readRELEASELOCKOWNER4args(&b)
 }
 
-func (m RELEASELOCKOWNER4args) LockOwner() LockOwner4 {
-	return LockOwner4(m[0:])
+func (m RELEASELOCKOWNER4args) LockOwner() StateOwner4 {
+	return StateOwner4(m[0:])
 }
 
 // RELEASELOCKOWNER4argsWriter writes a RELEASE_LOCKOWNER4args:
@@ -7765,8 +12860,8 @@ func StartRELEASELOCKOWNER4args(buf []byte) RELEASELOCKOWNER4argsWriter {
 	return RELEASELOCKOWNER4argsWriter{buf: buf, off: off}
 }
 
-func (w *RELEASELOCKOWNER4argsWriter) StartLockOwner() LockOwner4Writer {
-	child := StartLockOwner4(w.buf)
+func (w *RELEASELOCKOWNER4argsWriter) StartLockOwner() StateOwner4Writer {
+	child := StartStateOwner4(w.buf)
 	w.buf = nil
 	return child
 }
@@ -7849,6 +12944,8845 @@ func (m ILLEGAL4res) Status() uint32 {
 }
 
 func (m ILLEGAL4res) SetStatus(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+// -------------------------------------------------------
+// Gsshandle4T — variable: data_len(4) + u8 data[data_len] + align(4)
+// -------------------------------------------------------
+
+type Gsshandle4T []byte
+
+func readGsshandle4T(b *[]byte) (Gsshandle4T, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	n := int(binary.BigEndian.Uint32((*b)[0:4]))
+	padded := (n + 3) &^ 3
+	total := 4 + padded
+	if len(*b) < total {
+		return nil, false
+	}
+	result := Gsshandle4T((*b)[:total])
+	*b = (*b)[total:]
+	return result, true
+}
+
+func ReadGsshandle4T(b []byte) (Gsshandle4T, bool) {
+	if len(b) < 4 {
+		return nil, false
+	}
+	count := int(binary.BigEndian.Uint32(b[0:4]))
+	padded := (count + 3) &^ 3
+	total := 4 + padded
+	if len(b) < total {
+		return nil, false
+	}
+	return Gsshandle4T(b[:total]), true
+}
+
+func (m Gsshandle4T) DataLen() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m Gsshandle4T) Data() []byte {
+	n := int(binary.BigEndian.Uint32(m[0:4]))
+	return m[4 : 4+n]
+}
+
+// Gsshandle4TWriter writes a gsshandle4_t:
+//
+//	data_len + u8 data[data_len] + align(4)
+type Gsshandle4TWriter struct {
+	buf []byte
+	off int
+}
+
+func StartGsshandle4T(buf []byte) Gsshandle4TWriter {
+	off := len(buf)
+	return Gsshandle4TWriter{buf: buf, off: off}
+}
+
+func (w Gsshandle4TWriter) SetData(data []byte) Gsshandle4TWriter {
+	n := len(data)
+	padded := (n + 3) &^ 3
+	total := 4 + padded
+	w.buf = append(w.buf, make([]byte, total)...)
+	binary.BigEndian.PutUint32(w.buf[w.off:w.off+4], uint32(n))
+	copy(w.buf[w.off+4:], data)
+	return w
+}
+
+func (w Gsshandle4TWriter) Finish() []byte {
+	return w.buf
+}
+
+// -------------------------------------------------------
+// GssCbHandles4 — variable:
+//   gcbp_service(4) + gcbp_handle_from_server + gcbp_handle_from_client
+// -------------------------------------------------------
+
+type GssCbHandles4 struct {
+	data []byte
+	off1 int // byte offset within data where gcbp_handle_from_client starts
+}
+
+func readGssCbHandles4(b *[]byte) (GssCbHandles4, bool) {
+	if len(*b) < 4 {
+		return GssCbHandles4{}, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[4:]
+	if _, ok := readGsshandle4T(b); !ok {
+		return GssCbHandles4{}, false
+	}
+	off1 := startLen - len(*b)
+	if _, ok := readGsshandle4T(b); !ok {
+		return GssCbHandles4{}, false
+	}
+	total := startLen - len(*b)
+	return GssCbHandles4{data: start[:total], off1: off1}, true
+}
+
+func ReadGssCbHandles4(b []byte) (GssCbHandles4, bool) {
+	return readGssCbHandles4(&b)
+}
+
+func (m GssCbHandles4) GcbpService() uint32 {
+	return binary.BigEndian.Uint32(m.data[0:4])
+}
+
+func (m GssCbHandles4) GcbpHandleFromServer() Gsshandle4T {
+	return Gsshandle4T(m.data[4:m.off1])
+}
+
+func (m GssCbHandles4) GcbpHandleFromClient() Gsshandle4T {
+	return Gsshandle4T(m.data[m.off1:])
+}
+
+// GssCbHandles4Writer writes a gss_cb_handles4:
+//
+//	gcbp_service + gcbp_handle_from_server + gcbp_handle_from_client
+type GssCbHandles4Writer struct {
+	buf    []byte
+	header *[4]byte
+	phase  uint8
+}
+
+func StartGssCbHandles4(buf []byte) GssCbHandles4Writer {
+	buf = append(buf, make([]byte, 4)...) // gcbp_service(4)
+	return GssCbHandles4Writer{buf: buf, header: (*[4]byte)(buf[len(buf)-4:])}
+}
+
+func (w *GssCbHandles4Writer) SetGcbpService(v uint32) {
+	binary.BigEndian.PutUint32(w.header[0:4], v)
+}
+
+func (w *GssCbHandles4Writer) StartGcbpHandleFromServer() Gsshandle4TWriter {
+	if w.phase > 0 {
+		panic("writer fields called out of order")
+	}
+	child := StartGsshandle4T(w.buf)
+	w.buf = nil
+	w.header = nil
+	return child
+}
+
+func (w *GssCbHandles4Writer) StartGcbpHandleFromClient() Gsshandle4TWriter {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	child := StartGsshandle4T(w.buf)
+	w.buf = nil
+	w.header = nil
+	return child
+}
+
+func (w *GssCbHandles4Writer) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *GssCbHandles4Writer) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// CallbackSecParms4 — union on disc_callback_sec_parms4 (external discriminant)
+// -------------------------------------------------------
+
+type CallbackSecParms4 struct {
+	b    []byte
+	disc uint32
+}
+
+func readCallbackSecParms4(b *[]byte, discCallbackSecParms4 uint32) (CallbackSecParms4, bool) {
+	switch discCallbackSecParms4 {
+	case AUTH_NONE:
+		return CallbackSecParms4{b: (*b)[:0], disc: discCallbackSecParms4}, true
+	case AUTH_SYS:
+		r, ok := readAuthsysParms(b)
+		if !ok {
+			return CallbackSecParms4{}, false
+		}
+		return CallbackSecParms4{b: r.data, disc: discCallbackSecParms4}, true
+	case RPCSEC_GSS:
+		r, ok := readGssCbHandles4(b)
+		if !ok {
+			return CallbackSecParms4{}, false
+		}
+		return CallbackSecParms4{b: r.data, disc: discCallbackSecParms4}, true
+	default:
+		return CallbackSecParms4{}, false
+	}
+}
+
+func (m CallbackSecParms4) AsAuthsysParms() AuthsysParms {
+	if m.disc != AUTH_SYS {
+		panic("wrong union discriminant")
+	}
+	v, _ := ReadAuthsysParms(m.b)
+	return v
+}
+
+func (m CallbackSecParms4) AsGssCbHandles4() GssCbHandles4 {
+	if m.disc != RPCSEC_GSS {
+		panic("wrong union discriminant")
+	}
+	v, _ := ReadGssCbHandles4(m.b)
+	return v
+}
+
+// -------------------------------------------------------
+// CallbackSecParms4Entry — variable: disc(4) + callback_sec_parms4 value
+// -------------------------------------------------------
+
+type CallbackSecParms4Entry []byte
+
+func readCallbackSecParms4Entry(b *[]byte) (CallbackSecParms4Entry, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[4:]
+	if _, ok := readCallbackSecParms4(b, binary.BigEndian.Uint32(start[0:4])); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return CallbackSecParms4Entry(start[:total]), true
+}
+
+func ReadCallbackSecParms4Entry(b []byte) (CallbackSecParms4Entry, bool) {
+	return readCallbackSecParms4Entry(&b)
+}
+
+func (m CallbackSecParms4Entry) Disc() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m CallbackSecParms4Entry) Value() CallbackSecParms4 {
+	return CallbackSecParms4{b: m[4:], disc: binary.BigEndian.Uint32(m[0:4])}
+}
+
+// CallbackSecParms4EntryWriter writes a callback_sec_parms4_entry:
+//
+//	disc + value(disc)
+type CallbackSecParms4EntryWriter struct {
+	buf []byte
+	off int
+}
+
+func StartCallbackSecParms4Entry(buf []byte) CallbackSecParms4EntryWriter {
+	return CallbackSecParms4EntryWriter{buf: buf, off: len(buf)}
+}
+
+func (w *CallbackSecParms4EntryWriter) SetValue_None() {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, AUTH_NONE)
+}
+
+func (w *CallbackSecParms4EntryWriter) SetValue_Sys() AuthsysParmsWriter {
+	w.buf = append(w.buf, make([]byte, 4+8)...)
+	off := len(w.buf) - 4 - 8
+	binary.BigEndian.PutUint32((*[4 + 8]byte)(w.buf[off:])[:4], AUTH_SYS)
+	buf := w.buf
+	w.buf = nil
+	return AuthsysParmsWriter{buf: buf, off: off + 4}
+}
+
+func (w *CallbackSecParms4EntryWriter) SetValue_RpcsecGss() GssCbHandles4Writer {
+	w.buf = append(w.buf, make([]byte, 4+4)...)
+	off := len(w.buf) - 4 - 4
+	binary.BigEndian.PutUint32((*[4 + 4]byte)(w.buf[off:])[:4], RPCSEC_GSS)
+	buf := w.buf
+	w.buf = nil
+	return GssCbHandles4Writer{buf: buf, header: (*[4]byte)(buf[off+4:])}
+}
+
+func (w *CallbackSecParms4EntryWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *CallbackSecParms4EntryWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// BACKCHANNELCTL4args — variable:
+//   bca_cb_program(4) + bca_sec_parms_count(4) + callback_sec_parms4_entry bca_sec_parms[bca_sec_parms_count]
+// -------------------------------------------------------
+
+type BACKCHANNELCTL4args []byte
+
+func readBACKCHANNELCTL4args(b *[]byte) (BACKCHANNELCTL4args, bool) {
+	if len(*b) < 8 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	c_bca_sec_parms_count := int(binary.BigEndian.Uint32((*b)[4:8]))
+	*b = (*b)[8:]
+	for i := 0; i < c_bca_sec_parms_count; i++ {
+		if _, ok := readCallbackSecParms4Entry(b); !ok {
+			return nil, false
+		}
+	}
+	total := startLen - len(*b)
+	return BACKCHANNELCTL4args(start[:total]), true
+}
+
+func ReadBACKCHANNELCTL4args(b []byte) (BACKCHANNELCTL4args, bool) {
+	if len(b) < 8 {
+		return nil, false
+	}
+	return BACKCHANNELCTL4args(b), true
+}
+
+func (m BACKCHANNELCTL4args) BcaCbProgram() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m BACKCHANNELCTL4args) BcaSecParmsCount() uint32 {
+	return binary.BigEndian.Uint32(m[4:8])
+}
+
+func (m BACKCHANNELCTL4args) BcaSecParms() CallbackSecParms4EntryIter {
+	bca_sec_parms_count := int(binary.BigEndian.Uint32(m[4:8]))
+	return CallbackSecParms4EntryIter{
+		b:     []byte(m[8:]),
+		count: bca_sec_parms_count,
+	}
+}
+
+// CallbackSecParms4EntryIter iterates over variable-size CallbackSecParms4Entry entries.
+type CallbackSecParms4EntryIter struct {
+	b     []byte
+	count int
+	i     int
+	cur   CallbackSecParms4Entry
+}
+
+func (it *CallbackSecParms4EntryIter) Next() bool {
+	if it.i >= it.count {
+		return false
+	}
+	var ok bool
+	it.cur, ok = readCallbackSecParms4Entry(&it.b)
+	if !ok {
+		return false
+	}
+	it.i++
+	return true
+}
+
+func (it *CallbackSecParms4EntryIter) BcaSecParm() CallbackSecParms4Entry {
+	return it.cur
+}
+
+// BACKCHANNELCTL4argsWriter writes a BACKCHANNEL_CTL4args:
+//
+//	bca_cb_program + bca_sec_parms_count + callback_sec_parms4_entry bca_sec_parms[bca_sec_parms_count]
+type BACKCHANNELCTL4argsWriter struct {
+	buf              []byte
+	off              int
+	bcaSecParmsCount uint32
+}
+
+func StartBACKCHANNELCTL4args(buf []byte) BACKCHANNELCTL4argsWriter {
+	off := len(buf)
+	buf = append(buf, make([]byte, 8)...) // bca_cb_program(4) + bca_sec_parms_count(4)
+	return BACKCHANNELCTL4argsWriter{buf: buf, off: off}
+}
+
+func (w *BACKCHANNELCTL4argsWriter) SetBcaCbProgram(v uint32) {
+	binary.BigEndian.PutUint32((*[8]byte)(w.buf[w.off:])[0:4], v)
+}
+
+func (w *BACKCHANNELCTL4argsWriter) AppendBcaSecParms_None() {
+	_ = w.buf[:1]
+	w.buf = binary.BigEndian.AppendUint32(w.buf, AUTH_NONE)
+	w.bcaSecParmsCount++
+}
+
+func (w *BACKCHANNELCTL4argsWriter) AppendBcaSecParms_Sys() AuthsysParmsWriter {
+	_ = w.buf[:1]
+	w.buf = append(w.buf, make([]byte, 4+8)...)
+	off := len(w.buf) - 4 - 8
+	binary.BigEndian.PutUint32((*[4 + 8]byte)(w.buf[off:])[:4], AUTH_SYS)
+	w.bcaSecParmsCount++
+	buf := w.buf
+	w.buf = nil
+	return AuthsysParmsWriter{buf: buf, off: off + 4}
+}
+
+func (w *BACKCHANNELCTL4argsWriter) AppendBcaSecParms_RpcsecGss() GssCbHandles4Writer {
+	_ = w.buf[:1]
+	w.buf = append(w.buf, make([]byte, 4+4)...)
+	off := len(w.buf) - 4 - 4
+	binary.BigEndian.PutUint32((*[4 + 4]byte)(w.buf[off:])[:4], RPCSEC_GSS)
+	w.bcaSecParmsCount++
+	buf := w.buf
+	w.buf = nil
+	return GssCbHandles4Writer{buf: buf, header: (*[4]byte)(buf[off+4:])}
+}
+
+func (w *BACKCHANNELCTL4argsWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *BACKCHANNELCTL4argsWriter) Finish() []byte {
+	binary.BigEndian.PutUint32((*[8]byte)(w.buf[w.off:])[4:8], w.bcaSecParmsCount)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// BACKCHANNELCTL4res — fixed 4 bytes: bcr_status(4, beu32)
+// -------------------------------------------------------
+
+type BACKCHANNELCTL4res struct {
+	m *[bACKCHANNELCTL4resSize]byte
+}
+
+const bACKCHANNELCTL4resSize = 4
+
+func readBACKCHANNELCTL4res(b *[]byte) (BACKCHANNELCTL4res, bool) {
+	if len(*b) < bACKCHANNELCTL4resSize {
+		return BACKCHANNELCTL4res{}, false
+	}
+	result := BACKCHANNELCTL4res{m: (*[bACKCHANNELCTL4resSize]byte)(*b)}
+	*b = (*b)[bACKCHANNELCTL4resSize:]
+	return result, true
+}
+
+func ReadBACKCHANNELCTL4res(b []byte) (BACKCHANNELCTL4res, bool) {
+	return readBACKCHANNELCTL4res(&b)
+}
+
+func StartBACKCHANNELCTL4res(buf []byte) ([]byte, BACKCHANNELCTL4res) {
+	buf = append(buf, make([]byte, bACKCHANNELCTL4resSize)...)
+	return buf, BACKCHANNELCTL4res{m: (*[bACKCHANNELCTL4resSize]byte)(buf[len(buf)-bACKCHANNELCTL4resSize:])}
+}
+
+func (m BACKCHANNELCTL4res) BcrStatus() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m BACKCHANNELCTL4res) SetBcrStatus(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+// -------------------------------------------------------
+// BINDCONNTOSESSION4args — fixed 24 bytes:
+//   sessionid4(16) + bctsa_dir(4, beu32) + bctsa_use_conn_in_rdma_mode(4, beu32)
+// -------------------------------------------------------
+
+type BINDCONNTOSESSION4args struct {
+	m *[bINDCONNTOSESSION4argsSize]byte
+}
+
+const bINDCONNTOSESSION4argsSize = 24
+
+func readBINDCONNTOSESSION4args(b *[]byte) (BINDCONNTOSESSION4args, bool) {
+	if len(*b) < bINDCONNTOSESSION4argsSize {
+		return BINDCONNTOSESSION4args{}, false
+	}
+	result := BINDCONNTOSESSION4args{m: (*[bINDCONNTOSESSION4argsSize]byte)(*b)}
+	*b = (*b)[bINDCONNTOSESSION4argsSize:]
+	return result, true
+}
+
+func ReadBINDCONNTOSESSION4args(b []byte) (BINDCONNTOSESSION4args, bool) {
+	return readBINDCONNTOSESSION4args(&b)
+}
+
+func StartBINDCONNTOSESSION4args(buf []byte) ([]byte, BINDCONNTOSESSION4args) {
+	buf = append(buf, make([]byte, bINDCONNTOSESSION4argsSize)...)
+	return buf, BINDCONNTOSESSION4args{m: (*[bINDCONNTOSESSION4argsSize]byte)(buf[len(buf)-bINDCONNTOSESSION4argsSize:])}
+}
+
+func (m BINDCONNTOSESSION4args) BctsaSessid() Sessionid4 {
+	return Sessionid4{m: (*[sessionid4Size]byte)(m.m[0:16])}
+}
+
+func (m BINDCONNTOSESSION4args) BctsaDir() uint32 {
+	return binary.BigEndian.Uint32(m.m[16:20])
+}
+
+func (m BINDCONNTOSESSION4args) BctsaUseConnInRdmaMode() uint32 {
+	return binary.BigEndian.Uint32(m.m[20:24])
+}
+
+func (m BINDCONNTOSESSION4args) SetBctsaDir(v uint32) {
+	binary.BigEndian.PutUint32(m.m[16:20], v)
+}
+
+func (m BINDCONNTOSESSION4args) SetBctsaUseConnInRdmaMode(v uint32) {
+	binary.BigEndian.PutUint32(m.m[20:24], v)
+}
+
+// -------------------------------------------------------
+// BINDCONNTOSESSION4resok — fixed 24 bytes:
+//   sessionid4(16) + bctsr_dir(4, beu32) + bctsr_use_conn_in_rdma_mode(4, beu32)
+// -------------------------------------------------------
+
+type BINDCONNTOSESSION4resok struct {
+	m *[bINDCONNTOSESSION4resokSize]byte
+}
+
+const bINDCONNTOSESSION4resokSize = 24
+
+func readBINDCONNTOSESSION4resok(b *[]byte) (BINDCONNTOSESSION4resok, bool) {
+	if len(*b) < bINDCONNTOSESSION4resokSize {
+		return BINDCONNTOSESSION4resok{}, false
+	}
+	result := BINDCONNTOSESSION4resok{m: (*[bINDCONNTOSESSION4resokSize]byte)(*b)}
+	*b = (*b)[bINDCONNTOSESSION4resokSize:]
+	return result, true
+}
+
+func ReadBINDCONNTOSESSION4resok(b []byte) (BINDCONNTOSESSION4resok, bool) {
+	return readBINDCONNTOSESSION4resok(&b)
+}
+
+func StartBINDCONNTOSESSION4resok(buf []byte) ([]byte, BINDCONNTOSESSION4resok) {
+	buf = append(buf, make([]byte, bINDCONNTOSESSION4resokSize)...)
+	return buf, BINDCONNTOSESSION4resok{m: (*[bINDCONNTOSESSION4resokSize]byte)(buf[len(buf)-bINDCONNTOSESSION4resokSize:])}
+}
+
+func (m BINDCONNTOSESSION4resok) BctsrSessid() Sessionid4 {
+	return Sessionid4{m: (*[sessionid4Size]byte)(m.m[0:16])}
+}
+
+func (m BINDCONNTOSESSION4resok) BctsrDir() uint32 {
+	return binary.BigEndian.Uint32(m.m[16:20])
+}
+
+func (m BINDCONNTOSESSION4resok) BctsrUseConnInRdmaMode() uint32 {
+	return binary.BigEndian.Uint32(m.m[20:24])
+}
+
+func (m BINDCONNTOSESSION4resok) SetBctsrDir(v uint32) {
+	binary.BigEndian.PutUint32(m.m[16:20], v)
+}
+
+func (m BINDCONNTOSESSION4resok) SetBctsrUseConnInRdmaMode(v uint32) {
+	binary.BigEndian.PutUint32(m.m[20:24], v)
+}
+
+// -------------------------------------------------------
+// BINDCONNTOSESSION4res — union on nfsstat4 (external discriminant)
+// -------------------------------------------------------
+
+type BINDCONNTOSESSION4res struct {
+	b    []byte
+	disc uint32
+}
+
+func readBINDCONNTOSESSION4res(b *[]byte, nfsstat4 uint32) (BINDCONNTOSESSION4res, bool) {
+	switch nfsstat4 {
+	case NFS4_OK:
+		r, ok := readBINDCONNTOSESSION4resok(b)
+		if !ok {
+			return BINDCONNTOSESSION4res{}, false
+		}
+		return BINDCONNTOSESSION4res{b: r.m[:], disc: nfsstat4}, true
+	default:
+		return BINDCONNTOSESSION4res{b: (*b)[:0], disc: nfsstat4}, true
+	}
+}
+
+func (m BINDCONNTOSESSION4res) AsBINDCONNTOSESSION4resok() BINDCONNTOSESSION4resok {
+	if m.disc != NFS4_OK {
+		panic("wrong union discriminant")
+	}
+	return BINDCONNTOSESSION4resok{m: (*[bINDCONNTOSESSION4resokSize]byte)(m.b)}
+}
+
+// -------------------------------------------------------
+// StateProtectOps4 — variable: spo_must_enforce + spo_must_allow
+// -------------------------------------------------------
+
+type StateProtectOps4 struct {
+	data []byte
+	off1 int // byte offset within data where spo_must_allow starts
+}
+
+func readStateProtectOps4(b *[]byte) (StateProtectOps4, bool) {
+	start := *b
+	startLen := len(start)
+	if _, ok := readBitmap4(b); !ok {
+		return StateProtectOps4{}, false
+	}
+	off1 := startLen - len(*b)
+	if _, ok := readBitmap4(b); !ok {
+		return StateProtectOps4{}, false
+	}
+	total := startLen - len(*b)
+	return StateProtectOps4{data: start[:total], off1: off1}, true
+}
+
+func ReadStateProtectOps4(b []byte) (StateProtectOps4, bool) {
+	return readStateProtectOps4(&b)
+}
+
+func (m StateProtectOps4) SpoMustEnforce() Bitmap4 {
+	return Bitmap4(m.data[0:m.off1])
+}
+
+func (m StateProtectOps4) SpoMustAllow() Bitmap4 {
+	return Bitmap4(m.data[m.off1:])
+}
+
+// StateProtectOps4Writer writes a state_protect_ops4:
+//
+//	spo_must_enforce + spo_must_allow
+type StateProtectOps4Writer struct {
+	buf   []byte
+	off   int
+	phase uint8
+}
+
+func StartStateProtectOps4(buf []byte) StateProtectOps4Writer {
+	off := len(buf)
+	return StateProtectOps4Writer{buf: buf, off: off}
+}
+
+func (w *StateProtectOps4Writer) StartSpoMustEnforce() Bitmap4Writer {
+	if w.phase > 0 {
+		panic("writer fields called out of order")
+	}
+	child := StartBitmap4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *StateProtectOps4Writer) StartSpoMustAllow() Bitmap4Writer {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	child := StartBitmap4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *StateProtectOps4Writer) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *StateProtectOps4Writer) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// SsvSpParms4SspEncrAlgs — variable: count(4) + sec_oid4 data[count]
+// -------------------------------------------------------
+
+type SsvSpParms4SspEncrAlgs []byte
+
+func readSsvSpParms4SspEncrAlgs(b *[]byte) (SsvSpParms4SspEncrAlgs, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	c_count := int(binary.BigEndian.Uint32((*b)[0:4]))
+	*b = (*b)[4:]
+	for i := 0; i < c_count; i++ {
+		if _, ok := readSecOid4(b); !ok {
+			return nil, false
+		}
+	}
+	total := startLen - len(*b)
+	return SsvSpParms4SspEncrAlgs(start[:total]), true
+}
+
+func ReadSsvSpParms4SspEncrAlgs(b []byte) (SsvSpParms4SspEncrAlgs, bool) {
+	if len(b) < 4 {
+		return nil, false
+	}
+	return SsvSpParms4SspEncrAlgs(b), true
+}
+
+func (m SsvSpParms4SspEncrAlgs) Count() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m SsvSpParms4SspEncrAlgs) Data() SecOid4Iter {
+	count := int(binary.BigEndian.Uint32(m[0:4]))
+	return SecOid4Iter{
+		b:     []byte(m[4:]),
+		count: count,
+	}
+}
+
+// SecOid4Iter iterates over variable-size SecOid4 entries.
+type SecOid4Iter struct {
+	b      []byte
+	count  int
+	i      int
+	curLen int
+}
+
+func (it *SecOid4Iter) Next() bool {
+	b := it.b
+	if it.curLen > 0 {
+		if len(b) < it.curLen {
+			return false
+		}
+		b = b[it.curLen:]
+		it.curLen = 0
+	}
+	if it.i >= it.count {
+		it.b = b
+		return false
+	}
+	if len(b) < 4 {
+		return false
+	}
+	n := int(binary.BigEndian.Uint32(b[0:4]))
+	padded := (n + 3) &^ 3
+	total := 4 + padded
+	if len(b) < total {
+		return false
+	}
+	it.b = b
+	it.curLen = total
+	it.i++
+	return true
+}
+
+func (it *SecOid4Iter) Data() SecOid4 {
+	return SecOid4(it.b)
+}
+
+// SsvSpParms4SspEncrAlgsWriter writes a ssv_sp_parms4_ssp_encr_algs:
+//
+//	count + sec_oid4 data[count]
+type SsvSpParms4SspEncrAlgsWriter struct {
+	buf   []byte
+	off   int
+	count uint32
+}
+
+func StartSsvSpParms4SspEncrAlgs(buf []byte) SsvSpParms4SspEncrAlgsWriter {
+	off := len(buf)
+	buf = binary.BigEndian.AppendUint32(buf, 0) // count placeholder
+	return SsvSpParms4SspEncrAlgsWriter{buf: buf, off: off}
+}
+
+func (w *SsvSpParms4SspEncrAlgsWriter) AppendData() SecOid4Writer {
+	_ = w.buf[:1]
+	w.count++
+	child := StartSecOid4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *SsvSpParms4SspEncrAlgsWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *SsvSpParms4SspEncrAlgsWriter) Finish() []byte {
+	binary.BigEndian.PutUint32(w.buf[w.off:w.off+4], w.count)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// SsvSpParms4 — variable:
+//   ssp_ops + ssp_hash_algs_count(4) + sec_oid4 ssp_hash_algs[ssp_hash_algs_count] + ssp_encr_algs + ssp_window(4) + ssp_num_gss_handles(4)
+// -------------------------------------------------------
+
+type SsvSpParms4 struct {
+	data []byte
+	off1 int // byte offset within data where ssp_hash_algs_count starts
+	off2 int // byte offset within data where ssp_encr_algs starts
+	off3 int // byte offset within data where ssp_window starts
+}
+
+func readSsvSpParms4(b *[]byte) (SsvSpParms4, bool) {
+	start := *b
+	startLen := len(start)
+	if _, ok := readStateProtectOps4(b); !ok {
+		return SsvSpParms4{}, false
+	}
+	off1 := startLen - len(*b)
+	if len(*b) < 4 {
+		return SsvSpParms4{}, false
+	}
+	c_ssp_hash_algs_count := int(binary.BigEndian.Uint32((*b)[:4]))
+	*b = (*b)[4:]
+	for i := 0; i < c_ssp_hash_algs_count; i++ {
+		if _, ok := readSecOid4(b); !ok {
+			return SsvSpParms4{}, false
+		}
+	}
+	off2 := startLen - len(*b)
+	if _, ok := readSsvSpParms4SspEncrAlgs(b); !ok {
+		return SsvSpParms4{}, false
+	}
+	off3 := startLen - len(*b)
+	if len(*b) < 4 {
+		return SsvSpParms4{}, false
+	}
+	*b = (*b)[4:]
+	if len(*b) < 4 {
+		return SsvSpParms4{}, false
+	}
+	*b = (*b)[4:]
+	total := startLen - len(*b)
+	return SsvSpParms4{data: start[:total], off1: off1, off2: off2, off3: off3}, true
+}
+
+func ReadSsvSpParms4(b []byte) (SsvSpParms4, bool) {
+	return readSsvSpParms4(&b)
+}
+
+func (m SsvSpParms4) SspOps() StateProtectOps4 {
+	v, _ := ReadStateProtectOps4(m.data[0:m.off1])
+	return v
+}
+
+func (m SsvSpParms4) SspHashAlgs() SecOid4Iter {
+	ssp_hash_algs_count := int(binary.BigEndian.Uint32(m.data[m.off1 : m.off1+4]))
+	return SecOid4Iter{b: m.data[m.off1+4:], count: ssp_hash_algs_count}
+}
+
+func (m SsvSpParms4) SspHashAlgsCount() uint32 {
+	return binary.BigEndian.Uint32(m.data[m.off1 : m.off1+4])
+}
+
+func (m SsvSpParms4) SspEncrAlgs() SsvSpParms4SspEncrAlgs {
+	return SsvSpParms4SspEncrAlgs(m.data[m.off2:m.off3])
+}
+
+func (m SsvSpParms4) SspWindow() uint32 {
+	o := m.off3
+	return binary.BigEndian.Uint32(m.data[o : o+4])
+}
+
+func (m SsvSpParms4) SspNumGssHandles() uint32 {
+	o := m.off3 + 4
+	return binary.BigEndian.Uint32(m.data[o : o+4])
+}
+
+// SsvSpParms4Writer writes a ssv_sp_parms4:
+//
+//	ssp_ops + ssp_hash_algs_count + sec_oid4 ssp_hash_algs[ssp_hash_algs_count] + ssp_encr_algs + ssp_window + ssp_num_gss_handles
+type SsvSpParms4Writer struct {
+	buf                 []byte
+	off                 int
+	sspHashAlgsCount    uint32
+	sspHashAlgsCountOff int
+	phase               uint8
+}
+
+func StartSsvSpParms4(buf []byte) SsvSpParms4Writer {
+	off := len(buf)
+	return SsvSpParms4Writer{buf: buf, off: off}
+}
+
+func (w *SsvSpParms4Writer) SetSspWindow(v uint32) {
+	if w.phase > 3 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 3
+	w.buf = binary.BigEndian.AppendUint32(w.buf, v)
+}
+
+func (w *SsvSpParms4Writer) SetSspNumGssHandles(v uint32) {
+	if w.phase > 3 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 3
+	w.buf = binary.BigEndian.AppendUint32(w.buf, v)
+}
+
+func (w *SsvSpParms4Writer) AppendSspHashAlgs() SecOid4Writer {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.sspHashAlgsCountOff == 0 {
+		w.sspHashAlgsCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.sspHashAlgsCount++
+	child := StartSecOid4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *SsvSpParms4Writer) StartSspOps() StateProtectOps4Writer {
+	if w.phase > 0 {
+		panic("writer fields called out of order")
+	}
+	child := StartStateProtectOps4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *SsvSpParms4Writer) StartSspEncrAlgs() SsvSpParms4SspEncrAlgsWriter {
+	if w.phase > 2 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 2
+	child := StartSsvSpParms4SspEncrAlgs(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *SsvSpParms4Writer) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *SsvSpParms4Writer) Finish() []byte {
+	if w.sspHashAlgsCountOff == 0 {
+		w.sspHashAlgsCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0) // ssp_hash_algs_count = 0
+	} else {
+		binary.BigEndian.PutUint32(w.buf[w.sspHashAlgsCountOff:w.sspHashAlgsCountOff+4], w.sspHashAlgsCount)
+	}
+	return w.buf
+}
+
+// -------------------------------------------------------
+// StateProtect4A — union on state_protect_how4 (external discriminant)
+// -------------------------------------------------------
+
+type StateProtect4A struct {
+	b    []byte
+	disc uint32
+}
+
+func readStateProtect4A(b *[]byte, stateProtectHow4 uint32) (StateProtect4A, bool) {
+	switch stateProtectHow4 {
+	case SP4_NONE:
+		return StateProtect4A{b: (*b)[:0], disc: stateProtectHow4}, true
+	case SP4_MACH_CRED:
+		r, ok := readStateProtectOps4(b)
+		if !ok {
+			return StateProtect4A{}, false
+		}
+		return StateProtect4A{b: r.data, disc: stateProtectHow4}, true
+	case SP4_SSV:
+		r, ok := readSsvSpParms4(b)
+		if !ok {
+			return StateProtect4A{}, false
+		}
+		return StateProtect4A{b: r.data, disc: stateProtectHow4}, true
+	default:
+		return StateProtect4A{}, false
+	}
+}
+
+func (m StateProtect4A) AsStateProtectOps4() StateProtectOps4 {
+	if m.disc != SP4_MACH_CRED {
+		panic("wrong union discriminant")
+	}
+	v, _ := ReadStateProtectOps4(m.b)
+	return v
+}
+
+func (m StateProtect4A) AsSsvSpParms4() SsvSpParms4 {
+	if m.disc != SP4_SSV {
+		panic("wrong union discriminant")
+	}
+	v, _ := ReadSsvSpParms4(m.b)
+	return v
+}
+
+// -------------------------------------------------------
+// EXCHANGEID4args — variable:
+//   eia_clientowner + eia_flags(4) + eia_state_protect_type(4) + state_protect4_a eia_state_protect + eia_client_impl_id_count(4) + nfs_impl_id4 eia_client_impl_id[eia_client_impl_id_count]
+// -------------------------------------------------------
+
+type EXCHANGEID4args struct {
+	data []byte
+	off1 int // byte offset within data where eia_flags starts
+	off2 int // byte offset within data where eia_client_impl_id_count starts
+}
+
+func readEXCHANGEID4args(b *[]byte) (EXCHANGEID4args, bool) {
+	start := *b
+	startLen := len(start)
+	if _, ok := readClientOwner4(b); !ok {
+		return EXCHANGEID4args{}, false
+	}
+	off1 := startLen - len(*b)
+	if len(*b) < 4 {
+		return EXCHANGEID4args{}, false
+	}
+	*b = (*b)[4:]
+	if len(*b) < 4 {
+		return EXCHANGEID4args{}, false
+	}
+	c_eia_state_protect_type := binary.BigEndian.Uint32((*b)[:4])
+	*b = (*b)[4:]
+	if _, ok := readStateProtect4A(b, c_eia_state_protect_type); !ok {
+		return EXCHANGEID4args{}, false
+	}
+	off2 := startLen - len(*b)
+	if len(*b) < 4 {
+		return EXCHANGEID4args{}, false
+	}
+	c_eia_client_impl_id_count := int(binary.BigEndian.Uint32((*b)[:4]))
+	*b = (*b)[4:]
+	for i := 0; i < c_eia_client_impl_id_count; i++ {
+		if _, ok := readNfsImplId4(b); !ok {
+			return EXCHANGEID4args{}, false
+		}
+	}
+	total := startLen - len(*b)
+	return EXCHANGEID4args{data: start[:total], off1: off1, off2: off2}, true
+}
+
+func ReadEXCHANGEID4args(b []byte) (EXCHANGEID4args, bool) {
+	return readEXCHANGEID4args(&b)
+}
+
+func (m EXCHANGEID4args) EiaClientowner() ClientOwner4 {
+	return ClientOwner4(m.data[0:m.off1])
+}
+
+func (m EXCHANGEID4args) EiaFlags() uint32 {
+	o := m.off1
+	return binary.BigEndian.Uint32(m.data[o : o+4])
+}
+
+func (m EXCHANGEID4args) EiaStateProtectType() uint32 {
+	o := m.off1 + 4
+	return binary.BigEndian.Uint32(m.data[o : o+4])
+}
+
+func (m EXCHANGEID4args) EiaStateProtect() StateProtect4A {
+	return StateProtect4A{b: m.data[m.off1+8 : m.off2], disc: binary.BigEndian.Uint32(m.data[m.off1+4 : m.off1+8])}
+}
+
+func (m EXCHANGEID4args) EiaClientImplId() NfsImplId4Iter {
+	eia_client_impl_id_count := int(binary.BigEndian.Uint32(m.data[m.off2 : m.off2+4]))
+	return NfsImplId4Iter{b: m.data[m.off2+4:], count: eia_client_impl_id_count}
+}
+
+func (m EXCHANGEID4args) EiaClientImplIdCount() uint32 {
+	return binary.BigEndian.Uint32(m.data[m.off2 : m.off2+4])
+}
+
+// NfsImplId4Iter iterates over variable-size NfsImplId4 entries.
+type NfsImplId4Iter struct {
+	b     []byte
+	count int
+	i     int
+	cur   NfsImplId4
+}
+
+func (it *NfsImplId4Iter) Next() bool {
+	if it.i >= it.count {
+		return false
+	}
+	var ok bool
+	it.cur, ok = readNfsImplId4(&it.b)
+	if !ok {
+		return false
+	}
+	it.i++
+	return true
+}
+
+func (it *NfsImplId4Iter) EiaClientImplId() NfsImplId4 {
+	return it.cur
+}
+
+// EXCHANGEID4argsWriter writes a EXCHANGE_ID4args:
+//
+//	eia_clientowner + eia_flags + eia_state_protect_type + eia_state_protect(eia_state_protect_type) + eia_client_impl_id_count + nfs_impl_id4 eia_client_impl_id[eia_client_impl_id_count]
+type EXCHANGEID4argsWriter struct {
+	buf                     []byte
+	off                     int
+	eiaClientImplIdCount    uint32
+	eiaClientImplIdCountOff int
+	phase                   uint8
+}
+
+func StartEXCHANGEID4args(buf []byte) EXCHANGEID4argsWriter {
+	off := len(buf)
+	return EXCHANGEID4argsWriter{buf: buf, off: off}
+}
+
+func (w *EXCHANGEID4argsWriter) SetEiaFlags(v uint32) {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	w.buf = binary.BigEndian.AppendUint32(w.buf, v)
+}
+
+func (w *EXCHANGEID4argsWriter) AppendEiaClientImplId() NfsImplId4Writer {
+	_ = w.buf[:1]
+	if w.phase > 2 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 2
+	if w.eiaClientImplIdCountOff == 0 {
+		w.eiaClientImplIdCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.eiaClientImplIdCount++
+	child := StartNfsImplId4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *EXCHANGEID4argsWriter) SetEiaStateProtect_None() {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	w.buf = binary.BigEndian.AppendUint32(w.buf, SP4_NONE)
+}
+
+func (w *EXCHANGEID4argsWriter) SetEiaStateProtect_MachCred() StateProtectOps4Writer {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	w.buf = binary.BigEndian.AppendUint32(w.buf, SP4_MACH_CRED)
+	child := StartStateProtectOps4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *EXCHANGEID4argsWriter) SetEiaStateProtect_Ssv() SsvSpParms4Writer {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	w.buf = binary.BigEndian.AppendUint32(w.buf, SP4_SSV)
+	child := StartSsvSpParms4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *EXCHANGEID4argsWriter) StartEiaClientowner() ClientOwner4Writer {
+	if w.phase > 0 {
+		panic("writer fields called out of order")
+	}
+	child := StartClientOwner4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *EXCHANGEID4argsWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *EXCHANGEID4argsWriter) Finish() []byte {
+	if w.eiaClientImplIdCountOff == 0 {
+		w.eiaClientImplIdCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0) // eia_client_impl_id_count = 0
+	} else {
+		binary.BigEndian.PutUint32(w.buf[w.eiaClientImplIdCountOff:w.eiaClientImplIdCountOff+4], w.eiaClientImplIdCount)
+	}
+	return w.buf
+}
+
+// -------------------------------------------------------
+// SsvProtInfo4 — variable:
+//   spi_ops + spi_hash_alg(4) + spi_encr_alg(4) + spi_ssv_len(4) + spi_window(4) + spi_handles_count(4) + gsshandle4_t spi_handles[spi_handles_count]
+// -------------------------------------------------------
+
+type SsvProtInfo4 struct {
+	data []byte
+	off1 int // byte offset within data where spi_hash_alg starts
+}
+
+func readSsvProtInfo4(b *[]byte) (SsvProtInfo4, bool) {
+	start := *b
+	startLen := len(start)
+	if _, ok := readStateProtectOps4(b); !ok {
+		return SsvProtInfo4{}, false
+	}
+	off1 := startLen - len(*b)
+	if len(*b) < 4 {
+		return SsvProtInfo4{}, false
+	}
+	*b = (*b)[4:]
+	if len(*b) < 4 {
+		return SsvProtInfo4{}, false
+	}
+	*b = (*b)[4:]
+	if len(*b) < 4 {
+		return SsvProtInfo4{}, false
+	}
+	*b = (*b)[4:]
+	if len(*b) < 4 {
+		return SsvProtInfo4{}, false
+	}
+	*b = (*b)[4:]
+	if len(*b) < 4 {
+		return SsvProtInfo4{}, false
+	}
+	c_spi_handles_count := int(binary.BigEndian.Uint32((*b)[:4]))
+	*b = (*b)[4:]
+	for i := 0; i < c_spi_handles_count; i++ {
+		if _, ok := readGsshandle4T(b); !ok {
+			return SsvProtInfo4{}, false
+		}
+	}
+	total := startLen - len(*b)
+	return SsvProtInfo4{data: start[:total], off1: off1}, true
+}
+
+func ReadSsvProtInfo4(b []byte) (SsvProtInfo4, bool) {
+	return readSsvProtInfo4(&b)
+}
+
+func (m SsvProtInfo4) SpiOps() StateProtectOps4 {
+	v, _ := ReadStateProtectOps4(m.data[0:m.off1])
+	return v
+}
+
+func (m SsvProtInfo4) SpiHashAlg() uint32 {
+	o := m.off1
+	return binary.BigEndian.Uint32(m.data[o : o+4])
+}
+
+func (m SsvProtInfo4) SpiEncrAlg() uint32 {
+	o := m.off1 + 4
+	return binary.BigEndian.Uint32(m.data[o : o+4])
+}
+
+func (m SsvProtInfo4) SpiSsvLen() uint32 {
+	o := m.off1 + 8
+	return binary.BigEndian.Uint32(m.data[o : o+4])
+}
+
+func (m SsvProtInfo4) SpiWindow() uint32 {
+	o := m.off1 + 12
+	return binary.BigEndian.Uint32(m.data[o : o+4])
+}
+
+func (m SsvProtInfo4) SpiHandles() Gsshandle4TIter {
+	spi_handles_count := int(binary.BigEndian.Uint32(m.data[m.off1+16 : m.off1+20]))
+	return Gsshandle4TIter{b: m.data[m.off1+20:], count: spi_handles_count}
+}
+
+func (m SsvProtInfo4) SpiHandlesCount() uint32 {
+	return binary.BigEndian.Uint32(m.data[m.off1+16 : m.off1+20])
+}
+
+// Gsshandle4TIter iterates over variable-size Gsshandle4T entries.
+type Gsshandle4TIter struct {
+	b      []byte
+	count  int
+	i      int
+	curLen int
+}
+
+func (it *Gsshandle4TIter) Next() bool {
+	b := it.b
+	if it.curLen > 0 {
+		if len(b) < it.curLen {
+			return false
+		}
+		b = b[it.curLen:]
+		it.curLen = 0
+	}
+	if it.i >= it.count {
+		it.b = b
+		return false
+	}
+	if len(b) < 4 {
+		return false
+	}
+	n := int(binary.BigEndian.Uint32(b[0:4]))
+	padded := (n + 3) &^ 3
+	total := 4 + padded
+	if len(b) < total {
+		return false
+	}
+	it.b = b
+	it.curLen = total
+	it.i++
+	return true
+}
+
+func (it *Gsshandle4TIter) SpiHandle() Gsshandle4T {
+	return Gsshandle4T(it.b)
+}
+
+// SsvProtInfo4Writer writes a ssv_prot_info4:
+//
+//	spi_ops + spi_hash_alg + spi_encr_alg + spi_ssv_len + spi_window + spi_handles_count + gsshandle4_t spi_handles[spi_handles_count]
+type SsvProtInfo4Writer struct {
+	buf                []byte
+	off                int
+	spiHandlesCount    uint32
+	spiHandlesCountOff int
+	phase              uint8
+}
+
+func StartSsvProtInfo4(buf []byte) SsvProtInfo4Writer {
+	off := len(buf)
+	return SsvProtInfo4Writer{buf: buf, off: off}
+}
+
+func (w *SsvProtInfo4Writer) SetSpiHashAlg(v uint32) {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	w.buf = binary.BigEndian.AppendUint32(w.buf, v)
+}
+
+func (w *SsvProtInfo4Writer) SetSpiEncrAlg(v uint32) {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	w.buf = binary.BigEndian.AppendUint32(w.buf, v)
+}
+
+func (w *SsvProtInfo4Writer) SetSpiSsvLen(v uint32) {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	w.buf = binary.BigEndian.AppendUint32(w.buf, v)
+}
+
+func (w *SsvProtInfo4Writer) SetSpiWindow(v uint32) {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	w.buf = binary.BigEndian.AppendUint32(w.buf, v)
+}
+
+func (w *SsvProtInfo4Writer) AppendSpiHandles() Gsshandle4TWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.spiHandlesCountOff == 0 {
+		w.spiHandlesCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.spiHandlesCount++
+	child := StartGsshandle4T(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *SsvProtInfo4Writer) StartSpiOps() StateProtectOps4Writer {
+	if w.phase > 0 {
+		panic("writer fields called out of order")
+	}
+	child := StartStateProtectOps4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *SsvProtInfo4Writer) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *SsvProtInfo4Writer) Finish() []byte {
+	if w.spiHandlesCountOff == 0 {
+		w.spiHandlesCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0) // spi_handles_count = 0
+	} else {
+		binary.BigEndian.PutUint32(w.buf[w.spiHandlesCountOff:w.spiHandlesCountOff+4], w.spiHandlesCount)
+	}
+	return w.buf
+}
+
+// -------------------------------------------------------
+// StateProtect4R — union on state_protect_how4 (external discriminant)
+// -------------------------------------------------------
+
+type StateProtect4R struct {
+	b    []byte
+	disc uint32
+}
+
+func readStateProtect4R(b *[]byte, stateProtectHow4 uint32) (StateProtect4R, bool) {
+	switch stateProtectHow4 {
+	case SP4_NONE:
+		return StateProtect4R{b: (*b)[:0], disc: stateProtectHow4}, true
+	case SP4_MACH_CRED:
+		r, ok := readStateProtectOps4(b)
+		if !ok {
+			return StateProtect4R{}, false
+		}
+		return StateProtect4R{b: r.data, disc: stateProtectHow4}, true
+	case SP4_SSV:
+		r, ok := readSsvProtInfo4(b)
+		if !ok {
+			return StateProtect4R{}, false
+		}
+		return StateProtect4R{b: r.data, disc: stateProtectHow4}, true
+	default:
+		return StateProtect4R{}, false
+	}
+}
+
+func (m StateProtect4R) AsStateProtectOps4() StateProtectOps4 {
+	if m.disc != SP4_MACH_CRED {
+		panic("wrong union discriminant")
+	}
+	v, _ := ReadStateProtectOps4(m.b)
+	return v
+}
+
+func (m StateProtect4R) AsSsvProtInfo4() SsvProtInfo4 {
+	if m.disc != SP4_SSV {
+		panic("wrong union discriminant")
+	}
+	v, _ := ReadSsvProtInfo4(m.b)
+	return v
+}
+
+// -------------------------------------------------------
+// EXCHANGEID4resokEirServerImplId — variable:
+//   count(4) + nfs_impl_id4 data[count]
+// -------------------------------------------------------
+
+type EXCHANGEID4resokEirServerImplId []byte
+
+func readEXCHANGEID4resokEirServerImplId(b *[]byte) (EXCHANGEID4resokEirServerImplId, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	c_count := int(binary.BigEndian.Uint32((*b)[0:4]))
+	*b = (*b)[4:]
+	for i := 0; i < c_count; i++ {
+		if _, ok := readNfsImplId4(b); !ok {
+			return nil, false
+		}
+	}
+	total := startLen - len(*b)
+	return EXCHANGEID4resokEirServerImplId(start[:total]), true
+}
+
+func ReadEXCHANGEID4resokEirServerImplId(b []byte) (EXCHANGEID4resokEirServerImplId, bool) {
+	if len(b) < 4 {
+		return nil, false
+	}
+	return EXCHANGEID4resokEirServerImplId(b), true
+}
+
+func (m EXCHANGEID4resokEirServerImplId) Count() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m EXCHANGEID4resokEirServerImplId) Data() NfsImplId4Iter {
+	count := int(binary.BigEndian.Uint32(m[0:4]))
+	return NfsImplId4Iter{
+		b:     []byte(m[4:]),
+		count: count,
+	}
+}
+
+// EXCHANGEID4resokEirServerImplIdWriter writes a EXCHANGE_ID4resok_eir_server_impl_id:
+//
+//	count + nfs_impl_id4 data[count]
+type EXCHANGEID4resokEirServerImplIdWriter struct {
+	buf   []byte
+	off   int
+	count uint32
+}
+
+func StartEXCHANGEID4resokEirServerImplId(buf []byte) EXCHANGEID4resokEirServerImplIdWriter {
+	off := len(buf)
+	buf = binary.BigEndian.AppendUint32(buf, 0) // count placeholder
+	return EXCHANGEID4resokEirServerImplIdWriter{buf: buf, off: off}
+}
+
+func (w *EXCHANGEID4resokEirServerImplIdWriter) AppendData() NfsImplId4Writer {
+	_ = w.buf[:1]
+	w.count++
+	child := StartNfsImplId4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *EXCHANGEID4resokEirServerImplIdWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *EXCHANGEID4resokEirServerImplIdWriter) Finish() []byte {
+	binary.BigEndian.PutUint32(w.buf[w.off:w.off+4], w.count)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// EXCHANGEID4resok — variable:
+//   eir_clientid(8) + eir_sequenceid(4) + eir_flags(4) + eir_state_protect_type(4) + state_protect4_r eir_state_protect + eir_server_owner + eir_server_scope_len(4) + u8 eir_server_scope[eir_server_scope_len] + align(4) + eir_server_impl_id
+// -------------------------------------------------------
+
+type EXCHANGEID4resok struct {
+	data []byte
+	off1 int // byte offset within data where eir_server_owner starts
+	off2 int // byte offset within data where eir_server_scope_len starts
+	off3 int // byte offset within data where eir_server_impl_id starts
+}
+
+func readEXCHANGEID4resok(b *[]byte) (EXCHANGEID4resok, bool) {
+	if len(*b) < 20 {
+		return EXCHANGEID4resok{}, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[20:]
+	if _, ok := readStateProtect4R(b, binary.BigEndian.Uint32(start[16:20])); !ok {
+		return EXCHANGEID4resok{}, false
+	}
+	off1 := startLen - len(*b)
+	if _, ok := readServerOwner4(b); !ok {
+		return EXCHANGEID4resok{}, false
+	}
+	off2 := startLen - len(*b)
+	if len(*b) < 4 {
+		return EXCHANGEID4resok{}, false
+	}
+	c_eir_server_scope_len := int(binary.BigEndian.Uint32((*b)[:4]))
+	*b = (*b)[4:]
+	if len(*b) < c_eir_server_scope_len*1 {
+		return EXCHANGEID4resok{}, false
+	}
+	*b = (*b)[c_eir_server_scope_len*1:]
+	off3 := startLen - len(*b)
+	{
+		off := startLen - len(*b)
+		aligned := (off + 3) &^ 3
+		if aligned > startLen {
+			return EXCHANGEID4resok{}, false
+		}
+		*b = start[aligned:]
+	}
+	if _, ok := readEXCHANGEID4resokEirServerImplId(b); !ok {
+		return EXCHANGEID4resok{}, false
+	}
+	total := startLen - len(*b)
+	return EXCHANGEID4resok{data: start[:total], off1: off1, off2: off2, off3: off3}, true
+}
+
+func ReadEXCHANGEID4resok(b []byte) (EXCHANGEID4resok, bool) {
+	return readEXCHANGEID4resok(&b)
+}
+
+func (m EXCHANGEID4resok) EirClientid() uint64 {
+	return binary.BigEndian.Uint64(m.data[0:8])
+}
+
+func (m EXCHANGEID4resok) EirSequenceid() uint32 {
+	return binary.BigEndian.Uint32(m.data[8:12])
+}
+
+func (m EXCHANGEID4resok) EirFlags() uint32 {
+	return binary.BigEndian.Uint32(m.data[12:16])
+}
+
+func (m EXCHANGEID4resok) EirStateProtectType() uint32 {
+	return binary.BigEndian.Uint32(m.data[16:20])
+}
+
+func (m EXCHANGEID4resok) EirStateProtect() StateProtect4R {
+	return StateProtect4R{b: m.data[20:m.off1], disc: binary.BigEndian.Uint32(m.data[16:20])}
+}
+
+func (m EXCHANGEID4resok) EirServerOwner() ServerOwner4 {
+	return ServerOwner4(m.data[m.off1:m.off2])
+}
+
+func (m EXCHANGEID4resok) EirServerScope() []byte {
+	n := int(binary.BigEndian.Uint32(m.data[m.off2 : m.off2+4]))
+	o := m.off2 + 4
+	return m.data[o : o+n]
+}
+
+func (m EXCHANGEID4resok) EirServerScopeLen() uint32 {
+	return binary.BigEndian.Uint32(m.data[m.off2 : m.off2+4])
+}
+
+func (m EXCHANGEID4resok) EirServerImplId() EXCHANGEID4resokEirServerImplId {
+	return EXCHANGEID4resokEirServerImplId(m.data[m.off3:])
+}
+
+// EXCHANGEID4resokWriter writes a EXCHANGE_ID4resok:
+//
+//	eir_clientid + eir_sequenceid + eir_flags + eir_state_protect_type + eir_state_protect(eir_state_protect_type) + eir_server_owner + eir_server_scope_len + u8 eir_server_scope[eir_server_scope_len] + align(4) + eir_server_impl_id
+type EXCHANGEID4resokWriter struct {
+	buf                  []byte
+	off                  int
+	eirServerScopeLen    uint32
+	eirServerScopeLenOff int
+	phase                uint8
+}
+
+func StartEXCHANGEID4resok(buf []byte) EXCHANGEID4resokWriter {
+	off := len(buf)
+	buf = append(buf, make([]byte, 20)...) // eir_clientid(8) + eir_sequenceid(4) + eir_flags(4) + eir_state_protect_type(4)
+	return EXCHANGEID4resokWriter{buf: buf, off: off}
+}
+
+func (w *EXCHANGEID4resokWriter) SetEirClientid(v uint64) {
+	binary.BigEndian.PutUint64((*[20]byte)(w.buf[w.off:])[0:8], v)
+}
+
+func (w *EXCHANGEID4resokWriter) SetEirSequenceid(v uint32) {
+	binary.BigEndian.PutUint32((*[20]byte)(w.buf[w.off:])[8:12], v)
+}
+
+func (w *EXCHANGEID4resokWriter) SetEirFlags(v uint32) {
+	binary.BigEndian.PutUint32((*[20]byte)(w.buf[w.off:])[12:16], v)
+}
+
+func (w *EXCHANGEID4resokWriter) SetEirStateProtectType(v uint32) {
+	binary.BigEndian.PutUint32((*[20]byte)(w.buf[w.off:])[16:20], v)
+}
+
+func (w *EXCHANGEID4resokWriter) SetEirServerScope(data []byte) {
+	if w.phase > 2 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 2
+	if w.eirServerScopeLenOff == 0 {
+		w.eirServerScopeLenOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	n := len(data)
+	padded := (n + 3) &^ 3
+	w.buf = append(w.buf, make([]byte, padded)...)
+	copy(w.buf[len(w.buf)-padded:], data)
+	w.eirServerScopeLen = uint32(n)
+}
+
+func (w *EXCHANGEID4resokWriter) SetEirStateProtect_None() {
+	binary.BigEndian.PutUint32((*[20]byte)(w.buf[w.off:])[16:20], SP4_NONE)
+}
+
+func (w *EXCHANGEID4resokWriter) SetEirStateProtect_MachCred() StateProtectOps4Writer {
+	if w.phase > 0 {
+		panic("writer fields called out of order")
+	}
+	binary.BigEndian.PutUint32((*[20]byte)(w.buf[w.off:])[16:20], SP4_MACH_CRED)
+	child := StartStateProtectOps4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *EXCHANGEID4resokWriter) SetEirStateProtect_Ssv() SsvProtInfo4Writer {
+	if w.phase > 0 {
+		panic("writer fields called out of order")
+	}
+	binary.BigEndian.PutUint32((*[20]byte)(w.buf[w.off:])[16:20], SP4_SSV)
+	child := StartSsvProtInfo4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *EXCHANGEID4resokWriter) StartEirServerOwner() ServerOwner4Writer {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	child := StartServerOwner4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *EXCHANGEID4resokWriter) StartEirServerImplId() EXCHANGEID4resokEirServerImplIdWriter {
+	if w.phase > 2 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 2
+	child := StartEXCHANGEID4resokEirServerImplId(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *EXCHANGEID4resokWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *EXCHANGEID4resokWriter) Finish() []byte {
+	if w.eirServerScopeLenOff == 0 {
+		w.eirServerScopeLenOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0) // eir_server_scope_len = 0
+	} else {
+		binary.BigEndian.PutUint32(w.buf[w.eirServerScopeLenOff:w.eirServerScopeLenOff+4], w.eirServerScopeLen)
+	}
+	return w.buf
+}
+
+// -------------------------------------------------------
+// EXCHANGEID4res — union on nfsstat4 (external discriminant)
+// -------------------------------------------------------
+
+type EXCHANGEID4res struct {
+	b    []byte
+	disc uint32
+}
+
+func readEXCHANGEID4res(b *[]byte, nfsstat4 uint32) (EXCHANGEID4res, bool) {
+	switch nfsstat4 {
+	case NFS4_OK:
+		r, ok := readEXCHANGEID4resok(b)
+		if !ok {
+			return EXCHANGEID4res{}, false
+		}
+		return EXCHANGEID4res{b: r.data, disc: nfsstat4}, true
+	default:
+		return EXCHANGEID4res{b: (*b)[:0], disc: nfsstat4}, true
+	}
+}
+
+func (m EXCHANGEID4res) AsEXCHANGEID4resok() EXCHANGEID4resok {
+	if m.disc != NFS4_OK {
+		panic("wrong union discriminant")
+	}
+	v, _ := ReadEXCHANGEID4resok(m.b)
+	return v
+}
+
+// -------------------------------------------------------
+// ChannelAttrs4 — variable:
+//   ca_headerpadsize(4) + ca_maxrequestsize(4) + ca_maxresponsesize(4) + ca_maxresponsesize_cached(4) + ca_maxoperations(4) + ca_maxrequests(4) + ca_rdma_ird_count(4) + beu32 ca_rdma_ird[ca_rdma_ird_count]
+// -------------------------------------------------------
+
+type ChannelAttrs4 []byte
+
+func readChannelAttrs4(b *[]byte) (ChannelAttrs4, bool) {
+	if len(*b) < 28 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	c_ca_rdma_ird_count := int(binary.BigEndian.Uint32((*b)[24:28]))
+	*b = (*b)[28:]
+	if len(*b) < c_ca_rdma_ird_count*4 {
+		return nil, false
+	}
+	*b = (*b)[c_ca_rdma_ird_count*4:]
+	total := startLen - len(*b)
+	return ChannelAttrs4(start[:total]), true
+}
+
+func ReadChannelAttrs4(b []byte) (ChannelAttrs4, bool) {
+	if len(b) < 28 {
+		return nil, false
+	}
+	count := int(binary.BigEndian.Uint32(b[24:28]))
+	total := 28 + count*4
+	if len(b) < total {
+		return nil, false
+	}
+	return ChannelAttrs4(b[:total]), true
+}
+
+func (m ChannelAttrs4) CaHeaderpadsize() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m ChannelAttrs4) CaMaxrequestsize() uint32 {
+	return binary.BigEndian.Uint32(m[4:8])
+}
+
+func (m ChannelAttrs4) CaMaxresponsesize() uint32 {
+	return binary.BigEndian.Uint32(m[8:12])
+}
+
+func (m ChannelAttrs4) CaMaxresponsesizeCached() uint32 {
+	return binary.BigEndian.Uint32(m[12:16])
+}
+
+func (m ChannelAttrs4) CaMaxoperations() uint32 {
+	return binary.BigEndian.Uint32(m[16:20])
+}
+
+func (m ChannelAttrs4) CaMaxrequests() uint32 {
+	return binary.BigEndian.Uint32(m[20:24])
+}
+
+func (m ChannelAttrs4) CaRdmaIrdCount() uint32 {
+	return binary.BigEndian.Uint32(m[24:28])
+}
+
+func (m ChannelAttrs4) CaRdmaIrd(i int) uint32 {
+	off := 28 + i*4
+	return binary.BigEndian.Uint32(m[off : off+4])
+}
+
+// ChannelAttrs4Writer writes a channel_attrs4:
+//
+//	ca_headerpadsize + ca_maxrequestsize + ca_maxresponsesize + ca_maxresponsesize_cached + ca_maxoperations + ca_maxrequests + ca_rdma_ird_count + beu32 ca_rdma_ird[ca_rdma_ird_count]
+type ChannelAttrs4Writer struct {
+	buf            []byte
+	off            int
+	caRdmaIrdCount uint32
+}
+
+func StartChannelAttrs4(buf []byte) ChannelAttrs4Writer {
+	off := len(buf)
+	buf = append(buf, make([]byte, 28)...) // ca_headerpadsize(4) + ca_maxrequestsize(4) + ca_maxresponsesize(4) + ca_maxresponsesize_cached(4) + ca_maxoperations(4) + ca_maxrequests(4) + ca_rdma_ird_count(4)
+	return ChannelAttrs4Writer{buf: buf, off: off}
+}
+
+func (w *ChannelAttrs4Writer) SetCaHeaderpadsize(v uint32) {
+	binary.BigEndian.PutUint32((*[28]byte)(w.buf[w.off:])[0:4], v)
+}
+
+func (w *ChannelAttrs4Writer) SetCaMaxrequestsize(v uint32) {
+	binary.BigEndian.PutUint32((*[28]byte)(w.buf[w.off:])[4:8], v)
+}
+
+func (w *ChannelAttrs4Writer) SetCaMaxresponsesize(v uint32) {
+	binary.BigEndian.PutUint32((*[28]byte)(w.buf[w.off:])[8:12], v)
+}
+
+func (w *ChannelAttrs4Writer) SetCaMaxresponsesizeCached(v uint32) {
+	binary.BigEndian.PutUint32((*[28]byte)(w.buf[w.off:])[12:16], v)
+}
+
+func (w *ChannelAttrs4Writer) SetCaMaxoperations(v uint32) {
+	binary.BigEndian.PutUint32((*[28]byte)(w.buf[w.off:])[16:20], v)
+}
+
+func (w *ChannelAttrs4Writer) SetCaMaxrequests(v uint32) {
+	binary.BigEndian.PutUint32((*[28]byte)(w.buf[w.off:])[20:24], v)
+}
+
+func (w *ChannelAttrs4Writer) AppendCaRdmaIrd(v uint32) {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, v)
+	w.caRdmaIrdCount++
+}
+
+func (w *ChannelAttrs4Writer) Finish() []byte {
+	binary.BigEndian.PutUint32((*[28]byte)(w.buf[w.off:])[24:28], w.caRdmaIrdCount)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// CREATESESSION4args — variable:
+//   csa_clientid(8) + csa_sequence(4) + csa_flags(4) + csa_fore_chan_attrs + csa_back_chan_attrs + csa_cb_program(4) + csa_sec_parms_count(4) + callback_sec_parms4_entry csa_sec_parms[csa_sec_parms_count]
+// -------------------------------------------------------
+
+type CREATESESSION4args struct {
+	data []byte
+	off1 int // byte offset within data where csa_back_chan_attrs starts
+	off2 int // byte offset within data where csa_cb_program starts
+}
+
+func readCREATESESSION4args(b *[]byte) (CREATESESSION4args, bool) {
+	if len(*b) < 16 {
+		return CREATESESSION4args{}, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[16:]
+	if _, ok := readChannelAttrs4(b); !ok {
+		return CREATESESSION4args{}, false
+	}
+	off1 := startLen - len(*b)
+	if _, ok := readChannelAttrs4(b); !ok {
+		return CREATESESSION4args{}, false
+	}
+	off2 := startLen - len(*b)
+	if len(*b) < 4 {
+		return CREATESESSION4args{}, false
+	}
+	*b = (*b)[4:]
+	if len(*b) < 4 {
+		return CREATESESSION4args{}, false
+	}
+	c_csa_sec_parms_count := int(binary.BigEndian.Uint32((*b)[:4]))
+	*b = (*b)[4:]
+	for i := 0; i < c_csa_sec_parms_count; i++ {
+		if _, ok := readCallbackSecParms4Entry(b); !ok {
+			return CREATESESSION4args{}, false
+		}
+	}
+	total := startLen - len(*b)
+	return CREATESESSION4args{data: start[:total], off1: off1, off2: off2}, true
+}
+
+func ReadCREATESESSION4args(b []byte) (CREATESESSION4args, bool) {
+	return readCREATESESSION4args(&b)
+}
+
+func (m CREATESESSION4args) CsaClientid() uint64 {
+	return binary.BigEndian.Uint64(m.data[0:8])
+}
+
+func (m CREATESESSION4args) CsaSequence() uint32 {
+	return binary.BigEndian.Uint32(m.data[8:12])
+}
+
+func (m CREATESESSION4args) CsaFlags() uint32 {
+	return binary.BigEndian.Uint32(m.data[12:16])
+}
+
+func (m CREATESESSION4args) CsaForeChanAttrs() ChannelAttrs4 {
+	return ChannelAttrs4(m.data[16:m.off1])
+}
+
+func (m CREATESESSION4args) CsaBackChanAttrs() ChannelAttrs4 {
+	return ChannelAttrs4(m.data[m.off1:m.off2])
+}
+
+func (m CREATESESSION4args) CsaCbProgram() uint32 {
+	o := m.off2
+	return binary.BigEndian.Uint32(m.data[o : o+4])
+}
+
+func (m CREATESESSION4args) CsaSecParms() CallbackSecParms4EntryIter {
+	csa_sec_parms_count := int(binary.BigEndian.Uint32(m.data[m.off2+4 : m.off2+8]))
+	return CallbackSecParms4EntryIter{b: m.data[m.off2+8:], count: csa_sec_parms_count}
+}
+
+func (m CREATESESSION4args) CsaSecParmsCount() uint32 {
+	return binary.BigEndian.Uint32(m.data[m.off2+4 : m.off2+8])
+}
+
+// CREATESESSION4argsWriter writes a CREATE_SESSION4args:
+//
+//	csa_clientid + csa_sequence + csa_flags + csa_fore_chan_attrs + csa_back_chan_attrs + csa_cb_program + csa_sec_parms_count + callback_sec_parms4_entry csa_sec_parms[csa_sec_parms_count]
+type CREATESESSION4argsWriter struct {
+	buf                 []byte
+	off                 int
+	csaSecParmsCount    uint32
+	csaSecParmsCountOff int
+	phase               uint8
+}
+
+func StartCREATESESSION4args(buf []byte) CREATESESSION4argsWriter {
+	off := len(buf)
+	buf = append(buf, make([]byte, 16)...) // csa_clientid(8) + csa_sequence(4) + csa_flags(4)
+	return CREATESESSION4argsWriter{buf: buf, off: off}
+}
+
+func (w *CREATESESSION4argsWriter) SetCsaClientid(v uint64) {
+	binary.BigEndian.PutUint64((*[16]byte)(w.buf[w.off:])[0:8], v)
+}
+
+func (w *CREATESESSION4argsWriter) SetCsaSequence(v uint32) {
+	binary.BigEndian.PutUint32((*[16]byte)(w.buf[w.off:])[8:12], v)
+}
+
+func (w *CREATESESSION4argsWriter) SetCsaFlags(v uint32) {
+	binary.BigEndian.PutUint32((*[16]byte)(w.buf[w.off:])[12:16], v)
+}
+
+func (w *CREATESESSION4argsWriter) SetCsaCbProgram(v uint32) {
+	if w.phase > 2 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 2
+	w.buf = binary.BigEndian.AppendUint32(w.buf, v)
+}
+
+func (w *CREATESESSION4argsWriter) AppendCsaSecParms_None() {
+	_ = w.buf[:1]
+	if w.phase > 2 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 2
+	if w.csaSecParmsCountOff == 0 {
+		w.csaSecParmsCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = binary.BigEndian.AppendUint32(w.buf, AUTH_NONE)
+	w.csaSecParmsCount++
+}
+
+func (w *CREATESESSION4argsWriter) AppendCsaSecParms_Sys() AuthsysParmsWriter {
+	_ = w.buf[:1]
+	if w.phase > 2 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 2
+	if w.csaSecParmsCountOff == 0 {
+		w.csaSecParmsCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+8)...)
+	off := len(w.buf) - 4 - 8
+	binary.BigEndian.PutUint32((*[4 + 8]byte)(w.buf[off:])[:4], AUTH_SYS)
+	w.csaSecParmsCount++
+	buf := w.buf
+	w.buf = nil
+	return AuthsysParmsWriter{buf: buf, off: off + 4}
+}
+
+func (w *CREATESESSION4argsWriter) AppendCsaSecParms_RpcsecGss() GssCbHandles4Writer {
+	_ = w.buf[:1]
+	if w.phase > 2 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 2
+	if w.csaSecParmsCountOff == 0 {
+		w.csaSecParmsCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+4)...)
+	off := len(w.buf) - 4 - 4
+	binary.BigEndian.PutUint32((*[4 + 4]byte)(w.buf[off:])[:4], RPCSEC_GSS)
+	w.csaSecParmsCount++
+	buf := w.buf
+	w.buf = nil
+	return GssCbHandles4Writer{buf: buf, header: (*[4]byte)(buf[off+4:])}
+}
+
+func (w *CREATESESSION4argsWriter) StartCsaForeChanAttrs() ChannelAttrs4Writer {
+	if w.phase > 0 {
+		panic("writer fields called out of order")
+	}
+	child := StartChannelAttrs4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *CREATESESSION4argsWriter) StartCsaBackChanAttrs() ChannelAttrs4Writer {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	child := StartChannelAttrs4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *CREATESESSION4argsWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *CREATESESSION4argsWriter) Finish() []byte {
+	if w.csaSecParmsCountOff == 0 {
+		w.csaSecParmsCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0) // csa_sec_parms_count = 0
+	} else {
+		binary.BigEndian.PutUint32(w.buf[w.csaSecParmsCountOff:w.csaSecParmsCountOff+4], w.csaSecParmsCount)
+	}
+	return w.buf
+}
+
+// -------------------------------------------------------
+// CREATESESSION4resok — variable:
+//   csr_sessionid(16) + csr_sequence(4) + csr_flags(4) + csr_fore_chan_attrs + csr_back_chan_attrs
+// -------------------------------------------------------
+
+type CREATESESSION4resok struct {
+	data []byte
+	off1 int // byte offset within data where csr_back_chan_attrs starts
+}
+
+func readCREATESESSION4resok(b *[]byte) (CREATESESSION4resok, bool) {
+	if len(*b) < 24 {
+		return CREATESESSION4resok{}, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[24:]
+	if _, ok := readChannelAttrs4(b); !ok {
+		return CREATESESSION4resok{}, false
+	}
+	off1 := startLen - len(*b)
+	if _, ok := readChannelAttrs4(b); !ok {
+		return CREATESESSION4resok{}, false
+	}
+	total := startLen - len(*b)
+	return CREATESESSION4resok{data: start[:total], off1: off1}, true
+}
+
+func ReadCREATESESSION4resok(b []byte) (CREATESESSION4resok, bool) {
+	return readCREATESESSION4resok(&b)
+}
+
+func (m CREATESESSION4resok) CsrSessionid() Sessionid4 {
+	return Sessionid4{m: (*[sessionid4Size]byte)(m.data[0 : 0+sessionid4Size])}
+}
+
+func (m CREATESESSION4resok) CsrSequence() uint32 {
+	return binary.BigEndian.Uint32(m.data[16:20])
+}
+
+func (m CREATESESSION4resok) CsrFlags() uint32 {
+	return binary.BigEndian.Uint32(m.data[20:24])
+}
+
+func (m CREATESESSION4resok) CsrForeChanAttrs() ChannelAttrs4 {
+	return ChannelAttrs4(m.data[24:m.off1])
+}
+
+func (m CREATESESSION4resok) CsrBackChanAttrs() ChannelAttrs4 {
+	return ChannelAttrs4(m.data[m.off1:])
+}
+
+// CREATESESSION4resokWriter writes a CREATE_SESSION4resok:
+//
+//	csr_sessionid + csr_sequence + csr_flags + csr_fore_chan_attrs + csr_back_chan_attrs
+type CREATESESSION4resokWriter struct {
+	buf    []byte
+	header *[24]byte
+	phase  uint8
+}
+
+func StartCREATESESSION4resok(buf []byte) CREATESESSION4resokWriter {
+	buf = append(buf, make([]byte, 24)...) // csr_sessionid(16) + csr_sequence(4) + csr_flags(4)
+	return CREATESESSION4resokWriter{buf: buf, header: (*[24]byte)(buf[len(buf)-24:])}
+}
+
+func (w *CREATESESSION4resokWriter) CsrSessionid() Sessionid4 {
+	return Sessionid4{m: (*[sessionid4Size]byte)(w.header[0:])}
+}
+
+func (w *CREATESESSION4resokWriter) SetCsrSequence(v uint32) {
+	binary.BigEndian.PutUint32(w.header[16:20], v)
+}
+
+func (w *CREATESESSION4resokWriter) SetCsrFlags(v uint32) {
+	binary.BigEndian.PutUint32(w.header[20:24], v)
+}
+
+func (w *CREATESESSION4resokWriter) StartCsrForeChanAttrs() ChannelAttrs4Writer {
+	if w.phase > 0 {
+		panic("writer fields called out of order")
+	}
+	child := StartChannelAttrs4(w.buf)
+	w.buf = nil
+	w.header = nil
+	return child
+}
+
+func (w *CREATESESSION4resokWriter) StartCsrBackChanAttrs() ChannelAttrs4Writer {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	child := StartChannelAttrs4(w.buf)
+	w.buf = nil
+	w.header = nil
+	return child
+}
+
+func (w *CREATESESSION4resokWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *CREATESESSION4resokWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// CREATESESSION4res — union on nfsstat4 (external discriminant)
+// -------------------------------------------------------
+
+type CREATESESSION4res struct {
+	b    []byte
+	disc uint32
+}
+
+func readCREATESESSION4res(b *[]byte, nfsstat4 uint32) (CREATESESSION4res, bool) {
+	switch nfsstat4 {
+	case NFS4_OK:
+		r, ok := readCREATESESSION4resok(b)
+		if !ok {
+			return CREATESESSION4res{}, false
+		}
+		return CREATESESSION4res{b: r.data, disc: nfsstat4}, true
+	default:
+		return CREATESESSION4res{b: (*b)[:0], disc: nfsstat4}, true
+	}
+}
+
+func (m CREATESESSION4res) AsCREATESESSION4resok() CREATESESSION4resok {
+	if m.disc != NFS4_OK {
+		panic("wrong union discriminant")
+	}
+	v, _ := ReadCREATESESSION4resok(m.b)
+	return v
+}
+
+// -------------------------------------------------------
+// DESTROYSESSION4args — fixed 16 bytes: sessionid4(16)
+// -------------------------------------------------------
+
+type DESTROYSESSION4args struct {
+	m *[dESTROYSESSION4argsSize]byte
+}
+
+const dESTROYSESSION4argsSize = 16
+
+func readDESTROYSESSION4args(b *[]byte) (DESTROYSESSION4args, bool) {
+	if len(*b) < dESTROYSESSION4argsSize {
+		return DESTROYSESSION4args{}, false
+	}
+	result := DESTROYSESSION4args{m: (*[dESTROYSESSION4argsSize]byte)(*b)}
+	*b = (*b)[dESTROYSESSION4argsSize:]
+	return result, true
+}
+
+func ReadDESTROYSESSION4args(b []byte) (DESTROYSESSION4args, bool) {
+	return readDESTROYSESSION4args(&b)
+}
+
+func StartDESTROYSESSION4args(buf []byte) ([]byte, DESTROYSESSION4args) {
+	buf = append(buf, make([]byte, dESTROYSESSION4argsSize)...)
+	return buf, DESTROYSESSION4args{m: (*[dESTROYSESSION4argsSize]byte)(buf[len(buf)-dESTROYSESSION4argsSize:])}
+}
+
+func (m DESTROYSESSION4args) DsaSessionid() Sessionid4 {
+	return Sessionid4{m: (*[sessionid4Size]byte)(m.m[0:16])}
+}
+
+// -------------------------------------------------------
+// DESTROYSESSION4res — fixed 4 bytes: dsr_status(4, beu32)
+// -------------------------------------------------------
+
+type DESTROYSESSION4res struct {
+	m *[dESTROYSESSION4resSize]byte
+}
+
+const dESTROYSESSION4resSize = 4
+
+func readDESTROYSESSION4res(b *[]byte) (DESTROYSESSION4res, bool) {
+	if len(*b) < dESTROYSESSION4resSize {
+		return DESTROYSESSION4res{}, false
+	}
+	result := DESTROYSESSION4res{m: (*[dESTROYSESSION4resSize]byte)(*b)}
+	*b = (*b)[dESTROYSESSION4resSize:]
+	return result, true
+}
+
+func ReadDESTROYSESSION4res(b []byte) (DESTROYSESSION4res, bool) {
+	return readDESTROYSESSION4res(&b)
+}
+
+func StartDESTROYSESSION4res(buf []byte) ([]byte, DESTROYSESSION4res) {
+	buf = append(buf, make([]byte, dESTROYSESSION4resSize)...)
+	return buf, DESTROYSESSION4res{m: (*[dESTROYSESSION4resSize]byte)(buf[len(buf)-dESTROYSESSION4resSize:])}
+}
+
+func (m DESTROYSESSION4res) DsrStatus() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m DESTROYSESSION4res) SetDsrStatus(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+// -------------------------------------------------------
+// FREESTATEID4args — fixed 16 bytes: stateid4(16)
+// -------------------------------------------------------
+
+type FREESTATEID4args struct {
+	m *[fREESTATEID4argsSize]byte
+}
+
+const fREESTATEID4argsSize = 16
+
+func readFREESTATEID4args(b *[]byte) (FREESTATEID4args, bool) {
+	if len(*b) < fREESTATEID4argsSize {
+		return FREESTATEID4args{}, false
+	}
+	result := FREESTATEID4args{m: (*[fREESTATEID4argsSize]byte)(*b)}
+	*b = (*b)[fREESTATEID4argsSize:]
+	return result, true
+}
+
+func ReadFREESTATEID4args(b []byte) (FREESTATEID4args, bool) {
+	return readFREESTATEID4args(&b)
+}
+
+func StartFREESTATEID4args(buf []byte) ([]byte, FREESTATEID4args) {
+	buf = append(buf, make([]byte, fREESTATEID4argsSize)...)
+	return buf, FREESTATEID4args{m: (*[fREESTATEID4argsSize]byte)(buf[len(buf)-fREESTATEID4argsSize:])}
+}
+
+func (m FREESTATEID4args) FsaStateid() Stateid4 {
+	return Stateid4{m: (*[stateid4Size]byte)(m.m[0:16])}
+}
+
+// -------------------------------------------------------
+// FREESTATEID4res — fixed 4 bytes: fsr_status(4, beu32)
+// -------------------------------------------------------
+
+type FREESTATEID4res struct {
+	m *[fREESTATEID4resSize]byte
+}
+
+const fREESTATEID4resSize = 4
+
+func readFREESTATEID4res(b *[]byte) (FREESTATEID4res, bool) {
+	if len(*b) < fREESTATEID4resSize {
+		return FREESTATEID4res{}, false
+	}
+	result := FREESTATEID4res{m: (*[fREESTATEID4resSize]byte)(*b)}
+	*b = (*b)[fREESTATEID4resSize:]
+	return result, true
+}
+
+func ReadFREESTATEID4res(b []byte) (FREESTATEID4res, bool) {
+	return readFREESTATEID4res(&b)
+}
+
+func StartFREESTATEID4res(buf []byte) ([]byte, FREESTATEID4res) {
+	buf = append(buf, make([]byte, fREESTATEID4resSize)...)
+	return buf, FREESTATEID4res{m: (*[fREESTATEID4resSize]byte)(buf[len(buf)-fREESTATEID4resSize:])}
+}
+
+func (m FREESTATEID4res) FsrStatus() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m FREESTATEID4res) SetFsrStatus(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+// -------------------------------------------------------
+// GETDIRDELEGATION4args — variable:
+//   gdda_signal_deleg_avail(4) + gdda_notification_types + gdda_child_attr_delay(12) + gdda_dir_attr_delay(12) + gdda_child_attributes + gdda_dir_attributes
+// -------------------------------------------------------
+
+type GETDIRDELEGATION4args struct {
+	data []byte
+	off1 int // byte offset within data where gdda_child_attr_delay starts
+	off2 int // byte offset within data where gdda_dir_attributes starts
+}
+
+func readGETDIRDELEGATION4args(b *[]byte) (GETDIRDELEGATION4args, bool) {
+	if len(*b) < 4 {
+		return GETDIRDELEGATION4args{}, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[4:]
+	if _, ok := readBitmap4(b); !ok {
+		return GETDIRDELEGATION4args{}, false
+	}
+	off1 := startLen - len(*b)
+	if len(*b) < 12 {
+		return GETDIRDELEGATION4args{}, false
+	}
+	*b = (*b)[12:]
+	if len(*b) < 12 {
+		return GETDIRDELEGATION4args{}, false
+	}
+	*b = (*b)[12:]
+	if _, ok := readBitmap4(b); !ok {
+		return GETDIRDELEGATION4args{}, false
+	}
+	off2 := startLen - len(*b)
+	if _, ok := readBitmap4(b); !ok {
+		return GETDIRDELEGATION4args{}, false
+	}
+	total := startLen - len(*b)
+	return GETDIRDELEGATION4args{data: start[:total], off1: off1, off2: off2}, true
+}
+
+func ReadGETDIRDELEGATION4args(b []byte) (GETDIRDELEGATION4args, bool) {
+	return readGETDIRDELEGATION4args(&b)
+}
+
+func (m GETDIRDELEGATION4args) GddaSignalDelegAvail() uint32 {
+	return binary.BigEndian.Uint32(m.data[0:4])
+}
+
+func (m GETDIRDELEGATION4args) GddaNotificationTypes() Bitmap4 {
+	return Bitmap4(m.data[4:m.off1])
+}
+
+func (m GETDIRDELEGATION4args) GddaChildAttrDelay() Nfstime4 {
+	o := m.off1
+	return Nfstime4{m: (*[nfstime4Size]byte)(m.data[o : o+nfstime4Size])}
+}
+
+func (m GETDIRDELEGATION4args) GddaDirAttrDelay() Nfstime4 {
+	o := m.off1 + 12
+	return Nfstime4{m: (*[nfstime4Size]byte)(m.data[o : o+nfstime4Size])}
+}
+
+func (m GETDIRDELEGATION4args) GddaChildAttributes() Bitmap4 {
+	return Bitmap4(m.data[m.off1+24 : m.off2])
+}
+
+func (m GETDIRDELEGATION4args) GddaDirAttributes() Bitmap4 {
+	return Bitmap4(m.data[m.off2:])
+}
+
+// GETDIRDELEGATION4argsWriter writes a GET_DIR_DELEGATION4args:
+//
+//	gdda_signal_deleg_avail + gdda_notification_types + gdda_child_attr_delay + gdda_dir_attr_delay + gdda_child_attributes + gdda_dir_attributes
+type GETDIRDELEGATION4argsWriter struct {
+	buf    []byte
+	header *[4]byte
+	phase  uint8
+}
+
+func StartGETDIRDELEGATION4args(buf []byte) GETDIRDELEGATION4argsWriter {
+	buf = append(buf, make([]byte, 4)...) // gdda_signal_deleg_avail(4)
+	return GETDIRDELEGATION4argsWriter{buf: buf, header: (*[4]byte)(buf[len(buf)-4:])}
+}
+
+func (w *GETDIRDELEGATION4argsWriter) SetGddaSignalDelegAvail(v uint32) {
+	binary.BigEndian.PutUint32(w.header[0:4], v)
+}
+
+func (w *GETDIRDELEGATION4argsWriter) StartGddaNotificationTypes() Bitmap4Writer {
+	if w.phase > 0 {
+		panic("writer fields called out of order")
+	}
+	child := StartBitmap4(w.buf)
+	w.buf = nil
+	w.header = nil
+	return child
+}
+
+func (w *GETDIRDELEGATION4argsWriter) StartGddaChildAttributes() Bitmap4Writer {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	child := StartBitmap4(w.buf)
+	w.buf = nil
+	w.header = nil
+	return child
+}
+
+func (w *GETDIRDELEGATION4argsWriter) StartGddaDirAttributes() Bitmap4Writer {
+	if w.phase > 2 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 2
+	child := StartBitmap4(w.buf)
+	w.buf = nil
+	w.header = nil
+	return child
+}
+
+func (w *GETDIRDELEGATION4argsWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *GETDIRDELEGATION4argsWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// GETDIRDELEGATION4resok — variable:
+//   gddr_cookieverf(8) + gddr_stateid(16) + gddr_notification + gddr_child_attributes + gddr_dir_attributes
+// -------------------------------------------------------
+
+type GETDIRDELEGATION4resok struct {
+	data []byte
+	off1 int // byte offset within data where gddr_child_attributes starts
+	off2 int // byte offset within data where gddr_dir_attributes starts
+}
+
+func readGETDIRDELEGATION4resok(b *[]byte) (GETDIRDELEGATION4resok, bool) {
+	if len(*b) < 24 {
+		return GETDIRDELEGATION4resok{}, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[24:]
+	if _, ok := readBitmap4(b); !ok {
+		return GETDIRDELEGATION4resok{}, false
+	}
+	off1 := startLen - len(*b)
+	if _, ok := readBitmap4(b); !ok {
+		return GETDIRDELEGATION4resok{}, false
+	}
+	off2 := startLen - len(*b)
+	if _, ok := readBitmap4(b); !ok {
+		return GETDIRDELEGATION4resok{}, false
+	}
+	total := startLen - len(*b)
+	return GETDIRDELEGATION4resok{data: start[:total], off1: off1, off2: off2}, true
+}
+
+func ReadGETDIRDELEGATION4resok(b []byte) (GETDIRDELEGATION4resok, bool) {
+	return readGETDIRDELEGATION4resok(&b)
+}
+
+func (m GETDIRDELEGATION4resok) GddrCookieverf() Verifier4 {
+	return Verifier4{m: (*[verifier4Size]byte)(m.data[0 : 0+verifier4Size])}
+}
+
+func (m GETDIRDELEGATION4resok) GddrStateid() Stateid4 {
+	return Stateid4{m: (*[stateid4Size]byte)(m.data[8 : 8+stateid4Size])}
+}
+
+func (m GETDIRDELEGATION4resok) GddrNotification() Bitmap4 {
+	return Bitmap4(m.data[24:m.off1])
+}
+
+func (m GETDIRDELEGATION4resok) GddrChildAttributes() Bitmap4 {
+	return Bitmap4(m.data[m.off1:m.off2])
+}
+
+func (m GETDIRDELEGATION4resok) GddrDirAttributes() Bitmap4 {
+	return Bitmap4(m.data[m.off2:])
+}
+
+// GETDIRDELEGATION4resokWriter writes a GET_DIR_DELEGATION4resok:
+//
+//	gddr_cookieverf + gddr_stateid + gddr_notification + gddr_child_attributes + gddr_dir_attributes
+type GETDIRDELEGATION4resokWriter struct {
+	buf    []byte
+	header *[24]byte
+	phase  uint8
+}
+
+func StartGETDIRDELEGATION4resok(buf []byte) GETDIRDELEGATION4resokWriter {
+	buf = append(buf, make([]byte, 24)...) // gddr_cookieverf(8) + gddr_stateid(16)
+	return GETDIRDELEGATION4resokWriter{buf: buf, header: (*[24]byte)(buf[len(buf)-24:])}
+}
+
+func (w *GETDIRDELEGATION4resokWriter) GddrCookieverf() Verifier4 {
+	return Verifier4{m: (*[verifier4Size]byte)(w.header[0:])}
+}
+
+func (w *GETDIRDELEGATION4resokWriter) GddrStateid() Stateid4 {
+	return Stateid4{m: (*[stateid4Size]byte)(w.header[8:])}
+}
+
+func (w *GETDIRDELEGATION4resokWriter) StartGddrNotification() Bitmap4Writer {
+	if w.phase > 0 {
+		panic("writer fields called out of order")
+	}
+	child := StartBitmap4(w.buf)
+	w.buf = nil
+	w.header = nil
+	return child
+}
+
+func (w *GETDIRDELEGATION4resokWriter) StartGddrChildAttributes() Bitmap4Writer {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	child := StartBitmap4(w.buf)
+	w.buf = nil
+	w.header = nil
+	return child
+}
+
+func (w *GETDIRDELEGATION4resokWriter) StartGddrDirAttributes() Bitmap4Writer {
+	if w.phase > 2 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 2
+	child := StartBitmap4(w.buf)
+	w.buf = nil
+	w.header = nil
+	return child
+}
+
+func (w *GETDIRDELEGATION4resokWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *GETDIRDELEGATION4resokWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// GETDIRDELEGATION4resNonFatalGDD4UNAVAIL — fixed 4 bytes: value(4, beu32)
+// -------------------------------------------------------
+
+type GETDIRDELEGATION4resNonFatalGDD4UNAVAIL struct {
+	m *[gETDIRDELEGATION4resNonFatalGDD4UNAVAILSize]byte
+}
+
+const gETDIRDELEGATION4resNonFatalGDD4UNAVAILSize = 4
+
+func readGETDIRDELEGATION4resNonFatalGDD4UNAVAIL(b *[]byte) (GETDIRDELEGATION4resNonFatalGDD4UNAVAIL, bool) {
+	if len(*b) < gETDIRDELEGATION4resNonFatalGDD4UNAVAILSize {
+		return GETDIRDELEGATION4resNonFatalGDD4UNAVAIL{}, false
+	}
+	result := GETDIRDELEGATION4resNonFatalGDD4UNAVAIL{m: (*[gETDIRDELEGATION4resNonFatalGDD4UNAVAILSize]byte)(*b)}
+	*b = (*b)[gETDIRDELEGATION4resNonFatalGDD4UNAVAILSize:]
+	return result, true
+}
+
+func ReadGETDIRDELEGATION4resNonFatalGDD4UNAVAIL(b []byte) (GETDIRDELEGATION4resNonFatalGDD4UNAVAIL, bool) {
+	return readGETDIRDELEGATION4resNonFatalGDD4UNAVAIL(&b)
+}
+
+func StartGETDIRDELEGATION4resNonFatalGDD4UNAVAIL(buf []byte) ([]byte, GETDIRDELEGATION4resNonFatalGDD4UNAVAIL) {
+	buf = append(buf, make([]byte, gETDIRDELEGATION4resNonFatalGDD4UNAVAILSize)...)
+	return buf, GETDIRDELEGATION4resNonFatalGDD4UNAVAIL{m: (*[gETDIRDELEGATION4resNonFatalGDD4UNAVAILSize]byte)(buf[len(buf)-gETDIRDELEGATION4resNonFatalGDD4UNAVAILSize:])}
+}
+
+func (m GETDIRDELEGATION4resNonFatalGDD4UNAVAIL) Value() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m GETDIRDELEGATION4resNonFatalGDD4UNAVAIL) SetValue(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+// -------------------------------------------------------
+// GETDIRDELEGATION4resNonFatal — union on gddrnf4_status (external discriminant)
+// -------------------------------------------------------
+
+type GETDIRDELEGATION4resNonFatal struct {
+	b    []byte
+	disc uint32
+}
+
+func readGETDIRDELEGATION4resNonFatal(b *[]byte, gddrnf4Status uint32) (GETDIRDELEGATION4resNonFatal, bool) {
+	switch gddrnf4Status {
+	case GDD4_OK:
+		r, ok := readGETDIRDELEGATION4resok(b)
+		if !ok {
+			return GETDIRDELEGATION4resNonFatal{}, false
+		}
+		return GETDIRDELEGATION4resNonFatal{b: r.data, disc: gddrnf4Status}, true
+	case GDD4_UNAVAIL:
+		r, ok := readGETDIRDELEGATION4resNonFatalGDD4UNAVAIL(b)
+		if !ok {
+			return GETDIRDELEGATION4resNonFatal{}, false
+		}
+		return GETDIRDELEGATION4resNonFatal{b: r.m[:], disc: gddrnf4Status}, true
+	default:
+		return GETDIRDELEGATION4resNonFatal{}, false
+	}
+}
+
+func (m GETDIRDELEGATION4resNonFatal) AsGETDIRDELEGATION4resok() GETDIRDELEGATION4resok {
+	if m.disc != GDD4_OK {
+		panic("wrong union discriminant")
+	}
+	v, _ := ReadGETDIRDELEGATION4resok(m.b)
+	return v
+}
+
+func (m GETDIRDELEGATION4resNonFatal) AsGETDIRDELEGATION4resNonFatalGDD4UNAVAIL() GETDIRDELEGATION4resNonFatalGDD4UNAVAIL {
+	if m.disc != GDD4_UNAVAIL {
+		panic("wrong union discriminant")
+	}
+	return GETDIRDELEGATION4resNonFatalGDD4UNAVAIL{m: (*[gETDIRDELEGATION4resNonFatalGDD4UNAVAILSize]byte)(m.b)}
+}
+
+// -------------------------------------------------------
+// GETDIRDELEGATION4resNonFatalEntry — variable:
+//   disc(4) + GET_DIR_DELEGATION4res_non_fatal value
+// -------------------------------------------------------
+
+type GETDIRDELEGATION4resNonFatalEntry []byte
+
+func readGETDIRDELEGATION4resNonFatalEntry(b *[]byte) (GETDIRDELEGATION4resNonFatalEntry, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[4:]
+	if _, ok := readGETDIRDELEGATION4resNonFatal(b, binary.BigEndian.Uint32(start[0:4])); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return GETDIRDELEGATION4resNonFatalEntry(start[:total]), true
+}
+
+func ReadGETDIRDELEGATION4resNonFatalEntry(b []byte) (GETDIRDELEGATION4resNonFatalEntry, bool) {
+	return readGETDIRDELEGATION4resNonFatalEntry(&b)
+}
+
+func (m GETDIRDELEGATION4resNonFatalEntry) Disc() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m GETDIRDELEGATION4resNonFatalEntry) Value() GETDIRDELEGATION4resNonFatal {
+	return GETDIRDELEGATION4resNonFatal{b: m[4:], disc: binary.BigEndian.Uint32(m[0:4])}
+}
+
+// GETDIRDELEGATION4resNonFatalEntryWriter writes a GET_DIR_DELEGATION4res_non_fatal_entry:
+//
+//	disc + value(disc)
+type GETDIRDELEGATION4resNonFatalEntryWriter struct {
+	buf []byte
+	off int
+}
+
+func StartGETDIRDELEGATION4resNonFatalEntry(buf []byte) GETDIRDELEGATION4resNonFatalEntryWriter {
+	return GETDIRDELEGATION4resNonFatalEntryWriter{buf: buf, off: len(buf)}
+}
+
+func (w *GETDIRDELEGATION4resNonFatalEntryWriter) SetValue_Ok() GETDIRDELEGATION4resokWriter {
+	w.buf = append(w.buf, make([]byte, 4+24)...)
+	off := len(w.buf) - 4 - 24
+	binary.BigEndian.PutUint32((*[4 + 24]byte)(w.buf[off:])[:4], GDD4_OK)
+	buf := w.buf
+	w.buf = nil
+	return GETDIRDELEGATION4resokWriter{buf: buf, header: (*[24]byte)(buf[off+4:])}
+}
+
+func (w *GETDIRDELEGATION4resNonFatalEntryWriter) SetValue_Unavail() GETDIRDELEGATION4resNonFatalGDD4UNAVAIL {
+	w.buf = append(w.buf, make([]byte, 4+gETDIRDELEGATION4resNonFatalGDD4UNAVAILSize)...)
+	p := (*[4 + gETDIRDELEGATION4resNonFatalGDD4UNAVAILSize]byte)(w.buf[len(w.buf)-4-gETDIRDELEGATION4resNonFatalGDD4UNAVAILSize:])
+	binary.BigEndian.PutUint32(p[:4], GDD4_UNAVAIL)
+	return GETDIRDELEGATION4resNonFatalGDD4UNAVAIL{m: (*[gETDIRDELEGATION4resNonFatalGDD4UNAVAILSize]byte)(p[4:])}
+}
+
+func (w *GETDIRDELEGATION4resNonFatalEntryWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *GETDIRDELEGATION4resNonFatalEntryWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// GETDIRDELEGATION4res — union on nfsstat4 (external discriminant)
+// -------------------------------------------------------
+
+type GETDIRDELEGATION4res struct {
+	b    []byte
+	disc uint32
+}
+
+func readGETDIRDELEGATION4res(b *[]byte, nfsstat4 uint32) (GETDIRDELEGATION4res, bool) {
+	switch nfsstat4 {
+	case NFS4_OK:
+		r, ok := readGETDIRDELEGATION4resNonFatalEntry(b)
+		if !ok {
+			return GETDIRDELEGATION4res{}, false
+		}
+		return GETDIRDELEGATION4res{b: []byte(r), disc: nfsstat4}, true
+	default:
+		return GETDIRDELEGATION4res{b: (*b)[:0], disc: nfsstat4}, true
+	}
+}
+
+func (m GETDIRDELEGATION4res) AsGETDIRDELEGATION4resNonFatalEntry() GETDIRDELEGATION4resNonFatalEntry {
+	if m.disc != NFS4_OK {
+		panic("wrong union discriminant")
+	}
+	return GETDIRDELEGATION4resNonFatalEntry(m.b)
+}
+
+// -------------------------------------------------------
+// GETDEVICEINFO4args — variable:
+//   gdia_device_id(16) + gdia_layout_type(4) + gdia_maxcount(4) + gdia_notify_types
+// -------------------------------------------------------
+
+type GETDEVICEINFO4args []byte
+
+func readGETDEVICEINFO4args(b *[]byte) (GETDEVICEINFO4args, bool) {
+	if len(*b) < 24 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[24:]
+	if _, ok := readBitmap4(b); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return GETDEVICEINFO4args(start[:total]), true
+}
+
+func ReadGETDEVICEINFO4args(b []byte) (GETDEVICEINFO4args, bool) {
+	return readGETDEVICEINFO4args(&b)
+}
+
+func (m GETDEVICEINFO4args) GdiaDeviceId() Deviceid4 {
+	return Deviceid4{m: (*[deviceid4Size]byte)(m[0 : 0+deviceid4Size])}
+}
+
+func (m GETDEVICEINFO4args) GdiaLayoutType() uint32 {
+	return binary.BigEndian.Uint32(m[16:20])
+}
+
+func (m GETDEVICEINFO4args) GdiaMaxcount() uint32 {
+	return binary.BigEndian.Uint32(m[20:24])
+}
+
+func (m GETDEVICEINFO4args) GdiaNotifyTypes() Bitmap4 {
+	return Bitmap4(m[24:])
+}
+
+// GETDEVICEINFO4argsWriter writes a GETDEVICEINFO4args:
+//
+//	gdia_device_id + gdia_layout_type + gdia_maxcount + gdia_notify_types
+type GETDEVICEINFO4argsWriter struct {
+	buf    []byte
+	header *[24]byte
+}
+
+func StartGETDEVICEINFO4args(buf []byte) GETDEVICEINFO4argsWriter {
+	buf = append(buf, make([]byte, 24)...) // gdia_device_id(16) + gdia_layout_type(4) + gdia_maxcount(4)
+	return GETDEVICEINFO4argsWriter{buf: buf, header: (*[24]byte)(buf[len(buf)-24:])}
+}
+
+func (w *GETDEVICEINFO4argsWriter) GdiaDeviceId() Deviceid4 {
+	return Deviceid4{m: (*[deviceid4Size]byte)(w.header[0:])}
+}
+
+func (w *GETDEVICEINFO4argsWriter) SetGdiaLayoutType(v uint32) {
+	binary.BigEndian.PutUint32(w.header[16:20], v)
+}
+
+func (w *GETDEVICEINFO4argsWriter) SetGdiaMaxcount(v uint32) {
+	binary.BigEndian.PutUint32(w.header[20:24], v)
+}
+
+func (w *GETDEVICEINFO4argsWriter) StartGdiaNotifyTypes() Bitmap4Writer {
+	child := StartBitmap4(w.buf)
+	w.buf = nil
+	w.header = nil
+	return child
+}
+
+func (w *GETDEVICEINFO4argsWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *GETDEVICEINFO4argsWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// GETDEVICEINFO4resok — variable: gdir_device_addr + gdir_notification
+// -------------------------------------------------------
+
+type GETDEVICEINFO4resok struct {
+	data []byte
+	off1 int // byte offset within data where gdir_notification starts
+}
+
+func readGETDEVICEINFO4resok(b *[]byte) (GETDEVICEINFO4resok, bool) {
+	start := *b
+	startLen := len(start)
+	if _, ok := readDeviceAddr4(b); !ok {
+		return GETDEVICEINFO4resok{}, false
+	}
+	off1 := startLen - len(*b)
+	if _, ok := readBitmap4(b); !ok {
+		return GETDEVICEINFO4resok{}, false
+	}
+	total := startLen - len(*b)
+	return GETDEVICEINFO4resok{data: start[:total], off1: off1}, true
+}
+
+func ReadGETDEVICEINFO4resok(b []byte) (GETDEVICEINFO4resok, bool) {
+	return readGETDEVICEINFO4resok(&b)
+}
+
+func (m GETDEVICEINFO4resok) GdirDeviceAddr() DeviceAddr4 {
+	return DeviceAddr4(m.data[0:m.off1])
+}
+
+func (m GETDEVICEINFO4resok) GdirNotification() Bitmap4 {
+	return Bitmap4(m.data[m.off1:])
+}
+
+// GETDEVICEINFO4resokWriter writes a GETDEVICEINFO4resok:
+//
+//	gdir_device_addr + gdir_notification
+type GETDEVICEINFO4resokWriter struct {
+	buf   []byte
+	off   int
+	phase uint8
+}
+
+func StartGETDEVICEINFO4resok(buf []byte) GETDEVICEINFO4resokWriter {
+	off := len(buf)
+	return GETDEVICEINFO4resokWriter{buf: buf, off: off}
+}
+
+func (w *GETDEVICEINFO4resokWriter) StartGdirDeviceAddr() DeviceAddr4Writer {
+	if w.phase > 0 {
+		panic("writer fields called out of order")
+	}
+	child := StartDeviceAddr4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *GETDEVICEINFO4resokWriter) StartGdirNotification() Bitmap4Writer {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	child := StartBitmap4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *GETDEVICEINFO4resokWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *GETDEVICEINFO4resokWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// GETDEVICEINFO4resNFS4ERRTOOSMALL — fixed 4 bytes: value(4, beu32)
+// -------------------------------------------------------
+
+type GETDEVICEINFO4resNFS4ERRTOOSMALL struct {
+	m *[gETDEVICEINFO4resNFS4ERRTOOSMALLSize]byte
+}
+
+const gETDEVICEINFO4resNFS4ERRTOOSMALLSize = 4
+
+func readGETDEVICEINFO4resNFS4ERRTOOSMALL(b *[]byte) (GETDEVICEINFO4resNFS4ERRTOOSMALL, bool) {
+	if len(*b) < gETDEVICEINFO4resNFS4ERRTOOSMALLSize {
+		return GETDEVICEINFO4resNFS4ERRTOOSMALL{}, false
+	}
+	result := GETDEVICEINFO4resNFS4ERRTOOSMALL{m: (*[gETDEVICEINFO4resNFS4ERRTOOSMALLSize]byte)(*b)}
+	*b = (*b)[gETDEVICEINFO4resNFS4ERRTOOSMALLSize:]
+	return result, true
+}
+
+func ReadGETDEVICEINFO4resNFS4ERRTOOSMALL(b []byte) (GETDEVICEINFO4resNFS4ERRTOOSMALL, bool) {
+	return readGETDEVICEINFO4resNFS4ERRTOOSMALL(&b)
+}
+
+func StartGETDEVICEINFO4resNFS4ERRTOOSMALL(buf []byte) ([]byte, GETDEVICEINFO4resNFS4ERRTOOSMALL) {
+	buf = append(buf, make([]byte, gETDEVICEINFO4resNFS4ERRTOOSMALLSize)...)
+	return buf, GETDEVICEINFO4resNFS4ERRTOOSMALL{m: (*[gETDEVICEINFO4resNFS4ERRTOOSMALLSize]byte)(buf[len(buf)-gETDEVICEINFO4resNFS4ERRTOOSMALLSize:])}
+}
+
+func (m GETDEVICEINFO4resNFS4ERRTOOSMALL) Value() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m GETDEVICEINFO4resNFS4ERRTOOSMALL) SetValue(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+// -------------------------------------------------------
+// GETDEVICEINFO4res — union on nfsstat4 (external discriminant)
+// -------------------------------------------------------
+
+type GETDEVICEINFO4res struct {
+	b    []byte
+	disc uint32
+}
+
+func readGETDEVICEINFO4res(b *[]byte, nfsstat4 uint32) (GETDEVICEINFO4res, bool) {
+	switch nfsstat4 {
+	case NFS4_OK:
+		r, ok := readGETDEVICEINFO4resok(b)
+		if !ok {
+			return GETDEVICEINFO4res{}, false
+		}
+		return GETDEVICEINFO4res{b: r.data, disc: nfsstat4}, true
+	case NFS4ERR_TOOSMALL:
+		r, ok := readGETDEVICEINFO4resNFS4ERRTOOSMALL(b)
+		if !ok {
+			return GETDEVICEINFO4res{}, false
+		}
+		return GETDEVICEINFO4res{b: r.m[:], disc: nfsstat4}, true
+	default:
+		return GETDEVICEINFO4res{b: (*b)[:0], disc: nfsstat4}, true
+	}
+}
+
+func (m GETDEVICEINFO4res) AsGETDEVICEINFO4resok() GETDEVICEINFO4resok {
+	if m.disc != NFS4_OK {
+		panic("wrong union discriminant")
+	}
+	v, _ := ReadGETDEVICEINFO4resok(m.b)
+	return v
+}
+
+func (m GETDEVICEINFO4res) AsGETDEVICEINFO4resNFS4ERRTOOSMALL() GETDEVICEINFO4resNFS4ERRTOOSMALL {
+	if m.disc != NFS4ERR_TOOSMALL {
+		panic("wrong union discriminant")
+	}
+	return GETDEVICEINFO4resNFS4ERRTOOSMALL{m: (*[gETDEVICEINFO4resNFS4ERRTOOSMALLSize]byte)(m.b)}
+}
+
+// -------------------------------------------------------
+// GETDEVICELIST4args — fixed 24 bytes:
+//   gdla_layout_type(4, beu32) + gdla_maxdevices(4, beu32) + gdla_cookie(8, beu64) + verifier4(8)
+// -------------------------------------------------------
+
+type GETDEVICELIST4args struct {
+	m *[gETDEVICELIST4argsSize]byte
+}
+
+const gETDEVICELIST4argsSize = 24
+
+func readGETDEVICELIST4args(b *[]byte) (GETDEVICELIST4args, bool) {
+	if len(*b) < gETDEVICELIST4argsSize {
+		return GETDEVICELIST4args{}, false
+	}
+	result := GETDEVICELIST4args{m: (*[gETDEVICELIST4argsSize]byte)(*b)}
+	*b = (*b)[gETDEVICELIST4argsSize:]
+	return result, true
+}
+
+func ReadGETDEVICELIST4args(b []byte) (GETDEVICELIST4args, bool) {
+	return readGETDEVICELIST4args(&b)
+}
+
+func StartGETDEVICELIST4args(buf []byte) ([]byte, GETDEVICELIST4args) {
+	buf = append(buf, make([]byte, gETDEVICELIST4argsSize)...)
+	return buf, GETDEVICELIST4args{m: (*[gETDEVICELIST4argsSize]byte)(buf[len(buf)-gETDEVICELIST4argsSize:])}
+}
+
+func (m GETDEVICELIST4args) GdlaLayoutType() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m GETDEVICELIST4args) GdlaMaxdevices() uint32 {
+	return binary.BigEndian.Uint32(m.m[4:8])
+}
+
+func (m GETDEVICELIST4args) GdlaCookie() uint64 {
+	return binary.BigEndian.Uint64(m.m[8:16])
+}
+
+func (m GETDEVICELIST4args) GdlaCookieverf() Verifier4 {
+	return Verifier4{m: (*[verifier4Size]byte)(m.m[16:24])}
+}
+
+func (m GETDEVICELIST4args) SetGdlaLayoutType(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+func (m GETDEVICELIST4args) SetGdlaMaxdevices(v uint32) {
+	binary.BigEndian.PutUint32(m.m[4:8], v)
+}
+
+func (m GETDEVICELIST4args) SetGdlaCookie(v uint64) {
+	binary.BigEndian.PutUint64(m.m[8:16], v)
+}
+
+// -------------------------------------------------------
+// GETDEVICELIST4resok — variable:
+//   gdlr_cookie(8) + gdlr_cookieverf(8) + gdlr_deviceid_list_count(4) + deviceid4 gdlr_deviceid_list[gdlr_deviceid_list_count] + gdlr_eof(4)
+// -------------------------------------------------------
+
+type GETDEVICELIST4resok struct {
+	data []byte
+	off1 int // byte offset within data where gdlr_eof starts
+}
+
+func readGETDEVICELIST4resok(b *[]byte) (GETDEVICELIST4resok, bool) {
+	if len(*b) < 20 {
+		return GETDEVICELIST4resok{}, false
+	}
+	start := *b
+	startLen := len(start)
+	c_gdlr_deviceid_list_count := int(binary.BigEndian.Uint32((*b)[16:20]))
+	*b = (*b)[20:]
+	if len(*b) < c_gdlr_deviceid_list_count*16 {
+		return GETDEVICELIST4resok{}, false
+	}
+	*b = (*b)[c_gdlr_deviceid_list_count*16:]
+	off1 := startLen - len(*b)
+	if len(*b) < 4 {
+		return GETDEVICELIST4resok{}, false
+	}
+	*b = (*b)[4:]
+	total := startLen - len(*b)
+	return GETDEVICELIST4resok{data: start[:total], off1: off1}, true
+}
+
+func ReadGETDEVICELIST4resok(b []byte) (GETDEVICELIST4resok, bool) {
+	return readGETDEVICELIST4resok(&b)
+}
+
+func (m GETDEVICELIST4resok) GdlrCookie() uint64 {
+	return binary.BigEndian.Uint64(m.data[0:8])
+}
+
+func (m GETDEVICELIST4resok) GdlrCookieverf() Verifier4 {
+	return Verifier4{m: (*[verifier4Size]byte)(m.data[8 : 8+verifier4Size])}
+}
+
+func (m GETDEVICELIST4resok) GdlrDeviceidList(i int) Deviceid4 {
+	off := 20 + i*deviceid4Size
+	return Deviceid4{m: (*[deviceid4Size]byte)(m.data[off : off+deviceid4Size])}
+}
+
+func (m GETDEVICELIST4resok) GdlrDeviceidListCount() uint32 {
+	return binary.BigEndian.Uint32(m.data[16:20])
+}
+
+func (m GETDEVICELIST4resok) GdlrEof() uint32 {
+	o := m.off1
+	return binary.BigEndian.Uint32(m.data[o : o+4])
+}
+
+// GETDEVICELIST4resokWriter writes a GETDEVICELIST4resok:
+//
+//	gdlr_cookie + gdlr_cookieverf + gdlr_deviceid_list_count + deviceid4 gdlr_deviceid_list[gdlr_deviceid_list_count] + gdlr_eof
+type GETDEVICELIST4resokWriter struct {
+	buf                   []byte
+	off                   int
+	gdlrDeviceidListCount uint32
+}
+
+func StartGETDEVICELIST4resok(buf []byte) GETDEVICELIST4resokWriter {
+	off := len(buf)
+	buf = append(buf, make([]byte, 20)...) // gdlr_cookie(8) + gdlr_cookieverf(8) + gdlr_deviceid_list_count(4)
+	return GETDEVICELIST4resokWriter{buf: buf, off: off}
+}
+
+func (w *GETDEVICELIST4resokWriter) SetGdlrCookie(v uint64) {
+	binary.BigEndian.PutUint64((*[20]byte)(w.buf[w.off:])[0:8], v)
+}
+
+func (w *GETDEVICELIST4resokWriter) GdlrCookieverf() Verifier4 {
+	return Verifier4{m: (*[verifier4Size]byte)(w.buf[w.off+8:])}
+}
+
+func (w *GETDEVICELIST4resokWriter) SetGdlrEof(v uint32) {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, v)
+}
+
+func (w *GETDEVICELIST4resokWriter) AppendGdlrDeviceidList() Deviceid4 {
+	w.buf = append(w.buf, make([]byte, deviceid4Size)...)
+	w.gdlrDeviceidListCount++
+	return Deviceid4{m: (*[deviceid4Size]byte)(w.buf[len(w.buf)-deviceid4Size:])}
+}
+
+func (w *GETDEVICELIST4resokWriter) Finish() []byte {
+	binary.BigEndian.PutUint32((*[20]byte)(w.buf[w.off:])[16:20], w.gdlrDeviceidListCount)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// GETDEVICELIST4res — union on nfsstat4 (external discriminant)
+// -------------------------------------------------------
+
+type GETDEVICELIST4res struct {
+	b    []byte
+	disc uint32
+}
+
+func readGETDEVICELIST4res(b *[]byte, nfsstat4 uint32) (GETDEVICELIST4res, bool) {
+	switch nfsstat4 {
+	case NFS4_OK:
+		r, ok := readGETDEVICELIST4resok(b)
+		if !ok {
+			return GETDEVICELIST4res{}, false
+		}
+		return GETDEVICELIST4res{b: r.data, disc: nfsstat4}, true
+	default:
+		return GETDEVICELIST4res{b: (*b)[:0], disc: nfsstat4}, true
+	}
+}
+
+func (m GETDEVICELIST4res) AsGETDEVICELIST4resok() GETDEVICELIST4resok {
+	if m.disc != NFS4_OK {
+		panic("wrong union discriminant")
+	}
+	v, _ := ReadGETDEVICELIST4resok(m.b)
+	return v
+}
+
+// -------------------------------------------------------
+// Newtime4 — union on xdr_bool (external discriminant)
+// -------------------------------------------------------
+
+type Newtime4 struct {
+	b    []byte
+	disc uint32
+}
+
+func readNewtime4(b *[]byte, xdrBool uint32) (Newtime4, bool) {
+	switch xdrBool {
+	case TRUE:
+		r, ok := readNfstime4(b)
+		if !ok {
+			return Newtime4{}, false
+		}
+		return Newtime4{b: r.m[:], disc: xdrBool}, true
+	case FALSE:
+		return Newtime4{b: (*b)[:0], disc: xdrBool}, true
+	default:
+		return Newtime4{}, false
+	}
+}
+
+func (m Newtime4) AsNfstime4() Nfstime4 {
+	if m.disc != TRUE {
+		panic("wrong union discriminant")
+	}
+	return Nfstime4{m: (*[nfstime4Size]byte)(m.b)}
+}
+
+// -------------------------------------------------------
+// Newoffset4TRUE — fixed 8 bytes: value(8, beu64)
+// -------------------------------------------------------
+
+type Newoffset4TRUE struct {
+	m *[newoffset4TRUESize]byte
+}
+
+const newoffset4TRUESize = 8
+
+func readNewoffset4TRUE(b *[]byte) (Newoffset4TRUE, bool) {
+	if len(*b) < newoffset4TRUESize {
+		return Newoffset4TRUE{}, false
+	}
+	result := Newoffset4TRUE{m: (*[newoffset4TRUESize]byte)(*b)}
+	*b = (*b)[newoffset4TRUESize:]
+	return result, true
+}
+
+func ReadNewoffset4TRUE(b []byte) (Newoffset4TRUE, bool) {
+	return readNewoffset4TRUE(&b)
+}
+
+func StartNewoffset4TRUE(buf []byte) ([]byte, Newoffset4TRUE) {
+	buf = append(buf, make([]byte, newoffset4TRUESize)...)
+	return buf, Newoffset4TRUE{m: (*[newoffset4TRUESize]byte)(buf[len(buf)-newoffset4TRUESize:])}
+}
+
+func (m Newoffset4TRUE) Value() uint64 {
+	return binary.BigEndian.Uint64(m.m[0:8])
+}
+
+func (m Newoffset4TRUE) SetValue(v uint64) {
+	binary.BigEndian.PutUint64(m.m[0:8], v)
+}
+
+// -------------------------------------------------------
+// Newoffset4 — union on xdr_bool (external discriminant)
+// -------------------------------------------------------
+
+type Newoffset4 struct {
+	b    []byte
+	disc uint32
+}
+
+func readNewoffset4(b *[]byte, xdrBool uint32) (Newoffset4, bool) {
+	switch xdrBool {
+	case TRUE:
+		r, ok := readNewoffset4TRUE(b)
+		if !ok {
+			return Newoffset4{}, false
+		}
+		return Newoffset4{b: r.m[:], disc: xdrBool}, true
+	case FALSE:
+		return Newoffset4{b: (*b)[:0], disc: xdrBool}, true
+	default:
+		return Newoffset4{}, false
+	}
+}
+
+func (m Newoffset4) AsNewoffset4TRUE() Newoffset4TRUE {
+	if m.disc != TRUE {
+		panic("wrong union discriminant")
+	}
+	return Newoffset4TRUE{m: (*[newoffset4TRUESize]byte)(m.b)}
+}
+
+// -------------------------------------------------------
+// LAYOUTCOMMIT4args — variable:
+//   loca_offset(8) + loca_length(8) + loca_reclaim(4) + loca_stateid(16) + loca_last_write_offset_type(4) + newoffset4 loca_last_write_offset + loca_time_modify_type(4) + newtime4 loca_time_modify + loca_layoutupdate
+// -------------------------------------------------------
+
+type LAYOUTCOMMIT4args struct {
+	data []byte
+	off1 int // byte offset within data where loca_time_modify_type starts
+	off2 int // byte offset within data where loca_layoutupdate starts
+}
+
+func readLAYOUTCOMMIT4args(b *[]byte) (LAYOUTCOMMIT4args, bool) {
+	if len(*b) < 40 {
+		return LAYOUTCOMMIT4args{}, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[40:]
+	if _, ok := readNewoffset4(b, binary.BigEndian.Uint32(start[36:40])); !ok {
+		return LAYOUTCOMMIT4args{}, false
+	}
+	off1 := startLen - len(*b)
+	if len(*b) < 4 {
+		return LAYOUTCOMMIT4args{}, false
+	}
+	c_loca_time_modify_type := binary.BigEndian.Uint32((*b)[:4])
+	*b = (*b)[4:]
+	if _, ok := readNewtime4(b, c_loca_time_modify_type); !ok {
+		return LAYOUTCOMMIT4args{}, false
+	}
+	off2 := startLen - len(*b)
+	if _, ok := readLayoutupdate4(b); !ok {
+		return LAYOUTCOMMIT4args{}, false
+	}
+	total := startLen - len(*b)
+	return LAYOUTCOMMIT4args{data: start[:total], off1: off1, off2: off2}, true
+}
+
+func ReadLAYOUTCOMMIT4args(b []byte) (LAYOUTCOMMIT4args, bool) {
+	return readLAYOUTCOMMIT4args(&b)
+}
+
+func (m LAYOUTCOMMIT4args) LocaOffset() uint64 {
+	return binary.BigEndian.Uint64(m.data[0:8])
+}
+
+func (m LAYOUTCOMMIT4args) LocaLength() uint64 {
+	return binary.BigEndian.Uint64(m.data[8:16])
+}
+
+func (m LAYOUTCOMMIT4args) LocaReclaim() uint32 {
+	return binary.BigEndian.Uint32(m.data[16:20])
+}
+
+func (m LAYOUTCOMMIT4args) LocaStateid() Stateid4 {
+	return Stateid4{m: (*[stateid4Size]byte)(m.data[20 : 20+stateid4Size])}
+}
+
+func (m LAYOUTCOMMIT4args) LocaLastWriteOffsetType() uint32 {
+	return binary.BigEndian.Uint32(m.data[36:40])
+}
+
+func (m LAYOUTCOMMIT4args) LocaLastWriteOffset() Newoffset4 {
+	return Newoffset4{b: m.data[40:m.off1], disc: binary.BigEndian.Uint32(m.data[36:40])}
+}
+
+func (m LAYOUTCOMMIT4args) LocaTimeModifyType() uint32 {
+	o := m.off1
+	return binary.BigEndian.Uint32(m.data[o : o+4])
+}
+
+func (m LAYOUTCOMMIT4args) LocaTimeModify() Newtime4 {
+	return Newtime4{b: m.data[m.off1+4 : m.off2], disc: binary.BigEndian.Uint32(m.data[m.off1 : m.off1+4])}
+}
+
+func (m LAYOUTCOMMIT4args) LocaLayoutupdate() Layoutupdate4 {
+	return Layoutupdate4(m.data[m.off2:])
+}
+
+// LAYOUTCOMMIT4argsWriter writes a LAYOUTCOMMIT4args:
+//
+//	loca_offset + loca_length + loca_reclaim + loca_stateid + loca_last_write_offset_type + loca_last_write_offset(loca_last_write_offset_type) + loca_time_modify_type + loca_time_modify(loca_time_modify_type) + loca_layoutupdate
+type LAYOUTCOMMIT4argsWriter struct {
+	buf    []byte
+	header *[40]byte
+}
+
+func StartLAYOUTCOMMIT4args(buf []byte) LAYOUTCOMMIT4argsWriter {
+	buf = append(buf, make([]byte, 40)...) // loca_offset(8) + loca_length(8) + loca_reclaim(4) + loca_stateid(16) + loca_last_write_offset_type(4)
+	return LAYOUTCOMMIT4argsWriter{buf: buf, header: (*[40]byte)(buf[len(buf)-40:])}
+}
+
+func (w *LAYOUTCOMMIT4argsWriter) SetLocaOffset(v uint64) {
+	binary.BigEndian.PutUint64(w.header[0:8], v)
+}
+
+func (w *LAYOUTCOMMIT4argsWriter) SetLocaLength(v uint64) {
+	binary.BigEndian.PutUint64(w.header[8:16], v)
+}
+
+func (w *LAYOUTCOMMIT4argsWriter) SetLocaReclaim(v uint32) {
+	binary.BigEndian.PutUint32(w.header[16:20], v)
+}
+
+func (w *LAYOUTCOMMIT4argsWriter) LocaStateid() Stateid4 {
+	return Stateid4{m: (*[stateid4Size]byte)(w.header[20:])}
+}
+
+func (w *LAYOUTCOMMIT4argsWriter) SetLocaLastWriteOffsetType(v uint32) {
+	binary.BigEndian.PutUint32(w.header[36:40], v)
+}
+
+func (w *LAYOUTCOMMIT4argsWriter) SetLocaLastWriteOffset_True() Newoffset4TRUE {
+	binary.BigEndian.PutUint32(w.header[36:40], TRUE)
+	w.buf = append(w.buf, make([]byte, newoffset4TRUESize)...)
+	return Newoffset4TRUE{m: (*[newoffset4TRUESize]byte)(w.buf[len(w.buf)-newoffset4TRUESize:])}
+}
+
+func (w *LAYOUTCOMMIT4argsWriter) SetLocaLastWriteOffset_False() {
+	binary.BigEndian.PutUint32(w.header[36:40], FALSE)
+}
+
+func (w *LAYOUTCOMMIT4argsWriter) SetLocaTimeModify_True() Nfstime4 {
+	w.buf = append(w.buf, make([]byte, 4+nfstime4Size)...)
+	p := (*[4 + nfstime4Size]byte)(w.buf[len(w.buf)-4-nfstime4Size:])
+	binary.BigEndian.PutUint32(p[:4], TRUE)
+	return Nfstime4{m: (*[nfstime4Size]byte)(p[4:])}
+}
+
+func (w *LAYOUTCOMMIT4argsWriter) SetLocaTimeModify_False() {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, FALSE)
+}
+
+func (w *LAYOUTCOMMIT4argsWriter) StartLocaLayoutupdate() Layoutupdate4Writer {
+	child := StartLayoutupdate4(w.buf)
+	w.buf = nil
+	w.header = nil
+	return child
+}
+
+func (w *LAYOUTCOMMIT4argsWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *LAYOUTCOMMIT4argsWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// Newsize4TRUE — fixed 8 bytes: value(8, beu64)
+// -------------------------------------------------------
+
+type Newsize4TRUE struct {
+	m *[newsize4TRUESize]byte
+}
+
+const newsize4TRUESize = 8
+
+func readNewsize4TRUE(b *[]byte) (Newsize4TRUE, bool) {
+	if len(*b) < newsize4TRUESize {
+		return Newsize4TRUE{}, false
+	}
+	result := Newsize4TRUE{m: (*[newsize4TRUESize]byte)(*b)}
+	*b = (*b)[newsize4TRUESize:]
+	return result, true
+}
+
+func ReadNewsize4TRUE(b []byte) (Newsize4TRUE, bool) {
+	return readNewsize4TRUE(&b)
+}
+
+func StartNewsize4TRUE(buf []byte) ([]byte, Newsize4TRUE) {
+	buf = append(buf, make([]byte, newsize4TRUESize)...)
+	return buf, Newsize4TRUE{m: (*[newsize4TRUESize]byte)(buf[len(buf)-newsize4TRUESize:])}
+}
+
+func (m Newsize4TRUE) Value() uint64 {
+	return binary.BigEndian.Uint64(m.m[0:8])
+}
+
+func (m Newsize4TRUE) SetValue(v uint64) {
+	binary.BigEndian.PutUint64(m.m[0:8], v)
+}
+
+// -------------------------------------------------------
+// Newsize4 — union on xdr_bool (external discriminant)
+// -------------------------------------------------------
+
+type Newsize4 struct {
+	b    []byte
+	disc uint32
+}
+
+func readNewsize4(b *[]byte, xdrBool uint32) (Newsize4, bool) {
+	switch xdrBool {
+	case TRUE:
+		r, ok := readNewsize4TRUE(b)
+		if !ok {
+			return Newsize4{}, false
+		}
+		return Newsize4{b: r.m[:], disc: xdrBool}, true
+	case FALSE:
+		return Newsize4{b: (*b)[:0], disc: xdrBool}, true
+	default:
+		return Newsize4{}, false
+	}
+}
+
+func (m Newsize4) AsNewsize4TRUE() Newsize4TRUE {
+	if m.disc != TRUE {
+		panic("wrong union discriminant")
+	}
+	return Newsize4TRUE{m: (*[newsize4TRUESize]byte)(m.b)}
+}
+
+// -------------------------------------------------------
+// LAYOUTCOMMIT4resok — variable: locr_newsize_type(4) + newsize4 locr_newsize
+// -------------------------------------------------------
+
+type LAYOUTCOMMIT4resok []byte
+
+func readLAYOUTCOMMIT4resok(b *[]byte) (LAYOUTCOMMIT4resok, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[4:]
+	if _, ok := readNewsize4(b, binary.BigEndian.Uint32(start[0:4])); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return LAYOUTCOMMIT4resok(start[:total]), true
+}
+
+func ReadLAYOUTCOMMIT4resok(b []byte) (LAYOUTCOMMIT4resok, bool) {
+	return readLAYOUTCOMMIT4resok(&b)
+}
+
+func (m LAYOUTCOMMIT4resok) LocrNewsizeType() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m LAYOUTCOMMIT4resok) LocrNewsize() Newsize4 {
+	return Newsize4{b: m[4:], disc: binary.BigEndian.Uint32(m[0:4])}
+}
+
+// LAYOUTCOMMIT4resokWriter writes a LAYOUTCOMMIT4resok:
+//
+//	locr_newsize_type + locr_newsize(locr_newsize_type)
+type LAYOUTCOMMIT4resokWriter struct {
+	buf []byte
+	off int
+}
+
+func StartLAYOUTCOMMIT4resok(buf []byte) LAYOUTCOMMIT4resokWriter {
+	return LAYOUTCOMMIT4resokWriter{buf: buf, off: len(buf)}
+}
+
+func (w *LAYOUTCOMMIT4resokWriter) SetLocrNewsize_True() Newsize4TRUE {
+	w.buf = append(w.buf, make([]byte, 4+newsize4TRUESize)...)
+	p := (*[4 + newsize4TRUESize]byte)(w.buf[len(w.buf)-4-newsize4TRUESize:])
+	binary.BigEndian.PutUint32(p[:4], TRUE)
+	return Newsize4TRUE{m: (*[newsize4TRUESize]byte)(p[4:])}
+}
+
+func (w *LAYOUTCOMMIT4resokWriter) SetLocrNewsize_False() {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, FALSE)
+}
+
+func (w *LAYOUTCOMMIT4resokWriter) Finish() []byte {
+	return w.buf
+}
+
+// -------------------------------------------------------
+// LAYOUTCOMMIT4res — union on nfsstat4 (external discriminant)
+// -------------------------------------------------------
+
+type LAYOUTCOMMIT4res struct {
+	b    []byte
+	disc uint32
+}
+
+func readLAYOUTCOMMIT4res(b *[]byte, nfsstat4 uint32) (LAYOUTCOMMIT4res, bool) {
+	switch nfsstat4 {
+	case NFS4_OK:
+		r, ok := readLAYOUTCOMMIT4resok(b)
+		if !ok {
+			return LAYOUTCOMMIT4res{}, false
+		}
+		return LAYOUTCOMMIT4res{b: []byte(r), disc: nfsstat4}, true
+	default:
+		return LAYOUTCOMMIT4res{b: (*b)[:0], disc: nfsstat4}, true
+	}
+}
+
+func (m LAYOUTCOMMIT4res) AsLAYOUTCOMMIT4resok() LAYOUTCOMMIT4resok {
+	if m.disc != NFS4_OK {
+		panic("wrong union discriminant")
+	}
+	return LAYOUTCOMMIT4resok(m.b)
+}
+
+// -------------------------------------------------------
+// LAYOUTGET4args — fixed 56 bytes:
+//   loga_signal_layout_avail(4, beu32) + loga_layout_type(4, beu32) + loga_iomode(4, beu32) + loga_offset(8, beu64) + loga_length(8, beu64) + loga_minlength(8, beu64) + stateid4(16) + loga_maxcount(4, beu32)
+// -------------------------------------------------------
+
+type LAYOUTGET4args struct {
+	m *[lAYOUTGET4argsSize]byte
+}
+
+const lAYOUTGET4argsSize = 56
+
+func readLAYOUTGET4args(b *[]byte) (LAYOUTGET4args, bool) {
+	if len(*b) < lAYOUTGET4argsSize {
+		return LAYOUTGET4args{}, false
+	}
+	result := LAYOUTGET4args{m: (*[lAYOUTGET4argsSize]byte)(*b)}
+	*b = (*b)[lAYOUTGET4argsSize:]
+	return result, true
+}
+
+func ReadLAYOUTGET4args(b []byte) (LAYOUTGET4args, bool) {
+	return readLAYOUTGET4args(&b)
+}
+
+func StartLAYOUTGET4args(buf []byte) ([]byte, LAYOUTGET4args) {
+	buf = append(buf, make([]byte, lAYOUTGET4argsSize)...)
+	return buf, LAYOUTGET4args{m: (*[lAYOUTGET4argsSize]byte)(buf[len(buf)-lAYOUTGET4argsSize:])}
+}
+
+func (m LAYOUTGET4args) LogaSignalLayoutAvail() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m LAYOUTGET4args) LogaLayoutType() uint32 {
+	return binary.BigEndian.Uint32(m.m[4:8])
+}
+
+func (m LAYOUTGET4args) LogaIomode() uint32 {
+	return binary.BigEndian.Uint32(m.m[8:12])
+}
+
+func (m LAYOUTGET4args) LogaOffset() uint64 {
+	return binary.BigEndian.Uint64(m.m[12:20])
+}
+
+func (m LAYOUTGET4args) LogaLength() uint64 {
+	return binary.BigEndian.Uint64(m.m[20:28])
+}
+
+func (m LAYOUTGET4args) LogaMinlength() uint64 {
+	return binary.BigEndian.Uint64(m.m[28:36])
+}
+
+func (m LAYOUTGET4args) LogaStateid() Stateid4 {
+	return Stateid4{m: (*[stateid4Size]byte)(m.m[36:52])}
+}
+
+func (m LAYOUTGET4args) LogaMaxcount() uint32 {
+	return binary.BigEndian.Uint32(m.m[52:56])
+}
+
+func (m LAYOUTGET4args) SetLogaSignalLayoutAvail(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+func (m LAYOUTGET4args) SetLogaLayoutType(v uint32) {
+	binary.BigEndian.PutUint32(m.m[4:8], v)
+}
+
+func (m LAYOUTGET4args) SetLogaIomode(v uint32) {
+	binary.BigEndian.PutUint32(m.m[8:12], v)
+}
+
+func (m LAYOUTGET4args) SetLogaOffset(v uint64) {
+	binary.BigEndian.PutUint64(m.m[12:20], v)
+}
+
+func (m LAYOUTGET4args) SetLogaLength(v uint64) {
+	binary.BigEndian.PutUint64(m.m[20:28], v)
+}
+
+func (m LAYOUTGET4args) SetLogaMinlength(v uint64) {
+	binary.BigEndian.PutUint64(m.m[28:36], v)
+}
+
+func (m LAYOUTGET4args) SetLogaMaxcount(v uint32) {
+	binary.BigEndian.PutUint32(m.m[52:56], v)
+}
+
+// -------------------------------------------------------
+// LAYOUTGET4resok — variable:
+//   logr_return_on_close(4) + logr_stateid(16) + logr_layout_count(4) + layout4 logr_layout[logr_layout_count]
+// -------------------------------------------------------
+
+type LAYOUTGET4resok []byte
+
+func readLAYOUTGET4resok(b *[]byte) (LAYOUTGET4resok, bool) {
+	if len(*b) < 24 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	c_logr_layout_count := int(binary.BigEndian.Uint32((*b)[20:24]))
+	*b = (*b)[24:]
+	for i := 0; i < c_logr_layout_count; i++ {
+		if _, ok := readLayout4(b); !ok {
+			return nil, false
+		}
+	}
+	total := startLen - len(*b)
+	return LAYOUTGET4resok(start[:total]), true
+}
+
+func ReadLAYOUTGET4resok(b []byte) (LAYOUTGET4resok, bool) {
+	if len(b) < 24 {
+		return nil, false
+	}
+	return LAYOUTGET4resok(b), true
+}
+
+func (m LAYOUTGET4resok) LogrReturnOnClose() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m LAYOUTGET4resok) LogrStateid() Stateid4 {
+	return Stateid4{m: (*[stateid4Size]byte)(m[4 : 4+stateid4Size])}
+}
+
+func (m LAYOUTGET4resok) LogrLayoutCount() uint32 {
+	return binary.BigEndian.Uint32(m[20:24])
+}
+
+func (m LAYOUTGET4resok) LogrLayout() Layout4Iter {
+	logr_layout_count := int(binary.BigEndian.Uint32(m[20:24]))
+	return Layout4Iter{
+		b:     []byte(m[24:]),
+		count: logr_layout_count,
+	}
+}
+
+// Layout4Iter iterates over variable-size Layout4 entries.
+type Layout4Iter struct {
+	b     []byte
+	count int
+	i     int
+	cur   Layout4
+}
+
+func (it *Layout4Iter) Next() bool {
+	if it.i >= it.count {
+		return false
+	}
+	var ok bool
+	it.cur, ok = readLayout4(&it.b)
+	if !ok {
+		return false
+	}
+	it.i++
+	return true
+}
+
+func (it *Layout4Iter) LogrLayout() Layout4 {
+	return it.cur
+}
+
+// LAYOUTGET4resokWriter writes a LAYOUTGET4resok:
+//
+//	logr_return_on_close + logr_stateid + logr_layout_count + layout4 logr_layout[logr_layout_count]
+type LAYOUTGET4resokWriter struct {
+	buf             []byte
+	off             int
+	logrLayoutCount uint32
+}
+
+func StartLAYOUTGET4resok(buf []byte) LAYOUTGET4resokWriter {
+	off := len(buf)
+	buf = append(buf, make([]byte, 24)...) // logr_return_on_close(4) + logr_stateid(16) + logr_layout_count(4)
+	return LAYOUTGET4resokWriter{buf: buf, off: off}
+}
+
+func (w *LAYOUTGET4resokWriter) SetLogrReturnOnClose(v uint32) {
+	binary.BigEndian.PutUint32((*[24]byte)(w.buf[w.off:])[0:4], v)
+}
+
+func (w *LAYOUTGET4resokWriter) LogrStateid() Stateid4 {
+	return Stateid4{m: (*[stateid4Size]byte)(w.buf[w.off+4:])}
+}
+
+func (w *LAYOUTGET4resokWriter) AppendLogrLayout() Layout4Writer {
+	_ = w.buf[:1]
+	w.logrLayoutCount++
+	child := StartLayout4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *LAYOUTGET4resokWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *LAYOUTGET4resokWriter) Finish() []byte {
+	binary.BigEndian.PutUint32((*[24]byte)(w.buf[w.off:])[20:24], w.logrLayoutCount)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// LAYOUTGET4resNFS4ERRLAYOUTTRYLATER — fixed 4 bytes: value(4, beu32)
+// -------------------------------------------------------
+
+type LAYOUTGET4resNFS4ERRLAYOUTTRYLATER struct {
+	m *[lAYOUTGET4resNFS4ERRLAYOUTTRYLATERSize]byte
+}
+
+const lAYOUTGET4resNFS4ERRLAYOUTTRYLATERSize = 4
+
+func readLAYOUTGET4resNFS4ERRLAYOUTTRYLATER(b *[]byte) (LAYOUTGET4resNFS4ERRLAYOUTTRYLATER, bool) {
+	if len(*b) < lAYOUTGET4resNFS4ERRLAYOUTTRYLATERSize {
+		return LAYOUTGET4resNFS4ERRLAYOUTTRYLATER{}, false
+	}
+	result := LAYOUTGET4resNFS4ERRLAYOUTTRYLATER{m: (*[lAYOUTGET4resNFS4ERRLAYOUTTRYLATERSize]byte)(*b)}
+	*b = (*b)[lAYOUTGET4resNFS4ERRLAYOUTTRYLATERSize:]
+	return result, true
+}
+
+func ReadLAYOUTGET4resNFS4ERRLAYOUTTRYLATER(b []byte) (LAYOUTGET4resNFS4ERRLAYOUTTRYLATER, bool) {
+	return readLAYOUTGET4resNFS4ERRLAYOUTTRYLATER(&b)
+}
+
+func StartLAYOUTGET4resNFS4ERRLAYOUTTRYLATER(buf []byte) ([]byte, LAYOUTGET4resNFS4ERRLAYOUTTRYLATER) {
+	buf = append(buf, make([]byte, lAYOUTGET4resNFS4ERRLAYOUTTRYLATERSize)...)
+	return buf, LAYOUTGET4resNFS4ERRLAYOUTTRYLATER{m: (*[lAYOUTGET4resNFS4ERRLAYOUTTRYLATERSize]byte)(buf[len(buf)-lAYOUTGET4resNFS4ERRLAYOUTTRYLATERSize:])}
+}
+
+func (m LAYOUTGET4resNFS4ERRLAYOUTTRYLATER) Value() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m LAYOUTGET4resNFS4ERRLAYOUTTRYLATER) SetValue(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+// -------------------------------------------------------
+// LAYOUTGET4res — union on nfsstat4 (external discriminant)
+// -------------------------------------------------------
+
+type LAYOUTGET4res struct {
+	b    []byte
+	disc uint32
+}
+
+func readLAYOUTGET4res(b *[]byte, nfsstat4 uint32) (LAYOUTGET4res, bool) {
+	switch nfsstat4 {
+	case NFS4_OK:
+		r, ok := readLAYOUTGET4resok(b)
+		if !ok {
+			return LAYOUTGET4res{}, false
+		}
+		return LAYOUTGET4res{b: []byte(r), disc: nfsstat4}, true
+	case NFS4ERR_LAYOUTTRYLATER:
+		r, ok := readLAYOUTGET4resNFS4ERRLAYOUTTRYLATER(b)
+		if !ok {
+			return LAYOUTGET4res{}, false
+		}
+		return LAYOUTGET4res{b: r.m[:], disc: nfsstat4}, true
+	default:
+		return LAYOUTGET4res{b: (*b)[:0], disc: nfsstat4}, true
+	}
+}
+
+func (m LAYOUTGET4res) AsLAYOUTGET4resok() LAYOUTGET4resok {
+	if m.disc != NFS4_OK {
+		panic("wrong union discriminant")
+	}
+	return LAYOUTGET4resok(m.b)
+}
+
+func (m LAYOUTGET4res) AsLAYOUTGET4resNFS4ERRLAYOUTTRYLATER() LAYOUTGET4resNFS4ERRLAYOUTTRYLATER {
+	if m.disc != NFS4ERR_LAYOUTTRYLATER {
+		panic("wrong union discriminant")
+	}
+	return LAYOUTGET4resNFS4ERRLAYOUTTRYLATER{m: (*[lAYOUTGET4resNFS4ERRLAYOUTTRYLATERSize]byte)(m.b)}
+}
+
+// -------------------------------------------------------
+// LAYOUTRETURN4args — variable:
+//   lora_reclaim(4) + lora_layout_type(4) + lora_iomode(4) + lora_layoutreturn_type(4) + layoutreturn4 lora_layoutreturn
+// -------------------------------------------------------
+
+type LAYOUTRETURN4args []byte
+
+func readLAYOUTRETURN4args(b *[]byte) (LAYOUTRETURN4args, bool) {
+	if len(*b) < 16 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[16:]
+	if _, ok := readLayoutreturn4(b, binary.BigEndian.Uint32(start[12:16])); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return LAYOUTRETURN4args(start[:total]), true
+}
+
+func ReadLAYOUTRETURN4args(b []byte) (LAYOUTRETURN4args, bool) {
+	return readLAYOUTRETURN4args(&b)
+}
+
+func (m LAYOUTRETURN4args) LoraReclaim() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m LAYOUTRETURN4args) LoraLayoutType() uint32 {
+	return binary.BigEndian.Uint32(m[4:8])
+}
+
+func (m LAYOUTRETURN4args) LoraIomode() uint32 {
+	return binary.BigEndian.Uint32(m[8:12])
+}
+
+func (m LAYOUTRETURN4args) LoraLayoutreturnType() uint32 {
+	return binary.BigEndian.Uint32(m[12:16])
+}
+
+func (m LAYOUTRETURN4args) LoraLayoutreturn() Layoutreturn4 {
+	return Layoutreturn4{b: m[16:], disc: binary.BigEndian.Uint32(m[12:16])}
+}
+
+// LAYOUTRETURN4argsWriter writes a LAYOUTRETURN4args:
+//
+//	lora_reclaim + lora_layout_type + lora_iomode + lora_layoutreturn_type + lora_layoutreturn(lora_layoutreturn_type)
+type LAYOUTRETURN4argsWriter struct {
+	buf    []byte
+	header *[16]byte
+}
+
+func StartLAYOUTRETURN4args(buf []byte) LAYOUTRETURN4argsWriter {
+	buf = append(buf, make([]byte, 16)...) // lora_reclaim(4) + lora_layout_type(4) + lora_iomode(4) + lora_layoutreturn_type(4)
+	return LAYOUTRETURN4argsWriter{buf: buf, header: (*[16]byte)(buf[len(buf)-16:])}
+}
+
+func (w *LAYOUTRETURN4argsWriter) SetLoraReclaim(v uint32) {
+	binary.BigEndian.PutUint32(w.header[0:4], v)
+}
+
+func (w *LAYOUTRETURN4argsWriter) SetLoraLayoutType(v uint32) {
+	binary.BigEndian.PutUint32(w.header[4:8], v)
+}
+
+func (w *LAYOUTRETURN4argsWriter) SetLoraIomode(v uint32) {
+	binary.BigEndian.PutUint32(w.header[8:12], v)
+}
+
+func (w *LAYOUTRETURN4argsWriter) SetLoraLayoutreturnType(v uint32) {
+	binary.BigEndian.PutUint32(w.header[12:16], v)
+}
+
+func (w *LAYOUTRETURN4argsWriter) SetLoraLayoutreturn_File() LayoutreturnFile4Writer {
+	binary.BigEndian.PutUint32(w.header[12:16], LAYOUTRETURN4_FILE)
+	w.buf = append(w.buf, make([]byte, 36)...)
+	buf := w.buf
+	w.buf = nil
+	return LayoutreturnFile4Writer{buf: buf, off: len(buf) - 36}
+}
+
+func (w *LAYOUTRETURN4argsWriter) SetLoraLayoutreturn_Default(layoutreturnType4 uint32) {
+	binary.BigEndian.PutUint32(w.header[12:16], layoutreturnType4)
+}
+
+func (w *LAYOUTRETURN4argsWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *LAYOUTRETURN4argsWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// LayoutreturnStateid — union on xdr_bool (external discriminant)
+// -------------------------------------------------------
+
+type LayoutreturnStateid struct {
+	b    []byte
+	disc uint32
+}
+
+func readLayoutreturnStateid(b *[]byte, xdrBool uint32) (LayoutreturnStateid, bool) {
+	switch xdrBool {
+	case TRUE:
+		r, ok := readStateid4(b)
+		if !ok {
+			return LayoutreturnStateid{}, false
+		}
+		return LayoutreturnStateid{b: r.m[:], disc: xdrBool}, true
+	case FALSE:
+		return LayoutreturnStateid{b: (*b)[:0], disc: xdrBool}, true
+	default:
+		return LayoutreturnStateid{}, false
+	}
+}
+
+func (m LayoutreturnStateid) AsStateid4() Stateid4 {
+	if m.disc != TRUE {
+		panic("wrong union discriminant")
+	}
+	return Stateid4{m: (*[stateid4Size]byte)(m.b)}
+}
+
+// -------------------------------------------------------
+// LayoutreturnStateidEntry — variable: disc(4) + layoutreturn_stateid value
+// -------------------------------------------------------
+
+type LayoutreturnStateidEntry []byte
+
+func readLayoutreturnStateidEntry(b *[]byte) (LayoutreturnStateidEntry, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[4:]
+	if _, ok := readLayoutreturnStateid(b, binary.BigEndian.Uint32(start[0:4])); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return LayoutreturnStateidEntry(start[:total]), true
+}
+
+func ReadLayoutreturnStateidEntry(b []byte) (LayoutreturnStateidEntry, bool) {
+	return readLayoutreturnStateidEntry(&b)
+}
+
+func (m LayoutreturnStateidEntry) Disc() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m LayoutreturnStateidEntry) Value() LayoutreturnStateid {
+	return LayoutreturnStateid{b: m[4:], disc: binary.BigEndian.Uint32(m[0:4])}
+}
+
+// LayoutreturnStateidEntryWriter writes a layoutreturn_stateid_entry:
+//
+//	disc + value(disc)
+type LayoutreturnStateidEntryWriter struct {
+	buf []byte
+	off int
+}
+
+func StartLayoutreturnStateidEntry(buf []byte) LayoutreturnStateidEntryWriter {
+	return LayoutreturnStateidEntryWriter{buf: buf, off: len(buf)}
+}
+
+func (w *LayoutreturnStateidEntryWriter) SetValue_True() Stateid4 {
+	w.buf = append(w.buf, make([]byte, 4+stateid4Size)...)
+	p := (*[4 + stateid4Size]byte)(w.buf[len(w.buf)-4-stateid4Size:])
+	binary.BigEndian.PutUint32(p[:4], TRUE)
+	return Stateid4{m: (*[stateid4Size]byte)(p[4:])}
+}
+
+func (w *LayoutreturnStateidEntryWriter) SetValue_False() {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, FALSE)
+}
+
+func (w *LayoutreturnStateidEntryWriter) Finish() []byte {
+	return w.buf
+}
+
+// -------------------------------------------------------
+// LAYOUTRETURN4res — union on nfsstat4 (external discriminant)
+// -------------------------------------------------------
+
+type LAYOUTRETURN4res struct {
+	b    []byte
+	disc uint32
+}
+
+func readLAYOUTRETURN4res(b *[]byte, nfsstat4 uint32) (LAYOUTRETURN4res, bool) {
+	switch nfsstat4 {
+	case NFS4_OK:
+		r, ok := readLayoutreturnStateidEntry(b)
+		if !ok {
+			return LAYOUTRETURN4res{}, false
+		}
+		return LAYOUTRETURN4res{b: []byte(r), disc: nfsstat4}, true
+	default:
+		return LAYOUTRETURN4res{b: (*b)[:0], disc: nfsstat4}, true
+	}
+}
+
+func (m LAYOUTRETURN4res) AsLayoutreturnStateidEntry() LayoutreturnStateidEntry {
+	if m.disc != NFS4_OK {
+		panic("wrong union discriminant")
+	}
+	return LayoutreturnStateidEntry(m.b)
+}
+
+// -------------------------------------------------------
+// SEQUENCE4args — fixed 32 bytes:
+//   sessionid4(16) + sa_sequenceid(4, beu32) + sa_slotid(4, beu32) + sa_highest_slotid(4, beu32) + sa_cachethis(4, beu32)
+// -------------------------------------------------------
+
+type SEQUENCE4args struct {
+	m *[sEQUENCE4argsSize]byte
+}
+
+const sEQUENCE4argsSize = 32
+
+func readSEQUENCE4args(b *[]byte) (SEQUENCE4args, bool) {
+	if len(*b) < sEQUENCE4argsSize {
+		return SEQUENCE4args{}, false
+	}
+	result := SEQUENCE4args{m: (*[sEQUENCE4argsSize]byte)(*b)}
+	*b = (*b)[sEQUENCE4argsSize:]
+	return result, true
+}
+
+func ReadSEQUENCE4args(b []byte) (SEQUENCE4args, bool) {
+	return readSEQUENCE4args(&b)
+}
+
+func StartSEQUENCE4args(buf []byte) ([]byte, SEQUENCE4args) {
+	buf = append(buf, make([]byte, sEQUENCE4argsSize)...)
+	return buf, SEQUENCE4args{m: (*[sEQUENCE4argsSize]byte)(buf[len(buf)-sEQUENCE4argsSize:])}
+}
+
+func (m SEQUENCE4args) SaSessionid() Sessionid4 {
+	return Sessionid4{m: (*[sessionid4Size]byte)(m.m[0:16])}
+}
+
+func (m SEQUENCE4args) SaSequenceid() uint32 {
+	return binary.BigEndian.Uint32(m.m[16:20])
+}
+
+func (m SEQUENCE4args) SaSlotid() uint32 {
+	return binary.BigEndian.Uint32(m.m[20:24])
+}
+
+func (m SEQUENCE4args) SaHighestSlotid() uint32 {
+	return binary.BigEndian.Uint32(m.m[24:28])
+}
+
+func (m SEQUENCE4args) SaCachethis() uint32 {
+	return binary.BigEndian.Uint32(m.m[28:32])
+}
+
+func (m SEQUENCE4args) SetSaSequenceid(v uint32) {
+	binary.BigEndian.PutUint32(m.m[16:20], v)
+}
+
+func (m SEQUENCE4args) SetSaSlotid(v uint32) {
+	binary.BigEndian.PutUint32(m.m[20:24], v)
+}
+
+func (m SEQUENCE4args) SetSaHighestSlotid(v uint32) {
+	binary.BigEndian.PutUint32(m.m[24:28], v)
+}
+
+func (m SEQUENCE4args) SetSaCachethis(v uint32) {
+	binary.BigEndian.PutUint32(m.m[28:32], v)
+}
+
+// -------------------------------------------------------
+// SEQUENCE4resok — fixed 36 bytes:
+//   sessionid4(16) + sr_sequenceid(4, beu32) + sr_slotid(4, beu32) + sr_highest_slotid(4, beu32) + sr_target_highest_slotid(4, beu32) + sr_status_flags(4, beu32)
+// -------------------------------------------------------
+
+type SEQUENCE4resok struct {
+	m *[sEQUENCE4resokSize]byte
+}
+
+const sEQUENCE4resokSize = 36
+
+func readSEQUENCE4resok(b *[]byte) (SEQUENCE4resok, bool) {
+	if len(*b) < sEQUENCE4resokSize {
+		return SEQUENCE4resok{}, false
+	}
+	result := SEQUENCE4resok{m: (*[sEQUENCE4resokSize]byte)(*b)}
+	*b = (*b)[sEQUENCE4resokSize:]
+	return result, true
+}
+
+func ReadSEQUENCE4resok(b []byte) (SEQUENCE4resok, bool) {
+	return readSEQUENCE4resok(&b)
+}
+
+func StartSEQUENCE4resok(buf []byte) ([]byte, SEQUENCE4resok) {
+	buf = append(buf, make([]byte, sEQUENCE4resokSize)...)
+	return buf, SEQUENCE4resok{m: (*[sEQUENCE4resokSize]byte)(buf[len(buf)-sEQUENCE4resokSize:])}
+}
+
+func (m SEQUENCE4resok) SrSessionid() Sessionid4 {
+	return Sessionid4{m: (*[sessionid4Size]byte)(m.m[0:16])}
+}
+
+func (m SEQUENCE4resok) SrSequenceid() uint32 {
+	return binary.BigEndian.Uint32(m.m[16:20])
+}
+
+func (m SEQUENCE4resok) SrSlotid() uint32 {
+	return binary.BigEndian.Uint32(m.m[20:24])
+}
+
+func (m SEQUENCE4resok) SrHighestSlotid() uint32 {
+	return binary.BigEndian.Uint32(m.m[24:28])
+}
+
+func (m SEQUENCE4resok) SrTargetHighestSlotid() uint32 {
+	return binary.BigEndian.Uint32(m.m[28:32])
+}
+
+func (m SEQUENCE4resok) SrStatusFlags() uint32 {
+	return binary.BigEndian.Uint32(m.m[32:36])
+}
+
+func (m SEQUENCE4resok) SetSrSequenceid(v uint32) {
+	binary.BigEndian.PutUint32(m.m[16:20], v)
+}
+
+func (m SEQUENCE4resok) SetSrSlotid(v uint32) {
+	binary.BigEndian.PutUint32(m.m[20:24], v)
+}
+
+func (m SEQUENCE4resok) SetSrHighestSlotid(v uint32) {
+	binary.BigEndian.PutUint32(m.m[24:28], v)
+}
+
+func (m SEQUENCE4resok) SetSrTargetHighestSlotid(v uint32) {
+	binary.BigEndian.PutUint32(m.m[28:32], v)
+}
+
+func (m SEQUENCE4resok) SetSrStatusFlags(v uint32) {
+	binary.BigEndian.PutUint32(m.m[32:36], v)
+}
+
+// -------------------------------------------------------
+// SEQUENCE4res — union on nfsstat4 (external discriminant)
+// -------------------------------------------------------
+
+type SEQUENCE4res struct {
+	b    []byte
+	disc uint32
+}
+
+func readSEQUENCE4res(b *[]byte, nfsstat4 uint32) (SEQUENCE4res, bool) {
+	switch nfsstat4 {
+	case NFS4_OK:
+		r, ok := readSEQUENCE4resok(b)
+		if !ok {
+			return SEQUENCE4res{}, false
+		}
+		return SEQUENCE4res{b: r.m[:], disc: nfsstat4}, true
+	default:
+		return SEQUENCE4res{b: (*b)[:0], disc: nfsstat4}, true
+	}
+}
+
+func (m SEQUENCE4res) AsSEQUENCE4resok() SEQUENCE4resok {
+	if m.disc != NFS4_OK {
+		panic("wrong union discriminant")
+	}
+	return SEQUENCE4resok{m: (*[sEQUENCE4resokSize]byte)(m.b)}
+}
+
+// -------------------------------------------------------
+// SsaDigestInput4 — fixed 32 bytes: SEQUENCE4args(32)
+// -------------------------------------------------------
+
+type SsaDigestInput4 struct {
+	m *[ssaDigestInput4Size]byte
+}
+
+const ssaDigestInput4Size = 32
+
+func ReadSsaDigestInput4(b []byte) (SsaDigestInput4, bool) {
+	if len(b) < ssaDigestInput4Size {
+		return SsaDigestInput4{}, false
+	}
+	return SsaDigestInput4{m: (*[ssaDigestInput4Size]byte)(b)}, true
+}
+
+func StartSsaDigestInput4(buf []byte) ([]byte, SsaDigestInput4) {
+	buf = append(buf, make([]byte, ssaDigestInput4Size)...)
+	return buf, SsaDigestInput4{m: (*[ssaDigestInput4Size]byte)(buf[len(buf)-ssaDigestInput4Size:])}
+}
+
+func (m SsaDigestInput4) SdiSeqargs() SEQUENCE4args {
+	return SEQUENCE4args{m: (*[sEQUENCE4argsSize]byte)(m.m[0:32])}
+}
+
+// -------------------------------------------------------
+// SETSSV4args — variable: ssa_ssv + ssa_digest
+// -------------------------------------------------------
+
+type SETSSV4args struct {
+	data []byte
+	off1 int // byte offset within data where ssa_digest starts
+}
+
+func readSETSSV4args(b *[]byte) (SETSSV4args, bool) {
+	start := *b
+	startLen := len(start)
+	if _, ok := readXdrOpaque(b); !ok {
+		return SETSSV4args{}, false
+	}
+	off1 := startLen - len(*b)
+	if _, ok := readXdrOpaque(b); !ok {
+		return SETSSV4args{}, false
+	}
+	total := startLen - len(*b)
+	return SETSSV4args{data: start[:total], off1: off1}, true
+}
+
+func ReadSETSSV4args(b []byte) (SETSSV4args, bool) {
+	return readSETSSV4args(&b)
+}
+
+func (m SETSSV4args) SsaSsv() XdrOpaque {
+	return XdrOpaque(m.data[0:m.off1])
+}
+
+func (m SETSSV4args) SsaDigest() XdrOpaque {
+	return XdrOpaque(m.data[m.off1:])
+}
+
+// SETSSV4argsWriter writes a SET_SSV4args:
+//
+//	ssa_ssv + ssa_digest
+type SETSSV4argsWriter struct {
+	buf   []byte
+	off   int
+	phase uint8
+}
+
+func StartSETSSV4args(buf []byte) SETSSV4argsWriter {
+	off := len(buf)
+	return SETSSV4argsWriter{buf: buf, off: off}
+}
+
+func (w *SETSSV4argsWriter) StartSsaSsv() XdrOpaqueWriter {
+	if w.phase > 0 {
+		panic("writer fields called out of order")
+	}
+	child := StartXdrOpaque(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *SETSSV4argsWriter) StartSsaDigest() XdrOpaqueWriter {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	child := StartXdrOpaque(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *SETSSV4argsWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *SETSSV4argsWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// SsrDigestInput4 — variable: sdi_seqres_type(4) + SEQUENCE4res sdi_seqres
+// -------------------------------------------------------
+
+type SsrDigestInput4 []byte
+
+func readSsrDigestInput4(b *[]byte) (SsrDigestInput4, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[4:]
+	if _, ok := readSEQUENCE4res(b, binary.BigEndian.Uint32(start[0:4])); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return SsrDigestInput4(start[:total]), true
+}
+
+func ReadSsrDigestInput4(b []byte) (SsrDigestInput4, bool) {
+	return readSsrDigestInput4(&b)
+}
+
+func (m SsrDigestInput4) SdiSeqresType() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m SsrDigestInput4) SdiSeqres() SEQUENCE4res {
+	return SEQUENCE4res{b: m[4:], disc: binary.BigEndian.Uint32(m[0:4])}
+}
+
+// SsrDigestInput4Writer writes a ssr_digest_input4:
+//
+//	sdi_seqres_type + sdi_seqres(sdi_seqres_type)
+type SsrDigestInput4Writer struct {
+	buf []byte
+	off int
+}
+
+func StartSsrDigestInput4(buf []byte) SsrDigestInput4Writer {
+	return SsrDigestInput4Writer{buf: buf, off: len(buf)}
+}
+
+func (w *SsrDigestInput4Writer) SetSdiSeqres_Nfs4Ok() SEQUENCE4resok {
+	w.buf = append(w.buf, make([]byte, 4+sEQUENCE4resokSize)...)
+	p := (*[4 + sEQUENCE4resokSize]byte)(w.buf[len(w.buf)-4-sEQUENCE4resokSize:])
+	binary.BigEndian.PutUint32(p[:4], NFS4_OK)
+	return SEQUENCE4resok{m: (*[sEQUENCE4resokSize]byte)(p[4:])}
+}
+
+func (w *SsrDigestInput4Writer) SetSdiSeqres_Default(nfsstat4 uint32) {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, nfsstat4)
+}
+
+func (w *SsrDigestInput4Writer) Finish() []byte {
+	return w.buf
+}
+
+// -------------------------------------------------------
+// SETSSV4resok — variable:
+//   ssr_digest_len(4) + u8 ssr_digest[ssr_digest_len] + align(4)
+// -------------------------------------------------------
+
+type SETSSV4resok []byte
+
+func readSETSSV4resok(b *[]byte) (SETSSV4resok, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	n := int(binary.BigEndian.Uint32((*b)[0:4]))
+	padded := (n + 3) &^ 3
+	total := 4 + padded
+	if len(*b) < total {
+		return nil, false
+	}
+	result := SETSSV4resok((*b)[:total])
+	*b = (*b)[total:]
+	return result, true
+}
+
+func ReadSETSSV4resok(b []byte) (SETSSV4resok, bool) {
+	if len(b) < 4 {
+		return nil, false
+	}
+	count := int(binary.BigEndian.Uint32(b[0:4]))
+	padded := (count + 3) &^ 3
+	total := 4 + padded
+	if len(b) < total {
+		return nil, false
+	}
+	return SETSSV4resok(b[:total]), true
+}
+
+func (m SETSSV4resok) SsrDigestLen() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m SETSSV4resok) SsrDigest() []byte {
+	n := int(binary.BigEndian.Uint32(m[0:4]))
+	return m[4 : 4+n]
+}
+
+// SETSSV4resokWriter writes a SET_SSV4resok:
+//
+//	ssr_digest_len + u8 ssr_digest[ssr_digest_len] + align(4)
+type SETSSV4resokWriter struct {
+	buf []byte
+	off int
+}
+
+func StartSETSSV4resok(buf []byte) SETSSV4resokWriter {
+	off := len(buf)
+	return SETSSV4resokWriter{buf: buf, off: off}
+}
+
+func (w SETSSV4resokWriter) SetSsrDigest(data []byte) SETSSV4resokWriter {
+	n := len(data)
+	padded := (n + 3) &^ 3
+	total := 4 + padded
+	w.buf = append(w.buf, make([]byte, total)...)
+	binary.BigEndian.PutUint32(w.buf[w.off:w.off+4], uint32(n))
+	copy(w.buf[w.off+4:], data)
+	return w
+}
+
+func (w SETSSV4resokWriter) Finish() []byte {
+	return w.buf
+}
+
+// -------------------------------------------------------
+// SETSSV4res — union on nfsstat4 (external discriminant)
+// -------------------------------------------------------
+
+type SETSSV4res struct {
+	b    []byte
+	disc uint32
+}
+
+func readSETSSV4res(b *[]byte, nfsstat4 uint32) (SETSSV4res, bool) {
+	switch nfsstat4 {
+	case NFS4_OK:
+		r, ok := readSETSSV4resok(b)
+		if !ok {
+			return SETSSV4res{}, false
+		}
+		return SETSSV4res{b: []byte(r), disc: nfsstat4}, true
+	default:
+		return SETSSV4res{b: (*b)[:0], disc: nfsstat4}, true
+	}
+}
+
+func (m SETSSV4res) AsSETSSV4resok() SETSSV4resok {
+	if m.disc != NFS4_OK {
+		panic("wrong union discriminant")
+	}
+	return SETSSV4resok(m.b)
+}
+
+// -------------------------------------------------------
+// TESTSTATEID4args — variable:
+//   ts_stateids_count(4) + stateid4 ts_stateids[ts_stateids_count]
+// -------------------------------------------------------
+
+type TESTSTATEID4args []byte
+
+func readTESTSTATEID4args(b *[]byte) (TESTSTATEID4args, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	c_ts_stateids_count := int(binary.BigEndian.Uint32((*b)[0:4]))
+	*b = (*b)[4:]
+	if len(*b) < c_ts_stateids_count*16 {
+		return nil, false
+	}
+	*b = (*b)[c_ts_stateids_count*16:]
+	total := startLen - len(*b)
+	return TESTSTATEID4args(start[:total]), true
+}
+
+func ReadTESTSTATEID4args(b []byte) (TESTSTATEID4args, bool) {
+	if len(b) < 4 {
+		return nil, false
+	}
+	count := int(binary.BigEndian.Uint32(b[0:4]))
+	total := 4 + count*stateid4Size
+	if len(b) < total {
+		return nil, false
+	}
+	return TESTSTATEID4args(b[:total]), true
+}
+
+func (m TESTSTATEID4args) TsStateidsCount() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m TESTSTATEID4args) TsStateids(i int) Stateid4 {
+	off := 4 + i*stateid4Size
+	return Stateid4{m: (*[stateid4Size]byte)(m[off : off+stateid4Size])}
+}
+
+// TESTSTATEID4argsWriter writes a TEST_STATEID4args:
+//
+//	ts_stateids_count + stateid4 ts_stateids[ts_stateids_count]
+type TESTSTATEID4argsWriter struct {
+	buf             []byte
+	off             int
+	tsStateidsCount uint32
+}
+
+func StartTESTSTATEID4args(buf []byte) TESTSTATEID4argsWriter {
+	off := len(buf)
+	buf = binary.BigEndian.AppendUint32(buf, 0) // ts_stateids_count placeholder
+	return TESTSTATEID4argsWriter{buf: buf, off: off}
+}
+
+func (w *TESTSTATEID4argsWriter) AppendTsStateids() Stateid4 {
+	w.buf = append(w.buf, make([]byte, stateid4Size)...)
+	w.tsStateidsCount++
+	return Stateid4{m: (*[stateid4Size]byte)(w.buf[len(w.buf)-stateid4Size:])}
+}
+
+func (w *TESTSTATEID4argsWriter) Finish() []byte {
+	binary.BigEndian.PutUint32(w.buf[w.off:w.off+4], w.tsStateidsCount)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// TESTSTATEID4resok — variable:
+//   tsr_status_codes_count(4) + nfsstat4 tsr_status_codes[tsr_status_codes_count]
+// -------------------------------------------------------
+
+type TESTSTATEID4resok []byte
+
+func readTESTSTATEID4resok(b *[]byte) (TESTSTATEID4resok, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	c_tsr_status_codes_count := int(binary.BigEndian.Uint32((*b)[0:4]))
+	*b = (*b)[4:]
+	if len(*b) < c_tsr_status_codes_count*4 {
+		return nil, false
+	}
+	*b = (*b)[c_tsr_status_codes_count*4:]
+	total := startLen - len(*b)
+	return TESTSTATEID4resok(start[:total]), true
+}
+
+func ReadTESTSTATEID4resok(b []byte) (TESTSTATEID4resok, bool) {
+	if len(b) < 4 {
+		return nil, false
+	}
+	count := int(binary.BigEndian.Uint32(b[0:4]))
+	total := 4 + count*4
+	if len(b) < total {
+		return nil, false
+	}
+	return TESTSTATEID4resok(b[:total]), true
+}
+
+func (m TESTSTATEID4resok) TsrStatusCodesCount() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+// TESTSTATEID4resokWriter writes a TEST_STATEID4resok:
+//
+//	tsr_status_codes_count + nfsstat4 tsr_status_codes[tsr_status_codes_count]
+type TESTSTATEID4resokWriter struct {
+	buf                 []byte
+	off                 int
+	tsrStatusCodesCount uint32
+}
+
+func StartTESTSTATEID4resok(buf []byte) TESTSTATEID4resokWriter {
+	off := len(buf)
+	buf = binary.BigEndian.AppendUint32(buf, 0) // tsr_status_codes_count placeholder
+	return TESTSTATEID4resokWriter{buf: buf, off: off}
+}
+
+func (w *TESTSTATEID4resokWriter) AppendTsrStatusCodes(v uint32) {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, v)
+	w.tsrStatusCodesCount++
+}
+
+func (w *TESTSTATEID4resokWriter) Finish() []byte {
+	binary.BigEndian.PutUint32(w.buf[w.off:w.off+4], w.tsrStatusCodesCount)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// TESTSTATEID4res — union on nfsstat4 (external discriminant)
+// -------------------------------------------------------
+
+type TESTSTATEID4res struct {
+	b    []byte
+	disc uint32
+}
+
+func readTESTSTATEID4res(b *[]byte, nfsstat4 uint32) (TESTSTATEID4res, bool) {
+	switch nfsstat4 {
+	case NFS4_OK:
+		r, ok := readTESTSTATEID4resok(b)
+		if !ok {
+			return TESTSTATEID4res{}, false
+		}
+		return TESTSTATEID4res{b: []byte(r), disc: nfsstat4}, true
+	default:
+		return TESTSTATEID4res{b: (*b)[:0], disc: nfsstat4}, true
+	}
+}
+
+func (m TESTSTATEID4res) AsTESTSTATEID4resok() TESTSTATEID4resok {
+	if m.disc != NFS4_OK {
+		panic("wrong union discriminant")
+	}
+	return TESTSTATEID4resok(m.b)
+}
+
+// -------------------------------------------------------
+// DelegClaim4CLAIMPREVIOUS — fixed 4 bytes: value(4, beu32)
+// -------------------------------------------------------
+
+type DelegClaim4CLAIMPREVIOUS struct {
+	m *[delegClaim4CLAIMPREVIOUSSize]byte
+}
+
+const delegClaim4CLAIMPREVIOUSSize = 4
+
+func readDelegClaim4CLAIMPREVIOUS(b *[]byte) (DelegClaim4CLAIMPREVIOUS, bool) {
+	if len(*b) < delegClaim4CLAIMPREVIOUSSize {
+		return DelegClaim4CLAIMPREVIOUS{}, false
+	}
+	result := DelegClaim4CLAIMPREVIOUS{m: (*[delegClaim4CLAIMPREVIOUSSize]byte)(*b)}
+	*b = (*b)[delegClaim4CLAIMPREVIOUSSize:]
+	return result, true
+}
+
+func ReadDelegClaim4CLAIMPREVIOUS(b []byte) (DelegClaim4CLAIMPREVIOUS, bool) {
+	return readDelegClaim4CLAIMPREVIOUS(&b)
+}
+
+func StartDelegClaim4CLAIMPREVIOUS(buf []byte) ([]byte, DelegClaim4CLAIMPREVIOUS) {
+	buf = append(buf, make([]byte, delegClaim4CLAIMPREVIOUSSize)...)
+	return buf, DelegClaim4CLAIMPREVIOUS{m: (*[delegClaim4CLAIMPREVIOUSSize]byte)(buf[len(buf)-delegClaim4CLAIMPREVIOUSSize:])}
+}
+
+func (m DelegClaim4CLAIMPREVIOUS) Value() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m DelegClaim4CLAIMPREVIOUS) SetValue(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+// -------------------------------------------------------
+// DelegClaim4 — union on open_claim_type4 (external discriminant)
+// -------------------------------------------------------
+
+type DelegClaim4 struct {
+	b    []byte
+	disc uint32
+}
+
+func readDelegClaim4(b *[]byte, openClaimType4 uint32) (DelegClaim4, bool) {
+	switch openClaimType4 {
+	case CLAIM_FH:
+		return DelegClaim4{b: (*b)[:0], disc: openClaimType4}, true
+	case CLAIM_DELEG_PREV_FH:
+		return DelegClaim4{b: (*b)[:0], disc: openClaimType4}, true
+	case CLAIM_PREVIOUS:
+		r, ok := readDelegClaim4CLAIMPREVIOUS(b)
+		if !ok {
+			return DelegClaim4{}, false
+		}
+		return DelegClaim4{b: r.m[:], disc: openClaimType4}, true
+	default:
+		return DelegClaim4{}, false
+	}
+}
+
+func (m DelegClaim4) AsDelegClaim4CLAIMPREVIOUS() DelegClaim4CLAIMPREVIOUS {
+	if m.disc != CLAIM_PREVIOUS {
+		panic("wrong union discriminant")
+	}
+	return DelegClaim4CLAIMPREVIOUS{m: (*[delegClaim4CLAIMPREVIOUSSize]byte)(m.b)}
+}
+
+// -------------------------------------------------------
+// WANTDELEGATION4args — variable:
+//   wda_want(4) + wda_claim_type(4) + deleg_claim4 wda_claim
+// -------------------------------------------------------
+
+type WANTDELEGATION4args []byte
+
+func readWANTDELEGATION4args(b *[]byte) (WANTDELEGATION4args, bool) {
+	if len(*b) < 8 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[8:]
+	if _, ok := readDelegClaim4(b, binary.BigEndian.Uint32(start[4:8])); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return WANTDELEGATION4args(start[:total]), true
+}
+
+func ReadWANTDELEGATION4args(b []byte) (WANTDELEGATION4args, bool) {
+	return readWANTDELEGATION4args(&b)
+}
+
+func (m WANTDELEGATION4args) WdaWant() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m WANTDELEGATION4args) WdaClaimType() uint32 {
+	return binary.BigEndian.Uint32(m[4:8])
+}
+
+func (m WANTDELEGATION4args) WdaClaim() DelegClaim4 {
+	return DelegClaim4{b: m[8:], disc: binary.BigEndian.Uint32(m[4:8])}
+}
+
+// WANTDELEGATION4argsWriter writes a WANT_DELEGATION4args:
+//
+//	wda_want + wda_claim_type + wda_claim(wda_claim_type)
+type WANTDELEGATION4argsWriter struct {
+	buf    []byte
+	header *[8]byte
+}
+
+func StartWANTDELEGATION4args(buf []byte) WANTDELEGATION4argsWriter {
+	buf = append(buf, make([]byte, 8)...) // wda_want(4) + wda_claim_type(4)
+	return WANTDELEGATION4argsWriter{buf: buf, header: (*[8]byte)(buf[len(buf)-8:])}
+}
+
+func (w *WANTDELEGATION4argsWriter) SetWdaWant(v uint32) {
+	binary.BigEndian.PutUint32(w.header[0:4], v)
+}
+
+func (w *WANTDELEGATION4argsWriter) SetWdaClaimType(v uint32) {
+	binary.BigEndian.PutUint32(w.header[4:8], v)
+}
+
+func (w *WANTDELEGATION4argsWriter) SetWdaClaim_Fh() {
+	binary.BigEndian.PutUint32(w.header[4:8], CLAIM_FH)
+}
+
+func (w *WANTDELEGATION4argsWriter) SetWdaClaim_DelegPrevFh() {
+	binary.BigEndian.PutUint32(w.header[4:8], CLAIM_DELEG_PREV_FH)
+}
+
+func (w *WANTDELEGATION4argsWriter) SetWdaClaim_Previous() DelegClaim4CLAIMPREVIOUS {
+	binary.BigEndian.PutUint32(w.header[4:8], CLAIM_PREVIOUS)
+	w.buf = append(w.buf, make([]byte, delegClaim4CLAIMPREVIOUSSize)...)
+	return DelegClaim4CLAIMPREVIOUS{m: (*[delegClaim4CLAIMPREVIOUSSize]byte)(w.buf[len(w.buf)-delegClaim4CLAIMPREVIOUSSize:])}
+}
+
+func (w *WANTDELEGATION4argsWriter) Finish() []byte {
+	return w.buf
+}
+
+// -------------------------------------------------------
+// OpenDelegation4Entry — variable: disc(4) + open_delegation4 value
+// -------------------------------------------------------
+
+type OpenDelegation4Entry []byte
+
+func readOpenDelegation4Entry(b *[]byte) (OpenDelegation4Entry, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[4:]
+	if _, ok := readOpenDelegation4(b, binary.BigEndian.Uint32(start[0:4])); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return OpenDelegation4Entry(start[:total]), true
+}
+
+func ReadOpenDelegation4Entry(b []byte) (OpenDelegation4Entry, bool) {
+	return readOpenDelegation4Entry(&b)
+}
+
+func (m OpenDelegation4Entry) Disc() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m OpenDelegation4Entry) Value() OpenDelegation4 {
+	return OpenDelegation4{b: m[4:], disc: binary.BigEndian.Uint32(m[0:4])}
+}
+
+// OpenDelegation4EntryWriter writes a open_delegation4_entry:
+//
+//	disc + value(disc)
+type OpenDelegation4EntryWriter struct {
+	buf []byte
+	off int
+}
+
+func StartOpenDelegation4Entry(buf []byte) OpenDelegation4EntryWriter {
+	return OpenDelegation4EntryWriter{buf: buf, off: len(buf)}
+}
+
+func (w *OpenDelegation4EntryWriter) SetValue_None() {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OPEN_DELEGATE_NONE)
+}
+
+func (w *OpenDelegation4EntryWriter) SetValue_Read() OpenReadDelegation4Writer {
+	w.buf = append(w.buf, make([]byte, 4+20)...)
+	off := len(w.buf) - 4 - 20
+	binary.BigEndian.PutUint32((*[4 + 20]byte)(w.buf[off:])[:4], OPEN_DELEGATE_READ)
+	buf := w.buf
+	w.buf = nil
+	return OpenReadDelegation4Writer{buf: buf, header: (*[20]byte)(buf[off+4:])}
+}
+
+func (w *OpenDelegation4EntryWriter) SetValue_ReadAttrsDeleg() OpenReadDelegation4Writer {
+	w.buf = append(w.buf, make([]byte, 4+20)...)
+	off := len(w.buf) - 4 - 20
+	binary.BigEndian.PutUint32((*[4 + 20]byte)(w.buf[off:])[:4], OPEN_DELEGATE_READ_ATTRS_DELEG)
+	buf := w.buf
+	w.buf = nil
+	return OpenReadDelegation4Writer{buf: buf, header: (*[20]byte)(buf[off+4:])}
+}
+
+func (w *OpenDelegation4EntryWriter) SetValue_Write() OpenWriteDelegation4Writer {
+	w.buf = append(w.buf, make([]byte, 4+24)...)
+	off := len(w.buf) - 4 - 24
+	binary.BigEndian.PutUint32((*[4 + 24]byte)(w.buf[off:])[:4], OPEN_DELEGATE_WRITE)
+	buf := w.buf
+	w.buf = nil
+	return OpenWriteDelegation4Writer{buf: buf, header: (*[24]byte)(buf[off+4:])}
+}
+
+func (w *OpenDelegation4EntryWriter) SetValue_WriteAttrsDeleg() OpenWriteDelegation4Writer {
+	w.buf = append(w.buf, make([]byte, 4+24)...)
+	off := len(w.buf) - 4 - 24
+	binary.BigEndian.PutUint32((*[4 + 24]byte)(w.buf[off:])[:4], OPEN_DELEGATE_WRITE_ATTRS_DELEG)
+	buf := w.buf
+	w.buf = nil
+	return OpenWriteDelegation4Writer{buf: buf, header: (*[24]byte)(buf[off+4:])}
+}
+
+func (w *OpenDelegation4EntryWriter) SetValue_NoneExt() OpenNoneDelegation4EntryWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OPEN_DELEGATE_NONE_EXT)
+	child := StartOpenNoneDelegation4Entry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *OpenDelegation4EntryWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *OpenDelegation4EntryWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// WANTDELEGATION4res — union on nfsstat4 (external discriminant)
+// -------------------------------------------------------
+
+type WANTDELEGATION4res struct {
+	b    []byte
+	disc uint32
+}
+
+func readWANTDELEGATION4res(b *[]byte, nfsstat4 uint32) (WANTDELEGATION4res, bool) {
+	switch nfsstat4 {
+	case NFS4_OK:
+		r, ok := readOpenDelegation4Entry(b)
+		if !ok {
+			return WANTDELEGATION4res{}, false
+		}
+		return WANTDELEGATION4res{b: []byte(r), disc: nfsstat4}, true
+	default:
+		return WANTDELEGATION4res{b: (*b)[:0], disc: nfsstat4}, true
+	}
+}
+
+func (m WANTDELEGATION4res) AsOpenDelegation4Entry() OpenDelegation4Entry {
+	if m.disc != NFS4_OK {
+		panic("wrong union discriminant")
+	}
+	return OpenDelegation4Entry(m.b)
+}
+
+// -------------------------------------------------------
+// DESTROYCLIENTID4args — fixed 8 bytes: dca_clientid(8, beu64)
+// -------------------------------------------------------
+
+type DESTROYCLIENTID4args struct {
+	m *[dESTROYCLIENTID4argsSize]byte
+}
+
+const dESTROYCLIENTID4argsSize = 8
+
+func readDESTROYCLIENTID4args(b *[]byte) (DESTROYCLIENTID4args, bool) {
+	if len(*b) < dESTROYCLIENTID4argsSize {
+		return DESTROYCLIENTID4args{}, false
+	}
+	result := DESTROYCLIENTID4args{m: (*[dESTROYCLIENTID4argsSize]byte)(*b)}
+	*b = (*b)[dESTROYCLIENTID4argsSize:]
+	return result, true
+}
+
+func ReadDESTROYCLIENTID4args(b []byte) (DESTROYCLIENTID4args, bool) {
+	return readDESTROYCLIENTID4args(&b)
+}
+
+func StartDESTROYCLIENTID4args(buf []byte) ([]byte, DESTROYCLIENTID4args) {
+	buf = append(buf, make([]byte, dESTROYCLIENTID4argsSize)...)
+	return buf, DESTROYCLIENTID4args{m: (*[dESTROYCLIENTID4argsSize]byte)(buf[len(buf)-dESTROYCLIENTID4argsSize:])}
+}
+
+func (m DESTROYCLIENTID4args) DcaClientid() uint64 {
+	return binary.BigEndian.Uint64(m.m[0:8])
+}
+
+func (m DESTROYCLIENTID4args) SetDcaClientid(v uint64) {
+	binary.BigEndian.PutUint64(m.m[0:8], v)
+}
+
+// -------------------------------------------------------
+// DESTROYCLIENTID4res — fixed 4 bytes: dcr_status(4, beu32)
+// -------------------------------------------------------
+
+type DESTROYCLIENTID4res struct {
+	m *[dESTROYCLIENTID4resSize]byte
+}
+
+const dESTROYCLIENTID4resSize = 4
+
+func readDESTROYCLIENTID4res(b *[]byte) (DESTROYCLIENTID4res, bool) {
+	if len(*b) < dESTROYCLIENTID4resSize {
+		return DESTROYCLIENTID4res{}, false
+	}
+	result := DESTROYCLIENTID4res{m: (*[dESTROYCLIENTID4resSize]byte)(*b)}
+	*b = (*b)[dESTROYCLIENTID4resSize:]
+	return result, true
+}
+
+func ReadDESTROYCLIENTID4res(b []byte) (DESTROYCLIENTID4res, bool) {
+	return readDESTROYCLIENTID4res(&b)
+}
+
+func StartDESTROYCLIENTID4res(buf []byte) ([]byte, DESTROYCLIENTID4res) {
+	buf = append(buf, make([]byte, dESTROYCLIENTID4resSize)...)
+	return buf, DESTROYCLIENTID4res{m: (*[dESTROYCLIENTID4resSize]byte)(buf[len(buf)-dESTROYCLIENTID4resSize:])}
+}
+
+func (m DESTROYCLIENTID4res) DcrStatus() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m DESTROYCLIENTID4res) SetDcrStatus(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+// -------------------------------------------------------
+// RECLAIMCOMPLETE4args — fixed 4 bytes: rca_one_fs(4, beu32)
+// -------------------------------------------------------
+
+type RECLAIMCOMPLETE4args struct {
+	m *[rECLAIMCOMPLETE4argsSize]byte
+}
+
+const rECLAIMCOMPLETE4argsSize = 4
+
+func readRECLAIMCOMPLETE4args(b *[]byte) (RECLAIMCOMPLETE4args, bool) {
+	if len(*b) < rECLAIMCOMPLETE4argsSize {
+		return RECLAIMCOMPLETE4args{}, false
+	}
+	result := RECLAIMCOMPLETE4args{m: (*[rECLAIMCOMPLETE4argsSize]byte)(*b)}
+	*b = (*b)[rECLAIMCOMPLETE4argsSize:]
+	return result, true
+}
+
+func ReadRECLAIMCOMPLETE4args(b []byte) (RECLAIMCOMPLETE4args, bool) {
+	return readRECLAIMCOMPLETE4args(&b)
+}
+
+func StartRECLAIMCOMPLETE4args(buf []byte) ([]byte, RECLAIMCOMPLETE4args) {
+	buf = append(buf, make([]byte, rECLAIMCOMPLETE4argsSize)...)
+	return buf, RECLAIMCOMPLETE4args{m: (*[rECLAIMCOMPLETE4argsSize]byte)(buf[len(buf)-rECLAIMCOMPLETE4argsSize:])}
+}
+
+func (m RECLAIMCOMPLETE4args) RcaOneFs() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m RECLAIMCOMPLETE4args) SetRcaOneFs(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+// -------------------------------------------------------
+// RECLAIMCOMPLETE4res — fixed 4 bytes: rcr_status(4, beu32)
+// -------------------------------------------------------
+
+type RECLAIMCOMPLETE4res struct {
+	m *[rECLAIMCOMPLETE4resSize]byte
+}
+
+const rECLAIMCOMPLETE4resSize = 4
+
+func readRECLAIMCOMPLETE4res(b *[]byte) (RECLAIMCOMPLETE4res, bool) {
+	if len(*b) < rECLAIMCOMPLETE4resSize {
+		return RECLAIMCOMPLETE4res{}, false
+	}
+	result := RECLAIMCOMPLETE4res{m: (*[rECLAIMCOMPLETE4resSize]byte)(*b)}
+	*b = (*b)[rECLAIMCOMPLETE4resSize:]
+	return result, true
+}
+
+func ReadRECLAIMCOMPLETE4res(b []byte) (RECLAIMCOMPLETE4res, bool) {
+	return readRECLAIMCOMPLETE4res(&b)
+}
+
+func StartRECLAIMCOMPLETE4res(buf []byte) ([]byte, RECLAIMCOMPLETE4res) {
+	buf = append(buf, make([]byte, rECLAIMCOMPLETE4resSize)...)
+	return buf, RECLAIMCOMPLETE4res{m: (*[rECLAIMCOMPLETE4resSize]byte)(buf[len(buf)-rECLAIMCOMPLETE4resSize:])}
+}
+
+func (m RECLAIMCOMPLETE4res) RcrStatus() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m RECLAIMCOMPLETE4res) SetRcrStatus(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+// -------------------------------------------------------
+// COPY4args — variable:
+//   ca_src_stateid(16) + ca_dst_stateid(16) + ca_src_offset(8) + ca_dst_offset(8) + ca_count(8) + ca_consecutive(4) + ca_synchronous(4) + ca_source_server_count(4) + netloc4_entry ca_source_server[ca_source_server_count]
+// -------------------------------------------------------
+
+type COPY4args []byte
+
+func readCOPY4args(b *[]byte) (COPY4args, bool) {
+	if len(*b) < 68 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	c_ca_source_server_count := int(binary.BigEndian.Uint32((*b)[64:68]))
+	*b = (*b)[68:]
+	for i := 0; i < c_ca_source_server_count; i++ {
+		if _, ok := readNetloc4Entry(b); !ok {
+			return nil, false
+		}
+	}
+	total := startLen - len(*b)
+	return COPY4args(start[:total]), true
+}
+
+func ReadCOPY4args(b []byte) (COPY4args, bool) {
+	if len(b) < 68 {
+		return nil, false
+	}
+	return COPY4args(b), true
+}
+
+func (m COPY4args) CaSrcStateid() Stateid4 {
+	return Stateid4{m: (*[stateid4Size]byte)(m[0 : 0+stateid4Size])}
+}
+
+func (m COPY4args) CaDstStateid() Stateid4 {
+	return Stateid4{m: (*[stateid4Size]byte)(m[16 : 16+stateid4Size])}
+}
+
+func (m COPY4args) CaSrcOffset() uint64 {
+	return binary.BigEndian.Uint64(m[32:40])
+}
+
+func (m COPY4args) CaDstOffset() uint64 {
+	return binary.BigEndian.Uint64(m[40:48])
+}
+
+func (m COPY4args) CaCount() uint64 {
+	return binary.BigEndian.Uint64(m[48:56])
+}
+
+func (m COPY4args) CaConsecutive() uint32 {
+	return binary.BigEndian.Uint32(m[56:60])
+}
+
+func (m COPY4args) CaSynchronous() uint32 {
+	return binary.BigEndian.Uint32(m[60:64])
+}
+
+func (m COPY4args) CaSourceServerCount() uint32 {
+	return binary.BigEndian.Uint32(m[64:68])
+}
+
+func (m COPY4args) CaSourceServer() Netloc4EntryIter {
+	ca_source_server_count := int(binary.BigEndian.Uint32(m[64:68]))
+	return Netloc4EntryIter{
+		b:     []byte(m[68:]),
+		count: ca_source_server_count,
+	}
+}
+
+// COPY4argsWriter writes a COPY4args:
+//
+//	ca_src_stateid + ca_dst_stateid + ca_src_offset + ca_dst_offset + ca_count + ca_consecutive + ca_synchronous + ca_source_server_count + netloc4_entry ca_source_server[ca_source_server_count]
+type COPY4argsWriter struct {
+	buf                 []byte
+	off                 int
+	caSourceServerCount uint32
+}
+
+func StartCOPY4args(buf []byte) COPY4argsWriter {
+	off := len(buf)
+	buf = append(buf, make([]byte, 68)...) // ca_src_stateid(16) + ca_dst_stateid(16) + ca_src_offset(8) + ca_dst_offset(8) + ca_count(8) + ca_consecutive(4) + ca_synchronous(4) + ca_source_server_count(4)
+	return COPY4argsWriter{buf: buf, off: off}
+}
+
+func (w *COPY4argsWriter) CaSrcStateid() Stateid4 {
+	return Stateid4{m: (*[stateid4Size]byte)(w.buf[w.off:])}
+}
+
+func (w *COPY4argsWriter) CaDstStateid() Stateid4 {
+	return Stateid4{m: (*[stateid4Size]byte)(w.buf[w.off+16:])}
+}
+
+func (w *COPY4argsWriter) SetCaSrcOffset(v uint64) {
+	binary.BigEndian.PutUint64((*[68]byte)(w.buf[w.off:])[32:40], v)
+}
+
+func (w *COPY4argsWriter) SetCaDstOffset(v uint64) {
+	binary.BigEndian.PutUint64((*[68]byte)(w.buf[w.off:])[40:48], v)
+}
+
+func (w *COPY4argsWriter) SetCaCount(v uint64) {
+	binary.BigEndian.PutUint64((*[68]byte)(w.buf[w.off:])[48:56], v)
+}
+
+func (w *COPY4argsWriter) SetCaConsecutive(v uint32) {
+	binary.BigEndian.PutUint32((*[68]byte)(w.buf[w.off:])[56:60], v)
+}
+
+func (w *COPY4argsWriter) SetCaSynchronous(v uint32) {
+	binary.BigEndian.PutUint32((*[68]byte)(w.buf[w.off:])[60:64], v)
+}
+
+func (w *COPY4argsWriter) AppendCaSourceServer_Name() Utf8strCisWriter {
+	_ = w.buf[:1]
+	w.buf = binary.BigEndian.AppendUint32(w.buf, NL4_NAME)
+	w.caSourceServerCount++
+	child := StartUtf8strCis(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *COPY4argsWriter) AppendCaSourceServer_Url() Utf8strCisWriter {
+	_ = w.buf[:1]
+	w.buf = binary.BigEndian.AppendUint32(w.buf, NL4_URL)
+	w.caSourceServerCount++
+	child := StartUtf8strCis(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *COPY4argsWriter) AppendCaSourceServer_Netaddr() Netaddr4Writer {
+	_ = w.buf[:1]
+	w.buf = binary.BigEndian.AppendUint32(w.buf, NL4_NETADDR)
+	w.caSourceServerCount++
+	child := StartNetaddr4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *COPY4argsWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *COPY4argsWriter) Finish() []byte {
+	binary.BigEndian.PutUint32((*[68]byte)(w.buf[w.off:])[64:68], w.caSourceServerCount)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// CopyRequirements4 — fixed 8 bytes:
+//   cr_consecutive(4, beu32) + cr_synchronous(4, beu32)
+// -------------------------------------------------------
+
+type CopyRequirements4 struct {
+	m *[copyRequirements4Size]byte
+}
+
+const copyRequirements4Size = 8
+
+func readCopyRequirements4(b *[]byte) (CopyRequirements4, bool) {
+	if len(*b) < copyRequirements4Size {
+		return CopyRequirements4{}, false
+	}
+	result := CopyRequirements4{m: (*[copyRequirements4Size]byte)(*b)}
+	*b = (*b)[copyRequirements4Size:]
+	return result, true
+}
+
+func ReadCopyRequirements4(b []byte) (CopyRequirements4, bool) {
+	return readCopyRequirements4(&b)
+}
+
+func StartCopyRequirements4(buf []byte) ([]byte, CopyRequirements4) {
+	buf = append(buf, make([]byte, copyRequirements4Size)...)
+	return buf, CopyRequirements4{m: (*[copyRequirements4Size]byte)(buf[len(buf)-copyRequirements4Size:])}
+}
+
+func (m CopyRequirements4) CrConsecutive() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m CopyRequirements4) CrSynchronous() uint32 {
+	return binary.BigEndian.Uint32(m.m[4:8])
+}
+
+func (m CopyRequirements4) SetCrConsecutive(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+func (m CopyRequirements4) SetCrSynchronous(v uint32) {
+	binary.BigEndian.PutUint32(m.m[4:8], v)
+}
+
+// -------------------------------------------------------
+// COPY4resok — variable: cr_response + cr_requirements(8)
+// -------------------------------------------------------
+
+type COPY4resok struct {
+	data []byte
+	off1 int // byte offset within data where cr_requirements starts
+}
+
+func readCOPY4resok(b *[]byte) (COPY4resok, bool) {
+	start := *b
+	startLen := len(start)
+	if _, ok := readWriteResponse4(b); !ok {
+		return COPY4resok{}, false
+	}
+	off1 := startLen - len(*b)
+	if len(*b) < 8 {
+		return COPY4resok{}, false
+	}
+	*b = (*b)[8:]
+	total := startLen - len(*b)
+	return COPY4resok{data: start[:total], off1: off1}, true
+}
+
+func ReadCOPY4resok(b []byte) (COPY4resok, bool) {
+	return readCOPY4resok(&b)
+}
+
+func (m COPY4resok) CrResponse() WriteResponse4 {
+	v, _ := ReadWriteResponse4(m.data[0:m.off1])
+	return v
+}
+
+func (m COPY4resok) CrRequirements() CopyRequirements4 {
+	o := m.off1
+	return CopyRequirements4{m: (*[copyRequirements4Size]byte)(m.data[o : o+copyRequirements4Size])}
+}
+
+// COPY4resokWriter writes a COPY4resok:
+//
+//	cr_response + cr_requirements
+type COPY4resokWriter struct {
+	buf []byte
+	off int
+}
+
+func StartCOPY4resok(buf []byte) COPY4resokWriter {
+	off := len(buf)
+	return COPY4resokWriter{buf: buf, off: off}
+}
+
+func (w *COPY4resokWriter) StartCrResponse() WriteResponse4Writer {
+	child := StartWriteResponse4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *COPY4resokWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *COPY4resokWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// COPY4res — union on nfsstat4 (external discriminant)
+// -------------------------------------------------------
+
+type COPY4res struct {
+	b    []byte
+	disc uint32
+}
+
+func readCOPY4res(b *[]byte, nfsstat4 uint32) (COPY4res, bool) {
+	switch nfsstat4 {
+	case NFS4_OK:
+		r, ok := readCOPY4resok(b)
+		if !ok {
+			return COPY4res{}, false
+		}
+		return COPY4res{b: r.data, disc: nfsstat4}, true
+	case NFS4ERR_OFFLOAD_NO_REQS:
+		r, ok := readCopyRequirements4(b)
+		if !ok {
+			return COPY4res{}, false
+		}
+		return COPY4res{b: r.m[:], disc: nfsstat4}, true
+	default:
+		return COPY4res{b: (*b)[:0], disc: nfsstat4}, true
+	}
+}
+
+func (m COPY4res) AsCOPY4resok() COPY4resok {
+	if m.disc != NFS4_OK {
+		panic("wrong union discriminant")
+	}
+	v, _ := ReadCOPY4resok(m.b)
+	return v
+}
+
+func (m COPY4res) AsCopyRequirements4() CopyRequirements4 {
+	if m.disc != NFS4ERR_OFFLOAD_NO_REQS {
+		panic("wrong union discriminant")
+	}
+	return CopyRequirements4{m: (*[copyRequirements4Size]byte)(m.b)}
+}
+
+// -------------------------------------------------------
+// COPYNOTIFY4args — variable:
+//   cna_src_stateid(16) + cna_destination_server_type(4) + netloc4 cna_destination_server
+// -------------------------------------------------------
+
+type COPYNOTIFY4args []byte
+
+func readCOPYNOTIFY4args(b *[]byte) (COPYNOTIFY4args, bool) {
+	if len(*b) < 20 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[20:]
+	if _, ok := readNetloc4(b, binary.BigEndian.Uint32(start[16:20])); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return COPYNOTIFY4args(start[:total]), true
+}
+
+func ReadCOPYNOTIFY4args(b []byte) (COPYNOTIFY4args, bool) {
+	return readCOPYNOTIFY4args(&b)
+}
+
+func (m COPYNOTIFY4args) CnaSrcStateid() Stateid4 {
+	return Stateid4{m: (*[stateid4Size]byte)(m[0 : 0+stateid4Size])}
+}
+
+func (m COPYNOTIFY4args) CnaDestinationServerType() uint32 {
+	return binary.BigEndian.Uint32(m[16:20])
+}
+
+func (m COPYNOTIFY4args) CnaDestinationServer() Netloc4 {
+	return Netloc4{b: m[20:], disc: binary.BigEndian.Uint32(m[16:20])}
+}
+
+// COPYNOTIFY4argsWriter writes a COPY_NOTIFY4args:
+//
+//	cna_src_stateid + cna_destination_server_type + cna_destination_server(cna_destination_server_type)
+type COPYNOTIFY4argsWriter struct {
+	buf    []byte
+	header *[20]byte
+}
+
+func StartCOPYNOTIFY4args(buf []byte) COPYNOTIFY4argsWriter {
+	buf = append(buf, make([]byte, 20)...) // cna_src_stateid(16) + cna_destination_server_type(4)
+	return COPYNOTIFY4argsWriter{buf: buf, header: (*[20]byte)(buf[len(buf)-20:])}
+}
+
+func (w *COPYNOTIFY4argsWriter) CnaSrcStateid() Stateid4 {
+	return Stateid4{m: (*[stateid4Size]byte)(w.header[0:])}
+}
+
+func (w *COPYNOTIFY4argsWriter) SetCnaDestinationServerType(v uint32) {
+	binary.BigEndian.PutUint32(w.header[16:20], v)
+}
+
+func (w *COPYNOTIFY4argsWriter) SetCnaDestinationServer_Name() Utf8strCisWriter {
+	binary.BigEndian.PutUint32(w.header[16:20], NL4_NAME)
+	child := StartUtf8strCis(w.buf)
+	w.buf = nil
+	w.header = nil
+	return child
+}
+
+func (w *COPYNOTIFY4argsWriter) SetCnaDestinationServer_Url() Utf8strCisWriter {
+	binary.BigEndian.PutUint32(w.header[16:20], NL4_URL)
+	child := StartUtf8strCis(w.buf)
+	w.buf = nil
+	w.header = nil
+	return child
+}
+
+func (w *COPYNOTIFY4argsWriter) SetCnaDestinationServer_Netaddr() Netaddr4Writer {
+	binary.BigEndian.PutUint32(w.header[16:20], NL4_NETADDR)
+	child := StartNetaddr4(w.buf)
+	w.buf = nil
+	w.header = nil
+	return child
+}
+
+func (w *COPYNOTIFY4argsWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *COPYNOTIFY4argsWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// COPYNOTIFY4resok — variable:
+//   cnr_lease_time(12) + cnr_stateid(16) + cnr_source_server_count(4) + netloc4_entry cnr_source_server[cnr_source_server_count]
+// -------------------------------------------------------
+
+type COPYNOTIFY4resok []byte
+
+func readCOPYNOTIFY4resok(b *[]byte) (COPYNOTIFY4resok, bool) {
+	if len(*b) < 32 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	c_cnr_source_server_count := int(binary.BigEndian.Uint32((*b)[28:32]))
+	*b = (*b)[32:]
+	for i := 0; i < c_cnr_source_server_count; i++ {
+		if _, ok := readNetloc4Entry(b); !ok {
+			return nil, false
+		}
+	}
+	total := startLen - len(*b)
+	return COPYNOTIFY4resok(start[:total]), true
+}
+
+func ReadCOPYNOTIFY4resok(b []byte) (COPYNOTIFY4resok, bool) {
+	if len(b) < 32 {
+		return nil, false
+	}
+	return COPYNOTIFY4resok(b), true
+}
+
+func (m COPYNOTIFY4resok) CnrLeaseTime() Nfstime4 {
+	return Nfstime4{m: (*[nfstime4Size]byte)(m[0 : 0+nfstime4Size])}
+}
+
+func (m COPYNOTIFY4resok) CnrStateid() Stateid4 {
+	return Stateid4{m: (*[stateid4Size]byte)(m[12 : 12+stateid4Size])}
+}
+
+func (m COPYNOTIFY4resok) CnrSourceServerCount() uint32 {
+	return binary.BigEndian.Uint32(m[28:32])
+}
+
+func (m COPYNOTIFY4resok) CnrSourceServer() Netloc4EntryIter {
+	cnr_source_server_count := int(binary.BigEndian.Uint32(m[28:32]))
+	return Netloc4EntryIter{
+		b:     []byte(m[32:]),
+		count: cnr_source_server_count,
+	}
+}
+
+// COPYNOTIFY4resokWriter writes a COPY_NOTIFY4resok:
+//
+//	cnr_lease_time + cnr_stateid + cnr_source_server_count + netloc4_entry cnr_source_server[cnr_source_server_count]
+type COPYNOTIFY4resokWriter struct {
+	buf                  []byte
+	off                  int
+	cnrSourceServerCount uint32
+}
+
+func StartCOPYNOTIFY4resok(buf []byte) COPYNOTIFY4resokWriter {
+	off := len(buf)
+	buf = append(buf, make([]byte, 32)...) // cnr_lease_time(12) + cnr_stateid(16) + cnr_source_server_count(4)
+	return COPYNOTIFY4resokWriter{buf: buf, off: off}
+}
+
+func (w *COPYNOTIFY4resokWriter) CnrLeaseTime() Nfstime4 {
+	return Nfstime4{m: (*[nfstime4Size]byte)(w.buf[w.off:])}
+}
+
+func (w *COPYNOTIFY4resokWriter) CnrStateid() Stateid4 {
+	return Stateid4{m: (*[stateid4Size]byte)(w.buf[w.off+12:])}
+}
+
+func (w *COPYNOTIFY4resokWriter) AppendCnrSourceServer_Name() Utf8strCisWriter {
+	_ = w.buf[:1]
+	w.buf = binary.BigEndian.AppendUint32(w.buf, NL4_NAME)
+	w.cnrSourceServerCount++
+	child := StartUtf8strCis(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *COPYNOTIFY4resokWriter) AppendCnrSourceServer_Url() Utf8strCisWriter {
+	_ = w.buf[:1]
+	w.buf = binary.BigEndian.AppendUint32(w.buf, NL4_URL)
+	w.cnrSourceServerCount++
+	child := StartUtf8strCis(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *COPYNOTIFY4resokWriter) AppendCnrSourceServer_Netaddr() Netaddr4Writer {
+	_ = w.buf[:1]
+	w.buf = binary.BigEndian.AppendUint32(w.buf, NL4_NETADDR)
+	w.cnrSourceServerCount++
+	child := StartNetaddr4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *COPYNOTIFY4resokWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *COPYNOTIFY4resokWriter) Finish() []byte {
+	binary.BigEndian.PutUint32((*[32]byte)(w.buf[w.off:])[28:32], w.cnrSourceServerCount)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// COPYNOTIFY4res — union on nfsstat4 (external discriminant)
+// -------------------------------------------------------
+
+type COPYNOTIFY4res struct {
+	b    []byte
+	disc uint32
+}
+
+func readCOPYNOTIFY4res(b *[]byte, nfsstat4 uint32) (COPYNOTIFY4res, bool) {
+	switch nfsstat4 {
+	case NFS4_OK:
+		r, ok := readCOPYNOTIFY4resok(b)
+		if !ok {
+			return COPYNOTIFY4res{}, false
+		}
+		return COPYNOTIFY4res{b: []byte(r), disc: nfsstat4}, true
+	default:
+		return COPYNOTIFY4res{b: (*b)[:0], disc: nfsstat4}, true
+	}
+}
+
+func (m COPYNOTIFY4res) AsCOPYNOTIFY4resok() COPYNOTIFY4resok {
+	if m.disc != NFS4_OK {
+		panic("wrong union discriminant")
+	}
+	return COPYNOTIFY4resok(m.b)
+}
+
+// -------------------------------------------------------
+// OFFLOADCANCEL4args — fixed 16 bytes: stateid4(16)
+// -------------------------------------------------------
+
+type OFFLOADCANCEL4args struct {
+	m *[oFFLOADCANCEL4argsSize]byte
+}
+
+const oFFLOADCANCEL4argsSize = 16
+
+func readOFFLOADCANCEL4args(b *[]byte) (OFFLOADCANCEL4args, bool) {
+	if len(*b) < oFFLOADCANCEL4argsSize {
+		return OFFLOADCANCEL4args{}, false
+	}
+	result := OFFLOADCANCEL4args{m: (*[oFFLOADCANCEL4argsSize]byte)(*b)}
+	*b = (*b)[oFFLOADCANCEL4argsSize:]
+	return result, true
+}
+
+func ReadOFFLOADCANCEL4args(b []byte) (OFFLOADCANCEL4args, bool) {
+	return readOFFLOADCANCEL4args(&b)
+}
+
+func StartOFFLOADCANCEL4args(buf []byte) ([]byte, OFFLOADCANCEL4args) {
+	buf = append(buf, make([]byte, oFFLOADCANCEL4argsSize)...)
+	return buf, OFFLOADCANCEL4args{m: (*[oFFLOADCANCEL4argsSize]byte)(buf[len(buf)-oFFLOADCANCEL4argsSize:])}
+}
+
+func (m OFFLOADCANCEL4args) OcaStateid() Stateid4 {
+	return Stateid4{m: (*[stateid4Size]byte)(m.m[0:16])}
+}
+
+// -------------------------------------------------------
+// OFFLOADCANCEL4res — fixed 4 bytes: ocr_status(4, beu32)
+// -------------------------------------------------------
+
+type OFFLOADCANCEL4res struct {
+	m *[oFFLOADCANCEL4resSize]byte
+}
+
+const oFFLOADCANCEL4resSize = 4
+
+func readOFFLOADCANCEL4res(b *[]byte) (OFFLOADCANCEL4res, bool) {
+	if len(*b) < oFFLOADCANCEL4resSize {
+		return OFFLOADCANCEL4res{}, false
+	}
+	result := OFFLOADCANCEL4res{m: (*[oFFLOADCANCEL4resSize]byte)(*b)}
+	*b = (*b)[oFFLOADCANCEL4resSize:]
+	return result, true
+}
+
+func ReadOFFLOADCANCEL4res(b []byte) (OFFLOADCANCEL4res, bool) {
+	return readOFFLOADCANCEL4res(&b)
+}
+
+func StartOFFLOADCANCEL4res(buf []byte) ([]byte, OFFLOADCANCEL4res) {
+	buf = append(buf, make([]byte, oFFLOADCANCEL4resSize)...)
+	return buf, OFFLOADCANCEL4res{m: (*[oFFLOADCANCEL4resSize]byte)(buf[len(buf)-oFFLOADCANCEL4resSize:])}
+}
+
+func (m OFFLOADCANCEL4res) OcrStatus() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m OFFLOADCANCEL4res) SetOcrStatus(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+// -------------------------------------------------------
+// OFFLOADSTATUS4args — fixed 16 bytes: stateid4(16)
+// -------------------------------------------------------
+
+type OFFLOADSTATUS4args struct {
+	m *[oFFLOADSTATUS4argsSize]byte
+}
+
+const oFFLOADSTATUS4argsSize = 16
+
+func readOFFLOADSTATUS4args(b *[]byte) (OFFLOADSTATUS4args, bool) {
+	if len(*b) < oFFLOADSTATUS4argsSize {
+		return OFFLOADSTATUS4args{}, false
+	}
+	result := OFFLOADSTATUS4args{m: (*[oFFLOADSTATUS4argsSize]byte)(*b)}
+	*b = (*b)[oFFLOADSTATUS4argsSize:]
+	return result, true
+}
+
+func ReadOFFLOADSTATUS4args(b []byte) (OFFLOADSTATUS4args, bool) {
+	return readOFFLOADSTATUS4args(&b)
+}
+
+func StartOFFLOADSTATUS4args(buf []byte) ([]byte, OFFLOADSTATUS4args) {
+	buf = append(buf, make([]byte, oFFLOADSTATUS4argsSize)...)
+	return buf, OFFLOADSTATUS4args{m: (*[oFFLOADSTATUS4argsSize]byte)(buf[len(buf)-oFFLOADSTATUS4argsSize:])}
+}
+
+func (m OFFLOADSTATUS4args) OsaStateid() Stateid4 {
+	return Stateid4{m: (*[stateid4Size]byte)(m.m[0:16])}
+}
+
+// -------------------------------------------------------
+// OFFLOADSTATUS4resok — variable:
+//   osr_count(8) + osr_complete_count(4) + nfsstat4 osr_complete[osr_complete_count]
+// -------------------------------------------------------
+
+type OFFLOADSTATUS4resok []byte
+
+func readOFFLOADSTATUS4resok(b *[]byte) (OFFLOADSTATUS4resok, bool) {
+	if len(*b) < 12 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	c_osr_complete_count := int(binary.BigEndian.Uint32((*b)[8:12]))
+	*b = (*b)[12:]
+	if len(*b) < c_osr_complete_count*4 {
+		return nil, false
+	}
+	*b = (*b)[c_osr_complete_count*4:]
+	total := startLen - len(*b)
+	return OFFLOADSTATUS4resok(start[:total]), true
+}
+
+func ReadOFFLOADSTATUS4resok(b []byte) (OFFLOADSTATUS4resok, bool) {
+	if len(b) < 12 {
+		return nil, false
+	}
+	count := int(binary.BigEndian.Uint32(b[8:12]))
+	total := 12 + count*4
+	if len(b) < total {
+		return nil, false
+	}
+	return OFFLOADSTATUS4resok(b[:total]), true
+}
+
+func (m OFFLOADSTATUS4resok) OsrCount() uint64 {
+	return binary.BigEndian.Uint64(m[0:8])
+}
+
+func (m OFFLOADSTATUS4resok) OsrCompleteCount() uint32 {
+	return binary.BigEndian.Uint32(m[8:12])
+}
+
+// OFFLOADSTATUS4resokWriter writes a OFFLOAD_STATUS4resok:
+//
+//	osr_count + osr_complete_count + nfsstat4 osr_complete[osr_complete_count]
+type OFFLOADSTATUS4resokWriter struct {
+	buf              []byte
+	off              int
+	osrCompleteCount uint32
+}
+
+func StartOFFLOADSTATUS4resok(buf []byte) OFFLOADSTATUS4resokWriter {
+	off := len(buf)
+	buf = append(buf, make([]byte, 12)...) // osr_count(8) + osr_complete_count(4)
+	return OFFLOADSTATUS4resokWriter{buf: buf, off: off}
+}
+
+func (w *OFFLOADSTATUS4resokWriter) SetOsrCount(v uint64) {
+	binary.BigEndian.PutUint64((*[12]byte)(w.buf[w.off:])[0:8], v)
+}
+
+func (w *OFFLOADSTATUS4resokWriter) AppendOsrComplete(v uint32) {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, v)
+	w.osrCompleteCount++
+}
+
+func (w *OFFLOADSTATUS4resokWriter) Finish() []byte {
+	binary.BigEndian.PutUint32((*[12]byte)(w.buf[w.off:])[8:12], w.osrCompleteCount)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// OFFLOADSTATUS4res — union on nfsstat4 (external discriminant)
+// -------------------------------------------------------
+
+type OFFLOADSTATUS4res struct {
+	b    []byte
+	disc uint32
+}
+
+func readOFFLOADSTATUS4res(b *[]byte, nfsstat4 uint32) (OFFLOADSTATUS4res, bool) {
+	switch nfsstat4 {
+	case NFS4_OK:
+		r, ok := readOFFLOADSTATUS4resok(b)
+		if !ok {
+			return OFFLOADSTATUS4res{}, false
+		}
+		return OFFLOADSTATUS4res{b: []byte(r), disc: nfsstat4}, true
+	default:
+		return OFFLOADSTATUS4res{b: (*b)[:0], disc: nfsstat4}, true
+	}
+}
+
+func (m OFFLOADSTATUS4res) AsOFFLOADSTATUS4resok() OFFLOADSTATUS4resok {
+	if m.disc != NFS4_OK {
+		panic("wrong union discriminant")
+	}
+	return OFFLOADSTATUS4resok(m.b)
+}
+
+// -------------------------------------------------------
+// ALLOCATE4args — fixed 32 bytes:
+//   stateid4(16) + aa_offset(8, beu64) + aa_length(8, beu64)
+// -------------------------------------------------------
+
+type ALLOCATE4args struct {
+	m *[aLLOCATE4argsSize]byte
+}
+
+const aLLOCATE4argsSize = 32
+
+func readALLOCATE4args(b *[]byte) (ALLOCATE4args, bool) {
+	if len(*b) < aLLOCATE4argsSize {
+		return ALLOCATE4args{}, false
+	}
+	result := ALLOCATE4args{m: (*[aLLOCATE4argsSize]byte)(*b)}
+	*b = (*b)[aLLOCATE4argsSize:]
+	return result, true
+}
+
+func ReadALLOCATE4args(b []byte) (ALLOCATE4args, bool) {
+	return readALLOCATE4args(&b)
+}
+
+func StartALLOCATE4args(buf []byte) ([]byte, ALLOCATE4args) {
+	buf = append(buf, make([]byte, aLLOCATE4argsSize)...)
+	return buf, ALLOCATE4args{m: (*[aLLOCATE4argsSize]byte)(buf[len(buf)-aLLOCATE4argsSize:])}
+}
+
+func (m ALLOCATE4args) AaStateid() Stateid4 {
+	return Stateid4{m: (*[stateid4Size]byte)(m.m[0:16])}
+}
+
+func (m ALLOCATE4args) AaOffset() uint64 {
+	return binary.BigEndian.Uint64(m.m[16:24])
+}
+
+func (m ALLOCATE4args) AaLength() uint64 {
+	return binary.BigEndian.Uint64(m.m[24:32])
+}
+
+func (m ALLOCATE4args) SetAaOffset(v uint64) {
+	binary.BigEndian.PutUint64(m.m[16:24], v)
+}
+
+func (m ALLOCATE4args) SetAaLength(v uint64) {
+	binary.BigEndian.PutUint64(m.m[24:32], v)
+}
+
+// -------------------------------------------------------
+// ALLOCATE4res — fixed 4 bytes: ar_status(4, beu32)
+// -------------------------------------------------------
+
+type ALLOCATE4res struct {
+	m *[aLLOCATE4resSize]byte
+}
+
+const aLLOCATE4resSize = 4
+
+func readALLOCATE4res(b *[]byte) (ALLOCATE4res, bool) {
+	if len(*b) < aLLOCATE4resSize {
+		return ALLOCATE4res{}, false
+	}
+	result := ALLOCATE4res{m: (*[aLLOCATE4resSize]byte)(*b)}
+	*b = (*b)[aLLOCATE4resSize:]
+	return result, true
+}
+
+func ReadALLOCATE4res(b []byte) (ALLOCATE4res, bool) {
+	return readALLOCATE4res(&b)
+}
+
+func StartALLOCATE4res(buf []byte) ([]byte, ALLOCATE4res) {
+	buf = append(buf, make([]byte, aLLOCATE4resSize)...)
+	return buf, ALLOCATE4res{m: (*[aLLOCATE4resSize]byte)(buf[len(buf)-aLLOCATE4resSize:])}
+}
+
+func (m ALLOCATE4res) ArStatus() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m ALLOCATE4res) SetArStatus(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+// -------------------------------------------------------
+// DEALLOCATE4args — fixed 32 bytes:
+//   stateid4(16) + da_offset(8, beu64) + da_length(8, beu64)
+// -------------------------------------------------------
+
+type DEALLOCATE4args struct {
+	m *[dEALLOCATE4argsSize]byte
+}
+
+const dEALLOCATE4argsSize = 32
+
+func readDEALLOCATE4args(b *[]byte) (DEALLOCATE4args, bool) {
+	if len(*b) < dEALLOCATE4argsSize {
+		return DEALLOCATE4args{}, false
+	}
+	result := DEALLOCATE4args{m: (*[dEALLOCATE4argsSize]byte)(*b)}
+	*b = (*b)[dEALLOCATE4argsSize:]
+	return result, true
+}
+
+func ReadDEALLOCATE4args(b []byte) (DEALLOCATE4args, bool) {
+	return readDEALLOCATE4args(&b)
+}
+
+func StartDEALLOCATE4args(buf []byte) ([]byte, DEALLOCATE4args) {
+	buf = append(buf, make([]byte, dEALLOCATE4argsSize)...)
+	return buf, DEALLOCATE4args{m: (*[dEALLOCATE4argsSize]byte)(buf[len(buf)-dEALLOCATE4argsSize:])}
+}
+
+func (m DEALLOCATE4args) DaStateid() Stateid4 {
+	return Stateid4{m: (*[stateid4Size]byte)(m.m[0:16])}
+}
+
+func (m DEALLOCATE4args) DaOffset() uint64 {
+	return binary.BigEndian.Uint64(m.m[16:24])
+}
+
+func (m DEALLOCATE4args) DaLength() uint64 {
+	return binary.BigEndian.Uint64(m.m[24:32])
+}
+
+func (m DEALLOCATE4args) SetDaOffset(v uint64) {
+	binary.BigEndian.PutUint64(m.m[16:24], v)
+}
+
+func (m DEALLOCATE4args) SetDaLength(v uint64) {
+	binary.BigEndian.PutUint64(m.m[24:32], v)
+}
+
+// -------------------------------------------------------
+// DEALLOCATE4res — fixed 4 bytes: dr_status(4, beu32)
+// -------------------------------------------------------
+
+type DEALLOCATE4res struct {
+	m *[dEALLOCATE4resSize]byte
+}
+
+const dEALLOCATE4resSize = 4
+
+func readDEALLOCATE4res(b *[]byte) (DEALLOCATE4res, bool) {
+	if len(*b) < dEALLOCATE4resSize {
+		return DEALLOCATE4res{}, false
+	}
+	result := DEALLOCATE4res{m: (*[dEALLOCATE4resSize]byte)(*b)}
+	*b = (*b)[dEALLOCATE4resSize:]
+	return result, true
+}
+
+func ReadDEALLOCATE4res(b []byte) (DEALLOCATE4res, bool) {
+	return readDEALLOCATE4res(&b)
+}
+
+func StartDEALLOCATE4res(buf []byte) ([]byte, DEALLOCATE4res) {
+	buf = append(buf, make([]byte, dEALLOCATE4resSize)...)
+	return buf, DEALLOCATE4res{m: (*[dEALLOCATE4resSize]byte)(buf[len(buf)-dEALLOCATE4resSize:])}
+}
+
+func (m DEALLOCATE4res) DrStatus() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m DEALLOCATE4res) SetDrStatus(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+// -------------------------------------------------------
+// IOADVISE4args — variable:
+//   iaa_stateid(16) + iaa_offset(8) + iaa_count(8) + iaa_hints
+// -------------------------------------------------------
+
+type IOADVISE4args []byte
+
+func readIOADVISE4args(b *[]byte) (IOADVISE4args, bool) {
+	if len(*b) < 32 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[32:]
+	if _, ok := readBitmap4(b); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return IOADVISE4args(start[:total]), true
+}
+
+func ReadIOADVISE4args(b []byte) (IOADVISE4args, bool) {
+	return readIOADVISE4args(&b)
+}
+
+func (m IOADVISE4args) IaaStateid() Stateid4 {
+	return Stateid4{m: (*[stateid4Size]byte)(m[0 : 0+stateid4Size])}
+}
+
+func (m IOADVISE4args) IaaOffset() uint64 {
+	return binary.BigEndian.Uint64(m[16:24])
+}
+
+func (m IOADVISE4args) IaaCount() uint64 {
+	return binary.BigEndian.Uint64(m[24:32])
+}
+
+func (m IOADVISE4args) IaaHints() Bitmap4 {
+	return Bitmap4(m[32:])
+}
+
+// IOADVISE4argsWriter writes a IO_ADVISE4args:
+//
+//	iaa_stateid + iaa_offset + iaa_count + iaa_hints
+type IOADVISE4argsWriter struct {
+	buf    []byte
+	header *[32]byte
+}
+
+func StartIOADVISE4args(buf []byte) IOADVISE4argsWriter {
+	buf = append(buf, make([]byte, 32)...) // iaa_stateid(16) + iaa_offset(8) + iaa_count(8)
+	return IOADVISE4argsWriter{buf: buf, header: (*[32]byte)(buf[len(buf)-32:])}
+}
+
+func (w *IOADVISE4argsWriter) IaaStateid() Stateid4 {
+	return Stateid4{m: (*[stateid4Size]byte)(w.header[0:])}
+}
+
+func (w *IOADVISE4argsWriter) SetIaaOffset(v uint64) {
+	binary.BigEndian.PutUint64(w.header[16:24], v)
+}
+
+func (w *IOADVISE4argsWriter) SetIaaCount(v uint64) {
+	binary.BigEndian.PutUint64(w.header[24:32], v)
+}
+
+func (w *IOADVISE4argsWriter) StartIaaHints() Bitmap4Writer {
+	child := StartBitmap4(w.buf)
+	w.buf = nil
+	w.header = nil
+	return child
+}
+
+func (w *IOADVISE4argsWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *IOADVISE4argsWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// IOADVISE4resok — variable: ior_hints
+// -------------------------------------------------------
+
+type IOADVISE4resok []byte
+
+func readIOADVISE4resok(b *[]byte) (IOADVISE4resok, bool) {
+	start := *b
+	startLen := len(start)
+	if _, ok := readBitmap4(b); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return IOADVISE4resok(start[:total]), true
+}
+
+func ReadIOADVISE4resok(b []byte) (IOADVISE4resok, bool) {
+	return readIOADVISE4resok(&b)
+}
+
+func (m IOADVISE4resok) IorHints() Bitmap4 {
+	return Bitmap4(m[0:])
+}
+
+// IOADVISE4resokWriter writes a IO_ADVISE4resok:
+//
+//	ior_hints
+type IOADVISE4resokWriter struct {
+	buf []byte
+	off int
+}
+
+func StartIOADVISE4resok(buf []byte) IOADVISE4resokWriter {
+	off := len(buf)
+	return IOADVISE4resokWriter{buf: buf, off: off}
+}
+
+func (w *IOADVISE4resokWriter) StartIorHints() Bitmap4Writer {
+	child := StartBitmap4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *IOADVISE4resokWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *IOADVISE4resokWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// IOADVISE4res — union on nfsstat4 (external discriminant)
+// -------------------------------------------------------
+
+type IOADVISE4res struct {
+	b    []byte
+	disc uint32
+}
+
+func readIOADVISE4res(b *[]byte, nfsstat4 uint32) (IOADVISE4res, bool) {
+	switch nfsstat4 {
+	case NFS4_OK:
+		r, ok := readIOADVISE4resok(b)
+		if !ok {
+			return IOADVISE4res{}, false
+		}
+		return IOADVISE4res{b: []byte(r), disc: nfsstat4}, true
+	default:
+		return IOADVISE4res{b: (*b)[:0], disc: nfsstat4}, true
+	}
+}
+
+func (m IOADVISE4res) AsIOADVISE4resok() IOADVISE4resok {
+	if m.disc != NFS4_OK {
+		panic("wrong union discriminant")
+	}
+	return IOADVISE4resok(m.b)
+}
+
+// -------------------------------------------------------
+// DeviceError4 — fixed 24 bytes:
+//   deviceid4(16) + de_status(4, beu32) + de_opnum(4, beu32)
+// -------------------------------------------------------
+
+type DeviceError4 struct {
+	m *[deviceError4Size]byte
+}
+
+const deviceError4Size = 24
+
+func ReadDeviceError4(b []byte) (DeviceError4, bool) {
+	if len(b) < deviceError4Size {
+		return DeviceError4{}, false
+	}
+	return DeviceError4{m: (*[deviceError4Size]byte)(b)}, true
+}
+
+func StartDeviceError4(buf []byte) ([]byte, DeviceError4) {
+	buf = append(buf, make([]byte, deviceError4Size)...)
+	return buf, DeviceError4{m: (*[deviceError4Size]byte)(buf[len(buf)-deviceError4Size:])}
+}
+
+func (m DeviceError4) DeDeviceid() Deviceid4 {
+	return Deviceid4{m: (*[deviceid4Size]byte)(m.m[0:16])}
+}
+
+func (m DeviceError4) DeStatus() uint32 {
+	return binary.BigEndian.Uint32(m.m[16:20])
+}
+
+func (m DeviceError4) DeOpnum() uint32 {
+	return binary.BigEndian.Uint32(m.m[20:24])
+}
+
+func (m DeviceError4) SetDeStatus(v uint32) {
+	binary.BigEndian.PutUint32(m.m[16:20], v)
+}
+
+func (m DeviceError4) SetDeOpnum(v uint32) {
+	binary.BigEndian.PutUint32(m.m[20:24], v)
+}
+
+// -------------------------------------------------------
+// LAYOUTERROR4args — variable:
+//   lea_offset(8) + lea_length(8) + lea_stateid(16) + lea_errors_count(4) + device_error4 lea_errors[lea_errors_count]
+// -------------------------------------------------------
+
+type LAYOUTERROR4args []byte
+
+func readLAYOUTERROR4args(b *[]byte) (LAYOUTERROR4args, bool) {
+	if len(*b) < 36 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	c_lea_errors_count := int(binary.BigEndian.Uint32((*b)[32:36]))
+	*b = (*b)[36:]
+	if len(*b) < c_lea_errors_count*24 {
+		return nil, false
+	}
+	*b = (*b)[c_lea_errors_count*24:]
+	total := startLen - len(*b)
+	return LAYOUTERROR4args(start[:total]), true
+}
+
+func ReadLAYOUTERROR4args(b []byte) (LAYOUTERROR4args, bool) {
+	if len(b) < 36 {
+		return nil, false
+	}
+	count := int(binary.BigEndian.Uint32(b[32:36]))
+	total := 36 + count*deviceError4Size
+	if len(b) < total {
+		return nil, false
+	}
+	return LAYOUTERROR4args(b[:total]), true
+}
+
+func (m LAYOUTERROR4args) LeaOffset() uint64 {
+	return binary.BigEndian.Uint64(m[0:8])
+}
+
+func (m LAYOUTERROR4args) LeaLength() uint64 {
+	return binary.BigEndian.Uint64(m[8:16])
+}
+
+func (m LAYOUTERROR4args) LeaStateid() Stateid4 {
+	return Stateid4{m: (*[stateid4Size]byte)(m[16 : 16+stateid4Size])}
+}
+
+func (m LAYOUTERROR4args) LeaErrorsCount() uint32 {
+	return binary.BigEndian.Uint32(m[32:36])
+}
+
+func (m LAYOUTERROR4args) LeaErrors(i int) DeviceError4 {
+	off := 36 + i*deviceError4Size
+	return DeviceError4{m: (*[deviceError4Size]byte)(m[off : off+deviceError4Size])}
+}
+
+// LAYOUTERROR4argsWriter writes a LAYOUTERROR4args:
+//
+//	lea_offset + lea_length + lea_stateid + lea_errors_count + device_error4 lea_errors[lea_errors_count]
+type LAYOUTERROR4argsWriter struct {
+	buf            []byte
+	off            int
+	leaErrorsCount uint32
+}
+
+func StartLAYOUTERROR4args(buf []byte) LAYOUTERROR4argsWriter {
+	off := len(buf)
+	buf = append(buf, make([]byte, 36)...) // lea_offset(8) + lea_length(8) + lea_stateid(16) + lea_errors_count(4)
+	return LAYOUTERROR4argsWriter{buf: buf, off: off}
+}
+
+func (w *LAYOUTERROR4argsWriter) SetLeaOffset(v uint64) {
+	binary.BigEndian.PutUint64((*[36]byte)(w.buf[w.off:])[0:8], v)
+}
+
+func (w *LAYOUTERROR4argsWriter) SetLeaLength(v uint64) {
+	binary.BigEndian.PutUint64((*[36]byte)(w.buf[w.off:])[8:16], v)
+}
+
+func (w *LAYOUTERROR4argsWriter) LeaStateid() Stateid4 {
+	return Stateid4{m: (*[stateid4Size]byte)(w.buf[w.off+16:])}
+}
+
+func (w *LAYOUTERROR4argsWriter) AppendLeaErrors() DeviceError4 {
+	w.buf = append(w.buf, make([]byte, deviceError4Size)...)
+	w.leaErrorsCount++
+	return DeviceError4{m: (*[deviceError4Size]byte)(w.buf[len(w.buf)-deviceError4Size:])}
+}
+
+func (w *LAYOUTERROR4argsWriter) Finish() []byte {
+	binary.BigEndian.PutUint32((*[36]byte)(w.buf[w.off:])[32:36], w.leaErrorsCount)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// LAYOUTERROR4res — fixed 4 bytes: ler_status(4, beu32)
+// -------------------------------------------------------
+
+type LAYOUTERROR4res struct {
+	m *[lAYOUTERROR4resSize]byte
+}
+
+const lAYOUTERROR4resSize = 4
+
+func readLAYOUTERROR4res(b *[]byte) (LAYOUTERROR4res, bool) {
+	if len(*b) < lAYOUTERROR4resSize {
+		return LAYOUTERROR4res{}, false
+	}
+	result := LAYOUTERROR4res{m: (*[lAYOUTERROR4resSize]byte)(*b)}
+	*b = (*b)[lAYOUTERROR4resSize:]
+	return result, true
+}
+
+func ReadLAYOUTERROR4res(b []byte) (LAYOUTERROR4res, bool) {
+	return readLAYOUTERROR4res(&b)
+}
+
+func StartLAYOUTERROR4res(buf []byte) ([]byte, LAYOUTERROR4res) {
+	buf = append(buf, make([]byte, lAYOUTERROR4resSize)...)
+	return buf, LAYOUTERROR4res{m: (*[lAYOUTERROR4resSize]byte)(buf[len(buf)-lAYOUTERROR4resSize:])}
+}
+
+func (m LAYOUTERROR4res) LerStatus() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m LAYOUTERROR4res) SetLerStatus(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+// -------------------------------------------------------
+// IoInfo4 — fixed 16 bytes: ii_count(8, beu64) + ii_bytes(8, beu64)
+// -------------------------------------------------------
+
+type IoInfo4 struct {
+	m *[ioInfo4Size]byte
+}
+
+const ioInfo4Size = 16
+
+func ReadIoInfo4(b []byte) (IoInfo4, bool) {
+	if len(b) < ioInfo4Size {
+		return IoInfo4{}, false
+	}
+	return IoInfo4{m: (*[ioInfo4Size]byte)(b)}, true
+}
+
+func StartIoInfo4(buf []byte) ([]byte, IoInfo4) {
+	buf = append(buf, make([]byte, ioInfo4Size)...)
+	return buf, IoInfo4{m: (*[ioInfo4Size]byte)(buf[len(buf)-ioInfo4Size:])}
+}
+
+func (m IoInfo4) IiCount() uint64 {
+	return binary.BigEndian.Uint64(m.m[0:8])
+}
+
+func (m IoInfo4) IiBytes() uint64 {
+	return binary.BigEndian.Uint64(m.m[8:16])
+}
+
+func (m IoInfo4) SetIiCount(v uint64) {
+	binary.BigEndian.PutUint64(m.m[0:8], v)
+}
+
+func (m IoInfo4) SetIiBytes(v uint64) {
+	binary.BigEndian.PutUint64(m.m[8:16], v)
+}
+
+// -------------------------------------------------------
+// LAYOUTSTATS4args — variable:
+//   lsa_offset(8) + lsa_length(8) + lsa_stateid(16) + lsa_read(16) + lsa_write(16) + lsa_deviceid(16) + lsa_layoutupdate
+// -------------------------------------------------------
+
+type LAYOUTSTATS4args []byte
+
+func readLAYOUTSTATS4args(b *[]byte) (LAYOUTSTATS4args, bool) {
+	if len(*b) < 80 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[80:]
+	if _, ok := readLayoutupdate4(b); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return LAYOUTSTATS4args(start[:total]), true
+}
+
+func ReadLAYOUTSTATS4args(b []byte) (LAYOUTSTATS4args, bool) {
+	return readLAYOUTSTATS4args(&b)
+}
+
+func (m LAYOUTSTATS4args) LsaOffset() uint64 {
+	return binary.BigEndian.Uint64(m[0:8])
+}
+
+func (m LAYOUTSTATS4args) LsaLength() uint64 {
+	return binary.BigEndian.Uint64(m[8:16])
+}
+
+func (m LAYOUTSTATS4args) LsaStateid() Stateid4 {
+	return Stateid4{m: (*[stateid4Size]byte)(m[16 : 16+stateid4Size])}
+}
+
+func (m LAYOUTSTATS4args) LsaRead() IoInfo4 {
+	return IoInfo4{m: (*[ioInfo4Size]byte)(m[32 : 32+ioInfo4Size])}
+}
+
+func (m LAYOUTSTATS4args) LsaWrite() IoInfo4 {
+	return IoInfo4{m: (*[ioInfo4Size]byte)(m[48 : 48+ioInfo4Size])}
+}
+
+func (m LAYOUTSTATS4args) LsaDeviceid() Deviceid4 {
+	return Deviceid4{m: (*[deviceid4Size]byte)(m[64 : 64+deviceid4Size])}
+}
+
+func (m LAYOUTSTATS4args) LsaLayoutupdate() Layoutupdate4 {
+	return Layoutupdate4(m[80:])
+}
+
+// LAYOUTSTATS4argsWriter writes a LAYOUTSTATS4args:
+//
+//	lsa_offset + lsa_length + lsa_stateid + lsa_read + lsa_write + lsa_deviceid + lsa_layoutupdate
+type LAYOUTSTATS4argsWriter struct {
+	buf    []byte
+	header *[80]byte
+}
+
+func StartLAYOUTSTATS4args(buf []byte) LAYOUTSTATS4argsWriter {
+	buf = append(buf, make([]byte, 80)...) // lsa_offset(8) + lsa_length(8) + lsa_stateid(16) + lsa_read(16) + lsa_write(16) + lsa_deviceid(16)
+	return LAYOUTSTATS4argsWriter{buf: buf, header: (*[80]byte)(buf[len(buf)-80:])}
+}
+
+func (w *LAYOUTSTATS4argsWriter) SetLsaOffset(v uint64) {
+	binary.BigEndian.PutUint64(w.header[0:8], v)
+}
+
+func (w *LAYOUTSTATS4argsWriter) SetLsaLength(v uint64) {
+	binary.BigEndian.PutUint64(w.header[8:16], v)
+}
+
+func (w *LAYOUTSTATS4argsWriter) LsaStateid() Stateid4 {
+	return Stateid4{m: (*[stateid4Size]byte)(w.header[16:])}
+}
+
+func (w *LAYOUTSTATS4argsWriter) LsaRead() IoInfo4 {
+	return IoInfo4{m: (*[ioInfo4Size]byte)(w.header[32:])}
+}
+
+func (w *LAYOUTSTATS4argsWriter) LsaWrite() IoInfo4 {
+	return IoInfo4{m: (*[ioInfo4Size]byte)(w.header[48:])}
+}
+
+func (w *LAYOUTSTATS4argsWriter) LsaDeviceid() Deviceid4 {
+	return Deviceid4{m: (*[deviceid4Size]byte)(w.header[64:])}
+}
+
+func (w *LAYOUTSTATS4argsWriter) StartLsaLayoutupdate() Layoutupdate4Writer {
+	child := StartLayoutupdate4(w.buf)
+	w.buf = nil
+	w.header = nil
+	return child
+}
+
+func (w *LAYOUTSTATS4argsWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *LAYOUTSTATS4argsWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// LAYOUTSTATS4res — fixed 4 bytes: lsr_status(4, beu32)
+// -------------------------------------------------------
+
+type LAYOUTSTATS4res struct {
+	m *[lAYOUTSTATS4resSize]byte
+}
+
+const lAYOUTSTATS4resSize = 4
+
+func readLAYOUTSTATS4res(b *[]byte) (LAYOUTSTATS4res, bool) {
+	if len(*b) < lAYOUTSTATS4resSize {
+		return LAYOUTSTATS4res{}, false
+	}
+	result := LAYOUTSTATS4res{m: (*[lAYOUTSTATS4resSize]byte)(*b)}
+	*b = (*b)[lAYOUTSTATS4resSize:]
+	return result, true
+}
+
+func ReadLAYOUTSTATS4res(b []byte) (LAYOUTSTATS4res, bool) {
+	return readLAYOUTSTATS4res(&b)
+}
+
+func StartLAYOUTSTATS4res(buf []byte) ([]byte, LAYOUTSTATS4res) {
+	buf = append(buf, make([]byte, lAYOUTSTATS4resSize)...)
+	return buf, LAYOUTSTATS4res{m: (*[lAYOUTSTATS4resSize]byte)(buf[len(buf)-lAYOUTSTATS4resSize:])}
+}
+
+func (m LAYOUTSTATS4res) LsrStatus() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m LAYOUTSTATS4res) SetLsrStatus(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+// -------------------------------------------------------
+// READPLUS4args — fixed 28 bytes:
+//   stateid4(16) + rpa_offset(8, beu64) + rpa_count(4, beu32)
+// -------------------------------------------------------
+
+type READPLUS4args struct {
+	m *[rEADPLUS4argsSize]byte
+}
+
+const rEADPLUS4argsSize = 28
+
+func readREADPLUS4args(b *[]byte) (READPLUS4args, bool) {
+	if len(*b) < rEADPLUS4argsSize {
+		return READPLUS4args{}, false
+	}
+	result := READPLUS4args{m: (*[rEADPLUS4argsSize]byte)(*b)}
+	*b = (*b)[rEADPLUS4argsSize:]
+	return result, true
+}
+
+func ReadREADPLUS4args(b []byte) (READPLUS4args, bool) {
+	return readREADPLUS4args(&b)
+}
+
+func StartREADPLUS4args(buf []byte) ([]byte, READPLUS4args) {
+	buf = append(buf, make([]byte, rEADPLUS4argsSize)...)
+	return buf, READPLUS4args{m: (*[rEADPLUS4argsSize]byte)(buf[len(buf)-rEADPLUS4argsSize:])}
+}
+
+func (m READPLUS4args) RpaStateid() Stateid4 {
+	return Stateid4{m: (*[stateid4Size]byte)(m.m[0:16])}
+}
+
+func (m READPLUS4args) RpaOffset() uint64 {
+	return binary.BigEndian.Uint64(m.m[16:24])
+}
+
+func (m READPLUS4args) RpaCount() uint32 {
+	return binary.BigEndian.Uint32(m.m[24:28])
+}
+
+func (m READPLUS4args) SetRpaOffset(v uint64) {
+	binary.BigEndian.PutUint64(m.m[16:24], v)
+}
+
+func (m READPLUS4args) SetRpaCount(v uint32) {
+	binary.BigEndian.PutUint32(m.m[24:28], v)
+}
+
+// -------------------------------------------------------
+// ReadPlusContent — union on data_content4 (external discriminant)
+// -------------------------------------------------------
+
+type ReadPlusContent struct {
+	b    []byte
+	disc uint32
+}
+
+func readReadPlusContent(b *[]byte, dataContent4 uint32) (ReadPlusContent, bool) {
+	switch dataContent4 {
+	case NFS4_CONTENT_DATA:
+		r, ok := readData4(b)
+		if !ok {
+			return ReadPlusContent{}, false
+		}
+		return ReadPlusContent{b: []byte(r), disc: dataContent4}, true
+	case NFS4_CONTENT_HOLE:
+		r, ok := readDataInfo4(b)
+		if !ok {
+			return ReadPlusContent{}, false
+		}
+		return ReadPlusContent{b: r.m[:], disc: dataContent4}, true
+	default:
+		return ReadPlusContent{b: (*b)[:0], disc: dataContent4}, true
+	}
+}
+
+func (m ReadPlusContent) AsData4() Data4 {
+	if m.disc != NFS4_CONTENT_DATA {
+		panic("wrong union discriminant")
+	}
+	return Data4(m.b)
+}
+
+func (m ReadPlusContent) AsDataInfo4() DataInfo4 {
+	if m.disc != NFS4_CONTENT_HOLE {
+		panic("wrong union discriminant")
+	}
+	return DataInfo4{m: (*[dataInfo4Size]byte)(m.b)}
+}
+
+// -------------------------------------------------------
+// ReadPlusContentEntry — variable: disc(4) + read_plus_content value
+// -------------------------------------------------------
+
+type ReadPlusContentEntry []byte
+
+func readReadPlusContentEntry(b *[]byte) (ReadPlusContentEntry, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[4:]
+	if _, ok := readReadPlusContent(b, binary.BigEndian.Uint32(start[0:4])); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return ReadPlusContentEntry(start[:total]), true
+}
+
+func ReadReadPlusContentEntry(b []byte) (ReadPlusContentEntry, bool) {
+	return readReadPlusContentEntry(&b)
+}
+
+func (m ReadPlusContentEntry) Disc() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m ReadPlusContentEntry) Value() ReadPlusContent {
+	return ReadPlusContent{b: m[4:], disc: binary.BigEndian.Uint32(m[0:4])}
+}
+
+// ReadPlusContentEntryWriter writes a read_plus_content_entry:
+//
+//	disc + value(disc)
+type ReadPlusContentEntryWriter struct {
+	buf []byte
+	off int
+}
+
+func StartReadPlusContentEntry(buf []byte) ReadPlusContentEntryWriter {
+	return ReadPlusContentEntryWriter{buf: buf, off: len(buf)}
+}
+
+func (w *ReadPlusContentEntryWriter) SetValue_Data() Data4Writer {
+	w.buf = append(w.buf, make([]byte, 4+12)...)
+	off := len(w.buf) - 4 - 12
+	binary.BigEndian.PutUint32((*[4 + 12]byte)(w.buf[off:])[:4], NFS4_CONTENT_DATA)
+	buf := w.buf
+	w.buf = nil
+	return Data4Writer{buf: buf, off: off + 4}
+}
+
+func (w *ReadPlusContentEntryWriter) SetValue_Hole() DataInfo4 {
+	w.buf = append(w.buf, make([]byte, 4+dataInfo4Size)...)
+	p := (*[4 + dataInfo4Size]byte)(w.buf[len(w.buf)-4-dataInfo4Size:])
+	binary.BigEndian.PutUint32(p[:4], NFS4_CONTENT_HOLE)
+	return DataInfo4{m: (*[dataInfo4Size]byte)(p[4:])}
+}
+
+func (w *ReadPlusContentEntryWriter) SetValue_Default(dataContent4 uint32) {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, dataContent4)
+}
+
+func (w *ReadPlusContentEntryWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *ReadPlusContentEntryWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// ReadPlusRes4 — variable:
+//   rpr_eof(4) + rpr_contents_count(4) + read_plus_content_entry rpr_contents[rpr_contents_count]
+// -------------------------------------------------------
+
+type ReadPlusRes4 []byte
+
+func readReadPlusRes4(b *[]byte) (ReadPlusRes4, bool) {
+	if len(*b) < 8 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	c_rpr_contents_count := int(binary.BigEndian.Uint32((*b)[4:8]))
+	*b = (*b)[8:]
+	for i := 0; i < c_rpr_contents_count; i++ {
+		if _, ok := readReadPlusContentEntry(b); !ok {
+			return nil, false
+		}
+	}
+	total := startLen - len(*b)
+	return ReadPlusRes4(start[:total]), true
+}
+
+func ReadReadPlusRes4(b []byte) (ReadPlusRes4, bool) {
+	if len(b) < 8 {
+		return nil, false
+	}
+	return ReadPlusRes4(b), true
+}
+
+func (m ReadPlusRes4) RprEof() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m ReadPlusRes4) RprContentsCount() uint32 {
+	return binary.BigEndian.Uint32(m[4:8])
+}
+
+func (m ReadPlusRes4) RprContents() ReadPlusContentEntryIter {
+	rpr_contents_count := int(binary.BigEndian.Uint32(m[4:8]))
+	return ReadPlusContentEntryIter{
+		b:     []byte(m[8:]),
+		count: rpr_contents_count,
+	}
+}
+
+// ReadPlusContentEntryIter iterates over variable-size ReadPlusContentEntry entries.
+type ReadPlusContentEntryIter struct {
+	b     []byte
+	count int
+	i     int
+	cur   ReadPlusContentEntry
+}
+
+func (it *ReadPlusContentEntryIter) Next() bool {
+	if it.i >= it.count {
+		return false
+	}
+	var ok bool
+	it.cur, ok = readReadPlusContentEntry(&it.b)
+	if !ok {
+		return false
+	}
+	it.i++
+	return true
+}
+
+func (it *ReadPlusContentEntryIter) RprContent() ReadPlusContentEntry {
+	return it.cur
+}
+
+// ReadPlusRes4Writer writes a read_plus_res4:
+//
+//	rpr_eof + rpr_contents_count + read_plus_content_entry rpr_contents[rpr_contents_count]
+type ReadPlusRes4Writer struct {
+	buf              []byte
+	off              int
+	rprContentsCount uint32
+}
+
+func StartReadPlusRes4(buf []byte) ReadPlusRes4Writer {
+	off := len(buf)
+	buf = append(buf, make([]byte, 8)...) // rpr_eof(4) + rpr_contents_count(4)
+	return ReadPlusRes4Writer{buf: buf, off: off}
+}
+
+func (w *ReadPlusRes4Writer) SetRprEof(v uint32) {
+	binary.BigEndian.PutUint32((*[8]byte)(w.buf[w.off:])[0:4], v)
+}
+
+func (w *ReadPlusRes4Writer) AppendRprContents_Data() Data4Writer {
+	_ = w.buf[:1]
+	w.buf = append(w.buf, make([]byte, 4+12)...)
+	off := len(w.buf) - 4 - 12
+	binary.BigEndian.PutUint32((*[4 + 12]byte)(w.buf[off:])[:4], NFS4_CONTENT_DATA)
+	w.rprContentsCount++
+	buf := w.buf
+	w.buf = nil
+	return Data4Writer{buf: buf, off: off + 4}
+}
+
+func (w *ReadPlusRes4Writer) AppendRprContents_Hole() DataInfo4 {
+	_ = w.buf[:1]
+	w.buf = append(w.buf, make([]byte, 4+dataInfo4Size)...)
+	p := (*[4 + dataInfo4Size]byte)(w.buf[len(w.buf)-4-dataInfo4Size:])
+	binary.BigEndian.PutUint32(p[:4], NFS4_CONTENT_HOLE)
+	w.rprContentsCount++
+	return DataInfo4{m: (*[dataInfo4Size]byte)(p[4:])}
+}
+
+func (w *ReadPlusRes4Writer) AppendRprContents_Default(dataContent4 uint32) {
+	_ = w.buf[:1]
+	w.buf = binary.BigEndian.AppendUint32(w.buf, dataContent4)
+	w.rprContentsCount++
+}
+
+func (w *ReadPlusRes4Writer) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *ReadPlusRes4Writer) Finish() []byte {
+	binary.BigEndian.PutUint32((*[8]byte)(w.buf[w.off:])[4:8], w.rprContentsCount)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// READPLUS4res — union on nfsstat4 (external discriminant)
+// -------------------------------------------------------
+
+type READPLUS4res struct {
+	b    []byte
+	disc uint32
+}
+
+func readREADPLUS4res(b *[]byte, nfsstat4 uint32) (READPLUS4res, bool) {
+	switch nfsstat4 {
+	case NFS4_OK:
+		r, ok := readReadPlusRes4(b)
+		if !ok {
+			return READPLUS4res{}, false
+		}
+		return READPLUS4res{b: []byte(r), disc: nfsstat4}, true
+	default:
+		return READPLUS4res{b: (*b)[:0], disc: nfsstat4}, true
+	}
+}
+
+func (m READPLUS4res) AsReadPlusRes4() ReadPlusRes4 {
+	if m.disc != NFS4_OK {
+		panic("wrong union discriminant")
+	}
+	return ReadPlusRes4(m.b)
+}
+
+// -------------------------------------------------------
+// SEEK4args — fixed 28 bytes:
+//   stateid4(16) + sa_offset(8, beu64) + sa_what(4, beu32)
+// -------------------------------------------------------
+
+type SEEK4args struct {
+	m *[sEEK4argsSize]byte
+}
+
+const sEEK4argsSize = 28
+
+func readSEEK4args(b *[]byte) (SEEK4args, bool) {
+	if len(*b) < sEEK4argsSize {
+		return SEEK4args{}, false
+	}
+	result := SEEK4args{m: (*[sEEK4argsSize]byte)(*b)}
+	*b = (*b)[sEEK4argsSize:]
+	return result, true
+}
+
+func ReadSEEK4args(b []byte) (SEEK4args, bool) {
+	return readSEEK4args(&b)
+}
+
+func StartSEEK4args(buf []byte) ([]byte, SEEK4args) {
+	buf = append(buf, make([]byte, sEEK4argsSize)...)
+	return buf, SEEK4args{m: (*[sEEK4argsSize]byte)(buf[len(buf)-sEEK4argsSize:])}
+}
+
+func (m SEEK4args) SaStateid() Stateid4 {
+	return Stateid4{m: (*[stateid4Size]byte)(m.m[0:16])}
+}
+
+func (m SEEK4args) SaOffset() uint64 {
+	return binary.BigEndian.Uint64(m.m[16:24])
+}
+
+func (m SEEK4args) SaWhat() uint32 {
+	return binary.BigEndian.Uint32(m.m[24:28])
+}
+
+func (m SEEK4args) SetSaOffset(v uint64) {
+	binary.BigEndian.PutUint64(m.m[16:24], v)
+}
+
+func (m SEEK4args) SetSaWhat(v uint32) {
+	binary.BigEndian.PutUint32(m.m[24:28], v)
+}
+
+// -------------------------------------------------------
+// SeekRes4 — fixed 12 bytes: sr_eof(4, beu32) + sr_offset(8, beu64)
+// -------------------------------------------------------
+
+type SeekRes4 struct {
+	m *[seekRes4Size]byte
+}
+
+const seekRes4Size = 12
+
+func readSeekRes4(b *[]byte) (SeekRes4, bool) {
+	if len(*b) < seekRes4Size {
+		return SeekRes4{}, false
+	}
+	result := SeekRes4{m: (*[seekRes4Size]byte)(*b)}
+	*b = (*b)[seekRes4Size:]
+	return result, true
+}
+
+func ReadSeekRes4(b []byte) (SeekRes4, bool) {
+	return readSeekRes4(&b)
+}
+
+func StartSeekRes4(buf []byte) ([]byte, SeekRes4) {
+	buf = append(buf, make([]byte, seekRes4Size)...)
+	return buf, SeekRes4{m: (*[seekRes4Size]byte)(buf[len(buf)-seekRes4Size:])}
+}
+
+func (m SeekRes4) SrEof() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m SeekRes4) SrOffset() uint64 {
+	return binary.BigEndian.Uint64(m.m[4:12])
+}
+
+func (m SeekRes4) SetSrEof(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+func (m SeekRes4) SetSrOffset(v uint64) {
+	binary.BigEndian.PutUint64(m.m[4:12], v)
+}
+
+// -------------------------------------------------------
+// SEEK4res — union on nfsstat4 (external discriminant)
+// -------------------------------------------------------
+
+type SEEK4res struct {
+	b    []byte
+	disc uint32
+}
+
+func readSEEK4res(b *[]byte, nfsstat4 uint32) (SEEK4res, bool) {
+	switch nfsstat4 {
+	case NFS4_OK:
+		r, ok := readSeekRes4(b)
+		if !ok {
+			return SEEK4res{}, false
+		}
+		return SEEK4res{b: r.m[:], disc: nfsstat4}, true
+	default:
+		return SEEK4res{b: (*b)[:0], disc: nfsstat4}, true
+	}
+}
+
+func (m SEEK4res) AsSeekRes4() SeekRes4 {
+	if m.disc != NFS4_OK {
+		panic("wrong union discriminant")
+	}
+	return SeekRes4{m: (*[seekRes4Size]byte)(m.b)}
+}
+
+// -------------------------------------------------------
+// WRITESAME4args — variable: wsa_stateid(16) + wsa_stable(4) + wsa_adb
+// -------------------------------------------------------
+
+type WRITESAME4args []byte
+
+func readWRITESAME4args(b *[]byte) (WRITESAME4args, bool) {
+	if len(*b) < 20 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[20:]
+	if _, ok := readAppDataBlock4(b); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return WRITESAME4args(start[:total]), true
+}
+
+func ReadWRITESAME4args(b []byte) (WRITESAME4args, bool) {
+	return readWRITESAME4args(&b)
+}
+
+func (m WRITESAME4args) WsaStateid() Stateid4 {
+	return Stateid4{m: (*[stateid4Size]byte)(m[0 : 0+stateid4Size])}
+}
+
+func (m WRITESAME4args) WsaStable() uint32 {
+	return binary.BigEndian.Uint32(m[16:20])
+}
+
+func (m WRITESAME4args) WsaAdb() AppDataBlock4 {
+	return AppDataBlock4(m[20:])
+}
+
+// WRITESAME4argsWriter writes a WRITE_SAME4args:
+//
+//	wsa_stateid + wsa_stable + wsa_adb
+type WRITESAME4argsWriter struct {
+	buf    []byte
+	header *[20]byte
+}
+
+func StartWRITESAME4args(buf []byte) WRITESAME4argsWriter {
+	buf = append(buf, make([]byte, 20)...) // wsa_stateid(16) + wsa_stable(4)
+	return WRITESAME4argsWriter{buf: buf, header: (*[20]byte)(buf[len(buf)-20:])}
+}
+
+func (w *WRITESAME4argsWriter) WsaStateid() Stateid4 {
+	return Stateid4{m: (*[stateid4Size]byte)(w.header[0:])}
+}
+
+func (w *WRITESAME4argsWriter) SetWsaStable(v uint32) {
+	binary.BigEndian.PutUint32(w.header[16:20], v)
+}
+
+func (w *WRITESAME4argsWriter) StartWsaAdb() AppDataBlock4Writer {
+	child := StartAppDataBlock4(w.buf)
+	w.buf = nil
+	w.header = nil
+	return child
+}
+
+func (w *WRITESAME4argsWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *WRITESAME4argsWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// WRITESAME4res — union on nfsstat4 (external discriminant)
+// -------------------------------------------------------
+
+type WRITESAME4res struct {
+	b    []byte
+	disc uint32
+}
+
+func readWRITESAME4res(b *[]byte, nfsstat4 uint32) (WRITESAME4res, bool) {
+	switch nfsstat4 {
+	case NFS4_OK:
+		r, ok := readWriteResponse4(b)
+		if !ok {
+			return WRITESAME4res{}, false
+		}
+		return WRITESAME4res{b: r.data, disc: nfsstat4}, true
+	default:
+		return WRITESAME4res{b: (*b)[:0], disc: nfsstat4}, true
+	}
+}
+
+func (m WRITESAME4res) AsWriteResponse4() WriteResponse4 {
+	if m.disc != NFS4_OK {
+		panic("wrong union discriminant")
+	}
+	v, _ := ReadWriteResponse4(m.b)
+	return v
+}
+
+// -------------------------------------------------------
+// FfDeviceVersions4 — fixed 20 bytes:
+//   ffdv_version(4, beu32) + ffdv_minorversion(4, beu32) + ffdv_rsize(4, beu32) + ffdv_wsize(4, beu32) + ffdv_tightly_coupled(4, beu32)
+// -------------------------------------------------------
+
+type FfDeviceVersions4 struct {
+	m *[ffDeviceVersions4Size]byte
+}
+
+const ffDeviceVersions4Size = 20
+
+func ReadFfDeviceVersions4(b []byte) (FfDeviceVersions4, bool) {
+	if len(b) < ffDeviceVersions4Size {
+		return FfDeviceVersions4{}, false
+	}
+	return FfDeviceVersions4{m: (*[ffDeviceVersions4Size]byte)(b)}, true
+}
+
+func StartFfDeviceVersions4(buf []byte) ([]byte, FfDeviceVersions4) {
+	buf = append(buf, make([]byte, ffDeviceVersions4Size)...)
+	return buf, FfDeviceVersions4{m: (*[ffDeviceVersions4Size]byte)(buf[len(buf)-ffDeviceVersions4Size:])}
+}
+
+func (m FfDeviceVersions4) FfdvVersion() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m FfDeviceVersions4) FfdvMinorversion() uint32 {
+	return binary.BigEndian.Uint32(m.m[4:8])
+}
+
+func (m FfDeviceVersions4) FfdvRsize() uint32 {
+	return binary.BigEndian.Uint32(m.m[8:12])
+}
+
+func (m FfDeviceVersions4) FfdvWsize() uint32 {
+	return binary.BigEndian.Uint32(m.m[12:16])
+}
+
+func (m FfDeviceVersions4) FfdvTightlyCoupled() uint32 {
+	return binary.BigEndian.Uint32(m.m[16:20])
+}
+
+func (m FfDeviceVersions4) SetFfdvVersion(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+func (m FfDeviceVersions4) SetFfdvMinorversion(v uint32) {
+	binary.BigEndian.PutUint32(m.m[4:8], v)
+}
+
+func (m FfDeviceVersions4) SetFfdvRsize(v uint32) {
+	binary.BigEndian.PutUint32(m.m[8:12], v)
+}
+
+func (m FfDeviceVersions4) SetFfdvWsize(v uint32) {
+	binary.BigEndian.PutUint32(m.m[12:16], v)
+}
+
+func (m FfDeviceVersions4) SetFfdvTightlyCoupled(v uint32) {
+	binary.BigEndian.PutUint32(m.m[16:20], v)
+}
+
+// -------------------------------------------------------
+// FfDeviceAddr4 — variable:
+//   ffda_netaddrs + ffda_versions_count(4) + ff_device_versions4 ffda_versions[ffda_versions_count]
+// -------------------------------------------------------
+
+type FfDeviceAddr4 struct {
+	data []byte
+	off1 int // byte offset within data where ffda_versions_count starts
+}
+
+func readFfDeviceAddr4(b *[]byte) (FfDeviceAddr4, bool) {
+	start := *b
+	startLen := len(start)
+	if _, ok := readMultipathList4(b); !ok {
+		return FfDeviceAddr4{}, false
+	}
+	off1 := startLen - len(*b)
+	if len(*b) < 4 {
+		return FfDeviceAddr4{}, false
+	}
+	c_ffda_versions_count := int(binary.BigEndian.Uint32((*b)[:4]))
+	*b = (*b)[4:]
+	if len(*b) < c_ffda_versions_count*20 {
+		return FfDeviceAddr4{}, false
+	}
+	*b = (*b)[c_ffda_versions_count*20:]
+	total := startLen - len(*b)
+	return FfDeviceAddr4{data: start[:total], off1: off1}, true
+}
+
+func ReadFfDeviceAddr4(b []byte) (FfDeviceAddr4, bool) {
+	return readFfDeviceAddr4(&b)
+}
+
+func (m FfDeviceAddr4) FfdaNetaddrs() MultipathList4 {
+	return MultipathList4(m.data[0:m.off1])
+}
+
+func (m FfDeviceAddr4) FfdaVersions(i int) FfDeviceVersions4 {
+	off := m.off1 + 4 + i*ffDeviceVersions4Size
+	return FfDeviceVersions4{m: (*[ffDeviceVersions4Size]byte)(m.data[off : off+ffDeviceVersions4Size])}
+}
+
+func (m FfDeviceAddr4) FfdaVersionsCount() uint32 {
+	return binary.BigEndian.Uint32(m.data[m.off1 : m.off1+4])
+}
+
+// FfDeviceAddr4Writer writes a ff_device_addr4:
+//
+//	ffda_netaddrs + ffda_versions_count + ff_device_versions4 ffda_versions[ffda_versions_count]
+type FfDeviceAddr4Writer struct {
+	buf                  []byte
+	off                  int
+	ffdaVersionsCount    uint32
+	ffdaVersionsCountOff int
+}
+
+func StartFfDeviceAddr4(buf []byte) FfDeviceAddr4Writer {
+	off := len(buf)
+	return FfDeviceAddr4Writer{buf: buf, off: off}
+}
+
+func (w *FfDeviceAddr4Writer) AppendFfdaVersions() FfDeviceVersions4 {
+	if w.ffdaVersionsCountOff == 0 {
+		w.ffdaVersionsCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, ffDeviceVersions4Size)...)
+	w.ffdaVersionsCount++
+	return FfDeviceVersions4{m: (*[ffDeviceVersions4Size]byte)(w.buf[len(w.buf)-ffDeviceVersions4Size:])}
+}
+
+func (w *FfDeviceAddr4Writer) StartFfdaNetaddrs() MultipathList4Writer {
+	child := StartMultipathList4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *FfDeviceAddr4Writer) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *FfDeviceAddr4Writer) Finish() []byte {
+	if w.ffdaVersionsCountOff == 0 {
+		w.ffdaVersionsCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0) // ffda_versions_count = 0
+	} else {
+		binary.BigEndian.PutUint32(w.buf[w.ffdaVersionsCountOff:w.ffdaVersionsCountOff+4], w.ffdaVersionsCount)
+	}
+	return w.buf
+}
+
+// -------------------------------------------------------
+// FfDataServer4 — variable:
+//   ffds_deviceid(16) + ffds_efficiency(4) + ffds_stateid(16) + ffds_fh_vers_count(4) + nfs_fh4 ffds_fh_vers[ffds_fh_vers_count] + ffds_user + ffds_group
+// -------------------------------------------------------
+
+type FfDataServer4 struct {
+	data []byte
+	off1 int // byte offset within data where ffds_user starts
+	off2 int // byte offset within data where ffds_group starts
+}
+
+func readFfDataServer4(b *[]byte) (FfDataServer4, bool) {
+	if len(*b) < 40 {
+		return FfDataServer4{}, false
+	}
+	start := *b
+	startLen := len(start)
+	c_ffds_fh_vers_count := int(binary.BigEndian.Uint32((*b)[36:40]))
+	*b = (*b)[40:]
+	for i := 0; i < c_ffds_fh_vers_count; i++ {
+		if _, ok := readNfsFh4(b); !ok {
+			return FfDataServer4{}, false
+		}
+	}
+	off1 := startLen - len(*b)
+	if _, ok := readFattr4Owner(b); !ok {
+		return FfDataServer4{}, false
+	}
+	off2 := startLen - len(*b)
+	if _, ok := readFattr4OwnerGroup(b); !ok {
+		return FfDataServer4{}, false
+	}
+	total := startLen - len(*b)
+	return FfDataServer4{data: start[:total], off1: off1, off2: off2}, true
+}
+
+func ReadFfDataServer4(b []byte) (FfDataServer4, bool) {
+	return readFfDataServer4(&b)
+}
+
+func (m FfDataServer4) FfdsDeviceid() Deviceid4 {
+	return Deviceid4{m: (*[deviceid4Size]byte)(m.data[0 : 0+deviceid4Size])}
+}
+
+func (m FfDataServer4) FfdsEfficiency() uint32 {
+	return binary.BigEndian.Uint32(m.data[16:20])
+}
+
+func (m FfDataServer4) FfdsStateid() Stateid4 {
+	return Stateid4{m: (*[stateid4Size]byte)(m.data[20 : 20+stateid4Size])}
+}
+
+func (m FfDataServer4) FfdsFhVers() NfsFh4Iter {
+	ffds_fh_vers_count := int(binary.BigEndian.Uint32(m.data[36:40]))
+	return NfsFh4Iter{b: m.data[40:], count: ffds_fh_vers_count}
+}
+
+func (m FfDataServer4) FfdsFhVersCount() uint32 {
+	return binary.BigEndian.Uint32(m.data[36:40])
+}
+
+func (m FfDataServer4) FfdsUser() Fattr4Owner {
+	return Fattr4Owner(m.data[m.off1:m.off2])
+}
+
+func (m FfDataServer4) FfdsGroup() Fattr4OwnerGroup {
+	return Fattr4OwnerGroup(m.data[m.off2:])
+}
+
+// FfDataServer4Writer writes a ff_data_server4:
+//
+//	ffds_deviceid + ffds_efficiency + ffds_stateid + ffds_fh_vers_count + nfs_fh4 ffds_fh_vers[ffds_fh_vers_count] + ffds_user + ffds_group
+type FfDataServer4Writer struct {
+	buf             []byte
+	off             int
+	ffdsFhVersCount uint32
+	phase           uint8
+}
+
+func StartFfDataServer4(buf []byte) FfDataServer4Writer {
+	off := len(buf)
+	buf = append(buf, make([]byte, 40)...) // ffds_deviceid(16) + ffds_efficiency(4) + ffds_stateid(16) + ffds_fh_vers_count(4)
+	return FfDataServer4Writer{buf: buf, off: off}
+}
+
+func (w *FfDataServer4Writer) FfdsDeviceid() Deviceid4 {
+	return Deviceid4{m: (*[deviceid4Size]byte)(w.buf[w.off:])}
+}
+
+func (w *FfDataServer4Writer) SetFfdsEfficiency(v uint32) {
+	binary.BigEndian.PutUint32((*[40]byte)(w.buf[w.off:])[16:20], v)
+}
+
+func (w *FfDataServer4Writer) FfdsStateid() Stateid4 {
+	return Stateid4{m: (*[stateid4Size]byte)(w.buf[w.off+20:])}
+}
+
+func (w *FfDataServer4Writer) AppendFfdsFhVers() NfsFh4Writer {
+	_ = w.buf[:1]
+	if w.phase > 0 {
+		panic("writer fields called out of order")
+	}
+	w.ffdsFhVersCount++
+	child := StartNfsFh4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *FfDataServer4Writer) StartFfdsUser() Fattr4OwnerWriter {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	child := StartFattr4Owner(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *FfDataServer4Writer) StartFfdsGroup() Fattr4OwnerGroupWriter {
+	if w.phase > 2 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 2
+	child := StartFattr4OwnerGroup(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *FfDataServer4Writer) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *FfDataServer4Writer) Finish() []byte {
+	binary.BigEndian.PutUint32((*[40]byte)(w.buf[w.off:])[36:40], w.ffdsFhVersCount)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// FfMirror4 — variable:
+//   ffm_data_servers_count(4) + ff_data_server4 ffm_data_servers[ffm_data_servers_count]
+// -------------------------------------------------------
+
+type FfMirror4 []byte
+
+func readFfMirror4(b *[]byte) (FfMirror4, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	c_ffm_data_servers_count := int(binary.BigEndian.Uint32((*b)[0:4]))
+	*b = (*b)[4:]
+	for i := 0; i < c_ffm_data_servers_count; i++ {
+		if _, ok := readFfDataServer4(b); !ok {
+			return nil, false
+		}
+	}
+	total := startLen - len(*b)
+	return FfMirror4(start[:total]), true
+}
+
+func ReadFfMirror4(b []byte) (FfMirror4, bool) {
+	if len(b) < 4 {
+		return nil, false
+	}
+	return FfMirror4(b), true
+}
+
+func (m FfMirror4) FfmDataServersCount() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m FfMirror4) FfmDataServers() FfDataServer4Iter {
+	ffm_data_servers_count := int(binary.BigEndian.Uint32(m[0:4]))
+	return FfDataServer4Iter{
+		b:     []byte(m[4:]),
+		count: ffm_data_servers_count,
+	}
+}
+
+// FfDataServer4Iter iterates over variable-size FfDataServer4 entries.
+type FfDataServer4Iter struct {
+	b     []byte
+	count int
+	i     int
+	cur   FfDataServer4
+}
+
+func (it *FfDataServer4Iter) Next() bool {
+	if it.i >= it.count {
+		return false
+	}
+	var ok bool
+	it.cur, ok = readFfDataServer4(&it.b)
+	if !ok {
+		return false
+	}
+	it.i++
+	return true
+}
+
+func (it *FfDataServer4Iter) FfmDataServer() FfDataServer4 {
+	return it.cur
+}
+
+// FfMirror4Writer writes a ff_mirror4:
+//
+//	ffm_data_servers_count + ff_data_server4 ffm_data_servers[ffm_data_servers_count]
+type FfMirror4Writer struct {
+	buf                 []byte
+	off                 int
+	ffmDataServersCount uint32
+}
+
+func StartFfMirror4(buf []byte) FfMirror4Writer {
+	off := len(buf)
+	buf = binary.BigEndian.AppendUint32(buf, 0) // ffm_data_servers_count placeholder
+	return FfMirror4Writer{buf: buf, off: off}
+}
+
+func (w *FfMirror4Writer) AppendFfmDataServers() FfDataServer4Writer {
+	_ = w.buf[:1]
+	w.ffmDataServersCount++
+	child := StartFfDataServer4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *FfMirror4Writer) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *FfMirror4Writer) Finish() []byte {
+	binary.BigEndian.PutUint32(w.buf[w.off:w.off+4], w.ffmDataServersCount)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// FfLayout4 — variable:
+//   ffl_stripe_unit(8) + ffl_mirrors_count(4) + ff_mirror4 ffl_mirrors[ffl_mirrors_count] + ffl_flags(4) + ffl_stats_collect_hint(4)
+// -------------------------------------------------------
+
+type FfLayout4 struct {
+	data []byte
+	off1 int // byte offset within data where ffl_flags starts
+}
+
+func readFfLayout4(b *[]byte) (FfLayout4, bool) {
+	if len(*b) < 12 {
+		return FfLayout4{}, false
+	}
+	start := *b
+	startLen := len(start)
+	c_ffl_mirrors_count := int(binary.BigEndian.Uint32((*b)[8:12]))
+	*b = (*b)[12:]
+	for i := 0; i < c_ffl_mirrors_count; i++ {
+		if _, ok := readFfMirror4(b); !ok {
+			return FfLayout4{}, false
+		}
+	}
+	off1 := startLen - len(*b)
+	if len(*b) < 4 {
+		return FfLayout4{}, false
+	}
+	*b = (*b)[4:]
+	if len(*b) < 4 {
+		return FfLayout4{}, false
+	}
+	*b = (*b)[4:]
+	total := startLen - len(*b)
+	return FfLayout4{data: start[:total], off1: off1}, true
+}
+
+func ReadFfLayout4(b []byte) (FfLayout4, bool) {
+	return readFfLayout4(&b)
+}
+
+func (m FfLayout4) FflStripeUnit() uint64 {
+	return binary.BigEndian.Uint64(m.data[0:8])
+}
+
+func (m FfLayout4) FflMirrors() FfMirror4Iter {
+	ffl_mirrors_count := int(binary.BigEndian.Uint32(m.data[8:12]))
+	return FfMirror4Iter{b: m.data[12:], count: ffl_mirrors_count}
+}
+
+func (m FfLayout4) FflMirrorsCount() uint32 {
+	return binary.BigEndian.Uint32(m.data[8:12])
+}
+
+func (m FfLayout4) FflFlags() uint32 {
+	o := m.off1
+	return binary.BigEndian.Uint32(m.data[o : o+4])
+}
+
+func (m FfLayout4) FflStatsCollectHint() uint32 {
+	o := m.off1 + 4
+	return binary.BigEndian.Uint32(m.data[o : o+4])
+}
+
+// FfMirror4Iter iterates over variable-size FfMirror4 entries.
+type FfMirror4Iter struct {
+	b     []byte
+	count int
+	i     int
+	cur   FfMirror4
+}
+
+func (it *FfMirror4Iter) Next() bool {
+	if it.i >= it.count {
+		return false
+	}
+	var ok bool
+	it.cur, ok = readFfMirror4(&it.b)
+	if !ok {
+		return false
+	}
+	it.i++
+	return true
+}
+
+func (it *FfMirror4Iter) FflMirror() FfMirror4 {
+	return it.cur
+}
+
+// FfLayout4Writer writes a ff_layout4:
+//
+//	ffl_stripe_unit + ffl_mirrors_count + ff_mirror4 ffl_mirrors[ffl_mirrors_count] + ffl_flags + ffl_stats_collect_hint
+type FfLayout4Writer struct {
+	buf             []byte
+	off             int
+	fflMirrorsCount uint32
+}
+
+func StartFfLayout4(buf []byte) FfLayout4Writer {
+	off := len(buf)
+	buf = append(buf, make([]byte, 12)...) // ffl_stripe_unit(8) + ffl_mirrors_count(4)
+	return FfLayout4Writer{buf: buf, off: off}
+}
+
+func (w *FfLayout4Writer) SetFflStripeUnit(v uint64) {
+	binary.BigEndian.PutUint64((*[12]byte)(w.buf[w.off:])[0:8], v)
+}
+
+func (w *FfLayout4Writer) SetFflFlags(v uint32) {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, v)
+}
+
+func (w *FfLayout4Writer) SetFflStatsCollectHint(v uint32) {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, v)
+}
+
+func (w *FfLayout4Writer) AppendFflMirrors() FfMirror4Writer {
+	_ = w.buf[:1]
+	w.fflMirrorsCount++
+	child := StartFfMirror4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *FfLayout4Writer) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *FfLayout4Writer) Finish() []byte {
+	binary.BigEndian.PutUint32((*[12]byte)(w.buf[w.off:])[8:12], w.fflMirrorsCount)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// FfIoerr4 — variable:
+//   ffie_offset(8) + ffie_length(8) + ffie_stateid(16) + ffie_errors_count(4) + device_error4 ffie_errors[ffie_errors_count]
+// -------------------------------------------------------
+
+type FfIoerr4 []byte
+
+func readFfIoerr4(b *[]byte) (FfIoerr4, bool) {
+	if len(*b) < 36 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	c_ffie_errors_count := int(binary.BigEndian.Uint32((*b)[32:36]))
+	*b = (*b)[36:]
+	if len(*b) < c_ffie_errors_count*24 {
+		return nil, false
+	}
+	*b = (*b)[c_ffie_errors_count*24:]
+	total := startLen - len(*b)
+	return FfIoerr4(start[:total]), true
+}
+
+func ReadFfIoerr4(b []byte) (FfIoerr4, bool) {
+	if len(b) < 36 {
+		return nil, false
+	}
+	count := int(binary.BigEndian.Uint32(b[32:36]))
+	total := 36 + count*deviceError4Size
+	if len(b) < total {
+		return nil, false
+	}
+	return FfIoerr4(b[:total]), true
+}
+
+func (m FfIoerr4) FfieOffset() uint64 {
+	return binary.BigEndian.Uint64(m[0:8])
+}
+
+func (m FfIoerr4) FfieLength() uint64 {
+	return binary.BigEndian.Uint64(m[8:16])
+}
+
+func (m FfIoerr4) FfieStateid() Stateid4 {
+	return Stateid4{m: (*[stateid4Size]byte)(m[16 : 16+stateid4Size])}
+}
+
+func (m FfIoerr4) FfieErrorsCount() uint32 {
+	return binary.BigEndian.Uint32(m[32:36])
+}
+
+func (m FfIoerr4) FfieErrors(i int) DeviceError4 {
+	off := 36 + i*deviceError4Size
+	return DeviceError4{m: (*[deviceError4Size]byte)(m[off : off+deviceError4Size])}
+}
+
+// FfIoerr4Writer writes a ff_ioerr4:
+//
+//	ffie_offset + ffie_length + ffie_stateid + ffie_errors_count + device_error4 ffie_errors[ffie_errors_count]
+type FfIoerr4Writer struct {
+	buf             []byte
+	off             int
+	ffieErrorsCount uint32
+}
+
+func StartFfIoerr4(buf []byte) FfIoerr4Writer {
+	off := len(buf)
+	buf = append(buf, make([]byte, 36)...) // ffie_offset(8) + ffie_length(8) + ffie_stateid(16) + ffie_errors_count(4)
+	return FfIoerr4Writer{buf: buf, off: off}
+}
+
+func (w *FfIoerr4Writer) SetFfieOffset(v uint64) {
+	binary.BigEndian.PutUint64((*[36]byte)(w.buf[w.off:])[0:8], v)
+}
+
+func (w *FfIoerr4Writer) SetFfieLength(v uint64) {
+	binary.BigEndian.PutUint64((*[36]byte)(w.buf[w.off:])[8:16], v)
+}
+
+func (w *FfIoerr4Writer) FfieStateid() Stateid4 {
+	return Stateid4{m: (*[stateid4Size]byte)(w.buf[w.off+16:])}
+}
+
+func (w *FfIoerr4Writer) AppendFfieErrors() DeviceError4 {
+	w.buf = append(w.buf, make([]byte, deviceError4Size)...)
+	w.ffieErrorsCount++
+	return DeviceError4{m: (*[deviceError4Size]byte)(w.buf[len(w.buf)-deviceError4Size:])}
+}
+
+func (w *FfIoerr4Writer) Finish() []byte {
+	binary.BigEndian.PutUint32((*[36]byte)(w.buf[w.off:])[32:36], w.ffieErrorsCount)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// FfIoLatency4 — fixed 64 bytes:
+//   ffil_ops_requested(8, beu64) + ffil_bytes_requested(8, beu64) + ffil_ops_completed(8, beu64) + ffil_bytes_completed(8, beu64) + ffil_bytes_not_delivered(8, beu64) + nfstime4(12) + nfstime4(12)
+// -------------------------------------------------------
+
+type FfIoLatency4 struct {
+	m *[ffIoLatency4Size]byte
+}
+
+const ffIoLatency4Size = 64
+
+func ReadFfIoLatency4(b []byte) (FfIoLatency4, bool) {
+	if len(b) < ffIoLatency4Size {
+		return FfIoLatency4{}, false
+	}
+	return FfIoLatency4{m: (*[ffIoLatency4Size]byte)(b)}, true
+}
+
+func StartFfIoLatency4(buf []byte) ([]byte, FfIoLatency4) {
+	buf = append(buf, make([]byte, ffIoLatency4Size)...)
+	return buf, FfIoLatency4{m: (*[ffIoLatency4Size]byte)(buf[len(buf)-ffIoLatency4Size:])}
+}
+
+func (m FfIoLatency4) FfilOpsRequested() uint64 {
+	return binary.BigEndian.Uint64(m.m[0:8])
+}
+
+func (m FfIoLatency4) FfilBytesRequested() uint64 {
+	return binary.BigEndian.Uint64(m.m[8:16])
+}
+
+func (m FfIoLatency4) FfilOpsCompleted() uint64 {
+	return binary.BigEndian.Uint64(m.m[16:24])
+}
+
+func (m FfIoLatency4) FfilBytesCompleted() uint64 {
+	return binary.BigEndian.Uint64(m.m[24:32])
+}
+
+func (m FfIoLatency4) FfilBytesNotDelivered() uint64 {
+	return binary.BigEndian.Uint64(m.m[32:40])
+}
+
+func (m FfIoLatency4) FfilTotalBusyTime() Nfstime4 {
+	return Nfstime4{m: (*[nfstime4Size]byte)(m.m[40:52])}
+}
+
+func (m FfIoLatency4) FfilAggregateCompletionTime() Nfstime4 {
+	return Nfstime4{m: (*[nfstime4Size]byte)(m.m[52:64])}
+}
+
+func (m FfIoLatency4) SetFfilOpsRequested(v uint64) {
+	binary.BigEndian.PutUint64(m.m[0:8], v)
+}
+
+func (m FfIoLatency4) SetFfilBytesRequested(v uint64) {
+	binary.BigEndian.PutUint64(m.m[8:16], v)
+}
+
+func (m FfIoLatency4) SetFfilOpsCompleted(v uint64) {
+	binary.BigEndian.PutUint64(m.m[16:24], v)
+}
+
+func (m FfIoLatency4) SetFfilBytesCompleted(v uint64) {
+	binary.BigEndian.PutUint64(m.m[24:32], v)
+}
+
+func (m FfIoLatency4) SetFfilBytesNotDelivered(v uint64) {
+	binary.BigEndian.PutUint64(m.m[32:40], v)
+}
+
+// -------------------------------------------------------
+// FfLayoutupdate4 — variable:
+//   ffl_addr + ffl_fhandle + ffl_read(64) + ffl_write(64) + ffl_duration(12) + ffl_local(4)
+// -------------------------------------------------------
+
+type FfLayoutupdate4 struct {
+	data []byte
+	off1 int // byte offset within data where ffl_fhandle starts
+	off2 int // byte offset within data where ffl_read starts
+}
+
+func readFfLayoutupdate4(b *[]byte) (FfLayoutupdate4, bool) {
+	start := *b
+	startLen := len(start)
+	if _, ok := readNetaddr4(b); !ok {
+		return FfLayoutupdate4{}, false
+	}
+	off1 := startLen - len(*b)
+	if _, ok := readNfsFh4(b); !ok {
+		return FfLayoutupdate4{}, false
+	}
+	off2 := startLen - len(*b)
+	if len(*b) < 64 {
+		return FfLayoutupdate4{}, false
+	}
+	*b = (*b)[64:]
+	if len(*b) < 64 {
+		return FfLayoutupdate4{}, false
+	}
+	*b = (*b)[64:]
+	if len(*b) < 12 {
+		return FfLayoutupdate4{}, false
+	}
+	*b = (*b)[12:]
+	if len(*b) < 4 {
+		return FfLayoutupdate4{}, false
+	}
+	*b = (*b)[4:]
+	total := startLen - len(*b)
+	return FfLayoutupdate4{data: start[:total], off1: off1, off2: off2}, true
+}
+
+func ReadFfLayoutupdate4(b []byte) (FfLayoutupdate4, bool) {
+	return readFfLayoutupdate4(&b)
+}
+
+func (m FfLayoutupdate4) FflAddr() Netaddr4 {
+	v, _ := ReadNetaddr4(m.data[0:m.off1])
+	return v
+}
+
+func (m FfLayoutupdate4) FflFhandle() NfsFh4 {
+	return NfsFh4(m.data[m.off1:m.off2])
+}
+
+func (m FfLayoutupdate4) FflRead() FfIoLatency4 {
+	o := m.off2
+	return FfIoLatency4{m: (*[ffIoLatency4Size]byte)(m.data[o : o+ffIoLatency4Size])}
+}
+
+func (m FfLayoutupdate4) FflWrite() FfIoLatency4 {
+	o := m.off2 + 64
+	return FfIoLatency4{m: (*[ffIoLatency4Size]byte)(m.data[o : o+ffIoLatency4Size])}
+}
+
+func (m FfLayoutupdate4) FflDuration() Nfstime4 {
+	o := m.off2 + 128
+	return Nfstime4{m: (*[nfstime4Size]byte)(m.data[o : o+nfstime4Size])}
+}
+
+func (m FfLayoutupdate4) FflLocal() uint32 {
+	o := m.off2 + 140
+	return binary.BigEndian.Uint32(m.data[o : o+4])
+}
+
+// FfLayoutupdate4Writer writes a ff_layoutupdate4:
+//
+//	ffl_addr + ffl_fhandle + ffl_read + ffl_write + ffl_duration + ffl_local
+type FfLayoutupdate4Writer struct {
+	buf   []byte
+	off   int
+	phase uint8
+}
+
+func StartFfLayoutupdate4(buf []byte) FfLayoutupdate4Writer {
+	off := len(buf)
+	return FfLayoutupdate4Writer{buf: buf, off: off}
+}
+
+func (w *FfLayoutupdate4Writer) SetFflLocal(v uint32) {
+	if w.phase > 2 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 2
+	w.buf = binary.BigEndian.AppendUint32(w.buf, v)
+}
+
+func (w *FfLayoutupdate4Writer) StartFflAddr() Netaddr4Writer {
+	if w.phase > 0 {
+		panic("writer fields called out of order")
+	}
+	child := StartNetaddr4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *FfLayoutupdate4Writer) StartFflFhandle() NfsFh4Writer {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	child := StartNfsFh4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *FfLayoutupdate4Writer) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *FfLayoutupdate4Writer) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// FfIostats4 — variable:
+//   ffis_offset(8) + ffis_length(8) + ffis_stateid(16) + ffis_read(16) + ffis_write(16) + ffis_deviceid(16) + ffis_layoutupdate
+// -------------------------------------------------------
+
+type FfIostats4 []byte
+
+func readFfIostats4(b *[]byte) (FfIostats4, bool) {
+	if len(*b) < 80 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[80:]
+	if _, ok := readFfLayoutupdate4(b); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return FfIostats4(start[:total]), true
+}
+
+func ReadFfIostats4(b []byte) (FfIostats4, bool) {
+	return readFfIostats4(&b)
+}
+
+func (m FfIostats4) FfisOffset() uint64 {
+	return binary.BigEndian.Uint64(m[0:8])
+}
+
+func (m FfIostats4) FfisLength() uint64 {
+	return binary.BigEndian.Uint64(m[8:16])
+}
+
+func (m FfIostats4) FfisStateid() Stateid4 {
+	return Stateid4{m: (*[stateid4Size]byte)(m[16 : 16+stateid4Size])}
+}
+
+func (m FfIostats4) FfisRead() IoInfo4 {
+	return IoInfo4{m: (*[ioInfo4Size]byte)(m[32 : 32+ioInfo4Size])}
+}
+
+func (m FfIostats4) FfisWrite() IoInfo4 {
+	return IoInfo4{m: (*[ioInfo4Size]byte)(m[48 : 48+ioInfo4Size])}
+}
+
+func (m FfIostats4) FfisDeviceid() Deviceid4 {
+	return Deviceid4{m: (*[deviceid4Size]byte)(m[64 : 64+deviceid4Size])}
+}
+
+func (m FfIostats4) FfisLayoutupdate() FfLayoutupdate4 {
+	v, _ := ReadFfLayoutupdate4(m[80:])
+	return v
+}
+
+// FfIostats4Writer writes a ff_iostats4:
+//
+//	ffis_offset + ffis_length + ffis_stateid + ffis_read + ffis_write + ffis_deviceid + ffis_layoutupdate
+type FfIostats4Writer struct {
+	buf    []byte
+	header *[80]byte
+}
+
+func StartFfIostats4(buf []byte) FfIostats4Writer {
+	buf = append(buf, make([]byte, 80)...) // ffis_offset(8) + ffis_length(8) + ffis_stateid(16) + ffis_read(16) + ffis_write(16) + ffis_deviceid(16)
+	return FfIostats4Writer{buf: buf, header: (*[80]byte)(buf[len(buf)-80:])}
+}
+
+func (w *FfIostats4Writer) SetFfisOffset(v uint64) {
+	binary.BigEndian.PutUint64(w.header[0:8], v)
+}
+
+func (w *FfIostats4Writer) SetFfisLength(v uint64) {
+	binary.BigEndian.PutUint64(w.header[8:16], v)
+}
+
+func (w *FfIostats4Writer) FfisStateid() Stateid4 {
+	return Stateid4{m: (*[stateid4Size]byte)(w.header[16:])}
+}
+
+func (w *FfIostats4Writer) FfisRead() IoInfo4 {
+	return IoInfo4{m: (*[ioInfo4Size]byte)(w.header[32:])}
+}
+
+func (w *FfIostats4Writer) FfisWrite() IoInfo4 {
+	return IoInfo4{m: (*[ioInfo4Size]byte)(w.header[48:])}
+}
+
+func (w *FfIostats4Writer) FfisDeviceid() Deviceid4 {
+	return Deviceid4{m: (*[deviceid4Size]byte)(w.header[64:])}
+}
+
+func (w *FfIostats4Writer) StartFfisLayoutupdate() FfLayoutupdate4Writer {
+	child := StartFfLayoutupdate4(w.buf)
+	w.buf = nil
+	w.header = nil
+	return child
+}
+
+func (w *FfIostats4Writer) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *FfIostats4Writer) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// FfLayoutreturn4FflrIostatsReport — variable:
+//   count(4) + ff_iostats4 data[count]
+// -------------------------------------------------------
+
+type FfLayoutreturn4FflrIostatsReport []byte
+
+func readFfLayoutreturn4FflrIostatsReport(b *[]byte) (FfLayoutreturn4FflrIostatsReport, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	c_count := int(binary.BigEndian.Uint32((*b)[0:4]))
+	*b = (*b)[4:]
+	for i := 0; i < c_count; i++ {
+		if _, ok := readFfIostats4(b); !ok {
+			return nil, false
+		}
+	}
+	total := startLen - len(*b)
+	return FfLayoutreturn4FflrIostatsReport(start[:total]), true
+}
+
+func ReadFfLayoutreturn4FflrIostatsReport(b []byte) (FfLayoutreturn4FflrIostatsReport, bool) {
+	if len(b) < 4 {
+		return nil, false
+	}
+	return FfLayoutreturn4FflrIostatsReport(b), true
+}
+
+func (m FfLayoutreturn4FflrIostatsReport) Count() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m FfLayoutreturn4FflrIostatsReport) Data() FfIostats4Iter {
+	count := int(binary.BigEndian.Uint32(m[0:4]))
+	return FfIostats4Iter{
+		b:     []byte(m[4:]),
+		count: count,
+	}
+}
+
+// FfIostats4Iter iterates over variable-size FfIostats4 entries.
+type FfIostats4Iter struct {
+	b     []byte
+	count int
+	i     int
+	cur   FfIostats4
+}
+
+func (it *FfIostats4Iter) Next() bool {
+	if it.i >= it.count {
+		return false
+	}
+	var ok bool
+	it.cur, ok = readFfIostats4(&it.b)
+	if !ok {
+		return false
+	}
+	it.i++
+	return true
+}
+
+func (it *FfIostats4Iter) Data() FfIostats4 {
+	return it.cur
+}
+
+// FfLayoutreturn4FflrIostatsReportWriter writes a ff_layoutreturn4_fflr_iostats_report:
+//
+//	count + ff_iostats4 data[count]
+type FfLayoutreturn4FflrIostatsReportWriter struct {
+	buf   []byte
+	off   int
+	count uint32
+}
+
+func StartFfLayoutreturn4FflrIostatsReport(buf []byte) FfLayoutreturn4FflrIostatsReportWriter {
+	off := len(buf)
+	buf = binary.BigEndian.AppendUint32(buf, 0) // count placeholder
+	return FfLayoutreturn4FflrIostatsReportWriter{buf: buf, off: off}
+}
+
+func (w *FfLayoutreturn4FflrIostatsReportWriter) AppendData() FfIostats4Writer {
+	_ = w.buf[:1]
+	w.count++
+	child := StartFfIostats4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *FfLayoutreturn4FflrIostatsReportWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *FfLayoutreturn4FflrIostatsReportWriter) Finish() []byte {
+	binary.BigEndian.PutUint32(w.buf[w.off:w.off+4], w.count)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// FfLayoutreturn4 — variable:
+//   fflr_ioerr_report_count(4) + ff_ioerr4 fflr_ioerr_report[fflr_ioerr_report_count] + fflr_iostats_report
+// -------------------------------------------------------
+
+type FfLayoutreturn4 struct {
+	data []byte
+	off1 int // byte offset within data where fflr_iostats_report starts
+}
+
+func readFfLayoutreturn4(b *[]byte) (FfLayoutreturn4, bool) {
+	if len(*b) < 4 {
+		return FfLayoutreturn4{}, false
+	}
+	start := *b
+	startLen := len(start)
+	c_fflr_ioerr_report_count := int(binary.BigEndian.Uint32((*b)[0:4]))
+	*b = (*b)[4:]
+	for i := 0; i < c_fflr_ioerr_report_count; i++ {
+		if _, ok := readFfIoerr4(b); !ok {
+			return FfLayoutreturn4{}, false
+		}
+	}
+	off1 := startLen - len(*b)
+	if _, ok := readFfLayoutreturn4FflrIostatsReport(b); !ok {
+		return FfLayoutreturn4{}, false
+	}
+	total := startLen - len(*b)
+	return FfLayoutreturn4{data: start[:total], off1: off1}, true
+}
+
+func ReadFfLayoutreturn4(b []byte) (FfLayoutreturn4, bool) {
+	return readFfLayoutreturn4(&b)
+}
+
+func (m FfLayoutreturn4) FflrIoerrReport() FfIoerr4Iter {
+	fflr_ioerr_report_count := int(binary.BigEndian.Uint32(m.data[0:4]))
+	return FfIoerr4Iter{b: m.data[4:], count: fflr_ioerr_report_count}
+}
+
+func (m FfLayoutreturn4) FflrIoerrReportCount() uint32 {
+	return binary.BigEndian.Uint32(m.data[0:4])
+}
+
+func (m FfLayoutreturn4) FflrIostatsReport() FfLayoutreturn4FflrIostatsReport {
+	return FfLayoutreturn4FflrIostatsReport(m.data[m.off1:])
+}
+
+// FfIoerr4Iter iterates over variable-size FfIoerr4 entries.
+type FfIoerr4Iter struct {
+	b     []byte
+	count int
+	i     int
+	cur   FfIoerr4
+}
+
+func (it *FfIoerr4Iter) Next() bool {
+	if it.i >= it.count {
+		return false
+	}
+	var ok bool
+	it.cur, ok = readFfIoerr4(&it.b)
+	if !ok {
+		return false
+	}
+	it.i++
+	return true
+}
+
+func (it *FfIoerr4Iter) FflrIoerrReport() FfIoerr4 {
+	return it.cur
+}
+
+// FfLayoutreturn4Writer writes a ff_layoutreturn4:
+//
+//	fflr_ioerr_report_count + ff_ioerr4 fflr_ioerr_report[fflr_ioerr_report_count] + fflr_iostats_report
+type FfLayoutreturn4Writer struct {
+	buf                  []byte
+	off                  int
+	fflrIoerrReportCount uint32
+	phase                uint8
+}
+
+func StartFfLayoutreturn4(buf []byte) FfLayoutreturn4Writer {
+	off := len(buf)
+	buf = binary.BigEndian.AppendUint32(buf, 0) // fflr_ioerr_report_count placeholder
+	return FfLayoutreturn4Writer{buf: buf, off: off}
+}
+
+func (w *FfLayoutreturn4Writer) AppendFflrIoerrReport() FfIoerr4Writer {
+	_ = w.buf[:1]
+	if w.phase > 0 {
+		panic("writer fields called out of order")
+	}
+	w.fflrIoerrReportCount++
+	child := StartFfIoerr4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *FfLayoutreturn4Writer) StartFflrIostatsReport() FfLayoutreturn4FflrIostatsReportWriter {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	child := StartFfLayoutreturn4FflrIostatsReport(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *FfLayoutreturn4Writer) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *FfLayoutreturn4Writer) Finish() []byte {
+	binary.BigEndian.PutUint32(w.buf[w.off:w.off+4], w.fflrIoerrReportCount)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// FfMirrorsHintTRUE — fixed 4 bytes: value(4, beu32)
+// -------------------------------------------------------
+
+type FfMirrorsHintTRUE struct {
+	m *[ffMirrorsHintTRUESize]byte
+}
+
+const ffMirrorsHintTRUESize = 4
+
+func readFfMirrorsHintTRUE(b *[]byte) (FfMirrorsHintTRUE, bool) {
+	if len(*b) < ffMirrorsHintTRUESize {
+		return FfMirrorsHintTRUE{}, false
+	}
+	result := FfMirrorsHintTRUE{m: (*[ffMirrorsHintTRUESize]byte)(*b)}
+	*b = (*b)[ffMirrorsHintTRUESize:]
+	return result, true
+}
+
+func ReadFfMirrorsHintTRUE(b []byte) (FfMirrorsHintTRUE, bool) {
+	return readFfMirrorsHintTRUE(&b)
+}
+
+func StartFfMirrorsHintTRUE(buf []byte) ([]byte, FfMirrorsHintTRUE) {
+	buf = append(buf, make([]byte, ffMirrorsHintTRUESize)...)
+	return buf, FfMirrorsHintTRUE{m: (*[ffMirrorsHintTRUESize]byte)(buf[len(buf)-ffMirrorsHintTRUESize:])}
+}
+
+func (m FfMirrorsHintTRUE) Value() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m FfMirrorsHintTRUE) SetValue(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+// -------------------------------------------------------
+// FfMirrorsHint — union on xdr_bool (external discriminant)
+// -------------------------------------------------------
+
+type FfMirrorsHint struct {
+	b    []byte
+	disc uint32
+}
+
+func readFfMirrorsHint(b *[]byte, xdrBool uint32) (FfMirrorsHint, bool) {
+	switch xdrBool {
+	case TRUE:
+		r, ok := readFfMirrorsHintTRUE(b)
+		if !ok {
+			return FfMirrorsHint{}, false
+		}
+		return FfMirrorsHint{b: r.m[:], disc: xdrBool}, true
+	case FALSE:
+		return FfMirrorsHint{b: (*b)[:0], disc: xdrBool}, true
+	default:
+		return FfMirrorsHint{}, false
+	}
+}
+
+func (m FfMirrorsHint) AsFfMirrorsHintTRUE() FfMirrorsHintTRUE {
+	if m.disc != TRUE {
+		panic("wrong union discriminant")
+	}
+	return FfMirrorsHintTRUE{m: (*[ffMirrorsHintTRUESize]byte)(m.b)}
+}
+
+// -------------------------------------------------------
+// FfLayouthint4 — variable:
+//   fflh_mirrors_hint_type(4) + ff_mirrors_hint fflh_mirrors_hint
+// -------------------------------------------------------
+
+type FfLayouthint4 []byte
+
+func readFfLayouthint4(b *[]byte) (FfLayouthint4, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[4:]
+	if _, ok := readFfMirrorsHint(b, binary.BigEndian.Uint32(start[0:4])); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return FfLayouthint4(start[:total]), true
+}
+
+func ReadFfLayouthint4(b []byte) (FfLayouthint4, bool) {
+	return readFfLayouthint4(&b)
+}
+
+func (m FfLayouthint4) FflhMirrorsHintType() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m FfLayouthint4) FflhMirrorsHint() FfMirrorsHint {
+	return FfMirrorsHint{b: m[4:], disc: binary.BigEndian.Uint32(m[0:4])}
+}
+
+// FfLayouthint4Writer writes a ff_layouthint4:
+//
+//	fflh_mirrors_hint_type + fflh_mirrors_hint(fflh_mirrors_hint_type)
+type FfLayouthint4Writer struct {
+	buf []byte
+	off int
+}
+
+func StartFfLayouthint4(buf []byte) FfLayouthint4Writer {
+	return FfLayouthint4Writer{buf: buf, off: len(buf)}
+}
+
+func (w *FfLayouthint4Writer) SetFflhMirrorsHint_True() FfMirrorsHintTRUE {
+	w.buf = append(w.buf, make([]byte, 4+ffMirrorsHintTRUESize)...)
+	p := (*[4 + ffMirrorsHintTRUESize]byte)(w.buf[len(w.buf)-4-ffMirrorsHintTRUESize:])
+	binary.BigEndian.PutUint32(p[:4], TRUE)
+	return FfMirrorsHintTRUE{m: (*[ffMirrorsHintTRUESize]byte)(p[4:])}
+}
+
+func (w *FfLayouthint4Writer) SetFflhMirrorsHint_False() {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, FALSE)
+}
+
+func (w *FfLayouthint4Writer) Finish() []byte {
+	return w.buf
+}
+
+// -------------------------------------------------------
+// GETXATTR4args — variable: gxa_name
+// -------------------------------------------------------
+
+type GETXATTR4args []byte
+
+func readGETXATTR4args(b *[]byte) (GETXATTR4args, bool) {
+	start := *b
+	startLen := len(start)
+	if _, ok := readXattrkey4(b); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return GETXATTR4args(start[:total]), true
+}
+
+func ReadGETXATTR4args(b []byte) (GETXATTR4args, bool) {
+	return readGETXATTR4args(&b)
+}
+
+func (m GETXATTR4args) GxaName() Xattrkey4 {
+	return Xattrkey4(m[0:])
+}
+
+// GETXATTR4argsWriter writes a GETXATTR4args:
+//
+//	gxa_name
+type GETXATTR4argsWriter struct {
+	buf []byte
+	off int
+}
+
+func StartGETXATTR4args(buf []byte) GETXATTR4argsWriter {
+	off := len(buf)
+	return GETXATTR4argsWriter{buf: buf, off: off}
+}
+
+func (w *GETXATTR4argsWriter) StartGxaName() Xattrkey4Writer {
+	child := StartXattrkey4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *GETXATTR4argsWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *GETXATTR4argsWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// GETXATTR4res — union on nfsstat4 (external discriminant)
+// -------------------------------------------------------
+
+type GETXATTR4res struct {
+	b    []byte
+	disc uint32
+}
+
+func readGETXATTR4res(b *[]byte, nfsstat4 uint32) (GETXATTR4res, bool) {
+	switch nfsstat4 {
+	case NFS4_OK:
+		r, ok := readXattrvalue4(b)
+		if !ok {
+			return GETXATTR4res{}, false
+		}
+		return GETXATTR4res{b: []byte(r), disc: nfsstat4}, true
+	default:
+		return GETXATTR4res{b: (*b)[:0], disc: nfsstat4}, true
+	}
+}
+
+func (m GETXATTR4res) AsXattrvalue4() Xattrvalue4 {
+	if m.disc != NFS4_OK {
+		panic("wrong union discriminant")
+	}
+	return Xattrvalue4(m.b)
+}
+
+// -------------------------------------------------------
+// SETXATTR4args — variable: sxa_option(4) + sxa_key + sxa_value
+// -------------------------------------------------------
+
+type SETXATTR4args struct {
+	data []byte
+	off1 int // byte offset within data where sxa_value starts
+}
+
+func readSETXATTR4args(b *[]byte) (SETXATTR4args, bool) {
+	if len(*b) < 4 {
+		return SETXATTR4args{}, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[4:]
+	if _, ok := readXattrkey4(b); !ok {
+		return SETXATTR4args{}, false
+	}
+	off1 := startLen - len(*b)
+	if _, ok := readXattrvalue4(b); !ok {
+		return SETXATTR4args{}, false
+	}
+	total := startLen - len(*b)
+	return SETXATTR4args{data: start[:total], off1: off1}, true
+}
+
+func ReadSETXATTR4args(b []byte) (SETXATTR4args, bool) {
+	return readSETXATTR4args(&b)
+}
+
+func (m SETXATTR4args) SxaOption() uint32 {
+	return binary.BigEndian.Uint32(m.data[0:4])
+}
+
+func (m SETXATTR4args) SxaKey() Xattrkey4 {
+	return Xattrkey4(m.data[4:m.off1])
+}
+
+func (m SETXATTR4args) SxaValue() Xattrvalue4 {
+	return Xattrvalue4(m.data[m.off1:])
+}
+
+// SETXATTR4argsWriter writes a SETXATTR4args:
+//
+//	sxa_option + sxa_key + sxa_value
+type SETXATTR4argsWriter struct {
+	buf    []byte
+	header *[4]byte
+	phase  uint8
+}
+
+func StartSETXATTR4args(buf []byte) SETXATTR4argsWriter {
+	buf = append(buf, make([]byte, 4)...) // sxa_option(4)
+	return SETXATTR4argsWriter{buf: buf, header: (*[4]byte)(buf[len(buf)-4:])}
+}
+
+func (w *SETXATTR4argsWriter) SetSxaOption(v uint32) {
+	binary.BigEndian.PutUint32(w.header[0:4], v)
+}
+
+func (w *SETXATTR4argsWriter) StartSxaKey() Xattrkey4Writer {
+	if w.phase > 0 {
+		panic("writer fields called out of order")
+	}
+	child := StartXattrkey4(w.buf)
+	w.buf = nil
+	w.header = nil
+	return child
+}
+
+func (w *SETXATTR4argsWriter) StartSxaValue() Xattrvalue4Writer {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	child := StartXattrvalue4(w.buf)
+	w.buf = nil
+	w.header = nil
+	return child
+}
+
+func (w *SETXATTR4argsWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *SETXATTR4argsWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// SETXATTR4res — union on nfsstat4 (external discriminant)
+// -------------------------------------------------------
+
+type SETXATTR4res struct {
+	b    []byte
+	disc uint32
+}
+
+func readSETXATTR4res(b *[]byte, nfsstat4 uint32) (SETXATTR4res, bool) {
+	switch nfsstat4 {
+	case NFS4_OK:
+		r, ok := readChangeInfo4(b)
+		if !ok {
+			return SETXATTR4res{}, false
+		}
+		return SETXATTR4res{b: r.m[:], disc: nfsstat4}, true
+	default:
+		return SETXATTR4res{b: (*b)[:0], disc: nfsstat4}, true
+	}
+}
+
+func (m SETXATTR4res) AsChangeInfo4() ChangeInfo4 {
+	if m.disc != NFS4_OK {
+		panic("wrong union discriminant")
+	}
+	return ChangeInfo4{m: (*[changeInfo4Size]byte)(m.b)}
+}
+
+// -------------------------------------------------------
+// LISTXATTRS4args — fixed 12 bytes:
+//   lxa_cookie(8, beu64) + lxa_maxcount(4, beu32)
+// -------------------------------------------------------
+
+type LISTXATTRS4args struct {
+	m *[lISTXATTRS4argsSize]byte
+}
+
+const lISTXATTRS4argsSize = 12
+
+func readLISTXATTRS4args(b *[]byte) (LISTXATTRS4args, bool) {
+	if len(*b) < lISTXATTRS4argsSize {
+		return LISTXATTRS4args{}, false
+	}
+	result := LISTXATTRS4args{m: (*[lISTXATTRS4argsSize]byte)(*b)}
+	*b = (*b)[lISTXATTRS4argsSize:]
+	return result, true
+}
+
+func ReadLISTXATTRS4args(b []byte) (LISTXATTRS4args, bool) {
+	return readLISTXATTRS4args(&b)
+}
+
+func StartLISTXATTRS4args(buf []byte) ([]byte, LISTXATTRS4args) {
+	buf = append(buf, make([]byte, lISTXATTRS4argsSize)...)
+	return buf, LISTXATTRS4args{m: (*[lISTXATTRS4argsSize]byte)(buf[len(buf)-lISTXATTRS4argsSize:])}
+}
+
+func (m LISTXATTRS4args) LxaCookie() uint64 {
+	return binary.BigEndian.Uint64(m.m[0:8])
+}
+
+func (m LISTXATTRS4args) LxaMaxcount() uint32 {
+	return binary.BigEndian.Uint32(m.m[8:12])
+}
+
+func (m LISTXATTRS4args) SetLxaCookie(v uint64) {
+	binary.BigEndian.PutUint64(m.m[0:8], v)
+}
+
+func (m LISTXATTRS4args) SetLxaMaxcount(v uint32) {
+	binary.BigEndian.PutUint32(m.m[8:12], v)
+}
+
+// -------------------------------------------------------
+// LISTXATTRS4resok — variable:
+//   lxr_cookie(8) + lxr_names_count(4) + xattrkey4 lxr_names[lxr_names_count] + lxr_eof(4)
+// -------------------------------------------------------
+
+type LISTXATTRS4resok struct {
+	data []byte
+	off1 int // byte offset within data where lxr_eof starts
+}
+
+func readLISTXATTRS4resok(b *[]byte) (LISTXATTRS4resok, bool) {
+	if len(*b) < 12 {
+		return LISTXATTRS4resok{}, false
+	}
+	start := *b
+	startLen := len(start)
+	c_lxr_names_count := int(binary.BigEndian.Uint32((*b)[8:12]))
+	*b = (*b)[12:]
+	for i := 0; i < c_lxr_names_count; i++ {
+		if _, ok := readXattrkey4(b); !ok {
+			return LISTXATTRS4resok{}, false
+		}
+	}
+	off1 := startLen - len(*b)
+	if len(*b) < 4 {
+		return LISTXATTRS4resok{}, false
+	}
+	*b = (*b)[4:]
+	total := startLen - len(*b)
+	return LISTXATTRS4resok{data: start[:total], off1: off1}, true
+}
+
+func ReadLISTXATTRS4resok(b []byte) (LISTXATTRS4resok, bool) {
+	return readLISTXATTRS4resok(&b)
+}
+
+func (m LISTXATTRS4resok) LxrCookie() uint64 {
+	return binary.BigEndian.Uint64(m.data[0:8])
+}
+
+func (m LISTXATTRS4resok) LxrNames() Xattrkey4Iter {
+	lxr_names_count := int(binary.BigEndian.Uint32(m.data[8:12]))
+	return Xattrkey4Iter{b: m.data[12:], count: lxr_names_count}
+}
+
+func (m LISTXATTRS4resok) LxrNamesCount() uint32 {
+	return binary.BigEndian.Uint32(m.data[8:12])
+}
+
+func (m LISTXATTRS4resok) LxrEof() uint32 {
+	o := m.off1
+	return binary.BigEndian.Uint32(m.data[o : o+4])
+}
+
+// Xattrkey4Iter iterates over variable-size Xattrkey4 entries.
+type Xattrkey4Iter struct {
+	b      []byte
+	count  int
+	i      int
+	curLen int
+}
+
+func (it *Xattrkey4Iter) Next() bool {
+	b := it.b
+	if it.curLen > 0 {
+		if len(b) < it.curLen {
+			return false
+		}
+		b = b[it.curLen:]
+		it.curLen = 0
+	}
+	if it.i >= it.count {
+		it.b = b
+		return false
+	}
+	if len(b) < 4 {
+		return false
+	}
+	n := int(binary.BigEndian.Uint32(b[0:4]))
+	padded := (n + 3) &^ 3
+	total := 4 + padded
+	if len(b) < total {
+		return false
+	}
+	it.b = b
+	it.curLen = total
+	it.i++
+	return true
+}
+
+func (it *Xattrkey4Iter) LxrName() Xattrkey4 {
+	return Xattrkey4(it.b)
+}
+
+// LISTXATTRS4resokWriter writes a LISTXATTRS4resok:
+//
+//	lxr_cookie + lxr_names_count + xattrkey4 lxr_names[lxr_names_count] + lxr_eof
+type LISTXATTRS4resokWriter struct {
+	buf           []byte
+	off           int
+	lxrNamesCount uint32
+}
+
+func StartLISTXATTRS4resok(buf []byte) LISTXATTRS4resokWriter {
+	off := len(buf)
+	buf = append(buf, make([]byte, 12)...) // lxr_cookie(8) + lxr_names_count(4)
+	return LISTXATTRS4resokWriter{buf: buf, off: off}
+}
+
+func (w *LISTXATTRS4resokWriter) SetLxrCookie(v uint64) {
+	binary.BigEndian.PutUint64((*[12]byte)(w.buf[w.off:])[0:8], v)
+}
+
+func (w *LISTXATTRS4resokWriter) SetLxrEof(v uint32) {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, v)
+}
+
+func (w *LISTXATTRS4resokWriter) AppendLxrNames() Xattrkey4Writer {
+	_ = w.buf[:1]
+	w.lxrNamesCount++
+	child := StartXattrkey4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *LISTXATTRS4resokWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *LISTXATTRS4resokWriter) Finish() []byte {
+	binary.BigEndian.PutUint32((*[12]byte)(w.buf[w.off:])[8:12], w.lxrNamesCount)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// LISTXATTRS4res — union on nfsstat4 (external discriminant)
+// -------------------------------------------------------
+
+type LISTXATTRS4res struct {
+	b    []byte
+	disc uint32
+}
+
+func readLISTXATTRS4res(b *[]byte, nfsstat4 uint32) (LISTXATTRS4res, bool) {
+	switch nfsstat4 {
+	case NFS4_OK:
+		r, ok := readLISTXATTRS4resok(b)
+		if !ok {
+			return LISTXATTRS4res{}, false
+		}
+		return LISTXATTRS4res{b: r.data, disc: nfsstat4}, true
+	default:
+		return LISTXATTRS4res{b: (*b)[:0], disc: nfsstat4}, true
+	}
+}
+
+func (m LISTXATTRS4res) AsLISTXATTRS4resok() LISTXATTRS4resok {
+	if m.disc != NFS4_OK {
+		panic("wrong union discriminant")
+	}
+	v, _ := ReadLISTXATTRS4resok(m.b)
+	return v
+}
+
+// -------------------------------------------------------
+// REMOVEXATTR4args — variable: rxa_name
+// -------------------------------------------------------
+
+type REMOVEXATTR4args []byte
+
+func readREMOVEXATTR4args(b *[]byte) (REMOVEXATTR4args, bool) {
+	start := *b
+	startLen := len(start)
+	if _, ok := readXattrkey4(b); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return REMOVEXATTR4args(start[:total]), true
+}
+
+func ReadREMOVEXATTR4args(b []byte) (REMOVEXATTR4args, bool) {
+	return readREMOVEXATTR4args(&b)
+}
+
+func (m REMOVEXATTR4args) RxaName() Xattrkey4 {
+	return Xattrkey4(m[0:])
+}
+
+// REMOVEXATTR4argsWriter writes a REMOVEXATTR4args:
+//
+//	rxa_name
+type REMOVEXATTR4argsWriter struct {
+	buf []byte
+	off int
+}
+
+func StartREMOVEXATTR4args(buf []byte) REMOVEXATTR4argsWriter {
+	off := len(buf)
+	return REMOVEXATTR4argsWriter{buf: buf, off: off}
+}
+
+func (w *REMOVEXATTR4argsWriter) StartRxaName() Xattrkey4Writer {
+	child := StartXattrkey4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *REMOVEXATTR4argsWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *REMOVEXATTR4argsWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// REMOVEXATTR4res — union on nfsstat4 (external discriminant)
+// -------------------------------------------------------
+
+type REMOVEXATTR4res struct {
+	b    []byte
+	disc uint32
+}
+
+func readREMOVEXATTR4res(b *[]byte, nfsstat4 uint32) (REMOVEXATTR4res, bool) {
+	switch nfsstat4 {
+	case NFS4_OK:
+		r, ok := readChangeInfo4(b)
+		if !ok {
+			return REMOVEXATTR4res{}, false
+		}
+		return REMOVEXATTR4res{b: r.m[:], disc: nfsstat4}, true
+	default:
+		return REMOVEXATTR4res{b: (*b)[:0], disc: nfsstat4}, true
+	}
+}
+
+func (m REMOVEXATTR4res) AsChangeInfo4() ChangeInfo4 {
+	if m.disc != NFS4_OK {
+		panic("wrong union discriminant")
+	}
+	return ChangeInfo4{m: (*[changeInfo4Size]byte)(m.b)}
+}
+
+// -------------------------------------------------------
+// NfsArgop4OPSECINFONONAME — fixed 4 bytes: value(4, beu32)
+// -------------------------------------------------------
+
+type NfsArgop4OPSECINFONONAME struct {
+	m *[nfsArgop4OPSECINFONONAMESize]byte
+}
+
+const nfsArgop4OPSECINFONONAMESize = 4
+
+func readNfsArgop4OPSECINFONONAME(b *[]byte) (NfsArgop4OPSECINFONONAME, bool) {
+	if len(*b) < nfsArgop4OPSECINFONONAMESize {
+		return NfsArgop4OPSECINFONONAME{}, false
+	}
+	result := NfsArgop4OPSECINFONONAME{m: (*[nfsArgop4OPSECINFONONAMESize]byte)(*b)}
+	*b = (*b)[nfsArgop4OPSECINFONONAMESize:]
+	return result, true
+}
+
+func ReadNfsArgop4OPSECINFONONAME(b []byte) (NfsArgop4OPSECINFONONAME, bool) {
+	return readNfsArgop4OPSECINFONONAME(&b)
+}
+
+func StartNfsArgop4OPSECINFONONAME(buf []byte) ([]byte, NfsArgop4OPSECINFONONAME) {
+	buf = append(buf, make([]byte, nfsArgop4OPSECINFONONAMESize)...)
+	return buf, NfsArgop4OPSECINFONONAME{m: (*[nfsArgop4OPSECINFONONAMESize]byte)(buf[len(buf)-nfsArgop4OPSECINFONONAMESize:])}
+}
+
+func (m NfsArgop4OPSECINFONONAME) Value() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m NfsArgop4OPSECINFONONAME) SetValue(v uint32) {
 	binary.BigEndian.PutUint32(m.m[0:4], v)
 }
 
@@ -8053,6 +21987,222 @@ func readNfsArgop4(b *[]byte, nfsOpnum4 uint32) (NfsArgop4, bool) {
 		return NfsArgop4{b: []byte(r), disc: nfsOpnum4}, true
 	case OP_RELEASE_LOCKOWNER:
 		r, ok := readRELEASELOCKOWNER4args(b)
+		if !ok {
+			return NfsArgop4{}, false
+		}
+		return NfsArgop4{b: []byte(r), disc: nfsOpnum4}, true
+	case OP_BACKCHANNEL_CTL:
+		r, ok := readBACKCHANNELCTL4args(b)
+		if !ok {
+			return NfsArgop4{}, false
+		}
+		return NfsArgop4{b: []byte(r), disc: nfsOpnum4}, true
+	case OP_BIND_CONN_TO_SESSION:
+		r, ok := readBINDCONNTOSESSION4args(b)
+		if !ok {
+			return NfsArgop4{}, false
+		}
+		return NfsArgop4{b: r.m[:], disc: nfsOpnum4}, true
+	case OP_EXCHANGE_ID:
+		r, ok := readEXCHANGEID4args(b)
+		if !ok {
+			return NfsArgop4{}, false
+		}
+		return NfsArgop4{b: r.data, disc: nfsOpnum4}, true
+	case OP_CREATE_SESSION:
+		r, ok := readCREATESESSION4args(b)
+		if !ok {
+			return NfsArgop4{}, false
+		}
+		return NfsArgop4{b: r.data, disc: nfsOpnum4}, true
+	case OP_DESTROY_SESSION:
+		r, ok := readDESTROYSESSION4args(b)
+		if !ok {
+			return NfsArgop4{}, false
+		}
+		return NfsArgop4{b: r.m[:], disc: nfsOpnum4}, true
+	case OP_FREE_STATEID:
+		r, ok := readFREESTATEID4args(b)
+		if !ok {
+			return NfsArgop4{}, false
+		}
+		return NfsArgop4{b: r.m[:], disc: nfsOpnum4}, true
+	case OP_GET_DIR_DELEGATION:
+		r, ok := readGETDIRDELEGATION4args(b)
+		if !ok {
+			return NfsArgop4{}, false
+		}
+		return NfsArgop4{b: r.data, disc: nfsOpnum4}, true
+	case OP_GETDEVICEINFO:
+		r, ok := readGETDEVICEINFO4args(b)
+		if !ok {
+			return NfsArgop4{}, false
+		}
+		return NfsArgop4{b: []byte(r), disc: nfsOpnum4}, true
+	case OP_GETDEVICELIST:
+		r, ok := readGETDEVICELIST4args(b)
+		if !ok {
+			return NfsArgop4{}, false
+		}
+		return NfsArgop4{b: r.m[:], disc: nfsOpnum4}, true
+	case OP_LAYOUTCOMMIT:
+		r, ok := readLAYOUTCOMMIT4args(b)
+		if !ok {
+			return NfsArgop4{}, false
+		}
+		return NfsArgop4{b: r.data, disc: nfsOpnum4}, true
+	case OP_LAYOUTGET:
+		r, ok := readLAYOUTGET4args(b)
+		if !ok {
+			return NfsArgop4{}, false
+		}
+		return NfsArgop4{b: r.m[:], disc: nfsOpnum4}, true
+	case OP_LAYOUTRETURN:
+		r, ok := readLAYOUTRETURN4args(b)
+		if !ok {
+			return NfsArgop4{}, false
+		}
+		return NfsArgop4{b: []byte(r), disc: nfsOpnum4}, true
+	case OP_SECINFO_NO_NAME:
+		r, ok := readNfsArgop4OPSECINFONONAME(b)
+		if !ok {
+			return NfsArgop4{}, false
+		}
+		return NfsArgop4{b: r.m[:], disc: nfsOpnum4}, true
+	case OP_SEQUENCE:
+		r, ok := readSEQUENCE4args(b)
+		if !ok {
+			return NfsArgop4{}, false
+		}
+		return NfsArgop4{b: r.m[:], disc: nfsOpnum4}, true
+	case OP_SET_SSV:
+		r, ok := readSETSSV4args(b)
+		if !ok {
+			return NfsArgop4{}, false
+		}
+		return NfsArgop4{b: r.data, disc: nfsOpnum4}, true
+	case OP_TEST_STATEID:
+		r, ok := readTESTSTATEID4args(b)
+		if !ok {
+			return NfsArgop4{}, false
+		}
+		return NfsArgop4{b: []byte(r), disc: nfsOpnum4}, true
+	case OP_WANT_DELEGATION:
+		r, ok := readWANTDELEGATION4args(b)
+		if !ok {
+			return NfsArgop4{}, false
+		}
+		return NfsArgop4{b: []byte(r), disc: nfsOpnum4}, true
+	case OP_DESTROY_CLIENTID:
+		r, ok := readDESTROYCLIENTID4args(b)
+		if !ok {
+			return NfsArgop4{}, false
+		}
+		return NfsArgop4{b: r.m[:], disc: nfsOpnum4}, true
+	case OP_RECLAIM_COMPLETE:
+		r, ok := readRECLAIMCOMPLETE4args(b)
+		if !ok {
+			return NfsArgop4{}, false
+		}
+		return NfsArgop4{b: r.m[:], disc: nfsOpnum4}, true
+	case OP_ALLOCATE:
+		r, ok := readALLOCATE4args(b)
+		if !ok {
+			return NfsArgop4{}, false
+		}
+		return NfsArgop4{b: r.m[:], disc: nfsOpnum4}, true
+	case OP_COPY:
+		r, ok := readCOPY4args(b)
+		if !ok {
+			return NfsArgop4{}, false
+		}
+		return NfsArgop4{b: []byte(r), disc: nfsOpnum4}, true
+	case OP_COPY_NOTIFY:
+		r, ok := readCOPYNOTIFY4args(b)
+		if !ok {
+			return NfsArgop4{}, false
+		}
+		return NfsArgop4{b: []byte(r), disc: nfsOpnum4}, true
+	case OP_DEALLOCATE:
+		r, ok := readDEALLOCATE4args(b)
+		if !ok {
+			return NfsArgop4{}, false
+		}
+		return NfsArgop4{b: r.m[:], disc: nfsOpnum4}, true
+	case OP_IO_ADVISE:
+		r, ok := readIOADVISE4args(b)
+		if !ok {
+			return NfsArgop4{}, false
+		}
+		return NfsArgop4{b: []byte(r), disc: nfsOpnum4}, true
+	case OP_LAYOUTERROR:
+		r, ok := readLAYOUTERROR4args(b)
+		if !ok {
+			return NfsArgop4{}, false
+		}
+		return NfsArgop4{b: []byte(r), disc: nfsOpnum4}, true
+	case OP_LAYOUTSTATS:
+		r, ok := readLAYOUTSTATS4args(b)
+		if !ok {
+			return NfsArgop4{}, false
+		}
+		return NfsArgop4{b: []byte(r), disc: nfsOpnum4}, true
+	case OP_OFFLOAD_CANCEL:
+		r, ok := readOFFLOADCANCEL4args(b)
+		if !ok {
+			return NfsArgop4{}, false
+		}
+		return NfsArgop4{b: r.m[:], disc: nfsOpnum4}, true
+	case OP_OFFLOAD_STATUS:
+		r, ok := readOFFLOADSTATUS4args(b)
+		if !ok {
+			return NfsArgop4{}, false
+		}
+		return NfsArgop4{b: r.m[:], disc: nfsOpnum4}, true
+	case OP_READ_PLUS:
+		r, ok := readREADPLUS4args(b)
+		if !ok {
+			return NfsArgop4{}, false
+		}
+		return NfsArgop4{b: r.m[:], disc: nfsOpnum4}, true
+	case OP_SEEK:
+		r, ok := readSEEK4args(b)
+		if !ok {
+			return NfsArgop4{}, false
+		}
+		return NfsArgop4{b: r.m[:], disc: nfsOpnum4}, true
+	case OP_WRITE_SAME:
+		r, ok := readWRITESAME4args(b)
+		if !ok {
+			return NfsArgop4{}, false
+		}
+		return NfsArgop4{b: []byte(r), disc: nfsOpnum4}, true
+	case OP_CLONE:
+		r, ok := readCLONE4args(b)
+		if !ok {
+			return NfsArgop4{}, false
+		}
+		return NfsArgop4{b: r.m[:], disc: nfsOpnum4}, true
+	case OP_GETXATTR:
+		r, ok := readGETXATTR4args(b)
+		if !ok {
+			return NfsArgop4{}, false
+		}
+		return NfsArgop4{b: []byte(r), disc: nfsOpnum4}, true
+	case OP_SETXATTR:
+		r, ok := readSETXATTR4args(b)
+		if !ok {
+			return NfsArgop4{}, false
+		}
+		return NfsArgop4{b: r.data, disc: nfsOpnum4}, true
+	case OP_LISTXATTRS:
+		r, ok := readLISTXATTRS4args(b)
+		if !ok {
+			return NfsArgop4{}, false
+		}
+		return NfsArgop4{b: r.m[:], disc: nfsOpnum4}, true
+	case OP_REMOVEXATTR:
+		r, ok := readREMOVEXATTR4args(b)
 		if !ok {
 			return NfsArgop4{}, false
 		}
@@ -8276,6 +22426,264 @@ func (m NfsArgop4) AsRELEASELOCKOWNER4args() RELEASELOCKOWNER4args {
 		panic("wrong union discriminant")
 	}
 	return RELEASELOCKOWNER4args(m.b)
+}
+
+func (m NfsArgop4) AsBACKCHANNELCTL4args() BACKCHANNELCTL4args {
+	if m.disc != OP_BACKCHANNEL_CTL {
+		panic("wrong union discriminant")
+	}
+	return BACKCHANNELCTL4args(m.b)
+}
+
+func (m NfsArgop4) AsBINDCONNTOSESSION4args() BINDCONNTOSESSION4args {
+	if m.disc != OP_BIND_CONN_TO_SESSION {
+		panic("wrong union discriminant")
+	}
+	return BINDCONNTOSESSION4args{m: (*[bINDCONNTOSESSION4argsSize]byte)(m.b)}
+}
+
+func (m NfsArgop4) AsEXCHANGEID4args() EXCHANGEID4args {
+	if m.disc != OP_EXCHANGE_ID {
+		panic("wrong union discriminant")
+	}
+	v, _ := ReadEXCHANGEID4args(m.b)
+	return v
+}
+
+func (m NfsArgop4) AsCREATESESSION4args() CREATESESSION4args {
+	if m.disc != OP_CREATE_SESSION {
+		panic("wrong union discriminant")
+	}
+	v, _ := ReadCREATESESSION4args(m.b)
+	return v
+}
+
+func (m NfsArgop4) AsDESTROYSESSION4args() DESTROYSESSION4args {
+	if m.disc != OP_DESTROY_SESSION {
+		panic("wrong union discriminant")
+	}
+	return DESTROYSESSION4args{m: (*[dESTROYSESSION4argsSize]byte)(m.b)}
+}
+
+func (m NfsArgop4) AsFREESTATEID4args() FREESTATEID4args {
+	if m.disc != OP_FREE_STATEID {
+		panic("wrong union discriminant")
+	}
+	return FREESTATEID4args{m: (*[fREESTATEID4argsSize]byte)(m.b)}
+}
+
+func (m NfsArgop4) AsGETDIRDELEGATION4args() GETDIRDELEGATION4args {
+	if m.disc != OP_GET_DIR_DELEGATION {
+		panic("wrong union discriminant")
+	}
+	v, _ := ReadGETDIRDELEGATION4args(m.b)
+	return v
+}
+
+func (m NfsArgop4) AsGETDEVICEINFO4args() GETDEVICEINFO4args {
+	if m.disc != OP_GETDEVICEINFO {
+		panic("wrong union discriminant")
+	}
+	return GETDEVICEINFO4args(m.b)
+}
+
+func (m NfsArgop4) AsGETDEVICELIST4args() GETDEVICELIST4args {
+	if m.disc != OP_GETDEVICELIST {
+		panic("wrong union discriminant")
+	}
+	return GETDEVICELIST4args{m: (*[gETDEVICELIST4argsSize]byte)(m.b)}
+}
+
+func (m NfsArgop4) AsLAYOUTCOMMIT4args() LAYOUTCOMMIT4args {
+	if m.disc != OP_LAYOUTCOMMIT {
+		panic("wrong union discriminant")
+	}
+	v, _ := ReadLAYOUTCOMMIT4args(m.b)
+	return v
+}
+
+func (m NfsArgop4) AsLAYOUTGET4args() LAYOUTGET4args {
+	if m.disc != OP_LAYOUTGET {
+		panic("wrong union discriminant")
+	}
+	return LAYOUTGET4args{m: (*[lAYOUTGET4argsSize]byte)(m.b)}
+}
+
+func (m NfsArgop4) AsLAYOUTRETURN4args() LAYOUTRETURN4args {
+	if m.disc != OP_LAYOUTRETURN {
+		panic("wrong union discriminant")
+	}
+	return LAYOUTRETURN4args(m.b)
+}
+
+func (m NfsArgop4) AsNfsArgop4OPSECINFONONAME() NfsArgop4OPSECINFONONAME {
+	if m.disc != OP_SECINFO_NO_NAME {
+		panic("wrong union discriminant")
+	}
+	return NfsArgop4OPSECINFONONAME{m: (*[nfsArgop4OPSECINFONONAMESize]byte)(m.b)}
+}
+
+func (m NfsArgop4) AsSEQUENCE4args() SEQUENCE4args {
+	if m.disc != OP_SEQUENCE {
+		panic("wrong union discriminant")
+	}
+	return SEQUENCE4args{m: (*[sEQUENCE4argsSize]byte)(m.b)}
+}
+
+func (m NfsArgop4) AsSETSSV4args() SETSSV4args {
+	if m.disc != OP_SET_SSV {
+		panic("wrong union discriminant")
+	}
+	v, _ := ReadSETSSV4args(m.b)
+	return v
+}
+
+func (m NfsArgop4) AsTESTSTATEID4args() TESTSTATEID4args {
+	if m.disc != OP_TEST_STATEID {
+		panic("wrong union discriminant")
+	}
+	return TESTSTATEID4args(m.b)
+}
+
+func (m NfsArgop4) AsWANTDELEGATION4args() WANTDELEGATION4args {
+	if m.disc != OP_WANT_DELEGATION {
+		panic("wrong union discriminant")
+	}
+	return WANTDELEGATION4args(m.b)
+}
+
+func (m NfsArgop4) AsDESTROYCLIENTID4args() DESTROYCLIENTID4args {
+	if m.disc != OP_DESTROY_CLIENTID {
+		panic("wrong union discriminant")
+	}
+	return DESTROYCLIENTID4args{m: (*[dESTROYCLIENTID4argsSize]byte)(m.b)}
+}
+
+func (m NfsArgop4) AsRECLAIMCOMPLETE4args() RECLAIMCOMPLETE4args {
+	if m.disc != OP_RECLAIM_COMPLETE {
+		panic("wrong union discriminant")
+	}
+	return RECLAIMCOMPLETE4args{m: (*[rECLAIMCOMPLETE4argsSize]byte)(m.b)}
+}
+
+func (m NfsArgop4) AsALLOCATE4args() ALLOCATE4args {
+	if m.disc != OP_ALLOCATE {
+		panic("wrong union discriminant")
+	}
+	return ALLOCATE4args{m: (*[aLLOCATE4argsSize]byte)(m.b)}
+}
+
+func (m NfsArgop4) AsCOPY4args() COPY4args {
+	if m.disc != OP_COPY {
+		panic("wrong union discriminant")
+	}
+	return COPY4args(m.b)
+}
+
+func (m NfsArgop4) AsCOPYNOTIFY4args() COPYNOTIFY4args {
+	if m.disc != OP_COPY_NOTIFY {
+		panic("wrong union discriminant")
+	}
+	return COPYNOTIFY4args(m.b)
+}
+
+func (m NfsArgop4) AsDEALLOCATE4args() DEALLOCATE4args {
+	if m.disc != OP_DEALLOCATE {
+		panic("wrong union discriminant")
+	}
+	return DEALLOCATE4args{m: (*[dEALLOCATE4argsSize]byte)(m.b)}
+}
+
+func (m NfsArgop4) AsIOADVISE4args() IOADVISE4args {
+	if m.disc != OP_IO_ADVISE {
+		panic("wrong union discriminant")
+	}
+	return IOADVISE4args(m.b)
+}
+
+func (m NfsArgop4) AsLAYOUTERROR4args() LAYOUTERROR4args {
+	if m.disc != OP_LAYOUTERROR {
+		panic("wrong union discriminant")
+	}
+	return LAYOUTERROR4args(m.b)
+}
+
+func (m NfsArgop4) AsLAYOUTSTATS4args() LAYOUTSTATS4args {
+	if m.disc != OP_LAYOUTSTATS {
+		panic("wrong union discriminant")
+	}
+	return LAYOUTSTATS4args(m.b)
+}
+
+func (m NfsArgop4) AsOFFLOADCANCEL4args() OFFLOADCANCEL4args {
+	if m.disc != OP_OFFLOAD_CANCEL {
+		panic("wrong union discriminant")
+	}
+	return OFFLOADCANCEL4args{m: (*[oFFLOADCANCEL4argsSize]byte)(m.b)}
+}
+
+func (m NfsArgop4) AsOFFLOADSTATUS4args() OFFLOADSTATUS4args {
+	if m.disc != OP_OFFLOAD_STATUS {
+		panic("wrong union discriminant")
+	}
+	return OFFLOADSTATUS4args{m: (*[oFFLOADSTATUS4argsSize]byte)(m.b)}
+}
+
+func (m NfsArgop4) AsREADPLUS4args() READPLUS4args {
+	if m.disc != OP_READ_PLUS {
+		panic("wrong union discriminant")
+	}
+	return READPLUS4args{m: (*[rEADPLUS4argsSize]byte)(m.b)}
+}
+
+func (m NfsArgop4) AsSEEK4args() SEEK4args {
+	if m.disc != OP_SEEK {
+		panic("wrong union discriminant")
+	}
+	return SEEK4args{m: (*[sEEK4argsSize]byte)(m.b)}
+}
+
+func (m NfsArgop4) AsWRITESAME4args() WRITESAME4args {
+	if m.disc != OP_WRITE_SAME {
+		panic("wrong union discriminant")
+	}
+	return WRITESAME4args(m.b)
+}
+
+func (m NfsArgop4) AsCLONE4args() CLONE4args {
+	if m.disc != OP_CLONE {
+		panic("wrong union discriminant")
+	}
+	return CLONE4args{m: (*[cLONE4argsSize]byte)(m.b)}
+}
+
+func (m NfsArgop4) AsGETXATTR4args() GETXATTR4args {
+	if m.disc != OP_GETXATTR {
+		panic("wrong union discriminant")
+	}
+	return GETXATTR4args(m.b)
+}
+
+func (m NfsArgop4) AsSETXATTR4args() SETXATTR4args {
+	if m.disc != OP_SETXATTR {
+		panic("wrong union discriminant")
+	}
+	v, _ := ReadSETXATTR4args(m.b)
+	return v
+}
+
+func (m NfsArgop4) AsLISTXATTRS4args() LISTXATTRS4args {
+	if m.disc != OP_LISTXATTRS {
+		panic("wrong union discriminant")
+	}
+	return LISTXATTRS4args{m: (*[lISTXATTRS4argsSize]byte)(m.b)}
+}
+
+func (m NfsArgop4) AsREMOVEXATTR4args() REMOVEXATTR4args {
+	if m.disc != OP_REMOVEXATTR {
+		panic("wrong union discriminant")
+	}
+	return REMOVEXATTR4args(m.b)
 }
 
 // -------------------------------------------------------
@@ -9525,9 +23933,9 @@ func (w *SETCLIENTID4resEntryWriter) SetValue_Nfs4Ok() SETCLIENTID4resok {
 	return SETCLIENTID4resok{m: (*[sETCLIENTID4resokSize]byte)(p[4:])}
 }
 
-func (w *SETCLIENTID4resEntryWriter) SetValue_Nfs4errClidInuse() Clientaddr4Writer {
+func (w *SETCLIENTID4resEntryWriter) SetValue_Nfs4errClidInuse() Netaddr4Writer {
 	w.buf = binary.BigEndian.AppendUint32(w.buf, NFS4ERR_CLID_INUSE)
-	child := StartClientaddr4(w.buf)
+	child := StartNetaddr4(w.buf)
 	w.buf = nil
 	return child
 }
@@ -9601,6 +24009,1560 @@ func (w *WRITE4resEntryWriter) SetValue_Default(nfsstat4 uint32) {
 }
 
 func (w *WRITE4resEntryWriter) Finish() []byte {
+	return w.buf
+}
+
+// -------------------------------------------------------
+// BINDCONNTOSESSION4resEntry — variable:
+//   disc(4) + BIND_CONN_TO_SESSION4res value
+// -------------------------------------------------------
+
+type BINDCONNTOSESSION4resEntry []byte
+
+func readBINDCONNTOSESSION4resEntry(b *[]byte) (BINDCONNTOSESSION4resEntry, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[4:]
+	if _, ok := readBINDCONNTOSESSION4res(b, binary.BigEndian.Uint32(start[0:4])); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return BINDCONNTOSESSION4resEntry(start[:total]), true
+}
+
+func ReadBINDCONNTOSESSION4resEntry(b []byte) (BINDCONNTOSESSION4resEntry, bool) {
+	return readBINDCONNTOSESSION4resEntry(&b)
+}
+
+func (m BINDCONNTOSESSION4resEntry) Disc() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m BINDCONNTOSESSION4resEntry) Value() BINDCONNTOSESSION4res {
+	return BINDCONNTOSESSION4res{b: m[4:], disc: binary.BigEndian.Uint32(m[0:4])}
+}
+
+// BINDCONNTOSESSION4resEntryWriter writes a BIND_CONN_TO_SESSION4res_entry:
+//
+//	disc + value(disc)
+type BINDCONNTOSESSION4resEntryWriter struct {
+	buf []byte
+	off int
+}
+
+func StartBINDCONNTOSESSION4resEntry(buf []byte) BINDCONNTOSESSION4resEntryWriter {
+	return BINDCONNTOSESSION4resEntryWriter{buf: buf, off: len(buf)}
+}
+
+func (w *BINDCONNTOSESSION4resEntryWriter) SetValue_Nfs4Ok() BINDCONNTOSESSION4resok {
+	w.buf = append(w.buf, make([]byte, 4+bINDCONNTOSESSION4resokSize)...)
+	p := (*[4 + bINDCONNTOSESSION4resokSize]byte)(w.buf[len(w.buf)-4-bINDCONNTOSESSION4resokSize:])
+	binary.BigEndian.PutUint32(p[:4], NFS4_OK)
+	return BINDCONNTOSESSION4resok{m: (*[bINDCONNTOSESSION4resokSize]byte)(p[4:])}
+}
+
+func (w *BINDCONNTOSESSION4resEntryWriter) SetValue_Default(nfsstat4 uint32) {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, nfsstat4)
+}
+
+func (w *BINDCONNTOSESSION4resEntryWriter) Finish() []byte {
+	return w.buf
+}
+
+// -------------------------------------------------------
+// EXCHANGEID4resEntry — variable: disc(4) + EXCHANGE_ID4res value
+// -------------------------------------------------------
+
+type EXCHANGEID4resEntry []byte
+
+func readEXCHANGEID4resEntry(b *[]byte) (EXCHANGEID4resEntry, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[4:]
+	if _, ok := readEXCHANGEID4res(b, binary.BigEndian.Uint32(start[0:4])); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return EXCHANGEID4resEntry(start[:total]), true
+}
+
+func ReadEXCHANGEID4resEntry(b []byte) (EXCHANGEID4resEntry, bool) {
+	return readEXCHANGEID4resEntry(&b)
+}
+
+func (m EXCHANGEID4resEntry) Disc() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m EXCHANGEID4resEntry) Value() EXCHANGEID4res {
+	return EXCHANGEID4res{b: m[4:], disc: binary.BigEndian.Uint32(m[0:4])}
+}
+
+// EXCHANGEID4resEntryWriter writes a EXCHANGE_ID4res_entry:
+//
+//	disc + value(disc)
+type EXCHANGEID4resEntryWriter struct {
+	buf []byte
+	off int
+}
+
+func StartEXCHANGEID4resEntry(buf []byte) EXCHANGEID4resEntryWriter {
+	return EXCHANGEID4resEntryWriter{buf: buf, off: len(buf)}
+}
+
+func (w *EXCHANGEID4resEntryWriter) SetValue_Nfs4Ok() EXCHANGEID4resokWriter {
+	w.buf = append(w.buf, make([]byte, 4+20)...)
+	off := len(w.buf) - 4 - 20
+	binary.BigEndian.PutUint32((*[4 + 20]byte)(w.buf[off:])[:4], NFS4_OK)
+	buf := w.buf
+	w.buf = nil
+	return EXCHANGEID4resokWriter{buf: buf, off: off + 4}
+}
+
+func (w *EXCHANGEID4resEntryWriter) SetValue_Default(nfsstat4 uint32) {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, nfsstat4)
+}
+
+func (w *EXCHANGEID4resEntryWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *EXCHANGEID4resEntryWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// CREATESESSION4resEntry — variable: disc(4) + CREATE_SESSION4res value
+// -------------------------------------------------------
+
+type CREATESESSION4resEntry []byte
+
+func readCREATESESSION4resEntry(b *[]byte) (CREATESESSION4resEntry, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[4:]
+	if _, ok := readCREATESESSION4res(b, binary.BigEndian.Uint32(start[0:4])); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return CREATESESSION4resEntry(start[:total]), true
+}
+
+func ReadCREATESESSION4resEntry(b []byte) (CREATESESSION4resEntry, bool) {
+	return readCREATESESSION4resEntry(&b)
+}
+
+func (m CREATESESSION4resEntry) Disc() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m CREATESESSION4resEntry) Value() CREATESESSION4res {
+	return CREATESESSION4res{b: m[4:], disc: binary.BigEndian.Uint32(m[0:4])}
+}
+
+// CREATESESSION4resEntryWriter writes a CREATE_SESSION4res_entry:
+//
+//	disc + value(disc)
+type CREATESESSION4resEntryWriter struct {
+	buf []byte
+	off int
+}
+
+func StartCREATESESSION4resEntry(buf []byte) CREATESESSION4resEntryWriter {
+	return CREATESESSION4resEntryWriter{buf: buf, off: len(buf)}
+}
+
+func (w *CREATESESSION4resEntryWriter) SetValue_Nfs4Ok() CREATESESSION4resokWriter {
+	w.buf = append(w.buf, make([]byte, 4+24)...)
+	off := len(w.buf) - 4 - 24
+	binary.BigEndian.PutUint32((*[4 + 24]byte)(w.buf[off:])[:4], NFS4_OK)
+	buf := w.buf
+	w.buf = nil
+	return CREATESESSION4resokWriter{buf: buf, header: (*[24]byte)(buf[off+4:])}
+}
+
+func (w *CREATESESSION4resEntryWriter) SetValue_Default(nfsstat4 uint32) {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, nfsstat4)
+}
+
+func (w *CREATESESSION4resEntryWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *CREATESESSION4resEntryWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// GETDIRDELEGATION4resEntry — variable:
+//   disc(4) + GET_DIR_DELEGATION4res value
+// -------------------------------------------------------
+
+type GETDIRDELEGATION4resEntry []byte
+
+func readGETDIRDELEGATION4resEntry(b *[]byte) (GETDIRDELEGATION4resEntry, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[4:]
+	if _, ok := readGETDIRDELEGATION4res(b, binary.BigEndian.Uint32(start[0:4])); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return GETDIRDELEGATION4resEntry(start[:total]), true
+}
+
+func ReadGETDIRDELEGATION4resEntry(b []byte) (GETDIRDELEGATION4resEntry, bool) {
+	return readGETDIRDELEGATION4resEntry(&b)
+}
+
+func (m GETDIRDELEGATION4resEntry) Disc() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m GETDIRDELEGATION4resEntry) Value() GETDIRDELEGATION4res {
+	return GETDIRDELEGATION4res{b: m[4:], disc: binary.BigEndian.Uint32(m[0:4])}
+}
+
+// GETDIRDELEGATION4resEntryWriter writes a GET_DIR_DELEGATION4res_entry:
+//
+//	disc + value(disc)
+type GETDIRDELEGATION4resEntryWriter struct {
+	buf []byte
+	off int
+}
+
+func StartGETDIRDELEGATION4resEntry(buf []byte) GETDIRDELEGATION4resEntryWriter {
+	return GETDIRDELEGATION4resEntryWriter{buf: buf, off: len(buf)}
+}
+
+func (w *GETDIRDELEGATION4resEntryWriter) SetValue_Nfs4Ok() GETDIRDELEGATION4resNonFatalEntryWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, NFS4_OK)
+	child := StartGETDIRDELEGATION4resNonFatalEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *GETDIRDELEGATION4resEntryWriter) SetValue_Default(nfsstat4 uint32) {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, nfsstat4)
+}
+
+func (w *GETDIRDELEGATION4resEntryWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *GETDIRDELEGATION4resEntryWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// GETDEVICEINFO4resEntry — variable: disc(4) + GETDEVICEINFO4res value
+// -------------------------------------------------------
+
+type GETDEVICEINFO4resEntry []byte
+
+func readGETDEVICEINFO4resEntry(b *[]byte) (GETDEVICEINFO4resEntry, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[4:]
+	if _, ok := readGETDEVICEINFO4res(b, binary.BigEndian.Uint32(start[0:4])); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return GETDEVICEINFO4resEntry(start[:total]), true
+}
+
+func ReadGETDEVICEINFO4resEntry(b []byte) (GETDEVICEINFO4resEntry, bool) {
+	return readGETDEVICEINFO4resEntry(&b)
+}
+
+func (m GETDEVICEINFO4resEntry) Disc() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m GETDEVICEINFO4resEntry) Value() GETDEVICEINFO4res {
+	return GETDEVICEINFO4res{b: m[4:], disc: binary.BigEndian.Uint32(m[0:4])}
+}
+
+// GETDEVICEINFO4resEntryWriter writes a GETDEVICEINFO4res_entry:
+//
+//	disc + value(disc)
+type GETDEVICEINFO4resEntryWriter struct {
+	buf []byte
+	off int
+}
+
+func StartGETDEVICEINFO4resEntry(buf []byte) GETDEVICEINFO4resEntryWriter {
+	return GETDEVICEINFO4resEntryWriter{buf: buf, off: len(buf)}
+}
+
+func (w *GETDEVICEINFO4resEntryWriter) SetValue_Nfs4Ok() GETDEVICEINFO4resokWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, NFS4_OK)
+	child := StartGETDEVICEINFO4resok(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *GETDEVICEINFO4resEntryWriter) SetValue_Nfs4errToosmall() GETDEVICEINFO4resNFS4ERRTOOSMALL {
+	w.buf = append(w.buf, make([]byte, 4+gETDEVICEINFO4resNFS4ERRTOOSMALLSize)...)
+	p := (*[4 + gETDEVICEINFO4resNFS4ERRTOOSMALLSize]byte)(w.buf[len(w.buf)-4-gETDEVICEINFO4resNFS4ERRTOOSMALLSize:])
+	binary.BigEndian.PutUint32(p[:4], NFS4ERR_TOOSMALL)
+	return GETDEVICEINFO4resNFS4ERRTOOSMALL{m: (*[gETDEVICEINFO4resNFS4ERRTOOSMALLSize]byte)(p[4:])}
+}
+
+func (w *GETDEVICEINFO4resEntryWriter) SetValue_Default(nfsstat4 uint32) {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, nfsstat4)
+}
+
+func (w *GETDEVICEINFO4resEntryWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *GETDEVICEINFO4resEntryWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// GETDEVICELIST4resEntry — variable: disc(4) + GETDEVICELIST4res value
+// -------------------------------------------------------
+
+type GETDEVICELIST4resEntry []byte
+
+func readGETDEVICELIST4resEntry(b *[]byte) (GETDEVICELIST4resEntry, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[4:]
+	if _, ok := readGETDEVICELIST4res(b, binary.BigEndian.Uint32(start[0:4])); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return GETDEVICELIST4resEntry(start[:total]), true
+}
+
+func ReadGETDEVICELIST4resEntry(b []byte) (GETDEVICELIST4resEntry, bool) {
+	return readGETDEVICELIST4resEntry(&b)
+}
+
+func (m GETDEVICELIST4resEntry) Disc() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m GETDEVICELIST4resEntry) Value() GETDEVICELIST4res {
+	return GETDEVICELIST4res{b: m[4:], disc: binary.BigEndian.Uint32(m[0:4])}
+}
+
+// GETDEVICELIST4resEntryWriter writes a GETDEVICELIST4res_entry:
+//
+//	disc + value(disc)
+type GETDEVICELIST4resEntryWriter struct {
+	buf []byte
+	off int
+}
+
+func StartGETDEVICELIST4resEntry(buf []byte) GETDEVICELIST4resEntryWriter {
+	return GETDEVICELIST4resEntryWriter{buf: buf, off: len(buf)}
+}
+
+func (w *GETDEVICELIST4resEntryWriter) SetValue_Nfs4Ok() GETDEVICELIST4resokWriter {
+	w.buf = append(w.buf, make([]byte, 4+20)...)
+	off := len(w.buf) - 4 - 20
+	binary.BigEndian.PutUint32((*[4 + 20]byte)(w.buf[off:])[:4], NFS4_OK)
+	buf := w.buf
+	w.buf = nil
+	return GETDEVICELIST4resokWriter{buf: buf, off: off + 4}
+}
+
+func (w *GETDEVICELIST4resEntryWriter) SetValue_Default(nfsstat4 uint32) {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, nfsstat4)
+}
+
+func (w *GETDEVICELIST4resEntryWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *GETDEVICELIST4resEntryWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// LAYOUTCOMMIT4resEntry — variable: disc(4) + LAYOUTCOMMIT4res value
+// -------------------------------------------------------
+
+type LAYOUTCOMMIT4resEntry []byte
+
+func readLAYOUTCOMMIT4resEntry(b *[]byte) (LAYOUTCOMMIT4resEntry, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[4:]
+	if _, ok := readLAYOUTCOMMIT4res(b, binary.BigEndian.Uint32(start[0:4])); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return LAYOUTCOMMIT4resEntry(start[:total]), true
+}
+
+func ReadLAYOUTCOMMIT4resEntry(b []byte) (LAYOUTCOMMIT4resEntry, bool) {
+	return readLAYOUTCOMMIT4resEntry(&b)
+}
+
+func (m LAYOUTCOMMIT4resEntry) Disc() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m LAYOUTCOMMIT4resEntry) Value() LAYOUTCOMMIT4res {
+	return LAYOUTCOMMIT4res{b: m[4:], disc: binary.BigEndian.Uint32(m[0:4])}
+}
+
+// LAYOUTCOMMIT4resEntryWriter writes a LAYOUTCOMMIT4res_entry:
+//
+//	disc + value(disc)
+type LAYOUTCOMMIT4resEntryWriter struct {
+	buf []byte
+	off int
+}
+
+func StartLAYOUTCOMMIT4resEntry(buf []byte) LAYOUTCOMMIT4resEntryWriter {
+	return LAYOUTCOMMIT4resEntryWriter{buf: buf, off: len(buf)}
+}
+
+func (w *LAYOUTCOMMIT4resEntryWriter) SetValue_Nfs4Ok() LAYOUTCOMMIT4resokWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, NFS4_OK)
+	child := StartLAYOUTCOMMIT4resok(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *LAYOUTCOMMIT4resEntryWriter) SetValue_Default(nfsstat4 uint32) {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, nfsstat4)
+}
+
+func (w *LAYOUTCOMMIT4resEntryWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *LAYOUTCOMMIT4resEntryWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// LAYOUTGET4resEntry — variable: disc(4) + LAYOUTGET4res value
+// -------------------------------------------------------
+
+type LAYOUTGET4resEntry []byte
+
+func readLAYOUTGET4resEntry(b *[]byte) (LAYOUTGET4resEntry, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[4:]
+	if _, ok := readLAYOUTGET4res(b, binary.BigEndian.Uint32(start[0:4])); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return LAYOUTGET4resEntry(start[:total]), true
+}
+
+func ReadLAYOUTGET4resEntry(b []byte) (LAYOUTGET4resEntry, bool) {
+	return readLAYOUTGET4resEntry(&b)
+}
+
+func (m LAYOUTGET4resEntry) Disc() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m LAYOUTGET4resEntry) Value() LAYOUTGET4res {
+	return LAYOUTGET4res{b: m[4:], disc: binary.BigEndian.Uint32(m[0:4])}
+}
+
+// LAYOUTGET4resEntryWriter writes a LAYOUTGET4res_entry:
+//
+//	disc + value(disc)
+type LAYOUTGET4resEntryWriter struct {
+	buf []byte
+	off int
+}
+
+func StartLAYOUTGET4resEntry(buf []byte) LAYOUTGET4resEntryWriter {
+	return LAYOUTGET4resEntryWriter{buf: buf, off: len(buf)}
+}
+
+func (w *LAYOUTGET4resEntryWriter) SetValue_Nfs4Ok() LAYOUTGET4resokWriter {
+	w.buf = append(w.buf, make([]byte, 4+24)...)
+	off := len(w.buf) - 4 - 24
+	binary.BigEndian.PutUint32((*[4 + 24]byte)(w.buf[off:])[:4], NFS4_OK)
+	buf := w.buf
+	w.buf = nil
+	return LAYOUTGET4resokWriter{buf: buf, off: off + 4}
+}
+
+func (w *LAYOUTGET4resEntryWriter) SetValue_Nfs4errLayouttrylater() LAYOUTGET4resNFS4ERRLAYOUTTRYLATER {
+	w.buf = append(w.buf, make([]byte, 4+lAYOUTGET4resNFS4ERRLAYOUTTRYLATERSize)...)
+	p := (*[4 + lAYOUTGET4resNFS4ERRLAYOUTTRYLATERSize]byte)(w.buf[len(w.buf)-4-lAYOUTGET4resNFS4ERRLAYOUTTRYLATERSize:])
+	binary.BigEndian.PutUint32(p[:4], NFS4ERR_LAYOUTTRYLATER)
+	return LAYOUTGET4resNFS4ERRLAYOUTTRYLATER{m: (*[lAYOUTGET4resNFS4ERRLAYOUTTRYLATERSize]byte)(p[4:])}
+}
+
+func (w *LAYOUTGET4resEntryWriter) SetValue_Default(nfsstat4 uint32) {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, nfsstat4)
+}
+
+func (w *LAYOUTGET4resEntryWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *LAYOUTGET4resEntryWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// LAYOUTRETURN4resEntry — variable: disc(4) + LAYOUTRETURN4res value
+// -------------------------------------------------------
+
+type LAYOUTRETURN4resEntry []byte
+
+func readLAYOUTRETURN4resEntry(b *[]byte) (LAYOUTRETURN4resEntry, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[4:]
+	if _, ok := readLAYOUTRETURN4res(b, binary.BigEndian.Uint32(start[0:4])); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return LAYOUTRETURN4resEntry(start[:total]), true
+}
+
+func ReadLAYOUTRETURN4resEntry(b []byte) (LAYOUTRETURN4resEntry, bool) {
+	return readLAYOUTRETURN4resEntry(&b)
+}
+
+func (m LAYOUTRETURN4resEntry) Disc() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m LAYOUTRETURN4resEntry) Value() LAYOUTRETURN4res {
+	return LAYOUTRETURN4res{b: m[4:], disc: binary.BigEndian.Uint32(m[0:4])}
+}
+
+// LAYOUTRETURN4resEntryWriter writes a LAYOUTRETURN4res_entry:
+//
+//	disc + value(disc)
+type LAYOUTRETURN4resEntryWriter struct {
+	buf []byte
+	off int
+}
+
+func StartLAYOUTRETURN4resEntry(buf []byte) LAYOUTRETURN4resEntryWriter {
+	return LAYOUTRETURN4resEntryWriter{buf: buf, off: len(buf)}
+}
+
+func (w *LAYOUTRETURN4resEntryWriter) SetValue_Nfs4Ok() LayoutreturnStateidEntryWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, NFS4_OK)
+	child := StartLayoutreturnStateidEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *LAYOUTRETURN4resEntryWriter) SetValue_Default(nfsstat4 uint32) {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, nfsstat4)
+}
+
+func (w *LAYOUTRETURN4resEntryWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *LAYOUTRETURN4resEntryWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// SEQUENCE4resEntry — variable: disc(4) + SEQUENCE4res value
+// -------------------------------------------------------
+
+type SEQUENCE4resEntry []byte
+
+func readSEQUENCE4resEntry(b *[]byte) (SEQUENCE4resEntry, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[4:]
+	if _, ok := readSEQUENCE4res(b, binary.BigEndian.Uint32(start[0:4])); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return SEQUENCE4resEntry(start[:total]), true
+}
+
+func ReadSEQUENCE4resEntry(b []byte) (SEQUENCE4resEntry, bool) {
+	return readSEQUENCE4resEntry(&b)
+}
+
+func (m SEQUENCE4resEntry) Disc() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m SEQUENCE4resEntry) Value() SEQUENCE4res {
+	return SEQUENCE4res{b: m[4:], disc: binary.BigEndian.Uint32(m[0:4])}
+}
+
+// SEQUENCE4resEntryWriter writes a SEQUENCE4res_entry:
+//
+//	disc + value(disc)
+type SEQUENCE4resEntryWriter struct {
+	buf []byte
+	off int
+}
+
+func StartSEQUENCE4resEntry(buf []byte) SEQUENCE4resEntryWriter {
+	return SEQUENCE4resEntryWriter{buf: buf, off: len(buf)}
+}
+
+func (w *SEQUENCE4resEntryWriter) SetValue_Nfs4Ok() SEQUENCE4resok {
+	w.buf = append(w.buf, make([]byte, 4+sEQUENCE4resokSize)...)
+	p := (*[4 + sEQUENCE4resokSize]byte)(w.buf[len(w.buf)-4-sEQUENCE4resokSize:])
+	binary.BigEndian.PutUint32(p[:4], NFS4_OK)
+	return SEQUENCE4resok{m: (*[sEQUENCE4resokSize]byte)(p[4:])}
+}
+
+func (w *SEQUENCE4resEntryWriter) SetValue_Default(nfsstat4 uint32) {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, nfsstat4)
+}
+
+func (w *SEQUENCE4resEntryWriter) Finish() []byte {
+	return w.buf
+}
+
+// -------------------------------------------------------
+// SETSSV4resEntry — variable: disc(4) + SET_SSV4res value
+// -------------------------------------------------------
+
+type SETSSV4resEntry []byte
+
+func readSETSSV4resEntry(b *[]byte) (SETSSV4resEntry, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[4:]
+	if _, ok := readSETSSV4res(b, binary.BigEndian.Uint32(start[0:4])); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return SETSSV4resEntry(start[:total]), true
+}
+
+func ReadSETSSV4resEntry(b []byte) (SETSSV4resEntry, bool) {
+	return readSETSSV4resEntry(&b)
+}
+
+func (m SETSSV4resEntry) Disc() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m SETSSV4resEntry) Value() SETSSV4res {
+	return SETSSV4res{b: m[4:], disc: binary.BigEndian.Uint32(m[0:4])}
+}
+
+// SETSSV4resEntryWriter writes a SET_SSV4res_entry:
+//
+//	disc + value(disc)
+type SETSSV4resEntryWriter struct {
+	buf []byte
+	off int
+}
+
+func StartSETSSV4resEntry(buf []byte) SETSSV4resEntryWriter {
+	return SETSSV4resEntryWriter{buf: buf, off: len(buf)}
+}
+
+func (w *SETSSV4resEntryWriter) SetValue_Nfs4Ok() SETSSV4resokWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, NFS4_OK)
+	child := StartSETSSV4resok(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *SETSSV4resEntryWriter) SetValue_Default(nfsstat4 uint32) {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, nfsstat4)
+}
+
+func (w *SETSSV4resEntryWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *SETSSV4resEntryWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// TESTSTATEID4resEntry — variable: disc(4) + TEST_STATEID4res value
+// -------------------------------------------------------
+
+type TESTSTATEID4resEntry []byte
+
+func readTESTSTATEID4resEntry(b *[]byte) (TESTSTATEID4resEntry, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[4:]
+	if _, ok := readTESTSTATEID4res(b, binary.BigEndian.Uint32(start[0:4])); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return TESTSTATEID4resEntry(start[:total]), true
+}
+
+func ReadTESTSTATEID4resEntry(b []byte) (TESTSTATEID4resEntry, bool) {
+	return readTESTSTATEID4resEntry(&b)
+}
+
+func (m TESTSTATEID4resEntry) Disc() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m TESTSTATEID4resEntry) Value() TESTSTATEID4res {
+	return TESTSTATEID4res{b: m[4:], disc: binary.BigEndian.Uint32(m[0:4])}
+}
+
+// TESTSTATEID4resEntryWriter writes a TEST_STATEID4res_entry:
+//
+//	disc + value(disc)
+type TESTSTATEID4resEntryWriter struct {
+	buf []byte
+	off int
+}
+
+func StartTESTSTATEID4resEntry(buf []byte) TESTSTATEID4resEntryWriter {
+	return TESTSTATEID4resEntryWriter{buf: buf, off: len(buf)}
+}
+
+func (w *TESTSTATEID4resEntryWriter) SetValue_Nfs4Ok() TESTSTATEID4resokWriter {
+	w.buf = append(w.buf, make([]byte, 4+4)...)
+	off := len(w.buf) - 4 - 4
+	binary.BigEndian.PutUint32((*[4 + 4]byte)(w.buf[off:])[:4], NFS4_OK)
+	buf := w.buf
+	w.buf = nil
+	return TESTSTATEID4resokWriter{buf: buf, off: off + 4}
+}
+
+func (w *TESTSTATEID4resEntryWriter) SetValue_Default(nfsstat4 uint32) {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, nfsstat4)
+}
+
+func (w *TESTSTATEID4resEntryWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *TESTSTATEID4resEntryWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// WANTDELEGATION4resEntry — variable: disc(4) + WANT_DELEGATION4res value
+// -------------------------------------------------------
+
+type WANTDELEGATION4resEntry []byte
+
+func readWANTDELEGATION4resEntry(b *[]byte) (WANTDELEGATION4resEntry, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[4:]
+	if _, ok := readWANTDELEGATION4res(b, binary.BigEndian.Uint32(start[0:4])); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return WANTDELEGATION4resEntry(start[:total]), true
+}
+
+func ReadWANTDELEGATION4resEntry(b []byte) (WANTDELEGATION4resEntry, bool) {
+	return readWANTDELEGATION4resEntry(&b)
+}
+
+func (m WANTDELEGATION4resEntry) Disc() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m WANTDELEGATION4resEntry) Value() WANTDELEGATION4res {
+	return WANTDELEGATION4res{b: m[4:], disc: binary.BigEndian.Uint32(m[0:4])}
+}
+
+// WANTDELEGATION4resEntryWriter writes a WANT_DELEGATION4res_entry:
+//
+//	disc + value(disc)
+type WANTDELEGATION4resEntryWriter struct {
+	buf []byte
+	off int
+}
+
+func StartWANTDELEGATION4resEntry(buf []byte) WANTDELEGATION4resEntryWriter {
+	return WANTDELEGATION4resEntryWriter{buf: buf, off: len(buf)}
+}
+
+func (w *WANTDELEGATION4resEntryWriter) SetValue_Nfs4Ok() OpenDelegation4EntryWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, NFS4_OK)
+	child := StartOpenDelegation4Entry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *WANTDELEGATION4resEntryWriter) SetValue_Default(nfsstat4 uint32) {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, nfsstat4)
+}
+
+func (w *WANTDELEGATION4resEntryWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *WANTDELEGATION4resEntryWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// COPY4resEntry — variable: disc(4) + COPY4res value
+// -------------------------------------------------------
+
+type COPY4resEntry []byte
+
+func readCOPY4resEntry(b *[]byte) (COPY4resEntry, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[4:]
+	if _, ok := readCOPY4res(b, binary.BigEndian.Uint32(start[0:4])); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return COPY4resEntry(start[:total]), true
+}
+
+func ReadCOPY4resEntry(b []byte) (COPY4resEntry, bool) {
+	return readCOPY4resEntry(&b)
+}
+
+func (m COPY4resEntry) Disc() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m COPY4resEntry) Value() COPY4res {
+	return COPY4res{b: m[4:], disc: binary.BigEndian.Uint32(m[0:4])}
+}
+
+// COPY4resEntryWriter writes a COPY4res_entry:
+//
+//	disc + value(disc)
+type COPY4resEntryWriter struct {
+	buf []byte
+	off int
+}
+
+func StartCOPY4resEntry(buf []byte) COPY4resEntryWriter {
+	return COPY4resEntryWriter{buf: buf, off: len(buf)}
+}
+
+func (w *COPY4resEntryWriter) SetValue_Nfs4Ok() COPY4resokWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, NFS4_OK)
+	child := StartCOPY4resok(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *COPY4resEntryWriter) SetValue_Nfs4errOffloadNoReqs() CopyRequirements4 {
+	w.buf = append(w.buf, make([]byte, 4+copyRequirements4Size)...)
+	p := (*[4 + copyRequirements4Size]byte)(w.buf[len(w.buf)-4-copyRequirements4Size:])
+	binary.BigEndian.PutUint32(p[:4], NFS4ERR_OFFLOAD_NO_REQS)
+	return CopyRequirements4{m: (*[copyRequirements4Size]byte)(p[4:])}
+}
+
+func (w *COPY4resEntryWriter) SetValue_Default(nfsstat4 uint32) {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, nfsstat4)
+}
+
+func (w *COPY4resEntryWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *COPY4resEntryWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// COPYNOTIFY4resEntry — variable: disc(4) + COPY_NOTIFY4res value
+// -------------------------------------------------------
+
+type COPYNOTIFY4resEntry []byte
+
+func readCOPYNOTIFY4resEntry(b *[]byte) (COPYNOTIFY4resEntry, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[4:]
+	if _, ok := readCOPYNOTIFY4res(b, binary.BigEndian.Uint32(start[0:4])); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return COPYNOTIFY4resEntry(start[:total]), true
+}
+
+func ReadCOPYNOTIFY4resEntry(b []byte) (COPYNOTIFY4resEntry, bool) {
+	return readCOPYNOTIFY4resEntry(&b)
+}
+
+func (m COPYNOTIFY4resEntry) Disc() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m COPYNOTIFY4resEntry) Value() COPYNOTIFY4res {
+	return COPYNOTIFY4res{b: m[4:], disc: binary.BigEndian.Uint32(m[0:4])}
+}
+
+// COPYNOTIFY4resEntryWriter writes a COPY_NOTIFY4res_entry:
+//
+//	disc + value(disc)
+type COPYNOTIFY4resEntryWriter struct {
+	buf []byte
+	off int
+}
+
+func StartCOPYNOTIFY4resEntry(buf []byte) COPYNOTIFY4resEntryWriter {
+	return COPYNOTIFY4resEntryWriter{buf: buf, off: len(buf)}
+}
+
+func (w *COPYNOTIFY4resEntryWriter) SetValue_Nfs4Ok() COPYNOTIFY4resokWriter {
+	w.buf = append(w.buf, make([]byte, 4+32)...)
+	off := len(w.buf) - 4 - 32
+	binary.BigEndian.PutUint32((*[4 + 32]byte)(w.buf[off:])[:4], NFS4_OK)
+	buf := w.buf
+	w.buf = nil
+	return COPYNOTIFY4resokWriter{buf: buf, off: off + 4}
+}
+
+func (w *COPYNOTIFY4resEntryWriter) SetValue_Default(nfsstat4 uint32) {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, nfsstat4)
+}
+
+func (w *COPYNOTIFY4resEntryWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *COPYNOTIFY4resEntryWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// IOADVISE4resEntry — variable: disc(4) + IO_ADVISE4res value
+// -------------------------------------------------------
+
+type IOADVISE4resEntry []byte
+
+func readIOADVISE4resEntry(b *[]byte) (IOADVISE4resEntry, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[4:]
+	if _, ok := readIOADVISE4res(b, binary.BigEndian.Uint32(start[0:4])); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return IOADVISE4resEntry(start[:total]), true
+}
+
+func ReadIOADVISE4resEntry(b []byte) (IOADVISE4resEntry, bool) {
+	return readIOADVISE4resEntry(&b)
+}
+
+func (m IOADVISE4resEntry) Disc() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m IOADVISE4resEntry) Value() IOADVISE4res {
+	return IOADVISE4res{b: m[4:], disc: binary.BigEndian.Uint32(m[0:4])}
+}
+
+// IOADVISE4resEntryWriter writes a IO_ADVISE4res_entry:
+//
+//	disc + value(disc)
+type IOADVISE4resEntryWriter struct {
+	buf []byte
+	off int
+}
+
+func StartIOADVISE4resEntry(buf []byte) IOADVISE4resEntryWriter {
+	return IOADVISE4resEntryWriter{buf: buf, off: len(buf)}
+}
+
+func (w *IOADVISE4resEntryWriter) SetValue_Nfs4Ok() IOADVISE4resokWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, NFS4_OK)
+	child := StartIOADVISE4resok(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *IOADVISE4resEntryWriter) SetValue_Default(nfsstat4 uint32) {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, nfsstat4)
+}
+
+func (w *IOADVISE4resEntryWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *IOADVISE4resEntryWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// OFFLOADSTATUS4resEntry — variable: disc(4) + OFFLOAD_STATUS4res value
+// -------------------------------------------------------
+
+type OFFLOADSTATUS4resEntry []byte
+
+func readOFFLOADSTATUS4resEntry(b *[]byte) (OFFLOADSTATUS4resEntry, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[4:]
+	if _, ok := readOFFLOADSTATUS4res(b, binary.BigEndian.Uint32(start[0:4])); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return OFFLOADSTATUS4resEntry(start[:total]), true
+}
+
+func ReadOFFLOADSTATUS4resEntry(b []byte) (OFFLOADSTATUS4resEntry, bool) {
+	return readOFFLOADSTATUS4resEntry(&b)
+}
+
+func (m OFFLOADSTATUS4resEntry) Disc() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m OFFLOADSTATUS4resEntry) Value() OFFLOADSTATUS4res {
+	return OFFLOADSTATUS4res{b: m[4:], disc: binary.BigEndian.Uint32(m[0:4])}
+}
+
+// OFFLOADSTATUS4resEntryWriter writes a OFFLOAD_STATUS4res_entry:
+//
+//	disc + value(disc)
+type OFFLOADSTATUS4resEntryWriter struct {
+	buf []byte
+	off int
+}
+
+func StartOFFLOADSTATUS4resEntry(buf []byte) OFFLOADSTATUS4resEntryWriter {
+	return OFFLOADSTATUS4resEntryWriter{buf: buf, off: len(buf)}
+}
+
+func (w *OFFLOADSTATUS4resEntryWriter) SetValue_Nfs4Ok() OFFLOADSTATUS4resokWriter {
+	w.buf = append(w.buf, make([]byte, 4+12)...)
+	off := len(w.buf) - 4 - 12
+	binary.BigEndian.PutUint32((*[4 + 12]byte)(w.buf[off:])[:4], NFS4_OK)
+	buf := w.buf
+	w.buf = nil
+	return OFFLOADSTATUS4resokWriter{buf: buf, off: off + 4}
+}
+
+func (w *OFFLOADSTATUS4resEntryWriter) SetValue_Default(nfsstat4 uint32) {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, nfsstat4)
+}
+
+func (w *OFFLOADSTATUS4resEntryWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *OFFLOADSTATUS4resEntryWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// READPLUS4resEntry — variable: disc(4) + READ_PLUS4res value
+// -------------------------------------------------------
+
+type READPLUS4resEntry []byte
+
+func readREADPLUS4resEntry(b *[]byte) (READPLUS4resEntry, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[4:]
+	if _, ok := readREADPLUS4res(b, binary.BigEndian.Uint32(start[0:4])); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return READPLUS4resEntry(start[:total]), true
+}
+
+func ReadREADPLUS4resEntry(b []byte) (READPLUS4resEntry, bool) {
+	return readREADPLUS4resEntry(&b)
+}
+
+func (m READPLUS4resEntry) Disc() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m READPLUS4resEntry) Value() READPLUS4res {
+	return READPLUS4res{b: m[4:], disc: binary.BigEndian.Uint32(m[0:4])}
+}
+
+// READPLUS4resEntryWriter writes a READ_PLUS4res_entry:
+//
+//	disc + value(disc)
+type READPLUS4resEntryWriter struct {
+	buf []byte
+	off int
+}
+
+func StartREADPLUS4resEntry(buf []byte) READPLUS4resEntryWriter {
+	return READPLUS4resEntryWriter{buf: buf, off: len(buf)}
+}
+
+func (w *READPLUS4resEntryWriter) SetValue_Nfs4Ok() ReadPlusRes4Writer {
+	w.buf = append(w.buf, make([]byte, 4+8)...)
+	off := len(w.buf) - 4 - 8
+	binary.BigEndian.PutUint32((*[4 + 8]byte)(w.buf[off:])[:4], NFS4_OK)
+	buf := w.buf
+	w.buf = nil
+	return ReadPlusRes4Writer{buf: buf, off: off + 4}
+}
+
+func (w *READPLUS4resEntryWriter) SetValue_Default(nfsstat4 uint32) {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, nfsstat4)
+}
+
+func (w *READPLUS4resEntryWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *READPLUS4resEntryWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// SEEK4resEntry — variable: disc(4) + SEEK4res value
+// -------------------------------------------------------
+
+type SEEK4resEntry []byte
+
+func readSEEK4resEntry(b *[]byte) (SEEK4resEntry, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[4:]
+	if _, ok := readSEEK4res(b, binary.BigEndian.Uint32(start[0:4])); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return SEEK4resEntry(start[:total]), true
+}
+
+func ReadSEEK4resEntry(b []byte) (SEEK4resEntry, bool) {
+	return readSEEK4resEntry(&b)
+}
+
+func (m SEEK4resEntry) Disc() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m SEEK4resEntry) Value() SEEK4res {
+	return SEEK4res{b: m[4:], disc: binary.BigEndian.Uint32(m[0:4])}
+}
+
+// SEEK4resEntryWriter writes a SEEK4res_entry:
+//
+//	disc + value(disc)
+type SEEK4resEntryWriter struct {
+	buf []byte
+	off int
+}
+
+func StartSEEK4resEntry(buf []byte) SEEK4resEntryWriter {
+	return SEEK4resEntryWriter{buf: buf, off: len(buf)}
+}
+
+func (w *SEEK4resEntryWriter) SetValue_Nfs4Ok() SeekRes4 {
+	w.buf = append(w.buf, make([]byte, 4+seekRes4Size)...)
+	p := (*[4 + seekRes4Size]byte)(w.buf[len(w.buf)-4-seekRes4Size:])
+	binary.BigEndian.PutUint32(p[:4], NFS4_OK)
+	return SeekRes4{m: (*[seekRes4Size]byte)(p[4:])}
+}
+
+func (w *SEEK4resEntryWriter) SetValue_Default(nfsstat4 uint32) {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, nfsstat4)
+}
+
+func (w *SEEK4resEntryWriter) Finish() []byte {
+	return w.buf
+}
+
+// -------------------------------------------------------
+// WRITESAME4resEntry — variable: disc(4) + WRITE_SAME4res value
+// -------------------------------------------------------
+
+type WRITESAME4resEntry []byte
+
+func readWRITESAME4resEntry(b *[]byte) (WRITESAME4resEntry, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[4:]
+	if _, ok := readWRITESAME4res(b, binary.BigEndian.Uint32(start[0:4])); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return WRITESAME4resEntry(start[:total]), true
+}
+
+func ReadWRITESAME4resEntry(b []byte) (WRITESAME4resEntry, bool) {
+	return readWRITESAME4resEntry(&b)
+}
+
+func (m WRITESAME4resEntry) Disc() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m WRITESAME4resEntry) Value() WRITESAME4res {
+	return WRITESAME4res{b: m[4:], disc: binary.BigEndian.Uint32(m[0:4])}
+}
+
+// WRITESAME4resEntryWriter writes a WRITE_SAME4res_entry:
+//
+//	disc + value(disc)
+type WRITESAME4resEntryWriter struct {
+	buf []byte
+	off int
+}
+
+func StartWRITESAME4resEntry(buf []byte) WRITESAME4resEntryWriter {
+	return WRITESAME4resEntryWriter{buf: buf, off: len(buf)}
+}
+
+func (w *WRITESAME4resEntryWriter) SetValue_Nfs4Ok() WriteResponse4Writer {
+	w.buf = append(w.buf, make([]byte, 4+4)...)
+	off := len(w.buf) - 4 - 4
+	binary.BigEndian.PutUint32((*[4 + 4]byte)(w.buf[off:])[:4], NFS4_OK)
+	buf := w.buf
+	w.buf = nil
+	return WriteResponse4Writer{buf: buf, off: off + 4}
+}
+
+func (w *WRITESAME4resEntryWriter) SetValue_Default(nfsstat4 uint32) {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, nfsstat4)
+}
+
+func (w *WRITESAME4resEntryWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *WRITESAME4resEntryWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// GETXATTR4resEntry — variable: disc(4) + GETXATTR4res value
+// -------------------------------------------------------
+
+type GETXATTR4resEntry []byte
+
+func readGETXATTR4resEntry(b *[]byte) (GETXATTR4resEntry, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[4:]
+	if _, ok := readGETXATTR4res(b, binary.BigEndian.Uint32(start[0:4])); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return GETXATTR4resEntry(start[:total]), true
+}
+
+func ReadGETXATTR4resEntry(b []byte) (GETXATTR4resEntry, bool) {
+	return readGETXATTR4resEntry(&b)
+}
+
+func (m GETXATTR4resEntry) Disc() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m GETXATTR4resEntry) Value() GETXATTR4res {
+	return GETXATTR4res{b: m[4:], disc: binary.BigEndian.Uint32(m[0:4])}
+}
+
+// GETXATTR4resEntryWriter writes a GETXATTR4res_entry:
+//
+//	disc + value(disc)
+type GETXATTR4resEntryWriter struct {
+	buf []byte
+	off int
+}
+
+func StartGETXATTR4resEntry(buf []byte) GETXATTR4resEntryWriter {
+	return GETXATTR4resEntryWriter{buf: buf, off: len(buf)}
+}
+
+func (w *GETXATTR4resEntryWriter) SetValue_Nfs4Ok() Xattrvalue4Writer {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, NFS4_OK)
+	child := StartXattrvalue4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *GETXATTR4resEntryWriter) SetValue_Default(nfsstat4 uint32) {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, nfsstat4)
+}
+
+func (w *GETXATTR4resEntryWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *GETXATTR4resEntryWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// SETXATTR4resEntry — variable: disc(4) + SETXATTR4res value
+// -------------------------------------------------------
+
+type SETXATTR4resEntry []byte
+
+func readSETXATTR4resEntry(b *[]byte) (SETXATTR4resEntry, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[4:]
+	if _, ok := readSETXATTR4res(b, binary.BigEndian.Uint32(start[0:4])); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return SETXATTR4resEntry(start[:total]), true
+}
+
+func ReadSETXATTR4resEntry(b []byte) (SETXATTR4resEntry, bool) {
+	return readSETXATTR4resEntry(&b)
+}
+
+func (m SETXATTR4resEntry) Disc() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m SETXATTR4resEntry) Value() SETXATTR4res {
+	return SETXATTR4res{b: m[4:], disc: binary.BigEndian.Uint32(m[0:4])}
+}
+
+// SETXATTR4resEntryWriter writes a SETXATTR4res_entry:
+//
+//	disc + value(disc)
+type SETXATTR4resEntryWriter struct {
+	buf []byte
+	off int
+}
+
+func StartSETXATTR4resEntry(buf []byte) SETXATTR4resEntryWriter {
+	return SETXATTR4resEntryWriter{buf: buf, off: len(buf)}
+}
+
+func (w *SETXATTR4resEntryWriter) SetValue_Nfs4Ok() ChangeInfo4 {
+	w.buf = append(w.buf, make([]byte, 4+changeInfo4Size)...)
+	p := (*[4 + changeInfo4Size]byte)(w.buf[len(w.buf)-4-changeInfo4Size:])
+	binary.BigEndian.PutUint32(p[:4], NFS4_OK)
+	return ChangeInfo4{m: (*[changeInfo4Size]byte)(p[4:])}
+}
+
+func (w *SETXATTR4resEntryWriter) SetValue_Default(nfsstat4 uint32) {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, nfsstat4)
+}
+
+func (w *SETXATTR4resEntryWriter) Finish() []byte {
+	return w.buf
+}
+
+// -------------------------------------------------------
+// LISTXATTRS4resEntry — variable: disc(4) + LISTXATTRS4res value
+// -------------------------------------------------------
+
+type LISTXATTRS4resEntry []byte
+
+func readLISTXATTRS4resEntry(b *[]byte) (LISTXATTRS4resEntry, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[4:]
+	if _, ok := readLISTXATTRS4res(b, binary.BigEndian.Uint32(start[0:4])); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return LISTXATTRS4resEntry(start[:total]), true
+}
+
+func ReadLISTXATTRS4resEntry(b []byte) (LISTXATTRS4resEntry, bool) {
+	return readLISTXATTRS4resEntry(&b)
+}
+
+func (m LISTXATTRS4resEntry) Disc() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m LISTXATTRS4resEntry) Value() LISTXATTRS4res {
+	return LISTXATTRS4res{b: m[4:], disc: binary.BigEndian.Uint32(m[0:4])}
+}
+
+// LISTXATTRS4resEntryWriter writes a LISTXATTRS4res_entry:
+//
+//	disc + value(disc)
+type LISTXATTRS4resEntryWriter struct {
+	buf []byte
+	off int
+}
+
+func StartLISTXATTRS4resEntry(buf []byte) LISTXATTRS4resEntryWriter {
+	return LISTXATTRS4resEntryWriter{buf: buf, off: len(buf)}
+}
+
+func (w *LISTXATTRS4resEntryWriter) SetValue_Nfs4Ok() LISTXATTRS4resokWriter {
+	w.buf = append(w.buf, make([]byte, 4+12)...)
+	off := len(w.buf) - 4 - 12
+	binary.BigEndian.PutUint32((*[4 + 12]byte)(w.buf[off:])[:4], NFS4_OK)
+	buf := w.buf
+	w.buf = nil
+	return LISTXATTRS4resokWriter{buf: buf, off: off + 4}
+}
+
+func (w *LISTXATTRS4resEntryWriter) SetValue_Default(nfsstat4 uint32) {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, nfsstat4)
+}
+
+func (w *LISTXATTRS4resEntryWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *LISTXATTRS4resEntryWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// REMOVEXATTR4resEntry — variable: disc(4) + REMOVEXATTR4res value
+// -------------------------------------------------------
+
+type REMOVEXATTR4resEntry []byte
+
+func readREMOVEXATTR4resEntry(b *[]byte) (REMOVEXATTR4resEntry, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[4:]
+	if _, ok := readREMOVEXATTR4res(b, binary.BigEndian.Uint32(start[0:4])); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return REMOVEXATTR4resEntry(start[:total]), true
+}
+
+func ReadREMOVEXATTR4resEntry(b []byte) (REMOVEXATTR4resEntry, bool) {
+	return readREMOVEXATTR4resEntry(&b)
+}
+
+func (m REMOVEXATTR4resEntry) Disc() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m REMOVEXATTR4resEntry) Value() REMOVEXATTR4res {
+	return REMOVEXATTR4res{b: m[4:], disc: binary.BigEndian.Uint32(m[0:4])}
+}
+
+// REMOVEXATTR4resEntryWriter writes a REMOVEXATTR4res_entry:
+//
+//	disc + value(disc)
+type REMOVEXATTR4resEntryWriter struct {
+	buf []byte
+	off int
+}
+
+func StartREMOVEXATTR4resEntry(buf []byte) REMOVEXATTR4resEntryWriter {
+	return REMOVEXATTR4resEntryWriter{buf: buf, off: len(buf)}
+}
+
+func (w *REMOVEXATTR4resEntryWriter) SetValue_Nfs4Ok() ChangeInfo4 {
+	w.buf = append(w.buf, make([]byte, 4+changeInfo4Size)...)
+	p := (*[4 + changeInfo4Size]byte)(w.buf[len(w.buf)-4-changeInfo4Size:])
+	binary.BigEndian.PutUint32(p[:4], NFS4_OK)
+	return ChangeInfo4{m: (*[changeInfo4Size]byte)(p[4:])}
+}
+
+func (w *REMOVEXATTR4resEntryWriter) SetValue_Default(nfsstat4 uint32) {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, nfsstat4)
+}
+
+func (w *REMOVEXATTR4resEntryWriter) Finish() []byte {
 	return w.buf
 }
 
@@ -9837,6 +25799,222 @@ func readNfsResop4(b *[]byte, nfsOpnum4 uint32) (NfsResop4, bool) {
 			return NfsResop4{}, false
 		}
 		return NfsResop4{b: r.m[:], disc: nfsOpnum4}, true
+	case OP_BACKCHANNEL_CTL:
+		r, ok := readBACKCHANNELCTL4res(b)
+		if !ok {
+			return NfsResop4{}, false
+		}
+		return NfsResop4{b: r.m[:], disc: nfsOpnum4}, true
+	case OP_BIND_CONN_TO_SESSION:
+		r, ok := readBINDCONNTOSESSION4resEntry(b)
+		if !ok {
+			return NfsResop4{}, false
+		}
+		return NfsResop4{b: []byte(r), disc: nfsOpnum4}, true
+	case OP_EXCHANGE_ID:
+		r, ok := readEXCHANGEID4resEntry(b)
+		if !ok {
+			return NfsResop4{}, false
+		}
+		return NfsResop4{b: []byte(r), disc: nfsOpnum4}, true
+	case OP_CREATE_SESSION:
+		r, ok := readCREATESESSION4resEntry(b)
+		if !ok {
+			return NfsResop4{}, false
+		}
+		return NfsResop4{b: []byte(r), disc: nfsOpnum4}, true
+	case OP_DESTROY_SESSION:
+		r, ok := readDESTROYSESSION4res(b)
+		if !ok {
+			return NfsResop4{}, false
+		}
+		return NfsResop4{b: r.m[:], disc: nfsOpnum4}, true
+	case OP_FREE_STATEID:
+		r, ok := readFREESTATEID4res(b)
+		if !ok {
+			return NfsResop4{}, false
+		}
+		return NfsResop4{b: r.m[:], disc: nfsOpnum4}, true
+	case OP_GET_DIR_DELEGATION:
+		r, ok := readGETDIRDELEGATION4resEntry(b)
+		if !ok {
+			return NfsResop4{}, false
+		}
+		return NfsResop4{b: []byte(r), disc: nfsOpnum4}, true
+	case OP_GETDEVICEINFO:
+		r, ok := readGETDEVICEINFO4resEntry(b)
+		if !ok {
+			return NfsResop4{}, false
+		}
+		return NfsResop4{b: []byte(r), disc: nfsOpnum4}, true
+	case OP_GETDEVICELIST:
+		r, ok := readGETDEVICELIST4resEntry(b)
+		if !ok {
+			return NfsResop4{}, false
+		}
+		return NfsResop4{b: []byte(r), disc: nfsOpnum4}, true
+	case OP_LAYOUTCOMMIT:
+		r, ok := readLAYOUTCOMMIT4resEntry(b)
+		if !ok {
+			return NfsResop4{}, false
+		}
+		return NfsResop4{b: []byte(r), disc: nfsOpnum4}, true
+	case OP_LAYOUTGET:
+		r, ok := readLAYOUTGET4resEntry(b)
+		if !ok {
+			return NfsResop4{}, false
+		}
+		return NfsResop4{b: []byte(r), disc: nfsOpnum4}, true
+	case OP_LAYOUTRETURN:
+		r, ok := readLAYOUTRETURN4resEntry(b)
+		if !ok {
+			return NfsResop4{}, false
+		}
+		return NfsResop4{b: []byte(r), disc: nfsOpnum4}, true
+	case OP_SECINFO_NO_NAME:
+		r, ok := readSECINFO4resEntry(b)
+		if !ok {
+			return NfsResop4{}, false
+		}
+		return NfsResop4{b: []byte(r), disc: nfsOpnum4}, true
+	case OP_SEQUENCE:
+		r, ok := readSEQUENCE4resEntry(b)
+		if !ok {
+			return NfsResop4{}, false
+		}
+		return NfsResop4{b: []byte(r), disc: nfsOpnum4}, true
+	case OP_SET_SSV:
+		r, ok := readSETSSV4resEntry(b)
+		if !ok {
+			return NfsResop4{}, false
+		}
+		return NfsResop4{b: []byte(r), disc: nfsOpnum4}, true
+	case OP_TEST_STATEID:
+		r, ok := readTESTSTATEID4resEntry(b)
+		if !ok {
+			return NfsResop4{}, false
+		}
+		return NfsResop4{b: []byte(r), disc: nfsOpnum4}, true
+	case OP_WANT_DELEGATION:
+		r, ok := readWANTDELEGATION4resEntry(b)
+		if !ok {
+			return NfsResop4{}, false
+		}
+		return NfsResop4{b: []byte(r), disc: nfsOpnum4}, true
+	case OP_DESTROY_CLIENTID:
+		r, ok := readDESTROYCLIENTID4res(b)
+		if !ok {
+			return NfsResop4{}, false
+		}
+		return NfsResop4{b: r.m[:], disc: nfsOpnum4}, true
+	case OP_RECLAIM_COMPLETE:
+		r, ok := readRECLAIMCOMPLETE4res(b)
+		if !ok {
+			return NfsResop4{}, false
+		}
+		return NfsResop4{b: r.m[:], disc: nfsOpnum4}, true
+	case OP_ALLOCATE:
+		r, ok := readALLOCATE4res(b)
+		if !ok {
+			return NfsResop4{}, false
+		}
+		return NfsResop4{b: r.m[:], disc: nfsOpnum4}, true
+	case OP_COPY:
+		r, ok := readCOPY4resEntry(b)
+		if !ok {
+			return NfsResop4{}, false
+		}
+		return NfsResop4{b: []byte(r), disc: nfsOpnum4}, true
+	case OP_COPY_NOTIFY:
+		r, ok := readCOPYNOTIFY4resEntry(b)
+		if !ok {
+			return NfsResop4{}, false
+		}
+		return NfsResop4{b: []byte(r), disc: nfsOpnum4}, true
+	case OP_DEALLOCATE:
+		r, ok := readDEALLOCATE4res(b)
+		if !ok {
+			return NfsResop4{}, false
+		}
+		return NfsResop4{b: r.m[:], disc: nfsOpnum4}, true
+	case OP_IO_ADVISE:
+		r, ok := readIOADVISE4resEntry(b)
+		if !ok {
+			return NfsResop4{}, false
+		}
+		return NfsResop4{b: []byte(r), disc: nfsOpnum4}, true
+	case OP_LAYOUTERROR:
+		r, ok := readLAYOUTERROR4res(b)
+		if !ok {
+			return NfsResop4{}, false
+		}
+		return NfsResop4{b: r.m[:], disc: nfsOpnum4}, true
+	case OP_LAYOUTSTATS:
+		r, ok := readLAYOUTSTATS4res(b)
+		if !ok {
+			return NfsResop4{}, false
+		}
+		return NfsResop4{b: r.m[:], disc: nfsOpnum4}, true
+	case OP_OFFLOAD_CANCEL:
+		r, ok := readOFFLOADCANCEL4res(b)
+		if !ok {
+			return NfsResop4{}, false
+		}
+		return NfsResop4{b: r.m[:], disc: nfsOpnum4}, true
+	case OP_OFFLOAD_STATUS:
+		r, ok := readOFFLOADSTATUS4resEntry(b)
+		if !ok {
+			return NfsResop4{}, false
+		}
+		return NfsResop4{b: []byte(r), disc: nfsOpnum4}, true
+	case OP_READ_PLUS:
+		r, ok := readREADPLUS4resEntry(b)
+		if !ok {
+			return NfsResop4{}, false
+		}
+		return NfsResop4{b: []byte(r), disc: nfsOpnum4}, true
+	case OP_SEEK:
+		r, ok := readSEEK4resEntry(b)
+		if !ok {
+			return NfsResop4{}, false
+		}
+		return NfsResop4{b: []byte(r), disc: nfsOpnum4}, true
+	case OP_WRITE_SAME:
+		r, ok := readWRITESAME4resEntry(b)
+		if !ok {
+			return NfsResop4{}, false
+		}
+		return NfsResop4{b: []byte(r), disc: nfsOpnum4}, true
+	case OP_CLONE:
+		r, ok := readCLONE4res(b)
+		if !ok {
+			return NfsResop4{}, false
+		}
+		return NfsResop4{b: r.m[:], disc: nfsOpnum4}, true
+	case OP_GETXATTR:
+		r, ok := readGETXATTR4resEntry(b)
+		if !ok {
+			return NfsResop4{}, false
+		}
+		return NfsResop4{b: []byte(r), disc: nfsOpnum4}, true
+	case OP_SETXATTR:
+		r, ok := readSETXATTR4resEntry(b)
+		if !ok {
+			return NfsResop4{}, false
+		}
+		return NfsResop4{b: []byte(r), disc: nfsOpnum4}, true
+	case OP_LISTXATTRS:
+		r, ok := readLISTXATTRS4resEntry(b)
+		if !ok {
+			return NfsResop4{}, false
+		}
+		return NfsResop4{b: []byte(r), disc: nfsOpnum4}, true
+	case OP_REMOVEXATTR:
+		r, ok := readREMOVEXATTR4resEntry(b)
+		if !ok {
+			return NfsResop4{}, false
+		}
+		return NfsResop4{b: []byte(r), disc: nfsOpnum4}, true
 	case OP_ILLEGAL:
 		r, ok := readILLEGAL4res(b)
 		if !ok {
@@ -10058,7 +26236,7 @@ func (m NfsResop4) AsSAVEFH4res() SAVEFH4res {
 	return SAVEFH4res{m: (*[sAVEFH4resSize]byte)(m.b)}
 }
 
-func (m NfsResop4) AsSECINFO4resEntry() SECINFO4resEntry {
+func (m NfsResop4) AsSecinfo() SECINFO4resEntry {
 	if m.disc != OP_SECINFO {
 		panic("wrong union discriminant")
 	}
@@ -10105,6 +26283,258 @@ func (m NfsResop4) AsRELEASELOCKOWNER4res() RELEASELOCKOWNER4res {
 		panic("wrong union discriminant")
 	}
 	return RELEASELOCKOWNER4res{m: (*[rELEASELOCKOWNER4resSize]byte)(m.b)}
+}
+
+func (m NfsResop4) AsBACKCHANNELCTL4res() BACKCHANNELCTL4res {
+	if m.disc != OP_BACKCHANNEL_CTL {
+		panic("wrong union discriminant")
+	}
+	return BACKCHANNELCTL4res{m: (*[bACKCHANNELCTL4resSize]byte)(m.b)}
+}
+
+func (m NfsResop4) AsBINDCONNTOSESSION4resEntry() BINDCONNTOSESSION4resEntry {
+	if m.disc != OP_BIND_CONN_TO_SESSION {
+		panic("wrong union discriminant")
+	}
+	return BINDCONNTOSESSION4resEntry(m.b)
+}
+
+func (m NfsResop4) AsEXCHANGEID4resEntry() EXCHANGEID4resEntry {
+	if m.disc != OP_EXCHANGE_ID {
+		panic("wrong union discriminant")
+	}
+	return EXCHANGEID4resEntry(m.b)
+}
+
+func (m NfsResop4) AsCREATESESSION4resEntry() CREATESESSION4resEntry {
+	if m.disc != OP_CREATE_SESSION {
+		panic("wrong union discriminant")
+	}
+	return CREATESESSION4resEntry(m.b)
+}
+
+func (m NfsResop4) AsDESTROYSESSION4res() DESTROYSESSION4res {
+	if m.disc != OP_DESTROY_SESSION {
+		panic("wrong union discriminant")
+	}
+	return DESTROYSESSION4res{m: (*[dESTROYSESSION4resSize]byte)(m.b)}
+}
+
+func (m NfsResop4) AsFREESTATEID4res() FREESTATEID4res {
+	if m.disc != OP_FREE_STATEID {
+		panic("wrong union discriminant")
+	}
+	return FREESTATEID4res{m: (*[fREESTATEID4resSize]byte)(m.b)}
+}
+
+func (m NfsResop4) AsGETDIRDELEGATION4resEntry() GETDIRDELEGATION4resEntry {
+	if m.disc != OP_GET_DIR_DELEGATION {
+		panic("wrong union discriminant")
+	}
+	return GETDIRDELEGATION4resEntry(m.b)
+}
+
+func (m NfsResop4) AsGETDEVICEINFO4resEntry() GETDEVICEINFO4resEntry {
+	if m.disc != OP_GETDEVICEINFO {
+		panic("wrong union discriminant")
+	}
+	return GETDEVICEINFO4resEntry(m.b)
+}
+
+func (m NfsResop4) AsGETDEVICELIST4resEntry() GETDEVICELIST4resEntry {
+	if m.disc != OP_GETDEVICELIST {
+		panic("wrong union discriminant")
+	}
+	return GETDEVICELIST4resEntry(m.b)
+}
+
+func (m NfsResop4) AsLAYOUTCOMMIT4resEntry() LAYOUTCOMMIT4resEntry {
+	if m.disc != OP_LAYOUTCOMMIT {
+		panic("wrong union discriminant")
+	}
+	return LAYOUTCOMMIT4resEntry(m.b)
+}
+
+func (m NfsResop4) AsLAYOUTGET4resEntry() LAYOUTGET4resEntry {
+	if m.disc != OP_LAYOUTGET {
+		panic("wrong union discriminant")
+	}
+	return LAYOUTGET4resEntry(m.b)
+}
+
+func (m NfsResop4) AsLAYOUTRETURN4resEntry() LAYOUTRETURN4resEntry {
+	if m.disc != OP_LAYOUTRETURN {
+		panic("wrong union discriminant")
+	}
+	return LAYOUTRETURN4resEntry(m.b)
+}
+
+func (m NfsResop4) AsSecinfoNoName() SECINFO4resEntry {
+	if m.disc != OP_SECINFO_NO_NAME {
+		panic("wrong union discriminant")
+	}
+	return SECINFO4resEntry(m.b)
+}
+
+func (m NfsResop4) AsSEQUENCE4resEntry() SEQUENCE4resEntry {
+	if m.disc != OP_SEQUENCE {
+		panic("wrong union discriminant")
+	}
+	return SEQUENCE4resEntry(m.b)
+}
+
+func (m NfsResop4) AsSETSSV4resEntry() SETSSV4resEntry {
+	if m.disc != OP_SET_SSV {
+		panic("wrong union discriminant")
+	}
+	return SETSSV4resEntry(m.b)
+}
+
+func (m NfsResop4) AsTESTSTATEID4resEntry() TESTSTATEID4resEntry {
+	if m.disc != OP_TEST_STATEID {
+		panic("wrong union discriminant")
+	}
+	return TESTSTATEID4resEntry(m.b)
+}
+
+func (m NfsResop4) AsWANTDELEGATION4resEntry() WANTDELEGATION4resEntry {
+	if m.disc != OP_WANT_DELEGATION {
+		panic("wrong union discriminant")
+	}
+	return WANTDELEGATION4resEntry(m.b)
+}
+
+func (m NfsResop4) AsDESTROYCLIENTID4res() DESTROYCLIENTID4res {
+	if m.disc != OP_DESTROY_CLIENTID {
+		panic("wrong union discriminant")
+	}
+	return DESTROYCLIENTID4res{m: (*[dESTROYCLIENTID4resSize]byte)(m.b)}
+}
+
+func (m NfsResop4) AsRECLAIMCOMPLETE4res() RECLAIMCOMPLETE4res {
+	if m.disc != OP_RECLAIM_COMPLETE {
+		panic("wrong union discriminant")
+	}
+	return RECLAIMCOMPLETE4res{m: (*[rECLAIMCOMPLETE4resSize]byte)(m.b)}
+}
+
+func (m NfsResop4) AsALLOCATE4res() ALLOCATE4res {
+	if m.disc != OP_ALLOCATE {
+		panic("wrong union discriminant")
+	}
+	return ALLOCATE4res{m: (*[aLLOCATE4resSize]byte)(m.b)}
+}
+
+func (m NfsResop4) AsCOPY4resEntry() COPY4resEntry {
+	if m.disc != OP_COPY {
+		panic("wrong union discriminant")
+	}
+	return COPY4resEntry(m.b)
+}
+
+func (m NfsResop4) AsCOPYNOTIFY4resEntry() COPYNOTIFY4resEntry {
+	if m.disc != OP_COPY_NOTIFY {
+		panic("wrong union discriminant")
+	}
+	return COPYNOTIFY4resEntry(m.b)
+}
+
+func (m NfsResop4) AsDEALLOCATE4res() DEALLOCATE4res {
+	if m.disc != OP_DEALLOCATE {
+		panic("wrong union discriminant")
+	}
+	return DEALLOCATE4res{m: (*[dEALLOCATE4resSize]byte)(m.b)}
+}
+
+func (m NfsResop4) AsIOADVISE4resEntry() IOADVISE4resEntry {
+	if m.disc != OP_IO_ADVISE {
+		panic("wrong union discriminant")
+	}
+	return IOADVISE4resEntry(m.b)
+}
+
+func (m NfsResop4) AsLAYOUTERROR4res() LAYOUTERROR4res {
+	if m.disc != OP_LAYOUTERROR {
+		panic("wrong union discriminant")
+	}
+	return LAYOUTERROR4res{m: (*[lAYOUTERROR4resSize]byte)(m.b)}
+}
+
+func (m NfsResop4) AsLAYOUTSTATS4res() LAYOUTSTATS4res {
+	if m.disc != OP_LAYOUTSTATS {
+		panic("wrong union discriminant")
+	}
+	return LAYOUTSTATS4res{m: (*[lAYOUTSTATS4resSize]byte)(m.b)}
+}
+
+func (m NfsResop4) AsOFFLOADCANCEL4res() OFFLOADCANCEL4res {
+	if m.disc != OP_OFFLOAD_CANCEL {
+		panic("wrong union discriminant")
+	}
+	return OFFLOADCANCEL4res{m: (*[oFFLOADCANCEL4resSize]byte)(m.b)}
+}
+
+func (m NfsResop4) AsOFFLOADSTATUS4resEntry() OFFLOADSTATUS4resEntry {
+	if m.disc != OP_OFFLOAD_STATUS {
+		panic("wrong union discriminant")
+	}
+	return OFFLOADSTATUS4resEntry(m.b)
+}
+
+func (m NfsResop4) AsREADPLUS4resEntry() READPLUS4resEntry {
+	if m.disc != OP_READ_PLUS {
+		panic("wrong union discriminant")
+	}
+	return READPLUS4resEntry(m.b)
+}
+
+func (m NfsResop4) AsSEEK4resEntry() SEEK4resEntry {
+	if m.disc != OP_SEEK {
+		panic("wrong union discriminant")
+	}
+	return SEEK4resEntry(m.b)
+}
+
+func (m NfsResop4) AsWRITESAME4resEntry() WRITESAME4resEntry {
+	if m.disc != OP_WRITE_SAME {
+		panic("wrong union discriminant")
+	}
+	return WRITESAME4resEntry(m.b)
+}
+
+func (m NfsResop4) AsCLONE4res() CLONE4res {
+	if m.disc != OP_CLONE {
+		panic("wrong union discriminant")
+	}
+	return CLONE4res{m: (*[cLONE4resSize]byte)(m.b)}
+}
+
+func (m NfsResop4) AsGETXATTR4resEntry() GETXATTR4resEntry {
+	if m.disc != OP_GETXATTR {
+		panic("wrong union discriminant")
+	}
+	return GETXATTR4resEntry(m.b)
+}
+
+func (m NfsResop4) AsSETXATTR4resEntry() SETXATTR4resEntry {
+	if m.disc != OP_SETXATTR {
+		panic("wrong union discriminant")
+	}
+	return SETXATTR4resEntry(m.b)
+}
+
+func (m NfsResop4) AsLISTXATTRS4resEntry() LISTXATTRS4resEntry {
+	if m.disc != OP_LISTXATTRS {
+		panic("wrong union discriminant")
+	}
+	return LISTXATTRS4resEntry(m.b)
+}
+
+func (m NfsResop4) AsREMOVEXATTR4resEntry() REMOVEXATTR4resEntry {
+	if m.disc != OP_REMOVEXATTR {
+		panic("wrong union discriminant")
+	}
+	return REMOVEXATTR4resEntry(m.b)
 }
 
 func (m NfsResop4) AsILLEGAL4res() ILLEGAL4res {
@@ -10406,6 +26836,288 @@ func (w *NfsArgop4EntryWriter) SetValue_Write() WRITE4argsWriter {
 func (w *NfsArgop4EntryWriter) SetValue_ReleaseLockowner() RELEASELOCKOWNER4argsWriter {
 	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_RELEASE_LOCKOWNER)
 	child := StartRELEASELOCKOWNER4args(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NfsArgop4EntryWriter) SetValue_BackchannelCtl() BACKCHANNELCTL4argsWriter {
+	w.buf = append(w.buf, make([]byte, 4+8)...)
+	off := len(w.buf) - 4 - 8
+	binary.BigEndian.PutUint32((*[4 + 8]byte)(w.buf[off:])[:4], OP_BACKCHANNEL_CTL)
+	buf := w.buf
+	w.buf = nil
+	return BACKCHANNELCTL4argsWriter{buf: buf, off: off + 4}
+}
+
+func (w *NfsArgop4EntryWriter) SetValue_BindConnToSession() BINDCONNTOSESSION4args {
+	w.buf = append(w.buf, make([]byte, 4+bINDCONNTOSESSION4argsSize)...)
+	p := (*[4 + bINDCONNTOSESSION4argsSize]byte)(w.buf[len(w.buf)-4-bINDCONNTOSESSION4argsSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_BIND_CONN_TO_SESSION)
+	return BINDCONNTOSESSION4args{m: (*[bINDCONNTOSESSION4argsSize]byte)(p[4:])}
+}
+
+func (w *NfsArgop4EntryWriter) SetValue_ExchangeId() EXCHANGEID4argsWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_EXCHANGE_ID)
+	child := StartEXCHANGEID4args(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NfsArgop4EntryWriter) SetValue_CreateSession() CREATESESSION4argsWriter {
+	w.buf = append(w.buf, make([]byte, 4+16)...)
+	off := len(w.buf) - 4 - 16
+	binary.BigEndian.PutUint32((*[4 + 16]byte)(w.buf[off:])[:4], OP_CREATE_SESSION)
+	buf := w.buf
+	w.buf = nil
+	return CREATESESSION4argsWriter{buf: buf, off: off + 4}
+}
+
+func (w *NfsArgop4EntryWriter) SetValue_DestroySession() DESTROYSESSION4args {
+	w.buf = append(w.buf, make([]byte, 4+dESTROYSESSION4argsSize)...)
+	p := (*[4 + dESTROYSESSION4argsSize]byte)(w.buf[len(w.buf)-4-dESTROYSESSION4argsSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_DESTROY_SESSION)
+	return DESTROYSESSION4args{m: (*[dESTROYSESSION4argsSize]byte)(p[4:])}
+}
+
+func (w *NfsArgop4EntryWriter) SetValue_FreeStateid() FREESTATEID4args {
+	w.buf = append(w.buf, make([]byte, 4+fREESTATEID4argsSize)...)
+	p := (*[4 + fREESTATEID4argsSize]byte)(w.buf[len(w.buf)-4-fREESTATEID4argsSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_FREE_STATEID)
+	return FREESTATEID4args{m: (*[fREESTATEID4argsSize]byte)(p[4:])}
+}
+
+func (w *NfsArgop4EntryWriter) SetValue_GetDirDelegation() GETDIRDELEGATION4argsWriter {
+	w.buf = append(w.buf, make([]byte, 4+4)...)
+	off := len(w.buf) - 4 - 4
+	binary.BigEndian.PutUint32((*[4 + 4]byte)(w.buf[off:])[:4], OP_GET_DIR_DELEGATION)
+	buf := w.buf
+	w.buf = nil
+	return GETDIRDELEGATION4argsWriter{buf: buf, header: (*[4]byte)(buf[off+4:])}
+}
+
+func (w *NfsArgop4EntryWriter) SetValue_Getdeviceinfo() GETDEVICEINFO4argsWriter {
+	w.buf = append(w.buf, make([]byte, 4+24)...)
+	off := len(w.buf) - 4 - 24
+	binary.BigEndian.PutUint32((*[4 + 24]byte)(w.buf[off:])[:4], OP_GETDEVICEINFO)
+	buf := w.buf
+	w.buf = nil
+	return GETDEVICEINFO4argsWriter{buf: buf, header: (*[24]byte)(buf[off+4:])}
+}
+
+func (w *NfsArgop4EntryWriter) SetValue_Getdevicelist() GETDEVICELIST4args {
+	w.buf = append(w.buf, make([]byte, 4+gETDEVICELIST4argsSize)...)
+	p := (*[4 + gETDEVICELIST4argsSize]byte)(w.buf[len(w.buf)-4-gETDEVICELIST4argsSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_GETDEVICELIST)
+	return GETDEVICELIST4args{m: (*[gETDEVICELIST4argsSize]byte)(p[4:])}
+}
+
+func (w *NfsArgop4EntryWriter) SetValue_Layoutcommit() LAYOUTCOMMIT4argsWriter {
+	w.buf = append(w.buf, make([]byte, 4+40)...)
+	off := len(w.buf) - 4 - 40
+	binary.BigEndian.PutUint32((*[4 + 40]byte)(w.buf[off:])[:4], OP_LAYOUTCOMMIT)
+	buf := w.buf
+	w.buf = nil
+	return LAYOUTCOMMIT4argsWriter{buf: buf, header: (*[40]byte)(buf[off+4:])}
+}
+
+func (w *NfsArgop4EntryWriter) SetValue_Layoutget() LAYOUTGET4args {
+	w.buf = append(w.buf, make([]byte, 4+lAYOUTGET4argsSize)...)
+	p := (*[4 + lAYOUTGET4argsSize]byte)(w.buf[len(w.buf)-4-lAYOUTGET4argsSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_LAYOUTGET)
+	return LAYOUTGET4args{m: (*[lAYOUTGET4argsSize]byte)(p[4:])}
+}
+
+func (w *NfsArgop4EntryWriter) SetValue_Layoutreturn() LAYOUTRETURN4argsWriter {
+	w.buf = append(w.buf, make([]byte, 4+16)...)
+	off := len(w.buf) - 4 - 16
+	binary.BigEndian.PutUint32((*[4 + 16]byte)(w.buf[off:])[:4], OP_LAYOUTRETURN)
+	buf := w.buf
+	w.buf = nil
+	return LAYOUTRETURN4argsWriter{buf: buf, header: (*[16]byte)(buf[off+4:])}
+}
+
+func (w *NfsArgop4EntryWriter) SetValue_SecinfoNoName() NfsArgop4OPSECINFONONAME {
+	w.buf = append(w.buf, make([]byte, 4+nfsArgop4OPSECINFONONAMESize)...)
+	p := (*[4 + nfsArgop4OPSECINFONONAMESize]byte)(w.buf[len(w.buf)-4-nfsArgop4OPSECINFONONAMESize:])
+	binary.BigEndian.PutUint32(p[:4], OP_SECINFO_NO_NAME)
+	return NfsArgop4OPSECINFONONAME{m: (*[nfsArgop4OPSECINFONONAMESize]byte)(p[4:])}
+}
+
+func (w *NfsArgop4EntryWriter) SetValue_Sequence() SEQUENCE4args {
+	w.buf = append(w.buf, make([]byte, 4+sEQUENCE4argsSize)...)
+	p := (*[4 + sEQUENCE4argsSize]byte)(w.buf[len(w.buf)-4-sEQUENCE4argsSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_SEQUENCE)
+	return SEQUENCE4args{m: (*[sEQUENCE4argsSize]byte)(p[4:])}
+}
+
+func (w *NfsArgop4EntryWriter) SetValue_SetSsv() SETSSV4argsWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_SET_SSV)
+	child := StartSETSSV4args(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NfsArgop4EntryWriter) SetValue_TestStateid() TESTSTATEID4argsWriter {
+	w.buf = append(w.buf, make([]byte, 4+4)...)
+	off := len(w.buf) - 4 - 4
+	binary.BigEndian.PutUint32((*[4 + 4]byte)(w.buf[off:])[:4], OP_TEST_STATEID)
+	buf := w.buf
+	w.buf = nil
+	return TESTSTATEID4argsWriter{buf: buf, off: off + 4}
+}
+
+func (w *NfsArgop4EntryWriter) SetValue_WantDelegation() WANTDELEGATION4argsWriter {
+	w.buf = append(w.buf, make([]byte, 4+8)...)
+	off := len(w.buf) - 4 - 8
+	binary.BigEndian.PutUint32((*[4 + 8]byte)(w.buf[off:])[:4], OP_WANT_DELEGATION)
+	buf := w.buf
+	w.buf = nil
+	return WANTDELEGATION4argsWriter{buf: buf, header: (*[8]byte)(buf[off+4:])}
+}
+
+func (w *NfsArgop4EntryWriter) SetValue_DestroyClientid() DESTROYCLIENTID4args {
+	w.buf = append(w.buf, make([]byte, 4+dESTROYCLIENTID4argsSize)...)
+	p := (*[4 + dESTROYCLIENTID4argsSize]byte)(w.buf[len(w.buf)-4-dESTROYCLIENTID4argsSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_DESTROY_CLIENTID)
+	return DESTROYCLIENTID4args{m: (*[dESTROYCLIENTID4argsSize]byte)(p[4:])}
+}
+
+func (w *NfsArgop4EntryWriter) SetValue_ReclaimComplete() RECLAIMCOMPLETE4args {
+	w.buf = append(w.buf, make([]byte, 4+rECLAIMCOMPLETE4argsSize)...)
+	p := (*[4 + rECLAIMCOMPLETE4argsSize]byte)(w.buf[len(w.buf)-4-rECLAIMCOMPLETE4argsSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_RECLAIM_COMPLETE)
+	return RECLAIMCOMPLETE4args{m: (*[rECLAIMCOMPLETE4argsSize]byte)(p[4:])}
+}
+
+func (w *NfsArgop4EntryWriter) SetValue_Allocate() ALLOCATE4args {
+	w.buf = append(w.buf, make([]byte, 4+aLLOCATE4argsSize)...)
+	p := (*[4 + aLLOCATE4argsSize]byte)(w.buf[len(w.buf)-4-aLLOCATE4argsSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_ALLOCATE)
+	return ALLOCATE4args{m: (*[aLLOCATE4argsSize]byte)(p[4:])}
+}
+
+func (w *NfsArgop4EntryWriter) SetValue_Copy() COPY4argsWriter {
+	w.buf = append(w.buf, make([]byte, 4+68)...)
+	off := len(w.buf) - 4 - 68
+	binary.BigEndian.PutUint32((*[4 + 68]byte)(w.buf[off:])[:4], OP_COPY)
+	buf := w.buf
+	w.buf = nil
+	return COPY4argsWriter{buf: buf, off: off + 4}
+}
+
+func (w *NfsArgop4EntryWriter) SetValue_CopyNotify() COPYNOTIFY4argsWriter {
+	w.buf = append(w.buf, make([]byte, 4+20)...)
+	off := len(w.buf) - 4 - 20
+	binary.BigEndian.PutUint32((*[4 + 20]byte)(w.buf[off:])[:4], OP_COPY_NOTIFY)
+	buf := w.buf
+	w.buf = nil
+	return COPYNOTIFY4argsWriter{buf: buf, header: (*[20]byte)(buf[off+4:])}
+}
+
+func (w *NfsArgop4EntryWriter) SetValue_Deallocate() DEALLOCATE4args {
+	w.buf = append(w.buf, make([]byte, 4+dEALLOCATE4argsSize)...)
+	p := (*[4 + dEALLOCATE4argsSize]byte)(w.buf[len(w.buf)-4-dEALLOCATE4argsSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_DEALLOCATE)
+	return DEALLOCATE4args{m: (*[dEALLOCATE4argsSize]byte)(p[4:])}
+}
+
+func (w *NfsArgop4EntryWriter) SetValue_IoAdvise() IOADVISE4argsWriter {
+	w.buf = append(w.buf, make([]byte, 4+32)...)
+	off := len(w.buf) - 4 - 32
+	binary.BigEndian.PutUint32((*[4 + 32]byte)(w.buf[off:])[:4], OP_IO_ADVISE)
+	buf := w.buf
+	w.buf = nil
+	return IOADVISE4argsWriter{buf: buf, header: (*[32]byte)(buf[off+4:])}
+}
+
+func (w *NfsArgop4EntryWriter) SetValue_Layouterror() LAYOUTERROR4argsWriter {
+	w.buf = append(w.buf, make([]byte, 4+36)...)
+	off := len(w.buf) - 4 - 36
+	binary.BigEndian.PutUint32((*[4 + 36]byte)(w.buf[off:])[:4], OP_LAYOUTERROR)
+	buf := w.buf
+	w.buf = nil
+	return LAYOUTERROR4argsWriter{buf: buf, off: off + 4}
+}
+
+func (w *NfsArgop4EntryWriter) SetValue_Layoutstats() LAYOUTSTATS4argsWriter {
+	w.buf = append(w.buf, make([]byte, 4+80)...)
+	off := len(w.buf) - 4 - 80
+	binary.BigEndian.PutUint32((*[4 + 80]byte)(w.buf[off:])[:4], OP_LAYOUTSTATS)
+	buf := w.buf
+	w.buf = nil
+	return LAYOUTSTATS4argsWriter{buf: buf, header: (*[80]byte)(buf[off+4:])}
+}
+
+func (w *NfsArgop4EntryWriter) SetValue_OffloadCancel() OFFLOADCANCEL4args {
+	w.buf = append(w.buf, make([]byte, 4+oFFLOADCANCEL4argsSize)...)
+	p := (*[4 + oFFLOADCANCEL4argsSize]byte)(w.buf[len(w.buf)-4-oFFLOADCANCEL4argsSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_OFFLOAD_CANCEL)
+	return OFFLOADCANCEL4args{m: (*[oFFLOADCANCEL4argsSize]byte)(p[4:])}
+}
+
+func (w *NfsArgop4EntryWriter) SetValue_OffloadStatus() OFFLOADSTATUS4args {
+	w.buf = append(w.buf, make([]byte, 4+oFFLOADSTATUS4argsSize)...)
+	p := (*[4 + oFFLOADSTATUS4argsSize]byte)(w.buf[len(w.buf)-4-oFFLOADSTATUS4argsSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_OFFLOAD_STATUS)
+	return OFFLOADSTATUS4args{m: (*[oFFLOADSTATUS4argsSize]byte)(p[4:])}
+}
+
+func (w *NfsArgop4EntryWriter) SetValue_ReadPlus() READPLUS4args {
+	w.buf = append(w.buf, make([]byte, 4+rEADPLUS4argsSize)...)
+	p := (*[4 + rEADPLUS4argsSize]byte)(w.buf[len(w.buf)-4-rEADPLUS4argsSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_READ_PLUS)
+	return READPLUS4args{m: (*[rEADPLUS4argsSize]byte)(p[4:])}
+}
+
+func (w *NfsArgop4EntryWriter) SetValue_Seek() SEEK4args {
+	w.buf = append(w.buf, make([]byte, 4+sEEK4argsSize)...)
+	p := (*[4 + sEEK4argsSize]byte)(w.buf[len(w.buf)-4-sEEK4argsSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_SEEK)
+	return SEEK4args{m: (*[sEEK4argsSize]byte)(p[4:])}
+}
+
+func (w *NfsArgop4EntryWriter) SetValue_WriteSame() WRITESAME4argsWriter {
+	w.buf = append(w.buf, make([]byte, 4+20)...)
+	off := len(w.buf) - 4 - 20
+	binary.BigEndian.PutUint32((*[4 + 20]byte)(w.buf[off:])[:4], OP_WRITE_SAME)
+	buf := w.buf
+	w.buf = nil
+	return WRITESAME4argsWriter{buf: buf, header: (*[20]byte)(buf[off+4:])}
+}
+
+func (w *NfsArgop4EntryWriter) SetValue_Clone() CLONE4args {
+	w.buf = append(w.buf, make([]byte, 4+cLONE4argsSize)...)
+	p := (*[4 + cLONE4argsSize]byte)(w.buf[len(w.buf)-4-cLONE4argsSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_CLONE)
+	return CLONE4args{m: (*[cLONE4argsSize]byte)(p[4:])}
+}
+
+func (w *NfsArgop4EntryWriter) SetValue_Getxattr() GETXATTR4argsWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_GETXATTR)
+	child := StartGETXATTR4args(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NfsArgop4EntryWriter) SetValue_Setxattr() SETXATTR4argsWriter {
+	w.buf = append(w.buf, make([]byte, 4+4)...)
+	off := len(w.buf) - 4 - 4
+	binary.BigEndian.PutUint32((*[4 + 4]byte)(w.buf[off:])[:4], OP_SETXATTR)
+	buf := w.buf
+	w.buf = nil
+	return SETXATTR4argsWriter{buf: buf, header: (*[4]byte)(buf[off+4:])}
+}
+
+func (w *NfsArgop4EntryWriter) SetValue_Listxattrs() LISTXATTRS4args {
+	w.buf = append(w.buf, make([]byte, 4+lISTXATTRS4argsSize)...)
+	p := (*[4 + lISTXATTRS4argsSize]byte)(w.buf[len(w.buf)-4-lISTXATTRS4argsSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_LISTXATTRS)
+	return LISTXATTRS4args{m: (*[lISTXATTRS4argsSize]byte)(p[4:])}
+}
+
+func (w *NfsArgop4EntryWriter) SetValue_Removexattr() REMOVEXATTR4argsWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_REMOVEXATTR)
+	child := StartREMOVEXATTR4args(w.buf)
 	w.buf = nil
 	return child
 }
@@ -11155,6 +27867,648 @@ func (w *COMPOUND4argsWriter) AppendArgarray_ReleaseLockowner() RELEASELOCKOWNER
 	return child
 }
 
+func (w *COMPOUND4argsWriter) AppendArgarray_BackchannelCtl() BACKCHANNELCTL4argsWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+8)...)
+	off := len(w.buf) - 4 - 8
+	binary.BigEndian.PutUint32((*[4 + 8]byte)(w.buf[off:])[:4], OP_BACKCHANNEL_CTL)
+	w.argarrayCount++
+	buf := w.buf
+	w.buf = nil
+	return BACKCHANNELCTL4argsWriter{buf: buf, off: off + 4}
+}
+
+func (w *COMPOUND4argsWriter) AppendArgarray_BindConnToSession() BINDCONNTOSESSION4args {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+bINDCONNTOSESSION4argsSize)...)
+	p := (*[4 + bINDCONNTOSESSION4argsSize]byte)(w.buf[len(w.buf)-4-bINDCONNTOSESSION4argsSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_BIND_CONN_TO_SESSION)
+	w.argarrayCount++
+	return BINDCONNTOSESSION4args{m: (*[bINDCONNTOSESSION4argsSize]byte)(p[4:])}
+}
+
+func (w *COMPOUND4argsWriter) AppendArgarray_ExchangeId() EXCHANGEID4argsWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_EXCHANGE_ID)
+	w.argarrayCount++
+	child := StartEXCHANGEID4args(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *COMPOUND4argsWriter) AppendArgarray_CreateSession() CREATESESSION4argsWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+16)...)
+	off := len(w.buf) - 4 - 16
+	binary.BigEndian.PutUint32((*[4 + 16]byte)(w.buf[off:])[:4], OP_CREATE_SESSION)
+	w.argarrayCount++
+	buf := w.buf
+	w.buf = nil
+	return CREATESESSION4argsWriter{buf: buf, off: off + 4}
+}
+
+func (w *COMPOUND4argsWriter) AppendArgarray_DestroySession() DESTROYSESSION4args {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+dESTROYSESSION4argsSize)...)
+	p := (*[4 + dESTROYSESSION4argsSize]byte)(w.buf[len(w.buf)-4-dESTROYSESSION4argsSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_DESTROY_SESSION)
+	w.argarrayCount++
+	return DESTROYSESSION4args{m: (*[dESTROYSESSION4argsSize]byte)(p[4:])}
+}
+
+func (w *COMPOUND4argsWriter) AppendArgarray_FreeStateid() FREESTATEID4args {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+fREESTATEID4argsSize)...)
+	p := (*[4 + fREESTATEID4argsSize]byte)(w.buf[len(w.buf)-4-fREESTATEID4argsSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_FREE_STATEID)
+	w.argarrayCount++
+	return FREESTATEID4args{m: (*[fREESTATEID4argsSize]byte)(p[4:])}
+}
+
+func (w *COMPOUND4argsWriter) AppendArgarray_GetDirDelegation() GETDIRDELEGATION4argsWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+4)...)
+	off := len(w.buf) - 4 - 4
+	binary.BigEndian.PutUint32((*[4 + 4]byte)(w.buf[off:])[:4], OP_GET_DIR_DELEGATION)
+	w.argarrayCount++
+	buf := w.buf
+	w.buf = nil
+	return GETDIRDELEGATION4argsWriter{buf: buf, header: (*[4]byte)(buf[off+4:])}
+}
+
+func (w *COMPOUND4argsWriter) AppendArgarray_Getdeviceinfo() GETDEVICEINFO4argsWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+24)...)
+	off := len(w.buf) - 4 - 24
+	binary.BigEndian.PutUint32((*[4 + 24]byte)(w.buf[off:])[:4], OP_GETDEVICEINFO)
+	w.argarrayCount++
+	buf := w.buf
+	w.buf = nil
+	return GETDEVICEINFO4argsWriter{buf: buf, header: (*[24]byte)(buf[off+4:])}
+}
+
+func (w *COMPOUND4argsWriter) AppendArgarray_Getdevicelist() GETDEVICELIST4args {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+gETDEVICELIST4argsSize)...)
+	p := (*[4 + gETDEVICELIST4argsSize]byte)(w.buf[len(w.buf)-4-gETDEVICELIST4argsSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_GETDEVICELIST)
+	w.argarrayCount++
+	return GETDEVICELIST4args{m: (*[gETDEVICELIST4argsSize]byte)(p[4:])}
+}
+
+func (w *COMPOUND4argsWriter) AppendArgarray_Layoutcommit() LAYOUTCOMMIT4argsWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+40)...)
+	off := len(w.buf) - 4 - 40
+	binary.BigEndian.PutUint32((*[4 + 40]byte)(w.buf[off:])[:4], OP_LAYOUTCOMMIT)
+	w.argarrayCount++
+	buf := w.buf
+	w.buf = nil
+	return LAYOUTCOMMIT4argsWriter{buf: buf, header: (*[40]byte)(buf[off+4:])}
+}
+
+func (w *COMPOUND4argsWriter) AppendArgarray_Layoutget() LAYOUTGET4args {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+lAYOUTGET4argsSize)...)
+	p := (*[4 + lAYOUTGET4argsSize]byte)(w.buf[len(w.buf)-4-lAYOUTGET4argsSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_LAYOUTGET)
+	w.argarrayCount++
+	return LAYOUTGET4args{m: (*[lAYOUTGET4argsSize]byte)(p[4:])}
+}
+
+func (w *COMPOUND4argsWriter) AppendArgarray_Layoutreturn() LAYOUTRETURN4argsWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+16)...)
+	off := len(w.buf) - 4 - 16
+	binary.BigEndian.PutUint32((*[4 + 16]byte)(w.buf[off:])[:4], OP_LAYOUTRETURN)
+	w.argarrayCount++
+	buf := w.buf
+	w.buf = nil
+	return LAYOUTRETURN4argsWriter{buf: buf, header: (*[16]byte)(buf[off+4:])}
+}
+
+func (w *COMPOUND4argsWriter) AppendArgarray_SecinfoNoName() NfsArgop4OPSECINFONONAME {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+nfsArgop4OPSECINFONONAMESize)...)
+	p := (*[4 + nfsArgop4OPSECINFONONAMESize]byte)(w.buf[len(w.buf)-4-nfsArgop4OPSECINFONONAMESize:])
+	binary.BigEndian.PutUint32(p[:4], OP_SECINFO_NO_NAME)
+	w.argarrayCount++
+	return NfsArgop4OPSECINFONONAME{m: (*[nfsArgop4OPSECINFONONAMESize]byte)(p[4:])}
+}
+
+func (w *COMPOUND4argsWriter) AppendArgarray_Sequence() SEQUENCE4args {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+sEQUENCE4argsSize)...)
+	p := (*[4 + sEQUENCE4argsSize]byte)(w.buf[len(w.buf)-4-sEQUENCE4argsSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_SEQUENCE)
+	w.argarrayCount++
+	return SEQUENCE4args{m: (*[sEQUENCE4argsSize]byte)(p[4:])}
+}
+
+func (w *COMPOUND4argsWriter) AppendArgarray_SetSsv() SETSSV4argsWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_SET_SSV)
+	w.argarrayCount++
+	child := StartSETSSV4args(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *COMPOUND4argsWriter) AppendArgarray_TestStateid() TESTSTATEID4argsWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+4)...)
+	off := len(w.buf) - 4 - 4
+	binary.BigEndian.PutUint32((*[4 + 4]byte)(w.buf[off:])[:4], OP_TEST_STATEID)
+	w.argarrayCount++
+	buf := w.buf
+	w.buf = nil
+	return TESTSTATEID4argsWriter{buf: buf, off: off + 4}
+}
+
+func (w *COMPOUND4argsWriter) AppendArgarray_WantDelegation() WANTDELEGATION4argsWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+8)...)
+	off := len(w.buf) - 4 - 8
+	binary.BigEndian.PutUint32((*[4 + 8]byte)(w.buf[off:])[:4], OP_WANT_DELEGATION)
+	w.argarrayCount++
+	buf := w.buf
+	w.buf = nil
+	return WANTDELEGATION4argsWriter{buf: buf, header: (*[8]byte)(buf[off+4:])}
+}
+
+func (w *COMPOUND4argsWriter) AppendArgarray_DestroyClientid() DESTROYCLIENTID4args {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+dESTROYCLIENTID4argsSize)...)
+	p := (*[4 + dESTROYCLIENTID4argsSize]byte)(w.buf[len(w.buf)-4-dESTROYCLIENTID4argsSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_DESTROY_CLIENTID)
+	w.argarrayCount++
+	return DESTROYCLIENTID4args{m: (*[dESTROYCLIENTID4argsSize]byte)(p[4:])}
+}
+
+func (w *COMPOUND4argsWriter) AppendArgarray_ReclaimComplete() RECLAIMCOMPLETE4args {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+rECLAIMCOMPLETE4argsSize)...)
+	p := (*[4 + rECLAIMCOMPLETE4argsSize]byte)(w.buf[len(w.buf)-4-rECLAIMCOMPLETE4argsSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_RECLAIM_COMPLETE)
+	w.argarrayCount++
+	return RECLAIMCOMPLETE4args{m: (*[rECLAIMCOMPLETE4argsSize]byte)(p[4:])}
+}
+
+func (w *COMPOUND4argsWriter) AppendArgarray_Allocate() ALLOCATE4args {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+aLLOCATE4argsSize)...)
+	p := (*[4 + aLLOCATE4argsSize]byte)(w.buf[len(w.buf)-4-aLLOCATE4argsSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_ALLOCATE)
+	w.argarrayCount++
+	return ALLOCATE4args{m: (*[aLLOCATE4argsSize]byte)(p[4:])}
+}
+
+func (w *COMPOUND4argsWriter) AppendArgarray_Copy() COPY4argsWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+68)...)
+	off := len(w.buf) - 4 - 68
+	binary.BigEndian.PutUint32((*[4 + 68]byte)(w.buf[off:])[:4], OP_COPY)
+	w.argarrayCount++
+	buf := w.buf
+	w.buf = nil
+	return COPY4argsWriter{buf: buf, off: off + 4}
+}
+
+func (w *COMPOUND4argsWriter) AppendArgarray_CopyNotify() COPYNOTIFY4argsWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+20)...)
+	off := len(w.buf) - 4 - 20
+	binary.BigEndian.PutUint32((*[4 + 20]byte)(w.buf[off:])[:4], OP_COPY_NOTIFY)
+	w.argarrayCount++
+	buf := w.buf
+	w.buf = nil
+	return COPYNOTIFY4argsWriter{buf: buf, header: (*[20]byte)(buf[off+4:])}
+}
+
+func (w *COMPOUND4argsWriter) AppendArgarray_Deallocate() DEALLOCATE4args {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+dEALLOCATE4argsSize)...)
+	p := (*[4 + dEALLOCATE4argsSize]byte)(w.buf[len(w.buf)-4-dEALLOCATE4argsSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_DEALLOCATE)
+	w.argarrayCount++
+	return DEALLOCATE4args{m: (*[dEALLOCATE4argsSize]byte)(p[4:])}
+}
+
+func (w *COMPOUND4argsWriter) AppendArgarray_IoAdvise() IOADVISE4argsWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+32)...)
+	off := len(w.buf) - 4 - 32
+	binary.BigEndian.PutUint32((*[4 + 32]byte)(w.buf[off:])[:4], OP_IO_ADVISE)
+	w.argarrayCount++
+	buf := w.buf
+	w.buf = nil
+	return IOADVISE4argsWriter{buf: buf, header: (*[32]byte)(buf[off+4:])}
+}
+
+func (w *COMPOUND4argsWriter) AppendArgarray_Layouterror() LAYOUTERROR4argsWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+36)...)
+	off := len(w.buf) - 4 - 36
+	binary.BigEndian.PutUint32((*[4 + 36]byte)(w.buf[off:])[:4], OP_LAYOUTERROR)
+	w.argarrayCount++
+	buf := w.buf
+	w.buf = nil
+	return LAYOUTERROR4argsWriter{buf: buf, off: off + 4}
+}
+
+func (w *COMPOUND4argsWriter) AppendArgarray_Layoutstats() LAYOUTSTATS4argsWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+80)...)
+	off := len(w.buf) - 4 - 80
+	binary.BigEndian.PutUint32((*[4 + 80]byte)(w.buf[off:])[:4], OP_LAYOUTSTATS)
+	w.argarrayCount++
+	buf := w.buf
+	w.buf = nil
+	return LAYOUTSTATS4argsWriter{buf: buf, header: (*[80]byte)(buf[off+4:])}
+}
+
+func (w *COMPOUND4argsWriter) AppendArgarray_OffloadCancel() OFFLOADCANCEL4args {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+oFFLOADCANCEL4argsSize)...)
+	p := (*[4 + oFFLOADCANCEL4argsSize]byte)(w.buf[len(w.buf)-4-oFFLOADCANCEL4argsSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_OFFLOAD_CANCEL)
+	w.argarrayCount++
+	return OFFLOADCANCEL4args{m: (*[oFFLOADCANCEL4argsSize]byte)(p[4:])}
+}
+
+func (w *COMPOUND4argsWriter) AppendArgarray_OffloadStatus() OFFLOADSTATUS4args {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+oFFLOADSTATUS4argsSize)...)
+	p := (*[4 + oFFLOADSTATUS4argsSize]byte)(w.buf[len(w.buf)-4-oFFLOADSTATUS4argsSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_OFFLOAD_STATUS)
+	w.argarrayCount++
+	return OFFLOADSTATUS4args{m: (*[oFFLOADSTATUS4argsSize]byte)(p[4:])}
+}
+
+func (w *COMPOUND4argsWriter) AppendArgarray_ReadPlus() READPLUS4args {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+rEADPLUS4argsSize)...)
+	p := (*[4 + rEADPLUS4argsSize]byte)(w.buf[len(w.buf)-4-rEADPLUS4argsSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_READ_PLUS)
+	w.argarrayCount++
+	return READPLUS4args{m: (*[rEADPLUS4argsSize]byte)(p[4:])}
+}
+
+func (w *COMPOUND4argsWriter) AppendArgarray_Seek() SEEK4args {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+sEEK4argsSize)...)
+	p := (*[4 + sEEK4argsSize]byte)(w.buf[len(w.buf)-4-sEEK4argsSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_SEEK)
+	w.argarrayCount++
+	return SEEK4args{m: (*[sEEK4argsSize]byte)(p[4:])}
+}
+
+func (w *COMPOUND4argsWriter) AppendArgarray_WriteSame() WRITESAME4argsWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+20)...)
+	off := len(w.buf) - 4 - 20
+	binary.BigEndian.PutUint32((*[4 + 20]byte)(w.buf[off:])[:4], OP_WRITE_SAME)
+	w.argarrayCount++
+	buf := w.buf
+	w.buf = nil
+	return WRITESAME4argsWriter{buf: buf, header: (*[20]byte)(buf[off+4:])}
+}
+
+func (w *COMPOUND4argsWriter) AppendArgarray_Clone() CLONE4args {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+cLONE4argsSize)...)
+	p := (*[4 + cLONE4argsSize]byte)(w.buf[len(w.buf)-4-cLONE4argsSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_CLONE)
+	w.argarrayCount++
+	return CLONE4args{m: (*[cLONE4argsSize]byte)(p[4:])}
+}
+
+func (w *COMPOUND4argsWriter) AppendArgarray_Getxattr() GETXATTR4argsWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_GETXATTR)
+	w.argarrayCount++
+	child := StartGETXATTR4args(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *COMPOUND4argsWriter) AppendArgarray_Setxattr() SETXATTR4argsWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+4)...)
+	off := len(w.buf) - 4 - 4
+	binary.BigEndian.PutUint32((*[4 + 4]byte)(w.buf[off:])[:4], OP_SETXATTR)
+	w.argarrayCount++
+	buf := w.buf
+	w.buf = nil
+	return SETXATTR4argsWriter{buf: buf, header: (*[4]byte)(buf[off+4:])}
+}
+
+func (w *COMPOUND4argsWriter) AppendArgarray_Listxattrs() LISTXATTRS4args {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+lISTXATTRS4argsSize)...)
+	p := (*[4 + lISTXATTRS4argsSize]byte)(w.buf[len(w.buf)-4-lISTXATTRS4argsSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_LISTXATTRS)
+	w.argarrayCount++
+	return LISTXATTRS4args{m: (*[lISTXATTRS4argsSize]byte)(p[4:])}
+}
+
+func (w *COMPOUND4argsWriter) AppendArgarray_Removexattr() REMOVEXATTR4argsWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_REMOVEXATTR)
+	w.argarrayCount++
+	child := StartREMOVEXATTR4args(w.buf)
+	w.buf = nil
+	return child
+}
+
 func (w *COMPOUND4argsWriter) AppendArgarray_Illegal() {
 	_ = w.buf[:1]
 	if w.phase > 1 {
@@ -11509,6 +28863,258 @@ func (w *NfsResop4EntryWriter) SetValue_ReleaseLockowner() RELEASELOCKOWNER4res 
 	p := (*[4 + rELEASELOCKOWNER4resSize]byte)(w.buf[len(w.buf)-4-rELEASELOCKOWNER4resSize:])
 	binary.BigEndian.PutUint32(p[:4], OP_RELEASE_LOCKOWNER)
 	return RELEASELOCKOWNER4res{m: (*[rELEASELOCKOWNER4resSize]byte)(p[4:])}
+}
+
+func (w *NfsResop4EntryWriter) SetValue_BackchannelCtl() BACKCHANNELCTL4res {
+	w.buf = append(w.buf, make([]byte, 4+bACKCHANNELCTL4resSize)...)
+	p := (*[4 + bACKCHANNELCTL4resSize]byte)(w.buf[len(w.buf)-4-bACKCHANNELCTL4resSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_BACKCHANNEL_CTL)
+	return BACKCHANNELCTL4res{m: (*[bACKCHANNELCTL4resSize]byte)(p[4:])}
+}
+
+func (w *NfsResop4EntryWriter) SetValue_BindConnToSession() BINDCONNTOSESSION4resEntryWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_BIND_CONN_TO_SESSION)
+	child := StartBINDCONNTOSESSION4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NfsResop4EntryWriter) SetValue_ExchangeId() EXCHANGEID4resEntryWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_EXCHANGE_ID)
+	child := StartEXCHANGEID4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NfsResop4EntryWriter) SetValue_CreateSession() CREATESESSION4resEntryWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_CREATE_SESSION)
+	child := StartCREATESESSION4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NfsResop4EntryWriter) SetValue_DestroySession() DESTROYSESSION4res {
+	w.buf = append(w.buf, make([]byte, 4+dESTROYSESSION4resSize)...)
+	p := (*[4 + dESTROYSESSION4resSize]byte)(w.buf[len(w.buf)-4-dESTROYSESSION4resSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_DESTROY_SESSION)
+	return DESTROYSESSION4res{m: (*[dESTROYSESSION4resSize]byte)(p[4:])}
+}
+
+func (w *NfsResop4EntryWriter) SetValue_FreeStateid() FREESTATEID4res {
+	w.buf = append(w.buf, make([]byte, 4+fREESTATEID4resSize)...)
+	p := (*[4 + fREESTATEID4resSize]byte)(w.buf[len(w.buf)-4-fREESTATEID4resSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_FREE_STATEID)
+	return FREESTATEID4res{m: (*[fREESTATEID4resSize]byte)(p[4:])}
+}
+
+func (w *NfsResop4EntryWriter) SetValue_GetDirDelegation() GETDIRDELEGATION4resEntryWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_GET_DIR_DELEGATION)
+	child := StartGETDIRDELEGATION4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NfsResop4EntryWriter) SetValue_Getdeviceinfo() GETDEVICEINFO4resEntryWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_GETDEVICEINFO)
+	child := StartGETDEVICEINFO4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NfsResop4EntryWriter) SetValue_Getdevicelist() GETDEVICELIST4resEntryWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_GETDEVICELIST)
+	child := StartGETDEVICELIST4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NfsResop4EntryWriter) SetValue_Layoutcommit() LAYOUTCOMMIT4resEntryWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_LAYOUTCOMMIT)
+	child := StartLAYOUTCOMMIT4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NfsResop4EntryWriter) SetValue_Layoutget() LAYOUTGET4resEntryWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_LAYOUTGET)
+	child := StartLAYOUTGET4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NfsResop4EntryWriter) SetValue_Layoutreturn() LAYOUTRETURN4resEntryWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_LAYOUTRETURN)
+	child := StartLAYOUTRETURN4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NfsResop4EntryWriter) SetValue_SecinfoNoName() SECINFO4resEntryWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_SECINFO_NO_NAME)
+	child := StartSECINFO4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NfsResop4EntryWriter) SetValue_Sequence() SEQUENCE4resEntryWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_SEQUENCE)
+	child := StartSEQUENCE4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NfsResop4EntryWriter) SetValue_SetSsv() SETSSV4resEntryWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_SET_SSV)
+	child := StartSETSSV4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NfsResop4EntryWriter) SetValue_TestStateid() TESTSTATEID4resEntryWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_TEST_STATEID)
+	child := StartTESTSTATEID4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NfsResop4EntryWriter) SetValue_WantDelegation() WANTDELEGATION4resEntryWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_WANT_DELEGATION)
+	child := StartWANTDELEGATION4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NfsResop4EntryWriter) SetValue_DestroyClientid() DESTROYCLIENTID4res {
+	w.buf = append(w.buf, make([]byte, 4+dESTROYCLIENTID4resSize)...)
+	p := (*[4 + dESTROYCLIENTID4resSize]byte)(w.buf[len(w.buf)-4-dESTROYCLIENTID4resSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_DESTROY_CLIENTID)
+	return DESTROYCLIENTID4res{m: (*[dESTROYCLIENTID4resSize]byte)(p[4:])}
+}
+
+func (w *NfsResop4EntryWriter) SetValue_ReclaimComplete() RECLAIMCOMPLETE4res {
+	w.buf = append(w.buf, make([]byte, 4+rECLAIMCOMPLETE4resSize)...)
+	p := (*[4 + rECLAIMCOMPLETE4resSize]byte)(w.buf[len(w.buf)-4-rECLAIMCOMPLETE4resSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_RECLAIM_COMPLETE)
+	return RECLAIMCOMPLETE4res{m: (*[rECLAIMCOMPLETE4resSize]byte)(p[4:])}
+}
+
+func (w *NfsResop4EntryWriter) SetValue_Allocate() ALLOCATE4res {
+	w.buf = append(w.buf, make([]byte, 4+aLLOCATE4resSize)...)
+	p := (*[4 + aLLOCATE4resSize]byte)(w.buf[len(w.buf)-4-aLLOCATE4resSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_ALLOCATE)
+	return ALLOCATE4res{m: (*[aLLOCATE4resSize]byte)(p[4:])}
+}
+
+func (w *NfsResop4EntryWriter) SetValue_Copy() COPY4resEntryWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_COPY)
+	child := StartCOPY4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NfsResop4EntryWriter) SetValue_CopyNotify() COPYNOTIFY4resEntryWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_COPY_NOTIFY)
+	child := StartCOPYNOTIFY4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NfsResop4EntryWriter) SetValue_Deallocate() DEALLOCATE4res {
+	w.buf = append(w.buf, make([]byte, 4+dEALLOCATE4resSize)...)
+	p := (*[4 + dEALLOCATE4resSize]byte)(w.buf[len(w.buf)-4-dEALLOCATE4resSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_DEALLOCATE)
+	return DEALLOCATE4res{m: (*[dEALLOCATE4resSize]byte)(p[4:])}
+}
+
+func (w *NfsResop4EntryWriter) SetValue_IoAdvise() IOADVISE4resEntryWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_IO_ADVISE)
+	child := StartIOADVISE4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NfsResop4EntryWriter) SetValue_Layouterror() LAYOUTERROR4res {
+	w.buf = append(w.buf, make([]byte, 4+lAYOUTERROR4resSize)...)
+	p := (*[4 + lAYOUTERROR4resSize]byte)(w.buf[len(w.buf)-4-lAYOUTERROR4resSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_LAYOUTERROR)
+	return LAYOUTERROR4res{m: (*[lAYOUTERROR4resSize]byte)(p[4:])}
+}
+
+func (w *NfsResop4EntryWriter) SetValue_Layoutstats() LAYOUTSTATS4res {
+	w.buf = append(w.buf, make([]byte, 4+lAYOUTSTATS4resSize)...)
+	p := (*[4 + lAYOUTSTATS4resSize]byte)(w.buf[len(w.buf)-4-lAYOUTSTATS4resSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_LAYOUTSTATS)
+	return LAYOUTSTATS4res{m: (*[lAYOUTSTATS4resSize]byte)(p[4:])}
+}
+
+func (w *NfsResop4EntryWriter) SetValue_OffloadCancel() OFFLOADCANCEL4res {
+	w.buf = append(w.buf, make([]byte, 4+oFFLOADCANCEL4resSize)...)
+	p := (*[4 + oFFLOADCANCEL4resSize]byte)(w.buf[len(w.buf)-4-oFFLOADCANCEL4resSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_OFFLOAD_CANCEL)
+	return OFFLOADCANCEL4res{m: (*[oFFLOADCANCEL4resSize]byte)(p[4:])}
+}
+
+func (w *NfsResop4EntryWriter) SetValue_OffloadStatus() OFFLOADSTATUS4resEntryWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_OFFLOAD_STATUS)
+	child := StartOFFLOADSTATUS4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NfsResop4EntryWriter) SetValue_ReadPlus() READPLUS4resEntryWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_READ_PLUS)
+	child := StartREADPLUS4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NfsResop4EntryWriter) SetValue_Seek() SEEK4resEntryWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_SEEK)
+	child := StartSEEK4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NfsResop4EntryWriter) SetValue_WriteSame() WRITESAME4resEntryWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_WRITE_SAME)
+	child := StartWRITESAME4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NfsResop4EntryWriter) SetValue_Clone() CLONE4res {
+	w.buf = append(w.buf, make([]byte, 4+cLONE4resSize)...)
+	p := (*[4 + cLONE4resSize]byte)(w.buf[len(w.buf)-4-cLONE4resSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_CLONE)
+	return CLONE4res{m: (*[cLONE4resSize]byte)(p[4:])}
+}
+
+func (w *NfsResop4EntryWriter) SetValue_Getxattr() GETXATTR4resEntryWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_GETXATTR)
+	child := StartGETXATTR4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NfsResop4EntryWriter) SetValue_Setxattr() SETXATTR4resEntryWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_SETXATTR)
+	child := StartSETXATTR4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NfsResop4EntryWriter) SetValue_Listxattrs() LISTXATTRS4resEntryWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_LISTXATTRS)
+	child := StartLISTXATTRS4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NfsResop4EntryWriter) SetValue_Removexattr() REMOVEXATTR4resEntryWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_REMOVEXATTR)
+	child := StartREMOVEXATTR4resEntry(w.buf)
+	w.buf = nil
+	return child
 }
 
 func (w *NfsResop4EntryWriter) SetValue_Illegal() ILLEGAL4res {
@@ -12260,6 +29866,618 @@ func (w *COMPOUND4resWriter) AppendResarray_ReleaseLockowner() RELEASELOCKOWNER4
 	return RELEASELOCKOWNER4res{m: (*[rELEASELOCKOWNER4resSize]byte)(p[4:])}
 }
 
+func (w *COMPOUND4resWriter) AppendResarray_BackchannelCtl() BACKCHANNELCTL4res {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+bACKCHANNELCTL4resSize)...)
+	p := (*[4 + bACKCHANNELCTL4resSize]byte)(w.buf[len(w.buf)-4-bACKCHANNELCTL4resSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_BACKCHANNEL_CTL)
+	w.resarrayCount++
+	return BACKCHANNELCTL4res{m: (*[bACKCHANNELCTL4resSize]byte)(p[4:])}
+}
+
+func (w *COMPOUND4resWriter) AppendResarray_BindConnToSession() BINDCONNTOSESSION4resEntryWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_BIND_CONN_TO_SESSION)
+	w.resarrayCount++
+	child := StartBINDCONNTOSESSION4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *COMPOUND4resWriter) AppendResarray_ExchangeId() EXCHANGEID4resEntryWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_EXCHANGE_ID)
+	w.resarrayCount++
+	child := StartEXCHANGEID4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *COMPOUND4resWriter) AppendResarray_CreateSession() CREATESESSION4resEntryWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_CREATE_SESSION)
+	w.resarrayCount++
+	child := StartCREATESESSION4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *COMPOUND4resWriter) AppendResarray_DestroySession() DESTROYSESSION4res {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+dESTROYSESSION4resSize)...)
+	p := (*[4 + dESTROYSESSION4resSize]byte)(w.buf[len(w.buf)-4-dESTROYSESSION4resSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_DESTROY_SESSION)
+	w.resarrayCount++
+	return DESTROYSESSION4res{m: (*[dESTROYSESSION4resSize]byte)(p[4:])}
+}
+
+func (w *COMPOUND4resWriter) AppendResarray_FreeStateid() FREESTATEID4res {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+fREESTATEID4resSize)...)
+	p := (*[4 + fREESTATEID4resSize]byte)(w.buf[len(w.buf)-4-fREESTATEID4resSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_FREE_STATEID)
+	w.resarrayCount++
+	return FREESTATEID4res{m: (*[fREESTATEID4resSize]byte)(p[4:])}
+}
+
+func (w *COMPOUND4resWriter) AppendResarray_GetDirDelegation() GETDIRDELEGATION4resEntryWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_GET_DIR_DELEGATION)
+	w.resarrayCount++
+	child := StartGETDIRDELEGATION4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *COMPOUND4resWriter) AppendResarray_Getdeviceinfo() GETDEVICEINFO4resEntryWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_GETDEVICEINFO)
+	w.resarrayCount++
+	child := StartGETDEVICEINFO4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *COMPOUND4resWriter) AppendResarray_Getdevicelist() GETDEVICELIST4resEntryWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_GETDEVICELIST)
+	w.resarrayCount++
+	child := StartGETDEVICELIST4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *COMPOUND4resWriter) AppendResarray_Layoutcommit() LAYOUTCOMMIT4resEntryWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_LAYOUTCOMMIT)
+	w.resarrayCount++
+	child := StartLAYOUTCOMMIT4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *COMPOUND4resWriter) AppendResarray_Layoutget() LAYOUTGET4resEntryWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_LAYOUTGET)
+	w.resarrayCount++
+	child := StartLAYOUTGET4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *COMPOUND4resWriter) AppendResarray_Layoutreturn() LAYOUTRETURN4resEntryWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_LAYOUTRETURN)
+	w.resarrayCount++
+	child := StartLAYOUTRETURN4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *COMPOUND4resWriter) AppendResarray_SecinfoNoName() SECINFO4resEntryWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_SECINFO_NO_NAME)
+	w.resarrayCount++
+	child := StartSECINFO4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *COMPOUND4resWriter) AppendResarray_Sequence() SEQUENCE4resEntryWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_SEQUENCE)
+	w.resarrayCount++
+	child := StartSEQUENCE4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *COMPOUND4resWriter) AppendResarray_SetSsv() SETSSV4resEntryWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_SET_SSV)
+	w.resarrayCount++
+	child := StartSETSSV4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *COMPOUND4resWriter) AppendResarray_TestStateid() TESTSTATEID4resEntryWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_TEST_STATEID)
+	w.resarrayCount++
+	child := StartTESTSTATEID4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *COMPOUND4resWriter) AppendResarray_WantDelegation() WANTDELEGATION4resEntryWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_WANT_DELEGATION)
+	w.resarrayCount++
+	child := StartWANTDELEGATION4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *COMPOUND4resWriter) AppendResarray_DestroyClientid() DESTROYCLIENTID4res {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+dESTROYCLIENTID4resSize)...)
+	p := (*[4 + dESTROYCLIENTID4resSize]byte)(w.buf[len(w.buf)-4-dESTROYCLIENTID4resSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_DESTROY_CLIENTID)
+	w.resarrayCount++
+	return DESTROYCLIENTID4res{m: (*[dESTROYCLIENTID4resSize]byte)(p[4:])}
+}
+
+func (w *COMPOUND4resWriter) AppendResarray_ReclaimComplete() RECLAIMCOMPLETE4res {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+rECLAIMCOMPLETE4resSize)...)
+	p := (*[4 + rECLAIMCOMPLETE4resSize]byte)(w.buf[len(w.buf)-4-rECLAIMCOMPLETE4resSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_RECLAIM_COMPLETE)
+	w.resarrayCount++
+	return RECLAIMCOMPLETE4res{m: (*[rECLAIMCOMPLETE4resSize]byte)(p[4:])}
+}
+
+func (w *COMPOUND4resWriter) AppendResarray_Allocate() ALLOCATE4res {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+aLLOCATE4resSize)...)
+	p := (*[4 + aLLOCATE4resSize]byte)(w.buf[len(w.buf)-4-aLLOCATE4resSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_ALLOCATE)
+	w.resarrayCount++
+	return ALLOCATE4res{m: (*[aLLOCATE4resSize]byte)(p[4:])}
+}
+
+func (w *COMPOUND4resWriter) AppendResarray_Copy() COPY4resEntryWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_COPY)
+	w.resarrayCount++
+	child := StartCOPY4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *COMPOUND4resWriter) AppendResarray_CopyNotify() COPYNOTIFY4resEntryWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_COPY_NOTIFY)
+	w.resarrayCount++
+	child := StartCOPYNOTIFY4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *COMPOUND4resWriter) AppendResarray_Deallocate() DEALLOCATE4res {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+dEALLOCATE4resSize)...)
+	p := (*[4 + dEALLOCATE4resSize]byte)(w.buf[len(w.buf)-4-dEALLOCATE4resSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_DEALLOCATE)
+	w.resarrayCount++
+	return DEALLOCATE4res{m: (*[dEALLOCATE4resSize]byte)(p[4:])}
+}
+
+func (w *COMPOUND4resWriter) AppendResarray_IoAdvise() IOADVISE4resEntryWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_IO_ADVISE)
+	w.resarrayCount++
+	child := StartIOADVISE4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *COMPOUND4resWriter) AppendResarray_Layouterror() LAYOUTERROR4res {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+lAYOUTERROR4resSize)...)
+	p := (*[4 + lAYOUTERROR4resSize]byte)(w.buf[len(w.buf)-4-lAYOUTERROR4resSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_LAYOUTERROR)
+	w.resarrayCount++
+	return LAYOUTERROR4res{m: (*[lAYOUTERROR4resSize]byte)(p[4:])}
+}
+
+func (w *COMPOUND4resWriter) AppendResarray_Layoutstats() LAYOUTSTATS4res {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+lAYOUTSTATS4resSize)...)
+	p := (*[4 + lAYOUTSTATS4resSize]byte)(w.buf[len(w.buf)-4-lAYOUTSTATS4resSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_LAYOUTSTATS)
+	w.resarrayCount++
+	return LAYOUTSTATS4res{m: (*[lAYOUTSTATS4resSize]byte)(p[4:])}
+}
+
+func (w *COMPOUND4resWriter) AppendResarray_OffloadCancel() OFFLOADCANCEL4res {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+oFFLOADCANCEL4resSize)...)
+	p := (*[4 + oFFLOADCANCEL4resSize]byte)(w.buf[len(w.buf)-4-oFFLOADCANCEL4resSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_OFFLOAD_CANCEL)
+	w.resarrayCount++
+	return OFFLOADCANCEL4res{m: (*[oFFLOADCANCEL4resSize]byte)(p[4:])}
+}
+
+func (w *COMPOUND4resWriter) AppendResarray_OffloadStatus() OFFLOADSTATUS4resEntryWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_OFFLOAD_STATUS)
+	w.resarrayCount++
+	child := StartOFFLOADSTATUS4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *COMPOUND4resWriter) AppendResarray_ReadPlus() READPLUS4resEntryWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_READ_PLUS)
+	w.resarrayCount++
+	child := StartREADPLUS4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *COMPOUND4resWriter) AppendResarray_Seek() SEEK4resEntryWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_SEEK)
+	w.resarrayCount++
+	child := StartSEEK4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *COMPOUND4resWriter) AppendResarray_WriteSame() WRITESAME4resEntryWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_WRITE_SAME)
+	w.resarrayCount++
+	child := StartWRITESAME4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *COMPOUND4resWriter) AppendResarray_Clone() CLONE4res {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+cLONE4resSize)...)
+	p := (*[4 + cLONE4resSize]byte)(w.buf[len(w.buf)-4-cLONE4resSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_CLONE)
+	w.resarrayCount++
+	return CLONE4res{m: (*[cLONE4resSize]byte)(p[4:])}
+}
+
+func (w *COMPOUND4resWriter) AppendResarray_Getxattr() GETXATTR4resEntryWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_GETXATTR)
+	w.resarrayCount++
+	child := StartGETXATTR4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *COMPOUND4resWriter) AppendResarray_Setxattr() SETXATTR4resEntryWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_SETXATTR)
+	w.resarrayCount++
+	child := StartSETXATTR4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *COMPOUND4resWriter) AppendResarray_Listxattrs() LISTXATTRS4resEntryWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_LISTXATTRS)
+	w.resarrayCount++
+	child := StartLISTXATTRS4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *COMPOUND4resWriter) AppendResarray_Removexattr() REMOVEXATTR4resEntryWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_REMOVEXATTR)
+	w.resarrayCount++
+	child := StartREMOVEXATTR4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
 func (w *COMPOUND4resWriter) AppendResarray_Illegal() ILLEGAL4res {
 	_ = w.buf[:1]
 	if w.phase > 1 {
@@ -12605,6 +30823,2677 @@ func (m CBILLEGAL4res) SetStatus(v uint32) {
 }
 
 // -------------------------------------------------------
+// LayoutrecallFile4 — variable:
+//   lor_fh + lor_offset(8) + lor_length(8) + lor_stateid(16)
+// -------------------------------------------------------
+
+type LayoutrecallFile4 struct {
+	data []byte
+	off1 int // byte offset within data where lor_offset starts
+}
+
+func readLayoutrecallFile4(b *[]byte) (LayoutrecallFile4, bool) {
+	start := *b
+	startLen := len(start)
+	if _, ok := readNfsFh4(b); !ok {
+		return LayoutrecallFile4{}, false
+	}
+	off1 := startLen - len(*b)
+	if len(*b) < 8 {
+		return LayoutrecallFile4{}, false
+	}
+	*b = (*b)[8:]
+	if len(*b) < 8 {
+		return LayoutrecallFile4{}, false
+	}
+	*b = (*b)[8:]
+	if len(*b) < 16 {
+		return LayoutrecallFile4{}, false
+	}
+	*b = (*b)[16:]
+	total := startLen - len(*b)
+	return LayoutrecallFile4{data: start[:total], off1: off1}, true
+}
+
+func ReadLayoutrecallFile4(b []byte) (LayoutrecallFile4, bool) {
+	return readLayoutrecallFile4(&b)
+}
+
+func (m LayoutrecallFile4) LorFh() NfsFh4 {
+	return NfsFh4(m.data[0:m.off1])
+}
+
+func (m LayoutrecallFile4) LorOffset() uint64 {
+	o := m.off1
+	return binary.BigEndian.Uint64(m.data[o : o+8])
+}
+
+func (m LayoutrecallFile4) LorLength() uint64 {
+	o := m.off1 + 8
+	return binary.BigEndian.Uint64(m.data[o : o+8])
+}
+
+func (m LayoutrecallFile4) LorStateid() Stateid4 {
+	o := m.off1 + 16
+	return Stateid4{m: (*[stateid4Size]byte)(m.data[o : o+stateid4Size])}
+}
+
+// LayoutrecallFile4Writer writes a layoutrecall_file4:
+//
+//	lor_fh + lor_offset + lor_length + lor_stateid
+type LayoutrecallFile4Writer struct {
+	buf []byte
+	off int
+}
+
+func StartLayoutrecallFile4(buf []byte) LayoutrecallFile4Writer {
+	off := len(buf)
+	return LayoutrecallFile4Writer{buf: buf, off: off}
+}
+
+func (w *LayoutrecallFile4Writer) SetLorOffset(v uint64) {
+	w.buf = binary.BigEndian.AppendUint64(w.buf, v)
+}
+
+func (w *LayoutrecallFile4Writer) SetLorLength(v uint64) {
+	w.buf = binary.BigEndian.AppendUint64(w.buf, v)
+}
+
+func (w *LayoutrecallFile4Writer) StartLorFh() NfsFh4Writer {
+	child := StartNfsFh4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *LayoutrecallFile4Writer) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *LayoutrecallFile4Writer) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// Layoutrecall4 — union on layoutrecall_type4 (external discriminant)
+// -------------------------------------------------------
+
+type Layoutrecall4 struct {
+	b    []byte
+	disc uint32
+}
+
+func readLayoutrecall4(b *[]byte, layoutrecallType4 uint32) (Layoutrecall4, bool) {
+	switch layoutrecallType4 {
+	case LAYOUTRECALL4_FILE:
+		r, ok := readLayoutrecallFile4(b)
+		if !ok {
+			return Layoutrecall4{}, false
+		}
+		return Layoutrecall4{b: r.data, disc: layoutrecallType4}, true
+	case LAYOUTRECALL4_FSID:
+		r, ok := readFsid4(b)
+		if !ok {
+			return Layoutrecall4{}, false
+		}
+		return Layoutrecall4{b: r.m[:], disc: layoutrecallType4}, true
+	case LAYOUTRECALL4_ALL:
+		return Layoutrecall4{b: (*b)[:0], disc: layoutrecallType4}, true
+	default:
+		return Layoutrecall4{}, false
+	}
+}
+
+func (m Layoutrecall4) AsLayoutrecallFile4() LayoutrecallFile4 {
+	if m.disc != LAYOUTRECALL4_FILE {
+		panic("wrong union discriminant")
+	}
+	v, _ := ReadLayoutrecallFile4(m.b)
+	return v
+}
+
+func (m Layoutrecall4) AsFsid4() Fsid4 {
+	if m.disc != LAYOUTRECALL4_FSID {
+		panic("wrong union discriminant")
+	}
+	return Fsid4{m: (*[fsid4Size]byte)(m.b)}
+}
+
+// -------------------------------------------------------
+// CBLAYOUTRECALL4args — variable:
+//   clora_type(4) + clora_iomode(4) + clora_changed(4) + clora_recall_type(4) + layoutrecall4 clora_recall
+// -------------------------------------------------------
+
+type CBLAYOUTRECALL4args []byte
+
+func readCBLAYOUTRECALL4args(b *[]byte) (CBLAYOUTRECALL4args, bool) {
+	if len(*b) < 16 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[16:]
+	if _, ok := readLayoutrecall4(b, binary.BigEndian.Uint32(start[12:16])); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return CBLAYOUTRECALL4args(start[:total]), true
+}
+
+func ReadCBLAYOUTRECALL4args(b []byte) (CBLAYOUTRECALL4args, bool) {
+	return readCBLAYOUTRECALL4args(&b)
+}
+
+func (m CBLAYOUTRECALL4args) CloraType() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m CBLAYOUTRECALL4args) CloraIomode() uint32 {
+	return binary.BigEndian.Uint32(m[4:8])
+}
+
+func (m CBLAYOUTRECALL4args) CloraChanged() uint32 {
+	return binary.BigEndian.Uint32(m[8:12])
+}
+
+func (m CBLAYOUTRECALL4args) CloraRecallType() uint32 {
+	return binary.BigEndian.Uint32(m[12:16])
+}
+
+func (m CBLAYOUTRECALL4args) CloraRecall() Layoutrecall4 {
+	return Layoutrecall4{b: m[16:], disc: binary.BigEndian.Uint32(m[12:16])}
+}
+
+// CBLAYOUTRECALL4argsWriter writes a CB_LAYOUTRECALL4args:
+//
+//	clora_type + clora_iomode + clora_changed + clora_recall_type + clora_recall(clora_recall_type)
+type CBLAYOUTRECALL4argsWriter struct {
+	buf    []byte
+	header *[16]byte
+}
+
+func StartCBLAYOUTRECALL4args(buf []byte) CBLAYOUTRECALL4argsWriter {
+	buf = append(buf, make([]byte, 16)...) // clora_type(4) + clora_iomode(4) + clora_changed(4) + clora_recall_type(4)
+	return CBLAYOUTRECALL4argsWriter{buf: buf, header: (*[16]byte)(buf[len(buf)-16:])}
+}
+
+func (w *CBLAYOUTRECALL4argsWriter) SetCloraType(v uint32) {
+	binary.BigEndian.PutUint32(w.header[0:4], v)
+}
+
+func (w *CBLAYOUTRECALL4argsWriter) SetCloraIomode(v uint32) {
+	binary.BigEndian.PutUint32(w.header[4:8], v)
+}
+
+func (w *CBLAYOUTRECALL4argsWriter) SetCloraChanged(v uint32) {
+	binary.BigEndian.PutUint32(w.header[8:12], v)
+}
+
+func (w *CBLAYOUTRECALL4argsWriter) SetCloraRecallType(v uint32) {
+	binary.BigEndian.PutUint32(w.header[12:16], v)
+}
+
+func (w *CBLAYOUTRECALL4argsWriter) SetCloraRecall_File() LayoutrecallFile4Writer {
+	binary.BigEndian.PutUint32(w.header[12:16], LAYOUTRECALL4_FILE)
+	child := StartLayoutrecallFile4(w.buf)
+	w.buf = nil
+	w.header = nil
+	return child
+}
+
+func (w *CBLAYOUTRECALL4argsWriter) SetCloraRecall_Fsid() Fsid4 {
+	binary.BigEndian.PutUint32(w.header[12:16], LAYOUTRECALL4_FSID)
+	w.buf = append(w.buf, make([]byte, fsid4Size)...)
+	return Fsid4{m: (*[fsid4Size]byte)(w.buf[len(w.buf)-fsid4Size:])}
+}
+
+func (w *CBLAYOUTRECALL4argsWriter) SetCloraRecall_All() {
+	binary.BigEndian.PutUint32(w.header[12:16], LAYOUTRECALL4_ALL)
+}
+
+func (w *CBLAYOUTRECALL4argsWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *CBLAYOUTRECALL4argsWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// CBLAYOUTRECALL4res — fixed 4 bytes: clorr_status(4, beu32)
+// -------------------------------------------------------
+
+type CBLAYOUTRECALL4res struct {
+	m *[cBLAYOUTRECALL4resSize]byte
+}
+
+const cBLAYOUTRECALL4resSize = 4
+
+func readCBLAYOUTRECALL4res(b *[]byte) (CBLAYOUTRECALL4res, bool) {
+	if len(*b) < cBLAYOUTRECALL4resSize {
+		return CBLAYOUTRECALL4res{}, false
+	}
+	result := CBLAYOUTRECALL4res{m: (*[cBLAYOUTRECALL4resSize]byte)(*b)}
+	*b = (*b)[cBLAYOUTRECALL4resSize:]
+	return result, true
+}
+
+func ReadCBLAYOUTRECALL4res(b []byte) (CBLAYOUTRECALL4res, bool) {
+	return readCBLAYOUTRECALL4res(&b)
+}
+
+func StartCBLAYOUTRECALL4res(buf []byte) ([]byte, CBLAYOUTRECALL4res) {
+	buf = append(buf, make([]byte, cBLAYOUTRECALL4resSize)...)
+	return buf, CBLAYOUTRECALL4res{m: (*[cBLAYOUTRECALL4resSize]byte)(buf[len(buf)-cBLAYOUTRECALL4resSize:])}
+}
+
+func (m CBLAYOUTRECALL4res) ClorrStatus() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m CBLAYOUTRECALL4res) SetClorrStatus(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+// -------------------------------------------------------
+// NotifyEntry4 — variable: ne_file + ne_attrs
+// -------------------------------------------------------
+
+type NotifyEntry4 struct {
+	data []byte
+	off1 int // byte offset within data where ne_attrs starts
+}
+
+func readNotifyEntry4(b *[]byte) (NotifyEntry4, bool) {
+	start := *b
+	startLen := len(start)
+	if _, ok := readComponent4(b); !ok {
+		return NotifyEntry4{}, false
+	}
+	off1 := startLen - len(*b)
+	if _, ok := readFattr4(b); !ok {
+		return NotifyEntry4{}, false
+	}
+	total := startLen - len(*b)
+	return NotifyEntry4{data: start[:total], off1: off1}, true
+}
+
+func ReadNotifyEntry4(b []byte) (NotifyEntry4, bool) {
+	return readNotifyEntry4(&b)
+}
+
+func (m NotifyEntry4) NeFile() Component4 {
+	return Component4(m.data[0:m.off1])
+}
+
+func (m NotifyEntry4) NeAttrs() Fattr4 {
+	v, _ := ReadFattr4(m.data[m.off1:])
+	return v
+}
+
+// NotifyEntry4Writer writes a notify_entry4:
+//
+//	ne_file + ne_attrs
+type NotifyEntry4Writer struct {
+	buf   []byte
+	off   int
+	phase uint8
+}
+
+func StartNotifyEntry4(buf []byte) NotifyEntry4Writer {
+	off := len(buf)
+	return NotifyEntry4Writer{buf: buf, off: off}
+}
+
+func (w *NotifyEntry4Writer) StartNeFile() Component4Writer {
+	if w.phase > 0 {
+		panic("writer fields called out of order")
+	}
+	child := StartComponent4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NotifyEntry4Writer) StartNeAttrs() Fattr4Writer {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	child := StartFattr4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NotifyEntry4Writer) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *NotifyEntry4Writer) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// PrevEntry4 — variable: pe_prev_entry + pe_prev_entry_cookie(8)
+// -------------------------------------------------------
+
+type PrevEntry4 struct {
+	data []byte
+	off1 int // byte offset within data where pe_prev_entry_cookie starts
+}
+
+func readPrevEntry4(b *[]byte) (PrevEntry4, bool) {
+	start := *b
+	startLen := len(start)
+	if _, ok := readNotifyEntry4(b); !ok {
+		return PrevEntry4{}, false
+	}
+	off1 := startLen - len(*b)
+	if len(*b) < 8 {
+		return PrevEntry4{}, false
+	}
+	*b = (*b)[8:]
+	total := startLen - len(*b)
+	return PrevEntry4{data: start[:total], off1: off1}, true
+}
+
+func ReadPrevEntry4(b []byte) (PrevEntry4, bool) {
+	return readPrevEntry4(&b)
+}
+
+func (m PrevEntry4) PePrevEntry() NotifyEntry4 {
+	v, _ := ReadNotifyEntry4(m.data[0:m.off1])
+	return v
+}
+
+func (m PrevEntry4) PePrevEntryCookie() uint64 {
+	o := m.off1
+	return binary.BigEndian.Uint64(m.data[o : o+8])
+}
+
+// PrevEntry4Writer writes a prev_entry4:
+//
+//	pe_prev_entry + pe_prev_entry_cookie
+type PrevEntry4Writer struct {
+	buf []byte
+	off int
+}
+
+func StartPrevEntry4(buf []byte) PrevEntry4Writer {
+	off := len(buf)
+	return PrevEntry4Writer{buf: buf, off: off}
+}
+
+func (w *PrevEntry4Writer) SetPePrevEntryCookie(v uint64) {
+	w.buf = binary.BigEndian.AppendUint64(w.buf, v)
+}
+
+func (w *PrevEntry4Writer) StartPePrevEntry() NotifyEntry4Writer {
+	child := StartNotifyEntry4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *PrevEntry4Writer) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *PrevEntry4Writer) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// NotifyRemove4 — variable: nrm_old_entry + nrm_old_entry_cookie(8)
+// -------------------------------------------------------
+
+type NotifyRemove4 struct {
+	data []byte
+	off1 int // byte offset within data where nrm_old_entry_cookie starts
+}
+
+func readNotifyRemove4(b *[]byte) (NotifyRemove4, bool) {
+	start := *b
+	startLen := len(start)
+	if _, ok := readNotifyEntry4(b); !ok {
+		return NotifyRemove4{}, false
+	}
+	off1 := startLen - len(*b)
+	if len(*b) < 8 {
+		return NotifyRemove4{}, false
+	}
+	*b = (*b)[8:]
+	total := startLen - len(*b)
+	return NotifyRemove4{data: start[:total], off1: off1}, true
+}
+
+func ReadNotifyRemove4(b []byte) (NotifyRemove4, bool) {
+	return readNotifyRemove4(&b)
+}
+
+func (m NotifyRemove4) NrmOldEntry() NotifyEntry4 {
+	v, _ := ReadNotifyEntry4(m.data[0:m.off1])
+	return v
+}
+
+func (m NotifyRemove4) NrmOldEntryCookie() uint64 {
+	o := m.off1
+	return binary.BigEndian.Uint64(m.data[o : o+8])
+}
+
+// NotifyRemove4Writer writes a notify_remove4:
+//
+//	nrm_old_entry + nrm_old_entry_cookie
+type NotifyRemove4Writer struct {
+	buf []byte
+	off int
+}
+
+func StartNotifyRemove4(buf []byte) NotifyRemove4Writer {
+	off := len(buf)
+	return NotifyRemove4Writer{buf: buf, off: off}
+}
+
+func (w *NotifyRemove4Writer) SetNrmOldEntryCookie(v uint64) {
+	w.buf = binary.BigEndian.AppendUint64(w.buf, v)
+}
+
+func (w *NotifyRemove4Writer) StartNrmOldEntry() NotifyEntry4Writer {
+	child := StartNotifyEntry4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NotifyRemove4Writer) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *NotifyRemove4Writer) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// NotifyAdd4NadNewEntryCookie — variable: count(4) + beu64 data[count]
+// -------------------------------------------------------
+
+type NotifyAdd4NadNewEntryCookie []byte
+
+func readNotifyAdd4NadNewEntryCookie(b *[]byte) (NotifyAdd4NadNewEntryCookie, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	c_count := int(binary.BigEndian.Uint32((*b)[0:4]))
+	*b = (*b)[4:]
+	if len(*b) < c_count*8 {
+		return nil, false
+	}
+	*b = (*b)[c_count*8:]
+	total := startLen - len(*b)
+	return NotifyAdd4NadNewEntryCookie(start[:total]), true
+}
+
+func ReadNotifyAdd4NadNewEntryCookie(b []byte) (NotifyAdd4NadNewEntryCookie, bool) {
+	if len(b) < 4 {
+		return nil, false
+	}
+	count := int(binary.BigEndian.Uint32(b[0:4]))
+	total := 4 + count*8
+	if len(b) < total {
+		return nil, false
+	}
+	return NotifyAdd4NadNewEntryCookie(b[:total]), true
+}
+
+func (m NotifyAdd4NadNewEntryCookie) Count() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m NotifyAdd4NadNewEntryCookie) Data(i int) uint64 {
+	off := 4 + i*8
+	return binary.BigEndian.Uint64(m[off : off+8])
+}
+
+// NotifyAdd4NadNewEntryCookieWriter writes a notify_add4_nad_new_entry_cookie:
+//
+//	count + beu64 data[count]
+type NotifyAdd4NadNewEntryCookieWriter struct {
+	buf   []byte
+	off   int
+	count uint32
+}
+
+func StartNotifyAdd4NadNewEntryCookie(buf []byte) NotifyAdd4NadNewEntryCookieWriter {
+	off := len(buf)
+	buf = binary.BigEndian.AppendUint32(buf, 0) // count placeholder
+	return NotifyAdd4NadNewEntryCookieWriter{buf: buf, off: off}
+}
+
+func (w *NotifyAdd4NadNewEntryCookieWriter) AppendData(v uint64) {
+	w.buf = binary.BigEndian.AppendUint64(w.buf, v)
+	w.count++
+}
+
+func (w *NotifyAdd4NadNewEntryCookieWriter) Finish() []byte {
+	binary.BigEndian.PutUint32(w.buf[w.off:w.off+4], w.count)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// NotifyAdd4NadPrevEntry — variable: count(4) + prev_entry4 data[count]
+// -------------------------------------------------------
+
+type NotifyAdd4NadPrevEntry []byte
+
+func readNotifyAdd4NadPrevEntry(b *[]byte) (NotifyAdd4NadPrevEntry, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	c_count := int(binary.BigEndian.Uint32((*b)[0:4]))
+	*b = (*b)[4:]
+	for i := 0; i < c_count; i++ {
+		if _, ok := readPrevEntry4(b); !ok {
+			return nil, false
+		}
+	}
+	total := startLen - len(*b)
+	return NotifyAdd4NadPrevEntry(start[:total]), true
+}
+
+func ReadNotifyAdd4NadPrevEntry(b []byte) (NotifyAdd4NadPrevEntry, bool) {
+	if len(b) < 4 {
+		return nil, false
+	}
+	return NotifyAdd4NadPrevEntry(b), true
+}
+
+func (m NotifyAdd4NadPrevEntry) Count() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m NotifyAdd4NadPrevEntry) Data() PrevEntry4Iter {
+	count := int(binary.BigEndian.Uint32(m[0:4]))
+	return PrevEntry4Iter{
+		b:     []byte(m[4:]),
+		count: count,
+	}
+}
+
+// PrevEntry4Iter iterates over variable-size PrevEntry4 entries.
+type PrevEntry4Iter struct {
+	b     []byte
+	count int
+	i     int
+	cur   PrevEntry4
+}
+
+func (it *PrevEntry4Iter) Next() bool {
+	if it.i >= it.count {
+		return false
+	}
+	var ok bool
+	it.cur, ok = readPrevEntry4(&it.b)
+	if !ok {
+		return false
+	}
+	it.i++
+	return true
+}
+
+func (it *PrevEntry4Iter) Data() PrevEntry4 {
+	return it.cur
+}
+
+// NotifyAdd4NadPrevEntryWriter writes a notify_add4_nad_prev_entry:
+//
+//	count + prev_entry4 data[count]
+type NotifyAdd4NadPrevEntryWriter struct {
+	buf   []byte
+	off   int
+	count uint32
+}
+
+func StartNotifyAdd4NadPrevEntry(buf []byte) NotifyAdd4NadPrevEntryWriter {
+	off := len(buf)
+	buf = binary.BigEndian.AppendUint32(buf, 0) // count placeholder
+	return NotifyAdd4NadPrevEntryWriter{buf: buf, off: off}
+}
+
+func (w *NotifyAdd4NadPrevEntryWriter) AppendData() PrevEntry4Writer {
+	_ = w.buf[:1]
+	w.count++
+	child := StartPrevEntry4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NotifyAdd4NadPrevEntryWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *NotifyAdd4NadPrevEntryWriter) Finish() []byte {
+	binary.BigEndian.PutUint32(w.buf[w.off:w.off+4], w.count)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// NotifyAdd4 — variable:
+//   nad_old_entry_count(4) + notify_remove4 nad_old_entry[nad_old_entry_count] + nad_new_entry + nad_new_entry_cookie + nad_prev_entry + nad_last_entry(4)
+// -------------------------------------------------------
+
+type NotifyAdd4 struct {
+	data []byte
+	off1 int // byte offset within data where nad_new_entry starts
+	off2 int // byte offset within data where nad_new_entry_cookie starts
+	off3 int // byte offset within data where nad_prev_entry starts
+	off4 int // byte offset within data where nad_last_entry starts
+}
+
+func readNotifyAdd4(b *[]byte) (NotifyAdd4, bool) {
+	if len(*b) < 4 {
+		return NotifyAdd4{}, false
+	}
+	start := *b
+	startLen := len(start)
+	c_nad_old_entry_count := int(binary.BigEndian.Uint32((*b)[0:4]))
+	*b = (*b)[4:]
+	for i := 0; i < c_nad_old_entry_count; i++ {
+		if _, ok := readNotifyRemove4(b); !ok {
+			return NotifyAdd4{}, false
+		}
+	}
+	off1 := startLen - len(*b)
+	if _, ok := readNotifyEntry4(b); !ok {
+		return NotifyAdd4{}, false
+	}
+	off2 := startLen - len(*b)
+	if _, ok := readNotifyAdd4NadNewEntryCookie(b); !ok {
+		return NotifyAdd4{}, false
+	}
+	off3 := startLen - len(*b)
+	if _, ok := readNotifyAdd4NadPrevEntry(b); !ok {
+		return NotifyAdd4{}, false
+	}
+	off4 := startLen - len(*b)
+	if len(*b) < 4 {
+		return NotifyAdd4{}, false
+	}
+	*b = (*b)[4:]
+	total := startLen - len(*b)
+	return NotifyAdd4{data: start[:total], off1: off1, off2: off2, off3: off3, off4: off4}, true
+}
+
+func ReadNotifyAdd4(b []byte) (NotifyAdd4, bool) {
+	return readNotifyAdd4(&b)
+}
+
+func (m NotifyAdd4) NadOldEntry() NotifyRemove4Iter {
+	nad_old_entry_count := int(binary.BigEndian.Uint32(m.data[0:4]))
+	return NotifyRemove4Iter{b: m.data[4:], count: nad_old_entry_count}
+}
+
+func (m NotifyAdd4) NadOldEntryCount() uint32 {
+	return binary.BigEndian.Uint32(m.data[0:4])
+}
+
+func (m NotifyAdd4) NadNewEntry() NotifyEntry4 {
+	v, _ := ReadNotifyEntry4(m.data[m.off1:m.off2])
+	return v
+}
+
+func (m NotifyAdd4) NadNewEntryCookie() NotifyAdd4NadNewEntryCookie {
+	return NotifyAdd4NadNewEntryCookie(m.data[m.off2:m.off3])
+}
+
+func (m NotifyAdd4) NadPrevEntry() NotifyAdd4NadPrevEntry {
+	return NotifyAdd4NadPrevEntry(m.data[m.off3:m.off4])
+}
+
+func (m NotifyAdd4) NadLastEntry() uint32 {
+	o := m.off4
+	return binary.BigEndian.Uint32(m.data[o : o+4])
+}
+
+// NotifyRemove4Iter iterates over variable-size NotifyRemove4 entries.
+type NotifyRemove4Iter struct {
+	b     []byte
+	count int
+	i     int
+	cur   NotifyRemove4
+}
+
+func (it *NotifyRemove4Iter) Next() bool {
+	if it.i >= it.count {
+		return false
+	}
+	var ok bool
+	it.cur, ok = readNotifyRemove4(&it.b)
+	if !ok {
+		return false
+	}
+	it.i++
+	return true
+}
+
+func (it *NotifyRemove4Iter) NadOldEntry() NotifyRemove4 {
+	return it.cur
+}
+
+// NotifyAdd4Writer writes a notify_add4:
+//
+//	nad_old_entry_count + notify_remove4 nad_old_entry[nad_old_entry_count] + nad_new_entry + nad_new_entry_cookie + nad_prev_entry + nad_last_entry
+type NotifyAdd4Writer struct {
+	buf              []byte
+	off              int
+	nadOldEntryCount uint32
+	phase            uint8
+}
+
+func StartNotifyAdd4(buf []byte) NotifyAdd4Writer {
+	off := len(buf)
+	buf = binary.BigEndian.AppendUint32(buf, 0) // nad_old_entry_count placeholder
+	return NotifyAdd4Writer{buf: buf, off: off}
+}
+
+func (w *NotifyAdd4Writer) SetNadLastEntry(v uint32) {
+	if w.phase > 4 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 4
+	w.buf = binary.BigEndian.AppendUint32(w.buf, v)
+}
+
+func (w *NotifyAdd4Writer) AppendNadOldEntry() NotifyRemove4Writer {
+	_ = w.buf[:1]
+	if w.phase > 0 {
+		panic("writer fields called out of order")
+	}
+	w.nadOldEntryCount++
+	child := StartNotifyRemove4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NotifyAdd4Writer) StartNadNewEntry() NotifyEntry4Writer {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	child := StartNotifyEntry4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NotifyAdd4Writer) StartNadNewEntryCookie() NotifyAdd4NadNewEntryCookieWriter {
+	if w.phase > 2 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 2
+	child := StartNotifyAdd4NadNewEntryCookie(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NotifyAdd4Writer) StartNadPrevEntry() NotifyAdd4NadPrevEntryWriter {
+	if w.phase > 3 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 3
+	child := StartNotifyAdd4NadPrevEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NotifyAdd4Writer) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *NotifyAdd4Writer) Finish() []byte {
+	binary.BigEndian.PutUint32(w.buf[w.off:w.off+4], w.nadOldEntryCount)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// NotifyAttr4 — variable: na_changed_entry
+// -------------------------------------------------------
+
+type NotifyAttr4 []byte
+
+func readNotifyAttr4(b *[]byte) (NotifyAttr4, bool) {
+	start := *b
+	startLen := len(start)
+	if _, ok := readNotifyEntry4(b); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return NotifyAttr4(start[:total]), true
+}
+
+func ReadNotifyAttr4(b []byte) (NotifyAttr4, bool) {
+	return readNotifyAttr4(&b)
+}
+
+func (m NotifyAttr4) NaChangedEntry() NotifyEntry4 {
+	v, _ := ReadNotifyEntry4(m[0:])
+	return v
+}
+
+// NotifyAttr4Writer writes a notify_attr4:
+//
+//	na_changed_entry
+type NotifyAttr4Writer struct {
+	buf []byte
+	off int
+}
+
+func StartNotifyAttr4(buf []byte) NotifyAttr4Writer {
+	off := len(buf)
+	return NotifyAttr4Writer{buf: buf, off: off}
+}
+
+func (w *NotifyAttr4Writer) StartNaChangedEntry() NotifyEntry4Writer {
+	child := StartNotifyEntry4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NotifyAttr4Writer) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *NotifyAttr4Writer) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// NotifyRename4 — variable: nrn_old_entry + nrn_new_entry
+// -------------------------------------------------------
+
+type NotifyRename4 struct {
+	data []byte
+	off1 int // byte offset within data where nrn_new_entry starts
+}
+
+func readNotifyRename4(b *[]byte) (NotifyRename4, bool) {
+	start := *b
+	startLen := len(start)
+	if _, ok := readNotifyRemove4(b); !ok {
+		return NotifyRename4{}, false
+	}
+	off1 := startLen - len(*b)
+	if _, ok := readNotifyAdd4(b); !ok {
+		return NotifyRename4{}, false
+	}
+	total := startLen - len(*b)
+	return NotifyRename4{data: start[:total], off1: off1}, true
+}
+
+func ReadNotifyRename4(b []byte) (NotifyRename4, bool) {
+	return readNotifyRename4(&b)
+}
+
+func (m NotifyRename4) NrnOldEntry() NotifyRemove4 {
+	v, _ := ReadNotifyRemove4(m.data[0:m.off1])
+	return v
+}
+
+func (m NotifyRename4) NrnNewEntry() NotifyAdd4 {
+	v, _ := ReadNotifyAdd4(m.data[m.off1:])
+	return v
+}
+
+// NotifyRename4Writer writes a notify_rename4:
+//
+//	nrn_old_entry + nrn_new_entry
+type NotifyRename4Writer struct {
+	buf   []byte
+	off   int
+	phase uint8
+}
+
+func StartNotifyRename4(buf []byte) NotifyRename4Writer {
+	off := len(buf)
+	return NotifyRename4Writer{buf: buf, off: off}
+}
+
+func (w *NotifyRename4Writer) StartNrnOldEntry() NotifyRemove4Writer {
+	if w.phase > 0 {
+		panic("writer fields called out of order")
+	}
+	child := StartNotifyRemove4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NotifyRename4Writer) StartNrnNewEntry() NotifyAdd4Writer {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	child := StartNotifyAdd4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NotifyRename4Writer) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *NotifyRename4Writer) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// NotifyVerifier4 — fixed 16 bytes: verifier4(8) + verifier4(8)
+// -------------------------------------------------------
+
+type NotifyVerifier4 struct {
+	m *[notifyVerifier4Size]byte
+}
+
+const notifyVerifier4Size = 16
+
+func ReadNotifyVerifier4(b []byte) (NotifyVerifier4, bool) {
+	if len(b) < notifyVerifier4Size {
+		return NotifyVerifier4{}, false
+	}
+	return NotifyVerifier4{m: (*[notifyVerifier4Size]byte)(b)}, true
+}
+
+func StartNotifyVerifier4(buf []byte) ([]byte, NotifyVerifier4) {
+	buf = append(buf, make([]byte, notifyVerifier4Size)...)
+	return buf, NotifyVerifier4{m: (*[notifyVerifier4Size]byte)(buf[len(buf)-notifyVerifier4Size:])}
+}
+
+func (m NotifyVerifier4) NvOldCookieverf() Verifier4 {
+	return Verifier4{m: (*[verifier4Size]byte)(m.m[0:8])}
+}
+
+func (m NotifyVerifier4) NvNewCookieverf() Verifier4 {
+	return Verifier4{m: (*[verifier4Size]byte)(m.m[8:16])}
+}
+
+// -------------------------------------------------------
+// Notifylist4 — variable: data_len(4) + u8 data[data_len] + align(4)
+// -------------------------------------------------------
+
+type Notifylist4 []byte
+
+func readNotifylist4(b *[]byte) (Notifylist4, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	n := int(binary.BigEndian.Uint32((*b)[0:4]))
+	padded := (n + 3) &^ 3
+	total := 4 + padded
+	if len(*b) < total {
+		return nil, false
+	}
+	result := Notifylist4((*b)[:total])
+	*b = (*b)[total:]
+	return result, true
+}
+
+func ReadNotifylist4(b []byte) (Notifylist4, bool) {
+	if len(b) < 4 {
+		return nil, false
+	}
+	count := int(binary.BigEndian.Uint32(b[0:4]))
+	padded := (count + 3) &^ 3
+	total := 4 + padded
+	if len(b) < total {
+		return nil, false
+	}
+	return Notifylist4(b[:total]), true
+}
+
+func (m Notifylist4) DataLen() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m Notifylist4) Data() []byte {
+	n := int(binary.BigEndian.Uint32(m[0:4]))
+	return m[4 : 4+n]
+}
+
+// Notifylist4Writer writes a notifylist4:
+//
+//	data_len + u8 data[data_len] + align(4)
+type Notifylist4Writer struct {
+	buf []byte
+	off int
+}
+
+func StartNotifylist4(buf []byte) Notifylist4Writer {
+	off := len(buf)
+	return Notifylist4Writer{buf: buf, off: off}
+}
+
+func (w Notifylist4Writer) SetData(data []byte) Notifylist4Writer {
+	n := len(data)
+	padded := (n + 3) &^ 3
+	total := 4 + padded
+	w.buf = append(w.buf, make([]byte, total)...)
+	binary.BigEndian.PutUint32(w.buf[w.off:w.off+4], uint32(n))
+	copy(w.buf[w.off+4:], data)
+	return w
+}
+
+func (w Notifylist4Writer) Finish() []byte {
+	return w.buf
+}
+
+// -------------------------------------------------------
+// Notify4 — variable: notify_mask + notify_vals
+// -------------------------------------------------------
+
+type Notify4 struct {
+	data []byte
+	off1 int // byte offset within data where notify_vals starts
+}
+
+func readNotify4(b *[]byte) (Notify4, bool) {
+	start := *b
+	startLen := len(start)
+	if _, ok := readBitmap4(b); !ok {
+		return Notify4{}, false
+	}
+	off1 := startLen - len(*b)
+	if _, ok := readNotifylist4(b); !ok {
+		return Notify4{}, false
+	}
+	total := startLen - len(*b)
+	return Notify4{data: start[:total], off1: off1}, true
+}
+
+func ReadNotify4(b []byte) (Notify4, bool) {
+	return readNotify4(&b)
+}
+
+func (m Notify4) NotifyMask() Bitmap4 {
+	return Bitmap4(m.data[0:m.off1])
+}
+
+func (m Notify4) NotifyVals() Notifylist4 {
+	return Notifylist4(m.data[m.off1:])
+}
+
+// Notify4Writer writes a notify4:
+//
+//	notify_mask + notify_vals
+type Notify4Writer struct {
+	buf   []byte
+	off   int
+	phase uint8
+}
+
+func StartNotify4(buf []byte) Notify4Writer {
+	off := len(buf)
+	return Notify4Writer{buf: buf, off: off}
+}
+
+func (w *Notify4Writer) StartNotifyMask() Bitmap4Writer {
+	if w.phase > 0 {
+		panic("writer fields called out of order")
+	}
+	child := StartBitmap4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *Notify4Writer) StartNotifyVals() Notifylist4Writer {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	child := StartNotifylist4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *Notify4Writer) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *Notify4Writer) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// CBNOTIFY4args — variable:
+//   cna_stateid(16) + cna_fh + cna_changes_count(4) + notify4 cna_changes[cna_changes_count]
+// -------------------------------------------------------
+
+type CBNOTIFY4args struct {
+	data []byte
+	off1 int // byte offset within data where cna_changes_count starts
+}
+
+func readCBNOTIFY4args(b *[]byte) (CBNOTIFY4args, bool) {
+	if len(*b) < 16 {
+		return CBNOTIFY4args{}, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[16:]
+	if _, ok := readNfsFh4(b); !ok {
+		return CBNOTIFY4args{}, false
+	}
+	off1 := startLen - len(*b)
+	if len(*b) < 4 {
+		return CBNOTIFY4args{}, false
+	}
+	c_cna_changes_count := int(binary.BigEndian.Uint32((*b)[:4]))
+	*b = (*b)[4:]
+	for i := 0; i < c_cna_changes_count; i++ {
+		if _, ok := readNotify4(b); !ok {
+			return CBNOTIFY4args{}, false
+		}
+	}
+	total := startLen - len(*b)
+	return CBNOTIFY4args{data: start[:total], off1: off1}, true
+}
+
+func ReadCBNOTIFY4args(b []byte) (CBNOTIFY4args, bool) {
+	return readCBNOTIFY4args(&b)
+}
+
+func (m CBNOTIFY4args) CnaStateid() Stateid4 {
+	return Stateid4{m: (*[stateid4Size]byte)(m.data[0 : 0+stateid4Size])}
+}
+
+func (m CBNOTIFY4args) CnaFh() NfsFh4 {
+	return NfsFh4(m.data[16:m.off1])
+}
+
+func (m CBNOTIFY4args) CnaChanges() Notify4Iter {
+	cna_changes_count := int(binary.BigEndian.Uint32(m.data[m.off1 : m.off1+4]))
+	return Notify4Iter{b: m.data[m.off1+4:], count: cna_changes_count}
+}
+
+func (m CBNOTIFY4args) CnaChangesCount() uint32 {
+	return binary.BigEndian.Uint32(m.data[m.off1 : m.off1+4])
+}
+
+// Notify4Iter iterates over variable-size Notify4 entries.
+type Notify4Iter struct {
+	b     []byte
+	count int
+	i     int
+	cur   Notify4
+}
+
+func (it *Notify4Iter) Next() bool {
+	if it.i >= it.count {
+		return false
+	}
+	var ok bool
+	it.cur, ok = readNotify4(&it.b)
+	if !ok {
+		return false
+	}
+	it.i++
+	return true
+}
+
+func (it *Notify4Iter) CnaChange() Notify4 {
+	return it.cur
+}
+
+// CBNOTIFY4argsWriter writes a CB_NOTIFY4args:
+//
+//	cna_stateid + cna_fh + cna_changes_count + notify4 cna_changes[cna_changes_count]
+type CBNOTIFY4argsWriter struct {
+	buf                []byte
+	off                int
+	cnaChangesCount    uint32
+	cnaChangesCountOff int
+	phase              uint8
+}
+
+func StartCBNOTIFY4args(buf []byte) CBNOTIFY4argsWriter {
+	off := len(buf)
+	buf = append(buf, make([]byte, 16)...) // cna_stateid(16)
+	return CBNOTIFY4argsWriter{buf: buf, off: off}
+}
+
+func (w *CBNOTIFY4argsWriter) CnaStateid() Stateid4 {
+	return Stateid4{m: (*[stateid4Size]byte)(w.buf[w.off:])}
+}
+
+func (w *CBNOTIFY4argsWriter) AppendCnaChanges() Notify4Writer {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.cnaChangesCountOff == 0 {
+		w.cnaChangesCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.cnaChangesCount++
+	child := StartNotify4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *CBNOTIFY4argsWriter) StartCnaFh() NfsFh4Writer {
+	if w.phase > 0 {
+		panic("writer fields called out of order")
+	}
+	child := StartNfsFh4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *CBNOTIFY4argsWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *CBNOTIFY4argsWriter) Finish() []byte {
+	if w.cnaChangesCountOff == 0 {
+		w.cnaChangesCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0) // cna_changes_count = 0
+	} else {
+		binary.BigEndian.PutUint32(w.buf[w.cnaChangesCountOff:w.cnaChangesCountOff+4], w.cnaChangesCount)
+	}
+	return w.buf
+}
+
+// -------------------------------------------------------
+// CBNOTIFY4res — fixed 4 bytes: cnr_status(4, beu32)
+// -------------------------------------------------------
+
+type CBNOTIFY4res struct {
+	m *[cBNOTIFY4resSize]byte
+}
+
+const cBNOTIFY4resSize = 4
+
+func readCBNOTIFY4res(b *[]byte) (CBNOTIFY4res, bool) {
+	if len(*b) < cBNOTIFY4resSize {
+		return CBNOTIFY4res{}, false
+	}
+	result := CBNOTIFY4res{m: (*[cBNOTIFY4resSize]byte)(*b)}
+	*b = (*b)[cBNOTIFY4resSize:]
+	return result, true
+}
+
+func ReadCBNOTIFY4res(b []byte) (CBNOTIFY4res, bool) {
+	return readCBNOTIFY4res(&b)
+}
+
+func StartCBNOTIFY4res(buf []byte) ([]byte, CBNOTIFY4res) {
+	buf = append(buf, make([]byte, cBNOTIFY4resSize)...)
+	return buf, CBNOTIFY4res{m: (*[cBNOTIFY4resSize]byte)(buf[len(buf)-cBNOTIFY4resSize:])}
+}
+
+func (m CBNOTIFY4res) CnrStatus() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m CBNOTIFY4res) SetCnrStatus(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+// -------------------------------------------------------
+// CBPUSHDELEG4args — variable:
+//   cpda_fh + cpda_delegation_type(4) + open_delegation4 cpda_delegation
+// -------------------------------------------------------
+
+type CBPUSHDELEG4args struct {
+	data []byte
+	off1 int // byte offset within data where cpda_delegation_type starts
+}
+
+func readCBPUSHDELEG4args(b *[]byte) (CBPUSHDELEG4args, bool) {
+	start := *b
+	startLen := len(start)
+	if _, ok := readNfsFh4(b); !ok {
+		return CBPUSHDELEG4args{}, false
+	}
+	off1 := startLen - len(*b)
+	if len(*b) < 4 {
+		return CBPUSHDELEG4args{}, false
+	}
+	c_cpda_delegation_type := binary.BigEndian.Uint32((*b)[:4])
+	*b = (*b)[4:]
+	if _, ok := readOpenDelegation4(b, c_cpda_delegation_type); !ok {
+		return CBPUSHDELEG4args{}, false
+	}
+	total := startLen - len(*b)
+	return CBPUSHDELEG4args{data: start[:total], off1: off1}, true
+}
+
+func ReadCBPUSHDELEG4args(b []byte) (CBPUSHDELEG4args, bool) {
+	return readCBPUSHDELEG4args(&b)
+}
+
+func (m CBPUSHDELEG4args) CpdaFh() NfsFh4 {
+	return NfsFh4(m.data[0:m.off1])
+}
+
+func (m CBPUSHDELEG4args) CpdaDelegationType() uint32 {
+	o := m.off1
+	return binary.BigEndian.Uint32(m.data[o : o+4])
+}
+
+func (m CBPUSHDELEG4args) CpdaDelegation() OpenDelegation4 {
+	return OpenDelegation4{b: m.data[m.off1+4:], disc: binary.BigEndian.Uint32(m.data[m.off1 : m.off1+4])}
+}
+
+// CBPUSHDELEG4argsWriter writes a CB_PUSH_DELEG4args:
+//
+//	cpda_fh + cpda_delegation_type + cpda_delegation(cpda_delegation_type)
+type CBPUSHDELEG4argsWriter struct {
+	buf   []byte
+	off   int
+	phase uint8
+}
+
+func StartCBPUSHDELEG4args(buf []byte) CBPUSHDELEG4argsWriter {
+	off := len(buf)
+	return CBPUSHDELEG4argsWriter{buf: buf, off: off}
+}
+
+func (w *CBPUSHDELEG4argsWriter) SetCpdaDelegation_None() {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OPEN_DELEGATE_NONE)
+}
+
+func (w *CBPUSHDELEG4argsWriter) SetCpdaDelegation_Read() OpenReadDelegation4Writer {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	w.buf = append(w.buf, make([]byte, 4+20)...)
+	off := len(w.buf) - 4 - 20
+	binary.BigEndian.PutUint32((*[4 + 20]byte)(w.buf[off:])[:4], OPEN_DELEGATE_READ)
+	buf := w.buf
+	w.buf = nil
+	return OpenReadDelegation4Writer{buf: buf, header: (*[20]byte)(buf[off+4:])}
+}
+
+func (w *CBPUSHDELEG4argsWriter) SetCpdaDelegation_ReadAttrsDeleg() OpenReadDelegation4Writer {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	w.buf = append(w.buf, make([]byte, 4+20)...)
+	off := len(w.buf) - 4 - 20
+	binary.BigEndian.PutUint32((*[4 + 20]byte)(w.buf[off:])[:4], OPEN_DELEGATE_READ_ATTRS_DELEG)
+	buf := w.buf
+	w.buf = nil
+	return OpenReadDelegation4Writer{buf: buf, header: (*[20]byte)(buf[off+4:])}
+}
+
+func (w *CBPUSHDELEG4argsWriter) SetCpdaDelegation_Write() OpenWriteDelegation4Writer {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	w.buf = append(w.buf, make([]byte, 4+24)...)
+	off := len(w.buf) - 4 - 24
+	binary.BigEndian.PutUint32((*[4 + 24]byte)(w.buf[off:])[:4], OPEN_DELEGATE_WRITE)
+	buf := w.buf
+	w.buf = nil
+	return OpenWriteDelegation4Writer{buf: buf, header: (*[24]byte)(buf[off+4:])}
+}
+
+func (w *CBPUSHDELEG4argsWriter) SetCpdaDelegation_WriteAttrsDeleg() OpenWriteDelegation4Writer {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	w.buf = append(w.buf, make([]byte, 4+24)...)
+	off := len(w.buf) - 4 - 24
+	binary.BigEndian.PutUint32((*[4 + 24]byte)(w.buf[off:])[:4], OPEN_DELEGATE_WRITE_ATTRS_DELEG)
+	buf := w.buf
+	w.buf = nil
+	return OpenWriteDelegation4Writer{buf: buf, header: (*[24]byte)(buf[off+4:])}
+}
+
+func (w *CBPUSHDELEG4argsWriter) SetCpdaDelegation_NoneExt() OpenNoneDelegation4EntryWriter {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OPEN_DELEGATE_NONE_EXT)
+	child := StartOpenNoneDelegation4Entry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *CBPUSHDELEG4argsWriter) StartCpdaFh() NfsFh4Writer {
+	if w.phase > 0 {
+		panic("writer fields called out of order")
+	}
+	child := StartNfsFh4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *CBPUSHDELEG4argsWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *CBPUSHDELEG4argsWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// CBPUSHDELEG4res — fixed 4 bytes: cpdr_status(4, beu32)
+// -------------------------------------------------------
+
+type CBPUSHDELEG4res struct {
+	m *[cBPUSHDELEG4resSize]byte
+}
+
+const cBPUSHDELEG4resSize = 4
+
+func readCBPUSHDELEG4res(b *[]byte) (CBPUSHDELEG4res, bool) {
+	if len(*b) < cBPUSHDELEG4resSize {
+		return CBPUSHDELEG4res{}, false
+	}
+	result := CBPUSHDELEG4res{m: (*[cBPUSHDELEG4resSize]byte)(*b)}
+	*b = (*b)[cBPUSHDELEG4resSize:]
+	return result, true
+}
+
+func ReadCBPUSHDELEG4res(b []byte) (CBPUSHDELEG4res, bool) {
+	return readCBPUSHDELEG4res(&b)
+}
+
+func StartCBPUSHDELEG4res(buf []byte) ([]byte, CBPUSHDELEG4res) {
+	buf = append(buf, make([]byte, cBPUSHDELEG4resSize)...)
+	return buf, CBPUSHDELEG4res{m: (*[cBPUSHDELEG4resSize]byte)(buf[len(buf)-cBPUSHDELEG4resSize:])}
+}
+
+func (m CBPUSHDELEG4res) CpdrStatus() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m CBPUSHDELEG4res) SetCpdrStatus(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+// -------------------------------------------------------
+// CBRECALLANY4args — variable: craa_objects_to_keep(4) + craa_type_mask
+// -------------------------------------------------------
+
+type CBRECALLANY4args []byte
+
+func readCBRECALLANY4args(b *[]byte) (CBRECALLANY4args, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[4:]
+	if _, ok := readBitmap4(b); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return CBRECALLANY4args(start[:total]), true
+}
+
+func ReadCBRECALLANY4args(b []byte) (CBRECALLANY4args, bool) {
+	return readCBRECALLANY4args(&b)
+}
+
+func (m CBRECALLANY4args) CraaObjectsToKeep() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m CBRECALLANY4args) CraaTypeMask() Bitmap4 {
+	return Bitmap4(m[4:])
+}
+
+// CBRECALLANY4argsWriter writes a CB_RECALL_ANY4args:
+//
+//	craa_objects_to_keep + craa_type_mask
+type CBRECALLANY4argsWriter struct {
+	buf    []byte
+	header *[4]byte
+}
+
+func StartCBRECALLANY4args(buf []byte) CBRECALLANY4argsWriter {
+	buf = append(buf, make([]byte, 4)...) // craa_objects_to_keep(4)
+	return CBRECALLANY4argsWriter{buf: buf, header: (*[4]byte)(buf[len(buf)-4:])}
+}
+
+func (w *CBRECALLANY4argsWriter) SetCraaObjectsToKeep(v uint32) {
+	binary.BigEndian.PutUint32(w.header[0:4], v)
+}
+
+func (w *CBRECALLANY4argsWriter) StartCraaTypeMask() Bitmap4Writer {
+	child := StartBitmap4(w.buf)
+	w.buf = nil
+	w.header = nil
+	return child
+}
+
+func (w *CBRECALLANY4argsWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *CBRECALLANY4argsWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// CBRECALLANY4res — fixed 4 bytes: crar_status(4, beu32)
+// -------------------------------------------------------
+
+type CBRECALLANY4res struct {
+	m *[cBRECALLANY4resSize]byte
+}
+
+const cBRECALLANY4resSize = 4
+
+func readCBRECALLANY4res(b *[]byte) (CBRECALLANY4res, bool) {
+	if len(*b) < cBRECALLANY4resSize {
+		return CBRECALLANY4res{}, false
+	}
+	result := CBRECALLANY4res{m: (*[cBRECALLANY4resSize]byte)(*b)}
+	*b = (*b)[cBRECALLANY4resSize:]
+	return result, true
+}
+
+func ReadCBRECALLANY4res(b []byte) (CBRECALLANY4res, bool) {
+	return readCBRECALLANY4res(&b)
+}
+
+func StartCBRECALLANY4res(buf []byte) ([]byte, CBRECALLANY4res) {
+	buf = append(buf, make([]byte, cBRECALLANY4resSize)...)
+	return buf, CBRECALLANY4res{m: (*[cBRECALLANY4resSize]byte)(buf[len(buf)-cBRECALLANY4resSize:])}
+}
+
+func (m CBRECALLANY4res) CrarStatus() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m CBRECALLANY4res) SetCrarStatus(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+// -------------------------------------------------------
+// CBRECALLABLEOBJAVAIL4res — fixed 4 bytes: croa_status(4, beu32)
+// -------------------------------------------------------
+
+type CBRECALLABLEOBJAVAIL4res struct {
+	m *[cBRECALLABLEOBJAVAIL4resSize]byte
+}
+
+const cBRECALLABLEOBJAVAIL4resSize = 4
+
+func readCBRECALLABLEOBJAVAIL4res(b *[]byte) (CBRECALLABLEOBJAVAIL4res, bool) {
+	if len(*b) < cBRECALLABLEOBJAVAIL4resSize {
+		return CBRECALLABLEOBJAVAIL4res{}, false
+	}
+	result := CBRECALLABLEOBJAVAIL4res{m: (*[cBRECALLABLEOBJAVAIL4resSize]byte)(*b)}
+	*b = (*b)[cBRECALLABLEOBJAVAIL4resSize:]
+	return result, true
+}
+
+func ReadCBRECALLABLEOBJAVAIL4res(b []byte) (CBRECALLABLEOBJAVAIL4res, bool) {
+	return readCBRECALLABLEOBJAVAIL4res(&b)
+}
+
+func StartCBRECALLABLEOBJAVAIL4res(buf []byte) ([]byte, CBRECALLABLEOBJAVAIL4res) {
+	buf = append(buf, make([]byte, cBRECALLABLEOBJAVAIL4resSize)...)
+	return buf, CBRECALLABLEOBJAVAIL4res{m: (*[cBRECALLABLEOBJAVAIL4resSize]byte)(buf[len(buf)-cBRECALLABLEOBJAVAIL4resSize:])}
+}
+
+func (m CBRECALLABLEOBJAVAIL4res) CroaStatus() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m CBRECALLABLEOBJAVAIL4res) SetCroaStatus(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+// -------------------------------------------------------
+// CBRECALLSLOT4args — fixed 4 bytes: rsa_target_highest_slotid(4, beu32)
+// -------------------------------------------------------
+
+type CBRECALLSLOT4args struct {
+	m *[cBRECALLSLOT4argsSize]byte
+}
+
+const cBRECALLSLOT4argsSize = 4
+
+func readCBRECALLSLOT4args(b *[]byte) (CBRECALLSLOT4args, bool) {
+	if len(*b) < cBRECALLSLOT4argsSize {
+		return CBRECALLSLOT4args{}, false
+	}
+	result := CBRECALLSLOT4args{m: (*[cBRECALLSLOT4argsSize]byte)(*b)}
+	*b = (*b)[cBRECALLSLOT4argsSize:]
+	return result, true
+}
+
+func ReadCBRECALLSLOT4args(b []byte) (CBRECALLSLOT4args, bool) {
+	return readCBRECALLSLOT4args(&b)
+}
+
+func StartCBRECALLSLOT4args(buf []byte) ([]byte, CBRECALLSLOT4args) {
+	buf = append(buf, make([]byte, cBRECALLSLOT4argsSize)...)
+	return buf, CBRECALLSLOT4args{m: (*[cBRECALLSLOT4argsSize]byte)(buf[len(buf)-cBRECALLSLOT4argsSize:])}
+}
+
+func (m CBRECALLSLOT4args) RsaTargetHighestSlotid() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m CBRECALLSLOT4args) SetRsaTargetHighestSlotid(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+// -------------------------------------------------------
+// CBRECALLSLOT4res — fixed 4 bytes: rsr_status(4, beu32)
+// -------------------------------------------------------
+
+type CBRECALLSLOT4res struct {
+	m *[cBRECALLSLOT4resSize]byte
+}
+
+const cBRECALLSLOT4resSize = 4
+
+func readCBRECALLSLOT4res(b *[]byte) (CBRECALLSLOT4res, bool) {
+	if len(*b) < cBRECALLSLOT4resSize {
+		return CBRECALLSLOT4res{}, false
+	}
+	result := CBRECALLSLOT4res{m: (*[cBRECALLSLOT4resSize]byte)(*b)}
+	*b = (*b)[cBRECALLSLOT4resSize:]
+	return result, true
+}
+
+func ReadCBRECALLSLOT4res(b []byte) (CBRECALLSLOT4res, bool) {
+	return readCBRECALLSLOT4res(&b)
+}
+
+func StartCBRECALLSLOT4res(buf []byte) ([]byte, CBRECALLSLOT4res) {
+	buf = append(buf, make([]byte, cBRECALLSLOT4resSize)...)
+	return buf, CBRECALLSLOT4res{m: (*[cBRECALLSLOT4resSize]byte)(buf[len(buf)-cBRECALLSLOT4resSize:])}
+}
+
+func (m CBRECALLSLOT4res) RsrStatus() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m CBRECALLSLOT4res) SetRsrStatus(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+// -------------------------------------------------------
+// ReferringCall4 — fixed 8 bytes:
+//   rc_sequenceid(4, beu32) + rc_slotid(4, beu32)
+// -------------------------------------------------------
+
+type ReferringCall4 struct {
+	m *[referringCall4Size]byte
+}
+
+const referringCall4Size = 8
+
+func ReadReferringCall4(b []byte) (ReferringCall4, bool) {
+	if len(b) < referringCall4Size {
+		return ReferringCall4{}, false
+	}
+	return ReferringCall4{m: (*[referringCall4Size]byte)(b)}, true
+}
+
+func StartReferringCall4(buf []byte) ([]byte, ReferringCall4) {
+	buf = append(buf, make([]byte, referringCall4Size)...)
+	return buf, ReferringCall4{m: (*[referringCall4Size]byte)(buf[len(buf)-referringCall4Size:])}
+}
+
+func (m ReferringCall4) RcSequenceid() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m ReferringCall4) RcSlotid() uint32 {
+	return binary.BigEndian.Uint32(m.m[4:8])
+}
+
+func (m ReferringCall4) SetRcSequenceid(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+func (m ReferringCall4) SetRcSlotid(v uint32) {
+	binary.BigEndian.PutUint32(m.m[4:8], v)
+}
+
+// -------------------------------------------------------
+// ReferringCallList4 — variable:
+//   rcl_sessionid(16) + rcl_referring_calls_count(4) + referring_call4 rcl_referring_calls[rcl_referring_calls_count]
+// -------------------------------------------------------
+
+type ReferringCallList4 []byte
+
+func readReferringCallList4(b *[]byte) (ReferringCallList4, bool) {
+	if len(*b) < 20 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	c_rcl_referring_calls_count := int(binary.BigEndian.Uint32((*b)[16:20]))
+	*b = (*b)[20:]
+	if len(*b) < c_rcl_referring_calls_count*8 {
+		return nil, false
+	}
+	*b = (*b)[c_rcl_referring_calls_count*8:]
+	total := startLen - len(*b)
+	return ReferringCallList4(start[:total]), true
+}
+
+func ReadReferringCallList4(b []byte) (ReferringCallList4, bool) {
+	if len(b) < 20 {
+		return nil, false
+	}
+	count := int(binary.BigEndian.Uint32(b[16:20]))
+	total := 20 + count*referringCall4Size
+	if len(b) < total {
+		return nil, false
+	}
+	return ReferringCallList4(b[:total]), true
+}
+
+func (m ReferringCallList4) RclSessionid() Sessionid4 {
+	return Sessionid4{m: (*[sessionid4Size]byte)(m[0 : 0+sessionid4Size])}
+}
+
+func (m ReferringCallList4) RclReferringCallsCount() uint32 {
+	return binary.BigEndian.Uint32(m[16:20])
+}
+
+func (m ReferringCallList4) RclReferringCalls(i int) ReferringCall4 {
+	off := 20 + i*referringCall4Size
+	return ReferringCall4{m: (*[referringCall4Size]byte)(m[off : off+referringCall4Size])}
+}
+
+// ReferringCallList4Writer writes a referring_call_list4:
+//
+//	rcl_sessionid + rcl_referring_calls_count + referring_call4 rcl_referring_calls[rcl_referring_calls_count]
+type ReferringCallList4Writer struct {
+	buf                    []byte
+	off                    int
+	rclReferringCallsCount uint32
+}
+
+func StartReferringCallList4(buf []byte) ReferringCallList4Writer {
+	off := len(buf)
+	buf = append(buf, make([]byte, 20)...) // rcl_sessionid(16) + rcl_referring_calls_count(4)
+	return ReferringCallList4Writer{buf: buf, off: off}
+}
+
+func (w *ReferringCallList4Writer) RclSessionid() Sessionid4 {
+	return Sessionid4{m: (*[sessionid4Size]byte)(w.buf[w.off:])}
+}
+
+func (w *ReferringCallList4Writer) AppendRclReferringCalls() ReferringCall4 {
+	w.buf = append(w.buf, make([]byte, referringCall4Size)...)
+	w.rclReferringCallsCount++
+	return ReferringCall4{m: (*[referringCall4Size]byte)(w.buf[len(w.buf)-referringCall4Size:])}
+}
+
+func (w *ReferringCallList4Writer) Finish() []byte {
+	binary.BigEndian.PutUint32((*[20]byte)(w.buf[w.off:])[16:20], w.rclReferringCallsCount)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// CBSEQUENCE4args — variable:
+//   csa_sessionid(16) + csa_sequenceid(4) + csa_slotid(4) + csa_highest_slotid(4) + csa_cachethis(4) + csa_referring_call_lists_count(4) + referring_call_list4 csa_referring_call_lists[csa_referring_call_lists_count]
+// -------------------------------------------------------
+
+type CBSEQUENCE4args []byte
+
+func readCBSEQUENCE4args(b *[]byte) (CBSEQUENCE4args, bool) {
+	if len(*b) < 36 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	c_csa_referring_call_lists_count := int(binary.BigEndian.Uint32((*b)[32:36]))
+	*b = (*b)[36:]
+	for i := 0; i < c_csa_referring_call_lists_count; i++ {
+		if _, ok := readReferringCallList4(b); !ok {
+			return nil, false
+		}
+	}
+	total := startLen - len(*b)
+	return CBSEQUENCE4args(start[:total]), true
+}
+
+func ReadCBSEQUENCE4args(b []byte) (CBSEQUENCE4args, bool) {
+	if len(b) < 36 {
+		return nil, false
+	}
+	return CBSEQUENCE4args(b), true
+}
+
+func (m CBSEQUENCE4args) CsaSessionid() Sessionid4 {
+	return Sessionid4{m: (*[sessionid4Size]byte)(m[0 : 0+sessionid4Size])}
+}
+
+func (m CBSEQUENCE4args) CsaSequenceid() uint32 {
+	return binary.BigEndian.Uint32(m[16:20])
+}
+
+func (m CBSEQUENCE4args) CsaSlotid() uint32 {
+	return binary.BigEndian.Uint32(m[20:24])
+}
+
+func (m CBSEQUENCE4args) CsaHighestSlotid() uint32 {
+	return binary.BigEndian.Uint32(m[24:28])
+}
+
+func (m CBSEQUENCE4args) CsaCachethis() uint32 {
+	return binary.BigEndian.Uint32(m[28:32])
+}
+
+func (m CBSEQUENCE4args) CsaReferringCallListsCount() uint32 {
+	return binary.BigEndian.Uint32(m[32:36])
+}
+
+func (m CBSEQUENCE4args) CsaReferringCallLists() ReferringCallList4Iter {
+	csa_referring_call_lists_count := int(binary.BigEndian.Uint32(m[32:36]))
+	return ReferringCallList4Iter{
+		b:     []byte(m[36:]),
+		count: csa_referring_call_lists_count,
+	}
+}
+
+// ReferringCallList4Iter iterates over variable-size ReferringCallList4 entries.
+type ReferringCallList4Iter struct {
+	b     []byte
+	count int
+	i     int
+	cur   ReferringCallList4
+}
+
+func (it *ReferringCallList4Iter) Next() bool {
+	if it.i >= it.count {
+		return false
+	}
+	var ok bool
+	it.cur, ok = readReferringCallList4(&it.b)
+	if !ok {
+		return false
+	}
+	it.i++
+	return true
+}
+
+func (it *ReferringCallList4Iter) CsaReferringCallList() ReferringCallList4 {
+	return it.cur
+}
+
+// CBSEQUENCE4argsWriter writes a CB_SEQUENCE4args:
+//
+//	csa_sessionid + csa_sequenceid + csa_slotid + csa_highest_slotid + csa_cachethis + csa_referring_call_lists_count + referring_call_list4 csa_referring_call_lists[csa_referring_call_lists_count]
+type CBSEQUENCE4argsWriter struct {
+	buf                        []byte
+	off                        int
+	csaReferringCallListsCount uint32
+}
+
+func StartCBSEQUENCE4args(buf []byte) CBSEQUENCE4argsWriter {
+	off := len(buf)
+	buf = append(buf, make([]byte, 36)...) // csa_sessionid(16) + csa_sequenceid(4) + csa_slotid(4) + csa_highest_slotid(4) + csa_cachethis(4) + csa_referring_call_lists_count(4)
+	return CBSEQUENCE4argsWriter{buf: buf, off: off}
+}
+
+func (w *CBSEQUENCE4argsWriter) CsaSessionid() Sessionid4 {
+	return Sessionid4{m: (*[sessionid4Size]byte)(w.buf[w.off:])}
+}
+
+func (w *CBSEQUENCE4argsWriter) SetCsaSequenceid(v uint32) {
+	binary.BigEndian.PutUint32((*[36]byte)(w.buf[w.off:])[16:20], v)
+}
+
+func (w *CBSEQUENCE4argsWriter) SetCsaSlotid(v uint32) {
+	binary.BigEndian.PutUint32((*[36]byte)(w.buf[w.off:])[20:24], v)
+}
+
+func (w *CBSEQUENCE4argsWriter) SetCsaHighestSlotid(v uint32) {
+	binary.BigEndian.PutUint32((*[36]byte)(w.buf[w.off:])[24:28], v)
+}
+
+func (w *CBSEQUENCE4argsWriter) SetCsaCachethis(v uint32) {
+	binary.BigEndian.PutUint32((*[36]byte)(w.buf[w.off:])[28:32], v)
+}
+
+func (w *CBSEQUENCE4argsWriter) AppendCsaReferringCallLists() ReferringCallList4Writer {
+	_ = w.buf[:1]
+	w.csaReferringCallListsCount++
+	child := StartReferringCallList4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *CBSEQUENCE4argsWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *CBSEQUENCE4argsWriter) Finish() []byte {
+	binary.BigEndian.PutUint32((*[36]byte)(w.buf[w.off:])[32:36], w.csaReferringCallListsCount)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// CBSEQUENCE4resok — fixed 32 bytes:
+//   sessionid4(16) + csr_sequenceid(4, beu32) + csr_slotid(4, beu32) + csr_highest_slotid(4, beu32) + csr_target_highest_slotid(4, beu32)
+// -------------------------------------------------------
+
+type CBSEQUENCE4resok struct {
+	m *[cBSEQUENCE4resokSize]byte
+}
+
+const cBSEQUENCE4resokSize = 32
+
+func readCBSEQUENCE4resok(b *[]byte) (CBSEQUENCE4resok, bool) {
+	if len(*b) < cBSEQUENCE4resokSize {
+		return CBSEQUENCE4resok{}, false
+	}
+	result := CBSEQUENCE4resok{m: (*[cBSEQUENCE4resokSize]byte)(*b)}
+	*b = (*b)[cBSEQUENCE4resokSize:]
+	return result, true
+}
+
+func ReadCBSEQUENCE4resok(b []byte) (CBSEQUENCE4resok, bool) {
+	return readCBSEQUENCE4resok(&b)
+}
+
+func StartCBSEQUENCE4resok(buf []byte) ([]byte, CBSEQUENCE4resok) {
+	buf = append(buf, make([]byte, cBSEQUENCE4resokSize)...)
+	return buf, CBSEQUENCE4resok{m: (*[cBSEQUENCE4resokSize]byte)(buf[len(buf)-cBSEQUENCE4resokSize:])}
+}
+
+func (m CBSEQUENCE4resok) CsrSessionid() Sessionid4 {
+	return Sessionid4{m: (*[sessionid4Size]byte)(m.m[0:16])}
+}
+
+func (m CBSEQUENCE4resok) CsrSequenceid() uint32 {
+	return binary.BigEndian.Uint32(m.m[16:20])
+}
+
+func (m CBSEQUENCE4resok) CsrSlotid() uint32 {
+	return binary.BigEndian.Uint32(m.m[20:24])
+}
+
+func (m CBSEQUENCE4resok) CsrHighestSlotid() uint32 {
+	return binary.BigEndian.Uint32(m.m[24:28])
+}
+
+func (m CBSEQUENCE4resok) CsrTargetHighestSlotid() uint32 {
+	return binary.BigEndian.Uint32(m.m[28:32])
+}
+
+func (m CBSEQUENCE4resok) SetCsrSequenceid(v uint32) {
+	binary.BigEndian.PutUint32(m.m[16:20], v)
+}
+
+func (m CBSEQUENCE4resok) SetCsrSlotid(v uint32) {
+	binary.BigEndian.PutUint32(m.m[20:24], v)
+}
+
+func (m CBSEQUENCE4resok) SetCsrHighestSlotid(v uint32) {
+	binary.BigEndian.PutUint32(m.m[24:28], v)
+}
+
+func (m CBSEQUENCE4resok) SetCsrTargetHighestSlotid(v uint32) {
+	binary.BigEndian.PutUint32(m.m[28:32], v)
+}
+
+// -------------------------------------------------------
+// CBSEQUENCE4res — union on nfsstat4 (external discriminant)
+// -------------------------------------------------------
+
+type CBSEQUENCE4res struct {
+	b    []byte
+	disc uint32
+}
+
+func readCBSEQUENCE4res(b *[]byte, nfsstat4 uint32) (CBSEQUENCE4res, bool) {
+	switch nfsstat4 {
+	case NFS4_OK:
+		r, ok := readCBSEQUENCE4resok(b)
+		if !ok {
+			return CBSEQUENCE4res{}, false
+		}
+		return CBSEQUENCE4res{b: r.m[:], disc: nfsstat4}, true
+	default:
+		return CBSEQUENCE4res{b: (*b)[:0], disc: nfsstat4}, true
+	}
+}
+
+func (m CBSEQUENCE4res) AsCBSEQUENCE4resok() CBSEQUENCE4resok {
+	if m.disc != NFS4_OK {
+		panic("wrong union discriminant")
+	}
+	return CBSEQUENCE4resok{m: (*[cBSEQUENCE4resokSize]byte)(m.b)}
+}
+
+// -------------------------------------------------------
+// CBWANTSCANCELLED4args — fixed 8 bytes:
+//   cwca_contended_wants_cancelled(4, beu32) + cwca_resourced_wants_cancelled(4, beu32)
+// -------------------------------------------------------
+
+type CBWANTSCANCELLED4args struct {
+	m *[cBWANTSCANCELLED4argsSize]byte
+}
+
+const cBWANTSCANCELLED4argsSize = 8
+
+func readCBWANTSCANCELLED4args(b *[]byte) (CBWANTSCANCELLED4args, bool) {
+	if len(*b) < cBWANTSCANCELLED4argsSize {
+		return CBWANTSCANCELLED4args{}, false
+	}
+	result := CBWANTSCANCELLED4args{m: (*[cBWANTSCANCELLED4argsSize]byte)(*b)}
+	*b = (*b)[cBWANTSCANCELLED4argsSize:]
+	return result, true
+}
+
+func ReadCBWANTSCANCELLED4args(b []byte) (CBWANTSCANCELLED4args, bool) {
+	return readCBWANTSCANCELLED4args(&b)
+}
+
+func StartCBWANTSCANCELLED4args(buf []byte) ([]byte, CBWANTSCANCELLED4args) {
+	buf = append(buf, make([]byte, cBWANTSCANCELLED4argsSize)...)
+	return buf, CBWANTSCANCELLED4args{m: (*[cBWANTSCANCELLED4argsSize]byte)(buf[len(buf)-cBWANTSCANCELLED4argsSize:])}
+}
+
+func (m CBWANTSCANCELLED4args) CwcaContendedWantsCancelled() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m CBWANTSCANCELLED4args) CwcaResourcedWantsCancelled() uint32 {
+	return binary.BigEndian.Uint32(m.m[4:8])
+}
+
+func (m CBWANTSCANCELLED4args) SetCwcaContendedWantsCancelled(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+func (m CBWANTSCANCELLED4args) SetCwcaResourcedWantsCancelled(v uint32) {
+	binary.BigEndian.PutUint32(m.m[4:8], v)
+}
+
+// -------------------------------------------------------
+// CBWANTSCANCELLED4res — fixed 4 bytes: cwcr_status(4, beu32)
+// -------------------------------------------------------
+
+type CBWANTSCANCELLED4res struct {
+	m *[cBWANTSCANCELLED4resSize]byte
+}
+
+const cBWANTSCANCELLED4resSize = 4
+
+func readCBWANTSCANCELLED4res(b *[]byte) (CBWANTSCANCELLED4res, bool) {
+	if len(*b) < cBWANTSCANCELLED4resSize {
+		return CBWANTSCANCELLED4res{}, false
+	}
+	result := CBWANTSCANCELLED4res{m: (*[cBWANTSCANCELLED4resSize]byte)(*b)}
+	*b = (*b)[cBWANTSCANCELLED4resSize:]
+	return result, true
+}
+
+func ReadCBWANTSCANCELLED4res(b []byte) (CBWANTSCANCELLED4res, bool) {
+	return readCBWANTSCANCELLED4res(&b)
+}
+
+func StartCBWANTSCANCELLED4res(buf []byte) ([]byte, CBWANTSCANCELLED4res) {
+	buf = append(buf, make([]byte, cBWANTSCANCELLED4resSize)...)
+	return buf, CBWANTSCANCELLED4res{m: (*[cBWANTSCANCELLED4resSize]byte)(buf[len(buf)-cBWANTSCANCELLED4resSize:])}
+}
+
+func (m CBWANTSCANCELLED4res) CwcrStatus() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m CBWANTSCANCELLED4res) SetCwcrStatus(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+// -------------------------------------------------------
+// CBNOTIFYLOCK4args — variable: cnla_fh + cnla_lock_owner
+// -------------------------------------------------------
+
+type CBNOTIFYLOCK4args struct {
+	data []byte
+	off1 int // byte offset within data where cnla_lock_owner starts
+}
+
+func readCBNOTIFYLOCK4args(b *[]byte) (CBNOTIFYLOCK4args, bool) {
+	start := *b
+	startLen := len(start)
+	if _, ok := readNfsFh4(b); !ok {
+		return CBNOTIFYLOCK4args{}, false
+	}
+	off1 := startLen - len(*b)
+	if _, ok := readStateOwner4(b); !ok {
+		return CBNOTIFYLOCK4args{}, false
+	}
+	total := startLen - len(*b)
+	return CBNOTIFYLOCK4args{data: start[:total], off1: off1}, true
+}
+
+func ReadCBNOTIFYLOCK4args(b []byte) (CBNOTIFYLOCK4args, bool) {
+	return readCBNOTIFYLOCK4args(&b)
+}
+
+func (m CBNOTIFYLOCK4args) CnlaFh() NfsFh4 {
+	return NfsFh4(m.data[0:m.off1])
+}
+
+func (m CBNOTIFYLOCK4args) CnlaLockOwner() StateOwner4 {
+	return StateOwner4(m.data[m.off1:])
+}
+
+// CBNOTIFYLOCK4argsWriter writes a CB_NOTIFY_LOCK4args:
+//
+//	cnla_fh + cnla_lock_owner
+type CBNOTIFYLOCK4argsWriter struct {
+	buf   []byte
+	off   int
+	phase uint8
+}
+
+func StartCBNOTIFYLOCK4args(buf []byte) CBNOTIFYLOCK4argsWriter {
+	off := len(buf)
+	return CBNOTIFYLOCK4argsWriter{buf: buf, off: off}
+}
+
+func (w *CBNOTIFYLOCK4argsWriter) StartCnlaFh() NfsFh4Writer {
+	if w.phase > 0 {
+		panic("writer fields called out of order")
+	}
+	child := StartNfsFh4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *CBNOTIFYLOCK4argsWriter) StartCnlaLockOwner() StateOwner4Writer {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	child := StartStateOwner4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *CBNOTIFYLOCK4argsWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *CBNOTIFYLOCK4argsWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// CBNOTIFYLOCK4res — fixed 4 bytes: cnlr_status(4, beu32)
+// -------------------------------------------------------
+
+type CBNOTIFYLOCK4res struct {
+	m *[cBNOTIFYLOCK4resSize]byte
+}
+
+const cBNOTIFYLOCK4resSize = 4
+
+func readCBNOTIFYLOCK4res(b *[]byte) (CBNOTIFYLOCK4res, bool) {
+	if len(*b) < cBNOTIFYLOCK4resSize {
+		return CBNOTIFYLOCK4res{}, false
+	}
+	result := CBNOTIFYLOCK4res{m: (*[cBNOTIFYLOCK4resSize]byte)(*b)}
+	*b = (*b)[cBNOTIFYLOCK4resSize:]
+	return result, true
+}
+
+func ReadCBNOTIFYLOCK4res(b []byte) (CBNOTIFYLOCK4res, bool) {
+	return readCBNOTIFYLOCK4res(&b)
+}
+
+func StartCBNOTIFYLOCK4res(buf []byte) ([]byte, CBNOTIFYLOCK4res) {
+	buf = append(buf, make([]byte, cBNOTIFYLOCK4resSize)...)
+	return buf, CBNOTIFYLOCK4res{m: (*[cBNOTIFYLOCK4resSize]byte)(buf[len(buf)-cBNOTIFYLOCK4resSize:])}
+}
+
+func (m CBNOTIFYLOCK4res) CnlrStatus() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m CBNOTIFYLOCK4res) SetCnlrStatus(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+// -------------------------------------------------------
+// NotifyDeviceidDelete4 — fixed 20 bytes:
+//   ndd_layouttype(4, beu32) + deviceid4(16)
+// -------------------------------------------------------
+
+type NotifyDeviceidDelete4 struct {
+	m *[notifyDeviceidDelete4Size]byte
+}
+
+const notifyDeviceidDelete4Size = 20
+
+func ReadNotifyDeviceidDelete4(b []byte) (NotifyDeviceidDelete4, bool) {
+	if len(b) < notifyDeviceidDelete4Size {
+		return NotifyDeviceidDelete4{}, false
+	}
+	return NotifyDeviceidDelete4{m: (*[notifyDeviceidDelete4Size]byte)(b)}, true
+}
+
+func StartNotifyDeviceidDelete4(buf []byte) ([]byte, NotifyDeviceidDelete4) {
+	buf = append(buf, make([]byte, notifyDeviceidDelete4Size)...)
+	return buf, NotifyDeviceidDelete4{m: (*[notifyDeviceidDelete4Size]byte)(buf[len(buf)-notifyDeviceidDelete4Size:])}
+}
+
+func (m NotifyDeviceidDelete4) NddLayouttype() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m NotifyDeviceidDelete4) NddDeviceid() Deviceid4 {
+	return Deviceid4{m: (*[deviceid4Size]byte)(m.m[4:20])}
+}
+
+func (m NotifyDeviceidDelete4) SetNddLayouttype(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+// -------------------------------------------------------
+// NotifyDeviceidChange4 — fixed 24 bytes:
+//   ndc_layouttype(4, beu32) + deviceid4(16) + ndc_immediate(4, beu32)
+// -------------------------------------------------------
+
+type NotifyDeviceidChange4 struct {
+	m *[notifyDeviceidChange4Size]byte
+}
+
+const notifyDeviceidChange4Size = 24
+
+func ReadNotifyDeviceidChange4(b []byte) (NotifyDeviceidChange4, bool) {
+	if len(b) < notifyDeviceidChange4Size {
+		return NotifyDeviceidChange4{}, false
+	}
+	return NotifyDeviceidChange4{m: (*[notifyDeviceidChange4Size]byte)(b)}, true
+}
+
+func StartNotifyDeviceidChange4(buf []byte) ([]byte, NotifyDeviceidChange4) {
+	buf = append(buf, make([]byte, notifyDeviceidChange4Size)...)
+	return buf, NotifyDeviceidChange4{m: (*[notifyDeviceidChange4Size]byte)(buf[len(buf)-notifyDeviceidChange4Size:])}
+}
+
+func (m NotifyDeviceidChange4) NdcLayouttype() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m NotifyDeviceidChange4) NdcDeviceid() Deviceid4 {
+	return Deviceid4{m: (*[deviceid4Size]byte)(m.m[4:20])}
+}
+
+func (m NotifyDeviceidChange4) NdcImmediate() uint32 {
+	return binary.BigEndian.Uint32(m.m[20:24])
+}
+
+func (m NotifyDeviceidChange4) SetNdcLayouttype(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+func (m NotifyDeviceidChange4) SetNdcImmediate(v uint32) {
+	binary.BigEndian.PutUint32(m.m[20:24], v)
+}
+
+// -------------------------------------------------------
+// CBNOTIFYDEVICEID4args — variable:
+//   cnda_changes_count(4) + notify4 cnda_changes[cnda_changes_count]
+// -------------------------------------------------------
+
+type CBNOTIFYDEVICEID4args []byte
+
+func readCBNOTIFYDEVICEID4args(b *[]byte) (CBNOTIFYDEVICEID4args, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	c_cnda_changes_count := int(binary.BigEndian.Uint32((*b)[0:4]))
+	*b = (*b)[4:]
+	for i := 0; i < c_cnda_changes_count; i++ {
+		if _, ok := readNotify4(b); !ok {
+			return nil, false
+		}
+	}
+	total := startLen - len(*b)
+	return CBNOTIFYDEVICEID4args(start[:total]), true
+}
+
+func ReadCBNOTIFYDEVICEID4args(b []byte) (CBNOTIFYDEVICEID4args, bool) {
+	if len(b) < 4 {
+		return nil, false
+	}
+	return CBNOTIFYDEVICEID4args(b), true
+}
+
+func (m CBNOTIFYDEVICEID4args) CndaChangesCount() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m CBNOTIFYDEVICEID4args) CndaChanges() Notify4Iter {
+	cnda_changes_count := int(binary.BigEndian.Uint32(m[0:4]))
+	return Notify4Iter{
+		b:     []byte(m[4:]),
+		count: cnda_changes_count,
+	}
+}
+
+// CBNOTIFYDEVICEID4argsWriter writes a CB_NOTIFY_DEVICEID4args:
+//
+//	cnda_changes_count + notify4 cnda_changes[cnda_changes_count]
+type CBNOTIFYDEVICEID4argsWriter struct {
+	buf              []byte
+	off              int
+	cndaChangesCount uint32
+}
+
+func StartCBNOTIFYDEVICEID4args(buf []byte) CBNOTIFYDEVICEID4argsWriter {
+	off := len(buf)
+	buf = binary.BigEndian.AppendUint32(buf, 0) // cnda_changes_count placeholder
+	return CBNOTIFYDEVICEID4argsWriter{buf: buf, off: off}
+}
+
+func (w *CBNOTIFYDEVICEID4argsWriter) AppendCndaChanges() Notify4Writer {
+	_ = w.buf[:1]
+	w.cndaChangesCount++
+	child := StartNotify4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *CBNOTIFYDEVICEID4argsWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *CBNOTIFYDEVICEID4argsWriter) Finish() []byte {
+	binary.BigEndian.PutUint32(w.buf[w.off:w.off+4], w.cndaChangesCount)
+	return w.buf
+}
+
+// -------------------------------------------------------
+// CBNOTIFYDEVICEID4res — fixed 4 bytes: cndr_status(4, beu32)
+// -------------------------------------------------------
+
+type CBNOTIFYDEVICEID4res struct {
+	m *[cBNOTIFYDEVICEID4resSize]byte
+}
+
+const cBNOTIFYDEVICEID4resSize = 4
+
+func readCBNOTIFYDEVICEID4res(b *[]byte) (CBNOTIFYDEVICEID4res, bool) {
+	if len(*b) < cBNOTIFYDEVICEID4resSize {
+		return CBNOTIFYDEVICEID4res{}, false
+	}
+	result := CBNOTIFYDEVICEID4res{m: (*[cBNOTIFYDEVICEID4resSize]byte)(*b)}
+	*b = (*b)[cBNOTIFYDEVICEID4resSize:]
+	return result, true
+}
+
+func ReadCBNOTIFYDEVICEID4res(b []byte) (CBNOTIFYDEVICEID4res, bool) {
+	return readCBNOTIFYDEVICEID4res(&b)
+}
+
+func StartCBNOTIFYDEVICEID4res(buf []byte) ([]byte, CBNOTIFYDEVICEID4res) {
+	buf = append(buf, make([]byte, cBNOTIFYDEVICEID4resSize)...)
+	return buf, CBNOTIFYDEVICEID4res{m: (*[cBNOTIFYDEVICEID4resSize]byte)(buf[len(buf)-cBNOTIFYDEVICEID4resSize:])}
+}
+
+func (m CBNOTIFYDEVICEID4res) CndrStatus() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m CBNOTIFYDEVICEID4res) SetCndrStatus(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+// -------------------------------------------------------
+// OffloadInfo4Default — fixed 8 bytes: value(8, beu64)
+// -------------------------------------------------------
+
+type OffloadInfo4Default struct {
+	m *[offloadInfo4DefaultSize]byte
+}
+
+const offloadInfo4DefaultSize = 8
+
+func readOffloadInfo4Default(b *[]byte) (OffloadInfo4Default, bool) {
+	if len(*b) < offloadInfo4DefaultSize {
+		return OffloadInfo4Default{}, false
+	}
+	result := OffloadInfo4Default{m: (*[offloadInfo4DefaultSize]byte)(*b)}
+	*b = (*b)[offloadInfo4DefaultSize:]
+	return result, true
+}
+
+func ReadOffloadInfo4Default(b []byte) (OffloadInfo4Default, bool) {
+	return readOffloadInfo4Default(&b)
+}
+
+func StartOffloadInfo4Default(buf []byte) ([]byte, OffloadInfo4Default) {
+	buf = append(buf, make([]byte, offloadInfo4DefaultSize)...)
+	return buf, OffloadInfo4Default{m: (*[offloadInfo4DefaultSize]byte)(buf[len(buf)-offloadInfo4DefaultSize:])}
+}
+
+func (m OffloadInfo4Default) Value() uint64 {
+	return binary.BigEndian.Uint64(m.m[0:8])
+}
+
+func (m OffloadInfo4Default) SetValue(v uint64) {
+	binary.BigEndian.PutUint64(m.m[0:8], v)
+}
+
+// -------------------------------------------------------
+// OffloadInfo4 — union on nfsstat4 (external discriminant)
+// -------------------------------------------------------
+
+type OffloadInfo4 struct {
+	b    []byte
+	disc uint32
+}
+
+func readOffloadInfo4(b *[]byte, nfsstat4 uint32) (OffloadInfo4, bool) {
+	switch nfsstat4 {
+	case NFS4_OK:
+		r, ok := readWriteResponse4(b)
+		if !ok {
+			return OffloadInfo4{}, false
+		}
+		return OffloadInfo4{b: r.data, disc: nfsstat4}, true
+	default:
+		r, ok := readOffloadInfo4Default(b)
+		if !ok {
+			return OffloadInfo4{}, false
+		}
+		return OffloadInfo4{b: r.m[:], disc: nfsstat4}, true
+	}
+}
+
+func (m OffloadInfo4) AsWriteResponse4() WriteResponse4 {
+	if m.disc != NFS4_OK {
+		panic("wrong union discriminant")
+	}
+	v, _ := ReadWriteResponse4(m.b)
+	return v
+}
+
+func (m OffloadInfo4) AsOffloadInfo4Default() OffloadInfo4Default {
+	return OffloadInfo4Default{m: (*[offloadInfo4DefaultSize]byte)(m.b)}
+}
+
+// -------------------------------------------------------
+// CBOFFLOAD4args — variable:
+//   coa_fh + coa_stateid(16) + coa_offload_info_type(4) + offload_info4 coa_offload_info
+// -------------------------------------------------------
+
+type CBOFFLOAD4args struct {
+	data []byte
+	off1 int // byte offset within data where coa_stateid starts
+}
+
+func readCBOFFLOAD4args(b *[]byte) (CBOFFLOAD4args, bool) {
+	start := *b
+	startLen := len(start)
+	if _, ok := readNfsFh4(b); !ok {
+		return CBOFFLOAD4args{}, false
+	}
+	off1 := startLen - len(*b)
+	if len(*b) < 16 {
+		return CBOFFLOAD4args{}, false
+	}
+	*b = (*b)[16:]
+	if len(*b) < 4 {
+		return CBOFFLOAD4args{}, false
+	}
+	c_coa_offload_info_type := binary.BigEndian.Uint32((*b)[:4])
+	*b = (*b)[4:]
+	if _, ok := readOffloadInfo4(b, c_coa_offload_info_type); !ok {
+		return CBOFFLOAD4args{}, false
+	}
+	total := startLen - len(*b)
+	return CBOFFLOAD4args{data: start[:total], off1: off1}, true
+}
+
+func ReadCBOFFLOAD4args(b []byte) (CBOFFLOAD4args, bool) {
+	return readCBOFFLOAD4args(&b)
+}
+
+func (m CBOFFLOAD4args) CoaFh() NfsFh4 {
+	return NfsFh4(m.data[0:m.off1])
+}
+
+func (m CBOFFLOAD4args) CoaStateid() Stateid4 {
+	o := m.off1
+	return Stateid4{m: (*[stateid4Size]byte)(m.data[o : o+stateid4Size])}
+}
+
+func (m CBOFFLOAD4args) CoaOffloadInfoType() uint32 {
+	o := m.off1 + 16
+	return binary.BigEndian.Uint32(m.data[o : o+4])
+}
+
+func (m CBOFFLOAD4args) CoaOffloadInfo() OffloadInfo4 {
+	return OffloadInfo4{b: m.data[m.off1+20:], disc: binary.BigEndian.Uint32(m.data[m.off1+16 : m.off1+20])}
+}
+
+// CBOFFLOAD4argsWriter writes a CB_OFFLOAD4args:
+//
+//	coa_fh + coa_stateid + coa_offload_info_type + coa_offload_info(coa_offload_info_type)
+type CBOFFLOAD4argsWriter struct {
+	buf   []byte
+	off   int
+	phase uint8
+}
+
+func StartCBOFFLOAD4args(buf []byte) CBOFFLOAD4argsWriter {
+	off := len(buf)
+	return CBOFFLOAD4argsWriter{buf: buf, off: off}
+}
+
+func (w *CBOFFLOAD4argsWriter) SetCoaOffloadInfo_Nfs4Ok() WriteResponse4Writer {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	w.buf = append(w.buf, make([]byte, 4+4)...)
+	off := len(w.buf) - 4 - 4
+	binary.BigEndian.PutUint32((*[4 + 4]byte)(w.buf[off:])[:4], NFS4_OK)
+	buf := w.buf
+	w.buf = nil
+	return WriteResponse4Writer{buf: buf, off: off + 4}
+}
+
+func (w *CBOFFLOAD4argsWriter) SetCoaOffloadInfo_Default(nfsstat4 uint32) OffloadInfo4Default {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	w.buf = append(w.buf, make([]byte, 4+offloadInfo4DefaultSize)...)
+	p := (*[4 + offloadInfo4DefaultSize]byte)(w.buf[len(w.buf)-4-offloadInfo4DefaultSize:])
+	binary.BigEndian.PutUint32(p[:4], nfsstat4)
+	return OffloadInfo4Default{m: (*[offloadInfo4DefaultSize]byte)(p[4:])}
+}
+
+func (w *CBOFFLOAD4argsWriter) StartCoaFh() NfsFh4Writer {
+	if w.phase > 0 {
+		panic("writer fields called out of order")
+	}
+	child := StartNfsFh4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *CBOFFLOAD4argsWriter) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *CBOFFLOAD4argsWriter) Finish() []byte {
+	_ = w.buf[:1]
+	return w.buf
+}
+
+// -------------------------------------------------------
+// CBOFFLOAD4res — fixed 4 bytes: cor_status(4, beu32)
+// -------------------------------------------------------
+
+type CBOFFLOAD4res struct {
+	m *[cBOFFLOAD4resSize]byte
+}
+
+const cBOFFLOAD4resSize = 4
+
+func readCBOFFLOAD4res(b *[]byte) (CBOFFLOAD4res, bool) {
+	if len(*b) < cBOFFLOAD4resSize {
+		return CBOFFLOAD4res{}, false
+	}
+	result := CBOFFLOAD4res{m: (*[cBOFFLOAD4resSize]byte)(*b)}
+	*b = (*b)[cBOFFLOAD4resSize:]
+	return result, true
+}
+
+func ReadCBOFFLOAD4res(b []byte) (CBOFFLOAD4res, bool) {
+	return readCBOFFLOAD4res(&b)
+}
+
+func StartCBOFFLOAD4res(buf []byte) ([]byte, CBOFFLOAD4res) {
+	buf = append(buf, make([]byte, cBOFFLOAD4resSize)...)
+	return buf, CBOFFLOAD4res{m: (*[cBOFFLOAD4resSize]byte)(buf[len(buf)-cBOFFLOAD4resSize:])}
+}
+
+func (m CBOFFLOAD4res) CorStatus() uint32 {
+	return binary.BigEndian.Uint32(m.m[0:4])
+}
+
+func (m CBOFFLOAD4res) SetCorStatus(v uint32) {
+	binary.BigEndian.PutUint32(m.m[0:4], v)
+}
+
+// -------------------------------------------------------
 // NfsCbArgop4 — union on nfs_cb_opnum4 (external discriminant)
 // -------------------------------------------------------
 
@@ -12627,6 +33516,72 @@ func readNfsCbArgop4(b *[]byte, nfsCbOpnum4 uint32) (NfsCbArgop4, bool) {
 			return NfsCbArgop4{}, false
 		}
 		return NfsCbArgop4{b: []byte(r), disc: nfsCbOpnum4}, true
+	case OP_CB_LAYOUTRECALL:
+		r, ok := readCBLAYOUTRECALL4args(b)
+		if !ok {
+			return NfsCbArgop4{}, false
+		}
+		return NfsCbArgop4{b: []byte(r), disc: nfsCbOpnum4}, true
+	case OP_CB_NOTIFY:
+		r, ok := readCBNOTIFY4args(b)
+		if !ok {
+			return NfsCbArgop4{}, false
+		}
+		return NfsCbArgop4{b: r.data, disc: nfsCbOpnum4}, true
+	case OP_CB_PUSH_DELEG:
+		r, ok := readCBPUSHDELEG4args(b)
+		if !ok {
+			return NfsCbArgop4{}, false
+		}
+		return NfsCbArgop4{b: r.data, disc: nfsCbOpnum4}, true
+	case OP_CB_RECALL_ANY:
+		r, ok := readCBRECALLANY4args(b)
+		if !ok {
+			return NfsCbArgop4{}, false
+		}
+		return NfsCbArgop4{b: []byte(r), disc: nfsCbOpnum4}, true
+	case OP_CB_RECALLABLE_OBJ_AVAIL:
+		r, ok := readCBRECALLANY4args(b)
+		if !ok {
+			return NfsCbArgop4{}, false
+		}
+		return NfsCbArgop4{b: []byte(r), disc: nfsCbOpnum4}, true
+	case OP_CB_RECALL_SLOT:
+		r, ok := readCBRECALLSLOT4args(b)
+		if !ok {
+			return NfsCbArgop4{}, false
+		}
+		return NfsCbArgop4{b: r.m[:], disc: nfsCbOpnum4}, true
+	case OP_CB_SEQUENCE:
+		r, ok := readCBSEQUENCE4args(b)
+		if !ok {
+			return NfsCbArgop4{}, false
+		}
+		return NfsCbArgop4{b: []byte(r), disc: nfsCbOpnum4}, true
+	case OP_CB_WANTS_CANCELLED:
+		r, ok := readCBWANTSCANCELLED4args(b)
+		if !ok {
+			return NfsCbArgop4{}, false
+		}
+		return NfsCbArgop4{b: r.m[:], disc: nfsCbOpnum4}, true
+	case OP_CB_NOTIFY_LOCK:
+		r, ok := readCBNOTIFYLOCK4args(b)
+		if !ok {
+			return NfsCbArgop4{}, false
+		}
+		return NfsCbArgop4{b: r.data, disc: nfsCbOpnum4}, true
+	case OP_CB_NOTIFY_DEVICEID:
+		r, ok := readCBNOTIFYDEVICEID4args(b)
+		if !ok {
+			return NfsCbArgop4{}, false
+		}
+		return NfsCbArgop4{b: []byte(r), disc: nfsCbOpnum4}, true
+	case OP_CB_OFFLOAD:
+		r, ok := readCBOFFLOAD4args(b)
+		if !ok {
+			return NfsCbArgop4{}, false
+		}
+		return NfsCbArgop4{b: r.data, disc: nfsCbOpnum4}, true
 	case OP_CB_ILLEGAL:
 		return NfsCbArgop4{b: (*b)[:0], disc: nfsCbOpnum4}, true
 	default:
@@ -12647,6 +33602,87 @@ func (m NfsCbArgop4) AsCBRECALL4args() CBRECALL4args {
 		panic("wrong union discriminant")
 	}
 	return CBRECALL4args(m.b)
+}
+
+func (m NfsCbArgop4) AsCBLAYOUTRECALL4args() CBLAYOUTRECALL4args {
+	if m.disc != OP_CB_LAYOUTRECALL {
+		panic("wrong union discriminant")
+	}
+	return CBLAYOUTRECALL4args(m.b)
+}
+
+func (m NfsCbArgop4) AsCBNOTIFY4args() CBNOTIFY4args {
+	if m.disc != OP_CB_NOTIFY {
+		panic("wrong union discriminant")
+	}
+	v, _ := ReadCBNOTIFY4args(m.b)
+	return v
+}
+
+func (m NfsCbArgop4) AsCBPUSHDELEG4args() CBPUSHDELEG4args {
+	if m.disc != OP_CB_PUSH_DELEG {
+		panic("wrong union discriminant")
+	}
+	v, _ := ReadCBPUSHDELEG4args(m.b)
+	return v
+}
+
+func (m NfsCbArgop4) AsRecallAny() CBRECALLANY4args {
+	if m.disc != OP_CB_RECALL_ANY {
+		panic("wrong union discriminant")
+	}
+	return CBRECALLANY4args(m.b)
+}
+
+func (m NfsCbArgop4) AsRecallableObjAvail() CBRECALLANY4args {
+	if m.disc != OP_CB_RECALLABLE_OBJ_AVAIL {
+		panic("wrong union discriminant")
+	}
+	return CBRECALLANY4args(m.b)
+}
+
+func (m NfsCbArgop4) AsCBRECALLSLOT4args() CBRECALLSLOT4args {
+	if m.disc != OP_CB_RECALL_SLOT {
+		panic("wrong union discriminant")
+	}
+	return CBRECALLSLOT4args{m: (*[cBRECALLSLOT4argsSize]byte)(m.b)}
+}
+
+func (m NfsCbArgop4) AsCBSEQUENCE4args() CBSEQUENCE4args {
+	if m.disc != OP_CB_SEQUENCE {
+		panic("wrong union discriminant")
+	}
+	return CBSEQUENCE4args(m.b)
+}
+
+func (m NfsCbArgop4) AsCBWANTSCANCELLED4args() CBWANTSCANCELLED4args {
+	if m.disc != OP_CB_WANTS_CANCELLED {
+		panic("wrong union discriminant")
+	}
+	return CBWANTSCANCELLED4args{m: (*[cBWANTSCANCELLED4argsSize]byte)(m.b)}
+}
+
+func (m NfsCbArgop4) AsCBNOTIFYLOCK4args() CBNOTIFYLOCK4args {
+	if m.disc != OP_CB_NOTIFY_LOCK {
+		panic("wrong union discriminant")
+	}
+	v, _ := ReadCBNOTIFYLOCK4args(m.b)
+	return v
+}
+
+func (m NfsCbArgop4) AsCBNOTIFYDEVICEID4args() CBNOTIFYDEVICEID4args {
+	if m.disc != OP_CB_NOTIFY_DEVICEID {
+		panic("wrong union discriminant")
+	}
+	return CBNOTIFYDEVICEID4args(m.b)
+}
+
+func (m NfsCbArgop4) AsCBOFFLOAD4args() CBOFFLOAD4args {
+	if m.disc != OP_CB_OFFLOAD {
+		panic("wrong union discriminant")
+	}
+	v, _ := ReadCBOFFLOAD4args(m.b)
+	return v
 }
 
 // -------------------------------------------------------
@@ -12714,6 +33750,65 @@ func (w *CBGETATTR4resEntryWriter) Finish() []byte {
 }
 
 // -------------------------------------------------------
+// CBSEQUENCE4resEntry — variable: disc(4) + CB_SEQUENCE4res value
+// -------------------------------------------------------
+
+type CBSEQUENCE4resEntry []byte
+
+func readCBSEQUENCE4resEntry(b *[]byte) (CBSEQUENCE4resEntry, bool) {
+	if len(*b) < 4 {
+		return nil, false
+	}
+	start := *b
+	startLen := len(start)
+	*b = (*b)[4:]
+	if _, ok := readCBSEQUENCE4res(b, binary.BigEndian.Uint32(start[0:4])); !ok {
+		return nil, false
+	}
+	total := startLen - len(*b)
+	return CBSEQUENCE4resEntry(start[:total]), true
+}
+
+func ReadCBSEQUENCE4resEntry(b []byte) (CBSEQUENCE4resEntry, bool) {
+	return readCBSEQUENCE4resEntry(&b)
+}
+
+func (m CBSEQUENCE4resEntry) Disc() uint32 {
+	return binary.BigEndian.Uint32(m[0:4])
+}
+
+func (m CBSEQUENCE4resEntry) Value() CBSEQUENCE4res {
+	return CBSEQUENCE4res{b: m[4:], disc: binary.BigEndian.Uint32(m[0:4])}
+}
+
+// CBSEQUENCE4resEntryWriter writes a CB_SEQUENCE4res_entry:
+//
+//	disc + value(disc)
+type CBSEQUENCE4resEntryWriter struct {
+	buf []byte
+	off int
+}
+
+func StartCBSEQUENCE4resEntry(buf []byte) CBSEQUENCE4resEntryWriter {
+	return CBSEQUENCE4resEntryWriter{buf: buf, off: len(buf)}
+}
+
+func (w *CBSEQUENCE4resEntryWriter) SetValue_Nfs4Ok() CBSEQUENCE4resok {
+	w.buf = append(w.buf, make([]byte, 4+cBSEQUENCE4resokSize)...)
+	p := (*[4 + cBSEQUENCE4resokSize]byte)(w.buf[len(w.buf)-4-cBSEQUENCE4resokSize:])
+	binary.BigEndian.PutUint32(p[:4], NFS4_OK)
+	return CBSEQUENCE4resok{m: (*[cBSEQUENCE4resokSize]byte)(p[4:])}
+}
+
+func (w *CBSEQUENCE4resEntryWriter) SetValue_Default(nfsstat4 uint32) {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, nfsstat4)
+}
+
+func (w *CBSEQUENCE4resEntryWriter) Finish() []byte {
+	return w.buf
+}
+
+// -------------------------------------------------------
 // NfsCbResop4 — union on nfs_cb_opnum4 (external discriminant)
 // -------------------------------------------------------
 
@@ -12732,6 +33827,72 @@ func readNfsCbResop4(b *[]byte, nfsCbOpnum4 uint32) (NfsCbResop4, bool) {
 		return NfsCbResop4{b: []byte(r), disc: nfsCbOpnum4}, true
 	case OP_CB_RECALL:
 		r, ok := readCBRECALL4res(b)
+		if !ok {
+			return NfsCbResop4{}, false
+		}
+		return NfsCbResop4{b: r.m[:], disc: nfsCbOpnum4}, true
+	case OP_CB_LAYOUTRECALL:
+		r, ok := readCBLAYOUTRECALL4res(b)
+		if !ok {
+			return NfsCbResop4{}, false
+		}
+		return NfsCbResop4{b: r.m[:], disc: nfsCbOpnum4}, true
+	case OP_CB_NOTIFY:
+		r, ok := readCBNOTIFY4res(b)
+		if !ok {
+			return NfsCbResop4{}, false
+		}
+		return NfsCbResop4{b: r.m[:], disc: nfsCbOpnum4}, true
+	case OP_CB_PUSH_DELEG:
+		r, ok := readCBPUSHDELEG4res(b)
+		if !ok {
+			return NfsCbResop4{}, false
+		}
+		return NfsCbResop4{b: r.m[:], disc: nfsCbOpnum4}, true
+	case OP_CB_RECALL_ANY:
+		r, ok := readCBRECALLANY4res(b)
+		if !ok {
+			return NfsCbResop4{}, false
+		}
+		return NfsCbResop4{b: r.m[:], disc: nfsCbOpnum4}, true
+	case OP_CB_RECALLABLE_OBJ_AVAIL:
+		r, ok := readCBRECALLABLEOBJAVAIL4res(b)
+		if !ok {
+			return NfsCbResop4{}, false
+		}
+		return NfsCbResop4{b: r.m[:], disc: nfsCbOpnum4}, true
+	case OP_CB_RECALL_SLOT:
+		r, ok := readCBRECALLSLOT4res(b)
+		if !ok {
+			return NfsCbResop4{}, false
+		}
+		return NfsCbResop4{b: r.m[:], disc: nfsCbOpnum4}, true
+	case OP_CB_SEQUENCE:
+		r, ok := readCBSEQUENCE4resEntry(b)
+		if !ok {
+			return NfsCbResop4{}, false
+		}
+		return NfsCbResop4{b: []byte(r), disc: nfsCbOpnum4}, true
+	case OP_CB_WANTS_CANCELLED:
+		r, ok := readCBWANTSCANCELLED4res(b)
+		if !ok {
+			return NfsCbResop4{}, false
+		}
+		return NfsCbResop4{b: r.m[:], disc: nfsCbOpnum4}, true
+	case OP_CB_NOTIFY_LOCK:
+		r, ok := readCBNOTIFYLOCK4res(b)
+		if !ok {
+			return NfsCbResop4{}, false
+		}
+		return NfsCbResop4{b: r.m[:], disc: nfsCbOpnum4}, true
+	case OP_CB_NOTIFY_DEVICEID:
+		r, ok := readCBNOTIFYDEVICEID4res(b)
+		if !ok {
+			return NfsCbResop4{}, false
+		}
+		return NfsCbResop4{b: r.m[:], disc: nfsCbOpnum4}, true
+	case OP_CB_OFFLOAD:
+		r, ok := readCBOFFLOAD4res(b)
 		if !ok {
 			return NfsCbResop4{}, false
 		}
@@ -12759,6 +33920,83 @@ func (m NfsCbResop4) AsCBRECALL4res() CBRECALL4res {
 		panic("wrong union discriminant")
 	}
 	return CBRECALL4res{m: (*[cBRECALL4resSize]byte)(m.b)}
+}
+
+func (m NfsCbResop4) AsCBLAYOUTRECALL4res() CBLAYOUTRECALL4res {
+	if m.disc != OP_CB_LAYOUTRECALL {
+		panic("wrong union discriminant")
+	}
+	return CBLAYOUTRECALL4res{m: (*[cBLAYOUTRECALL4resSize]byte)(m.b)}
+}
+
+func (m NfsCbResop4) AsCBNOTIFY4res() CBNOTIFY4res {
+	if m.disc != OP_CB_NOTIFY {
+		panic("wrong union discriminant")
+	}
+	return CBNOTIFY4res{m: (*[cBNOTIFY4resSize]byte)(m.b)}
+}
+
+func (m NfsCbResop4) AsCBPUSHDELEG4res() CBPUSHDELEG4res {
+	if m.disc != OP_CB_PUSH_DELEG {
+		panic("wrong union discriminant")
+	}
+	return CBPUSHDELEG4res{m: (*[cBPUSHDELEG4resSize]byte)(m.b)}
+}
+
+func (m NfsCbResop4) AsCBRECALLANY4res() CBRECALLANY4res {
+	if m.disc != OP_CB_RECALL_ANY {
+		panic("wrong union discriminant")
+	}
+	return CBRECALLANY4res{m: (*[cBRECALLANY4resSize]byte)(m.b)}
+}
+
+func (m NfsCbResop4) AsCBRECALLABLEOBJAVAIL4res() CBRECALLABLEOBJAVAIL4res {
+	if m.disc != OP_CB_RECALLABLE_OBJ_AVAIL {
+		panic("wrong union discriminant")
+	}
+	return CBRECALLABLEOBJAVAIL4res{m: (*[cBRECALLABLEOBJAVAIL4resSize]byte)(m.b)}
+}
+
+func (m NfsCbResop4) AsCBRECALLSLOT4res() CBRECALLSLOT4res {
+	if m.disc != OP_CB_RECALL_SLOT {
+		panic("wrong union discriminant")
+	}
+	return CBRECALLSLOT4res{m: (*[cBRECALLSLOT4resSize]byte)(m.b)}
+}
+
+func (m NfsCbResop4) AsCBSEQUENCE4resEntry() CBSEQUENCE4resEntry {
+	if m.disc != OP_CB_SEQUENCE {
+		panic("wrong union discriminant")
+	}
+	return CBSEQUENCE4resEntry(m.b)
+}
+
+func (m NfsCbResop4) AsCBWANTSCANCELLED4res() CBWANTSCANCELLED4res {
+	if m.disc != OP_CB_WANTS_CANCELLED {
+		panic("wrong union discriminant")
+	}
+	return CBWANTSCANCELLED4res{m: (*[cBWANTSCANCELLED4resSize]byte)(m.b)}
+}
+
+func (m NfsCbResop4) AsCBNOTIFYLOCK4res() CBNOTIFYLOCK4res {
+	if m.disc != OP_CB_NOTIFY_LOCK {
+		panic("wrong union discriminant")
+	}
+	return CBNOTIFYLOCK4res{m: (*[cBNOTIFYLOCK4resSize]byte)(m.b)}
+}
+
+func (m NfsCbResop4) AsCBNOTIFYDEVICEID4res() CBNOTIFYDEVICEID4res {
+	if m.disc != OP_CB_NOTIFY_DEVICEID {
+		panic("wrong union discriminant")
+	}
+	return CBNOTIFYDEVICEID4res{m: (*[cBNOTIFYDEVICEID4resSize]byte)(m.b)}
+}
+
+func (m NfsCbResop4) AsCBOFFLOAD4res() CBOFFLOAD4res {
+	if m.disc != OP_CB_OFFLOAD {
+		panic("wrong union discriminant")
+	}
+	return CBOFFLOAD4res{m: (*[cBOFFLOAD4resSize]byte)(m.b)}
 }
 
 func (m NfsCbResop4) AsCBILLEGAL4res() CBILLEGAL4res {
@@ -12826,6 +34064,95 @@ func (w *NfsCbArgop4EntryWriter) SetValue_Recall() CBRECALL4argsWriter {
 	buf := w.buf
 	w.buf = nil
 	return CBRECALL4argsWriter{buf: buf, header: (*[20]byte)(buf[off+4:])}
+}
+
+func (w *NfsCbArgop4EntryWriter) SetValue_Layoutrecall() CBLAYOUTRECALL4argsWriter {
+	w.buf = append(w.buf, make([]byte, 4+16)...)
+	off := len(w.buf) - 4 - 16
+	binary.BigEndian.PutUint32((*[4 + 16]byte)(w.buf[off:])[:4], OP_CB_LAYOUTRECALL)
+	buf := w.buf
+	w.buf = nil
+	return CBLAYOUTRECALL4argsWriter{buf: buf, header: (*[16]byte)(buf[off+4:])}
+}
+
+func (w *NfsCbArgop4EntryWriter) SetValue_Notify() CBNOTIFY4argsWriter {
+	w.buf = append(w.buf, make([]byte, 4+16)...)
+	off := len(w.buf) - 4 - 16
+	binary.BigEndian.PutUint32((*[4 + 16]byte)(w.buf[off:])[:4], OP_CB_NOTIFY)
+	buf := w.buf
+	w.buf = nil
+	return CBNOTIFY4argsWriter{buf: buf, off: off + 4}
+}
+
+func (w *NfsCbArgop4EntryWriter) SetValue_PushDeleg() CBPUSHDELEG4argsWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_CB_PUSH_DELEG)
+	child := StartCBPUSHDELEG4args(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NfsCbArgop4EntryWriter) SetValue_RecallAny() CBRECALLANY4argsWriter {
+	w.buf = append(w.buf, make([]byte, 4+4)...)
+	off := len(w.buf) - 4 - 4
+	binary.BigEndian.PutUint32((*[4 + 4]byte)(w.buf[off:])[:4], OP_CB_RECALL_ANY)
+	buf := w.buf
+	w.buf = nil
+	return CBRECALLANY4argsWriter{buf: buf, header: (*[4]byte)(buf[off+4:])}
+}
+
+func (w *NfsCbArgop4EntryWriter) SetValue_RecallableObjAvail() CBRECALLANY4argsWriter {
+	w.buf = append(w.buf, make([]byte, 4+4)...)
+	off := len(w.buf) - 4 - 4
+	binary.BigEndian.PutUint32((*[4 + 4]byte)(w.buf[off:])[:4], OP_CB_RECALLABLE_OBJ_AVAIL)
+	buf := w.buf
+	w.buf = nil
+	return CBRECALLANY4argsWriter{buf: buf, header: (*[4]byte)(buf[off+4:])}
+}
+
+func (w *NfsCbArgop4EntryWriter) SetValue_RecallSlot() CBRECALLSLOT4args {
+	w.buf = append(w.buf, make([]byte, 4+cBRECALLSLOT4argsSize)...)
+	p := (*[4 + cBRECALLSLOT4argsSize]byte)(w.buf[len(w.buf)-4-cBRECALLSLOT4argsSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_CB_RECALL_SLOT)
+	return CBRECALLSLOT4args{m: (*[cBRECALLSLOT4argsSize]byte)(p[4:])}
+}
+
+func (w *NfsCbArgop4EntryWriter) SetValue_Sequence() CBSEQUENCE4argsWriter {
+	w.buf = append(w.buf, make([]byte, 4+36)...)
+	off := len(w.buf) - 4 - 36
+	binary.BigEndian.PutUint32((*[4 + 36]byte)(w.buf[off:])[:4], OP_CB_SEQUENCE)
+	buf := w.buf
+	w.buf = nil
+	return CBSEQUENCE4argsWriter{buf: buf, off: off + 4}
+}
+
+func (w *NfsCbArgop4EntryWriter) SetValue_WantsCancelled() CBWANTSCANCELLED4args {
+	w.buf = append(w.buf, make([]byte, 4+cBWANTSCANCELLED4argsSize)...)
+	p := (*[4 + cBWANTSCANCELLED4argsSize]byte)(w.buf[len(w.buf)-4-cBWANTSCANCELLED4argsSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_CB_WANTS_CANCELLED)
+	return CBWANTSCANCELLED4args{m: (*[cBWANTSCANCELLED4argsSize]byte)(p[4:])}
+}
+
+func (w *NfsCbArgop4EntryWriter) SetValue_NotifyLock() CBNOTIFYLOCK4argsWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_CB_NOTIFY_LOCK)
+	child := StartCBNOTIFYLOCK4args(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NfsCbArgop4EntryWriter) SetValue_NotifyDeviceid() CBNOTIFYDEVICEID4argsWriter {
+	w.buf = append(w.buf, make([]byte, 4+4)...)
+	off := len(w.buf) - 4 - 4
+	binary.BigEndian.PutUint32((*[4 + 4]byte)(w.buf[off:])[:4], OP_CB_NOTIFY_DEVICEID)
+	buf := w.buf
+	w.buf = nil
+	return CBNOTIFYDEVICEID4argsWriter{buf: buf, off: off + 4}
+}
+
+func (w *NfsCbArgop4EntryWriter) SetValue_Offload() CBOFFLOAD4argsWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_CB_OFFLOAD)
+	child := StartCBOFFLOAD4args(w.buf)
+	w.buf = nil
+	return child
 }
 
 func (w *NfsCbArgop4EntryWriter) SetValue_Illegal() {
@@ -13000,6 +34327,205 @@ func (w *CBCOMPOUND4argsWriter) AppendArgarray_Recall() CBRECALL4argsWriter {
 	return CBRECALL4argsWriter{buf: buf, header: (*[20]byte)(buf[off+4:])}
 }
 
+func (w *CBCOMPOUND4argsWriter) AppendArgarray_Layoutrecall() CBLAYOUTRECALL4argsWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+16)...)
+	off := len(w.buf) - 4 - 16
+	binary.BigEndian.PutUint32((*[4 + 16]byte)(w.buf[off:])[:4], OP_CB_LAYOUTRECALL)
+	w.argarrayCount++
+	buf := w.buf
+	w.buf = nil
+	return CBLAYOUTRECALL4argsWriter{buf: buf, header: (*[16]byte)(buf[off+4:])}
+}
+
+func (w *CBCOMPOUND4argsWriter) AppendArgarray_Notify() CBNOTIFY4argsWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+16)...)
+	off := len(w.buf) - 4 - 16
+	binary.BigEndian.PutUint32((*[4 + 16]byte)(w.buf[off:])[:4], OP_CB_NOTIFY)
+	w.argarrayCount++
+	buf := w.buf
+	w.buf = nil
+	return CBNOTIFY4argsWriter{buf: buf, off: off + 4}
+}
+
+func (w *CBCOMPOUND4argsWriter) AppendArgarray_PushDeleg() CBPUSHDELEG4argsWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_CB_PUSH_DELEG)
+	w.argarrayCount++
+	child := StartCBPUSHDELEG4args(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *CBCOMPOUND4argsWriter) AppendArgarray_RecallAny() CBRECALLANY4argsWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+4)...)
+	off := len(w.buf) - 4 - 4
+	binary.BigEndian.PutUint32((*[4 + 4]byte)(w.buf[off:])[:4], OP_CB_RECALL_ANY)
+	w.argarrayCount++
+	buf := w.buf
+	w.buf = nil
+	return CBRECALLANY4argsWriter{buf: buf, header: (*[4]byte)(buf[off+4:])}
+}
+
+func (w *CBCOMPOUND4argsWriter) AppendArgarray_RecallableObjAvail() CBRECALLANY4argsWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+4)...)
+	off := len(w.buf) - 4 - 4
+	binary.BigEndian.PutUint32((*[4 + 4]byte)(w.buf[off:])[:4], OP_CB_RECALLABLE_OBJ_AVAIL)
+	w.argarrayCount++
+	buf := w.buf
+	w.buf = nil
+	return CBRECALLANY4argsWriter{buf: buf, header: (*[4]byte)(buf[off+4:])}
+}
+
+func (w *CBCOMPOUND4argsWriter) AppendArgarray_RecallSlot() CBRECALLSLOT4args {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+cBRECALLSLOT4argsSize)...)
+	p := (*[4 + cBRECALLSLOT4argsSize]byte)(w.buf[len(w.buf)-4-cBRECALLSLOT4argsSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_CB_RECALL_SLOT)
+	w.argarrayCount++
+	return CBRECALLSLOT4args{m: (*[cBRECALLSLOT4argsSize]byte)(p[4:])}
+}
+
+func (w *CBCOMPOUND4argsWriter) AppendArgarray_Sequence() CBSEQUENCE4argsWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+36)...)
+	off := len(w.buf) - 4 - 36
+	binary.BigEndian.PutUint32((*[4 + 36]byte)(w.buf[off:])[:4], OP_CB_SEQUENCE)
+	w.argarrayCount++
+	buf := w.buf
+	w.buf = nil
+	return CBSEQUENCE4argsWriter{buf: buf, off: off + 4}
+}
+
+func (w *CBCOMPOUND4argsWriter) AppendArgarray_WantsCancelled() CBWANTSCANCELLED4args {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+cBWANTSCANCELLED4argsSize)...)
+	p := (*[4 + cBWANTSCANCELLED4argsSize]byte)(w.buf[len(w.buf)-4-cBWANTSCANCELLED4argsSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_CB_WANTS_CANCELLED)
+	w.argarrayCount++
+	return CBWANTSCANCELLED4args{m: (*[cBWANTSCANCELLED4argsSize]byte)(p[4:])}
+}
+
+func (w *CBCOMPOUND4argsWriter) AppendArgarray_NotifyLock() CBNOTIFYLOCK4argsWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_CB_NOTIFY_LOCK)
+	w.argarrayCount++
+	child := StartCBNOTIFYLOCK4args(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *CBCOMPOUND4argsWriter) AppendArgarray_NotifyDeviceid() CBNOTIFYDEVICEID4argsWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+4)...)
+	off := len(w.buf) - 4 - 4
+	binary.BigEndian.PutUint32((*[4 + 4]byte)(w.buf[off:])[:4], OP_CB_NOTIFY_DEVICEID)
+	w.argarrayCount++
+	buf := w.buf
+	w.buf = nil
+	return CBNOTIFYDEVICEID4argsWriter{buf: buf, off: off + 4}
+}
+
+func (w *CBCOMPOUND4argsWriter) AppendArgarray_Offload() CBOFFLOAD4argsWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.argarrayCountOff == 0 {
+		w.argarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_CB_OFFLOAD)
+	w.argarrayCount++
+	child := StartCBOFFLOAD4args(w.buf)
+	w.buf = nil
+	return child
+}
+
 func (w *CBCOMPOUND4argsWriter) AppendArgarray_Illegal() {
 	_ = w.buf[:1]
 	if w.phase > 1 {
@@ -13093,6 +34619,83 @@ func (w *NfsCbResop4EntryWriter) SetValue_Recall() CBRECALL4res {
 	p := (*[4 + cBRECALL4resSize]byte)(w.buf[len(w.buf)-4-cBRECALL4resSize:])
 	binary.BigEndian.PutUint32(p[:4], OP_CB_RECALL)
 	return CBRECALL4res{m: (*[cBRECALL4resSize]byte)(p[4:])}
+}
+
+func (w *NfsCbResop4EntryWriter) SetValue_Layoutrecall() CBLAYOUTRECALL4res {
+	w.buf = append(w.buf, make([]byte, 4+cBLAYOUTRECALL4resSize)...)
+	p := (*[4 + cBLAYOUTRECALL4resSize]byte)(w.buf[len(w.buf)-4-cBLAYOUTRECALL4resSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_CB_LAYOUTRECALL)
+	return CBLAYOUTRECALL4res{m: (*[cBLAYOUTRECALL4resSize]byte)(p[4:])}
+}
+
+func (w *NfsCbResop4EntryWriter) SetValue_Notify() CBNOTIFY4res {
+	w.buf = append(w.buf, make([]byte, 4+cBNOTIFY4resSize)...)
+	p := (*[4 + cBNOTIFY4resSize]byte)(w.buf[len(w.buf)-4-cBNOTIFY4resSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_CB_NOTIFY)
+	return CBNOTIFY4res{m: (*[cBNOTIFY4resSize]byte)(p[4:])}
+}
+
+func (w *NfsCbResop4EntryWriter) SetValue_PushDeleg() CBPUSHDELEG4res {
+	w.buf = append(w.buf, make([]byte, 4+cBPUSHDELEG4resSize)...)
+	p := (*[4 + cBPUSHDELEG4resSize]byte)(w.buf[len(w.buf)-4-cBPUSHDELEG4resSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_CB_PUSH_DELEG)
+	return CBPUSHDELEG4res{m: (*[cBPUSHDELEG4resSize]byte)(p[4:])}
+}
+
+func (w *NfsCbResop4EntryWriter) SetValue_RecallAny() CBRECALLANY4res {
+	w.buf = append(w.buf, make([]byte, 4+cBRECALLANY4resSize)...)
+	p := (*[4 + cBRECALLANY4resSize]byte)(w.buf[len(w.buf)-4-cBRECALLANY4resSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_CB_RECALL_ANY)
+	return CBRECALLANY4res{m: (*[cBRECALLANY4resSize]byte)(p[4:])}
+}
+
+func (w *NfsCbResop4EntryWriter) SetValue_RecallableObjAvail() CBRECALLABLEOBJAVAIL4res {
+	w.buf = append(w.buf, make([]byte, 4+cBRECALLABLEOBJAVAIL4resSize)...)
+	p := (*[4 + cBRECALLABLEOBJAVAIL4resSize]byte)(w.buf[len(w.buf)-4-cBRECALLABLEOBJAVAIL4resSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_CB_RECALLABLE_OBJ_AVAIL)
+	return CBRECALLABLEOBJAVAIL4res{m: (*[cBRECALLABLEOBJAVAIL4resSize]byte)(p[4:])}
+}
+
+func (w *NfsCbResop4EntryWriter) SetValue_RecallSlot() CBRECALLSLOT4res {
+	w.buf = append(w.buf, make([]byte, 4+cBRECALLSLOT4resSize)...)
+	p := (*[4 + cBRECALLSLOT4resSize]byte)(w.buf[len(w.buf)-4-cBRECALLSLOT4resSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_CB_RECALL_SLOT)
+	return CBRECALLSLOT4res{m: (*[cBRECALLSLOT4resSize]byte)(p[4:])}
+}
+
+func (w *NfsCbResop4EntryWriter) SetValue_Sequence() CBSEQUENCE4resEntryWriter {
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_CB_SEQUENCE)
+	child := StartCBSEQUENCE4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *NfsCbResop4EntryWriter) SetValue_WantsCancelled() CBWANTSCANCELLED4res {
+	w.buf = append(w.buf, make([]byte, 4+cBWANTSCANCELLED4resSize)...)
+	p := (*[4 + cBWANTSCANCELLED4resSize]byte)(w.buf[len(w.buf)-4-cBWANTSCANCELLED4resSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_CB_WANTS_CANCELLED)
+	return CBWANTSCANCELLED4res{m: (*[cBWANTSCANCELLED4resSize]byte)(p[4:])}
+}
+
+func (w *NfsCbResop4EntryWriter) SetValue_NotifyLock() CBNOTIFYLOCK4res {
+	w.buf = append(w.buf, make([]byte, 4+cBNOTIFYLOCK4resSize)...)
+	p := (*[4 + cBNOTIFYLOCK4resSize]byte)(w.buf[len(w.buf)-4-cBNOTIFYLOCK4resSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_CB_NOTIFY_LOCK)
+	return CBNOTIFYLOCK4res{m: (*[cBNOTIFYLOCK4resSize]byte)(p[4:])}
+}
+
+func (w *NfsCbResop4EntryWriter) SetValue_NotifyDeviceid() CBNOTIFYDEVICEID4res {
+	w.buf = append(w.buf, make([]byte, 4+cBNOTIFYDEVICEID4resSize)...)
+	p := (*[4 + cBNOTIFYDEVICEID4resSize]byte)(w.buf[len(w.buf)-4-cBNOTIFYDEVICEID4resSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_CB_NOTIFY_DEVICEID)
+	return CBNOTIFYDEVICEID4res{m: (*[cBNOTIFYDEVICEID4resSize]byte)(p[4:])}
+}
+
+func (w *NfsCbResop4EntryWriter) SetValue_Offload() CBOFFLOAD4res {
+	w.buf = append(w.buf, make([]byte, 4+cBOFFLOAD4resSize)...)
+	p := (*[4 + cBOFFLOAD4resSize]byte)(w.buf[len(w.buf)-4-cBOFFLOAD4resSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_CB_OFFLOAD)
+	return CBOFFLOAD4res{m: (*[cBOFFLOAD4resSize]byte)(p[4:])}
 }
 
 func (w *NfsCbResop4EntryWriter) SetValue_Illegal() CBILLEGAL4res {
@@ -13247,6 +34850,193 @@ func (w *CBCOMPOUND4resWriter) AppendResarray_Recall() CBRECALL4res {
 	return CBRECALL4res{m: (*[cBRECALL4resSize]byte)(p[4:])}
 }
 
+func (w *CBCOMPOUND4resWriter) AppendResarray_Layoutrecall() CBLAYOUTRECALL4res {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+cBLAYOUTRECALL4resSize)...)
+	p := (*[4 + cBLAYOUTRECALL4resSize]byte)(w.buf[len(w.buf)-4-cBLAYOUTRECALL4resSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_CB_LAYOUTRECALL)
+	w.resarrayCount++
+	return CBLAYOUTRECALL4res{m: (*[cBLAYOUTRECALL4resSize]byte)(p[4:])}
+}
+
+func (w *CBCOMPOUND4resWriter) AppendResarray_Notify() CBNOTIFY4res {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+cBNOTIFY4resSize)...)
+	p := (*[4 + cBNOTIFY4resSize]byte)(w.buf[len(w.buf)-4-cBNOTIFY4resSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_CB_NOTIFY)
+	w.resarrayCount++
+	return CBNOTIFY4res{m: (*[cBNOTIFY4resSize]byte)(p[4:])}
+}
+
+func (w *CBCOMPOUND4resWriter) AppendResarray_PushDeleg() CBPUSHDELEG4res {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+cBPUSHDELEG4resSize)...)
+	p := (*[4 + cBPUSHDELEG4resSize]byte)(w.buf[len(w.buf)-4-cBPUSHDELEG4resSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_CB_PUSH_DELEG)
+	w.resarrayCount++
+	return CBPUSHDELEG4res{m: (*[cBPUSHDELEG4resSize]byte)(p[4:])}
+}
+
+func (w *CBCOMPOUND4resWriter) AppendResarray_RecallAny() CBRECALLANY4res {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+cBRECALLANY4resSize)...)
+	p := (*[4 + cBRECALLANY4resSize]byte)(w.buf[len(w.buf)-4-cBRECALLANY4resSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_CB_RECALL_ANY)
+	w.resarrayCount++
+	return CBRECALLANY4res{m: (*[cBRECALLANY4resSize]byte)(p[4:])}
+}
+
+func (w *CBCOMPOUND4resWriter) AppendResarray_RecallableObjAvail() CBRECALLABLEOBJAVAIL4res {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+cBRECALLABLEOBJAVAIL4resSize)...)
+	p := (*[4 + cBRECALLABLEOBJAVAIL4resSize]byte)(w.buf[len(w.buf)-4-cBRECALLABLEOBJAVAIL4resSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_CB_RECALLABLE_OBJ_AVAIL)
+	w.resarrayCount++
+	return CBRECALLABLEOBJAVAIL4res{m: (*[cBRECALLABLEOBJAVAIL4resSize]byte)(p[4:])}
+}
+
+func (w *CBCOMPOUND4resWriter) AppendResarray_RecallSlot() CBRECALLSLOT4res {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+cBRECALLSLOT4resSize)...)
+	p := (*[4 + cBRECALLSLOT4resSize]byte)(w.buf[len(w.buf)-4-cBRECALLSLOT4resSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_CB_RECALL_SLOT)
+	w.resarrayCount++
+	return CBRECALLSLOT4res{m: (*[cBRECALLSLOT4resSize]byte)(p[4:])}
+}
+
+func (w *CBCOMPOUND4resWriter) AppendResarray_Sequence() CBSEQUENCE4resEntryWriter {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = binary.BigEndian.AppendUint32(w.buf, OP_CB_SEQUENCE)
+	w.resarrayCount++
+	child := StartCBSEQUENCE4resEntry(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *CBCOMPOUND4resWriter) AppendResarray_WantsCancelled() CBWANTSCANCELLED4res {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+cBWANTSCANCELLED4resSize)...)
+	p := (*[4 + cBWANTSCANCELLED4resSize]byte)(w.buf[len(w.buf)-4-cBWANTSCANCELLED4resSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_CB_WANTS_CANCELLED)
+	w.resarrayCount++
+	return CBWANTSCANCELLED4res{m: (*[cBWANTSCANCELLED4resSize]byte)(p[4:])}
+}
+
+func (w *CBCOMPOUND4resWriter) AppendResarray_NotifyLock() CBNOTIFYLOCK4res {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+cBNOTIFYLOCK4resSize)...)
+	p := (*[4 + cBNOTIFYLOCK4resSize]byte)(w.buf[len(w.buf)-4-cBNOTIFYLOCK4resSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_CB_NOTIFY_LOCK)
+	w.resarrayCount++
+	return CBNOTIFYLOCK4res{m: (*[cBNOTIFYLOCK4resSize]byte)(p[4:])}
+}
+
+func (w *CBCOMPOUND4resWriter) AppendResarray_NotifyDeviceid() CBNOTIFYDEVICEID4res {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+cBNOTIFYDEVICEID4resSize)...)
+	p := (*[4 + cBNOTIFYDEVICEID4resSize]byte)(w.buf[len(w.buf)-4-cBNOTIFYDEVICEID4resSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_CB_NOTIFY_DEVICEID)
+	w.resarrayCount++
+	return CBNOTIFYDEVICEID4res{m: (*[cBNOTIFYDEVICEID4resSize]byte)(p[4:])}
+}
+
+func (w *CBCOMPOUND4resWriter) AppendResarray_Offload() CBOFFLOAD4res {
+	_ = w.buf[:1]
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	if w.resarrayCountOff == 0 {
+		w.resarrayCountOff = len(w.buf)
+		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
+	}
+	w.buf = append(w.buf, make([]byte, 4+cBOFFLOAD4resSize)...)
+	p := (*[4 + cBOFFLOAD4resSize]byte)(w.buf[len(w.buf)-4-cBOFFLOAD4resSize:])
+	binary.BigEndian.PutUint32(p[:4], OP_CB_OFFLOAD)
+	w.resarrayCount++
+	return CBOFFLOAD4res{m: (*[cBOFFLOAD4resSize]byte)(p[4:])}
+}
+
 func (w *CBCOMPOUND4resWriter) AppendResarray_Illegal() CBILLEGAL4res {
 	_ = w.buf[:1]
 	if w.phase > 1 {
@@ -13284,6 +35074,141 @@ func (w *CBCOMPOUND4resWriter) Finish() []byte {
 	} else {
 		binary.BigEndian.PutUint32(w.buf[w.resarrayCountOff:w.resarrayCountOff+4], w.resarrayCount)
 	}
+	return w.buf
+}
+
+// -------------------------------------------------------
+// OpenArguments4 — variable:
+//   oa_share_access + oa_share_deny + oa_share_access_want + oa_open_claim + oa_create_mode
+// -------------------------------------------------------
+
+type OpenArguments4 struct {
+	data []byte
+	off1 int // byte offset within data where oa_share_deny starts
+	off2 int // byte offset within data where oa_share_access_want starts
+	off3 int // byte offset within data where oa_open_claim starts
+	off4 int // byte offset within data where oa_create_mode starts
+}
+
+func readOpenArguments4(b *[]byte) (OpenArguments4, bool) {
+	start := *b
+	startLen := len(start)
+	if _, ok := readBitmap4(b); !ok {
+		return OpenArguments4{}, false
+	}
+	off1 := startLen - len(*b)
+	if _, ok := readBitmap4(b); !ok {
+		return OpenArguments4{}, false
+	}
+	off2 := startLen - len(*b)
+	if _, ok := readBitmap4(b); !ok {
+		return OpenArguments4{}, false
+	}
+	off3 := startLen - len(*b)
+	if _, ok := readBitmap4(b); !ok {
+		return OpenArguments4{}, false
+	}
+	off4 := startLen - len(*b)
+	if _, ok := readBitmap4(b); !ok {
+		return OpenArguments4{}, false
+	}
+	total := startLen - len(*b)
+	return OpenArguments4{data: start[:total], off1: off1, off2: off2, off3: off3, off4: off4}, true
+}
+
+func ReadOpenArguments4(b []byte) (OpenArguments4, bool) {
+	return readOpenArguments4(&b)
+}
+
+func (m OpenArguments4) OaShareAccess() Bitmap4 {
+	return Bitmap4(m.data[0:m.off1])
+}
+
+func (m OpenArguments4) OaShareDeny() Bitmap4 {
+	return Bitmap4(m.data[m.off1:m.off2])
+}
+
+func (m OpenArguments4) OaShareAccessWant() Bitmap4 {
+	return Bitmap4(m.data[m.off2:m.off3])
+}
+
+func (m OpenArguments4) OaOpenClaim() Bitmap4 {
+	return Bitmap4(m.data[m.off3:m.off4])
+}
+
+func (m OpenArguments4) OaCreateMode() Bitmap4 {
+	return Bitmap4(m.data[m.off4:])
+}
+
+// OpenArguments4Writer writes a open_arguments4:
+//
+//	oa_share_access + oa_share_deny + oa_share_access_want + oa_open_claim + oa_create_mode
+type OpenArguments4Writer struct {
+	buf   []byte
+	off   int
+	phase uint8
+}
+
+func StartOpenArguments4(buf []byte) OpenArguments4Writer {
+	off := len(buf)
+	return OpenArguments4Writer{buf: buf, off: off}
+}
+
+func (w *OpenArguments4Writer) StartOaShareAccess() Bitmap4Writer {
+	if w.phase > 0 {
+		panic("writer fields called out of order")
+	}
+	child := StartBitmap4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *OpenArguments4Writer) StartOaShareDeny() Bitmap4Writer {
+	if w.phase > 1 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 1
+	child := StartBitmap4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *OpenArguments4Writer) StartOaShareAccessWant() Bitmap4Writer {
+	if w.phase > 2 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 2
+	child := StartBitmap4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *OpenArguments4Writer) StartOaOpenClaim() Bitmap4Writer {
+	if w.phase > 3 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 3
+	child := StartBitmap4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *OpenArguments4Writer) StartOaCreateMode() Bitmap4Writer {
+	if w.phase > 4 {
+		panic("writer fields called out of order")
+	}
+	w.phase = 4
+	child := StartBitmap4(w.buf)
+	w.buf = nil
+	return child
+}
+
+func (w *OpenArguments4Writer) Resume(buf []byte) {
+	w.buf = buf
+}
+
+func (w *OpenArguments4Writer) Finish() []byte {
+	_ = w.buf[:1]
 	return w.buf
 }
 
@@ -13450,6 +35375,100 @@ func Nfsstat4Name(v uint32) string {
 		return "NFS4ERR_ADMIN_REVOKED"
 	case NFS4ERR_CB_PATH_DOWN:
 		return "NFS4ERR_CB_PATH_DOWN"
+	case NFS4ERR_BADIOMODE:
+		return "NFS4ERR_BADIOMODE"
+	case NFS4ERR_BADLAYOUT:
+		return "NFS4ERR_BADLAYOUT"
+	case NFS4ERR_BAD_SESSION_DIGEST:
+		return "NFS4ERR_BAD_SESSION_DIGEST"
+	case NFS4ERR_BADSESSION:
+		return "NFS4ERR_BADSESSION"
+	case NFS4ERR_BADSLOT:
+		return "NFS4ERR_BADSLOT"
+	case NFS4ERR_COMPLETE_ALREADY:
+		return "NFS4ERR_COMPLETE_ALREADY"
+	case NFS4ERR_CONN_NOT_BOUND_TO_SESSION:
+		return "NFS4ERR_CONN_NOT_BOUND_TO_SESSION"
+	case NFS4ERR_DELEG_ALREADY_WANTED:
+		return "NFS4ERR_DELEG_ALREADY_WANTED"
+	case NFS4ERR_BACK_CHAN_BUSY:
+		return "NFS4ERR_BACK_CHAN_BUSY"
+	case NFS4ERR_LAYOUTTRYLATER:
+		return "NFS4ERR_LAYOUTTRYLATER"
+	case NFS4ERR_LAYOUTUNAVAILABLE:
+		return "NFS4ERR_LAYOUTUNAVAILABLE"
+	case NFS4ERR_NOMATCHING_LAYOUT:
+		return "NFS4ERR_NOMATCHING_LAYOUT"
+	case NFS4ERR_RECALLCONFLICT:
+		return "NFS4ERR_RECALLCONFLICT"
+	case NFS4ERR_UNKNOWN_LAYOUTTYPE:
+		return "NFS4ERR_UNKNOWN_LAYOUTTYPE"
+	case NFS4ERR_SEQ_MISORDERED:
+		return "NFS4ERR_SEQ_MISORDERED"
+	case NFS4ERR_SEQUENCE_POS:
+		return "NFS4ERR_SEQUENCE_POS"
+	case NFS4ERR_REQ_TOO_BIG:
+		return "NFS4ERR_REQ_TOO_BIG"
+	case NFS4ERR_REP_TOO_BIG:
+		return "NFS4ERR_REP_TOO_BIG"
+	case NFS4ERR_REP_TOO_BIG_TO_CACHE:
+		return "NFS4ERR_REP_TOO_BIG_TO_CACHE"
+	case NFS4ERR_RETRY_UNCACHED_REP:
+		return "NFS4ERR_RETRY_UNCACHED_REP"
+	case NFS4ERR_UNSAFE_COMPOUND:
+		return "NFS4ERR_UNSAFE_COMPOUND"
+	case NFS4ERR_TOO_MANY_OPS:
+		return "NFS4ERR_TOO_MANY_OPS"
+	case NFS4ERR_OP_NOT_IN_SESSION:
+		return "NFS4ERR_OP_NOT_IN_SESSION"
+	case NFS4ERR_HASH_ALG_UNSUPP:
+		return "NFS4ERR_HASH_ALG_UNSUPP"
+	case NFS4ERR_CLIENTID_BUSY:
+		return "NFS4ERR_CLIENTID_BUSY"
+	case NFS4ERR_PNFS_IO_HOLE:
+		return "NFS4ERR_PNFS_IO_HOLE"
+	case NFS4ERR_SEQ_FALSE_RETRY:
+		return "NFS4ERR_SEQ_FALSE_RETRY"
+	case NFS4ERR_BAD_HIGH_SLOT:
+		return "NFS4ERR_BAD_HIGH_SLOT"
+	case NFS4ERR_DEADSESSION:
+		return "NFS4ERR_DEADSESSION"
+	case NFS4ERR_ENCR_ALG_UNSUPP:
+		return "NFS4ERR_ENCR_ALG_UNSUPP"
+	case NFS4ERR_PNFS_NO_LAYOUT:
+		return "NFS4ERR_PNFS_NO_LAYOUT"
+	case NFS4ERR_NOT_ONLY_OP:
+		return "NFS4ERR_NOT_ONLY_OP"
+	case NFS4ERR_WRONG_CRED:
+		return "NFS4ERR_WRONG_CRED"
+	case NFS4ERR_WRONG_TYPE:
+		return "NFS4ERR_WRONG_TYPE"
+	case NFS4ERR_DIRDELEG_UNAVAIL:
+		return "NFS4ERR_DIRDELEG_UNAVAIL"
+	case NFS4ERR_REJECT_DELEG:
+		return "NFS4ERR_REJECT_DELEG"
+	case NFS4ERR_RETURNCONFLICT:
+		return "NFS4ERR_RETURNCONFLICT"
+	case NFS4ERR_DELEG_REVOKED:
+		return "NFS4ERR_DELEG_REVOKED"
+	case NFS4ERR_PARTNER_NOTSUPP:
+		return "NFS4ERR_PARTNER_NOTSUPP"
+	case NFS4ERR_PARTNER_NO_AUTH:
+		return "NFS4ERR_PARTNER_NO_AUTH"
+	case NFS4ERR_UNION_NOTSUPP:
+		return "NFS4ERR_UNION_NOTSUPP"
+	case NFS4ERR_OFFLOAD_DENIED:
+		return "NFS4ERR_OFFLOAD_DENIED"
+	case NFS4ERR_WRONG_LFS:
+		return "NFS4ERR_WRONG_LFS"
+	case NFS4ERR_BADLABEL:
+		return "NFS4ERR_BADLABEL"
+	case NFS4ERR_OFFLOAD_NO_REQS:
+		return "NFS4ERR_OFFLOAD_NO_REQS"
+	case NFS4ERR_NOXATTR:
+		return "NFS4ERR_NOXATTR"
+	case NFS4ERR_XATTR2BIG:
+		return "NFS4ERR_XATTR2BIG"
 	default:
 		return fmt.Sprintf("nfsstat4(%v)", v)
 	}
@@ -13463,6 +35482,118 @@ func TimeHow4Name(v uint32) string {
 		return "SET_TO_CLIENT_TIME4"
 	default:
 		return fmt.Sprintf("time_how4(%v)", v)
+	}
+}
+
+func Layouttype4Name(v uint32) string {
+	switch v {
+	case LAYOUT4_NFSV4_1_FILES:
+		return "LAYOUT4_NFSV4_1_FILES"
+	case LAYOUT4_OSD2_OBJECTS:
+		return "LAYOUT4_OSD2_OBJECTS"
+	case LAYOUT4_BLOCK_VOLUME:
+		return "LAYOUT4_BLOCK_VOLUME"
+	case LAYOUT4_FLEX_FILES:
+		return "LAYOUT4_FLEX_FILES"
+	default:
+		return fmt.Sprintf("layouttype4(%v)", v)
+	}
+}
+
+func Layoutiomode4Name(v uint32) string {
+	switch v {
+	case LAYOUTIOMODE4_READ:
+		return "LAYOUTIOMODE4_READ"
+	case LAYOUTIOMODE4_RW:
+		return "LAYOUTIOMODE4_RW"
+	case LAYOUTIOMODE4_ANY:
+		return "LAYOUTIOMODE4_ANY"
+	default:
+		return fmt.Sprintf("layoutiomode4(%v)", v)
+	}
+}
+
+func LayoutreturnType4Name(v uint32) string {
+	switch v {
+	case LAYOUTRETURN4_FILE:
+		return "LAYOUTRETURN4_FILE"
+	case LAYOUTRETURN4_FSID:
+		return "LAYOUTRETURN4_FSID"
+	case LAYOUTRETURN4_ALL:
+		return "LAYOUTRETURN4_ALL"
+	default:
+		return fmt.Sprintf("layoutreturn_type4(%v)", v)
+	}
+}
+
+func Fs4StatusTypeName(v uint32) string {
+	switch v {
+	case STATUS4_FIXED:
+		return "STATUS4_FIXED"
+	case STATUS4_UPDATED:
+		return "STATUS4_UPDATED"
+	case STATUS4_VERSIONED:
+		return "STATUS4_VERSIONED"
+	case STATUS4_WRITABLE:
+		return "STATUS4_WRITABLE"
+	case STATUS4_REFERRAL:
+		return "STATUS4_REFERRAL"
+	default:
+		return fmt.Sprintf("fs4_status_type(%v)", v)
+	}
+}
+
+func NetlocType4Name(v uint32) string {
+	switch v {
+	case NL4_NAME:
+		return "NL4_NAME"
+	case NL4_URL:
+		return "NL4_URL"
+	case NL4_NETADDR:
+		return "NL4_NETADDR"
+	default:
+		return fmt.Sprintf("netloc_type4(%v)", v)
+	}
+}
+
+func ChangeAttrType4Name(v uint32) string {
+	switch v {
+	case NFS4_CHANGE_TYPE_IS_MONOTONIC_INCR:
+		return "NFS4_CHANGE_TYPE_IS_MONOTONIC_INCR"
+	case NFS4_CHANGE_TYPE_IS_VERSION_COUNTER:
+		return "NFS4_CHANGE_TYPE_IS_VERSION_COUNTER"
+	case NFS4_CHANGE_TYPE_IS_VERSION_COUNTER_NOPNFS:
+		return "NFS4_CHANGE_TYPE_IS_VERSION_COUNTER_NOPNFS"
+	case NFS4_CHANGE_TYPE_IS_TIME_METADATA:
+		return "NFS4_CHANGE_TYPE_IS_TIME_METADATA"
+	case NFS4_CHANGE_TYPE_IS_UNDEFINED:
+		return "NFS4_CHANGE_TYPE_IS_UNDEFINED"
+	default:
+		return fmt.Sprintf("change_attr_type4(%v)", v)
+	}
+}
+
+func DataContent4Name(v uint32) string {
+	switch v {
+	case NFS4_CONTENT_DATA:
+		return "NFS4_CONTENT_DATA"
+	case NFS4_CONTENT_HOLE:
+		return "NFS4_CONTENT_HOLE"
+	default:
+		return fmt.Sprintf("data_content4(%v)", v)
+	}
+}
+
+func StableHow4Name(v uint32) string {
+	switch v {
+	case UNSTABLE4:
+		return "UNSTABLE4"
+	case DATA_SYNC4:
+		return "DATA_SYNC4"
+	case FILE_SYNC4:
+		return "FILE_SYNC4"
+	default:
+		return fmt.Sprintf("stable_how4(%v)", v)
 	}
 }
 
@@ -13481,112 +35612,35 @@ func NfsLockType4Name(v uint32) string {
 	}
 }
 
-func XdrBoolName(v uint32) string {
+func SsvSubkey4Name(v uint32) string {
 	switch v {
-	case FALSE:
-		return "FALSE"
-	case TRUE:
-		return "TRUE"
+	case SSV4_SUBKEY_MIC_I2T:
+		return "SSV4_SUBKEY_MIC_I2T"
+	case SSV4_SUBKEY_MIC_T2I:
+		return "SSV4_SUBKEY_MIC_T2I"
+	case SSV4_SUBKEY_SEAL_I2T:
+		return "SSV4_SUBKEY_SEAL_I2T"
+	case SSV4_SUBKEY_SEAL_T2I:
+		return "SSV4_SUBKEY_SEAL_T2I"
 	default:
-		return fmt.Sprintf("xdr_bool(%v)", v)
+		return fmt.Sprintf("ssv_subkey4(%v)", v)
 	}
 }
 
-func Createmode4Name(v uint32) string {
+func FilelayoutHintCare4Name(v uint32) string {
 	switch v {
-	case UNCHECKED4:
-		return "UNCHECKED4"
-	case GUARDED4:
-		return "GUARDED4"
-	case EXCLUSIVE4:
-		return "EXCLUSIVE4"
+	case NFLH4_CARE_DENSE:
+		return "NFLH4_CARE_DENSE"
+	case NFLH4_CARE_COMMIT_THRU_MDS:
+		return "NFLH4_CARE_COMMIT_THRU_MDS"
+	case NFL42_CARE_IO_ADVISE_THRU_MDS:
+		return "NFL42_CARE_IO_ADVISE_THRU_MDS"
+	case NFLH4_CARE_STRIPE_UNIT_SIZE:
+		return "NFLH4_CARE_STRIPE_UNIT_SIZE"
+	case NFLH4_CARE_STRIPE_COUNT:
+		return "NFLH4_CARE_STRIPE_COUNT"
 	default:
-		return fmt.Sprintf("createmode4(%v)", v)
-	}
-}
-
-func Opentype4Name(v uint32) string {
-	switch v {
-	case OPEN4_NOCREATE:
-		return "OPEN4_NOCREATE"
-	case OPEN4_CREATE:
-		return "OPEN4_CREATE"
-	default:
-		return fmt.Sprintf("opentype4(%v)", v)
-	}
-}
-
-func LimitBy4Name(v uint32) string {
-	switch v {
-	case NFS_LIMIT_SIZE:
-		return "NFS_LIMIT_SIZE"
-	case NFS_LIMIT_BLOCKS:
-		return "NFS_LIMIT_BLOCKS"
-	default:
-		return fmt.Sprintf("limit_by4(%v)", v)
-	}
-}
-
-func OpenDelegationType4Name(v uint32) string {
-	switch v {
-	case OPEN_DELEGATE_NONE:
-		return "OPEN_DELEGATE_NONE"
-	case OPEN_DELEGATE_READ:
-		return "OPEN_DELEGATE_READ"
-	case OPEN_DELEGATE_WRITE:
-		return "OPEN_DELEGATE_WRITE"
-	default:
-		return fmt.Sprintf("open_delegation_type4(%v)", v)
-	}
-}
-
-func OpenClaimType4Name(v uint32) string {
-	switch v {
-	case CLAIM_NULL:
-		return "CLAIM_NULL"
-	case CLAIM_PREVIOUS:
-		return "CLAIM_PREVIOUS"
-	case CLAIM_DELEGATE_CUR:
-		return "CLAIM_DELEGATE_CUR"
-	case CLAIM_DELEGATE_PREV:
-		return "CLAIM_DELEGATE_PREV"
-	default:
-		return fmt.Sprintf("open_claim_type4(%v)", v)
-	}
-}
-
-func RpcGssSvcTName(v uint32) string {
-	switch v {
-	case RPC_GSS_SVC_NONE:
-		return "RPC_GSS_SVC_NONE"
-	case RPC_GSS_SVC_INTEGRITY:
-		return "RPC_GSS_SVC_INTEGRITY"
-	case RPC_GSS_SVC_PRIVACY:
-		return "RPC_GSS_SVC_PRIVACY"
-	default:
-		return fmt.Sprintf("rpc_gss_svc_t(%v)", v)
-	}
-}
-
-func DiscSecinfo4Name(v uint32) string {
-	switch v {
-	case RPCSEC_GSS:
-		return "RPCSEC_GSS"
-	default:
-		return fmt.Sprintf("disc_secinfo4(%v)", v)
-	}
-}
-
-func StableHow4Name(v uint32) string {
-	switch v {
-	case UNSTABLE4:
-		return "UNSTABLE4"
-	case DATA_SYNC4:
-		return "DATA_SYNC4"
-	case FILE_SYNC4:
-		return "FILE_SYNC4"
-	default:
-		return fmt.Sprintf("stable_how4(%v)", v)
+		return fmt.Sprintf("filelayout_hint_care4(%v)", v)
 	}
 }
 
@@ -13666,10 +35720,387 @@ func NfsOpnum4Name(v uint32) string {
 		return "OP_WRITE"
 	case OP_RELEASE_LOCKOWNER:
 		return "OP_RELEASE_LOCKOWNER"
+	case OP_BACKCHANNEL_CTL:
+		return "OP_BACKCHANNEL_CTL"
+	case OP_BIND_CONN_TO_SESSION:
+		return "OP_BIND_CONN_TO_SESSION"
+	case OP_EXCHANGE_ID:
+		return "OP_EXCHANGE_ID"
+	case OP_CREATE_SESSION:
+		return "OP_CREATE_SESSION"
+	case OP_DESTROY_SESSION:
+		return "OP_DESTROY_SESSION"
+	case OP_FREE_STATEID:
+		return "OP_FREE_STATEID"
+	case OP_GET_DIR_DELEGATION:
+		return "OP_GET_DIR_DELEGATION"
+	case OP_GETDEVICEINFO:
+		return "OP_GETDEVICEINFO"
+	case OP_GETDEVICELIST:
+		return "OP_GETDEVICELIST"
+	case OP_LAYOUTCOMMIT:
+		return "OP_LAYOUTCOMMIT"
+	case OP_LAYOUTGET:
+		return "OP_LAYOUTGET"
+	case OP_LAYOUTRETURN:
+		return "OP_LAYOUTRETURN"
+	case OP_SECINFO_NO_NAME:
+		return "OP_SECINFO_NO_NAME"
+	case OP_SEQUENCE:
+		return "OP_SEQUENCE"
+	case OP_SET_SSV:
+		return "OP_SET_SSV"
+	case OP_TEST_STATEID:
+		return "OP_TEST_STATEID"
+	case OP_WANT_DELEGATION:
+		return "OP_WANT_DELEGATION"
+	case OP_DESTROY_CLIENTID:
+		return "OP_DESTROY_CLIENTID"
+	case OP_RECLAIM_COMPLETE:
+		return "OP_RECLAIM_COMPLETE"
+	case OP_ALLOCATE:
+		return "OP_ALLOCATE"
+	case OP_COPY:
+		return "OP_COPY"
+	case OP_COPY_NOTIFY:
+		return "OP_COPY_NOTIFY"
+	case OP_DEALLOCATE:
+		return "OP_DEALLOCATE"
+	case OP_IO_ADVISE:
+		return "OP_IO_ADVISE"
+	case OP_LAYOUTERROR:
+		return "OP_LAYOUTERROR"
+	case OP_LAYOUTSTATS:
+		return "OP_LAYOUTSTATS"
+	case OP_OFFLOAD_CANCEL:
+		return "OP_OFFLOAD_CANCEL"
+	case OP_OFFLOAD_STATUS:
+		return "OP_OFFLOAD_STATUS"
+	case OP_READ_PLUS:
+		return "OP_READ_PLUS"
+	case OP_SEEK:
+		return "OP_SEEK"
+	case OP_WRITE_SAME:
+		return "OP_WRITE_SAME"
+	case OP_CLONE:
+		return "OP_CLONE"
+	case OP_GETXATTR:
+		return "OP_GETXATTR"
+	case OP_SETXATTR:
+		return "OP_SETXATTR"
+	case OP_LISTXATTRS:
+		return "OP_LISTXATTRS"
+	case OP_REMOVEXATTR:
+		return "OP_REMOVEXATTR"
 	case OP_ILLEGAL:
 		return "OP_ILLEGAL"
 	default:
 		return fmt.Sprintf("nfs_opnum4(%v)", v)
+	}
+}
+
+func XdrBoolName(v uint32) string {
+	switch v {
+	case FALSE:
+		return "FALSE"
+	case TRUE:
+		return "TRUE"
+	default:
+		return fmt.Sprintf("xdr_bool(%v)", v)
+	}
+}
+
+func Createmode4Name(v uint32) string {
+	switch v {
+	case UNCHECKED4:
+		return "UNCHECKED4"
+	case GUARDED4:
+		return "GUARDED4"
+	case EXCLUSIVE4:
+		return "EXCLUSIVE4"
+	case EXCLUSIVE4_1:
+		return "EXCLUSIVE4_1"
+	default:
+		return fmt.Sprintf("createmode4(%v)", v)
+	}
+}
+
+func Opentype4Name(v uint32) string {
+	switch v {
+	case OPEN4_NOCREATE:
+		return "OPEN4_NOCREATE"
+	case OPEN4_CREATE:
+		return "OPEN4_CREATE"
+	default:
+		return fmt.Sprintf("opentype4(%v)", v)
+	}
+}
+
+func LimitBy4Name(v uint32) string {
+	switch v {
+	case NFS_LIMIT_SIZE:
+		return "NFS_LIMIT_SIZE"
+	case NFS_LIMIT_BLOCKS:
+		return "NFS_LIMIT_BLOCKS"
+	default:
+		return fmt.Sprintf("limit_by4(%v)", v)
+	}
+}
+
+func OpenDelegationType4Name(v uint32) string {
+	switch v {
+	case OPEN_DELEGATE_NONE:
+		return "OPEN_DELEGATE_NONE"
+	case OPEN_DELEGATE_READ:
+		return "OPEN_DELEGATE_READ"
+	case OPEN_DELEGATE_WRITE:
+		return "OPEN_DELEGATE_WRITE"
+	case OPEN_DELEGATE_NONE_EXT:
+		return "OPEN_DELEGATE_NONE_EXT"
+	case OPEN_DELEGATE_READ_ATTRS_DELEG:
+		return "OPEN_DELEGATE_READ_ATTRS_DELEG"
+	case OPEN_DELEGATE_WRITE_ATTRS_DELEG:
+		return "OPEN_DELEGATE_WRITE_ATTRS_DELEG"
+	default:
+		return fmt.Sprintf("open_delegation_type4(%v)", v)
+	}
+}
+
+func OpenClaimType4Name(v uint32) string {
+	switch v {
+	case CLAIM_NULL:
+		return "CLAIM_NULL"
+	case CLAIM_PREVIOUS:
+		return "CLAIM_PREVIOUS"
+	case CLAIM_DELEGATE_CUR:
+		return "CLAIM_DELEGATE_CUR"
+	case CLAIM_DELEGATE_PREV:
+		return "CLAIM_DELEGATE_PREV"
+	case CLAIM_FH:
+		return "CLAIM_FH"
+	case CLAIM_DELEG_CUR_FH:
+		return "CLAIM_DELEG_CUR_FH"
+	case CLAIM_DELEG_PREV_FH:
+		return "CLAIM_DELEG_PREV_FH"
+	default:
+		return fmt.Sprintf("open_claim_type4(%v)", v)
+	}
+}
+
+func WhyNoDelegation4Name(v uint32) string {
+	switch v {
+	case WND4_NOT_WANTED:
+		return "WND4_NOT_WANTED"
+	case WND4_CONTENTION:
+		return "WND4_CONTENTION"
+	case WND4_RESOURCE:
+		return "WND4_RESOURCE"
+	case WND4_NOT_SUPP_FTYPE:
+		return "WND4_NOT_SUPP_FTYPE"
+	case WND4_WRITE_DELEG_NOT_SUPP_FTYPE:
+		return "WND4_WRITE_DELEG_NOT_SUPP_FTYPE"
+	case WND4_NOT_SUPP_UPGRADE:
+		return "WND4_NOT_SUPP_UPGRADE"
+	case WND4_NOT_SUPP_DOWNGRADE:
+		return "WND4_NOT_SUPP_DOWNGRADE"
+	case WND4_CANCELLED:
+		return "WND4_CANCELLED"
+	case WND4_IS_DIR:
+		return "WND4_IS_DIR"
+	default:
+		return fmt.Sprintf("why_no_delegation4(%v)", v)
+	}
+}
+
+func RpcGssSvcTName(v uint32) string {
+	switch v {
+	case RPC_GSS_SVC_NONE:
+		return "RPC_GSS_SVC_NONE"
+	case RPC_GSS_SVC_INTEGRITY:
+		return "RPC_GSS_SVC_INTEGRITY"
+	case RPC_GSS_SVC_PRIVACY:
+		return "RPC_GSS_SVC_PRIVACY"
+	default:
+		return fmt.Sprintf("rpc_gss_svc_t(%v)", v)
+	}
+}
+
+func DiscSecinfo4Name(v uint32) string {
+	switch v {
+	case RPCSEC_GSS:
+		return "RPCSEC_GSS"
+	default:
+		return fmt.Sprintf("disc_secinfo4(%v)", v)
+	}
+}
+
+func DiscCallbackSecParms4Name(v uint32) string {
+	switch v {
+	case AUTH_NONE:
+		return "AUTH_NONE"
+	case AUTH_SYS:
+		return "AUTH_SYS"
+	default:
+		return fmt.Sprintf("disc_callback_sec_parms4(%v)", v)
+	}
+}
+
+func ChannelDirFromClient4Name(v uint32) string {
+	switch v {
+	case CDFC4_FORE:
+		return "CDFC4_FORE"
+	case CDFC4_BACK:
+		return "CDFC4_BACK"
+	case CDFC4_FORE_OR_BOTH:
+		return "CDFC4_FORE_OR_BOTH"
+	case CDFC4_BACK_OR_BOTH:
+		return "CDFC4_BACK_OR_BOTH"
+	default:
+		return fmt.Sprintf("channel_dir_from_client4(%v)", v)
+	}
+}
+
+func ChannelDirFromServer4Name(v uint32) string {
+	switch v {
+	case CDFS4_FORE:
+		return "CDFS4_FORE"
+	case CDFS4_BACK:
+		return "CDFS4_BACK"
+	case CDFS4_BOTH:
+		return "CDFS4_BOTH"
+	default:
+		return fmt.Sprintf("channel_dir_from_server4(%v)", v)
+	}
+}
+
+func StateProtectHow4Name(v uint32) string {
+	switch v {
+	case SP4_NONE:
+		return "SP4_NONE"
+	case SP4_MACH_CRED:
+		return "SP4_MACH_CRED"
+	case SP4_SSV:
+		return "SP4_SSV"
+	default:
+		return fmt.Sprintf("state_protect_how4(%v)", v)
+	}
+}
+
+func Gddrnf4StatusName(v uint32) string {
+	switch v {
+	case GDD4_OK:
+		return "GDD4_OK"
+	case GDD4_UNAVAIL:
+		return "GDD4_UNAVAIL"
+	default:
+		return fmt.Sprintf("gddrnf4_status(%v)", v)
+	}
+}
+
+func SecinfoStyle4Name(v uint32) string {
+	switch v {
+	case SECINFO_STYLE4_CURRENT_FH:
+		return "SECINFO_STYLE4_CURRENT_FH"
+	case SECINFO_STYLE4_PARENT:
+		return "SECINFO_STYLE4_PARENT"
+	default:
+		return fmt.Sprintf("secinfo_style4(%v)", v)
+	}
+}
+
+func IOADVISEType4Name(v uint32) string {
+	switch v {
+	case IO_ADVISE4_NORMAL:
+		return "IO_ADVISE4_NORMAL"
+	case IO_ADVISE4_SEQUENTIAL:
+		return "IO_ADVISE4_SEQUENTIAL"
+	case IO_ADVISE4_SEQUENTIAL_BACKWARDS:
+		return "IO_ADVISE4_SEQUENTIAL_BACKWARDS"
+	case IO_ADVISE4_RANDOM:
+		return "IO_ADVISE4_RANDOM"
+	case IO_ADVISE4_WILLNEED:
+		return "IO_ADVISE4_WILLNEED"
+	case IO_ADVISE4_WILLNEED_OPPORTUNISTIC:
+		return "IO_ADVISE4_WILLNEED_OPPORTUNISTIC"
+	case IO_ADVISE4_DONTNEED:
+		return "IO_ADVISE4_DONTNEED"
+	case IO_ADVISE4_NOREUSE:
+		return "IO_ADVISE4_NOREUSE"
+	case IO_ADVISE4_READ:
+		return "IO_ADVISE4_READ"
+	case IO_ADVISE4_WRITE:
+		return "IO_ADVISE4_WRITE"
+	case IO_ADVISE4_INIT_PROXIMITY:
+		return "IO_ADVISE4_INIT_PROXIMITY"
+	default:
+		return fmt.Sprintf("IO_ADVISE_type4(%v)", v)
+	}
+}
+
+func FfCbRecallAnyMaskName(v uint32) string {
+	switch v {
+	case FF_RCA4_TYPE_MASK_READ:
+		return "FF_RCA4_TYPE_MASK_READ"
+	case FF_RCA4_TYPE_MASK_RW:
+		return "FF_RCA4_TYPE_MASK_RW"
+	default:
+		return fmt.Sprintf("ff_cb_recall_any_mask(%v)", v)
+	}
+}
+
+func SetxattrOption4Name(v uint32) string {
+	switch v {
+	case SETXATTR4_EITHER:
+		return "SETXATTR4_EITHER"
+	case SETXATTR4_CREATE:
+		return "SETXATTR4_CREATE"
+	case SETXATTR4_REPLACE:
+		return "SETXATTR4_REPLACE"
+	default:
+		return fmt.Sprintf("setxattr_option4(%v)", v)
+	}
+}
+
+func LayoutrecallType4Name(v uint32) string {
+	switch v {
+	case LAYOUTRECALL4_FILE:
+		return "LAYOUTRECALL4_FILE"
+	case LAYOUTRECALL4_FSID:
+		return "LAYOUTRECALL4_FSID"
+	case LAYOUTRECALL4_ALL:
+		return "LAYOUTRECALL4_ALL"
+	default:
+		return fmt.Sprintf("layoutrecall_type4(%v)", v)
+	}
+}
+
+func NotifyType4Name(v uint32) string {
+	switch v {
+	case NOTIFY4_CHANGE_CHILD_ATTRS:
+		return "NOTIFY4_CHANGE_CHILD_ATTRS"
+	case NOTIFY4_CHANGE_DIR_ATTRS:
+		return "NOTIFY4_CHANGE_DIR_ATTRS"
+	case NOTIFY4_REMOVE_ENTRY:
+		return "NOTIFY4_REMOVE_ENTRY"
+	case NOTIFY4_ADD_ENTRY:
+		return "NOTIFY4_ADD_ENTRY"
+	case NOTIFY4_RENAME_ENTRY:
+		return "NOTIFY4_RENAME_ENTRY"
+	case NOTIFY4_CHANGE_COOKIE_VERIFIER:
+		return "NOTIFY4_CHANGE_COOKIE_VERIFIER"
+	default:
+		return fmt.Sprintf("notify_type4(%v)", v)
+	}
+}
+
+func NotifyDeviceidType4Name(v uint32) string {
+	switch v {
+	case NOTIFY_DEVICEID4_CHANGE:
+		return "NOTIFY_DEVICEID4_CHANGE"
+	case NOTIFY_DEVICEID4_DELETE:
+		return "NOTIFY_DEVICEID4_DELETE"
+	default:
+		return fmt.Sprintf("notify_deviceid_type4(%v)", v)
 	}
 }
 
@@ -13679,11 +36110,158 @@ func NfsCbOpnum4Name(v uint32) string {
 		return "OP_CB_GETATTR"
 	case OP_CB_RECALL:
 		return "OP_CB_RECALL"
+	case OP_CB_LAYOUTRECALL:
+		return "OP_CB_LAYOUTRECALL"
+	case OP_CB_NOTIFY:
+		return "OP_CB_NOTIFY"
+	case OP_CB_PUSH_DELEG:
+		return "OP_CB_PUSH_DELEG"
+	case OP_CB_RECALL_ANY:
+		return "OP_CB_RECALL_ANY"
+	case OP_CB_RECALLABLE_OBJ_AVAIL:
+		return "OP_CB_RECALLABLE_OBJ_AVAIL"
+	case OP_CB_RECALL_SLOT:
+		return "OP_CB_RECALL_SLOT"
+	case OP_CB_SEQUENCE:
+		return "OP_CB_SEQUENCE"
+	case OP_CB_WANTS_CANCELLED:
+		return "OP_CB_WANTS_CANCELLED"
+	case OP_CB_NOTIFY_LOCK:
+		return "OP_CB_NOTIFY_LOCK"
+	case OP_CB_NOTIFY_DEVICEID:
+		return "OP_CB_NOTIFY_DEVICEID"
+	case OP_CB_OFFLOAD:
+		return "OP_CB_OFFLOAD"
 	case OP_CB_ILLEGAL:
 		return "OP_CB_ILLEGAL"
 	default:
 		return fmt.Sprintf("nfs_cb_opnum4(%v)", v)
 	}
+}
+
+func OpenArgsShareAccess4Name(v uint32) string {
+	switch v {
+	case OPEN_ARGS_SHARE_ACCESS_READ:
+		return "OPEN_ARGS_SHARE_ACCESS_READ"
+	case OPEN_ARGS_SHARE_ACCESS_WRITE:
+		return "OPEN_ARGS_SHARE_ACCESS_WRITE"
+	case OPEN_ARGS_SHARE_ACCESS_BOTH:
+		return "OPEN_ARGS_SHARE_ACCESS_BOTH"
+	default:
+		return fmt.Sprintf("open_args_share_access4(%v)", v)
+	}
+}
+
+func OpenArgsShareDeny4Name(v uint32) string {
+	switch v {
+	case OPEN_ARGS_SHARE_DENY_NONE:
+		return "OPEN_ARGS_SHARE_DENY_NONE"
+	case OPEN_ARGS_SHARE_DENY_READ:
+		return "OPEN_ARGS_SHARE_DENY_READ"
+	case OPEN_ARGS_SHARE_DENY_WRITE:
+		return "OPEN_ARGS_SHARE_DENY_WRITE"
+	case OPEN_ARGS_SHARE_DENY_BOTH:
+		return "OPEN_ARGS_SHARE_DENY_BOTH"
+	default:
+		return fmt.Sprintf("open_args_share_deny4(%v)", v)
+	}
+}
+
+func OpenArgsShareAccessWant4Name(v uint32) string {
+	switch v {
+	case OPEN_ARGS_SHARE_ACCESS_WANT_ANY_DELEG:
+		return "OPEN_ARGS_SHARE_ACCESS_WANT_ANY_DELEG"
+	case OPEN_ARGS_SHARE_ACCESS_WANT_NO_DELEG:
+		return "OPEN_ARGS_SHARE_ACCESS_WANT_NO_DELEG"
+	case OPEN_ARGS_SHARE_ACCESS_WANT_CANCEL:
+		return "OPEN_ARGS_SHARE_ACCESS_WANT_CANCEL"
+	case OPEN_ARGS_SHARE_ACCESS_WANT_SIGNAL_DELEG_WHEN_RESRC_AVAIL:
+		return "OPEN_ARGS_SHARE_ACCESS_WANT_SIGNAL_DELEG_WHEN_RESRC_AVAIL"
+	case OPEN_ARGS_SHARE_ACCESS_WANT_PUSH_DELEG_WHEN_UNCONTENDED:
+		return "OPEN_ARGS_SHARE_ACCESS_WANT_PUSH_DELEG_WHEN_UNCONTENDED"
+	case OPEN_ARGS_SHARE_ACCESS_WANT_DELEG_TIMESTAMPS:
+		return "OPEN_ARGS_SHARE_ACCESS_WANT_DELEG_TIMESTAMPS"
+	case OPEN_ARGS_SHARE_ACCESS_WANT_OPEN_XOR_DELEGATION:
+		return "OPEN_ARGS_SHARE_ACCESS_WANT_OPEN_XOR_DELEGATION"
+	default:
+		return fmt.Sprintf("open_args_share_access_want4(%v)", v)
+	}
+}
+
+func OpenArgsOpenClaim4Name(v uint32) string {
+	switch v {
+	case OPEN_ARGS_OPEN_CLAIM_NULL:
+		return "OPEN_ARGS_OPEN_CLAIM_NULL"
+	case OPEN_ARGS_OPEN_CLAIM_PREVIOUS:
+		return "OPEN_ARGS_OPEN_CLAIM_PREVIOUS"
+	case OPEN_ARGS_OPEN_CLAIM_DELEGATE_CUR:
+		return "OPEN_ARGS_OPEN_CLAIM_DELEGATE_CUR"
+	case OPEN_ARGS_OPEN_CLAIM_DELEGATE_PREV:
+		return "OPEN_ARGS_OPEN_CLAIM_DELEGATE_PREV"
+	case OPEN_ARGS_OPEN_CLAIM_FH:
+		return "OPEN_ARGS_OPEN_CLAIM_FH"
+	case OPEN_ARGS_OPEN_CLAIM_DELEG_CUR_FH:
+		return "OPEN_ARGS_OPEN_CLAIM_DELEG_CUR_FH"
+	case OPEN_ARGS_OPEN_CLAIM_DELEG_PREV_FH:
+		return "OPEN_ARGS_OPEN_CLAIM_DELEG_PREV_FH"
+	default:
+		return fmt.Sprintf("open_args_open_claim4(%v)", v)
+	}
+}
+
+func OpenArgsCreatemode4Name(v uint32) string {
+	switch v {
+	case OPEN_ARGS_CREATEMODE_UNCHECKED4:
+		return "OPEN_ARGS_CREATEMODE_UNCHECKED4"
+	case OPEN_ARGS_CREATE_MODE_GUARDED:
+		return "OPEN_ARGS_CREATE_MODE_GUARDED"
+	case OPEN_ARGS_CREATEMODE_EXCLUSIVE4:
+		return "OPEN_ARGS_CREATEMODE_EXCLUSIVE4"
+	case OPEN_ARGS_CREATE_MODE_EXCLUSIVE4_1:
+		return "OPEN_ARGS_CREATE_MODE_EXCLUSIVE4_1"
+	default:
+		return fmt.Sprintf("open_args_createmode4(%v)", v)
+	}
+}
+
+func (m AuthsysParmsGids) String() string {
+	var b strings.Builder
+	b.WriteString("AuthsysParmsGids{")
+	{
+		n := int(m.Count())
+		fmt.Fprintf(&b, "data: [")
+		for i := 0; i < n && i < 64; i++ {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			fmt.Fprintf(&b, "%d", m.Data(i))
+		}
+		if n > 64 {
+			fmt.Fprintf(&b, ", ...(%d total)", n)
+		}
+		b.WriteString("]")
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m AuthsysParms) String() string {
+	var b strings.Builder
+	b.WriteString("AuthsysParms{")
+	fmt.Fprintf(&b, "stamp: %d", m.Stamp())
+	{
+		d := m.Machinename()
+		if len(d) <= 32 {
+			fmt.Fprintf(&b, ", machinename: %x", d)
+		} else {
+			fmt.Fprintf(&b, ", machinename: %x...(%d bytes)", d[:32], len(d))
+		}
+	}
+	fmt.Fprintf(&b, ", uid: %d", m.Uid())
+	fmt.Fprintf(&b, ", gid: %d", m.Gid())
+	fmt.Fprintf(&b, ", gids: %v", m.Gids())
+	b.WriteString("}")
+	return b.String()
 }
 
 func (m Attrlist4) String() string {
@@ -13748,6 +36326,21 @@ func (m SecOid4) String() string {
 			fmt.Fprintf(&b, "data: %x...(%d bytes)", d[:32], len(d))
 		}
 	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m Sessionid4) String() string {
+	var b strings.Builder
+	b.WriteString("Sessionid4{")
+	fmt.Fprintf(&b, "data: [")
+	for i := 0; i < 16; i++ {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		fmt.Fprintf(&b, "%d", m.Data(i))
+	}
+	b.WriteString("]")
 	b.WriteString("}")
 	return b.String()
 }
@@ -13866,6 +36459,21 @@ func (m Verifier4) String() string {
 	return b.String()
 }
 
+func (m Secret4) String() string {
+	var b strings.Builder
+	b.WriteString("Secret4{")
+	{
+		d := m.Data()
+		if len(d) <= 32 {
+			fmt.Fprintf(&b, "data: %x", d)
+		} else {
+			fmt.Fprintf(&b, "data: %x...(%d bytes)", d[:32], len(d))
+		}
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
 func (m Nfstime4) String() string {
 	var b strings.Builder
 	b.WriteString("Nfstime4{")
@@ -13889,6 +36497,15 @@ func (m Fsid4) String() string {
 	b.WriteString("Fsid4{")
 	fmt.Fprintf(&b, "major: %d", m.Major())
 	fmt.Fprintf(&b, ", minor: %d", m.Minor())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m ChangePolicy4) String() string {
+	var b strings.Builder
+	b.WriteString("ChangePolicy4{")
+	fmt.Fprintf(&b, "cp_major: %d", m.CpMajor())
+	fmt.Fprintf(&b, ", cp_minor: %d", m.CpMinor())
 	b.WriteString("}")
 	return b.String()
 }
@@ -13954,11 +36571,538 @@ func (m Nfsace4) String() string {
 	return b.String()
 }
 
+func (m Nfsacl41) String() string {
+	var b strings.Builder
+	b.WriteString("Nfsacl41{")
+	fmt.Fprintf(&b, "na41_flag: %d", m.Na41Flag())
+	{
+		iter := m.Na41Aces()
+		fmt.Fprintf(&b, ", na41_aces: [")
+		i := 0
+		for iter.Next() {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			if i >= 64 {
+				b.WriteString("...")
+				break
+			}
+			fmt.Fprintf(&b, "%v", iter.Na41Ace())
+			i++
+		}
+		b.WriteString("]")
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m ModeMasked4) String() string {
+	var b strings.Builder
+	b.WriteString("ModeMasked4{")
+	fmt.Fprintf(&b, "mm_value_to_set: %d", m.MmValueToSet())
+	fmt.Fprintf(&b, ", mm_mask_bits: %d", m.MmMaskBits())
+	b.WriteString("}")
+	return b.String()
+}
+
 func (m Specdata4) String() string {
 	var b strings.Builder
 	b.WriteString("Specdata4{")
 	fmt.Fprintf(&b, "specdata1: %d", m.Specdata1())
 	fmt.Fprintf(&b, ", specdata2: %d", m.Specdata2())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m XdrOpaque) String() string {
+	var b strings.Builder
+	b.WriteString("XdrOpaque{")
+	{
+		d := m.Data()
+		if len(d) <= 32 {
+			fmt.Fprintf(&b, "data: %x", d)
+		} else {
+			fmt.Fprintf(&b, "data: %x...(%d bytes)", d[:32], len(d))
+		}
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m Netaddr4) String() string {
+	var b strings.Builder
+	b.WriteString("Netaddr4{")
+	fmt.Fprintf(&b, "na_r_netid: %v", m.NaRNetid())
+	fmt.Fprintf(&b, ", na_r_addr: %v", m.NaRAddr())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m NfsImplId4) String() string {
+	var b strings.Builder
+	b.WriteString("NfsImplId4{")
+	fmt.Fprintf(&b, "nii_domain: %v", m.NiiDomain())
+	fmt.Fprintf(&b, ", nii_name: %v", m.NiiName())
+	fmt.Fprintf(&b, ", nii_date: %v", m.NiiDate())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m Stateid4) String() string {
+	var b strings.Builder
+	b.WriteString("Stateid4{")
+	fmt.Fprintf(&b, "seqid: %d", m.Seqid())
+	fmt.Fprintf(&b, ", other: [")
+	for i := 0; i < 12; i++ {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		fmt.Fprintf(&b, "%d", m.Other(i))
+	}
+	b.WriteString("]")
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m LayoutContent4) String() string {
+	var b strings.Builder
+	b.WriteString("LayoutContent4{")
+	fmt.Fprintf(&b, "loc_type: %s", Layouttype4Name(m.LocType()))
+	{
+		d := m.LocBody()
+		if len(d) <= 32 {
+			fmt.Fprintf(&b, ", loc_body: %x", d)
+		} else {
+			fmt.Fprintf(&b, ", loc_body: %x...(%d bytes)", d[:32], len(d))
+		}
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m Layouthint4) String() string {
+	var b strings.Builder
+	b.WriteString("Layouthint4{")
+	fmt.Fprintf(&b, "loh_type: %s", Layouttype4Name(m.LohType()))
+	{
+		d := m.LohBody()
+		if len(d) <= 32 {
+			fmt.Fprintf(&b, ", loh_body: %x", d)
+		} else {
+			fmt.Fprintf(&b, ", loh_body: %x...(%d bytes)", d[:32], len(d))
+		}
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m Layout4) String() string {
+	var b strings.Builder
+	b.WriteString("Layout4{")
+	fmt.Fprintf(&b, "lo_offset: %d", m.LoOffset())
+	fmt.Fprintf(&b, ", lo_length: %d", m.LoLength())
+	fmt.Fprintf(&b, ", lo_iomode: %s", Layoutiomode4Name(m.LoIomode()))
+	fmt.Fprintf(&b, ", lo_content: %v", m.LoContent())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m Deviceid4) String() string {
+	var b strings.Builder
+	b.WriteString("Deviceid4{")
+	fmt.Fprintf(&b, "data: [")
+	for i := 0; i < 16; i++ {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		fmt.Fprintf(&b, "%d", m.Data(i))
+	}
+	b.WriteString("]")
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m DeviceAddr4) String() string {
+	var b strings.Builder
+	b.WriteString("DeviceAddr4{")
+	fmt.Fprintf(&b, "da_layout_type: %s", Layouttype4Name(m.DaLayoutType()))
+	{
+		d := m.DaAddrBody()
+		if len(d) <= 32 {
+			fmt.Fprintf(&b, ", da_addr_body: %x", d)
+		} else {
+			fmt.Fprintf(&b, ", da_addr_body: %x...(%d bytes)", d[:32], len(d))
+		}
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m Layoutupdate4) String() string {
+	var b strings.Builder
+	b.WriteString("Layoutupdate4{")
+	fmt.Fprintf(&b, "lou_type: %s", Layouttype4Name(m.LouType()))
+	{
+		d := m.LouBody()
+		if len(d) <= 32 {
+			fmt.Fprintf(&b, ", lou_body: %x", d)
+		} else {
+			fmt.Fprintf(&b, ", lou_body: %x...(%d bytes)", d[:32], len(d))
+		}
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m LayoutreturnFile4) String() string {
+	var b strings.Builder
+	b.WriteString("LayoutreturnFile4{")
+	fmt.Fprintf(&b, "lrf_offset: %d", m.LrfOffset())
+	fmt.Fprintf(&b, ", lrf_length: %d", m.LrfLength())
+	fmt.Fprintf(&b, ", lrf_stateid: %v", m.LrfStateid())
+	{
+		d := m.LrfBody()
+		if len(d) <= 32 {
+			fmt.Fprintf(&b, ", lrf_body: %x", d)
+		} else {
+			fmt.Fprintf(&b, ", lrf_body: %x...(%d bytes)", d[:32], len(d))
+		}
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m Layoutreturn4) String() string {
+	switch m.disc {
+	case LAYOUTRETURN4_FILE:
+		return fmt.Sprintf("FILE:%v", m.AsLayoutreturnFile4())
+	default:
+		return fmt.Sprintf("unknown(%v)", m.disc)
+	}
+}
+
+func (m Fs4Status) String() string {
+	var b strings.Builder
+	b.WriteString("Fs4Status{")
+	fmt.Fprintf(&b, "fss_absent: %d", m.FssAbsent())
+	fmt.Fprintf(&b, ", fss_type: %s", Fs4StatusTypeName(m.FssType()))
+	fmt.Fprintf(&b, ", fss_source: %v", m.FssSource())
+	fmt.Fprintf(&b, ", fss_current: %v", m.FssCurrent())
+	fmt.Fprintf(&b, ", fss_age: %d", m.FssAge())
+	fmt.Fprintf(&b, ", fss_version: %v", m.FssVersion())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m ThresholdItem4) String() string {
+	var b strings.Builder
+	b.WriteString("ThresholdItem4{")
+	fmt.Fprintf(&b, "thi_layout_type: %s", Layouttype4Name(m.ThiLayoutType()))
+	fmt.Fprintf(&b, ", thi_hintset: %v", m.ThiHintset())
+	{
+		d := m.ThiHintlist()
+		if len(d) <= 32 {
+			fmt.Fprintf(&b, ", thi_hintlist: %x", d)
+		} else {
+			fmt.Fprintf(&b, ", thi_hintlist: %x...(%d bytes)", d[:32], len(d))
+		}
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m Mdsthreshold4) String() string {
+	var b strings.Builder
+	b.WriteString("Mdsthreshold4{")
+	{
+		iter := m.MthHints()
+		fmt.Fprintf(&b, "mth_hints: [")
+		i := 0
+		for iter.Next() {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			if i >= 64 {
+				b.WriteString("...")
+				break
+			}
+			fmt.Fprintf(&b, "%v", iter.MthHint())
+			i++
+		}
+		b.WriteString("]")
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m RetentionGet4) String() string {
+	var b strings.Builder
+	b.WriteString("RetentionGet4{")
+	fmt.Fprintf(&b, "rg_duration: %d", m.RgDuration())
+	{
+		n := int(m.RgBeginTimeCount())
+		fmt.Fprintf(&b, ", rg_begin_time: [")
+		for i := 0; i < n && i < 64; i++ {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			fmt.Fprintf(&b, "%v", m.RgBeginTime(i))
+		}
+		if n > 64 {
+			fmt.Fprintf(&b, ", ...(%d total)", n)
+		}
+		b.WriteString("]")
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m RetentionSet4) String() string {
+	var b strings.Builder
+	b.WriteString("RetentionSet4{")
+	fmt.Fprintf(&b, "rs_enable: %d", m.RsEnable())
+	{
+		n := int(m.RsDurationCount())
+		fmt.Fprintf(&b, ", rs_duration: [")
+		for i := 0; i < n && i < 64; i++ {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			fmt.Fprintf(&b, "%d", m.RsDuration(i))
+		}
+		if n > 64 {
+			fmt.Fprintf(&b, ", ...(%d total)", n)
+		}
+		b.WriteString("]")
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m Netloc4) String() string {
+	switch m.disc {
+	case NL4_NAME:
+		return fmt.Sprintf("NAME:%v", m.AsName())
+	case NL4_URL:
+		return fmt.Sprintf("URL:%v", m.AsUrl())
+	case NL4_NETADDR:
+		return fmt.Sprintf("NETADDR:%v", m.AsNetaddr4())
+	default:
+		return fmt.Sprintf("unknown(%v)", m.disc)
+	}
+}
+
+func (m LabelformatSpec4) String() string {
+	var b strings.Builder
+	b.WriteString("LabelformatSpec4{")
+	fmt.Fprintf(&b, "lfs_lfs: %d", m.LfsLfs())
+	fmt.Fprintf(&b, ", lfs_pi: %d", m.LfsPi())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m SecLabel4) String() string {
+	var b strings.Builder
+	b.WriteString("SecLabel4{")
+	fmt.Fprintf(&b, "slai_lfs: %v", m.SlaiLfs())
+	{
+		d := m.SlaiData()
+		if len(d) <= 32 {
+			fmt.Fprintf(&b, ", slai_data: %x", d)
+		} else {
+			fmt.Fprintf(&b, ", slai_data: %x...(%d bytes)", d[:32], len(d))
+		}
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m CopyFromAuthPriv) String() string {
+	var b strings.Builder
+	b.WriteString("CopyFromAuthPriv{")
+	fmt.Fprintf(&b, "cfap_shared_secret: %v", m.CfapSharedSecret())
+	fmt.Fprintf(&b, ", cfap_destination: %v", m.CfapDestination())
+	fmt.Fprintf(&b, ", cfap_username: %v", m.CfapUsername())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m Netloc4Entry) String() string {
+	var b strings.Builder
+	b.WriteString("Netloc4Entry{")
+	fmt.Fprintf(&b, "value: %v", m.Value())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m CopyToAuthPriv) String() string {
+	var b strings.Builder
+	b.WriteString("CopyToAuthPriv{")
+	fmt.Fprintf(&b, "ctap_shared_secret: %v", m.CtapSharedSecret())
+	{
+		iter := m.CtapSource()
+		fmt.Fprintf(&b, ", ctap_source: [")
+		i := 0
+		for iter.Next() {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			if i >= 64 {
+				b.WriteString("...")
+				break
+			}
+			fmt.Fprintf(&b, "%v", iter.CtapSource())
+			i++
+		}
+		b.WriteString("]")
+	}
+	fmt.Fprintf(&b, ", ctap_username: %v", m.CtapUsername())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m CopyConfirmAuthPriv) String() string {
+	var b strings.Builder
+	b.WriteString("CopyConfirmAuthPriv{")
+	{
+		d := m.CcapSharedSecretMic()
+		if len(d) <= 32 {
+			fmt.Fprintf(&b, "ccap_shared_secret_mic: %x", d)
+		} else {
+			fmt.Fprintf(&b, "ccap_shared_secret_mic: %x...(%d bytes)", d[:32], len(d))
+		}
+	}
+	fmt.Fprintf(&b, ", ccap_username: %v", m.CcapUsername())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m AppDataBlock4) String() string {
+	var b strings.Builder
+	b.WriteString("AppDataBlock4{")
+	fmt.Fprintf(&b, "adb_offset: %d", m.AdbOffset())
+	fmt.Fprintf(&b, ", adb_block_size: %d", m.AdbBlockSize())
+	fmt.Fprintf(&b, ", adb_block_count: %d", m.AdbBlockCount())
+	fmt.Fprintf(&b, ", adb_reloff_blocknum: %d", m.AdbReloffBlocknum())
+	fmt.Fprintf(&b, ", adb_block_num: %d", m.AdbBlockNum())
+	fmt.Fprintf(&b, ", adb_reloff_pattern: %d", m.AdbReloffPattern())
+	{
+		d := m.AdbPattern()
+		if len(d) <= 32 {
+			fmt.Fprintf(&b, ", adb_pattern: %x", d)
+		} else {
+			fmt.Fprintf(&b, ", adb_pattern: %x...(%d bytes)", d[:32], len(d))
+		}
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m Data4) String() string {
+	var b strings.Builder
+	b.WriteString("Data4{")
+	fmt.Fprintf(&b, "d_offset: %d", m.DOffset())
+	{
+		d := m.DData()
+		if len(d) <= 32 {
+			fmt.Fprintf(&b, ", d_data: %x", d)
+		} else {
+			fmt.Fprintf(&b, ", d_data: %x...(%d bytes)", d[:32], len(d))
+		}
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m DataInfo4) String() string {
+	var b strings.Builder
+	b.WriteString("DataInfo4{")
+	fmt.Fprintf(&b, "di_offset: %d", m.DiOffset())
+	fmt.Fprintf(&b, ", di_length: %d", m.DiLength())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m WriteResponse4) String() string {
+	var b strings.Builder
+	b.WriteString("WriteResponse4{")
+	{
+		n := int(m.WrCallbackIdCount())
+		fmt.Fprintf(&b, "wr_callback_id: [")
+		for i := 0; i < n && i < 64; i++ {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			fmt.Fprintf(&b, "%v", m.WrCallbackId(i))
+		}
+		if n > 64 {
+			fmt.Fprintf(&b, ", ...(%d total)", n)
+		}
+		b.WriteString("]")
+	}
+	fmt.Fprintf(&b, ", wr_count: %d", m.WrCount())
+	fmt.Fprintf(&b, ", wr_committed: %s", StableHow4Name(m.WrCommitted()))
+	fmt.Fprintf(&b, ", wr_writeverf: %v", m.WrWriteverf())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m Xattrkey4) String() string {
+	var b strings.Builder
+	b.WriteString("Xattrkey4{")
+	{
+		d := m.Data()
+		if len(d) <= 32 {
+			fmt.Fprintf(&b, "data: %x", d)
+		} else {
+			fmt.Fprintf(&b, "data: %x...(%d bytes)", d[:32], len(d))
+		}
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m Xattrvalue4) String() string {
+	var b strings.Builder
+	b.WriteString("Xattrvalue4{")
+	{
+		d := m.Data()
+		if len(d) <= 32 {
+			fmt.Fprintf(&b, "data: %x", d)
+		} else {
+			fmt.Fprintf(&b, "data: %x...(%d bytes)", d[:32], len(d))
+		}
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m Fattr4Owner) String() string {
+	var b strings.Builder
+	b.WriteString("Fattr4Owner{")
+	{
+		d := m.Data()
+		if len(d) <= 32 {
+			fmt.Fprintf(&b, "data: %x", d)
+		} else {
+			fmt.Fprintf(&b, "data: %x...(%d bytes)", d[:32], len(d))
+		}
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m Fattr4OwnerGroup) String() string {
+	var b strings.Builder
+	b.WriteString("Fattr4OwnerGroup{")
+	{
+		d := m.Data()
+		if len(d) <= 32 {
+			fmt.Fprintf(&b, "data: %x", d)
+		} else {
+			fmt.Fprintf(&b, "data: %x...(%d bytes)", d[:32], len(d))
+		}
+	}
 	b.WriteString("}")
 	return b.String()
 }
@@ -13982,51 +37126,11 @@ func (m ChangeInfo4) String() string {
 	return b.String()
 }
 
-func (m XdrOpaque) String() string {
-	var b strings.Builder
-	b.WriteString("XdrOpaque{")
-	{
-		d := m.Data()
-		if len(d) <= 32 {
-			fmt.Fprintf(&b, "data: %x", d)
-		} else {
-			fmt.Fprintf(&b, "data: %x...(%d bytes)", d[:32], len(d))
-		}
-	}
-	b.WriteString("}")
-	return b.String()
-}
-
-func (m Clientaddr4) String() string {
-	var b strings.Builder
-	b.WriteString("Clientaddr4{")
-	fmt.Fprintf(&b, "r_netid: %v", m.RNetid())
-	fmt.Fprintf(&b, ", r_addr: %v", m.RAddr())
-	b.WriteString("}")
-	return b.String()
-}
-
 func (m CbClient4) String() string {
 	var b strings.Builder
 	b.WriteString("CbClient4{")
 	fmt.Fprintf(&b, "cb_program: %d", m.CbProgram())
 	fmt.Fprintf(&b, ", cb_location: %v", m.CbLocation())
-	b.WriteString("}")
-	return b.String()
-}
-
-func (m Stateid4) String() string {
-	var b strings.Builder
-	b.WriteString("Stateid4{")
-	fmt.Fprintf(&b, "seqid: %d", m.Seqid())
-	fmt.Fprintf(&b, ", other: [")
-	for i := 0; i < 12; i++ {
-		if i > 0 {
-			b.WriteString(", ")
-		}
-		fmt.Fprintf(&b, "%d", m.Other(i))
-	}
-	b.WriteString("]")
 	b.WriteString("}")
 	return b.String()
 }
@@ -14047,9 +37151,41 @@ func (m NfsClientId4) String() string {
 	return b.String()
 }
 
-func (m OpenOwner4) String() string {
+func (m ClientOwner4) String() string {
 	var b strings.Builder
-	b.WriteString("OpenOwner4{")
+	b.WriteString("ClientOwner4{")
+	fmt.Fprintf(&b, "co_verifier: %v", m.CoVerifier())
+	{
+		d := m.CoOwnerid()
+		if len(d) <= 32 {
+			fmt.Fprintf(&b, ", co_ownerid: %x", d)
+		} else {
+			fmt.Fprintf(&b, ", co_ownerid: %x...(%d bytes)", d[:32], len(d))
+		}
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m ServerOwner4) String() string {
+	var b strings.Builder
+	b.WriteString("ServerOwner4{")
+	fmt.Fprintf(&b, "so_minor_id: %d", m.SoMinorId())
+	{
+		d := m.SoMajorId()
+		if len(d) <= 32 {
+			fmt.Fprintf(&b, ", so_major_id: %x", d)
+		} else {
+			fmt.Fprintf(&b, ", so_major_id: %x...(%d bytes)", d[:32], len(d))
+		}
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m StateOwner4) String() string {
+	var b strings.Builder
+	b.WriteString("StateOwner4{")
 	fmt.Fprintf(&b, "clientid: %d", m.Clientid())
 	{
 		d := m.Owner()
@@ -14063,17 +37199,232 @@ func (m OpenOwner4) String() string {
 	return b.String()
 }
 
-func (m LockOwner4) String() string {
+func (m SsvMicPlainTkn4) String() string {
 	var b strings.Builder
-	b.WriteString("LockOwner4{")
-	fmt.Fprintf(&b, "clientid: %d", m.Clientid())
+	b.WriteString("SsvMicPlainTkn4{")
+	fmt.Fprintf(&b, "smpt_ssv_seq: %d", m.SmptSsvSeq())
 	{
-		d := m.Owner()
+		d := m.SmptOrigPlain()
 		if len(d) <= 32 {
-			fmt.Fprintf(&b, ", owner: %x", d)
+			fmt.Fprintf(&b, ", smpt_orig_plain: %x", d)
 		} else {
-			fmt.Fprintf(&b, ", owner: %x...(%d bytes)", d[:32], len(d))
+			fmt.Fprintf(&b, ", smpt_orig_plain: %x...(%d bytes)", d[:32], len(d))
 		}
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m SsvMicTkn4) String() string {
+	var b strings.Builder
+	b.WriteString("SsvMicTkn4{")
+	fmt.Fprintf(&b, "smt_ssv_seq: %d", m.SmtSsvSeq())
+	{
+		d := m.SmtHmac()
+		if len(d) <= 32 {
+			fmt.Fprintf(&b, ", smt_hmac: %x", d)
+		} else {
+			fmt.Fprintf(&b, ", smt_hmac: %x...(%d bytes)", d[:32], len(d))
+		}
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m SsvSealPlainTkn4) String() string {
+	var b strings.Builder
+	b.WriteString("SsvSealPlainTkn4{")
+	fmt.Fprintf(&b, "sspt_confounder: %v", m.SsptConfounder())
+	fmt.Fprintf(&b, ", sspt_ssv_seq: %d", m.SsptSsvSeq())
+	fmt.Fprintf(&b, ", sspt_orig_plain: %v", m.SsptOrigPlain())
+	fmt.Fprintf(&b, ", sspt_pad: %v", m.SsptPad())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m SsvSealCipherTkn4) String() string {
+	var b strings.Builder
+	b.WriteString("SsvSealCipherTkn4{")
+	fmt.Fprintf(&b, "ssct_ssv_seq: %d", m.SsctSsvSeq())
+	fmt.Fprintf(&b, ", ssct_iv: %v", m.SsctIv())
+	fmt.Fprintf(&b, ", ssct_encr_data: %v", m.SsctEncrData())
+	fmt.Fprintf(&b, ", ssct_hmac: %v", m.SsctHmac())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m FsLocationsServer4) String() string {
+	var b strings.Builder
+	b.WriteString("FsLocationsServer4{")
+	fmt.Fprintf(&b, "fls_currency: %d", m.FlsCurrency())
+	{
+		d := m.FlsInfo()
+		if len(d) <= 32 {
+			fmt.Fprintf(&b, ", fls_info: %x", d)
+		} else {
+			fmt.Fprintf(&b, ", fls_info: %x...(%d bytes)", d[:32], len(d))
+		}
+	}
+	fmt.Fprintf(&b, ", fls_server: %v", m.FlsServer())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m FsLocationsItem4) String() string {
+	var b strings.Builder
+	b.WriteString("FsLocationsItem4{")
+	{
+		iter := m.FliEntries()
+		fmt.Fprintf(&b, "fli_entries: [")
+		i := 0
+		for iter.Next() {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			if i >= 64 {
+				b.WriteString("...")
+				break
+			}
+			fmt.Fprintf(&b, "%v", iter.FliEntry())
+			i++
+		}
+		b.WriteString("]")
+	}
+	fmt.Fprintf(&b, ", fli_rootpath: %v", m.FliRootpath())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m FsLocationsInfo4) String() string {
+	var b strings.Builder
+	b.WriteString("FsLocationsInfo4{")
+	fmt.Fprintf(&b, "fli_flags: %d", m.FliFlags())
+	fmt.Fprintf(&b, ", fli_valid_for: %d", m.FliValidFor())
+	fmt.Fprintf(&b, ", fli_fs_root: %v", m.FliFsRoot())
+	{
+		iter := m.FliItems()
+		fmt.Fprintf(&b, ", fli_items: [")
+		i := 0
+		for iter.Next() {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			if i >= 64 {
+				b.WriteString("...")
+				break
+			}
+			fmt.Fprintf(&b, "%v", iter.FliItem())
+			i++
+		}
+		b.WriteString("]")
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m Nfsv41FileLayouthint4) String() string {
+	var b strings.Builder
+	b.WriteString("Nfsv41FileLayouthint4{")
+	fmt.Fprintf(&b, "nflh_care: %d", m.NflhCare())
+	fmt.Fprintf(&b, ", nflh_util: %d", m.NflhUtil())
+	fmt.Fprintf(&b, ", nflh_stripe_count: %d", m.NflhStripeCount())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m MultipathList4) String() string {
+	var b strings.Builder
+	b.WriteString("MultipathList4{")
+	{
+		iter := m.Data()
+		fmt.Fprintf(&b, "data: [")
+		i := 0
+		for iter.Next() {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			if i >= 64 {
+				b.WriteString("...")
+				break
+			}
+			fmt.Fprintf(&b, "%v", iter.Data())
+			i++
+		}
+		b.WriteString("]")
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m Nfsv41FileLayoutDsAddr4NfldaMultipathDsList) String() string {
+	var b strings.Builder
+	b.WriteString("Nfsv41FileLayoutDsAddr4NfldaMultipathDsList{")
+	{
+		iter := m.Data()
+		fmt.Fprintf(&b, "data: [")
+		i := 0
+		for iter.Next() {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			if i >= 64 {
+				b.WriteString("...")
+				break
+			}
+			fmt.Fprintf(&b, "%v", iter.Data())
+			i++
+		}
+		b.WriteString("]")
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m Nfsv41FileLayoutDsAddr4) String() string {
+	var b strings.Builder
+	b.WriteString("Nfsv41FileLayoutDsAddr4{")
+	{
+		n := int(m.NfldaStripeIndicesCount())
+		fmt.Fprintf(&b, "nflda_stripe_indices: [")
+		for i := 0; i < n && i < 64; i++ {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			fmt.Fprintf(&b, "%d", m.NfldaStripeIndices(i))
+		}
+		if n > 64 {
+			fmt.Fprintf(&b, ", ...(%d total)", n)
+		}
+		b.WriteString("]")
+	}
+	fmt.Fprintf(&b, ", nflda_multipath_ds_list: %v", m.NfldaMultipathDsList())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m Nfsv41FileLayout4) String() string {
+	var b strings.Builder
+	b.WriteString("Nfsv41FileLayout4{")
+	fmt.Fprintf(&b, "nfl_deviceid: %v", m.NflDeviceid())
+	fmt.Fprintf(&b, ", nfl_util: %d", m.NflUtil())
+	fmt.Fprintf(&b, ", nfl_first_stripe_index: %d", m.NflFirstStripeIndex())
+	fmt.Fprintf(&b, ", nfl_pattern_offset: %d", m.NflPatternOffset())
+	{
+		iter := m.NflFhList()
+		fmt.Fprintf(&b, ", nfl_fh_list: [")
+		i := 0
+		for iter.Next() {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			if i >= 64 {
+				b.WriteString("...")
+				break
+			}
+			fmt.Fprintf(&b, "%v", iter.NflFhList())
+			i++
+		}
+		b.WriteString("]")
 	}
 	b.WriteString("}")
 	return b.String()
@@ -14103,6 +37454,26 @@ func (m ACCESS4res) String() string {
 	default:
 		return fmt.Sprintf("unknown(%v)", m.disc)
 	}
+}
+
+func (m CLONE4args) String() string {
+	var b strings.Builder
+	b.WriteString("CLONE4args{")
+	fmt.Fprintf(&b, "cl_src_stateid: %v", m.ClSrcStateid())
+	fmt.Fprintf(&b, ", cl_dst_stateid: %v", m.ClDstStateid())
+	fmt.Fprintf(&b, ", cl_src_offset: %d", m.ClSrcOffset())
+	fmt.Fprintf(&b, ", cl_dst_offset: %d", m.ClDstOffset())
+	fmt.Fprintf(&b, ", cl_count: %d", m.ClCount())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m CLONE4res) String() string {
+	var b strings.Builder
+	b.WriteString("CLONE4res{")
+	fmt.Fprintf(&b, "cl_status: %s", Nfsstat4Name(m.ClStatus()))
+	b.WriteString("}")
+	return b.String()
 }
 
 func (m CLOSE4args) String() string {
@@ -14451,6 +37822,15 @@ func (m NVERIFY4res) String() string {
 	return b.String()
 }
 
+func (m Creatverfattr) String() string {
+	var b strings.Builder
+	b.WriteString("Creatverfattr{")
+	fmt.Fprintf(&b, "cva_verf: %v", m.CvaVerf())
+	fmt.Fprintf(&b, ", cva_attrs: %v", m.CvaAttrs())
+	b.WriteString("}")
+	return b.String()
+}
+
 func (m Createhow4) String() string {
 	switch m.disc {
 	case UNCHECKED4:
@@ -14459,6 +37839,8 @@ func (m Createhow4) String() string {
 		return fmt.Sprintf("GUARDED4:%v", m.AsGuarded4())
 	case EXCLUSIVE4:
 		return fmt.Sprintf("EXCLUSIVE4:%v", m.AsVerifier4())
+	case EXCLUSIVE4_1:
+		return fmt.Sprintf("EXCLUSIVE4_1:%v", m.AsCreatverfattr())
 	default:
 		return fmt.Sprintf("unknown(%v)", m.disc)
 	}
@@ -14536,6 +37918,12 @@ func (m OpenClaim4) String() string {
 		return fmt.Sprintf("DELEGATE_CUR:%v", m.AsOpenClaimDelegateCur4())
 	case CLAIM_DELEGATE_PREV:
 		return fmt.Sprintf("DELEGATE_PREV:%v", m.AsDelegatePrev())
+	case CLAIM_FH:
+		return "FH"
+	case CLAIM_DELEG_PREV_FH:
+		return "DELEG_PREV_FH"
+	case CLAIM_DELEG_CUR_FH:
+		return fmt.Sprintf("DELEG_CUR_FH:%v", m.AsStateid4())
 	default:
 		return fmt.Sprintf("unknown(%v)", m.disc)
 	}
@@ -14575,14 +37963,55 @@ func (m OpenWriteDelegation4) String() string {
 	return b.String()
 }
 
+func (m OpenNoneDelegation4WND4CONTENTION) String() string {
+	var b strings.Builder
+	b.WriteString("OpenNoneDelegation4WND4CONTENTION{")
+	fmt.Fprintf(&b, "value: %d", m.Value())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m OpenNoneDelegation4WND4RESOURCE) String() string {
+	var b strings.Builder
+	b.WriteString("OpenNoneDelegation4WND4RESOURCE{")
+	fmt.Fprintf(&b, "value: %d", m.Value())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m OpenNoneDelegation4) String() string {
+	switch m.disc {
+	case WND4_CONTENTION:
+		return fmt.Sprintf("CONTENTION:%v", m.AsOpenNoneDelegation4WND4CONTENTION())
+	case WND4_RESOURCE:
+		return fmt.Sprintf("RESOURCE:%v", m.AsOpenNoneDelegation4WND4RESOURCE())
+	default:
+		return fmt.Sprintf("unknown(%v)", m.disc)
+	}
+}
+
+func (m OpenNoneDelegation4Entry) String() string {
+	var b strings.Builder
+	b.WriteString("OpenNoneDelegation4Entry{")
+	fmt.Fprintf(&b, "value: %v", m.Value())
+	b.WriteString("}")
+	return b.String()
+}
+
 func (m OpenDelegation4) String() string {
 	switch m.disc {
 	case OPEN_DELEGATE_NONE:
 		return "NONE"
 	case OPEN_DELEGATE_READ:
-		return fmt.Sprintf("READ:%v", m.AsOpenReadDelegation4())
+		return fmt.Sprintf("READ:%v", m.AsRead())
+	case OPEN_DELEGATE_READ_ATTRS_DELEG:
+		return fmt.Sprintf("READ_ATTRS_DELEG:%v", m.AsReadAttrsDeleg())
 	case OPEN_DELEGATE_WRITE:
-		return fmt.Sprintf("WRITE:%v", m.AsOpenWriteDelegation4())
+		return fmt.Sprintf("WRITE:%v", m.AsWrite())
+	case OPEN_DELEGATE_WRITE_ATTRS_DELEG:
+		return fmt.Sprintf("WRITE_ATTRS_DELEG:%v", m.AsWriteAttrsDeleg())
+	case OPEN_DELEGATE_NONE_EXT:
+		return fmt.Sprintf("NONE_EXT:%v", m.AsOpenNoneDelegation4Entry())
 	default:
 		return fmt.Sprintf("unknown(%v)", m.disc)
 	}
@@ -15016,7 +38445,7 @@ func (m SETCLIENTID4res) String() string {
 	case NFS4_OK:
 		return fmt.Sprintf("NFS4_OK:%v", m.AsSETCLIENTID4resok())
 	case NFS4ERR_CLID_INUSE:
-		return fmt.Sprintf("NFS4ERR_CLID_INUSE:%v", m.AsClientaddr4())
+		return fmt.Sprintf("NFS4ERR_CLID_INUSE:%v", m.AsNetaddr4())
 	default:
 		return fmt.Sprintf("unknown(%v)", m.disc)
 	}
@@ -15116,6 +38545,1695 @@ func (m ILLEGAL4res) String() string {
 	return b.String()
 }
 
+func (m Gsshandle4T) String() string {
+	var b strings.Builder
+	b.WriteString("Gsshandle4T{")
+	{
+		d := m.Data()
+		if len(d) <= 32 {
+			fmt.Fprintf(&b, "data: %x", d)
+		} else {
+			fmt.Fprintf(&b, "data: %x...(%d bytes)", d[:32], len(d))
+		}
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m GssCbHandles4) String() string {
+	var b strings.Builder
+	b.WriteString("GssCbHandles4{")
+	fmt.Fprintf(&b, "gcbp_service: %s", RpcGssSvcTName(m.GcbpService()))
+	fmt.Fprintf(&b, ", gcbp_handle_from_server: %v", m.GcbpHandleFromServer())
+	fmt.Fprintf(&b, ", gcbp_handle_from_client: %v", m.GcbpHandleFromClient())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m CallbackSecParms4) String() string {
+	switch m.disc {
+	case AUTH_NONE:
+		return "NONE"
+	case AUTH_SYS:
+		return fmt.Sprintf("SYS:%v", m.AsAuthsysParms())
+	case RPCSEC_GSS:
+		return fmt.Sprintf("RPCSEC_GSS:%v", m.AsGssCbHandles4())
+	default:
+		return fmt.Sprintf("unknown(%v)", m.disc)
+	}
+}
+
+func (m CallbackSecParms4Entry) String() string {
+	var b strings.Builder
+	b.WriteString("CallbackSecParms4Entry{")
+	fmt.Fprintf(&b, "value: %v", m.Value())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m BACKCHANNELCTL4args) String() string {
+	var b strings.Builder
+	b.WriteString("BACKCHANNELCTL4args{")
+	fmt.Fprintf(&b, "bca_cb_program: %d", m.BcaCbProgram())
+	{
+		iter := m.BcaSecParms()
+		fmt.Fprintf(&b, ", bca_sec_parms: [")
+		i := 0
+		for iter.Next() {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			if i >= 64 {
+				b.WriteString("...")
+				break
+			}
+			fmt.Fprintf(&b, "%v", iter.BcaSecParm())
+			i++
+		}
+		b.WriteString("]")
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m BACKCHANNELCTL4res) String() string {
+	var b strings.Builder
+	b.WriteString("BACKCHANNELCTL4res{")
+	fmt.Fprintf(&b, "bcr_status: %s", Nfsstat4Name(m.BcrStatus()))
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m BINDCONNTOSESSION4args) String() string {
+	var b strings.Builder
+	b.WriteString("BINDCONNTOSESSION4args{")
+	fmt.Fprintf(&b, "bctsa_sessid: %v", m.BctsaSessid())
+	fmt.Fprintf(&b, ", bctsa_dir: %s", ChannelDirFromClient4Name(m.BctsaDir()))
+	fmt.Fprintf(&b, ", bctsa_use_conn_in_rdma_mode: %d", m.BctsaUseConnInRdmaMode())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m BINDCONNTOSESSION4resok) String() string {
+	var b strings.Builder
+	b.WriteString("BINDCONNTOSESSION4resok{")
+	fmt.Fprintf(&b, "bctsr_sessid: %v", m.BctsrSessid())
+	fmt.Fprintf(&b, ", bctsr_dir: %s", ChannelDirFromServer4Name(m.BctsrDir()))
+	fmt.Fprintf(&b, ", bctsr_use_conn_in_rdma_mode: %d", m.BctsrUseConnInRdmaMode())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m BINDCONNTOSESSION4res) String() string {
+	switch m.disc {
+	case NFS4_OK:
+		return fmt.Sprintf("NFS4_OK:%v", m.AsBINDCONNTOSESSION4resok())
+	default:
+		return fmt.Sprintf("unknown(%v)", m.disc)
+	}
+}
+
+func (m StateProtectOps4) String() string {
+	var b strings.Builder
+	b.WriteString("StateProtectOps4{")
+	fmt.Fprintf(&b, "spo_must_enforce: %v", m.SpoMustEnforce())
+	fmt.Fprintf(&b, ", spo_must_allow: %v", m.SpoMustAllow())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m SsvSpParms4SspEncrAlgs) String() string {
+	var b strings.Builder
+	b.WriteString("SsvSpParms4SspEncrAlgs{")
+	{
+		iter := m.Data()
+		fmt.Fprintf(&b, "data: [")
+		i := 0
+		for iter.Next() {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			if i >= 64 {
+				b.WriteString("...")
+				break
+			}
+			fmt.Fprintf(&b, "%v", iter.Data())
+			i++
+		}
+		b.WriteString("]")
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m SsvSpParms4) String() string {
+	var b strings.Builder
+	b.WriteString("SsvSpParms4{")
+	fmt.Fprintf(&b, "ssp_ops: %v", m.SspOps())
+	{
+		iter := m.SspHashAlgs()
+		fmt.Fprintf(&b, ", ssp_hash_algs: [")
+		i := 0
+		for iter.Next() {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			if i >= 64 {
+				b.WriteString("...")
+				break
+			}
+			fmt.Fprintf(&b, "%v", iter.Data())
+			i++
+		}
+		b.WriteString("]")
+	}
+	fmt.Fprintf(&b, ", ssp_encr_algs: %v", m.SspEncrAlgs())
+	fmt.Fprintf(&b, ", ssp_window: %d", m.SspWindow())
+	fmt.Fprintf(&b, ", ssp_num_gss_handles: %d", m.SspNumGssHandles())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m StateProtect4A) String() string {
+	switch m.disc {
+	case SP4_NONE:
+		return "NONE"
+	case SP4_MACH_CRED:
+		return fmt.Sprintf("MACH_CRED:%v", m.AsStateProtectOps4())
+	case SP4_SSV:
+		return fmt.Sprintf("SSV:%v", m.AsSsvSpParms4())
+	default:
+		return fmt.Sprintf("unknown(%v)", m.disc)
+	}
+}
+
+func (m EXCHANGEID4args) String() string {
+	var b strings.Builder
+	b.WriteString("EXCHANGEID4args{")
+	fmt.Fprintf(&b, "eia_clientowner: %v", m.EiaClientowner())
+	fmt.Fprintf(&b, ", eia_flags: %d", m.EiaFlags())
+	fmt.Fprintf(&b, ", eia_state_protect: %v", m.EiaStateProtect())
+	{
+		iter := m.EiaClientImplId()
+		fmt.Fprintf(&b, ", eia_client_impl_id: [")
+		i := 0
+		for iter.Next() {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			if i >= 64 {
+				b.WriteString("...")
+				break
+			}
+			fmt.Fprintf(&b, "%v", iter.EiaClientImplId())
+			i++
+		}
+		b.WriteString("]")
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m SsvProtInfo4) String() string {
+	var b strings.Builder
+	b.WriteString("SsvProtInfo4{")
+	fmt.Fprintf(&b, "spi_ops: %v", m.SpiOps())
+	fmt.Fprintf(&b, ", spi_hash_alg: %d", m.SpiHashAlg())
+	fmt.Fprintf(&b, ", spi_encr_alg: %d", m.SpiEncrAlg())
+	fmt.Fprintf(&b, ", spi_ssv_len: %d", m.SpiSsvLen())
+	fmt.Fprintf(&b, ", spi_window: %d", m.SpiWindow())
+	{
+		iter := m.SpiHandles()
+		fmt.Fprintf(&b, ", spi_handles: [")
+		i := 0
+		for iter.Next() {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			if i >= 64 {
+				b.WriteString("...")
+				break
+			}
+			fmt.Fprintf(&b, "%v", iter.SpiHandle())
+			i++
+		}
+		b.WriteString("]")
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m StateProtect4R) String() string {
+	switch m.disc {
+	case SP4_NONE:
+		return "NONE"
+	case SP4_MACH_CRED:
+		return fmt.Sprintf("MACH_CRED:%v", m.AsStateProtectOps4())
+	case SP4_SSV:
+		return fmt.Sprintf("SSV:%v", m.AsSsvProtInfo4())
+	default:
+		return fmt.Sprintf("unknown(%v)", m.disc)
+	}
+}
+
+func (m EXCHANGEID4resokEirServerImplId) String() string {
+	var b strings.Builder
+	b.WriteString("EXCHANGEID4resokEirServerImplId{")
+	{
+		iter := m.Data()
+		fmt.Fprintf(&b, "data: [")
+		i := 0
+		for iter.Next() {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			if i >= 64 {
+				b.WriteString("...")
+				break
+			}
+			fmt.Fprintf(&b, "%v", iter.EiaClientImplId())
+			i++
+		}
+		b.WriteString("]")
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m EXCHANGEID4resok) String() string {
+	var b strings.Builder
+	b.WriteString("EXCHANGEID4resok{")
+	fmt.Fprintf(&b, "eir_clientid: %d", m.EirClientid())
+	fmt.Fprintf(&b, ", eir_sequenceid: %d", m.EirSequenceid())
+	fmt.Fprintf(&b, ", eir_flags: %d", m.EirFlags())
+	fmt.Fprintf(&b, ", eir_state_protect: %v", m.EirStateProtect())
+	fmt.Fprintf(&b, ", eir_server_owner: %v", m.EirServerOwner())
+	{
+		d := m.EirServerScope()
+		if len(d) <= 32 {
+			fmt.Fprintf(&b, ", eir_server_scope: %x", d)
+		} else {
+			fmt.Fprintf(&b, ", eir_server_scope: %x...(%d bytes)", d[:32], len(d))
+		}
+	}
+	fmt.Fprintf(&b, ", eir_server_impl_id: %v", m.EirServerImplId())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m EXCHANGEID4res) String() string {
+	switch m.disc {
+	case NFS4_OK:
+		return fmt.Sprintf("NFS4_OK:%v", m.AsEXCHANGEID4resok())
+	default:
+		return fmt.Sprintf("unknown(%v)", m.disc)
+	}
+}
+
+func (m ChannelAttrs4) String() string {
+	var b strings.Builder
+	b.WriteString("ChannelAttrs4{")
+	fmt.Fprintf(&b, "ca_headerpadsize: %d", m.CaHeaderpadsize())
+	fmt.Fprintf(&b, ", ca_maxrequestsize: %d", m.CaMaxrequestsize())
+	fmt.Fprintf(&b, ", ca_maxresponsesize: %d", m.CaMaxresponsesize())
+	fmt.Fprintf(&b, ", ca_maxresponsesize_cached: %d", m.CaMaxresponsesizeCached())
+	fmt.Fprintf(&b, ", ca_maxoperations: %d", m.CaMaxoperations())
+	fmt.Fprintf(&b, ", ca_maxrequests: %d", m.CaMaxrequests())
+	{
+		n := int(m.CaRdmaIrdCount())
+		fmt.Fprintf(&b, ", ca_rdma_ird: [")
+		for i := 0; i < n && i < 64; i++ {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			fmt.Fprintf(&b, "%d", m.CaRdmaIrd(i))
+		}
+		if n > 64 {
+			fmt.Fprintf(&b, ", ...(%d total)", n)
+		}
+		b.WriteString("]")
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m CREATESESSION4args) String() string {
+	var b strings.Builder
+	b.WriteString("CREATESESSION4args{")
+	fmt.Fprintf(&b, "csa_clientid: %d", m.CsaClientid())
+	fmt.Fprintf(&b, ", csa_sequence: %d", m.CsaSequence())
+	fmt.Fprintf(&b, ", csa_flags: %d", m.CsaFlags())
+	fmt.Fprintf(&b, ", csa_fore_chan_attrs: %v", m.CsaForeChanAttrs())
+	fmt.Fprintf(&b, ", csa_back_chan_attrs: %v", m.CsaBackChanAttrs())
+	fmt.Fprintf(&b, ", csa_cb_program: %d", m.CsaCbProgram())
+	{
+		iter := m.CsaSecParms()
+		fmt.Fprintf(&b, ", csa_sec_parms: [")
+		i := 0
+		for iter.Next() {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			if i >= 64 {
+				b.WriteString("...")
+				break
+			}
+			fmt.Fprintf(&b, "%v", iter.BcaSecParm())
+			i++
+		}
+		b.WriteString("]")
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m CREATESESSION4resok) String() string {
+	var b strings.Builder
+	b.WriteString("CREATESESSION4resok{")
+	fmt.Fprintf(&b, "csr_sessionid: %v", m.CsrSessionid())
+	fmt.Fprintf(&b, ", csr_sequence: %d", m.CsrSequence())
+	fmt.Fprintf(&b, ", csr_flags: %d", m.CsrFlags())
+	fmt.Fprintf(&b, ", csr_fore_chan_attrs: %v", m.CsrForeChanAttrs())
+	fmt.Fprintf(&b, ", csr_back_chan_attrs: %v", m.CsrBackChanAttrs())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m CREATESESSION4res) String() string {
+	switch m.disc {
+	case NFS4_OK:
+		return fmt.Sprintf("NFS4_OK:%v", m.AsCREATESESSION4resok())
+	default:
+		return fmt.Sprintf("unknown(%v)", m.disc)
+	}
+}
+
+func (m DESTROYSESSION4args) String() string {
+	var b strings.Builder
+	b.WriteString("DESTROYSESSION4args{")
+	fmt.Fprintf(&b, "dsa_sessionid: %v", m.DsaSessionid())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m DESTROYSESSION4res) String() string {
+	var b strings.Builder
+	b.WriteString("DESTROYSESSION4res{")
+	fmt.Fprintf(&b, "dsr_status: %s", Nfsstat4Name(m.DsrStatus()))
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m FREESTATEID4args) String() string {
+	var b strings.Builder
+	b.WriteString("FREESTATEID4args{")
+	fmt.Fprintf(&b, "fsa_stateid: %v", m.FsaStateid())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m FREESTATEID4res) String() string {
+	var b strings.Builder
+	b.WriteString("FREESTATEID4res{")
+	fmt.Fprintf(&b, "fsr_status: %s", Nfsstat4Name(m.FsrStatus()))
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m GETDIRDELEGATION4args) String() string {
+	var b strings.Builder
+	b.WriteString("GETDIRDELEGATION4args{")
+	fmt.Fprintf(&b, "gdda_signal_deleg_avail: %d", m.GddaSignalDelegAvail())
+	fmt.Fprintf(&b, ", gdda_notification_types: %v", m.GddaNotificationTypes())
+	fmt.Fprintf(&b, ", gdda_child_attr_delay: %v", m.GddaChildAttrDelay())
+	fmt.Fprintf(&b, ", gdda_dir_attr_delay: %v", m.GddaDirAttrDelay())
+	fmt.Fprintf(&b, ", gdda_child_attributes: %v", m.GddaChildAttributes())
+	fmt.Fprintf(&b, ", gdda_dir_attributes: %v", m.GddaDirAttributes())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m GETDIRDELEGATION4resok) String() string {
+	var b strings.Builder
+	b.WriteString("GETDIRDELEGATION4resok{")
+	fmt.Fprintf(&b, "gddr_cookieverf: %v", m.GddrCookieverf())
+	fmt.Fprintf(&b, ", gddr_stateid: %v", m.GddrStateid())
+	fmt.Fprintf(&b, ", gddr_notification: %v", m.GddrNotification())
+	fmt.Fprintf(&b, ", gddr_child_attributes: %v", m.GddrChildAttributes())
+	fmt.Fprintf(&b, ", gddr_dir_attributes: %v", m.GddrDirAttributes())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m GETDIRDELEGATION4resNonFatalGDD4UNAVAIL) String() string {
+	var b strings.Builder
+	b.WriteString("GETDIRDELEGATION4resNonFatalGDD4UNAVAIL{")
+	fmt.Fprintf(&b, "value: %d", m.Value())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m GETDIRDELEGATION4resNonFatal) String() string {
+	switch m.disc {
+	case GDD4_OK:
+		return fmt.Sprintf("OK:%v", m.AsGETDIRDELEGATION4resok())
+	case GDD4_UNAVAIL:
+		return fmt.Sprintf("UNAVAIL:%v", m.AsGETDIRDELEGATION4resNonFatalGDD4UNAVAIL())
+	default:
+		return fmt.Sprintf("unknown(%v)", m.disc)
+	}
+}
+
+func (m GETDIRDELEGATION4resNonFatalEntry) String() string {
+	var b strings.Builder
+	b.WriteString("GETDIRDELEGATION4resNonFatalEntry{")
+	fmt.Fprintf(&b, "value: %v", m.Value())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m GETDIRDELEGATION4res) String() string {
+	switch m.disc {
+	case NFS4_OK:
+		return fmt.Sprintf("NFS4_OK:%v", m.AsGETDIRDELEGATION4resNonFatalEntry())
+	default:
+		return fmt.Sprintf("unknown(%v)", m.disc)
+	}
+}
+
+func (m GETDEVICEINFO4args) String() string {
+	var b strings.Builder
+	b.WriteString("GETDEVICEINFO4args{")
+	fmt.Fprintf(&b, "gdia_device_id: %v", m.GdiaDeviceId())
+	fmt.Fprintf(&b, ", gdia_layout_type: %s", Layouttype4Name(m.GdiaLayoutType()))
+	fmt.Fprintf(&b, ", gdia_maxcount: %d", m.GdiaMaxcount())
+	fmt.Fprintf(&b, ", gdia_notify_types: %v", m.GdiaNotifyTypes())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m GETDEVICEINFO4resok) String() string {
+	var b strings.Builder
+	b.WriteString("GETDEVICEINFO4resok{")
+	fmt.Fprintf(&b, "gdir_device_addr: %v", m.GdirDeviceAddr())
+	fmt.Fprintf(&b, ", gdir_notification: %v", m.GdirNotification())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m GETDEVICEINFO4resNFS4ERRTOOSMALL) String() string {
+	var b strings.Builder
+	b.WriteString("GETDEVICEINFO4resNFS4ERRTOOSMALL{")
+	fmt.Fprintf(&b, "value: %d", m.Value())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m GETDEVICEINFO4res) String() string {
+	switch m.disc {
+	case NFS4_OK:
+		return fmt.Sprintf("NFS4_OK:%v", m.AsGETDEVICEINFO4resok())
+	case NFS4ERR_TOOSMALL:
+		return fmt.Sprintf("NFS4ERR_TOOSMALL:%v", m.AsGETDEVICEINFO4resNFS4ERRTOOSMALL())
+	default:
+		return fmt.Sprintf("unknown(%v)", m.disc)
+	}
+}
+
+func (m GETDEVICELIST4args) String() string {
+	var b strings.Builder
+	b.WriteString("GETDEVICELIST4args{")
+	fmt.Fprintf(&b, "gdla_layout_type: %s", Layouttype4Name(m.GdlaLayoutType()))
+	fmt.Fprintf(&b, ", gdla_maxdevices: %d", m.GdlaMaxdevices())
+	fmt.Fprintf(&b, ", gdla_cookie: %d", m.GdlaCookie())
+	fmt.Fprintf(&b, ", gdla_cookieverf: %v", m.GdlaCookieverf())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m GETDEVICELIST4resok) String() string {
+	var b strings.Builder
+	b.WriteString("GETDEVICELIST4resok{")
+	fmt.Fprintf(&b, "gdlr_cookie: %d", m.GdlrCookie())
+	fmt.Fprintf(&b, ", gdlr_cookieverf: %v", m.GdlrCookieverf())
+	{
+		n := int(m.GdlrDeviceidListCount())
+		fmt.Fprintf(&b, ", gdlr_deviceid_list: [")
+		for i := 0; i < n && i < 64; i++ {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			fmt.Fprintf(&b, "%v", m.GdlrDeviceidList(i))
+		}
+		if n > 64 {
+			fmt.Fprintf(&b, ", ...(%d total)", n)
+		}
+		b.WriteString("]")
+	}
+	fmt.Fprintf(&b, ", gdlr_eof: %d", m.GdlrEof())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m GETDEVICELIST4res) String() string {
+	switch m.disc {
+	case NFS4_OK:
+		return fmt.Sprintf("NFS4_OK:%v", m.AsGETDEVICELIST4resok())
+	default:
+		return fmt.Sprintf("unknown(%v)", m.disc)
+	}
+}
+
+func (m Newtime4) String() string {
+	switch m.disc {
+	case TRUE:
+		return fmt.Sprintf("TRUE:%v", m.AsNfstime4())
+	case FALSE:
+		return "FALSE"
+	default:
+		return fmt.Sprintf("unknown(%v)", m.disc)
+	}
+}
+
+func (m Newoffset4TRUE) String() string {
+	var b strings.Builder
+	b.WriteString("Newoffset4TRUE{")
+	fmt.Fprintf(&b, "value: %d", m.Value())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m Newoffset4) String() string {
+	switch m.disc {
+	case TRUE:
+		return fmt.Sprintf("TRUE:%v", m.AsNewoffset4TRUE())
+	case FALSE:
+		return "FALSE"
+	default:
+		return fmt.Sprintf("unknown(%v)", m.disc)
+	}
+}
+
+func (m LAYOUTCOMMIT4args) String() string {
+	var b strings.Builder
+	b.WriteString("LAYOUTCOMMIT4args{")
+	fmt.Fprintf(&b, "loca_offset: %d", m.LocaOffset())
+	fmt.Fprintf(&b, ", loca_length: %d", m.LocaLength())
+	fmt.Fprintf(&b, ", loca_reclaim: %d", m.LocaReclaim())
+	fmt.Fprintf(&b, ", loca_stateid: %v", m.LocaStateid())
+	fmt.Fprintf(&b, ", loca_last_write_offset: %v", m.LocaLastWriteOffset())
+	fmt.Fprintf(&b, ", loca_time_modify: %v", m.LocaTimeModify())
+	fmt.Fprintf(&b, ", loca_layoutupdate: %v", m.LocaLayoutupdate())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m Newsize4TRUE) String() string {
+	var b strings.Builder
+	b.WriteString("Newsize4TRUE{")
+	fmt.Fprintf(&b, "value: %d", m.Value())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m Newsize4) String() string {
+	switch m.disc {
+	case TRUE:
+		return fmt.Sprintf("TRUE:%v", m.AsNewsize4TRUE())
+	case FALSE:
+		return "FALSE"
+	default:
+		return fmt.Sprintf("unknown(%v)", m.disc)
+	}
+}
+
+func (m LAYOUTCOMMIT4resok) String() string {
+	var b strings.Builder
+	b.WriteString("LAYOUTCOMMIT4resok{")
+	fmt.Fprintf(&b, "locr_newsize: %v", m.LocrNewsize())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m LAYOUTCOMMIT4res) String() string {
+	switch m.disc {
+	case NFS4_OK:
+		return fmt.Sprintf("NFS4_OK:%v", m.AsLAYOUTCOMMIT4resok())
+	default:
+		return fmt.Sprintf("unknown(%v)", m.disc)
+	}
+}
+
+func (m LAYOUTGET4args) String() string {
+	var b strings.Builder
+	b.WriteString("LAYOUTGET4args{")
+	fmt.Fprintf(&b, "loga_signal_layout_avail: %d", m.LogaSignalLayoutAvail())
+	fmt.Fprintf(&b, ", loga_layout_type: %s", Layouttype4Name(m.LogaLayoutType()))
+	fmt.Fprintf(&b, ", loga_iomode: %s", Layoutiomode4Name(m.LogaIomode()))
+	fmt.Fprintf(&b, ", loga_offset: %d", m.LogaOffset())
+	fmt.Fprintf(&b, ", loga_length: %d", m.LogaLength())
+	fmt.Fprintf(&b, ", loga_minlength: %d", m.LogaMinlength())
+	fmt.Fprintf(&b, ", loga_stateid: %v", m.LogaStateid())
+	fmt.Fprintf(&b, ", loga_maxcount: %d", m.LogaMaxcount())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m LAYOUTGET4resok) String() string {
+	var b strings.Builder
+	b.WriteString("LAYOUTGET4resok{")
+	fmt.Fprintf(&b, "logr_return_on_close: %d", m.LogrReturnOnClose())
+	fmt.Fprintf(&b, ", logr_stateid: %v", m.LogrStateid())
+	{
+		iter := m.LogrLayout()
+		fmt.Fprintf(&b, ", logr_layout: [")
+		i := 0
+		for iter.Next() {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			if i >= 64 {
+				b.WriteString("...")
+				break
+			}
+			fmt.Fprintf(&b, "%v", iter.LogrLayout())
+			i++
+		}
+		b.WriteString("]")
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m LAYOUTGET4resNFS4ERRLAYOUTTRYLATER) String() string {
+	var b strings.Builder
+	b.WriteString("LAYOUTGET4resNFS4ERRLAYOUTTRYLATER{")
+	fmt.Fprintf(&b, "value: %d", m.Value())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m LAYOUTGET4res) String() string {
+	switch m.disc {
+	case NFS4_OK:
+		return fmt.Sprintf("NFS4_OK:%v", m.AsLAYOUTGET4resok())
+	case NFS4ERR_LAYOUTTRYLATER:
+		return fmt.Sprintf("NFS4ERR_LAYOUTTRYLATER:%v", m.AsLAYOUTGET4resNFS4ERRLAYOUTTRYLATER())
+	default:
+		return fmt.Sprintf("unknown(%v)", m.disc)
+	}
+}
+
+func (m LAYOUTRETURN4args) String() string {
+	var b strings.Builder
+	b.WriteString("LAYOUTRETURN4args{")
+	fmt.Fprintf(&b, "lora_reclaim: %d", m.LoraReclaim())
+	fmt.Fprintf(&b, ", lora_layout_type: %s", Layouttype4Name(m.LoraLayoutType()))
+	fmt.Fprintf(&b, ", lora_iomode: %s", Layoutiomode4Name(m.LoraIomode()))
+	fmt.Fprintf(&b, ", lora_layoutreturn: %v", m.LoraLayoutreturn())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m LayoutreturnStateid) String() string {
+	switch m.disc {
+	case TRUE:
+		return fmt.Sprintf("TRUE:%v", m.AsStateid4())
+	case FALSE:
+		return "FALSE"
+	default:
+		return fmt.Sprintf("unknown(%v)", m.disc)
+	}
+}
+
+func (m LayoutreturnStateidEntry) String() string {
+	var b strings.Builder
+	b.WriteString("LayoutreturnStateidEntry{")
+	fmt.Fprintf(&b, "value: %v", m.Value())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m LAYOUTRETURN4res) String() string {
+	switch m.disc {
+	case NFS4_OK:
+		return fmt.Sprintf("NFS4_OK:%v", m.AsLayoutreturnStateidEntry())
+	default:
+		return fmt.Sprintf("unknown(%v)", m.disc)
+	}
+}
+
+func (m SEQUENCE4args) String() string {
+	var b strings.Builder
+	b.WriteString("SEQUENCE4args{")
+	fmt.Fprintf(&b, "sa_sessionid: %v", m.SaSessionid())
+	fmt.Fprintf(&b, ", sa_sequenceid: %d", m.SaSequenceid())
+	fmt.Fprintf(&b, ", sa_slotid: %d", m.SaSlotid())
+	fmt.Fprintf(&b, ", sa_highest_slotid: %d", m.SaHighestSlotid())
+	fmt.Fprintf(&b, ", sa_cachethis: %d", m.SaCachethis())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m SEQUENCE4resok) String() string {
+	var b strings.Builder
+	b.WriteString("SEQUENCE4resok{")
+	fmt.Fprintf(&b, "sr_sessionid: %v", m.SrSessionid())
+	fmt.Fprintf(&b, ", sr_sequenceid: %d", m.SrSequenceid())
+	fmt.Fprintf(&b, ", sr_slotid: %d", m.SrSlotid())
+	fmt.Fprintf(&b, ", sr_highest_slotid: %d", m.SrHighestSlotid())
+	fmt.Fprintf(&b, ", sr_target_highest_slotid: %d", m.SrTargetHighestSlotid())
+	fmt.Fprintf(&b, ", sr_status_flags: %d", m.SrStatusFlags())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m SEQUENCE4res) String() string {
+	switch m.disc {
+	case NFS4_OK:
+		return fmt.Sprintf("NFS4_OK:%v", m.AsSEQUENCE4resok())
+	default:
+		return fmt.Sprintf("unknown(%v)", m.disc)
+	}
+}
+
+func (m SsaDigestInput4) String() string {
+	var b strings.Builder
+	b.WriteString("SsaDigestInput4{")
+	fmt.Fprintf(&b, "sdi_seqargs: %v", m.SdiSeqargs())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m SETSSV4args) String() string {
+	var b strings.Builder
+	b.WriteString("SETSSV4args{")
+	fmt.Fprintf(&b, "ssa_ssv: %v", m.SsaSsv())
+	fmt.Fprintf(&b, ", ssa_digest: %v", m.SsaDigest())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m SsrDigestInput4) String() string {
+	var b strings.Builder
+	b.WriteString("SsrDigestInput4{")
+	fmt.Fprintf(&b, "sdi_seqres: %v", m.SdiSeqres())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m SETSSV4resok) String() string {
+	var b strings.Builder
+	b.WriteString("SETSSV4resok{")
+	{
+		d := m.SsrDigest()
+		if len(d) <= 32 {
+			fmt.Fprintf(&b, "ssr_digest: %x", d)
+		} else {
+			fmt.Fprintf(&b, "ssr_digest: %x...(%d bytes)", d[:32], len(d))
+		}
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m SETSSV4res) String() string {
+	switch m.disc {
+	case NFS4_OK:
+		return fmt.Sprintf("NFS4_OK:%v", m.AsSETSSV4resok())
+	default:
+		return fmt.Sprintf("unknown(%v)", m.disc)
+	}
+}
+
+func (m TESTSTATEID4args) String() string {
+	var b strings.Builder
+	b.WriteString("TESTSTATEID4args{")
+	{
+		n := int(m.TsStateidsCount())
+		fmt.Fprintf(&b, "ts_stateids: [")
+		for i := 0; i < n && i < 64; i++ {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			fmt.Fprintf(&b, "%v", m.TsStateids(i))
+		}
+		if n > 64 {
+			fmt.Fprintf(&b, ", ...(%d total)", n)
+		}
+		b.WriteString("]")
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m TESTSTATEID4resok) String() string {
+	var b strings.Builder
+	b.WriteString("TESTSTATEID4resok{")
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m TESTSTATEID4res) String() string {
+	switch m.disc {
+	case NFS4_OK:
+		return fmt.Sprintf("NFS4_OK:%v", m.AsTESTSTATEID4resok())
+	default:
+		return fmt.Sprintf("unknown(%v)", m.disc)
+	}
+}
+
+func (m DelegClaim4CLAIMPREVIOUS) String() string {
+	var b strings.Builder
+	b.WriteString("DelegClaim4CLAIMPREVIOUS{")
+	fmt.Fprintf(&b, "value: %s", OpenDelegationType4Name(m.Value()))
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m DelegClaim4) String() string {
+	switch m.disc {
+	case CLAIM_FH:
+		return "FH"
+	case CLAIM_DELEG_PREV_FH:
+		return "DELEG_PREV_FH"
+	case CLAIM_PREVIOUS:
+		return fmt.Sprintf("PREVIOUS:%v", m.AsDelegClaim4CLAIMPREVIOUS())
+	default:
+		return fmt.Sprintf("unknown(%v)", m.disc)
+	}
+}
+
+func (m WANTDELEGATION4args) String() string {
+	var b strings.Builder
+	b.WriteString("WANTDELEGATION4args{")
+	fmt.Fprintf(&b, "wda_want: %d", m.WdaWant())
+	fmt.Fprintf(&b, ", wda_claim: %v", m.WdaClaim())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m OpenDelegation4Entry) String() string {
+	var b strings.Builder
+	b.WriteString("OpenDelegation4Entry{")
+	fmt.Fprintf(&b, "value: %v", m.Value())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m WANTDELEGATION4res) String() string {
+	switch m.disc {
+	case NFS4_OK:
+		return fmt.Sprintf("NFS4_OK:%v", m.AsOpenDelegation4Entry())
+	default:
+		return fmt.Sprintf("unknown(%v)", m.disc)
+	}
+}
+
+func (m DESTROYCLIENTID4args) String() string {
+	var b strings.Builder
+	b.WriteString("DESTROYCLIENTID4args{")
+	fmt.Fprintf(&b, "dca_clientid: %d", m.DcaClientid())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m DESTROYCLIENTID4res) String() string {
+	var b strings.Builder
+	b.WriteString("DESTROYCLIENTID4res{")
+	fmt.Fprintf(&b, "dcr_status: %s", Nfsstat4Name(m.DcrStatus()))
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m RECLAIMCOMPLETE4args) String() string {
+	var b strings.Builder
+	b.WriteString("RECLAIMCOMPLETE4args{")
+	fmt.Fprintf(&b, "rca_one_fs: %d", m.RcaOneFs())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m RECLAIMCOMPLETE4res) String() string {
+	var b strings.Builder
+	b.WriteString("RECLAIMCOMPLETE4res{")
+	fmt.Fprintf(&b, "rcr_status: %s", Nfsstat4Name(m.RcrStatus()))
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m COPY4args) String() string {
+	var b strings.Builder
+	b.WriteString("COPY4args{")
+	fmt.Fprintf(&b, "ca_src_stateid: %v", m.CaSrcStateid())
+	fmt.Fprintf(&b, ", ca_dst_stateid: %v", m.CaDstStateid())
+	fmt.Fprintf(&b, ", ca_src_offset: %d", m.CaSrcOffset())
+	fmt.Fprintf(&b, ", ca_dst_offset: %d", m.CaDstOffset())
+	fmt.Fprintf(&b, ", ca_count: %d", m.CaCount())
+	fmt.Fprintf(&b, ", ca_consecutive: %d", m.CaConsecutive())
+	fmt.Fprintf(&b, ", ca_synchronous: %d", m.CaSynchronous())
+	{
+		iter := m.CaSourceServer()
+		fmt.Fprintf(&b, ", ca_source_server: [")
+		i := 0
+		for iter.Next() {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			if i >= 64 {
+				b.WriteString("...")
+				break
+			}
+			fmt.Fprintf(&b, "%v", iter.CtapSource())
+			i++
+		}
+		b.WriteString("]")
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m CopyRequirements4) String() string {
+	var b strings.Builder
+	b.WriteString("CopyRequirements4{")
+	fmt.Fprintf(&b, "cr_consecutive: %d", m.CrConsecutive())
+	fmt.Fprintf(&b, ", cr_synchronous: %d", m.CrSynchronous())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m COPY4resok) String() string {
+	var b strings.Builder
+	b.WriteString("COPY4resok{")
+	fmt.Fprintf(&b, "cr_response: %v", m.CrResponse())
+	fmt.Fprintf(&b, ", cr_requirements: %v", m.CrRequirements())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m COPY4res) String() string {
+	switch m.disc {
+	case NFS4_OK:
+		return fmt.Sprintf("NFS4_OK:%v", m.AsCOPY4resok())
+	case NFS4ERR_OFFLOAD_NO_REQS:
+		return fmt.Sprintf("NFS4ERR_OFFLOAD_NO_REQS:%v", m.AsCopyRequirements4())
+	default:
+		return fmt.Sprintf("unknown(%v)", m.disc)
+	}
+}
+
+func (m COPYNOTIFY4args) String() string {
+	var b strings.Builder
+	b.WriteString("COPYNOTIFY4args{")
+	fmt.Fprintf(&b, "cna_src_stateid: %v", m.CnaSrcStateid())
+	fmt.Fprintf(&b, ", cna_destination_server: %v", m.CnaDestinationServer())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m COPYNOTIFY4resok) String() string {
+	var b strings.Builder
+	b.WriteString("COPYNOTIFY4resok{")
+	fmt.Fprintf(&b, "cnr_lease_time: %v", m.CnrLeaseTime())
+	fmt.Fprintf(&b, ", cnr_stateid: %v", m.CnrStateid())
+	{
+		iter := m.CnrSourceServer()
+		fmt.Fprintf(&b, ", cnr_source_server: [")
+		i := 0
+		for iter.Next() {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			if i >= 64 {
+				b.WriteString("...")
+				break
+			}
+			fmt.Fprintf(&b, "%v", iter.CtapSource())
+			i++
+		}
+		b.WriteString("]")
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m COPYNOTIFY4res) String() string {
+	switch m.disc {
+	case NFS4_OK:
+		return fmt.Sprintf("NFS4_OK:%v", m.AsCOPYNOTIFY4resok())
+	default:
+		return fmt.Sprintf("unknown(%v)", m.disc)
+	}
+}
+
+func (m OFFLOADCANCEL4args) String() string {
+	var b strings.Builder
+	b.WriteString("OFFLOADCANCEL4args{")
+	fmt.Fprintf(&b, "oca_stateid: %v", m.OcaStateid())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m OFFLOADCANCEL4res) String() string {
+	var b strings.Builder
+	b.WriteString("OFFLOADCANCEL4res{")
+	fmt.Fprintf(&b, "ocr_status: %s", Nfsstat4Name(m.OcrStatus()))
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m OFFLOADSTATUS4args) String() string {
+	var b strings.Builder
+	b.WriteString("OFFLOADSTATUS4args{")
+	fmt.Fprintf(&b, "osa_stateid: %v", m.OsaStateid())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m OFFLOADSTATUS4resok) String() string {
+	var b strings.Builder
+	b.WriteString("OFFLOADSTATUS4resok{")
+	fmt.Fprintf(&b, "osr_count: %d", m.OsrCount())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m OFFLOADSTATUS4res) String() string {
+	switch m.disc {
+	case NFS4_OK:
+		return fmt.Sprintf("NFS4_OK:%v", m.AsOFFLOADSTATUS4resok())
+	default:
+		return fmt.Sprintf("unknown(%v)", m.disc)
+	}
+}
+
+func (m ALLOCATE4args) String() string {
+	var b strings.Builder
+	b.WriteString("ALLOCATE4args{")
+	fmt.Fprintf(&b, "aa_stateid: %v", m.AaStateid())
+	fmt.Fprintf(&b, ", aa_offset: %d", m.AaOffset())
+	fmt.Fprintf(&b, ", aa_length: %d", m.AaLength())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m ALLOCATE4res) String() string {
+	var b strings.Builder
+	b.WriteString("ALLOCATE4res{")
+	fmt.Fprintf(&b, "ar_status: %s", Nfsstat4Name(m.ArStatus()))
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m DEALLOCATE4args) String() string {
+	var b strings.Builder
+	b.WriteString("DEALLOCATE4args{")
+	fmt.Fprintf(&b, "da_stateid: %v", m.DaStateid())
+	fmt.Fprintf(&b, ", da_offset: %d", m.DaOffset())
+	fmt.Fprintf(&b, ", da_length: %d", m.DaLength())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m DEALLOCATE4res) String() string {
+	var b strings.Builder
+	b.WriteString("DEALLOCATE4res{")
+	fmt.Fprintf(&b, "dr_status: %s", Nfsstat4Name(m.DrStatus()))
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m IOADVISE4args) String() string {
+	var b strings.Builder
+	b.WriteString("IOADVISE4args{")
+	fmt.Fprintf(&b, "iaa_stateid: %v", m.IaaStateid())
+	fmt.Fprintf(&b, ", iaa_offset: %d", m.IaaOffset())
+	fmt.Fprintf(&b, ", iaa_count: %d", m.IaaCount())
+	fmt.Fprintf(&b, ", iaa_hints: %v", m.IaaHints())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m IOADVISE4resok) String() string {
+	var b strings.Builder
+	b.WriteString("IOADVISE4resok{")
+	fmt.Fprintf(&b, "ior_hints: %v", m.IorHints())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m IOADVISE4res) String() string {
+	switch m.disc {
+	case NFS4_OK:
+		return fmt.Sprintf("NFS4_OK:%v", m.AsIOADVISE4resok())
+	default:
+		return fmt.Sprintf("unknown(%v)", m.disc)
+	}
+}
+
+func (m DeviceError4) String() string {
+	var b strings.Builder
+	b.WriteString("DeviceError4{")
+	fmt.Fprintf(&b, "de_deviceid: %v", m.DeDeviceid())
+	fmt.Fprintf(&b, ", de_status: %s", Nfsstat4Name(m.DeStatus()))
+	fmt.Fprintf(&b, ", de_opnum: %s", NfsOpnum4Name(m.DeOpnum()))
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m LAYOUTERROR4args) String() string {
+	var b strings.Builder
+	b.WriteString("LAYOUTERROR4args{")
+	fmt.Fprintf(&b, "lea_offset: %d", m.LeaOffset())
+	fmt.Fprintf(&b, ", lea_length: %d", m.LeaLength())
+	fmt.Fprintf(&b, ", lea_stateid: %v", m.LeaStateid())
+	{
+		n := int(m.LeaErrorsCount())
+		fmt.Fprintf(&b, ", lea_errors: [")
+		for i := 0; i < n && i < 64; i++ {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			fmt.Fprintf(&b, "%v", m.LeaErrors(i))
+		}
+		if n > 64 {
+			fmt.Fprintf(&b, ", ...(%d total)", n)
+		}
+		b.WriteString("]")
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m LAYOUTERROR4res) String() string {
+	var b strings.Builder
+	b.WriteString("LAYOUTERROR4res{")
+	fmt.Fprintf(&b, "ler_status: %s", Nfsstat4Name(m.LerStatus()))
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m IoInfo4) String() string {
+	var b strings.Builder
+	b.WriteString("IoInfo4{")
+	fmt.Fprintf(&b, "ii_count: %d", m.IiCount())
+	fmt.Fprintf(&b, ", ii_bytes: %d", m.IiBytes())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m LAYOUTSTATS4args) String() string {
+	var b strings.Builder
+	b.WriteString("LAYOUTSTATS4args{")
+	fmt.Fprintf(&b, "lsa_offset: %d", m.LsaOffset())
+	fmt.Fprintf(&b, ", lsa_length: %d", m.LsaLength())
+	fmt.Fprintf(&b, ", lsa_stateid: %v", m.LsaStateid())
+	fmt.Fprintf(&b, ", lsa_read: %v", m.LsaRead())
+	fmt.Fprintf(&b, ", lsa_write: %v", m.LsaWrite())
+	fmt.Fprintf(&b, ", lsa_deviceid: %v", m.LsaDeviceid())
+	fmt.Fprintf(&b, ", lsa_layoutupdate: %v", m.LsaLayoutupdate())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m LAYOUTSTATS4res) String() string {
+	var b strings.Builder
+	b.WriteString("LAYOUTSTATS4res{")
+	fmt.Fprintf(&b, "lsr_status: %s", Nfsstat4Name(m.LsrStatus()))
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m READPLUS4args) String() string {
+	var b strings.Builder
+	b.WriteString("READPLUS4args{")
+	fmt.Fprintf(&b, "rpa_stateid: %v", m.RpaStateid())
+	fmt.Fprintf(&b, ", rpa_offset: %d", m.RpaOffset())
+	fmt.Fprintf(&b, ", rpa_count: %d", m.RpaCount())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m ReadPlusContent) String() string {
+	switch m.disc {
+	case NFS4_CONTENT_DATA:
+		return fmt.Sprintf("DATA:%v", m.AsData4())
+	case NFS4_CONTENT_HOLE:
+		return fmt.Sprintf("HOLE:%v", m.AsDataInfo4())
+	default:
+		return fmt.Sprintf("unknown(%v)", m.disc)
+	}
+}
+
+func (m ReadPlusContentEntry) String() string {
+	var b strings.Builder
+	b.WriteString("ReadPlusContentEntry{")
+	fmt.Fprintf(&b, "value: %v", m.Value())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m ReadPlusRes4) String() string {
+	var b strings.Builder
+	b.WriteString("ReadPlusRes4{")
+	fmt.Fprintf(&b, "rpr_eof: %d", m.RprEof())
+	{
+		iter := m.RprContents()
+		fmt.Fprintf(&b, ", rpr_contents: [")
+		i := 0
+		for iter.Next() {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			if i >= 64 {
+				b.WriteString("...")
+				break
+			}
+			fmt.Fprintf(&b, "%v", iter.RprContent())
+			i++
+		}
+		b.WriteString("]")
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m READPLUS4res) String() string {
+	switch m.disc {
+	case NFS4_OK:
+		return fmt.Sprintf("NFS4_OK:%v", m.AsReadPlusRes4())
+	default:
+		return fmt.Sprintf("unknown(%v)", m.disc)
+	}
+}
+
+func (m SEEK4args) String() string {
+	var b strings.Builder
+	b.WriteString("SEEK4args{")
+	fmt.Fprintf(&b, "sa_stateid: %v", m.SaStateid())
+	fmt.Fprintf(&b, ", sa_offset: %d", m.SaOffset())
+	fmt.Fprintf(&b, ", sa_what: %s", DataContent4Name(m.SaWhat()))
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m SeekRes4) String() string {
+	var b strings.Builder
+	b.WriteString("SeekRes4{")
+	fmt.Fprintf(&b, "sr_eof: %d", m.SrEof())
+	fmt.Fprintf(&b, ", sr_offset: %d", m.SrOffset())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m SEEK4res) String() string {
+	switch m.disc {
+	case NFS4_OK:
+		return fmt.Sprintf("NFS4_OK:%v", m.AsSeekRes4())
+	default:
+		return fmt.Sprintf("unknown(%v)", m.disc)
+	}
+}
+
+func (m WRITESAME4args) String() string {
+	var b strings.Builder
+	b.WriteString("WRITESAME4args{")
+	fmt.Fprintf(&b, "wsa_stateid: %v", m.WsaStateid())
+	fmt.Fprintf(&b, ", wsa_stable: %s", StableHow4Name(m.WsaStable()))
+	fmt.Fprintf(&b, ", wsa_adb: %v", m.WsaAdb())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m WRITESAME4res) String() string {
+	switch m.disc {
+	case NFS4_OK:
+		return fmt.Sprintf("NFS4_OK:%v", m.AsWriteResponse4())
+	default:
+		return fmt.Sprintf("unknown(%v)", m.disc)
+	}
+}
+
+func (m FfDeviceVersions4) String() string {
+	var b strings.Builder
+	b.WriteString("FfDeviceVersions4{")
+	fmt.Fprintf(&b, "ffdv_version: %d", m.FfdvVersion())
+	fmt.Fprintf(&b, ", ffdv_minorversion: %d", m.FfdvMinorversion())
+	fmt.Fprintf(&b, ", ffdv_rsize: %d", m.FfdvRsize())
+	fmt.Fprintf(&b, ", ffdv_wsize: %d", m.FfdvWsize())
+	fmt.Fprintf(&b, ", ffdv_tightly_coupled: %d", m.FfdvTightlyCoupled())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m FfDeviceAddr4) String() string {
+	var b strings.Builder
+	b.WriteString("FfDeviceAddr4{")
+	fmt.Fprintf(&b, "ffda_netaddrs: %v", m.FfdaNetaddrs())
+	{
+		n := int(m.FfdaVersionsCount())
+		fmt.Fprintf(&b, ", ffda_versions: [")
+		for i := 0; i < n && i < 64; i++ {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			fmt.Fprintf(&b, "%v", m.FfdaVersions(i))
+		}
+		if n > 64 {
+			fmt.Fprintf(&b, ", ...(%d total)", n)
+		}
+		b.WriteString("]")
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m FfDataServer4) String() string {
+	var b strings.Builder
+	b.WriteString("FfDataServer4{")
+	fmt.Fprintf(&b, "ffds_deviceid: %v", m.FfdsDeviceid())
+	fmt.Fprintf(&b, ", ffds_efficiency: %d", m.FfdsEfficiency())
+	fmt.Fprintf(&b, ", ffds_stateid: %v", m.FfdsStateid())
+	{
+		iter := m.FfdsFhVers()
+		fmt.Fprintf(&b, ", ffds_fh_vers: [")
+		i := 0
+		for iter.Next() {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			if i >= 64 {
+				b.WriteString("...")
+				break
+			}
+			fmt.Fprintf(&b, "%v", iter.NflFhList())
+			i++
+		}
+		b.WriteString("]")
+	}
+	fmt.Fprintf(&b, ", ffds_user: %v", m.FfdsUser())
+	fmt.Fprintf(&b, ", ffds_group: %v", m.FfdsGroup())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m FfMirror4) String() string {
+	var b strings.Builder
+	b.WriteString("FfMirror4{")
+	{
+		iter := m.FfmDataServers()
+		fmt.Fprintf(&b, "ffm_data_servers: [")
+		i := 0
+		for iter.Next() {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			if i >= 64 {
+				b.WriteString("...")
+				break
+			}
+			fmt.Fprintf(&b, "%v", iter.FfmDataServer())
+			i++
+		}
+		b.WriteString("]")
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m FfLayout4) String() string {
+	var b strings.Builder
+	b.WriteString("FfLayout4{")
+	fmt.Fprintf(&b, "ffl_stripe_unit: %d", m.FflStripeUnit())
+	{
+		iter := m.FflMirrors()
+		fmt.Fprintf(&b, ", ffl_mirrors: [")
+		i := 0
+		for iter.Next() {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			if i >= 64 {
+				b.WriteString("...")
+				break
+			}
+			fmt.Fprintf(&b, "%v", iter.FflMirror())
+			i++
+		}
+		b.WriteString("]")
+	}
+	fmt.Fprintf(&b, ", ffl_flags: %d", m.FflFlags())
+	fmt.Fprintf(&b, ", ffl_stats_collect_hint: %d", m.FflStatsCollectHint())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m FfIoerr4) String() string {
+	var b strings.Builder
+	b.WriteString("FfIoerr4{")
+	fmt.Fprintf(&b, "ffie_offset: %d", m.FfieOffset())
+	fmt.Fprintf(&b, ", ffie_length: %d", m.FfieLength())
+	fmt.Fprintf(&b, ", ffie_stateid: %v", m.FfieStateid())
+	{
+		n := int(m.FfieErrorsCount())
+		fmt.Fprintf(&b, ", ffie_errors: [")
+		for i := 0; i < n && i < 64; i++ {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			fmt.Fprintf(&b, "%v", m.FfieErrors(i))
+		}
+		if n > 64 {
+			fmt.Fprintf(&b, ", ...(%d total)", n)
+		}
+		b.WriteString("]")
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m FfIoLatency4) String() string {
+	var b strings.Builder
+	b.WriteString("FfIoLatency4{")
+	fmt.Fprintf(&b, "ffil_ops_requested: %d", m.FfilOpsRequested())
+	fmt.Fprintf(&b, ", ffil_bytes_requested: %d", m.FfilBytesRequested())
+	fmt.Fprintf(&b, ", ffil_ops_completed: %d", m.FfilOpsCompleted())
+	fmt.Fprintf(&b, ", ffil_bytes_completed: %d", m.FfilBytesCompleted())
+	fmt.Fprintf(&b, ", ffil_bytes_not_delivered: %d", m.FfilBytesNotDelivered())
+	fmt.Fprintf(&b, ", ffil_total_busy_time: %v", m.FfilTotalBusyTime())
+	fmt.Fprintf(&b, ", ffil_aggregate_completion_time: %v", m.FfilAggregateCompletionTime())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m FfLayoutupdate4) String() string {
+	var b strings.Builder
+	b.WriteString("FfLayoutupdate4{")
+	fmt.Fprintf(&b, "ffl_addr: %v", m.FflAddr())
+	fmt.Fprintf(&b, ", ffl_fhandle: %v", m.FflFhandle())
+	fmt.Fprintf(&b, ", ffl_read: %v", m.FflRead())
+	fmt.Fprintf(&b, ", ffl_write: %v", m.FflWrite())
+	fmt.Fprintf(&b, ", ffl_duration: %v", m.FflDuration())
+	fmt.Fprintf(&b, ", ffl_local: %d", m.FflLocal())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m FfIostats4) String() string {
+	var b strings.Builder
+	b.WriteString("FfIostats4{")
+	fmt.Fprintf(&b, "ffis_offset: %d", m.FfisOffset())
+	fmt.Fprintf(&b, ", ffis_length: %d", m.FfisLength())
+	fmt.Fprintf(&b, ", ffis_stateid: %v", m.FfisStateid())
+	fmt.Fprintf(&b, ", ffis_read: %v", m.FfisRead())
+	fmt.Fprintf(&b, ", ffis_write: %v", m.FfisWrite())
+	fmt.Fprintf(&b, ", ffis_deviceid: %v", m.FfisDeviceid())
+	fmt.Fprintf(&b, ", ffis_layoutupdate: %v", m.FfisLayoutupdate())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m FfLayoutreturn4FflrIostatsReport) String() string {
+	var b strings.Builder
+	b.WriteString("FfLayoutreturn4FflrIostatsReport{")
+	{
+		iter := m.Data()
+		fmt.Fprintf(&b, "data: [")
+		i := 0
+		for iter.Next() {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			if i >= 64 {
+				b.WriteString("...")
+				break
+			}
+			fmt.Fprintf(&b, "%v", iter.Data())
+			i++
+		}
+		b.WriteString("]")
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m FfLayoutreturn4) String() string {
+	var b strings.Builder
+	b.WriteString("FfLayoutreturn4{")
+	{
+		iter := m.FflrIoerrReport()
+		fmt.Fprintf(&b, "fflr_ioerr_report: [")
+		i := 0
+		for iter.Next() {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			if i >= 64 {
+				b.WriteString("...")
+				break
+			}
+			fmt.Fprintf(&b, "%v", iter.FflrIoerrReport())
+			i++
+		}
+		b.WriteString("]")
+	}
+	fmt.Fprintf(&b, ", fflr_iostats_report: %v", m.FflrIostatsReport())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m FfMirrorsHintTRUE) String() string {
+	var b strings.Builder
+	b.WriteString("FfMirrorsHintTRUE{")
+	fmt.Fprintf(&b, "value: %d", m.Value())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m FfMirrorsHint) String() string {
+	switch m.disc {
+	case TRUE:
+		return fmt.Sprintf("TRUE:%v", m.AsFfMirrorsHintTRUE())
+	case FALSE:
+		return "FALSE"
+	default:
+		return fmt.Sprintf("unknown(%v)", m.disc)
+	}
+}
+
+func (m FfLayouthint4) String() string {
+	var b strings.Builder
+	b.WriteString("FfLayouthint4{")
+	fmt.Fprintf(&b, "fflh_mirrors_hint: %v", m.FflhMirrorsHint())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m GETXATTR4args) String() string {
+	var b strings.Builder
+	b.WriteString("GETXATTR4args{")
+	fmt.Fprintf(&b, "gxa_name: %v", m.GxaName())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m GETXATTR4res) String() string {
+	switch m.disc {
+	case NFS4_OK:
+		return fmt.Sprintf("NFS4_OK:%v", m.AsXattrvalue4())
+	default:
+		return fmt.Sprintf("unknown(%v)", m.disc)
+	}
+}
+
+func (m SETXATTR4args) String() string {
+	var b strings.Builder
+	b.WriteString("SETXATTR4args{")
+	fmt.Fprintf(&b, "sxa_option: %s", SetxattrOption4Name(m.SxaOption()))
+	fmt.Fprintf(&b, ", sxa_key: %v", m.SxaKey())
+	fmt.Fprintf(&b, ", sxa_value: %v", m.SxaValue())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m SETXATTR4res) String() string {
+	switch m.disc {
+	case NFS4_OK:
+		return fmt.Sprintf("NFS4_OK:%v", m.AsChangeInfo4())
+	default:
+		return fmt.Sprintf("unknown(%v)", m.disc)
+	}
+}
+
+func (m LISTXATTRS4args) String() string {
+	var b strings.Builder
+	b.WriteString("LISTXATTRS4args{")
+	fmt.Fprintf(&b, "lxa_cookie: %d", m.LxaCookie())
+	fmt.Fprintf(&b, ", lxa_maxcount: %d", m.LxaMaxcount())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m LISTXATTRS4resok) String() string {
+	var b strings.Builder
+	b.WriteString("LISTXATTRS4resok{")
+	fmt.Fprintf(&b, "lxr_cookie: %d", m.LxrCookie())
+	{
+		iter := m.LxrNames()
+		fmt.Fprintf(&b, ", lxr_names: [")
+		i := 0
+		for iter.Next() {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			if i >= 64 {
+				b.WriteString("...")
+				break
+			}
+			fmt.Fprintf(&b, "%v", iter.LxrName())
+			i++
+		}
+		b.WriteString("]")
+	}
+	fmt.Fprintf(&b, ", lxr_eof: %d", m.LxrEof())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m LISTXATTRS4res) String() string {
+	switch m.disc {
+	case NFS4_OK:
+		return fmt.Sprintf("NFS4_OK:%v", m.AsLISTXATTRS4resok())
+	default:
+		return fmt.Sprintf("unknown(%v)", m.disc)
+	}
+}
+
+func (m REMOVEXATTR4args) String() string {
+	var b strings.Builder
+	b.WriteString("REMOVEXATTR4args{")
+	fmt.Fprintf(&b, "rxa_name: %v", m.RxaName())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m REMOVEXATTR4res) String() string {
+	switch m.disc {
+	case NFS4_OK:
+		return fmt.Sprintf("NFS4_OK:%v", m.AsChangeInfo4())
+	default:
+		return fmt.Sprintf("unknown(%v)", m.disc)
+	}
+}
+
+func (m NfsArgop4OPSECINFONONAME) String() string {
+	var b strings.Builder
+	b.WriteString("NfsArgop4OPSECINFONONAME{")
+	fmt.Fprintf(&b, "value: %s", SecinfoStyle4Name(m.Value()))
+	b.WriteString("}")
+	return b.String()
+}
+
 func (m NfsArgop4) String() string {
 	switch m.disc {
 	case OP_ACCESS:
@@ -15192,6 +40310,78 @@ func (m NfsArgop4) String() string {
 		return fmt.Sprintf("WRITE:%v", m.AsWRITE4args())
 	case OP_RELEASE_LOCKOWNER:
 		return fmt.Sprintf("RELEASE_LOCKOWNER:%v", m.AsRELEASELOCKOWNER4args())
+	case OP_BACKCHANNEL_CTL:
+		return fmt.Sprintf("BACKCHANNEL_CTL:%v", m.AsBACKCHANNELCTL4args())
+	case OP_BIND_CONN_TO_SESSION:
+		return fmt.Sprintf("BIND_CONN_TO_SESSION:%v", m.AsBINDCONNTOSESSION4args())
+	case OP_EXCHANGE_ID:
+		return fmt.Sprintf("EXCHANGE_ID:%v", m.AsEXCHANGEID4args())
+	case OP_CREATE_SESSION:
+		return fmt.Sprintf("CREATE_SESSION:%v", m.AsCREATESESSION4args())
+	case OP_DESTROY_SESSION:
+		return fmt.Sprintf("DESTROY_SESSION:%v", m.AsDESTROYSESSION4args())
+	case OP_FREE_STATEID:
+		return fmt.Sprintf("FREE_STATEID:%v", m.AsFREESTATEID4args())
+	case OP_GET_DIR_DELEGATION:
+		return fmt.Sprintf("GET_DIR_DELEGATION:%v", m.AsGETDIRDELEGATION4args())
+	case OP_GETDEVICEINFO:
+		return fmt.Sprintf("GETDEVICEINFO:%v", m.AsGETDEVICEINFO4args())
+	case OP_GETDEVICELIST:
+		return fmt.Sprintf("GETDEVICELIST:%v", m.AsGETDEVICELIST4args())
+	case OP_LAYOUTCOMMIT:
+		return fmt.Sprintf("LAYOUTCOMMIT:%v", m.AsLAYOUTCOMMIT4args())
+	case OP_LAYOUTGET:
+		return fmt.Sprintf("LAYOUTGET:%v", m.AsLAYOUTGET4args())
+	case OP_LAYOUTRETURN:
+		return fmt.Sprintf("LAYOUTRETURN:%v", m.AsLAYOUTRETURN4args())
+	case OP_SECINFO_NO_NAME:
+		return fmt.Sprintf("SECINFO_NO_NAME:%v", m.AsNfsArgop4OPSECINFONONAME())
+	case OP_SEQUENCE:
+		return fmt.Sprintf("SEQUENCE:%v", m.AsSEQUENCE4args())
+	case OP_SET_SSV:
+		return fmt.Sprintf("SET_SSV:%v", m.AsSETSSV4args())
+	case OP_TEST_STATEID:
+		return fmt.Sprintf("TEST_STATEID:%v", m.AsTESTSTATEID4args())
+	case OP_WANT_DELEGATION:
+		return fmt.Sprintf("WANT_DELEGATION:%v", m.AsWANTDELEGATION4args())
+	case OP_DESTROY_CLIENTID:
+		return fmt.Sprintf("DESTROY_CLIENTID:%v", m.AsDESTROYCLIENTID4args())
+	case OP_RECLAIM_COMPLETE:
+		return fmt.Sprintf("RECLAIM_COMPLETE:%v", m.AsRECLAIMCOMPLETE4args())
+	case OP_ALLOCATE:
+		return fmt.Sprintf("ALLOCATE:%v", m.AsALLOCATE4args())
+	case OP_COPY:
+		return fmt.Sprintf("COPY:%v", m.AsCOPY4args())
+	case OP_COPY_NOTIFY:
+		return fmt.Sprintf("COPY_NOTIFY:%v", m.AsCOPYNOTIFY4args())
+	case OP_DEALLOCATE:
+		return fmt.Sprintf("DEALLOCATE:%v", m.AsDEALLOCATE4args())
+	case OP_IO_ADVISE:
+		return fmt.Sprintf("IO_ADVISE:%v", m.AsIOADVISE4args())
+	case OP_LAYOUTERROR:
+		return fmt.Sprintf("LAYOUTERROR:%v", m.AsLAYOUTERROR4args())
+	case OP_LAYOUTSTATS:
+		return fmt.Sprintf("LAYOUTSTATS:%v", m.AsLAYOUTSTATS4args())
+	case OP_OFFLOAD_CANCEL:
+		return fmt.Sprintf("OFFLOAD_CANCEL:%v", m.AsOFFLOADCANCEL4args())
+	case OP_OFFLOAD_STATUS:
+		return fmt.Sprintf("OFFLOAD_STATUS:%v", m.AsOFFLOADSTATUS4args())
+	case OP_READ_PLUS:
+		return fmt.Sprintf("READ_PLUS:%v", m.AsREADPLUS4args())
+	case OP_SEEK:
+		return fmt.Sprintf("SEEK:%v", m.AsSEEK4args())
+	case OP_WRITE_SAME:
+		return fmt.Sprintf("WRITE_SAME:%v", m.AsWRITESAME4args())
+	case OP_CLONE:
+		return fmt.Sprintf("CLONE:%v", m.AsCLONE4args())
+	case OP_GETXATTR:
+		return fmt.Sprintf("GETXATTR:%v", m.AsGETXATTR4args())
+	case OP_SETXATTR:
+		return fmt.Sprintf("SETXATTR:%v", m.AsSETXATTR4args())
+	case OP_LISTXATTRS:
+		return fmt.Sprintf("LISTXATTRS:%v", m.AsLISTXATTRS4args())
+	case OP_REMOVEXATTR:
+		return fmt.Sprintf("REMOVEXATTR:%v", m.AsREMOVEXATTR4args())
 	case OP_ILLEGAL:
 		return "ILLEGAL"
 	default:
@@ -15367,6 +40557,198 @@ func (m WRITE4resEntry) String() string {
 	return b.String()
 }
 
+func (m BINDCONNTOSESSION4resEntry) String() string {
+	var b strings.Builder
+	b.WriteString("BINDCONNTOSESSION4resEntry{")
+	fmt.Fprintf(&b, "value: %v", m.Value())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m EXCHANGEID4resEntry) String() string {
+	var b strings.Builder
+	b.WriteString("EXCHANGEID4resEntry{")
+	fmt.Fprintf(&b, "value: %v", m.Value())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m CREATESESSION4resEntry) String() string {
+	var b strings.Builder
+	b.WriteString("CREATESESSION4resEntry{")
+	fmt.Fprintf(&b, "value: %v", m.Value())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m GETDIRDELEGATION4resEntry) String() string {
+	var b strings.Builder
+	b.WriteString("GETDIRDELEGATION4resEntry{")
+	fmt.Fprintf(&b, "value: %v", m.Value())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m GETDEVICEINFO4resEntry) String() string {
+	var b strings.Builder
+	b.WriteString("GETDEVICEINFO4resEntry{")
+	fmt.Fprintf(&b, "value: %v", m.Value())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m GETDEVICELIST4resEntry) String() string {
+	var b strings.Builder
+	b.WriteString("GETDEVICELIST4resEntry{")
+	fmt.Fprintf(&b, "value: %v", m.Value())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m LAYOUTCOMMIT4resEntry) String() string {
+	var b strings.Builder
+	b.WriteString("LAYOUTCOMMIT4resEntry{")
+	fmt.Fprintf(&b, "value: %v", m.Value())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m LAYOUTGET4resEntry) String() string {
+	var b strings.Builder
+	b.WriteString("LAYOUTGET4resEntry{")
+	fmt.Fprintf(&b, "value: %v", m.Value())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m LAYOUTRETURN4resEntry) String() string {
+	var b strings.Builder
+	b.WriteString("LAYOUTRETURN4resEntry{")
+	fmt.Fprintf(&b, "value: %v", m.Value())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m SEQUENCE4resEntry) String() string {
+	var b strings.Builder
+	b.WriteString("SEQUENCE4resEntry{")
+	fmt.Fprintf(&b, "value: %v", m.Value())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m SETSSV4resEntry) String() string {
+	var b strings.Builder
+	b.WriteString("SETSSV4resEntry{")
+	fmt.Fprintf(&b, "value: %v", m.Value())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m TESTSTATEID4resEntry) String() string {
+	var b strings.Builder
+	b.WriteString("TESTSTATEID4resEntry{")
+	fmt.Fprintf(&b, "value: %v", m.Value())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m WANTDELEGATION4resEntry) String() string {
+	var b strings.Builder
+	b.WriteString("WANTDELEGATION4resEntry{")
+	fmt.Fprintf(&b, "value: %v", m.Value())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m COPY4resEntry) String() string {
+	var b strings.Builder
+	b.WriteString("COPY4resEntry{")
+	fmt.Fprintf(&b, "value: %v", m.Value())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m COPYNOTIFY4resEntry) String() string {
+	var b strings.Builder
+	b.WriteString("COPYNOTIFY4resEntry{")
+	fmt.Fprintf(&b, "value: %v", m.Value())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m IOADVISE4resEntry) String() string {
+	var b strings.Builder
+	b.WriteString("IOADVISE4resEntry{")
+	fmt.Fprintf(&b, "value: %v", m.Value())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m OFFLOADSTATUS4resEntry) String() string {
+	var b strings.Builder
+	b.WriteString("OFFLOADSTATUS4resEntry{")
+	fmt.Fprintf(&b, "value: %v", m.Value())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m READPLUS4resEntry) String() string {
+	var b strings.Builder
+	b.WriteString("READPLUS4resEntry{")
+	fmt.Fprintf(&b, "value: %v", m.Value())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m SEEK4resEntry) String() string {
+	var b strings.Builder
+	b.WriteString("SEEK4resEntry{")
+	fmt.Fprintf(&b, "value: %v", m.Value())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m WRITESAME4resEntry) String() string {
+	var b strings.Builder
+	b.WriteString("WRITESAME4resEntry{")
+	fmt.Fprintf(&b, "value: %v", m.Value())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m GETXATTR4resEntry) String() string {
+	var b strings.Builder
+	b.WriteString("GETXATTR4resEntry{")
+	fmt.Fprintf(&b, "value: %v", m.Value())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m SETXATTR4resEntry) String() string {
+	var b strings.Builder
+	b.WriteString("SETXATTR4resEntry{")
+	fmt.Fprintf(&b, "value: %v", m.Value())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m LISTXATTRS4resEntry) String() string {
+	var b strings.Builder
+	b.WriteString("LISTXATTRS4resEntry{")
+	fmt.Fprintf(&b, "value: %v", m.Value())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m REMOVEXATTR4resEntry) String() string {
+	var b strings.Builder
+	b.WriteString("REMOVEXATTR4resEntry{")
+	fmt.Fprintf(&b, "value: %v", m.Value())
+	b.WriteString("}")
+	return b.String()
+}
+
 func (m NfsResop4) String() string {
 	switch m.disc {
 	case OP_ACCESS:
@@ -15430,7 +40812,7 @@ func (m NfsResop4) String() string {
 	case OP_SAVEFH:
 		return fmt.Sprintf("SAVEFH:%v", m.AsSAVEFH4res())
 	case OP_SECINFO:
-		return fmt.Sprintf("SECINFO:%v", m.AsSECINFO4resEntry())
+		return fmt.Sprintf("SECINFO:%v", m.AsSecinfo())
 	case OP_SETATTR:
 		return fmt.Sprintf("SETATTR:%v", m.AsSETATTR4res())
 	case OP_SETCLIENTID:
@@ -15443,6 +40825,78 @@ func (m NfsResop4) String() string {
 		return fmt.Sprintf("WRITE:%v", m.AsWRITE4resEntry())
 	case OP_RELEASE_LOCKOWNER:
 		return fmt.Sprintf("RELEASE_LOCKOWNER:%v", m.AsRELEASELOCKOWNER4res())
+	case OP_BACKCHANNEL_CTL:
+		return fmt.Sprintf("BACKCHANNEL_CTL:%v", m.AsBACKCHANNELCTL4res())
+	case OP_BIND_CONN_TO_SESSION:
+		return fmt.Sprintf("BIND_CONN_TO_SESSION:%v", m.AsBINDCONNTOSESSION4resEntry())
+	case OP_EXCHANGE_ID:
+		return fmt.Sprintf("EXCHANGE_ID:%v", m.AsEXCHANGEID4resEntry())
+	case OP_CREATE_SESSION:
+		return fmt.Sprintf("CREATE_SESSION:%v", m.AsCREATESESSION4resEntry())
+	case OP_DESTROY_SESSION:
+		return fmt.Sprintf("DESTROY_SESSION:%v", m.AsDESTROYSESSION4res())
+	case OP_FREE_STATEID:
+		return fmt.Sprintf("FREE_STATEID:%v", m.AsFREESTATEID4res())
+	case OP_GET_DIR_DELEGATION:
+		return fmt.Sprintf("GET_DIR_DELEGATION:%v", m.AsGETDIRDELEGATION4resEntry())
+	case OP_GETDEVICEINFO:
+		return fmt.Sprintf("GETDEVICEINFO:%v", m.AsGETDEVICEINFO4resEntry())
+	case OP_GETDEVICELIST:
+		return fmt.Sprintf("GETDEVICELIST:%v", m.AsGETDEVICELIST4resEntry())
+	case OP_LAYOUTCOMMIT:
+		return fmt.Sprintf("LAYOUTCOMMIT:%v", m.AsLAYOUTCOMMIT4resEntry())
+	case OP_LAYOUTGET:
+		return fmt.Sprintf("LAYOUTGET:%v", m.AsLAYOUTGET4resEntry())
+	case OP_LAYOUTRETURN:
+		return fmt.Sprintf("LAYOUTRETURN:%v", m.AsLAYOUTRETURN4resEntry())
+	case OP_SECINFO_NO_NAME:
+		return fmt.Sprintf("SECINFO_NO_NAME:%v", m.AsSecinfoNoName())
+	case OP_SEQUENCE:
+		return fmt.Sprintf("SEQUENCE:%v", m.AsSEQUENCE4resEntry())
+	case OP_SET_SSV:
+		return fmt.Sprintf("SET_SSV:%v", m.AsSETSSV4resEntry())
+	case OP_TEST_STATEID:
+		return fmt.Sprintf("TEST_STATEID:%v", m.AsTESTSTATEID4resEntry())
+	case OP_WANT_DELEGATION:
+		return fmt.Sprintf("WANT_DELEGATION:%v", m.AsWANTDELEGATION4resEntry())
+	case OP_DESTROY_CLIENTID:
+		return fmt.Sprintf("DESTROY_CLIENTID:%v", m.AsDESTROYCLIENTID4res())
+	case OP_RECLAIM_COMPLETE:
+		return fmt.Sprintf("RECLAIM_COMPLETE:%v", m.AsRECLAIMCOMPLETE4res())
+	case OP_ALLOCATE:
+		return fmt.Sprintf("ALLOCATE:%v", m.AsALLOCATE4res())
+	case OP_COPY:
+		return fmt.Sprintf("COPY:%v", m.AsCOPY4resEntry())
+	case OP_COPY_NOTIFY:
+		return fmt.Sprintf("COPY_NOTIFY:%v", m.AsCOPYNOTIFY4resEntry())
+	case OP_DEALLOCATE:
+		return fmt.Sprintf("DEALLOCATE:%v", m.AsDEALLOCATE4res())
+	case OP_IO_ADVISE:
+		return fmt.Sprintf("IO_ADVISE:%v", m.AsIOADVISE4resEntry())
+	case OP_LAYOUTERROR:
+		return fmt.Sprintf("LAYOUTERROR:%v", m.AsLAYOUTERROR4res())
+	case OP_LAYOUTSTATS:
+		return fmt.Sprintf("LAYOUTSTATS:%v", m.AsLAYOUTSTATS4res())
+	case OP_OFFLOAD_CANCEL:
+		return fmt.Sprintf("OFFLOAD_CANCEL:%v", m.AsOFFLOADCANCEL4res())
+	case OP_OFFLOAD_STATUS:
+		return fmt.Sprintf("OFFLOAD_STATUS:%v", m.AsOFFLOADSTATUS4resEntry())
+	case OP_READ_PLUS:
+		return fmt.Sprintf("READ_PLUS:%v", m.AsREADPLUS4resEntry())
+	case OP_SEEK:
+		return fmt.Sprintf("SEEK:%v", m.AsSEEK4resEntry())
+	case OP_WRITE_SAME:
+		return fmt.Sprintf("WRITE_SAME:%v", m.AsWRITESAME4resEntry())
+	case OP_CLONE:
+		return fmt.Sprintf("CLONE:%v", m.AsCLONE4res())
+	case OP_GETXATTR:
+		return fmt.Sprintf("GETXATTR:%v", m.AsGETXATTR4resEntry())
+	case OP_SETXATTR:
+		return fmt.Sprintf("SETXATTR:%v", m.AsSETXATTR4resEntry())
+	case OP_LISTXATTRS:
+		return fmt.Sprintf("LISTXATTRS:%v", m.AsLISTXATTRS4resEntry())
+	case OP_REMOVEXATTR:
+		return fmt.Sprintf("REMOVEXATTR:%v", m.AsREMOVEXATTR4resEntry())
 	case OP_ILLEGAL:
 		return fmt.Sprintf("ILLEGAL:%v", m.AsILLEGAL4res())
 	default:
@@ -15570,12 +41024,520 @@ func (m CBILLEGAL4res) String() string {
 	return b.String()
 }
 
+func (m LayoutrecallFile4) String() string {
+	var b strings.Builder
+	b.WriteString("LayoutrecallFile4{")
+	fmt.Fprintf(&b, "lor_fh: %v", m.LorFh())
+	fmt.Fprintf(&b, ", lor_offset: %d", m.LorOffset())
+	fmt.Fprintf(&b, ", lor_length: %d", m.LorLength())
+	fmt.Fprintf(&b, ", lor_stateid: %v", m.LorStateid())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m Layoutrecall4) String() string {
+	switch m.disc {
+	case LAYOUTRECALL4_FILE:
+		return fmt.Sprintf("FILE:%v", m.AsLayoutrecallFile4())
+	case LAYOUTRECALL4_FSID:
+		return fmt.Sprintf("FSID:%v", m.AsFsid4())
+	case LAYOUTRECALL4_ALL:
+		return "ALL"
+	default:
+		return fmt.Sprintf("unknown(%v)", m.disc)
+	}
+}
+
+func (m CBLAYOUTRECALL4args) String() string {
+	var b strings.Builder
+	b.WriteString("CBLAYOUTRECALL4args{")
+	fmt.Fprintf(&b, "clora_type: %s", Layouttype4Name(m.CloraType()))
+	fmt.Fprintf(&b, ", clora_iomode: %s", Layoutiomode4Name(m.CloraIomode()))
+	fmt.Fprintf(&b, ", clora_changed: %d", m.CloraChanged())
+	fmt.Fprintf(&b, ", clora_recall: %v", m.CloraRecall())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m CBLAYOUTRECALL4res) String() string {
+	var b strings.Builder
+	b.WriteString("CBLAYOUTRECALL4res{")
+	fmt.Fprintf(&b, "clorr_status: %s", Nfsstat4Name(m.ClorrStatus()))
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m NotifyEntry4) String() string {
+	var b strings.Builder
+	b.WriteString("NotifyEntry4{")
+	fmt.Fprintf(&b, "ne_file: %v", m.NeFile())
+	fmt.Fprintf(&b, ", ne_attrs: %v", m.NeAttrs())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m PrevEntry4) String() string {
+	var b strings.Builder
+	b.WriteString("PrevEntry4{")
+	fmt.Fprintf(&b, "pe_prev_entry: %v", m.PePrevEntry())
+	fmt.Fprintf(&b, ", pe_prev_entry_cookie: %d", m.PePrevEntryCookie())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m NotifyRemove4) String() string {
+	var b strings.Builder
+	b.WriteString("NotifyRemove4{")
+	fmt.Fprintf(&b, "nrm_old_entry: %v", m.NrmOldEntry())
+	fmt.Fprintf(&b, ", nrm_old_entry_cookie: %d", m.NrmOldEntryCookie())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m NotifyAdd4NadNewEntryCookie) String() string {
+	var b strings.Builder
+	b.WriteString("NotifyAdd4NadNewEntryCookie{")
+	{
+		n := int(m.Count())
+		fmt.Fprintf(&b, "data: [")
+		for i := 0; i < n && i < 64; i++ {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			fmt.Fprintf(&b, "%d", m.Data(i))
+		}
+		if n > 64 {
+			fmt.Fprintf(&b, ", ...(%d total)", n)
+		}
+		b.WriteString("]")
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m NotifyAdd4NadPrevEntry) String() string {
+	var b strings.Builder
+	b.WriteString("NotifyAdd4NadPrevEntry{")
+	{
+		iter := m.Data()
+		fmt.Fprintf(&b, "data: [")
+		i := 0
+		for iter.Next() {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			if i >= 64 {
+				b.WriteString("...")
+				break
+			}
+			fmt.Fprintf(&b, "%v", iter.Data())
+			i++
+		}
+		b.WriteString("]")
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m NotifyAdd4) String() string {
+	var b strings.Builder
+	b.WriteString("NotifyAdd4{")
+	{
+		iter := m.NadOldEntry()
+		fmt.Fprintf(&b, "nad_old_entry: [")
+		i := 0
+		for iter.Next() {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			if i >= 64 {
+				b.WriteString("...")
+				break
+			}
+			fmt.Fprintf(&b, "%v", iter.NadOldEntry())
+			i++
+		}
+		b.WriteString("]")
+	}
+	fmt.Fprintf(&b, ", nad_new_entry: %v", m.NadNewEntry())
+	fmt.Fprintf(&b, ", nad_new_entry_cookie: %v", m.NadNewEntryCookie())
+	fmt.Fprintf(&b, ", nad_prev_entry: %v", m.NadPrevEntry())
+	fmt.Fprintf(&b, ", nad_last_entry: %d", m.NadLastEntry())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m NotifyAttr4) String() string {
+	var b strings.Builder
+	b.WriteString("NotifyAttr4{")
+	fmt.Fprintf(&b, "na_changed_entry: %v", m.NaChangedEntry())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m NotifyRename4) String() string {
+	var b strings.Builder
+	b.WriteString("NotifyRename4{")
+	fmt.Fprintf(&b, "nrn_old_entry: %v", m.NrnOldEntry())
+	fmt.Fprintf(&b, ", nrn_new_entry: %v", m.NrnNewEntry())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m NotifyVerifier4) String() string {
+	var b strings.Builder
+	b.WriteString("NotifyVerifier4{")
+	fmt.Fprintf(&b, "nv_old_cookieverf: %v", m.NvOldCookieverf())
+	fmt.Fprintf(&b, ", nv_new_cookieverf: %v", m.NvNewCookieverf())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m Notifylist4) String() string {
+	var b strings.Builder
+	b.WriteString("Notifylist4{")
+	{
+		d := m.Data()
+		if len(d) <= 32 {
+			fmt.Fprintf(&b, "data: %x", d)
+		} else {
+			fmt.Fprintf(&b, "data: %x...(%d bytes)", d[:32], len(d))
+		}
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m Notify4) String() string {
+	var b strings.Builder
+	b.WriteString("Notify4{")
+	fmt.Fprintf(&b, "notify_mask: %v", m.NotifyMask())
+	fmt.Fprintf(&b, ", notify_vals: %v", m.NotifyVals())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m CBNOTIFY4args) String() string {
+	var b strings.Builder
+	b.WriteString("CBNOTIFY4args{")
+	fmt.Fprintf(&b, "cna_stateid: %v", m.CnaStateid())
+	fmt.Fprintf(&b, ", cna_fh: %v", m.CnaFh())
+	{
+		iter := m.CnaChanges()
+		fmt.Fprintf(&b, ", cna_changes: [")
+		i := 0
+		for iter.Next() {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			if i >= 64 {
+				b.WriteString("...")
+				break
+			}
+			fmt.Fprintf(&b, "%v", iter.CnaChange())
+			i++
+		}
+		b.WriteString("]")
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m CBNOTIFY4res) String() string {
+	var b strings.Builder
+	b.WriteString("CBNOTIFY4res{")
+	fmt.Fprintf(&b, "cnr_status: %s", Nfsstat4Name(m.CnrStatus()))
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m CBPUSHDELEG4args) String() string {
+	var b strings.Builder
+	b.WriteString("CBPUSHDELEG4args{")
+	fmt.Fprintf(&b, "cpda_fh: %v", m.CpdaFh())
+	fmt.Fprintf(&b, ", cpda_delegation: %v", m.CpdaDelegation())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m CBPUSHDELEG4res) String() string {
+	var b strings.Builder
+	b.WriteString("CBPUSHDELEG4res{")
+	fmt.Fprintf(&b, "cpdr_status: %s", Nfsstat4Name(m.CpdrStatus()))
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m CBRECALLANY4args) String() string {
+	var b strings.Builder
+	b.WriteString("CBRECALLANY4args{")
+	fmt.Fprintf(&b, "craa_objects_to_keep: %d", m.CraaObjectsToKeep())
+	fmt.Fprintf(&b, ", craa_type_mask: %v", m.CraaTypeMask())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m CBRECALLANY4res) String() string {
+	var b strings.Builder
+	b.WriteString("CBRECALLANY4res{")
+	fmt.Fprintf(&b, "crar_status: %s", Nfsstat4Name(m.CrarStatus()))
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m CBRECALLABLEOBJAVAIL4res) String() string {
+	var b strings.Builder
+	b.WriteString("CBRECALLABLEOBJAVAIL4res{")
+	fmt.Fprintf(&b, "croa_status: %s", Nfsstat4Name(m.CroaStatus()))
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m CBRECALLSLOT4args) String() string {
+	var b strings.Builder
+	b.WriteString("CBRECALLSLOT4args{")
+	fmt.Fprintf(&b, "rsa_target_highest_slotid: %d", m.RsaTargetHighestSlotid())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m CBRECALLSLOT4res) String() string {
+	var b strings.Builder
+	b.WriteString("CBRECALLSLOT4res{")
+	fmt.Fprintf(&b, "rsr_status: %s", Nfsstat4Name(m.RsrStatus()))
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m ReferringCall4) String() string {
+	var b strings.Builder
+	b.WriteString("ReferringCall4{")
+	fmt.Fprintf(&b, "rc_sequenceid: %d", m.RcSequenceid())
+	fmt.Fprintf(&b, ", rc_slotid: %d", m.RcSlotid())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m ReferringCallList4) String() string {
+	var b strings.Builder
+	b.WriteString("ReferringCallList4{")
+	fmt.Fprintf(&b, "rcl_sessionid: %v", m.RclSessionid())
+	{
+		n := int(m.RclReferringCallsCount())
+		fmt.Fprintf(&b, ", rcl_referring_calls: [")
+		for i := 0; i < n && i < 64; i++ {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			fmt.Fprintf(&b, "%v", m.RclReferringCalls(i))
+		}
+		if n > 64 {
+			fmt.Fprintf(&b, ", ...(%d total)", n)
+		}
+		b.WriteString("]")
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m CBSEQUENCE4args) String() string {
+	var b strings.Builder
+	b.WriteString("CBSEQUENCE4args{")
+	fmt.Fprintf(&b, "csa_sessionid: %v", m.CsaSessionid())
+	fmt.Fprintf(&b, ", csa_sequenceid: %d", m.CsaSequenceid())
+	fmt.Fprintf(&b, ", csa_slotid: %d", m.CsaSlotid())
+	fmt.Fprintf(&b, ", csa_highest_slotid: %d", m.CsaHighestSlotid())
+	fmt.Fprintf(&b, ", csa_cachethis: %d", m.CsaCachethis())
+	{
+		iter := m.CsaReferringCallLists()
+		fmt.Fprintf(&b, ", csa_referring_call_lists: [")
+		i := 0
+		for iter.Next() {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			if i >= 64 {
+				b.WriteString("...")
+				break
+			}
+			fmt.Fprintf(&b, "%v", iter.CsaReferringCallList())
+			i++
+		}
+		b.WriteString("]")
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m CBSEQUENCE4resok) String() string {
+	var b strings.Builder
+	b.WriteString("CBSEQUENCE4resok{")
+	fmt.Fprintf(&b, "csr_sessionid: %v", m.CsrSessionid())
+	fmt.Fprintf(&b, ", csr_sequenceid: %d", m.CsrSequenceid())
+	fmt.Fprintf(&b, ", csr_slotid: %d", m.CsrSlotid())
+	fmt.Fprintf(&b, ", csr_highest_slotid: %d", m.CsrHighestSlotid())
+	fmt.Fprintf(&b, ", csr_target_highest_slotid: %d", m.CsrTargetHighestSlotid())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m CBSEQUENCE4res) String() string {
+	switch m.disc {
+	case NFS4_OK:
+		return fmt.Sprintf("NFS4_OK:%v", m.AsCBSEQUENCE4resok())
+	default:
+		return fmt.Sprintf("unknown(%v)", m.disc)
+	}
+}
+
+func (m CBWANTSCANCELLED4args) String() string {
+	var b strings.Builder
+	b.WriteString("CBWANTSCANCELLED4args{")
+	fmt.Fprintf(&b, "cwca_contended_wants_cancelled: %d", m.CwcaContendedWantsCancelled())
+	fmt.Fprintf(&b, ", cwca_resourced_wants_cancelled: %d", m.CwcaResourcedWantsCancelled())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m CBWANTSCANCELLED4res) String() string {
+	var b strings.Builder
+	b.WriteString("CBWANTSCANCELLED4res{")
+	fmt.Fprintf(&b, "cwcr_status: %s", Nfsstat4Name(m.CwcrStatus()))
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m CBNOTIFYLOCK4args) String() string {
+	var b strings.Builder
+	b.WriteString("CBNOTIFYLOCK4args{")
+	fmt.Fprintf(&b, "cnla_fh: %v", m.CnlaFh())
+	fmt.Fprintf(&b, ", cnla_lock_owner: %v", m.CnlaLockOwner())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m CBNOTIFYLOCK4res) String() string {
+	var b strings.Builder
+	b.WriteString("CBNOTIFYLOCK4res{")
+	fmt.Fprintf(&b, "cnlr_status: %s", Nfsstat4Name(m.CnlrStatus()))
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m NotifyDeviceidDelete4) String() string {
+	var b strings.Builder
+	b.WriteString("NotifyDeviceidDelete4{")
+	fmt.Fprintf(&b, "ndd_layouttype: %s", Layouttype4Name(m.NddLayouttype()))
+	fmt.Fprintf(&b, ", ndd_deviceid: %v", m.NddDeviceid())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m NotifyDeviceidChange4) String() string {
+	var b strings.Builder
+	b.WriteString("NotifyDeviceidChange4{")
+	fmt.Fprintf(&b, "ndc_layouttype: %s", Layouttype4Name(m.NdcLayouttype()))
+	fmt.Fprintf(&b, ", ndc_deviceid: %v", m.NdcDeviceid())
+	fmt.Fprintf(&b, ", ndc_immediate: %d", m.NdcImmediate())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m CBNOTIFYDEVICEID4args) String() string {
+	var b strings.Builder
+	b.WriteString("CBNOTIFYDEVICEID4args{")
+	{
+		iter := m.CndaChanges()
+		fmt.Fprintf(&b, "cnda_changes: [")
+		i := 0
+		for iter.Next() {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			if i >= 64 {
+				b.WriteString("...")
+				break
+			}
+			fmt.Fprintf(&b, "%v", iter.CnaChange())
+			i++
+		}
+		b.WriteString("]")
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m CBNOTIFYDEVICEID4res) String() string {
+	var b strings.Builder
+	b.WriteString("CBNOTIFYDEVICEID4res{")
+	fmt.Fprintf(&b, "cndr_status: %s", Nfsstat4Name(m.CndrStatus()))
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m OffloadInfo4Default) String() string {
+	var b strings.Builder
+	b.WriteString("OffloadInfo4Default{")
+	fmt.Fprintf(&b, "value: %d", m.Value())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m OffloadInfo4) String() string {
+	switch m.disc {
+	case NFS4_OK:
+		return fmt.Sprintf("NFS4_OK:%v", m.AsWriteResponse4())
+	default:
+		return fmt.Sprintf("%v:%v", m.disc, m.AsOffloadInfo4Default())
+	}
+}
+
+func (m CBOFFLOAD4args) String() string {
+	var b strings.Builder
+	b.WriteString("CBOFFLOAD4args{")
+	fmt.Fprintf(&b, "coa_fh: %v", m.CoaFh())
+	fmt.Fprintf(&b, ", coa_stateid: %v", m.CoaStateid())
+	fmt.Fprintf(&b, ", coa_offload_info: %v", m.CoaOffloadInfo())
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m CBOFFLOAD4res) String() string {
+	var b strings.Builder
+	b.WriteString("CBOFFLOAD4res{")
+	fmt.Fprintf(&b, "cor_status: %s", Nfsstat4Name(m.CorStatus()))
+	b.WriteString("}")
+	return b.String()
+}
+
 func (m NfsCbArgop4) String() string {
 	switch m.disc {
 	case OP_CB_GETATTR:
 		return fmt.Sprintf("GETATTR:%v", m.AsCBGETATTR4args())
 	case OP_CB_RECALL:
 		return fmt.Sprintf("RECALL:%v", m.AsCBRECALL4args())
+	case OP_CB_LAYOUTRECALL:
+		return fmt.Sprintf("LAYOUTRECALL:%v", m.AsCBLAYOUTRECALL4args())
+	case OP_CB_NOTIFY:
+		return fmt.Sprintf("NOTIFY:%v", m.AsCBNOTIFY4args())
+	case OP_CB_PUSH_DELEG:
+		return fmt.Sprintf("PUSH_DELEG:%v", m.AsCBPUSHDELEG4args())
+	case OP_CB_RECALL_ANY:
+		return fmt.Sprintf("RECALL_ANY:%v", m.AsRecallAny())
+	case OP_CB_RECALLABLE_OBJ_AVAIL:
+		return fmt.Sprintf("RECALLABLE_OBJ_AVAIL:%v", m.AsRecallableObjAvail())
+	case OP_CB_RECALL_SLOT:
+		return fmt.Sprintf("RECALL_SLOT:%v", m.AsCBRECALLSLOT4args())
+	case OP_CB_SEQUENCE:
+		return fmt.Sprintf("SEQUENCE:%v", m.AsCBSEQUENCE4args())
+	case OP_CB_WANTS_CANCELLED:
+		return fmt.Sprintf("WANTS_CANCELLED:%v", m.AsCBWANTSCANCELLED4args())
+	case OP_CB_NOTIFY_LOCK:
+		return fmt.Sprintf("NOTIFY_LOCK:%v", m.AsCBNOTIFYLOCK4args())
+	case OP_CB_NOTIFY_DEVICEID:
+		return fmt.Sprintf("NOTIFY_DEVICEID:%v", m.AsCBNOTIFYDEVICEID4args())
+	case OP_CB_OFFLOAD:
+		return fmt.Sprintf("OFFLOAD:%v", m.AsCBOFFLOAD4args())
 	case OP_CB_ILLEGAL:
 		return "ILLEGAL"
 	default:
@@ -15591,12 +41553,42 @@ func (m CBGETATTR4resEntry) String() string {
 	return b.String()
 }
 
+func (m CBSEQUENCE4resEntry) String() string {
+	var b strings.Builder
+	b.WriteString("CBSEQUENCE4resEntry{")
+	fmt.Fprintf(&b, "value: %v", m.Value())
+	b.WriteString("}")
+	return b.String()
+}
+
 func (m NfsCbResop4) String() string {
 	switch m.disc {
 	case OP_CB_GETATTR:
 		return fmt.Sprintf("GETATTR:%v", m.AsCBGETATTR4resEntry())
 	case OP_CB_RECALL:
 		return fmt.Sprintf("RECALL:%v", m.AsCBRECALL4res())
+	case OP_CB_LAYOUTRECALL:
+		return fmt.Sprintf("LAYOUTRECALL:%v", m.AsCBLAYOUTRECALL4res())
+	case OP_CB_NOTIFY:
+		return fmt.Sprintf("NOTIFY:%v", m.AsCBNOTIFY4res())
+	case OP_CB_PUSH_DELEG:
+		return fmt.Sprintf("PUSH_DELEG:%v", m.AsCBPUSHDELEG4res())
+	case OP_CB_RECALL_ANY:
+		return fmt.Sprintf("RECALL_ANY:%v", m.AsCBRECALLANY4res())
+	case OP_CB_RECALLABLE_OBJ_AVAIL:
+		return fmt.Sprintf("RECALLABLE_OBJ_AVAIL:%v", m.AsCBRECALLABLEOBJAVAIL4res())
+	case OP_CB_RECALL_SLOT:
+		return fmt.Sprintf("RECALL_SLOT:%v", m.AsCBRECALLSLOT4res())
+	case OP_CB_SEQUENCE:
+		return fmt.Sprintf("SEQUENCE:%v", m.AsCBSEQUENCE4resEntry())
+	case OP_CB_WANTS_CANCELLED:
+		return fmt.Sprintf("WANTS_CANCELLED:%v", m.AsCBWANTSCANCELLED4res())
+	case OP_CB_NOTIFY_LOCK:
+		return fmt.Sprintf("NOTIFY_LOCK:%v", m.AsCBNOTIFYLOCK4res())
+	case OP_CB_NOTIFY_DEVICEID:
+		return fmt.Sprintf("NOTIFY_DEVICEID:%v", m.AsCBNOTIFYDEVICEID4res())
+	case OP_CB_OFFLOAD:
+		return fmt.Sprintf("OFFLOAD:%v", m.AsCBOFFLOAD4res())
 	case OP_CB_ILLEGAL:
 		return fmt.Sprintf("ILLEGAL:%v", m.AsCBILLEGAL4res())
 	default:
@@ -15669,6 +41661,18 @@ func (m CBCOMPOUND4res) String() string {
 		}
 		b.WriteString("]")
 	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func (m OpenArguments4) String() string {
+	var b strings.Builder
+	b.WriteString("OpenArguments4{")
+	fmt.Fprintf(&b, "oa_share_access: %v", m.OaShareAccess())
+	fmt.Fprintf(&b, ", oa_share_deny: %v", m.OaShareDeny())
+	fmt.Fprintf(&b, ", oa_share_access_want: %v", m.OaShareAccessWant())
+	fmt.Fprintf(&b, ", oa_open_claim: %v", m.OaOpenClaim())
+	fmt.Fprintf(&b, ", oa_create_mode: %v", m.OaCreateMode())
 	b.WriteString("}")
 	return b.String()
 }

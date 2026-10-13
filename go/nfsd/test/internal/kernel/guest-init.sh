@@ -6,7 +6,7 @@
 # PID 1 inside the qemu guest started by the kernel test driver (main.go). The
 # root filesystem is
 # the host's, shared over virtio-9p, so paths on the kernel command line are host
-# paths. Mount nfsd through the guest kernel's NFSv4.0 client, run the
+# paths. Mount nfsd through the guest kernel's NFSv4.1 client, run the
 # selected functional cases against it, then power the guest off. Everything
 # printed here also goes to the log file named on the command line.
 
@@ -75,13 +75,24 @@ diagnostics() {
 
 mkdir -p "$mnt"
 # 10.0.2.2 is the host's loopback interface as seen through qemu user networking.
-if ! mount -t nfs4 -o vers=4.0,proto=tcp,port="$nfsport",hard,timeo=600 "10.0.2.2:$export_path" "$mnt"; then
+if ! mount -t nfs4 -o vers=4.1,proto=tcp,port="$nfsport",hard,timeo=600 "10.0.2.2:$export_path" "$mnt"; then
 	echo "MOUNT-FAILED"
 	dmesg | tail -20
 	echo "suite exit=2"
 	exit 2
 fi
 echo "MOUNT-OK $(grep " $mnt " /proc/mounts)"
+
+# The driver's -restart-mid-write mode: one writer stays open while the host
+# restarts nfsd, instead of the functional cases.
+if [[ ${mode:-} == restart-mid-write ]]; then
+	timeout -s KILL "$case_timeout" python3 "${restart_writer:-}" "$mnt" "${control:-}" < /dev/null
+	status=$?
+	(( status == 137 )) && diagnostics
+	echo "suite exit=$status"
+	umount "$mnt" || umount -f "$mnt" || echo "umount failed"
+	exit "$status"
+fi
 
 if ! cd -- "$functional"; then
 	echo "suite exit=2"

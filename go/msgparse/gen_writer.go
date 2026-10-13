@@ -420,7 +420,11 @@ func (g *Generator) emitWriterHeaderSetters(ti *TypeInfo, writerName string, use
 			if p, ok := g.fieldPrimInfoOk(f); ok {
 				g.p("\nfunc (w *%s) Set%s(v %s) {\n", writerName, fieldGoName, goType(p))
 				g.emitPhaseCheck(needsPhase, fieldPhase)
-				g.p("\tw.buf = %s(w.buf, v)\n", g.appendHelper(p))
+				val := "v"
+				if p.Signed && p.Size > 1 {
+					val = fmt.Sprintf("%s(v)", strings.Replace(goType(p), "int", "uint", 1))
+				}
+				g.p("\tw.buf = %s(w.buf, %s)\n", g.appendHelper(p), val)
 				g.p("}\n")
 			}
 			continue
@@ -478,6 +482,15 @@ func (g *Generator) emitWriterArrayMethods(ti *TypeInfo, writerName string, coun
 				g.emitPhaseCheck(needsPhase, fieldPhase)
 				g.emitDeferredCountAlloc(c.deferred, c.goName, va.CountField)
 				g.p("\tw.buf = %s(w.buf, v)\n", helper)
+				g.p("\tw.%s++\n", c.goName)
+				g.p("}\n")
+			} else if eti, ok := g.a.Types[f.TypeName]; ok && eti.Decl.Kind == DeclEnum {
+				// Enum array: AppendXxx(v Type), as for its primitive.
+				p := enumPrimInfo(eti.Decl.Enum)
+				g.p("\nfunc (w *%s) Append%s(v %s) {\n", writerName, fieldGoName, goType(p))
+				g.emitPhaseCheck(needsPhase, fieldPhase)
+				g.emitDeferredCountAlloc(c.deferred, c.goName, va.CountField)
+				g.p("\tw.buf = %s(w.buf, v)\n", g.appendHelper(p))
 				g.p("\tw.%s++\n", c.goName)
 				g.p("}\n")
 			} else if eti, ok := g.a.Types[f.TypeName]; ok && eti.Decl.Kind == DeclStruct {
@@ -661,6 +674,11 @@ func (g *Generator) emitConvenienceAppendMethods(parentTi *TypeInfo, arrayField 
 		}
 
 		payloadTi := g.a.Types[arm.Payload]
+		discExpr, discParam := arm.Label, ""
+		if arm.Label == "default" {
+			discExpr = camelCase(g.goName(discEnum))
+			discParam = discExpr + " " + goType(discPrim)
+		}
 		if payloadTi == nil {
 			continue
 		}
@@ -669,14 +687,14 @@ func (g *Generator) emitConvenienceAppendMethods(parentTi *TypeInfo, arrayField 
 			// Fixed-size struct payload: coalesce disc + body into single append.
 			sizeConst := sizeConstName(arm.Payload)
 
-			g.p("\nfunc (w *%s) %s() %s {\n", writerName, methodName, g.goName(payloadTi))
+			g.p("\nfunc (w *%s) %s(%s) %s {\n", writerName, methodName, discParam, g.goName(payloadTi))
 			g.p("\t_ = w.buf[:1]\n")
 			g.emitPhaseCheck(needsPhase, fieldPhase)
 			g.emitDeferredCountAlloc(countDeferred, countGoName, countField)
 			g.p("\tw.buf = append(w.buf, make([]byte, %d+%s)...)\n", discSize, sizeConst)
 			g.p("\tp := (*[%d + %s]byte)(w.buf[len(w.buf)-%d-%s:])\n",
 				discSize, sizeConst, discSize, sizeConst)
-			g.p("\t%s\n", g.writePrim(discPrim, fmt.Sprintf("p[:%d]", discSize), arm.Label))
+			g.p("\t%s\n", g.writePrim(discPrim, fmt.Sprintf("p[:%d]", discSize), discExpr))
 			g.p("\tw.%s++\n", countGoName)
 			g.p("\treturn %s{m: (*[%s]byte)(p[%d:])}\n}\n",
 				g.goName(payloadTi), sizeConst, discSize)
@@ -685,7 +703,7 @@ func (g *Generator) emitConvenienceAppendMethods(parentTi *TypeInfo, arrayField 
 			childWriter := g.goName(payloadTi) + "Writer"
 			knownSize := g.childWriterKnownSize(payloadTi)
 			if knownSize > 0 {
-				g.p("\nfunc (w *%s) %s() %s {\n", writerName, methodName, childWriter)
+				g.p("\nfunc (w *%s) %s(%s) %s {\n", writerName, methodName, discParam, childWriter)
 				g.p("\t_ = w.buf[:1]\n")
 				g.emitPhaseCheck(needsPhase, fieldPhase)
 				g.emitDeferredCountAlloc(countDeferred, countGoName, countField)
@@ -694,7 +712,7 @@ func (g *Generator) emitConvenienceAppendMethods(parentTi *TypeInfo, arrayField 
 				g.p("\n")
 				g.p("\toff := len(w.buf) - %d - %d\n", discSize, knownSize)
 				g.p("\t%s\n", g.writePrim(discPrim,
-					fmt.Sprintf("(*[%d + %d]byte)(w.buf[off:])[:%d]", discSize, knownSize, discSize), arm.Label))
+					fmt.Sprintf("(*[%d + %d]byte)(w.buf[off:])[:%d]", discSize, knownSize, discSize), discExpr))
 				g.p("\tw.%s++\n", countGoName)
 				g.p("\tbuf := w.buf\n")
 				g.p("\tw.buf = nil\n")
@@ -702,12 +720,12 @@ func (g *Generator) emitConvenienceAppendMethods(parentTi *TypeInfo, arrayField 
 				g.p("}\n")
 			} else {
 				// Can't coalesce — just append disc, then start child.
-				g.p("\nfunc (w *%s) %s() %s {\n", writerName, methodName, childWriter)
+				g.p("\nfunc (w *%s) %s(%s) %s {\n", writerName, methodName, discParam, childWriter)
 				g.p("\t_ = w.buf[:1]\n")
 				g.emitPhaseCheck(needsPhase, fieldPhase)
 				g.emitDeferredCountAlloc(countDeferred, countGoName, countField)
 				helper := g.appendHelper(discPrim)
-				g.p("\tw.buf = %s(w.buf, %s)\n", helper, arm.Label)
+				g.p("\tw.buf = %s(w.buf, %s)\n", helper, discExpr)
 				g.p("\tw.%s++\n", countGoName)
 				g.p("\tchild := Start%s(w.buf)\n", g.goName(payloadTi))
 				g.p("\tw.buf = nil\n")
@@ -800,6 +818,11 @@ func (g *Generator) emitWriterUnionMethods(ti *TypeInfo, writerName string) {
 			}
 
 			payloadTi := g.a.Types[arm.Payload]
+			discExpr, discParam := arm.Label, ""
+			if arm.Label == "default" {
+				discExpr = camelCase(unionDecl.DiscType)
+				discParam = discExpr + " " + goType(discPrim)
+			}
 			if payloadTi == nil {
 				continue
 			}
@@ -808,18 +831,18 @@ func (g *Generator) emitWriterUnionMethods(ti *TypeInfo, writerName string) {
 				// Discriminant is in the pre-allocated header — write it there,
 				// only append payload bytes.
 				g.emitUnionArmDiscInHeader(writerName, methodName, payloadTi,
-					discPrim, headerSize, discOff, arm, needsPhase, fieldPhase, useHeaderPtr)
+					discPrim, headerSize, discOff, arm, discExpr, discParam, needsPhase, fieldPhase, useHeaderPtr)
 			} else if payloadTi.IsFixedSize {
 				// Fixed-size struct: coalesce disc + body.
 				sizeConst := sizeConstName(arm.Payload)
 
-				g.p("\nfunc (w *%s) %s() %s {\n", writerName, methodName, g.goName(payloadTi))
+				g.p("\nfunc (w *%s) %s(%s) %s {\n", writerName, methodName, discParam, g.goName(payloadTi))
 				g.emitPhaseCheck(needsPhase, fieldPhase)
 				g.p("\tw.buf = append(w.buf, make([]byte, %d+%s)...)\n", discSize, sizeConst)
 				g.p("\tp := (*[%d + %s]byte)(w.buf[len(w.buf)-%d-%s:])\n",
 					discSize, sizeConst, discSize, sizeConst)
 				g.p("\t%s\n", g.writePrim(discPrim,
-					fmt.Sprintf("p[:%d]", discSize), arm.Label))
+					fmt.Sprintf("p[:%d]", discSize), discExpr))
 				g.p("\treturn %s{m: (*[%s]byte)(p[%d:])}\n}\n",
 					g.goName(payloadTi), sizeConst, discSize)
 			} else {
@@ -827,12 +850,12 @@ func (g *Generator) emitWriterUnionMethods(ti *TypeInfo, writerName string) {
 				childWriter := g.goName(payloadTi) + "Writer"
 				knownSize := g.childWriterKnownSize(payloadTi)
 				if knownSize > 0 {
-					g.p("\nfunc (w *%s) %s() %s {\n", writerName, methodName, childWriter)
+					g.p("\nfunc (w *%s) %s(%s) %s {\n", writerName, methodName, discParam, childWriter)
 					g.emitPhaseCheck(needsPhase, fieldPhase)
 					g.p("\tw.buf = append(w.buf, make([]byte, %d+%d)...)\n", discSize, knownSize)
 					g.p("\toff := len(w.buf) - %d - %d\n", discSize, knownSize)
 					g.p("\t%s\n", g.writePrim(discPrim,
-						fmt.Sprintf("(*[%d + %d]byte)(w.buf[off:])[:%d]", discSize, knownSize, discSize), arm.Label))
+						fmt.Sprintf("(*[%d + %d]byte)(w.buf[off:])[:%d]", discSize, knownSize, discSize), discExpr))
 					g.p("\tbuf := w.buf\n")
 					g.p("\tw.buf = nil\n")
 					g.emitChildWriterReturn(payloadTi, childWriter, "buf", fmt.Sprintf("off + %d", discSize))
@@ -840,9 +863,9 @@ func (g *Generator) emitWriterUnionMethods(ti *TypeInfo, writerName string) {
 				} else {
 					// Default: append disc, start child.
 					helper := g.appendHelper(discPrim)
-					g.p("\nfunc (w *%s) %s() %s {\n", writerName, methodName, childWriter)
+					g.p("\nfunc (w *%s) %s(%s) %s {\n", writerName, methodName, discParam, childWriter)
 					g.emitPhaseCheck(needsPhase, fieldPhase)
-					g.p("\tw.buf = %s(w.buf, %s)\n", helper, arm.Label)
+					g.p("\tw.buf = %s(w.buf, %s)\n", helper, discExpr)
 					g.p("\tchild := Start%s(w.buf)\n", g.goName(payloadTi))
 					g.p("\tw.buf = nil\n")
 					g.p("\treturn child\n}\n")
@@ -854,13 +877,13 @@ func (g *Generator) emitWriterUnionMethods(ti *TypeInfo, writerName string) {
 
 // emitUnionArmDiscInHeader generates a Set method for a union arm whose
 // discriminant is in the pre-allocated message header.
-func (g *Generator) emitUnionArmDiscInHeader(writerName, methodName string, payloadTi *TypeInfo, discPrim PrimInfo, headerSize, discOff int, arm UnionArm, needsPhase bool, fieldPhase int, useHeaderPtr bool) {
+func (g *Generator) emitUnionArmDiscInHeader(writerName, methodName string, payloadTi *TypeInfo, discPrim PrimInfo, headerSize, discOff int, arm UnionArm, discExpr, discParam string, needsPhase bool, fieldPhase int, useHeaderPtr bool) {
 	if payloadTi.IsFixedSize {
 		// Fixed-size struct payload: write disc into header, append only payload.
 		sizeConst := sizeConstName(arm.Payload)
-		g.p("\nfunc (w *%s) %s() %s {\n", writerName, methodName, g.goName(payloadTi))
+		g.p("\nfunc (w *%s) %s(%s) %s {\n", writerName, methodName, discParam, g.goName(payloadTi))
 		g.emitPhaseCheck(needsPhase, fieldPhase)
-		g.p("\t%s\n", g.writerSetPrimVal(discPrim, headerSize, discOff, arm.Label, useHeaderPtr))
+		g.p("\t%s\n", g.writerSetPrimVal(discPrim, headerSize, discOff, discExpr, useHeaderPtr))
 		g.p("\tw.buf = append(w.buf, make([]byte, %s)...)\n", sizeConst)
 		g.p("\treturn %s{m: (*[%s]byte)(w.buf[len(w.buf)-%s:])}\n}\n",
 			g.goName(payloadTi), sizeConst, sizeConst)
@@ -868,9 +891,9 @@ func (g *Generator) emitUnionArmDiscInHeader(writerName, methodName string, payl
 		// Variable-size payload: write disc into header, append only payload header.
 		childWriter := g.goName(payloadTi) + "Writer"
 		knownSize := g.childWriterKnownSize(payloadTi)
-		g.p("\nfunc (w *%s) %s() %s {\n", writerName, methodName, childWriter)
+		g.p("\nfunc (w *%s) %s(%s) %s {\n", writerName, methodName, discParam, childWriter)
 		g.emitPhaseCheck(needsPhase, fieldPhase)
-		g.p("\t%s\n", g.writerSetPrimVal(discPrim, headerSize, discOff, arm.Label, useHeaderPtr))
+		g.p("\t%s\n", g.writerSetPrimVal(discPrim, headerSize, discOff, discExpr, useHeaderPtr))
 		if knownSize > 0 {
 			g.p("\tw.buf = append(w.buf, make([]byte, %d)...)\n", knownSize)
 			g.p("\tbuf := w.buf\n")

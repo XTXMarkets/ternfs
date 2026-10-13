@@ -38,6 +38,9 @@ var pynfsCodePattern = regexp.MustCompile(`^[A-Z][A-Z0-9]*[a-z]?$`)
 
 const defaultPynfsSkipFile = "pynfs/pynfs_unsupported.txt"
 
+// pynfsTimedCases sleep for a lease period or longer.
+var pynfsTimedCases = []string{"noEID9", "noCOUR1", "noCOUR4", "noCOUR5", "noCOUR6", "noCOUR7"}
+
 func pynfsSkipSelectors(path string) ([]string, error) {
 	if path == "" {
 		return nil, nil
@@ -102,7 +105,7 @@ func run(ctx context.Context, opts harness.Options, short bool) (err error) {
 		python = "python3"
 	}
 
-	testServer := filepath.Join(source, "nfs4.0", "testserver.py")
+	testServer := filepath.Join(source, "nfs4.1", "testserver.py")
 	if _, err := os.Stat(testServer); err != nil {
 		return fmt.Errorf("pynfs runner not found: %w; run make fetch-pynfs", err)
 	}
@@ -122,6 +125,7 @@ func run(ctx context.Context, opts harness.Options, short bool) (err error) {
 		"-u",
 		testServer,
 		fmt.Sprintf("nfs://%s/%s", server.Addr, server.Name),
+		"--minorversion=1",
 		"--maketree",
 		"--rundeps",
 		"--verbose",
@@ -130,7 +134,7 @@ func run(ctx context.Context, opts harness.Options, short bool) (err error) {
 
 	selectors := strings.Fields(os.Getenv("PYNFS_TESTS"))
 	if len(selectors) == 0 {
-		selectors = []string{"all", "noblock", "nochar", "nofifo", "nosocket", "nogss", "noacl", "nomode000"}
+		selectors = []string{"all", "noblock", "nochar", "nofifo", "nosocket", "nodeleg"}
 	}
 	skipFile, configured := os.LookupEnv("PYNFS_SKIP_FILE")
 	if !configured {
@@ -145,14 +149,16 @@ func run(ctx context.Context, opts harness.Options, short bool) (err error) {
 	}
 	selectors = append(selectors, skipSelectors...)
 	if short {
-		selectors = append(selectors, "notimed")
+		// The NFSv4.1 suite has no timed flag; its lease-waiting cases are
+		// listed individually.
+		selectors = append(selectors, pynfsTimedCases...)
 	}
 	// Keep failure evidence; the shared fixture removes this tree on success.
 	args = append(args, "--nocleanup", "--jsonout", resultsPath)
 	args = append(args, selectors...)
 
 	cmd := exec.Command(python, args...)
-	cmd.Dir = filepath.Join(source, "nfs4.0")
+	cmd.Dir = filepath.Join(source, "nfs4.1")
 	console, err := os.Create(filepath.Join(server.Dir, "pynfs.out"))
 	if err != nil {
 		return err

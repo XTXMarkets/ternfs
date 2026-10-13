@@ -51,7 +51,7 @@ func newInspectFixture(t *testing.T) *inspectFixture {
 	f := &inspectFixture{
 		fs:       NewLocalTernVFS(t.TempDir()),
 		now:      time.Unix(1_700_000_000, 0),
-		identity: []byte("Linux NFSv4.0 host-a/10.0.0.1"),
+		identity: []byte("Linux NFSv4.1 host-a/10.0.0.1"),
 	}
 	var err error
 	f.first, err = NewClientStore(f.fs)
@@ -67,8 +67,6 @@ func newInspectFixture(t *testing.T) *inspectFixture {
 
 	owner := clientOwner{
 		principal: rpcPrincipal{flavor: authSys, body: authSysBody(1000, 100, 100, 4)},
-		netid:     "tcp",
-		addr:      "10.0.0.1.8.1",
 	}
 
 	// Identity C: confirmed with a lease which expires before the report is
@@ -106,8 +104,8 @@ func newInspectFixture(t *testing.T) *inspectFixture {
 	}
 
 	// The first slot of identity A and the only slot of identity C are now
-	// expired; the second slot of identity A is live.
-	f.now = f.now.Add(50 * time.Second)
+	// expired, by 10s; the second slot of identity A is live.
+	f.now = f.now.Add(leaseWriteTerm - 40*time.Second)
 
 	f.stagingDir = t.TempDir()
 	uploadMeta := filepath.Join(f.stagingDir, "0000000000003039.meta")
@@ -222,7 +220,7 @@ func TestInspectReportsClientState(t *testing.T) {
 	if identity.IdentityHash != clientIdentityKey(f.identity) {
 		t.Fatalf("identity hash = %s", identity.IdentityHash)
 	}
-	if identity.Identity != "Linux NFSv4.0 host-a/10.0.0.1" ||
+	if identity.Identity != "Linux NFSv4.1 host-a/10.0.0.1" ||
 		identity.IdentityHex != "" {
 		t.Fatalf("identity = %q hex = %q", identity.Identity, identity.IdentityHex)
 	}
@@ -259,9 +257,6 @@ func TestInspectReportsClientState(t *testing.T) {
 	if current.Record.Principal != "AUTH_SYS uid=1000 gid=100 groups=[100,4]" {
 		t.Fatalf("principal = %s", current.Record.Principal)
 	}
-	if current.Record.Callback != "tcp 10.0.0.1:2049" {
-		t.Fatalf("callback = %s", current.Record.Callback)
-	}
 	if current.Record.Verifier != hex.EncodeToString([]byte{2, 0, 0, 0, 0, 0, 0, 0}) {
 		t.Fatalf("verifier = %s", current.Record.Verifier)
 	}
@@ -286,7 +281,7 @@ func TestInspectReportsClientState(t *testing.T) {
 		report.StagingSummary.Complete != 2 {
 		t.Fatalf("staging summary = %+v", report.StagingSummary)
 	}
-	if open.Staging.SidecarVersion != "v6" ||
+	if open.Staging.SidecarVersion != "v8" ||
 		open.Staging.BaseID != inspectInode(MakeInodeID(InodeTypeFile, 123)) ||
 		open.Staging.BaseSize != 8192 || open.Staging.CheckpointSize != 4096 ||
 		len(open.Staging.Dirty) != 1 || !open.Staging.MetadataChanged ||
@@ -595,7 +590,7 @@ func TestInspectOutput(t *testing.T) {
 			"open markers 1, stale 0",
 		// Every label matches the flag which selects it.
 		"identity-hash " + clientIdentityKey(f.identity),
-		"identity  \"Linux NFSv4.0 host-a/10.0.0.1\"",
+		"identity  \"Linux NFSv4.1 host-a/10.0.0.1\"",
 		"directory " + inodeHex(InodeID(f.identityDirID)),
 		"confirmed clientid " + inodeHex(InodeID(f.clientID)),
 		"[confirmed,pending, lease live] ACTIVE",
@@ -611,8 +606,8 @@ func TestInspectOutput(t *testing.T) {
 		"attrs change 99",
 		"owner \"owner-a\" access write",
 		"NO OPEN MARKER",
-		"client     identity \"Linux NFSv4.0 host-a/10.0.0.1\" verifier ",
-		"principal AUTH_SYS uid=1000 gid=100 groups=[100,4] callback tcp 10.0.0.1:2049",
+		"client     identity \"Linux NFSv4.1 host-a/10.0.0.1\" verifier ",
+		"principal AUTH_SYS uid=1000 gid=100 groups=[100,4]",
 	} {
 		if !strings.Contains(text.String(), want) {
 			t.Errorf("text report lacks %q:\n%s", want, text.String())
@@ -933,7 +928,7 @@ func TestInspectReportsStagingIntegrity(t *testing.T) {
 		!strings.Contains(got.Problems[0], "cannot read metadata sidecar") {
 		t.Fatalf("malformed entry = %+v", got)
 	}
-	if got := byID[4]; got == nil || got.SidecarVersion != "v6" ||
+	if got := byID[4]; got == nil || got.SidecarVersion != "v8" ||
 		!got.Exclusive || got.Verifier != "0102030000000000" ||
 		!got.ReadOnly || !got.Retired || !got.Unlinked || !got.Guarded ||
 		!strings.HasPrefix(got.RecoveryKey, "aabb") ||
@@ -947,7 +942,7 @@ func TestInspectReportsStagingIntegrity(t *testing.T) {
 	var text bytes.Buffer
 	report.WriteText(&text)
 	for _, want := range []string{
-		"sidecar v6",
+		"sidecar v8",
 		"unlinked guarded",
 		"EXCLUSIVE4 verifier 0102030000000000",
 		"RETIRED (lease expired, held for reclaim)",
@@ -1057,7 +1052,7 @@ func TestInspectWithoutStore(t *testing.T) {
 	}
 }
 
-func TestFormatPrincipalAndCallback(t *testing.T) {
+func TestFormatPrincipal(t *testing.T) {
 	if got := formatPrincipal(rpcPrincipal{flavor: authNone}); got != "AUTH_NONE" {
 		t.Fatalf("AUTH_NONE = %s", got)
 	}
@@ -1066,20 +1061,6 @@ func TestFormatPrincipalAndCallback(t *testing.T) {
 	}
 	if got := formatPrincipal(rpcPrincipal{flavor: 6, body: "\x01"}); got != "flavor 6 01" {
 		t.Fatalf("unknown flavor = %s", got)
-	}
-	if got := formatCallback("tcp", "192.168.1.20.8.1"); got != "tcp 192.168.1.20:2049" {
-		t.Fatalf("callback = %s", got)
-	}
-	if got := formatCallback("tcp6", "::1.8.1"); got != "tcp6 ::1.8.1" {
-		t.Fatalf("callback = %s", got)
-	}
-	// Sscanf used to accept trailing junk and out-of-range octets, formatting
-	// garbage as if it were a clean address.
-	for _, addr := range []string{"10.1.2.3junk.8.1", "10.1.2.999.8.1",
-		"10.1.2.-3.8.1", "10.1.2..8.1"} {
-		if got := formatCallback("tcp", addr); got != "tcp "+addr {
-			t.Errorf("formatCallback(tcp, %q) = %s, want the raw address", addr, got)
-		}
 	}
 }
 
