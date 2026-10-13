@@ -371,12 +371,7 @@ func TestExchangeIDBoundsAndRetirement(t *testing.T) {
 func awaitOwnerWaiter(t *testing.T, ss *sessionStore, owner string) {
 	t.Helper()
 	for deadline := time.Now().Add(testChannelTimeout); ; {
-		ss.ownerLocks.mu.Lock()
-		refs := 0
-		if e := ss.ownerLocks.entries[owner]; e != nil {
-			refs = e.refs
-		}
-		ss.ownerLocks.mu.Unlock()
+		refs := ss.ownerLocks.Refs(owner)
 		if refs == 2 {
 			return
 		}

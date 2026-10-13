@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/keyedlock"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -40,8 +41,8 @@ type ClientStore struct {
 
 	identityLocksMu sync.Mutex
 	identityLocks   map[vfs.InodeID]*clientIdentityLock
-	leaseLocks      keyedLocker[vfs.InodeID]
-	markerLocks     keyedLocker[clientOpenMarker]
+	leaseLocks      keyedlock.Locker[vfs.InodeID]
+	markerLocks     keyedlock.Locker[clientOpenMarker]
 
 	// Set by the server (canonical r3 §5.4): publishing an expired marker
 	// for an incarnation and collecting an identity each hold a destruction
@@ -1052,7 +1053,7 @@ func (cs *ClientStore) MarkOpen(clientID uint64, stateID StateID) error {
 	}
 	unlock := cs.readLockIdentity(identityID)
 	defer unlock()
-	unlockMarker := cs.markerLocks.lock(clientOpenMarker{clientID, stateID})
+	unlockMarker := cs.markerLocks.Lock(clientOpenMarker{clientID, stateID})
 	defer unlockMarker()
 
 	location, confirmed, err := cs.confirmedLocationForIdentity(incarnationID, identityID)
@@ -1164,7 +1165,7 @@ func (cs *ClientStore) RemoveOpen(clientID uint64, stateID StateID) error {
 	}
 	unlock := cs.readLockIdentity(identityID)
 	defer unlock()
-	unlockMarker := cs.markerLocks.lock(clientOpenMarker{clientID, stateID})
+	unlockMarker := cs.markerLocks.Lock(clientOpenMarker{clientID, stateID})
 	defer unlockMarker()
 	err := cs.removeIfExists(incarnationID, activeOpenName(stateID))
 	if value, ok := cs.localClients.Load(incarnationID); ok {
@@ -1249,7 +1250,7 @@ func (cs *ClientStore) HasOpen(clientID uint64, stateID StateID) (bool, error) {
 	defer unlock()
 	// Keep the durable lookup and cache insertion ordered with operations
 	// on this marker while allowing unrelated markers to proceed.
-	unlockMarker := cs.markerLocks.lock(clientOpenMarker{clientID, stateID})
+	unlockMarker := cs.markerLocks.Lock(clientOpenMarker{clientID, stateID})
 	defer unlockMarker()
 	location, confirmed, err := cs.confirmedLocationForIdentity(
 		incarnationID, identityID)

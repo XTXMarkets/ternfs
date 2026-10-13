@@ -346,7 +346,7 @@ func (s *Server) confirmingOwner(owner string) bool {
 // bound here, and there is no forced timeout or unprotection. Lock order:
 // owner lock, sessions.mu, confirmMu.
 func (s *Server) registerConfirmation(e *confirmation) bool {
-	unlockOwner := s.sessions.ownerLocks.lock(e.owner)
+	unlockOwner := s.sessions.ownerLocks.Lock(e.owner)
 	defer unlockOwner()
 	s.confirmMu.Lock()
 	_, identityBusy := s.confirmingIdentity[e.identity]

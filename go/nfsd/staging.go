@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/keyedlock"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -149,7 +150,7 @@ type LocalStagingStore struct {
 	targets map[stagingTarget]map[vfs.InodeID]struct{}
 	log     *slog.Logger
 
-	fileLocks  keyedLocker[vfs.InodeID]
+	fileLocks  keyedlock.Locker[vfs.InodeID]
 	createFile func(string) (*os.File, error)
 }
 
@@ -278,7 +279,7 @@ func (s *LocalStagingStore) closeAll() {
 func (s *LocalStagingStore) ReadOnly() bool { return false }
 
 func (s *LocalStagingStore) Create(id vfs.InodeID, meta StagingMeta) (StagingFile, error) {
-	unlock := s.fileLocks.lock(id)
+	unlock := s.fileLocks.Lock(id)
 	defer unlock()
 	s.mu.Lock()
 	entry := s.files[id]
@@ -477,7 +478,7 @@ func (s *LocalStagingStore) Retarget(id vfs.InodeID, dirID vfs.InodeID, name str
 }
 
 func (s *LocalStagingStore) Quarantine(id vfs.InodeID) error {
-	unlock := s.fileLocks.lock(id)
+	unlock := s.fileLocks.Lock(id)
 	defer unlock()
 	s.mu.Lock()
 	entry := s.files[id]
@@ -532,7 +533,7 @@ func quarantineStagingFiles(dir string, id vfs.InodeID) error {
 }
 
 func (s *LocalStagingStore) Remove(id vfs.InodeID) {
-	unlock := s.fileLocks.lock(id)
+	unlock := s.fileLocks.Lock(id)
 	defer unlock()
 	s.mu.Lock()
 	entry := s.files[id]

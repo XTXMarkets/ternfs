@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/keyedlock"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
@@ -152,7 +153,7 @@ type sessionStore struct {
 	// ownerLocks orders each owner's registrations and destructions: the
 	// durable registration and the wire publication happen together. Taken
 	// before the client store's identity lock and before mu.
-	ownerLocks keyedLocker[string]
+	ownerLocks keyedlock.Locker[string]
 }
 
 const maxSessionCacheBytes = 64 << 20
@@ -657,7 +658,7 @@ func (s *Server) opExchangeID(
 	// publishes names the durable registration it made. Otherwise a slower
 	// request could publish a pending incarnation that a faster one has
 	// already superseded in the store.
-	unlockOwner := ss.ownerLocks.lock(ownerKey)
+	unlockOwner := ss.ownerLocks.Lock(ownerKey)
 	defer unlockOwner()
 	// Checked under the owner lock, which a confirmation's registration
 	// also takes: either this request's durable registration and wire
@@ -1183,7 +1184,7 @@ func (s *Server) opDestroyClientID(args nfs4.DESTROYCLIENTID4args, st *compoundS
 	}
 	// Ordered with the owner's registrations: no EXCHANGE_ID can replace
 	// this record between the checks below and its destruction.
-	unlockOwner := s.sessions.ownerLocks.lock(c.owner)
+	unlockOwner := s.sessions.ownerLocks.Lock(c.owner)
 	defer unlockOwner()
 	s.sessions.mu.Lock()
 	if c.retired {

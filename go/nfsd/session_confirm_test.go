@@ -854,7 +854,7 @@ func (f *confirmServer) pausedCreate(t *testing.T) (result <-chan uint32, resume
 // pausedCreateFor is pausedCreate for another record of the same owner.
 func (f *confirmServer) pausedCreateFor(t *testing.T, wire uint64) (result <-chan uint32, resume func()) {
 	t.Helper()
-	unlock := f.srv.sessions.ownerLocks.lock("test-client")
+	unlock := f.srv.sessions.ownerLocks.Lock("test-client")
 	var once sync.Once
 	resume = func() { once.Do(unlock) }
 	t.Cleanup(resume)

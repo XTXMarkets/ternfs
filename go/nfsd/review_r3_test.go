@@ -330,7 +330,7 @@ func TestVerifyDoesNotRunMaintenance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	unlock := cs.leaseLocks.lock(r.incarnation)
+	unlock := cs.leaseLocks.Lock(r.incarnation)
 	o, ok := r.takeOrphan()
 	if !ok {
 		unlock()

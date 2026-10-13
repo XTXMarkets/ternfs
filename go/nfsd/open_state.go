@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/keyedlock"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -122,7 +123,7 @@ type openStateStore struct {
 	expired map[StateID]uint64
 	// expiredIDs bounds expired.
 	expiredIDs []StateID
-	fileLocks  keyedLocker[vfs.InodeID]
+	fileLocks  keyedlock.Locker[vfs.InodeID]
 	now        func() time.Time
 }
 
@@ -184,7 +185,7 @@ func (os *openStateStore) markExpiredLocked(id StateID, owner uint64) {
 // the filehandle clients hold. A caller which needs the file's pathname
 // lock takes it first.
 func (os *openStateStore) lockFile(fileID vfs.InodeID) func() {
-	return os.fileLocks.lock(fileID)
+	return os.fileLocks.Lock(fileID)
 }
 
 // existingOpen returns the owner's open of fileID. The caller holds

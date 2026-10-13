@@ -552,7 +552,7 @@ func (r *leaseRefresher) nextBackoffLocked() time.Duration {
 // been freed.
 func (r *leaseRefresher) pass(authorize bool) (time.Duration, bool) {
 	cs := r.cs
-	unlock := cs.leaseLocks.lock(r.incarnation)
+	unlock := cs.leaseLocks.Lock(r.incarnation)
 	defer unlock()
 	if wait, exit, done := r.reclaimed(); done {
 		return wait, exit

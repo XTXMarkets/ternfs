@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/keyedlock"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -61,7 +62,7 @@ type Server struct {
 
 	foregroundReads atomic.Int64
 	hydrationSlots  chan struct{}
-	mutationLocks   keyedLocker[mutationTarget]
+	mutationLocks   keyedlock.Locker[mutationTarget]
 
 	clientGCMu      sync.Mutex
 	clientGCPending map[vfs.InodeID]struct{}
@@ -88,61 +89,6 @@ type Server struct {
 	purgeLimit   int
 }
 
-type keyedLockEntry struct {
-	mu   sync.Mutex
-	refs int
-}
-
-type keyedLocker[K comparable] struct {
-	mu      sync.Mutex
-	entries map[K]*keyedLockEntry
-}
-
-func (l *keyedLocker[K]) ref(key K) *keyedLockEntry {
-	l.mu.Lock()
-	if l.entries == nil {
-		l.entries = make(map[K]*keyedLockEntry)
-	}
-	entry := l.entries[key]
-	if entry == nil {
-		entry = &keyedLockEntry{}
-		l.entries[key] = entry
-	}
-	entry.refs++
-	l.mu.Unlock()
-	return entry
-}
-
-func (l *keyedLocker[K]) unref(key K, entry *keyedLockEntry) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	entry.refs--
-	if entry.refs == 0 {
-		delete(l.entries, key)
-	}
-}
-
-func (l *keyedLocker[K]) lock(key K) func() {
-	entry := l.ref(key)
-	entry.mu.Lock()
-	return func() {
-		entry.mu.Unlock()
-		l.unref(key, entry)
-	}
-}
-
-func (l *keyedLocker[K]) tryLock(key K) (func(), bool) {
-	entry := l.ref(key)
-	if !entry.mu.TryLock() {
-		l.unref(key, entry)
-		return nil, false
-	}
-	return func() {
-		entry.mu.Unlock()
-		l.unref(key, entry)
-	}, true
-}
-
 type mutationTarget struct {
 	dirID vfs.InodeID
 	name  string
@@ -163,7 +109,7 @@ func (s *Server) lockMutationTargets(targets ...mutationTarget) func() {
 	}
 	unlocks := make([]func(), 0, len(unique))
 	for _, target := range unique {
-		unlocks = append(unlocks, s.mutationLocks.lock(target))
+		unlocks = append(unlocks, s.mutationLocks.Lock(target))
 	}
 	return func() {
 		for i := len(unlocks) - 1; i >= 0; i-- {
