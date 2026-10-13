@@ -37,4 +37,4 @@ check-cluster-port:
 	fi
 
 test-cluster: check-cluster-port
-	go test -tags ternnfs $(GO_TEST_FLAGS) .
+	go test -tags ternnfs $(GO_TEST_FLAGS) ./internal/server

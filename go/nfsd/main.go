@@ -20,6 +20,7 @@ import (
 	"github.com/XTXMarkets/ternfs/go/msgs"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/server"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -37,7 +38,7 @@ func main() {
 	verbose := flag.Bool("v", false, "verbose logging of NFS requests/responses")
 	allowMinor2 := flag.Bool("allow-minor-version-2", false,
 		"also accept NFSv4.2 COMPOUNDs, served as NFSv4.1 with every 4.2 operation unsupported")
-	maxInFlight := flag.Int("max-in-flight-per-connection", defaultMaxInFlightPerConn,
+	maxInFlight := flag.Int("max-in-flight-per-connection", server.DefaultMaxInFlightPerConn,
 		"maximum requests admitted per TCP connection")
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(),
@@ -82,13 +83,13 @@ func main() {
 	}
 	slogger.Info("filesystem opened", "target", target)
 
-	srv, err := NewServer(fs, ss, slogger)
+	srv, err := server.NewServer(fs, ss, slogger)
 	if err != nil {
 		slogger.Error("creating server", "err", err)
 		os.Exit(1)
 	}
-	srv.maxInFlightPerConn = *maxInFlight
-	srv.allowMinorVersion2 = *allowMinor2
+	srv.MaxInFlightPerConn = *maxInFlight
+	srv.AllowMinorVersion2 = *allowMinor2
 	slogger.Info("NFS server listening", "addr", *addr)
 	if err := srv.ListenAndServe(*addr); err != nil {
 		slogger.Error("server error", "err", err)

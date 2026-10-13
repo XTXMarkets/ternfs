@@ -172,10 +172,10 @@ for that session, without renewing. Replies with unknown XIDs are dropped
 and counted. Clients that never ask for a backchannel see no backchannel
 status flags.
 
-The implementation is in [`session.go`](session.go),
-[`session_store.go`](session_store.go),
-[`backchannel.go`](backchannel.go) and
-[`backchannel_sender.go`](backchannel_sender.go).
+The implementation is in [`session.go`](internal/server/session.go),
+[`session_store.go`](internal/server/session_store.go),
+[`backchannel.go`](internal/server/backchannel.go) and
+[`backchannel_sender.go`](internal/server/backchannel_sender.go).
 
 ## State overview
 
@@ -345,7 +345,7 @@ the staging directory, before upgrading to a binary that cannot read the
 staging format on disk.
 
 The implementation is in [`internal/staging`](internal/staging/staging.go),
-[`staging_lifecycle.go`](staging_lifecycle.go) and [`ops_open.go`](ops_open.go).
+[`staging_lifecycle.go`](internal/server/staging_lifecycle.go) and [`ops_open.go`](internal/server/ops_open.go).
 
 ## Namespace changes with staged writers
 
@@ -552,7 +552,7 @@ published. Opens of different files run in parallel.
 
 The implementation is in
 [`internal/openstate`](internal/openstate/open_state.go) and
-[`view.go`](view.go).
+[`view.go`](internal/server/view.go).
 
 ## Client identities and incarnations
 
@@ -1115,9 +1115,9 @@ Run the default Go tests from this directory:
 make test
 ```
 
-[`nfsd_test.go`](nfsd_test.go) starts the server on a local TCP socket with a
+[`nfsd_test.go`](internal/server/nfsd_test.go) starts the server on a local TCP socket with a
 local filesystem backend. The tests construct NFS RPC messages directly.
-[`client_store_test.go`](client_store_test.go) holds the focused durable client
+[`client_store_test.go`](internal/clientstore/client_store_test.go) holds the focused durable client
 store and collection tests. Together they cover RPC framing, compound
 processing, filehandles, attributes, directory traversal, reads, staged
 writes, sessions, client and open state, and expected errors for
@@ -1127,7 +1127,7 @@ unsupported operations.
 
 ### TernFS-backed protocol tests
 
-[`cluster_test.go`](cluster_test.go) contains tests behind the `ternnfs` build
+[`cluster_test.go`](internal/server/cluster_test.go) contains tests behind the `ternnfs` build
 tag. The intended command is:
 
 ```sh
