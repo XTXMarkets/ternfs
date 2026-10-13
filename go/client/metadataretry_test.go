@@ -131,6 +131,26 @@ func TestRetryableMetadataSendError(t *testing.T) {
 	}
 }
 
+func TestMetadataRequestWaitsForAddresses(t *testing.T) {
+	for _, api := range []string{"shard", "cdc"} {
+		t.Run(api, func(t *testing.T) {
+			c, logger := metadataRetryClient(t, DefaultShardTimeout, msgs.AddrsInfo{}, func(packet []byte) ([]byte, error) {
+				return metadataRetryReply(packet, 0), nil
+			})
+			done := testMetadataRequest(c, logger, api, "file")
+			select {
+			case err := <-done:
+				t.Fatalf("request finished before an address was known: %v", err)
+			case <-time.After(50 * time.Millisecond):
+			}
+			c.SetAddrs(metadataTestAddrs, &[256]msgs.AddrsInfo{metadataTestAddrs})
+			if err := receiveMetadata(t, done); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestMetadataTransientSendRetries(t *testing.T) {
 	for _, api := range []string{"shard", "cdc"} {
 		t.Run(api, func(t *testing.T) {
