@@ -65,6 +65,7 @@ func (c *Client) metadataRequest(
 			return msgs.TIMEOUT
 		}
 		if timeouts.Overall > 0 {
+			// Cap the reply wait when queueing. Time in the sender queue is additional.
 			timeout = min(timeout, timeouts.Overall-now.Sub(startedAt))
 		}
 		if counters != nil {

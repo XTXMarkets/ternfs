@@ -255,15 +255,11 @@ type clientMetadata struct {
 
 var whichMetadatataAddr int
 
-func (cm *clientMetadata) init(log *log.Logger, client *Client) error {
+func (cm *clientMetadata) init(log *log.Logger, client *Client, sock metadataSocket) error {
 	log.Debug("initiating clientMetadata")
 	defer log.Debug("finished initializing clientMetadata")
 	cm.client = client
-	sock, err := net.ListenPacket("udp", ":0")
-	if err != nil {
-		return err
-	}
-	cm.sock = sock.(*net.UDPConn)
+	cm.sock = sock
 	// 10MiB/100byte ~ 100k requests in the pipe. 100byte is
 	// kinda conservative. Note that the kernel silently clamps
 	// this to net.core.rmem_max, so the effective size may be
@@ -341,11 +337,16 @@ func (cm *clientMetadata) processRequests(log *log.Logger) {
 		whichMetadatataAddr++
 		written, err := cm.sock.WriteToUDP(buf.Bytes(), addr)
 		if err != nil {
-			log.RaiseAlert("could not send request %v to shard %v addr %v: %v", req.req, req.shard, addr, err)
+			retryable := retryableMetadataSendError(err)
+			if retryable {
+				log.Info("could not send request %v to shard %v addr %v: %v", req.req, req.shard, addr, err)
+			} else {
+				log.RaiseAlert("could not send request %v to shard %v addr %v: %v", req.req, req.shard, addr, err)
+			}
 			if dontWait {
 				continue
 			}
-			if !retryableMetadataSendError(err) {
+			if !retryable {
 				req.respCh <- &metadataProcessorResponse{
 					requestId: req.requestId,
 					err:       err,
@@ -1168,7 +1169,11 @@ func NewClientDirectNoAddrs(
 	c.shardTimeout = &DefaultShardTimeout
 	c.cdcTimeout = &DefaultCDCTimeout
 	c.blockTimeout = &DefaultBlockTimeout
-	if err := c.clientMetadata.init(log, c); err != nil {
+	sock, err := net.ListenPacket("udp", ":0")
+	if err != nil {
+		return nil, err
+	}
+	if err := c.clientMetadata.init(log, c, sock.(*net.UDPConn)); err != nil {
 		return nil, err
 	}
 	// Ideally, for write/fetch we'd want to have one socket
