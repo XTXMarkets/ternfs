@@ -79,6 +79,8 @@ type leaseRefresher struct {
 	// mu is never held across I/O. The worker's own fields (attempt,
 	// orphans, identity, lastExpiry, backoff) change only in the worker,
 	// which holds leaseLocks; mu orders them with readers.
+	// Writes to identity and lastExpiry also hold mu for diagnostics;
+	// the worker may read them under its exclusive leaseLocks ownership.
 	mu         sync.Mutex
 	identity   InodeID
 	proven     int64
@@ -589,7 +591,9 @@ func (r *leaseRefresher) pass(authorize bool) (time.Duration, bool) {
 			r.state = leaseRecordStale
 			r.mu.Unlock()
 		default:
+			r.mu.Lock()
 			r.identity = identity
+			r.mu.Unlock()
 		}
 	}
 	settled := r.settle()
@@ -794,8 +798,8 @@ func (r *leaseRefresher) refresh() bool {
 	if err != nil || edge.ID != id {
 		return false
 	}
-	r.lastExpiry = expiry
 	r.mu.Lock()
+	r.lastExpiry = expiry
 	r.attempt = &leaseAttempt{orphan: o, edge: edge, expiry: expiry}
 	r.mu.Unlock()
 	r.call(func() { err = cs.fs.RenameEdge(dir, o.temp, edge, dir, cs.leaseName) })

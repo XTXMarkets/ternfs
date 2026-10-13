@@ -7,10 +7,8 @@ package main
 import (
 	"encoding/binary"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -21,70 +19,49 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/inspect"
 )
 
-// This file implements a read-only inspector over the persistent client
-// store described in README.md. It reads the same records with the same
-// rules as the nfsd fleet, but never writes: it does not create the expired
-// marker, remove collectable slots or age GC candidates.
+// This file implements the read-only store report that /v1/store serves
+// over the persistent client store described in README.md. It reads the
+// same records with the same rules as the nfsd fleet, but never writes: it
+// does not create the expired marker, remove collectable slots or age GC
+// candidates.
 
-// inspectOptions selects which part of the client store to report. Each
-// field is set by the command line flag of the same name, and the report
-// labels the values it prints with those same names.
-type inspectOptions struct {
-	// Identity is the raw EXCHANGE_ID identity (-identity). Its SHA-256 names
-	// the identity directory.
-	Identity []byte
-	// IdentityHash is the hexadecimal identity directory name
-	// (-identity-hash).
-	IdentityHash string
-	// ClientID is an incarnation directory inode (-clientid).
-	ClientID uint64
-	// StateID limits the report to the incarnation which owns the marker
-	// (-stateid).
-	StateID *StateID
-	// StagingDir is the local staging directory of this nfsd host
-	// (-staging). Its sidecars are joined to open markers.
-	StagingDir string
-}
-
-// filtered reports whether the options narrow the report to one client. A
-// filtered report cannot say whether a staging sidecar belongs to no client
+// storeFiltered reports whether the query narrows the report to one client.
+// A filtered report cannot say whether a staging sidecar belongs to no client
 // at all or merely to a client the filter excluded.
-func (o inspectOptions) filtered() bool {
-	return len(o.Identity) != 0 || o.IdentityHash != "" ||
-		o.ClientID != 0 || o.StateID != nil
+func storeFiltered(q inspect.StoreQuery) bool {
+	return q.Identity != "" || q.IdentityHash != "" || q.Incarnation != 0 || q.Stateid != nil
 }
 
-// inspectFilter echoes the active filter back into the report so that JSON
-// output is self-describing. Its keys are the command line flag names.
+// inspectFilter echoes the active selector back into the report so that the
+// JSON is self-describing. Its keys are the query parameter names.
 type inspectFilter struct {
 	Identity     string `json:"identity,omitempty"`
 	IdentityHex  string `json:"identity_hex,omitempty"`
 	IdentityHash string `json:"identity_hash,omitempty"`
-	ClientID     string `json:"clientid,omitempty"`
-	StateID      string `json:"stateid,omitempty"`
+	Incarnation  string `json:"incarnation,omitempty"`
+	Stateid      string `json:"stateid,omitempty"`
 }
 
-func (o inspectOptions) filter() *inspectFilter {
-	if !o.filtered() {
+func storeFilter(q inspect.StoreQuery) *inspectFilter {
+	if !storeFiltered(q) {
 		return nil
 	}
-	f := &inspectFilter{IdentityHash: o.IdentityHash}
-	f.Identity, f.IdentityHex = inspectOpaque(o.Identity)
-	if o.ClientID != 0 {
-		f.ClientID = inodeHex(o.ClientID)
-	}
-	if o.StateID != nil {
-		f.StateID = hex.EncodeToString(o.StateID[:])
+	f := &inspectFilter{IdentityHash: identityHashText(q.IdentityHash), Incarnation: incarnationText(q.Incarnation)}
+	f.Identity, f.IdentityHex = inspectOpaque([]byte(q.Identity))
+	if q.Stateid != nil {
+		f.Stateid = stateidText(StateID(*q.Stateid))
 	}
 	return f
 }
 
 type inspectReport struct {
-	Now          time.Time    `json:"now"`
-	LeaseTime    string       `json:"lease_time"`
-	ClientsDirID inspectInode `json:"clients_dir_id"`
+	Now          time.Time `json:"now"`
+	LeaseTime    string    `json:"lease_time"`
+	ClientsDirID string    `json:"clients_dir_id"`
 	// Filter is the selection the report was narrowed to, or nil. A filtered
 	// report's Staging holds only the selected clients' sidecars.
 	Filter         *inspectFilter         `json:"filter,omitempty"`
@@ -96,12 +73,12 @@ type inspectReport struct {
 	// Quarantined names the files nfsd moved aside because their metadata
 	// sidecar could not be decoded, relative to StagingDir.
 	Quarantined []string `json:"quarantined,omitempty"`
-	// Problems are defects in the store or the staging directory. They set the
-	// exit status; see inspectExitProblems.
+	// Problems are defects in the store or the staging directory, counted in
+	// Summary.Problems.
 	Problems []string `json:"problems,omitempty"`
 	// Notes explain an empty or narrowed report, such as a filter which
 	// selected a client that is not in the store. A note is an answer to the
-	// question asked, not a defect, so notes do not affect the exit status.
+	// question asked, not a defect, so notes are not counted as problems.
 	Notes []string `json:"notes,omitempty"`
 }
 
@@ -138,13 +115,16 @@ type inspectStagingSummary struct {
 	AllocatedBytes int64 `json:"allocated_bytes"`
 }
 
-// inspectIdentity names its fields after the flags which select it:
-// IdentityHash is -identity-hash and Identity is -identity. DirectoryID is
-// the identity directory's own inode, which is not a clientid.
+// inspectIdentity names its fields after the query parameters which select
+// it: IdentityHash is identity-hash and Identity is identity. Name is the
+// directory's raw name, which is the hash when the store is well formed and
+// is kept as evidence when it is not. DirectoryID is the identity
+// directory's own inode, which is not an incarnation.
 type inspectIdentity struct {
-	IdentityHash string       `json:"identity_hash"`
-	DirectoryID  inspectInode `json:"directory_id"`
-	Identity     string       `json:"identity,omitempty"`
+	Name         string `json:"name"`
+	IdentityHash string `json:"identity_hash,omitempty"`
+	DirectoryID  string `json:"directory_id"`
+	Identity     string `json:"identity,omitempty"`
 	// IdentityHex carries the identity when it is not printable text.
 	IdentityHex  string               `json:"identity_hex,omitempty"`
 	Confirmed    *inspectPointer      `json:"confirmed,omitempty"`
@@ -155,15 +135,15 @@ type inspectIdentity struct {
 }
 
 type inspectPointer struct {
-	Target   string       `json:"target"`
-	TargetID inspectInode `json:"target_id,omitempty"`
-	Dangling bool         `json:"dangling,omitempty"`
-	Problem  string       `json:"problem,omitempty"`
+	Target   string `json:"target"`
+	TargetID string `json:"target_id,omitempty"`
+	Dangling bool   `json:"dangling,omitempty"`
+	Problem  string `json:"problem,omitempty"`
 }
 
 type inspectIncarnation struct {
-	Name     string       `json:"name"`
-	ClientID inspectInode `json:"clientid"`
+	Name        string `json:"name"`
+	Incarnation string `json:"incarnation"`
 	// Roles is any of confirmed, pending and reboot-target. An incarnation
 	// without a role is unreachable and will be collected.
 	Roles []string `json:"roles"`
@@ -172,7 +152,7 @@ type inspectIncarnation struct {
 	// Status is ACTIVE, EXPIRED, UNLEASED, PENDING, REPLACED or
 	// UNREACHABLE.
 	Status string `json:"status"`
-	// Usable reports whether stateids of this clientid are accepted: the
+	// Usable reports whether stateids of this incarnation are accepted: the
 	// incarnation is confirmed and its lease is live.
 	Usable        bool                   `json:"usable"`
 	Record        *inspectRecord         `json:"client,omitempty"`
@@ -222,23 +202,23 @@ type inspectTemp struct {
 }
 
 type inspectStagingEntry struct {
-	FileID         inspectInode `json:"file_id"`
-	DataPresent    bool         `json:"data_present"`
-	MetaPresent    bool         `json:"meta_present"`
-	Size           int64        `json:"size"`
-	AllocatedBytes int64        `json:"allocated_bytes"`
-	DataMtime      *time.Time   `json:"data_mtime,omitempty"`
-	CheckpointTime *time.Time   `json:"checkpoint_time,omitempty"`
-	SidecarVersion string       `json:"sidecar_version,omitempty"`
-	DirID          inspectInode `json:"dir_id"`
-	FileName       string       `json:"file_name,omitempty"`
-	Cookie         string       `json:"cookie,omitempty"`
+	FileID         string     `json:"file_id"`
+	DataPresent    bool       `json:"data_present"`
+	MetaPresent    bool       `json:"meta_present"`
+	Size           int64      `json:"size"`
+	AllocatedBytes int64      `json:"allocated_bytes"`
+	DataMtime      *time.Time `json:"data_mtime,omitempty"`
+	CheckpointTime *time.Time `json:"checkpoint_time,omitempty"`
+	SidecarVersion string     `json:"sidecar_version,omitempty"`
+	DirID          string     `json:"dir_id,omitempty"`
+	FileName       string     `json:"file_name,omitempty"`
+	Cookie         string     `json:"cookie,omitempty"`
 	// RecoveryKey is the client identity, boot verifier and principal which
 	// must match for a rebooted client to reclaim this data.
-	RecoveryKey string       `json:"recovery_key,omitempty"`
-	StateID     string       `json:"stateid,omitempty"`
-	ClientID    inspectInode `json:"clientid"`
-	OpenOwner   string       `json:"open_owner,omitempty"`
+	RecoveryKey string `json:"recovery_key,omitempty"`
+	StateID     string `json:"stateid,omitempty"`
+	Incarnation string `json:"incarnation,omitempty"`
+	OpenOwner   string `json:"open_owner,omitempty"`
 	// OpenOwnerHex carries the open owner when it is not printable text.
 	OpenOwnerHex string `json:"open_owner_hex,omitempty"`
 	OwnerKnown   bool   `json:"owner_known"`
@@ -252,7 +232,7 @@ type inspectStagingEntry struct {
 	// verifier, which a retry must match to reuse this writer.
 	Exclusive       bool               `json:"exclusive,omitempty"`
 	Verifier        string             `json:"verifier,omitempty"`
-	BaseID          inspectInode       `json:"base_id"`
+	BaseID          string             `json:"base_id,omitempty"`
 	BaseSize        uint64             `json:"base_size"`
 	CheckpointSize  uint64             `json:"checkpoint_size"`
 	Dirty           []inspectByteRange `json:"dirty,omitempty"`
@@ -265,6 +245,9 @@ type inspectStagingEntry struct {
 	openMatched     bool
 	reported        bool
 	metaValid       bool
+	// clientID is the sidecar's owner, for resolving a stateid selector to
+	// its identity directory; Incarnation is its text.
+	clientID InodeID
 }
 
 type inspectByteRange struct {
@@ -299,27 +282,29 @@ func openClientStoreReader(fs TernVFS) (*ClientStore, error) {
 
 // Inspect builds a report of the client store without modifying it. Every
 // lease and collection decision is taken against a single instant so that the
-// report is internally consistent.
-func (cs *ClientStore) Inspect(opts inspectOptions) (*inspectReport, error) {
+// report is internally consistent. stagingDir is the server's own staging
+// directory, or empty when the sidecars were not asked for; the query never
+// names a path.
+func (cs *ClientStore) Inspect(q inspect.StoreQuery, stagingDir string) (*inspectReport, error) {
 	now := cs.now()
 	report := &inspectReport{
 		Now:          now,
 		LeaseTime:    nfsLeaseTime.String(),
-		ClientsDirID: inspectInode(cs.dirID),
-		Filter:       opts.filter(),
+		ClientsDirID: inodeText(cs.dirID),
+		Filter:       storeFilter(q),
 		Identities:   []inspectIdentity{},
-		StagingDir:   opts.StagingDir,
+		StagingDir:   stagingDir,
 	}
 
 	var staging []*inspectStagingEntry
-	if opts.StagingDir != "" {
+	if stagingDir != "" {
 		var err error
-		if staging, err = report.readStaging(opts.StagingDir); err != nil {
+		if staging, err = report.readStaging(stagingDir); err != nil {
 			return nil, err
 		}
 	}
 
-	identityIDs, err := cs.inspectSelectIdentities(opts, staging, report)
+	identityIDs, err := cs.inspectSelectIdentities(q, staging, report)
 	if err != nil {
 		return nil, err
 	}
@@ -328,9 +313,8 @@ func (cs *ClientStore) Inspect(opts inspectOptions) (*inspectReport, error) {
 		if err != nil {
 			return nil, err
 		}
-		if opts.StateID != nil {
-			identity.Incarnations = inspectKeepStateID(
-				identity.Incarnations, hex.EncodeToString(opts.StateID[:]))
+		if q.Stateid != nil {
+			identity.Incarnations = inspectKeepStateID(identity.Incarnations, stateidText(StateID(*q.Stateid)))
 			if len(identity.Incarnations) == 0 {
 				continue
 			}
@@ -348,12 +332,11 @@ func (cs *ClientStore) Inspect(opts inspectOptions) (*inspectReport, error) {
 		report.Identities = append(report.Identities, identity)
 	}
 	sort.Slice(report.Identities, func(i, j int) bool {
-		return report.Identities[i].IdentityHash < report.Identities[j].IdentityHash
+		return report.Identities[i].Name < report.Identities[j].Name
 	})
-	if opts.StateID != nil && len(report.Identities) == 0 {
+	if q.Stateid != nil && len(report.Identities) == 0 {
 		report.Notes = append(report.Notes, fmt.Sprintf(
-			"stateid %s has no open marker in the store",
-			hex.EncodeToString(opts.StateID[:])))
+			"%s has no open marker in the store", stateidText(StateID(*q.Stateid))))
 	}
 	// Only an unfiltered report can claim a sidecar belongs to no client: a
 	// filtered one has not looked at the other identities. Count the rest
@@ -362,7 +345,7 @@ func (cs *ClientStore) Inspect(opts inspectOptions) (*inspectReport, error) {
 		if entry.reported {
 			continue
 		}
-		if opts.filtered() {
+		if storeFiltered(q) {
 			report.StagingSummary.OtherClients++
 			continue
 		}
@@ -391,79 +374,80 @@ func inspectKeepStateID(
 	return kept
 }
 
-// inspectSelectIdentities resolves the options to identity directories. A
-// clientid or a stateid with a staging sidecar resolve through the parent
-// directory; a stateid without one requires a scan of every identity.
+// inspectSelectIdentities resolves the query to identity directories. The
+// store is addressed by its raw directory names: the identity hash as hex,
+// never the typed text. An incarnation, or a stateid with a staging sidecar,
+// resolves through the parent directory; a stateid without one requires a
+// scan of every identity.
 func (cs *ClientStore) inspectSelectIdentities(
-	opts inspectOptions,
+	q inspect.StoreQuery,
 	staging []*inspectStagingEntry,
 	report *inspectReport,
 ) ([]DirEntry, error) {
 	switch {
-	case len(opts.Identity) != 0 || opts.IdentityHash != "":
-		name := opts.IdentityHash
-		if len(opts.Identity) != 0 {
-			name = clientIdentityKey(opts.Identity)
+	case q.Identity != "" || q.IdentityHash != "":
+		name := q.IdentityHash
+		if q.Identity != "" {
+			name = clientIdentityKey([]byte(q.Identity))
 		}
 		id, err := cs.fs.Lookup(cs.dirID, name)
 		if errors.Is(err, os.ErrNotExist) {
 			report.Notes = append(report.Notes,
-				fmt.Sprintf("identity-hash %s is not registered", name))
+				fmt.Sprintf("identity-hash:%s is not registered", name))
 			return nil, nil
 		}
 		if err != nil {
 			return nil, err
 		}
 		return []DirEntry{{Name: name, ID: id}}, nil
-	case opts.ClientID != 0:
-		return cs.inspectIdentityForClientID(InodeID(opts.ClientID), report)
-	case opts.StateID != nil:
-		// A sidecar names the clientid directly. Without one there is nothing
-		// to resolve against, so fall through and scan every identity for an
-		// open marker with this stateid.
-		want := hex.EncodeToString(opts.StateID[:])
+	case q.Incarnation != 0:
+		return cs.inspectIdentityForIncarnation(InodeID(q.Incarnation), report)
+	case q.Stateid != nil:
+		// A sidecar names the incarnation directly. Without one there is
+		// nothing to resolve against, so fall through and scan every identity
+		// for an open marker with this stateid.
+		want := stateidText(StateID(*q.Stateid))
 		for _, entry := range staging {
-			if entry.StateID == want && entry.ClientID != 0 {
-				return cs.inspectIdentityForClientID(
-					InodeID(entry.ClientID), report)
+			if entry.StateID == want && entry.clientID != 0 {
+				return cs.inspectIdentityForIncarnation(entry.clientID, report)
 			}
 		}
 	}
 	return cs.entries(cs.dirID)
 }
 
-// inspectIdentityForClientID resolves a clientid to its identity directory.
-// Anything that goes wrong here is about the argument, not the store, so it
-// is reported as a note rather than a problem. The most likely mistake is
-// pasting the identity directory inode, which the report prints next to the
-// clientid, so that case gets its own message.
-func (cs *ClientStore) inspectIdentityForClientID(
-	clientID InodeID,
+// inspectIdentityForIncarnation resolves an incarnation to its identity
+// directory. Anything that goes wrong here is about the argument, not the
+// store, so it is reported as a note rather than a problem. The most likely
+// mistake is pasting the identity directory inode, which the report prints
+// next to the incarnation, so that case gets its own message.
+func (cs *ClientStore) inspectIdentityForIncarnation(
+	incarnation InodeID,
 	report *inspectReport,
 ) ([]DirEntry, error) {
 	note := func(format string, args ...any) ([]DirEntry, error) {
 		report.Notes = append(report.Notes, fmt.Sprintf(format, args...))
 		return nil, nil
 	}
-	identityID, err := cs.fs.LookupParent(clientID)
+	identityID, err := cs.fs.LookupParent(incarnation)
 	if errors.Is(err, os.ErrNotExist) {
-		return note("clientid %s has no incarnation directory; "+
-			"it is stale or collected", inodeHex(clientID))
+		return note("%s has no incarnation directory; it is stale or collected",
+			incarnationText(uint64(incarnation)))
 	}
 	if err != nil {
 		return nil, err
 	}
 	if identityID == cs.dirID {
-		return note("%s is an identity directory, not a clientid; "+
-			"select it with -identity-hash", inodeHex(clientID))
+		return note("%s is an identity directory, not an incarnation; "+
+			"select it with identity-hash", inodeText(incarnation))
 	}
 	name, err := cs.inspectChildName(cs.dirID, identityID)
 	if err != nil {
 		return nil, err
 	}
 	if name == "" {
-		return note("clientid %s is not under /%s/clients",
-			inodeHex(clientID), nfsDirName)
+		return note("%s is not under /%s/clients",
+			incarnationText(uint64(incarnation)), nfsDirName)
 	}
 	return []DirEntry{{Name: name, ID: identityID}}, nil
 }
@@ -490,8 +474,15 @@ func (cs *ClientStore) inspectIdentity(
 	now time.Time,
 ) (inspectIdentity, error) {
 	identity := inspectIdentity{
-		IdentityHash: dir.Name,
-		DirectoryID:  inspectInode(dir.ID),
+		Name:         dir.Name,
+		IdentityHash: identityHashText(dir.Name),
+		DirectoryID:  inodeText(dir.ID),
+	}
+	// The directory name is the identity hash. A name that is not one is
+	// kept as evidence; the hash field stays absent rather than invented.
+	if identity.IdentityHash == "" {
+		identity.Problems = append(identity.Problems,
+			fmt.Sprintf("identity entry %q is not a 64-digit hex hash", dir.Name))
 	}
 	if !isDirectoryInodeID(dir.ID) {
 		identity.Problems = append(identity.Problems,
@@ -508,7 +499,9 @@ func (cs *ClientStore) inspectIdentity(
 		return identity, err
 	}
 
-	roles := make(map[InodeID][]string)
+	// Roles are keyed by the incarnation's text, as the pointers and
+	// incarnations report it.
+	roles := make(map[string][]string)
 	pointer := func(name string) (*inspectPointer, error) {
 		return cs.inspectPointer(dir.ID, name, false)
 	}
@@ -518,11 +511,11 @@ func (cs *ClientStore) inspectIdentity(
 	if identity.Pending, err = pointer(pendingName); err != nil {
 		return identity, err
 	}
-	if p := identity.Confirmed; p != nil && p.TargetID != 0 {
-		roles[InodeID(p.TargetID)] = append(roles[InodeID(p.TargetID)], "confirmed")
+	if p := identity.Confirmed; p != nil && p.TargetID != "" {
+		roles[p.TargetID] = append(roles[p.TargetID], "confirmed")
 	}
-	if p := identity.Pending; p != nil && p.TargetID != 0 {
-		roles[InodeID(p.TargetID)] = append(roles[InodeID(p.TargetID)], "pending")
+	if p := identity.Pending; p != nil && p.TargetID != "" {
+		roles[p.TargetID] = append(roles[p.TargetID], "pending")
 	}
 
 	var incarnations []inspectIncarnation
@@ -550,12 +543,11 @@ func (cs *ClientStore) inspectIdentity(
 	// Reboot targets of the primary incarnations stay reachable until the
 	// confirmation has purged their state.
 	for _, inc := range incarnations {
-		if _, primary := roles[InodeID(inc.ClientID)]; !primary {
+		if _, primary := roles[inc.Incarnation]; !primary {
 			continue
 		}
-		if inc.Reboot != nil && inc.Reboot.TargetID != 0 {
-			targetID := InodeID(inc.Reboot.TargetID)
-			roles[targetID] = append(roles[targetID], "reboot-target")
+		if inc.Reboot != nil && inc.Reboot.TargetID != "" {
+			roles[inc.Reboot.TargetID] = append(roles[inc.Reboot.TargetID], "reboot-target")
 		}
 	}
 	sort.Slice(incarnations, func(i, j int) bool {
@@ -563,7 +555,7 @@ func (cs *ClientStore) inspectIdentity(
 	})
 	for i := range incarnations {
 		inc := &incarnations[i]
-		inc.Roles = roles[InodeID(inc.ClientID)]
+		inc.Roles = roles[inc.Incarnation]
 		if inc.Roles == nil {
 			inc.Roles = []string{}
 		}
@@ -714,7 +706,7 @@ func (cs *ClientStore) inspectPointer(
 	if err != nil {
 		return nil, err
 	}
-	p.TargetID = inspectInode(id)
+	p.TargetID = incarnationText(uint64(id))
 	return p, nil
 }
 
@@ -741,9 +733,9 @@ func (cs *ClientStore) inspectIncarnation(
 	now time.Time,
 ) (inspectIncarnation, error) {
 	inc := inspectIncarnation{
-		Name:       dir.Name,
-		ClientID:   inspectInode(dir.ID),
-		LeaseState: "none",
+		Name:        dir.Name,
+		Incarnation: incarnationText(uint64(dir.ID)),
+		LeaseState:  "none",
 	}
 	entries, err := cs.entries(dir.ID)
 	if errors.Is(err, os.ErrNotExist) {
@@ -808,9 +800,14 @@ func (cs *ClientStore) inspectIncarnation(
 				inc.Confirming = append(inc.Confirming, slot)
 			}
 		case isActiveOpenName(entry.Name):
-			inc.Opens = append(inc.Opens, inspectOpenMarker(
-				strings.TrimPrefix(entry.Name, activeOpenPrefix),
-				inspectInode(dir.ID), staging))
+			// The marker suffix is the raw stateid hex. One that does not
+			// decode is kept by name under unknown, not given a made-up id.
+			raw, err := hex.DecodeString(strings.TrimPrefix(entry.Name, activeOpenPrefix))
+			if err != nil || len(raw) != len(StateID{}) {
+				inc.Unknown = append(inc.Unknown, entry.Name)
+				continue
+			}
+			inc.Opens = append(inc.Opens, inspectOpenMarker(StateID(raw), inc.Incarnation, staging))
 		case strings.HasPrefix(entry.Name, tempPrefix):
 			temp, err := cs.inspectTemp(entry, now)
 			if err != nil {
@@ -833,7 +830,7 @@ func (cs *ClientStore) inspectIncarnation(
 		inc.Problems = append(inc.Problems, "no client record")
 	}
 	for _, entry := range staging {
-		if entry.ClientID == inc.ClientID && !entry.openMatched {
+		if entry.Incarnation == inc.Incarnation && !entry.openMatched {
 			inc.Staging = append(inc.Staging, entry)
 		}
 	}
@@ -883,17 +880,14 @@ func (cs *ClientStore) inspectSlot(
 }
 
 func inspectOpenMarker(
-	stateID string,
-	clientID inspectInode,
+	stateID StateID,
+	incarnation string,
 	staging []*inspectStagingEntry,
 ) inspectOpen {
-	open := inspectOpen{StateID: stateID}
-	if len(stateID) >= 8 {
-		open.Epoch = stateID[:8]
-	}
+	open := inspectOpen{StateID: stateidText(stateID), Epoch: hex.EncodeToString(stateID[:4])}
 	for _, entry := range staging {
-		if !entry.openMatched && entry.StateID == stateID &&
-			(entry.ClientID == 0 || entry.ClientID == clientID) {
+		if !entry.openMatched && entry.StateID == open.StateID &&
+			(entry.Incarnation == "" || entry.Incarnation == incarnation) {
 			entry.openMatched = true
 			open.Staging = entry
 			break
@@ -930,7 +924,7 @@ func (r *inspectReport) readStaging(dir string) ([]*inspectStagingEntry, error) 
 	entryFor := func(id uint64) *inspectStagingEntry {
 		entry := byID[id]
 		if entry == nil {
-			entry = &inspectStagingEntry{FileID: inspectInode(id)}
+			entry = &inspectStagingEntry{FileID: inodeText(InodeID(id))}
 			byID[id] = entry
 		}
 		return entry
@@ -1073,14 +1067,15 @@ func readStagingQuarantine(stagingDir string, dir string) ([]string, error) {
 func (entry *inspectStagingEntry) setMeta(meta StagingMeta) {
 	entry.metaValid = true
 	entry.SidecarVersion = inspectSidecarVersion(meta.version)
-	entry.DirID = inspectInode(meta.DirID)
+	entry.DirID = inodeText(meta.DirID)
 	entry.FileName = meta.FileName
 	entry.Cookie = hex.EncodeToString(meta.TernCookie[:])
 	if meta.RecoveryKey != ([32]byte{}) {
 		entry.RecoveryKey = hex.EncodeToString(meta.RecoveryKey[:])
 	}
-	entry.StateID = hex.EncodeToString(meta.NFSStateID[:])
-	entry.ClientID = inspectInode(meta.ClientID)
+	entry.StateID = stateidText(meta.NFSStateID)
+	entry.clientID = InodeID(meta.ClientID)
+	entry.Incarnation = incarnationText(meta.ClientID)
 	entry.OpenOwner, entry.OpenOwnerHex = inspectOpaque([]byte(meta.OpenOwner))
 	entry.OwnerKnown = meta.OwnerKnown
 	entry.ReadOnly = meta.ReadOnly
@@ -1091,7 +1086,7 @@ func (entry *inspectStagingEntry) setMeta(meta StagingMeta) {
 	if meta.Exclusive {
 		entry.Verifier = hex.EncodeToString(meta.Verifier[:])
 	}
-	entry.BaseID = inspectInode(meta.BaseID)
+	entry.BaseID = inodeText(meta.BaseID)
 	entry.BaseSize = meta.BaseSize
 	entry.CheckpointSize = meta.Size
 	for _, dirty := range meta.Dirty {
@@ -1124,7 +1119,7 @@ func inspectTime(value time.Time) *time.Time {
 // identity or an open owner. Clients send printable text in practice but
 // nothing requires it, so anything else is reported as hex rather than
 // mangled into replacement runes by the JSON encoder. The returned text is
-// the raw value, so it can be passed straight back to -identity.
+// the raw value, so it can be passed straight back as the identity selector.
 func inspectOpaque(value []byte) (text string, hexText string) {
 	if len(value) == 0 {
 		return "", ""
@@ -1161,313 +1156,4 @@ func formatPrincipal(p rpcPrincipal) string {
 			uid, gid, strings.Join(gids, ","))
 	}
 	return fmt.Sprintf("flavor %d %s", p.flavor, hex.EncodeToString(body))
-}
-
-// WriteText renders the report for a terminal.
-func (r *inspectReport) WriteText(w io.Writer) {
-	rel := func(t time.Time) string {
-		d := t.Sub(r.Now).Round(time.Second)
-		if d >= 0 {
-			return fmt.Sprintf("%s (in %s)", t.Format(time.RFC3339), d)
-		}
-		return fmt.Sprintf("%s (%s ago)", t.Format(time.RFC3339), -d)
-	}
-	fmt.Fprintf(w, "client store /%s/clients %s at %s, lease %s\n",
-		nfsDirName, inodeHex(r.ClientsDirID), r.Now.Format(time.RFC3339), r.LeaseTime)
-	fmt.Fprintf(w,
-		"summary identities %d incarnations %d: ACTIVE %d EXPIRED %d "+
-			"UNLEASED %d PENDING %d REPLACED %d UNREACHABLE %d; "+
-			"open markers %d, stale %d; problems %d\n",
-		r.Summary.Identities, r.Summary.Incarnations,
-		r.Summary.Active, r.Summary.Expired, r.Summary.Unleased,
-		r.Summary.Pending, r.Summary.Replaced, r.Summary.Unreachable,
-		r.Summary.OpenMarkers, r.Summary.StaleOpens, r.Summary.Problems)
-	if summary := r.StagingSummary; summary != nil {
-		fmt.Fprintf(w,
-			"staging %q: entries %d complete %d retired %d data files %d "+
-				"sidecars %d, %d bytes (%d allocated)\n",
-			r.StagingDir, summary.Entries, summary.Complete, summary.Retired,
-			summary.DataFiles, summary.Sidecars, summary.DataBytes,
-			summary.AllocatedBytes)
-		if summary.OtherClients > 0 {
-			fmt.Fprintf(w,
-				"staging: %d sidecars belong to clients outside this filter; "+
-					"rerun without a filter to list them\n",
-				summary.OtherClients)
-		}
-	}
-	for _, problem := range r.Problems {
-		fmt.Fprintf(w, "problem: %s\n", problem)
-	}
-	for _, note := range r.Notes {
-		fmt.Fprintf(w, "note: %s\n", note)
-	}
-	if len(r.Identities) == 0 {
-		fmt.Fprintf(w, "no client identities\n")
-	}
-	// Every label below is spelled like the flag which selects that value, so
-	// that anything in the report can be pasted back onto the command line.
-	for _, identity := range r.Identities {
-		fmt.Fprintf(w, "\nidentity-hash %s\n", identity.IdentityHash)
-		fmt.Fprintf(w, "  %-9s %s\n", "directory", inodeHex(identity.DirectoryID))
-		if identity.Identity != "" {
-			fmt.Fprintf(w, "  %-9s %q\n", "identity", identity.Identity)
-		}
-		if identity.IdentityHex != "" {
-			fmt.Fprintf(w, "  %-9s %s (not printable)\n",
-				"identity", identity.IdentityHex)
-		}
-		fmt.Fprintf(w, "  %-9s %s\n", "confirmed", pointerText(identity.Confirmed))
-		fmt.Fprintf(w, "  %-9s %s\n", "pending", pointerText(identity.Pending))
-		for _, problem := range identity.Problems {
-			fmt.Fprintf(w, "  problem: %s\n", problem)
-		}
-		for _, temp := range identity.Temps {
-			fmt.Fprintf(w, "  temp %s mtime %s%s\n", temp.Name, rel(temp.Mtime),
-				collectableSuffix(temp.Collectable))
-		}
-		for _, inc := range identity.Incarnations {
-			roles := strings.Join(inc.Roles, ",")
-			if roles == "" {
-				roles = "unreachable"
-			}
-			fmt.Fprintf(w, "\n  incarnation %s clientid %s [%s, lease %s] %s\n",
-				inc.Name, inodeHex(inc.ClientID), roles, inc.LeaseState,
-				inc.Status)
-			writeRecord := func(name string, rec *inspectRecord) {
-				if rec == nil {
-					return
-				}
-				fmt.Fprintf(w, "    %-10s", name)
-				if rec.Identity != "" {
-					fmt.Fprintf(w, " identity %q", rec.Identity)
-				}
-				if rec.IdentityHex != "" {
-					fmt.Fprintf(w, " identity %s (not printable)", rec.IdentityHex)
-				}
-				fmt.Fprintf(w, " verifier %s confirm %s\n", rec.Verifier, rec.Confirm)
-				fmt.Fprintf(w, "    %-10s principal %s\n", "", rec.Principal)
-			}
-			writeRecord("client", inc.Record)
-			writeRecord("update", inc.Update)
-			if inc.Reboot != nil {
-				fmt.Fprintf(w, "    reboot     %s; purge in progress\n",
-					pointerText(inc.Reboot))
-			}
-			for _, slot := range inc.Leases {
-				fmt.Fprintf(w, "    lease      nfsd %s expires %s %s%s\n",
-					slot.NfsdID, rel(slot.Expires), liveWord(slot.Live),
-					collectableSuffix(slot.Collectable))
-			}
-			for _, slot := range inc.Confirming {
-				fmt.Fprintf(w, "    confirming nfsd %s expires %s %s%s\n",
-					slot.NfsdID, rel(slot.Expires), liveWord(slot.Live),
-					collectableSuffix(slot.Collectable))
-			}
-			if inc.ExpiredMarker {
-				fmt.Fprintf(w, "    expired    marker present; clientid cannot renew\n")
-			}
-			if inc.GCAfter != nil {
-				fmt.Fprintf(w, "    gc         unreachable, collect after %s\n",
-					rel(*inc.GCAfter))
-			}
-			for _, open := range inc.Opens {
-				state := "STALE"
-				if open.Active {
-					state = inspectStatusActive
-				}
-				fmt.Fprintf(w, "    open       stateid %s epoch %s %s\n",
-					open.StateID, open.Epoch, state)
-				if open.Staging != nil {
-					writeInspectStagingEntry(w, "      ", open.Staging, rel)
-				}
-			}
-			for _, entry := range inc.Staging {
-				fmt.Fprintf(w, "    staging    NO OPEN MARKER\n")
-				writeInspectStagingEntry(w, "      ", entry, rel)
-			}
-			for _, temp := range inc.Temps {
-				fmt.Fprintf(w, "    temp       %s mtime %s%s\n", temp.Name,
-					rel(temp.Mtime), collectableSuffix(temp.Collectable))
-			}
-			for _, name := range inc.Unknown {
-				fmt.Fprintf(w, "    unknown    %s\n", name)
-			}
-			for _, problem := range inc.Problems {
-				fmt.Fprintf(w, "    problem: %s\n", problem)
-			}
-		}
-	}
-	if len(r.Staging) > 0 {
-		fmt.Fprintf(w, "\nstaging files with no client in the store\n")
-		for _, entry := range r.Staging {
-			writeInspectStagingEntry(w, "  ", entry, rel)
-		}
-	}
-	if len(r.Quarantined) > 0 {
-		fmt.Fprintf(w,
-			"\nquarantined checkpoints (excluded from automatic recovery; "+
-				"nfsd will not recover these)\n")
-		for _, name := range r.Quarantined {
-			fmt.Fprintf(w, "  %s\n", name)
-		}
-	}
-	// Problems are scattered through a long report, so repeat the count where
-	// it will be read: at the end.
-	if r.Summary.Problems > 0 {
-		fmt.Fprintf(w, "\nproblems found: %d\n", r.Summary.Problems)
-	}
-}
-
-// pointerText renders a confirmed, pending or reboot pointer. The clientid
-// comes first because that is what the reader pastes into -clientid; the
-// symlink target is kept for matching against a directory listing.
-func pointerText(p *inspectPointer) string {
-	if p == nil {
-		return "(none)"
-	}
-	var s string
-	if p.Dangling {
-		s = "-> " + p.Target + " DANGLING"
-	} else {
-		s = fmt.Sprintf("clientid %s (%s)", inodeHex(p.TargetID), p.Target)
-	}
-	if p.Problem != "" {
-		s += " (" + p.Problem + ")"
-	}
-	return s
-}
-
-func writeInspectStagingEntry(
-	w io.Writer,
-	indent string,
-	entry *inspectStagingEntry,
-	rel func(time.Time) string,
-) {
-	fmt.Fprintf(w, "%sfile %s", indent, inodeHex(entry.FileID))
-	if entry.DataPresent {
-		fmt.Fprintf(w, " data %d bytes (%d allocated)",
-			entry.Size, entry.AllocatedBytes)
-		if entry.DataMtime != nil {
-			fmt.Fprintf(w, " modified %s", rel(*entry.DataMtime))
-		}
-	} else {
-		fmt.Fprint(w, " data MISSING")
-	}
-	switch {
-	case !entry.MetaPresent:
-		fmt.Fprint(w, " sidecar MISSING")
-	case entry.SidecarVersion == "":
-		fmt.Fprint(w, " sidecar UNREADABLE")
-	default:
-		fmt.Fprintf(w, " sidecar %s", entry.SidecarVersion)
-	}
-	fmt.Fprintln(w)
-
-	if entry.metaValid {
-		fmt.Fprintf(w, "%starget dir %s name %q; clientid %s stateid %s\n",
-			indent, inodeHex(entry.DirID), entry.FileName,
-			inodeHex(entry.ClientID), entry.StateID)
-		access := "write"
-		if entry.ReadOnly {
-			access = "read-only"
-		}
-		owner := "(not recorded)"
-		switch {
-		case entry.OpenOwnerHex != "":
-			owner = entry.OpenOwnerHex + " (not printable)"
-		case entry.OwnerKnown:
-			owner = fmt.Sprintf("%q", entry.OpenOwner)
-		}
-		fmt.Fprintf(w, "%sowner %s access %s", indent, owner, access)
-		if entry.Exclusive {
-			fmt.Fprintf(w, " EXCLUSIVE4 verifier %s", entry.Verifier)
-		}
-		if entry.Unlinked {
-			fmt.Fprint(w, " unlinked")
-		}
-		if entry.Guarded {
-			fmt.Fprint(w, " guarded")
-		}
-		if entry.Retired {
-			fmt.Fprint(w, " RETIRED (lease expired, held for reclaim)")
-		}
-		fmt.Fprintln(w)
-		fmt.Fprintf(w,
-			"%sbase %s size %d; checkpoint size %d dirty %s\n",
-			indent, inodeHex(entry.BaseID), entry.BaseSize,
-			entry.CheckpointSize, formatInspectRanges(entry.Dirty))
-		if entry.Change != 0 {
-			fmt.Fprintf(w, "%sattrs change %d mtime %s atime %s ctime %s",
-				indent, entry.Change, inspectTimeText(entry.Mtime),
-				inspectTimeText(entry.Atime), inspectTimeText(entry.Ctime))
-		} else {
-			fmt.Fprintf(w, "%sattrs (no change counter recorded)", indent)
-		}
-		if entry.MetadataChanged {
-			fmt.Fprint(w, " METADATA CHANGED")
-		}
-		fmt.Fprintln(w)
-		fmt.Fprintf(w, "%scookie %s", indent, entry.Cookie)
-		if entry.RecoveryKey != "" {
-			fmt.Fprintf(w, " recovery-key %s", entry.RecoveryKey)
-		}
-		if entry.CheckpointTime != nil {
-			fmt.Fprintf(w, "; checkpoint %s", rel(*entry.CheckpointTime))
-		}
-		fmt.Fprintln(w)
-	}
-	for _, problem := range entry.Problems {
-		fmt.Fprintf(w, "%sproblem: %s\n", indent, problem)
-	}
-}
-
-func formatInspectRanges(ranges []inspectByteRange) string {
-	if len(ranges) == 0 {
-		return "(none)"
-	}
-	parts := make([]string, 0, len(ranges))
-	for _, r := range ranges {
-		parts = append(parts, fmt.Sprintf("[%d,%d)", r.Start, r.End))
-	}
-	return strings.Join(parts, ",")
-}
-
-func inspectTimeText(value *time.Time) string {
-	if value == nil {
-		return "(not recorded)"
-	}
-	return value.Format(time.RFC3339Nano)
-}
-
-func (r *inspectReport) WriteJSON(w io.Writer) error {
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	return enc.Encode(r)
-}
-
-func liveWord(live bool) string {
-	if live {
-		return "LIVE"
-	}
-	return "EXPIRED"
-}
-
-func collectableSuffix(collectable bool) string {
-	if collectable {
-		return " (collectable)"
-	}
-	return ""
-}
-
-// inodeHex formats an inode ID the way terncli and the TernFS logs do.
-func inodeHex[T ~uint64](id T) string {
-	return fmt.Sprintf("0x%016x", uint64(id))
-}
-
-// inspectInode keeps inspector JSON formatting local to the report.
-type inspectInode InodeID
-
-func (id inspectInode) MarshalJSON() ([]byte, error) {
-	return json.Marshal(inodeHex(id))
 }

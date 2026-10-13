@@ -7,12 +7,11 @@
 package libnfs
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -29,67 +28,59 @@ func (s *nfsTestServer) published(t *testing.T, name, want string) {
 	}
 }
 
-// Inode IDs in the inspector's JSON are hexadecimal strings. Decode only the
-// fields asserted here, leaving the complete report in the run artifacts.
+// Ids in the store report are typed kind:hex strings. Decode only the fields
+// asserted here, leaving the complete report in the run artifacts.
 type recoveryReport struct {
 	// LeaseTime is a Go duration string such as "90s".
-	LeaseTime  string   `json:"lease_time"`
-	Problems   []string `json:"problems"`
+	LeaseTime string `json:"lease_time"`
+	// Summary.Problems counts every defect anywhere in the report, nested
+	// staging and pointer problems included; a clean store reports zero.
+	Summary struct {
+		Problems int `json:"problems"`
+	} `json:"summary"`
 	Identities []struct {
-		Problems     []string              `json:"problems"`
 		Incarnations []recoveryIncarnation `json:"incarnations"`
 	} `json:"identities"`
 }
 
 type recoveryIncarnation struct {
-	ClientID string   `json:"clientid"`
-	Roles    []string `json:"roles"`
-	Usable   bool     `json:"usable"`
-	Problems []string `json:"problems"`
-	Opens    []struct {
+	Incarnation string   `json:"incarnation"`
+	Roles       []string `json:"roles"`
+	Usable      bool     `json:"usable"`
+	Opens       []struct {
 		StateID string          `json:"stateid"`
 		Staging json.RawMessage `json:"staging"`
 	} `json:"opens"`
-	// Staging lists this clientid's sidecars in the staging directory.
+	// Staging lists this incarnation's sidecars in the staging directory.
 	Staging []struct {
 		FileID  string `json:"file_id"`
 		Retired bool   `json:"retired"`
 	} `json:"staging"`
 }
 
-func (s *nfsTestServer) inspect(t *testing.T, c *libnfsProcessClient) *recoveryReport {
+// storeReport reads the running server's durable store report for the
+// client's identity, with its staging sidecars joined.
+func (s *nfsTestServer) storeReport(t *testing.T, c *libnfsProcessClient) *recoveryReport {
 	t.Helper()
-	// Use the actual binary's inspector so its decoding matches the server.
-	args := []string{"inspect", "-identity", c.identity, "-staging", s.Staging,
-		"-registry", s.Suite.Registry, "-json"}
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, s.Suite.Binary, args...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("inspect: %v\n%s", err, stderr.Bytes())
+	var body struct {
+		Report json.RawMessage `json:"report"`
 	}
+	if err := s.Diagnostics(ctx, "/v1/store?staging=1&identity="+url.QueryEscape(c.identity), &body); err != nil {
+		t.Fatalf("store report: %v", err)
+	}
+	out := []byte(body.Report)
 	var report recoveryReport
 	if err := json.Unmarshal(out, &report); err != nil {
 		t.Fatal(err)
 	}
-	if len(report.Problems) != 0 || len(report.Identities) != 1 {
-		t.Fatalf("unexpected inspector report: %s", out)
-	}
-	for _, identity := range report.Identities {
-		if len(identity.Problems) != 0 {
-			t.Fatalf("identity problems: %v", identity.Problems)
-		}
-		for _, incarnation := range identity.Incarnations {
-			if len(incarnation.Problems) != 0 {
-				t.Fatalf("incarnation problems: %v", incarnation.Problems)
-			}
-		}
+	if report.Summary.Problems != 0 || len(report.Identities) != 1 {
+		t.Fatalf("store report has %d problems and %d identities: %s",
+			report.Summary.Problems, len(report.Identities), out)
 	}
 	s.inspections++
-	if err := os.WriteFile(filepath.Join(s.Dir, fmt.Sprintf("%s-inspect-%03d.json", c.identity, s.inspections)), out, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(s.Dir, fmt.Sprintf("%s-store-%03d.json", c.identity, s.inspections)), out, 0600); err != nil {
 		t.Fatal(err)
 	}
 	return &report
@@ -120,7 +111,7 @@ func requireRecoveryError(t *testing.T, r libnfsReply, statuses ...string) {
 	t.Fatalf("got error %q (errno %d), want one of %v", r.Error, r.Errno, statuses)
 }
 
-// stagedWriter is the inspector's report of one open's staging, without the
+// stagedWriter is the store report's entry for one open's staging, without the
 // fields a checkpoint may change (times, allocation).
 type stagedWriter struct {
 	FileID      string `json:"file_id"`
@@ -131,7 +122,7 @@ type stagedWriter struct {
 	FileName    string `json:"file_name"`
 	RecoveryKey string `json:"recovery_key"`
 	StateID     string `json:"stateid"`
-	ClientID    string `json:"clientid"`
+	Incarnation string `json:"incarnation"`
 	OpenOwner   string `json:"open_owner"`
 	OwnerKnown  bool   `json:"owner_known"`
 	ReadOnly    bool   `json:"read_only"`
@@ -152,7 +143,7 @@ type stagedWriter struct {
 // retainedWriter checks that the incarnation's only open still has its
 // staging, and reads its synced range [0, len(synced)) from the one staging
 // data file in the server's staging directory. The file is tied to the
-// inspector's entry by being the only one there and by its size.
+// report's entry by being the only one there and by its size.
 func (s *nfsTestServer) retainedWriter(t *testing.T, inc recoveryIncarnation, synced string) (string, stagedWriter) {
 	t.Helper()
 	if len(inc.Opens) != 1 || inc.Opens[0].Staging == nil {
@@ -186,7 +177,7 @@ func (s *nfsTestServer) retainedWriter(t *testing.T, inc recoveryIncarnation, sy
 	}
 	defer f.Close()
 	if info, err := f.Stat(); err != nil || info.Size() != w.Size {
-		t.Fatalf("staging data file %s does not match the inspector's entry: %v %v", files[0], info, err)
+		t.Fatalf("staging data file %s does not match the report's entry: %v %v", files[0], info, err)
 	}
 	data := make([]byte, len(synced))
 	if _, err := f.ReadAt(data, 0); err != nil || string(data) != synced {
@@ -284,7 +275,7 @@ func runLibnfsRecovery(t *testing.T, suite *nfsTestSuite) {
 				c.must(t, libnfsRequest{Op: "write", Handle: h, Data: []byte("new")})
 				c.must(t, libnfsRequest{Op: "sync", Handle: h})
 				s.published(t, "file", tc.base)
-				before := recoveryConfirmed(t, s.inspect(t, c))
+				before := recoveryConfirmed(t, s.storeReport(t, c))
 				if !before.Usable {
 					t.Fatalf("writer not durably registered: %+v", before)
 				}
@@ -296,9 +287,9 @@ func runLibnfsRecovery(t *testing.T, suite *nfsTestSuite) {
 				// open, still holds the synced bytes.
 				retained := func(when string) recoveryIncarnation {
 					t.Helper()
-					inc := recoveryConfirmed(t, s.inspect(t, c))
-					if inc.ClientID != before.ClientID {
-						t.Fatalf("%s: client re-registered: %s -> %s", when, before.ClientID, inc.ClientID)
+					inc := recoveryConfirmed(t, s.storeReport(t, c))
+					if inc.Incarnation != before.Incarnation {
+						t.Fatalf("%s: client re-registered: %s -> %s", when, before.Incarnation, inc.Incarnation)
 					}
 					gotState, got := s.retainedWriter(t, inc, "new")
 					if gotState != stateID || !reflect.DeepEqual(got, staged) {
@@ -357,7 +348,7 @@ func runLibnfsRecovery(t *testing.T, suite *nfsTestSuite) {
 		h := c.open(t, s, "file", os.O_CREATE|os.O_RDWR)
 		c.must(t, libnfsRequest{Op: "write", Handle: h, Data: []byte("abandoned")})
 		c.must(t, libnfsRequest{Op: "sync", Handle: h})
-		before := recoveryConfirmed(t, s.inspect(t, c))
+		before := recoveryConfirmed(t, s.storeReport(t, c))
 		if !before.Usable || len(before.Opens) != 1 {
 			t.Fatalf("expected one live writer: %+v", before)
 		}
@@ -365,14 +356,14 @@ func runLibnfsRecovery(t *testing.T, suite *nfsTestSuite) {
 		abandoned := dead.open(t, s, "dead-client", os.O_CREATE|os.O_EXCL|os.O_RDWR)
 		dead.must(t, libnfsRequest{Op: "write", Handle: abandoned, Data: []byte("client died")})
 		dead.must(t, libnfsRequest{Op: "sync", Handle: abandoned})
-		if inc := recoveryConfirmed(t, s.inspect(t, dead)); !inc.Usable || len(inc.Opens) != 1 {
+		if inc := recoveryConfirmed(t, s.storeReport(t, dead)); !inc.Usable || len(inc.Opens) != 1 {
 			t.Fatalf("expected one live writer before killing client: %+v", inc)
 		}
 		dead.process.stop(t, syscall.SIGKILL)
 		t.Logf("one libnfs client idle, one killed; waiting for lease expiry and server sweep")
 		// The helper blocks on its command pipe: no calls service libnfs or renew
-		// its lease. The inspector is read-only and cannot keep the lease alive.
-		lease, err := time.ParseDuration(s.inspect(t, c).LeaseTime)
+		// its lease. The store report is read-only and cannot keep the lease alive.
+		lease, err := time.ParseDuration(s.storeReport(t, c).LeaseTime)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -403,15 +394,15 @@ func runLibnfsRecovery(t *testing.T, suite *nfsTestSuite) {
 		//              that period (leaseWriteTerm = lease + lease/2);
 		//   0.5*lease  the sweeper's tick, which makes the decision and
 		//              retires the staging;
-		//   0.5*lease  margin for scheduling, the inspector's polling and
+		//   0.5*lease  margin for scheduling, the report's polling and
 		//              the sweep's own run time.
 		// It is not a bound under arbitrarily slow backend calls.
 		expiryHorizon := lease + lease*3/2 + lease/2 + lease/2
 		waitForNFSTest(t, "lease expiration and staging retirement", expiryHorizon, func() bool {
 			c.process.alive(t)
 			s.process.alive(t)
-			inc := recoveryConfirmed(t, s.inspect(t, c))
-			deadInc := recoveryConfirmed(t, s.inspect(t, dead))
+			inc := recoveryConfirmed(t, s.storeReport(t, c))
+			deadInc := recoveryConfirmed(t, s.storeReport(t, dead))
 			return !inc.Usable && len(inc.Opens) == 0 && retiredStaging(inc) &&
 				!deadInc.Usable && len(deadInc.Opens) == 0 && retiredStaging(deadInc) &&
 				retainedStaging()

@@ -44,7 +44,7 @@ const finishHydrationWorkers = 4
 
 // stagingQuarantineDirName is the subdirectory of the staging directory which
 // holds checkpoints whose metadata sidecar would not decode. Recovery moves
-// them aside rather than deleting them; nfsd inspect lists them.
+// them aside rather than deleting them; /v1/store?staging=1 lists them.
 const stagingQuarantineDirName = "quarantine"
 
 var errStagingRemoved = errors.New("staging file was removed")

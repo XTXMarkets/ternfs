@@ -5,14 +5,14 @@
 package main
 
 import (
-	"encoding/hex"
 	"flag"
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/nfsd/inspect"
 	"log/slog"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
 
 	"github.com/XTXMarkets/ternfs/go/client"
 	"github.com/XTXMarkets/ternfs/go/core/bufpool"
@@ -21,11 +21,6 @@ import (
 )
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "inspect" {
-		runInspect(os.Args[2:])
-		return
-	}
-
 	addr := flag.String("addr", ":2049", "listen address")
 	root := flag.String("root", "", "local root directory to export (for testing)")
 	registry := flag.String("registry", "", "TernFS registry address (for production)")
@@ -35,15 +30,25 @@ func main() {
 		"also accept NFSv4.2 COMPOUNDs, served as NFSv4.1 with every 4.2 operation unsupported")
 	maxInFlight := flag.Int("max-in-flight-per-connection", defaultMaxInFlightPerConn,
 		"maximum requests admitted per TCP connection")
+	statusAddr := flag.String("status-addr", "",
+		"serve the read-only diagnostics API (JSON over HTTP) on this address; off by default")
+	storeOnly := flag.Bool("store-only", false,
+		"serve only the diagnostics API, reading the client store and -staging without\n"+
+			"starting the NFS server or touching anything; requires -status-addr")
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(),
-			"Usage: %s [options]\n       %s inspect [options]\n\nOptions:\n",
+			"Usage: %s [options]\n       %s -store-only -status-addr ADDR [options]\n\nOptions:\n",
 			os.Args[0], os.Args[0])
 		flag.PrintDefaults()
-		fmt.Fprintf(flag.CommandLine.Output(),
-			"\nRun %s inspect -h for the client store inspector.\n", os.Args[0])
 	}
 	flag.Parse()
+	// nfsd takes no positional arguments. Rejecting them here, before any
+	// directory or listener is touched, keeps a mistyped command line from
+	// starting a server.
+	if flag.NArg() > 0 {
+		fmt.Fprintf(os.Stderr, "unexpected arguments: %v\n", flag.Args())
+		os.Exit(2)
+	}
 	if *maxInFlight <= 0 {
 		fmt.Fprintln(os.Stderr, "-max-in-flight-per-connection must be positive")
 		os.Exit(2)
@@ -54,6 +59,15 @@ func main() {
 		level = slog.LevelDebug
 	}
 	slogger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+
+	if *storeOnly {
+		if *statusAddr == "" {
+			fmt.Fprintln(os.Stderr, "-store-only requires -status-addr")
+			os.Exit(2)
+		}
+		runStoreOnly(slogger, *root, *registry, *staging, *statusAddr, *verbose)
+		return
+	}
 
 	// Set up local state before dialling the cluster, so that a bad -staging
 	// path or an unusable -root fails without a round trip to the registry.
@@ -85,9 +99,58 @@ func main() {
 	}
 	srv.maxInFlightPerConn = *maxInFlight
 	srv.allowMinorVersion2 = *allowMinor2
+	srv.nfsAddr = *addr
+	if *statusAddr != "" {
+		ln, err := net.Listen("tcp", *statusAddr)
+		if err != nil {
+			slogger.Error("diagnostics listen", "addr", *statusAddr, "err", err)
+			os.Exit(1)
+		}
+		go func() {
+			err := http.Serve(ln, inspect.Handler(srv, srv))
+			slogger.Error("diagnostics server stopped", "err", err)
+		}()
+		slogger.Info("diagnostics listening", "addr", ln.Addr().String())
+	}
 	slogger.Info("NFS server listening", "addr", *addr)
 	if err := srv.ListenAndServe(*addr); err != nil {
 		slogger.Error("server error", "err", err)
+		os.Exit(1)
+	}
+}
+
+// runStoreOnly serves the diagnostics API for a process that is not an NFS
+// server, for when nfsd will not start or a host's store should be read
+// without disturbing it. It opens the client store read-only and never
+// opens the staging store: NewLocalStagingStore would quarantine and
+// truncate during recovery, so sidecars are only read by the store report,
+// on request.
+func runStoreOnly(slogger *slog.Logger, root, registry, staging, statusAddr string, verbose bool) {
+	fs, target, err := openVFS(root, registry, verbose)
+	if err != nil {
+		slogger.Error("opening filesystem", "err", err)
+		os.Exit(1)
+	}
+	slogger.Info("filesystem opened", "target", target)
+	store, err := openClientStoreReader(fs)
+	if err != nil {
+		slogger.Error("opening client store", "err", err)
+		os.Exit(1)
+	}
+	if staging != "" {
+		if info, err := os.Stat(staging); err != nil || !info.IsDir() {
+			slogger.Error("staging directory", "path", staging, "err", err)
+			os.Exit(1)
+		}
+	}
+	ln, err := net.Listen("tcp", statusAddr)
+	if err != nil {
+		slogger.Error("diagnostics listen", "addr", statusAddr, "err", err)
+		os.Exit(1)
+	}
+	slogger.Info("diagnostics listening in store-only mode", "addr", ln.Addr().String(), "staging", staging)
+	if err := http.Serve(ln, inspect.Handler(nil, storeOnlySource{store: store, stagingDir: staging})); err != nil {
+		slogger.Error("diagnostics server stopped", "err", err)
 		os.Exit(1)
 	}
 }
@@ -122,139 +185,4 @@ func openVFS(root string, registry string, verbose bool) (TernVFS, string, error
 	}
 	return NewRemoteTernVFS(c, ternLogger, bufpool.NewBufPool()),
 		"TernFS registry " + registry, nil
-}
-
-// Exit statuses of "nfsd inspect". A report which found problems is still a
-// successful report, so it gets its own status rather than reusing the one
-// that means the inspector could not run.
-const (
-	inspectExitUsage    = 2
-	inspectExitProblems = 3
-)
-
-// runInspect implements "nfsd inspect", a read-only report of the persistent
-// client store.
-func runInspect(args []string) {
-	fs := flag.NewFlagSet("nfsd inspect", flag.ExitOnError)
-	root := fs.String("root", "", "local root directory (for testing)")
-	registry := fs.String("registry", "", "TernFS registry address")
-	identity := fs.String("identity", "",
-		"the report's `identity` field: the raw EXCHANGE_ID identity,\n"+
-			"for example \"Linux NFSv4.1 host/10.0.0.1\"")
-	identityHash := fs.String("identity-hash", "",
-		"the report's `identity-hash` field: 64 hex digits naming the\n"+
-			"identity directory (SHA-256 of the identity)")
-	clientID := fs.String("clientid", "",
-		"the report's `clientid` field: the value returned to the client,\n"+
-			"0x-prefixed hex or decimal. Not the directory inode")
-	stateID := fs.String("stateid", "",
-		"the report's `stateid` field: the 12-byte \"other\" field as\n"+
-			"24 hex digits")
-	staging := fs.String("staging", "",
-		"local staging directory; report file integrity and join opens")
-	jsonOut := fs.Bool("json", false, "write the report as JSON")
-	verbose := fs.Bool("v", false, "verbose TernFS client logging")
-	fs.Usage = func() {
-		fmt.Fprintf(fs.Output(),
-			"Usage: %s inspect (-root DIR | -registry ADDR) [filter] [-staging DIR] [-json]\n\n",
-			os.Args[0])
-		fmt.Fprintf(fs.Output(),
-			"Reports every client identity in /%s/clients, or the one selected by\n"+
-				"-identity, -identity-hash, -clientid or -stateid. It never modifies the\n"+
-				"store. Each field the report prints is labelled with the flag which\n"+
-				"selects it, so any value in the output can be pasted back here.\n\n",
-			nfsDirName)
-		fs.PrintDefaults()
-		fmt.Fprintf(fs.Output(),
-			"\nExit status: 0 if the report found no problems, %d if it found any,\n"+
-				"%d for a usage error, 1 if the report could not be produced. Expired\n"+
-				"leases, stale opens and unreachable incarnations are ordinary states\n"+
-				"and are not problems.\n",
-			inspectExitProblems, inspectExitUsage)
-	}
-	fs.Parse(args)
-	if fs.NArg() > 0 {
-		fmt.Fprintf(os.Stderr, "unexpected arguments: %v\n", fs.Args())
-		os.Exit(inspectExitUsage)
-	}
-
-	opts, err := parseInspectOptions(*identity, *identityHash, *clientID, *stateID)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(inspectExitUsage)
-	}
-	opts.StagingDir = *staging
-
-	vfs, _, err := openVFS(*root, *registry, *verbose)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%v\n", err)
-		os.Exit(1)
-	}
-	store, err := openClientStoreReader(vfs)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%v\n", err)
-		os.Exit(1)
-	}
-	report, err := store.Inspect(opts)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "inspect: %v\n", err)
-		os.Exit(1)
-	}
-	if *jsonOut {
-		if err := report.WriteJSON(os.Stdout); err != nil {
-			fmt.Fprintf(os.Stderr, "%v\n", err)
-			os.Exit(1)
-		}
-	} else {
-		report.WriteText(os.Stdout)
-	}
-	if report.Summary.Problems > 0 {
-		os.Exit(inspectExitProblems)
-	}
-}
-
-func parseInspectOptions(identity, identityHash, clientID, stateID string) (
-	inspectOptions, error,
-) {
-	var opts inspectOptions
-	filters := 0
-	if identity != "" {
-		opts.Identity = []byte(identity)
-		filters++
-	}
-	if identityHash != "" {
-		raw, err := hex.DecodeString(identityHash)
-		if err != nil || len(raw) != 32 {
-			return opts, fmt.Errorf(
-				"invalid -identity-hash %q: want 64 hex digits", identityHash)
-		}
-		opts.IdentityHash = strings.ToLower(identityHash)
-		filters++
-	}
-	if clientID != "" {
-		id, err := strconv.ParseUint(clientID, 0, 64)
-		if err != nil || !isDirectoryInodeID(InodeID(id)) {
-			return opts, fmt.Errorf(
-				"invalid -clientid %q: want a 0x-prefixed hex or decimal "+
-					"directory inode", clientID)
-		}
-		opts.ClientID = id
-		filters++
-	}
-	if stateID != "" {
-		raw, err := hex.DecodeString(stateID)
-		if err != nil || len(raw) != len(StateID{}) {
-			return opts, fmt.Errorf("invalid -stateid %q: want %d hex digits",
-				stateID, 2*len(StateID{}))
-		}
-		var sid StateID
-		copy(sid[:], raw)
-		opts.StateID = &sid
-		filters++
-	}
-	if filters > 1 {
-		return opts, fmt.Errorf(
-			"use at most one of -identity, -identity-hash, -clientid and -stateid")
-	}
-	return opts, nil
 }

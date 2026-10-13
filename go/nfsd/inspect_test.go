@@ -15,6 +15,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/inspect"
 )
 
 func authSysBody(uid uint32, gid uint32, groups ...uint32) string {
@@ -194,7 +196,7 @@ func findIncarnation(
 	t.Helper()
 	for _, identity := range report.Identities {
 		for _, inc := range identity.Incarnations {
-			if uint64(inc.ClientID) == clientID {
+			if inc.Incarnation == incarnationText(clientID) {
 				return identity, inc
 			}
 		}
@@ -205,7 +207,7 @@ func findIncarnation(
 
 func TestInspectReportsClientState(t *testing.T) {
 	f := newInspectFixture(t)
-	report, err := f.reader(t).Inspect(inspectOptions{StagingDir: f.stagingDir})
+	report, err := f.reader(t).Inspect(inspect.StoreQuery{}, f.stagingDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,15 +219,15 @@ func TestInspectReportsClientState(t *testing.T) {
 	}
 
 	identity, current := findIncarnation(t, report, f.clientID)
-	if identity.IdentityHash != clientIdentityKey(f.identity) {
-		t.Fatalf("identity hash = %s", identity.IdentityHash)
+	if identity.IdentityHash != identityHashText(clientIdentityKey(f.identity)) {
+		t.Fatalf("identity hash = %q", identity.IdentityHash)
 	}
 	if identity.Identity != "Linux NFSv4.1 host-a/10.0.0.1" ||
 		identity.IdentityHex != "" {
 		t.Fatalf("identity = %q hex = %q", identity.Identity, identity.IdentityHex)
 	}
 	if identity.Confirmed == nil ||
-		identity.Confirmed.TargetID != inspectInode(f.clientID) {
+		identity.Confirmed.TargetID != incarnationText(f.clientID) {
 		t.Fatalf("confirmed pointer = %+v", identity.Confirmed)
 	}
 	if strings.Join(current.Roles, ",") != "confirmed,pending" {
@@ -264,10 +266,10 @@ func TestInspectReportsClientState(t *testing.T) {
 		t.Fatalf("opens = %+v", current.Opens)
 	}
 	open := current.Opens[0]
-	if open.StateID != hex.EncodeToString(f.stateID[:]) || open.Epoch != "abcdef01" {
+	if open.StateID != stateidText(f.stateID) || open.Epoch != "abcdef01" {
 		t.Fatalf("open = %+v", open)
 	}
-	if open.Staging == nil || open.Staging.FileID != 0x3039 ||
+	if open.Staging == nil || open.Staging.FileID != inodeText(0x3039) ||
 		open.Staging.FileName != "upload.bin" || open.Staging.Size != 4096 {
 		t.Fatalf("open staging = %+v", open.Staging)
 	}
@@ -282,7 +284,7 @@ func TestInspectReportsClientState(t *testing.T) {
 		t.Fatalf("staging summary = %+v", report.StagingSummary)
 	}
 	if open.Staging.SidecarVersion != "v8" ||
-		open.Staging.BaseID != inspectInode(MakeInodeID(InodeTypeFile, 123)) ||
+		open.Staging.BaseID != inodeText(MakeInodeID(InodeTypeFile, 123)) ||
 		open.Staging.BaseSize != 8192 || open.Staging.CheckpointSize != 4096 ||
 		len(open.Staging.Dirty) != 1 || !open.Staging.MetadataChanged ||
 		open.Staging.OpenOwner != "owner-a" || !open.Staging.OwnerKnown {
@@ -326,7 +328,7 @@ func TestInspectReportsClientState(t *testing.T) {
 func TestInspectCountsNoProblemsForOrdinaryLifecycleStates(t *testing.T) {
 	f := newInspectFixture(t)
 	f.now = f.now.Add(10 * nfsLeaseTime)
-	report, err := f.reader(t).Inspect(inspectOptions{StagingDir: f.stagingDir})
+	report, err := f.reader(t).Inspect(inspect.StoreQuery{}, f.stagingDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -337,12 +339,6 @@ func TestInspectCountsNoProblemsForOrdinaryLifecycleStates(t *testing.T) {
 	}
 	if report.Summary.Problems != 0 {
 		t.Fatalf("summary = %+v problems = %v", report.Summary, report.Problems)
-	}
-	var text bytes.Buffer
-	report.WriteText(&text)
-	if !strings.Contains(text.String(), "problems 0") ||
-		strings.Contains(text.String(), "problems found") {
-		t.Fatalf("text report claims problems:\n%s", text.String())
 	}
 }
 
@@ -356,7 +352,7 @@ func TestInspectCountsUnreadableRecord(t *testing.T) {
 	if _, err := f.fs.Symlink(InodeID(f.clientID), clientRecordName, "nowhere"); err != nil {
 		t.Fatal(err)
 	}
-	report, err := f.reader(t).Inspect(inspectOptions{ClientID: f.clientID})
+	report, err := f.reader(t).Inspect(inspect.StoreQuery{Incarnation: f.clientID}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -367,8 +363,8 @@ func TestInspectCountsUnreadableRecord(t *testing.T) {
 	}
 }
 
-// Defects anywhere in the report are counted, so that the exit status is
-// meaningful without parsing the output.
+// Defects anywhere in the report are counted, so that summary.problems is
+// meaningful without reading the rest of the report.
 func TestInspectCountsProblems(t *testing.T) {
 	f := newInspectFixture(t)
 
@@ -396,26 +392,19 @@ func TestInspectCountsProblems(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	report, err := f.reader(t).Inspect(inspectOptions{StagingDir: f.stagingDir})
+	report, err := f.reader(t).Inspect(inspect.StoreQuery{}, f.stagingDir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if report.Summary.Problems != 3 {
 		t.Fatalf("problems = %d, want 3:\n%+v", report.Summary.Problems, report)
 	}
-	var text bytes.Buffer
-	report.WriteText(&text)
-	if !strings.Contains(text.String(), "problems 3") ||
-		!strings.Contains(text.String(), "\nproblems found: 3\n") {
-		t.Fatalf("text report lacks the problem count:\n%s", text.String())
-	}
-
-	var out bytes.Buffer
-	if err := report.WriteJSON(&out); err != nil {
+	out, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(out.Bytes(), []byte(`"problems": 3`)) {
-		t.Fatalf("JSON lacks the problem count:\n%s", out.String())
+	if !bytes.Contains(out, []byte(`"problems": 3`)) {
+		t.Fatalf("JSON lacks the problem count:\n%s", out)
 	}
 }
 
@@ -426,7 +415,7 @@ func TestInspectDoesNotModifyStore(t *testing.T) {
 	f.now = f.now.Add(10 * nfsLeaseTime)
 
 	before := listTree(t, f.fs, f.first.dirID, "")
-	report, err := f.reader(t).Inspect(inspectOptions{})
+	report, err := f.reader(t).Inspect(inspect.StoreQuery{}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -456,7 +445,7 @@ func TestInspectFilters(t *testing.T) {
 	reader := f.reader(t)
 
 	t.Run("clientid", func(t *testing.T) {
-		report, err := reader.Inspect(inspectOptions{ClientID: f.clientID})
+		report, err := reader.Inspect(inspect.StoreQuery{Incarnation: f.clientID}, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -465,12 +454,12 @@ func TestInspectFilters(t *testing.T) {
 		}
 	})
 	// A clientid the store has collected is a note, not a problem: asking
-	// whether a client is still around and being told it is not must not make
-	// a monitoring check fire.
+	// whether a client is still around and being told it is not must not
+	// count as a defect.
 	t.Run("stale clientid", func(t *testing.T) {
-		report, err := reader.Inspect(inspectOptions{
-			ClientID: uint64(MakeInodeID(InodeTypeDir, 0x123456)),
-		})
+		report, err := reader.Inspect(inspect.StoreQuery{
+			Incarnation: uint64(MakeInodeID(InodeTypeDir, 0x123456)),
+		}, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -479,32 +468,30 @@ func TestInspectFilters(t *testing.T) {
 			t.Fatalf("report = %+v", report)
 		}
 	})
-	// Pasting the identity directory inode into -clientid is the likely
-	// mistake, so the note names the flag to use instead. The store is not
+	// Giving the identity directory inode as clientid is the likely mistake,
+	// so the note names the selector to use instead. The store is not
 	// broken, so it is not a problem.
 	t.Run("identity directory as clientid", func(t *testing.T) {
-		report, err := reader.Inspect(inspectOptions{
-			ClientID: uint64(f.identityDirID),
-		})
+		report, err := reader.Inspect(inspect.StoreQuery{Incarnation: uint64(f.identityDirID)}, "")
 		if err != nil {
 			t.Fatal(err)
 		}
 		if len(report.Identities) != 0 || report.Summary.Problems != 0 ||
 			len(report.Notes) != 1 ||
-			!strings.Contains(report.Notes[0], "-identity-hash") {
+			!strings.Contains(report.Notes[0], "select it with identity-hash") {
 			t.Fatalf("report = %+v", report)
 		}
 	})
 	t.Run("identity", func(t *testing.T) {
-		report, err := reader.Inspect(inspectOptions{Identity: f.identity})
+		report, err := reader.Inspect(inspect.StoreQuery{Identity: string(f.identity)}, "")
 		if err != nil {
 			t.Fatal(err)
 		}
 		if len(report.Identities) != 1 ||
-			report.Identities[0].IdentityHash != clientIdentityKey(f.identity) {
+			report.Identities[0].IdentityHash != identityHashText(clientIdentityKey(f.identity)) {
 			t.Fatalf("report = %+v", report.Identities)
 		}
-		report, err = reader.Inspect(inspectOptions{Identity: []byte("nobody")})
+		report, err = reader.Inspect(inspect.StoreQuery{Identity: "nobody"}, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -514,9 +501,7 @@ func TestInspectFilters(t *testing.T) {
 		}
 	})
 	t.Run("identity hash", func(t *testing.T) {
-		report, err := reader.Inspect(inspectOptions{
-			IdentityHash: clientIdentityKey([]byte("pending-client")),
-		})
+		report, err := reader.Inspect(inspect.StoreQuery{IdentityHash: clientIdentityKey([]byte("pending-client"))}, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -525,17 +510,17 @@ func TestInspectFilters(t *testing.T) {
 		}
 	})
 	t.Run("stateid scan", func(t *testing.T) {
-		sid := f.stateID
-		report, err := reader.Inspect(inspectOptions{StateID: &sid})
+		sid := [12]byte(f.stateID)
+		report, err := reader.Inspect(inspect.StoreQuery{Stateid: &sid}, "")
 		if err != nil {
 			t.Fatal(err)
 		}
 		if len(report.Identities) != 1 || len(report.Identities[0].Incarnations) != 1 ||
-			report.Identities[0].Incarnations[0].ClientID != inspectInode(f.clientID) {
+			report.Identities[0].Incarnations[0].Incarnation != incarnationText(f.clientID) {
 			t.Fatalf("report = %+v", report.Identities)
 		}
-		unknown := StateID{1}
-		report, err = reader.Inspect(inspectOptions{StateID: &unknown})
+		unknown := [12]byte{1}
+		report, err = reader.Inspect(inspect.StoreQuery{Stateid: &unknown}, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -545,10 +530,8 @@ func TestInspectFilters(t *testing.T) {
 		}
 	})
 	t.Run("stateid via staging sidecar", func(t *testing.T) {
-		sid := f.stateID
-		report, err := reader.Inspect(inspectOptions{
-			StateID: &sid, StagingDir: f.stagingDir,
-		})
+		sid := [12]byte(f.stateID)
+		report, err := reader.Inspect(inspect.StoreQuery{Stateid: &sid}, f.stagingDir)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -558,10 +541,8 @@ func TestInspectFilters(t *testing.T) {
 		}
 	})
 	t.Run("stateid with staging but no open marker", func(t *testing.T) {
-		sid := StateID{9}
-		report, err := reader.Inspect(inspectOptions{
-			StateID: &sid, StagingDir: f.stagingDir,
-		})
+		sid := [12]byte{9}
+		report, err := reader.Inspect(inspect.StoreQuery{Stateid: &sid}, f.stagingDir)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -577,91 +558,76 @@ func TestInspectFilters(t *testing.T) {
 
 func TestInspectOutput(t *testing.T) {
 	f := newInspectFixture(t)
-	report, err := f.reader(t).Inspect(inspectOptions{StagingDir: f.stagingDir})
+	report, err := f.reader(t).Inspect(inspect.StoreQuery{}, f.stagingDir)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	var text bytes.Buffer
-	report.WriteText(&text)
-	for _, want := range []string{
-		"summary identities 3 incarnations 4: ACTIVE 1 EXPIRED 1 " +
-			"UNLEASED 0 PENDING 1 REPLACED 0 UNREACHABLE 1; " +
-			"open markers 1, stale 0",
-		// Every label matches the flag which selects it.
-		"identity-hash " + clientIdentityKey(f.identity),
-		"identity  \"Linux NFSv4.1 host-a/10.0.0.1\"",
-		"directory " + inodeHex(InodeID(f.identityDirID)),
-		"confirmed clientid " + inodeHex(InodeID(f.clientID)),
-		"[confirmed,pending, lease live] ACTIVE",
-		"[unreachable, lease none] UNREACHABLE",
-		"[pending, lease none] PENDING",
-		"[confirmed,pending, lease expired] EXPIRED",
-		"open       stateid " + hex.EncodeToString(f.stateID[:]) +
-			" epoch abcdef01 ACTIVE",
-		"file 0x0000000000003039 data 4096 bytes",
-		"target dir " + inodeHex(f.fs.RootID()) + " name \"upload.bin\"",
-		"base " + inodeHex(MakeInodeID(InodeTypeFile, 123)) +
-			" size 8192; checkpoint size 4096 dirty [512,1024)",
-		"attrs change 99",
-		"owner \"owner-a\" access write",
-		"NO OPEN MARKER",
-		"client     identity \"Linux NFSv4.1 host-a/10.0.0.1\" verifier ",
-		"principal AUTH_SYS uid=1000 gid=100 groups=[100,4]",
-	} {
-		if !strings.Contains(text.String(), want) {
-			t.Errorf("text report lacks %q:\n%s", want, text.String())
+	if s := report.Summary; s.Identities != 3 || s.Incarnations != 4 || s.Active != 1 ||
+		s.Expired != 1 || s.Pending != 1 || s.Unreachable != 1 || s.OpenMarkers != 1 || s.StaleOpens != 0 {
+		t.Fatalf("summary = %+v", s)
+	}
+	// A staged file with no client in the store is listed once, at the top
+	// level, and not again under any identity.
+	orphans := 0
+	for _, entry := range report.Staging {
+		if entry.FileName == "orphan.bin" {
+			orphans++
 		}
 	}
-	// The identity directory inode is not a clientid and must not be labelled
-	// as one: pasting it into -clientid does not work.
-	if strings.Contains(text.String(),
-		"clientid "+inodeHex(InodeID(f.identityDirID))) {
-		t.Errorf("identity directory inode labelled as a clientid:\n%s", text.String())
+	for _, identity := range report.Identities {
+		for _, inc := range identity.Incarnations {
+			for _, entry := range inc.Staging {
+				if entry.FileName == "orphan.bin" {
+					orphans++
+				}
+			}
+		}
 	}
-	if count := strings.Count(text.String(), "orphan.bin"); count != 1 {
-		t.Fatalf("orphan staging reported %d times:\n%s", count, text.String())
+	if orphans != 1 {
+		t.Fatalf("orphan staging reported %d times", orphans)
 	}
 
-	var out bytes.Buffer
-	if err := report.WriteJSON(&out); err != nil {
+	out, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
 		t.Fatal(err)
 	}
 	// Opaque client bytes are plain strings, not base64, so that they can be
-	// read and pasted back into the matching flag.
-	if !bytes.Contains(out.Bytes(), []byte(`"open_owner": "owner-a"`)) ||
-		!bytes.Contains(out.Bytes(), []byte(`"status": "ACTIVE"`)) {
-		t.Fatalf("JSON lacks staging owner or lifecycle status:\n%s", out.String())
+	// read and pasted back into the matching selector.
+	if !bytes.Contains(out, []byte(`"open_owner": "owner-a"`)) ||
+		!bytes.Contains(out, []byte(`"status": "ACTIVE"`)) {
+		t.Fatalf("JSON lacks staging owner or lifecycle status:\n%s", out)
 	}
-	if bytes.Contains(out.Bytes(), []byte("b3duZXItYQ==")) {
-		t.Fatalf("JSON still base64-encodes the open owner:\n%s", out.String())
+	if bytes.Contains(out, []byte("b3duZXItYQ==")) {
+		t.Fatalf("JSON still base64-encodes the open owner:\n%s", out)
 	}
 	var decoded struct {
 		Identities []struct {
 			Incarnations []struct {
-				ClientID string `json:"clientid"`
-				Usable   bool   `json:"usable"`
-				Status   string `json:"status"`
+				Incarnation string `json:"incarnation"`
+				Usable      bool   `json:"usable"`
+				Status      string `json:"status"`
 			} `json:"incarnations"`
 		} `json:"identities"`
 	}
-	if err := json.Unmarshal(out.Bytes(), &decoded); err != nil {
+	if err := json.Unmarshal(out, &decoded); err != nil {
 		t.Fatal(err)
 	}
 	found := false
 	for _, identity := range decoded.Identities {
 		for _, inc := range identity.Incarnations {
-			if inc.ClientID == inodeHex(InodeID(f.clientID)) && inc.Usable &&
+			if inc.Incarnation == incarnationText(f.clientID) && inc.Usable &&
 				inc.Status == inspectStatusActive {
 				found = true
 			}
 		}
 	}
 	if !found {
-		t.Fatalf("JSON lacks usable clientid %s:\n%s", inodeHex(InodeID(f.clientID)), out.String())
+		t.Fatalf("JSON lacks usable %s:\n%s", incarnationText(f.clientID), out)
 	}
-	// The JSON keys are the flag names, and the values are what those flags
-	// accept: -identity takes identity, -identity-hash takes identity_hash.
+	// The JSON keys are the selector names, and the values are what those
+	// selectors accept: identity takes identity, identity-hash takes
+	// identity_hash.
 	var identityJSON struct {
 		Identities []struct {
 			IdentityHash string `json:"identity_hash"`
@@ -669,44 +635,44 @@ func TestInspectOutput(t *testing.T) {
 			Identity     string `json:"identity"`
 		} `json:"identities"`
 	}
-	if err := json.Unmarshal(out.Bytes(), &identityJSON); err != nil {
+	if err := json.Unmarshal(out, &identityJSON); err != nil {
 		t.Fatal(err)
 	}
 	for _, identity := range identityJSON.Identities {
 		if identity.Identity != string(f.identity) {
 			continue
 		}
-		if identity.IdentityHash != clientIdentityKey(f.identity) {
+		if identity.IdentityHash != identityHashText(clientIdentityKey(f.identity)) {
 			t.Fatalf("identity_hash = %q", identity.IdentityHash)
 		}
-		if identity.DirectoryID != inodeHex(InodeID(f.identityDirID)) {
+		if identity.DirectoryID != inodeText(f.identityDirID) {
 			t.Fatalf("directory_id = %q", identity.DirectoryID)
 		}
 		return
 	}
-	t.Fatalf("JSON lacks identity %q as a plain string:\n%s", f.identity, out.String())
+	t.Fatalf("JSON lacks identity %q as a plain string:\n%s", f.identity, out)
 }
 
 func TestInspectJSONKeepsAnEmptyIdentityListAnArray(t *testing.T) {
 	f := newInspectFixture(t)
-	report, err := f.reader(t).Inspect(inspectOptions{
-		ClientID: uint64(MakeInodeID(InodeTypeDir, 0x123456)),
-	})
+	report, err := f.reader(t).Inspect(inspect.StoreQuery{
+		Incarnation: uint64(MakeInodeID(InodeTypeDir, 0x123456)),
+	}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var out bytes.Buffer
-	if err := report.WriteJSON(&out); err != nil {
+	out, err := json.Marshal(report)
+	if err != nil {
 		t.Fatal(err)
 	}
 	var decoded struct {
 		Identities []json.RawMessage `json:"identities"`
 	}
-	if err := json.Unmarshal(out.Bytes(), &decoded); err != nil {
+	if err := json.Unmarshal(out, &decoded); err != nil {
 		t.Fatal(err)
 	}
 	if decoded.Identities == nil {
-		t.Fatalf("identities = null:\n%s", out.String())
+		t.Fatalf("identities = null:\n%s", out)
 	}
 }
 
@@ -736,37 +702,54 @@ func TestInspectReportsMalformedStagingAndPointers(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	report, err := f.reader(t).Inspect(inspectOptions{StagingDir: f.stagingDir})
+	// A directory under clients whose name is not a hash is kept by its raw
+	// name as a problem, with no typed hash invented for it.
+	if _, err := f.fs.Mkdir(f.first.dirID, "not-a-hash"); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := f.reader(t).Inspect(inspect.StoreQuery{}, f.stagingDir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(report.Problems) != 2 {
 		t.Fatalf("staging problems = %v", report.Problems)
 	}
+	found := 0
 	for _, identity := range report.Identities {
-		if identity.DirectoryID != inspectInode(identityID) {
+		switch {
+		case identity.DirectoryID == inodeText(identityID):
+			if identity.Confirmed == nil || !identity.Confirmed.Dangling ||
+				identity.Confirmed.Problem == "" {
+				t.Fatalf("confirmed pointer = %+v", identity.Confirmed)
+			}
+		case identity.Name == "not-a-hash":
+			if identity.IdentityHash != "" || len(identity.Problems) != 1 ||
+				!strings.Contains(identity.Problems[0], "not a 64-digit hex hash") {
+				t.Fatalf("malformed identity = %+v", identity)
+			}
+		default:
 			continue
 		}
-		if identity.Confirmed == nil || !identity.Confirmed.Dangling ||
-			identity.Confirmed.Problem == "" {
-			t.Fatalf("confirmed pointer = %+v", identity.Confirmed)
-		}
-		return
+		found++
 	}
-	t.Fatalf("identity %s not found", inodeHex(identityID))
+	if found != 2 {
+		t.Fatalf("found %d of the dangling and malformed identities in %+v", found, report.Identities)
+	}
 }
 
-func TestInspectTextDescribesConfirmedClientWithoutLease(t *testing.T) {
+// A confirmed client that has never recorded a lease is UNLEASED, not
+// EXPIRED: it can still acquire its first lease.
+func TestInspectReportsConfirmedClientWithoutLease(t *testing.T) {
 	f := newInspectFixture(t)
-	f.register(t, f.first, []byte("awaiting-renew"), [8]byte{5}, clientOwner{})
-	report, err := f.reader(t).Inspect(inspectOptions{})
+	id := f.register(t, f.first, []byte("awaiting-renew"), [8]byte{5}, clientOwner{})
+	report, err := f.reader(t).Inspect(inspect.StoreQuery{}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var text bytes.Buffer
-	report.WriteText(&text)
-	if !strings.Contains(text.String(), "[confirmed,pending, lease none] UNLEASED") {
-		t.Fatalf("text report lacks unleased state:\n%s", text.String())
+	_, inc := findIncarnation(t, report, id)
+	if inc.Status != inspectStatusUnleased || inc.LeaseState != "none" {
+		t.Fatalf("unleased incarnation = %+v", inc)
 	}
 }
 
@@ -804,7 +787,7 @@ func TestInspectIncarnationStatus(t *testing.T) {
 func TestInspectMarksOpenUnderExpiredLeaseStale(t *testing.T) {
 	f := newInspectFixture(t)
 	f.now = f.now.Add(nfsLeaseTime)
-	report, err := f.reader(t).Inspect(inspectOptions{})
+	report, err := f.reader(t).Inspect(inspect.StoreQuery{}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -815,13 +798,6 @@ func TestInspectMarksOpenUnderExpiredLeaseStale(t *testing.T) {
 	}
 	if report.Summary.StaleOpens != 1 {
 		t.Fatalf("summary = %+v", report.Summary)
-	}
-	var text bytes.Buffer
-	report.WriteText(&text)
-	if !strings.Contains(text.String(),
-		"open       stateid "+hex.EncodeToString(f.stateID[:])+
-			" epoch abcdef01 STALE") {
-		t.Fatalf("text report lacks stale open:\n%s", text.String())
 	}
 }
 
@@ -885,7 +861,7 @@ func TestInspectReportsStagingIntegrity(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	report, err := f.reader(t).Inspect(inspectOptions{StagingDir: dir})
+	report, err := f.reader(t).Inspect(inspect.StoreQuery{}, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -912,49 +888,52 @@ func TestInspectReportsStagingIntegrity(t *testing.T) {
 	if len(report.Staging) != 4 {
 		t.Fatalf("unmatched staging = %+v", report.Staging)
 	}
-	byID := make(map[inspectInode]*inspectStagingEntry)
+	byID := make(map[string]*inspectStagingEntry)
 	for _, entry := range report.Staging {
 		byID[entry.FileID] = entry
 	}
-	if got := byID[1]; got == nil || len(got.Problems) != 1 ||
+	if got := byID[inodeText(1)]; got == nil || len(got.Problems) != 1 ||
 		got.Problems[0] != "metadata sidecar is missing" {
 		t.Fatalf("data-only entry = %+v", got)
 	}
-	if got := byID[2]; got == nil || len(got.Problems) != 1 ||
+	if got := byID[inodeText(2)]; got == nil || len(got.Problems) != 1 ||
 		got.Problems[0] != "staging data file is missing" {
 		t.Fatalf("meta-only entry = %+v", got)
 	}
-	if got := byID[3]; got == nil || len(got.Problems) != 1 ||
+	if got := byID[inodeText(3)]; got == nil || len(got.Problems) != 1 ||
 		!strings.Contains(got.Problems[0], "cannot read metadata sidecar") {
 		t.Fatalf("malformed entry = %+v", got)
 	}
-	if got := byID[4]; got == nil || got.SidecarVersion != "v8" ||
+	if got := byID[inodeText(4)]; got == nil || got.SidecarVersion != "v8" ||
 		!got.Exclusive || got.Verifier != "0102030000000000" ||
 		!got.ReadOnly || !got.Retired || !got.Unlinked || !got.Guarded ||
 		!strings.HasPrefix(got.RecoveryKey, "aabb") ||
 		len(got.Problems) != 0 {
 		t.Fatalf("complete entry = %+v", got)
 	}
-	if got := byID[5]; got != nil {
+	if got := byID[inodeText(5)]; got != nil {
 		t.Fatalf("short-named pair was accepted: %+v", got)
 	}
-
-	var text bytes.Buffer
-	report.WriteText(&text)
-	for _, want := range []string{
-		"sidecar v8",
-		"unlinked guarded",
-		"EXCLUSIVE4 verifier 0102030000000000",
-		"RETIRED (lease expired, held for reclaim)",
-		"quarantined checkpoints",
-		"attrs (no change counter recorded)",
-	} {
-		if !strings.Contains(text.String(), want) {
-			t.Errorf("text report lacks %q:\n%s", want, text.String())
-		}
+	// An entry whose sidecar is missing or unreadable has no directory to
+	// report, so dir_id is omitted rather than a zero id invented; the two
+	// entries with a readable sidecar keep theirs.
+	out, err := json.Marshal(report.Staging)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if strings.Contains(text.String(), "sidecar NFS") {
-		t.Errorf("sidecar version still rendered as an NFS version:\n%s", text.String())
+	var entries []map[string]json.RawMessage
+	if err := json.Unmarshal(out, &entries); err != nil {
+		t.Fatal(err)
+	}
+	hasDir := map[string]bool{inodeText(2): true, inodeText(4): true}
+	for _, e := range entries {
+		var fileID string
+		if err := json.Unmarshal(e["file_id"], &fileID); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := e["dir_id"]; ok != hasDir[fileID] {
+			t.Fatalf("%s: dir_id present = %v, want %v", fileID, ok, hasDir[fileID])
+		}
 	}
 }
 
@@ -963,15 +942,12 @@ func TestInspectReportsStagingIntegrity(t *testing.T) {
 // under a heading which claims they have no client.
 func TestInspectFilteredReportCountsOtherClientsStaging(t *testing.T) {
 	f := newInspectFixture(t)
-	report, err := f.reader(t).Inspect(inspectOptions{
-		IdentityHash: clientIdentityKey([]byte("pending-client")),
-		StagingDir:   f.stagingDir,
-	})
+	report, err := f.reader(t).Inspect(inspect.StoreQuery{IdentityHash: clientIdentityKey([]byte("pending-client"))}, f.stagingDir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if report.Filter == nil ||
-		report.Filter.IdentityHash != clientIdentityKey([]byte("pending-client")) {
+		report.Filter.IdentityHash != identityHashText(clientIdentityKey([]byte("pending-client"))) {
 		t.Fatalf("filter = %+v", report.Filter)
 	}
 	if len(report.Staging) != 0 {
@@ -980,24 +956,20 @@ func TestInspectFilteredReportCountsOtherClientsStaging(t *testing.T) {
 	if report.StagingSummary.OtherClients != 2 {
 		t.Fatalf("staging summary = %+v", report.StagingSummary)
 	}
-	var text bytes.Buffer
-	report.WriteText(&text)
-	if strings.Contains(text.String(), "upload.bin") ||
-		strings.Contains(text.String(), "orphan.bin") {
-		t.Fatalf("filtered text report leaked other clients' files:\n%s", text.String())
+	// Nothing of the other clients' files leaks into the filtered report.
+	out, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(text.String(),
-		"2 sidecars belong to clients outside this filter") {
-		t.Fatalf("filtered text report lacks the suppression note:\n%s", text.String())
+	if bytes.Contains(out, []byte("upload.bin")) || bytes.Contains(out, []byte("orphan.bin")) {
+		t.Fatalf("filtered report leaked other clients' files:\n%s", out)
 	}
 }
 
 func TestInspectRejectsInvalidStagingPath(t *testing.T) {
 	f := newInspectFixture(t)
 	missing := filepath.Join(t.TempDir(), "missing")
-	if _, err := f.reader(t).Inspect(inspectOptions{
-		StagingDir: missing,
-	}); err == nil || !strings.Contains(err.Error(), "staging directory") {
+	if _, err := f.reader(t).Inspect(inspect.StoreQuery{}, missing); err == nil || !strings.Contains(err.Error(), "staging directory") {
 		t.Fatalf("missing staging path error = %v", err)
 	}
 
@@ -1005,44 +977,8 @@ func TestInspectRejectsInvalidStagingPath(t *testing.T) {
 	if err := os.WriteFile(path, nil, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.reader(t).Inspect(inspectOptions{
-		StagingDir: path,
-	}); err == nil || !strings.Contains(err.Error(), "is not a directory") {
+	if _, err := f.reader(t).Inspect(inspect.StoreQuery{}, path); err == nil || !strings.Contains(err.Error(), "is not a directory") {
 		t.Fatalf("file staging path error = %v", err)
-	}
-}
-
-func TestParseInspectOptions(t *testing.T) {
-	hash := strings.Repeat("a", 64)
-	tests := []struct {
-		name                                      string
-		identity, identityHash, clientID, stateID string
-		wantErr                                   bool
-	}{
-		{name: "no filter"},
-		{name: "identity", identity: "client"},
-		{name: "identity hash", identityHash: hash},
-		{name: "uppercase identity hash", identityHash: strings.ToUpper(hash)},
-		{name: "clientid", clientID: "0x2000000000000001"},
-		{name: "stateid", stateID: strings.Repeat("0", 24)},
-		{name: "zero clientid", clientID: "0", wantErr: true},
-		{name: "file inode as clientid", clientID: "0x4000000000000001", wantErr: true},
-		{name: "short identity hash", identityHash: "abcd", wantErr: true},
-		{name: "invalid identity hash", identityHash: strings.Repeat("g", 64), wantErr: true},
-		{name: "two filters", identity: "client", clientID: "0x2000000000000001", wantErr: true},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			opts, err := parseInspectOptions(
-				test.identity, test.identityHash, test.clientID, test.stateID)
-			if (err != nil) != test.wantErr {
-				t.Fatalf("parseInspectOptions() error = %v, wantErr %v", err, test.wantErr)
-			}
-			if !test.wantErr && test.identityHash != "" &&
-				opts.IdentityHash != strings.ToLower(test.identityHash) {
-				t.Fatalf("identity hash = %q", opts.IdentityHash)
-			}
-		})
 	}
 }
 

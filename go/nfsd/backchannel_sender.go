@@ -597,25 +597,33 @@ func (ss *sessionStore) callbackRenew(clientID uint64, received time.Time) {
 	}
 }
 
+// sequenceFlagsFrom combines the observations into SEQUENCE's status flags.
+// fault, pending and up are the session's own sender and path state;
+// clientDown is clientPathDown for its incarnation. The request path and
+// the diagnostics snapshot share it, so both report the same meanings.
+func sequenceFlagsFrom(fault, pending, up, backRequested, clientDown bool) uint32 {
+	var flags uint32
+	if fault {
+		flags |= SEQ4_STATUS_BACKCHANNEL_FAULT
+	}
+	if (backRequested || pending) && !up {
+		flags |= SEQ4_STATUS_CB_PATH_DOWN_SESSION
+	}
+	if !up && clientDown {
+		flags |= SEQ4_STATUS_CB_PATH_DOWN
+	}
+	return flags
+}
+
 // sequenceFlags is SEQUENCE's status flags for sess, from memory.
 func (s *Server) sequenceFlags(sess *session) uint32 {
 	cb := sess.cb
 	if cb == nil {
 		return 0
 	}
-	var flags uint32
 	fault, pending := cb.flags()
-	if fault {
-		flags |= SEQ4_STATUS_BACKCHANNEL_FAULT
-	}
 	up := cb.pathUp()
-	if (sess.backRequested || pending) && !up {
-		flags |= SEQ4_STATUS_CB_PATH_DOWN_SESSION
-	}
-	if !up && s.sessions.clientPathDown(sess.clientID) {
-		flags |= SEQ4_STATUS_CB_PATH_DOWN
-	}
-	return flags
+	return sequenceFlagsFrom(fault, pending, up, sess.backRequested, !up && s.sessions.clientPathDown(sess.clientID))
 }
 
 // clientPathDown reports that some session of the client asked for a

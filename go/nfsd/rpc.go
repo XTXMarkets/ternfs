@@ -11,6 +11,8 @@ import (
 	"net"
 	"sort"
 	"sync"
+	"sync/atomic"
+	"time"
 )
 
 // RPC constants.
@@ -138,6 +140,11 @@ type rpcConnection struct {
 	// closed when the connection ends. Both are set by handleConn.
 	send   func([]byte) bool
 	closed <-chan struct{}
+	// For diagnostics: when the connection was accepted, the requests
+	// admitted and not yet replied to, and the requests admitted in total.
+	connectedAt time.Time
+	inFlight    atomic.Int32
+	requests    atomic.Uint64
 }
 
 const maxConnectionSessions = 64

@@ -10,9 +10,12 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/inspect"
 )
 
 // cbTestClient is a client connection that also serves callbacks: its
@@ -703,6 +706,119 @@ func TestCallbackArbitratesExpiry(t *testing.T) {
 			// lease is dead.
 			if expired, err := srv.decideExpired(clientID, false); expired || err != nil {
 				t.Fatalf("renewed client decided %t %v", expired, err)
+			}
+		})
+	}
+}
+
+// SEQUENCE's status flags from the request path and from the diagnostics
+// snapshot agree with each other and with these expected masks. Sessions
+// are built in the store directly: a session without a sender has no flags
+// and does not count for its client's path; pending is a recall or a
+// callback in flight; a probing path is up, a closed connection is not;
+// the client-wide path-down flag needs a requested backchannel and no path
+// up across the incarnation's sessions with senders, other clients aside.
+func TestSequenceFlagsTable(t *testing.T) {
+	type spec struct {
+		client                   uint64
+		sender, requested, fault bool
+		recall, inFlight         bool
+		paths                    []cbPath
+		closed                   bool // every connection has been closed
+		want                     uint32
+	}
+	const a, b = 0x8000000000000001, 0x8000000000000002
+	const down, sessionDown = SEQ4_STATUS_CB_PATH_DOWN, SEQ4_STATUS_CB_PATH_DOWN_SESSION
+	for _, tc := range []struct {
+		name     string
+		sessions []spec
+	}{
+		{"no sender; a requested sibling is still down", []spec{
+			{client: a, want: 0},
+			{client: a, sender: true, requested: true, want: sessionDown | down},
+		}},
+		{"sender, nothing requested, no path, no sibling", []spec{
+			{client: a, sender: true, want: 0},
+		}},
+		{"sibling requested and down", []spec{
+			{client: a, sender: true, want: down},
+			{client: a, sender: true, requested: true, want: sessionDown | down},
+		}},
+		{"requested, every path down", []spec{
+			{client: a, sender: true, requested: true, paths: []cbPath{cbPathUnresponsive}, want: sessionDown | down},
+		}},
+		{"requested and down, sibling up", []spec{
+			{client: a, sender: true, requested: true, want: sessionDown},
+			{client: a, sender: true, paths: []cbPath{cbPathUp}, want: 0},
+		}},
+		{"requested and down, sibling probing", []spec{
+			{client: a, sender: true, requested: true, want: sessionDown},
+			{client: a, sender: true, paths: []cbPath{cbPathProbing}, want: 0},
+		}},
+		{"recall pending, nothing requested", []spec{
+			{client: a, sender: true, recall: true, want: sessionDown},
+		}},
+		{"callback in flight, nothing requested", []spec{
+			{client: a, sender: true, inFlight: true, want: sessionDown},
+		}},
+		{"fault with a path up", []spec{
+			{client: a, sender: true, requested: true, fault: true, paths: []cbPath{cbPathUp}, want: SEQ4_STATUS_BACKCHANNEL_FAULT},
+		}},
+		{"an unrelated client's path does not count", []spec{
+			{client: a, sender: true, requested: true, want: sessionDown | down},
+			{client: b, sender: true, requested: true, paths: []cbPath{cbPathUp}, want: 0},
+		}},
+		{"a closed connection is unresponsive", []spec{
+			{client: a, sender: true, requested: true, paths: []cbPath{cbPathUp}, closed: true, want: sessionDown | down},
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ss := newSessionStore(1)
+			srv := &Server{sessions: ss, opens: newOpenStateStore(), clients: &ClientStore{now: time.Now}}
+			var sessions []*session
+			for _, sp := range tc.sessions {
+				sess := &session{clientID: sp.client, backRequested: sp.requested, slots: make([]sessionSlot, 1)}
+				if sp.sender {
+					cb := newCBSender(srv, sess, 0x40000001, callbackSec{})
+					cb.fault, cb.recall, cb.inFlight = sp.fault, sp.recall, sp.inFlight
+					for _, path := range sp.paths {
+						c := &rpcConnection{path: path}
+						if sp.closed {
+							closed := make(chan struct{})
+							close(closed)
+							c.closed = closed
+						}
+						cb.conns = append(cb.conns, c)
+					}
+					sess.cb = cb
+				}
+				ss.mu.Lock()
+				sess.id = ss.newSessionIDLocked(sp.client)
+				ss.insertSessionLocked(sess)
+				ss.mu.Unlock()
+				sessions = append(sessions, sess)
+			}
+			all, _ := srv.Sessions(inspect.SessionFilter{})
+			for i, sp := range tc.sessions {
+				sess := sessions[i]
+				if got := srv.sequenceFlags(sess); got != sp.want {
+					t.Errorf("session %d: sequenceFlags %#x, want %#x", i, got, sp.want)
+				}
+				want := strings.Join(decodeSequenceFlags(sp.want), ",")
+				for _, rec := range all.Records {
+					if rec.ID == sessionText(sess.id) && strings.Join(rec.StatusFlags, ",") != want {
+						t.Errorf("session %d: snapshot flags %v, want %v", i, rec.StatusFlags, want)
+					}
+				}
+				// A filter limits the output, not the siblings consulted.
+				id := [16]byte(sess.id)
+				one, _ := srv.Sessions(inspect.SessionFilter{ID: &id})
+				if len(one.Records) != 1 || strings.Join(one.Records[0].StatusFlags, ",") != want {
+					t.Errorf("session %d: filtered snapshot %+v, want flags %v", i, one.Records, want)
+				}
+			}
+			if len(all.Records) != len(tc.sessions) {
+				t.Errorf("snapshot has %d records, want %d", len(all.Records), len(tc.sessions))
 			}
 		})
 	}
