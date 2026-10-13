@@ -1013,7 +1013,7 @@ func TestTernClientIncarnationGC(t *testing.T) {
 	second.now = now
 	collector.now = now
 	owner := clientOwner{
-		principal: rpcPrincipal{flavor: authSys, body: t.Name()},
+		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: t.Name()},
 	}
 	identity := []byte(t.Name())
 	oldID, confirm, err := first.SetClientID(

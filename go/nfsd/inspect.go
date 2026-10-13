@@ -1148,9 +1148,9 @@ func inspectOpaque(value []byte) (text string, hexText string) {
 func formatPrincipal(p rpcPrincipal) string {
 	body := []byte(p.body)
 	switch p.flavor {
-	case authNone:
+	case nfs4.AUTH_NONE:
 		return "AUTH_NONE"
-	case authSys:
+	case nfs4.AUTH_SYS:
 		if len(body) < 12 {
 			return "AUTH_SYS " + hex.EncodeToString(body)
 		}

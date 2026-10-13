@@ -222,6 +222,9 @@ func newClientStoreAt(
 	return cs, nil
 }
 
+// maxSessionRecords bounds the session store's wire clientids and sessions.
+const maxSessionRecords = 4096
+
 // maxRefreshers bounds lease refresher records (canonical r3 §9.4).
 const maxRefreshers = maxSessionRecords
 

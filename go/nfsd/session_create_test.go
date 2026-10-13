@@ -173,7 +173,7 @@ func identityCallOn(t *testing.T, srv *Server, uid uint32, conn *rpcConnection, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.credFlavor, req.credBody, req.connection = authSys, authSysCredForTest(uid), conn
+	req.credFlavor, req.credBody, req.connection = nfs4.AUTH_SYS, authSysCredForTest(uid), conn
 	reply := srv.safeHandleCompound(req, "identity-test")
 	res, err := parseCompoundReply(append([]byte(nil), reply...))
 	req.releaseReply()

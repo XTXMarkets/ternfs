@@ -104,10 +104,10 @@ func TestClientStoreDurableState(t *testing.T) {
 	}
 
 	owner1 := clientOwner{
-		principal: rpcPrincipal{flavor: authSys, body: "owner-1"},
+		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner-1"},
 	}
 	owner2 := clientOwner{
-		principal: rpcPrincipal{flavor: authSys, body: "owner-2"},
+		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner-2"},
 	}
 	verifier := [8]byte{1}
 	base := time.Unix(1000, 0)
@@ -325,9 +325,9 @@ func TestClientStoreConfirmationReplayAndUpdateRejection(t *testing.T) {
 		t.Fatal(err)
 	}
 	owner := clientOwner{
-		principal: rpcPrincipal{flavor: authSys, body: "owner"},
+		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"},
 	}
-	otherPrincipal := rpcPrincipal{flavor: authSys, body: "other"}
+	otherPrincipal := rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "other"}
 	clientID, confirm, err := store.SetClientID(
 		[8]byte{1}, []byte("client"), owner)
 	if err != nil {
@@ -395,7 +395,7 @@ func TestClientStoreLeaseSlotsDoNotShortenEachOther(t *testing.T) {
 	base := time.Unix(1000, 0)
 	first.now = func() time.Time { return base }
 	second.now = func() time.Time { return base }
-	owner := clientOwner{principal: rpcPrincipal{flavor: authSys, body: "owner"}}
+	owner := clientOwner{principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"}}
 	clientID, confirm, err := first.SetClientID(
 		[8]byte{1}, []byte("client"), owner)
 	if err != nil {
@@ -461,7 +461,7 @@ func TestClientStoreRemovesExpiredProcessSlots(t *testing.T) {
 	fs := vfs.NewLocalTernVFS(t.TempDir())
 	base := time.Unix(1000, 0)
 	owner := clientOwner{
-		principal: rpcPrincipal{flavor: authSys, body: "owner"},
+		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"},
 	}
 	first, clientID := newConfirmedStoreClient(
 		t, fs, []byte("client"), [8]byte{1}, owner)
@@ -536,7 +536,7 @@ func TestClientStoreExpiredLeaseDoesNotReviveAfterSlotCleanup(t *testing.T) {
 			fs := vfs.NewLocalTernVFS(t.TempDir())
 			base := time.Unix(1000, 0)
 			owner := clientOwner{
-				principal: rpcPrincipal{flavor: authSys, body: "owner"},
+				principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"},
 			}
 			first, clientID := newConfirmedStoreClient(
 				t, fs, []byte("client"), [8]byte{1}, owner)
@@ -577,7 +577,7 @@ func TestClientStoreCachedRenewSeesExpiredMarker(t *testing.T) {
 	fs := vfs.NewLocalTernVFS(t.TempDir())
 	base := time.Unix(1000, 0)
 	owner := clientOwner{
-		principal: rpcPrincipal{flavor: authSys, body: "owner"},
+		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"},
 	}
 	first, clientID := newConfirmedStoreClient(
 		t, fs, []byte("client"), [8]byte{1}, owner)
@@ -618,7 +618,7 @@ func TestClientStorePersistsExpiryBeforeSlotCleanup(t *testing.T) {
 	fs := &removeFailureVFS{TernVFS: baseFS}
 	base := time.Unix(1000, 0)
 	owner := clientOwner{
-		principal: rpcPrincipal{flavor: authSys, body: "owner"},
+		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"},
 	}
 	store, clientID := newConfirmedStoreClient(
 		t, fs, []byte("client"), [8]byte{1}, owner)
@@ -766,7 +766,7 @@ func TestClientStoreIsConfirmedUsesCachedLocation(t *testing.T) {
 		fs,
 		[]byte("client"),
 		[8]byte{1},
-		clientOwner{principal: rpcPrincipal{flavor: authSys, body: "owner"}},
+		clientOwner{principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"}},
 	)
 	if err := store.MarkOpen(clientID, nfs4.StateID{1}); err != nil {
 		t.Fatal(err)
@@ -796,7 +796,7 @@ func TestClientStoreHasOpenFastPathAndImplicitRenewal(t *testing.T) {
 	base := time.Unix(1000, 0)
 	store.now = func() time.Time { return base }
 	owner := clientOwner{
-		principal: rpcPrincipal{flavor: authSys, body: "owner"},
+		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"},
 	}
 	clientID, confirm, err := store.SetClientID(
 		[8]byte{1}, []byte("client"), owner)
@@ -857,7 +857,7 @@ func TestClientStoreMarkOpenKeepsExistingMarkerInode(t *testing.T) {
 		fs,
 		[]byte("client"),
 		[8]byte{1},
-		clientOwner{principal: rpcPrincipal{flavor: authSys, body: "owner"}},
+		clientOwner{principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"}},
 	)
 	stateID := nfs4.StateID{1}
 	if err := store.MarkOpen(clientID, stateID); err != nil {
@@ -895,7 +895,7 @@ func TestClientStoreImplicitRenewalRechecksReboot(t *testing.T) {
 	first.now = func() time.Time { return base }
 	second.now = func() time.Time { return base }
 	owner := clientOwner{
-		principal: rpcPrincipal{flavor: authSys, body: "owner"},
+		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"},
 	}
 	oldID, confirm, err := first.SetClientID(
 		[8]byte{1}, []byte("client"), owner)
@@ -1189,7 +1189,7 @@ func TestClientStoreConfirmationRechecksPending(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	owner := clientOwner{principal: rpcPrincipal{flavor: authSys, body: "owner"}}
+	owner := clientOwner{principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"}}
 	oldID, oldConfirm, err := first.SetClientID(
 		[8]byte{1}, []byte("client"), owner)
 	if err != nil {
@@ -1273,7 +1273,7 @@ func TestClientStoreMarkOpenKeepsExistingMarkerOnRenewFailure(t *testing.T) {
 	fs := &renameFailureVFS{TernVFS: baseFS}
 	base := time.Unix(1000, 0)
 	owner := clientOwner{
-		principal: rpcPrincipal{flavor: authSys, body: "owner"},
+		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"},
 	}
 	store, clientID := newConfirmedStoreClient(
 		t, fs, []byte("client"), [8]byte{1}, owner)
@@ -1329,7 +1329,7 @@ func TestClientStoreLiveSlotsSkipsRemovedEntry(t *testing.T) {
 	fs := &readAllHookVFS{TernVFS: baseFS}
 	base := time.Unix(1000, 0)
 	owner := clientOwner{
-		principal: rpcPrincipal{flavor: authSys, body: "owner"},
+		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"},
 	}
 	store, clientID := newConfirmedStoreClient(
 		t, fs, []byte("client"), [8]byte{1}, owner)
@@ -1385,7 +1385,7 @@ func TestClientStoreRenewalDoesNotBlockActiveState(t *testing.T) {
 	}
 	base := time.Unix(1000, 0)
 	owner := clientOwner{
-		principal: rpcPrincipal{flavor: authSys, body: "owner"},
+		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"},
 	}
 	store, clientID := newConfirmedStoreClient(
 		t, fs, []byte("client"), [8]byte{1}, owner)
@@ -1432,7 +1432,7 @@ func TestClientStoreConfirmLeavesPendingUntilReplacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	owner := clientOwner{
-		principal: rpcPrincipal{flavor: authSys, body: "owner"},
+		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"},
 	}
 	clientID, confirm, err := store.SetClientID(
 		[8]byte{1}, []byte("client"), owner)
@@ -1519,7 +1519,7 @@ func TestClientStoreGCDoesNotRemoveInFlightTemporaryEntry(t *testing.T) {
 func TestClientStoreGCCollectsTemporaryAndHalfCreatedEntries(t *testing.T) {
 	fs := vfs.NewLocalTernVFS(t.TempDir())
 	owner := clientOwner{
-		principal: rpcPrincipal{flavor: authSys, body: "owner"},
+		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"},
 	}
 	store, clientID := newConfirmedStoreClient(
 		t, fs, []byte("client"), [8]byte{1}, owner)
@@ -1593,7 +1593,7 @@ func TestClientStoreGCHonorsConfirmationClaims(t *testing.T) {
 	base := time.Unix(1000, 0)
 	first.now = func() time.Time { return base }
 	second.now = func() time.Time { return base.Add(30 * time.Second) }
-	owner := clientOwner{principal: rpcPrincipal{flavor: authSys, body: "owner"}}
+	owner := clientOwner{principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"}}
 	oldID, _, err := first.SetClientID(
 		[8]byte{1}, []byte("client"), owner)
 	if err != nil {
@@ -1652,7 +1652,7 @@ func TestClientStoreGCRechecksConfirmationBeforeDeleting(t *testing.T) {
 	}
 	base := time.Unix(1000, 0)
 	writer.now = func() time.Time { return base }
-	owner := clientOwner{principal: rpcPrincipal{flavor: authSys, body: "owner"}}
+	owner := clientOwner{principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"}}
 	oldID, _, err := writer.SetClientID(
 		[8]byte{1}, []byte("client"), owner)
 	if err != nil {
@@ -1702,7 +1702,7 @@ func TestClientStoreRebootCleanupIsRetryable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	owner := clientOwner{principal: rpcPrincipal{flavor: authSys, body: "owner"}}
+	owner := clientOwner{principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"}}
 	oldID, confirm, err := first.SetClientID(
 		[8]byte{1}, []byte("client"), owner)
 	if err != nil {
@@ -1800,7 +1800,7 @@ func TestClientStoreGCIsBoundedAndRetryable(t *testing.T) {
 	}
 	base := time.Unix(1000, 0)
 	collector.now = func() time.Time { return base }
-	owner := clientOwner{principal: rpcPrincipal{flavor: authSys, body: "owner"}}
+	owner := clientOwner{principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"}}
 
 	var clientID uint64
 	for i := 0; i < maxClientGCRemovals+3; i++ {
@@ -1861,7 +1861,7 @@ func TestServerSchedulesClientGC(t *testing.T) {
 	}
 	base := time.Unix(1000, 0)
 	srv.clients.setClock(func() time.Time { return base })
-	owner := clientOwner{principal: rpcPrincipal{flavor: authSys, body: "owner"}}
+	owner := clientOwner{principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"}}
 	oldID, _, err := srv.clients.SetClientID(
 		[8]byte{1}, []byte("client"), owner)
 	if err != nil {
@@ -2029,7 +2029,7 @@ func TestClientStoreHasOpenSlowPathDoesNotBlockFastPath(t *testing.T) {
 	hookFS := &markerLookupGateVFS{TernVFS: baseFS, Gate: testutil.NewGate()}
 	defer testutil.CloseSignal(hookFS.Release)
 	owner := clientOwner{
-		principal: rpcPrincipal{flavor: authSys, body: "owner"},
+		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"},
 	}
 	first, clientID := newConfirmedStoreClient(
 		t, hookFS, []byte("client"), [8]byte{1}, owner)

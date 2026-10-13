@@ -342,36 +342,36 @@ func TestRPCPrincipalIgnoresAuthSysCallerFields(t *testing.T) {
 		return body
 	}
 	first := &rpcRequest{
-		credFlavor: authSys,
+		credFlavor: nfs4.AUTH_SYS,
 		credBody:   authSysBody(1, "first-host", 1000),
 	}
 	second := &rpcRequest{
-		credFlavor: authSys,
+		credFlavor: nfs4.AUTH_SYS,
 		credBody:   authSysBody(2, "second-host", 1000),
 	}
 	if first.principal() != second.principal() {
 		t.Fatal("AUTH_SYS timestamp or machine name changed the RPC principal")
 	}
 	differentUID := &rpcRequest{
-		credFlavor: authSys,
+		credFlavor: nfs4.AUTH_SYS,
 		credBody:   authSysBody(2, "second-host", 1001),
 	}
 	if first.principal() == differentUID.principal() {
 		t.Fatal("different AUTH_SYS uid produced the same RPC principal")
 	}
 	differentFlavor := &rpcRequest{
-		credFlavor: authNone,
+		credFlavor: nfs4.AUTH_NONE,
 		credBody:   first.credBody,
 	}
 	if first.principal() == differentFlavor.principal() {
 		t.Fatal("different credential flavor produced the same RPC principal")
 	}
 	shortFirst := (&rpcRequest{
-		credFlavor: authSys,
+		credFlavor: nfs4.AUTH_SYS,
 		credBody:   []byte{1, 2, 3},
 	}).principal()
 	shortSecond := (&rpcRequest{
-		credFlavor: authSys,
+		credFlavor: nfs4.AUTH_SYS,
 		credBody:   []byte{1, 2, 4},
 	}).principal()
 	if shortFirst == shortSecond {
@@ -1003,7 +1003,7 @@ func TestPutfhAllowsUncachedClientStoreFileHandles(t *testing.T) {
 	dir := t.TempDir()
 	firstFS := vfs.NewLocalTernVFS(dir)
 	owner := clientOwner{
-		principal: rpcPrincipal{flavor: authSys, body: "owner"},
+		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"},
 	}
 	store, clientID := newConfirmedStoreClient(
 		t, firstFS, []byte("client"), [8]byte{1}, owner)
@@ -1484,7 +1484,7 @@ func TestLookupDurableOpenStorageErrorPreservesClientState(t *testing.T) {
 	base := time.Unix(1000, 0)
 	srv.clients.setClock(func() time.Time { return base })
 	owner := clientOwner{
-		principal: rpcPrincipal{flavor: authSys, body: "owner"},
+		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"},
 	}
 	clientID, confirm, err := srv.clients.SetClientID(
 		[8]byte{1}, []byte("client"), owner)
@@ -1580,7 +1580,7 @@ func TestExpireIfLeaseDeadKeepsClientWithoutSlot(t *testing.T) {
 		t.Fatal(err)
 	}
 	owner := clientOwner{
-		principal: rpcPrincipal{flavor: authSys, body: "owner"},
+		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"},
 	}
 	clientID, confirm, err := srv.clients.SetClientID(
 		[8]byte{1}, []byte("client"), owner)
@@ -1621,7 +1621,7 @@ func TestExpireIfLeaseDeadExpiresCollectedIncarnation(t *testing.T) {
 		t.Fatal(err)
 	}
 	owner := clientOwner{
-		principal: rpcPrincipal{flavor: authSys, body: "owner"},
+		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"},
 	}
 	clientID, confirm, err := srv.clients.SetClientID(
 		[8]byte{1}, []byte("client"), owner)
@@ -1694,7 +1694,7 @@ func TestStagingSweepKeepsClientWithoutLeaseSlot(t *testing.T) {
 		return base.Add(nfsLeaseTime + time.Second)
 	})
 	owner := clientOwner{
-		principal: rpcPrincipal{flavor: authSys, body: "owner"},
+		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"},
 	}
 	clientID, confirm, err := srv.clients.SetClientID(
 		[8]byte{1}, []byte("client"), owner)
@@ -1740,7 +1740,7 @@ func TestServerLeaseSweepExpiresAbandonedStaging(t *testing.T) {
 	base := time.Unix(1000, 0)
 	srv.clients.setClock(func() time.Time { return base })
 	owner := clientOwner{
-		principal: rpcPrincipal{flavor: authSys, body: "owner"},
+		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"},
 	}
 	clientID, confirm, err := srv.clients.SetClientID(
 		[8]byte{1}, []byte("client"), owner)
@@ -1819,7 +1819,7 @@ func TestServerLeaseSweepKeepsClientRenewedByAnotherOwner(t *testing.T) {
 	base := time.Unix(1000, 0)
 	srv.clients.setClock(func() time.Time { return base })
 	owner := clientOwner{
-		principal: rpcPrincipal{flavor: authSys, body: "owner"},
+		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"},
 	}
 	clientID, confirm, err := srv.clients.SetClientID(
 		[8]byte{1}, []byte("client"), owner)
@@ -1893,7 +1893,7 @@ func TestNewServerDelaysExpiredRecoveredStagingRemoval(t *testing.T) {
 	base := time.Unix(1000, 0)
 	clients.setClock(func() time.Time { return base })
 	owner := clientOwner{
-		principal: rpcPrincipal{flavor: authSys, body: "owner"},
+		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"},
 	}
 	clientID, confirm, err := clients.SetClientID(
 		[8]byte{1}, []byte("client"), owner)
@@ -1984,7 +1984,7 @@ func TestClientStoreGCKeepsConfirmedIncarnation(t *testing.T) {
 	base := time.Unix(1000, 0)
 	store.now = func() time.Time { return base }
 	owner := clientOwner{
-		principal: rpcPrincipal{flavor: authSys, body: "owner"},
+		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"},
 	}
 	clientID, confirm, err := store.SetClientID(
 		[8]byte{1}, []byte("client"), owner)
@@ -8130,7 +8130,7 @@ func TestServerLeaseSweepExpiresButDoesNotRevokeConfirmedClient(t *testing.T) {
 	base := time.Unix(1000, 0)
 	srv.clients.setClock(func() time.Time { return base })
 	owner := clientOwner{
-		principal: rpcPrincipal{flavor: authSys, body: "owner"},
+		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"},
 	}
 	clientID, confirm, err := srv.clients.SetClientID(
 		[8]byte{1}, []byte("client"), owner)
@@ -8190,7 +8190,7 @@ func TestServerLeaseSweepDropsRenewOnlyClientCache(t *testing.T) {
 	base := time.Unix(1000, 0)
 	srv.clients.setClock(func() time.Time { return base })
 	owner := clientOwner{
-		principal: rpcPrincipal{flavor: authSys, body: "owner"},
+		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"},
 	}
 	clientID, confirm, err := srv.clients.SetClientID(
 		[8]byte{1}, []byte("client"), owner)
@@ -8231,7 +8231,7 @@ func TestClientStoreMarkOpenReusesFreshLease(t *testing.T) {
 	base := time.Unix(1000, 0)
 	store.now = func() time.Time { return base }
 	owner := clientOwner{
-		principal: rpcPrincipal{flavor: authSys, body: "owner"},
+		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"},
 	}
 	clientID, confirm, err := store.SetClientID(
 		[8]byte{1}, []byte("client"), owner)
@@ -8320,7 +8320,7 @@ func TestRunLeaseSweepContinuesAfterPanic(t *testing.T) {
 	}
 	base := time.Unix(1000, 0)
 	srv.clients.setClock(func() time.Time { return base })
-	owner := clientOwner{principal: rpcPrincipal{flavor: authSys, body: "owner"}}
+	owner := clientOwner{principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"}}
 	clientID, confirm, err := srv.clients.SetClientID([8]byte{1}, []byte("client"), owner)
 	if err != nil {
 		t.Fatal(err)

@@ -170,7 +170,7 @@ func (c *cbTestClient) answer(call, body []byte) {
 	r := binary.BigEndian.AppendUint32(nil, binary.BigEndian.Uint32(call[0:4]))
 	r = binary.BigEndian.AppendUint32(r, rpcReply)
 	r = binary.BigEndian.AppendUint32(r, 0) // MSG_ACCEPTED
-	r = binary.BigEndian.AppendUint32(r, authNone)
+	r = binary.BigEndian.AppendUint32(r, nfs4.AUTH_NONE)
 	r = binary.BigEndian.AppendUint32(r, 0)
 	r = binary.BigEndian.AppendUint32(r, acceptSuccess)
 	c.write(append(r, body...))

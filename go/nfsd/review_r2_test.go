@@ -164,7 +164,7 @@ func backSessionForTest(t *testing.T, srv *Server) *session {
 	t.Helper()
 	sess := srv.sessions.lookup(connectionSession(t, srv).id)
 	sess.backRequested = true
-	sess.cb = newCBSender(srv, sess, 0x40000001, callbackSec{flavor: authNone})
+	sess.cb = newCBSender(srv, sess, 0x40000001, callbackSec{flavor: nfs4.AUTH_NONE})
 	return sess
 }
 
@@ -626,7 +626,7 @@ func recallReplyFrame(xid, compound uint32, results ...[]byte) []byte {
 	b := binary.BigEndian.AppendUint32(nil, xid)
 	b = binary.BigEndian.AppendUint32(b, rpcReply)
 	b = binary.BigEndian.AppendUint32(b, 0) // MSG_ACCEPTED
-	b = binary.BigEndian.AppendUint32(b, authNone)
+	b = binary.BigEndian.AppendUint32(b, nfs4.AUTH_NONE)
 	b = binary.BigEndian.AppendUint32(b, 0)
 	b = binary.BigEndian.AppendUint32(b, acceptSuccess)
 	b = binary.BigEndian.AppendUint32(b, compound)

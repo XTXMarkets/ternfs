@@ -433,7 +433,7 @@ func cbCallFrame(xid, program, proc uint32, sec callbackSec, args []byte) []byte
 	b = binary.BigEndian.AppendUint32(b, sec.flavor)
 	b = binary.BigEndian.AppendUint32(b, uint32(len(sec.body)))
 	b = append(b, sec.body...)
-	b = binary.BigEndian.AppendUint32(b, authNone)
+	b = binary.BigEndian.AppendUint32(b, nfs4.AUTH_NONE)
 	b = binary.BigEndian.AppendUint32(b, 0)
 	return append(b, args...)
 }

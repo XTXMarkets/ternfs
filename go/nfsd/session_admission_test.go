@@ -211,10 +211,10 @@ func admissionAuthCall(xid uint32, body []byte, stamp uint32, host string, uid, 
 		cred = binary.BigEndian.AppendUint32(cred, n)
 	}
 	call := rpcCallForTest(xid, procCompound, nil)[:24]
-	call = binary.BigEndian.AppendUint32(call, authSys)
+	call = binary.BigEndian.AppendUint32(call, nfs4.AUTH_SYS)
 	call = binary.BigEndian.AppendUint32(call, uint32(len(cred)))
 	call = append(call, cred...)
-	call = binary.BigEndian.AppendUint32(call, authNone)
+	call = binary.BigEndian.AppendUint32(call, nfs4.AUTH_NONE)
 	call = binary.BigEndian.AppendUint32(call, 0)
 	return append(call, body...)
 }
@@ -589,7 +589,7 @@ func TestAdmissionUncachedFalseRetryAndMalformedUser(t *testing.T) {
 		flavor uint32
 		cred   []byte
 	}{
-		{"nonempty-auth-none", authNone, []byte{1}}, {"truncated-auth-sys", authSys, make([]byte, 8)}, {"unsupported-flavor", 99, nil},
+		{"nonempty-auth-none", nfs4.AUTH_NONE, []byte{1}}, {"truncated-auth-sys", nfs4.AUTH_SYS, make([]byte, 8)}, {"unsupported-flavor", 99, nil},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			req, err := parseRPCCall(rpcCallForTest(3, procCompound, admissionSequence(body, ts, 0, 2, false)))

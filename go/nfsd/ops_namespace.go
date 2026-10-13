@@ -423,8 +423,8 @@ func (s *Server) opSecinfo(args nfs4.SECINFO4args, st *compoundState, w *nfs4.CO
 	// Return AUTH_SYS (flavor 1) and AUTH_NONE (flavor 0).
 	ew := w.AppendResarray_Secinfo()
 	okW := ew.SetValue_Nfs4Ok()
-	okW.AppendData_Default(authSys)
-	okW.AppendData_Default(authNone)
+	okW.AppendData_Default(nfs4.AUTH_SYS)
+	okW.AppendData_Default(nfs4.AUTH_NONE)
 	buf := okW.Finish()
 	ew.Resume(buf)
 	w.Resume(ew.Finish())

@@ -72,7 +72,7 @@ func newInspectFixture(t *testing.T) *inspectFixture {
 	f.second.now = func() time.Time { return f.now }
 
 	owner := clientOwner{
-		principal: rpcPrincipal{flavor: authSys, body: authSysBody(1000, 100, 100, 4)},
+		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: authSysBody(1000, 100, 100, 4)},
 	}
 
 	// Identity C: confirmed with a lease which expires before the report is
@@ -1059,10 +1059,10 @@ func TestInspectWithoutStore(t *testing.T) {
 }
 
 func TestFormatPrincipal(t *testing.T) {
-	if got := formatPrincipal(rpcPrincipal{flavor: authNone}); got != "AUTH_NONE" {
+	if got := formatPrincipal(rpcPrincipal{flavor: nfs4.AUTH_NONE}); got != "AUTH_NONE" {
 		t.Fatalf("AUTH_NONE = %s", got)
 	}
-	if got := formatPrincipal(rpcPrincipal{flavor: authSys, body: "ab"}); got != "AUTH_SYS 6162" {
+	if got := formatPrincipal(rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "ab"}); got != "AUTH_SYS 6162" {
 		t.Fatalf("short AUTH_SYS = %s", got)
 	}
 	if got := formatPrincipal(rpcPrincipal{flavor: 6, body: "\x01"}); got != "flavor 6 01" {

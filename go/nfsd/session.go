@@ -1437,8 +1437,8 @@ func (s *Server) opSecinfoNoName(style uint32, st *compoundState, w *nfs4.COMPOU
 		return nfs4.NFS4ERR_NOENT
 	}
 	okW := ew.SetValue_Nfs4Ok()
-	okW.AppendData_Default(authSys)
-	okW.AppendData_Default(authNone)
+	okW.AppendData_Default(nfs4.AUTH_SYS)
+	okW.AppendData_Default(nfs4.AUTH_NONE)
 	ew.Resume(okW.Finish())
 	w.Resume(ew.Finish())
 	// SECINFO consumes the current filehandle (RFC 8881 section 2.6.3.1.1.8).

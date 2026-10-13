@@ -11,6 +11,8 @@ import (
 	"net"
 	"sort"
 	"sync"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
 // RPC constants.
@@ -29,10 +31,6 @@ const (
 	// RPC procedures.
 	procNull     = 0
 	procCompound = 1
-
-	// Auth flavors.
-	authNone = 0
-	authSys  = 1
 
 	// maxRPCMessage caps total reassembled RPC message size: a max WRITE
 	// (maxReadWrite) plus headroom for COMPOUND/RPC framing.
@@ -276,12 +274,12 @@ type effectiveUser struct {
 
 func (r *rpcRequest) effectiveUser() (effectiveUser, error) {
 	switch r.credFlavor {
-	case authNone:
+	case nfs4.AUTH_NONE:
 		if len(r.credBody) != 0 {
 			return effectiveUser{}, fmt.Errorf("AUTH_NONE body")
 		}
-		return effectiveUser{flavor: authNone, uid: 65534, gid: 65534}, nil
-	case authSys:
+		return effectiveUser{flavor: nfs4.AUTH_NONE, uid: 65534, gid: 65534}, nil
+	case nfs4.AUTH_SYS:
 		body := r.credBody
 		if len(body) < 8 {
 			return effectiveUser{}, fmt.Errorf("AUTH_SYS header")
@@ -334,7 +332,7 @@ func (r *rpcRequest) principal() rpcPrincipal {
 	body := r.credBody
 	// AUTH_SYS starts with a caller-supplied timestamp. It is not part of
 	// the principal and may change between requests from the same caller.
-	if r.credFlavor == authSys && len(body) >= 4 {
+	if r.credFlavor == nfs4.AUTH_SYS && len(body) >= 4 {
 		body = body[4:]
 		// The machine name is caller-supplied too. Linux nfsd identifies
 		// AUTH_SYS callers by uid, gid and auxiliary groups instead.
@@ -426,7 +424,7 @@ func buildRPCReply(xid uint32, acceptStat uint32) []byte {
 	buf = binary.BigEndian.AppendUint32(buf, rpcReply)
 	buf = binary.BigEndian.AppendUint32(buf, msgAccepted)
 	// Verifier: AUTH_NONE, length 0.
-	buf = binary.BigEndian.AppendUint32(buf, authNone)
+	buf = binary.BigEndian.AppendUint32(buf, nfs4.AUTH_NONE)
 	buf = binary.BigEndian.AppendUint32(buf, 0)
 	buf = binary.BigEndian.AppendUint32(buf, acceptStat)
 	return buf

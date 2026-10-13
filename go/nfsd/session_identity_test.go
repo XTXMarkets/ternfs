@@ -87,7 +87,7 @@ func identityCall(t *testing.T, srv *Server, uid uint32, body []byte) nfs4.COMPO
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.credFlavor, req.credBody = authSys, authSysCredForTest(uid)
+	req.credFlavor, req.credBody = nfs4.AUTH_SYS, authSysCredForTest(uid)
 	reply := srv.safeHandleCompound(req, "identity-test")
 	res, err := parseCompoundReply(append([]byte(nil), reply...))
 	req.releaseReply()
@@ -526,7 +526,7 @@ func TestClientStoreExchangeIDAdoptionObservation(t *testing.T) {
 			}
 			owner := clientOwner{}
 			if test.otherPrincipal {
-				owner.principal = rpcPrincipal{flavor: authSys, body: "other"}
+				owner.principal = rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "other"}
 			}
 			before := fs.writes.Load()
 			got, _, adopted, err := store.ExchangeID([8]byte{verifier}, []byte("adopt"), owner)

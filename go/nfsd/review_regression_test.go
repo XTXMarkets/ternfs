@@ -121,7 +121,7 @@ func TestStagingRecoveryKeySeparatesBootsAndPrincipals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	owner := clientOwner{principal: rpcPrincipal{flavor: authSys, body: "one"}}
+	owner := clientOwner{principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "one"}}
 	key := func(identity string, verifier byte, principal string) [32]byte {
 		owner.principal.body = principal
 		id, _, err := cs.SetClientID([8]byte{verifier}, []byte(identity), owner)

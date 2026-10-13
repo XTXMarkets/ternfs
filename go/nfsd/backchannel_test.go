@@ -129,7 +129,7 @@ func TestCreateSessionCallbackSecurity(t *testing.T) {
 		t.Fatal("requested backchannel not granted")
 	}
 	sess := srv.sessions.lookup(readSessionID(ok.CsrSessionid()))
-	if sess == nil || !sess.backRequested || sess.cbProgram != 0x40000001 || sess.cbSec.flavor != authSys {
+	if sess == nil || !sess.backRequested || sess.cbProgram != 0x40000001 || sess.cbSec.flavor != nfs4.AUTH_SYS {
 		t.Fatalf("session callback state %+v", sess)
 	}
 	// stamp, machine name with its padding, uid, gid and no groups.
@@ -207,7 +207,7 @@ func TestStrayRepliesDropped(t *testing.T) {
 	reply := binary.BigEndian.AppendUint32(nil, 77)
 	reply = binary.BigEndian.AppendUint32(reply, rpcReply)
 	reply = binary.BigEndian.AppendUint32(reply, 0) // MSG_ACCEPTED
-	reply = binary.BigEndian.AppendUint32(reply, authNone)
+	reply = binary.BigEndian.AppendUint32(reply, nfs4.AUTH_NONE)
 	reply = binary.BigEndian.AppendUint32(reply, 0)
 	reply = binary.BigEndian.AppendUint32(reply, acceptSuccess)
 	for range 3 {

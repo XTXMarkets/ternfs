@@ -34,9 +34,9 @@ func parseCallbackSec(it nfs4.CallbackSecParms4EntryIter) (callbackSec, uint32) 
 		entry := it.BcaSecParm()
 		switch entry.Disc() {
 		case nfs4.AUTH_NONE:
-			return callbackSec{flavor: authNone}, nfs4.NFS4_OK
+			return callbackSec{flavor: nfs4.AUTH_NONE}, nfs4.NFS4_OK
 		case nfs4.AUTH_SYS:
-			return callbackSec{flavor: authSys, body: append([]byte(nil), entry.Value().Bytes()...)}, nfs4.NFS4_OK
+			return callbackSec{flavor: nfs4.AUTH_SYS, body: append([]byte(nil), entry.Value().Bytes()...)}, nfs4.NFS4_OK
 		case nfs4.RPCSEC_GSS:
 			gss = true
 		}
