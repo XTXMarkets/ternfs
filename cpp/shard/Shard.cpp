@@ -131,7 +131,6 @@ struct ShardShared {
 
     RegistryClient registryClient;
 
-    // the replicas of our shard at every location, as the registry describes them
     ReplicaTracker replicaTracker;
 
     ShardShared() = delete;
@@ -167,7 +166,7 @@ struct ShardShared {
         isInitiated(false),
         isBlockServiceCacheInitiated(false),
         registryClient(logger, xmon, options_.registryClientOptions.host, options_.registryClientOptions.port, options_.registryClientOptions.timeout),
-        replicaTracker(options_.shrid(), options_.logsDBOptions.location, options_.isLeader(), socks[0].addr())
+        replicaTracker(logger, xmon, options_.shrid(), options_.logsDBOptions.location, options_.isLeader(), socks[0].addr())
     {
         for (uint16_t i = 0; i < options_.numReaders; ++i) {
             readerRequestsQueues.emplace_back(std::make_unique<SPSC<ShardReq>>(READER_QUEUE_SIZE));
@@ -309,14 +308,15 @@ static void packCheckPointedShardResponse(
     LOG_DEBUG(env, "will send response for req id %s kind %s to %s", msg.id, reqKind, req.clientAddr);
 }
 
-static constexpr std::array<uint32_t, 7> ShardProtocols = {
+static constexpr std::array<uint32_t, 8> ShardProtocols = {
         SHARD_REQ_PROTOCOL_VERSION,
         SHARD_RESP_PROTOCOL_VERSION,
         CDC_TO_SHARD_REQ_PROTOCOL_VERSION,
         LOG_REQ_PROTOCOL_VERSION,
         LOG_RESP_PROTOCOL_VERSION,
         PROXY_SHARD_RESP_PROTOCOL_VERSION,
-        PROXY_SHARD_REQ_PROTOCOL_VERSION};
+        PROXY_SHARD_REQ_PROTOCOL_VERSION,
+        SHARD_REPLICA_ANNOUNCEMENT_PROTOCOL_VERSION};
 
 using ShardChannel = MultiplexedChannel<ShardProtocols.size(), ShardProtocols>;
 
@@ -367,6 +367,22 @@ public:
     virtual ~ShardServer() = default;
 
 private:
+    void _handleReplicaAnnouncement(UDPMessage& msg) {
+        ShardReplicaAnnouncementMsg announcement;
+        try {
+            announcement.unpack(msg.buf, _expandedShardKey);
+        } catch (const BincodeException& err) {
+            LOG_ERROR(_env, "Could not parse shard replica announcement from %s: %s", msg.clientAddr, err.what());
+            return;
+        }
+
+        if (!_shared.options.replicaAnnouncements) {
+            return;
+        }
+
+        _shared.replicaTracker.recordAnnouncement(msg.clientAddr, announcement.body, ternNow());
+    }
+
     void _handleLogsDBResponse(UDPMessage& msg) {
         LOG_DEBUG(_env, "received LogsDBResponse from %s", msg.clientAddr);
 
@@ -592,7 +608,8 @@ private:
 
 public:
     virtual void step() override {
-        if (unlikely(!_shared.isInitiated.load(std::memory_order_acquire) || !_shared.isBlockServiceCacheInitiated.load(std::memory_order_acquire))) {
+        const bool ready = _shared.isInitiated.load(std::memory_order_acquire) && _shared.isBlockServiceCacheInitiated.load(std::memory_order_acquire);
+        if (unlikely(!ready && !_shared.options.replicaAnnouncements)) {
             (100_ms).sleepRetry();
             return;
         }
@@ -607,6 +624,14 @@ public:
         _waitResponses.clear();
 
         if (unlikely(!_channel->receiveMessages(_env, _shared.socks, *_receiver))) {
+            return;
+        }
+
+        for (auto& msg : _channel->protocolMessages(SHARD_REPLICA_ANNOUNCEMENT_PROTOCOL_VERSION)) {
+            _handleReplicaAnnouncement(msg);
+        }
+
+        if (unlikely(!ready)) {
             return;
         }
 
@@ -690,6 +715,47 @@ public:
 
         _shared.receivedReaderReqs.fetch_add(_readRequests.size(), std::memory_order_relaxed);
         _shared.droppedReadReqs.fetch_add(std::distance(readIt, _readRequests.end()), std::memory_order_relaxed);
+    }
+};
+
+struct ShardReplicaAnnouncer : Loop {
+private:
+    ShardShared& _shared;
+    AES128Key _expandedShardKey;
+    UDPSender _sender;
+
+public:
+    ShardReplicaAnnouncer(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardShared& shared) :
+        Loop(logger, xmon, "announcer"),
+        _shared(shared)
+    {
+        expandKey(ShardKey, _expandedShardKey);
+    }
+
+    virtual void step() override {
+        _shared.replicaTracker.expire(ternNow());
+
+        ShardReplicaAnnouncementMsg announcement;
+        announcement.body.shrid = _shared.options.shrid();
+        announcement.body.location = _shared.options.logsDBOptions.location;
+        announcement.body.isLeader = _shared.options.isLeader() && (_shared.options.logsDBOptions.noReplication || _shared.isInitiated.load(std::memory_order_acquire));
+        announcement.body.addrs = _shared.sock().addr();
+
+        auto targets = _shared.replicaTracker.announcementTargets();
+        for (const auto& target : *targets) {
+            _sender.prepareOutgoingMessage(
+                _env,
+                _shared.sock().addr(),
+                target,
+                [&announcement, this](BincodeBuf& buf) {
+                    announcement.pack(buf, _expandedShardKey);
+                });
+        }
+        _sender.sendMessages(_env, _shared.sock());
+
+        if (Loop::sleep(100_ms) < 0 && errno != EINTR) {
+            throw SYSCALL_EXCEPTION("sleep");
+        }
     }
 };
 
@@ -2212,7 +2278,7 @@ public:
                 return false;
             }
 
-            _shared.replicaTracker.seedRegistry(allReplicas);
+            _shared.replicaTracker.seedRegistry(allReplicas, ternNow());
             LOG_DEBUG(_env, "Leaders at other locations now %s", *_shared.getLeadersAtOtherLocations());
 
             std::array<AddrsInfo, LogsDB::REPLICA_COUNT> localReplicas;
@@ -2624,6 +2690,7 @@ void runShard(ShardOptions& options) {
         LOG_INFO(env, "  registryPort = %s", options.registryClientOptions.port);
         LOG_INFO(env, "  ownAddres = %s", options.serverOptions.addrs);
         LOG_INFO(env, "  simulateOutgoingPacketDrop = %s", options.serverOptions.simulateOutgoingPacketDrop);
+        LOG_INFO(env, "  replicaAnnouncements = %s", options.replicaAnnouncements);
         LOG_INFO(env, "  syslog = %s", (int)options.logOptions.syslog);
         LOG_INFO(env, "Using LogsDB with options:");
         LOG_INFO(env, "    noReplication = '%s'", (int)options.logsDBOptions.noReplication);
@@ -2680,6 +2747,9 @@ void runShard(ShardOptions& options) {
     ShardShared shared(options, sharedDB, blockServicesCache, shardDB, logsDB, UDPSocketPair(env, options.serverOptions.addrs), logger, xmon);
 
     threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardServer>(logger, xmon, shared)));
+    if (options.replicaAnnouncements) {
+        threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardReplicaAnnouncer>(logger, xmon, shared)));
+    }
     for (uint16_t i = 0; i < options.numReaders; ++i) {
         threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardReader>(logger, xmon, shared, *shared.readerRequestsQueues[i])));
     }

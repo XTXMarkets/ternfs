@@ -12,42 +12,65 @@
 #include <unordered_map>
 #include <vector>
 
+#include "Env.hpp"
 #include "LogsDB.hpp"
 #include "MsgsGen.hpp"
 #include "Time.hpp"
 
-// Tracks the replicas of our shard, at every location, as the registry
-// describes them. It publishes the addresses of the replicas at our location
-// and the leaders at other locations as snapshots that the receive, writer
-// and metrics threads read without locking.
+// Keeps registry records and peer announcements separately. Published snapshots
+// use fresh announcements in preference to registry records and contain at most
+// one leader per remote location.
 class ReplicaTracker {
 public:
-    struct PeerState {
+    // How long a peer's announcements stay authoritative after we last heard one.
+    static constexpr Duration PEER_EXPIRY = 1_mins;
+
+    // One source's description of a peer.
+    struct View {
         AddrsInfo addrs;
-        bool isLeader;
-        TernTime registryLastSeen;  // when the registry last heard from the peer
+        bool isLeader = false;
+        // Registry registration time, or local receipt time for an announcement.
+        TernTime lastSeen;
+    };
+
+    struct PeerState {
+        std::optional<View> registry;   // once a registry poll has described the peer
+        std::optional<View> announced;  // once the peer has announced itself
+
+        bool hasFreshAnnouncement(TernTime now) const;
+        View current(TernTime now) const;
     };
 
     using LocalReplicas = std::array<AddrsInfo, LogsDB::REPLICA_COUNT>;
     using RemoteLeaders = std::vector<FullShardInfo>;
+    using AnnouncementTargets = std::vector<AddrsInfo>;
 
-    ReplicaTracker(ShardReplicaId self, uint8_t location, bool isLeader, const AddrsInfo& addrs);
+    ReplicaTracker(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardReplicaId self, uint8_t location, bool isLeader, const AddrsInfo& addrs);
 
-    // Takes addresses, leadership and last-seen times from the registry.
-    void seedRegistry(const std::vector<FullShardInfo>& replicas);
+    void seedRegistry(const std::vector<FullShardInfo>& replicas, TernTime now);
+    void recordAnnouncement(const IpPort& source, const ShardReplicaAnnouncement& announcement, TernTime now);
+    void expire(TernTime now);
 
     std::shared_ptr<const LocalReplicas> localReplicas() const;
     std::shared_ptr<const RemoteLeaders> remoteLeaders() const;
+    std::shared_ptr<const AnnouncementTargets> announcementTargets() const;
     std::optional<PeerState> peerState(ShardReplicaId id, uint8_t location) const;
 
 private:
+    Env _env;
     const ShardReplicaId _self;
     const uint8_t _location;
+    const bool _isLeader;
     mutable std::mutex _mutex;
     std::unordered_map<ShardReplicaLocationKey, PeerState> _peers;
     std::atomic<std::shared_ptr<const LocalReplicas>> _localReplicas;
     std::atomic<std::shared_ptr<const RemoteLeaders>> _remoteLeaders;
+    std::atomic<std::shared_ptr<const AnnouncementTargets>> _announcementTargets;
+    TernTime _publishedAt; // the `now` the snapshots were last built for
 
     static bool _validReplicaId(ShardReplicaId id);
-    void _publishLocked();
+    // Whether the snapshots would differ for a peer at `location` described by
+    // `before` rather than `after`.
+    bool _publishedDiffers(uint8_t location, const View& before, const View& after) const;
+    void _publishLocked(TernTime now);
 };

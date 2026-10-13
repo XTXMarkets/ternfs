@@ -40,6 +40,11 @@ static bool parseShardOptions(CommandLineArgs& args, ShardOptions& options) {
             }
             continue;
         }
+        if (arg == "-replica-announcements") {
+            args.next();
+            options.replicaAnnouncements = true;
+            continue;
+        }
         if (arg == "-region-staleness-threshold") {
             options.regionStalenessThreshold = parseDuration(args.next());
             continue;
@@ -98,6 +103,8 @@ static void printShardOptionsUsage() {
     fprintf(stderr, "    	How often the primary leader emits a heartbeat log entry while idle. 0 disables. Default: 1s\n");
     fprintf(stderr, " -num-readers\n");
     fprintf(stderr, "    	Number of reader threads. Default: 1\n");
+    fprintf(stderr, " -replica-announcements\n");
+    fprintf(stderr, "    	Send and use direct shard replica announcements. Default: false\n");
     fprintf(stderr, " -shard\n");
     fprintf(stderr, "    	Which shard we are running as [0-255]\n");
     fprintf(stderr, " -transient-deadline-interval\n");
