@@ -341,7 +341,10 @@ func (cm *clientMetadata) processRequests(log *log.Logger) {
 			addr = &addrs[0]
 		}
 		whichMetadatataAddr++
-		written, err := cm.sock.WriteToUDP(buf.Bytes(), addr)
+		written, err := 0, errMetadataAddressUnknown
+		if addr.Port != 0 {
+			written, err = cm.sock.WriteToUDP(buf.Bytes(), addr)
+		}
 		if dontWait {
 			continue
 		}

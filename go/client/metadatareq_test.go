@@ -23,7 +23,7 @@ func TestMetadataRequestProcessorSurvivesErrors(t *testing.T) {
 			t.Run(api+"/"+failure, func(t *testing.T) {
 				sendErr := &net.OpError{Op: "write", Net: "udp", Err: io.ErrClosedPipe}
 				attempts := 0
-				c, logger := metadataRetryClient(t, DefaultShardTimeout, func(packet []byte) ([]byte, error) {
+				c, logger := metadataRetryClient(t, DefaultShardTimeout, metadataTestAddrs, func(packet []byte) ([]byte, error) {
 					attempts++
 					reply := metadataRetryReply(packet, 0)
 					if attempts == 1 {
