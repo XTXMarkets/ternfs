@@ -344,7 +344,7 @@ the staging directory, before upgrading to a binary that cannot read the
 staging format on disk.
 
 The implementation is in [`staging.go`](staging.go),
-[`staging_lifecycle.go`](staging_lifecycle.go) and [`ops.go`](ops.go).
+[`staging_lifecycle.go`](staging_lifecycle.go) and [`ops_open.go`](ops_open.go).
 
 ## Namespace changes with staged writers
 
