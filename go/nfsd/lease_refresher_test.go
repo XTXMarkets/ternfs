@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -422,7 +423,7 @@ func TestRefresherRecordBudget(t *testing.T) {
 // an active or quiet group is never expired; expiry refuses admission.
 func TestLeaseGateDecisions(t *testing.T) {
 	fs := &admissionLeaseVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
-	srv, err := NewServer(fs, readOnlyStagingStore{}, nil)
+	srv, err := NewServer(fs, staging.ReadOnlyStore{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -550,7 +551,7 @@ func (fs *trapVFS) LookupEdge(d vfs.InodeID, n string) (vfs.Edge, error) {
 // memory while every backend call blocks.
 func TestSequenceAdmissionDoesNoStoreIO(t *testing.T) {
 	fs := &trapVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir()), release: make(chan struct{})}
-	srv, err := NewServer(fs, readOnlyStagingStore{}, nil)
+	srv, err := NewServer(fs, staging.ReadOnlyStore{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -585,7 +586,7 @@ func TestSequenceAdmissionDoesNoStoreIO(t *testing.T) {
 // a pending-only failure leaves nothing, and pending tokens count toward
 // the quota so SEQUENCE gets RESOURCE before any renewal work.
 func TestAssociationTokens(t *testing.T) {
-	srv, err := NewServer(vfs.NewLocalTernVFS(t.TempDir()), readOnlyStagingStore{}, nil)
+	srv, err := NewServer(vfs.NewLocalTernVFS(t.TempDir()), staging.ReadOnlyStore{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -649,7 +650,7 @@ func TestAssociationTokens(t *testing.T) {
 
 // A replay renews: its commit activates a hold like a new request.
 func TestSequenceReplayRenews(t *testing.T) {
-	srv, err := NewServer(vfs.NewLocalTernVFS(t.TempDir()), readOnlyStagingStore{}, nil)
+	srv, err := NewServer(vfs.NewLocalTernVFS(t.TempDir()), staging.ReadOnlyStore{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -672,7 +673,7 @@ func TestSequenceReplayRenews(t *testing.T) {
 // lease; the worker's read-only pass then admits the retry.
 func TestIdleClientResumesAfterVerify(t *testing.T) {
 	fs := &refresherFaultVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
-	srv, err := NewServer(fs, readOnlyStagingStore{}, nil)
+	srv, err := NewServer(fs, staging.ReadOnlyStore{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

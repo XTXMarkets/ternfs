@@ -15,13 +15,14 @@ import (
 	"testing"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 func admissionWritableServer(t *testing.T, fs vfs.TernVFS) *Server {
 	t.Helper()
-	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	staging, err := staging.NewLocalStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +83,7 @@ func TestResponseAdmissionReadFullRPCBoundary(t *testing.T) {
 				if err := os.WriteFile(filepath.Join(root, "file"), []byte("12345"), 0600); err != nil {
 					t.Fatal(err)
 				}
-				srv, err := NewServer(vfs.NewLocalTernVFS(root), readOnlyStagingStore{}, nil)
+				srv, err := NewServer(vfs.NewLocalTernVFS(root), staging.ReadOnlyStore{}, nil)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -186,7 +187,7 @@ func TestResponseAdmissionHandleBeforeEffect(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/fits=%t", nfs4.NfsOpnum4Name(opnum), fits), func(t *testing.T) {
 				root := t.TempDir()
 				fs := vfs.NewLocalTernVFS(root)
-				staging, err := NewLocalStagingStore(t.TempDir(), nil)
+				staging, err := staging.NewLocalStore(t.TempDir(), nil)
 				if err != nil {
 					t.Fatal(err)
 				}

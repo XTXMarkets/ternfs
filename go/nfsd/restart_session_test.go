@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -21,7 +22,7 @@ import (
 func TestRestartRetransmissionGetsBadSession(t *testing.T) {
 	root := t.TempDir()
 	newServer := func() (*Server, string, func()) {
-		staging, err := NewLocalStagingStore(t.TempDir(), nil)
+		staging, err := staging.NewLocalStore(t.TempDir(), nil)
 		if err != nil {
 			t.Fatal(err)
 		}

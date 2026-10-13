@@ -26,6 +26,7 @@ import (
 	"github.com/XTXMarkets/ternfs/go/core/managedprocess"
 	"github.com/XTXMarkets/ternfs/go/msgs"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -223,7 +224,7 @@ func startTernTestServerState(t *testing.T) (*Server, string, func()) {
 	fs := vfs.NewRemoteTernVFS(c, ternLogger, bp)
 
 	stagingDir := t.TempDir()
-	ss, err := NewLocalStagingStore(stagingDir, nil)
+	ss, err := staging.NewLocalStore(stagingDir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

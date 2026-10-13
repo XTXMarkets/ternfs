@@ -23,6 +23,7 @@ import (
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sidecar"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -58,7 +59,7 @@ type mutableBlockingLinkVFS struct {
 }
 
 type markerCheckingStagingStore struct {
-	StagingStore
+	staging.Store
 	clients *ClientStore
 	checked bool
 }
@@ -76,7 +77,7 @@ func (s *markerCheckingStagingStore) Rebind(
 		return errors.New("staging rebound before durable open marker")
 	}
 	s.checked = true
-	return s.StagingStore.Rebind(id, clientID, stateID)
+	return s.Store.Rebind(id, clientID, stateID)
 }
 
 func (v *mutableBlockingLinkVFS) LinkFile(
@@ -135,7 +136,7 @@ func startTestServerWithServer(
 	t.Helper()
 	fs := vfs.NewLocalTernVFS(dir)
 	stagingDir := t.TempDir()
-	ss, err := NewLocalStagingStore(stagingDir, nil)
+	ss, err := staging.NewLocalStore(stagingDir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1031,7 +1032,7 @@ func TestPutfhAllowsUncachedClientStoreFileHandles(t *testing.T) {
 	}
 
 	secondFS := vfs.NewLocalTernVFS(dir)
-	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	staging, err := staging.NewLocalStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1449,7 +1450,7 @@ func newClientStoreTestServer(
 	fs := &lookupFailureVFS{
 		TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
 	}
-	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	staging, err := staging.NewLocalStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1471,7 +1472,7 @@ func newClientStoreTestServer(
 func TestLookupDurableOpenStorageErrorPreservesClientState(t *testing.T) {
 	baseFS := vfs.NewLocalTernVFS(t.TempDir())
 	fs := &lookupFailureVFS{TernVFS: baseFS}
-	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	staging, err := staging.NewLocalStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1569,7 +1570,7 @@ func TestOwnerOperationsPreserveStateOnClientStoreError(t *testing.T) {
 
 func TestExpireIfLeaseDeadKeepsClientWithoutSlot(t *testing.T) {
 	fs := vfs.NewLocalTernVFS(t.TempDir())
-	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	staging, err := staging.NewLocalStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1610,7 +1611,7 @@ func TestExpireIfLeaseDeadKeepsClientWithoutSlot(t *testing.T) {
 // sweep must drop any process-local state which still names it.
 func TestExpireIfLeaseDeadExpiresCollectedIncarnation(t *testing.T) {
 	fs := vfs.NewLocalTernVFS(t.TempDir())
-	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	staging, err := staging.NewLocalStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1678,7 +1679,7 @@ func TestExpireIfLeaseDeadExpiresCollectedIncarnation(t *testing.T) {
 
 func TestStagingSweepKeepsClientWithoutLeaseSlot(t *testing.T) {
 	fs := vfs.NewLocalTernVFS(t.TempDir())
-	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	staging, err := staging.NewLocalStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1727,7 +1728,7 @@ func TestStagingSweepKeepsClientWithoutLeaseSlot(t *testing.T) {
 func TestServerLeaseSweepExpiresAbandonedStaging(t *testing.T) {
 	baseFS := vfs.NewLocalTernVFS(t.TempDir())
 	fs := &removeFailureVFS{TernVFS: baseFS}
-	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	staging, err := staging.NewLocalStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1806,7 +1807,7 @@ func TestServerLeaseSweepExpiresAbandonedStaging(t *testing.T) {
 
 func TestServerLeaseSweepKeepsClientRenewedByAnotherOwner(t *testing.T) {
 	fs := vfs.NewLocalTernVFS(t.TempDir())
-	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	staging, err := staging.NewLocalStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1880,7 +1881,7 @@ func TestServerLeaseSweepKeepsClientRenewedByAnotherOwner(t *testing.T) {
 func TestNewServerDelaysExpiredRecoveredStagingRemoval(t *testing.T) {
 	fs := vfs.NewLocalTernVFS(t.TempDir())
 	stagingDir := t.TempDir()
-	staging, err := NewLocalStagingStore(stagingDir, nil)
+	stagingStore, err := staging.NewLocalStore(stagingDir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1911,7 +1912,7 @@ func TestNewServerDelaysExpiredRecoveredStagingRemoval(t *testing.T) {
 	if err := clients.MarkOpen(clientID, stateID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := staging.Create(fileID, sidecar.Meta{
+	if _, err := stagingStore.Create(fileID, sidecar.Meta{
 		DirID:      fs.RootID(),
 		FileName:   "expired.txt",
 		TernCookie: cookie,
@@ -1939,7 +1940,7 @@ func TestNewServerDelaysExpiredRecoveredStagingRemoval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := staging.Create(liveFileID, sidecar.Meta{
+	if _, err := stagingStore.Create(liveFileID, sidecar.Meta{
 		DirID:      fs.RootID(),
 		FileName:   "live.txt",
 		TernCookie: liveCookie,
@@ -1948,8 +1949,8 @@ func TestNewServerDelaysExpiredRecoveredStagingRemoval(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	closeLocalStagingFiles(t, staging)
-	recovered, err := NewLocalStagingStore(stagingDir, nil)
+	staging.CloseFiles(t, stagingStore)
+	recovered, err := staging.NewLocalStore(stagingDir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3996,11 +3997,11 @@ func TestHydrationFailureDiscardsReplacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	fs := &readErrorVFS{LocalTernVFS: local, failID: failID}
-	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	stagingStore, err := staging.NewLocalStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv, err := NewServer(fs, staging, nil)
+	srv, err := NewServer(fs, stagingStore, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -4021,7 +4022,7 @@ func TestHydrationFailureDiscardsReplacement(t *testing.T) {
 			nfs4.Nfsstat4Name(status))
 	}
 
-	if stagingTargetBusyForTest(staging, fs.RootID(), "existing.txt") {
+	if staging.TargetBusy(stagingStore, fs.RootID(), "existing.txt") {
 		t.Fatal("failed hydration left the publication target reserved")
 	}
 	data, err := os.ReadFile(path)
@@ -4044,7 +4045,7 @@ func TestConcurrentClosePublishesOnce(t *testing.T) {
 		started:      make(chan struct{}),
 		release:      make(chan struct{}),
 	}
-	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	staging, err := staging.NewLocalStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -4287,11 +4288,11 @@ func TestClientRebootDoesNotDiscardOtherWriter(t *testing.T) {
 		t.Fatal(err)
 	}
 	fs := vfs.NewLocalTernVFS(dir)
-	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	stagingStore, err := staging.NewLocalStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv, err := NewServer(fs, staging, nil)
+	srv, err := NewServer(fs, stagingStore, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -4328,7 +4329,7 @@ func TestClientRebootDoesNotDiscardOtherWriter(t *testing.T) {
 	); status != nfs4.NFS4_OK {
 		t.Fatalf("reader reboot confirmation = %s", nfs4.Nfsstat4Name(status))
 	}
-	if !stagingTargetBusyForTest(staging, fs.RootID(), "existing.txt") {
+	if !staging.TargetBusy(stagingStore, fs.RootID(), "existing.txt") {
 		t.Fatal("reader reboot discarded another client's staging")
 	}
 	closeFile(t, conn, &xid, writerFH, writerState)
@@ -4387,11 +4388,11 @@ func TestExpiredMutableOpenReleasesTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	fs := vfs.NewLocalTernVFS(dir)
-	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	stagingStore, err := staging.NewLocalStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv, err := NewServer(fs, staging, nil)
+	srv, err := NewServer(fs, stagingStore, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -4420,7 +4421,7 @@ func TestExpiredMutableOpenReleasesTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if busy || stagingTargetBusyForTest(staging, fs.RootID(), "existing.txt") {
+	if busy || staging.TargetBusy(stagingStore, fs.RootID(), "existing.txt") {
 		t.Fatal("expired mutable open still reserves its target")
 	}
 }
@@ -4434,7 +4435,7 @@ func TestRecoveredMutableOpenCanBeReplayedByClient(t *testing.T) {
 	}
 	fs := vfs.NewLocalTernVFS(dir)
 	stagingDir := t.TempDir()
-	staging1, err := NewLocalStagingStore(stagingDir, nil)
+	staging1, err := staging.NewLocalStore(stagingDir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -4455,19 +4456,19 @@ func TestRecoveredMutableOpenCanBeReplayedByClient(t *testing.T) {
 	conn1.Close()
 	cleanup1()
 
-	staging2, err := NewLocalStagingStore(stagingDir, nil)
+	staging2, err := staging.NewLocalStore(stagingDir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	checkedStaging := &markerCheckingStagingStore{
-		StagingStore: staging2,
+		Store: staging2,
 	}
 	srv2, err := NewServer(fs, checkedStaging, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	checkedStaging.clients = srv2.clients
-	if !stagingTargetBusyForTest(staging2, fs.RootID(), "existing.txt") {
+	if !staging.TargetBusy(staging2, fs.RootID(), "existing.txt") {
 		t.Fatal("live recovered staging was discarded during startup")
 	}
 	addr2, cleanup2 := serveTestServer(t, srv2)
@@ -4495,7 +4496,7 @@ func TestRecoveredNewFileCanBeReopenedWithoutCreate(t *testing.T) {
 	dir := t.TempDir()
 	fs := vfs.NewLocalTernVFS(dir)
 	stagingDir := t.TempDir()
-	staging1, err := NewLocalStagingStore(stagingDir, nil)
+	staging1, err := staging.NewLocalStore(stagingDir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -4516,7 +4517,7 @@ func TestRecoveredNewFileCanBeReopenedWithoutCreate(t *testing.T) {
 	conn1.Close()
 	cleanup1()
 
-	staging2, err := NewLocalStagingStore(stagingDir, nil)
+	staging2, err := staging.NewLocalStore(stagingDir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -4550,7 +4551,7 @@ func TestRecoveredMutableOpenKeepsOriginalBase(t *testing.T) {
 	}
 	fs := vfs.NewLocalTernVFS(dir)
 	stagingDir := t.TempDir()
-	staging1, err := NewLocalStagingStore(stagingDir, nil)
+	staging1, err := staging.NewLocalStore(stagingDir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -4566,7 +4567,7 @@ func TestRecoveredMutableOpenKeepsOriginalBase(t *testing.T) {
 		t, conn1, &xid, clientid, "existing.txt",
 	)
 	writeFileAt(t, conn1, &xid, fh, stateid, 0, []byte("changed"))
-	_, oldMeta, ok := findStagingTarget(staging1, fs.RootID(), "existing.txt")
+	_, oldMeta, ok := staging.FindTarget(staging1, fs.RootID(), "existing.txt")
 	if !ok {
 		t.Fatal("staging metadata not found")
 	}
@@ -4587,7 +4588,7 @@ func TestRecoveredMutableOpenKeepsOriginalBase(t *testing.T) {
 	if currentID == oldMeta.BaseID {
 		t.Fatal("test replacement reused the original inode")
 	}
-	staging2, err := NewLocalStagingStore(stagingDir, nil)
+	staging2, err := staging.NewLocalStore(stagingDir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -4607,7 +4608,7 @@ func TestRecoveredMutableOpenKeepsOriginalBase(t *testing.T) {
 		t.Fatal("recovered OPEN did not return the current published handle")
 	}
 	closeFile(t, conn2, &xid, recoveredFH, recoveredState)
-	if stagingTargetBusyForTest(staging2, fs.RootID(), "existing.txt") {
+	if staging.TargetBusy(staging2, fs.RootID(), "existing.txt") {
 		t.Fatal("recovered publication left staging registered")
 	}
 	data, err := os.ReadFile(path)
@@ -4627,7 +4628,7 @@ func TestRecoveredMissingBaseCreatesFreshFile(t *testing.T) {
 	}
 	fs := vfs.NewLocalTernVFS(dir)
 	stagingDir := t.TempDir()
-	staging1, err := NewLocalStagingStore(stagingDir, nil)
+	staging1, err := staging.NewLocalStore(stagingDir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -4649,7 +4650,7 @@ func TestRecoveredMissingBaseCreatesFreshFile(t *testing.T) {
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
-	staging2, err := NewLocalStagingStore(stagingDir, nil)
+	staging2, err := staging.NewLocalStore(stagingDir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -4662,7 +4663,7 @@ func TestRecoveredMissingBaseCreatesFreshFile(t *testing.T) {
 	conn2 := dial(t, addr2)
 	defer conn2.Close()
 
-	oldStagingID, _, ok := findStagingTarget(staging2,
+	oldStagingID, _, ok := staging.FindTarget(staging2,
 		fs.RootID(), "existing.txt",
 	)
 	if !ok {
@@ -6659,7 +6660,7 @@ func TestConcurrentOpenSharesOwnerState(t *testing.T) {
 		},
 	}
 	defer testutil.CloseSignal(fs.releaseFirst)
-	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	staging, err := staging.NewLocalStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -6776,7 +6777,7 @@ func (fs *blockingFailingLinkVFS) LinkFile(
 }
 
 type notifyingStagingStore struct {
-	StagingStore
+	staging.Store
 
 	mu       sync.Mutex
 	calls    int
@@ -6793,7 +6794,7 @@ func (store *notifyingStagingStore) GetMeta(
 		close(store.notified)
 	}
 	store.mu.Unlock()
-	return store.StagingStore.GetMeta(id)
+	return store.Store.GetMeta(id)
 }
 
 func (store *notifyingStagingStore) notifyNextGetMeta() <-chan struct{} {
@@ -6812,11 +6813,11 @@ func TestWaitingCloseRechecksStagingMeta(t *testing.T) {
 		release: make(chan struct{}),
 	}
 	defer testutil.CloseSignal(fs.release)
-	localStaging, err := NewLocalStagingStore(t.TempDir(), nil)
+	localStaging, err := staging.NewLocalStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	staging := &notifyingStagingStore{StagingStore: localStaging}
+	staging := &notifyingStagingStore{Store: localStaging}
 	srv, err := NewServer(fs, staging, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -6894,7 +6895,7 @@ func TestFailedCloseReplaysFromSlot(t *testing.T) {
 		TernVFS:   vfs.NewLocalTernVFS(dir),
 		remaining: 1,
 	}
-	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	staging, err := staging.NewLocalStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -6970,11 +6971,11 @@ func TestConcurrentClosePublishesAtMostOnce(t *testing.T) {
 		},
 	}
 	defer testutil.CloseSignal(fs.releaseFirst)
-	localStaging, err := NewLocalStagingStore(t.TempDir(), nil)
+	localStaging, err := staging.NewLocalStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	staging := &notifyingStagingStore{StagingStore: localStaging}
+	staging := &notifyingStagingStore{Store: localStaging}
 	srv, err := NewServer(fs, staging, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -7385,7 +7386,7 @@ func TestCommitVerifier(t *testing.T) {
 func TestReadOnlyMode(t *testing.T) {
 	dir := t.TempDir()
 	fs := vfs.NewLocalTernVFS(dir)
-	ss := readOnlyStagingStore{}
+	ss := staging.ReadOnlyStore{}
 	srv, err := NewServer(fs, ss, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -7571,30 +7572,12 @@ func TestOpenStateStoreBoundsExpiredTombstones(t *testing.T) {
 	}
 }
 
-func closeLocalStagingFiles(t *testing.T, store *LocalStagingStore) {
-	t.Helper()
-	store.mu.Lock()
-	defer store.mu.Unlock()
-
-	for _, entry := range store.files {
-		if entry.failed || entry.file.Meta().Retired {
-			continue // retirement has already synced and closed this file
-		}
-		if err := entry.file.f.Sync(); err != nil {
-			t.Fatal(err)
-		}
-		if err := entry.file.f.Close(); err != nil {
-			t.Fatal(err)
-		}
-	}
-}
-
 type restartedStagedWrite struct {
 	rootDir    string
 	stagingDir string
 	fs         vfs.TernVFS
 	srv        *Server
-	staging    *LocalStagingStore
+	staging    *staging.LocalStore
 	clientID   uint64
 	conn       net.Conn
 	xid        uint32
@@ -7610,7 +7593,7 @@ func restartWithStagedWrite(
 	t.Helper()
 	rootDir, stagingDir := t.TempDir(), t.TempDir()
 	fs := vfs.NewLocalTernVFS(rootDir)
-	firstStaging, err := NewLocalStagingStore(stagingDir, nil)
+	firstStaging, err := staging.NewLocalStore(stagingDir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -7642,9 +7625,9 @@ func restartWithStagedWrite(
 	fileID := stagingIDForTest(t, firstStaging, stateid)
 	conn.Close()
 	stopFirst()
-	closeLocalStagingFiles(t, firstStaging)
+	staging.CloseFiles(t, firstStaging)
 
-	recoveredStaging, err := NewLocalStagingStore(stagingDir, nil)
+	recoveredStaging, err := staging.NewLocalStore(stagingDir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -7883,7 +7866,7 @@ func TestSetclientidRebootRetiresStagingFiles(t *testing.T) {
 	rootDir := t.TempDir()
 	stagingDir := t.TempDir()
 	fs := vfs.NewLocalTernVFS(rootDir)
-	staging, err := NewLocalStagingStore(stagingDir, nil)
+	staging, err := staging.NewLocalStore(stagingDir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -7970,11 +7953,11 @@ func TestLocalStagingStoreRejectsPreMagicSidecars(t *testing.T) {
 			if err := os.WriteFile(metaPath, sidecar.encoded, 0600); err != nil {
 				t.Fatal(err)
 			}
-			store, err := NewLocalStagingStore(dir, nil)
+			store, err := staging.NewLocalStore(dir, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer closeLocalStagingFiles(t, store)
+			defer staging.CloseFiles(t, store)
 			if _, found := store.GetMeta(id); found || store.Get(id) != nil {
 				t.Fatal("pre-magic staging sidecar was loaded")
 			}
@@ -8217,7 +8200,7 @@ func TestReaddirEntryXDRSize(t *testing.T) {
 
 func TestServerLeaseSweepExpiresButDoesNotRevokeConfirmedClient(t *testing.T) {
 	fs := vfs.NewLocalTernVFS(t.TempDir())
-	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	staging, err := staging.NewLocalStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -8277,7 +8260,7 @@ func TestServerLeaseSweepExpiresButDoesNotRevokeConfirmedClient(t *testing.T) {
 
 func TestServerLeaseSweepDropsRenewOnlyClientCache(t *testing.T) {
 	fs := vfs.NewLocalTernVFS(t.TempDir())
-	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	staging, err := staging.NewLocalStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -8408,7 +8391,7 @@ func TestClientStoreMarkOpenReusesFreshLease(t *testing.T) {
 
 func TestRunLeaseSweepContinuesAfterPanic(t *testing.T) {
 	fs := vfs.NewLocalTernVFS(t.TempDir())
-	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	staging, err := staging.NewLocalStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

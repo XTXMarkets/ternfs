@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -208,7 +209,7 @@ func (s *Server) opSetattr(args nfs4.SETATTR4args, st *compoundState, w *nfs4.CO
 		return setattrReply(nfs4.NFS4ERR_BADXDR, attrMask{})
 	}
 
-	var sf StagingFile
+	var sf staging.File
 	var state openState
 	dataID := st.currentID
 	stateid, ok := st.resolveStateID(args.Stateid())

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -189,7 +190,7 @@ func TestRecoveredSharedWriterAcrossOpenOwners(t *testing.T) {
 	}
 	fs := vfs.NewLocalTernVFS(root)
 	dir := t.TempDir()
-	store, err := NewLocalStagingStore(dir, nil)
+	store, err := staging.NewLocalStore(dir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,10 +220,8 @@ func TestRecoveredSharedWriterAcrossOpenOwners(t *testing.T) {
 	conn.Close()
 	cleanup()
 	// Close descriptors without deleting durable sidecars, simulating restart.
-	for _, entry := range store.files {
-		entry.file.prepareRemove()
-	}
-	recovered, err := NewLocalStagingStore(dir, nil)
+	store.PrepareRemoveAll()
+	recovered, err := staging.NewLocalStore(dir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +242,7 @@ func TestRecoveredSharedWriterAcrossOpenOwners(t *testing.T) {
 	closeFile(t, conn, &xid, fh, second)
 	closeFile(t, conn, &xid, fh, first)
 	got, _ = readFileData(t, conn, &xid, lookupFH(t, conn, &xid, "file"), 0, 1024)
-	if string(got) != "ONETWOal" || stagingTargetBusyForTest(recovered, fs.RootID(), "file") {
+	if string(got) != "ONETWOal" || staging.TargetBusy(recovered, fs.RootID(), "file") {
 		t.Fatalf("last recovered CLOSE did not publish and release staging: %q", got)
 	}
 }
@@ -263,7 +262,7 @@ func TestStagingCheckpointRetry(t *testing.T) {
 		t.Run(mutation, func(t *testing.T) {
 			dir := t.TempDir()
 			base := []byte("original")
-			store, id, stage := createOverlayStage(t, dir, vfs.MakeInodeID(vfs.InodeTypeFile, 10), base)
+			store, id, stage := staging.CreateOverlayStage(t, dir, vfs.MakeInodeID(vfs.InodeTypeFile, 10), base)
 			defer store.Remove(id)
 			if err := stage.Write(0, []byte("O")); err != nil {
 				t.Fatal(err)
@@ -291,24 +290,24 @@ func TestStagingCheckpointRetry(t *testing.T) {
 				t.Fatal(err)
 			}
 			wantAttrs := encodeAttrs(mutableAttrMask, id, stage.Stat())
-			sf := stage.(*localStagingFile)
-			metaPath := sf.metaPath
-			sf.metaPath = filepath.Join(dir, "missing", "file.meta")
+			sf := stage.(*staging.LocalFile)
+			metaPath := sf.MetaPath()
+			sf.SetMetaPath(filepath.Join(dir, "missing", "file.meta"))
 			if err := stage.Sync(); err == nil {
 				t.Fatal("checkpoint unexpectedly succeeded")
 			}
-			sf.metaPath = metaPath
+			sf.SetMetaPath(metaPath)
 			if err := stage.Sync(); err != nil {
 				t.Fatalf("checkpoint retry: %v", err)
 			}
-			recovered, err := NewLocalStagingStore(dir, nil)
+			recovered, err := staging.NewLocalStore(dir, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer recovered.Remove(id)
 			buf := make([]byte, len(want))
 			rs := recovered.Get(id)
-			if _, _, err := rs.Read(0, buf, sliceBaseReader(base, nil)); err != nil {
+			if _, _, err := rs.Read(0, buf, staging.SliceBaseReader(base, nil)); err != nil {
 				t.Fatal(err)
 			}
 			if string(buf) != want {

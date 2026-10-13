@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -600,7 +601,7 @@ func (im *identityMap) get(clientID uint64) (string, [8]byte) {
 
 // stagingIDForTest returns the staging inode of the writer with stateid. A
 // write OPEN returns the published filehandle, not its staging inode.
-func stagingIDForTest(t *testing.T, store StagingStore, stateid [16]byte) vfs.InodeID {
+func stagingIDForTest(t *testing.T, store staging.Store, stateid [16]byte) vfs.InodeID {
 	t.Helper()
 	var other nfs4.StateID
 	copy(other[:], stateid[4:])

@@ -23,6 +23,7 @@ import (
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/keyedlock"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sidecar"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -53,7 +54,7 @@ type Server struct {
 	allowMinorVersion2 bool
 	views              viewStore
 	names              nameCache
-	stagingStore       StagingStore
+	stagingStore       staging.Store
 	writeVerifier      [8]byte       // random per server instance, changes on restart
 	idleTimeout        time.Duration // timeout reading the next request
 	writeTimeout       time.Duration // timeout writing one reply
@@ -122,7 +123,7 @@ func (s *Server) lockMutationTargets(targets ...mutationTarget) func() {
 const maxPendingClientGC = 256
 const defaultMaxInFlightPerConn = 64
 
-func NewServer(fs vfs.TernVFS, stagingStore StagingStore, logger *slog.Logger) (*Server, error) {
+func NewServer(fs vfs.TernVFS, stagingStore staging.Store, logger *slog.Logger) (*Server, error) {
 	clients, err := NewClientStore(fs)
 	if err != nil {
 		return nil, err

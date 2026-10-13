@@ -11,13 +11,14 @@ import (
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sidecar"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 func (s *Server) stagingOwnedBy(
 	fileID vfs.InodeID,
 	state openState,
-) StagingFile {
+) staging.File {
 	meta, ok := s.stagingStore.GetMeta(fileID)
 	if !ok || meta.ClientID != state.owner.clientID ||
 		meta.NFSStateID != state.id && state.dataID != fileID {
@@ -26,7 +27,7 @@ func (s *Server) stagingOwnedBy(
 	return s.stagingStore.Get(fileID)
 }
 
-func (s *Server) directStaging(fileID vfs.InodeID) StagingFile {
+func (s *Server) directStaging(fileID vfs.InodeID) staging.File {
 	return s.stagingStore.Get(fileID)
 }
 
@@ -69,7 +70,7 @@ func (s *Server) retireIfInactiveWriter(id vfs.InodeID, meta sidecar.Meta) (bool
 			return true, nil
 		}
 	}
-	if err := s.retireStagingLocked(id, meta); err != nil && !errors.Is(err, errStagingRemoved) {
+	if err := s.retireStagingLocked(id, meta); err != nil && !errors.Is(err, staging.ErrRemoved) {
 		return true, err
 	}
 	return false, nil
@@ -102,13 +103,13 @@ func (s *Server) namespaceWriters(dirID vfs.InodeID, name string, target *mutati
 func (s *Server) guardNamespaceWriters(writers []namespaceWriter) error {
 	for i, writer := range writers {
 		err := s.stagingStore.SetGuard(writer.id, true)
-		if err == nil || errors.Is(err, errStagingRemoved) {
+		if err == nil || errors.Is(err, staging.ErrRemoved) {
 			continue
 		}
 		// A failed save may already have installed the guard. Clear every
 		// attempted writer in memory, including this one, before returning.
 		for _, attempted := range writers[:i+1] {
-			if clearErr := s.stagingStore.SetGuard(attempted.id, false); clearErr != nil && !errors.Is(clearErr, errStagingRemoved) {
+			if clearErr := s.stagingStore.SetGuard(attempted.id, false); clearErr != nil && !errors.Is(clearErr, staging.ErrRemoved) {
 				// Keep the writer usable: the next Sync repairs a stale disk guard,
 				// or startup quarantines it if the process crashes before repair.
 				s.log.Warn("cannot checkpoint cleared namespace guard", "inode", attempted.id, "err", clearErr)
@@ -140,7 +141,7 @@ func (s *Server) finishNamespaceWriters(writers []namespaceWriter, op uint32, ba
 			// writer rather than guess a target or replay an uncertain request.
 			err = s.stagingStore.Quarantine(writer.id)
 		}
-		if err != nil && !errors.Is(err, errStagingRemoved) {
+		if err != nil && !errors.Is(err, staging.ErrRemoved) {
 			// A known target stays usable despite a failed save: Sync repairs
 			// the sidecar, and a surviving disk guard makes restart conservative.
 			s.log.Warn("namespace staging bookkeeping failed", "inode", writer.id, "err", err)

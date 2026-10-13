@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -54,7 +55,7 @@ func (fs *confirmedLookupHold) Lookup(dir vfs.InodeID, name string) (vfs.InodeID
 func TestActiveCompoundDoesNotExpireClientState(t *testing.T) {
 	fs := &confirmedLookupHold{TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
 		entered: make(chan struct{}), release: make(chan struct{})}
-	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	staging, err := staging.NewLocalStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +253,7 @@ func TestBindDirectionMatrix(t *testing.T) {
 // be written. It does not claim fleet expiry.
 func TestLocalExpiryDrainsSessionsWithoutMarker(t *testing.T) {
 	fs := &expiryGateVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir()), failMarker: true}
-	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	staging, err := staging.NewLocalStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -920,7 +921,7 @@ func (fs *passCountVFS) reset() {
 // nothing.
 func TestRequestsDoNotDriveRefresherPasses(t *testing.T) {
 	fs := &passCountVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
-	srv, err := NewServer(fs, readOnlyStagingStore{}, nil)
+	srv, err := NewServer(fs, staging.ReadOnlyStore{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1205,7 +1206,7 @@ func TestNoNewSessionForExpiredIncarnation(t *testing.T) {
 func TestCreateSessionRacingExpiry(t *testing.T) {
 	fs := &confirmedLookupHold{TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
 		entered: make(chan struct{}), release: make(chan struct{})}
-	srv, err := NewServer(fs, readOnlyStagingStore{}, nil)
+	srv, err := NewServer(fs, staging.ReadOnlyStore{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1241,7 +1242,7 @@ func TestCreateSessionRacingExpiry(t *testing.T) {
 // client's other writer keeps its open, marker and staging, and publishes.
 func TestLoneFailedWriterLeavesSiblingsAlone(t *testing.T) {
 	fs := &readerSourceVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
-	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	staging, err := staging.NewLocalStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1296,7 +1297,7 @@ func TestLoneFailedWriterLeavesSiblingsAlone(t *testing.T) {
 // ownership under leaseLocks); it reads the record and writes nothing.
 func TestRenewWithServerHooksDoesNotPass(t *testing.T) {
 	fs := &passCountVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
-	srv, err := NewServer(fs, readOnlyStagingStore{}, nil)
+	srv, err := NewServer(fs, staging.ReadOnlyStore{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

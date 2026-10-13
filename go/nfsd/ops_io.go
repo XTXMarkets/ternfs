@@ -9,6 +9,7 @@ import (
 	"errors"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -114,7 +115,7 @@ func (s *Server) opRead(args nfs4.READ4args, st *compoundState, w *nfs4.COMPOUND
 
 	if sf != nil {
 		n, eof, err = sf.Read(offset, buf, s.readBaseForeground)
-		if errors.Is(err, errStagingRemoved) && !s.stagingStore.Failed(dataID) {
+		if errors.Is(err, staging.ErrRemoved) && !s.stagingStore.Failed(dataID) {
 			n, eof, err = s.readBaseForeground(
 				s.clientView(st.clientID, st.currentID), offset, buf,
 			)
@@ -383,7 +384,7 @@ func (s *Server) opWrite(args nfs4.WRITE4args, st *compoundState, w *nfs4.COMPOU
 		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 
-	var sf StagingFile
+	var sf staging.File
 	dataID := st.currentID
 	stateid, ok := st.resolveStateID(args.Stateid())
 	if !ok {

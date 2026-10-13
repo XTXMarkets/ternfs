@@ -11,6 +11,7 @@ import (
 
 	"github.com/XTXMarkets/ternfs/go/msgs"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -33,7 +34,7 @@ func TestNamespaceUnstagedErrorOutcomes(t *testing.T) {
 					t.Fatal(err)
 				}
 				base := vfs.NewLocalTernVFS(root)
-				store, err := NewLocalStagingStore(t.TempDir(), nil)
+				store, err := staging.NewLocalStore(t.TempDir(), nil)
 				if err != nil {
 					t.Fatal(err)
 				}

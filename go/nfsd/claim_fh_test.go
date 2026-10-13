@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -231,7 +232,7 @@ func TestOpenWaitsForPublishingClose(t *testing.T) {
 		started:      make(chan struct{}),
 		release:      make(chan struct{}),
 	}
-	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	staging, err := staging.NewLocalStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

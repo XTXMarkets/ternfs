@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-package main
+package staging
 
 import (
 	"errors"
@@ -22,9 +22,9 @@ import (
 )
 
 func TestNamespaceChangePreservesDataCheckpoint(t *testing.T) {
-	store, id, stage := createOverlayStage(t, t.TempDir(), 42, []byte("original bytes"))
+	store, id, stage := CreateOverlayStage(t, t.TempDir(), 42, []byte("original bytes"))
 	defer store.Remove(id)
-	sf := stage.(*localStagingFile)
+	sf := stage.(*LocalFile)
 	if err := sf.Write(0, []byte("saved")); err != nil {
 		t.Fatal(err)
 	}
@@ -79,9 +79,9 @@ func TestNamespaceChangePreservesDataCheckpoint(t *testing.T) {
 }
 
 func TestNamespaceFinalCheckpointFailureRepairsOnSync(t *testing.T) {
-	store, id, stage := createOverlayStage(t, t.TempDir(), 42, []byte("original"))
+	store, id, stage := CreateOverlayStage(t, t.TempDir(), 42, []byte("original"))
 	defer store.Remove(id)
-	sf := stage.(*localStagingFile)
+	sf := stage.(*LocalFile)
 	if err := store.SetGuard(id, true); err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestNamespaceFinalCheckpointFailureRepairsOnSync(t *testing.T) {
 }
 
 func TestNamespaceQuarantineKeepsTombstone(t *testing.T) {
-	store, id, stage := createOverlayStage(t, t.TempDir(), 42, []byte("original"))
+	store, id, stage := CreateOverlayStage(t, t.TempDir(), 42, []byte("original"))
 	meta, _ := store.GetMeta(id)
 	if err := store.SetGuard(id, true); err != nil {
 		t.Fatal(err)
@@ -130,21 +130,21 @@ func TestNamespaceQuarantineKeepsTombstone(t *testing.T) {
 	if _, ok := store.GetMeta(id); ok {
 		t.Fatal("failed metadata is still recoverable")
 	}
-	if _, err := store.Create(id, meta); !errors.Is(err, errStagingRemoved) {
+	if _, err := store.Create(id, meta); !errors.Is(err, ErrRemoved) {
 		t.Fatalf("Create revived failed inode: %v", err)
 	}
-	if err := stage.Write(0, []byte("late")); !errors.Is(err, errStagingRemoved) {
+	if err := stage.Write(0, []byte("late")); !errors.Is(err, ErrRemoved) {
 		t.Fatalf("previously obtained reference still writes: %v", err)
 	}
-	if err := stage.Sync(); !errors.Is(err, errStagingRemoved) {
+	if err := stage.Sync(); !errors.Is(err, ErrRemoved) {
 		t.Fatalf("previously obtained reference still commits: %v", err)
 	}
 }
 
 func TestNamespaceGuardRecoveryPreservesUncheckpointedTail(t *testing.T) {
 	dir := t.TempDir()
-	store, id, stage := createOverlayStage(t, dir, 42, []byte("base"))
-	sf := stage.(*localStagingFile)
+	store, id, stage := CreateOverlayStage(t, dir, 42, []byte("base"))
+	sf := stage.(*LocalFile)
 	if err := sf.Write(4, []byte("tail")); err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestNamespaceGuardRecoveryPreservesUncheckpointedTail(t *testing.T) {
 	if err := sf.f.Close(); err != nil {
 		t.Fatal(err)
 	}
-	recovered, err := NewLocalStagingStore(dir, nil)
+	recovered, err := NewLocalStore(dir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,8 +205,8 @@ func TestNamespaceMutationClassification(t *testing.T) {
 func TestNamespaceCheckpointDoesNotHoldStoreLock(t *testing.T) {
 	for _, finish := range []bool{false, true} {
 		t.Run(fmt.Sprintf("finish=%t", finish), func(t *testing.T) {
-			store, id, _ := createOverlayStage(t, t.TempDir(), 0, nil)
-			defer closeLocalStagingFiles(t, store)
+			store, id, _ := CreateOverlayStage(t, t.TempDir(), 0, nil)
+			defer CloseFiles(t, store)
 			dirID := vfs.MakeInodeID(vfs.InodeTypeDir, 1)
 			otherID := vfs.MakeInodeID(vfs.InodeTypeFile, 123)
 			if _, err := store.Create(otherID, sidecar.Meta{DirID: dirID, FileName: "other"}); err != nil {
@@ -217,7 +217,7 @@ func TestNamespaceCheckpointDoesNotHoldStoreLock(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			sf := store.Get(id).(*localStagingFile)
+			sf := store.Get(id).(*LocalFile)
 			sf.mu.Lock()
 			done := make(chan error, 1)
 			go func() {
@@ -252,13 +252,13 @@ func TestNamespaceCheckpointDoesNotHoldStoreLock(t *testing.T) {
 }
 
 func TestRemovedNamespaceWriterIsNotReindexed(t *testing.T) {
-	store, id, _ := createOverlayStage(t, t.TempDir(), 0, nil)
-	defer closeLocalStagingFiles(t, store)
+	store, id, _ := CreateOverlayStage(t, t.TempDir(), 0, nil)
+	defer CloseFiles(t, store)
 	dirID := vfs.MakeInodeID(vfs.InodeTypeDir, 1)
 	if err := store.SetGuard(id, true); err != nil {
 		t.Fatal(err)
 	}
-	sf := store.Get(id).(*localStagingFile)
+	sf := store.Get(id).(*LocalFile)
 	sf.mu.Lock()
 	done := make(chan error, 1)
 	go func() { done <- store.Retarget(id, dirID, "target") }()

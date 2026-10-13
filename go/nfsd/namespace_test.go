@@ -17,6 +17,7 @@ import (
 	"github.com/XTXMarkets/ternfs/go/msgs"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sidecar"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -183,7 +184,7 @@ type namespaceFixture struct {
 	root, disk string
 	fs         *vfs.LocalTernVFS
 	backend    vfs.TernVFS // serves in place of fs when set, including after restart
-	store      *LocalStagingStore
+	store      *staging.LocalStore
 	server     *Server
 	conn       net.Conn
 	stop       func()
@@ -270,7 +271,7 @@ func assertQuarantined(t *testing.T, f *namespaceFixture, id vfs.InodeID) {
 	if f.store.Get(id) != nil {
 		t.Fatal("quarantined writer is still indexed")
 	}
-	matches, _ := filepath.Glob(filepath.Join(f.disk, stagingQuarantineDirName,
+	matches, _ := filepath.Glob(filepath.Join(f.disk, staging.QuarantineDirName,
 		fmt.Sprintf("%016x-*", uint64(id)), fmt.Sprintf("%016x.staging", uint64(id))))
 	if len(matches) != 1 {
 		t.Fatalf("quarantined staging files = %v", matches)
@@ -456,7 +457,7 @@ func TestDetachedCloseDoesNotLockOldName(t *testing.T) {
 func (f *namespaceFixture) start(t *testing.T) {
 	t.Helper()
 	var err error
-	f.store, err = NewLocalStagingStore(f.disk, nil)
+	f.store, err = staging.NewLocalStore(f.disk, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -477,7 +478,7 @@ func (f *namespaceFixture) close(t *testing.T) {
 	t.Helper()
 	f.conn.Close()
 	f.stop()
-	closeLocalStagingFiles(t, f.store)
+	staging.CloseFiles(t, f.store)
 }
 
 func (f *namespaceFixture) restart(t *testing.T) {
@@ -551,13 +552,13 @@ func TestRetiredSourceDoesNotBlockRename(t *testing.T) {
 			}
 			var savedMetaPath string
 			if destination == "checkpoint failure" {
-				sf := f.store.Get(destinationID).(*localStagingFile)
-				savedMetaPath = sf.metaPath
-				sf.metaPath = filepath.Join(f.disk, "missing", "destination.meta")
+				sf := f.store.Get(destinationID).(*staging.LocalFile)
+				savedMetaPath = sf.MetaPath()
+				sf.SetMetaPath(filepath.Join(f.disk, "missing", "destination.meta"))
 			}
 			status := renameNamespaceIntoDirectory(t, f)
 			if savedMetaPath != "" {
-				f.store.Get(destinationID).(*localStagingFile).metaPath = savedMetaPath
+				f.store.Get(destinationID).(*staging.LocalFile).SetMetaPath(savedMetaPath)
 			}
 			if destination == "rejected" || destination == "checkpoint failure" {
 				if status == nfs4.NFS4_OK || status == nfs4.NFS4ERR_FILE_OPEN {
@@ -686,7 +687,7 @@ func TestCloseWaitsForStagedRename(t *testing.T) {
 		entered: make(chan struct{}),
 		release: make(chan struct{}),
 	}
-	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	staging, err := staging.NewLocalStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

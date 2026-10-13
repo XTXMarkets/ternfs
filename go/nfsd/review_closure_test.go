@@ -21,6 +21,7 @@ import (
 
 	"github.com/XTXMarkets/ternfs/go/msgs"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -160,13 +161,13 @@ func TestReviewN08R3UncachedRequiredErrors(t *testing.T) {
 }
 
 type reviewSyncFailStore struct {
-	StagingStore
+	staging.Store
 	armed bool
 }
-type reviewSyncFailFile struct{ StagingFile }
+type reviewSyncFailFile struct{ staging.File }
 
-func (s *reviewSyncFailStore) Get(id vfs.InodeID) StagingFile {
-	f := s.StagingStore.Get(id)
+func (s *reviewSyncFailStore) Get(id vfs.InodeID) staging.File {
+	f := s.Store.Get(id)
 	if f != nil && s.armed {
 		return &reviewSyncFailFile{f}
 	}
@@ -196,11 +197,11 @@ func reviewOpenSize(w *nfs4.COMPOUND4argsWriter, client uint64, name, owner stri
 func TestReviewN08R4JoinedOpenSizeSyncFailure(t *testing.T) {
 	root := t.TempDir()
 	stageDir := t.TempDir()
-	base, err := NewLocalStagingStore(stageDir, nil)
+	base, err := staging.NewLocalStore(stageDir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := &reviewSyncFailStore{StagingStore: base}
+	store := &reviewSyncFailStore{Store: base}
 	srv, err := NewServer(vfs.NewLocalTernVFS(root), store, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -589,7 +590,7 @@ func (fs *reviewPagedVFS) Stat(id vfs.InodeID) (vfs.NodeInfo, error) {
 
 func TestReviewN08R1aReaddirPreparationWithinReservation(t *testing.T) {
 	fs := &reviewPagedVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir()), entries: 12000}
-	srv, err := NewServer(fs, readOnlyStagingStore{}, nil)
+	srv, err := NewServer(fs, staging.ReadOnlyStore{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

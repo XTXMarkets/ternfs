@@ -19,6 +19,7 @@ import (
 	"github.com/XTXMarkets/ternfs/go/core/log"
 	"github.com/XTXMarkets/ternfs/go/msgs"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -31,7 +32,7 @@ func main() {
 	addr := flag.String("addr", ":2049", "listen address")
 	root := flag.String("root", "", "local root directory to export (for testing)")
 	registry := flag.String("registry", "", "TernFS registry address (for production)")
-	staging := flag.String("staging", "", "staging directory for writes (omit for read-only)")
+	stagingDir := flag.String("staging", "", "staging directory for writes (omit for read-only)")
 	verbose := flag.Bool("v", false, "verbose logging of NFS requests/responses")
 	allowMinor2 := flag.Bool("allow-minor-version-2", false,
 		"also accept NFSv4.2 COMPOUNDs, served as NFSv4.1 with every 4.2 operation unsupported")
@@ -59,17 +60,17 @@ func main() {
 
 	// Set up local state before dialling the cluster, so that a bad -staging
 	// path or an unusable -root fails without a round trip to the registry.
-	var ss StagingStore
-	if *staging != "" {
-		store, err := NewLocalStagingStore(*staging, slogger)
+	var ss staging.Store
+	if *stagingDir != "" {
+		store, err := staging.NewLocalStore(*stagingDir, slogger)
 		if err != nil {
 			slogger.Error("creating staging store", "err", err)
 			os.Exit(1)
 		}
 		ss = store
-		slogger.Info("staging directory configured", "path", *staging)
+		slogger.Info("staging directory configured", "path", *stagingDir)
 	} else {
-		ss = readOnlyStagingStore{}
+		ss = staging.ReadOnlyStore{}
 		slogger.Info("no staging directory — read-only mode")
 	}
 

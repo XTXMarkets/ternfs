@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -128,7 +129,7 @@ func (fs *leaseRemoveHold) RemoveEdge(dir vfs.InodeID, name string, edge vfs.Edg
 func TestTerminalAdmissionBeforeCleanup(t *testing.T) {
 	fs := &leaseRemoveHold{TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
 		entered: make(chan struct{}), release: make(chan struct{})}
-	srv, err := NewServer(fs, readOnlyStagingStore{}, nil)
+	srv, err := NewServer(fs, staging.ReadOnlyStore{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +211,7 @@ func TestPendingBackReservationDoesNotKeepOldProbe(t *testing.T) {
 func pendingBackProbe(t *testing.T, prune bool) {
 	fs := &confirmedLookupHold{TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
 		entered: make(chan struct{}), release: make(chan struct{})}
-	srv, err := NewServer(fs, readOnlyStagingStore{}, nil)
+	srv, err := NewServer(fs, staging.ReadOnlyStore{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

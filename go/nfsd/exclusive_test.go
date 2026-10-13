@@ -16,6 +16,7 @@ import (
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/byterange"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sidecar"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -125,7 +126,7 @@ func TestExclusiveVerifierDoesNotFollowReplacement(t *testing.T) {
 func TestExclusiveCreateRecovery(t *testing.T) {
 	fs := vfs.NewLocalTernVFS(t.TempDir())
 	stagingDir := t.TempDir()
-	store, err := NewLocalStagingStore(stagingDir, nil)
+	store, err := staging.NewLocalStore(stagingDir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,13 +146,13 @@ func TestExclusiveCreateRecovery(t *testing.T) {
 	writeFileAt(t, conn, &xid, fh, state, 0, []byte("checkpoint"))
 	conn.Close()
 	cleanup()
-	closeLocalStagingFiles(t, store)
+	staging.CloseFiles(t, store)
 
-	recovered, err := NewLocalStagingStore(stagingDir, nil)
+	recovered, err := staging.NewLocalStore(stagingDir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer closeLocalStagingFiles(t, recovered)
+	defer staging.CloseFiles(t, recovered)
 	srv, err = NewServer(fs, recovered, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -179,7 +180,7 @@ func TestExclusiveCreateRecovery(t *testing.T) {
 
 func TestExclusiveStagingCheckpoint(t *testing.T) {
 	dir := t.TempDir()
-	store, err := NewLocalStagingStore(dir, nil)
+	store, err := staging.NewLocalStore(dir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,12 +208,12 @@ func TestExclusiveStagingCheckpoint(t *testing.T) {
 	if err := store.Rebind(id, 2, nfs4.StateID{2}); err != nil {
 		t.Fatal(err)
 	}
-	closeLocalStagingFiles(t, store)
-	loaded, err := NewLocalStagingStore(dir, nil)
+	staging.CloseFiles(t, store)
+	loaded, err := staging.NewLocalStore(dir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer closeLocalStagingFiles(t, loaded)
+	defer staging.CloseFiles(t, loaded)
 	got, ok := loaded.GetMeta(id)
 	if !ok || got.Version != sidecar.Version || !got.Exclusive || got.Verifier != meta.Verifier ||
 		got.BaseID != meta.BaseID || got.ClientID != 2 || got.NFSStateID != (nfs4.StateID{2}) ||
@@ -277,11 +278,11 @@ func TestExclusiveSetattr(t *testing.T) {
 		t.Run(map[bool]string{false: "times", true: "published-before-time-error"}[failTimes], func(t *testing.T) {
 			root := t.TempDir()
 			fs := &exclusiveTimeVFS{TernVFS: vfs.NewLocalTernVFS(root), fail: failTimes}
-			store, err := NewLocalStagingStore(t.TempDir(), nil)
+			store, err := staging.NewLocalStore(t.TempDir(), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer closeLocalStagingFiles(t, store)
+			defer staging.CloseFiles(t, store)
 			srv, err := NewServer(fs, store, nil)
 			if err != nil {
 				t.Fatal(err)

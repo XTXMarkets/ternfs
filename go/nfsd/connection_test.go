@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -128,7 +129,7 @@ func newConnectionTestServer(t *testing.T, limit int) (*Server, *statGateVFS) {
 	fs := &statGateVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
 		Gate: testutil.NewGate()}
 	fs.All = true
-	srv, err := NewServer(fs, readOnlyStagingStore{}, nil)
+	srv, err := NewServer(fs, staging.ReadOnlyStore{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +225,7 @@ func TestConnectionInFlightDuplicates(t *testing.T) {
 		t.Run(fmt.Sprint(conflicting), func(t *testing.T) {
 			fs := &mkdirGateVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
 				Gate: testutil.NewGate()}
-			staging, err := NewLocalStagingStore(t.TempDir(), nil)
+			staging, err := staging.NewLocalStore(t.TempDir(), nil)
 			if err != nil {
 				t.Fatal(err)
 			}

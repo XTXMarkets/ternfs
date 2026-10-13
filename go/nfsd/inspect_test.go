@@ -19,6 +19,7 @@ import (
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/byterange"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sidecar"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -881,7 +882,7 @@ func TestInspectReportsStagingIntegrity(t *testing.T) {
 		sidecar.Meta{DirID: f.fs.RootID(), FileName: "short-name"}); err != nil {
 		t.Fatal(err)
 	}
-	quarantine := filepath.Join(dir, stagingQuarantineDirName, "0000000000000006-abc")
+	quarantine := filepath.Join(dir, staging.QuarantineDirName, "0000000000000006-abc")
 	if err := os.MkdirAll(quarantine, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -910,7 +911,7 @@ func TestInspectReportsStagingIntegrity(t *testing.T) {
 		t.Fatalf("problems = %v", report.Problems)
 	}
 	if len(report.Quarantined) != 1 ||
-		report.Quarantined[0] != filepath.Join(stagingQuarantineDirName,
+		report.Quarantined[0] != filepath.Join(staging.QuarantineDirName,
 			"0000000000000006-abc", "0000000000000006.staging") {
 		t.Fatalf("quarantined = %v", report.Quarantined)
 	}

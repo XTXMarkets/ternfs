@@ -15,6 +15,7 @@ import (
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sidecar"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -39,7 +40,7 @@ type confirmServer struct {
 func newConfirmServer(t *testing.T) *confirmServer {
 	t.Helper()
 	f := &confirmServer{fs: newConfirmFaultVFS(t), xid: 1}
-	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	staging, err := staging.NewLocalStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1280,7 +1281,7 @@ func TestPurgeOwnership(t *testing.T) {
 		f := newConfirmServer(t)
 		f.commitWithFailedPurge(t)
 		// A new process over the same store: no hint, only the marker.
-		staging, err := NewLocalStagingStore(t.TempDir(), nil)
+		staging, err := staging.NewLocalStore(t.TempDir(), nil)
 		if err != nil {
 			t.Fatal(err)
 		}

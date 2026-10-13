@@ -24,6 +24,7 @@ import (
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sidecar"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -956,7 +957,7 @@ func (r *inspectReport) readStaging(dir string) ([]*inspectStagingEntry, error) 
 		name := dirEntry.Name()
 		path := filepath.Join(dir, name)
 		if dirEntry.IsDir() {
-			if name == stagingQuarantineDirName {
+			if name == staging.QuarantineDirName {
 				found, err := readStagingQuarantine(dir, path)
 				if err != nil {
 					problem("%v", err)

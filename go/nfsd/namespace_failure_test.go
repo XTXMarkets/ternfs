@@ -18,6 +18,7 @@ import (
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sidecar"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -60,17 +61,17 @@ func TestNamespacePreparationFailureKeepsWritersUsable(t *testing.T) {
 			// guard as well as the writer whose own guard failed.
 			state, fh := openWriteFile(t, f.conn, &f.xid, f.clientID, "target")
 			dstID := stagingIDForTest(t, f.store, state)
-			sf := f.store.Get(dstID).(*localStagingFile)
-			path := sf.metaPath
+			sf := f.store.Get(dstID).(*staging.LocalFile)
+			path := sf.MetaPath()
 			if installed {
-				f.server.stagingStore = &installedGuardFailureStore{StagingStore: f.store, id: dstID}
+				f.server.stagingStore = &installedGuardFailureStore{Store: f.store, id: dstID}
 			} else {
-				sf.metaPath = filepath.Join(f.disk, "missing", "checkpoint.meta")
+				sf.SetMetaPath(filepath.Join(f.disk, "missing", "checkpoint.meta"))
 			}
 			if got := renameNamespaceFile(t, f, "source", "target"); got != nfs4.NFS4ERR_IO {
 				t.Fatalf("preparation failure = %s", nfs4.Nfsstat4Name(got))
 			}
-			sf.metaPath = path
+			sf.SetMetaPath(path)
 			if fs.mutations.Load() != 0 {
 				t.Fatal("preparation failure submitted a backend mutation")
 			}
@@ -82,7 +83,7 @@ func TestNamespacePreparationFailureKeepsWritersUsable(t *testing.T) {
 				if err := f.store.Get(id).Sync(); err != nil {
 					t.Fatal(err)
 				}
-				disk, err := sidecar.Load(f.store.Get(id).(*localStagingFile).metaPath)
+				disk, err := sidecar.Load(f.store.Get(id).(*staging.LocalFile).MetaPath())
 				if err != nil || disk.Guarded {
 					t.Fatalf("rollback was not repaired: %+v, %v", disk, err)
 				}
@@ -94,12 +95,12 @@ func TestNamespacePreparationFailureKeepsWritersUsable(t *testing.T) {
 }
 
 type installedGuardFailureStore struct {
-	StagingStore
+	staging.Store
 	id vfs.InodeID
 }
 
 func (store *installedGuardFailureStore) SetGuard(id vfs.InodeID, guarded bool) error {
-	err := store.StagingStore.SetGuard(id, guarded)
+	err := store.Store.SetGuard(id, guarded)
 	if err == nil && id == store.id && guarded {
 		return errors.New("guard installed but directory sync failed")
 	}
@@ -110,17 +111,15 @@ func TestNamespaceFinalSaveFailureKeepsBackendResult(t *testing.T) {
 	for _, operation := range []string{"remove", "rename", "replace"} {
 		t.Run(operation, func(t *testing.T) {
 			f := newNamespaceFixture(t)
-			sf := f.store.Get(f.id).(*localStagingFile)
-			path := sf.metaPath
+			sf := f.store.Get(f.id).(*staging.LocalFile)
+			path := sf.MetaPath()
 			f.server.fs = &namespaceProbeVFS{TernVFS: f.fs, before: func() {
-				sf.mu.Lock()
-				sf.metaPath = filepath.Join(f.disk, "missing", "checkpoint.meta")
-				sf.mu.Unlock()
+				sf.SetMetaPath(filepath.Join(f.disk, "missing", "checkpoint.meta"))
 			}}
 			if got := namespaceOperation(t, f, operation); got != nfs4.NFS4_OK {
 				t.Fatalf("known outcome changed to %s", nfs4.Nfsstat4Name(got))
 			}
-			sf.metaPath = path
+			sf.SetMetaPath(path)
 			meta, ok := f.store.GetMeta(f.id)
 			if !ok || meta.Guarded || f.store.Failed(f.id) {
 				t.Fatalf("final save failure excluded the writer: %+v", meta)
@@ -178,7 +177,7 @@ func TestNamespaceFinalDirectorySyncFailureIsSafe(t *testing.T) {
 		t.Fatal(err)
 	}
 	meta, _ := f.store.GetMeta(f.id)
-	if meta.Guarded || meta.FileName != "target" || !f.store.Get(f.id).(*localStagingFile).checkpointDirty {
+	if meta.Guarded || meta.FileName != "target" || !f.store.Get(f.id).(*staging.LocalFile).CheckpointDirty() {
 		t.Fatalf("installed final checkpoint was not retained for repair: %+v", meta)
 	}
 	if got := commitNamespaceStatus(t, f); got != nfs4.NFS4_OK {
@@ -193,14 +192,14 @@ func TestNamespaceFinalDirectorySyncFailureIsSafe(t *testing.T) {
 }
 
 type pausedFailureCheckStore struct {
-	StagingStore
+	staging.Store
 	id               vfs.InodeID
 	paused           atomic.Bool
 	entered, release chan struct{}
 }
 
 func (store *pausedFailureCheckStore) Failed(id vfs.InodeID) bool {
-	failed := store.StagingStore.Failed(id)
+	failed := store.Store.Failed(id)
 	if id == store.id && store.paused.CompareAndSwap(false, true) {
 		close(store.entered)
 		<-store.release
@@ -212,7 +211,7 @@ func TestFailedWriterCloseDoesNotExpireSiblingDuringLookup(t *testing.T) {
 	f := newNamespaceFixture(t)
 	siblingState, siblingFH := openWriteFile(t, f.conn, &f.xid, f.clientID, "target")
 	siblingID := stagingIDForTest(t, f.store, siblingState)
-	store := &pausedFailureCheckStore{StagingStore: f.store, id: f.id,
+	store := &pausedFailureCheckStore{Store: f.store, id: f.id,
 		entered: make(chan struct{}), release: make(chan struct{})}
 	f.server.stagingStore = store
 	readConn := dial(t, f.conn.RemoteAddr().String())
@@ -284,16 +283,16 @@ func TestStagingStartupExcludesEveryBadEntry(t *testing.T) {
 				t.Skip("root bypasses unreadable sidecar permissions")
 			}
 			dir := t.TempDir()
-			store, id, stage := createOverlayStage(t, dir, 42, []byte("original"))
+			store, id, stage := staging.CreateOverlayStage(t, dir, 42, []byte("original"))
 			meta, _ := store.GetMeta(id)
-			path := stage.(*localStagingFile).metaPath
+			path := stage.(*staging.LocalFile).MetaPath()
 			if err := stage.Write(0, []byte("private!")); err != nil {
 				t.Fatal(err)
 			}
 			if err := stage.Sync(); err != nil {
 				t.Fatal(err)
 			}
-			if err := stage.(*localStagingFile).f.Close(); err != nil {
+			if err := stage.(*staging.LocalFile).DataFile().Close(); err != nil {
 				t.Fatal(err)
 			}
 			meta, _ = sidecar.Load(path)
@@ -303,7 +302,7 @@ func TestStagingStartupExcludesEveryBadEntry(t *testing.T) {
 					t.Fatal(err)
 				}
 				if problem == "quarantine failure" {
-					if err := os.WriteFile(filepath.Join(dir, stagingQuarantineDirName), []byte("blocked"), 0600); err != nil {
+					if err := os.WriteFile(filepath.Join(dir, staging.QuarantineDirName), []byte("blocked"), 0600); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -321,7 +320,7 @@ func TestStagingStartupExcludesEveryBadEntry(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "truncate failure":
-				dataPath := stage.(*localStagingFile).f.Name()
+				dataPath := stage.(*staging.LocalFile).DataFile().Name()
 				if err := os.Rename(dataPath, dataPath+".preserved"); err != nil {
 					t.Fatal(err)
 				}
@@ -339,10 +338,10 @@ func TestStagingStartupExcludesEveryBadEntry(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := healthyFile.(*localStagingFile).f.Close(); err != nil {
+			if err := healthyFile.(*staging.LocalFile).DataFile().Close(); err != nil {
 				t.Fatal(err)
 			}
-			recovered, err := NewLocalStagingStore(dir, nil)
+			recovered, err := staging.NewLocalStore(dir, nil)
 			if err != nil {
 				t.Fatalf("per-entry failure prevented startup: %v", err)
 			}
@@ -356,7 +355,7 @@ func TestStagingStartupExcludesEveryBadEntry(t *testing.T) {
 			}
 			srv.waitForClientGC()
 			if problem == "quarantine failure" {
-				data, err := os.ReadFile(stage.(*localStagingFile).f.Name())
+				data, err := os.ReadFile(stage.(*staging.LocalFile).DataFile().Name())
 				if err != nil || string(data) != "private!" {
 					t.Fatalf("failed quarantine discarded data: %q, %v", data, err)
 				}
@@ -408,20 +407,20 @@ func TestNamespacePreflightRejectionDoesNotGuard(t *testing.T) {
 	}
 	probe := &namespaceProbeVFS{TernVFS: f.fs}
 	f.server.fs = probe
-	sf := f.store.Get(f.id).(*localStagingFile)
-	path := sf.metaPath
+	sf := f.store.Get(f.id).(*staging.LocalFile)
+	path := sf.MetaPath()
 	// A misplaced guard attempt would fail with IO instead of the preflight
 	// EXIST response, even if the operation later tried to clear its guard.
-	sf.metaPath = filepath.Join(f.disk, "missing", "checkpoint.meta")
-	defer func() { sf.metaPath = path }()
+	sf.SetMetaPath(filepath.Join(f.disk, "missing", "checkpoint.meta"))
+	defer func() { sf.SetMetaPath(path) }()
 	if got := renameNamespaceFile(t, f, "source", "directory"); got != nfs4.NFS4ERR_EXIST {
 		t.Fatalf("type rejection = %s", nfs4.Nfsstat4Name(got))
 	}
 	if probe.mutations.Load() != 0 {
 		t.Fatal("type rejection submitted a mutation")
 	}
-	sf.metaPath = path
-	meta, _ := sidecar.Load(f.store.Get(f.id).(*localStagingFile).metaPath)
+	sf.SetMetaPath(path)
+	meta, _ := sidecar.Load(f.store.Get(f.id).(*staging.LocalFile).MetaPath())
 	if meta.Guarded || meta.Unlinked {
 		t.Fatalf("type rejection changed the sidecar: %+v", meta)
 	}
@@ -430,7 +429,7 @@ func TestNamespacePreflightRejectionDoesNotGuard(t *testing.T) {
 
 func TestUnknownNamespaceQuarantineFailureSurvivesRestart(t *testing.T) {
 	f := newNamespaceFixture(t)
-	blocker := filepath.Join(f.disk, stagingQuarantineDirName)
+	blocker := filepath.Join(f.disk, staging.QuarantineDirName)
 	if err := os.WriteFile(blocker, []byte("blocked"), 0600); err != nil {
 		t.Fatal(err)
 	}

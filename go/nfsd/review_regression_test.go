@@ -18,17 +18,18 @@ import (
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sidecar"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
-func assertRetiredStaging(t *testing.T, store StagingStore, id vfs.InodeID) {
+func assertRetiredStaging(t *testing.T, store staging.Store, id vfs.InodeID) {
 	t.Helper()
 	meta, ok := store.GetMeta(id)
 	if !ok || !meta.Retired || store.Get(id) == nil {
 		t.Fatal("expired open did not retain its recoverable staging")
 	}
-	if stagingTargetBusyForTest(store, meta.DirID, meta.FileName) {
+	if staging.TargetBusy(store, meta.DirID, meta.FileName) {
 		t.Fatal("retired staging still reserves its pathname")
 	}
 }
@@ -45,7 +46,7 @@ func TestExpiredWriterRecoversAcknowledgedData(t *testing.T) {
 					}
 				}
 				stagingDir := t.TempDir()
-				store, err := NewLocalStagingStore(stagingDir, nil)
+				store, err := staging.NewLocalStore(stagingDir, nil)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -74,8 +75,8 @@ func TestExpiredWriterRecoversAcknowledgedData(t *testing.T) {
 				if restart {
 					conn.Close()
 					cleanup()
-					closeLocalStagingFiles(t, store)
-					store, err = NewLocalStagingStore(stagingDir, nil)
+					staging.CloseFiles(t, store)
+					store, err = staging.NewLocalStore(stagingDir, nil)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -147,7 +148,7 @@ func TestStagingRecoveryKeySeparatesBootsAndPrincipals(t *testing.T) {
 }
 
 func TestRemoveCancelsQueuedHydration(t *testing.T) {
-	store, id, sf := createOverlayStage(t, t.TempDir(), vfs.MakeInodeID(vfs.InodeTypeFile, 1), []byte("base"))
+	store, id, sf := staging.CreateOverlayStage(t, t.TempDir(), vfs.MakeInodeID(vfs.InodeTypeFile, 1), []byte("base"))
 	srv := &Server{hydrationSlots: make(chan struct{}, 1)}
 	srv.hydrationSlots <- struct{}{}
 	entered := make(chan struct{})
@@ -168,22 +169,22 @@ func TestOlderStagingFormatFailsStartup(t *testing.T) {
 	for _, format := range []string{"NFS5", "NFS6", "NFS7"} {
 		t.Run(format, func(t *testing.T) {
 			dir := t.TempDir()
-			store, _, sf := createOverlayStage(t, dir, vfs.MakeInodeID(vfs.InodeTypeFile, 1), []byte("base"))
+			store, _, sf := staging.CreateOverlayStage(t, dir, vfs.MakeInodeID(vfs.InodeTypeFile, 1), []byte("base"))
 			if err := sf.Sync(); err != nil {
 				t.Fatal(err)
 			}
-			metaPath := sf.(*localStagingFile).metaPath
+			metaPath := sf.(*staging.LocalFile).MetaPath()
 			data, err := os.ReadFile(metaPath)
 			if err != nil {
 				t.Fatal(err)
 			}
-			closeLocalStagingFiles(t, store)
+			staging.CloseFiles(t, store)
 			copy(data[30+int(binary.BigEndian.Uint16(data[28:30]))+8:], format)
 			if err := os.WriteFile(metaPath, data, 0600); err != nil {
 				t.Fatal(err)
 			}
 			var formatErr sidecar.FormatError
-			if _, err := NewLocalStagingStore(dir, nil); !errors.As(err, &formatErr) {
+			if _, err := staging.NewLocalStore(dir, nil); !errors.As(err, &formatErr) {
 				t.Fatalf("startup with %s staging = %v", format, err)
 			}
 			if _, err := os.Stat(metaPath); err != nil {
@@ -197,19 +198,19 @@ func TestInvalidStagingIsQuarantined(t *testing.T) {
 	for _, format := range []string{"missing", "truncated", "XFS8"} {
 		t.Run(format, func(t *testing.T) {
 			dir := t.TempDir()
-			store, id, sf := createOverlayStage(t, dir, vfs.MakeInodeID(vfs.InodeTypeFile, 1), []byte("base"))
+			store, id, sf := staging.CreateOverlayStage(t, dir, vfs.MakeInodeID(vfs.InodeTypeFile, 1), []byte("base"))
 			if err := sf.Write(0, []byte("keep")); err != nil {
 				t.Fatal(err)
 			}
 			if err := sf.Sync(); err != nil {
 				t.Fatal(err)
 			}
-			metaPath := sf.(*localStagingFile).metaPath
+			metaPath := sf.(*staging.LocalFile).MetaPath()
 			data, err := os.ReadFile(metaPath)
 			if err != nil {
 				t.Fatal(err)
 			}
-			closeLocalStagingFiles(t, store)
+			staging.CloseFiles(t, store)
 			switch format {
 			case "missing":
 				err = os.Remove(metaPath)
@@ -223,7 +224,7 @@ func TestInvalidStagingIsQuarantined(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			recovered, err := NewLocalStagingStore(dir, nil)
+			recovered, err := staging.NewLocalStore(dir, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -252,7 +253,7 @@ func (fs *closeTimeErrorVFS) SetTime(vfs.InodeID, *time.Time, *time.Time) error 
 
 func TestPublishedCloseSurvivesTimestampFailure(t *testing.T) {
 	fs := &closeTimeErrorVFS{vfs.NewLocalTernVFS(t.TempDir())}
-	store, err := NewLocalStagingStore(t.TempDir(), nil)
+	store, err := staging.NewLocalStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +314,7 @@ func TestMetadataOnlyCloseSkipsDataIO(t *testing.T) {
 				t.Fatal(err)
 			}
 			fs := &metadataOnlyVFS{LocalTernVFS: base}
-			store, err := NewLocalStagingStore(t.TempDir(), nil)
+			store, err := staging.NewLocalStore(t.TempDir(), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -386,11 +387,11 @@ func createSizeStatus(t *testing.T, conn net.Conn, xid *uint32, clientID, size u
 	return res.Status()
 }
 
-type sizeErrorStore struct{ StagingStore }
-type sizeErrorFile struct{ StagingFile }
+type sizeErrorStore struct{ staging.Store }
+type sizeErrorFile struct{ staging.File }
 
-func (s sizeErrorStore) Get(id vfs.InodeID) StagingFile {
-	sf := s.StagingStore.Get(id)
+func (s sizeErrorStore) Get(id vfs.InodeID) staging.File {
+	sf := s.Store.Get(id)
 	if sf == nil {
 		return nil
 	}
@@ -401,11 +402,11 @@ func (sizeErrorFile) SetSize(uint64) error { return errors.New("injected size fa
 func TestOpenSizeErrorReplay(t *testing.T) {
 	for _, ioFailure := range []bool{false, true} {
 		t.Run(map[bool]string{false: "FBIG", true: "IO"}[ioFailure], func(t *testing.T) {
-			store, err := NewLocalStagingStore(t.TempDir(), nil)
+			store, err := staging.NewLocalStore(t.TempDir(), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
-			var ss StagingStore = store
+			var ss staging.Store = store
 			size, want := uint64(1<<63), uint32(nfs4.NFS4ERR_FBIG)
 			if ioFailure {
 				ss, size, want = sizeErrorStore{store}, 1, nfs4.NFS4ERR_IO
@@ -430,7 +431,7 @@ func TestOpenSizeErrorReplay(t *testing.T) {
 }
 
 func TestStaleLeaseCheckCannotRetireRecoveredWriter(t *testing.T) {
-	store, id, sf := createOverlayStage(t, t.TempDir(), vfs.MakeInodeID(vfs.InodeTypeFile, 1), []byte("base"))
+	store, id, sf := staging.CreateOverlayStage(t, t.TempDir(), vfs.MakeInodeID(vfs.InodeTypeFile, 1), []byte("base"))
 	defer store.Remove(id)
 	old, _ := store.GetMeta(id)
 	if err := store.Rebind(id, 42, nfs4.StateID{3}); err != nil {
@@ -440,14 +441,14 @@ func TestStaleLeaseCheckCannotRetireRecoveredWriter(t *testing.T) {
 		t.Fatal(err)
 	}
 	meta, _ := store.GetMeta(id)
-	if meta.Retired || !stagingTargetBusyForTest(store, meta.DirID, meta.FileName) {
+	if meta.Retired || !staging.TargetBusy(store, meta.DirID, meta.FileName) {
 		t.Fatal("stale lease check retired the recovered writer")
 	}
 }
 
 func TestRetiredStagingReleasesDescriptorAndReopensOnRecovery(t *testing.T) {
 	dir := t.TempDir()
-	store, id, sf := createOverlayStage(t, dir, vfs.MakeInodeID(vfs.InodeTypeFile, 1), []byte("base"))
+	store, id, sf := staging.CreateOverlayStage(t, dir, vfs.MakeInodeID(vfs.InodeTypeFile, 1), []byte("base"))
 	if err := sf.Write(0, []byte("kept")); err != nil {
 		t.Fatal(err)
 	}
@@ -455,16 +456,16 @@ func TestRetiredStagingReleasesDescriptorAndReopensOnRecovery(t *testing.T) {
 	if err := sf.Retire(meta.ClientID, meta.NFSStateID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := sf.(*localStagingFile).f.Stat(); !errors.Is(err, os.ErrClosed) {
+	if _, err := sf.(*staging.LocalFile).DataFile().Stat(); !errors.Is(err, os.ErrClosed) {
 		t.Fatalf("retired file still has an open descriptor: %v", err)
 	}
-	recovered, err := NewLocalStagingStore(dir, nil)
+	recovered, err := staging.NewLocalStore(dir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer recovered.Remove(id)
-	recoveredFile := recovered.Get(id).(*localStagingFile)
-	if _, err := recoveredFile.f.Stat(); !errors.Is(err, os.ErrClosed) {
+	recoveredFile := recovered.Get(id).(*staging.LocalFile)
+	if _, err := recoveredFile.DataFile().Stat(); !errors.Is(err, os.ErrClosed) {
 		t.Fatalf("restart reopened a retired descriptor: %v", err)
 	}
 	if err := recovered.Rebind(id, 42, nfs4.StateID{3}); err != nil {

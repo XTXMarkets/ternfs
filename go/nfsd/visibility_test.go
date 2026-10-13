@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -128,7 +129,7 @@ func TestConcurrentGuardedCreationPublishesOnce(t *testing.T) {
 		},
 	}
 	defer testutil.CloseSignal(fs.releaseFirst)
-	store, err := NewLocalStagingStore(t.TempDir(), nil)
+	store, err := staging.NewLocalStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +195,7 @@ func TestAbandonedCreationKeepsEmptyVersion(t *testing.T) {
 	now := time.Now().Add(2 * nfsLeaseTime)
 	srv.clients.setClock(func() time.Time { return now })
 	srv.runLeaseSweep()
-	if stagingTargetBusyForTest(srv.stagingStore, srv.fs.RootID(), "abandoned") {
+	if staging.TargetBusy(srv.stagingStore, srv.fs.RootID(), "abandoned") {
 		t.Fatal("expired creator still holds staging")
 	}
 	if got := lookupFH(t, conn, &xid, "abandoned"); !bytes.Equal(got, baseFH) {
@@ -209,7 +210,7 @@ func TestAbandonedCreationKeepsEmptyVersion(t *testing.T) {
 func TestReadOnlyCreationSurvivesRestart(t *testing.T) {
 	fs := vfs.NewLocalTernVFS(t.TempDir())
 	stagingDir := t.TempDir()
-	store, err := NewLocalStagingStore(stagingDir, nil)
+	store, err := staging.NewLocalStore(stagingDir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,10 +229,8 @@ func TestReadOnlyCreationSurvivesRestart(t *testing.T) {
 	emptyFH := lookupFH(t, conn, &xid, "readonly")
 	conn.Close()
 	cleanup()
-	for _, entry := range store.files {
-		entry.file.prepareRemove()
-	}
-	recovered, err := NewLocalStagingStore(stagingDir, nil)
+	store.PrepareRemoveAll()
+	recovered, err := staging.NewLocalStore(stagingDir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -306,7 +305,7 @@ func TestFailedCreationDoesNotPublishEmptyVersion(t *testing.T) {
 				LocalTernVFS: vfs.NewLocalTernVFS(t.TempDir()),
 				failure:      failure,
 			}
-			store, err := NewLocalStagingStore(t.TempDir(), nil)
+			store, err := staging.NewLocalStore(t.TempDir(), nil)
 			if err != nil {
 				t.Fatal(err)
 			}

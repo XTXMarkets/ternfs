@@ -16,6 +16,7 @@ import (
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sidecar"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -56,7 +57,7 @@ type claimFHRestart struct {
 	root        string
 	fs          *claimHookVFS
 	srv         *Server
-	staging     *LocalStagingStore
+	staging     *staging.LocalStore
 	conn        net.Conn
 	xid         uint32
 	wire        uint64
@@ -90,7 +91,7 @@ func newRestartedWriter(t *testing.T, name string, replacement bool, now func() 
 		data: []byte("staged before restart")}
 	f.fs = &claimHookVFS{TernVFS: vfs.NewLocalTernVFS(f.root)}
 	stagingDir := t.TempDir()
-	firstStaging, err := NewLocalStagingStore(stagingDir, nil)
+	firstStaging, err := staging.NewLocalStore(stagingDir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,9 +122,9 @@ func newRestartedWriter(t *testing.T, name string, replacement bool, now func() 
 	f.stagingID = stagingIDForTest(t, firstStaging, stateid)
 	conn.Close()
 	stopFirst()
-	closeLocalStagingFiles(t, firstStaging)
+	staging.CloseFiles(t, firstStaging)
 
-	if f.staging, err = NewLocalStagingStore(stagingDir, nil); err != nil {
+	if f.staging, err = staging.NewLocalStore(stagingDir, nil); err != nil {
 		t.Fatal(err)
 	}
 	if f.srv, err = NewServer(f.fs, f.staging, nil); err != nil {

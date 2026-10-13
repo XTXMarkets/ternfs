@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sidecar"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -58,14 +59,14 @@ func (s *Server) readBaseBackground(
 	return s.fs.Read(fileID, offset, dest)
 }
 
-func (s *Server) startHydration(sf StagingFile) {
+func (s *Server) startHydration(sf staging.File) {
 	baseID, _ := sf.Base()
 	if baseID != 0 {
 		sf.StartHydration(s.readBaseBackground)
 	}
 }
 
-func (s *Server) setStagingSize(sf StagingFile, size uint64) error {
+func (s *Server) setStagingSize(sf staging.File, size uint64) error {
 	if err := sf.SetSize(size); err != nil {
 		return err
 	}

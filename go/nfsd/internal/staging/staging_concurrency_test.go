@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-package main
+package staging
 
 import (
 	"errors"
@@ -15,7 +15,7 @@ import (
 )
 
 func TestStagingCreateConcurrency(t *testing.T) {
-	store, err := NewLocalStagingStore(t.TempDir(), nil)
+	store, err := NewLocalStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,7 +25,7 @@ func TestStagingCreateConcurrency(t *testing.T) {
 		return os.Create(path)
 	}
 	type result struct {
-		file StagingFile
+		file File
 		err  error
 	}
 	first := make(chan result, 1)
@@ -65,7 +65,7 @@ func TestStagingCreateConcurrency(t *testing.T) {
 func TestStagingCleanupWaitsForCreation(t *testing.T) {
 	for _, quarantine := range []bool{false, true} {
 		t.Run(map[bool]string{false: "remove", true: "quarantine"}[quarantine], func(t *testing.T) {
-			store, err := NewLocalStagingStore(t.TempDir(), nil)
+			store, err := NewLocalStore(t.TempDir(), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -102,7 +102,7 @@ func TestStagingCleanupWaitsForCreation(t *testing.T) {
 				t.Fatal("cleanup left a published entry")
 			}
 			if quarantine {
-				if _, err := store.Create(1, sidecar.Meta{}); !errors.Is(err, errStagingRemoved) {
+				if _, err := store.Create(1, sidecar.Meta{}); !errors.Is(err, ErrRemoved) {
 					t.Fatalf("quarantined Create = %v", err)
 				}
 			}
@@ -114,7 +114,7 @@ func TestStagingCleanupWaitsForCreation(t *testing.T) {
 }
 
 func TestStagingCreateFailureCanRetry(t *testing.T) {
-	store, err := NewLocalStagingStore(t.TempDir(), nil)
+	store, err := NewLocalStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

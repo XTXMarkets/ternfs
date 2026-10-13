@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -1850,7 +1851,7 @@ func TestClientStoreGCIsBoundedAndRetryable(t *testing.T) {
 
 func TestServerSchedulesClientGC(t *testing.T) {
 	fs := vfs.NewLocalTernVFS(t.TempDir())
-	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	staging, err := staging.NewLocalStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1900,7 +1901,7 @@ func TestServerSchedulesClientGC(t *testing.T) {
 
 func TestConfirmedClientGCRechecksAfterLease(t *testing.T) {
 	fs := vfs.NewLocalTernVFS(t.TempDir())
-	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	staging, err := staging.NewLocalStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1946,7 +1947,7 @@ func TestConfirmedClientGCRechecksAfterLease(t *testing.T) {
 
 func TestScheduleClientGCRestartsForPendingWork(t *testing.T) {
 	fs := vfs.NewLocalTernVFS(t.TempDir())
-	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	staging, err := staging.NewLocalStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1983,7 +1984,7 @@ func TestScheduleClientGCRestartsForPendingWork(t *testing.T) {
 func TestClientGCContinuesAfterPanic(t *testing.T) {
 	baseFS := vfs.NewLocalTernVFS(t.TempDir())
 	fs := &lookupFailureVFS{TernVFS: baseFS}
-	staging, err := NewLocalStagingStore(t.TempDir(), nil)
+	staging, err := staging.NewLocalStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
