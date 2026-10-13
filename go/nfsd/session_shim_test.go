@@ -135,7 +135,7 @@ func stateidOwner(conn net.Conn, body []byte) (uint64, bool) {
 	it := args.Argarray()
 	for it.Next() {
 		op := it.Argarray().Value()
-		switch op.disc {
+		switch op.Disc() {
 		case OP_READ:
 			presented = append(presented, extractStateID(op.AsREAD4args().Stateid()))
 		case OP_WRITE:

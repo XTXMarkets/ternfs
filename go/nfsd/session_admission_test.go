@@ -293,7 +293,7 @@ func TestAdmissionUncachedReplayPrefix(t *testing.T) {
 			}
 			if following {
 				it.Next()
-				if binary.BigEndian.Uint32(it.Resarray().Value().b) != NFS4ERR_RETRY_UNCACHED_REP {
+				if binary.BigEndian.Uint32(it.Resarray().Value().Bytes()) != NFS4ERR_RETRY_UNCACHED_REP {
 					t.Fatal("wrong uncached result")
 				}
 			}

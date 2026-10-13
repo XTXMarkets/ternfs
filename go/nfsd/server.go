@@ -752,7 +752,7 @@ func (s *Server) compoundBody(req *rpcRequest, args COMPOUND4args) (result []byt
 	}()
 	user, userErr := req.effectiveUser()
 	for index, op := range ops {
-		opnum := op.disc
+		opnum := op.Disc()
 		currentOp, checkpoint = opnum, w
 		s.log.Debug("op", "opnum", NfsOpnum4Name(opnum))
 		if userErr != nil {
@@ -763,10 +763,10 @@ func (s *Server) compoundBody(req *rpcRequest, args COMPOUND4args) (result []byt
 		if index == 0 {
 			switch {
 			case opnum == OP_SEQUENCE:
-				prefixBytes := uint32(rpcAcceptedHeaderSize + len(w.buf) + 44)
+				prefixBytes := uint32(rpcAcceptedHeaderSize + w.Len() + 44)
 				uncachedBytes := prefixBytes
 				if len(ops) > 1 {
-					uncachedBytes += resultErrorSize(ops[1].disc)
+					uncachedBytes += resultErrorSize(ops[1].Disc())
 				}
 				seq = s.startSequence(op.AsSEQUENCE4args(), sequenceAdmission{
 					digest: sha256.Sum256(req.body), user: user, requestBytes: uint32(req.fullSize()),
@@ -815,10 +815,10 @@ func (s *Server) compoundBody(req *rpcRequest, args COMPOUND4args) (result []byt
 		if st.session != nil {
 			limit = seq.budget
 		}
-		used := uint32(rpcAcceptedHeaderSize + len(w.buf))
+		used := uint32(rpcAcceptedHeaderSize + w.Len())
 		suffix := uint32(0)
 		if index+1 < len(ops) {
-			suffix = resultErrorSize(ops[index+1].disc)
+			suffix = resultErrorSize(ops[index+1].Disc())
 		}
 		bound := s.operationReplyBound(op)
 		handleBytes, handleStatus := s.handleReplyObligation(ops, index)
@@ -935,7 +935,7 @@ func (s *Server) compoundBody(req *rpcRequest, args COMPOUND4args) (result []byt
 		if st.effectUnknown && seq.sess != nil {
 			s.sessions.retireSession(seq.sess, true)
 		}
-		if uint64(rpcAcceptedHeaderSize+len(w.buf))+uint64(suffix) > uint64(limit) {
+		if uint64(rpcAcceptedHeaderSize+w.Len())+uint64(suffix) > uint64(limit) {
 			if operationMutates(opnum) {
 				// A violated fixed bound after a known effect cannot be recast as
 				// a pre-effect failure. Retain terminal slot authority and close.

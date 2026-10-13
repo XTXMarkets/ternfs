@@ -26,13 +26,9 @@ func appendResultError(body []byte, op, status uint32) []byte {
 }
 
 func writeOperationError(w *COMPOUND4resWriter, op, status uint32) {
-	if w.resarrayCountOff == 0 {
-		w.resarrayCountOff = len(w.buf)
-		w.buf = binary.BigEndian.AppendUint32(w.buf, 0)
-	}
-	w.phase = 1
-	w.resarrayCount++
-	w.buf = appendResultError(w.buf, op, status)
+	w.AppendEncodedResult(func(buf []byte) []byte {
+		return appendResultError(buf, op, status)
+	})
 }
 
 func resultLimitStatus(seq *sequenceResult) uint32 {
@@ -47,7 +43,7 @@ func resultLimitStatus(seq *sequenceResult) uint32 {
 // Read-only variable operations may compute a bounded result and then fail that
 // operation, preserving earlier effects. Mutations have fixed pre-effect bounds.
 func (s *Server) operationReplyBound(op NfsArgop4) uint32 {
-	switch op.disc {
+	switch op.Disc() {
 	case OP_ACCESS:
 		return 16
 	case OP_CLOSE, OP_OPEN_DOWNGRADE, OP_WRITE:
@@ -91,7 +87,7 @@ func (s *Server) operationReplyBound(op NfsArgop4) uint32 {
 	case OP_TEST_STATEID:
 		return 12 + 4*op.AsTESTSTATEID4args().TsStateidsCount()
 	default:
-		return resultErrorSize(op.disc)
+		return resultErrorSize(op.Disc())
 	}
 }
 
@@ -118,15 +114,15 @@ func operationMutates(op uint32) bool {
 // OPEN/CREATE must have room to report a following handle before their effects.
 // Intervening results are bounded up to the GETFH or another handle change.
 func (s *Server) handleReplyObligation(ops []NfsArgop4, index int) (uint32, uint32) {
-	if ops[index].disc != OP_OPEN && ops[index].disc != OP_CREATE {
+	if ops[index].Disc() != OP_OPEN && ops[index].Disc() != OP_CREATE {
 		return 0, NFS4_OK
 	}
 	end := -1
 	for i := index + 1; i < len(ops); i++ {
-		if changesHandle(ops[i].disc) {
+		if changesHandle(ops[i].Disc()) {
 			break
 		}
-		if ops[i].disc == OP_GETFH {
+		if ops[i].Disc() == OP_GETFH {
 			end = i
 			break
 		}
@@ -136,7 +132,7 @@ func (s *Server) handleReplyObligation(ops []NfsArgop4, index int) (uint32, uint
 	}
 	var bytes uint32
 	for _, op := range ops[index+1 : end+1] {
-		if op.disc == OP_READLINK || op.disc == OP_READDIR {
+		if op.Disc() == OP_READLINK || op.Disc() == OP_READDIR {
 			// These currently consume remaining budget or have only a minimum
 			// result bound. Refuse before creation rather than lose its handle.
 			return 0, NFS4ERR_UNSAFE_COMPOUND
@@ -144,7 +140,7 @@ func (s *Server) handleReplyObligation(ops []NfsArgop4, index int) (uint32, uint
 		bytes += s.operationReplyBound(op)
 	}
 	if end+1 < len(ops) {
-		bytes += resultErrorSize(ops[end+1].disc)
+		bytes += resultErrorSize(ops[end+1].Disc())
 	}
 	return bytes, NFS4_OK
 }
@@ -159,7 +155,7 @@ func mandatoryUnsupported(op uint32) bool {
 }
 
 func maintenancePosition(op NfsArgop4, st *compoundState, index, count int) uint32 {
-	switch op.disc {
+	switch op.Disc() {
 	case OP_BIND_CONN_TO_SESSION:
 		if count != 1 {
 			return NFS4ERR_NOT_ONLY_OP

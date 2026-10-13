@@ -31,8 +31,7 @@ func (st *compoundState) resolveStateID(stateid Stateid4) (Stateid4, bool) {
 	if !st.currentStateIDSet {
 		return stateid, false
 	}
-	var buf [16]byte
-	resolved := Stateid4{m: &buf}
+	_, resolved := StartStateid4(nil)
 	writeStateID(resolved, st.currentGeneration, st.currentStateID)
 	return resolved, true
 }

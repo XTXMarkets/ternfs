@@ -342,7 +342,7 @@ type sequenceAdmission struct {
 // startSequence validates SEQUENCE and claims its slot. The caller must
 // call finishSequence once the compound reply is complete.
 func (s *Server) startSequence(args SEQUENCE4args, admission ...sequenceAdmission) sequenceResult {
-	a := sequenceAdmission{digest: sha256.Sum256(args.m[:]), operations: 1,
+	a := sequenceAdmission{digest: sha256.Sum256(args.Bytes()), operations: 1,
 		sequenceReplyBytes: rpcAcceptedHeaderSize + 12 + 44}
 	if len(admission) != 0 {
 		a = admission[0]

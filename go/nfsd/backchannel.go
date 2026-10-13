@@ -34,7 +34,7 @@ func parseCallbackSec(it CallbackSecParms4EntryIter) (callbackSec, uint32) {
 		case AUTH_NONE:
 			return callbackSec{flavor: authNone}, NFS4_OK
 		case AUTH_SYS:
-			return callbackSec{flavor: authSys, body: append([]byte(nil), entry.Value().b...)}, NFS4_OK
+			return callbackSec{flavor: authSys, body: append([]byte(nil), entry.Value().Bytes()...)}, NFS4_OK
 		case RPCSEC_GSS:
 			gss = true
 		}

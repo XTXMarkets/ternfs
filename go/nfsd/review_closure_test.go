@@ -658,7 +658,7 @@ func TestReviewN08R1aReaddirPreparationWithinReservation(t *testing.T) {
 	if ok.Reply().Eof() != FALSE {
 		t.Fatal("partial page reported EOF")
 	}
-	for e := ok.Reply().Entries(); e.disc == TRUE; {
+	for e := ok.Reply().Entries(); e.Disc() == TRUE; {
 		entry := e.AsEntry4()
 		if entry.Cookie() != uint64(got+3) || len(entry.Name().Data()) != maxTernNameLength {
 			t.Fatalf("entry %d cookie %d", got, entry.Cookie())
@@ -678,7 +678,7 @@ func TestReviewN08R1aReaddirPreparationWithinReservation(t *testing.T) {
 	it.Next()
 	it.Next()
 	ok = it.Resarray().Value().AsREADDIR4resEntry().Value().AsREADDIR4resok()
-	if e := ok.Reply().Entries(); e.disc != TRUE || e.AsEntry4().Cookie() != last+1 {
+	if e := ok.Reply().Entries(); e.Disc() != TRUE || e.AsEntry4().Cookie() != last+1 {
 		t.Fatal("continuation did not resume after the last cookie")
 	}
 	if a := srv.sessions.accounting(); a.WorkBytes != 0 || a.WorkReplies != 0 {

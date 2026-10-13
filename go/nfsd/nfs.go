@@ -1939,6 +1939,14 @@ func readSettime4(b *[]byte, timeHow4 uint32) (Settime4, bool) {
 	}
 }
 
+func (m Settime4) Disc() uint32 {
+	return m.disc
+}
+
+func (m Settime4) Bytes() []byte {
+	return m.b
+}
+
 func (m Settime4) AsNfstime4() Nfstime4 {
 	if m.disc != SET_TO_CLIENT_TIME4 {
 		panic("wrong union discriminant")
@@ -3390,6 +3398,14 @@ func readLayoutreturn4(b *[]byte, layoutreturnType4 uint32) (Layoutreturn4, bool
 	}
 }
 
+func (m Layoutreturn4) Disc() uint32 {
+	return m.disc
+}
+
+func (m Layoutreturn4) Bytes() []byte {
+	return m.b
+}
+
 func (m Layoutreturn4) AsLayoutreturnFile4() LayoutreturnFile4 {
 	if m.disc != LAYOUTRETURN4_FILE {
 		panic("wrong union discriminant")
@@ -3896,6 +3912,14 @@ func readNetloc4(b *[]byte, netlocType4 uint32) (Netloc4, bool) {
 	default:
 		return Netloc4{}, false
 	}
+}
+
+func (m Netloc4) Disc() uint32 {
+	return m.disc
+}
+
+func (m Netloc4) Bytes() []byte {
+	return m.b
 }
 
 func (m Netloc4) AsName() Utf8strCis {
@@ -6965,6 +6989,14 @@ func readACCESS4res(b *[]byte, nfsstat4 uint32) (ACCESS4res, bool) {
 	}
 }
 
+func (m ACCESS4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m ACCESS4res) Bytes() []byte {
+	return m.b
+}
+
 func (m ACCESS4res) AsACCESS4resok() ACCESS4resok {
 	if m.disc != NFS4_OK {
 		panic("wrong union discriminant")
@@ -7131,6 +7163,14 @@ func readCLOSE4res(b *[]byte, nfsstat4 uint32) (CLOSE4res, bool) {
 	}
 }
 
+func (m CLOSE4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m CLOSE4res) Bytes() []byte {
+	return m.b
+}
+
 func (m CLOSE4res) AsStateid4() Stateid4 {
 	if m.disc != NFS4_OK {
 		panic("wrong union discriminant")
@@ -7236,6 +7276,14 @@ func readCOMMIT4res(b *[]byte, nfsstat4 uint32) (COMMIT4res, bool) {
 	}
 }
 
+func (m COMMIT4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m COMMIT4res) Bytes() []byte {
+	return m.b
+}
+
 func (m COMMIT4res) AsCOMMIT4resok() COMMIT4resok {
 	if m.disc != NFS4_OK {
 		panic("wrong union discriminant")
@@ -7281,6 +7329,14 @@ func readCreatetype4(b *[]byte, nfsFtype4 uint32) (Createtype4, bool) {
 	default:
 		return Createtype4{b: (*b)[:0], disc: nfsFtype4}, true
 	}
+}
+
+func (m Createtype4) Disc() uint32 {
+	return m.disc
+}
+
+func (m Createtype4) Bytes() []byte {
+	return m.b
 }
 
 func (m Createtype4) AsLinktext4() Linktext4 {
@@ -7537,6 +7593,14 @@ func readCREATE4res(b *[]byte, nfsstat4 uint32) (CREATE4res, bool) {
 	default:
 		return CREATE4res{b: (*b)[:0], disc: nfsstat4}, true
 	}
+}
+
+func (m CREATE4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m CREATE4res) Bytes() []byte {
+	return m.b
 }
 
 func (m CREATE4res) AsCREATE4resok() CREATE4resok {
@@ -7813,6 +7877,14 @@ func readGETATTR4res(b *[]byte, nfsstat4 uint32) (GETATTR4res, bool) {
 	}
 }
 
+func (m GETATTR4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m GETATTR4res) Bytes() []byte {
+	return m.b
+}
+
 func (m GETATTR4res) AsGETATTR4resok() GETATTR4resok {
 	if m.disc != NFS4_OK {
 		panic("wrong union discriminant")
@@ -7892,6 +7964,14 @@ func readGETFH4res(b *[]byte, nfsstat4 uint32) (GETFH4res, bool) {
 	default:
 		return GETFH4res{b: (*b)[:0], disc: nfsstat4}, true
 	}
+}
+
+func (m GETFH4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m GETFH4res) Bytes() []byte {
+	return m.b
 }
 
 func (m GETFH4res) AsGETFH4resok() GETFH4resok {
@@ -8005,6 +8085,14 @@ func readLINK4res(b *[]byte, nfsstat4 uint32) (LINK4res, bool) {
 	default:
 		return LINK4res{b: (*b)[:0], disc: nfsstat4}, true
 	}
+}
+
+func (m LINK4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m LINK4res) Bytes() []byte {
+	return m.b
 }
 
 func (m LINK4res) AsLINK4resok() LINK4resok {
@@ -8162,6 +8250,14 @@ func readLocker4(b *[]byte, xdrBool uint32) (Locker4, bool) {
 	default:
 		return Locker4{}, false
 	}
+}
+
+func (m Locker4) Disc() uint32 {
+	return m.disc
+}
+
+func (m Locker4) Bytes() []byte {
+	return m.b
 }
 
 func (m Locker4) AsOpenToLockOwner4() OpenToLockOwner4 {
@@ -8424,6 +8520,14 @@ func readLOCK4res(b *[]byte, nfsstat4 uint32) (LOCK4res, bool) {
 	}
 }
 
+func (m LOCK4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m LOCK4res) Bytes() []byte {
+	return m.b
+}
+
 func (m LOCK4res) AsLOCK4resok() LOCK4resok {
 	if m.disc != NFS4_OK {
 		panic("wrong union discriminant")
@@ -8543,6 +8647,14 @@ func readLOCKT4res(b *[]byte, nfsstat4 uint32) (LOCKT4res, bool) {
 	}
 }
 
+func (m LOCKT4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m LOCKT4res) Bytes() []byte {
+	return m.b
+}
+
 func (m LOCKT4res) AsLOCK4denied() LOCK4denied {
 	if m.disc != NFS4ERR_DENIED {
 		panic("wrong union discriminant")
@@ -8635,6 +8747,14 @@ func readLOCKU4res(b *[]byte, nfsstat4 uint32) (LOCKU4res, bool) {
 	default:
 		return LOCKU4res{b: (*b)[:0], disc: nfsstat4}, true
 	}
+}
+
+func (m LOCKU4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m LOCKU4res) Bytes() []byte {
+	return m.b
 }
 
 func (m LOCKU4res) AsStateid4() Stateid4 {
@@ -8963,6 +9083,14 @@ func readCreatehow4(b *[]byte, createmode4 uint32) (Createhow4, bool) {
 	}
 }
 
+func (m Createhow4) Disc() uint32 {
+	return m.disc
+}
+
+func (m Createhow4) Bytes() []byte {
+	return m.b
+}
+
 func (m Createhow4) AsUnchecked4() Fattr4 {
 	if m.disc != UNCHECKED4 {
 		panic("wrong union discriminant")
@@ -9098,6 +9226,14 @@ func readOpenflag4(b *[]byte, opentype4 uint32) (Openflag4, bool) {
 	}
 }
 
+func (m Openflag4) Disc() uint32 {
+	return m.disc
+}
+
+func (m Openflag4) Bytes() []byte {
+	return m.b
+}
+
 func (m Openflag4) AsCreatehow4Entry() Createhow4Entry {
 	if m.disc != OPEN4_CREATE {
 		panic("wrong union discriminant")
@@ -9212,6 +9348,14 @@ func readNfsSpaceLimit4(b *[]byte, limitBy4 uint32) (NfsSpaceLimit4, bool) {
 	default:
 		return NfsSpaceLimit4{}, false
 	}
+}
+
+func (m NfsSpaceLimit4) Disc() uint32 {
+	return m.disc
+}
+
+func (m NfsSpaceLimit4) Bytes() []byte {
+	return m.b
 }
 
 func (m NfsSpaceLimit4) AsNfsSpaceLimit4NFSLIMITSIZE() NfsSpaceLimit4NFSLIMITSIZE {
@@ -9377,6 +9521,14 @@ func readOpenClaim4(b *[]byte, openClaimType4 uint32) (OpenClaim4, bool) {
 	default:
 		return OpenClaim4{}, false
 	}
+}
+
+func (m OpenClaim4) Disc() uint32 {
+	return m.disc
+}
+
+func (m OpenClaim4) Bytes() []byte {
+	return m.b
 }
 
 func (m OpenClaim4) AsNull() Component4 {
@@ -9910,6 +10062,14 @@ func readOpenNoneDelegation4(b *[]byte, whyNoDelegation4 uint32) (OpenNoneDelega
 	}
 }
 
+func (m OpenNoneDelegation4) Disc() uint32 {
+	return m.disc
+}
+
+func (m OpenNoneDelegation4) Bytes() []byte {
+	return m.b
+}
+
 func (m OpenNoneDelegation4) AsOpenNoneDelegation4WND4CONTENTION() OpenNoneDelegation4WND4CONTENTION {
 	if m.disc != WND4_CONTENTION {
 		panic("wrong union discriminant")
@@ -10036,6 +10196,14 @@ func readOpenDelegation4(b *[]byte, openDelegationType4 uint32) (OpenDelegation4
 	default:
 		return OpenDelegation4{}, false
 	}
+}
+
+func (m OpenDelegation4) Disc() uint32 {
+	return m.disc
+}
+
+func (m OpenDelegation4) Bytes() []byte {
+	return m.b
 }
 
 func (m OpenDelegation4) AsRead() OpenReadDelegation4 {
@@ -10275,6 +10443,14 @@ func readOPEN4res(b *[]byte, nfsstat4 uint32) (OPEN4res, bool) {
 	}
 }
 
+func (m OPEN4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m OPEN4res) Bytes() []byte {
+	return m.b
+}
+
 func (m OPEN4res) AsOPEN4resok() OPEN4resok {
 	if m.disc != NFS4_OK {
 		panic("wrong union discriminant")
@@ -10449,6 +10625,14 @@ func readOPENCONFIRM4res(b *[]byte, nfsstat4 uint32) (OPENCONFIRM4res, bool) {
 	}
 }
 
+func (m OPENCONFIRM4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m OPENCONFIRM4res) Bytes() []byte {
+	return m.b
+}
+
 func (m OPENCONFIRM4res) AsOPENCONFIRM4resok() OPENCONFIRM4resok {
 	if m.disc != NFS4_OK {
 		panic("wrong union discriminant")
@@ -10565,6 +10749,14 @@ func readOPENDOWNGRADE4res(b *[]byte, nfsstat4 uint32) (OPENDOWNGRADE4res, bool)
 	default:
 		return OPENDOWNGRADE4res{b: (*b)[:0], disc: nfsstat4}, true
 	}
+}
+
+func (m OPENDOWNGRADE4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m OPENDOWNGRADE4res) Bytes() []byte {
+	return m.b
 }
 
 func (m OPENDOWNGRADE4res) AsOPENDOWNGRADE4resok() OPENDOWNGRADE4resok {
@@ -10886,6 +11078,14 @@ func readREAD4res(b *[]byte, nfsstat4 uint32) (READ4res, bool) {
 	}
 }
 
+func (m READ4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m READ4res) Bytes() []byte {
+	return m.b
+}
+
 func (m READ4res) AsREAD4resok() READ4resok {
 	if m.disc != NFS4_OK {
 		panic("wrong union discriminant")
@@ -11003,6 +11203,14 @@ func readEntry4Opt(b *[]byte, xdrBool uint32) (Entry4Opt, bool) {
 	default:
 		return Entry4Opt{b: (*b)[:0], disc: xdrBool}, true
 	}
+}
+
+func (m Entry4Opt) Disc() uint32 {
+	return m.disc
+}
+
+func (m Entry4Opt) Bytes() []byte {
+	return m.b
 }
 
 func (m Entry4Opt) AsEntry4() Entry4 {
@@ -11321,6 +11529,14 @@ func readREADDIR4res(b *[]byte, nfsstat4 uint32) (READDIR4res, bool) {
 	}
 }
 
+func (m READDIR4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m READDIR4res) Bytes() []byte {
+	return m.b
+}
+
 func (m READDIR4res) AsREADDIR4resok() READDIR4resok {
 	if m.disc != NFS4_OK {
 		panic("wrong union discriminant")
@@ -11400,6 +11616,14 @@ func readREADLINK4res(b *[]byte, nfsstat4 uint32) (READLINK4res, bool) {
 	default:
 		return READLINK4res{b: (*b)[:0], disc: nfsstat4}, true
 	}
+}
+
+func (m READLINK4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m READLINK4res) Bytes() []byte {
+	return m.b
 }
 
 func (m READLINK4res) AsREADLINK4resok() READLINK4resok {
@@ -11513,6 +11737,14 @@ func readREMOVE4res(b *[]byte, nfsstat4 uint32) (REMOVE4res, bool) {
 	default:
 		return REMOVE4res{b: (*b)[:0], disc: nfsstat4}, true
 	}
+}
+
+func (m REMOVE4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m REMOVE4res) Bytes() []byte {
+	return m.b
 }
 
 func (m REMOVE4res) AsREMOVE4resok() REMOVE4resok {
@@ -11655,6 +11887,14 @@ func readRENAME4res(b *[]byte, nfsstat4 uint32) (RENAME4res, bool) {
 	default:
 		return RENAME4res{b: (*b)[:0], disc: nfsstat4}, true
 	}
+}
+
+func (m RENAME4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m RENAME4res) Bytes() []byte {
+	return m.b
 }
 
 func (m RENAME4res) AsRENAME4resok() RENAME4resok {
@@ -11964,6 +12204,14 @@ func readSecinfo4(b *[]byte, discSecinfo4 uint32) (Secinfo4, bool) {
 	}
 }
 
+func (m Secinfo4) Disc() uint32 {
+	return m.disc
+}
+
+func (m Secinfo4) Bytes() []byte {
+	return m.b
+}
+
 func (m Secinfo4) AsRpcsecGssInfo() RpcsecGssInfo {
 	if m.disc != RPCSEC_GSS {
 		panic("wrong union discriminant")
@@ -12162,6 +12410,14 @@ func readSECINFO4res(b *[]byte, nfsstat4 uint32) (SECINFO4res, bool) {
 	default:
 		return SECINFO4res{b: (*b)[:0], disc: nfsstat4}, true
 	}
+}
+
+func (m SECINFO4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m SECINFO4res) Bytes() []byte {
+	return m.b
 }
 
 func (m SECINFO4res) AsSECINFO4resok() SECINFO4resok {
@@ -12464,6 +12720,14 @@ func readSETCLIENTID4res(b *[]byte, nfsstat4 uint32) (SETCLIENTID4res, bool) {
 	default:
 		return SETCLIENTID4res{b: (*b)[:0], disc: nfsstat4}, true
 	}
+}
+
+func (m SETCLIENTID4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m SETCLIENTID4res) Bytes() []byte {
+	return m.b
 }
 
 func (m SETCLIENTID4res) AsSETCLIENTID4resok() SETCLIENTID4resok {
@@ -12816,6 +13080,14 @@ func readWRITE4res(b *[]byte, nfsstat4 uint32) (WRITE4res, bool) {
 	}
 }
 
+func (m WRITE4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m WRITE4res) Bytes() []byte {
+	return m.b
+}
+
 func (m WRITE4res) AsWRITE4resok() WRITE4resok {
 	if m.disc != NFS4_OK {
 		panic("wrong union discriminant")
@@ -13137,6 +13409,14 @@ func readCallbackSecParms4(b *[]byte, discCallbackSecParms4 uint32) (CallbackSec
 	default:
 		return CallbackSecParms4{}, false
 	}
+}
+
+func (m CallbackSecParms4) Disc() uint32 {
+	return m.disc
+}
+
+func (m CallbackSecParms4) Bytes() []byte {
+	return m.b
 }
 
 func (m CallbackSecParms4) AsAuthsysParms() AuthsysParms {
@@ -13512,6 +13792,14 @@ func readBINDCONNTOSESSION4res(b *[]byte, nfsstat4 uint32) (BINDCONNTOSESSION4re
 	default:
 		return BINDCONNTOSESSION4res{b: (*b)[:0], disc: nfsstat4}, true
 	}
+}
+
+func (m BINDCONNTOSESSION4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m BINDCONNTOSESSION4res) Bytes() []byte {
+	return m.b
 }
 
 func (m BINDCONNTOSESSION4res) AsBINDCONNTOSESSION4resok() BINDCONNTOSESSION4resok {
@@ -13899,6 +14187,14 @@ func readStateProtect4A(b *[]byte, stateProtectHow4 uint32) (StateProtect4A, boo
 	default:
 		return StateProtect4A{}, false
 	}
+}
+
+func (m StateProtect4A) Disc() uint32 {
+	return m.disc
+}
+
+func (m StateProtect4A) Bytes() []byte {
+	return m.b
 }
 
 func (m StateProtect4A) AsStateProtectOps4() StateProtectOps4 {
@@ -14353,6 +14649,14 @@ func readStateProtect4R(b *[]byte, stateProtectHow4 uint32) (StateProtect4R, boo
 	}
 }
 
+func (m StateProtect4R) Disc() uint32 {
+	return m.disc
+}
+
+func (m StateProtect4R) Bytes() []byte {
+	return m.b
+}
+
 func (m StateProtect4R) AsStateProtectOps4() StateProtectOps4 {
 	if m.disc != SP4_MACH_CRED {
 		panic("wrong union discriminant")
@@ -14665,6 +14969,14 @@ func readEXCHANGEID4res(b *[]byte, nfsstat4 uint32) (EXCHANGEID4res, bool) {
 	default:
 		return EXCHANGEID4res{b: (*b)[:0], disc: nfsstat4}, true
 	}
+}
+
+func (m EXCHANGEID4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m EXCHANGEID4res) Bytes() []byte {
+	return m.b
 }
 
 func (m EXCHANGEID4res) AsEXCHANGEID4resok() EXCHANGEID4resok {
@@ -15126,6 +15438,14 @@ func readCREATESESSION4res(b *[]byte, nfsstat4 uint32) (CREATESESSION4res, bool)
 	}
 }
 
+func (m CREATESESSION4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m CREATESESSION4res) Bytes() []byte {
+	return m.b
+}
+
 func (m CREATESESSION4res) AsCREATESESSION4resok() CREATESESSION4resok {
 	if m.disc != NFS4_OK {
 		panic("wrong union discriminant")
@@ -15584,6 +15904,14 @@ func readGETDIRDELEGATION4resNonFatal(b *[]byte, gddrnf4Status uint32) (GETDIRDE
 	}
 }
 
+func (m GETDIRDELEGATION4resNonFatal) Disc() uint32 {
+	return m.disc
+}
+
+func (m GETDIRDELEGATION4resNonFatal) Bytes() []byte {
+	return m.b
+}
+
 func (m GETDIRDELEGATION4resNonFatal) AsGETDIRDELEGATION4resok() GETDIRDELEGATION4resok {
 	if m.disc != GDD4_OK {
 		panic("wrong union discriminant")
@@ -15689,6 +16017,14 @@ func readGETDIRDELEGATION4res(b *[]byte, nfsstat4 uint32) (GETDIRDELEGATION4res,
 	default:
 		return GETDIRDELEGATION4res{b: (*b)[:0], disc: nfsstat4}, true
 	}
+}
+
+func (m GETDIRDELEGATION4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m GETDIRDELEGATION4res) Bytes() []byte {
+	return m.b
 }
 
 func (m GETDIRDELEGATION4res) AsGETDIRDELEGATION4resNonFatalEntry() GETDIRDELEGATION4resNonFatalEntry {
@@ -15921,6 +16257,14 @@ func readGETDEVICEINFO4res(b *[]byte, nfsstat4 uint32) (GETDEVICEINFO4res, bool)
 	}
 }
 
+func (m GETDEVICEINFO4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m GETDEVICEINFO4res) Bytes() []byte {
+	return m.b
+}
+
 func (m GETDEVICEINFO4res) AsGETDEVICEINFO4resok() GETDEVICEINFO4resok {
 	if m.disc != NFS4_OK {
 		panic("wrong union discriminant")
@@ -16110,6 +16454,14 @@ func readGETDEVICELIST4res(b *[]byte, nfsstat4 uint32) (GETDEVICELIST4res, bool)
 	}
 }
 
+func (m GETDEVICELIST4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m GETDEVICELIST4res) Bytes() []byte {
+	return m.b
+}
+
 func (m GETDEVICELIST4res) AsGETDEVICELIST4resok() GETDEVICELIST4resok {
 	if m.disc != NFS4_OK {
 		panic("wrong union discriminant")
@@ -16140,6 +16492,14 @@ func readNewtime4(b *[]byte, xdrBool uint32) (Newtime4, bool) {
 	default:
 		return Newtime4{}, false
 	}
+}
+
+func (m Newtime4) Disc() uint32 {
+	return m.disc
+}
+
+func (m Newtime4) Bytes() []byte {
+	return m.b
 }
 
 func (m Newtime4) AsNfstime4() Nfstime4 {
@@ -16207,6 +16567,14 @@ func readNewoffset4(b *[]byte, xdrBool uint32) (Newoffset4, bool) {
 	default:
 		return Newoffset4{}, false
 	}
+}
+
+func (m Newoffset4) Disc() uint32 {
+	return m.disc
+}
+
+func (m Newoffset4) Bytes() []byte {
+	return m.b
 }
 
 func (m Newoffset4) AsNewoffset4TRUE() Newoffset4TRUE {
@@ -16425,6 +16793,14 @@ func readNewsize4(b *[]byte, xdrBool uint32) (Newsize4, bool) {
 	}
 }
 
+func (m Newsize4) Disc() uint32 {
+	return m.disc
+}
+
+func (m Newsize4) Bytes() []byte {
+	return m.b
+}
+
 func (m Newsize4) AsNewsize4TRUE() Newsize4TRUE {
 	if m.disc != TRUE {
 		panic("wrong union discriminant")
@@ -16511,6 +16887,14 @@ func readLAYOUTCOMMIT4res(b *[]byte, nfsstat4 uint32) (LAYOUTCOMMIT4res, bool) {
 	default:
 		return LAYOUTCOMMIT4res{b: (*b)[:0], disc: nfsstat4}, true
 	}
+}
+
+func (m LAYOUTCOMMIT4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m LAYOUTCOMMIT4res) Bytes() []byte {
+	return m.b
 }
 
 func (m LAYOUTCOMMIT4res) AsLAYOUTCOMMIT4resok() LAYOUTCOMMIT4resok {
@@ -16789,6 +17173,14 @@ func readLAYOUTGET4res(b *[]byte, nfsstat4 uint32) (LAYOUTGET4res, bool) {
 	}
 }
 
+func (m LAYOUTGET4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m LAYOUTGET4res) Bytes() []byte {
+	return m.b
+}
+
 func (m LAYOUTGET4res) AsLAYOUTGET4resok() LAYOUTGET4resok {
 	if m.disc != NFS4_OK {
 		panic("wrong union discriminant")
@@ -16922,6 +17314,14 @@ func readLayoutreturnStateid(b *[]byte, xdrBool uint32) (LayoutreturnStateid, bo
 	}
 }
 
+func (m LayoutreturnStateid) Disc() uint32 {
+	return m.disc
+}
+
+func (m LayoutreturnStateid) Bytes() []byte {
+	return m.b
+}
+
 func (m LayoutreturnStateid) AsStateid4() Stateid4 {
 	if m.disc != TRUE {
 		panic("wrong union discriminant")
@@ -17008,6 +17408,14 @@ func readLAYOUTRETURN4res(b *[]byte, nfsstat4 uint32) (LAYOUTRETURN4res, bool) {
 	default:
 		return LAYOUTRETURN4res{b: (*b)[:0], disc: nfsstat4}, true
 	}
+}
+
+func (m LAYOUTRETURN4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m LAYOUTRETURN4res) Bytes() []byte {
+	return m.b
 }
 
 func (m LAYOUTRETURN4res) AsLayoutreturnStateidEntry() LayoutreturnStateidEntry {
@@ -17175,6 +17583,14 @@ func readSEQUENCE4res(b *[]byte, nfsstat4 uint32) (SEQUENCE4res, bool) {
 	default:
 		return SEQUENCE4res{b: (*b)[:0], disc: nfsstat4}, true
 	}
+}
+
+func (m SEQUENCE4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m SEQUENCE4res) Bytes() []byte {
+	return m.b
 }
 
 func (m SEQUENCE4res) AsSEQUENCE4resok() SEQUENCE4resok {
@@ -17439,6 +17855,14 @@ func readSETSSV4res(b *[]byte, nfsstat4 uint32) (SETSSV4res, bool) {
 	}
 }
 
+func (m SETSSV4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m SETSSV4res) Bytes() []byte {
+	return m.b
+}
+
 func (m SETSSV4res) AsSETSSV4resok() SETSSV4resok {
 	if m.disc != NFS4_OK {
 		panic("wrong union discriminant")
@@ -17602,6 +18026,14 @@ func readTESTSTATEID4res(b *[]byte, nfsstat4 uint32) (TESTSTATEID4res, bool) {
 	}
 }
 
+func (m TESTSTATEID4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m TESTSTATEID4res) Bytes() []byte {
+	return m.b
+}
+
 func (m TESTSTATEID4res) AsTESTSTATEID4resok() TESTSTATEID4resok {
 	if m.disc != NFS4_OK {
 		panic("wrong union discriminant")
@@ -17669,6 +18101,14 @@ func readDelegClaim4(b *[]byte, openClaimType4 uint32) (DelegClaim4, bool) {
 	default:
 		return DelegClaim4{}, false
 	}
+}
+
+func (m DelegClaim4) Disc() uint32 {
+	return m.disc
+}
+
+func (m DelegClaim4) Bytes() []byte {
+	return m.b
 }
 
 func (m DelegClaim4) AsDelegClaim4CLAIMPREVIOUS() DelegClaim4CLAIMPREVIOUS {
@@ -17874,6 +18314,14 @@ func readWANTDELEGATION4res(b *[]byte, nfsstat4 uint32) (WANTDELEGATION4res, boo
 	default:
 		return WANTDELEGATION4res{b: (*b)[:0], disc: nfsstat4}, true
 	}
+}
+
+func (m WANTDELEGATION4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m WANTDELEGATION4res) Bytes() []byte {
+	return m.b
 }
 
 func (m WANTDELEGATION4res) AsOpenDelegation4Entry() OpenDelegation4Entry {
@@ -18316,6 +18764,14 @@ func readCOPY4res(b *[]byte, nfsstat4 uint32) (COPY4res, bool) {
 	}
 }
 
+func (m COPY4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m COPY4res) Bytes() []byte {
+	return m.b
+}
+
 func (m COPY4res) AsCOPY4resok() COPY4resok {
 	if m.disc != NFS4_OK {
 		panic("wrong union discriminant")
@@ -18554,6 +19010,14 @@ func readCOPYNOTIFY4res(b *[]byte, nfsstat4 uint32) (COPYNOTIFY4res, bool) {
 	}
 }
 
+func (m COPYNOTIFY4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m COPYNOTIFY4res) Bytes() []byte {
+	return m.b
+}
+
 func (m COPYNOTIFY4res) AsCOPYNOTIFY4resok() COPYNOTIFY4resok {
 	if m.disc != NFS4_OK {
 		panic("wrong union discriminant")
@@ -18753,6 +19217,14 @@ func readOFFLOADSTATUS4res(b *[]byte, nfsstat4 uint32) (OFFLOADSTATUS4res, bool)
 	default:
 		return OFFLOADSTATUS4res{b: (*b)[:0], disc: nfsstat4}, true
 	}
+}
+
+func (m OFFLOADSTATUS4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m OFFLOADSTATUS4res) Bytes() []byte {
+	return m.b
 }
 
 func (m OFFLOADSTATUS4res) AsOFFLOADSTATUS4resok() OFFLOADSTATUS4resok {
@@ -19086,6 +19558,14 @@ func readIOADVISE4res(b *[]byte, nfsstat4 uint32) (IOADVISE4res, bool) {
 	default:
 		return IOADVISE4res{b: (*b)[:0], disc: nfsstat4}, true
 	}
+}
+
+func (m IOADVISE4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m IOADVISE4res) Bytes() []byte {
+	return m.b
 }
 
 func (m IOADVISE4res) AsIOADVISE4resok() IOADVISE4resok {
@@ -19525,6 +20005,14 @@ func readReadPlusContent(b *[]byte, dataContent4 uint32) (ReadPlusContent, bool)
 	}
 }
 
+func (m ReadPlusContent) Disc() uint32 {
+	return m.disc
+}
+
+func (m ReadPlusContent) Bytes() []byte {
+	return m.b
+}
+
 func (m ReadPlusContent) AsData4() Data4 {
 	if m.disc != NFS4_CONTENT_DATA {
 		panic("wrong union discriminant")
@@ -19760,6 +20248,14 @@ func readREADPLUS4res(b *[]byte, nfsstat4 uint32) (READPLUS4res, bool) {
 	}
 }
 
+func (m READPLUS4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m READPLUS4res) Bytes() []byte {
+	return m.b
+}
+
 func (m READPLUS4res) AsReadPlusRes4() ReadPlusRes4 {
 	if m.disc != NFS4_OK {
 		panic("wrong union discriminant")
@@ -19882,6 +20378,14 @@ func readSEEK4res(b *[]byte, nfsstat4 uint32) (SEEK4res, bool) {
 	}
 }
 
+func (m SEEK4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m SEEK4res) Bytes() []byte {
+	return m.b
+}
+
 func (m SEEK4res) AsSeekRes4() SeekRes4 {
 	if m.disc != NFS4_OK {
 		panic("wrong union discriminant")
@@ -19982,6 +20486,14 @@ func readWRITESAME4res(b *[]byte, nfsstat4 uint32) (WRITESAME4res, bool) {
 	default:
 		return WRITESAME4res{b: (*b)[:0], disc: nfsstat4}, true
 	}
+}
+
+func (m WRITESAME4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m WRITESAME4res) Bytes() []byte {
+	return m.b
 }
 
 func (m WRITESAME4res) AsWriteResponse4() WriteResponse4 {
@@ -21192,6 +21704,14 @@ func readFfMirrorsHint(b *[]byte, xdrBool uint32) (FfMirrorsHint, bool) {
 	}
 }
 
+func (m FfMirrorsHint) Disc() uint32 {
+	return m.disc
+}
+
+func (m FfMirrorsHint) Bytes() []byte {
+	return m.b
+}
+
 func (m FfMirrorsHint) AsFfMirrorsHintTRUE() FfMirrorsHintTRUE {
 	if m.disc != TRUE {
 		panic("wrong union discriminant")
@@ -21333,6 +21853,14 @@ func readGETXATTR4res(b *[]byte, nfsstat4 uint32) (GETXATTR4res, bool) {
 	}
 }
 
+func (m GETXATTR4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m GETXATTR4res) Bytes() []byte {
+	return m.b
+}
+
 func (m GETXATTR4res) AsXattrvalue4() Xattrvalue4 {
 	if m.disc != NFS4_OK {
 		panic("wrong union discriminant")
@@ -21451,6 +21979,14 @@ func readSETXATTR4res(b *[]byte, nfsstat4 uint32) (SETXATTR4res, bool) {
 	default:
 		return SETXATTR4res{b: (*b)[:0], disc: nfsstat4}, true
 	}
+}
+
+func (m SETXATTR4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m SETXATTR4res) Bytes() []byte {
+	return m.b
 }
 
 func (m SETXATTR4res) AsChangeInfo4() ChangeInfo4 {
@@ -21661,6 +22197,14 @@ func readLISTXATTRS4res(b *[]byte, nfsstat4 uint32) (LISTXATTRS4res, bool) {
 	}
 }
 
+func (m LISTXATTRS4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m LISTXATTRS4res) Bytes() []byte {
+	return m.b
+}
+
 func (m LISTXATTRS4res) AsLISTXATTRS4resok() LISTXATTRS4resok {
 	if m.disc != NFS4_OK {
 		panic("wrong union discriminant")
@@ -21741,6 +22285,14 @@ func readREMOVEXATTR4res(b *[]byte, nfsstat4 uint32) (REMOVEXATTR4res, bool) {
 	default:
 		return REMOVEXATTR4res{b: (*b)[:0], disc: nfsstat4}, true
 	}
+}
+
+func (m REMOVEXATTR4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m REMOVEXATTR4res) Bytes() []byte {
+	return m.b
 }
 
 func (m REMOVEXATTR4res) AsChangeInfo4() ChangeInfo4 {
@@ -22212,6 +22764,14 @@ func readNfsArgop4(b *[]byte, nfsOpnum4 uint32) (NfsArgop4, bool) {
 	default:
 		return NfsArgop4{b: (*b)[:0], disc: nfsOpnum4}, true
 	}
+}
+
+func (m NfsArgop4) Disc() uint32 {
+	return m.disc
+}
+
+func (m NfsArgop4) Bytes() []byte {
+	return m.b
 }
 
 func (m NfsArgop4) AsACCESS4args() ACCESS4args {
@@ -26024,6 +26584,14 @@ func readNfsResop4(b *[]byte, nfsOpnum4 uint32) (NfsResop4, bool) {
 	default:
 		return NfsResop4{}, false
 	}
+}
+
+func (m NfsResop4) Disc() uint32 {
+	return m.disc
+}
+
+func (m NfsResop4) Bytes() []byte {
+	return m.b
 }
 
 func (m NfsResop4) AsACCESS4resEntry() ACCESS4resEntry {
@@ -30670,6 +31238,14 @@ func readCBGETATTR4res(b *[]byte, nfsstat4 uint32) (CBGETATTR4res, bool) {
 	}
 }
 
+func (m CBGETATTR4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m CBGETATTR4res) Bytes() []byte {
+	return m.b
+}
+
 func (m CBGETATTR4res) AsCBGETATTR4resok() CBGETATTR4resok {
 	if m.disc != NFS4_OK {
 		panic("wrong union discriminant")
@@ -30942,6 +31518,14 @@ func readLayoutrecall4(b *[]byte, layoutrecallType4 uint32) (Layoutrecall4, bool
 	default:
 		return Layoutrecall4{}, false
 	}
+}
+
+func (m Layoutrecall4) Disc() uint32 {
+	return m.disc
+}
+
+func (m Layoutrecall4) Bytes() []byte {
+	return m.b
 }
 
 func (m Layoutrecall4) AsLayoutrecallFile4() LayoutrecallFile4 {
@@ -32882,6 +33466,14 @@ func readCBSEQUENCE4res(b *[]byte, nfsstat4 uint32) (CBSEQUENCE4res, bool) {
 	}
 }
 
+func (m CBSEQUENCE4res) Disc() uint32 {
+	return m.disc
+}
+
+func (m CBSEQUENCE4res) Bytes() []byte {
+	return m.b
+}
+
 func (m CBSEQUENCE4res) AsCBSEQUENCE4resok() CBSEQUENCE4resok {
 	if m.disc != NFS4_OK {
 		panic("wrong union discriminant")
@@ -33334,6 +33926,14 @@ func readOffloadInfo4(b *[]byte, nfsstat4 uint32) (OffloadInfo4, bool) {
 	}
 }
 
+func (m OffloadInfo4) Disc() uint32 {
+	return m.disc
+}
+
+func (m OffloadInfo4) Bytes() []byte {
+	return m.b
+}
+
 func (m OffloadInfo4) AsWriteResponse4() WriteResponse4 {
 	if m.disc != NFS4_OK {
 		panic("wrong union discriminant")
@@ -33587,6 +34187,14 @@ func readNfsCbArgop4(b *[]byte, nfsCbOpnum4 uint32) (NfsCbArgop4, bool) {
 	default:
 		return NfsCbArgop4{}, false
 	}
+}
+
+func (m NfsCbArgop4) Disc() uint32 {
+	return m.disc
+}
+
+func (m NfsCbArgop4) Bytes() []byte {
+	return m.b
 }
 
 func (m NfsCbArgop4) AsCBGETATTR4args() CBGETATTR4args {
@@ -33906,6 +34514,14 @@ func readNfsCbResop4(b *[]byte, nfsCbOpnum4 uint32) (NfsCbResop4, bool) {
 	default:
 		return NfsCbResop4{}, false
 	}
+}
+
+func (m NfsCbResop4) Disc() uint32 {
+	return m.disc
+}
+
+func (m NfsCbResop4) Bytes() []byte {
+	return m.b
 }
 
 func (m NfsCbResop4) AsCBGETATTR4resEntry() CBGETATTR4resEntry {
