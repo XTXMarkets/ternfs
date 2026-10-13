@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/openstate"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sidecar"
@@ -118,7 +119,7 @@ func (s *Server) expireInactiveOpen(state openstate.State, failed func() bool) u
 func (s *Server) retireInactiveRecovered(clientID uint64, id nfs4.StateID, retire func()) uint32 {
 	active, err := s.clients.HasOpen(clientID, id)
 	if err != nil {
-		return clientStoreErrToNFS(err)
+		return clientstore.ErrToNFS(err)
 	}
 	if active {
 		return nfs4.NFS4_OK
@@ -129,7 +130,7 @@ func (s *Server) retireInactiveRecovered(clientID uint64, id nfs4.StateID, retir
 	}
 	defer end()
 	if active, err = s.clients.HasOpen(clientID, id); err != nil {
-		return clientStoreErrToNFS(err)
+		return clientstore.ErrToNFS(err)
 	}
 	if active {
 		return nfs4.NFS4_OK
@@ -160,7 +161,7 @@ func (s *Server) recoveredDataID(clientID uint64, id nfs4.StateID, fileID vfs.In
 func (s *Server) requireActiveOpen(state openstate.State) uint32 {
 	active, err := s.clients.HasOpen(state.Owner.ClientID, state.ID)
 	if err != nil {
-		return clientStoreErrToNFS(err)
+		return clientstore.ErrToNFS(err)
 	}
 	if !active {
 		return nfs4.NFS4ERR_EXPIRED
@@ -765,7 +766,7 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 				return fail(nfs4.NFS4ERR_STALE)
 			}
 			if recoveryErr != nil {
-				return fail(clientStoreErrToNFS(recoveryErr))
+				return fail(clientstore.ErrToNFS(recoveryErr))
 			}
 			if recovering && !s.sameRecoveryCandidate(recoverID, recoverMeta,
 				recoveredStagingID, recoveredStagingMeta, hasRecoveredStaging) {
@@ -1035,7 +1036,7 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 		if staged {
 			cleanupStagedOpen()
 		}
-		return fail(clientStoreErrToNFS(err))
+		return fail(clientstore.ErrToNFS(err))
 	}
 	if reusedStaging && recoveredStagingMeta.NFSStateID != markID {
 		if err := s.stagingStore.Rebind(
@@ -1114,9 +1115,9 @@ func (s *Server) constructStaging(
 	baseInfo vfs.NodeInfo,
 	exclusiveVerifier *[8]byte,
 ) (vfs.InodeID, nfs4.StateID, uint32) {
-	recoveryKey, err := s.clients.stagingRecoveryKey(clientID)
+	recoveryKey, err := s.clients.StagingRecoveryKey(clientID)
 	if err != nil {
-		return 0, nfs4.StateID{}, clientStoreErrToNFS(err)
+		return 0, nfs4.StateID{}, clientstore.ErrToNFS(err)
 	}
 	id, cookie, err := s.fs.ConstructFile(dirID)
 	if err != nil {

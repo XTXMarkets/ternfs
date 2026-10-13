@@ -6,19 +6,14 @@ package main
 
 import (
 	"net"
-	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
-
-// leaseTemp reports a refresher lease temp: the publication of this
-// process's lease uses ConstructFile and LinkFile like a file publication,
-// so fixtures that fault or count file publications skip these.
-func leaseTemp(name string) bool { return strings.HasPrefix(name, tempPrefix) }
 
 // clientStoreDir reports whether dir is inside the client store (.nfs), where
 // the refresher constructs its temps.
@@ -62,20 +57,20 @@ func awaitShimLease(conn net.Conn, wireID uint64) {
 		return
 	}
 	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
-		if srv.clients.leaseProven(vfs.InodeID(c.incarnation)) {
+		if srv.clients.LeaseProven(vfs.InodeID(c.incarnation)) {
 			return
 		}
 	}
 }
 
 // setLeaseForTest changes an incarnation's refresher record in place.
-func setLeaseForTest(srv *Server, clientID uint64, mutate func(r *leaseRefresher)) {
+func setLeaseForTest(srv *Server, clientID uint64, mutate func(r *clientstore.LeaseRefresher)) {
 	cs := srv.clients
-	cs.refreshMu.Lock()
-	r, _ := cs.recordLocked(vfs.InodeID(clientID), true)
-	cs.refreshMu.Unlock()
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	cs.RefreshMu.Lock()
+	r, _ := cs.RecordLocked(vfs.InodeID(clientID), true)
+	cs.RefreshMu.Unlock()
+	r.Mu.Lock()
+	defer r.Mu.Unlock()
 	mutate(r)
 }
 
@@ -97,20 +92,20 @@ func endQuietForTest(srv *Server) {
 func leasePassForTest(t *testing.T, srv *Server, clientID uint64) {
 	t.Helper()
 	cs := srv.clients
-	cs.refreshMu.Lock()
-	r, ok := cs.recordLocked(vfs.InodeID(clientID), true)
-	cs.refreshMu.Unlock()
+	cs.RefreshMu.Lock()
+	r, ok := cs.RecordLocked(vfs.InodeID(clientID), true)
+	cs.RefreshMu.Unlock()
 	if !ok {
 		t.Fatal("no refresher record credit")
 	}
-	r.safePass(false)
+	r.SafePass(false)
 }
 
 // awaitLeaseProven waits until this process has published the incarnation's
 // lease, as a client's first SEQUENCE after CREATE_SESSION waits out DELAY.
 func awaitLeaseProven(t *testing.T, srv *Server, clientID uint64) {
 	t.Helper()
-	for deadline := time.Now().Add(testutil.ChannelTimeout); !srv.clients.leaseProven(vfs.InodeID(clientID)); {
+	for deadline := time.Now().Add(testutil.ChannelTimeout); !srv.clients.LeaseProven(vfs.InodeID(clientID)); {
 		if time.Now().After(deadline) {
 			t.Fatalf("lease of %d never published", clientID)
 		}
@@ -124,11 +119,11 @@ func awaitLeaseProven(t *testing.T, srv *Server, clientID uint64) {
 func publishLeaseForTest(t *testing.T, srv *Server, clientID uint64) {
 	t.Helper()
 	// With no session, the record is kept by a reservation for the test.
-	release, ok := srv.clients.reserveLeaseRecord(clientID)
+	release, ok := srv.clients.ReserveLeaseRecord(clientID)
 	if !ok {
 		t.Fatal("no refresher record credit")
 	}
 	t.Cleanup(release)
-	srv.clients.startLeaseBootstrap(clientID)
+	srv.clients.StartLeaseBootstrap(clientID)
 	awaitLeaseProven(t, srv, clientID)
 }

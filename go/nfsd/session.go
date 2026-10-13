@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/keyedlock"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
@@ -91,7 +92,7 @@ type sessionClient struct {
 	incarnation uint64
 	owner       string
 	verifier    [8]byte
-	principal   rpcPrincipal
+	principal   clientstore.RPCPrincipal
 	createdAt   time.Time
 	// confirmed is set by the first successful CREATE_SESSION. An adopted
 	// record names an incarnation that was already durably confirmed.
@@ -164,12 +165,12 @@ func newSessionStore(epoch uint32) *sessionStore {
 		sessions:    make(map[SessionID]*session),
 		clients:     make(map[uint64]*sessionClient),
 		owners:      make(map[string]*wireOwner),
-		wireLimit:   maxSessionRecords,
+		wireLimit:   clientstore.MaxSessionRecords,
 		groups:      make(map[uint64]*clientGroup),
 		groupLimit:  maxClientGroups,
 		cacheLimit:  maxSessionCacheBytes,
 		workLimit:   maxReplyWorkBytes,
-		recordLimit: maxSessionRecords,
+		recordLimit: clientstore.MaxSessionRecords,
 		now:         time.Now,
 	}
 }
@@ -463,7 +464,7 @@ func (s *Server) startSequence(args nfs4.SEQUENCE4args, admission ...sequenceAdm
 	committed = true
 	token.commit()
 	hold.activate()
-	s.clients.noteLeaseNeed(sess.clientID)
+	s.clients.NoteLeaseNeed(sess.clientID)
 	if replay {
 		slot.buffer.retain()
 		s.sessions.releaseSessionUse(sess)
@@ -554,17 +555,17 @@ func (s *Server) renewalCheck(hold *requestHold, sess *session) uint32 {
 	if status := hold.gateStatus(); status != nfs4.NFS4_OK {
 		return status
 	}
-	view, ok := s.clients.leaseView(sess.clientID)
+	view, ok := s.clients.LeaseView(sess.clientID)
 	if !ok {
 		// No refresher record credit.
 		return nfs4.NFS4ERR_DELAY
 	}
-	if view.state != leaseRecordLive {
+	if view.State != clientstore.LeaseRecordLive {
 		return nfs4.NFS4ERR_BADSESSION
 	}
-	now := s.clients.now().UnixNano()
-	if view.proven <= now || view.verifiedAt < now-int64(nfsLeaseRenewAfter) {
-		s.clients.requestLeaseVerify(sess.clientID)
+	now := s.clients.Now().UnixNano()
+	if view.Proven <= now || view.VerifiedAt < now-int64(clientstore.LeaseRenewAfter) {
+		s.clients.RequestLeaseVerify(sess.clientID)
 		return nfs4.NFS4ERR_DELAY
 	}
 	return nfs4.NFS4_OK
@@ -593,7 +594,7 @@ func writeSequenceError(w *nfs4.COMPOUND4resWriter, status uint32) {
 // Every nfsd serving one TernFS shares durable client state, but sessions
 // and stateids are process-local, so each process is its own server owner.
 func (s *Server) serverOwnerMajor() []byte {
-	return []byte("ternfs-nfsd/" + s.clients.nfsdID)
+	return []byte("ternfs-nfsd/" + s.clients.NfsdID)
 }
 
 var serverScope = []byte("ternfs")
@@ -643,7 +644,7 @@ func (s *Server) opExchangeID(
 		if c == nil {
 			return fail(nfs4.NFS4ERR_NOENT)
 		}
-		incarnation, status := s.clients.confirmedRecord(owner.CoOwnerid(), verifier, st.principal)
+		incarnation, status := s.clients.ConfirmedRecord(owner.CoOwnerid(), verifier, st.principal)
 		if status != nfs4.NFS4_OK {
 			return fail(status)
 		}
@@ -699,13 +700,13 @@ func (s *Server) opExchangeID(
 	ss.mu.Unlock()
 
 	incarnation, confirm, adopted, err := s.clients.ExchangeID(
-		verifier, owner.CoOwnerid(), clientOwner{principal: st.principal})
+		verifier, owner.CoOwnerid(), clientstore.ClientOwner{Principal: st.principal})
 	if err != nil {
-		var inUse clientInUseError
+		var inUse clientstore.ClientInUseError
 		if errors.As(err, &inUse) {
 			return fail(nfs4.NFS4ERR_CLID_INUSE)
 		}
-		return fail(clientStoreErrToNFS(err))
+		return fail(clientstore.ErrToNFS(err))
 	}
 
 	ss.mu.Lock()
@@ -756,7 +757,7 @@ func (s *Server) opExchangeID(
 		owner:       ownerKey,
 		verifier:    verifier,
 		principal:   st.principal,
-		createdAt:   s.clients.now(),
+		createdAt:   s.clients.Now(),
 		adopted:     adopted,
 		confirm:     confirm,
 		hasConfirm:  !adopted,
@@ -783,7 +784,7 @@ func (s *Server) wireCapacityLocked(incarnation uint64) uint32 {
 		return len(ss.clients) < ss.wireLimit && ss.groupAvailableLocked(incarnation)
 	}
 	if !admits() {
-		ss.reclaimUnconfirmedLocked(s.clients.now())
+		ss.reclaimUnconfirmedLocked(s.clients.Now())
 	}
 	if !admits() {
 		return nfs4.NFS4ERR_DELAY
@@ -1034,7 +1035,7 @@ func (s *Server) opCreateSession(
 	}
 	cr.id, cr.record = id, true
 	// The refresher record that bootstrap will use (canonical r3 §9.4).
-	if cr.leaseRecord, admitted = s.clients.reserveLeaseRecord(incarnation); !admitted {
+	if cr.leaseRecord, admitted = s.clients.ReserveLeaseRecord(incarnation); !admitted {
 		return fail(nfs4.NFS4ERR_DELAY)
 	}
 	// The new session's association on this connection, and its back
@@ -1115,7 +1116,7 @@ func (s *Server) opCreateSession(
 	// EXCHANGE_ID would return as confirmed.
 	confirmedNow, err := s.clients.IsConfirmed(incarnation)
 	if err != nil {
-		return fail(clientStoreErrToNFS(err))
+		return fail(clientstore.ErrToNFS(err))
 	}
 	if !confirmedNow {
 		ss.mu.Lock()

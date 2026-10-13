@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/msgs"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
@@ -460,7 +461,7 @@ func TestReviewN08R1SessionAndWorkCapacityBeforeEffects(t *testing.T) {
 		t.Fatalf("failed work admission charged %+v", a)
 	}
 	ss.workLimit = maxReplyWorkBytes
-	ss.recordLimit = maxSessionRecords
+	ss.recordLimit = clientstore.MaxSessionRecords
 	ss.mu.Lock()
 	ss.next = uint64(^uint32(0))
 	ss.mu.Unlock()
@@ -518,17 +519,17 @@ func TestReviewN08R2OpenFollowingGetfhBoundary(t *testing.T) {
 }
 func TestReviewN08R4DefiniteOpenErrorStaysReplayable(t *testing.T) {
 	srv := admissionWritableServer(t, vfs.NewLocalTernVFS(t.TempDir()))
-	client, confirm, err := srv.clients.SetClientID([8]byte{}, []byte("definite-open"), clientOwner{})
+	client, confirm, err := srv.clients.SetClientID([8]byte{}, []byte("definite-open"), clientstore.ClientOwner{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = srv.clients.ConfirmClientID(client, confirm, rpcPrincipal{}); err != nil {
+	if _, err = srv.clients.ConfirmClientID(client, confirm, clientstore.RPCPrincipal{}); err != nil {
 		t.Fatal(err)
 	}
 	ts := connectionSession(t, srv)
 	ts.clientID = client
 	moveSessionForTest(srv.sessions, srv.sessions.lookup(ts.id), client, ts.id)
-	srv.clients.pinLeaseForTest(client)
+	srv.clients.PinLeaseForTest(client)
 	body := buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		op := w.AppendArgarray_Open()
@@ -695,7 +696,7 @@ func TestReviewN08R1bClientRetirementHoldsRecords(t *testing.T) {
 	ss := srv.sessions
 	const client, count = 77, 64
 	ss.recordLimit = count
-	srv.clients.pinLeaseForTest(client)
+	srv.clients.PinLeaseForTest(client)
 	var batch []*session
 	ss.mu.Lock()
 	for i := 0; i < count; i++ {

@@ -55,23 +55,23 @@ func (s *Server) decideExpired(clientID uint64, expireState bool) (bool, error) 
 		ss.mu.Unlock()
 	}
 
-	obs, err := s.clients.observeLease(clientID)
+	obs, err := s.clients.ObserveLease(clientID)
 	switch {
 	case err != nil:
 		live()
 		return false, err
-	case obs.collected:
-		s.clients.localClients.Delete(vfs.InodeID(clientID))
-	case obs.unconfirmed:
+	case obs.Collected:
+		s.clients.LocalClients.Delete(vfs.InodeID(clientID))
+	case obs.Unconfirmed:
 		// Replaced: nothing to mark; its durable state is purged.
-		if err := s.clients.forgetUnconfirmed(clientID); err != nil {
+		if err := s.clients.ForgetUnconfirmed(clientID); err != nil {
 			live()
 			return false, err
 		}
-	case obs.marked:
+	case obs.Marked:
 		// Another process decided.
-		s.clients.noteFleetExpired(clientID)
-	case obs.live || !obs.found:
+		s.clients.NoteFleetExpired(clientID)
+	case obs.Live || !obs.Found:
 		// No slot yet means a first OPEN may be registering its lease.
 		live()
 		return false, nil
@@ -87,18 +87,18 @@ func (s *Server) decideExpired(clientID uint64, expireState bool) (bool, error) 
 		}
 		g.markerPhase = markerSubmitted
 		ss.mu.Unlock()
-		if err := s.clients.publishExpiredMarker(clientID); err != nil {
+		if err := s.clients.PublishExpiredMarker(clientID); err != nil {
 			// The marker is uncertain; the refresher reports fleetExpired
 			// if it exists. Expiry proceeds either way.
 			s.log.Warn("publish expired marker", "clientid", clientID, "err", err)
 		} else {
-			s.clients.noteFleetExpired(clientID)
+			s.clients.NoteFleetExpired(clientID)
 		}
 	}
 	ss.mu.Lock()
 	g.lease, g.markerPhase = gateExpired, markerNone
 	ss.mu.Unlock()
-	s.clients.localClients.Delete(vfs.InodeID(clientID))
+	s.clients.LocalClients.Delete(vfs.InodeID(clientID))
 	if expireState {
 		s.expireLocally(clientID)
 	}

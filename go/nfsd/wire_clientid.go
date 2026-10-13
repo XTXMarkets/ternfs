@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 )
 
 // Wire clientids are the eir_clientid values EXCHANGE_ID returns. They are
@@ -161,7 +163,7 @@ func (ss *sessionStore) retireWireOf(incarnation uint64) {
 // progress.
 func (ss *sessionStore) reclaimUnconfirmedLocked(now time.Time) {
 	for _, c := range ss.clients {
-		if !c.confirmed && !c.csBusy && !now.Before(c.createdAt.Add(nfsLeaseTime)) {
+		if !c.confirmed && !c.csBusy && !now.Before(c.createdAt.Add(clientstore.LeaseTime)) {
 			ss.retireWireLocked(c)
 		}
 	}

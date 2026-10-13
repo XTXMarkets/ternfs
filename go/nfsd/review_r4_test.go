@@ -10,17 +10,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 // leaseRecordForTest returns the incarnation's record, or nil.
-func leaseRecordForTest(srv *Server, inc uint64) *leaseRefresher {
+func leaseRecordForTest(srv *Server, inc uint64) *clientstore.LeaseRefresher {
 	cs := srv.clients
-	cs.refreshMu.Lock()
-	defer cs.refreshMu.Unlock()
-	return cs.refreshers[vfs.InodeID(inc)]
+	cs.RefreshMu.Lock()
+	defer cs.RefreshMu.Unlock()
+	return cs.Refreshers[vfs.InodeID(inc)]
 }
 
 func destroyClientBody(clientID uint64) []byte {
@@ -37,9 +38,9 @@ func destroyClientBody(clientID uint64) []byte {
 func TestIdleRecordReclaimedForNextClient(t *testing.T) {
 	srv, addr, cleanup := startTestServerWithServer(t, t.TempDir())
 	defer cleanup()
-	srv.clients.refreshMu.Lock()
-	srv.clients.refresherLimit = 1
-	srv.clients.refreshMu.Unlock()
+	srv.clients.RefreshMu.Lock()
+	srv.clients.RefresherLimit = 1
+	srv.clients.RefreshMu.Unlock()
 	xid := uint32(1)
 	for cycle := range 3 {
 		c := newCBTestClient(t, addr)
@@ -52,9 +53,9 @@ func TestIdleRecordReclaimedForNextClient(t *testing.T) {
 		inc := incarnationForTest(t, srv, clientID)
 		r := leaseRecordForTest(srv, inc)
 		waitFor(t, "the worker to wait idle", func() bool {
-			r.mu.Lock()
-			defer r.mu.Unlock()
-			return r.idleWaiting && r.proven > 0 && !r.inCall
+			r.Mu.Lock()
+			defer r.Mu.Unlock()
+			return r.IdleWaiting && r.Proven > 0 && !r.InCall
 		})
 		if res := c.compound(xid+2, admissionDestroy(id)); res.Status() != nfs4.NFS4_OK {
 			t.Fatalf("cycle %d: DESTROY_SESSION %s", cycle, nfs4.Nfsstat4Name(res.Status()))
@@ -97,14 +98,14 @@ func TestIdleReclaimWaitsForQuietAndReservation(t *testing.T) {
 	// Wait until its next maintenance (the refresh the quiet period needs)
 	// is scheduled ahead, so no pass is due during the checks.
 	waitFor(t, "the worker to schedule its refresh", func() bool {
-		r.mu.Lock()
-		defer r.mu.Unlock()
-		return !r.inCall && time.Until(r.maintainAt) > 5*time.Second
+		r.Mu.Lock()
+		defer r.Mu.Unlock()
+		return !r.InCall && time.Until(r.MaintainAt) > 5*time.Second
 	})
 	deadlines := func() [3]any {
-		r.mu.Lock()
-		defer r.mu.Unlock()
-		return [3]any{r.maintainAt, r.notBefore, r.backoff}
+		r.Mu.Lock()
+		defer r.Mu.Unlock()
+		return [3]any{r.MaintainAt, r.NotBefore, r.Backoff}
 	}
 	before := deadlines()
 	held := func(what string) {
@@ -119,7 +120,7 @@ func TestIdleReclaimWaitsForQuietAndReservation(t *testing.T) {
 		}
 	}
 	held("its logical lease is quiet")
-	release, ok := srv.clients.reserveLeaseRecord(inc)
+	release, ok := srv.clients.ReserveLeaseRecord(inc)
 	if !ok {
 		t.Fatal("no record for the reservation")
 	}
@@ -141,34 +142,34 @@ func TestIdleReclaimWaitsForQuietAndReservation(t *testing.T) {
 func TestIdleReclaimKeepsObligations(t *testing.T) {
 	counts := &passCountVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
 	fs := &fenceClockVFS{passCountVFS: counts}
-	cs, clientID := newConfirmedStoreClient(t, fs, []byte("client"), [8]byte{1}, clientOwner{})
-	counts.leaseName = cs.leaseName
-	cs.now = time.Now
+	cs, clientID := clientstore.NewConfirmedStoreClient(t, fs, []byte("client"), [8]byte{1}, clientstore.ClientOwner{})
+	counts.leaseName = cs.LeaseName
+	cs.Now = time.Now
 	var need atomic.Bool
 	need.Store(true)
-	cs.leaseNeed = func(uint64) bool { return need.Load() }
-	cs.leaseSessions = func(uint64) bool { return false }
-	t.Cleanup(cs.stopLeaseWorkers)
-	release, ok := cs.reserveLeaseRecord(clientID)
+	cs.LeaseNeed = func(uint64) bool { return need.Load() }
+	cs.LeaseSessions = func(uint64) bool { return false }
+	t.Cleanup(cs.StopLeaseWorkers)
+	release, ok := cs.ReserveLeaseRecord(clientID)
 	if !ok {
 		t.Fatal("no record credit")
 	}
-	cs.refreshMu.Lock()
-	r := cs.refreshers[vfs.InodeID(clientID)]
-	cs.refreshMu.Unlock()
+	cs.RefreshMu.Lock()
+	r := cs.Refreshers[vfs.InodeID(clientID)]
+	cs.RefreshMu.Unlock()
 	// The publication's rename fails, and so does the first fence.
 	counts.mu.Lock()
 	counts.failRename, counts.failFence = true, true
 	counts.mu.Unlock()
-	cs.noteLeaseNeed(clientID)
+	cs.NoteLeaseNeed(clientID)
 	waitFor(t, "the failed publication", func() bool {
-		r.mu.Lock()
-		defer r.mu.Unlock()
-		return r.attempt != nil && !r.notBefore.IsZero() && !r.inCall
+		r.Mu.Lock()
+		defer r.Mu.Unlock()
+		return r.Attempt != nil && !r.NotBefore.IsZero() && !r.InCall
 	})
-	r.mu.Lock()
-	deadline, backoff := r.notBefore, r.backoff
-	r.mu.Unlock()
+	r.Mu.Lock()
+	deadline, backoff := r.NotBefore, r.Backoff
+	r.Mu.Unlock()
 	// Nothing references the record but its attempt.
 	need.Store(false)
 	release()
@@ -177,20 +178,20 @@ func TestIdleReclaimKeepsObligations(t *testing.T) {
 	counts.mu.Unlock()
 	_, fences0, writes0, _ := counts.counts()
 	for time.Until(deadline) > 500*time.Millisecond {
-		cs.sweepLeaseRecords()
+		cs.SweepLeaseRecords()
 		time.Sleep(50 * time.Millisecond)
 	}
 	_, fences, writes, _ := counts.counts()
-	attempt, _, _, _ := recordImage(r)
-	r.mu.Lock()
-	moved := !r.notBefore.Equal(deadline) || r.backoff != backoff
-	r.mu.Unlock()
+	attempt, _, _, _ := clientstore.RecordImage(r)
+	r.Mu.Lock()
+	moved := !r.NotBefore.Equal(deadline) || r.Backoff != backoff
+	r.Mu.Unlock()
 	if fences != fences0 || writes != writes0 {
 		t.Fatalf("sweeps inside the backoff drove %d fences and %d writes", fences-fences0, writes-writes0)
 	}
-	cs.refreshMu.Lock()
-	kept := cs.refreshers[vfs.InodeID(clientID)] == r
-	cs.refreshMu.Unlock()
+	cs.RefreshMu.Lock()
+	kept := cs.Refreshers[vfs.InodeID(clientID)] == r
+	cs.RefreshMu.Unlock()
 	if !attempt || !kept {
 		t.Fatalf("the sweeps released the obligation: attempt %v, record kept %v", attempt, kept)
 	}
@@ -199,9 +200,9 @@ func TestIdleReclaimKeepsObligations(t *testing.T) {
 	}
 	// After the deadline the worker fences the attempt, then frees the record.
 	for limit := time.Now().Add(deadline.Sub(time.Now()) + testutil.ChannelTimeout); ; time.Sleep(10 * time.Millisecond) {
-		cs.refreshMu.Lock()
-		freed := cs.refreshers[vfs.InodeID(clientID)] == nil
-		cs.refreshMu.Unlock()
+		cs.RefreshMu.Lock()
+		freed := cs.Refreshers[vfs.InodeID(clientID)] == nil
+		cs.RefreshMu.Unlock()
 		if freed {
 			break
 		}
@@ -212,7 +213,7 @@ func TestIdleReclaimKeepsObligations(t *testing.T) {
 	if at := fs.firstFence(); at.IsZero() || at.Before(deadline) {
 		t.Fatalf("the attempt was fenced at %v, before the deadline %v", at, deadline)
 	}
-	if attempt, _, _, _ := recordImage(r); attempt {
+	if attempt, _, _, _ := clientstore.RecordImage(r); attempt {
 		t.Fatal("freed with its attempt unsettled")
 	}
 }

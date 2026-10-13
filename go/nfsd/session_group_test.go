@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
@@ -249,7 +250,7 @@ type confirmedLookupGateVFS struct {
 }
 
 func (fs *confirmedLookupGateVFS) Lookup(dir vfs.InodeID, name string) (vfs.InodeID, error) {
-	if name == confirmedName && fs.armed.CompareAndSwap(true, false) {
+	if name == clientstore.ConfirmedName && fs.armed.CompareAndSwap(true, false) {
 		close(fs.entered)
 		<-fs.release
 	}

@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
@@ -31,7 +32,7 @@ func admissionWritableServer(t *testing.T, fs vfs.TernVFS) *Server {
 		t.Fatal(err)
 	}
 	t.Cleanup(srv.waitForClientGC)
-	t.Cleanup(srv.clients.stopLeaseWorkers)
+	t.Cleanup(srv.clients.StopLeaseWorkers)
 	useTestWireEpoch(srv) // Tests also run compounds directly.
 	return srv
 }
@@ -195,17 +196,17 @@ func TestResponseAdmissionHandleBeforeEffect(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				clientID, confirm, err := srv.clients.SetClientID([8]byte{}, []byte("handles"), clientOwner{})
+				clientID, confirm, err := srv.clients.SetClientID([8]byte{}, []byte("handles"), clientstore.ClientOwner{})
 				if err != nil {
 					t.Fatal(err)
 				}
-				if _, err = srv.clients.ConfirmClientID(clientID, confirm, rpcPrincipal{}); err != nil {
+				if _, err = srv.clients.ConfirmClientID(clientID, confirm, clientstore.RPCPrincipal{}); err != nil {
 					t.Fatal(err)
 				}
 				ts := connectionSession(t, srv)
 				sess := srv.sessions.lookup(ts.id)
 				moveSessionForTest(srv.sessions, sess, clientID, sess.id)
-				srv.clients.pinLeaseForTest(clientID)
+				srv.clients.PinLeaseForTest(clientID)
 				bound := uint32(140)
 				if opnum == nfs4.OP_OPEN {
 					bound = 164
@@ -515,7 +516,7 @@ type admissionLinkFaultVFS struct {
 }
 
 func (fs *admissionLinkFaultVFS) LinkFile(id vfs.InodeID, cookie vfs.Cookie, dir vfs.InodeID, name string, data io.Reader) error {
-	if !fs.fail || data == nil || leaseTemp(name) {
+	if !fs.fail || data == nil || clientstore.LeaseTemp(name) {
 		return fs.TernVFS.LinkFile(id, cookie, dir, name, data)
 	}
 	fs.submissions++

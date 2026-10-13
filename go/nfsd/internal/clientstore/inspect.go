@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-package main
+package clientstore
 
 import (
 	"encoding/binary"
@@ -36,7 +36,7 @@ import (
 // inspectOptions selects which part of the client store to report. Each
 // field is set by the command line flag of the same name, and the report
 // labels the values it prints with those same names.
-type inspectOptions struct {
+type InspectOptions struct {
 	// Identity is the raw EXCHANGE_ID identity (-identity). Its SHA-256 names
 	// the identity directory.
 	Identity []byte
@@ -56,7 +56,7 @@ type inspectOptions struct {
 // filtered reports whether the options narrow the report to one client. A
 // filtered report cannot say whether a staging sidecar belongs to no client
 // at all or merely to a client the filter excluded.
-func (o inspectOptions) filtered() bool {
+func (o InspectOptions) filtered() bool {
 	return len(o.Identity) != 0 || o.IdentityHash != "" ||
 		o.ClientID != 0 || o.StateID != nil
 }
@@ -71,7 +71,7 @@ type inspectFilter struct {
 	StateID      string `json:"stateid,omitempty"`
 }
 
-func (o inspectOptions) filter() *inspectFilter {
+func (o InspectOptions) filter() *inspectFilter {
 	if !o.filtered() {
 		return nil
 	}
@@ -286,10 +286,10 @@ const (
 	inspectStatusUnreachable = "UNREACHABLE"
 )
 
-// openClientStoreReader returns a ClientStore for inspection. Unlike
-// NewClientStore it does not create the store directories or a process
+// OpenReader returns a Store for inspection. Unlike
+// NewStore it does not create the store directories or a process
 // identity.
-func openClientStoreReader(fs vfs.TernVFS) (*ClientStore, error) {
+func OpenReader(fs vfs.TernVFS) (*Store, error) {
 	nfsID, err := fs.Lookup(fs.RootID(), vfs.NFSDirName)
 	if err != nil {
 		return nil, fmt.Errorf("client store: lookup /%s: %w", vfs.NFSDirName, err)
@@ -299,18 +299,18 @@ func openClientStoreReader(fs vfs.TernVFS) (*ClientStore, error) {
 		return nil, fmt.Errorf(
 			"client store: lookup /%s/clients: %w", vfs.NFSDirName, err)
 	}
-	return newClientStoreAt(fs, nfsID, clientsID)
+	return NewStoreAt(fs, nfsID, clientsID)
 }
 
 // Inspect builds a report of the client store without modifying it. Every
 // lease and collection decision is taken against a single instant so that the
 // report is internally consistent.
-func (cs *ClientStore) Inspect(opts inspectOptions) (*inspectReport, error) {
-	now := cs.now()
+func (cs *Store) Inspect(opts InspectOptions) (*inspectReport, error) {
+	now := cs.Now()
 	report := &inspectReport{
 		Now:          now,
-		LeaseTime:    nfsLeaseTime.String(),
-		ClientsDirID: inspectInode(cs.dirID),
+		LeaseTime:    LeaseTime.String(),
+		ClientsDirID: inspectInode(cs.DirID),
 		Filter:       opts.filter(),
 		Identities:   []inspectIdentity{},
 		StagingDir:   opts.StagingDir,
@@ -399,8 +399,8 @@ func inspectKeepStateID(
 // inspectSelectIdentities resolves the options to identity directories. A
 // clientid or a stateid with a staging sidecar resolve through the parent
 // directory; a stateid without one requires a scan of every identity.
-func (cs *ClientStore) inspectSelectIdentities(
-	opts inspectOptions,
+func (cs *Store) inspectSelectIdentities(
+	opts InspectOptions,
 	staging []*inspectStagingEntry,
 	report *inspectReport,
 ) ([]vfs.DirEntry, error) {
@@ -410,7 +410,7 @@ func (cs *ClientStore) inspectSelectIdentities(
 		if len(opts.Identity) != 0 {
 			name = clientIdentityKey(opts.Identity)
 		}
-		id, err := cs.fs.Lookup(cs.dirID, name)
+		id, err := cs.fs.Lookup(cs.DirID, name)
 		if errors.Is(err, os.ErrNotExist) {
 			report.Notes = append(report.Notes,
 				fmt.Sprintf("identity-hash %s is not registered", name))
@@ -434,7 +434,7 @@ func (cs *ClientStore) inspectSelectIdentities(
 			}
 		}
 	}
-	return cs.entries(cs.dirID)
+	return cs.entries(cs.DirID)
 }
 
 // inspectIdentityForClientID resolves a clientid to its identity directory.
@@ -442,7 +442,7 @@ func (cs *ClientStore) inspectSelectIdentities(
 // is reported as a note rather than a problem. The most likely mistake is
 // pasting the identity directory inode, which the report prints next to the
 // clientid, so that case gets its own message.
-func (cs *ClientStore) inspectIdentityForClientID(
+func (cs *Store) inspectIdentityForClientID(
 	clientID vfs.InodeID,
 	report *inspectReport,
 ) ([]vfs.DirEntry, error) {
@@ -458,11 +458,11 @@ func (cs *ClientStore) inspectIdentityForClientID(
 	if err != nil {
 		return nil, err
 	}
-	if identityID == cs.dirID {
+	if identityID == cs.DirID {
 		return note("%s is an identity directory, not a clientid; "+
 			"select it with -identity-hash", inodeHex(clientID))
 	}
-	name, err := cs.inspectChildName(cs.dirID, identityID)
+	name, err := cs.inspectChildName(cs.DirID, identityID)
 	if err != nil {
 		return nil, err
 	}
@@ -473,7 +473,7 @@ func (cs *ClientStore) inspectIdentityForClientID(
 	return []vfs.DirEntry{{Name: name, ID: identityID}}, nil
 }
 
-func (cs *ClientStore) inspectChildName(
+func (cs *Store) inspectChildName(
 	dirID vfs.InodeID,
 	childID vfs.InodeID,
 ) (string, error) {
@@ -489,7 +489,7 @@ func (cs *ClientStore) inspectChildName(
 	return "", nil
 }
 
-func (cs *ClientStore) inspectIdentity(
+func (cs *Store) inspectIdentity(
 	dir vfs.DirEntry,
 	staging []*inspectStagingEntry,
 	now time.Time,
@@ -498,7 +498,7 @@ func (cs *ClientStore) inspectIdentity(
 		IdentityHash: dir.Name,
 		DirectoryID:  inspectInode(dir.ID),
 	}
-	if !isDirectoryInodeID(dir.ID) {
+	if !IsDirectoryInodeID(dir.ID) {
 		identity.Problems = append(identity.Problems,
 			"identity entry is not a directory")
 		return identity, nil
@@ -517,7 +517,7 @@ func (cs *ClientStore) inspectIdentity(
 	pointer := func(name string) (*inspectPointer, error) {
 		return cs.inspectPointer(dir.ID, name, false)
 	}
-	if identity.Confirmed, err = pointer(confirmedName); err != nil {
+	if identity.Confirmed, err = pointer(ConfirmedName); err != nil {
 		return identity, err
 	}
 	if identity.Pending, err = pointer(pendingName); err != nil {
@@ -533,14 +533,14 @@ func (cs *ClientStore) inspectIdentity(
 	var incarnations []inspectIncarnation
 	for _, entry := range entries {
 		switch {
-		case entry.Name == confirmedName || entry.Name == pendingName:
-		case strings.HasPrefix(entry.Name, tempPrefix):
+		case entry.Name == ConfirmedName || entry.Name == pendingName:
+		case strings.HasPrefix(entry.Name, TempPrefix):
 			temp, err := cs.inspectTemp(entry, now)
 			if err != nil {
 				return identity, err
 			}
 			identity.Temps = append(identity.Temps, temp)
-		case isIncarnationName(entry.Name) && isDirectoryInodeID(entry.ID):
+		case isIncarnationName(entry.Name) && IsDirectoryInodeID(entry.ID):
 			inc, err := cs.inspectIncarnation(entry, staging, now)
 			if err != nil {
 				return identity, err
@@ -668,7 +668,7 @@ func (r *inspectReport) summarize() {
 	r.Summary = summary
 }
 
-func (cs *ClientStore) inspectPointer(
+func (cs *Store) inspectPointer(
 	dirID vfs.InodeID,
 	name string,
 	parentRelative bool,
@@ -723,7 +723,7 @@ func (cs *ClientStore) inspectPointer(
 	return p, nil
 }
 
-func (cs *ClientStore) inspectTemp(
+func (cs *Store) inspectTemp(
 	entry vfs.DirEntry,
 	now time.Time,
 ) (inspectTemp, error) {
@@ -736,11 +736,11 @@ func (cs *ClientStore) inspectTemp(
 		return temp, err
 	}
 	temp.Mtime = info.Mtime
-	temp.Collectable = !info.Mtime.After(now.Add(-nfsLeaseTime))
+	temp.Collectable = !info.Mtime.After(now.Add(-LeaseTime))
 	return temp, nil
 }
 
-func (cs *ClientStore) inspectIncarnation(
+func (cs *Store) inspectIncarnation(
 	dir vfs.DirEntry,
 	staging []*inspectStagingEntry,
 	now time.Time,
@@ -763,25 +763,25 @@ func (cs *ClientStore) inspectIncarnation(
 	leaseLive := false
 	for _, entry := range entries {
 		switch {
-		case entry.Name == clientRecordName || entry.Name == updateName:
+		case entry.Name == ClientRecordName || entry.Name == updateName:
 			record, err := cs.inspectRecord(entry)
 			if err != nil {
 				inc.Problems = append(inc.Problems, err.Error())
 				continue
 			}
-			if entry.Name == clientRecordName {
+			if entry.Name == ClientRecordName {
 				inc.Record = record
 			} else {
 				inc.Update = record
 			}
-		case entry.Name == rebootName:
-			inc.Reboot, err = cs.inspectPointer(dir.ID, rebootName, true)
+		case entry.Name == RebootName:
+			inc.Reboot, err = cs.inspectPointer(dir.ID, RebootName, true)
 			if err != nil {
 				return inc, err
 			}
-		case entry.Name == expiredName:
+		case entry.Name == ExpiredName:
 			inc.ExpiredMarker = true
-		case entry.Name == gcCandidateName:
+		case entry.Name == GCCandidateName:
 			var candidate durableGCCandidate
 			if err := cs.readJSONFile(
 				entry.ID, entry.Name, &candidate,
@@ -792,7 +792,7 @@ func (cs *ClientStore) inspectIncarnation(
 			after := time.Unix(0, candidate.CollectAfterUnixNano)
 			inc.GCAfter = &after
 		case isLeaseName(entry.Name):
-			slot, ok, err := cs.inspectSlot(entry, leasePrefix, now)
+			slot, ok, err := cs.inspectSlot(entry, LeasePrefix, now)
 			if err != nil {
 				inc.Problems = append(inc.Problems, err.Error())
 				continue
@@ -812,11 +812,11 @@ func (cs *ClientStore) inspectIncarnation(
 			if ok {
 				inc.Confirming = append(inc.Confirming, slot)
 			}
-		case isActiveOpenName(entry.Name):
+		case IsActiveOpenName(entry.Name):
 			inc.Opens = append(inc.Opens, inspectOpenMarker(
 				strings.TrimPrefix(entry.Name, activeOpenPrefix),
 				inspectInode(dir.ID), staging))
-		case strings.HasPrefix(entry.Name, tempPrefix):
+		case strings.HasPrefix(entry.Name, TempPrefix):
 			temp, err := cs.inspectTemp(entry, now)
 			if err != nil {
 				return inc, err
@@ -850,7 +850,7 @@ func (cs *ClientStore) inspectIncarnation(
 
 // inspectRecord decodes a client or update record. An unreadable record is a
 // defect in the store, so the error is returned for the caller to report.
-func (cs *ClientStore) inspectRecord(entry vfs.DirEntry) (*inspectRecord, error) {
+func (cs *Store) inspectRecord(entry vfs.DirEntry) (*inspectRecord, error) {
 	var record durableClientRecord
 	if err := cs.readJSONFile(entry.ID, entry.Name, &record); err != nil {
 		return nil, err
@@ -864,7 +864,7 @@ func (cs *ClientStore) inspectRecord(entry vfs.DirEntry) (*inspectRecord, error)
 	return out, nil
 }
 
-func (cs *ClientStore) inspectSlot(
+func (cs *Store) inspectSlot(
 	entry vfs.DirEntry,
 	prefix string,
 	now time.Time,
@@ -883,7 +883,7 @@ func (cs *ClientStore) inspectSlot(
 		Expires: expires,
 		Live:    lease.ExpiresUnixNano > now.UnixNano(),
 		Collectable: lease.ExpiresUnixNano <=
-			now.UnixNano()-nfsLeaseTime.Nanoseconds(),
+			now.UnixNano()-LeaseTime.Nanoseconds(),
 	}, true, nil
 }
 
@@ -1145,9 +1145,9 @@ func inspectOpaque(value []byte) (text string, hexText string) {
 
 // formatPrincipal decodes the normalized principal stored by
 // rpcRequest.principal. AUTH_SYS bodies hold uid, gid and auxiliary gids.
-func formatPrincipal(p rpcPrincipal) string {
-	body := []byte(p.body)
-	switch p.flavor {
+func formatPrincipal(p RPCPrincipal) string {
+	body := []byte(p.Body)
+	switch p.Flavor {
 	case nfs4.AUTH_NONE:
 		return "AUTH_NONE"
 	case nfs4.AUTH_SYS:
@@ -1165,7 +1165,7 @@ func formatPrincipal(p rpcPrincipal) string {
 		return fmt.Sprintf("AUTH_SYS uid=%d gid=%d groups=[%s]",
 			uid, gid, strings.Join(gids, ","))
 	}
-	return fmt.Sprintf("flavor %d %s", p.flavor, hex.EncodeToString(body))
+	return fmt.Sprintf("flavor %d %s", p.Flavor, hex.EncodeToString(body))
 }
 
 // WriteText renders the report for a terminal.

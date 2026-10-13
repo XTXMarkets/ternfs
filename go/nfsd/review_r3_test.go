@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
@@ -133,7 +134,7 @@ func TestTerminalAdmissionBeforeCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fs.leaseName = srv.clients.leaseName
+	fs.leaseName = srv.clients.LeaseName
 	addr, stop := serveTestServer(t, srv)
 	defer stop()
 	defer testutil.CloseSignal(fs.release)
@@ -142,22 +143,22 @@ func TestTerminalAdmissionBeforeCleanup(t *testing.T) {
 	body := backCreateSessionBody(clientID, seq, 0)
 	id, _ := createdSession(t, c.compound(2, body))
 	inc := incarnationForTest(t, srv, clientID)
-	srv.clients.stopLeaseWorkers()
+	srv.clients.StopLeaseWorkers()
 	if !fs.present(vfs.InodeID(inc)) {
 		t.Fatal("no published lease to clean up")
 	}
-	setLeaseForTest(srv, inc, func(r *leaseRefresher) { r.state = leaseRecordStale })
+	setLeaseForTest(srv, inc, func(r *clientstore.LeaseRefresher) { r.State = clientstore.LeaseRecordStale })
 	fs.mu.Lock()
 	fs.armed = true
 	fs.mu.Unlock()
 	cs := srv.clients
-	cs.refreshMu.Lock()
-	r, _ := cs.recordLocked(vfs.InodeID(inc), true)
-	cs.refreshMu.Unlock()
+	cs.RefreshMu.Lock()
+	r, _ := cs.RecordLocked(vfs.InodeID(inc), true)
+	cs.RefreshMu.Unlock()
 	passed := make(chan struct{})
 	go func() {
 		defer close(passed)
-		r.safePass(false)
+		r.SafePass(false)
 	}()
 	testutil.AwaitSignal(t, fs.entered, "the terminal cleanup's RemoveEdge")
 
@@ -237,7 +238,7 @@ func pendingBackProbe(t *testing.T, prune bool) {
 	}
 
 	// S1 reserves its back association, then waits in IsConfirmed.
-	srv.clients.stopLeaseWorkers() // no refresher reads the confirmed pointer
+	srv.clients.StopLeaseWorkers() // no refresher reads the confirmed pointer
 	fs.mu.Lock()
 	fs.armed = true
 	fs.mu.Unlock()
@@ -294,7 +295,7 @@ type fenceClockVFS struct {
 }
 
 func (fs *fenceClockVFS) RemoveEdge(dir vfs.InodeID, name string, edge vfs.Edge) error {
-	if leaseTemp(name) {
+	if clientstore.LeaseTemp(name) {
 		fs.mu.Lock()
 		if fs.at.IsZero() {
 			fs.at = time.Now()
@@ -318,12 +319,12 @@ func (fs *fenceClockVFS) firstFence() time.Time {
 func TestVerifyDoesNotRunMaintenance(t *testing.T) {
 	counts := &passCountVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
 	fs := &fenceClockVFS{passCountVFS: counts}
-	cs, clientID, r, _ := refresherForTest(t, fs)
-	counts.leaseName = cs.leaseName
-	cs.now = time.Now
-	cs.leaseNeed = func(uint64) bool { return true }
-	cs.leaseSessions = func(uint64) bool { return true }
-	t.Cleanup(cs.stopLeaseWorkers)
+	cs, clientID, r, _ := clientstore.RefresherForTest(t, fs)
+	counts.leaseName = cs.LeaseName
+	cs.Now = time.Now
+	cs.LeaseNeed = func(uint64) bool { return true }
+	cs.LeaseSessions = func(uint64) bool { return true }
+	t.Cleanup(cs.StopLeaseWorkers)
 	dir := vfs.InodeID(clientID)
 
 	// A LINK whose outcome was unknown: its orphan is recorded, unresolved,
@@ -332,48 +333,48 @@ func TestVerifyDoesNotRunMaintenance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	unlock := cs.leaseLocks.Lock(r.incarnation)
-	o, ok := r.takeOrphan()
+	unlock := cs.LeaseLocks.Lock(r.Incarnation)
+	o, ok := r.TakeOrphan()
 	if !ok {
 		unlock()
 		t.Fatal("no orphan credit")
 	}
-	r.mu.Lock()
-	o.inode, o.phase = inode, orphanUnresolved
-	r.mu.Unlock()
+	r.Mu.Lock()
+	o.Inode, o.Phase = inode, clientstore.OrphanUnresolved
+	r.Mu.Unlock()
 	unlock()
 
 	// A maintenance pass publishes successfully: no failure deadline, and
 	// the orphan is an obligation to recheck at the next maintenance.
-	cs.startLeaseBootstrap(clientID)
-	waitFor(t, "the publication", func() bool { _, _, proven, _ := recordImage(r); return proven > 0 })
+	cs.StartLeaseBootstrap(clientID)
+	waitFor(t, "the publication", func() bool { _, _, proven, _ := clientstore.RecordImage(r); return proven > 0 })
 	waitFor(t, "the pass to schedule", func() bool {
-		r.mu.Lock()
-		defer r.mu.Unlock()
-		return !r.maintainAt.IsZero() && r.notBefore.IsZero() && !r.inCall
+		r.Mu.Lock()
+		defer r.Mu.Unlock()
+		return !r.MaintainAt.IsZero() && r.NotBefore.IsZero() && !r.InCall
 	})
 	// Bring the scheduled recheck in, so the test need not wait
 	// leaseBackoffMax; verifies must neither move nor run it.
 	deadline := time.Now().Add(2500 * time.Millisecond)
-	r.mu.Lock()
-	r.maintainAt = deadline
-	r.mu.Unlock()
+	r.Mu.Lock()
+	r.MaintainAt = deadline
+	r.Mu.Unlock()
 
 	// The LINK applies late: the orphan's temp is now visible.
-	data, _ := json.Marshal(durableLease{ExpiresUnixNano: time.Now().Add(leaseWriteTerm).UnixNano()})
-	if err := counts.TernVFS.LinkFile(inode, cookie, dir, o.temp, bytes.NewReader(data)); err != nil {
+	data, _ := json.Marshal(clientstore.DurableLease{ExpiresUnixNano: time.Now().Add(clientstore.LeaseWriteTerm).UnixNano()})
+	if err := counts.TernVFS.LinkFile(inode, cookie, dir, o.Temp, bytes.NewReader(data)); err != nil {
 		t.Fatal(err)
 	}
 	counts.reset()
 	for time.Until(deadline) > 300*time.Millisecond {
-		cs.requestLeaseVerify(clientID)
+		cs.RequestLeaseVerify(clientID)
 		time.Sleep(20 * time.Millisecond)
 	}
 	reads, fences, writes, removes := counts.counts()
-	_, orphans, _, _ := recordImage(r)
-	r.mu.Lock()
-	moved := !r.maintainAt.Equal(deadline)
-	r.mu.Unlock()
+	_, orphans, _, _ := clientstore.RecordImage(r)
+	r.Mu.Lock()
+	moved := !r.MaintainAt.Equal(deadline)
+	r.Mu.Unlock()
 	if fences != 0 || writes != 0 || removes != 0 || orphans != 1 {
 		t.Fatalf("verifies before the maintenance deadline: fences %d writes %d removes %d, orphans %d",
 			fences, writes, removes, orphans)
@@ -385,7 +386,7 @@ func TestVerifyDoesNotRunMaintenance(t *testing.T) {
 		t.Fatal("a verify pass moved the maintenance deadline")
 	}
 	// Due: the orphan is consumed, with no further request.
-	waitFor(t, "maintenance at its deadline", func() bool { _, n, _, _ := recordImage(r); return n == 0 })
+	waitFor(t, "maintenance at its deadline", func() bool { _, n, _, _ := clientstore.RecordImage(r); return n == 0 })
 	if at := fs.firstFence(); at.Before(deadline) {
 		t.Fatalf("the orphan was removed %s before the maintenance deadline", deadline.Sub(at))
 	}
@@ -397,18 +398,18 @@ func TestVerifyDoesNotRunMaintenance(t *testing.T) {
 func TestVerifySchedulesTerminalWork(t *testing.T) {
 	fs := &passCountVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
 	cs, clientID, r := refresherWorkerForTest(t, fs)
-	cs.startLeaseBootstrap(clientID)
-	waitFor(t, "the publication", func() bool { _, _, proven, _ := recordImage(r); return proven > 0 })
-	if err := cs.publishExpiredMarker(clientID); err != nil {
+	cs.StartLeaseBootstrap(clientID)
+	waitFor(t, "the publication", func() bool { _, _, proven, _ := clientstore.RecordImage(r); return proven > 0 })
+	if err := cs.PublishExpiredMarker(clientID); err != nil {
 		t.Fatal(err)
 	}
-	cs.requestLeaseVerify(clientID)
+	cs.RequestLeaseVerify(clientID)
 	waitFor(t, "the terminal steps", func() bool {
-		r.mu.Lock()
-		defer r.mu.Unlock()
-		return r.finished && r.state == leaseRecordFleetExpired
+		r.Mu.Lock()
+		defer r.Mu.Unlock()
+		return r.Finished && r.State == clientstore.LeaseRecordFleetExpired
 	})
-	if _, err := fs.TernVFS.Lookup(vfs.InodeID(clientID), cs.leaseName); err == nil {
+	if _, err := fs.TernVFS.Lookup(vfs.InodeID(clientID), cs.LeaseName); err == nil {
 		t.Fatal("the terminal steps left our lease")
 	}
 }
@@ -418,17 +419,17 @@ func TestVerifySchedulesTerminalWork(t *testing.T) {
 func TestNotedExpiryRunsTerminalSteps(t *testing.T) {
 	fs := &passCountVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
 	cs, clientID, r := refresherWorkerForTest(t, fs)
-	cs.startLeaseBootstrap(clientID)
-	waitFor(t, "the publication", func() bool { _, _, proven, _ := recordImage(r); return proven > 0 })
+	cs.StartLeaseBootstrap(clientID)
+	waitFor(t, "the publication", func() bool { _, _, proven, _ := clientstore.RecordImage(r); return proven > 0 })
 	waitFor(t, "the next refresh to be scheduled", func() bool {
-		r.mu.Lock()
-		defer r.mu.Unlock()
-		return time.Until(r.maintainAt) > testutil.ChannelTimeout
+		r.Mu.Lock()
+		defer r.Mu.Unlock()
+		return time.Until(r.MaintainAt) > testutil.ChannelTimeout
 	})
-	cs.noteFleetExpired(clientID)
+	cs.NoteFleetExpired(clientID)
 	waitFor(t, "the terminal steps", func() bool {
-		r.mu.Lock()
-		defer r.mu.Unlock()
-		return r.finished
+		r.Mu.Lock()
+		defer r.Mu.Unlock()
+		return r.Finished
 	})
 }

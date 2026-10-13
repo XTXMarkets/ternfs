@@ -7,6 +7,7 @@ package main
 import (
 	"errors"
 
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -112,8 +113,8 @@ func (cr *creation) finish() {
 		// bounded time for it, so a client's first SEQUENCE normally finds
 		// it published. Clients such as libnfs treat a DELAY there as a
 		// mount failure.
-		s.clients.startLeaseBootstrap(created.clientID)
-		s.clients.awaitLeasePublished(created.clientID, bootstrapWait)
+		s.clients.StartLeaseBootstrap(created.clientID)
+		s.clients.AwaitLeasePublished(created.clientID, clientstore.BootstrapWait)
 	}
 	if cr.resume {
 		cr.resume = false
@@ -196,7 +197,7 @@ func (s *Server) resumeReplacementPurge(n uint64) {
 			s.notePurgePending(n)
 		}
 	}()
-	if _, err := s.clients.ResumeReplacementPurge(n); errors.Is(err, errPurgeProtected) {
+	if _, err := s.clients.ResumeReplacementPurge(n); errors.Is(err, clientstore.ErrPurgeProtected) {
 		s.log.Info("replacement purge deferred by a confirmation", "clientid", n)
 		return
 	} else if err != nil {
@@ -215,9 +216,9 @@ type confirmation struct {
 	owner    string
 	n, p     uint64 // p is zero without a predecessor
 	cr       *creation
-	attempt  *confirmAttempt // nil until CommitConfirmation returns
-	applying bool            // under confirmMu: one caller acts at a time
-	done     bool            // under confirmMu: the result has been applied
+	attempt  *clientstore.ConfirmAttempt // nil until CommitConfirmation returns
+	applying bool                        // under confirmMu: one caller acts at a time
+	done     bool                        // under confirmMu: the result has been applied
 
 	// Local application stages, owned by the applying caller. Each is
 	// recorded once its step has returned, so a panic resumes at the first
@@ -449,7 +450,7 @@ func (s *Server) unregisterConfirmation(e *confirmation) {
 //     record (idempotent), retire N's record (idempotent), then unregister.
 //     No durable state of N or P is removed.
 //   - Unresolved: nothing changes.
-func (s *Server) applyConfirmation(e *confirmation, result confirmResult) (status uint32, reply createSessionResult, complete bool) {
+func (s *Server) applyConfirmation(e *confirmation, result clientstore.ConfirmResult) (status uint32, reply createSessionResult, complete bool) {
 	ss, cr := s.sessions, e.cr
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -467,7 +468,7 @@ func (s *Server) applyConfirmation(e *confirmation, result confirmResult) (statu
 		f()
 	}
 	switch result {
-	case confirmCommitted:
+	case clientstore.ConfirmCommitted:
 		// P is replaced, then N's session is inserted (§5.3 step 8).
 		if e.p != 0 && !e.pClosedEnded {
 			ss.replaced(e.p)
@@ -498,7 +499,7 @@ func (s *Server) applyConfirmation(e *confirmation, result confirmResult) (statu
 		s.unregisterConfirmation(e)
 		s.scheduleClientGC(e.n)
 		return e.status, e.reply, true
-	case confirmRolledBack:
+	case clientstore.ConfirmRolledBack:
 		// D never applied and confirmed is still P through Sp.
 		if e.p != 0 && !e.pClosedEnded {
 			ss.reopen(e.p)
@@ -506,7 +507,7 @@ func (s *Server) applyConfirmation(e *confirmation, result confirmResult) (statu
 		}
 		s.unregisterConfirmation(e)
 		return nfs4.NFS4ERR_DELAY, createSessionResult{}, true
-	case confirmConservative:
+	case clientstore.ConfirmConservative:
 		// Neither committed nor proved unchanged: P is replaced in this
 		// process only, keeping its durable state, and N's record ends. A
 		// client whose P is still valid adopts it again.
@@ -555,7 +556,7 @@ func (s *Server) finishReplacement(e *confirmation) {
 // confirmPending confirms a pending record (§5.3) for a creation that holds
 // N's slot. It returns the status and, for OK, the reply. handedOver reports
 // that an unresolved confirmation now owns cr.
-func (s *Server) confirmPending(cr *creation, confirm [8]byte, principal, caller rpcPrincipal) (status uint32, reply createSessionResult, handedOver bool) {
+func (s *Server) confirmPending(cr *creation, confirm [8]byte, principal, caller clientstore.RPCPrincipal) (status uint32, reply createSessionResult, handedOver bool) {
 	ss, c := s.sessions, cr.c
 	retire := func() {
 		ss.mu.Lock()
@@ -564,7 +565,7 @@ func (s *Server) confirmPending(cr *creation, confirm [8]byte, principal, caller
 	}
 	target, err := s.clients.PrepareConfirmation(c.incarnation, confirm)
 	if err != nil {
-		status := clientStoreErrToNFS(err)
+		status := clientstore.ErrToNFS(err)
 		if status == nfs4.NFS4ERR_STALE_CLIENTID {
 			retire()
 		}
@@ -573,8 +574,8 @@ func (s *Server) confirmPending(cr *creation, confirm [8]byte, principal, caller
 	// Close P before the principal check and before any write. Commit
 	// revalidates P and Sp after this, under the identity lock.
 	var p uint64
-	if target.p != 0 && target.p != target.n {
-		p = uint64(target.p)
+	if target.P != 0 && target.P != target.N {
+		p = uint64(target.P)
 		if !ss.closeForReplacement(p) {
 			return nfs4.NFS4ERR_DELAY, reply, false
 		}
@@ -588,7 +589,7 @@ func (s *Server) confirmPending(cr *creation, confirm [8]byte, principal, caller
 		ss.mu.Unlock()
 		return nfs4.NFS4ERR_CLID_INUSE, reply, false
 	}
-	e := &confirmation{identity: target.identity, owner: c.owner, n: c.incarnation, p: p, cr: cr}
+	e := &confirmation{identity: target.Identity, owner: c.owner, n: c.incarnation, p: p, cr: cr}
 	if !s.registerConfirmation(e) {
 		if p != 0 {
 			ss.reopen(p)
@@ -613,11 +614,11 @@ func (s *Server) confirmPending(cr *creation, confirm [8]byte, principal, caller
 	// read-back (see CommitConfirmation). Only a proved unchanged P is
 	// reopened; a read error keeps P closed and N and P protected.
 	a := s.clients.CommitConfirmation(target, confirm)
-	if a.panicked != nil {
-		s.log.Error("panic confirming a client", "clientid", e.n, "panic", a.panicked)
+	if a.Panicked != nil {
+		s.log.Error("panic confirming a client", "clientid", e.n, "panic", a.Panicked)
 	}
-	if a.preWrite != nil {
-		s.log.Info("client confirmation made no write", "clientid", e.n, "reason", a.preWrite)
+	if a.PreWrite != nil {
+		s.log.Info("client confirmation made no write", "clientid", e.n, "reason", a.PreWrite)
 	}
 	s.confirmMu.Lock()
 	e.attempt = a

@@ -633,7 +633,7 @@ The physical TernFS files are immutable. Updating a pointer or JSON record
 creates a temporary symlink or file and renames it over the public name.
 Readers therefore see a complete old or new record.
 
-The implementation is in [`client_store.go`](client_store.go).
+The implementation is in [`internal/clientstore`](internal/clientstore/client_store.go).
 
 ## Client registration
 

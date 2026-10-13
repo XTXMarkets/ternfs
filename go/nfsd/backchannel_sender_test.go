@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
@@ -398,7 +399,7 @@ func TestCBRecallSlotOncePerPressure(t *testing.T) {
 	f.srv.sessions.mu.Lock()
 	quiet := f.srv.sessions.groups[inc].quietUntil
 	f.srv.sessions.mu.Unlock()
-	if quiet.Before(before.Add(nfsLeaseTime - time.Second)) {
+	if quiet.Before(before.Add(clientstore.LeaseTime - time.Second)) {
 		t.Fatalf("callback did not renew: quiet until %s", quiet)
 	}
 
@@ -607,7 +608,7 @@ func TestCallbackRenewalUnderGate(t *testing.T) {
 		if renewed != c.renews || g.renewedDuringCheck != c.arbiter {
 			t.Errorf("%s: renewed %t, arbitration %t", c.name, renewed, g.renewedDuringCheck)
 		}
-		if renewed && !g.quietUntil.Equal(now.Add(nfsLeaseTime)) {
+		if renewed && !g.quietUntil.Equal(now.Add(clientstore.LeaseTime)) {
 			t.Errorf("%s: quiet until %s", c.name, g.quietUntil)
 		}
 		ss.mu.Unlock()
@@ -641,7 +642,7 @@ func (fs *expiryGateVFS) Readdir(dir vfs.InodeID, start uint64) ([]vfs.DirEntry,
 
 func (fs *expiryGateVFS) CreateFile(dir vfs.InodeID, name string, data io.Reader) (vfs.InodeID, error) {
 	fs.mu.Lock()
-	fail := fs.failMarker && name == expiredName
+	fail := fs.failMarker && name == clientstore.ExpiredName
 	fs.mu.Unlock()
 	if fail {
 		return 0, errInjectedExpiry
@@ -663,19 +664,19 @@ func TestCallbackArbitratesExpiry(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(srv.clients.stopLeaseWorkers)
-			clientID, confirm, err := srv.clients.SetClientID([8]byte{1}, []byte("cb-expiry"), clientOwner{})
+			t.Cleanup(srv.clients.StopLeaseWorkers)
+			clientID, confirm, err := srv.clients.SetClientID([8]byte{1}, []byte("cb-expiry"), clientstore.ClientOwner{})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := srv.clients.ConfirmClientID(clientID, confirm, rpcPrincipal{}); err != nil {
+			if _, err := srv.clients.ConfirmClientID(clientID, confirm, clientstore.RPCPrincipal{}); err != nil {
 				t.Fatal(err)
 			}
 			publishLeaseForTest(t, srv, clientID)
-			srv.clients.stopLeaseWorkers()
+			srv.clients.StopLeaseWorkers()
 			// The durable lease is long dead.
-			later := time.Now().Add(10 * leaseWriteTerm)
-			srv.clients.setClock(func() time.Time { return later })
+			later := time.Now().Add(10 * clientstore.LeaseWriteTerm)
+			srv.clients.SetClock(func() time.Time { return later })
 			fs.mu.Lock()
 			fs.dir, fs.entered, fs.release = vfs.InodeID(clientID), make(chan struct{}), make(chan struct{})
 			fs.failMarker = c == "marker-error"
@@ -697,7 +698,7 @@ func TestCallbackArbitratesExpiry(t *testing.T) {
 			if want := c != "reply-during-check"; expired != want {
 				t.Fatalf("expired %t, want %t", expired, want)
 			}
-			_, markerErr := fs.TernVFS.Lookup(vfs.InodeID(clientID), expiredName)
+			_, markerErr := fs.TernVFS.Lookup(vfs.InodeID(clientID), clientstore.ExpiredName)
 			if marked := markerErr == nil; marked != (c == "no-reply") {
 				t.Fatalf("marker present %t", marked)
 			}

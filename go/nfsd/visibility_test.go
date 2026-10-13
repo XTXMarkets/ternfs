@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
@@ -192,8 +193,8 @@ func TestAbandonedCreationKeepsEmptyVersion(t *testing.T) {
 	baseFH := lookupFH(t, conn, &xid, "abandoned")
 	writeFileAt(t, conn, &xid, fh, state, 0, []byte("unpublished"))
 	srv.waitForClientGC()
-	now := time.Now().Add(2 * nfsLeaseTime)
-	srv.clients.setClock(func() time.Time { return now })
+	now := time.Now().Add(2 * clientstore.LeaseTime)
+	srv.clients.SetClock(func() time.Time { return now })
 	srv.runLeaseSweep()
 	if staging.TargetBusy(srv.stagingStore, srv.fs.RootID(), "abandoned") {
 		t.Fatal("expired creator still holds staging")
@@ -285,7 +286,7 @@ func (fs *visibilityFailureVFS) ConstructFile(dirID vfs.InodeID) (vfs.InodeID, v
 }
 
 func (fs *visibilityFailureVFS) CreateFile(dirID vfs.InodeID, name string, data io.Reader) (vfs.InodeID, error) {
-	if fs.failure == "marker" && isActiveOpenName(name) {
+	if fs.failure == "marker" && clientstore.IsActiveOpenName(name) {
 		return 0, errors.New("injected open marker failure")
 	}
 	return fs.LocalTernVFS.CreateFile(dirID, name, data)

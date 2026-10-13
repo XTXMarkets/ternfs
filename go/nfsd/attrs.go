@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"time"
 
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -246,7 +247,7 @@ func appendAttrs(buf []byte, mask attrMask, id vfs.InodeID, ni vfs.NodeInfo) []b
 		buf = binary.BigEndian.AppendUint32(buf, nfs4.TRUE)
 	}
 	if mask[0]&(1<<nfs4.FATTR4_LEASE_TIME) != 0 {
-		buf = binary.BigEndian.AppendUint32(buf, uint32(nfsLeaseTime/time.Second))
+		buf = binary.BigEndian.AppendUint32(buf, uint32(clientstore.LeaseTime/time.Second))
 	}
 	if mask[0]&(1<<nfs4.FATTR4_RDATTR_ERROR) != 0 {
 		buf = binary.BigEndian.AppendUint32(buf, nfs4.NFS4_OK)

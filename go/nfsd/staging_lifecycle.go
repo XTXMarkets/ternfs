@@ -9,6 +9,7 @@ import (
 	"os"
 	"slices"
 
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/openstate"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sidecar"
@@ -211,7 +212,7 @@ func (s *Server) recoveredStagingTarget(
 			release()
 		}
 	}()
-	key, err := s.clients.stagingRecoveryKey(clientID)
+	key, err := s.clients.StagingRecoveryKey(clientID)
 	if err != nil {
 		return 0, sidecar.Meta{}, false, release, err
 	}
@@ -306,8 +307,8 @@ func (s *Server) claimFHRecoveryCandidate(
 			}
 			if !keyRead {
 				var err error
-				if key, err = s.clients.stagingRecoveryKey(clientID); err != nil {
-					return 0, sidecar.Meta{}, clientStoreErrToNFS(err)
+				if key, err = s.clients.StagingRecoveryKey(clientID); err != nil {
+					return 0, sidecar.Meta{}, clientstore.ErrToNFS(err)
 				}
 				keyRead = true
 			}
@@ -359,7 +360,7 @@ func (s *Server) recoveryLeaseExpired(clientID uint64) (bool, uint32) {
 	defer end()
 	expired, err := s.decideExpired(clientID, false)
 	if err != nil {
-		return false, clientStoreErrToNFS(err)
+		return false, clientstore.ErrToNFS(err)
 	}
 	return expired, nfs4.NFS4_OK
 }

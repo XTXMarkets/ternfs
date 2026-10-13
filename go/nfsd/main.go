@@ -18,6 +18,7 @@ import (
 	"github.com/XTXMarkets/ternfs/go/core/bufpool"
 	"github.com/XTXMarkets/ternfs/go/core/log"
 	"github.com/XTXMarkets/ternfs/go/msgs"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
@@ -193,7 +194,7 @@ func runInspect(args []string) {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
 	}
-	store, err := openClientStoreReader(vfs)
+	store, err := clientstore.OpenReader(vfs)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
@@ -217,9 +218,9 @@ func runInspect(args []string) {
 }
 
 func parseInspectOptions(identity, identityHash, clientID, stateID string) (
-	inspectOptions, error,
+	clientstore.InspectOptions, error,
 ) {
-	var opts inspectOptions
+	var opts clientstore.InspectOptions
 	filters := 0
 	if identity != "" {
 		opts.Identity = []byte(identity)
@@ -236,7 +237,7 @@ func parseInspectOptions(identity, identityHash, clientID, stateID string) (
 	}
 	if clientID != "" {
 		id, err := strconv.ParseUint(clientID, 0, 64)
-		if err != nil || !isDirectoryInodeID(vfs.InodeID(id)) {
+		if err != nil || !clientstore.IsDirectoryInodeID(vfs.InodeID(id)) {
 			return opts, fmt.Errorf(
 				"invalid -clientid %q: want a 0x-prefixed hex or decimal "+
 					"directory inode", clientID)

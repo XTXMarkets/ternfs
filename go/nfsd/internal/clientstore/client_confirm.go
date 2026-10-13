@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-package main
+package clientstore
 
 import (
 	"bytes"
@@ -49,23 +49,23 @@ var (
 	// errPurgeProtected: a resumed purge was deferred because a
 	// confirmation in this process protects n or its selected target.
 	// Nothing was removed.
-	errPurgeProtected = errors.New("client store: replacement purge deferred by a confirmation")
+	ErrPurgeProtected = errors.New("client store: replacement purge deferred by a confirmation")
 )
 
 // confirmTarget is what PrepareConfirmation read, without writing.
 type confirmTarget struct {
-	identity, n vfs.InodeID
+	Identity, N vfs.InodeID
 	// p is the confirmed incarnation and sp its confirmed symlink's inode,
 	// both zero when the identity has no confirmed incarnation.
-	p, sp vfs.InodeID
+	P, sp vfs.InodeID
 }
 
-type writeID int
+type WriteID int
 
 const (
-	writeA writeID = iota
+	writeA WriteID = iota
 	writeB
-	writeD
+	WriteD
 )
 
 type fenceState uint8
@@ -111,26 +111,26 @@ func (w *edgeWrite) outcome() writeOutcome {
 	return writeUnsettled
 }
 
-type confirmResult uint8
+type ConfirmResult uint8
 
 const (
 	// confirmUnresolved: a fence or the read-back failed. All evidence is
 	// kept; nothing about N or P may be destroyed until a later settle.
-	confirmUnresolved confirmResult = iota
+	confirmUnresolved ConfirmResult = iota
 	// confirmCommitted: confirmed names N. Only now may P be replaced.
-	confirmCommitted
+	ConfirmCommitted
 	// confirmRolledBack: D never applied and confirmed is still P with
 	// symlink Sp. P is unchanged.
-	confirmRolledBack
+	ConfirmRolledBack
 	// confirmConservative: neither committed nor provably unchanged. P is
 	// treated as replaced locally and N's record is dropped; nothing durable
 	// is deleted.
-	confirmConservative
+	ConfirmConservative
 )
 
 // confirmAttempt holds the evidence of one CommitConfirmation until it is
 // settled. Its methods are called with no session-store lock held.
-type confirmAttempt struct {
+type ConfirmAttempt struct {
 	mu       sync.Mutex
 	target   confirmTarget
 	writes   [3]*edgeWrite
@@ -138,17 +138,17 @@ type confirmAttempt struct {
 		id, file vfs.InodeID
 		found    bool
 	}
-	result confirmResult
+	result ConfirmResult
 	// panicked is the last recovered panic, for the caller to log. The
 	// attempt is then unresolved with all its evidence.
-	panicked any
+	Panicked any
 	// preWrite is why no write was made, if none was: N no longer pending,
 	// a changed predecessor, or a read error. The attempt is still
 	// classified only by its read-back.
-	preWrite error
+	PreWrite error
 }
 
-func (a *confirmAttempt) Result() confirmResult {
+func (a *ConfirmAttempt) Result() ConfirmResult {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.result
@@ -158,7 +158,7 @@ func (a *confirmAttempt) Result() confirmResult {
 // with this confirmation verifier, and reads its predecessor and the
 // predecessor's confirmed symlink inode. It does not write. The caller then
 // closes the predecessor; CommitConfirmation revalidates both afterwards.
-func (cs *ClientStore) PrepareConfirmation(n uint64, confirm [8]byte) (confirmTarget, error) {
+func (cs *Store) PrepareConfirmation(n uint64, confirm [8]byte) (confirmTarget, error) {
 	incarnationID := vfs.InodeID(n)
 	identityID, valid, err := cs.identityForIncarnation(incarnationID)
 	if err != nil {
@@ -172,15 +172,15 @@ func (cs *ClientStore) PrepareConfirmation(n uint64, confirm [8]byte) (confirmTa
 	if err := cs.checkPendingLocked(identityID, incarnationID, confirm); err != nil {
 		return confirmTarget{}, err
 	}
-	target := confirmTarget{identity: identityID, n: incarnationID}
-	if target.p, target.sp, err = cs.readPredecessorLocked(identityID); err != nil {
+	target := confirmTarget{Identity: identityID, N: incarnationID}
+	if target.P, target.sp, err = cs.readPredecessorLocked(identityID); err != nil {
 		return confirmTarget{}, err
 	}
 	return target, nil
 }
 
-func (cs *ClientStore) readPredecessorLocked(identityID vfs.InodeID) (vfs.InodeID, vfs.InodeID, error) {
-	p, sp, found, err := cs.readIdentitySymlinkWithFile(identityID, confirmedName)
+func (cs *Store) readPredecessorLocked(identityID vfs.InodeID) (vfs.InodeID, vfs.InodeID, error) {
+	p, sp, found, err := cs.readIdentitySymlinkWithFile(identityID, ConfirmedName)
 	if err != nil || !found {
 		return 0, 0, err
 	}
@@ -188,15 +188,15 @@ func (cs *ClientStore) readPredecessorLocked(identityID vfs.InodeID) (vfs.InodeI
 }
 
 // checkPendingLocked requires n to be pending with the given verifier.
-func (cs *ClientStore) checkPendingLocked(identityID, n vfs.InodeID, confirm [8]byte) error {
-	record, found, err := cs.readRecord(n, clientRecordName)
+func (cs *Store) checkPendingLocked(identityID, n vfs.InodeID, confirm [8]byte) error {
+	record, found, err := cs.readRecord(n, ClientRecordName)
 	if err != nil {
 		return err
 	}
 	if !found || !bytes.Equal(record.Confirm, confirm[:]) {
 		return nfs4.Error(nfs4.NFS4ERR_STALE_CLIENTID)
 	}
-	pending, isPending, err := cs.readIdentitySymlink(identityID, pendingName)
+	pending, isPending, err := cs.ReadIdentitySymlink(identityID, pendingName)
 	if err != nil {
 		return err
 	}
@@ -223,47 +223,47 @@ func (cs *ClientStore) checkPendingLocked(identityID, n vfs.InodeID, confirm [8]
 //
 // It always returns an attempt, even after a panic: the attempt is then
 // unresolved and keeps every write record.
-func (cs *ClientStore) CommitConfirmation(t confirmTarget, confirm [8]byte) (a *confirmAttempt) {
-	unlock := cs.lockIdentity(t.identity)
+func (cs *Store) CommitConfirmation(t confirmTarget, confirm [8]byte) (a *ConfirmAttempt) {
+	unlock := cs.LockIdentity(t.Identity)
 	defer unlock()
-	a = &confirmAttempt{target: t}
+	a = &ConfirmAttempt{target: t}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			a.panicked, a.result = recovered, confirmUnresolved
+			a.Panicked, a.result = recovered, confirmUnresolved
 		}
 	}()
-	a.preWrite = cs.checkPendingLocked(t.identity, t.n, confirm)
-	if a.preWrite == nil {
-		p, sp, err := cs.readPredecessorLocked(t.identity)
+	a.PreWrite = cs.checkPendingLocked(t.Identity, t.N, confirm)
+	if a.PreWrite == nil {
+		p, sp, err := cs.readPredecessorLocked(t.Identity)
 		switch {
 		case err != nil:
-			a.preWrite = err
-		case p != t.p || sp != t.sp:
-			a.preWrite = errPredecessorChanged
+			a.PreWrite = err
+		case p != t.P || sp != t.sp:
+			a.PreWrite = errPredecessorChanged
 		}
 	}
 	var claim []byte
-	if a.preWrite == nil {
-		claim, a.preWrite = json.Marshal(durableLease{ExpiresUnixNano: cs.now().Add(clientGCGrace).UnixNano()})
+	if a.PreWrite == nil {
+		claim, a.PreWrite = json.Marshal(DurableLease{ExpiresUnixNano: cs.Now().Add(ClientGCGrace).UnixNano()})
 	}
-	if a.preWrite != nil {
+	if a.PreWrite != nil {
 		cs.settleLocked(a)
 		return a
 	}
 	ok := func(w *edgeWrite) bool { return w.submitted && w.err == nil }
-	a.writes[writeA] = &edgeWrite{dir: t.n, name: cs.confirmingName}
+	a.writes[writeA] = &edgeWrite{dir: t.N, name: cs.ConfirmingName}
 	cs.edgeReplace(a.writes[writeA], func(temp string) (vfs.InodeID, error) {
-		return cs.fs.CreateFile(t.n, temp, bytes.NewReader(claim))
+		return cs.fs.CreateFile(t.N, temp, bytes.NewReader(claim))
 	})
-	if ok(a.writes[writeA]) && t.p != 0 && t.p != t.n {
-		a.writes[writeB] = &edgeWrite{dir: t.n, name: rebootName}
-		cs.writePointer(a.writes[writeB], t.identity, t.p, "../")
+	if ok(a.writes[writeA]) && t.P != 0 && t.P != t.N {
+		a.writes[writeB] = &edgeWrite{dir: t.N, name: RebootName}
+		cs.writePointer(a.writes[writeB], t.Identity, t.P, "../")
 	}
-	if ok(a.writes[writeA]) && (a.writes[writeB] == nil || ok(a.writes[writeB])) && t.p != t.n {
-		a.writes[writeD] = &edgeWrite{dir: t.identity, name: confirmedName}
-		cs.writePointer(a.writes[writeD], t.identity, t.n, "")
+	if ok(a.writes[writeA]) && (a.writes[writeB] == nil || ok(a.writes[writeB])) && t.P != t.N {
+		a.writes[WriteD] = &edgeWrite{dir: t.Identity, name: ConfirmedName}
+		cs.writePointer(a.writes[WriteD], t.Identity, t.N, "")
 	}
 	cs.settleLocked(a)
 	return a
@@ -271,8 +271,8 @@ func (cs *ClientStore) CommitConfirmation(t confirmTarget, confirm [8]byte) (a *
 
 // writePointer writes w.dir/w.name as a symlink to prefix+(target's name
 // below the identity).
-func (cs *ClientStore) writePointer(w *edgeWrite, identityID, target vfs.InodeID, prefix string) {
-	targetName, found, err := cs.incarnationName(identityID, target)
+func (cs *Store) writePointer(w *edgeWrite, identityID, target vfs.InodeID, prefix string) {
+	targetName, found, err := cs.IncarnationName(identityID, target)
 	if err == nil && !found {
 		err = fmt.Errorf("client store: incarnation %d is not below identity %d", target, identityID)
 	}
@@ -287,13 +287,13 @@ func (cs *ClientStore) writePointer(w *edgeWrite, identityID, target vfs.InodeID
 
 // edgeReplace replaces w.dir/w.name with a new temp through its exact edge,
 // recording each step in w as it goes.
-func (cs *ClientStore) edgeReplace(w *edgeWrite, create func(string) (vfs.InodeID, error)) {
+func (cs *Store) edgeReplace(w *edgeWrite, create func(string) (vfs.InodeID, error)) {
 	suffix, err := randomHex(8)
 	if err != nil {
 		w.err = err
 		return
 	}
-	w.temp = tempPrefix + suffix
+	w.temp = TempPrefix + suffix
 	if w.inode, w.err = create(w.temp); w.err != nil {
 		return
 	}
@@ -311,17 +311,17 @@ func (cs *ClientStore) edgeReplace(w *edgeWrite, create func(string) (vfs.InodeI
 
 // SettleConfirmation retries the fences and the read-back of an unresolved
 // attempt. Settled attempts keep their result. It never writes again.
-func (cs *ClientStore) SettleConfirmation(a *confirmAttempt) (result confirmResult) {
+func (cs *Store) SettleConfirmation(a *ConfirmAttempt) (result ConfirmResult) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.result != confirmUnresolved {
 		return a.result
 	}
-	unlock := cs.lockIdentity(a.target.identity)
+	unlock := cs.LockIdentity(a.target.Identity)
 	defer unlock()
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			a.panicked, a.result = recovered, confirmUnresolved
+			a.Panicked, a.result = recovered, confirmUnresolved
 			result = confirmUnresolved
 		}
 	}()
@@ -332,7 +332,7 @@ func (cs *ClientStore) SettleConfirmation(a *confirmAttempt) (result confirmResu
 // settleLocked fences and observes. The caller holds a.mu and the identity
 // lock. A panic leaves the attempt unresolved: every unfinished fence is
 // recorded as failed before it is sent.
-func (cs *ClientStore) settleLocked(a *confirmAttempt) {
+func (cs *Store) settleLocked(a *ConfirmAttempt) {
 	a.result = confirmUnresolved
 	settled := true
 	for _, w := range a.writes {
@@ -354,30 +354,30 @@ func (cs *ClientStore) settleLocked(a *confirmAttempt) {
 	if !settled {
 		return
 	}
-	id, file, found, err := cs.readIdentitySymlinkWithFile(a.target.identity, confirmedName)
+	id, file, found, err := cs.readIdentitySymlinkWithFile(a.target.Identity, ConfirmedName)
 	if err != nil {
 		return
 	}
 	a.observed.id, a.observed.file, a.observed.found = id, file, found
-	a.result = classifyConfirmation(a.target, a.writes[writeD], id, file, found)
+	a.result = classifyConfirmation(a.target, a.writes[WriteD], id, file, found)
 }
 
 // classifyConfirmation is the observation table of canonical r3 §5.3.
 // Missing data never proves a rollback: only D never applied and confirmed
 // still P through Sp does.
-func classifyConfirmation(t confirmTarget, d *edgeWrite, id, file vfs.InodeID, found bool) confirmResult {
+func classifyConfirmation(t confirmTarget, d *edgeWrite, id, file vfs.InodeID, found bool) ConfirmResult {
 	outcome := d.outcome()
 	switch {
-	case found && id == t.n && d != nil && file == d.inode && (outcome == writeApplied || outcome == writeMaybe):
-		return confirmCommitted
-	case found && id == t.n && (d == nil || file != d.inode):
-		return confirmCommitted // committed elsewhere, or already
-	case outcome == writeNever && t.p != 0 && found && id == t.p && file == t.sp:
-		return confirmRolledBack
+	case found && id == t.N && d != nil && file == d.inode && (outcome == writeApplied || outcome == writeMaybe):
+		return ConfirmCommitted
+	case found && id == t.N && (d == nil || file != d.inode):
+		return ConfirmCommitted // committed elsewhere, or already
+	case outcome == writeNever && t.P != 0 && found && id == t.P && file == t.sp:
+		return ConfirmRolledBack
 	}
 	// P with another symlink, another incarnation M, or no confirmed
 	// symlink, including a first confirmation that never applied.
-	return confirmConservative
+	return ConfirmConservative
 }
 
 // isEdgeGone recognises a removal whose exact edge no longer exists: the
@@ -394,24 +394,24 @@ func isEdgeGone(err error) bool {
 // exact edge, still names P. It returns the purged predecessor, or zero. A
 // purge failure leaves the reboot symlink as evidence for
 // ResumeReplacementPurge.
-func (cs *ClientStore) FinishReplacement(a *confirmAttempt) (uint64, error) {
+func (cs *Store) FinishReplacement(a *ConfirmAttempt) (uint64, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.result != confirmCommitted {
+	if a.result != ConfirmCommitted {
 		panic("FinishReplacement of an unconfirmed attempt")
 	}
 	t := a.target
-	unlock := cs.lockIdentity(t.identity)
+	unlock := cs.LockIdentity(t.Identity)
 	defer unlock()
 	// Only this process writes its own confirming name, and only for an
 	// attempt the caller serializes, so removing it by name is exact.
-	defer func() { _ = cs.removeIfExists(t.n, cs.confirmingName) }()
+	defer func() { _ = cs.removeIfExists(t.N, cs.ConfirmingName) }()
 	b := a.writes[writeB]
-	if t.p == 0 || (b.outcome() != writeApplied && b.outcome() != writeMaybe) {
+	if t.P == 0 || (b.outcome() != writeApplied && b.outcome() != writeMaybe) {
 		return 0, nil
 	}
 	// The attempt's own confirmation protects N and P until this returns.
-	return cs.purgeReplacedLocked(t.n, t.p, nil)
+	return cs.purgeReplacedLocked(t.N, t.P, nil)
 }
 
 // ResumeReplacementPurge completes, from durable evidence alone, a purge that
@@ -440,19 +440,19 @@ func (cs *ClientStore) FinishReplacement(a *confirmAttempt) (uint64, error) {
 // errPurgeProtected, evidence unchanged.
 //
 // It returns the purged incarnation, or zero when there is nothing to do.
-func (cs *ClientStore) ResumeReplacementPurge(n uint64) (uint64, error) {
+func (cs *Store) ResumeReplacementPurge(n uint64) (uint64, error) {
 	incarnationID := vfs.InodeID(n)
 	identityID, valid, err := cs.identityForIncarnation(incarnationID)
 	if err != nil || !valid {
 		return 0, err
 	}
-	unlock := cs.lockIdentity(identityID)
+	unlock := cs.LockIdentity(identityID)
 	defer unlock()
-	confirmedID, confirmed, err := cs.readIdentitySymlink(identityID, confirmedName)
+	confirmedID, confirmed, err := cs.ReadIdentitySymlink(identityID, ConfirmedName)
 	if err != nil || !confirmed || confirmedID != incarnationID {
 		return 0, err
 	}
-	return cs.purgeReplacedLocked(incarnationID, 0, cs.beginPurge)
+	return cs.purgeReplacedLocked(incarnationID, 0, cs.BeginPurge)
 }
 
 // purgeReplacedLocked purges p if n/reboot names p, then removes that exact
@@ -462,8 +462,8 @@ func (cs *ClientStore) ResumeReplacementPurge(n uint64) (uint64, error) {
 // one purged, for ResumeReplacementPurge's durable evidence. A non-nil begin
 // admits the purge of the selected target, and its release runs when the
 // purge returns or unwinds.
-func (cs *ClientStore) purgeReplacedLocked(n, p vfs.InodeID, begin func(n, p vfs.InodeID) (func(), bool)) (uint64, error) {
-	edge, err := cs.fs.LookupEdge(n, rebootName)
+func (cs *Store) purgeReplacedLocked(n, p vfs.InodeID, begin func(n, p vfs.InodeID) (func(), bool)) (uint64, error) {
+	edge, err := cs.fs.LookupEdge(n, RebootName)
 	if errors.Is(err, os.ErrNotExist) {
 		return 0, nil
 	}
@@ -481,15 +481,15 @@ func (cs *ClientStore) purgeReplacedLocked(n, p vfs.InodeID, begin func(n, p vfs
 	if begin != nil {
 		end, ok := begin(n, p)
 		if !ok {
-			return 0, errPurgeProtected
+			return 0, ErrPurgeProtected
 		}
 		defer end()
 	}
 	if err := cs.purgeState(p); err != nil {
 		return 0, err
 	}
-	cs.localClients.Delete(p)
-	if err := cs.fs.RemoveEdge(n, rebootName, edge); err != nil && !isEdgeGone(err) {
+	cs.LocalClients.Delete(p)
+	if err := cs.fs.RemoveEdge(n, RebootName, edge); err != nil && !isEdgeGone(err) {
 		return uint64(p), err
 	}
 	return uint64(p), nil

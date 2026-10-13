@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -192,10 +193,10 @@ func (s *Server) opPutfh(args nfs4.PUTFH4args, st *compoundState, w *nfs4.COMPOU
 		r := w.AppendResarray_Putfh()
 		return finishStatusResponse(&r, nfs4.NFS4ERR_BADHANDLE)
 	}
-	internal, err := s.clients.isInternalFilehandle(id)
+	internal, err := s.clients.IsInternalFilehandle(id)
 	if err != nil {
 		r := w.AppendResarray_Putfh()
-		status := clientStoreErrToNFS(err)
+		status := clientstore.ErrToNFS(err)
 		return finishStatusResponse(&r, status)
 	}
 	if internal {

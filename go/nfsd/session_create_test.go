@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
@@ -102,7 +103,7 @@ func TestCreateSessionOutcomeTable(t *testing.T) {
 	}
 	unchanged("reservation failure")
 	srv.sessions.mu.Lock()
-	srv.sessions.recordLimit = maxSessionRecords
+	srv.sessions.recordLimit = clientstore.MaxSessionRecords
 	srv.sessions.mu.Unlock()
 
 	// Another principal on an unconfirmed record: CLID_INUSE, cached. Its
@@ -271,7 +272,7 @@ func TestCreateSessionInProgressRecordNotReclaimed(t *testing.T) {
 	var clock atomic.Int64
 	start := time.Now()
 	clock.Store(start.UnixNano())
-	srv.clients.setClock(func() time.Time { return time.Unix(0, clock.Load()) })
+	srv.clients.SetClock(func() time.Time { return time.Unix(0, clock.Load()) })
 	adopted := identityExchange(t, srv, 1, "client", [8]byte{1}, false)
 	srv.waitForClientGC()
 	fs.armed.Store(true)
@@ -281,7 +282,7 @@ func TestCreateSessionInProgressRecordNotReclaimed(t *testing.T) {
 		running <- status
 	}()
 	testutil.AwaitSignal(t, fs.entered, "adopted confirmation")
-	clock.Store(start.Add(nfsLeaseTime).UnixNano())
+	clock.Store(start.Add(clientstore.LeaseTime).UnixNano())
 	srv.sessions.wireLimit = 1
 	if got := identityExchange(t, srv, 1, "other", [8]byte{1}, false); got.status != nfs4.NFS4ERR_DELAY {
 		t.Fatalf("EXCHANGE_ID at the cap %s", nfs4.Nfsstat4Name(got.status))
@@ -300,8 +301,8 @@ type leaseRenameFailureVFS struct {
 }
 
 func (fs *leaseRenameFailureVFS) RenameEdge(src vfs.InodeID, name string, edge vfs.Edge, dst vfs.InodeID, newName string) error {
-	if fs.armed.Load() && strings.HasPrefix(newName, leasePrefix) {
-		return errInjectedLookup
+	if fs.armed.Load() && strings.HasPrefix(newName, clientstore.LeasePrefix) {
+		return clientstore.ErrInjectedLookup
 	}
 	return fs.TernVFS.RenameEdge(src, name, edge, dst, newName)
 }
@@ -344,7 +345,7 @@ func TestCreateSessionBootstrap(t *testing.T) {
 		// Another process expired the client; the store check still passes,
 		// so the creation commits and bootstrap then finds the marker.
 		srv.waitForClientGC()
-		if _, err := local.CreateFile(incarnation, expiredName, nil); err != nil {
+		if _, err := local.CreateFile(incarnation, clientstore.ExpiredName, nil); err != nil {
 			t.Fatal(err)
 		}
 		status, id := createResult(t, srv, 1, wire, 1)
@@ -365,9 +366,9 @@ func TestCreateSessionBootstrap(t *testing.T) {
 	t.Run("record credit", func(t *testing.T) {
 		srv := identityServer(t, vfs.NewLocalTernVFS(t.TempDir()))
 		wire := identityExchange(t, srv, 1, "client", [8]byte{1}, false).clientID
-		srv.clients.refreshMu.Lock()
-		srv.clients.refresherLimit = len(srv.clients.refreshers)
-		srv.clients.refreshMu.Unlock()
+		srv.clients.RefreshMu.Lock()
+		srv.clients.RefresherLimit = len(srv.clients.Refreshers)
+		srv.clients.RefreshMu.Unlock()
 		if got, _ := createResult(t, srv, 1, wire, 1); got != nfs4.NFS4ERR_DELAY {
 			t.Fatalf("CREATE_SESSION without a refresher credit %s", nfs4.Nfsstat4Name(got))
 		}
@@ -384,21 +385,21 @@ func TestCreateSessionBootstrap(t *testing.T) {
 // nothing else is allocated. A destroyed session's replay at the limit still
 // returns its result without rebuilding it.
 func TestCachedReplayAtRecordLimit(t *testing.T) {
-	fs := newConfirmFaultVFS(t)
+	fs := clientstore.NewConfirmFaultVFS(t)
 	srv := identityServer(t, fs)
 	ss := srv.sessions
 	wire := identityExchange(t, srv, 1, "client", [8]byte{1}, false).clientID
 	ss.mu.Lock()
 	ss.recordLimit = 1
 	ss.mu.Unlock()
-	fs.set(writeD, faultAppliedFail, nil)
-	fs.mu.Lock()
-	fs.armed = true
-	fs.mu.Unlock()
+	fs.Set(clientstore.WriteD, clientstore.FaultAppliedFail, nil)
+	fs.Mu.Lock()
+	fs.Armed = true
+	fs.Mu.Unlock()
 	if got, _ := createResult(t, srv, 1, wire, 1); got != nfs4.NFS4ERR_DELAY {
 		t.Fatalf("CREATE_SESSION with an unfenceable D %s", nfs4.Nfsstat4Name(got))
 	}
-	fs.set(writeD, faultNone, nil)
+	fs.Set(clientstore.WriteD, clientstore.FaultNone, nil)
 	srv.settleConfirmations()
 	var committed SessionID
 	ss.mu.Lock()
@@ -537,7 +538,7 @@ type leaseLinkPanicVFS struct {
 }
 
 func (fs *leaseLinkPanicVFS) LinkFile(id vfs.InodeID, cookie vfs.Cookie, dir vfs.InodeID, name string, data io.Reader) error {
-	if strings.HasPrefix(name, tempPrefix) && fs.armed.CompareAndSwap(true, false) {
+	if strings.HasPrefix(name, clientstore.TempPrefix) && fs.armed.CompareAndSwap(true, false) {
 		panic("injected publication panic")
 	}
 	return fs.TernVFS.LinkFile(id, cookie, dir, name, data)

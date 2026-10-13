@@ -7,6 +7,7 @@ package main
 import (
 	"time"
 
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
@@ -239,7 +240,7 @@ func (h *requestHold) release() {
 	defer ss.mu.Unlock()
 	if h.active {
 		h.group.active--
-		if quiet := ss.now().Add(nfsLeaseTime); !h.group.dropped && quiet.After(h.group.quietUntil) {
+		if quiet := ss.now().Add(clientstore.LeaseTime); !h.group.dropped && quiet.After(h.group.quietUntil) {
 			h.group.quietUntil = quiet
 		}
 	} else {

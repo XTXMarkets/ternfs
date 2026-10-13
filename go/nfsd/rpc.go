@@ -12,6 +12,7 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
@@ -328,7 +329,7 @@ func (r *rpcRequest) fullSize() int {
 	return 40 + ((len(r.credBody) + 3) &^ 3) + ((len(r.verfBody) + 3) &^ 3) + len(r.body)
 }
 
-func (r *rpcRequest) principal() rpcPrincipal {
+func (r *rpcRequest) principal() clientstore.RPCPrincipal {
 	body := r.credBody
 	// AUTH_SYS starts with a caller-supplied timestamp. It is not part of
 	// the principal and may change between requests from the same caller.
@@ -344,7 +345,7 @@ func (r *rpcRequest) principal() rpcPrincipal {
 			}
 		}
 	}
-	return rpcPrincipal{flavor: r.credFlavor, body: string(body)}
+	return clientstore.RPCPrincipal{Flavor: r.credFlavor, Body: string(body)}
 }
 
 // parseRPCCall parses an ONC RPC CALL message.

@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
@@ -48,7 +49,7 @@ func (fs *countingWriteVFS) CreateFile(dir vfs.InodeID, name string, data io.Rea
 // The refresher's own lease writes (its temps and lease.<nfsdID>) run in
 // the background for every client and are not counted.
 func (fs *countingWriteVFS) LinkFile(id vfs.InodeID, cookie vfs.Cookie, dir vfs.InodeID, name string, data io.Reader) error {
-	if leaseTemp(name) {
+	if clientstore.LeaseTemp(name) {
 		return fs.TernVFS.LinkFile(id, cookie, dir, name, data)
 	}
 	return fs.count(fs.TernVFS.LinkFile(id, cookie, dir, name, data))
@@ -57,7 +58,7 @@ func (fs *countingWriteVFS) Remove(dir vfs.InodeID, name string) error {
 	return fs.count(fs.TernVFS.Remove(dir, name))
 }
 func (fs *countingWriteVFS) RemoveEdge(dir vfs.InodeID, name string, edge vfs.Edge) error {
-	if leaseTemp(name) || strings.HasPrefix(name, leasePrefix) {
+	if clientstore.LeaseTemp(name) || strings.HasPrefix(name, clientstore.LeasePrefix) {
 		return fs.TernVFS.RemoveEdge(dir, name, edge)
 	}
 	return fs.count(fs.TernVFS.RemoveEdge(dir, name, edge))
@@ -66,7 +67,7 @@ func (fs *countingWriteVFS) Rename(src vfs.InodeID, name string, dst vfs.InodeID
 	return fs.count(fs.TernVFS.Rename(src, name, dst, newName))
 }
 func (fs *countingWriteVFS) RenameEdge(src vfs.InodeID, name string, edge vfs.Edge, dst vfs.InodeID, newName string) error {
-	if strings.HasPrefix(newName, leasePrefix) {
+	if strings.HasPrefix(newName, clientstore.LeasePrefix) {
 		return fs.TernVFS.RenameEdge(src, name, edge, dst, newName)
 	}
 	return fs.count(fs.TernVFS.RenameEdge(src, name, edge, dst, newName))
@@ -148,7 +149,7 @@ func identityServer(t *testing.T, fs vfs.TernVFS) *Server {
 		t.Fatal(err)
 	}
 	t.Cleanup(srv.waitForClientGC)
-	t.Cleanup(srv.clients.stopLeaseWorkers)
+	t.Cleanup(srv.clients.StopLeaseWorkers)
 	useTestWireEpoch(srv)
 	return srv
 }
@@ -311,7 +312,7 @@ func TestExchangeIDBoundsAndRetirement(t *testing.T) {
 	setNow := func(t time.Time) { clock.Store(t.UnixNano()) }
 	created := time.Now()
 	setNow(created)
-	srv.clients.setClock(func() time.Time { return time.Unix(0, clock.Load()) })
+	srv.clients.SetClock(func() time.Time { return time.Unix(0, clock.Load()) })
 	confirmed := identityExchange(t, srv, 1, "confirmed", [8]byte{1}, false)
 	if identityCreate(t, srv, 1, confirmed.clientID, 1) != nfs4.NFS4_OK {
 		t.Fatal("registration")
@@ -320,13 +321,13 @@ func TestExchangeIDBoundsAndRetirement(t *testing.T) {
 	// The cap counts every live record. Only records that waited a lease
 	// interval for CREATE_SESSION are reclaimed.
 	srv.sessions.wireLimit = 2
-	setNow(created.Add(-nfsLeaseTime / 2))
+	setNow(created.Add(-clientstore.LeaseTime / 2))
 	waiting := identityExchange(t, srv, 1, "waiting", [8]byte{1}, false)
 	setNow(created)
 	if got := identityExchange(t, srv, 1, "new", [8]byte{1}, false); got.status != nfs4.NFS4ERR_DELAY {
 		t.Fatalf("EXCHANGE_ID at the cap %s", nfs4.Nfsstat4Name(got.status))
 	}
-	setNow(created.Add(nfsLeaseTime / 2))
+	setNow(created.Add(clientstore.LeaseTime / 2))
 	admitted := identityExchange(t, srv, 1, "new", [8]byte{1}, false)
 	if admitted.status != nfs4.NFS4_OK || wireRecords(srv) != 2 {
 		t.Fatalf("EXCHANGE_ID after reclamation %+v, %d records", admitted, wireRecords(srv))
@@ -337,7 +338,7 @@ func TestExchangeIDBoundsAndRetirement(t *testing.T) {
 	if got := identityCreate(t, srv, 1, confirmed.clientID, 2); got != nfs4.NFS4_OK {
 		t.Fatalf("confirmed record reclaimed: %s", nfs4.Nfsstat4Name(got))
 	}
-	srv.sessions.wireLimit = maxSessionRecords
+	srv.sessions.wireLimit = clientstore.MaxSessionRecords
 
 	// Exhaustion: no new record, but existing ones keep working.
 	srv.sessions.wireIDs.mu.Lock()
@@ -358,7 +359,7 @@ func TestExchangeIDBoundsAndRetirement(t *testing.T) {
 	srv.sessions.wireIDs.mu.Unlock()
 
 	// Expiry ends the record: the client starts again from the store.
-	setNow(created.Add(nfsLeaseTime/2 + 3*nfsLeaseTime))
+	setNow(created.Add(clientstore.LeaseTime/2 + 3*clientstore.LeaseTime))
 	srv.runLeaseSweep()
 	if got := identityCreate(t, srv, 1, confirmed.clientID, 3); got != nfs4.NFS4ERR_STALE_CLIENTID {
 		t.Fatalf("CREATE_SESSION on expired client %s", nfs4.Nfsstat4Name(got))
@@ -484,55 +485,55 @@ func TestClientStoreExchangeIDAdoptionObservation(t *testing.T) {
 		keepSlots, noMarker bool
 	}
 	for _, test := range []setup{
-		{name: "live and old", leases: map[string]time.Duration{"lease.live": nfsLeaseTime, "lease.old": -2 * nfsLeaseTime},
+		{name: "live and old", leases: map[string]time.Duration{"lease.live": clientstore.LeaseTime, "lease.old": -2 * clientstore.LeaseTime},
 			adopt: true, zeroWrites: true, keepSlots: true, noMarker: true},
 		{name: "absent", adopt: true, zeroWrites: true, noMarker: true},
-		{name: "all dead", leases: map[string]time.Duration{"lease.dead": -2 * nfsLeaseTime},
+		{name: "all dead", leases: map[string]time.Duration{"lease.dead": -2 * clientstore.LeaseTime},
 			keepSlots: true, noMarker: true},
-		{name: "expired marker", leases: map[string]time.Duration{"lease.live": nfsLeaseTime}, marker: true,
+		{name: "expired marker", leases: map[string]time.Duration{"lease.live": clientstore.LeaseTime}, marker: true,
 			keepSlots: true},
-		{name: "read error", leases: map[string]time.Duration{"lease.live": nfsLeaseTime}, readError: true,
+		{name: "read error", leases: map[string]time.Duration{"lease.live": clientstore.LeaseTime}, readError: true,
 			wantErr: true, zeroWrites: true, keepSlots: true, noMarker: true},
-		{name: "other principal", leases: map[string]time.Duration{"lease.live": nfsLeaseTime}, otherPrincipal: true,
+		{name: "other principal", leases: map[string]time.Duration{"lease.live": clientstore.LeaseTime}, otherPrincipal: true,
 			wantErr: true, wantInUse: true, zeroWrites: true, keepSlots: true, noMarker: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			failing := &lookupFailureVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
+			failing := &clientstore.LookupFailureVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
 			fs := &countingWriteVFS{TernVFS: failing}
-			store, id := newConfirmedStoreClient(t, fs, []byte("adopt"), [8]byte{verifier}, clientOwner{})
+			store, id := clientstore.NewConfirmedStoreClient(t, fs, []byte("adopt"), [8]byte{verifier}, clientstore.ClientOwner{})
 			now := time.Now()
-			store.now = func() time.Time { return now }
+			store.Now = func() time.Time { return now }
 			incarnation := vfs.InodeID(id)
 			for name, expiry := range test.leases {
-				if _, err := store.createJSON(incarnation, name, durableLease{ExpiresUnixNano: now.Add(expiry).UnixNano()}); err != nil {
+				if _, err := store.CreateJSON(incarnation, name, clientstore.DurableLease{ExpiresUnixNano: now.Add(expiry).UnixNano()}); err != nil {
 					t.Fatal(err)
 				}
 			}
 			if test.marker {
-				if err := store.ensureMarker(incarnation, expiredName); err != nil {
+				if err := store.EnsureMarker(incarnation, clientstore.ExpiredName); err != nil {
 					t.Fatal(err)
 				}
 			}
 			if test.otherPrincipal {
 				// A live open with another principal makes the identity in use.
-				if err := store.ensureMarker(incarnation, activeOpenName(nfs4.StateID{1})); err != nil {
+				if err := store.EnsureMarker(incarnation, clientstore.ActiveOpenName(nfs4.StateID{1})); err != nil {
 					t.Fatal(err)
 				}
 			}
 			if test.readError {
-				failing.mu.Lock()
-				failing.name, failing.remaining = expiredName, 1
-				failing.mu.Unlock()
+				failing.Mu.Lock()
+				failing.Name, failing.Remaining = clientstore.ExpiredName, 1
+				failing.Mu.Unlock()
 			}
-			owner := clientOwner{}
+			owner := clientstore.ClientOwner{}
 			if test.otherPrincipal {
-				owner.principal = rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "other"}
+				owner.Principal = clientstore.RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "other"}
 			}
 			before := fs.writes.Load()
 			got, _, adopted, err := store.ExchangeID([8]byte{verifier}, []byte("adopt"), owner)
 			switch {
 			case test.wantErr:
-				var inUse clientInUseError
+				var inUse clientstore.ClientInUseError
 				if err == nil || errors.As(err, &inUse) != test.wantInUse {
 					t.Fatalf("err %v", err)
 				}
@@ -552,7 +553,7 @@ func TestClientStoreExchangeIDAdoptionObservation(t *testing.T) {
 				}
 			}
 			if test.noMarker {
-				if _, err := failing.TernVFS.Lookup(incarnation, expiredName); !errors.Is(err, os.ErrNotExist) {
+				if _, err := failing.TernVFS.Lookup(incarnation, clientstore.ExpiredName); !errors.Is(err, os.ErrNotExist) {
 					t.Fatalf("observation published an expired marker: %v", err)
 				}
 			}

@@ -2,12 +2,11 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-package main
+package clientstore
 
 import (
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"strings"
 	"sync"
@@ -15,47 +14,9 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
-
-// collectStaleForClient and collectStale run a collection pass and discard
-// the recheck flag. Production code uses collectStaleForClientResult.
-func (cs *ClientStore) collectStaleForClient(clientID vfs.InodeID) error {
-	_, err := cs.collectStaleForClientResult(clientID)
-	return err
-}
-
-func (cs *ClientStore) collectStale(identityID vfs.InodeID) error {
-	_, err := cs.collectStaleResult(identityID)
-	return err
-}
-
-func newConfirmedStoreClient(
-	t *testing.T,
-	fs vfs.TernVFS,
-	identity []byte,
-	verifier [8]byte,
-	owner clientOwner,
-) (*ClientStore, uint64) {
-	t.Helper()
-	store, err := NewClientStore(fs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	clientID, confirm, err := store.SetClientID(
-		verifier, identity, owner)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.ConfirmClientID(
-		clientID, confirm, owner.principal,
-	); err != nil {
-		t.Fatal(err)
-	}
-	return store, clientID
-}
 
 func TestClientStoreErrToNFS(t *testing.T) {
 	for _, test := range []struct {
@@ -69,7 +30,7 @@ func TestClientStoreErrToNFS(t *testing.T) {
 		{"storage failure", errors.New("storage failed"), nfs4.NFS4ERR_DELAY},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if got := clientStoreErrToNFS(test.err); got != test.want {
+			if got := ErrToNFS(test.err); got != test.want {
 				t.Fatalf("status = %s, want %s",
 					nfs4.Nfsstat4Name(got), nfs4.Nfsstat4Name(test.want))
 			}
@@ -78,11 +39,11 @@ func TestClientStoreErrToNFS(t *testing.T) {
 }
 
 func TestClientStorePrunesIdentityLocks(t *testing.T) {
-	store, err := NewClientStore(vfs.NewLocalTernVFS(t.TempDir()))
+	store, err := NewStore(vfs.NewLocalTernVFS(t.TempDir()))
 	if err != nil {
 		t.Fatal(err)
 	}
-	unlock := store.lockIdentity(42)
+	unlock := store.LockIdentity(42)
 	unlock()
 	store.identityLocksMu.Lock()
 	defer store.identityLocksMu.Unlock()
@@ -94,31 +55,31 @@ func TestClientStorePrunesIdentityLocks(t *testing.T) {
 
 func TestClientStoreDurableState(t *testing.T) {
 	fs := vfs.NewLocalTernVFS(t.TempDir())
-	first, err := NewClientStore(fs)
+	first, err := NewStore(fs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := NewClientStore(fs)
+	second, err := NewStore(fs)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	owner1 := clientOwner{
-		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner-1"},
+	owner1 := ClientOwner{
+		Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner-1"},
 	}
-	owner2 := clientOwner{
-		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner-2"},
+	owner2 := ClientOwner{
+		Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner-2"},
 	}
 	verifier := [8]byte{1}
 	base := time.Unix(1000, 0)
-	first.now = func() time.Time { return base }
-	second.now = func() time.Time { return base }
+	first.Now = func() time.Time { return base }
+	second.Now = func() time.Time { return base }
 
 	var clientID uint64
 	var confirm [8]byte
 	t.Run("registration and callback update", func(t *testing.T) {
 		if _, err := first.ConfirmClientID(
-			0, [8]byte{}, rpcPrincipal{},
+			0, [8]byte{}, RPCPrincipal{},
 		); nfs4.ErrorCode(err) != nfs4.NFS4ERR_STALE_CLIENTID {
 			t.Fatalf("zero clientid confirmation error = %v, want NFS4ERR_STALE_CLIENTID", err)
 		}
@@ -143,12 +104,12 @@ func TestClientStoreDurableState(t *testing.T) {
 				staleID, err)
 		}
 		if _, err := second.ConfirmClientID(
-			clientID, staleConfirm, owner1.principal,
+			clientID, staleConfirm, owner1.Principal,
 		); nfs4.ErrorCode(err) != nfs4.NFS4ERR_STALE_CLIENTID {
 			t.Fatalf("replaced confirmation error = %v, want NFS4ERR_STALE_CLIENTID", err)
 		}
 		if _, err := second.ConfirmClientID(
-			clientID, confirm, owner1.principal,
+			clientID, confirm, owner1.Principal,
 		); err != nil {
 			t.Fatal(err)
 		}
@@ -169,12 +130,12 @@ func TestClientStoreDurableState(t *testing.T) {
 			t.Fatal("callback update did not retain clientid with a new token")
 		}
 		if _, err := first.ConfirmClientID(
-			clientID, confirm, owner1.principal,
+			clientID, confirm, owner1.Principal,
 		); err != nil {
 			t.Fatalf("previous confirmed token should remain replayable: %v", err)
 		}
 		if _, err := first.ConfirmClientID(
-			clientID, updateConfirm, owner1.principal,
+			clientID, updateConfirm, owner1.Principal,
 		); err != nil {
 			t.Fatal(err)
 		}
@@ -191,7 +152,7 @@ func TestClientStoreDurableState(t *testing.T) {
 		); err == nil {
 			t.Fatal("different-verifier owner conflict with active state was accepted")
 		} else {
-			var inUse clientInUseError
+			var inUse ClientInUseError
 			if !errors.As(err, &inUse) {
 				t.Fatalf("different-verifier owner conflict = %v", err)
 			}
@@ -201,7 +162,7 @@ func TestClientStoreDurableState(t *testing.T) {
 		); err == nil {
 			t.Fatal("conflicting owner with active state was accepted")
 		} else {
-			var inUse clientInUseError
+			var inUse ClientInUseError
 			if !errors.As(err, &inUse) {
 				t.Fatalf("active owner conflict = %v", err)
 			}
@@ -218,13 +179,13 @@ func TestClientStoreDurableState(t *testing.T) {
 			t.Fatal("inactive owner takeover reused clientid")
 		}
 		if _, err := first.ConfirmClientID(
-			takeoverID, takeoverConfirm, owner2.principal,
+			takeoverID, takeoverConfirm, owner2.Principal,
 		); err != nil {
 			t.Fatal(err)
 		}
 		clientID = takeoverID
 
-		second.now = func() time.Time { return base.Add(leaseWriteTerm + time.Second) }
+		second.Now = func() time.Time { return base.Add(LeaseWriteTerm + time.Second) }
 		stateID[0] = 2
 		if err := first.MarkOpen(clientID, stateID); err != nil {
 			t.Fatal(err)
@@ -239,7 +200,7 @@ func TestClientStoreDurableState(t *testing.T) {
 			t.Fatal("registration after lease expiry reused clientid")
 		}
 		if _, err := second.ConfirmClientID(
-			reregisterID, reregisterConfirm, owner1.principal,
+			reregisterID, reregisterConfirm, owner1.Principal,
 		); err != nil {
 			t.Fatal(err)
 		}
@@ -254,7 +215,7 @@ func TestClientStoreDurableState(t *testing.T) {
 	})
 
 	t.Run("reboot and collection", func(t *testing.T) {
-		second.now = func() time.Time { return base }
+		second.Now = func() time.Time { return base }
 		stateID[0] = 3
 		if err := second.MarkOpen(clientID, stateID); err != nil {
 			t.Fatal(err)
@@ -268,7 +229,7 @@ func TestClientStoreDurableState(t *testing.T) {
 			t.Fatal("client reboot reused clientid")
 		}
 		replacedID, err := second.ConfirmClientID(
-			rebootID, rebootConfirm, owner1.principal)
+			rebootID, rebootConfirm, owner1.Principal)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -289,11 +250,11 @@ func TestClientStoreDurableState(t *testing.T) {
 			t.Fatalf("new client RENEW failed: %v", err)
 		}
 
-		if err := first.collectStaleForClient(vfs.InodeID(rebootID)); err != nil {
+		if err := first.CollectStaleForClient(vfs.InodeID(rebootID)); err != nil {
 			t.Fatal(err)
 		}
-		first.now = func() time.Time { return base.Add(clientGCGrace + time.Second) }
-		if err := first.collectStaleForClient(vfs.InodeID(rebootID)); err != nil {
+		first.Now = func() time.Time { return base.Add(ClientGCGrace + time.Second) }
+		if err := first.CollectStaleForClient(vfs.InodeID(rebootID)); err != nil {
 			t.Fatal(err)
 		}
 
@@ -307,7 +268,7 @@ func TestClientStoreDurableState(t *testing.T) {
 		}
 		incarnations := 0
 		for _, entry := range entries {
-			if strings.HasPrefix(entry.Name, incarnationPrefix) {
+			if strings.HasPrefix(entry.Name, IncarnationPrefix) {
 				incarnations++
 			}
 		}
@@ -320,21 +281,21 @@ func TestClientStoreDurableState(t *testing.T) {
 
 func TestClientStoreConfirmationReplayAndUpdateRejection(t *testing.T) {
 	fs := vfs.NewLocalTernVFS(t.TempDir())
-	store, err := NewClientStore(fs)
+	store, err := NewStore(fs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	owner := clientOwner{
-		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"},
+	owner := ClientOwner{
+		Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"},
 	}
-	otherPrincipal := rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "other"}
+	otherPrincipal := RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "other"}
 	clientID, confirm, err := store.SetClientID(
 		[8]byte{1}, []byte("client"), owner)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.ConfirmClientID(
-		clientID, confirm, owner.principal,
+		clientID, confirm, owner.Principal,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -345,7 +306,7 @@ func TestClientStoreConfirmationReplayAndUpdateRejection(t *testing.T) {
 		t.Fatal(err)
 	}
 	if replaced, err := store.ConfirmClientID(
-		clientID, confirm, owner.principal,
+		clientID, confirm, owner.Principal,
 	); err != nil {
 		t.Fatalf("confirmed SETCLIENTID_CONFIRM replay failed: %v", err)
 	} else if replaced != 0 {
@@ -364,7 +325,7 @@ func TestClientStoreConfirmationReplayAndUpdateRejection(t *testing.T) {
 	wrongConfirm := updateConfirm
 	wrongConfirm[0] ^= 0xff
 	if _, err := store.ConfirmClientID(
-		clientID, wrongConfirm, owner.principal,
+		clientID, wrongConfirm, owner.Principal,
 	); nfs4.ErrorCode(err) != nfs4.NFS4ERR_STALE_CLIENTID {
 		t.Fatalf("wrong callback-update token error = %v, want NFS4ERR_STALE_CLIENTID",
 			err)
@@ -376,7 +337,7 @@ func TestClientStoreConfirmationReplayAndUpdateRejection(t *testing.T) {
 			err)
 	}
 	if _, err := store.ConfirmClientID(
-		clientID, updateConfirm, owner.principal,
+		clientID, updateConfirm, owner.Principal,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -384,25 +345,25 @@ func TestClientStoreConfirmationReplayAndUpdateRejection(t *testing.T) {
 
 func TestClientStoreLeaseSlotsDoNotShortenEachOther(t *testing.T) {
 	fs := vfs.NewLocalTernVFS(t.TempDir())
-	first, err := NewClientStore(fs)
+	first, err := NewStore(fs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := NewClientStore(fs)
+	second, err := NewStore(fs)
 	if err != nil {
 		t.Fatal(err)
 	}
 	base := time.Unix(1000, 0)
-	first.now = func() time.Time { return base }
-	second.now = func() time.Time { return base }
-	owner := clientOwner{principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"}}
+	first.Now = func() time.Time { return base }
+	second.Now = func() time.Time { return base }
+	owner := ClientOwner{Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"}}
 	clientID, confirm, err := first.SetClientID(
 		[8]byte{1}, []byte("client"), owner)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := second.ConfirmClientID(
-		clientID, confirm, owner.principal,
+		clientID, confirm, owner.Principal,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -412,18 +373,18 @@ func TestClientStoreLeaseSlotsDoNotShortenEachOther(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	secondRenewAt := base.Add(nfsLeaseRenewAfter)
-	second.now = func() time.Time { return secondRenewAt }
+	secondRenewAt := base.Add(LeaseRenewAfter)
+	second.Now = func() time.Time { return secondRenewAt }
 	if err := second.Renew(clientID); err != nil {
 		t.Fatal(err)
 	}
-	secondExpiry := secondRenewAt.Add(leaseWriteTerm)
+	secondExpiry := secondRenewAt.Add(LeaseWriteTerm)
 	firstRenewAt := secondExpiry.Add(-time.Second)
-	first.now = func() time.Time { return firstRenewAt }
+	first.Now = func() time.Time { return firstRenewAt }
 	if err := first.Renew(clientID); err != nil {
 		t.Fatal(err)
 	}
-	firstExpiry := firstRenewAt.Add(leaseWriteTerm)
+	firstExpiry := firstRenewAt.Add(LeaseWriteTerm)
 
 	entries, _, err := fs.Readdir(vfs.InodeID(clientID), 0)
 	if err != nil {
@@ -431,7 +392,7 @@ func TestClientStoreLeaseSlotsDoNotShortenEachOther(t *testing.T) {
 	}
 	leases := 0
 	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name, leasePrefix) {
+		if strings.HasPrefix(entry.Name, LeasePrefix) {
 			leases++
 		}
 	}
@@ -439,7 +400,7 @@ func TestClientStoreLeaseSlotsDoNotShortenEachOther(t *testing.T) {
 		t.Fatalf("lease slots = %d, want 2", leases)
 	}
 
-	second.now = func() time.Time { return secondExpiry.Add(time.Second) }
+	second.Now = func() time.Time { return secondExpiry.Add(time.Second) }
 	live, _, err := second.leaseStatus(vfs.InodeID(clientID))
 	if err != nil {
 		t.Fatal(err)
@@ -447,7 +408,7 @@ func TestClientStoreLeaseSlotsDoNotShortenEachOther(t *testing.T) {
 	if !live {
 		t.Fatal("shorter lease slot hid a longer lease")
 	}
-	second.now = func() time.Time { return firstExpiry.Add(time.Second) }
+	second.Now = func() time.Time { return firstExpiry.Add(time.Second) }
 	live, _, err = second.leaseStatus(vfs.InodeID(clientID))
 	if err != nil {
 		t.Fatal(err)
@@ -460,29 +421,29 @@ func TestClientStoreLeaseSlotsDoNotShortenEachOther(t *testing.T) {
 func TestClientStoreRemovesExpiredProcessSlots(t *testing.T) {
 	fs := vfs.NewLocalTernVFS(t.TempDir())
 	base := time.Unix(1000, 0)
-	owner := clientOwner{
-		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"},
+	owner := ClientOwner{
+		Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"},
 	}
-	first, clientID := newConfirmedStoreClient(
+	first, clientID := NewConfirmedStoreClient(
 		t, fs, []byte("client"), [8]byte{1}, owner)
-	first.now = func() time.Time { return base }
+	first.Now = func() time.Time { return base }
 	if err := first.MarkOpen(clientID, nfs4.StateID{1}); err != nil {
 		t.Fatal(err)
 	}
-	second, err := NewClientStore(fs)
+	second, err := NewStore(fs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second.now = func() time.Time { return base }
+	second.Now = func() time.Time { return base }
 	if err := second.beginConfirmation(vfs.InodeID(clientID)); err != nil {
 		t.Fatal(err)
 	}
-	observer, err := NewClientStore(fs)
+	observer, err := NewStore(fs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	observer.now = func() time.Time {
-		return base.Add(leaseWriteTerm + time.Second)
+	observer.Now = func() time.Time {
+		return base.Add(LeaseWriteTerm + time.Second)
 	}
 	if _, _, err := observer.leaseStatus(vfs.InodeID(clientID)); err != nil {
 		t.Fatal(err)
@@ -491,18 +452,18 @@ func TestClientStoreRemovesExpiredProcessSlots(t *testing.T) {
 		vfs.InodeID(clientID)); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{first.leaseName, second.confirmingName} {
+	for _, name := range []string{first.LeaseName, second.ConfirmingName} {
 		if _, err := fs.Lookup(vfs.InodeID(clientID), name); err != nil {
 			t.Fatalf("process slot %q removed without cleanup grace: %v",
 				name, err)
 		}
 	}
-	collector, err := NewClientStore(fs)
+	collector, err := NewStore(fs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	collector.now = func() time.Time {
-		return base.Add(leaseWriteTerm + nfsLeaseTime + time.Second)
+	collector.Now = func() time.Time {
+		return base.Add(LeaseWriteTerm + LeaseTime + time.Second)
 	}
 	if _, _, err := collector.leaseStatus(vfs.InodeID(clientID)); err != nil {
 		t.Fatal(err)
@@ -511,7 +472,7 @@ func TestClientStoreRemovesExpiredProcessSlots(t *testing.T) {
 		vfs.InodeID(clientID)); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{first.leaseName, second.confirmingName} {
+	for _, name := range []string{first.LeaseName, second.ConfirmingName} {
 		if _, err := fs.Lookup(
 			vfs.InodeID(clientID), name,
 		); !errors.Is(err, os.ErrNotExist) {
@@ -523,34 +484,34 @@ func TestClientStoreRemovesExpiredProcessSlots(t *testing.T) {
 func TestClientStoreExpiredLeaseDoesNotReviveAfterSlotCleanup(t *testing.T) {
 	for _, test := range []struct {
 		name string
-		use  func(*ClientStore, uint64) error
+		use  func(*Store, uint64) error
 	}{
-		{"RENEW", func(store *ClientStore, clientID uint64) error {
+		{"RENEW", func(store *Store, clientID uint64) error {
 			return store.Renew(clientID)
 		}},
-		{"OPEN", func(store *ClientStore, clientID uint64) error {
+		{"OPEN", func(store *Store, clientID uint64) error {
 			return store.MarkOpen(clientID, nfs4.StateID{2})
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			fs := vfs.NewLocalTernVFS(t.TempDir())
 			base := time.Unix(1000, 0)
-			owner := clientOwner{
-				principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"},
+			owner := ClientOwner{
+				Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"},
 			}
-			first, clientID := newConfirmedStoreClient(
+			first, clientID := NewConfirmedStoreClient(
 				t, fs, []byte("client"), [8]byte{1}, owner)
-			first.now = func() time.Time { return base }
+			first.Now = func() time.Time { return base }
 			if err := first.MarkOpen(clientID, nfs4.StateID{1}); err != nil {
 				t.Fatal(err)
 			}
 
-			collector, err := NewClientStore(fs)
+			collector, err := NewStore(fs)
 			if err != nil {
 				t.Fatal(err)
 			}
-			collector.now = func() time.Time {
-				return base.Add(leaseWriteTerm + nfsLeaseTime + time.Second)
+			collector.Now = func() time.Time {
+				return base.Add(LeaseWriteTerm + LeaseTime + time.Second)
 			}
 			if _, _, err := collector.leaseStatus(
 				vfs.InodeID(clientID),
@@ -558,11 +519,11 @@ func TestClientStoreExpiredLeaseDoesNotReviveAfterSlotCleanup(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			restarted, err := NewClientStore(fs)
+			restarted, err := NewStore(fs)
 			if err != nil {
 				t.Fatal(err)
 			}
-			restarted.now = collector.now
+			restarted.Now = collector.Now
 			if err := test.use(
 				restarted, clientID,
 			); nfs4.ErrorCode(err) != nfs4.NFS4ERR_EXPIRED {
@@ -576,23 +537,23 @@ func TestClientStoreExpiredLeaseDoesNotReviveAfterSlotCleanup(t *testing.T) {
 func TestClientStoreCachedRenewSeesExpiredMarker(t *testing.T) {
 	fs := vfs.NewLocalTernVFS(t.TempDir())
 	base := time.Unix(1000, 0)
-	owner := clientOwner{
-		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"},
+	owner := ClientOwner{
+		Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"},
 	}
-	first, clientID := newConfirmedStoreClient(
+	first, clientID := NewConfirmedStoreClient(
 		t, fs, []byte("client"), [8]byte{1}, owner)
-	first.now = func() time.Time { return base }
+	first.Now = func() time.Time { return base }
 	stateID := nfs4.StateID{1}
 	if err := first.MarkOpen(clientID, stateID); err != nil {
 		t.Fatal(err)
 	}
 
-	second, err := NewClientStore(fs)
+	second, err := NewStore(fs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second.now = func() time.Time {
-		return base.Add(leaseWriteTerm + time.Second)
+	second.Now = func() time.Time {
+		return base.Add(LeaseWriteTerm + time.Second)
 	}
 	if live, found, err := second.leaseStatus(
 		vfs.InodeID(clientID),
@@ -602,8 +563,8 @@ func TestClientStoreCachedRenewSeesExpiredMarker(t *testing.T) {
 		t.Fatalf("expired lease status = live %t, found %t", live, found)
 	}
 
-	first.now = func() time.Time {
-		return base.Add(nfsLeaseRenewAfter + time.Second)
+	first.Now = func() time.Time {
+		return base.Add(LeaseRenewAfter + time.Second)
 	}
 	if active, err := first.HasOpen(
 		clientID, stateID,
@@ -615,163 +576,48 @@ func TestClientStoreCachedRenewSeesExpiredMarker(t *testing.T) {
 
 func TestClientStorePersistsExpiryBeforeSlotCleanup(t *testing.T) {
 	baseFS := vfs.NewLocalTernVFS(t.TempDir())
-	fs := &removeFailureVFS{TernVFS: baseFS}
+	fs := &RemoveFailureVFS{TernVFS: baseFS}
 	base := time.Unix(1000, 0)
-	owner := clientOwner{
-		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"},
+	owner := ClientOwner{
+		Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"},
 	}
-	store, clientID := newConfirmedStoreClient(
+	store, clientID := NewConfirmedStoreClient(
 		t, fs, []byte("client"), [8]byte{1}, owner)
-	store.now = func() time.Time { return base }
+	store.Now = func() time.Time { return base }
 	if err := store.MarkOpen(clientID, nfs4.StateID{1}); err != nil {
 		t.Fatal(err)
 	}
 
-	store.now = func() time.Time {
-		return base.Add(leaseWriteTerm + nfsLeaseTime + time.Second)
+	store.Now = func() time.Time {
+		return base.Add(LeaseWriteTerm + LeaseTime + time.Second)
 	}
-	fs.name = store.leaseName
-	fs.remaining = 1
+	fs.Name = store.LeaseName
+	fs.Remaining = 1
 	if _, _, err := store.leaseStatus(
 		vfs.InodeID(clientID),
-	); !errors.Is(err, errInjectedRemove) {
+	); !errors.Is(err, ErrInjectedRemove) {
 		t.Fatalf("lease cleanup error = %v, want injected remove failure", err)
 	}
 	if _, err := baseFS.Lookup(
-		vfs.InodeID(clientID), expiredName,
+		vfs.InodeID(clientID), ExpiredName,
 	); err != nil {
 		t.Fatalf("expiry was not durable before slot cleanup: %v", err)
 	}
 }
 
-type countingVFS struct {
-	vfs.TernVFS
-
-	mu           sync.Mutex
-	lookup       int
-	lookupParent int
-	readdir      int
-	stat         int
-	read         int
-	readlink     int
-	createFile   int
-	rename       int
-}
-
-func (fs *countingVFS) Lookup(dirID vfs.InodeID, name string) (vfs.InodeID, error) {
-	fs.mu.Lock()
-	fs.lookup++
-	fs.mu.Unlock()
-	return fs.TernVFS.Lookup(dirID, name)
-}
-
-func (fs *countingVFS) LookupParent(id vfs.InodeID) (vfs.InodeID, error) {
-	fs.mu.Lock()
-	fs.lookupParent++
-	fs.mu.Unlock()
-	return fs.TernVFS.LookupParent(id)
-}
-
-func (fs *countingVFS) Readdir(
-	dirID vfs.InodeID,
-	startHash uint64,
-) ([]vfs.DirEntry, uint64, error) {
-	fs.mu.Lock()
-	fs.readdir++
-	fs.mu.Unlock()
-	return fs.TernVFS.Readdir(dirID, startHash)
-}
-
-func (fs *countingVFS) Stat(id vfs.InodeID) (vfs.NodeInfo, error) {
-	fs.mu.Lock()
-	fs.stat++
-	fs.mu.Unlock()
-	return fs.TernVFS.Stat(id)
-}
-
-func (fs *countingVFS) Read(
-	id vfs.InodeID,
-	offset uint64,
-	dest []byte,
-) (int, bool, error) {
-	fs.mu.Lock()
-	fs.read++
-	fs.mu.Unlock()
-	return fs.TernVFS.Read(id, offset, dest)
-}
-
-func (fs *countingVFS) Readlink(id vfs.InodeID) (string, error) {
-	fs.mu.Lock()
-	fs.readlink++
-	fs.mu.Unlock()
-	return fs.TernVFS.Readlink(id)
-}
-
-func (fs *countingVFS) CreateFile(
-	dirID vfs.InodeID,
-	name string,
-	data io.Reader,
-) (vfs.InodeID, error) {
-	fs.mu.Lock()
-	fs.createFile++
-	fs.mu.Unlock()
-	return fs.TernVFS.CreateFile(dirID, name, data)
-}
-
-func (fs *countingVFS) Rename(
-	srcDirID vfs.InodeID,
-	srcName string,
-	dstDirID vfs.InodeID,
-	dstName string,
-) error {
-	fs.mu.Lock()
-	fs.rename++
-	fs.mu.Unlock()
-	return fs.TernVFS.Rename(srcDirID, srcName, dstDirID, dstName)
-}
-
-// The refresher's lease publication counts as a create (its LINK) and a
-// rename.
-func (fs *countingVFS) LinkFile(id vfs.InodeID, cookie vfs.Cookie, dirID vfs.InodeID, name string, data io.Reader) error {
-	fs.mu.Lock()
-	fs.createFile++
-	fs.mu.Unlock()
-	return fs.TernVFS.LinkFile(id, cookie, dirID, name, data)
-}
-
-func (fs *countingVFS) RenameEdge(srcDirID vfs.InodeID, srcName string, edge vfs.Edge, dstDirID vfs.InodeID, dstName string) error {
-	fs.mu.Lock()
-	fs.rename++
-	fs.mu.Unlock()
-	return fs.TernVFS.RenameEdge(srcDirID, srcName, edge, dstDirID, dstName)
-}
-
-func (fs *countingVFS) reset() {
-	fs.mu.Lock()
-	defer fs.mu.Unlock()
-	fs.lookup = 0
-	fs.lookupParent = 0
-	fs.readdir = 0
-	fs.stat = 0
-	fs.read = 0
-	fs.readlink = 0
-	fs.createFile = 0
-	fs.rename = 0
-}
-
 func TestClientStoreIsConfirmedUsesCachedLocation(t *testing.T) {
-	fs := &countingVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
-	store, clientID := newConfirmedStoreClient(
+	fs := &CountingVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
+	store, clientID := NewConfirmedStoreClient(
 		t,
 		fs,
 		[]byte("client"),
 		[8]byte{1},
-		clientOwner{principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"}},
+		ClientOwner{Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"}},
 	)
 	if err := store.MarkOpen(clientID, nfs4.StateID{1}); err != nil {
 		t.Fatal(err)
 	}
-	fs.reset()
+	fs.Reset()
 	confirmed, err := store.IsConfirmed(clientID)
 	if err != nil {
 		t.Fatal(err)
@@ -788,15 +634,15 @@ func TestClientStoreIsConfirmedUsesCachedLocation(t *testing.T) {
 }
 
 func TestClientStoreHasOpenFastPathAndImplicitRenewal(t *testing.T) {
-	fs := &countingVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
-	store, err := NewClientStore(fs)
+	fs := &CountingVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
+	store, err := NewStore(fs)
 	if err != nil {
 		t.Fatal(err)
 	}
 	base := time.Unix(1000, 0)
-	store.now = func() time.Time { return base }
-	owner := clientOwner{
-		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"},
+	store.Now = func() time.Time { return base }
+	owner := ClientOwner{
+		Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"},
 	}
 	clientID, confirm, err := store.SetClientID(
 		[8]byte{1}, []byte("client"), owner)
@@ -804,7 +650,7 @@ func TestClientStoreHasOpenFastPathAndImplicitRenewal(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := store.ConfirmClientID(
-		clientID, confirm, owner.principal,
+		clientID, confirm, owner.Principal,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -818,11 +664,11 @@ func TestClientStoreHasOpenFastPathAndImplicitRenewal(t *testing.T) {
 	// writes are the refresher's alone (canonical r3 §9.1).
 	for _, elapsed := range []time.Duration{
 		time.Second,
-		nfsLeaseRenewAfter + time.Second,
-		2 * (nfsLeaseRenewAfter + time.Second),
+		LeaseRenewAfter + time.Second,
+		2 * (LeaseRenewAfter + time.Second),
 	} {
-		store.now = func() time.Time { return base.Add(elapsed) }
-		fs.reset()
+		store.Now = func() time.Time { return base.Add(elapsed) }
+		fs.Reset()
 		active, err := store.HasOpen(clientID, stateID)
 		if err != nil {
 			t.Fatal(err)
@@ -832,45 +678,45 @@ func TestClientStoreHasOpenFastPathAndImplicitRenewal(t *testing.T) {
 		}
 		if fs.lookup != 2 || fs.lookupParent != 0 || fs.readdir != 0 ||
 			fs.stat != 0 || fs.read != 0 || fs.readlink != 0 ||
-			fs.createFile != 0 || fs.rename != 0 {
+			fs.CreateFiles != 0 || fs.Renames != 0 {
 			t.Fatalf("fast HasOpen calls at %s: lookup=%d parent=%d readdir=%d stat=%d read=%d readlink=%d create=%d rename=%d",
 				elapsed, fs.lookup, fs.lookupParent, fs.readdir, fs.stat, fs.read,
-				fs.readlink, fs.createFile, fs.rename)
+				fs.readlink, fs.CreateFiles, fs.Renames)
 		}
 	}
 	// Past the published lease, HasOpen reads the durable lease, finds it
 	// dead and writes nothing.
-	store.now = func() time.Time { return base.Add(leaseWriteTerm + time.Second) }
-	fs.reset()
+	store.Now = func() time.Time { return base.Add(LeaseWriteTerm + time.Second) }
+	fs.Reset()
 	if active, err := store.HasOpen(clientID, stateID); err != nil || active {
 		t.Fatalf("open past the lease %t %v", active, err)
 	}
-	if fs.createFile != 0 || fs.rename != 0 {
-		t.Fatalf("HasOpen wrote: create=%d rename=%d", fs.createFile, fs.rename)
+	if fs.CreateFiles != 0 || fs.Renames != 0 {
+		t.Fatalf("HasOpen wrote: create=%d rename=%d", fs.CreateFiles, fs.Renames)
 	}
 }
 
 func TestClientStoreMarkOpenKeepsExistingMarkerInode(t *testing.T) {
 	fs := vfs.NewLocalTernVFS(t.TempDir())
-	store, clientID := newConfirmedStoreClient(
+	store, clientID := NewConfirmedStoreClient(
 		t,
 		fs,
 		[]byte("client"),
 		[8]byte{1},
-		clientOwner{principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"}},
+		ClientOwner{Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"}},
 	)
 	stateID := nfs4.StateID{1}
 	if err := store.MarkOpen(clientID, stateID); err != nil {
 		t.Fatal(err)
 	}
-	before, err := fs.Lookup(vfs.InodeID(clientID), activeOpenName(stateID))
+	before, err := fs.Lookup(vfs.InodeID(clientID), ActiveOpenName(stateID))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := store.MarkOpen(clientID, stateID); err != nil {
 		t.Fatal(err)
 	}
-	after, err := fs.Lookup(vfs.InodeID(clientID), activeOpenName(stateID))
+	after, err := fs.Lookup(vfs.InodeID(clientID), ActiveOpenName(stateID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -883,19 +729,19 @@ func TestClientStoreMarkOpenKeepsExistingMarkerInode(t *testing.T) {
 func TestClientStoreImplicitRenewalRechecksReboot(t *testing.T) {
 	baseFS := vfs.NewLocalTernVFS(t.TempDir())
 	hookFS := &renameHookVFS{TernVFS: baseFS}
-	first, err := NewClientStore(hookFS)
+	first, err := NewStore(hookFS)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := NewClientStore(baseFS)
+	second, err := NewStore(baseFS)
 	if err != nil {
 		t.Fatal(err)
 	}
 	base := time.Unix(1000, 0)
-	first.now = func() time.Time { return base }
-	second.now = func() time.Time { return base }
-	owner := clientOwner{
-		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"},
+	first.Now = func() time.Time { return base }
+	second.Now = func() time.Time { return base }
+	owner := ClientOwner{
+		Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"},
 	}
 	oldID, confirm, err := first.SetClientID(
 		[8]byte{1}, []byte("client"), owner)
@@ -903,7 +749,7 @@ func TestClientStoreImplicitRenewalRechecksReboot(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := first.ConfirmClientID(
-		oldID, confirm, owner.principal,
+		oldID, confirm, owner.Principal,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -920,11 +766,11 @@ func TestClientStoreImplicitRenewalRechecksReboot(t *testing.T) {
 	// HasOpen writes no lease (canonical r3 §9.1), so a reboot confirmed by
 	// another process cannot be raced by a renewal: the cached open sees the
 	// confirmed pointer move and reports nothing.
-	if _, err := second.ConfirmClientID(newID, confirm, owner.principal); err != nil {
+	if _, err := second.ConfirmClientID(newID, confirm, owner.Principal); err != nil {
 		t.Fatalf("reboot confirmation failed: %v", err)
 	}
-	first.now = func() time.Time {
-		return base.Add(nfsLeaseRenewAfter + time.Second)
+	first.Now = func() time.Time {
+		return base.Add(LeaseRenewAfter + time.Second)
 	}
 	active, err := first.HasOpen(oldID, stateID)
 	if err != nil {
@@ -934,13 +780,13 @@ func TestClientStoreImplicitRenewalRechecksReboot(t *testing.T) {
 		t.Fatal("cached open survived reboot confirmation")
 	}
 	if _, err := baseFS.Lookup(
-		vfs.InodeID(oldID), first.leaseName,
+		vfs.InodeID(oldID), first.LeaseName,
 	); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("reboot confirmation left a stale lease: %v", err)
 	}
 	_ = hookFS
 	if _, err := baseFS.Lookup(
-		vfs.InodeID(oldID), activeOpenName(stateID),
+		vfs.InodeID(oldID), ActiveOpenName(stateID),
 	); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("reboot confirmation left a stale open marker: %v", err)
 	}
@@ -948,7 +794,7 @@ func TestClientStoreImplicitRenewalRechecksReboot(t *testing.T) {
 
 func TestClientStoreRejectsClientIDOutsideStateDirectory(t *testing.T) {
 	fs := vfs.NewLocalTernVFS(t.TempDir())
-	store, err := NewClientStore(fs)
+	store, err := NewStore(fs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -957,15 +803,15 @@ func TestClientStoreRejectsClientIDOutsideStateDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	incarnationID, err := fs.Mkdir(
-		parentID, incarnationPrefix+strings.Repeat("0", 32))
+		parentID, IncarnationPrefix+strings.Repeat("0", 32))
 	if err != nil {
 		t.Fatal(err)
 	}
 	confirm := [8]byte{1}
 	record := newDurableClientRecord(
-		[]byte("client"), [8]byte{1}, confirm, clientOwner{})
-	if _, err := store.createJSON(
-		incarnationID, clientRecordName, record,
+		[]byte("client"), [8]byte{1}, confirm, ClientOwner{})
+	if _, err := store.CreateJSON(
+		incarnationID, ClientRecordName, record,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -975,7 +821,7 @@ func TestClientStoreRejectsClientIDOutsideStateDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := store.ConfirmClientID(
-		uint64(incarnationID), confirm, rpcPrincipal{},
+		uint64(incarnationID), confirm, RPCPrincipal{},
 	); nfs4.ErrorCode(err) != nfs4.NFS4ERR_STALE_CLIENTID {
 		t.Fatalf("forged clientid confirmation error = %v, want NFS4ERR_STALE_CLIENTID",
 			err)
@@ -988,7 +834,7 @@ func TestClientStoreRejectsClientIDOutsideStateDirectory(t *testing.T) {
 			err)
 	}
 	if _, err := fs.Lookup(
-		incarnationID, activeOpenName(stateID),
+		incarnationID, ActiveOpenName(stateID),
 	); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("forged clientid created an open marker: %v", err)
 	}
@@ -1011,52 +857,6 @@ func TestClientStoreRejectsClientIDOutsideStateDirectory(t *testing.T) {
 	} else if active {
 		t.Fatal("forged clientid reported an active open")
 	}
-}
-
-type removeFailureVFS struct {
-	vfs.TernVFS
-	mu        sync.Mutex
-	name      string
-	remaining int
-}
-
-var errInjectedRemove = errors.New("injected remove failure")
-
-func (fs *removeFailureVFS) Remove(dirID vfs.InodeID, name string) error {
-	fs.mu.Lock()
-	defer fs.mu.Unlock()
-	if name == fs.name && fs.remaining > 0 {
-		fs.remaining--
-		return errInjectedRemove
-	}
-	return fs.TernVFS.Remove(dirID, name)
-}
-
-type lookupFailureVFS struct {
-	vfs.TernVFS
-	mu             sync.Mutex
-	name           string
-	remaining      int
-	panicRemaining int
-}
-
-var errInjectedLookup = errors.New("injected lookup failure")
-
-func (fs *lookupFailureVFS) Lookup(
-	dirID vfs.InodeID,
-	name string,
-) (vfs.InodeID, error) {
-	fs.mu.Lock()
-	defer fs.mu.Unlock()
-	if name == fs.name && fs.panicRemaining > 0 {
-		fs.panicRemaining--
-		panic("injected lookup panic")
-	}
-	if name == fs.name && fs.remaining > 0 {
-		fs.remaining--
-		return 0, errInjectedLookup
-	}
-	return fs.TernVFS.Lookup(dirID, name)
 }
 
 type readAllHookVFS struct {
@@ -1085,14 +885,6 @@ type beforeRenameHookVFS struct {
 	dstName string
 	once    sync.Once
 	hook    func()
-}
-
-type blockingRenameVFS struct {
-	vfs.TernVFS
-	dstName string
-	entered chan struct{}
-	release chan struct{}
-	once    sync.Once
 }
 
 type renameFailureVFS struct {
@@ -1151,45 +943,18 @@ func (fs *beforeRenameHookVFS) Rename(
 	return fs.TernVFS.Rename(srcDirID, srcName, dstDirID, dstName)
 }
 
-func (fs *blockingRenameVFS) Rename(
-	srcDirID vfs.InodeID,
-	srcName string,
-	dstDirID vfs.InodeID,
-	dstName string,
-) error {
-	if dstName == fs.dstName {
-		fs.once.Do(func() { close(fs.entered) })
-		<-fs.release
-	}
-	return fs.TernVFS.Rename(srcDirID, srcName, dstDirID, dstName)
-}
-
-func (fs *blockingRenameVFS) RenameEdge(
-	srcDirID vfs.InodeID,
-	srcName string,
-	edge vfs.Edge,
-	dstDirID vfs.InodeID,
-	dstName string,
-) error {
-	if dstName == fs.dstName {
-		fs.once.Do(func() { close(fs.entered) })
-		<-fs.release
-	}
-	return fs.TernVFS.RenameEdge(srcDirID, srcName, edge, dstDirID, dstName)
-}
-
 func TestClientStoreConfirmationRechecksPending(t *testing.T) {
 	baseFS := vfs.NewLocalTernVFS(t.TempDir())
 	hookFS := &renameHookVFS{TernVFS: baseFS}
-	first, err := NewClientStore(hookFS)
+	first, err := NewStore(hookFS)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := NewClientStore(baseFS)
+	second, err := NewStore(baseFS)
 	if err != nil {
 		t.Fatal(err)
 	}
-	owner := clientOwner{principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"}}
+	owner := ClientOwner{Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"}}
 	oldID, oldConfirm, err := first.SetClientID(
 		[8]byte{1}, []byte("client"), owner)
 	if err != nil {
@@ -1198,13 +963,13 @@ func TestClientStoreConfirmationRechecksPending(t *testing.T) {
 
 	var newID uint64
 	var newConfirm [8]byte
-	hookFS.dstName = first.confirmingName
+	hookFS.dstName = first.ConfirmingName
 	hookFS.hook = func() {
 		newID, newConfirm, err = second.SetClientID(
 			[8]byte{2}, []byte("client"), owner)
 	}
 	_, confirmErr := first.ConfirmClientID(
-		oldID, oldConfirm, owner.principal)
+		oldID, oldConfirm, owner.Principal)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1213,7 +978,7 @@ func TestClientStoreConfirmationRechecksPending(t *testing.T) {
 			confirmErr)
 	}
 	if _, err := second.ConfirmClientID(
-		newID, newConfirm, owner.principal,
+		newID, newConfirm, owner.Principal,
 	); err != nil {
 		t.Fatalf("replacement confirmation failed: %v", err)
 	}
@@ -1229,32 +994,32 @@ func TestClientStoreHasOpenRequiresLiveDurableLease(t *testing.T) {
 		for _, expired := range []bool{false, true} {
 			t.Run(fmt.Sprintf("cached=%t/expired=%t", cached, expired), func(t *testing.T) {
 				fs := vfs.NewLocalTernVFS(t.TempDir())
-				store, id := newConfirmedStoreClient(t, fs, []byte("client"), [8]byte{1}, clientOwner{})
+				store, id := NewConfirmedStoreClient(t, fs, []byte("client"), [8]byte{1}, ClientOwner{})
 				now := time.Unix(1000, 0)
-				store.now = func() time.Time { return now }
+				store.Now = func() time.Time { return now }
 				sid := nfs4.StateID{1}
 				if err := store.MarkOpen(id, sid); err != nil {
 					t.Fatal(err)
 				}
-				leaseID, err := fs.Lookup(vfs.InodeID(id), store.leaseName)
+				leaseID, err := fs.Lookup(vfs.InodeID(id), store.LeaseName)
 				if err != nil {
 					t.Fatal(err)
 				}
 				if cached {
-					state, _ := store.localClients.Load(vfs.InodeID(id))
+					state, _ := store.LocalClients.Load(vfs.InodeID(id))
 					delete(state.(*localClientState).opens, sid)
 				} else {
-					store.localClients.Delete(vfs.InodeID(id))
+					store.LocalClients.Delete(vfs.InodeID(id))
 				}
 				if expired {
-					now = now.Add(leaseWriteTerm + time.Second)
-				} else if err := fs.Remove(vfs.InodeID(id), store.leaseName); err != nil {
+					now = now.Add(LeaseWriteTerm + time.Second)
+				} else if err := fs.Remove(vfs.InodeID(id), store.LeaseName); err != nil {
 					t.Fatal(err)
 				}
 				if active, err := store.HasOpen(id, sid); err != nil || active {
 					t.Fatalf("marker without live lease = %v, %v", active, err)
 				}
-				currentID, err := fs.Lookup(vfs.InodeID(id), store.leaseName)
+				currentID, err := fs.Lookup(vfs.InodeID(id), store.LeaseName)
 				if expired {
 					// The expired slot is still inside its cleanup grace period.
 					if err != nil || currentID != leaseID {
@@ -1272,12 +1037,12 @@ func TestClientStoreMarkOpenKeepsExistingMarkerOnRenewFailure(t *testing.T) {
 	baseFS := vfs.NewLocalTernVFS(t.TempDir())
 	fs := &renameFailureVFS{TernVFS: baseFS}
 	base := time.Unix(1000, 0)
-	owner := clientOwner{
-		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"},
+	owner := ClientOwner{
+		Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"},
 	}
-	store, clientID := newConfirmedStoreClient(
+	store, clientID := NewConfirmedStoreClient(
 		t, fs, []byte("client"), [8]byte{1}, owner)
-	store.now = func() time.Time { return base }
+	store.Now = func() time.Time { return base }
 	stateID := nfs4.StateID{1}
 	if err := store.MarkOpen(clientID, stateID); err != nil {
 		t.Fatal(err)
@@ -1285,10 +1050,10 @@ func TestClientStoreMarkOpenKeepsExistingMarkerOnRenewFailure(t *testing.T) {
 
 	// A refresh that fails while the published lease still lasts does not
 	// fail MarkOpen: the lease it relies on is proven (canonical r3 §9.1).
-	store.now = func() time.Time {
-		return base.Add(nfsLeaseRenewAfter + time.Second)
+	store.Now = func() time.Time {
+		return base.Add(LeaseRenewAfter + time.Second)
 	}
-	fs.dstName = store.leaseName
+	fs.dstName = store.LeaseName
 	fs.remaining = 1
 	if err := store.MarkOpen(clientID, stateID); err != nil {
 		t.Fatalf("MarkOpen within the proven lease = %v", err)
@@ -1297,14 +1062,14 @@ func TestClientStoreMarkOpenKeepsExistingMarkerOnRenewFailure(t *testing.T) {
 		t.Fatal("the due refresh was not attempted")
 	}
 	if _, err := baseFS.Lookup(
-		vfs.InodeID(clientID), activeOpenName(stateID),
+		vfs.InodeID(clientID), ActiveOpenName(stateID),
 	); err != nil {
 		t.Fatalf("refresh failure removed existing marker: %v", err)
 	}
 
 	// Past the proven lease, with publication still failing, MarkOpen gets
 	// DELAY and creates no marker.
-	store.now = func() time.Time { return base.Add(leaseWriteTerm + time.Second) }
+	store.Now = func() time.Time { return base.Add(LeaseWriteTerm + time.Second) }
 	fs.remaining = 100
 	newStateID := nfs4.StateID{2}
 	if err := store.MarkOpen(
@@ -1313,12 +1078,12 @@ func TestClientStoreMarkOpenKeepsExistingMarkerOnRenewFailure(t *testing.T) {
 		t.Fatalf("new MarkOpen error = %v, want DELAY", err)
 	}
 	if _, err := baseFS.Lookup(
-		vfs.InodeID(clientID), activeOpenName(newStateID),
+		vfs.InodeID(clientID), ActiveOpenName(newStateID),
 	); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("failed refresh created a new marker: %v", err)
 	}
 	if _, err := baseFS.Lookup(
-		vfs.InodeID(clientID), activeOpenName(stateID),
+		vfs.InodeID(clientID), ActiveOpenName(stateID),
 	); err != nil {
 		t.Fatalf("refresh failure removed existing marker: %v", err)
 	}
@@ -1328,26 +1093,26 @@ func TestClientStoreLiveSlotsSkipsRemovedEntry(t *testing.T) {
 	baseFS := vfs.NewLocalTernVFS(t.TempDir())
 	fs := &readAllHookVFS{TernVFS: baseFS}
 	base := time.Unix(1000, 0)
-	owner := clientOwner{
-		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"},
+	owner := ClientOwner{
+		Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"},
 	}
-	store, clientID := newConfirmedStoreClient(
+	store, clientID := NewConfirmedStoreClient(
 		t, fs, []byte("client"), [8]byte{1}, owner)
-	store.now = func() time.Time { return base }
+	store.Now = func() time.Time { return base }
 	if err := store.MarkOpen(clientID, nfs4.StateID{1}); err != nil {
 		t.Fatal(err)
 	}
-	leaseID, err := baseFS.Lookup(vfs.InodeID(clientID), store.leaseName)
+	leaseID, err := baseFS.Lookup(vfs.InodeID(clientID), store.LeaseName)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var hookErr error
 	fs.id = leaseID
 	fs.hook = func() {
-		hookErr = baseFS.Remove(vfs.InodeID(clientID), store.leaseName)
+		hookErr = baseFS.Remove(vfs.InodeID(clientID), store.LeaseName)
 	}
 
-	live, found, err := store.liveSlots(vfs.InodeID(clientID), leasePrefix)
+	live, found, err := store.liveSlots(vfs.InodeID(clientID), LeasePrefix)
 	if err != nil {
 		t.Fatalf("raced slot scan failed: %v", err)
 	}
@@ -1362,9 +1127,9 @@ func TestClientStoreLiveSlotsSkipsRemovedEntry(t *testing.T) {
 	}
 	if _, err := store.replaceJSON(
 		vfs.InodeID(clientID),
-		store.leaseName,
-		durableLease{
-			ExpiresUnixNano: base.Add(nfsLeaseTime).UnixNano(),
+		store.LeaseName,
+		DurableLease{
+			ExpiresUnixNano: base.Add(LeaseTime).UnixNano(),
 		},
 	); err != nil {
 		t.Fatal(err)
@@ -1378,32 +1143,32 @@ func TestClientStoreLiveSlotsSkipsRemovedEntry(t *testing.T) {
 
 func TestClientStoreRenewalDoesNotBlockActiveState(t *testing.T) {
 	baseFS := vfs.NewLocalTernVFS(t.TempDir())
-	fs := &blockingRenameVFS{
+	fs := &BlockingRenameVFS{
 		TernVFS: baseFS,
-		entered: make(chan struct{}),
-		release: make(chan struct{}),
+		Entered: make(chan struct{}),
+		Release: make(chan struct{}),
 	}
 	base := time.Unix(1000, 0)
-	owner := clientOwner{
-		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"},
+	owner := ClientOwner{
+		Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"},
 	}
-	store, clientID := newConfirmedStoreClient(
+	store, clientID := NewConfirmedStoreClient(
 		t, fs, []byte("client"), [8]byte{1}, owner)
-	store.now = func() time.Time { return base }
+	store.Now = func() time.Time { return base }
 	stateID := nfs4.StateID{1}
 	if err := store.MarkOpen(clientID, stateID); err != nil {
 		t.Fatal(err)
 	}
 
-	store.now = func() time.Time {
-		return base.Add(nfsLeaseRenewAfter + time.Second)
+	store.Now = func() time.Time {
+		return base.Add(LeaseRenewAfter + time.Second)
 	}
-	fs.dstName = store.leaseName
+	fs.DstName = store.LeaseName
 	renewed := make(chan error, 1)
 	go func() {
 		renewed <- store.Renew(clientID)
 	}()
-	<-fs.entered
+	<-fs.Entered
 
 	activeResult := make(chan bool, 1)
 	go func() {
@@ -1416,10 +1181,10 @@ func TestClientStoreRenewalDoesNotBlockActiveState(t *testing.T) {
 			t.Fatal("active state failed while renewal was in flight")
 		}
 	case <-time.After(time.Second):
-		close(fs.release)
+		close(fs.Release)
 		t.Fatal("active state blocked behind lease renewal")
 	}
-	close(fs.release)
+	close(fs.Release)
 	if err := <-renewed; err != nil {
 		t.Fatal(err)
 	}
@@ -1427,12 +1192,12 @@ func TestClientStoreRenewalDoesNotBlockActiveState(t *testing.T) {
 
 func TestClientStoreConfirmLeavesPendingUntilReplacement(t *testing.T) {
 	fs := vfs.NewLocalTernVFS(t.TempDir())
-	store, err := NewClientStore(fs)
+	store, err := NewStore(fs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	owner := clientOwner{
-		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"},
+	owner := ClientOwner{
+		Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"},
 	}
 	clientID, confirm, err := store.SetClientID(
 		[8]byte{1}, []byte("client"), owner)
@@ -1444,11 +1209,11 @@ func TestClientStoreConfirmLeavesPendingUntilReplacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := store.ConfirmClientID(
-		clientID, confirm, owner.principal,
+		clientID, confirm, owner.Principal,
 	); err != nil {
 		t.Fatal(err)
 	}
-	if pendingID, found, err := store.readIdentitySymlink(
+	if pendingID, found, err := store.ReadIdentitySymlink(
 		identityID, pendingName,
 	); err != nil {
 		t.Fatal(err)
@@ -1461,7 +1226,7 @@ func TestClientStoreConfirmLeavesPendingUntilReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pendingID, found, err := store.readIdentitySymlink(
+	if pendingID, found, err := store.ReadIdentitySymlink(
 		identityID, pendingName,
 	); err != nil {
 		t.Fatal(err)
@@ -1477,11 +1242,11 @@ func TestClientStoreGCDoesNotRemoveInFlightTemporaryEntry(t *testing.T) {
 		TernVFS: baseFS,
 		dstName: pendingName,
 	}
-	first, err := NewClientStore(hookFS)
+	first, err := NewStore(hookFS)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := NewClientStore(baseFS)
+	second, err := NewStore(baseFS)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1489,7 +1254,7 @@ func TestClientStoreGCDoesNotRemoveInFlightTemporaryEntry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	incarnationID, err := first.newIncarnation(identityID)
+	incarnationID, err := first.NewIncarnation(identityID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1506,7 +1271,7 @@ func TestClientStoreGCDoesNotRemoveInFlightTemporaryEntry(t *testing.T) {
 	if collectErr != nil {
 		t.Fatalf("concurrent collection failed: %v", collectErr)
 	}
-	if got, found, err := first.readIdentitySymlink(
+	if got, found, err := first.ReadIdentitySymlink(
 		identityID, pendingName,
 	); err != nil {
 		t.Fatal(err)
@@ -1518,41 +1283,41 @@ func TestClientStoreGCDoesNotRemoveInFlightTemporaryEntry(t *testing.T) {
 
 func TestClientStoreGCCollectsTemporaryAndHalfCreatedEntries(t *testing.T) {
 	fs := vfs.NewLocalTernVFS(t.TempDir())
-	owner := clientOwner{
-		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"},
+	owner := ClientOwner{
+		Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"},
 	}
-	store, clientID := newConfirmedStoreClient(
+	store, clientID := NewConfirmedStoreClient(
 		t, fs, []byte("client"), [8]byte{1}, owner)
 	identityID, err := fs.LookupParent(vfs.InodeID(clientID))
 	if err != nil {
 		t.Fatal(err)
 	}
-	tempName := tempPrefix + "orphan"
+	tempName := TempPrefix + "orphan"
 	tempID, err := fs.CreateFile(identityID, tempName, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	incarnationTempName := tempPrefix + "incarnation-orphan"
+	incarnationTempName := TempPrefix + "incarnation-orphan"
 	incarnationTempID, err := fs.CreateFile(
 		vfs.InodeID(clientID), incarnationTempName, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	halfCreated, err := fs.Mkdir(
-		identityID, incarnationPrefix+strings.Repeat("a", 32))
+		identityID, IncarnationPrefix+strings.Repeat("a", 32))
 	if err != nil {
 		t.Fatal(err)
 	}
 	base := time.Unix(1000, 0)
-	store.now = func() time.Time { return base }
-	oldTemp := base.Add(-nfsLeaseTime - time.Second)
+	store.Now = func() time.Time { return base }
+	oldTemp := base.Add(-LeaseTime - time.Second)
 	if err := fs.SetTime(tempID, &oldTemp, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := fs.SetTime(incarnationTempID, &oldTemp, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.collectStaleForClient(vfs.InodeID(clientID)); err != nil {
+	if err := store.CollectStaleForClient(vfs.InodeID(clientID)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := fs.Lookup(
@@ -1565,10 +1330,10 @@ func TestClientStoreGCCollectsTemporaryAndHalfCreatedEntries(t *testing.T) {
 	); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("incarnation temporary entry remains after GC: %v", err)
 	}
-	store.now = func() time.Time {
-		return base.Add(clientGCGrace + time.Second)
+	store.Now = func() time.Time {
+		return base.Add(ClientGCGrace + time.Second)
 	}
-	if err := store.collectStaleForClient(vfs.InodeID(clientID)); err != nil {
+	if err := store.CollectStaleForClient(vfs.InodeID(clientID)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := fs.Stat(halfCreated); !errors.Is(err, os.ErrNotExist) {
@@ -1578,22 +1343,22 @@ func TestClientStoreGCCollectsTemporaryAndHalfCreatedEntries(t *testing.T) {
 
 func TestClientStoreGCHonorsConfirmationClaims(t *testing.T) {
 	fs := vfs.NewLocalTernVFS(t.TempDir())
-	first, err := NewClientStore(fs)
+	first, err := NewStore(fs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := NewClientStore(fs)
+	second, err := NewStore(fs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	collector, err := NewClientStore(fs)
+	collector, err := NewStore(fs)
 	if err != nil {
 		t.Fatal(err)
 	}
 	base := time.Unix(1000, 0)
-	first.now = func() time.Time { return base }
-	second.now = func() time.Time { return base.Add(30 * time.Second) }
-	owner := clientOwner{principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"}}
+	first.Now = func() time.Time { return base }
+	second.Now = func() time.Time { return base.Add(30 * time.Second) }
+	owner := ClientOwner{Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"}}
 	oldID, _, err := first.SetClientID(
 		[8]byte{1}, []byte("client"), owner)
 	if err != nil {
@@ -1613,19 +1378,19 @@ func TestClientStoreGCHonorsConfirmationClaims(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	collector.now = func() time.Time { return base.Add(100 * time.Second) }
-	if err := collector.collectStaleForClient(vfs.InodeID(clientID)); err != nil {
+	collector.Now = func() time.Time { return base.Add(100 * time.Second) }
+	if err := collector.CollectStaleForClient(vfs.InodeID(clientID)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fs.Lookup(vfs.InodeID(oldID), gcCandidateName); !os.IsNotExist(err) {
+	if _, err := fs.Lookup(vfs.InodeID(oldID), GCCandidateName); !os.IsNotExist(err) {
 		t.Fatalf("live confirmation claim did not protect incarnation: %v", err)
 	}
 
-	collector.now = func() time.Time { return base.Add(121 * time.Second) }
-	if err := collector.collectStaleForClient(vfs.InodeID(clientID)); err != nil {
+	collector.Now = func() time.Time { return base.Add(121 * time.Second) }
+	if err := collector.CollectStaleForClient(vfs.InodeID(clientID)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fs.Lookup(vfs.InodeID(oldID), gcCandidateName); err != nil {
+	if _, err := fs.Lookup(vfs.InodeID(oldID), GCCandidateName); err != nil {
 		t.Fatalf("expired confirmation claims still protected incarnation: %v", err)
 	}
 }
@@ -1638,21 +1403,21 @@ func TestClientStoreGCHonorsConfirmationClaims(t *testing.T) {
 // that would otherwise delete it must still block the removal.
 func TestClientStoreGCRechecksConfirmationBeforeDeleting(t *testing.T) {
 	fs := vfs.NewLocalTernVFS(t.TempDir())
-	writer, err := NewClientStore(fs)
+	writer, err := NewStore(fs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	confirmer, err := NewClientStore(fs)
+	confirmer, err := NewStore(fs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	collector, err := NewClientStore(fs)
+	collector, err := NewStore(fs)
 	if err != nil {
 		t.Fatal(err)
 	}
 	base := time.Unix(1000, 0)
-	writer.now = func() time.Time { return base }
-	owner := clientOwner{principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"}}
+	writer.Now = func() time.Time { return base }
+	owner := ClientOwner{Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"}}
 	oldID, _, err := writer.SetClientID(
 		[8]byte{1}, []byte("client"), owner)
 	if err != nil {
@@ -1665,16 +1430,16 @@ func TestClientStoreGCRechecksConfirmationBeforeDeleting(t *testing.T) {
 	}
 
 	// Age oldID into a GC candidate with no confirmation claim yet.
-	collector.now = func() time.Time { return base }
-	if err := collector.collectStaleForClient(vfs.InodeID(clientID)); err != nil {
+	collector.Now = func() time.Time { return base }
+	if err := collector.CollectStaleForClient(vfs.InodeID(clientID)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fs.Lookup(vfs.InodeID(oldID), gcCandidateName); err != nil {
+	if _, err := fs.Lookup(vfs.InodeID(oldID), GCCandidateName); err != nil {
 		t.Fatalf("incarnation was not aged into a GC candidate: %v", err)
 	}
 
 	// A confirmation claims oldID only after it was already aged.
-	confirmer.now = func() time.Time { return base.Add(30 * time.Second) }
+	confirmer.Now = func() time.Time { return base.Add(30 * time.Second) }
 	err = confirmer.beginConfirmation(vfs.InodeID(oldID))
 	if err != nil {
 		t.Fatal(err)
@@ -1682,8 +1447,8 @@ func TestClientStoreGCRechecksConfirmationBeforeDeleting(t *testing.T) {
 
 	// Once the candidate is due, the delete-time pass must recheck the live
 	// claim, not just the roots snapshot from before the claim existed.
-	collector.now = func() time.Time { return base.Add(nfsLeaseTime + time.Second) }
-	if err := collector.collectStaleForClient(vfs.InodeID(clientID)); err != nil {
+	collector.Now = func() time.Time { return base.Add(LeaseTime + time.Second) }
+	if err := collector.CollectStaleForClient(vfs.InodeID(clientID)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := fs.Stat(vfs.InodeID(oldID)); err != nil {
@@ -1693,23 +1458,23 @@ func TestClientStoreGCRechecksConfirmationBeforeDeleting(t *testing.T) {
 
 func TestClientStoreRebootCleanupIsRetryable(t *testing.T) {
 	baseFS := vfs.NewLocalTernVFS(t.TempDir())
-	first, err := NewClientStore(baseFS)
+	first, err := NewStore(baseFS)
 	if err != nil {
 		t.Fatal(err)
 	}
-	failingFS := &removeFailureVFS{TernVFS: baseFS, remaining: 1}
-	second, err := NewClientStore(failingFS)
+	failingFS := &RemoveFailureVFS{TernVFS: baseFS, Remaining: 1}
+	second, err := NewStore(failingFS)
 	if err != nil {
 		t.Fatal(err)
 	}
-	owner := clientOwner{principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"}}
+	owner := ClientOwner{Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"}}
 	oldID, confirm, err := first.SetClientID(
 		[8]byte{1}, []byte("client"), owner)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := first.ConfirmClientID(
-		oldID, confirm, owner.principal,
+		oldID, confirm, owner.Principal,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -1718,7 +1483,7 @@ func TestClientStoreRebootCleanupIsRetryable(t *testing.T) {
 	if err := first.MarkOpen(oldID, stateID); err != nil {
 		t.Fatal(err)
 	}
-	failingFS.name = activeOpenName(stateID)
+	failingFS.Name = ActiveOpenName(stateID)
 
 	newID, confirm, err := first.SetClientID(
 		[8]byte{2}, []byte("client"), owner)
@@ -1726,8 +1491,8 @@ func TestClientStoreRebootCleanupIsRetryable(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := second.ConfirmClientID(
-		newID, confirm, owner.principal,
-	); !errors.Is(err, errInjectedRemove) {
+		newID, confirm, owner.Principal,
+	); !errors.Is(err, ErrInjectedRemove) {
 		t.Fatalf("reboot cleanup error = %v, want injected failure", err)
 	}
 	if confirmed, err := first.IsConfirmed(oldID); err != nil {
@@ -1740,15 +1505,15 @@ func TestClientStoreRebootCleanupIsRetryable(t *testing.T) {
 	} else if !confirmed {
 		t.Fatal("new client was not confirmed before cleanup retry")
 	}
-	if err := first.collectStaleForClient(vfs.InodeID(newID)); err != nil {
+	if err := first.CollectStaleForClient(vfs.InodeID(newID)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := baseFS.Lookup(vfs.InodeID(oldID), gcCandidateName); !os.IsNotExist(err) {
+	if _, err := baseFS.Lookup(vfs.InodeID(oldID), GCCandidateName); !os.IsNotExist(err) {
 		t.Fatalf("in-progress reboot target was marked for collection: %v", err)
 	}
 
 	replacedID, err := second.ConfirmClientID(
-		newID, confirm, owner.principal)
+		newID, confirm, owner.Principal)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1761,264 +1526,26 @@ func TestClientStoreRebootCleanupIsRetryable(t *testing.T) {
 		t.Fatal("cleanup retry left old open active")
 	}
 
-	failingFS.name = rebootName
-	failingFS.remaining = 1
+	failingFS.Name = RebootName
+	failingFS.Remaining = 1
 	thirdID, confirm, err := first.SetClientID(
 		[8]byte{3}, []byte("client"), owner)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := second.ConfirmClientID(
-		thirdID, confirm, owner.principal,
-	); !errors.Is(err, errInjectedRemove) {
+		thirdID, confirm, owner.Principal,
+	); !errors.Is(err, ErrInjectedRemove) {
 		t.Fatalf("reboot marker cleanup error = %v, want injected failure",
 			err)
 	}
 	replacedID, err = second.ConfirmClientID(
-		thirdID, confirm, owner.principal)
+		thirdID, confirm, owner.Principal)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if replacedID != newID {
 		t.Fatalf("marker retry replaced clientid %d, want %d", replacedID, newID)
-	}
-}
-
-func TestClientStoreGCIsBoundedAndRetryable(t *testing.T) {
-	baseFS := vfs.NewLocalTernVFS(t.TempDir())
-	writer, err := NewClientStore(baseFS)
-	if err != nil {
-		t.Fatal(err)
-	}
-	failingFS := &removeFailureVFS{
-		TernVFS: baseFS,
-		name:    clientRecordName,
-	}
-	collector, err := NewClientStore(failingFS)
-	if err != nil {
-		t.Fatal(err)
-	}
-	base := time.Unix(1000, 0)
-	collector.now = func() time.Time { return base }
-	owner := clientOwner{principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"}}
-
-	var clientID uint64
-	for i := 0; i < maxClientGCRemovals+3; i++ {
-		clientID, _, err = writer.SetClientID(
-			[8]byte{byte(i + 1)}, []byte("client"), owner)
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	identityID, err := baseFS.LookupParent(vfs.InodeID(clientID))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := collector.collectStaleForClient(vfs.InodeID(clientID)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := baseFS.Lookup(vfs.InodeID(clientID), gcCandidateName); !os.IsNotExist(err) {
-		t.Fatalf("current incarnation has a GC candidate marker: %v", err)
-	}
-
-	collector.now = func() time.Time {
-		return base.Add(clientGCGrace + time.Second)
-	}
-	failingFS.remaining = 1
-	if err := collector.collectStaleForClient(
-		vfs.InodeID(clientID),
-	); !errors.Is(err, errInjectedRemove) {
-		t.Fatalf("GC error = %v, want injected failure", err)
-	}
-	if got := countClientIncarnations(t, baseFS, identityID); got != maxClientGCRemovals+3 {
-		t.Fatalf("incarnations after failed GC = %d, want %d",
-			got, maxClientGCRemovals+3)
-	}
-
-	if err := collector.collectStaleForClient(vfs.InodeID(clientID)); err != nil {
-		t.Fatal(err)
-	}
-	if got := countClientIncarnations(t, baseFS, identityID); got != 3 {
-		t.Fatalf("incarnations after bounded GC = %d, want 3", got)
-	}
-	if err := collector.collectStaleForClient(vfs.InodeID(clientID)); err != nil {
-		t.Fatal(err)
-	}
-	if got := countClientIncarnations(t, baseFS, identityID); got != 1 {
-		t.Fatalf("incarnations after GC retry = %d, want 1", got)
-	}
-}
-
-func TestServerSchedulesClientGC(t *testing.T) {
-	fs := vfs.NewLocalTernVFS(t.TempDir())
-	staging, err := staging.NewLocalStore(t.TempDir(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	srv, err := NewServer(fs, staging, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	base := time.Unix(1000, 0)
-	srv.clients.setClock(func() time.Time { return base })
-	owner := clientOwner{principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"}}
-	oldID, _, err := srv.clients.SetClientID(
-		[8]byte{1}, []byte("client"), owner)
-	if err != nil {
-		t.Fatal(err)
-	}
-	clientID, _, err := srv.clients.SetClientID(
-		[8]byte{2}, []byte("client"), owner)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := srv.clients.collectStaleForClient(vfs.InodeID(clientID)); err != nil {
-		t.Fatal(err)
-	}
-	srv.clients.setClock(func() time.Time {
-		return base.Add(clientGCGrace + time.Second)
-	})
-
-	for range 20 {
-		srv.scheduleClientGC(clientID)
-	}
-	srv.waitForClientGC()
-
-	if _, err := fs.Stat(vfs.InodeID(oldID)); !os.IsNotExist(err) {
-		t.Fatalf("scheduled GC did not remove stale incarnation: %v", err)
-	}
-	if _, err := fs.Stat(vfs.InodeID(clientID)); err != nil {
-		t.Fatalf("scheduled GC removed current incarnation: %v", err)
-	}
-	srv.clientGCMu.Lock()
-	running := srv.clientGCRunning
-	pending := len(srv.clientGCPending)
-	srv.clientGCMu.Unlock()
-	if running || pending != 0 {
-		t.Fatalf("client GC did not drain: running=%v pending=%d", running, pending)
-	}
-}
-
-func TestConfirmedClientGCRechecksAfterLease(t *testing.T) {
-	fs := vfs.NewLocalTernVFS(t.TempDir())
-	staging, err := staging.NewLocalStore(t.TempDir(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	srv, err := NewServer(fs, staging, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	base := time.Unix(1000, 0)
-	srv.clients.setClock(func() time.Time { return base })
-	addr, cleanup := serveTestServer(t, srv)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-	xid := uint32(1)
-
-	oldID := incarnationForTest(t, srv, setupClientWithVerifier(t, conn, &xid, [8]byte{1}))
-	srv.waitForClientGC()
-	newID, confirm := requestClientID(
-		t, conn, &xid, "test-client", [8]byte{2})
-	srv.waitForClientGC()
-	if status := confirmClientID(
-		t, conn, &xid, newID, confirm,
-	); status != nfs4.NFS4_OK {
-		t.Fatalf("SETCLIENTID_CONFIRM status = %s",
-			nfs4.Nfsstat4Name(status))
-	}
-	srv.waitForClientGC()
-
-	if _, err := fs.Lookup(
-		vfs.InodeID(oldID), gcCandidateName,
-	); err != nil {
-		t.Fatalf("confirmation did not schedule first GC phase: %v", err)
-	}
-	srv.clients.setClock(func() time.Time {
-		return base.Add(clientGCGrace + time.Second)
-	})
-	srv.runLeaseSweep()
-	srv.waitForClientGC()
-	if _, err := fs.Stat(vfs.InodeID(oldID)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("periodic GC recheck retained stale incarnation: %v", err)
-	}
-}
-
-func TestScheduleClientGCRestartsForPendingWork(t *testing.T) {
-	fs := vfs.NewLocalTernVFS(t.TempDir())
-	staging, err := staging.NewLocalStore(t.TempDir(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	srv, err := NewServer(fs, staging, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	clientID, _, err := srv.clients.SetClientID(
-		[8]byte{1}, []byte("client"), clientOwner{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	identityID, err := fs.LookupParent(vfs.InodeID(clientID))
-	if err != nil {
-		t.Fatal(err)
-	}
-	unlock := srv.clients.lockIdentity(identityID)
-	srv.clientGCMu.Lock()
-	srv.clientGCPending[vfs.InodeID(clientID)] = struct{}{}
-	srv.clientGCRunning = false
-	srv.clientGCMu.Unlock()
-
-	srv.scheduleClientGC(clientID)
-	srv.clientGCMu.Lock()
-	running := srv.clientGCRunning
-	srv.clientGCMu.Unlock()
-	unlock()
-	if !running {
-		t.Fatal("pending client GC did not restart a stopped worker")
-	}
-	srv.waitForClientGC()
-}
-
-func TestClientGCContinuesAfterPanic(t *testing.T) {
-	baseFS := vfs.NewLocalTernVFS(t.TempDir())
-	fs := &lookupFailureVFS{TernVFS: baseFS}
-	staging, err := staging.NewLocalStore(t.TempDir(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	srv, err := NewServer(fs, staging, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var clientIDs []vfs.InodeID
-	for i := byte(1); i <= 2; i++ {
-		clientID, _, err := srv.clients.SetClientID(
-			[8]byte{i}, []byte{byte('a' + i)}, clientOwner{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		clientIDs = append(clientIDs, vfs.InodeID(clientID))
-	}
-	fs.name = confirmedName
-	fs.panicRemaining = 1
-	srv.clientGCMu.Lock()
-	for _, clientID := range clientIDs {
-		srv.clientGCPending[clientID] = struct{}{}
-	}
-	srv.clientGCRunning = true
-	srv.clientGCDone = make(chan struct{})
-	srv.clientGCMu.Unlock()
-
-	srv.runClientGC()
-	srv.clientGCMu.Lock()
-	running := srv.clientGCRunning
-	pending := len(srv.clientGCPending)
-	srv.clientGCMu.Unlock()
-	if running || pending != 0 {
-		t.Fatalf("GC after panic: running=%t pending=%d, want false, 0",
-			running, pending)
 	}
 }
 
@@ -2028,12 +1555,12 @@ func TestClientStoreHasOpenSlowPathDoesNotBlockFastPath(t *testing.T) {
 	baseFS := vfs.NewLocalTernVFS(t.TempDir())
 	hookFS := &markerLookupGateVFS{TernVFS: baseFS, Gate: testutil.NewGate()}
 	defer testutil.CloseSignal(hookFS.Release)
-	owner := clientOwner{
-		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "owner"},
+	owner := ClientOwner{
+		Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"},
 	}
-	first, clientID := newConfirmedStoreClient(
+	first, clientID := NewConfirmedStoreClient(
 		t, hookFS, []byte("client"), [8]byte{1}, owner)
-	second, err := NewClientStore(baseFS)
+	second, err := NewStore(baseFS)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2048,7 +1575,7 @@ func TestClientStoreHasOpenSlowPathDoesNotBlockFastPath(t *testing.T) {
 	if err := second.MarkOpen(clientID, remoteState); err != nil {
 		t.Fatal(err)
 	}
-	hookFS.name = activeOpenName(remoteState)
+	hookFS.name = ActiveOpenName(remoteState)
 
 	type result struct {
 		open bool

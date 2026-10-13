@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
@@ -35,7 +36,7 @@ type confirmedLookupHold struct {
 
 func (fs *confirmedLookupHold) Lookup(dir vfs.InodeID, name string) (vfs.InodeID, error) {
 	fs.mu.Lock()
-	hold := fs.armed && name == confirmedName
+	hold := fs.armed && name == clientstore.ConfirmedName
 	if hold {
 		fs.armed = false
 	}
@@ -78,9 +79,9 @@ func TestActiveCompoundDoesNotExpireClientState(t *testing.T) {
 	bStaging := stagingIDForTest(t, staging, bSid)
 
 	// No more refreshes: the lease stays as published, then dies.
-	srv.clients.stopLeaseWorkers()
+	srv.clients.StopLeaseWorkers()
 	var skew atomic.Int64
-	srv.clients.setClock(func() time.Time { return time.Now().Add(time.Duration(skew.Load())) })
+	srv.clients.SetClock(func() time.Time { return time.Now().Add(time.Duration(skew.Load())) })
 	fs.mu.Lock()
 	fs.armed = true
 	fs.mu.Unlock()
@@ -94,7 +95,7 @@ func TestActiveCompoundDoesNotExpireClientState(t *testing.T) {
 		closed <- status
 	}()
 	testutil.AwaitSignal(t, fs.entered, "CLOSE's durable-open check")
-	skew.Store(int64(10 * leaseWriteTerm))
+	skew.Store(int64(10 * clientstore.LeaseWriteTerm))
 	testutil.CloseSignal(fs.release)
 	if got := testutil.AwaitValue(t, closed, "CLOSE with a dead durable lease"); got != nfs4.NFS4ERR_EXPIRED {
 		t.Fatalf("CLOSE %s, want EXPIRED", nfs4.Nfsstat4Name(got))
@@ -108,7 +109,7 @@ func TestActiveCompoundDoesNotExpireClientState(t *testing.T) {
 	if m, ok := staging.GetMeta(bStaging); !ok || m.Retired {
 		t.Fatal("the operation retired the client's other staging")
 	}
-	if _, err := fs.TernVFS.Lookup(vfs.InodeID(inc), activeOpenName(bID)); err != nil {
+	if _, err := fs.TernVFS.Lookup(vfs.InodeID(inc), clientstore.ActiveOpenName(bID)); err != nil {
 		t.Fatalf("the operation removed the other open's marker: %v", err)
 	}
 	// The gate decides: not while the logical lease is held...
@@ -276,9 +277,9 @@ func TestLocalExpiryDrainsSessionsWithoutMarker(t *testing.T) {
 	f.pressure(t, false)
 
 	// The durable lease dies; the marker write fails.
-	srv.clients.stopLeaseWorkers()
-	later := time.Now().Add(10 * leaseWriteTerm)
-	srv.clients.setClock(func() time.Time { return later })
+	srv.clients.StopLeaseWorkers()
+	later := time.Now().Add(10 * clientstore.LeaseWriteTerm)
+	srv.clients.SetClock(func() time.Time { return later })
 	endQuietForTest(srv)
 	held := srv.sessions.accounting()
 	end, ok := srv.beginDestroy(inc)
@@ -290,7 +291,7 @@ func TestLocalExpiryDrainsSessionsWithoutMarker(t *testing.T) {
 	if !expired || err != nil {
 		t.Fatalf("decideExpired %t %v", expired, err)
 	}
-	if _, err := fs.TernVFS.Lookup(vfs.InodeID(inc), expiredName); err == nil {
+	if _, err := fs.TernVFS.Lookup(vfs.InodeID(inc), clientstore.ExpiredName); err == nil {
 		t.Fatal("the marker exists; the fixture should have failed it")
 	}
 	if srv.sessions.lookup(sess.id) != nil {
@@ -315,20 +316,20 @@ func TestLocalExpiryDrainsSessionsWithoutMarker(t *testing.T) {
 		}
 	}
 	srv.sessions.mu.Unlock()
-	srv.clients.refreshMu.Lock()
-	r := srv.clients.refreshers[vfs.InodeID(inc)]
-	srv.clients.refreshMu.Unlock()
+	srv.clients.RefreshMu.Lock()
+	r := srv.clients.Refreshers[vfs.InodeID(inc)]
+	srv.clients.RefreshMu.Unlock()
 	if r != nil {
-		r.mu.Lock()
-		state := r.state
-		r.mu.Unlock()
-		if state == leaseRecordFleetExpired {
+		r.Mu.Lock()
+		state := r.State
+		r.Mu.Unlock()
+		if state == clientstore.LeaseRecordFleetExpired {
 			t.Fatal("local expiry recorded fleet expiry without a marker")
 		}
 	}
 	// Later sweeps change nothing more and stay bounded.
 	srv.sweepExpiredClientState()
-	if _, err := fs.TernVFS.Lookup(vfs.InodeID(inc), expiredName); err == nil {
+	if _, err := fs.TernVFS.Lookup(vfs.InodeID(inc), clientstore.ExpiredName); err == nil {
 		t.Fatal("marker appeared")
 	}
 }
@@ -340,8 +341,8 @@ func TestLocalExpiryDrainsSessionsWithoutMarker(t *testing.T) {
 func TestRefresherTerminalRespectsConfirmationProtection(t *testing.T) {
 	f := newConfirmServer(t)
 	srv := f.srv
-	srv.clients.stopLeaseWorkers()
-	f.arm(writeD, faultFenceErr, nil)
+	srv.clients.StopLeaseWorkers()
+	f.arm(clientstore.WriteD, clientstore.FaultFenceErr, nil)
 	if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4ERR_DELAY {
 		t.Fatalf("CREATE_SESSION with an unfenceable D %s", nfs4.Nfsstat4Name(got))
 	}
@@ -349,30 +350,30 @@ func TestRefresherTerminalRespectsConfirmationProtection(t *testing.T) {
 	if !srv.protected(f.p) {
 		t.Fatal("P is not protected")
 	}
-	if !f.present(t, vfs.InodeID(f.p), srv.clients.leaseName) {
+	if !f.present(t, vfs.InodeID(f.p), srv.clients.LeaseName) {
 		t.Fatal("P has no lease to protect")
 	}
 	pSession := f.pSession(t)
 	// P's refresher finds it stale, as after D applied.
-	setLeaseForTest(srv, f.p, func(r *leaseRefresher) { r.state = leaseRecordStale })
+	setLeaseForTest(srv, f.p, func(r *clientstore.LeaseRefresher) { r.State = clientstore.LeaseRecordStale })
 	leasePassForTest(t, srv, f.p)
-	if !f.present(t, vfs.InodeID(f.p), srv.clients.leaseName) {
+	if !f.present(t, vfs.InodeID(f.p), srv.clients.LeaseName) {
 		t.Fatal("terminal cleanup removed P's lease while it was protected")
 	}
 	if srv.sessions.lookup(pSession) == nil || len(srv.opens.ClientStates(f.p)) == 0 {
 		t.Fatal("terminal cleanup retired P while it was protected")
 	}
 	// Settled: D never applied. The next pass after the backoff cleans up.
-	f.fs.set(writeD, faultNone, nil)
+	f.fs.Set(clientstore.WriteD, clientstore.FaultNone, nil)
 	srv.runLeaseSweep()
 	if srv.protected(f.p) {
 		t.Fatal("still protected")
 	}
-	setLeaseForTest(srv, f.p, func(r *leaseRefresher) {
-		r.state, r.notBefore = leaseRecordStale, time.Time{}
+	setLeaseForTest(srv, f.p, func(r *clientstore.LeaseRefresher) {
+		r.State, r.NotBefore = clientstore.LeaseRecordStale, time.Time{}
 	})
 	leasePassForTest(t, srv, f.p)
-	if f.present(t, vfs.InodeID(f.p), srv.clients.leaseName) {
+	if f.present(t, vfs.InodeID(f.p), srv.clients.LeaseName) {
 		t.Fatal("terminal cleanup did not remove the lease once permitted")
 	}
 	if srv.sessions.lookup(pSession) != nil {
@@ -538,12 +539,12 @@ func TestHeldCreateSessionRetryBindsBackchannel(t *testing.T) {
 	f := newConfirmServer(t)
 	body := backCreateSessionBody(f.wireN, 1, nfs4.CREATE_SESSION4_FLAG_CONN_BACK_CHAN, offerNone)
 	// D applies but reports failure: held, and settled by the retry.
-	f.arm(writeD, faultAppliedFail, nil)
+	f.arm(clientstore.WriteD, clientstore.FaultAppliedFail, nil)
 	if got := f.rawStatus(t, body); got != nfs4.NFS4ERR_DELAY {
 		t.Fatalf("unresolved CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 	}
 	f.disarm()
-	f.fs.set(writeD, faultNone, nil)
+	f.fs.Set(clientstore.WriteD, clientstore.FaultNone, nil)
 	retry := newCBTestClient(t, addrOfTestServer(t, f.srv))
 	_, flags := createdSession(t, retry.compound(4000, body))
 	if flags&nfs4.CREATE_SESSION4_FLAG_CONN_BACK_CHAN == 0 {
@@ -878,16 +879,16 @@ func (fs *passCountVFS) ConstructFile(dir vfs.InodeID) (vfs.InodeID, vfs.Cookie,
 func (fs *passCountVFS) RenameEdge(src vfs.InodeID, old string, edge vfs.Edge, dst vfs.InodeID, name string) error {
 	fs.mu.Lock()
 	fs.writes++
-	fail := fs.failRename && leaseTemp(old)
+	fail := fs.failRename && clientstore.LeaseTemp(old)
 	fs.mu.Unlock()
 	if fail {
-		return errInjectedLease
+		return clientstore.ErrInjectedLease
 	}
 	return fs.TernVFS.RenameEdge(src, old, edge, dst, name)
 }
 func (fs *passCountVFS) RemoveEdge(dir vfs.InodeID, name string, edge vfs.Edge) error {
 	fs.mu.Lock()
-	temp := leaseTemp(name)
+	temp := clientstore.LeaseTemp(name)
 	if temp {
 		fs.fences++
 	}
@@ -895,7 +896,7 @@ func (fs *passCountVFS) RemoveEdge(dir vfs.InodeID, name string, edge vfs.Edge) 
 	fail := fs.failFence && temp
 	fs.mu.Unlock()
 	if fail {
-		return errInjectedLease
+		return clientstore.ErrInjectedLease
 	}
 	return fs.TernVFS.RemoveEdge(dir, name, edge)
 }
@@ -925,7 +926,7 @@ func TestRequestsDoNotDriveRefresherPasses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fs.leaseName = srv.clients.leaseName
+	fs.leaseName = srv.clients.LeaseName
 	addr, stop := serveTestServer(t, srv)
 	defer stop()
 	c := newCBTestClient(t, addr)
@@ -951,17 +952,17 @@ func TestRequestsDoNotDriveRefresherPasses(t *testing.T) {
 
 // refresherWorkerForTest is refresherForTest with server hooks, so the
 // record has a worker that wakes are delivered to.
-func refresherWorkerForTest(t *testing.T, fs *passCountVFS) (*ClientStore, uint64, *leaseRefresher) {
+func refresherWorkerForTest(t *testing.T, fs *passCountVFS) (*clientstore.Store, uint64, *clientstore.LeaseRefresher) {
 	t.Helper()
-	cs, clientID, r, _ := refresherForTest(t, fs)
-	fs.leaseName = cs.leaseName
+	cs, clientID, r, _ := clientstore.RefresherForTest(t, fs)
+	fs.leaseName = cs.LeaseName
 	// Real time: no worker runs yet, so the field can still be set.
-	cs.now = time.Now
+	cs.Now = time.Now
 	var need atomic.Bool
 	need.Store(true)
-	cs.leaseNeed = func(uint64) bool { return need.Load() }
-	cs.leaseSessions = func(uint64) bool { return true }
-	t.Cleanup(cs.stopLeaseWorkers)
+	cs.LeaseNeed = func(uint64) bool { return need.Load() }
+	cs.LeaseSessions = func(uint64) bool { return true }
+	t.Cleanup(cs.StopLeaseWorkers)
 	return cs, clientID, r
 }
 
@@ -976,27 +977,27 @@ func TestWakesDoNotShortenBackoff(t *testing.T) {
 	fs.failRename, fs.failFence = true, true
 	fs.mu.Unlock()
 	fs.reset()
-	cs.startLeaseBootstrap(clientID)
-	waitFor(t, "the failed publication", func() bool { a, _, _, _ := recordImage(r); return a })
+	cs.StartLeaseBootstrap(clientID)
+	waitFor(t, "the failed publication", func() bool { a, _, _, _ := clientstore.RecordImage(r); return a })
 	start := time.Now()
 	_, fences0, writes0, _ := fs.counts()
 	for range 50 {
-		cs.noteLeaseNeed(clientID)
-		cs.requestLeaseVerify(clientID)
+		cs.NoteLeaseNeed(clientID)
+		cs.RequestLeaseVerify(clientID)
 		time.Sleep(20 * time.Millisecond)
 	}
 	elapsed := time.Since(start)
 	reads, fences, writes, _ := fs.counts()
-	r.mu.Lock()
-	deadline := r.notBefore
-	r.mu.Unlock()
+	r.Mu.Lock()
+	deadline := r.NotBefore
+	r.Mu.Unlock()
 	if !deadline.After(start) {
 		t.Fatalf("no backoff deadline after the failure (elapsed %s)", elapsed)
 	}
 	if fences != fences0 || writes != writes0 {
 		t.Fatalf("wakes drove %d fences and %d writes inside the backoff", fences-fences0, writes-writes0)
 	}
-	if maxPasses := int(elapsed/leaseVerifySpacing) + 2; reads > maxPasses {
+	if maxPasses := int(elapsed/clientstore.LeaseVerifySpacing) + 2; reads > maxPasses {
 		t.Fatalf("%d verify passes in %s", reads, elapsed)
 	}
 }
@@ -1007,18 +1008,18 @@ func TestWakesDoNotShortenBackoff(t *testing.T) {
 func TestVerifyPassIsReadOnly(t *testing.T) {
 	fs := &passCountVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
 	cs, clientID, r := refresherWorkerForTest(t, fs)
-	r.safePass(true) // publish a fresh lease
-	dead, err := json.Marshal(durableLease{ExpiresUnixNano: time.Now().Add(-10 * nfsLeaseTime).UnixNano()})
+	r.SafePass(true) // publish a fresh lease
+	dead, err := json.Marshal(clientstore.DurableLease{ExpiresUnixNano: time.Now().Add(-10 * clientstore.LeaseTime).UnixNano()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fs.TernVFS.CreateFile(vfs.InodeID(clientID), leasePrefix+"otherprocess", bytes.NewReader(dead)); err != nil {
+	if _, err := fs.TernVFS.CreateFile(vfs.InodeID(clientID), clientstore.LeasePrefix+"otherprocess", bytes.NewReader(dead)); err != nil {
 		t.Fatal(err)
 	}
-	cs.leaseNeed = func(uint64) bool { return false }
+	cs.LeaseNeed = func(uint64) bool { return false }
 	fs.reset()
 	for range 20 {
-		cs.requestLeaseVerify(clientID)
+		cs.RequestLeaseVerify(clientID)
 		time.Sleep(50 * time.Millisecond)
 	}
 	reads, fences, writes, removes := fs.counts()
@@ -1028,12 +1029,12 @@ func TestVerifyPassIsReadOnly(t *testing.T) {
 	if fences != 0 || writes != 0 || removes != 0 {
 		t.Fatalf("verify passes wrote: fences %d writes %d removes %d", fences, writes, removes)
 	}
-	if _, err := fs.TernVFS.Lookup(vfs.InodeID(clientID), leasePrefix+"otherprocess"); err != nil {
+	if _, err := fs.TernVFS.Lookup(vfs.InodeID(clientID), clientstore.LeasePrefix+"otherprocess"); err != nil {
 		t.Fatal("a verify pass removed another process's slot")
 	}
 	// An authorized pass, with our lease live, prunes it.
-	r.safePass(true)
-	if _, err := fs.TernVFS.Lookup(vfs.InodeID(clientID), leasePrefix+"otherprocess"); err == nil {
+	r.SafePass(true)
+	if _, err := fs.TernVFS.Lookup(vfs.InodeID(clientID), clientstore.LeasePrefix+"otherprocess"); err == nil {
 		t.Fatal("an authorized pass kept another process's long-dead slot")
 	}
 }
@@ -1178,8 +1179,8 @@ func TestNoNewSessionForExpiredIncarnation(t *testing.T) {
 	body := backCreateSessionBody(clientID, seq, 0)
 	id, _ := createdSession(t, c.compound(2, body))
 	inc := incarnationForTest(t, srv, clientID)
-	srv.clients.stopLeaseWorkers()
-	setLeaseForTest(srv, inc, func(r *leaseRefresher) { r.state = leaseRecordStale })
+	srv.clients.StopLeaseWorkers()
+	setLeaseForTest(srv, inc, func(r *clientstore.LeaseRefresher) { r.State = clientstore.LeaseRecordStale })
 	leasePassForTest(t, srv, inc)
 	if srv.sessions.lookup(id) != nil {
 		t.Fatal("terminal pass did not retire the session")
@@ -1220,7 +1221,7 @@ func TestCreateSessionRacingExpiry(t *testing.T) {
 	fs.mu.Lock()
 	fs.armed = true // CREATE_SESSION's IsConfirmed check pauses
 	fs.mu.Unlock()
-	srv.clients.stopLeaseWorkers()
+	srv.clients.StopLeaseWorkers()
 	done := make(chan uint32, 1)
 	go func() { done <- c.compound(3, backCreateSessionBody(clientID, seq+1, 0)).Status() }()
 	testutil.AwaitSignal(t, fs.entered, "CREATE_SESSION's confirmation check")
@@ -1283,7 +1284,7 @@ func TestLoneFailedWriterLeavesSiblingsAlone(t *testing.T) {
 	if m, ok := staging.GetMeta(bStaging); !ok || m.Retired {
 		t.Fatal("the failed writer's operations retired the sibling staging")
 	}
-	if _, err := fs.TernVFS.Lookup(vfs.InodeID(inc), activeOpenName(bID)); err != nil {
+	if _, err := fs.TernVFS.Lookup(vfs.InodeID(inc), clientstore.ActiveOpenName(bID)); err != nil {
 		t.Fatalf("the sibling's marker: %v", err)
 	}
 	closeFile(t, conn, &xid, bFH, bSid)
@@ -1301,20 +1302,20 @@ func TestRenewWithServerHooksDoesNotPass(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(srv.clients.stopLeaseWorkers)
-	fs.leaseName = srv.clients.leaseName
-	clientID, confirm, err := srv.clients.SetClientID([8]byte{1}, []byte("renew"), clientOwner{})
+	t.Cleanup(srv.clients.StopLeaseWorkers)
+	fs.leaseName = srv.clients.LeaseName
+	clientID, confirm, err := srv.clients.SetClientID([8]byte{1}, []byte("renew"), clientstore.ClientOwner{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := srv.clients.ConfirmClientID(clientID, confirm, rpcPrincipal{}); err != nil {
+	if _, err := srv.clients.ConfirmClientID(clientID, confirm, clientstore.RPCPrincipal{}); err != nil {
 		t.Fatal(err)
 	}
 	publishLeaseForTest(t, srv, clientID)
-	srv.clients.stopLeaseWorkers()
+	srv.clients.StopLeaseWorkers()
 	// Due for a refresh, but still live.
-	later := time.Now().Add(nfsLeaseRenewAfter)
-	srv.clients.setClock(func() time.Time { return later })
+	later := time.Now().Add(clientstore.LeaseRenewAfter)
+	srv.clients.SetClock(func() time.Time { return later })
 	fs.reset()
 	if err := srv.clients.Renew(clientID); err != nil {
 		t.Fatalf("Renew %v", err)
@@ -1340,10 +1341,10 @@ func TestExpiredRegistrationRecovers(t *testing.T) {
 	inc := incarnationForTest(t, srv, oldWire)
 	// Another process marked the client expired; this process's refresher
 	// sees the marker and retires the incarnation's sessions.
-	if err := srv.clients.publishExpiredMarker(inc); err != nil {
+	if err := srv.clients.PublishExpiredMarker(inc); err != nil {
 		t.Fatal(err)
 	}
-	srv.clients.stopLeaseWorkers()
+	srv.clients.StopLeaseWorkers()
 	leasePassForTest(t, srv, inc)
 	if srv.sessions.lookup(oldID) != nil {
 		t.Fatal("the terminal pass did not retire the session")
@@ -1366,13 +1367,13 @@ func TestExpiredRegistrationRecovers(t *testing.T) {
 	if newInc == inc {
 		t.Fatal("the fleet-expired incarnation was adopted again")
 	}
-	srv.clients.refreshMu.Lock()
-	r, ok := srv.clients.recordLocked(vfs.InodeID(newInc), true)
-	srv.clients.refreshMu.Unlock()
+	srv.clients.RefreshMu.Lock()
+	r, ok := srv.clients.RecordLocked(vfs.InodeID(newInc), true)
+	srv.clients.RefreshMu.Unlock()
 	if !ok {
 		t.Fatal("no record")
 	}
-	r.safePass(true)
+	r.SafePass(true)
 	ts := newTestSession(newID, newWire, 16)
 	empty := buildCompoundBody(nil, func(*nfs4.COMPOUND4argsWriter) {})
 	if res := c.compound(7, withSequence(empty, ts, 0, 1)); res.Status() != nfs4.NFS4_OK {

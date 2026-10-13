@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/keyedlock"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/openstate"
@@ -47,7 +48,7 @@ func peekCompoundHeader(body []byte) (tag []byte, minor uint32, ok bool) {
 // Server is the NFSv4 server.
 type Server struct {
 	fs                 vfs.TernVFS
-	clients            *ClientStore
+	clients            *clientstore.Store
 	opens              *openstate.Store
 	sessions           *sessionStore
 	backchannel        backchannelStats
@@ -125,7 +126,7 @@ const maxPendingClientGC = 256
 const defaultMaxInFlightPerConn = 64
 
 func NewServer(fs vfs.TernVFS, stagingStore staging.Store, logger *slog.Logger) (*Server, error) {
-	clients, err := NewClientStore(fs)
+	clients, err := clientstore.NewStore(fs)
 	if err != nil {
 		return nil, err
 	}
@@ -144,7 +145,7 @@ func NewServer(fs vfs.TernVFS, stagingStore staging.Store, logger *slog.Logger) 
 		writeTimeout:       5 * time.Minute,
 		maxInFlightPerConn: defaultMaxInFlightPerConn,
 		log:                logger,
-		startedAt:          clients.now(),
+		startedAt:          clients.Now(),
 		hydrationSlots:     make(chan struct{}, maxConcurrentHydrations),
 		clientGCPending:    make(map[vfs.InodeID]struct{}),
 		clientGCRecheck:    make(map[vfs.InodeID]struct{}),
@@ -154,28 +155,28 @@ func NewServer(fs vfs.TernVFS, stagingStore staging.Store, logger *slog.Logger) 
 		destroying:         make(map[uint64]int),
 		destroyingIdentity: make(map[vfs.InodeID]int),
 		purgePending:       make(map[uint64]struct{}),
-		purgeLimit:         maxSessionRecords,
+		purgeLimit:         clientstore.MaxSessionRecords,
 	}
 	s.destroyEnded = sync.NewCond(&s.confirmMu)
-	s.opens.Now = func() time.Time { return s.clients.now() }
+	s.opens.Now = func() time.Time { return s.clients.Now() }
 	// The client store's expired marker, its client GC and a resumed
 	// replacement purge hold destruction holds for their whole action.
-	clients.beginMarker = func(id vfs.InodeID) (func(), bool) { return s.beginDestroy(uint64(id)) }
-	clients.beginCollect = s.beginDestroyIdentity
-	clients.beginPurge = s.beginPurge
+	clients.BeginMarker = func(id vfs.InodeID) (func(), bool) { return s.beginDestroy(uint64(id)) }
+	clients.BeginCollect = s.beginDestroyIdentity
+	clients.BeginPurge = s.beginPurge
 	s.sessions = newSessionStore(s.opens.Epoch)
-	s.sessions.now = func() time.Time { return s.clients.now() }
+	s.sessions.now = func() time.Time { return s.clients.Now() }
 	// The durable lease refresher reads the logical lease's need, and
 	// retires an incarnation whose record turns stale or fleet-expired.
-	clients.leaseNeed = s.sessions.leaseNeed
-	clients.leaseTerminal = s.leaseTerminal
-	clients.leaseSessions = s.sessions.hasSessions
+	clients.LeaseNeed = s.sessions.leaseNeed
+	clients.LeaseTerminal = s.leaseTerminal
+	clients.LeaseSessions = s.sessions.hasSessions
 	// The nfsd ID names this process's lease and confirming slots in the
 	// client store. The epoch is the first four bytes of every stateid this
 	// process issues. Both are needed to attribute persisted state and wire
 	// stateids to an nfsd instance.
 	logger.Info("nfsd instance",
-		"nfsd_id", clients.nfsdID,
+		"nfsd_id", clients.NfsdID,
 		"stateid_epoch", fmt.Sprintf("%08x", s.opens.Epoch))
 	return s, nil
 }
@@ -249,7 +250,7 @@ func (s *Server) collectClientSafely(
 				"clientid", uint64(clientID), "panic", recovered)
 		}
 	}()
-	return s.clients.collectStaleForClientResult(clientID)
+	return s.clients.CollectStaleForClientResult(clientID)
 }
 
 func (s *Server) scheduleClientGCRechecks() {
@@ -263,7 +264,7 @@ func (s *Server) scheduleClientGCRechecks() {
 }
 
 func (s *Server) removeExpiredStaging() {
-	if s.clients.now().Before(s.startedAt.Add(nfsLeaseTime)) {
+	if s.clients.Now().Before(s.startedAt.Add(clientstore.LeaseTime)) {
 		return
 	}
 	byClient := make(map[uint64]map[vfs.InodeID]sidecar.Meta)
@@ -308,7 +309,7 @@ func (s *Server) sweepExpiredClientState() {
 	for _, clientID := range s.opens.ActiveClientIDs() {
 		clients[clientID] = struct{}{}
 	}
-	for _, clientID := range s.clients.cachedClientIDs() {
+	for _, clientID := range s.clients.CachedClientIDs() {
 		clients[clientID] = struct{}{}
 	}
 	s.sessions.mu.Lock()
@@ -352,11 +353,11 @@ func (s *Server) runLeaseSweep() {
 	s.sessions.mu.Lock()
 	s.sessions.pruneGroupsLocked()
 	s.sessions.mu.Unlock()
-	s.clients.sweepLeaseRecords()
+	s.clients.SweepLeaseRecords()
 }
 
 func (s *Server) runLeaseSweeper() {
-	ticker := time.NewTicker(nfsLeaseRenewAfter)
+	ticker := time.NewTicker(clientstore.LeaseRenewAfter)
 	defer ticker.Stop()
 	for range ticker.C {
 		s.runLeaseSweep()
@@ -564,7 +565,7 @@ type compoundState struct {
 	currentIDSet  bool
 	savedID       vfs.InodeID
 	savedIDSet    bool
-	principal     rpcPrincipal
+	principal     clientstore.RPCPrincipal
 	connection    *rpcConnection
 	replyBudget   uint32
 	effectUnknown bool // Submitted mutation lacks whole-call outcome proof.

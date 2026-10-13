@@ -7,6 +7,7 @@ package main
 import (
 	"sync"
 
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/openstate"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -45,11 +46,11 @@ func (s *Server) publishedAs(clientID uint64, fileID, dataID vfs.InodeID) {
 	if fileID == dataID {
 		return
 	}
-	s.views.Set(openstate.ViewKey{ClientID: clientID, FileID: fileID}, dataID, s.clients.now().Add(nfsLeaseTime))
+	s.views.Set(openstate.ViewKey{ClientID: clientID, FileID: fileID}, dataID, s.clients.Now().Add(clientstore.LeaseTime))
 }
 
 func (s *Server) sweepViews() {
-	s.views.Sweep(s.clients.now(), func(key openstate.ViewKey) bool {
+	s.views.Sweep(s.clients.Now(), func(key openstate.ViewKey) bool {
 		return len(s.opens.ClientOpens(key.ClientID, key.FileID)) > 0
 	})
 }

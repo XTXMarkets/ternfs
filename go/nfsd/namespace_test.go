@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/msgs"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sidecar"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
@@ -261,8 +262,8 @@ func renameNamespaceFile(t *testing.T, f *namespaceFixture, from, to string) uin
 func expireNamespaceClient(t *testing.T, f *namespaceFixture) {
 	t.Helper()
 	f.server.waitForClientGC()
-	now := time.Now().Add(2 * nfsLeaseTime)
-	f.server.clients.setClock(func() time.Time { return now })
+	now := time.Now().Add(2 * clientstore.LeaseTime)
+	f.server.clients.SetClock(func() time.Time { return now })
 	f.server.runLeaseSweep()
 }
 
@@ -681,11 +682,11 @@ func TestCloseWaitsForStagedRename(t *testing.T) {
 		t.Fatal(err)
 	}
 	baseFS := vfs.NewLocalTernVFS(dir)
-	fs := &blockingRenameVFS{
+	fs := &clientstore.BlockingRenameVFS{
 		TernVFS: baseFS,
-		dstName: "renamed.txt",
-		entered: make(chan struct{}),
-		release: make(chan struct{}),
+		DstName: "renamed.txt",
+		Entered: make(chan struct{}),
+		Release: make(chan struct{}),
 	}
 	staging, err := staging.NewLocalStore(t.TempDir(), nil)
 	if err != nil {
@@ -723,7 +724,7 @@ func TestCloseWaitsForStagedRename(t *testing.T) {
 		})
 		renameDone <- res.Status()
 	}()
-	<-fs.entered
+	<-fs.Entered
 
 	closeDone := make(chan uint32, 1)
 	go func() {
@@ -735,12 +736,12 @@ func TestCloseWaitsForStagedRename(t *testing.T) {
 	}()
 	select {
 	case status := <-closeDone:
-		close(fs.release)
+		close(fs.Release)
 		t.Fatalf("CLOSE completed during RENAME with status %s",
 			nfs4.Nfsstat4Name(status))
 	case <-time.After(100 * time.Millisecond):
 	}
-	close(fs.release)
+	close(fs.Release)
 
 	if status := <-renameDone; status != nfs4.NFS4_OK {
 		t.Fatalf("RENAME status = %s, want NFS4_OK",

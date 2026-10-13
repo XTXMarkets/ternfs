@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sidecar"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
@@ -25,7 +26,7 @@ import (
 // pending incarnation awaiting CREATE_SESSION, driven by raw calls so the
 // shim keeps using P's session.
 type confirmServer struct {
-	fs           *confirmFaultVFS
+	fs           *clientstore.ConfirmFaultVFS
 	srv          *Server
 	conn         net.Conn
 	xid          uint32
@@ -39,7 +40,7 @@ type confirmServer struct {
 
 func newConfirmServer(t *testing.T) *confirmServer {
 	t.Helper()
-	f := &confirmServer{fs: newConfirmFaultVFS(t), xid: 1}
+	f := &confirmServer{fs: clientstore.NewConfirmFaultVFS(t), xid: 1}
 	staging, err := staging.NewLocalStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -48,7 +49,7 @@ func newConfirmServer(t *testing.T) *confirmServer {
 		t.Fatal(err)
 	}
 	f.clock.Store(time.Now().UnixNano())
-	f.srv.clients.setClock(func() time.Time { return time.Unix(0, f.clock.Load()) })
+	f.srv.clients.SetClock(func() time.Time { return time.Unix(0, f.clock.Load()) })
 	addr, stop := serveTestServer(t, f.srv)
 	t.Cleanup(stop)
 	f.conn = dial(t, addr)
@@ -72,19 +73,19 @@ func newConfirmServer(t *testing.T) *confirmServer {
 
 func (f *confirmServer) advance(d time.Duration) { f.clock.Add(int64(d)) }
 
-func (f *confirmServer) arm(w writeID, fault confirmFault, hook func()) {
-	f.fs.set(w, fault, hook)
-	f.fs.mu.Lock()
-	f.fs.armed = true
-	f.fs.mu.Unlock()
+func (f *confirmServer) arm(w clientstore.WriteID, fault clientstore.ConfirmFault, hook func()) {
+	f.fs.Set(w, fault, hook)
+	f.fs.Mu.Lock()
+	f.fs.Armed = true
+	f.fs.Mu.Unlock()
 }
 
 // disarm stops recording new temps, so the armed fault stays with N's
 // attempt and other clients' writes are unaffected.
 func (f *confirmServer) disarm() {
-	f.fs.mu.Lock()
-	f.fs.armed = false
-	f.fs.mu.Unlock()
+	f.fs.Mu.Lock()
+	f.fs.Armed = false
+	f.fs.Mu.Unlock()
 }
 
 // rawCreate sends CREATE_SESSION without registering a shim session.
@@ -163,7 +164,7 @@ func (f *confirmServer) present(t *testing.T, dir vfs.InodeID, name string) bool
 func (f *confirmServer) pMarker(t *testing.T) bool {
 	var sid nfs4.StateID
 	copy(sid[:], f.state[4:])
-	return f.present(t, vfs.InodeID(f.p), activeOpenName(sid))
+	return f.present(t, vfs.InodeID(f.p), clientstore.ActiveOpenName(sid))
 }
 
 func (f *confirmServer) pStaging(t *testing.T) sidecar.Meta {
@@ -194,7 +195,7 @@ func (f *confirmServer) nSessions() int {
 // the client's next attempt then commits and replaces P.
 func TestConfirmationUnresolvedAdmission(t *testing.T) {
 	f := newConfirmServer(t)
-	f.arm(writeD, faultFenceErr, nil)
+	f.arm(clientstore.WriteD, clientstore.FaultFenceErr, nil)
 	if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4ERR_DELAY {
 		t.Fatalf("CREATE_SESSION with an unfenceable D %s", nfs4.Nfsstat4Name(got))
 	}
@@ -245,7 +246,7 @@ func TestConfirmationUnresolvedAdmission(t *testing.T) {
 
 	// Fenced, D never applied and confirmed is still P through Sp: the
 	// retry rolls back and P reopens.
-	f.fs.set(writeD, faultNone, nil)
+	f.fs.Set(clientstore.WriteD, clientstore.FaultNone, nil)
 	if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4ERR_DELAY {
 		t.Fatalf("rolled-back retry %s", nfs4.Nfsstat4Name(got))
 	}
@@ -263,7 +264,7 @@ func TestConfirmationUnresolvedAdmission(t *testing.T) {
 	if got := f.pSequence(t); got != nfs4.NFS4ERR_BADSESSION {
 		t.Fatalf("P's SEQUENCE after replacement %s", nfs4.Nfsstat4Name(got))
 	}
-	if f.pMarker(t) || f.present(t, vfs.InodeID(f.n), rebootName) {
+	if f.pMarker(t) || f.present(t, vfs.InodeID(f.n), clientstore.RebootName) {
 		t.Fatal("P not purged")
 	}
 	if got := identityConfirmed(t, f); got != vfs.InodeID(f.n) {
@@ -273,7 +274,7 @@ func TestConfirmationUnresolvedAdmission(t *testing.T) {
 
 func identityConfirmed(t *testing.T, f *confirmServer) vfs.InodeID {
 	t.Helper()
-	id, _, err := f.srv.clients.readIdentitySymlink(f.identity, confirmedName)
+	id, _, err := f.srv.clients.ReadIdentitySymlink(f.identity, clientstore.ConfirmedName)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -329,7 +330,7 @@ func TestConfirmationProtectsDestructivePaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	key, err := srv.clients.stagingRecoveryKey(f.n)
+	key, err := srv.clients.StagingRecoveryKey(f.n)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -339,14 +340,14 @@ func TestConfirmationProtectsDestructivePaths(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	f.arm(writeD, faultFenceErr, nil)
+	f.arm(clientstore.WriteD, clientstore.FaultFenceErr, nil)
 	if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4ERR_DELAY {
 		t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 	}
 	f.disarm()
 	// P's lease and the confirming claim expire, and P's open marker goes.
-	f.advance(3 * nfsLeaseTime)
-	if err := f.fs.TernVFS.Remove(vfs.InodeID(f.p), activeOpenName(sid)); err != nil {
+	f.advance(3 * clientstore.LeaseTime)
+	if err := f.fs.TernVFS.Remove(vfs.InodeID(f.p), clientstore.ActiveOpenName(sid)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -354,13 +355,13 @@ func TestConfirmationProtectsDestructivePaths(t *testing.T) {
 	if !srv.protected(f.n) || !srv.protected(f.p) {
 		t.Fatal("lease expiry settled an unresolved confirmation")
 	}
-	if f.present(t, vfs.InodeID(f.p), expiredName) {
+	if f.present(t, vfs.InodeID(f.p), clientstore.ExpiredName) {
 		t.Fatal("expired marker published for P")
 	}
 	// A lease reader finds P's lease dead but writes no marker: only
 	// decideExpired publishes one, and the sweep above refused (canonical
 	// r3 §8).
-	if expired, err := srv.clients.IsLeaseExpired(f.p); err != nil || !expired || f.present(t, vfs.InodeID(f.p), expiredName) {
+	if expired, err := srv.clients.IsLeaseExpired(f.p); err != nil || !expired || f.present(t, vfs.InodeID(f.p), clientstore.ExpiredName) {
 		t.Fatalf("P's lease read %t %v, want dead with no marker", expired, err)
 	}
 	if recheck, err := srv.collectClientSafely(vfs.InodeID(f.n)); err != nil || !recheck {
@@ -401,13 +402,13 @@ func TestConfirmationProtectsDestructivePaths(t *testing.T) {
 
 	// Settled by the sweeper: D was never applied and confirmed is still
 	// P through Sp. Protection ends, and expiry then proceeds normally.
-	f.fs.set(writeD, faultNone, nil)
+	f.fs.Set(clientstore.WriteD, clientstore.FaultNone, nil)
 	srv.runLeaseSweep()
 	if srv.protected(f.n) || srv.protected(f.p) {
 		t.Fatal("settled confirmation still protected")
 	}
 	srv.runLeaseSweep()
-	if !f.present(t, vfs.InodeID(f.p), expiredName) {
+	if !f.present(t, vfs.InodeID(f.p), clientstore.ExpiredName) {
 		t.Fatal("P's expiry did not resume")
 	}
 }
@@ -416,11 +417,11 @@ func TestConfirmationProtectsDestructivePaths(t *testing.T) {
 // CREATE_SESSION settles it; the retry then replays the cached OK.
 func TestConfirmationSettledOnce(t *testing.T) {
 	f := newConfirmServer(t)
-	f.arm(writeD, faultAppliedFail, nil)
+	f.arm(clientstore.WriteD, clientstore.FaultAppliedFail, nil)
 	if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4ERR_DELAY {
 		t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 	}
-	f.fs.set(writeD, faultNone, nil)
+	f.fs.Set(clientstore.WriteD, clientstore.FaultNone, nil)
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
@@ -461,17 +462,17 @@ func TestConfirmationConservative(t *testing.T) {
 		if got := f.pSequence(t); got != nfs4.NFS4ERR_BADSESSION {
 			t.Fatalf("P's SEQUENCE %s", nfs4.Nfsstat4Name(got))
 		}
-		if !f.pMarker(t) || f.pStaging(t).Retired || f.present(t, vfs.InodeID(f.p), expiredName) {
+		if !f.pMarker(t) || f.pStaging(t).Retired || f.present(t, vfs.InodeID(f.p), clientstore.ExpiredName) {
 			t.Fatal("P's durable state changed")
 		}
 	}
 	t.Run("observed another incarnation", func(t *testing.T) {
 		f := newConfirmServer(t)
-		m, err := f.srv.clients.newIncarnation(f.identity)
+		m, err := f.srv.clients.NewIncarnation(f.identity)
 		if err != nil {
 			t.Fatal(err)
 		}
-		f.arm(writeD, faultNotApplied, func() { pointConfirmed(t, f, m) })
+		f.arm(clientstore.WriteD, clientstore.FaultNotApplied, func() { pointConfirmed(t, f, m) })
 		if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4ERR_STALE_CLIENTID {
 			t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 		}
@@ -479,16 +480,16 @@ func TestConfirmationConservative(t *testing.T) {
 	})
 	t.Run("P changed after preparation", func(t *testing.T) {
 		f := newConfirmServer(t)
-		f.fs.mu.Lock()
+		f.fs.Mu.Lock()
 		// Prepare reads N's record first, Commit second: change P's
 		// symlink between them, after P is closed.
-		f.fs.lookupHook.dir, f.fs.lookupHook.name, f.fs.lookupHook.skip = vfs.InodeID(f.n), clientRecordName, 1
-		f.fs.lookupHook.fn = func() { pointConfirmed(t, f, vfs.InodeID(f.p)) }
-		f.fs.mu.Unlock()
+		f.fs.LookupHook.Dir, f.fs.LookupHook.Name, f.fs.LookupHook.Skip = vfs.InodeID(f.n), clientstore.ClientRecordName, 1
+		f.fs.LookupHook.Fn = func() { pointConfirmed(t, f, vfs.InodeID(f.p)) }
+		f.fs.Mu.Unlock()
 		if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4ERR_STALE_CLIENTID {
 			t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 		}
-		if f.present(t, vfs.InodeID(f.n), f.srv.clients.confirmingName) {
+		if f.present(t, vfs.InodeID(f.n), f.srv.clients.ConfirmingName) {
 			t.Fatal("write A made after the predecessor changed")
 		}
 		check(t, f)
@@ -499,14 +500,14 @@ func TestConfirmationConservative(t *testing.T) {
 // symlink to incarnation id.
 func pointConfirmed(t *testing.T, f *confirmServer, id vfs.InodeID) {
 	t.Helper()
-	name, found, err := f.srv.clients.incarnationName(f.identity, id)
+	name, found, err := f.srv.clients.IncarnationName(f.identity, id)
 	if err != nil || !found {
 		t.Fatalf("incarnation name %v", err)
 	}
 	if _, err := f.fs.TernVFS.Symlink(f.identity, "t.hook", name); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.fs.TernVFS.Rename(f.identity, "t.hook", f.identity, confirmedName); err != nil {
+	if err := f.fs.TernVFS.Rename(f.identity, "t.hook", f.identity, clientstore.ConfirmedName); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -514,15 +515,15 @@ func pointConfirmed(t *testing.T, f *confirmServer, id vfs.InodeID) {
 // A first confirmation has no predecessor. A D that never applied observes
 // no confirmed pointer, which is conservative: the record ends.
 func TestConfirmationFirstWithoutPredecessor(t *testing.T) {
-	fs := newConfirmFaultVFS(t)
+	fs := clientstore.NewConfirmFaultVFS(t)
 	srv := identityServer(t, fs)
 	wire := identityExchange(t, srv, 1, "first", [8]byte{1}, false).clientID
 	// Protection is keyed by incarnation; save it before the record ends.
 	incarnation := incarnationForTest(t, srv, wire)
-	fs.set(writeD, faultNotApplied, nil)
-	fs.mu.Lock()
-	fs.armed = true
-	fs.mu.Unlock()
+	fs.Set(clientstore.WriteD, clientstore.FaultNotApplied, nil)
+	fs.Mu.Lock()
+	fs.Armed = true
+	fs.Mu.Unlock()
 	if got, _ := createResult(t, srv, 1, wire, 1); got != nfs4.NFS4ERR_STALE_CLIENTID {
 		t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 	}
@@ -530,7 +531,7 @@ func TestConfirmationFirstWithoutPredecessor(t *testing.T) {
 		t.Fatal("record or protection left")
 	}
 	// The client starts again and confirms.
-	fs.set(writeD, faultNone, nil)
+	fs.Set(clientstore.WriteD, clientstore.FaultNone, nil)
 	again := identityExchange(t, srv, 1, "first", [8]byte{1}, false)
 	if got, _ := createResult(t, srv, 1, again.clientID, 1); got != nfs4.NFS4_OK {
 		t.Fatalf("second attempt %s", nfs4.Nfsstat4Name(got))
@@ -541,20 +542,20 @@ func TestConfirmationFirstWithoutPredecessor(t *testing.T) {
 // next warm EXCHANGE_ID of N retries the purge of exactly P.
 func TestConfirmationPurgeRetry(t *testing.T) {
 	f := newConfirmServer(t)
-	f.fs.mu.Lock()
-	f.fs.failLeaseRemove = vfs.InodeID(f.p)
-	f.fs.mu.Unlock()
+	f.fs.Mu.Lock()
+	f.fs.FailLeaseRemove = vfs.InodeID(f.p)
+	f.fs.Mu.Unlock()
 	if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4_OK {
 		t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 	}
-	if !f.present(t, vfs.InodeID(f.n), rebootName) {
+	if !f.present(t, vfs.InodeID(f.n), clientstore.RebootName) {
 		t.Fatal("reboot evidence lost after a failed purge")
 	}
 	if _, _, status, _ := exchangeID(f.conn, f.xid, "test-client", [8]byte{9}); status != nfs4.NFS4_OK {
 		t.Fatalf("warm EXCHANGE_ID %s", nfs4.Nfsstat4Name(status))
 	}
 	f.xid++
-	if f.present(t, vfs.InodeID(f.n), rebootName) || f.present(t, vfs.InodeID(f.p), f.srv.clients.leaseName) {
+	if f.present(t, vfs.InodeID(f.n), clientstore.RebootName) || f.present(t, vfs.InodeID(f.p), f.srv.clients.LeaseName) {
 		t.Fatal("purge not retried")
 	}
 }
@@ -565,7 +566,7 @@ func TestConfirmationProtectedWhileInFlight(t *testing.T) {
 	f := newConfirmServer(t)
 	entered, release := make(chan struct{}), make(chan struct{})
 	defer testutil.CloseSignal(release)
-	f.arm(writeD, faultNotApplied, func() {
+	f.arm(clientstore.WriteD, clientstore.FaultNotApplied, func() {
 		close(entered)
 		<-release
 	})
@@ -608,16 +609,16 @@ func TestConfirmationProtectedWhileInFlight(t *testing.T) {
 // afterPrepare runs fn once, when CommitConfirmation rereads N's record: after
 // Prepare and after P is closed, before any write.
 func (f *confirmServer) afterPrepare(fn func()) {
-	f.fs.mu.Lock()
-	defer f.fs.mu.Unlock()
-	f.fs.lookupHook.dir, f.fs.lookupHook.name, f.fs.lookupHook.skip = vfs.InodeID(f.n), clientRecordName, 1
-	f.fs.lookupHook.fn = fn
+	f.fs.Mu.Lock()
+	defer f.fs.Mu.Unlock()
+	f.fs.LookupHook.Dir, f.fs.LookupHook.Name, f.fs.LookupHook.Skip = vfs.InodeID(f.n), clientstore.ClientRecordName, 1
+	f.fs.LookupHook.Fn = fn
 }
 
 func (f *confirmServer) setFailLookup(fail bool) {
-	f.fs.mu.Lock()
-	f.fs.failLookup = fail
-	f.fs.mu.Unlock()
+	f.fs.Mu.Lock()
+	f.fs.FailLookup = fail
+	f.fs.Mu.Unlock()
 }
 
 // A read error before any write is no evidence that P is unchanged: P stays
@@ -633,7 +634,7 @@ func TestConfirmationPreWriteReadError(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			f := newConfirmServer(t)
-			m, err := f.srv.clients.newIncarnation(f.identity)
+			m, err := f.srv.clients.NewIncarnation(f.identity)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -652,7 +653,7 @@ func TestConfirmationPreWriteReadError(t *testing.T) {
 				pointConfirmed(t, f, m)
 			}
 			f.setFailLookup(false)
-			if f.present(t, vfs.InodeID(f.n), f.srv.clients.confirmingName) {
+			if f.present(t, vfs.InodeID(f.n), f.srv.clients.ConfirmingName) {
 				t.Fatal("a write was made")
 			}
 			if !changed {
@@ -670,7 +671,7 @@ func TestConfirmationPreWriteReadError(t *testing.T) {
 			if f.srv.protected(f.p) || f.pSequence(t) != nfs4.NFS4ERR_BADSESSION {
 				t.Fatal("changed P not invalidated locally")
 			}
-			if !f.pMarker(t) || f.pStaging(t).Retired || f.present(t, vfs.InodeID(f.p), expiredName) {
+			if !f.pMarker(t) || f.pStaging(t).Retired || f.present(t, vfs.InodeID(f.p), clientstore.ExpiredName) {
 				t.Fatal("P's durable state changed")
 			}
 		})
@@ -682,12 +683,12 @@ func TestConfirmationPreWriteReadError(t *testing.T) {
 // DELAY. The retry then finds N stale, and so does every later one.
 func TestConfirmationPendingMoved(t *testing.T) {
 	f := newConfirmServer(t)
-	other, err := newClientStoreAt(f.fs.TernVFS, f.srv.clients.nfsDirID, f.srv.clients.dirID)
+	other, err := clientstore.NewStoreAt(f.fs.TernVFS, f.srv.clients.NFSDirID, f.srv.clients.DirID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	f.afterPrepare(func() {
-		if _, _, err := other.SetClientID([8]byte{11}, []byte("test-client"), clientOwner{}); err != nil {
+		if _, _, err := other.SetClientID([8]byte{11}, []byte("test-client"), clientstore.ClientOwner{}); err != nil {
 			t.Error(err)
 		}
 	})
@@ -719,7 +720,7 @@ func TestConfirmationCommittedElsewhere(t *testing.T) {
 	if f.pSequence(t) != nfs4.NFS4ERR_BADSESSION || f.nSessions() != 1 {
 		t.Fatal("commit not applied")
 	}
-	if !f.present(t, vfs.InodeID(f.p), f.srv.clients.leaseName) || f.present(t, vfs.InodeID(f.n), rebootName) {
+	if !f.present(t, vfs.InodeID(f.p), f.srv.clients.LeaseName) || f.present(t, vfs.InodeID(f.n), clientstore.RebootName) {
 		t.Fatal("P purged without B")
 	}
 }
@@ -733,9 +734,9 @@ func TestConfirmationApplyPanic(t *testing.T) {
 		t.Run("before publication/"+resume, func(t *testing.T) {
 			f := newConfirmServer(t)
 			// P's first removal is expireClientState's open marker.
-			f.fs.mu.Lock()
-			f.fs.panicRemove.dir = vfs.InodeID(f.p)
-			f.fs.mu.Unlock()
+			f.fs.Mu.Lock()
+			f.fs.PanicRemove.Dir = vfs.InodeID(f.p)
+			f.fs.Mu.Unlock()
 			if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4ERR_DELAY {
 				t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 			}
@@ -755,7 +756,7 @@ func TestConfirmationApplyPanic(t *testing.T) {
 			if f.srv.protected(f.n) || f.pSequence(t) != nfs4.NFS4ERR_BADSESSION || f.pMarker(t) {
 				t.Fatal("commit not fully applied")
 			}
-			if f.present(t, vfs.InodeID(f.n), rebootName) {
+			if f.present(t, vfs.InodeID(f.n), clientstore.RebootName) {
 				t.Fatal("purge not done")
 			}
 		})
@@ -763,14 +764,14 @@ func TestConfirmationApplyPanic(t *testing.T) {
 	t.Run("after publication", func(t *testing.T) {
 		f := newConfirmServer(t)
 		// Skip the open marker's removal; panic in the purge.
-		f.fs.mu.Lock()
-		f.fs.panicRemove.dir, f.fs.panicRemove.skip = vfs.InodeID(f.p), 1
-		f.fs.mu.Unlock()
+		f.fs.Mu.Lock()
+		f.fs.PanicRemove.Dir, f.fs.PanicRemove.Skip = vfs.InodeID(f.p), 1
+		f.fs.Mu.Unlock()
 		status, id := f.rawCreate(t, f.wireN, 1)
 		if status != nfs4.NFS4_OK || f.srv.protected(f.n) || f.nSessions() != 1 {
 			t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(status))
 		}
-		if !f.present(t, vfs.InodeID(f.n), rebootName) {
+		if !f.present(t, vfs.InodeID(f.n), clientstore.RebootName) {
 			t.Fatal("interrupted purge lost its evidence")
 		}
 		if got, replay := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4_OK || replay != id {
@@ -780,7 +781,7 @@ func TestConfirmationApplyPanic(t *testing.T) {
 			t.Fatalf("warm EXCHANGE_ID %s", nfs4.Nfsstat4Name(status))
 		}
 		f.xid++
-		if f.present(t, vfs.InodeID(f.n), rebootName) || f.present(t, vfs.InodeID(f.p), f.srv.clients.leaseName) {
+		if f.present(t, vfs.InodeID(f.n), clientstore.RebootName) || f.present(t, vfs.InodeID(f.p), f.srv.clients.LeaseName) {
 			t.Fatal("purge not retried")
 		}
 	})
@@ -877,9 +878,9 @@ func TestProtectionOrdering(t *testing.T) {
 		result, resume := f.pausedCreate(t)
 		g := newGate()
 		defer testutil.CloseSignal(g.release)
-		f.fs.mu.Lock()
-		f.fs.onReaddir[f.identity] = g.hold
-		f.fs.mu.Unlock()
+		f.fs.Mu.Lock()
+		f.fs.OnReaddir[f.identity] = g.hold
+		f.fs.Mu.Unlock()
 		collected := make(chan bool, 1)
 		go func() {
 			recheck, _ := f.srv.collectClientSafely(vfs.InodeID(f.n))
@@ -925,25 +926,25 @@ func TestProtectionOrdering(t *testing.T) {
 	t.Run("expired marker", func(t *testing.T) {
 		f := newConfirmServer(t)
 		result, resume := f.pausedCreate(t)
-		f.advance(3 * nfsLeaseTime)
+		f.advance(3 * clientstore.LeaseTime)
 		g := newGate()
 		defer testutil.CloseSignal(g.release)
-		f.fs.mu.Lock()
-		f.fs.createHook.dir, f.fs.createHook.name, f.fs.createHook.fn = vfs.InodeID(f.p), expiredName, g.hold
-		f.fs.mu.Unlock()
+		f.fs.Mu.Lock()
+		f.fs.CreateHook.Dir, f.fs.CreateHook.Name, f.fs.CreateHook.Fn = vfs.InodeID(f.p), clientstore.ExpiredName, g.hold
+		f.fs.Mu.Unlock()
 		expired := make(chan struct{})
 		go func() { defer close(expired); f.srv.expireClientIfDead(f.p) }()
 		testutil.AwaitSignal(t, g.entered, "marker write")
 		resume()
 		f.awaitInstalling(t)
 		notYet(t, result, "confirmation behind an admitted expiry")
-		if f.present(t, vfs.InodeID(f.n), f.srv.clients.confirmingName) {
+		if f.present(t, vfs.InodeID(f.n), f.srv.clients.ConfirmingName) {
 			t.Fatal("confirmation wrote while the expiry was running")
 		}
 		testutil.CloseSignal(g.release)
 		testutil.AwaitSignal(t, expired, "expiry")
 		// The expiry finished completely before any confirmation write.
-		if !f.present(t, vfs.InodeID(f.p), expiredName) || len(f.srv.opens.ClientStates(f.p)) != 0 {
+		if !f.present(t, vfs.InodeID(f.p), clientstore.ExpiredName) || len(f.srv.opens.ClientStates(f.p)) != 0 {
 			t.Fatal("admitted expiry did not complete")
 		}
 		testutil.AwaitValue(t, result, "confirmation")
@@ -959,9 +960,9 @@ func TestProtectionOrdering(t *testing.T) {
 		result, resume := f.pausedCreate(t)
 		g := newGate()
 		defer testutil.CloseSignal(g.release)
-		f.fs.mu.Lock()
-		f.fs.lookupHook.dir, f.fs.lookupHook.name, f.fs.lookupHook.fn = vfs.InodeID(f.p), activeOpenName(sid), g.hold
-		f.fs.mu.Unlock()
+		f.fs.Mu.Lock()
+		f.fs.LookupHook.Dir, f.fs.LookupHook.Name, f.fs.LookupHook.Fn = vfs.InodeID(f.p), clientstore.ActiveOpenName(sid), g.hold
+		f.fs.Mu.Unlock()
 		retired := make(chan bool, 1)
 		go func() {
 			unlock := f.srv.lockMutationTargets(mutationTarget{dirID: meta.DirID, name: meta.FileName})
@@ -983,10 +984,10 @@ func TestProtectionOrdering(t *testing.T) {
 		f := newConfirmServer(t)
 		g := newGate()
 		defer testutil.CloseSignal(g.release)
-		f.fs.mu.Lock()
+		f.fs.Mu.Lock()
 		// The registration reads the identity before rewriting pending.
-		f.fs.onReaddir[f.identity] = g.hold
-		f.fs.mu.Unlock()
+		f.fs.OnReaddir[f.identity] = g.hold
+		f.fs.Mu.Unlock()
 		other := dial(t, f.conn.RemoteAddr().String())
 		defer other.Close()
 		exchanged := make(chan uint64, 1)
@@ -1012,7 +1013,7 @@ func TestProtectionOrdering(t *testing.T) {
 		if got := testutil.AwaitValue(t, result, "confirmation"); got != nfs4.NFS4ERR_DELAY && got != nfs4.NFS4ERR_STALE_CLIENTID {
 			t.Fatalf("superseded confirmation %s", nfs4.Nfsstat4Name(got))
 		}
-		if f.present(t, vfs.InodeID(f.n), f.srv.clients.confirmingName) || identityConfirmed(t, f) != vfs.InodeID(f.p) {
+		if f.present(t, vfs.InodeID(f.n), f.srv.clients.ConfirmingName) || identityConfirmed(t, f) != vfs.InodeID(f.p) {
 			t.Fatal("superseded N was written")
 		}
 		if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4ERR_STALE_CLIENTID {
@@ -1033,12 +1034,12 @@ func TestHeldRetryAdmission(t *testing.T) {
 	held := func(t *testing.T) *confirmServer {
 		t.Helper()
 		f := newConfirmServer(t)
-		f.arm(writeD, faultAppliedFail, nil)
+		f.arm(clientstore.WriteD, clientstore.FaultAppliedFail, nil)
 		if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4ERR_DELAY {
 			t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 		}
 		f.disarm()
-		f.fs.set(writeD, faultNone, nil)
+		f.fs.Set(clientstore.WriteD, clientstore.FaultNone, nil)
 		return f
 	}
 	t.Run("saturated record budget", func(t *testing.T) {
@@ -1109,9 +1110,9 @@ func (f *confirmServer) replacementHeld() bool {
 // after client GC, which also removes there, has finished.
 func (f *confirmServer) panicNextRemoveInP() {
 	f.srv.waitForClientGC()
-	f.fs.mu.Lock()
-	f.fs.panicRemove.dir, f.fs.panicRemove.skip = vfs.InodeID(f.p), 0
-	f.fs.mu.Unlock()
+	f.fs.Mu.Lock()
+	f.fs.PanicRemove.Dir, f.fs.PanicRemove.Skip = vfs.InodeID(f.p), 0
+	f.fs.Mu.Unlock()
 }
 
 // A failed purge is retried by N's later CREATE_SESSION and warm
@@ -1121,9 +1122,9 @@ func (f *confirmServer) panicNextRemoveInP() {
 func TestPurgeRetryPanic(t *testing.T) {
 	f := newConfirmServer(t)
 	ss := f.srv.sessions
-	f.fs.mu.Lock()
-	f.fs.failLeaseRemove = vfs.InodeID(f.p)
-	f.fs.mu.Unlock()
+	f.fs.Mu.Lock()
+	f.fs.FailLeaseRemove = vfs.InodeID(f.p)
+	f.fs.Mu.Unlock()
 	if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4_OK || !f.replacementHeld() {
 		t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 	}
@@ -1141,7 +1142,7 @@ func TestPurgeRetryPanic(t *testing.T) {
 		t.Fatal("creation hold leaked")
 	}
 	ss.reopen(f.n)
-	if !f.replacementHeld() || !f.present(t, vfs.InodeID(f.n), rebootName) {
+	if !f.replacementHeld() || !f.present(t, vfs.InodeID(f.n), clientstore.RebootName) {
 		t.Fatal("purge obligation lost")
 	}
 	if got, replay := f.rawCreate(t, f.wireN, 2); got != nfs4.NFS4_OK || replay != id {
@@ -1154,7 +1155,7 @@ func TestPurgeRetryPanic(t *testing.T) {
 		t.Fatalf("warm EXCHANGE_ID with a panicking purge retry %s", nfs4.Nfsstat4Name(status))
 	}
 	f.xid++
-	if !f.replacementHeld() || !f.present(t, vfs.InodeID(f.n), rebootName) {
+	if !f.replacementHeld() || !f.present(t, vfs.InodeID(f.n), clientstore.RebootName) {
 		t.Fatal("purge obligation lost")
 	}
 
@@ -1163,7 +1164,7 @@ func TestPurgeRetryPanic(t *testing.T) {
 		t.Fatalf("warm EXCHANGE_ID %s", nfs4.Nfsstat4Name(status))
 	}
 	f.xid++
-	if f.replacementHeld() || f.present(t, vfs.InodeID(f.n), rebootName) || f.present(t, vfs.InodeID(f.p), f.srv.clients.leaseName) {
+	if f.replacementHeld() || f.present(t, vfs.InodeID(f.n), clientstore.RebootName) || f.present(t, vfs.InodeID(f.p), f.srv.clients.LeaseName) {
 		t.Fatal("purge not completed")
 	}
 }
@@ -1172,9 +1173,9 @@ func TestPurgeRetryPanic(t *testing.T) {
 // would do.
 func (f *confirmServer) failPurgeOnce() {
 	f.srv.waitForClientGC()
-	f.fs.mu.Lock()
-	f.fs.failLeaseRemove = vfs.InodeID(f.p)
-	f.fs.mu.Unlock()
+	f.fs.Mu.Lock()
+	f.fs.FailLeaseRemove = vfs.InodeID(f.p)
+	f.fs.Mu.Unlock()
 }
 
 // commitWithFailedPurge confirms N over P with P's purge failing, and checks
@@ -1190,15 +1191,15 @@ func (f *confirmServer) commitWithFailedPurge(t *testing.T) {
 
 func (f *confirmServer) assertPurgePending(t *testing.T) {
 	t.Helper()
-	target, found, err := f.srv.clients.readRebootSymlink(vfs.InodeID(f.n))
-	if err != nil || !found || target != vfs.InodeID(f.p) || !f.present(t, vfs.InodeID(f.p), f.srv.clients.leaseName) {
+	target, found, err := f.srv.clients.ReadRebootSymlink(vfs.InodeID(f.n))
+	if err != nil || !found || target != vfs.InodeID(f.p) || !f.present(t, vfs.InodeID(f.p), f.srv.clients.LeaseName) {
 		t.Fatalf("purge obligation lost: reboot %d %t %v", target, found, err)
 	}
 }
 
 func (f *confirmServer) assertPurged(t *testing.T) {
 	t.Helper()
-	if f.present(t, vfs.InodeID(f.n), rebootName) || f.present(t, vfs.InodeID(f.p), f.srv.clients.leaseName) {
+	if f.present(t, vfs.InodeID(f.n), clientstore.RebootName) || f.present(t, vfs.InodeID(f.p), f.srv.clients.LeaseName) {
 		t.Fatal("purge not completed")
 	}
 }
@@ -1310,27 +1311,27 @@ func TestPurgeOwnership(t *testing.T) {
 		f.commitWithFailedPurge(t)
 		// Another confirmation of N, in another process, recorded M as its
 		// predecessor: the evidence now names M, which is what is purged.
-		m, err := f.srv.clients.newIncarnation(f.identity)
+		m, err := f.srv.clients.NewIncarnation(f.identity)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := f.fs.TernVFS.CreateFile(m, activeOpenName(nfs4.StateID{2}), nil); err != nil {
+		if _, err := f.fs.TernVFS.CreateFile(m, clientstore.ActiveOpenName(nfs4.StateID{2}), nil); err != nil {
 			t.Fatal(err)
 		}
-		name, _, _ := f.srv.clients.incarnationName(f.identity, m)
+		name, _, _ := f.srv.clients.IncarnationName(f.identity, m)
 		if _, err := f.fs.TernVFS.Symlink(vfs.InodeID(f.n), "t.hook", "../"+name); err != nil {
 			t.Fatal(err)
 		}
-		if err := f.fs.TernVFS.Rename(vfs.InodeID(f.n), "t.hook", vfs.InodeID(f.n), rebootName); err != nil {
+		if err := f.fs.TernVFS.Rename(vfs.InodeID(f.n), "t.hook", vfs.InodeID(f.n), clientstore.RebootName); err != nil {
 			t.Fatal(err)
 		}
 		if got, _ := f.rawCreate(t, f.wireN, 2); got != nfs4.NFS4_OK {
 			t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 		}
-		if f.present(t, m, activeOpenName(nfs4.StateID{2})) || f.present(t, vfs.InodeID(f.n), rebootName) {
+		if f.present(t, m, clientstore.ActiveOpenName(nfs4.StateID{2})) || f.present(t, vfs.InodeID(f.n), clientstore.RebootName) {
 			t.Fatal("the incarnation the evidence names was not purged")
 		}
-		if !f.present(t, vfs.InodeID(f.p), f.srv.clients.leaseName) {
+		if !f.present(t, vfs.InodeID(f.p), f.srv.clients.LeaseName) {
 			t.Fatal("P purged without evidence naming it")
 		}
 	})
@@ -1413,7 +1414,7 @@ func TestPurgeProtectionOrdering(t *testing.T) {
 		f.commitWithFailedPurge(t)
 		wireR, _ := f.rebootN(t)
 		// R's confirmation over N stays unresolved: N is protected.
-		f.arm(writeD, faultFenceErr, nil)
+		f.arm(clientstore.WriteD, clientstore.FaultFenceErr, nil)
 		if got, _ := f.rawCreate(t, wireR, 1); got != nfs4.NFS4ERR_DELAY || !f.srv.protected(f.n) {
 			t.Fatalf("R's CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 		}
@@ -1424,7 +1425,7 @@ func TestPurgeProtectionOrdering(t *testing.T) {
 			t.Fatal("deferred purge dropped its hint or kept a hold")
 		}
 		// R rolls back; N is no longer protected and the purge completes.
-		f.fs.set(writeD, faultNone, nil)
+		f.fs.Set(clientstore.WriteD, clientstore.FaultNone, nil)
 		f.srv.settleConfirmations()
 		if f.srv.protected(f.n) || identityConfirmed(t, f) != vfs.InodeID(f.n) {
 			t.Fatal("R did not roll back")
@@ -1462,9 +1463,9 @@ func TestPurgeProtectionOrdering(t *testing.T) {
 		result, resume := f.pausedCreateFor(t, wireR)
 		g := newGate()
 		defer testutil.CloseSignal(g.release)
-		f.fs.mu.Lock()
-		f.fs.onReaddir[vfs.InodeID(f.p)] = g.hold
-		f.fs.mu.Unlock()
+		f.fs.Mu.Lock()
+		f.fs.OnReaddir[vfs.InodeID(f.p)] = g.hold
+		f.fs.Mu.Unlock()
 		purged := make(chan struct{})
 		go func() { defer close(purged); f.srv.resumeReplacementPurge(f.n) }()
 		testutil.AwaitSignal(t, g.entered, "purge of P")
@@ -1482,7 +1483,7 @@ func TestPurgeProtectionOrdering(t *testing.T) {
 		if holdN != 1 || holdP != 1 || registered {
 			t.Fatalf("registration completed past the admitted purge: holds %d %d, registered %t", holdN, holdP, registered)
 		}
-		if f.present(t, vfs.InodeID(r), f.srv.clients.confirmingName) || identityConfirmed(t, f) != vfs.InodeID(f.n) {
+		if f.present(t, vfs.InodeID(r), f.srv.clients.ConfirmingName) || identityConfirmed(t, f) != vfs.InodeID(f.n) {
 			t.Fatal("confirmation wrote while the purge was running")
 		}
 		testutil.CloseSignal(g.release)
@@ -1507,7 +1508,7 @@ func TestPurgeProtectionOrdering(t *testing.T) {
 		}
 		f.panicNextRemoveInP()
 		f.srv.resumeReplacementPurge(f.n)
-		if !f.replacementHeld() || !f.present(t, vfs.InodeID(f.n), rebootName) || f.destructionHolds() != 0 {
+		if !f.replacementHeld() || !f.present(t, vfs.InodeID(f.n), clientstore.RebootName) || f.destructionHolds() != 0 {
 			t.Fatal("panicking purge dropped its obligation or kept a hold")
 		}
 		// No hold is left to wait for: R's confirmation registers and commits.
@@ -1528,7 +1529,7 @@ func TestRecoveryHoldReleasedOnPanic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	key, err := srv.clients.stagingRecoveryKey(f.n)
+	key, err := srv.clients.StagingRecoveryKey(f.n)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1542,10 +1543,10 @@ func TestRecoveryHoldReleasedOnPanic(t *testing.T) {
 	endQuietForTest(srv)
 	// decideExpired(P), after the hold, reads the identity's confirmed
 	// pointer: panic there.
-	f.fs.mu.Lock()
-	f.fs.lookupHook.dir, f.fs.lookupHook.name, f.fs.lookupHook.skip = f.identity, confirmedName, 0
-	f.fs.lookupHook.fn = func() { panic("injected panic after the recovery hold") }
-	f.fs.mu.Unlock()
+	f.fs.Mu.Lock()
+	f.fs.LookupHook.Dir, f.fs.LookupHook.Name, f.fs.LookupHook.Skip = f.identity, clientstore.ConfirmedName, 0
+	f.fs.LookupHook.Fn = func() { panic("injected panic after the recovery hold") }
+	f.fs.Mu.Unlock()
 	func() {
 		defer func() {
 			if recover() == nil {
@@ -1570,14 +1571,14 @@ func TestRecoveryHoldReleasedOnPanic(t *testing.T) {
 // with its evidence; the retry settles it as committed.
 func TestConfirmationPanicRetained(t *testing.T) {
 	f := newConfirmServer(t)
-	f.arm(writeD, faultAppliedPanic, nil)
+	f.arm(clientstore.WriteD, clientstore.FaultAppliedPanic, nil)
 	if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4ERR_DELAY {
 		t.Fatalf("CREATE_SESSION after a panic %s", nfs4.Nfsstat4Name(got))
 	}
 	if !f.srv.protected(f.n) {
 		t.Fatal("panic dropped the protection")
 	}
-	f.fs.set(writeD, faultNone, nil)
+	f.fs.Set(clientstore.WriteD, clientstore.FaultNone, nil)
 	if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4_OK {
 		t.Fatalf("retry %s", nfs4.Nfsstat4Name(got))
 	}

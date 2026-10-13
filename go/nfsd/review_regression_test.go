@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sidecar"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
@@ -68,8 +69,8 @@ func TestExpiredWriterRecoversAcknowledgedData(t *testing.T) {
 				writeFileAt(t, conn, &xid, fh, state, 0, []byte("UPDATED!"))
 				id := stagingIDForTest(t, srv.stagingStore, state)
 				srv.waitForClientGC()
-				now := time.Now().Add(2 * nfsLeaseTime)
-				srv.clients.setClock(func() time.Time { return now })
+				now := time.Now().Add(2 * clientstore.LeaseTime)
+				srv.clients.SetClock(func() time.Time { return now })
 				srv.runLeaseSweep()
 				assertRetiredStaging(t, store, id)
 				if restart {
@@ -84,7 +85,7 @@ func TestExpiredWriterRecoversAcknowledgedData(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					srv.clients.setClock(func() time.Time { return now })
+					srv.clients.SetClock(func() time.Time { return now })
 					addr, cleanup = serveTestServer(t, srv)
 					conn = dial(t, addr)
 				}
@@ -117,18 +118,18 @@ func TestExpiredWriterRecoversAcknowledgedData(t *testing.T) {
 
 func TestStagingRecoveryKeySeparatesBootsAndPrincipals(t *testing.T) {
 	fs := vfs.NewLocalTernVFS(t.TempDir())
-	cs, err := NewClientStore(fs)
+	cs, err := clientstore.NewStore(fs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	owner := clientOwner{principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "one"}}
+	owner := clientstore.ClientOwner{Principal: clientstore.RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "one"}}
 	key := func(identity string, verifier byte, principal string) [32]byte {
-		owner.principal.body = principal
+		owner.Principal.Body = principal
 		id, _, err := cs.SetClientID([8]byte{verifier}, []byte(identity), owner)
 		if err != nil {
 			t.Fatal(err)
 		}
-		k, err := cs.stagingRecoveryKey(id)
+		k, err := cs.StagingRecoveryKey(id)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -298,7 +299,7 @@ func (fs *metadataOnlyVFS) Read(vfs.InodeID, uint64, []byte) (int, bool, error) 
 }
 
 func (fs *metadataOnlyVFS) LinkFile(id vfs.InodeID, cookie vfs.Cookie, dir vfs.InodeID, name string, data io.Reader) error {
-	if leaseTemp(name) {
+	if clientstore.LeaseTemp(name) {
 		return fs.LocalTernVFS.LinkFile(id, cookie, dir, name, data)
 	}
 	fs.links.Add(1)
@@ -487,8 +488,8 @@ func TestRecoveredRetiredCreateAppliesSize(t *testing.T) {
 	state, fh := openCreateFile(t, conn, &xid, clientID, "file")
 	writeFileAt(t, conn, &xid, fh, state, 0, []byte("acknowledged"))
 	srv.waitForClientGC()
-	now := time.Now().Add(2 * nfsLeaseTime)
-	srv.clients.setClock(func() time.Time { return now })
+	now := time.Now().Add(2 * clientstore.LeaseTime)
+	srv.clients.SetClock(func() time.Time { return now })
 	srv.runLeaseSweep()
 	newClient := setupClient(t, conn, &xid)
 	size := uint64(3)

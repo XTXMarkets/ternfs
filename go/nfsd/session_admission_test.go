@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
@@ -168,15 +169,15 @@ func TestAdmissionFailedSequencePreservesCache(t *testing.T) {
 			case "renewal":
 				// The lease is not proven: DELAY from memory, with the
 				// store failing too.
-				setLeaseForTest(srv, sess.clientID, func(r *leaseRefresher) { r.proven = 0 })
+				setLeaseForTest(srv, sess.clientID, func(r *clientstore.LeaseRefresher) { r.Proven = 0 })
 				fs.fail = true
 				want = nfs4.NFS4ERR_DELAY
-				restore = func() { fs.fail = false; srv.clients.pinLeaseForTest(sess.clientID) }
+				restore = func() { fs.fail = false; srv.clients.PinLeaseForTest(sess.clientID) }
 			case "missing-client":
-				setLeaseForTest(srv, sess.clientID, func(r *leaseRefresher) { r.state = leaseRecordStale })
+				setLeaseForTest(srv, sess.clientID, func(r *clientstore.LeaseRefresher) { r.State = clientstore.LeaseRecordStale })
 				want = nfs4.NFS4ERR_BADSESSION
 				restore = func() {
-					setLeaseForTest(srv, sess.clientID, func(r *leaseRefresher) { r.state = leaseRecordLive })
+					setLeaseForTest(srv, sess.clientID, func(r *clientstore.LeaseRefresher) { r.State = clientstore.LeaseRecordLive })
 				}
 			}
 			_, res = admissionRequest(t, srv, next, 2, conn)

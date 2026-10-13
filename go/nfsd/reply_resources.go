@@ -8,6 +8,7 @@ import (
 	"unsafe"
 
 	"github.com/XTXMarkets/ternfs/go/msgs"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -18,7 +19,7 @@ const (
 	// A group is referenced by a wire record, a session, or a request or
 	// CREATE_SESSION in progress. The first two are bounded by their own
 	// caps; the credit bounds groups that only running work keeps.
-	maxClientGroups = 2 * maxSessionRecords
+	maxClientGroups = 2 * clientstore.MaxSessionRecords
 )
 
 // A cachedReply owns one allocation or a pre-effect capacity reservation.

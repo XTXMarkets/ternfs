@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
@@ -332,7 +333,7 @@ func (cb *cbSender) call(conn *rpcConnection, seq, target uint32) (cbOutcome, bo
 				cb.mu.Unlock()
 				// Renew while this goroutine still holds its session use.
 				cb.s.sessions.callbackRenew(cb.sess.clientID, cb.s.sessions.now())
-				cb.s.clients.noteLeaseNeed(cb.sess.clientID)
+				cb.s.clients.NoteLeaseNeed(cb.sess.clientID)
 			}
 			return outcome, true
 		case <-timeout:
@@ -594,7 +595,7 @@ func (ss *sessionStore) callbackRenew(clientID uint64, received time.Time) {
 	default:
 		return
 	}
-	if quiet := received.Add(nfsLeaseTime); quiet.After(g.quietUntil) {
+	if quiet := received.Add(clientstore.LeaseTime); quiet.After(g.quietUntil) {
 		g.quietUntil = quiet
 	}
 }

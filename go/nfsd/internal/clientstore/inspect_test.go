@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-package main
+package clientstore
 
 import (
 	"bytes"
@@ -37,8 +37,8 @@ func authSysBody(uid uint32, gid uint32, groups ...uint32) string {
 // client identities in different states.
 type inspectFixture struct {
 	fs         vfs.TernVFS
-	first      *ClientStore
-	second     *ClientStore
+	first      *Store
+	second     *Store
 	now        time.Time
 	identity   []byte
 	clientID   uint64
@@ -60,19 +60,19 @@ func newInspectFixture(t *testing.T) *inspectFixture {
 		identity: []byte("Linux NFSv4.1 host-a/10.0.0.1"),
 	}
 	var err error
-	f.first, err = NewClientStore(f.fs)
+	f.first, err = NewStore(f.fs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.second, err = NewClientStore(f.fs)
+	f.second, err = NewStore(f.fs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.first.now = func() time.Time { return f.now }
-	f.second.now = func() time.Time { return f.now }
+	f.first.Now = func() time.Time { return f.now }
+	f.second.Now = func() time.Time { return f.now }
 
-	owner := clientOwner{
-		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: authSysBody(1000, 100, 100, 4)},
+	owner := ClientOwner{
+		Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: authSysBody(1000, 100, 100, 4)},
 	}
 
 	// Identity C: confirmed with a lease which expires before the report is
@@ -111,7 +111,7 @@ func newInspectFixture(t *testing.T) *inspectFixture {
 
 	// The first slot of identity A and the only slot of identity C are now
 	// expired, by 10s; the second slot of identity A is live.
-	f.now = f.now.Add(leaseWriteTerm - 40*time.Second)
+	f.now = f.now.Add(LeaseWriteTerm - 40*time.Second)
 
 	f.stagingDir = t.TempDir()
 	uploadMeta := filepath.Join(f.stagingDir, "0000000000003039.meta")
@@ -166,29 +166,29 @@ func newInspectFixture(t *testing.T) *inspectFixture {
 
 func (f *inspectFixture) register(
 	t *testing.T,
-	store *ClientStore,
+	store *Store,
 	identity []byte,
 	verifier [8]byte,
-	owner clientOwner,
+	owner ClientOwner,
 ) uint64 {
 	t.Helper()
 	clientID, confirm, err := store.SetClientID(verifier, identity, owner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ConfirmClientID(clientID, confirm, owner.principal); err != nil {
+	if _, err := store.ConfirmClientID(clientID, confirm, owner.Principal); err != nil {
 		t.Fatal(err)
 	}
 	return clientID
 }
 
-func (f *inspectFixture) reader(t *testing.T) *ClientStore {
+func (f *inspectFixture) reader(t *testing.T) *Store {
 	t.Helper()
-	store, err := openClientStoreReader(f.fs)
+	store, err := OpenReader(f.fs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	store.now = func() time.Time { return f.now }
+	store.Now = func() time.Time { return f.now }
 	return store
 }
 
@@ -211,7 +211,7 @@ func findIncarnation(
 
 func TestInspectReportsClientState(t *testing.T) {
 	f := newInspectFixture(t)
-	report, err := f.reader(t).Inspect(inspectOptions{StagingDir: f.stagingDir})
+	report, err := f.reader(t).Inspect(InspectOptions{StagingDir: f.stagingDir})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,8 +247,8 @@ func TestInspectReportsClientState(t *testing.T) {
 	for _, slot := range current.Leases {
 		if slot.Live {
 			liveSlots++
-			if slot.NfsdID != f.second.nfsdID {
-				t.Fatalf("live slot belongs to %s, want %s", slot.NfsdID, f.second.nfsdID)
+			if slot.NfsdID != f.second.NfsdID {
+				t.Fatalf("live slot belongs to %s, want %s", slot.NfsdID, f.second.NfsdID)
 			}
 		} else if slot.Collectable {
 			t.Fatalf("slot expired 10s ago reported collectable: %+v", slot)
@@ -331,8 +331,8 @@ func TestInspectReportsClientState(t *testing.T) {
 // which fired on ordinary lifecycle states would fire constantly.
 func TestInspectCountsNoProblemsForOrdinaryLifecycleStates(t *testing.T) {
 	f := newInspectFixture(t)
-	f.now = f.now.Add(10 * nfsLeaseTime)
-	report, err := f.reader(t).Inspect(inspectOptions{StagingDir: f.stagingDir})
+	f.now = f.now.Add(10 * LeaseTime)
+	report, err := f.reader(t).Inspect(InspectOptions{StagingDir: f.stagingDir})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -356,13 +356,13 @@ func TestInspectCountsNoProblemsForOrdinaryLifecycleStates(t *testing.T) {
 // the principal field where nothing looks for it.
 func TestInspectCountsUnreadableRecord(t *testing.T) {
 	f := newInspectFixture(t)
-	if err := f.fs.Remove(vfs.InodeID(f.clientID), clientRecordName); err != nil {
+	if err := f.fs.Remove(vfs.InodeID(f.clientID), ClientRecordName); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.fs.Symlink(vfs.InodeID(f.clientID), clientRecordName, "nowhere"); err != nil {
+	if _, err := f.fs.Symlink(vfs.InodeID(f.clientID), ClientRecordName, "nowhere"); err != nil {
 		t.Fatal(err)
 	}
-	report, err := f.reader(t).Inspect(inspectOptions{ClientID: f.clientID})
+	report, err := f.reader(t).Inspect(InspectOptions{ClientID: f.clientID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -383,11 +383,11 @@ func TestInspectCountsProblems(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.fs.Remove(identityID, confirmedName); err != nil {
+	if err := f.fs.Remove(identityID, ConfirmedName); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.fs.Symlink(
-		identityID, confirmedName, "i.ffffffffffffffffffffffffffffffff",
+		identityID, ConfirmedName, "i.ffffffffffffffffffffffffffffffff",
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -402,7 +402,7 @@ func TestInspectCountsProblems(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	report, err := f.reader(t).Inspect(inspectOptions{StagingDir: f.stagingDir})
+	report, err := f.reader(t).Inspect(InspectOptions{StagingDir: f.stagingDir})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -429,14 +429,14 @@ func TestInspectDoesNotModifyStore(t *testing.T) {
 	f := newInspectFixture(t)
 	// Move far enough that every slot of the expired identity is collectable
 	// and the replaced incarnation would be a GC candidate.
-	f.now = f.now.Add(10 * nfsLeaseTime)
+	f.now = f.now.Add(10 * LeaseTime)
 
-	before := listTree(t, f.fs, f.first.dirID, "")
-	report, err := f.reader(t).Inspect(inspectOptions{})
+	before := listTree(t, f.fs, f.first.DirID, "")
+	report, err := f.reader(t).Inspect(InspectOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	after := listTree(t, f.fs, f.first.dirID, "")
+	after := listTree(t, f.fs, f.first.DirID, "")
 	if !equalStrings(before, after) {
 		t.Fatalf("inspect modified the store:\nbefore %v\nafter  %v", before, after)
 	}
@@ -448,7 +448,7 @@ func TestInspectDoesNotModifyStore(t *testing.T) {
 	if len(expired.Leases) != 1 || !expired.Leases[0].Collectable {
 		t.Fatalf("expired leases = %+v", expired.Leases)
 	}
-	if _, err := f.fs.Lookup(vfs.InodeID(f.expiredID), expiredName); !errors.Is(err, os.ErrNotExist) {
+	if _, err := f.fs.Lookup(vfs.InodeID(f.expiredID), ExpiredName); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expired marker lookup = %v", err)
 	}
 	_, replaced := findIncarnation(t, report, f.replacedID)
@@ -462,7 +462,7 @@ func TestInspectFilters(t *testing.T) {
 	reader := f.reader(t)
 
 	t.Run("clientid", func(t *testing.T) {
-		report, err := reader.Inspect(inspectOptions{ClientID: f.clientID})
+		report, err := reader.Inspect(InspectOptions{ClientID: f.clientID})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -474,7 +474,7 @@ func TestInspectFilters(t *testing.T) {
 	// whether a client is still around and being told it is not must not make
 	// a monitoring check fire.
 	t.Run("stale clientid", func(t *testing.T) {
-		report, err := reader.Inspect(inspectOptions{
+		report, err := reader.Inspect(InspectOptions{
 			ClientID: uint64(vfs.MakeInodeID(vfs.InodeTypeDir, 0x123456)),
 		})
 		if err != nil {
@@ -489,7 +489,7 @@ func TestInspectFilters(t *testing.T) {
 	// mistake, so the note names the flag to use instead. The store is not
 	// broken, so it is not a problem.
 	t.Run("identity directory as clientid", func(t *testing.T) {
-		report, err := reader.Inspect(inspectOptions{
+		report, err := reader.Inspect(InspectOptions{
 			ClientID: uint64(f.identityDirID),
 		})
 		if err != nil {
@@ -502,7 +502,7 @@ func TestInspectFilters(t *testing.T) {
 		}
 	})
 	t.Run("identity", func(t *testing.T) {
-		report, err := reader.Inspect(inspectOptions{Identity: f.identity})
+		report, err := reader.Inspect(InspectOptions{Identity: f.identity})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -510,7 +510,7 @@ func TestInspectFilters(t *testing.T) {
 			report.Identities[0].IdentityHash != clientIdentityKey(f.identity) {
 			t.Fatalf("report = %+v", report.Identities)
 		}
-		report, err = reader.Inspect(inspectOptions{Identity: []byte("nobody")})
+		report, err = reader.Inspect(InspectOptions{Identity: []byte("nobody")})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -520,7 +520,7 @@ func TestInspectFilters(t *testing.T) {
 		}
 	})
 	t.Run("identity hash", func(t *testing.T) {
-		report, err := reader.Inspect(inspectOptions{
+		report, err := reader.Inspect(InspectOptions{
 			IdentityHash: clientIdentityKey([]byte("pending-client")),
 		})
 		if err != nil {
@@ -532,7 +532,7 @@ func TestInspectFilters(t *testing.T) {
 	})
 	t.Run("stateid scan", func(t *testing.T) {
 		sid := f.stateID
-		report, err := reader.Inspect(inspectOptions{StateID: &sid})
+		report, err := reader.Inspect(InspectOptions{StateID: &sid})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -541,7 +541,7 @@ func TestInspectFilters(t *testing.T) {
 			t.Fatalf("report = %+v", report.Identities)
 		}
 		unknown := nfs4.StateID{1}
-		report, err = reader.Inspect(inspectOptions{StateID: &unknown})
+		report, err = reader.Inspect(InspectOptions{StateID: &unknown})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -552,7 +552,7 @@ func TestInspectFilters(t *testing.T) {
 	})
 	t.Run("stateid via staging sidecar", func(t *testing.T) {
 		sid := f.stateID
-		report, err := reader.Inspect(inspectOptions{
+		report, err := reader.Inspect(InspectOptions{
 			StateID: &sid, StagingDir: f.stagingDir,
 		})
 		if err != nil {
@@ -565,7 +565,7 @@ func TestInspectFilters(t *testing.T) {
 	})
 	t.Run("stateid with staging but no open marker", func(t *testing.T) {
 		sid := nfs4.StateID{9}
-		report, err := reader.Inspect(inspectOptions{
+		report, err := reader.Inspect(InspectOptions{
 			StateID: &sid, StagingDir: f.stagingDir,
 		})
 		if err != nil {
@@ -583,7 +583,7 @@ func TestInspectFilters(t *testing.T) {
 
 func TestInspectOutput(t *testing.T) {
 	f := newInspectFixture(t)
-	report, err := f.reader(t).Inspect(inspectOptions{StagingDir: f.stagingDir})
+	report, err := f.reader(t).Inspect(InspectOptions{StagingDir: f.stagingDir})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -695,7 +695,7 @@ func TestInspectOutput(t *testing.T) {
 
 func TestInspectJSONKeepsAnEmptyIdentityListAnArray(t *testing.T) {
 	f := newInspectFixture(t)
-	report, err := f.reader(t).Inspect(inspectOptions{
+	report, err := f.reader(t).Inspect(InspectOptions{
 		ClientID: uint64(vfs.MakeInodeID(vfs.InodeTypeDir, 0x123456)),
 	})
 	if err != nil {
@@ -735,14 +735,14 @@ func TestInspectReportsMalformedStagingAndPointers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.fs.Remove(identityID, confirmedName); err != nil {
+	if err := f.fs.Remove(identityID, ConfirmedName); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.fs.Symlink(identityID, confirmedName, "../"+name); err != nil {
+	if _, err := f.fs.Symlink(identityID, ConfirmedName, "../"+name); err != nil {
 		t.Fatal(err)
 	}
 
-	report, err := f.reader(t).Inspect(inspectOptions{StagingDir: f.stagingDir})
+	report, err := f.reader(t).Inspect(InspectOptions{StagingDir: f.stagingDir})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -764,8 +764,8 @@ func TestInspectReportsMalformedStagingAndPointers(t *testing.T) {
 
 func TestInspectTextDescribesConfirmedClientWithoutLease(t *testing.T) {
 	f := newInspectFixture(t)
-	f.register(t, f.first, []byte("awaiting-renew"), [8]byte{5}, clientOwner{})
-	report, err := f.reader(t).Inspect(inspectOptions{})
+	f.register(t, f.first, []byte("awaiting-renew"), [8]byte{5}, ClientOwner{})
+	report, err := f.reader(t).Inspect(InspectOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -809,8 +809,8 @@ func TestInspectIncarnationStatus(t *testing.T) {
 
 func TestInspectMarksOpenUnderExpiredLeaseStale(t *testing.T) {
 	f := newInspectFixture(t)
-	f.now = f.now.Add(nfsLeaseTime)
-	report, err := f.reader(t).Inspect(inspectOptions{})
+	f.now = f.now.Add(LeaseTime)
+	report, err := f.reader(t).Inspect(InspectOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -891,7 +891,7 @@ func TestInspectReportsStagingIntegrity(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	report, err := f.reader(t).Inspect(inspectOptions{StagingDir: dir})
+	report, err := f.reader(t).Inspect(InspectOptions{StagingDir: dir})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -969,7 +969,7 @@ func TestInspectReportsStagingIntegrity(t *testing.T) {
 // under a heading which claims they have no client.
 func TestInspectFilteredReportCountsOtherClientsStaging(t *testing.T) {
 	f := newInspectFixture(t)
-	report, err := f.reader(t).Inspect(inspectOptions{
+	report, err := f.reader(t).Inspect(InspectOptions{
 		IdentityHash: clientIdentityKey([]byte("pending-client")),
 		StagingDir:   f.stagingDir,
 	})
@@ -1001,7 +1001,7 @@ func TestInspectFilteredReportCountsOtherClientsStaging(t *testing.T) {
 func TestInspectRejectsInvalidStagingPath(t *testing.T) {
 	f := newInspectFixture(t)
 	missing := filepath.Join(t.TempDir(), "missing")
-	if _, err := f.reader(t).Inspect(inspectOptions{
+	if _, err := f.reader(t).Inspect(InspectOptions{
 		StagingDir: missing,
 	}); err == nil || !strings.Contains(err.Error(), "staging directory") {
 		t.Fatalf("missing staging path error = %v", err)
@@ -1011,61 +1011,27 @@ func TestInspectRejectsInvalidStagingPath(t *testing.T) {
 	if err := os.WriteFile(path, nil, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.reader(t).Inspect(inspectOptions{
+	if _, err := f.reader(t).Inspect(InspectOptions{
 		StagingDir: path,
 	}); err == nil || !strings.Contains(err.Error(), "is not a directory") {
 		t.Fatalf("file staging path error = %v", err)
 	}
 }
 
-func TestParseInspectOptions(t *testing.T) {
-	hash := strings.Repeat("a", 64)
-	tests := []struct {
-		name                                      string
-		identity, identityHash, clientID, stateID string
-		wantErr                                   bool
-	}{
-		{name: "no filter"},
-		{name: "identity", identity: "client"},
-		{name: "identity hash", identityHash: hash},
-		{name: "uppercase identity hash", identityHash: strings.ToUpper(hash)},
-		{name: "clientid", clientID: "0x2000000000000001"},
-		{name: "stateid", stateID: strings.Repeat("0", 24)},
-		{name: "zero clientid", clientID: "0", wantErr: true},
-		{name: "file inode as clientid", clientID: "0x4000000000000001", wantErr: true},
-		{name: "short identity hash", identityHash: "abcd", wantErr: true},
-		{name: "invalid identity hash", identityHash: strings.Repeat("g", 64), wantErr: true},
-		{name: "two filters", identity: "client", clientID: "0x2000000000000001", wantErr: true},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			opts, err := parseInspectOptions(
-				test.identity, test.identityHash, test.clientID, test.stateID)
-			if (err != nil) != test.wantErr {
-				t.Fatalf("parseInspectOptions() error = %v, wantErr %v", err, test.wantErr)
-			}
-			if !test.wantErr && test.identityHash != "" &&
-				opts.IdentityHash != strings.ToLower(test.identityHash) {
-				t.Fatalf("identity hash = %q", opts.IdentityHash)
-			}
-		})
-	}
-}
-
 func TestInspectWithoutStore(t *testing.T) {
-	if _, err := openClientStoreReader(vfs.NewLocalTernVFS(t.TempDir())); err == nil {
+	if _, err := OpenReader(vfs.NewLocalTernVFS(t.TempDir())); err == nil {
 		t.Fatal("reader opened a filesystem without a client store")
 	}
 }
 
 func TestFormatPrincipal(t *testing.T) {
-	if got := formatPrincipal(rpcPrincipal{flavor: nfs4.AUTH_NONE}); got != "AUTH_NONE" {
+	if got := formatPrincipal(RPCPrincipal{Flavor: nfs4.AUTH_NONE}); got != "AUTH_NONE" {
 		t.Fatalf("AUTH_NONE = %s", got)
 	}
-	if got := formatPrincipal(rpcPrincipal{flavor: nfs4.AUTH_SYS, body: "ab"}); got != "AUTH_SYS 6162" {
+	if got := formatPrincipal(RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "ab"}); got != "AUTH_SYS 6162" {
 		t.Fatalf("short AUTH_SYS = %s", got)
 	}
-	if got := formatPrincipal(rpcPrincipal{flavor: 6, body: "\x01"}); got != "flavor 6 01" {
+	if got := formatPrincipal(RPCPrincipal{Flavor: 6, Body: "\x01"}); got != "flavor 6 01" {
 		t.Fatalf("unknown flavor = %s", got)
 	}
 }
@@ -1082,7 +1048,7 @@ func listTree(t *testing.T, fs vfs.TernVFS, dirID vfs.InodeID, prefix string) []
 		for _, entry := range entries {
 			name := prefix + entry.Name
 			result = append(result, name)
-			if isDirectoryInodeID(entry.ID) {
+			if IsDirectoryInodeID(entry.ID) {
 				result = append(result, listTree(t, fs, entry.ID, name+"/")...)
 			}
 		}

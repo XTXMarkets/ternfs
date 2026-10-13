@@ -25,6 +25,7 @@ import (
 	"github.com/XTXMarkets/ternfs/go/core/log"
 	"github.com/XTXMarkets/ternfs/go/core/managedprocess"
 	"github.com/XTXMarkets/ternfs/go/msgs"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
@@ -990,15 +991,15 @@ func TestTernClientIncarnationGC(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	first, err := NewClientStore(fs)
+	first, err := clientstore.NewStore(fs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := NewClientStore(fs)
+	second, err := clientstore.NewStore(fs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	collector, err := NewClientStore(fs)
+	collector, err := clientstore.NewStore(fs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1009,11 +1010,11 @@ func TestTernClientIncarnationGC(t *testing.T) {
 	now := func() time.Time { return time.Unix(0, clock.Load()) }
 	// Install once before using the stores. All three observe the same clock;
 	// advancing time does not replace functions or mutate captured variables.
-	first.now = now
-	second.now = now
-	collector.now = now
-	owner := clientOwner{
-		principal: rpcPrincipal{flavor: nfs4.AUTH_SYS, body: t.Name()},
+	first.Now = now
+	second.Now = now
+	collector.Now = now
+	owner := clientstore.ClientOwner{
+		Principal: clientstore.RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: t.Name()},
 	}
 	identity := []byte(t.Name())
 	oldID, confirm, err := first.SetClientID(
@@ -1022,7 +1023,7 @@ func TestTernClientIncarnationGC(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := first.ConfirmClientID(
-		oldID, confirm, owner.principal,
+		oldID, confirm, owner.Principal,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -1034,18 +1035,18 @@ func TestTernClientIncarnationGC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	leaseID, err := fs.Lookup(vfs.InodeID(oldID), first.leaseName)
+	leaseID, err := fs.Lookup(vfs.InodeID(oldID), first.LeaseName)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// A renewal below the coalescing threshold must not rewrite the lease.
 	// The refresher rewrites once the published lease is less than
 	// nfsLeaseTime + nfsLeaseRenewAfter/2 ahead (canonical r3 §9.2).
-	clock.Store(base.Add(nfsLeaseRenewAfter/2 - time.Nanosecond).UnixNano())
+	clock.Store(base.Add(clientstore.LeaseRenewAfter/2 - time.Nanosecond).UnixNano())
 	if err := first.Renew(oldID); err != nil {
 		t.Fatal(err)
 	}
-	coalescedLeaseID, err := fs.Lookup(vfs.InodeID(oldID), first.leaseName)
+	coalescedLeaseID, err := fs.Lookup(vfs.InodeID(oldID), first.LeaseName)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1058,11 +1059,11 @@ func TestTernClientIncarnationGC(t *testing.T) {
 
 		// Each rewrite is beyond the threshold from the previous durable
 		// renewal, but before that lease expires.
-		clock.Store(base.Add(time.Duration(i) * (nfsLeaseRenewAfter + time.Second)).UnixNano())
+		clock.Store(base.Add(time.Duration(i) * (clientstore.LeaseRenewAfter + time.Second)).UnixNano())
 		if err := first.Renew(oldID); err != nil {
 			t.Fatal(err)
 		}
-		nextLeaseID, err := fs.Lookup(vfs.InodeID(oldID), first.leaseName)
+		nextLeaseID, err := fs.Lookup(vfs.InodeID(oldID), first.LeaseName)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1082,7 +1083,7 @@ func TestTernClientIncarnationGC(t *testing.T) {
 		}
 		leaseID = nextLeaseID
 	}
-	oldName, found, err := first.incarnationName(
+	oldName, found, err := first.IncarnationName(
 		identityID, vfs.InodeID(oldID))
 	if err != nil {
 		t.Fatal(err)
@@ -1090,7 +1091,7 @@ func TestTernClientIncarnationGC(t *testing.T) {
 	if !found {
 		t.Fatal("old incarnation has no directory entry")
 	}
-	confirmedSymlinkID, err := fs.Lookup(identityID, confirmedName)
+	confirmedSymlinkID, err := fs.Lookup(identityID, clientstore.ConfirmedName)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1102,11 +1103,11 @@ func TestTernClientIncarnationGC(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := second.ConfirmClientID(
-		newID, confirm, owner.principal,
+		newID, confirm, owner.Principal,
 	); err != nil {
 		t.Fatal(err)
 	}
-	nextConfirmedSymlinkID, err := fs.Lookup(identityID, confirmedName)
+	nextConfirmedSymlinkID, err := fs.Lookup(identityID, clientstore.ConfirmedName)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1121,7 +1122,7 @@ func TestTernClientIncarnationGC(t *testing.T) {
 		t.Fatalf("confirmed symlink parent = %d, want %d",
 			nextParent, identityID)
 	}
-	if err := collector.collectStaleForClient(vfs.InodeID(newID)); err != nil {
+	if err := collector.CollectStaleForClient(vfs.InodeID(newID)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := fs.Lookup(identityID, oldName); err != nil {
@@ -1129,8 +1130,8 @@ func TestTernClientIncarnationGC(t *testing.T) {
 	}
 	// The first collection marks a candidate relative to the current shared
 	// clock, after the renewals and replacement, not the original base.
-	clock.Add(int64(clientGCGrace + time.Second))
-	if err := collector.collectStaleForClient(vfs.InodeID(newID)); err != nil {
+	clock.Add(int64(clientstore.ClientGCGrace + time.Second))
+	if err := collector.CollectStaleForClient(vfs.InodeID(newID)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := fs.Lookup(identityID, oldName); !os.IsNotExist(err) {
@@ -2692,7 +2693,7 @@ func TestTernLookupParentCachesDirectoryOwner(t *testing.T) {
 	}
 	defer c.Close()
 	fs := vfs.NewRemoteTernVFS(c, ternLogger, bufpool.NewBufPool())
-	dirID, err := ensureDir(fs, fs.RootID(), "lookup-parent-cache")
+	dirID, err := clientstore.EnsureDir(fs, fs.RootID(), "lookup-parent-cache")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2914,8 +2915,8 @@ func TestTernRetiredSourceCanMoveAcrossDirectories(t *testing.T) {
 	writeFileAt(t, conn, &xid, fh, state, 0, []byte("unpublished"))
 	id := stagingIDForTest(t, srv.stagingStore, state)
 	srv.waitForClientGC()
-	now := time.Now().Add(2 * nfsLeaseTime)
-	srv.clients.setClock(func() time.Time { return now })
+	now := time.Now().Add(2 * clientstore.LeaseTime)
+	srv.clients.SetClock(func() time.Time { return now })
 	srv.runLeaseSweep()
 	meta, ok := srv.stagingStore.GetMeta(id)
 	if !ok || !meta.Retired {
