@@ -35,6 +35,7 @@
 #include "ShardKey.hpp"
 #include "SharedRocksDB.hpp"
 #include "RegistryClient.hpp"
+#include "ReplicaTracker.hpp"
 #include "SPSC.hpp"
 #include "Time.hpp"
 #include "Timings.hpp"
@@ -130,6 +131,9 @@ struct ShardShared {
 
     RegistryClient registryClient;
 
+    // the replicas of our shard at every location, as the registry describes them
+    ReplicaTracker replicaTracker;
+
     ShardShared() = delete;
     ShardShared(const ShardOptions& options_, SharedRocksDB& sharedDB_, BlockServicesCacheDB& blockServicesCache_, ShardDB& shardDB_, LogsDB& logsDB_, UDPSocketPair&& sock, Logger& logger, std::shared_ptr<XmonAgent>& xmon) :
         options(options_),
@@ -163,8 +167,7 @@ struct ShardShared {
         isInitiated(false),
         isBlockServiceCacheInitiated(false),
         registryClient(logger, xmon, options_.registryClientOptions.host, options_.registryClientOptions.port, options_.registryClientOptions.timeout),
-        _replicas(nullptr),
-        _leadersAtOtherLocations(std::make_shared<const std::vector<FullShardInfo>>())
+        replicaTracker(options_.shrid(), options_.logsDBOptions.location, options_.isLeader(), socks[0].addr())
     {
         for (uint16_t i = 0; i < options_.numReaders; ++i) {
             readerRequestsQueues.emplace_back(std::make_unique<SPSC<ShardReq>>(READER_QUEUE_SIZE));
@@ -182,11 +185,7 @@ struct ShardShared {
     }
 
     inline std::shared_ptr<const std::array<AddrsInfo, LogsDB::REPLICA_COUNT>> getReplicas() const {
-        return _replicas.load();
-    }
-
-    inline void setReplicas(const std::array<AddrsInfo, LogsDB::REPLICA_COUNT>&& replicas) {
-        _replicas.store(std::make_shared<const std::array<AddrsInfo, LogsDB::REPLICA_COUNT>>(replicas));
+        return replicaTracker.localReplicas();
     }
 
     inline bool readStale() const {
@@ -195,17 +194,8 @@ struct ShardShared {
     }
 
     inline std::shared_ptr<const std::vector<FullShardInfo>> getLeadersAtOtherLocations() const {
-        return _leadersAtOtherLocations.load();
+        return replicaTracker.remoteLeaders();
     }
-
-    inline void setLeadersAtOtherLocations(const std::vector<FullShardInfo>&& leadersAtOtherLocations) {
-        _leadersAtOtherLocations.store(std::make_shared<const std::vector<FullShardInfo>>(leadersAtOtherLocations));
-    }
-
-private:
-    // replication information
-    std::atomic<std::shared_ptr<const std::array<AddrsInfo, LogsDB::REPLICA_COUNT>>> _replicas; // used for replicating shard within location
-    std::atomic<std::shared_ptr<const std::vector<FullShardInfo>>> _leadersAtOtherLocations; // used for cross location replication
 };
 
 static bool bigRequest(ShardMessageKind kind) {
@@ -2222,18 +2212,13 @@ public:
                 return false;
             }
 
-            std::vector<FullShardInfo> leadersAtOtherLocations;
+            _shared.replicaTracker.seedRegistry(allReplicas);
+            LOG_DEBUG(_env, "Leaders at other locations now %s", *_shared.getLeadersAtOtherLocations());
+
             std::array<AddrsInfo, LogsDB::REPLICA_COUNT> localReplicas;
             for (auto& replica : allReplicas) {
-                if (replica.id.shardId() != _shrid.shardId()) {
-                    continue;
-                }
-                if (replica.locationId == _location) {
+                if (replica.id.shardId() == _shrid.shardId() && replica.locationId == _location) {
                     localReplicas[replica.id.replicaId().u8] = replica.addrs;
-                    continue;
-                }
-                if (replica.isLeader && replica.addrs.addrs[0].port != 0) {
-                    leadersAtOtherLocations.emplace_back(std::move(replica));
                 }
             }
             if (_shared.sock().addr() != localReplicas[_shrid.replicaId().u8]) {
@@ -2254,13 +2239,6 @@ public:
                 }
             }
 
-            if (unlikely(!_shared.getReplicas() || *_shared.getReplicas() != localReplicas)) {
-                LOG_DEBUG(_env, "Updating replicas to %s %s %s %s %s", localReplicas[0], localReplicas[1], localReplicas[2], localReplicas[3], localReplicas[4]);
-                _shared.setReplicas(std::move(localReplicas));
-            }
-
-            LOG_DEBUG(_env, "Updating leaders at other locations to %s", leadersAtOtherLocations);
-            _shared.setLeadersAtOtherLocations(std::move(leadersAtOtherLocations));
         }
 
         _env.clearAlert(_alert);
