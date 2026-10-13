@@ -115,6 +115,7 @@ func TestRetryableMetadataSendError(t *testing.T) {
 		err  error
 		want bool
 	}{
+		{errMetadataAddressUnknown, true},
 		{syscall.EINTR, true}, {syscall.EAGAIN, true}, {syscall.ENOBUFS, true},
 		{syscall.ENOMEM, true}, {syscall.ENETDOWN, true}, {syscall.ENETUNREACH, true},
 		{syscall.EHOSTUNREACH, true}, {syscall.ECONNREFUSED, true}, {syscall.ECONNRESET, true},

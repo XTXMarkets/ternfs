@@ -173,7 +173,7 @@ func (c *Client) shardRequestInternal(
 }
 
 // ShardRequestDontWait queues a request without waiting for a reply.
-// Packing errors and missing addresses are logged; send errors are ignored.
+// Packing errors are logged; send errors and missing addresses are ignored.
 // This call does not retry.
 func (c *Client) ShardRequestDontWait(
 	logger *log.Logger,

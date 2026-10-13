@@ -341,37 +341,31 @@ func (cm *clientMetadata) processRequests(log *log.Logger) {
 			addr = &addrs[0]
 		}
 		whichMetadatataAddr++
-		if addr.Port == 0 {
-			// Discovery runs asynchronously. Retry missing addresses like lost packets.
-			if dontWait {
-				log.Info("no address yet for shard %v, dropping dont-wait req id %v", req.shard, req.requestId)
-				continue
-			}
-			log.Debug("no address yet for shard %v, holding req id %v until it times out", req.shard, req.requestId)
-		} else {
-			written, err := cm.sock.WriteToUDP(buf.Bytes(), addr)
-			if dontWait {
-				continue
-			}
-			if err != nil {
-				if retryableMetadataSendError(err) {
-					log.Debug("could not send request %v to shard %v addr %v: %v", req.req, req.shard, addr, err)
-				} else {
-					log.RaiseAlert("could not send request %v to shard %v addr %v: %v", req.req, req.shard, addr, err)
-					req.respCh <- &metadataProcessorResponse{
-						requestId: req.requestId,
-						err:       err,
-						extra:     req.extra,
-						resp:      nil,
-					}
-					continue
+		written, err := 0, errMetadataAddressUnknown
+		if addr.Port != 0 {
+			written, err = cm.sock.WriteToUDP(buf.Bytes(), addr)
+		}
+		if dontWait {
+			continue
+		}
+		if err != nil {
+			if retryableMetadataSendError(err) {
+				log.Debug("could not send request %v to shard %v addr %v: %v", req.req, req.shard, addr, err)
+			} else {
+				log.RaiseAlert("could not send request %v to shard %v addr %v: %v", req.req, req.shard, addr, err)
+				req.respCh <- &metadataProcessorResponse{
+					requestId: req.requestId,
+					err:       err,
+					extra:     req.extra,
+					resp:      nil,
 				}
-				// Wait for this attempt's timeout before retrying. A reply to an
-				// earlier transmission may still arrive in the meantime. Sleeping
-				// here would block every other metadata request on this client.
-			} else if written != len(buf.Bytes()) {
-				panic(fmt.Errorf("%v != %v", written, len(buf.Bytes())))
+				continue
 			}
+			// Wait for this attempt's timeout before retrying. A reply to an
+			// earlier transmission may still arrive in the meantime. Sleeping
+			// here would block every other metadata request on this client.
+		} else if written != len(buf.Bytes()) {
+			panic(fmt.Errorf("%v != %v", written, len(buf.Bytes())))
 		}
 		req.deadline = time.Now().Add(req.timeout)
 		cm.inFlight <- req

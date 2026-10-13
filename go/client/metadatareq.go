@@ -14,7 +14,12 @@ import (
 	"time"
 )
 
+var errMetadataAddressUnknown = errors.New("metadata address not known")
+
 func retryableMetadataSendError(err error) bool {
+	if errors.Is(err, errMetadataAddressUnknown) {
+		return true
+	}
 	var errno syscall.Errno
 	if !errors.As(err, &errno) {
 		return false
