@@ -33,7 +33,7 @@ func assertOpenStateIndex(t *testing.T, store *openStateStore) {
 func TestOpenRejectsOccupiedStateID(t *testing.T) {
 	store := newOpenStateStore()
 	owner := openOwnerKey{clientID: 1, owner: "owner"}
-	first, err := store.open(owner, vfs.MakeInodeID(vfs.InodeTypeFile, 1), vfs.MakeInodeID(vfs.InodeTypeFile, 1), testGrant(false), StateID{})
+	first, err := store.open(owner, vfs.MakeInodeID(vfs.InodeTypeFile, 1), vfs.MakeInodeID(vfs.InodeTypeFile, 1), testGrant(false), nfs4.StateID{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestWriteReopenUpgrades(t *testing.T) {
 	fileID := vfs.MakeInodeID(vfs.InodeTypeFile, 1)
 	stagingID := vfs.MakeInodeID(vfs.InodeTypeFile, 2)
 	state := addConfirmedOpen(t, store, owner, fileID)
-	upgraded, err := store.open(owner, fileID, stagingID, testGrant(true), StateID{})
+	upgraded, err := store.open(owner, fileID, stagingID, testGrant(true), nfs4.StateID{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func addOpenForTest(
 	owner openOwnerKey,
 	fileID vfs.InodeID,
 	write bool,
-	id StateID,
+	id nfs4.StateID,
 ) (openState, uint32) {
 	state, err := os.open(owner, fileID, fileID, testGrant(write), id)
 	if err != nil {
@@ -110,7 +110,7 @@ func addConfirmedOpen(
 	fileID vfs.InodeID,
 ) openState {
 	t.Helper()
-	state, status := addOpenForTest(store, owner, fileID, false, StateID{})
+	state, status := addOpenForTest(store, owner, fileID, false, nfs4.StateID{})
 	if status != nfs4.NFS4_OK {
 		t.Fatalf("OPEN status = %s", nfs4.Nfsstat4Name(status))
 	}
@@ -143,7 +143,7 @@ func TestOpenStateStoreLookupClassifiesStateids(t *testing.T) {
 	state := addConfirmedOpen(t, store, owner, fileID)
 	for _, test := range []struct {
 		name       string
-		id         StateID
+		id         nfs4.StateID
 		generation uint32
 		fileID     vfs.InodeID
 		want       uint32
@@ -151,7 +151,7 @@ func TestOpenStateStoreLookupClassifiesStateids(t *testing.T) {
 		{"current", state.id, 1, fileID, nfs4.NFS4_OK},
 		{"future generation", state.id, 2, fileID, nfs4.NFS4ERR_BAD_STATEID},
 		{"wrong file", state.id, 1, vfs.MakeInodeID(vfs.InodeTypeFile, 2), nfs4.NFS4ERR_BAD_STATEID},
-		{"unknown", StateID{}, 0, fileID, nfs4.NFS4ERR_BAD_STATEID},
+		{"unknown", nfs4.StateID{}, 0, fileID, nfs4.NFS4ERR_BAD_STATEID},
 	} {
 		if _, status := store.lookup(owner.clientID, test.id, test.generation, test.fileID); status != test.want {
 			t.Errorf("%s: status = %s, want %s", test.name,

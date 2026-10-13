@@ -38,7 +38,7 @@ type openOwnerKey struct {
 // what its I/O uses: the writer's staging inode, or for a read open the
 // published inode current at OPEN.
 type openState struct {
-	id     StateID
+	id     nfs4.StateID
 	fileID vfs.InodeID
 	dataID vfs.InodeID
 	owner  openOwnerKey
@@ -116,13 +116,13 @@ type openStateStore struct {
 	epoch   uint32
 	nextID  uint64
 	nextSeq uint64
-	states  map[StateID]*openState
+	states  map[nfs4.StateID]*openState
 	byFile  map[openFileKey]*openState
 	// expired maps an expired stateid's tombstone to its owner incarnation,
 	// so only the owner sees EXPIRED or may free it (canonical r3 §10).
-	expired map[StateID]uint64
+	expired map[nfs4.StateID]uint64
 	// expiredIDs bounds expired.
-	expiredIDs []StateID
+	expiredIDs []nfs4.StateID
 	fileLocks  keyedlock.Locker[vfs.InodeID]
 	now        func() time.Time
 }
@@ -137,24 +137,24 @@ func newOpenStateStore() *openStateStore {
 		if epoch > 1 {
 			return &openStateStore{
 				epoch:   epoch,
-				states:  make(map[StateID]*openState),
+				states:  make(map[nfs4.StateID]*openState),
 				byFile:  make(map[openFileKey]*openState),
-				expired: make(map[StateID]uint64),
+				expired: make(map[nfs4.StateID]uint64),
 				now:     time.Now,
 			}
 		}
 	}
 }
 
-func (os *openStateStore) newStateIDLocked() StateID {
+func (os *openStateStore) newStateIDLocked() nfs4.StateID {
 	os.nextID++
-	var id StateID
+	var id nfs4.StateID
 	binary.BigEndian.PutUint32(id[0:4], os.epoch)
 	binary.BigEndian.PutUint64(id[4:12], os.nextID)
 	return id
 }
 
-func (os *openStateStore) newStateID() StateID {
+func (os *openStateStore) newStateID() nfs4.StateID {
 	os.mu.Lock()
 	defer os.mu.Unlock()
 	return os.newStateIDLocked()
@@ -168,7 +168,7 @@ func nextStateidGeneration(generation uint32) uint32 {
 	return generation
 }
 
-func (os *openStateStore) markExpiredLocked(id StateID, owner uint64) {
+func (os *openStateStore) markExpiredLocked(id nfs4.StateID, owner uint64) {
 	if _, exists := os.expired[id]; exists {
 		return
 	}
@@ -210,7 +210,7 @@ func (os *openStateStore) open(
 	fileID vfs.InodeID,
 	dataID vfs.InodeID,
 	g grant,
-	id StateID,
+	id nfs4.StateID,
 ) (openState, error) {
 	os.mu.Lock()
 	defer os.mu.Unlock()
@@ -227,7 +227,7 @@ func (os *openStateStore) open(
 		state.seq = os.nextSeq
 		return *state, nil
 	}
-	if id == (StateID{}) {
+	if id == (nfs4.StateID{}) {
 		id = os.newStateIDLocked()
 	}
 	if os.states[id] != nil {
@@ -250,7 +250,7 @@ func (os *openStateStore) open(
 }
 
 // ownerOf returns the incarnation owning a live or expired stateid.
-func (os *openStateStore) ownerOf(id StateID) (uint64, bool) {
+func (os *openStateStore) ownerOf(id nfs4.StateID) (uint64, bool) {
 	os.mu.Lock()
 	defer os.mu.Unlock()
 	if state := os.states[id]; state != nil {
@@ -262,7 +262,7 @@ func (os *openStateStore) ownerOf(id StateID) (uint64, bool) {
 
 // adoptable reports that adopt would succeed: no live open has the stateid,
 // and the owner has no live open of fileID. The caller holds lockFile.
-func (os *openStateStore) adoptable(owner openOwnerKey, fileID vfs.InodeID, id StateID) bool {
+func (os *openStateStore) adoptable(owner openOwnerKey, fileID vfs.InodeID, id nfs4.StateID) bool {
 	os.mu.Lock()
 	defer os.mu.Unlock()
 	return os.states[id] == nil && os.byFile[openFileKey{owner: owner, fileID: fileID}] == nil
@@ -271,7 +271,7 @@ func (os *openStateStore) adoptable(owner openOwnerKey, fileID vfs.InodeID, id S
 // adopt installs a recovered open as a live one under its stateid, at
 // generation, after OPEN_DOWNGRADE published its writer. The caller holds
 // lockFile for the pair.
-func (os *openStateStore) adopt(owner openOwnerKey, fileID, dataID vfs.InodeID, g grant, id StateID, generation uint32) (openState, bool) {
+func (os *openStateStore) adopt(owner openOwnerKey, fileID, dataID vfs.InodeID, g grant, id nfs4.StateID, generation uint32) (openState, bool) {
 	os.mu.Lock()
 	defer os.mu.Unlock()
 	key := openFileKey{owner: owner, fileID: fileID}
@@ -295,7 +295,7 @@ func (os *openStateStore) adopt(owner openOwnerKey, fileID, dataID vfs.InodeID, 
 // 8.2.2), with no other effect.
 func (os *openStateStore) lookup(
 	clientID uint64,
-	id StateID,
+	id nfs4.StateID,
 	generation uint32,
 	fileID vfs.InodeID,
 ) (openState, uint32) {
@@ -308,7 +308,7 @@ func (os *openStateStore) lookup(
 	return *state, nfs4.NFS4_OK
 }
 
-func (os *openStateStore) unknownStateStatusLocked(clientID uint64, id StateID) uint32 {
+func (os *openStateStore) unknownStateStatusLocked(clientID uint64, id nfs4.StateID) uint32 {
 	if owner, ok := os.expired[id]; ok && owner == clientID {
 		return nfs4.NFS4ERR_EXPIRED
 	}
@@ -317,7 +317,7 @@ func (os *openStateStore) unknownStateStatusLocked(clientID uint64, id StateID) 
 
 func (os *openStateStore) lookupLocked(
 	clientID uint64,
-	id StateID,
+	id nfs4.StateID,
 	generation uint32,
 	fileID vfs.InodeID,
 ) (*openState, uint32) {
@@ -338,7 +338,7 @@ func (os *openStateStore) lookupLocked(
 }
 
 // status answers TEST_STATEID for clientID without a filehandle.
-func (os *openStateStore) status(clientID uint64, id StateID, generation uint32) uint32 {
+func (os *openStateStore) status(clientID uint64, id nfs4.StateID, generation uint32) uint32 {
 	os.mu.Lock()
 	defer os.mu.Unlock()
 	state := os.states[id]
@@ -360,7 +360,7 @@ func (os *openStateStore) status(clientID uint64, id StateID, generation uint32)
 // downgrade narrows an open to g with I/O on dataID: for a write open
 // downgraded to READ, the version its writer published. It advances the
 // generation. The caller holds lockFile for the pair and has checked g.
-func (os *openStateStore) downgrade(id StateID, dataID vfs.InodeID, g grant) (openState, bool) {
+func (os *openStateStore) downgrade(id nfs4.StateID, dataID vfs.InodeID, g grant) (openState, bool) {
 	os.mu.Lock()
 	defer os.mu.Unlock()
 	state := os.states[id]
@@ -402,7 +402,7 @@ func (os *openStateStore) writerOf(clientID uint64, fileID vfs.InodeID) (openSta
 }
 
 // otherWriter returns an open other than id which writes to dataID.
-func (os *openStateStore) otherWriter(id StateID, dataID vfs.InodeID) (openState, bool) {
+func (os *openStateStore) otherWriter(id nfs4.StateID, dataID vfs.InodeID) (openState, bool) {
 	os.mu.Lock()
 	defer os.mu.Unlock()
 	for other, state := range os.states {
@@ -415,7 +415,7 @@ func (os *openStateStore) otherWriter(id StateID, dataID vfs.InodeID) (openState
 
 // forget drops clientID's expired stateid's tombstone (FREE_STATEID). It
 // reports false, changing nothing, for any other stateid.
-func (os *openStateStore) forget(clientID uint64, id StateID) bool {
+func (os *openStateStore) forget(clientID uint64, id nfs4.StateID) bool {
 	os.mu.Lock()
 	defer os.mu.Unlock()
 	if owner, ok := os.expired[id]; !ok || owner != clientID {
@@ -427,7 +427,7 @@ func (os *openStateStore) forget(clientID uint64, id StateID) bool {
 
 // close removes an open and returns its final state with the generation
 // incremented. The caller holds lockFile for the pair.
-func (os *openStateStore) close(id StateID) (openState, bool) {
+func (os *openStateStore) close(id nfs4.StateID) (openState, bool) {
 	os.mu.Lock()
 	defer os.mu.Unlock()
 	state := os.states[id]
@@ -445,7 +445,7 @@ func (os *openStateStore) close(id StateID) (openState, bool) {
 }
 
 // expire removes an open whose durable lease state has gone.
-func (os *openStateStore) expire(id StateID) {
+func (os *openStateStore) expire(id nfs4.StateID) {
 	os.mu.Lock()
 	defer os.mu.Unlock()
 	state := os.states[id]
@@ -474,7 +474,7 @@ func (os *openStateStore) retarget(stagingID vfs.InodeID) {
 }
 
 // readers reports opens other than id whose I/O uses dataID.
-func (os *openStateStore) readers(dataID vfs.InodeID, id StateID) bool {
+func (os *openStateStore) readers(dataID vfs.InodeID, id nfs4.StateID) bool {
 	os.mu.Lock()
 	defer os.mu.Unlock()
 	for other, state := range os.states {
@@ -486,7 +486,7 @@ func (os *openStateStore) readers(dataID vfs.InodeID, id StateID) bool {
 }
 
 // live reports whether id names a local open.
-func (os *openStateStore) live(id StateID) bool {
+func (os *openStateStore) live(id nfs4.StateID) bool {
 	os.mu.Lock()
 	defer os.mu.Unlock()
 	return os.states[id] != nil
@@ -494,7 +494,7 @@ func (os *openStateStore) live(id StateID) bool {
 
 // canRecover reports whether id names a write open issued by an earlier
 // nfsd process. Its staging sidecar may still hold the client's data.
-func (os *openStateStore) canRecover(id StateID) bool {
+func (os *openStateStore) canRecover(id nfs4.StateID) bool {
 	os.mu.Lock()
 	defer os.mu.Unlock()
 	if _, ok := os.expired[id]; ok || os.states[id] != nil {

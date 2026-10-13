@@ -90,13 +90,13 @@ var testSessions = struct {
 	nextCSSeq map[uint64]uint32
 	// stateids maps the stateids OPEN returned on a connection to their
 	// clientid.
-	stateids map[net.Conn]map[StateID]uint64
+	stateids map[net.Conn]map[nfs4.StateID]uint64
 }{
 	byClient:  make(map[string]*testSession),
 	byConn:    make(map[net.Conn]*testSession),
 	pending:   make(map[string]uint32),
 	nextCSSeq: make(map[uint64]uint32),
-	stateids:  make(map[net.Conn]map[StateID]uint64),
+	stateids:  make(map[net.Conn]map[nfs4.StateID]uint64),
 }
 
 // noteOpenStateids records the stateids of a reply's successful OPENs.
@@ -119,7 +119,7 @@ func noteOpenStateids(conn net.Conn, clientID uint64, reply []byte) {
 		}
 		owners := testSessions.stateids[conn]
 		if owners == nil {
-			owners = make(map[StateID]uint64)
+			owners = make(map[nfs4.StateID]uint64)
 			testSessions.stateids[conn] = owners
 		}
 		owners[extractStateID(open.Value().AsOPEN4resok().Stateid())] = clientID
@@ -134,7 +134,7 @@ func stateidOwner(conn net.Conn, body []byte) (uint64, bool) {
 	if !ok {
 		return 0, false
 	}
-	var presented []StateID
+	var presented []nfs4.StateID
 	it := args.Argarray()
 	for it.Next() {
 		op := it.Argarray().Value()
@@ -602,7 +602,7 @@ func (im *identityMap) get(clientID uint64) (string, [8]byte) {
 // write OPEN returns the published filehandle, not its staging inode.
 func stagingIDForTest(t *testing.T, store StagingStore, stateid [16]byte) vfs.InodeID {
 	t.Helper()
-	var other StateID
+	var other nfs4.StateID
 	copy(other[:], stateid[4:])
 	for id, meta := range store.Entries() {
 		if meta.NFSStateID == other {

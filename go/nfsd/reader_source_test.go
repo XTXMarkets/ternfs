@@ -144,7 +144,7 @@ func (f *readerFixture) read(t *testing.T, sid [16]byte) (uint32, string) {
 
 func (f *readerFixture) dataID(t *testing.T, sid [16]byte) vfs.InodeID {
 	t.Helper()
-	var id StateID
+	var id nfs4.StateID
 	copy(id[:], sid[4:])
 	state, status := f.srv.opens.lookup(incarnationForTest(t, f.srv, f.clientID), id, 0, f.fileID)
 	if status != nfs4.NFS4_OK {

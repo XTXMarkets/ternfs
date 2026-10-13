@@ -13,7 +13,7 @@ import (
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
-func scopedStateid(seqid uint32, id StateID) [16]byte {
+func scopedStateid(seqid uint32, id nfs4.StateID) [16]byte {
 	var wire [16]byte
 	binary.BigEndian.PutUint32(wire[:4], seqid)
 	copy(wire[4:], id[:])
@@ -114,7 +114,7 @@ func TestForeignStateidsAreBadStateid(t *testing.T) {
 	liveSid, liveFH := openCreateFile(t, connA, &xidA, wireA, "a-live")
 	writeFileAt(t, connA, &xidA, liveFH, liveSid, 0, []byte("A's bytes"))
 	expSid, expFH := openCreateFile(t, connA, &xidA, wireA, "a-expired")
-	var expID StateID
+	var expID nfs4.StateID
 	copy(expID[:], expSid[4:])
 	srv.opens.expire(expID)
 
@@ -124,7 +124,7 @@ func TestForeignStateidsAreBadStateid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	recID := StateID{1, 2, 3, 4, 0, 0, 0, 0, 0, 0, 0, 9}
+	recID := nfs4.StateID{1, 2, 3, 4, 0, 0, 0, 0, 0, 0, 0, 9}
 	if binary.BigEndian.Uint32(recID[:4]) == srv.opens.epoch {
 		recID[0]++
 	}
@@ -160,7 +160,7 @@ func TestForeignStateidsAreBadStateid(t *testing.T) {
 	}
 
 	// A's state survived.
-	var liveID StateID
+	var liveID nfs4.StateID
 	copy(liveID[:], liveSid[4:])
 	liveFile, _ := vfs.FHToInodeID(liveFH)
 	state, status := srv.opens.lookup(incA, liveID, 0, liveFile)
@@ -172,7 +172,7 @@ func TestForeignStateidsAreBadStateid(t *testing.T) {
 			t.Fatalf("A's staging %d retired", id)
 		}
 	}
-	for _, id := range []StateID{liveID, recID} {
+	for _, id := range []nfs4.StateID{liveID, recID} {
 		if open, err := srv.clients.HasOpen(incA, id); err != nil || !open {
 			t.Fatalf("A's marker %x: %t %v", id, open, err)
 		}
@@ -202,7 +202,7 @@ func TestForeignStateidsAreBadStateid(t *testing.T) {
 	if got := stateidOpStatus(t, connA, &xidA, "TEST_STATEID", expFH, expSid); got != nfs4.NFS4ERR_BAD_STATEID {
 		t.Fatalf("freed stateid %s", nfs4.Nfsstat4Name(got))
 	}
-	unknown := scopedStateid(1, StateID{9, 9, 9, 9})
+	unknown := scopedStateid(1, nfs4.StateID{9, 9, 9, 9})
 	if got := stateidOpStatus(t, connA, &xidA, "FREE_STATEID", liveFH, unknown); got != nfs4.NFS4ERR_BAD_STATEID {
 		t.Fatalf("FREE_STATEID of an unknown stateid %s", nfs4.Nfsstat4Name(got))
 	}

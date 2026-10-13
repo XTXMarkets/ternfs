@@ -174,7 +174,7 @@ func TestOpenDowngradeRecoveredWriterToRead(t *testing.T) {
 	if status != nfs4.NFS4_OK {
 		t.Fatalf("recovered downgrade to READ %s", nfs4.Nfsstat4Name(status))
 	}
-	var id StateID
+	var id nfs4.StateID
 	copy(id[:], read[4:])
 	if !restarted.srv.opens.live(id) {
 		t.Fatal("recovered open did not become a live read open")

@@ -98,7 +98,7 @@ func TestActiveCompoundDoesNotExpireClientState(t *testing.T) {
 		t.Fatalf("CLOSE %s, want EXPIRED", nfs4.Nfsstat4Name(got))
 	}
 
-	var bID StateID
+	var bID nfs4.StateID
 	copy(bID[:], bSid[4:])
 	if !srv.opens.live(bID) {
 		t.Fatal("the operation expired the client's other open")
@@ -390,7 +390,7 @@ func TestRecoveredDowngradeKeepsItsGrant(t *testing.T) {
 	if status != nfs4.NFS4_OK {
 		t.Fatalf("recovered BOTH to WRITE %s", nfs4.Nfsstat4Name(status))
 	}
-	var id StateID
+	var id nfs4.StateID
 	copy(id[:], write[4:])
 	if !r.srv.opens.live(id) {
 		t.Fatal("the downgrade installed no live state")
@@ -433,7 +433,7 @@ func TestRecoveredDowngradeCollisionWaits(t *testing.T) {
 	if got, _ := downgradeResult(t, conn, &xid, r.fh, r.stateid, nfs4.OPEN4_SHARE_ACCESS_READ, nfs4.OPEN4_SHARE_DENY_NONE); got != nfs4.NFS4ERR_DELAY {
 		t.Fatalf("colliding recovered downgrade %s, want DELAY", nfs4.Nfsstat4Name(got))
 	}
-	var recovered, liveID StateID
+	var recovered, liveID nfs4.StateID
 	copy(recovered[:], r.stateid[4:])
 	copy(liveID[:], live[4:])
 	if after, _ := readPublished(r.fs, name); string(after) != string(before) {
@@ -1273,7 +1273,7 @@ func TestLoneFailedWriterLeavesSiblingsAlone(t *testing.T) {
 			t.Errorf("%s on the failed writer %s, want NFS4ERR_EXPIRED", op, nfs4.Nfsstat4Name(got))
 		}
 	}
-	var bID StateID
+	var bID nfs4.StateID
 	copy(bID[:], bSid[4:])
 	if !srv.opens.live(bID) {
 		t.Fatal("the failed writer's operations expired the sibling open")

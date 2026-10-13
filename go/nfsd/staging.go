@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/keyedlock"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -59,21 +60,21 @@ type stagingTarget struct {
 
 // StagingMeta contains the state needed to complete CLOSE after a restart.
 type StagingMeta struct {
-	DirID           vfs.InodeID // directory to link the file into on CLOSE
-	FileName        string      // name in directory
-	TernCookie      vfs.Cookie  // cookie from VFS ConstructFile
-	NFSStateID      StateID     // random, returned to NFS client as stateid "other"
-	ClientID        uint64      // owning client
-	OpenOwner       string      // separates recovered writers belonging to the same client
-	OwnerKnown      bool        // an empty owner is valid
-	RecoveryKey     [32]byte    // stable client identity, boot verifier and principal
-	Unlinked        bool        // detached from its publication target
-	Guarded         bool        // interrupted namespace operations quarantine at startup
-	Retired         bool        // lease expired; retain acknowledged data for recovery
-	ReadOnly        bool        // CREATE may initialize size/times with read-only share access
-	Exclusive       bool        // EXCLUSIVE4 create
-	Verifier        [8]byte     // EXCLUSIVE4 create verifier
-	BaseID          vfs.InodeID // immutable file being replaced; zero for a new file
+	DirID           vfs.InodeID  // directory to link the file into on CLOSE
+	FileName        string       // name in directory
+	TernCookie      vfs.Cookie   // cookie from VFS ConstructFile
+	NFSStateID      nfs4.StateID // random, returned to NFS client as stateid "other"
+	ClientID        uint64       // owning client
+	OpenOwner       string       // separates recovered writers belonging to the same client
+	OwnerKnown      bool         // an empty owner is valid
+	RecoveryKey     [32]byte     // stable client identity, boot verifier and principal
+	Unlinked        bool         // detached from its publication target
+	Guarded         bool         // interrupted namespace operations quarantine at startup
+	Retired         bool         // lease expired; retain acknowledged data for recovery
+	ReadOnly        bool         // CREATE may initialize size/times with read-only share access
+	Exclusive       bool         // EXCLUSIVE4 create
+	Verifier        [8]byte      // EXCLUSIVE4 create verifier
+	BaseID          vfs.InodeID  // immutable file being replaced; zero for a new file
 	BaseSize        uint64
 	Size            uint64
 	Dirty           byteRangeSet
@@ -102,7 +103,7 @@ type StagingFile interface {
 	Base() (id vfs.InodeID, size uint64)
 	Dirty() bool
 	DataChanged() bool
-	Retire(clientID uint64, stateID StateID) error
+	Retire(clientID uint64, stateID nfs4.StateID) error
 	StartHydration(readBase stagingHydrationReader)
 	FinishHydration(readBase stagingBaseReader) error
 	Sync() error                    // persist to stable storage
@@ -126,7 +127,7 @@ type StagingStore interface {
 	// Entries returns a snapshot of all staging metadata keyed by staging inode.
 	Entries() map[vfs.InodeID]StagingMeta
 	// Rebind updates the owning client and stateid of a recovered staging file.
-	Rebind(id vfs.InodeID, clientID uint64, stateID StateID) error
+	Rebind(id vfs.InodeID, clientID uint64, stateID nfs4.StateID) error
 	// Namespace updates preserve the current durable data checkpoint.
 	SetGuard(id vfs.InodeID, guarded bool) error
 	Detach(id vfs.InodeID) error
@@ -394,7 +395,7 @@ func (s *LocalStagingStore) Entries() map[vfs.InodeID]StagingMeta {
 func (s *LocalStagingStore) Rebind(
 	id vfs.InodeID,
 	clientID uint64,
-	stateID StateID,
+	stateID nfs4.StateID,
 ) error {
 	s.mu.Lock()
 	entry := s.files[id]
@@ -569,7 +570,7 @@ func (readOnlyStagingStore) Get(vfs.InodeID) StagingFile                        
 func (readOnlyStagingStore) GetMeta(vfs.InodeID) (StagingMeta, bool)                     { return StagingMeta{}, false }
 func (readOnlyStagingStore) FindTargets(vfs.InodeID, string) map[vfs.InodeID]StagingMeta { return nil }
 func (readOnlyStagingStore) Entries() map[vfs.InodeID]StagingMeta                        { return nil }
-func (readOnlyStagingStore) Rebind(vfs.InodeID, uint64, StateID) error {
+func (readOnlyStagingStore) Rebind(vfs.InodeID, uint64, nfs4.StateID) error {
 	return os.ErrPermission
 }
 func (readOnlyStagingStore) SetGuard(vfs.InodeID, bool) error                { return os.ErrPermission }
@@ -682,7 +683,7 @@ func (sf *localStagingFile) DataChanged() bool {
 	return len(sf.dirty) != 0 || sf.size != sf.meta.BaseSize
 }
 
-func (sf *localStagingFile) Retire(clientID uint64, stateID StateID) error {
+func (sf *localStagingFile) Retire(clientID uint64, stateID nfs4.StateID) error {
 	sf.hydrateMu.Lock()
 	done := sf.cancelHydrationLocked()
 	sf.hydrateMu.Unlock()
@@ -763,7 +764,7 @@ func (sf *localStagingFile) updateMetaLocked(meta StagingMeta) error {
 
 func (sf *localStagingFile) rebind(
 	clientID uint64,
-	stateID StateID,
+	stateID nfs4.StateID,
 ) error {
 	sf.mu.Lock()
 	defer sf.mu.Unlock()

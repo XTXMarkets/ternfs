@@ -113,7 +113,7 @@ func (s *Server) expireInactiveOpen(state openState, failed func() bool) uint32 
 // it is gone, retires its staging. The decisive check and the retirement run
 // under one destruction hold; while a confirmation protects the client it
 // gives DELAY and retires nothing.
-func (s *Server) retireInactiveRecovered(clientID uint64, id StateID, retire func()) uint32 {
+func (s *Server) retireInactiveRecovered(clientID uint64, id nfs4.StateID, retire func()) uint32 {
 	active, err := s.clients.HasOpen(clientID, id)
 	if err != nil {
 		return clientStoreErrToNFS(err)
@@ -140,7 +140,7 @@ func (s *Server) retireInactiveRecovered(clientID uint64, id StateID, retire fun
 // earlier nfsd process. Its client may present the staging inode as the
 // handle (as before this process), or the base inode the staging replaces.
 // Another client's staging is not found.
-func (s *Server) recoveredDataID(clientID uint64, id StateID, fileID vfs.InodeID) (vfs.InodeID, bool) {
+func (s *Server) recoveredDataID(clientID uint64, id nfs4.StateID, fileID vfs.InodeID) (vfs.InodeID, bool) {
 	if !s.opens.canRecover(id) {
 		return 0, false
 	}
@@ -483,7 +483,7 @@ func (s *Server) releaseWrite(openStateid nfs4.Stateid4, st *compoundState, clos
 // failForReaders marks a staging failed, when opens other than the closing
 // one read it, before a failed CLOSE discards it: its readers then get IO,
 // never the old bytes or NOENT (canonical r3 §11).
-func (s *Server) failForReaders(dataID vfs.InodeID, closing StateID) {
+func (s *Server) failForReaders(dataID vfs.InodeID, closing nfs4.StateID) {
 	if !s.opens.readers(dataID, closing) {
 		return
 	}
@@ -516,7 +516,7 @@ func (s *Server) readSource(clientID uint64, fileID vfs.InodeID) vfs.InodeID {
 // foreignStateID reports a stateid known to belong to another client
 // incarnation: a live or expired open of another owner, or another
 // client's recovered staging.
-func (s *Server) foreignStateID(clientID uint64, id StateID) bool {
+func (s *Server) foreignStateID(clientID uint64, id nfs4.StateID) bool {
 	if owner, known := s.opens.ownerOf(id); known {
 		return owner != clientID
 	}
@@ -649,7 +649,7 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 	// targetID is the inode the open's I/O uses; publishedID is the inode
 	// the name resolves to, which is the filehandle OPEN returns.
 	var targetID, publishedID vfs.InodeID
-	var nfsSID StateID
+	var nfsSID nfs4.StateID
 	joined := false
 	created := false
 	staged := false
@@ -1025,7 +1025,7 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 			nfsSID = markID
 		}
 	}
-	if markID == (StateID{}) {
+	if markID == (nfs4.StateID{}) {
 		markID = s.opens.newStateID()
 		nfsSID = markID
 	}
@@ -1111,15 +1111,15 @@ func (s *Server) constructStaging(
 	baseID vfs.InodeID,
 	baseInfo vfs.NodeInfo,
 	exclusiveVerifier *[8]byte,
-) (vfs.InodeID, StateID, uint32) {
+) (vfs.InodeID, nfs4.StateID, uint32) {
 	recoveryKey, err := s.clients.stagingRecoveryKey(clientID)
 	if err != nil {
-		return 0, StateID{}, clientStoreErrToNFS(err)
+		return 0, nfs4.StateID{}, clientStoreErrToNFS(err)
 	}
 	id, cookie, err := s.fs.ConstructFile(dirID)
 	if err != nil {
 		st.observeMutation(s.fs, nfs4.OP_OPEN, err)
-		return 0, StateID{}, s.errToNFS(err)
+		return 0, nfs4.StateID{}, s.errToNFS(err)
 	}
 	stateID := s.opens.newStateID()
 	meta := StagingMeta{
@@ -1143,7 +1143,7 @@ func (s *Server) constructStaging(
 	if _, err := s.stagingStore.Create(id, meta); err != nil {
 		_ = s.fs.ScrapFile(id, cookie)
 		s.log.Error("staging create error", "err", err)
-		return 0, StateID{}, nfs4.NFS4ERR_IO
+		return 0, nfs4.StateID{}, nfs4.NFS4ERR_IO
 	}
 	return id, stateID, nfs4.NFS4_OK
 }

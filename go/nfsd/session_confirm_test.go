@@ -158,7 +158,7 @@ func (f *confirmServer) present(t *testing.T, dir vfs.InodeID, name string) bool
 }
 
 func (f *confirmServer) pMarker(t *testing.T) bool {
-	var sid StateID
+	var sid nfs4.StateID
 	copy(sid[:], f.state[4:])
 	return f.present(t, vfs.InodeID(f.p), activeOpenName(sid))
 }
@@ -301,7 +301,7 @@ func stateid4For(t *testing.T, stateid [16]byte) nfs4.Stateid4 {
 func TestConfirmationProtectsDestructivePaths(t *testing.T) {
 	f := newConfirmServer(t)
 	srv := f.srv
-	var sid StateID
+	var sid nfs4.StateID
 	copy(sid[:], f.state[4:])
 	stagingID := stagingIDForTest(t, srv.stagingStore, f.state)
 	meta := f.pStaging(t)
@@ -947,7 +947,7 @@ func TestProtectionOrdering(t *testing.T) {
 	})
 	t.Run("staging retirement", func(t *testing.T) {
 		f := newConfirmServer(t)
-		var sid StateID
+		var sid nfs4.StateID
 		copy(sid[:], f.state[4:])
 		meta := f.pStaging(t)
 		if err := f.srv.clients.RemoveOpen(f.p, sid); err != nil {
@@ -1311,7 +1311,7 @@ func TestPurgeOwnership(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := f.fs.TernVFS.CreateFile(m, activeOpenName(StateID{2}), nil); err != nil {
+		if _, err := f.fs.TernVFS.CreateFile(m, activeOpenName(nfs4.StateID{2}), nil); err != nil {
 			t.Fatal(err)
 		}
 		name, _, _ := f.srv.clients.incarnationName(f.identity, m)
@@ -1324,7 +1324,7 @@ func TestPurgeOwnership(t *testing.T) {
 		if got, _ := f.rawCreate(t, f.wireN, 2); got != nfs4.NFS4_OK {
 			t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 		}
-		if f.present(t, m, activeOpenName(StateID{2})) || f.present(t, vfs.InodeID(f.n), rebootName) {
+		if f.present(t, m, activeOpenName(nfs4.StateID{2})) || f.present(t, vfs.InodeID(f.n), rebootName) {
 			t.Fatal("the incarnation the evidence names was not purged")
 		}
 		if !f.present(t, vfs.InodeID(f.p), f.srv.clients.leaseName) {

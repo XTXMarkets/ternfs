@@ -79,8 +79,8 @@ func requireRegularFile(id vfs.InodeID) uint32 {
 }
 
 // extractStateID reads the 12-byte "other" field from a Stateid4 into a StateID.
-func extractStateID(s nfs4.Stateid4) StateID {
-	var sid StateID
+func extractStateID(s nfs4.Stateid4) nfs4.StateID {
+	var sid nfs4.StateID
 	for i := 0; i < 12; i++ {
 		sid[i] = s.Other(i)
 	}
@@ -88,7 +88,7 @@ func extractStateID(s nfs4.Stateid4) StateID {
 }
 
 // writeStateID writes the generation and opaque ID into a Stateid4.
-func writeStateID(s nfs4.Stateid4, generation uint32, sid StateID) {
+func writeStateID(s nfs4.Stateid4, generation uint32, sid nfs4.StateID) {
 	s.SetSeqid(generation)
 	for i := 0; i < 12; i++ {
 		s.SetOther(i, sid[i])

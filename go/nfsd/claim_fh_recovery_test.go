@@ -178,7 +178,7 @@ func (f *claimFHRestart) assertNothingAdopted(t *testing.T, before StagingMeta) 
 }
 
 // oldEpochStateID is a stateid an earlier process could have issued.
-func oldEpochStateID(srv *Server) StateID {
+func oldEpochStateID(srv *Server) nfs4.StateID {
 	sid := srv.opens.newStateID()
 	binary.BigEndian.PutUint32(sid[0:4], binary.BigEndian.Uint32(sid[0:4])+1)
 	return sid

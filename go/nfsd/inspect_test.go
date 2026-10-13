@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -39,7 +40,7 @@ type inspectFixture struct {
 	identity   []byte
 	clientID   uint64
 	replacedID uint64
-	stateID    StateID
+	stateID    nfs4.StateID
 	pendingID  uint64
 	expiredID  uint64
 	// identityDirID is the identity directory inode of clientID. It is not a
@@ -89,7 +90,7 @@ func newInspectFixture(t *testing.T) *inspectFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.stateID = StateID{0xab, 0xcd, 0xef, 0x01, 0, 0, 0, 0, 0, 0, 0, 7}
+	f.stateID = nfs4.StateID{0xab, 0xcd, 0xef, 0x01, 0, 0, 0, 0, 0, 0, 0, 7}
 	if err := f.first.MarkOpen(f.clientID, f.stateID); err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +143,7 @@ func newInspectFixture(t *testing.T) *inspectFixture {
 	if err := saveStagingMeta(orphanMeta, StagingMeta{
 		DirID:      f.fs.RootID(),
 		FileName:   "orphan.bin",
-		NFSStateID: StateID{9},
+		NFSStateID: nfs4.StateID{9},
 		ClientID:   f.clientID,
 		Size:       512,
 	}); err != nil {
@@ -536,7 +537,7 @@ func TestInspectFilters(t *testing.T) {
 			report.Identities[0].Incarnations[0].ClientID != inspectInode(f.clientID) {
 			t.Fatalf("report = %+v", report.Identities)
 		}
-		unknown := StateID{1}
+		unknown := nfs4.StateID{1}
 		report, err = reader.Inspect(inspectOptions{StateID: &unknown})
 		if err != nil {
 			t.Fatal(err)
@@ -560,7 +561,7 @@ func TestInspectFilters(t *testing.T) {
 		}
 	})
 	t.Run("stateid with staging but no open marker", func(t *testing.T) {
-		sid := StateID{9}
+		sid := nfs4.StateID{9}
 		report, err := reader.Inspect(inspectOptions{
 			StateID: &sid, StagingDir: f.stagingDir,
 		})

@@ -185,7 +185,7 @@ func TestExclusiveStagingCheckpoint(t *testing.T) {
 	meta := StagingMeta{
 		DirID: vfs.MakeInodeID(vfs.InodeTypeDir, 1), FileName: "file",
 		BaseID: vfs.MakeInodeID(vfs.InodeTypeFile, 18), BaseSize: 10,
-		ClientID: 1, NFSStateID: StateID{1}, OpenOwner: "", OwnerKnown: true,
+		ClientID: 1, NFSStateID: nfs4.StateID{1}, OpenOwner: "", OwnerKnown: true,
 		Exclusive: true, Verifier: [8]byte{0, 1, 2, 3, 4, 5, 6, 7},
 	}
 	stage, err := store.Create(id, meta)
@@ -202,7 +202,7 @@ func TestExclusiveStagingCheckpoint(t *testing.T) {
 	if err := stage.Sync(); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Rebind(id, 2, StateID{2}); err != nil {
+	if err := store.Rebind(id, 2, nfs4.StateID{2}); err != nil {
 		t.Fatal(err)
 	}
 	closeLocalStagingFiles(t, store)
@@ -213,7 +213,7 @@ func TestExclusiveStagingCheckpoint(t *testing.T) {
 	defer closeLocalStagingFiles(t, loaded)
 	got, ok := loaded.GetMeta(id)
 	if !ok || got.version != stagingMetaVersion || !got.Exclusive || got.Verifier != meta.Verifier ||
-		got.BaseID != meta.BaseID || got.ClientID != 2 || got.NFSStateID != (StateID{2}) ||
+		got.BaseID != meta.BaseID || got.ClientID != 2 || got.NFSStateID != (nfs4.StateID{2}) ||
 		!got.OwnerKnown || got.OpenOwner != "" || !got.Attrs.Mtime.Equal(stamp) ||
 		got.Size != 10 || len(got.Dirty) != 1 || got.Dirty[0] != (byteRange{2, 9}) {
 		t.Fatalf("recovered checkpoint: %+v", got)

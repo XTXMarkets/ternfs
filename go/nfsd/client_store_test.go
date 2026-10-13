@@ -178,7 +178,7 @@ func TestClientStoreDurableState(t *testing.T) {
 		}
 	})
 
-	var stateID StateID
+	var stateID nfs4.StateID
 	t.Run("ownership takeover and expiry", func(t *testing.T) {
 		stateID[0] = 1
 		if err := first.MarkOpen(clientID, stateID); err != nil {
@@ -404,7 +404,7 @@ func TestClientStoreLeaseSlotsDoNotShortenEachOther(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	var stateID StateID
+	var stateID nfs4.StateID
 	stateID[0] = 1
 	if err := first.MarkOpen(clientID, stateID); err != nil {
 		t.Fatal(err)
@@ -464,7 +464,7 @@ func TestClientStoreRemovesExpiredProcessSlots(t *testing.T) {
 	first, clientID := newConfirmedStoreClient(
 		t, fs, []byte("client"), [8]byte{1}, owner)
 	first.now = func() time.Time { return base }
-	if err := first.MarkOpen(clientID, StateID{1}); err != nil {
+	if err := first.MarkOpen(clientID, nfs4.StateID{1}); err != nil {
 		t.Fatal(err)
 	}
 	second, err := NewClientStore(fs)
@@ -527,7 +527,7 @@ func TestClientStoreExpiredLeaseDoesNotReviveAfterSlotCleanup(t *testing.T) {
 			return store.Renew(clientID)
 		}},
 		{"OPEN", func(store *ClientStore, clientID uint64) error {
-			return store.MarkOpen(clientID, StateID{2})
+			return store.MarkOpen(clientID, nfs4.StateID{2})
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -539,7 +539,7 @@ func TestClientStoreExpiredLeaseDoesNotReviveAfterSlotCleanup(t *testing.T) {
 			first, clientID := newConfirmedStoreClient(
 				t, fs, []byte("client"), [8]byte{1}, owner)
 			first.now = func() time.Time { return base }
-			if err := first.MarkOpen(clientID, StateID{1}); err != nil {
+			if err := first.MarkOpen(clientID, nfs4.StateID{1}); err != nil {
 				t.Fatal(err)
 			}
 
@@ -580,7 +580,7 @@ func TestClientStoreCachedRenewSeesExpiredMarker(t *testing.T) {
 	first, clientID := newConfirmedStoreClient(
 		t, fs, []byte("client"), [8]byte{1}, owner)
 	first.now = func() time.Time { return base }
-	stateID := StateID{1}
+	stateID := nfs4.StateID{1}
 	if err := first.MarkOpen(clientID, stateID); err != nil {
 		t.Fatal(err)
 	}
@@ -621,7 +621,7 @@ func TestClientStorePersistsExpiryBeforeSlotCleanup(t *testing.T) {
 	store, clientID := newConfirmedStoreClient(
 		t, fs, []byte("client"), [8]byte{1}, owner)
 	store.now = func() time.Time { return base }
-	if err := store.MarkOpen(clientID, StateID{1}); err != nil {
+	if err := store.MarkOpen(clientID, nfs4.StateID{1}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -766,7 +766,7 @@ func TestClientStoreIsConfirmedUsesCachedLocation(t *testing.T) {
 		[8]byte{1},
 		clientOwner{principal: rpcPrincipal{flavor: authSys, body: "owner"}},
 	)
-	if err := store.MarkOpen(clientID, StateID{1}); err != nil {
+	if err := store.MarkOpen(clientID, nfs4.StateID{1}); err != nil {
 		t.Fatal(err)
 	}
 	fs.reset()
@@ -806,7 +806,7 @@ func TestClientStoreHasOpenFastPathAndImplicitRenewal(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	stateID := StateID{1}
+	stateID := nfs4.StateID{1}
 	if err := store.MarkOpen(clientID, stateID); err != nil {
 		t.Fatal(err)
 	}
@@ -857,7 +857,7 @@ func TestClientStoreMarkOpenKeepsExistingMarkerInode(t *testing.T) {
 		[8]byte{1},
 		clientOwner{principal: rpcPrincipal{flavor: authSys, body: "owner"}},
 	)
-	stateID := StateID{1}
+	stateID := nfs4.StateID{1}
 	if err := store.MarkOpen(clientID, stateID); err != nil {
 		t.Fatal(err)
 	}
@@ -905,7 +905,7 @@ func TestClientStoreImplicitRenewalRechecksReboot(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	stateID := StateID{1}
+	stateID := nfs4.StateID{1}
 	if err := first.MarkOpen(oldID, stateID); err != nil {
 		t.Fatal(err)
 	}
@@ -978,7 +978,7 @@ func TestClientStoreRejectsClientIDOutsideStateDirectory(t *testing.T) {
 		t.Fatalf("forged clientid confirmation error = %v, want NFS4ERR_STALE_CLIENTID",
 			err)
 	}
-	stateID := StateID{1}
+	stateID := nfs4.StateID{1}
 	if err := store.MarkOpen(
 		uint64(incarnationID), stateID,
 	); nfs4.ErrorCode(err) != nfs4.NFS4ERR_STALE_CLIENTID {
@@ -1230,7 +1230,7 @@ func TestClientStoreHasOpenRequiresLiveDurableLease(t *testing.T) {
 				store, id := newConfirmedStoreClient(t, fs, []byte("client"), [8]byte{1}, clientOwner{})
 				now := time.Unix(1000, 0)
 				store.now = func() time.Time { return now }
-				sid := StateID{1}
+				sid := nfs4.StateID{1}
 				if err := store.MarkOpen(id, sid); err != nil {
 					t.Fatal(err)
 				}
@@ -1276,7 +1276,7 @@ func TestClientStoreMarkOpenKeepsExistingMarkerOnRenewFailure(t *testing.T) {
 	store, clientID := newConfirmedStoreClient(
 		t, fs, []byte("client"), [8]byte{1}, owner)
 	store.now = func() time.Time { return base }
-	stateID := StateID{1}
+	stateID := nfs4.StateID{1}
 	if err := store.MarkOpen(clientID, stateID); err != nil {
 		t.Fatal(err)
 	}
@@ -1304,7 +1304,7 @@ func TestClientStoreMarkOpenKeepsExistingMarkerOnRenewFailure(t *testing.T) {
 	// DELAY and creates no marker.
 	store.now = func() time.Time { return base.Add(leaseWriteTerm + time.Second) }
 	fs.remaining = 100
-	newStateID := StateID{2}
+	newStateID := nfs4.StateID{2}
 	if err := store.MarkOpen(
 		clientID, newStateID,
 	); nfs4.ErrorCode(err) != nfs4.NFS4ERR_DELAY {
@@ -1332,7 +1332,7 @@ func TestClientStoreLiveSlotsSkipsRemovedEntry(t *testing.T) {
 	store, clientID := newConfirmedStoreClient(
 		t, fs, []byte("client"), [8]byte{1}, owner)
 	store.now = func() time.Time { return base }
-	if err := store.MarkOpen(clientID, StateID{1}); err != nil {
+	if err := store.MarkOpen(clientID, nfs4.StateID{1}); err != nil {
 		t.Fatal(err)
 	}
 	leaseID, err := baseFS.Lookup(vfs.InodeID(clientID), store.leaseName)
@@ -1388,7 +1388,7 @@ func TestClientStoreRenewalDoesNotBlockActiveState(t *testing.T) {
 	store, clientID := newConfirmedStoreClient(
 		t, fs, []byte("client"), [8]byte{1}, owner)
 	store.now = func() time.Time { return base }
-	stateID := StateID{1}
+	stateID := nfs4.StateID{1}
 	if err := store.MarkOpen(clientID, stateID); err != nil {
 		t.Fatal(err)
 	}
@@ -1711,7 +1711,7 @@ func TestClientStoreRebootCleanupIsRetryable(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	var stateID StateID
+	var stateID nfs4.StateID
 	stateID[0] = 1
 	if err := first.MarkOpen(oldID, stateID); err != nil {
 		t.Fatal(err)
@@ -2036,13 +2036,13 @@ func TestClientStoreHasOpenSlowPathDoesNotBlockFastPath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cachedState := StateID{1}
+	cachedState := nfs4.StateID{1}
 	if err := first.MarkOpen(clientID, cachedState); err != nil {
 		t.Fatal(err)
 	}
 	// An open recorded by another nfsd is only visible to first through the
 	// durable marker, so HasOpen takes the slow path for it.
-	remoteState := StateID{2}
+	remoteState := nfs4.StateID{2}
 	if err := second.MarkOpen(clientID, remoteState); err != nil {
 		t.Fatal(err)
 	}

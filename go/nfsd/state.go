@@ -8,9 +8,6 @@ import (
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
-// StateID is the 12-byte "other" field of an NFSv4 stateid4.
-type StateID [12]byte
-
 // isCurrentStateID reports the special stateid meaning the compound's
 // current stateid: seqid 1, other all zero.
 func isCurrentStateID(stateid nfs4.Stateid4) bool {

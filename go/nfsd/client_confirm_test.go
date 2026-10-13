@@ -351,7 +351,7 @@ func newConfirmFixture(t *testing.T, withP bool) *confirmFixture {
 		if _, err := store.ConfirmClientID(p, confirm, rpcPrincipal{}); err != nil {
 			t.Fatal(err)
 		}
-		if err := store.MarkOpen(p, StateID{1}); err != nil {
+		if err := store.MarkOpen(p, nfs4.StateID{1}); err != nil {
 			t.Fatal(err)
 		}
 		f.p = vfs.InodeID(p)
@@ -555,7 +555,7 @@ func TestConfirmationWithoutPredecessor(t *testing.T) {
 
 func pMarker(t *testing.T, f *confirmFixture) bool {
 	t.Helper()
-	_, err := f.local.Lookup(f.p, activeOpenName(StateID{1}))
+	_, err := f.local.Lookup(f.p, activeOpenName(nfs4.StateID{1}))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		t.Fatal(err)
 	}
@@ -638,7 +638,7 @@ func (f *confirmFixture) pointReboot(t *testing.T, id vfs.InodeID) {
 	}
 }
 
-func markerIn(t *testing.T, fs vfs.TernVFS, dir vfs.InodeID, stateID StateID) bool {
+func markerIn(t *testing.T, fs vfs.TernVFS, dir vfs.InodeID, stateID nfs4.StateID) bool {
 	t.Helper()
 	_, err := fs.Lookup(dir, activeOpenName(stateID))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -660,7 +660,7 @@ func TestConfirmationPurgeBoundToCheckedReboot(t *testing.T) {
 			}
 			t.Run(name, func(t *testing.T) {
 				f := newConfirmFixture(t, true)
-				if _, err := f.local.CreateFile(f.m, activeOpenName(StateID{2}), nil); err != nil {
+				if _, err := f.local.CreateFile(f.m, activeOpenName(nfs4.StateID{2}), nil); err != nil {
 					t.Fatal(err)
 				}
 				a := f.commit(t)
@@ -694,10 +694,10 @@ func TestConfirmationPurgeBoundToCheckedReboot(t *testing.T) {
 				if err != nil || replaced != uint64(f.p) {
 					t.Fatalf("purge %d %v, want P", replaced, err)
 				}
-				if markerIn(t, f.local, f.p, StateID{1}) {
+				if markerIn(t, f.local, f.p, nfs4.StateID{1}) {
 					t.Fatal("P not purged")
 				}
-				if !markerIn(t, f.local, f.m, StateID{2}) {
+				if !markerIn(t, f.local, f.m, nfs4.StateID{2}) {
 					t.Fatal("M purged")
 				}
 				target, found, err := f.store.readRebootSymlink(f.n)

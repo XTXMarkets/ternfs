@@ -92,7 +92,7 @@ type clientIdentityLock struct {
 
 type clientOpenMarker struct {
 	clientID uint64
-	stateID  StateID
+	stateID  nfs4.StateID
 }
 
 type localClientState struct {
@@ -100,7 +100,7 @@ type localClientState struct {
 	confirmedPointer vfs.InodeID
 
 	mu    sync.Mutex
-	opens map[StateID]struct{}
+	opens map[nfs4.StateID]struct{}
 }
 
 type confirmedClientLocation struct {
@@ -1042,7 +1042,7 @@ func (cs *ClientStore) Renew(clientID uint64) error {
 	return nil
 }
 
-func (cs *ClientStore) MarkOpen(clientID uint64, stateID StateID) error {
+func (cs *ClientStore) MarkOpen(clientID uint64, stateID nfs4.StateID) error {
 	incarnationID := vfs.InodeID(clientID)
 	identityID, valid, err := cs.identityForIncarnation(incarnationID)
 	if err != nil {
@@ -1149,12 +1149,12 @@ func (cs *ClientStore) leaseProven(incarnationID vfs.InodeID) bool {
 
 // MarkerGone reports that the open's durable marker is definitely absent:
 // the open no longer exists, whatever the client's lease.
-func (cs *ClientStore) MarkerGone(clientID uint64, stateID StateID) bool {
+func (cs *ClientStore) MarkerGone(clientID uint64, stateID nfs4.StateID) bool {
 	_, err := cs.fs.Lookup(vfs.InodeID(clientID), activeOpenName(stateID))
 	return errors.Is(err, os.ErrNotExist)
 }
 
-func (cs *ClientStore) RemoveOpen(clientID uint64, stateID StateID) error {
+func (cs *ClientStore) RemoveOpen(clientID uint64, stateID nfs4.StateID) error {
 	incarnationID := vfs.InodeID(clientID)
 	identityID, valid, lockErr := cs.identityForIncarnation(incarnationID)
 	if lockErr != nil {
@@ -1188,7 +1188,7 @@ func (cs *ClientStore) cachedClientIDs() []uint64 {
 	return result
 }
 
-func (cs *ClientStore) HasOpen(clientID uint64, stateID StateID) (bool, error) {
+func (cs *ClientStore) HasOpen(clientID uint64, stateID nfs4.StateID) (bool, error) {
 	incarnationID := vfs.InodeID(clientID)
 	if value, ok := cs.localClients.Load(incarnationID); ok {
 		state := value.(*localClientState)
@@ -1287,7 +1287,7 @@ func (cs *ClientStore) localClientState(
 	state := &localClientState{
 		identityID:       identityID,
 		confirmedPointer: confirmedPointer,
-		opens:            make(map[StateID]struct{}),
+		opens:            make(map[nfs4.StateID]struct{}),
 	}
 	value, _ := cs.localClients.LoadOrStore(incarnationID, state)
 	return value.(*localClientState)
@@ -1909,7 +1909,7 @@ func isIncarnationName(name string) bool {
 	return err == nil
 }
 
-func activeOpenName(stateID StateID) string {
+func activeOpenName(stateID nfs4.StateID) string {
 	return activeOpenPrefix + hex.EncodeToString(stateID[:])
 }
 

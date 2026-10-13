@@ -576,10 +576,10 @@ type compoundState struct {
 	// currentStateID is the stateid returned by the last OPEN or CLOSE,
 	// substituted for the special current stateid (RFC 8881 section
 	// 16.2.3.1.2). Changing the current filehandle clears it.
-	currentStateID    StateID
+	currentStateID    nfs4.StateID
 	currentGeneration uint32
 	currentStateIDSet bool
-	savedStateID      StateID
+	savedStateID      nfs4.StateID
 	savedGeneration   uint32
 	savedStateIDSet   bool
 }
@@ -592,7 +592,7 @@ func (st *compoundState) setCurrentFH(id vfs.InodeID) {
 	st.currentStateIDSet = false
 }
 
-func (st *compoundState) setCurrentStateID(id StateID, generation uint32) {
+func (st *compoundState) setCurrentStateID(id nfs4.StateID, generation uint32) {
 	st.currentStateID = id
 	st.currentGeneration = generation
 	st.currentStateIDSet = true

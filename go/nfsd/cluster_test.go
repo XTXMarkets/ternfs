@@ -1025,7 +1025,7 @@ func TestTernClientIncarnationGC(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	stateID := StateID{1}
+	stateID := nfs4.StateID{1}
 	if err := first.MarkOpen(oldID, stateID); err != nil {
 		t.Fatal(err)
 	}

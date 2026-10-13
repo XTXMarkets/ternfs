@@ -513,7 +513,7 @@ func TestClientStoreExchangeIDAdoptionObservation(t *testing.T) {
 			}
 			if test.otherPrincipal {
 				// A live open with another principal makes the identity in use.
-				if err := store.ensureMarker(incarnation, activeOpenName(StateID{1})); err != nil {
+				if err := store.ensureMarker(incarnation, activeOpenName(nfs4.StateID{1})); err != nil {
 					t.Fatal(err)
 				}
 			}

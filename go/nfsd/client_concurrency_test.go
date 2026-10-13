@@ -29,20 +29,20 @@ func (fs *markerGateVFS) CreateFile(dir vfs.InodeID, name string, data io.Reader
 
 func TestClientStoreIndependentMarkers(t *testing.T) {
 	fs := &markerGateVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
-		name: activeOpenName(StateID{1}), testGate: newTestGate()}
+		name: activeOpenName(nfs4.StateID{1}), testGate: newTestGate()}
 	store, id := newConfirmedStoreClient(t, fs, []byte("client"), [8]byte{1}, clientOwner{})
-	if err := store.MarkOpen(id, StateID{3}); err != nil {
+	if err := store.MarkOpen(id, nfs4.StateID{3}); err != nil {
 		t.Fatal(err)
 	}
 	first := make(chan error, 1)
-	go func() { first <- store.MarkOpen(id, StateID{1}) }()
+	go func() { first <- store.MarkOpen(id, nfs4.StateID{1}) }()
 	defer closeSignal(fs.release)
 	awaitSignal(t, fs.entered, "blocked marker")
 	other := make(chan error, 1)
 	go func() {
-		err := store.MarkOpen(id, StateID{2})
+		err := store.MarkOpen(id, nfs4.StateID{2})
 		if err == nil {
-			err = store.RemoveOpen(id, StateID{3})
+			err = store.RemoveOpen(id, nfs4.StateID{3})
 		}
 		other <- err
 	}()
@@ -50,7 +50,7 @@ func TestClientStoreIndependentMarkers(t *testing.T) {
 		t.Fatal(err)
 	}
 	duplicate := make(chan error, 1)
-	go func() { duplicate <- store.MarkOpen(id, StateID{1}) }()
+	go func() { duplicate <- store.MarkOpen(id, nfs4.StateID{1}) }()
 	closeSignal(fs.release)
 	for _, result := range []chan error{first, duplicate} {
 		if err := awaitValue(t, result, "marker creation"); err != nil {
@@ -60,26 +60,26 @@ func TestClientStoreIndependentMarkers(t *testing.T) {
 	if fs.calls.Load() != 1 {
 		t.Fatalf("duplicate marker creates = %d", fs.calls.Load())
 	}
-	for _, sid := range []StateID{{1}, {2}} {
+	for _, sid := range []nfs4.StateID{{1}, {2}} {
 		if active, err := store.HasOpen(id, sid); err != nil || !active {
 			t.Fatalf("open %v = %v, %v", sid, active, err)
 		}
 	}
-	if active, err := store.HasOpen(id, StateID{3}); err != nil || active {
+	if active, err := store.HasOpen(id, nfs4.StateID{3}); err != nil || active {
 		t.Fatalf("removed open = %v, %v", active, err)
 	}
 }
 
 func TestClientStoreRemoveWaitsForSameMarker(t *testing.T) {
 	fs := &markerGateVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
-		name: activeOpenName(StateID{1}), testGate: newTestGate()}
+		name: activeOpenName(nfs4.StateID{1}), testGate: newTestGate()}
 	store, id := newConfirmedStoreClient(t, fs, []byte("client"), [8]byte{1}, clientOwner{})
 	first := make(chan error, 1)
-	go func() { first <- store.MarkOpen(id, StateID{1}) }()
+	go func() { first <- store.MarkOpen(id, nfs4.StateID{1}) }()
 	defer closeSignal(fs.release)
 	awaitSignal(t, fs.entered, "marker creation")
 	removed := make(chan error, 1)
-	go func() { removed <- store.RemoveOpen(id, StateID{1}) }()
+	go func() { removed <- store.RemoveOpen(id, nfs4.StateID{1}) }()
 	assertBlocked(t, removed, "removal during creation")
 	closeSignal(fs.release)
 	for _, result := range []chan error{first, removed} {
@@ -90,7 +90,7 @@ func TestClientStoreRemoveWaitsForSameMarker(t *testing.T) {
 	// Read through a fresh cache as well as the local map, so a cached
 	// removal cannot hide an orphaned durable marker.
 	for i := 0; i < 2; i++ {
-		if active, err := store.HasOpen(id, StateID{1}); err != nil || active {
+		if active, err := store.HasOpen(id, nfs4.StateID{1}); err != nil || active {
 			t.Fatalf("removed marker = %v, %v", active, err)
 		}
 		store.localClients.Delete(vfs.InodeID(id))
@@ -101,7 +101,7 @@ func TestClientStoreMarkerExcludesLifecycle(t *testing.T) {
 	for _, action := range []string{"confirm", "expire", "collect"} {
 		t.Run(action, func(t *testing.T) {
 			fs := &markerGateVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
-				name: activeOpenName(StateID{1}), testGate: newTestGate()}
+				name: activeOpenName(nfs4.StateID{1}), testGate: newTestGate()}
 			store, id := newConfirmedStoreClient(t, fs, []byte("client"), [8]byte{1}, clientOwner{})
 			next, verifier, err := store.SetClientID([8]byte{2}, []byte("client"), clientOwner{})
 			if err != nil {
@@ -114,7 +114,7 @@ func TestClientStoreMarkerExcludesLifecycle(t *testing.T) {
 				t.Fatal(err)
 			}
 			created := make(chan error, 1)
-			go func() { created <- store.MarkOpen(id, StateID{1}) }()
+			go func() { created <- store.MarkOpen(id, nfs4.StateID{1}) }()
 			defer closeSignal(fs.release)
 			awaitSignal(t, fs.entered, "marker creation")
 			done := make(chan error, 1)
@@ -143,7 +143,7 @@ func TestClientStoreMarkerExcludesLifecycle(t *testing.T) {
 			if err := awaitValue(t, done, action); err != nil {
 				t.Fatal(err)
 			}
-			active, err := store.HasOpen(id, StateID{1})
+			active, err := store.HasOpen(id, nfs4.StateID{1})
 			if err != nil || active != (action == "collect") {
 				t.Fatalf("open after %s = %v, %v", action, active, err)
 			}
@@ -170,7 +170,7 @@ func TestClientStoreHasOpenSlowPathMarkerOrdering(t *testing.T) {
 		TernVFS: vfs.NewLocalTernVFS(t.TempDir()), testGate: newTestGate(),
 	}
 	store, id := newConfirmedStoreClient(t, fs, []byte("client"), [8]byte{1}, clientOwner{})
-	sid := StateID{1}
+	sid := nfs4.StateID{1}
 	if err := store.MarkOpen(id, sid); err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,7 @@ func TestClientStoreHasOpenSlowPathMarkerOrdering(t *testing.T) {
 	awaitSignal(t, fs.entered, "durable marker lookup")
 
 	independent := make(chan error, 1)
-	go func() { independent <- store.MarkOpen(id, StateID{2}) }()
+	go func() { independent <- store.MarkOpen(id, nfs4.StateID{2}) }()
 	if err := awaitValue(t, independent, "independent marker during HasOpen"); err != nil {
 		t.Fatal(err)
 	}
@@ -240,14 +240,14 @@ func TestClientStoreLeaseLockSurvivesCacheReplacement(t *testing.T) {
 	base := time.Now()
 	store.now = func() time.Time { return base.Add(nfsLeaseRenewAfter + time.Second) }
 	first := make(chan error, 1)
-	go func() { first <- store.MarkOpen(id, StateID{1}) }()
+	go func() { first <- store.MarkOpen(id, nfs4.StateID{1}) }()
 	defer closeSignal(fs.release)
 	awaitSignal(t, fs.entered, "lease renewal")
 	// Invalidation may discard the cache while another shared holder is
 	// still renewing. The next holder must use the same serialization lock.
 	store.localClients.Delete(vfs.InodeID(id))
 	second := make(chan error, 1)
-	go func() { second <- store.MarkOpen(id, StateID{2}) }()
+	go func() { second <- store.MarkOpen(id, nfs4.StateID{2}) }()
 	assertBlocked(t, second, "lease renewal after cache replacement")
 	if fs.calls.Load() != 1 {
 		t.Fatal("lease writes overlapped across cache replacement")

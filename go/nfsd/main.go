@@ -18,6 +18,7 @@ import (
 	"github.com/XTXMarkets/ternfs/go/core/bufpool"
 	"github.com/XTXMarkets/ternfs/go/core/log"
 	"github.com/XTXMarkets/ternfs/go/msgs"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -244,11 +245,11 @@ func parseInspectOptions(identity, identityHash, clientID, stateID string) (
 	}
 	if stateID != "" {
 		raw, err := hex.DecodeString(stateID)
-		if err != nil || len(raw) != len(StateID{}) {
+		if err != nil || len(raw) != len(nfs4.StateID{}) {
 			return opts, fmt.Errorf("invalid -stateid %q: want %d hex digits",
-				stateID, 2*len(StateID{}))
+				stateID, 2*len(nfs4.StateID{}))
 		}
-		var sid StateID
+		var sid nfs4.StateID
 		copy(sid[:], raw)
 		opts.StateID = &sid
 		filters++

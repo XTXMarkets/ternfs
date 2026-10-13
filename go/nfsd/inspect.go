@@ -22,6 +22,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -44,7 +45,7 @@ type inspectOptions struct {
 	ClientID uint64
 	// StateID limits the report to the incarnation which owns the marker
 	// (-stateid).
-	StateID *StateID
+	StateID *nfs4.StateID
 	// StagingDir is the local staging directory of this nfsd host
 	// (-staging). Its sidecars are joined to open markers.
 	StagingDir string

@@ -431,7 +431,7 @@ func TestStaleLeaseCheckCannotRetireRecoveredWriter(t *testing.T) {
 	store, id, sf := createOverlayStage(t, t.TempDir(), vfs.MakeInodeID(vfs.InodeTypeFile, 1), []byte("base"))
 	defer store.Remove(id)
 	old, _ := store.GetMeta(id)
-	if err := store.Rebind(id, 42, StateID{3}); err != nil {
+	if err := store.Rebind(id, 42, nfs4.StateID{3}); err != nil {
 		t.Fatal(err)
 	}
 	if err := sf.Retire(old.ClientID, old.NFSStateID); err != nil {
@@ -465,7 +465,7 @@ func TestRetiredStagingReleasesDescriptorAndReopensOnRecovery(t *testing.T) {
 	if _, err := recoveredFile.f.Stat(); !errors.Is(err, os.ErrClosed) {
 		t.Fatalf("restart reopened a retired descriptor: %v", err)
 	}
-	if err := recovered.Rebind(id, 42, StateID{3}); err != nil {
+	if err := recovered.Rebind(id, 42, nfs4.StateID{3}); err != nil {
 		t.Fatal(err)
 	}
 	data := make([]byte, 4)

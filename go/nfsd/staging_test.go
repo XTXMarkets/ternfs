@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -534,7 +535,7 @@ func TestStagingRebindSurvivesRestart(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	stateID := StateID{1, 2, 3}
+	stateID := nfs4.StateID{1, 2, 3}
 	if err := store.Rebind(stagingID, 2, stateID); err != nil {
 		t.Fatal(err)
 	}
