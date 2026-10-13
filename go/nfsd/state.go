@@ -50,17 +50,3 @@ func isSpecialStateID(stateid nfs4.Stateid4) bool {
 	}
 	return allZero || allOne
 }
-
-// nfsError is a simple error type that carries an NFS status code.
-type nfsError uint32
-
-func (e nfsError) Error() string {
-	return "nfs error"
-}
-
-func nfsErrCode(err error) uint32 {
-	if e, ok := err.(nfsError); ok {
-		return uint32(e)
-	}
-	return nfs4.NFS4ERR_SERVERFAULT
-}

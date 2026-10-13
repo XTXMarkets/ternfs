@@ -126,7 +126,7 @@ func TestClientStoreMarkerExcludesLifecycle(t *testing.T) {
 					now.Add(int64(2 * nfsLeaseTime))
 					expired, err := store.ExpireIfLeaseDead(id)
 					if err == nil && !expired {
-						err = nfsError(nfs4.NFS4ERR_SERVERFAULT)
+						err = nfs4.Error(nfs4.NFS4ERR_SERVERFAULT)
 					}
 					done <- err
 				case "collect":
@@ -179,7 +179,7 @@ func TestClientStoreHasOpenSlowPathMarkerOrdering(t *testing.T) {
 	go func() {
 		active, err := store.HasOpen(id, sid)
 		if err == nil && !active {
-			err = nfsError(nfs4.NFS4ERR_BAD_STATEID)
+			err = nfs4.Error(nfs4.NFS4ERR_BAD_STATEID)
 		}
 		found <- err
 	}()

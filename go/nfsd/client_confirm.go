@@ -164,7 +164,7 @@ func (cs *ClientStore) PrepareConfirmation(n uint64, confirm [8]byte) (confirmTa
 		return confirmTarget{}, err
 	}
 	if !valid {
-		return confirmTarget{}, nfsError(nfs4.NFS4ERR_STALE_CLIENTID)
+		return confirmTarget{}, nfs4.Error(nfs4.NFS4ERR_STALE_CLIENTID)
 	}
 	unlock := cs.readLockIdentity(identityID)
 	defer unlock()
@@ -193,14 +193,14 @@ func (cs *ClientStore) checkPendingLocked(identityID, n InodeID, confirm [8]byte
 		return err
 	}
 	if !found || !bytes.Equal(record.Confirm, confirm[:]) {
-		return nfsError(nfs4.NFS4ERR_STALE_CLIENTID)
+		return nfs4.Error(nfs4.NFS4ERR_STALE_CLIENTID)
 	}
 	pending, isPending, err := cs.readIdentitySymlink(identityID, pendingName)
 	if err != nil {
 		return err
 	}
 	if !isPending || pending != n {
-		return nfsError(nfs4.NFS4ERR_STALE_CLIENTID)
+		return nfs4.Error(nfs4.NFS4ERR_STALE_CLIENTID)
 	}
 	return nil
 }

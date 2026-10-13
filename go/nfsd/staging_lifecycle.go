@@ -235,7 +235,7 @@ func (s *Server) recoveredStagingTarget(
 			end, ok := s.beginDestroy(meta.ClientID)
 			if !ok {
 				// The other incarnation's expiry waits for its confirmation.
-				return 0, StagingMeta{}, false, release, nfsError(nfs4.NFS4ERR_DELAY)
+				return 0, StagingMeta{}, false, release, nfs4.Error(nfs4.NFS4ERR_DELAY)
 			}
 			holds[id] = end
 			// The expiry decision is the gate's (canonical r3 §8); this
@@ -253,7 +253,7 @@ func (s *Server) recoveredStagingTarget(
 		// Never guess between multiple recovered sessions and hand one
 		// writer another's data.
 		if foundID != 0 {
-			return 0, StagingMeta{}, false, release, nfsError(nfs4.NFS4ERR_EXPIRED)
+			return 0, StagingMeta{}, false, release, nfs4.Error(nfs4.NFS4ERR_EXPIRED)
 		}
 		foundID, foundMeta = id, meta
 	}

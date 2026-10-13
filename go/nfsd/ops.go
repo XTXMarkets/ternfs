@@ -127,7 +127,7 @@ func (s *Server) errToNFS(err error) uint32 {
 	case errors.Is(err, syscall.ENOTEMPTY):
 		return nfs4.NFS4ERR_NOTEMPTY
 	}
-	if e, ok := err.(nfsError); ok {
+	if e, ok := err.(nfs4.Error); ok {
 		return uint32(e)
 	}
 	if os.IsNotExist(err) {

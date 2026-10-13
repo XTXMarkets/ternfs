@@ -508,9 +508,9 @@ func ternToOSError(err error) error {
 	case msgs.CANNOT_OVERRIDE_NAME:
 		return os.ErrExist
 	case msgs.DIRECTORY_NOT_EMPTY:
-		return nfsError(nfs4.NFS4ERR_NOTEMPTY)
+		return nfs4.Error(nfs4.NFS4ERR_NOTEMPTY)
 	case msgs.EDGE_IS_LOCKED, msgs.NAME_IS_LOCKED:
-		return nfsError(nfs4.NFS4ERR_LOCKED)
+		return nfs4.Error(nfs4.NFS4ERR_LOCKED)
 	default:
 		return err
 	}

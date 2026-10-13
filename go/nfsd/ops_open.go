@@ -169,7 +169,7 @@ func (s *Server) requireActiveOpen(state openState) uint32 {
 func (s *Server) expireClientState(clientID uint64) {
 	for _, state := range s.opens.clientStates(clientID) {
 		if err := s.clients.RemoveOpen(clientID, state.id); err != nil &&
-			nfsErrCode(err) != nfs4.NFS4ERR_STALE_CLIENTID {
+			nfs4.ErrorCode(err) != nfs4.NFS4ERR_STALE_CLIENTID {
 			s.log.Error("expire client: remove active-open record",
 				"clientid", clientID, "stateid", state.id, "err", err)
 			return
@@ -757,7 +757,7 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 			// Taking an expired incarnation's staging is destructive for it:
 			// its hold lasts, with the pathname lock, until OPEN returns.
 			defer releaseRecovery()
-			if recovering && errors.Is(recoveryErr, nfsError(nfs4.NFS4ERR_EXPIRED)) {
+			if recovering && errors.Is(recoveryErr, nfs4.Error(nfs4.NFS4ERR_EXPIRED)) {
 				// Another staging became selectable since preselection.
 				return fail(nfs4.NFS4ERR_STALE)
 			}

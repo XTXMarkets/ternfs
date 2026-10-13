@@ -375,7 +375,7 @@ func TestConfirmationProtectsDestructivePaths(t *testing.T) {
 	if _, status := srv.releaseWrite(stateid4For(t, oldWire), st, true, nil); status != nfs4.NFS4ERR_DELAY {
 		t.Fatalf("recovered CLOSE %s", nfs4.Nfsstat4Name(status))
 	}
-	if _, _, _, release, err := srv.recoveredStagingTarget(f.fs.RootID(), "kfile", f.n, "owner", true); nfsErrCode(err) != nfs4.NFS4ERR_DELAY {
+	if _, _, _, release, err := srv.recoveredStagingTarget(f.fs.RootID(), "kfile", f.n, "owner", true); nfs4.ErrorCode(err) != nfs4.NFS4ERR_DELAY {
 		t.Fatalf("expired-lease recovery rule %v", err)
 	} else {
 		release()

@@ -31,6 +31,9 @@ const (
 	InodeTypeSymlink = 3
 )
 
+// nfsDirName is the directory under the root that holds nfsd's own state.
+const nfsDirName = ".nfs"
+
 func (id InodeID) Type() uint64   { return (uint64(id) >> 61) & 0x3 }
 func (id InodeID) Fileid() uint64 { return uint64(id) & ((1 << 61) - 1) }
 

@@ -1702,7 +1702,7 @@ func TestExpireIfLeaseDeadExpiresCollectedIncarnation(t *testing.T) {
 	}
 	if err := srv.clients.MarkOpen(
 		clientID, StateID{2},
-	); nfsErrCode(err) != nfs4.NFS4ERR_STALE_CLIENTID {
+	); nfs4.ErrorCode(err) != nfs4.NFS4ERR_STALE_CLIENTID {
 		t.Fatalf("MarkOpen on collected incarnation = %v, want NFS4ERR_STALE_CLIENTID",
 			err)
 	}
@@ -8293,12 +8293,12 @@ func TestServerLeaseSweepExpiresButDoesNotRevokeConfirmedClient(t *testing.T) {
 			nfs4.Nfsstat4Name(status))
 	}
 
-	if err := srv.clients.Renew(clientID); nfsErrCode(err) != nfs4.NFS4ERR_EXPIRED {
+	if err := srv.clients.Renew(clientID); nfs4.ErrorCode(err) != nfs4.NFS4ERR_EXPIRED {
 		t.Fatalf("RENEW after lease sweep = %v, want NFS4ERR_EXPIRED", err)
 	}
 	if err := srv.clients.MarkOpen(
 		clientID, StateID{2},
-	); nfsErrCode(err) != nfs4.NFS4ERR_EXPIRED {
+	); nfs4.ErrorCode(err) != nfs4.NFS4ERR_EXPIRED {
 		t.Fatalf("OPEN marker after lease sweep = %v, want NFS4ERR_EXPIRED",
 			err)
 	}
@@ -8435,7 +8435,7 @@ func TestClientStoreMarkOpenReusesFreshLease(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.MarkOpen(clientID, StateID{6}); nfsErrCode(err) != nfs4.NFS4ERR_STALE_CLIENTID {
+	if err := store.MarkOpen(clientID, StateID{6}); nfs4.ErrorCode(err) != nfs4.NFS4ERR_STALE_CLIENTID {
 		t.Fatalf("MarkOpen on replaced clientid = %v, want NFS4ERR_STALE_CLIENTID", err)
 	}
 }

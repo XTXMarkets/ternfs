@@ -159,7 +159,6 @@ type slotScan struct {
 }
 
 const (
-	nfsDirName          = ".nfs"
 	confirmedName       = "confirmed"
 	pendingName         = "pending"
 	clientRecordName    = "client"
@@ -451,7 +450,7 @@ func (cs *ClientStore) ConfirmClientID(
 		return 0, err
 	}
 	if !valid {
-		return 0, nfsError(nfs4.NFS4ERR_STALE_CLIENTID)
+		return 0, nfs4.Error(nfs4.NFS4ERR_STALE_CLIENTID)
 	}
 	unlock := cs.lockIdentity(identityID)
 	defer unlock()
@@ -460,7 +459,7 @@ func (cs *ClientStore) ConfirmClientID(
 		return 0, err
 	}
 	if !found {
-		return 0, nfsError(nfs4.NFS4ERR_STALE_CLIENTID)
+		return 0, nfs4.Error(nfs4.NFS4ERR_STALE_CLIENTID)
 	}
 
 	pendingID, pending, err := cs.readIdentitySymlink(
@@ -477,7 +476,7 @@ func (cs *ClientStore) ConfirmClientID(
 	if pending && pendingID == incarnationID &&
 		bytes.Equal(record.Confirm, confirm[:]) {
 		if record.principal() != principal {
-			return 0, nfsError(nfs4.NFS4ERR_CLID_INUSE)
+			return 0, nfs4.Error(nfs4.NFS4ERR_CLID_INUSE)
 		}
 		// The claim keeps this incarnation alive while another nfsd may
 		// replace pending.
@@ -491,7 +490,7 @@ func (cs *ClientStore) ConfirmClientID(
 		}
 		if !pending || pendingID != incarnationID {
 			_ = cs.removeIfExists(incarnationID, cs.confirmingName)
-			return 0, nfsError(nfs4.NFS4ERR_STALE_CLIENTID)
+			return 0, nfs4.Error(nfs4.NFS4ERR_STALE_CLIENTID)
 		}
 		if !confirmed || confirmedID != incarnationID {
 			if confirmed {
@@ -512,11 +511,11 @@ func (cs *ClientStore) ConfirmClientID(
 	}
 
 	if !confirmed || confirmedID != incarnationID {
-		return 0, nfsError(nfs4.NFS4ERR_STALE_CLIENTID)
+		return 0, nfs4.Error(nfs4.NFS4ERR_STALE_CLIENTID)
 	}
 	if bytes.Equal(record.Confirm, confirm[:]) {
 		if record.principal() != principal {
-			return 0, nfsError(nfs4.NFS4ERR_CLID_INUSE)
+			return 0, nfs4.Error(nfs4.NFS4ERR_CLID_INUSE)
 		}
 		return cs.finishConfirmed(incarnationID)
 	}
@@ -526,10 +525,10 @@ func (cs *ClientStore) ConfirmClientID(
 		return 0, err
 	}
 	if !updateFound || !bytes.Equal(update.Confirm, confirm[:]) {
-		return 0, nfsError(nfs4.NFS4ERR_STALE_CLIENTID)
+		return 0, nfs4.Error(nfs4.NFS4ERR_STALE_CLIENTID)
 	}
 	if update.principal() != principal {
-		return 0, nfsError(nfs4.NFS4ERR_CLID_INUSE)
+		return 0, nfs4.Error(nfs4.NFS4ERR_CLID_INUSE)
 	}
 	if _, err := cs.replaceJSON(
 		incarnationID, clientRecordName, update,
@@ -1012,7 +1011,7 @@ func (cs *ClientStore) Renew(clientID uint64) error {
 		return err
 	}
 	if !valid {
-		return nfsError(nfs4.NFS4ERR_STALE_CLIENTID)
+		return nfs4.Error(nfs4.NFS4ERR_STALE_CLIENTID)
 	}
 	unlock := cs.readLockIdentity(identityID)
 	defer unlock()
@@ -1022,14 +1021,14 @@ func (cs *ClientStore) Renew(clientID uint64) error {
 		return err
 	}
 	if !confirmed {
-		return nfsError(nfs4.NFS4ERR_STALE_CLIENTID)
+		return nfs4.Error(nfs4.NFS4ERR_STALE_CLIENTID)
 	}
 	marked, err := cs.hasExpiredMarker(incarnationID)
 	if err != nil {
 		return err
 	}
 	if marked {
-		return nfsError(nfs4.NFS4ERR_EXPIRED)
+		return nfs4.Error(nfs4.NFS4ERR_EXPIRED)
 	}
 	view, err := cs.refreshInline(clientID)
 	if err != nil {
@@ -1048,7 +1047,7 @@ func (cs *ClientStore) MarkOpen(clientID uint64, stateID StateID) error {
 		return err
 	}
 	if !valid {
-		return nfsError(nfs4.NFS4ERR_STALE_CLIENTID)
+		return nfs4.Error(nfs4.NFS4ERR_STALE_CLIENTID)
 	}
 	unlock := cs.readLockIdentity(identityID)
 	defer unlock()
@@ -1060,7 +1059,7 @@ func (cs *ClientStore) MarkOpen(clientID uint64, stateID StateID) error {
 		return err
 	}
 	if !confirmed {
-		return nfsError(nfs4.NFS4ERR_STALE_CLIENTID)
+		return nfs4.Error(nfs4.NFS4ERR_STALE_CLIENTID)
 	}
 	state, err := cs.renewLease(incarnationID, location, false)
 	if err != nil {
@@ -1095,14 +1094,14 @@ func (cs *ClientStore) renewLease(
 			return nil, err
 		}
 		if !live {
-			return nil, nfsError(nfs4.NFS4ERR_EXPIRED)
+			return nil, nfs4.Error(nfs4.NFS4ERR_EXPIRED)
 		}
 	} else {
 		var view leaseView
 		if cs.serverDecides() {
 			var ok bool
 			if view, ok = cs.leaseView(uint64(incarnationID)); !ok {
-				return nil, nfsError(nfs4.NFS4ERR_DELAY)
+				return nil, nfs4.Error(nfs4.NFS4ERR_DELAY)
 			}
 		} else {
 			marked, err := cs.hasExpiredMarker(incarnationID)
@@ -1110,14 +1109,14 @@ func (cs *ClientStore) renewLease(
 				return nil, err
 			}
 			if marked {
-				return nil, nfsError(nfs4.NFS4ERR_EXPIRED)
+				return nil, nfs4.Error(nfs4.NFS4ERR_EXPIRED)
 			}
 			if view, err = cs.refreshInline(uint64(incarnationID)); err != nil {
 				return nil, err
 			}
 		}
 		if err := cs.leaseStatusError(view); err != nil {
-			switch nfsErrCode(err) {
+			switch nfs4.ErrorCode(err) {
 			case nfs4.NFS4ERR_DELAY:
 				cs.requestLeaseVerify(uint64(incarnationID))
 			case nfs4.NFS4ERR_STALE_CLIENTID:
@@ -1160,7 +1159,7 @@ func (cs *ClientStore) RemoveOpen(clientID uint64, stateID StateID) error {
 		return lockErr
 	}
 	if !valid {
-		return nfsError(nfs4.NFS4ERR_STALE_CLIENTID)
+		return nfs4.Error(nfs4.NFS4ERR_STALE_CLIENTID)
 	}
 	unlock := cs.readLockIdentity(identityID)
 	defer unlock()
@@ -1234,7 +1233,7 @@ func (cs *ClientStore) HasOpen(clientID uint64, stateID StateID) (bool, error) {
 				}
 				if marked {
 					cs.localClients.Delete(incarnationID)
-					return false, nfsError(nfs4.NFS4ERR_EXPIRED)
+					return false, nfs4.Error(nfs4.NFS4ERR_EXPIRED)
 				}
 				return true, nil
 			}
@@ -1263,7 +1262,7 @@ func (cs *ClientStore) HasOpen(clientID uint64, stateID StateID) (bool, error) {
 		return false, err
 	}
 	state, err := cs.renewLease(incarnationID, location, true)
-	if nfsErrCode(err) == nfs4.NFS4ERR_EXPIRED {
+	if nfs4.ErrorCode(err) == nfs4.NFS4ERR_EXPIRED {
 		cs.localClients.Delete(incarnationID)
 		return false, nil
 	}
@@ -1425,7 +1424,7 @@ func (cs *ClientStore) leaseStatus(
 			end, ok := cs.beginMarker(incarnationID)
 			if !ok {
 				// Deferred until the confirmation settles; the caller retries.
-				return false, true, nfsError(nfs4.NFS4ERR_DELAY)
+				return false, true, nfs4.Error(nfs4.NFS4ERR_DELAY)
 			}
 			defer end()
 		}
@@ -1841,7 +1840,7 @@ func (cs *ClientStore) removeIfExists(dirID InodeID, name string) error {
 }
 
 func clientStoreErrToNFS(err error) uint32 {
-	var nfs nfsError
+	var nfs nfs4.Error
 	if errors.As(err, &nfs) {
 		return uint32(nfs)
 	}
@@ -1937,7 +1936,7 @@ func (cs *ClientStore) stagingRecoveryKey(clientID uint64) ([32]byte, error) {
 		return [32]byte{}, err
 	}
 	if !valid {
-		return [32]byte{}, nfsError(nfs4.NFS4ERR_STALE_CLIENTID)
+		return [32]byte{}, nfs4.Error(nfs4.NFS4ERR_STALE_CLIENTID)
 	}
 	record, found, err := cs.readRecord(id, clientRecordName)
 	if err != nil {

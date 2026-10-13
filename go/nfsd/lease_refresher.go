@@ -1024,7 +1024,7 @@ func (cs *ClientStore) refreshInline(clientID uint64) (leaseView, error) {
 	r, ok := cs.recordLocked(InodeID(clientID), true)
 	cs.refreshMu.Unlock()
 	if !ok {
-		return leaseView{}, nfsError(nfs4.NFS4ERR_DELAY)
+		return leaseView{}, nfs4.Error(nfs4.NFS4ERR_DELAY)
 	}
 	if cs.serverDecides() {
 		view, _ := cs.leaseView(clientID)
@@ -1043,11 +1043,11 @@ func (cs *ClientStore) refreshInline(clientID uint64) (leaseView, error) {
 func (cs *ClientStore) leaseStatusError(view leaseView) error {
 	switch {
 	case view.state == leaseRecordStale:
-		return nfsError(nfs4.NFS4ERR_STALE_CLIENTID)
+		return nfs4.Error(nfs4.NFS4ERR_STALE_CLIENTID)
 	case view.state == leaseRecordFleetExpired:
-		return nfsError(nfs4.NFS4ERR_EXPIRED)
+		return nfs4.Error(nfs4.NFS4ERR_EXPIRED)
 	case view.proven <= cs.now().UnixNano():
-		return nfsError(nfs4.NFS4ERR_DELAY)
+		return nfs4.Error(nfs4.NFS4ERR_DELAY)
 	}
 	return nil
 }
