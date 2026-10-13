@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -422,41 +423,6 @@ func nextOp(t *testing.T, iter *nfs4.NfsResop4EntryIter) nfs4.NfsResop4Entry {
 		t.Fatal("expected another op in resarray")
 	}
 	return iter.Resarray()
-}
-
-const testChannelTimeout = 5 * time.Second
-
-func awaitSignal(t *testing.T, ch <-chan struct{}, description string) {
-	t.Helper()
-	select {
-	case <-ch:
-	case <-time.After(testChannelTimeout):
-		t.Fatalf("timed out waiting for %s", description)
-	}
-}
-
-func awaitValue[T any](
-	t *testing.T,
-	ch <-chan T,
-	description string,
-) T {
-	t.Helper()
-	select {
-	case value := <-ch:
-		return value
-	case <-time.After(testChannelTimeout):
-		t.Fatalf("timed out waiting for %s", description)
-		var zero T
-		return zero
-	}
-}
-
-func closeSignal(ch chan struct{}) {
-	select {
-	case <-ch:
-	default:
-		close(ch)
-	}
 }
 
 // getAttrData extracts attribute values from a GETATTR4resok fattr4.
@@ -6653,7 +6619,7 @@ func (gate *blockingVFSGate) enter() error {
 		close(gate.firstEntered)
 		select {
 		case <-gate.releaseFirst:
-		case <-time.After(testChannelTimeout):
+		case <-time.After(testutil.ChannelTimeout):
 			return errors.New("timed out waiting to release VFS gate")
 		}
 	}
@@ -6691,7 +6657,7 @@ func TestConcurrentOpenSharesOwnerState(t *testing.T) {
 			releaseFirst: make(chan struct{}),
 		},
 	}
-	defer closeSignal(fs.releaseFirst)
+	defer testutil.CloseSignal(fs.releaseFirst)
 	staging, err := NewLocalStagingStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -6726,11 +6692,11 @@ func TestConcurrentOpenSharesOwnerState(t *testing.T) {
 		}
 	}
 	go open(firstConn, 100)
-	awaitSignal(t, fs.firstEntered, "first OPEN entering ConstructFile")
+	testutil.AwaitSignal(t, fs.firstEntered, "first OPEN entering ConstructFile")
 	go open(secondConn, 200)
-	closeSignal(fs.releaseFirst)
-	first := awaitValue(t, results, "first concurrent OPEN result")
-	second := awaitValue(t, results, "second concurrent OPEN result")
+	testutil.CloseSignal(fs.releaseFirst)
+	first := testutil.AwaitValue(t, results, "first concurrent OPEN result")
+	second := testutil.AwaitValue(t, results, "second concurrent OPEN result")
 
 	if first.err != nil || second.err != nil {
 		t.Fatalf("concurrent OPEN errors = %v, %v", first.err, second.err)
@@ -6802,7 +6768,7 @@ func (fs *blockingFailingLinkVFS) LinkFile(
 	fs.once.Do(func() { close(fs.entered) })
 	select {
 	case <-fs.release:
-	case <-time.After(testChannelTimeout):
+	case <-time.After(testutil.ChannelTimeout):
 		return errors.New("timed out waiting to release LinkFile")
 	}
 	return errors.New("injected LinkFile failure")
@@ -6844,7 +6810,7 @@ func TestWaitingCloseRechecksStagingMeta(t *testing.T) {
 		entered: make(chan struct{}),
 		release: make(chan struct{}),
 	}
-	defer closeSignal(fs.release)
+	defer testutil.CloseSignal(fs.release)
 	localStaging, err := NewLocalStagingStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -6881,7 +6847,7 @@ func TestWaitingCloseRechecksStagingMeta(t *testing.T) {
 			status: status, stateid: result, err: err,
 		}
 	}()
-	awaitSignal(t, fs.entered, "first CLOSE entering LinkFile")
+	testutil.AwaitSignal(t, fs.entered, "first CLOSE entering LinkFile")
 	secondRead := srv.waitForOpenFileWaiter(clientID, fh)
 	secondResult := make(chan closeResult, 1)
 	go func() {
@@ -6892,11 +6858,11 @@ func TestWaitingCloseRechecksStagingMeta(t *testing.T) {
 			status: status, stateid: result, err: err,
 		}
 	}()
-	awaitSignal(t, secondRead, "second CLOSE waiting for the first")
-	closeSignal(fs.release)
+	testutil.AwaitSignal(t, secondRead, "second CLOSE waiting for the first")
+	testutil.CloseSignal(fs.release)
 
-	first := awaitValue(t, firstResult, "first racing CLOSE result")
-	second := awaitValue(t, secondResult, "second racing CLOSE result")
+	first := testutil.AwaitValue(t, firstResult, "first racing CLOSE result")
+	second := testutil.AwaitValue(t, secondResult, "second racing CLOSE result")
 	if first.err != nil || second.err != nil {
 		t.Fatalf("CLOSE errors = %v, %v", first.err, second.err)
 	}
@@ -7002,7 +6968,7 @@ func TestConcurrentClosePublishesAtMostOnce(t *testing.T) {
 			releaseFirst: make(chan struct{}),
 		},
 	}
-	defer closeSignal(fs.releaseFirst)
+	defer testutil.CloseSignal(fs.releaseFirst)
 	localStaging, err := NewLocalStagingStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -7040,7 +7006,7 @@ func TestConcurrentClosePublishesAtMostOnce(t *testing.T) {
 			status: status, stateid: result, err: err,
 		}
 	}()
-	awaitSignal(t, fs.firstEntered, "first CLOSE entering LinkFile")
+	testutil.AwaitSignal(t, fs.firstEntered, "first CLOSE entering LinkFile")
 	secondRequestEntered := srv.waitForOpenFileWaiter(clientID, fh)
 	go func() {
 		closeXID := uint32(200)
@@ -7050,10 +7016,10 @@ func TestConcurrentClosePublishesAtMostOnce(t *testing.T) {
 			status: status, stateid: result, err: err,
 		}
 	}()
-	awaitSignal(t, secondRequestEntered, "second CLOSE waiting for the first")
-	closeSignal(fs.releaseFirst)
-	first := awaitValue(t, results, "first concurrent CLOSE result")
-	second := awaitValue(t, secondResults, "second concurrent CLOSE result")
+	testutil.AwaitSignal(t, secondRequestEntered, "second CLOSE waiting for the first")
+	testutil.CloseSignal(fs.releaseFirst)
+	first := testutil.AwaitValue(t, results, "first concurrent CLOSE result")
+	second := testutil.AwaitValue(t, secondResults, "second concurrent CLOSE result")
 
 	if first.err != nil || second.err != nil {
 		t.Fatalf("concurrent CLOSE errors = %v, %v", first.err, second.err)

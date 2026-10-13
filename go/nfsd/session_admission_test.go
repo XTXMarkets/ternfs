@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -326,7 +327,7 @@ func TestAdmissionExecutingDuplicateAcrossConnections(t *testing.T) {
 	ts := connectionSession(t, srv)
 	addr, cleanup := serveTestServer(t, srv)
 	defer cleanup()
-	defer closeSignal(fs.release)
+	defer testutil.CloseSignal(fs.Release)
 	a, b := dial(t, addr), dial(t, addr)
 	defer a.Close()
 	defer b.Close()
@@ -340,9 +341,9 @@ func TestAdmissionExecutingDuplicateAcrossConnections(t *testing.T) {
 	})
 	wire := admissionSequence(body, ts, 0, 1, true)
 	writeCallForTest(t, a, rpcCallForTest(1, procCompound, wire))
-	awaitSignal(t, fs.entered, "original stat")
+	testutil.AwaitSignal(t, fs.Entered, "original stat")
 	before := admissionImage(&srv.sessions.lookup(ts.id).slots[0])
-	b.SetDeadline(time.Now().Add(testChannelTimeout))
+	b.SetDeadline(time.Now().Add(testutil.ChannelTimeout))
 	reply, err := sendRawRPC(b, 2, procCompound, wire)
 	if err != nil {
 		t.Fatal(err)
@@ -355,11 +356,11 @@ func TestAdmissionExecutingDuplicateAcrossConnections(t *testing.T) {
 	if !reflect.DeepEqual(before, admissionImage(&srv.sessions.lookup(ts.id).slots[0])) {
 		t.Fatal("executing duplicate changed slot")
 	}
-	if fs.calls.Load() != 1 {
+	if fs.Calls.Load() != 1 {
 		t.Fatal("executing duplicate reached backend")
 	}
-	closeSignal(fs.release)
-	a.SetDeadline(time.Now().Add(testChannelTimeout))
+	testutil.CloseSignal(fs.Release)
+	a.SetDeadline(time.Now().Add(testutil.ChannelTimeout))
 	first, err := readFrame(a)
 	if err != nil {
 		t.Fatal(err)
@@ -368,7 +369,7 @@ func TestAdmissionExecutingDuplicateAcrossConnections(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(first[24:], replay[24:]) || fs.calls.Load() != 1 {
+	if !bytes.Equal(first[24:], replay[24:]) || fs.Calls.Load() != 1 {
 		t.Fatal("completed cross-connection replay reexecuted")
 	}
 }

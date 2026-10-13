@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -561,7 +562,7 @@ func TestConfirmationPurgeRetry(t *testing.T) {
 func TestConfirmationProtectedWhileInFlight(t *testing.T) {
 	f := newConfirmServer(t)
 	entered, release := make(chan struct{}), make(chan struct{})
-	defer closeSignal(release)
+	defer testutil.CloseSignal(release)
 	f.arm(writeD, faultNotApplied, func() {
 		close(entered)
 		<-release
@@ -582,7 +583,7 @@ func TestConfirmationProtectedWhileInFlight(t *testing.T) {
 		}
 		result <- res.Status()
 	}()
-	awaitSignal(t, entered, "write D in flight")
+	testutil.AwaitSignal(t, entered, "write D in flight")
 	if !f.srv.protected(f.n) || !f.srv.protected(f.p) {
 		t.Fatal("not protected while the first write is in flight")
 	}
@@ -592,9 +593,9 @@ func TestConfirmationProtectedWhileInFlight(t *testing.T) {
 	if got := f.pSequence(t); got != nfs4.NFS4ERR_DELAY {
 		t.Fatalf("P's SEQUENCE while in flight %s", nfs4.Nfsstat4Name(got))
 	}
-	closeSignal(release)
+	testutil.CloseSignal(release)
 	// D never applied and confirmed is still P through Sp: rolled back.
-	if got := awaitValue(t, result, "first CREATE_SESSION"); got != nfs4.NFS4ERR_DELAY {
+	if got := testutil.AwaitValue(t, result, "first CREATE_SESSION"); got != nfs4.NFS4ERR_DELAY {
 		t.Fatalf("first CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 	}
 	if f.srv.protected(f.n) || f.pSequence(t) != nfs4.NFS4_OK {
@@ -825,7 +826,7 @@ func (f *confirmServer) createAsyncFor(t *testing.T, wire uint64) <-chan uint32 
 // waits for earlier destructive work.
 func (f *confirmServer) awaitInstalling(t *testing.T) {
 	t.Helper()
-	for deadline := time.Now().Add(testChannelTimeout); !f.srv.protected(f.n); {
+	for deadline := time.Now().Add(testutil.ChannelTimeout); !f.srv.protected(f.n); {
 		if time.Now().After(deadline) {
 			t.Fatal("confirmation never installed its protection")
 		}
@@ -873,7 +874,7 @@ func TestProtectionOrdering(t *testing.T) {
 		f := newConfirmServer(t)
 		result, resume := f.pausedCreate(t)
 		g := newGate()
-		defer closeSignal(g.release)
+		defer testutil.CloseSignal(g.release)
 		f.fs.mu.Lock()
 		f.fs.onReaddir[f.identity] = g.hold
 		f.fs.mu.Unlock()
@@ -882,7 +883,7 @@ func TestProtectionOrdering(t *testing.T) {
 			recheck, _ := f.srv.collectClientSafely(vfs.InodeID(f.n))
 			collected <- recheck
 		}()
-		awaitSignal(t, g.entered, "GC inside the identity")
+		testutil.AwaitSignal(t, g.entered, "GC inside the identity")
 		resume()
 		f.awaitInstalling(t)
 		notYet(t, result, "confirmation behind an admitted GC")
@@ -905,17 +906,17 @@ func TestProtectionOrdering(t *testing.T) {
 		if got, _ := createResult(t, f.srv, 1, unrelated.clientID, 1); got != nfs4.NFS4_OK {
 			t.Fatalf("other client %s", nfs4.Nfsstat4Name(got))
 		}
-		closeSignal(g.release)
-		if recheck := awaitValue(t, collected, "admitted GC"); recheck {
+		testutil.CloseSignal(g.release)
+		if recheck := testutil.AwaitValue(t, collected, "admitted GC"); recheck {
 			t.Fatal("admitted GC was cut short")
 		}
 		// It gets DELAY while the confirmation is protected, or runs after
 		// it has finished; it never rewrites N's pending pointer under
 		// protection, which would have failed the commit's pending check.
-		if got := awaitValue(t, exchanged, "EXCHANGE_ID during registration"); got != nfs4.NFS4ERR_DELAY && got != nfs4.NFS4_OK {
+		if got := testutil.AwaitValue(t, exchanged, "EXCHANGE_ID during registration"); got != nfs4.NFS4ERR_DELAY && got != nfs4.NFS4_OK {
 			t.Fatalf("EXCHANGE_ID during registration %s", nfs4.Nfsstat4Name(got))
 		}
-		if got := awaitValue(t, result, "confirmation"); got != nfs4.NFS4_OK || identityConfirmed(t, f) != vfs.InodeID(f.n) {
+		if got := testutil.AwaitValue(t, result, "confirmation"); got != nfs4.NFS4_OK || identityConfirmed(t, f) != vfs.InodeID(f.n) {
 			t.Fatalf("confirmation %s", nfs4.Nfsstat4Name(got))
 		}
 	})
@@ -924,26 +925,26 @@ func TestProtectionOrdering(t *testing.T) {
 		result, resume := f.pausedCreate(t)
 		f.advance(3 * nfsLeaseTime)
 		g := newGate()
-		defer closeSignal(g.release)
+		defer testutil.CloseSignal(g.release)
 		f.fs.mu.Lock()
 		f.fs.createHook.dir, f.fs.createHook.name, f.fs.createHook.fn = vfs.InodeID(f.p), expiredName, g.hold
 		f.fs.mu.Unlock()
 		expired := make(chan struct{})
 		go func() { defer close(expired); f.srv.expireClientIfDead(f.p) }()
-		awaitSignal(t, g.entered, "marker write")
+		testutil.AwaitSignal(t, g.entered, "marker write")
 		resume()
 		f.awaitInstalling(t)
 		notYet(t, result, "confirmation behind an admitted expiry")
 		if f.present(t, vfs.InodeID(f.n), f.srv.clients.confirmingName) {
 			t.Fatal("confirmation wrote while the expiry was running")
 		}
-		closeSignal(g.release)
-		awaitSignal(t, expired, "expiry")
+		testutil.CloseSignal(g.release)
+		testutil.AwaitSignal(t, expired, "expiry")
 		// The expiry finished completely before any confirmation write.
 		if !f.present(t, vfs.InodeID(f.p), expiredName) || len(f.srv.opens.clientStates(f.p)) != 0 {
 			t.Fatal("admitted expiry did not complete")
 		}
-		awaitValue(t, result, "confirmation")
+		testutil.AwaitValue(t, result, "confirmation")
 	})
 	t.Run("staging retirement", func(t *testing.T) {
 		f := newConfirmServer(t)
@@ -955,7 +956,7 @@ func TestProtectionOrdering(t *testing.T) {
 		}
 		result, resume := f.pausedCreate(t)
 		g := newGate()
-		defer closeSignal(g.release)
+		defer testutil.CloseSignal(g.release)
 		f.fs.mu.Lock()
 		f.fs.lookupHook.dir, f.fs.lookupHook.name, f.fs.lookupHook.fn = vfs.InodeID(f.p), activeOpenName(sid), g.hold
 		f.fs.mu.Unlock()
@@ -966,20 +967,20 @@ func TestProtectionOrdering(t *testing.T) {
 			busy, _ := f.srv.retireInactiveStagingTarget(meta.DirID, meta.FileName)
 			retired <- busy
 		}()
-		awaitSignal(t, g.entered, "writer inspection")
+		testutil.AwaitSignal(t, g.entered, "writer inspection")
 		resume()
 		f.awaitInstalling(t)
 		notYet(t, result, "confirmation behind an admitted retirement")
-		closeSignal(g.release)
-		if busy := awaitValue(t, retired, "retirement"); busy || !f.pStaging(t).Retired {
+		testutil.CloseSignal(g.release)
+		if busy := testutil.AwaitValue(t, retired, "retirement"); busy || !f.pStaging(t).Retired {
 			t.Fatal("admitted retirement did not complete")
 		}
-		awaitValue(t, result, "confirmation")
+		testutil.AwaitValue(t, result, "confirmation")
 	})
 	t.Run("EXCHANGE_ID", func(t *testing.T) {
 		f := newConfirmServer(t)
 		g := newGate()
-		defer closeSignal(g.release)
+		defer testutil.CloseSignal(g.release)
 		f.fs.mu.Lock()
 		// The registration reads the identity before rewriting pending.
 		f.fs.onReaddir[f.identity] = g.hold
@@ -994,19 +995,19 @@ func TestProtectionOrdering(t *testing.T) {
 			}
 			exchanged <- wire
 		}()
-		awaitSignal(t, g.entered, "EXCHANGE_ID inside the store")
+		testutil.AwaitSignal(t, g.entered, "EXCHANGE_ID inside the store")
 		result := f.createAsync(t)
 		notYet(t, result, "confirmation behind an admitted EXCHANGE_ID")
 		if f.srv.protected(f.n) {
 			t.Fatal("protection installed while EXCHANGE_ID held the owner")
 		}
-		closeSignal(g.release)
-		if wire := awaitValue(t, exchanged, "EXCHANGE_ID"); wire == 0 || wire == f.wireN {
+		testutil.CloseSignal(g.release)
+		if wire := testutil.AwaitValue(t, exchanged, "EXCHANGE_ID"); wire == 0 || wire == f.wireN {
 			t.Fatalf("EXCHANGE_ID %#x", wire)
 		}
 		// The new registration superseded N before protection: nothing was
 		// written for N, and N's record is gone.
-		if got := awaitValue(t, result, "confirmation"); got != nfs4.NFS4ERR_DELAY && got != nfs4.NFS4ERR_STALE_CLIENTID {
+		if got := testutil.AwaitValue(t, result, "confirmation"); got != nfs4.NFS4ERR_DELAY && got != nfs4.NFS4ERR_STALE_CLIENTID {
 			t.Fatalf("superseded confirmation %s", nfs4.Nfsstat4Name(got))
 		}
 		if f.present(t, vfs.InodeID(f.n), f.srv.clients.confirmingName) || identityConfirmed(t, f) != vfs.InodeID(f.p) {
@@ -1458,13 +1459,13 @@ func TestPurgeProtectionOrdering(t *testing.T) {
 		// R's confirmation has prepared and closed N, and waits to register.
 		result, resume := f.pausedCreateFor(t, wireR)
 		g := newGate()
-		defer closeSignal(g.release)
+		defer testutil.CloseSignal(g.release)
 		f.fs.mu.Lock()
 		f.fs.onReaddir[vfs.InodeID(f.p)] = g.hold
 		f.fs.mu.Unlock()
 		purged := make(chan struct{})
 		go func() { defer close(purged); f.srv.resumeReplacementPurge(f.n) }()
-		awaitSignal(t, g.entered, "purge of P")
+		testutil.AwaitSignal(t, g.entered, "purge of P")
 		resume()
 		f.awaitInstalling(t)
 		notYet(t, result, "confirmation behind an admitted purge")
@@ -1482,14 +1483,14 @@ func TestPurgeProtectionOrdering(t *testing.T) {
 		if f.present(t, vfs.InodeID(r), f.srv.clients.confirmingName) || identityConfirmed(t, f) != vfs.InodeID(f.n) {
 			t.Fatal("confirmation wrote while the purge was running")
 		}
-		closeSignal(g.release)
-		awaitSignal(t, purged, "purge")
+		testutil.CloseSignal(g.release)
+		testutil.AwaitSignal(t, purged, "purge")
 		// The admitted purge completed: P's state and N's reboot edge.
 		f.assertPurged(t)
 		if f.replacementHeld() {
 			t.Fatal("hint kept after the purge")
 		}
-		if got := awaitValue(t, result, "R's confirmation"); got != nfs4.NFS4_OK || identityConfirmed(t, f) != vfs.InodeID(r) {
+		if got := testutil.AwaitValue(t, result, "R's confirmation"); got != nfs4.NFS4_OK || identityConfirmed(t, f) != vfs.InodeID(r) {
 			t.Fatalf("R's confirmation %s", nfs4.Nfsstat4Name(got))
 		}
 	})
@@ -1509,7 +1510,7 @@ func TestPurgeProtectionOrdering(t *testing.T) {
 		}
 		// No hold is left to wait for: R's confirmation registers and commits.
 		wireR, r := f.rebootN(t)
-		if got := awaitValue(t, f.createAsyncFor(t, wireR), "R's confirmation"); got != nfs4.NFS4_OK || identityConfirmed(t, f) != vfs.InodeID(r) {
+		if got := testutil.AwaitValue(t, f.createAsyncFor(t, wireR), "R's confirmation"); got != nfs4.NFS4_OK || identityConfirmed(t, f) != vfs.InodeID(r) {
 			t.Fatalf("R's confirmation %s", nfs4.Nfsstat4Name(got))
 		}
 	})
@@ -1558,7 +1559,7 @@ func TestRecoveryHoldReleasedOnPanic(t *testing.T) {
 		t.Fatalf("%d destruction holds left after the panic", residual)
 	}
 	result := f.createAsync(t)
-	if got := awaitValue(t, result, "confirmation after the panic"); got != nfs4.NFS4_OK {
+	if got := testutil.AwaitValue(t, result, "confirmation after the panic"); got != nfs4.NFS4_OK {
 		t.Fatalf("confirmation %s", nfs4.Nfsstat4Name(got))
 	}
 }

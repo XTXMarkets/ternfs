@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -2024,8 +2025,8 @@ func TestClientGCContinuesAfterPanic(t *testing.T) {
 // hold state.mu, or every fast-path stateid check for the client waits on it.
 func TestClientStoreHasOpenSlowPathDoesNotBlockFastPath(t *testing.T) {
 	baseFS := vfs.NewLocalTernVFS(t.TempDir())
-	hookFS := &markerLookupGateVFS{TernVFS: baseFS, testGate: newTestGate()}
-	defer closeSignal(hookFS.release)
+	hookFS := &markerLookupGateVFS{TernVFS: baseFS, Gate: testutil.NewGate()}
+	defer testutil.CloseSignal(hookFS.Release)
 	owner := clientOwner{
 		principal: rpcPrincipal{flavor: authSys, body: "owner"},
 	}
@@ -2057,14 +2058,14 @@ func TestClientStoreHasOpenSlowPathDoesNotBlockFastPath(t *testing.T) {
 		open, err := first.HasOpen(clientID, remoteState)
 		slow <- result{open: open, err: err}
 	}()
-	awaitSignal(t, hookFS.entered, "slow-path marker lookup")
+	testutil.AwaitSignal(t, hookFS.Entered, "slow-path marker lookup")
 
 	fast := make(chan result, 1)
 	go func() {
 		open, err := first.HasOpen(clientID, cachedState)
 		fast <- result{open: open, err: err}
 	}()
-	got := awaitValue(t, fast, "fast-path HasOpen during the slow path")
+	got := testutil.AwaitValue(t, fast, "fast-path HasOpen during the slow path")
 	if got.err != nil {
 		t.Fatalf("fast-path HasOpen failed: %v", got.err)
 	}
@@ -2072,8 +2073,8 @@ func TestClientStoreHasOpenSlowPathDoesNotBlockFastPath(t *testing.T) {
 		t.Fatal("fast-path HasOpen lost a cached open during the slow path")
 	}
 
-	closeSignal(hookFS.release)
-	got = awaitValue(t, slow, "slow-path HasOpen")
+	testutil.CloseSignal(hookFS.Release)
+	got = testutil.AwaitValue(t, slow, "slow-path HasOpen")
 	if got.err != nil {
 		t.Fatalf("slow-path HasOpen failed: %v", got.err)
 	}

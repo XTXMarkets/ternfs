@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 )
 
 func TestStagingCreateConcurrency(t *testing.T) {
@@ -16,9 +18,9 @@ func TestStagingCreateConcurrency(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gate := newTestGate()
+	gate := testutil.NewGate()
 	store.createFile = func(path string) (*os.File, error) {
-		gate.wait()
+		gate.Wait()
 		return os.Create(path)
 	}
 	type result struct {
@@ -30,14 +32,14 @@ func TestStagingCreateConcurrency(t *testing.T) {
 		f, err := store.Create(1, StagingMeta{})
 		first <- result{f, err}
 	}()
-	defer closeSignal(gate.release)
-	awaitSignal(t, gate.entered, "first staging creation")
+	defer testutil.CloseSignal(gate.Release)
+	testutil.AwaitSignal(t, gate.Entered, "first staging creation")
 	other := make(chan result, 1)
 	go func() {
 		f, err := store.Create(2, StagingMeta{})
 		other <- result{f, err}
 	}()
-	if r := awaitValue(t, other, "independent staging creation"); r.err != nil {
+	if r := testutil.AwaitValue(t, other, "independent staging creation"); r.err != nil {
 		t.Fatal(r.err)
 	}
 	duplicate := make(chan result, 1)
@@ -48,12 +50,12 @@ func TestStagingCreateConcurrency(t *testing.T) {
 	if store.Get(1) != nil || len(store.Entries()) != 1 {
 		t.Fatal("unfinished creation was published")
 	}
-	closeSignal(gate.release)
-	a := awaitValue(t, first, "first creation")
-	b := awaitValue(t, duplicate, "duplicate creation")
-	if a.err != nil || b.err != nil || a.file != b.file || gate.calls.Load() != 2 {
+	testutil.CloseSignal(gate.Release)
+	a := testutil.AwaitValue(t, first, "first creation")
+	b := testutil.AwaitValue(t, duplicate, "duplicate creation")
+	if a.err != nil || b.err != nil || a.file != b.file || gate.Calls.Load() != 2 {
 		t.Fatalf("duplicate creation: first=%v second=%v same=%v calls=%d",
-			a.err, b.err, a.file == b.file, gate.calls.Load())
+			a.err, b.err, a.file == b.file, gate.Calls.Load())
 	}
 	store.Remove(1)
 	store.Remove(2)
@@ -66,9 +68,9 @@ func TestStagingCleanupWaitsForCreation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			gate := newTestGate()
+			gate := testutil.NewGate()
 			store.createFile = func(path string) (*os.File, error) {
-				gate.wait()
+				gate.Wait()
 				return os.Create(path)
 			}
 			created := make(chan error, 1)
@@ -76,8 +78,8 @@ func TestStagingCleanupWaitsForCreation(t *testing.T) {
 				_, err := store.Create(1, StagingMeta{})
 				created <- err
 			}()
-			defer closeSignal(gate.release)
-			awaitSignal(t, gate.entered, "creation before cleanup")
+			defer testutil.CloseSignal(gate.Release)
+			testutil.AwaitSignal(t, gate.Entered, "creation before cleanup")
 			cleaned := make(chan error, 1)
 			go func() {
 				if quarantine {
@@ -87,12 +89,12 @@ func TestStagingCleanupWaitsForCreation(t *testing.T) {
 					cleaned <- nil
 				}
 			}()
-			assertBlocked(t, cleaned, "cleanup during creation")
-			closeSignal(gate.release)
-			if err := awaitValue(t, created, "creation"); err != nil {
+			testutil.AssertBlocked(t, cleaned, "cleanup during creation")
+			testutil.CloseSignal(gate.Release)
+			if err := testutil.AwaitValue(t, created, "creation"); err != nil {
 				t.Fatal(err)
 			}
-			if err := awaitValue(t, cleaned, "cleanup"); err != nil {
+			if err := testutil.AwaitValue(t, cleaned, "cleanup"); err != nil {
 				t.Fatal(err)
 			}
 			if store.Get(1) != nil || len(store.Entries()) != 0 {

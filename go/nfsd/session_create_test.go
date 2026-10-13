@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -212,7 +213,7 @@ func TestCreateSessionConcurrentSameSequence(t *testing.T) {
 	fs := &confirmedLookupGateVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
 		entered: make(chan struct{}), release: make(chan struct{})}
 	srv := identityServer(t, fs)
-	defer closeSignal(fs.release)
+	defer testutil.CloseSignal(fs.release)
 	wire := identityExchange(t, srv, 1, "client", [8]byte{1}, false).clientID
 	status, previous := createResult(t, srv, 1, wire, 1)
 	if status != nfs4.NFS4_OK {
@@ -229,7 +230,7 @@ func TestCreateSessionConcurrentSameSequence(t *testing.T) {
 		status, id := createResult(t, srv, 1, wire, 2)
 		running <- result{status, id}
 	}()
-	awaitSignal(t, fs.entered, "CREATE_SESSION 2 checking the store")
+	testutil.AwaitSignal(t, fs.entered, "CREATE_SESSION 2 checking the store")
 	if got, _ := createResult(t, srv, 1, wire, 2); got != nfs4.NFS4ERR_DELAY {
 		t.Fatalf("same sequence while running %s", nfs4.Nfsstat4Name(got))
 	}
@@ -242,8 +243,8 @@ func TestCreateSessionConcurrentSameSequence(t *testing.T) {
 	if got := identityDestroy(t, srv, wire); got != nfs4.NFS4ERR_CLIENTID_BUSY {
 		t.Fatalf("DESTROY_CLIENTID while running %s", nfs4.Nfsstat4Name(got))
 	}
-	closeSignal(fs.release)
-	r := awaitValue(t, running, "CREATE_SESSION 2")
+	testutil.CloseSignal(fs.release)
+	r := testutil.AwaitValue(t, running, "CREATE_SESSION 2")
 	if r.status != nfs4.NFS4_OK {
 		t.Fatal(nfs4.Nfsstat4Name(r.status))
 	}
@@ -266,7 +267,7 @@ func TestCreateSessionInProgressRecordNotReclaimed(t *testing.T) {
 	}
 	fs := &confirmedLookupGateVFS{TernVFS: local, entered: make(chan struct{}), release: make(chan struct{})}
 	srv := identityServer(t, fs)
-	defer closeSignal(fs.release)
+	defer testutil.CloseSignal(fs.release)
 	var clock atomic.Int64
 	start := time.Now()
 	clock.Store(start.UnixNano())
@@ -279,14 +280,14 @@ func TestCreateSessionInProgressRecordNotReclaimed(t *testing.T) {
 		status, _ := createResult(t, srv, 1, adopted.clientID, 1)
 		running <- status
 	}()
-	awaitSignal(t, fs.entered, "adopted confirmation")
+	testutil.AwaitSignal(t, fs.entered, "adopted confirmation")
 	clock.Store(start.Add(nfsLeaseTime).UnixNano())
 	srv.sessions.wireLimit = 1
 	if got := identityExchange(t, srv, 1, "other", [8]byte{1}, false); got.status != nfs4.NFS4ERR_DELAY {
 		t.Fatalf("EXCHANGE_ID at the cap %s", nfs4.Nfsstat4Name(got.status))
 	}
-	closeSignal(fs.release)
-	if got := awaitValue(t, running, "adopted CREATE_SESSION"); got != nfs4.NFS4_OK {
+	testutil.CloseSignal(fs.release)
+	if got := testutil.AwaitValue(t, running, "adopted CREATE_SESSION"); got != nfs4.NFS4_OK {
 		t.Fatalf("adopted CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 	}
 }
@@ -487,7 +488,7 @@ func TestDestroyClientIDFinalCheckSeesCreation(t *testing.T) {
 	fs := &confirmedLookupGateVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
 		entered: make(chan struct{}), release: make(chan struct{})}
 	srv := identityServer(t, fs)
-	defer closeSignal(fs.release)
+	defer testutil.CloseSignal(fs.release)
 	ss := srv.sessions
 	wire := identityExchange(t, srv, 1, "client", [8]byte{1}, false).clientID
 	status, first := createResult(t, srv, 1, wire, 1)
@@ -512,12 +513,12 @@ func TestDestroyClientIDFinalCheckSeesCreation(t *testing.T) {
 		status, _ := createResult(t, srv, 1, wire, 2)
 		created <- status
 	}()
-	awaitSignal(t, fs.entered, "CREATE_SESSION in the store")
+	testutil.AwaitSignal(t, fs.entered, "CREATE_SESSION in the store")
 	if got := ss.destroyClientRecord(c); got != nfs4.NFS4ERR_CLIENTID_BUSY {
 		t.Fatalf("destruction while creating %s", nfs4.Nfsstat4Name(got))
 	}
-	closeSignal(fs.release)
-	if got := awaitValue(t, created, "CREATE_SESSION"); got != nfs4.NFS4_OK {
+	testutil.CloseSignal(fs.release)
+	if got := testutil.AwaitValue(t, created, "CREATE_SESSION"); got != nfs4.NFS4_OK {
 		t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 	}
 	// The creator has inserted its session.

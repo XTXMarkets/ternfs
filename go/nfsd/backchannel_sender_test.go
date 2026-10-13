@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -118,7 +119,7 @@ func (c *cbTestClient) compound(xid uint32, body []byte) nfs4.COMPOUND4res {
 	c.replies[xid] = ch
 	c.mu.Unlock()
 	c.write(rpcCallForTest(xid, procCompound, body))
-	reply := awaitValue(c.t, ch, "reply")
+	reply := testutil.AwaitValue(c.t, ch, "reply")
 	res, err := parseCompoundReply(reply)
 	if err != nil {
 		c.t.Fatal(err)
@@ -202,7 +203,7 @@ func (c *cbTestClient) answerSequence(t *testing.T, call []byte, status uint32) 
 // answerNull answers the next callback, which must be CB_NULL.
 func (c *cbTestClient) answerNull(t *testing.T) {
 	t.Helper()
-	call, ok := c.nextCall(testChannelTimeout)
+	call, ok := c.nextCall(testutil.ChannelTimeout)
 	if !ok || cbProc(call) != cbProcNull {
 		t.Fatalf("expected CB_NULL, got %v", ok)
 	}
@@ -342,7 +343,7 @@ func shortCallbackTimeout(t *testing.T, d time.Duration) {
 func TestCBNullMarksPath(t *testing.T) {
 	shortCallbackTimeout(t, 100*time.Millisecond)
 	f := newCBSession(t)
-	call, ok := f.client.nextCall(testChannelTimeout)
+	call, ok := f.client.nextCall(testutil.ChannelTimeout)
 	if !ok || cbProc(call) != cbProcNull || binary.BigEndian.Uint32(call[12:]) != 0x40000001 {
 		t.Fatal("no CB_NULL to the callback program")
 	}
@@ -359,7 +360,7 @@ func TestCBNullMarksPath(t *testing.T) {
 
 func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	for deadline := time.Now().Add(testChannelTimeout); !cond(); time.Sleep(5 * time.Millisecond) {
+	for deadline := time.Now().Add(testutil.ChannelTimeout); !cond(); time.Sleep(5 * time.Millisecond) {
 		if time.Now().After(deadline) {
 			t.Fatalf("timed out waiting for %s", what)
 		}
@@ -378,7 +379,7 @@ func TestCBRecallSlotOncePerPressure(t *testing.T) {
 	if _, target := f.sequence(t); target != highest/2 {
 		t.Fatalf("target %d under pressure, want %d", target, highest/2)
 	}
-	call, ok := f.client.nextCall(testChannelTimeout)
+	call, ok := f.client.nextCall(testutil.ChannelTimeout)
 	if !ok {
 		t.Fatal("no CB_RECALL_SLOT")
 	}
@@ -406,7 +407,7 @@ func TestCBRecallSlotOncePerPressure(t *testing.T) {
 	}
 	f.pressure(t, true)
 	f.sequence(t)
-	call, ok = f.client.nextCall(testChannelTimeout)
+	call, ok = f.client.nextCall(testutil.ChannelTimeout)
 	if !ok {
 		t.Fatal("no recall in the second episode")
 	}
@@ -438,7 +439,7 @@ func TestCBResendOnlyAfterDisconnect(t *testing.T) {
 		second.answerNull(t)
 		f.pressure(t, true)
 		f.sequence(t)
-		call, ok := f.client.nextCall(testChannelTimeout)
+		call, ok := f.client.nextCall(testutil.ChannelTimeout)
 		if !ok {
 			t.Fatal("no recall")
 		}
@@ -450,7 +451,7 @@ func TestCBResendOnlyAfterDisconnect(t *testing.T) {
 			t.Fatal("resent on another connection before a disconnect")
 		}
 		f.client.conn.Close()
-		call, ok = second.nextCall(testChannelTimeout)
+		call, ok = second.nextCall(testutil.ChannelTimeout)
 		if !ok {
 			t.Fatal("not resent after the disconnect")
 		}
@@ -465,7 +466,7 @@ func TestCBResendOnlyAfterDisconnect(t *testing.T) {
 		f.client.answerNull(t)
 		f.pressure(t, true)
 		f.sequence(t)
-		call, ok := f.client.nextCall(testChannelTimeout)
+		call, ok := f.client.nextCall(testutil.ChannelTimeout)
 		if !ok {
 			t.Fatal("no recall")
 		}
@@ -476,7 +477,7 @@ func TestCBResendOnlyAfterDisconnect(t *testing.T) {
 			t.Fatalf("BIND %s", nfs4.Nfsstat4Name(res.Status()))
 		}
 		for {
-			call, ok = third.nextCall(testChannelTimeout)
+			call, ok = third.nextCall(testutil.ChannelTimeout)
 			if !ok {
 				t.Fatal("not resent after the BIND")
 			}
@@ -528,7 +529,7 @@ func TestCBSequenceReplies(t *testing.T) {
 		f.client.answerNull(t)
 		f.pressure(t, true)
 		f.sequence(t)
-		call, ok := f.client.nextCall(testChannelTimeout)
+		call, ok := f.client.nextCall(testutil.ChannelTimeout)
 		if !ok {
 			t.Fatal("no recall")
 		}
@@ -555,7 +556,7 @@ func TestCBWorkerHoldsSessionUntilExit(t *testing.T) {
 	f.client.answerNull(t)
 	f.pressure(t, true)
 	f.sequence(t)
-	call, ok := f.client.nextCall(testChannelTimeout)
+	call, ok := f.client.nextCall(testutil.ChannelTimeout)
 	if !ok {
 		t.Fatal("no recall")
 	}
@@ -686,12 +687,12 @@ func TestCallbackArbitratesExpiry(t *testing.T) {
 				expired, _ := srv.decideExpired(clientID, false)
 				decided <- expired
 			}()
-			awaitSignal(t, fs.entered, "lease observation")
+			testutil.AwaitSignal(t, fs.entered, "lease observation")
 			if c == "reply-during-check" {
 				srv.sessions.callbackRenew(clientID, later)
 			}
 			close(fs.release)
-			expired := awaitValue(t, decided, "expiry decision")
+			expired := testutil.AwaitValue(t, decided, "expiry decision")
 			if want := c != "reply-during-check"; expired != want {
 				t.Fatalf("expired %t, want %t", expired, want)
 			}

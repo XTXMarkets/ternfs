@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -227,7 +228,7 @@ func TestFailedWriterCloseDoesNotExpireSiblingDuringLookup(t *testing.T) {
 		})
 		done <- res.Status()
 	}()
-	awaitSignal(t, store.entered, "READ local stateid lookup")
+	testutil.AwaitSignal(t, store.entered, "READ local stateid lookup")
 	// The READ has copied valid local state and observed no tombstone.
 	// Fail W1, then let CLOSE remove its marker before READ checks it.
 	f.server.fs = &namespaceFaultVFS{TernVFS: f.fs, err: errors.New("lost reply")}
@@ -238,7 +239,7 @@ func TestFailedWriterCloseDoesNotExpireSiblingDuringLookup(t *testing.T) {
 		t.Fatal(nfs4.Nfsstat4Name(got))
 	}
 	close(store.release)
-	if got := awaitValue(t, done, "READ after failed CLOSE"); got != nfs4.NFS4ERR_IO {
+	if got := testutil.AwaitValue(t, done, "READ after failed CLOSE"); got != nfs4.NFS4ERR_IO {
 		t.Fatalf("racing READ = %s", nfs4.Nfsstat4Name(got))
 	}
 	meta, ok := f.store.GetMeta(siblingID)
@@ -489,7 +490,7 @@ func TestNamespacePrivateIODoesNotWaitForGuard(t *testing.T) {
 	defer removeF.conn.Close()
 	done := make(chan uint32, 1)
 	go func() { done <- removeNamespaceFile(t, &removeF, "source") }()
-	awaitSignal(t, fs.entered, "guarded REMOVE")
+	testutil.AwaitSignal(t, fs.entered, "guarded REMOVE")
 	f.conn.SetDeadline(time.Now().Add(time.Second))
 	writeFileAt(t, f.conn, &f.xid, f.fh, f.state, 0, []byte("new private data"))
 	if got := commitNamespaceStatus(t, f); got != nfs4.NFS4_OK {
@@ -500,7 +501,7 @@ func TestNamespacePrivateIODoesNotWaitForGuard(t *testing.T) {
 		t.Fatalf("guarded private read = %q", data)
 	}
 	close(fs.release)
-	if got := awaitValue(t, done, "completed REMOVE"); got != nfs4.NFS4_OK {
+	if got := testutil.AwaitValue(t, done, "completed REMOVE"); got != nfs4.NFS4_OK {
 		t.Fatal(nfs4.Nfsstat4Name(got))
 	}
 }

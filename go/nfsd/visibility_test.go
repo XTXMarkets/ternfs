@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -126,7 +127,7 @@ func TestConcurrentGuardedCreationPublishesOnce(t *testing.T) {
 			releaseFirst: make(chan struct{}),
 		},
 	}
-	defer closeSignal(fs.releaseFirst)
+	defer testutil.CloseSignal(fs.releaseFirst)
 	store, err := NewLocalStagingStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -155,7 +156,7 @@ func TestConcurrentGuardedCreationPublishesOnce(t *testing.T) {
 		}
 		results <- status
 	}()
-	awaitSignal(t, fs.firstEntered, "guarded create allocating its empty inode")
+	testutil.AwaitSignal(t, fs.firstEntered, "guarded create allocating its empty inode")
 	go func() {
 		seq := uint32(200)
 		status, _, _, _, err := openFileForOwnerE(
@@ -167,9 +168,9 @@ func TestConcurrentGuardedCreationPublishesOnce(t *testing.T) {
 		}
 		results <- status
 	}()
-	closeSignal(fs.releaseFirst)
-	first := awaitValue(t, results, "first guarded create result")
-	second := awaitValue(t, results, "second guarded create result")
+	testutil.CloseSignal(fs.releaseFirst)
+	first := testutil.AwaitValue(t, results, "first guarded create result")
+	second := testutil.AwaitValue(t, results, "second guarded create result")
 	if !(first == nfs4.NFS4_OK && second == nfs4.NFS4ERR_EXIST ||
 		first == nfs4.NFS4ERR_EXIST && second == nfs4.NFS4_OK) {
 		t.Fatalf("guarded creates returned %s and %s", nfs4.Nfsstat4Name(first), nfs4.Nfsstat4Name(second))

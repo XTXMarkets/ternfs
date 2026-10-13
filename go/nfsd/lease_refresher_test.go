@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -569,7 +570,7 @@ func TestSequenceAdmissionDoesNoStoreIO(t *testing.T) {
 		done <- res.Status()
 	}()
 	for _, want := range []uint32{nfs4.NFS4_OK, nfs4.NFS4ERR_DELAY} {
-		if got := awaitValue(t, done, "SEQUENCE with a blocked store"); got != want {
+		if got := testutil.AwaitValue(t, done, "SEQUENCE with a blocked store"); got != want {
 			t.Fatalf("SEQUENCE %s, want %s", nfs4.Nfsstat4Name(got), nfs4.Nfsstat4Name(want))
 		}
 	}
@@ -694,7 +695,7 @@ func TestIdleClientResumesAfterVerify(t *testing.T) {
 	if got := sequenceStatus(reply); got != nfs4.NFS4ERR_DELAY {
 		t.Fatalf("idle SEQUENCE %s, want DELAY", nfs4.Nfsstat4Name(got))
 	}
-	for deadline := time.Now().Add(testChannelTimeout); ; time.Sleep(time.Millisecond) {
+	for deadline := time.Now().Add(testutil.ChannelTimeout); ; time.Sleep(time.Millisecond) {
 		reply, err = sendRawRPC(conn, 3, procCompound, withSequence(body, ts, 0, 1))
 		if err != nil {
 			t.Fatal(err)

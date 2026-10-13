@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -370,7 +371,7 @@ func TestExchangeIDBoundsAndRetirement(t *testing.T) {
 // awaitOwnerWaiter waits until a second request queues on an owner's lock.
 func awaitOwnerWaiter(t *testing.T, ss *sessionStore, owner string) {
 	t.Helper()
-	for deadline := time.Now().Add(testChannelTimeout); ; {
+	for deadline := time.Now().Add(testutil.ChannelTimeout); ; {
 		refs := ss.ownerLocks.Refs(owner)
 		if refs == 2 {
 			return
@@ -390,11 +391,11 @@ func TestExchangeIDSameOwnerRegistersInOrder(t *testing.T) {
 	fs := &confirmedLookupGateVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
 		entered: make(chan struct{}), release: make(chan struct{})}
 	srv := identityServer(t, fs)
-	defer closeSignal(fs.release)
+	defer testutil.CloseSignal(fs.release)
 	fs.armed.Store(true)
 	first, second := make(chan exchangeResult, 1), make(chan exchangeResult, 1)
 	go func() { first <- identityExchange(t, srv, 1, "client", [8]byte{1}, false) }()
-	awaitSignal(t, fs.entered, "first registration in the store")
+	testutil.AwaitSignal(t, fs.entered, "first registration in the store")
 	go func() { second <- identityExchange(t, srv, 1, "client", [8]byte{1}, false) }()
 	awaitOwnerWaiter(t, srv.sessions, "client")
 	select {
@@ -402,9 +403,9 @@ func TestExchangeIDSameOwnerRegistersInOrder(t *testing.T) {
 		t.Fatalf("second registration overtook the first: %+v", got)
 	default:
 	}
-	closeSignal(fs.release)
-	a := awaitValue(t, first, "first registration")
-	b := awaitValue(t, second, "second registration")
+	testutil.CloseSignal(fs.release)
+	a := testutil.AwaitValue(t, first, "first registration")
+	b := testutil.AwaitValue(t, second, "second registration")
 	if a.status != nfs4.NFS4_OK || b.status != nfs4.NFS4_OK || a.clientID == b.clientID {
 		t.Fatalf("registrations %+v, %+v", a, b)
 	}
@@ -428,7 +429,7 @@ func TestDestroyClientIDRetiresOnlyItsRecord(t *testing.T) {
 	fs := &confirmedLookupGateVFS{TernVFS: local, entered: make(chan struct{}), release: make(chan struct{})}
 	srv := identityServer(t, fs)
 	ss := srv.sessions
-	defer closeSignal(fs.release)
+	defer testutil.CloseSignal(fs.release)
 	// A: an unconfirmed cold adoption of P, with no sessions or opens.
 	a := identityExchange(t, srv, 1, "client", [8]byte{1}, false)
 	ss.mu.Lock()
@@ -442,16 +443,16 @@ func TestDestroyClientIDRetiresOnlyItsRecord(t *testing.T) {
 	fs.armed.Store(true)
 	exchanged := make(chan exchangeResult, 1)
 	go func() { exchanged <- identityExchange(t, srv, 1, "client", [8]byte{1}, false) }()
-	awaitSignal(t, fs.entered, "adoption in the store")
+	testutil.AwaitSignal(t, fs.entered, "adoption in the store")
 	destroyed := make(chan uint32, 1)
 	go func() { destroyed <- identityDestroy(t, srv, a.clientID) }()
 	awaitOwnerWaiter(t, ss, "client")
-	closeSignal(fs.release)
-	b := awaitValue(t, exchanged, "second adoption")
+	testutil.CloseSignal(fs.release)
+	b := testutil.AwaitValue(t, exchanged, "second adoption")
 	if b.status != nfs4.NFS4_OK || b.clientID == a.clientID || incarnationForTest(t, srv, b.clientID) != recordA.incarnation {
 		t.Fatalf("second adoption %+v", b)
 	}
-	if got := awaitValue(t, destroyed, "delayed DESTROY_CLIENTID"); got != nfs4.NFS4ERR_STALE_CLIENTID {
+	if got := testutil.AwaitValue(t, destroyed, "delayed DESTROY_CLIENTID"); got != nfs4.NFS4ERR_STALE_CLIENTID {
 		t.Fatalf("DESTROY_CLIENTID of a superseded record %s", nfs4.Nfsstat4Name(got))
 	}
 	// The same holds for a destruction already past its checks.

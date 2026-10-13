@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -63,7 +64,7 @@ func TestActiveCompoundDoesNotExpireClientState(t *testing.T) {
 	}
 	addr, stop := serveTestServer(t, srv)
 	defer stop()
-	defer closeSignal(fs.release)
+	defer testutil.CloseSignal(fs.release)
 	conn := dial(t, addr)
 	defer conn.Close()
 	xid := uint32(1)
@@ -91,10 +92,10 @@ func TestActiveCompoundDoesNotExpireClientState(t *testing.T) {
 		}
 		closed <- status
 	}()
-	awaitSignal(t, fs.entered, "CLOSE's durable-open check")
+	testutil.AwaitSignal(t, fs.entered, "CLOSE's durable-open check")
 	skew.Store(int64(10 * leaseWriteTerm))
-	closeSignal(fs.release)
-	if got := awaitValue(t, closed, "CLOSE with a dead durable lease"); got != nfs4.NFS4ERR_EXPIRED {
+	testutil.CloseSignal(fs.release)
+	if got := testutil.AwaitValue(t, closed, "CLOSE with a dead durable lease"); got != nfs4.NFS4ERR_EXPIRED {
 		t.Fatalf("CLOSE %s, want EXPIRED", nfs4.Nfsstat4Name(got))
 	}
 
@@ -268,7 +269,7 @@ func TestLocalExpiryDrainsSessionsWithoutMarker(t *testing.T) {
 	inc := sess.clientID
 	f.pressure(t, true)
 	f.sequence(t)
-	if _, ok := f.client.nextCall(testChannelTimeout); !ok {
+	if _, ok := f.client.nextCall(testutil.ChannelTimeout); !ok {
 		t.Fatal("no recall outstanding")
 	}
 	f.pressure(t, false)
@@ -598,7 +599,7 @@ func TestBackchannelCyclesReuseConnection(t *testing.T) {
 		if flags&nfs4.CREATE_SESSION4_FLAG_CONN_BACK_CHAN == 0 {
 			t.Fatalf("cycle %d: no backchannel granted", i)
 		}
-		call, ok := c.nextCall(testChannelTimeout)
+		call, ok := c.nextCall(testutil.ChannelTimeout)
 		if !ok || cbProc(call) != cbProcNull {
 			t.Fatalf("cycle %d: no CB_NULL for the new backchannel", i)
 		}
@@ -708,7 +709,7 @@ func TestRecallReplyEffects(t *testing.T) {
 		sess := f.session(t)
 		f.pressure(t, true)
 		f.sequence(t)
-		call, ok := f.client.nextCall(testChannelTimeout)
+		call, ok := f.client.nextCall(testutil.ChannelTimeout)
 		if !ok {
 			t.Fatal("no recall")
 		}
@@ -734,7 +735,7 @@ func TestRecallReplyEffects(t *testing.T) {
 		sess := f.session(t)
 		f.pressure(t, true)
 		f.sequence(t)
-		call, ok := f.client.nextCall(testChannelTimeout)
+		call, ok := f.client.nextCall(testutil.ChannelTimeout)
 		if !ok {
 			t.Fatal("no recall")
 		}
@@ -768,7 +769,7 @@ func TestRecallReplyEffects(t *testing.T) {
 func TestCallbacksWaitForAnsweredPath(t *testing.T) {
 	t.Run("probing", func(t *testing.T) {
 		f := newCBSession(t)
-		null, ok := f.client.nextCall(testChannelTimeout)
+		null, ok := f.client.nextCall(testutil.ChannelTimeout)
 		if !ok || cbProc(null) != cbProcNull {
 			t.Fatal("no CB_NULL")
 		}
@@ -778,7 +779,7 @@ func TestCallbacksWaitForAnsweredPath(t *testing.T) {
 			t.Fatal("a recall went to a connection still being probed")
 		}
 		f.client.answer(null, nil)
-		call, ok := f.client.nextCall(testChannelTimeout)
+		call, ok := f.client.nextCall(testutil.ChannelTimeout)
 		if !ok || cbProc(call) != cbProcCompound {
 			t.Fatal("no recall once the path was up")
 		}
@@ -792,13 +793,13 @@ func TestCallbacksWaitForAnsweredPath(t *testing.T) {
 		if res := second.compound(1000, admissionBind(f.ts.id, nfs4.CDFC4_BACK_OR_BOTH, false)); res.Status() != nfs4.NFS4_OK {
 			t.Fatalf("BIND %s", nfs4.Nfsstat4Name(res.Status()))
 		}
-		null, ok := second.nextCall(testChannelTimeout)
+		null, ok := second.nextCall(testutil.ChannelTimeout)
 		if !ok || cbProc(null) != cbProcNull {
 			t.Fatal("no CB_NULL on the second connection")
 		}
 		f.pressure(t, true)
 		f.sequence(t)
-		call, ok := f.client.nextCall(testChannelTimeout)
+		call, ok := f.client.nextCall(testutil.ChannelTimeout)
 		if !ok {
 			t.Fatal("no recall")
 		}
@@ -808,7 +809,7 @@ func TestCallbacksWaitForAnsweredPath(t *testing.T) {
 			t.Fatal("resent to a connection still being probed")
 		}
 		second.answer(null, nil)
-		call, ok = second.nextCall(testChannelTimeout)
+		call, ok = second.nextCall(testutil.ChannelTimeout)
 		if !ok {
 			t.Fatal("not resent once the second path was up")
 		}
@@ -828,7 +829,7 @@ func TestLateCallbackReplyRestoresPath(t *testing.T) {
 	f.client.answerNull(t)
 	f.pressure(t, true)
 	f.sequence(t)
-	call, ok := f.client.nextCall(testChannelTimeout)
+	call, ok := f.client.nextCall(testutil.ChannelTimeout)
 	if !ok {
 		t.Fatal("no recall")
 	}
@@ -838,7 +839,7 @@ func TestLateCallbackReplyRestoresPath(t *testing.T) {
 	f.sequence(t)
 	f.pressure(t, true)
 	f.sequence(t)
-	call, ok = f.client.nextCall(testChannelTimeout)
+	call, ok = f.client.nextCall(testutil.ChannelTimeout)
 	if !ok {
 		t.Fatal("no recall after the late reply")
 	}
@@ -1061,7 +1062,7 @@ func TestRecallDroppedWhenCredentialGrows(t *testing.T) {
 	srv, addr, cleanup := startTestServerWithServer(t, t.TempDir())
 	defer cleanup()
 	f := newCBSessionLimits(t, srv, addr, minSessionRequest, 1)
-	null, ok := f.client.nextCall(testChannelTimeout)
+	null, ok := f.client.nextCall(testutil.ChannelTimeout)
 	if !ok || cbProc(null) != cbProcNull {
 		t.Fatal("no CB_NULL")
 	}
@@ -1210,7 +1211,7 @@ func TestCreateSessionRacingExpiry(t *testing.T) {
 	}
 	addr, stop := serveTestServer(t, srv)
 	defer stop()
-	defer closeSignal(fs.release)
+	defer testutil.CloseSignal(fs.release)
 	c := newCBTestClient(t, addr)
 	clientID, seq := exchangeOn(t, c, 1, "lease1-race")
 	createdSession(t, c.compound(2, backCreateSessionBody(clientID, seq, 0)))
@@ -1221,13 +1222,13 @@ func TestCreateSessionRacingExpiry(t *testing.T) {
 	srv.clients.stopLeaseWorkers()
 	done := make(chan uint32, 1)
 	go func() { done <- c.compound(3, backCreateSessionBody(clientID, seq+1, 0)).Status() }()
-	awaitSignal(t, fs.entered, "CREATE_SESSION's confirmation check")
+	testutil.AwaitSignal(t, fs.entered, "CREATE_SESSION's confirmation check")
 	srv.sessions.mu.Lock()
 	srv.sessions.groups[inc].lease = gateExpired
 	srv.sessions.mu.Unlock()
 	before := srv.sessions.accounting()
-	closeSignal(fs.release)
-	if got := awaitValue(t, done, "CREATE_SESSION"); got != nfs4.NFS4ERR_STALE_CLIENTID {
+	testutil.CloseSignal(fs.release)
+	if got := testutil.AwaitValue(t, done, "CREATE_SESSION"); got != nfs4.NFS4ERR_STALE_CLIENTID {
 		t.Fatalf("CREATE_SESSION racing expiry %s, want STALE_CLIENTID", nfs4.Nfsstat4Name(got))
 	}
 	if after := srv.sessions.accounting(); after.Sessions != before.Sessions {

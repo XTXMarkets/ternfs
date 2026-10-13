@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -153,10 +154,10 @@ func TestRemoveCancelsQueuedHydration(t *testing.T) {
 		close(entered)
 		return srv.readBaseBackground(cancel, id, offset, dest)
 	})
-	awaitSignal(t, entered, "queued hydration")
+	testutil.AwaitSignal(t, entered, "queued hydration")
 	done := make(chan struct{})
 	go func() { store.Remove(id); close(done) }()
-	awaitSignal(t, done, "cancelled queued hydration")
+	testutil.AwaitSignal(t, done, "cancelled queued hydration")
 }
 
 // Sidecars from the NFSv4.0 server (NFS5 on main, NFS6 and NFS7 on its

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -280,7 +281,7 @@ func TestReadOpenBehindCleanCloseEndsOnFile(t *testing.T) {
 		xid := uint32(5000)
 		closed <- closeFileStatus(t, f.conn, &xid, f.fh, writer)
 	}()
-	awaitSignal(t, scrapping, "clean CLOSE discarding the staging")
+	testutil.AwaitSignal(t, scrapping, "clean CLOSE discarding the staging")
 	opened := make(chan [16]byte, 1)
 	go func() {
 		xid := uint32(6000)
@@ -296,10 +297,10 @@ func TestReadOpenBehindCleanCloseEndsOnFile(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 	close(hold)
-	if status := awaitValue(t, closed, "clean CLOSE"); status != nfs4.NFS4_OK {
+	if status := testutil.AwaitValue(t, closed, "clean CLOSE"); status != nfs4.NFS4_OK {
 		t.Fatalf("CLOSE %s", nfs4.Nfsstat4Name(status))
 	}
-	reader := awaitValue(t, opened, "read OPEN")
+	reader := testutil.AwaitValue(t, opened, "read OPEN")
 	if got := f.dataID(t, reader); got != f.fileID {
 		t.Fatalf("reader source %d, want %d", got, f.fileID)
 	}

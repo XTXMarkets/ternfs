@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -74,7 +75,7 @@ func (fs *peakVFS) arm(kind string) {
 
 func (fs *peakVFS) awaitPeak(t *testing.T, want int) int {
 	t.Helper()
-	deadline := time.Now().Add(testChannelTimeout)
+	deadline := time.Now().Add(testutil.ChannelTimeout)
 	for {
 		fs.mu.Lock()
 		peak := fs.peak

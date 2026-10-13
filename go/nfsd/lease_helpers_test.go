@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -109,7 +110,7 @@ func leasePassForTest(t *testing.T, srv *Server, clientID uint64) {
 // lease, as a client's first SEQUENCE after CREATE_SESSION waits out DELAY.
 func awaitLeaseProven(t *testing.T, srv *Server, clientID uint64) {
 	t.Helper()
-	for deadline := time.Now().Add(testChannelTimeout); !srv.clients.leaseProven(vfs.InodeID(clientID)); {
+	for deadline := time.Now().Add(testutil.ChannelTimeout); !srv.clients.leaseProven(vfs.InodeID(clientID)); {
 		if time.Now().After(deadline) {
 			t.Fatalf("lease of %d never published", clientID)
 		}

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -134,7 +135,7 @@ func TestTerminalAdmissionBeforeCleanup(t *testing.T) {
 	fs.leaseName = srv.clients.leaseName
 	addr, stop := serveTestServer(t, srv)
 	defer stop()
-	defer closeSignal(fs.release)
+	defer testutil.CloseSignal(fs.release)
 	c := newCBTestClient(t, addr)
 	clientID, seq := exchangeOn(t, c, 1, "terminal-cleanup")
 	body := backCreateSessionBody(clientID, seq, 0)
@@ -157,7 +158,7 @@ func TestTerminalAdmissionBeforeCleanup(t *testing.T) {
 		defer close(passed)
 		r.safePass(false)
 	}()
-	awaitSignal(t, fs.entered, "the terminal cleanup's RemoveEdge")
+	testutil.AwaitSignal(t, fs.entered, "the terminal cleanup's RemoveEdge")
 
 	before := srv.sessions.accounting()
 	if res := c.compound(3, backCreateSessionBody(clientID, seq+1, 0)); res.Status() != nfs4.NFS4ERR_STALE_CLIENTID {
@@ -171,8 +172,8 @@ func TestTerminalAdmissionBeforeCleanup(t *testing.T) {
 		t.Fatal("the cached CREATE_SESSION did not replay during cleanup")
 	}
 
-	closeSignal(fs.release)
-	awaitSignal(t, passed, "the terminal pass")
+	testutil.CloseSignal(fs.release)
+	testutil.AwaitSignal(t, passed, "the terminal pass")
 	if fs.present(vfs.InodeID(inc)) {
 		t.Fatal("the terminal pass left our lease")
 	}
@@ -215,7 +216,7 @@ func pendingBackProbe(t *testing.T, prune bool) {
 	}
 	addr, stop := serveTestServer(t, srv)
 	defer stop()
-	defer closeSignal(fs.release)
+	defer testutil.CloseSignal(fs.release)
 	c := newCBTestClient(t, addr)
 	clientID, seq := exchangeOn(t, c, 1, "probe-owner")
 	s0, flags := createdSession(t, c.compound(2, backCreateSessionBody(clientID, seq,
@@ -223,7 +224,7 @@ func pendingBackProbe(t *testing.T, prune bool) {
 	if flags&nfs4.CREATE_SESSION4_FLAG_CONN_BACK_CHAN == 0 {
 		t.Fatal("no backchannel granted")
 	}
-	if call, ok := c.nextCall(testChannelTimeout); !ok || cbProc(call) != cbProcNull {
+	if call, ok := c.nextCall(testutil.ChannelTimeout); !ok || cbProc(call) != cbProcNull {
 		t.Fatal("no CB_NULL for S0")
 	} // Left unanswered.
 	sess0 := srv.sessions.lookup(s0)
@@ -244,7 +245,7 @@ func pendingBackProbe(t *testing.T, prune bool) {
 		s1Done <- c.compound(3, backCreateSessionBody(clientID, seq+1,
 			nfs4.CREATE_SESSION4_FLAG_CONN_BACK_CHAN, offerNone))
 	}()
-	awaitSignal(t, fs.entered, "S1's confirmation check")
+	testutil.AwaitSignal(t, fs.entered, "S1's confirmation check")
 	conn.mu.Lock()
 	pending := len(conn.backPending)
 	conn.mu.Unlock()
@@ -268,12 +269,12 @@ func pendingBackProbe(t *testing.T, prune bool) {
 		}
 	}
 
-	closeSignal(fs.release)
-	s1, flags := createdSession(t, awaitValue(t, s1Done, "S1's CREATE_SESSION"))
+	testutil.CloseSignal(fs.release)
+	s1, flags := createdSession(t, testutil.AwaitValue(t, s1Done, "S1's CREATE_SESSION"))
 	if flags&nfs4.CREATE_SESSION4_FLAG_CONN_BACK_CHAN == 0 {
 		t.Fatal("no backchannel granted to S1")
 	}
-	call, ok := c.nextCall(testChannelTimeout)
+	call, ok := c.nextCall(testutil.ChannelTimeout)
 	if !ok || cbProc(call) != cbProcNull {
 		t.Fatal("no CB_NULL for S1's backchannel")
 	}
@@ -421,7 +422,7 @@ func TestNotedExpiryRunsTerminalSteps(t *testing.T) {
 	waitFor(t, "the next refresh to be scheduled", func() bool {
 		r.mu.Lock()
 		defer r.mu.Unlock()
-		return time.Until(r.maintainAt) > testChannelTimeout
+		return time.Until(r.maintainAt) > testutil.ChannelTimeout
 	})
 	cs.noteFleetExpired(clientID)
 	waitFor(t, "the terminal steps", func() bool {

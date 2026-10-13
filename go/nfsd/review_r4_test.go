@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -197,7 +198,7 @@ func TestIdleReclaimKeepsObligations(t *testing.T) {
 		t.Fatal("the sweeps moved the backoff")
 	}
 	// After the deadline the worker fences the attempt, then frees the record.
-	for limit := time.Now().Add(deadline.Sub(time.Now()) + testChannelTimeout); ; time.Sleep(10 * time.Millisecond) {
+	for limit := time.Now().Add(deadline.Sub(time.Now()) + testutil.ChannelTimeout); ; time.Sleep(10 * time.Millisecond) {
 		cs.refreshMu.Lock()
 		freed := cs.refreshers[vfs.InodeID(clientID)] == nil
 		cs.refreshMu.Unlock()

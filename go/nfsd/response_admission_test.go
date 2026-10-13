@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -303,7 +304,7 @@ func TestResponseAdmissionPanicRetainsTerminalAuthority(t *testing.T) {
 
 func TestResponseAdmissionAttributeAndDirectoryBudgets(t *testing.T) {
 	srv, fs := newConnectionTestServer(t, 2)
-	closeSignal(fs.release)
+	testutil.CloseSignal(fs.Release)
 	ts := connectionSession(t, srv)
 	sess := srv.sessions.lookup(ts.id)
 	body := buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {

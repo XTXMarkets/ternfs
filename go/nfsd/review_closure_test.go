@@ -21,6 +21,7 @@ import (
 
 	"github.com/XTXMarkets/ternfs/go/msgs"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -344,15 +345,15 @@ func TestReviewN08R1StalledTransportRetainsOutput(t *testing.T) {
 	done := make(chan struct{})
 	go func() { defer close(done); srv.handleConn(gate) }()
 	defer func() {
-		closeSignal(gate.release)
+		testutil.CloseSignal(gate.release)
 		client.Close()
 		server.Close()
-		awaitSignal(t, done, "transport worker cleanup")
+		testutil.AwaitSignal(t, done, "transport worker cleanup")
 	}()
 	body := buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) { w.AppendArgarray_Putrootfh() })
 	wire := admissionSequence(body, ts, 0, 1, false)
 	writeCallForTest(t, client, rpcCallForTest(1, procCompound, wire))
-	awaitSignal(t, gate.entered, "stalled response")
+	testutil.AwaitSignal(t, gate.entered, "stalled response")
 	if a := srv.sessions.accounting(); a.WorkReplies != 1 || a.WorkBytes == 0 {
 		t.Fatalf("stalled output not charged %+v", a)
 	}
@@ -363,13 +364,13 @@ func TestReviewN08R1StalledTransportRetainsOutput(t *testing.T) {
 	if a := srv.sessions.accounting(); a.CacheBytes != 0 || a.WorkReplies != 1 || a.WorkBytes == 0 {
 		t.Fatalf("stalled output released before write %+v", a)
 	}
-	closeSignal(gate.release)
-	client.SetReadDeadline(time.Now().Add(testChannelTimeout))
+	testutil.CloseSignal(gate.release)
+	client.SetReadDeadline(time.Now().Add(testutil.ChannelTimeout))
 	if _, err := readFrame(client); err != nil {
 		t.Fatal(err)
 	}
 	client.Close()
-	awaitSignal(t, done, "completed transport")
+	testutil.AwaitSignal(t, done, "completed transport")
 	if a := srv.sessions.accounting(); a.WorkBytes != 0 || a.WorkReplies != 0 {
 		t.Fatalf("completed output retains charge %+v", a)
 	}
@@ -736,7 +737,7 @@ func TestReviewN08R1bClientRetirementHoldsRecords(t *testing.T) {
 	}
 	// The batch is detached from lookup yet its records stay counted.
 	waitFor("batch detached", func(a replyAccounting) bool { return a.Sessions == 0 })
-	assertBlocked(t, done, "client-wide retirement")
+	testutil.AssertBlocked(t, done, "client-wide retirement")
 	if a := ss.accounting(); a.Records != count {
 		t.Fatalf("stalled batch returned record credit %+v", a)
 	}

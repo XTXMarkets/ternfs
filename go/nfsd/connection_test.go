@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -81,7 +82,7 @@ func writeCallForTest(t *testing.T, conn net.Conn, call []byte) {
 
 func readXIDForTest(t *testing.T, conn net.Conn) uint32 {
 	t.Helper()
-	if err := conn.SetReadDeadline(time.Now().Add(testChannelTimeout)); err != nil {
+	if err := conn.SetReadDeadline(time.Now().Add(testutil.ChannelTimeout)); err != nil {
 		t.Fatal(err)
 	}
 	reply, err := readFrame(conn)
@@ -105,7 +106,7 @@ func readXIDForTest(t *testing.T, conn net.Conn) uint32 {
 
 type statGateVFS struct {
 	vfs.TernVFS
-	*testGate
+	*testutil.Gate
 	active    atomic.Int32
 	maxActive atomic.Int32
 }
@@ -118,15 +119,15 @@ func (fs *statGateVFS) Stat(id vfs.InodeID) (vfs.NodeInfo, error) {
 			break
 		}
 	}
-	fs.wait()
+	fs.Wait()
 	return fs.TernVFS.Stat(id)
 }
 
 func newConnectionTestServer(t *testing.T, limit int) (*Server, *statGateVFS) {
 	t.Helper()
 	fs := &statGateVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
-		testGate: newTestGate()}
-	fs.all = true
+		Gate: testutil.NewGate()}
+	fs.All = true
 	srv, err := NewServer(fs, readOnlyStagingStore{}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -142,21 +143,21 @@ func TestConnectionConcurrentCompounds(t *testing.T) {
 		t.Run(fmt.Sprint(limit), func(t *testing.T) {
 			srv, fs := newConnectionTestServer(t, limit)
 			ts := connectionSession(t, srv)
-			fs.all = false
+			fs.All = false
 			addr, cleanup := serveTestServer(t, srv)
 			defer cleanup()
-			defer closeSignal(fs.release)
+			defer testutil.CloseSignal(fs.Release)
 			conn := dial(t, addr)
 			defer conn.Close()
 			writeCallForTest(t, conn, statCallForTest(ts, 1))
-			awaitSignal(t, fs.entered, "slow stat")
+			testutil.AwaitSignal(t, fs.Entered, "slow stat")
 			writeCallForTest(t, conn, statCallForTest(ts, 2))
 			if limit == 1 {
 				conn.SetReadDeadline(time.Now().Add(25 * time.Millisecond))
 				if _, err := readFrame(conn); err == nil {
 					t.Fatal("reply bypassed limit of one")
 				}
-				closeSignal(fs.release)
+				testutil.CloseSignal(fs.Release)
 				if xid := readXIDForTest(t, conn); xid != 1 {
 					t.Fatalf("first reply = %d", xid)
 				}
@@ -167,7 +168,7 @@ func TestConnectionConcurrentCompounds(t *testing.T) {
 				if xid := readXIDForTest(t, conn); xid != 2 {
 					t.Fatalf("fast reply = %d", xid)
 				}
-				closeSignal(fs.release)
+				testutil.CloseSignal(fs.Release)
 				if xid := readXIDForTest(t, conn); xid != 1 {
 					t.Fatalf("slow reply = %d", xid)
 				}
@@ -182,17 +183,17 @@ func TestConnectionAdmissionBound(t *testing.T) {
 	ts := connectionSession(t, srv)
 	addr, cleanup := serveTestServer(t, srv)
 	defer cleanup()
-	defer closeSignal(fs.release)
+	defer testutil.CloseSignal(fs.Release)
 	conn := dial(t, addr)
 	defer conn.Close()
 	for i := 1; i <= count; i++ {
 		writeCallForTest(t, conn, statCallForTest(ts, uint32(i)))
 	}
 	for i := 0; i < limit; i++ {
-		awaitSignal(t, fs.entered, "admitted stat")
+		testutil.AwaitSignal(t, fs.Entered, "admitted stat")
 	}
-	assertBlocked(t, fs.entered, "admission beyond the limit")
-	closeSignal(fs.release)
+	testutil.AssertBlocked(t, fs.Entered, "admission beyond the limit")
+	testutil.CloseSignal(fs.Release)
 	seen := make(map[uint32]bool)
 	for i := 0; i < count; i++ {
 		xid := readXIDForTest(t, conn)
@@ -201,19 +202,19 @@ func TestConnectionAdmissionBound(t *testing.T) {
 		}
 		seen[xid] = true
 	}
-	if fs.maxActive.Load() > limit || fs.calls.Load() != count {
-		t.Fatalf("maximum=%d calls=%d", fs.maxActive.Load(), fs.calls.Load())
+	if fs.maxActive.Load() > limit || fs.Calls.Load() != count {
+		t.Fatalf("maximum=%d calls=%d", fs.maxActive.Load(), fs.Calls.Load())
 	}
 }
 
 type mkdirGateVFS struct {
 	vfs.TernVFS
-	*testGate
+	*testutil.Gate
 }
 
 func (fs *mkdirGateVFS) Mkdir(dir vfs.InodeID, name string) (vfs.InodeID, error) {
 	if name == "once" {
-		fs.wait()
+		fs.Wait()
 	}
 	return fs.TernVFS.Mkdir(dir, name)
 }
@@ -222,7 +223,7 @@ func TestConnectionInFlightDuplicates(t *testing.T) {
 	for _, conflicting := range []bool{false, true} {
 		t.Run(fmt.Sprint(conflicting), func(t *testing.T) {
 			fs := &mkdirGateVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
-				testGate: newTestGate()}
+				Gate: testutil.NewGate()}
 			staging, err := NewLocalStagingStore(t.TempDir(), nil)
 			if err != nil {
 				t.Fatal(err)
@@ -233,7 +234,7 @@ func TestConnectionInFlightDuplicates(t *testing.T) {
 			}
 			addr, cleanup := serveTestServer(t, srv)
 			defer cleanup()
-			defer closeSignal(fs.release)
+			defer testutil.CloseSignal(fs.Release)
 			conn := dial(t, addr)
 			defer conn.Close()
 			body := buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
@@ -255,10 +256,10 @@ func TestConnectionInFlightDuplicates(t *testing.T) {
 			})
 			call := sessionCallForTest(connectionSession(t, srv), 1, body)
 			writeCallForTest(t, conn, call)
-			awaitSignal(t, fs.entered, "directory creation")
+			testutil.AwaitSignal(t, fs.Entered, "directory creation")
 			if conflicting {
 				writeCallForTest(t, conn, rpcCallForTest(1, procNull, nil))
-				conn.SetReadDeadline(time.Now().Add(testChannelTimeout))
+				conn.SetReadDeadline(time.Now().Add(testutil.ChannelTimeout))
 				if _, err := readFrame(conn); err == nil {
 					t.Fatal("conflicting XID did not close connection")
 				}
@@ -268,7 +269,7 @@ func TestConnectionInFlightDuplicates(t *testing.T) {
 				if xid := readXIDForTest(t, conn); xid != 2 {
 					t.Fatalf("NULL barrier = %d", xid)
 				}
-				closeSignal(fs.release)
+				testutil.CloseSignal(fs.Release)
 				if xid := readXIDForTest(t, conn); xid != 1 {
 					t.Fatalf("original reply = %d", xid)
 				}
@@ -277,8 +278,8 @@ func TestConnectionInFlightDuplicates(t *testing.T) {
 					t.Fatalf("duplicate produced another reply: %d", xid)
 				}
 			}
-			if fs.calls.Load() != 1 {
-				t.Fatalf("duplicate mutation executions = %d", fs.calls.Load())
+			if fs.Calls.Load() != 1 {
+				t.Fatalf("duplicate mutation executions = %d", fs.Calls.Load())
 			}
 		})
 	}
@@ -289,15 +290,15 @@ func TestConnectionHalfCloseDrainsReply(t *testing.T) {
 	ts := connectionSession(t, srv)
 	addr, cleanup := serveTestServer(t, srv)
 	defer cleanup()
-	defer closeSignal(fs.release)
+	defer testutil.CloseSignal(fs.Release)
 	conn := dial(t, addr)
 	defer conn.Close()
 	writeCallForTest(t, conn, statCallForTest(ts, 1))
-	awaitSignal(t, fs.entered, "stat before half-close")
+	testutil.AwaitSignal(t, fs.Entered, "stat before half-close")
 	if err := conn.(*net.TCPConn).CloseWrite(); err != nil {
 		t.Fatal(err)
 	}
-	closeSignal(fs.release)
+	testutil.CloseSignal(fs.Release)
 	if xid := readXIDForTest(t, conn); xid != 1 {
 		t.Fatalf("drained reply = %d", xid)
 	}
@@ -337,12 +338,12 @@ func TestConnectionTermination(t *testing.T) {
 			go func() { srv.handleConn(conn); close(done) }()
 			defer client.Close()
 			defer server.Close()
-			defer closeSignal(fs.release)
+			defer testutil.CloseSignal(fs.Release)
 			writeCallForTest(t, client, statCallForTest(ts, 1))
-			awaitSignal(t, fs.entered, "active stat")
+			testutil.AwaitSignal(t, fs.Entered, "active stat")
 			if mode == "write-timeout" {
 				writeCallForTest(t, client, statCallForTest(ts, 2))
-				awaitSignal(t, fs.entered, "second active stat")
+				testutil.AwaitSignal(t, fs.Entered, "second active stat")
 			}
 			if mode == "disconnect" {
 				client.Close()
@@ -350,13 +351,13 @@ func TestConnectionTermination(t *testing.T) {
 			if mode == "read-timeout" {
 				time.Sleep(60 * time.Millisecond)
 			}
-			closeSignal(fs.release)
+			testutil.CloseSignal(fs.Release)
 			if mode == "read-timeout" {
 				if xid := readXIDForTest(t, client); xid != 1 {
 					t.Fatalf("reply after read timeout = %d", xid)
 				}
 			}
-			awaitSignal(t, done, "connection handler exit")
+			testutil.AwaitSignal(t, done, "connection handler exit")
 			// With no reader on the pipe, the first frame's header write
 			// times out. Later workers must skip their writes altogether.
 			if mode == "write-timeout" && conn.writes.Load() != 1 {

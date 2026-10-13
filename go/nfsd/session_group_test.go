@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -37,7 +38,7 @@ func moveSessionForTest(ss *sessionStore, sess *session, clientID uint64, id Ses
 
 func waitForAccounting(t *testing.T, ss *sessionStore, what string, cond func(replyAccounting) bool) {
 	t.Helper()
-	for deadline := time.Now().Add(testChannelTimeout); ; {
+	for deadline := time.Now().Add(testutil.ChannelTimeout); ; {
 		a := ss.accounting()
 		if cond(a) {
 			return
@@ -67,12 +68,12 @@ func TestGroupHoldLastsThroughReplayTransport(t *testing.T) {
 	done := make(chan struct{})
 	go func() { defer close(done); srv.handleConn(gate) }()
 	defer func() {
-		closeSignal(gate.release)
+		testutil.CloseSignal(gate.release)
 		client.Close()
-		awaitSignal(t, done, "transport cleanup")
+		testutil.AwaitSignal(t, done, "transport cleanup")
 	}()
 	writeCallForTest(t, client, rpcCallForTest(2, procCompound, wire))
-	awaitSignal(t, gate.entered, "stalled replay")
+	testutil.AwaitSignal(t, gate.entered, "stalled replay")
 	if a := srv.sessions.accounting(); a.ActiveRequests != 1 {
 		t.Fatalf("replay has no active hold %+v", a)
 	}
@@ -83,8 +84,8 @@ func TestGroupHoldLastsThroughReplayTransport(t *testing.T) {
 	if a := srv.sessions.accounting(); a.Sessions != 0 || a.Groups != 1 || a.ActiveRequests != 1 {
 		t.Fatalf("detached replay lost its group %+v", a)
 	}
-	closeSignal(gate.release)
-	client.SetReadDeadline(time.Now().Add(testChannelTimeout))
+	testutil.CloseSignal(gate.release)
+	client.SetReadDeadline(time.Now().Add(testutil.ChannelTimeout))
 	if _, err := readFrame(client); err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +117,7 @@ func TestGroupHoldReleasedOnTransportFailure(t *testing.T) {
 			body := buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) { w.AppendArgarray_Putrootfh() })
 			writeCallForTest(t, client, rpcCallForTest(1, procCompound, admissionSequence(body, ts, 0, 1, true)))
 			// The client never reads, so the reply cannot be delivered.
-			awaitSignal(t, done, "failed connection")
+			testutil.AwaitSignal(t, done, "failed connection")
 			if conn.writes.Load() == 0 {
 				t.Fatal("reply was never attempted")
 			}
@@ -270,19 +271,19 @@ func TestGroupStandaloneCreateSessionExcludesReplacement(t *testing.T) {
 	ts := testSessionForClient(conn, client)
 
 	fs.armed.Store(true)
-	defer closeSignal(fs.release)
+	defer testutil.CloseSignal(fs.release)
 	result := make(chan nfs4.COMPOUND4res, 1)
 	go func() {
 		_, res := admissionRequest(t, srv, createSessionBody(client, ts.nextCSSeq), 100, nil)
 		result <- res
 	}()
 	incarnation := incarnationForTest(t, srv, client)
-	awaitSignal(t, fs.entered, "CREATE_SESSION store check")
+	testutil.AwaitSignal(t, fs.entered, "CREATE_SESSION store check")
 	if srv.sessions.closeForReplacement(incarnation) {
 		t.Fatal("replacement overtook an in-progress CREATE_SESSION")
 	}
-	closeSignal(fs.release)
-	admissionStatus(t, awaitValue(t, result, "CREATE_SESSION"), nfs4.NFS4_OK, nfs4.OP_CREATE_SESSION)
+	testutil.CloseSignal(fs.release)
+	admissionStatus(t, testutil.AwaitValue(t, result, "CREATE_SESSION"), nfs4.NFS4_OK, nfs4.OP_CREATE_SESSION)
 	if !srv.sessions.closeForReplacement(incarnation) {
 		t.Fatal("finished CREATE_SESSION still blocks replacement")
 	}
@@ -320,15 +321,15 @@ func heldReply(t *testing.T, srv *Server, call []byte) func() {
 	done := make(chan struct{})
 	go func() { defer close(done); srv.handleConn(gate) }()
 	t.Cleanup(func() {
-		closeSignal(gate.release)
+		testutil.CloseSignal(gate.release)
 		client.Close()
-		awaitSignal(t, done, "held transport cleanup")
+		testutil.AwaitSignal(t, done, "held transport cleanup")
 	})
 	writeCallForTest(t, client, call)
-	awaitSignal(t, gate.entered, "held reply")
+	testutil.AwaitSignal(t, gate.entered, "held reply")
 	return func() {
-		closeSignal(gate.release)
-		client.SetReadDeadline(time.Now().Add(testChannelTimeout))
+		testutil.CloseSignal(gate.release)
+		client.SetReadDeadline(time.Now().Add(testutil.ChannelTimeout))
 		if _, err := readFrame(client); err != nil {
 			t.Fatal(err)
 		}
