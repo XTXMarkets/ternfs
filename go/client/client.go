@@ -255,11 +255,17 @@ type clientMetadata struct {
 
 var whichMetadatataAddr int
 
-func (cm *clientMetadata) init(log *log.Logger, client *Client, sock metadataSocket) error {
+func (cm *clientMetadata) init(log *log.Logger, client *Client) error {
 	log.Debug("initiating clientMetadata")
 	defer log.Debug("finished initializing clientMetadata")
 	cm.client = client
-	cm.sock = sock
+	if cm.sock == nil {
+		sock, err := net.ListenPacket("udp", ":0")
+		if err != nil {
+			return err
+		}
+		cm.sock = sock.(*net.UDPConn)
+	}
 	// 10MiB/100byte ~ 100k requests in the pipe. 100byte is
 	// kinda conservative. Note that the kernel silently clamps
 	// this to net.core.rmem_max, so the effective size may be
@@ -336,17 +342,14 @@ func (cm *clientMetadata) processRequests(log *log.Logger) {
 		}
 		whichMetadatataAddr++
 		written, err := cm.sock.WriteToUDP(buf.Bytes(), addr)
+		if dontWait {
+			continue
+		}
 		if err != nil {
-			retryable := retryableMetadataSendError(err)
-			if retryable {
-				log.Info("could not send request %v to shard %v addr %v: %v", req.req, req.shard, addr, err)
+			if retryableMetadataSendError(err) {
+				log.Debug("could not send request %v to shard %v addr %v: %v", req.req, req.shard, addr, err)
 			} else {
 				log.RaiseAlert("could not send request %v to shard %v addr %v: %v", req.req, req.shard, addr, err)
-			}
-			if dontWait {
-				continue
-			}
-			if !retryable {
 				req.respCh <- &metadataProcessorResponse{
 					requestId: req.requestId,
 					err:       err,
@@ -361,10 +364,8 @@ func (cm *clientMetadata) processRequests(log *log.Logger) {
 		} else if written != len(buf.Bytes()) {
 			panic(fmt.Errorf("%v != %v", written, len(buf.Bytes())))
 		}
-		if !dontWait {
-			req.deadline = time.Now().Add(req.timeout)
-			cm.inFlight <- req
-		}
+		req.deadline = time.Now().Add(req.timeout)
+		cm.inFlight <- req
 	}
 	log.Debug("got close request in request processor, winding down")
 }
@@ -1169,11 +1170,7 @@ func NewClientDirectNoAddrs(
 	c.shardTimeout = &DefaultShardTimeout
 	c.cdcTimeout = &DefaultCDCTimeout
 	c.blockTimeout = &DefaultBlockTimeout
-	sock, err := net.ListenPacket("udp", ":0")
-	if err != nil {
-		return nil, err
-	}
-	if err := c.clientMetadata.init(log, c, sock.(*net.UDPConn)); err != nil {
+	if err := c.clientMetadata.init(log, c); err != nil {
 		return nil, err
 	}
 	// Ideally, for write/fetch we'd want to have one socket

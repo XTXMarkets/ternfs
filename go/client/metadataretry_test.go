@@ -83,7 +83,8 @@ func metadataRetryClient(t *testing.T, timeouts timing.ReqTimeouts, send func([]
 	shards[0] = addr
 	c.SetAddrs(addr, &shards)
 	logger := log.NewLogger(os.Stderr, &log.LoggerOptions{Level: log.ERROR})
-	if err := c.clientMetadata.init(logger, c, &metadataSendTestSocket{UDPConn: sock, send: send}); err != nil {
+	c.clientMetadata.sock = &metadataSendTestSocket{UDPConn: sock, send: send}
+	if err := c.clientMetadata.init(logger, c); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(c.clientMetadata.close)
@@ -189,22 +190,26 @@ func TestMetadataLateReplyAfterSendFailure(t *testing.T) {
 }
 
 func TestMetadataDontWaitDoesNotRetrySendErrors(t *testing.T) {
-	kinds := make(chan uint8, 4)
-	c, logger := metadataRetryClient(t, DefaultShardTimeout, func(packet []byte) ([]byte, error) {
-		kinds <- packet[12]
-		if packet[12] == uint8(msgs.SET_TIME) {
-			return nil, syscall.EPERM
-		}
-		return metadataRetryReply(packet, 0), nil
-	})
-	if err := c.ShardRequestDontWait(logger, 0, &msgs.SetTimeReq{Id: msgs.ROOT_DIR_INODE_ID}); err != nil {
-		t.Fatal(err)
-	}
-	if err := receiveMetadata(t, testMetadataRequest(c, logger, "shard", "healthy")); err != nil {
-		t.Fatal(err)
-	}
-	if a, b := receiveMetadata(t, kinds), receiveMetadata(t, kinds); a != uint8(msgs.SET_TIME) || b != uint8(msgs.LOOKUP) {
-		t.Fatalf("send kinds = %v, %v, want SET_TIME followed by LOOKUP", a, b)
+	for _, sendErr := range []error{syscall.EPERM, syscall.EBADF} {
+		t.Run(sendErr.Error(), func(t *testing.T) {
+			kinds := make(chan uint8, 4)
+			c, logger := metadataRetryClient(t, DefaultShardTimeout, func(packet []byte) ([]byte, error) {
+				kinds <- packet[12]
+				if packet[12] == uint8(msgs.SET_TIME) {
+					return nil, sendErr
+				}
+				return metadataRetryReply(packet, 0), nil
+			})
+			if err := c.ShardRequestDontWait(logger, 0, &msgs.SetTimeReq{Id: msgs.ROOT_DIR_INODE_ID}); err != nil {
+				t.Fatal(err)
+			}
+			if err := receiveMetadata(t, testMetadataRequest(c, logger, "shard", "healthy")); err != nil {
+				t.Fatal(err)
+			}
+			if a, b := receiveMetadata(t, kinds), receiveMetadata(t, kinds); a != uint8(msgs.SET_TIME) || b != uint8(msgs.LOOKUP) {
+				t.Fatalf("send kinds = %v, %v, want SET_TIME followed by LOOKUP", a, b)
+			}
+		})
 	}
 }
 
