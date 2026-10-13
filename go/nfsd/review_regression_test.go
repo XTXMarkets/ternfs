@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sidecar"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -181,7 +182,7 @@ func TestOlderStagingFormatFailsStartup(t *testing.T) {
 			if err := os.WriteFile(metaPath, data, 0600); err != nil {
 				t.Fatal(err)
 			}
-			var formatErr errStagingFormat
+			var formatErr sidecar.FormatError
 			if _, err := NewLocalStagingStore(dir, nil); !errors.As(err, &formatErr) {
 				t.Fatalf("startup with %s staging = %v", format, err)
 			}

@@ -16,6 +16,7 @@ import (
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/byterange"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sidecar"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -45,7 +46,7 @@ func createOverlayStage(
 		t.Fatal(err)
 	}
 	id := vfs.MakeInodeID(vfs.InodeTypeFile, 100)
-	stage, err := store.Create(id, StagingMeta{
+	stage, err := store.Create(id, sidecar.Meta{
 		DirID:    vfs.MakeInodeID(vfs.InodeTypeDir, 1),
 		FileName: "file",
 		BaseID:   baseID,
@@ -427,7 +428,7 @@ func TestStagingRetainsUncommittedNewFileOnRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := vfs.MakeInodeID(vfs.InodeTypeFile, 100)
-	stage, err := store.Create(id, StagingMeta{
+	stage, err := store.Create(id, sidecar.Meta{
 		DirID:    vfs.MakeInodeID(vfs.InodeTypeDir, 1),
 		FileName: "new",
 	})
@@ -470,7 +471,7 @@ func TestStagingAllowsIndependentReplacementsOfSameBase(t *testing.T) {
 	baseID := vfs.MakeInodeID(vfs.InodeTypeFile, 10)
 	firstID := vfs.MakeInodeID(vfs.InodeTypeFile, 100)
 	secondID := vfs.MakeInodeID(vfs.InodeTypeFile, 101)
-	meta := StagingMeta{
+	meta := sidecar.Meta{
 		DirID:    vfs.MakeInodeID(vfs.InodeTypeDir, 1),
 		FileName: "file",
 		BaseID:   baseID,
@@ -496,7 +497,7 @@ func TestStagingKeepsBaseFilehandlePrivate(t *testing.T) {
 	}
 	baseID := vfs.MakeInodeID(vfs.InodeTypeFile, 10)
 	stagingID := vfs.MakeInodeID(vfs.InodeTypeFile, 100)
-	stage, err := store.Create(stagingID, StagingMeta{
+	stage, err := store.Create(stagingID, sidecar.Meta{
 		DirID:    vfs.MakeInodeID(vfs.InodeTypeDir, 1),
 		FileName: "file",
 		BaseID:   baseID,
@@ -527,7 +528,7 @@ func TestStagingRebindSurvivesRestart(t *testing.T) {
 	}
 	baseID := vfs.MakeInodeID(vfs.InodeTypeFile, 10)
 	stagingID := vfs.MakeInodeID(vfs.InodeTypeFile, 100)
-	if _, err := store.Create(stagingID, StagingMeta{
+	if _, err := store.Create(stagingID, sidecar.Meta{
 		DirID:    vfs.MakeInodeID(vfs.InodeTypeDir, 1),
 		FileName: "file",
 		BaseID:   baseID,
@@ -561,11 +562,11 @@ func hydrationReader(reader stagingBaseReader) stagingHydrationReader {
 	}
 }
 
-func findStagingTarget(store StagingStore, dirID vfs.InodeID, name string) (vfs.InodeID, StagingMeta, bool) {
+func findStagingTarget(store StagingStore, dirID vfs.InodeID, name string) (vfs.InodeID, sidecar.Meta, bool) {
 	for id, meta := range store.FindTargets(dirID, name) {
 		return id, meta, true
 	}
-	return 0, StagingMeta{}, false
+	return 0, sidecar.Meta{}, false
 }
 
 func stagingTargetBusyForTest(store StagingStore, dirID vfs.InodeID, name string) bool {

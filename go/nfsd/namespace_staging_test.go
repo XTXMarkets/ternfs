@@ -17,6 +17,7 @@ import (
 
 	"github.com/XTXMarkets/ternfs/go/msgs"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sidecar"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -30,7 +31,7 @@ func TestNamespaceChangePreservesDataCheckpoint(t *testing.T) {
 	if err := sf.Sync(); err != nil {
 		t.Fatal(err)
 	}
-	before, err := loadStagingMeta(sf.metaPath)
+	before, err := sidecar.Load(sf.metaPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +44,7 @@ func TestNamespaceChangePreservesDataCheckpoint(t *testing.T) {
 	if err := store.SetGuard(id, true); err != nil {
 		t.Fatal(err)
 	}
-	guarded, err := loadStagingMeta(sf.metaPath)
+	guarded, err := sidecar.Load(sf.metaPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,14 +56,14 @@ func TestNamespaceChangePreservesDataCheckpoint(t *testing.T) {
 	if err := sf.Sync(); err != nil {
 		t.Fatal(err)
 	}
-	committed, err := loadStagingMeta(sf.metaPath)
+	committed, err := sidecar.Load(sf.metaPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Retarget(id, before.DirID, "renamed"); err != nil {
 		t.Fatal(err)
 	}
-	final, err := loadStagingMeta(sf.metaPath)
+	final, err := sidecar.Load(sf.metaPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +99,7 @@ func TestNamespaceFinalCheckpointFailureRepairsOnSync(t *testing.T) {
 	if len(store.FindTargets(1, "new-name")) != 1 {
 		t.Fatal("failed save did not reindex the final target")
 	}
-	disk, err := loadStagingMeta(path)
+	disk, err := sidecar.Load(path)
 	if err != nil || !disk.Guarded {
 		t.Fatalf("old guard missing: %+v, %v", disk, err)
 	}
@@ -106,7 +107,7 @@ func TestNamespaceFinalCheckpointFailureRepairsOnSync(t *testing.T) {
 	if err := sf.Sync(); err != nil {
 		t.Fatal(err)
 	}
-	disk, err = loadStagingMeta(path)
+	disk, err = sidecar.Load(path)
 	if err != nil || disk.Guarded || disk.FileName != "new-name" {
 		t.Fatalf("Sync did not repair namespace checkpoint: %+v, %v", disk, err)
 	}
@@ -208,7 +209,7 @@ func TestNamespaceCheckpointDoesNotHoldStoreLock(t *testing.T) {
 			defer closeLocalStagingFiles(t, store)
 			dirID := vfs.MakeInodeID(vfs.InodeTypeDir, 1)
 			otherID := vfs.MakeInodeID(vfs.InodeTypeFile, 123)
-			if _, err := store.Create(otherID, StagingMeta{DirID: dirID, FileName: "other"}); err != nil {
+			if _, err := store.Create(otherID, sidecar.Meta{DirID: dirID, FileName: "other"}); err != nil {
 				t.Fatal(err)
 			}
 			if finish {

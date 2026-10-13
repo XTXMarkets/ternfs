@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sidecar"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -128,7 +129,7 @@ func TestForeignStateidsAreBadStateid(t *testing.T) {
 	if binary.BigEndian.Uint32(recID[:4]) == srv.opens.epoch {
 		recID[0]++
 	}
-	if _, err := srv.stagingStore.Create(recStaging, StagingMeta{DirID: root, FileName: "a-recovered",
+	if _, err := srv.stagingStore.Create(recStaging, sidecar.Meta{DirID: root, FileName: "a-recovered",
 		TernCookie: cookie, NFSStateID: recID, ClientID: incA}); err != nil {
 		t.Fatal(err)
 	}

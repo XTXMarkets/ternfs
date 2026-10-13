@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sidecar"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -164,7 +165,7 @@ func (f *confirmServer) pMarker(t *testing.T) bool {
 	return f.present(t, vfs.InodeID(f.p), activeOpenName(sid))
 }
 
-func (f *confirmServer) pStaging(t *testing.T) StagingMeta {
+func (f *confirmServer) pStaging(t *testing.T) sidecar.Meta {
 	t.Helper()
 	meta, ok := f.srv.stagingStore.GetMeta(stagingIDForTest(t, f.srv.stagingStore, f.state))
 	if !ok {
@@ -318,7 +319,7 @@ func TestConfirmationProtectsDestructivePaths(t *testing.T) {
 	}
 	old := srv.opens.newStateID()
 	old[0] ^= 0xff // another epoch
-	if _, err := srv.stagingStore.Create(recovered, StagingMeta{DirID: f.fs.RootID(), FileName: "rfile",
+	if _, err := srv.stagingStore.Create(recovered, sidecar.Meta{DirID: f.fs.RootID(), FileName: "rfile",
 		BaseID: base, ClientID: f.p, NFSStateID: old, TernCookie: cookie}); err != nil {
 		t.Fatal(err)
 	}
@@ -331,7 +332,7 @@ func TestConfirmationProtectsDestructivePaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := srv.stagingStore.Create(keyed, StagingMeta{DirID: f.fs.RootID(), FileName: "kfile",
+	if _, err := srv.stagingStore.Create(keyed, sidecar.Meta{DirID: f.fs.RootID(), FileName: "kfile",
 		ClientID: f.p, NFSStateID: srv.opens.newStateID(), TernCookie: keyedCookie,
 		OwnerKnown: true, OpenOwner: "owner", RecoveryKey: key}); err != nil {
 		t.Fatal(err)
@@ -1530,7 +1531,7 @@ func TestRecoveryHoldReleasedOnPanic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := srv.stagingStore.Create(keyed, StagingMeta{DirID: f.fs.RootID(), FileName: "kfile",
+	if _, err := srv.stagingStore.Create(keyed, sidecar.Meta{DirID: f.fs.RootID(), FileName: "kfile",
 		ClientID: f.p, NFSStateID: srv.opens.newStateID(), TernCookie: cookie,
 		OwnerKnown: true, OpenOwner: "owner", RecoveryKey: key}); err != nil {
 		t.Fatal(err)

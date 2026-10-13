@@ -22,6 +22,7 @@ import (
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/keyedlock"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sidecar"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -263,13 +264,13 @@ func (s *Server) removeExpiredStaging() {
 	if s.clients.now().Before(s.startedAt.Add(nfsLeaseTime)) {
 		return
 	}
-	byClient := make(map[uint64]map[vfs.InodeID]StagingMeta)
+	byClient := make(map[uint64]map[vfs.InodeID]sidecar.Meta)
 	for fileID, meta := range s.stagingStore.Entries() {
 		if meta.ClientID == 0 {
 			continue
 		}
 		if byClient[meta.ClientID] == nil {
-			byClient[meta.ClientID] = make(map[vfs.InodeID]StagingMeta)
+			byClient[meta.ClientID] = make(map[vfs.InodeID]sidecar.Meta)
 		}
 		byClient[meta.ClientID][fileID] = meta
 	}
@@ -281,7 +282,7 @@ func (s *Server) removeExpiredStaging() {
 // removeClientExpiredStaging retires an expired client's staging, holding a
 // destruction hold from the lease check through the last retirement. A
 // confirmation protecting the client keeps its staging.
-func (s *Server) removeClientExpiredStaging(clientID uint64, fileIDs map[vfs.InodeID]StagingMeta) {
+func (s *Server) removeClientExpiredStaging(clientID uint64, fileIDs map[vfs.InodeID]sidecar.Meta) {
 	end, ok := s.beginDestroy(clientID)
 	if !ok {
 		return

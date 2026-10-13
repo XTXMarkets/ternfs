@@ -23,6 +23,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sidecar"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -1011,7 +1012,7 @@ func (r *inspectReport) readStaging(dir string) ([]*inspectStagingEntry, error) 
 			} else {
 				entry.CheckpointTime = inspectTime(fileInfo.ModTime())
 			}
-			meta, err := loadStagingMeta(path)
+			meta, err := sidecar.Load(path)
 			if err != nil {
 				entry.Problems = append(entry.Problems,
 					"cannot read metadata sidecar: "+err.Error())
@@ -1073,9 +1074,9 @@ func readStagingQuarantine(stagingDir string, dir string) ([]string, error) {
 	return found, nil
 }
 
-func (entry *inspectStagingEntry) setMeta(meta StagingMeta) {
+func (entry *inspectStagingEntry) setMeta(meta sidecar.Meta) {
 	entry.metaValid = true
-	entry.SidecarVersion = inspectSidecarVersion(meta.version)
+	entry.SidecarVersion = inspectSidecarVersion(meta.Version)
 	entry.DirID = inspectInode(meta.DirID)
 	entry.FileName = meta.FileName
 	entry.Cookie = hex.EncodeToString(meta.TernCookie[:])

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sidecar"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -81,7 +82,7 @@ func TestNamespacePreparationFailureKeepsWritersUsable(t *testing.T) {
 				if err := f.store.Get(id).Sync(); err != nil {
 					t.Fatal(err)
 				}
-				disk, err := loadStagingMeta(f.store.Get(id).(*localStagingFile).metaPath)
+				disk, err := sidecar.Load(f.store.Get(id).(*localStagingFile).metaPath)
 				if err != nil || disk.Guarded {
 					t.Fatalf("rollback was not repaired: %+v, %v", disk, err)
 				}
@@ -124,14 +125,14 @@ func TestNamespaceFinalSaveFailureKeepsBackendResult(t *testing.T) {
 			if !ok || meta.Guarded || f.store.Failed(f.id) {
 				t.Fatalf("final save failure excluded the writer: %+v", meta)
 			}
-			disk, err := loadStagingMeta(path)
+			disk, err := sidecar.Load(path)
 			if err != nil || !disk.Guarded {
 				t.Fatalf("failed save lost durable guard: %+v, %v", disk, err)
 			}
 			if got := commitNamespaceStatus(t, f); got != nfs4.NFS4_OK {
 				t.Fatalf("repair COMMIT = %s", nfs4.Nfsstat4Name(got))
 			}
-			disk, err = loadStagingMeta(path)
+			disk, err = sidecar.Load(path)
 			if err != nil || disk.Guarded || disk.Unlinked != meta.Unlinked || disk.FileName != meta.FileName {
 				t.Fatalf("COMMIT did not repair final metadata: %+v, %v", disk, err)
 			}
@@ -295,7 +296,7 @@ func TestStagingStartupExcludesEveryBadEntry(t *testing.T) {
 			if err := stage.(*localStagingFile).f.Close(); err != nil {
 				t.Fatal(err)
 			}
-			meta, _ = loadStagingMeta(path)
+			meta, _ = sidecar.Load(path)
 			switch problem {
 			case "corrupt", "quarantine failure":
 				if err := os.WriteFile(path, []byte("corrupt"), 0600); err != nil {
@@ -329,12 +330,12 @@ func TestStagingStartupExcludesEveryBadEntry(t *testing.T) {
 				}
 			case "retired detached":
 				meta.Unlinked, meta.Retired = true, true
-				if err := saveStagingMeta(path, meta); err != nil {
+				if err := sidecar.Save(path, meta); err != nil {
 					t.Fatal(err)
 				}
 			}
 			healthy := id + 1
-			healthyFile, err := store.Create(healthy, StagingMeta{DirID: meta.DirID, FileName: "healthy"})
+			healthyFile, err := store.Create(healthy, sidecar.Meta{DirID: meta.DirID, FileName: "healthy"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -366,8 +367,8 @@ func TestStagingStartupExcludesEveryBadEntry(t *testing.T) {
 
 func TestNamespaceSidecarStrictDecode(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "checkpoint.meta")
-	meta := StagingMeta{FileName: "file", Unlinked: true, Guarded: true}
-	if err := saveStagingMeta(path, meta); err != nil {
+	meta := sidecar.Meta{FileName: "file", Unlinked: true, Guarded: true}
+	if err := sidecar.Save(path, meta); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(path)
@@ -393,7 +394,7 @@ func TestNamespaceSidecarStrictDecode(t *testing.T) {
 			if err := os.WriteFile(path, bad, 0600); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := loadStagingMeta(path); err == nil {
+			if _, err := sidecar.Load(path); err == nil {
 				t.Fatal("incompatible checkpoint was accepted")
 			}
 		})
@@ -420,7 +421,7 @@ func TestNamespacePreflightRejectionDoesNotGuard(t *testing.T) {
 		t.Fatal("type rejection submitted a mutation")
 	}
 	sf.metaPath = path
-	meta, _ := loadStagingMeta(f.store.Get(f.id).(*localStagingFile).metaPath)
+	meta, _ := sidecar.Load(f.store.Get(f.id).(*localStagingFile).metaPath)
 	if meta.Guarded || meta.Unlinked {
 		t.Fatalf("type rejection changed the sidecar: %+v", meta)
 	}
@@ -473,7 +474,7 @@ func TestQuarantineSyncFailureLeavesSourceFiles(t *testing.T) {
 	if err != nil || string(data) != "private data" {
 		t.Fatalf("source data moved before destination was durable: %q, %v", data, err)
 	}
-	meta, err := loadStagingMeta(filepath.Join(f.disk, fmt.Sprintf("%016x.meta", uint64(f.id))))
+	meta, err := sidecar.Load(filepath.Join(f.disk, fmt.Sprintf("%016x.meta", uint64(f.id))))
 	if err != nil || !meta.Guarded || !f.store.Failed(f.id) {
 		t.Fatalf("failed quarantine lost its guard or tombstone: %+v, %v", meta, err)
 	}

@@ -5,12 +5,10 @@
 package main
 
 import (
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
-	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -21,28 +19,9 @@ import (
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/byterange"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/keyedlock"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sidecar"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
-
-// The only sidecar format this nfsd reads or writes. NFS8 is the NFSv4.1
-// server: one writer per client and file, found by stateid. Earlier formats
-// belong to the NFSv4.0 server and make startup fail; drain or remove the
-// staging directory before upgrading.
-const (
-	stagingMetaMagic   = "NFS8"
-	stagingMetaVersion = 8
-)
-
-// errStagingFormat reports a sidecar written by an incompatible nfsd.
-type errStagingFormat struct {
-	path  string
-	magic string
-}
-
-func (e errStagingFormat) Error() string {
-	return fmt.Sprintf("staging sidecar %s has format %q, want %q; drain or remove the staging directory written by the older nfsd",
-		e.path, e.magic, stagingMetaMagic)
-}
 
 const stagingHydrationChunk = 1 << 20
 const finishHydrationWorkers = 4
@@ -57,31 +36,6 @@ var errStagingRemoved = errors.New("staging file was removed")
 type stagingTarget struct {
 	dirID vfs.InodeID
 	name  string
-}
-
-// StagingMeta contains the state needed to complete CLOSE after a restart.
-type StagingMeta struct {
-	DirID           vfs.InodeID  // directory to link the file into on CLOSE
-	FileName        string       // name in directory
-	TernCookie      vfs.Cookie   // cookie from VFS ConstructFile
-	NFSStateID      nfs4.StateID // random, returned to NFS client as stateid "other"
-	ClientID        uint64       // owning client
-	OpenOwner       string       // separates recovered writers belonging to the same client
-	OwnerKnown      bool         // an empty owner is valid
-	RecoveryKey     [32]byte     // stable client identity, boot verifier and principal
-	Unlinked        bool         // detached from its publication target
-	Guarded         bool         // interrupted namespace operations quarantine at startup
-	Retired         bool         // lease expired; retain acknowledged data for recovery
-	ReadOnly        bool         // CREATE may initialize size/times with read-only share access
-	Exclusive       bool         // EXCLUSIVE4 create
-	Verifier        [8]byte      // EXCLUSIVE4 create verifier
-	BaseID          vfs.InodeID  // immutable file being replaced; zero for a new file
-	BaseSize        uint64
-	Size            uint64
-	Dirty           byterange.Set
-	MetadataChanged bool
-	Attrs           vfs.NodeInfo // Size is stored separately
-	version         uint8
 }
 
 type stagingHydrationReader func(cancel <-chan struct{}, fileID vfs.InodeID, offset uint64, dest []byte) (int, bool, error)
@@ -118,15 +72,15 @@ type StagingStore interface {
 	// ReadOnly returns true if no staging directory is configured.
 	ReadOnly() bool
 	// Create creates a new staging file with associated metadata.
-	Create(id vfs.InodeID, meta StagingMeta) (StagingFile, error)
+	Create(id vfs.InodeID, meta sidecar.Meta) (StagingFile, error)
 	// Get returns the staging file for the given inode, or nil.
 	Get(id vfs.InodeID) StagingFile
 	// GetMeta returns the metadata sidecar for the given inode.
-	GetMeta(id vfs.InodeID) (StagingMeta, bool)
+	GetMeta(id vfs.InodeID) (sidecar.Meta, bool)
 	// FindTargets returns the staging sessions indexed by dirID/name.
-	FindTargets(dirID vfs.InodeID, name string) map[vfs.InodeID]StagingMeta
+	FindTargets(dirID vfs.InodeID, name string) map[vfs.InodeID]sidecar.Meta
 	// Entries returns a snapshot of all staging metadata keyed by staging inode.
-	Entries() map[vfs.InodeID]StagingMeta
+	Entries() map[vfs.InodeID]sidecar.Meta
 	// Rebind updates the owning client and stateid of a recovered staging file.
 	Rebind(id vfs.InodeID, clientID uint64, stateID nfs4.StateID) error
 	// Namespace updates preserve the current durable data checkpoint.
@@ -217,8 +171,8 @@ func NewLocalStagingStore(dir string, logger *slog.Logger) (*LocalStagingStore, 
 			continue
 		}
 		metaPath := filepath.Join(dir, fmt.Sprintf("%016x.meta", uint64(id)))
-		meta, metaErr := loadStagingMeta(metaPath)
-		var formatErr errStagingFormat
+		meta, metaErr := sidecar.Load(metaPath)
+		var formatErr sidecar.FormatError
 		if errors.As(metaErr, &formatErr) {
 			f.Close()
 			s.closeAll()
@@ -280,7 +234,7 @@ func (s *LocalStagingStore) closeAll() {
 
 func (s *LocalStagingStore) ReadOnly() bool { return false }
 
-func (s *LocalStagingStore) Create(id vfs.InodeID, meta StagingMeta) (StagingFile, error) {
+func (s *LocalStagingStore) Create(id vfs.InodeID, meta sidecar.Meta) (StagingFile, error) {
 	unlock := s.fileLocks.Lock(id)
 	defer unlock()
 	s.mu.Lock()
@@ -294,7 +248,7 @@ func (s *LocalStagingStore) Create(id vfs.InodeID, meta StagingMeta) (StagingFil
 	}
 	target := stagingTarget{dirID: meta.DirID, name: meta.FileName}
 	meta.Size = meta.BaseSize
-	meta.version = stagingMetaVersion
+	meta.Version = sidecar.Version
 	meta.Attrs = stagingAttributes(meta.Attrs, time.Now())
 	path := filepath.Join(s.dir, fmt.Sprintf("%016x.staging", uint64(id)))
 	f, err := s.createFile(path)
@@ -303,7 +257,7 @@ func (s *LocalStagingStore) Create(id vfs.InodeID, meta StagingMeta) (StagingFil
 	}
 	// Write sidecar metadata.
 	metaPath := filepath.Join(s.dir, fmt.Sprintf("%016x.meta", uint64(id)))
-	if err := saveStagingMeta(metaPath, meta); err != nil {
+	if err := sidecar.Save(metaPath, meta); err != nil {
 		f.Close()
 		os.Remove(path)
 		return nil, err
@@ -355,29 +309,29 @@ func (s *LocalStagingStore) Failed(id vfs.InodeID) bool {
 	return entry != nil && entry.failed
 }
 
-func (s *LocalStagingStore) GetMeta(id vfs.InodeID) (StagingMeta, bool) {
+func (s *LocalStagingStore) GetMeta(id vfs.InodeID) (sidecar.Meta, bool) {
 	file := s.Get(id)
 	if file == nil {
-		return StagingMeta{}, false
+		return sidecar.Meta{}, false
 	}
 	return file.(*localStagingFile).Meta(), true
 }
 
-func (s *LocalStagingStore) FindTargets(dirID vfs.InodeID, name string) map[vfs.InodeID]StagingMeta {
+func (s *LocalStagingStore) FindTargets(dirID vfs.InodeID, name string) map[vfs.InodeID]sidecar.Meta {
 	s.mu.Lock()
 	files := make(map[vfs.InodeID]*localStagingFile)
 	for id := range s.targets[stagingTarget{dirID: dirID, name: name}] {
 		files[id] = s.files[id].file
 	}
 	s.mu.Unlock()
-	result := make(map[vfs.InodeID]StagingMeta, len(files))
+	result := make(map[vfs.InodeID]sidecar.Meta, len(files))
 	for id, file := range files {
 		result[id] = file.Meta()
 	}
 	return result
 }
 
-func (s *LocalStagingStore) Entries() map[vfs.InodeID]StagingMeta {
+func (s *LocalStagingStore) Entries() map[vfs.InodeID]sidecar.Meta {
 	s.mu.Lock()
 	files := make(map[vfs.InodeID]*localStagingFile)
 	for id, entry := range s.files {
@@ -386,7 +340,7 @@ func (s *LocalStagingStore) Entries() map[vfs.InodeID]StagingMeta {
 		}
 	}
 	s.mu.Unlock()
-	entries := make(map[vfs.InodeID]StagingMeta, len(files))
+	entries := make(map[vfs.InodeID]sidecar.Meta, len(files))
 	for id, file := range files {
 		entries[id] = file.Meta()
 	}
@@ -425,7 +379,7 @@ func (s *LocalStagingStore) removeTargetLocked(id vfs.InodeID, entry *localStagi
 
 // The pathname lock serializes namespace callers. File checkpoint I/O takes
 // only sf.mu; reindexing rechecks the entry because removal can overlap it.
-func (s *LocalStagingStore) updateNamespace(id vfs.InodeID, update func(*StagingMeta)) error {
+func (s *LocalStagingStore) updateNamespace(id vfs.InodeID, update func(*sidecar.Meta)) error {
 	s.mu.Lock()
 	entry := s.files[id]
 	if entry == nil || entry.failed {
@@ -445,7 +399,7 @@ func (s *LocalStagingStore) updateNamespace(id vfs.InodeID, update func(*Staging
 	update(&sf.meta)
 	// Meta() includes live dirty ranges. Save only sf.meta, which describes
 	// the last data checkpoint and the namespace fields just assigned.
-	err := saveStagingMeta(sf.metaPath, sf.meta)
+	err := sidecar.Save(sf.metaPath, sf.meta)
 	sf.checkpointDirty = err != nil
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -463,17 +417,17 @@ func (s *LocalStagingStore) updateNamespace(id vfs.InodeID, update func(*Staging
 }
 
 func (s *LocalStagingStore) SetGuard(id vfs.InodeID, guarded bool) error {
-	return s.updateNamespace(id, func(meta *StagingMeta) { meta.Guarded = guarded })
+	return s.updateNamespace(id, func(meta *sidecar.Meta) { meta.Guarded = guarded })
 }
 
 func (s *LocalStagingStore) Detach(id vfs.InodeID) error {
-	return s.updateNamespace(id, func(meta *StagingMeta) {
+	return s.updateNamespace(id, func(meta *sidecar.Meta) {
 		meta.Unlinked, meta.Guarded = true, false
 	})
 }
 
 func (s *LocalStagingStore) Retarget(id vfs.InodeID, dirID vfs.InodeID, name string) error {
-	return s.updateNamespace(id, func(meta *StagingMeta) {
+	return s.updateNamespace(id, func(meta *sidecar.Meta) {
 		meta.DirID, meta.FileName = dirID, name
 		meta.Unlinked, meta.Guarded = false, false
 	})
@@ -513,7 +467,7 @@ func quarantineStagingFiles(dir string, id vfs.InodeID) error {
 	// name. A crash during the moves must not strand acknowledged bytes in
 	// a directory whose parent entry was never persisted.
 	for _, path := range []string{dst, root, dir} {
-		if err := syncStagingDir(path); err != nil {
+		if err := sidecar.SyncDir(path); err != nil {
 			return err
 		}
 	}
@@ -527,7 +481,7 @@ func quarantineStagingFiles(dir string, id vfs.InodeID) error {
 		}
 	}
 	for _, path := range []string{dst, root, dir} {
-		if err := syncStagingDir(path); err != nil {
+		if err := sidecar.SyncDir(path); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -564,13 +518,13 @@ func (s *LocalStagingStore) StagedSize(id vfs.InodeID) (uint64, bool) {
 type readOnlyStagingStore struct{}
 
 func (readOnlyStagingStore) ReadOnly() bool { return true }
-func (readOnlyStagingStore) Create(vfs.InodeID, StagingMeta) (StagingFile, error) {
+func (readOnlyStagingStore) Create(vfs.InodeID, sidecar.Meta) (StagingFile, error) {
 	return nil, os.ErrPermission
 }
-func (readOnlyStagingStore) Get(vfs.InodeID) StagingFile                                 { return nil }
-func (readOnlyStagingStore) GetMeta(vfs.InodeID) (StagingMeta, bool)                     { return StagingMeta{}, false }
-func (readOnlyStagingStore) FindTargets(vfs.InodeID, string) map[vfs.InodeID]StagingMeta { return nil }
-func (readOnlyStagingStore) Entries() map[vfs.InodeID]StagingMeta                        { return nil }
+func (readOnlyStagingStore) Get(vfs.InodeID) StagingFile                                  { return nil }
+func (readOnlyStagingStore) GetMeta(vfs.InodeID) (sidecar.Meta, bool)                     { return sidecar.Meta{}, false }
+func (readOnlyStagingStore) FindTargets(vfs.InodeID, string) map[vfs.InodeID]sidecar.Meta { return nil }
+func (readOnlyStagingStore) Entries() map[vfs.InodeID]sidecar.Meta                        { return nil }
 func (readOnlyStagingStore) Rebind(vfs.InodeID, uint64, nfs4.StateID) error {
 	return os.ErrPermission
 }
@@ -589,7 +543,7 @@ type localStagingFile struct {
 	mu              sync.Mutex
 	f               *os.File
 	size            uint64
-	meta            StagingMeta
+	meta            sidecar.Meta
 	metaPath        string
 	dirty           byterange.Set
 	attrs           vfs.NodeInfo
@@ -658,7 +612,7 @@ func (sf *localStagingFile) Size() uint64 {
 	return sf.size
 }
 
-func (sf *localStagingFile) Meta() StagingMeta {
+func (sf *localStagingFile) Meta() sidecar.Meta {
 	sf.mu.Lock()
 	defer sf.mu.Unlock()
 	meta := sf.meta
@@ -718,8 +672,8 @@ func (sf *localStagingFile) saveMetaLocked() error {
 	meta.Size = sf.size
 	meta.Attrs = sf.attrs
 	meta.MetadataChanged = sf.metadataChanged
-	meta.version = stagingMetaVersion
-	if err := saveStagingMeta(sf.metaPath, meta); err != nil {
+	meta.Version = sidecar.Version
+	if err := sidecar.Save(sf.metaPath, meta); err != nil {
 		return err
 	}
 	// Only a successfully persisted checkpoint can suppress a later retry.
@@ -744,14 +698,14 @@ func (sf *localStagingFile) checkpointChangedLocked() bool {
 
 // updateMetaLocked changes sidecar metadata without checkpointing unstable
 // data. The caller holds sf.mu.
-func (sf *localStagingFile) updateMetaLocked(meta StagingMeta) error {
+func (sf *localStagingFile) updateMetaLocked(meta sidecar.Meta) error {
 	if sf.removed {
 		return errStagingRemoved
 	}
 	previous := sf.meta
-	if err := saveStagingMeta(sf.metaPath, meta); err != nil {
+	if err := sidecar.Save(sf.metaPath, meta); err != nil {
 		// A directory sync can fail after the replacement was installed.
-		restoreErr := saveStagingMeta(sf.metaPath, previous)
+		restoreErr := sidecar.Save(sf.metaPath, previous)
 		sf.checkpointDirty = restoreErr != nil
 		if restoreErr != nil {
 			restoreErr = fmt.Errorf("restore previous staging metadata: %w", restoreErr)
@@ -1156,15 +1110,6 @@ func (sf *localStagingFile) Sync() error {
 	return sf.saveMetaLocked()
 }
 
-func syncStagingDir(path string) error {
-	dir, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer dir.Close()
-	return dir.Sync()
-}
-
 func (sf *localStagingFile) Reader() (io.ReadSeeker, error) {
 	sf.mu.Lock()
 	defer sf.mu.Unlock()
@@ -1175,224 +1120,4 @@ func (sf *localStagingFile) Reader() (io.ReadSeeker, error) {
 		return nil, err
 	}
 	return sf.f, nil
-}
-
-// Sidecar file format (binary, big-endian):
-//   [8]  DirID
-//   [8]  TernCookie
-//   [12] NFSStateID
-//   [2]  FileNameLen
-//   [N]  FileName (UTF-8)
-//   [8]  ClientID
-//   [4]  "NFS8"
-//   [8]  BaseID
-//   [8]  BaseSize
-//   [8]  LogicalSize
-//   [4]  DirtyRangeCount
-//   [16 * count] Dirty ranges as start/end pairs
-//   [8] Change
-//   [8] Mtime, [8] Atime, [8] Ctime (Unix nanoseconds)
-//   [1] flags: bit 0 MetadataChanged, bit 1 OwnerKnown, bit 2 ReadOnly,
-//       bit 3 Retired, bit 4 Exclusive, bit 5 Unlinked, bit 6 Guarded
-//   [4] OpenOwnerLen, [N] OpenOwner (opaque bytes)
-//   [32] RecoveryKey
-//   [8] EXCLUSIVE4 verifier
-
-func saveStagingMeta(path string, meta StagingMeta) error {
-	nameBytes := []byte(meta.FileName)
-	buf := make([]byte, 8+8+12+2+len(nameBytes)+8+4+8+8+8+4+
-		16*len(meta.Dirty)+32+1+4+len(meta.OpenOwner)+
-		len(meta.RecoveryKey)+len(meta.Verifier))
-	binary.BigEndian.PutUint64(buf[0:8], uint64(meta.DirID))
-	copy(buf[8:16], meta.TernCookie[:])
-	copy(buf[16:28], meta.NFSStateID[:])
-	binary.BigEndian.PutUint16(buf[28:30], uint16(len(nameBytes)))
-	copy(buf[30:], nameBytes)
-	off := 30 + len(nameBytes)
-	binary.BigEndian.PutUint64(buf[off:off+8], meta.ClientID)
-	off += 8
-	copy(buf[off:off+4], stagingMetaMagic)
-	off += 4
-	binary.BigEndian.PutUint64(buf[off:off+8], uint64(meta.BaseID))
-	off += 8
-	binary.BigEndian.PutUint64(buf[off:off+8], meta.BaseSize)
-	off += 8
-	binary.BigEndian.PutUint64(buf[off:off+8], meta.Size)
-	off += 8
-	binary.BigEndian.PutUint32(buf[off:off+4], uint32(len(meta.Dirty)))
-	off += 4
-	for _, r := range meta.Dirty {
-		binary.BigEndian.PutUint64(buf[off:off+8], r.Start)
-		binary.BigEndian.PutUint64(buf[off+8:off+16], r.End)
-		off += 16
-	}
-	binary.BigEndian.PutUint64(buf[off:off+8], meta.Attrs.Change)
-	for i, stamp := range []time.Time{meta.Attrs.Mtime, meta.Attrs.Atime, meta.Attrs.Ctime} {
-		binary.BigEndian.PutUint64(buf[off+8+i*8:off+16+i*8], uint64(stamp.UnixNano()))
-	}
-	off += 32
-	if meta.MetadataChanged {
-		buf[off] = 1
-	}
-	if meta.OwnerKnown {
-		buf[off] |= 2
-	}
-	if meta.ReadOnly {
-		buf[off] |= 4
-	}
-	if meta.Retired {
-		buf[off] |= 8
-	}
-	if meta.Exclusive {
-		buf[off] |= 16
-	}
-	if meta.Unlinked {
-		buf[off] |= 32
-	}
-	if meta.Guarded {
-		buf[off] |= 64
-	}
-	off++
-	binary.BigEndian.PutUint32(buf[off:off+4], uint32(len(meta.OpenOwner)))
-	copy(buf[off+4:], meta.OpenOwner)
-	off += 4 + len(meta.OpenOwner)
-	copy(buf[off:], meta.RecoveryKey[:])
-	copy(buf[off+len(meta.RecoveryKey):], meta.Verifier[:])
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-	if err := tmp.Chmod(0600); err != nil {
-		tmp.Close()
-		return err
-	}
-	if n, err := tmp.Write(buf); err != nil {
-		tmp.Close()
-		return err
-	} else if n != len(buf) {
-		tmp.Close()
-		return io.ErrShortWrite
-	}
-	// Persist the new file before replacing the last checkpoint's name.
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		return err
-	}
-	return syncStagingDir(dir)
-}
-
-func loadStagingMeta(path string) (StagingMeta, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return StagingMeta{}, err
-	}
-	if len(data) < 30 {
-		return StagingMeta{}, fmt.Errorf("meta file too short")
-	}
-	var meta StagingMeta
-	meta.DirID = vfs.InodeID(binary.BigEndian.Uint64(data[0:8]))
-	copy(meta.TernCookie[:], data[8:16])
-	copy(meta.NFSStateID[:], data[16:28])
-	nameLen := int(binary.BigEndian.Uint16(data[28:30]))
-	nameEnd := 30 + nameLen
-	if len(data) < nameEnd {
-		return StagingMeta{}, fmt.Errorf("meta file truncated")
-	}
-	meta.FileName = string(data[30:nameEnd])
-	if len(data) < nameEnd+12 {
-		return StagingMeta{}, fmt.Errorf("meta file truncated")
-	}
-	meta.ClientID = binary.BigEndian.Uint64(data[nameEnd : nameEnd+8])
-	off := nameEnd + 8
-	magic := string(data[off : off+4])
-	if magic != stagingMetaMagic {
-		if strings.HasPrefix(magic, "NFS") {
-			return StagingMeta{}, errStagingFormat{path: path, magic: magic}
-		}
-		return StagingMeta{}, fmt.Errorf("unknown meta file extension")
-	}
-	off += 4
-	if len(data) < off+20 {
-		return StagingMeta{}, fmt.Errorf("meta file truncated")
-	}
-	meta.BaseID = vfs.InodeID(binary.BigEndian.Uint64(data[off : off+8]))
-	off += 8
-	meta.BaseSize = binary.BigEndian.Uint64(data[off : off+8])
-	off += 8
-	if len(data) < off+8 {
-		return StagingMeta{}, fmt.Errorf("meta file truncated")
-	}
-	meta.Size = binary.BigEndian.Uint64(data[off : off+8])
-	meta.version = stagingMetaVersion
-	off += 8
-	if len(data) < off+4 {
-		return StagingMeta{}, fmt.Errorf("meta file truncated")
-	}
-	count := int(binary.BigEndian.Uint32(data[off : off+4]))
-	off += 4
-	if count > (len(data)-off)/16 {
-		return StagingMeta{}, fmt.Errorf("invalid dirty range count")
-	}
-	for range count {
-		start := binary.BigEndian.Uint64(data[off : off+8])
-		end := binary.BigEndian.Uint64(data[off+8 : off+16])
-		if start >= end {
-			return StagingMeta{}, fmt.Errorf("invalid dirty range")
-		}
-		if len(meta.Dirty) != 0 && start <= meta.Dirty[len(meta.Dirty)-1].End {
-			return StagingMeta{}, fmt.Errorf("dirty ranges are not normalized")
-		}
-		meta.Dirty = append(meta.Dirty, byterange.Range{Start: start, End: end})
-		off += 16
-	}
-	if len(data)-off < 37 {
-		return StagingMeta{}, fmt.Errorf("truncated staging attributes")
-	}
-	meta.Attrs.Change = binary.BigEndian.Uint64(data[off : off+8])
-	if meta.Attrs.Change != 0 {
-		meta.Attrs.Mtime = time.Unix(0, int64(binary.BigEndian.Uint64(data[off+8:off+16])))
-		meta.Attrs.Atime = time.Unix(0, int64(binary.BigEndian.Uint64(data[off+16:off+24])))
-		meta.Attrs.Ctime = time.Unix(0, int64(binary.BigEndian.Uint64(data[off+24:off+32])))
-	}
-	off += 32
-	if data[off]&^byte(127) != 0 {
-		return StagingMeta{}, fmt.Errorf("invalid metadata change flag")
-	}
-	meta.MetadataChanged = data[off]&1 != 0
-	meta.OwnerKnown = data[off]&2 != 0
-	meta.ReadOnly = data[off]&4 != 0
-	meta.Retired = data[off]&8 != 0
-	meta.Exclusive = data[off]&16 != 0
-	meta.Unlinked = data[off]&32 != 0
-	meta.Guarded = data[off]&64 != 0
-	off++
-	ownerLen := uint64(binary.BigEndian.Uint32(data[off : off+4]))
-	off += 4
-	// The recovery key and the EXCLUSIVE4 verifier close every sidecar.
-	tailLen := uint64(len(meta.RecoveryKey) + len(meta.Verifier))
-	if uint64(len(data)-off) != ownerLen+tailLen {
-		return StagingMeta{}, fmt.Errorf("invalid staging owner length")
-	}
-	meta.OpenOwner = string(data[off : off+int(ownerLen)])
-	off += int(ownerLen)
-	copy(meta.RecoveryKey[:], data[off:off+len(meta.RecoveryKey)])
-	off += len(meta.RecoveryKey)
-	copy(meta.Verifier[:], data[off:off+len(meta.Verifier)])
-	off += len(meta.Verifier)
-	if off != len(data) {
-		return StagingMeta{}, fmt.Errorf("trailing staging metadata")
-	}
-	if meta.Size > math.MaxInt64 || meta.BaseSize > math.MaxInt64 {
-		return StagingMeta{}, fmt.Errorf("staging size exceeds supported offset")
-	}
-	return meta, nil
 }

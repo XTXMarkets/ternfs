@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sidecar"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -1506,7 +1507,7 @@ func TestLookupDurableOpenStorageErrorPreservesClientState(t *testing.T) {
 	}
 	writer := addConfirmedOpenForTest(
 		t, srv, clientID, "writer", writerID, true)
-	if _, err := staging.Create(writerID, StagingMeta{
+	if _, err := staging.Create(writerID, sidecar.Meta{
 		DirID:      fs.RootID(),
 		FileName:   "writer",
 		TernCookie: cookie,
@@ -1707,7 +1708,7 @@ func TestStagingSweepKeepsClientWithoutLeaseSlot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := staging.Create(fileID, StagingMeta{
+	if _, err := staging.Create(fileID, sidecar.Meta{
 		DirID:      fs.RootID(),
 		FileName:   "opening.txt",
 		TernCookie: cookie,
@@ -1756,7 +1757,7 @@ func TestServerLeaseSweepExpiresAbandonedStaging(t *testing.T) {
 	}
 	state := addConfirmedOpenForTest(
 		t, srv, clientID, "writer", fileID, true)
-	if _, err := staging.Create(fileID, StagingMeta{
+	if _, err := staging.Create(fileID, sidecar.Meta{
 		DirID:      fs.RootID(),
 		FileName:   "abandoned.txt",
 		TernCookie: cookie,
@@ -1835,7 +1836,7 @@ func TestServerLeaseSweepKeepsClientRenewedByAnotherOwner(t *testing.T) {
 	}
 	writer := addConfirmedOpenForTest(
 		t, srv, clientID, "writer", writerID, true)
-	if _, err := staging.Create(writerID, StagingMeta{
+	if _, err := staging.Create(writerID, sidecar.Meta{
 		DirID:      fs.RootID(),
 		FileName:   "active.txt",
 		TernCookie: cookie,
@@ -1910,7 +1911,7 @@ func TestNewServerDelaysExpiredRecoveredStagingRemoval(t *testing.T) {
 	if err := clients.MarkOpen(clientID, stateID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := staging.Create(fileID, StagingMeta{
+	if _, err := staging.Create(fileID, sidecar.Meta{
 		DirID:      fs.RootID(),
 		FileName:   "expired.txt",
 		TernCookie: cookie,
@@ -1938,7 +1939,7 @@ func TestNewServerDelaysExpiredRecoveredStagingRemoval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := staging.Create(liveFileID, StagingMeta{
+	if _, err := staging.Create(liveFileID, sidecar.Meta{
 		DirID:      fs.RootID(),
 		FileName:   "live.txt",
 		TernCookie: liveCookie,
@@ -6785,7 +6786,7 @@ type notifyingStagingStore struct {
 
 func (store *notifyingStagingStore) GetMeta(
 	id vfs.InodeID,
-) (StagingMeta, bool) {
+) (sidecar.Meta, bool) {
 	store.mu.Lock()
 	store.calls++
 	if store.calls == store.notifyAt {
@@ -7930,7 +7931,7 @@ func TestSetclientidRebootRetiresStagingFiles(t *testing.T) {
 func TestLocalStagingStoreRejectsPreMagicSidecars(t *testing.T) {
 	// There are no deployed NFS servers, so nfsd reads one sidecar format.
 	// Sidecars from before the format marker are quarantined, not loaded.
-	meta := StagingMeta{
+	meta := sidecar.Meta{
 		DirID:      vfs.MakeInodeID(vfs.InodeTypeDir, 7),
 		FileName:   "legacy.txt",
 		TernCookie: vfs.Cookie{1, 2, 3},
@@ -7992,14 +7993,14 @@ func TestLocalStagingStoreRejectsPreMagicSidecars(t *testing.T) {
 
 func TestLoadStagingMetaRejectsTrailingBytes(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "staging.meta")
-	meta := StagingMeta{
+	meta := sidecar.Meta{
 		DirID:      vfs.MakeInodeID(vfs.InodeTypeDir, 1),
 		FileName:   "file.txt",
 		TernCookie: vfs.Cookie{1},
 		NFSStateID: nfs4.StateID{2},
 		ClientID:   3,
 	}
-	if err := saveStagingMeta(path, meta); err != nil {
+	if err := sidecar.Save(path, meta); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(path)
@@ -8009,7 +8010,7 @@ func TestLoadStagingMetaRejectsTrailingBytes(t *testing.T) {
 	if err := os.WriteFile(path, append(data, 0), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := loadStagingMeta(path); err == nil {
+	if _, err := sidecar.Load(path); err == nil {
 		t.Fatal("staging metadata with trailing bytes was accepted")
 	}
 }

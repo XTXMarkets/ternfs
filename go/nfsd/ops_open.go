@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sidecar"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -336,7 +337,7 @@ func (s *Server) releaseWrite(openStateid nfs4.Stateid4, st *compoundState, clos
 			(sid == meta.NFSStateID || state.dataID == dataID))
 	if !ownsStaging {
 		hasMeta = false
-		meta = StagingMeta{}
+		meta = sidecar.Meta{}
 	}
 
 	sf := s.stagingStore.Get(dataID)
@@ -529,7 +530,7 @@ func (s *Server) foreignStateID(clientID uint64, id nfs4.StateID) bool {
 }
 
 // recoveredOwner is the open owner a recovered writer's sidecar records.
-func recoveredOwner(meta StagingMeta) openOwnerKey {
+func recoveredOwner(meta sidecar.Meta) openOwnerKey {
 	owner := openOwnerKey{clientID: meta.ClientID}
 	if meta.OwnerKnown {
 		owner.owner = meta.OpenOwner
@@ -571,7 +572,7 @@ func (s *Server) adoptRecovered(st *compoundState, stateid nfs4.Stateid4, g gran
 
 // recoveredAccess is a recovered open's access: its writer's original
 // grant is unknown, so a writer may keep or drop READ.
-func recoveredAccess(meta StagingMeta) uint32 {
+func recoveredAccess(meta sidecar.Meta) uint32 {
 	if meta.ReadOnly {
 		return nfs4.OPEN4_SHARE_ACCESS_READ
 	}
@@ -657,7 +658,7 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 	var openSize *uint64
 	var exclusiveVerifier *[8]byte
 	var recoveredStagingID vfs.InodeID
-	var recoveredStagingMeta StagingMeta
+	var recoveredStagingMeta sidecar.Meta
 	var hasRecoveredStaging bool
 	var placeholderID, placeholderDir vfs.InodeID
 	var placeholderCookie vfs.Cookie
@@ -686,7 +687,7 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 	// must confirm.
 	var recovering bool
 	var recoverID vfs.InodeID
-	var recoverMeta StagingMeta
+	var recoverMeta sidecar.Meta
 	switch claimType {
 	case nfs4.CLAIM_NULL, nfs4.CLAIM_FH:
 		var dirID vfs.InodeID
@@ -1122,7 +1123,7 @@ func (s *Server) constructStaging(
 		return 0, nfs4.StateID{}, s.errToNFS(err)
 	}
 	stateID := s.opens.newStateID()
-	meta := StagingMeta{
+	meta := sidecar.Meta{
 		DirID:       dirID,
 		FileName:    fileName,
 		TernCookie:  cookie,
