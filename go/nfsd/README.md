@@ -173,6 +173,7 @@ and counted. Clients that never ask for a backchannel see no backchannel
 status flags.
 
 The implementation is in [`session.go`](session.go),
+[`session_store.go`](session_store.go),
 [`backchannel.go`](backchannel.go) and
 [`backchannel_sender.go`](backchannel_sender.go).
 
