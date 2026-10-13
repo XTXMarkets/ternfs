@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/byterange"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -123,7 +124,7 @@ func newInspectFixture(t *testing.T) *inspectFixture {
 		BaseID:          vfs.MakeInodeID(vfs.InodeTypeFile, 123),
 		BaseSize:        8192,
 		Size:            4096,
-		Dirty:           byteRangeSet{{start: 512, end: 1024}},
+		Dirty:           byterange.Set{{Start: 512, End: 1024}},
 		MetadataChanged: true,
 		Attrs: vfs.NodeInfo{
 			Mtime:  f.now.Add(-3 * time.Second),

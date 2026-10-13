@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-package main
+package byterange
 
 import (
 	"reflect"
@@ -10,16 +10,16 @@ import (
 )
 
 func TestByteRangeSetAdd(t *testing.T) {
-	var ranges byteRangeSet
-	ranges.add(10, 20)
-	ranges.add(30, 40)
-	ranges.add(20, 30)
-	ranges.add(5, 8)
-	ranges.add(6, 12)
-	ranges.add(50, 50)
+	var ranges Set
+	ranges.Add(10, 20)
+	ranges.Add(30, 40)
+	ranges.Add(20, 30)
+	ranges.Add(5, 8)
+	ranges.Add(6, 12)
+	ranges.Add(50, 50)
 
-	want := byteRangeSet{
-		{start: 5, end: 40},
+	want := Set{
+		{Start: 5, End: 40},
 	}
 	if !reflect.DeepEqual(ranges, want) {
 		t.Fatalf("ranges = %#v, want %#v", ranges, want)
@@ -27,22 +27,22 @@ func TestByteRangeSetAdd(t *testing.T) {
 }
 
 func TestByteRangeSetUnion(t *testing.T) {
-	left := byteRangeSet{
-		{start: 0, end: 10},
-		{start: 30, end: 40},
-		{start: 60, end: 70},
+	left := Set{
+		{Start: 0, End: 10},
+		{Start: 30, End: 40},
+		{Start: 60, End: 70},
 	}
-	right := byteRangeSet{
-		{start: 10, end: 20},
-		{start: 25, end: 35},
-		{start: 80, end: 90},
+	right := Set{
+		{Start: 10, End: 20},
+		{Start: 25, End: 35},
+		{Start: 80, End: 90},
 	}
-	got := left.union(right)
-	want := byteRangeSet{
-		{start: 0, end: 20},
-		{start: 25, end: 40},
-		{start: 60, end: 70},
-		{start: 80, end: 90},
+	got := left.Union(right)
+	want := Set{
+		{Start: 0, End: 20},
+		{Start: 25, End: 40},
+		{Start: 60, End: 70},
+		{Start: 80, End: 90},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("union = %#v, want %#v", got, want)
@@ -50,15 +50,15 @@ func TestByteRangeSetUnion(t *testing.T) {
 }
 
 func TestByteRangeSetRemove(t *testing.T) {
-	ranges := byteRangeSet{
-		{start: 0, end: 10},
-		{start: 20, end: 30},
+	ranges := Set{
+		{Start: 0, End: 10},
+		{Start: 20, End: 30},
 	}
-	ranges.remove(5, 25)
+	ranges.Remove(5, 25)
 
-	want := byteRangeSet{
-		{start: 0, end: 5},
-		{start: 25, end: 30},
+	want := Set{
+		{Start: 0, End: 5},
+		{Start: 25, End: 30},
 	}
 	if !reflect.DeepEqual(ranges, want) {
 		t.Fatalf("ranges = %#v, want %#v", ranges, want)
@@ -66,16 +66,16 @@ func TestByteRangeSetRemove(t *testing.T) {
 }
 
 func TestByteRangeSetRemoveSplitsWithoutCorruptingFollowingRanges(t *testing.T) {
-	ranges := byteRangeSet{
-		{start: 0, end: 100},
-		{start: 200, end: 300},
+	ranges := Set{
+		{Start: 0, End: 100},
+		{Start: 200, End: 300},
 	}
-	ranges.remove(10, 20)
+	ranges.Remove(10, 20)
 
-	want := byteRangeSet{
-		{start: 0, end: 10},
-		{start: 20, end: 100},
-		{start: 200, end: 300},
+	want := Set{
+		{Start: 0, End: 10},
+		{Start: 20, End: 100},
+		{Start: 200, End: 300},
 	}
 	if !reflect.DeepEqual(ranges, want) {
 		t.Fatalf("ranges = %#v, want %#v", ranges, want)
@@ -83,9 +83,9 @@ func TestByteRangeSetRemoveSplitsWithoutCorruptingFollowingRanges(t *testing.T) 
 }
 
 func TestByteRangeSetContains(t *testing.T) {
-	ranges := byteRangeSet{
-		{start: 5, end: 15},
-		{start: 20, end: 30},
+	ranges := Set{
+		{Start: 5, End: 15},
+		{Start: 20, End: 30},
 	}
 	for _, tt := range []struct {
 		start uint64
@@ -98,7 +98,7 @@ func TestByteRangeSetContains(t *testing.T) {
 		{start: 15, end: 20, want: false},
 		{start: 25, end: 25, want: true},
 	} {
-		if got := ranges.contains(tt.start, tt.end); got != tt.want {
+		if got := ranges.Contains(tt.start, tt.end); got != tt.want {
 			t.Errorf("contains(%d, %d) = %t, want %t",
 				tt.start, tt.end, got, tt.want)
 		}
@@ -106,15 +106,15 @@ func TestByteRangeSetContains(t *testing.T) {
 }
 
 func TestByteRangeSetGaps(t *testing.T) {
-	ranges := byteRangeSet{
-		{start: 5, end: 10},
-		{start: 15, end: 20},
-		{start: 25, end: 30},
+	ranges := Set{
+		{Start: 5, End: 10},
+		{Start: 15, End: 20},
+		{Start: 25, End: 30},
 	}
-	got := ranges.gaps(7, 28)
-	want := []byteRange{
-		{start: 10, end: 15},
-		{start: 20, end: 25},
+	got := ranges.Gaps(7, 28)
+	want := []Range{
+		{Start: 10, End: 15},
+		{Start: 20, End: 25},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("gaps = %#v, want %#v", got, want)

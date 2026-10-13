@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/byterange"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -215,7 +216,7 @@ func TestExclusiveStagingCheckpoint(t *testing.T) {
 	if !ok || got.version != stagingMetaVersion || !got.Exclusive || got.Verifier != meta.Verifier ||
 		got.BaseID != meta.BaseID || got.ClientID != 2 || got.NFSStateID != (nfs4.StateID{2}) ||
 		!got.OwnerKnown || got.OpenOwner != "" || !got.Attrs.Mtime.Equal(stamp) ||
-		got.Size != 10 || len(got.Dirty) != 1 || got.Dirty[0] != (byteRange{2, 9}) {
+		got.Size != 10 || len(got.Dirty) != 1 || got.Dirty[0] != (byterange.Range{Start: 2, End: 9}) {
 		t.Fatalf("recovered checkpoint: %+v", got)
 	}
 }

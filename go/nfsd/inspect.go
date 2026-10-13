@@ -1099,8 +1099,8 @@ func (entry *inspectStagingEntry) setMeta(meta StagingMeta) {
 	entry.CheckpointSize = meta.Size
 	for _, dirty := range meta.Dirty {
 		entry.Dirty = append(entry.Dirty, inspectByteRange{
-			Start: dirty.start,
-			End:   dirty.end,
+			Start: dirty.Start,
+			End:   dirty.End,
 		})
 	}
 	entry.MetadataChanged = meta.MetadataChanged

@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/byterange"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -56,11 +57,11 @@ func createOverlayStage(
 	return store, id, stage
 }
 
-func sliceBaseReader(base []byte, calls *[]byteRange) stagingBaseReader {
+func sliceBaseReader(base []byte, calls *[]byterange.Range) stagingBaseReader {
 	return func(_ vfs.InodeID, offset uint64, dest []byte) (int, bool, error) {
 		end := min(offset+uint64(len(dest)), uint64(len(base)))
 		if calls != nil {
-			*calls = append(*calls, byteRange{start: offset, end: end})
+			*calls = append(*calls, byterange.Range{Start: offset, End: end})
 		}
 		if offset >= uint64(len(base)) {
 			return 0, true, nil
@@ -78,7 +79,7 @@ func TestStagingOverlayReadAndCache(t *testing.T) {
 	if err := stage.Write(3, []byte("XYZ")); err != nil {
 		t.Fatal(err)
 	}
-	var calls []byteRange
+	var calls []byterange.Range
 	buf := make([]byte, len(base))
 	n, eof, err := stage.Read(0, buf, sliceBaseReader(base, &calls))
 	if err != nil {
@@ -88,7 +89,7 @@ func TestStagingOverlayReadAndCache(t *testing.T) {
 		t.Fatalf("read = (%d, %t, %q), want (10, true, %q)",
 			n, eof, buf, "abcXYZghij")
 	}
-	wantCalls := []byteRange{{start: 0, end: 3}, {start: 6, end: 10}}
+	wantCalls := []byterange.Range{{Start: 0, End: 3}, {Start: 6, End: 10}}
 	if !reflect.DeepEqual(calls, wantCalls) {
 		t.Fatalf("base reads = %#v, want %#v", calls, wantCalls)
 	}
@@ -359,7 +360,7 @@ func TestStagingDirtyRangesSurviveRestart(t *testing.T) {
 	if !ok {
 		t.Fatal("staging metadata was not recovered")
 	}
-	wantDirty := byteRangeSet{{start: 3, end: 6}}
+	wantDirty := byterange.Set{{Start: 3, End: 6}}
 	if meta.BaseID != baseID || meta.BaseSize != uint64(len(base)) ||
 		!reflect.DeepEqual(meta.Dirty, wantDirty) {
 		t.Fatalf("recovered metadata = %#v", meta)

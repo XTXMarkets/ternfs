@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/byterange"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/keyedlock"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
@@ -77,7 +78,7 @@ type StagingMeta struct {
 	BaseID          vfs.InodeID  // immutable file being replaced; zero for a new file
 	BaseSize        uint64
 	Size            uint64
-	Dirty           byteRangeSet
+	Dirty           byterange.Set
 	MetadataChanged bool
 	Attrs           vfs.NodeInfo // Size is stored separately
 	version         uint8
@@ -251,7 +252,7 @@ func NewLocalStagingStore(dir string, logger *slog.Logger) (*LocalStagingStore, 
 				size:            size,
 				meta:            meta,
 				metaPath:        metaPath,
-				dirty:           append(byteRangeSet(nil), meta.Dirty...),
+				dirty:           append(byterange.Set(nil), meta.Dirty...),
 				attrs:           stagingAttributes(meta.Attrs, info.ModTime()),
 				metadataChanged: meta.MetadataChanged,
 			},
@@ -320,7 +321,7 @@ func (s *LocalStagingStore) Create(id vfs.InodeID, meta StagingMeta) (StagingFil
 		size:     meta.BaseSize,
 		meta:     meta,
 		metaPath: metaPath,
-		dirty:    append(byteRangeSet(nil), meta.Dirty...),
+		dirty:    append(byterange.Set(nil), meta.Dirty...),
 		attrs:    meta.Attrs,
 	}
 	// Readers only see complete entries. The inode lock excludes duplicate
@@ -590,10 +591,10 @@ type localStagingFile struct {
 	size            uint64
 	meta            StagingMeta
 	metaPath        string
-	dirty           byteRangeSet
+	dirty           byterange.Set
 	attrs           vfs.NodeInfo
 	metadataChanged bool
-	hydrated        byteRangeSet
+	hydrated        byterange.Set
 	checkpointDirty bool
 	removed         bool
 
@@ -661,7 +662,7 @@ func (sf *localStagingFile) Meta() StagingMeta {
 	sf.mu.Lock()
 	defer sf.mu.Unlock()
 	meta := sf.meta
-	meta.Dirty = append(byteRangeSet(nil), sf.dirty...)
+	meta.Dirty = append(byterange.Set(nil), sf.dirty...)
 	return meta
 }
 
@@ -713,7 +714,7 @@ func (sf *localStagingFile) Retire(clientID uint64, stateID nfs4.StateID) error 
 
 func (sf *localStagingFile) saveMetaLocked() error {
 	meta := sf.meta
-	meta.Dirty = append(byteRangeSet(nil), sf.dirty...)
+	meta.Dirty = append(byterange.Set(nil), sf.dirty...)
 	meta.Size = sf.size
 	meta.Attrs = sf.attrs
 	meta.MetadataChanged = sf.metadataChanged
@@ -810,10 +811,10 @@ func (sf *localStagingFile) SetSize(size uint64) error {
 		return nil
 	}
 	if size < oldSize {
-		sf.dirty.add(size, oldSize)
-		sf.hydrated.remove(size, oldSize)
+		sf.dirty.Add(size, oldSize)
+		sf.hydrated.Remove(size, oldSize)
 	} else {
-		sf.dirty.add(oldSize, size)
+		sf.dirty.Add(oldSize, size)
 	}
 	return nil
 }
@@ -845,8 +846,8 @@ func (sf *localStagingFile) Write(offset uint64, data []byte) error {
 	if sf.meta.BaseID == 0 {
 		return nil
 	}
-	sf.dirty.add(offset, end)
-	sf.hydrated.remove(offset, end)
+	sf.dirty.Add(offset, end)
+	sf.hydrated.Remove(offset, end)
 	return nil
 }
 
@@ -883,12 +884,12 @@ func (sf *localStagingFile) Read(
 	baseID := sf.meta.BaseID
 	baseSize := sf.meta.BaseSize
 	coverage := sf.localCoverageLocked()
-	missing := coverage.gaps(offset, min(end, baseSize))
+	missing := coverage.Gaps(offset, min(end, baseSize))
 	sf.mu.Unlock()
 
 	for _, gap := range missing {
-		part := dest[gap.start-offset : gap.end-offset]
-		if err := readStagingBase(readBase, baseID, gap.start, part); err != nil {
+		part := dest[gap.Start-offset : gap.End-offset]
+		if err := readStagingBase(readBase, baseID, gap.Start, part); err != nil {
 			return 0, false, err
 		}
 	}
@@ -899,8 +900,8 @@ func (sf *localStagingFile) Read(
 		return 0, false, errStagingRemoved
 	}
 	for _, gap := range missing {
-		part := dest[gap.start-offset : gap.end-offset]
-		if err := sf.cacheLocked(gap.start, part); err != nil {
+		part := dest[gap.Start-offset : gap.End-offset]
+		if err := sf.cacheLocked(gap.Start, part); err != nil {
 			return 0, false, err
 		}
 	}
@@ -946,8 +947,8 @@ func readStagingBase(
 	return nil
 }
 
-func (sf *localStagingFile) localCoverageLocked() byteRangeSet {
-	return sf.dirty.union(sf.hydrated)
+func (sf *localStagingFile) localCoverageLocked() byterange.Set {
+	return sf.dirty.Union(sf.hydrated)
 }
 
 func (sf *localStagingFile) readLocalLocked(offset uint64, dest []byte) error {
@@ -982,12 +983,12 @@ func (sf *localStagingFile) cacheLocked(offset uint64, data []byte) error {
 		return fmt.Errorf("staging cache offset overflow")
 	}
 	end = min(end, sf.size, sf.meta.BaseSize)
-	for _, clean := range sf.dirty.gaps(offset, end) {
-		part := data[clean.start-offset : clean.end-offset]
-		if _, err := sf.f.WriteAt(part, int64(clean.start)); err != nil {
+	for _, clean := range sf.dirty.Gaps(offset, end) {
+		part := data[clean.Start-offset : clean.End-offset]
+		if _, err := sf.f.WriteAt(part, int64(clean.Start)); err != nil {
 			return err
 		}
-		sf.hydrated.add(clean.start, clean.end)
+		sf.hydrated.Add(clean.Start, clean.End)
 	}
 	return nil
 }
@@ -1021,7 +1022,7 @@ func (sf *localStagingFile) hydrate(
 		sf.mu.Lock()
 		baseID := sf.meta.BaseID
 		end := min(sf.size, sf.meta.BaseSize)
-		gaps := sf.localCoverageLocked().gaps(0, end)
+		gaps := sf.localCoverageLocked().Gaps(0, end)
 		sf.mu.Unlock()
 		if baseID == 0 || len(gaps) == 0 {
 			return nil
@@ -1034,12 +1035,12 @@ func (sf *localStagingFile) hydrate(
 			}
 		}
 		gap := gaps[0]
-		count := min(uint64(len(buf)), gap.end-gap.start)
+		count := min(uint64(len(buf)), gap.End-gap.Start)
 		part := buf[:count]
-		if err := readStagingBase(readBase, baseID, gap.start, part); err != nil {
+		if err := readStagingBase(readBase, baseID, gap.Start, part); err != nil {
 			return err
 		}
-		if err := sf.Cache(gap.start, part); err != nil {
+		if err := sf.Cache(gap.Start, part); err != nil {
 			return err
 		}
 	}
@@ -1072,13 +1073,13 @@ func (sf *localStagingFile) finishHydration(
 		sf.mu.Lock()
 		baseID := sf.meta.BaseID
 		end := min(sf.size, sf.meta.BaseSize)
-		gaps := sf.localCoverageLocked().gaps(0, end)
+		gaps := sf.localCoverageLocked().Gaps(0, end)
 		sf.mu.Unlock()
 		if baseID == 0 || len(gaps) == 0 {
 			return nil
 		}
 
-		jobs := make(chan byteRange)
+		jobs := make(chan byterange.Range)
 		var wg sync.WaitGroup
 		var errMu sync.Mutex
 		var firstErr error
@@ -1094,12 +1095,12 @@ func (sf *localStagingFile) finishHydration(
 					if failed {
 						continue
 					}
-					part := buf[:job.end-job.start]
+					part := buf[:job.End-job.Start]
 					err := readStagingBase(
-						readBase, baseID, job.start, part,
+						readBase, baseID, job.Start, part,
 					)
 					if err == nil {
-						err = sf.Cache(job.start, part)
+						err = sf.Cache(job.Start, part)
 					}
 					if err != nil {
 						errMu.Lock()
@@ -1112,9 +1113,9 @@ func (sf *localStagingFile) finishHydration(
 			}()
 		}
 		for _, gap := range gaps {
-			for start := gap.start; start < gap.end; {
-				end := min(start+stagingHydrationChunk, gap.end)
-				jobs <- byteRange{start: start, end: end}
+			for start := gap.Start; start < gap.End; {
+				end := min(start+stagingHydrationChunk, gap.End)
+				jobs <- byterange.Range{Start: start, End: end}
 				start = end
 			}
 		}
@@ -1221,8 +1222,8 @@ func saveStagingMeta(path string, meta StagingMeta) error {
 	binary.BigEndian.PutUint32(buf[off:off+4], uint32(len(meta.Dirty)))
 	off += 4
 	for _, r := range meta.Dirty {
-		binary.BigEndian.PutUint64(buf[off:off+8], r.start)
-		binary.BigEndian.PutUint64(buf[off+8:off+16], r.end)
+		binary.BigEndian.PutUint64(buf[off:off+8], r.Start)
+		binary.BigEndian.PutUint64(buf[off+8:off+16], r.End)
 		off += 16
 	}
 	binary.BigEndian.PutUint64(buf[off:off+8], meta.Attrs.Change)
@@ -1347,10 +1348,10 @@ func loadStagingMeta(path string) (StagingMeta, error) {
 		if start >= end {
 			return StagingMeta{}, fmt.Errorf("invalid dirty range")
 		}
-		if len(meta.Dirty) != 0 && start <= meta.Dirty[len(meta.Dirty)-1].end {
+		if len(meta.Dirty) != 0 && start <= meta.Dirty[len(meta.Dirty)-1].End {
 			return StagingMeta{}, fmt.Errorf("dirty ranges are not normalized")
 		}
-		meta.Dirty = append(meta.Dirty, byteRange{start: start, end: end})
+		meta.Dirty = append(meta.Dirty, byterange.Range{Start: start, End: end})
 		off += 16
 	}
 	if len(data)-off < 37 {
