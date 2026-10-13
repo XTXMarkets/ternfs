@@ -102,7 +102,7 @@ func TestActiveCompoundDoesNotExpireClientState(t *testing.T) {
 
 	var bID nfs4.StateID
 	copy(bID[:], bSid[4:])
-	if !srv.opens.live(bID) {
+	if !srv.opens.Live(bID) {
 		t.Fatal("the operation expired the client's other open")
 	}
 	if m, ok := staging.GetMeta(bStaging); !ok || m.Retired {
@@ -120,7 +120,7 @@ func TestActiveCompoundDoesNotExpireClientState(t *testing.T) {
 	// ...and once it is not, the sweeper's decision expires the client.
 	endQuietForTest(srv)
 	srv.sweepExpiredClientState()
-	if srv.opens.live(bID) {
+	if srv.opens.Live(bID) {
 		t.Fatal("sweeper did not expire the dead client")
 	}
 	assertRetiredStaging(t, staging, bStaging)
@@ -359,7 +359,7 @@ func TestRefresherTerminalRespectsConfirmationProtection(t *testing.T) {
 	if !f.present(t, vfs.InodeID(f.p), srv.clients.leaseName) {
 		t.Fatal("terminal cleanup removed P's lease while it was protected")
 	}
-	if srv.sessions.lookup(pSession) == nil || len(srv.opens.clientStates(f.p)) == 0 {
+	if srv.sessions.lookup(pSession) == nil || len(srv.opens.ClientStates(f.p)) == 0 {
 		t.Fatal("terminal cleanup retired P while it was protected")
 	}
 	// Settled: D never applied. The next pass after the backoff cleans up.
@@ -394,7 +394,7 @@ func TestRecoveredDowngradeKeepsItsGrant(t *testing.T) {
 	}
 	var id nfs4.StateID
 	copy(id[:], write[4:])
-	if !r.srv.opens.live(id) {
+	if !r.srv.opens.Live(id) {
 		t.Fatal("the downgrade installed no live state")
 	}
 	if got := stateidOpStatus(t, conn, &xid, "WRITE", r.fh, r.stateid); got != nfs4.NFS4ERR_OLD_STATEID {
@@ -444,7 +444,7 @@ func TestRecoveredDowngradeCollisionWaits(t *testing.T) {
 	if m, ok := r.staging.GetMeta(stagingID); !ok || m.Retired || m.NFSStateID != recovered {
 		t.Fatal("the refused downgrade changed the recovered staging")
 	}
-	if !r.srv.opens.live(liveID) || r.srv.opens.live(recovered) {
+	if !r.srv.opens.Live(liveID) || r.srv.opens.Live(recovered) {
 		t.Fatal("the refused downgrade changed the open state")
 	}
 	if open, err := r.srv.clients.HasOpen(r.clientID, recovered); err != nil || !open {
@@ -1277,7 +1277,7 @@ func TestLoneFailedWriterLeavesSiblingsAlone(t *testing.T) {
 	}
 	var bID nfs4.StateID
 	copy(bID[:], bSid[4:])
-	if !srv.opens.live(bID) {
+	if !srv.opens.Live(bID) {
 		t.Fatal("the failed writer's operations expired the sibling open")
 	}
 	if m, ok := staging.GetMeta(bStaging); !ok || m.Retired {

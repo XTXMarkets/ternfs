@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/openstate"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -210,7 +211,7 @@ func (s *Server) opSetattr(args nfs4.SETATTR4args, st *compoundState, w *nfs4.CO
 	}
 
 	var sf staging.File
-	var state openState
+	var state openstate.State
 	dataID := st.currentID
 	stateid, ok := st.resolveStateID(args.Stateid())
 	if !ok {
@@ -221,7 +222,7 @@ func (s *Server) opSetattr(args nfs4.SETATTR4args, st *compoundState, w *nfs4.CO
 		state, status = s.lookupDurableOpen(st.clientID, stateid, st.currentID)
 		switch {
 		case status == nfs4.NFS4_OK:
-			dataID = state.dataID
+			dataID = state.DataID
 			sf = s.stagingOwnedBy(dataID, state)
 		case newSize != nil || s.foreignStateID(st.clientID, extractStateID(stateid)):
 			// Another client's stateid is rejected before any effect, times
@@ -242,7 +243,7 @@ func (s *Server) opSetattr(args nfs4.SETATTR4args, st *compoundState, w *nfs4.CO
 		if status := requireRegularFile(st.currentID); status != nfs4.NFS4_OK {
 			return setattrReply(status, attrMask{})
 		}
-		if !isSpecialStateID(stateid) && !state.writes() {
+		if !isSpecialStateID(stateid) && !state.Writes() {
 			return setattrReply(nfs4.NFS4ERR_OPENMODE, attrMask{})
 		}
 		if sf == nil {

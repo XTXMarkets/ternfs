@@ -318,7 +318,7 @@ func TestConfirmationProtectsDestructivePaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	old := srv.opens.newStateID()
+	old := srv.opens.NewStateID()
 	old[0] ^= 0xff // another epoch
 	if _, err := srv.stagingStore.Create(recovered, sidecar.Meta{DirID: f.fs.RootID(), FileName: "rfile",
 		BaseID: base, ClientID: f.p, NFSStateID: old, TernCookie: cookie}); err != nil {
@@ -334,7 +334,7 @@ func TestConfirmationProtectsDestructivePaths(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := srv.stagingStore.Create(keyed, sidecar.Meta{DirID: f.fs.RootID(), FileName: "kfile",
-		ClientID: f.p, NFSStateID: srv.opens.newStateID(), TernCookie: keyedCookie,
+		ClientID: f.p, NFSStateID: srv.opens.NewStateID(), TernCookie: keyedCookie,
 		OwnerKnown: true, OpenOwner: "owner", RecoveryKey: key}); err != nil {
 		t.Fatal(err)
 	}
@@ -395,7 +395,7 @@ func TestConfirmationProtectsDestructivePaths(t *testing.T) {
 			t.Fatalf("staging %d retired", id)
 		}
 	}
-	if len(srv.opens.clientStates(f.p)) == 0 {
+	if len(srv.opens.ClientStates(f.p)) == 0 {
 		t.Fatal("P's open state expired")
 	}
 
@@ -943,7 +943,7 @@ func TestProtectionOrdering(t *testing.T) {
 		testutil.CloseSignal(g.release)
 		testutil.AwaitSignal(t, expired, "expiry")
 		// The expiry finished completely before any confirmation write.
-		if !f.present(t, vfs.InodeID(f.p), expiredName) || len(f.srv.opens.clientStates(f.p)) != 0 {
+		if !f.present(t, vfs.InodeID(f.p), expiredName) || len(f.srv.opens.ClientStates(f.p)) != 0 {
 			t.Fatal("admitted expiry did not complete")
 		}
 		testutil.AwaitValue(t, result, "confirmation")
@@ -1533,7 +1533,7 @@ func TestRecoveryHoldReleasedOnPanic(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := srv.stagingStore.Create(keyed, sidecar.Meta{DirID: f.fs.RootID(), FileName: "kfile",
-		ClientID: f.p, NFSStateID: srv.opens.newStateID(), TernCookie: cookie,
+		ClientID: f.p, NFSStateID: srv.opens.NewStateID(), TernCookie: cookie,
 		OwnerKnown: true, OpenOwner: "owner", RecoveryKey: key}); err != nil {
 		t.Fatal(err)
 	}

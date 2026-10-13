@@ -644,7 +644,7 @@ func TestAdmissionDestroyClientWithOpenAndNoSession(t *testing.T) {
 	admissionStatus(t, send(admissionDestroy(ts.id)), nfs4.NFS4_OK, nfs4.OP_DESTROY_SESSION)
 	destroy := buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) { w.AppendArgarray_DestroyClientid().SetDcaClientid(client) })
 	admissionStatus(t, send(destroy), nfs4.NFS4ERR_CLIENTID_BUSY, nfs4.OP_DESTROY_CLIENTID)
-	if len(srv.opens.clientStates(incarnationForTest(t, srv, client))) != 1 {
+	if len(srv.opens.ClientStates(incarnationForTest(t, srv, client))) != 1 {
 		t.Fatal("busy rejection discarded live open")
 	}
 	replacement, status, err := createSession(conn, xid, client, ts.nextCSSeq)

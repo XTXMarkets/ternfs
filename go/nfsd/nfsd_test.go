@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/openstate"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sidecar"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
@@ -1428,16 +1429,16 @@ func addConfirmedOpenForTest(
 	owner string,
 	fileID vfs.InodeID,
 	write bool,
-) openState {
+) openstate.State {
 	t.Helper()
-	state, status := addOpenForTest(srv.opens,
-		openOwnerKey{clientID: clientID, owner: owner},
+	state, status := openstate.AddOpenForTest(srv.opens,
+		openstate.OwnerKey{ClientID: clientID, Owner: owner},
 		fileID, write, nfs4.StateID{},
 	)
 	if status != nfs4.NFS4_OK {
 		t.Fatalf("OPEN state setup = %s", nfs4.Nfsstat4Name(status))
 	}
-	if err := srv.clients.MarkOpen(clientID, state.id); err != nil {
+	if err := srv.clients.MarkOpen(clientID, state.ID); err != nil {
 		t.Fatal(err)
 	}
 	return state
@@ -1512,7 +1513,7 @@ func TestLookupDurableOpenStorageErrorPreservesClientState(t *testing.T) {
 		DirID:      fs.RootID(),
 		FileName:   "writer",
 		TernCookie: cookie,
-		NFSStateID: writer.id,
+		NFSStateID: writer.ID,
 		ClientID:   clientID,
 	}); err != nil {
 		t.Fatal(err)
@@ -1522,15 +1523,15 @@ func TestLookupDurableOpenStorageErrorPreservesClientState(t *testing.T) {
 	fs.name = confirmedName
 	fs.remaining = 1
 	_, stateid := nfs4.StartStateid4(nil)
-	writeStateID(stateid, reader.generation, reader.id)
+	writeStateID(stateid, reader.Generation, reader.ID)
 	if _, status := srv.lookupDurableOpen(
 		clientID, stateid, readerID,
 	); status != nfs4.NFS4ERR_DELAY {
 		t.Fatalf("lookup status = %s, want NFS4ERR_DELAY",
 			nfs4.Nfsstat4Name(status))
 	}
-	if _, status := srv.opens.lookup(
-		writer.owner.clientID, writer.id, writer.generation, writerID,
+	if _, status := srv.opens.Lookup(
+		writer.Owner.ClientID, writer.ID, writer.Generation, writerID,
 	); status != nfs4.NFS4_OK {
 		t.Fatalf("unrelated state after lookup error = %s, want NFS4_OK",
 			nfs4.Nfsstat4Name(status))
@@ -1539,7 +1540,7 @@ func TestLookupDurableOpenStorageErrorPreservesClientState(t *testing.T) {
 		t.Fatal("lookup error removed unrelated staging")
 	}
 	if _, err := baseFS.Lookup(
-		vfs.InodeID(clientID), activeOpenName(writer.id),
+		vfs.InodeID(clientID), activeOpenName(writer.ID),
 	); err != nil {
 		t.Fatalf("lookup error removed unrelated marker: %v", err)
 	}
@@ -1591,8 +1592,8 @@ func TestExpireIfLeaseDeadKeepsClientWithoutSlot(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	if _, status := addOpenForTest(srv.opens,
-		openOwnerKey{clientID: clientID, owner: "owner"},
+	if _, status := openstate.AddOpenForTest(srv.opens,
+		openstate.OwnerKey{ClientID: clientID, Owner: "owner"},
 		vfs.MakeInodeID(vfs.InodeTypeFile, 1), false, nfs4.StateID{},
 	); status != nfs4.NFS4_OK {
 		t.Fatalf("OPEN = %s", nfs4.Nfsstat4Name(status))
@@ -1762,7 +1763,7 @@ func TestServerLeaseSweepExpiresAbandonedStaging(t *testing.T) {
 		DirID:      fs.RootID(),
 		FileName:   "abandoned.txt",
 		TernCookie: cookie,
-		NFSStateID: state.id,
+		NFSStateID: state.ID,
 		ClientID:   clientID,
 	}); err != nil {
 		t.Fatal(err)
@@ -1771,33 +1772,33 @@ func TestServerLeaseSweepExpiresAbandonedStaging(t *testing.T) {
 	srv.clients.setClock(func() time.Time {
 		return base.Add(leaseWriteTerm + time.Second)
 	})
-	fs.name = activeOpenName(state.id)
+	fs.name = activeOpenName(state.ID)
 	fs.remaining = 1
 	srv.sweepExpiredClientState()
 	if staging.Get(fileID) == nil {
 		t.Fatal("marker cleanup failure removed staging")
 	}
-	if _, status := srv.opens.lookup(
-		state.owner.clientID, state.id, state.generation, fileID,
+	if _, status := srv.opens.Lookup(
+		state.Owner.ClientID, state.ID, state.Generation, fileID,
 	); status != nfs4.NFS4_OK {
 		t.Fatalf("marker cleanup failure removed state = %s",
 			nfs4.Nfsstat4Name(status))
 	}
 	srv.sweepExpiredClientState()
 	assertRetiredStaging(t, staging, fileID)
-	if _, status := srv.opens.lookup(
-		state.owner.clientID, state.id, state.generation, fileID,
+	if _, status := srv.opens.Lookup(
+		state.Owner.ClientID, state.ID, state.Generation, fileID,
 	); status != nfs4.NFS4ERR_EXPIRED {
 		t.Fatalf("lease sweep state = %s, want NFS4ERR_EXPIRED",
 			nfs4.Nfsstat4Name(status))
 	}
 	if _, err := fs.Lookup(
-		vfs.InodeID(clientID), activeOpenName(state.id),
+		vfs.InodeID(clientID), activeOpenName(state.ID),
 	); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("lease sweep retained active-open marker: %v", err)
 	}
 	if active, err := srv.clients.HasOpen(
-		clientID, state.id,
+		clientID, state.ID,
 	); err != nil {
 		t.Fatal(err)
 	} else if active {
@@ -1841,7 +1842,7 @@ func TestServerLeaseSweepKeepsClientRenewedByAnotherOwner(t *testing.T) {
 		DirID:      fs.RootID(),
 		FileName:   "active.txt",
 		TernCookie: cookie,
-		NFSStateID: writer.id,
+		NFSStateID: writer.ID,
 		ClientID:   clientID,
 	}); err != nil {
 		t.Fatal(err)
@@ -1857,7 +1858,7 @@ func TestServerLeaseSweepKeepsClientRenewedByAnotherOwner(t *testing.T) {
 		return base.Add(nfsLeaseRenewAfter + time.Second)
 	})
 	if active, err := srv.clients.HasOpen(
-		clientID, reader.id,
+		clientID, reader.ID,
 	); err != nil {
 		t.Fatal(err)
 	} else if !active {
@@ -1870,8 +1871,8 @@ func TestServerLeaseSweepKeepsClientRenewedByAnotherOwner(t *testing.T) {
 	if staging.Get(writerID) == nil {
 		t.Fatal("lease sweep removed staging for a renewed client")
 	}
-	if _, status := srv.opens.lookup(
-		writer.owner.clientID, writer.id, writer.generation, writerID,
+	if _, status := srv.opens.Lookup(
+		writer.Owner.ClientID, writer.ID, writer.Generation, writerID,
 	); status != nfs4.NFS4_OK {
 		t.Fatalf("renewed writer state = %s, want NFS4_OK",
 			nfs4.Nfsstat4Name(status))
@@ -6876,11 +6877,8 @@ func TestWaitingCloseRechecksStagingMeta(t *testing.T) {
 		t.Fatalf("second CLOSE = %s, want NFS4ERR_EXPIRED",
 			nfs4.Nfsstat4Name(second.status))
 	}
-	srv.opens.mu.Lock()
-	defer srv.opens.mu.Unlock()
-	if len(srv.opens.states) != 0 {
-		t.Fatalf("states after lost write = %d, want 0",
-			len(srv.opens.states))
+	if n := srv.opens.StateCount(); n != 0 {
+		t.Fatalf("states after lost write = %d, want 0", n)
 	}
 }
 
@@ -7493,85 +7491,6 @@ func TestLockNotSupported(t *testing.T) {
 	}
 }
 
-func TestOpenStateStoreKeepsOtherOwnersUntilClientPurge(t *testing.T) {
-	store := newOpenStateStore()
-	defer assertOpenStateIndex(t, store)
-	clientID := uint64(1)
-	var states []openState
-	for i, test := range []struct {
-		owner string
-		write bool
-	}{
-		{"reader", false},
-		{"writer", true},
-	} {
-		fileID := vfs.MakeInodeID(vfs.InodeTypeFile, uint64(i+1))
-		state, status := addOpenForTest(store,
-			openOwnerKey{clientID: clientID, owner: test.owner},
-			fileID, test.write, nfs4.StateID{})
-		if status != nfs4.NFS4_OK {
-			t.Fatal(nfs4.Nfsstat4Name(status))
-		}
-		states = append(states, state)
-	}
-
-	if _, ok := store.close(states[0].id); !ok {
-		t.Fatal("first owner CLOSE found no state")
-	}
-	if len(store.states) != 1 {
-		t.Fatalf("states after CLOSE = %d, want 1", len(store.states))
-	}
-	if _, status := store.lookup(
-		clientID, states[1].id, 1, states[1].fileID,
-	); status != nfs4.NFS4_OK {
-		t.Fatalf("activity by one owner invalidated another: %s",
-			nfs4.Nfsstat4Name(status))
-	}
-
-	expired := store.expireClient(clientID)
-	if len(expired) != 1 || expired[0].id != states[1].id {
-		t.Fatalf("expired states = %v, want stateid %x",
-			expired, states[1].id)
-	}
-	if len(store.states) != 0 || len(store.byFile) != 0 {
-		t.Fatalf("reboot retained states=%d files=%d",
-			len(store.states), len(store.byFile))
-	}
-	if _, status := store.lookup(
-		clientID, states[1].id, 1, states[1].fileID,
-	); status != nfs4.NFS4ERR_EXPIRED {
-		t.Fatalf("reboot-purged state = %s", nfs4.Nfsstat4Name(status))
-	}
-}
-
-func TestOpenStateStoreBoundsExpiredTombstones(t *testing.T) {
-	store := newOpenStateStore()
-	defer assertOpenStateIndex(t, store)
-	fileID := vfs.MakeInodeID(vfs.InodeTypeFile, 1)
-	var firstStateID nfs4.StateID
-	for i := 0; i <= maxTombstones; i++ {
-		clientID := uint64(i + 1)
-		state, status := addOpenForTest(store,
-			openOwnerKey{clientID: clientID, owner: "owner"},
-			fileID, false, nfs4.StateID{})
-		if status != nfs4.NFS4_OK {
-			t.Fatal(nfs4.Nfsstat4Name(status))
-		}
-		if i == 0 {
-			firstStateID = state.id
-		}
-		store.expireClient(clientID)
-	}
-
-	if len(store.expired) != maxTombstones {
-		t.Fatalf("expired stateids = %d, want %d",
-			len(store.expired), maxTombstones)
-	}
-	if _, found := store.expired[firstStateID]; found {
-		t.Fatal("oldest expired stateid was not evicted")
-	}
-}
-
 type restartedStagedWrite struct {
 	rootDir    string
 	stagingDir string
@@ -8100,7 +8019,7 @@ func TestSetclientidReboot(t *testing.T) {
 		fhID, _ := vfs.FHToInodeID(fh)
 		var localStateID nfs4.StateID
 		copy(localStateID[:], stateid[4:])
-		if _, status := srv.opens.lookup(
+		if _, status := srv.opens.Lookup(
 			incarnation1,
 			localStateID,
 			binary.BigEndian.Uint32(stateid[:4]),
@@ -8235,8 +8154,8 @@ func TestServerLeaseSweepExpiresButDoesNotRevokeConfirmedClient(t *testing.T) {
 		return base.Add(leaseWriteTerm + time.Second)
 	})
 	srv.sweepExpiredClientState()
-	if _, status := srv.opens.lookup(
-		state.owner.clientID, state.id, state.generation, fileID,
+	if _, status := srv.opens.Lookup(
+		state.Owner.ClientID, state.ID, state.Generation, fileID,
 	); status != nfs4.NFS4ERR_EXPIRED {
 		t.Fatalf("swept state = %s, want NFS4ERR_EXPIRED",
 			nfs4.Nfsstat4Name(status))
@@ -8416,12 +8335,12 @@ func TestRunLeaseSweepContinuesAfterPanic(t *testing.T) {
 	srv.startedAt = base
 	srv.stagingStore = nil
 	srv.runLeaseSweep()
-	if _, status := srv.opens.lookup(state.owner.clientID, state.id, 0, state.fileID); status != nfs4.NFS4_OK {
+	if _, status := srv.opens.Lookup(state.Owner.ClientID, state.ID, 0, state.FileID); status != nfs4.NFS4_OK {
 		t.Fatal("panicking sweep unexpectedly reached client expiry")
 	}
 	srv.stagingStore = staging
 	srv.runLeaseSweep()
-	if _, status := srv.opens.lookup(state.owner.clientID, state.id, 0, state.fileID); status != nfs4.NFS4ERR_EXPIRED {
+	if _, status := srv.opens.Lookup(state.Owner.ClientID, state.ID, 0, state.FileID); status != nfs4.NFS4ERR_EXPIRED {
 		t.Fatalf("later sweep did not expire the client: %s", nfs4.Nfsstat4Name(status))
 	}
 }

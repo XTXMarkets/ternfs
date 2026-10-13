@@ -176,7 +176,7 @@ func TestOpenDowngradeRecoveredWriterToRead(t *testing.T) {
 	}
 	var id nfs4.StateID
 	copy(id[:], read[4:])
-	if !restarted.srv.opens.live(id) {
+	if !restarted.srv.opens.Live(id) {
 		t.Fatal("recovered open did not become a live read open")
 	}
 	if data, _ := readFileData(t, conn, &xid, lookupFH(t, conn, &xid, "recovered-downgrade.txt"), 0, 64); string(data) != "staged data" {

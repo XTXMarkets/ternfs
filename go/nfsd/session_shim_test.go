@@ -559,7 +559,7 @@ func (s *Server) waitForOpenFileWaiter(clientID uint64, fh []byte) <-chan struct
 	go func() {
 		defer close(ch)
 		for {
-			waiting := s.opens.fileLocks.Refs(fileID) > 1
+			waiting := s.opens.FileLockRefs(fileID) > 1
 			// CLOSE takes the writer's pathname lock first.
 			if s.mutationLocks.Contended() {
 				waiting = true

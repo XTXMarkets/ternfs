@@ -170,7 +170,7 @@ func (f *claimFHRestart) meta(t *testing.T) sidecar.Meta {
 // the staging as it was.
 func (f *claimFHRestart) assertNothingAdopted(t *testing.T, before sidecar.Meta) {
 	t.Helper()
-	if states := f.srv.opens.clientStates(incarnationForTest(t, f.srv, f.wire)); len(states) != 0 {
+	if states := f.srv.opens.ClientStates(incarnationForTest(t, f.srv, f.wire)); len(states) != 0 {
 		t.Fatalf("refused CLAIM_FH left %d opens", len(states))
 	}
 	if meta, ok := f.staging.GetMeta(f.stagingID); ok &&
@@ -181,7 +181,7 @@ func (f *claimFHRestart) assertNothingAdopted(t *testing.T, before sidecar.Meta)
 
 // oldEpochStateID is a stateid an earlier process could have issued.
 func oldEpochStateID(srv *Server) nfs4.StateID {
-	sid := srv.opens.newStateID()
+	sid := srv.opens.NewStateID()
 	binary.BigEndian.PutUint32(sid[0:4], binary.BigEndian.Uint32(sid[0:4])+1)
 	return sid
 }
@@ -417,7 +417,7 @@ func TestClaimFHRecoveryRevalidation(t *testing.T) {
 				t.Fatal("the change did not run between preselection and the lock")
 			}
 			if c.gone {
-				if states := f.srv.opens.clientStates(incarnationForTest(t, f.srv, f.wire)); len(states) != 0 {
+				if states := f.srv.opens.ClientStates(incarnationForTest(t, f.srv, f.wire)); len(states) != 0 {
 					t.Fatalf("refused CLAIM_FH left %d opens", len(states))
 				}
 				return

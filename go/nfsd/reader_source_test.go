@@ -148,11 +148,11 @@ func (f *readerFixture) dataID(t *testing.T, sid [16]byte) vfs.InodeID {
 	t.Helper()
 	var id nfs4.StateID
 	copy(id[:], sid[4:])
-	state, status := f.srv.opens.lookup(incarnationForTest(t, f.srv, f.clientID), id, 0, f.fileID)
+	state, status := f.srv.opens.Lookup(incarnationForTest(t, f.srv, f.clientID), id, 0, f.fileID)
 	if status != nfs4.NFS4_OK {
 		t.Fatalf("reader state %s", nfs4.Nfsstat4Name(status))
 	}
-	return state.dataID
+	return state.DataID
 }
 
 // Another owner's read OPEN sees the client's writer's staging; a clean

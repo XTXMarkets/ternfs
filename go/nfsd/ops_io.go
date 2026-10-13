@@ -9,6 +9,7 @@ import (
 	"errors"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/openstate"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -26,7 +27,7 @@ func (s *Server) opCommit(st *compoundState, w *nfs4.COMPOUND4resWriter) uint32 
 	// COMMIT carries no stateid. Sync every writer this client has open
 	// through the handle, and the handle's own staging after a restart.
 	writers := append([]vfs.InodeID{st.currentID},
-		s.views.writersOf(viewKey{st.clientID, st.currentID})...)
+		s.views.WritersOf(openstate.ViewKey{ClientID: st.clientID, FileID: st.currentID})...)
 	failed := func() bool {
 		for _, id := range writers {
 			if s.stagingStore.Failed(id) {
@@ -94,7 +95,7 @@ func (s *Server) opRead(args nfs4.READ4args, st *compoundState, w *nfs4.COMPOUND
 			ew := w.AppendResarray_Read()
 			return finishDefaultResponse(w, ew.Finish(), status)
 		}
-		dataID = state.dataID
+		dataID = state.DataID
 	}
 	sf := s.stagingStore.Get(dataID)
 	if s.stagingStore.Failed(dataID) {
@@ -398,12 +399,12 @@ func (s *Server) opWrite(args nfs4.WRITE4args, st *compoundState, w *nfs4.COMPOU
 			ew := w.AppendResarray_Write()
 			return finishDefaultResponse(w, ew.Finish(), status)
 		}
-		if !state.writes() {
+		if !state.Writes() {
 			ew := w.AppendResarray_Write()
 			return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_OPENMODE)
 		}
-		sf = s.stagingOwnedBy(state.dataID, state)
-		dataID = state.dataID
+		sf = s.stagingOwnedBy(state.DataID, state)
+		dataID = state.DataID
 	} else {
 		dataID = s.clientWriter(st.clientID, st.currentID)
 		sf = s.directStaging(dataID)

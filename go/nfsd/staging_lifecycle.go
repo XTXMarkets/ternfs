@@ -10,6 +10,7 @@ import (
 	"slices"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/openstate"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sidecar"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
@@ -17,11 +18,11 @@ import (
 
 func (s *Server) stagingOwnedBy(
 	fileID vfs.InodeID,
-	state openState,
+	state openstate.State,
 ) staging.File {
 	meta, ok := s.stagingStore.GetMeta(fileID)
-	if !ok || meta.ClientID != state.owner.clientID ||
-		meta.NFSStateID != state.id && state.dataID != fileID {
+	if !ok || meta.ClientID != state.Owner.ClientID ||
+		meta.NFSStateID != state.ID && state.DataID != fileID {
 		return nil
 	}
 	return s.stagingStore.Get(fileID)
@@ -228,7 +229,7 @@ func (s *Server) recoveredStagingTarget(
 			continue
 		}
 		if meta.ClientID == clientID {
-			if !s.opens.canRecover(meta.NFSStateID) {
+			if !s.opens.CanRecover(meta.NFSStateID) {
 				continue
 			}
 		} else {
@@ -296,7 +297,7 @@ func (s *Server) claimFHRecoveryCandidate(
 		}
 		crossIncarnation := meta.ClientID != clientID
 		if !crossIncarnation {
-			if !s.opens.canRecover(meta.NFSStateID) {
+			if !s.opens.CanRecover(meta.NFSStateID) {
 				continue
 			}
 		} else {
@@ -381,15 +382,15 @@ func (s *Server) exclusiveStagingTarget(
 	dirID vfs.InodeID,
 	name string,
 	publishedID vfs.InodeID,
-	owner openOwnerKey,
+	owner openstate.OwnerKey,
 	verifier [8]byte,
 ) (vfs.InodeID, sidecar.Meta, bool) {
 	for id, meta := range s.stagingStore.FindTargets(dirID, name) {
 		// Another publication at this name invalidates the old create verifier.
 		if meta.BaseID == publishedID &&
 			meta.Exclusive && meta.Verifier == verifier &&
-			meta.ClientID == owner.clientID &&
-			meta.OwnerKnown && meta.OpenOwner == owner.owner {
+			meta.ClientID == owner.ClientID &&
+			meta.OwnerKnown && meta.OpenOwner == owner.Owner {
 			return id, meta, true
 		}
 	}

@@ -117,7 +117,7 @@ func TestForeignStateidsAreBadStateid(t *testing.T) {
 	expSid, expFH := openCreateFile(t, connA, &xidA, wireA, "a-expired")
 	var expID nfs4.StateID
 	copy(expID[:], expSid[4:])
-	srv.opens.expire(expID)
+	srv.opens.Expire(expID)
 
 	// A write open from an earlier process, recovered through its staging.
 	root := srv.fs.RootID()
@@ -126,7 +126,7 @@ func TestForeignStateidsAreBadStateid(t *testing.T) {
 		t.Fatal(err)
 	}
 	recID := nfs4.StateID{1, 2, 3, 4, 0, 0, 0, 0, 0, 0, 0, 9}
-	if binary.BigEndian.Uint32(recID[:4]) == srv.opens.epoch {
+	if binary.BigEndian.Uint32(recID[:4]) == srv.opens.Epoch {
 		recID[0]++
 	}
 	if _, err := srv.stagingStore.Create(recStaging, sidecar.Meta{DirID: root, FileName: "a-recovered",
@@ -164,11 +164,11 @@ func TestForeignStateidsAreBadStateid(t *testing.T) {
 	var liveID nfs4.StateID
 	copy(liveID[:], liveSid[4:])
 	liveFile, _ := vfs.FHToInodeID(liveFH)
-	state, status := srv.opens.lookup(incA, liveID, 0, liveFile)
+	state, status := srv.opens.Lookup(incA, liveID, 0, liveFile)
 	if status != nfs4.NFS4_OK {
 		t.Fatalf("A's live open %s", nfs4.Nfsstat4Name(status))
 	}
-	for _, id := range []vfs.InodeID{state.dataID, recStaging} {
+	for _, id := range []vfs.InodeID{state.DataID, recStaging} {
 		if m, ok := srv.stagingStore.GetMeta(id); !ok || m.Retired {
 			t.Fatalf("A's staging %d retired", id)
 		}

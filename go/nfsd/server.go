@@ -22,6 +22,7 @@ import (
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/keyedlock"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/openstate"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sidecar"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
@@ -47,12 +48,12 @@ func peekCompoundHeader(body []byte) (tag []byte, minor uint32, ok bool) {
 type Server struct {
 	fs                 vfs.TernVFS
 	clients            *ClientStore
-	opens              *openStateStore
+	opens              *openstate.Store
 	sessions           *sessionStore
 	backchannel        backchannelStats
 	cbXIDs             atomic.Uint32
 	allowMinorVersion2 bool
-	views              viewStore
+	views              openstate.ViewStore
 	names              nameCache
 	stagingStore       staging.Store
 	writeVerifier      [8]byte       // random per server instance, changes on restart
@@ -136,7 +137,7 @@ func NewServer(fs vfs.TernVFS, stagingStore staging.Store, logger *slog.Logger) 
 	s := &Server{
 		fs:                 fs,
 		clients:            clients,
-		opens:              newOpenStateStore(),
+		opens:              openstate.NewStore(),
 		stagingStore:       stagingStore,
 		writeVerifier:      verf,
 		idleTimeout:        5 * time.Minute,
@@ -156,13 +157,13 @@ func NewServer(fs vfs.TernVFS, stagingStore staging.Store, logger *slog.Logger) 
 		purgeLimit:         maxSessionRecords,
 	}
 	s.destroyEnded = sync.NewCond(&s.confirmMu)
-	s.opens.now = func() time.Time { return s.clients.now() }
+	s.opens.Now = func() time.Time { return s.clients.now() }
 	// The client store's expired marker, its client GC and a resumed
 	// replacement purge hold destruction holds for their whole action.
 	clients.beginMarker = func(id vfs.InodeID) (func(), bool) { return s.beginDestroy(uint64(id)) }
 	clients.beginCollect = s.beginDestroyIdentity
 	clients.beginPurge = s.beginPurge
-	s.sessions = newSessionStore(s.opens.epoch)
+	s.sessions = newSessionStore(s.opens.Epoch)
 	s.sessions.now = func() time.Time { return s.clients.now() }
 	// The durable lease refresher reads the logical lease's need, and
 	// retires an incarnation whose record turns stale or fleet-expired.
@@ -175,7 +176,7 @@ func NewServer(fs vfs.TernVFS, stagingStore staging.Store, logger *slog.Logger) 
 	// stateids to an nfsd instance.
 	logger.Info("nfsd instance",
 		"nfsd_id", clients.nfsdID,
-		"stateid_epoch", fmt.Sprintf("%08x", s.opens.epoch))
+		"stateid_epoch", fmt.Sprintf("%08x", s.opens.Epoch))
 	return s, nil
 }
 
@@ -304,7 +305,7 @@ func (s *Server) removeClientExpiredStaging(clientID uint64, fileIDs map[vfs.Ino
 
 func (s *Server) sweepExpiredClientState() {
 	clients := make(map[uint64]struct{})
-	for _, clientID := range s.opens.activeClientIDs() {
+	for _, clientID := range s.opens.ActiveClientIDs() {
 		clients[clientID] = struct{}{}
 	}
 	for _, clientID := range s.clients.cachedClientIDs() {

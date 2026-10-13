@@ -1197,7 +1197,7 @@ func (s *Server) opDestroyClientID(args nfs4.DESTROYCLIENTID4args, st *compoundS
 	busy := c.csBusy || g != nil && g.members > 0
 	s.sessions.mu.Unlock()
 	// Opens still make the client busy after its last session is destroyed.
-	busy = busy || len(s.opens.clientStates(incarnation)) != 0
+	busy = busy || len(s.opens.ClientStates(incarnation)) != 0
 	if busy {
 		r.SetDcrStatus(nfs4.NFS4ERR_CLIENTID_BUSY)
 		return nfs4.NFS4ERR_CLIENTID_BUSY
@@ -1373,11 +1373,11 @@ func (s *Server) opReclaimComplete(args nfs4.RECLAIMCOMPLETE4args, st *compoundS
 // stateid, live, recovered or expired, is BAD_STATEID (canonical r3 §10).
 func (s *Server) stateIDStatus(clientID uint64, stateid nfs4.Stateid4) uint32 {
 	id := extractStateID(stateid)
-	if status := s.opens.status(clientID, id, stateid.Seqid()); status != nfs4.NFS4ERR_BAD_STATEID {
+	if status := s.opens.Status(clientID, id, stateid.Seqid()); status != nfs4.NFS4ERR_BAD_STATEID {
 		return status
 	}
 	// A write open from before a restart remains usable through its staging.
-	if s.opens.canRecover(id) {
+	if s.opens.CanRecover(id) {
 		for _, meta := range s.stagingStore.Entries() {
 			if meta.NFSStateID == id && meta.ClientID == clientID {
 				return nfs4.NFS4_OK
@@ -1413,7 +1413,7 @@ func (s *Server) opFreeStateID(args nfs4.FREESTATEID4args, st *compoundState, w 
 		status = nfs4.NFS4ERR_LOCKS_HELD
 	case nfs4.NFS4ERR_EXPIRED:
 		status = nfs4.NFS4_OK
-		if !s.opens.forget(st.clientID, extractStateID(stateid)) {
+		if !s.opens.Forget(st.clientID, extractStateID(stateid)) {
 			status = nfs4.NFS4ERR_BAD_STATEID
 		}
 	case nfs4.NFS4ERR_OLD_STATEID:

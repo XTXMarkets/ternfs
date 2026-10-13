@@ -549,7 +549,8 @@ OPEN, CLOSE and OPEN_DOWNGRADE of one file are serialized across all clients
 on one nfsd. An OPEN after a publishing CLOSE therefore sees what it
 published. Opens of different files run in parallel.
 
-The implementation is in [`open_state.go`](open_state.go) and
+The implementation is in
+[`internal/openstate`](internal/openstate/open_state.go) and
 [`view.go`](view.go).
 
 ## Client identities and incarnations

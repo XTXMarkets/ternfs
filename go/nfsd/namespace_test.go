@@ -534,7 +534,7 @@ func TestRetiredSourceDoesNotBlockRename(t *testing.T) {
 				if destination == "active" {
 					clientID = incarnationForTest(t, f.server, setupClient(t, f.conn, &f.xid))
 				}
-				stateID := f.server.opens.newStateID()
+				stateID := f.server.opens.NewStateID()
 				sf, err := f.store.Create(destinationID, sidecar.Meta{
 					DirID: dir, FileName: "moved", BaseID: base, BaseSize: 9,
 					ClientID: clientID, NFSStateID: stateID, TernCookie: cookie,
