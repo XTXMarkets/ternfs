@@ -127,13 +127,16 @@ func (os *Store) ExistingOpen(owner OwnerKey, fileID vfs.InodeID) (State, bool) 
 // same file returns the existing stateid with an incremented generation
 // (RFC 8881 section 8.2.2), its access ORed in and its share values
 // recorded. An OPEN for write of an owner's read open upgrades it to
-// dataID, the new writer's staging. The caller holds LockFile for the file.
+// dataID, the new writer's staging. marked records that the open has a
+// durable marker; an open once marked stays marked. The caller holds
+// LockFile for the file.
 func (os *Store) Open(
 	owner OwnerKey,
 	fileID vfs.InodeID,
 	dataID vfs.InodeID,
 	g Grant,
 	id nfs4.StateID,
+	marked bool,
 ) (State, error) {
 	os.mu.Lock()
 	defer os.mu.Unlock()
@@ -143,6 +146,7 @@ func (os *Store) Open(
 		if g.Access&nfs4.OPEN4_SHARE_ACCESS_WRITE != 0 && !state.Writes() {
 			state.DataID = dataID
 		}
+		state.Marked = state.Marked || marked
 		state.Access |= g.Access
 		state.modes |= 1 << g.Access
 		state.denyModes |= 1 << g.Deny
@@ -165,6 +169,7 @@ func (os *Store) Open(
 		modes:      1 << g.Access,
 		denyModes:  1 << g.Deny,
 		Generation: 1,
+		Marked:     marked,
 		seq:        os.nextSeq,
 	}
 	os.states[id] = state
@@ -192,7 +197,8 @@ func (os *Store) Adoptable(owner OwnerKey, fileID vfs.InodeID, id nfs4.StateID) 
 }
 
 // Adopt installs a recovered open as a live one under its stateid, at
-// generation, after OPEN_DOWNGRADE published its writer. The caller holds
+// generation, after OPEN_DOWNGRADE published its writer. A recovered open
+// was a writer, so it has a marker. The caller holds
 // LockFile for the file.
 func (os *Store) Adopt(owner OwnerKey, fileID, dataID vfs.InodeID, g Grant, id nfs4.StateID, generation uint32) (State, bool) {
 	os.mu.Lock()
@@ -205,7 +211,7 @@ func (os *Store) Adopt(owner OwnerKey, fileID, dataID vfs.InodeID, g Grant, id n
 	state := &State{
 		ID: id, FileID: fileID, DataID: dataID, Owner: owner,
 		Access: g.Access, modes: 1 << g.Access, denyModes: 1 << g.Deny,
-		Generation: generation, seq: os.nextSeq,
+		Generation: generation, Marked: true, seq: os.nextSeq,
 	}
 	os.states[id] = state
 	os.byFile[key] = state

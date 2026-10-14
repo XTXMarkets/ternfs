@@ -698,3 +698,114 @@ func TestRecoveredRetiredCreateAppliesSize(t *testing.T) {
 		t.Fatalf("recovered CREATE size was not applied: %q", got)
 	}
 }
+
+// markerVFS counts the client store's open-marker mutations.
+type markerVFS struct {
+	*vfs.LocalTernVFS
+	creates, removes atomic.Int64
+}
+
+func (v *markerVFS) CreateFile(dirID vfs.InodeID, name string, data io.Reader) (vfs.InodeID, error) {
+	if clientstore.IsActiveOpenName(name) {
+		v.creates.Add(1)
+	}
+	return v.LocalTernVFS.CreateFile(dirID, name, data)
+}
+
+func (v *markerVFS) Remove(dirID vfs.InodeID, name string) error {
+	if clientstore.IsActiveOpenName(name) {
+		v.removes.Add(1)
+	}
+	return v.LocalTernVFS.Remove(dirID, name)
+}
+
+func (v *markerVFS) RemoveEdge(dirID vfs.InodeID, name string, edge vfs.Edge) error {
+	if clientstore.IsActiveOpenName(name) {
+		v.removes.Add(1)
+	}
+	return v.LocalTernVFS.RemoveEdge(dirID, name, edge)
+}
+
+// A read-only open is process-local: its OPEN and CLOSE write nothing to
+// the client store, which on TernFS saves three shard mutations per open.
+// A write open is marked, and an owner's read open gets its marker when
+// an OPEN for write upgrades it.
+func TestReadOpenHasNoDurableMarker(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "file.txt"), []byte("data"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	fs := &markerVFS{LocalTernVFS: vfs.NewLocalTernVFS(dir)}
+	ss, err := staging.NewLocalStore(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewServer(fs, ss, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr, cleanup := serveTestServer(t, srv)
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+	xid := uint32(1)
+	clientID := setupClient(t, conn, &xid)
+	markers := func(wantCreates, wantRemoves int64, wantLive int, step string) {
+		t.Helper()
+		if c, r := fs.creates.Load(), fs.removes.Load(); c != wantCreates || r != wantRemoves {
+			t.Fatalf("%s: marker creates/removes = %d/%d, want %d/%d", step, c, r, wantCreates, wantRemoves)
+		}
+		if got := activeOpenMarkerCount(t, srv, clientID); got != wantLive {
+			t.Fatalf("%s: live markers = %d, want %d", step, got, wantLive)
+		}
+	}
+
+	status, reader, fh, _ := openFileForOwner(
+		t, conn, &xid, clientID, "reader", "file.txt",
+		nfs4.OPEN4_SHARE_ACCESS_READ, false, false,
+	)
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("read OPEN %s", nfs4.Nfsstat4Name(status))
+	}
+	if data, eof := readFileData(t, conn, &xid, fh, 0, 16); string(data) != "data" || !eof {
+		t.Fatalf("READ through the unmarked open = %q, %t", data, eof)
+	}
+	markers(0, 0, 0, "read open")
+	closeFile(t, conn, &xid, fh, reader)
+	markers(0, 0, 0, "read close")
+
+	status, writer, fh, _ := openFileForOwner(
+		t, conn, &xid, clientID, "writer", "file.txt",
+		nfs4.OPEN4_SHARE_ACCESS_BOTH, false, false,
+	)
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("write OPEN %s", nfs4.Nfsstat4Name(status))
+	}
+	markers(1, 0, 1, "write open")
+	writeFileAt(t, conn, &xid, fh, writer, 0, []byte("DATA"))
+	closeFile(t, conn, &xid, fh, writer)
+	markers(1, 1, 0, "write close")
+
+	status, first, fh, _ := openFileForOwner(
+		t, conn, &xid, clientID, "upgrader", "file.txt",
+		nfs4.OPEN4_SHARE_ACCESS_READ, false, false,
+	)
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("read OPEN before upgrade %s", nfs4.Nfsstat4Name(status))
+	}
+	markers(1, 1, 0, "read open before upgrade")
+	status, upgraded, upgradedFH, _ := openFileForOwner(
+		t, conn, &xid, clientID, "upgrader", "file.txt",
+		nfs4.OPEN4_SHARE_ACCESS_BOTH, false, false,
+	)
+	if status != nfs4.NFS4_OK || !bytes.Equal(first[4:], upgraded[4:]) || !bytes.Equal(fh, upgradedFH) {
+		t.Fatalf("upgrade OPEN %s, stateid %x -> %x", nfs4.Nfsstat4Name(status), first[4:], upgraded[4:])
+	}
+	markers(2, 1, 1, "upgrade to write")
+	writeFileAt(t, conn, &xid, fh, upgraded, 0, []byte("DATA2"))
+	closeFile(t, conn, &xid, fh, upgraded)
+	markers(2, 2, 0, "close of the upgraded open")
+	if data, err := readPublished(fs, "file.txt"); err != nil || string(data) != "DATA2" {
+		t.Fatalf("published %q %v", data, err)
+	}
+}

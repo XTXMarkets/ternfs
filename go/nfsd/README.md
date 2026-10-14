@@ -683,8 +683,11 @@ yet been confirmed.
 its leases and open markers.
 
 `o.<state ID>` is an empty marker whose name identifies an open owned by the
-incarnation. The rest of the stateid and open-owner state remains local to the
-nfsd process.
+incarnation. Only opens with a writer get one: a write open, a create, or a
+recovered staged writer. A read-only open is recorded in the nfsd process
+alone, since it has no staging to recover and nothing another process needs
+to see; it costs no shard mutation. The rest of the stateid and open-owner
+state remains local to the nfsd process.
 
 `lease.<nfsd ID>` contains the lease expiry written by one nfsd instance.
 
@@ -775,8 +778,10 @@ without moving any deadline; a record still referenced, needed or holding
 an obligation is left as it is.
 
 OPEN requires a published lease that has not expired, and otherwise returns
-`NFS4ERR_DELAY` while the worker reads it. It then creates an open marker;
-CLOSE removes it.
+`NFS4ERR_DELAY` while the worker reads it. A write open then creates an
+open marker and CLOSE removes it; a read open is registered locally. An
+OPEN for write by an owner holding an unmarked read open creates the marker
+then, and the open stays marked after OPEN_DOWNGRADE.
 
 The worker's passes are scheduled, not driven by requests: a request only
 notes that the lease is needed. Maintenance (settling temps, refresh,
@@ -798,8 +803,9 @@ the process restarts. The store's own `Renew`, used without a server, runs
 the worker's pass inline; with a server it only reads the worker's record.
 
 An operation whose open turns out inactive gets `NFS4ERR_EXPIRED`, and only
-an open whose own marker is gone loses its entry; local expiry of the client
-is the lease gate's decision. When the gate expires a client, it retires
+an open whose own marker is gone loses its entry; an unmarked read open is
+active while its client is confirmed with a live lease. Local expiry of the
+client is the lease gate's decision. When the gate expires a client, it retires
 the client's sessions, cancelling their callbacks and returning their
 credits, whether or not the expired marker could be written. A
 CREATE_SESSION for an incarnation this process has expired gets
@@ -832,9 +838,9 @@ OPENs reuse the cached identity and confirmed-pointer location.
 These updates leave garbage behind in TernFS. A same-directory rename
 soft-unlinks the temporary edge and turns the replaced edge into a snapshot
 edge, so each lease renewal leaves two snapshot edges and one dead file inode.
-Each OPEN and CLOSE marker pair leaves one snapshot edge and one dead inode.
-Renewals are bounded to about one per 22.5 seconds for each nfsd and active
-client, but markers scale with open activity. The shard garbage collector removes this
+Each write OPEN and CLOSE marker pair leaves one snapshot edge and one dead
+inode. Renewals are bounded to about one per 22.5 seconds for each nfsd and
+active client, but markers scale with write-open activity. The shard garbage collector removes this
 under the snapshot policy in effect for `/.nfs`, so that tree should not keep
 the retention used for user data. A policy which deletes snapshots immediately
 is appropriate, for example:
@@ -864,6 +870,10 @@ create new open state even after all of its process slots have been removed.
 
 OPEN markers are create-if-absent records. A repeated OPEN whose stateid
 already owns a marker reuses the existing TernFS inode.
+
+`NFS4ERR_CLID_INUSE` and the inspector see only marked opens. A client whose
+opens are all read-only therefore counts as holding no open state in the
+store, and can be replaced by a different principal.
 
 A client whose last request was at time t is therefore expired here by about
 t + 3 × lease on a healthy backend (the quiet period, the durable lease
@@ -1125,8 +1135,9 @@ collection. The report removes nothing and creates nothing; it is a read-only
 view of the store at that instant.
 
 Open markers do not say which file they belong to. That association lives in
-the process-local open state and, for write opens, in the staging sidecars on
-the nfsd host. `staging=1` reads the server's own staging directory and joins
+the process-local open state and in the staging sidecars on the nfsd host.
+Read-only opens have no marker and appear only in `/v1/opens`, not in the
+durable store report. `staging=1` reads the server's own staging directory and joins
 the sidecars to open markers by stateid, adding the target directory, file
 name, staged size, sidecar version, owning client and open owner, access mode,
 base inode and size, checkpointed size and dirty ranges, writer attributes,

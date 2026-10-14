@@ -6512,8 +6512,9 @@ func TestReopenReusesState(t *testing.T) {
 	if !bytes.Equal(upgradedFH, fh) {
 		t.Fatal("second OPEN returned a different filehandle")
 	}
-	if got := activeOpenMarkerCount(t, srv, clientID); got != 1 {
-		t.Fatalf("active-open markers after reopen = %d, want 1", got)
+	// Read opens are process-local: no marker, however often reopened.
+	if got := activeOpenMarkerCount(t, srv, clientID); got != 0 {
+		t.Fatalf("active-open markers after read reopen = %d, want 0", got)
 	}
 	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pw := w.AppendArgarray_Putfh()

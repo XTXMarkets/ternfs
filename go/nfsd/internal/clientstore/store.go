@@ -1007,7 +1007,23 @@ func (cs *Store) Renew(clientID uint64) error {
 	return nil
 }
 
+// MarkOpen records an open with a durable marker in the incarnation
+// directory, so that other nfsd processes, and this one after a restart,
+// can see that the open is active. Opens that write or hold staging are
+// marked.
 func (cs *Store) MarkOpen(clientID uint64, stateID nfs4.StateID) error {
+	return cs.registerOpen(clientID, stateID, true)
+}
+
+// NoteOpen records an open in this process only. A read-only open has no
+// staging to recover and nothing another process needs to see, so it skips
+// the marker's shard mutations. It is otherwise admitted exactly like a
+// marked open: the client must be confirmed with a live lease.
+func (cs *Store) NoteOpen(clientID uint64, stateID nfs4.StateID) error {
+	return cs.registerOpen(clientID, stateID, false)
+}
+
+func (cs *Store) registerOpen(clientID uint64, stateID nfs4.StateID, durable bool) error {
 	incarnationID := vfs.InodeID(clientID)
 	identityID, valid, err := cs.identityForIncarnation(incarnationID)
 	if err != nil {
@@ -1034,8 +1050,10 @@ func (cs *Store) MarkOpen(clientID uint64, stateID nfs4.StateID) error {
 	}
 	// Independent markers share identity ownership, but neither the lease
 	// lock nor the cache map lock is held across marker I/O.
-	if err := cs.EnsureMarker(incarnationID, ActiveOpenName(stateID)); err != nil {
-		return err
+	if durable {
+		if err := cs.EnsureMarker(incarnationID, ActiveOpenName(stateID)); err != nil {
+			return err
+		}
 	}
 	state.mu.Lock()
 	state.opens[stateID] = struct{}{}
@@ -1043,13 +1061,14 @@ func (cs *Store) MarkOpen(clientID uint64, stateID nfs4.StateID) error {
 	return nil
 }
 
-// renewLease checks a confirmed client's lease for MarkOpen and HasOpen. It
-// writes nothing: every lease write belongs to the refresher (canonical r3
-// §9.1). MarkOpen (requireLiveLease false) needs a live record whose proven
-// lease is in the future, else DELAY while a verify runs. HasOpen with
-// requireLiveLease reads the durable lease, which after a restart may be
-// another process's, and gets EXPIRED when it is dead. The caller holds
-// shared identity ownership.
+// renewLease checks a confirmed client's lease for registerOpen and
+// hasOpen, for marked and unmarked opens alike. It writes nothing: every
+// lease write belongs to the refresher (canonical r3 §9.1). registerOpen
+// (requireLiveLease false) needs a live record whose proven lease is in the
+// future, else DELAY while a verify runs. hasOpen with requireLiveLease
+// reads the durable lease, which after a restart may be another process's,
+// and gets EXPIRED when it is dead. The caller holds shared identity
+// ownership.
 func (cs *Store) renewLease(
 	incarnationID vfs.InodeID, location confirmedClientLocation,
 	requireLiveLease bool,
@@ -1119,7 +1138,17 @@ func (cs *Store) MarkerGone(clientID uint64, stateID nfs4.StateID) bool {
 	return errors.Is(err, os.ErrNotExist)
 }
 
+// RemoveOpen removes a marked open's durable marker and its local entry.
 func (cs *Store) RemoveOpen(clientID uint64, stateID nfs4.StateID) error {
+	return cs.unregisterOpen(clientID, stateID, true)
+}
+
+// ForgetOpen removes the local entry of an open recorded with NoteOpen.
+func (cs *Store) ForgetOpen(clientID uint64, stateID nfs4.StateID) error {
+	return cs.unregisterOpen(clientID, stateID, false)
+}
+
+func (cs *Store) unregisterOpen(clientID uint64, stateID nfs4.StateID, durable bool) error {
 	incarnationID := vfs.InodeID(clientID)
 	identityID, valid, lockErr := cs.identityForIncarnation(incarnationID)
 	if lockErr != nil {
@@ -1132,7 +1161,10 @@ func (cs *Store) RemoveOpen(clientID uint64, stateID nfs4.StateID) error {
 	defer unlock()
 	unlockMarker := cs.markerLocks.Lock(clientOpenMarker{clientID, stateID})
 	defer unlockMarker()
-	err := cs.removeIfExists(incarnationID, ActiveOpenName(stateID))
+	var err error
+	if durable {
+		err = cs.removeIfExists(incarnationID, ActiveOpenName(stateID))
+	}
 	if value, ok := cs.LocalClients.Load(incarnationID); ok {
 		state := value.(*localClientState)
 
@@ -1153,7 +1185,21 @@ func (cs *Store) CachedClientIDs() []uint64 {
 	return result
 }
 
+// HasOpen reports that a marked open is active: its client is confirmed
+// with a live lease and its marker exists.
 func (cs *Store) HasOpen(clientID uint64, stateID nfs4.StateID) (bool, error) {
+	return cs.hasOpen(clientID, stateID, true)
+}
+
+// HasLocalOpen reports that an open recorded with NoteOpen is active. It
+// has no marker, so only the client's confirmation and lease decide; the
+// local entry is recreated when the client's local state was dropped
+// while the open stayed live.
+func (cs *Store) HasLocalOpen(clientID uint64, stateID nfs4.StateID) (bool, error) {
+	return cs.hasOpen(clientID, stateID, false)
+}
+
+func (cs *Store) hasOpen(clientID uint64, stateID nfs4.StateID, marked bool) (bool, error) {
 	incarnationID := vfs.InodeID(clientID)
 	if value, ok := cs.LocalClients.Load(incarnationID); ok {
 		state := value.(*localClientState)
@@ -1222,11 +1268,13 @@ func (cs *Store) HasOpen(clientID uint64, stateID nfs4.StateID) (bool, error) {
 	if err != nil || !confirmed {
 		return false, err
 	}
-	name := ActiveOpenName(stateID)
-	if _, err := cs.fs.Lookup(incarnationID, name); errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	} else if err != nil {
-		return false, err
+	if marked {
+		name := ActiveOpenName(stateID)
+		if _, err := cs.fs.Lookup(incarnationID, name); errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		} else if err != nil {
+			return false, err
+		}
 	}
 	state, err := cs.renewLease(incarnationID, location, true)
 	if nfs4.ErrorCode(err) == nfs4.NFS4ERR_EXPIRED {

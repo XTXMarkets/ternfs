@@ -32,6 +32,11 @@ type State struct {
 	modes      uint8
 	denyModes  uint8
 	Generation uint32
+	// Marked reports that the open has a durable marker in the client
+	// store. An open is marked once it is granted write access, creates
+	// its file or recovers a writer's staging, and stays marked; other read
+	// opens are recorded in this process only.
+	Marked bool
 	// seq orders opens of one file for choosing the most recent.
 	seq uint64
 }

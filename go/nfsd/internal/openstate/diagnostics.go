@@ -35,6 +35,7 @@ func (st *State) snapshot() inspect.Open {
 		Generation:  st.Generation,
 		Seq:         st.seq,
 		Writer:      st.Writes(),
+		Marked:      st.Marked,
 	}
 	if st.Access&nfs4.OPEN4_SHARE_ACCESS_READ != 0 {
 		out.Access = append(out.Access, "read")
