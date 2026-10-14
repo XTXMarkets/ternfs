@@ -9,14 +9,18 @@ package harness
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -154,11 +158,13 @@ type Server struct {
 	Dir     string
 	Staging string
 	Addr    string
-	Name    string
-	Process *Process
-	store   *store
-	epoch   int
-	closed  bool
+	// StatusAddr serves the diagnostics API; see Diagnostics.
+	StatusAddr string
+	Name       string
+	Process    *Process
+	store      *store
+	epoch      int
+	closed     bool
 }
 
 func (s *Suite) Server(ctx context.Context) (*Server, error) {
@@ -174,6 +180,12 @@ func (s *Suite) Server(ctx context.Context) (*Server, error) {
 		return nil, err
 	}
 	server.Addr = listener.Addr().String()
+	listener.Close()
+	listener, err = net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		return nil, err
+	}
+	server.StatusAddr = listener.Addr().String()
 	listener.Close()
 	server.store, err = newStore(s.Registry, filepath.Join(dir, "backend-client.log"))
 	if err != nil {
@@ -194,6 +206,9 @@ func (s *Server) Start(ctx context.Context) error {
 	// ask for 4.1 explicitly, so accepting 4.2 does not change what they use.
 	args := []string{"-addr", s.Addr, "-staging", s.Staging, "-registry", s.Suite.Registry,
 		"-allow-minor-version-2", "-v"}
+	if s.StatusAddr != "" {
+		args = append(args, "-status-addr", s.StatusAddr)
+	}
 	var err error
 	s.Process, err = StartProcess(exec.Command(s.Suite.Binary, args...),
 		filepath.Join(s.Dir, fmt.Sprintf("nfsd-%d.log", s.epoch)))
@@ -209,8 +224,78 @@ func (s *Server) Start(ctx context.Context) error {
 			return false, nil
 		}
 		conn.Close()
-		return true, nil
+		if s.StatusAddr == "" {
+			return true, nil
+		}
+		var status struct {
+			Mode string `json:"mode"`
+		}
+		if err := s.Diagnostics(ctx, "/v1/status", &status); err != nil {
+			return false, nil
+		}
+		return status.Mode == "serving", nil
 	})
+}
+
+// Diagnostics fetches one resource of the server's diagnostics API into
+// out, which is decoded from JSON. A non-200 reply is an error carrying the
+// body, which is the API's own error object.
+func (s *Server) Diagnostics(ctx context.Context, path string, out any) error {
+	if s.StatusAddr == "" {
+		return fmt.Errorf("diagnostics: server %s has no status address", s.Name)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+s.StatusAddr+path, nil)
+	if err != nil {
+		return err
+	}
+	client := http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("diagnostics %s: %s: %s", path, resp.Status, strings.TrimSpace(string(body)))
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+// diagnosticsDump is what a failed run keeps of the server's in-memory
+// state, fetched before the process is stopped.
+var diagnosticsDump = []string{
+	"/", "/v1/status", "/v1/clients", "/v1/incarnations", "/v1/sessions",
+	"/v1/connections", "/v1/opens", "/v1/staging", "/v1/confirmations",
+}
+
+// DumpDiagnostics writes each resource of the running server's diagnostics
+// API into the server directory, under diagnostics/, so a failed run's
+// artifacts include what the process knew. Fetch errors are written in
+// place of the resource; the dump never fails the run.
+func (s *Server) DumpDiagnostics(ctx context.Context) {
+	if s.StatusAddr == "" || s.Process == nil || s.Process.Check() != nil {
+		return
+	}
+	dir := filepath.Join(s.Dir, "diagnostics")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		fmt.Printf("diagnostics dump: %v\n", err)
+		return
+	}
+	for _, path := range diagnosticsDump {
+		name := strings.Trim(strings.ReplaceAll(path, "/", "-"), "-")
+		if name == "" {
+			name = "index"
+		}
+		var raw json.RawMessage
+		err := s.Diagnostics(ctx, path, &raw)
+		if err != nil {
+			raw = json.RawMessage(fmt.Sprintf("%q", err.Error()))
+		}
+		if err := os.WriteFile(filepath.Join(dir, name+".json"), raw, 0644); err != nil {
+			fmt.Printf("diagnostics dump %s: %v\n", path, err)
+		}
+	}
+	fmt.Printf("diagnostics of %s written to %s\n", s.Name, dir)
 }
 
 func (s *Server) Close(success bool) error {
@@ -219,6 +304,11 @@ func (s *Server) Close(success bool) error {
 	}
 	s.closed = true
 	var err error
+	if !success {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		s.DumpDiagnostics(ctx)
+		cancel()
+	}
 	if s.Process != nil {
 		err = s.Process.Stop(syscall.SIGTERM)
 	}

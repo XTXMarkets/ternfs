@@ -94,6 +94,12 @@ var errInjectedConfirm = errors.New("injected confirmation failure")
 // No fault is ever set for it.
 const writeLeaseTemp WriteID = 99
 
+// LockForTest holds the attempt's lock, as a settle does.
+func (a *ConfirmAttempt) LockForTest() { a.mu.Lock() }
+
+// UnlockForTest releases LockForTest.
+func (a *ConfirmAttempt) UnlockForTest() { a.mu.Unlock() }
+
 // refresherWorkerForTest is RefresherForTest with server hooks, so the
 // record has a worker that wakes are delivered to.
 func RefresherWorkerForTest(t testingT, fs *PassCountVFS) (*Store, uint64, *LeaseRefresher) {

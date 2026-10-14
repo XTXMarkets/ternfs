@@ -92,6 +92,13 @@ func (cr *creation) finish() {
 	if cr.created != nil {
 		created := cr.created
 		cr.created = nil
+		// The only place the three identities a capture can show are logged
+		// together: the wire clientid EXCHANGE_ID returned, the durable
+		// incarnation it is bound to, and the session.
+		s.log.Info("session created",
+			"wire_clientid", wireText(cr.c.clientID),
+			"incarnation", incarnationText(created.clientID),
+			"session", sessionText(created.id))
 		// The first durable publication: until it, SEQUENCE gets DELAY
 		// (canonical r3 §9.1). The worker writes it; the reply waits a
 		// bounded time for it, so a client's first SEQUENCE normally finds
