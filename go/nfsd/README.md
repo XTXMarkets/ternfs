@@ -172,7 +172,7 @@ for that session, without renewing. Replies with unknown XIDs are dropped
 and counted. Clients that never ask for a backchannel see no backchannel
 status flags.
 
-The implementation is in [`session.go`](internal/server/session.go),
+The implementation is in [`ops_session.go`](internal/server/ops_session.go),
 [`session_store.go`](internal/server/session_store.go),
 [`backchannel.go`](internal/server/backchannel.go) and
 [`backchannel_sender.go`](internal/server/backchannel_sender.go).
@@ -195,7 +195,7 @@ visible to every nfsd.
 
 The [`TernVFS`](internal/vfs/vfs.go) interface is the boundary between the
 NFS protocol implementation and TernFS. The production implementation in
-[`internal/vfs/ternvfs.go`](internal/vfs/ternvfs.go) maps namespace
+[`internal/vfs/remote_tern_vfs.go`](internal/vfs/remote_tern_vfs.go) maps namespace
 operations, reads and file construction to TernFS requests. Tests can use a local implementation of the
 same interface.
 
@@ -344,7 +344,7 @@ startup fail rather than being quarantined. Drain active writes, or remove
 the staging directory, before upgrading to a binary that cannot read the
 staging format on disk.
 
-The implementation is in [`internal/staging`](internal/staging/staging.go),
+The implementation is in [`internal/staging`](internal/staging/store.go),
 [`staging_lifecycle.go`](internal/server/staging_lifecycle.go) and [`ops_open.go`](internal/server/ops_open.go).
 
 ## Namespace changes with staged writers
@@ -551,7 +551,7 @@ on one nfsd. An OPEN after a publishing CLOSE therefore sees what it
 published. Opens of different files run in parallel.
 
 The implementation is in
-[`internal/openstate`](internal/openstate/open_state.go) and
+[`internal/openstate`](internal/openstate/store.go) and
 [`view.go`](internal/server/view.go).
 
 ## Client identities and incarnations
@@ -634,7 +634,7 @@ The physical TernFS files are immutable. Updating a pointer or JSON record
 creates a temporary symlink or file and renames it over the public name.
 Readers therefore see a complete old or new record.
 
-The implementation is in [`internal/clientstore`](internal/clientstore/client_store.go).
+The implementation is in [`internal/clientstore`](internal/clientstore/store.go).
 
 ## Client registration
 
@@ -1117,7 +1117,7 @@ make test
 
 [`nfsd_test.go`](internal/server/nfsd_test.go) starts the server on a local TCP socket with a
 local filesystem backend. The tests construct NFS RPC messages directly.
-[`client_store_test.go`](internal/clientstore/client_store_test.go) holds the focused durable client
+[`store_test.go`](internal/clientstore/store_test.go) holds the focused durable client
 store and collection tests. Together they cover RPC framing, compound
 processing, filehandles, attributes, directory traversal, reads, staged
 writes, sessions, client and open state, and expected errors for

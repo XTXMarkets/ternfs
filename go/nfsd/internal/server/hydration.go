@@ -9,7 +9,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sidecar"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -97,7 +96,7 @@ func (s *Server) discardStaging(id vfs.InodeID) {
 
 // Recheck ownership under the target lock: the lease snapshot may predate a
 // reclaim or a namespace operation which detached this writer.
-func (s *Server) retireStaging(id vfs.InodeID, meta sidecar.Meta) {
+func (s *Server) retireStaging(id vfs.InodeID, meta staging.Meta) {
 	current, ok, unlock := s.lockStagingTarget(id)
 	defer unlock()
 	if !ok || current.ClientID != meta.ClientID || current.NFSStateID != meta.NFSStateID {
@@ -106,7 +105,7 @@ func (s *Server) retireStaging(id vfs.InodeID, meta sidecar.Meta) {
 	s.retireStagingLocked(id, current)
 }
 
-func (s *Server) retireStagingLocked(id vfs.InodeID, meta sidecar.Meta) error {
+func (s *Server) retireStagingLocked(id vfs.InodeID, meta staging.Meta) error {
 	if meta.Unlinked {
 		if meta.Retired {
 			if err := s.stagingStore.Quarantine(id); err != nil {

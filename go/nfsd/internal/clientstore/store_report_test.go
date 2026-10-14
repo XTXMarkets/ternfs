@@ -18,7 +18,6 @@ import (
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/byterange"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sidecar"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -115,7 +114,7 @@ func newInspectFixture(t *testing.T) *inspectFixture {
 
 	f.stagingDir = t.TempDir()
 	uploadMeta := filepath.Join(f.stagingDir, "0000000000003039.meta")
-	if err := sidecar.Save(uploadMeta, sidecar.Meta{
+	if err := staging.SaveMeta(uploadMeta, staging.Meta{
 		DirID:           f.fs.RootID(),
 		FileName:        "upload.bin",
 		TernCookie:      vfs.Cookie{1, 2, 3, 4, 5, 6, 7, 8},
@@ -143,7 +142,7 @@ func newInspectFixture(t *testing.T) *inspectFixture {
 		t.Fatal(err)
 	}
 	orphanMeta := filepath.Join(f.stagingDir, "4000000000010932.meta")
-	if err := sidecar.Save(orphanMeta, sidecar.Meta{
+	if err := staging.SaveMeta(orphanMeta, staging.Meta{
 		DirID:      f.fs.RootID(),
 		FileName:   "orphan.bin",
 		NFSStateID: nfs4.StateID{9},
@@ -718,8 +717,8 @@ func TestInspectJSONKeepsAnEmptyIdentityListAnArray(t *testing.T) {
 
 func TestInspectReportsMalformedStagingAndPointers(t *testing.T) {
 	f := newInspectFixture(t)
-	if err := sidecar.Save(filepath.Join(f.stagingDir, "not-an-inode.meta"),
-		sidecar.Meta{}); err != nil {
+	if err := staging.SaveMeta(filepath.Join(f.stagingDir, "not-an-inode.meta"),
+		staging.Meta{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(f.stagingDir, "broken.meta"),
@@ -840,7 +839,7 @@ func TestInspectReportsStagingIntegrity(t *testing.T) {
 		t.Fatal(err)
 	}
 	metaOnly := filepath.Join(dir, "0000000000000002.meta")
-	if err := sidecar.Save(metaOnly, sidecar.Meta{
+	if err := staging.SaveMeta(metaOnly, staging.Meta{
 		DirID: f.fs.RootID(), FileName: "meta-only",
 	}); err != nil {
 		t.Fatal(err)
@@ -858,7 +857,7 @@ func TestInspectReportsStagingIntegrity(t *testing.T) {
 		t.Fatal(err)
 	}
 	completeMeta := filepath.Join(dir, "0000000000000004.meta")
-	if err := sidecar.Save(completeMeta, sidecar.Meta{
+	if err := staging.SaveMeta(completeMeta, staging.Meta{
 		DirID: f.fs.RootID(), FileName: "exclusive",
 		Exclusive: true, Verifier: [8]byte{1, 2, 3},
 		ReadOnly: true, Retired: true, Unlinked: true, Guarded: true, Size: 8,
@@ -878,8 +877,8 @@ func TestInspectReportsStagingIntegrity(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "5.staging"), []byte("x"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := sidecar.Save(filepath.Join(dir, "5.meta"),
-		sidecar.Meta{DirID: f.fs.RootID(), FileName: "short-name"}); err != nil {
+	if err := staging.SaveMeta(filepath.Join(dir, "5.meta"),
+		staging.Meta{DirID: f.fs.RootID(), FileName: "short-name"}); err != nil {
 		t.Fatal(err)
 	}
 	quarantine := filepath.Join(dir, staging.QuarantineDirName, "0000000000000006-abc")

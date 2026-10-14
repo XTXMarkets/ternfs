@@ -15,7 +15,6 @@ import (
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/byterange"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sidecar"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -185,7 +184,7 @@ func TestExclusiveStagingCheckpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := vfs.MakeInodeID(vfs.InodeTypeFile, 17)
-	meta := sidecar.Meta{
+	meta := staging.Meta{
 		DirID: vfs.MakeInodeID(vfs.InodeTypeDir, 1), FileName: "file",
 		BaseID: vfs.MakeInodeID(vfs.InodeTypeFile, 18), BaseSize: 10,
 		ClientID: 1, NFSStateID: nfs4.StateID{1}, OpenOwner: "", OwnerKnown: true,
@@ -215,7 +214,7 @@ func TestExclusiveStagingCheckpoint(t *testing.T) {
 	}
 	defer staging.CloseFiles(t, loaded)
 	got, ok := loaded.GetMeta(id)
-	if !ok || got.Version != sidecar.Version || !got.Exclusive || got.Verifier != meta.Verifier ||
+	if !ok || got.Version != staging.MetaVersion || !got.Exclusive || got.Verifier != meta.Verifier ||
 		got.BaseID != meta.BaseID || got.ClientID != 2 || got.NFSStateID != (nfs4.StateID{2}) ||
 		!got.OwnerKnown || got.OpenOwner != "" || !got.Attrs.Mtime.Equal(stamp) ||
 		got.Size != 10 || len(got.Dirty) != 1 || got.Dirty[0] != (byterange.Range{Start: 2, End: 9}) {
@@ -225,22 +224,22 @@ func TestExclusiveStagingCheckpoint(t *testing.T) {
 
 func TestExclusiveSidecarRoundTrip(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "file.meta")
-	meta := sidecar.Meta{FileName: "file", OwnerKnown: true, OpenOwner: "owner"}
-	if err := sidecar.Save(file, meta); err != nil {
+	meta := staging.Meta{FileName: "file", OwnerKnown: true, OpenOwner: "owner"}
+	if err := staging.SaveMeta(file, meta); err != nil {
 		t.Fatal(err)
 	}
-	plain, err := sidecar.Load(file)
-	if err != nil || plain.Version != sidecar.Version || plain.Exclusive ||
+	plain, err := staging.LoadMeta(file)
+	if err != nil || plain.Version != staging.MetaVersion || plain.Exclusive ||
 		plain.Verifier != ([8]byte{}) {
 		t.Fatalf("ordinary sidecar: %+v, %v", plain, err)
 	}
 	meta.Exclusive = true
 	meta.Verifier = [8]byte{1, 2, 3}
 	meta.RecoveryKey = [32]byte{4, 5, 6}
-	if err := sidecar.Save(file, meta); err != nil {
+	if err := staging.SaveMeta(file, meta); err != nil {
 		t.Fatal(err)
 	}
-	exclusive, err := sidecar.Load(file)
+	exclusive, err := staging.LoadMeta(file)
 	if err != nil || !exclusive.Exclusive ||
 		exclusive.Verifier != meta.Verifier ||
 		exclusive.RecoveryKey != meta.RecoveryKey ||
@@ -255,7 +254,7 @@ func TestExclusiveSidecarRoundTrip(t *testing.T) {
 		if err := os.WriteFile(file, encoded[:len(encoded)-removed], 0600); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := sidecar.Load(file); err == nil {
+		if _, err := staging.LoadMeta(file); err == nil {
 			t.Fatalf("accepted sidecar missing %d verifier bytes", removed)
 		}
 	}

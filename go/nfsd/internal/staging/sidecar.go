@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-package sidecar
+package staging
 
 import (
 	"encoding/binary"
@@ -25,7 +25,7 @@ import (
 // staging directory before upgrading.
 const (
 	formatMagic = "NFS8"
-	Version     = 8
+	MetaVersion = 8
 )
 
 // FormatError reports a sidecar written by an incompatible nfsd.
@@ -85,7 +85,7 @@ type Meta struct {
 //   [32] RecoveryKey
 //   [8] EXCLUSIVE4 verifier
 
-func Save(path string, meta Meta) error {
+func SaveMeta(path string, meta Meta) error {
 	nameBytes := []byte(meta.FileName)
 	buf := make([]byte, 8+8+12+2+len(nameBytes)+8+4+8+8+8+4+
 		16*len(meta.Dirty)+32+1+4+len(meta.OpenOwner)+
@@ -174,10 +174,10 @@ func Save(path string, meta Meta) error {
 	if err := os.Rename(tmpPath, path); err != nil {
 		return err
 	}
-	return SyncDir(dir)
+	return syncDir(dir)
 }
 
-func Load(path string) (Meta, error) {
+func LoadMeta(path string) (Meta, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return Meta{}, err
@@ -219,7 +219,7 @@ func Load(path string) (Meta, error) {
 		return Meta{}, fmt.Errorf("meta file truncated")
 	}
 	meta.Size = binary.BigEndian.Uint64(data[off : off+8])
-	meta.Version = Version
+	meta.Version = MetaVersion
 	off += 8
 	if len(data) < off+4 {
 		return Meta{}, fmt.Errorf("meta file truncated")
@@ -284,7 +284,7 @@ func Load(path string) (Meta, error) {
 	return meta, nil
 }
 
-func SyncDir(path string) error {
+func syncDir(path string) error {
 	dir, err := os.Open(path)
 	if err != nil {
 		return err

@@ -17,7 +17,6 @@ import (
 	"github.com/XTXMarkets/ternfs/go/msgs"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sidecar"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -536,7 +535,7 @@ func TestRetiredSourceDoesNotBlockRename(t *testing.T) {
 					clientID = incarnationForTest(t, f.server, setupClient(t, f.conn, &f.xid))
 				}
 				stateID := f.server.opens.NewStateID()
-				sf, err := f.store.Create(destinationID, sidecar.Meta{
+				sf, err := f.store.Create(destinationID, staging.Meta{
 					DirID: dir, FileName: "moved", BaseID: base, BaseSize: 9,
 					ClientID: clientID, NFSStateID: stateID, TernCookie: cookie,
 				})

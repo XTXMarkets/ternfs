@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sidecar"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 )
 
@@ -30,14 +29,14 @@ func TestStagingCreateConcurrency(t *testing.T) {
 	}
 	first := make(chan result, 1)
 	go func() {
-		f, err := store.Create(1, sidecar.Meta{})
+		f, err := store.Create(1, Meta{})
 		first <- result{f, err}
 	}()
 	defer testutil.CloseSignal(gate.Release)
 	testutil.AwaitSignal(t, gate.Entered, "first staging creation")
 	other := make(chan result, 1)
 	go func() {
-		f, err := store.Create(2, sidecar.Meta{})
+		f, err := store.Create(2, Meta{})
 		other <- result{f, err}
 	}()
 	if r := testutil.AwaitValue(t, other, "independent staging creation"); r.err != nil {
@@ -45,7 +44,7 @@ func TestStagingCreateConcurrency(t *testing.T) {
 	}
 	duplicate := make(chan result, 1)
 	go func() {
-		f, err := store.Create(1, sidecar.Meta{})
+		f, err := store.Create(1, Meta{})
 		duplicate <- result{f, err}
 	}()
 	if store.Get(1) != nil || len(store.Entries()) != 1 {
@@ -76,7 +75,7 @@ func TestStagingCleanupWaitsForCreation(t *testing.T) {
 			}
 			created := make(chan error, 1)
 			go func() {
-				_, err := store.Create(1, sidecar.Meta{})
+				_, err := store.Create(1, Meta{})
 				created <- err
 			}()
 			defer testutil.CloseSignal(gate.Release)
@@ -102,7 +101,7 @@ func TestStagingCleanupWaitsForCreation(t *testing.T) {
 				t.Fatal("cleanup left a published entry")
 			}
 			if quarantine {
-				if _, err := store.Create(1, sidecar.Meta{}); !errors.Is(err, ErrRemoved) {
+				if _, err := store.Create(1, Meta{}); !errors.Is(err, ErrRemoved) {
 					t.Fatalf("quarantined Create = %v", err)
 				}
 			}
@@ -124,7 +123,7 @@ func TestStagingCreateFailureCanRetry(t *testing.T) {
 	if err := os.Mkdir(meta, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Create(1, sidecar.Meta{}); err == nil {
+	if _, err := store.Create(1, Meta{}); err == nil {
 		t.Fatal("creation unexpectedly succeeded")
 	}
 	if store.Get(1) != nil {
@@ -133,7 +132,7 @@ func TestStagingCreateFailureCanRetry(t *testing.T) {
 	if err := os.Remove(meta); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Create(1, sidecar.Meta{}); err != nil {
+	if _, err := store.Create(1, Meta{}); err != nil {
 		t.Fatal(err)
 	}
 	store.Remove(1)

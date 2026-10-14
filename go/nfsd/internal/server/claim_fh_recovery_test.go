@@ -16,7 +16,6 @@ import (
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sidecar"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -158,7 +157,7 @@ func (f *claimFHRestart) claimFH(t *testing.T, owner string) (uint32, [16]byte, 
 	return openByHandle(t, f.conn, &f.xid, f.wire, owner, f.fh, nfs4.OPEN4_SHARE_ACCESS_BOTH)
 }
 
-func (f *claimFHRestart) meta(t *testing.T) sidecar.Meta {
+func (f *claimFHRestart) meta(t *testing.T) staging.Meta {
 	t.Helper()
 	meta, ok := f.staging.GetMeta(f.stagingID)
 	if !ok {
@@ -169,7 +168,7 @@ func (f *claimFHRestart) meta(t *testing.T) sidecar.Meta {
 
 // assertNothingAdopted checks that a refused CLAIM_FH opened nothing and left
 // the staging as it was.
-func (f *claimFHRestart) assertNothingAdopted(t *testing.T, before sidecar.Meta) {
+func (f *claimFHRestart) assertNothingAdopted(t *testing.T, before staging.Meta) {
 	t.Helper()
 	if states := f.srv.opens.ClientStates(incarnationForTest(t, f.srv, f.wire)); len(states) != 0 {
 		t.Fatalf("refused CLAIM_FH left %d opens", len(states))
@@ -196,7 +195,7 @@ func (f *claimFHRestart) injectWriter(t *testing.T) {
 		t.Fatal(err)
 	}
 	meta := f.meta(t)
-	if _, err := f.staging.Create(id, sidecar.Meta{DirID: meta.DirID, FileName: meta.FileName,
+	if _, err := f.staging.Create(id, staging.Meta{DirID: meta.DirID, FileName: meta.FileName,
 		TernCookie: cookie, NFSStateID: oldEpochStateID(f.srv), ClientID: meta.ClientID,
 		OwnerKnown: true, OpenOwner: meta.OpenOwner, RecoveryKey: meta.RecoveryKey}); err != nil {
 		t.Fatal(err)
@@ -403,7 +402,7 @@ func TestClaimFHRecoveryRevalidation(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			f := newClaimFHRestart(t, "file", true, nil)
 			ran := false
-			var changed sidecar.Meta // the staging as the change left it
+			var changed staging.Meta // the staging as the change left it
 			f.fs.afterLookup(f.name, func() {
 				ran = true
 				c.change(t, f)

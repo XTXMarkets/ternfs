@@ -8,7 +8,6 @@ import (
 	"os"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/byterange"
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sidecar"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -34,7 +33,7 @@ func CreateOverlayStage(
 		t.Fatal(err)
 	}
 	id := vfs.MakeInodeID(vfs.InodeTypeFile, 100)
-	stage, err := store.Create(id, sidecar.Meta{
+	stage, err := store.Create(id, Meta{
 		DirID:    vfs.MakeInodeID(vfs.InodeTypeDir, 1),
 		FileName: "file",
 		BaseID:   baseID,
@@ -60,11 +59,11 @@ func SliceBaseReader(base []byte, calls *[]byterange.Range) BaseReader {
 	}
 }
 
-func FindTarget(store Store, dirID vfs.InodeID, name string) (vfs.InodeID, sidecar.Meta, bool) {
+func FindTarget(store Store, dirID vfs.InodeID, name string) (vfs.InodeID, Meta, bool) {
 	for id, meta := range store.FindTargets(dirID, name) {
 		return id, meta, true
 	}
-	return 0, sidecar.Meta{}, false
+	return 0, Meta{}, false
 }
 
 func TargetBusy(store Store, dirID vfs.InodeID, name string) bool {

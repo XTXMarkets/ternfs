@@ -16,7 +16,6 @@ import (
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/byterange"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sidecar"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -390,7 +389,7 @@ func TestStagingRetainsUncommittedNewFileOnRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := vfs.MakeInodeID(vfs.InodeTypeFile, 100)
-	stage, err := store.Create(id, sidecar.Meta{
+	stage, err := store.Create(id, Meta{
 		DirID:    vfs.MakeInodeID(vfs.InodeTypeDir, 1),
 		FileName: "new",
 	})
@@ -433,7 +432,7 @@ func TestStagingAllowsIndependentReplacementsOfSameBase(t *testing.T) {
 	baseID := vfs.MakeInodeID(vfs.InodeTypeFile, 10)
 	firstID := vfs.MakeInodeID(vfs.InodeTypeFile, 100)
 	secondID := vfs.MakeInodeID(vfs.InodeTypeFile, 101)
-	meta := sidecar.Meta{
+	meta := Meta{
 		DirID:    vfs.MakeInodeID(vfs.InodeTypeDir, 1),
 		FileName: "file",
 		BaseID:   baseID,
@@ -459,7 +458,7 @@ func TestStagingKeepsBaseFilehandlePrivate(t *testing.T) {
 	}
 	baseID := vfs.MakeInodeID(vfs.InodeTypeFile, 10)
 	stagingID := vfs.MakeInodeID(vfs.InodeTypeFile, 100)
-	stage, err := store.Create(stagingID, sidecar.Meta{
+	stage, err := store.Create(stagingID, Meta{
 		DirID:    vfs.MakeInodeID(vfs.InodeTypeDir, 1),
 		FileName: "file",
 		BaseID:   baseID,
@@ -490,7 +489,7 @@ func TestStagingRebindSurvivesRestart(t *testing.T) {
 	}
 	baseID := vfs.MakeInodeID(vfs.InodeTypeFile, 10)
 	stagingID := vfs.MakeInodeID(vfs.InodeTypeFile, 100)
-	if _, err := store.Create(stagingID, sidecar.Meta{
+	if _, err := store.Create(stagingID, Meta{
 		DirID:    vfs.MakeInodeID(vfs.InodeTypeDir, 1),
 		FileName: "file",
 		BaseID:   baseID,

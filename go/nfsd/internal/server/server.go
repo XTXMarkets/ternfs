@@ -24,7 +24,6 @@ import (
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/keyedlock"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/openstate"
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sidecar"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -267,13 +266,13 @@ func (s *Server) removeExpiredStaging() {
 	if s.clients.Now().Before(s.startedAt.Add(clientstore.LeaseTime)) {
 		return
 	}
-	byClient := make(map[uint64]map[vfs.InodeID]sidecar.Meta)
+	byClient := make(map[uint64]map[vfs.InodeID]staging.Meta)
 	for fileID, meta := range s.stagingStore.Entries() {
 		if meta.ClientID == 0 {
 			continue
 		}
 		if byClient[meta.ClientID] == nil {
-			byClient[meta.ClientID] = make(map[vfs.InodeID]sidecar.Meta)
+			byClient[meta.ClientID] = make(map[vfs.InodeID]staging.Meta)
 		}
 		byClient[meta.ClientID][fileID] = meta
 	}
@@ -285,7 +284,7 @@ func (s *Server) removeExpiredStaging() {
 // removeClientExpiredStaging retires an expired client's staging, holding a
 // destruction hold from the lease check through the last retirement. A
 // confirmation protecting the client keeps its staging.
-func (s *Server) removeClientExpiredStaging(clientID uint64, fileIDs map[vfs.InodeID]sidecar.Meta) {
+func (s *Server) removeClientExpiredStaging(clientID uint64, fileIDs map[vfs.InodeID]staging.Meta) {
 	end, ok := s.beginDestroy(clientID)
 	if !ok {
 		return
@@ -556,55 +555,6 @@ func (s *Server) handleRPC(req *rpcRequest, remote string) []byte {
 		return s.safeHandleCompound(req, remote)
 	default:
 		return buildRPCReply(req.xid, acceptProcUnavail)
-	}
-}
-
-// compoundState tracks the current/saved filehandle during COMPOUND execution.
-type compoundState struct {
-	currentID     vfs.InodeID
-	currentIDSet  bool
-	savedID       vfs.InodeID
-	savedIDSet    bool
-	principal     clientstore.RPCPrincipal
-	connection    *rpcConnection
-	replyBudget   uint32
-	effectUnknown bool // Submitted mutation lacks whole-call outcome proof.
-
-	// session and clientID come from the compound's SEQUENCE.
-	session  *session
-	clientID uint64
-
-	// afterReply collects work for after the reply is written.
-	afterReply *[]func()
-
-	// currentStateID is the stateid returned by the last OPEN or CLOSE,
-	// substituted for the special current stateid (RFC 8881 section
-	// 16.2.3.1.2). Changing the current filehandle clears it.
-	currentStateID    nfs4.StateID
-	currentGeneration uint32
-	currentStateIDSet bool
-	savedStateID      nfs4.StateID
-	savedGeneration   uint32
-	savedStateIDSet   bool
-}
-
-// setCurrentFH changes the current filehandle. Operations which do so
-// without producing a stateid invalidate the current stateid.
-func (st *compoundState) setCurrentFH(id vfs.InodeID) {
-	st.currentID = id
-	st.currentIDSet = true
-	st.currentStateIDSet = false
-}
-
-func (st *compoundState) setCurrentStateID(id nfs4.StateID, generation uint32) {
-	st.currentStateID = id
-	st.currentGeneration = generation
-	st.currentStateIDSet = true
-}
-
-func (st *compoundState) observeMutation(fs vfs.TernVFS, op uint32, err error) {
-	if err != nil && fs.ClassifyMutation(op, err) == vfs.MutationUnknown {
-		st.effectUnknown = true
 	}
 }
 

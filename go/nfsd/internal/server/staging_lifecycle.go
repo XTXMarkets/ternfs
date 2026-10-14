@@ -12,7 +12,6 @@ import (
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/openstate"
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sidecar"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -57,7 +56,7 @@ func (s *Server) retireInactiveStagingTarget(dirID vfs.InodeID, name string) (bo
 // retireIfInactiveWriter retires one writer whose open is gone. The check and
 // the retirement run under one destruction hold on its client; a writer
 // whose client a confirmation protects counts as active and is kept.
-func (s *Server) retireIfInactiveWriter(id vfs.InodeID, meta sidecar.Meta) (bool, error) {
+func (s *Server) retireIfInactiveWriter(id vfs.InodeID, meta staging.Meta) (bool, error) {
 	end, ok := s.beginDestroy(meta.ClientID)
 	if !ok {
 		return true, nil
@@ -164,7 +163,7 @@ func (s *Server) finishNamespaceWriters(writers []namespaceWriter, op uint32, ba
 
 // lockStagingTarget waits for namespace operations on a writer's publication
 // target. A rename may move the target while we wait, so check it again.
-func (s *Server) lockStagingTarget(fileID vfs.InodeID) (sidecar.Meta, bool, func()) {
+func (s *Server) lockStagingTarget(fileID vfs.InodeID) (staging.Meta, bool, func()) {
 	for {
 		meta, ok := s.stagingStore.GetMeta(fileID)
 		if !ok || meta.Unlinked {
@@ -196,7 +195,7 @@ func (s *Server) recoveredStagingTarget(
 	clientID uint64,
 	openOwner string,
 	write bool,
-) (_ vfs.InodeID, _ sidecar.Meta, _ bool, release func(), err error) {
+) (_ vfs.InodeID, _ staging.Meta, _ bool, release func(), err error) {
 	holds := make(map[vfs.InodeID]func()) // by candidate staging
 	release = func() {
 		for id, end := range holds {
@@ -214,10 +213,10 @@ func (s *Server) recoveredStagingTarget(
 	}()
 	key, err := s.clients.StagingRecoveryKey(clientID)
 	if err != nil {
-		return 0, sidecar.Meta{}, false, release, err
+		return 0, staging.Meta{}, false, release, err
 	}
 	var foundID vfs.InodeID
-	var foundMeta sidecar.Meta
+	var foundMeta staging.Meta
 	// Writers on one client share staging, so any of the client's open
 	// owners may reclaim it after a server restart. Reclaim after lease
 	// expiry, by a new incarnation, still requires the original owner.
@@ -240,14 +239,14 @@ func (s *Server) recoveredStagingTarget(
 			end, ok := s.beginDestroy(meta.ClientID)
 			if !ok {
 				// The other incarnation's expiry waits for its confirmation.
-				return 0, sidecar.Meta{}, false, release, nfs4.Error(nfs4.NFS4ERR_DELAY)
+				return 0, staging.Meta{}, false, release, nfs4.Error(nfs4.NFS4ERR_DELAY)
 			}
 			holds[id] = end
 			// The expiry decision is the gate's (canonical r3 §8); this
 			// OPEN holds the pathname lock, so local expiry is the sweeper's.
 			expired, err := s.decideExpired(meta.ClientID, false)
 			if err != nil {
-				return 0, sidecar.Meta{}, false, release, err
+				return 0, staging.Meta{}, false, release, err
 			}
 			if !expired {
 				end()
@@ -258,7 +257,7 @@ func (s *Server) recoveredStagingTarget(
 		// Never guess between multiple recovered sessions and hand one
 		// writer another's data.
 		if foundID != 0 {
-			return 0, sidecar.Meta{}, false, release, nfs4.Error(nfs4.NFS4ERR_EXPIRED)
+			return 0, staging.Meta{}, false, release, nfs4.Error(nfs4.NFS4ERR_EXPIRED)
 		}
 		foundID, foundMeta = id, meta
 	}
@@ -284,11 +283,11 @@ func (s *Server) claimFHRecoveryCandidate(
 	fileID vfs.InodeID,
 	clientID uint64,
 	openOwner string,
-) (vfs.InodeID, sidecar.Meta, uint32) {
+) (vfs.InodeID, staging.Meta, uint32) {
 	var key [32]byte
 	keyRead := false
 	var foundID vfs.InodeID
-	var foundMeta sidecar.Meta
+	var foundMeta staging.Meta
 	for id, meta := range s.stagingStore.Entries() {
 		if meta.ReadOnly || meta.Unlinked || s.stagingStore.Failed(id) {
 			continue
@@ -308,7 +307,7 @@ func (s *Server) claimFHRecoveryCandidate(
 			if !keyRead {
 				var err error
 				if key, err = s.clients.StagingRecoveryKey(clientID); err != nil {
-					return 0, sidecar.Meta{}, clientstore.ErrToNFS(err)
+					return 0, staging.Meta{}, clientstore.ErrToNFS(err)
 				}
 				keyRead = true
 			}
@@ -321,7 +320,7 @@ func (s *Server) claimFHRecoveryCandidate(
 			if s.errToNFS(err) == nfs4.NFS4ERR_NOENT {
 				continue
 			}
-			return 0, sidecar.Meta{}, s.errToNFS(err)
+			return 0, staging.Meta{}, s.errToNFS(err)
 		}
 		if current != fileID {
 			continue
@@ -329,7 +328,7 @@ func (s *Server) claimFHRecoveryCandidate(
 		if crossIncarnation {
 			expired, status := s.recoveryLeaseExpired(meta.ClientID)
 			if status != nfs4.NFS4_OK {
-				return 0, sidecar.Meta{}, status
+				return 0, staging.Meta{}, status
 			}
 			if !expired {
 				continue
@@ -337,12 +336,12 @@ func (s *Server) claimFHRecoveryCandidate(
 		}
 		if foundID != 0 {
 			// Never guess which writer's data the client meant.
-			return 0, sidecar.Meta{}, nfs4.NFS4ERR_EXPIRED
+			return 0, staging.Meta{}, nfs4.NFS4ERR_EXPIRED
 		}
 		foundID, foundMeta = id, meta
 	}
 	if foundID == 0 {
-		return 0, sidecar.Meta{}, nfs4.NFS4ERR_STALE
+		return 0, staging.Meta{}, nfs4.NFS4ERR_STALE
 	}
 	return foundID, foundMeta, nfs4.NFS4_OK
 }
@@ -369,8 +368,8 @@ func (s *Server) recoveryLeaseExpired(clientID uint64) (bool, uint32) {
 // pathname lock, selected exactly the preselected staging, unchanged in its
 // stateid, incarnation and owner, and still linked and healthy.
 func (s *Server) sameRecoveryCandidate(
-	wantID vfs.InodeID, want sidecar.Meta,
-	gotID vfs.InodeID, got sidecar.Meta, found bool,
+	wantID vfs.InodeID, want staging.Meta,
+	gotID vfs.InodeID, got staging.Meta, found bool,
 ) bool {
 	return found && gotID == wantID &&
 		got.NFSStateID == want.NFSStateID && got.ClientID == want.ClientID &&
@@ -385,7 +384,7 @@ func (s *Server) exclusiveStagingTarget(
 	publishedID vfs.InodeID,
 	owner openstate.OwnerKey,
 	verifier [8]byte,
-) (vfs.InodeID, sidecar.Meta, bool) {
+) (vfs.InodeID, staging.Meta, bool) {
 	for id, meta := range s.stagingStore.FindTargets(dirID, name) {
 		// Another publication at this name invalidates the old create verifier.
 		if meta.BaseID == publishedID &&
@@ -395,5 +394,5 @@ func (s *Server) exclusiveStagingTarget(
 			return id, meta, true
 		}
 	}
-	return 0, sidecar.Meta{}, false
+	return 0, staging.Meta{}, false
 }
