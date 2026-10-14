@@ -18,6 +18,11 @@ import (
 	"github.com/XTXMarkets/ternfs/go/core/bufpool"
 	"github.com/XTXMarkets/ternfs/go/core/log"
 	"github.com/XTXMarkets/ternfs/go/msgs"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/server"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 func main() {
@@ -29,11 +34,11 @@ func main() {
 	addr := flag.String("addr", ":2049", "listen address")
 	root := flag.String("root", "", "local root directory to export (for testing)")
 	registry := flag.String("registry", "", "TernFS registry address (for production)")
-	staging := flag.String("staging", "", "staging directory for writes (omit for read-only)")
+	stagingDir := flag.String("staging", "", "staging directory for writes (omit for read-only)")
 	verbose := flag.Bool("v", false, "verbose logging of NFS requests/responses")
 	allowMinor2 := flag.Bool("allow-minor-version-2", false,
 		"also accept NFSv4.2 COMPOUNDs, served as NFSv4.1 with every 4.2 operation unsupported")
-	maxInFlight := flag.Int("max-in-flight-per-connection", defaultMaxInFlightPerConn,
+	maxInFlight := flag.Int("max-in-flight-per-connection", server.DefaultMaxInFlightPerConn,
 		"maximum requests admitted per TCP connection")
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(),
@@ -57,17 +62,17 @@ func main() {
 
 	// Set up local state before dialling the cluster, so that a bad -staging
 	// path or an unusable -root fails without a round trip to the registry.
-	var ss StagingStore
-	if *staging != "" {
-		store, err := NewLocalStagingStore(*staging, slogger)
+	var ss staging.Store
+	if *stagingDir != "" {
+		store, err := staging.NewLocalStore(*stagingDir, slogger)
 		if err != nil {
 			slogger.Error("creating staging store", "err", err)
 			os.Exit(1)
 		}
 		ss = store
-		slogger.Info("staging directory configured", "path", *staging)
+		slogger.Info("staging directory configured", "path", *stagingDir)
 	} else {
-		ss = readOnlyStagingStore{}
+		ss = staging.ReadOnlyStore{}
 		slogger.Info("no staging directory — read-only mode")
 	}
 
@@ -78,13 +83,13 @@ func main() {
 	}
 	slogger.Info("filesystem opened", "target", target)
 
-	srv, err := NewServer(fs, ss, slogger)
+	srv, err := server.NewServer(fs, ss, slogger)
 	if err != nil {
 		slogger.Error("creating server", "err", err)
 		os.Exit(1)
 	}
-	srv.maxInFlightPerConn = *maxInFlight
-	srv.allowMinorVersion2 = *allowMinor2
+	srv.MaxInFlightPerConn = *maxInFlight
+	srv.AllowMinorVersion2 = *allowMinor2
 	slogger.Info("NFS server listening", "addr", *addr)
 	if err := srv.ListenAndServe(*addr); err != nil {
 		slogger.Error("server error", "err", err)
@@ -95,7 +100,7 @@ func main() {
 // openVFS opens the local directory or the TernFS cluster named by exactly
 // one of root and registry. It also returns a description of what it opened,
 // with a local root resolved to an absolute path.
-func openVFS(root string, registry string, verbose bool) (TernVFS, string, error) {
+func openVFS(root string, registry string, verbose bool) (vfs.TernVFS, string, error) {
 	if (root == "") == (registry == "") {
 		return nil, "", fmt.Errorf(
 			"exactly one of -root (local) or -registry (TernFS) must be specified")
@@ -109,7 +114,7 @@ func openVFS(root string, registry string, verbose bool) (TernVFS, string, error
 		if err != nil || !info.IsDir() {
 			return nil, "", fmt.Errorf("root must be a directory: %s", absRoot)
 		}
-		return NewLocalTernVFS(absRoot), "local root " + absRoot, nil
+		return vfs.NewLocalTernVFS(absRoot), "local root " + absRoot, nil
 	}
 	logLevel := log.INFO
 	if verbose {
@@ -120,7 +125,7 @@ func openVFS(root string, registry string, verbose bool) (TernVFS, string, error
 	if err != nil {
 		return nil, "", fmt.Errorf("connecting to TernFS registry: %w", err)
 	}
-	return NewRemoteTernVFS(c, ternLogger, bufpool.NewBufPool()),
+	return vfs.NewRemoteTernVFS(c, ternLogger, bufpool.NewBufPool()),
 		"TernFS registry " + registry, nil
 }
 
@@ -163,7 +168,7 @@ func runInspect(args []string) {
 				"-identity, -identity-hash, -clientid or -stateid. It never modifies the\n"+
 				"store. Each field the report prints is labelled with the flag which\n"+
 				"selects it, so any value in the output can be pasted back here.\n\n",
-			nfsDirName)
+			vfs.NFSDirName)
 		fs.PrintDefaults()
 		fmt.Fprintf(fs.Output(),
 			"\nExit status: 0 if the report found no problems, %d if it found any,\n"+
@@ -190,7 +195,7 @@ func runInspect(args []string) {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
 	}
-	store, err := openClientStoreReader(vfs)
+	store, err := clientstore.OpenReader(vfs)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
@@ -214,9 +219,9 @@ func runInspect(args []string) {
 }
 
 func parseInspectOptions(identity, identityHash, clientID, stateID string) (
-	inspectOptions, error,
+	clientstore.InspectOptions, error,
 ) {
-	var opts inspectOptions
+	var opts clientstore.InspectOptions
 	filters := 0
 	if identity != "" {
 		opts.Identity = []byte(identity)
@@ -233,7 +238,7 @@ func parseInspectOptions(identity, identityHash, clientID, stateID string) (
 	}
 	if clientID != "" {
 		id, err := strconv.ParseUint(clientID, 0, 64)
-		if err != nil || !isDirectoryInodeID(InodeID(id)) {
+		if err != nil || !clientstore.IsDirectoryInodeID(vfs.InodeID(id)) {
 			return opts, fmt.Errorf(
 				"invalid -clientid %q: want a 0x-prefixed hex or decimal "+
 					"directory inode", clientID)
@@ -243,11 +248,11 @@ func parseInspectOptions(identity, identityHash, clientID, stateID string) (
 	}
 	if stateID != "" {
 		raw, err := hex.DecodeString(stateID)
-		if err != nil || len(raw) != len(StateID{}) {
+		if err != nil || len(raw) != len(nfs4.StateID{}) {
 			return opts, fmt.Errorf("invalid -stateid %q: want %d hex digits",
-				stateID, 2*len(StateID{}))
+				stateID, 2*len(nfs4.StateID{}))
 		}
-		var sid StateID
+		var sid nfs4.StateID
 		copy(sid[:], raw)
 		opts.StateID = &sid
 		filters++

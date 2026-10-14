@@ -172,9 +172,10 @@ for that session, without renewing. Replies with unknown XIDs are dropped
 and counted. Clients that never ask for a backchannel see no backchannel
 status flags.
 
-The implementation is in [`session.go`](session.go),
-[`backchannel.go`](backchannel.go) and
-[`backchannel_sender.go`](backchannel_sender.go).
+The implementation is in [`ops_session.go`](internal/server/ops_session.go),
+[`session_store.go`](internal/server/session_store.go),
+[`backchannel.go`](internal/server/backchannel.go) and
+[`backchannel_sender.go`](internal/server/backchannel_sender.go).
 
 ## State overview
 
@@ -192,10 +193,10 @@ visible to every nfsd.
 
 ## Namespace and filehandles
 
-The [`TernVFS`](vfs.go) interface is the boundary between the NFS protocol
-implementation and TernFS. The production implementation in
-[`ternvfs.go`](ternvfs.go) maps namespace operations, reads and file
-construction to TernFS requests. Tests can use a local implementation of the
+The [`TernVFS`](internal/vfs/vfs.go) interface is the boundary between the
+NFS protocol implementation and TernFS. The production implementation in
+[`internal/vfs/remote_tern_vfs.go`](internal/vfs/remote_tern_vfs.go) maps namespace
+operations, reads and file construction to TernFS requests. Tests can use a local implementation of the
 same interface.
 
 TernFS assigns every file and directory an inode ID. nfsd uses the eight-byte
@@ -343,8 +344,8 @@ startup fail rather than being quarantined. Drain active writes, or remove
 the staging directory, before upgrading to a binary that cannot read the
 staging format on disk.
 
-The implementation is in [`staging.go`](staging.go),
-[`staging_lifecycle.go`](staging_lifecycle.go) and [`ops.go`](ops.go).
+The implementation is in [`internal/staging`](internal/staging/store.go),
+[`staging_lifecycle.go`](internal/server/staging_lifecycle.go) and [`ops_open.go`](internal/server/ops_open.go).
 
 ## Namespace changes with staged writers
 
@@ -549,8 +550,9 @@ OPEN, CLOSE and OPEN_DOWNGRADE of one file are serialized across all clients
 on one nfsd. An OPEN after a publishing CLOSE therefore sees what it
 published. Opens of different files run in parallel.
 
-The implementation is in [`open_state.go`](open_state.go) and
-[`view.go`](view.go).
+The implementation is in
+[`internal/openstate`](internal/openstate/store.go) and
+[`view.go`](internal/server/view.go).
 
 ## Client identities and incarnations
 
@@ -632,7 +634,7 @@ The physical TernFS files are immutable. Updating a pointer or JSON record
 creates a temporary symlink or file and renames it over the public name.
 Readers therefore see a complete old or new record.
 
-The implementation is in [`client_store.go`](client_store.go).
+The implementation is in [`internal/clientstore`](internal/clientstore/store.go).
 
 ## Client registration
 
@@ -1113,9 +1115,9 @@ Run the default Go tests from this directory:
 make test
 ```
 
-[`nfsd_test.go`](nfsd_test.go) starts the server on a local TCP socket with a
+[`nfsd_test.go`](internal/server/nfsd_test.go) starts the server on a local TCP socket with a
 local filesystem backend. The tests construct NFS RPC messages directly.
-[`client_store_test.go`](client_store_test.go) holds the focused durable client
+[`store_test.go`](internal/clientstore/store_test.go) holds the focused durable client
 store and collection tests. Together they cover RPC framing, compound
 processing, filehandles, attributes, directory traversal, reads, staged
 writes, sessions, client and open state, and expected errors for
@@ -1125,7 +1127,7 @@ unsupported operations.
 
 ### TernFS-backed protocol tests
 
-[`cluster_test.go`](cluster_test.go) contains tests behind the `ternnfs` build
+[`cluster_test.go`](internal/server/cluster_test.go) contains tests behind the `ternnfs` build
 tag. The intended command is:
 
 ```sh

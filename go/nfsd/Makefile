@@ -24,7 +24,7 @@ help:
 		'The client test harnesses (libnfs, pynfs, kernel client, workflows) are in test/Makefile.'
 
 test:
-	go test $(GO_TEST_FLAGS) .
+	go test $(GO_TEST_FLAGS) . ./internal/...
 
 check-cluster-port:
 	@command -v "$(SS)" >/dev/null 2>&1 || { \
@@ -37,4 +37,4 @@ check-cluster-port:
 	fi
 
 test-cluster: check-cluster-port
-	go test -tags ternnfs $(GO_TEST_FLAGS) .
+	go test -tags ternnfs $(GO_TEST_FLAGS) ./internal/server

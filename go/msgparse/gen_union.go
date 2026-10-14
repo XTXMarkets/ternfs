@@ -67,6 +67,10 @@ func (g *Generator) emitUnion(ti *TypeInfo) {
 	}
 	g.p("\t}\n}\n")
 
+	// Discriminant and raw payload, for callers outside the package.
+	g.p("\nfunc (m %s) Disc() %s {\n\treturn m.disc\n}\n", name, discGoType)
+	g.p("\nfunc (m %s) Bytes() []byte {\n\treturn m.b\n}\n", name)
+
 	// Detect payload types used by multiple arms (need per-arm naming).
 	payloadCount := map[string]int{}
 	for _, arm := range u.Arms {
