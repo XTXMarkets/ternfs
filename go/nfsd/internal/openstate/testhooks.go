@@ -44,3 +44,10 @@ func (os *Store) StateCount() int {
 func (os *Store) FileLockRefs(fileID vfs.InodeID) int {
 	return os.fileLocks.Refs(fileID)
 }
+
+// AddTombstoneForTest records id as an expired stateid of owner.
+func (os *Store) AddTombstoneForTest(id nfs4.StateID, owner uint64) {
+	os.mu.Lock()
+	defer os.mu.Unlock()
+	os.expired[id] = owner
+}

@@ -125,3 +125,21 @@ func (sf *LocalFile) CheckpointDirty() bool {
 	defer sf.mu.Unlock()
 	return sf.checkpointDirty
 }
+
+// LockForTest holds the file's lock, as a disk operation does.
+func (sf *LocalFile) LockForTest() { sf.mu.Lock() }
+
+// UnlockForTest releases LockForTest.
+func (sf *LocalFile) UnlockForTest() { sf.mu.Unlock() }
+
+// HydrationForTest returns the running hydration's completion channel and,
+// when cancel is set, cancels it.
+func (sf *LocalFile) HydrationForTest(cancel bool) chan struct{} {
+	sf.hydrateMu.Lock()
+	defer sf.hydrateMu.Unlock()
+	done := sf.hydrateDone
+	if cancel {
+		sf.cancelHydrationLocked()
+	}
+	return done
+}

@@ -82,6 +82,8 @@ type LeaseRefresher struct {
 	// mu is never held across I/O. The worker's own fields (attempt,
 	// orphans, identity, lastExpiry, backoff) change only in the worker,
 	// which holds leaseLocks; mu orders them with readers.
+	// Writes to identity and lastExpiry also hold Mu for diagnostics;
+	// the worker may read them under its exclusive LeaseLocks ownership.
 	Mu         sync.Mutex
 	identity   vfs.InodeID
 	Proven     int64
@@ -89,7 +91,7 @@ type LeaseRefresher struct {
 	State      leaseRecordState
 	Attempt    *leaseAttempt
 	orphans    []*leaseOrphan
-	lastExpiry int64
+	LastExpiry int64
 	bootstrap  bool
 	InCall     bool
 	running    bool // a worker goroutine exists
@@ -592,7 +594,9 @@ func (r *LeaseRefresher) pass(authorize bool) (time.Duration, bool) {
 			r.State = LeaseRecordStale
 			r.Mu.Unlock()
 		default:
+			r.Mu.Lock()
 			r.identity = identity
+			r.Mu.Unlock()
 		}
 	}
 	settled := r.settle()
@@ -610,7 +614,7 @@ func (r *LeaseRefresher) pass(authorize bool) (time.Duration, bool) {
 			failed = true
 		}
 	} else if r.identity != 0 && settled && (authorize || r.need() || r.bootstrapSet()) {
-		if !r.refresh() {
+		if !r.Refresh() {
 			failed = true
 		} else {
 			r.pruneOthers()
@@ -748,7 +752,7 @@ func (r *LeaseRefresher) pruneOthers() {
 
 // refresh publishes a new lease when ours is due (§9.2 step 3). It reports
 // false on a failure that should back off.
-func (r *LeaseRefresher) refresh() bool {
+func (r *LeaseRefresher) Refresh() bool {
 	cs, dir := r.cs, r.Incarnation
 	now := cs.Now()
 	r.Mu.Lock()
@@ -763,8 +767,8 @@ func (r *LeaseRefresher) refresh() bool {
 		return false
 	}
 	expiry := now.Add(LeaseWriteTerm).UnixNano()
-	if expiry <= r.lastExpiry {
-		expiry = r.lastExpiry + 1
+	if expiry <= r.LastExpiry {
+		expiry = r.LastExpiry + 1
 	}
 	data, err := json.Marshal(DurableLease{ExpiresUnixNano: expiry})
 	if err != nil {
@@ -797,8 +801,8 @@ func (r *LeaseRefresher) refresh() bool {
 	if err != nil || edge.ID != id {
 		return false
 	}
-	r.lastExpiry = expiry
 	r.Mu.Lock()
+	r.LastExpiry = expiry
 	r.Attempt = &leaseAttempt{orphan: o, edge: edge, expiry: expiry}
 	r.Mu.Unlock()
 	r.call(func() { err = cs.fs.RenameEdge(dir, o.Temp, edge, dir, cs.LeaseName) })

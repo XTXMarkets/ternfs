@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/XTXMarkets/ternfs/go/msgs"
+	"github.com/XTXMarkets/ternfs/go/nfsd/inspect"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -109,10 +110,6 @@ func (f *confirmFixture) confirmedIs(t *testing.T) vfs.InodeID {
 		return 0
 	}
 	return id
-}
-
-func confirmResultName(r ConfirmResult) string {
-	return [...]string{"unresolved", "committed", "rolled back", "conservative"}[r]
 }
 
 // Each write's faults with an unchanged predecessor. Only D can commit, and
@@ -666,4 +663,45 @@ func (f *confirmFixture) present(t *testing.T, dir vfs.InodeID, name string) boo
 		t.Fatal(err)
 	}
 	return err == nil
+}
+
+// A confirmation stuck at a failed fence reports the fence's error, so the
+// cause of an unresolved attempt is visible; a later settle that fences
+// clears it.
+func TestConfirmationSnapshotFenceError(t *testing.T) {
+	f := newConfirmFixture(t, true)
+	f.fs.Set(WriteD, FaultFenceErr, nil)
+	a := f.commit(t)
+	if a.Result() != confirmUnresolved {
+		t.Fatal(confirmResultName(a.Result()))
+	}
+	confirmed := func(snap *inspect.Attempt) inspect.ConfirmWrite {
+		t.Helper()
+		for _, w := range snap.Writes {
+			if w.Name == "confirmed" {
+				return w
+			}
+		}
+		t.Fatalf("no confirmed write in %+v", snap)
+		return inspect.ConfirmWrite{}
+	}
+	snap := a.Snapshot()
+	if snap.Locked || snap.Result != inspect.ConfirmUnresolved {
+		t.Fatalf("attempt = %+v", snap)
+	}
+	w := confirmed(snap)
+	if w.Fence != inspect.FenceFailed || w.FenceError == "" || w.Outcome != inspect.WriteUnsettled {
+		t.Fatalf("confirmed write = %+v", w)
+	}
+	if want := a.writes[WriteD].fenceErr.Error(); w.FenceError != want {
+		t.Fatalf("fence_error %q, want %q", w.FenceError, want)
+	}
+	f.fs.Set(WriteD, FaultNone, nil)
+	if got := f.store.SettleConfirmation(a); got != ConfirmRolledBack {
+		t.Fatalf("settled %s", confirmResultName(got))
+	}
+	w = confirmed(a.Snapshot())
+	if w.Fence != inspect.FenceNotApplied || w.FenceError != "" || w.Outcome != inspect.WriteNever {
+		t.Fatalf("settled write = %+v", w)
+	}
 }

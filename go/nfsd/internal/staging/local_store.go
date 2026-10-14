@@ -99,7 +99,7 @@ func NewLocalStore(dir string, logger *slog.Logger) (*LocalStore, error) {
 		var formatErr FormatError
 		if errors.As(metaErr, &formatErr) {
 			f.Close()
-			s.closeAll()
+			s.CloseAll()
 			return nil, formatErr
 		}
 		if metaErr != nil || meta.Guarded || meta.Unlinked && meta.Retired {
@@ -149,7 +149,7 @@ func NewLocalStore(dir string, logger *slog.Logger) (*LocalStore, error) {
 }
 
 // closeAll releases descriptors opened during a failed startup.
-func (s *LocalStore) closeAll() {
+func (s *LocalStore) CloseAll() {
 	for _, entry := range s.files {
 		entry.file.prepareRemove()
 	}

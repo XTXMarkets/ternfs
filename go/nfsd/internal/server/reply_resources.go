@@ -333,23 +333,31 @@ func (ss *sessionStore) drainSession(sess *session) {
 	}
 }
 
+// replyAccounting is the store's reply-cache and request figures with their
+// limits, for tests and diagnostics.
 type replyAccounting struct {
 	CacheBytes, CacheBuffers, WorkBytes, WorkReplies int
+	CacheLimit, WorkLimit                            int
 	Sessions, Records, PendingSessions               int
-	Groups, GroupCredits                             int
+	RecordLimit, WireLimit                           int
+	Groups, GroupCredits, GroupLimit                 int
 	ActiveRequests, ProvisionalRequests              int
 }
 
 func (ss *sessionStore) accounting() replyAccounting {
 	ss.cacheMu.Lock()
-	r := replyAccounting{CacheBytes: ss.cachedBytes, CacheBuffers: ss.cachedBuffers, WorkBytes: ss.workBytes, WorkReplies: ss.workReplies}
+	r := replyAccounting{
+		CacheBytes: ss.cachedBytes, CacheBuffers: ss.cachedBuffers, CacheLimit: ss.cacheLimit,
+		WorkBytes: ss.workBytes, WorkReplies: ss.workReplies, WorkLimit: ss.workLimit,
+	}
 	ss.cacheMu.Unlock()
 	ss.mu.Lock()
 	r.Sessions = len(ss.sessions)
 	r.Records = ss.records
 	r.PendingSessions = ss.pendingSessions
+	r.RecordLimit, r.WireLimit = ss.recordLimit, ss.wireLimit
 	r.Groups = len(ss.groups)
-	r.GroupCredits = ss.groupCredits
+	r.GroupCredits, r.GroupLimit = ss.groupCredits, ss.groupLimit
 	for _, g := range ss.groups {
 		r.ActiveRequests += g.active
 		r.ProvisionalRequests += g.provisional
