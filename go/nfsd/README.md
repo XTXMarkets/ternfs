@@ -435,10 +435,11 @@ format is the exception: startup fails, as described under [Writes](#writes).
 
 A quarantined writer's `.staging` and `.meta` files are kept together in a
 directory under `quarantine/`. A partial move leaves each file where it
-reached and requires manual recovery. To list quarantined entries, run:
+reached and requires manual recovery. The store report lists quarantined
+entries; see [Diagnostics](#diagnostics):
 
 ```sh
-nfsd inspect -registry <addr> -staging <dir>
+curl -s 'http://127.0.0.1:9049/v1/store?staging=1' | jq .report.quarantined
 ```
 
 A staging file is a sparse overlay. The unwritten ranges of an unlinked or
@@ -905,30 +906,139 @@ filehandle because TernFS cannot recover a file's parent from its inode ID.
 Those records contain client-supplied identity metadata and expiry times, not
 authentication secrets.
 
-## Inspecting client state
+## Diagnostics
 
-`nfsd inspect` reads the client store and explains its current state. It uses
+nfsd serves a read-only JSON API about its own state on `-status-addr`, off
+by default. Most NFSv4.1 state lives only in process memory: sessions and
+their slots, the wire clientids EXCHANGE_ID returned, the durable lease
+refresher records and the logical lease gate, confirmations in progress and
+backchannel paths. The durable client store holds the rest, and `/v1/store`
+reads it.
+
+```sh
+nfsd -registry <addr> -staging <dir> -status-addr 127.0.0.1:9049
+curl -s http://127.0.0.1:9049/ | jq .
+```
+
+`GET /` lists every `/v1` resource, its query filters, and the meaning of
+every state word the API uses. Read it first.
+
+| Path | Content |
+| --- | --- |
+| `/v1/status` | The process identifiers, limits, reply-cache and request accounting, hydration and client GC activity. |
+| `/v1/lookup?id=` | Resolves one typed id. See below. |
+| `/v1/clients` | Wire clientids this process issued, each bound to a durable incarnation, with the CREATE_SESSION replay slot. Filters `wire`, `incarnation`, `owner`. |
+| `/v1/incarnations` | Per incarnation: the session group and lease gate, the lease refresher record, the cached store location, confirmation protection and destruction holds. Filter `id`. |
+| `/v1/sessions` | Each session's channel limits, SEQUENCE status flags, backchannel sender and connections, and slots. Filters `id`, `incarnation`, `slots=0`. |
+| `/v1/opens` | Open stateids with file, data inode, owner and access; expired tombstones; the client views behind a handle. Filters `stateid`, `incarnation`, `file`. |
+| `/v1/confirmations` | Client confirmations in progress or unresolved, with the evidence of their writes, including why a fence failed, destruction holds and purge hints. |
+| `/v1/staging` | The staging store in memory: each writer's target, owner, size, dirty ranges and flags, and the failed tombstones. Filters `file`, `incarnation`. |
+| `/v1/connections` | Live client connections: requests in flight, the sessions each carries in either direction, and its callback path state. Filter `session`. |
+| `/v1/store` | The durable client store report, described below. Filters `identity`, `identity-hash`, `incarnation`, `stateid`, plus `staging=1`. |
+| `/debug/pprof/` | Go profiling, served beside the API. It is not in the index and its responses are not JSON. |
+
+Every `/v1` response carries `now`, `nfsd_id`, `stateid_epoch`, `wire_epoch`
+and `mode`. These are the three identities of an nfsd process. `nfsd_id` names
+its `lease.` and `confirming.` slots in the client store. `stateid_epoch` is
+the first four bytes of every stateid and every session id it issued.
+`wire_epoch` is the high 32 bits of every wire clientid it issued, chosen
+after it bound its NFS endpoint. The log line `session created` records a
+wire clientid, its incarnation and its session id together, in the same
+spellings the API uses; it is the one place all three appear.
+
+The six ids the API routes on are typed: `kind:hex`, lowercase, of fixed
+width. The kinds are `wire-clientid`, `incarnation` and `inode` (sixteen hex
+digits each), `stateid` (24), `session` (32) and `identity-hash` (64). The
+process identifiers `nfsd_id`, `stateid_epoch` and `wire_epoch`, and opaque
+metadata such as owners, verifiers and cookies, keep their plain forms. A value
+copied from any response or from the `session created` line pastes back into
+a filter or a lookup unchanged, and a filter accepts only the kind it names:
+an incarnation is never read as a wire clientid, though both are eight bytes.
+Uppercase hex is accepted. A zero `wire-clientid`, `incarnation` or `inode`
+is rejected rather than treated as no filter. Values from a packet capture
+need the kind written in front of them.
+
+The clientid an NFSv4.1 client sees is not the incarnation inode that the
+client store uses. It is a process-local wire clientid, never stored, and
+only the process that issued it can resolve it. `/v1/lookup` takes one typed
+id and says which epoch issued it, whether that is this process, and whether
+this process has state for it, with links to the resources that describe it.
+
+```sh
+curl -s 'http://127.0.0.1:9049/v1/lookup?id=wire-clientid:4000000100000001' | jq .
+```
+
+Each store copies its own state under its own locks, one at a time, so
+counts across resources may disagree slightly. The registry and record
+mutexes are taken normally; they are held only for map and field access.
+Three locks are only tried, because a request path tries them or they are
+held across I/O: a slot that a request holds at that instant, a staging file
+in the middle of a disk operation and a confirmation attempt in the middle
+of a settle are reported as `locked`, with their details unavailable. A
+locked slot or attempt shows its identity only; a locked staging file keeps
+its file, target and hydration activity. Trying those locks avoids waiting
+for their holders. It does not avoid all interference: a SEQUENCE that
+arrives while the API holds a slot for its brief copy sees a busy slot and
+retries with `NFS4ERR_DELAY`, as it would for any other holder. `/v1/store`
+is different: it reads the backend and, with `staging=1`, the sidecars on
+disk, so it takes as long as that I/O does.
+
+Stateid lookup also checks recovered staging from earlier daemon epochs.
+`issued_by_this_process=false` does not mean the stateid is unknown locally.
+If busy staging files prevent a complete lookup, the candidate reports
+`incomplete=true`; `known=false` then does not establish that staging is
+absent. Retry when the files are no longer busy.
+
+Staging responses report `incomplete=true` when they contain locked entries.
+Those entries provide their file, target and hydration activity; other fields
+are unavailable. An incarnation filter keeps locked entries whose owner is
+unknown as possible matches, rather than hiding a client's busy writer. The
+failed tombstones follow a `file` filter but not an `incarnation` filter,
+since a tombstone records no owner. Locked slots and confirmation attempts
+are reported in place; sessions and confirmations have no response-level
+`incomplete` flag. The `hydrating` flag is cleared when the hydration worker
+completes, including after cancellation.
+
+When nfsd will not start, or a host's store should be read without
+disturbing a running server, `-store-only` serves the API without the NFS
+listener:
+
+```sh
+nfsd -store-only -registry <addr> -staging <dir> -status-addr 127.0.0.1:9049
+```
+
+It opens the client store read-only and never opens the staging store, which
+would quarantine and truncate sidecars during recovery; `/v1/store?staging=1`
+reads them with the inspector instead. `mode` is `store-only`, and the
+resources that describe a running server return 503.
+
+The API has no authentication. Bind it to a loopback or management address.
+
+### The store report
+
+`/v1/store` reads the client store and explains its current state. It uses
 the same record definitions and lease rules as the server, but does not
-modify the store.
+modify the store. It works in both modes.
 
-```
-nfsd inspect -registry <addr> [-staging <dir>] [-json]
-nfsd inspect -registry <addr> -identity "Linux NFSv4.1 host"
-nfsd inspect -registry <addr> -identity-hash <hash>
-nfsd inspect -registry <addr> -clientid 0x200000000000000e
-nfsd inspect -registry <addr> -stateid 09cb5ee40000000000000001
+```sh
+curl -s 'http://127.0.0.1:9049/v1/store' | jq .report.summary
+curl -s 'http://127.0.0.1:9049/v1/store?identity=Linux%20NFSv4.1%20host' | jq .report
+curl -s 'http://127.0.0.1:9049/v1/store?incarnation=incarnation:200000000000000e' | jq .report
+curl -s 'http://127.0.0.1:9049/v1/store?stateid=stateid:09cb5ee40000000000000001' | jq .report
+curl -s 'http://127.0.0.1:9049/v1/store?staging=1' | jq .report.staging_summary
 ```
 
-With no filter, the command reports every identity. At most one filter may be
-specified. `-clientid` and `-stateid` take the values shown to a client or in
-a packet capture. The clientid is the incarnation directory inode. The
-stateid is the 12-byte `other` field. `-json` emits the same report in a
-machine-readable form.
+With no selector, the report covers every identity. At most one of
+`identity`, `identity-hash`, `incarnation` and `stateid` may be given, each in
+its typed spelling; `identity` is the raw EXCHANGE_ID owner string. An
+`incarnation` must be a directory inode. The clientid an NFSv4.1 client sees
+is a wire clientid, which only `/v1/lookup` on the issuing process can
+resolve. The report echoes the selector under `filter`.
 
 For each identity, the report shows the stored identity string and its
-`confirmed` and `pending` pointers. It then shows every incarnation and its
-roles: `confirmed`, `pending`, `reboot-target` or `unreachable`. The summary
-and each incarnation use distinct lifecycle states:
+`confirmed` and `pending` pointers, then every incarnation and its roles:
+`confirmed`, `pending`, `reboot-target` or `unreachable`. The summary and
+each incarnation use distinct lifecycle states:
 
 - `ACTIVE` is confirmed and has a live lease.
 - `EXPIRED` had a lease which elapsed and cannot renew.
@@ -939,85 +1049,56 @@ and each incarnation use distinct lifecycle states:
 - `UNREACHABLE` has no persistent pointer keeping it live.
 
 Each incarnation includes its client and update records, decoded principal,
-lease and confirming slots, expiry marker, GC deadline,
-open markers and temporary files. Lease slots name the nfsd which wrote them.
-The first four bytes of an open stateid identify the nfsd process which issued
-it. An open marker is `STALE` when its incarnation is not active.
-
-Expired slots and temporary files are marked `collectable` once they are old
-enough for collection. An expired lease slot is only removed when a daemon
-next scans that client; the lease sweeper does not walk the entire shared
-store. The inspector does not remove anything. It also does not create the
-`expired` or `gc` records which a server scan may add. The report is a
-read-only view of the state at that point in time.
+lease and confirming slots, expiry marker, GC deadline, open markers and
+temporary files. Lease slots name the nfsd which wrote them. The first four
+bytes of an open stateid identify the nfsd process which issued it. An open
+marker is `STALE` when its incarnation is not active. Expired slots and
+temporary files are marked `collectable` once they are old enough for
+collection. The report removes nothing and creates nothing; it is a read-only
+view of the store at that instant.
 
 Open markers do not say which file they belong to. That association lives in
 the process-local open state and, for write opens, in the staging sidecars on
-the nfsd host. `-staging` reads those sidecars and joins them to open markers
-by stateid. This adds the target directory, file name and staged size to the
-report. It also reports the sidecar format version, construction cookie,
-recovery key, owning client and open owner, access mode, base inode and size,
-checkpointed logical size and dirty ranges, writer attributes and the
-EXCLUSIVE4 verifier when present, plus the `unlinked` and `guarded` namespace
-flags. An entry is `RETIRED` when its lease expired and the acknowledged data
-is being held for the client to reclaim. The staging summary includes logical
-and allocated bytes. Uncheckpointed writes and in-memory hydration progress
-are not visible.
+the nfsd host. `staging=1` reads the server's own staging directory and joins
+the sidecars to open markers by stateid, adding the target directory, file
+name, staged size, sidecar version, owning client and open owner, access mode,
+base inode and size, checkpointed size and dirty ranges, writer attributes,
+the EXCLUSIVE4 verifier when present, and the `unlinked` and `guarded` flags.
+An entry is `RETIRED` when its lease expired and the acknowledged data is held
+for the client to reclaim. Uncheckpointed writes and in-memory hydration
+progress are not visible here; `/v1/staging` shows them. The sidecar version
+is the on-disk layout, such as `v8`, not an NFS version.
 
-The reported sidecar version is the on-disk metadata layout, printed as `v8`.
-It is not an NFS protocol version.
+The staging directory is read as `.staging` and `.meta` pairs named with the
+file inode as sixteen hex digits, which is how recovery looks them up.
+Missing or malformed files, metadata temporaries and names that do not match
+that spelling are reported. Quarantined files are listed under `quarantined`;
+see [Restart and quarantine](#restart-and-quarantine). Sidecars without an
+open marker are shown under their client. In an unfiltered report, sidecars
+belonging to no client in the store are listed once under `staging`. A
+filtered report has not read the other identities, so it cannot tell an
+orphan from another client's file: it counts those sidecars in
+`staging_summary.other_clients` instead of listing them.
 
-The inspector reads the staging directory as `.staging` and `.meta` pairs named
-with the file inode as sixteen hex digits, which is how recovery looks them up.
-It reports missing or malformed files, metadata temporaries and any name which
-does not match that spelling. Quarantined files are listed separately; see
-[Restart and quarantine](#restart-and-quarantine) for the reasons an entry
-can be quarantined. A missing staging path is an error rather than an empty
-report. The staging directory is local, so this option must run on the nfsd
-host which owns it.
-
-Sidecars without an open marker are shown under their client. In an unfiltered
-report, sidecars belonging to no client in the store are listed once at the end.
-A filtered report has not read the other identities, so it cannot tell an orphan
-from another client's file: it counts those sidecars instead of listing them, and
-says so. Rerun without a filter to see them.
-
-### Exit status
-
-The command is usable as a monitoring check without parsing its output:
-
-| status | meaning |
-| --- | --- |
-| 0 | the report was produced and found no problems |
-| 1 | the report could not be produced |
-| 2 | usage error |
-| 3 | the report was produced and found problems |
-
-A problem is a defect: an unreadable or missing record, a dangling `confirmed`,
-`pending` or `reboot` pointer, an unrecognized entry in an incarnation
-directory, a broken or unpaired staging file, or a quarantined checkpoint. The
-count appears as `problems` in the summary line, again at the end of the text
-report, and as `summary.problems` in the JSON.
-
-Expired leases, stale open markers, unreachable incarnations, collectable slots
-and temporaries, and retired staging entries are **not** problems. They are the
-states the lifecycle is meant to pass through, and a check which fired on them
-would fire constantly.
-
-A filter which selects nothing is also not a problem: a stale clientid, an
-unregistered identity, a stateid with no marker, or the `directory` inode
-pasted into `-clientid` by mistake. Those are answers to the question asked, so
-they are reported as a `note` and exit 0. Notes are collected under `notes` in
-the JSON.
-
-Because a filtered report only reads the selected clients, its exit status
-covers those clients and the layout of the staging directory; defects inside
-sidecars belonging to other clients are neither shown nor counted. Run without
-a filter to check the whole store.
+`summary.problems` counts defects: an unreadable or missing record, a
+dangling `confirmed`, `pending` or `reboot` pointer, an unrecognized entry in
+an incarnation directory, a directory under `clients` whose name is not an
+identity hash, a broken or unpaired staging file, or a quarantined
+checkpoint. Malformed names are reported as found; the report never invents
+a typed id for them. Each is also listed under `problems` where it was found. Expired
+leases, stale open markers, unreachable incarnations, collectable slots and
+temporaries, and retired staging entries are **not** problems; they are the
+states the lifecycle is meant to pass through. A selector that matches
+nothing is not a problem either: a stale clientid, an unregistered identity,
+a stateid with no marker, or an identity directory inode given as
+`incarnation`.
+Those are answers to the question asked and appear under `notes`.
 
 At startup each nfsd logs its `nfsd_id`, which names its `lease.` and
-`confirming.` slots, and its `stateid_epoch`. Grep the fleet's logs for these
-values to find the process which holds a lease slot or issued a stateid.
+`confirming.` slots, its `stateid_epoch`, and its wire clientid `epoch`. Grep
+the fleet's logs for these values to find the process which holds a lease
+slot or issued a stateid, session or clientid; `/v1/status` on a running
+process reports the same three.
 
 ## Profile and limitations
 
@@ -1179,7 +1260,9 @@ The Go tests live in [`test/libnfs`](test/libnfs); the pynfs runner is
 `GO_TEST_FLAGS=-short` for libnfs or add `-short` to `TEST_ARGS` for pynfs.
 The NFSv4.1 pynfs suite has no `timed` flag, so the runner's `-short` excludes
 its lease-waiting cases by test code.
-Failed runs retain logs and test data;
+Failed runs retain logs and test data, and each server's directory gains a
+`diagnostics/` dump of the index and the in-memory resources, fetched before
+the process is stopped and skipped if it has already exited;
 `-artifacts-dir DIR` selects their local parent directory. Pynfs should run
 serially per existing filesystem because some cases reuse client identities.
 

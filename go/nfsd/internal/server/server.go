@@ -62,6 +62,11 @@ type Server struct {
 	MaxInFlightPerConn int
 	log                *slog.Logger
 	startedAt          time.Time
+	NFSAddr            string // the -addr flag, for diagnostics
+
+	// Live connections, for diagnostics only; connsMu guards the map.
+	connsMu sync.Mutex
+	conns   map[*rpcConnection]struct{}
 
 	foregroundReads atomic.Int64
 	hydrationSlots  chan struct{}
@@ -400,7 +405,8 @@ func (s *Server) listen(addr string) (net.Listener, error) {
 
 func (s *Server) handleConn(conn net.Conn) {
 	remote := conn.RemoteAddr().String()
-	association := &rpcConnection{remote: remote}
+	association := &rpcConnection{remote: remote, connectedAt: s.clients.Now()}
+	defer s.untrackConn(association)
 	defer s.disconnectBack(association)
 	s.log.Info("client connected", "remote", remote)
 	var closed atomic.Bool
@@ -443,6 +449,9 @@ func (s *Server) handleConn(conn net.Conn) {
 		writeReply(frame)
 		return !closed.Load()
 	}
+	// Published to diagnostics only once closed and send are set, since a
+	// snapshot reads them without the connection's lock.
+	s.trackConn(association)
 	run := func(req *rpcRequest) {
 		defer workers.Done()
 		defer req.releaseReply()
@@ -450,6 +459,7 @@ func (s *Server) handleConn(conn net.Conn) {
 			requestsMu.Lock()
 			delete(inFlight, req.xid)
 			requestsMu.Unlock()
+			association.inFlight.Add(-1)
 			<-slots
 			if recovered := recover(); recovered != nil {
 				closeConnection()
@@ -516,6 +526,8 @@ func (s *Server) handleConn(conn net.Conn) {
 		previous, duplicate := inFlight[req.xid]
 		if !duplicate {
 			inFlight[req.xid] = frame
+			association.inFlight.Add(1)
+			association.requests.Add(1)
 		}
 		requestsMu.Unlock()
 		if duplicate {
@@ -537,6 +549,21 @@ func (s *Server) handleConn(conn net.Conn) {
 			run(req)
 		}
 	}
+}
+
+func (s *Server) trackConn(c *rpcConnection) {
+	s.connsMu.Lock()
+	defer s.connsMu.Unlock()
+	if s.conns == nil {
+		s.conns = make(map[*rpcConnection]struct{})
+	}
+	s.conns[c] = struct{}{}
+}
+
+func (s *Server) untrackConn(c *rpcConnection) {
+	s.connsMu.Lock()
+	defer s.connsMu.Unlock()
+	delete(s.conns, c)
 }
 
 func (s *Server) handleRPC(req *rpcRequest, remote string) []byte {

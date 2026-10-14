@@ -6,6 +6,8 @@ package server
 
 import (
 	"sync"
+	"sync/atomic"
+	"time"
 )
 
 // Forechannel association belongs to the live TCP connection, not its remote
@@ -33,6 +35,11 @@ type rpcConnection struct {
 	// closed when the connection ends. Both are set by handleConn.
 	send   func([]byte) bool
 	closed <-chan struct{}
+	// For diagnostics: when the connection was accepted, the requests
+	// admitted and not yet replied to, and the requests admitted in total.
+	connectedAt time.Time
+	inFlight    atomic.Int32
+	requests    atomic.Uint64
 }
 
 func (c *rpcConnection) associated(id SessionID) bool {
