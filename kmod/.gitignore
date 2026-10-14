@@ -4,6 +4,7 @@
 
 *.qcow2
 compile_commands.json
+registry_tests
 *.o
 *.d
 *.cmd

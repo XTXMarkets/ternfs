@@ -81,7 +81,7 @@ extra-files-clean:
 	rm -f $(LOCAL_FILES) revision.c *.o
 
 # C=1 builds with sparse
-ternfs-client-tests: revision.c extra-files
+ternfs-client-tests: revision.c extra-files registry-tests
 	$(MAKE) -C $(KDIR) M=$(CURDIR) C=1 modules
 
 ternfs-client-clean:
@@ -92,9 +92,18 @@ ternfs-client-clean:
 bincode_tests: bincode_tests.c bincodegen.h bincode.h
 	gcc -Wall -g -O2 -fsanitize=undefined,address -fno-sanitize-recover=all bincode_tests.c -o bincode_tests
 
-bincode_tests-clean:
-	rm -f bincode_tests rs_tests ubuntu.img test-out trace vm-out dmesg
+registry_tests: registry_tests.c registry_dns.h
+	gcc -Wall -Wextra -Werror -g -O1 -fsanitize=undefined,address -fno-sanitize-recover=all registry_tests.c -o registry_tests
+
+.PHONY: registry-tests tests-clean bincode_tests-clean
+registry-tests: registry_tests
+	./registry_tests
+
+tests-clean:
+	rm -f bincode_tests registry_tests rs_tests ubuntu.img test-out trace vm-out dmesg
 	rm -rf tmp
+
+bincode_tests-clean: tests-clean
 
 dkms-version:
 	cp debian_tmpl/* debian/. && find debian -maxdepth 1 -type f -exec sed -i "s/##VERSION##/$(FULL_MINOR_VERSION)/g" {} \;
@@ -113,4 +122,4 @@ ternfs-client:
 ternfs-client-local: revision.c extra-files
 	$(MAKE) -C $(KDIR) M=$(CURDIR) modules
 
-clean: ternfs-client-clean bincode_tests-clean
+clean: ternfs-client-clean tests-clean

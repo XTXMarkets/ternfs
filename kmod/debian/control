@@ -7,5 +7,6 @@ Build-Depends: debhelper (>= 10), dkms
 Package: ternfs-client-dkms
 Architecture: amd64
 Depends: dkms (>= 2.2), ${misc:Depends}, linux-headers-generic
+Recommends: keyutils
 Description: ternfs client module (DKMS)
  Builds and installs the ternfs kernel module for all installed kernels.

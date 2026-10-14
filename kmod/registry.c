@@ -18,6 +18,7 @@
 #include "err.h"
 #include "super.h"
 #include "net_compat.h"
+#include "registry_dns.h"
 
 void ternfs_write_registry_req_header(char* buf, u32 req_len, u8 req_kind) {
     put_unaligned_le32(TERNFS_REGISTRY_REQ_PROTOCOL_VERSION, buf); buf += 4;
@@ -83,7 +84,13 @@ static int ternfs_parse_ipv4_addr(const char* str, int len, struct sockaddr_in* 
     return 0;
 }
 
-static int ternfs_resolve_domain_name_addr(struct ternfs_registry_addr* saddr, struct sockaddr_in* addr) {
+static int ternfs_resolve_domain_name_addrs(
+    struct ternfs_registry_addr* saddr,
+    struct sockaddr_in* addr1,
+    struct sockaddr_in* addr2
+) {
+    static_assert(TERNFS_MAX_REGISTRY_ADDRS == 2);
+    struct sockaddr_in* addrs[TERNFS_MAX_REGISTRY_ADDRS] = {addr1, addr2};
     const char* domain_name_end = strchr(saddr->addr, ':');
     if (domain_name_end == NULL) {
         ternfs_info("registry address %s does not have port", saddr->addr);
@@ -92,13 +99,27 @@ static int ternfs_resolve_domain_name_addr(struct ternfs_registry_addr* saddr, s
 
     ternfs_debug("resolving address %s", saddr->addr);
 
+    u16 port;
+    {
+        int err = kstrtou16(domain_name_end+1, 10, &port);
+        if (err < 0) {
+            ternfs_info("bad port in registry address %s: %d", saddr->addr, err);
+            return err;
+        }
+        if (port == 0) {
+            ternfs_info("registry address %s has zero port", saddr->addr);
+            return -EINVAL;
+        }
+    }
+
     char* ip_addr = NULL;
+    // Without "list", key.dns_resolver's legacy mode returns only one address.
     int ip_len = dns_query(
         saddr->net,
         NULL,
         saddr->addr,
         domain_name_end - saddr->addr,
-        NULL,
+        "ipv4 list",
         &ip_addr,
         NULL,
         false
@@ -107,23 +128,48 @@ static int ternfs_resolve_domain_name_addr(struct ternfs_registry_addr* saddr, s
         ternfs_info("could not resolve registry address %s: %d", saddr->addr, ip_len);
         return ip_len;
     }
-    size_t addrsz = rpc_pton(saddr->net, ip_addr, ip_len, (struct sockaddr*)addr, sizeof(*addr));
-    kfree(ip_addr);
-    if (addrsz == 0) {
-        ternfs_info("could not parse DNS query result for registry address %s: %d", saddr->addr, ip_len);
+
+    struct ternfs_registry_dns_token tokens[TERNFS_MAX_REGISTRY_ADDRS];
+    size_t num_addrs = ternfs_registry_dns_tokens(
+        ip_addr,
+        ip_len,
+        tokens,
+        ARRAY_SIZE(tokens)
+    );
+    if (num_addrs == 0) {
+        ternfs_info(
+            "could not parse DNS query result for registry address %s: %*pE",
+            saddr->addr,
+            ip_len,
+            ip_addr
+        );
+        kfree(ip_addr);
         return -EINVAL;
     }
 
-    u16 port;
-    {
-        int err = kstrtou16(domain_name_end+1, 10, &port);
-        if (err < 0) {
-            return err;
+    size_t ix;
+    for (ix = 0; ix < num_addrs; ix++) {
+        size_t addrsz = rpc_pton(
+            saddr->net,
+            tokens[ix].data,
+            tokens[ix].len,
+            (struct sockaddr*)addrs[ix],
+            sizeof(*addrs[ix])
+        );
+        if (addrsz == 0 || addrs[ix]->sin_family != AF_INET) {
+            ternfs_info("could not parse DNS address %zu for registry address %s", ix, saddr->addr);
+            kfree(ip_addr);
+            return -EINVAL;
         }
+        addrs[ix]->sin_port = htons(port);
+        ternfs_debug(
+            "resolved address %s to %pI4:%d",
+            saddr->addr,
+            &addrs[ix]->sin_addr,
+            ntohs(addrs[ix]->sin_port)
+        );
     }
-    addr->sin_port = htons(port);
-
-    ternfs_debug("resolved address %s to %pI4:%d", saddr->addr, &addr->sin_addr, ntohs(addr->sin_port));
+    kfree(ip_addr);
 
     return 0;
 }
@@ -137,7 +183,7 @@ int ternfs_process_registry_addr(struct ternfs_registry_addr* saddr, struct sock
     if (addr1_end == NULL) { // only one address
         int err = ternfs_parse_ipv4_addr(saddr->addr, addr_len, addr1);
         if (err == -EINVAL) {
-            return ternfs_resolve_domain_name_addr(saddr, addr1);
+            return ternfs_resolve_domain_name_addrs(saddr, addr1, addr2);
         }
         return err;
     } else if (saddr->addr + addr_len == addr1_end) {
@@ -151,18 +197,9 @@ int ternfs_process_registry_addr(struct ternfs_registry_addr* saddr, struct sock
     }
 }
 
-int ternfs_create_registry_socket(struct ternfs_registry_addr* saddr, struct socket** sock) {
+static int ternfs_create_registry_tcp_socket(struct socket** sock) {
     int err;
 
-    struct sockaddr_in addrs[2];
-    memset(&addrs, 0, sizeof(addrs));
-
-    err = ternfs_process_registry_addr(saddr, &addrs[0], &addrs[1]);
-    if (err) {
-        return err;
-    }
-
-    // create socket
     err = sock_create_kern(&init_net, PF_INET, SOCK_STREAM, IPPROTO_TCP, sock);
     if (err < 0) {
         ternfs_warn("could not create registry socket: %d", err);
@@ -190,19 +227,56 @@ int ternfs_create_registry_socket(struct ternfs_registry_addr* saddr, struct soc
         goto out_sock;
     }
 
+    return 0;
+
+out_sock:
+    sock_release(*sock);
+    *sock = NULL;
+    return err;
+}
+
+int ternfs_create_registry_socket(struct ternfs_registry_addr* saddr, struct socket** sock) {
+    int err;
+
+    struct sockaddr_in addrs[TERNFS_MAX_REGISTRY_ADDRS];
+    memset(&addrs, 0, sizeof(addrs));
+
+    err = ternfs_process_registry_addr(saddr, &addrs[0], &addrs[1]);
+    if (err) {
+        return err;
+    }
+
+    *sock = NULL;
+    err = -EINVAL;
     u64 start = get_jiffies_64();
     u64 i;
-    for (i = start; i < start+2; i++) {
-        int ix = i%2;
+    for (i = start; i < start+ARRAY_SIZE(addrs); i++) {
+        int ix = i%ARRAY_SIZE(addrs);
         struct sockaddr_in* addr = &addrs[ix];
         if (addr->sin_port == 0) {
             ternfs_debug("skipping zero port address val %pI4:%d", &addr->sin_addr, ntohs(addr->sin_port));
             continue;
         }
         ternfs_debug("connecting to address %pI4:%d", &addr->sin_addr, ntohs(addr->sin_port));
-        err = kernel_connect(*sock, (struct sockaddr*)addr, sizeof(*addr), 0);
+
+        err = ternfs_create_registry_tcp_socket(sock);
         if (err < 0) {
-            ternfs_warn("could not connect to registry addr %pI4:%d, might retry", &addr->sin_addr, ntohs(addr->sin_port));
+            return err;
+        }
+        err = kernel_connect(*sock, (struct sockaddr*)addr, sizeof(*addr), 0);
+        if (err == -EINPROGRESS) {
+            // Blocking connect timed out while TCP was still in SYN_SENT.
+            err = -ETIMEDOUT;
+        }
+        if (err < 0) {
+            ternfs_warn(
+                "could not connect to registry addr %pI4:%d: %d, might retry",
+                &addr->sin_addr,
+                ntohs(addr->sin_port),
+                err
+            );
+            sock_release(*sock);
+            *sock = NULL;
             continue;
         }
         ternfs_debug("connected to registry");
@@ -210,10 +284,5 @@ int ternfs_create_registry_socket(struct ternfs_registry_addr* saddr, struct soc
         return 0;
     }
 
-out_sock:
-    // this would only happens with two zero addresses,
-    // which we guard against elsewhere in the code.
-    BUG_ON(err == 0);
-    sock_release(*sock);
     return err;
 }
