@@ -8,6 +8,7 @@
 #include <linux/fs.h>
 
 #include "dentry.h"
+#include "block.h"
 #include "span.h"
 #include "log.h"
 
@@ -53,9 +54,13 @@ static umode_t ternfs_stat_visible(struct kobject *kobj, struct attribute *attr,
 #define TERNFS_SYSFS_COUNTER_PTR(_name) (&ternfs_sysfs_counter_##_name.kobj_attr.attr)
 
 TERNFS_SYSFS_COUNTER(dir_revalidations);
+TERNFS_SYSFS_COUNTER(block_read_bytes);
+TERNFS_SYSFS_COUNTER(block_write_bytes);
 
 static struct attribute* ternfs_stat_attrs[] = {
     TERNFS_SYSFS_COUNTER_PTR(dir_revalidations),
+    TERNFS_SYSFS_COUNTER_PTR(block_read_bytes),
+    TERNFS_SYSFS_COUNTER_PTR(block_write_bytes),
     NULL
 };
 

@@ -13,6 +13,12 @@
 #include <net/tcp.h>
 
 #include "bincode.h"
+#include "counter.h"
+
+// Block payload transferred, including partial/failed attempts and retries.
+// Excludes protocol headers and CRCs. Reset when the module is loaded.
+TERNFS_DECLARE_COUNTER(ternfs_stat_block_read_bytes);
+TERNFS_DECLARE_COUNTER(ternfs_stat_block_write_bytes);
 
 #define TERNFS_MAX_BLOCK_SIZE (100 << 20) // 100MiB
 

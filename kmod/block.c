@@ -39,6 +39,9 @@ int ternfs_block_service_bad_addr_cooldown_jiffies = MSECS_TO_JIFFIES(2 * 60 * 1
 static u64 WHICH_BLOCK_IP = 0;
 static bool block_stopping;
 
+TERNFS_DEFINE_COUNTER(ternfs_stat_block_read_bytes);
+TERNFS_DEFINE_COUNTER(ternfs_stat_block_write_bytes);
+
 // Bad-address cooldown table.
 //
 // When a connect attempt to a block service address fails we record the
@@ -1305,6 +1308,7 @@ static int fetch_receive_single_req(
 
     // Actual data copy
 
+    u32 bytes_fetched0 = req->bytes_fetched;
     struct page* page = list_first_entry(&req->pages, struct page, lru);
     BUG_ON(!page);
     char* page_ptr = kmap_atomic(page);
@@ -1366,6 +1370,7 @@ static int fetch_receive_single_req(
 
     kunmap_atomic(page_ptr);
 
+    ternfs_counter_add(ternfs_stat_block_read_bytes, req->bytes_fetched - bytes_fetched0);
     return header_read + block_bytes_read;
 }
 
@@ -1652,6 +1657,7 @@ static int write_block_write_req(struct block_socket* socket, struct block_reque
             break;
         }
         if (sent < 0) { err = sent; goto out_err; }
+        ternfs_counter_add(ternfs_stat_block_write_bytes, sent);
         page->index += sent;
         write_req_written += sent;
         if (page->index >= PAGE_SIZE) {

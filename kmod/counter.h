@@ -13,6 +13,7 @@
 
 #define ternfs_counter_inc(_counter) raw_cpu_inc(_counter)
 #define ternfs_counter_dec(_counter) raw_cpu_dec(_counter)
+#define ternfs_counter_add(_counter, _value) this_cpu_add(_counter, _value)
 
 #define ternfs_counter_get(_counter) ({ \
         u64 total = 0; \
