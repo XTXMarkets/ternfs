@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -712,4 +713,297 @@ func TestCallbackArbitratesExpiry(t *testing.T) {
 			}
 		})
 	}
+}
+
+// recallReplyFrame builds a CB_COMPOUND reply with the given compound
+// status and raw result words.
+func recallReplyFrame(xid, compound uint32, results ...[]byte) []byte {
+	b := binary.BigEndian.AppendUint32(nil, xid)
+	b = binary.BigEndian.AppendUint32(b, rpcReply)
+	b = binary.BigEndian.AppendUint32(b, 0) // MSG_ACCEPTED
+	b = binary.BigEndian.AppendUint32(b, nfs4.AUTH_NONE)
+	b = binary.BigEndian.AppendUint32(b, 0)
+	b = binary.BigEndian.AppendUint32(b, acceptSuccess)
+	b = binary.BigEndian.AppendUint32(b, compound)
+	b = binary.BigEndian.AppendUint32(b, 0) // tag
+	b = binary.BigEndian.AppendUint32(b, uint32(len(results)))
+	for _, r := range results {
+		b = append(b, r...)
+	}
+	return b
+}
+
+func seqResult(status uint32, id SessionID, seq uint32) []byte {
+	b := binary.BigEndian.AppendUint32(nil, nfs4.OP_CB_SEQUENCE)
+	b = binary.BigEndian.AppendUint32(b, status)
+	if status == nfs4.NFS4_OK {
+		b = append(b, id[:]...)
+		for _, v := range []uint32{seq, 0, 0, 0} {
+			b = binary.BigEndian.AppendUint32(b, v)
+		}
+	}
+	return b
+}
+
+func recallResult(status uint32) []byte {
+	return binary.BigEndian.AppendUint32(binary.BigEndian.AppendUint32(nil, nfs4.OP_CB_RECALL_SLOT), status)
+}
+
+// The whole reply is validated before any of it is used.
+func TestRecallReplyValidation(t *testing.T) {
+	id := SessionID{7}
+	ok := seqResult(nfs4.NFS4_OK, id, 3)
+	for _, c := range []struct {
+		name  string
+		frame []byte
+		want  cbOutcome
+		bad   bool
+	}{
+		{"success", recallReplyFrame(1, nfs4.NFS4_OK, ok, recallResult(nfs4.NFS4_OK)), cbDone, false},
+		{"recall error", recallReplyFrame(1, nfs4.NFS4ERR_INVAL, ok, recallResult(nfs4.NFS4ERR_INVAL)), cbRecallRefused, false},
+		{"delay", recallReplyFrame(1, nfs4.NFS4ERR_DELAY, seqResult(nfs4.NFS4ERR_DELAY, id, 3)), cbRetry, false},
+		{"misordered", recallReplyFrame(1, nfs4.NFS4ERR_SEQ_MISORDERED, seqResult(nfs4.NFS4ERR_SEQ_MISORDERED, id, 3)), cbFault, false},
+		{"truncated second result", recallReplyFrame(1, nfs4.NFS4_OK, ok, recallResult(nfs4.NFS4_OK)[:4]), cbFault, true},
+		{"count two, one present", recallReplyFrame(1, nfs4.NFS4_OK, ok)[:0:0], cbFault, true},
+		{"only CB_SEQUENCE", recallReplyFrame(1, nfs4.NFS4_OK, ok), cbFault, true},
+		{"compound status disagrees", recallReplyFrame(1, nfs4.NFS4_OK, ok, recallResult(nfs4.NFS4ERR_INVAL)), cbFault, true},
+		{"delay status disagrees", recallReplyFrame(1, nfs4.NFS4_OK, seqResult(nfs4.NFS4ERR_DELAY, id, 3)), cbFault, true},
+		{"wrong second opcode", recallReplyFrame(1, nfs4.NFS4_OK, ok, binary.BigEndian.AppendUint32(binary.BigEndian.AppendUint32(nil, nfs4.OP_CB_SEQUENCE), 0)), cbFault, true},
+		{"trailing bytes", append(recallReplyFrame(1, nfs4.NFS4_OK, ok, recallResult(nfs4.NFS4_OK)), 0, 0, 0, 0), cbFault, true},
+		{"wrong session", recallReplyFrame(1, nfs4.NFS4_OK, seqResult(nfs4.NFS4_OK, SessionID{8}, 3), recallResult(nfs4.NFS4_OK)), cbFault, true},
+		{"wrong sequence", recallReplyFrame(1, nfs4.NFS4_OK, seqResult(nfs4.NFS4_OK, id, 4), recallResult(nfs4.NFS4_OK)), cbFault, true},
+	} {
+		frame := c.frame
+		if c.name == "count two, one present" {
+			frame = recallReplyFrame(1, nfs4.NFS4_OK, ok)
+			// Declare two results.
+			binary.BigEndian.PutUint32(frame[32:], 2)
+		}
+		r := parseRecallReply(frame, id, 3)
+		if r.malformed != c.bad || r.outcome() != c.want {
+			t.Errorf("%s: malformed %t outcome %d, want %t %d", c.name, r.malformed, r.outcome(), c.bad, c.want)
+		}
+	}
+}
+
+// A malformed reply faults without renewing or advancing; a valid
+// CB_SEQUENCE OK with a CB_RECALL_SLOT error advances and renews, records
+// the error, and neither faults nor retries.
+func TestRecallReplyEffects(t *testing.T) {
+	t.Run("malformed", func(t *testing.T) {
+		f := newCBSession(t)
+		f.client.answerNull(t)
+		sess := f.session(t)
+		f.pressure(t, true)
+		f.sequence(t)
+		call, ok := f.client.nextCall(testutil.ChannelTimeout)
+		if !ok {
+			t.Fatal("no recall")
+		}
+		endQuietForTest(f.srv)
+		id, seq, _, _ := cbRecall(t, call)
+		frame := recallReplyFrame(binary.BigEndian.Uint32(call[:4]), nfs4.NFS4_OK, seqResult(nfs4.NFS4_OK, id, seq))
+		f.client.write(frame)
+		waitFor(t, "fault", func() bool { fault, _ := sess.cb.flags(); return fault })
+		if !groupQuiet(f.srv, sess.clientID).IsZero() {
+			t.Fatal("a malformed reply renewed the lease")
+		}
+		sess.cb.mu.Lock()
+		next := sess.cb.seq
+		sess.cb.mu.Unlock()
+		if next != seq {
+			t.Fatalf("a malformed reply advanced the sequence to %d", next)
+		}
+		f.pressure(t, false)
+	})
+	t.Run("recall-error", func(t *testing.T) {
+		f := newCBSession(t)
+		f.client.answerNull(t)
+		sess := f.session(t)
+		f.pressure(t, true)
+		f.sequence(t)
+		call, ok := f.client.nextCall(testutil.ChannelTimeout)
+		if !ok {
+			t.Fatal("no recall")
+		}
+		endQuietForTest(f.srv)
+		id, seq, _, _ := cbRecall(t, call)
+		f.client.write(recallReplyFrame(binary.BigEndian.Uint32(call[:4]), nfs4.NFS4ERR_INVAL,
+			seqResult(nfs4.NFS4_OK, id, seq), recallResult(nfs4.NFS4ERR_INVAL)))
+		waitFor(t, "sequence advance", func() bool {
+			sess.cb.mu.Lock()
+			defer sess.cb.mu.Unlock()
+			return sess.cb.seq == seq+1 && !sess.cb.running
+		})
+		sess.cb.mu.Lock()
+		status, fault := sess.cb.lastRecallStatus, sess.cb.fault
+		sess.cb.mu.Unlock()
+		if status != nfs4.NFS4ERR_INVAL || fault {
+			t.Fatalf("recall status %d fault %t", status, fault)
+		}
+		if groupQuiet(f.srv, sess.clientID).IsZero() {
+			t.Fatal("a validated CB_SEQUENCE did not renew")
+		}
+		if _, again := f.client.nextCall(100 * time.Millisecond); again {
+			t.Fatal("the refused recall was retried")
+		}
+		f.pressure(t, false)
+	})
+}
+
+// Callbacks go only to a connection that has answered: not while its
+// CB_NULL is unanswered, nor as a resend after a disconnect.
+func TestCallbacksWaitForAnsweredPath(t *testing.T) {
+	t.Run("probing", func(t *testing.T) {
+		f := newCBSession(t)
+		null, ok := f.client.nextCall(testutil.ChannelTimeout)
+		if !ok || cbProc(null) != cbProcNull {
+			t.Fatal("no CB_NULL")
+		}
+		f.pressure(t, true)
+		f.sequence(t)
+		if _, sent := f.client.nextCall(200 * time.Millisecond); sent {
+			t.Fatal("a recall went to a connection still being probed")
+		}
+		f.client.answer(null, nil)
+		call, ok := f.client.nextCall(testutil.ChannelTimeout)
+		if !ok || cbProc(call) != cbProcCompound {
+			t.Fatal("no recall once the path was up")
+		}
+		f.client.answerSequence(t, call, nfs4.NFS4_OK)
+		f.pressure(t, false)
+	})
+	t.Run("resend", func(t *testing.T) {
+		f := newCBSession(t)
+		f.client.answerNull(t)
+		second := newCBTestClient(t, f.addr)
+		if res := second.compound(1000, admissionBind(f.ts.id, nfs4.CDFC4_BACK_OR_BOTH, false)); res.Status() != nfs4.NFS4_OK {
+			t.Fatalf("BIND %s", nfs4.Nfsstat4Name(res.Status()))
+		}
+		null, ok := second.nextCall(testutil.ChannelTimeout)
+		if !ok || cbProc(null) != cbProcNull {
+			t.Fatal("no CB_NULL on the second connection")
+		}
+		f.pressure(t, true)
+		f.sequence(t)
+		call, ok := f.client.nextCall(testutil.ChannelTimeout)
+		if !ok {
+			t.Fatal("no recall")
+		}
+		_, seq, _, _ := cbRecall(t, call)
+		f.client.conn.Close()
+		if _, sent := second.nextCall(200 * time.Millisecond); sent {
+			t.Fatal("resent to a connection still being probed")
+		}
+		second.answer(null, nil)
+		call, ok = second.nextCall(testutil.ChannelTimeout)
+		if !ok {
+			t.Fatal("not resent once the second path was up")
+		}
+		if _, again, _, _ := cbRecall(t, call); again != seq {
+			t.Fatalf("resent with sequence %d, want %d", again, seq)
+		}
+		second.answerSequence(t, call, nfs4.NFS4_OK)
+		f.pressure(t, false)
+	})
+}
+
+// A callback that timed out marks the path unresponsive, but its late,
+// validated reply marks it up again, so later callbacks still go out.
+func TestLateCallbackReplyRestoresPath(t *testing.T) {
+	shortCallbackTimeout(t, 50*time.Millisecond)
+	f := newCBSession(t)
+	f.client.answerNull(t)
+	f.pressure(t, true)
+	f.sequence(t)
+	call, ok := f.client.nextCall(testutil.ChannelTimeout)
+	if !ok {
+		t.Fatal("no recall")
+	}
+	time.Sleep(4 * cbTimeout)
+	f.client.answerSequence(t, call, nfs4.NFS4_OK)
+	f.pressure(t, false)
+	f.sequence(t)
+	f.pressure(t, true)
+	f.sequence(t)
+	call, ok = f.client.nextCall(testutil.ChannelTimeout)
+	if !ok {
+		t.Fatal("no recall after the late reply")
+	}
+	if _, seq, _, _ := cbRecall(t, call); seq != 2 {
+		t.Fatalf("sequence %d, want 2", seq)
+	}
+	f.client.answerSequence(t, call, nfs4.NFS4_OK)
+	f.pressure(t, false)
+}
+
+// A back channel offering no slots never gets a CB_COMPOUND;
+// the session still sees the halved target.
+func TestRecallNeedsABackSlot(t *testing.T) {
+	srv, addr, cleanup := startTestServerWithServer(t, t.TempDir())
+	defer cleanup()
+	f := newCBSessionLimits(t, srv, addr, maxRPCMessage, 0)
+	f.client.answerNull(t)
+	highest := uint32(len(f.session(t).slots) - 1)
+	f.pressure(t, true)
+	if _, target := f.sequence(t); target != highest/2 {
+		t.Fatalf("target %d, want %d", target, highest/2)
+	}
+	if _, sent := f.client.nextCall(200 * time.Millisecond); sent {
+		t.Fatal("a CB_COMPOUND went to a back channel with no slots")
+	}
+	f.pressure(t, false)
+}
+
+// A recall queued while it fitted, whose credential then grows
+// past the back channel's request size, is dropped unsent: no CB_COMPOUND,
+// the sequence is not consumed, nothing renews, and the sender exits.
+func TestRecallDroppedWhenCredentialGrows(t *testing.T) {
+	srv, addr, cleanup := startTestServerWithServer(t, t.TempDir())
+	defer cleanup()
+	f := newCBSessionLimits(t, srv, addr, minSessionRequest, 1)
+	null, ok := f.client.nextCall(testutil.ChannelTimeout)
+	if !ok || cbProc(null) != cbProcNull {
+		t.Fatal("no CB_NULL")
+	}
+	sess := f.session(t)
+	f.pressure(t, true)
+	f.sequence(t) // queues the recall; the path is still being probed
+	f.slotSeq++
+	ctl := buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
+		bw := w.AppendArgarray_BackchannelCtl()
+		bw.SetBcaCbProgram(0x40000001)
+		aw := bw.AppendBcaSecParms_Sys()
+		aw.SetStamp(1)
+		aw.SetMachinename([]byte(strings.Repeat("h", 255)))
+		aw.SetUid(1)
+		aw.SetGid(1)
+		gw := aw.StartGids()
+		aw.Resume(gw.Finish())
+		bw.Resume(aw.Finish())
+		w.Resume(bw.Finish())
+	})
+	if res := f.client.compound(f.next(), withSequence(ctl, f.ts, 0, f.slotSeq)); res.Status() != nfs4.NFS4_OK {
+		t.Fatalf("BACKCHANNEL_CTL %s", nfs4.Nfsstat4Name(res.Status()))
+	}
+	endQuietForTest(srv)
+	f.client.answer(null, nil)
+	waitFor(t, "sender exit", func() bool {
+		sess.cb.mu.Lock()
+		defer sess.cb.mu.Unlock()
+		return !sess.cb.running && !sess.cb.recall
+	})
+	if _, sent := f.client.nextCall(200 * time.Millisecond); sent {
+		t.Fatal("an oversized CB_COMPOUND was sent")
+	}
+	sess.cb.mu.Lock()
+	seq, fault := sess.cb.seq, sess.cb.fault
+	sess.cb.mu.Unlock()
+	if seq != 1 || fault {
+		t.Fatalf("sequence %d fault %t after the unsent recall", seq, fault)
+	}
+	if !groupQuiet(srv, sess.clientID).IsZero() {
+		t.Fatal("the unsent recall renewed the lease")
+	}
+	f.pressure(t, false)
 }

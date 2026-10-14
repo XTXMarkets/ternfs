@@ -1610,3 +1610,35 @@ func TestClientStoreHasOpenSlowPathDoesNotBlockFastPath(t *testing.T) {
 		t.Fatal("slow-path HasOpen did not find the durable marker")
 	}
 }
+
+func TestStagingRecoveryKeySeparatesBootsAndPrincipals(t *testing.T) {
+	fs := vfs.NewLocalTernVFS(t.TempDir())
+	cs, err := NewStore(fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := ClientOwner{Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "one"}}
+	key := func(identity string, verifier byte, principal string) [32]byte {
+		owner.Principal.Body = principal
+		id, _, err := cs.SetClientID([8]byte{verifier}, []byte(identity), owner)
+		if err != nil {
+			t.Fatal(err)
+		}
+		k, err := cs.StagingRecoveryKey(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return k
+	}
+	original := key("client", 1, "one")
+	if original != key("client", 1, "one") {
+		t.Fatal("incarnation changed recovery identity")
+	}
+	for _, other := range [][32]byte{
+		key("client", 2, "one"), key("client", 1, "two"), key("other", 1, "one"),
+	} {
+		if original == other {
+			t.Fatal("recovery identity crossed a client, boot or principal boundary")
+		}
+	}
+}

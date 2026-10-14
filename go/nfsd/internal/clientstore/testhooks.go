@@ -7,6 +7,7 @@ package clientstore
 import (
 	"errors"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
@@ -92,3 +93,19 @@ var errInjectedConfirm = errors.New("injected confirmation failure")
 // writeLeaseTemp marks the refresher's lease temps, which LinkFile creates.
 // No fault is ever set for it.
 const writeLeaseTemp WriteID = 99
+
+// refresherWorkerForTest is RefresherForTest with server hooks, so the
+// record has a worker that wakes are delivered to.
+func RefresherWorkerForTest(t testingT, fs *PassCountVFS) (*Store, uint64, *LeaseRefresher) {
+	t.Helper()
+	cs, clientID, r, _ := RefresherForTest(t, fs)
+	fs.LeaseName = cs.LeaseName
+	// Real time: no worker runs yet, so the field can still be set.
+	cs.Now = time.Now
+	var need atomic.Bool
+	need.Store(true)
+	cs.LeaseNeed = func(uint64) bool { return need.Load() }
+	cs.LeaseSessions = func(uint64) bool { return true }
+	t.Cleanup(cs.StopLeaseWorkers)
+	return cs, clientID, r
+}

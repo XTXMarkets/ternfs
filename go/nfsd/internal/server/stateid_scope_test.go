@@ -114,6 +114,7 @@ func TestForeignStateidsAreBadStateid(t *testing.T) {
 
 	liveSid, liveFH := openCreateFile(t, connA, &xidA, wireA, "a-live")
 	writeFileAt(t, connA, &xidA, liveFH, liveSid, 0, []byte("A's bytes"))
+	stagedBefore := srv.stagingStore.Get(stagingIDForTest(t, srv.stagingStore, liveSid)).Stat().Mtime
 	expSid, expFH := openCreateFile(t, connA, &xidA, wireA, "a-expired")
 	var expID nfs4.StateID
 	copy(expID[:], expSid[4:])
@@ -144,6 +145,11 @@ func TestForeignStateidsAreBadStateid(t *testing.T) {
 		t.Fatal(err)
 	}
 	xidB := uint32(100)
+	liveFile, _ := vfs.FHToInodeID(liveFH)
+	publishedBefore, err := srv.fs.Stat(liveFile)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, target := range []struct {
 		name string
 		fh   []byte
@@ -160,13 +166,18 @@ func TestForeignStateidsAreBadStateid(t *testing.T) {
 		}
 	}
 
-	// A's state survived.
+	// A's state survived, and B's timestamp SETATTRs changed no times.
 	var liveID nfs4.StateID
 	copy(liveID[:], liveSid[4:])
-	liveFile, _ := vfs.FHToInodeID(liveFH)
 	state, status := srv.opens.Lookup(incA, liveID, 0, liveFile)
 	if status != nfs4.NFS4_OK {
 		t.Fatalf("A's live open %s", nfs4.Nfsstat4Name(status))
+	}
+	if got := srv.stagingStore.Get(state.DataID).Stat().Mtime; !got.Equal(stagedBefore) {
+		t.Fatal("B's SETATTR changed A's staged times")
+	}
+	if got, _ := srv.fs.Stat(liveFile); !got.Mtime.Equal(publishedBefore.Mtime) {
+		t.Fatal("B's SETATTR changed the published times")
 	}
 	for _, id := range []vfs.InodeID{state.DataID, recStaging} {
 		if m, ok := srv.stagingStore.GetMeta(id); !ok || m.Retired {

@@ -5,6 +5,8 @@
 package clientstore
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"testing"
 	"time"
@@ -282,5 +284,42 @@ func TestRefresherRecordBudget(t *testing.T) {
 	cs.SweepLeaseRecords()
 	if _, ok := cs.ReserveLeaseRecord(2); !ok {
 		t.Fatal("credit not returned after the worker exited")
+	}
+}
+
+// A verify-only pass reads and does not write or remove anything: not
+// even another process's long-dead lease slot, which only an authorized
+// pass prunes.
+func TestVerifyPassIsReadOnly(t *testing.T) {
+	fs := &PassCountVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
+	cs, clientID, r := RefresherWorkerForTest(t, fs)
+	r.SafePass(true) // publish a fresh lease
+	dead, err := json.Marshal(DurableLease{ExpiresUnixNano: time.Now().Add(-10 * LeaseTime).UnixNano()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fs.TernVFS.CreateFile(vfs.InodeID(clientID), LeasePrefix+"otherprocess", bytes.NewReader(dead)); err != nil {
+		t.Fatal(err)
+	}
+	cs.LeaseNeed = func(uint64) bool { return false }
+	fs.Reset()
+	for range 20 {
+		cs.RequestLeaseVerify(clientID)
+		time.Sleep(50 * time.Millisecond)
+	}
+	reads, fences, writes, removes := fs.Counts()
+	if reads == 0 || reads > 3 {
+		t.Fatalf("%d verify passes for 20 requests in 1s", reads)
+	}
+	if fences != 0 || writes != 0 || removes != 0 {
+		t.Fatalf("verify passes wrote: fences %d writes %d removes %d", fences, writes, removes)
+	}
+	if _, err := fs.TernVFS.Lookup(vfs.InodeID(clientID), LeasePrefix+"otherprocess"); err != nil {
+		t.Fatal("a verify pass removed another process's slot")
+	}
+	// An authorized pass, with our lease live, prunes it.
+	r.SafePass(true)
+	if _, err := fs.TernVFS.Lookup(vfs.InodeID(clientID), LeasePrefix+"otherprocess"); err == nil {
+		t.Fatal("an authorized pass kept another process's long-dead slot")
 	}
 }

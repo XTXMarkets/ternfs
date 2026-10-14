@@ -65,7 +65,7 @@ func TestGroupHoldLastsThroughReplayTransport(t *testing.T) {
 	}
 
 	server, client := net.Pipe()
-	gate := &reviewBlockedWriteConn{Conn: server, entered: make(chan struct{}), release: make(chan struct{})}
+	gate := &blockedWriteConn{Conn: server, entered: make(chan struct{}), release: make(chan struct{})}
 	done := make(chan struct{})
 	go func() { defer close(done); srv.handleConn(gate) }()
 	defer func() {
@@ -179,7 +179,7 @@ func TestGroupClosingAndReplacedAdmission(t *testing.T) {
 	inc := ts.clientID
 	body := buildCompoundBody(nil, nil)
 
-	seq := srv.startSequence(ReadCOMPOUND4argsForTest(t, admissionSequence(body, ts, 0, 1, true)))
+	seq := srv.startSequence(sequenceArgsForTest(t, admissionSequence(body, ts, 0, 1, true)))
 	if seq.status != nfs4.NFS4_OK {
 		t.Fatalf("admission %s", nfs4.Nfsstat4Name(seq.status))
 	}
@@ -207,7 +207,7 @@ func TestGroupClosingAndReplacedAdmission(t *testing.T) {
 	slot := &ss.lookup(ts.id).slots[1]
 	before := admissionImage(slot)
 	next := admissionSequence(body, ts, 1, 1, true)
-	if seq := srv.startSequence(ReadCOMPOUND4argsForTest(t, next)); seq.status != nfs4.NFS4ERR_DELAY {
+	if seq := srv.startSequence(sequenceArgsForTest(t, next)); seq.status != nfs4.NFS4ERR_DELAY {
 		t.Fatalf("SEQUENCE while closing %s", nfs4.Nfsstat4Name(seq.status))
 	}
 	if after := admissionImage(slot); !reflect.DeepEqual(after, before) {
@@ -223,7 +223,7 @@ func TestGroupClosingAndReplacedAdmission(t *testing.T) {
 		t.Fatalf("CREATE_SESSION while closing %s", nfs4.Nfsstat4Name(status))
 	}
 	ss.reopen(inc)
-	seq = srv.startSequence(ReadCOMPOUND4argsForTest(t, next))
+	seq = srv.startSequence(sequenceArgsForTest(t, next))
 	if seq.status != nfs4.NFS4_OK {
 		t.Fatalf("SEQUENCE after reopen %s", nfs4.Nfsstat4Name(seq.status))
 	}
@@ -235,7 +235,7 @@ func TestGroupClosingAndReplacedAdmission(t *testing.T) {
 		t.Fatal("reopened incarnation cannot be replaced")
 	}
 	ss.replaced(inc)
-	if seq := srv.startSequence(ReadCOMPOUND4argsForTest(t, admissionSequence(body, ts, 2, 1, true))); seq.status != nfs4.NFS4ERR_BADSESSION {
+	if seq := srv.startSequence(sequenceArgsForTest(t, admissionSequence(body, ts, 2, 1, true))); seq.status != nfs4.NFS4ERR_BADSESSION {
 		t.Fatalf("SEQUENCE after replacement %s", nfs4.Nfsstat4Name(seq.status))
 	}
 	if _, status := ss.beginCreate(inc); status != nfs4.NFS4ERR_STALE_CLIENTID {
@@ -318,7 +318,7 @@ func createForTest(t *testing.T, srv *Server, clientID uint64, seq uint32) *test
 func heldReply(t *testing.T, srv *Server, call []byte) func() {
 	t.Helper()
 	server, client := net.Pipe()
-	gate := &reviewBlockedWriteConn{Conn: server, entered: make(chan struct{}), release: make(chan struct{})}
+	gate := &blockedWriteConn{Conn: server, entered: make(chan struct{}), release: make(chan struct{})}
 	done := make(chan struct{})
 	go func() { defer close(done); srv.handleConn(gate) }()
 	t.Cleanup(func() {

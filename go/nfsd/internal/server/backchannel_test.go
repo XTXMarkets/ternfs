@@ -8,9 +8,12 @@ import (
 	"bytes"
 	"encoding/binary"
 	"net"
+	"runtime"
 	"testing"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -277,5 +280,136 @@ func TestCallbackMapsBounded(t *testing.T) {
 	srv.sessions.destroySession(a)
 	if !c.bindBack(srv, connectionSession(t, srv).id) {
 		t.Fatal("a retired session's back association was not pruned")
+	}
+}
+
+// More create/destroy cycles on one connection than its back quota,
+// half with the CB_NULL answered and half not. Every new backchannel is
+// probed: retired sessions' back associations are pruned, and an
+// unanswered probe of a connection left with none is cancelled, its
+// goroutine gone.
+func TestBackchannelCyclesReuseConnection(t *testing.T) {
+	_, addr, cleanup := startTestServerWithServer(t, t.TempDir())
+	defer cleanup()
+	c := newCBTestClient(t, addr)
+	clientID, seq := exchangeOn(t, c, 1, "cycles")
+	xid := uint32(10)
+	baseline := 0
+	for i := range maxConnectionSessions + 6 {
+		xid++
+		id, flags := createdSession(t, c.compound(xid, backCreateSessionBody(clientID, seq,
+			nfs4.CREATE_SESSION4_FLAG_CONN_BACK_CHAN, offerNone)))
+		seq++
+		if flags&nfs4.CREATE_SESSION4_FLAG_CONN_BACK_CHAN == 0 {
+			t.Fatalf("cycle %d: no backchannel granted", i)
+		}
+		call, ok := c.nextCall(testutil.ChannelTimeout)
+		if !ok || cbProc(call) != cbProcNull {
+			t.Fatalf("cycle %d: no CB_NULL for the new backchannel", i)
+		}
+		if i%2 == 0 {
+			c.answer(call, nil)
+		}
+		xid++
+		if res := c.compound(xid, admissionDestroy(id)); res.Status() != nfs4.NFS4_OK {
+			t.Fatalf("cycle %d: DESTROY_SESSION %s", i, nfs4.Nfsstat4Name(res.Status()))
+		}
+		if i == 4 {
+			baseline = runtime.NumGoroutine()
+		}
+	}
+	if grown := runtime.NumGoroutine() - baseline; grown > 8 {
+		t.Fatalf("goroutines grew by %d over the cycles", grown)
+	}
+}
+
+// A back reservation still pending does not keep the probe of a
+// session that has gone. S0's CB_NULL is unanswered; S1's CREATE_SESSION
+// has reserved its back association and waits in its confirmation check;
+// S0 is destroyed. S0's probe is cancelled, by a prune meanwhile or at S1's
+// commit, and S1 gets its own CB_NULL.
+func TestPendingBackReservationDoesNotKeepOldProbe(t *testing.T) {
+	for _, prune := range []bool{true, false} {
+		t.Run(map[bool]string{true: "pruned meanwhile", false: "at commit"}[prune], func(t *testing.T) {
+			pendingBackProbe(t, prune)
+		})
+	}
+}
+
+func pendingBackProbe(t *testing.T, prune bool) {
+	fs := &confirmedLookupHold{TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
+		entered: make(chan struct{}), release: make(chan struct{})}
+	srv, err := NewServer(fs, staging.ReadOnlyStore{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr, stop := serveTestServer(t, srv)
+	defer stop()
+	defer testutil.CloseSignal(fs.release)
+	c := newCBTestClient(t, addr)
+	clientID, seq := exchangeOn(t, c, 1, "probe-owner")
+	s0, flags := createdSession(t, c.compound(2, backCreateSessionBody(clientID, seq,
+		nfs4.CREATE_SESSION4_FLAG_CONN_BACK_CHAN, offerNone)))
+	if flags&nfs4.CREATE_SESSION4_FLAG_CONN_BACK_CHAN == 0 {
+		t.Fatal("no backchannel granted")
+	}
+	if call, ok := c.nextCall(testutil.ChannelTimeout); !ok || cbProc(call) != cbProcNull {
+		t.Fatal("no CB_NULL for S0")
+	} // Left unanswered.
+	sess0 := srv.sessions.lookup(s0)
+	sess0.cb.mu.Lock()
+	conn := sess0.cb.conns[0]
+	sess0.cb.mu.Unlock()
+	if conn.outstandingCalls() != 1 {
+		t.Fatalf("%d outstanding calls, want S0's CB_NULL", conn.outstandingCalls())
+	}
+
+	// S1 reserves its back association, then waits in IsConfirmed.
+	srv.clients.StopLeaseWorkers() // no refresher reads the confirmed pointer
+	fs.mu.Lock()
+	fs.armed = true
+	fs.mu.Unlock()
+	s1Done := make(chan nfs4.COMPOUND4res, 1)
+	go func() {
+		s1Done <- c.compound(3, backCreateSessionBody(clientID, seq+1,
+			nfs4.CREATE_SESSION4_FLAG_CONN_BACK_CHAN, offerNone))
+	}()
+	testutil.AwaitSignal(t, fs.entered, "S1's confirmation check")
+	conn.mu.Lock()
+	pending := len(conn.backPending)
+	conn.mu.Unlock()
+	if pending != 1 {
+		t.Fatalf("%d pending back reservations, want S1's", pending)
+	}
+
+	if res := c.compound(4, admissionDestroy(s0)); res.Status() != nfs4.NFS4_OK {
+		t.Fatalf("DESTROY_SESSION S0 %s", nfs4.Nfsstat4Name(res.Status()))
+	}
+	if prune {
+		// Another reservation prunes the connection, as any later
+		// CREATE_SESSION or BIND would.
+		bt, ok := conn.reserveBack(srv, SessionID{0xff})
+		if !ok {
+			t.Fatal("reserving")
+		}
+		bt.abort()
+		if n := conn.outstandingCalls(); n != 0 {
+			t.Fatalf("S0's CB_NULL is still outstanding (%d calls) with only S1 pending", n)
+		}
+	}
+
+	testutil.CloseSignal(fs.release)
+	s1, flags := createdSession(t, testutil.AwaitValue(t, s1Done, "S1's CREATE_SESSION"))
+	if flags&nfs4.CREATE_SESSION4_FLAG_CONN_BACK_CHAN == 0 {
+		t.Fatal("no backchannel granted to S1")
+	}
+	call, ok := c.nextCall(testutil.ChannelTimeout)
+	if !ok || cbProc(call) != cbProcNull {
+		t.Fatal("no CB_NULL for S1's backchannel")
+	}
+	c.answer(call, nil)
+	waitFor(t, "S1's path up", func() bool { return conn.backPath() == cbPathUp })
+	if !conn.carriesBack(s1) || conn.carriesBack(s0) {
+		t.Fatal("the back associations are not S1's alone")
 	}
 }

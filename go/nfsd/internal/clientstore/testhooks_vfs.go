@@ -669,3 +669,74 @@ type lateLink struct {
 	name   string
 	data   []byte
 }
+
+// passCountVFS counts the refresher's calls: lease reads (one per pass's
+// evidence), fences and writes. Fences of temps can be made to fail.
+type PassCountVFS struct {
+	vfs.TernVFS
+	Mu                                  sync.Mutex
+	LeaseName                           string
+	leaseReads, fences, writes, removes int
+	FailRename, FailFence               bool
+}
+
+func (fs *PassCountVFS) Lookup(dir vfs.InodeID, name string) (vfs.InodeID, error) {
+	fs.Mu.Lock()
+	if name != "" && name == fs.LeaseName {
+		fs.leaseReads++
+	}
+	fs.Mu.Unlock()
+	return fs.TernVFS.Lookup(dir, name)
+}
+
+func (fs *PassCountVFS) ConstructFile(dir vfs.InodeID) (vfs.InodeID, vfs.Cookie, error) {
+	fs.Mu.Lock()
+	fs.writes++
+	fs.Mu.Unlock()
+	return fs.TernVFS.ConstructFile(dir)
+}
+
+func (fs *PassCountVFS) RenameEdge(src vfs.InodeID, old string, edge vfs.Edge, dst vfs.InodeID, name string) error {
+	fs.Mu.Lock()
+	fs.writes++
+	fail := fs.FailRename && LeaseTemp(old)
+	fs.Mu.Unlock()
+	if fail {
+		return ErrInjectedLease
+	}
+	return fs.TernVFS.RenameEdge(src, old, edge, dst, name)
+}
+
+func (fs *PassCountVFS) RemoveEdge(dir vfs.InodeID, name string, edge vfs.Edge) error {
+	fs.Mu.Lock()
+	temp := LeaseTemp(name)
+	if temp {
+		fs.fences++
+	}
+	fs.removes++
+	fail := fs.FailFence && temp
+	fs.Mu.Unlock()
+	if fail {
+		return ErrInjectedLease
+	}
+	return fs.TernVFS.RemoveEdge(dir, name, edge)
+}
+
+func (fs *PassCountVFS) Remove(dir vfs.InodeID, name string) error {
+	fs.Mu.Lock()
+	fs.removes++
+	fs.Mu.Unlock()
+	return fs.TernVFS.Remove(dir, name)
+}
+
+func (fs *PassCountVFS) Counts() (reads, fences, writes, removes int) {
+	fs.Mu.Lock()
+	defer fs.Mu.Unlock()
+	return fs.leaseReads, fs.fences, fs.writes, fs.removes
+}
+
+func (fs *PassCountVFS) Reset() {
+	fs.Mu.Lock()
+	defer fs.Mu.Unlock()
+	fs.leaseReads, fs.fences, fs.writes, fs.removes = 0, 0, 0, 0
+}
