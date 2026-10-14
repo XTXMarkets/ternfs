@@ -19,6 +19,8 @@ import (
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
+// Race detector test: incarnation snapshots read cached store locations
+// under their own lock while MarkOpen renews them.
 func TestDiagnosticsCachedClientDuringRenewal(t *testing.T) {
 	f := newDiagnosticsFixture(t)
 	done := make(chan error, 1)
@@ -47,6 +49,8 @@ func TestDiagnosticsCachedClientDuringRenewal(t *testing.T) {
 	}
 }
 
+// Race detector test: incarnation snapshots read a refresher's published
+// expiry under its mutex while the worker publishes.
 func TestDiagnosticsLeaseDuringPublication(t *testing.T) {
 	cs, id, r, _ := clientstore.RefresherForTest(t, vfs.NewLocalTernVFS(t.TempDir()))
 	srv := &Server{clients: cs, sessions: newSessionStore(1), opens: openstate.NewStore()}
@@ -109,6 +113,8 @@ func diagnosticStateid(epoch uint32, counter uint64) nfs4.StateID {
 	return id
 }
 
+// A stateid lookup tries a busy staging file's lock rather than waiting:
+// the answer is incomplete, and complete once the file is free.
 func TestDiagnosticsStateidLookupDoesNotWaitForStaging(t *testing.T) {
 	srv, store := diagnosticsStagingStore(t)
 	id := diagnosticStateid(srv.opens.Epoch, 1)
@@ -162,6 +168,8 @@ func TestDiagnosticsStateidLookupDoesNotWaitForStaging(t *testing.T) {
 	}
 }
 
+// A stateid from an earlier process resolves through its recovered staging,
+// and not once that staging is quarantined.
 func TestDiagnosticsStateidLookupFindsRecoveredEpoch(t *testing.T) {
 	srv, store := diagnosticsStagingStore(t)
 	id := diagnosticStateid(srv.opens.Epoch+1, 1)

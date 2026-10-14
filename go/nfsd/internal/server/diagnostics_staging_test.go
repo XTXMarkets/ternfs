@@ -16,6 +16,9 @@ import (
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
+// A staging file locked by a disk operation hides its owner, so an
+// incarnation filter keeps it and marks the result incomplete; a file filter
+// that excludes it gives a complete answer. The HTTP result says the same.
 func TestDiagnosticsStagingFilterKeepsUnknownOwners(t *testing.T) {
 	srv, store := diagnosticsStagingStore(t)
 	const first = vfs.InodeID(0x4000000000000001)
@@ -94,6 +97,8 @@ func TestDiagnosticsStagingFilterKeepsUnknownOwners(t *testing.T) {
 	}
 }
 
+// A file reports hydrating while its reader runs, including after a cancel
+// until the reader has exited.
 func TestDiagnosticsHydrationReportsWorkerActivity(t *testing.T) {
 	for _, stop := range []string{"complete", "cancel"} {
 		t.Run(stop, func(t *testing.T) {

@@ -50,6 +50,8 @@ func getJSON(t *testing.T, base, path string, want int) map[string]any {
 	return out
 }
 
+// The HTTP surface: the index, each resource and its filters, ids that
+// paste back between resources, the store report, JSON errors and pprof.
 func TestDiagnosticsHTTP(t *testing.T) {
 	f := newDiagnosticsFixture(t)
 	ts := httptest.NewServer(inspect.Handler(f.srv, f.srv))

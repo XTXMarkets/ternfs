@@ -112,10 +112,6 @@ func (f *confirmFixture) confirmedIs(t *testing.T) vfs.InodeID {
 	return id
 }
 
-func confirmResultLabel(r ConfirmResult) string {
-	return [...]string{"unresolved", "committed", "rolled back", "conservative"}[r]
-}
-
 // Each write's faults with an unchanged predecessor. Only D can commit, and
 // only on proof; an unfenceable write stays unresolved until a later
 // settle succeeds.
@@ -148,7 +144,7 @@ func TestConfirmationWriteFaults(t *testing.T) {
 				}
 				a := f.commit(t)
 				if a.Result() != want {
-					t.Fatalf("result %s, want %s", confirmResultLabel(a.Result()), confirmResultLabel(want))
+					t.Fatalf("result %s, want %s", confirmResultName(a.Result()), confirmResultName(want))
 				}
 				rec := a.writes[w]
 				if rec == nil || rec.submitted != c.submitted {
@@ -161,7 +157,7 @@ func TestConfirmationWriteFaults(t *testing.T) {
 				}
 				f.fs.Set(w, FaultNone, nil)
 				if got := f.store.SettleConfirmation(a); got != afterClear {
-					t.Fatalf("settled %s, want %s", confirmResultLabel(got), confirmResultLabel(afterClear))
+					t.Fatalf("settled %s, want %s", confirmResultName(got), confirmResultName(afterClear))
 				}
 				if rec.outcome() != c.outcome {
 					t.Fatalf("write outcome %d, want %d", rec.outcome(), c.outcome)
@@ -200,7 +196,7 @@ func TestConfirmationObservation(t *testing.T) {
 			f := newConfirmFixture(t, true)
 			f.fs.Set(WriteD, c.fault, func() { f.point(t, c.to(f)) })
 			if got := f.commit(t).Result(); got != c.want {
-				t.Fatalf("result %s, want %s", confirmResultLabel(got), confirmResultLabel(c.want))
+				t.Fatalf("result %s, want %s", confirmResultName(got), confirmResultName(c.want))
 			}
 		})
 	}
@@ -209,20 +205,20 @@ func TestConfirmationObservation(t *testing.T) {
 		f.fs.Set(WriteD, FaultNotApplied, func() { f.fs.FailLookup = true })
 		a := f.commit(t)
 		if a.Result() != confirmUnresolved {
-			t.Fatalf("result %s", confirmResultLabel(a.Result()))
+			t.Fatalf("result %s", confirmResultName(a.Result()))
 		}
 		f.fs.Mu.Lock()
 		f.fs.FailLookup = false
 		f.fs.Mu.Unlock()
 		if got := f.store.SettleConfirmation(a); got != ConfirmRolledBack {
-			t.Fatalf("settled %s", confirmResultLabel(got))
+			t.Fatalf("settled %s", confirmResultName(got))
 		}
 	})
 	t.Run("success", func(t *testing.T) {
 		f := newConfirmFixture(t, true)
 		a := f.commit(t)
 		if a.Result() != ConfirmCommitted || a.observed.file != a.writes[WriteD].inode {
-			t.Fatalf("result %s, observed %+v", confirmResultLabel(a.Result()), a.observed)
+			t.Fatalf("result %s, observed %+v", confirmResultName(a.Result()), a.observed)
 		}
 	})
 }
@@ -235,12 +231,12 @@ func TestConfirmationWithoutPredecessor(t *testing.T) {
 	f.fs.Set(WriteD, FaultNotApplied, nil)
 	a := f.commit(t)
 	if a.writes[writeB] != nil || a.Result() != ConfirmConservative {
-		t.Fatalf("B %+v, result %s", a.writes[writeB], confirmResultLabel(a.Result()))
+		t.Fatalf("B %+v, result %s", a.writes[writeB], confirmResultName(a.Result()))
 	}
 	f = newConfirmFixture(t, false)
 	a = f.commit(t)
 	if a.Result() != ConfirmCommitted || f.confirmedIs(t) != f.n {
-		t.Fatalf("result %s", confirmResultLabel(a.Result()))
+		t.Fatalf("result %s", confirmResultName(a.Result()))
 	}
 	if replaced, err := f.store.FinishReplacement(a); err != nil || replaced != 0 {
 		t.Fatalf("finish %d %v", replaced, err)
@@ -278,7 +274,7 @@ func TestConfirmationFinishReplacement(t *testing.T) {
 		f.fs.Set(writeB, faultPreSend, func() { f.point(t, f.n) })
 		a := f.commit(t)
 		if a.Result() != ConfirmCommitted {
-			t.Fatalf("result %s", confirmResultLabel(a.Result()))
+			t.Fatalf("result %s", confirmResultName(a.Result()))
 		}
 		if replaced, err := f.store.FinishReplacement(a); err != nil || replaced != 0 || !pMarker(t, f) {
 			t.Fatalf("finish %d %v purged without B", replaced, err)
@@ -359,7 +355,7 @@ func TestConfirmationPurgeBoundToCheckedReboot(t *testing.T) {
 				}
 				a := f.commit(t)
 				if a.Result() != ConfirmCommitted {
-					t.Fatalf("result %s", confirmResultLabel(a.Result()))
+					t.Fatalf("result %s", confirmResultName(a.Result()))
 				}
 				if retry {
 					// The first purge fails at P's first removal; the retry
@@ -415,7 +411,7 @@ func TestConfirmationAppliedThenPanic(t *testing.T) {
 			f.fs.Set(w, FaultAppliedPanic, nil)
 			a := f.commit(t)
 			if a.Result() != confirmUnresolved || a.Panicked == nil {
-				t.Fatalf("result %s, panic %v", confirmResultLabel(a.Result()), a.Panicked)
+				t.Fatalf("result %s, panic %v", confirmResultName(a.Result()), a.Panicked)
 			}
 			rec := a.writes[w]
 			if rec == nil || !rec.submitted || rec.err != errOutcomeUnknown || rec.inode == 0 {
@@ -431,7 +427,7 @@ func TestConfirmationAppliedThenPanic(t *testing.T) {
 				want = ConfirmCommitted
 			}
 			if got := f.store.SettleConfirmation(a); got != want {
-				t.Fatalf("settled %s, want %s", confirmResultLabel(got), confirmResultLabel(want))
+				t.Fatalf("settled %s, want %s", confirmResultName(got), confirmResultName(want))
 			}
 			if rec.outcome() != writeMaybe {
 				t.Fatalf("outcome %d", rec.outcome())
@@ -450,14 +446,14 @@ func TestConfirmationSettlementPanic(t *testing.T) {
 		f.fs.Set(WriteD, faultFencePanic, nil)
 		a := f.commit(t)
 		if a.Result() != confirmUnresolved || a.Panicked == nil {
-			t.Fatalf("result %s", confirmResultLabel(a.Result()))
+			t.Fatalf("result %s", confirmResultName(a.Result()))
 		}
 		if d := a.writes[WriteD]; d.fence != fenceFailed || d.fenceErr != errOutcomeUnknown {
 			t.Fatalf("fence record %+v", d)
 		}
 		f.fs.Set(WriteD, FaultNone, nil)
 		if got := f.store.SettleConfirmation(a); got != ConfirmConservative {
-			t.Fatalf("settled %s", confirmResultLabel(got))
+			t.Fatalf("settled %s", confirmResultName(got))
 		}
 	})
 	t.Run("read-back", func(t *testing.T) {
@@ -465,20 +461,20 @@ func TestConfirmationSettlementPanic(t *testing.T) {
 		f.fs.Set(WriteD, FaultFenceErr, nil)
 		a := f.commit(t)
 		if a.Result() != confirmUnresolved {
-			t.Fatal(confirmResultLabel(a.Result()))
+			t.Fatal(confirmResultName(a.Result()))
 		}
 		f.fs.Set(WriteD, FaultNone, nil)
 		f.fs.Mu.Lock()
 		f.fs.panicRead = true
 		f.fs.Mu.Unlock()
 		if got := f.store.SettleConfirmation(a); got != confirmUnresolved || a.Panicked == nil {
-			t.Fatalf("settled %s after read-back panic", confirmResultLabel(got))
+			t.Fatalf("settled %s after read-back panic", confirmResultName(got))
 		}
 		if d := a.writes[WriteD]; d.fence != fenceNotApplied {
 			t.Fatalf("fence record %+v", d)
 		}
 		if got := f.store.SettleConfirmation(a); got != ConfirmRolledBack {
-			t.Fatalf("settled %s", confirmResultLabel(got))
+			t.Fatalf("settled %s", confirmResultName(got))
 		}
 	})
 }
@@ -490,7 +486,7 @@ func TestConfirmationSettleSerialized(t *testing.T) {
 	f.fs.Set(WriteD, FaultFenceErr, nil)
 	a := f.commit(t)
 	if a.Result() != confirmUnresolved {
-		t.Fatal(confirmResultLabel(a.Result()))
+		t.Fatal(confirmResultName(a.Result()))
 	}
 	f.fs.Set(WriteD, FaultNone, nil)
 	f.fs.Mu.Lock()
@@ -509,7 +505,7 @@ func TestConfirmationSettleSerialized(t *testing.T) {
 	close(results)
 	for got := range results {
 		if got != ConfirmRolledBack {
-			t.Fatalf("settled %s", confirmResultLabel(got))
+			t.Fatalf("settled %s", confirmResultName(got))
 		}
 	}
 	f.fs.Mu.Lock()
@@ -549,7 +545,7 @@ func TestConfirmationRevalidatesPredecessor(t *testing.T) {
 			before := f.confirmedIs(t)
 			a := f.store.CommitConfirmation(f.target, f.confirm)
 			if !errors.Is(a.PreWrite, errPredecessorChanged) || a.Result() != c.want || a.writes != [3]*edgeWrite{} {
-				t.Fatalf("commit %v %s %+v", a.PreWrite, confirmResultLabel(a.Result()), a.writes)
+				t.Fatalf("commit %v %s %+v", a.PreWrite, confirmResultName(a.Result()), a.writes)
 			}
 			if c.want == ConfirmCommitted {
 				if replaced, err := f.store.FinishReplacement(a); err != nil || replaced != 0 || !pMarker(t, f) {
@@ -612,7 +608,7 @@ func TestConfirmationRequiresPending(t *testing.T) {
 	}
 	a := f.store.CommitConfirmation(f.target, f.confirm)
 	if nfs4.ErrorCode(a.PreWrite) != nfs4.NFS4ERR_STALE_CLIENTID || a.Result() != ConfirmRolledBack || a.writes != [3]*edgeWrite{} {
-		t.Fatalf("commit %v %s", a.PreWrite, confirmResultLabel(a.Result()))
+		t.Fatalf("commit %v %s", a.PreWrite, confirmResultName(a.Result()))
 	}
 	if f.confirmedIs(t) != f.p {
 		t.Fatal("confirmed pointer changed")
@@ -638,11 +634,11 @@ func TestConfirmationStorePreWriteReadError(t *testing.T) {
 			f.fs.Mu.Unlock()
 			a := f.store.CommitConfirmation(f.target, f.confirm)
 			if a.Result() != confirmUnresolved || a.PreWrite == nil || a.writes != [3]*edgeWrite{} {
-				t.Fatalf("commit %v %s", a.PreWrite, confirmResultLabel(a.Result()))
+				t.Fatalf("commit %v %s", a.PreWrite, confirmResultName(a.Result()))
 			}
 			// Still unreadable: still unresolved.
 			if got := f.store.SettleConfirmation(a); got != confirmUnresolved {
-				t.Fatalf("settled %s while unreadable", confirmResultLabel(got))
+				t.Fatalf("settled %s while unreadable", confirmResultName(got))
 			}
 			if c.change {
 				f.point(t, f.m)
@@ -651,7 +647,7 @@ func TestConfirmationStorePreWriteReadError(t *testing.T) {
 			f.fs.FailLookup = false
 			f.fs.Mu.Unlock()
 			if got := f.store.SettleConfirmation(a); got != c.want {
-				t.Fatalf("settled %s, want %s", confirmResultLabel(got), confirmResultLabel(c.want))
+				t.Fatalf("settled %s, want %s", confirmResultName(got), confirmResultName(c.want))
 			}
 			if f.present(t, f.n, f.store.ConfirmingName) || !pMarker(t, f) {
 				t.Fatal("durable state changed")
@@ -677,7 +673,7 @@ func TestConfirmationSnapshotFenceError(t *testing.T) {
 	f.fs.Set(WriteD, FaultFenceErr, nil)
 	a := f.commit(t)
 	if a.Result() != confirmUnresolved {
-		t.Fatal(confirmResultLabel(a.Result()))
+		t.Fatal(confirmResultName(a.Result()))
 	}
 	confirmed := func(snap *inspect.Attempt) inspect.ConfirmWrite {
 		t.Helper()
@@ -702,7 +698,7 @@ func TestConfirmationSnapshotFenceError(t *testing.T) {
 	}
 	f.fs.Set(WriteD, FaultNone, nil)
 	if got := f.store.SettleConfirmation(a); got != ConfirmRolledBack {
-		t.Fatalf("settled %s", confirmResultLabel(got))
+		t.Fatalf("settled %s", confirmResultName(got))
 	}
 	w = confirmed(a.Snapshot())
 	if w.Fence != inspect.FenceNotApplied || w.FenceError != "" || w.Outcome != inspect.WriteNever {
