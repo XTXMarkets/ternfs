@@ -1914,6 +1914,14 @@ public:
                 _inFlightEntries.emplace(_shardEntries[i].idx.u64, std::move(_shardEntries[i]));
             }
             _logsDBEntries.clear();
+            // Entries released during this step (at once, without
+            // replication) are applied and answered at the start of the
+            // next one. Start it now rather than after the response
+            // timeout: that wait added about 10 ms to every mutation on an
+            // otherwise idle shard.
+            if (_logsDB.getLastReleased().u64 > _currentLogIndex) {
+                _nextTimeout = 0;
+            }
         }
 
         // Log if not active is not chaty but it's messages are higher priority as they make us progress state under high load.
