@@ -44,13 +44,20 @@ func (s *Server) publishedAs(clientID uint64, fileID, dataID vfs.InodeID) {
 	if fileID == dataID {
 		return
 	}
-	s.views.Set(openstate.ViewKey{ClientID: clientID, FileID: fileID}, dataID, s.clients.Now().Add(clientstore.LeaseTime))
+	expires := s.clients.Now().Add(clientstore.LeaseTime)
+	s.views.Set(openstate.ViewKey{ClientID: clientID, FileID: fileID}, dataID, expires)
+	// Persisted so that the client's view survives an nfsd restart; see
+	// alias_log.go.
+	if err := s.aliases.append(aliasRecord{ClientID: clientID, FileID: uint64(fileID), DataID: uint64(dataID), Expires: expires}); err != nil {
+		s.log.Warn("publication aliases: append", "err", err)
+	}
 }
 
 func (s *Server) sweepViews() {
 	s.views.Sweep(s.clients.Now(), func(key openstate.ViewKey) bool {
 		return len(s.opens.ClientOpens(key.ClientID, key.FileID)) > 0
 	})
+	s.compactAliases()
 }
 
 // failedWriter reports whether a writer clientID used through fileID has

@@ -958,6 +958,9 @@ func (r *inspectReport) readStaging(dir string) ([]*inspectStagingEntry, error) 
 				r.Quarantined = append(r.Quarantined, found...)
 				continue
 			}
+			if name == staging.AliasesDirName {
+				continue // The server's publication alias log.
+			}
 			problem("%s: unexpected directory", path)
 			continue
 		}

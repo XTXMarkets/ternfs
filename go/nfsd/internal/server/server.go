@@ -84,6 +84,7 @@ type Server struct {
 	// held only for map access.
 	confirmMu          sync.Mutex
 	metrics            *Metrics
+	aliases            *aliasLog // nil without a staging directory
 	confirming         map[uint64]*confirmation
 	confirmingIdentity map[vfs.InodeID]*confirmation
 	confirmingOwners   map[string]*confirmation
@@ -194,6 +195,10 @@ func NewServer(fs vfs.TernVFS, stagingStore staging.Store, logger *slog.Logger) 
 	logger.Info("nfsd instance",
 		"nfsd_id", clients.NfsdID,
 		"stateid_epoch", fmt.Sprintf("%08x", s.opens.Epoch))
+	if d, ok := stagingStore.(interface{ Dir() string }); ok {
+		s.aliases = newAliasLog(d.Dir())
+		s.loadAliases()
+	}
 	return s, nil
 }
 

@@ -85,6 +85,24 @@ func (vs *ViewStore) Set(key ViewKey, dataID vfs.InodeID, expires time.Time) {
 	vs.aliases[key] = publishedAlias{dataID: dataID, expires: expires}
 }
 
+// AliasEntry is one alias as Entries reports it.
+type AliasEntry struct {
+	Key     ViewKey
+	DataID  vfs.InodeID
+	Expires time.Time
+}
+
+// Entries returns every alias held.
+func (vs *ViewStore) Entries() []AliasEntry {
+	vs.mu.Lock()
+	defer vs.mu.Unlock()
+	out := make([]AliasEntry, 0, len(vs.aliases))
+	for key, alias := range vs.aliases {
+		out = append(out, AliasEntry{Key: key, DataID: alias.dataID, Expires: alias.expires})
+	}
+	return out
+}
+
 func (vs *ViewStore) Get(key ViewKey) (vfs.InodeID, bool) {
 	vs.mu.Lock()
 	defer vs.mu.Unlock()

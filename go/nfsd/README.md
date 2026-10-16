@@ -281,10 +281,13 @@ staging, or the version a read open saw at OPEN. Operations without a
 stateid (GETATTR, VERIFY, COMMIT and READ with a special stateid) use the
 client's view of the handle: its writer if it has one, else for one lease
 the version its own CLOSE published, else the version its most recent read
-open saw, else the inode itself. That alias is
-process-local and is kept while the client still has the handle open. After
-it lapses, or after an nfsd restart, the handle names its original immutable
-version again. A fresh pathname lookup after publication finds the
+open saw, else the inode itself. That alias is kept while the client still
+has the handle open, and is recorded in `aliases/published.jsonl` under the
+staging directory so that it survives an nfsd restart: without that, a
+client that had just saved a file read the previous version, or the empty
+placeholder of a new file, through the handle it still held until it looked
+the name up again. After the alias lapses the handle names its original
+immutable version again. A fresh pathname lookup after publication finds the
 replacement inode. Old versions remain readable until the directory's
 configured snapshot retention and garbage collection remove them (commonly a
 week or longer).
@@ -912,8 +915,12 @@ incarnation, `CLAIM_PREVIOUS` gets `NFS4ERR_NO_GRACE`, and the open is
 reestablished with CLAIM_FH.
 
 A write open is the exception because its local staging and sidecar files may
-still hold unpublished data. On startup nfsd discovers these files and checks
-whether they can be recovered, as described under
+still hold unpublished data. A retried CLOSE or WRITE with the old stateid
+finds the recovered staging through the handle the client holds: the staging
+inode itself, or its base inode. For a file the earlier process created, the
+base is the empty placeholder published at its name, which stays the client's
+handle if the name is renamed or removed. On startup nfsd discovers these
+files and checks whether they can be recovered, as described under
 [Restart and quarantine](#restart-and-quarantine). An eligible sidecar contains
 the state needed to complete the pending `CLOSE` or rebind the staging to a
 replacement `OPEN` for the same clientid. Because writers on one client share
@@ -1147,7 +1154,8 @@ progress are not visible here; `/v1/staging` shows them. The sidecar version
 is the on-disk layout, such as `v8`, not an NFS version.
 
 The staging directory is read as `.staging` and `.meta` pairs named with the
-file inode as sixteen hex digits, which is how recovery looks them up.
+file inode as sixteen hex digits, which is how recovery looks them up; its
+`quarantine/` and `aliases/` subdirectories are expected.
 Missing or malformed files, metadata temporaries and names that do not match
 that spelling are reported. Quarantined files are listed under `quarantined`;
 see [Restart and quarantine](#restart-and-quarantine). Sidecars without an

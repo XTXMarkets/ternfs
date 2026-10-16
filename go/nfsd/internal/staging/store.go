@@ -18,6 +18,10 @@ import (
 // them aside rather than deleting them; /v1/store?staging=1 lists them.
 const QuarantineDirName = "quarantine"
 
+// AliasesDirName is the staging subdirectory holding the server's
+// publication alias log, which recovery and the inspector leave alone.
+const AliasesDirName = "aliases"
+
 var ErrRemoved = errors.New("staging file was removed")
 
 type stagingTarget struct {

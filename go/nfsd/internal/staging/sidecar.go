@@ -55,7 +55,7 @@ type Meta struct {
 	ReadOnly        bool         // CREATE may initialize size/times with read-only share access
 	Exclusive       bool         // EXCLUSIVE4 create
 	Verifier        [8]byte      // EXCLUSIVE4 create verifier
-	BaseID          vfs.InodeID  // immutable file being replaced; zero for a new file
+	BaseID          vfs.InodeID  // immutable file being replaced, or a create's placeholder; zero for none
 	BaseSize        uint64
 	Size            uint64
 	Dirty           byterange.Set

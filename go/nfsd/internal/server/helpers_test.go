@@ -5,6 +5,7 @@
 package server
 
 import (
+	"os"
 	"testing"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
@@ -69,4 +70,20 @@ func createdSession(t *testing.T, res nfs4.COMPOUND4res) (SessionID, uint32) {
 	it.Next()
 	ok := it.Resarray().Value().AsCREATESESSION4resEntry().Value().AsCREATESESSION4resok()
 	return readSessionID(ok.CsrSessionid()), ok.CsrFlags()
+}
+
+// stagingFiles lists the staging directory's files, leaving out its
+// subdirectories: aliases and quarantine are not staged writers.
+func stagingFiles(dir string) ([]os.DirEntry, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	files := entries[:0]
+	for _, e := range entries {
+		if !e.IsDir() {
+			files = append(files, e)
+		}
+	}
+	return files, nil
 }
