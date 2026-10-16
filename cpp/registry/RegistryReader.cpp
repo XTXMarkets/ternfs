@@ -11,6 +11,17 @@
 #include "RegistryServer.hpp"
 #include "SPSC.hpp"
 
+#include <limits>
+
+template<typename T>
+static void limitBlockServices(BincodeList<T>& blockServices) {
+    // Legacy lists have a 16-bit length. The cache is ordered newest change first,
+    // so truncating a response keeps the most recently changed matching services.
+    constexpr size_t maxServices = std::numeric_limits<uint16_t>::max();
+    if (blockServices.els.size() > maxServices) {
+        blockServices.els.resize(maxServices);
+    }
+}
 
 std::vector<RegistryRequest>::iterator RegistryReader::pushRequests(std::vector<RegistryRequest>::iterator begin, std::vector<RegistryRequest>::iterator end) {
     return _queue.push(begin, end);
@@ -76,12 +87,14 @@ void RegistryReader::step() {
             auto& registryResp = resp.resp.setLocalChangedBlockServices();
             auto& changedReq = req.req.getLocalChangedBlockServices();
             registryResp.blockServices.els = _changedBlockServices(_options.logsDBOptions.location, changedReq.changedSince);
+            limitBlockServices(registryResp.blockServices);
             break;
         }
         case RegistryMessageKind::CHANGED_BLOCK_SERVICES_AT_LOCATION: {
             auto& registryResp = resp.resp.setChangedBlockServicesAtLocation();
             auto& changedReq = req.req.getChangedBlockServicesAtLocation();
             registryResp.blockServices.els = _changedBlockServices(changedReq.locationId, changedReq.changedSince);
+            limitBlockServices(registryResp.blockServices);
             break;
         }
         case RegistryMessageKind::SHARDS_AT_LOCATION: {
@@ -210,17 +223,20 @@ void RegistryReader::step() {
         case RegistryMessageKind::ALL_BLOCK_SERVICES_DEPRECATED: {
             auto &registryResp = resp.resp.setAllBlockServicesDeprecated();
             registryResp.blockServices.els = _allBlockServices();
+            limitBlockServices(registryResp.blockServices);
             break;
         }
         case RegistryMessageKind::ALL_BLOCK_SERVICES: {
             auto &registryResp = resp.resp.setAllBlockServices();
             registryResp.blockServices.els = _allBlockServicesFull();
+            limitBlockServices(registryResp.blockServices);
             break;
         }
         case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION_DEPRECATED: {
             auto &registryResp = resp.resp.setBlockServicesNeedingMigrationDeprecated();
             auto &migrationReq = req.req.getBlockServicesNeedingMigrationDeprecated();
             registryResp.blockServices.els = _blockServicesNeedingMigration(migrationReq.locationId);
+            limitBlockServices(registryResp.blockServices);
             break;
         }
         case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION: {
@@ -234,6 +250,7 @@ void RegistryReader::step() {
             auto& registryResp = resp.resp.setChangedBlockServicesDeprecated();
             registryResp.lastChange = changed.lastChange;
             registryResp.blockServices.els = std::move(changed.blockServices.els);
+            limitBlockServices(registryResp.blockServices);
             break;
         }
         case RegistryMessageKind::CHANGED_BLOCK_SERVICES: {
@@ -244,6 +261,7 @@ void RegistryReader::step() {
         case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE_DEPRECATED: {
             auto& registryResp = resp.resp.setBlockServiceAvailableSpaceDeprecated();
             registryResp.blockServices.els = _blockServiceAvailableSpace();
+            limitBlockServices(registryResp.blockServices);
             break;
         }
         case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE: {
