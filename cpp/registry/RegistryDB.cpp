@@ -361,6 +361,7 @@ void RegistryDB::processLogEntries(std::vector<LogsDBLogEntry>& logEntries, std:
                     writeBatch.Delete(_lastHeartBeatCf, lastHeartBeat.toSlice());
                     // DECOMMISSIONED service looses other flags
                     info.flags = BlockServiceFlags::DECOMMISSIONED;
+                    LOG_INFO(_env, "block service %s decommissioned", info.id);
                 } else {
                     info.flags = (info.flags & ~(BlockServiceFlags)req.flagsMask) | (req.flags & (BlockServiceFlags) req.flagsMask);
                 }
@@ -545,6 +546,7 @@ void RegistryDB::processLogEntries(std::vector<LogsDBLogEntry>& logEntries, std:
 
                 // DECOMMISSIONED service looses other flags
                 info.flags = BlockServiceFlags::DECOMMISSIONED;
+                LOG_INFO(_env, "block service %s decommissioned", info.id);
                 info.lastInfoChange = requestTime;
                 writeBlockServiceInfo(writeBatch, _blockServicesCf, info);
                 updatedBlocks[info.id.u64] = info;
@@ -706,6 +708,9 @@ void RegistryDB::processLogEntries(std::vector<LogsDBLogEntry>& logEntries, std:
                     readBlockServiceInfo(key.toSlice(), value, info);
                 } else {
                     info = bsIt->second;
+                }
+                if (info.flags == BlockServiceFlags::DECOMMISSIONED && info.hasFiles && !req.hasFiles) {
+                    LOG_INFO(_env, "decommissioned block service %s has no files left, %s after it was decommissioned", info.id, requestTime - info.lastInfoChange);
                 }
                 info.hasFiles = req.hasFiles;
                 writeBlockServiceInfo(writeBatch, _blockServicesCf, info);
