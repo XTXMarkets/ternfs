@@ -8,8 +8,8 @@ import (
 	"os"
 	"testing"
 
-	"xtx/ternfs/core/log"
-	"xtx/ternfs/msgs"
+	"github.com/XTXMarkets/ternfs/go/core/log"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 )
 
 func TestInitBlockServicesInfoReturnsStorageReadErrors(t *testing.T) {
@@ -31,6 +31,7 @@ func TestInitBlockServicesInfoReturnsStorageReadErrors(t *testing.T) {
 		msgs.AddrsInfo{},
 		[16]byte{},
 		blockServices,
+		0,
 		0,
 	)
 	if err == nil {

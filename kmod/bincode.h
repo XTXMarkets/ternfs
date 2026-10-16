@@ -15,6 +15,8 @@
 #else
 #include <linux/unaligned.h>
 #endif
+#else
+#include <stddef.h>
 #endif
 
 struct ternfs_bincode_put_ctx { char* start; char* cursor; char* end; };
@@ -49,6 +51,16 @@ static inline void _ternfs_failure_domain_get(struct ternfs_bincode_get_ctx* ctx
 #ifdef __KERNEL__
 static_assert(14 == TERNFS_ERR_MALFORMED_RESPONSE);
 #endif
+
+inline static void ternfs_bincode_get_skip(struct ternfs_bincode_get_ctx* ctx, size_t size) {
+    if (likely(ctx->err == 0)) {
+        if (unlikely(ctx->buf > ctx->end || size > (size_t)(ctx->end - ctx->buf))) {
+            ctx->err = TERNFS_ERR_MALFORMED_RESPONSE;
+        } else {
+            ctx->buf += size;
+        }
+    }
+}
 
 inline static void ternfs_bincode_put_u64(struct ternfs_bincode_put_ctx* ctx, u64 x) {
     BUG_ON(ctx->end - ctx->cursor < sizeof(x));

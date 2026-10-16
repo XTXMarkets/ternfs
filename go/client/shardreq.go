@@ -6,9 +6,9 @@ package client
 
 import (
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/core/log"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"net"
-	"xtx/ternfs/core/log"
-	"xtx/ternfs/msgs"
 )
 
 func (c *Client) checkDeletedEdge(
@@ -172,6 +172,9 @@ func (c *Client) shardRequestInternal(
 	return c.metadataRequest(logger, int16(shid), reqBody, respBody, counters, dontWait)
 }
 
+// ShardRequestDontWait queues a request without waiting for a reply.
+// Packing errors are logged; send errors and missing addresses are ignored.
+// This call does not retry.
 func (c *Client) ShardRequestDontWait(
 	logger *log.Logger,
 	shid msgs.ShardId,

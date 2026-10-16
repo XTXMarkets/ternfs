@@ -9,6 +9,14 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/client"
+	"github.com/XTXMarkets/ternfs/go/core/bufpool"
+	"github.com/XTXMarkets/ternfs/go/core/log"
+	"github.com/XTXMarkets/ternfs/go/core/managedprocess"
+	lrecover "github.com/XTXMarkets/ternfs/go/core/recover"
+	"github.com/XTXMarkets/ternfs/go/core/timing"
+	"github.com/XTXMarkets/ternfs/go/core/wyhash"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"io"
 	"io/ioutil"
 	"net"
@@ -23,14 +31,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-	"xtx/ternfs/client"
-	"xtx/ternfs/core/bufpool"
-	"xtx/ternfs/core/log"
-	"xtx/ternfs/core/managedprocess"
-	lrecover "xtx/ternfs/core/recover"
-	"xtx/ternfs/core/timing"
-	"xtx/ternfs/core/wyhash"
-	"xtx/ternfs/msgs"
 
 	"golang.org/x/sys/unix"
 )
@@ -83,7 +83,7 @@ type RunTests struct {
 	registryIp              string
 	registryPort            uint16
 	mountPoint              string
-	nfsMountPoint           string
+	withNfsMount            func(string, func(string, func(time.Duration)))
 	terncliExe              string
 	kmod                    bool
 	short                   bool
@@ -367,13 +367,15 @@ func (r *RunTests) run(
 		},
 	)
 
-	if r.nfsMountPoint != "" {
+	if r.withNfsMount != nil {
 		r.test(
 			log,
 			"nfs mounted fs",
 			fmt.Sprintf("%v dirs, %v files, %v depth", fsTestOpts.numDirs, fsTestOpts.numFiles, fsTestOpts.depth),
 			func(counters *client.ClientCounters) {
-				fsTest(log, r.registryAddress(), &fsTestOpts, counters, posixHarness{mountPoint: r.nfsMountPoint})
+				r.withNfsMount("mounted-fs", func(mountPoint string, _ func(time.Duration)) {
+					fsTest(log, r.registryAddress(), &fsTestOpts, counters, posixHarness{mountPoint: mountPoint})
+				})
 			},
 		)
 
@@ -382,9 +384,14 @@ func (r *RunTests) run(
 			"nfs mutations",
 			"",
 			func(counters *client.ClientCounters) {
-				nfsMutationTest(log, r.nfsMountPoint)
+				r.withNfsMount("mutations", func(mountPoint string, _ func(time.Duration)) {
+					nfsMutationTest(log, mountPoint)
+				})
 			},
 		)
+		r.test(log, "nfs lease recovery", "", func(counters *client.ClientCounters) {
+			r.withNfsMount("lease-recovery", nfsLeaseRecoveryTest)
+		})
 	}
 
 	parallelDirsOpts := &parallelDirsOpts{
@@ -1600,29 +1607,49 @@ func main() {
 		})
 	}
 
-	var nfsMountPoint string
+	var withNfsMount func(string, func(string, func(time.Duration)))
 	if *nfs {
 		nfsAddr := fmt.Sprintf("127.0.0.1:%v", *nfsPort)
-		procs.StartNfs(l, &managedprocess.NfsOpts{
-			Exe:             goExes.NfsExe,
-			Path:            path.Join(*dataDir, "nfs"),
-			Addr:            nfsAddr,
-			LogLevel:        level,
-			RegistryAddress: registryAddress,
-		})
-		nfsMountPoint = path.Join(*dataDir, "nfs", "mnt")
-		if err := os.MkdirAll(nfsMountPoint, 0777); err != nil {
+		nfsDir := path.Join(*dataDir, "nfs")
+		if err := os.MkdirAll(nfsDir, 0777); err != nil {
 			panic(err)
 		}
-		mountNfs(nfsAddr, nfsMountPoint)
-		defer func() {
-			l.Info("about to unmount nfs mount")
-			out, err := exec.Command("sudo", "umount", nfsMountPoint).CombinedOutput()
-			l.Info("done unmounting nfs")
-			if err != nil {
-				fmt.Printf("could not umount nfs (%v): %s", err, out)
+		// cleanupAfterTest deletes the entire TernFS namespace, including
+		// /.nfs. No live server or mount may retain that deleted client state.
+		withNfsMount = func(name string, run func(string, func(time.Duration))) {
+			testDir := path.Join(nfsDir, name)
+			_, stop := procs.StartNfsWithStop(l, &managedprocess.NfsOpts{
+				Exe:             goExes.NfsExe,
+				Path:            testDir,
+				Addr:            nfsAddr,
+				LogLevel:        level,
+				RegistryAddress: registryAddress,
+			})
+			defer stop()
+			mountPoint := path.Join(testDir, "mnt")
+			if err := os.MkdirAll(mountPoint, 0777); err != nil {
+				panic(err)
 			}
-		}()
+			mountAddr := nfsAddr
+			var outage func(time.Duration)
+			if name == "lease-recovery" {
+				var stopProxy func()
+				var err error
+				mountAddr, outage, stopProxy, err = nfsOutageProxy(nfsAddr)
+				if err != nil {
+					panic(err)
+				}
+				defer stopProxy()
+			}
+			mountNfs(mountAddr, mountPoint)
+			defer func() {
+				l.Info("unmounting nfs test %s before namespace cleanup", name)
+				if out, err := exec.Command("sudo", "umount", mountPoint).CombinedOutput(); err != nil {
+					panic(fmt.Errorf("unmount nfs test %s (%w): %s", name, err, out))
+				}
+			}()
+			run(mountPoint, outage)
+		}
 	}
 
 	fmt.Printf("operational 🤖\n")
@@ -1680,7 +1707,7 @@ func main() {
 			registryIp:              "127.0.0.1",
 			registryPort:            registryPort,
 			mountPoint:              mountPoint,
-			nfsMountPoint:           nfsMountPoint,
+			withNfsMount:            withNfsMount,
 			terncliExe:              goExes.CliExe,
 			kmod:                    *kmod,
 			short:                   *short,

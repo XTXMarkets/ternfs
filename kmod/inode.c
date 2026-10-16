@@ -17,6 +17,8 @@
 #include "file.h"
 #include "wq.h"
 #include "inode_compat.h"
+#include "getattr_completion.h"
+#include "policy_update.h"
 
 // Some services (samba) try to preallocate larger files, but can handle
 // the failure or absence of ftruncate().
@@ -62,6 +64,7 @@ void ternfs_inode_evict(struct inode* inode) {
     if (S_ISDIR(inode->i_mode)) {
         ternfs_dir_drop_cache(enode);
     } else if (S_ISREG(inode->i_mode) || S_ISLNK(inode->i_mode)) {
+        ternfs_file_discard(enode);
         ternfs_free_file_spans(&enode->file.spans);
     }
     truncate_inode_pages(&inode->i_data, 0);
@@ -161,8 +164,7 @@ out:
         // releasing the latch.
         bool was_pending = cancel_delayed_work_sync(&enode->getattr_async_work);
         if (was_pending) {
-            iput(&enode->inode);
-            ternfs_latch_release(&enode->getattr_update_latch, enode->getattr_async_seqno);
+            ternfs_finish_async_getattr(enode);
         }
     }
     return ret;
@@ -204,18 +206,9 @@ static void getattr_async_complete(struct work_struct* work) {
             struct ternfs_policy_body snapshot_policy;
             err = ternfs_error_to_linux(ternfs_shard_parse_getattr_dir(skb, &mtime, &owner, &block_policy, &span_policy, &stripe_policy, &snapshot_policy));
             if (err == 0) {
-                if (block_policy.len) {
-                    enode->block_policy = ternfs_upsert_policy(enode->inode.i_ino, BLOCK_POLICY_TAG, block_policy.body, block_policy.len);
-                }
-                if (span_policy.len) {
-                    enode->span_policy = ternfs_upsert_policy(enode->inode.i_ino, SPAN_POLICY_TAG, span_policy.body, span_policy.len);
-                }
-                if (stripe_policy.len) {
-                    enode->stripe_policy = ternfs_upsert_policy(enode->inode.i_ino, STRIPE_POLICY_TAG, stripe_policy.body, stripe_policy.len);
-                }
-                if (snapshot_policy.len) {
-                    enode->snapshot_policy = ternfs_upsert_policy(enode->inode.i_ino, SNAPSHOT_POLICY_TAG, snapshot_policy.body, snapshot_policy.len);
-                }
+                err = ternfs_update_dir_policies(
+                    enode, &block_policy, &span_policy, &stripe_policy, &snapshot_policy
+                );
                 expiry = get_jiffies_64() + ternfs_dir_getattr_refresh_time_jiffies;
             }
         } else {
@@ -249,9 +242,7 @@ static void getattr_async_complete(struct work_struct* work) {
         }
     }
 
-    // And put inode, release latch ordering is not important in this case but it's good practice to release references/locks in reverse order of acquisition
-    iput(&enode->inode);
-    ternfs_latch_release(&enode->getattr_update_latch, enode->getattr_async_seqno);
+    ternfs_finish_async_getattr(enode);
 }
 
 int ternfs_do_getattr(struct ternfs_inode* enode, int cache_timeout_type) {
@@ -305,18 +296,9 @@ int ternfs_do_getattr(struct ternfs_inode* enode, int cache_timeout_type) {
                     &snapshot_policy
                 );
                 if (err == 0) {
-                    if (block_policy.len) {
-                        enode->block_policy = ternfs_upsert_policy(enode->inode.i_ino, BLOCK_POLICY_TAG, block_policy.body, block_policy.len);
-                    }
-                    if (span_policy.len) {
-                        enode->span_policy = ternfs_upsert_policy(enode->inode.i_ino, SPAN_POLICY_TAG, span_policy.body, span_policy.len);
-                    }
-                    if (stripe_policy.len) {
-                        enode->stripe_policy = ternfs_upsert_policy(enode->inode.i_ino, STRIPE_POLICY_TAG, stripe_policy.body, stripe_policy.len);
-                    }
-                    if (snapshot_policy.len) {
-                        enode->snapshot_policy = ternfs_upsert_policy(enode->inode.i_ino, SNAPSHOT_POLICY_TAG, snapshot_policy.body, snapshot_policy.len);
-                    }
+                    err = ternfs_update_dir_policies(
+                        enode, &block_policy, &span_policy, &stripe_policy, &snapshot_policy
+                    );
                     expiry = get_jiffies_64() + ternfs_dir_getattr_refresh_time_jiffies;
                 }
             } else {
@@ -454,16 +436,18 @@ static int COMPAT_FUNC_UNS_IMP(ternfs_create, struct inode* parent, struct dentr
 static int COMPAT_FUNC_UNS_IMP(ternfs_getattr, const struct path* path, struct kstat* stat, u32 request_mask, unsigned int query_flags) {
     struct inode* inode = d_inode(path->dentry);
     struct ternfs_inode* enode = TERNFS_I(inode);
+    bool force_sync = query_flags & AT_STATX_FORCE_SYNC;
 
     trace_eggsfs_vfs_getattr_enter(inode);
 
-    // >= so that ternfs_dir_refresh_time=0 causes revalidation at every call to this function
-    if (get_jiffies_64() >= smp_load_acquire(&enode->getattr_expiry)) {
+    // AT_STATX_FORCE_SYNC (stat --cached=never) bypasses both cache checks.
+    // >= so that a zero refresh interval causes revalidation at every call.
+    if (force_sync || get_jiffies_64() >= smp_load_acquire(&enode->getattr_expiry)) {
         int err;
 
         // FIXME: symlinks
         // if requests_mask is 0 then this is originating from stat() call and not statx and we should fill in basic stats
-        if (request_mask && !(request_mask & STATX_MTIME) && (S_ISDIR(inode->i_mode) || !(request_mask & (STATX_ATIME | STATX_SIZE | STATX_BLOCKS)))) {
+        if (!force_sync && request_mask && !(request_mask & STATX_MTIME) && (S_ISDIR(inode->i_mode) || !(request_mask & (STATX_ATIME | STATX_SIZE | STATX_BLOCKS)))) {
             goto done;
         }
 
@@ -471,7 +455,7 @@ static int COMPAT_FUNC_UNS_IMP(ternfs_getattr, const struct path* path, struct k
 
         // dentry refcount also protects the inode (e.g. d_delete will not turn used dentry into a negative one),
         // so no need to grab anything before we start waiting for stuff
-        err = ternfs_do_getattr(enode, ATTR_CACHE_NORM_TIMEOUT);
+        err = ternfs_do_getattr(enode, force_sync ? ATTR_CACHE_NO_TIMEOUT : ATTR_CACHE_NORM_TIMEOUT);
         if (err) {
             trace_eggsfs_vfs_getattr_exit(inode, err);
             return err;
@@ -583,32 +567,7 @@ static int COMPAT_FUNC_UNS_IMP(ternfs_setattr, struct dentry* dentry, struct iat
 static int COMPAT_FUNC_UNS_IMP(ternfs_symlink, struct inode* dir, struct dentry* dentry, const char* path) {
     struct ternfs_inode* enode = ternfs_create_internal(dir, TERNFS_INODE_SYMLINK, dentry);
     if (IS_ERR(enode)) { return PTR_ERR(enode); }
-
-    enode->file.status = TERNFS_FILE_STATUS_WRITING; // needed for flush to flush below
-
-    size_t len = strlen(path);
-
-    // We now need to write out the symlink contents...
-    loff_t ppos = 0;
-    struct kvec vec;
-    struct iov_iter from;
-    vec.iov_base = (void*)path;
-    vec.iov_len = len;
-    iov_iter_kvec(&from, WRITE, &vec, 1, vec.iov_len);
-    trace_eggsfs_inode_lock(&enode->inode, TERNFS_INODE_LOCK, "symlink");
-    inode_lock(&enode->inode);
-    int err = ternfs_file_write(enode, 0, &ppos, &from);
-    inode_unlock(&enode->inode);
-    trace_eggsfs_inode_lock(&enode->inode, TERNFS_INODE_UNLOCK, "symlink");
-    if (err < 0) { return err; }
-    // ...and flush them
-    err = ternfs_file_flush(enode, dentry);
-    if (err < 0) { return err; }
-
-    // Now we link the dentry in
-    d_instantiate(dentry, &enode->inode);
-
-    return 0;
+    return ternfs_finish_symlink(enode, dentry, path);
 }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6,6,0)

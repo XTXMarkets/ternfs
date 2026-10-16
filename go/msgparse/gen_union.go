@@ -67,6 +67,10 @@ func (g *Generator) emitUnion(ti *TypeInfo) {
 	}
 	g.p("\t}\n}\n")
 
+	// Discriminant and raw payload, for callers outside the package.
+	g.p("\nfunc (m %s) Disc() %s {\n\treturn m.disc\n}\n", name, discGoType)
+	g.p("\nfunc (m %s) Bytes() []byte {\n\treturn m.b\n}\n", name)
+
 	// Detect payload types used by multiple arms (need per-arm naming).
 	payloadCount := map[string]int{}
 	for _, arm := range u.Arms {
@@ -108,7 +112,10 @@ func (g *Generator) emitUnion(ti *TypeInfo) {
 			emittedDefault = true
 			payloadTi := g.a.Types[arm.Payload]
 			g.p("\nfunc (m %s) As%s() %s {\n", name, g.goName(payloadTi), g.goName(payloadTi))
-			if g.a.isStructReader(arm.Payload) {
+			if payloadTi.Decl.Kind == DeclStruct {
+				sizeConst := sizeConstName(arm.Payload)
+				g.p("\treturn %s{m: (*[%s]byte)(m.b)}\n}\n", g.goName(payloadTi), sizeConst)
+			} else if g.a.isStructReader(arm.Payload) {
 				g.p("\tv, _ := Read%s(m.b)\n\treturn v\n}\n", g.goName(payloadTi))
 			} else {
 				g.p("\treturn %s(m.b)\n}\n", g.goName(payloadTi))

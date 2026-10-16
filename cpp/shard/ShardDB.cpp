@@ -613,9 +613,9 @@ struct ShardDBImpl {
         bool current = !!(req.flags&FULL_READ_DIR_CURRENT);
         bool forwards = !(req.flags&FULL_READ_DIR_BACKWARDS);
 
-        // TODO proper errors at validation
-        ALWAYS_ASSERT(!(sameName && req.startName.packedSize() == 0));
-        ALWAYS_ASSERT(!(current && req.startTime != 0));
+        if ((sameName && req.startName.size() == 0) || (current && req.startTime != 0)) {
+            return TernError::MALFORMED_REQUEST;
+        }
 
         HashMode hashMode;
         {
@@ -1129,6 +1129,9 @@ struct ShardDBImpl {
         if (req.ownerId.shard() != _shid || req.fileId.shard() != _shid) {
             return TernError::BAD_SHARD;
         }
+        if (!validName(req.name.ref())) {
+            return TernError::BAD_NAME;
+        }
         TernError err = _checkTransientFileCookie(req.fileId, req.cookie.data);
         if (err != TernError::NO_ERROR) {
             return err;
@@ -1203,7 +1206,7 @@ struct ShardDBImpl {
         if (!validName(req.name.ref())) {
             return TernError::BAD_NAME;
         }
-        ALWAYS_ASSERT(req.targetId != NULL_INODE_ID); // proper error
+        ALWAYS_ASSERT(req.targetId != NULL_INODE_ID);
         entry.dirId = req.dirId;
         entry.targetId = req.targetId;
         entry.name = req.name;
@@ -1247,7 +1250,7 @@ struct ShardDBImpl {
         if (req.dirId.shard() != _shid) {
             return TernError::BAD_SHARD;
         }
-        ALWAYS_ASSERT(req.dirId != ROOT_DIR_INODE_ID); // TODO proper error
+        ALWAYS_ASSERT(req.dirId != ROOT_DIR_INODE_ID);
         entry.dirId = req.dirId;
         entry.info = req.info;
         return TernError::NO_ERROR;
@@ -1256,6 +1259,9 @@ struct ShardDBImpl {
     TernError _prepareRemoveInode(TernTime time, const RemoveInodeReq& req, RemoveInodeEntry& entry) {
         if (req.id.shard() != _shid) {
             return TernError::BAD_SHARD;
+        }
+        if (req.id == NULL_INODE_ID) {
+            return TernError::MALFORMED_REQUEST;
         }
         if (req.id == ROOT_DIR_INODE_ID) {
             return TernError::CANNOT_REMOVE_ROOT_DIRECTORY;
@@ -1343,6 +1349,15 @@ struct ShardDBImpl {
         // Note that the span size might be bigger or smaller than
         // the data -- check comment on top of `AddSpanInitiateReq` in `msgs.go`
         // for details.
+        if (!req.parity.valid()) {
+            LOG_DEBUG(_env, "unsupported parity configuration %s", req.parity);
+            return false;
+        }
+        if (req.stripes == 0 || req.stripes >= MAX_STRIPES) {
+            LOG_DEBUG(_env, "unsupported stripe count %s", (int)req.stripes);
+            return false;
+        }
+
         if (req.size > MAXIMUM_SPAN_SIZE) {
             LOG_DEBUG(_env, "req.size=%s > MAXIMUM_SPAN_SIZE=%s", req.size, MAXIMUM_SPAN_SIZE);
             return false;
@@ -1611,7 +1626,9 @@ struct ShardDBImpl {
         if (req.fileId1.shard() != _shid || req.fileId2.shard() != _shid) {
             return TernError::BAD_SHARD;
         }
-        ALWAYS_ASSERT(req.fileId1 != req.fileId2);
+        if (req.fileId1 == req.fileId2) {
+            return TernError::SAME_SOURCE_AND_DESTINATION;
+        }
         entry.fileId1 = req.fileId1;
         entry.byteOffset1 = req.byteOffset1;
         entry.blockId1 = req.blockId1;
@@ -1628,7 +1645,9 @@ struct ShardDBImpl {
         if (req.fileId1.shard() != _shid || req.fileId2.shard() != _shid) {
             return TernError::BAD_SHARD;
         }
-        ALWAYS_ASSERT(req.fileId1 != req.fileId2);
+        if (req.fileId1 == req.fileId2) {
+            return TernError::SAME_SOURCE_AND_DESTINATION;
+        }
         entry.fileId1 = req.fileId1;
         entry.byteOffset1 = req.byteOffset1;
         entry.blocks1 = req.blocks1;
@@ -1645,7 +1664,9 @@ struct ShardDBImpl {
         if (req.fileId1.shard() != _shid || req.fileId2.shard() != _shid) {
             return TernError::BAD_SHARD;
         }
-        ALWAYS_ASSERT(req.fileId1 != req.fileId2);
+        if (req.fileId1 == req.fileId2) {
+            return TernError::SAME_SOURCE_AND_DESTINATION;
+        }
         entry.fileId1 = req.fileId1;
         entry.byteOffset1 = req.byteOffset1;
         entry.blocks1 = req.blocks1;

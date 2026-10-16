@@ -18,6 +18,14 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/core/bincode"
+	"github.com/XTXMarkets/ternfs/go/core/bufpool"
+	"github.com/XTXMarkets/ternfs/go/core/crc32c"
+	"github.com/XTXMarkets/ternfs/go/core/log"
+	"github.com/XTXMarkets/ternfs/go/core/timing"
+	"github.com/XTXMarkets/ternfs/go/divide32"
+	"github.com/XTXMarkets/ternfs/go/msgs"
+	"golang.org/x/sys/unix"
 	"io"
 	"math/rand"
 	"net"
@@ -29,13 +37,6 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
-	"xtx/ternfs/core/bincode"
-	"xtx/ternfs/core/bufpool"
-	"xtx/ternfs/core/crc32c"
-	"xtx/ternfs/core/log"
-	"xtx/ternfs/core/timing"
-	"xtx/ternfs/divide32"
-	"xtx/ternfs/msgs"
 )
 
 type ReqCounters struct {
@@ -228,12 +229,20 @@ type rawMetadataResponse struct {
 	buf        *[]byte // the buf contains the header
 }
 
+type metadataSocket interface {
+	WriteToUDP([]byte, *net.UDPAddr) (int, error)
+	ReadFromUDP([]byte) (int, *net.UDPAddr, error)
+	SetReadBuffer(int) error
+	SetReadDeadline(time.Time) error
+	Close() error
+}
+
 type clientMetadata struct {
 	client *Client
-	sock   *net.UDPConn
+	sock   metadataSocket
 
-	requestsById                 map[uint64]*metadataProcessorRequest // requests we've sent, by req id
-	requestsByTimeout            metadataRequestsPQ                   // requests we've sent, by timeout (earlier first)
+	requestsById                 map[uint64]*metadataProcessorRequest // attempts awaiting a response or retry timeout
+	requestsByTimeout            metadataRequestsPQ                   // attempts by timeout (earlier first)
 	earlyRequests                map[uint64]rawMetadataResponse       // requests we've received a response for, but that we haven't seen that we've sent yet. should be uncommon.
 	lastCleanedUpEarlyRequestsAt time.Time
 
@@ -250,14 +259,18 @@ func (cm *clientMetadata) init(log *log.Logger, client *Client) error {
 	log.Debug("initiating clientMetadata")
 	defer log.Debug("finished initializing clientMetadata")
 	cm.client = client
-	sock, err := net.ListenPacket("udp", ":0")
-	if err != nil {
-		return err
+	if cm.sock == nil {
+		sock, err := net.ListenPacket("udp", ":0")
+		if err != nil {
+			return err
+		}
+		cm.sock = sock.(*net.UDPConn)
 	}
-	cm.sock = sock.(*net.UDPConn)
 	// 10MiB/100byte ~ 100k requests in the pipe. 100byte is
-	// kinda conservative.
-	if err := cm.sock.SetReadBuffer(1 << 20); err != nil {
+	// kinda conservative. Note that the kernel silently clamps
+	// this to net.core.rmem_max, so the effective size may be
+	// much smaller than requested.
+	if err := cm.sock.SetReadBuffer(10 << 20); err != nil {
 		cm.sock.Close()
 		return err
 	}
@@ -320,7 +333,7 @@ func (cm *clientMetadata) processRequests(log *log.Logger) {
 					resp:      nil,
 				}
 			}
-			// keep running even if the socket is totally broken to process all the requests
+			// Reject this request without stopping the shared sender.
 			continue
 		}
 		addr := &addrs[whichMetadatataAddr%2]
@@ -328,42 +341,34 @@ func (cm *clientMetadata) processRequests(log *log.Logger) {
 			addr = &addrs[0]
 		}
 		whichMetadatataAddr++
-		var written int
-		var err error
-		epermAlert := log.NewNCAlert(0)
-		for attempts := 0; ; attempts++ {
+		written, err := 0, errMetadataAddressUnknown
+		if addr.Port != 0 {
 			written, err = cm.sock.WriteToUDP(buf.Bytes(), addr)
-			var opError *net.OpError
-			// We get EPERM when nf drops packets, at least on fsf1/fsf2.
-			// This is rare.
-			if errors.As(err, &opError) && os.IsPermission(opError.Err) {
-				log.RaiseNC(epermAlert, "could not send metadata packet because of EPERM (attempt %v), will retry in 100ms: %v", attempts, err)
-				time.Sleep(100 * time.Millisecond)
-			} else {
-				log.ClearNC(epermAlert)
-				break
-			}
+		}
+		if dontWait {
+			continue
 		}
 		if err != nil {
-			log.RaiseAlert("could not send request %v to shard %v addr %v: %v", req.req, req.shard, addr, err)
-			if !dontWait {
+			if retryableMetadataSendError(err) {
+				log.Debug("could not send request %v to shard %v addr %v: %v", req.req, req.shard, addr, err)
+			} else {
+				log.RaiseAlert("could not send request %v to shard %v addr %v: %v", req.req, req.shard, addr, err)
 				req.respCh <- &metadataProcessorResponse{
 					requestId: req.requestId,
 					err:       err,
 					extra:     req.extra,
 					resp:      nil,
 				}
+				continue
 			}
-			// keep running even if the socket is totally broken to process all the requests
-			continue
-		}
-		if written != len(buf.Bytes()) {
+			// Wait for this attempt's timeout before retrying. A reply to an
+			// earlier transmission may still arrive in the meantime. Sleeping
+			// here would block every other metadata request on this client.
+		} else if written != len(buf.Bytes()) {
 			panic(fmt.Errorf("%v != %v", written, len(buf.Bytes())))
 		}
-		if !dontWait {
-			req.deadline = time.Now().Add(req.timeout)
-			cm.inFlight <- req
-		}
+		req.deadline = time.Now().Add(req.timeout)
+		cm.inFlight <- req
 	}
 	log.Debug("got close request in request processor, winding down")
 }
@@ -443,7 +448,7 @@ func (cm *clientMetadata) parseResponse(log *log.Logger, req *metadataProcessorR
 			log.RaiseAlert("could not unpack resp %T for request id %v, shard %v: %v", req.resp, req.requestId, req.shard, err)
 			req.respCh <- &metadataProcessorResponse{
 				requestId: req.requestId,
-				err:       err,
+				err:       msgs.MALFORMED_RESPONSE,
 				extra:     req.extra,
 				resp:      nil,
 			}
@@ -589,7 +594,8 @@ func (cm *clientMetadata) drainSocket(log *log.Logger) {
 	}
 }
 
-type blockCompletion struct {
+// BlockCompletion is the result of an asynchronous block request.
+type BlockCompletion struct {
 	Resp  msgs.BlocksResponse
 	Extra any
 	Error error
@@ -604,7 +610,7 @@ type clientBlockResponse struct {
 	// stores the error, if any
 	err error
 	// called when we're done
-	completionChan chan *blockCompletion
+	completionChan chan *BlockCompletion
 }
 
 func (resp *clientBlockResponse) done(log *log.Logger, addr1 *net.TCPAddr, addr2 *net.TCPAddr, extra any, err error) {
@@ -612,7 +618,7 @@ func (resp *clientBlockResponse) done(log *log.Logger, addr1 *net.TCPAddr, addr2
 		log.InfoStack(1, "failing request %T %+v addr1=%+v addr2=%+v extra=%+v: %v", resp.req, resp.req, addr1, addr2, extra, err)
 		resp.err = err
 	}
-	completion := &blockCompletion{
+	completion := &BlockCompletion{
 		Resp:  resp.resp,
 		Error: resp.err,
 		Extra: resp.extra,
@@ -666,6 +672,16 @@ func (proc *blocksProcessor) storeConn(conn *net.TCPConn) *blocksProcessorConn {
 var whichBlockIp uint64
 var whichSourceIp uint64
 
+func bindAddressNoPort(_ string, _ string, conn syscall.RawConn) error {
+	var sockErr error
+	if err := conn.Control(func(fd uintptr) {
+		sockErr = unix.SetsockoptInt(int(fd), unix.IPPROTO_IP, unix.IP_BIND_ADDRESS_NO_PORT, 1)
+	}); err != nil {
+		return err
+	}
+	return sockErr
+}
+
 func (proc *blocksProcessor) connect(log *log.Logger) (*net.TCPConn, error) {
 	var err error
 	sourceIpSelector := atomic.AddUint64(&whichSourceIp, 1)
@@ -688,7 +704,11 @@ func (proc *blocksProcessor) connect(log *log.Logger) (*net.TCPConn, error) {
 			continue
 		}
 		log.Debug("trying to connect to block service %v", addr)
-		dialer := net.Dialer{LocalAddr: sourceAddr, Timeout: (*proc.timeout).Max}
+		dialer := net.Dialer{
+			LocalAddr: sourceAddr,
+			Timeout:   (*proc.timeout).Max,
+			Control:   bindAddressNoPort,
+		}
 		var conn net.Conn
 		conn, err = dialer.Dial("tcp4", addr.String())
 		if err == nil {
@@ -885,7 +905,7 @@ type sendArgs struct {
 func (procs *blocksProcessors) send(
 	log *log.Logger,
 	args *sendArgs,
-	completionChan chan *blockCompletion,
+	completionChan chan *BlockCompletion,
 ) error {
 	if args.addrs.Addr1.Port == 0 && args.addrs.Addr2.Port == 0 {
 		panic(fmt.Errorf("got zero ports for both addresses for block service %v: %v:%v %v:%v", args.blockService, args.addrs.Addr1.Addrs, args.addrs.Addr1.Port, args.addrs.Addr2.Addrs, args.addrs.Addr2.Port))
@@ -1258,8 +1278,12 @@ func (c *Client) Close() {
 
 // Not atomic between the read/write
 func (c *Client) MergeDirectoryInfo(log *log.Logger, id msgs.InodeId, entry msgs.IsDirectoryInfoEntry) error {
+	body, err := bincode.Pack(entry)
+	if err != nil {
+		return fmt.Errorf("could not pack directory info entry: %w", err)
+	}
 	packedEntry := msgs.DirectoryInfoEntry{
-		Body: bincode.Pack(entry),
+		Body: body,
 		Tag:  entry.Tag(),
 	}
 	statResp := msgs.StatDirectoryResp{}
@@ -1397,7 +1421,7 @@ func writeBlockSendArgs(block *msgs.AddSpanInitiateBlockInfo, r io.ReadSeeker, s
 }
 
 // An asynchronous version of [StartBlock] that is currently unused.
-func (c *Client) StartWriteBlock(log *log.Logger, block *msgs.AddSpanInitiateBlockInfo, r io.ReadSeeker, size uint32, crc msgs.Crc, extra any, completion chan *blockCompletion) error {
+func (c *Client) StartWriteBlock(log *log.Logger, block *msgs.AddSpanInitiateBlockInfo, r io.ReadSeeker, size uint32, crc msgs.Crc, extra any, completion chan *BlockCompletion) error {
 	return c.writeBlockProcessors.send(log, writeBlockSendArgs(block, r, size, crc, extra), completion)
 }
 
@@ -1411,7 +1435,7 @@ func (c *Client) singleBlockReq(log *log.Logger, timeouts *timing.ReqTimeouts, p
 	}
 	startedAt := time.Now()
 	for attempt := 0; ; attempt++ {
-		ch := make(chan *blockCompletion, 1)
+		ch := make(chan *BlockCompletion, 1)
 		err := processor.send(log, args, ch)
 		if err != nil {
 			log.Debug("failed to send block request to %v:%v %v:%v: %v", net.IP(args.addrs.Addr1.Addrs[:]), args.addrs.Addr1.Port, net.IP(args.addrs.Addr2.Addrs[:]), args.addrs.Addr2.Port, err)
@@ -1476,7 +1500,7 @@ func fetchBlockSendArgs(blockService *msgs.BlockService, blockId msgs.BlockId, o
 }
 
 // An asynchronous version of [FetchBlock]
-func (c *Client) StartFetchBlock(log *log.Logger, blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32, w io.ReaderFrom, extra any, completion chan *blockCompletion) error {
+func (c *Client) StartFetchBlock(log *log.Logger, blockService *msgs.BlockService, blockId msgs.BlockId, offset uint32, count uint32, w io.ReaderFrom, extra any, completion chan *BlockCompletion) error {
 	return c.fetchBlockProcessors.send(log, fetchBlockSendArgs(blockService, blockId, offset, count, w, extra), completion)
 }
 
@@ -1631,9 +1655,19 @@ func eraseBlockSendArgs(block *msgs.RemoveSpanInitiateBlockInfo, extra any) *sen
 	}
 }
 
-// An asynchronous version of [EraseBlock] that is currently unused.
-func (c *Client) StartEraseBlock(log *log.Logger, block *msgs.RemoveSpanInitiateBlockInfo, extra any, completion chan *blockCompletion) error {
-	return c.eraseBlockProcessors.send(log, eraseBlockSendArgs(block, extra), completion)
+// StartEraseBlock is an asynchronous version of [EraseBlock]. It applies the
+// same retry policy and sends exactly one final result to completion.
+func (c *Client) StartEraseBlock(log *log.Logger, block *msgs.RemoveSpanInitiateBlockInfo, extra any, completion chan *BlockCompletion) error {
+	args := eraseBlockSendArgs(block, extra)
+	go func() {
+		resp, err := c.singleBlockReq(log, nil, &c.eraseBlockProcessors, args)
+		completion <- &BlockCompletion{
+			Resp:  resp,
+			Extra: extra,
+			Error: err,
+		}
+	}()
+	return nil
 }
 
 func (c *Client) EraseBlock(log *log.Logger, block *msgs.RemoveSpanInitiateBlockInfo) (proof [8]byte, err error) {
@@ -1649,7 +1683,11 @@ func (c *Client) RegistryAddress() string {
 }
 
 func (c *Client) EraseDecommissionedBlock(block *msgs.RemoveSpanInitiateBlockInfo) (proof [8]byte, err error) {
-	resp, err := c.registryConn.Request(&msgs.EraseDecommissionedBlockReq{block.BlockServiceId, block.BlockId, block.Certificate})
+	resp, err := c.registryConn.Request(&msgs.EraseDecommissionedBlockReq{
+		BlockServiceId: block.BlockServiceId,
+		BlockId:        block.BlockId,
+		Certificate:    block.Certificate,
+	})
 	if err != nil {
 		return [8]byte{}, err
 	}
@@ -1673,7 +1711,7 @@ func checkBlockSendArgs(blockService *msgs.BlockService, blockId msgs.BlockId, s
 }
 
 // An asynchronous version of [CheckBlock] that is currently unused.
-func (c *Client) StartCheckBlock(log *log.Logger, blockService *msgs.BlockService, blockId msgs.BlockId, size uint32, crc msgs.Crc, extra any, completion chan *blockCompletion) error {
+func (c *Client) StartCheckBlock(log *log.Logger, blockService *msgs.BlockService, blockId msgs.BlockId, size uint32, crc msgs.Crc, extra any, completion chan *BlockCompletion) error {
 	return c.checkBlockProcessors.send(log, checkBlockSendArgs(blockService, blockId, size, crc, extra), completion)
 }
 

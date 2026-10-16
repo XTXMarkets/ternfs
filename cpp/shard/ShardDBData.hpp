@@ -128,7 +128,7 @@ struct SpanBlocksBodyV0 {
     SpanBlocksBodyV0(char* data) : _data(data) {}
 
     static size_t calcSize(Parity parity, uint8_t stripes) {
-        ALWAYS_ASSERT(stripes > 0 && stripes < 16);
+        ALWAYS_ASSERT(stripes > 0 && stripes < MAX_STRIPES);
         ALWAYS_ASSERT(parity.dataBlocks() > 0);
         return MIN_SIZE + BlockBody::SIZE*parity.blocks() + sizeof(uint32_t)*stripes;
     }
@@ -311,10 +311,36 @@ struct SpanBody {
 
     void checkSize(size_t sz) {
         ALWAYS_ASSERT(sz >= MIN_SIZE);
+        ALWAYS_ASSERT(version() <= 1);
         if (isInlineStorage()) {
             ALWAYS_ASSERT(sz >= MIN_SIZE+1); // length
+            ALWAYS_ASSERT(sz == MIN_SIZE + 1 + *((uint8_t*)_data + MIN_SIZE));
+            return;
         }
-        ALWAYS_ASSERT(sz == size());
+        if (version() == 0) {
+            ALWAYS_ASSERT(sz >= MIN_SIZE + SpanBlocksBodyV0::MIN_SIZE);
+            SpanBlocksBodyV0 body(_data + MIN_SIZE);
+            ALWAYS_ASSERT(_storageClassOrLocationCount() != EMPTY_STORAGE);
+            ALWAYS_ASSERT(body.parity().dataBlocks() != 0);
+            ALWAYS_ASSERT(body.stripes() != 0 && body.stripes() < 16);
+            ALWAYS_ASSERT(sz == MIN_SIZE + body.size());
+            return;
+        }
+        auto locationCount = _storageClassOrLocationCount();
+        ALWAYS_ASSERT(locationCount != 0 && locationCount != INVALID_LOCATION_IDX);
+        size_t offset = MIN_SIZE;
+        for (uint8_t i = 0; i < locationCount; ++i) {
+            ALWAYS_ASSERT(sz - offset >= SpanBlocksBody::MIN_SIZE);
+            SpanBlocksBody body(_data + offset);
+            ALWAYS_ASSERT(body.storageClass() != EMPTY_STORAGE);
+            ALWAYS_ASSERT(body.storageClass() != INLINE_STORAGE);
+            ALWAYS_ASSERT(body.parity().dataBlocks() != 0);
+            ALWAYS_ASSERT(body.stripes() != 0 && body.stripes() < 16);
+            auto bodySize = body.size();
+            ALWAYS_ASSERT(bodySize <= sz - offset);
+            offset += bodySize;
+        }
+        ALWAYS_ASSERT(offset == sz);
     }
 
     // inline

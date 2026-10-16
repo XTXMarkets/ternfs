@@ -8,6 +8,7 @@
 #include "inode.h"
 
 extern unsigned ternfs_atime_update_interval_sec;
+extern int ternfs_atime_on_open;
 extern unsigned ternfs_max_write_span_attempts;
 extern unsigned ternfs_file_io_timeout_sec;
 extern unsigned ternfs_file_io_retry_refresh_span_interval_sec;
@@ -15,7 +16,9 @@ extern unsigned ternfs_file_io_retry_refresh_span_interval_sec;
 extern int ternfs_file_getattr_refresh_time_jiffies; // this is only relevant for mtime/atime updates
 
 ssize_t ternfs_file_write(struct ternfs_inode* enode, int flags, loff_t* ppos, struct iov_iter* from);
+int ternfs_file_open(struct inode* inode, struct file* filp);
 int ternfs_file_flush(struct ternfs_inode* enode, struct dentry* dentry);
+void ternfs_file_discard(struct ternfs_inode* enode);
 int ternfs_link(struct dentry* old_dentry, struct inode* dir, struct dentry* new_dentry);
 
 // Also used in ternfs_do_ftruncate to fill the end of the file.
@@ -23,6 +26,8 @@ ssize_t ternfs_file_write_internal(struct ternfs_inode* enode, int flags, loff_t
 
 void ternfs_link_destructor(void*);
 char* ternfs_read_link(struct ternfs_inode* enode);
+// Consumes the new inode reference: transfer to dentry on success, put on error.
+int ternfs_finish_symlink(struct ternfs_inode* enode, struct dentry* dentry, const char* path);
 
 extern const struct file_operations ternfs_file_operations;
 extern const struct address_space_operations ternfs_mmap_operations;

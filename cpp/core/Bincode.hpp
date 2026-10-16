@@ -9,9 +9,11 @@
 #include <cstdint>
 #include <exception>
 #include <iomanip>
+#include <limits>
 #include <rocksdb/slice.h>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #include "Assert.hpp"
@@ -144,16 +146,18 @@ public:
 
 std::ostream& operator<<(std::ostream& out, const BincodeBytes& x);
 
-template<typename A>
+template<typename A, typename LenType = uint16_t>
 struct BincodeList {
+    static_assert(std::is_same_v<LenType, uint16_t> || std::is_same_v<LenType, uint32_t>);
+
     std::vector<A> els;
 
-    static constexpr uint16_t STATIC_SIZE = 2; // length
+    static constexpr uint16_t STATIC_SIZE = sizeof(LenType); // length
 
     void clear() { els.resize(0); }
 
     size_t packedSize() const {
-        size_t sz = 2;
+        size_t sz = sizeof(LenType);
         if constexpr (std::is_integral_v<A> || std::is_enum_v<A>) {
             sz += els.size()*sizeof(A);
         } else {
@@ -164,11 +168,11 @@ struct BincodeList {
         return sz;
     }
 
-    bool operator==(const BincodeList<A>& rhs) const {
+    bool operator==(const BincodeList<A, LenType>& rhs) const {
         if (els.size() != rhs.els.size()) {
             return false;
         }
-        for (int i = 0; i < els.size(); i++) {
+        for (size_t i = 0; i < els.size(); i++) {
             if (els[i] != rhs.els[i]) {
                 return false;
             }
@@ -177,10 +181,10 @@ struct BincodeList {
     }
 };
 
-template<typename A>
-static std::ostream& operator<<(std::ostream& out, const BincodeList<A>& x) {
+template<typename A, typename LenType>
+static std::ostream& operator<<(std::ostream& out, const BincodeList<A, LenType>& x) {
     out << "[";
-    for (int i = 0; i < x.els.size(); i++) {
+    for (size_t i = 0; i < x.els.size(); i++) {
         if (i > 0) {
             out << ", ";
         }
@@ -188,6 +192,26 @@ static std::ostream& operator<<(std::ostream& out, const BincodeList<A>& x) {
     }
     out << "]";
     return out;
+}
+
+// Smallest number of bytes an encoded A can occupy. Every bincode type is one of:
+// - a primitive (integral or enum), exactly sizeof(A) bytes;
+// - a container (tagged union exposing kind()), at least the kind tag;
+// - a static type, whose STATIC_SIZE is the sum of its fields' static sizes.
+// Note that a container's STATIC_SIZE is the size of its largest variant, which
+// is why containers are checked first.
+template<typename A>
+constexpr size_t bincodeMinSize() {
+    if constexpr (std::is_integral_v<A> || std::is_enum_v<A>) {
+        return sizeof(A);
+    } else if constexpr (requires (const A& a) { a.kind(); }) {
+        return sizeof(std::declval<const A&>().kind());
+    } else if constexpr (requires { A::STATIC_SIZE; }) {
+        static_assert(A::STATIC_SIZE > 0);
+        return A::STATIC_SIZE;
+    } else {
+        static_assert(sizeof(A) == 0, "type A must be integral, a container, or statically sized");
+    }
 }
 
 template<uint16_t SZ>
@@ -288,7 +312,9 @@ struct BincodeBuf {
     }
 
     void ensureFinished() const {
-        ALWAYS_ASSERT(remaining() == 0);
+        if (unlikely(remaining() != 0)) {
+            throw BINCODE_EXCEPTION("buffer has %s trailing bytes after decoding", remaining());
+        }
     }
 
     void ensureSizeOrPanic(size_t sz) const {
@@ -318,10 +344,10 @@ struct BincodeBuf {
         cursor += x.size();
     }
 
-    template<typename A>
-    void packList(const BincodeList<A>& xs) {
-        ALWAYS_ASSERT(xs.els.size() < (1<<16));
-        packScalar<uint16_t>(xs.els.size());
+    template<typename A, typename LenType>
+    void packList(const BincodeList<A, LenType>& xs) {
+        ALWAYS_ASSERT(xs.els.size() <= std::numeric_limits<LenType>::max());
+        packScalar<LenType>(xs.els.size());
         if (unlikely(xs.els.size() == 0)) {
             return;
         }
@@ -370,23 +396,24 @@ struct BincodeBuf {
         cursor += len;
     }
 
-    template<typename A>
-    void unpackList(BincodeList<A>& xs) {
-        xs.els.resize(unpackScalar<uint16_t>());
-        if (unlikely(xs.els.size() == 0)) {
+    template<typename A, typename LenType>
+    void unpackList(BincodeList<A, LenType>& xs) {
+        size_t count = unpackScalar<LenType>();
+        constexpr size_t minSize = bincodeMinSize<A>();
+        if (unlikely(count > remaining() / minSize)) {
+            throw BINCODE_EXCEPTION("not enough bytes to unpack list (count %s, min element size %s, remaining %s)", count, minSize, remaining());
+        }
+        xs.els.resize(count);
+        if (unlikely(count == 0)) {
             return;
         }
         // If it's a number of some sorts, just memcpy it
         if constexpr (std::is_integral_v<A> || std::is_enum_v<A>) {
             static_assert(std::endian::native == std::endian::little);
-            size_t sz = sizeof(A)*xs.els.size();
-            if (unlikely(remaining() < sz)) {
-                throw BINCODE_EXCEPTION("not enough bytes to unpack scalars (need %s, got %s)", sz, remaining());
-            }
-            memcpy(xs.els.data(), cursor, sz);
-            cursor += sz;
+            memcpy(xs.els.data(), cursor, sizeof(A)*count);
+            cursor += sizeof(A)*count;
         } else {
-            for (int i = 0; i < xs.els.size(); i++) {
+            for (size_t i = 0; i < count; i++) {
                 xs.els[i].unpack(*this);
             }
         }
@@ -484,8 +511,9 @@ std::ostream& operator<<(std::ostream& out, const SignedProtocolMessage<P,R, Che
     return out << msg.id << " : " << msg.body;
 }
 
-constexpr size_t DEFAULT_UDP_MTU = 1472; // 1500 - IP header - ICMP header
-constexpr size_t MAX_UDP_MTU = 8972;     // 9000 - IP header - ICMP header
+constexpr size_t MIN_UDP_MTU = 548;      // 576 - IPv4 header - UDP header
+constexpr size_t DEFAULT_UDP_MTU = 1472; // 1500 - IPv4 header - UDP header
+constexpr size_t MAX_UDP_MTU = 8972;     // 9000 - IPv4 header - UDP header
 
 constexpr uint8_t BLOCK_SERVICE_STALE          = 1u;
 constexpr uint8_t BLOCK_SERVICE_NO_READ        = 1u<<1;

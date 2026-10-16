@@ -51,6 +51,91 @@ TEST_CASE("bincode u16") { bincodeTestScalar<uint16_t>(); }
 TEST_CASE("bincode u32") { bincodeTestScalar<uint32_t>(); }
 TEST_CASE("bincode u64") { bincodeTestScalar<uint64_t>(); }
 
+struct SizedBincodeValue {
+    static constexpr size_t STATIC_SIZE = sizeof(uint32_t);
+    static inline size_t constructed = 0;
+
+    uint32_t value;
+
+    SizedBincodeValue() {
+        constructed++;
+    }
+
+    void unpack(BincodeBuf& buf) {
+        value = buf.unpackScalar<uint32_t>();
+    }
+};
+
+static_assert(bincodeMinSize<uint64_t>() == 8);
+static_assert(bincodeMinSize<InodeId>() == 8);
+static_assert(bincodeMinSize<Edge>() == Edge::STATIC_SIZE);
+static_assert(bincodeMinSize<RegistryReqContainer>() == sizeof(RegistryMessageKind));
+static_assert(bincodeMinSize<ShardLogEntryContainer>() == sizeof(ShardLogEntryKind));
+static_assert(bincodeMinSize<SizedBincodeValue>() == 4);
+
+TEST_CASE("bincode rejects trailing bytes") {
+    char buf[] = {'x'};
+    BincodeBuf bbuf(buf, sizeof(buf));
+
+    CHECK_THROWS_AS(bbuf.ensureFinished(), BincodeException);
+}
+
+TEST_CASE("bincode checks list count before allocating") {
+    // count = 3, but only two 4-byte elements follow
+    char buf[] = {3, 0, 1, 0, 0, 0, 2, 0, 0, 0};
+    BincodeBuf bbuf(buf, sizeof(buf));
+    BincodeList<SizedBincodeValue> values;
+    SizedBincodeValue::constructed = 0;
+
+    CHECK_THROWS_AS(bbuf.unpackList(values), BincodeException);
+    CHECK(values.els.empty());
+    CHECK(SizedBincodeValue::constructed == 0);
+}
+
+TEST_CASE("bincode checks container list count before allocating") {
+    char buf[] = {-1, -1};
+    BincodeBuf bbuf(buf, sizeof(buf));
+    BincodeList<RegistryReqContainer> values;
+
+    CHECK_THROWS_AS(bbuf.unpackList(values), BincodeException);
+    CHECK(values.els.empty());
+}
+
+TEST_CASE("bincode decodes lists") {
+    char buf[] = {2, 0, 1, 0, 0, 0, 2, 0, 0, 0};
+    BincodeBuf bbuf(buf, sizeof(buf));
+    BincodeList<SizedBincodeValue> values;
+
+    bbuf.unpackList(values);
+    bbuf.ensureFinished();
+    REQUIRE(values.els.size() == 2);
+    CHECK(values.els[0].value == 1);
+    CHECK(values.els[1].value == 2);
+}
+
+TEST_CASE("bincode list length prefix") {
+    std::vector<char> buf(4 + 70000*8);
+
+    BincodeList<uint64_t> narrow;
+    narrow.els = {1, 2, 3};
+    BincodeBuf nbuf(buf.data(), buf.size());
+    nbuf.packList(narrow);
+    CHECK(nbuf.len() == narrow.packedSize());
+    CHECK(nbuf.len() == 2 + 3*8);
+
+    BincodeList<uint64_t, uint32_t> wide;
+    for (uint64_t i = 0; i < 70000; i++) { wide.els.push_back(i); }
+    BincodeBuf wbuf(buf.data(), buf.size());
+    wbuf.packList(wide);
+    CHECK(wbuf.len() == wide.packedSize());
+    CHECK(wbuf.len() == buf.size());
+    BincodeList<uint64_t, uint32_t> wideOut;
+    BincodeBuf rbuf(buf.data(), buf.size());
+    rbuf.unpackList(wideOut);
+    CHECK(wideOut == wide);
+    CHECK(rbuf.remaining() == 0);
+}
+
 TEST_CASE("LeaderToken epoch encoding") {
     LeaderToken token(ReplicaId(3), Epoch(42));
 
@@ -698,6 +783,161 @@ TEST_CASE("fullreaddir backwards without same_name") {
         REQUIRE(resp.results.els.size() >= 1);
         // The only snapshot edge is the now-historical "foo" rename source.
         REQUIRE(resp.results.els[0].name == "foo");
+    }
+}
+
+TEST_CASE("wire request validation returns errors") {
+    TempShardDB db(LogLevel::LOG_ERROR, ShardId(0));
+
+    SUBCASE("fullreaddir same name requires a name") {
+        ShardReqContainer reqContainer;
+        ShardRespContainer respContainer;
+        auto& req = reqContainer.setFullReadDir();
+        req.dirId = ROOT_DIR_INODE_ID;
+        req.flags = FULL_READ_DIR_SAME_NAME;
+
+        db->read(reqContainer, respContainer);
+
+        REQUIRE(respContainer.kind() == ShardMessageKind::ERROR);
+        CHECK(respContainer.getError() == TernError::MALFORMED_REQUEST);
+    }
+
+    SUBCASE("fullreaddir current cursor cannot have a start time") {
+        ShardReqContainer reqContainer;
+        ShardRespContainer respContainer;
+        auto& req = reqContainer.setFullReadDir();
+        req.dirId = ROOT_DIR_INODE_ID;
+        req.flags = FULL_READ_DIR_CURRENT;
+        req.startTime = TernTime(1);
+
+        db->read(reqContainer, respContainer);
+
+        REQUIRE(respContainer.kind() == ShardMessageKind::ERROR);
+        CHECK(respContainer.getError() == TernError::MALFORMED_REQUEST);
+    }
+
+    SUBCASE("null inode cannot be removed") {
+        ShardReqContainer reqContainer;
+        ShardLogEntry logEntry;
+        auto& req = reqContainer.setRemoveInode();
+        req.id = NULL_INODE_ID;
+
+        CHECK(db->prepareLogEntry(reqContainer, logEntry) == TernError::MALFORMED_REQUEST);
+    }
+
+    SUBCASE("link file requires a valid name") {
+        const std::vector<std::string> invalidNames{
+            "",
+            ".",
+            "..",
+            "bad/name",
+            std::string("bad\0name", 8),
+        };
+        for (const auto& name : invalidNames) {
+            ShardReqContainer reqContainer;
+            ShardLogEntry logEntry;
+            auto& req = reqContainer.setLinkFile();
+            req.ownerId = ROOT_DIR_INODE_ID;
+            req.fileId = InodeId(InodeType::FILE, ShardId(0), 1);
+            req.name = name;
+
+            CHECK(db->prepareLogEntry(reqContainer, logEntry) == TernError::BAD_NAME);
+        }
+    }
+
+    SUBCASE("swap blocks requires distinct files") {
+        ShardReqContainer reqContainer;
+        ShardLogEntry logEntry;
+        auto& req = reqContainer.setSwapBlocks();
+        req.fileId1 = InodeId(InodeType::FILE, ShardId(0), 1);
+        req.fileId2 = req.fileId1;
+
+        CHECK(db->prepareLogEntry(reqContainer, logEntry) == TernError::SAME_SOURCE_AND_DESTINATION);
+    }
+
+    SUBCASE("swap spans requires distinct files") {
+        ShardReqContainer reqContainer;
+        ShardLogEntry logEntry;
+        auto& req = reqContainer.setSwapSpans();
+        req.fileId1 = InodeId(InodeType::FILE, ShardId(0), 1);
+        req.fileId2 = req.fileId1;
+
+        CHECK(db->prepareLogEntry(reqContainer, logEntry) == TernError::SAME_SOURCE_AND_DESTINATION);
+    }
+
+    SUBCASE("add span location requires distinct files") {
+        ShardReqContainer reqContainer;
+        ShardLogEntry logEntry;
+        auto& req = reqContainer.setAddSpanLocation();
+        req.fileId1 = InodeId(InodeType::FILE, ShardId(0), 1);
+        req.fileId2 = req.fileId1;
+
+        CHECK(db->prepareLogEntry(reqContainer, logEntry) == TernError::SAME_SOURCE_AND_DESTINATION);
+    }
+}
+
+TEST_CASE("add span validates layout before preparing a log entry") {
+    TempShardDB db(LogLevel::LOG_ERROR, ShardId(0));
+
+    InodeId fileId;
+    BincodeFixedBytes<8> cookie;
+    {
+        ShardReqContainer reqContainer;
+        ShardRespContainer respContainer;
+        ShardLogEntry logEntry;
+        auto& req = reqContainer.setConstructFile();
+        req.type = (uint8_t)InodeType::FILE;
+
+        NO_TERN_ERROR(db->prepareLogEntry(reqContainer, logEntry));
+        NO_TERN_ERROR_IN_RESPONSE(respContainer, db->applyLogEntry(1, logEntry, respContainer));
+        db->flush(false);
+        fileId = respContainer.getConstructFile().id;
+        cookie = respContainer.getConstructFile().cookie;
+    }
+
+    const auto prepareAddSpan = [&](Parity parity, uint8_t stripes, size_t crcCount) {
+        ShardReqContainer reqContainer;
+        ShardLogEntry logEntry;
+        auto& req = reqContainer.setAddSpanInitiate();
+        req.fileId = fileId;
+        req.cookie = cookie;
+        req.storageClass = HDD_STORAGE;
+        req.parity = parity;
+        req.stripes = stripes;
+        req.crcs.els.resize(crcCount);
+        return db->prepareLogEntry(reqContainer, logEntry);
+    };
+
+    SUBCASE("zero data and parity blocks") {
+        CHECK(prepareAddSpan(Parity(0), 1, 0) == TernError::BAD_SPAN_BODY);
+    }
+
+    SUBCASE("multiple data blocks without parity") {
+        CHECK(prepareAddSpan(Parity(2), 1, 2) == TernError::BAD_SPAN_BODY);
+    }
+
+    SUBCASE("too many data blocks") {
+        CHECK(prepareAddSpan(Parity(0x1B), 1, 12) == TernError::BAD_SPAN_BODY);
+    }
+
+    SUBCASE("too many parity blocks") {
+        CHECK(prepareAddSpan(Parity(0x71), 1, 8) == TernError::BAD_SPAN_BODY);
+    }
+
+    SUBCASE("zero stripes") {
+        CHECK(prepareAddSpan(Parity(1, 1), 0, 0) == TernError::BAD_SPAN_BODY);
+    }
+
+    SUBCASE("too many stripes") {
+        CHECK(prepareAddSpan(Parity(1, 1), 16, 32) == TernError::BAD_SPAN_BODY);
+    }
+
+    SUBCASE("one data block without parity is supported") {
+        CHECK(prepareAddSpan(Parity(1), 1, 1) == TernError::COULD_NOT_PICK_BLOCK_SERVICES);
+    }
+
+    SUBCASE("production erasure coding configuration is supported") {
+        CHECK(prepareAddSpan(Parity(10, 4), 1, 14) == TernError::COULD_NOT_PICK_BLOCK_SERVICES);
     }
 }
 

@@ -7,14 +7,14 @@ package main
 import (
 	"flag"
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/client"
+	"github.com/XTXMarkets/ternfs/go/core/bufpool"
+	"github.com/XTXMarkets/ternfs/go/core/log"
+	"github.com/XTXMarkets/ternfs/go/msgs"
+	"github.com/XTXMarkets/ternfs/go/s3"
 	"net/http"
 	"os"
 	"strings"
-	"xtx/ternfs/client"
-	"xtx/ternfs/core/bufpool"
-	"xtx/ternfs/core/log"
-	"xtx/ternfs/msgs"
-	"xtx/ternfs/s3"
 )
 
 // bucketFlag is a custom flag type to handle multiple "-bucket" arguments.

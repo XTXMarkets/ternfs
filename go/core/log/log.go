@@ -63,17 +63,19 @@ type LoggerOptions struct {
 	HardwareEventServerURL string      // URL of the server you want to send hardware events OR empty for no logging
 	AppType                XmonAppType // only used for xmon
 	PrintQuietAlerts       bool        // whether to print alerts in quiet period
+	StderrOnNoSpace        bool        // fall back to stderr instead of panicking on ENOSPC
 }
 
 type Logger struct {
-	level     LogLevel
-	hasColors bool
-	syslog    bool
-	xmon      *Xmon
-	heClient  *HardwareEventClient
-	mu        sync.Mutex
-	bufPool   sync.Pool
-	out       io.Writer
+	level           LogLevel
+	hasColors       bool
+	syslog          bool
+	xmon            *Xmon
+	heClient        *HardwareEventClient
+	mu              sync.Mutex
+	bufPool         sync.Pool
+	out             io.Writer
+	stderrOnNoSpace bool
 }
 
 func isTerminal(f *os.File) bool {
@@ -131,6 +133,12 @@ func (log *Logger) formatLog(level LogLevel, time time.Time, file string, line i
 			if errors.Is(err, os.ErrClosed) {
 				// we've already torn down the logging system
 				break
+			} else if log.stderrOnNoSpace && errors.Is(err, unix.ENOSPC) {
+				// Storage servers must remain able to serve reads and erases
+				// when their log filesystem fills up. Stderr may also fail;
+				// do not turn space exhaustion into a process-wide panic.
+				os.Stderr.Write(bytes[written+w:])
+				break
 			} else {
 				log.mu.Unlock()
 				panic(fmt.Errorf("could not log: %v", err))
@@ -157,7 +165,8 @@ func NewLogger(
 				return bytes.NewBuffer([]byte{})
 			},
 		},
-		out: out,
+		out:             out,
+		stderrOnNoSpace: options.StderrOnNoSpace,
 	}
 
 	xmonConfig := XmonConfig{

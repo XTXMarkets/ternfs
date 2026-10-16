@@ -7,12 +7,12 @@ package client
 import (
 	"bytes"
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"math/bits"
 	"sync"
 	"sync/atomic"
 	"time"
 	"unsafe"
-	"xtx/ternfs/msgs"
 )
 
 type dirInfoKey struct {

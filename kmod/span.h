@@ -114,7 +114,8 @@ void ternfs_unlink_span(struct ternfs_file_spans* spans, struct ternfs_span* spa
 // If the requested range is larger than span end, the remaining pages are
 // dropped with put_page and not filled. The upstream code only really cares that
 // the first page is filled in by the readahead code, so returning fewer pages or
-// even returning error aggressively is fine.
+// even returning an error is fine. Before returning, all submitted block
+// callbacks are drained so they cannot outlive the caller's span and mapping.
 int ternfs_span_get_pages(struct ternfs_block_span* block_span, struct address_space* mapping, struct list_head *pages, unsigned nr_pages, struct list_head *extra_pages);
 
 int __init ternfs_span_init(void);

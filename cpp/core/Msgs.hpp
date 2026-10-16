@@ -244,6 +244,7 @@ struct std::hash<ShardReplicaLocationKey> {
 // TTIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIISSSSSSSS
 struct InodeId {
     uint64_t u64;
+    static constexpr size_t STATIC_SIZE = sizeof(uint64_t);
 
     constexpr InodeId(): u64(0) {}
 
@@ -365,6 +366,10 @@ struct InodeIdExtra {
 std::ostream& operator<<(std::ostream& out, InodeIdExtra id);
 
 struct Parity {
+    // Keep these limits in sync with TERNFS_MAX_DATA/PARITY in kmod/rs.h.
+    static constexpr uint8_t MAX_DATA_BLOCKS = 10;
+    static constexpr uint8_t MAX_PARITY_BLOCKS = 6;
+
     uint8_t u8;
 
     constexpr Parity(): u8(0) {}
@@ -372,8 +377,7 @@ struct Parity {
     explicit constexpr Parity(uint8_t data): u8(data) {}
 
     constexpr Parity(uint8_t dataBlocks, uint8_t parityBlocks): u8(dataBlocks | (parityBlocks << 4)) {
-        ALWAYS_ASSERT(dataBlocks != 0 && dataBlocks < 16);
-        ALWAYS_ASSERT(parityBlocks < 16);
+        ALWAYS_ASSERT(valid(dataBlocks, parityBlocks));
     }
 
     constexpr uint8_t dataBlocks() const {
@@ -386,6 +390,17 @@ struct Parity {
 
     constexpr uint8_t blocks() const {
         return dataBlocks()+parityBlocks();
+    }
+
+    static constexpr bool valid(uint8_t dataBlocks, uint8_t parityBlocks) {
+        return dataBlocks != 0
+            && dataBlocks <= MAX_DATA_BLOCKS
+            && parityBlocks <= MAX_PARITY_BLOCKS
+            && (dataBlocks == 1 || parityBlocks != 0);
+    }
+
+    constexpr bool valid() const {
+        return valid(dataBlocks(), parityBlocks());
     }
 
     void pack(BincodeBuf& buf) const {
@@ -415,6 +430,7 @@ std::string storageClassName(uint8_t storageClass);
 
 struct Crc {
     uint32_t u32;
+    static constexpr size_t STATIC_SIZE = sizeof(uint32_t);
 
     Crc() : u32(0) {}
     Crc(uint32_t x) : u32(x) {}
@@ -440,6 +456,7 @@ std::ostream& operator<<(std::ostream& out, Crc crc);
 
 struct BlockServiceId {
     uint64_t u64;
+    static constexpr size_t STATIC_SIZE = sizeof(uint64_t);
 
     BlockServiceId(): u64(0) {}
     BlockServiceId(uint64_t x): u64(x) {}
@@ -662,3 +679,5 @@ static std::array<uint8_t, 4> REQUIRED_DIR_INFO_TAGS = {SNAPSHOT_POLICY_TAG, SPA
 
 static constexpr uint8_t DEFAULT_LOCATION = 0;
 static constexpr uint8_t INVALID_LOCATION = 255;
+
+static constexpr uint8_t MAX_STRIPES = 16;

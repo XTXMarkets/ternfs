@@ -5,10 +5,10 @@
 package cleanup
 
 import (
+	"github.com/XTXMarkets/ternfs/go/core/assert"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"testing"
 	"time"
-	"xtx/ternfs/core/assert"
-	"xtx/ternfs/msgs"
 )
 
 func inodeId(id uint64, extra bool) msgs.InodeIdExtra {

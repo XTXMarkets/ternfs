@@ -1,0 +1,377 @@
+// Copyright 2026 XTX Markets Technologies Limited
+//
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+//go:build linux && libnfs
+
+package libnfs
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"syscall"
+	"testing"
+)
+
+func TestLibnfs(t *testing.T) {
+	suite := newNFSTestSuite(t)
+	for _, tc := range []struct {
+		name string
+		run  func(*testing.T, *nfsTestSuite)
+	}{
+		{"PrivateMutableWriters", testLibnfsPrivateMutableWriters},
+		{"ExclusiveCreate", testLibnfsExclusiveCreate},
+		{"StatRoot", testLibnfsStatRoot},
+		{"ReadFile", testLibnfsReadFile},
+		{"ReadLargeFile", testLibnfsReadLargeFile},
+		{"ReadDir", testLibnfsReadDir},
+		{"SubdirNavigation", testLibnfsSubdirNavigation},
+		{"StatFile", testLibnfsStatFile},
+		{"Readlink", testLibnfsReadlink},
+		{"EmptyFile", testLibnfsEmptyFile},
+		{"EmptyDir", testLibnfsEmptyDir},
+		{"NonExistent", testLibnfsNonExistent},
+		{"ManyFiles", testLibnfsManyFiles},
+		{"recovery", runLibnfsRecovery},
+	} {
+		t.Run(tc.name, func(t *testing.T) { tc.run(t, suite) })
+	}
+}
+
+func testLibnfsExclusiveCreate(t *testing.T, suite *nfsTestSuite) {
+	s := suite.server(t)
+	c := s.client(t)
+	flags := os.O_WRONLY | os.O_CREATE | os.O_EXCL
+	h := c.open(t, s, "exclusive", flags)
+	c.must(t, libnfsRequest{Op: "write", Handle: h, Data: []byte("exclusive data")})
+	other := s.client(t)
+	for _, client := range []*libnfsProcessClient{c, other} {
+		r := client.call(t, libnfsRequest{Op: "open", Path: "/" + s.Name + "/exclusive", Flags: flags})
+		if r.Errno != int(syscall.EEXIST) {
+			t.Fatalf("exclusive create while staged: %+v", r)
+		}
+	}
+	c.must(t, libnfsRequest{Op: "close", Handle: h})
+	s.published(t, "exclusive", "exclusive data")
+	r := other.call(t, libnfsRequest{Op: "open", Path: "/" + s.Name + "/exclusive", Flags: flags})
+	if r.Errno != int(syscall.EEXIST) {
+		t.Fatalf("exclusive create after close: %+v", r)
+	}
+	s.published(t, "exclusive", "exclusive data")
+}
+
+func connectLibnfs(t *testing.T, suite *nfsTestSuite, fixtureDir string) *libnfsProcessClient {
+	t.Helper()
+	server := suite.server(t)
+	server.seed(t, fixtureDir)
+	return server.clientAt(t, "/"+server.Name)
+}
+
+// Writers in one client share its staged version of a file; a writer in
+// another client stays private until its CLOSE. Readers keep the version
+// they opened.
+func testLibnfsPrivateMutableWriters(t *testing.T, suite *nfsTestSuite) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "private.txt"), []byte("original"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	server := suite.server(t)
+	server.seed(t, dir)
+	c := server.clientAt(t, "/"+server.Name)
+	t.Cleanup(c.Close)
+	other := server.clientAt(t, "/"+server.Name)
+	t.Cleanup(other.Close)
+	open := func(c *libnfsProcessClient, flags int) *libnfsProcessFile {
+		f, err := c.OpenFile("/private.txt", flags)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = f.Close() })
+		return f
+	}
+	reader := open(other, os.O_RDONLY)
+	first := open(c, os.O_RDWR)
+	joined := open(c, os.O_RDWR)
+	second := open(other, os.O_RDWR)
+	check := func(f *libnfsProcessFile, want string) {
+		t.Helper()
+		got, err := f.Read()
+		if err != nil || string(got) != want {
+			t.Fatalf("read = %q, %v; want %q", got, err, want)
+		}
+	}
+	if err := first.WriteAt([]byte("XYZ"), 8); err != nil {
+		t.Fatal(err)
+	}
+	end, err := first.SyncSize()
+	if err != nil || end != 11 {
+		t.Fatalf("fsync/fstat size=%d err=%v", end, err)
+	}
+	if err := joined.WriteAt([]byte("Q"), end); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.WriteAt([]byte("SECOND"), 0); err != nil {
+		t.Fatal(err)
+	}
+	check(reader, "original")
+	check(first, "originalXYZQ")
+	check(joined, "originalXYZQ")
+	check(second, "SECONDal")
+	if err := second.Close(); err != nil {
+		t.Fatal(err)
+	}
+	check(reader, "original")
+	fresh := open(other, os.O_RDONLY)
+	check(fresh, "SECONDal")
+	// The first client's staging publishes at its last write CLOSE.
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	check(fresh, "SECONDal")
+	if err := joined.Close(); err != nil {
+		t.Fatal(err)
+	}
+	check(reader, "original")
+	check(fresh, "SECONDal")
+	last := open(other, os.O_RDONLY)
+	check(last, "originalXYZQ")
+	// Close before destroying the libnfs context; Cleanup also handles failures.
+	for _, f := range []*libnfsProcessFile{reader, fresh, last} {
+		if err := f.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func testLibnfsStatRoot(t *testing.T, suite *nfsTestSuite) {
+	dir := t.TempDir()
+	c := connectLibnfs(t, suite, dir)
+	defer c.Close()
+
+	st, err := c.Stat("/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Mode&0040000 == 0 {
+		t.Fatalf("root is not a directory: mode=%#o", st.Mode)
+	}
+}
+
+func testLibnfsReadFile(t *testing.T, suite *nfsTestSuite) {
+	dir := t.TempDir()
+	content := []byte("Hello from libnfs test!")
+	os.WriteFile(filepath.Join(dir, "test.txt"), content, 0644)
+
+	c := connectLibnfs(t, suite, dir)
+	defer c.Close()
+
+	data, err := c.ReadFile("/test.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != string(content) {
+		t.Fatalf("read = %q, want %q", data, content)
+	}
+}
+
+func testLibnfsReadLargeFile(t *testing.T, suite *nfsTestSuite) {
+	dir := t.TempDir()
+	content := make([]byte, 128*1024)
+	for i := range content {
+		content[i] = byte(i % 251)
+	}
+	os.WriteFile(filepath.Join(dir, "large.bin"), content, 0644)
+
+	c := connectLibnfs(t, suite, dir)
+	defer c.Close()
+
+	data, err := c.ReadFile("/large.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) != len(content) {
+		t.Fatalf("read %d bytes, want %d", len(data), len(content))
+	}
+	for i := range data {
+		if data[i] != content[i] {
+			t.Fatalf("mismatch at byte %d: got %d, want %d", i, data[i], content[i])
+		}
+	}
+}
+
+func testLibnfsReadDir(t *testing.T, suite *nfsTestSuite) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "aaa.txt"), []byte("A"), 0644)
+	os.WriteFile(filepath.Join(dir, "bbb.txt"), []byte("BB"), 0644)
+	os.Mkdir(filepath.Join(dir, "subdir"), 0755)
+
+	c := connectLibnfs(t, suite, dir)
+	defer c.Close()
+
+	names, err := c.ReadDir("/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(names)
+	expected := []string{"aaa.txt", "bbb.txt", "subdir"}
+	if len(names) != len(expected) {
+		t.Fatalf("readdir = %v, want %v", names, expected)
+	}
+	for i := range expected {
+		if names[i] != expected[i] {
+			t.Fatalf("readdir[%d] = %q, want %q", i, names[i], expected[i])
+		}
+	}
+}
+
+func testLibnfsSubdirNavigation(t *testing.T, suite *nfsTestSuite) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "a", "b"), 0755)
+	os.WriteFile(filepath.Join(dir, "a", "b", "deep.txt"), []byte("deep"), 0644)
+
+	c := connectLibnfs(t, suite, dir)
+	defer c.Close()
+
+	data, err := c.ReadFile("/a/b/deep.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "deep" {
+		t.Fatalf("read = %q, want %q", data, "deep")
+	}
+
+	names, err := c.ReadDir("/a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(names) != 1 || names[0] != "b" {
+		t.Fatalf("readdir(/a) = %v, want [b]", names)
+	}
+}
+
+func testLibnfsStatFile(t *testing.T, suite *nfsTestSuite) {
+	dir := t.TempDir()
+	content := []byte("stat me")
+	os.WriteFile(filepath.Join(dir, "info.txt"), content, 0644)
+
+	c := connectLibnfs(t, suite, dir)
+	defer c.Close()
+
+	st, err := c.Stat("/info.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Size != uint64(len(content)) {
+		t.Fatalf("size = %d, want %d", st.Size, len(content))
+	}
+	if st.Mode&0100000 == 0 {
+		t.Fatalf("not a regular file: mode=%#o", st.Mode)
+	}
+}
+
+func testLibnfsReadlink(t *testing.T, suite *nfsTestSuite) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "target.txt"), []byte("target"), 0644)
+	os.Symlink("target.txt", filepath.Join(dir, "link.txt"))
+
+	c := connectLibnfs(t, suite, dir)
+	defer c.Close()
+
+	target, err := c.Readlink("/link.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target != "target.txt" {
+		t.Fatalf("readlink = %q, want %q", target, "target.txt")
+	}
+
+	// Reading through the symlink should also work.
+	data, err := c.ReadFile("/link.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "target" {
+		t.Fatalf("read through symlink = %q, want %q", data, "target")
+	}
+}
+
+func testLibnfsEmptyFile(t *testing.T, suite *nfsTestSuite) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "empty.txt"), nil, 0644)
+
+	c := connectLibnfs(t, suite, dir)
+	defer c.Close()
+
+	data, err := c.ReadFile("/empty.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) != 0 {
+		t.Fatalf("expected empty, got %d bytes", len(data))
+	}
+
+	st, err := c.Stat("/empty.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Size != 0 {
+		t.Fatalf("size = %d, want 0", st.Size)
+	}
+}
+
+func testLibnfsEmptyDir(t *testing.T, suite *nfsTestSuite) {
+	dir := t.TempDir()
+	os.Mkdir(filepath.Join(dir, "empty"), 0755)
+
+	c := connectLibnfs(t, suite, dir)
+	defer c.Close()
+
+	names, err := c.ReadDir("/empty")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(names) != 0 {
+		t.Fatalf("expected empty dir, got %v", names)
+	}
+}
+
+func testLibnfsNonExistent(t *testing.T, suite *nfsTestSuite) {
+	dir := t.TempDir()
+	c := connectLibnfs(t, suite, dir)
+	defer c.Close()
+
+	_, err := c.Stat("/no-such-file.txt")
+	if err == nil {
+		t.Fatal("expected error for non-existent file")
+	}
+}
+
+func testLibnfsManyFiles(t *testing.T, suite *nfsTestSuite) {
+	dir := t.TempDir()
+	var expected []string
+	for i := 0; i < 100; i++ {
+		name := fmt.Sprintf("file_%03d.txt", i)
+		os.WriteFile(filepath.Join(dir, name), []byte(name), 0644)
+		expected = append(expected, name)
+	}
+	sort.Strings(expected)
+
+	c := connectLibnfs(t, suite, dir)
+	defer c.Close()
+
+	names, err := c.ReadDir("/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(names)
+	if len(names) != len(expected) {
+		t.Fatalf("readdir returned %d entries, want %d", len(names), len(expected))
+	}
+	for i := range expected {
+		if names[i] != expected[i] {
+			t.Fatalf("readdir[%d] = %q, want %q", i, names[i], expected[i])
+		}
+	}
+}

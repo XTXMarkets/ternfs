@@ -270,9 +270,12 @@ class Gen:
         self.tdmap = {}
         self.emitted = set()
         self.wrappers = {}
+        self.synth_labels = set()
         self.out = []
 
         # External constants not defined in the .x file
+        self.consts["AUTH_NONE"] = "0"  # RFC 5531
+        self.consts["AUTH_SYS"] = "1"
         self.consts["RPCSEC_GSS"] = "6"  # RFC 2203
 
         for d in decls:
@@ -343,6 +346,8 @@ class Gen:
         base, fl, vl = self.resolve_td(xdr_type)
         if base in XDR_PRIM:
             return XDR_PRIM[base]
+        if (base in self.enums or base in self.structs) and fl is None and vl is None:
+            return base
         return xdr_type
 
     def is_enum(self, name):
@@ -484,7 +489,7 @@ class Gen:
         self.out.append(f"enum {e.name} : beu32 {{")
         start = self._start_block()
         for v in e.values:
-            self.out.append(f"    {v.name} = {v.value};")
+            self.out.append(f"    {v.name} = {self.rc(v.value)};")
         self._end_block(start)
         self.out.append("}")
         self.out.append("")
@@ -803,6 +808,15 @@ class Gen:
         if len(label_enums) == 1:
             return label_enums.pop()
 
+        # A synthesized enum for every label, so that unions which share
+        # labels (secinfo4 and callback_sec_parms4 both use RPCSEC_GSS) do
+        # not declare the same constant twice.
+        labels = [l for arm in u.arms for l in arm.labels]
+        if u.default_arm:
+            labels += [l for l in u.default_arm.labels if l != "default"]
+        if any(l in self.synth_labels for l in labels):
+            return self._make_shared_synth_enum(u, labels)
+
         key = f"disc_{u.name}"
         if key in self.emitted: return key
         self.emitted.add(key)
@@ -820,6 +834,28 @@ class Gen:
         self._end_block(start)
         self.out.append("}")
         self.out.append("")
+        self.synth_labels.update(labels)
+        return key
+
+    def _make_shared_synth_enum(self, u, labels):
+        """Discriminant for a union whose labels overlap an earlier synthesized enum.
+
+        Emit an enum holding only the labels not declared yet. The union's
+        arms still name every label; the Go generator resolves them as
+        package constants.
+        """
+        key = f"disc_{u.name}"
+        if key in self.emitted: return key
+        self.emitted.add(key)
+        self.out.append(f"enum {key} : beu32 {{")
+        start = self._start_block()
+        for lbl in labels:
+            if lbl not in self.synth_labels:
+                self.out.append(f"    {lbl} = {self._resolve_label_value(lbl)};")
+        self._end_block(start)
+        self.out.append("}")
+        self.out.append("")
+        self.synth_labels.update(labels)
         return key
 
     def _emit_union(self, u):
@@ -861,8 +897,10 @@ class Gen:
         base, fl, vl = self.resolve_td(type_name)
         wlines = []
 
-        # Named struct → use directly
+        # Named struct → use directly, through any plain alias
         if base in self.structs:
+            if fl is None and vl is None:
+                return base, wlines
             return type_name, wlines
         # Promoted typedef → use directly
         if self._is_promoted(type_name):
@@ -929,6 +967,40 @@ class Gen:
         return wname, lines
 
 
+def split_inline_arrays(decls):
+    """Give inline variable arrays after a struct's first one a named type.
+
+    The message compiler supports at most one inline variable-length array of
+    primitives or structs per message. NFSv4.1 has several structs with two
+    or more; moving the later arrays into typedefs keeps them encodable.
+    Structs with a single inline array are unchanged.
+    """
+    named = {d.name for d in decls if isinstance(d, (Struct, Union, Enum, Typedef))}
+    tds = {d.name: d for d in decls if isinstance(d, Typedef)}
+
+    def inline_array(f):
+        return f.var_len is not None and not f.is_optional
+
+    def is_bytes(f):
+        return f.type_name in ("opaque", "string")
+
+    out = []
+    for d in decls:
+        if isinstance(d, Struct):
+            arrays = [f for f in d.fields if inline_array(f)]
+            # Several byte strings alone are already handled by referencing
+            # xdr_opaque, which keeps the existing NFSv4.0 output unchanged.
+            if len(arrays) >= 2 and not all(is_bytes(f) for f in arrays):
+                for f in arrays[1:]:
+                    tname = f"{d.name}_{f.name}"
+                    assert tname not in named, tname
+                    named.add(tname)
+                    out.append(Typedef(tname, f.type_name, None, f.var_len))
+                    f.type_name, f.var_len = tname, None
+        out.append(d)
+    return out
+
+
 def main():
     if len(sys.argv) < 2:
         print("Usage: python3 xdr2msg.py <file.x>", file=sys.stderr)
@@ -937,7 +1009,7 @@ def main():
     with open(sys.argv[1]) as f:
         src = f.read()
 
-    decls = Parser(src).parse()
+    decls = split_inline_arrays(Parser(src).parse())
     output = Gen(decls).emit()
     print(output, end="")
 

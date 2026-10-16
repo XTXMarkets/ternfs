@@ -46,12 +46,17 @@ static u64 policy_key(u64 inode, u8 tag) {
 
 static struct ternfs_policy* find_policy(u64 inode, u8 tag) {
     struct ternfs_policy* policy;
+    struct ternfs_policy* found = NULL;
+    rcu_read_lock();
     hash_for_each_possible_rcu(policies, policy, hnode, policy_key(inode, tag)) {
-        if (likely(policy->inode && inode && policy->tag == tag)) {
-            return policy;
+        if (likely(policy->inode == inode && policy->tag == tag)) {
+            found = policy;
+            break;
         }
     }
-    return NULL;
+    rcu_read_unlock();
+    // Entries live until module exit; only their bodies are replaced.
+    return found;
 }
 
 struct ternfs_policy* ternfs_upsert_policy(u64 inode, u8 tag, char* body, int len) {

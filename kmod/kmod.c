@@ -26,12 +26,6 @@
 
 MODULE_LICENSE("GPL");
 
-// general purpose wq this is where various async completion function run
-struct workqueue_struct* ternfs_wq;
-
-// fast wq, we don't want delays in these operations
-struct workqueue_struct* ternfs_fast_wq;
-
 static int __init ternfs_init(void) {
     int err;
 
@@ -40,11 +34,8 @@ static int __init ternfs_init(void) {
 
     ternfs_shard_init();
 
-    ternfs_wq = alloc_workqueue("ternfs-wq", 0, 0);
-    if (!ternfs_wq) { return -ENOMEM; }
-
-    ternfs_fast_wq = alloc_workqueue("ternfs-fast-wq", 0, 0);
-    if (!ternfs_fast_wq) { goto out_fast_wq; }
+    err = ternfs_workqueues_init();
+    if (err) { return err; }
 
     err = ternfs_rs_init();
     if (err) { goto out_rs; }
@@ -102,24 +93,23 @@ out_sysfs:
 out_policy:
     ternfs_rs_exit();
 out_rs:
-    destroy_workqueue(ternfs_fast_wq);
-out_fast_wq:
-    destroy_workqueue(ternfs_wq);
+    ternfs_workqueues_exit();
     return err;
 }
 
 static void __exit ternfs_exit(void) {
-    ternfs_debugfs_exit();
     ternfs_fs_exit();
+    // Block completions still use span/inode caches, policies and metrics.
+    ternfs_block_exit();
     ternfs_file_exit();
     ternfs_dir_exit();
     ternfs_inode_exit();
     ternfs_span_exit();
-    ternfs_block_exit();
     ternfs_sysctl_exit();
     ternfs_sysfs_exit();
     ternfs_policy_exit();
     ternfs_rs_exit();
+    ternfs_debugfs_exit();
 
     // tracepoint_synchronize_unregister() must be called before the end of
     // the module exit function to make sure there is no caller left using
@@ -128,10 +118,8 @@ static void __exit ternfs_exit(void) {
     tracepoint_synchronize_unregister();
 
     ternfs_debug("destroying workqueues");
-    destroy_workqueue(ternfs_fast_wq);
-    destroy_workqueue(ternfs_wq);
+    ternfs_workqueues_exit();
 }
 
 module_init(ternfs_init);
 module_exit(ternfs_exit);
-

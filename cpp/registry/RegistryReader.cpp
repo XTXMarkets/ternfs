@@ -217,15 +217,33 @@ void RegistryReader::step() {
             registryResp.blockServices.els = _allBlockServicesFull();
             break;
         }
+        case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION_DEPRECATED: {
+            auto &registryResp = resp.resp.setBlockServicesNeedingMigrationDeprecated();
+            auto &migrationReq = req.req.getBlockServicesNeedingMigrationDeprecated();
+            registryResp.blockServices.els = _blockServicesNeedingMigration(migrationReq.locationId);
+            break;
+        }
         case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION: {
             auto &registryResp = resp.resp.setBlockServicesNeedingMigration();
             auto &migrationReq = req.req.getBlockServicesNeedingMigration();
             registryResp.blockServices.els = _blockServicesNeedingMigration(migrationReq.locationId);
             break;
         }
+        case RegistryMessageKind::CHANGED_BLOCK_SERVICES_DEPRECATED: {
+            auto changed = _changedBlockServicesFull(req.req.getChangedBlockServicesDeprecated().since);
+            auto& registryResp = resp.resp.setChangedBlockServicesDeprecated();
+            registryResp.lastChange = changed.lastChange;
+            registryResp.blockServices.els = std::move(changed.blockServices.els);
+            break;
+        }
         case RegistryMessageKind::CHANGED_BLOCK_SERVICES: {
             auto& changedReq = req.req.getChangedBlockServices();
             resp.resp.setChangedBlockServices() = _changedBlockServicesFull(changedReq.since);
+            break;
+        }
+        case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE_DEPRECATED: {
+            auto& registryResp = resp.resp.setBlockServiceAvailableSpaceDeprecated();
+            registryResp.blockServices.els = _blockServiceAvailableSpace();
             break;
         }
         case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE: {

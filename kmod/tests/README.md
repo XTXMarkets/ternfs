@@ -1,0 +1,197 @@
+<!--
+Copyright 2026 XTX Markets Technologies Limited
+
+SPDX-License-Identifier: GPL-2.0-or-later
+-->
+
+These kernel test modules exercise production helpers without a running
+TernFS cluster. Build against the kernel used by a disposable test VM:
+
+```sh
+make -C /path/to/kernel/build M="$PWD/kmod/tests" modules
+```
+
+Run a test module as root with the reusable log-checking wrapper:
+
+```sh
+./run_module_test.sh ./ternfs-policy-test.ko \
+    ternfs_policy_test 'ternfs-policy-test: PASS'
+```
+
+The wrapper records the current kernel-log length, loads and unloads the
+module, prints only new messages, requires the supplied success text, and
+fails if those messages contain a KASAN report or other kernel fault.
+
+Inside that VM, run the policy-cache test:
+
+```sh
+sudo insmod ternfs-policy-test.ko
+sudo dmesg | grep ternfs-policy-test
+sudo rmmod ternfs_policy_test
+```
+
+The test checks that 257 distinct inode keys retain their own values, updates
+do not affect other keys, and policy tags remain distinct. It prints `PASS`
+on success; a failed check logs the reason and returns an error from module
+initialization. Use a KASAN-enabled kernel to also check memory accesses.
+
+The write-page test runs the production copy helper with real kernel iterators
+and pages, including empty and short iterators and failures of the first or
+later page allocation. It checks returned progress, retained contents, page
+ownership, and RSS accounting:
+
+```sh
+sudo insmod ternfs-write-test.ko
+sudo dmesg | grep ternfs-write-test
+sudo rmmod ternfs_write_test
+```
+
+The inline-read test poisons a real page before filling it through the
+production helper. It checks content preservation and zeroed tails for empty,
+one-byte, 255-byte and full-page inline data, then reuses the same page to
+ensure shorter contents cannot expose bytes from an earlier fill:
+
+```sh
+sudo insmod ternfs-inline-read-test.ko
+sudo dmesg | grep ternfs-inline-read-test
+sudo rmmod ternfs_inline_read_test
+```
+
+The symlink test includes the production read-link implementation while
+substituting metadata and span I/O at their external boundaries. It checks
+metadata, span lookup, buffer allocation, page allocation and page-fetch
+failures, including exact buffer, span and page cleanup. Empty, inline and
+block-backed successes must return terminated contents and release everything
+through the production destructor:
+
+```sh
+./run_module_test.sh ./ternfs-symlink-test.ko \
+    ternfs_symlink_test 'ternfs-symlink-test: PASS'
+```
+
+The file-open test uses a real initialized inode mutex and snapshots all
+transient file fields around the production open callback. It covers NONE,
+READING and WRITING states with read-only, write-only and read/write modes,
+including repeated rejected read-only reopens followed by a writable reopen.
+Every return must preserve the expected state and leave the inode unlocked:
+
+```sh
+./run_module_test.sh ./ternfs-open-test.ko \
+    ternfs_open_test 'ternfs-open-test: PASS'
+```
+
+It also exercises the production atime-on-open helper with metadata RPCs and
+time replaced at their boundaries. A read-only/noatime mount must still permit
+the opt-in update; disabling the sysctl, `O_NOATIME`, or a transient writer must
+skip it. Cases cover cached and peer-updated throttling, repeated opens reaching
+the update deadline, zero interval, future timestamps with nanosecond precision,
+metadata failures that leave the file readable, and unchanged mtime.
+
+The transient-lifetime test includes the production span, cleanup and write
+page-accounting helpers. It uses real slab objects, pages, inode locking,
+semaphores and an `mm` reference to check span refcounts, current and
+per-block page cleanup, RSS balance, idempotent file cleanup, preserved
+errors, non-owner eviction, and waiting for an outstanding flush before
+dropping the writer's `mm`:
+
+```sh
+./run_module_test.sh ./ternfs-transient-test.ko \
+    ternfs_transient_test 'ternfs-transient-test: PASS'
+```
+
+The symlink-create test includes the production post-create helper with
+write, flush, trace and dentry-publication boundaries substituted. It uses a
+real initialized inode and `iput`, retaining one observer reference so error
+paths can verify exactly one reference drop without invoking fabricated VFS
+teardown. It checks original errors, ordering, path contents, link count,
+publication ownership and inode-lock release:
+
+```sh
+./run_module_test.sh ./ternfs-symlink-create-test.ko \
+    ternfs_symlink_create_test 'ternfs-symlink-create-test: PASS'
+```
+
+The fetch-state test includes the production callback-reference and cache
+implementation. With real slab objects, pages, spinlocks, waitqueues and
+controlled kthreads it checks immediate cleanup, pending and terminal-error
+callbacks, retry holds, borrowed span/mapping lifetime, final wake/free
+ordering, leftover-page release, semaphore reset and slab-object reuse:
+
+```sh
+./run_module_test.sh ./ternfs-fetch-state-test.ko \
+    ternfs_fetch_state_test 'ternfs-fetch-state-test: PASS'
+```
+
+The async-getattr completion test uses a real initialized inode reference,
+latch waitqueue, sleeping waiter and synchronous wake callback. It verifies
+that release advances the counter and notifies waiters before exactly one
+`iput`, including a wake-time latch reacquisition that changes the async
+sequence number before the old completion returns:
+
+```sh
+./run_module_test.sh ./ternfs-getattr-completion-test.ko \
+    ternfs_getattr_completion_test 'ternfs-getattr-completion-test: PASS'
+```
+
+The directory-policy update test includes the production policy cache and
+update helper with allocation failure injection scoped to the cache's
+`kmalloc` calls. Using real allocations, spinlocks and RCU callbacks, it checks
+object creation, body creation and existing-body replacement failures across
+all four policy slots. Failed and unvisited slots must retain valid inherited
+pointers, successful earlier slots remain valid, empty bodies allocate
+nothing, and retries publish the requested bodies without changing unrelated
+inode metadata:
+
+```sh
+./run_module_test.sh ./ternfs-policy-update-test.ko \
+    ternfs_policy_update_test 'ternfs-policy-update-test: PASS'
+```
+
+The block teardown test includes production `block.c` with only its tracepoint
+boundary substituted. It uses real workqueues, RCU callbacks, slab caches and
+an unconnected kernel TCP socket. A synthetic pending request exercises hash
+removal, RCU handoff, process-context socket release, completion draining and
+cache-destruction ordering. It also checks allocation-failure unwind, stopped
+retry rejection, periodic-work cancellation, bad-address RCU cleanup and a
+second idle init/exit lifecycle:
+
+```sh
+./run_module_test.sh ./ternfs-block-teardown-test.ko \
+    ternfs_block_teardown_test 'ternfs-block-teardown-test: PASS'
+```
+
+The directory teardown test includes production `dir.c` with trace and
+metadata/inode lookup boundaries substituted. It assigns a real slab-backed
+cache with real pages to an inode, holds a non-sleeping RCU reader across the
+drop, and runs directory exit in a controlled thread. Exit must wait until the
+callback releases the cache and its page references before either slab is
+destroyed. Repeated and null drops must be harmless, while external page
+owners retain valid contents:
+
+```sh
+./run_module_test.sh ./ternfs-dir-teardown-test.ko \
+    ternfs_dir_teardown_test 'ternfs-dir-teardown-test: PASS'
+```
+
+The workqueue test includes production `wq.c` with allocation failure
+injection scoped to its two `alloc_workqueue` calls. Successful allocations
+use real kernel queues. It checks both failure positions and cleanup/nulling,
+preserved names and flags, queued work draining during destruction,
+fast-before-general destruction order, repeated cleanup and a second complete
+init/exit lifecycle:
+
+```sh
+./run_module_test.sh ./ternfs-wq-test.ko \
+    ternfs_wq_test 'ternfs-wq-test: PASS'
+```
+
+The read-page completion test uses the production helper with a real locked
+page. Its unlock boundary calls the real kernel unlock after checking that the
+page is still locked, already uptodate, unchanged, and at the original
+reference count. A real page waiter must observe completed data after wake,
+and repeated reuse of the same page must preserve the same ordering:
+
+```sh
+./run_module_test.sh ./ternfs-read-page-test.ko \
+    ternfs_read_page_test 'ternfs-read-page-test: PASS'
+```

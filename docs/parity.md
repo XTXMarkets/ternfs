@@ -4,7 +4,9 @@ Copyright 2025 XTX Markets Technologies Limited
 SPDX-License-Identifier: GPL-2.0-or-later
 -->
 
-TernFS supports erasure coding in any configuration, as long as the parity and data blocks are between 1 and 16 and 0 and 16, respectively.
+TernFS supports erasure coding with up to 10 data blocks and 6 parity blocks.
+At least one data block is required, and configurations with multiple data blocks
+require at least one parity block.
 
 When working with spinning disks we want to not have seek time to dominate the time spent by the block services.
 

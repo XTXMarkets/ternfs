@@ -61,9 +61,9 @@ if args.build:
     for r in (['ubuntu', 'ubuntusanitized', 'ubuntuvalgrind'] if args.docker else ['release', 'sanitized', 'valgrind']):
         wait_cmd(run_cmd(['./build.sh', r]))
     if args.docker:
-        run_docker_unbuffered(['-w', '/ternfs/kmod'], ['make', 'bincode_tests'])
+        run_docker_unbuffered(['-w', '/ternfs/kmod'], ['make', 'bincode_tests', 'registry_tests'])
     else:
-        wait_cmd(run_cmd(['make', 'bincode_tests'], cwd='kmod'))
+        wait_cmd(run_cmd(['make', 'bincode_tests', 'registry_tests'], cwd='kmod'))
 
 if args.functional:
     bold_print('functional tests')
@@ -77,11 +77,15 @@ if args.functional:
             ['-w', '/ternfs/kmod'], ['./bincode_tests']
         )
         run_docker_unbuffered(
+            ['-w', '/ternfs/kmod'], ['./registry_tests']
+        )
+        run_docker_unbuffered(
             ['-w', '/ternfs/go'], ['go', 'test', './...']
         )
     else:
         wait_cmds([
             run_cmd(['./bincode_tests'], cwd='kmod'),
+            run_cmd(['./registry_tests'], cwd='kmod'),
             run_cmd(['./cpp/tests.sh']),
             run_cmd(['go', 'test', './...'], cwd='go')
         ])

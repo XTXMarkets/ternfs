@@ -153,8 +153,11 @@ public:
             case RegistryMessageKind::ALL_BLOCK_SERVICES:
             case RegistryMessageKind::ALL_SHARDS:
             case RegistryMessageKind::ALL_CDC:
+            case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION_DEPRECATED:
             case RegistryMessageKind::BLOCK_SERVICES_NEEDING_MIGRATION:
+            case RegistryMessageKind::CHANGED_BLOCK_SERVICES_DEPRECATED:
             case RegistryMessageKind::CHANGED_BLOCK_SERVICES:
+            case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE_DEPRECATED:
             case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE: {
                 _readRequests.emplace_back(std::move(req));
                 break;
@@ -409,6 +412,7 @@ void Registry::start(const RegistryOptions& options, LoopThreads& threads) {
         LOG_INFO(_env, "    ownAddres = %s", options.serverOptions.addrs);
         LOG_INFO(_env, "    enforceStableIp = '%s'", (int)options.enforceStableIp);
         LOG_INFO(_env, "    enforceStableLeader = '%s'", (int)options.enforceStableLeader);
+        LOG_INFO(_env, "    enforceStableBlockServicePath = '%s'", (int)options.enforceStableBlockServicePath);
         LOG_INFO(_env, "    maxConnections = '%s'", options.maxConnections);
         LOG_INFO(_env, "    minAutoDecomInterval = '%s'", options.minDecomInterval);
         LOG_INFO(_env, "    alertAtUnavailableFailureDomains = '%s'", (int)options.alertAfterUnavailableFailureDomains);

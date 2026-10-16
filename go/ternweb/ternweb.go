@@ -10,6 +10,13 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/client"
+	"github.com/XTXMarkets/ternfs/go/core/bincode"
+	"github.com/XTXMarkets/ternfs/go/core/bufpool"
+	"github.com/XTXMarkets/ternfs/go/core/log"
+	lrecover "github.com/XTXMarkets/ternfs/go/core/recover"
+	"github.com/XTXMarkets/ternfs/go/msgs"
+	"github.com/XTXMarkets/ternfs/go/msgs/public"
 	"html/template"
 	"io"
 	"io/ioutil"
@@ -28,13 +35,6 @@ import (
 	"strings"
 	"syscall"
 	"time"
-	"xtx/ternfs/client"
-	"xtx/ternfs/core/bincode"
-	"xtx/ternfs/core/bufpool"
-	"xtx/ternfs/core/log"
-	lrecover "xtx/ternfs/core/recover"
-	"xtx/ternfs/msgs"
-	"xtx/ternfs/msgs/public"
 )
 
 type namedTemplate struct {

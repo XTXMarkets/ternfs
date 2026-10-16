@@ -6,15 +6,15 @@ package cleanup
 
 import (
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/cleanup/scratch"
+	"github.com/XTXMarkets/ternfs/go/client"
+	"github.com/XTXMarkets/ternfs/go/core/bufpool"
+	"github.com/XTXMarkets/ternfs/go/core/log"
+	lrecover "github.com/XTXMarkets/ternfs/go/core/recover"
+	"github.com/XTXMarkets/ternfs/go/core/timing"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"sync"
 	"sync/atomic"
-	"xtx/ternfs/cleanup/scratch"
-	"xtx/ternfs/client"
-	"xtx/ternfs/core/bufpool"
-	"xtx/ternfs/core/log"
-	lrecover "xtx/ternfs/core/recover"
-	"xtx/ternfs/core/timing"
-	"xtx/ternfs/msgs"
 )
 
 type ScrubState struct {
@@ -52,6 +52,15 @@ func scrubFileInternal(
 	badBlock := func(blockService *msgs.BlockService, blockSize uint32, block *msgs.FetchedBlock) (bool, error) {
 		err := c.CheckBlock(log, blockService, block.BlockId, blockSize, block.Crc)
 		if badBlockError(err) {
+			// The file can become transient after we fetched its spans, while
+			// destruct-files erases the blocks we are about to check. Stop at
+			// the first error in that case instead of reporting every erased
+			// block as bad.
+			if err == msgs.BLOCK_NOT_FOUND {
+				if _, statErr := c.StatFile(log, file); statErr == msgs.FILE_NOT_FOUND || statErr == msgs.FILE_IS_TRANSIENT {
+					return false, statErr
+				}
+			}
 			log.ErrorNoAlert("found bad block, block service %v, block %v: %v", blockService.Id, block.BlockId, err)
 			return true, nil
 		}

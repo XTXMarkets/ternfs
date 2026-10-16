@@ -25,6 +25,10 @@
 #include "dir.h"
 #include "inode_compat.h"
 #include "page_compat.h"
+#include "write.h"
+#include "inline_read.h"
+#include "transient.h"
+#include "read_page.h"
 
 unsigned ternfs_atime_update_interval_sec = 0;
 
@@ -33,150 +37,6 @@ unsigned ternfs_file_io_timeout_sec = 86400;
 unsigned ternfs_file_io_retry_refresh_span_interval_sec = 60; // 1 minute interval for refreshing spans during IO retries
 
 unsigned ternfs_max_write_span_attempts = 5;
-
-static struct kmem_cache* ternfs_transient_span_cachep;
-
-struct ternfs_transient_span {
-    // The transient span holds a reference to this. As long as the
-    // transient span lives, the enode must live.
-    struct ternfs_inode* enode;
-    // Offset in the file for this span
-    u64 offset;
-    // Linear list of pages with the body of the span, used when we're still gathering
-    // content for it. We use `index` in the page to track where we're writing to.
-    struct list_head pages;
-    u32 written; // how much we've written to this span
-    atomic_t refcount;
-
-    // These are finalized when we start flushing out a span.
-    char failure_domains[TERNFS_MAX_BLOCKS][16]; // failure domains for current run so we can blacklist failures
-    char blacklisted_failure_domains[TERNFS_MAX_BLACKLIST_LENGTH][16]; // blacklisted failure domains
-    struct list_head blocks[TERNFS_MAX_BLOCKS]; // the pages for each block
-    u64 block_ids[TERNFS_MAX_BLOCKS]; // the block ids assigned by add span initiate
-    spinlock_t lock; // we use this for various modifications
-    u64 blocks_proofs[TERNFS_MAX_BLOCKS]; // when completing blocks, one of proof or err is set.
-    int blocks_errs[TERNFS_MAX_BLOCKS];
-    u32 span_crc;
-    u32 cell_crcs[TERNFS_MAX_BLOCKS*TERNFS_MAX_STRIPES];
-    u32 block_size;
-    u8 attempts;
-    u8 stripes;
-    u8 storage_class;
-    u8 parity;
-    u8 blacklist_length;
-    bool started_flushing;
-};
-// just a sanity check, this is just two per page rn
-static_assert(sizeof(struct ternfs_transient_span) < (2<<10));
-
-// open_mutex held here
-// really want atomic open for this
-static int file_open(struct inode* inode, struct file* filp) {
-    trace_eggsfs_inode_lock(inode, TERNFS_INODE_LOCK, "file_open");
-    inode_lock(inode); // for the .status modification below
-
-    struct ternfs_inode* enode = TERNFS_I(inode);
-
-    ternfs_debug("enode=%p status=%d owner=%p", enode, enode->file.status, current->group_leader);
-
-    if ((filp->f_mode&FMODE_WRITE) && (enode->file.status == TERNFS_FILE_STATUS_WRITING)) {
-        // this is the "common" writing case, we've just created a file to write it.
-        // note that we never change the file owner, which might lead to confusing behavior
-        // but is probably the only sensible thing to do.
-    } else {
-        // otherwise, the file must be already there, we're very relaxed in what we allow
-        // in f_mode here and we just fail when operations that can't be done (e.g. writing
-        // to files) are attempted. the reason is that some workflows (such as open write +
-        // setattr) _will_ work.
-        enode->file.status = TERNFS_FILE_STATUS_READING;
-    }
-
-    inode_unlock(inode);
-    trace_eggsfs_inode_lock(inode, TERNFS_INODE_UNLOCK, "file_open");
-    return 0;
-}
-
-static void init_transient_span(void* p) {
-    struct ternfs_transient_span* span = (struct ternfs_transient_span*)p;
-    INIT_LIST_HEAD(&span->pages);
-    int i;
-    for (i = 0; i < TERNFS_MAX_BLOCKS; i++) {
-        INIT_LIST_HEAD(&span->blocks[i]);
-    }
-    // we set it to 0, we bug if not 0 when getting from cache
-    atomic_set(&span->refcount, 0);
-    spin_lock_init(&span->lock);
-}
-
-// starts out with refcount = 1
-static struct ternfs_transient_span* new_transient_span(struct ternfs_inode* enode, u64 offset) {
-    struct ternfs_transient_span* span = kmem_cache_alloc(ternfs_transient_span_cachep, GFP_KERNEL);
-    if (span == NULL) { return span; }
-    span->enode = enode;
-    BUG_ON(atomic_read(&span->refcount) != 0);
-    atomic_set(&span->refcount, 1);
-    span->offset = offset;
-    span->written = 0;
-    memset(span->failure_domains, 0, sizeof(span->failure_domains));
-    memset(span->blacklisted_failure_domains, 0, sizeof(span->blacklisted_failure_domains));
-    memset(span->blocks_proofs, 0, sizeof(span->blocks_proofs));
-    memset(span->blocks_errs, 0, sizeof(span->blocks_errs));
-    span->span_crc = 0;
-    memset(span->cell_crcs, 0, sizeof(span->cell_crcs));
-    span->attempts = 0;
-    // We set the parity to zero here so that `put_transient_span`
-    // is always safe to run, since it traverses the blocks to free
-    // the pages, if any.
-    span->parity = 0;
-    span->blacklist_length = 0;
-    span->started_flushing = false;
-    return span;
-}
-
-static void hold_transient_span(struct ternfs_transient_span* span) {
-    atomic_inc(&span->refcount);
-}
-
-#define lru_to_page_impl(head) (list_entry((head)->prev, struct page, lru))
-
-static bool put_transient_span(struct ternfs_transient_span* span) {
-    if (atomic_dec_return(&span->refcount) == 0) {
-        BUG_ON(spin_is_locked(&span->lock));
-        // free pages, adjust OOM score
-        int num_pages = 0;
-        // We are not necessarily holding the last reference to a page here.
-        // We could have errored out before fully sending out the request.
-        // In which case network stack could still hold a reference to it.
-        // It is however fine to adjust the OOM score here as technically
-        // the file system is now responsible for this memory and it's no
-        // longer tied to the process lifetime.
-#define FREE_PAGES(pages) \
-        while (!list_empty(pages)) { \
-            struct page* victim = lru_to_page_impl(pages); \
-            list_del(&victim->lru); \
-            put_page(victim); \
-            num_pages++; \
-        }
-        FREE_PAGES(&span->pages);
-        int b;
-        for (b = 0; b < ternfs_blocks(span->parity); b++) {
-            FREE_PAGES(&span->blocks[b]);
-        }
-#undef FREE_PAGES
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(6,2,0))
-        atomic_long_add_return(-num_pages, &span->enode->file.mm->rss_stat.count[MM_FILEPAGES]);
-#else
-        percpu_counter_add(&span->enode->file.mm->rss_stat[MM_FILEPAGES], -num_pages);
-#endif
-        if (span->started_flushing) {
-            up(&span->enode->file.flushing_span_sema);
-        }
-        // Free the span itself
-        kmem_cache_free(ternfs_transient_span_cachep, span);
-        return true;
-    }
-    return false;
-}
 
 static int add_span_initiate(struct ternfs_transient_span* span);
 
@@ -283,7 +143,7 @@ static void write_block_finalize(struct ternfs_transient_span* span, int b, u64 
         atomic_cmpxchg(&enode->file.transient_err, 0, err);
     }
     // waiters will be woken up once span ref count reaches 0
-    put_transient_span(span);
+    ternfs_put_transient_span(span);
 }
 
 static void write_block_done(void* data, struct list_head* pages, u64 block_id, u64 proof, int block_write_err) {
@@ -387,7 +247,7 @@ static int add_span_initiate(struct ternfs_transient_span* span) {
             .ip2 = block->ip2,
             .port2 = block->port2,
         };
-        hold_transient_span(span); // for the callback when block is done
+        ternfs_hold_transient_span(span); // for the callback when block is done
         int err = ternfs_write_block(
             &write_block_done,
             span,
@@ -409,19 +269,7 @@ static int add_span_initiate(struct ternfs_transient_span* span) {
 }
 
 static struct page* alloc_write_page(struct ternfs_inode_file* file) {
-    // The zeroing is to assume that in the blocks we have trailing zeros,
-    // and we also use this to just append zeros to the blocks without
-    // copying. The former is definitely not needed, but anyway, simpler
-    // for now.
-    struct page* p = alloc_page(GFP_KERNEL | __GFP_ZERO);
-    if (p == NULL) { return p; }
-    // This contributes to OOM score.
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(6,2,0))
-    atomic_long_inc_return(&file->mm->rss_stat.count[MM_FILEPAGES]);
-#else
-    percpu_counter_inc(&file->mm->rss_stat[MM_FILEPAGES]);
-#endif
-    return p;
+    return ternfs_alloc_write_page(file->mm);
 }
 
 static int compute_span_parameters(
@@ -712,7 +560,7 @@ out:
         atomic_cmpxchg(&enode->file.transient_err, 0, err);
     }
     // we don't need this anymore (the requests might though)
-    put_transient_span(span);
+    ternfs_put_transient_span(span);
     return err;
 }
 
@@ -757,7 +605,7 @@ ssize_t ternfs_file_write_internal(struct ternfs_inode* enode, int flags, loff_t
 
     // Get the span we're currently writing at
     if (enode->file.writing_span == NULL) {
-        enode->file.writing_span = new_transient_span(enode, enode->inode.i_size);
+        enode->file.writing_span = ternfs_new_transient_span(enode, enode->inode.i_size);
         if (enode->file.writing_span == NULL) {
             err = -ENOMEM;
             goto out_err;
@@ -770,48 +618,16 @@ ssize_t ternfs_file_write_internal(struct ternfs_inode* enode, int flags, loff_t
     ktime_get_real_ts64(&mtime);
     inode_set_mtime_to_ts(&enode->inode, mtime);
 
-    // We now start writing into the span, as much as we can anyway
-    while (span->written < max_span_size && count) {
-        // grab the page to write to
-        struct page* page = list_empty(&span->pages) ? NULL : list_last_entry(&span->pages, struct page, lru);
-        if (page == NULL || page->index == 0) { // we're the first ones to get here, or we need to switch to the next one
-            BUG_ON(page != NULL && page->index >= PAGE_SIZE);
-            page = alloc_write_page(&enode->file);
-            if (!page) {
-                err = -ENOMEM;
-                goto out_err; // we haven't corrupted anything, so no need to make it permanent
-            }
-            page->index = 0;
-            list_add_tail(&page->lru, &span->pages);
-        }
-
-        // copy stuff into page
-        int ret;
-        if (likely(from)) {
-            ret = copy_page_from_iter(page, page->index, PAGE_SIZE - page->index, from);
-        } else {
-            ret = min(count, PAGE_SIZE - page->index);
-        }
-        if (ret < 0) { err = ret; goto out_err_permanent; }
-        if (unlikely(ret == 0 && page->index == 0)) {
-            // if we just continue we will allocate another page in the list
-            // we should free the page we just allocated
-            // TODO: we could utilize page offset for this
-            list_del(&page->lru);
-            put_page(page);
-            #if (LINUX_VERSION_CODE < KERNEL_VERSION(6,2,0))
-                atomic_long_add_return(-1, &span->enode->file.mm->rss_stat.count[MM_FILEPAGES]);
-            #else
-                percpu_counter_add(&span->enode->file.mm->rss_stat[MM_FILEPAGES], -1);
-            #endif
-        }
-        ternfs_debug("written %d to page %p", ret, page);
-        enode->inode.i_size += ret;
-        span->written += ret;
-        page->index = (page->index + ret) % PAGE_SIZE;
-        *ppos += ret;
-        count -= ret;
+    size_t copy_count = span->written < max_span_size
+        ? min(count, (size_t)(max_span_size - span->written)) : 0;
+    ssize_t copied = ternfs_copy_write_pages(&span->pages, enode->file.mm, from, copy_count);
+    if (copied < 0) {
+        err = copied;
+        goto out_err;
     }
+    enode->inode.i_size += copied;
+    span->written += copied;
+    *ppos += copied;
 
     if (span->written >= max_span_size) { // we need to start flushing the span
         // this might block even if it says nonblock, which is unfortunate.
@@ -877,8 +693,6 @@ static int flush_and_link(struct ternfs_inode *enode, struct dentry *parent, con
 
     int err = 0;
 
-    bool file_is_alive_and_flushing = false;
-
     // if we've errored out already, just exit
     err = atomic_read(&enode->file.transient_err);
     if (err < 0) { goto out; }
@@ -907,7 +721,7 @@ static int flush_and_link(struct ternfs_inode *enode, struct dentry *parent, con
     if (err < 0) { goto out; }
 
     down(&enode->file.flushing_span_sema);
-    file_is_alive_and_flushing = true;
+    up(&enode->file.flushing_span_sema);
 
     // the requests might have failed
     err = atomic_read(&enode->file.transient_err);
@@ -938,32 +752,7 @@ out:
     if (err) {
         atomic_cmpxchg(&enode->file.transient_err, 0, err);
     }
-    if (!file_is_alive_and_flushing) {
-        // The file is dead, we want to make sure that any in-flight flushings
-        // are gone. We might enter this function multiple times with a dead
-        // file: imagine for instance a process dying with many threads having
-        // the reference to the same file. This is why we also release the
-        // semaphore afterwards, so that after the first one that cleans up
-        // the others will not get stuck. So this section acts as a flushing
-        // barrier of sorts. Since the file is dead this should not cause problems
-        // (e.g. we should not get genuine flushes due to writes which then conflict
-        // with this logic).
-        down(&enode->file.flushing_span_sema);
-        up(&enode->file.flushing_span_sema);
-    }
-    // There are cases where we decide not to flush, we still need to free the writing span
-    if (enode->file.writing_span != NULL) {
-        // if writing_span is not NULL we should be the one holding last reference to it
-        BUG_ON(!put_transient_span(enode->file.writing_span));
-        enode->file.writing_span = NULL;
-    }
-    // after we last cleared it should have no longer be set
-
-    BUG_ON(enode->file.writing_span != NULL);
-    if (enode->file.mm) {
-        mmdrop(enode->file.mm);
-    }
-    enode->file.mm = NULL;
+    ternfs_release_transient_file(enode);
 
     return err;
 }
@@ -1087,79 +876,6 @@ static ssize_t file_read_iter(struct kiocb* iocb, struct iov_iter* to) {
     return generic_file_read_iter(iocb, to);
 }
 
-void ternfs_link_destructor(void* buf) {
-    kfree(buf);
-}
-
-char* ternfs_read_link(struct ternfs_inode* enode) {
-    ternfs_debug("ino=%016lx", enode->inode.i_ino);
-
-    BUG_ON(ternfs_inode_type(enode->inode.i_ino) != TERNFS_INODE_SYMLINK);
-    int err = 0;
-    LIST_HEAD(pages);
-    LIST_HEAD(extra_pages);
-    char* buf = NULL;
-    struct ternfs_span* span = NULL;
-
-    // make sure we have size information
-    err = ternfs_do_getattr(enode, ATTR_CACHE_NORM_TIMEOUT);
-    if (err) { goto out; }
-
-    BUG_ON(enode->inode.i_size > PAGE_SIZE); // for simplicity...
-    size_t size = enode->inode.i_size;
-    ternfs_debug("size=%lu", size);
-
-    buf = kmalloc(size+1, GFP_KERNEL);
-    if (buf == NULL) { err = -ENOMEM; goto out; }
-    buf[size] = '\0';
-
-    if (size == 0) { goto out; } // empty link
-    span = ternfs_get_span((struct ternfs_fs_info*)enode->inode.i_sb->s_fs_info, &enode->file.spans, 0);
-
-    BUG_ON(span == NULL); // should not happen
-    if (IS_ERR(span)) {
-        err = PTR_ERR(span);
-        goto out;
-    }
-
-    BUG_ON(span->end-span->start != size); // again, for simplicity
-
-
-    if (span->storage_class == TERNFS_INLINE_STORAGE) {
-        memcpy(buf, TERNFS_INLINE_SPAN(span)->body, size);
-    } else {
-        struct page* page;
-        struct ternfs_block_span* block_span = TERNFS_BLOCK_SPAN(span);
-        page = alloc_page(GFP_KERNEL);
-        if(IS_ERR(page)) {
-            err = PTR_ERR(page);
-            goto out;
-        }
-        page->index = 0;
-        list_add_tail(&page->lru, &pages);
-        err = ternfs_span_get_pages(block_span, enode->inode.i_mapping, &pages, 1, &extra_pages);
-        if (err) { goto out; }
-        char* page_buf = kmap(page);
-        memcpy(buf, page_buf, size);
-        kunmap(page);
-    }
-
-
-out:
-    if (span) { ternfs_put_span(span); }
-    put_pages_list(&pages);
-    put_pages_list(&extra_pages);
-    if (err) { goto out_err; }
-
-    ternfs_debug("link %*pE", (int)size, buf);
-    return buf;
-
-out_err:
-    if (buf) { kfree(buf); }
-    ternfs_debug("get_link err=%d", err);
-    return ERR_PTR(err);
-}
-
 static loff_t file_lseek(struct file *file, loff_t offset, int whence) {
     // When seeking a read file, we just do as normal.
     // When seeking a file we're writing, we only allow to seek forward,
@@ -1232,7 +948,7 @@ static int file_mmap(struct file* file, struct vm_area_struct* vma) {
 }
 
 const struct file_operations ternfs_file_operations = {
-    .open = file_open,
+    .open = ternfs_file_open,
     .read_iter = file_read_iter,
     .write_iter = file_write_iter,
     .flush = file_flush_internal,
@@ -1259,8 +975,7 @@ static void process_file_pages(struct address_space *mapping, struct list_head *
         if (err != 0) {
             ternfs_debug("failed adding page at index=%ld, err=%d", page->index, err);
         } else {
-            unlock_page(page);
-            SetPageUptodate(page);
+            ternfs_complete_read_page(page);
         }
         put_page(page);
     }
@@ -1308,9 +1023,7 @@ static int file_readpages(struct file *filp, struct address_space *mapping, stru
         // return page back
         list_add_tail(&page->lru, pages);
         BUG_ON(page_offset(page) != span->start);
-        char* dst = kmap_atomic(page);
-        memcpy(dst, inline_span->body, inline_span->len);
-        kunmap_atomic(dst);
+        ternfs_fill_inline_page(page, inline_span->body, inline_span->len);
     } else {
         struct ternfs_block_span* block_span = TERNFS_BLOCK_SPAN(span);
         err = ternfs_span_get_pages(block_span, mapping, pages, nr_pages, &extra_pages);
@@ -1321,7 +1034,7 @@ static int file_readpages(struct file *filp, struct address_space *mapping, stru
         }
     }
 out:
-    ternfs_put_span(span);
+    if (span) { ternfs_put_span(span); }
     process_file_pages(mapping, pages, nr_pages);
     process_file_pages(mapping, &extra_pages, 0);
     trace_eggsfs_file_read_exit(enode->inode.i_ino, off, nr_pages, 0);
@@ -1379,9 +1092,7 @@ retry:
         struct ternfs_inline_span* inline_span = TERNFS_INLINE_SPAN(span);
         size_t to_copy = inline_span->len - span_offset;
         BUG_ON(to_copy > PAGE_SIZE);
-        char* dst = kmap_atomic(page);
-        memcpy(dst, inline_span->body + span_offset, to_copy);
-        kunmap_atomic(dst);
+        ternfs_fill_inline_page(page, inline_span->body + span_offset, to_copy);
     } else {
         struct ternfs_block_span* block_span = TERNFS_BLOCK_SPAN(span);
         if (block_span->cell_size%PAGE_SIZE != 0) {
@@ -1542,11 +1253,7 @@ static void file_readahead(struct readahead_control *rac)
             }
 
             size_t to_copy = min((size_t)(inline_span->len - span_offset), (size_t)PAGE_SIZE);
-            char *dst = kmap_atomic(page);
-            memcpy(dst, inline_span->body + span_offset, to_copy);
-            if (to_copy < PAGE_SIZE)
-                memset(dst + to_copy, 0, PAGE_SIZE - to_copy);
-            kunmap_atomic(dst);
+            ternfs_fill_inline_page(page, inline_span->body + span_offset, to_copy);
         }
     } else {
         struct ternfs_block_span *block_span = TERNFS_BLOCK_SPAN(span);
@@ -1569,8 +1276,7 @@ out_process:
         memcpy(dest, src, PAGE_SIZE);
         kunmap_atomic(src);
         kunmap_atomic(dest);
-        SetPageUptodate(rac_page);
-        unlock_page(rac_page);
+        ternfs_complete_read_page(rac_page);
         put_page(rac_page);
     }
     // Process any extra pages
@@ -1608,21 +1314,3 @@ const struct address_space_operations ternfs_mmap_operations = {
     .read_folio = file_readfolio,
 #endif
 };
-
-int __init ternfs_file_init(void) {
-    ternfs_transient_span_cachep = kmem_cache_create(
-        "ternfs_transient_span_cache",
-        sizeof(struct ternfs_transient_span),
-        0,
-        SLAB_RECLAIM_ACCOUNT,
-        &init_transient_span
-    );
-    if (!ternfs_transient_span_cachep) { return -ENOMEM; }
-    return 0;
-}
-
-void __cold ternfs_file_exit(void) {
-    ternfs_debug("file exit");
-    // TODO: handle case where there still are requests in flight.
-    kmem_cache_destroy(ternfs_transient_span_cachep);
-}

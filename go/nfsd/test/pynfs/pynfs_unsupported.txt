@@ -1,0 +1,30 @@
+# pynfs NFSv4.1 (nfs4.1/server41tests) cases excluded from the default run.
+# Flag selectors in PYNFS_TESTS already exclude delegations and special
+# files; these are the individual cases that remain.
+
+# Byte-range locking is not supported.
+COUR2
+CSID2
+CSID4
+
+# Share reservations (share_deny) are not enforced.
+COUR3
+
+# TernFS has no hard links.
+RNM20
+
+# TernFS cannot rename a directory over an existing empty directory.
+RNM13
+
+# A write with the anonymous stateid needs an open writer; nfsd stages
+# writes per open and cannot accept one after CLOSE.
+OPEN31
+
+# nfsd offers no grace period, so non-reclaim opens succeed before
+# RECLAIM_COMPLETE.
+RECC3
+
+# An unconfirmed or replaced record is collected by the client store's GC
+# rather than becoming STALE at once; CREATE_SESSION still succeeds.
+EID5e
+EID9

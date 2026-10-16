@@ -6,9 +6,9 @@ package client
 
 import (
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/core/log"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"time"
-	"xtx/ternfs/core/log"
-	"xtx/ternfs/msgs"
 )
 
 func WaitForBlockServices(ll *log.Logger, registryAddress string, expectedBlockServices int, timeout time.Duration) ([]msgs.FullBlockServiceInfo, error) {

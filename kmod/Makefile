@@ -20,8 +20,10 @@ ternfs-client-objs += \
 	export.o \
 	debugfs.o \
 	file.o \
+	open.o \
 	inode.o \
 	kmod.o \
+	wq.o \
 	metadata.o \
 	dentry.o \
 	net.o \
@@ -32,13 +34,19 @@ ternfs-client-objs += \
 	registry.o \
 	block.o \
 	file.o \
+	write.o \
+	symlink.o \
+	symlink_create.o \
+	transient.o \
 	rs.o \
 	crc.o \
 	crc_fpu.o \
 	span.o \
+	fetch_state.o \
 	bincode.o \
 	revision.o \
-	policy.o
+	policy.o \
+	policy_update.o
 
 HAVE_INODE_ATIME_ACCESSORS := $(shell grep -q inode_get_atime_sec \
     $(srctree)/include/linux/fs.h 2>/dev/null && echo 1)
@@ -63,7 +71,7 @@ revision.c:
 	@test -f $@ || { echo "revision.c missing and not a git checkout" >&2; exit 1; }
 endif
 
-EXTRA_FILES := ../cpp/crc32c/crc32c_body.c ../cpp/rs/gf_tables.c ../cpp/rs/rs_core.c
+EXTRA_FILES := ../go/core/crc32c/crc32c_body.c ../go/core/rs/gf_tables.c ../go/core/rs/rs_core.c
 
 extra-files: $(EXTRA_FILES)
 	$(foreach file,$(EXTRA_FILES),cp $(file) .;)
@@ -73,7 +81,7 @@ extra-files-clean:
 	rm -f $(LOCAL_FILES) revision.c *.o
 
 # C=1 builds with sparse
-ternfs-client-tests: revision.c extra-files
+ternfs-client-tests: revision.c extra-files registry-tests
 	$(MAKE) -C $(KDIR) M=$(CURDIR) C=1 modules
 
 ternfs-client-clean:
@@ -84,9 +92,18 @@ ternfs-client-clean:
 bincode_tests: bincode_tests.c bincodegen.h bincode.h
 	gcc -Wall -g -O2 -fsanitize=undefined,address -fno-sanitize-recover=all bincode_tests.c -o bincode_tests
 
-bincode_tests-clean:
-	rm -f bincode_tests rs_tests ubuntu.img test-out trace vm-out dmesg
+registry_tests: registry_tests.c registry_dns.h
+	gcc -Wall -Wextra -Werror -g -O1 -fsanitize=undefined,address -fno-sanitize-recover=all registry_tests.c -o registry_tests
+
+.PHONY: registry-tests tests-clean bincode_tests-clean
+registry-tests: registry_tests
+	./registry_tests
+
+tests-clean:
+	rm -f bincode_tests registry_tests rs_tests ubuntu.img test-out trace vm-out dmesg
 	rm -rf tmp
+
+bincode_tests-clean: tests-clean
 
 dkms-version:
 	cp debian_tmpl/* debian/. && find debian -maxdepth 1 -type f -exec sed -i "s/##VERSION##/$(FULL_MINOR_VERSION)/g" {} \;
@@ -105,4 +122,4 @@ ternfs-client:
 ternfs-client-local: revision.c extra-files
 	$(MAKE) -C $(KDIR) M=$(CURDIR) modules
 
-clean: ternfs-client-clean bincode_tests-clean
+clean: ternfs-client-clean tests-clean

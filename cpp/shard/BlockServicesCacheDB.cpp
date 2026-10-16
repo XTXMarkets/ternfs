@@ -74,8 +74,21 @@ struct BlockServiceBody {
     }
 
     void checkSize(size_t sz) {
-        ALWAYS_ASSERT(sz >= MIN_SIZE || version() < 2, "expected %s >= %s", sz, MIN_SIZE);
-        ALWAYS_ASSERT(sz == size());
+        ALWAYS_ASSERT(sz >= sizeof(uint8_t));
+        switch (version()) {
+        case 0:
+            ALWAYS_ASSERT(sz == V0_OFFSET);
+            break;
+        case 1:
+            ALWAYS_ASSERT(sz == V1_OFFSET);
+            break;
+        case 2:
+            ALWAYS_ASSERT(sz >= MIN_SIZE);
+            ALWAYS_ASSERT(sz == MIN_SIZE + pathV2().size());
+            break;
+        default:
+            ALWAYS_ASSERT(false, "bad block service body version %s", version());
+        }
     }
 
     BlockServiceFlags flags() const {

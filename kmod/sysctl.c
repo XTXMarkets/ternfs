@@ -154,6 +154,7 @@ static struct ctl_table ternfs_cb_sysctls[] = {
     TERNFS_CTL_UINT(readahead_pages),
     TERNFS_CTL_UINT(max_write_span_attempts),
     TERNFS_CTL_UINT(atime_update_interval_sec),
+    TERNFS_CTL_BOOL(atime_on_open),
     TERNFS_CTL_UINT(file_io_timeout_sec),
     TERNFS_CTL_UINT(file_io_retry_refresh_span_interval_sec),
     TERNFS_CTL_UINT(disable_ftruncate),

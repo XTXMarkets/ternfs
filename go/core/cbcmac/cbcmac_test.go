@@ -6,8 +6,8 @@ package cbcmac
 
 import (
 	"crypto/aes"
+	"github.com/XTXMarkets/ternfs/go/core/assert"
 	"testing"
-	"xtx/ternfs/core/assert"
 )
 
 // Sanity check to ensure that the block cipher we're using is the correct one

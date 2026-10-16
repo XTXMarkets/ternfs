@@ -9,6 +9,14 @@ import (
 	"encoding/binary"
 	"flag"
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/client"
+	"github.com/XTXMarkets/ternfs/go/core/bincode"
+	"github.com/XTXMarkets/ternfs/go/core/flags"
+	"github.com/XTXMarkets/ternfs/go/core/log"
+	lrecover "github.com/XTXMarkets/ternfs/go/core/recover"
+	"github.com/XTXMarkets/ternfs/go/core/timing"
+	"github.com/XTXMarkets/ternfs/go/core/wyhash"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"io"
 	"math/rand"
 	"net"
@@ -17,14 +25,6 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
-	"xtx/ternfs/client"
-	"xtx/ternfs/core/bincode"
-	"xtx/ternfs/core/flags"
-	"xtx/ternfs/core/log"
-	lrecover "xtx/ternfs/core/recover"
-	"xtx/ternfs/core/timing"
-	"xtx/ternfs/core/wyhash"
-	"xtx/ternfs/msgs"
 )
 
 type state struct {
@@ -162,6 +162,8 @@ func handleRequestParsed(log *log.Logger, s *state, req msgs.RegistryRequest) (m
 		resp, err = handleProxyRequest(log, s, req)
 	case *msgs.ShardBlockServicesReq:
 		resp, err = handleProxyRequest(log, s, req)
+	case *msgs.BlockServicesNeedingMigrationDeprecatedReq:
+		resp, err = handleProxyRequest(log, s, req)
 	case *msgs.BlockServicesNeedingMigrationReq:
 		resp, err = handleProxyRequest(log, s, req)
 	case *msgs.AllBlockServicesReq:
@@ -172,7 +174,11 @@ func handleRequestParsed(log *log.Logger, s *state, req msgs.RegistryRequest) (m
 		resp, err = handleProxyRequest(log, s, req)
 	case *msgs.AllCdcReq:
 		resp, err = handleProxyRequest(log, s, req)
+	case *msgs.ChangedBlockServicesDeprecatedReq:
+		resp, err = handleProxyRequest(log, s, req)
 	case *msgs.ChangedBlockServicesReq:
+		resp, err = handleProxyRequest(log, s, req)
+	case *msgs.BlockServiceAvailableSpaceDeprecatedReq:
 		resp, err = handleProxyRequest(log, s, req)
 	case *msgs.BlockServiceAvailableSpaceReq:
 		resp, err = handleProxyRequest(log, s, req)
@@ -205,7 +211,10 @@ func isBenignConnTermination(err error) bool {
 
 func writeRegistryResponse(log *log.Logger, w io.Writer, resp msgs.RegistryResponse) error {
 	// serialize
-	bytes := bincode.Pack(resp)
+	bytes, err := bincode.Pack(resp)
+	if err != nil {
+		return fmt.Errorf("could not pack registry response: %w", err)
+	}
 	// write out
 	if err := binary.Write(w, binary.LittleEndian, msgs.REGISTRY_RESP_PROTOCOL_VERSION); err != nil {
 		return err
@@ -343,6 +352,8 @@ func readRegistryRequest(
 		req = &msgs.ShardsAtLocationReq{}
 	case msgs.SHARD_BLOCK_SERVICES:
 		req = &msgs.ShardBlockServicesReq{}
+	case msgs.BLOCK_SERVICES_NEEDING_MIGRATION_DEPRECATED:
+		req = &msgs.BlockServicesNeedingMigrationDeprecatedReq{}
 	case msgs.BLOCK_SERVICES_NEEDING_MIGRATION:
 		req = &msgs.BlockServicesNeedingMigrationReq{}
 	case msgs.ALL_BLOCK_SERVICES:
@@ -353,8 +364,12 @@ func readRegistryRequest(
 		req = &msgs.AllShardsReq{}
 	case msgs.ALL_CDC:
 		req = &msgs.AllCdcReq{}
+	case msgs.CHANGED_BLOCK_SERVICES_DEPRECATED:
+		req = &msgs.ChangedBlockServicesDeprecatedReq{}
 	case msgs.CHANGED_BLOCK_SERVICES:
 		req = &msgs.ChangedBlockServicesReq{}
+	case msgs.BLOCK_SERVICE_AVAILABLE_SPACE_DEPRECATED:
+		req = &msgs.BlockServiceAvailableSpaceDeprecatedReq{}
 	case msgs.BLOCK_SERVICE_AVAILABLE_SPACE:
 		req = &msgs.BlockServiceAvailableSpaceReq{}
 	default:

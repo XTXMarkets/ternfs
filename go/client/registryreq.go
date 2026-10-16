@@ -7,21 +7,24 @@ package client
 import (
 	"encoding/binary"
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/core/bincode"
+	"github.com/XTXMarkets/ternfs/go/core/log"
+	"github.com/XTXMarkets/ternfs/go/core/timing"
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"io"
 	"net"
 	"os"
 	"syscall"
 	"time"
-	"xtx/ternfs/core/bincode"
-	"xtx/ternfs/core/log"
-	"xtx/ternfs/core/timing"
-	"xtx/ternfs/msgs"
 )
 
 func writeRegistryRequest(log *log.Logger, w io.Writer, req msgs.RegistryRequest) error {
 	log.Debug("sending request %v to registry", req.RegistryRequestKind())
 	// serialize
-	bytes := bincode.Pack(req)
+	bytes, err := bincode.Pack(req)
+	if err != nil {
+		return fmt.Errorf("could not pack registry request: %w", err)
+	}
 	// write out
 	if err := binary.Write(w, binary.LittleEndian, msgs.REGISTRY_REQ_PROTOCOL_VERSION); err != nil {
 		return err
@@ -129,6 +132,8 @@ func readRegistryResponse(
 		resp = &msgs.UpdateBlockServicePathResp{}
 	case msgs.SET_BLOCK_SERVICE_HAS_FILES:
 		resp = &msgs.SetBlockServiceHasFilesResp{}
+	case msgs.BLOCK_SERVICES_NEEDING_MIGRATION_DEPRECATED:
+		resp = &msgs.BlockServicesNeedingMigrationDeprecatedResp{}
 	case msgs.BLOCK_SERVICES_NEEDING_MIGRATION:
 		resp = &msgs.BlockServicesNeedingMigrationResp{}
 	case msgs.ALL_REGISTRY_REPLICAS:
@@ -137,8 +142,12 @@ func readRegistryResponse(
 		resp = &msgs.AllShardsResp{}
 	case msgs.ALL_CDC:
 		resp = &msgs.AllCdcResp{}
+	case msgs.CHANGED_BLOCK_SERVICES_DEPRECATED:
+		resp = &msgs.ChangedBlockServicesDeprecatedResp{}
 	case msgs.CHANGED_BLOCK_SERVICES:
 		resp = &msgs.ChangedBlockServicesResp{}
+	case msgs.BLOCK_SERVICE_AVAILABLE_SPACE_DEPRECATED:
+		resp = &msgs.BlockServiceAvailableSpaceDeprecatedResp{}
 	case msgs.BLOCK_SERVICE_AVAILABLE_SPACE:
 		resp = &msgs.BlockServiceAvailableSpaceResp{}
 	default:
