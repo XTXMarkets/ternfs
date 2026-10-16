@@ -7,6 +7,9 @@ include_directories(${ternfs_SOURCE_DIR}/core ${ternfs_SOURCE_DIR}/shard ${ternf
 add_executable(tests tests.cpp doctest.h)
 target_link_libraries(tests PRIVATE core shard cdc)
 
+add_executable(shardsnapshottests shardsnapshottests.cpp doctest.h)
+target_link_libraries(shardsnapshottests PRIVATE core shard)
+
 add_executable(logsdbtests logsdbtests.cpp doctest.h)
 target_link_libraries(logsdbtests PRIVATE core)
 

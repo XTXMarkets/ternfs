@@ -483,10 +483,6 @@ private:
 
     void _handleShardRequest(UDPMessage& msg, uint32_t protocol) {
         LOG_DEBUG(_env, "received message from %s", msg.clientAddr);
-        if (unlikely(!_shared.options.isLeader())) {
-            LOG_DEBUG(_env, "not leader, dropping request %s", msg.clientAddr);
-            return;
-        }
 
         ShardReqMsg req;
         try {
@@ -520,6 +516,11 @@ private:
         } catch (const BincodeException& err) {
             LOG_ERROR(_env, "Could not parse: %s", err.what());
             RAISE_ALERT(_env, "could not parse request from %s, dropping it.", msg.clientAddr);
+            return;
+        }
+
+        if (unlikely(!_shared.options.isLeader()) && req.body.kind() != ShardMessageKind::SHARD_SNAPSHOT) {
+            LOG_DEBUG(_env, "not leader, dropping request %s", msg.clientAddr);
             return;
         }
 
@@ -1519,7 +1520,6 @@ public:
 
         if (!_isLogsDBLeader) {
             // clear things we don't serve or expect as a follower
-            _shardRequests.clear();
             _shardResponses.clear();
             _proxyLogsDBRequests.clear();
             _proxyLogsDBResponses.clear();
@@ -1544,6 +1544,14 @@ public:
         // prepare log entries for requests or proxy them to primary leader
         ALWAYS_ASSERT(_shardEntries.empty());
         for (auto& req : _shardRequests) {
+            // Snapshots are local to the addressed replica, including followers.
+            if (req.msg.body.kind() == ShardMessageKind::SHARD_SNAPSHOT) {
+                snapshotReq = std::move(req);
+                continue;
+            }
+            if (!_isLogsDBLeader) {
+                continue;
+            }
             if (req.msg.id != 0 && _inFlightRequestKeys.contains(InFlightRequestKey{req.msg.id, req.clientAddr})) {
                 // we already have a request in flight with this id from this client
                 continue;
@@ -1556,9 +1564,6 @@ public:
                 continue;
             }
             switch (req.msg.body.kind()) {
-                case ShardMessageKind::SHARD_SNAPSHOT:
-                    snapshotReq = std::move(req);
-                    continue;
                 case ShardMessageKind::GET_LINK_ENTRIES:
                     _linkReadRequests.emplace_back(std::move(req));
                     continue;
@@ -1942,11 +1947,13 @@ public:
         // not needed as we just flushed and apparently it does actually flush again
         // _logsDB.flush(true);
 
-        // snapshot is processed once and last as it will initiate a flush
+        // The WAL is already flushed; include it in the checkpoint without flushing memtables.
         if (unlikely(snapshotReq.msg.body.kind() == ShardMessageKind::SHARD_SNAPSHOT)) {
             ShardRespMsg resp;
             resp.id = snapshotReq.msg.id;
-            auto err = _shared.sharedDB.snapshot(_basePath +"/snapshot-" + std::to_string(snapshotReq.msg.body.getShardSnapshot().snapshotId));
+            auto err = _shared.sharedDB.snapshot(
+                _basePath + "/snapshot-" + std::to_string(snapshotReq.msg.body.getShardSnapshot().snapshotId),
+                /*flushMemtables=*/false);
 
             if (err == TernError::NO_ERROR) {
                 resp.body.setShardSnapshot();

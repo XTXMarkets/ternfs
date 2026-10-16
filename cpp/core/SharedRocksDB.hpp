@@ -39,7 +39,8 @@ public:
     void rocksDBMetrics(std::unordered_map<std::string, uint64_t>& stats);
     void dumpRocksDBStatistics();
 
-    TernError snapshot(const std::string& path);
+    // Skipping memtable flushes requires WAL-enabled writes.
+    TernError snapshot(const std::string& path, bool flushMemtables = true);
 
 private:
     Env _env;
