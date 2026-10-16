@@ -5,6 +5,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"github.com/XTXMarkets/ternfs/go/client"
 	"github.com/XTXMarkets/ternfs/go/core/log"
@@ -22,7 +23,7 @@ type parwalkManyOpts struct {
 }
 
 // parwalkManyTest creates several disjoint root subtrees, walks them all
-// through a single ParwalkMany call, and checks:
+// through a single ParwalkPool.WalkMany call, and checks:
 //
 //  1. Every owned file inserted is reported exactly once.
 //  2. Every reported file lives under one of the seeded roots.
@@ -74,7 +75,7 @@ func parwalkManyTest(
 
 	// Concurrency observability: the parwalk callback runs on a shard
 	// goroutine. Track how many distinct shards are *simultaneously*
-	// inside the callback. If ParwalkMany shares a pool, this tops 1
+	// inside the callback. If WalkMany shares a pool, this tops 1
 	// the moment a second root is seeded and there's any work left for
 	// the first root.
 	var (
@@ -131,9 +132,11 @@ func parwalkManyTest(
 		return nil
 	}
 
-	if err := client.ParwalkMany(
-		logger, c,
-		&client.ParwalkOptions{WorkersPerShard: opts.workersPerShard},
+	pool := client.NewParwalkPool(logger, c, opts.workersPerShard)
+	defer pool.Close()
+	if err := pool.WalkMany(
+		context.Background(),
+		&client.ParwalkOptions{},
 		roots,
 		cb,
 	); err != nil {
@@ -144,7 +147,7 @@ func parwalkManyTest(
 	for id, name := range expected {
 		got, ok := seen[id]
 		if !ok {
-			panic(fmt.Errorf("file %v (%s) never visited by ParwalkMany", id, name))
+			panic(fmt.Errorf("file %v (%s) never visited by WalkMany", id, name))
 		}
 		if got != 1 {
 			panic(fmt.Errorf("file %v (%s) visited %d times, want 1", id, name, got))
@@ -156,20 +159,20 @@ func parwalkManyTest(
 	// Every visited file is one we created (no leakage from elsewhere
 	// in the test fs).
 	if len(seen) != len(expected) {
-		panic(fmt.Errorf("ParwalkMany visited %d files, expected %d", len(seen), len(expected)))
+		panic(fmt.Errorf("WalkMany visited %d files, expected %d", len(seen), len(expected)))
 	}
 	for name := range seenNames {
 		if _, want := expectedNames[name]; !want {
-			panic(fmt.Errorf("ParwalkMany visited unexpected path %s", name))
+			panic(fmt.Errorf("WalkMany visited unexpected path %s", name))
 		}
 	}
 
 	// Sanity: with multiple roots and >1 worker per shard, we expect to
 	// have observed at least 2 shard goroutines running concurrently in
-	// the callback at some point. If this fails, ParwalkMany is
+	// the callback at some point. If this fails, WalkMany is
 	// effectively serial — which would defeat the whole point.
 	if opts.numRoots > 1 && opts.dirsPerRoot*opts.filesPerDir > 1 && atomic.LoadInt32(&maxConc) < 2 {
-		panic(fmt.Errorf("ParwalkMany never had >=2 shards active concurrently (max=%d); pool not shared across roots", maxConc))
+		panic(fmt.Errorf("WalkMany never had >=2 shards active concurrently (max=%d); pool not shared across roots", maxConc))
 	}
 	logger.Info("parwalkMany visited %d files across %d roots; max concurrent shards observed = %d",
 		len(seen), len(roots), atomic.LoadInt32(&maxConc))
