@@ -2189,6 +2189,11 @@ func main() {
 			reflect.TypeOf(msgs.BlockServiceAvailableSpaceReq{}),
 			reflect.TypeOf(msgs.BlockServiceAvailableSpaceResp{}),
 		},
+		{
+			0x31,
+			reflect.TypeOf(msgs.LocalShardReplicasReq{}),
+			reflect.TypeOf(msgs.LocalShardReplicasResp{}),
+		},
 	}...)
 
 	kernelBlocksReqResps := []reqRespType{

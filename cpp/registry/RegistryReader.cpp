@@ -42,6 +42,16 @@ void RegistryReader::step() {
         auto& resp = _resps.emplace_back();
         resp.requestId = req.requestId;
         switch (req.req.kind()) {
+        case RegistryMessageKind::LOCAL_SHARD_REPLICAS: {
+            _populateShardCache();
+            auto& shards = resp.resp.setLocalShardReplicas().shards.els;
+            for (const auto& shard : _cachedShardInfo) {
+                if (shard.locationId == _options.logsDBOptions.location) {
+                    shards.push_back(shard);
+                }
+            }
+            break;
+        }
         case RegistryMessageKind::LOCAL_SHARDS: {
             auto& shards = _shardsAtLocation(_options.logsDBOptions.location);
             if (!_allShardsReady(shards)) {

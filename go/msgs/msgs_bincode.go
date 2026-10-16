@@ -911,6 +911,8 @@ func (k RegistryMessageKind) String() string {
 		return "BLOCK_SERVICES_NEEDING_MIGRATION"
 	case 48:
 		return "BLOCK_SERVICE_AVAILABLE_SPACE"
+	case 49:
+		return "LOCAL_SHARD_REPLICAS"
 	default:
 		return fmt.Sprintf("RegistryMessageKind(%d)", k)
 	}
@@ -958,6 +960,7 @@ const (
 	CHANGED_BLOCK_SERVICES                      RegistryMessageKind = 0x2E
 	BLOCK_SERVICES_NEEDING_MIGRATION            RegistryMessageKind = 0x2F
 	BLOCK_SERVICE_AVAILABLE_SPACE               RegistryMessageKind = 0x30
+	LOCAL_SHARD_REPLICAS                        RegistryMessageKind = 0x31
 )
 
 var AllRegistryMessageKind = [...]RegistryMessageKind{
@@ -1002,9 +1005,10 @@ var AllRegistryMessageKind = [...]RegistryMessageKind{
 	CHANGED_BLOCK_SERVICES,
 	BLOCK_SERVICES_NEEDING_MIGRATION,
 	BLOCK_SERVICE_AVAILABLE_SPACE,
+	LOCAL_SHARD_REPLICAS,
 }
 
-const MaxRegistryMessageKind RegistryMessageKind = 48
+const MaxRegistryMessageKind RegistryMessageKind = 49
 
 func MkRegistryMessage(k string) (RegistryRequest, RegistryResponse, error) {
 	switch {
@@ -1090,6 +1094,8 @@ func MkRegistryMessage(k string) (RegistryRequest, RegistryResponse, error) {
 		return &BlockServicesNeedingMigrationReq{}, &BlockServicesNeedingMigrationResp{}, nil
 	case k == "BLOCK_SERVICE_AVAILABLE_SPACE":
 		return &BlockServiceAvailableSpaceReq{}, &BlockServiceAvailableSpaceResp{}, nil
+	case k == "LOCAL_SHARD_REPLICAS":
+		return &LocalShardReplicasReq{}, &LocalShardReplicasResp{}, nil
 	default:
 		return nil, nil, fmt.Errorf("bad kind string %s", k)
 	}
@@ -7244,6 +7250,49 @@ func (v *BlockServiceAvailableSpaceResp) Unpack(r io.Reader) error {
 	bincode.EnsureLength(&v.BlockServices, len1)
 	for i := 0; i < len1; i++ {
 		if err := v.BlockServices[i].Unpack(r); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (v *LocalShardReplicasReq) RegistryRequestKind() RegistryMessageKind {
+	return LOCAL_SHARD_REPLICAS
+}
+
+func (v *LocalShardReplicasReq) Pack(w io.Writer) error {
+	return nil
+}
+
+func (v *LocalShardReplicasReq) Unpack(r io.Reader) error {
+	return nil
+}
+
+func (v *LocalShardReplicasResp) RegistryResponseKind() RegistryMessageKind {
+	return LOCAL_SHARD_REPLICAS
+}
+
+func (v *LocalShardReplicasResp) Pack(w io.Writer) error {
+	len1 := len(v.Shards)
+	if err := bincode.PackLength(w, len1); err != nil {
+		return err
+	}
+	for i := 0; i < len1; i++ {
+		if err := v.Shards[i].Pack(w); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (v *LocalShardReplicasResp) Unpack(r io.Reader) error {
+	var len1 int
+	if err := bincode.UnpackLength(r, &len1); err != nil {
+		return err
+	}
+	bincode.EnsureLength(&v.Shards, len1)
+	for i := 0; i < len1; i++ {
+		if err := v.Shards[i].Unpack(r); err != nil {
 			return err
 		}
 	}

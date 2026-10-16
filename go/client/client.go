@@ -172,7 +172,8 @@ var DefaultBlockTimeout = timing.ReqTimeouts{
 type metadataProcessorRequest struct {
 	requestId uint64
 	timeout   time.Duration
-	shard     int16 // -1 = cdc
+	shard     int16           // -1 = cdc
+	replica   *msgs.ReplicaId // nil = current leader
 	req       bincode.Packable
 	resp      bincode.Unpackable
 	extra     any
@@ -312,7 +313,11 @@ func (cm *clientMetadata) processRequests(log *log.Logger) {
 		var kind uint8
 		var protocol uint32
 		if req.shard >= 0 { // shard
-			addrs = cm.client.shardAddrs(msgs.ShardId(req.shard))
+			if req.replica == nil {
+				addrs = cm.client.shardAddrs(msgs.ShardId(req.shard))
+			} else {
+				addrs = cm.client.shardReplicaAddrs(msgs.MakeShardReplicaId(msgs.ShardId(req.shard), *req.replica))
+			}
 			kind = uint8(req.req.(msgs.ShardRequest).ShardRequestKind())
 			protocol = msgs.SHARD_REQ_PROTOCOL_VERSION
 		} else { // CDC
@@ -338,7 +343,7 @@ func (cm *clientMetadata) processRequests(log *log.Logger) {
 		}
 		addr := &addrs[whichMetadatataAddr%2]
 		if addr.Port == 0 {
-			addr = &addrs[0]
+			addr = &addrs[(whichMetadatataAddr+1)%2]
 		}
 		whichMetadatataAddr++
 		written, err := 0, errMetadataAddressUnknown
@@ -967,6 +972,7 @@ func (procs *blocksProcessors) close() {
 
 type Client struct {
 	shardRawAddrs        [256][2]uint64
+	shardReplicas        atomic.Value // map[msgs.ShardReplicaId]msgs.AddrsInfo
 	cdcRawAddr           [2]uint64
 	clientMetadata       clientMetadata
 	counters             *ClientCounters
@@ -996,17 +1002,35 @@ func (c *Client) refreshAddrs() error {
 	errMsg := ""
 	{
 		log.Info("Getting shard/CDC info from registry at '%v'", c.registryAddress)
-		resp, err := c.registryConn.Request(&msgs.LocalShardsReq{})
+		resp, err := c.registryConn.Request(&msgs.LocalShardReplicasReq{})
+		if err != nil {
+			// Keep leader discovery working against older registries and proxies.
+			log.Debug("could not request shard replicas: %v; falling back to leader discovery", err)
+			resp, err = c.registryConn.Request(&msgs.LocalShardsReq{})
+		}
 		if err != nil {
 			errMsg = fmt.Sprintf("could not request shards from registry: %v; ", err)
 		} else {
-			shards := resp.(*msgs.LocalShardsResp)
+			switch shards := resp.(type) {
+			case *msgs.LocalShardReplicasResp:
+				replicas := make(map[msgs.ShardReplicaId]msgs.AddrsInfo, len(shards.Shards))
+				for _, shard := range shards.Shards {
+					replicas[shard.Id] = shard.Addrs
+					if shard.IsLeader {
+						shardAddrs[shard.Id.Shard()] = shard.Addrs
+					}
+				}
+				c.SetShardReplicaAddrs(replicas)
+			case *msgs.LocalShardsResp:
+				for i, shard := range shards.Shards {
+					shardAddrs[i] = shard.Addrs
+				}
+			}
 			missingShardCount := 0
-			for i, shard := range shards.Shards {
-				if shard.Addrs.Addr1.Port == 0 {
+			for _, addrs := range shardAddrs {
+				if addrs.Addr1.Port == 0 && addrs.Addr2.Port == 0 {
 					missingShardCount++
 				}
-				shardAddrs[i] = shard.Addrs
 			}
 			if missingShardCount > 0 {
 				errMsg += fmt.Sprintf("registry is missing %v shard(s); ", missingShardCount)
@@ -1226,6 +1250,28 @@ func (c *Client) shardAddrs(shid msgs.ShardId) *[2]net.UDPAddr {
 	}
 }
 
+func (c *Client) shardReplicaAddrs(shrid msgs.ShardReplicaId) *[2]net.UDPAddr {
+	var addrs msgs.AddrsInfo
+	if replicas := c.shardReplicas.Load(); replicas != nil {
+		addrs = replicas.(map[msgs.ShardReplicaId]msgs.AddrsInfo)[shrid]
+	}
+	return &[2]net.UDPAddr{
+		{IP: net.IP(addrs.Addr1.Addrs[:]), Port: int(addrs.Addr1.Port)},
+		{IP: net.IP(addrs.Addr2.Addrs[:]), Port: int(addrs.Addr2.Port)},
+	}
+}
+
+// SetShardReplicaAddrs replaces the addresses used by ShardReplicaRequest.
+// All replicas must be in the same location. This may be called concurrently
+// with requests; it does not change the leader addresses used by ShardRequest.
+func (c *Client) SetShardReplicaAddrs(addrs map[msgs.ShardReplicaId]msgs.AddrsInfo) {
+	replicas := make(map[msgs.ShardReplicaId]msgs.AddrsInfo, len(addrs))
+	for id, addr := range addrs {
+		replicas[id] = addr
+	}
+	c.shardReplicas.Store(replicas)
+}
+
 // Modify the CDC and Shard IP addresses and ports dynamically.
 // The update is atomic, this can be done at any time from any context.
 func (c *Client) SetAddrs(
@@ -1265,7 +1311,9 @@ func (c *Client) IsReady() bool {
 }
 
 func (c *Client) Close() {
-	c.addrsRefreshClose <- struct{}{}
+	if c.addrsRefreshClose != nil {
+		c.addrsRefreshClose <- struct{}{}
+	}
 	c.clientMetadata.close()
 	c.writeBlockProcessors.close()
 	c.fetchBlockProcessors.close()

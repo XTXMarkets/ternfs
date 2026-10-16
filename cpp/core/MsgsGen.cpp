@@ -629,6 +629,9 @@ std::ostream& operator<<(std::ostream& out, RegistryMessageKind kind) {
     case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
         out << "BLOCK_SERVICE_AVAILABLE_SPACE";
         break;
+    case RegistryMessageKind::LOCAL_SHARD_REPLICAS:
+        out << "LOCAL_SHARD_REPLICAS";
+        break;
     case RegistryMessageKind::EMPTY:
         out << "EMPTY";
         break;
@@ -5710,6 +5713,38 @@ std::ostream& operator<<(std::ostream& out, const BlockServiceAvailableSpaceResp
     return out;
 }
 
+void LocalShardReplicasReq::pack(BincodeBuf& buf) const {
+}
+void LocalShardReplicasReq::unpack(BincodeBuf& buf) {
+}
+void LocalShardReplicasReq::clear() {
+}
+bool LocalShardReplicasReq::operator==(const LocalShardReplicasReq& rhs) const {
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const LocalShardReplicasReq& x) {
+    out << "LocalShardReplicasReq(" << ")";
+    return out;
+}
+
+void LocalShardReplicasResp::pack(BincodeBuf& buf) const {
+    buf.packList<FullShardInfo>(shards);
+}
+void LocalShardReplicasResp::unpack(BincodeBuf& buf) {
+    buf.unpackList<FullShardInfo>(shards);
+}
+void LocalShardReplicasResp::clear() {
+    shards.clear();
+}
+bool LocalShardReplicasResp::operator==(const LocalShardReplicasResp& rhs) const {
+    if (shards != rhs.shards) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const LocalShardReplicasResp& x) {
+    out << "LocalShardReplicasResp(" << "Shards=" << x.shards << ")";
+    return out;
+}
+
 void FetchBlockReq::pack(BincodeBuf& buf) const {
     buf.packScalar<uint64_t>(blockId);
     buf.packScalar<uint32_t>(offset);
@@ -9607,6 +9642,15 @@ BlockServiceAvailableSpaceReq& RegistryReqContainer::setBlockServiceAvailableSpa
     auto& x = _data.emplace<40>();
     return x;
 }
+const LocalShardReplicasReq& RegistryReqContainer::getLocalShardReplicas() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::LOCAL_SHARD_REPLICAS, "%s != %s", _kind, RegistryMessageKind::LOCAL_SHARD_REPLICAS);
+    return std::get<41>(_data);
+}
+LocalShardReplicasReq& RegistryReqContainer::setLocalShardReplicas() {
+    _kind = RegistryMessageKind::LOCAL_SHARD_REPLICAS;
+    auto& x = _data.emplace<41>();
+    return x;
+}
 RegistryReqContainer::RegistryReqContainer() {
     clear();
 }
@@ -9747,6 +9791,9 @@ void RegistryReqContainer::operator=(const RegistryReqContainer& other) {
     case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
         setBlockServiceAvailableSpace() = other.getBlockServiceAvailableSpace();
         break;
+    case RegistryMessageKind::LOCAL_SHARD_REPLICAS:
+        setLocalShardReplicas() = other.getLocalShardReplicas();
+        break;
     default:
         throw TERN_EXCEPTION("bad RegistryMessageKind kind %s", other.kind());
     }
@@ -9842,6 +9889,8 @@ size_t RegistryReqContainer::packedSize() const {
         return sizeof(RegistryMessageKind) + std::get<39>(_data).packedSize();
     case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
         return sizeof(RegistryMessageKind) + std::get<40>(_data).packedSize();
+    case RegistryMessageKind::LOCAL_SHARD_REPLICAS:
+        return sizeof(RegistryMessageKind) + std::get<41>(_data).packedSize();
     default:
         throw TERN_EXCEPTION("bad RegistryMessageKind kind %s", _kind);
     }
@@ -9972,6 +10021,9 @@ void RegistryReqContainer::pack(BincodeBuf& buf) const {
         break;
     case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
         std::get<40>(_data).pack(buf);
+        break;
+    case RegistryMessageKind::LOCAL_SHARD_REPLICAS:
+        std::get<41>(_data).pack(buf);
         break;
     default:
         throw TERN_EXCEPTION("bad RegistryMessageKind kind %s", _kind);
@@ -10104,6 +10156,9 @@ void RegistryReqContainer::unpack(BincodeBuf& buf) {
     case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
         _data.emplace<40>().unpack(buf);
         break;
+    case RegistryMessageKind::LOCAL_SHARD_REPLICAS:
+        _data.emplace<41>().unpack(buf);
+        break;
     default:
         throw BINCODE_EXCEPTION("bad RegistryMessageKind kind %s", _kind);
     }
@@ -10195,6 +10250,8 @@ bool RegistryReqContainer::operator==(const RegistryReqContainer& other) const {
         return getBlockServicesNeedingMigration() == other.getBlockServicesNeedingMigration();
     case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
         return getBlockServiceAvailableSpace() == other.getBlockServiceAvailableSpace();
+    case RegistryMessageKind::LOCAL_SHARD_REPLICAS:
+        return getLocalShardReplicas() == other.getLocalShardReplicas();
     default:
         throw BINCODE_EXCEPTION("bad RegistryMessageKind kind %s", _kind);
     }
@@ -10324,6 +10381,9 @@ std::ostream& operator<<(std::ostream& out, const RegistryReqContainer& x) {
         break;
     case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
         out << x.getBlockServiceAvailableSpace();
+        break;
+    case RegistryMessageKind::LOCAL_SHARD_REPLICAS:
+        out << x.getLocalShardReplicas();
         break;
     case RegistryMessageKind::EMPTY:
         out << "EMPTY";
@@ -10712,6 +10772,15 @@ BlockServiceAvailableSpaceResp& RegistryRespContainer::setBlockServiceAvailableS
     auto& x = _data.emplace<41>();
     return x;
 }
+const LocalShardReplicasResp& RegistryRespContainer::getLocalShardReplicas() const {
+    ALWAYS_ASSERT(_kind == RegistryMessageKind::LOCAL_SHARD_REPLICAS, "%s != %s", _kind, RegistryMessageKind::LOCAL_SHARD_REPLICAS);
+    return std::get<42>(_data);
+}
+LocalShardReplicasResp& RegistryRespContainer::setLocalShardReplicas() {
+    _kind = RegistryMessageKind::LOCAL_SHARD_REPLICAS;
+    auto& x = _data.emplace<42>();
+    return x;
+}
 RegistryRespContainer::RegistryRespContainer() {
     clear();
 }
@@ -10855,6 +10924,9 @@ void RegistryRespContainer::operator=(const RegistryRespContainer& other) {
     case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
         setBlockServiceAvailableSpace() = other.getBlockServiceAvailableSpace();
         break;
+    case RegistryMessageKind::LOCAL_SHARD_REPLICAS:
+        setLocalShardReplicas() = other.getLocalShardReplicas();
+        break;
     default:
         throw TERN_EXCEPTION("bad RegistryMessageKind kind %s", other.kind());
     }
@@ -10952,6 +11024,8 @@ size_t RegistryRespContainer::packedSize() const {
         return sizeof(RegistryMessageKind) + std::get<40>(_data).packedSize();
     case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
         return sizeof(RegistryMessageKind) + std::get<41>(_data).packedSize();
+    case RegistryMessageKind::LOCAL_SHARD_REPLICAS:
+        return sizeof(RegistryMessageKind) + std::get<42>(_data).packedSize();
     default:
         throw TERN_EXCEPTION("bad RegistryMessageKind kind %s", _kind);
     }
@@ -11085,6 +11159,9 @@ void RegistryRespContainer::pack(BincodeBuf& buf) const {
         break;
     case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
         std::get<41>(_data).pack(buf);
+        break;
+    case RegistryMessageKind::LOCAL_SHARD_REPLICAS:
+        std::get<42>(_data).pack(buf);
         break;
     default:
         throw TERN_EXCEPTION("bad RegistryMessageKind kind %s", _kind);
@@ -11220,6 +11297,9 @@ void RegistryRespContainer::unpack(BincodeBuf& buf) {
     case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
         _data.emplace<41>().unpack(buf);
         break;
+    case RegistryMessageKind::LOCAL_SHARD_REPLICAS:
+        _data.emplace<42>().unpack(buf);
+        break;
     default:
         throw BINCODE_EXCEPTION("bad RegistryMessageKind kind %s", _kind);
     }
@@ -11313,6 +11393,8 @@ bool RegistryRespContainer::operator==(const RegistryRespContainer& other) const
         return getBlockServicesNeedingMigration() == other.getBlockServicesNeedingMigration();
     case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
         return getBlockServiceAvailableSpace() == other.getBlockServiceAvailableSpace();
+    case RegistryMessageKind::LOCAL_SHARD_REPLICAS:
+        return getLocalShardReplicas() == other.getLocalShardReplicas();
     default:
         throw BINCODE_EXCEPTION("bad RegistryMessageKind kind %s", _kind);
     }
@@ -11445,6 +11527,9 @@ std::ostream& operator<<(std::ostream& out, const RegistryRespContainer& x) {
         break;
     case RegistryMessageKind::BLOCK_SERVICE_AVAILABLE_SPACE:
         out << x.getBlockServiceAvailableSpace();
+        break;
+    case RegistryMessageKind::LOCAL_SHARD_REPLICAS:
+        out << x.getLocalShardReplicas();
         break;
     case RegistryMessageKind::EMPTY:
         out << "EMPTY";

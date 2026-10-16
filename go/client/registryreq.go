@@ -70,6 +70,8 @@ func readRegistryResponse(
 	switch kind {
 	case msgs.LOCAL_SHARDS:
 		resp = &msgs.LocalShardsResp{}
+	case msgs.LOCAL_SHARD_REPLICAS:
+		resp = &msgs.LocalShardReplicasResp{}
 	case msgs.LOCAL_CDC:
 		resp = &msgs.LocalCdcResp{}
 	case msgs.INFO:

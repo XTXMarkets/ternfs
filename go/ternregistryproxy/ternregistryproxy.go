@@ -90,6 +90,20 @@ func handleLocalCdc(log *log.Logger, s *state, req *msgs.LocalCdcReq) (msgs.Regi
 	return &msgs.LocalCdcResp{respAtLocation.Addrs, respAtLocation.LastSeen}, nil
 }
 
+func handleLocalShardReplicas(log *log.Logger, s *state) (msgs.RegistryResponse, error) {
+	resp, err := handleProxyRequest(log, s, &msgs.AllShardsReq{})
+	if err != nil {
+		return nil, err
+	}
+	local := &msgs.LocalShardReplicasResp{}
+	for _, shard := range resp.(*msgs.AllShardsResp).Shards {
+		if shard.LocationId == s.config.location {
+			local.Shards = append(local.Shards, shard)
+		}
+	}
+	return local, nil
+}
+
 func handleProxyRequest(log *log.Logger, s *state, req msgs.RegistryRequest) (msgs.RegistryResponse, error) {
 	return s.registryConn.Request(req)
 }
@@ -114,6 +128,8 @@ func handleRequestParsed(log *log.Logger, s *state, req msgs.RegistryRequest) (m
 		resp, err = handleProxyRequest(log, s, req)
 	case *msgs.LocalShardsReq:
 		resp, err = handleLocalShards(log, s, whichReq)
+	case *msgs.LocalShardReplicasReq:
+		resp, err = handleLocalShardReplicas(log, s)
 	case *msgs.AllShardsDEPRECATEDReq:
 		resp, err = handleProxyRequest(log, s, req)
 	case *msgs.RegisterShardReq:
@@ -300,6 +316,8 @@ func readRegistryRequest(
 	switch kind {
 	case msgs.LOCAL_SHARDS:
 		req = &msgs.LocalShardsReq{}
+	case msgs.LOCAL_SHARD_REPLICAS:
+		req = &msgs.LocalShardReplicasReq{}
 	case msgs.REGISTER_SHARD:
 		req = &msgs.RegisterShardReq{}
 	case msgs.ALL_BLOCK_SERVICES_DEPRECATED:

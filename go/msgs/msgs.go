@@ -2307,6 +2307,12 @@ type LocalShardsResp struct {
 	Shards []ShardInfo
 }
 
+type LocalShardReplicasReq struct{}
+
+type LocalShardReplicasResp struct {
+	Shards []FullShardInfo
+}
+
 type ShardsAtLocationReq struct {
 	LocationId Location
 }
