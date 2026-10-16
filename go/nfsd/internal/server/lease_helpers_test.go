@@ -74,6 +74,26 @@ func setLeaseForTest(srv *Server, clientID uint64, mutate func(r *clientstore.Le
 	mutate(r)
 }
 
+// awaitRequestHoldsReleased waits until no request holds its incarnation
+// group. The server releases a request's hold, which starts the quiet
+// period, after writing the reply (releaseReply), so a test that has
+// received a reply may still race the release; a lease sweep run in that
+// window does not expire the client, as intended for a live request.
+func awaitRequestHoldsReleased(t *testing.T, srv *Server) {
+	t.Helper()
+	waitFor(t, "request holds to be released", func() bool {
+		ss := srv.sessions
+		ss.mu.Lock()
+		defer ss.mu.Unlock()
+		for _, g := range ss.groups {
+			if g.active > 0 || g.provisional > 0 {
+				return false
+			}
+		}
+		return true
+	})
+}
+
 // endQuietForTest ends every group's quiet period and forgets the groups
 // kept only by it: a group outlives its last request until quietUntil
 // (canonical r3 §8).

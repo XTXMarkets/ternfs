@@ -1753,6 +1753,9 @@ func TestServerLeaseSweepExpiresAbandonedStaging(t *testing.T) {
 		t.Fatal(err)
 	}
 	publishLeaseForTest(t, srv, clientID)
+	// The refresher's terminal steps would also expire the client's state
+	// once the marker is noted; only the sweep's own retry is under test.
+	srv.clients.StopLeaseWorkers()
 	fileID, cookie, err := fs.ConstructFile(fs.RootID())
 	if err != nil {
 		t.Fatal(err)

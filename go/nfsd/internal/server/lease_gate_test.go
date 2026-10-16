@@ -266,6 +266,7 @@ func TestLocalExpiryDrainsSessionsWithoutMarker(t *testing.T) {
 
 	// The durable lease dies; the marker write fails.
 	srv.clients.StopLeaseWorkers()
+	awaitRequestHoldsReleased(t, srv)
 	later := time.Now().Add(10 * clientstore.LeaseWriteTerm)
 	srv.clients.SetClock(func() time.Time { return later })
 	endQuietForTest(srv)
