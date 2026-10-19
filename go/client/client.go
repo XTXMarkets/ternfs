@@ -44,10 +44,18 @@ type ReqCounters struct {
 	Attempts uint64
 }
 
+// Snapshot copies live counters into storage of their own. Each word is
+// loaded atomically; Attempts and the timings are not one instant.
+func (c *ReqCounters) Snapshot() ReqCounters {
+	return ReqCounters{Timings: c.Timings.Snapshot(), Attempts: atomic.LoadUint64(&c.Attempts)}
+}
+
+// MergeReqCounters sums live counters into a new ReqCounters, leaving cs
+// unchanged.
 func MergeReqCounters(cs []ReqCounters) *ReqCounters {
-	counters := cs[0] // important to copy
+	counters := cs[0].Snapshot()
 	for i := 1; i < len(cs); i++ {
-		counters.Attempts += cs[i].Attempts
+		counters.Attempts += atomic.LoadUint64(&cs[i].Attempts)
 		counters.Timings.Merge(&cs[i].Timings)
 	}
 	return &counters
@@ -135,12 +143,12 @@ func (counters *ClientCounters) Log(log *log.Logger) {
 	}
 	log.Info("CDC stats (total CDC time %v):", cdcTime)
 	for _, k := range msgs.AllCDCMessageKind {
-		c := counters.CDC[uint8(k)]
+		c := counters.CDC[uint8(k)].Snapshot()
 		if c.Attempts == 0 {
 			continue
 		}
 		log.Info("  %v", k)
-		formatCounters(c)
+		formatCounters(&c)
 	}
 
 }

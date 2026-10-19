@@ -14,6 +14,7 @@ import (
 
 	"github.com/XTXMarkets/ternfs/go/client"
 	"github.com/XTXMarkets/ternfs/go/core/log"
+	"github.com/XTXMarkets/ternfs/go/core/timing"
 	"github.com/XTXMarkets/ternfs/go/msgs"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/server"
 )
@@ -210,43 +211,48 @@ func (p *metricsPusher) build(b *log.MetricsBuilder, now time.Time) {
 }
 
 // buildBackend folds the TernFS client's per-shard, per-kind request
-// counters into one series per request kind.
+// counters into one series per request kind. The client keeps updating
+// them, so each kind is read once into a detached snapshot, and its count
+// and buckets all come from that one histogram. Attempts is sampled
+// separately and may be a request ahead of or behind the count.
 func (p *metricsPusher) buildBackend(b *log.MetricsBuilder, now time.Time) {
 	type kindCounters struct {
 		service, kind string
-		c             *client.ReqCounters
+		attempts      uint64
+		hist          []timing.HistogramBin
+		total         uint64
 	}
 	var kinds []kindCounters
-	for k, perShard := range p.counters.Shard {
-		merged := client.MergeReqCounters(perShard[:])
-		if merged.Timings.Count() == 0 && merged.Attempts == 0 {
-			continue
+	add := func(service, kind string, c *client.ReqCounters) {
+		hist := c.Timings.Histogram()
+		var total uint64
+		for _, bin := range hist {
+			total += bin.Count
 		}
-		kinds = append(kinds, kindCounters{"shard", msgs.ShardMessageKind(k).String(), merged})
+		if total == 0 && c.Attempts == 0 {
+			return
+		}
+		kinds = append(kinds, kindCounters{service, kind, c.Attempts, hist, total})
+	}
+	for k, perShard := range p.counters.Shard {
+		add("shard", msgs.ShardMessageKind(k).String(), client.MergeReqCounters(perShard[:]))
 	}
 	for k, c := range p.counters.CDC {
-		if c.Timings.Count() == 0 && c.Attempts == 0 {
-			continue
-		}
-		copied := *c
-		kinds = append(kinds, kindCounters{"cdc", msgs.CDCMessageKind(k).String(), &copied})
+		snap := c.Snapshot()
+		add("cdc", msgs.CDCMessageKind(k).String(), &snap)
 	}
 	sort.Slice(kinds, func(i, j int) bool {
 		return kinds[i].service < kinds[j].service || kinds[i].service == kinds[j].service && kinds[i].kind < kinds[j].kind
 	})
 	for _, kc := range kinds {
-		hist := kc.c.Timings.Histogram()
+		hist, total := kc.hist, kc.total
 		b.Measurement(measBackend)
 		p.tags(b)
 		b.Tag("service", kc.service)
 		b.Tag("kind", kc.kind)
-		b.FieldU64("count", kc.c.Timings.Count())
-		b.FieldU64("attempts", kc.c.Attempts)
+		b.FieldU64("count", total)
+		b.FieldU64("attempts", kc.attempts)
 		b.Timestamp(now)
-		var total uint64
-		for _, bin := range hist {
-			total += bin.Count
-		}
 		for _, bound := range backendLatencyBounds {
 			var n uint64
 			for _, bin := range hist {
