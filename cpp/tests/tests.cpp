@@ -16,6 +16,7 @@
 #include "ShardDB.hpp"
 #include "ShardDBData.hpp"
 #include "Crypto.hpp"
+#include "crc32c.h"
 #include "RocksDBUtils.hpp"
 #include "SharedRocksDB.hpp"
 #include "Time.hpp"
@@ -941,6 +942,311 @@ TEST_CASE("add span validates layout before preparing a log entry") {
     }
 }
 
+struct BlockReplacementTest {
+    struct ClockReset { ~ClockReset() { _setCurrentTime(0); } } clockReset;
+    TempShardDB db{LogLevel::LOG_ERROR, ShardId(0)};
+    std::unique_ptr<ShardReqContainer> req = std::make_unique<ShardReqContainer>();
+    std::unique_ptr<ShardRespContainer> resp = std::make_unique<ShardRespContainer>();
+    std::unique_ptr<ShardLogEntry> entry = std::make_unique<ShardLogEntry>();
+    std::vector<FullBlockServiceInfo> services;
+    std::array<AES128Key, 5> keys;
+    std::array<uint64_t, 2> oldBlocks;
+    uint64_t logIndex = 0;
+    InodeId fileId;
+    BincodeFixedBytes<8> cookie;
+    static constexpr uint32_t BLOCK_SIZE = 4096;
+
+    TernError prepare() {
+        _setCurrentTime(ternNow() + 1_ms);
+        return db->prepareLogEntry(*req, *entry);
+    }
+
+    void apply(TernError expected = TernError::NO_ERROR) {
+        NO_TERN_ERROR(prepare());
+        applyEntry(*entry, expected);
+    }
+
+    void applyEntry(const ShardLogEntry& logEntry, TernError expected = TernError::NO_ERROR) {
+        db->applyLogEntry(++logIndex, logEntry, *resp);
+        db->flush(false);
+        auto actual = resp->kind() == ShardMessageKind::ERROR ? resp->getError() : TernError::NO_ERROR;
+        REQUIRE(actual == expected);
+    }
+
+    BlockProof proof(char tag, BlockServiceId bs, uint64_t blockId) {
+        char buf[32]{};
+        BincodeBuf packed(buf, sizeof(buf));
+        packed.packScalar<uint64_t>(bs.u64);
+        packed.packScalar<char>(tag);
+        packed.packScalar<uint64_t>(blockId);
+        BlockProof result;
+        result.blockId = blockId;
+        result.proof.data = cbcmac(keys[bs.u64], (uint8_t*)buf, sizeof(buf));
+        return result;
+    }
+
+    BlockReplacementTest(bool transient = false, bool dirtyLast = false, LocationId location = 0, bool decommission = true) {
+        for (uint64_t id = 1; id <= 4; ++id) {
+            auto& bs = services.emplace_back();
+            bs.id = BlockServiceId(id);
+            bs.locationId = location;
+            bs.storageClass = HDD_STORAGE;
+            bs.failureDomain.name.data[0] = id;
+            bs.secretKey.data.fill(id);
+            expandKey(bs.secretKey.data, keys[id]);
+            bs.capacityBytes = 1ull << 30;
+            bs.availableBytes = 1ull << 30;
+        }
+        db.blockServicesCacheDB->updateCache(services);
+        req->setConstructFile().type = (uint8_t)InodeType::FILE;
+        apply();
+        fileId = resp->getConstructFile().id;
+        cookie = resp->getConstructFile().cookie;
+        const Crc crc(0x12345678);
+        for (uint64_t i = 0; i < 2; ++i) {
+            auto& atLocation = req->setAddSpanAtLocationInitiate();
+            atLocation.locationId = location;
+            auto& add = atLocation.req.req;
+            add.fileId = fileId;
+            add.cookie = cookie;
+            add.byteOffset = i*BLOCK_SIZE;
+            add.size = BLOCK_SIZE;
+            add.crc = Crc(crc32c_append_pclmul(0, crc.u32, BLOCK_SIZE));
+            add.storageClass = HDD_STORAGE;
+            add.parity = Parity(1, 1);
+            add.stripes = 1;
+            add.cellSize = BLOCK_SIZE;
+            add.crcs.els = {crc, crc};
+            for (uint64_t bs = 3; bs <= 4; ++bs) {
+                add.blacklist.els.emplace_back().blockService = BlockServiceId(bs);
+            }
+            apply();
+            auto blocks = resp->getAddSpanAtLocationInitiate().resp.blocks.els;
+            REQUIRE(blocks.size() == 2);
+            for (const auto& block : blocks) {
+                if (block.blockServiceId == BlockServiceId(1)) { oldBlocks[i] = block.blockId; }
+            }
+            if (dirtyLast && i == 1) { break; }
+            auto& certify = req->setAddSpanCertify();
+            certify.fileId = fileId;
+            certify.cookie = cookie;
+            certify.byteOffset = i*BLOCK_SIZE;
+            for (const auto& block : blocks) {
+                certify.proofs.els.push_back(proof('W', block.blockServiceId, block.blockId));
+            }
+            apply();
+        }
+        if (!transient) {
+            auto& link = req->setLinkFile();
+            link.fileId = fileId;
+            link.cookie = cookie;
+            link.ownerId = ROOT_DIR_INODE_ID;
+            link.name = BincodeBytes("replacement");
+            apply();
+        }
+        if (decommission) {
+            services[0].flags = BlockServiceFlags::DECOMMISSIONED;
+            db.blockServicesCacheDB->updateCache(services);
+        }
+    }
+
+    ReplaceBlockInitiateReq& initiateRequest(size_t span = 0) {
+        auto& init = req->setReplaceBlockInitiate();
+        init.fileId = fileId;
+        init.byteOffset = span*BLOCK_SIZE;
+        init.oldBlockId = oldBlocks[span];
+        return init;
+    }
+
+    ReplaceBlockInitiateResp initiate(size_t span = 0) {
+        initiateRequest(span);
+        apply();
+        auto result = resp->getReplaceBlockInitiate();
+        CHECK(result.newBlock.blockServiceId.u64 >= 3);
+        return result;
+    }
+
+    ReplaceBlockCertifyReq& certifyRequest(const ReplaceBlockInitiateResp& init, size_t span = 0) {
+        auto& certify = req->setReplaceBlockCertify();
+        certify.fileId = fileId;
+        certify.byteOffset = span*BLOCK_SIZE;
+        certify.oldBlockId = oldBlocks[span];
+        certify.holderId = init.holderId;
+        certify.holderCookie = init.holderCookie;
+        certify.newBlock = proof('W', init.newBlock.blockServiceId, init.newBlock.blockId);
+        return certify;
+    }
+
+    void collect(const ReplaceBlockInitiateResp& init, uint64_t expectedBlockId = 0) {
+        auto& scrap = req->setScrapTransientFile();
+        scrap.id = init.holderId;
+        scrap.cookie = init.holderCookie;
+        apply();
+        auto& remove = req->setRemoveSpanInitiate();
+        remove.fileId = init.holderId;
+        remove.cookie = init.holderCookie;
+        apply();
+        auto blocks = resp->getRemoveSpanInitiate().blocks.els;
+        REQUIRE(resp->getRemoveSpanInitiate().byteOffset == 0);
+        REQUIRE(blocks.size() == 1);
+        CHECK(blocks[0].blockId == (expectedBlockId == 0 ? init.newBlock.blockId : expectedBlockId));
+        auto& certify = req->setRemoveSpanCertify();
+        certify.fileId = init.holderId;
+        certify.cookie = init.holderCookie;
+        certify.proofs.els.push_back(proof('E', blocks[0].blockServiceId, blocks[0].blockId));
+        apply();
+        auto& empty = req->setRemoveSpanInitiate();
+        empty.fileId = init.holderId;
+        empty.cookie = init.holderCookie;
+        apply(TernError::FILE_EMPTY);
+        req->setRemoveInode().id = init.holderId;
+        apply();
+    }
+};
+
+TEST_CASE("single block replacement and abandoned holder cleanup") {
+    BlockReplacementTest f(false, false, LocationId(2));
+    auto first = f.initiate();
+    auto abandoned = f.initiate(1);
+    f.certifyRequest(first);
+    f.apply();
+    CHECK(f.resp->getReplaceBlockCertify().replaced);
+    f.req->setStatTransientFile().id = first.holderId;
+    f.db->read(*f.req, *f.resp);
+    REQUIRE(f.resp->kind() == ShardMessageKind::ERROR);
+    CHECK(f.resp->getError() == TernError::FILE_NOT_FOUND);
+    f.certifyRequest(first);
+    CHECK(f.prepare() == TernError::BLOCK_NOT_FOUND);
+    auto& spans = f.req->setFileSpans();
+    spans.fileId = f.fileId;
+    f.db->read(*f.req, *f.resp);
+    REQUIRE(f.resp->kind() == ShardMessageKind::FILE_SPANS);
+    const auto& spansResp = f.resp->getFileSpans();
+    REQUIRE(spansResp.spans.els.size() == 2);
+    const auto& location = spansResp.spans.els[0].getLocations().locations.els[0];
+    CHECK(location.locationId == 2);
+    bool found = false;
+    for (const auto& block : location.blocks.els) {
+        found |= block.blockId == first.newBlock.blockId;
+    }
+    CHECK(found);
+    f.collect(abandoned);
+}
+
+TEST_CASE("single block replacement validates source and write proof") {
+    BlockReplacementTest f;
+    auto init = f.initiate();
+    SUBCASE("bad proof leaves holder for GC") {
+        f.certifyRequest(init).newBlock.proof.data[0] ^= 1;
+        f.apply(TernError::BAD_BLOCK_PROOF);
+        f.collect(init);
+    }
+    SUBCASE("wrong old block is rejected") {
+        f.initiateRequest().oldBlockId++;
+        CHECK(f.prepare() == TernError::BLOCK_NOT_FOUND);
+    }
+    SUBCASE("concurrent replacement leaves losing holder intact") {
+        auto other = f.initiate();
+        f.certifyRequest(init);
+        NO_TERN_ERROR(f.prepare());
+        auto pending = std::make_unique<ShardLogEntry>(*f.entry);
+        f.certifyRequest(other);
+        f.apply();
+        CHECK(f.resp->getReplaceBlockCertify().replaced);
+        f.applyEntry(*pending);
+        CHECK_FALSE(f.resp->getReplaceBlockCertify().replaced);
+        f.collect(init);
+    }
+}
+
+TEST_CASE("block replacement retains the old block when an erase is still needed") {
+    BlockReplacementTest f(false, false, LocationId(2), false);
+    auto init = f.initiate();
+    f.certifyRequest(init);
+    NO_TERN_ERROR(f.prepare());
+    CHECK_FALSE(f.entry->body.getReplaceBlockCertify().discardOldBlock);
+    SUBCASE("healthy service") {}
+    SUBCASE("service decommissioned after prepare") {
+        f.services[0].flags = BlockServiceFlags::DECOMMISSIONED;
+        f.db.blockServicesCacheDB->updateCache(f.services);
+    }
+    // Apply must honor the recorded decision even if its cache has changed.
+    f.applyEntry(*f.entry);
+    CHECK(f.resp->getReplaceBlockCertify().replaced);
+    f.req->setFileSpans().fileId = init.holderId;
+    f.db->read(*f.req, *f.resp);
+    REQUIRE(f.resp->kind() == ShardMessageKind::FILE_SPANS);
+    const auto& spans = f.resp->getFileSpans().spans.els;
+    REQUIRE(spans.size() == 1);
+    const auto& locations = spans[0].getLocations().locations.els;
+    REQUIRE(locations.size() == 1);
+    REQUIRE(locations[0].blocks.els.size() == 1);
+    CHECK(locations[0].locationId == 2);
+    CHECK(locations[0].blocks.els[0].blockId == f.oldBlocks[0]);
+
+    auto& refs = f.req->setBlockServiceFiles();
+    refs.blockServiceId = BlockServiceId(1);
+    refs.startFrom = init.holderId;
+    f.db->read(*f.req, *f.resp);
+    REQUIRE(f.resp->kind() == ShardMessageKind::BLOCK_SERVICE_FILES);
+    REQUIRE(f.resp->getBlockServiceFiles().fileIds.els.size() == 1);
+    CHECK(f.resp->getBlockServiceFiles().fileIds.els[0] == init.holderId);
+    f.collect(init, f.oldBlocks[0]);
+    auto& after = f.req->setBlockServiceFiles();
+    after.blockServiceId = BlockServiceId(1);
+    after.startFrom = init.holderId;
+    f.db->read(*f.req, *f.resp);
+    CHECK(f.resp->getBlockServiceFiles().fileIds.els.empty());
+}
+
+TEST_CASE("block replacement discards an old block decommissioned before certify") {
+    BlockReplacementTest f(false, false, 0, false);
+    auto init = f.initiate();
+    f.services[0].flags = BlockServiceFlags::DECOMMISSIONED;
+    f.db.blockServicesCacheDB->updateCache(f.services);
+    f.certifyRequest(init);
+    NO_TERN_ERROR(f.prepare());
+    CHECK(f.entry->body.getReplaceBlockCertify().discardOldBlock);
+    // A replica can apply this log entry before learning the new registry flags.
+    f.services[0].flags = BlockServiceFlags::EMPTY;
+    f.db.blockServicesCacheDB->updateCache(f.services);
+    f.applyEntry(*f.entry);
+    CHECK(f.resp->getReplaceBlockCertify().replaced);
+    f.req->setStatTransientFile().id = init.holderId;
+    f.db->read(*f.req, *f.resp);
+    REQUIRE(f.resp->kind() == ShardMessageKind::ERROR);
+    CHECK(f.resp->getError() == TernError::FILE_NOT_FOUND);
+}
+
+TEST_CASE("single block replacement respects transient span ownership") {
+    BlockReplacementTest f(true, true);
+    f.initiateRequest(1);
+    CHECK(f.prepare() == TernError::SPAN_NOT_FOUND);
+    auto& scrap = f.req->setScrapTransientFile();
+    scrap.id = f.fileId;
+    scrap.cookie = f.cookie;
+    f.apply();
+    auto init = f.initiate(1);
+    SUBCASE("expired dirty span can be replaced") {
+        f.certifyRequest(init, 1);
+        f.apply();
+        CHECK(f.resp->getReplaceBlockCertify().replaced);
+    }
+    SUBCASE("GC condemns the span before certification is applied") {
+        f.certifyRequest(init, 1);
+        NO_TERN_ERROR(f.prepare());
+        auto pending = std::make_unique<ShardLogEntry>(*f.entry);
+        auto& remove = f.req->setRemoveSpanInitiate();
+        remove.fileId = f.fileId;
+        remove.cookie = f.cookie;
+        f.apply();
+        f.applyEntry(*pending);
+        CHECK_FALSE(f.resp->getReplaceBlockCertify().replaced);
+        f.collect(init);
+        f.initiateRequest(1);
+        CHECK(f.prepare() == TernError::SPAN_NOT_FOUND);
+    }
+}
 TEST_CASE("test fmt") {
     {
         std::stringstream ss;
