@@ -446,6 +446,7 @@ func (s *Server) releaseWrite(openStateid nfs4.Stateid4, st *compoundState, clos
 	}
 
 	if published != 0 && state.Owner.ClientID != 0 {
+		s.metrics.publishes.Add(1)
 		s.publishedAs(state.Owner.ClientID, st.currentID, published)
 	}
 	if !closing && !expiredClose {

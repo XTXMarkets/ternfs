@@ -144,6 +144,7 @@ func (s *Server) opRead(args nfs4.READ4args, st *compoundState, w *nfs4.COMPOUND
 		okW = okW.SetEof(nfs4.FALSE)
 	}
 	okW = okW.SetData(buf[:n])
+	s.metrics.addIO(true, n)
 	rbuf := okW.Finish()
 	ew.Resume(rbuf)
 	w.Resume(ew.Finish())
@@ -457,6 +458,7 @@ func (s *Server) opWrite(args nfs4.WRITE4args, st *compoundState, w *nfs4.COMPOU
 	okW := ew.SetValue_Nfs4Ok()
 	okW.SetCount(uint32(len(data)))
 	okW.SetCommitted(committed)
+	s.metrics.addIO(false, len(data))
 	verf := okW.Writeverf()
 	for i := 0; i < 8; i++ {
 		verf.SetData(i, s.writeVerifier[i])

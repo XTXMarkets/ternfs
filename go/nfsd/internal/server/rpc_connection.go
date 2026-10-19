@@ -42,6 +42,20 @@ type rpcConnection struct {
 	requests    atomic.Uint64
 }
 
+// isClosed reports that the connection has ended, so a request waiting
+// for resources on its behalf should stop.
+func (c *rpcConnection) isClosed() bool {
+	if c.closed == nil {
+		return false
+	}
+	select {
+	case <-c.closed:
+		return true
+	default:
+		return false
+	}
+}
+
 func (c *rpcConnection) associated(id SessionID) bool {
 	if c == nil {
 		return true
