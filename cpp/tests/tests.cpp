@@ -1112,13 +1112,17 @@ struct BlockReplacementTest {
         apply(expected);
     }
 
-    // Every block in the file, as (span offset, block id, block service)
+    // Every block in the file, as (span offset, block id, block service). None
+    // if the file is gone.
     std::vector<std::tuple<uint64_t, uint64_t, uint64_t>> spanBlocks(InodeId id) {
         req->setFileSpans().fileId = id;
         db->read(*req, *resp);
+        std::vector<std::tuple<uint64_t, uint64_t, uint64_t>> result;
+        if (resp->kind() == ShardMessageKind::ERROR && resp->getError() == TernError::FILE_NOT_FOUND) {
+            return result;
+        }
         REQUIRE(resp->kind() == ShardMessageKind::FILE_SPANS);
         const auto& spans = resp->getFileSpans();
-        std::vector<std::tuple<uint64_t, uint64_t, uint64_t>> result;
         for (const auto& span : spans.spans.els) {
             for (const auto& location : span.getLocations().locations.els) {
                 for (const auto& block : location.blocks.els) {
@@ -1134,6 +1138,18 @@ struct BlockReplacementTest {
         db->read(*req, *resp);
         REQUIRE(resp->kind() == ShardMessageKind::BLOCK_SERVICE_FILES);
         return resp->getBlockServiceFiles().fileIds.els;
+    }
+
+    bool hasBlock(InodeId id, uint64_t blockId) {
+        for (const auto& block : spanBlocks(id)) {
+            if (std::get<1>(block) == blockId) { return true; }
+        }
+        return false;
+    }
+
+    bool holds(uint64_t blockServiceId, InodeId id) {
+        auto files = filesIn(blockServiceId);
+        return std::find(files.begin(), files.end(), id) != files.end();
     }
 
     // The target's and holder's blocks, and which files each block service holds
@@ -1210,8 +1226,11 @@ TEST_CASE("single block replacement and abandoned holder cleanup") {
     f.db->read(*f.req, *f.resp);
     REQUIRE(f.resp->kind() == ShardMessageKind::ERROR);
     CHECK(f.resp->getError() == TernError::FILE_NOT_FOUND);
+    // Repeating the request, as the client does when the reply is lost, reports
+    // the replacement it already made
     f.certifyRequest(first);
-    CHECK(f.prepare() == TernError::BLOCK_NOT_FOUND);
+    f.apply();
+    CHECK(f.resp->getReplaceBlockCertify().replaced);
     auto& spans = f.req->setFileSpans();
     spans.fileId = f.fileId;
     f.db->read(*f.req, *f.resp);
@@ -1250,6 +1269,9 @@ TEST_CASE("single block replacement validates source and write proof") {
         CHECK(f.resp->getReplaceBlockCertify().replaced);
         f.applyEntry(*pending);
         CHECK_FALSE(f.resp->getReplaceBlockCertify().replaced);
+        // and the loser's new block isn't mistaken for a replacement already made
+        f.certifyRequest(init);
+        CHECK(f.prepare() == TernError::BLOCK_NOT_FOUND);
         f.collect(init);
     }
 }
@@ -1339,10 +1361,133 @@ TEST_CASE("single block replacement respects transient span ownership") {
         f.apply();
         f.applyEntry(*pending);
         CHECK_FALSE(f.resp->getReplaceBlockCertify().replaced);
+        // The condemned span keeps its old block, and a new attempt can't install
+        // the new one either
+        CHECK(f.hasBlock(f.fileId, f.oldBlocks[1]));
+        CHECK_FALSE(f.holds(init.newBlock.blockServiceId.u64, f.fileId));
+        f.certifyRequest(init, 1);
+        CHECK(f.prepare() == TernError::SPAN_NOT_FOUND);
         f.collect(init);
         f.initiateRequest(1);
         CHECK(f.prepare() == TernError::SPAN_NOT_FOUND);
     }
+}
+
+// The shard forgets a request once it has replied. If the reply is lost, the
+// client sends the same request again, and the shard has to recognize the
+// replacement it already made from the span alone.
+static void checkRepeatedCertify(bool decommission) {
+    BlockReplacementTest f(false, false, 0, decommission);
+    auto init = f.initiate();
+    f.certifyRequest(init);
+    NO_TERN_ERROR(f.prepare());
+    auto first = std::make_unique<ShardLogEntry>(*f.entry);
+    NO_TERN_ERROR(f.prepare());
+    auto second = std::make_unique<ShardLogEntry>(*f.entry);
+    CHECK(first->body.getReplaceBlockCertify().discardOldBlock == decommission);
+    f.applyEntry(*first);
+    REQUIRE(f.resp->getReplaceBlockCertify().replaced);
+    auto after = f.metadata(init.holderId);
+    SUBCASE("entry prepared before the first one applied") {
+        f.applyEntry(*second);
+        CHECK(f.resp->getReplaceBlockCertify().replaced);
+    }
+    SUBCASE("request prepared again after it applied") {
+        f.certifyRequest(init);
+        f.apply();
+        CHECK(f.resp->getReplaceBlockCertify().replaced);
+    }
+    SUBCASE("with a bad proof") {
+        f.certifyRequest(init).newBlock.proof.data[0] ^= 1;
+        f.apply(TernError::BAD_BLOCK_PROOF);
+    }
+    CHECK(f.metadata(init.holderId) == after);
+}
+
+TEST_CASE("a repeated certify reports the replacement it already made") {
+    SUBCASE("old block discarded") { checkRepeatedCertify(true); }
+    SUBCASE("old block kept for GC") { checkRepeatedCertify(false); }
+}
+
+TEST_CASE("a repeated certify is recognized after GC collected the holder") {
+    BlockReplacementTest f(false, false, 0, false);
+    auto init = f.initiate();
+    f.certifyRequest(init);
+    f.apply();
+    REQUIRE(f.resp->getReplaceBlockCertify().replaced);
+    f.collect(init, f.oldBlocks[0]);
+    auto after = f.metadata(init.holderId);
+    f.certifyRequest(init);
+    f.apply();
+    CHECK(f.resp->getReplaceBlockCertify().replaced);
+    CHECK(f.metadata(init.holderId) == after);
+}
+
+TEST_CASE("a repeated certify is recognized after GC condemned the target span") {
+    BlockReplacementTest f(true);
+    auto init = f.initiate(1);
+    f.certifyRequest(init, 1);
+    NO_TERN_ERROR(f.prepare());
+    auto first = std::make_unique<ShardLogEntry>(*f.entry);
+    NO_TERN_ERROR(f.prepare());
+    auto second = std::make_unique<ShardLogEntry>(*f.entry);
+    f.applyEntry(*first);
+    REQUIRE(f.resp->getReplaceBlockCertify().replaced);
+    auto& remove = f.req->setRemoveSpanInitiate();
+    remove.fileId = f.fileId;
+    remove.cookie = f.cookie;
+    f.apply();
+    REQUIRE(f.resp->getRemoveSpanInitiate().byteOffset == BlockReplacementTest::BLOCK_SIZE);
+    auto condemned = f.resp->getRemoveSpanInitiate().blocks.els;
+    auto after = f.metadata(init.holderId);
+    SUBCASE("entry prepared before GC") {
+        f.applyEntry(*second);
+        CHECK(f.resp->getReplaceBlockCertify().replaced);
+    }
+    SUBCASE("request prepared after GC") {
+        f.certifyRequest(init, 1);
+        f.apply();
+        CHECK(f.resp->getReplaceBlockCertify().replaced);
+    }
+    CHECK(f.metadata(init.holderId) == after);
+
+    // The span is still condemned, and GC can finish removing it
+    auto& certify = f.req->setRemoveSpanCertify();
+    certify.fileId = f.fileId;
+    certify.cookie = f.cookie;
+    certify.byteOffset = BlockReplacementTest::BLOCK_SIZE;
+    bool erasesNewBlock = false;
+    for (const auto& block : condemned) {
+        certify.proofs.els.push_back(f.proof('E', block.blockServiceId, block.blockId));
+        erasesNewBlock |= block.blockId == init.newBlock.blockId;
+    }
+    CHECK(erasesNewBlock);
+    f.apply();
+
+    // Once the span is gone, a repeat can't be recognized, and doesn't bring it back
+    f.certifyRequest(init, 1);
+    CHECK(f.prepare() == TernError::SPAN_NOT_FOUND);
+    CHECK_FALSE(f.hasBlock(f.fileId, init.newBlock.blockId));
+    CHECK_FALSE(f.holds(init.newBlock.blockServiceId.u64, f.fileId));
+}
+
+TEST_CASE("a repeated certify can't be recognized once its block has moved on") {
+    BlockReplacementTest f;
+    auto init = f.initiate();
+    f.certifyRequest(init);
+    f.apply();
+    REQUIRE(f.resp->getReplaceBlockCertify().replaced);
+    // Replace the new block in turn
+    auto original = f.oldBlocks[0];
+    f.oldBlocks[0] = init.newBlock.blockId;
+    auto next = f.initiate();
+    f.certifyRequest(next);
+    f.apply();
+    REQUIRE(f.resp->getReplaceBlockCertify().replaced);
+    // The first request now looks like one that lost a race, and isn't counted
+    f.oldBlocks[0] = original;
+    f.certifyRequest(init);
+    CHECK(f.prepare() == TernError::BLOCK_NOT_FOUND);
 }
 TEST_CASE("test fmt") {
     {

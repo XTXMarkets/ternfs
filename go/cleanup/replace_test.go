@@ -88,11 +88,15 @@ type replaceFixture struct {
 	newBlock msgs.AddSpanInitiateBlockInfo
 	// what STAT_FILE and STAT_TRANSIENT_FILE return, the file is live by default
 	statFileErr, statTransientFileErr msgs.TernError
+	// how many REPLACE_BLOCK_CERTIFY replies to drop after applying the request
+	dropCertifyReplies int
 
 	mu        sync.Mutex
 	fetched   []msgs.BlockId
 	written   [][]byte
 	certified []msgs.ReplaceBlockCertifyReq
+	// the certify requests as they arrived
+	certifyPackets [][]byte
 }
 
 // Splits the span's data into blocks the way the client writes them: each
@@ -248,6 +252,9 @@ func (f *replaceFixture) startShard() msgs.AddrsInfo {
 			}
 			kind := msgs.ShardMessageKind(buf[12])
 			resp, terr := f.shardRequest(kind, buf[13:n])
+			if f.dropReply(kind, buf[:n]) {
+				continue
+			}
 			packet := binary.LittleEndian.AppendUint32(nil, msgs.SHARD_RESP_PROTOCOL_VERSION)
 			packet = append(packet, buf[4:13]...)
 			if terr != 0 {
@@ -288,6 +295,20 @@ func (f *replaceFixture) shardRequest(kind msgs.ShardMessageKind, body []byte) (
 	}
 	f.t.Errorf("unexpected shard request %v", kind)
 	return nil, msgs.UNRECOGNIZED_REQUEST
+}
+
+func (f *replaceFixture) dropReply(kind msgs.ShardMessageKind, packet []byte) bool {
+	if kind != msgs.REPLACE_BLOCK_CERTIFY {
+		return false
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.certifyPackets = append(f.certifyPackets, append([]byte{}, packet...))
+	if f.dropCertifyReplies > 0 {
+		f.dropCertifyReplies--
+		return true
+	}
+	return false
 }
 
 func (f *replaceFixture) startBlockService() msgs.AddrsInfo {
@@ -533,5 +554,38 @@ func TestReplaceAlertsOnlyForLiveFiles(t *testing.T) {
 				t.Errorf("stats %+v, expected 1 block of %v bytes in 1 file", stats, replaceTestBlockSize)
 			}
 		})
+	}
+}
+
+// The shard applies the certify but its reply is lost, so the client sends the
+// same request again. The shard reports the replacement it already made (its
+// own tests check that, here it's scripted) and the block is counted once.
+func TestReplaceCountsCertifyOnceWhenReplyDropped(t *testing.T) {
+	if runInChildProcess(t) {
+		return
+	}
+	f := newReplaceFixture(t, replaceLayout{parity: parity.MkParity(2, 1), stripes: 1, cellSize: replaceTestBlockSize})
+	f.mu.Lock()
+	f.dropCertifyReplies = 1
+	f.mu.Unlock()
+	stats, err := f.replace()
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.certifyPackets) != 2 || !bytes.Equal(f.certifyPackets[0], f.certifyPackets[1]) {
+		t.Errorf("sent %v certify requests, expected the same one twice", len(f.certifyPackets))
+	}
+	for _, certify := range f.certified {
+		if certify.OldBlockId != f.target.BlockId || certify.NewBlock.BlockId != f.newBlock.BlockId {
+			t.Errorf("unexpected certify %+v", certify)
+		}
+	}
+	if len(f.written) != 1 || !bytes.Equal(f.written[0], f.blocks[f.target.BlockId]) {
+		t.Errorf("wrote %v blocks, expected the target's bytes once", len(f.written))
+	}
+	if stats.MigratedBlocks != 1 || stats.MigratedBytes != uint64(replaceTestBlockSize) || stats.MigratedFiles != 1 {
+		t.Errorf("stats %+v, expected 1 block of %v bytes in 1 file", stats, replaceTestBlockSize)
 	}
 }

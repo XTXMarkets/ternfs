@@ -1420,6 +1420,13 @@ type ReplaceBlockInitiateResp struct {
 // removed, returns BLOCK_NOT_FOUND or SPAN_NOT_FOUND. If GC has condemned the
 // holder, returns SPAN_NOT_FOUND. A change between prepare and apply returns
 // Replaced=false. In either case the holder is left for GC.
+//
+// If the new block is already in the span and the old block isn't, for instance
+// because this request already applied and its reply was lost, the proof is
+// checked and Replaced=true is returned without changing anything, even if the
+// span has been condemned since. Once the span is gone, or the new block has
+// been moved out of it, a repeat can't be told apart from a losing attempt and
+// gets an error or Replaced=false.
 type ReplaceBlockCertifyReq struct {
 	FileId       InodeId
 	ByteOffset   uint64
