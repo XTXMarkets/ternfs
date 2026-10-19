@@ -290,7 +290,7 @@ func migrateBlocksInFileGeneric(
 	timeStats *timeStats,
 	progressReportAlert *log.XmonNCAlert,
 	what string,
-	badBlock func(blockService *msgs.BlockService, blockSize uint32, block *msgs.FetchedBlock) (bool, error),
+	shouldMigrate func(blockService *msgs.BlockService, blockSize uint32, block *msgs.FetchedBlock) (bool, error),
 	scratchFile scratch.ScratchFile,
 	fileId msgs.InodeId,
 ) error {
@@ -344,12 +344,12 @@ func migrateBlocksInFileGeneric(
 				for blockIx := range lb.Blocks {
 					block := &lb.Blocks[blockIx]
 					bs := &fileSpansResp.BlockServices[block.BlockServiceIx]
-					isBadBlock, err := badBlock(bs, lb.CellSize*uint32(lb.Stripes), block)
+					selected, err := shouldMigrate(bs, lb.CellSize*uint32(lb.Stripes), block)
 					if err != nil {
 						return err
 					}
-					toMigrate[lIx][blockIx] = isBadBlock
-					usableByLoc[lIx][blockIx] = !isBadBlock && bs.Flags.CanRead()
+					toMigrate[lIx][blockIx] = selected
+					usableByLoc[lIx][blockIx] = !selected && bs.Flags.CanRead()
 				}
 			}
 			for locIx := range locationsBody.Locations {
@@ -449,10 +449,10 @@ func MigrateBlocksInFile(
 ) error {
 	scratchFile := scratch.NewScratchFile(log, c, fileId.Shard(), fmt.Sprintf("migrating file %v", fileId))
 	defer scratchFile.Close()
-	badBlock := func(blockService *msgs.BlockService, blockSize uint32, block *msgs.FetchedBlock) (bool, error) {
+	shouldMigrate := func(blockService *msgs.BlockService, blockSize uint32, block *msgs.FetchedBlock) (bool, error) {
 		return blockService.Id == blockServiceId, nil
 	}
-	return migrateBlocksInFileGeneric(log, c, bufpool.NewBufPool(), stats, newTimeStats(), progressReportAlert, fmt.Sprintf("%v: migrated", blockServiceId), badBlock, scratchFile, fileId)
+	return migrateBlocksInFileGeneric(log, c, bufpool.NewBufPool(), stats, newTimeStats(), progressReportAlert, fmt.Sprintf("%v: migrated", blockServiceId), shouldMigrate, scratchFile, fileId)
 }
 
 // Tries to migrate as many blocks as possible from that block service in a certain
@@ -471,7 +471,7 @@ func migrateBlocksInternal(
 	defer scratchFile.Close()
 	filesReq := msgs.BlockServiceFilesReq{BlockServiceId: blockServiceId}
 	filesResp := msgs.BlockServiceFilesResp{}
-	badBlock := func(blockService *msgs.BlockService, blockSize uint32, block *msgs.FetchedBlock) (bool, error) {
+	shouldMigrate := func(blockService *msgs.BlockService, blockSize uint32, block *msgs.FetchedBlock) (bool, error) {
 		return blockService.Id == blockServiceId, nil
 	}
 	blockNotFoundAlert := log.NewNCAlert(time.Hour)
@@ -490,7 +490,7 @@ func migrateBlocksInternal(
 				continue
 			}
 			for attempts := 1; ; attempts++ {
-				if err := migrateBlocksInFileGeneric(log, c, bufPool, stats, timeStats, progressReportAlert, fmt.Sprintf("%v: migrated", blockServiceId), badBlock, scratchFile, file); err != nil {
+				if err := migrateBlocksInFileGeneric(log, c, bufPool, stats, timeStats, progressReportAlert, fmt.Sprintf("%v: migrated", blockServiceId), shouldMigrate, scratchFile, file); err != nil {
 					if err == msgs.BLOCK_NOT_FOUND {
 						log.RaiseNC(blockNotFoundAlert, "could not migrate blocks in file %v after %v attempts because a block was not found in it. this is probably due to conflicts with other migrations or scrubbing. will retry in one second.", file, attempts)
 						time.Sleep(time.Second)
@@ -614,6 +614,15 @@ func Migrator(registryAddress string, log *log.Logger, client *client.Client, nu
 		res.fileFetchers[i] = make(chan msgs.BlockServiceId, 500)
 	}
 	return &res
+}
+
+// A block is ours to move if its block service is one the registry told us to
+// evacuate (and that passed the failure domain filter, if any).
+func (m *migrator) isScheduled(blockService *msgs.BlockService, blockSize uint32, block *msgs.FetchedBlock) (bool, error) {
+	m.blockServicesLock.RLock()
+	defer m.blockServicesLock.RUnlock()
+	_, ok := m.scheduledBlockServices[blockService.Id]
+	return ok, nil
 }
 
 func (m *migrator) Run() {
@@ -895,12 +904,6 @@ func (m *migrator) closeMigrators() {
 }
 
 func (m *migrator) runFileMigrators(wg *sync.WaitGroup) {
-	badBlock := func(blockService *msgs.BlockService, blockSize uint32, block *msgs.FetchedBlock) (bool, error) {
-		m.blockServicesLock.RLock()
-		defer m.blockServicesLock.RUnlock()
-		_, ok := m.scheduledBlockServices[blockService.Id]
-		return ok, nil
-	}
 	bufPool := bufpool.NewBufPool()
 	for range m.numParallelFiles {
 		wg.Go(func() {
@@ -923,7 +926,7 @@ func (m *migrator) runFileMigrators(wg *sync.WaitGroup) {
 
 				err := error(nil)
 				for {
-					if err = migrateBlocksInFileGeneric(m.log, m.client, bufPool, &m.stats, nil, nil, "", badBlock, tmpFile, file); err == nil {
+					if err = migrateBlocksInFileGeneric(m.log, m.client, bufPool, &m.stats, nil, nil, "", m.isScheduled, tmpFile, file); err == nil {
 						break
 					}
 					if err != msgs.BLOCK_NOT_FOUND {
