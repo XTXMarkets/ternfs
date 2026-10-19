@@ -227,6 +227,7 @@ func TestActiveCompoundDoesNotExpireClientState(t *testing.T) {
 	if got := testutil.AwaitValue(t, closed, "CLOSE with a dead durable lease"); got != nfs4.NFS4ERR_EXPIRED {
 		t.Fatalf("CLOSE %s, want EXPIRED", nfs4.Nfsstat4Name(got))
 	}
+	awaitRequestHoldsReleased(t, srv)
 
 	var bID nfs4.StateID
 	copy(bID[:], bSid[4:])
@@ -435,6 +436,7 @@ func TestExpiredWriterRecoversAcknowledgedData(t *testing.T) {
 				writeFileAt(t, conn, &xid, fh, state, 0, []byte("UPDATED!"))
 				id := stagingIDForTest(t, srv.stagingStore, state)
 				srv.waitForClientGC()
+				awaitRequestHoldsReleased(t, srv)
 				now := time.Now().Add(2 * clientstore.LeaseTime)
 				srv.clients.SetClock(func() time.Time { return now })
 				srv.runLeaseSweep()

@@ -261,6 +261,7 @@ func renameNamespaceFile(t *testing.T, f *namespaceFixture, from, to string) uin
 func expireNamespaceClient(t *testing.T, f *namespaceFixture) {
 	t.Helper()
 	f.server.waitForClientGC()
+	awaitRequestHoldsReleased(t, f.server)
 	now := time.Now().Add(2 * clientstore.LeaseTime)
 	f.server.clients.SetClock(func() time.Time { return now })
 	f.server.runLeaseSweep()
