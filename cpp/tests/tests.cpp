@@ -1102,7 +1102,102 @@ struct BlockReplacementTest {
         req->setRemoveInode().id = init.holderId;
         apply();
     }
+
+    void link(InodeId id, const BincodeFixedBytes<8>& linkCookie, const char* name, TernError expected = TernError::NO_ERROR) {
+        auto& link = req->setLinkFile();
+        link.fileId = id;
+        link.cookie = linkCookie;
+        link.ownerId = ROOT_DIR_INODE_ID;
+        link.name = BincodeBytes(name);
+        apply(expected);
+    }
+
+    // Every block in the file, as (span offset, block id, block service)
+    std::vector<std::tuple<uint64_t, uint64_t, uint64_t>> spanBlocks(InodeId id) {
+        req->setFileSpans().fileId = id;
+        db->read(*req, *resp);
+        REQUIRE(resp->kind() == ShardMessageKind::FILE_SPANS);
+        const auto& spans = resp->getFileSpans();
+        std::vector<std::tuple<uint64_t, uint64_t, uint64_t>> result;
+        for (const auto& span : spans.spans.els) {
+            for (const auto& location : span.getLocations().locations.els) {
+                for (const auto& block : location.blocks.els) {
+                    result.emplace_back(span.header.byteOffset, block.blockId, spans.blockServices.els[block.blockServiceIx].id.u64);
+                }
+            }
+        }
+        return result;
+    }
+
+    std::vector<InodeId> filesIn(uint64_t blockServiceId) {
+        req->setBlockServiceFiles().blockServiceId = BlockServiceId(blockServiceId);
+        db->read(*req, *resp);
+        REQUIRE(resp->kind() == ShardMessageKind::BLOCK_SERVICE_FILES);
+        return resp->getBlockServiceFiles().fileIds.els;
+    }
+
+    // The target's and holder's blocks, and which files each block service holds
+    auto metadata(InodeId holderId) {
+        std::vector<std::vector<InodeId>> files;
+        for (uint64_t id = 1; id <= services.size(); ++id) {
+            files.push_back(filesIn(id));
+        }
+        return std::make_tuple(spanBlocks(fileId), spanBlocks(holderId), files);
+    }
 };
+
+TEST_CASE("an unwritten replacement block cannot be published") {
+    BlockReplacementTest f;
+    auto init = f.initiate();
+    auto before = f.metadata(init.holderId);
+    SUBCASE("by linking its holder") {
+        f.link(init.holderId, init.holderCookie, "holder", TernError::LAST_SPAN_STATE_NOT_CLEAN);
+    }
+    SUBCASE("by swapping its block into the target") {
+        auto& swap = f.req->setSwapBlocks();
+        swap.fileId1 = f.fileId;
+        swap.byteOffset1 = 0;
+        swap.blockId1 = f.oldBlocks[0];
+        swap.fileId2 = init.holderId;
+        swap.byteOffset2 = 0;
+        swap.blockId2 = init.newBlock.blockId;
+        f.apply(TernError::SWAP_BLOCKS_MISMATCHING_STATE);
+    }
+    SUBCASE("by swapping its span into the target") {
+        auto& swap = f.req->setSwapSpans();
+        swap.fileId1 = f.fileId;
+        swap.byteOffset1 = 0;
+        for (const auto& [offset, blockId, _] : std::get<0>(before)) {
+            if (offset == 0) { swap.blocks1.els.push_back(blockId); }
+        }
+        swap.fileId2 = init.holderId;
+        swap.byteOffset2 = 0;
+        swap.blocks2.els = {init.newBlock.blockId};
+        f.apply(TernError::SWAP_SPANS_NOT_CLEAN);
+    }
+    CHECK(f.metadata(init.holderId) == before);
+    // Certifying with the write proof still works
+    f.certifyRequest(init);
+    f.apply();
+    CHECK(f.resp->getReplaceBlockCertify().replaced);
+}
+
+TEST_CASE("a replacement holder taken by GC before certify is not consumed") {
+    BlockReplacementTest f;
+    auto init = f.initiate();
+    auto target = f.spanBlocks(f.fileId);
+    auto& remove = f.req->setRemoveSpanInitiate();
+    remove.fileId = init.holderId;
+    remove.cookie = init.holderCookie;
+    f.apply();
+    f.certifyRequest(init);
+    f.apply(TernError::SPAN_NOT_FOUND);
+    CHECK(f.spanBlocks(f.fileId) == target);
+    f.collect(init);
+    f.certifyRequest(init);
+    f.apply(TernError::FILE_NOT_FOUND);
+    CHECK(f.spanBlocks(f.fileId) == target);
+}
 
 TEST_CASE("single block replacement and abandoned holder cleanup") {
     BlockReplacementTest f(false, false, LocationId(2));
@@ -1183,6 +1278,8 @@ TEST_CASE("block replacement retains the old block when an erase is still needed
     REQUIRE(locations[0].blocks.els.size() == 1);
     CHECK(locations[0].locationId == 2);
     CHECK(locations[0].blocks.els[0].blockId == f.oldBlocks[0]);
+    // The holder stays dirty: it only exists for GC to erase the old block
+    f.link(init.holderId, init.holderCookie, "holder", TernError::LAST_SPAN_STATE_NOT_CLEAN);
 
     auto& refs = f.req->setBlockServiceFiles();
     refs.blockServiceId = BlockServiceId(1);

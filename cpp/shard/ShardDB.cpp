@@ -3359,7 +3359,7 @@ struct ShardDBImpl {
         }
 
         // Fetch span state
-        auto state1 = _fetchSpanState(time, entry.fileId1, entry.byteOffset1 + sourceSpan().size());
+        auto state1 = _fetchSpanState(time, entry.fileId1, entry.byteOffset1 + sourceSpan().spanSize());
         if (state1 != SpanState::CLEAN) {
             return TernError::ADD_SPAN_LOCATION_NOT_CLEAN;
         }
@@ -3607,8 +3607,8 @@ struct ShardDBImpl {
         }
 
         // Fetch span state
-        auto state1 = _fetchSpanState(time, entry.fileId1, entry.byteOffset1 + span1().size());
-        auto state2 = _fetchSpanState(time, entry.fileId2, entry.byteOffset2 + span2().size());
+        auto state1 = _fetchSpanState(time, entry.fileId1, entry.byteOffset1 + span1().spanSize());
+        auto state2 = _fetchSpanState(time, entry.fileId2, entry.byteOffset2 + span2().spanSize());
         // We don't want to put not-certified blocks in clean spans, or similar
         if (state1 != state2) {
             return TernError::SWAP_BLOCKS_MISMATCHING_STATE;
@@ -3737,13 +3737,17 @@ struct ShardDBImpl {
         _writeNextBlockId(batch, nextBlockId);
 
         // The holder is a conventional transient file with the normal deadline
-        // so that GC can reclaim if the caller never calls REPLACE_BLOCK_CERTIFY)
+        // so that GC can reclaim if the caller never calls REPLACE_BLOCK_CERTIFY).
+        // Its span is DIRTY, like one from ADD_SPAN_INITIATE: the new block hasn't
+        // been written, so nothing may link the holder or swap the block out of it.
+        // It stays DIRTY after certify too, when it may hold an old block that was
+        // never certified.
         StaticValue<TransientFileBody> holder;
         holder().setVersion(0);
         holder().setFileSize(blockSize);
         holder().setMtime(time);
         holder().setDeadline(entry.deadlineTime);
-        holder().setLastSpanState(SpanState::CLEAN);
+        holder().setLastSpanState(SpanState::DIRTY);
         BincodeBytes note("block replacement");
         holder().setNoteDangerous(note.ref());
         ROCKS_DB_CHECKED(batch.Put(_transientCf, InodeIdKey::Static(holderId).toSlice(), holder.toSlice()));
@@ -3784,8 +3788,10 @@ struct ShardDBImpl {
         if (err != TernError::NO_ERROR) {
             return err;
         }
-        if (holder().lastSpanState() != SpanState::CLEAN) {
-            return TernError::LAST_SPAN_STATE_NOT_CLEAN;
+        // Anything but DIRTY means GC has condemned the holder, or someone else
+        // certified its span
+        if (holder().lastSpanState() != SpanState::DIRTY) {
+            return TernError::SPAN_NOT_FOUND;
         }
         // If somehow the holder was appended to, then deleting the inode on success
         // wil lead to orphan blocks. So make sure this was not done
@@ -3964,8 +3970,8 @@ struct ShardDBImpl {
             return TernError::SWAP_SPANS_MISMATCHING_CRC;
         }
         // Fetch span state
-        auto state1 = _fetchSpanState(time, entry.fileId1, entry.byteOffset1 + span1().size());
-        auto state2 = _fetchSpanState(time, entry.fileId2, entry.byteOffset2 + span2().size());
+        auto state1 = _fetchSpanState(time, entry.fileId1, entry.byteOffset1 + span1().spanSize());
+        auto state2 = _fetchSpanState(time, entry.fileId2, entry.byteOffset2 + span2().spanSize());
         if (state1 != SpanState::CLEAN || state2 != SpanState::CLEAN) {
             return TernError::SWAP_SPANS_NOT_CLEAN;
         }

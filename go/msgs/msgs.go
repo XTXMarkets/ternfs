@@ -1396,6 +1396,8 @@ type SwapBlocksResp struct{}
 // failure-domain separation.
 //
 // The new block lives in a single-span transient holder until certified.
+// The holder's span is dirty, like one from ADD_SPAN_INITIATE, so it can't be
+// linked and its block can't be swapped into a clean span before it is written.
 // If the caller abandons it, ordinary GC can destruct the holder.
 // A transient target's dirty last span can only be replaced after its deadline;
 // a condemned last span cannot be replaced while GC is erasing it.
@@ -1413,9 +1415,10 @@ type ReplaceBlockInitiateResp struct {
 
 // Checks the write proof and replaces OldBlockId. If the old block's service is
 // decommissioned, the old reference and holder are removed without an erase
-// proof. Otherwise the old block moves into the holder for ordinary GC.
-// If the old block has moved, or the span is being written or removed, returns
-// BLOCK_NOT_FOUND or SPAN_NOT_FOUND. A change between prepare and apply returns
+// proof. Otherwise the old block moves into the holder, which stays dirty, for
+// ordinary GC. If the old block has moved, or the span is being written or
+// removed, returns BLOCK_NOT_FOUND or SPAN_NOT_FOUND. If GC has condemned the
+// holder, returns SPAN_NOT_FOUND. A change between prepare and apply returns
 // Replaced=false. In either case the holder is left for GC.
 type ReplaceBlockCertifyReq struct {
 	FileId       InodeId
