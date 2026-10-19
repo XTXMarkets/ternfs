@@ -494,6 +494,12 @@ func replaceDecommissionedBlocks(
 	}
 }
 
+// Locations only have to agree on the span's size and CRC. Block i of another
+// location holds the same bytes as ours only if it splits the span the same way.
+func sameBlockLayout(a, b *msgs.FetchedBlockServices) bool {
+	return a.Parity == b.Parity && a.Stripes == b.Stripes && a.CellSize == b.CellSize && len(a.Blocks) == len(b.Blocks)
+}
+
 func replaceBlock(
 	log *log.Logger,
 	c *client.Client,
@@ -516,6 +522,10 @@ func replaceBlock(
 	}
 	for _, srcLocIx := range append([]int{dstLocIx}, otherLocationIxs(len(locations), dstLocIx)...) {
 		src := &locations[srcLocIx]
+		if srcLocIx != dstLocIx && !sameBlockLayout(dst, src) {
+			log.Debug("not recovering block %v in file %v from location %v, it splits the span differently", oldBlock.BlockId, fileId, src.LocationId)
+			continue
+		}
 		usable := func(ix int) bool {
 			return !(srcLocIx == dstLocIx && ix == int(blockIx)) && blockServices[src.Blocks[ix].BlockServiceIx].Flags.CanRead()
 		}
