@@ -688,6 +688,14 @@ func (s *Server) compoundBody(req *rpcRequest, args nfs4.COMPOUND4args) (result 
 	var seq sequenceResult
 	checkpoint := w
 	currentOp := uint32(nfs4.OP_ILLEGAL)
+	// Each operation's result is counted once it is final: an earlier one
+	// when the next operation installs its checkpoint, the last one when
+	// the compound returns, after recovery has chosen what is returned.
+	opStart := time.Now()
+	var last opResult
+	record := func(op, status uint32) {
+		last = opResult{op: op, status: status, elapsed: time.Since(opStart), set: true}
+	}
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			s.log.Error("panic handling admitted compound", "xid", req.xid, "panic", recovered)
@@ -696,27 +704,30 @@ func (s *Server) compoundBody(req *rpcRequest, args nfs4.COMPOUND4args) (result 
 			}
 			w = checkpoint
 			writeOperationError(&w, currentOp, nfs4.NFS4ERR_SERVERFAULT)
+			record(currentOp, nfs4.NFS4ERR_SERVERFAULT)
 			w.SetStatus(nfs4.NFS4ERR_SERVERFAULT)
 			result = w.Finish()
 			if seq.slot != nil {
 				seq.finish(result)
 			}
 		}
+		s.metrics.observeResult(&last)
 	}()
 	user, userErr := req.effectiveUser()
 	for index, op := range ops {
 		opnum := op.Disc()
-		currentOp, checkpoint = opnum, w
+		s.metrics.observeResult(&last)
+		currentOp, checkpoint, opStart = opnum, w, time.Now()
 		s.log.Debug("op", "opnum", nfs4.NfsOpnum4Name(opnum))
 		if userErr != nil {
 			writeOperationError(&w, opnum, nfs4.NFS4ERR_WRONGSEC)
+			record(opnum, nfs4.NFS4ERR_WRONGSEC)
 			overallStatus = nfs4.NFS4ERR_WRONGSEC
 			goto done
 		}
 		if index == 0 {
 			switch {
 			case opnum == nfs4.OP_SEQUENCE:
-				seqStart := time.Now()
 				prefixBytes := uint32(rpcAcceptedHeaderSize + w.Len() + sequenceResultBytes)
 				uncachedBytes := prefixBytes
 				if len(ops) > 1 {
@@ -728,7 +739,7 @@ func (s *Server) compoundBody(req *rpcRequest, args nfs4.COMPOUND4args) (result 
 					uncachedBytes: uncachedBytes, connection: req.connection,
 				})
 				opCount++
-				s.metrics.observeOp(nfs4.OP_SEQUENCE, seq.status, time.Since(seqStart))
+				record(nfs4.OP_SEQUENCE, seq.status)
 				if seq.status != nfs4.NFS4_OK {
 					writeSequenceError(&w, seq.status)
 					overallStatus = seq.status
@@ -750,18 +761,21 @@ func (s *Server) compoundBody(req *rpcRequest, args nfs4.COMPOUND4args) (result 
 					status = nfs4.NFS4ERR_OP_ILLEGAL
 				}
 				writeOperationError(&w, opnum, status)
+				record(opnum, status)
 				overallStatus = status
 				opCount++
 				goto done
 			}
 		} else if opnum == nfs4.OP_SEQUENCE {
 			writeOperationError(&w, opnum, nfs4.NFS4ERR_SEQUENCE_POS)
+			record(opnum, nfs4.NFS4ERR_SEQUENCE_POS)
 			overallStatus = nfs4.NFS4ERR_SEQUENCE_POS
 			opCount++
 			break
 		}
 		if status := maintenancePosition(op, st, index, len(ops)); status != nfs4.NFS4_OK {
 			writeOperationError(&w, opnum, status)
+			record(opnum, status)
 			overallStatus = status
 			opCount++
 			break
@@ -782,6 +796,7 @@ func (s *Server) compoundBody(req *rpcRequest, args nfs4.COMPOUND4args) (result 
 		handleBytes, handleStatus := s.handleReplyObligation(ops, index)
 		if handleStatus != nfs4.NFS4_OK {
 			writeOperationError(&w, opnum, handleStatus)
+			record(opnum, handleStatus)
 			overallStatus = handleStatus
 			opCount++
 			break
@@ -793,13 +808,13 @@ func (s *Server) compoundBody(req *rpcRequest, args nfs4.COMPOUND4args) (result 
 				status = resultLimitStatus(&seq)
 			}
 			writeOperationError(&w, opnum, status)
+			record(opnum, status)
 			overallStatus = status
 			opCount++
 			break
 		}
 		st.replyBudget = limit - used - suffix
 
-		opStart := time.Now()
 		var opStatus uint32
 		switch opnum {
 		case nfs4.OP_ACCESS:
@@ -912,7 +927,7 @@ func (s *Server) compoundBody(req *rpcRequest, args nfs4.COMPOUND4args) (result 
 			writeOperationError(&w, opnum, opStatus)
 		}
 
-		s.metrics.observeOp(opnum, opStatus, time.Since(opStart))
+		record(opnum, opStatus)
 		if opStatus != nfs4.NFS4_OK {
 			s.log.Debug("op failed", "op", nfs4.NfsOpnum4Name(opnum), "status", nfs4.Nfsstat4Name(opStatus))
 			overallStatus = opStatus

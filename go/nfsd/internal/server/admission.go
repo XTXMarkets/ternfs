@@ -18,10 +18,17 @@ func resultErrorSize(op uint32) uint32 {
 	return 8
 }
 
-func appendResultError(body []byte, op, status uint32) []byte {
+// wireOperation is the opcode a result carries on the wire: an operation the
+// XDR does not define is answered as OP_ILLEGAL.
+func wireOperation(op uint32) uint32 {
 	if !knownOperation(op) {
-		op = nfs4.OP_ILLEGAL
+		return nfs4.OP_ILLEGAL
 	}
+	return op
+}
+
+func appendResultError(body []byte, op, status uint32) []byte {
+	op = wireOperation(op)
 	body = binary.BigEndian.AppendUint32(body, op)
 	body = binary.BigEndian.AppendUint32(body, status)
 	if op == nfs4.OP_SETATTR {

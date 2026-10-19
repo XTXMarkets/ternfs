@@ -178,6 +178,24 @@ func TestMetricsBackendDuringRequests(t *testing.T) {
 	}
 }
 
+// An operation the XDR does not define is exported as OP_ILLEGAL. Its raw
+// name, nfs_opnum4(123456), is not a valid tag value, and the counter is
+// cumulative, so before this every later push failed.
+func TestMetricsPayloadUnknownOpcode(t *testing.T) {
+	srv, err := server.NewServer(vfs.NewLocalTernVFS(t.TempDir()), staging.ReadOnlyStore{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.ObserveOpForTest(123456, nfs4.NFS4ERR_OP_ILLEGAL, time.Millisecond)
+	p := &metricsPusher{srv: srv, filesystem: "qa_nfs", instance: "r73:2049", started: time.Now()}
+	var b log.MetricsBuilder
+	payload := buildPayload(t, p, &b) // The builder panics on an invalid tag value.
+	want := measOps + ",filesystem=qa_nfs,instance=r73:2049,op=OP_ILLEGAL,status=NFS4ERR_OP_ILLEGAL count=1i"
+	if !strings.Contains(string(payload), want) {
+		t.Fatalf("payload lacks %q:\n%s", want, payload)
+	}
+}
+
 // buildPayload builds one push into b, as push does.
 func buildPayload(t *testing.T, p *metricsPusher, b *log.MetricsBuilder) []byte {
 	t.Helper()

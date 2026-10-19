@@ -87,7 +87,7 @@ Counters are cumulative from process start. Latency histograms have a
 
 | Series | Labels | Meaning |
 |---|---|---|
-| `eggsfs_nfsd_ops_count` | `op`, `status` | Operations completed, by NFS operation and status. Includes SEQUENCE. |
+| `eggsfs_nfsd_ops_count` | `op`, `status` | Operation results, by NFS operation and status, once each, including SEQUENCE and operations refused before they ran. An undefined opcode counts as `OP_ILLEGAL`, as on the wire. A replayed reply counts only its SEQUENCE. |
 | `eggsfs_nfsd_op_latency_bucket_count` | `op`, `le` | Operation service time inside nfsd, bounds 0.5 ms to 60 s. |
 | `eggsfs_nfsd_op_latency_count`, `_sum_nanos` | `op` | For mean latency. |
 | `eggsfs_nfsd_io_ops`, `_bytes` | `direction` | READ and WRITE operations and payload bytes. |

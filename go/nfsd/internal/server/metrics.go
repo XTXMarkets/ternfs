@@ -55,8 +55,11 @@ func newMetrics() *Metrics {
 	return &Metrics{ops: make(map[opStatusKey]uint64), latency: make(map[uint32]*opLatency)}
 }
 
-// observeOp records one operation's status and duration.
+// observeOp records one operation's status and duration, under the opcode
+// its result carries on the wire, so a client's arbitrary opcodes cannot
+// add series or names that are not valid tags.
 func (m *Metrics) observeOp(op, status uint32, d time.Duration) {
+	op = wireOperation(op)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.ops[opStatusKey{op, status}]++
@@ -70,6 +73,22 @@ func (m *Metrics) observeOp(op, status uint32, d time.Duration) {
 	l.buckets[i]++
 	l.sumNanos += uint64(max(d, 0))
 	l.count++
+}
+
+// opResult is an operation result not yet counted, because a panic before
+// the compound returns can still replace it with SERVERFAULT.
+type opResult struct {
+	op, status uint32
+	elapsed    time.Duration
+	set        bool
+}
+
+// observeResult counts a pending result once, and clears it.
+func (m *Metrics) observeResult(r *opResult) {
+	if r.set {
+		m.observeOp(r.op, r.status, r.elapsed)
+		*r = opResult{}
+	}
 }
 
 func (m *Metrics) addIO(read bool, n int) {
