@@ -36,12 +36,11 @@ The read timeout is five minutes from the start of each admitted frame
 read. The separate write timeout is five minutes for each reply once it
 acquires the writer lock. A clean EOF may be a TCP half-close, so accepted
 requests drain and send their replies before the socket closes. A timeout,
-reset or other read failure closes the socket first and wakes requests
-waiting for reply capacity. A write failure also closes the socket and
-wakes the reader. Backend operations already executing finish their effects,
-but send no reply on the closed socket; a stuck backend can therefore
-retain a handler after its client disconnects. An RPC parse error still
-drains previously accepted requests.
+reset, other read failure or RPC that does not parse closes the socket
+first and wakes requests waiting for reply capacity. A write failure also
+closes the socket and wakes the reader. Backend operations already
+executing finish their effects, but send no reply on the closed socket; a
+stuck backend can therefore retain a handler after its client disconnects.
 
 Identical requests reusing an in-flight XID on the same connection are
 dropped; the original request sends one reply. Reusing that XID with

@@ -543,20 +543,23 @@ func (c *failingConn) Write(p []byte) (int, error) {
 	return c.Conn.Write(p)
 }
 
-// A read failure other than EOF closes the connection before the drain:
-// requests waiting for reply work give up at once instead of holding their
-// frames until the budget frees, nothing executes or is written, and the
-// connection is counted once, by its cause, not once per refused waiter.
+// A read failure other than EOF, or an RPC that does not parse, closes the
+// connection before the drain: requests waiting for reply work give up at
+// once instead of holding their frames until the budget frees, nothing
+// executes or is written, and the connection is counted once, by its
+// cause, not once per refused waiter.
 func TestConnectionFatalReadReleasesWaiters(t *testing.T) {
 	for _, test := range []struct {
 		name, cause string
 		readErr     error
 		deadline    int32
+		malformed   bool
 	}{
-		{"idle-timeout", "idle", nil, 0},
-		{"reset", "client", syscall.ECONNRESET, 0},
-		{"read-error", "read", errors.New("injected read failure"), 0},
-		{"set-read-deadline", "read", nil, 2},
+		{"idle-timeout", "idle", nil, 0, false},
+		{"reset", "client", syscall.ECONNRESET, 0, false},
+		{"read-error", "read", errors.New("injected read failure"), 0, false},
+		{"set-read-deadline", "read", nil, 2, false},
+		{"parse-error", "parse", nil, 0, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			srv, fs := newConnectionTestServer(t, 4)
@@ -583,6 +586,10 @@ func TestConnectionFatalReadReleasesWaiters(t *testing.T) {
 			}
 			if test.readErr != nil {
 				client.Close() // The server's Read fails with readErr.
+			}
+			if test.malformed {
+				// A CALL too short to parse. The client stays connected.
+				writeCallForTest(t, client, []byte{0, 0, 0, 9, 0, 0, 0, 0})
 			}
 			// The budget is still held: only the close can release the waiters.
 			testutil.AwaitSignal(t, done, "connection handler exit with the budget held")
