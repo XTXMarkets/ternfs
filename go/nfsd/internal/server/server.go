@@ -422,6 +422,11 @@ func (s *Server) handleConn(conn net.Conn) {
 	defer s.disconnectBack(association)
 	s.log.Info("client connected", "remote", remote)
 	s.metrics.connAccepted.Add(1)
+	// Why the connection ended: every exit records a cause, the first one
+	// recorded is kept, and it is counted once, after the drain and close.
+	var ended atomic.Uint32
+	end := func(why connEnd) { ended.CompareAndSwap(uint32(connEndUnset), uint32(why)) }
+	defer func() { s.metrics.connectionEnded(connEnd(ended.Load())) }()
 	var closed atomic.Bool
 	done := make(chan struct{})
 	closeConnection := func() {
@@ -434,7 +439,9 @@ func (s *Server) handleConn(conn net.Conn) {
 	defer closeConnection()
 	var workers sync.WaitGroup
 	// A read EOF may be a TCP half-close. Drain accepted replies before
-	// closing the write side. Backend operations are not cancelled.
+	// closing the write side. Other read failures close the connection
+	// first, so the drain only waits for requests already executing.
+	// Backend operations are not cancelled.
 	defer workers.Wait()
 	slots := make(chan struct{}, s.MaxInFlightPerConn)
 	var writeMu, requestsMu sync.Mutex
@@ -455,7 +462,7 @@ func (s *Server) handleConn(conn net.Conn) {
 		if err != nil {
 			s.log.Debug("RPC reply failed", "remote", remote, "err", err)
 			// Wake a reader blocked either on the socket or on admission.
-			s.metrics.connClosedByServer.Add(1)
+			end(connEndServer)
 			closeConnection()
 		}
 	}
@@ -477,14 +484,16 @@ func (s *Server) handleConn(conn net.Conn) {
 			association.inFlight.Add(-1)
 			<-slots
 			if recovered := recover(); recovered != nil {
-				s.metrics.connClosedByServer.Add(1)
+				end(connEndServer)
 				closeConnection()
 				s.log.Error("panic handling RPC", "remote", remote, "xid", req.xid, "panic", recovered)
 			}
 		}()
 		reply := s.handleRPC(req, remote)
 		if reply == nil {
-			s.metrics.connClosedByServer.Add(1)
+			// Refused or dropped without a reply. When the connection had
+			// already closed, its cause was recorded first and is kept.
+			end(connEndServer)
 			closeConnection()
 			return
 		}
@@ -505,6 +514,8 @@ func (s *Server) handleConn(conn net.Conn) {
 		if s.idleTimeout > 0 {
 			if err := conn.SetReadDeadline(time.Now().Add(s.idleTimeout)); err != nil {
 				<-slots
+				end(connEndReadError)
+				closeConnection()
 				return
 			}
 		}
@@ -514,15 +525,23 @@ func (s *Server) handleConn(conn net.Conn) {
 			if closed.Load() {
 				return
 			}
+			eof := errors.Is(err, io.EOF)
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
-				s.metrics.connIdleTimeouts.Add(1)
+				end(connEndIdle)
 				s.log.Info("client idle timeout", "remote", remote)
-			} else if errors.Is(err, io.EOF) || errors.Is(err, syscall.ECONNRESET) {
-				s.metrics.connClosedByClient.Add(1)
+			} else if eof || errors.Is(err, syscall.ECONNRESET) {
+				end(connEndClient)
 				s.log.Info("client disconnected", "remote", remote)
 			} else {
-				s.metrics.connReadErrors.Add(1)
+				end(connEndReadError)
 				s.log.Info("client disconnected", "remote", remote, "err", err)
+			}
+			// After a clean EOF the client can still read its replies. After
+			// any other failure no reply will be read: close now, so requests
+			// waiting for reply work give up rather than hold their frames
+			// until the budget frees.
+			if !eof {
+				closeConnection()
 			}
 			return
 		}
@@ -538,7 +557,7 @@ func (s *Server) handleConn(conn net.Conn) {
 		req, err := parseRPCCall(frame)
 		if err != nil {
 			<-slots
-			s.metrics.parseErrors.Add(1)
+			end(connEndParseError)
 			s.log.Warn("RPC parse error", "remote", remote, "err", err)
 			return
 		}
@@ -555,7 +574,7 @@ func (s *Server) handleConn(conn net.Conn) {
 			<-slots
 			if !bytes.Equal(previous, frame) {
 				s.log.Warn("conflicting in-flight RPC xid", "remote", remote, "xid", req.xid)
-				s.metrics.connClosedByServer.Add(1)
+				end(connEndServer)
 				closeConnection()
 				return
 			}

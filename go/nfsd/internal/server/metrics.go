@@ -91,6 +91,34 @@ func (m *Metrics) observeResult(r *opResult) {
 	}
 }
 
+// connEnd is why a connection ended. A handler keeps the first cause it
+// observes and counts it once, when it returns.
+type connEnd uint32
+
+const (
+	connEndUnset      connEnd = iota // every exit records a cause; counted as a server close
+	connEndServer                    // a failed reply write, a panic, a request refused or dropped, a conflicting XID
+	connEndClient                    // EOF or reset
+	connEndIdle                      // no request within the idle timeout
+	connEndReadError                 // any other read failure
+	connEndParseError                // an RPC that would not parse
+)
+
+func (m *Metrics) connectionEnded(why connEnd) {
+	switch why {
+	case connEndClient:
+		m.connClosedByClient.Add(1)
+	case connEndIdle:
+		m.connIdleTimeouts.Add(1)
+	case connEndReadError:
+		m.connReadErrors.Add(1)
+	case connEndParseError:
+		m.parseErrors.Add(1)
+	default:
+		m.connClosedByServer.Add(1)
+	}
+}
+
 func (m *Metrics) addIO(read bool, n int) {
 	if read {
 		m.reads.Add(1)

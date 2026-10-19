@@ -242,15 +242,20 @@ func (req *rpcRequest) acquireReplyWork(s *Server) bool {
 	// work or its connection closes. Dropping the connection instead made
 	// the Linux client replay the burst and back off for 15 s on the
 	// retried slots.
-	waited := false
+	//
+	// Admission is decided here, under cacheMu, as work is charged: a
+	// request whose connection has closed is refused even when capacity is
+	// free, including capacity released while it waited, so it neither
+	// executes nor holds work for a reply nobody will read.
+	admitted, waited := false, false
 	var waitStart time.Time
-	for ss.workBytes+charge > ss.workLimit {
+	for {
 		if req.connection != nil && req.connection.isClosed() {
-			if waited {
-				s.metrics.workWaiters.Add(-1)
-				s.metrics.workWaitNanos.Add(uint64(time.Since(waitStart)))
-			}
-			return false
+			break
+		}
+		if ss.workBytes+charge <= ss.workLimit {
+			admitted = true
+			break
 		}
 		if !waited {
 			waited, waitStart = true, time.Now()
@@ -262,6 +267,9 @@ func (req *rpcRequest) acquireReplyWork(s *Server) bool {
 	if waited {
 		s.metrics.workWaiters.Add(-1)
 		s.metrics.workWaitNanos.Add(uint64(time.Since(waitStart)))
+	}
+	if !admitted {
+		return false
 	}
 	ss.workBytes += charge
 	ss.workReplies++
