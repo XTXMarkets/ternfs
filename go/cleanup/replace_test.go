@@ -69,20 +69,25 @@ type replaceLayout struct {
 }
 
 // A fake shard and block service, with just enough of each for
-// replaceDecommissionedBlocks: FILE_SPANS and REPLACE_BLOCK_* on the shard,
-// FETCH_BLOCK_WITH_CRC and WRITE_BLOCK on the block service. The block to
-// replace is the last block of location 0, on a decommissioned block service.
+// replaceDecommissionedBlocks: FILE_SPANS, STAT_*FILE and REPLACE_BLOCK_* on
+// the shard, FETCH_BLOCK_WITH_CRC and WRITE_BLOCK on the block service. In
+// every span, the block to replace is the last block of location 0, on a
+// decommissioned block service.
 type replaceFixture struct {
-	t      *testing.T
-	log    *log.Logger
-	logs   *os.File
-	client *client.Client
-	fileId msgs.InodeId
-	spans  msgs.FileSpansResp
-	blocks map[msgs.BlockId][]byte
+	t                 *testing.T
+	log               *log.Logger
+	logs              *os.File
+	client            *client.Client
+	blockServiceAddrs msgs.AddrsInfo
+	fileId            msgs.InodeId
+	spans             msgs.FileSpansResp
+	blocks            map[msgs.BlockId][]byte
+	// the block to replace in the first span
 	target *msgs.FetchedBlock
 	// what the replacement block will be
 	newBlock msgs.AddSpanInitiateBlockInfo
+	// what STAT_FILE and STAT_TRANSIENT_FILE return, the file is live by default
+	statFileErr, statTransientFileErr msgs.TernError
 
 	mu        sync.Mutex
 	fetched   []msgs.BlockId
@@ -134,56 +139,10 @@ func newReplaceFixture(t *testing.T, layouts ...replaceLayout) *replaceFixture {
 		}
 		logs.Close()
 	})
-	blockServiceAddrs := f.startBlockService()
-
-	spanSize := int(layouts[0].parity.DataBlocks()) * int(layouts[0].stripes) * int(layouts[0].cellSize)
-	data := make([]byte, spanSize)
-	for i := range data {
-		data[i] = byte(i*7 + i/4096)
-	}
-	locations := &msgs.FetchedLocations{}
-	for locIx, layout := range layouts {
-		if size := layout.parity.DataBlocks() * int(layout.stripes) * int(layout.cellSize); size != spanSize {
-			t.Fatalf("location %v holds %v bytes, location 0 holds %v", locIx, size, spanSize)
-		}
-		location := msgs.FetchedBlockServices{
-			LocationId:   msgs.Location(locIx),
-			StorageClass: msgs.HDD_STORAGE,
-			Parity:       layout.parity,
-			Stripes:      layout.stripes,
-			CellSize:     layout.cellSize,
-		}
-		for blockIx, blockData := range layoutBlocks(data, layout) {
-			blockService := msgs.BlockService{
-				Addrs: blockServiceAddrs,
-				Id:    msgs.BlockServiceId(10*(locIx+1) + blockIx),
-			}
-			for _, ix := range layout.noRead {
-				if ix == blockIx {
-					blockService.Flags = msgs.TERNFS_BLOCK_SERVICE_NO_READ
-				}
-			}
-			if locIx == 0 && blockIx == layout.parity.Blocks()-1 {
-				blockService.Flags = msgs.TERNFS_BLOCK_SERVICE_DECOMMISSIONED
-			}
-			blockId := msgs.BlockId(100*(locIx+1) + blockIx)
-			f.blocks[blockId] = blockData
-			location.Blocks = append(location.Blocks, msgs.FetchedBlock{
-				BlockServiceIx: uint8(len(f.spans.BlockServices)),
-				BlockId:        blockId,
-				Crc:            msgs.Crc(crc32c.Sum(0, blockData)),
-			})
-			f.spans.BlockServices = append(f.spans.BlockServices, blockService)
-		}
-		locations.Locations = append(locations.Locations, location)
-	}
-	f.target = &locations.Locations[0].Blocks[layouts[0].parity.Blocks()-1]
-	f.spans.Spans = []msgs.FetchedFullSpan{{
-		Header: msgs.FetchedSpanHeaderFull{ByteOffset: 0, Size: uint32(spanSize), Crc: msgs.Crc(crc32c.Sum(0, data))},
-		Body:   locations,
-	}}
+	f.blockServiceAddrs = f.startBlockService()
+	f.target = f.addSpan(layouts...)
 	f.newBlock = msgs.AddSpanInitiateBlockInfo{
-		BlockServiceAddrs: blockServiceAddrs,
+		BlockServiceAddrs: f.blockServiceAddrs,
 		BlockServiceId:    999,
 		BlockId:           9999,
 	}
@@ -199,6 +158,65 @@ func newReplaceFixture(t *testing.T, layouts ...replaceLayout) *replaceFixture {
 	c.SetAddrs(msgs.AddrsInfo{}, &shards)
 	f.client = c
 	return f
+}
+
+// Appends a span stored in the given layouts, location i in layouts[i], and
+// returns the block to replace.
+func (f *replaceFixture) addSpan(layouts ...replaceLayout) *msgs.FetchedBlock {
+	t := f.t
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	spanIx := len(f.spans.Spans)
+	offset := uint64(0)
+	for _, span := range f.spans.Spans {
+		offset += uint64(span.Header.Size)
+	}
+	spanSize := int(layouts[0].parity.DataBlocks()) * int(layouts[0].stripes) * int(layouts[0].cellSize)
+	data := make([]byte, spanSize)
+	for i := range data {
+		data[i] = byte(i*7 + i/4096 + spanIx)
+	}
+	locations := &msgs.FetchedLocations{}
+	for locIx, layout := range layouts {
+		if size := layout.parity.DataBlocks() * int(layout.stripes) * int(layout.cellSize); size != spanSize {
+			t.Fatalf("location %v holds %v bytes, location 0 holds %v", locIx, size, spanSize)
+		}
+		location := msgs.FetchedBlockServices{
+			LocationId:   msgs.Location(locIx),
+			StorageClass: msgs.HDD_STORAGE,
+			Parity:       layout.parity,
+			Stripes:      layout.stripes,
+			CellSize:     layout.cellSize,
+		}
+		for blockIx, blockData := range layoutBlocks(data, layout) {
+			blockService := msgs.BlockService{
+				Addrs: f.blockServiceAddrs,
+				Id:    msgs.BlockServiceId(100*spanIx + 10*(locIx+1) + blockIx),
+			}
+			for _, ix := range layout.noRead {
+				if ix == blockIx {
+					blockService.Flags = msgs.TERNFS_BLOCK_SERVICE_NO_READ
+				}
+			}
+			if locIx == 0 && blockIx == layout.parity.Blocks()-1 {
+				blockService.Flags = msgs.TERNFS_BLOCK_SERVICE_DECOMMISSIONED
+			}
+			blockId := msgs.BlockId(1000*spanIx + 100*(locIx+1) + blockIx)
+			f.blocks[blockId] = blockData
+			location.Blocks = append(location.Blocks, msgs.FetchedBlock{
+				BlockServiceIx: uint8(len(f.spans.BlockServices)),
+				BlockId:        blockId,
+				Crc:            msgs.Crc(crc32c.Sum(0, blockData)),
+			})
+			f.spans.BlockServices = append(f.spans.BlockServices, blockService)
+		}
+		locations.Locations = append(locations.Locations, location)
+	}
+	f.spans.Spans = append(f.spans.Spans, msgs.FetchedFullSpan{
+		Header: msgs.FetchedSpanHeaderFull{ByteOffset: offset, Size: uint32(spanSize), Crc: msgs.Crc(crc32c.Sum(0, data))},
+		Body:   locations,
+	})
+	return &locations.Locations[0].Blocks[layouts[0].parity.Blocks()-1]
 }
 
 func addrsInfo(addr net.Addr) msgs.AddrsInfo {
@@ -254,6 +272,10 @@ func (f *replaceFixture) shardRequest(kind msgs.ShardMessageKind, body []byte) (
 	switch kind {
 	case msgs.FILE_SPANS:
 		return &f.spans, 0
+	case msgs.STAT_FILE:
+		return &msgs.StatFileResp{}, f.statFileErr
+	case msgs.STAT_TRANSIENT_FILE:
+		return &msgs.StatTransientFileResp{}, f.statTransientFileErr
 	case msgs.REPLACE_BLOCK_INITIATE:
 		return &msgs.ReplaceBlockInitiateResp{HolderId: msgs.MakeInodeId(msgs.FILE, 0, 2), NewBlock: f.newBlock}, 0
 	case msgs.REPLACE_BLOCK_CERTIFY:
@@ -460,5 +482,56 @@ func TestReplaceFewerBlocksDoesNotPanic(t *testing.T) {
 	f.checkFetched()
 	if len(f.written) != 0 || len(f.certified) != 0 || stats.MigratedBlocks != 0 {
 		t.Errorf("wrote %v blocks and certified %v, expected nothing", len(f.written), len(f.certified))
+	}
+}
+
+// When no location can produce a block of a live file, its data is at risk, so
+// raise an alert. A deleted file, or one that's gone by the time we look, is
+// GC's business. Either way the rest of the file is still migrated.
+func TestReplaceAlertsOnlyForLiveFiles(t *testing.T) {
+	if runInChildProcess(t) {
+		return
+	}
+	for _, tc := range []struct {
+		name                              string
+		statFileErr, statTransientFileErr msgs.TernError
+		alert                             bool
+	}{
+		{"live", 0, 0, true},
+		{"transient", msgs.FILE_NOT_FOUND, 0, false},
+		{"gone", msgs.FILE_NOT_FOUND, msgs.FILE_NOT_FOUND, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// nothing but the block to replace can be read in the first span
+			f := newReplaceFixture(t, replaceLayout{parity: parity.MkParity(2, 1), stripes: 1, cellSize: replaceTestBlockSize, noRead: []int{0, 1}})
+			// the second can be rebuilt in place
+			next := f.addSpan(replaceLayout{parity: parity.MkParity(2, 1), stripes: 1, cellSize: replaceTestBlockSize})
+			f.mu.Lock()
+			f.statFileErr, f.statTransientFileErr = tc.statFileErr, tc.statTransientFileErr
+			f.mu.Unlock()
+			stats, err := f.replace()
+			if err != nil {
+				t.Fatal(err)
+			}
+			alert := fmt.Sprintf("could not recover block %v in file %v from any location", f.target.BlockId, f.fileId)
+			alerted := false
+			for _, line := range strings.Split(f.logged(), "\n") {
+				alerted = alerted || (strings.Contains(line, "[ERROR]") && strings.Contains(line, alert))
+			}
+			if alerted != tc.alert {
+				t.Errorf("alerted %v, expected %v", alerted, tc.alert)
+			}
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			if len(f.certified) != 1 || f.certified[0].OldBlockId != next.BlockId || f.certified[0].ByteOffset != 2*uint64(replaceTestBlockSize) {
+				t.Fatalf("certified %+v, expected only block %v", f.certified, next.BlockId)
+			}
+			if len(f.written) != 1 || !bytes.Equal(f.written[0], f.blocks[next.BlockId]) {
+				t.Errorf("wrote %v blocks, expected the second span's block once", len(f.written))
+			}
+			if stats.MigratedBlocks != 1 || stats.MigratedBytes != uint64(replaceTestBlockSize) || stats.MigratedFiles != 1 {
+				t.Errorf("stats %+v, expected 1 block of %v bytes in 1 file", stats, replaceTestBlockSize)
+			}
+		})
 	}
 }

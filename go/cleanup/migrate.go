@@ -480,6 +480,18 @@ func replaceDecommissionedBlocks(
 					if err == msgs.FILE_NOT_FOUND || err == msgs.SPAN_NOT_FOUND || err == msgs.BLOCK_NOT_FOUND {
 						continue // changed concurrently, or the transient last span is still in use
 					}
+					if err == errBlockUnrecoverable {
+						// Only a live file's data is at risk, deleted files are GC's business.
+						// Either way, try again at the next scan of the block service.
+						if _, statErr := c.StatFile(log, fileId); statErr == msgs.FILE_NOT_FOUND || statErr == msgs.FILE_IS_TRANSIENT {
+							log.Debug("not alerting about unrecoverable block %v because file %v is %v", block.BlockId, fileId, statErr)
+						} else if statErr != nil {
+							log.Info("could not replace block %v in file %v: %v, and could not stat the file: %v", block.BlockId, fileId, err, statErr)
+						} else {
+							log.RaiseAlert("could not recover block %v in file %v from any location (P=%d, D=%d)", block.BlockId, fileId, blocks.Parity.ParityBlocks(), blocks.Parity.DataBlocks())
+						}
+						continue
+					}
 					if err != nil {
 						log.Info("could not replace block %v in file %v: %v", block.BlockId, fileId, err)
 					}
