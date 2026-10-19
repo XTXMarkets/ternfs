@@ -85,7 +85,8 @@ func (s *Server) lookupDurableOpen(
 // expireInactiveOpen requires state's open to be active. When it is not, the
 // operation gets EXPIRED, and the client's other state is untouched: local
 // expiry is the lease gate's decision, which the sweeper drives (canonical
-// r3 §8 caller table). An open whose own marker is gone loses its entry.
+// r3 §8 caller table). A marked open whose own marker is gone loses its
+// entry; an unmarked one never had a marker, so only the gate ends it.
 // The decisive check runs under a destruction hold, so while a confirmation
 // protects the client it gives DELAY. failed reports a failed writer, which
 // gives IO.
@@ -105,7 +106,7 @@ func (s *Server) expireInactiveOpen(state openstate.State, failed func() bool) u
 	if status = s.requireActiveOpen(state); status != nfs4.NFS4_OK && failed != nil && failed() {
 		return nfs4.NFS4ERR_IO
 	}
-	if status == nfs4.NFS4ERR_EXPIRED && s.clients.MarkerGone(state.Owner.ClientID, state.ID) {
+	if status == nfs4.NFS4ERR_EXPIRED && state.Marked && s.clients.MarkerGone(state.Owner.ClientID, state.ID) {
 		// This open itself is gone, as after a CLOSE that discarded its
 		// writer: only its own local entry goes.
 		s.opens.Expire(state.ID)
@@ -1213,9 +1214,10 @@ func writeOpenError(w *nfs4.COMPOUND4resWriter, status uint32) uint32 {
 	return finishDefaultResponse(w, ew.Finish(), status)
 }
 
-// recordOpen registers an open with the client store: durably, with a
-// marker other processes can see, or in this process only. Both paths
-// require a confirmed client with a live lease.
+// recordOpen admits an open through the client store, which requires a
+// confirmed client with a live lease. A durable open also gets a marker
+// other processes can see; otherwise the server's open state is the
+// open's only record.
 func (s *Server) recordOpen(clientID uint64, id nfs4.StateID, durable bool) error {
 	if durable {
 		return s.clients.MarkOpen(clientID, id)
@@ -1223,12 +1225,13 @@ func (s *Server) recordOpen(clientID uint64, id nfs4.StateID, durable bool) erro
 	return s.clients.NoteOpen(clientID, id)
 }
 
-// dropOpenRecord removes what recordOpen registered for an open.
+// dropOpenRecord removes a marked open's marker. An unmarked open has
+// nothing in the client store to remove.
 func (s *Server) dropOpenRecord(clientID uint64, id nfs4.StateID, marked bool) error {
-	if marked {
-		return s.clients.RemoveOpen(clientID, id)
+	if !marked {
+		return nil
 	}
-	return s.clients.ForgetOpen(clientID, id)
+	return s.clients.RemoveOpen(clientID, id)
 }
 
 // hasOpen reports that an open's client still holds it: by its marker, or

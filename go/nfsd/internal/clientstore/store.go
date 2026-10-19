@@ -1015,10 +1015,11 @@ func (cs *Store) MarkOpen(clientID uint64, stateID nfs4.StateID) error {
 	return cs.registerOpen(clientID, stateID, true)
 }
 
-// NoteOpen records an open in this process only. A read-only open has no
-// staging to recover and nothing another process needs to see, so it skips
-// the marker's shard mutations. It is otherwise admitted exactly like a
-// marked open: the client must be confirmed with a live lease.
+// NoteOpen admits a read-only open without a durable marker: the client
+// must be confirmed with a live lease, as for MarkOpen. A read-only open
+// has no staging to recover and nothing another process needs to see, so
+// it skips the marker's shard mutations. The caller's open state is its
+// only record; the client store keeps nothing for it.
 func (cs *Store) NoteOpen(clientID uint64, stateID nfs4.StateID) error {
 	return cs.registerOpen(clientID, stateID, false)
 }
@@ -1050,10 +1051,11 @@ func (cs *Store) registerOpen(clientID uint64, stateID nfs4.StateID, durable boo
 	}
 	// Independent markers share identity ownership, but neither the lease
 	// lock nor the cache map lock is held across marker I/O.
-	if durable {
-		if err := cs.EnsureMarker(incarnationID, ActiveOpenName(stateID)); err != nil {
-			return err
-		}
+	if !durable {
+		return nil
+	}
+	if err := cs.EnsureMarker(incarnationID, ActiveOpenName(stateID)); err != nil {
+		return err
 	}
 	state.mu.Lock()
 	state.opens[stateID] = struct{}{}
@@ -1138,17 +1140,7 @@ func (cs *Store) MarkerGone(clientID uint64, stateID nfs4.StateID) bool {
 	return errors.Is(err, os.ErrNotExist)
 }
 
-// RemoveOpen removes a marked open's durable marker and its local entry.
 func (cs *Store) RemoveOpen(clientID uint64, stateID nfs4.StateID) error {
-	return cs.unregisterOpen(clientID, stateID, true)
-}
-
-// ForgetOpen removes the local entry of an open recorded with NoteOpen.
-func (cs *Store) ForgetOpen(clientID uint64, stateID nfs4.StateID) error {
-	return cs.unregisterOpen(clientID, stateID, false)
-}
-
-func (cs *Store) unregisterOpen(clientID uint64, stateID nfs4.StateID, durable bool) error {
 	incarnationID := vfs.InodeID(clientID)
 	identityID, valid, lockErr := cs.identityForIncarnation(incarnationID)
 	if lockErr != nil {
@@ -1161,10 +1153,7 @@ func (cs *Store) unregisterOpen(clientID uint64, stateID nfs4.StateID, durable b
 	defer unlock()
 	unlockMarker := cs.markerLocks.Lock(clientOpenMarker{clientID, stateID})
 	defer unlockMarker()
-	var err error
-	if durable {
-		err = cs.removeIfExists(incarnationID, ActiveOpenName(stateID))
-	}
+	err := cs.removeIfExists(incarnationID, ActiveOpenName(stateID))
 	if value, ok := cs.LocalClients.Load(incarnationID); ok {
 		state := value.(*localClientState)
 
@@ -1191,10 +1180,9 @@ func (cs *Store) HasOpen(clientID uint64, stateID nfs4.StateID) (bool, error) {
 	return cs.hasOpen(clientID, stateID, true)
 }
 
-// HasLocalOpen reports that an open recorded with NoteOpen is active. It
-// has no marker, so only the client's confirmation and lease decide; the
-// local entry is recreated when the client's local state was dropped
-// while the open stayed live.
+// HasLocalOpen reports that an open admitted with NoteOpen is still active.
+// It has no marker, so only the client's confirmation and lease decide, and
+// the cached client answers from its lease proof without an entry.
 func (cs *Store) HasLocalOpen(clientID uint64, stateID nfs4.StateID) (bool, error) {
 	return cs.hasOpen(clientID, stateID, false)
 }
@@ -1210,7 +1198,9 @@ func (cs *Store) hasOpen(clientID uint64, stateID nfs4.StateID, marked bool) (bo
 		pointerID := state.confirmedPointer
 		state.mu.Unlock()
 
-		if open {
+		// A marked open's entry stands in for its marker; an unmarked open
+		// needs only the client.
+		if open || !marked {
 			currentPointer, err := cs.fs.Lookup(identityID, ConfirmedName)
 			if errors.Is(err, os.ErrNotExist) {
 				cs.LocalClients.Delete(incarnationID)
@@ -1285,9 +1275,11 @@ func (cs *Store) hasOpen(clientID uint64, stateID nfs4.StateID, marked bool) (bo
 		return false, err
 	}
 
-	state.mu.Lock()
-	state.opens[stateID] = struct{}{}
-	state.mu.Unlock()
+	if marked {
+		state.mu.Lock()
+		state.opens[stateID] = struct{}{}
+		state.mu.Unlock()
+	}
 
 	return true, nil
 }
