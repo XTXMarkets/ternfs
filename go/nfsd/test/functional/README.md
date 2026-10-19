@@ -22,19 +22,19 @@ strace -ff -o /tmp/0007.trace \
 The suite checks supported workflows and explicitly rejected combinations.
 Unexpected failures are reported rather than skipped.
 
-Overwriting a file replaces its inode: a writable OPEN constructs a new
-transient file, and CLOSE links that file into the directory. `fstat` on a
-write descriptor therefore reports the inode the pathname will have after
-CLOSE, not the one it had before. Tools which verify that identity across a
-write need to replace the file rather than write in place. Vim does that by
-default, but writes in place under a path matching its `backupskip` (which
-contains `/tmp/*`) or with `backupcopy=yes`, and then reports `E949: File
-changed while writing`. The Vim cases set both options explicitly so they do
-not depend on where the test root is.
+Overwriting a file publishes a replacement inode on the last write CLOSE.
+The open descriptor's FILEID still describes its original handle; a fresh
+pathname lookup finds the replacement. The Vim cases set `backupskip` and
+`backupcopy` explicitly so their write strategy does not depend on the test
+root's path.
 
-Concurrent append from separately opened writable file descriptors is not a
-supported workflow. Each writable OPEN has independent staging, and the last
-successful CLOSE publishes its complete private version.
+Writers of the same file on one client and daemon share staging. Other
+clients, or writers through different daemons, have independent versions;
+the last successful publication wins. These tests do not establish atomic
+append across clients.
+
+See the [test guide](../README.md) for other suites and
+[Deployment](../../DEPLOYMENT.md) for the supported modes and known issues.
 
 Cases 0018, 0019 and 0023 unlink from the client which holds the open
 descriptor. Linux normally implements this with a `.nfs...` rename followed
