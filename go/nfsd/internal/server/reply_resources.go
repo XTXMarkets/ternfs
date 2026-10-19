@@ -5,6 +5,7 @@
 package server
 
 import (
+	"time"
 	"unsafe"
 
 	"github.com/XTXMarkets/ternfs/go/msgs"
@@ -241,11 +242,26 @@ func (req *rpcRequest) acquireReplyWork(s *Server) bool {
 	// work or its connection closes. Dropping the connection instead made
 	// the Linux client replay the burst and back off for 15 s on the
 	// retried slots.
+	waited := false
+	var waitStart time.Time
 	for ss.workBytes+charge > ss.workLimit {
 		if req.connection != nil && req.connection.isClosed() {
+			if waited {
+				s.metrics.workWaiters.Add(-1)
+				s.metrics.workWaitNanos.Add(uint64(time.Since(waitStart)))
+			}
 			return false
 		}
+		if !waited {
+			waited, waitStart = true, time.Now()
+			s.metrics.workWaits.Add(1)
+			s.metrics.workWaiters.Add(1)
+		}
 		ss.workFreed.Wait()
+	}
+	if waited {
+		s.metrics.workWaiters.Add(-1)
+		s.metrics.workWaitNanos.Add(uint64(time.Since(waitStart)))
 	}
 	ss.workBytes += charge
 	ss.workReplies++

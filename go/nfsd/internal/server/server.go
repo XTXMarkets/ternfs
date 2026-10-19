@@ -83,6 +83,7 @@ type Server struct {
 	// confirmMu is taken after any other lock, sessions.mu included, and
 	// held only for map access.
 	confirmMu          sync.Mutex
+	metrics            *Metrics
 	confirming         map[uint64]*confirmation
 	confirmingIdentity map[vfs.InodeID]*confirmation
 	confirmingOwners   map[string]*confirmation
@@ -163,6 +164,7 @@ func NewServer(fs vfs.TernVFS, stagingStore staging.Store, logger *slog.Logger) 
 		hydrationSlots:     make(chan struct{}, maxConcurrentHydrations),
 		clientGCPending:    make(map[vfs.InodeID]struct{}),
 		clientGCRecheck:    make(map[vfs.InodeID]struct{}),
+		metrics:            newMetrics(),
 		confirming:         make(map[uint64]*confirmation),
 		confirmingIdentity: make(map[vfs.InodeID]*confirmation),
 		confirmingOwners:   make(map[string]*confirmation),
@@ -419,6 +421,7 @@ func (s *Server) handleConn(conn net.Conn) {
 	defer s.untrackConn(association)
 	defer s.disconnectBack(association)
 	s.log.Info("client connected", "remote", remote)
+	s.metrics.connAccepted.Add(1)
 	var closed atomic.Bool
 	done := make(chan struct{})
 	closeConnection := func() {
@@ -452,6 +455,7 @@ func (s *Server) handleConn(conn net.Conn) {
 		if err != nil {
 			s.log.Debug("RPC reply failed", "remote", remote, "err", err)
 			// Wake a reader blocked either on the socket or on admission.
+			s.metrics.connClosedByServer.Add(1)
 			closeConnection()
 		}
 	}
@@ -473,12 +477,14 @@ func (s *Server) handleConn(conn net.Conn) {
 			association.inFlight.Add(-1)
 			<-slots
 			if recovered := recover(); recovered != nil {
+				s.metrics.connClosedByServer.Add(1)
 				closeConnection()
 				s.log.Error("panic handling RPC", "remote", remote, "xid", req.xid, "panic", recovered)
 			}
 		}()
 		reply := s.handleRPC(req, remote)
 		if reply == nil {
+			s.metrics.connClosedByServer.Add(1)
 			closeConnection()
 			return
 		}
@@ -509,10 +515,13 @@ func (s *Server) handleConn(conn net.Conn) {
 				return
 			}
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				s.metrics.connIdleTimeouts.Add(1)
 				s.log.Info("client idle timeout", "remote", remote)
 			} else if errors.Is(err, io.EOF) || errors.Is(err, syscall.ECONNRESET) {
+				s.metrics.connClosedByClient.Add(1)
 				s.log.Info("client disconnected", "remote", remote)
 			} else {
+				s.metrics.connReadErrors.Add(1)
 				s.log.Info("client disconnected", "remote", remote, "err", err)
 			}
 			return
@@ -529,6 +538,7 @@ func (s *Server) handleConn(conn net.Conn) {
 		req, err := parseRPCCall(frame)
 		if err != nil {
 			<-slots
+			s.metrics.parseErrors.Add(1)
 			s.log.Warn("RPC parse error", "remote", remote, "err", err)
 			return
 		}
@@ -545,6 +555,7 @@ func (s *Server) handleConn(conn net.Conn) {
 			<-slots
 			if !bytes.Equal(previous, frame) {
 				s.log.Warn("conflicting in-flight RPC xid", "remote", remote, "xid", req.xid)
+				s.metrics.connClosedByServer.Add(1)
 				closeConnection()
 				return
 			}
@@ -654,6 +665,7 @@ func (s *Server) compoundBody(req *rpcRequest, args nfs4.COMPOUND4args) (result 
 	// result temporaries and checkpoints retained through result construction.
 	w := nfs4.StartCOMPOUND4res(make([]byte, 0, req.replyWork.capacity))
 	w.SetStatus(nfs4.NFS4_OK)
+	s.metrics.compounds.Add(1)
 
 	// Echo the tag.
 	tagW := w.StartTag()
@@ -704,6 +716,7 @@ func (s *Server) compoundBody(req *rpcRequest, args nfs4.COMPOUND4args) (result 
 		if index == 0 {
 			switch {
 			case opnum == nfs4.OP_SEQUENCE:
+				seqStart := time.Now()
 				prefixBytes := uint32(rpcAcceptedHeaderSize + w.Len() + sequenceResultBytes)
 				uncachedBytes := prefixBytes
 				if len(ops) > 1 {
@@ -715,6 +728,7 @@ func (s *Server) compoundBody(req *rpcRequest, args nfs4.COMPOUND4args) (result 
 					uncachedBytes: uncachedBytes, connection: req.connection,
 				})
 				opCount++
+				s.metrics.observeOp(nfs4.OP_SEQUENCE, seq.status, time.Since(seqStart))
 				if seq.status != nfs4.NFS4_OK {
 					writeSequenceError(&w, seq.status)
 					overallStatus = seq.status
@@ -785,6 +799,7 @@ func (s *Server) compoundBody(req *rpcRequest, args nfs4.COMPOUND4args) (result 
 		}
 		st.replyBudget = limit - used - suffix
 
+		opStart := time.Now()
 		var opStatus uint32
 		switch opnum {
 		case nfs4.OP_ACCESS:
@@ -897,6 +912,7 @@ func (s *Server) compoundBody(req *rpcRequest, args nfs4.COMPOUND4args) (result 
 			writeOperationError(&w, opnum, opStatus)
 		}
 
+		s.metrics.observeOp(opnum, opStatus, time.Since(opStart))
 		if opStatus != nfs4.NFS4_OK {
 			s.log.Debug("op failed", "op", nfs4.NfsOpnum4Name(opnum), "status", nfs4.Nfsstat4Name(opStatus))
 			overallStatus = opStatus

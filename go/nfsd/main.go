@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/XTXMarkets/ternfs/go/client"
 	"github.com/XTXMarkets/ternfs/go/core/bufpool"
@@ -36,6 +37,12 @@ func main() {
 		"memory reserved for replies in flight across all connections, in MiB; requests beyond it wait")
 	maxInFlight := flag.Int("max-in-flight-per-connection", server.DefaultMaxInFlightPerConn,
 		"maximum requests admitted per TCP connection")
+	influxOrigin := flag.String("influx-db-origin", "", "base URL of the metrics store accepting InfluxDB line protocol; empty disables metrics")
+	influxOrg := flag.String("influx-db-org", "", "InfluxDB org for metrics")
+	influxBucket := flag.String("influx-db-bucket", "", "InfluxDB bucket for metrics")
+	filesystem := flag.String("filesystem", "", "name of the served filesystem, the filesystem tag on every metric; required with -influx-db-origin")
+	instance := flag.String("instance", "", "instance tag on every metric (default: short hostname and NFS port)")
+	metricsInterval := flag.Duration("metrics-interval", defaultMetricsInterval, "how often metrics are pushed")
 	statusAddr := flag.String("status-addr", "",
 		"serve the read-only diagnostics API (JSON over HTTP) on this address; off by default")
 	storeOnly := flag.Bool("store-only", false,
@@ -95,7 +102,7 @@ func main() {
 		slogger.Info("no staging directory — read-only mode")
 	}
 
-	fs, target, err := openVFS(*root, *registry, *verbose)
+	fs, target, counters, err := openVFS(*root, *registry, *verbose)
 	if err != nil {
 		slogger.Error("opening filesystem", "err", err)
 		os.Exit(1)
@@ -123,6 +130,23 @@ func main() {
 		}()
 		slogger.Info("diagnostics listening", "addr", ln.Addr().String())
 	}
+	if *influxOrigin != "" {
+		if *filesystem == "" {
+			fmt.Fprintln(os.Stderr, "-filesystem is required with -influx-db-origin")
+			os.Exit(2)
+		}
+		if *instance == "" {
+			hostname, _ := os.Hostname()
+			*instance = defaultInstance(hostname, *addr)
+		}
+		pusher := &metricsPusher{
+			srv: srv, counters: counters,
+			db:         &log.InfluxDB{Origin: *influxOrigin, Org: *influxOrg, Bucket: *influxBucket},
+			filesystem: *filesystem, instance: *instance, started: time.Now(), log: slogger,
+		}
+		go pusher.run(*metricsInterval, make(chan struct{}))
+		slogger.Info("metrics enabled", "origin", *influxOrigin, "filesystem", *filesystem, "instance", *instance, "interval", *metricsInterval)
+	}
 	slogger.Info("NFS server listening", "addr", *addr)
 	if err := srv.ListenAndServe(*addr); err != nil {
 		slogger.Error("server error", "err", err)
@@ -137,7 +161,7 @@ func main() {
 // truncate during recovery, so sidecars are only read by the store report,
 // on request.
 func runStoreOnly(slogger *slog.Logger, root, registry, stagingDir, statusAddr string, verbose bool) {
-	fs, target, err := openVFS(root, registry, verbose)
+	fs, target, _, err := openVFS(root, registry, verbose)
 	if err != nil {
 		slogger.Error("opening filesystem", "err", err)
 		os.Exit(1)
@@ -168,22 +192,23 @@ func runStoreOnly(slogger *slog.Logger, root, registry, stagingDir, statusAddr s
 
 // openVFS opens the local directory or the TernFS cluster named by exactly
 // one of root and registry. It also returns a description of what it opened,
-// with a local root resolved to an absolute path.
-func openVFS(root string, registry string, verbose bool) (vfs.TernVFS, string, error) {
+// with a local root resolved to an absolute path, and for a TernFS backend
+// the client's request counters for the metrics exporter.
+func openVFS(root string, registry string, verbose bool) (vfs.TernVFS, string, *client.ClientCounters, error) {
 	if (root == "") == (registry == "") {
-		return nil, "", fmt.Errorf(
+		return nil, "", nil, fmt.Errorf(
 			"exactly one of -root (local) or -registry (TernFS) must be specified")
 	}
 	if root != "" {
 		absRoot, err := filepath.Abs(root)
 		if err != nil {
-			return nil, "", fmt.Errorf("resolving root path: %w", err)
+			return nil, "", nil, fmt.Errorf("resolving root path: %w", err)
 		}
 		info, err := os.Stat(absRoot)
 		if err != nil || !info.IsDir() {
-			return nil, "", fmt.Errorf("root must be a directory: %s", absRoot)
+			return nil, "", nil, fmt.Errorf("root must be a directory: %s", absRoot)
 		}
-		return vfs.NewLocalTernVFS(absRoot), "local root " + absRoot, nil
+		return vfs.NewLocalTernVFS(absRoot), "local root " + absRoot, nil, nil
 	}
 	logLevel := log.INFO
 	if verbose {
@@ -192,8 +217,10 @@ func openVFS(root string, registry string, verbose bool) (vfs.TernVFS, string, e
 	ternLogger := log.NewLogger(os.Stderr, &log.LoggerOptions{Level: logLevel})
 	c, err := client.NewClient(ternLogger, nil, registry, msgs.AddrsInfo{})
 	if err != nil {
-		return nil, "", fmt.Errorf("connecting to TernFS registry: %w", err)
+		return nil, "", nil, fmt.Errorf("connecting to TernFS registry: %w", err)
 	}
+	counters := client.NewClientCounters()
+	c.SetCounters(counters)
 	return vfs.NewRemoteTernVFS(c, ternLogger, bufpool.NewBufPool()),
-		"TernFS registry " + registry, nil
+		"TernFS registry " + registry, counters, nil
 }

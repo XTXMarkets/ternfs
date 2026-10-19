@@ -70,6 +70,49 @@ client flushing 256 one-MiB WRITEs with 64 slots was reset whenever 58 were
 in flight, replayed the burst, and backed off for 15 s on the slots the
 server was still executing.
 
+## Metrics
+
+With `-influx-db-origin`, `-influx-db-org` and `-influx-db-bucket`, nfsd
+pushes its metrics every `-metrics-interval` (10 s) as InfluxDB line
+protocol, the way the other TernFS Go services do, so VictoriaMetrics
+stores each field as `<measurement>_<field>`. `-filesystem` is required and
+becomes the `filesystem` label on every series; `instance` is the short
+host name and NFS port unless `-instance` says otherwise, so several nfsd
+processes on one host stay apart. The `Eggs NFS` dashboard
+(`deploy/grafana/.../nfs.json` in Restech) reads these and nothing else.
+
+Counters are cumulative from process start. Latency histograms have a
+`le` label with the bound in seconds and a final `+Inf`, for
+`histogram_quantile`.
+
+| Series | Labels | Meaning |
+|---|---|---|
+| `eggsfs_nfsd_ops_count` | `op`, `status` | Operations completed, by NFS operation and status. Includes SEQUENCE. |
+| `eggsfs_nfsd_op_latency_bucket_count` | `op`, `le` | Operation service time inside nfsd, bounds 0.5 ms to 60 s. |
+| `eggsfs_nfsd_op_latency_count`, `_sum_nanos` | `op` | For mean latency. |
+| `eggsfs_nfsd_io_ops`, `_bytes` | `direction` | READ and WRITE operations and payload bytes. |
+| `eggsfs_nfsd_compounds_count` | | RPC compounds handled. |
+| `eggsfs_nfsd_connections_open` | | Open TCP connections (gauge). |
+| `eggsfs_nfsd_connections_accepted`, `_closed_by_client`, `_closed_by_server`, `_idle_timeouts`, `_read_errors`, `_parse_errors` | | How connections began and ended. A server close is a reply write failure, an unanswerable request or a conflicting XID. |
+| `eggsfs_nfsd_admission_in_flight`, `_max_in_flight` | | Requests admitted and not yet answered, and the sum of per-connection limits (gauges). |
+| `eggsfs_nfsd_admission_work_bytes`, `_work_limit`, `_work_replies`, `_work_waiters` | | Reply-work reservations against `-reply-work-budget-mib`, and requests waiting for it (gauges). |
+| `eggsfs_nfsd_admission_work_waits`, `_work_wait_nanos` | | Waits for reply work begun, and time spent waiting. |
+| `eggsfs_nfsd_admission_cache_bytes`, `_cache_limit`, `_sessions`, `_records`, `_groups`, `_active_requests` | | Reply cache and session store figures (gauges). |
+| `eggsfs_nfsd_state_opens`, `_aliases` | | Live open stateids and publication aliases (gauges). |
+| `eggsfs_nfsd_state_publishes` | | Files published by CLOSE or OPEN_DOWNGRADE. |
+| `eggsfs_nfsd_staging_files`, `_bytes`, `_retired`, `_unlinked`, `_hydrations_in_flight` | | The staging store (gauges). |
+| `eggsfs_nfsd_backend_count`, `_attempts` | `service`, `kind` | Requests to shards and the CDC by kind, and attempts including resends. |
+| `eggsfs_nfsd_backend_latency_bucket_count` | `service`, `kind`, `le` | Backend round-trip time, bounds 0.1 ms to 10 s. |
+| `eggsfs_nfsd_process_heap_alloc_bytes`, `_sys_bytes`, `_goroutines`, `_gc_pause_nanos`, `_gc_count`, `_uptime_seconds` | | Go runtime figures. |
+
+The dashboard reads them in this order: rate, errors and duration of the
+NFS service; utilisation and saturation of the admission limits, reply
+work, reply cache and connections; the backend; open state and staging;
+the process. The two signals that have mattered so far are `status` other
+than `NFS4_OK` on SEQUENCE or WRITE, since a Linux client sleeps 15 s on a
+session-level DELAY, and `closed_by_server`, since every server-side close
+costs a client that reconnect and backoff.
+
 ## Sessions
 
 Every COMPOUND other than a lone EXCHANGE_ID, CREATE_SESSION,
