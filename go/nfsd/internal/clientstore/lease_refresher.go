@@ -16,7 +16,7 @@ import (
 
 // The durable lease refresher (canonical r3 §9). This process's lease file,
 // lease.<nfsdID>, is written only here: by one worker per incarnation that
-// needs it, which holds leaseLocks for each cycle. Everything else reads the
+// needs it, which holds LeaseLocks for each cycle. Everything else reads the
 // record from memory and asks the worker for work.
 //
 // A write goes through a uniquely named temp: ConstructFile, then LinkFile
@@ -25,8 +25,7 @@ import (
 // edge is consumed, by our RenameEdge, the fence of an unsettled attempt, or
 // a RemoveEdge of the edge found pointing at it. Nothing settles on elapsed
 // time or absence, nothing is scrapped, and a LinkFile is never retried.
-// Settling an orphan never publishes it as the lease
-// (P/C8/SETTLEMENT-CLARIFICATION.md).
+// Settling an orphan never publishes it as the lease.
 
 type leaseRecordState uint8
 
@@ -79,10 +78,10 @@ type LeaseRefresher struct {
 	cs          *Store
 	Incarnation vfs.InodeID
 
-	// mu is never held across I/O. The worker's own fields (attempt,
-	// orphans, identity, lastExpiry, backoff) change only in the worker,
-	// which holds leaseLocks; mu orders them with readers.
-	// Writes to identity and lastExpiry also hold Mu for diagnostics;
+	// Mu is never held across I/O. The worker's own fields (Attempt,
+	// orphans, identity, LastExpiry, Backoff) change only in the worker,
+	// which holds LeaseLocks; Mu orders them with readers.
+	// Writes to identity and LastExpiry also hold Mu for diagnostics;
 	// the worker may read them under its exclusive LeaseLocks ownership.
 	Mu         sync.Mutex
 	identity   vfs.InodeID
@@ -102,14 +101,14 @@ type LeaseRefresher struct {
 	refs       int  // reservations that keep the record (CREATE_SESSION)
 	Finished   bool // a terminal record's sessions have been retired
 	pinned     bool // tests: a fixed live lease, no worker
-	// raised is closed, and replaced, whenever proven rises or the record
+	// raised is closed, and replaced, whenever Proven rises or the record
 	// turns terminal, for CREATE_SESSION's bounded bootstrap wait.
 	raised chan struct{}
-	// notBefore is a failed pass's backoff deadline: no settlement or write
-	// runs before it, whatever wakes the worker. maintainAt is when the next
+	// NotBefore is a failed pass's backoff deadline: no settlement or write
+	// runs before it, whatever wakes the worker. MaintainAt is when the next
 	// maintenance pass (settle, refresh, prune or the terminal steps) is
-	// due, never before notBefore; a pass before it is a verify and only
-	// reads. Verifies neither run nor move it. idleWaiting: the worker is
+	// due, never before NotBefore; a pass before it is a verify and only
+	// reads. Verifies neither run nor move it. IdleWaiting: the worker is
 	// waiting with nothing scheduled, so a need that arrives starts a pass.
 	NotBefore   time.Time
 	MaintainAt  time.Time
@@ -120,7 +119,7 @@ type LeaseRefresher struct {
 	reclaim bool
 }
 
-// raiseLocked wakes the waiters for proven. The caller holds r.mu.
+// raiseLocked wakes the waiters for Proven. The caller holds r.Mu.
 func (r *LeaseRefresher) raiseLocked() {
 	if r.raised != nil {
 		close(r.raised)
@@ -136,8 +135,8 @@ var (
 	LeaseVerifySpacing   = time.Second
 )
 
-// recordLocked returns the incarnation's record, creating it when create is
-// set and a credit is free. The caller holds cs.refreshMu.
+// RecordLocked returns the incarnation's record, creating it when create is
+// set and a credit is free. The caller holds cs.RefreshMu.
 func (cs *Store) RecordLocked(id vfs.InodeID, create bool) (*LeaseRefresher, bool) {
 	if r := cs.Refreshers[id]; r != nil {
 		return r, true
@@ -150,7 +149,7 @@ func (cs *Store) RecordLocked(id vfs.InodeID, create bool) (*LeaseRefresher, boo
 	return r, true
 }
 
-// kickLocked starts or wakes the worker. The caller holds cs.refreshMu.
+// kickLocked starts or wakes the worker. The caller holds cs.RefreshMu.
 func (r *LeaseRefresher) kickLocked() {
 	r.Mu.Lock()
 	defer r.Mu.Unlock()
@@ -172,7 +171,7 @@ func (r *LeaseRefresher) kickLocked() {
 	}
 }
 
-// leaseView reads the incarnation's record from memory, creating one (with
+// LeaseView reads the incarnation's record from memory, creating one (with
 // a verify pass) if it has none. ok is false when no record credit is free.
 func (cs *Store) LeaseView(clientID uint64) (leaseView, bool) {
 	cs.RefreshMu.Lock()
@@ -191,7 +190,7 @@ func (cs *Store) LeaseView(clientID uint64) (leaseView, bool) {
 	return view, true
 }
 
-// requestLeaseVerify asks for a read-only pass: it never changes need or
+// RequestLeaseVerify asks for a read-only pass: it never changes need or
 // bootstrap. Requests coalesce.
 func (cs *Store) RequestLeaseVerify(clientID uint64) {
 	cs.RefreshMu.Lock()
@@ -208,7 +207,7 @@ func (cs *Store) requestVerifyLocked(r *LeaseRefresher) {
 	r.kickLocked()
 }
 
-// noteLeaseNeed tells the worker that need may have become true: a SEQUENCE
+// NoteLeaseNeed tells the worker that need may have become true: a SEQUENCE
 // committed. The condition itself is read from the server each pass.
 func (cs *Store) NoteLeaseNeed(clientID uint64) {
 	cs.RefreshMu.Lock()
@@ -218,7 +217,7 @@ func (cs *Store) NoteLeaseNeed(clientID uint64) {
 	}
 }
 
-// reserveLeaseRecord keeps a record for a CREATE_SESSION in progress; with
+// ReserveLeaseRecord keeps a record for a CREATE_SESSION in progress; with
 // no credit the caller gets DELAY before its slot.
 func (cs *Store) ReserveLeaseRecord(clientID uint64) (func(), bool) {
 	cs.RefreshMu.Lock()
@@ -246,7 +245,7 @@ func (cs *Store) ReserveLeaseRecord(clientID uint64) (func(), bool) {
 	}, true
 }
 
-// startLeaseBootstrap marks a committed CREATE_SESSION's incarnation for its
+// StartLeaseBootstrap marks a committed CREATE_SESSION's incarnation for its
 // first publication. It is cleared only by a publication or a terminal state.
 func (cs *Store) StartLeaseBootstrap(clientID uint64) {
 	cs.RefreshMu.Lock()
@@ -263,7 +262,7 @@ func (cs *Store) StartLeaseBootstrap(clientID uint64) {
 	r.kickLocked()
 }
 
-// noteFleetExpired records a marker this process published or observed, so
+// NoteFleetExpired records a marker this process published or observed, so
 // lease users see EXPIRED without waiting for the worker's evidence, and
 // wakes the worker for the terminal steps.
 func (cs *Store) NoteFleetExpired(clientID uint64) {
@@ -284,7 +283,7 @@ func (cs *Store) NoteFleetExpired(clientID uint64) {
 // publication before replying. A variable so tests can shorten it.
 var BootstrapWait = 2 * time.Second
 
-// awaitLeasePublished waits, up to wait, until the incarnation's record has
+// AwaitLeasePublished waits, up to wait, until the incarnation's record has
 // a published lease in the future or turns terminal. CREATE_SESSION uses it
 // so that a client's first SEQUENCE does not get DELAY while the bootstrap
 // publication, which the worker writes, is still in flight. It reports
@@ -321,7 +320,7 @@ func (cs *Store) AwaitLeasePublished(clientID uint64, wait time.Duration) bool {
 	}
 }
 
-// pinLeaseForTest gives an incarnation a fixed live lease with no worker,
+// PinLeaseForTest gives an incarnation a fixed live lease with no worker,
 // for tests whose sessions have no durable client.
 func (cs *Store) PinLeaseForTest(clientID uint64) {
 	cs.RefreshMu.Lock()
@@ -336,11 +335,11 @@ func (cs *Store) PinLeaseForTest(clientID uint64) {
 }
 
 // idleLocked reports that nothing references the record and nothing needs
-// it. The caller holds cs.refreshMu and r.mu. A live record whose
+// it. The caller holds cs.RefreshMu and r.Mu. A live record whose
 // incarnation still has sessions here is referenced: SEQUENCE reads it. One
 // whose lease is needed (an active request or a quiet period) is kept for
 // its refresh. Both are read from the server, under sessionStore.mu, which
-// is ordered after r.mu.
+// is ordered after r.Mu.
 func (r *LeaseRefresher) idleLocked() bool {
 	return !r.pinned && r.refs == 0 && !r.bootstrap && r.Attempt == nil &&
 		len(r.orphans) == 0 && !r.Verify && !r.InCall &&
@@ -350,7 +349,7 @@ func (r *LeaseRefresher) idleLocked() bool {
 
 // reclaimLocked frees an idle record with no worker, or has its worker
 // free it: the worker, which may be waiting with a deadline a day away,
-// owns the record until it exits. The caller holds cs.refreshMu and has
+// owns the record until it exits. The caller holds cs.RefreshMu and has
 // found the record idle.
 func (cs *Store) reclaimLocked(r *LeaseRefresher) {
 	r.Mu.Lock()
@@ -377,7 +376,7 @@ func (r *LeaseRefresher) sessionsLocked() bool {
 }
 
 // freeLocked forgets an idle record and returns its credit. The caller holds
-// cs.refreshMu.
+// cs.RefreshMu.
 func (cs *Store) freeLocked(r *LeaseRefresher) {
 	if cs.Refreshers[r.Incarnation] == r {
 		delete(cs.Refreshers, r.Incarnation)
@@ -455,13 +454,13 @@ func (r *LeaseRefresher) wakeDue() time.Time {
 }
 
 // terminalLocked reports a stale or fleet-expired record whose terminal
-// steps have not finished. The caller holds r.mu.
+// steps have not finished. The caller holds r.Mu.
 func (r *LeaseRefresher) terminalLocked() bool {
 	return r.State != LeaseRecordLive && !r.Finished
 }
 
 // maintainSoonLocked makes maintenance due now, or at the failure deadline
-// if one applies, and returns when. The caller holds r.mu.
+// if one applies, and returns when. The caller holds r.Mu.
 func (r *LeaseRefresher) maintainSoonLocked() time.Time {
 	start := time.Now()
 	if r.NotBefore.After(start) {
@@ -492,7 +491,7 @@ func (r *LeaseRefresher) stopped() bool {
 	return true
 }
 
-// stopLeaseWorkers ends every worker after its current pass and waits for
+// StopLeaseWorkers ends every worker after its current pass and waits for
 // them. No worker starts after it.
 func (cs *Store) StopLeaseWorkers() {
 	cs.RefreshMu.Lock()
@@ -510,7 +509,7 @@ func (r *LeaseRefresher) bootstrapSet() bool {
 	return r.bootstrap
 }
 
-// safePass runs a pass; a panic is treated as a failed pass and backs off.
+// SafePass runs a pass; a panic is treated as a failed pass and backs off.
 func (r *LeaseRefresher) SafePass(authorize bool) (wait time.Duration, exit bool) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -750,7 +749,7 @@ func (r *LeaseRefresher) pruneOthers() {
 	})
 }
 
-// refresh publishes a new lease when ours is due (§9.2 step 3). It reports
+// Refresh publishes a new lease when ours is due (§9.2 step 3). It reports
 // false on a failure that should back off.
 func (r *LeaseRefresher) Refresh() bool {
 	cs, dir := r.cs, r.Incarnation
@@ -822,7 +821,7 @@ func (r *LeaseRefresher) Refresh() bool {
 	return true
 }
 
-// takeOrphan takes an orphan credit and records a new temp, below the
+// TakeOrphan takes an orphan credit and records a new temp, below the
 // per-record and process caps.
 func (r *LeaseRefresher) TakeOrphan() (*leaseOrphan, bool) {
 	cs := r.cs
@@ -933,7 +932,7 @@ func (r *LeaseRefresher) verified() (wait time.Duration, exit, done bool) {
 }
 
 // nextPassLocked is the wait before the next pass: the maintenance wait, or
-// sooner for a pending verify. The caller holds r.mu.
+// sooner for a pending verify. The caller holds r.Mu.
 func (r *LeaseRefresher) nextPassLocked(maintain time.Duration) time.Duration {
 	if r.Verify {
 		maintain = min(maintain, time.Until(r.lastPass.Add(LeaseVerifySpacing)))
@@ -967,7 +966,7 @@ func (r *LeaseRefresher) schedule(failed bool) (time.Duration, bool) {
 }
 
 // maintenanceLocked is the wait before the next maintenance pass, or exit
-// once the record is freed. The caller holds cs.refreshMu and r.mu.
+// once the record is freed. The caller holds cs.RefreshMu and r.Mu.
 func (r *LeaseRefresher) maintenanceLocked(need bool) (time.Duration, bool) {
 	cs := r.cs
 	switch {
@@ -999,7 +998,7 @@ func (r *LeaseRefresher) maintenanceLocked(need bool) (time.Duration, bool) {
 // leaseIdleWait bounds an idle worker's sleep; it is woken for any work.
 const leaseIdleWait = 24 * time.Hour
 
-// sweepLeaseRecords reclaims idle records, so a record nothing references
+// SweepLeaseRecords reclaims idle records, so a record nothing references
 // or needs any more is freed on the sweeper's tick, by its worker if it has
 // one. Other workers are only woken, which brings nothing forward that
 // wakeDue does not allow.
@@ -1021,7 +1020,7 @@ func (cs *Store) SweepLeaseRecords() {
 // refreshInline runs one pass in the caller, for store-only use (no server
 // worker): Renew and MarkOpen publish through the same cycle. The caller
 // may hold the identity lock. With a server the worker owns every pass, and
-// a server's terminal steps take identity ownership under leaseLocks, so
+// a server's terminal steps take identity ownership under LeaseLocks, so
 // running a pass here under the identity lock would invert that order: it
 // only reads the record instead, and asks for a verify.
 func (cs *Store) refreshInline(clientID uint64) (leaseView, error) {

@@ -56,8 +56,8 @@ func TestDiagnosticsLeaseDuringPublication(t *testing.T) {
 	srv := &Server{clients: cs, sessions: newSessionStore(1), opens: openstate.NewStore()}
 	done := make(chan error, 1)
 	go func() {
-		// The worker owns leaseLocks during every refresh. Force each
-		// publication due so snapshots overlap real lastExpiry writes.
+		// The worker owns LeaseLocks during every refresh. Force each
+		// publication due so snapshots overlap real LastExpiry writes.
 		release := cs.LeaseLocks.Lock(vfs.InodeID(id))
 		defer release()
 		for range 100 {

@@ -26,7 +26,7 @@ func AddOpenForTest(
 	write bool,
 	id nfs4.StateID,
 ) (State, uint32) {
-	state, err := os.Open(owner, fileID, fileID, testGrant(write), id)
+	state, err := os.Open(owner, fileID, fileID, testGrant(write), id, write)
 	if err != nil {
 		return State{}, nfs4.NFS4ERR_SERVERFAULT
 	}

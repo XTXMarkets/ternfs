@@ -207,7 +207,7 @@ func testSessionForConn(conn net.Conn) *testSession {
 	return testSessions.byConn[conn]
 }
 
-// compoundFirstOp returns the offset of the argarray count and the first
+// compoundArgLayout returns the offset of the argarray count and the first
 // operation's opnum.
 func compoundArgLayout(body []byte) (countOff int, firstOp uint32, ok bool) {
 	if len(body) < 4 {

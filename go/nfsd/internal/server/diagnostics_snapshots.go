@@ -24,11 +24,11 @@ import (
 // copies into the API's types and returns, so the aggregator in
 // diagnostics.go holds no lock and reads no guarded field. The private
 // record builders (clientRecord, groupRecord, confirmation.snapshot and the
-// enum-name helpers) run under a lock their owner method has already taken. Ordinary registry and record mutexes are acquired
-// normally. Three locks are only tried, because a request path tries them
-// or they are held across I/O: session slots, staging files and
-// confirmation attempts. A snapshot never waits for their holders; it
-// reports the entry as locked instead.
+// enum-name helpers) run under a lock their owner method has already taken.
+// Ordinary registry and record mutexes are acquired normally. Three locks
+// are only tried, because a request path tries them or they are held across
+// I/O: session slots, staging files and confirmation attempts. A snapshot
+// never waits for their holders; it reports the entry as locked instead.
 
 func decodeSequenceFlags(flags uint32) []string {
 	names := []string{}

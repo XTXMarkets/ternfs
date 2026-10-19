@@ -670,7 +670,7 @@ type lateLink struct {
 	data   []byte
 }
 
-// passCountVFS counts the refresher's calls: lease reads (one per pass's
+// PassCountVFS counts the refresher's calls: lease reads (one per pass's
 // evidence), fences and writes. Fences of temps can be made to fail.
 type PassCountVFS struct {
 	vfs.TernVFS

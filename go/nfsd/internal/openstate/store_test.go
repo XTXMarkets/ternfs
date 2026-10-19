@@ -33,12 +33,12 @@ func assertOpenStateIndex(t *testing.T, store *Store) {
 func TestOpenRejectsOccupiedStateID(t *testing.T) {
 	store := NewStore()
 	owner := OwnerKey{ClientID: 1, Owner: "owner"}
-	first, err := store.Open(owner, vfs.MakeInodeID(vfs.InodeTypeFile, 1), vfs.MakeInodeID(vfs.InodeTypeFile, 1), testGrant(false), nfs4.StateID{})
+	first, err := store.Open(owner, vfs.MakeInodeID(vfs.InodeTypeFile, 1), vfs.MakeInodeID(vfs.InodeTypeFile, 1), testGrant(false), nfs4.StateID{}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.Open(
-		owner, vfs.MakeInodeID(vfs.InodeTypeFile, 2), vfs.MakeInodeID(vfs.InodeTypeFile, 2), testGrant(false), first.ID,
+		owner, vfs.MakeInodeID(vfs.InodeTypeFile, 2), vfs.MakeInodeID(vfs.InodeTypeFile, 2), testGrant(false), first.ID, false,
 	); err == nil {
 		t.Fatal("occupied stateid was reused for another file")
 	}
@@ -53,7 +53,7 @@ func TestWriteReopenUpgrades(t *testing.T) {
 	fileID := vfs.MakeInodeID(vfs.InodeTypeFile, 1)
 	stagingID := vfs.MakeInodeID(vfs.InodeTypeFile, 2)
 	state := addConfirmedOpen(t, store, owner, fileID)
-	upgraded, err := store.Open(owner, fileID, stagingID, testGrant(true), nfs4.StateID{})
+	upgraded, err := store.Open(owner, fileID, stagingID, testGrant(true), nfs4.StateID{}, true)
 	if err != nil {
 		t.Fatal(err)
 	}

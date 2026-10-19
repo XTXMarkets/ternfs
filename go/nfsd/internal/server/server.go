@@ -439,9 +439,9 @@ func (s *Server) handleConn(conn net.Conn) {
 	defer closeConnection()
 	var workers sync.WaitGroup
 	// A read EOF may be a TCP half-close. Drain accepted replies before
-	// closing the write side. Other read failures close the connection
-	// first, so the drain only waits for requests already executing.
-	// Backend operations are not cancelled.
+	// closing the write side. Other read failures and parse errors close
+	// the connection first, so the drain only waits for requests already
+	// executing. Backend operations are not cancelled.
 	defer workers.Wait()
 	slots := make(chan struct{}, s.MaxInFlightPerConn)
 	var writeMu, requestsMu sync.Mutex
@@ -559,6 +559,10 @@ func (s *Server) handleConn(conn net.Conn) {
 			<-slots
 			end(connEndParseError)
 			s.log.Warn("RPC parse error", "remote", remote, "err", err)
+			// Unlike EOF, a bad frame says nothing about whether the client
+			// still reads, and with the reader gone nothing would notice it
+			// leave: close now, so waiting requests give up.
+			closeConnection()
 			return
 		}
 		req.connection = association

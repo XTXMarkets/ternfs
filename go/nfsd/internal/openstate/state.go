@@ -32,6 +32,11 @@ type State struct {
 	modes      uint8
 	denyModes  uint8
 	Generation uint32
+	// Marked reports that the open has a durable marker in the client
+	// store. An open is marked once it is granted write access, creates
+	// its file or recovers a writer's staging, and stays marked; other read
+	// opens are recorded in this process only.
+	Marked bool
 	// seq orders opens of one file for choosing the most recent.
 	seq uint64
 }
@@ -39,7 +44,7 @@ type State struct {
 // Writes reports write access: the open has a writer.
 func (s State) Writes() bool { return s.Access&nfs4.OPEN4_SHARE_ACCESS_WRITE != 0 }
 
-// grant is one OPEN or OPEN_DOWNGRADE's share access and deny.
+// Grant is one OPEN or OPEN_DOWNGRADE's share access and deny.
 type Grant struct {
 	Access, Deny uint32
 }

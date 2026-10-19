@@ -4265,7 +4265,7 @@ func TestReadCloseIgnoresOtherWriterStaging(t *testing.T) {
 	if status := confirmClientID(
 		t, conn, &xid, writerClient, confirm,
 	); status != nfs4.NFS4_OK {
-		t.Fatal("writer SETCLIENTID_CONFIRM failed")
+		t.Fatal("writer CREATE_SESSION failed")
 	}
 	readerState, readerFH := openReadFile(
 		t, conn, &xid, readerClient, "existing.txt",
@@ -4313,7 +4313,7 @@ func TestClientRebootDoesNotDiscardOtherWriter(t *testing.T) {
 	if status := confirmClientID(
 		t, conn, &xid, writerClient, confirm,
 	); status != nfs4.NFS4_OK {
-		t.Fatal("writer SETCLIENTID_CONFIRM failed")
+		t.Fatal("writer CREATE_SESSION failed")
 	}
 	_, _ = openReadFile(
 		t, conn, &xid, readerClient, "existing.txt",
@@ -5730,25 +5730,6 @@ func collectReaddirNames(t *testing.T, conn net.Conn, xid *uint32, dirFH []byte)
 	return allNames
 }
 
-// --- Checklist of new tests ---
-// [x] TestReaddirPagination — multi-batch READDIR with continuation cookies
-// [x] TestReaddirCookieverfMismatch — NFS4ERR_NOT_SAME on stale verifier
-// [x] TestReaddirTooSmall — NFS4ERR_TOOSMALL with tiny maxcount
-// [x] TestReaddirNfsDirHidden — .nfs not visible in root listing
-// [x] TestReaddirTransientNotVisible — transient files not in listing until CLOSE
-// [x] TestSetattrTime — SET_TO_CLIENT_TIME4 and SET_TO_SERVER_TIME4
-// [x] TestSetattrModeRejected — mode/owner → NFS4ERR_ATTRNOTSUPP
-// [x] TestSetattrSize — truncate staging file via SETATTR
-// [x] TestOpenExclusive4 — exclusive create and verifier replay
-// [x] TestOpenClaimPrevious — CLAIM_PREVIOUS → NFS4ERR_NO_GRACE
-// [x] TestCloseReplay — CLOSE twice returns OK both times
-// [x] TestCloseUnknownStateid — unknown stateid returns NFS4ERR_BAD_STATEID
-// [x] TestWriteBadStateid — WRITE with wrong stateid → error
-// [x] TestCommitVerifier — COMMIT returns write verifier
-// [x] TestReadOnlyMode — no staging → NFS4ERR_ROFS
-// [x] TestLockNotSupported — LOCK/LOCKT/LOCKU → NFS4ERR_NOTSUPP
-// [x] TestSetclientidReboot — same identity, different verifier (EXCHANGE_ID)
-
 func TestReaddirPagination(t *testing.T) {
 	dir := t.TempDir()
 	// Create 50 files to force multiple batches (VFS batch size is 16).
@@ -6531,8 +6512,9 @@ func TestReopenReusesState(t *testing.T) {
 	if !bytes.Equal(upgradedFH, fh) {
 		t.Fatal("second OPEN returned a different filehandle")
 	}
-	if got := activeOpenMarkerCount(t, srv, clientID); got != 1 {
-		t.Fatalf("active-open markers after reopen = %d, want 1", got)
+	// Read opens are process-local: no marker, however often reopened.
+	if got := activeOpenMarkerCount(t, srv, clientID); got != 0 {
+		t.Fatalf("active-open markers after read reopen = %d, want 0", got)
 	}
 	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 		pw := w.AppendArgarray_Putfh()

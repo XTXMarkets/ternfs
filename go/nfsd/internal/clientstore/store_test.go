@@ -792,6 +792,63 @@ func TestClientStoreImplicitRenewalRechecksReboot(t *testing.T) {
 	}
 }
 
+// A read open admitted with NoteOpen has no marker and is not one of the
+// cached client's markers, so it does not keep the client in use: another
+// principal can take the identity over. The open is then inactive, though
+// this process's lease proof for the replaced incarnation has not run out.
+func TestClientStoreNotedOpenHoldsNoMarker(t *testing.T) {
+	fs := vfs.NewLocalTernVFS(t.TempDir())
+	first, err := NewStore(fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := NewStore(fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Unix(1000, 0)
+	first.Now = func() time.Time { return base }
+	second.Now = func() time.Time { return base }
+	owner1 := ClientOwner{Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner-1"}}
+	owner2 := ClientOwner{Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner-2"}}
+	clientID, confirm, err := first.SetClientID([8]byte{1}, []byte("client"), owner1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := first.ConfirmClientID(clientID, confirm, owner1.Principal); err != nil {
+		t.Fatal(err)
+	}
+	stateID := nfs4.StateID{1}
+	if err := first.NoteOpen(clientID, stateID); err != nil {
+		t.Fatal(err)
+	}
+	if active, err := first.HasLocalOpen(clientID, stateID); err != nil || !active {
+		t.Fatalf("noted open active %t %v", active, err)
+	}
+	if _, err := fs.Lookup(vfs.InodeID(clientID), ActiveOpenName(stateID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("noted open has a marker: %v", err)
+	}
+	if incs, _ := first.SnapshotIncarnations(vfs.InodeID(clientID)); len(incs) != 1 || incs[0].Cached == nil {
+		t.Fatal("no cached client")
+	} else if n := incs[0].Cached.Opens; n != 0 {
+		t.Fatalf("cached client lists %d open markers, want 0", n)
+	}
+
+	takeoverID, takeoverConfirm, err := second.SetClientID([8]byte{2}, []byte("client"), owner2)
+	if err != nil {
+		t.Fatalf("takeover by another principal: %v", err)
+	}
+	if _, err := second.ConfirmClientID(takeoverID, takeoverConfirm, owner2.Principal); err != nil {
+		t.Fatal(err)
+	}
+	if !first.LeaseProven(vfs.InodeID(clientID)) {
+		t.Fatal("the replaced incarnation's lease proof ran out")
+	}
+	if active, err := first.HasLocalOpen(clientID, stateID); err != nil || active {
+		t.Fatalf("noted open of a replaced incarnation active %t %v", active, err)
+	}
+}
+
 func TestClientStoreRejectsClientIDOutsideStateDirectory(t *testing.T) {
 	fs := vfs.NewLocalTernVFS(t.TempDir())
 	store, err := NewStore(fs)

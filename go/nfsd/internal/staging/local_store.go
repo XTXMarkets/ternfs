@@ -148,7 +148,7 @@ func NewLocalStore(dir string, logger *slog.Logger) (*LocalStore, error) {
 	return s, nil
 }
 
-// closeAll releases descriptors opened during a failed startup.
+// CloseAll releases descriptors opened during a failed startup.
 func (s *LocalStore) CloseAll() {
 	for _, entry := range s.files {
 		entry.file.prepareRemove()

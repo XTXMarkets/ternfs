@@ -698,3 +698,185 @@ func TestRecoveredRetiredCreateAppliesSize(t *testing.T) {
 		t.Fatalf("recovered CREATE size was not applied: %q", got)
 	}
 }
+
+// markerVFS counts the client store's open-marker mutations.
+type markerVFS struct {
+	*vfs.LocalTernVFS
+	creates, removes atomic.Int64
+}
+
+func (v *markerVFS) CreateFile(dirID vfs.InodeID, name string, data io.Reader) (vfs.InodeID, error) {
+	if clientstore.IsActiveOpenName(name) {
+		v.creates.Add(1)
+	}
+	return v.LocalTernVFS.CreateFile(dirID, name, data)
+}
+
+func (v *markerVFS) Remove(dirID vfs.InodeID, name string) error {
+	if clientstore.IsActiveOpenName(name) {
+		v.removes.Add(1)
+	}
+	return v.LocalTernVFS.Remove(dirID, name)
+}
+
+func (v *markerVFS) RemoveEdge(dirID vfs.InodeID, name string, edge vfs.Edge) error {
+	if clientstore.IsActiveOpenName(name) {
+		v.removes.Add(1)
+	}
+	return v.LocalTernVFS.RemoveEdge(dirID, name, edge)
+}
+
+// A read-only open is process-local: its OPEN and CLOSE write nothing to
+// the client store, which on TernFS saves three shard mutations per open.
+// A write open is marked, and an owner's read open gets its marker when
+// an OPEN for write upgrades it. The cached client lists only the markers.
+func TestReadOpenHasNoDurableMarker(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "file.txt"), []byte("data"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	fs := &markerVFS{LocalTernVFS: vfs.NewLocalTernVFS(dir)}
+	ss, err := staging.NewLocalStore(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewServer(fs, ss, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr, cleanup := serveTestServer(t, srv)
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+	xid := uint32(1)
+	clientID := setupClient(t, conn, &xid)
+	incarnation := incarnationForTest(t, srv, clientID)
+	markers := func(wantCreates, wantRemoves int64, wantLive int, step string) {
+		t.Helper()
+		if c, r := fs.creates.Load(), fs.removes.Load(); c != wantCreates || r != wantRemoves {
+			t.Fatalf("%s: marker creates/removes = %d/%d, want %d/%d", step, c, r, wantCreates, wantRemoves)
+		}
+		if got := activeOpenMarkerCount(t, srv, clientID); got != wantLive {
+			t.Fatalf("%s: live markers = %d, want %d", step, got, wantLive)
+		}
+		cached := -1
+		if incs, _ := srv.clients.SnapshotIncarnations(vfs.InodeID(incarnation)); len(incs) == 1 && incs[0].Cached != nil {
+			cached = incs[0].Cached.Opens
+		}
+		if cached != wantLive {
+			t.Fatalf("%s: cached client's open markers = %d, want %d", step, cached, wantLive)
+		}
+	}
+
+	status, reader, fh, _ := openFileForOwner(
+		t, conn, &xid, clientID, "reader", "file.txt",
+		nfs4.OPEN4_SHARE_ACCESS_READ, false, false,
+	)
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("read OPEN %s", nfs4.Nfsstat4Name(status))
+	}
+	if data, eof := readFileData(t, conn, &xid, fh, 0, 16); string(data) != "data" || !eof {
+		t.Fatalf("READ through the unmarked open = %q, %t", data, eof)
+	}
+	markers(0, 0, 0, "read open")
+	closeFile(t, conn, &xid, fh, reader)
+	markers(0, 0, 0, "read close")
+
+	status, writer, fh, _ := openFileForOwner(
+		t, conn, &xid, clientID, "writer", "file.txt",
+		nfs4.OPEN4_SHARE_ACCESS_BOTH, false, false,
+	)
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("write OPEN %s", nfs4.Nfsstat4Name(status))
+	}
+	markers(1, 0, 1, "write open")
+	writeFileAt(t, conn, &xid, fh, writer, 0, []byte("DATA"))
+	closeFile(t, conn, &xid, fh, writer)
+	markers(1, 1, 0, "write close")
+
+	status, first, fh, _ := openFileForOwner(
+		t, conn, &xid, clientID, "upgrader", "file.txt",
+		nfs4.OPEN4_SHARE_ACCESS_READ, false, false,
+	)
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("read OPEN before upgrade %s", nfs4.Nfsstat4Name(status))
+	}
+	markers(1, 1, 0, "read open before upgrade")
+	status, upgraded, upgradedFH, _ := openFileForOwner(
+		t, conn, &xid, clientID, "upgrader", "file.txt",
+		nfs4.OPEN4_SHARE_ACCESS_BOTH, false, false,
+	)
+	if status != nfs4.NFS4_OK || !bytes.Equal(first[4:], upgraded[4:]) || !bytes.Equal(fh, upgradedFH) {
+		t.Fatalf("upgrade OPEN %s, stateid %x -> %x", nfs4.Nfsstat4Name(status), first[4:], upgraded[4:])
+	}
+	markers(2, 1, 1, "upgrade to write")
+	writeFileAt(t, conn, &xid, fh, upgraded, 0, []byte("DATA2"))
+	closeFile(t, conn, &xid, fh, upgraded)
+	markers(2, 2, 0, "close of the upgraded open")
+	if data, err := readPublished(fs, "file.txt"); err != nil || string(data) != "DATA2" {
+		t.Fatalf("published %q %v", data, err)
+	}
+}
+
+// A read open whose client's lease lapses gets EXPIRED, as a write open
+// does, but expiring the client's state is the lease gate's decision: both
+// opens keep their entries, and once the lease is renewed the same
+// stateids work again.
+func TestReadOpenOutlivesLapsedLease(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "file.txt"), []byte("data"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	srv, addr, cleanup := startTestServerWithServer(t, dir)
+	defer cleanup()
+	var clock atomic.Int64
+	clock.Store(time.Now().UnixNano())
+	srv.clients.SetClock(func() time.Time { return time.Unix(0, clock.Load()) })
+	conn := dial(t, addr)
+	defer conn.Close()
+	xid := uint32(1)
+	clientID := setupClient(t, conn, &xid)
+	incarnation := incarnationForTest(t, srv, clientID)
+	status, reader, readFH, _ := openFileForOwner(
+		t, conn, &xid, clientID, "reader", "file.txt",
+		nfs4.OPEN4_SHARE_ACCESS_READ, false, false,
+	)
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("read OPEN %s", nfs4.Nfsstat4Name(status))
+	}
+	writer, writeFH := openCreateFile(t, conn, &xid, clientID, "written")
+	check := func(want uint32, step string) {
+		t.Helper()
+		for _, open := range []struct {
+			name    string
+			stateid [16]byte
+			fh      []byte
+		}{{"read", reader, readFH}, {"write", writer, writeFH}} {
+			fileID, _ := vfs.FHToInodeID(open.fh)
+			if _, got := srv.lookupDurableOpen(incarnation, stateid4For(t, open.stateid), fileID); got != want {
+				t.Fatalf("%s: %s open %s, want %s", step, open.name, nfs4.Nfsstat4Name(got), nfs4.Nfsstat4Name(want))
+			}
+			var id nfs4.StateID
+			copy(id[:], open.stateid[4:])
+			if !srv.opens.Live(id) {
+				t.Fatalf("%s: %s open lost its entry", step, open.name)
+			}
+		}
+	}
+
+	// Past this process's published lease and the durable one, with no
+	// sweep to expire the client.
+	srv.clients.StopLeaseWorkers()
+	clock.Add(int64(clientstore.LeaseWriteTerm + time.Second))
+	check(nfs4.NFS4ERR_EXPIRED, "lapsed lease")
+	// The refresher publishes again, as it does for an active client once
+	// its writes succeed.
+	srv.clients.RefreshMu.Lock()
+	r, ok := srv.clients.RecordLocked(vfs.InodeID(incarnation), true)
+	srv.clients.RefreshMu.Unlock()
+	if !ok {
+		t.Fatal("no refresher record")
+	}
+	r.SafePass(true)
+	check(nfs4.NFS4_OK, "renewed lease")
+}

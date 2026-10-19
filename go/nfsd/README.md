@@ -34,11 +34,13 @@ file, and per-file locks protect staging data.
 
 The read timeout is five minutes from the start of each admitted frame
 read. The separate write timeout is five minutes for each reply once it
-acquires the writer lock. Read EOF or timeout stops admission and lets
-accepted requests finish, including after a TCP half-close. A write failure
-closes the socket and wakes the reader. Backend operations already in
-flight continue; a stuck backend can therefore retain a handler after its
-client disconnects.
+acquires the writer lock. A clean EOF may be a TCP half-close, so accepted
+requests drain and send their replies before the socket closes. A timeout,
+reset, other read failure or RPC that does not parse closes the socket
+first and wakes requests waiting for reply capacity. A write failure also
+closes the socket and wakes the reader. Backend operations already
+executing finish their effects, but send no reply on the closed socket; a
+stuck backend can therefore retain a handler after its client disconnects.
 
 Identical requests reusing an in-flight XID on the same connection are
 dropped; the original request sends one reply. Reusing that XID with
@@ -46,29 +48,27 @@ different request bytes closes the connection. This guard lasts through
 the reply write. It does not cover reconnects; completed replies are cached
 by session slot instead.
 
-The admission limit bounds request count, not bytes or connections. One
-request is limited to 2 MiB, but a compound can contain up to 128 one-MiB
-READs. At the default concurrency this can retain roughly 8 GiB of reply
-payload on one connection, plus allocation overhead. Ordinary clients
-send much smaller compounds. Monitor RSS and tune the request limit for
-the workload.
+The per-connection admission limit bounds request count, not connections
+or total server RSS. RPC messages are limited to 2 MiB, and each session
+negotiates a maximum compound response within that limit. Allowing up to
+128 operations in one compound does not multiply its response limit.
+Monitor RSS and tune the request limit for the workload.
 
-Reply work is bounded separately. Each admitted request reserves an
-envelope for its reply before anything executes: eight times the bytes
-its operations can return, plus 64 KiB, so that output construction can
-never fail for memory after an effect. The bound is the sum of the
-per-operation reply bounds that execution enforces, so a WRITE compound
-reserves a few hundred KiB and a 1 MiB READ about 8.5 MiB; a compound with
-READDIR or READLINK, whose results are sized from the remaining budget,
-reserves the session's full response size. The reservations are counted
-against `-reply-work-budget-mib`, 8 GiB by default. A request that does
-not fit waits, holding its connection admission slot, until a reply
-releases work or its connection closes; it is never dropped. Before this,
-every request reserved the session's full response size against a fixed
-512 MiB, 57 requests in all, and the 58th lost its connection: a Linux
-client flushing 256 one-MiB WRITEs with 64 slots was reset whenever 58 were
-in flight, replayed the burst, and backed off for 15 s on the slots the
-server was still executing.
+Reply work bounds the memory accounted for building and sending replies.
+Before execution, each admitted request reserves eight times the sum of
+its reply capacity and a 65 KiB fixed allowance, plus a preparation
+allowance for READDIR when needed. The reply capacity follows the
+per-operation bounds that execution enforces, so a WRITE compound reserves
+much less than a 1 MiB READ, which reserves about 8.5 MiB. A compound with
+READDIR or READLINK, whose results use the remaining budget, reserves the
+session's full response size, limited further by the cache size when
+caching is requested.
+The reservations are counted against `-reply-work-budget-mib`, 8 GiB by
+default. A request waiting for available capacity keeps its connection
+admission slot until work is released or its connection closes. Requests
+larger than the entire budget are refused and their connection is closed.
+Waiting under temporary pressure avoids resets and client replay backoff
+during write bursts.
 
 ## Metrics
 
@@ -92,7 +92,7 @@ Counters are cumulative from process start. Latency histograms have a
 | `eggsfs_nfsd_op_latency_count`, `_sum_nanos` | `op` | For mean latency. |
 | `eggsfs_nfsd_io_ops`, `_bytes` | `direction` | READ and WRITE operations and payload bytes. |
 | `eggsfs_nfsd_compounds_count` | | RPC compounds handled. |
-| `eggsfs_nfsd_connections_open` | | Open TCP connections (gauge). |
+| `eggsfs_nfsd_connections_open` | | Tracked connection handlers, including connections draining requests (gauge). |
 | `eggsfs_nfsd_connections_accepted`, `_closed_by_client`, `_closed_by_server`, `_idle_timeouts`, `_read_errors`, `_parse_errors` | | How connections began and ended. Each ended connection is counted once, by the first cause seen, when its handler returns, so the causes sum to the accepted connections that are no longer open. A client close is EOF or a reset; a server close is a reply write failure, a panic, a request refused or dropped without a reply, or a conflicting XID. |
 | `eggsfs_nfsd_admission_in_flight`, `_max_in_flight` | | Requests admitted and not yet answered, and the sum of per-connection limits (gauges). |
 | `eggsfs_nfsd_admission_work_bytes`, `_work_limit`, `_work_replies`, `_work_waiters` | | Reply-work reservations against `-reply-work-budget-mib`, and requests waiting for it (gauges). |
@@ -131,11 +131,17 @@ restart.
 The negotiated limits are enforced. CREATE_SESSION returns `NFS4ERR_TOOSMALL`
 for channel attributes too small to carry a SEQUENCE. SEQUENCE returns
 `NFS4ERR_TOO_MANY_OPS` or `NFS4ERR_REQ_TOO_BIG` for a compound beyond the
-session's limits. With `sa_cachethis` set, a session whose negotiated cache
-size cannot hold even a minimal reply gets `NFS4ERR_REP_TOO_BIG_TO_CACHE`; a
-reply larger than the cache size is simply not cached. A reply larger than
-the session's maximum is replaced by `NFS4ERR_REP_TOO_BIG`; the operations
-may already have taken effect.
+session's limits. With `sa_cachethis` set, the reply must also fit the
+negotiated cache limit; it is not silently served uncached.
+
+Each operation's reply bound is checked before dispatch. An operation
+that would exceed the remaining response or cache budget returns
+`NFS4ERR_REP_TOO_BIG` or `NFS4ERR_REP_TOO_BIG_TO_CACHE` without executing.
+Earlier operations in the compound may already have taken effect.
+Read-only operations with variable results can also be replaced by a
+size error after their result is built. If a mutation exceeds its fixed
+reply bound after execution, the server retires the session and closes the
+connection instead of reporting a pre-execution failure.
 
 Any connection may carry requests for any session; a connection is
 associated with a session by CREATE_SESSION, BIND_CONN_TO_SESSION or its
@@ -676,8 +682,11 @@ yet been confirmed.
 its leases and open markers.
 
 `o.<state ID>` is an empty marker whose name identifies an open owned by the
-incarnation. The rest of the stateid and open-owner state remains local to the
-nfsd process.
+incarnation. Only opens with a writer get one: a write open, a create, or a
+recovered staged writer. A read-only open is recorded in the nfsd process
+alone, since it has no staging to recover and nothing another process needs
+to see; it costs no shard mutation. The rest of the stateid and open-owner
+state remains local to the nfsd process.
 
 `lease.<nfsd ID>` contains the lease expiry written by one nfsd instance.
 
@@ -768,8 +777,10 @@ without moving any deadline; a record still referenced, needed or holding
 an obligation is left as it is.
 
 OPEN requires a published lease that has not expired, and otherwise returns
-`NFS4ERR_DELAY` while the worker reads it. It then creates an open marker;
-CLOSE removes it.
+`NFS4ERR_DELAY` while the worker reads it. A write open then creates an
+open marker and CLOSE removes it; a read open is registered locally. An
+OPEN for write by an owner holding an unmarked read open creates the marker
+then, and the open stays marked after OPEN_DOWNGRADE.
 
 The worker's passes are scheduled, not driven by requests: a request only
 notes that the lease is needed. Maintenance (settling temps, refresh,
@@ -791,8 +802,9 @@ the process restarts. The store's own `Renew`, used without a server, runs
 the worker's pass inline; with a server it only reads the worker's record.
 
 An operation whose open turns out inactive gets `NFS4ERR_EXPIRED`, and only
-an open whose own marker is gone loses its entry; local expiry of the client
-is the lease gate's decision. When the gate expires a client, it retires
+an open whose own marker is gone loses its entry; an unmarked read open is
+active while its client is confirmed with a live lease. Local expiry of the
+client is the lease gate's decision. When the gate expires a client, it retires
 the client's sessions, cancelling their callbacks and returning their
 credits, whether or not the expired marker could be written. A
 CREATE_SESSION for an incarnation this process has expired gets
@@ -825,9 +837,9 @@ OPENs reuse the cached identity and confirmed-pointer location.
 These updates leave garbage behind in TernFS. A same-directory rename
 soft-unlinks the temporary edge and turns the replaced edge into a snapshot
 edge, so each lease renewal leaves two snapshot edges and one dead file inode.
-Each OPEN and CLOSE marker pair leaves one snapshot edge and one dead inode.
-Renewals are bounded to about one per 22.5 seconds for each nfsd and active
-client, but markers scale with open activity. The shard garbage collector removes this
+Each write OPEN and CLOSE marker pair leaves one snapshot edge and one dead
+inode. Renewals are bounded to about one per 22.5 seconds for each nfsd and
+active client, but markers scale with write-open activity. The shard garbage collector removes this
 under the snapshot policy in effect for `/.nfs`, so that tree should not keep
 the retention used for user data. A policy which deletes snapshots immediately
 is appropriate, for example:
@@ -857,6 +869,10 @@ create new open state even after all of its process slots have been removed.
 
 OPEN markers are create-if-absent records. A repeated OPEN whose stateid
 already owns a marker reuses the existing TernFS inode.
+
+`NFS4ERR_CLID_INUSE` and the inspector see only marked opens. A client whose
+opens are all read-only therefore counts as holding no open state in the
+store, and can be replaced by a different principal.
 
 A client whose last request was at time t is therefore expired here by about
 t + 3 × lease on a healthy backend (the quiet period, the durable lease
@@ -1118,8 +1134,9 @@ collection. The report removes nothing and creates nothing; it is a read-only
 view of the store at that instant.
 
 Open markers do not say which file they belong to. That association lives in
-the process-local open state and, for write opens, in the staging sidecars on
-the nfsd host. `staging=1` reads the server's own staging directory and joins
+the process-local open state and in the staging sidecars on the nfsd host.
+Read-only opens have no marker and appear only in `/v1/opens`, not in the
+durable store report. `staging=1` reads the server's own staging directory and joins
 the sidecars to open markers by stateid, adding the target directory, file
 name, staged size, sidecar version, owning client and open owner, access mode,
 base inode and size, checkpointed size and dirty ranges, writer attributes,
