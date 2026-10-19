@@ -78,6 +78,10 @@ type Server struct {
 	clientGCRunning bool
 	clientGCDone    chan struct{}
 
+	// aliasMu orders each publication alias set and its append to aliases
+	// with the sweep's snapshot and rewrite of that log (alias_log.go).
+	aliasMu sync.Mutex
+
 	// Confirmations in progress or unresolved (server_confirm.go), by N and
 	// P, by identity and by EXCHANGE_ID owner. At most one per identity.
 	// confirmMu is taken after any other lock, sessions.mu included, and

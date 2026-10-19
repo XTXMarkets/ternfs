@@ -37,14 +37,15 @@ type aliasRecord struct {
 // each sweep. Writes are not synced: losing them on a crash leaves what
 // there was before this file existed, old handles serving old content.
 type aliasLog struct {
-	path string
+	path   string
+	rename func(oldpath, newpath string) error
 }
 
 func newAliasLog(stagingDir string) *aliasLog {
 	if stagingDir == "" {
 		return nil
 	}
-	return &aliasLog{path: filepath.Join(stagingDir, staging.AliasesDirName, aliasLogName)}
+	return &aliasLog{path: filepath.Join(stagingDir, staging.AliasesDirName, aliasLogName), rename: os.Rename}
 }
 
 func (l *aliasLog) append(rec aliasRecord) error {
@@ -124,7 +125,7 @@ func (l *aliasLog) rewrite(recs []aliasRecord) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp, l.path)
+	return l.rename(tmp, l.path)
 }
 
 // loadAliases installs the persisted aliases that are still live.
@@ -144,11 +145,14 @@ func (s *Server) loadAliases() {
 // compactAliases rewrites the log with the aliases still held. An alias
 // whose handle its client still has open outlives its expiry in memory;
 // the log gives it a lease from now, so that a process starting before
-// the next sweep keeps it too.
+// the next sweep keeps it too. A publication waits for the rewrite, since
+// its append to the file being replaced would be lost.
 func (s *Server) compactAliases() {
 	if s.aliases == nil {
 		return
 	}
+	s.aliasMu.Lock()
+	defer s.aliasMu.Unlock()
 	heldUntil := s.clients.Now().Add(clientstore.LeaseTime)
 	var recs []aliasRecord
 	for _, a := range s.views.Entries() {

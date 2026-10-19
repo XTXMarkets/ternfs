@@ -21,6 +21,7 @@ import (
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/openstate"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
@@ -1094,6 +1095,89 @@ func TestHeldPublicationAliasStaysInLog(t *testing.T) {
 	recs, err := srv.aliases.load(later.Add(clientstore.LeaseRenewAfter))
 	if err != nil || len(recs) != 1 || vfs.InodeID(recs[0].DataID) != held[0].DataID {
 		t.Fatalf("a process starting before the next sweep loads %v (%v), want the held alias", recs, err)
+	}
+}
+
+// A publication made while a sweep rewrites the alias log survives a
+// restart. The rewrite renames a new file over the log, so an alias
+// appended to the old file in the meantime would be lost until the next
+// sweep; a process started in that time would not load it. The rewrite
+// here is held at its rename while an alias is published, and the clock
+// moves on meanwhile: the alias lasts a lease from when it is made, not
+// from when its publication began to wait.
+func TestAliasPublishedDuringRewriteSurvivesRestart(t *testing.T) {
+	fs := vfs.NewLocalTernVFS(t.TempDir())
+	stagingDir := t.TempDir()
+	store, err := staging.NewLocalStore(stagingDir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewServer(fs, store, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(srv.clients.StopLeaseWorkers)
+	entered, release := make(chan struct{}), make(chan struct{})
+	var enterOnce, releaseOnce sync.Once
+	srv.aliases.rename = func(oldpath, newpath string) error {
+		enterOnce.Do(func() { close(entered) })
+		<-release
+		return os.Rename(oldpath, newpath)
+	}
+	swept, published := make(chan struct{}), make(chan struct{})
+	finish := func() {
+		releaseOnce.Do(func() { close(release) })
+		for _, done := range []chan struct{}{swept, published} {
+			select {
+			case <-done:
+			case <-time.After(10 * time.Second):
+				t.Fatal("sweep or publication did not finish")
+			}
+		}
+	}
+	key := openstate.ViewKey{ClientID: 7, FileID: 0x1001}
+	go func() {
+		defer close(swept)
+		srv.sweepViews()
+	}()
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		close(published)
+		finish()
+		t.Fatal("the sweep's rewrite did not reach its rename")
+	}
+	go func() {
+		defer close(published)
+		srv.publishedAs(key.ClientID, key.FileID, 0x1002)
+	}()
+	// Give the publication time to append to the file about to be
+	// replaced, if nothing makes it wait for the rewrite.
+	select {
+	case <-published:
+	case <-time.After(100 * time.Millisecond):
+	}
+	srv.clients.StopLeaseWorkers()
+	later := time.Now().Add(2 * clientstore.LeaseTime)
+	srv.clients.SetClock(func() time.Time { return later })
+	finish()
+	if recs, err := srv.aliases.load(later); err != nil || len(recs) != 1 || recs[0].DataID != 0x1002 {
+		t.Fatalf("at the time of the publication the log loads %v (%v), want its alias", recs, err)
+	}
+	staging.CloseFiles(t, store)
+
+	recovered, err := staging.NewLocalStore(stagingDir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer staging.CloseFiles(t, recovered)
+	restarted, err := NewServer(fs, recovered, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(restarted.clients.StopLeaseWorkers)
+	if dataID, ok := restarted.views.Get(key); !ok || dataID != 0x1002 {
+		t.Fatalf("after a restart the alias is %v %v, want the publication made during the rewrite", dataID, ok)
 	}
 }
 

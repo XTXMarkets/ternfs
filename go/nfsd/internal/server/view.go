@@ -44,6 +44,8 @@ func (s *Server) publishedAs(clientID uint64, fileID, dataID vfs.InodeID) {
 	if fileID == dataID {
 		return
 	}
+	s.aliasMu.Lock()
+	defer s.aliasMu.Unlock()
 	expires := s.clients.Now().Add(clientstore.LeaseTime)
 	s.views.Set(openstate.ViewKey{ClientID: clientID, FileID: fileID}, dataID, expires)
 	// Persisted so that the client's view survives an nfsd restart; see
