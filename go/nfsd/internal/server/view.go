@@ -53,10 +53,14 @@ func (s *Server) publishedAs(clientID uint64, fileID, dataID vfs.InodeID) {
 	}
 }
 
+// viewHeld reports that the alias's client still has its handle open,
+// which keeps the alias past its expiry.
+func (s *Server) viewHeld(key openstate.ViewKey) bool {
+	return len(s.opens.ClientOpens(key.ClientID, key.FileID)) > 0
+}
+
 func (s *Server) sweepViews() {
-	s.views.Sweep(s.clients.Now(), func(key openstate.ViewKey) bool {
-		return len(s.opens.ClientOpens(key.ClientID, key.FileID)) > 0
-	})
+	s.views.Sweep(s.clients.Now(), s.viewHeld)
 	s.compactAliases()
 }
 

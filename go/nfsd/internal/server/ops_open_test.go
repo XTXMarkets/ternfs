@@ -1043,6 +1043,60 @@ func TestPublicationAliasSurvivesRestart(t *testing.T) {
 	}
 }
 
+// A client that holds a handle open keeps its publication alias past the
+// lease after the publication, and the log must keep it as well: a process
+// starting before the next sweep loads the alias rather than showing the
+// client the version it replaced. A read open under another owner holds
+// the handle while a write open publishes over it.
+func TestHeldPublicationAliasStaysInLog(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "doc"), []byte("version one"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store, err := staging.NewLocalStore(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer staging.CloseFiles(t, store)
+	srv, err := NewServer(vfs.NewLocalTernVFS(root), store, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(srv.clients.StopLeaseWorkers)
+	addr, cleanup := serveTestServer(t, srv)
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+	xid := uint32(1)
+	clientID := setupClient(t, conn, &xid)
+	status, _, readFH, _ := openFileForOwner(t, conn, &xid, clientID, "reader", "doc", nfs4.OPEN4_SHARE_ACCESS_READ, false, false)
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("read OPEN = %s", nfs4.Nfsstat4Name(status))
+	}
+	state, fh := openWriteFile(t, conn, &xid, clientID, "doc")
+	if !bytes.Equal(fh, readFH) {
+		t.Fatal("write open changed the handle")
+	}
+	writeFileAt(t, conn, &xid, fh, state, 0, []byte("version two"))
+	closeFile(t, conn, &xid, fh, state)
+
+	// Two leases on, the read open still holds the alias. Nothing else may
+	// act on the jumped clock.
+	srv.clients.StopLeaseWorkers()
+	awaitRequestHoldsReleased(t, srv)
+	later := time.Now().Add(2 * clientstore.LeaseTime)
+	srv.clients.SetClock(func() time.Time { return later })
+	srv.sweepViews()
+	held := srv.views.Entries()
+	if len(held) != 1 {
+		t.Fatalf("%d aliases in memory after the sweep, want the held one", len(held))
+	}
+	recs, err := srv.aliases.load(later.Add(clientstore.LeaseRenewAfter))
+	if err != nil || len(recs) != 1 || vfs.InodeID(recs[0].DataID) != held[0].DataID {
+		t.Fatalf("a process starting before the next sweep loads %v (%v), want the held alias", recs, err)
+	}
+}
+
 // The Linux client's recovery after an nfsd restart, as the kill tests show
 // it: the wire clientid is new, so every open is reclaimed with CLAIM_FH
 // before the in-flight WRITEs are replayed with the new stateids, then

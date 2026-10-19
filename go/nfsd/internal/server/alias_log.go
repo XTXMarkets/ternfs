@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/openstate"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
@@ -140,14 +141,22 @@ func (s *Server) loadAliases() {
 	}
 }
 
-// compactAliases rewrites the log with the aliases still held.
+// compactAliases rewrites the log with the aliases still held. An alias
+// whose handle its client still has open outlives its expiry in memory;
+// the log gives it a lease from now, so that a process starting before
+// the next sweep keeps it too.
 func (s *Server) compactAliases() {
 	if s.aliases == nil {
 		return
 	}
+	heldUntil := s.clients.Now().Add(clientstore.LeaseTime)
 	var recs []aliasRecord
 	for _, a := range s.views.Entries() {
-		recs = append(recs, aliasRecord{ClientID: a.Key.ClientID, FileID: uint64(a.Key.FileID), DataID: uint64(a.DataID), Expires: a.Expires})
+		expires := a.Expires
+		if heldUntil.After(expires) && s.viewHeld(a.Key) {
+			expires = heldUntil
+		}
+		recs = append(recs, aliasRecord{ClientID: a.Key.ClientID, FileID: uint64(a.Key.FileID), DataID: uint64(a.DataID), Expires: expires})
 	}
 	if err := s.aliases.rewrite(recs); err != nil {
 		s.log.Warn("publication aliases: rewrite", "err", err)

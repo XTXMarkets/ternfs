@@ -21,9 +21,10 @@ import (
 // showing the replacement until the client has no opens of it and one lease
 // has passed. Close-to-open revalidation within that time sees the client's
 // own write through the handle it holds; a later LOOKUP finds the
-// replacement's own handle. The alias is process-local and bounded by
-// recent publications; after it lapses the handle names its original,
-// immutable version again.
+// replacement's own handle. Aliases are bounded by recent publications,
+// and the server records them on the staging disk so that they survive an
+// nfsd restart; after one lapses the handle names its original, immutable
+// version again.
 
 type ViewKey struct {
 	ClientID uint64
