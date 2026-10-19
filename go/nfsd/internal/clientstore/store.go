@@ -1180,9 +1180,11 @@ func (cs *Store) HasOpen(clientID uint64, stateID nfs4.StateID) (bool, error) {
 	return cs.hasOpen(clientID, stateID, true)
 }
 
-// HasLocalOpen reports that an open admitted with NoteOpen is still active.
-// It has no marker, so only the client's confirmation and lease decide, and
-// the cached client answers from its lease proof without an entry.
+// HasLocalOpen reports that the client of an open admitted with NoteOpen is
+// confirmed with a live lease. The caller has already found the open in its
+// own state. With no marker to check, the cached client answers from its
+// lease proof without an entry for the open, so a check in flight when the
+// open closes can still succeed.
 func (cs *Store) HasLocalOpen(clientID uint64, stateID nfs4.StateID) (bool, error) {
 	return cs.hasOpen(clientID, stateID, false)
 }
