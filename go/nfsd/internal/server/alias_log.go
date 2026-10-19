@@ -142,7 +142,7 @@ func (s *Server) loadAliases() {
 	}
 }
 
-// compactAliases rewrites the log with the aliases still held. An alias
+// compactAliases rewrites the log with the aliases in memory. An alias
 // whose handle its client still has open outlives its expiry in memory;
 // the log gives it a lease from now, so that a process starting before
 // the next sweep keeps it too. A publication waits for the rewrite, since

@@ -7,6 +7,7 @@ package server
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -1178,6 +1179,51 @@ func TestAliasPublishedDuringRewriteSurvivesRestart(t *testing.T) {
 	t.Cleanup(restarted.clients.StopLeaseWorkers)
 	if dataID, ok := restarted.views.Get(key); !ok || dataID != 0x1002 {
 		t.Fatalf("after a restart the alias is %v %v, want the publication made during the rewrite", dataID, ok)
+	}
+}
+
+// The alias log is read up to its first malformed line, which a torn
+// append leaves when the process dies in the middle of it. At startup the
+// aliases before that line are installed and none after it.
+func TestAliasLogLoadsUpToMalformedLine(t *testing.T) {
+	stagingDir := t.TempDir()
+	expires := time.Now().Add(clientstore.LeaseTime)
+	before := aliasRecord{ClientID: 7, FileID: 0x1001, DataID: 0x1002, Expires: expires}
+	after := aliasRecord{ClientID: 7, FileID: 0x2001, DataID: 0x2002, Expires: expires}
+	var log []byte
+	for _, rec := range []aliasRecord{before, after} {
+		line, err := json.Marshal(rec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		log = append(log, line...)
+		log = append(log, '\n')
+		if rec == before {
+			log = append(log, `{"client":7,"fi`+"\n"...)
+		}
+	}
+	path := filepath.Join(stagingDir, staging.AliasesDirName, aliasLogName)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, log, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store, err := staging.NewLocalStore(stagingDir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer staging.CloseFiles(t, store)
+	srv, err := NewServer(vfs.NewLocalTernVFS(t.TempDir()), store, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(srv.clients.StopLeaseWorkers)
+	if dataID, ok := srv.views.Get(openstate.ViewKey{ClientID: 7, FileID: 0x1001}); !ok || dataID != 0x1002 {
+		t.Fatalf("alias before the malformed line = %v %v, want it installed", dataID, ok)
+	}
+	if dataID, ok := srv.views.Get(openstate.ViewKey{ClientID: 7, FileID: 0x2001}); ok {
+		t.Fatalf("alias after the malformed line installed as %v", dataID)
 	}
 }
 

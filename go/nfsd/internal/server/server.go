@@ -81,6 +81,7 @@ type Server struct {
 	// aliasMu orders each publication alias set and its append to aliases
 	// with the sweep's snapshot and rewrite of that log (alias_log.go).
 	aliasMu sync.Mutex
+	aliases *aliasLog // nil without a staging directory
 
 	// Confirmations in progress or unresolved (server_confirm.go), by N and
 	// P, by identity and by EXCHANGE_ID owner. At most one per identity.
@@ -88,7 +89,6 @@ type Server struct {
 	// held only for map access.
 	confirmMu          sync.Mutex
 	metrics            *Metrics
-	aliases            *aliasLog // nil without a staging directory
 	confirming         map[uint64]*confirmation
 	confirmingIdentity map[vfs.InodeID]*confirmation
 	confirmingOwners   map[string]*confirmation
