@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 )
 
 // OpLatencyBounds are the upper bounds, in seconds, of the NFS operation
@@ -164,6 +165,7 @@ type MetricsSnapshot struct {
 	Opens, Aliases                                int
 	Publishes                                     uint64
 	StagingFiles, StagingRetired, StagingUnlinked int
+	StagingBusy                                   int
 	StagingBytes                                  uint64
 	HydrationsInFlight                            int
 }
@@ -216,14 +218,25 @@ func (s *Server) MetricsSnapshot() MetricsSnapshot {
 	snap.Opens = s.opens.StateCount()
 	snap.Aliases = len(s.views.Snapshot().Aliases)
 	snap.HydrationsInFlight = len(s.hydrationSlots)
-	for _, meta := range s.stagingStore.Entries() {
-		snap.StagingFiles++
-		snap.StagingBytes += meta.Size
-		if meta.Retired {
-			snap.StagingRetired++
-		}
-		if meta.Unlinked {
-			snap.StagingUnlinked++
+	// A staging file's lock is held across writes, truncates and fsyncs, so
+	// the files are inspected as the diagnostics do, without waiting for it.
+	// A busy file is counted, but its size and flags are not known. Sizes
+	// are live, including UNSTABLE writes the checkpoint does not have yet.
+	if local, ok := s.stagingStore.(*staging.LocalStore); ok {
+		records, _ := local.Snapshot()
+		for _, r := range records {
+			snap.StagingFiles++
+			if r.Locked {
+				snap.StagingBusy++
+				continue
+			}
+			snap.StagingBytes += r.Size
+			if r.Retired {
+				snap.StagingRetired++
+			}
+			if r.Unlinked {
+				snap.StagingUnlinked++
+			}
 		}
 	}
 	return snap

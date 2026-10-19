@@ -38,7 +38,7 @@ const (
 	measConnections    = metricsPrefix + "connections"            // open (gauge) and close counters
 	measAdmission      = metricsPrefix + "admission"              // in-flight, reply work, cache, sessions
 	measState          = metricsPrefix + "state"                  // opens, aliases, publishes
-	measStaging        = metricsPrefix + "staging"                // files, bytes, retired, unlinked, hydrations
+	measStaging        = metricsPrefix + "staging"                // files, bytes, retired, unlinked, busy, hydrations
 	measBackend        = metricsPrefix + "backend"                // tags service, kind; count, attempts
 	measBackendLatency = metricsPrefix + "backend_latency_bucket" // tags service, kind, le; count
 	measProcess        = metricsPrefix + "process"                // Go runtime figures
@@ -190,6 +190,7 @@ func (p *metricsPusher) build(b *log.MetricsBuilder, now time.Time) {
 	b.FieldU64("bytes", snap.StagingBytes)
 	b.FieldU64("retired", uint64(snap.StagingRetired))
 	b.FieldU64("unlinked", uint64(snap.StagingUnlinked))
+	b.FieldU64("busy", uint64(snap.StagingBusy))
 	b.FieldU64("hydrations_in_flight", uint64(snap.HydrationsInFlight))
 	b.Timestamp(now)
 

@@ -14,12 +14,14 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -389,4 +391,99 @@ func TestMetricsReplayCountsSequenceOnly(t *testing.T) {
 	if !reflect.DeepEqual(ops, want) || !reflect.DeepEqual(latency, map[string]uint64{"OP_SEQUENCE": 1}) {
 		t.Fatalf("replay counted %v, latency %v; want SEQUENCE once", ops, latency)
 	}
+}
+
+// Staging gauges do not wait on a file's lock, which disk I/O holds: a busy
+// file is counted as a file and as busy, without its size or flags, while
+// the others are reported in full.
+func TestMetricsStagingSkipsBusyFile(t *testing.T) {
+	srv, _, cleanup := startTestServerWithServer(t, t.TempDir())
+	defer cleanup()
+	store := srv.stagingStore.(*staging.LocalStore)
+	free, err := store.Create(1, staging.Meta{FileName: "free"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := free.Write(0, make([]byte, 100)); err != nil {
+		t.Fatal(err)
+	}
+	// Its flags would show if the snapshot read them.
+	busy, err := store.Create(2, staging.Meta{FileName: "busy", Unlinked: true, Retired: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := busy.Write(0, make([]byte, 50)); err != nil {
+		t.Fatal(err)
+	}
+	busy.(*staging.LocalFile).LockForTest()
+	var unlock sync.Once
+	defer unlock.Do(busy.(*staging.LocalFile).UnlockForTest)
+	snapshot := make(chan MetricsSnapshot, 1)
+	go func() { snapshot <- srv.MetricsSnapshot() }()
+	snap := testutil.AwaitValue(t, snapshot, "metrics snapshot with a busy staging file")
+	if snap.StagingFiles != 2 || snap.StagingBusy != 1 || snap.StagingBytes != 100 || snap.StagingRetired != 0 || snap.StagingUnlinked != 0 {
+		t.Fatalf("busy file: files %d busy %d bytes %d retired %d unlinked %d, want 2 1 100 0 0",
+			snap.StagingFiles, snap.StagingBusy, snap.StagingBytes, snap.StagingRetired, snap.StagingUnlinked)
+	}
+	unlock.Do(busy.(*staging.LocalFile).UnlockForTest)
+	snap = srv.MetricsSnapshot()
+	if snap.StagingFiles != 2 || snap.StagingBusy != 0 || snap.StagingBytes != 150 || snap.StagingRetired != 1 || snap.StagingUnlinked != 1 {
+		t.Fatalf("after unlock: files %d busy %d bytes %d retired %d unlinked %d, want 2 0 150 1 1",
+			snap.StagingFiles, snap.StagingBusy, snap.StagingBytes, snap.StagingRetired, snap.StagingUnlinked)
+	}
+}
+
+// Staging bytes are the live size. An UNSTABLE WRITE changes it at once,
+// while the checkpoint that recovery uses keeps its size until COMMIT. A
+// SETATTR truncate shows at once too; the server checkpoints it as it
+// truncates (setStagingSize), so the two agree until the next write.
+func TestMetricsStagingLiveSize(t *testing.T) {
+	srv, addr, cleanup := startTestServerWithServer(t, t.TempDir())
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+	xid := uint32(1)
+	clientID := setupClient(t, conn, &xid)
+	stateid, fh := openCreateFile(t, conn, &xid, clientID, "live.txt")
+	id := stagingIDForTest(t, srv.stagingStore, stateid)
+	compound := func(op func(w *nfs4.COMPOUND4argsWriter)) {
+		t.Helper()
+		res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
+			pw := w.AppendArgarray_Putfh()
+			pw.Resume(pw.StartObject().SetData(fh).Finish())
+			w.Resume(pw.Finish())
+			op(w)
+		})
+		xid++
+		expectOK(t, res)
+	}
+	sizes := func(what string, live, checkpoint uint64) {
+		t.Helper()
+		snap := srv.MetricsSnapshot()
+		meta, ok := srv.stagingStore.GetMeta(id)
+		if !ok || snap.StagingFiles != 1 || snap.StagingBytes != live || meta.Size != checkpoint {
+			t.Fatalf("%s: files %d, staging bytes %d, checkpoint size %d; want 1, %d, %d",
+				what, snap.StagingFiles, snap.StagingBytes, meta.Size, live, checkpoint)
+		}
+	}
+	sizes("after OPEN", 0, 0)
+	unstable := func(offset uint64, n int) {
+		t.Helper()
+		compound(func(w *nfs4.COMPOUND4argsWriter) {
+			ww := w.AppendArgarray_Write()
+			setStateid(ww.Stateid(), stateid)
+			ww = ww.SetOffset(offset)
+			ww = ww.SetStable(0) // UNSTABLE4
+			ww = ww.SetData(make([]byte, n))
+			w.Resume(ww.Finish())
+		})
+	}
+	unstable(0, 1000)
+	sizes("after an UNSTABLE WRITE", 1000, 0)
+	setFileSize(t, conn, &xid, fh, stateid, 400)
+	sizes("after a SETATTR truncate", 400, 400)
+	unstable(400, 200)
+	sizes("after another UNSTABLE WRITE", 600, 400)
+	compound(func(w *nfs4.COMPOUND4argsWriter) { w.AppendArgarray_Commit() })
+	sizes("after COMMIT", 600, 600)
 }

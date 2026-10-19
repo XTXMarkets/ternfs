@@ -64,6 +64,9 @@ func TestMetricsPayload(t *testing.T) {
 	if !strings.Contains(string(payload), "work_limit="+itoa(server.DefaultReplyWorkBudgetMiB<<20)+"i") {
 		t.Errorf("payload lacks the reply-work limit:\n%s", payload)
 	}
+	if !strings.Contains(string(payload), ",unlinked=0i,busy=0i,") {
+		t.Errorf("payload lacks the staging busy gauge:\n%s", payload)
+	}
 	backend := []string{
 		measBackendLatency + ",filesystem=qa_nfs,instance=r73:2049,service=shard,kind=LOOKUP,le=+Inf count=1i",
 		measBackend + ",filesystem=qa_nfs,instance=r73:2049,service=shard,kind=LOOKUP count=1i,attempts=1i",
