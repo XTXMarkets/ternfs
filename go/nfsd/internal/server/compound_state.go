@@ -28,9 +28,9 @@ type compoundState struct {
 	// afterReply collects work for after the reply is written.
 	afterReply *[]func()
 
-	// currentStateID is the stateid returned by the last OPEN or CLOSE,
-	// substituted for the special current stateid (RFC 8881 section
-	// 16.2.3.1.2). Changing the current filehandle clears it.
+	// currentStateID is the stateid returned by the last OPEN, CLOSE or
+	// OPEN_DOWNGRADE, substituted for the special current stateid
+	// (RFC 8881 section 16.2.3.1.2). Changing the current filehandle clears it.
 	currentStateID    nfs4.StateID
 	currentGeneration uint32
 	currentStateIDSet bool

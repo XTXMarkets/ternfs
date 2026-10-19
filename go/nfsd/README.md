@@ -34,11 +34,14 @@ file, and per-file locks protect staging data.
 
 The read timeout is five minutes from the start of each admitted frame
 read. The separate write timeout is five minutes for each reply once it
-acquires the writer lock. Read EOF or timeout stops admission and lets
-accepted requests finish, including after a TCP half-close. A write failure
-closes the socket and wakes the reader. Backend operations already in
-flight continue; a stuck backend can therefore retain a handler after its
-client disconnects.
+acquires the writer lock. A clean EOF may be a TCP half-close, so accepted
+requests drain and send their replies before the socket closes. A timeout,
+reset or other read failure closes the socket first and wakes requests
+waiting for reply capacity. A write failure also closes the socket and
+wakes the reader. Backend operations already executing finish their effects,
+but send no reply on the closed socket; a stuck backend can therefore
+retain a handler after its client disconnects. An RPC parse error still
+drains previously accepted requests.
 
 Identical requests reusing an in-flight XID on the same connection are
 dropped; the original request sends one reply. Reusing that XID with
@@ -46,29 +49,27 @@ different request bytes closes the connection. This guard lasts through
 the reply write. It does not cover reconnects; completed replies are cached
 by session slot instead.
 
-The admission limit bounds request count, not bytes or connections. One
-request is limited to 2 MiB, but a compound can contain up to 128 one-MiB
-READs. At the default concurrency this can retain roughly 8 GiB of reply
-payload on one connection, plus allocation overhead. Ordinary clients
-send much smaller compounds. Monitor RSS and tune the request limit for
-the workload.
+The per-connection admission limit bounds request count, not connections
+or total server RSS. RPC messages are limited to 2 MiB, and each session
+negotiates a maximum compound response within that limit. Allowing up to
+128 operations in one compound does not multiply its response limit.
+Monitor RSS and tune the request limit for the workload.
 
-Reply work is bounded separately. Each admitted request reserves an
-envelope for its reply before anything executes: eight times the bytes
-its operations can return, plus 64 KiB, so that output construction can
-never fail for memory after an effect. The bound is the sum of the
-per-operation reply bounds that execution enforces, so a WRITE compound
-reserves a few hundred KiB and a 1 MiB READ about 8.5 MiB; a compound with
-READDIR or READLINK, whose results are sized from the remaining budget,
-reserves the session's full response size. The reservations are counted
-against `-reply-work-budget-mib`, 8 GiB by default. A request that does
-not fit waits, holding its connection admission slot, until a reply
-releases work or its connection closes; it is never dropped. Before this,
-every request reserved the session's full response size against a fixed
-512 MiB, 57 requests in all, and the 58th lost its connection: a Linux
-client flushing 256 one-MiB WRITEs with 64 slots was reset whenever 58 were
-in flight, replayed the burst, and backed off for 15 s on the slots the
-server was still executing.
+Reply work bounds the memory accounted for building and sending replies.
+Before execution, each admitted request reserves eight times the sum of
+its reply capacity and a 65 KiB fixed allowance, plus a preparation
+allowance for READDIR when needed. The reply capacity follows the
+per-operation bounds that execution enforces, so a WRITE compound reserves
+much less than a 1 MiB READ, which reserves about 8.5 MiB. A compound with
+READDIR or READLINK, whose results use the remaining budget, reserves the
+session's full response size, limited further by the cache size when
+caching is requested.
+The reservations are counted against `-reply-work-budget-mib`, 8 GiB by
+default. A request waiting for available capacity keeps its connection
+admission slot until work is released or its connection closes. Requests
+larger than the entire budget are refused and their connection is closed.
+Waiting under temporary pressure avoids resets and client replay backoff
+during write bursts.
 
 ## Metrics
 
@@ -92,7 +93,7 @@ Counters are cumulative from process start. Latency histograms have a
 | `eggsfs_nfsd_op_latency_count`, `_sum_nanos` | `op` | For mean latency. |
 | `eggsfs_nfsd_io_ops`, `_bytes` | `direction` | READ and WRITE operations and payload bytes. |
 | `eggsfs_nfsd_compounds_count` | | RPC compounds handled. |
-| `eggsfs_nfsd_connections_open` | | Open TCP connections (gauge). |
+| `eggsfs_nfsd_connections_open` | | Tracked connection handlers, including connections draining requests (gauge). |
 | `eggsfs_nfsd_connections_accepted`, `_closed_by_client`, `_closed_by_server`, `_idle_timeouts`, `_read_errors`, `_parse_errors` | | How connections began and ended. Each ended connection is counted once, by the first cause seen, when its handler returns, so the causes sum to the accepted connections that are no longer open. A client close is EOF or a reset; a server close is a reply write failure, a panic, a request refused or dropped without a reply, or a conflicting XID. |
 | `eggsfs_nfsd_admission_in_flight`, `_max_in_flight` | | Requests admitted and not yet answered, and the sum of per-connection limits (gauges). |
 | `eggsfs_nfsd_admission_work_bytes`, `_work_limit`, `_work_replies`, `_work_waiters` | | Reply-work reservations against `-reply-work-budget-mib`, and requests waiting for it (gauges). |
@@ -131,11 +132,17 @@ restart.
 The negotiated limits are enforced. CREATE_SESSION returns `NFS4ERR_TOOSMALL`
 for channel attributes too small to carry a SEQUENCE. SEQUENCE returns
 `NFS4ERR_TOO_MANY_OPS` or `NFS4ERR_REQ_TOO_BIG` for a compound beyond the
-session's limits. With `sa_cachethis` set, a session whose negotiated cache
-size cannot hold even a minimal reply gets `NFS4ERR_REP_TOO_BIG_TO_CACHE`; a
-reply larger than the cache size is simply not cached. A reply larger than
-the session's maximum is replaced by `NFS4ERR_REP_TOO_BIG`; the operations
-may already have taken effect.
+session's limits. With `sa_cachethis` set, the reply must also fit the
+negotiated cache limit; it is not silently served uncached.
+
+Each operation's reply bound is checked before dispatch. An operation
+that would exceed the remaining response or cache budget returns
+`NFS4ERR_REP_TOO_BIG` or `NFS4ERR_REP_TOO_BIG_TO_CACHE` without executing.
+Earlier operations in the compound may already have taken effect.
+Read-only operations with variable results can also be replaced by a
+size error after their result is built. If a mutation exceeds its fixed
+reply bound after execution, the server retires the session and closes the
+connection instead of reporting a pre-execution failure.
 
 Any connection may carry requests for any session; a connection is
 associated with a session by CREATE_SESSION, BIND_CONN_TO_SESSION or its

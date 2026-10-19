@@ -86,7 +86,7 @@ type sequenceAdmission struct {
 }
 
 // startSequence validates SEQUENCE and claims its slot. The caller must
-// call finishSequence once the compound reply is complete.
+// call sequenceResult.finish once the compound reply is complete.
 func (s *Server) startSequence(args nfs4.SEQUENCE4args, admission ...sequenceAdmission) sequenceResult {
 	a := sequenceAdmission{digest: sha256.Sum256(args.Bytes()), operations: 1,
 		sequenceReplyBytes: rpcAcceptedHeaderSize + 12 + 44}
@@ -229,7 +229,7 @@ func (s *Server) startSequence(args nfs4.SEQUENCE4args, admission ...sequenceAdm
 	}
 }
 
-// finishSequence records the reply for a request which claimed a slot.
+// finish records the reply for a request which claimed a slot.
 func (r *sequenceResult) finish(reply []byte) {
 	if r.slot == nil {
 		if r.view != nil {

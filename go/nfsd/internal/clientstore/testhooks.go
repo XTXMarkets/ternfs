@@ -22,8 +22,8 @@ type testingT interface {
 	TempDir() string
 }
 
-// collectStaleForClient and collectStale run a collection pass and discard
-// the recheck flag. Production code uses collectStaleForClientResult.
+// CollectStaleForClient and collectStale run a collection pass and discard
+// the recheck flag. Production code uses CollectStaleForClientResult.
 func (cs *Store) CollectStaleForClient(clientID vfs.InodeID) error {
 	_, err := cs.CollectStaleForClientResult(clientID)
 	return err
@@ -100,7 +100,7 @@ func (a *ConfirmAttempt) LockForTest() { a.mu.Lock() }
 // UnlockForTest releases LockForTest.
 func (a *ConfirmAttempt) UnlockForTest() { a.mu.Unlock() }
 
-// refresherWorkerForTest is RefresherForTest with server hooks, so the
+// RefresherWorkerForTest is RefresherForTest with server hooks, so the
 // record has a worker that wakes are delivered to.
 func RefresherWorkerForTest(t testingT, fs *PassCountVFS) (*Store, uint64, *LeaseRefresher) {
 	t.Helper()

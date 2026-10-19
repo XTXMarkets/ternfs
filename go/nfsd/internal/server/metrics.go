@@ -146,7 +146,8 @@ type OpLatencySnapshot struct {
 	SumNanos   uint64
 }
 
-// MetricsSnapshot is everything the exporter needs, taken at one instant.
+// MetricsSnapshot holds the counters and gauges sampled for one export.
+// Different subsystems are read separately, not at one common instant.
 type MetricsSnapshot struct {
 	Ops     []OpCount
 	Latency []OpLatencySnapshot

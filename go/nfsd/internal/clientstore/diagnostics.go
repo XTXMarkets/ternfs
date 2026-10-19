@@ -108,7 +108,7 @@ func (a *ConfirmAttempt) Snapshot() *inspect.Attempt {
 	return out
 }
 
-// refresherRecord copies a lease record. The caller holds r.mu.
+// refresherRecord copies a lease record. The caller holds r.Mu.
 func refresherRecord(r *LeaseRefresher) *inspect.Refresher {
 	out := &inspect.Refresher{
 		State:       leaseRecordName(r.State),

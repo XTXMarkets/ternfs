@@ -92,7 +92,7 @@ func (vs *ViewStore) Get(key ViewKey) (vfs.InodeID, bool) {
 	return alias.dataID, ok
 }
 
-// sweep drops aliases which have expired and whose handle no client of
+// Sweep drops aliases which have expired and whose handle no client of
 // this nfsd still has open.
 func (vs *ViewStore) Sweep(now time.Time, open func(ViewKey) bool) {
 	vs.mu.Lock()

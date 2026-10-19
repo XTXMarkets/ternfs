@@ -273,7 +273,7 @@ func (s *Server) removeConfirmationLocked(e *confirmation) {
 	}
 }
 
-// acquire gives the caller exclusive application of an unresolved e.
+// acquireConfirmation gives the caller exclusive application of an unresolved e.
 func (s *Server) acquireConfirmation(e *confirmation) bool {
 	s.confirmMu.Lock()
 	defer s.confirmMu.Unlock()
@@ -284,7 +284,7 @@ func (s *Server) acquireConfirmation(e *confirmation) bool {
 	return true
 }
 
-// release ends exclusive application of a still unresolved e.
+// releaseConfirmation ends exclusive application of a still unresolved e.
 func (s *Server) releaseConfirmation(e *confirmation) {
 	s.confirmMu.Lock()
 	e.applying = false

@@ -61,10 +61,10 @@ func main() {
 	}
 }
 
-// restartWriterData is what restart-writer.py writes: a prefix before the
-// restart and the rest after it.
 const restartWriterName = "restart-mid-write.dat"
 
+// restartWriterData is what restart-writer.py writes: a prefix before the
+// restart and the rest after it.
 func restartWriterData() []byte {
 	return append(bytes.Repeat([]byte("written before the nfsd restart\n"), 2048),
 		bytes.Repeat([]byte("written after the nfsd restart\n"), 2048)...)

@@ -35,7 +35,7 @@ type Store struct {
 	LeaseName      string
 	ConfirmingName string
 	Now            func() time.Time
-	// clock is what now reads; setClock swaps it while workers run.
+	// clock is read by Now; SetClock swaps it while workers run.
 	clock        atomic.Pointer[func() time.Time]
 	LocalClients sync.Map
 
@@ -54,7 +54,7 @@ type Store struct {
 	BeginPurge   func(n, p vfs.InodeID) (func(), bool)
 
 	// The durable lease refresher's records (lease_refresher.go), under
-	// refreshMu, with their record and orphan credits.
+	// RefreshMu, with their record and orphan credits.
 	RefreshMu      sync.Mutex
 	Refreshers     map[vfs.InodeID]*LeaseRefresher
 	RefresherLimit int
@@ -64,8 +64,8 @@ type Store struct {
 	leaseStop    chan struct{}
 	leaseStopped bool
 	leaseWorkers sync.WaitGroup
-	// Set by the server (canonical r3 §§8 and 9). leaseNeed reports the
-	// logical lease's refresh need; leaseTerminal retires an incarnation's
+	// Set by the server (canonical r3 §§8 and 9). LeaseNeed reports the
+	// logical lease's refresh need; LeaseTerminal retires an incarnation's
 	// sessions once its record is stale or fleet-expired, reporting false to
 	// be retried. With them set, records have workers and only the server's
 	// decideExpired publishes expired markers. Without them (store-only use)
@@ -73,12 +73,12 @@ type Store struct {
 	// before.
 	LeaseNeed     func(uint64) bool
 	LeaseTerminal func(uint64, func()) bool
-	// leaseSessions reports that the incarnation has sessions here, which
+	// LeaseSessions reports that the incarnation has sessions here, which
 	// keeps its record (and its proven lease) between requests.
 	LeaseSessions func(uint64) bool
 }
 
-// setClock replaces the store's clock; it is safe while workers and
+// SetClock replaces the store's clock; it is safe while workers and
 // connections read it.
 func (cs *Store) SetClock(now func() time.Time) { cs.clock.Store(&now) }
 
@@ -950,9 +950,9 @@ func (cs *Store) identityForIncarnation(
 	return identityID, true, nil
 }
 
-// confirmedLocation validates the clientid ancestry and checks that the
-// identity's confirmed symlink still names this incarnation. The symlink inode
-// is returned so callers can detect an atomic pointer replacement cheaply.
+// confirmedLocationForIdentity checks whether identityID's confirmed symlink
+// names incarnationID. It returns the symlink inode so callers can detect a
+// pointer replacement.
 func (cs *Store) confirmedLocationForIdentity(
 	incarnationID vfs.InodeID,
 	identityID vfs.InodeID,
@@ -1098,7 +1098,7 @@ func (cs *Store) renewLease(
 	return state, nil
 }
 
-// leaseProven reports whether this process's refresher has published a
+// LeaseProven reports whether this process's refresher has published a
 // lease for the client that is still in the future.
 func (cs *Store) LeaseProven(incarnationID vfs.InodeID) bool {
 	cs.RefreshMu.Lock()
@@ -1143,7 +1143,7 @@ func (cs *Store) RemoveOpen(clientID uint64, stateID nfs4.StateID) error {
 	return err
 }
 
-// cachedClientIDs includes clients which only renew and have no open state.
+// CachedClientIDs includes clients which only renew and have no open state.
 func (cs *Store) CachedClientIDs() []uint64 {
 	var result []uint64
 	cs.LocalClients.Range(func(key, _ any) bool {
@@ -1321,7 +1321,7 @@ type leaseObservation struct {
 	Found       bool // some lease slot exists
 }
 
-// observeLease reads an incarnation's lease state without writing.
+// ObserveLease reads an incarnation's lease state without writing.
 func (cs *Store) ObserveLease(clientID uint64) (leaseObservation, error) {
 	incarnationID := vfs.InodeID(clientID)
 	identityID, valid, err := cs.identityForIncarnation(incarnationID)
@@ -1351,13 +1351,13 @@ func (cs *Store) ObserveLease(clientID uint64) (leaseObservation, error) {
 	return leaseObservation{Marked: marked, Live: scan.live && !marked, Found: scan.found}, nil
 }
 
-// publishExpiredMarker is decideExpired's only write: the marker, after
+// PublishExpiredMarker is decideExpired's only write: the marker, after
 // arbitration (canonical r3 §8 step 3).
 func (cs *Store) PublishExpiredMarker(clientID uint64) error {
 	return cs.EnsureMarker(vfs.InodeID(clientID), ExpiredName)
 }
 
-// forgetUnconfirmed ends an incarnation that is no longer confirmed: its
+// ForgetUnconfirmed ends an incarnation that is no longer confirmed: its
 // markers and leases are purged, as ExpireIfLeaseDead does.
 func (cs *Store) ForgetUnconfirmed(clientID uint64) error {
 	incarnationID := vfs.InodeID(clientID)
@@ -1874,7 +1874,7 @@ func isConfirmingName(name string) bool {
 		len(name) > len(confirmingPrefix)
 }
 
-// stagingRecoveryKey identifies one client boot independently of the lease
+// StagingRecoveryKey identifies one client boot independently of the lease
 // incarnation. Hash the principal too so an identity takeover cannot recover
 // another principal's private bytes. The key survives incarnation GC.
 func (cs *Store) StagingRecoveryKey(clientID uint64) ([32]byte, error) {
@@ -1905,7 +1905,7 @@ func (cs *Store) StagingRecoveryKey(clientID uint64) ([32]byte, error) {
 	return sha256.Sum256(data), nil
 }
 
-// confirmedRecord answers an EXCHANGE_ID update (EXCHGID4_FLAG_UPD_CONFIRMED_REC_A)
+// ConfirmedRecord answers an EXCHANGE_ID update (EXCHGID4_FLAG_UPD_CONFIRMED_REC_A)
 // without changing the store. RFC 8881 section 18.35.5 cases 6-8 require a
 // confirmed record with the same verifier and principal.
 func (cs *Store) ConfirmedRecord(

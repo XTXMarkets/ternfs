@@ -14,9 +14,9 @@ import (
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
-// DefaultReplyWorkBudgetMiB is the default -reply-work-budget-mib. A READ
-// compound reserves about 8.5 MiB, so this admits roughly a thousand READs
-// at once; WRITE compounds reserve a few hundred KiB.
+// DefaultReplyWorkBudgetMiB is the default -reply-work-budget-mib. A compound
+// with one 1 MiB READ reserves about 8.5 MiB, so this admits roughly a
+// thousand such requests at once. WRITE compounds reserve much less.
 const DefaultReplyWorkBudgetMiB = 8192
 
 const (
@@ -28,10 +28,10 @@ const (
 	compoundHeaderBytes = 12 // status, tag length, result count
 	sequenceResultBytes = 44 // SEQUENCE resok: session id, sequence and slot ids, flags
 	failedResultBytes   = 8  // one operation's opnum and status
-	// The envelope is replyWorkMultiplier times the bytes the compound can
-	// return, plus replyWorkFixedBytes, covering the response writer, its
+	// The envelope is replyWorkMultiplier times the sum of the reply
+	// capacity and replyWorkFixedBytes. It covers the response writer, its
 	// checkpoints and growth, variable-result scratch and the full encoded
-	// output existing at once.
+	// output existing at once. READDIR's preparation allowance is separate.
 	replyWorkMultiplier = 8
 	replyWorkFixedBytes = 64<<10 + 1024
 	// replyBoundSlack covers the fixed-size results execution adds around
@@ -145,7 +145,7 @@ func variableReplyOperation(op uint32) bool {
 // replyWork charges a conservative allocation envelope independently of cache.
 // It covers the response writer, checkpoints/growth, variable-result scratch and
 // full RPC output simultaneously. It lives until transport completion, not until
-// slot finish. This ownership says nothing about the client's lease (N09).
+// slot finish. The client's lease is tracked separately by its request hold.
 type replyWork struct {
 	store          *sessionStore
 	capacity       int
@@ -224,8 +224,8 @@ func (req *rpcRequest) acquireReplyWork(s *Server) bool {
 		}
 	}
 	// Go append growth and temporary variable results are covered conservatively.
-	// READ is admitted before its buffer; READLINK is bounded separately below.
-	// One READDIR runs at a time, so one preparation allowance covers them all.
+	// READ is admitted before allocating its buffer. READDIR operations within
+	// a compound run sequentially, so one preparation allowance covers them all.
 	charge := replyWorkMultiplier * (capacity + replyWorkFixedBytes)
 	if readdir {
 		charge += readdirPrepareBytes

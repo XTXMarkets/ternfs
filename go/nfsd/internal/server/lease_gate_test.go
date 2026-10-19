@@ -450,7 +450,7 @@ func TestWakesDoNotShortenBackoff(t *testing.T) {
 
 // With server hooks the store's Renew does not run a pass
 // (the worker owns every pass and a server's terminal steps take identity
-// ownership under leaseLocks); it reads the record and writes nothing.
+// ownership under LeaseLocks); it reads the record and writes nothing.
 func TestRenewWithServerHooksDoesNotPass(t *testing.T) {
 	fs := &clientstore.PassCountVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
 	srv, err := NewServer(fs, staging.ReadOnlyStore{}, nil)

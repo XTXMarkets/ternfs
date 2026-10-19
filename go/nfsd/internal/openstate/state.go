@@ -39,7 +39,7 @@ type State struct {
 // Writes reports write access: the open has a writer.
 func (s State) Writes() bool { return s.Access&nfs4.OPEN4_SHARE_ACCESS_WRITE != 0 }
 
-// grant is one OPEN or OPEN_DOWNGRADE's share access and deny.
+// Grant is one OPEN or OPEN_DOWNGRADE's share access and deny.
 type Grant struct {
 	Access, Deny uint32
 }

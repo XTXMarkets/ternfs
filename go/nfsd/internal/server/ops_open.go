@@ -464,7 +464,7 @@ func (s *Server) releaseWrite(openStateid nfs4.Stateid4, st *compoundState, clos
 		if adopted, ok := s.opens.Adopt(recoveredOwner(meta), st.currentID, readID, *to, sid, openstate.NextGeneration(generation)); ok {
 			return adopted, nfs4.NFS4_OK
 		}
-		panic("recovered downgrade: adoption checked under lockFile failed")
+		panic("recovered downgrade: adoption failed with the file lock held")
 	}
 	if recovered {
 		state.Generation = openstate.NextGeneration(generation)
