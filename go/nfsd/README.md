@@ -51,7 +51,24 @@ request is limited to 2 MiB, but a compound can contain up to 128 one-MiB
 READs. At the default concurrency this can retain roughly 8 GiB of reply
 payload on one connection, plus allocation overhead. Ordinary clients
 send much smaller compounds. Monitor RSS and tune the request limit for
-the workload; there is no aggregate byte budget.
+the workload.
+
+Reply work is bounded separately. Each admitted request reserves an
+envelope for its reply before anything executes: eight times the bytes
+its operations can return, plus 64 KiB, so that output construction can
+never fail for memory after an effect. The bound is the sum of the
+per-operation reply bounds that execution enforces, so a WRITE compound
+reserves a few hundred KiB and a 1 MiB READ about 8.5 MiB; a compound with
+READDIR or READLINK, whose results are sized from the remaining budget,
+reserves the session's full response size. The reservations are counted
+against `-reply-work-budget-mib`, 8 GiB by default. A request that does
+not fit waits, holding its connection admission slot, until a reply
+releases work or its connection closes; it is never dropped. Before this,
+every request reserved the session's full response size against a fixed
+512 MiB, 57 requests in all, and the 58th lost its connection: a Linux
+client flushing 256 one-MiB WRITEs with 64 slots was reset whenever 58 were
+in flight, replayed the burst, and backed off for 15 s on the slots the
+server was still executing.
 
 ## Sessions
 

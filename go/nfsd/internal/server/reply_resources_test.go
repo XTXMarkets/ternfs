@@ -240,3 +240,133 @@ func TestSessionAndWorkCapacityBeforeEffects(t *testing.T) {
 		t.Fatalf("serial exhaustion changed records %+v", a)
 	}
 }
+
+// A request that does not fit the reply-work budget waits for releases
+// rather than losing its connection; one whose connection closes while it
+// waits gives up. A request larger than the whole budget is refused at once.
+func TestReplyWorkWaitsForCapacity(t *testing.T) {
+	srv, addr, cleanup := startTestServerWithServer(t, t.TempDir())
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+	xid := uint32(1)
+	client := setupClient(t, conn, &xid)
+	ts := testSessionForClient(conn, client)
+	ss := srv.sessions
+	request := func(slot, seq uint32) *rpcRequest {
+		wire := admissionSequence(buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) { w.AppendArgarray_Putrootfh() }), ts, slot, seq, false)
+		req, err := parseRPCCall(rpcCallForTest(xid, procCompound, wire))
+		if err != nil {
+			t.Fatal(err)
+		}
+		xid++
+		return req
+	}
+	first := request(0, 1)
+	if !first.acquireReplyWork(srv) {
+		t.Fatal("first admission")
+	}
+	ss.cacheMu.Lock()
+	ss.workLimit = ss.workBytes // Exactly one request fits.
+	ss.cacheMu.Unlock()
+	defer func() {
+		ss.cacheMu.Lock()
+		ss.workLimit = maxReplyWorkBytes
+		ss.cacheMu.Unlock()
+	}()
+
+	second := request(1, 1)
+	admitted := make(chan bool, 1)
+	go func() { admitted <- second.acquireReplyWork(srv) }()
+	testutil.AssertBlocked(t, admitted, "second request while the budget is full")
+	first.releaseReply()
+	if !testutil.AwaitValue(t, admitted, "second request after a release") {
+		t.Fatal("second request refused after the release")
+	}
+
+	closed := make(chan struct{})
+	third := request(2, 1)
+	third.connection = &rpcConnection{closed: closed}
+	go func() { admitted <- third.acquireReplyWork(srv) }()
+	testutil.AssertBlocked(t, admitted, "third request while the budget is full")
+	close(closed)
+	ss.wakeWorkWaiters()
+	if testutil.AwaitValue(t, admitted, "third request after its connection closed") {
+		t.Fatal("a request on a closed connection was admitted")
+	}
+	second.releaseReply()
+
+	ss.cacheMu.Lock()
+	ss.workLimit = 1
+	ss.cacheMu.Unlock()
+	if request(3, 1).acquireReplyWork(srv) {
+		t.Fatal("a request larger than the whole budget was admitted")
+	}
+}
+
+// The reply-work charge follows what a compound can return, not the session's
+// maximum response: a WRITE of 1 MiB reserves a few hundred KiB, a READ of
+// 1 MiB reserves the full envelope, and a compound with READDIR keeps the
+// session's response size because its result is sized from the remainder.
+func TestReplyWorkChargeFollowsOperationBounds(t *testing.T) {
+	srv, addr, cleanup := startTestServerWithServer(t, t.TempDir())
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+	xid := uint32(1)
+	client := setupClient(t, conn, &xid)
+	ts := testSessionForClient(conn, client)
+	charge := func(body func(w *nfs4.COMPOUND4argsWriter)) int {
+		t.Helper()
+		wire := admissionSequence(buildCompoundBody(nil, body), ts, 0, 1, false)
+		req, err := parseRPCCall(rpcCallForTest(xid, procCompound, wire))
+		if err != nil {
+			t.Fatal(err)
+		}
+		xid++
+		if !req.acquireReplyWork(srv) {
+			t.Fatal("admission")
+		}
+		c := req.replyWork.charge
+		req.releaseReply()
+		return c
+	}
+	data := make([]byte, 1<<20)
+	write := charge(func(w *nfs4.COMPOUND4argsWriter) {
+		w.AppendArgarray_Putrootfh()
+		ww := w.AppendArgarray_Write()
+		ww.Stateid().SetSeqid(0)
+		for i := 0; i < 12; i++ {
+			ww.Stateid().SetOther(i, 0)
+		}
+		ww = ww.SetOffset(0)
+		ww = ww.SetStable(0)
+		ww = ww.SetData(data)
+		w.Resume(ww.Finish())
+	})
+	read := charge(func(w *nfs4.COMPOUND4argsWriter) {
+		w.AppendArgarray_Putrootfh()
+		rw := w.AppendArgarray_Read()
+		rw.Stateid().SetSeqid(0)
+		rw.SetOffset(0)
+		rw.SetCount(1 << 20)
+	})
+	readdir := charge(func(w *nfs4.COMPOUND4argsWriter) {
+		w.AppendArgarray_Putrootfh()
+		r := w.AppendArgarray_Readdir()
+		r.SetMaxcount(1 << 20)
+		r.SetDircount(1 << 20)
+		mask := r.StartAttrRequest()
+		r.Resume(mask.Finish())
+		w.Resume(r.Finish())
+	})
+	if write > 8*(96<<10) {
+		t.Fatalf("WRITE compound charged %d bytes, want a few hundred KiB", write)
+	}
+	if read < 8*(1<<20) {
+		t.Fatalf("READ compound charged %d bytes, want at least the 1 MiB payload eightfold", read)
+	}
+	if readdir < 8*(1<<20) {
+		t.Fatalf("READDIR compound charged %d bytes, want the session's response size eightfold", readdir)
+	}
+}

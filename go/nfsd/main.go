@@ -32,6 +32,8 @@ func main() {
 	verbose := flag.Bool("v", false, "verbose logging of NFS requests/responses")
 	allowMinor2 := flag.Bool("allow-minor-version-2", false,
 		"also accept NFSv4.2 COMPOUNDs, served as NFSv4.1 with every 4.2 operation unsupported")
+	replyWorkMiB := flag.Int("reply-work-budget-mib", server.DefaultReplyWorkBudgetMiB,
+		"memory reserved for replies in flight across all connections, in MiB; requests beyond it wait")
 	maxInFlight := flag.Int("max-in-flight-per-connection", server.DefaultMaxInFlightPerConn,
 		"maximum requests admitted per TCP connection")
 	statusAddr := flag.String("status-addr", "",
@@ -51,6 +53,10 @@ func main() {
 	// starting a server.
 	if flag.NArg() > 0 {
 		fmt.Fprintf(os.Stderr, "unexpected arguments: %v\n", flag.Args())
+		os.Exit(2)
+	}
+	if *replyWorkMiB <= 0 {
+		fmt.Fprintln(os.Stderr, "-reply-work-budget-mib must be positive")
 		os.Exit(2)
 	}
 	if *maxInFlight <= 0 {
@@ -102,6 +108,7 @@ func main() {
 		os.Exit(1)
 	}
 	srv.MaxInFlightPerConn = *maxInFlight
+	srv.SetReplyWorkBudget(*replyWorkMiB << 20)
 	srv.AllowMinorVersion2 = *allowMinor2
 	srv.NFSAddr = *addr
 	if *statusAddr != "" {

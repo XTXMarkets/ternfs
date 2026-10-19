@@ -129,6 +129,16 @@ func (s *Server) lockMutationTargets(targets ...mutationTarget) func() {
 const maxPendingClientGC = 256
 const DefaultMaxInFlightPerConn = 64
 
+// SetReplyWorkBudget bounds the reply work admitted at once across all
+// connections. Requests beyond it wait for releases.
+func (s *Server) SetReplyWorkBudget(bytes int) {
+	ss := s.sessions
+	ss.cacheMu.Lock()
+	ss.workLimit = bytes
+	ss.workFreed.Broadcast()
+	ss.cacheMu.Unlock()
+}
+
 func NewServer(fs vfs.TernVFS, stagingStore staging.Store, logger *slog.Logger) (*Server, error) {
 	clients, err := clientstore.NewStore(fs)
 	if err != nil {
@@ -415,6 +425,7 @@ func (s *Server) handleConn(conn net.Conn) {
 		if closed.CompareAndSwap(false, true) {
 			close(done)
 			conn.Close()
+			s.sessions.wakeWorkWaiters()
 		}
 	}
 	defer closeConnection()
@@ -693,7 +704,7 @@ func (s *Server) compoundBody(req *rpcRequest, args nfs4.COMPOUND4args) (result 
 		if index == 0 {
 			switch {
 			case opnum == nfs4.OP_SEQUENCE:
-				prefixBytes := uint32(rpcAcceptedHeaderSize + w.Len() + 44)
+				prefixBytes := uint32(rpcAcceptedHeaderSize + w.Len() + sequenceResultBytes)
 				uncachedBytes := prefixBytes
 				if len(ops) > 1 {
 					uncachedBytes += resultErrorSize(ops[1].Disc())
@@ -745,6 +756,9 @@ func (s *Server) compoundBody(req *rpcRequest, args nfs4.COMPOUND4args) (result 
 		if st.session != nil {
 			limit = seq.budget
 		}
+		// Admission reserved the envelope the compound's operations can
+		// fill; the output must stay inside it.
+		limit = min(limit, uint32(req.replyWork.capacity))
 		used := uint32(rpcAcceptedHeaderSize + w.Len())
 		suffix := uint32(0)
 		if index+1 < len(ops) {

@@ -31,10 +31,13 @@ type sessionStore struct {
 	cachedBuffers                     int
 	cacheLimit                        int
 	workBytes, workReplies, workLimit int
-	records, pendingSessions          int
-	recordLimit                       int
-	wireIDs                           wireClientIDs
-	now                               func() time.Time
+	// workFreed is signalled under cacheMu when reply work is released or a
+	// connection closes, for requests waiting in acquireReplyWork.
+	workFreed                *sync.Cond
+	records, pendingSessions int
+	recordLimit              int
+	wireIDs                  wireClientIDs
+	now                      func() time.Time
 
 	// ownerLocks orders each owner's registrations and destructions: the
 	// durable registration and the wire publication happen together. Taken
@@ -43,7 +46,7 @@ type sessionStore struct {
 }
 
 func newSessionStore(epoch uint32) *sessionStore {
-	return &sessionStore{
+	ss := &sessionStore{
 		epoch:       epoch,
 		sessions:    make(map[SessionID]*session),
 		clients:     make(map[uint64]*sessionClient),
@@ -56,6 +59,16 @@ func newSessionStore(epoch uint32) *sessionStore {
 		recordLimit: clientstore.MaxSessionRecords,
 		now:         time.Now,
 	}
+	ss.workFreed = sync.NewCond(&ss.cacheMu)
+	return ss
+}
+
+// wakeWorkWaiters lets requests waiting for reply work re-check their
+// connection, which has closed.
+func (ss *sessionStore) wakeWorkWaiters() {
+	ss.cacheMu.Lock()
+	ss.workFreed.Broadcast()
+	ss.cacheMu.Unlock()
 }
 
 // A session ID is the issuing process's epoch, the incarnation and a
