@@ -382,7 +382,8 @@ A retransmission to a restored slot is answered in one of three ways:
 - Its sequence number is later than recorded, in serial order, by any
   amount: the records of later requests were never written. It runs as a
   new request, once; ordinary rules apply from then on. An unused restored
-  slot likewise takes any first sequence number. The slot must not be in
+  slot likewise takes any first sequence number after zero in serial
+  order, that is 1 to 2^31-1. The slot must not be in
   use. While the file was on disk, the request could have
   had at most one mutating operation. RENAME, REMOVE and CREATE of a
   directory or symlink would have written an intent. The others, alone,

@@ -269,10 +269,11 @@ entries, complete pairs, retired entries, data files, sidecars, data bytes
 and allocated bytes.
 
 Each sidecar is joined to an open marker by stateid, within its incarnation.
-The joined entry carries the target directory and name, staged and
-checkpointed size, sidecar version, owning incarnation and open owner,
-access mode, base inode and size, dirty ranges, writer attributes, the
-recovery key, the EXCLUSIVE4 verifier when present, and the `retired`,
+The joined entry carries the target directory and name, the data file's
+current `size`, `allocated_bytes` and `data_mtime`, the sidecar's
+`checkpoint_size` and `checkpoint_time`, sidecar version, owning
+incarnation and open owner, access mode, base inode and size, dirty
+ranges, writer attributes, the recovery key, the EXCLUSIVE4 verifier when present, and the `retired`,
 `unlinked` and `guarded` flags. An entry is `retired` when its lease
 expired and its acknowledged data is held for the client to reclaim. The
 sidecar version is the on-disk layout, such as `v8`, not an NFS version.
@@ -285,9 +286,12 @@ client's file; it counts those sidecars in `staging_summary.other_clients`
 instead. Quarantined files are listed under `quarantined`, as paths
 relative to the staging directory.
 
-The report shows only checkpointed state. Uncheckpointed writes and
-in-memory hydration progress are absent; `/v1/staging` on the running
-process shows them.
+The sidecar fields are the last checkpoint: `checkpoint_size`, `dirty`,
+the attributes and the flags. The data file's `size`, `allocated_bytes` and
+`data_mtime`, and `staging_summary.data_bytes` and `allocated_bytes`, are
+current disk statistics, so they can include writes not yet checkpointed.
+The live dirty ranges of uncheckpointed writes and in-memory hydration
+progress are absent; `/v1/staging` on the running process shows them.
 
 ### Problems and notes
 

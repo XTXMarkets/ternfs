@@ -176,11 +176,8 @@ Other writers of the client remain usable.
 Quarantine retains the data and sidecar beneath `quarantine/`. A failed
 move can leave the pair split between directories. Keep both parts. The
 mechanism is in [staging](internal/staging/README.md#startup-recovery-and-quarantine).
-A CLOSE whose hydration or LinkFile fails quarantines its staging only
-when other opens read it; otherwise the staging is discarded. A
-timestamp-only CLOSE that fails keeps its staging; see
-[Writer recovery](#writer-recovery) and
-[failed CLOSE](DEPLOYMENT.md#a-backend-timeout-is-treated-as-a-failure).
+A failed CLOSE has its own rules for what is kept; see
+[Writer recovery](#writer-recovery).
 
 ## Inspect stored state
 
@@ -225,7 +222,10 @@ the staging sidecars without changing them. On a running daemon, use its
    not, so account for them separately: a count of zero does not mean all
    staged writes were published or recovered.
 
-The report shows checkpointed state only. In-memory writes, hydration
+The report's sidecar fields are the last checkpoint, while a data file's
+size, allocation and modification time are current disk statistics that
+can include writes not yet checkpointed; see the
+[staging join](inspect/README.md#staging-join). Live dirty ranges, hydration
 progress and session state are absent; on a running daemon, `/v1/staging`
 and `/v1/sessions` show them. A report taken while the daemon runs is an
 observation, not an atomic backup. Lease slots in the report name the

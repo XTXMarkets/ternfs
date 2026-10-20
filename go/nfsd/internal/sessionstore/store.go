@@ -67,8 +67,8 @@ const (
 	// names the index of the operation it protects. Version 3: areas are
 	// written in turn, not chosen by sequence number, and a completion
 	// beats its intent at the same sequence number. Version 4: no file is
-	// left of a session that sent a callback or changed its callback
-	// program, which a version 3 file may be. Version 5: no file is left
+	// left of a session that sent a CB_COMPOUND or changed its callback
+	// program, which a version 3 file may be; CB_NULL leaves the file. Version 5: no file is left
 	// of a session that ran a compound with more than one mutating
 	// operation, which a version 4 file may be.
 	formatVersion = 5

@@ -220,7 +220,8 @@ type inspectStagingEntry struct {
 	FileName       string     `json:"file_name,omitempty"`
 	Cookie         string     `json:"cookie,omitempty"`
 	// RecoveryKey is the client identity, boot verifier and principal which
-	// must match for a rebooted client to reclaim this data.
+	// must match for the same client boot to reclaim this data after its
+	// incarnation expired (README.md#registration).
 	RecoveryKey string `json:"recovery_key,omitempty"`
 	StateID     string `json:"stateid,omitempty"`
 	Incarnation string `json:"incarnation,omitempty"`
@@ -230,7 +231,7 @@ type inspectStagingEntry struct {
 	OwnerKnown   bool   `json:"owner_known"`
 	ReadOnly     bool   `json:"read_only"`
 	// Retired marks data kept after the owning lease expired, so that the
-	// client can reclaim it after a reboot.
+	// same client boot can reclaim it.
 	Retired  bool `json:"retired"`
 	Unlinked bool `json:"unlinked"`
 	Guarded  bool `json:"guarded"`

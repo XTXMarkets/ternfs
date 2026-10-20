@@ -14,6 +14,8 @@ Tests should distinguish supported behaviour, correctly rejected operations
 and unsupported features. The current contract and defects are described in
 [Deployment](../DEPLOYMENT.md).
 
+## Suites
+
 | Suite | Client and backend | What it checks |
 | --- | --- | --- |
 | Go unit tests | Raw RPC and direct calls; local filesystem backend. | Protocol handling, state, staging and injected failures. |
@@ -198,10 +200,13 @@ The driver also accepts `-registry`, `-binaries-dir`, `-nfsd` and
 
 ## Separate CI NFS integration
 
-From the repository root, the CI VM path is:
+From the repository root, with the Ubuntu Noble cloud image the
+[CI workflow](../../../.github/workflows/main.yml) downloads, the CI VM path
+is:
 
 ```sh
-./ci.py --short --prepare-image <noble-cloud-image> --nfs --leader-only
+curl -fsSL -O https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
+./ci.py --short --prepare-image "$PWD/noble-server-cloudimg-amd64.img" --nfs --leader-only
 ```
 
 [ci_nfs.sh](../../../ci_nfs.sh) deploys the cluster and nfsd into the VM.

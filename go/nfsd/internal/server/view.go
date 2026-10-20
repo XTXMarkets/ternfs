@@ -11,8 +11,9 @@ import (
 )
 
 // clientWriter returns the staging inode of clientID's most recent write
-// open of fileID, or fileID itself. Restart-recovered writers present
-// their staging inode as the handle.
+// open of fileID, or fileID itself. Recovered staging not yet adopted as a
+// live open is absent from the open index this reads
+// (README.md#stateid-checks).
 func (s *Server) clientWriter(clientID uint64, fileID vfs.InodeID) vfs.InodeID {
 	for _, state := range s.opens.ClientOpens(clientID, fileID) {
 		if state.Writes() {

@@ -17,6 +17,8 @@ and the implementation has known recovery defects. Several nfsd processes
 can serve one TernFS namespace, but they do not form one NFS server with
 shared sessions or transparent failover.
 
+## Documents
+
 | Document | Contents |
 | --- | --- |
 | [Deployment](DEPLOYMENT.md) | Deployment modes, guarantees, failure behaviour and known issues. |
