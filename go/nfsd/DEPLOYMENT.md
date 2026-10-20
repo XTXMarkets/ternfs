@@ -262,49 +262,20 @@ client is mounting means a session was retired.
 
 ## Diagnostics
 
-nfsd serves a read-only JSON API about its own state on `-status-addr`,
-off by default. `GET /` lists every `/v1` resource, its query filters and
-the meaning of every state word the API uses.
+`-status-addr` serves a read-only JSON API about the process's own state,
+off by default. `-store-only` serves the same API without the NFS server,
+reading the client store and staging sidecars without changing them. The
+[diagnostics API reference](inspect/README.md) describes the resources,
+typed ids and the store report.
 
 ```sh
-nfsd -registry <addr> -staging <dir> -status-addr 127.0.0.1:9049
+nfsd -registry registry.example:55556 -staging /var/lib/nfsd \
+    -status-addr 127.0.0.1:9049
 curl -s http://127.0.0.1:9049/ | jq .
 ```
 
-| Path | Content |
-| --- | --- |
-| `/v1/status` | The process identifiers, limits, reply-cache and request accounting, hydration and client GC activity. |
-| `/v1/lookup?id=` | Resolves one typed id. |
-| `/v1/clients` | Wire clientids this process issued, each bound to a durable incarnation, with the CREATE_SESSION replay slot. Filters `wire`, `incarnation`, `owner`. |
-| `/v1/incarnations` | Per incarnation: the session group and lease gate, the lease refresher record, the cached store location, confirmation protection and destruction holds. Filter `id`. |
-| `/v1/sessions` | Each session's channel limits, SEQUENCE status flags, backchannel sender and connections, whether it has a file and was restored, and slots with their restored and intent state. Filters `id`, `incarnation`, `slots=0`. |
-| `/v1/opens` | Open stateids with file, data inode, owner and access; expired tombstones; the client views behind a handle. Filters `stateid`, `incarnation`, `file`. |
-| `/v1/confirmations` | Client confirmations in progress or unresolved, with the evidence of their writes, destruction holds and purge hints. |
-| `/v1/staging` | The staging store in memory: each writer's target, owner, size, dirty ranges and flags, and the failed tombstones. Filters `file`, `incarnation`. |
-| `/v1/connections` | Live client connections: requests in flight, the sessions each carries in either direction, and its callback path state. Filter `session`. |
-| `/v1/store` | The durable client store report, with `staging=1` to join the sidecars. Filters `identity`, `identity-hash`, `incarnation`, `stateid`. |
-| `/debug/pprof/` | Go profiling, served beside the API; `goroutine?debug=2` is the first thing to take during a stall. |
-
-Every `/v1` response carries `now`, `nfsd_id`, `stateid_epoch`,
-`wire_epoch` and `mode`, the identities of the process. Ids are typed
-`kind:hex` strings, as the log lines spell them. A filter accepts only the
-kind it names, for example `incarnation=incarnation:200000000000000e` or
-`stateid=stateid:09cb5ee40000000000000001`.
-
-When nfsd will not start, or a host's store should be read without
-disturbing a running server, `-store-only` serves the API without the NFS
-listener:
-
-```sh
-nfsd -store-only -registry <addr> -staging <dir> -status-addr 127.0.0.1:9049
-```
-
-It opens the client store read-only and never opens the staging store,
-which would quarantine and truncate sidecars during recovery;
-`/v1/store?staging=1` reads the sidecars directly. `mode` is `store-only`,
-and the resources that describe a running server return 503.
-
 The API has no authentication. Bind it to a loopback or management address.
+During a stall, take `/debug/pprof/goroutine?debug=2` first.
 
 ## Operating requirements
 

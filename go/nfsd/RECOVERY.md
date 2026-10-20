@@ -177,51 +177,57 @@ move can leave the pair split between directories. Keep both parts.
 Publication failures during CLOSE do not have the same preservation
 guarantee; see [failed CLOSE](DEPLOYMENT.md#a-backend-timeout-is-treated-as-a-failure).
 
-## Inspect state
+## Inspect stored state
 
-The durable client store and the staging sidecars are read through the
-[diagnostics API](DEPLOYMENT.md#diagnostics). On a running daemon, use its
-`-status-addr`. When the daemon will not start, or should not be disturbed,
-run a store-only process against the same backend, on the host which owns
-the staging disk:
+The [diagnostics API](inspect/README.md) reads the durable client store and
+the staging sidecars without changing them. On a running daemon, use its
+`-status-addr`. When the daemon will not start, or should not be disturbed:
 
-```sh
-nfsd -store-only -registry HOST:PORT -staging /var/lib/nfsd \
-    -status-addr 127.0.0.1:9049
-curl -s 'http://127.0.0.1:9049/v1/store?staging=1' | jq .report
-curl -s 'http://127.0.0.1:9049/v1/store?identity=Linux%20NFSv4.1%20host' | jq .report
-curl -s 'http://127.0.0.1:9049/v1/store?stateid=stateid:09cb5ee40000000000000001' | jq .report
-```
+1. On the host which owns the staging disk, start a
+   [store-only](inspect/README.md#store-only-mode) process against the same
+   backend. It never opens the staging store, so startup recovery does not
+   quarantine or truncate anything. It runs in the foreground until
+   stopped, so run the following steps from another terminal.
 
-A store-only process opens the client store read-only and never opens the
-staging store, so startup recovery does not quarantine or truncate
-anything. The report lists incarnations, lease slots, open markers, staging
-checkpoints and quarantined entries. `staging=1` joins sidecars to open
-markers by stateid; markers alone do not identify a file. In-memory writes,
-hydration progress and session state are absent; on a running daemon,
-`/v1/staging` and `/v1/sessions` show them. A report taken while the daemon
-runs is an observation, not an atomic backup.
+   ```sh
+   nfsd -store-only -registry registry.example:55556 -staging /var/lib/nfsd \
+       -status-addr 127.0.0.1:9049
+   ```
 
-Use at most one of `identity`, `identity-hash`, `incarnation` and
-`stateid`. Each takes its typed spelling, except `identity`, which is the
-raw EXCHANGE_ID owner string. An `incarnation` is the durable incarnation
-directory inode, not the wire clientid a client sees. Only the issuing
-process can resolve a wire clientid, with `/v1/lookup?id=wire-clientid:...`.
+2. Save a whole-store report with the sidecars joined, then read it from
+   the saved file:
 
-`summary.problems` is the total across the whole report. It adds the
-top-level `problems` and `quarantined` lists, the `problems` lists of each
-identity, incarnation and staging entry, each incarnation's `unknown`
-entries, and every `confirmed`, `pending` or `reboot` pointer marked
-`dangling` or carrying a `problem`. Find each one where it was recorded,
-not only in the top-level list. Expired leases, unreachable incarnations
-and retired staging are not problems. A count of zero therefore does not
-mean all staged writes were published or recovered. A selector limits
-which clients are checked; omit it for a whole-store report.
+   ```sh
+   curl -sf -o store-report.json 'http://127.0.0.1:9049/v1/store?staging=1'
+   jq .report.summary store-report.json
+   ```
 
-Startup logs contain `nfsd_id` and `stateid_epoch`, and the wire clientid
-epoch once the daemon binds its endpoint. `nfsd_id` names that process's
-lease and confirmation slots; `stateid_epoch` prefixes its stateids and
-session ids. These connect a store report to the issuing daemon's logs.
+3. Narrow it to the affected client with one
+   [selector](inspect/README.md#selectors), for example:
+
+   ```sh
+   curl -s 'http://127.0.0.1:9049/v1/store?staging=1&identity=Linux%20NFSv4.1%20host' | jq .report
+   curl -s 'http://127.0.0.1:9049/v1/store?staging=1&stateid=stateid:09cb5ee40000000000000001' | jq .report
+   ```
+
+   An `incarnation` selector takes the durable incarnation directory inode,
+   not the wire clientid a client sees. Only the process that issued a wire
+   clientid can resolve it, with [lookup](inspect/README.md#lookup).
+
+4. Read `summary.problems` and find each problem where it was recorded; see
+   [problems and notes](inspect/README.md#problems-and-notes). Quarantined
+   files count as problems. Retired, unlinked and guarded staging entries do
+   not, so account for them separately: a count of zero does not mean all
+   staged writes were published or recovered.
+
+The report shows checkpointed state only. In-memory writes, hydration
+progress and session state are absent; on a running daemon, `/v1/staging`
+and `/v1/sessions` show them. A report taken while the daemon runs is an
+observation, not an atomic backup. Lease slots in the report name the
+`nfsd_id` that wrote them, and a stateid's first four bytes are the issuing
+process's `stateid_epoch`. Match these against startup logs or a serving
+daemon's [process identities](inspect/README.md#process-identities) to find
+that daemon; a store-only process has none of its own.
 
 ## Restart on the same host
 

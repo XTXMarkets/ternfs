@@ -22,6 +22,7 @@ shared sessions or transparent failover.
 | [Deployment](DEPLOYMENT.md) | Deployment modes, guarantees, failure behaviour and known issues. |
 | [Recovery](RECOVERY.md) | Crash and lease recovery, staging inspection, quarantine and replacement procedures. |
 | [Design](DESIGN.md) | Filehandles, staging, sessions, client identities, leases and namespace operations. |
+| [Diagnostics API](inspect/README.md) | The read-only JSON API: resources, typed ids, snapshot consistency, store-only mode and the store report. |
 | [Testing](test/README.md) | Test suites, prerequisites, commands and coverage limits. |
 
 ## Run
@@ -48,7 +49,7 @@ Omitting `-staging` selects the server's
 [read-only mode](DEPLOYMENT.md#read-only-servers). `-root DIR` selects a
 local test backend instead of `-registry`; exactly one is required.
 `-v` enables request logging. `-status-addr` serves a read-only JSON
-[diagnostics API](DEPLOYMENT.md#diagnostics); `-store-only` serves only that
+[diagnostics API](inspect/README.md); `-store-only` serves only that
 API, without the NFS server. `-influx-db-origin`, `-influx-db-org`,
 `-influx-db-bucket` and `-filesystem` push [metrics](DEPLOYMENT.md#metrics).
 `./nfsd -h` lists the other options.
