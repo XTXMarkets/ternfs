@@ -566,17 +566,26 @@ func TestResponseAdmissionUnknownCloseEffect(t *testing.T) {
 				}
 				return res
 			}
-			admissionStatus(t, send(), nfs4.NFS4ERR_IO, nfs4.OP_SEQUENCE, nfs4.OP_PUTFH, nfs4.OP_CLOSE)
-			content, err := os.ReadFile(filepath.Join(root, "victim"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			want := ""
 			if applied {
-				want = "pending"
+				// The link happened: the name resolves to the staging inode,
+				// which proves it, so the CLOSE reports the publication it
+				// made and the session lives on.
+				admissionStatus(t, send(), nfs4.NFS4_OK, nfs4.OP_SEQUENCE, nfs4.OP_PUTFH, nfs4.OP_CLOSE)
+				if content, err := os.ReadFile(filepath.Join(root, "victim")); err != nil || string(content) != "pending" {
+					t.Fatalf("published %q %v", content, err)
+				}
+				if n := len(srv.stagingStore.Entries()); n != 0 {
+					t.Fatalf("%d staging entries left", n)
+				}
+				admissionStatus(t, send(), nfs4.NFS4_OK, nfs4.OP_SEQUENCE, nfs4.OP_PUTFH, nfs4.OP_CLOSE)
+				if fs.submissions != 1 {
+					t.Fatalf("LinkFile submitted %d times", fs.submissions)
+				}
+				return
 			}
-			if string(content) != want {
-				t.Fatalf("applied=%t data=%q", applied, content)
+			admissionStatus(t, send(), nfs4.NFS4ERR_IO, nfs4.OP_SEQUENCE, nfs4.OP_PUTFH, nfs4.OP_CLOSE)
+			if content, err := os.ReadFile(filepath.Join(root, "victim")); err != nil || string(content) != "" {
+				t.Fatalf("data=%q %v", content, err)
 			}
 			if err := os.WriteFile(filepath.Join(root, "victim"), []byte("replacement"), 0600); err != nil {
 				t.Fatal(err)
