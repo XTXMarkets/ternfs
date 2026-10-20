@@ -279,6 +279,22 @@ func newCBSessionLimits(t *testing.T, srv *Server, addr string, backReq, backReq
 
 func (f *cbSessionFixture) next() uint32 { f.xid++; return f.xid }
 
+// awaitSenderStopped waits until the session's callback sender has
+// processed the reply to the recall at seq and stopped. It reads cbTimeout
+// for its reply timer before it can process that reply, though the reply
+// itself can arrive first; once it has stopped it reads nothing more. The
+// caller makes sure nothing starts it again (no pressure, no SEQUENCE), so
+// that a test's cleanup may then restore the timeout.
+func (f *cbSessionFixture) awaitSenderStopped(t *testing.T, seq uint32) {
+	t.Helper()
+	sess := f.session(t)
+	waitFor(t, "sender exit", func() bool {
+		sess.cb.mu.Lock()
+		defer sess.cb.mu.Unlock()
+		return sess.cb.seq == seq+1 && !sess.cb.running
+	})
+}
+
 func (f *cbSessionFixture) session(t *testing.T) *session {
 	t.Helper()
 	sess := f.srv.sessions.lookup(f.ts.id)
@@ -465,6 +481,7 @@ func TestCBResendOnlyAfterDisconnect(t *testing.T) {
 		}
 		second.answerSequence(t, call, nfs4.NFS4_OK)
 		f.pressure(t, false)
+		f.awaitSenderStopped(t, seq)
 	})
 	t.Run("bind", func(t *testing.T) {
 		f := newCBSession(t)
@@ -497,6 +514,7 @@ func TestCBResendOnlyAfterDisconnect(t *testing.T) {
 		}
 		third.answerSequence(t, call, nfs4.NFS4_OK)
 		f.pressure(t, false)
+		f.awaitSenderStopped(t, seq)
 	})
 }
 
@@ -1050,6 +1068,7 @@ func TestLateCallbackReplyRestoresPath(t *testing.T) {
 	}
 	f.client.answerSequence(t, call, nfs4.NFS4_OK)
 	f.pressure(t, false)
+	f.awaitSenderStopped(t, 2)
 }
 
 // A back channel offering no slots never gets a CB_COMPOUND;
