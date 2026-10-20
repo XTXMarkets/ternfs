@@ -28,7 +28,8 @@ import (
 // compound containing OPEN uses the session of the open owner's clientid,
 // and one presenting a stateid an OPEN returned uses that OPEN's session,
 // so a test can drive several clients over one connection: a stateid is
-// only valid under its own client's sessions (canonical r3 §10).
+// only valid under its own client's sessions
+// (../openstate/README.md#stateid-scope).
 
 type testSession struct {
 	id       SessionID
@@ -43,7 +44,7 @@ type testSession struct {
 	retransmit        bool
 	// warm is set by the session's first admitted SEQUENCE. Until then
 	// SEQUENCE may get DELAY while the client's first lease is published,
-	// and the shim retries, as Linux does (canonical r3 §9.1).
+	// and the shim retries, as Linux does (../clientstore/README.md#bootstrap).
 	warm atomic.Bool
 
 	// For recovery after BADSESSION.

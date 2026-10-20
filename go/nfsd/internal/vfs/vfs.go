@@ -2,6 +2,9 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+// Package vfs is the boundary between the NFS server and TernFS: the
+// TernVFS interface and its native and local implementations. See
+// ../../DESIGN.md#backend-boundary.
 package vfs
 
 import (

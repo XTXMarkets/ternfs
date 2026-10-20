@@ -213,6 +213,50 @@ on a full connection gets `NFS4ERR_RESOURCE` before it changes anything.
 DESTROY_SESSION needs the connection to be associated with the session
 (`NFS4ERR_CONN_NOT_BOUND_TO_SESSION`).
 
+### CREATE_SESSION outcomes
+
+CREATE_SESSION first validates its arguments: unknown flags get
+`NFS4ERR_INVAL`, malformed RDMA attributes `NFS4ERR_BADXDR`, channels too
+small for a SEQUENCE `NFS4ERR_TOOSMALL`, and, when a backchannel is asked
+for, an unusable callback credential list `NFS4ERR_NOENT` or
+`NFS4ERR_INVAL`. It then looks its clientid up among this process's wire
+records. A clientid this process never issued, one from another epoch and
+a retired one all get `NFS4ERR_STALE_CLIENTID`, before any slot or store
+effect.
+
+The record has one creation slot. Outcomes that create nothing are decided
+from that slot before a new creation's reservations (group, session
+record, lease record), so they work when those are exhausted:
+
+| Request | Result |
+| --- | --- |
+| The sequence a held confirmation owns | The confirmation is settled through its own creation; see [Client confirmation](#client-confirmation). The retry reserves the connection's association with the session, and a back association when one was granted, and gets `NFS4ERR_RESOURCE` with nothing settled when the connection is full. |
+| Its incarnation is being replaced | `NFS4ERR_DELAY`. |
+| Its incarnation was replaced | `NFS4ERR_STALE_CLIENTID`. |
+| The sequence a running request owns | `NFS4ERR_DELAY`. |
+| The cached sequence | The cached outcome. An OK replay whose session still exists, and is not yet associated with the connection, needs room for that association, or gets `NFS4ERR_RESOURCE`. A replay never rebuilds a destroyed session. |
+| Any other sequence than the next one | `NFS4ERR_SEQ_MISORDERED`, without overwriting the cached outcome. |
+
+A new creation then reserves, before it claims the slot: a client group, a
+session record, a lease record, and the connection's association with the
+new session, plus a back association when a backchannel is granted. A
+reservation that fails gets `NFS4ERR_DELAY` or `NFS4ERR_RESOURCE` and
+leaves the slot as it was. The slot is then checked again and claimed, and
+the session file is created.
+
+A pending incarnation is confirmed; see
+[Client confirmation](#client-confirmation). An adopted record that was
+not confirmed here belongs to the principal that registered it; another
+principal gets `NFS4ERR_CLID_INUSE`, and that outcome is cached. Otherwise
+the server checks, without writing, that the incarnation is still the
+confirmed one. If it is not, the record is retired and the request gets
+`NFS4ERR_STALE_CLIENTID`; a store read error gives the store's status. A
+record retired meanwhile, or an incarnation this process has expired,
+inserts no session and gets `NFS4ERR_STALE_CLIENTID`. Only `NFS4_OK` and
+`NFS4ERR_CLID_INUSE` are cached. A confirmation left unresolved or
+interrupted keeps the slot and the creation for its retry or the sweeper;
+any other exit rolls the slot back.
+
 ## Persistent sessions
 
 With a staging directory, sessions are kept on disk so that a
@@ -516,7 +560,13 @@ Other operations differ:
 - CLOSE looks up the local open, and otherwise the recovered staging found
   the same way, and closes that writer through its sidecar. Under the
   pathname and file locks it checks again whether another request has
-  adopted it meanwhile; if so the live open answers.
+  adopted it meanwhile; if so the live open answers. When hydration fails,
+  or LinkFile fails and the file is not found already published, a CLOSE
+  of a live local open also expires that open, leaving a tombstone.
+  Later uses of the stateid then follow
+  [Stateid scope](../openstate/README.md#stateid-scope). Retransmissions
+  follow the [slot replay](#slot-replay) rules. A recovered writer's
+  failed CLOSE leaves no tombstone.
 - OPEN_DOWNGRADE of a recovered writer has no sidecar fallback. If the
   owner already has a live open of the file, it gets `NFS4ERR_DELAY` before
   anything is published, and both opens are kept; see

@@ -661,7 +661,7 @@ func TestClientStoreHasOpenFastPathAndImplicitRenewal(t *testing.T) {
 
 	// The fast path, while this process's published lease lasts: the
 	// confirmed pointer and the expired marker, and no lease write. Lease
-	// writes are the refresher's alone (canonical r3 §9.1).
+	// writes are the refresher's alone (README.md#refresher).
 	for _, elapsed := range []time.Duration{
 		time.Second,
 		LeaseRenewAfter + time.Second,
@@ -763,7 +763,7 @@ func TestClientStoreImplicitRenewalRechecksReboot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// HasOpen writes no lease (canonical r3 §9.1), so a reboot confirmed by
+	// HasOpen writes no lease (README.md#refresher), so a reboot confirmed by
 	// another process cannot be raced by a renewal: the cached open sees the
 	// confirmed pointer move and reports nothing.
 	if _, err := second.ConfirmClientID(newID, confirm, owner.Principal); err != nil {
@@ -1106,7 +1106,7 @@ func TestClientStoreMarkOpenKeepsExistingMarkerOnRenewFailure(t *testing.T) {
 	}
 
 	// A refresh that fails while the published lease still lasts does not
-	// fail MarkOpen: the lease it relies on is proven (canonical r3 §9.1).
+	// fail MarkOpen: the lease it relies on is proven (README.md#open-markers).
 	store.Now = func() time.Time {
 		return base.Add(LeaseRenewAfter + time.Second)
 	}

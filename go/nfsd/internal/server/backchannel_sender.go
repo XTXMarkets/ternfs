@@ -13,7 +13,7 @@ import (
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
-// The backchannel sender (canonical r3 §12). nfsd sends only CB_NULL, to
+// The backchannel sender (README.md#callback-sender). nfsd sends only CB_NULL, to
 // probe a back connection when it appears, and CB_COMPOUND carrying
 // CB_SEQUENCE and CB_RECALL_SLOT, to ask a session to use fewer slots
 // while the reply cache is under pressure.

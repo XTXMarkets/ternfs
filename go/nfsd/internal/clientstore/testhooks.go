@@ -59,7 +59,8 @@ func NewConfirmedStoreClient(
 	return store, clientID
 }
 
-// RefresherForTest returns a store-only client's record, kept by a
+// RefresherForTest returns the record of a client in a Store without a
+// server, kept by a
 // reservation, and a clock the test moves.
 func RefresherForTest(t testingT, fs vfs.TernVFS) (*Store, uint64, *LeaseRefresher, *time.Time) {
 	t.Helper()

@@ -20,8 +20,8 @@ import (
 )
 
 // Sessions are kept on the staging disk so that a retransmitted request
-// after an nfsd restart gets its original reply (RFC 8881 §2.10.6.5; the
-// README's Sessions and Restart recovery sections). Each session has a file in
+// after an nfsd restart gets its original reply (RFC 8881 §2.10.6.5;
+// README.md#persistent-sessions). Each session has a file in
 // <staging>/sessions; each completed request writes its slot's record, and
 // RENAME, REMOVE and CREATE write an intent before their effect.
 //

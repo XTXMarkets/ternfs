@@ -188,7 +188,8 @@ func (s *nfsTestServer) retainedWriter(t *testing.T, inc recoveryIncarnation, sy
 
 // Sessions survive the nfsd process: the persistent reply cache records a
 // session and its slots on the staging disk, and a restarted nfsd restores
-// the sessions that recorded a request (the README's Sessions section). The
+// the sessions that recorded a request
+// (../../internal/server/README.md#session-restoration). The
 // libnfs build these tests run with (the Makefile's libnfs-8.0.0 pin, whose
 // source declares version 18.0.0) does not recover a session itself: after
 // a restart it reconnects and carries on with SEQUENCE on its old session,
@@ -412,7 +413,7 @@ func runLibnfsRecovery(t *testing.T, suite *nfsTestSuite) {
 			return len(staging) == 2 && len(sidecars) == 2
 		}
 		// The server's expiry horizon from the clients' last requests, which
-		// precede this wait (canonical r3 §§8-9), for a healthy backend:
+		// precede this wait (../../DESIGN.md#two-leases), for a healthy backend:
 		//   lease      the logical lease's quiet period after the last reply;
 		//   1.5*lease  the durable lease the refresher wrote last, during
 		//              that period (clientstore.LeaseWriteTerm = lease + lease/2);

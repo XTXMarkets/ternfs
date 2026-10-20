@@ -100,8 +100,8 @@ func (b *cachedReply) storeBody(data []byte) {
 // touching the slot: the old buffer stays attached, charged and replayable
 // until installSlotReply at commit; undo releases only the new charge. The
 // capacity check credits the old buffer only when nothing else holds it, so
-// the total exceeds cacheLimit by at most one per-slot credit (canonical r3
-// §7.1).
+// the total exceeds cacheLimit by at most one per-slot credit
+// (README.md#reply-cache-accounting).
 func (ss *sessionStore) reserveSlotReply(sess *session, slot *sessionSlot, bytes int) (*cachedReply, bool) {
 	ss.cacheMu.Lock()
 	defer ss.cacheMu.Unlock()

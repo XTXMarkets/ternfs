@@ -13,18 +13,20 @@ import (
 
 // Filehandles name the published inode a client looked up. A client's
 // opens of a handle record what its I/O uses (State.dataID): a writer's
-// staging, or the version a reader opened. Operations without a stateid
-// (GETATTR, COMMIT, special-stateid READ) use the client's view of the
-// handle: its most recent writer, else the version its own CLOSE published.
+// staging, or the version a reader opened. GETATTR, VERIFY and
+// special-stateid READ use the client's view of the handle: its most recent
+// writer, else the version its own CLOSE published, else its most recent
+// open's version, else the handle. COMMIT uses the writer index below
+// instead (README.md#client-views).
 //
 // When a CLOSE publishes a replacement, the closing client's handle keeps
 // showing the replacement until the client has no opens of it and one lease
 // has passed. Close-to-open revalidation within that time sees the client's
 // own write through the handle it holds; a later LOOKUP finds the
 // replacement's own handle. Aliases are bounded by recent publications,
-// and the server records them on the staging disk so that they survive an
-// nfsd restart; after one lapses the handle names its original, immutable
-// version again.
+// and the server records them on the staging disk so that an unexpired
+// alias survives an nfsd restart (../server/README.md#publication-alias-log);
+// after one lapses the handle names its original, immutable version again.
 
 type ViewKey struct {
 	ClientID uint64

@@ -10,7 +10,7 @@
 // Every value is rendered for a reader who has a packet capture or a log
 // line and wants to know what the server thinks: ids are typed kind:hex
 // strings (ids.go), enums are lowercase words, and times are RFC 3339.
-// Field names are stable.
+// Field names are stable. README.md describes the API.
 package inspect
 
 import (

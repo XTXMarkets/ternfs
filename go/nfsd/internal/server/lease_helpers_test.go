@@ -43,7 +43,8 @@ func unregisterTestServer(addr string)            { testServers.Delete(addr) }
 
 // awaitShimLease waits, for a session the shim created on conn, until its
 // server has published the client's lease: the DELAY a real client's first
-// SEQUENCE may get (canonical r3 §9.1). Unknown servers are not waited for.
+// SEQUENCE may get (../clientstore/README.md#bootstrap). Unknown servers are
+// not waited for.
 func awaitShimLease(conn net.Conn, wireID uint64) {
 	value, ok := testServers.Load(conn.RemoteAddr().String())
 	if !ok {
@@ -96,7 +97,7 @@ func awaitRequestHoldsReleased(t *testing.T, srv *Server) {
 
 // endQuietForTest ends every group's quiet period and forgets the groups
 // kept only by it: a group outlives its last request until quietUntil
-// (canonical r3 §8).
+// (README.md#lease-gate).
 func endQuietForTest(srv *Server) {
 	ss := srv.sessions
 	ss.mu.Lock()

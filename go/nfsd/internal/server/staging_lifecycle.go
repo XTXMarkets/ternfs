@@ -242,7 +242,7 @@ func (s *Server) recoveredStagingTarget(
 				return 0, staging.Meta{}, false, release, nfs4.Error(nfs4.NFS4ERR_DELAY)
 			}
 			holds[id] = end
-			// The expiry decision is the gate's (canonical r3 §8); this
+			// The expiry decision is the gate's (README.md#expiry-decision); this
 			// OPEN holds the pathname lock, so local expiry is the sweeper's.
 			expired, err := s.decideExpired(meta.ClientID, false)
 			if err != nil {
@@ -269,7 +269,8 @@ func (s *Server) recoveredStagingTarget(
 
 // claimFHRecoveryCandidate preselects, without locks, the staged writer a
 // writable CLAIM_FH of fileID recovers when this nfsd has no name for it
-// (canonical r3 §6): typically the first OPEN after a restart. A candidate
+// (README.md#writer-recovery-mechanics): typically the first OPEN after a
+// restart. A candidate
 // is a writable, linked, healthy staging entry of this incarnation whose
 // stateid an earlier process issued, or another incarnation's with this
 // client's RecoveryKey whose lease has expired, as recoveredStagingTarget

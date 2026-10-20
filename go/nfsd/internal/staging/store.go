@@ -2,6 +2,9 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+// Package staging keeps writable opens' files on the local staging disk
+// until CLOSE publishes them. README.md describes the layout, sidecars,
+// checkpoints, startup recovery and quarantine.
 package staging
 
 import (
@@ -14,8 +17,10 @@ import (
 )
 
 // QuarantineDirName is the subdirectory of the staging directory which
-// holds checkpoints whose metadata sidecar would not decode. Recovery moves
-// them aside rather than deleting them; /v1/store?staging=1 lists them.
+// holds pairs moved aside rather than deleted: at startup those whose sidecar
+// would not decode, was guarded, or was both unlinked and retired, and at run
+// time failed writers (README.md#startup-recovery-and-quarantine).
+// /v1/store?staging=1 lists them.
 const QuarantineDirName = "quarantine"
 
 // AliasesDirName is the staging subdirectory holding the server's

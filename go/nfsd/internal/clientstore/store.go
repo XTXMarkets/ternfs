@@ -2,6 +2,10 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+// Package clientstore keeps the NFS client records shared by every nfsd
+// serving one TernFS namespace, under /.nfs/clients. README.md describes the
+// layout, registration, confirmation, open markers, durable leases and
+// collection.
 package clientstore
 
 import (
@@ -25,8 +29,9 @@ import (
 
 // Store persists client identity and lease decisions for the nfsd fleet.
 // A stable identity directory points at distinct incarnation directories. The
-// inode ID of each incarnation directory is returned to the client as a
-// clientid.
+// inode ID of each incarnation directory is the incarnation's durable id. It
+// is not the clientid a client sees: the server returns process-local wire
+// clientids that index this incarnation; see README.md#layout.
 type Store struct {
 	fs             vfs.TernVFS
 	NFSDirID       vfs.InodeID
@@ -44,11 +49,12 @@ type Store struct {
 	LeaseLocks      keyedlock.Locker[vfs.InodeID]
 	markerLocks     keyedlock.Locker[clientOpenMarker]
 
-	// Set by the server (canonical r3 §5.4): publishing an expired marker
-	// for an incarnation and collecting an identity each hold a destruction
-	// hold for the whole action, refused while a confirmation protects it.
-	// A resumed replacement purge holds them on n and its selected target.
-	// Nil in store-only use.
+	// Set by the server (../server/README.md#protection-and-destruction-holds):
+	// publishing an expired marker for an incarnation and collecting an
+	// identity each hold a destruction hold for the whole action, refused
+	// while a confirmation protects it. A resumed replacement purge holds
+	// them on n and its selected target. Nil in a Store without a server,
+	// including the read-only one nfsd -store-only opens.
 	BeginMarker  func(vfs.InodeID) (func(), bool)
 	BeginCollect func(vfs.InodeID) (func(), bool)
 	BeginPurge   func(n, p vfs.InodeID) (func(), bool)
@@ -64,11 +70,12 @@ type Store struct {
 	leaseStop    chan struct{}
 	leaseStopped bool
 	leaseWorkers sync.WaitGroup
-	// Set by the server (canonical r3 §§8 and 9). LeaseNeed reports the
-	// logical lease's refresh need; LeaseTerminal retires an incarnation's
-	// sessions once its record is stale or fleet-expired, reporting false to
-	// be retried. With them set, records have workers and only the server's
-	// decideExpired publishes expired markers. Without them (store-only use)
+	// Set by the server (../server/README.md#lease-gate, README.md#refresher).
+	// LeaseNeed reports the logical lease's refresh need; LeaseTerminal
+	// retires an incarnation's sessions once its record is stale or
+	// fleet-expired, reporting false to be retried. With them set, records
+	// have workers and only the server's decideExpired publishes expired
+	// markers. Without them (a Store used on its own, as in the package tests)
 	// lease work runs inline in the caller and lease observations mark, as
 	// before.
 	LeaseNeed     func(uint64) bool
@@ -187,7 +194,7 @@ func NewStoreAt(
 // MaxSessionRecords bounds the session store's wire clientids and sessions.
 const MaxSessionRecords = 4096
 
-// maxRefreshers bounds lease refresher records (canonical r3 §9.4).
+// maxRefreshers bounds lease refresher records (README.md#record-bounds).
 const maxRefreshers = MaxSessionRecords
 
 func EnsureDir(fs vfs.TernVFS, parentID vfs.InodeID, name string) (vfs.InodeID, error) {
@@ -310,11 +317,11 @@ func (cs *Store) SetClientID(
 	return cs.createPending(identityID, verifier, id, owner)
 }
 
-// ExchangeID binds an NFSv4.1 EXCHANGE_ID to a durable incarnation. It
-// follows SetClientID, except that a matching verifier and principal never
-// update the confirmed record: they adopt it without any write, as the
-// incarnation a restarted client already holds. Otherwise it creates a
-// pending incarnation for CREATE_SESSION to confirm.
+// ExchangeID binds an NFSv4.1 EXCHANGE_ID to a durable incarnation. It follows
+// SetClientID, except that a matching verifier and principal never update the
+// confirmed record: they adopt it without any write, as the incarnation the
+// same client boot already holds when it registers again. Otherwise it creates
+// a pending incarnation for CREATE_SESSION to confirm.
 //
 // Adoption needs no expired marker and either no lease or a live one, as
 // SetClientID decides. Unlike SetClientID, the observation only reads: it
@@ -970,7 +977,8 @@ func (cs *Store) confirmedLocationForIdentity(
 
 // Renew runs one refresher cycle for a confirmed client in the caller and
 // reports its lease: it publishes through the record like the worker. No
-// serving path uses it; SEQUENCE renews from memory (canonical r3 §7.1).
+// serving path uses it; SEQUENCE renews from memory
+// (../server/README.md#sequence-admission).
 func (cs *Store) Renew(clientID uint64) error {
 	incarnationID := vfs.InodeID(clientID)
 	identityID, valid, err := cs.identityForIncarnation(incarnationID)
@@ -1065,7 +1073,7 @@ func (cs *Store) registerOpen(clientID uint64, stateID nfs4.StateID, durable boo
 
 // renewLease checks a confirmed client's lease for registerOpen and
 // hasOpen, for marked and unmarked opens alike. It writes nothing: every
-// lease write belongs to the refresher (canonical r3 §9.1). registerOpen
+// lease write belongs to the refresher (README.md#refresher). registerOpen
 // (requireLiveLease false) needs a live record whose proven lease is in the
 // future, else DELAY while a verify runs. hasOpen with requireLiveLease
 // reads the durable lease, which after a restart may be another process's,
@@ -1353,8 +1361,8 @@ func (cs *Store) observeLeaseStatus(incarnationID vfs.InodeID) (bool, bool, erro
 	return scan.live, scan.found, nil
 }
 
-// leaseObservation is decideExpired's read-only observation (canonical r3
-// §8 step 2).
+// leaseObservation is decideExpired's read-only observation
+// (../server/README.md#expiry-decision).
 type leaseObservation struct {
 	Collected   bool // the incarnation directory is gone
 	Unconfirmed bool // the identity's confirmed pointer names another
@@ -1394,7 +1402,7 @@ func (cs *Store) ObserveLease(clientID uint64) (leaseObservation, error) {
 }
 
 // PublishExpiredMarker is decideExpired's only write: the marker, after
-// arbitration (canonical r3 §8 step 3).
+// arbitration (../server/README.md#expiry-decision).
 func (cs *Store) PublishExpiredMarker(clientID uint64) error {
 	return cs.EnsureMarker(vfs.InodeID(clientID), ExpiredName)
 }
@@ -1410,7 +1418,7 @@ func (cs *Store) ForgetUnconfirmed(clientID uint64) error {
 	return nil
 }
 
-// leaseStatus observes the lease and, in store-only use, publishes the
+// leaseStatus observes the lease and, in a Store without a server, publishes the
 // expired marker for a dead one and removes long-expired slots. With a
 // server, only decideExpired publishes markers and the refresher removes
 // slots, so this only observes.

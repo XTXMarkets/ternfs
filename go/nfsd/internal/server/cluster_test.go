@@ -926,8 +926,8 @@ func TestTernExchangeIDAndSequence(t *testing.T) {
 	defer ts.release(slot)
 	body := buildCompoundBody(nil, func(*nfs4.COMPOUND4argsWriter) {})
 	// The first SEQUENCE may get DELAY until the client's first lease is
-	// published (canonical r3 §9.1); sendWarming retries it as a client
-	// would, on the same slot and sequence.
+	// published (../clientstore/README.md#bootstrap); sendWarming retries it
+	// as a client would, on the same slot and sequence.
 	reply, err := sendWarming(conn, xid, body, ts, slot, seq)
 	xid++
 	if err != nil {
@@ -1041,7 +1041,8 @@ func TestTernClientIncarnationGC(t *testing.T) {
 	}
 	// A renewal below the coalescing threshold must not rewrite the lease.
 	// The refresher rewrites once the published lease is less than
-	// clientstore.LeaseTime + clientstore.LeaseRenewAfter/2 ahead (canonical r3 §9.2).
+	// clientstore.LeaseTime + clientstore.LeaseRenewAfter/2 ahead
+	// (../clientstore/README.md#publication-schedule).
 	clock.Store(base.Add(clientstore.LeaseRenewAfter/2 - time.Nanosecond).UnixNano())
 	if err := first.Renew(oldID); err != nil {
 		t.Fatal(err)

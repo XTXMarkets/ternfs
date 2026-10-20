@@ -16,7 +16,8 @@ import (
 
 // Retired sessions, including ones carrying an earlier epoch, stay
 // BADSESSION for SEQUENCE and BIND without any record kept for them: with no
-// revival there is nothing to deny (canonical r3 §6). Fresh sessions are
+// revival there is nothing to deny (README.md#session-restoration). Fresh
+// sessions are
 // unaffected.
 func TestRetiredSessionIDsStayBadSession(t *testing.T) {
 	srv := admissionWritableServer(t, vfs.NewLocalTernVFS(t.TempDir()))

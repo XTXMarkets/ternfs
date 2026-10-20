@@ -26,8 +26,8 @@ type State struct {
 	// Access is the READ/WRITE share access granted. modes holds bit v for
 	// each distinct share_access value v the open was granted, and
 	// denyModes bit d for each share_deny value d requested. Deny is kept
-	// for OPEN_DOWNGRADE's validation only; it is not enforced (canonical
-	// r3 §11).
+	// for OPEN_DOWNGRADE's validation only; it is not enforced
+	// (README.md#downgrades).
 	Access     uint32
 	modes      uint8
 	denyModes  uint8

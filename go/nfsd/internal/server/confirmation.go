@@ -13,7 +13,8 @@ import (
 )
 
 // Confirmation of a pending incarnation N over its predecessor P, on the
-// server side (canonical r3 §5.3, §5.4). The client store makes writes A, B
+// server side (README.md#client-confirmation,
+// ../clientstore/README.md#confirmation). The client store makes writes A, B
 // and D and decides each result from evidence; the server acts on it once.
 //
 // While a confirmation exists, from just before its first write until its
@@ -349,7 +350,7 @@ func (s *Server) applyConfirmation(e *confirmation, result clientstore.ConfirmRe
 	}
 	switch result {
 	case clientstore.ConfirmCommitted:
-		// P is replaced, then N's session is inserted (§5.3 step 8).
+		// P is replaced, then N's session is inserted (README.md#applying-a-result).
 		if e.p != 0 && !e.pClosedEnded {
 			ss.replaced(e.p)
 			e.pClosedEnded = true
@@ -433,7 +434,8 @@ func (s *Server) finishReplacement(e *confirmation) {
 	failed = false
 }
 
-// confirmPending confirms a pending record (§5.3) for a creation that holds
+// confirmPending confirms a pending record (README.md#client-confirmation)
+// for a creation that holds
 // N's slot. It returns the status and, for OK, the reply. handedOver reports
 // that an unresolved confirmation now owns cr.
 func (s *Server) confirmPending(cr *creation, confirm [8]byte, principal, caller clientstore.RPCPrincipal) (status uint32, reply createSessionResult, handedOver bool) {
