@@ -12,11 +12,16 @@ import (
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/keyedlock"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sessionstore"
 )
 
 type SessionID [nfs4.NFS4_SESSIONID_SIZE]byte
 
 type sessionStore struct {
+	// persistSlot, when set, records a completed request on its session's
+	// file (session_persist.go).
+	persistSlot func(sess *session, slotID uint32, rec sessionstore.Record)
+
 	mu                                sync.Mutex
 	epoch                             uint32
 	next                              uint64
@@ -54,7 +59,7 @@ func newSessionStore(epoch uint32) *sessionStore {
 		wireLimit:   clientstore.MaxSessionRecords,
 		groups:      make(map[uint64]*clientGroup),
 		groupLimit:  maxClientGroups,
-		cacheLimit:  maxSessionCacheBytes,
+		cacheLimit:  replyCacheLimit,
 		workLimit:   maxReplyWorkBytes,
 		recordLimit: clientstore.MaxSessionRecords,
 		now:         time.Now,
@@ -72,15 +77,46 @@ func (ss *sessionStore) wakeWorkWaiters() {
 }
 
 // A session ID is the issuing process's epoch, the incarnation and a
-// counter. A session never outlives its process, so an ID from another
-// epoch is unknown here.
-func (ss *sessionStore) newSessionIDLocked(clientID uint64) SessionID {
+// counter. It reports false, giving no ID, once the counter is at its last
+// value; the counter never wraps. A restored session keeps the ID an
+// earlier process gave it, and the epoch is random, so an ID of this
+// epoch may already be known: observeSessionIDLocked moves the counter
+// past it, and no ID this process has seen is given again.
+func (ss *sessionStore) newSessionIDLocked(clientID uint64) (SessionID, bool) {
+	if ss.next >= uint64(^uint32(0)) {
+		return SessionID{}, false
+	}
 	ss.next++
 	var id SessionID
 	binary.BigEndian.PutUint32(id[0:4], ss.epoch)
 	binary.BigEndian.PutUint64(id[4:12], clientID)
 	binary.BigEndian.PutUint32(id[12:16], uint32(ss.next))
-	return id
+	return id, true
+}
+
+// observeSessionIDLocked moves the ID counter past a known session ID of
+// this process's epoch. The caller holds ss.mu.
+func (ss *sessionStore) observeSessionIDLocked(id SessionID) {
+	if binary.BigEndian.Uint32(id[0:4]) == ss.epoch {
+		ss.next = max(ss.next, uint64(binary.BigEndian.Uint32(id[12:16])))
+	}
+}
+
+// replyCacheLimit bounds the reply cache of a new store; a variable so that
+// tests can start a server with a small one.
+var replyCacheLimit = maxSessionCacheBytes
+
+// persistedSessions counts the sessions with a file on disk.
+func (ss *sessionStore) persistedSessions() int {
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+	n := 0
+	for _, sess := range ss.sessions {
+		if sess.file.onDisk.Load() {
+			n++
+		}
+	}
+	return n
 }
 
 func (ss *sessionStore) lookup(id SessionID) *session {

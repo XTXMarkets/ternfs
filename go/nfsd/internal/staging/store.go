@@ -22,6 +22,11 @@ const QuarantineDirName = "quarantine"
 // publication alias log, which recovery and the inspector leave alone.
 const AliasesDirName = "aliases"
 
+// SessionsDirName is the staging subdirectory holding the server's session
+// files (the persistent reply cache), which recovery and the inspector
+// leave alone.
+const SessionsDirName = "sessions"
+
 var ErrRemoved = errors.New("staging file was removed")
 
 type stagingTarget struct {

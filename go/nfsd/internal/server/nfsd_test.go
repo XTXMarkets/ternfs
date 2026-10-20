@@ -6907,6 +6907,14 @@ func TestFailedCloseReplaysFromSlot(t *testing.T) {
 		t.Fatalf("failed CLOSE status = %s, want NFS4ERR_IO",
 			nfs4.Nfsstat4Name(status))
 	}
+	// The failed publication ends the open: its staging is discarded and
+	// the client will not close it again.
+	if n := srv.opens.StateCount(); n != 0 {
+		t.Fatalf("%d opens after the failed CLOSE, want 0", n)
+	}
+	if n := len(staging.Entries()); n != 0 {
+		t.Fatalf("%d staging entries after the failed CLOSE, want 0", n)
+	}
 	retransmitNext(conn)
 	if status := closeFileStatus(
 		t, conn, &xid, fh, stateid); status != nfs4.NFS4ERR_IO {

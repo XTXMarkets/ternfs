@@ -636,10 +636,25 @@ func TestActiveSourceStillBlocksCrossDirectoryRename(t *testing.T) {
 func TestRenameOpenStaging(t *testing.T) {
 	f := newNamespaceFixture(t)
 	// A writer based on a different published version must also follow the
-	// pathname. This occurs when one writer publishes while another is open.
-	other, err := f.fs.CreateFile(f.fs.RootID(), "source", nil)
+	// pathname. This occurs when one writer publishes while another is open:
+	// another file is linked over the name, as a publication does. The
+	// first writer's base stays readable through its handle. CreateFile,
+	// the bookkeeping API, would free the old inode instead, and the local
+	// backend could give its number to a new internal file, which PUTFH of
+	// the old handle then rejects.
+	other, cookie, err := f.fs.ConstructFile(f.fs.RootID())
 	if err != nil {
 		t.Fatal(err)
+	}
+	if err := f.fs.LinkFile(other, cookie, f.fs.RootID(), "source", nil); err != nil {
+		t.Fatal(err)
+	}
+	baseID, ok := vfs.FHToInodeID(f.fh)
+	if !ok {
+		t.Fatal("first writer's handle does not decode")
+	}
+	if data, err := f.fs.ReadAll(baseID); err != nil || string(data) != "original" {
+		t.Fatalf("first writer's base after the publication: %q %v", data, err)
 	}
 	status, state, fh, _ := openFileForOwner(t, f.conn, &f.xid, f.clientID,
 		"second-owner", "source", nfs4.OPEN4_SHARE_ACCESS_BOTH, false, false)

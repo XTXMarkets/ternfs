@@ -440,21 +440,27 @@ func exchangeIDBody(identity string, verifier [8]byte) []byte {
 }
 
 func createSessionBody(clientID uint64, seq uint32) []byte {
+	return createSessionBodyCached(clientID, seq, maxSessionReplyCached)
+}
+
+// createSessionBodyCached is createSessionBody asking for a fore channel
+// that caches replies of up to cached bytes.
+func createSessionBodyCached(clientID uint64, seq, cached uint32) []byte {
 	return buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
 		cw := w.AppendArgarray_CreateSession()
 		cw.SetCsaClientid(clientID)
 		cw.SetCsaSequence(seq)
 		cw.SetCsaFlags(0)
-		attrs := func(a nfs4.ChannelAttrs4Writer) []byte {
+		attrs := func(a nfs4.ChannelAttrs4Writer, cached uint32) []byte {
 			a.SetCaMaxrequestsize(maxRPCMessage)
 			a.SetCaMaxresponsesize(maxRPCMessage)
-			a.SetCaMaxresponsesizeCached(maxSessionReplyCached)
+			a.SetCaMaxresponsesizeCached(cached)
 			a.SetCaMaxoperations(maxCompoundOperations)
 			a.SetCaMaxrequests(16)
 			return a.Finish()
 		}
-		cw.Resume(attrs(cw.StartCsaForeChanAttrs()))
-		cw.Resume(attrs(cw.StartCsaBackChanAttrs()))
+		cw.Resume(attrs(cw.StartCsaForeChanAttrs(), cached))
+		cw.Resume(attrs(cw.StartCsaBackChanAttrs(), maxSessionReplyCached))
 		cw.SetCsaCbProgram(0x40000000)
 		cw.AppendCsaSecParms_None()
 		w.Resume(cw.Finish())
@@ -493,7 +499,12 @@ func exchangeID(conn net.Conn, xid uint32, identity string, verifier [8]byte) (u
 }
 
 func createSession(conn net.Conn, xid uint32, clientID uint64, seq uint32) (*testSession, uint32, error) {
-	reply, err := sendRawRPC(conn, xid, procCompound, createSessionBody(clientID, seq))
+	return createSessionCached(conn, xid, clientID, seq, maxSessionReplyCached)
+}
+
+// createSessionCached is createSession with createSessionBodyCached.
+func createSessionCached(conn net.Conn, xid uint32, clientID uint64, seq, cached uint32) (*testSession, uint32, error) {
+	reply, err := sendRawRPC(conn, xid, procCompound, createSessionBodyCached(clientID, seq, cached))
 	if err != nil {
 		return nil, 0, err
 	}

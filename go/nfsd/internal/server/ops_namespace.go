@@ -53,6 +53,10 @@ func (s *Server) opCreate(args nfs4.CREATE4args, st *compoundState, w *nfs4.COMP
 		name:  name,
 	})
 	defer unlock()
+	if verdict, status := s.decideCreateReplay(st, st.currentID, name); verdict != replayNone {
+		ew := w.AppendResarray_Create()
+		return finishDefaultResponse(w, ew.Finish(), status)
+	}
 	busy, err := s.stagingTargetBusy(st.currentID, name)
 	if err != nil {
 		ew := w.AppendResarray_Create()
@@ -75,6 +79,10 @@ func (s *Server) opCreate(args nfs4.CREATE4args, st *compoundState, w *nfs4.COMP
 
 	switch objType {
 	case nfs4.NF4DIR:
+		if status := s.persistIntent(st, createIntent{dir: st.currentID, name: name, objType: nfs4.NF4DIR}.encode(st.opIndex)); status != nfs4.NFS4_OK {
+			ew := w.AppendResarray_Create()
+			return finishDefaultResponse(w, ew.Finish(), status)
+		}
 		newID, err = s.fs.Mkdir(st.currentID, name)
 	case nfs4.NF4LNK:
 		targetData := args.Objtype().AsLinktext4().Data()
@@ -87,6 +95,10 @@ func (s *Server) opCreate(args nfs4.CREATE4args, st *compoundState, w *nfs4.COMP
 			return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_NAMETOOLONG)
 		}
 		target := string(targetData)
+		if status := s.persistIntent(st, createIntent{dir: st.currentID, name: name, objType: nfs4.NF4LNK, target: target}.encode(st.opIndex)); status != nfs4.NFS4_OK {
+			ew := w.AppendResarray_Create()
+			return finishDefaultResponse(w, ew.Finish(), status)
+		}
 		newID, err = s.fs.Symlink(st.currentID, name, target)
 	}
 
@@ -97,6 +109,11 @@ func (s *Server) opCreate(args nfs4.CREATE4args, st *compoundState, w *nfs4.COMP
 		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 
+	return writeCreateOK(w, st, newID)
+}
+
+// writeCreateOK finishes a successful CREATE of newID.
+func writeCreateOK(w *nfs4.COMPOUND4resWriter, st *compoundState, newID vfs.InodeID) uint32 {
 	st.setCurrentFH(newID)
 
 	ew := w.AppendResarray_Create()
@@ -247,6 +264,12 @@ func (s *Server) opRemove(args nfs4.REMOVE4args, st *compoundState, w *nfs4.COMP
 		ew := w.AppendResarray_Remove()
 		return finishDefaultResponse(w, ew.Finish(), status)
 	}
+	switch verdict, status := s.decideRemoveReplay(st, st.currentID, name); verdict {
+	case replayApplied:
+		return writeRemoveOK(w)
+	case replayUndecidable:
+		return fail(status)
+	}
 	if _, err := s.retireInactiveStagingTarget(st.currentID, name); err != nil {
 		return fail(s.errToNFS(err))
 	}
@@ -254,6 +277,12 @@ func (s *Server) opRemove(args nfs4.REMOVE4args, st *compoundState, w *nfs4.COMP
 	edge, err := s.fs.LookupEdge(st.currentID, name)
 	if err != nil {
 		return fail(s.errToNFS(err))
+	}
+	// The intent goes before the writers' guard, so that a REMOVE refused
+	// here has nothing to undo; one whose guard then fails left an intent
+	// that a replay finds not applied.
+	if status := s.persistIntent(st, removeIntent{dir: st.currentID, name: name, edge: edge}.encode(st.opIndex)); status != nfs4.NFS4_OK {
+		return fail(status)
 	}
 	if err := s.guardNamespaceWriters(writers); err != nil {
 		s.log.Warn("cannot guard REMOVE writers", "err", err)
@@ -264,7 +293,11 @@ func (s *Server) opRemove(args nfs4.REMOVE4args, st *compoundState, w *nfs4.COMP
 	if status := s.finishNamespaceWriters(writers, nfs4.OP_REMOVE, err); status != nfs4.NFS4_OK {
 		return fail(status)
 	}
+	return writeRemoveOK(w)
+}
 
+// writeRemoveOK finishes a successful REMOVE.
+func writeRemoveOK(w *nfs4.COMPOUND4resWriter) uint32 {
 	ew := w.AppendResarray_Remove()
 	okW := ew.SetValue_Nfs4Ok()
 	cinfo := okW.Cinfo()
@@ -303,16 +336,6 @@ func (s *Server) opRename(args nfs4.RENAME4args, st *compoundState, w *nfs4.COMP
 		ew := w.AppendResarray_Rename()
 		return finishDefaultResponse(w, ew.Finish(), status)
 	}
-	if st.savedID == st.currentID && oldName == newName {
-		ew := w.AppendResarray_Rename()
-		okW := ew.SetValue_Nfs4Ok()
-		now := uint64(time.Now().UnixNano())
-		setChangeInfo(okW.SourceCinfo(), nfs4.TRUE, now, now)
-		setChangeInfo(okW.TargetCinfo(), nfs4.TRUE, now, now)
-		w.Resume(ew.Finish())
-		return nfs4.NFS4_OK
-	}
-
 	unlock := s.lockMutationTargets(
 		mutationTarget{dirID: st.savedID, name: oldName},
 		mutationTarget{dirID: st.currentID, name: newName},
@@ -322,6 +345,23 @@ func (s *Server) opRename(args nfs4.RENAME4args, st *compoundState, w *nfs4.COMP
 	fail := func(status uint32) uint32 {
 		ew := w.AppendResarray_Rename()
 		return finishDefaultResponse(w, ew.Finish(), status)
+	}
+	// A replay is decided first, also when the names now resolve to one:
+	// the RENAME the intent records may have crossed directories.
+	switch verdict, status := s.decideRenameReplay(st, st.savedID, oldName, st.currentID, newName); verdict {
+	case replayApplied:
+		return writeRenameOK(w)
+	case replayUndecidable:
+		return fail(status)
+	}
+	if st.savedID == st.currentID && oldName == newName {
+		ew := w.AppendResarray_Rename()
+		okW := ew.SetValue_Nfs4Ok()
+		now := uint64(time.Now().UnixNano())
+		setChangeInfo(okW.SourceCinfo(), nfs4.TRUE, now, now)
+		setChangeInfo(okW.TargetCinfo(), nfs4.TRUE, now, now)
+		w.Resume(ew.Finish())
+		return nfs4.NFS4_OK
 	}
 	sourceActive, err := s.retireInactiveStagingTarget(st.savedID, oldName)
 	if err != nil {
@@ -352,6 +392,11 @@ func (s *Server) opRename(args nfs4.RENAME4args, st *compoundState, w *nfs4.COMP
 	if err == nil && (edge.ID.Type() == vfs.InodeTypeDir) != (dst.Type() == vfs.InodeTypeDir) {
 		return fail(nfs4.NFS4ERR_EXIST)
 	}
+	// The intent goes before the writers' guard, as for REMOVE.
+	if status := s.persistIntent(st, renameIntent{srcDir: st.savedID, srcName: oldName, src: edge,
+		dstDir: st.currentID, dstName: newName, dst: dst}.encode(st.opIndex)); status != nfs4.NFS4_OK {
+		return fail(status)
+	}
 	// Preflight cannot freeze the destination. A later type race is a
 	// submitted failure and can quarantine writers on the remote backend.
 	if err := s.guardNamespaceWriters(writers); err != nil {
@@ -363,7 +408,11 @@ func (s *Server) opRename(args nfs4.RENAME4args, st *compoundState, w *nfs4.COMP
 	if status := s.finishNamespaceWriters(writers, nfs4.OP_RENAME, err); status != nfs4.NFS4_OK {
 		return fail(status)
 	}
+	return writeRenameOK(w)
+}
 
+// writeRenameOK finishes a successful RENAME.
+func writeRenameOK(w *nfs4.COMPOUND4resWriter) uint32 {
 	ew := w.AppendResarray_Rename()
 	okW := ew.SetValue_Nfs4Ok()
 	now := uint64(time.Now().UnixNano())

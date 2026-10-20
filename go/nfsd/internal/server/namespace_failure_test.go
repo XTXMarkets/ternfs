@@ -22,6 +22,10 @@ import (
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
+// namespaceProbeVFS counts the namespace calls made against the root
+// directory, where the fixtures' names live. The client store's own calls
+// under /.nfs, such as publishing a restored session's lease at startup,
+// are not namespace recovery and are not counted.
 type namespaceProbeVFS struct {
 	vfs.TernVFS
 	mutations atomic.Int32
@@ -30,22 +34,28 @@ type namespaceProbeVFS struct {
 }
 
 func (fs *namespaceProbeVFS) LookupEdge(dir vfs.InodeID, name string) (vfs.Edge, error) {
-	fs.lookups.Add(1)
+	if dir == fs.TernVFS.RootID() {
+		fs.lookups.Add(1)
+	}
 	return fs.TernVFS.LookupEdge(dir, name)
 }
 
 func (fs *namespaceProbeVFS) RemoveEdge(dir vfs.InodeID, name string, edge vfs.Edge) error {
-	fs.mutations.Add(1)
-	if fs.before != nil {
-		fs.before()
+	if dir == fs.TernVFS.RootID() {
+		fs.mutations.Add(1)
+		if fs.before != nil {
+			fs.before()
+		}
 	}
 	return fs.TernVFS.RemoveEdge(dir, name, edge)
 }
 
 func (fs *namespaceProbeVFS) RenameEdge(dir vfs.InodeID, name string, edge vfs.Edge, dst vfs.InodeID, newName string) error {
-	fs.mutations.Add(1)
-	if fs.before != nil {
-		fs.before()
+	if dir == fs.TernVFS.RootID() {
+		fs.mutations.Add(1)
+		if fs.before != nil {
+			fs.before()
+		}
 	}
 	return fs.TernVFS.RenameEdge(dir, name, edge, dst, newName)
 }

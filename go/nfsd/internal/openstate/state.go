@@ -37,6 +37,14 @@ type State struct {
 	// its file or recovers a writer's staging, and stays marked; other read
 	// opens are recorded in this process only.
 	Marked bool
+	// Recovered reports an open adopted from an earlier process's staging.
+	// Its original grants are unknown, so a downgrade gets only the subset
+	// rule (DowngradeStatus).
+	Recovered bool
+	// learnGeneration: the open was adopted from a request whose stateid
+	// carried seqid 0 ("the current one"), so its generation is unknown.
+	// The first request to present a seqid sets it.
+	learnGeneration bool
 	// seq orders opens of one file for choosing the most recent.
 	seq uint64
 }

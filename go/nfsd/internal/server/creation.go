@@ -7,6 +7,7 @@ package server
 import (
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sessionstore"
 )
 
 // creation holds one CREATE_SESSION's reservations: the incarnation's group
@@ -32,6 +33,11 @@ type creation struct {
 	cbProgram     uint32
 	cbSec         callbackSec
 	backRequested bool
+	// file is the session's file, the creation's until commitLocked gives
+	// it to the session. fileAttempted: a file may be at the session's path,
+	// made by an attempt that did not return it.
+	file          *sessionstore.File
+	fileAttempted bool
 }
 
 // cacheLocked records the slot's outcome for seq and releases the slot.
@@ -70,6 +76,10 @@ func (cr *creation) commitLocked() (createSessionResult, bool) {
 	}
 	sess.cb = newCBSender(cr.s, sess, cr.cbProgram, cr.cbSec)
 	ss.insertSessionLocked(sess)
+	if cr.file != nil {
+		sess.file.attach(cr.file, cr.s)
+		cr.file, cr.fileAttempted = nil, false
+	}
 	cr.created = sess
 	ss.confirmWireLocked(c)
 	c.hasConfirm = false
@@ -113,8 +123,10 @@ func (cr *creation) finish() {
 	}
 }
 
-// release ends the creation's reservations, once each.
+// release ends the creation's reservations, once each, and removes the
+// session file of a creation that inserted no session.
 func (cr *creation) release() {
+	cr.s.removeCreationFile(cr)
 	ss := cr.s.sessions
 	if cr.slot {
 		ss.mu.Lock()

@@ -1227,10 +1227,11 @@ func TestAliasLogLoadsUpToMalformedLine(t *testing.T) {
 	}
 }
 
-// The Linux client's recovery after an nfsd restart, as the kill tests show
-// it: the wire clientid is new, so every open is reclaimed with CLAIM_FH
-// before the in-flight WRITEs are replayed with the new stateids, then
-// COMMIT and CLOSE follow. For a file created just before the kill, with
+// The Linux client's recovery when its session is lost across an nfsd
+// restart (no session file, or an expired lease): the wire clientid is
+// new, so every open is reclaimed with CLAIM_FH before the in-flight WRITEs
+// are replayed with the new stateids, then COMMIT and CLOSE follow. For a
+// file created just before the kill, with
 // no WRITE yet acknowledged, the reclaimed open must adopt the recovered
 // staging and its CLOSE must publish what was written after the restart.
 func TestLinuxRecoveryOfFreshCreateAcrossRestart(t *testing.T) {

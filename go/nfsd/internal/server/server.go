@@ -7,7 +7,6 @@ package server
 import (
 	"bytes"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -24,6 +23,7 @@ import (
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/keyedlock"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/openstate"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sessionstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -82,6 +82,12 @@ type Server struct {
 	// with the sweep's snapshot and rewrite of that log (alias_log.go).
 	aliasMu sync.Mutex
 	aliases *aliasLog // nil without a staging directory
+	// unlinkSessionFile deletes a session's file from the staging disk;
+	// tests make it block or fail.
+	unlinkSessionFile func(*sessionstore.File) error
+	// newSessionFile creates a session's file, sessionFiles.Create; tests
+	// make it block or fail.
+	newSessionFile func(sessionstore.ID, sessionstore.Header) (*sessionstore.File, error)
 
 	// Confirmations in progress or unresolved (server_confirm.go), by N and
 	// P, by identity and by EXCHANGE_ID owner. At most one per identity.
@@ -89,6 +95,7 @@ type Server struct {
 	// held only for map access.
 	confirmMu          sync.Mutex
 	metrics            *Metrics
+	sessionFiles       *sessionstore.Store // nil without a staging directory
 	confirming         map[uint64]*confirmation
 	confirmingIdentity map[vfs.InodeID]*confirmation
 	confirmingOwners   map[string]*confirmation
@@ -177,6 +184,7 @@ func NewServer(fs vfs.TernVFS, stagingStore staging.Store, logger *slog.Logger) 
 		destroyingIdentity: make(map[vfs.InodeID]int),
 		purgePending:       make(map[uint64]struct{}),
 		purgeLimit:         clientstore.MaxSessionRecords,
+		unlinkSessionFile:  (*sessionstore.File).Unlink,
 	}
 	s.destroyEnded = sync.NewCond(&s.confirmMu)
 	s.opens.Now = func() time.Time { return s.clients.Now() }
@@ -187,6 +195,7 @@ func NewServer(fs vfs.TernVFS, stagingStore staging.Store, logger *slog.Logger) 
 	clients.BeginPurge = s.beginPurge
 	s.sessions = newSessionStore(s.opens.Epoch)
 	s.sessions.now = func() time.Time { return s.clients.Now() }
+	s.sessions.persistSlot = s.persistSlot
 	// The durable lease refresher reads the logical lease's need, and
 	// retires an incarnation whose record turns stale or fleet-expired.
 	clients.LeaseNeed = s.sessions.leaseNeed
@@ -202,6 +211,8 @@ func NewServer(fs vfs.TernVFS, stagingStore staging.Store, logger *slog.Logger) 
 	if d, ok := stagingStore.(interface{ Dir() string }); ok {
 		s.aliases = newAliasLog(d.Dir())
 		s.loadAliases()
+		s.openSessionFiles(d.Dir())
+		s.restoreSessions()
 	}
 	return s, nil
 }
@@ -766,7 +777,7 @@ func (s *Server) compoundBody(req *rpcRequest, args nfs4.COMPOUND4args) (result 
 					uncachedBytes += resultErrorSize(ops[1].Disc())
 				}
 				seq = s.startSequence(op.AsSEQUENCE4args(), sequenceAdmission{
-					digest: sha256.Sum256(req.body), user: user, requestBytes: uint32(req.fullSize()),
+					digest: replayDigest(req.body), user: user, requestBytes: uint32(req.fullSize()),
 					operations: args.ArgarrayCount(), sequenceReplyBytes: prefixBytes,
 					uncachedBytes: uncachedBytes, connection: req.connection,
 				})
@@ -784,6 +795,8 @@ func (s *Server) compoundBody(req *rpcRequest, args nfs4.COMPOUND4args) (result 
 					return seq.replay
 				}
 				st.session, st.clientID = seq.sess, seq.sess.clientID
+				st.slot, st.slotID, st.seq = seq.slot, seq.slotID, seq.seq
+				st.replay = newReplayState(seq.hasIntent, seq.intent)
 				s.writeSequenceOK(&w, &seq)
 				continue
 			case sessionlessOp(opnum):
@@ -846,6 +859,21 @@ func (s *Server) compoundBody(req *rpcRequest, args nfs4.COMPOUND4args) (result 
 			break
 		}
 		st.replyBudget = limit - used - suffix
+		st.opIndex = index
+		if status := s.replayGate(st, opnum); status != nfs4.NFS4_OK {
+			writeOperationError(&w, opnum, status)
+			record(opnum, status)
+			overallStatus = status
+			opCount++
+			break
+		}
+		if status := s.mutationGate(st, opnum); status != nfs4.NFS4_OK {
+			writeOperationError(&w, opnum, status)
+			record(opnum, status)
+			overallStatus = status
+			opCount++
+			break
+		}
 
 		var opStatus uint32
 		switch opnum {

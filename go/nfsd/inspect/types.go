@@ -324,12 +324,14 @@ type Sessions struct {
 	Records []Session `json:"records"`
 }
 
-// Session is one NFSv4.1 session. Sessions live in memory and end with the
-// process.
+// Session is one NFSv4.1 session. A session with a file on the staging disk
+// survives an nfsd restart; Restored says this process rebuilt it from one.
 type Session struct {
 	ID            string       `json:"session"`
 	Incarnation   string       `json:"incarnation"`
 	WireClientID  string       `json:"wire_clientid,omitempty"`
+	Persisted     bool         `json:"persisted"`
+	Restored      bool         `json:"restored,omitempty"`
 	Fore          Channel      `json:"fore_channel"`
 	Back          Channel      `json:"back_channel"`
 	BackRequested bool         `json:"back_channel_requested"`
@@ -397,6 +399,11 @@ type Slot struct {
 	ReplyBytes int    `json:"cached_reply_bytes"`
 	HasBuffer  bool   `json:"has_buffer"`
 	User       *User  `json:"user,omitempty"`
+	// Restored: read from the session file at startup and not used since.
+	// Intent: a restored request whose reply was never written; it is
+	// decided when it is retransmitted.
+	Restored bool `json:"restored,omitempty"`
+	Intent   bool `json:"intent,omitempty"`
 }
 
 type User struct {

@@ -319,11 +319,15 @@ func (req *rpcRequest) joinRPCBody(body []byte) []byte {
 func (ss *sessionStore) reserveSessionRecord(clientID uint64) (SessionID, bool) {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
-	if ss.records+ss.pendingSessions >= ss.recordLimit || ss.next >= uint64(^uint32(0)) {
+	if ss.records+ss.pendingSessions >= ss.recordLimit {
+		return SessionID{}, false
+	}
+	id, ok := ss.newSessionIDLocked(clientID)
+	if !ok {
 		return SessionID{}, false
 	}
 	ss.pendingSessions++
-	return ss.newSessionIDLocked(clientID), true
+	return id, true
 }
 func (ss *sessionStore) releaseSessionRecord() {
 	ss.mu.Lock()
@@ -342,6 +346,7 @@ func (ss *sessionStore) insertSessionLocked(sess *session) {
 	if !ok {
 		panic("session inserted without a group credit")
 	}
+	ss.observeSessionIDLocked(sess.id)
 	ss.sessions[sess.id] = sess
 	sess.users = 1
 	ss.records++
@@ -359,13 +364,22 @@ func (ss *sessionStore) useSession(sess *session) bool {
 }
 func (ss *sessionStore) releaseSessionUse(sess *session) {
 	ss.mu.Lock()
-	defer ss.mu.Unlock()
 	sess.users--
+	last := false
 	switch {
 	case sess.users < 0:
 		panic("session use underflow")
 	case sess.users == 0:
 		ss.records--
+		last = true
+	}
+	ss.mu.Unlock()
+	if last {
+		// The last use of a retired session has ended: no request can
+		// write its file any more, so it goes with the session. A
+		// retransmission after that gets BADSESSION, as for any session
+		// this process destroyed.
+		sess.file.close()
 	}
 }
 

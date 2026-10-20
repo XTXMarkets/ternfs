@@ -30,6 +30,7 @@ func (s *Server) lookupDurableOpen(
 	stateid nfs4.Stateid4,
 	fileID vfs.InodeID,
 ) (openstate.State, uint32) {
+	handleID := fileID
 	state, status := s.opens.Lookup(
 		clientID,
 		extractStateID(stateid),
@@ -63,6 +64,16 @@ func (s *Server) lookupDurableOpen(
 			}); status != nfs4.NFS4_OK {
 				return openstate.State{}, status
 			}
+		}
+		// The client goes on using the open it had: make it a live one here,
+		// so COMMIT, reads and CLOSE find it as they find any other. When
+		// adoption is refused (read-only staging, or an owner that already
+		// has a live open of the file) the request runs on a state built
+		// from the sidecar alone, and COMMIT finds such writers through
+		// recoveredWritersOf. When another request adopted it meanwhile, the
+		// live open decides, as for any request that finds one.
+		if adopted, live, status := s.adoptRecoveredWriter(clientID, handleID, fileID, id, stateid.Seqid()); live {
+			return adopted, status
 		}
 		return openstate.State{
 			ID:         id,
@@ -231,7 +242,7 @@ func (s *Server) opOpenDowngrade(args nfs4.OPENDOWNGRADE4args, st *compoundState
 		return fail(status)
 	}
 	recovered := !s.opens.Live(state.ID)
-	if status := state.DowngradeStatus(g, recovered); status != nfs4.NFS4_OK {
+	if status := state.DowngradeStatus(g, recovered || state.Recovered); status != nfs4.NFS4_OK {
 		return fail(status)
 	}
 	switch {
@@ -294,6 +305,12 @@ func (s *Server) releaseWrite(openStateid nfs4.Stateid4, st *compoundState, clos
 		unlockOpen()
 		unlockTarget()
 	}()
+	if recovered && s.opens.Live(sid) {
+		// Adopted since the lookup above, by a request that took these
+		// locks first. No adoption can start while they are held, so the
+		// live open answers, as for any CLOSE or OPEN_DOWNGRADE of one.
+		recovered = false
+	}
 	if !recovered {
 		current, status := s.opens.Lookup(st.clientID, sid, generation, st.currentID)
 		if status != nfs4.NFS4_OK {
@@ -307,7 +324,7 @@ func (s *Server) releaseWrite(openStateid nfs4.Stateid4, st *compoundState, clos
 		}
 		state = current
 		if to != nil {
-			if status := state.DowngradeStatus(*to, false); status != nfs4.NFS4_OK {
+			if status := state.DowngradeStatus(*to, state.Recovered); status != nfs4.NFS4_OK {
 				return openstate.State{}, status
 			}
 		}
@@ -401,6 +418,7 @@ func (s *Server) releaseWrite(openStateid nfs4.Stateid4, st *compoundState, clos
 				if err := sf.FinishHydration(s.readBaseForeground); err != nil {
 					s.failForReaders(dataID, sid)
 					s.discardStaging(dataID)
+					s.abandonFailedOpen(sid, recovered)
 					status := s.errToNFS(err)
 					s.log.Error("close: hydrate replacement", "err", err,
 						"status", nfs4.Nfsstat4Name(status))
@@ -413,11 +431,18 @@ func (s *Server) releaseWrite(openStateid nfs4.Stateid4, st *compoundState, clos
 				panic("close: staging Reader failed: " + rErr.Error())
 			}
 			linkErr := s.fs.LinkFile(stagingID, meta.TernCookie, meta.DirID, meta.FileName, r)
+			if linkErr != nil && s.alreadyPublished(stagingID, meta) {
+				// An earlier process linked it and died before removing the
+				// staging: the CLOSE, run again, finds its work done.
+				s.log.Info("close: staging was already published", "inode", stagingID, "name", meta.FileName)
+				linkErr = nil
+			}
 			if linkErr != nil {
 				st.observeMutation(s.fs, nfs4.OP_CLOSE, linkErr)
 				// The write phase is not resumable after a partial LinkFile.
 				s.failForReaders(dataID, sid)
 				s.discardStaging(dataID)
+				s.abandonFailedOpen(sid, recovered)
 				status := s.errToNFS(linkErr)
 				s.log.Error("close: link file", "err", linkErr, "status", nfs4.Nfsstat4Name(status))
 				return fail(status)
@@ -582,6 +607,89 @@ func (s *Server) adoptRecovered(st *compoundState, stateid nfs4.Stateid4, g open
 	return state, nfs4.NFS4_OK
 }
 
+// adoptRecoveredWriter installs a recovered writer, presented by its old
+// stateid on the handle the client holds, as a live open of this process at
+// the generation the client is using. After an nfsd restart the Linux
+// client learns nothing of the restart while its session survives: it keeps
+// writing and committing with the stateid it has. Without this, COMMIT
+// found no writer for the handle, synced nothing, and answered with this
+// process's verifier, which matched the writes it had just taken; the
+// client dropped its pages, nothing was checkpointed, and the next restart
+// lost the data. The caller holds no staging or file lock.
+//
+// live reports that a live open answers for the stateid: the one adopted
+// here, or one another request adopted after the caller's own lookup, whose
+// status, OLD_STATEID or BAD_STATEID for a generation it does not have, is
+// the request's. Otherwise adoption was refused, and the caller may run the
+// request on the sidecar.
+func (s *Server) adoptRecoveredWriter(clientID uint64, handleID, dataID vfs.InodeID, id nfs4.StateID, generation uint32) (state openstate.State, live bool, status uint32) {
+	meta, hasMeta, unlockTarget := s.lockStagingTarget(dataID)
+	defer unlockTarget()
+	unlockOpen := s.opens.LockFile(handleID)
+	defer unlockOpen()
+	if s.opens.Live(id) {
+		// Adopted meanwhile by another request of this client. Its live
+		// open answers, whatever the staging says now.
+		state, status = s.opens.Lookup(clientID, id, generation, handleID)
+		return state, true, status
+	}
+	if !hasMeta || meta.NFSStateID != id || meta.ClientID != clientID || meta.ReadOnly {
+		return openstate.State{}, false, nfs4.NFS4_OK
+	}
+	owner := recoveredOwner(meta)
+	state, ok := s.opens.Adopt(owner, handleID, dataID, openstate.Grant{Access: recoveredAccess(meta)}, id, generation)
+	if !ok {
+		return openstate.State{}, false, nfs4.NFS4_OK
+	}
+	s.views.AddWriter(openstate.ViewKey{ClientID: clientID, FileID: handleID}, dataID)
+	if !meta.Unlinked {
+		s.names.remember(handleID, meta.DirID, meta.FileName)
+	}
+	s.log.Info("recovered writer adopted", "inode", dataID, "name", meta.FileName, "stateid", id, "handle", handleID)
+	return state, true, nfs4.NFS4_OK
+}
+
+// recoveredWritersOf lists the client's staged writers for a handle that no
+// request of this process has adopted yet: those an earlier process issued
+// against the handle as base or placeholder, or with the handle as their
+// own inode. COMMIT carries no stateid, so it finds them here.
+func (s *Server) recoveredWritersOf(clientID uint64, handleID vfs.InodeID) []vfs.InodeID {
+	var ids []vfs.InodeID
+	for id, meta := range s.stagingStore.Entries() {
+		if meta.ClientID != clientID || meta.ReadOnly || !s.opens.CanRecover(meta.NFSStateID) {
+			continue
+		}
+		if id == handleID || meta.BaseID == handleID {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+// abandonFailedOpen ends the open state of a CLOSE whose publication
+// failed and whose staging was discarded. The Linux client treats a failed
+// close() as closed and never retries it, so an open kept here would last
+// until the client's lease ended, which for a live client is never; the
+// lease-expiry run on QA left one such open with no staging behind it. A
+// retried CLOSE gets EXPIRED, as for a writer whose staging was lost.
+func (s *Server) abandonFailedOpen(sid nfs4.StateID, recovered bool) {
+	if !recovered {
+		s.opens.Expire(sid)
+	}
+}
+
+// alreadyPublished reports that the staging inode is the file at its name:
+// a LinkFile of it failed because an earlier process had already linked it
+// and died before removing the staging. Inode IDs are never reused, so the
+// name resolving to the staging inode is proof.
+func (s *Server) alreadyPublished(stagingID vfs.InodeID, meta staging.Meta) bool {
+	if meta.Unlinked {
+		return false
+	}
+	current, err := s.fs.Lookup(meta.DirID, meta.FileName)
+	return err == nil && current == stagingID
+}
+
 // recoveredAccess is a recovered open's access: its writer's original
 // grant is unknown, so a writer may keep or drop READ.
 func recoveredAccess(meta staging.Meta) uint32 {
@@ -602,7 +710,7 @@ func (s *Server) regrant(st *compoundState, stateid nfs4.Stateid4, g openstate.G
 	if status != nfs4.NFS4_OK {
 		return openstate.State{}, status
 	}
-	if status := current.DowngradeStatus(g, false); status != nfs4.NFS4_OK {
+	if status := current.DowngradeStatus(g, current.Recovered); status != nfs4.NFS4_OK {
 		return openstate.State{}, status
 	}
 	if current.Writes() && g.Access == nfs4.OPEN4_SHARE_ACCESS_READ {

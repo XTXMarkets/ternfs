@@ -211,7 +211,8 @@ func (os *Store) Adopt(owner OwnerKey, fileID, dataID vfs.InodeID, g Grant, id n
 	state := &State{
 		ID: id, FileID: fileID, DataID: dataID, Owner: owner,
 		Access: g.Access, modes: 1 << g.Access, denyModes: 1 << g.Deny,
-		Generation: generation, Marked: true, seq: os.nextSeq,
+		Generation: generation, Marked: true, Recovered: true, seq: os.nextSeq,
+		learnGeneration: generation == 0,
 	}
 	os.states[id] = state
 	os.byFile[key] = state
@@ -257,6 +258,7 @@ func (os *Store) lookupLocked(
 	if state.Owner.ClientID != clientID || state.FileID != fileID {
 		return nil, nfs4.NFS4ERR_BAD_STATEID
 	}
+	state.learnGenerationLocked(generation)
 	if generation != 0 && generation < state.Generation {
 		return nil, nfs4.NFS4ERR_OLD_STATEID
 	}
@@ -277,6 +279,7 @@ func (os *Store) Status(clientID uint64, id nfs4.StateID, generation uint32) uin
 	if state.Owner.ClientID != clientID {
 		return nfs4.NFS4ERR_BAD_STATEID
 	}
+	state.learnGenerationLocked(generation)
 	if generation != 0 && generation < state.Generation {
 		return nfs4.NFS4ERR_OLD_STATEID
 	}
@@ -284,6 +287,15 @@ func (os *Store) Status(clientID uint64, id nfs4.StateID, generation uint32) uin
 		return nfs4.NFS4ERR_BAD_STATEID
 	}
 	return nfs4.NFS4_OK
+}
+
+// learnGenerationLocked takes the first seqid an adopted open of unknown
+// generation is presented with as its generation. The caller holds os.mu.
+func (s *State) learnGenerationLocked(generation uint32) {
+	if s.learnGeneration && generation != 0 {
+		s.Generation = generation
+		s.learnGeneration = false
+	}
 }
 
 // Downgrade narrows an open to g with I/O on dataID: for a write open

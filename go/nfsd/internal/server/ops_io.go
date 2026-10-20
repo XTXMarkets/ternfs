@@ -25,9 +25,11 @@ func (s *Server) opCommit(st *compoundState, w *nfs4.COMPOUND4resWriter) uint32 
 	}
 
 	// COMMIT carries no stateid. Sync every writer this client has open
-	// through the handle, and the handle's own staging after a restart.
+	// through the handle, the handle's own staging, and after a restart the
+	// client's writers of the handle that no request has adopted yet.
 	writers := append([]vfs.InodeID{st.currentID},
 		s.views.WritersOf(openstate.ViewKey{ClientID: st.clientID, FileID: st.currentID})...)
+	writers = append(writers, s.recoveredWritersOf(st.clientID, st.currentID)...)
 	failed := func() bool {
 		for _, id := range writers {
 			if s.stagingStore.Failed(id) {

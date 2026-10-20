@@ -39,6 +39,7 @@ const (
 	measAdmission      = metricsPrefix + "admission"              // in-flight, reply work, cache, sessions
 	measState          = metricsPrefix + "state"                  // opens, aliases, publishes
 	measStaging        = metricsPrefix + "staging"                // files, bytes, retired, unlinked, busy, hydrations
+	measReplay         = metricsPrefix + "replay"                 // the persistent reply cache
 	measBackend        = metricsPrefix + "backend"                // tags service, kind; count, attempts
 	measBackendLatency = metricsPrefix + "backend_latency_bucket" // tags service, kind, le; count
 	measProcess        = metricsPrefix + "process"                // Go runtime figures
@@ -182,6 +183,19 @@ func (p *metricsPusher) build(b *log.MetricsBuilder, now time.Time) {
 	b.FieldU64("opens", uint64(snap.Opens))
 	b.FieldU64("aliases", uint64(snap.Aliases))
 	b.FieldU64("publishes", snap.Publishes)
+	b.Timestamp(now)
+
+	b.Measurement(measReplay)
+	p.tags(b)
+	b.FieldU64("records", snap.ReplayRecords)
+	b.FieldU64("write_failures", snap.ReplayWriteFailures)
+	b.FieldU64("record_bytes", snap.ReplayRecordBytes)
+	b.FieldU64("intents", snap.ReplayIntents)
+	b.FieldU64("session_files", uint64(snap.ReplaySessionFiles))
+	b.FieldU64("sessions_restored", snap.ReplaySessionsRestored)
+	b.FieldU64("served", snap.ReplayServed)
+	b.FieldU64("decided_applied", snap.ReplayDecidedApplied)
+	b.FieldU64("undecidable", snap.ReplayUndecidable)
 	b.Timestamp(now)
 
 	b.Measurement(measStaging)

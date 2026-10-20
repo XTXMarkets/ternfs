@@ -269,6 +269,8 @@ func TestConfirmationUnresolvedAdmission(t *testing.T) {
 	if got := identityConfirmed(t, f); got != vfs.InodeID(f.n) {
 		t.Fatalf("confirmed %d", got)
 	}
+	// The held creation's file went to N's session, and no other is left.
+	sessionFilesMatchSessions(t, f.srv)
 }
 
 func identityConfirmed(t *testing.T, f *confirmServer) vfs.InodeID {
@@ -464,6 +466,9 @@ func TestConfirmationConservative(t *testing.T) {
 		if !f.pMarker(t) || f.pStaging(t).Retired || f.present(t, vfs.InodeID(f.p), clientstore.ExpiredName) {
 			t.Fatal("P's durable state changed")
 		}
+		// N's creation made its session file before confirming, and
+		// removed it with the creation.
+		noOrphanSessionFiles(t, f.srv)
 	}
 	t.Run("observed another incarnation", func(t *testing.T) {
 		f := newConfirmServer(t)
@@ -1584,4 +1589,5 @@ func TestConfirmationPanicRetained(t *testing.T) {
 	if f.nSessions() != 1 || f.pSequence(t) != nfs4.NFS4ERR_BADSESSION {
 		t.Fatal("commit not applied once")
 	}
+	sessionFilesMatchSessions(t, f.srv)
 }

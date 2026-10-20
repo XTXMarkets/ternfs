@@ -274,6 +274,8 @@ func (slot *sessionSlot) snapshot(index int) inspect.Slot {
 		Reserved:   slot.reserved,
 		ReplyBytes: len(slot.reply),
 		HasBuffer:  slot.buffer != nil,
+		Restored:   slot.restored,
+		Intent:     slot.hasIntent,
 	}
 	if slot.occupied {
 		out.User = &inspect.User{Flavor: clientstore.AuthFlavorName(slot.user.flavor), UID: slot.user.uid, GID: slot.user.gid}
@@ -304,6 +306,8 @@ func (sess *session) snapshot(users int, wire string, flags uint32, withSlots bo
 		},
 		BackRequested: sess.backRequested,
 		CBProgram:     sess.cbProgram,
+		Persisted:     sess.file.onDisk.Load(),
+		Restored:      sess.restored,
 		Users:         users,
 		Recalled:      sess.recalled.Load(),
 		Destroyed:     sess.destroyed.Load(),

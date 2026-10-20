@@ -101,6 +101,9 @@ Counters are cumulative from process start. Latency histograms have a
 | `eggsfs_nfsd_state_opens`, `_aliases` | | Live open stateids and publication aliases (gauges). |
 | `eggsfs_nfsd_state_publishes` | | Files published by CLOSE or OPEN_DOWNGRADE. |
 | `eggsfs_nfsd_staging_files`, `_bytes`, `_retired`, `_unlinked`, `_busy`, `_hydrations_in_flight` | | The staging store (gauges). Files are read without waiting on a file busy with disk I/O: a busy file counts in `files` and `busy` but not in `bytes`, `retired` or `unlinked`, so those are lower bounds while `busy` is above zero. `bytes` is the files' live size, including UNSTABLE writes not yet committed. |
+| `eggsfs_nfsd_replay_records`, `_write_failures`, `_record_bytes`, `_intents` | | The persistent reply cache: slot and intent records written, record writes and session file creations that failed, reply bytes recorded, intents. |
+| `eggsfs_nfsd_replay_session_files` | | Sessions with a file on the staging disk (gauge). |
+| `eggsfs_nfsd_replay_sessions_restored`, `_served`, `_decided_applied`, `_undecidable` | | Sessions restored at startup; retransmissions after a restart answered from a restored reply, run again with their intent found applied, and undecidable (`NFS4ERR_DEADSESSION`). |
 | `eggsfs_nfsd_backend_count`, `_attempts` | `service`, `kind` | Requests to shards and the CDC by kind, and attempts including resends. |
 | `eggsfs_nfsd_backend_latency_bucket_count` | `service`, `kind`, `le` | Backend round-trip time, bounds 0.1 ms to 10 s. |
 | `eggsfs_nfsd_process_heap_alloc_bytes`, `_sys_bytes`, `_goroutines`, `_gc_pause_nanos`, `_gc_count`, `_uptime_seconds` | | Go runtime figures. |
@@ -125,8 +128,8 @@ last request and, when the client sets `sa_cachethis`, that request's reply.
 A cached reply is at most 64 KiB. A retransmission on the same slot and
 sequence ID returns the cached reply. While the original is still running it
 gets `NFS4ERR_DELAY`; if its reply was not cached it gets
-`NFS4ERR_RETRY_UNCACHED_REP`. The cache is process-local and is lost on
-restart.
+`NFS4ERR_RETRY_UNCACHED_REP`. The cache survives an nfsd restart on the
+same host; see below.
 
 The negotiated limits are enforced. CREATE_SESSION returns `NFS4ERR_TOOSMALL`
 for channel attributes too small to carry a SEQUENCE. SEQUENCE returns
@@ -159,15 +162,35 @@ instead; libnfs treats a DELAY at mount as a failure. The first SEQUENCE
 after an idle period can still get DELAY while the lease is read again. See
 [Leases](#leases).
 
-Sessions are held in memory and end with the nfsd process; `PERSIST` is
-never granted. A session ID contains the issuing process's epoch and the
-client incarnation. After an nfsd restart, SEQUENCE and BIND_CONN_TO_SESSION for a session from an
-earlier process return `NFS4ERR_BADSESSION`, as for any session this process
-destroyed or never issued. The client then registers again: CREATE_SESSION
-with its old clientid gets `NFS4ERR_STALE_CLIENTID`, and EXCHANGE_ID gives a
-new clientid for the same durable client while its lease is live. A writer
-open is recovered either with its old stateid or, if the client reopens it,
-by a writable CLAIM_FH OPEN of the handle it holds; `CLAIM_PREVIOUS` gets
+Sessions survive an nfsd restart on the same host. Each session has a
+file under `sessions/` in the staging directory holding its identity,
+its negotiated channel attributes and its slot table: for each slot the
+last request's sequence number, a digest of its arguments, its effective
+user and its reply, the whole reply when the client asked for caching and
+the SEQUENCE-only prefix otherwise. The record is written before the
+reply goes to the socket, by a `pwrite` without fsync, which survives the
+death of the process; the store is for restarts, not host crashes. At
+startup nfsd rebuilds every session that recorded a request and whose
+incarnation is still the confirmed one, so a retransmission after a
+restart gets its original reply (RFC 8881 §2.10.6.5). The file does not
+record the callback sequence, nor a callback program or credential set by
+BACKCHANNEL_CTL, so it is removed before a session's first callback and
+before BACKCHANNEL_CTL: such a session is not restored. If the file cannot
+be removed, the callback is not sent, BACKCHANNEL_CTL gets
+`NFS4ERR_SERVERFAULT`, and the session is retired. `PERSIST` is not
+granted: the Linux client behaves the same either way, except that it
+would switch exclusive creates to GUARDED4 and lose their verifier.
+RENAME, REMOVE and CREATE write an intent before their effect, so a
+request the earlier process was running when it died is decided rather
+than run blind; see [Restart recovery](#restart-recovery). A session ID
+contains the issuing process's epoch and the client incarnation. A session
+with no file, or whose incarnation's lease expired, is unknown to the new
+process: SEQUENCE and BIND_CONN_TO_SESSION get `NFS4ERR_BADSESSION`, the
+client registers again, CREATE_SESSION with its old clientid gets
+`NFS4ERR_STALE_CLIENTID`, and EXCHANGE_ID gives a new clientid for the
+same durable client while its lease is live. A writer open is recovered
+either with its old stateid or, if the client reopens it, by a writable
+CLAIM_FH OPEN of the handle it holds; `CLAIM_PREVIOUS` gets
 `NFS4ERR_NO_GRACE`.
 
 A request admitted by SEQUENCE renews the client's logical lease when its
@@ -484,8 +507,10 @@ manual recovery. Looking up the current pathname cannot establish whether
 this operation applied or someone else changed the name, so nfsd cannot
 automatically choose a publication target.
 
-A retry after an applied first attempt returns `NFS4ERR_NOENT`, so `rm` or
-`mv` can report an error even though the operation happened.
+A retransmission of an applied first attempt is answered from the session's
+reply cache, across a restart included. A request the client sends again as
+a new one, after a session it lost, returns `NFS4ERR_NOENT`, so `rm` or `mv`
+can then report an error even though the operation happened.
 
 ### Restart and quarantine
 
@@ -904,11 +929,37 @@ presented again gets `NFS4ERR_BAD_STATEID`.
 The persistent records do not reconstruct general process-local open state
 after an nfsd restart. A client normally establishes new state.
 
-Sessions do not survive a restart, as described under
-[Sessions](#sessions), and stateids are process-local. A client which sends
-one nfsd's stateid to a different nfsd, or to the same nfsd after a restart,
-gets `NFS4ERR_BAD_STATEID`, not `NFS4ERR_STALE_STATEID`. The Linux client
-recovers by registering again and opening the file again: SEQUENCE gets
+Sessions survive a restart, as described under [Sessions](#sessions);
+stateids are process-local. The Linux client, which learns nothing of the
+restart, retransmits every request that was in flight with the same slot
+and sequence number and goes on using its stateids. A retransmission is
+answered from the session's recorded reply. A slot that holds an intent
+but no reply belongs to a request the earlier process was running when it
+died, between the shard committing the effect and the reply being
+recorded; the request runs again and the operation the intent names is
+decided against TernFS first. A RENAME whose destination holds the
+intended inode and whose source edge is gone, and a REMOVE whose edge is
+gone, happened, and report success without running again; a source edge
+still in place did not, and the operation runs now. Anything else gets
+`NFS4ERR_DEADSESSION`, the RFC's answer for a request a restart left half
+done: a CREATE, since nothing shows whether it made what is, or is not, at
+the name; an operation on other names or directories than its intent's;
+any mutating operation before it in the compound; and every mutating
+operation when the intent cannot be read. While a session's file is on
+disk, each of its compounds is permitted at most one mutating operation:
+before a second one of any kind runs, the file is removed, and the
+session is not restored. The request goes on in memory, and a
+retransmission of it after a restart gets `NFS4ERR_BADSESSION`, as
+before sessions were kept on disk. A restored slot
+accepts a later sequence number than it recorded once, since the record of
+a later request may not have been written; the ordinary rules apply from
+then on. Restored incarnations' leases are published at startup, before
+nfsd listens, as CREATE_SESSION publishes a new session's.
+
+A stateid from the earlier process gets `NFS4ERR_BAD_STATEID`, not
+`NFS4ERR_STALE_STATEID`, except where a staged writer recovers it (below).
+The Linux client reopens a read with CLAIM_FH on BAD_STATEID. A client
+whose session was lost registers again: SEQUENCE gets
 `NFS4ERR_BADSESSION`, CREATE_SESSION with the old clientid
 `NFS4ERR_STALE_CLIENTID`, EXCHANGE_ID gives a new clientid for the same
 incarnation, `CLAIM_PREVIOUS` gets `NFS4ERR_NO_GRACE`, and the open is
@@ -1012,7 +1063,7 @@ every state word the API uses. Read it first.
 | `/v1/lookup?id=` | Resolves one typed id. See below. |
 | `/v1/clients` | Wire clientids this process issued, each bound to a durable incarnation, with the CREATE_SESSION replay slot. Filters `wire`, `incarnation`, `owner`. |
 | `/v1/incarnations` | Per incarnation: the session group and lease gate, the lease refresher record, the cached store location, confirmation protection and destruction holds. Filter `id`. |
-| `/v1/sessions` | Each session's channel limits, SEQUENCE status flags, backchannel sender and connections, and slots. Filters `id`, `incarnation`, `slots=0`. |
+| `/v1/sessions` | Each session's channel limits, SEQUENCE status flags, backchannel sender and connections, whether it has a file and was restored, and slots with their restored and intent state. Filters `id`, `incarnation`, `slots=0`. |
 | `/v1/opens` | Open stateids with file, data inode, owner and access; expired tombstones; the client views behind a handle. Filters `stateid`, `incarnation`, `file`. |
 | `/v1/confirmations` | Client confirmations in progress or unresolved, with the evidence of their writes, including why a fence failed, destruction holds and purge hints. |
 | `/v1/staging` | The staging store in memory: each writer's target, owner, size, dirty ranges and flags, and the failed tombstones. Filters `file`, `incarnation`. |
@@ -1250,9 +1301,11 @@ OPEN never sets `OPEN4_RESULT_PRESERVE_UNLINKED`, so the Linux client still
 silly-renames a busy file instead of removing it. nfsd implements NFSv4.1
 only.
 
-The session reply cache is process-local and holds only replies the client
-asked to cache. A retransmission of a request which completed before a
-restart gets `NFS4ERR_BADSESSION` and does not run again. If the client
+The session reply cache holds only replies the client asked to cache and
+survives an nfsd restart on the same host, not a host crash: see
+[Sessions](#sessions). A retransmission of a request which completed before
+a restart gets its original reply. One to a session that was lost gets
+`NFS4ERR_BADSESSION` and does not run again. If the client
 resends it on a new session, it is a new request there.
 
 ## Testing

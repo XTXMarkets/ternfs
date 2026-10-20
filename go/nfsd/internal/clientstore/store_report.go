@@ -961,6 +961,9 @@ func (r *inspectReport) readStaging(dir string) ([]*inspectStagingEntry, error) 
 			if name == staging.AliasesDirName {
 				continue // The server's publication alias log.
 			}
+			if name == staging.SessionsDirName {
+				continue // The server's session files.
+			}
 			problem("%s: unexpected directory", path)
 			continue
 		}

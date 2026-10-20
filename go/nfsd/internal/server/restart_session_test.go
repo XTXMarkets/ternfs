@@ -15,10 +15,10 @@ import (
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
-// Sessions end with their nfsd process (canonical r3 §6). A retransmission
-// of a request the earlier process completed gets BADSESSION from the
-// restarted one and does not run again; BIND_CONN_TO_SESSION and a new
-// request on the old session get BADSESSION too, and nothing is rebuilt.
+// A restart onto a fresh staging disk, with no session files, loses the
+// session: the retransmission gets BADSESSION and does not run again, and
+// so do a new request on the old session and a BIND. With the staging disk
+// kept, the session survives (session_restore_test.go).
 func TestRestartRetransmissionGetsBadSession(t *testing.T) {
 	root := t.TempDir()
 	newServer := func() (*Server, string, func()) {

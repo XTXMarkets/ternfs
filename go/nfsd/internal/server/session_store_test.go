@@ -74,7 +74,7 @@ func TestClientRetirementHoldsRecords(t *testing.T) {
 		sess := &session{clientID: client, slots: make([]sessionSlot, maxSessionSlots),
 			maxOps: maxCompoundOperations, maxReq: maxRPCMessage, maxResp: maxRPCMessage,
 			maxCached: maxSessionReplyCached}
-		sess.id = ss.newSessionIDLocked(client)
+		sess.id, _ = ss.newSessionIDLocked(client)
 		ss.insertSessionLocked(sess)
 		batch = append(batch, sess)
 	}
