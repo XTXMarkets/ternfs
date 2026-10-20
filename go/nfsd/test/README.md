@@ -34,13 +34,20 @@ make test-cluster
 make test-cluster GO_TEST_FLAGS='-v -run TestTernWriteAndRead'
 ```
 
-The untagged tests include [nfsd_test.go](../nfsd_test.go), the
-[client-store tests](../client_store_test.go), session tests and staging
-tests. They run under the normal `go test ./...` path.
+`make test` runs `go test . ./internal/...`. The untagged tests include
+[nfsd_test.go](../internal/server/nfsd_test.go), the
+[client-store tests](../internal/clientstore/store_test.go), session tests
+and staging tests. `make test` does not include the diagnostics API package;
+run its typed-ID tests from `go/nfsd` with:
 
-[cluster_test.go](../cluster_test.go) uses the `ternnfs` build tag and starts
-a registry, block services, CDC and metadata shards. `make test-cluster`
-requires `ss` from iproute2 to check the fixed registry UDP port 55556.
+```sh
+go test ./inspect
+```
+
+[cluster_test.go](../internal/server/cluster_test.go) uses the `ternnfs`
+build tag and starts a registry, block services, CDC and metadata shards.
+`make test-cluster` runs it in `./internal/server` and requires `ss` from
+iproute2 to check the fixed registry UDP port 55556.
 Do not run two copies against that port. The test harness builds backend
 binaries unless given its `-binaries-dir` argument. These tagged tests are
 not selected by the current CI workflow.

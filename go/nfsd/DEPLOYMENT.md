@@ -20,7 +20,7 @@ These are the current implementation's guarantees and limitations.
 | --- | --- |
 | Successful create OPEN | The pathname contains an empty published file. Initial size and later writes can still be private. |
 | Unstable WRITE | The server accepted bytes into local staging. The client must retain them until made stable. |
-| Stable WRITE or COMMIT | Normally checkpoints staging data and metadata on the local disk. It does not publish to TernFS. The recovered-COMMIT defect below is an exception. |
+| Stable WRITE or COMMIT | Checkpoints staging data and metadata on the local disk. After a restart, COMMIT also syncs the client's recovered writers of the handle. It does not publish to TernFS. |
 | Last write CLOSE or downgrade to READ | Publishes a changed, linked staging version synchronously. A clean writer leaves the published file unchanged; an unlinked writer discards its private version. |
 | Fresh lookup after publication | Finds the replacement inode. Already held handles and client caches need not select that version. |
 
@@ -35,9 +35,10 @@ file can still appear empty to another client and an edited file can still
 show its previous published contents.
 
 An old handle identifies an immutable inode, but the issuing daemon may
-temporarily map it to the client's newer version. That mapping is lost on
-restart and is absent on other daemons. This causes the
-[old-handle defect](#old-handles-can-return-older-content).
+temporarily map it to the client's newer version. A process restart on
+the same staging disk keeps that mapping only if its recorded expiry has
+not passed; other daemons never have it. This causes the
+[old-handle defect](#old-handles-name-their-original-version).
 
 ## Deployment modes
 
@@ -59,12 +60,15 @@ nfsd. Give that daemon a persistent staging directory.
 Publication is synchronous. REMOVE and RENAME update that daemon's staged
 writers so a later CLOSE follows the local namespace change.
 
-**Failure behaviour.** Restarting with the same disk restores sessions and
-their cached replies, so clients continue on the same session and
-retransmissions get their original replies; recovers eligible checkpointed
-writers through their old stateids; and restores publication aliases. Read
-opens are reopened by the client. Disk loss removes unpublished contents
-and every session.
+**Failure behaviour.** Restarting the process with the same disk can
+restore sessions and their cached replies, so clients continue on the same
+session and retransmissions get their original replies. Restoration is
+conditional; see [sessions](DESIGN.md#requests-and-sessions). A restart also
+recovers eligible checkpointed writers through their old stateids, and
+restores publication aliases whose recorded expiry has not passed. Read
+opens are reopened by the client. Session files and aliases are written
+without fsync, so a host crash can lose them. Disk loss removes
+unpublished contents and every session.
 
 **Known issues.** The backend-timeout issue below applies. A surviving
 disk is not a guarantee that every descriptor resumes. There are no
@@ -122,9 +126,11 @@ they already use.
 **Guarantees.** Eligible staged writers have the local data and sidecars
 needed for recovery. This has the same recovery scope as an in-place restart.
 
-**Failure behaviour.** The new daemon has new sessions, clientids and
-in-memory state. Recovery still depends on the client identity and boot,
-the held handle, the namespace, and retained base/transient inodes.
+**Failure behaviour.** The new daemon has new wire clientids and in-memory
+state. It can restore sessions from the disk under the same conditions as
+an in-place restart, but a host crash can have lost session records written
+without fsync. Writer recovery still depends on the client identity and
+boot, the held handle, the namespace, and retained base/transient inodes.
 
 **Known issues.** All restart defects below apply. A movable disk does not
 make active/active service safe: never run two daemons against the same
@@ -193,12 +199,14 @@ outage. Tracked as `work-49b9`.
 
 A client reads its newly published contents through the handle it still
 holds while the daemon keeps a publication alias for it: while the handle
-is open and for one lease after publication. The alias survives a restart.
-After it lapses, or through another daemon, the handle names its original
-immutable inode again, so a read through a very old handle can return
-older bytes. The replacement is always available through a fresh pathname
-lookup. A writable OPEN by handle can get `NFS4ERR_STALE` when the daemon
-has neither a remembered current pathname nor eligible staging; the Linux
+is open and for one lease after publication. The alias survives a restart
+while its recorded expiry, renewed at each sweep for an open handle, is
+still in the future. After it lapses, including during a long outage, or
+through another daemon, the handle names its original immutable inode
+again, so a read through a very old handle can return older bytes. The
+replacement is always available through a fresh pathname lookup. A
+writable OPEN by handle can get `NFS4ERR_STALE` when the daemon has
+neither a remembered current pathname nor eligible staging; the Linux
 client then looks the name up again.
 
 ### Lease expiry leaves retired staging
@@ -225,21 +233,21 @@ Counters are cumulative from process start. Latency histograms have a
 
 | Series | Labels | Meaning |
 |---|---|---|
-| `eggsfs_nfsd_ops_count` | `op`, `status` | Operations completed, by NFS operation and status. Includes SEQUENCE. |
+| `eggsfs_nfsd_ops_count` | `op`, `status` | Operation results, by NFS operation and status, once each, including SEQUENCE and operations refused before they ran. An undefined opcode counts as `OP_ILLEGAL`, as on the wire. A replayed reply counts only its SEQUENCE. |
 | `eggsfs_nfsd_op_latency_bucket_count` | `op`, `le` | Operation service time inside nfsd, bounds 0.5 ms to 60 s. |
 | `eggsfs_nfsd_op_latency_count`, `_sum_nanos` | `op` | For mean latency. |
 | `eggsfs_nfsd_io_ops`, `_bytes` | `direction` | READ and WRITE operations and payload bytes. |
 | `eggsfs_nfsd_compounds_count` | | RPC compounds handled. |
-| `eggsfs_nfsd_connections_open` | | Open TCP connections (gauge). |
-| `eggsfs_nfsd_connections_accepted`, `_closed_by_client`, `_closed_by_server`, `_idle_timeouts`, `_read_errors`, `_parse_errors` | | How connections began and ended. A server close is a reply write failure, an unanswerable request or a conflicting XID. |
+| `eggsfs_nfsd_connections_open` | | Tracked connection handlers, including connections draining requests (gauge). |
+| `eggsfs_nfsd_connections_accepted`, `_closed_by_client`, `_closed_by_server`, `_idle_timeouts`, `_read_errors`, `_parse_errors` | | How connections began and ended. Each ended connection is counted once, by the first cause seen, when its handler returns, so the causes sum to the accepted connections that are no longer open. A client close is EOF or a reset; a server close is a reply write failure, a panic, a request refused or dropped without a reply, or a conflicting XID. |
 | `eggsfs_nfsd_admission_in_flight`, `_max_in_flight` | | Requests admitted and not yet answered, and the sum of per-connection limits (gauges). |
 | `eggsfs_nfsd_admission_work_bytes`, `_work_limit`, `_work_replies`, `_work_waiters` | | Reply-work reservations against `-reply-work-budget-mib`, and requests waiting for it (gauges). |
 | `eggsfs_nfsd_admission_work_waits`, `_work_wait_nanos` | | Waits for reply work begun, and time spent waiting. |
 | `eggsfs_nfsd_admission_cache_bytes`, `_cache_limit`, `_sessions`, `_records`, `_groups`, `_active_requests` | | Reply cache and session store figures (gauges). |
 | `eggsfs_nfsd_state_opens`, `_aliases` | | Live open stateids and publication aliases (gauges). |
 | `eggsfs_nfsd_state_publishes` | | Files published by CLOSE or OPEN_DOWNGRADE. |
-| `eggsfs_nfsd_staging_files`, `_bytes`, `_retired`, `_unlinked`, `_hydrations_in_flight` | | The staging store (gauges). |
-| `eggsfs_nfsd_replay_records`, `_write_failures`, `_record_bytes`, `_intents` | | The persistent reply cache: slot and intent records written, writes that failed, reply bytes recorded, intents. |
+| `eggsfs_nfsd_staging_files`, `_bytes`, `_retired`, `_unlinked`, `_busy`, `_hydrations_in_flight` | | The staging store (gauges). Files are read without waiting on a file busy with disk I/O: a busy file counts in `files` and `busy` but not in `bytes`, `retired` or `unlinked`, so those are lower bounds while `busy` is above zero. `bytes` is the files' live size, including UNSTABLE writes not yet committed. |
+| `eggsfs_nfsd_replay_records`, `_write_failures`, `_record_bytes`, `_intents` | | The persistent reply cache: slot and intent records written, record writes and session file creations that failed, reply bytes recorded, intents. |
 | `eggsfs_nfsd_replay_session_files` | | Sessions with a file on the staging disk (gauge). |
 | `eggsfs_nfsd_replay_sessions_restored`, `_served`, `_decided_applied`, `_undecidable` | | Sessions restored at startup; retransmissions after a restart answered from a restored reply, run again with their intent found applied, and undecidable (`NFS4ERR_DEADSESSION`). |
 | `eggsfs_nfsd_backend_count`, `_attempts` | `service`, `kind` | Requests to shards and the CDC by kind, and attempts including resends. |
@@ -279,7 +287,24 @@ curl -s http://127.0.0.1:9049/ | jq .
 
 Every `/v1` response carries `now`, `nfsd_id`, `stateid_epoch`,
 `wire_epoch` and `mode`, the identities of the process. Ids are typed
-`kind:hex` strings, as the log lines spell them.
+`kind:hex` strings, as the log lines spell them. A filter accepts only the
+kind it names, for example `incarnation=incarnation:200000000000000e` or
+`stateid=stateid:09cb5ee40000000000000001`.
+
+When nfsd will not start, or a host's store should be read without
+disturbing a running server, `-store-only` serves the API without the NFS
+listener:
+
+```sh
+nfsd -store-only -registry <addr> -staging <dir> -status-addr 127.0.0.1:9049
+```
+
+It opens the client store read-only and never opens the staging store,
+which would quarantine and truncate sidecars during recovery;
+`/v1/store?staging=1` reads the sidecars directly. `mode` is `store-only`,
+and the resources that describe a running server return 503.
+
+The API has no authentication. Bind it to a loopback or management address.
 
 ## Operating requirements
 
@@ -290,11 +315,15 @@ staging, hydration traffic, CLOSE latency and backend errors. Linked retired
 staging has no automatic age-based deletion.
 
 Bound request concurrency with `-max-in-flight-per-connection` if needed.
-Its default is 64; it bounds request count, not bytes or total connections.
-Reply bytes are bounded across the process by `-reply-work-budget-mib`,
-8 GiB by default, charged per request from its operations' reply bounds; a
-request that does not fit waits for replies to drain rather than being
-refused. A dashboard shows the waits as `admission_work_waits`.
+Its default is 64; it bounds request count per connection, not bytes,
+connections or total server RSS. Monitor RSS and tune it for the workload.
+Reply memory is bounded across the process by `-reply-work-budget-mib`,
+8 GiB by default. Each request reserves eight times its reply capacity plus
+a fixed allowance before it runs, so a 1 MiB READ reserves about 8.5 MiB; see
+[requests and sessions](DESIGN.md#requests-and-sessions). A request that
+does not fit waits for replies to drain rather than being refused. A request
+larger than the whole budget is refused and its connection closed. A
+dashboard shows the waits as `admission_work_waits`.
 
 Give `/.nfs` a snapshot policy appropriate for disposable client-store
 history. Lease and marker churn otherwise accumulates snapshot edges and

@@ -48,9 +48,10 @@ Omitting `-staging` selects the server's
 [read-only mode](DEPLOYMENT.md#read-only-servers). `-root DIR` selects a
 local test backend instead of `-registry`; exactly one is required.
 `-v` enables request logging. `-status-addr` serves a read-only JSON
-diagnostics API and `-influx-db-origin`, `-org` and `-bucket` push metrics;
-both are described under [Deployment](DEPLOYMENT.md#metrics). `./nfsd -h`
-lists the other options.
+[diagnostics API](DEPLOYMENT.md#diagnostics); `-store-only` serves only that
+API, without the NFS server. `-influx-db-origin`, `-influx-db-org`,
+`-influx-db-bucket` and `-filesystem` push [metrics](DEPLOYMENT.md#metrics).
+`./nfsd -h` lists the other options.
 
 ## NFS profile
 
@@ -60,8 +61,9 @@ The server implements a restricted NFSv4.1 profile. NFSv4.0 requests receive
 rejects 4.2-only operations with `NFS4ERR_NOTSUPP`. It exists for libnfs 8;
 Linux mounts should still request `vers=4.1`.
 
-Sessions and their reply caches survive a restart of the daemon on the same
-staging disk ([Design](DESIGN.md#requests-and-sessions)); they do not move
+Sessions and their reply caches can survive a restart of the daemon on the
+same staging disk. Restoration is conditional and is not promised after a
+host crash ([Design](DESIGN.md#requests-and-sessions)). Sessions do not move
 between daemons. Byte-range locking,
 share-deny enforcement, delegations, pNFS, hard links, named attributes and
 special files are unsupported. There is no protocol reclaim grace period.

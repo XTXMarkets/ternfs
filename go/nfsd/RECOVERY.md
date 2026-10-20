@@ -8,7 +8,9 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
 Recovery depends on three separate stores: published data and client records
 in TernFS, staging on the nfsd disk, and protocol state in process memory.
-Only the first two survive a process crash. The
+Only the first two survive a process crash. Session files and publication
+aliases on the staging disk let a restarted daemon rebuild part of the
+third. The
 [deployment modes and known defects](DEPLOYMENT.md) define the limits of
 the procedures here.
 
@@ -17,8 +19,8 @@ the procedures here.
 | Event | Published data | Unpublished staging | Client protocol state |
 | --- | --- | --- | --- |
 | Connection loss, daemon still running | Unchanged. | Remains on the daemon. | Sessions can be reused while live; lease expiry can retire opens. |
-| Daemon crash, staging disk retained | Remains in TernFS. | Eligible checkpoints can be recovered. | Sessions, their cached replies, namespace intents and publication aliases are restored from the disk. Read opens are not: their stateids get `BAD_STATEID` and the client reopens. |
-| Host replacement with its staging disk | Remains in TernFS. | Same recovery scope as a daemon restart. | The same files are restored by the new daemon; clients must reach it at the old address to use them. |
+| Daemon crash, staging disk retained | Remains in TernFS. | Eligible checkpoints can be recovered. | Eligible sessions, their cached replies and namespace intents, and publication aliases, are restored from the disk; see [sessions](DESIGN.md#requests-and-sessions). Read opens are not: their stateids get `BAD_STATEID` and the client reopens. |
+| Host replacement with its staging disk | Remains in TernFS. | Same recovery scope as a daemon restart. | The new daemon restores from the same files, under the same conditions. Records written without fsync may be missing after a host crash. Clients must reach it at the old address to use them. |
 | Staging disk lost or unavailable | Remains in TernFS. | Unavailable, including acknowledged stable bytes. | Shared client records do not reconstruct the missing data. |
 | Client reboot | Remains in TernFS. | Linked old staging may be retained, but the new client boot cannot adopt it automatically. | Confirmation of a new incarnation invalidates the old one across daemons. |
 
@@ -29,28 +31,49 @@ neither that old descriptors recovered nor that pending writes were published.
 ## Client recovery
 
 A reconnect to the same running daemon reuses its session and cached
-replies. So does a reconnect after a restart: the session is rebuilt from
-its file on the staging disk, bound to its incarnation, whose lease the new
-daemon publishes before it listens. The Linux client, which learns nothing
-of the restart, retransmits every request that was in flight with the same
-slot and sequence number and goes on using its stateids. A retransmission
-of a completed request is answered from the recorded reply. A slot holding
-an intent but no reply belongs to a request the earlier process was running
-when it died; the request runs again and the operation the intent names is
-decided against TernFS first. A RENAME whose destination holds the intended
-inode and whose source edge is gone, a REMOVE whose edge is gone, and a
-CREATE whose name holds an object of the asked type happened, and report
-success without running again; a source edge still in place, or a name
-still absent, did not, and the operation runs now; anything else gets
-`NFS4ERR_DEADSESSION`, after which the client re-establishes its session.
-A restored slot accepts a later sequence number than it recorded once,
-since the record of a later request may not have been written.
+replies. A reconnect after a restart can too, when the new daemon rebuilt
+the session from its file on the staging disk. That needs a usable file
+that recorded a request, an incarnation that is still the confirmed one,
+and room for the session in the new daemon; see
+[sessions](DESIGN.md#requests-and-sessions). Before it listens, the new
+daemon starts publishing rebuilt incarnations' leases and waits up to two
+seconds for each; if one is not published by then, it logs a warning and
+starts anyway.
+The Linux client, which learns nothing of the restart, retransmits every
+request that was in flight with the same slot and sequence number and goes
+on using its stateids. A retransmission of a completed request is answered
+from the recorded reply.
 
-A session with no file, or whose incarnation's lease expired during the
-outage, is unknown to the new daemon: SEQUENCE and BIND_CONN_TO_SESSION
-receive `NFS4ERR_BADSESSION`, CREATE_SESSION with the old wire clientid
-`NFS4ERR_STALE_CLIENTID`, and EXCHANGE_ID and CREATE_SESSION establish new
-wire state, reusing the durable incarnation when it is still eligible.
+A slot holding an intent but no reply belongs to a request the earlier
+process was running when it died. The request runs again, and the
+operation the intent names is decided against TernFS first:
+
+| Intent | Decision |
+| --- | --- |
+| RENAME | Source edge still in place: not applied, so it runs now. Destination holds the source inode and the source edge is gone: applied, so it reports success without running again. Anything else: `NFS4ERR_DEADSESSION`. |
+| REMOVE | Edge still in place: not applied, so it runs now. Edge gone or replaced: applied. |
+| CREATE | Always `NFS4ERR_DEADSESSION`: nothing shows whether it made what is, or is not, at the name. |
+
+An operation on other names or directories than its intent's, any mutating
+operation before it in the compound, and every mutating operation when the
+intent cannot be read also get `NFS4ERR_DEADSESSION`. A backend lookup
+error while deciding returns that error, mapped to NFS. After
+`NFS4ERR_DEADSESSION` the client re-establishes its session.
+
+While a session's file is on disk, each of its compounds may run at most
+one mutating operation. Before a second one of any kind runs, OPEN, WRITE
+and CLOSE included, the file is removed and the session goes on in memory
+only, so a retransmission of that request after a restart gets
+`NFS4ERR_BADSESSION`. A restored slot accepts a later sequence number than
+it recorded once, since the record of a later request may not have been
+written.
+
+A session with no usable file is unknown to the new daemon, and so is one
+retired after the restart because its incarnation expired: SEQUENCE and
+BIND_CONN_TO_SESSION receive `NFS4ERR_BADSESSION`, CREATE_SESSION with the
+old wire clientid `NFS4ERR_STALE_CLIENTID`, and EXCHANGE_ID and
+CREATE_SESSION establish new wire state, reusing the durable incarnation
+when it is still eligible.
 
 There is no NFS reclaim grace period. OPEN with `CLAIM_PREVIOUS` receives
 `NFS4ERR_NO_GRACE`; RECLAIM_COMPLETE is accepted without reconstructing
@@ -59,11 +82,17 @@ application descriptor resumes depends on that recovery path.
 
 Read stateids receive `NFS4ERR_BAD_STATEID`: read opens leave no durable
 marker, and the Linux client reopens the handle with CLAIM_FH. A writer
-whose sidecar still proves ownership continues with its old stateid: its
-first WRITE, COMMIT or CLOSE adopts the recovered staging, and COMMIT syncs
-recovered writers it has not yet adopted. A new read OPEN selects the held
-inode or this daemon's current view of it, including a restored publication
-alias.
+whose sidecar still proves ownership continues with its old stateid. READ,
+WRITE and SETATTR with that stateid adopt the recovered staging as a live
+open. When adoption is refused, because the staging is read-only or the
+owner already has a live open of the file, the request runs on the state
+recorded in the sidecar. OPEN_DOWNGRADE also adopts, but does not fall back
+to the sidecar: if the owner already has a live open of the file, it gets
+`NFS4ERR_DELAY` before any publication, and both opens are kept. CLOSE
+closes the writer through its sidecar. COMMIT carries no stateid: it syncs
+the client's recovered writers of the handle without adopting them. A new
+read OPEN selects the held inode or this daemon's current view of it,
+including a restored publication alias.
 
 The write verifier changes at every daemon restart. Clients can use it to
 detect loss of unstable writes. Stable writes may already have left the
@@ -81,7 +110,7 @@ There are three paths, with different eligibility rules:
 
 | Path | Conditions |
 | --- | --- |
-| Continue with the old stateid | Sidecar matches the stateid, client incarnation and held base/staging handle; its durable open marker and lease remain active. |
+| Continue with the old stateid | Sidecar matches the stateid and client incarnation, and the client presents the staging inode or the sidecar's base inode as its handle; its durable open marker and lease remain active. For a file the earlier process created, the base is the empty placeholder, which stays the client's handle after the name is renamed or removed. The stateid alone does not find the staging. |
 | Reopen by pathname | A unique eligible staging entry matches the target and access. Within the same incarnation, another open-owner can adopt shared staging. |
 | Writable `CLAIM_FH` on a cold daemon | A unique healthy, linked writer matches the client and recorded owner, and its recorded pathname still names the held handle. |
 
@@ -101,8 +130,11 @@ looking up a name.
 
 The base and transient TernFS inodes must still exist. Retaining staging
 does not extend TernFS snapshot or transient-file retention. Also account
-for the [COMMIT and CLOSE defects](DEPLOYMENT.md#known-recovery-defects)
-before relying on recovered writes.
+for the [CLOSE defect](DEPLOYMENT.md#a-backend-timeout-is-treated-as-a-failure)
+before relying on recovered writes. A CLOSE whose hydration of the base
+fails, or whose LinkFile fails without the file turning out to be
+published already, discards its staging. A timestamp-only CLOSE whose
+lookup or SetTime fails returns the error without discarding it.
 
 ## Lease expiry
 
@@ -147,43 +179,49 @@ guarantee; see [failed CLOSE](DEPLOYMENT.md#a-backend-timeout-is-treated-as-a-fa
 
 ## Inspect state
 
-Run the inspector against the same backend. Include the staging path on the
-host which owns that disk:
+The durable client store and the staging sidecars are read through the
+[diagnostics API](DEPLOYMENT.md#diagnostics). On a running daemon, use its
+`-status-addr`. When the daemon will not start, or should not be disturbed,
+run a store-only process against the same backend, on the host which owns
+the staging disk:
 
 ```sh
-nfsd inspect -registry HOST:PORT -staging /var/lib/nfsd
-nfsd inspect -registry HOST:PORT -staging /var/lib/nfsd -json
-nfsd inspect -registry HOST:PORT -identity 'Linux NFSv4.1 host'
+nfsd -store-only -registry HOST:PORT -staging /var/lib/nfsd \
+    -status-addr 127.0.0.1:9049
+curl -s 'http://127.0.0.1:9049/v1/store?staging=1' | jq .report
+curl -s 'http://127.0.0.1:9049/v1/store?identity=Linux%20NFSv4.1%20host' | jq .report
+curl -s 'http://127.0.0.1:9049/v1/store?stateid=stateid:09cb5ee40000000000000001' | jq .report
 ```
 
-The inspector reads records without modifying them. It lists incarnations,
-lease slots, open markers, staging checkpoints and quarantined entries.
-Staging is joined to open markers by stateid; markers alone do not identify
-a file. In-memory writes, hydration progress and session state are absent.
-An inspection while the daemon runs is an observation, not an atomic backup.
+A store-only process opens the client store read-only and never opens the
+staging store, so startup recovery does not quarantine or truncate
+anything. The report lists incarnations, lease slots, open markers, staging
+checkpoints and quarantined entries. `staging=1` joins sidecars to open
+markers by stateid; markers alone do not identify a file. In-memory writes,
+hydration progress and session state are absent; on a running daemon,
+`/v1/staging` and `/v1/sessions` show them. A report taken while the daemon
+runs is an observation, not an atomic backup.
 
-Use at most one of `-identity`, `-identity-hash`, `-clientid` or `-stateid`.
-The `-stateid` value is the 12-byte `other` field as 24 hex digits.
-**The current `-clientid` filter takes the durable incarnation directory
-inode, despite help text describing the wire clientid.** The two IDs differ
-in NFSv4.1; use the identity filter when starting from client information.
+Use at most one of `identity`, `identity-hash`, `incarnation` and
+`stateid`. Each takes its typed spelling, except `identity`, which is the
+raw EXCHANGE_ID owner string. An `incarnation` is the durable incarnation
+directory inode, not the wire clientid a client sees. Only the issuing
+process can resolve a wire clientid, with `/v1/lookup?id=wire-clientid:...`.
 
-| Exit status | Meaning |
-| --- | --- |
-| 0 | Report completed without detected problems. |
-| 1 | Inspection failed. |
-| 2 | Invalid arguments. |
-| 3 | Report completed and found problems. |
+`summary.problems` is the total across the whole report. It adds the
+top-level `problems` and `quarantined` lists, the `problems` lists of each
+identity, incarnation and staging entry, each incarnation's `unknown`
+entries, and every `confirmed`, `pending` or `reboot` pointer marked
+`dangling` or carrying a `problem`. Find each one where it was recorded,
+not only in the top-level list. Expired leases, unreachable incarnations
+and retired staging are not problems. A count of zero therefore does not
+mean all staged writes were published or recovered. A selector limits
+which clients are checked; omit it for a whole-store report.
 
-Malformed records, dangling pointers, damaged staging and quarantine count
-as problems. Expired leases, unreachable incarnations and retired staging
-do not. Exit 0 therefore does not mean all staged writes were published or
-recovered. Filters limit which clients are checked; run without one for a
-whole-store report.
-
-Startup logs contain `nfsd_id` and `stateid_epoch`. The former names that
-process's lease and confirmation slots; the latter prefixes its stateids.
-These connect a store inspection to the issuing daemon's logs.
+Startup logs contain `nfsd_id` and `stateid_epoch`, and the wire clientid
+epoch once the daemon binds its endpoint. `nfsd_id` names that process's
+lease and confirmation slots; `stateid_epoch` prefixes its stateids and
+session ids. These connect a store report to the issuing daemon's logs.
 
 ## Restart on the same host
 
@@ -238,7 +276,7 @@ dirty ranges, the base where required, and an explicit decision about where
 to publish the recovered contents. Do this before the required TernFS
 inodes are collected.
 
-`nfsd inspect` is diagnostic only; it does not reconstruct or publish files.
+The diagnostics API is read-only; it does not reconstruct or publish files.
 There is no general automatic repair command for quarantined staging.
 
 ## Upgrade the server
