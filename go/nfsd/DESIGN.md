@@ -31,11 +31,11 @@ Two TernFS properties shape the design:
 
 | Package | Responsibility | Reference |
 | --- | --- | --- |
-| [internal/server](internal/server/server.go) | RPC and connections, sessions and slots, compounds and operations, the logical lease, confirmation, the staging lifecycle and the backchannel. | This document. |
+| [internal/server](internal/server/server.go) | RPC and connections, sessions and slots, compounds and operations, persistent sessions and replay, the logical lease, confirmation, the staging lifecycle, the alias log and the backchannel. | [README](internal/server/README.md) |
 | [internal/clientstore](internal/clientstore/store.go) | The shared client records under `/.nfs`: identities, incarnations, confirmation, open markers, durable leases and collection. | [README](internal/clientstore/README.md) |
 | [internal/openstate](internal/openstate/store.go) | Process-local stateids, opens, tombstones and client views. | [README](internal/openstate/README.md) |
 | [internal/staging](internal/staging/store.go) | Staged data files and sidecars on the local disk, checkpoints, startup recovery and quarantine. | [README](internal/staging/README.md) |
-| [internal/sessionstore](internal/sessionstore/store.go) | The session file format on the staging disk. | [Requests and sessions](#requests-and-sessions) |
+| [internal/sessionstore](internal/sessionstore/store.go) | The session file format on the staging disk. | [Session files on disk](internal/server/README.md#session-files-on-disk) |
 | [internal/vfs](internal/vfs/vfs.go) | The boundary between NFS and TernFS. | [Backend boundary](#backend-boundary) |
 | [inspect](inspect/types.go) | The diagnostics API types and handlers. | [README](inspect/README.md) |
 | [internal/nfs4](internal/nfs4/nfs.go), [internal/byterange](internal/byterange/set.go), [internal/keyedlock](internal/keyedlock/locker.go) | NFSv4.1 XDR types, byte-range sets and keyed locks. | Source. |
@@ -47,8 +47,8 @@ Two TernFS properties shape the design:
 | Namespace and published file contents | TernFS; subject to its policies. |
 | Client identity, incarnation, lease slots and open markers | Shared TernFS client store under `/.nfs`; see [clientstore](internal/clientstore/README.md). |
 | Staged bytes and checkpointed writer metadata | One daemon's staging disk; retained across compatible restarts; see [staging](internal/staging/README.md). |
-| Sessions, their slot reply caches and namespace intents | One daemon's staging disk (`sessions/`), written without fsync; a restart on the same host restores eligible sessions. |
-| Publication aliases | One daemon's staging disk (`aliases/published.jsonl`); rewritten at each sweep and reloaded at startup. |
+| Sessions, their slot reply caches and namespace intents | One daemon's staging disk (`sessions/`), written without fsync; a restart on the same host restores eligible sessions; see [Sessions across restarts](#sessions-across-restarts). |
+| Publication aliases | One daemon's staging disk (`aliases/published.jsonl`), not synced; rewritten at each sweep and reloaded at startup while unexpired; see the [alias log](internal/server/README.md#publication-alias-log). |
 | Wire clientids and logical leases | One daemon process. A restored session rebinds to its incarnation, whose lease is published again at startup. |
 | Detailed opens and pathname hints | One daemon process, with writer recovery from sidecars; read opens are reopened by the client; see [openstate](internal/openstate/README.md). |
 
@@ -73,29 +73,25 @@ publication alias, then its latest open, then the handle itself. COMMIT has
 no stateid either, but does not use the view. It syncs the handle, every
 staging the client wrote through it, from a separate writer index, and
 after a restart the client's recovered writers of the handle. The view,
-the writer index, the alias lifetime
-and what readers see when a writer closes are in
-[openstate](internal/openstate/README.md#client-views). Stateids, owners
-and downgrades are there too.
+the writer index, the alias lifetime and what readers see when a writer
+closes are in [openstate](internal/openstate/README.md#client-views).
+Stateids, owners and downgrades are there too.
 
-The server records each publication alias, without fsync, in
-`aliases/published.jsonl` under the staging directory with an expiry. Each
-sweep rewrites the log, giving an alias whose handle is still open a lease
-from then. Startup reloads only aliases whose recorded expiry is still in
-the future. A short process restart therefore does not reverse what a
-client reads through a handle it still holds; after a longer outage the
-alias can have expired, even for a handle the client still has open.
-Without aliases, a client that had just saved read the previous version,
-or the empty placeholder of a new file, until it looked the name up again.
-See [old handles](DEPLOYMENT.md#old-handles-name-their-original-version)
-and [alias_log.go](internal/server/alias_log.go).
+The server also records each publication alias on the staging disk, so a
+short process restart does not reverse what a client reads through a handle
+it still holds. After a longer outage the alias can have expired, even for a
+handle the client still has open. Without aliases, a client that had just
+saved read the previous version, or the empty placeholder of a new file,
+until it looked the name up again. See the
+[alias log](internal/server/README.md#publication-alias-log) and
+[old handles](DEPLOYMENT.md#old-handles-name-their-original-version).
 
 A read `CLAIM_FH` OPEN needs only the inode. A writable one needs a
 publication target. A bounded table of 65,536 pathname hints remembers
 where LOOKUP and OPEN saw files; each hint is checked against the current
 directory entry. A cold miss can use eligible recovered staging, otherwise
-it returns `NFS4ERR_STALE`. See [view.go](internal/server/view.go) and
-[staging_lifecycle.go](internal/server/staging_lifecycle.go).
+it returns `NFS4ERR_STALE`. See
+[Writer recovery mechanics](internal/server/README.md#writer-recovery-mechanics).
 
 Ownership and modes are synthetic. The `/.nfs` namespace is hidden from
 LOOKUP and READDIR. PUTFH rejects internal objects whose ancestry is known
@@ -113,9 +109,8 @@ the staging; other clients build independent versions.
 The staged file is a sparse overlay over the immutable base seen at OPEN.
 Its data file and sidecar, named by the transient inode, are described in
 [staging](internal/staging/README.md). The first data or size change starts
-background hydration of the clean ranges. Across the process at most two
-background base reads run at once, and each gives foreground reads up to
-10 ms to go first.
+background hydration of the clean ranges, which yields to foreground reads;
+see [Hydration](internal/server/README.md#hydration).
 
 Stable WRITE, COMMIT and size changes sync data before checkpointing the
 sidecar. Namespace checkpoints update only namespace fields, preserving the
@@ -129,23 +124,22 @@ staging. A clean writer scraps its transient without publication; an
 unlinked writer discards its private version.
 
 Timestamp-only publication updates the current published inode without
-replacing its contents; if that lookup or SetTime fails, CLOSE returns the
-error and the staging is kept. After data publication succeeds, failure to
-restore timestamps is logged and CLOSE still succeeds because the data is
-already visible. A hydration or LinkFile failure discards the staging,
-unless other opens read it; then it is quarantined and those readers get
-`NFS4ERR_IO`.
-The client-visible consequences are under
+replacing its contents. If that lookup or SetTime fails, CLOSE returns the
+error and keeps the staging; a failed SetTime may still have applied.
+After data publication succeeds, failure to restore timestamps is logged
+and CLOSE still succeeds because the data is already visible. A hydration
+failure, or a LinkFile failure where the file is not found already
+published, discards the staging, unless other opens read it; then it is
+quarantined and those readers get `NFS4ERR_IO`. The client-visible
+consequences are under
 [failed CLOSE](DEPLOYMENT.md#a-backend-timeout-is-treated-as-a-failure).
 
 Initial CREATE attributes can be staged even for a read-only create OPEN;
 the share access still prohibits WRITE. EXCLUSIVE4 and EXCLUSIVE4_1 retries
 reuse staging for a matching client, owner and verifier while the name
 still contains the original placeholder. The verifier remains in staging
-until CLOSE; it is not a reservation across hosts.
-
-The implementation is in [hydration.go](internal/server/hydration.go) and
-[ops_open.go](internal/server/ops_open.go).
+until CLOSE; it is not a reservation across hosts. See
+[Exclusive creates](internal/server/README.md#exclusive-creates).
 
 ## Writer lifecycle
 
@@ -315,8 +309,7 @@ bootstrapping, while this process's own published lease is live; see
 [slot pruning](internal/clientstore/README.md#expired-marker-and-slot-pruning).
 Expired markers prevent slot removal from reviving an old incarnation. Data
 disposition on expiry is described in [Recovery](RECOVERY.md#lease-expiry).
-See [lease_gate.go](internal/server/lease_gate.go) and
-[client_group.go](internal/server/client_group.go).
+See [Lease gate](internal/server/README.md#lease-gate).
 
 ### Client reboot
 
@@ -333,127 +326,45 @@ While a confirmation outcome is unresolved, the local server protects both
 incarnations from expiry and destructive cleanup, delays dependent
 requests and rejects client destruction as busy. Elapsed time alone does
 not settle an unknown outcome. See
-[confirmation.go](internal/server/confirmation.go).
+[Client confirmation](internal/server/README.md#client-confirmation).
 
-## Requests and sessions
+## Sessions across restarts
 
-Each TCP connection has one reader and a default limit of 64 admitted
-requests. Capacity is reserved before reading a complete frame. Compounds
-run concurrently; operations within each compound run in order. Replies
-share a writer lock and use RPC XIDs to match requests.
+NFSv4.1 session slots replace open-owner sequence numbers: a retransmission
+on a slot gets the slot's recorded reply instead of running again. That
+only holds while the slot still exists. Sessions therefore live in memory
+and, with a staging directory, in one file each under `sessions/`, so that
+a restart of the process on the same staging disk can rebuild them. The
+mechanisms are in
+[Persistent sessions](internal/server/README.md#persistent-sessions).
 
-Read and reply-write timeouts are independently five minutes. A clean EOF
-may be a TCP half-close, so accepted requests drain and send their replies
-before the socket closes. A read timeout, reset, other read failure or an
-RPC that does not parse closes the socket first and wakes requests waiting
-for reply work. A write failure also closes the socket. Backend operations
-already executing finish their effects but send no reply on the closed
-socket. Identical in-flight XIDs on one connection are dropped, while
-conflicting reuse closes it. This guard lasts through the reply write.
+The design keeps one invariant: no recorded reply asserts an outcome the
+daemon does not know.
 
-Each admitted request reserves reply work before it executes: eight times
-the sum of its reply capacity and a 65 KiB allowance, plus a preparation
-allowance for READDIR. A 1 MiB READ reserves about 8.5 MiB. Reservations
-count against `-reply-work-budget-mib`. A request that does not fit waits,
-keeping its admission slot, until work is released or its connection
-closes. A request larger than the whole budget is refused and its
-connection closed. RPC messages are limited to 2 MiB; allowing 128
-operations in a compound does not multiply the session's response limit.
+- A completed request's record is written, without fsync, before its reply
+  goes to the socket. A process restart can answer a retransmission from
+  it; a host crash may have lost it.
+- RENAME, REMOVE and CREATE of a directory or symlink record an intent
+  before their effect. A request the earlier process was running when it
+  died is decided against TernFS from that intent, or gets
+  `NFS4ERR_DEADSESSION` when nothing can prove the outcome; see the
+  [replay decision](internal/server/README.md#restart-replay-decision).
+- A file can protect one effect per request, so a compound's second
+  mutating operation removes the file first, and that session is not
+  restored.
+- Anything the file does not record, the first CB_COMPOUND and an accepted
+  BACKCHANNEL_CTL, removes the file first. CB_NULL does not.
+- A mutation whose backend outcome cannot be established retires the
+  session as fatal. On the native backend that is every mutation error
+  except a REMOVE whose edge is already gone, timeouts included. The client
+  then creates a new session; see the
+  [known issue](DEPLOYMENT.md#a-backend-timeout-is-treated-as-a-failure).
 
-Except for the permitted standalone session-management operations, every
-compound starts with SEQUENCE. A session negotiates up to 64 slots. Each
-slot orders requests and, when requested, caches a reply up to 64 KiB.
-Retransmissions return the cached reply, DELAY while work is active, or
-RETRY_UNCACHED_REP if the reply was not cached.
-
-Negotiated request, operation and response limits are enforced. With
-`sa_cachethis` set, the reply must also fit the negotiated cache limit; it
-is not silently served uncached. Each operation's reply bound is checked
-before dispatch: an operation that would exceed the remaining response or
-cache budget gets `NFS4ERR_REP_TOO_BIG` or `NFS4ERR_REP_TOO_BIG_TO_CACHE`
-without executing. Earlier operations in the compound may already have
-taken effect. A read-only operation with a variable result can also be
-replaced by a size error after its result is built. A mutation that
-exceeds its fixed reply bound after executing retires the session and
-closes the connection instead. Any connection to the issuing daemon can
-carry a session, with at most 64 session associations per connection.
-
-Each session has a file under `sessions/` in the staging directory holding
-its identity, its negotiated channel attributes and its slot table: for
-each slot the last request's sequence number, a digest of the request, its
-effective user and its reply, the whole reply when the client asked for
-caching and the SEQUENCE-only prefix otherwise. The record is written
-before the reply goes to the socket, by a `pwrite` without fsync. It
-survives the death of the process, not necessarily a host crash.
-
-At startup the daemon rebuilds a session only when its file is readable
-and of the current format, it recorded at least one request, and its
-incarnation is still the confirmed one. The session must also get a lease
-record, reply-cache space for its recorded replies, a session record and a
-client group; otherwise it is dropped and its file removed. A
-retransmission to a rebuilt session gets its original reply (RFC 8881
-§2.10.6.5). Before the daemon listens, it starts publishing rebuilt
-incarnations' leases and waits up to two seconds for them; a lease not
-published by then is logged, and startup continues. A session with no
-usable file is unknown to the new process and gets `NFS4ERR_BADSESSION`,
-as does one retired later because its incarnation expired. `PERSIST` is
-still not granted: the Linux client behaves the same either way, except
-that it would switch exclusive creates to GUARDED4 and lose their verifier.
-
-The file does not record the callback sequence, nor a callback program or
-credential changed by BACKCHANNEL_CTL. It is therefore removed before a
-session's first CB_COMPOUND and before an accepted BACKCHANNEL_CTL; CB_NULL
-probes leave it alone. A session without its file goes on in memory and is
-not restored by a later restart. If the file cannot be removed, the
-callback is not sent or BACKCHANNEL_CTL gets `NFS4ERR_SERVERFAULT`, and the
-session is retired.
-
-RENAME, REMOVE and CREATE write an intent to the slot before their effect,
-so a request the earlier process was running when it died is decided
-against TernFS rather than run blind; see
-[client recovery](RECOVERY.md#client-recovery). The file can protect only
-one effect per request. Before a compound's second mutating operation of
-any kind, OPEN, WRITE and CLOSE included, the file is removed and the
-session goes on in memory only. A retransmission of that request after a
-restart gets `NFS4ERR_BADSESSION`.
-
-A mutation whose backend outcome cannot be established, every backend
-timeout included, retires the client's session as fatal so that no cached
-reply can assert an outcome the daemon does not know. The client then
-re-creates its session; see the
-[known issue](DEPLOYMENT.md#a-backend-timeout-is-treated-as-a-failure).
-
-## Backchannel
-
-CREATE_SESSION can grant a backchannel; BIND_CONN_TO_SESSION associates
-further connections within the negotiated direction and quotas. Callback
-credentials support AUTH_NONE and AUTH_SYS. Only SP4_NONE state protection
-is offered.
-
-CB_NULL probes a new back connection after the binding reply. Its timeout
-is ten seconds; until then the path provisionally counts as up for status
-flags. CB_RECALL_SLOT, sent in a CB_COMPOUND, asks clients to reduce slot
-use under reply-cache pressure. The first CB_COMPOUND of a session removes
-its session file, as described above. Clients without a usable backchannel
-see the target highest slot in SEQUENCE instead.
-
-Callbacks use RPC version 2, callback program version 1, and NFS minor
-version 1. Only one recall is outstanding per session. An unanswered call
-is not resent on the same live connection; after disconnect it can retry
-on another connection with the same slot and sequence.
-
-Replies are validated before use. Successful CB_SEQUENCE renews the logical
-lease; a later recall error does not undo that renewal. DELAY is retried
-at most three times. Other invalid replies mark a backchannel fault without
-renewing. Clients which never request a backchannel see no backchannel
-status flags. There are no delegation callbacks.
-
-See [server.go](internal/server/server.go),
-[ops_session.go](internal/server/ops_session.go),
-[session_persist.go](internal/server/session_persist.go),
-[replay_decide.go](internal/server/replay_decide.go),
-[backchannel.go](internal/server/backchannel.go) and
-[backchannel_sender.go](internal/server/backchannel_sender.go).
+A restart rebuilds a session only from a usable file that recorded a
+request, for an incarnation still confirmed, within the new process's
+resource limits; see
+[Session restoration](internal/server/README.md#session-restoration).
+Sessions never move between daemons. `PERSIST` is not granted.
 
 ## Lock order
 

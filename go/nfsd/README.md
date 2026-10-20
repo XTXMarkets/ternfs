@@ -21,7 +21,8 @@ shared sessions or transparent failover.
 | --- | --- |
 | [Deployment](DEPLOYMENT.md) | Deployment modes, guarantees, failure behaviour and known issues. |
 | [Recovery](RECOVERY.md) | Crash and lease recovery, staging inspection, quarantine and replacement procedures. |
-| [Design](DESIGN.md) | How the packages fit together: state ownership, writes and publication, the writer lifecycle, namespace changes, clients and leases, sessions and lock order. |
+| [Design](DESIGN.md) | How the packages fit together: state ownership, writes and publication, the writer lifecycle, namespace changes, clients and leases, sessions across restarts and lock order. |
+| [Server](internal/server/README.md) | Request handling, sessions and slots, persistent sessions and the restart replay decision, the lease gate, client confirmation, opens, the alias log, the staging lifecycle and the backchannel. |
 | [Client store](internal/clientstore/README.md) | The shared records under `/.nfs`: layout, registration, confirmation, open markers, durable leases and collection. |
 | [Open state](internal/openstate/README.md) | Stateids, opens, downgrades, reader visibility and client views. |
 | [Staging](internal/staging/README.md) | Staged data files and sidecars, checkpoints, startup recovery and quarantine. |
@@ -67,9 +68,9 @@ Linux mounts should still request `vers=4.1`.
 
 Sessions and their reply caches can survive a restart of the daemon on the
 same staging disk. Restoration is conditional and is not promised after a
-host crash ([Design](DESIGN.md#requests-and-sessions)). Sessions do not move
-between daemons. Byte-range locking,
-share-deny enforcement, delegations, pNFS, hard links, named attributes and
+host crash; see [session restoration](internal/server/README.md#session-restoration).
+Sessions do not move between daemons. Byte-range locking, share-deny
+enforcement, delegations, pNFS, hard links, named attributes and
 special files are unsupported. There is no protocol reclaim grace period.
 Ownership and permissions are synthetic. This is not a general-purpose
 POSIX filesystem; the [deployment guarantees](DEPLOYMENT.md#data-guarantees)

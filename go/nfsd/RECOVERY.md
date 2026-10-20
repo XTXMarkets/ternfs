@@ -19,7 +19,7 @@ the procedures here.
 | Event | Published data | Unpublished staging | Client protocol state |
 | --- | --- | --- | --- |
 | Connection loss, daemon still running | Unchanged. | Remains on the daemon. | Sessions can be reused while live; lease expiry can retire opens. |
-| Daemon crash, staging disk retained | Remains in TernFS. | Eligible checkpoints can be recovered. | Eligible sessions, their cached replies and namespace intents, and publication aliases, are restored from the disk; see [sessions](DESIGN.md#requests-and-sessions). Read opens are not: their stateids get `BAD_STATEID` and the client reopens. |
+| Daemon crash, staging disk retained | Remains in TernFS. | Eligible checkpoints can be recovered. | Eligible sessions, their cached replies and namespace intents, and publication aliases, are restored from the disk; see [session restoration](internal/server/README.md#session-restoration). Read opens are not: their stateids get `BAD_STATEID` and the client reopens. |
 | Host replacement with its staging disk | Remains in TernFS. | Same recovery scope as a daemon restart. | The new daemon restores from the same files, under the same conditions. Records written without fsync may be missing after a host crash. Clients must reach it at the old address to use them. |
 | Staging disk lost or unavailable | Remains in TernFS. | Unavailable, including acknowledged stable bytes. | Shared client records do not reconstruct the missing data. |
 | Client reboot | Remains in TernFS. | Linked old staging may be retained, but the new client boot cannot adopt it automatically. | Confirmation of a new incarnation invalidates the old one across daemons. |
@@ -35,10 +35,10 @@ replies. A reconnect after a restart can too, when the new daemon rebuilt
 the session from its file on the staging disk. That needs a usable file
 that recorded a request, an incarnation that is still the confirmed one,
 and room for the session in the new daemon; see
-[sessions](DESIGN.md#requests-and-sessions). Before it listens, the new
-daemon starts publishing rebuilt incarnations' leases and waits up to two
-seconds for each; if one is not published by then, it logs a warning and
-starts anyway.
+[session restoration](internal/server/README.md#session-restoration).
+Before it listens, the new daemon starts publishing rebuilt incarnations'
+leases and waits up to two seconds for each; if one is not published by
+then, it logs a warning and starts anyway.
 The Linux client, which learns nothing of the restart, retransmits every
 request that was in flight with the same slot and sequence number and goes
 on using its stateids. A retransmission of a completed request is answered
@@ -46,27 +46,20 @@ from the recorded reply.
 
 A slot holding an intent but no reply belongs to a request the earlier
 process was running when it died. The request runs again, and the
-operation the intent names is decided against TernFS first:
-
-| Intent | Decision |
-| --- | --- |
-| RENAME | Source edge still in place: not applied, so it runs now. Destination holds the source inode and the source edge is gone: applied, so it reports success without running again. Anything else: `NFS4ERR_DEADSESSION`. |
-| REMOVE | Edge still in place: not applied, so it runs now. Edge gone or replaced: applied. |
-| CREATE | Always `NFS4ERR_DEADSESSION`: nothing shows whether it made what is, or is not, at the name. |
-
-An operation on other names or directories than its intent's, any mutating
-operation before it in the compound, and every mutating operation when the
-intent cannot be read also get `NFS4ERR_DEADSESSION`. A backend lookup
-error while deciding returns that error, mapped to NFS. After
-`NFS4ERR_DEADSESSION` the client re-establishes its session.
+operation the intent names is decided against TernFS first: a RENAME or
+REMOVE whose effect is visible reports success without running again, one
+whose source is still in place runs now, and anything that cannot be
+proved, a pending CREATE included, gets `NFS4ERR_DEADSESSION`. The full
+rules are in the
+[replay decision](internal/server/README.md#restart-replay-decision).
+After `NFS4ERR_DEADSESSION` the client re-establishes its session.
 
 While a session's file is on disk, each of its compounds may run at most
-one mutating operation. Before a second one of any kind runs, OPEN, WRITE
-and CLOSE included, the file is removed and the session goes on in memory
-only, so a retransmission of that request after a restart gets
-`NFS4ERR_BADSESSION`. A restored slot accepts a later sequence number than
-it recorded once, since the record of a later request may not have been
-written.
+one mutating operation. Before a second one of any kind runs, the file is
+removed and the session goes on in memory only, so a retransmission of
+that request after a restart gets `NFS4ERR_BADSESSION`. A restored slot
+accepts a later sequence number than it recorded once, since the record of
+a later request may not have been written.
 
 A session with no usable file is unknown to the new daemon, and so is one
 retired after the restart because its incarnation expired: SEQUENCE and
@@ -80,8 +73,11 @@ There is no NFS reclaim grace period. OPEN with `CLAIM_PREVIOUS` receives
 opens. Clients may then reopen by handle or pathname. Whether a particular
 application descriptor resumes depends on that recovery path.
 
-Read stateids receive `NFS4ERR_BAD_STATEID`: read opens leave no durable
-marker, and the Linux client reopens the handle with CLAIM_FH. A writer
+Ordinary read stateids receive `NFS4ERR_BAD_STATEID`: a read open of an
+existing file leaves no staging to recover, and the Linux client reopens
+the handle with CLAIM_FH. A read-only create is different: it stages its
+initial attributes, and its old stateid can still find that staging after
+a restart, although a WRITE through it gets `NFS4ERR_OPENMODE`. A writer
 whose sidecar still proves ownership continues with its old stateid. READ,
 WRITE and SETATTR with that stateid adopt the recovered staging as a live
 open. When adoption is refused, because the staging is read-only or the
@@ -153,9 +149,11 @@ It stays until recovered and closed or explicitly removed. Unlinked staging
 is discarded on expiry. Staging already retired when it becomes unlinked
 is quarantined.
 
-For the first 90 seconds after startup, the staging sweep does not retire
-recovered writers. This is a local cleanup delay, not NFS grace-period
-reclaim. Linked retired data can remain recoverable after this interval.
+For the first 90 seconds after startup, the periodic staging sweep does not
+run. Ordinary client expiry, and the check before a namespace change, can
+still retire staging in that time. This is a local cleanup delay, not NFS
+grace-period reclaim. Linked retired data can remain recoverable after this
+interval.
 
 ## Startup and quarantine
 

@@ -60,14 +60,14 @@ nfsd. Give that daemon a persistent staging directory.
 Publication is synchronous. REMOVE and RENAME update that daemon's staged
 writers so a later CLOSE follows the local namespace change.
 
-**Failure behaviour.** Restarting the process with the same disk can
-restore sessions and their cached replies, so clients continue on the same
-session and retransmissions get their original replies. Restoration is
-conditional; see [sessions](DESIGN.md#requests-and-sessions). A restart also
-recovers eligible checkpointed writers through their old stateids, and
-restores publication aliases whose recorded expiry has not passed. Read
-opens are reopened by the client. Session files and aliases are written
-without fsync, so a host crash can lose them. Disk loss removes
+**Failure behaviour.** Restarting the process with the same disk can restore
+sessions and their cached replies, so clients continue on the same session
+and retransmissions get their original replies. Restoration is conditional;
+see [session restoration](internal/server/README.md#session-restoration). A
+restart also recovers eligible checkpointed writers through their old
+stateids, and restores publication aliases whose recorded expiry has not
+passed. Read opens are reopened by the client. Session files and aliases are
+written without fsync, so a host crash can lose them. Disk loss removes
 unpublished contents and every session.
 
 **Known issues.** The backend-timeout issue below applies. A surviving
@@ -174,18 +174,36 @@ reply cache. Per-connection stickiness is insufficient if one mount has
 connections to several daemons. This remains unsupported for read-only
 mounts.
 
-## Known recovery defects
+## Known defects
 
 ### A backend timeout is treated as a failure
 
-The go client gives up on a shard request after 10 s, on the CDC after
-60 s and on a block service after 5 min. A CLOSE whose publication hits
-that limit discards its staging, scraps the transient file if the shard
-is back by then, and answers `NFS4ERR_IO`. The Linux client discards a
-CLOSE's status, so `close(2)` returns 0 and the application believes its
-save was published while the name holds the previous version or the empty
-placeholder. A shard restart lasting longer than about 7 s produces this;
-a 7 s one is latency only. Tracked as `work-kd49`.
+nfsd uses the Go client's default timeout settings: an overall limit of
+10 s on a shard request, 60 s on a CDC request and 5 min on a block-service
+request. These are configured limits on one request's retries, not
+guarantees about how long a CLOSE or an outage takes. Time a metadata
+request spends in the client's send queue comes on top, a block-service
+request sets a fresh socket deadline for each attempt, and one CLOSE makes
+many requests.
+
+When publication fails, CLOSE returns the backend error mapped to an NFS
+status. A timeout, or any error without a more specific mapping, is
+`NFS4ERR_IO`; a missing name is `NFS4ERR_NOENT` and a permission error
+`NFS4ERR_ACCESS`. What happens to the staging depends on the step that
+failed:
+
+- If hydration fails, or LinkFile fails and the file is not found already
+  published, the staging is discarded and the transient file scrapped,
+  best effort. If other opens still read that staging, it is quarantined
+  instead: its files are kept, and those readers get `NFS4ERR_IO`.
+- If a timestamp-only CLOSE fails to look up the name or set the times,
+  the staging is kept. A failed SetTime may still have applied.
+
+The Linux client discards a CLOSE's status, so `close(2)` returns 0 and the
+application believes its save was published while the name holds the
+previous version or the empty placeholder. A shard outage that outlasts
+these retries produces this. No shorter outage has been established as
+safe. Tracked as `work-kd49`.
 
 Any mutation whose outcome cannot be established, which includes every
 backend timeout, also retires the client's session. The client re-creates
@@ -216,6 +234,58 @@ including one that acknowledged nothing, and is kept until recovered or
 removed by an administrator (`work-yhrt`). An `EXCLUSIVE4` create retried
 by the same client boot after its lease expired gets `NFS4ERR_EXIST`
 instead of adopting its retired staging (`work-obgt`).
+
+## Operating requirements
+
+### Staging disk
+
+Use a persistent staging disk and size it for complete replacement files.
+Small edits can require reading the entire immutable base and uploading a
+whole replacement on CLOSE. Monitor free space, retired and quarantined
+staging, hydration traffic, CLOSE latency and backend errors. Linked retired
+staging has no automatic age-based deletion.
+
+### Request limits
+
+Bound request concurrency with `-max-in-flight-per-connection` if needed.
+Its default is 64; it bounds request count per connection, not bytes,
+connections or total server RSS. Monitor RSS and tune it for the workload.
+Reply memory is bounded across the process by `-reply-work-budget-mib`,
+8 GiB by default. Each request reserves eight times its reply capacity plus
+a fixed allowance before it runs, so a 1 MiB READ reserves about 8.5 MiB; see
+[reply work](internal/server/README.md#reply-work). A request that
+does not fit waits for replies to drain rather than being refused. A request
+larger than the whole budget is refused and its connection closed. A
+dashboard shows the waits as `admission_work_waits`.
+
+### Client store snapshot policy
+
+Give `/.nfs` a snapshot policy appropriate for disposable client-store
+history. Lease and marker churn otherwise accumulates snapshot edges and
+dead inodes. For example, with the inode of `/.nfs` in `NFS_DIR_ID`:
+
+```sh
+terncli set-dir-info -id "$NFS_DIR_ID" -tag SNAPSHOT \
+    -body '{"DeleteAfterVersions": 0}'
+```
+
+Do not apply that recommendation to user data indiscriminately: staging
+recovery can need retained base versions. Keep `/.nfs` itself while serving
+the filesystem. Even a read-only daemon uses its current records.
+
+### Network access
+
+Ownership and modes are synthetic. AUTH_SYS principal comparison is an
+identity-collision guard, not an authentication or permission boundary.
+Choose network access accordingly. The diagnostics API has no
+authentication either; see [Diagnostics](#diagnostics).
+
+### Upgrades
+
+For upgrades, drain and close writers, then account for remaining active,
+retired and quarantined staging. The current sidecar format is NFS8.
+Deleting staging to bypass a format incompatibility discards unpublished
+data. Follow [upgrade recovery](RECOVERY.md#upgrade-the-server).
 
 ## Metrics
 
@@ -276,44 +346,3 @@ curl -s http://127.0.0.1:9049/ | jq .
 
 The API has no authentication. Bind it to a loopback or management address.
 During a stall, take `/debug/pprof/goroutine?debug=2` first.
-
-## Operating requirements
-
-Use a persistent staging disk and size it for complete replacement files.
-Small edits can require reading the entire immutable base and uploading a
-whole replacement on CLOSE. Monitor free space, retired and quarantined
-staging, hydration traffic, CLOSE latency and backend errors. Linked retired
-staging has no automatic age-based deletion.
-
-Bound request concurrency with `-max-in-flight-per-connection` if needed.
-Its default is 64; it bounds request count per connection, not bytes,
-connections or total server RSS. Monitor RSS and tune it for the workload.
-Reply memory is bounded across the process by `-reply-work-budget-mib`,
-8 GiB by default. Each request reserves eight times its reply capacity plus
-a fixed allowance before it runs, so a 1 MiB READ reserves about 8.5 MiB; see
-[requests and sessions](DESIGN.md#requests-and-sessions). A request that
-does not fit waits for replies to drain rather than being refused. A request
-larger than the whole budget is refused and its connection closed. A
-dashboard shows the waits as `admission_work_waits`.
-
-Give `/.nfs` a snapshot policy appropriate for disposable client-store
-history. Lease and marker churn otherwise accumulates snapshot edges and
-dead inodes. For example, after identifying the inode of `/.nfs`:
-
-```sh
-terncli set-dir-info -id <inode-of-/.nfs> -tag SNAPSHOT \
-    -body '{"DeleteAfterVersions": 0}'
-```
-
-Do not apply that recommendation to user data indiscriminately: staging
-recovery can need retained base versions. Keep `/.nfs` itself while serving
-the filesystem. Even a read-only daemon uses its current records.
-
-Ownership and modes are synthetic. AUTH_SYS principal comparison is an
-identity-collision guard, not an authentication or permission boundary.
-Choose network access accordingly.
-
-For upgrades, drain and close writers, then account for remaining active,
-retired and quarantined staging. The current sidecar format is NFS8.
-Deleting staging to bypass a format incompatibility discards unpublished
-data. Follow [upgrade recovery](RECOVERY.md#upgrade-the-server).

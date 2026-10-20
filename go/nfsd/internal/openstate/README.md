@@ -164,9 +164,10 @@ alias only when the client has no open of the handle; while the handle is
 open the alias stays. After the alias is gone the handle names its original
 immutable version again.
 
-The server records aliases on the staging disk and reloads them at
-startup; see [Filehandles and client views](../../DESIGN.md#filehandles-and-client-views).
-This package holds only the in-memory aliases.
+The server records aliases on the staging disk and reloads the unexpired
+ones at startup; see the
+[alias log](../server/README.md#publication-alias-log). This package holds
+only the in-memory aliases.
 
 ## Locking
 

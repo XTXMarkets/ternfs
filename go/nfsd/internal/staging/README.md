@@ -36,8 +36,8 @@ an operator can recover is in [Recovery](../../RECOVERY.md#startup-and-quarantin
 is created mode 0700 and sidecars are written mode 0600. This package owns
 the pairs, their temporaries and `quarantine/`. It skips `aliases/` and
 `sessions/`, which belong to the server; see
-[Filehandles and client views](../../DESIGN.md#filehandles-and-client-views)
-and [Requests and sessions](../../DESIGN.md#requests-and-sessions).
+[Publication alias log](../server/README.md#publication-alias-log)
+and [Session files on disk](../server/README.md#session-files-on-disk).
 
 ## Overlay files
 
@@ -156,8 +156,8 @@ process: `Get`, `GetMeta` and `Entries` no longer return the entry,
 `Failed` reports it, `Create` of the same inode gets `ErrRemoved` and
 `Remove` does nothing. The server quarantines a writer whose namespace
 operation has an unknown outcome, and a staging whose hydration or LinkFile
-failed during CLOSE while other opens read it. A tombstone is not persisted; a restart changes
-the write verifier.
+failed during CLOSE while other opens read it. A tombstone is not
+persisted; a restart changes the write verifier.
 
 ## Read-only store
 
