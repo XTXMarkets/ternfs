@@ -303,6 +303,15 @@ func (cb *cbSender) call(conn *rpcConnection, seq, target uint32) (cbOutcome, bo
 		// recall was queued: it is dropped, unsent, consuming nothing.
 		return cbUnfit, true
 	}
+	// The session's file does not record the callback sequence, so a
+	// session restored from it after this call would start again at the
+	// sequence the client has used. The file goes first, or nothing is
+	// sent and the session is retired. This goroutine holds a use of the
+	// session and no lock.
+	if !cb.s.dropSessionFile(cb.sess, "a callback") {
+		cb.s.sessions.retireSession(cb.sess, true)
+		return cbFault, true
+	}
 	if !conn.registerCall(call) {
 		return cbRetry, false
 	}

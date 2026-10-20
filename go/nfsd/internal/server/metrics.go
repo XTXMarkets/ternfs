@@ -42,6 +42,15 @@ type Metrics struct {
 	workWaits, workWaitNanos atomic.Uint64
 	workWaiters              atomic.Int64
 	publishes                atomic.Uint64
+	// The persistent reply cache: records written, record writes and
+	// session file creations that failed, reply bytes recorded, intents
+	// written.
+	replayRecords, replayWriteFailures atomic.Uint64
+	replayRecordBytes, replayIntents   atomic.Uint64
+	// Replays after a restart: served from a restored reply, run again
+	// with an intent decided as applied, and undecidable.
+	replayServed, replayDecidedApplied, replayUndecidable atomic.Uint64
+	replaySessionsRestored                                atomic.Uint64
 }
 
 type opStatusKey struct{ op, status uint32 }
@@ -169,6 +178,12 @@ type MetricsSnapshot struct {
 	StagingBusy                                   int
 	StagingBytes                                  uint64
 	HydrationsInFlight                            int
+	ReplayRecords, ReplayWriteFailures            uint64
+	ReplayRecordBytes, ReplayIntents              uint64
+	ReplaySessionFiles                            int
+	ReplaySessionsRestored                        uint64
+	ReplayServed, ReplayDecidedApplied            uint64
+	ReplayUndecidable                             uint64
 }
 
 // MetricsSnapshot reads the counters and the gauges the server can report
@@ -219,6 +234,12 @@ func (s *Server) MetricsSnapshot() MetricsSnapshot {
 	snap.Opens = s.opens.StateCount()
 	snap.Aliases = len(s.views.Snapshot().Aliases)
 	snap.HydrationsInFlight = len(s.hydrationSlots)
+	snap.ReplayRecords, snap.ReplayWriteFailures = m.replayRecords.Load(), m.replayWriteFailures.Load()
+	snap.ReplayRecordBytes, snap.ReplayIntents = m.replayRecordBytes.Load(), m.replayIntents.Load()
+	snap.ReplaySessionFiles = s.sessions.persistedSessions()
+	snap.ReplaySessionsRestored = m.replaySessionsRestored.Load()
+	snap.ReplayServed, snap.ReplayDecidedApplied = m.replayServed.Load(), m.replayDecidedApplied.Load()
+	snap.ReplayUndecidable = m.replayUndecidable.Load()
 	// A staging file's lock is held across writes, truncates and fsyncs, so
 	// the files are inspected as the diagnostics do, without waiting for it.
 	// A busy file is counted, but its size and flags are not known. Sizes

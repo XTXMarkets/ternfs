@@ -52,7 +52,7 @@ func connectionSession(t *testing.T, srv *Server) *testSession {
 		maxResp:   maxRPCMessage,
 		maxCached: maxSessionReplyCached,
 	}
-	sess.id = srv.sessions.newSessionIDLocked(sess.clientID)
+	sess.id, _ = srv.sessions.newSessionIDLocked(sess.clientID)
 	srv.sessions.insertSessionLocked(sess)
 	return newTestSession(sess.id, sess.clientID, maxSessionSlots)
 }

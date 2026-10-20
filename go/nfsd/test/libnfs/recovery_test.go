@@ -186,14 +186,18 @@ func (s *nfsTestServer) retainedWriter(t *testing.T, inc recoveryIncarnation, sy
 	return inc.Opens[0].StateID, w
 }
 
-// Sessions end with the nfsd process (canonical r3 §6). The libnfs build
-// these tests were run with (the Makefile's libnfs-8.0.0 pin, whose source
-// declares version 18.0.0) does not recover a session: after a restart it
-// reconnects and sends SEQUENCE and BIND_CONN_TO_SESSION on its old session,
-// gets NFS4ERR_BADSESSION and reports it, without EXCHANGE_ID or
-// CREATE_SESSION. Each restart case below records that, and checks that
-// nothing published or staged is lost and that a new libnfs context works. A
-// client that re-registers recovers; these cases do not show that.
+// Sessions survive the nfsd process: the persistent reply cache records a
+// session and its slots on the staging disk, and a restarted nfsd restores
+// the sessions that recorded a request (the README's Sessions section). The
+// libnfs build these tests run with (the Makefile's libnfs-8.0.0 pin, whose
+// source declares version 18.0.0) does not recover a session itself: after
+// a restart it reconnects and carries on with SEQUENCE on its old session,
+// which is exactly what the restored session answers. So a request in
+// flight or issued after the restart completes on the same client, without
+// EXCHANGE_ID or CREATE_SESSION, and the cases below check that: the same
+// libnfs context keeps working, the same incarnation stays confirmed, and a
+// writer synced before the restart is published by its CLOSE afterwards. A
+// fresh context then confirms the published bytes.
 func runLibnfsRecovery(t *testing.T, suite *nfsTestSuite) {
 	t.Log("libnfs=8.0.0 timeout=5s reconnects=2")
 	t.Run("OpenCloseAcrossRestart", func(t *testing.T) {
@@ -204,14 +208,21 @@ func runLibnfsRecovery(t *testing.T, suite *nfsTestSuite) {
 			c.must(t, libnfsRequest{Op: "write", Handle: h, Data: []byte("published")})
 			c.must(t, libnfsRequest{Op: "close", Handle: h})
 			s.published(t, "file", "published")
+			before := recoveryConfirmed(t, s.storeReport(t, c)).Incarnation
 			s.restart(t, sig)
-			requireRecoveryError(t, c.call(t, libnfsRequest{Op: "open", Path: "/" + s.Name + "/file", Flags: os.O_RDONLY}), "NFS4ERR_BADSESSION")
-			c.process.stop(t, syscall.SIGKILL)
-			c = s.client(t)
+			// The same context, on its restored session: no re-registration.
 			h = c.open(t, s, "file", os.O_RDONLY)
 			c.read(t, h, "published")
 			c.must(t, libnfsRequest{Op: "close", Handle: h})
+			if after := recoveryConfirmed(t, s.storeReport(t, c)).Incarnation; after != before {
+				t.Fatalf("client re-registered across %s: %s -> %s", sig, before, after)
+			}
 		}
+		c.process.stop(t, syscall.SIGKILL)
+		fresh := s.client(t)
+		h := fresh.open(t, s, "file", os.O_RDONLY)
+		fresh.read(t, h, "published")
+		fresh.must(t, libnfsRequest{Op: "close", Handle: h})
 	})
 	t.Run("OperationsWhileServerDown", func(t *testing.T) {
 		for _, operation := range []string{"open", "close"} {
@@ -299,19 +310,31 @@ func runLibnfsRecovery(t *testing.T, suite *nfsTestSuite) {
 				}
 				s.restart(t, syscall.SIGKILL)
 				retained("after restart")
-				// The tested libnfs cannot close on its pre-restart session,
-				// so the synced data is not published. It is not lost either:
-				// the original open's staging stays, with its bytes, for a
-				// client that recovers it (old stateid or CLAIM_FH) or for
-				// lease expiry to retire.
-				requireRecoveryError(t, c.call(t, libnfsRequest{Op: "close", Handle: h}), "NFS4ERR_BADSESSION")
-				s.published(t, "file", tc.base)
-				retained("after the rejected CLOSE")
-				t.Logf("synced writer retained, unpublished: open %s, staging %s", stateID, staged.FileID)
+				// The CLOSE arrives on the restored session with the
+				// pre-restart stateid. The recovered writer is adopted and
+				// published: the synced bytes over the base, as the client
+				// wrote them.
+				c.must(t, libnfsRequest{Op: "close", Handle: h})
+				want := "new"
+				if len(tc.base) > len(want) {
+					want += tc.base[len(want):]
+				}
+				s.published(t, "file", want)
+				after := recoveryConfirmed(t, s.storeReport(t, c))
+				if after.Incarnation != before.Incarnation {
+					t.Fatalf("client re-registered: %s -> %s", before.Incarnation, after.Incarnation)
+				}
+				if len(after.Opens) != 0 || len(after.Staging) != 0 {
+					t.Fatalf("open or staging left after the publishing CLOSE: %+v", after)
+				}
+				if files, _ := filepath.Glob(filepath.Join(s.Staging, "*.staging")); len(files) != 0 {
+					t.Fatalf("staging data files left after publication: %v", files)
+				}
+				t.Logf("synced writer published after restart: open %s, staging %s", stateID, staged.FileID)
 				c.process.stop(t, syscall.SIGKILL)
 				fresh := s.client(t)
 				h = fresh.open(t, s, "file", os.O_RDONLY)
-				fresh.read(t, h, tc.base)
+				fresh.read(t, h, want)
 				fresh.must(t, libnfsRequest{Op: "close", Handle: h})
 			})
 		}
@@ -324,15 +347,16 @@ func runLibnfsRecovery(t *testing.T, suite *nfsTestSuite) {
 		c.must(t, libnfsRequest{Op: "close", Handle: h})
 		h = c.open(t, s, "file", os.O_RDONLY)
 		s.restart(t, syscall.SIGKILL)
-		// The SEQUENCE in front of the request fails before the read
-		// stateid, which is not recovered, is examined.
-		requireRecoveryError(t, c.call(t, libnfsRequest{Op: "read", Handle: h}), "NFS4ERR_BADSESSION")
-		// The tested libnfs then sends CLOSE either on the old session, which
-		// gets NFS4ERR_BADSESSION, or after dropping it, without SEQUENCE,
-		// which gets NFS4ERR_OP_NOT_IN_SESSION. Both were observed. Neither
-		// says anything about the read stateid.
-		requireRecoveryError(t, c.call(t, libnfsRequest{Op: "close", Handle: h}),
-			"NFS4ERR_BADSESSION", "NFS4ERR_OP_NOT_IN_SESSION")
+		// A read open leaves no durable marker; after the restart its
+		// stateid is unknown to the server, and the READ on the restored
+		// session gets NFS4ERR_BAD_STATEID: the client reopens. The
+		// published bytes are intact through a new handle on the same
+		// context.
+		requireRecoveryError(t, c.call(t, libnfsRequest{Op: "read", Handle: h}), "NFS4ERR_BAD_STATEID")
+		requireRecoveryError(t, c.call(t, libnfsRequest{Op: "close", Handle: h}), "NFS4ERR_BAD_STATEID")
+		h = c.open(t, s, "file", os.O_RDONLY)
+		c.read(t, h, "retained")
+		c.must(t, libnfsRequest{Op: "close", Handle: h})
 		c.process.stop(t, syscall.SIGKILL)
 		c = s.client(t)
 		h = c.open(t, s, "file", os.O_RDONLY)

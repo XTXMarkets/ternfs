@@ -20,6 +20,12 @@ type sessionSlot struct {
 	user     effectiveUser
 	reserved int
 	buffer   *cachedReply
+	// restored: the slot's state was read from the session file at startup
+	// and no request has used it since. hasIntent: its record is the intent
+	// of a request whose reply was never written, with payload intent
+	// (replay_decide.go).
+	restored, hasIntent bool
+	intent              []byte
 }
 
 type session struct {
@@ -44,6 +50,14 @@ type session struct {
 
 	destroyed atomic.Bool
 	fatal     atomic.Bool
+
+	// file is the session's persistent record and slot table, empty when
+	// the server has no staging directory or the file could not be made.
+	// Requests use it without the store lock; it is closed when the
+	// session's last use ends (releaseSessionUse).
+	file sessionFile
+	// restored: this process rebuilt the session from its file at startup.
+	restored bool
 
 	// users counts store membership plus admitted slot requests, under
 	// sessionStore.mu. The record stays counted until the last one ends.

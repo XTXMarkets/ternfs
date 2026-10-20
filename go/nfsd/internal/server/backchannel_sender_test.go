@@ -817,7 +817,7 @@ func TestSequenceFlagsTable(t *testing.T) {
 					sess.cb = cb
 				}
 				ss.mu.Lock()
-				sess.id = ss.newSessionIDLocked(sp.client)
+				sess.id, _ = ss.newSessionIDLocked(sp.client)
 				ss.insertSessionLocked(sess)
 				ss.mu.Unlock()
 				sessions = append(sessions, sess)

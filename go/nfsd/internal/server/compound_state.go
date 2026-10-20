@@ -21,9 +21,22 @@ type compoundState struct {
 	replyBudget   uint32
 	effectUnknown bool // Submitted mutation lacks whole-call outcome proof.
 
-	// session and clientID come from the compound's SEQUENCE.
-	session  *session
-	clientID uint64
+	// session and clientID come from the compound's SEQUENCE, as do the
+	// slot it claimed and its sequence number, for intents.
+	session     *session
+	clientID    uint64
+	slot        *sessionSlot
+	slotID, seq uint32
+	// replay is the intent a restored slot held for this request, when the
+	// request is being run again after a restart (replay_decide.go).
+	replay replayState
+	// opIndex is the index in the compound of the operation being run.
+	// intentOp is one more than the index of the operation whose intent is
+	// on the slot, written or restored, and 0 when there is none.
+	opIndex, intentOp int
+	// mutated: a mutating operation of this compound has been permitted
+	// to run, so a later one removes the session's file (mutationGate).
+	mutated bool
 
 	// afterReply collects work for after the reply is written.
 	afterReply *[]func()

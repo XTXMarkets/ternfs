@@ -270,6 +270,29 @@ func TestAdmissionReplayEffectiveUserAndDigest(t *testing.T) {
 	admissionStatus(t, res, nfs4.NFS4ERR_SEQ_FALSE_RETRY, nfs4.OP_SEQUENCE)
 }
 
+// The Linux client re-encodes a retransmission with its current highest
+// slot in use and cachethis, so those SEQUENCE arguments are not part of a
+// request's identity: a replay differing only there is served, not a false
+// retry.
+func TestAdmissionReplayIgnoresSequenceArguments(t *testing.T) {
+	srv, _ := newConnectionTestServer(t, 4)
+	ts := connectionSession(t, srv)
+	wire := admissionSequence(buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) { w.AppendArgarray_Putrootfh() }), ts, 1, 1, true)
+	original, res := admissionRequest(t, srv, wire, 1, nil)
+	admissionStatus(t, res, nfs4.NFS4_OK, nfs4.OP_SEQUENCE, nfs4.OP_PUTROOTFH)
+	countOff, _, _ := compoundArgLayout(wire)
+	highestOff := countOff + 4 + 4 + 16 + 4 + 4
+	cachethisOff := highestOff + 4
+	changed := bytes.Clone(wire)
+	binary.BigEndian.PutUint32(changed[highestOff:], binary.BigEndian.Uint32(wire[highestOff:])-1)
+	binary.BigEndian.PutUint32(changed[cachethisOff:], nfs4.FALSE)
+	replay, res := admissionRequest(t, srv, changed, 2, nil)
+	admissionStatus(t, res, nfs4.NFS4_OK, nfs4.OP_SEQUENCE, nfs4.OP_PUTROOTFH)
+	if !bytes.Equal(withoutSequenceResult(original)[24:], withoutSequenceResult(replay)[24:]) {
+		t.Fatal("replay with other SEQUENCE arguments was not the cached reply")
+	}
+}
+
 func TestAdmissionUncachedReplayPrefix(t *testing.T) {
 	for _, following := range []bool{false, true} {
 		t.Run(map[bool]string{false: "sequence-only", true: "following-operation"}[following], func(t *testing.T) {

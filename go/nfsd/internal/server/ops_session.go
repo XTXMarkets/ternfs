@@ -11,16 +11,19 @@ import (
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sessionstore"
 )
 
 // NFSv4.1 sessions (RFC 8881 section 2.10).
 //
-// Sessions are held in memory and end with the nfsd process: after a
-// restart, every earlier session ID gets BADSESSION, and the client
-// registers again with EXCHANGE_ID and CREATE_SESSION (canonical r3 §6).
-// The slot table and its reply cache replace NFSv4.0 open-owner seqids:
-// a retransmitted request on a slot returns the cached reply instead of
-// running again, and requests on different slots run concurrently.
+// Sessions live in memory and, with a staging directory, in a file each
+// (session_persist.go) from which a restarted nfsd rebuilds them. A
+// session with no file, or whose incarnation's lease has ended, gets
+// BADSESSION after a restart and the client registers again with
+// EXCHANGE_ID and CREATE_SESSION (canonical r3 §6). The slot table and its
+// reply cache replace NFSv4.0 open-owner seqids: a retransmitted request
+// on a slot returns the cached reply instead of running again, and
+// requests on different slots run concurrently.
 
 const (
 	// maxSessionReplyCached bounds one cached reply. Clients only ask for
@@ -65,6 +68,10 @@ type sequenceResult struct {
 	// hold is the admitted request's active hold on its incarnation. The
 	// caller passes it to the transport (rpcRequest.hold).
 	hold *requestHold
+	// hasIntent: the request is run again after a restart and its slot held
+	// an intent, whose payload is intent.
+	hasIntent bool
+	intent    []byte
 }
 
 // releaseUse ends the admitted request's use of its session, once.
@@ -85,18 +92,47 @@ type sequenceAdmission struct {
 	uncachedBytes      uint32
 }
 
+// replayDigest identifies a compound's request for the false-retry check:
+// everything but the SEQUENCE arguments. The slot, sequence number and
+// session are checked on their own, and sa_highest_slotid and sa_cachethis
+// are not part of the request's identity: the Linux client re-encodes a
+// retransmission with its current highest slot in use, so hashing them
+// turned every retransmission after a reconnect into SEQ_FALSE_RETRY,
+// which the client answers by running the request again as a new one.
+func replayDigest(body []byte) [32]byte {
+	// COMPOUND4args: tag (length, bytes, padding), minorversion, count,
+	// then the first operation: opnum and, for SEQUENCE, 32 bytes of
+	// arguments.
+	const sequenceArgs = 16 + 4 + 4 + 4 + 4
+	if len(body) >= 4 {
+		tagLen := int(binary.BigEndian.Uint32(body))
+		argsOff := 4 + (tagLen+3)&^3 + 4 + 4 + 4
+		if argsOff <= len(body) && argsOff+sequenceArgs <= len(body) &&
+			binary.BigEndian.Uint32(body[argsOff-4:]) == nfs4.OP_SEQUENCE {
+			h := sha256.New()
+			h.Write(body[:argsOff])
+			h.Write(body[argsOff+sequenceArgs:])
+			var out [32]byte
+			h.Sum(out[:0])
+			return out
+		}
+	}
+	return sha256.Sum256(body)
+}
+
 // startSequence validates SEQUENCE and claims its slot. The caller must
 // call sequenceResult.finish once the compound reply is complete.
 func (s *Server) startSequence(args nfs4.SEQUENCE4args, admission ...sequenceAdmission) sequenceResult {
-	a := sequenceAdmission{digest: sha256.Sum256(args.Bytes()), operations: 1,
-		sequenceReplyBytes: rpcAcceptedHeaderSize + 12 + 44}
+	// Without an admission (tests only) the request has no identity; the
+	// transport computes replayDigest over the compound.
+	a := sequenceAdmission{operations: 1, sequenceReplyBytes: rpcAcceptedHeaderSize + 12 + 44}
 	if len(admission) != 0 {
 		a = admission[0]
 	}
 	id := readSessionID(args.SaSessionid())
 	sess := s.sessions.lookup(id)
-	// An unknown session, including one an earlier process issued, is never
-	// reconstructed (RFC 8881 §2.10.13.1.4).
+	// An unknown session is never reconstructed on demand (RFC 8881
+	// §2.10.13.1.4); sessions with a file were restored at startup.
 	if sess == nil || sess.destroyed.Load() || sess.fatal.Load() {
 		return sequenceResult{status: nfs4.NFS4ERR_BADSESSION}
 	}
@@ -127,6 +163,10 @@ func (s *Server) startSequence(args nfs4.SEQUENCE4args, admission ...sequenceAdm
 	}
 	defer slot.mu.Unlock()
 	replay := slot.occupied && seq == slot.seq
+	// rerun: a retransmission to a restored slot whose reply was never
+	// written. The request ran, or was about to, in the earlier process;
+	// it runs again, deciding any intent it left (replay_decide.go).
+	rerun := false
 	switch {
 	case replay:
 		// Retransmission of the last request on this slot.
@@ -137,10 +177,23 @@ func (s *Server) startSequence(args nfs4.SEQUENCE4args, admission ...sequenceAdm
 			return sequenceResult{status: nfs4.NFS4ERR_SEQ_FALSE_RETRY}
 		}
 		if slot.buffer == nil {
-			return sequenceResult{status: nfs4.NFS4ERR_BADSESSION}
+			if !slot.restored {
+				return sequenceResult{status: nfs4.NFS4ERR_BADSESSION}
+			}
+			rerun = true
 		}
 	case !slot.inUse && (slot.occupied && seq == slot.seq+1 ||
 		!slot.occupied && seq == 1):
+	case !slot.inUse && slot.restored && sessionstore.SeqAfter(seq, slot.seq):
+		// A later request's record on this slot was not written before the
+		// restart. Only a new request can carry a later sequence number,
+		// and running it is safe. While the session's file was on disk,
+		// each request was permitted at most one mutating operation
+		// (mutationGate). RENAME, REMOVE and CREATE of a directory or
+		// symlink write an intent before theirs. The others, alone, repeat
+		// safely or fail: an exclusive OPEN matches its verifier, a GUARDED
+		// one gets EXIST, a CLOSE finds its publication or BAD_STATEID. The
+		// ordinary rules apply from here on.
 	default:
 		return sequenceResult{status: nfs4.NFS4ERR_SEQ_MISORDERED}
 	}
@@ -184,7 +237,7 @@ func (s *Server) startSequence(args nfs4.SEQUENCE4args, admission ...sequenceAdm
 		budget = min(budget, sess.maxCached)
 	}
 	var reply *cachedReply
-	if !replay {
+	if !replay || rerun {
 		reservation := int(max(a.sequenceReplyBytes, a.uncachedBytes))
 		if args.SaCachethis() != 0 {
 			reservation = int(budget)
@@ -207,7 +260,10 @@ func (s *Server) startSequence(args nfs4.SEQUENCE4args, admission ...sequenceAdm
 	token.commit()
 	hold.activate()
 	s.clients.NoteLeaseNeed(sess.clientID)
-	if replay {
+	if replay && !rerun {
+		if slot.restored {
+			s.metrics.replayServed.Add(1)
+		}
 		slot.buffer.retain()
 		s.sessions.releaseSessionUse(sess)
 		return sequenceResult{status: nfs4.NFS4_OK, sess: sess, replay: slot.reply, view: slot.buffer, hold: hold}
@@ -216,16 +272,24 @@ func (s *Server) startSequence(args nfs4.SEQUENCE4args, admission ...sequenceAdm
 	slot.seq, slot.occupied, slot.inUse = seq, true, true
 	slot.cached = false
 	slot.digest, slot.user = a.digest, a.user
+	var intent []byte
+	hasIntent := rerun && slot.hasIntent
+	if hasIntent {
+		intent = slot.intent
+	}
+	slot.restored, slot.hasIntent, slot.intent = false, false, nil
 	return sequenceResult{
-		hold:   hold,
-		status: nfs4.NFS4_OK,
-		sess:   sess,
-		slot:   slot,
-		slotID: slotID,
-		seq:    seq,
-		cache:  args.SaCachethis() != 0,
-		budget: budget,
-		store:  s.sessions,
+		hasIntent: hasIntent,
+		intent:    intent,
+		hold:      hold,
+		status:    nfs4.NFS4_OK,
+		sess:      sess,
+		slot:      slot,
+		slotID:    slotID,
+		seq:       seq,
+		cache:     args.SaCachethis() != 0,
+		budget:    budget,
+		store:     s.sessions,
 	}
 }
 
@@ -240,6 +304,13 @@ func (r *sequenceResult) finish(reply []byte) {
 	}
 	slot := r.slot
 	defer r.releaseUse() // After the slot is unlocked.
+	defer func() {
+		// A session whose file is out of date and still on disk goes, now
+		// that the slot is unlocked, for retiring drains every slot.
+		if r.sess.file.poisoned.Load() && r.store != nil {
+			r.store.retireSession(r.sess, true)
+		}
+	}()
 	slot.mu.Lock()
 	defer slot.mu.Unlock()
 	slot.inUse = false
@@ -287,6 +358,12 @@ func (r *sequenceResult) finish(reply []byte) {
 	slot.buffer.storeBody(saved)
 	slot.reply = slot.buffer.data
 	slot.reserved = slot.buffer.charge
+	if r.store != nil && r.store.persistSlot != nil {
+		r.store.persistSlot(r.sess, r.slotID, sessionstore.Record{
+			Seq: r.seq, Kind: sessionstore.KindSlot, CacheThis: r.cache,
+			Digest: slot.digest, User: encodeUser(slot.user), Payload: saved,
+		})
+	}
 }
 
 // renewalCheck is admission's renewal check (canonical r3 §7.1 step 6). It
@@ -333,8 +410,9 @@ func writeSequenceError(w *nfs4.COMPOUND4resWriter, status uint32) {
 }
 
 // serverOwnerMajor identifies this export for session trunking checks.
-// Every nfsd serving one TernFS shares durable client state, but sessions
-// and stateids are process-local, so each process is its own server owner.
+// Every nfsd serving one TernFS shares durable client state, but open state
+// and staging are local to each running nfsd and not shared with another
+// running at the same time, so each process is its own server owner.
 func (s *Server) serverOwnerMajor() []byte {
 	return []byte("ternfs-nfsd/" + s.clients.NfsdID)
 }
@@ -832,6 +910,9 @@ func (s *Server) opCreateSession(
 	confirmed, confirm, hasConfirm, principal := c.confirmed, c.confirm, c.hasConfirm, c.principal
 	ss.mu.Unlock()
 	cr.fore = s.negotiateForeChannel(fore)
+	if status := s.createSessionFile(cr); status != nfs4.NFS4_OK {
+		return fail(status)
+	}
 
 	if hasConfirm {
 		// A pending incarnation: closing its predecessor, the principal
@@ -961,8 +1042,8 @@ func (s *Server) opBindConnToSession(args nfs4.BINDCONNTOSESSION4args, st *compo
 	ew := w.AppendResarray_BindConnToSession()
 	id := readSessionID(args.BctsaSessid())
 	if s.sessions.lookup(id) == nil {
-		// Unknown, including a session from before an nfsd restart: the
-		// client creates a new one.
+		// Unknown, including a session from before an nfsd restart that
+		// has no file: the client creates a new one.
 		ew.SetValue_Default(nfs4.NFS4ERR_BADSESSION)
 		w.Resume(ew.Finish())
 		return nfs4.NFS4ERR_BADSESSION
@@ -1071,6 +1152,12 @@ func (s *Server) opBackchannelCtl(args nfs4.BACKCHANNELCTL4args, st *compoundSta
 	sec, status := parseCallbackSec(args.BcaSecParms())
 	if status == nfs4.NFS4_OK && (st.session == nil || st.session.cb == nil) {
 		status = nfs4.NFS4ERR_INVAL
+	}
+	// The session's file records the program and credential CREATE_SESSION
+	// gave: it goes before they change, or they do not. A file that stays
+	// retires the session when the request finishes.
+	if status == nfs4.NFS4_OK && !s.dropSessionFile(st.session, "BACKCHANNEL_CTL") {
+		status = nfs4.NFS4ERR_SERVERFAULT
 	}
 	if status == nfs4.NFS4_OK {
 		st.session.cb.setProgram(args.BcaCbProgram(), sec)
