@@ -21,9 +21,10 @@ import (
 // showing the replacement until the client has no opens of it and one lease
 // has passed. Close-to-open revalidation within that time sees the client's
 // own write through the handle it holds; a later LOOKUP finds the
-// replacement's own handle. The alias is process-local and bounded by
-// recent publications; after it lapses the handle names its original,
-// immutable version again.
+// replacement's own handle. Aliases are bounded by recent publications,
+// and the server records them on the staging disk so that they survive an
+// nfsd restart; after one lapses the handle names its original, immutable
+// version again.
 
 type ViewKey struct {
 	ClientID uint64
@@ -83,6 +84,24 @@ func (vs *ViewStore) Set(key ViewKey, dataID vfs.InodeID, expires time.Time) {
 		vs.aliases = make(map[ViewKey]publishedAlias)
 	}
 	vs.aliases[key] = publishedAlias{dataID: dataID, expires: expires}
+}
+
+// AliasEntry is one alias as Entries reports it.
+type AliasEntry struct {
+	Key     ViewKey
+	DataID  vfs.InodeID
+	Expires time.Time
+}
+
+// Entries returns every alias held.
+func (vs *ViewStore) Entries() []AliasEntry {
+	vs.mu.Lock()
+	defer vs.mu.Unlock()
+	out := make([]AliasEntry, 0, len(vs.aliases))
+	for key, alias := range vs.aliases {
+		out = append(out, AliasEntry{Key: key, DataID: alias.dataID, Expires: alias.expires})
+	}
+	return out
 }
 
 func (vs *ViewStore) Get(key ViewKey) (vfs.InodeID, bool) {

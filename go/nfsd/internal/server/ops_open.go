@@ -144,7 +144,9 @@ func (s *Server) retireInactiveRecovered(clientID uint64, id nfs4.StateID, retir
 // recoveredDataID finds the staging of clientID's write open issued by an
 // earlier nfsd process. Its client may present the staging inode as the
 // handle (as before this process), or the base inode the staging replaces.
-// Another client's staging is not found.
+// A file created by OPEN has the empty placeholder published at its name as
+// its base, which is the handle its client holds. Another client's staging
+// is not found.
 func (s *Server) recoveredDataID(clientID uint64, id nfs4.StateID, fileID vfs.InodeID) (vfs.InodeID, bool) {
 	if !s.opens.CanRecover(id) {
 		return 0, false
@@ -362,6 +364,7 @@ func (s *Server) releaseWrite(openStateid nfs4.Stateid4, st *compoundState, clos
 			// Another open of this client still writes the shared staging.
 			// The final write CLOSE publishes it; hand the sidecar's
 			// ownership to that open so recovery and expiry follow it.
+			s.log.Info("close: staging handed to another open of this client", "inode", dataID, "stateid", sid, "next", next.ID)
 			if meta.NFSStateID == sid {
 				if err := s.stagingStore.Rebind(dataID, next.Owner.ClientID, next.ID); err != nil {
 					return fail(nfs4.NFS4ERR_IO)
@@ -448,6 +451,9 @@ func (s *Server) releaseWrite(openStateid nfs4.Stateid4, st *compoundState, clos
 		}
 	}
 
+	if recovered {
+		s.log.Info("recovered close", "inode", dataID, "name", meta.FileName, "stateid", sid, "published", published, "discarded", published == 0)
+	}
 	if published != 0 && state.Owner.ClientID != 0 {
 		s.metrics.publishes.Add(1)
 		s.publishedAs(state.Owner.ClientID, st.currentID, published)
@@ -1061,6 +1067,8 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 			return fail(nfs4.NFS4ERR_IO)
 		}
 		stagingRebound = true
+		s.log.Info("recovered staging adopted", "inode", recoveredStagingID, "name", recoveredStagingMeta.FileName,
+			"old_stateid", recoveredStagingMeta.NFSStateID, "stateid", markID, "claim", claimType)
 		// Retired files release their descriptors; Rebind reopens them after
 		// the new durable marker exists. Apply CREATE size only then.
 		if openSize != nil {

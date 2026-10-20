@@ -7692,7 +7692,7 @@ func TestStagedWriteOperationsAfterServerRestart(t *testing.T) {
 			if !bytes.Equal(got, expected) {
 				t.Fatalf("recovered file data = %q, want %q", got, expected)
 			}
-			entries, err := os.ReadDir(restarted.stagingDir)
+			entries, err := stagingFiles(restarted.stagingDir)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -7753,7 +7753,7 @@ func TestRecoveredStagedWriteRequiresActiveMarker(t *testing.T) {
 				t.Fatalf("%s status = %s, want NFS4ERR_EXPIRED",
 					operation, nfs4.Nfsstat4Name(status))
 			}
-			entries, err := os.ReadDir(restarted.stagingDir)
+			entries, err := stagingFiles(restarted.stagingDir)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -7799,7 +7799,7 @@ func TestSetclientidRebootRetiresStagingFiles(t *testing.T) {
 	setupClientWithVerifier(t, conn, &xid, rebootVerifier)
 
 	assertRetiredStaging(t, staging, fileID)
-	entries, err := os.ReadDir(stagingDir)
+	entries, err := stagingFiles(stagingDir)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -78,6 +78,11 @@ type Server struct {
 	clientGCRunning bool
 	clientGCDone    chan struct{}
 
+	// aliasMu orders each publication alias set and its append to aliases
+	// with the sweep's snapshot and rewrite of that log (alias_log.go).
+	aliasMu sync.Mutex
+	aliases *aliasLog // nil without a staging directory
+
 	// Confirmations in progress or unresolved (server_confirm.go), by N and
 	// P, by identity and by EXCHANGE_ID owner. At most one per identity.
 	// confirmMu is taken after any other lock, sessions.mu included, and
@@ -194,6 +199,10 @@ func NewServer(fs vfs.TernVFS, stagingStore staging.Store, logger *slog.Logger) 
 	logger.Info("nfsd instance",
 		"nfsd_id", clients.NfsdID,
 		"stateid_epoch", fmt.Sprintf("%08x", s.opens.Epoch))
+	if d, ok := stagingStore.(interface{ Dir() string }); ok {
+		s.aliases = newAliasLog(d.Dir())
+		s.loadAliases()
+	}
 	return s, nil
 }
 

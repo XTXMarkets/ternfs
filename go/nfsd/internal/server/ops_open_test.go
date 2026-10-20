@@ -7,6 +7,7 @@ package server
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/openstate"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
@@ -879,4 +881,435 @@ func TestReadOpenOutlivesLapsedLease(t *testing.T) {
 	}
 	r.SafePass(true)
 	check(nfs4.NFS4_OK, "renewed lease")
+}
+
+// A file created and written before an nfsd restart is closed through the
+// handle the client holds, the empty placeholder published at its name,
+// which the sidecar records as the staging's base. The retried CLOSE finds
+// the recovered staging and publishes it. A same-directory rename meanwhile
+// is followed, as for any open writer, and a REMOVE detaches the writer so
+// its CLOSE discards.
+func TestRestartedCreateClosesThroughPlaceholder(t *testing.T) {
+	for _, namespace := range []string{"linked", "renamed", "removed"} {
+		t.Run(namespace, func(t *testing.T) {
+			fs := vfs.NewLocalTernVFS(t.TempDir())
+			stagingDir := t.TempDir()
+			store, err := staging.NewLocalStore(stagingDir, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			srv, err := NewServer(fs, store, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			addr, cleanup := serveTestServer(t, srv)
+			conn := dial(t, addr)
+			xid := uint32(1)
+			clientID := setupClient(t, conn, &xid)
+			state, fh := openCreateFile(t, conn, &xid, clientID, "saved.tmp")
+			writeFileAt(t, conn, &xid, fh, state, 0, []byte("the whole save"))
+			conn.Close()
+			cleanup()
+			staging.CloseFiles(t, store)
+
+			recovered, err := staging.NewLocalStore(stagingDir, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer staging.CloseFiles(t, recovered)
+			srv, err = NewServer(fs, recovered, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			addr, cleanup = serveTestServer(t, srv)
+			defer cleanup()
+			conn = dial(t, addr)
+			defer conn.Close()
+			setupClient(t, conn, &xid)
+			name := "saved.tmp"
+			switch namespace {
+			case "renamed":
+				renameFile(t, conn, &xid, "saved.tmp", "elsewhere")
+				name = "elsewhere"
+			case "removed":
+				removeFile(t, conn, &xid, "saved.tmp")
+			}
+			if status, _ := closeFileResult(t, conn, &xid, fh, state); status != nfs4.NFS4_OK {
+				t.Fatalf("CLOSE after restart = %s", nfs4.Nfsstat4Name(status))
+			}
+			if n := len(recovered.Entries()); n != 0 {
+				t.Fatalf("%d staging entries left after the CLOSE", n)
+			}
+			if namespace == "removed" {
+				if _, err := readPublished(fs, "saved.tmp"); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("removed name still resolves: %v", err)
+				}
+				return
+			}
+			if data, err := readPublished(fs, name); err != nil || string(data) != "the whole save" {
+				t.Fatalf("published at %s: %q %v", name, data, err)
+			}
+		})
+	}
+}
+
+func removeFile(t *testing.T, conn net.Conn, xid *uint32, name string) {
+	t.Helper()
+	res := sendCompound(t, conn, *xid, func(w *nfs4.COMPOUND4argsWriter) {
+		w.AppendArgarray_Putrootfh()
+		rw := w.AppendArgarray_Remove()
+		rw.Resume(rw.StartTarget().SetData([]byte(name)).Finish())
+		w.Resume(rw.Finish())
+	})
+	*xid++
+	if res.Status() != nfs4.NFS4_OK {
+		t.Fatalf("REMOVE %s: %s", name, nfs4.Nfsstat4Name(res.Status()))
+	}
+}
+
+func renameFile(t *testing.T, conn net.Conn, xid *uint32, from, to string) {
+	t.Helper()
+	res := sendCompound(t, conn, *xid, func(w *nfs4.COMPOUND4argsWriter) {
+		w.AppendArgarray_Putrootfh()
+		w.AppendArgarray_Savefh()
+		rw := w.AppendArgarray_Rename()
+		rw.Resume(rw.StartOldname().SetData([]byte(from)).Finish())
+		rw.Resume(rw.StartNewname().SetData([]byte(to)).Finish())
+		w.Resume(rw.Finish())
+	})
+	*xid++
+	if res.Status() != nfs4.NFS4_OK {
+		t.Fatalf("RENAME %s -> %s: %s", from, to, nfs4.Nfsstat4Name(res.Status()))
+	}
+}
+
+// A client that has just published a new version through its write open
+// keeps seeing that version through the handle it holds, even if nfsd
+// restarts in between: the publication alias is kept in the staging
+// directory and reloaded.
+func TestPublicationAliasSurvivesRestart(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "doc"), []byte("version one"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fs := vfs.NewLocalTernVFS(root)
+	stagingDir := t.TempDir()
+	store, err := staging.NewLocalStore(stagingDir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewServer(fs, store, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr, cleanup := serveTestServer(t, srv)
+	conn := dial(t, addr)
+	xid := uint32(1)
+	clientID := setupClient(t, conn, &xid)
+	oldFH := lookupFH(t, conn, &xid, "doc")
+	state, fh := openWriteFile(t, conn, &xid, clientID, "doc")
+	if !bytes.Equal(fh, oldFH) {
+		t.Fatal("write open changed the handle")
+	}
+	writeFileAt(t, conn, &xid, fh, state, 0, []byte("version two"))
+	closeFile(t, conn, &xid, fh, state)
+	if data, _ := readFileData(t, conn, &xid, oldFH, 0, 64); string(data) != "version two" {
+		t.Fatalf("before restart, old handle reads %q", data)
+	}
+	conn.Close()
+	cleanup()
+	staging.CloseFiles(t, store)
+
+	recovered, err := staging.NewLocalStore(stagingDir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer staging.CloseFiles(t, recovered)
+	srv, err = NewServer(fs, recovered, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr, cleanup = serveTestServer(t, srv)
+	defer cleanup()
+	conn = dial(t, addr)
+	defer conn.Close()
+	setupClient(t, conn, &xid)
+	if data, _ := readFileData(t, conn, &xid, oldFH, 0, 64); string(data) != "version two" {
+		t.Fatalf("after restart, old handle reads %q, want the version this client published", data)
+	}
+	// Sweeping with the alias expired drops it from memory and the file.
+	srv.clients.SetClock(func() time.Time { return time.Now().Add(2 * clientstore.LeaseTime) })
+	srv.sweepViews()
+	if recs, err := srv.aliases.load(srv.clients.Now()); err != nil || len(recs) != 0 {
+		t.Fatalf("after expiry the log holds %d records (%v)", len(recs), err)
+	}
+}
+
+// A client that holds a handle open keeps its publication alias past the
+// lease after the publication, and the log must keep it as well: a process
+// starting before the next sweep loads the alias rather than showing the
+// client the version it replaced. A read open under another owner holds
+// the handle while a write open publishes over it.
+func TestHeldPublicationAliasStaysInLog(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "doc"), []byte("version one"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store, err := staging.NewLocalStore(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer staging.CloseFiles(t, store)
+	srv, err := NewServer(vfs.NewLocalTernVFS(root), store, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(srv.clients.StopLeaseWorkers)
+	addr, cleanup := serveTestServer(t, srv)
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+	xid := uint32(1)
+	clientID := setupClient(t, conn, &xid)
+	status, _, readFH, _ := openFileForOwner(t, conn, &xid, clientID, "reader", "doc", nfs4.OPEN4_SHARE_ACCESS_READ, false, false)
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("read OPEN = %s", nfs4.Nfsstat4Name(status))
+	}
+	state, fh := openWriteFile(t, conn, &xid, clientID, "doc")
+	if !bytes.Equal(fh, readFH) {
+		t.Fatal("write open changed the handle")
+	}
+	writeFileAt(t, conn, &xid, fh, state, 0, []byte("version two"))
+	closeFile(t, conn, &xid, fh, state)
+
+	// Two leases on, the read open still holds the alias. Nothing else may
+	// act on the jumped clock.
+	srv.clients.StopLeaseWorkers()
+	awaitRequestHoldsReleased(t, srv)
+	later := time.Now().Add(2 * clientstore.LeaseTime)
+	srv.clients.SetClock(func() time.Time { return later })
+	srv.sweepViews()
+	held := srv.views.Entries()
+	if len(held) != 1 {
+		t.Fatalf("%d aliases in memory after the sweep, want the held one", len(held))
+	}
+	recs, err := srv.aliases.load(later.Add(clientstore.LeaseRenewAfter))
+	if err != nil || len(recs) != 1 || vfs.InodeID(recs[0].DataID) != held[0].DataID {
+		t.Fatalf("a process starting before the next sweep loads %v (%v), want the held alias", recs, err)
+	}
+}
+
+// A publication made while a sweep rewrites the alias log survives a
+// restart. The rewrite renames a new file over the log, so an alias
+// appended to the old file in the meantime would be lost until the next
+// sweep; a process started in that time would not load it. The rewrite
+// here is held at its rename while an alias is published, and the clock
+// moves on meanwhile: the alias lasts a lease from when it is made, not
+// from when its publication began to wait.
+func TestAliasPublishedDuringRewriteSurvivesRestart(t *testing.T) {
+	fs := vfs.NewLocalTernVFS(t.TempDir())
+	stagingDir := t.TempDir()
+	store, err := staging.NewLocalStore(stagingDir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewServer(fs, store, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(srv.clients.StopLeaseWorkers)
+	entered, release := make(chan struct{}), make(chan struct{})
+	var enterOnce, releaseOnce sync.Once
+	srv.aliases.rename = func(oldpath, newpath string) error {
+		enterOnce.Do(func() { close(entered) })
+		<-release
+		return os.Rename(oldpath, newpath)
+	}
+	swept, published := make(chan struct{}), make(chan struct{})
+	finish := func() {
+		releaseOnce.Do(func() { close(release) })
+		for _, done := range []chan struct{}{swept, published} {
+			select {
+			case <-done:
+			case <-time.After(10 * time.Second):
+				t.Fatal("sweep or publication did not finish")
+			}
+		}
+	}
+	key := openstate.ViewKey{ClientID: 7, FileID: 0x1001}
+	go func() {
+		defer close(swept)
+		srv.sweepViews()
+	}()
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		close(published)
+		finish()
+		t.Fatal("the sweep's rewrite did not reach its rename")
+	}
+	go func() {
+		defer close(published)
+		srv.publishedAs(key.ClientID, key.FileID, 0x1002)
+	}()
+	// Give the publication time to append to the file about to be
+	// replaced, if nothing makes it wait for the rewrite.
+	select {
+	case <-published:
+	case <-time.After(100 * time.Millisecond):
+	}
+	srv.clients.StopLeaseWorkers()
+	later := time.Now().Add(2 * clientstore.LeaseTime)
+	srv.clients.SetClock(func() time.Time { return later })
+	finish()
+	if recs, err := srv.aliases.load(later); err != nil || len(recs) != 1 || recs[0].DataID != 0x1002 {
+		t.Fatalf("at the time of the publication the log loads %v (%v), want its alias", recs, err)
+	}
+	staging.CloseFiles(t, store)
+
+	recovered, err := staging.NewLocalStore(stagingDir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer staging.CloseFiles(t, recovered)
+	restarted, err := NewServer(fs, recovered, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(restarted.clients.StopLeaseWorkers)
+	if dataID, ok := restarted.views.Get(key); !ok || dataID != 0x1002 {
+		t.Fatalf("after a restart the alias is %v %v, want the publication made during the rewrite", dataID, ok)
+	}
+}
+
+// The alias log is read up to its first malformed line, which a torn
+// append leaves when the process dies in the middle of it. At startup the
+// aliases before that line are installed and none after it.
+func TestAliasLogLoadsUpToMalformedLine(t *testing.T) {
+	stagingDir := t.TempDir()
+	expires := time.Now().Add(clientstore.LeaseTime)
+	before := aliasRecord{ClientID: 7, FileID: 0x1001, DataID: 0x1002, Expires: expires}
+	after := aliasRecord{ClientID: 7, FileID: 0x2001, DataID: 0x2002, Expires: expires}
+	var log []byte
+	for _, rec := range []aliasRecord{before, after} {
+		line, err := json.Marshal(rec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		log = append(log, line...)
+		log = append(log, '\n')
+		if rec == before {
+			log = append(log, `{"client":7,"fi`+"\n"...)
+		}
+	}
+	path := filepath.Join(stagingDir, staging.AliasesDirName, aliasLogName)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, log, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store, err := staging.NewLocalStore(stagingDir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer staging.CloseFiles(t, store)
+	srv, err := NewServer(vfs.NewLocalTernVFS(t.TempDir()), store, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(srv.clients.StopLeaseWorkers)
+	if dataID, ok := srv.views.Get(openstate.ViewKey{ClientID: 7, FileID: 0x1001}); !ok || dataID != 0x1002 {
+		t.Fatalf("alias before the malformed line = %v %v, want it installed", dataID, ok)
+	}
+	if dataID, ok := srv.views.Get(openstate.ViewKey{ClientID: 7, FileID: 0x2001}); ok {
+		t.Fatalf("alias after the malformed line installed as %v", dataID)
+	}
+}
+
+// The Linux client's recovery after an nfsd restart, as the kill tests show
+// it: the wire clientid is new, so every open is reclaimed with CLAIM_FH
+// before the in-flight WRITEs are replayed with the new stateids, then
+// COMMIT and CLOSE follow. For a file created just before the kill, with
+// no WRITE yet acknowledged, the reclaimed open must adopt the recovered
+// staging and its CLOSE must publish what was written after the restart.
+func TestLinuxRecoveryOfFreshCreateAcrossRestart(t *testing.T) {
+	for _, exclusive := range []bool{true, false} {
+		t.Run(map[bool]string{true: "exclusive", false: "unchecked"}[exclusive], func(t *testing.T) {
+			fs := vfs.NewLocalTernVFS(t.TempDir())
+			stagingDir := t.TempDir()
+			store, err := staging.NewLocalStore(stagingDir, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			srv, err := NewServer(fs, store, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			addr, cleanup := serveTestServer(t, srv)
+			conn := dial(t, addr)
+			xid := uint32(1)
+			clientID := setupClient(t, conn, &xid)
+			var fh []byte
+			if exclusive {
+				var status uint32
+				status, _, fh, _ = openExclusiveFile(t, conn, &xid, clientID, "owner", "save.tmp", [8]byte{1, 2, 3})
+				if status != nfs4.NFS4_OK {
+					t.Fatal(nfs4.Nfsstat4Name(status))
+				}
+			} else {
+				var status uint32
+				status, _, fh, _ = openFileForOwner(t, conn, &xid, clientID, "owner", "save.tmp", nfs4.OPEN4_SHARE_ACCESS_BOTH, true, false)
+				if status != nfs4.NFS4_OK {
+					t.Fatal(nfs4.Nfsstat4Name(status))
+				}
+			}
+			// Killed here: no WRITE reached the server.
+			conn.Close()
+			cleanup()
+			staging.CloseFiles(t, store)
+
+			recovered, err := staging.NewLocalStore(stagingDir, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer staging.CloseFiles(t, recovered)
+			srv, err = NewServer(fs, recovered, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			addr, cleanup = serveTestServer(t, srv)
+			defer cleanup()
+			conn = dial(t, addr)
+			defer conn.Close()
+			newClientID := setupClient(t, conn, &xid)
+			status, sid, reclaimedFH := openByHandle(t, conn, &xid, newClientID, "owner", fh, nfs4.OPEN4_SHARE_ACCESS_BOTH)
+			if status != nfs4.NFS4_OK || !bytes.Equal(reclaimedFH, fh) {
+				t.Fatalf("CLAIM_FH reclaim = %s", nfs4.Nfsstat4Name(status))
+			}
+			if n := len(recovered.Entries()); n != 1 {
+				t.Fatalf("%d staging entries after the reclaim, want the one adopted", n)
+			}
+			writeFileAt(t, conn, &xid, fh, sid, 0, []byte("written after the restart"))
+			res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
+				pw := w.AppendArgarray_Putfh()
+				pw.Resume(pw.StartObject().SetData(fh).Finish())
+				w.Resume(pw.Finish())
+				w.AppendArgarray_Commit()
+			})
+			xid++
+			if res.Status() != nfs4.NFS4_OK {
+				t.Fatalf("COMMIT %s", nfs4.Nfsstat4Name(res.Status()))
+			}
+			if status, _ := closeFileResult(t, conn, &xid, fh, sid); status != nfs4.NFS4_OK {
+				t.Fatalf("CLOSE %s", nfs4.Nfsstat4Name(status))
+			}
+			if data, err := readPublished(fs, "save.tmp"); err != nil || string(data) != "written after the restart" {
+				t.Fatalf("published %q %v", data, err)
+			}
+			if n := len(recovered.Entries()); n != 0 {
+				t.Fatalf("%d staging entries left after the CLOSE", n)
+			}
+		})
+	}
 }
