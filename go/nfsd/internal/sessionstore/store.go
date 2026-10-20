@@ -2,26 +2,18 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-// Package sessionstore keeps NFSv4.1 sessions and their slot tables on
-// local disk so that a retransmitted request after an nfsd restart gets
-// its original reply (RFC 8881 §2.10.6.5).
+// Package sessionstore is the on-disk format of NFSv4.1 session files: one
+// fixed-layout file per session, overwritten in place, whose slots each hold
+// their last request's record. Why it is shaped this way and how the server
+// uses it is in ../server/README.md#session-files-on-disk.
 //
-// One fixed-layout file per session, overwritten in place. The state per
-// slot is only ever the last request, and a session's slot count and
-// cached-reply bound are negotiated at CREATE_SESSION and fixed for its
-// life, so both are per-file constants in the header and every offset is
-// computed from the header. Nothing grows and nothing is compacted; a
-// session's file is deleted when the session goes.
-//
-// Each slot has two record areas. A write goes to the area that does not
-// hold the slot's newest record, so a torn write damages only a record the
-// slot no longer needs. Records carry a CRC32C; the loader takes the valid
-// record with the higher sequence number and, at equal sequence numbers, a
-// completed request's record over its intent, which is written first. So a
-// torn record of a new request leaves the previous request's, and a torn
-// record of a completion leaves its intent. Nothing is fsynced: the store
-// is for nfsd process restarts, and a pwrite survives the death of the
-// process.
+// The slot count and area size are fixed in the header, and every offset is
+// computed from it. Each slot has two record areas, and a write goes to the
+// area that does not hold the slot's newest record. Load keeps, per slot,
+// the valid record (CRC32C) with the later sequence number in serial order
+// (SeqAfter), and at an equal sequence number a completed request's record
+// over its intent, which is written first. Nothing is fsynced: a pwrite
+// survives the death of the process, not necessarily a host crash.
 //
 // File layout (big-endian):
 //

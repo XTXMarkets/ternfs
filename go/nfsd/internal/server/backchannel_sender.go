@@ -13,10 +13,9 @@ import (
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
-// The backchannel sender (README.md#callback-sender). nfsd sends only CB_NULL, to
-// probe a back connection when it appears, and CB_COMPOUND carrying
-// CB_SEQUENCE and CB_RECALL_SLOT, to ask a session to use fewer slots
-// while the reply cache is under pressure.
+// The backchannel sender: CB_NULL probes, and CB_COMPOUND carrying
+// CB_SEQUENCE and CB_RECALL_SLOT under reply-cache pressure
+// (README.md#callback-sender).
 //
 // Each session has one sender, which runs a goroutine only while it has a
 // recall to deliver. It uses slot 0, with its sequence starting at 1, and

@@ -12,36 +12,22 @@ import (
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
-// A request retransmitted after a restart whose slot holds an intent but
-// no reply ran, or was about to run, in the earlier process: it died
-// between writing the intent and writing the reply, so the effect may or
-// may not have committed in the shard. The compound runs again, and the
-// operation the intent names is decided against TernFS first: applied, so
-// its success is reported without doing it again; not applied, so it runs
-// now; or neither, which is NFS4ERR_DEADSESSION, the RFC's answer for a
-// request a restart left half done (RFC 8881 §18.46.4).
+// Deciding a request retransmitted after a restart whose slot holds an
+// intent but no reply (README.md#restart-replay-decision). The earlier
+// process may or may not have committed the effect. The compound runs
+// again, and the operation the intent names is decided against TernFS
+// first: applied, not applied, or NFS4ERR_DEADSESSION, the RFC's answer for
+// a request a restart left half done (RFC 8881 §18.46.4).
 //
-// While a session's file is on disk, each of its compounds has been
-// permitted at most one mutating operation: before a second one runs, the
-// file is removed (mutationGate). A compound's body may hold several, but
-// in a restored session only the first can have run before the kill. So
-// the intent names the only operation that may have changed anything, by
-// its index in the compound, and nothing a rerun cannot prove is done
-// again: a mutating operation before
-// it gets DEADSESSION, as does any operation at its index that is not the
-// one it names, on other names or directories (a LOOKUP before it can
-// resolve differently now), and every mutating operation when the intent
-// cannot be read.
-//
-// RENAME and REMOVE are decided on identity: TernFS never reuses an inode ID
-// and identifies an edge by its inode and creation time. A RENAME is applied
-// when its destination holds the source inode and the source edge is gone;
-// a REMOVE when its edge is gone, whoever removed it, and a replacement at
-// the name is left alone. The edge still in place means not applied. A
-// CREATE has no such proof: the created inode is known only after the
-// call, so an object at the name may be someone else's, and a name absent
-// may be one this CREATE made and someone removed since. A restored CREATE
-// intent is always DEADSESSION.
+// While the file was on disk each compound ran at most one mutating
+// operation (mutationGate), so the intent, by its index, names the only one
+// that may have changed anything. Nothing a rerun cannot prove is done
+// again: a mutating operation before it, an operation at its index that is
+// not the one it names or uses other names or directories (a LOOKUP before
+// it can resolve differently now), and every mutating operation when the
+// intent cannot be read get DEADSESSION. RENAME and REMOVE are decided on
+// edge identity, since TernFS never reuses an inode ID; a CREATE has no such
+// proof, so a restored CREATE intent is always DEADSESSION.
 
 type replayVerdict uint8
 

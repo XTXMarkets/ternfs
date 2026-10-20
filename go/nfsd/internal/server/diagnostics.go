@@ -16,16 +16,11 @@ import (
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
-// Server implements inspect.Source: the in-memory state the diagnostics API
-// reports. This file takes no lock and reads no guarded field. Each store's
-// snapshot methods, in diagnostics_snapshots.go and in the diagnostics.go
-// of the clientstore, openstate and staging packages, take only their
-// owner's locks and return copies, which this file composes, filters and
-// sorts. Ordinary registry and record locks are acquired normally there; the
-// three locks a request path tries or holds across I/O (slots, staging
-// files, confirmation attempts) are only tried, so a snapshot never waits
-// for their holders, and a request arriving during the short hold retries
-// as for any other holder.
+// Server implements inspect.Source (../../inspect/README.md#snapshot-consistency).
+// This file takes no lock and reads no guarded field: each store's snapshot
+// methods, in diagnostics_snapshots.go and in the diagnostics.go of the
+// clientstore, openstate and staging packages, take only their owner's locks
+// and return copies, which this file composes, filters and sorts.
 var _ inspect.Source = (*Server)(nil)
 var _ inspect.StoreSource = (*Server)(nil)
 

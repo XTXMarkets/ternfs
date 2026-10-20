@@ -14,17 +14,10 @@ import (
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sessionstore"
 )
 
-// NFSv4.1 sessions (RFC 8881 section 2.10).
-//
-// Sessions live in memory and, with a staging directory, in a file each
-// (session_persist.go) from which a restarted nfsd rebuilds them. A
-// session with no file, or whose incarnation's lease has ended, gets
-// BADSESSION after a restart and the client registers again with
-// EXCHANGE_ID and CREATE_SESSION (README.md#session-restoration). The slot
-// table and its
-// reply cache replace NFSv4.0 open-owner seqids: a retransmitted request
-// on a slot returns the cached reply instead of running again, and
-// requests on different slots run concurrently.
+// NFSv4.1 sessions (RFC 8881 section 2.10; README.md#sessions-and-slots).
+// The slot table and its reply cache replace NFSv4.0 open-owner seqids, and
+// requests on different slots run concurrently. Sessions are also kept on
+// disk (session_persist.go; README.md#persistent-sessions).
 
 const (
 	// maxSessionReplyCached bounds one cached reply. Clients only ask for
@@ -1100,10 +1093,12 @@ func (s *Server) opBindConnToSession(args nfs4.BINDCONNTOSESSION4args, st *compo
 // sets: FORE {fore}; BACK {back}; FORE_OR_BOTH {fore} or {fore, back};
 // BACK_OR_BOTH {back} or {fore, back}. An existing association that is
 // acceptable is returned unchanged, and one that is not gets INVAL: a BIND
-// never changes an existing association. With none, the preferred set is
-// established, both directions when the session asked for a backchannel and
-// the transport can carry one; the back direction needs both. The decision and
-// both quotas are taken with the publication, in one connection section, so
+// never changes an existing association. With none, FORE and BACK establish
+// their own channel. FORE_OR_BOTH and BACK_OR_BOTH establish both when the
+// session asked for a backchannel and the transport can carry one; otherwise
+// FORE_OR_BOTH establishes the fore channel. The back direction needs both,
+// so BACK and BACK_OR_BOTH get INVAL without them. The decision and both
+// quotas are taken with the publication, in one connection section, so
 // concurrent BINDs are ordered and RESOURCE changes nothing.
 func (s *Server) bindDirections(st *compoundState, sess *session, dir uint32) (fore, back bool, status uint32) {
 	conn := st.connection

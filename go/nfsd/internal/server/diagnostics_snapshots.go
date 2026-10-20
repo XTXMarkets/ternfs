@@ -28,7 +28,8 @@ import (
 // Ordinary registry and record mutexes are acquired normally. Three locks
 // are only tried, because a request path tries them or they are held across
 // I/O: session slots, staging files and confirmation attempts. A snapshot
-// never waits for their holders; it reports the entry as locked instead.
+// never waits for their holders; it reports the entry as locked instead
+// (../../inspect/README.md#snapshot-consistency).
 
 func decodeSequenceFlags(flags uint32) []string {
 	names := []string{}

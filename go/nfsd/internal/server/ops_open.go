@@ -612,13 +612,8 @@ func (s *Server) adoptRecovered(st *compoundState, stateid nfs4.Stateid4, g open
 
 // adoptRecoveredWriter installs a recovered writer, presented by its old
 // stateid on the handle the client holds, as a live open of this process at
-// the generation the client is using. After an nfsd restart the Linux
-// client learns nothing of the restart while its session survives: it keeps
-// writing and committing with the stateid it has. Without this, COMMIT
-// found no writer for the handle, synced nothing, and answered with this
-// process's verifier, which matched the writes it had just taken; the
-// client dropped its pages, nothing was checkpointed, and the next restart
-// lost the data. The caller holds no staging or file lock.
+// the generation the client is using (README.md#writer-recovery-mechanics).
+// The caller holds no staging or file lock.
 //
 // live reports that a live open answers for the stateid: the one adopted
 // here, or one another request adopted after the caller's own lookup, whose

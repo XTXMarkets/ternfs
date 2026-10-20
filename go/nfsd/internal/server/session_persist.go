@@ -19,24 +19,19 @@ import (
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 )
 
-// Sessions are kept on the staging disk so that a retransmitted request
-// after an nfsd restart gets its original reply (RFC 8881 §2.10.6.5;
-// README.md#persistent-sessions). Each session has a file in
-// <staging>/sessions; each completed request writes its slot's record, and
-// RENAME, REMOVE and CREATE write an intent before their effect.
+// Session files (RFC 8881 §2.10.6.5; README.md#persistent-sessions).
 //
 // A file a restart restores from must hold, for every slot, the newest
 // record this process wrote, and the intent of every protected effect
 // (RENAME, REMOVE, CREATE of a directory or symlink) this process permitted.
-// A record write that fails breaks the first, so the file is unlinked and
-// the session goes on in memory only, as sessions did before they were kept
-// on disk. If the unlink fails too, the file is poisoned: no protected
-// effect is permitted after that (SERVERFAULT), and the session is retired.
-// An effect permitted before, whose intent the file holds, may still start
-// or finish. A poisoned file lacks only replies, as a file does after a kill
-// before the reply write, and a write that failed or was torn left the
-// slot's newest record in place (sessionstore), so a restart from it is as
-// safe as one after a kill.
+// A record write that fails breaks the first, so the file is unlinked and the
+// session goes on in memory only. If the unlink fails too, the file is
+// poisoned: no protected effect is permitted after that (SERVERFAULT), and the
+// session is retired. An effect permitted before, whose intent the file holds,
+// may still start or finish. A poisoned file lacks only replies, as a file
+// does after a kill before the reply write, and a write that failed or was
+// torn left the slot's newest record in place (sessionstore), so a restart
+// from it is as safe as one after a kill.
 //
 // The file records the callback program and credential CREATE_SESSION gave,
 // and not the callback sequence. So the file also goes before the session's

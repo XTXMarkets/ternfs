@@ -317,16 +317,13 @@ func (cs *Store) SetClientID(
 	return cs.createPending(identityID, verifier, id, owner)
 }
 
-// ExchangeID binds an NFSv4.1 EXCHANGE_ID to a durable incarnation. It follows
-// SetClientID, except that a matching verifier and principal never update the
-// confirmed record: they adopt it without any write, as the incarnation the
-// same client boot already holds when it registers again. Otherwise it creates
-// a pending incarnation for CREATE_SESSION to confirm.
-//
-// Adoption needs no expired marker and either no lease or a live one, as
-// SetClientID decides. Unlike SetClientID, the observation only reads: it
-// publishes no marker and removes no lease slot, even when every lease is
-// dead. A read error is an error, never evidence of absence.
+// ExchangeID binds an NFSv4.1 EXCHANGE_ID to a durable incarnation
+// (README.md#registration). A matching verifier and principal adopt the
+// confirmed incarnation without any write; otherwise it creates a pending
+// incarnation for CREATE_SESSION to confirm. Adoption needs no expired marker
+// and either no lease or a live one. Unlike SetClientID, the observation only
+// reads: it publishes no marker and removes no lease slot, even when every
+// lease is dead. A read error is an error, never evidence of absence.
 func (cs *Store) ExchangeID(
 	verifier [8]byte,
 	id []byte,
