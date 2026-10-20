@@ -21,7 +21,10 @@ shared sessions or transparent failover.
 | --- | --- |
 | [Deployment](DEPLOYMENT.md) | Deployment modes, guarantees, failure behaviour and known issues. |
 | [Recovery](RECOVERY.md) | Crash and lease recovery, staging inspection, quarantine and replacement procedures. |
-| [Design](DESIGN.md) | Filehandles, staging, sessions, client identities, leases and namespace operations. |
+| [Design](DESIGN.md) | How the packages fit together: state ownership, writes and publication, the writer lifecycle, namespace changes, clients and leases, sessions and lock order. |
+| [Client store](internal/clientstore/README.md) | The shared records under `/.nfs`: layout, registration, confirmation, open markers, durable leases and collection. |
+| [Open state](internal/openstate/README.md) | Stateids, opens, downgrades, reader visibility and client views. |
+| [Staging](internal/staging/README.md) | Staged data files and sidecars, checkpoints, startup recovery and quarantine. |
 | [Diagnostics API](inspect/README.md) | The read-only JSON API: resources, typed ids, snapshot consistency, store-only mode and the store report. |
 | [Testing](test/README.md) | Test suites, prerequisites, commands and coverage limits. |
 

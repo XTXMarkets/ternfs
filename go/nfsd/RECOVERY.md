@@ -133,14 +133,17 @@ does not extend TernFS snapshot or transient-file retention. Also account
 for the [CLOSE defect](DEPLOYMENT.md#a-backend-timeout-is-treated-as-a-failure)
 before relying on recovered writes. A CLOSE whose hydration of the base
 fails, or whose LinkFile fails without the file turning out to be
-published already, discards its staging. A timestamp-only CLOSE whose
-lookup or SetTime fails returns the error without discarding it.
+published already, discards its staging. If other opens were reading that
+staging, it is quarantined instead, and those readers get `NFS4ERR_IO`. A
+timestamp-only CLOSE whose lookup or SetTime fails returns the error
+without discarding it.
 
 ## Lease expiry
 
 The advertised lease is 90 seconds. This is not a deadline at which every
 idle writer disappears: the daemon has a logical lease and the fleet has
-durable lease slots, with a periodic sweep. See [Leases](DESIGN.md#leases).
+durable lease slots, with a periodic sweep. See
+[Two leases](DESIGN.md#two-leases).
 Client-store errors generally produce `NFS4ERR_DELAY` and defer recovery or
 expiry while the outcome is unresolved.
 
@@ -173,9 +176,13 @@ a failed writer report `NFS4ERR_IO`; CLOSE reports `NFS4ERR_EXPIRED`.
 Other writers of the client remain usable.
 
 Quarantine retains the data and sidecar beneath `quarantine/`. A failed
-move can leave the pair split between directories. Keep both parts.
-Publication failures during CLOSE do not have the same preservation
-guarantee; see [failed CLOSE](DEPLOYMENT.md#a-backend-timeout-is-treated-as-a-failure).
+move can leave the pair split between directories. Keep both parts. The
+mechanism is in [staging](internal/staging/README.md#startup-recovery-and-quarantine).
+A CLOSE whose hydration or LinkFile fails quarantines its staging only
+when other opens read it; otherwise the staging is discarded. A
+timestamp-only CLOSE that fails keeps its staging; see
+[Writer recovery](#writer-recovery) and
+[failed CLOSE](DEPLOYMENT.md#a-backend-timeout-is-treated-as-a-failure).
 
 ## Inspect stored state
 
