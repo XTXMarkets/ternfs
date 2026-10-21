@@ -102,7 +102,12 @@ func (s *Server) replayGate(st *compoundState, opnum uint32) uint32 {
 // counts. If the file cannot be removed, the operation gets SERVERFAULT
 // before its effect, and the session is retired once its slot is unlocked.
 func (s *Server) mutationGate(st *compoundState, opnum uint32) uint32 {
-	if st.session == nil || !operationMutates(opnum) {
+	if st.session == nil || !operationMutates(opnum) || opnum == nfs4.OP_COMMIT {
+		// COMMIT changes no file and no name: run again after a restart it
+		// syncs the same staging, or fails on a stateid that is gone. It is
+		// an effect for the reply budget, not for this gate. libnfs closes
+		// a file with PUTFH, COMMIT, CLOSE in one compound; counting the
+		// COMMIT dropped every libnfs session's file at its first close.
 		return nfs4.NFS4_OK
 	}
 	if !st.mutated {

@@ -2040,6 +2040,76 @@ func TestRestartMultiMutationCompoundNotRestored(t *testing.T) {
 	}
 }
 
+// COMMIT is not a change for the gate: run again after a restart it syncs
+// the same staging or fails on a stateid that is gone. libnfs closes a
+// file with PUTFH, COMMIT, CLOSE in one compound, so counting COMMIT took
+// the session file from every libnfs session at its first close.
+func TestCommitIsNotASecondMutation(t *testing.T) {
+	f := newReplayFixture(t)
+	writeRoot(t, f.root, "doc", "old")
+	path := f.srv.sessionFiles.Path(sessionstore.ID(f.ts.id))
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("session file before the compounds: %v", err)
+	}
+	slot, seq := f.ts.acquire()
+	defer f.ts.release(slot)
+	// One compound opens the file and reports its handle: one change.
+	open := buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
+		w.AppendArgarray_Putrootfh()
+		ow := w.AppendArgarray_Open()
+		ow.SetShareAccess(nfs4.OPEN4_SHARE_ACCESS_BOTH)
+		ow.SetShareDeny(nfs4.OPEN4_SHARE_DENY_NONE)
+		ownerW := ow.StartOwner()
+		ownerW = ownerW.SetClientid(f.wire)
+		ow.Resume(ownerW.SetOwner([]byte("commit-owner")).Finish())
+		ow.SetOpenhow_Default(nfs4.OPEN4_NOCREATE)
+		cw := ow.SetClaim_Null()
+		ow.Resume(cw.SetData([]byte("doc")).Finish())
+		w.Resume(ow.Finish())
+		w.AppendArgarray_Getfh()
+	})
+	reply := f.send(open, slot, seq)
+	res, err := parseCompoundReply(reply)
+	if err != nil || res.Status() != nfs4.NFS4_OK {
+		t.Fatalf("open: %v %s", err, nfs4.Nfsstat4Name(res.Status()))
+	}
+	var stateid nfs4.Stateid4
+	var fh []byte
+	iter := res.Resarray()
+	for iter.Next() {
+		switch entry := iter.Resarray(); entry.Disc() {
+		case nfs4.OP_OPEN:
+			stateid = entry.Value().AsOPEN4resEntry().Value().AsOPEN4resok().Stateid()
+		case nfs4.OP_GETFH:
+			fh = entry.Value().AsGETFH4resEntry().Value().AsGETFH4resok().Object().Data()
+		}
+	}
+	if fh == nil {
+		t.Fatal("no handle in the OPEN reply")
+	}
+	// The libnfs close: PUTFH, COMMIT, CLOSE in one compound. COMMIT is the
+	// first operation the budget calls a change and CLOSE the second; the
+	// file must stay, since the compound changes one thing.
+	closeBody := buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
+		pw := w.AppendArgarray_Putfh()
+		pw.Resume(pw.StartObject().SetData(fh).Finish())
+		w.Resume(pw.Finish())
+		w.AppendArgarray_Commit()
+		caw := w.AppendArgarray_Close()
+		dst := caw.OpenStateid()
+		dst.SetSeqid(stateid.Seqid())
+		for i := 0; i < 12; i++ {
+			dst.SetOther(i, stateid.Other(i))
+		}
+	})
+	if got := compoundStatus(t, f.send(closeBody, slot, seq+1)); got != nfs4.NFS4_OK {
+		t.Fatalf("commit, close: %s", nfs4.Nfsstat4Name(got))
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("session file after PUTFH, COMMIT, CLOSE: %v; COMMIT counted as a change", err)
+	}
+}
+
 // When the session file cannot be removed before a compound's second
 // mutating operation, that operation is refused before its effect.
 func TestSecondMutationRefusedWhenSessionFileStays(t *testing.T) {
