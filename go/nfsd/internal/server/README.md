@@ -154,7 +154,10 @@ unknown outcome, timeouts included, except a REMOVE that finds its edge
 already gone. The local test backend treats its recognized syscall errors
 as definite rejections; any other error from it, such as an injected
 transport or decoding error, is unknown. Staging I/O errors in WRITE,
-COMMIT, SETATTR and a sized OPEN count too.
+COMMIT, SETATTR and a sized OPEN count too. A CLOSE or OPEN_DOWNGRADE whose
+publication or hydration the backend does not answer retires nothing: it
+gets `NFS4ERR_DELAY` and keeps its open and staging; see
+[Writes and publication](../../DESIGN.md#writes-and-publication).
 
 A slot restored after a restart has two more cases, described under
 [Restart replay decision](#restart-replay-decision): it accepts, once, any

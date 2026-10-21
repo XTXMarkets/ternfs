@@ -123,16 +123,35 @@ Earlier closes hand sidecar ownership to another writer of the shared
 staging. A clean writer scraps its transient without publication; an
 unlinked writer discards its private version.
 
+A publication the backend does not answer in time, as a shard restart
+causes (the Go client gives a shard 10 s), is neither a success nor a
+failure: the link may have applied, in whole or in part, or not at all. The
+CLOSE then keeps the open and the staging, retires nothing, and answers
+`NFS4ERR_DELAY`; the Linux client retries CLOSE after DELAY with a backoff
+that reaches 15 s, so `close(2)` blocks for about the outage, as on a hard
+mount. There is no limit to the retries while the backend is silent: the
+lease still runs, and a client that goes away leaves the writer to lease
+expiry as any other. The retried CLOSE looks the name up first. If it holds
+a transient an earlier attempt submitted, that attempt applied and the
+CLOSE completes. Otherwise it publishes through a fresh transient, since
+TernFS appends spans at a file's current size and a partly written one
+cannot be written again, notes it before linking so the next retry can
+recognise it, and scraps the transients it abandoned; one the backend will
+not scrap is left to TernFS's collection of transient files. These
+attempts are kept in memory: a CLOSE recovered after a restart starts over
+with the OPEN's transient. Hydration of the base that the backend does not
+answer is treated the same way; it resumes where it stopped. The
+`publish_delays` field of the state measurement counts these answers.
+
 Timestamp-only publication updates the current published inode without
 replacing its contents. If that lookup or SetTime fails, CLOSE returns the
 error and keeps the staging; a failed SetTime may still have applied.
 After data publication succeeds, failure to restore timestamps is logged
 and CLOSE still succeeds because the data is already visible. A hydration
-failure, or a LinkFile failure where the file is not found already
-published, discards the staging, unless other opens read it; then it is
-quarantined and those readers get `NFS4ERR_IO`. The client-visible
-consequences are under
-[failed CLOSE](DEPLOYMENT.md#a-backend-timeout-is-treated-as-a-failure).
+or LinkFile rejection, where the file is not found already published,
+discards the staging, unless other opens read it; then it is quarantined
+and those readers get `NFS4ERR_IO`. The client-visible consequences are
+under [failed CLOSE](DEPLOYMENT.md#a-backend-timeout-is-treated-as-a-failure).
 
 Initial CREATE attributes can be staged even for a read-only create OPEN;
 the share access still prohibits WRITE. EXCLUSIVE4 and EXCLUSIVE4_1 retries
@@ -191,6 +210,11 @@ The UDP client can submit more than one copy. An error for one copy does
 not prove another did not apply. Production namespace rejections are
 therefore treated conservatively. The local test backend can classify
 syscall rejections as known non-application and leave writers linked.
+
+A CLOSE's own publication is the exception: a backend that gives no answer
+retires neither the session nor the writer, and the CLOSE is retried after
+`NFS4ERR_DELAY`, as described under
+[Writes and publication](#writes-and-publication).
 
 Failed-writer tombstones remain after CLOSE so COMMIT, which has no stateid,
 cannot acknowledge a failed writer as healthy. They are process-local;
@@ -356,8 +380,9 @@ daemon does not know.
   BACKCHANNEL_CTL, removes the file first. CB_NULL does not.
 - A mutation whose backend outcome cannot be established retires the
   session as fatal. On the native backend that is every mutation error
-  except a REMOVE whose edge is already gone, timeouts included. The client
-  then creates a new session; see the
+  except a REMOVE whose edge is already gone, timeouts included, but not a
+  CLOSE's publication the backend does not answer, which gets
+  `NFS4ERR_DELAY`. The client then creates a new session; see the
   [known issue](DEPLOYMENT.md#a-backend-timeout-is-treated-as-a-failure).
 
 A restart rebuilds a session only from a usable file that recorded a

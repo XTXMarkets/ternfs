@@ -183,6 +183,7 @@ func (p *metricsPusher) build(b *log.MetricsBuilder, now time.Time) {
 	b.FieldU64("opens", uint64(snap.Opens))
 	b.FieldU64("aliases", uint64(snap.Aliases))
 	b.FieldU64("publishes", snap.Publishes)
+	b.FieldU64("publish_delays", snap.PublishDelays)
 	b.Timestamp(now)
 
 	b.Measurement(measReplay)

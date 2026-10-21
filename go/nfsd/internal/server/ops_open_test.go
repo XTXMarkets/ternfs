@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/openstate"
@@ -1312,5 +1313,213 @@ func TestLinuxRecoveryOfFreshCreateAcrossRestart(t *testing.T) {
 				t.Fatalf("%d staging entries left after the CLOSE", n)
 			}
 		})
+	}
+}
+
+// publishFaultVFS is a backend whose shard stops answering: LinkFile of a
+// user file reports TIMEOUT a set number of times, after applying or not,
+// and the first lookups of one name may time out too. It counts the
+// constructions and scraps a publication makes once counting is on.
+type publishFaultVFS struct {
+	vfs.TernVFS
+	mu             sync.Mutex
+	linkTimeouts   int  // LinkFile calls still to be answered with TIMEOUT
+	applyOnTimeout bool // the link applies before TIMEOUT is reported
+	lookupTimeouts int  // Lookup calls of lookupName still to time out
+	lookupName     string
+	counting       bool
+	links          int
+	constructs     int
+	scrapped       []vfs.InodeID
+}
+
+func (fs *publishFaultVFS) LinkFile(id vfs.InodeID, cookie vfs.Cookie, dir vfs.InodeID, name string, data io.Reader) error {
+	if data == nil || clientstore.LeaseTemp(name) {
+		return fs.TernVFS.LinkFile(id, cookie, dir, name, data)
+	}
+	fs.mu.Lock()
+	fs.links++
+	timeout := fs.linkTimeouts > 0
+	if timeout {
+		fs.linkTimeouts--
+	}
+	apply := !timeout || fs.applyOnTimeout
+	fs.mu.Unlock()
+	if apply {
+		if err := fs.TernVFS.LinkFile(id, cookie, dir, name, data); err != nil {
+			return err
+		}
+	}
+	if timeout {
+		return msgs.TIMEOUT
+	}
+	return nil
+}
+
+func (fs *publishFaultVFS) Lookup(dir vfs.InodeID, name string) (vfs.InodeID, error) {
+	fs.mu.Lock()
+	timeout := fs.lookupTimeouts > 0 && name == fs.lookupName
+	if timeout {
+		fs.lookupTimeouts--
+	}
+	fs.mu.Unlock()
+	if timeout {
+		return 0, msgs.TIMEOUT
+	}
+	return fs.TernVFS.Lookup(dir, name)
+}
+
+func (fs *publishFaultVFS) ConstructFile(dir vfs.InodeID) (vfs.InodeID, vfs.Cookie, error) {
+	fs.mu.Lock()
+	if fs.counting {
+		fs.constructs++
+	}
+	fs.mu.Unlock()
+	return fs.TernVFS.ConstructFile(dir)
+}
+
+func (fs *publishFaultVFS) ScrapFile(id vfs.InodeID, cookie vfs.Cookie) error {
+	fs.mu.Lock()
+	if fs.counting {
+		fs.scrapped = append(fs.scrapped, id)
+	}
+	fs.mu.Unlock()
+	return fs.TernVFS.ScrapFile(id, cookie)
+}
+
+func newPublishFaultServer(t *testing.T) (*publishFaultVFS, staging.Store, *Server, net.Conn, *uint32, uint64) {
+	t.Helper()
+	fs := &publishFaultVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
+	store, err := staging.NewLocalStore(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewServer(fs, store, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr, stop := serveTestServer(t, srv)
+	t.Cleanup(stop)
+	conn := dial(t, addr)
+	t.Cleanup(func() { conn.Close() })
+	xid := uint32(1)
+	clientID := setupClient(t, conn, &xid)
+	return fs, store, srv, conn, &xid, clientID
+}
+
+// A CLOSE whose publication the backend does not answer loses nothing: it
+// keeps the open, the staging and the session and answers DELAY, as many
+// times as the backend stays silent. The retried CLOSE looks first, then
+// publishes through a fresh transient, since the first one may hold part
+// of the data, and scraps the one it abandoned (work-kd49, work-49b9).
+func TestClosePublicationTimeoutDelaysAndRetries(t *testing.T) {
+	fs, store, srv, conn, xid, clientID := newPublishFaultServer(t)
+	sid, fh := openCreateFile(t, conn, xid, clientID, "doc")
+	writeFileAt(t, conn, xid, fh, sid, 0, []byte("saved"))
+	stagingID := stagingIDForTest(t, store, sid)
+	fs.mu.Lock()
+	fs.linkTimeouts, fs.lookupTimeouts, fs.lookupName, fs.counting = 1, 1, "doc", true
+	fs.mu.Unlock()
+
+	// The link is submitted and not answered.
+	if got := closeFileStatus(t, conn, xid, fh, sid); got != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("CLOSE with an unanswered link %s, want NFS4ERR_DELAY", nfs4.Nfsstat4Name(got))
+	}
+	if n := srv.opens.StateCount(); n != 1 {
+		t.Fatalf("%d opens after the delayed CLOSE, want the open kept", n)
+	}
+	if _, ok := store.GetMeta(stagingID); !ok {
+		t.Fatal("staging discarded by the delayed CLOSE")
+	}
+	// The name still holds the empty inode the OPEN published, nothing else.
+	if data, err := readPublished(fs.TernVFS, "doc"); err != nil || len(data) != 0 {
+		t.Fatalf("name holds %q (%v) while the link is unanswered, want the OPEN's empty version", data, err)
+	}
+	// The shard is still down: the retry's lookup gets no answer either.
+	// The session answers, so it was not retired.
+	if got := closeFileStatus(t, conn, xid, fh, sid); got != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("CLOSE while the lookup is unanswered %s, want NFS4ERR_DELAY", nfs4.Nfsstat4Name(got))
+	}
+	if n := srv.metrics.publishDelays.Load(); n != 2 {
+		t.Fatalf("publish delays = %d, want 2", n)
+	}
+	// The shard is back: the name is empty, so a fresh transient publishes.
+	if got := closeFileStatus(t, conn, xid, fh, sid); got != nfs4.NFS4_OK {
+		t.Fatalf("retried CLOSE %s, want NFS4_OK", nfs4.Nfsstat4Name(got))
+	}
+	if data, err := readPublished(fs.TernVFS, "doc"); err != nil || string(data) != "saved" {
+		t.Fatalf("published %q, %v", data, err)
+	}
+	published, err := fs.TernVFS.Lookup(fs.TernVFS.RootID(), "doc")
+	if err != nil || published == stagingID {
+		t.Fatalf("published inode %v (%v), want a fresh transient, not the staging %v", published, err, stagingID)
+	}
+	fs.mu.Lock()
+	constructs, scrapped, links := fs.constructs, fs.scrapped, fs.links
+	fs.mu.Unlock()
+	if constructs != 1 || links != 2 {
+		t.Fatalf("constructs %d links %d, want 1 and 2", constructs, links)
+	}
+	if len(scrapped) != 1 || scrapped[0] != stagingID {
+		t.Fatalf("scrapped %v, want the abandoned transient %v", scrapped, stagingID)
+	}
+	if n := srv.opens.StateCount(); n != 0 {
+		t.Fatalf("%d opens after the publishing CLOSE", n)
+	}
+	if n := len(store.Entries()); n != 0 {
+		t.Fatalf("%d staging entries after the publishing CLOSE", n)
+	}
+	if got := len(srv.publicationAttempts(stagingID)); got != 0 {
+		t.Fatalf("%d attempts remembered after publication", got)
+	}
+}
+
+// A link that applied before the backend's answer was lost: the retried
+// CLOSE finds the staging at its name and publishes nothing twice.
+func TestClosePublicationAppliedButUnansweredPublishesOnce(t *testing.T) {
+	fs, store, srv, conn, xid, clientID := newPublishFaultServer(t)
+	sid, fh := openCreateFile(t, conn, xid, clientID, "doc")
+	writeFileAt(t, conn, xid, fh, sid, 0, []byte("saved"))
+	stagingID := stagingIDForTest(t, store, sid)
+	fs.mu.Lock()
+	fs.linkTimeouts, fs.applyOnTimeout, fs.counting = 1, true, true
+	fs.mu.Unlock()
+	if got := closeFileStatus(t, conn, xid, fh, sid); got != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("CLOSE with an unanswered link %s, want NFS4ERR_DELAY", nfs4.Nfsstat4Name(got))
+	}
+	if got := closeFileStatus(t, conn, xid, fh, sid); got != nfs4.NFS4_OK {
+		t.Fatalf("retried CLOSE %s, want NFS4_OK", nfs4.Nfsstat4Name(got))
+	}
+	published, err := fs.TernVFS.Lookup(fs.TernVFS.RootID(), "doc")
+	if err != nil || published != stagingID {
+		t.Fatalf("published inode %v (%v), want the staging %v", published, err, stagingID)
+	}
+	if data, _ := readPublished(fs.TernVFS, "doc"); string(data) != "saved" {
+		t.Fatalf("published %q", data)
+	}
+	fs.mu.Lock()
+	constructs, scrapped, links := fs.constructs, fs.scrapped, fs.links
+	fs.mu.Unlock()
+	if constructs != 0 || links != 1 || len(scrapped) != 0 {
+		t.Fatalf("constructs %d links %d scrapped %v, want 0, 1, none", constructs, links, scrapped)
+	}
+	if n := srv.opens.StateCount(); n != 0 || len(store.Entries()) != 0 {
+		t.Fatalf("%d opens, %d staging entries after the publishing CLOSE", n, len(store.Entries()))
+	}
+}
+
+// A permanent publication error keeps its answer: the open ends, the
+// staging goes, and the CLOSE reports it (TestFailedCloseReplaysFromSlot
+// pins the replay). Only the backend's silence is retried.
+func TestClosePublicationPermanentErrorStillFails(t *testing.T) {
+	fs, store, srv, conn, xid, clientID := newPublishFaultServer(t)
+	sid, fh := openCreateFile(t, conn, xid, clientID, "doc")
+	writeFileAt(t, conn, xid, fh, sid, 0, []byte("saved"))
+	fs.TernVFS = &failingLinkVFS{TernVFS: fs.TernVFS, remaining: 1}
+	if got := closeFileStatus(t, conn, xid, fh, sid); got != nfs4.NFS4ERR_IO {
+		t.Fatalf("CLOSE with a rejected link %s, want NFS4ERR_IO", nfs4.Nfsstat4Name(got))
+	}
+	if n := srv.opens.StateCount(); n != 0 || len(store.Entries()) != 0 {
+		t.Fatalf("%d opens, %d staging entries after the failed CLOSE, want none", n, len(store.Entries()))
 	}
 }

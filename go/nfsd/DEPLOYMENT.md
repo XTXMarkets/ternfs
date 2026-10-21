@@ -186,27 +186,32 @@ request spends in the client's send queue comes on top, a block-service
 request sets a fresh socket deadline for each attempt, and one CLOSE makes
 many requests.
 
-When publication fails, CLOSE returns the backend error mapped to an NFS
-status. A timeout, or any error without a more specific mapping, is
+A publication or hydration the backend does not answer is not treated as a
+failure: CLOSE answers `NFS4ERR_DELAY` and keeps the open and the staging,
+and the client retries it; see
+[Writes and publication](DESIGN.md#writes-and-publication).
+
+When the backend rejects a publication, CLOSE returns the backend error
+mapped to an NFS status. Any error without a more specific mapping is
 `NFS4ERR_IO`; a missing name is `NFS4ERR_NOENT` and a permission error
 `NFS4ERR_ACCESS`. What happens to the staging depends on the step that
 failed:
 
-- If hydration fails, or LinkFile fails and the file is not found already
-  published, the staging is discarded and the transient file scrapped,
-  best effort. If other opens still read that staging, it is quarantined
-  instead: its files are kept, and those readers get `NFS4ERR_IO`.
+- If hydration is rejected, or LinkFile is rejected and the file is not
+  found already published, the staging is discarded and the transient file
+  scrapped, best effort. If other opens still read that staging, it is
+  quarantined instead: its files are kept, and those readers get
+  `NFS4ERR_IO`.
 - If a timestamp-only CLOSE fails to look up the name or set the times,
   the staging is kept. A failed SetTime may still have applied.
 
 The Linux client discards a CLOSE's status, so `close(2)` returns 0 and the
 application believes its save was published while the name holds the
-previous version or the empty placeholder. A shard outage that outlasts
-these retries produces this. No shorter outage has been established as
-safe. Tracked as `work-kd49`.
+previous version or the empty placeholder.
 
-Any mutation whose outcome cannot be established, which includes every
-backend timeout, also retires the client's session. The client re-creates
+Any other mutation whose outcome cannot be established, which includes
+every backend timeout of a namespace operation, also retires the client's
+session. The client re-creates
 it, and while the daemon confirms the new session its OPEN, WRITE and
 CLOSE get `NFS4ERR_DELAY`, which the Linux client answers with a backoff
 of up to 15 s for asynchronous operations. If this happens while the shard
@@ -316,6 +321,7 @@ Counters are cumulative from process start. Latency histograms have a
 | `eggsfs_nfsd_admission_cache_bytes`, `_cache_limit`, `_sessions`, `_records`, `_groups`, `_active_requests` | | Reply cache and session store figures (gauges). |
 | `eggsfs_nfsd_state_opens`, `_aliases` | | Live open stateids and publication aliases (gauges). |
 | `eggsfs_nfsd_state_publishes` | | Files published by CLOSE or OPEN_DOWNGRADE. |
+| `eggsfs_nfsd_state_publish_delays` | | CLOSEs and OPEN_DOWNGRADEs answered `NFS4ERR_DELAY` because the backend did not answer the publication; the client retries them. |
 | `eggsfs_nfsd_staging_files`, `_bytes`, `_retired`, `_unlinked`, `_busy`, `_hydrations_in_flight` | | The staging store (gauges). Files are read without waiting on a file busy with disk I/O: a busy file counts in `files` and `busy` but not in `bytes`, `retired` or `unlinked`, so those are lower bounds while `busy` is above zero. `bytes` is the files' live size, including UNSTABLE writes not yet committed. |
 | `eggsfs_nfsd_replay_records`, `_write_failures`, `_record_bytes`, `_intents` | | The persistent reply cache: slot and intent records written, record writes and session file creations that failed, reply bytes recorded, intents. |
 | `eggsfs_nfsd_replay_session_files` | | Sessions with a file on the staging disk (gauge). |

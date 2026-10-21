@@ -60,6 +60,10 @@ type Server struct {
 	views              openstate.ViewStore
 	names              nameCache
 	stagingStore       staging.Store
+	// Publications a CLOSE submitted and got no answer for, by staging
+	// inode: the transients each attempt went through (publishStaging).
+	publishMu          sync.Mutex
+	publishTried       map[vfs.InodeID][]publishAttempt
 	writeVerifier      [8]byte       // random per server instance, changes on restart
 	idleTimeout        time.Duration // timeout reading the next request
 	writeTimeout       time.Duration // timeout writing one reply

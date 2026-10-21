@@ -42,6 +42,7 @@ type Metrics struct {
 	workWaits, workWaitNanos atomic.Uint64
 	workWaiters              atomic.Int64
 	publishes                atomic.Uint64
+	publishDelays            atomic.Uint64 // CLOSEs answered DELAY because the backend did not answer the publication
 	// The persistent reply cache: records written, record writes and
 	// session file creations that failed, reply bytes recorded, intents
 	// written.
@@ -174,6 +175,7 @@ type MetricsSnapshot struct {
 	Sessions, Records, Groups, ActiveRequests     int
 	Opens, Aliases                                int
 	Publishes                                     uint64
+	PublishDelays                                 uint64
 	StagingFiles, StagingRetired, StagingUnlinked int
 	StagingBusy                                   int
 	StagingBytes                                  uint64
@@ -197,7 +199,7 @@ func (s *Server) MetricsSnapshot() MetricsSnapshot {
 		ConnClosedByServer: m.connClosedByServer.Load(), ConnIdleTimeouts: m.connIdleTimeouts.Load(),
 		ConnReadErrors: m.connReadErrors.Load(), ParseErrors: m.parseErrors.Load(),
 		WorkWaiters: m.workWaiters.Load(), WorkWaits: m.workWaits.Load(), WorkWaitNanos: m.workWaitNanos.Load(),
-		Publishes: m.publishes.Load(),
+		Publishes: m.publishes.Load(), PublishDelays: m.publishDelays.Load(),
 	}
 	m.mu.Lock()
 	for k, n := range m.ops {

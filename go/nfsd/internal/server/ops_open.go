@@ -6,6 +6,7 @@ package server
 
 import (
 	"errors"
+	"io"
 	"os"
 	"time"
 
@@ -417,6 +418,14 @@ func (s *Server) releaseWrite(openStateid nfs4.Stateid4, st *compoundState, clos
 			if meta.BaseID != 0 {
 				s.startHydration(sf)
 				if err := sf.FinishHydration(s.readBaseForeground); err != nil {
+					if vfs.IsTransientBackendError(err) {
+						// The base's shard did not answer. Hydration resumes
+						// where it stopped, so the staging and the open stay
+						// and the client retries the CLOSE after DELAY.
+						s.metrics.publishDelays.Add(1)
+						s.log.Warn("close: hydration delayed by the backend; the client retries", "inode", dataID, "err", err)
+						return fail(nfs4.NFS4ERR_DELAY)
+					}
 					s.failForReaders(dataID, sid)
 					s.discardStaging(dataID)
 					s.abandonFailedOpen(sid, recovered)
@@ -431,12 +440,19 @@ func (s *Server) releaseWrite(openStateid nfs4.Stateid4, st *compoundState, clos
 				// Seek on an open regular file cannot fail; broken invariant.
 				panic("close: staging Reader failed: " + rErr.Error())
 			}
-			linkErr := s.fs.LinkFile(stagingID, meta.TernCookie, meta.DirID, meta.FileName, r)
-			if linkErr != nil && s.alreadyPublished(stagingID, meta) {
-				// An earlier process linked it and died before removing the
-				// staging: the CLOSE, run again, finds its work done.
-				s.log.Info("close: staging was already published", "inode", stagingID, "name", meta.FileName)
-				linkErr = nil
+			publishedID, linkErr := s.publishStaging(stagingID, meta, r)
+			if linkErr != nil && vfs.IsTransientBackendError(linkErr) {
+				// The backend did not answer, so whether the link applied is
+				// unknown: nothing may be discarded and no outcome may be
+				// reported. The Linux client discards a CLOSE's error status
+				// (close(2) returns 0), so NFS4ERR_IO here lost the save on
+				// every shard restart. The staging and the open stay, the
+				// session stays, and the client retries the CLOSE after
+				// DELAY; publishStaging then looks before it publishes.
+				s.metrics.publishDelays.Add(1)
+				s.log.Warn("close: publication delayed by the backend; the client retries",
+					"inode", stagingID, "name", meta.FileName, "err", linkErr)
+				return fail(nfs4.NFS4ERR_DELAY)
 			}
 			if linkErr != nil {
 				st.observeMutation(s.fs, nfs4.OP_CLOSE, linkErr)
@@ -451,13 +467,14 @@ func (s *Server) releaseWrite(openStateid nfs4.Stateid4, st *compoundState, clos
 			info := sf.Stat()
 			// LinkFile stamps the immutable inode with publication time.
 			// Restore the writer's times, including explicit SETATTR values.
-			timeErr := s.fs.SetTime(stagingID, &info.Mtime, &info.Atime)
+			timeErr := s.fs.SetTime(publishedID, &info.Mtime, &info.Atime)
 			s.stagingStore.Remove(dataID)
-			published = stagingID
+			s.forgetPublication(stagingID)
+			published = publishedID
 			if timeErr != nil {
 				// Publication already committed. Complete CLOSE so a retry
 				// cannot turn the successful write into an expired open.
-				s.log.Warn("close: published file but could not restore timestamps", "inode", stagingID, "err", timeErr)
+				s.log.Warn("close: published file but could not restore timestamps", "inode", publishedID, "err", timeErr)
 			}
 		} else {
 			if !meta.Unlinked && meta.BaseID != 0 {
@@ -673,6 +690,112 @@ func (s *Server) recoveredWritersOf(clientID uint64, handleID vfs.InodeID) []vfs
 func (s *Server) abandonFailedOpen(sid nfs4.StateID, recovered bool) {
 	if !recovered {
 		s.opens.Expire(sid)
+	}
+}
+
+// publishAttempt is a transient a publication was submitted through and
+// not answered for.
+type publishAttempt struct {
+	id     vfs.InodeID
+	cookie vfs.Cookie
+}
+
+func (s *Server) publicationAttempts(stagingID vfs.InodeID) []publishAttempt {
+	s.publishMu.Lock()
+	defer s.publishMu.Unlock()
+	return append([]publishAttempt(nil), s.publishTried[stagingID]...)
+}
+
+func (s *Server) notePublicationAttempt(stagingID vfs.InodeID, a publishAttempt) {
+	s.publishMu.Lock()
+	defer s.publishMu.Unlock()
+	if s.publishTried == nil {
+		s.publishTried = map[vfs.InodeID][]publishAttempt{}
+	}
+	s.publishTried[stagingID] = append(s.publishTried[stagingID], a)
+}
+
+func (s *Server) forgetPublication(stagingID vfs.InodeID) {
+	s.publishMu.Lock()
+	defer s.publishMu.Unlock()
+	delete(s.publishTried, stagingID)
+}
+
+// publishStaging publishes a staging's data at its name and returns the
+// inode now at the name.
+//
+// The first attempt links the transient the OPEN constructed. When an
+// earlier attempt got no answer from the backend (a shard restart), the
+// request may have applied, in whole or in part: TernFS appends spans at a
+// file's current size, so a transient whose spans were partly written
+// cannot be written from the start again, and a linked one is a file. So a
+// later attempt first looks the name up. If it holds a transient an
+// earlier attempt submitted, that attempt applied and the work is done.
+// Otherwise it constructs a fresh transient, notes it before linking so
+// the next attempt can recognise it, writes and links that one, and scraps
+// the transients it abandoned. A name that meanwhile holds another
+// client's version is replaced, as by any CLOSE that publishes later.
+//
+// The attempts live in memory. After a restart the recovered CLOSE starts
+// over with the OPEN's transient, as before.
+func (s *Server) publishStaging(stagingID vfs.InodeID, meta staging.Meta, data io.Reader) (vfs.InodeID, error) {
+	tried := s.publicationAttempts(stagingID)
+	if len(tried) == 0 {
+		err := s.fs.LinkFile(stagingID, meta.TernCookie, meta.DirID, meta.FileName, data)
+		if err == nil {
+			return stagingID, nil
+		}
+		if vfs.IsTransientBackendError(err) {
+			// No lookup now: it would wait on the same backend. The retry
+			// looks first.
+			s.notePublicationAttempt(stagingID, publishAttempt{stagingID, meta.TernCookie})
+			return 0, err
+		}
+		if s.alreadyPublished(stagingID, meta) {
+			// An earlier process linked it and died before removing the
+			// staging: the CLOSE, run again, finds its work done.
+			s.log.Info("close: staging was already published", "inode", stagingID, "name", meta.FileName)
+			return stagingID, nil
+		}
+		return 0, err
+	}
+	current, err := s.fs.Lookup(meta.DirID, meta.FileName)
+	if err != nil && !os.IsNotExist(err) {
+		return 0, err
+	}
+	if err == nil {
+		for _, a := range tried {
+			if a.id == current {
+				s.log.Info("close: an earlier attempt had published", "inode", current, "name", meta.FileName, "attempts", len(tried))
+				s.scrapAbandonedTransients(tried, current)
+				return current, nil
+			}
+		}
+	}
+	id, cookie, err := s.fs.ConstructFile(meta.DirID)
+	if err != nil {
+		return 0, err
+	}
+	s.notePublicationAttempt(stagingID, publishAttempt{id, cookie})
+	if err := s.fs.LinkFile(id, cookie, meta.DirID, meta.FileName, data); err != nil {
+		return 0, err
+	}
+	s.log.Info("close: published through a fresh transient after an unanswered attempt", "inode", id, "staging", stagingID, "name", meta.FileName, "attempts", len(tried))
+	s.scrapAbandonedTransients(tried, id)
+	return id, nil
+}
+
+// scrapAbandonedTransients scraps the transients of attempts other than
+// the one that published. A scrap the backend does not answer is left to
+// TernFS, which collects transient files.
+func (s *Server) scrapAbandonedTransients(tried []publishAttempt, published vfs.InodeID) {
+	for _, a := range tried {
+		if a.id == published {
+			continue
+		}
+		if err := s.fs.ScrapFile(a.id, a.cookie); err != nil && !os.IsNotExist(err) {
+			s.log.Info("close: abandoned transient not scrapped", "inode", a.id, "err", err)
+		}
 	}
 }
 

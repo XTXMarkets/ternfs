@@ -76,6 +76,7 @@ func (s *Server) setStagingSize(sf staging.File, size uint64) error {
 }
 
 func (s *Server) discardStaging(id vfs.InodeID) {
+	s.forgetPublication(id)
 	meta, ok := s.stagingStore.GetMeta(id)
 	s.stagingStore.Remove(id)
 	if !ok {
