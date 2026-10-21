@@ -11,7 +11,7 @@ import (
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
-// The backchannel (canonical r3 §12): callbacks the server sends on a
+// The backchannel (README.md#backchannel): callbacks the server sends on a
 // connection the client also uses for requests. This file holds the
 // connection side: the sessions whose callbacks a connection carries, and
 // the callbacks waiting for a REPLY. A REPLY nothing waits for is dropped

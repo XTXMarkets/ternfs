@@ -18,17 +18,15 @@ import (
 )
 
 // Confirmation of a pending incarnation N over the identity's confirmed
-// predecessor P (canonical r3 §5.3). Three replace-by-rename writes:
+// predecessor P (README.md#writes-and-fencing). Three replace-by-rename writes:
 //
 //	A  N/confirming.<nfsdID>       a claim that keeps N from GC
 //	B  N/reboot -> P               evidence for purging P afterwards
 //	D  identity/confirmed -> N     the commit
 //
-// Each write creates a temp, pins its edge with LookupEdge and renames that
-// exact edge. A rename error leaves the outcome unknown, so the write is
-// fenced by removing the same temp edge: success proves it can never apply.
-// The result is then decided by reading the confirmed pointer back. Ordinary
-// lease writes keep using replaceBytes.
+// Each write renames one pinned temp edge; a rename error is fenced by
+// removing that edge, and the result is decided by reading the confirmed
+// pointer back (README.md#writes-and-fencing).
 //
 // Ownership: a ConfirmAttempt's mutex serializes SettleConfirmation,
 // FinishReplacement and Result on it, and is taken
@@ -362,7 +360,7 @@ func (cs *Store) settleLocked(a *ConfirmAttempt) {
 	a.result = classifyConfirmation(a.target, a.writes[WriteD], id, file, found)
 }
 
-// classifyConfirmation is the observation table of canonical r3 §5.3.
+// classifyConfirmation is the observation table (README.md#observation-table).
 // Missing data never proves a rollback: only D never applied and confirmed
 // still P through Sp does.
 func classifyConfirmation(t confirmTarget, d *edgeWrite, id, file vfs.InodeID, found bool) ConfirmResult {
@@ -423,16 +421,11 @@ func (cs *Store) FinishReplacement(a *ConfirmAttempt) (uint64, error) {
 // names n, and n's reboot symlink, through one exact edge, names an
 // incarnation p other than n. Then p is purged and that exact edge removed.
 //
-// This is the baseline's marker-based cleanup: finishConfirmed purges
-// whatever n's reboot symlink names, on no stronger evidence, and this path
-// only adds the confirmed check and the exact edge. It is not a proof that p
-// can never be used again. The legacy SetClientID callback update points
-// pending at the existing confirmed incarnation, after which ConfirmClientID
-// can move confirmed back to it, and another process's writes are not atomic
-// with these reads: the identity lock is local. Those cross-process limits
-// are inherited from the baseline, unchanged. It is separate from
-// FinishReplacement's authority: an attempt whose own B never applied grants
-// nothing, and this path does not pretend that it did.
+// It acts on the same evidence the NFSv4.0 path's finishConfirmed purges on,
+// adding only the confirmed check and the exact edge, and is not a proof that
+// p can never be used again: the NFSv4.0 callback update can move confirmed
+// back to it, and the identity lock is local (README.md#replacement-purge).
+// It grants nothing on behalf of an attempt whose own B never applied.
 //
 // Locally, the purge is ordered with confirmation protection: once p is
 // selected, beginPurge holds destruction holds on n and p through the purge

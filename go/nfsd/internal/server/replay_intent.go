@@ -13,13 +13,10 @@ import (
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
-// An intent is written to the session file before a non-idempotent effect
-// on TernFS: RENAME, REMOVE and CREATE of a directory or symlink. If the
-// process dies between the effect committing in the shard and the reply
-// record being written, the next process finds the intent on the slot and
-// can decide from TernFS whether the effect happened. The intent carries
-// the identity of what was there before, since inode IDs are never reused
-// and an edge is identified by its inode and creation time.
+// An intent is written to the session file before RENAME, REMOVE and CREATE
+// of a directory or symlink, carrying the identity of what was there before,
+// so that a later process can decide from TernFS whether the effect
+// happened (README.md#intents-and-the-mutation-gate).
 //
 // Encoding (big-endian): [1] kind, [2] the index in the compound of the
 // operation it protects, then the fields below. Names are [2] length +

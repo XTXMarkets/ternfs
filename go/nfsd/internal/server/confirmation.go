@@ -13,33 +13,26 @@ import (
 )
 
 // Confirmation of a pending incarnation N over its predecessor P, on the
-// server side (canonical r3 §5.3, §5.4). The client store makes writes A, B
+// server side (README.md#client-confirmation,
+// ../clientstore/README.md#confirmation). The client store makes writes A, B
 // and D and decides each result from evidence; the server acts on it once.
 //
 // While a confirmation exists, from just before its first write until its
 // result has been applied, N and P are protected(): no path in this process
-// marks, purges, expires, retires, reclaims or collects them. P is closing,
-// so its SEQUENCE, BIND and CREATE_SESSION get DELAY and DESTROY_CLIENTID gets
-// CLIENTID_BUSY. N's creation slot stays held for the sequence, so its retry
-// gets DELAY or the settled outcome. A new EXCHANGE_ID for the identity gets
-// DELAY. An unresolved result is retried by the same CREATE_SESSION sequence
-// and by the lease sweeper; lease expiry never resolves it.
+// marks, purges, expires, retires, reclaims or collects them. What clients
+// see meanwhile is in README.md#protection-and-destruction-holds. An
+// unresolved result is retried by the same CREATE_SESSION sequence and by
+// the lease sweeper; lease expiry never resolves it.
 
 // An unfinished replacement purge is owned by durable evidence: N confirmed,
 // and N's reboot symlink naming the predecessor
-// (clientstore.Store.ResumeReplacementPurge). That evidence outlives wire records,
-// sessions and restarts, so the obligation cannot be lost.
-//
-// The server keeps only a hint: purgePending names the incarnations whose
-// purge is known to have failed, so that a warm EXCHANGE_ID, which otherwise
-// makes no store call, retries it. It is bounded by purgeLimit; at the limit
-// a new hint is dropped, which only defers the retry to that incarnation's
-// next successful CREATE_SESSION. Every successful CREATE_SESSION reads the
-// evidence whether or not a hint exists, so restart, a dropped hint and
-// cold adoption after the record retired are all covered. A cold
-// EXCHANGE_ID adoption stays read-only. A purge whose n or selected target
-// is protected by a confirmation is deferred, like a failure: the hint and
-// the evidence stay.
+// (clientstore.Store.ResumeReplacementPurge; README.md#resumed-purge). The
+// server keeps only purgePending, hints bounded by purgeLimit, so that a
+// warm EXCHANGE_ID, which otherwise makes no store call, retries a purge
+// known to have failed. A dropped hint only defers the retry to the next
+// successful CREATE_SESSION, which reads the evidence anyway. A cold
+// EXCHANGE_ID adoption stays read-only. A protected purge is deferred like
+// a failure: the hint and the evidence stay.
 
 // notePurgePending records that n's replacement purge is unfinished.
 func (s *Server) notePurgePending(n uint64) {
@@ -112,17 +105,12 @@ type confirmation struct {
 	reply        createSessionResult
 }
 
-// Destruction holds order destructive work against protection. Each
-// destructive action on an incarnation (marking it expired, expiring or
-// retiring its state or staging, or a resumed replacement purge, which holds
-// one on n and one on its target) or on an identity (client GC) holds one for
-// the whole action, from its first check through its last effect, backend
-// waits included. A hold is refused once the incarnation or identity is
-// protected. Registration installs protection first, which refuses every new
-// hold, and then waits for the holds already admitted to end. So every
-// destructive action either completes before protection is complete or does
-// not start. Holds are counts under confirmMu, deleted at zero: as many as
-// the destructive work in flight, and never held as a lock across backend
+// Destruction holds order destructive work against protection
+// (README.md#protection-and-destruction-holds): each destructive action
+// holds one from its first check through its last effect, and a hold is
+// refused once its incarnation or identity is protected. A resumed
+// replacement purge holds one on n and one on its target. Holds are counts
+// under confirmMu, deleted at zero, and never held as a lock across backend
 // calls. Each holder releases its hold when its action returns or unwinds,
 // panics included. Ending the last hold on a key wakes a registration
 // waiting for it (destroyEnded, on confirmMu).
@@ -349,7 +337,7 @@ func (s *Server) applyConfirmation(e *confirmation, result clientstore.ConfirmRe
 	}
 	switch result {
 	case clientstore.ConfirmCommitted:
-		// P is replaced, then N's session is inserted (§5.3 step 8).
+		// P is replaced, then N's session is inserted (README.md#applying-a-result).
 		if e.p != 0 && !e.pClosedEnded {
 			ss.replaced(e.p)
 			e.pClosedEnded = true
@@ -433,7 +421,8 @@ func (s *Server) finishReplacement(e *confirmation) {
 	failed = false
 }
 
-// confirmPending confirms a pending record (§5.3) for a creation that holds
+// confirmPending confirms a pending record (README.md#client-confirmation)
+// for a creation that holds
 // N's slot. It returns the status and, for OK, the reply. handedOver reports
 // that an unresolved confirmation now owns cr.
 func (s *Server) confirmPending(cr *creation, confirm [8]byte, principal, caller clientstore.RPCPrincipal) (status uint32, reply createSessionResult, handedOver bool) {

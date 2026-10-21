@@ -226,7 +226,7 @@ func (s *Server) opSetattr(args nfs4.SETATTR4args, st *compoundState, w *nfs4.CO
 			sf = s.stagingOwnedBy(dataID, state)
 		case newSize != nil || s.foreignStateID(st.clientID, extractStateID(stateid)):
 			// Another client's stateid is rejected before any effect, times
-			// included (canonical r3 §10).
+			// included (README.md#stateid-checks).
 			return setattrReply(status, attrMask{})
 		default:
 			// Times need no open; apply them as this client sees the file.

@@ -14,7 +14,10 @@ import (
 )
 
 // Wire clientids are the eir_clientid values EXCHANGE_ID returns. They are
-// process-local and never stored: a wire clientid is the process epoch in the
+// process-local: the record a wire clientid indexes lives only in this
+// process's memory, and the client store never holds one. A session file
+// records the value of its session's wire clientid
+// (README.md#session-files-on-disk). A wire clientid is the process epoch in the
 // high 32 bits and a counter in the low 32 bits. The epoch is a whole second
 // chosen after this process binds its endpoint exclusively, and later than
 // the second of the bind, so it exceeds the epoch of every earlier owner of

@@ -2,6 +2,10 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+// Package server is the NFSv4.1 server: connections and compounds,
+// sessions and their persistence, the logical lease, client confirmation,
+// opens, the staging lifecycle and the backchannel. README.md describes how
+// they work.
 package server
 
 import (
@@ -374,7 +378,7 @@ func (s *Server) expireClientIfDead(clientID uint64) {
 }
 
 // runLeaseSweep is the sweeper's tick. It writes no lease: every durable
-// lease write belongs to the refresher (canonical r3 §8).
+// lease write belongs to the refresher (../clientstore/README.md#refresher).
 func (s *Server) runLeaseSweep() {
 	defer func() {
 		if recovered := recover(); recovered != nil {

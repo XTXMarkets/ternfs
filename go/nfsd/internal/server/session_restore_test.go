@@ -620,7 +620,8 @@ func TestRestartRestoredSlotSequenceRules(t *testing.T) {
 	if got := sequenceStatus(f.send(ping, slot, last+5)); got != nfs4.NFS4ERR_SEQ_MISORDERED {
 		t.Fatalf("skipped seqid after the slot was used %s", nfs4.Nfsstat4Name(got))
 	}
-	// An untouched restored slot takes any first seqid.
+	// An untouched restored slot takes any first seqid after zero in serial
+	// order.
 	free, _ := f.ts.acquire()
 	f.ts.release(free)
 	if got := compoundStatus(t, f.send(ping, free, 7)); got != nfs4.NFS4_OK {

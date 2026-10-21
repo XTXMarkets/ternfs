@@ -1,0 +1,348 @@
+<!--
+Copyright 2026 XTX Markets Technologies Limited
+
+SPDX-License-Identifier: GPL-2.0-or-later
+-->
+
+# Deploying nfsd
+
+An nfsd process owns its sessions, open state and local staging. The TernFS
+namespace and client registration store are shared. Sharing that store
+coordinates client lifetimes; it does not share staged bytes or make the
+processes interchangeable.
+
+These are the current implementation's guarantees and limitations.
+[Recovery](RECOVERY.md) describes the recovery paths and operator steps.
+
+## Data guarantees
+
+| Event | What it establishes |
+| --- | --- |
+| Successful create OPEN | The pathname contains an empty published file. Initial size and later writes can still be private. |
+| Unstable WRITE | The server accepted bytes into local staging. The client must retain them until made stable. |
+| Stable WRITE or COMMIT | Checkpoints staging data and metadata on the local disk. After a restart, COMMIT also syncs the client's recovered writers of the handle. It does not publish to TernFS. |
+| Last write CLOSE or downgrade to READ | Publishes a changed, linked staging version synchronously. A clean writer leaves the published file unchanged; an unlinked writer discards its private version. |
+| Fresh lookup after publication | Finds the replacement inode. Already held handles and client caches need not select that version. |
+
+Writers on one client share staging for the same file within one daemon.
+Other clients have independent versions. Concurrent writers do not merge
+edits: the last successful publication wins the pathname. This also applies
+across daemons. Do not use this as a distributed append or locking service.
+
+Published contents have TernFS's configured durability and retention.
+Unpublished contents depend on the staging disk. Even after fsync, a new
+file can still appear empty to another client and an edited file can still
+show its previous published contents.
+
+An old handle identifies an immutable inode, but the issuing daemon may
+temporarily map it to the client's newer version. A process restart on
+the same staging disk keeps that mapping only if its recorded expiry has
+not passed; other daemons never have it. This causes the
+[old-handle defect](#old-handles-name-their-original-version).
+
+## Deployment modes
+
+| Mode | Intended use | Main limit |
+| --- | --- | --- |
+| [One writable server](#one-writable-server) | Clients pinned to one daemon and its staging disk. | Staged data has no second copy in TernFS. |
+| [Independent writable servers](#independent-writable-servers) | Separate mounts serve one namespace through different daemons. | Mutable views and namespace bookkeeping are local. |
+| [Read-only servers](#read-only-servers) | Read published data without write staging. | Sessions still require affinity; the mode does not block timestamp updates. |
+| [Replacement with the staging disk](#replacement-with-the-staging-disk) | Recover a stopped server on another host. | Existing opens recover only in the supported cases. |
+| [Replacement without the staging disk](#replacement-without-the-staging-disk) | Restore access to published data. | Unpublished stable data is unavailable. |
+| [One mount distributed across servers](#one-mount-distributed-across-servers) | Not supported. | Sessions and stateids are not shared. |
+
+### One writable server
+
+**Topology.** Direct each mount, including all its TCP connections, to one
+nfsd. Give that daemon a persistent staging directory.
+
+**Guarantees.** Same-client opens share a mutable view within the daemon.
+Publication is synchronous. REMOVE and RENAME update that daemon's staged
+writers so a later CLOSE follows the local namespace change.
+
+**Failure behaviour.** Restarting the process with the same disk can restore
+sessions and their cached replies, so clients continue on the same session
+and retransmissions get their original replies. Restoration is conditional;
+see [session restoration](internal/server/README.md#session-restoration). A
+restart also recovers eligible checkpointed writers through their old
+stateids, and restores publication aliases whose recorded expiry has not
+passed. Read opens are reopened by the client. Session files and aliases are
+written without fsync, so a host crash can lose them. Disk loss removes
+unpublished contents and every session.
+
+**Known issues.** The backend-timeout issue below applies. A surviving
+disk is not a guarantee that every descriptor resumes. There are no
+enforced share reservations or byte-range locks.
+
+### Independent writable servers
+
+**Topology.** Several daemons serve one TernFS namespace, each with its own
+address and staging directory. A client may mount more than one, but each
+mount must stay with its chosen daemon.
+
+**Guarantees.** The published namespace is shared. A fresh lookup can see
+another daemon's completed publication. Client reboot and lease decisions
+are coordinated through the shared client store.
+
+**Failure behaviour.** Surviving daemons continue serving published files.
+They cannot take over another daemon's unpublished writes without its
+staging disk. Reads through another daemon do not see a client's private
+writes, even if it registered the same client identity there.
+
+**Known issues.** Namespace bookkeeping does not cross daemons. If A has a
+writer for `x` and B removes `x`, A's later CLOSE can recreate `x`. If B
+renames it to `y`, A can publish at the old name. GUARDED and exclusive
+create checks are also serialized only locally. All single-server recovery
+defects remain. A backend outage can prevent A from renewing its durable
+lease long enough for B to expire the client, even while A has active work.
+
+### Read-only servers
+
+**Topology.** Omit `-staging` and use read-only client mounts, for example
+`-o vers=4.1,proto=tcp,hard,ro`. Each mount still belongs to one daemon.
+
+**Guarantees.** Published files can be read without local write staging.
+The daemon rejects writable opens and create/remove/rename mutations.
+
+**Failure behaviour.** A replacement can serve the published data without
+the old host's disk. Existing sessions and opens still need recovery, and
+DNS changes alone do not redirect existing mounts.
+
+**Known issues.** The server's read-only mode is incomplete: timestamp-only
+SETATTR can still change backend timestamps. A client `ro` mount prevents
+ordinary writes through that mount; it does not enforce policy on other
+clients. The daemon also writes its client registrations, leases and open
+markers under `/.nfs`. Read-only service is therefore not a backend with no
+writes. It adds no coherence or failover guarantee for a concurrently
+changing namespace.
+
+### Replacement with the staging disk
+
+**Topology.** Stop or fence the old daemon, attach its staging disk to the
+replacement, and use the same TernFS backend and compatible sidecar format.
+To preserve existing mounts' destination, arrange takeover of the address
+they already use.
+
+**Guarantees.** Eligible staged writers have the local data and sidecars
+needed for recovery. This has the same recovery scope as an in-place restart.
+
+**Failure behaviour.** The new daemon has new wire clientids and in-memory
+state. It can restore sessions from the disk under the same conditions as
+an in-place restart, but a host crash can have lost session records written
+without fsync. Writer recovery still depends on the client identity and
+boot, the held handle, the namespace, and retained base/transient inodes.
+
+**Known issues.** All restart defects below apply. A movable disk does not
+make active/active service safe: never run two daemons against the same
+staging directory. Endpoint ownership and clocks also matter; see
+[host replacement](RECOVERY.md#replace-a-host).
+
+### Replacement without the staging disk
+
+**Topology.** Start a fresh daemon against the same TernFS backend with a
+new staging directory. Direct new mounts to it, or separately arrange
+address takeover for existing mounts.
+
+**Guarantees.** Published data remains accessible under TernFS's normal
+retention rules. New clients can open files and begin new writes.
+
+**Failure behaviour.** The replacement lacks the old daemon's unpublished
+bytes, including bytes acknowledged stable. The pathname may contain an
+empty placeholder or the earlier published version. Existing write
+descriptors cannot rely on resuming.
+
+**Known issues.** A changed write verifier lets clients detect loss of
+unstable writes. It does not require them to retain or resend stable data.
+If the old disk is recovered later, its staging needs reconciliation with
+any intervening publications; do not blindly bring both daemons online.
+
+### One mount distributed across servers
+
+**Topology.** A load balancer, proxy or client sends one mount's connections
+to independent nfsd processes.
+
+**Guarantees.** None for a shared NFS session. Multiple connections work
+when they all reach the same daemon.
+
+**Failure behaviour.** A session issued by A is unknown to B and gets
+`NFS4ERR_BADSESSION`. Registering separately with B does not transfer A's
+opens, staged data or handle aliases.
+
+**Known issues.** Each process advertises a distinct server owner. There is
+no session trunking across daemons, transparent NFS migration, or replicated
+reply cache. Per-connection stickiness is insufficient if one mount has
+connections to several daemons. This remains unsupported for read-only
+mounts.
+
+## Known defects
+
+### A backend timeout is treated as a failure
+
+nfsd uses the Go client's default timeout settings: an overall limit of
+10 s on a shard request, 60 s on a CDC request and 5 min on a block-service
+request. These are configured limits on one request's retries, not
+guarantees about how long a CLOSE or an outage takes. Time a metadata
+request spends in the client's send queue comes on top, a block-service
+request sets a fresh socket deadline for each attempt, and one CLOSE makes
+many requests.
+
+When publication fails, CLOSE returns the backend error mapped to an NFS
+status. A timeout, or any error without a more specific mapping, is
+`NFS4ERR_IO`; a missing name is `NFS4ERR_NOENT` and a permission error
+`NFS4ERR_ACCESS`. What happens to the staging depends on the step that
+failed:
+
+- If hydration fails, or LinkFile fails and the file is not found already
+  published, the staging is discarded and the transient file scrapped,
+  best effort. If other opens still read that staging, it is quarantined
+  instead: its files are kept, and those readers get `NFS4ERR_IO`.
+- If a timestamp-only CLOSE fails to look up the name or set the times,
+  the staging is kept. A failed SetTime may still have applied.
+
+The Linux client discards a CLOSE's status, so `close(2)` returns 0 and the
+application believes its save was published while the name holds the
+previous version or the empty placeholder. A shard outage that outlasts
+these retries produces this. No shorter outage has been established as
+safe. Tracked as `work-kd49`.
+
+Any mutation whose outcome cannot be established, which includes every
+backend timeout, also retires the client's session. The client re-creates
+it, and while the daemon confirms the new session its OPEN, WRITE and
+CLOSE get `NFS4ERR_DELAY`, which the Linux client answers with a backoff
+of up to 15 s for asynchronous operations. If this happens while the shard
+is still down, every application on the mount stalls for the rest of the
+outage. Tracked as `work-49b9`.
+
+### Old handles name their original version
+
+A client reads its newly published contents through the handle it still
+holds while the daemon keeps a publication alias for it: while the handle
+is open and for one lease after publication. The alias survives a restart
+while its recorded expiry, renewed at each sweep for an open handle, is
+still in the future. After it lapses, including during a long outage, or
+through another daemon, the handle names its original immutable inode
+again, so a read through a very old handle can return older bytes. The
+replacement is always available through a fresh pathname lookup. A
+writable OPEN by handle can get `NFS4ERR_STALE` when the daemon has
+neither a remembered current pathname nor eligible staging; the Linux
+client then looks the name up again.
+
+### Lease expiry leaves retired staging
+
+A writer whose client's lease expires is retired with its data in place,
+including one that acknowledged nothing, and is kept until recovered or
+removed by an administrator (`work-yhrt`). An `EXCLUSIVE4` create retried
+by the same client boot after its lease expired gets `NFS4ERR_EXIST`
+instead of adopting its retired staging (`work-obgt`).
+
+## Operating requirements
+
+### Staging disk
+
+Use a persistent staging disk and size it for complete replacement files.
+Small edits can require reading the entire immutable base and uploading a
+whole replacement on CLOSE. Monitor free space, retired and quarantined
+staging, hydration traffic, CLOSE latency and backend errors. Linked retired
+staging has no automatic age-based deletion.
+
+### Request limits
+
+Bound request concurrency with `-max-in-flight-per-connection` if needed.
+Its default is 64; it bounds request count per connection, not bytes,
+connections or total server RSS. Monitor RSS and tune it for the workload.
+Reply memory is bounded across the process by `-reply-work-budget-mib`,
+8 GiB by default. Each request reserves eight times its reply capacity plus
+a fixed allowance before it runs, so a 1 MiB READ reserves about 8.5 MiB; see
+[reply work](internal/server/README.md#reply-work). A request that
+does not fit waits for replies to drain rather than being refused. A request
+larger than the whole budget is refused and its connection closed. A
+dashboard shows the waits as `admission_work_waits`.
+
+### Client store snapshot policy
+
+Give `/.nfs` a snapshot policy appropriate for disposable client-store
+history. Lease and marker churn otherwise accumulates snapshot edges and
+dead inodes. For example, with the inode of `/.nfs` in `NFS_DIR_ID`:
+
+```sh
+terncli set-dir-info -id "$NFS_DIR_ID" -tag SNAPSHOT \
+    -body '{"DeleteAfterVersions": 0}'
+```
+
+Do not apply that recommendation to user data indiscriminately: staging
+recovery can need retained base versions. Keep `/.nfs` itself while serving
+the filesystem. Even a read-only daemon uses its current records.
+
+### Network access
+
+Ownership and modes are synthetic. AUTH_SYS principal comparison is an
+identity-collision guard, not an authentication or permission boundary.
+Choose network access accordingly. The diagnostics API has no
+authentication either; see [Diagnostics](#diagnostics).
+
+### Upgrades
+
+For upgrades, drain and close writers, then account for remaining active,
+retired and quarantined staging. The current sidecar format is NFS8.
+Deleting staging to bypass a format incompatibility discards unpublished
+data. Follow [upgrade recovery](RECOVERY.md#upgrade-the-server).
+
+## Metrics
+
+With `-influx-db-origin`, `-influx-db-org` and `-influx-db-bucket`, nfsd
+pushes its metrics every `-metrics-interval` (10 s) as InfluxDB line
+protocol, the way the other TernFS Go services do, so VictoriaMetrics
+stores each field as `<measurement>_<field>`. `-filesystem` is required and
+becomes the `filesystem` label on every series; `instance` is the short
+host name and NFS port unless `-instance` says otherwise, so several nfsd
+processes on one host stay apart. The `Eggs NFS` dashboard reads these.
+
+Counters are cumulative from process start. Latency histograms have a
+`le` label with the bound in seconds and a final `+Inf`, for
+`histogram_quantile`.
+
+| Series | Labels | Meaning |
+|---|---|---|
+| `eggsfs_nfsd_ops_count` | `op`, `status` | Operation results, by NFS operation and status, once each, including SEQUENCE and operations refused before they ran. An undefined opcode counts as `OP_ILLEGAL`, as on the wire. A replayed reply counts only its SEQUENCE. |
+| `eggsfs_nfsd_op_latency_bucket_count` | `op`, `le` | Operation service time inside nfsd, bounds 0.5 ms to 60 s. |
+| `eggsfs_nfsd_op_latency_count`, `_sum_nanos` | `op` | For mean latency. |
+| `eggsfs_nfsd_io_ops`, `_bytes` | `direction` | READ and WRITE operations and payload bytes. |
+| `eggsfs_nfsd_compounds_count` | | RPC compounds handled. |
+| `eggsfs_nfsd_connections_open` | | Tracked connection handlers, including connections draining requests (gauge). |
+| `eggsfs_nfsd_connections_accepted`, `_closed_by_client`, `_closed_by_server`, `_idle_timeouts`, `_read_errors`, `_parse_errors` | | How connections began and ended. Each ended connection is counted once, by the first cause seen, when its handler returns, so the causes sum to the accepted connections that are no longer open. A client close is EOF or a reset; a server close is a reply write failure, a panic, a request refused or dropped without a reply, or a conflicting XID. |
+| `eggsfs_nfsd_admission_in_flight`, `_max_in_flight` | | Requests admitted and not yet answered, and the sum of per-connection limits (gauges). |
+| `eggsfs_nfsd_admission_work_bytes`, `_work_limit`, `_work_replies`, `_work_waiters` | | Reply-work reservations against `-reply-work-budget-mib`, and requests waiting for it (gauges). |
+| `eggsfs_nfsd_admission_work_waits`, `_work_wait_nanos` | | Waits for reply work begun, and time spent waiting. |
+| `eggsfs_nfsd_admission_cache_bytes`, `_cache_limit`, `_sessions`, `_records`, `_groups`, `_active_requests` | | Reply cache and session store figures (gauges). |
+| `eggsfs_nfsd_state_opens`, `_aliases` | | Live open stateids and publication aliases (gauges). |
+| `eggsfs_nfsd_state_publishes` | | Files published by CLOSE or OPEN_DOWNGRADE. |
+| `eggsfs_nfsd_staging_files`, `_bytes`, `_retired`, `_unlinked`, `_busy`, `_hydrations_in_flight` | | The staging store (gauges). Files are read without waiting on a file busy with disk I/O: a busy file counts in `files` and `busy` but not in `bytes`, `retired` or `unlinked`, so those are lower bounds while `busy` is above zero. `bytes` is the files' live size, including UNSTABLE writes not yet committed. |
+| `eggsfs_nfsd_replay_records`, `_write_failures`, `_record_bytes`, `_intents` | | The persistent reply cache: slot and intent records written, record writes and session file creations that failed, reply bytes recorded, intents. |
+| `eggsfs_nfsd_replay_session_files` | | Sessions with a file on the staging disk (gauge). |
+| `eggsfs_nfsd_replay_sessions_restored`, `_served`, `_decided_applied`, `_undecidable` | | Sessions restored at startup; retransmissions after a restart answered from a restored reply, run again with their intent found applied, and undecidable (`NFS4ERR_DEADSESSION`). |
+| `eggsfs_nfsd_backend_count`, `_attempts` | `service`, `kind` | Requests to shards and the CDC by kind, and attempts including resends. |
+| `eggsfs_nfsd_backend_latency_bucket_count` | `service`, `kind`, `le` | Backend round-trip time, bounds 0.1 ms to 10 s. |
+| `eggsfs_nfsd_process_heap_alloc_bytes`, `_sys_bytes`, `_goroutines`, `_gc_pause_nanos`, `_gc_count`, `_uptime_seconds` | | Go runtime figures. |
+
+The two signals that have mattered so far are `status` other than
+`NFS4_OK` on SEQUENCE or WRITE, since a Linux client sleeps 15 s on a
+session-level DELAY, and `closed_by_server`, since every server-side close
+costs a client that reconnect and backoff. `OP_CREATE_SESSION` while no
+client is mounting means a session was retired.
+
+## Diagnostics
+
+`-status-addr` serves a read-only JSON API about the process's own state,
+off by default. `-store-only` serves the same API without the NFS server,
+reading the client store and staging sidecars without changing them. The
+[diagnostics API reference](inspect/README.md) describes the resources,
+typed ids and the store report.
+
+```sh
+nfsd -registry registry.example:55556 -staging /var/lib/nfsd \
+    -status-addr 127.0.0.1:9049
+curl -s http://127.0.0.1:9049/ | jq .
+```
+
+The API has no authentication. Bind it to a loopback or management address.
+During a stall, take `/debug/pprof/goroutine?debug=2` first.

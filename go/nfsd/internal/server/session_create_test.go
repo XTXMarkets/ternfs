@@ -66,7 +66,7 @@ func sequenceStatusForTest(t *testing.T, srv *Server, id SessionID) uint32 {
 	return res.Status()
 }
 
-// The CREATE_SESSION outcome table, canonical r3 §5.1.
+// The CREATE_SESSION outcome table (README.md#create_session-outcomes).
 func TestCreateSessionOutcomeTable(t *testing.T) {
 	srv := identityServer(t, vfs.NewLocalTernVFS(t.TempDir()))
 	ex := identityExchange(t, srv, 1, "client", [8]byte{1}, false)
@@ -308,7 +308,8 @@ func (fs *leaseRenameFailureVFS) RenameEdge(src vfs.InodeID, name string, edge v
 }
 
 // A committed CREATE_SESSION starts bootstrap, the client's first durable
-// publication, and never becomes an error (canonical r3 §9.1). Until the
+// publication, and never becomes an error
+// (../clientstore/README.md#bootstrap). Until the
 // publication SEQUENCE gets DELAY; a store that proves the client expired
 // makes the session unusable while its cached result still replays.
 func TestCreateSessionBootstrap(t *testing.T) {

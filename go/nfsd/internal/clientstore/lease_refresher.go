@@ -14,7 +14,7 @@ import (
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
-// The durable lease refresher (canonical r3 §9). This process's lease file,
+// The durable lease refresher (README.md#refresher). This process's lease file,
 // lease.<nfsdID>, is written only here: by one worker per incarnation that
 // needs it, which holds LeaseLocks for each cycle. Everything else reads the
 // record from memory and asks the worker for work.
@@ -48,7 +48,7 @@ const (
 const maxRecordOrphans = 4
 
 // LeaseWriteTerm is how far ahead a publication's expiry is written
-// (canonical r3 §9.2 step 3): a refresh is due once the proven lease is
+// (README.md#publication-schedule): a refresh is due once the proven lease is
 // less than LeaseTime + LeaseRenewAfter/2 ahead.
 const LeaseWriteTerm = LeaseTime + LeaseRenewAfter
 
@@ -548,9 +548,9 @@ func (r *LeaseRefresher) nextBackoffLocked() time.Duration {
 }
 
 // pass is one worker cycle: settle, evidence, then refresh or the terminal
-// steps (§9.2). authorize forces the refresh condition, for the store-only
-// inline callers. It reports how long to wait, or exit when the record has
-// been freed.
+// steps (README.md#refresher). authorize forces the refresh condition, for the
+// inline callers of a Store without a server. It reports how long to wait, or
+// exit when the record has been freed.
 func (r *LeaseRefresher) pass(authorize bool) (time.Duration, bool) {
 	cs := r.cs
 	unlock := cs.LeaseLocks.Lock(r.Incarnation)
@@ -623,7 +623,8 @@ func (r *LeaseRefresher) pass(authorize bool) (time.Duration, bool) {
 }
 
 // settle fences the unsettled attempt and consumes orphans whose edges are
-// found (§9.2 step 1, §9.3). It reports false while an attempt is unsettled.
+// found (README.md#write-obligations). It reports false while an attempt
+// is unsettled.
 func (r *LeaseRefresher) settle() bool {
 	cs, dir := r.cs, r.Incarnation
 	if a := r.Attempt; a != nil {
@@ -676,9 +677,10 @@ func (r *LeaseRefresher) consume(o *leaseOrphan) {
 	r.Mu.Unlock()
 }
 
-// evidence reads, without writing: our lease's content, the expired marker
-// and the confirmed pointer (§9.2 step 2). It also removes other processes'
-// lease slots that expired at least a lease time ago.
+// evidence reads, without writing: our lease's content, the expired marker and
+// the confirmed pointer (README.md#refresher). Other processes' expired lease
+// slots are removed separately, by pruneOthers, under its own conditions
+// (README.md#expired-marker-and-slot-pruning).
 func (r *LeaseRefresher) evidence() {
 	cs, dir := r.cs, r.Incarnation
 	start := cs.Now().UnixNano()
@@ -749,8 +751,9 @@ func (r *LeaseRefresher) pruneOthers() {
 	})
 }
 
-// Refresh publishes a new lease when ours is due (§9.2 step 3). It reports
-// false on a failure that should back off.
+// Refresh publishes a new lease when ours is due
+// (README.md#publication-schedule). It reports false on a failure that
+// should back off.
 func (r *LeaseRefresher) Refresh() bool {
 	cs, dir := r.cs, r.Incarnation
 	now := cs.Now()
@@ -1017,12 +1020,12 @@ func (cs *Store) SweepLeaseRecords() {
 	}
 }
 
-// refreshInline runs one pass in the caller, for store-only use (no server
-// worker): Renew and MarkOpen publish through the same cycle. The caller
-// may hold the identity lock. With a server the worker owns every pass, and
-// a server's terminal steps take identity ownership under LeaseLocks, so
-// running a pass here under the identity lock would invert that order: it
-// only reads the record instead, and asks for a verify.
+// refreshInline runs one pass in the caller, for a Store used without a server
+// (no worker): Renew and MarkOpen publish through the same cycle. The caller
+// may hold the identity lock. With a server the worker owns every pass, and a
+// server's terminal steps take identity ownership under LeaseLocks, so running
+// a pass here under the identity lock would invert that order: it only reads
+// the record instead, and asks for a verify.
 func (cs *Store) refreshInline(clientID uint64) (leaseView, error) {
 	cs.RefreshMu.Lock()
 	r, ok := cs.RecordLocked(vfs.InodeID(clientID), true)

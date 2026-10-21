@@ -100,8 +100,8 @@ func (b *cachedReply) storeBody(data []byte) {
 // touching the slot: the old buffer stays attached, charged and replayable
 // until installSlotReply at commit; undo releases only the new charge. The
 // capacity check credits the old buffer only when nothing else holds it, so
-// the total exceeds cacheLimit by at most one per-slot credit (canonical r3
-// §7.1).
+// the total exceeds cacheLimit by at most one per-slot credit
+// (README.md#reply-cache-accounting).
 func (ss *sessionStore) reserveSlotReply(sess *session, slot *sessionSlot, bytes int) (*cachedReply, bool) {
 	ss.cacheMu.Lock()
 	defer ss.cacheMu.Unlock()
@@ -237,11 +237,9 @@ func (req *rpcRequest) acquireReplyWork(s *Server) bool {
 		return false // Can never be admitted.
 	}
 	// The limit is a bound on memory, not a reason to drop the connection:
-	// a client with more requests in flight than the budget admits waits
-	// here, holding its connection admission slot, until replies release
-	// work or its connection closes. Dropping the connection instead made
-	// the Linux client replay the burst and back off for 15 s on the
-	// retried slots.
+	// a request that does not fit waits here, holding its connection
+	// admission slot, until replies release work or its connection closes
+	// (README.md#reply-work).
 	//
 	// Admission is decided here, under cacheMu, as work is charged: a
 	// request whose connection has closed is refused even when capacity is

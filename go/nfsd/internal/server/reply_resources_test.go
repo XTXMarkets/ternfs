@@ -205,7 +205,7 @@ func TestSessionAndWorkCapacityBeforeEffects(t *testing.T) {
 	ss := srv.sessions
 	ss.recordLimit = 1
 	// A failed pre-slot reservation is DELAY and leaves the creation slot
-	// unchanged (canonical r3 §5.1).
+	// unchanged (README.md#create_session-outcomes).
 	_, res := admissionRequest(t, srv, createSessionBody(client, ts.nextCSSeq), 100, nil)
 	admissionStatus(t, res, nfs4.NFS4ERR_DELAY, nfs4.OP_CREATE_SESSION)
 	if a := ss.accounting(); a.Sessions != 1 || a.PendingSessions != 0 {

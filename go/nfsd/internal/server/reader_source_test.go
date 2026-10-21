@@ -157,7 +157,7 @@ func (f *readerFixture) dataID(t *testing.T, sid [16]byte) vfs.InodeID {
 
 // Another owner's read OPEN sees the client's writer's staging; a clean
 // writer CLOSE then leaves the reader on the published file, not NOENT
-// (canonical r3 §11, the conversion regression).
+// (../openstate/README.md#reader-visibility; the conversion regression).
 func TestAssessmentReadSurvivesCleanWriterClose(t *testing.T) {
 	for _, claimFH := range []bool{true, false} {
 		name := "CLAIM_NULL"

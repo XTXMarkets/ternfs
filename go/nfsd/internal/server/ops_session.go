@@ -14,16 +14,10 @@ import (
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sessionstore"
 )
 
-// NFSv4.1 sessions (RFC 8881 section 2.10).
-//
-// Sessions live in memory and, with a staging directory, in a file each
-// (session_persist.go) from which a restarted nfsd rebuilds them. A
-// session with no file, or whose incarnation's lease has ended, gets
-// BADSESSION after a restart and the client registers again with
-// EXCHANGE_ID and CREATE_SESSION (canonical r3 §6). The slot table and its
-// reply cache replace NFSv4.0 open-owner seqids: a retransmitted request
-// on a slot returns the cached reply instead of running again, and
-// requests on different slots run concurrently.
+// NFSv4.1 sessions (RFC 8881 section 2.10; README.md#sessions-and-slots).
+// The slot table and its reply cache replace NFSv4.0 open-owner seqids, and
+// requests on different slots run concurrently. Sessions are also kept on
+// disk (session_persist.go; README.md#persistent-sessions).
 
 const (
 	// maxSessionReplyCached bounds one cached reply. Clients only ask for
@@ -198,7 +192,7 @@ func (s *Server) startSequence(args nfs4.SEQUENCE4args, admission ...sequenceAdm
 		return sequenceResult{status: nfs4.NFS4ERR_SEQ_MISORDERED}
 	}
 
-	// Admission (canonical r3 §7.1) holds slot.mu throughout and does no
+	// Admission (README.md#sequence-admission) holds slot.mu throughout and does no
 	// backend I/O. Each step takes a resource; until the commit nothing in
 	// the slot, the cache, the association or the lease changes, and undo
 	// releases the resources taken, exactly once, in reverse.
@@ -366,7 +360,7 @@ func (r *sequenceResult) finish(reply []byte) {
 	}
 }
 
-// renewalCheck is admission's renewal check (canonical r3 §7.1 step 6). It
+// renewalCheck is admission's renewal check (README.md#sequence-admission). It
 // reads the gate and the refresher's record from memory, never the store.
 // A lease this process cannot prove, or a confirmed pointer not read
 // recently, gives DELAY and asks the refresher to verify.
@@ -451,7 +445,7 @@ func (s *Server) opExchangeID(
 		// cases 6-9). nfsd has no per-client properties for an update to
 		// change, so a valid update returns the record unchanged. It only
 		// reads, so it needs no ordering with a confirmation beyond waiting
-		// while one is in progress (§5.4).
+		// while one is in progress (README.md#protection-and-destruction-holds).
 		if s.confirmingOwner(ownerKey) {
 			return fail(nfs4.NFS4ERR_DELAY)
 		}
@@ -484,7 +478,7 @@ func (s *Server) opExchangeID(
 	// Checked under the owner lock, which a confirmation's registration
 	// also takes: either this request's durable registration and wire
 	// publication finish before protection is installed, or it sees the
-	// owner confirming and waits (§5.4).
+	// owner confirming and waits (README.md#protection-and-destruction-holds).
 	if s.confirmingOwner(ownerKey) {
 		return fail(nfs4.NFS4ERR_DELAY)
 	}
@@ -544,7 +538,8 @@ func (s *Server) opExchangeID(
 		return fail(nfs4.NFS4ERR_DELAY)
 	}
 	if o != nil && o.unconfirmed != nil && o.unconfirmed.confirming != nil {
-		// The record is being confirmed: it is not superseded (§5.4).
+		// The record is being confirmed: it is not superseded
+		// (README.md#protection-and-destruction-holds).
 		ss.mu.Unlock()
 		return fail(nfs4.NFS4ERR_DELAY)
 	}
@@ -719,7 +714,8 @@ func (s *Server) opCreateSession(
 	// This request's reservations are released when it returns. An
 	// unresolved confirmation takes them over instead. No connection lock is
 	// held across store calls: the association is a token, counted against
-	// the connection's quota from before the slot (canonical r3 §7.2).
+	// the connection's quota from before the slot
+	// (README.md#connection-associations).
 	cr := &creation{s: s, seq: seq, back: back, cbProgram: args.CsaCbProgram(), cbSec: cbSec, backRequested: backRequested}
 	handedOver := false
 	var settled func() // finishes an earlier confirmation this retry applied
@@ -854,7 +850,8 @@ func (s *Server) opCreateSession(
 		return fail(nfs4.NFS4ERR_DELAY)
 	}
 	cr.id, cr.record = id, true
-	// The refresher record that bootstrap will use (canonical r3 §9.4).
+	// The refresher record that bootstrap will use
+	// (../clientstore/README.md#record-bounds).
 	if cr.leaseRecord, admitted = s.clients.ReserveLeaseRecord(incarnation); !admitted {
 		return fail(nfs4.NFS4ERR_DELAY)
 	}
@@ -916,7 +913,8 @@ func (s *Server) opCreateSession(
 
 	if hasConfirm {
 		// A pending incarnation: closing its predecessor, the principal
-		// check, writes A, B and D, and acting on their result (§5.3).
+		// check, writes A, B and D, and acting on their result
+		// (README.md#client-confirmation).
 		status, reply, owned := s.confirmPending(cr, confirm, principal, st.principal)
 		handedOver = owned
 		if status != nfs4.NFS4_OK {
@@ -933,7 +931,8 @@ func (s *Server) opCreateSession(
 		return fail(nfs4.NFS4ERR_CLID_INUSE)
 	}
 	// An adopted or already confirmed record: check, without writing, that
-	// the incarnation is still the confirmed one (§5.2). If not,
+	// the incarnation is still the confirmed one
+	// (README.md#create_session-outcomes). If not,
 	// STALE_CLIENTID ends the record and leaves its slot untouched; a store
 	// that proves the incarnation stale must not leave a record a later
 	// EXCHANGE_ID would return as confirmed.
@@ -1089,16 +1088,18 @@ func (s *Server) opBindConnToSession(args nfs4.BINDCONNTOSESSION4args, st *compo
 	return nfs4.NFS4_OK
 }
 
-// bindDirections decides and applies a BIND_CONN_TO_SESSION (RFC 8881
-// section 18.34.3, canonical r3 §12). Each request accepts these channel
+// bindDirections decides and applies a BIND_CONN_TO_SESSION (RFC 8881 section
+// 18.34.3; README.md#grants-and-binding). Each request accepts these channel
 // sets: FORE {fore}; BACK {back}; FORE_OR_BOTH {fore} or {fore, back};
 // BACK_OR_BOTH {back} or {fore, back}. An existing association that is
 // acceptable is returned unchanged, and one that is not gets INVAL: a BIND
-// never changes an existing association. With none, the preferred set is
-// established, both directions when the session asked for a backchannel and
-// the transport can carry one; the back direction needs both. The decision
-// and both quotas are taken with the publication, in one connection
-// section, so concurrent BINDs are ordered and RESOURCE changes nothing.
+// never changes an existing association. With none, FORE and BACK establish
+// their own channel. FORE_OR_BOTH and BACK_OR_BOTH establish both when the
+// session asked for a backchannel and the transport can carry one; otherwise
+// FORE_OR_BOTH establishes the fore channel. The back direction needs both,
+// so BACK and BACK_OR_BOTH get INVAL without them. The decision and both
+// quotas are taken with the publication, in one connection section, so
+// concurrent BINDs are ordered and RESOURCE changes nothing.
 func (s *Server) bindDirections(st *compoundState, sess *session, dir uint32) (fore, back bool, status uint32) {
 	conn := st.connection
 	if conn == nil {
@@ -1190,7 +1191,8 @@ func (s *Server) opReclaimComplete(args nfs4.RECLAIMCOMPLETE4args, st *compoundS
 }
 
 // stateIDStatus is clientID's status for a stateid. Another client's
-// stateid, live, recovered or expired, is BAD_STATEID (canonical r3 §10).
+// stateid, live, recovered or expired, is BAD_STATEID
+// (../openstate/README.md#stateid-scope).
 func (s *Server) stateIDStatus(clientID uint64, stateid nfs4.Stateid4) uint32 {
 	id := extractStateID(stateid)
 	if status := s.opens.Status(clientID, id, stateid.Seqid()); status != nfs4.NFS4ERR_BAD_STATEID {

@@ -8,7 +8,7 @@ import (
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
-// The logical lease and its expiry (canonical r3 §8). Each process is its
+// The logical lease and its expiry (README.md#lease-gate). Each process is its
 // own server owner, so the RFC lease is this process's logical lease, kept
 // per incarnation in the group's gate. Expiry needs both the lease-hold
 // conditions (no hold, quiet period over) and the absence of
@@ -157,7 +157,7 @@ func (s *Server) leaseTerminal(clientID uint64, cleanup func()) bool {
 	ss.mu.Unlock()
 	cleanup()
 	// Only the sessions: the wire record stays, so its committed
-	// CREATE_SESSION results still replay (canonical r3 §9.2 step 4).
+	// CREATE_SESSION results still replay (README.md#expiry-decision).
 	s.retireIncarnationSessions(clientID)
 	s.expireClientState(clientID)
 	return true

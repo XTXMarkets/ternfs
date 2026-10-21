@@ -367,7 +367,7 @@ func TestLoneFailedWriterLeavesSiblingsAlone(t *testing.T) {
 	fs.failLink = "a"
 	fs.mu.Unlock()
 	// The publication's error is the CLOSE's; the failed writer's open is
-	// then inactive, so its later operations get EXPIRED (README).
+	// then expired, so its later operations get EXPIRED (README.md#stateid-checks).
 	if status := closeFileStatus(t, conn, &xid, aFH, aSid); status != nfs4.NFS4ERR_IO {
 		t.Fatalf("A's CLOSE with a LinkFile error %s, want NFS4ERR_IO", nfs4.Nfsstat4Name(status))
 	}

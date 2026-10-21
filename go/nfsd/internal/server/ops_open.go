@@ -24,7 +24,7 @@ import (
 // lookupDurableOpen validates a stateid that clientID presented with
 // filehandle fileID. The returned state's dataID is the inode the
 // operation's I/O uses. Another client's stateid, live, recovered or
-// expired, gets BAD_STATEID before any effect (canonical r3 §10).
+// expired, gets BAD_STATEID before any effect (README.md#stateid-checks).
 func (s *Server) lookupDurableOpen(
 	clientID uint64,
 	stateid nfs4.Stateid4,
@@ -95,8 +95,8 @@ func (s *Server) lookupDurableOpen(
 
 // expireInactiveOpen requires state's open to be active. When it is not, the
 // operation gets EXPIRED, and the client's other state is untouched: local
-// expiry is the lease gate's decision, which the sweeper drives (canonical
-// r3 §8 caller table). A marked open whose own marker is gone loses its
+// expiry is the lease gate's decision, which the sweeper drives
+// (README.md#expiry-decision). A marked open whose own marker is gone loses its
 // entry; an unmarked one never had a marker, so only the gate ends it.
 // The decisive check runs under a destruction hold, so while a confirmation
 // protects the client it gives DELAY. failed reports a failed writer, which
@@ -225,8 +225,9 @@ func (s *Server) opOpenDowngrade(args nfs4.OPENDOWNGRADE4args, st *compoundState
 		return fail(nfs4.NFS4ERR_NOFILEHANDLE)
 	}
 	// The target must be a valid share value, a subset of the open's
-	// grants, and the union of the values recorded inside it (canonical r3
-	// §11). Deny is validated, not enforced. Narrowing BOTH to READ ends the
+	// grants, and the union of the values recorded inside it
+	// (../openstate/README.md#downgrades). Deny is validated, not enforced.
+	// Narrowing BOTH to READ ends the
 	// open's writer as CLOSE would; narrowing BOTH to WRITE drops READ and
 	// keeps the writer.
 	g := openstate.Grant{Access: args.ShareAccess() &^ nfs4.OPEN4_SHARE_ACCESS_WANT_DELEG_MASK, Deny: args.ShareDeny()}
@@ -518,9 +519,11 @@ func (s *Server) releaseWrite(openStateid nfs4.Stateid4, st *compoundState, clos
 	return state, nfs4.NFS4_OK
 }
 
-// failForReaders marks a staging failed, when opens other than the closing
-// one read it, before a failed CLOSE discards it: its readers then get IO,
-// never the old bytes or NOENT (canonical r3 §11).
+// failForReaders quarantines a staging, when opens other than the closing
+// one read it, before a failed CLOSE would discard it: its files are kept,
+// the entry stays failed, and the CLOSE's later discard leaves it alone. Its
+// readers then get IO, never the old bytes or NOENT
+// (../openstate/README.md#reader-visibility).
 func (s *Server) failForReaders(dataID vfs.InodeID, closing nfs4.StateID) {
 	if !s.opens.Readers(dataID, closing) {
 		return
@@ -609,13 +612,8 @@ func (s *Server) adoptRecovered(st *compoundState, stateid nfs4.Stateid4, g open
 
 // adoptRecoveredWriter installs a recovered writer, presented by its old
 // stateid on the handle the client holds, as a live open of this process at
-// the generation the client is using. After an nfsd restart the Linux
-// client learns nothing of the restart while its session survives: it keeps
-// writing and committing with the stateid it has. Without this, COMMIT
-// found no writer for the handle, synced nothing, and answered with this
-// process's verifier, which matched the writes it had just taken; the
-// client dropped its pages, nothing was checkpointed, and the next restart
-// lost the data. The caller holds no staging or file lock.
+// the generation the client is using (README.md#writer-recovery-mechanics).
+// The caller holds no staging or file lock.
 //
 // live reports that a live open answers for the stateid: the one adopted
 // here, or one another request adopted after the caller's own lookup, whose
@@ -803,7 +801,8 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 	var openDir vfs.InodeID
 	var openName string
 	// A writable CLAIM_FH this nfsd cannot name may recover a staged writer
-	// (canonical r3 §6): the preselected staging, which the pathname lock
+	// (README.md#writer-recovery-mechanics): the preselected staging, which the
+	// pathname lock
 	// must confirm.
 	var recovering bool
 	var recoverID vfs.InodeID
@@ -1120,7 +1119,7 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 	unlockOpen := s.opens.LockFile(publishedID)
 	if !staged && !created && access&nfs4.OPEN4_SHARE_ACCESS_WRITE == 0 {
 		// A writer's CLOSE may have ended the staging this read selected
-		// while it waited for the file (canonical r3 §11).
+		// while it waited for the file (../openstate/README.md#reader-visibility).
 		targetID = s.readSource(clientID, publishedID)
 	}
 	if !staged && claimType == nfs4.CLAIM_NULL && openDir != 0 && retries < 3 {

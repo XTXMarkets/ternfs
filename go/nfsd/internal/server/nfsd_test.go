@@ -7595,7 +7595,8 @@ func TestRecoveredStagedWriteWithDeadLeaseExpires(t *testing.T) {
 			rw.SetCount(1)
 		})
 	// With its lease dead the client registers a new incarnation, whose
-	// session the old stateid does not belong to (canonical r3 §10). The
+	// session the old stateid does not belong to
+	// (../openstate/README.md#stateid-scope). The
 	// predecessor's staging is retired by its expiry, not by the READ.
 	if res.Status() != nfs4.NFS4ERR_BAD_STATEID {
 		t.Fatalf("recovered READ with dead lease = %s, want BAD_STATEID",
@@ -7815,7 +7816,7 @@ func TestSetclientidRebootRetiresStagingFiles(t *testing.T) {
 		t.Fatalf("client reboot lost recoverable staging: %v", entries)
 	}
 	// The rebooted client is a new incarnation: its predecessor's stateid
-	// is not its own (canonical r3 §10).
+	// is not its own (../openstate/README.md#stateid-scope).
 	if status := closeFileStatus(
 		t, conn, &xid, fh, stateid); status != nfs4.NFS4ERR_BAD_STATEID {
 		t.Fatalf("CLOSE after reboot = %s, want NFS4ERR_BAD_STATEID",
@@ -7988,7 +7989,7 @@ func TestSetclientidReboot(t *testing.T) {
 
 	// The test client recovers like Linux: it registers again and uses a
 	// session for the new incarnation. Old stateids are then another
-	// incarnation's and report BAD_STATEID (canonical r3 §10).
+	// incarnation's and report BAD_STATEID (../openstate/README.md#stateid-scope).
 	t.Run("state operations", func(t *testing.T) {
 		res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
 			pw := w.AppendArgarray_Putfh()

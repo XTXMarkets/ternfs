@@ -37,7 +37,10 @@ type clientGroup struct {
 
 	// Request holds. SEQUENCE takes a provisional hold before it can fail.
 	// An admitted request, a replay included, holds an active one until its
-	// reply is written or its connection fails. These are independent of
+	// worker finishes: after the compound has executed and its reply has
+	// been written, or skipped because the connection had closed. A
+	// connection failure alone does not end the hold of a request still
+	// executing (README.md#lease-gate). These are independent of
 	// session.users, which also counts store membership and ends before the
 	// reply is sent.
 	provisional, active int
@@ -45,7 +48,7 @@ type clientGroup struct {
 	creating int
 	state    groupState
 
-	// The logical lease gate (canonical r3 §8). quietUntil is extended when
+	// The logical lease gate (README.md#lease-gate). quietUntil is extended when
 	// an active hold ends; while it is in the future, or any hold exists,
 	// this process never expires the client. lease is checking while
 	// decideExpired observes, and expired once it has decided.
@@ -144,7 +147,7 @@ func (ss *sessionStore) hasSessions(incarnation uint64) bool {
 }
 
 // leaseNeed is the refresher's need condition for an incarnation: an active
-// request, or a quiet period still running (canonical r3 §9.1).
+// request, or a quiet period still running (../clientstore/README.md#refresher).
 func (ss *sessionStore) leaseNeed(incarnation uint64) bool {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()

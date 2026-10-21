@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+// Package openstate is the process-local NFSv4.1 open state: stateids,
+// opens, tombstones and client views. README.md describes its rules.
 package openstate
 
 import (
@@ -42,7 +44,7 @@ type Store struct {
 	states  map[nfs4.StateID]*State
 	byFile  map[openFileKey]*State
 	// expired maps an expired stateid's tombstone to its owner incarnation,
-	// so only the owner sees EXPIRED or may free it (canonical r3 §10).
+	// so only the owner sees EXPIRED or may free it (README.md#stateid-scope).
 	expired map[nfs4.StateID]uint64
 	// expiredIDs bounds expired.
 	expiredIDs []nfs4.StateID
@@ -402,8 +404,8 @@ func (os *Store) Expire(id nfs4.StateID) {
 }
 
 // Retarget points the opens whose I/O uses stagingID, a staging a clean or
-// timestamp-only CLOSE is discarding, back to their own fileID (canonical
-// r3 §11). The caller holds LockFile.
+// timestamp-only CLOSE is discarding, back to their own fileID
+// (README.md#reader-visibility). The caller holds LockFile.
 func (os *Store) Retarget(stagingID vfs.InodeID) {
 	os.mu.Lock()
 	defer os.mu.Unlock()

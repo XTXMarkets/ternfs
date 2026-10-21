@@ -27,7 +27,8 @@ import (
 )
 
 // This file implements the read-only store report that /v1/store serves
-// over the persistent client store described in README.md. It reads the
+// over the persistent client store described in README.md#layout; its
+// meaning for users is in ../../inspect/README.md#the-store-report. It reads the
 // same records with the same rules as the nfsd fleet, but never writes: it
 // does not create the expired marker, remove collectable slots or age GC
 // candidates.
@@ -73,8 +74,10 @@ type inspectReport struct {
 	StagingDir     string                 `json:"staging_dir,omitempty"`
 	StagingSummary *inspectStagingSummary `json:"staging_summary,omitempty"`
 	Staging        []*inspectStagingEntry `json:"staging,omitempty"`
-	// Quarantined names the files nfsd moved aside because their metadata
-	// sidecar could not be decoded, relative to StagingDir.
+	// Quarantined names the files nfsd moved under quarantine/, relative to
+	// StagingDir: at startup those whose sidecar would not decode, was
+	// guarded, or was both unlinked and retired; at run time failed
+	// writers (../staging/README.md#startup-recovery-and-quarantine).
 	Quarantined []string `json:"quarantined,omitempty"`
 	// Problems are defects in the store or the staging directory, counted in
 	// Summary.Problems.
@@ -217,7 +220,8 @@ type inspectStagingEntry struct {
 	FileName       string     `json:"file_name,omitempty"`
 	Cookie         string     `json:"cookie,omitempty"`
 	// RecoveryKey is the client identity, boot verifier and principal which
-	// must match for a rebooted client to reclaim this data.
+	// must match for the same client boot to reclaim this data after its
+	// incarnation expired (README.md#registration).
 	RecoveryKey string `json:"recovery_key,omitempty"`
 	StateID     string `json:"stateid,omitempty"`
 	Incarnation string `json:"incarnation,omitempty"`
@@ -227,7 +231,7 @@ type inspectStagingEntry struct {
 	OwnerKnown   bool   `json:"owner_known"`
 	ReadOnly     bool   `json:"read_only"`
 	// Retired marks data kept after the owning lease expired, so that the
-	// client can reclaim it after a reboot.
+	// same client boot can reclaim it.
 	Retired  bool `json:"retired"`
 	Unlinked bool `json:"unlinked"`
 	Guarded  bool `json:"guarded"`

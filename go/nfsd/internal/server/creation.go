@@ -110,7 +110,7 @@ func (cr *creation) finish() {
 			"incarnation", incarnationText(created.clientID),
 			"session", sessionText(created.id))
 		// The first durable publication: until it, SEQUENCE gets DELAY
-		// (canonical r3 §9.1). The worker writes it; the reply waits a
+		// (../clientstore/README.md#bootstrap). The worker writes it; the reply waits a
 		// bounded time for it, so a client's first SEQUENCE normally finds
 		// it published. Clients such as libnfs treat a DELAY there as a
 		// mount failure.

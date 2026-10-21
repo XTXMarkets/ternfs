@@ -360,8 +360,8 @@ func TestConfirmationProtectsDestructivePaths(t *testing.T) {
 		t.Fatal("expired marker published for P")
 	}
 	// A lease reader finds P's lease dead but writes no marker: only
-	// decideExpired publishes one, and the sweep above refused (canonical
-	// r3 §8).
+	// decideExpired publishes one, and the sweep above refused
+	// (README.md#expiry-decision).
 	if expired, err := srv.clients.IsLeaseExpired(f.p); err != nil || !expired || f.present(t, vfs.InodeID(f.p), clientstore.ExpiredName) {
 		t.Fatalf("P's lease read %t %v, want dead with no marker", expired, err)
 	}
