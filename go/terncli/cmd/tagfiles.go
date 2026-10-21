@@ -5,6 +5,7 @@
 package cmd
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"github.com/XTXMarkets/ternfs/go/client"
@@ -261,10 +262,11 @@ func runTagFiles(l *log.Logger, c *client.Client, p *tagFilesParams) error {
 		return nil
 	}
 
-	walkErr := client.ParwalkMany(
-		l,
-		c,
-		&client.ParwalkOptions{WorkersPerShard: p.workersPerShard},
+	pool := client.NewParwalkPool(l, c, p.workersPerShard)
+	defer pool.Close()
+	walkErr := pool.WalkMany(
+		context.Background(),
+		&client.ParwalkOptions{},
 		p.roots,
 		cb,
 	)
