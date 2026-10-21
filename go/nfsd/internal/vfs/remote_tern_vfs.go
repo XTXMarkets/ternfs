@@ -523,7 +523,17 @@ func (t *RemoteTernVFS) ClassifyMutation(op uint32, err error) MutationOutcome {
 	if op == nfs4.OP_REMOVE && (errors.Is(err, msgs.EDGE_NOT_FOUND) || errors.Is(err, msgs.MISMATCHING_CREATION_TIME)) {
 		return MutationDetachOnly
 	}
-	// A rejection can arrive after another retransmitted copy applies.
-	// Without whole-call outcome evidence, it cannot prove non-application.
+	// DIRECTORY_NOT_EMPTY says the directory named by the request still
+	// has an owner and current edges, so no copy of the request removed
+	// or replaced it: the shard answers a retransmission of an applied
+	// removal with success (the owner is already gone), never with this.
+	// Every rm -r over NFS produces one when rmdir races the unlinks, and
+	// an unknown outcome here retired the session each time (work-c67t).
+	if errors.Is(err, msgs.DIRECTORY_NOT_EMPTY) {
+		return MutationNotApplied
+	}
+	// Any other rejection can arrive after another retransmitted copy
+	// applies. Without whole-call outcome evidence, it cannot prove
+	// non-application.
 	return MutationUnknown
 }

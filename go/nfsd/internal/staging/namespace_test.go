@@ -176,10 +176,15 @@ func TestNamespaceMutationClassification(t *testing.T) {
 	for _, op := range []uint32{nfs4.OP_REMOVE, nfs4.OP_RENAME} {
 		for _, err := range []error{msgs.TIMEOUT, msgs.EDGE_IS_LOCKED, msgs.NAME_IS_LOCKED,
 			msgs.MALFORMED_RESPONSE, msgs.CANNOT_OVERRIDE_NAME, msgs.NOT_AUTHORISED,
-			msgs.DIRECTORY_NOT_EMPTY, errors.New("lost reply"), syscall.EEXIST} {
+			errors.New("lost reply"), syscall.EEXIST} {
 			if got := remote.ClassifyMutation(op, err); got != vfs.MutationUnknown {
 				t.Fatalf("remote classification of %v = %v", err, got)
 			}
+		}
+		// A non-empty directory is still there with its owner: nothing was
+		// applied, and the session must not be retired over it.
+		if got := remote.ClassifyMutation(op, msgs.DIRECTORY_NOT_EMPTY); got != vfs.MutationNotApplied {
+			t.Fatalf("remote classification of DIRECTORY_NOT_EMPTY = %v, want not applied", got)
 		}
 		for _, err := range []error{msgs.EDGE_NOT_FOUND, msgs.MISMATCHING_CREATION_TIME} {
 			want := vfs.MutationUnknown

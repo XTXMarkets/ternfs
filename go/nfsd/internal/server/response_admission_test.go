@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
@@ -459,6 +460,28 @@ func TestResponseAdmissionUnknownNamespaceEffect(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A REMOVE the backend rejects with DIRECTORY_NOT_EMPTY is a known
+// non-application: the session stays, and the next request on the slot is
+// served. Every rm -r over NFS produces one of these (work-c67t).
+func TestResponseAdmissionNotEmptyRemoveKeepsSession(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "victim"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	fs := &namespaceFaultVFS{TernVFS: vfs.NewLocalTernVFS(root), err: msgs.DIRECTORY_NOT_EMPTY, remote: true}
+	srv := admissionWritableServer(t, fs)
+	ts := connectionSession(t, srv)
+	wire := admissionSequence(buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) { w.AppendArgarray_Putrootfh(); admissionRemove(w, "victim") }), ts, 0, 1, false)
+	_, res := admissionRequest(t, srv, wire, 1, nil)
+	admissionStatus(t, res, nfs4.NFS4ERR_NOTEMPTY, nfs4.OP_SEQUENCE, nfs4.OP_PUTROOTFH, nfs4.OP_REMOVE)
+	if _, err := os.Stat(filepath.Join(root, "victim")); err != nil {
+		t.Fatalf("rejected REMOVE changed the namespace: %v", err)
+	}
+	next := admissionSequence(buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) { w.AppendArgarray_Putrootfh() }), ts, 0, 2, false)
+	_, res = admissionRequest(t, srv, next, 2, nil)
+	admissionStatus(t, res, nfs4.NFS4_OK, nfs4.OP_SEQUENCE, nfs4.OP_PUTROOTFH)
 }
 
 func TestResponseAdmissionSetattrBudgetErrorCompleteXDR(t *testing.T) {
