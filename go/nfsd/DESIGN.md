@@ -68,8 +68,9 @@ handle, even when I/O uses staging or another published version.
 
 An open records both its handle inode and its data inode. Real-stateid
 operations use the open's data inode. GETATTR, VERIFY and special-stateid
-READ use the client's view of the handle instead: its writer, then a recent
-publication alias, then its latest open, then the handle itself. COMMIT has
+READ use the client's view of the handle instead: its writer, live or
+recovered, then a recent publication alias, then its latest open, then the
+handle itself. COMMIT has
 no stateid either, but does not use the view. It syncs the handle, every
 staging the client wrote through it, from a separate writer index, and
 after a restart the client's recovered writers of the handle. The view,

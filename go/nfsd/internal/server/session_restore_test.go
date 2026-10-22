@@ -925,6 +925,81 @@ func TestRestartWriteAdoptsRecoveredWriter(t *testing.T) {
 	}
 }
 
+// The read-back of an in-place edit, opened across a restart. The edit's
+// CLOSE was in flight when nfsd died; after the restart the client's read
+// OPEN of the name reached nfsd before the CLOSE's retransmission, and its
+// READ returned the version before the edit (QA soak of 2026-10-21, a
+// nfsfault read-back mismatch): clientView knew live opens and aliases,
+// not the writers recovered from the staging disk. A client's recovered
+// writer is its view of the handle, as a live writer is, until the
+// recovered CLOSE publishes it; the read open then follows the
+// publication, as it does when a live writer's CLOSE removes the staging.
+func TestRestartReadOpenSeesRecoveredWriter(t *testing.T) {
+	for _, readerFirst := range []bool{false, true} {
+		name := "reader closes after the recovered CLOSE"
+		if readerFirst {
+			name = "reader closes before the recovered CLOSE"
+		}
+		t.Run(name, func(t *testing.T) {
+			f := newReplayFixture(t)
+			writeRoot(t, f.root, "doc", "version one")
+			state, fh := openWriteFile(t, f.conn, &f.xid, f.wire, "doc")
+			writeFileAt(t, f.conn, &f.xid, fh, state, 0, []byte("version two"))
+			f.restart()
+			readState, readFH := openReadFile(t, f.conn, &f.xid, f.wire, "doc")
+			readAt := func(sid [16]byte) string {
+				res := sendCompound(t, f.conn, f.xid, func(w *nfs4.COMPOUND4argsWriter) {
+					pw := w.AppendArgarray_Putfh()
+					pw.Resume(pw.StartObject().SetData(readFH).Finish())
+					w.Resume(pw.Finish())
+					rw := w.AppendArgarray_Read()
+					setStateid(rw.Stateid(), sid)
+					rw.SetOffset(0)
+					rw.SetCount(64)
+				})
+				f.xid++
+				iter := expectOK(t, res)
+				nextOp(t, &iter) // PUTFH
+				readRes := nextOp(t, &iter).Value().AsREAD4resEntry()
+				if readRes.Disc() != nfs4.NFS4_OK {
+					t.Fatalf("READ %s", nfs4.Nfsstat4Name(readRes.Disc()))
+				}
+				return string(readRes.Value().AsREAD4resok().Data())
+			}
+			if got := readAt(readState); got != "version two" {
+				t.Fatalf("read open before the recovered CLOSE reads %q, want the edit", got)
+			}
+			if got := readAt([16]byte{}); got != "version two" {
+				t.Fatalf("anonymous READ before the recovered CLOSE reads %q, want the edit", got)
+			}
+			if readerFirst {
+				// The reader's CLOSE leaves the staging it read to its writer.
+				closeFile(t, f.conn, &f.xid, readFH, readState)
+				if n := len(f.store.Entries()); n != 1 {
+					t.Fatalf("%d staging entries after the reader's CLOSE, want the recovered writer's", n)
+				}
+				if got, ok := readRoot(t, f.root, "doc"); !ok || got != "version one" {
+					t.Fatalf("the reader's CLOSE published %q", got)
+				}
+			}
+			// The CLOSE the client retransmits after the restart: a recovered close.
+			closeFile(t, f.conn, &f.xid, fh, state)
+			if got, ok := readRoot(t, f.root, "doc"); !ok || got != "version two" {
+				t.Fatalf("published %q %v", got, ok)
+			}
+			if !readerFirst {
+				if got := readAt(readState); got != "version two" {
+					t.Fatalf("read open after the recovered CLOSE reads %q, want the publication", got)
+				}
+				closeFile(t, f.conn, &f.xid, readFH, readState)
+			}
+			if n := len(f.store.Entries()); n != 0 {
+				t.Fatalf("%d staging entries left", n)
+			}
+		})
+	}
+}
+
 // stateidOf builds a wire stateid from a test's 16-byte form.
 func stateidOf(stateid [16]byte) nfs4.Stateid4 {
 	_, sid := nfs4.StartStateid4(nil)

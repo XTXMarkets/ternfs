@@ -96,4 +96,7 @@ type Store interface {
 	// StagedSize returns the staged size for the given inode.
 	// Returns (0, false) if the inode has no staging file.
 	StagedSize(id vfs.InodeID) (uint64, bool)
+	// RecoveredWriters lists the entries recovered at startup that a client
+	// may hold through handleID: the entry itself, or a replacement of it.
+	RecoveredWriters(handleID vfs.InodeID) []vfs.InodeID
 }

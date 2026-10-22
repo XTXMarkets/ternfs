@@ -358,8 +358,11 @@ func (s *Server) releaseWrite(openStateid nfs4.Stateid4, st *compoundState, clos
 			}
 		}
 	}
+	// A read open reads a staging it does not own: its client's writer of
+	// the file, live or recovered from the staging disk. Only a writer's
+	// CLOSE disposes of the staging.
 	ownsStaging := hasMeta && (recovered ||
-		state.Owner.ClientID == meta.ClientID &&
+		state.Writes() && state.Owner.ClientID == meta.ClientID &&
 			(sid == meta.NFSStateID || state.DataID == dataID))
 	if !ownsStaging {
 		hasMeta = false
@@ -670,13 +673,12 @@ func (s *Server) adoptRecoveredWriter(clientID uint64, handleID, dataID vfs.Inod
 // own inode. COMMIT carries no stateid, so it finds them here.
 func (s *Server) recoveredWritersOf(clientID uint64, handleID vfs.InodeID) []vfs.InodeID {
 	var ids []vfs.InodeID
-	for id, meta := range s.stagingStore.Entries() {
-		if meta.ClientID != clientID || meta.ReadOnly || !s.opens.CanRecover(meta.NFSStateID) {
+	for _, id := range s.stagingStore.RecoveredWriters(handleID) {
+		meta, ok := s.stagingStore.GetMeta(id)
+		if !ok || meta.ClientID != clientID || meta.ReadOnly || !s.opens.CanRecover(meta.NFSStateID) {
 			continue
 		}
-		if id == handleID || meta.BaseID == handleID {
-			ids = append(ids, id)
-		}
+		ids = append(ids, id)
 	}
 	return ids
 }

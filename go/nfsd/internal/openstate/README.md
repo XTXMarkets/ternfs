@@ -112,8 +112,10 @@ These rules decide what a read open of a handle sees when the same client
 also writes it. The server applies them under the file lock.
 
 - A read OPEN takes the client's [view](#client-views) of the handle. When
-  the client has a writer, that is the writer's staging, so the client
-  reads its own writes. The source is chosen again once the file lock is
+  the client has a writer, live or recovered from the staging disk, that is
+  the writer's staging, so the client reads its own writes; the read open
+  never owns that staging, and its CLOSE leaves it to the writer. The
+  source is chosen again once the file lock is
   held, since a writer's CLOSE may have ended that staging meanwhile. A
   failed staging, or a published version that no longer exists, falls back
   to the handle.
@@ -139,10 +141,17 @@ writer downgraded to READ keeps its marker.
 Operations without a usable stateid, such as GETATTR, VERIFY and READ with a
 special stateid, use the client's view of a handle. The view is, in order:
 
-1. the staging of the client's most recent write open of the handle;
+1. the staging of the client's most recent write open of the handle, or a
+   writer of its own that the restarted process recovered from the staging
+   disk and no request has adopted yet;
 2. the client's publication alias for the handle;
 3. the data inode of the client's most recent open of it;
 4. the handle itself.
+
+The recovered writer counts because after a restart the client's in-flight
+CLOSE is retransmitted some time after its first requests reach the new
+process, and a read open of the name in that window would otherwise see
+the version before the edit.
 
 COMMIT has no stateid either. It uses a separate writer index: the staging
 each client wrote through each handle, at most eight per handle and 1024

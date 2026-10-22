@@ -31,6 +31,19 @@ func (s *Server) clientView(clientID uint64, fileID vfs.InodeID) vfs.InodeID {
 			return state.DataID
 		}
 	}
+	// After a restart the client's writer of the handle is on the staging
+	// disk until a request adopts it or its CLOSE's retransmission publishes
+	// it. It is the client's view meanwhile, as a live writer is: a read
+	// OPEN of the name in that window saw the version before the edit
+	// (QA soak 2026-10-21). Several are rare, since a client's opens of a
+	// file share one staging; the newest inode is the latest edit.
+	var recovered vfs.InodeID
+	for _, id := range s.recoveredWritersOf(clientID, fileID) {
+		recovered = max(recovered, id)
+	}
+	if recovered != 0 {
+		return recovered
+	}
 	if dataID, ok := s.views.Get(openstate.ViewKey{ClientID: clientID, FileID: fileID}); ok {
 		return dataID
 	}
