@@ -115,8 +115,8 @@ separate_arguments(
 )
 ExternalProject_Add(make_rocksdb
     DOWNLOAD_DIR ${THIRDPARTY_DOWNLOAD_DIR}
-    URL https://github.com/facebook/rocksdb/archive/refs/tags/v7.9.2.tar.gz
-    URL_HASH SHA256=886378093098a1b2521b824782db7f7dd86224c232cf9652fcaf88222420b292
+    URL https://github.com/facebook/rocksdb/archive/refs/tags/v10.10.1.tar.gz
+    URL_HASH SHA256=df2ff348f3fac8578fd4b727eee7267aaf90cd403c99b55e898d1db63fa8cff5
     DOWNLOAD_NAME rocksdb.tar.gz
     PREFIX thirdparty/rocksdb
     UPDATE_COMMAND ""
