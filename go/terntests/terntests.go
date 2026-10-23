@@ -1528,7 +1528,9 @@ func main() {
 	// Start shards
 	numShards := 256
 	for i := 0; i < numShards; i++ {
-		for r := uint8(0); r < replicaCount; r++ {
+		// Start followers first; their registry fetches may run before the leader registers.
+		for replicaOffset := uint8(1); replicaOffset <= replicaCount; replicaOffset++ {
+			r := replicaOffset % replicaCount
 			shrid := msgs.MakeShardReplicaId(msgs.ShardId(i), msgs.ReplicaId(r))
 			noWritableDelay := time.Duration(0)
 			shopts := managedprocess.ShardOpts{
@@ -1545,6 +1547,7 @@ func main() {
 				TransientDeadlineInterval: &testTransientDeadlineInterval,
 				BlockServiceWritableDelay: &noWritableDelay,
 				LogsDBFlags:               nil,
+				ReplicaAnnouncements:      true,
 			}
 			if r == 0 {
 				if *leaderOnly {
