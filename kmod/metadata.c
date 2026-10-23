@@ -249,7 +249,7 @@ int ternfs_shard_readdir(struct ternfs_fs_info* info, u64 dir, u64 start_pos, vo
             if (likely(ctx.err == 0)) {
                 int err = ternfs_dir_readdir_entry_cb(data, name_hash.x, name.str.buf, name.str.len, creation_time.x, target_id.x);
                 if (err) {
-                    consume_skb(skb);
+                    finish_resp(skb, kind, &ctx);
                     return err;
                 }
             }
@@ -327,8 +327,7 @@ static bool check_deleted_edge(
         }
         ternfs_full_read_dir_resp_get_end(&ctx, results_len, end);
         ternfs_full_read_dir_resp_get_finish(&ctx, end);
-        consume_skb(skb);
-        if (ctx.err != 0) { return false; }
+        if (finish_resp(skb, kind, &ctx) != 0) { return false; }
     }
 
     return good;
@@ -385,8 +384,7 @@ static bool check_new_edge_after_rename(
         }
         ternfs_full_read_dir_resp_get_end(&ctx, results_len, end);
         ternfs_full_read_dir_resp_get_finish(&ctx, end);
-        consume_skb(skb);
-        if (ctx.err != 0) { return false; }
+        if (finish_resp(skb, kind, &ctx) != 0) { return false; }
     }
     return good;
 }
@@ -901,7 +899,7 @@ int ternfs_shard_add_span_initiate(
         ternfs_add_span_initiate_resp_get_start(&ctx, start);
         ternfs_add_span_initiate_resp_get_blocks(&ctx, start, blocks);
         if (unlikely(ctx.err == 0 && blocks.len != B)) {
-            consume_skb(skb);
+            finish_resp(skb, kind, &ctx);
             ternfs_warn("expected %d blocks, got %d", B, blocks.len);
             return TERNFS_ERR_MALFORMED_RESPONSE;
         }
@@ -936,11 +934,7 @@ int ternfs_shard_add_span_initiate(
         }
         ternfs_add_span_initiate_resp_get_end(&ctx, blocks, end);
         ternfs_add_span_initiate_resp_get_finish(&ctx, end);
-        consume_skb(skb);
-        if (unlikely(ctx.err != 0)) {
-            ternfs_debug("resp of kind %02x failed with err %d", kind, ctx.err);
-            return ctx.err;
-        }
+        FINISH_RESP();
     }
 
     return 0;
