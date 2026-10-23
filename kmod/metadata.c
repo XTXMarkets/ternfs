@@ -333,7 +333,9 @@ static bool check_deleted_edge(
     return good;
 }
 
-static bool check_new_edge_after_rename(
+// Return true if there is a recent edge from dir/name to target (even if that has since been replaced)
+// Limited to one page of current and historical edges within rename_idempotency_window of the current time.
+static bool check_new_edge(
     struct ternfs_fs_info* info, u64 dir, u64 target, const char* name, int name_len, u64* creation_time
 ) {
     int i;
@@ -515,7 +517,7 @@ int ternfs_shard_rename(
             // See commentary in shardreq.go
             if (
                 check_deleted_edge(info, dir, target, old_name, old_name_len, old_creation_time, false) &&
-                check_new_edge_after_rename(info, dir, target, new_name, new_name_len, new_creation_time)
+                check_new_edge(info, dir, target, new_name, new_name_len, new_creation_time)
             ) {
                 recovered = true;
                 ctx.err = 0;
@@ -523,7 +525,7 @@ int ternfs_shard_rename(
         }
         FINISH_RESP();
 
-        if (!recovered) { // otherwise it's set by `check_new_edge_after_rename`
+        if (!recovered) { // otherwise it's set by `check_new_edge`
             *new_creation_time = resp_new_creation_time.x;
         }
     }
@@ -554,8 +556,19 @@ int ternfs_shard_link_file(struct ternfs_fs_info* info, u64 file, u64 cookie, u6
         ternfs_link_file_resp_get_creation_time(&ctx, start, resp_creation_time);
         ternfs_link_file_resp_get_end(&ctx, resp_creation_time, end);
         ternfs_link_file_resp_get_finish(&ctx, end);
+        bool recovered = false;
+        if (ctx.err == TERNFS_ERR_FILE_NOT_FOUND) {
+            ternfs_debug("got file not found, performing followup checks");
+            // Return success if the link previously succeeded
+            if (check_new_edge(info, dir, file, name, name_len, creation_time)) {
+                recovered = true;
+                ctx.err = 0;
+            }
+        }
         FINISH_RESP();
-        *creation_time = resp_creation_time.x;
+        if (!recovered) { // otherwise it's set by `check_new_edge`
+            *creation_time = resp_creation_time.x;
+        }
     }
 
     return 0;
@@ -1280,7 +1293,7 @@ int ternfs_cdc_rename_directory(
             // See commentary in shardreq.go
             if (
                 check_deleted_edge(info, old_parent, target, old_name, old_name_len, old_creation_time, false) &&
-                check_new_edge_after_rename(info, new_parent, target, new_name, new_name_len, new_creation_time)
+                check_new_edge(info, new_parent, target, new_name, new_name_len, new_creation_time)
             ) {
                 recovered = true;
                 ctx.err = 0;
@@ -1331,7 +1344,7 @@ int ternfs_cdc_rename_file(
             // See commentary in shardreq.go
             if (
                 check_deleted_edge(info, old_parent, target, old_name, old_name_len, old_creation_time, false) &&
-                check_new_edge_after_rename(info, new_parent, target, new_name, new_name_len, new_creation_time)
+                check_new_edge(info, new_parent, target, new_name, new_name_len, new_creation_time)
             ) {
                 recovered = true;
                 ctx.err = 0;
