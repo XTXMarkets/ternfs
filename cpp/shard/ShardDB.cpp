@@ -1638,6 +1638,204 @@ struct ShardDBImpl {
         return TernError::NO_ERROR;
     }
 
+    static bool _isDecommissioned(const BlockServicesCache& cache, BlockServiceId blockServiceId) {
+        auto it = cache.blockServices.find(blockServiceId.u64);
+        return it != cache.blockServices.end() && (it->second.flags & BlockServiceFlags::DECOMMISSIONED) != BlockServiceFlags::EMPTY;
+    }
+
+    // Fetches the span the caller named, which must have blocks.
+    TernError _getReplaceSpan(
+        const rocksdb::ReadOptions& options, InodeId fileId, uint64_t byteOffset,
+        std::string& spanValue, ExternalValue<SpanBody>& span
+    ) {
+        if (fileId.type() != InodeType::FILE && fileId.type() != InodeType::SYMLINK) {
+            return TernError::TYPE_IS_DIRECTORY;
+        }
+
+        // Validate the span
+        StaticValue<SpanKey> key;
+        key().setFileId(fileId);
+        key().setOffset(byteOffset);
+        auto status = _db->Get(options, _spansCf, key.toSlice(), &spanValue);
+        if (status.IsNotFound()) {
+            return TernError::SPAN_NOT_FOUND;
+        }
+        ROCKS_DB_CHECKED(status);
+        span = ExternalValue<SpanBody>(spanValue);
+        if (span().isInlineStorage()) {
+            // TODO: Better error
+            return TernError::SPAN_NOT_FOUND;
+        }
+        return TernError::NO_ERROR;
+    }
+
+    // Checks that nobody else is working on the span, so a block in it can be
+    // replaced: the file exists, and the span isn't a transient file's last span
+    // while a writer or GC owns it.
+    TernError _checkReplaceTarget(
+        const rocksdb::ReadOptions& options, TernTime time, InodeId fileId,
+        uint64_t byteOffset, const ExternalValue<SpanBody>& span
+    ) {
+        std::string fileValue;
+        ExternalValue<FileBody> file;
+        auto err = _getFile(options, fileId, fileValue, file);
+        if (err == TernError::FILE_NOT_FOUND) {
+            ExternalValue<TransientFileBody> transient;
+            err = _getTransientFile(options, time, true, fileId, fileValue, transient);
+            if (err != TernError::NO_ERROR) {
+                return err;
+            }
+            // A transient file might still have a writer or GC working on it's last span
+            if (byteOffset + span().spanSize() == transient().fileSize()) {
+                auto state = transient().lastSpanState();
+                // DIRTY is allowed only after the writer's deadline
+                // GC maybe working on COMDEMNED already
+                if (state == SpanState::CONDEMNED || (state == SpanState::DIRTY && time <= transient().deadline())) {
+                    return TernError::SPAN_NOT_FOUND;
+                }
+            }
+        } else if (err != TernError::NO_ERROR) {
+            return err;
+        }
+        return TernError::NO_ERROR;
+    }
+
+    // Finds the location and position of a block within the span
+    static bool _findSpanBlock(const SpanBody& span, uint64_t blockId, uint8_t& locIx, uint8_t& blockIx) {
+        for (locIx = 0; locIx < span.locationCount(); ++locIx) {
+            auto blocks = span.blocksBodyReadOnly(locIx);
+            for (blockIx = 0; blockIx < blocks.parity().blocks(); ++blockIx) {
+                if (blocks.block(blockIx).blockId() == blockId) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    // Checks that the block the caller wants to replace is still where the caller
+    // says, in a span nobody else is working on. Returns the block's position in
+    // the span, which prepare and apply both use.
+    TernError _getReplaceBlock(
+        const rocksdb::ReadOptions& options, TernTime time, InodeId fileId,
+        uint64_t byteOffset, uint64_t blockId, std::string& spanValue,
+        ExternalValue<SpanBody>& span, uint8_t& locIx, uint8_t& blockIx
+    ) {
+        auto err = _getReplaceSpan(options, fileId, byteOffset, spanValue, span);
+        if (err != TernError::NO_ERROR) {
+            return err;
+        }
+        err = _checkReplaceTarget(options, time, fileId, byteOffset, span);
+        if (err != TernError::NO_ERROR) {
+            return err;
+        }
+        return _findSpanBlock(span(), blockId, locIx, blockIx) ? TernError::NO_ERROR : TernError::BLOCK_NOT_FOUND;
+    }
+
+    // The old block is gone from the span and the new one is in it: the
+    // replacement this request asks for is done, most likely by this same request
+    // before its reply was lost. This says nothing about how the new block got
+    // there, so the write proof still has to be checked.
+    static bool _replaceBlockPlaced(const SpanBody& span, uint64_t oldBlockId, uint64_t newBlockId, uint8_t& locIx, uint8_t& blockIx) {
+        return !_findSpanBlock(span, oldBlockId, locIx, blockIx) && _findSpanBlock(span, newBlockId, locIx, blockIx);
+    }
+
+    // Decides where the replacement for one block will go.
+    TernError _prepareReplaceBlockInitiate(
+        TernTime time, const rocksdb::ReadOptions& options,
+        const ReplaceBlockInitiateReq& req, ReplaceBlockInitiateEntry& entry
+    ) {
+        // Check that this shard owns the file and that the requested old block
+        // still occupies an eligible span.
+        if (req.fileId.shard() != _shid) {
+            return TernError::BAD_SHARD;
+        }
+        std::string spanValue;
+        ExternalValue<SpanBody> span;
+        uint8_t locIx, blockIx;
+        auto err = _getReplaceBlock(options, time, req.fileId, req.byteOffset, req.oldBlockId, spanValue, span, locIx, blockIx);
+        if (err != TernError::NO_ERROR) {
+            return err;
+        }
+        auto blocks = span().blocksBodyReadOnly(locIx);
+
+        // The destination must be a different block service and failure domain, so
+        // exclude all block services and failure domains already used by this span
+        std::vector<BlacklistEntry> blacklist;
+        {
+            auto cache = _blockServicesCache.getCache();
+            for (uint8_t i = 0; i < blocks.parity().blocks(); ++i) {
+                auto& excluded = blacklist.emplace_back();
+                excluded.blockService = blocks.block(i).blockService();
+                excluded.failureDomain.name.data = cache.blockServices.at(excluded.blockService.u64).failureDomain;
+            }
+        }
+
+        std::vector<BlockServiceId> picked;
+        err = _blockServicesCache.pickBlockServices(
+            blocks.location(), blocks.storageClass(), 1, blacklist, picked,
+            static_cast<uint64_t>(blocks.cellSize()) * blocks.stripes()
+        );
+        if (err != TernError::NO_ERROR) {
+            return err;
+        }
+        
+        entry.fileId = req.fileId;
+        entry.byteOffset = req.byteOffset;
+        entry.oldBlockId = req.oldBlockId;
+        entry.newBlockServiceId = picked[0];
+        entry.deadlineTime = time + _transientDeadlineInterval;
+        return TernError::NO_ERROR;
+    }
+
+    // Records that the block has moved
+    TernError _prepareReplaceBlockCertify(
+        TernTime time, const rocksdb::ReadOptions& options,
+        const ReplaceBlockCertifyReq& req, ReplaceBlockCertifyEntry& entry
+    ) {
+        if (req.fileId.shard() != _shid || req.holderId.shard() != _shid) {
+            return TernError::BAD_SHARD;
+        }
+        if (req.fileId == req.holderId) {
+            return TernError::SAME_SOURCE_AND_DESTINATION;
+        }
+        auto err = _checkTransientFileCookie(req.holderId, req.holderCookie.data);
+        if (err != TernError::NO_ERROR) {
+            return err;
+        }
+        
+        entry.fileId = req.fileId;
+        entry.byteOffset = req.byteOffset;
+        entry.oldBlockId = req.oldBlockId;
+        entry.holderId = req.holderId;
+        entry.newBlock = req.newBlock;
+        entry.discardOldBlock = false;
+
+        std::string spanValue;
+        ExternalValue<SpanBody> span;
+        err = _getReplaceSpan(options, req.fileId, req.byteOffset, spanValue, span);
+        if (err != TernError::NO_ERROR) {
+            return err;
+        }
+        uint8_t locIx, blockIx;
+        if (_replaceBlockPlaced(span(), req.oldBlockId, req.newBlock.blockId, locIx, blockIx)) {
+            // Apply only acknowledges this, so it doesn't matter whether GC has
+            // condemned the span since
+            return TernError::NO_ERROR;
+        }
+
+        // Check that the to-be-replaced block can still be replaced
+        err = _checkReplaceTarget(options, time, req.fileId, req.byteOffset, span);
+        if (err != TernError::NO_ERROR) {
+            return err;
+        }
+        if (!_findSpanBlock(span(), req.oldBlockId, locIx, blockIx)) {
+            return TernError::BLOCK_NOT_FOUND;
+        }
+        auto cache = _blockServicesCache.getCache();
+        entry.discardOldBlock = _isDecommissioned(cache, span().blocksBodyReadOnly(locIx).block(blockIx).blockService());
+        return TernError::NO_ERROR;
+    }
     TernError _prepareSwapSpans(TernTime time, const SwapSpansReq& req, SwapSpansEntry& entry) {
         if (req.fileId1.type() == InodeType::DIRECTORY || req.fileId2.type() == InodeType::DIRECTORY) {
             return TernError::TYPE_IS_DIRECTORY;
@@ -1822,6 +2020,12 @@ struct ShardDBImpl {
         case ShardMessageKind::SWAP_BLOCKS:
             err = _prepareSwapBlocks(time, req.getSwapBlocks(), logEntryBody.setSwapBlocks());
             break;
+        case ShardMessageKind::REPLACE_BLOCK_INITIATE:
+            err = _prepareReplaceBlockInitiate(time, options, req.getReplaceBlockInitiate(), logEntryBody.setReplaceBlockInitiate());
+            break;
+        case ShardMessageKind::REPLACE_BLOCK_CERTIFY:
+            err = _prepareReplaceBlockCertify(time, options, req.getReplaceBlockCertify(), logEntryBody.setReplaceBlockCertify());
+            break;
         case ShardMessageKind::MOVE_SPAN:
             err = _prepareMoveSpan(time, req.getMoveSpan(), logEntryBody.setMoveSpan());
             break;
@@ -1866,20 +2070,21 @@ struct ShardDBImpl {
         ROCKS_DB_CHECKED(batch.Put({}, shardMetadataKey(&LAST_APPLIED_ENTRY_TIME_KEY), t.toSlice()));
     }
 
+    InodeId _nextFileId(rocksdb::WriteBatch& batch, const ShardMetadataKey* key) {
+        std::string value;
+        ROCKS_DB_CHECKED(_db->Get({}, shardMetadataKey(key), &value));
+        ExternalValue<InodeIdValue> inodeId(value);
+        inodeId().setId(InodeId::FromU64(inodeId().id().u64 + 0x100));
+        ROCKS_DB_CHECKED(batch.Put(shardMetadataKey(key), inodeId.toSlice()));
+        return inodeId().id();
+    }
+
     TernError _applyConstructFile(rocksdb::WriteBatch& batch, TernTime time, const ConstructFileEntry& entry, ConstructFileResp& resp) {
-        const auto nextFileId = [this, &batch](const ShardMetadataKey* key) -> InodeId {
-            std::string value;
-            ROCKS_DB_CHECKED(_db->Get({}, shardMetadataKey(key), &value));
-            ExternalValue<InodeIdValue> inodeId(value);
-            inodeId().setId(InodeId::FromU64(inodeId().id().u64 + 0x100));
-            ROCKS_DB_CHECKED(batch.Put(shardMetadataKey(key), inodeId.toSlice()));
-            return inodeId().id();
-        };
         InodeId id;
         if (entry.type == (uint8_t)InodeType::FILE) {
-            id = nextFileId(&NEXT_FILE_ID_KEY);
+            id = _nextFileId(batch, &NEXT_FILE_ID_KEY);
         } else if (entry.type == (uint8_t)InodeType::SYMLINK) {
-            id = nextFileId(&NEXT_SYMLINK_ID_KEY);
+            id = _nextFileId(batch, &NEXT_SYMLINK_ID_KEY);
         } else {
             throw TERN_EXCEPTION("Bad type %s", (int)entry.type);
         }
@@ -3202,7 +3407,7 @@ struct ShardDBImpl {
         }
 
         // Fetch span state
-        auto state1 = _fetchSpanState(time, entry.fileId1, entry.byteOffset1 + sourceSpan().size());
+        auto state1 = _fetchSpanState(time, entry.fileId1, entry.byteOffset1 + sourceSpan().spanSize());
         if (state1 != SpanState::CLEAN) {
             return TernError::ADD_SPAN_LOCATION_NOT_CLEAN;
         }
@@ -3450,8 +3655,8 @@ struct ShardDBImpl {
         }
 
         // Fetch span state
-        auto state1 = _fetchSpanState(time, entry.fileId1, entry.byteOffset1 + span1().size());
-        auto state2 = _fetchSpanState(time, entry.fileId2, entry.byteOffset2 + span2().size());
+        auto state1 = _fetchSpanState(time, entry.fileId1, entry.byteOffset1 + span1().spanSize());
+        auto state2 = _fetchSpanState(time, entry.fileId2, entry.byteOffset2 + span2().spanSize());
         // We don't want to put not-certified blocks in clean spans, or similar
         if (state1 != state2) {
             return TernError::SWAP_BLOCKS_MISMATCHING_STATE;
@@ -3539,6 +3744,192 @@ struct ShardDBImpl {
         return TernError::NO_ERROR;
     }
 
+    TernError _applyReplaceBlockInitiate(
+        TernTime time, rocksdb::WriteBatch& batch,
+        const ReplaceBlockInitiateEntry& entry, ReplaceBlockInitiateResp& resp
+    ) {
+        std::string spanValue;
+        ExternalValue<SpanBody> span;
+        uint8_t locIx, blockIx;
+        auto err = _getReplaceBlock({}, time, entry.fileId, entry.byteOffset, entry.oldBlockId, spanValue, span, locIx, blockIx);
+        if (err != TernError::NO_ERROR) {
+            return err;
+        }
+        auto source = span().blocksBodyReadOnly(locIx);
+        uint32_t blockSize = source.cellSize()*source.stripes();
+        auto crc = source.block(blockIx).crc();
+
+        InodeId holderId = _nextFileId(batch, &NEXT_FILE_ID_KEY);
+        uint64_t nextBlockId = _getNextBlockId();
+
+        // The holder file owns one physical block 1+0, one-strip span
+        OwnedValue<SpanBody> holderSpan(LocationBlocksInfo(source.location(), source.storageClass(), Parity(1, 0), 1));
+        holderSpan().setSpanSize(blockSize);
+        holderSpan().setCrc(crc);
+        auto blocks = holderSpan().blocksBody(0);
+        blocks.setLocation(source.location());
+        blocks.setCellSize(blockSize);
+        blocks.setStripeCrc(0, crc);
+        auto block = blocks.block(0);
+        block.setBlockId(_updateNextBlockId(time, nextBlockId));
+        block.setBlockService(entry.newBlockServiceId);
+        block.setCrc(crc);
+        StaticValue<SpanKey> holderKey;
+        holderKey().setFileId(holderId);
+        holderKey().setOffset(0);
+
+        // Record the holder's span and its block-service reference. The target
+        // still owns the old block: initiation has not changed its contents.
+        ROCKS_DB_CHECKED(batch.Put(_spansCf, holderKey.toSlice(), holderSpan.toSlice()));
+        _addBlockServicesToFiles(batch, entry.newBlockServiceId, holderId, 1);
+        _writeNextBlockId(batch, nextBlockId);
+
+        // The holder is a conventional transient file with the normal deadline
+        // so that GC can reclaim if the caller never calls REPLACE_BLOCK_CERTIFY).
+        // Its span is DIRTY, like one from ADD_SPAN_INITIATE: the new block hasn't
+        // been written, so nothing may link the holder or swap the block out of it.
+        // It stays DIRTY after certify too, when it may hold an old block that was
+        // never certified.
+        StaticValue<TransientFileBody> holder;
+        holder().setVersion(0);
+        holder().setFileSize(blockSize);
+        holder().setMtime(time);
+        holder().setDeadline(entry.deadlineTime);
+        holder().setLastSpanState(SpanState::DIRTY);
+        BincodeBytes note("block replacement");
+        holder().setNoteDangerous(note.ref());
+        ROCKS_DB_CHECKED(batch.Put(_transientCf, InodeIdKey::Static(holderId).toSlice(), holder.toSlice()));
+
+        resp.holderId = holderId;
+        resp.holderCookie.data = _calcCookie(holderId);
+        auto cache = _blockServicesCache.getCache();
+        const auto& service = cache.blockServices.at(entry.newBlockServiceId.u64);
+        resp.newBlock.blockServiceAddrs = service.addrs;
+        resp.newBlock.blockServiceId = entry.newBlockServiceId;
+        resp.newBlock.blockServiceFailureDomain.name.data = service.failureDomain;
+        resp.newBlock.blockId = block.blockId();
+        resp.newBlock.certificate.data = _blockWriteCertificate(blockSize, block, service.secretKey);
+        return TernError::NO_ERROR;
+    }
+
+    TernError _applyReplaceBlockCertify(
+        TernTime time, rocksdb::WriteBatch& batch,
+        const ReplaceBlockCertifyEntry& entry, ReplaceBlockCertifyResp& resp
+    ) {
+        // Check the source hasn't changed. If anything did since prepare, leave
+        // the holder for GC.
+        std::string spanValue;
+        ExternalValue<SpanBody> span;
+        auto err = _getReplaceSpan({}, entry.fileId, entry.byteOffset, spanValue, span);
+        if (err == TernError::SPAN_NOT_FOUND) {
+            return TernError::NO_ERROR;
+        }
+        if (err != TernError::NO_ERROR) {
+            return err;
+        }
+        uint8_t locIx, blockIx;
+        if (_replaceBlockPlaced(span(), entry.oldBlockId, entry.newBlock.blockId, locIx, blockIx)) {
+            // Already done. Check the proof, and change nothing: not the span,
+            // the holder, or the block service references.
+            auto cache = _blockServicesCache.getCache();
+            if (!_checkBlockAddProof(cache, span().blocksBodyReadOnly(locIx).block(blockIx).blockService(), entry.newBlock)) {
+                return TernError::BAD_BLOCK_PROOF;
+            }
+            resp.replaced = true;
+            return TernError::NO_ERROR;
+        }
+        err = _checkReplaceTarget({}, time, entry.fileId, entry.byteOffset, span);
+        if (err == TernError::FILE_NOT_FOUND || err == TernError::SPAN_NOT_FOUND) {
+            return TernError::NO_ERROR;
+        }
+        if (err != TernError::NO_ERROR) {
+            return err;
+        }
+        if (!_findSpanBlock(span(), entry.oldBlockId, locIx, blockIx)) {
+            return TernError::NO_ERROR;
+        }
+
+        // Check the holder wasn't GCd
+        std::string holderValue;
+        ExternalValue<TransientFileBody> holder;
+        err = _initiateTransientFileModification(time, false /*allowPastDeadline*/, batch, entry.holderId, holderValue, holder);
+        if (err != TernError::NO_ERROR) {
+            return err;
+        }
+        // Anything but DIRTY means GC has condemned the holder, or someone else
+        // certified its span
+        if (holder().lastSpanState() != SpanState::DIRTY) {
+            return TernError::SPAN_NOT_FOUND;
+        }
+        // If somehow the holder was appended to, then deleting the inode on success
+        // wil lead to orphan blocks. So make sure this was not done
+        StaticValue<SpanKey> holderKey;
+        std::string holderSpanValue;
+        ExternalValue<SpanBody> holderSpan;
+        if (!_fetchSpan(entry.holderId, 0, holderKey, holderSpanValue, holderSpan)) {
+            return TernError::SPAN_NOT_FOUND;
+        }
+        if (holderSpan().isInlineStorage() || holderSpan().locationCount() != 1 ||
+            holderSpan().spanSize() != holder().fileSize() || holderSpan().blocksBodyReadOnly(0).parity() != Parity(1, 0)) {
+            return TernError::BAD_SPAN_BODY;
+        }
+
+        // Validate that the old block and the new block have the same attributes
+        // and that the new block has actually been writen
+        auto newBlocks = holderSpan().blocksBodyReadOnly(0);
+        auto newBlock = newBlocks.block(0);
+        if (newBlock.blockId() != entry.newBlock.blockId) {
+            return TernError::BLOCK_NOT_FOUND;
+        }
+        auto blocks = span().blocksBodyReadOnly(locIx);
+        auto oldBlock = blocks.block(blockIx);
+        if (oldBlock.crc() != newBlock.crc() || blocks.cellSize()*blocks.stripes() != newBlocks.cellSize()*newBlocks.stripes() ||
+            blocks.location() != newBlocks.location()) {
+            return TernError::BAD_SPAN_BODY;
+        }
+        auto cache = _blockServicesCache.getCache();
+        if (!_checkBlockAddProof(cache, newBlock.blockService(), entry.newBlock)) {
+            return TernError::BAD_BLOCK_PROOF;
+        }
+
+        // Other blocks might have moved since the destination was picked. Validate again
+        // that the new block is not colocated with it's siblings.
+        const auto& failureDomain = cache.blockServices.at(newBlock.blockService().u64).failureDomain;
+        for (uint8_t i = 0; i < blocks.parity().blocks(); ++i) {
+            if (i == blockIx) { continue; }
+            auto other = blocks.block(i).blockService();
+            if (other == newBlock.blockService() || cache.blockServices.at(other.u64).failureDomain == failureDomain) {
+                return TernError::NO_ERROR;
+            }
+        }
+
+        _addBlockServicesToFiles(batch, oldBlock.blockService(), entry.fileId, -1);
+        _addBlockServicesToFiles(batch, newBlock.blockService(), entry.fileId, 1);
+        _addBlockServicesToFiles(batch, newBlock.blockService(), entry.holderId, -1);
+
+        if (entry.discardOldBlock) {
+            // Prepare established that the old service is decommissioneds, so no erase proof is needed
+            // Install the new block
+            oldBlock.setBlockService(newBlock.blockService());
+            oldBlock.setBlockId(newBlock.blockId());
+            // Delete the holder
+            ROCKS_DB_CHECKED(batch.Delete(_spansCf, holderKey.toSlice()));
+            ROCKS_DB_CHECKED(batch.Delete(_transientCf, InodeIdKey::Static(entry.holderId).toSlice()));
+        } else {
+            // The old block still needs erasing. Perform a swapBlocks operation
+            _addBlockServicesToFiles(batch, oldBlock.blockService(), entry.holderId, 1);
+            swapBlocks(oldBlock, newBlock);
+            ROCKS_DB_CHECKED(batch.Put(_spansCf, holderKey.toSlice(), holderSpan.toSlice()));
+        }
+
+        StaticValue<SpanKey> key;
+        key().setFileId(entry.fileId);
+        key().setOffset(entry.byteOffset);
+        ROCKS_DB_CHECKED(batch.Put(_spansCf, key.toSlice(), span.toSlice()));
+
+        resp.replaced = true;
+        return TernError::NO_ERROR;
+    }
     TernError _applyMoveSpan(TernTime time, rocksdb::WriteBatch& batch, const MoveSpanEntry& entry, MoveSpanResp& resp) {
         // fetch files
         std::string transientValue1;
@@ -3647,8 +4038,8 @@ struct ShardDBImpl {
             return TernError::SWAP_SPANS_MISMATCHING_CRC;
         }
         // Fetch span state
-        auto state1 = _fetchSpanState(time, entry.fileId1, entry.byteOffset1 + span1().size());
-        auto state2 = _fetchSpanState(time, entry.fileId2, entry.byteOffset2 + span2().size());
+        auto state1 = _fetchSpanState(time, entry.fileId1, entry.byteOffset1 + span1().spanSize());
+        auto state2 = _fetchSpanState(time, entry.fileId2, entry.byteOffset2 + span2().spanSize());
         if (state1 != SpanState::CLEAN || state2 != SpanState::CLEAN) {
             return TernError::SWAP_SPANS_NOT_CLEAN;
         }
@@ -3887,6 +4278,12 @@ struct ShardDBImpl {
             break;
         case ShardLogEntryKind::SWAP_BLOCKS:
             err = _applySwapBlocks(time, batch, logEntryBody.getSwapBlocks(), resp.setSwapBlocks());
+            break;
+        case ShardLogEntryKind::REPLACE_BLOCK_INITIATE:
+            err = _applyReplaceBlockInitiate(time, batch, logEntryBody.getReplaceBlockInitiate(), resp.setReplaceBlockInitiate());
+            break;
+        case ShardLogEntryKind::REPLACE_BLOCK_CERTIFY:
+            err = _applyReplaceBlockCertify(time, batch, logEntryBody.getReplaceBlockCertify(), resp.setReplaceBlockCertify());
             break;
         case ShardLogEntryKind::SWAP_SPANS:
             err = _applySwapSpans(time, batch, logEntryBody.getSwapSpans(), resp.setSwapSpans());
@@ -4134,6 +4531,8 @@ bool readOnlyShardReq(const ShardMessageKind kind) {
     case ShardMessageKind::REMOVE_SPAN_INITIATE:
     case ShardMessageKind::REMOVE_SPAN_CERTIFY:
     case ShardMessageKind::SWAP_BLOCKS:
+    case ShardMessageKind::REPLACE_BLOCK_INITIATE:
+    case ShardMessageKind::REPLACE_BLOCK_CERTIFY:
     case ShardMessageKind::CREATE_DIRECTORY_INODE:
     case ShardMessageKind::SET_DIRECTORY_OWNER:
     case ShardMessageKind::REMOVE_DIRECTORY_OWNER:

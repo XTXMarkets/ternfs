@@ -529,6 +529,10 @@ func (k ShardMessageKind) String() string {
 		return "REMOVE_SPAN_CERTIFY"
 	case 120:
 		return "SWAP_BLOCKS"
+	case 23:
+		return "REPLACE_BLOCK_INITIATE"
+	case 24:
+		return "REPLACE_BLOCK_CERTIFY"
 	case 121:
 		return "BLOCK_SERVICE_FILES"
 	case 122:
@@ -596,6 +600,8 @@ const (
 	REMOVE_SPAN_INITIATE             ShardMessageKind = 0x76
 	REMOVE_SPAN_CERTIFY              ShardMessageKind = 0x77
 	SWAP_BLOCKS                      ShardMessageKind = 0x78
+	REPLACE_BLOCK_INITIATE           ShardMessageKind = 0x17
+	REPLACE_BLOCK_CERTIFY            ShardMessageKind = 0x18
 	BLOCK_SERVICE_FILES              ShardMessageKind = 0x79
 	REMOVE_INODE                     ShardMessageKind = 0x7A
 	ADD_SPAN_INITIATE_WITH_REFERENCE ShardMessageKind = 0x7C
@@ -645,6 +651,8 @@ var AllShardMessageKind = [...]ShardMessageKind{
 	REMOVE_SPAN_INITIATE,
 	REMOVE_SPAN_CERTIFY,
 	SWAP_BLOCKS,
+	REPLACE_BLOCK_INITIATE,
+	REPLACE_BLOCK_CERTIFY,
 	BLOCK_SERVICE_FILES,
 	REMOVE_INODE,
 	ADD_SPAN_INITIATE_WITH_REFERENCE,
@@ -728,6 +736,10 @@ func MkShardMessage(k string) (ShardRequest, ShardResponse, error) {
 		return &RemoveSpanCertifyReq{}, &RemoveSpanCertifyResp{}, nil
 	case k == "SWAP_BLOCKS":
 		return &SwapBlocksReq{}, &SwapBlocksResp{}, nil
+	case k == "REPLACE_BLOCK_INITIATE":
+		return &ReplaceBlockInitiateReq{}, &ReplaceBlockInitiateResp{}, nil
+	case k == "REPLACE_BLOCK_CERTIFY":
+		return &ReplaceBlockCertifyReq{}, &ReplaceBlockCertifyResp{}, nil
 	case k == "BLOCK_SERVICE_FILES":
 		return &BlockServiceFilesReq{}, &BlockServiceFilesResp{}, nil
 	case k == "REMOVE_INODE":
@@ -3055,6 +3067,132 @@ func (v *SwapBlocksResp) Pack(w io.Writer) error {
 }
 
 func (v *SwapBlocksResp) Unpack(r io.Reader) error {
+	return nil
+}
+
+func (v *ReplaceBlockInitiateReq) ShardRequestKind() ShardMessageKind {
+	return REPLACE_BLOCK_INITIATE
+}
+
+func (v *ReplaceBlockInitiateReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.FileId)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.ByteOffset)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.OldBlockId)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *ReplaceBlockInitiateReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.FileId)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.ByteOffset)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.OldBlockId)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *ReplaceBlockInitiateResp) ShardResponseKind() ShardMessageKind {
+	return REPLACE_BLOCK_INITIATE
+}
+
+func (v *ReplaceBlockInitiateResp) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.HolderId)); err != nil {
+		return err
+	}
+	if err := bincode.PackFixedBytes(w, 8, v.HolderCookie[:]); err != nil {
+		return err
+	}
+	if err := v.NewBlock.Pack(w); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *ReplaceBlockInitiateResp) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.HolderId)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackFixedBytes(r, 8, v.HolderCookie[:]); err != nil {
+		return err
+	}
+	if err := v.NewBlock.Unpack(r); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *ReplaceBlockCertifyReq) ShardRequestKind() ShardMessageKind {
+	return REPLACE_BLOCK_CERTIFY
+}
+
+func (v *ReplaceBlockCertifyReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.FileId)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.ByteOffset)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.OldBlockId)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.HolderId)); err != nil {
+		return err
+	}
+	if err := bincode.PackFixedBytes(w, 8, v.HolderCookie[:]); err != nil {
+		return err
+	}
+	if err := v.NewBlock.Pack(w); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *ReplaceBlockCertifyReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.FileId)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.ByteOffset)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.OldBlockId)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.HolderId)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackFixedBytes(r, 8, v.HolderCookie[:]); err != nil {
+		return err
+	}
+	if err := v.NewBlock.Unpack(r); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *ReplaceBlockCertifyResp) ShardResponseKind() ShardMessageKind {
+	return REPLACE_BLOCK_CERTIFY
+}
+
+func (v *ReplaceBlockCertifyResp) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, bool(v.Replaced)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *ReplaceBlockCertifyResp) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*bool)(&v.Replaced)); err != nil {
+		return err
+	}
 	return nil
 }
 

@@ -115,6 +115,7 @@ func main() {
 	countMetrics := flag.Bool("count-metrics", false, "Compute and send count metrics")
 	migrate := flag.Bool("migrate", false, "migrate")
 	migrateLocation := flag.Uint("migrate-location", 256, "Location ID to migrate from")
+	migrateReplaceDecommissioned := flag.Bool("migrate-replace-decommissioned", false, "Replace blocks in decommissioned block services through the shard (REPLACE_BLOCK) rather than swapping them through a scratch file. Only enable once all the shards support it.")
 	numMigrators := flag.Int("num-migrators", 1, "How many migrate instances are running. 1 by default")
 	migratorIdx := flag.Int("migrator-idx", 0, "Which migrate instance is this. should be less than num-migrators. 0 by default")
 	numFileMigrators := flag.Uint("num-file-migrators", 1, "Number of file migrations to do in parallel. 1 by default")
@@ -436,7 +437,15 @@ func main() {
 	if *migrate {
 		go func() {
 			defer func() { lrecover.HandleRecoverChan(l, terminateChan, recover()) }()
-			migrator := cleanup.Migrator(*registryAddress, l, c, uint64(*numMigrators), uint64(*migratorIdx), uint32(*numFileMigrators), *migratorLogOnly, *migrateFailureDomain, msgs.Location(*migrateLocation))
+			migrator := cleanup.Migrator(l, c, &cleanup.MigratorOptions{
+				NumMigrators:          uint64(*numMigrators),
+				MigratorIdx:           uint64(*migratorIdx),
+				NumParallelFiles:      uint32(*numFileMigrators),
+				LogOnly:               *migratorLogOnly,
+				FailureDomain:         *migrateFailureDomain,
+				LocationId:            msgs.Location(*migrateLocation),
+				ReplaceDecommissioned: *migrateReplaceDecommissioned,
+			})
 			migrator.Run()
 		}()
 	}
