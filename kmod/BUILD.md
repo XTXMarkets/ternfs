@@ -32,7 +32,7 @@ make -C kmod -j"$(nproc)" compile-check
 
 To check just one version, add `COMPILE_KERNELS=6.12.44` or
 `COMPILE_KERNELS=6.14.9`. Each check cleans the module objects and
-builds `ternfs-client.o` with the kernel's normal warning flags. The 6.14.9
+builds `ternfs-client.o` with the kernel's warning flags and -Werror. The 6.14.9
 check uses `kmod/linux`; the 6.12.44 check uses `kmod/linux-6.12.44`.
 These checks stop before modpost because `modules_prepare` does not generate
 `Module.symvers`. They validate compilation and linking of the module objects,

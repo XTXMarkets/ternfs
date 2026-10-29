@@ -120,7 +120,7 @@ ternfs-client-local: revision.c extra-files
 # modules_prepare has no Module.symvers, so stop before modpost.
 .PHONY: ternfs-client-compile
 ternfs-client-compile: revision.c extra-files
-	$(MAKE) -C $(KDIR) M=$(CURDIR) KCFLAGS=-Werror ternfs-client.o
+	$(MAKE) -C $(KDIR) M=$(CURDIR) KCFLAGS="$(KCFLAGS) -Werror" ternfs-client.o
 
 COMPILE_KERNELS ?= 6.12.44 6.14.9
 .PHONY: compile-check
