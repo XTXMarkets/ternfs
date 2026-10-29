@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <set>
 
 #include "LogsDB.hpp"
@@ -57,6 +58,7 @@ public:
         _receiver = std::make_unique<UDPReceiver<1>>(UDPReceiverConfig{
             .perSockMaxRecvMsg = MAX_RECV_MSGS, .maxMsgSize = MAX_UDP_MTU});
         expandKey(RegistryKey, _expandedRegistryKey);
+        _initDeprecatedKinds();
     }
 
     virtual ~RegistryServer() = default;
@@ -76,6 +78,13 @@ public:
     inline std::vector<RegistryRequest>& receivedRegistryRequests() { return _receivedRequests; }
 
     inline std::vector<ShardResponse>& receivedShardResponses() { return _shardResponses; }
+
+    // Registry requests received since start, by kind. Read by the metrics
+    // loop, which tells us whether anything still sends a kind before we
+    // remove it.
+    inline const std::array<std::atomic<uint64_t>, maxRegistryMessageKind + 1>& receivedRequestCounts() const {
+        return _receivedRequestCounts;
+    }
 
     void sendLogsDBMessages(std::vector<LogsDBRequest *>& requests, std::vector<LogsDBResponse>& responses);
     void sendShardRequests(const std::vector<std::pair<AddrsInfo, ShardReqMsg>>& requests);
@@ -101,6 +110,7 @@ private:
 
     struct Client {
         int fd;
+        IpPort addr;
         std::string readBuffer;
         std::string writeBuffer;
         TernTime lastActive;
@@ -116,6 +126,13 @@ private:
     std::unordered_map<uint64_t, int> _inFlightRequests; // request to fd mapping
     std::vector<RegistryRequest> _receivedRequests;
 
+    std::array<std::atomic<uint64_t>, maxRegistryMessageKind + 1> _receivedRequestCounts{};
+    // Kinds whose generated name marks them as deprecated, and the
+    // (kind, client ip) pairs we have already logged for them.
+    std::array<bool, maxRegistryMessageKind + 1> _deprecatedKinds{};
+    std::set<std::pair<RegistryMessageKind, std::array<uint8_t, 4>>> _loggedDeprecatedRequests;
+    void _countRequest(const Client& client, RegistryMessageKind kind);
+
     std::vector<ShardResponse> _shardResponses;
 
     std::shared_ptr<std::array<AddrsInfo, LogsDB::REPLICA_COUNT>> _replicaInfo;
@@ -130,6 +147,7 @@ private:
     RandomGenerator _packetDropRand;
     uint64_t _outgoingPacketDropProbability; // probability * 10,000
 
+    void _initDeprecatedKinds();
     void _acceptConnection(int fd);
     void _removeClient(int fd);
     void _removeIdleClients();
