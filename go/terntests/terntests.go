@@ -988,6 +988,16 @@ func (r *RunTests) run(
 		},
 	)
 
+	// Decommissions a block service, so keep it last.
+	r.test(
+		log,
+		"migrate decommissioned",
+		"",
+		func(counters *client.ClientCounters) {
+			migrateDecommissionedTest(log, r.registryAddress(), counters)
+		},
+	)
+
 	terminateChan <- nil
 }
 

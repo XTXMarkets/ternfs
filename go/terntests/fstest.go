@@ -1115,7 +1115,7 @@ func fsTestInternal[Id comparable](
 			blockServiceToPurge := findBlockServiceToPurge(log, c)
 			log.Info("will migrate block service %v", blockServiceToPurge)
 
-			migrator := cleanup.Migrator(registryAddress, log, c, 1, 0, 1, false, "", 0)
+			migrator := cleanup.Migrator(log, c, &cleanup.MigratorOptions{NumMigrators: 1, NumParallelFiles: 1})
 			wg := sync.WaitGroup{}
 			wg.Add(1)
 			go func() {
