@@ -807,10 +807,8 @@ func canDeleteFileImmediately(dirId msgs.InodeId) (bool, syscall.Errno) {
 	if _, err := c.ResolveDirectoryInfoEntry(logger, dirInfoCache, dirId, policy); err != nil {
 		return false, ternErrToErrno(err)
 	}
-	delete :=
-		!(!policy.DeleteAfterTime.Active() && !policy.DeleteAfterVersions.Active()) && // not infinite retention
-			((!policy.DeleteAfterVersions.Active() || policy.DeleteAfterTime.Time() == time.Duration(0)) || // immediate deletion through time or
-				(!policy.DeleteAfterTime.Active() || policy.DeleteAfterVersions.Versions() == 0)) // immediate deletion through versions
+	delete := (policy.DeleteAfterTime.Active() && policy.DeleteAfterTime.Time() == 0) ||
+		(policy.DeleteAfterVersions.Active() && policy.DeleteAfterVersions.Versions() == 0)
 	return delete, 0
 }
 
