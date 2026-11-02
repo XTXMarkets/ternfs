@@ -60,8 +60,6 @@ func confirmResultName(r ConfirmResult) string {
 		return inspect.ConfirmCommitted
 	case ConfirmRolledBack:
 		return inspect.ConfirmRolledBack
-	case ConfirmConservative:
-		return inspect.ConfirmConservative
 	}
 	return fmt.Sprintf("unknown_%d", r)
 }

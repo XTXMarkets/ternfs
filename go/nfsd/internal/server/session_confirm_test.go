@@ -457,28 +457,12 @@ func TestConfirmationSettledOnce(t *testing.T) {
 	}
 }
 
-// Without proof of commit or of an unchanged P, P is invalidated in this
-// process only and N's record ends; P's durable state is kept. The same holds
-// when P changes between preparation and the revalidation after closing.
-func TestConfirmationConservative(t *testing.T) {
-	check := func(t *testing.T, f *confirmServer) {
-		t.Helper()
-		if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4ERR_STALE_CLIENTID {
-			t.Fatalf("N's record survived: %s", nfs4.Nfsstat4Name(got))
-		}
-		if f.srv.protected(f.n) || f.srv.protected(f.p) {
-			t.Fatal("conservative result kept the protection")
-		}
-		if got := f.pSequence(t); got != nfs4.NFS4ERR_BADSESSION {
-			t.Fatalf("P's SEQUENCE %s", nfs4.Nfsstat4Name(got))
-		}
-		if !f.pMarker(t) || f.pStaging(t).Retired || f.present(t, vfs.InodeID(f.p), clientstore.ExpiredName) {
-			t.Fatal("P's durable state changed")
-		}
-		// N's creation made its session file before confirming, and
-		// removed it with the creation.
-		noOrphanSessionFiles(t, f.srv)
-	}
+// The confirmed pointer changed under a confirmation, as only another
+// writer could. A pointer naming another incarnation decides nothing: the
+// attempt stays unresolved, N and P stay protected and P closed, and
+// nothing durable changes, until the pointer reads N or P again. A pointer
+// still naming P, through a new symlink, rolls back and P reopens.
+func TestConfirmationAgainstAnotherWriter(t *testing.T) {
 	t.Run("observed another incarnation", func(t *testing.T) {
 		f := newConfirmServer(t)
 		m, err := f.srv.clients.NewIncarnation(f.identity)
@@ -486,12 +470,24 @@ func TestConfirmationConservative(t *testing.T) {
 			t.Fatal(err)
 		}
 		f.arm(clientstore.WriteD, clientstore.FaultNotApplied, func() { pointConfirmed(t, f, m) })
-		if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4ERR_STALE_CLIENTID {
+		if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4ERR_DELAY {
 			t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 		}
-		check(t, f)
+		f.disarm()
+		f.srv.runLeaseSweep()
+		if !f.srv.protected(f.n) || !f.srv.protected(f.p) || f.pSequence(t) != nfs4.NFS4ERR_DELAY {
+			t.Fatal("an undecided read-back released N or P")
+		}
+		if !f.pMarker(t) || f.pStaging(t).Retired || f.present(t, vfs.InodeID(f.p), clientstore.ExpiredName) {
+			t.Fatal("P's durable state changed")
+		}
+		pointConfirmed(t, f, vfs.InodeID(f.p))
+		f.srv.runLeaseSweep()
+		if f.srv.protected(f.p) || f.pSequence(t) != nfs4.NFS4_OK {
+			t.Fatal("P not reopened once confirmed named it again")
+		}
 	})
-	t.Run("P changed after preparation", func(t *testing.T) {
+	t.Run("P rewritten after preparation", func(t *testing.T) {
 		f := newConfirmServer(t)
 		f.fs.Mu.Lock()
 		// Prepare reads N's record first, Commit second: change P's
@@ -499,13 +495,18 @@ func TestConfirmationConservative(t *testing.T) {
 		f.fs.LookupHook.Dir, f.fs.LookupHook.Name, f.fs.LookupHook.Skip = vfs.InodeID(f.n), clientstore.ClientRecordName, 1
 		f.fs.LookupHook.Fn = func() { pointConfirmed(t, f, vfs.InodeID(f.p)) }
 		f.fs.Mu.Unlock()
-		if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4ERR_STALE_CLIENTID {
+		if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4ERR_DELAY {
 			t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 		}
 		if f.present(t, vfs.InodeID(f.n), clientstore.RebootName) {
 			t.Fatal("write B made after the predecessor changed")
 		}
-		check(t, f)
+		if f.srv.protected(f.n) || f.srv.protected(f.p) || f.pSequence(t) != nfs4.NFS4_OK {
+			t.Fatal("rollback kept the protection or P closed")
+		}
+		if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4_OK {
+			t.Fatalf("retry %s", nfs4.Nfsstat4Name(got))
+		}
 	})
 }
 
@@ -526,7 +527,8 @@ func pointConfirmed(t *testing.T, f *confirmServer, id vfs.InodeID) {
 }
 
 // A first confirmation has no predecessor. A D that never applied observes
-// no confirmed pointer, which is conservative: the record ends.
+// the absent pointer it started from, which rolls back: the reply is DELAY,
+// and the retry confirms.
 func TestConfirmationFirstWithoutPredecessor(t *testing.T) {
 	fs := clientstore.NewConfirmFaultVFS(t)
 	srv := identityServer(t, fs)
@@ -537,16 +539,15 @@ func TestConfirmationFirstWithoutPredecessor(t *testing.T) {
 	fs.Mu.Lock()
 	fs.Armed = true
 	fs.Mu.Unlock()
-	if got, _ := createResult(t, srv, 1, wire, 1); got != nfs4.NFS4ERR_STALE_CLIENTID {
+	if got, _ := createResult(t, srv, 1, wire, 1); got != nfs4.NFS4ERR_DELAY {
 		t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 	}
-	if wireRecords(srv) != 0 || srv.protected(incarnation) {
-		t.Fatal("record or protection left")
+	if wireRecords(srv) != 1 || srv.protected(incarnation) {
+		t.Fatal("record lost or protection left")
 	}
-	// The client starts again and confirms.
+	// The client retries and confirms.
 	fs.Set(clientstore.WriteD, clientstore.FaultNone, nil)
-	again := identityExchange(t, srv, 1, "first", [8]byte{1}, false)
-	if got, _ := createResult(t, srv, 1, again.clientID, 1); got != nfs4.NFS4_OK {
+	if got, _ := createResult(t, srv, 1, wire, 1); got != nfs4.NFS4_OK {
 		t.Fatalf("second attempt %s", nfs4.Nfsstat4Name(got))
 	}
 }
@@ -637,13 +638,14 @@ func (f *confirmServer) setFailLookup(fail bool) {
 // A read error before any write is no evidence that P is unchanged: P stays
 // closed, N and P protected and N's slot held. Retries keep it so while the
 // read fails. Once readable, the pointer decides: unchanged P rolls back
-// and reopens; a pointer another process changed is conservative. Durable
-// state is kept either way.
+// and reopens; a pointer naming another incarnation, which only another
+// writer could make, decides nothing and keeps everything. Durable state is
+// kept either way.
 func TestConfirmationPreWriteReadError(t *testing.T) {
 	for _, changed := range []bool{false, true} {
 		name := "unchanged"
 		if changed {
-			name = "changed by another process"
+			name = "changed under it"
 		}
 		t.Run(name, func(t *testing.T) {
 			f := newConfirmServer(t)
@@ -678,11 +680,11 @@ func TestConfirmationPreWriteReadError(t *testing.T) {
 				}
 				return
 			}
-			if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4ERR_STALE_CLIENTID {
-				t.Fatalf("retry after another process changed P %s", nfs4.Nfsstat4Name(got))
+			if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4ERR_DELAY {
+				t.Fatalf("retry after the pointer changed %s", nfs4.Nfsstat4Name(got))
 			}
-			if f.srv.protected(f.p) || f.pSequence(t) != nfs4.NFS4ERR_BADSESSION {
-				t.Fatal("changed P not invalidated locally")
+			if !f.srv.protected(f.p) || f.pSequence(t) != nfs4.NFS4ERR_DELAY {
+				t.Fatal("an undecided read-back released P")
 			}
 			if !f.pMarker(t) || f.pStaging(t).Retired || f.present(t, vfs.InodeID(f.p), clientstore.ExpiredName) {
 				t.Fatal("P's durable state changed")
@@ -691,7 +693,7 @@ func TestConfirmationPreWriteReadError(t *testing.T) {
 	}
 }
 
-// Another process makes N not pending before the revalidation: nothing is
+// A new registration makes N not pending before the revalidation: nothing is
 // written, P through Sp proves P unchanged, so P reopens and the reply is
 // DELAY. The retry then finds N stale, and so does every later one.
 func TestConfirmationPendingMoved(t *testing.T) {
@@ -721,7 +723,8 @@ func TestConfirmationPendingMoved(t *testing.T) {
 	}
 }
 
-// Another process confirms N before the revalidation: committed elsewhere.
+// N is already confirmed at the revalidation, as after an earlier attempt
+// whose reply was lost: committed, with no purge authority.
 // N gets its session and P is replaced locally, but with no B this attempt
 // has no authority to purge P.
 func TestConfirmationCommittedElsewhere(t *testing.T) {
@@ -1290,7 +1293,7 @@ func TestPurgeOwnership(t *testing.T) {
 	t.Run("marker changed before the resumed purge", func(t *testing.T) {
 		f := newConfirmServer(t)
 		f.commitWithFailedPurge(t)
-		// Another confirmation of N, in another process, recorded M as its
+		// An earlier confirmation of N, before a restart, recorded M as its
 		// predecessor: the evidence now names M, which is what is purged.
 		m, err := f.srv.clients.NewIncarnation(f.identity)
 		if err != nil {

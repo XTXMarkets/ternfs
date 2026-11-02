@@ -118,13 +118,9 @@ const (
 	confirmUnresolved ConfirmResult = iota
 	// ConfirmCommitted: confirmed names N. Only now may P be replaced.
 	ConfirmCommitted
-	// ConfirmRolledBack: D never applied and confirmed is still P with
-	// symlink Sp. P is unchanged.
+	// ConfirmRolledBack: D did not apply and can no longer, and confirmed
+	// is still P. P is unchanged.
 	ConfirmRolledBack
-	// ConfirmConservative: neither committed nor provably unchanged. P is
-	// treated as replaced locally and N's record is dropped; nothing durable
-	// is deleted.
-	ConfirmConservative
 )
 
 // ConfirmAttempt holds the evidence of one CommitConfirmation until it is
@@ -212,13 +208,11 @@ func (cs *Store) checkPendingLocked(identityID, n vfs.InodeID, confirm [8]byte) 
 // Under the exclusive identity lock it first rechecks that N is pending and
 // that the confirmed pointer is still the target's P through Sp. If either
 // check fails or cannot be read, nothing is written and the attempt is
-// classified by the read-back alone, with D never applied:
-//   - confirmed still P through Sp proves P unchanged (rolled back), for
-//     example when only N's pending state moved;
-//   - confirmed naming N is committed elsewhere, with no B and so no purge;
-//   - anything else is conservative;
-//   - a read error leaves the attempt unresolved until SettleConfirmation
-//     can read.
+// classified by the read-back alone, with D never applied: rolled back when
+// confirmed is still P, for example when only N's pending state moved;
+// committed, with no B and so no purge, when it already names N; and
+// unresolved otherwise, or on a read error, until SettleConfirmation can
+// read.
 //
 // It always returns an attempt, even after a panic: the attempt is then
 // unresolved and keeps every write record.
@@ -350,25 +344,25 @@ func (cs *Store) settleLocked(a *ConfirmAttempt) {
 		return
 	}
 	a.observed.id, a.observed.file, a.observed.found = id, file, found
-	a.result = classifyConfirmation(a.target, a.writes[WriteD], id, file, found)
+	a.result = classifyConfirmation(a.target, a.writes[WriteD], id, found)
 }
 
 // classifyConfirmation is the observation table (README.md#observation-table).
-// Missing data never proves a rollback: only D never applied and confirmed
-// still P through Sp does.
-func classifyConfirmation(t confirmTarget, d *edgeWrite, id, file vfs.InodeID, found bool) ConfirmResult {
-	outcome := d.outcome()
+// This process is the only writer of confirmed, and every fence has settled,
+// so D either applied or never will: confirmed names N or still names P. Any
+// other read-back is a store this process did not produce, and stays
+// unresolved with all its evidence.
+func classifyConfirmation(t confirmTarget, d *edgeWrite, id vfs.InodeID, found bool) ConfirmResult {
 	switch {
-	case found && id == t.N && d != nil && file == d.inode && (outcome == writeApplied || outcome == writeMaybe):
+	case found && id == t.N:
 		return ConfirmCommitted
-	case found && id == t.N && (d == nil || file != d.inode):
-		return ConfirmCommitted // committed elsewhere, or already
-	case outcome == writeNever && t.P != 0 && found && id == t.P && file == t.sp:
+	case d.outcome() == writeApplied:
+		// D's rename returned success, yet confirmed does not name N.
+		return confirmUnresolved
+	case found && t.P != 0 && id == t.P, !found && t.P == 0:
 		return ConfirmRolledBack
 	}
-	// P with another symlink, another incarnation M, or no confirmed
-	// symlink, including a first confirmation that never applied.
-	return ConfirmConservative
+	return confirmUnresolved
 }
 
 // isEdgeGone recognises a removal whose exact edge no longer exists: the
@@ -403,8 +397,8 @@ func (cs *Store) FinishReplacement(a *ConfirmAttempt) (uint64, error) {
 }
 
 // ResumeReplacementPurge completes, from durable evidence alone, a purge that
-// an earlier confirmation of n left unfinished: in this process, in another,
-// or before a restart. It needs no attempt, so it survives wire retirement
+// an earlier confirmation of n left unfinished, in this process or before a
+// restart. It needs no attempt, so it survives wire retirement
 // and restarts.
 //
 // Evidence, read under the exclusive identity lock: the confirmed pointer
@@ -439,8 +433,8 @@ func (cs *Store) ResumeReplacementPurge(n uint64) (uint64, error) {
 
 // purgeReplacedLocked purges p if n/reboot names p, then removes that exact
 // reboot edge. The target stays the one the edge named when checked,
-// whatever the symlink names later, and a reboot symlink replaced meanwhile,
-// by another process, is left alone. With p zero, the edge's target is the
+// whatever the symlink names later, and a reboot symlink replaced meanwhile
+// is left alone. With p zero, the edge's target is the
 // one purged, for ResumeReplacementPurge's durable evidence. A non-nil begin
 // admits the purge of the selected target, and its release runs when the
 // purge returns or unwinds.

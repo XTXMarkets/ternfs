@@ -463,7 +463,6 @@ var enums = map[string][]string{
 		ConfirmUnresolved + ": a fence or the read-back failed; nothing durable may be destroyed yet",
 		ConfirmCommitted + ": the confirmed pointer names the new incarnation",
 		ConfirmRolledBack + ": the confirmed write never applied and the predecessor is unchanged",
-		ConfirmConservative + ": neither committed nor provably unchanged; nothing durable is deleted",
 	},
 	"confirmation.attempt.writes[].outcome": {
 		WriteNever + ": not attempted, failed before sending, or fenced",

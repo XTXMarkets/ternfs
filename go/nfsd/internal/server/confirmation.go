@@ -314,9 +314,6 @@ func (s *Server) unregisterConfirmation(e *confirmation) {
 //     ResumeReplacementPurge, so a resumed application never repeats it.
 //     Once published, the reply stays OK whatever happens later.
 //   - Rolled back: reopen P at most once, then unregister.
-//   - Conservative: mark P replaced at most once, drop P's sessions and
-//     record (idempotent), retire N's record (idempotent), then unregister.
-//     No durable state of N or P is removed.
 //   - Unresolved: nothing changes.
 func (s *Server) applyConfirmation(e *confirmation, result clientstore.ConfirmResult) (status uint32, reply createSessionResult, complete bool) {
 	ss, cr := s.sessions, e.cr
@@ -375,23 +372,6 @@ func (s *Server) applyConfirmation(e *confirmation, result clientstore.ConfirmRe
 		}
 		s.unregisterConfirmation(e)
 		return nfs4.NFS4ERR_DELAY, createSessionResult{}, true
-	case clientstore.ConfirmConservative:
-		// Neither committed nor proved unchanged: P is replaced in this
-		// process only, keeping its durable state, and N's record ends. A
-		// client whose P is still valid adopts it again.
-		if e.p != 0 && !e.pClosedEnded {
-			ss.replaced(e.p)
-			e.pClosedEnded = true
-		}
-		if e.p != 0 {
-			ss.dropClient(e.p)
-		}
-		locked(func() {
-			cr.c.csBusy, cr.slot = false, false
-			ss.retireWireLocked(cr.c)
-		})
-		s.unregisterConfirmation(e)
-		return nfs4.NFS4ERR_STALE_CLIENTID, createSessionResult{}, true
 	}
 	// Unresolved: protection, P's closing and N's slot all stay.
 	return nfs4.NFS4ERR_DELAY, createSessionResult{}, false

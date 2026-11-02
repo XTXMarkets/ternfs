@@ -530,7 +530,6 @@ finishes before protection is complete or does not start.
 | --- | --- | --- |
 | Committed | Mark P replaced; drop P's sessions and wire record and expire its local open state; insert N's session; purge P on the attempt's evidence; unregister. | `NFS4_OK` |
 | Rolled back | Reopen P; unregister. | `NFS4ERR_DELAY` |
-| Conservative | Mark P replaced and drop its sessions here, keeping its durable state; retire N's wire record; unregister. | `NFS4ERR_STALE_CLIENTID` |
 | Unresolved | Nothing changes. N and P stay protected. | `NFS4ERR_DELAY` |
 
 An unresolved result is retried by the same CREATE_SESSION sequence and by
