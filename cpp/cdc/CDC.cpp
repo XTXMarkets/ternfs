@@ -234,6 +234,12 @@ private:
     bool _seenShards;
     uint64_t _currentLogIndex;
     LogIdx _logsDBLogIndex;
+    // The bootstrap entry this replica logged on becoming leader. Entries
+    // before it were logged by the previous leader and are applied without
+    // driving shards: the bootstrap entry then sends the current step of every
+    // executing txn. Driving them as well would send a step twice, and log two
+    // answers for it, the second applied to whatever step the txn is at by then.
+    uint64_t _bootstrapLogIdx = 0;
     CDCStep _step;
     uint64_t _shardRequestIdCounter;
     AES128Key _expandedCDCKey;
@@ -384,6 +390,7 @@ public:
             bootstrap.pack(bbuf);
             ALWAYS_ASSERT(bbuf.len() == entry.value.size());
             bootstrap.logIdx(++_logsDBLogIndex.u64);
+            _bootstrapLogIdx = bootstrap.logIdx();
             _inFlightLogEntries[bootstrap.logIdx()] = std::move(bootstrap);
         }
         _shared.isLeader.store(_logsDB.isLeader(), std::memory_order_relaxed);
@@ -479,7 +486,9 @@ public:
                         _updateInFlightTxns();
                     }
                 }
-                _processStep();
+                if (cdcEntry.logIdx() >= _bootstrapLogIdx) {
+                    _processStep();
+                }
                 _logEntryIdxToReqInfos.erase(cdcEntry.logIdx());
             }
         }
