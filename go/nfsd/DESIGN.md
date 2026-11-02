@@ -22,10 +22,17 @@ Two TernFS properties shape the design:
 1. A file is immutable once it is linked into a directory. nfsd therefore
    presents mutable NFS files by copy-on-write: a writer's changes are
    staged on the nfsd host and published as a new immutable inode on CLOSE.
-2. Several nfsd processes may serve the same namespace, and any of them may
-   restart. Client lifetimes and lease decisions must therefore be visible
-   to every process. Everything else stays local to the process or its
-   staging disk.
+2. One nfsd serves a tree at a time. It restarts in place on the same
+   staging disk, which is the normal recovery, and its address can move to
+   another host, which is failover. Staging stays on that daemon's local
+   POSIX disk: nfsd turns TernFS, where a file is visible on close, into
+   POSIX, where it is visible on write, and only a local POSIX filesystem
+   can hold the bytes in between. Client identities, incarnations and
+   leases are kept in TernFS under `/.nfs`, so they outlive the process
+   and its disk. Everything else stays local to the process or its staging
+   disk. Two daemons on one tree are not supported and nfsd does not
+   detect them: the operator fences the old daemon before its address
+   moves; see [Replace a host](RECOVERY.md#replace-a-host).
 
 ## Packages
 
@@ -52,11 +59,14 @@ Two TernFS properties shape the design:
 | Wire clientids and logical leases | One daemon process. A restored session rebinds to its incarnation, whose lease is published again at startup. |
 | Detailed opens and pathname hints | One daemon process, with writer recovery from sidecars; read opens are reopened by the client; see [openstate](internal/openstate/README.md). |
 
-Shared client records let one daemon detect a reboot or expiry established
-elsewhere. Local staging does not replace that authority. Conversely, the
-shared records contain neither staged bytes nor enough information to
-reconstruct general opens. Every process advertises its own server owner;
-this is client-lifetime coordination, not a shared NFS session service.
+The client records in TernFS outlive the process and its staging disk.
+After a restart or a failover they let the daemon check a returning
+client's principal, tell a client that rebooted from one that did not, and
+decide whether a staged writer may still be resumed. They hold neither
+staged bytes nor enough to rebuild opens. Every process advertises a new
+server owner, so the Linux client runs server-reboot recovery against a
+new process whatever the records say; the records decide what that
+recovery finds, not whether clients stay mounted.
 
 ## Filehandles and client views
 
@@ -87,12 +97,26 @@ until it looked the name up again. See the
 [alias log](internal/server/README.md#publication-alias-log) and
 [old handles](DEPLOYMENT.md#old-handles-name-their-original-version).
 
+Aliases exist so a client sees its own save through the handle it holds.
+They are not seen by other clients and do not replace a fresh lookup.
+
 A read `CLAIM_FH` OPEN needs only the inode. A writable one needs a
 publication target. A bounded table of 65,536 pathname hints remembers
 where LOOKUP and OPEN saw files; each hint is checked against the current
 directory entry. A cold miss can use eligible recovered staging, otherwise
 it returns `NFS4ERR_STALE`. See
 [Writer recovery mechanics](internal/server/README.md#writer-recovery-mechanics).
+
+The hints exist for one case: finding where to publish when a writable
+open names a handle after a write has changed the file's inode. They are
+not a map of the namespace. READDIR hands out filehandles without filling
+them; a handle held across this process's start, a handle the client
+learned from READDIR, and a reference taken before the file was replaced
+all miss. Eviction is by first insertion, and a hit does not refresh an
+entry. An ordinary open on Linux recovers from the STALE by looking the
+name up again. A client that reopens without a path walk cannot, and must
+mount with `lookupcache=none`; see
+[Client mounts](DEPLOYMENT.md#one-writable-server).
 
 Ownership and modes are synthetic. The `/.nfs` namespace is hidden from
 LOOKUP and READDIR. PUTFH rejects internal objects whose ancestry is known
@@ -411,6 +435,26 @@ resource limits; see
 [Session restoration](internal/server/README.md#session-restoration).
 Sessions never move between daemons. `PERSIST` is not granted.
 
+## Client behaviours nfsd depends on
+
+Several mechanisms exist because of how particular clients behave. This
+is the list; each entry says where the handling is described.
+
+| Behaviour | How nfsd handles it |
+| --- | --- |
+| Linux 4.1 opens a cached dentry by `CLAIM_FH` with the handle it holds, and keeps its inode even when the OPEN reply names another. | Name hints for handles this process named, cold recovery of staged writers after a restart, `NFS4ERR_STALE` otherwise. See [Filehandles and client views](#filehandles-and-client-views). |
+| A client reopens a file without a path walk, as smbd does through `/proc/self/fd`. | A deployment rule: such a client mounts with `lookupcache=none`. Without it, a refused reopen is `NFS4ERR_STALE`, which smbd reports as access denied. See [Client mounts](DEPLOYMENT.md#one-writable-server). |
+| A client keeps its handle after its own save and revalidates it by GETATTR. | Publication aliases while the handle is open and for a lease after; content reversal after that is a [known defect](DEPLOYMENT.md#old-handles-name-their-original-version). |
+| Linux discards a CLOSE's status: `close(2)` returns 0 whatever CLOSE answered. | A CLOSE the backend does not answer gets `NFS4ERR_DELAY` and is retried. A rejected publication is still lost silently; see [Known defects](DEPLOYMENT.md#a-rejected-publication-is-not-reported-to-the-application). |
+| Linux retries CLOSE after `NFS4ERR_DELAY`, backing off to 15 s. | The CLOSE DELAY relies on it; see [Writes and publication](#writes-and-publication). |
+| Linux re-encodes a retransmission with its current highest slot. | The slot digest leaves out SEQUENCE arguments; see [Slot replay](internal/server/README.md#slot-replay). |
+| Linux answers `NFS4ERR_DELAY` on a lone SEQUENCE by waiting its 15 s maximum. | CREATE_SESSION, and startup after a restore, wait for the first lease publication so SEQUENCE does not get DELAY. |
+| Linux 4.10 and later end CLOSE, OPEN_DOWNGRADE, REMOVE and RENAME compounds with that operation. | Locks held until the record; see [Sessions across restarts](#sessions-across-restarts). |
+| After a server restart Linux retransmits in-flight requests in no particular order, so a read OPEN can arrive before the CLOSE it follows. | The client's recovered writer is its view of the handle; see [client views](internal/openstate/README.md#client-views). |
+| Facing a new server owner, Linux runs server-reboot recovery: `CLAIM_PREVIOUS`, then reopens. | `CLAIM_PREVIOUS` gets `NFS4ERR_NO_GRACE`; reopens go through writer recovery. This is what clients see after a [failover](RECOVERY.md#replace-a-host). |
+| libnfs sends PUTFH, COMMIT, CLOSE in one compound. | The mutation gate does not count COMMIT; see [Sessions across restarts](#sessions-across-restarts). |
+| libnfs turns `NFS4ERR_DELAY` into an error. | Not handled: libnfs is a test client. |
+
 ## Lock order
 
 Locks across packages are taken in this order:
@@ -450,3 +494,10 @@ name with its contents, and scrapping it. It also has edge operations that
 look up, rename or remove one exact directory edge, so an operation whose
 outcome is unknown can be fenced, and a delayed mutation cannot apply to a
 later file at the same name.
+
+RemoteTernVFS keeps two process-local caches. The parent map, filled by
+Lookup and Readdir, serves PUTFH's check for internal objects and LOOKUPP.
+The reader cache keeps one file reader per inode read, so READs reuse span
+metadata; a published file is immutable, so a cached reader cannot be
+stale. Neither is a record of the namespace: an entry goes only when this
+process overwrites or removes the name, and neither is bounded.

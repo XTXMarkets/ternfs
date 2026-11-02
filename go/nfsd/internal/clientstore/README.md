@@ -6,10 +6,13 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
 # clientstore
 
-Package clientstore keeps the NFS client records every nfsd process serving
-one TernFS namespace shares: client identities and their incarnations,
-confirmation evidence, durable lease slots, open markers and collection.
-It lives under `/.nfs/clients` in TernFS. The server owns the protocol
+Package clientstore keeps the NFS client records in TernFS, under
+`/.nfs/clients`, so they outlive the nfsd process and its staging disk:
+client identities and their incarnations, confirmation evidence, durable
+lease slots, open markers and collection. One daemon serves a tree; the
+records let it check a returning client's principal, recognise a client
+reboot and decide whether a staged writer may be resumed, after a restart
+or a failover. The server owns the protocol
 decisions and the process-local state built on these records; see
 [Clients and leases](../../DESIGN.md#clients-and-leases).
 

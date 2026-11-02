@@ -179,7 +179,10 @@ the version before the edit.
 COMMIT has no stateid either. It uses a separate writer index: the staging
 each client wrote through each handle, at most eight per handle and 1024
 handles, kept for the life of the process. That index lets COMMIT find a
-failed writer's tombstone after its CLOSE. After a restart COMMIT also
+failed writer's tombstone after its CLOSE. It is not a list of the
+client's open writers. Its bound is first in, first out: once an entry is
+evicted, COMMIT through that handle can answer OK for a writer that
+failed. After a restart COMMIT also
 syncs the client's recovered writers of the handle, without adopting them;
 see [Client recovery](../../RECOVERY.md#client-recovery).
 
@@ -193,8 +196,14 @@ finds the replacement's own handle.
 
 An alias's expiry is one lease after publication. A sweep drops an expired
 alias only when the client has no open of the handle; while the handle is
-open the alias stays. After the alias is gone the handle names its original
-immutable version again.
+open the alias stays. A lookup does not check the expiry, so a closed
+handle's alias lasts until the first sweep after it expires: 90 to 135 s
+after publication, with the 45 s sweep. After the alias is gone the handle
+names its original immutable version again.
+
+Aliases are for one thing: a client seeing its own save through the handle
+it holds. Other clients do not see them, and they are not a substitute for
+looking the name up.
 
 The server records aliases on the staging disk and reloads the unexpired
 ones at startup; see the

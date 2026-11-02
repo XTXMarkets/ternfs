@@ -20,9 +20,9 @@ the procedures here.
 | --- | --- | --- | --- |
 | Connection loss, daemon still running | Unchanged. | Remains on the daemon. | Sessions can be reused while live; lease expiry can retire opens. |
 | Daemon crash, staging disk retained | Remains in TernFS. | Eligible checkpoints can be recovered. | Eligible sessions, their cached replies and namespace intents, and publication aliases, are restored from the disk; see [session restoration](internal/server/README.md#session-restoration). Read opens are not: their stateids get `BAD_STATEID` and the client reopens. |
-| Host replacement with its staging disk | Remains in TernFS. | Same recovery scope as a daemon restart. | The new daemon restores from the same files, under the same conditions. Records written without fsync may be missing after a host crash. Clients must reach it at the old address to use them. |
-| Staging disk lost or unavailable | Remains in TernFS. | Unavailable, including acknowledged stable bytes. | Shared client records do not reconstruct the missing data. |
-| Client reboot | Remains in TernFS. | Linked old staging may be retained, but the new client boot cannot adopt it automatically. | Confirmation of a new incarnation invalidates the old one across daemons. |
+| Failover with the staging directory copied | Remains in TernFS. | Same recovery scope as a daemon restart. | The new daemon restores from the copied files, under the same conditions. Records written without fsync may be missing after a host crash. Clients must reach it at the old address. |
+| Failover with an empty staging directory | Remains in TernFS. | Lost, including acknowledged stable bytes; the old disk keeps them if it survives. | Clients stay mounted and run server-reboot recovery; writable reopens of files open at the failover are refused. |
+| Client reboot | Remains in TernFS. | Linked old staging may be retained, but the new client boot cannot adopt it automatically. | Confirmation of a new incarnation invalidates the old one. |
 
 No restart publishes all leftover staging automatically. The client must
 recover an eligible writer and close it. A successful mount alone proves
@@ -265,26 +265,63 @@ does not restore missing staging or make quarantined targets unambiguous.
 
 ## Replace a host
 
-1. Fence the old daemon so it cannot accept requests or later publish old
-   staging. Do this before giving a replacement its disk or address.
-2. If the staging disk survives, preserve and attach it with its sidecars.
-   Use the same backend and a compatible binary. If it does not survive,
-   treat unpublished data as unavailable.
-3. Arrange the client destination separately from recovering the data.
-   Existing Linux NFS mounts normally retain the resolved IP address.
-   Changing DNS affects new resolution; it does not move those mounts.
-   A hard mount can keep waiting on the dead address.
-4. For existing mounts, provide the address they already use. Otherwise
-   plan application shutdown and fresh mounts. Mounting elsewhere does not
-   move descriptors held on the old mount.
-5. Check recovered writers, quarantine and published contents as for an
-   in-place restart.
+A tree's daemon moves to another host by moving the tree's address. There
+are two ways; they differ in what clients lose. What clients see in each is
+in [Deployment](DEPLOYMENT.md#failover-with-the-staging-directory).
 
-The server derives wire-clientid epochs from wall time after binding its
-socket. Clocks must not go backwards across successive owners of one
-endpoint. A successful bind on another host is not proof that the old owner
-was fenced. There is no automatic disk transfer, address takeover or
-fencing service in nfsd.
+### Before either
+
+1. The operator fences the old daemon before the address moves: it must
+   not serve or publish again once the new one starts, because a late CLOSE
+   from it would publish old staging over newer data. Stop and disable its
+   unit and make sure the old host cannot come back with the address. nfsd
+   has no fencing of its own.
+2. The new host runs a binary that reads the old sidecar format, with the
+   same `-registry`, `-filesystem` and `-owner` flags, as the same uid, with
+   its staging directory at the path its unit uses.
+
+Wire-clientid epochs come from wall time after binding the socket, so
+clocks must not go backwards across successive owners of an address; NTP
+keeps that true. Existing Linux mounts keep the resolved IP address, so
+the address itself must move: a DNS change affects only new mounts.
+
+### With the staging directory (preferred)
+
+Copy the stopped daemon's staging directory to the new host. Copy through
+a machine that can reach both hosts if the hosts cannot reach each other:
+
+```sh
+# A = old host, B = new host, S = the staging directory, same path on both.
+# Optional warm copy while A still serves, to shorten the outage:
+rsync -aHS --numeric-ids --rsync-path='sudo rsync' A:$S/ ./staging/
+# Fence A: stop and disable it before the final copy.
+ssh A 'sudo systemctl disable --now nfsd.service'
+# Final copy with A stopped. -c because staging files are rewritten in
+# place at the same size, which a size-and-mtime check can miss.
+rsync -aHSc --numeric-ids --delete --rsync-path='sudo rsync' A:$S/ ./staging/
+rsync -aHS --numeric-ids --delete --rsync-path='sudo rsync' ./staging/ B:$S/
+ssh B sync
+# Move the address to B, then start nfsd there.
+```
+
+Copy the whole directory, `sessions/` and `aliases/` included: without the
+session files a CLOSE in flight at the failover is lost silently. Never
+start the new daemon from a copy taken while the old one was serving.
+`-S` keeps the sparse staging files sparse; `--numeric-ids` keeps
+ownership. Afterwards check the new daemon's startup log for restored
+sessions, recovered staging and quarantine, and resolve leftover staging
+before the next failover.
+
+### With an empty staging directory
+
+Use this when the old staging cannot be read. Start the new daemon with an
+empty staging directory owned as the unit expects. If the old disk may come
+back, keep it untouched; its data can be recovered by hand later, before
+the base and transient inodes it needs are collected; see
+[Recover retained data manually](#recover-retained-data-manually). Tell
+the users of files that were open for writing at the failover that their
+last changes may be gone: the new daemon's journal names the refused
+writable reopens ("writable open by filehandle refused").
 
 ## Recover retained data manually
 

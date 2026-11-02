@@ -13,9 +13,9 @@ replacement on the last write CLOSE or downgrade to read access.
 
 **Successful fsync does not publish or replicate staged data.** Unpublished
 data depends on the staging disk. Recovery with that disk is conditional,
-and the implementation has known recovery defects. Several nfsd processes
-can serve one TernFS namespace, but they do not form one NFS server with
-shared sessions or transparent failover.
+and the implementation has known recovery defects. One nfsd serves each
+tree. Failover moves its address to another host, preferably with a copy
+of its staging directory; see [Replace a host](RECOVERY.md#replace-a-host).
 
 ## Documents
 
@@ -73,7 +73,7 @@ Linux mounts should still request `vers=4.1`.
 Sessions and their reply caches can survive a restart of the daemon on the
 same staging disk. Restoration is conditional and is not promised after a
 host crash; see [session restoration](internal/server/README.md#session-restoration).
-Sessions do not move between daemons. Byte-range locking, share-deny
+Byte-range locking, share-deny
 enforcement, delegations, pNFS, hard links, named attributes and
 special files are unsupported. There is no protocol reclaim grace period.
 Ownership and permissions are synthetic. This is not a general-purpose
