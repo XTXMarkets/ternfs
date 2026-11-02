@@ -83,7 +83,7 @@ func newInspectFixture(t *testing.T) *inspectFixture {
 	}
 
 	// Identity A: a confirmed incarnation which replaced an earlier one, with
-	// one open and lease slots from both nfsd processes.
+	// one open and a lease renewed after it was first written.
 	f.replacedID = f.register(t, f.first, f.identity, [8]byte{1}, owner)
 	f.clientID = f.register(t, f.first, f.identity, [8]byte{2}, owner)
 	if f.clientID == f.replacedID {
@@ -112,8 +112,8 @@ func newInspectFixture(t *testing.T) *inspectFixture {
 		t.Fatal(err)
 	}
 
-	// The first slot of identity A and the only slot of identity C are now
-	// expired, by 10s; the second slot of identity A is live.
+	// The lease of identity C is now expired, by 10s; identity A's renewed
+	// lease is live.
 	f.now = f.now.Add(LeaseWriteTerm - 40*time.Second)
 
 	f.stagingDir = t.TempDir()
@@ -243,22 +243,8 @@ func TestInspectReportsClientState(t *testing.T) {
 	if current.LeaseState != "live" || !current.Usable {
 		t.Fatalf("lease state = %s usable = %v", current.LeaseState, current.Usable)
 	}
-	if len(current.Leases) != 2 {
-		t.Fatalf("lease slots = %+v", current.Leases)
-	}
-	liveSlots := 0
-	for _, slot := range current.Leases {
-		if slot.Live {
-			liveSlots++
-			if slot.NfsdID != f.second.NfsdID {
-				t.Fatalf("live slot belongs to %s, want %s", slot.NfsdID, f.second.NfsdID)
-			}
-		} else if slot.Collectable {
-			t.Fatalf("slot expired 10s ago reported collectable: %+v", slot)
-		}
-	}
-	if liveSlots != 1 {
-		t.Fatalf("live slots = %d", liveSlots)
+	if len(current.Leases) != 1 || !current.Leases[0].Live || current.Leases[0].Name != LeaseName || current.Leases[0].NfsdID != "" {
+		t.Fatalf("leases = %+v", current.Leases)
 	}
 	if current.Record == nil {
 		t.Fatal("no client record")

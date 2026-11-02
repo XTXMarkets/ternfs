@@ -245,7 +245,7 @@ func TestCreateSessionRacingExpiry(t *testing.T) {
 	}
 }
 
-// After the refresher has retired a fleet-expired
+// After the refresher has retired an expired
 // incarnation here, the client recovers by registering again, without
 // waiting for a sweep. Its cached CREATE_SESSION replays the dead session,
 // a new sequence gets STALE_CLIENTID, and EXCHANGE_ID does not hand back the
@@ -259,7 +259,7 @@ func TestExpiredRegistrationRecovers(t *testing.T) {
 	body := backCreateSessionBody(oldWire, seq, 0)
 	oldID, _ := createdSession(t, c.compound(2, body))
 	inc := incarnationForTest(t, srv, oldWire)
-	// Another process marked the client expired; this process's refresher
+	// An earlier run marked the client expired; this process's refresher
 	// sees the marker and retires the incarnation's sessions.
 	if err := srv.clients.PublishExpiredMarker(inc); err != nil {
 		t.Fatal(err)
@@ -285,7 +285,7 @@ func TestExpiredRegistrationRecovers(t *testing.T) {
 	newID, _ := createdSession(t, c.compound(6, backCreateSessionBody(newWire, newSeq, 0)))
 	newInc := incarnationForTest(t, srv, newWire)
 	if newInc == inc {
-		t.Fatal("the fleet-expired incarnation was adopted again")
+		t.Fatal("the expired incarnation was adopted again")
 	}
 	srv.clients.RefreshMu.Lock()
 	r, ok := srv.clients.RecordLocked(vfs.InodeID(newInc), true)
@@ -421,7 +421,7 @@ func TestTerminalAdmissionBeforeCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fs.leaseName = srv.clients.LeaseName
+	fs.leaseName = clientstore.LeaseName
 	addr, stop := serveTestServer(t, srv)
 	defer stop()
 	defer testutil.CloseSignal(fs.release)

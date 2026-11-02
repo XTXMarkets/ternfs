@@ -14,8 +14,8 @@ import (
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
-// The durable lease refresher (README.md#refresher). This process's lease file,
-// lease.<nfsdID>, is written only here: by one worker per incarnation that
+// The durable lease refresher (README.md#refresher). The incarnation's lease
+// file, lease, is written only here: by one worker per incarnation that
 // needs it, which holds LeaseLocks for each cycle. Everything else reads the
 // record from memory and asks the worker for work.
 //
@@ -32,7 +32,7 @@ type leaseRecordState uint8
 const (
 	LeaseRecordLive leaseRecordState = iota
 	LeaseRecordStale
-	LeaseRecordFleetExpired
+	LeaseRecordExpired
 )
 
 type orphanPhase uint8
@@ -262,10 +262,10 @@ func (cs *Store) StartLeaseBootstrap(clientID uint64) {
 	r.kickLocked()
 }
 
-// NoteFleetExpired records a marker this process published or observed, so
+// NoteExpired records a marker this process published or observed, so
 // lease users see EXPIRED without waiting for the worker's evidence, and
 // wakes the worker for the terminal steps.
-func (cs *Store) NoteFleetExpired(clientID uint64) {
+func (cs *Store) NoteExpired(clientID uint64) {
 	cs.RefreshMu.Lock()
 	defer cs.RefreshMu.Unlock()
 	r := cs.Refreshers[vfs.InodeID(clientID)]
@@ -273,7 +273,7 @@ func (cs *Store) NoteFleetExpired(clientID uint64) {
 		return
 	}
 	r.Mu.Lock()
-	r.State = LeaseRecordFleetExpired
+	r.State = LeaseRecordExpired
 	r.bootstrap = false
 	r.Mu.Unlock()
 	r.kickLocked()
@@ -453,7 +453,7 @@ func (r *LeaseRefresher) wakeDue() time.Time {
 	return due
 }
 
-// terminalLocked reports a stale or fleet-expired record whose terminal
+// terminalLocked reports a stale or expired record whose terminal
 // steps have not finished. The caller holds r.Mu.
 func (r *LeaseRefresher) terminalLocked() bool {
 	return r.State != LeaseRecordLive && !r.Finished
@@ -615,8 +615,6 @@ func (r *LeaseRefresher) pass(authorize bool) (time.Duration, bool) {
 	} else if r.identity != 0 && settled && (authorize || r.need() || r.bootstrapSet()) {
 		if !r.Refresh() {
 			failed = true
-		} else {
-			r.pruneOthers()
 		}
 	}
 	return r.schedule(failed)
@@ -677,10 +675,10 @@ func (r *LeaseRefresher) consume(o *leaseOrphan) {
 	r.Mu.Unlock()
 }
 
-// evidence reads, without writing: our lease's content, the expired marker and
-// the confirmed pointer (README.md#refresher). Other processes' expired lease
-// slots are removed separately, by pruneOthers, under its own conditions
-// (README.md#expired-marker-and-slot-pruning).
+// evidence reads, without writing: the lease's content, the expired marker
+// and the confirmed pointer (README.md#refresher). The lease may have been
+// written by an earlier run of this nfsd, which is how a restart in place
+// keeps the client's lease.
 func (r *LeaseRefresher) evidence() {
 	cs, dir := r.cs, r.Incarnation
 	start := cs.Now().UnixNano()
@@ -688,7 +686,7 @@ func (r *LeaseRefresher) evidence() {
 	var leaseErr error
 	r.call(func() {
 		var id vfs.InodeID
-		if id, leaseErr = cs.fs.Lookup(dir, cs.LeaseName); leaseErr == nil {
+		if id, leaseErr = cs.fs.Lookup(dir, LeaseName); leaseErr == nil {
 			lease, leaseErr = cs.readLease(id)
 		}
 	})
@@ -705,7 +703,7 @@ func (r *LeaseRefresher) evidence() {
 		r.raiseLocked()
 	}
 	if markErr == nil && marked {
-		r.State = LeaseRecordFleetExpired
+		r.State = LeaseRecordExpired
 	}
 	if ptrErr == nil {
 		if found && target == dir {
@@ -715,40 +713,6 @@ func (r *LeaseRefresher) evidence() {
 		}
 	}
 	r.Mu.Unlock()
-}
-
-// pruneOthers removes other processes' lease slots that expired at least a
-// lease time ago. It runs only in an authorized pass, while our own
-// published lease is live, so the client is not expired and those slots are
-// no longer evidence of anything; and only under a destruction hold, so
-// never while a confirmation protects the incarnation. Ours is removed only
-// by the terminal steps, after a marker. Verify passes do not call it.
-func (r *LeaseRefresher) pruneOthers() {
-	cs, dir := r.cs, r.Incarnation
-	r.Mu.Lock()
-	live := r.State == LeaseRecordLive && r.Proven > cs.Now().UnixNano()
-	r.Mu.Unlock()
-	if !live {
-		return
-	}
-	if cs.BeginMarker != nil {
-		end, ok := cs.BeginMarker(dir)
-		if !ok {
-			return
-		}
-		defer end()
-	}
-	r.call(func() {
-		if scan, err := cs.scanSlots(dir, LeasePrefix); err == nil {
-			var others []string
-			for _, name := range scan.expiredNames {
-				if name != cs.LeaseName {
-					others = append(others, name)
-				}
-			}
-			_ = cs.removeExpiredSlots(dir, others)
-		}
-	})
 }
 
 // Refresh publishes a new lease when ours is due
@@ -807,7 +771,7 @@ func (r *LeaseRefresher) Refresh() bool {
 	r.LastExpiry = expiry
 	r.Attempt = &leaseAttempt{orphan: o, edge: edge, expiry: expiry}
 	r.Mu.Unlock()
-	r.call(func() { err = cs.fs.RenameEdge(dir, o.Temp, edge, dir, cs.LeaseName) })
+	r.call(func() { err = cs.fs.RenameEdge(dir, o.Temp, edge, dir, LeaseName) })
 	if err != nil {
 		// Unsettled: no later publication starts until it is fenced.
 		return false
@@ -852,7 +816,7 @@ func (r *LeaseRefresher) TakeOrphan() (*leaseOrphan, bool) {
 	return o, true
 }
 
-// terminate handles a stale or fleet-expired record once its attempt is
+// terminate handles a stale or expired record once its attempt is
 // settled: remove our lease through its edge, best effort, then retire the
 // incarnation's sessions. It writes nothing more. It reports false when the
 // retirement must be retried.
@@ -871,8 +835,8 @@ func (r *LeaseRefresher) terminate() bool {
 	// protects the incarnation.
 	cleanup := func() {
 		r.call(func() {
-			if edge, err := cs.fs.LookupEdge(dir, cs.LeaseName); err == nil {
-				_ = cs.fs.RemoveEdge(dir, cs.LeaseName, edge)
+			if edge, err := cs.fs.LookupEdge(dir, LeaseName); err == nil {
+				_ = cs.fs.RemoveEdge(dir, LeaseName, edge)
 			}
 		})
 	}
@@ -1051,7 +1015,7 @@ func (cs *Store) leaseStatusError(view leaseView) error {
 	switch {
 	case view.State == LeaseRecordStale:
 		return nfs4.Error(nfs4.NFS4ERR_STALE_CLIENTID)
-	case view.State == LeaseRecordFleetExpired:
+	case view.State == LeaseRecordExpired:
 		return nfs4.Error(nfs4.NFS4ERR_EXPIRED)
 	case view.Proven <= cs.Now().UnixNano():
 		return nfs4.Error(nfs4.NFS4ERR_DELAY)

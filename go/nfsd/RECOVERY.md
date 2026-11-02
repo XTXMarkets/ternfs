@@ -150,8 +150,8 @@ keeps the staging.
 ## Lease expiry
 
 The advertised lease is 90 seconds. This is not a deadline at which every
-idle writer disappears: the daemon has a logical lease and the fleet has
-durable lease slots, with a periodic sweep. See
+idle writer disappears: the daemon has a logical lease and each
+incarnation a durable lease, with a periodic sweep. See
 [Two leases](DESIGN.md#two-leases).
 Client-store errors generally produce `NFS4ERR_DELAY` and defer recovery or
 expiry while the outcome is unresolved.

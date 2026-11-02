@@ -636,7 +636,7 @@ func TestCallbackRenewalUnderGate(t *testing.T) {
 	}
 }
 
-// expiryGateVFS blocks the lease observation's directory read, and can
+// expiryGateVFS blocks the lease observation's lookup of the lease, and can
 // fail the expired marker's creation.
 type expiryGateVFS struct {
 	vfs.TernVFS
@@ -647,9 +647,9 @@ type expiryGateVFS struct {
 	failMarker bool
 }
 
-func (fs *expiryGateVFS) Readdir(dir vfs.InodeID, start uint64) ([]vfs.DirEntry, uint64, error) {
+func (fs *expiryGateVFS) Lookup(dir vfs.InodeID, name string) (vfs.InodeID, error) {
 	fs.mu.Lock()
-	block := fs.dir != 0 && dir == fs.dir
+	block := fs.dir != 0 && dir == fs.dir && name == clientstore.LeaseName
 	if block {
 		fs.dir = 0
 	}
@@ -658,7 +658,7 @@ func (fs *expiryGateVFS) Readdir(dir vfs.InodeID, start uint64) ([]vfs.DirEntry,
 		close(fs.entered)
 		<-fs.release
 	}
-	return fs.TernVFS.Readdir(dir, start)
+	return fs.TernVFS.Lookup(dir, name)
 }
 
 func (fs *expiryGateVFS) CreateFile(dir vfs.InodeID, name string, data io.Reader) (vfs.InodeID, error) {

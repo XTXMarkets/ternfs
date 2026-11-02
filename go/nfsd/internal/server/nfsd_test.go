@@ -1009,7 +1009,7 @@ func TestPutfhAllowsUncachedClientStoreFileHandles(t *testing.T) {
 		t.Fatal(err)
 	}
 	leaseID, err := firstFS.Lookup(
-		vfs.InodeID(clientID), store.LeaseName)
+		vfs.InodeID(clientID), clientstore.LeaseName)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1707,7 +1707,7 @@ func TestServerLeaseSweepExpiresAbandonedStaging(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	} else if active {
-		t.Fatal("expired fleet marker remained active")
+		t.Fatal("expired marker remained active")
 	}
 }
 

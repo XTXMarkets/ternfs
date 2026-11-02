@@ -16,7 +16,7 @@ import (
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
-// lookupDurableOpen requires valid local protocol state and a fleet-wide
+// lookupDurableOpen requires valid local protocol state and a live durable
 // lease. The lease invalidates stale local state after a reboot is confirmed.
 // After an nfsd restart there is no local state; the staging sidecar is then
 // the durable proof that this stateid is the confirmed write-open for this

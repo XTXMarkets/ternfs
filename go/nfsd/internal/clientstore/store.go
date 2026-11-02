@@ -27,18 +27,17 @@ import (
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
-// Store persists client identity and lease decisions for the nfsd fleet.
+// Store persists client identity and lease decisions for the tree's nfsd.
 // A stable identity directory points at distinct incarnation directories. The
 // inode ID of each incarnation directory is the incarnation's durable id. It
 // is not the clientid a client sees: the server returns process-local wire
 // clientids that index this incarnation; see README.md#layout.
 type Store struct {
-	fs        vfs.TernVFS
-	NFSDirID  vfs.InodeID
-	DirID     vfs.InodeID
-	NfsdID    string
-	LeaseName string
-	Now       func() time.Time
+	fs       vfs.TernVFS
+	NFSDirID vfs.InodeID
+	DirID    vfs.InodeID
+	NfsdID   string
+	Now      func() time.Time
 	// clock is read by Now; SetClock swaps it while workers run.
 	clock        atomic.Pointer[func() time.Time]
 	LocalClients sync.Map
@@ -75,7 +74,7 @@ type Store struct {
 	// Set by the server (../server/README.md#lease-gate, README.md#refresher).
 	// LeaseNeed reports the logical lease's refresh need; LeaseTerminal
 	// retires an incarnation's sessions once its record is stale or
-	// fleet-expired, reporting false to be retried. With them set, records
+	// expired, reporting false to be retried. With them set, records
 	// have workers and only the server's decideExpired publishes expired
 	// markers. Without them (a Store used on its own, as in the package tests)
 	// lease work runs inline in the caller and lease observations mark, as
@@ -119,21 +118,28 @@ func (e ClientInUseError) Error() string {
 	return "NFS client identity is in use by another principal"
 }
 
-type slotScan struct {
-	live         bool
-	found        bool
-	expiredNames []string
+// leaseScan is what an incarnation's lease says: whether one exists and
+// whether it is live.
+type leaseScan struct {
+	live  bool
+	found bool
 }
 
 const (
-	ConfirmedName       = "confirmed"
-	pendingName         = "pending"
-	ClientRecordName    = "client"
-	RebootName          = "reboot"
-	GCCandidateName     = "gc"
-	ExpiredName         = "expired"
-	IncarnationPrefix   = "i."
-	activeOpenPrefix    = "o."
+	ConfirmedName     = "confirmed"
+	pendingName       = "pending"
+	ClientRecordName  = "client"
+	RebootName        = "reboot"
+	GCCandidateName   = "gc"
+	ExpiredName       = "expired"
+	IncarnationPrefix = "i."
+	activeOpenPrefix  = "o."
+	// LeaseName is the incarnation's one lease, written by the refresher of
+	// the tree's nfsd (README.md#refresher).
+	LeaseName = "lease"
+	// LeasePrefix names the per-process lease slots of earlier releases.
+	// They are read only while an incarnation has no lease, and removed
+	// with the incarnation's state.
 	LeasePrefix         = "lease."
 	confirmingPrefix    = "confirming."
 	TempPrefix          = "t."
@@ -173,7 +179,6 @@ func NewStoreAt(
 		NFSDirID:       nfsID,
 		DirID:          clientsID,
 		NfsdID:         nfsdID,
-		LeaseName:      LeasePrefix + nfsdID,
 		identityLocks:  make(map[vfs.InodeID]*clientIdentityLock),
 		Refreshers:     make(map[vfs.InodeID]*LeaseRefresher),
 		RefresherLimit: maxRefreshers,
@@ -292,7 +297,7 @@ func (cs *Store) ExchangeID(
 		if err != nil {
 			return 0, [8]byte{}, false, err
 		}
-		leases, err := cs.scanSlots(confirmedID, LeasePrefix)
+		leases, err := cs.leaseOf(confirmedID)
 		if err != nil {
 			return 0, [8]byte{}, false, err
 		}
@@ -342,7 +347,7 @@ func (cs *Store) purgeState(incarnationID vfs.InodeID) error {
 		return err
 	}
 	for _, entry := range entries {
-		if !IsActiveOpenName(entry.Name) && !isLeaseName(entry.Name) {
+		if !IsActiveOpenName(entry.Name) && entry.Name != LeaseName && !isLeaseName(entry.Name) {
 			continue
 		}
 		if err := cs.removeIfExists(incarnationID, entry.Name); err != nil {
@@ -988,22 +993,21 @@ func (cs *Store) hasActiveOpen(incarnationID vfs.InodeID) (bool, error) {
 	return live, err
 }
 
-// A lease is live while any nfsd process has renewed its own slot. Taking the
-// maximum prevents a slow writer from shortening another process's lease.
+// A lease is live while its expiry is in the future.
 func (cs *Store) hasLiveLease(incarnationID vfs.InodeID) (bool, error) {
 	live, _, err := cs.leaseStatus(incarnationID)
 	return live, err
 }
 
-// observeLeaseStatus reports whether the client's durable lease is live
-// (any process's slot) and whether any slot was found, without writing:
+// observeLeaseStatus reports whether the client's durable lease is live and
+// whether one was found, without writing:
 // leaseStatus(mark=false). An expired marker reads as dead.
 func (cs *Store) observeLeaseStatus(incarnationID vfs.InodeID) (bool, bool, error) {
 	expired, err := cs.hasExpiredMarker(incarnationID)
 	if err != nil {
 		return false, false, err
 	}
-	scan, err := cs.scanSlots(incarnationID, LeasePrefix)
+	scan, err := cs.leaseOf(incarnationID)
 	if err != nil {
 		return false, false, err
 	}
@@ -1019,8 +1023,8 @@ type leaseObservation struct {
 	Collected   bool // the incarnation directory is gone
 	Unconfirmed bool // the identity's confirmed pointer names another
 	Marked      bool // an expired marker exists
-	Live        bool // some process's lease is live
-	Found       bool // some lease slot exists
+	Live        bool // the lease is live
+	Found       bool // a lease exists
 }
 
 // ObserveLease reads an incarnation's lease state without writing.
@@ -1046,7 +1050,7 @@ func (cs *Store) ObserveLease(clientID uint64) (leaseObservation, error) {
 	if err != nil {
 		return leaseObservation{}, err
 	}
-	scan, err := cs.scanSlots(incarnationID, LeasePrefix)
+	scan, err := cs.leaseOf(incarnationID)
 	if err != nil {
 		return leaseObservation{}, err
 	}
@@ -1070,10 +1074,9 @@ func (cs *Store) ForgetUnconfirmed(clientID uint64) error {
 	return nil
 }
 
-// leaseStatus observes the lease and, in a Store without a server, publishes the
-// expired marker for a dead one and removes long-expired slots. With a
-// server, only decideExpired publishes markers and the refresher removes
-// slots, so this only observes.
+// leaseStatus observes the lease and, in a Store without a server, publishes
+// the expired marker for a dead one. With a server, only decideExpired
+// publishes markers, so this only observes.
 func (cs *Store) leaseStatus(
 	incarnationID vfs.InodeID,
 ) (bool, bool, error) {
@@ -1084,7 +1087,7 @@ func (cs *Store) leaseStatus(
 	if err != nil {
 		return false, false, err
 	}
-	scan, err := cs.scanSlots(incarnationID, LeasePrefix)
+	scan, err := cs.leaseOf(incarnationID)
 	if err != nil {
 		return false, false, err
 	}
@@ -1102,11 +1105,6 @@ func (cs *Store) leaseStatus(
 		}
 		expired = true
 	}
-	if err := cs.removeExpiredSlots(
-		incarnationID, scan.expiredNames,
-	); err != nil {
-		return false, expired || scan.found, err
-	}
 	if expired {
 		return false, true, nil
 	}
@@ -1123,35 +1121,31 @@ func (cs *Store) hasExpiredMarker(
 	return err == nil, err
 }
 
-func (cs *Store) liveSlots(
-	incarnationID vfs.InodeID,
-	prefix string,
-) (bool, bool, error) {
-	scan, err := cs.scanSlots(incarnationID, prefix)
-	if err != nil {
-		return false, false, err
+// leaseOf reads the incarnation's lease. An incarnation that has none
+// yet, last served by an earlier release, is read from that release's
+// per-process slots instead, taking the latest expiry, so a client live at
+// the upgrade is not judged expired.
+func (cs *Store) leaseOf(incarnationID vfs.InodeID) (leaseScan, error) {
+	now := cs.Now().UnixNano()
+	id, err := cs.fs.Lookup(incarnationID, LeaseName)
+	if err == nil {
+		lease, err := cs.readLease(id)
+		if err == nil {
+			return leaseScan{found: true, live: lease.ExpiresUnixNano > now}, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return leaseScan{}, err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return leaseScan{}, err
 	}
-	if err := cs.removeExpiredSlots(
-		incarnationID, scan.expiredNames,
-	); err != nil {
-		return false, scan.found, err
-	}
-	return scan.live, scan.found, nil
-}
-
-func (cs *Store) scanSlots(
-	incarnationID vfs.InodeID,
-	prefix string,
-) (slotScan, error) {
 	entries, err := cs.entries(incarnationID)
 	if err != nil {
-		return slotScan{}, err
+		return leaseScan{}, err
 	}
-	now := cs.Now().UnixNano()
-	var scan slotScan
+	var scan leaseScan
 	for _, entry := range entries {
-		if !strings.HasPrefix(entry.Name, prefix) ||
-			len(entry.Name) == len(prefix) {
+		if !isLeaseName(entry.Name) {
 			continue
 		}
 		lease, err := cs.readLease(entry.ID)
@@ -1159,30 +1153,12 @@ func (cs *Store) scanSlots(
 			continue
 		}
 		if err != nil {
-			return slotScan{}, err
+			return leaseScan{}, err
 		}
 		scan.found = true
-		if lease.ExpiresUnixNano > now {
-			scan.live = true
-			continue
-		}
-		if lease.ExpiresUnixNano <= now-LeaseTime.Nanoseconds() {
-			scan.expiredNames = append(scan.expiredNames, entry.Name)
-		}
+		scan.live = scan.live || lease.ExpiresUnixNano > now
 	}
 	return scan, nil
-}
-
-func (cs *Store) removeExpiredSlots(
-	incarnationID vfs.InodeID,
-	names []string,
-) error {
-	for _, name := range names {
-		if err := cs.removeIfExists(incarnationID, name); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func (cs *Store) IsInternalFilehandle(id vfs.InodeID) (bool, error) {

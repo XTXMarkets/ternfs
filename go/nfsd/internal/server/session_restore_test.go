@@ -738,8 +738,8 @@ func TestRestartDropsSessionOfUnknownIncarnation(t *testing.T) {
 // A session whose recorded replies the reply cache cannot hold is not
 // restored at all: a slot without its reply would run a completed request
 // again, so the client gets BADSESSION and registers afresh. The new
-// process holds no session of the incarnation, so it publishes no lease
-// for it.
+// process holds no session of the incarnation, so it publishes no new
+// lease for it.
 func TestRestartRefusesSessionWhenReplyCacheFull(t *testing.T) {
 	f := newReplayFixture(t)
 	writeRoot(t, f.root, "victim", "first")
@@ -751,6 +751,10 @@ func TestRestartRefusesSessionWhenReplyCacheFull(t *testing.T) {
 	}
 	incarnation := f.srv.sessions.lookup(f.ts.id).clientID
 	path := f.srv.sessionFiles.Path(sessionstore.ID(f.ts.id))
+	before, err := f.srv.fs.Lookup(vfs.InodeID(incarnation), clientstore.LeaseName)
+	if err != nil {
+		t.Fatal(err)
+	}
 	limit := replyCacheLimit
 	replyCacheLimit = cachedReplyOverhead // room for nothing
 	defer func() { replyCacheLimit = limit }()
@@ -764,9 +768,10 @@ func TestRestartRefusesSessionWhenReplyCacheFull(t *testing.T) {
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("refused session's file kept: %v", err)
 	}
-	// Startup waits for the leases it publishes, so one would be there now.
-	if _, err := f.srv.fs.Lookup(vfs.InodeID(incarnation), f.srv.clients.LeaseName); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("lease of an incarnation with no restored session: %v", err)
+	// Startup waits for the leases it publishes, so a new one would be there
+	// now. The lease the earlier run wrote is all there is.
+	if after, err := f.srv.fs.Lookup(vfs.InodeID(incarnation), clientstore.LeaseName); err != nil || after != before {
+		t.Fatalf("lease of an incarnation with no restored session: %v %v, want %v", after, err, before)
 	}
 	writeRoot(t, f.root, "victim", "second")
 	reply, err := sendRawRPC(f.conn, f.xid, procCompound, request)

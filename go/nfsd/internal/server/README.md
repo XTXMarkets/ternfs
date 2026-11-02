@@ -211,7 +211,7 @@ SEQUENCE does no backend I/O. Holding the slot's lock, it takes in order:
    (`NFS4ERR_RESOURCE`);
 4. a reply buffer (`NFS4ERR_RESOURCE`);
 5. a renewal check from memory: `NFS4ERR_DELAY` with no lease record
-   credit; `NFS4ERR_BADSESSION` for a stale or fleet-expired record; and
+   credit; `NFS4ERR_BADSESSION` for a stale or expired record; and
    `NFS4ERR_DELAY`, with a verify requested, when this process's published
    lease is not in the future or the confirmed pointer has not been read in
    the last 45 seconds.
@@ -461,17 +461,20 @@ store:
 | --- | --- |
 | A read error | The gate returns to live. Nothing is published or expired; a later sweep tries again. |
 | The incarnation directory is gone | Expired here. |
-| The confirmed pointer names another incarnation | Its open markers and lease slots are purged, then expired here. |
-| An `expired` marker exists | Another process decided; expired here. |
-| Some slot is live, or no slot exists yet | The gate returns to live. A first OPEN may still be registering its lease. |
-| Slots exist and none is live | A renewal or hold that arrived during the check wins. Otherwise the marker is written, and the client is expired here even if that write fails. |
+| The confirmed pointer names another incarnation | Its lease and any legacy open markers are purged, then expired here. |
+| An `expired` marker exists | Decided before, by this process or an earlier run of it; expired here. |
+| The lease is live, or none exists yet | The gate returns to live. A first CREATE_SESSION may still be publishing it. A lease an earlier run wrote counts, which is how a restart keeps a client. |
+| The lease exists and is not live | A renewal or hold that arrived during the check wins. Otherwise the marker is written, and the client is expired here even if that write fails. |
+
+No row looks at another daemon. One nfsd decides for its tree, which rests
+on the operator fencing the old server before a failover.
 
 Expiring a client here retires its wire record, its sessions, cancelling
 their callbacks, and its local open state. Once expired, its SEQUENCEs get
 `NFS4ERR_BADSESSION` and a CREATE_SESSION for it gets
 `NFS4ERR_STALE_CLIENTID`.
 
-The refresher's terminal steps, for a stale or fleet-expired record, take
+The refresher's terminal steps, for a stale or expired record, take
 another path: they close the gate and retire the incarnation's sessions
 under a destruction hold, but keep its wire record. A committed
 CREATE_SESSION result still replays, and a new CREATE_SESSION for the

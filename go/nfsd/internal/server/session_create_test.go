@@ -301,7 +301,7 @@ type leaseRenameFailureVFS struct {
 }
 
 func (fs *leaseRenameFailureVFS) RenameEdge(src vfs.InodeID, name string, edge vfs.Edge, dst vfs.InodeID, newName string) error {
-	if fs.armed.Load() && strings.HasPrefix(newName, clientstore.LeasePrefix) {
+	if fs.armed.Load() && newName == clientstore.LeaseName {
 		return clientstore.ErrInjectedLookup
 	}
 	return fs.TernVFS.RenameEdge(src, name, edge, dst, newName)
@@ -343,7 +343,7 @@ func TestCreateSessionBootstrap(t *testing.T) {
 		srv := identityServer(t, local)
 		wire := identityExchange(t, srv, 1, "client", [8]byte{1}, false).clientID
 		incarnation := vfs.InodeID(incarnationForTest(t, srv, wire))
-		// Another process expired the client; the store check still passes,
+		// An earlier run expired the client; the store check still passes,
 		// so the creation commits and bootstrap then finds the marker.
 		srv.waitForClientGC()
 		if _, err := local.CreateFile(incarnation, clientstore.ExpiredName, nil); err != nil {

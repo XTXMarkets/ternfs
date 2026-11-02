@@ -446,7 +446,7 @@ var enums = map[string][]string{
 	"lease_refresher.state": {
 		LeaseLive + ": the durable lease can be refreshed",
 		LeaseStale + ": the confirmed pointer no longer names this incarnation",
-		LeaseFleetExpired + ": an expired marker was published or observed",
+		LeaseExpired + ": an expired marker was published or observed",
 	},
 	"lease_refresher.temp_obligations[].phase": {
 		OrphanConstructing + ": ConstructFile in flight",

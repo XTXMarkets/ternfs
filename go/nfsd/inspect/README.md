@@ -77,8 +77,10 @@ Every JSON response, the index and errors included, carries `now`,
 `nfsd_id`, `stateid_epoch`, `wire_epoch` and `mode`. The profiling pages are
 not JSON and carry none of them.
 
-- `nfsd_id` names this process's `lease.` slots in the client store.
-  `confirming.` slots were written by earlier releases.
+- `nfsd_id` identifies this process. It is the server owner Linux sees at
+  EXCHANGE_ID. The `lease.<nfsd-id>` and `confirming.<nfsd-id>` slots a
+  report may show were written by earlier releases, which kept one per
+  process.
 - `stateid_epoch` is the first four bytes of every stateid and session id
   the process issued.
 - `wire_epoch` is the high 32 bits of every wire clientid it issued. It is
@@ -231,21 +233,21 @@ For each identity, the report shows the stored identity string, its
 has `roles`: any of `confirmed`, `pending` and `reboot-target`, where a
 reboot target is the incarnation a confirmed or pending incarnation's
 `reboot` pointer names. Its `lease_state` is `live`, `expired` (an
-`expired` marker, or only dead lease slots) or `none`. Its `status` is:
+`expired` marker, or a dead lease) or `none`. Its `status` is:
 
 | Status | Meaning |
 | --- | --- |
 | `ACTIVE` | Confirmed, with a live lease. |
-| `EXPIRED` | Confirmed, with an expired marker or only dead lease slots. |
-| `UNLEASED` | Confirmed, with no lease slot recorded. It can still acquire its first lease. |
+| `EXPIRED` | Confirmed, with an expired marker or a dead lease. |
+| `UNLEASED` | Confirmed, with no lease recorded. It can still acquire its first lease. |
 | `PENDING` | Named by `pending`, waiting for its first CREATE_SESSION. |
 | `REPLACED` | Retained as a reboot target until its state is purged. |
 | `UNREACHABLE` | No pointer keeps it. Client collection removes it after it has aged. |
 
 `usable` is true only for `ACTIVE`: the incarnation's stateids are
 accepted. Each incarnation also shows its `client` record,
-with the decoded principal; its lease and confirming slots, each naming the
-nfsd which wrote it; the expired marker; `gc_after`; its open markers; and
+with the decoded principal; its `lease`, and any legacy lease and
+confirming slots, each naming the nfsd which wrote it; the expired marker; `gc_after`; its open markers; and
 temporary files. An open marker's `active` follows `usable`, and the
 summary counts the inactive ones as `stale_open_markers`. A lease or
 confirming slot is `collectable` once it has been expired for a full extra

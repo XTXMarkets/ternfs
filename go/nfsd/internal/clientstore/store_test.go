@@ -283,128 +283,6 @@ func TestClientStoreDurableState(t *testing.T) {
 	})
 }
 
-func TestClientStoreLeaseSlotsDoNotShortenEachOther(t *testing.T) {
-	fs := vfs.NewLocalTernVFS(t.TempDir())
-	first, err := NewStore(fs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := NewStore(fs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	base := time.Unix(1000, 0)
-	first.Now = func() time.Time { return base }
-	second.Now = func() time.Time { return base }
-	owner := ClientOwner{Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"}}
-	clientID, confirm, err := first.RegisterForTest(
-		[8]byte{1}, []byte("client"), owner)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := second.ConfirmForTest(
-		clientID, confirm, owner.Principal,
-	); err != nil {
-		t.Fatal(err)
-	}
-	var stateID nfs4.StateID
-	stateID[0] = 1
-	if err := first.NoteOpen(clientID, stateID); err != nil {
-		t.Fatal(err)
-	}
-
-	secondRenewAt := base.Add(LeaseRenewAfter)
-	second.Now = func() time.Time { return secondRenewAt }
-	if err := second.Renew(clientID); err != nil {
-		t.Fatal(err)
-	}
-	secondExpiry := secondRenewAt.Add(LeaseWriteTerm)
-	firstRenewAt := secondExpiry.Add(-time.Second)
-	first.Now = func() time.Time { return firstRenewAt }
-	if err := first.Renew(clientID); err != nil {
-		t.Fatal(err)
-	}
-	firstExpiry := firstRenewAt.Add(LeaseWriteTerm)
-
-	entries, _, err := fs.Readdir(vfs.InodeID(clientID), 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	leases := 0
-	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name, LeasePrefix) {
-			leases++
-		}
-	}
-	if leases != 2 {
-		t.Fatalf("lease slots = %d, want 2", leases)
-	}
-
-	second.Now = func() time.Time { return secondExpiry.Add(time.Second) }
-	live, _, err := second.leaseStatus(vfs.InodeID(clientID))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !live {
-		t.Fatal("shorter lease slot hid a longer lease")
-	}
-	second.Now = func() time.Time { return firstExpiry.Add(time.Second) }
-	live, _, err = second.leaseStatus(vfs.InodeID(clientID))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if live {
-		t.Fatal("expired lease slots kept an open marker active")
-	}
-}
-
-func TestClientStoreRemovesExpiredProcessSlots(t *testing.T) {
-	fs := vfs.NewLocalTernVFS(t.TempDir())
-	base := time.Unix(1000, 0)
-	owner := ClientOwner{
-		Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"},
-	}
-	first, clientID := NewConfirmedStoreClient(
-		t, fs, []byte("client"), [8]byte{1}, owner)
-	first.Now = func() time.Time { return base }
-	if err := first.NoteOpen(clientID, nfs4.StateID{1}); err != nil {
-		t.Fatal(err)
-	}
-	observer, err := NewStore(fs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	observer.Now = func() time.Time {
-		return base.Add(LeaseWriteTerm + time.Second)
-	}
-	if _, _, err := observer.leaseStatus(vfs.InodeID(clientID)); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{first.LeaseName} {
-		if _, err := fs.Lookup(vfs.InodeID(clientID), name); err != nil {
-			t.Fatalf("process slot %q removed without cleanup grace: %v",
-				name, err)
-		}
-	}
-	collector, err := NewStore(fs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	collector.Now = func() time.Time {
-		return base.Add(LeaseWriteTerm + LeaseTime + time.Second)
-	}
-	if _, _, err := collector.leaseStatus(vfs.InodeID(clientID)); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{first.LeaseName} {
-		if _, err := fs.Lookup(
-			vfs.InodeID(clientID), name,
-		); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("expired process slot %q remains: %v", name, err)
-		}
-	}
-}
-
 func TestClientStoreExpiredLeaseDoesNotReviveAfterSlotCleanup(t *testing.T) {
 	for _, test := range []struct {
 		name string
@@ -493,39 +371,8 @@ func TestClientStoreCachedRenewSeesExpiredMarker(t *testing.T) {
 	if active, err := first.HasLocalOpen(
 		clientID, stateID,
 	); active || nfs4.ErrorCode(err) != nfs4.NFS4ERR_EXPIRED {
-		t.Fatalf("cached renewal after fleet expiry = active %t, err %v",
+		t.Fatalf("cached renewal after expiry = active %t, err %v",
 			active, err)
-	}
-}
-
-func TestClientStorePersistsExpiryBeforeSlotCleanup(t *testing.T) {
-	baseFS := vfs.NewLocalTernVFS(t.TempDir())
-	fs := &RemoveFailureVFS{TernVFS: baseFS}
-	base := time.Unix(1000, 0)
-	owner := ClientOwner{
-		Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"},
-	}
-	store, clientID := NewConfirmedStoreClient(
-		t, fs, []byte("client"), [8]byte{1}, owner)
-	store.Now = func() time.Time { return base }
-	if err := store.NoteOpen(clientID, nfs4.StateID{1}); err != nil {
-		t.Fatal(err)
-	}
-
-	store.Now = func() time.Time {
-		return base.Add(LeaseWriteTerm + LeaseTime + time.Second)
-	}
-	fs.Name = store.LeaseName
-	fs.Remaining = 1
-	if _, _, err := store.leaseStatus(
-		vfs.InodeID(clientID),
-	); !errors.Is(err, ErrInjectedRemove) {
-		t.Fatalf("lease cleanup error = %v, want injected remove failure", err)
-	}
-	if _, err := baseFS.Lookup(
-		vfs.InodeID(clientID), ExpiredName,
-	); err != nil {
-		t.Fatalf("expiry was not durable before slot cleanup: %v", err)
 	}
 }
 
@@ -674,7 +521,7 @@ func TestClientStoreImplicitRenewalRechecksReboot(t *testing.T) {
 		t.Fatal("cached open survived reboot confirmation")
 	}
 	if _, err := baseFS.Lookup(
-		vfs.InodeID(oldID), first.LeaseName,
+		vfs.InodeID(oldID), LeaseName,
 	); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("reboot confirmation left a stale lease: %v", err)
 	}
@@ -896,7 +743,7 @@ func TestClientStoreHasLocalOpenRequiresLiveDurableLease(t *testing.T) {
 				if err := store.NoteOpen(id, sid); err != nil {
 					t.Fatal(err)
 				}
-				leaseID, err := fs.Lookup(vfs.InodeID(id), store.LeaseName)
+				leaseID, err := fs.Lookup(vfs.InodeID(id), LeaseName)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -905,13 +752,13 @@ func TestClientStoreHasLocalOpenRequiresLiveDurableLease(t *testing.T) {
 				}
 				if expired {
 					now = now.Add(LeaseWriteTerm + time.Second)
-				} else if err := fs.Remove(vfs.InodeID(id), store.LeaseName); err != nil {
+				} else if err := fs.Remove(vfs.InodeID(id), LeaseName); err != nil {
 					t.Fatal(err)
 				}
 				if active, err := store.HasLocalOpen(id, sid); err != nil || active {
 					t.Fatalf("open without live lease = %v, %v", active, err)
 				}
-				currentID, err := fs.Lookup(vfs.InodeID(id), store.LeaseName)
+				currentID, err := fs.Lookup(vfs.InodeID(id), LeaseName)
 				if expired {
 					// The expired slot is still inside its cleanup grace period.
 					if err != nil || currentID != leaseID {
@@ -925,7 +772,7 @@ func TestClientStoreHasLocalOpenRequiresLiveDurableLease(t *testing.T) {
 	}
 }
 
-func TestClientStoreLiveSlotsSkipsRemovedEntry(t *testing.T) {
+func TestClientStoreLeaseReadSkipsRemovedEntry(t *testing.T) {
 	baseFS := vfs.NewLocalTernVFS(t.TempDir())
 	fs := &readAllHookVFS{TernVFS: baseFS}
 	base := time.Unix(1000, 0)
@@ -938,32 +785,33 @@ func TestClientStoreLiveSlotsSkipsRemovedEntry(t *testing.T) {
 	if err := store.NoteOpen(clientID, nfs4.StateID{1}); err != nil {
 		t.Fatal(err)
 	}
-	leaseID, err := baseFS.Lookup(vfs.InodeID(clientID), store.LeaseName)
+	leaseID, err := baseFS.Lookup(vfs.InodeID(clientID), LeaseName)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var hookErr error
 	fs.id = leaseID
 	fs.hook = func() {
-		hookErr = baseFS.Remove(vfs.InodeID(clientID), store.LeaseName)
+		hookErr = baseFS.Remove(vfs.InodeID(clientID), LeaseName)
 	}
 
-	live, found, err := store.liveSlots(vfs.InodeID(clientID), LeasePrefix)
+	scan, err := store.leaseOf(vfs.InodeID(clientID))
+	live, found := scan.live, scan.found
 	if err != nil {
-		t.Fatalf("raced slot scan failed: %v", err)
+		t.Fatalf("raced lease read failed: %v", err)
 	}
 	if hookErr != nil {
 		t.Fatal(hookErr)
 	}
 	// TernFS keeps a removed file readable by inode until it is collected, so
-	// a scan racing the removal reads the stale slot rather than failing.
+	// a read racing the removal reads the stale lease rather than failing.
 	if !live || !found {
-		t.Fatalf("raced slot scan = live %t, found %t; want true, true",
+		t.Fatalf("raced lease read = live %t, found %t; want true, true",
 			live, found)
 	}
 	if _, err := store.replaceJSON(
 		vfs.InodeID(clientID),
-		store.LeaseName,
+		LeaseName,
 		DurableLease{
 			ExpiresUnixNano: base.Add(LeaseTime).UnixNano(),
 		},
@@ -999,7 +847,7 @@ func TestClientStoreRenewalDoesNotBlockActiveState(t *testing.T) {
 	store.Now = func() time.Time {
 		return base.Add(LeaseRenewAfter + time.Second)
 	}
-	fs.DstName = store.LeaseName
+	fs.DstName = LeaseName
 	renewed := make(chan error, 1)
 	go func() {
 		renewed <- store.Renew(clientID)
@@ -1205,6 +1053,55 @@ func TestStagingRecoveryKeySeparatesBootsAndPrincipals(t *testing.T) {
 	} {
 		if original == other {
 			t.Fatal("recovery identity crossed a client, boot or principal boundary")
+		}
+	}
+}
+
+// An incarnation last served by an earlier release has per-process slots
+// and no lease. Its latest slot decides until the refresher publishes the
+// lease, which then decides alone.
+func TestClientStoreLegacyLeaseSlots(t *testing.T) {
+	fs := vfs.NewLocalTernVFS(t.TempDir())
+	base := time.Unix(1000, 0)
+	owner := ClientOwner{Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"}}
+	store, clientID := NewConfirmedStoreClient(t, fs, []byte("client"), [8]byte{1}, owner)
+	store.Now = func() time.Time { return base }
+	inc := vfs.InodeID(clientID)
+	if err := store.removeIfExists(inc, LeaseName); err != nil {
+		t.Fatal(err)
+	}
+	write := func(name string, expires time.Time) {
+		t.Helper()
+		if _, err := store.replaceJSON(inc, name, DurableLease{ExpiresUnixNano: expires.UnixNano()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	read := func() leaseScan {
+		t.Helper()
+		scan, err := store.leaseOf(inc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return scan
+	}
+	if scan := read(); scan.found {
+		t.Fatalf("no lease and no slots read as %+v", scan)
+	}
+	write(LeasePrefix+"old", base.Add(-time.Second))
+	write(LeasePrefix+"older", base.Add(time.Minute))
+	if scan := read(); !scan.found || !scan.live {
+		t.Fatalf("a live legacy slot read as %+v", scan)
+	}
+	write(LeaseName, base.Add(-time.Second))
+	if scan := read(); !scan.found || scan.live {
+		t.Fatalf("a dead lease beside a live legacy slot read as %+v", scan)
+	}
+	if err := store.purgeState(inc); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{LeaseName, LeasePrefix + "old", LeasePrefix + "older"} {
+		if _, err := fs.Lookup(inc, name); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("purge kept %s: %v", name, err)
 		}
 	}
 }

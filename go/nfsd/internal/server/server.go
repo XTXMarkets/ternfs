@@ -201,7 +201,7 @@ func NewServer(fs vfs.TernVFS, stagingStore staging.Store, logger *slog.Logger) 
 	s.sessions.now = func() time.Time { return s.clients.Now() }
 	s.sessions.persistSlot = s.persistSlot
 	// The durable lease refresher reads the logical lease's need, and
-	// retires an incarnation whose record turns stale or fleet-expired.
+	// retires an incarnation whose record turns stale or expired.
 	clients.LeaseNeed = s.sessions.leaseNeed
 	clients.LeaseTerminal = s.leaseTerminal
 	clients.LeaseSessions = s.sessions.hasSessions

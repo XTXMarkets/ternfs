@@ -9,7 +9,6 @@ import (
 	"errors"
 	"io"
 	"os"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -58,7 +57,7 @@ func (fs *countingWriteVFS) Remove(dir vfs.InodeID, name string) error {
 	return fs.count(fs.TernVFS.Remove(dir, name))
 }
 func (fs *countingWriteVFS) RemoveEdge(dir vfs.InodeID, name string, edge vfs.Edge) error {
-	if clientstore.LeaseTemp(name) || strings.HasPrefix(name, clientstore.LeasePrefix) {
+	if clientstore.LeaseTemp(name) || name == clientstore.LeaseName {
 		return fs.TernVFS.RemoveEdge(dir, name, edge)
 	}
 	return fs.count(fs.TernVFS.RemoveEdge(dir, name, edge))
@@ -67,7 +66,7 @@ func (fs *countingWriteVFS) Rename(src vfs.InodeID, name string, dst vfs.InodeID
 	return fs.count(fs.TernVFS.Rename(src, name, dst, newName))
 }
 func (fs *countingWriteVFS) RenameEdge(src vfs.InodeID, name string, edge vfs.Edge, dst vfs.InodeID, newName string) error {
-	if strings.HasPrefix(newName, clientstore.LeasePrefix) {
+	if newName == clientstore.LeaseName {
 		return fs.TernVFS.RenameEdge(src, name, edge, dst, newName)
 	}
 	return fs.count(fs.TernVFS.RenameEdge(src, name, edge, dst, newName))

@@ -65,7 +65,7 @@ func TestClientStoreLeaseLockSurvivesCacheReplacement(t *testing.T) {
 	fs := &leaseGateVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
 		Gate: testutil.NewGate()}
 	store, id := NewConfirmedStoreClient(t, fs, []byte("client"), [8]byte{1}, ClientOwner{})
-	fs.name = store.LeaseName
+	fs.name = LeaseName
 	// Due for a refresh, so the first MarkOpen publishes.
 	base := time.Now()
 	store.Now = func() time.Time { return base.Add(LeaseRenewAfter + time.Second) }

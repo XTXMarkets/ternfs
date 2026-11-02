@@ -186,7 +186,7 @@ func (fs *ConfirmFaultVFS) Remove(dir vfs.InodeID, name string) error {
 	if fail {
 		fs.failRemove = 0
 	}
-	if fs.FailLeaseRemove == dir && strings.HasPrefix(name, LeasePrefix) {
+	if fs.FailLeaseRemove == dir && (name == LeaseName || strings.HasPrefix(name, LeasePrefix)) {
 		fs.FailLeaseRemove, fail = 0, true
 	}
 	panicking := false

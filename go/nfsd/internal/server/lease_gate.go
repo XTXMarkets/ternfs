@@ -69,10 +69,10 @@ func (s *Server) decideExpired(clientID uint64, expireState bool) (bool, error) 
 			return false, err
 		}
 	case obs.Marked:
-		// Another process decided.
-		s.clients.NoteFleetExpired(clientID)
+		// Decided before, by this process or an earlier run of it.
+		s.clients.NoteExpired(clientID)
 	case obs.Live || !obs.Found:
-		// No slot yet means a first OPEN may be registering its lease.
+		// No lease yet means a first CREATE_SESSION may be publishing it.
 		live()
 		return false, nil
 	default:
@@ -88,11 +88,11 @@ func (s *Server) decideExpired(clientID uint64, expireState bool) (bool, error) 
 		g.markerPhase = markerSubmitted
 		ss.mu.Unlock()
 		if err := s.clients.PublishExpiredMarker(clientID); err != nil {
-			// The marker is uncertain; the refresher reports fleetExpired
+			// The marker is uncertain; the refresher reports it expired
 			// if it exists. Expiry proceeds either way.
 			s.log.Warn("publish expired marker", "clientid", clientID, "err", err)
 		} else {
-			s.clients.NoteFleetExpired(clientID)
+			s.clients.NoteExpired(clientID)
 		}
 	}
 	ss.mu.Lock()
@@ -111,7 +111,7 @@ func (s *Server) decideExpired(clientID uint64, expireState bool) (bool, error) 
 // expireLocally ends an expired client's local state: its wire record, its
 // sessions (cancelling their callbacks and returning their credits) and its
 // opens. It does not depend on the refresher or on the expired marker
-// having been written, and claims nothing about fleet expiry. The caller
+// having been written. The caller
 // holds a destruction hold.
 func (s *Server) expireLocally(clientID uint64) {
 	s.sessions.retireWireOf(clientID)
@@ -138,8 +138,8 @@ func (s *Server) retireIncarnationSessions(clientID uint64) {
 }
 
 // leaseTerminal retires an incarnation whose refresher found it stale (the
-// identity confirmed another incarnation) or fleet-expired (an expired
-// marker exists). It reports false while a confirmation protects it, to be
+// identity confirmed another incarnation) or expired (an expired marker
+// exists). It reports false while a confirmation protects it, to be
 // retried. Committed CREATE_SESSION results are not rewritten.
 func (s *Server) leaseTerminal(clientID uint64, cleanup func()) bool {
 	end, ok := s.beginDestroy(clientID)

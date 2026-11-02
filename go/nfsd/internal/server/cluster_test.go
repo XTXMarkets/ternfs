@@ -1037,7 +1037,7 @@ func TestTernClientIncarnationGC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	leaseID, err := fs.Lookup(vfs.InodeID(oldID), first.LeaseName)
+	leaseID, err := fs.Lookup(vfs.InodeID(oldID), clientstore.LeaseName)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1049,7 +1049,7 @@ func TestTernClientIncarnationGC(t *testing.T) {
 	if err := first.Renew(oldID); err != nil {
 		t.Fatal(err)
 	}
-	coalescedLeaseID, err := fs.Lookup(vfs.InodeID(oldID), first.LeaseName)
+	coalescedLeaseID, err := fs.Lookup(vfs.InodeID(oldID), clientstore.LeaseName)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1066,7 +1066,7 @@ func TestTernClientIncarnationGC(t *testing.T) {
 		if err := first.Renew(oldID); err != nil {
 			t.Fatal(err)
 		}
-		nextLeaseID, err := fs.Lookup(vfs.InodeID(oldID), first.LeaseName)
+		nextLeaseID, err := fs.Lookup(vfs.InodeID(oldID), clientstore.LeaseName)
 		if err != nil {
 			t.Fatal(err)
 		}

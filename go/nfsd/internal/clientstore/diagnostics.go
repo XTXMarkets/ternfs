@@ -166,8 +166,8 @@ func leaseRecordName(st leaseRecordState) string {
 		return inspect.LeaseLive
 	case LeaseRecordStale:
 		return inspect.LeaseStale
-	case LeaseRecordFleetExpired:
-		return inspect.LeaseFleetExpired
+	case LeaseRecordExpired:
+		return inspect.LeaseExpired
 	}
 	return fmt.Sprintf("unknown_%d", st)
 }

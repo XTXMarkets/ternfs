@@ -5,8 +5,6 @@
 package clientstore
 
 import (
-	"bytes"
-	"encoding/json"
 	"os"
 	"testing"
 	"time"
@@ -16,7 +14,7 @@ import (
 
 func publishedExpiry(t *testing.T, cs *Store, clientID uint64) int64 {
 	t.Helper()
-	id, err := cs.fs.Lookup(vfs.InodeID(clientID), cs.LeaseName)
+	id, err := cs.fs.Lookup(vfs.InodeID(clientID), LeaseName)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +147,7 @@ func TestRefresherPersistentLinkFailure(t *testing.T) {
 			t.Fatalf("settled temp %s still linked", temp)
 		}
 	}
-	if _, err := fs.Lookup(r.Incarnation, cs.LeaseName); err == nil {
+	if _, err := fs.Lookup(r.Incarnation, LeaseName); err == nil {
 		t.Fatal("an orphan was published as the lease")
 	}
 }
@@ -287,20 +285,11 @@ func TestRefresherRecordBudget(t *testing.T) {
 	}
 }
 
-// A verify-only pass reads and does not write or remove anything: not
-// even another process's long-dead lease slot, which only an authorized
-// pass prunes.
+// A verify-only pass reads and does not write or remove anything.
 func TestVerifyPassIsReadOnly(t *testing.T) {
 	fs := &PassCountVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
 	cs, clientID, r := RefresherWorkerForTest(t, fs)
 	r.SafePass(true) // publish a fresh lease
-	dead, err := json.Marshal(DurableLease{ExpiresUnixNano: time.Now().Add(-10 * LeaseTime).UnixNano()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := fs.TernVFS.CreateFile(vfs.InodeID(clientID), LeasePrefix+"otherprocess", bytes.NewReader(dead)); err != nil {
-		t.Fatal(err)
-	}
 	cs.LeaseNeed = func(uint64) bool { return false }
 	fs.Reset()
 	for range 20 {
@@ -313,13 +302,5 @@ func TestVerifyPassIsReadOnly(t *testing.T) {
 	}
 	if fences != 0 || writes != 0 || removes != 0 {
 		t.Fatalf("verify passes wrote: fences %d writes %d removes %d", fences, writes, removes)
-	}
-	if _, err := fs.TernVFS.Lookup(vfs.InodeID(clientID), LeasePrefix+"otherprocess"); err != nil {
-		t.Fatal("a verify pass removed another process's slot")
-	}
-	// An authorized pass, with our lease live, prunes it.
-	r.SafePass(true)
-	if _, err := fs.TernVFS.Lookup(vfs.InodeID(clientID), LeasePrefix+"otherprocess"); err == nil {
-		t.Fatal("an authorized pass kept another process's long-dead slot")
 	}
 }

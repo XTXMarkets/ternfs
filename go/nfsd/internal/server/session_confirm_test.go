@@ -568,7 +568,7 @@ func TestConfirmationPurgeRetry(t *testing.T) {
 		t.Fatalf("warm EXCHANGE_ID %s", nfs4.Nfsstat4Name(status))
 	}
 	f.xid++
-	if f.present(t, vfs.InodeID(f.n), clientstore.RebootName) || f.present(t, vfs.InodeID(f.p), f.srv.clients.LeaseName) {
+	if f.present(t, vfs.InodeID(f.n), clientstore.RebootName) || f.present(t, vfs.InodeID(f.p), clientstore.LeaseName) {
 		t.Fatal("purge not retried")
 	}
 }
@@ -733,7 +733,7 @@ func TestConfirmationCommittedElsewhere(t *testing.T) {
 	if f.pSequence(t) != nfs4.NFS4ERR_BADSESSION || f.nSessions() != 1 {
 		t.Fatal("commit not applied")
 	}
-	if !f.present(t, vfs.InodeID(f.p), f.srv.clients.LeaseName) || f.present(t, vfs.InodeID(f.n), clientstore.RebootName) {
+	if !f.present(t, vfs.InodeID(f.p), clientstore.LeaseName) || f.present(t, vfs.InodeID(f.n), clientstore.RebootName) {
 		t.Fatal("P purged without B")
 	}
 }
@@ -793,7 +793,7 @@ func TestConfirmationApplyPanic(t *testing.T) {
 			t.Fatalf("warm EXCHANGE_ID %s", nfs4.Nfsstat4Name(status))
 		}
 		f.xid++
-		if f.present(t, vfs.InodeID(f.n), clientstore.RebootName) || f.present(t, vfs.InodeID(f.p), f.srv.clients.LeaseName) {
+		if f.present(t, vfs.InodeID(f.n), clientstore.RebootName) || f.present(t, vfs.InodeID(f.p), clientstore.LeaseName) {
 			t.Fatal("purge not retried")
 		}
 	})
@@ -1145,7 +1145,7 @@ func TestPurgeRetryPanic(t *testing.T) {
 		t.Fatalf("warm EXCHANGE_ID %s", nfs4.Nfsstat4Name(status))
 	}
 	f.xid++
-	if f.replacementHeld() || f.present(t, vfs.InodeID(f.n), clientstore.RebootName) || f.present(t, vfs.InodeID(f.p), f.srv.clients.LeaseName) {
+	if f.replacementHeld() || f.present(t, vfs.InodeID(f.n), clientstore.RebootName) || f.present(t, vfs.InodeID(f.p), clientstore.LeaseName) {
 		t.Fatal("purge not completed")
 	}
 }
@@ -1173,14 +1173,14 @@ func (f *confirmServer) commitWithFailedPurge(t *testing.T) {
 func (f *confirmServer) assertPurgePending(t *testing.T) {
 	t.Helper()
 	target, found, err := f.srv.clients.ReadRebootSymlink(vfs.InodeID(f.n))
-	if err != nil || !found || target != vfs.InodeID(f.p) || !f.present(t, vfs.InodeID(f.p), f.srv.clients.LeaseName) {
+	if err != nil || !found || target != vfs.InodeID(f.p) || !f.present(t, vfs.InodeID(f.p), clientstore.LeaseName) {
 		t.Fatalf("purge obligation lost: reboot %d %t %v", target, found, err)
 	}
 }
 
 func (f *confirmServer) assertPurged(t *testing.T) {
 	t.Helper()
-	if f.present(t, vfs.InodeID(f.n), clientstore.RebootName) || f.present(t, vfs.InodeID(f.p), f.srv.clients.LeaseName) {
+	if f.present(t, vfs.InodeID(f.n), clientstore.RebootName) || f.present(t, vfs.InodeID(f.p), clientstore.LeaseName) {
 		t.Fatal("purge not completed")
 	}
 }
@@ -1312,7 +1312,7 @@ func TestPurgeOwnership(t *testing.T) {
 		if f.present(t, m, clientstore.ActiveOpenName(nfs4.StateID{2})) || f.present(t, vfs.InodeID(f.n), clientstore.RebootName) {
 			t.Fatal("the incarnation the evidence names was not purged")
 		}
-		if !f.present(t, vfs.InodeID(f.p), f.srv.clients.LeaseName) {
+		if !f.present(t, vfs.InodeID(f.p), clientstore.LeaseName) {
 			t.Fatal("P purged without evidence naming it")
 		}
 	})

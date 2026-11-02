@@ -325,54 +325,53 @@ The advertised lease is 90 seconds. Each incarnation has two leases here.
   not when its connection fails: a request still executing keeps its hold
   until it returns. A validated callback reply also renews it. This process
   does not expire a client while its logical lease is held.
-- The *durable lease* is this process's `lease.<nfsd-id>` slot in the
-  client store, written only by the
+- The *durable lease* is the incarnation's one `lease` file in the client
+  store, written only by the
   [refresher](internal/clientstore/README.md#refresher): once at
   [bootstrap](internal/clientstore/README.md#bootstrap), after
   CREATE_SESSION or a session restore, and then while the logical lease is
   needed. It is published 135 seconds ahead and refreshed when
   less than 112.5 seconds remain: about every 22.5 seconds while the client
-  is active. Failures back off from about 5.6 to 22.5 seconds. The fleet
-  lease is live while any process's slot is live.
+  is active. Failures back off from about 5.6 to 22.5 seconds. A restarted
+  nfsd reads the lease its earlier run wrote, so a restart in place, or a
+  failover that copies the staging directory, keeps the client's lease.
 
 SEQUENCE reads the refresher's cached proof and performs no backend I/O.
 An unproven or expired proof gives `NFS4ERR_DELAY` and requests refresh
 work. CREATE_SESSION waits up to two seconds for the first publication.
 OPEN also needs a live published lease. Stateid operations check the
-confirmed pointer and expired marker; a live local durable slot avoids
-reading every slot.
+confirmed pointer and expired marker.
 
 The server's sweep runs every 45 seconds. A client is expired here only
-when its logical lease is not held, no confirmation protects it, and it has
-durable slots but none is live. A client with no slot yet is not expired;
-its first OPEN may still be registering its lease. Only that decision
-writes the `expired` marker, and a renewal or hold that arrives while it is
-checking wins.
-Expiry retires local sessions even if writing the marker fails. Another
-daemon can still expire a client whose durable publication lapsed; a local
-logical lease cannot prevent that fleet decision.
+when its logical lease is not held, no confirmation protects it, and its
+durable lease exists but is not live. A client with no lease yet is not
+expired; its first CREATE_SESSION may still be publishing it. Only that
+decision writes the `expired` marker, and a renewal or hold that arrives
+while it is checking wins.
+Expiry retires local sessions even if writing the marker fails.
+
+This process is the only one that decides. That rests on the operator
+fencing the old server before a failover (DEPLOYMENT.md): no nfsd store
+mechanism stops a second live daemon from renewing or expiring the same
+client.
 
 Nominal timings follow from these constants. Suppose the hold of a
 client's last request here is released at time t, its bootstrap
 publication is done, and afterwards nothing renews it: no further requests
-or callbacks, no confirmation protection and no other process publishing a
-lease for it; and the backend and scheduler make ordinary progress. Then:
+or callbacks and no confirmation protection; and the backend and scheduler
+make ordinary progress. Then:
 
 - the quiet period ends at t + 90 s, and with it the durable refreshes;
-- this process's slot therefore expires by about t + 225 s (90 + 135), and
-  other daemons can see it live until then;
+- the durable lease therefore expires by about t + 225 s (90 + 135);
 - the next sweep after that expires the client here, by about t + 270 s.
 
 These are derived estimates, not deadlines the code enforces. A slow
-backend, a request still executing, confirmation protection or another
-daemon's lease lengthens them.
+backend, a request still executing or confirmation protection lengthens
+them.
 
-Another process's dead slot becomes eligible for pruning one further lease,
-90 seconds, after it expired. That is not a promise of removal: a slot is
-removed only by a refresher pass for a lease that is needed or
-bootstrapping, while this process's own published lease is live; see
-[slot pruning](internal/clientstore/README.md#expired-marker-and-slot-pruning).
-Expired markers prevent slot removal from reviving an old incarnation. Data
+The expired marker stops an expired incarnation from acquiring a new lease,
+including after a restart; see
+[expired marker](internal/clientstore/README.md#expired-marker). Data
 disposition on expiry is described in [Recovery](RECOVERY.md#lease-expiry).
 See [Lease gate](internal/server/README.md#lease-gate).
 

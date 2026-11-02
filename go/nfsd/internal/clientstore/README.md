@@ -33,7 +33,8 @@ writer, and [store_report.go](store_report.go) the read-only
         client              JSON record
         reboot              symlink to ../i.<hex>
         o.<stateid>         open marker, written by earlier releases only
-        lease.<nfsd-id>     JSON expiry
+        lease               JSON expiry
+        lease.<nfsd-id>     JSON expiry, written by earlier releases only
         confirming.<nfsd-id> claim, written by earlier releases only
         expired             empty marker
         gc                  JSON collection time
@@ -49,9 +50,10 @@ writer, and [store_report.go](store_report.go) the read-only
 | `client` | The owner, the client's verifier, the confirmation verifier nfsd issued and the RPC principal. The owner is kept for inspection; the directory name is its hash. |
 | `reboot` | The incarnation this one replaced, while its state still needs purging. |
 | `o.<stateid>` | An open marker, named by its 12-byte stateid as hex. Earlier releases wrote one for every write open; nfsd no longer does. A replacement purge removes any left, and collection removes them with their incarnation. |
-| `lease.<nfsd-id>` | One process's durable lease expiry. |
+| `lease` | The incarnation's durable lease expiry, written by the tree's nfsd. |
+| `lease.<nfsd-id>` | A per-process lease slot of an earlier release. Read only while the incarnation has no `lease`, so a client live at the upgrade is not judged expired, and removed with the incarnation's state. |
 | `confirming.<nfsd-id>` | A claim earlier releases wrote on an incarnation they were confirming. nfsd neither writes nor reads them; collection removes them with their incarnation. |
-| `expired` | The fleet expired this incarnation. It cannot be revived. |
+| `expired` | nfsd expired this incarnation. It cannot be revived. |
 | `gc` | The earliest time an unreachable incarnation may be removed. |
 
 An `nfsd-id` is 32 random hex digits chosen when a process opens the store.
@@ -213,20 +215,20 @@ The two-lease model and its timings are in
 ### Refresher
 
 Each incarnation that needs one has a `LeaseRefresher` record and at most
-one worker goroutine. The worker is the only writer of this process's
-`lease.<nfsd-id>`. Everything else reads the record from memory and asks
+one worker goroutine. The worker is the only writer of the incarnation's
+`lease`. Everything else reads the record from memory and asks
 the worker for work. Each pass holds the incarnation's `LeaseLocks` entry
 and:
 
 1. settles any unsettled write and consumes obligations whose edges it can
    find;
-2. reads evidence without writing: this process's lease, the `expired`
-   marker and the `confirmed` pointer;
-3. refreshes and prunes, or runs the terminal steps.
+2. reads evidence without writing: the lease, the `expired` marker and the
+   `confirmed` pointer;
+3. refreshes, or runs the terminal steps.
 
 A record is live, stale (`confirmed` names another incarnation) or
-fleet-expired (an `expired` marker exists). A stale or fleet-expired record
-runs its terminal steps: it removes this process's lease through its edge,
+expired (an `expired` marker exists). A stale or expired record runs its
+terminal steps: it removes the lease through its edge,
 best effort, and has the server retire the incarnation's sessions, both
 under a destruction hold. While a confirmation protects the incarnation the
 hold is refused, and the steps are retried after a backoff.
@@ -269,7 +271,7 @@ work.
 
 A lease publication makes a uniquely named temporary with `ConstructFile`,
 writes and links it with `LinkFile`, pins its edge, and renames that exact
-edge over `lease.<nfsd-id>`.
+edge over `lease`.
 
 Each temporary is an obligation from before its first backend call until
 its edge is consumed: by the rename, by the fence of an unsettled rename,
@@ -297,23 +299,18 @@ record with a reservation or an obligation is still kept. The server's
 sweep, or the release of the last reservation, has the worker free an idle
 record without a store call.
 
-### Expired marker and slot pruning
+### Expired marker
 
 With a server, only the server's expiry decision writes `expired`; see
 [Two leases](../../DESIGN.md#two-leases). A `Store` used on its own,
-without the server's hooks, writes it when it observes a dead lease, and
-removes old slots, as part of the same observation. The read-only store
-report never does either.
+without the server's hooks, writes it when it observes a dead lease. The
+read-only store report never does.
 
-Another process's lease slot becomes eligible for pruning once it has been
-expired for one further lease, 90 seconds. Eligibility is not removal. A
-slot is removed only by a maintenance pass for a lease that is needed or
-bootstrapping, after its refresh succeeds or is found not yet due, while
-this process's own published lease is live, under a destruction hold.
-Verify passes never prune, so an eligible slot can remain for as long as
-no such pass runs. This process's own slot is removed only by the terminal
-steps, after a marker. The `expired` marker stops an incarnation whose
-slots have all been removed from acquiring a new lease.
+The lease is removed only by the terminal steps, after a marker. The
+`expired` marker stops an incarnation whose lease has been removed from
+acquiring a new one, including after a restart. Nothing prunes leases:
+there is one per incarnation, and the legacy slots of earlier releases go
+with the incarnation's state.
 
 ## Collection
 
@@ -349,7 +346,7 @@ identity registers again. There is no sweep of abandoned identities.
 | Attempt mutex | Serializes settlement and purge of one confirmation attempt, taken before the identity lock. `CommitConfirmation` takes the identity lock first, then the mutex of the attempt it is creating, which nothing else can see yet. |
 
 Destruction holds (`BeginMarker`, `BeginCollect`, `BeginPurge`) are the
-server's. They keep marker publication, collection, pruning and purges away
+server's. They keep marker publication, collection and purges away
 from incarnations a confirmation protects. They are nil in a `Store`
 without a server, including the read-only store `nfsd -store-only` opens.
 

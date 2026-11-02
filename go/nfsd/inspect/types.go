@@ -286,9 +286,9 @@ type Refresher struct {
 
 // Refresher states and temp obligation phases.
 const (
-	LeaseLive         = "live"
-	LeaseStale        = "stale"
-	LeaseFleetExpired = "fleet_expired"
+	LeaseLive    = "live"
+	LeaseStale   = "stale"
+	LeaseExpired = "expired"
 
 	OrphanConstructing = "constructing"
 	OrphanLinking      = "linking"

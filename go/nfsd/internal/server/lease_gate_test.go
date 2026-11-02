@@ -239,7 +239,7 @@ func TestCreateSessionWaitsForFirstPublication(t *testing.T) {
 
 // Local expiry retires the client's sessions itself, cancelling their
 // callbacks and returning their credits, even when no expired marker could
-// be written. It does not claim fleet expiry.
+// be written.
 func TestLocalExpiryDrainsSessionsWithoutMarker(t *testing.T) {
 	fs := &expiryGateVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir()), failMarker: true}
 	staging, err := staging.NewLocalStore(t.TempDir(), nil)
@@ -313,8 +313,8 @@ func TestLocalExpiryDrainsSessionsWithoutMarker(t *testing.T) {
 		r.Mu.Lock()
 		state := r.State
 		r.Mu.Unlock()
-		if state == clientstore.LeaseRecordFleetExpired {
-			t.Fatal("local expiry recorded fleet expiry without a marker")
+		if state == clientstore.LeaseRecordExpired {
+			t.Fatal("local expiry recorded expiry without a marker")
 		}
 	}
 	// Later sweeps change nothing more and stay bounded.
@@ -340,14 +340,14 @@ func TestRefresherTerminalRespectsConfirmationProtection(t *testing.T) {
 	if !srv.protected(f.p) {
 		t.Fatal("P is not protected")
 	}
-	if !f.present(t, vfs.InodeID(f.p), srv.clients.LeaseName) {
+	if !f.present(t, vfs.InodeID(f.p), clientstore.LeaseName) {
 		t.Fatal("P has no lease to protect")
 	}
 	pSession := f.pSession(t)
 	// P's refresher finds it stale, as after D applied.
 	setLeaseForTest(srv, f.p, func(r *clientstore.LeaseRefresher) { r.State = clientstore.LeaseRecordStale })
 	leasePassForTest(t, srv, f.p)
-	if !f.present(t, vfs.InodeID(f.p), srv.clients.LeaseName) {
+	if !f.present(t, vfs.InodeID(f.p), clientstore.LeaseName) {
 		t.Fatal("terminal cleanup removed P's lease while it was protected")
 	}
 	if srv.sessions.lookup(pSession) == nil || len(srv.opens.ClientStates(f.p)) == 0 {
@@ -363,7 +363,7 @@ func TestRefresherTerminalRespectsConfirmationProtection(t *testing.T) {
 		r.State, r.NotBefore = clientstore.LeaseRecordStale, time.Time{}
 	})
 	leasePassForTest(t, srv, f.p)
-	if f.present(t, vfs.InodeID(f.p), srv.clients.LeaseName) {
+	if f.present(t, vfs.InodeID(f.p), clientstore.LeaseName) {
 		t.Fatal("terminal cleanup did not remove the lease once permitted")
 	}
 	if srv.sessions.lookup(pSession) != nil {
@@ -389,7 +389,7 @@ func TestRequestsDoNotDriveRefresherPasses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fs.LeaseName = srv.clients.LeaseName
+	fs.LeaseName = clientstore.LeaseName
 	addr, stop := serveTestServer(t, srv)
 	defer stop()
 	c := newCBTestClient(t, addr)
@@ -459,7 +459,7 @@ func TestRenewWithServerHooksDoesNotPass(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(srv.clients.StopLeaseWorkers)
-	fs.LeaseName = srv.clients.LeaseName
+	fs.LeaseName = clientstore.LeaseName
 	clientID, confirm, err := srv.clients.RegisterForTest([8]byte{1}, []byte("renew"), clientstore.ClientOwner{})
 	if err != nil {
 		t.Fatal(err)
@@ -514,7 +514,7 @@ func TestVerifyDoesNotRunMaintenance(t *testing.T) {
 	counts := &clientstore.PassCountVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
 	fs := &fenceClockVFS{PassCountVFS: counts}
 	cs, clientID, r, _ := clientstore.RefresherForTest(t, fs)
-	counts.LeaseName = cs.LeaseName
+	counts.LeaseName = clientstore.LeaseName
 	cs.Now = time.Now
 	cs.LeaseNeed = func(uint64) bool { return true }
 	cs.LeaseSessions = func(uint64) bool { return true }
@@ -586,7 +586,7 @@ func TestVerifyDoesNotRunMaintenance(t *testing.T) {
 	}
 }
 
-// A verify that newly finds the client fleet-expired schedules
+// A verify that newly finds the client expired schedules
 // the terminal steps, which then run as a maintenance pass: the record is
 // finished and our lease removed, without waiting for the next refresh.
 func TestVerifySchedulesTerminalWork(t *testing.T) {
@@ -601,14 +601,14 @@ func TestVerifySchedulesTerminalWork(t *testing.T) {
 	waitFor(t, "the terminal steps", func() bool {
 		r.Mu.Lock()
 		defer r.Mu.Unlock()
-		return r.Finished && r.State == clientstore.LeaseRecordFleetExpired
+		return r.Finished && r.State == clientstore.LeaseRecordExpired
 	})
-	if _, err := fs.TernVFS.Lookup(vfs.InodeID(clientID), cs.LeaseName); err == nil {
+	if _, err := fs.TernVFS.Lookup(vfs.InodeID(clientID), clientstore.LeaseName); err == nil {
 		t.Fatal("the terminal steps left our lease")
 	}
 }
 
-// An expiry this process notes (noteFleetExpired) makes the
+// An expiry this process notes (noteExpired) makes the
 // terminal steps due at once, rather than at the next scheduled refresh.
 func TestNotedExpiryRunsTerminalSteps(t *testing.T) {
 	fs := &clientstore.PassCountVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
@@ -620,7 +620,7 @@ func TestNotedExpiryRunsTerminalSteps(t *testing.T) {
 		defer r.Mu.Unlock()
 		return time.Until(r.MaintainAt) > testutil.ChannelTimeout
 	})
-	cs.NoteFleetExpired(clientID)
+	cs.NoteExpired(clientID)
 	waitFor(t, "the terminal steps", func() bool {
 		r.Mu.Lock()
 		defer r.Mu.Unlock()
@@ -755,7 +755,7 @@ func TestIdleReclaimKeepsObligations(t *testing.T) {
 	counts := &clientstore.PassCountVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
 	fs := &fenceClockVFS{PassCountVFS: counts}
 	cs, clientID := clientstore.NewConfirmedStoreClient(t, fs, []byte("client"), [8]byte{1}, clientstore.ClientOwner{})
-	counts.LeaseName = cs.LeaseName
+	counts.LeaseName = clientstore.LeaseName
 	cs.Now = time.Now
 	var need atomic.Bool
 	need.Store(true)

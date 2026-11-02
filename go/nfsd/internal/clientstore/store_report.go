@@ -29,7 +29,7 @@ import (
 // This file implements the read-only store report that /v1/store serves
 // over the persistent client store described in README.md#layout; its
 // meaning for users is in ../../inspect/README.md#the-store-report. It reads the
-// same records with the same rules as the nfsd fleet, but never writes: it
+// same records with the same rules as nfsd, but never writes: it
 // does not create the expired marker, remove collectable slots or age GC
 // candidates.
 
@@ -754,8 +754,8 @@ func (cs *Store) inspectIncarnation(
 	if err != nil {
 		return inc, err
 	}
-	leaseFound := false
-	leaseLive := false
+	var haveLease, legacyFound, legacyLive bool
+	var lease inspectSlot
 	for _, entry := range entries {
 		switch {
 		case entry.Name == ClientRecordName:
@@ -782,7 +782,9 @@ func (cs *Store) inspectIncarnation(
 			}
 			after := time.Unix(0, candidate.CollectAfterUnixNano)
 			inc.GCAfter = &after
-		case isLeaseName(entry.Name):
+		case entry.Name == LeaseName || isLeaseName(entry.Name):
+			// The lease decides; legacy slots only when there is none
+			// (Store.leaseOf).
 			slot, ok, err := cs.inspectSlot(entry, LeasePrefix, now)
 			if err != nil {
 				inc.Problems = append(inc.Problems, err.Error())
@@ -791,8 +793,13 @@ func (cs *Store) inspectIncarnation(
 			if !ok {
 				continue
 			}
-			leaseFound = true
-			leaseLive = leaseLive || slot.Live
+			if entry.Name == LeaseName {
+				slot.NfsdID = ""
+				haveLease, lease = true, slot
+			} else {
+				legacyFound = true
+				legacyLive = legacyLive || slot.Live
+			}
 			inc.Leases = append(inc.Leases, slot)
 		case isConfirmingName(entry.Name):
 			slot, ok, err := cs.inspectSlot(entry, confirmingPrefix, now)
@@ -821,6 +828,10 @@ func (cs *Store) inspectIncarnation(
 		default:
 			inc.Unknown = append(inc.Unknown, entry.Name)
 		}
+	}
+	leaseFound, leaseLive := legacyFound, legacyLive
+	if haveLease {
+		leaseFound, leaseLive = true, lease.Live
 	}
 	switch {
 	case inc.ExpiredMarker:

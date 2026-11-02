@@ -169,7 +169,7 @@ func (a *ConfirmAttempt) UnlockForTest() { a.mu.Unlock() }
 func RefresherWorkerForTest(t testingT, fs *PassCountVFS) (*Store, uint64, *LeaseRefresher) {
 	t.Helper()
 	cs, clientID, r, _ := RefresherForTest(t, fs)
-	fs.LeaseName = cs.LeaseName
+	fs.LeaseName = LeaseName
 	// Real time: no worker runs yet, so the field can still be set.
 	cs.Now = time.Now
 	var need atomic.Bool
