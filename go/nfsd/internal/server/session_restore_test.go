@@ -3136,3 +3136,85 @@ func TestCandidateSurvivesRenameAndRestart(t *testing.T) {
 		t.Fatalf("moved holds %q", data)
 	}
 }
+
+type candidateCheckpointFailStore struct {
+	*staging.LocalStore
+	fail atomic.Bool
+}
+
+type candidateCheckpointFailFile struct {
+	staging.File
+	id    vfs.InodeID
+	store *candidateCheckpointFailStore
+}
+
+func (s *candidateCheckpointFailStore) Get(id vfs.InodeID) staging.File {
+	file := s.LocalStore.Get(id)
+	if file == nil {
+		return nil
+	}
+	return &candidateCheckpointFailFile{File: file, id: id, store: s}
+}
+
+func (f *candidateCheckpointFailFile) SetCandidate(c staging.Candidate, persist bool) error {
+	if persist && c.ID != f.id && f.store.fail.Load() {
+		// A failed checkpoint leaves the candidate in memory.
+		if err := f.File.SetCandidate(c, false); err != nil {
+			return err
+		}
+		return errors.New("injected candidate checkpoint failure")
+	}
+	return f.File.SetCandidate(c, persist)
+}
+
+// A fresh candidate must be checkpointed before it is submitted. Otherwise
+// a restart can forget an applied link and overwrite a later publication.
+func TestFreshPublicationWaitsForCandidateCheckpoint(t *testing.T) {
+	for _, restart := range []bool{false, true} {
+		t.Run(fmt.Sprintf("restart=%t", restart), func(t *testing.T) {
+			f := &replayFixture{t: t, root: t.TempDir(), stagingDir: t.TempDir(), xid: 1}
+			pf := newLocalPublishVFS(t, f.root)
+			pf.counting = true
+			f.fs = &namespaceFaultSwitch{TernVFS: pf}
+			var fault *candidateCheckpointFailStore
+			f.wrapStore = func(store *staging.LocalStore) staging.Store {
+				fault = &candidateCheckpointFailStore{LocalStore: store}
+				return fault
+			}
+			f.start()
+			f.wire = setupClient(t, f.conn, &f.xid)
+			f.ts = testSessionForClient(f.conn, f.wire)
+			sid, fh := openCreateFile(t, f.conn, &f.xid, f.wire, "doc")
+			writeFileAt(t, f.conn, &f.xid, fh, sid, 0, []byte("saved"))
+			id := stagingIDForTest(t, f.store, sid)
+			pf.timeoutLinks(1, false)
+			if got := f.closeStatus(fh, sid); got != nfs4.NFS4ERR_DELAY {
+				t.Fatalf("initial CLOSE %s", nfs4.Nfsstat4Name(got))
+			}
+			links := pf.count("link")
+			fault.fail.Store(true)
+			for range 2 {
+				if got := f.closeStatus(fh, sid); got != nfs4.NFS4ERR_DELAY {
+					t.Fatalf("CLOSE without a candidate checkpoint %s", nfs4.Nfsstat4Name(got))
+				}
+				if got := pf.count("link"); got != links {
+					t.Fatalf("submitted %d links, want %d before checkpoint succeeds", got, links)
+				}
+				if f.store.Get(id) == nil {
+					t.Fatal("checkpoint failure discarded staging")
+				}
+			}
+			fault.fail.Store(false)
+			if restart {
+				f.restart()
+			}
+			if got := f.closeStatus(fh, sid); got != nfs4.NFS4_OK {
+				t.Fatalf("CLOSE after checkpoint repair %s", nfs4.Nfsstat4Name(got))
+			}
+			mustPublished(t, pf, "doc", "saved")
+			if got := pf.count("link"); got != links+1 {
+				t.Fatalf("submitted %d links, want one after checkpoint repair", got-links)
+			}
+		})
+	}
+}

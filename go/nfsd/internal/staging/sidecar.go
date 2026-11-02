@@ -66,8 +66,9 @@ type Meta struct {
 	Version         uint8
 }
 
-// Candidate is the transient inode a CLOSE submitted the staging's
-// publication through and the data version it carried. A zero ID is none.
+// Candidate is the transient inode selected for a CLOSE's publication and
+// the data version it carries. It is recorded before submission, which may
+// not have happened yet. A zero ID is none.
 type Candidate struct {
 	ID      vfs.InodeID
 	Cookie  vfs.Cookie

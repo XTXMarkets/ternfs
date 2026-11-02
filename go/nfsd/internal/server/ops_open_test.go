@@ -2706,3 +2706,118 @@ func TestDelayedDowngradeIsNotClosing(t *testing.T) {
 		t.Fatal("a DELAYed downgrade marked its open closing")
 	}
 }
+
+// closeWriteGate holds a WRITE after it selected staging, and CLOSE just
+// before its final version check or just before removal.
+type closeWriteGate struct {
+	staging.Store
+	holdWrite, holdSeal, holdRemove atomic.Bool
+	writeEntered, writeRelease      chan struct{}
+	closeEntered, closeRelease      chan struct{}
+}
+
+type closeWriteFile struct {
+	staging.File
+	gate *closeWriteGate
+}
+
+func (g *closeWriteGate) Get(id vfs.InodeID) staging.File {
+	file := g.Store.Get(id)
+	if file == nil {
+		return nil
+	}
+	return &closeWriteFile{File: file, gate: g}
+}
+
+func (f *closeWriteFile) Write(offset uint64, data []byte) error {
+	if f.gate.holdWrite.CompareAndSwap(true, false) {
+		close(f.gate.writeEntered)
+		<-f.gate.writeRelease
+	}
+	return f.File.Write(offset, data)
+}
+
+func (f *closeWriteFile) Seal(version uint64) bool {
+	if f.gate.holdSeal.CompareAndSwap(true, false) {
+		close(f.gate.closeEntered)
+		<-f.gate.closeRelease
+	}
+	return f.File.Seal(version)
+}
+
+func (g *closeWriteGate) Remove(id vfs.InodeID) {
+	if g.holdRemove.CompareAndSwap(true, false) {
+		close(g.closeEntered)
+		<-g.closeRelease
+	}
+	g.Store.Remove(id)
+}
+
+// A stable WRITE that has selected staging must either reach the final
+// publication or fail. It cannot succeed after CLOSE's final version check
+// and then have its bytes discarded.
+func TestCloseFinalVersionCheckOrdersStableWrites(t *testing.T) {
+	for _, ending := range []string{"upload", "clean", "times"} {
+		for _, before := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/before-check=%t", ending, before), func(t *testing.T) {
+				gate := &closeWriteGate{
+					writeEntered: make(chan struct{}), writeRelease: make(chan struct{}),
+					closeEntered: make(chan struct{}), closeRelease: make(chan struct{}),
+				}
+				f := newPublishFixtureWithStore(t, func(store staging.Store) staging.Store {
+					gate.Store = store
+					return gate
+				})
+				sid, fh, _ := f.writer(t, "doc", "old")
+				if ending != "upload" {
+					closeFile(t, f.conn, f.xid, fh, sid)
+					fh = lookupFH(t, f.conn, f.xid, "doc")
+					status, writer, _ := openByHandle(t, f.conn, f.xid, f.clientID, "writer", fh, nfs4.OPEN4_SHARE_ACCESS_WRITE)
+					if status != nfs4.NFS4_OK {
+						t.Fatal(nfs4.Nfsstat4Name(status))
+					}
+					sid = writer
+					if ending == "times" {
+						if got := setMtimeStatus(t, f.conn, f.xid, fh, sid, 123); got != nfs4.NFS4_OK {
+							t.Fatal(nfs4.Nfsstat4Name(got))
+						}
+					}
+				}
+				conn := dial(t, f.addr)
+				defer conn.Close()
+				xid := uint32(9000)
+				setupClient(t, conn, &xid)
+				defer testutil.CloseSignal(gate.writeRelease)
+				defer testutil.CloseSignal(gate.closeRelease)
+				gate.holdWrite.Store(true)
+				gate.holdSeal.Store(before)
+				gate.holdRemove.Store(!before)
+				written := make(chan uint32, 1)
+				go func() {
+					reply := sendBody(t, conn, &xid, writeBody(fh, sid, "new"))
+					written <- compoundStatus(t, reply)
+				}()
+				testutil.AwaitSignal(t, gate.writeEntered, "WRITE that already selected staging")
+				closed := make(chan uint32, 1)
+				go func() { closed <- closeFileStatus(t, f.conn, f.xid, fh, sid) }()
+				testutil.AwaitSignal(t, gate.closeEntered, "CLOSE finalization")
+				testutil.CloseSignal(gate.writeRelease)
+				writeStatus := testutil.AwaitValue(t, written, "stable WRITE reply")
+				testutil.CloseSignal(gate.closeRelease)
+				closeStatus := testutil.AwaitValue(t, closed, "CLOSE reply")
+				if before {
+					if writeStatus != nfs4.NFS4_OK || closeStatus != nfs4.NFS4ERR_DELAY {
+						t.Fatalf("WRITE %s, CLOSE %s; want OK, DELAY", nfs4.Nfsstat4Name(writeStatus), nfs4.Nfsstat4Name(closeStatus))
+					}
+					mustCloseStatus(t, f, fh, sid, nfs4.NFS4_OK, "retry after concurrent write")
+					mustPublished(t, f.fs, "doc", "new")
+				} else {
+					if writeStatus != nfs4.NFS4ERR_IO || closeStatus != nfs4.NFS4_OK {
+						t.Fatalf("WRITE %s, CLOSE %s; want IO, OK", nfs4.Nfsstat4Name(writeStatus), nfs4.Nfsstat4Name(closeStatus))
+					}
+					mustPublished(t, f.fs, "doc", "old")
+				}
+			})
+		}
+	}
+}

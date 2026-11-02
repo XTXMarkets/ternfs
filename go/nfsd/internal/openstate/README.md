@@ -143,7 +143,8 @@ also writes it. The server applies them under the file lock.
   for the life of the process. Those readers get `NFS4ERR_IO`, never the old
   bytes or `NFS4ERR_NOENT`. With no other reader the staging is discarded.
 - READ takes no lock. A READ that chose the staging just before a CLOSE
-  removed it reads what its stateid resolves to then.
+  removed it reads what its stateid resolves to then. If an OPEN upgraded
+  that source to a writer, READ checks staging again before using the backend.
 - A writer downgraded to READ reads the version its writer published.
 - A writer whose name was removed keeps its private version while an open
   of its client reads it. A downgrade to READ goes on reading it, and a

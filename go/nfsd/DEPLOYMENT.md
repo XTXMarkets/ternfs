@@ -197,8 +197,8 @@ REMOVE and RENAME do. A timeout there, like any error except a REMOVE whose
 edge is already gone, is an unknown outcome. The staged writers at the
 names are failed and quarantined, and the operation gets `NFS4ERR_IO` even
 if it applied; with no staged writer it gets the mapped backend error. The
-session is kept. Deciding these outcomes by looking the names up is tracked
-as `work-49b9`.
+session is kept. Deciding these outcomes by looking the names up is not
+done yet.
 
 ### A rejected publication is not reported to the application
 
@@ -252,9 +252,9 @@ client then looks the name up again.
 
 A writer whose client's lease expires is retired with its data in place,
 including one that acknowledged nothing, and is kept until recovered or
-removed by an administrator (`work-yhrt`). An `EXCLUSIVE4` create retried
+removed by an administrator. An `EXCLUSIVE4` create retried
 by the same client boot after its lease expired gets `NFS4ERR_EXIST`
-instead of adopting its retired staging (`work-obgt`).
+instead of adopting its retired staging.
 
 ## Operating requirements
 
@@ -337,7 +337,7 @@ Counters are cumulative from process start. Latency histograms have a
 | `eggsfs_nfsd_admission_cache_bytes`, `_cache_limit`, `_sessions`, `_records`, `_groups`, `_active_requests` | | Reply cache and session store figures (gauges). |
 | `eggsfs_nfsd_state_opens`, `_aliases` | | Live open stateids and publication aliases (gauges). |
 | `eggsfs_nfsd_state_publishes` | | Files published by CLOSE or OPEN_DOWNGRADE. |
-| `eggsfs_nfsd_state_publish_delays` | | CLOSEs and OPEN_DOWNGRADEs answered `NFS4ERR_DELAY` because the backend did not answer a step of the publication, its hydration, scrap, lookup or SetTime, or refused the link on a locked name, or because a WRITE landed while it ran; the client retries them. |
+| `eggsfs_nfsd_state_publish_delays` | | CLOSEs and OPEN_DOWNGRADEs answered `NFS4ERR_DELAY` because the backend did not answer a step of the publication, its hydration, scrap, lookup or SetTime, refused the link on a locked name, a candidate checkpoint failed, or a WRITE landed while it ran; the client retries them. |
 | `eggsfs_nfsd_staging_files`, `_bytes`, `_retired`, `_unlinked`, `_busy`, `_hydrations_in_flight` | | The staging store (gauges). Files are read without waiting on a file busy with disk I/O: a busy file counts in `files` and `busy` but not in `bytes`, `retired` or `unlinked`, so those are lower bounds while `busy` is above zero. `bytes` is the files' live size, including UNSTABLE writes not yet committed. |
 | `eggsfs_nfsd_replay_records`, `_write_failures`, `_record_bytes`, `_intents` | | The persistent reply cache: slot and intent records written, record writes and session file creations that failed, reply bytes recorded, intents. |
 | `eggsfs_nfsd_replay_session_files` | | Sessions with a file on the staging disk (gauge). |

@@ -39,6 +39,7 @@ type LocalFile struct {
 	candidate       Candidate
 	hydrated        byterange.Set
 	checkpointDirty bool
+	sealed          bool
 	removed         bool
 
 	hydrateMu      sync.Mutex
@@ -81,7 +82,7 @@ func (sf *LocalFile) changedLocked() {
 func (sf *LocalFile) SetTime(mtime, atime *time.Time) error {
 	sf.mu.Lock()
 	defer sf.mu.Unlock()
-	if sf.removed {
+	if sf.removed || sf.sealed {
 		return ErrRemoved
 	}
 	if mtime != nil {
@@ -131,6 +132,16 @@ func (sf *LocalFile) DataVersion() uint64 {
 	sf.mu.Lock()
 	defer sf.mu.Unlock()
 	return sf.dataVersion
+}
+
+func (sf *LocalFile) Seal(version uint64) bool {
+	sf.mu.Lock()
+	defer sf.mu.Unlock()
+	if sf.removed || sf.dataVersion != version {
+		return false
+	}
+	sf.sealed = true
+	return true
 }
 
 func (sf *LocalFile) Candidate() Candidate {
@@ -272,7 +283,7 @@ func (sf *LocalFile) bind(
 func (sf *LocalFile) SetSize(size uint64) error {
 	sf.mu.Lock()
 	defer sf.mu.Unlock()
-	if sf.removed {
+	if sf.removed || sf.sealed {
 		return ErrRemoved
 	}
 	oldSize := sf.size
@@ -301,7 +312,7 @@ func (sf *LocalFile) SetSize(size uint64) error {
 func (sf *LocalFile) Write(offset uint64, data []byte) error {
 	sf.mu.Lock()
 	defer sf.mu.Unlock()
-	if sf.removed {
+	if sf.removed || sf.sealed {
 		return ErrRemoved
 	}
 	if len(data) == 0 {

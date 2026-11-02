@@ -707,11 +707,12 @@ confirmation protects its client, and is otherwise retired; see
 
 The last write CLOSE of a staging, or the downgrade of its last writer to
 READ, ends it ([ops_open.go](ops_open.go)). Every step that can answer
-`NFS4ERR_DELAY` comes before the open or the staging changes: a
+`NFS4ERR_DELAY` precedes ending the open or discarding staging: a
 publication, hydration, scrap, lookup or SetTime the backend does not
-answer, a link refused because the name is locked, and a WRITE that landed
-while the publication ran. Only then does the CLOSE expire the staging's
-other writers, which can only be opens whose own CLOSE answered DELAY,
+answer, a link refused because the name is locked, a candidate checkpoint
+that fails, and a WRITE that landed while the publication ran. Only then
+does the CLOSE expire the staging's other writers, which can only be opens
+whose own CLOSE answered DELAY,
 point the staging's readers at what they read next, or fail the staging for
 them, and remove it.
 
@@ -731,7 +732,9 @@ first, from positive evidence only:
 | Any other answer | Not known. | `NFS4ERR_DELAY` if the backend did not answer; otherwise the publication fails. |
 
 A fresh transient is constructed, recorded as the candidate in the sidecar,
-uploaded and linked, at most one per attempt. A first submission answered
+uploaded and linked, at most one per attempt. A failed candidate checkpoint
+answers DELAY without submitting the link; the staging stays for retry.
+A first submission answered
 not-exist is resolved the same way and, when not linked, retried through
 that fresh transient. A first submission that gets any other error but
 DELAY is resolved too, since another copy of the request may have linked
@@ -740,7 +743,11 @@ while a publication runs (WRITE takes no file lock) leaves the linked
 version without it. If it landed during the upload, the CLOSE publishes
 again through one fresh transient; if it has made one already, or the WRITE
 landed after the link, it answers DELAY and the retry publishes the newer
-bytes. Times set meanwhile do not cause a second publication.
+bytes. The final data-version check also seals the staging against further
+mutations under its lock: a WRITE either changes the version before that
+check, causing DELAY, or fails after the seal. Reads can still use the
+staging until CLOSE retargets them and removes it. Times set meanwhile do
+not cause a second publication.
 
 A CLOSE that answers DELAY marks its open closing; see
 [Owners and files](../openstate/README.md#owners-and-files). libnfs turns
