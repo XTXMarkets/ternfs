@@ -123,3 +123,10 @@ func (vs *ViewStore) Snapshot() inspect.Views {
 	}
 	return out
 }
+
+// StateCount returns the number of live open states, for metrics.
+func (os *Store) StateCount() int {
+	os.mu.Lock()
+	defer os.mu.Unlock()
+	return len(os.states)
+}
