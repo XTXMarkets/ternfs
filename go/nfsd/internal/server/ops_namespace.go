@@ -48,11 +48,10 @@ func (s *Server) opCreate(args nfs4.CREATE4args, st *compoundState, w *nfs4.COMP
 		ew := w.AppendResarray_Create()
 		return finishDefaultResponse(w, ew.Finish(), status)
 	}
-	unlock := s.lockMutationTargets(mutationTarget{
+	st.hold(s.lockMutationTargets(mutationTarget{
 		dirID: st.currentID,
 		name:  name,
-	})
-	defer unlock()
+	}))
 	if verdict, status := s.decideCreateReplay(st, st.currentID, name); verdict != replayNone {
 		ew := w.AppendResarray_Create()
 		return finishDefaultResponse(w, ew.Finish(), status)
@@ -103,7 +102,6 @@ func (s *Server) opCreate(args nfs4.CREATE4args, st *compoundState, w *nfs4.COMP
 	}
 
 	if err != nil {
-		st.observeMutation(s.fs, nfs4.OP_CREATE, err)
 		ew := w.AppendResarray_Create()
 		status := s.errToNFS(err)
 		return finishDefaultResponse(w, ew.Finish(), status)
@@ -255,11 +253,10 @@ func (s *Server) opRemove(args nfs4.REMOVE4args, st *compoundState, w *nfs4.COMP
 		ew := w.AppendResarray_Remove()
 		return finishDefaultResponse(w, ew.Finish(), status)
 	}
-	unlock := s.lockMutationTargets(mutationTarget{
+	st.hold(s.lockMutationTargets(mutationTarget{
 		dirID: st.currentID,
 		name:  name,
-	})
-	defer unlock()
+	}))
 	fail := func(status uint32) uint32 {
 		ew := w.AppendResarray_Remove()
 		return finishDefaultResponse(w, ew.Finish(), status)
@@ -274,6 +271,9 @@ func (s *Server) opRemove(args nfs4.REMOVE4args, st *compoundState, w *nfs4.COMP
 		return fail(s.errToNFS(err))
 	}
 	writers := s.namespaceWriters(st.currentID, name, nil)
+	if status := s.fenceNamespaceWriters(writers); status != nfs4.NFS4_OK {
+		return fail(status)
+	}
 	edge, err := s.fs.LookupEdge(st.currentID, name)
 	if err != nil {
 		return fail(s.errToNFS(err))
@@ -289,7 +289,6 @@ func (s *Server) opRemove(args nfs4.REMOVE4args, st *compoundState, w *nfs4.COMP
 		return fail(nfs4.NFS4ERR_IO)
 	}
 	err = s.fs.RemoveEdge(st.currentID, name, edge)
-	st.observeMutation(s.fs, nfs4.OP_REMOVE, err)
 	if status := s.finishNamespaceWriters(writers, nfs4.OP_REMOVE, err); status != nfs4.NFS4_OK {
 		return fail(status)
 	}
@@ -336,11 +335,10 @@ func (s *Server) opRename(args nfs4.RENAME4args, st *compoundState, w *nfs4.COMP
 		ew := w.AppendResarray_Rename()
 		return finishDefaultResponse(w, ew.Finish(), status)
 	}
-	unlock := s.lockMutationTargets(
+	st.hold(s.lockMutationTargets(
 		mutationTarget{dirID: st.savedID, name: oldName},
 		mutationTarget{dirID: st.currentID, name: newName},
-	)
-	defer unlock()
+	))
 
 	fail := func(status uint32) uint32 {
 		ew := w.AppendResarray_Rename()
@@ -381,6 +379,9 @@ func (s *Server) opRename(args nfs4.RENAME4args, st *compoundState, w *nfs4.COMP
 	}
 	writers := s.namespaceWriters(st.savedID, oldName, sourceTarget)
 	writers = append(writers, s.namespaceWriters(st.currentID, newName, nil)...)
+	if status := s.fenceNamespaceWriters(writers); status != nfs4.NFS4_OK {
+		return fail(status)
+	}
 	edge, err := s.fs.LookupEdge(st.savedID, oldName)
 	if err != nil {
 		return fail(s.errToNFS(err))
@@ -404,7 +405,6 @@ func (s *Server) opRename(args nfs4.RENAME4args, st *compoundState, w *nfs4.COMP
 		return fail(nfs4.NFS4ERR_IO)
 	}
 	err = s.fs.RenameEdge(st.savedID, oldName, edge, st.currentID, newName)
-	st.observeMutation(s.fs, nfs4.OP_RENAME, err)
 	if status := s.finishNamespaceWriters(writers, nfs4.OP_RENAME, err); status != nfs4.NFS4_OK {
 		return fail(status)
 	}

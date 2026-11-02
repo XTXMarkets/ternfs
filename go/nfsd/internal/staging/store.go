@@ -59,6 +59,11 @@ type File interface {
 	Base() (id vfs.InodeID, size uint64)
 	Dirty() bool
 	DataChanged() bool
+	// DataVersion counts the writes and size changes. Times, hydration and
+	// checkpoints do not change it.
+	DataVersion() uint64
+	Candidate() Candidate
+	SetCandidate(c Candidate, persist bool) error
 	Retire(clientID uint64, stateID nfs4.StateID) error
 	StartHydration(readBase stagingHydrationReader)
 	FinishHydration(readBase BaseReader) error
@@ -84,6 +89,9 @@ type Store interface {
 	Entries() map[vfs.InodeID]Meta
 	// Rebind updates the owning client and stateid of a recovered staging file.
 	Rebind(id vfs.InodeID, clientID uint64, stateID nfs4.StateID) error
+	// Bind names another open as the owner in one save: its client, stateid
+	// and open owner, and readOnly for an open that only reads the staging.
+	Bind(id vfs.InodeID, clientID uint64, stateID nfs4.StateID, openOwner string, readOnly bool) error
 	// Namespace updates preserve the current durable data checkpoint.
 	SetGuard(id vfs.InodeID, guarded bool) error
 	Detach(id vfs.InodeID) error

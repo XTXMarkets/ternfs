@@ -131,6 +131,17 @@ func NewLocalStore(dir string, logger *slog.Logger) (*LocalStore, error) {
 			}
 		}
 		target := stagingTarget{dirID: meta.DirID, name: meta.FileName}
+		candidate, version := meta.Candidate, meta.DataVersion
+		if candidate.ID == 0 {
+			// The earlier process may have submitted the staging's own
+			// transient without a checkpoint recording it.
+			candidate = Candidate{ID: id, Cookie: meta.TernCookie, Version: version}
+		}
+		if candidate.Version > version {
+			// A namespace save recorded a candidate newer than the data
+			// checkpoint: no later write may make it look current.
+			version = candidate.Version + 1
+		}
 		entry := &localStagingEntry{
 			file: &LocalFile{
 				f:               f,
@@ -140,6 +151,8 @@ func NewLocalStore(dir string, logger *slog.Logger) (*LocalStore, error) {
 				dirty:           append(byterange.Set(nil), meta.Dirty...),
 				attrs:           stagingAttributes(meta.Attrs, info.ModTime()),
 				metadataChanged: meta.MetadataChanged,
+				dataVersion:     version,
+				candidate:       candidate,
 			},
 			target: target,
 			baseID: meta.BaseID,
@@ -181,6 +194,7 @@ func (s *LocalStore) Create(id vfs.InodeID, meta Meta) (File, error) {
 	}
 	target := stagingTarget{dirID: meta.DirID, name: meta.FileName}
 	meta.Size = meta.BaseSize
+	meta.DataVersion, meta.Candidate = 0, Candidate{}
 	meta.Version = MetaVersion
 	meta.Attrs = stagingAttributes(meta.Attrs, time.Now())
 	path := filepath.Join(s.dir, fmt.Sprintf("%016x.staging", uint64(id)))
@@ -226,6 +240,14 @@ func (s *LocalStore) Create(id vfs.InodeID, meta Meta) (File, error) {
 }
 
 func (s *LocalStore) Get(id vfs.InodeID) File {
+	if file := s.liveFile(id); file != nil {
+		return file
+	}
+	return nil
+}
+
+// liveFile returns id's file unless it is missing or failed.
+func (s *LocalStore) liveFile(id vfs.InodeID) *LocalFile {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	entry := s.files[id]
@@ -285,15 +307,28 @@ func (s *LocalStore) Rebind(
 	clientID uint64,
 	stateID nfs4.StateID,
 ) error {
-	s.mu.Lock()
-	entry := s.files[id]
-	if entry == nil || entry.failed {
-		s.mu.Unlock()
+	file := s.liveFile(id)
+	if file == nil {
 		return os.ErrNotExist
 	}
-	file := entry.file
-	s.mu.Unlock()
-	return file.rebind(clientID, stateID)
+	return file.bind(clientID, stateID, func(*Meta) {})
+}
+
+func (s *LocalStore) Bind(
+	id vfs.InodeID,
+	clientID uint64,
+	stateID nfs4.StateID,
+	openOwner string,
+	readOnly bool,
+) error {
+	file := s.liveFile(id)
+	if file == nil {
+		return os.ErrNotExist
+	}
+	return file.bind(clientID, stateID, func(meta *Meta) {
+		meta.OpenOwner, meta.OwnerKnown = openOwner, true
+		meta.ReadOnly = readOnly
+	})
 }
 
 func (s *LocalStore) addTargetLocked(id vfs.InodeID, target stagingTarget) {
@@ -339,9 +374,7 @@ func (s *LocalStore) RecoveredWriters(handleID vfs.InodeID) []vfs.InodeID {
 	defer s.mu.Unlock()
 	ids := make([]vfs.InodeID, 0, len(s.recovered[handleID]))
 	for id := range s.recovered[handleID] {
-		if entry := s.files[id]; entry != nil && !entry.failed {
-			ids = append(ids, id)
-		}
+		ids = append(ids, id)
 	}
 	return ids
 }
@@ -367,7 +400,9 @@ func (s *LocalStore) updateNamespace(id vfs.InodeID, update func(*Meta)) error {
 	}
 	update(&sf.meta)
 	// Meta() includes live dirty ranges. Save only sf.meta, which describes
-	// the last data checkpoint and the namespace fields just assigned.
+	// the last data checkpoint and the namespace fields just assigned, with
+	// the current candidate.
+	sf.meta.Candidate = sf.candidate
 	err := SaveMeta(sf.metaPath, sf.meta)
 	sf.checkpointDirty = err != nil
 	s.mu.Lock()

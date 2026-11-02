@@ -184,9 +184,11 @@ func (s *Server) startSequence(args nfs4.SEQUENCE4args, admission ...sequenceAdm
 		// and running it is safe. While the session's file was on disk,
 		// each request was permitted at most one mutating operation
 		// (mutationGate). RENAME, REMOVE and CREATE of a directory or
-		// symlink write an intent before theirs. The others, alone, repeat
-		// safely or fail: an exclusive OPEN matches its verifier, a GUARDED
-		// one gets EXIST, a CLOSE finds its publication or BAD_STATEID. The
+		// symlink write an intent before theirs. The others run again as
+		// new requests: an exclusive OPEN matches its verifier, a GUARDED
+		// one gets EXIST, an upgrade OPEN gets a new stateid, a CLOSE finds
+		// its publication through its candidate, and a CLOSE or
+		// OPEN_DOWNGRADE whose staging was removed gets BAD_STATEID. The
 		// ordinary rules apply from here on.
 	default:
 		return sequenceResult{status: nfs4.NFS4ERR_SEQ_MISORDERED}

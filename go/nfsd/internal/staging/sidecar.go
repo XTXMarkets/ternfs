@@ -19,13 +19,13 @@ import (
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
-// The only sidecar format this nfsd reads or writes. NFS8 is the NFSv4.1
-// server: one writer per client and file, found by stateid. Earlier formats
-// belong to the NFSv4.0 server and make startup fail; drain or remove the
-// staging directory before upgrading.
+// The only sidecar format this nfsd reads or writes. NFS9 is the NFSv4.1
+// server: one writer per client and file, found by stateid, with its
+// publication candidate. Earlier formats make startup fail; drain or
+// remove the staging directory before upgrading.
 const (
-	formatMagic = "NFS8"
-	MetaVersion = 8
+	formatMagic = "NFS9"
+	MetaVersion = 9
 )
 
 // FormatError reports a sidecar written by an incompatible nfsd.
@@ -61,7 +61,17 @@ type Meta struct {
 	Dirty           byterange.Set
 	MetadataChanged bool
 	Attrs           vfs.NodeInfo // Size is stored separately
+	DataVersion     uint64       // counts the writes and size changes Size and Dirty include
+	Candidate       Candidate    // the publication submitted and not yet resolved
 	Version         uint8
+}
+
+// Candidate is the transient inode a CLOSE submitted the staging's
+// publication through and the data version it carried. A zero ID is none.
+type Candidate struct {
+	ID      vfs.InodeID
+	Cookie  vfs.Cookie
+	Version uint64
 }
 
 // Sidecar file format (binary, big-endian):
@@ -71,7 +81,7 @@ type Meta struct {
 //   [2]  FileNameLen
 //   [N]  FileName (UTF-8)
 //   [8]  ClientID
-//   [4]  "NFS8"
+//   [4]  "NFS9"
 //   [8]  BaseID
 //   [8]  BaseSize
 //   [8]  LogicalSize
@@ -81,6 +91,8 @@ type Meta struct {
 //   [8] Mtime, [8] Atime, [8] Ctime (Unix nanoseconds)
 //   [1] flags: bit 0 MetadataChanged, bit 1 OwnerKnown, bit 2 ReadOnly,
 //       bit 3 Retired, bit 4 Exclusive, bit 5 Unlinked, bit 6 Guarded
+//   [8] DataVersion
+//   [8] Candidate ID, [8] Candidate cookie, [8] Candidate data version
 //   [4] OpenOwnerLen, [N] OpenOwner (opaque bytes)
 //   [32] RecoveryKey
 //   [8] EXCLUSIVE4 verifier
@@ -88,7 +100,7 @@ type Meta struct {
 func SaveMeta(path string, meta Meta) error {
 	nameBytes := []byte(meta.FileName)
 	buf := make([]byte, 8+8+12+2+len(nameBytes)+8+4+8+8+8+4+
-		16*len(meta.Dirty)+32+1+4+len(meta.OpenOwner)+
+		16*len(meta.Dirty)+32+1+32+4+len(meta.OpenOwner)+
 		len(meta.RecoveryKey)+len(meta.Verifier))
 	binary.BigEndian.PutUint64(buf[0:8], uint64(meta.DirID))
 	copy(buf[8:16], meta.TernCookie[:])
@@ -140,6 +152,11 @@ func SaveMeta(path string, meta Meta) error {
 		buf[off] |= 64
 	}
 	off++
+	binary.BigEndian.PutUint64(buf[off:off+8], meta.DataVersion)
+	binary.BigEndian.PutUint64(buf[off+8:off+16], uint64(meta.Candidate.ID))
+	copy(buf[off+16:off+24], meta.Candidate.Cookie[:])
+	binary.BigEndian.PutUint64(buf[off+24:off+32], meta.Candidate.Version)
+	off += 32
 	binary.BigEndian.PutUint32(buf[off:off+4], uint32(len(meta.OpenOwner)))
 	copy(buf[off+4:], meta.OpenOwner)
 	off += 4 + len(meta.OpenOwner)
@@ -241,7 +258,7 @@ func LoadMeta(path string) (Meta, error) {
 		meta.Dirty = append(meta.Dirty, byterange.Range{Start: start, End: end})
 		off += 16
 	}
-	if len(data)-off < 37 {
+	if len(data)-off < 69 {
 		return Meta{}, fmt.Errorf("truncated staging attributes")
 	}
 	meta.Attrs.Change = binary.BigEndian.Uint64(data[off : off+8])
@@ -262,6 +279,11 @@ func LoadMeta(path string) (Meta, error) {
 	meta.Unlinked = data[off]&32 != 0
 	meta.Guarded = data[off]&64 != 0
 	off++
+	meta.DataVersion = binary.BigEndian.Uint64(data[off : off+8])
+	meta.Candidate.ID = vfs.InodeID(binary.BigEndian.Uint64(data[off+8 : off+16]))
+	copy(meta.Candidate.Cookie[:], data[off+16:off+24])
+	meta.Candidate.Version = binary.BigEndian.Uint64(data[off+24 : off+32])
+	off += 32
 	ownerLen := uint64(binary.BigEndian.Uint32(data[off : off+4]))
 	off += 4
 	// The recovery key and the EXCLUSIVE4 verifier close every sidecar.

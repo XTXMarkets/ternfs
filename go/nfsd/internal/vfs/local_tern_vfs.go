@@ -124,11 +124,12 @@ func (lfs *LocalTernVFS) register(absPath string, parentID InodeID) InodeID {
 	return id
 }
 
+// Stat of a transient file reports not-exist, as the shard's StatFile does.
 func (lfs *LocalTernVFS) Stat(id InodeID) (NodeInfo, error) {
 	lfs.mu.RLock()
 	defer lfs.mu.RUnlock()
 	rel, ok := lfs.byID[id]
-	if !ok {
+	if _, transient := lfs.transient[id]; !ok || transient {
 		return NodeInfo{}, os.ErrNotExist
 	}
 	var st syscall.Stat_t

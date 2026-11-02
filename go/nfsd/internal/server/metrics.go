@@ -42,7 +42,7 @@ type Metrics struct {
 	workWaits, workWaitNanos atomic.Uint64
 	workWaiters              atomic.Int64
 	publishes                atomic.Uint64
-	publishDelays            atomic.Uint64 // CLOSEs answered DELAY because the backend did not answer the publication
+	publishDelays            atomic.Uint64 // CLOSEs and OPEN_DOWNGRADEs whose publication answered DELAY
 	// The persistent reply cache: records written, record writes and
 	// session file creations that failed, reply bytes recorded, intents
 	// written.

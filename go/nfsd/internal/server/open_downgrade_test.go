@@ -6,6 +6,7 @@ package server
 
 import (
 	"encoding/binary"
+	"fmt"
 	"net"
 	"testing"
 
@@ -186,4 +187,85 @@ func TestOpenDowngradeRecoveredWriterToRead(t *testing.T) {
 		t.Fatalf("READ through the adopted open %s", nfs4.Nfsstat4Name(got))
 	}
 	closeFile(t, conn, &xid, restarted.fh, read)
+}
+
+// A downgrade that publishes nothing keeps the open's marker: the open
+// goes on as a read open, and its next operation is not EXPIRED.
+func TestCleanDowngradeKeepsMarker(t *testing.T) {
+	srv, conn, xid, clientID, fh := openGrantFixture(t, "old")
+	openByHandle(t, conn, xid, clientID, "o", fh, nfs4.OPEN4_SHARE_ACCESS_READ)
+	_, both, _ := openByHandle(t, conn, xid, clientID, "o", fh, nfs4.OPEN4_SHARE_ACCESS_WRITE)
+	status, read := downgradeResult(t, conn, xid, fh, both, nfs4.OPEN4_SHARE_ACCESS_READ, nfs4.OPEN4_SHARE_DENY_NONE)
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("clean downgrade %s", nfs4.Nfsstat4Name(status))
+	}
+	awaitRequestHoldsReleased(t, srv)
+	if got := stateidOpStatus(t, conn, xid, "READ", fh, read); got != nfs4.NFS4_OK {
+		t.Fatalf("READ after a clean downgrade %s", nfs4.Nfsstat4Name(got))
+	}
+	if got := closeFileStatus(t, conn, xid, fh, read); got != nfs4.NFS4_OK {
+		t.Fatalf("CLOSE after a clean downgrade %s", nfs4.Nfsstat4Name(got))
+	}
+}
+
+// A writer whose name another client removes, downgraded to READ, goes on
+// reading its own image, written to or not; its CLOSE then discards it.
+func TestDetachedDowngradeReadsItsImage(t *testing.T) {
+	for _, write := range []bool{true, false} {
+		t.Run(fmt.Sprintf("written=%t", write), func(t *testing.T) {
+			f := newPublishFixture(t)
+			sid, fh, _ := f.writer(t, "doc", "base")
+			closeFile(t, f.conn, f.xid, fh, sid)
+			fh = lookupFH(t, f.conn, f.xid, "doc")
+			openByHandle(t, f.conn, f.xid, f.clientID, "o", fh, nfs4.OPEN4_SHARE_ACCESS_READ)
+			_, both, _ := openByHandle(t, f.conn, f.xid, f.clientID, "o", fh, nfs4.OPEN4_SHARE_ACCESS_WRITE)
+			want := "base"
+			if write {
+				writeFileAt(t, f.conn, f.xid, fh, both, 0, []byte("BA"))
+				want = "BAse"
+			}
+			conn, xid, _ := f.otherClient(t)
+			removeFile(t, conn, xid, "doc")
+			status, read := downgradeResult(t, f.conn, f.xid, fh, both, nfs4.OPEN4_SHARE_ACCESS_READ, nfs4.OPEN4_SHARE_DENY_NONE)
+			if status != nfs4.NFS4_OK {
+				t.Fatalf("downgrade of the detached writer %s", nfs4.Nfsstat4Name(status))
+			}
+			if status, data := readStateid(t, f.conn, f.xid, fh, read); status != nfs4.NFS4_OK || data != want {
+				t.Fatalf("READ after the downgrade %s %q, want %q", nfs4.Nfsstat4Name(status), data, want)
+			}
+			if got := closeFileStatus(t, f.conn, f.xid, fh, read); got != nfs4.NFS4_OK {
+				t.Fatalf("CLOSE %s", nfs4.Nfsstat4Name(got))
+			}
+			if n := len(f.store.Entries()); n != 0 {
+				t.Fatalf("%d staging entries after the reader's CLOSE", n)
+			}
+		})
+	}
+}
+
+// A writer's CLOSE of a detached staging that another open of the client
+// reads hands the image to that reader, bound to it as read-only; the
+// reader's CLOSE discards it.
+func TestDetachedCloseHandsImageToReader(t *testing.T) {
+	f := newPublishFixture(t)
+	sid, fh, stagingID := f.writer(t, "doc", "granted")
+	reader := f.reader(t, "doc")
+	conn, xid, _ := f.otherClient(t)
+	removeFile(t, conn, xid, "doc")
+	if got := closeFileStatus(t, f.conn, f.xid, fh, sid); got != nfs4.NFS4_OK {
+		t.Fatalf("writer CLOSE %s", nfs4.Nfsstat4Name(got))
+	}
+	if status, data := readStateid(t, f.conn, f.xid, fh, reader); status != nfs4.NFS4_OK || data != "granted" {
+		t.Fatalf("reader after the writer's CLOSE %s %q", nfs4.Nfsstat4Name(status), data)
+	}
+	meta, ok := f.store.GetMeta(stagingID)
+	if !ok || !meta.ReadOnly || meta.NFSStateID != extractStateID(stateidOf(reader)) || meta.OpenOwner != "reader" {
+		t.Fatalf("handed staging %+v %t, want it bound read-only to the reader", meta, ok)
+	}
+	if got := closeFileStatus(t, f.conn, f.xid, fh, reader); got != nfs4.NFS4_OK {
+		t.Fatalf("reader CLOSE %s", nfs4.Nfsstat4Name(got))
+	}
+	if n := len(f.store.Entries()); n != 0 {
+		t.Fatalf("%d staging entries after the reader's CLOSE", n)
+	}
 }

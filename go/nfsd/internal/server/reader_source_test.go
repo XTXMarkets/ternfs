@@ -21,15 +21,12 @@ import (
 
 var errInjectedReader = errors.New("injected reader-source fault")
 
-// readerSourceVFS fails LinkFile of a name, fails reads of one inode, and
-// can hold ScrapFile, the last step of a clean CLOSE under the file lock.
+// readerSourceVFS fails LinkFile of a name and fails reads of one inode.
 type readerSourceVFS struct {
 	vfs.TernVFS
-	mu        sync.Mutex
-	failLink  string
-	failRead  vfs.InodeID
-	holdScrap chan struct{}
-	scrapping chan struct{}
+	mu       sync.Mutex
+	failLink string
+	failRead vfs.InodeID
 }
 
 func (fs *readerSourceVFS) LinkFile(id vfs.InodeID, cookie vfs.Cookie, dir vfs.InodeID, name string, data io.Reader) error {
@@ -50,18 +47,6 @@ func (fs *readerSourceVFS) Read(id vfs.InodeID, offset uint64, dest []byte) (int
 		return 0, false, errInjectedReader
 	}
 	return fs.TernVFS.Read(id, offset, dest)
-}
-
-func (fs *readerSourceVFS) ScrapFile(id vfs.InodeID, cookie vfs.Cookie) error {
-	fs.mu.Lock()
-	hold, scrapping := fs.holdScrap, fs.scrapping
-	fs.holdScrap = nil
-	fs.mu.Unlock()
-	if hold != nil {
-		close(scrapping)
-		<-hold
-	}
-	return fs.TernVFS.ScrapFile(id, cookie)
 }
 
 type readerFixture struct {
@@ -127,21 +112,7 @@ func (f *readerFixture) openWriter(t *testing.T) [16]byte {
 // read reads through sid and returns the status and data.
 func (f *readerFixture) read(t *testing.T, sid [16]byte) (uint32, string) {
 	t.Helper()
-	res := sendCompound(t, f.conn, f.xid, func(w *nfs4.COMPOUND4argsWriter) {
-		putfhOp(w, f.fh)
-		rw := w.AppendArgarray_Read()
-		setStateid(rw.Stateid(), sid)
-		rw.SetOffset(0)
-		rw.SetCount(64)
-	})
-	f.xid++
-	if res.Status() != nfs4.NFS4_OK {
-		return res.Status(), ""
-	}
-	iter := res.Resarray()
-	iter.Next()
-	iter.Next()
-	return nfs4.NFS4_OK, string(iter.Resarray().Value().AsREAD4resEntry().Value().AsREAD4resok().Data())
+	return readStateid(t, f.conn, &f.xid, f.fh, sid)
 }
 
 func (f *readerFixture) dataID(t *testing.T, sid [16]byte) vfs.InodeID {
@@ -273,20 +244,25 @@ func TestReaderGetsIOAfterFailedPublication(t *testing.T) {
 func TestReadOpenBehindCleanCloseEndsOnFile(t *testing.T) {
 	f := newReaderFixture(t, "original")
 	writer := f.openWriter(t)
-	hold, scrapping := make(chan struct{}), make(chan struct{})
-	f.fs.mu.Lock()
-	f.fs.holdScrap, f.fs.scrapping = hold, scrapping
-	f.fs.mu.Unlock()
+	// The OPEN goes on another connection of the client: two requests in
+	// flight on one connection would share its replies.
+	conn := dial(t, addrOfTestServer(t, f.srv))
+	defer conn.Close()
+	xid := uint32(6000)
+	setupClient(t, conn, &xid)
+	// The CLOSE, its compound's last operation, keeps its locks until its
+	// reply is recorded on the slot: hold it there.
+	recording, hold := holdRecord(f.srv)
+	defer testutil.CloseSignal(hold)
 	closed := make(chan uint32, 1)
 	go func() {
 		xid := uint32(5000)
 		closed <- closeFileStatus(t, f.conn, &xid, f.fh, writer)
 	}()
-	testutil.AwaitSignal(t, scrapping, "clean CLOSE discarding the staging")
+	testutil.AwaitSignal(t, recording, "clean CLOSE recording its reply")
 	opened := make(chan [16]byte, 1)
 	go func() {
-		xid := uint32(6000)
-		status, sid, _ := openByHandle(t, f.conn, &xid, f.clientID, "r", f.fh, nfs4.OPEN4_SHARE_ACCESS_READ)
+		status, sid, _ := openByHandle(t, conn, &xid, f.clientID, "r", f.fh, nfs4.OPEN4_SHARE_ACCESS_READ)
 		if status != nfs4.NFS4_OK {
 			t.Errorf("reader OPEN %s", nfs4.Nfsstat4Name(status))
 		}
@@ -297,7 +273,7 @@ func TestReadOpenBehindCleanCloseEndsOnFile(t *testing.T) {
 		t.Fatal("read OPEN did not wait for the CLOSE")
 	case <-time.After(50 * time.Millisecond):
 	}
-	close(hold)
+	testutil.CloseSignal(hold)
 	if status := testutil.AwaitValue(t, closed, "clean CLOSE"); status != nfs4.NFS4_OK {
 		t.Fatalf("CLOSE %s", nfs4.Nfsstat4Name(status))
 	}

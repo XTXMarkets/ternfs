@@ -7,7 +7,9 @@
 package server
 
 import (
+	"bytes"
 	"encoding/binary"
+	"errors"
 	"flag"
 	"fmt"
 	"net"
@@ -3007,4 +3009,78 @@ func TestTernRenameOverStagedDestination(t *testing.T) {
 			data, "replacement")
 	}
 	cleanupViaNFS(t, conn, &xid, "target")
+}
+
+// The evidence a CLOSE resolves its publication candidate from, on a real
+// shard: a scrapped transient can be neither extended nor linked, and a
+// second scrap succeeds; ScrapFile of a linked file reports not-exist and
+// changes nothing; Stat reports not-exist for a transient and succeeds for
+// a linked file, also once another file replaced it at its name.
+func TestTernScrapAndStatResolveCandidate(t *testing.T) {
+	c, err := client.NewClient(ternLogger, nil, registryAddr, msgs.AddrsInfo{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	fs := vfs.NewRemoteTernVFS(c, ternLogger, bufpool.NewBufPool())
+	root := fs.RootID()
+	data := bytes.Repeat([]byte("x"), 300<<10)
+
+	p, pc, err := fs.ConstructFile(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fs.Stat(p); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("Stat of a transient: %v, want not-exist", err)
+	}
+	for i := range 2 {
+		if err := fs.ScrapFile(p, pc); err != nil {
+			t.Errorf("ScrapFile %d of a transient: %v", i+1, err)
+		}
+	}
+	if err := fs.LinkFile(p, pc, root, "candidate-scrapped", bytes.NewReader(data)); err == nil {
+		t.Error("a scrapped transient was extended and linked")
+	}
+	if err := fs.LinkFile(p, pc, root, "candidate-scrapped", nil); err == nil {
+		t.Error("a scrapped transient was linked")
+	}
+	if _, err := fs.Lookup(root, "candidate-scrapped"); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the scrapped transient's name: %v, want not-exist", err)
+	}
+
+	q, qc, err := fs.ConstructFile(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.LinkFile(q, qc, root, "candidate-linked", bytes.NewReader(data)); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.ScrapFile(q, qc); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("ScrapFile of a linked file: %v, want not-exist", err)
+	}
+	if info, err := fs.Stat(q); err != nil || info.Size != uint64(len(data)) {
+		t.Errorf("Stat of a linked file: %+v %v", info, err)
+	}
+	if cur, err := fs.Lookup(root, "candidate-linked"); err != nil || cur != q {
+		t.Errorf("the name after ScrapFile of its file: %v %v, want %v", cur, err, q)
+	}
+	r, rc, err := fs.ConstructFile(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.LinkFile(r, rc, root, "candidate-linked", bytes.NewReader([]byte("newer"))); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.ScrapFile(q, qc); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("ScrapFile of a replaced file: %v, want not-exist", err)
+	}
+	if _, err := fs.Stat(q); err != nil {
+		t.Errorf("Stat of a replaced file: %v", err)
+	}
+	if err := fs.LinkFile(q, qc, root, "candidate-linked", nil); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a repeated link after the replacement: %v, want not-exist", err)
+	}
+	if cur, _ := fs.Lookup(root, "candidate-linked"); cur != r {
+		t.Errorf("the name holds %v, want the replacement %v", cur, r)
+	}
 }

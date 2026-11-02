@@ -6,10 +6,13 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"hash/crc32"
+	"io"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -20,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/XTXMarkets/ternfs/go/msgs"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/openstate"
@@ -948,23 +952,11 @@ func TestRestartReadOpenSeesRecoveredWriter(t *testing.T) {
 			f.restart()
 			readState, readFH := openReadFile(t, f.conn, &f.xid, f.wire, "doc")
 			readAt := func(sid [16]byte) string {
-				res := sendCompound(t, f.conn, f.xid, func(w *nfs4.COMPOUND4argsWriter) {
-					pw := w.AppendArgarray_Putfh()
-					pw.Resume(pw.StartObject().SetData(readFH).Finish())
-					w.Resume(pw.Finish())
-					rw := w.AppendArgarray_Read()
-					setStateid(rw.Stateid(), sid)
-					rw.SetOffset(0)
-					rw.SetCount(64)
-				})
-				f.xid++
-				iter := expectOK(t, res)
-				nextOp(t, &iter) // PUTFH
-				readRes := nextOp(t, &iter).Value().AsREAD4resEntry()
-				if readRes.Disc() != nfs4.NFS4_OK {
-					t.Fatalf("READ %s", nfs4.Nfsstat4Name(readRes.Disc()))
+				status, data := readStateid(t, f.conn, &f.xid, readFH, sid)
+				if status != nfs4.NFS4_OK {
+					t.Fatalf("READ %s", nfs4.Nfsstat4Name(status))
 				}
-				return string(readRes.Value().AsREAD4resok().Data())
+				return data
 			}
 			if got := readAt(readState); got != "version two" {
 				t.Fatalf("read open before the recovered CLOSE reads %q, want the edit", got)
@@ -2301,7 +2293,846 @@ func TestRestartRecoveredCloseAfterConcurrentAdoption(t *testing.T) {
 	if f.srv.opens.Live(id) {
 		t.Fatal("the adopted open outlived the CLOSE")
 	}
+	awaitRequestHoldsReleased(t, f.srv) // the marker goes after the reply
 	if marked, err := f.srv.clients.HasOpen(f.srv.sessions.lookup(f.ts.id).clientID, id); err != nil || marked {
 		t.Fatalf("open marker after the CLOSE: %v %v", marked, err)
+	}
+}
+
+// A COMMIT ahead of a REMOVE in the compound does not make the REMOVE's
+// intent undecidable after a restart: COMMIT is no effect for the gates.
+func TestRestartCommitBeforeRemoveIsDecided(t *testing.T) {
+	f := newReplayFixture(t)
+	writeRoot(t, f.root, "kept", "data")
+	writeRoot(t, f.root, "gone", "x")
+	edge, err := f.srv.fs.LookupEdge(f.srv.fs.RootID(), "gone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
+		w.AppendArgarray_Putrootfh()
+		admissionLookup(w, "kept")
+		w.AppendArgarray_Commit()
+		w.AppendArgarray_Putrootfh()
+		admissionRemove(w, "gone")
+	})
+	slot, seq := f.ts.acquire()
+	request := withSequence(body, f.ts, slot, seq)
+	f.ts.release(slot)
+	if got := compoundStatus(t, f.sendRaw(request)); got != nfs4.NFS4_OK {
+		t.Fatalf("first attempt %s", nfs4.Nfsstat4Name(got))
+	}
+	f.leaveIntent(slot, seq, removeIntent{dir: f.srv.fs.RootID(), name: "gone", edge: edge}.encode(5))
+	f.restart()
+	if got := compoundStatus(t, f.sendRaw(request)); got != nfs4.NFS4_OK {
+		t.Fatalf("retransmission after restart %s, want the REMOVE decided", nfs4.Nfsstat4Name(got))
+	}
+	if got := f.srv.metrics.replayDecidedApplied.Load(); got != 1 {
+		t.Fatalf("decided applied %d", got)
+	}
+}
+
+// A RENAME keeps its names locked until its reply is recorded: another
+// client's REMOVE of the new name waits, and the RENAME's retransmission
+// after a restart replays its reply.
+func TestRenameHoldsNamesUntilRecorded(t *testing.T) {
+	f := newReplayFixture(t)
+	writeRoot(t, f.root, "a", "payload")
+	slot, seq := f.ts.acquire()
+	defer f.ts.release(slot)
+	request := withSequence(renameBody("a", "b"), f.ts, slot, seq)
+	recording, release := holdRecord(f.srv)
+	defer testutil.CloseSignal(release)
+	first := sendAsync(f.conn, 7000, request)
+	testutil.AwaitSignal(t, recording, "the RENAME recording its reply")
+	other := dial(t, f.addr)
+	defer other.Close()
+	xid := uint32(1)
+	id, confirm := requestClientID(t, other, &xid, "other-client", [8]byte{2})
+	if status := confirmClientID(t, other, &xid, id, confirm); status != nfs4.NFS4_OK {
+		t.Fatal(nfs4.Nfsstat4Name(status))
+	}
+	removed := make(chan uint32, 1)
+	go func() {
+		reply, err := sendRPC(other, 7001, procCompound, removeBody("b"))
+		if err != nil {
+			removed <- nfs4.NFS4ERR_SERVERFAULT
+			return
+		}
+		removed <- compoundStatus(t, reply)
+	}()
+	testutil.AssertBlocked(t, removed, "another client's REMOVE behind the RENAME's record")
+	testutil.CloseSignal(release)
+	reply := testutil.AwaitValue(t, first, "the RENAME")
+	if reply == nil || compoundStatus(t, reply) != nfs4.NFS4_OK {
+		t.Fatal("RENAME failed")
+	}
+	if got := testutil.AwaitValue(t, removed, "the REMOVE"); got != nfs4.NFS4_OK {
+		t.Fatalf("REMOVE %s", nfs4.Nfsstat4Name(got))
+	}
+	other.Close()
+	f.restart()
+	if got := compoundStatus(t, f.sendRaw(request)); got != nfs4.NFS4_OK {
+		t.Fatalf("RENAME retransmission %s, want its recorded reply", nfs4.Nfsstat4Name(got))
+	}
+}
+
+// A CLOSE that ends its compound by failing, here with DELAY before a
+// GETATTR, keeps its locks until the reply is recorded; one that succeeds
+// and is followed by a GETATTR releases them when it returns.
+func TestCloseReleasesAtRecordOnlyWhenLast(t *testing.T) {
+	for _, delayed := range []bool{true, false} {
+		t.Run(fmt.Sprintf("delayed=%t", delayed), func(t *testing.T) {
+			f := newPublishFixture(t)
+			sid, fh, _ := f.writer(t, "doc", "saved")
+			if delayed {
+				f.fs.timeoutLinks(1, false)
+			}
+			body := buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
+				putfhOp(w, fh)
+				cw := w.AppendArgarray_Close()
+				setStateid(cw.OpenStateid(), sid)
+				gw := w.AppendArgarray_Getattr()
+				bw := gw.StartAttrRequest()
+				bw.AppendData(1 << nfs4.FATTR4_SIZE)
+				gw.Resume(bw.Finish())
+				w.Resume(gw.Finish())
+			})
+			// The other connection's session exists before anything waits.
+			conn := dial(t, f.addr)
+			defer conn.Close()
+			xid := uint32(1)
+			setupClient(t, conn, &xid)
+			recording, release := holdRecord(f.srv)
+			defer testutil.CloseSignal(release)
+			closed := make(chan uint32, 1)
+			go func() {
+				xid := uint32(7000)
+				reply, err := sendRPC(f.conn, xid, procCompound, body)
+				if err != nil {
+					closed <- nfs4.NFS4ERR_SERVERFAULT
+					return
+				}
+				closed <- compoundStatus(t, reply)
+			}()
+			testutil.AwaitSignal(t, recording, "the CLOSE compound recording its reply")
+			opened := make(chan uint32, 1)
+			go func() {
+				status, _, _ := openByHandle(t, conn, &xid, f.clientID, "other-owner", fh, nfs4.OPEN4_SHARE_ACCESS_READ)
+				opened <- status
+			}()
+			if delayed {
+				testutil.AssertBlocked(t, opened, "an OPEN behind the DELAYed CLOSE's record")
+				testutil.CloseSignal(release)
+			}
+			if got := testutil.AwaitValue(t, opened, "the OPEN"); got != nfs4.NFS4_OK {
+				t.Fatalf("OPEN %s", nfs4.Nfsstat4Name(got))
+			}
+			testutil.CloseSignal(release)
+			want := uint32(nfs4.NFS4_OK)
+			if delayed {
+				want = nfs4.NFS4ERR_DELAY
+			}
+			if got := testutil.AwaitValue(t, closed, "the CLOSE"); got != want {
+				t.Fatalf("CLOSE compound %s, want %s", nfs4.Nfsstat4Name(got), nfs4.Nfsstat4Name(want))
+			}
+		})
+	}
+}
+
+type panicRemoveVFS struct {
+	vfs.TernVFS
+	panics atomic.Int32
+}
+
+func (fs *panicRemoveVFS) RemoveEdge(dir vfs.InodeID, name string, edge vfs.Edge) error {
+	if fs.panics.Add(-1) >= 0 {
+		panic("injected REMOVE panic")
+	}
+	return fs.TernVFS.RemoveEdge(dir, name, edge)
+}
+
+// panicLogHandler panics on one log message: a panic while recovering
+// from the panic that message reports.
+type panicLogHandler struct {
+	slog.Handler
+	message string
+}
+
+func (h panicLogHandler) Handle(ctx context.Context, r slog.Record) error {
+	if r.Message == h.message {
+		panic("injected panic in recovery")
+	}
+	return h.Handler.Handle(ctx, r)
+}
+
+// A panic inside a REMOVE, and one while its panic is being recovered,
+// release its name: a later REMOVE of it runs. A guard for the compound's
+// release of held locks.
+func TestPanicReleasesHeldName(t *testing.T) {
+	for _, inRecovery := range []bool{false, true} {
+		t.Run(fmt.Sprintf("in-recovery=%t", inRecovery), func(t *testing.T) {
+			root := t.TempDir()
+			writeRoot(t, root, "victim", "data")
+			fs := &panicRemoveVFS{TernVFS: vfs.NewLocalTernVFS(root)}
+			fs.panics.Store(1)
+			var handler slog.Handler = slog.NewTextHandler(io.Discard, nil)
+			if inRecovery {
+				handler = panicLogHandler{Handler: handler, message: "panic handling admitted compound"}
+			}
+			store, err := staging.NewLocalStore(t.TempDir(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			srv, err := NewServer(fs, store, slog.New(handler))
+			if err != nil {
+				t.Fatal(err)
+			}
+			addr, cleanup := serveTestServer(t, srv)
+			defer cleanup()
+			conn := dial(t, addr)
+			defer conn.Close()
+			xid := uint32(1)
+			setupClient(t, conn, &xid)
+			if reply, err := sendRPC(conn, xid, procCompound, removeBody("victim")); err != nil || compoundStatus(t, reply) != nfs4.NFS4ERR_SERVERFAULT {
+				t.Fatalf("panicking REMOVE: %v", err)
+			}
+			// A new session removes the name.
+			again := dial(t, addr)
+			defer again.Close()
+			xid2 := uint32(1)
+			setupClient(t, again, &xid2)
+			done := make(chan uint32, 1)
+			go func() {
+				reply, err := sendRPC(again, xid2, procCompound, removeBody("victim"))
+				if err != nil {
+					done <- nfs4.NFS4ERR_SERVERFAULT
+					return
+				}
+				done <- compoundStatus(t, reply)
+			}()
+			if got := testutil.AwaitValue(t, done, "the later REMOVE"); got != nfs4.NFS4_OK {
+				t.Fatalf("later REMOVE %s", nfs4.Nfsstat4Name(got))
+			}
+		})
+	}
+}
+
+// An OPEN_DOWNGRADE of a writer recovered after a restart completes: the
+// adoption's own locks are released before the downgrade takes its. A
+// guard: the adoption keeps scoped locks while the downgrade holds its own.
+func TestRestartRecoveredDowngradeCompletes(t *testing.T) {
+	f := newReplayFixture(t)
+	state, fh := openCreateFile(t, f.conn, &f.xid, f.wire, "doc")
+	writeFileAt(t, f.conn, &f.xid, fh, state, 0, []byte("saved"))
+	f.restart()
+	done := make(chan uint32, 1)
+	go func() {
+		got, _ := downgradeResult(t, f.conn, &f.xid, fh, state, nfs4.OPEN4_SHARE_ACCESS_READ, nfs4.OPEN4_SHARE_DENY_NONE)
+		done <- got
+	}()
+	if got := testutil.AwaitValue(t, done, "the recovered downgrade"); got != nfs4.NFS4_OK {
+		t.Fatalf("OPEN_DOWNGRADE %s", nfs4.Nfsstat4Name(got))
+	}
+	if data, _ := readRoot(t, f.root, "doc"); data != "saved" {
+		t.Fatalf("doc holds %q", data)
+	}
+}
+
+// newPublishReplayFixture is newReplayFixture over a publishFaultVFS, which
+// stays across restarts, as the backend does.
+func newPublishReplayFixture(t *testing.T) (*replayFixture, *publishFaultVFS) {
+	t.Helper()
+	f := &replayFixture{t: t, root: t.TempDir(), stagingDir: t.TempDir(), xid: 1}
+	pf := newLocalPublishVFS(t, f.root)
+	pf.counting = true
+	f.fs = &namespaceFaultSwitch{TernVFS: pf}
+	f.start()
+	f.wire = setupClient(t, f.conn, &f.xid)
+	f.ts = testSessionForClient(f.conn, f.wire)
+	return f, pf
+}
+
+// closeStatus sends CLOSE of stateid on fh as a new request and returns
+// its status.
+func (f *replayFixture) closeStatus(fh []byte, stateid [16]byte) uint32 {
+	f.t.Helper()
+	body := buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
+		putfhOp(w, fh)
+		cw := w.AppendArgarray_Close()
+		setStateid(cw.OpenStateid(), stateid)
+	})
+	slot, seq := f.ts.acquire()
+	defer f.ts.release(slot)
+	return compoundStatus(f.t, f.send(body, slot, seq))
+}
+
+// stagingFiles reads a staging's file and sidecar, for restoreStaging to
+// put back: the state a process killed at that point leaves.
+func (f *replayFixture) stagingFiles(id vfs.InodeID) map[string][]byte {
+	kept := map[string][]byte{}
+	for _, suffix := range []string{".staging", ".meta"} {
+		name := fmt.Sprintf("%016x%s", uint64(id), suffix)
+		data, err := os.ReadFile(filepath.Join(f.stagingDir, name))
+		if err != nil {
+			panic(err)
+		}
+		kept[name] = data
+	}
+	return kept
+}
+
+// restartKeeping restarts with the given files put back in the staging
+// directory and the open's marker, which the dead process would not have
+// removed.
+func (f *replayFixture) restartKeeping(kept map[string][]byte, stateid [16]byte) {
+	f.t.Helper()
+	f.conn.Close()
+	f.stop()
+	f.stop = nil
+	staging.CloseFiles(f.t, f.store)
+	for name, data := range kept {
+		if err := os.WriteFile(filepath.Join(f.stagingDir, name), data, 0o600); err != nil {
+			f.t.Fatal(err)
+		}
+	}
+	f.start()
+	if err := f.srv.clients.MarkOpen(f.srv.sessions.lookup(f.ts.id).clientID, extractStateID(stateidOf(stateid))); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+// A restart after a fresh transient was linked, before the staging was
+// removed: the retransmitted CLOSE finds its candidate linked and
+// completes.
+func TestRestartAfterFreshPublicationCompletes(t *testing.T) {
+	f, pf := newPublishReplayFixture(t)
+	state, fh := openCreateFile(t, f.conn, &f.xid, f.wire, "doc")
+	writeFileAt(t, f.conn, &f.xid, fh, state, 0, []byte("saved"))
+	stagingID := stagingIDForTest(t, f.store, state)
+	pf.mu.Lock()
+	pf.events = nil
+	pf.mu.Unlock()
+	pf.timeoutLinks(1, false)
+	if got := f.closeStatus(fh, state); got != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("CLOSE %s, want DELAY", nfs4.Nfsstat4Name(got))
+	}
+	var kept map[string][]byte
+	pf.set(func() {
+		pf.onSetTime = func(vfs.InodeID) {
+			if kept == nil {
+				kept = f.stagingFiles(stagingID)
+			}
+		}
+	})
+	if got := f.closeStatus(fh, state); got != nfs4.NFS4_OK {
+		t.Fatalf("retried CLOSE %s", nfs4.Nfsstat4Name(got))
+	}
+	pf.set(func() { pf.onSetTime = nil })
+	f.restartKeeping(kept, state)
+	if got := f.closeStatus(fh, state); got != nfs4.NFS4_OK {
+		t.Fatalf("CLOSE after the restart %s", nfs4.Nfsstat4Name(got))
+	}
+	if data, _ := readRoot(t, f.root, "doc"); data != "saved" {
+		t.Fatalf("doc holds %q", data)
+	}
+	if published, err := f.srv.fs.Lookup(f.srv.fs.RootID(), "doc"); err != nil || published == stagingID {
+		t.Fatalf("doc is %v (%v), want the fresh candidate, not the staging", published, err)
+	}
+	if got := pf.count("construct"); got != 1 {
+		t.Fatalf("%d constructions, want the one fresh candidate", got)
+	}
+	if n := len(f.store.Entries()); n != 0 {
+		t.Fatalf("%d staging entries left", n)
+	}
+}
+
+// A restart during an upload that wrote spans into the staging's own
+// transient: TernFS does not rewrite a file from offset 0, so the
+// recovered CLOSE publishes through a fresh candidate rather than failing.
+func TestRestartAfterPartialUploadPublishesFresh(t *testing.T) {
+	for _, saved := range []bool{true, false} {
+		t.Run(fmt.Sprintf("candidate-saved=%t", saved), func(t *testing.T) {
+			f, pf := newPublishReplayFixture(t)
+			state, fh := openCreateFile(t, f.conn, &f.xid, f.wire, "doc")
+			writeFileAt(t, f.conn, &f.xid, fh, state, 0, []byte("saved"))
+			stagingID := stagingIDForTest(t, f.store, state)
+			submitted := map[vfs.Cookie]bool{}
+			pf.onLink(func(n int, _ vfs.InodeID, cookie vfs.Cookie, link func() error) error {
+				if submitted[cookie] {
+					return errors.New("injected SPAN_NOT_FOUND: spans exist past offset 0")
+				}
+				submitted[cookie] = true
+				if n == 1 {
+					return msgs.TIMEOUT
+				}
+				return link()
+			})
+			if got := f.closeStatus(fh, state); got != nfs4.NFS4ERR_DELAY {
+				t.Fatalf("CLOSE %s, want DELAY", nfs4.Nfsstat4Name(got))
+			}
+			if !saved {
+				// A kill during the upload, before the DELAY saved the
+				// candidate: the loader implies the staging's own transient.
+				path := filepath.Join(f.stagingDir, fmt.Sprintf("%016x.meta", uint64(stagingID)))
+				meta, err := staging.LoadMeta(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				meta.Candidate = staging.Candidate{}
+				if err := staging.SaveMeta(path, meta); err != nil {
+					t.Fatal(err)
+				}
+			}
+			f.restart()
+			if got := f.closeStatus(fh, state); got != nfs4.NFS4_OK {
+				t.Fatalf("recovered CLOSE %s", nfs4.Nfsstat4Name(got))
+			}
+			if data, _ := readRoot(t, f.root, "doc"); data != "saved" {
+				t.Fatalf("doc holds %q", data)
+			}
+		})
+	}
+}
+
+// A restart after a link that applied and timed out: before the CLOSE's
+// retransmission, a write OPEN of the client adopts the staging, which the
+// name now holds, and writes. Its CLOSE publishes those bytes, also after
+// a second restart, through the staging's own inode, which a READ there
+// also sees.
+func TestRestartAdoptedLinkedStagingPublishesAdopterBytes(t *testing.T) {
+	for _, second := range []bool{false, true} {
+		t.Run(fmt.Sprintf("second-restart=%t", second), func(t *testing.T) {
+			f, pf := newPublishReplayFixture(t)
+			state, fh := openCreateFile(t, f.conn, &f.xid, f.wire, "doc")
+			writeFileAt(t, f.conn, &f.xid, fh, state, 0, []byte("v1"))
+			stagingID := stagingIDForTest(t, f.store, state)
+			pf.timeoutLinks(1, true)
+			if got := f.closeStatus(fh, state); got != nfs4.NFS4ERR_DELAY {
+				t.Fatalf("CLOSE %s, want DELAY", nfs4.Nfsstat4Name(got))
+			}
+			f.restart()
+			adopter, sfh := openWriteFile(t, f.conn, &f.xid, f.wire, "doc")
+			if id, _ := vfs.FHToInodeID(sfh); id != stagingID {
+				t.Fatalf("adopting OPEN returned %v, want the staging's own inode %v", id, stagingID)
+			}
+			writeFileAt(t, f.conn, &f.xid, sfh, adopter, 0, []byte("v2"))
+			if second {
+				f.restart()
+				if data, _ := readFileData(t, f.conn, &f.xid, sfh, 0, 16); string(data) != "v2" {
+					t.Fatalf("READ through the staging's inode after the restart %q, want v2", data)
+				}
+			}
+			if got := f.closeStatus(sfh, adopter); got != nfs4.NFS4_OK {
+				t.Fatalf("adopter's CLOSE %s", nfs4.Nfsstat4Name(got))
+			}
+			if data, _ := readRoot(t, f.root, "doc"); data != "v2" {
+				t.Fatalf("doc holds %q, want the adopter's bytes", data)
+			}
+		})
+	}
+}
+
+// A restart after a link that applied and timed out, then another client
+// publishes first: the retransmitted CLOSE completes without publishing
+// the older bytes again.
+func TestRestartAppliedLinkThenForeignPublicationCompletes(t *testing.T) {
+	f, pf := newPublishReplayFixture(t)
+	state, fh := openCreateFile(t, f.conn, &f.xid, f.wire, "doc")
+	writeFileAt(t, f.conn, &f.xid, fh, state, 0, []byte("mine"))
+	pf.timeoutLinks(1, true)
+	if got := f.closeStatus(fh, state); got != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("CLOSE %s, want DELAY", nfs4.Nfsstat4Name(got))
+	}
+	f.restart()
+	other := dial(t, f.addr)
+	defer other.Close()
+	xid := uint32(1)
+	otherID, confirm := requestClientID(t, other, &xid, "other-client", [8]byte{2})
+	if status := confirmClientID(t, other, &xid, otherID, confirm); status != nfs4.NFS4_OK {
+		t.Fatal(nfs4.Nfsstat4Name(status))
+	}
+	osid, ofh := openWriteFile(t, other, &xid, otherID, "doc")
+	writeFileAt(t, other, &xid, ofh, osid, 0, []byte("theirs"))
+	closeFile(t, other, &xid, ofh, osid)
+	if got := f.closeStatus(fh, state); got != nfs4.NFS4_OK {
+		t.Fatalf("recovered CLOSE %s", nfs4.Nfsstat4Name(got))
+	}
+	if data, _ := readRoot(t, f.root, "doc"); data != "theirs" {
+		t.Fatalf("doc holds %q, want the later save", data)
+	}
+}
+
+// aliasKillStore keeps the alias log as it is when a staging is removed,
+// for the restart to put back: a kill right after the removal.
+type aliasKillStore struct {
+	*staging.LocalStore
+	dir  string
+	kept []byte
+}
+
+func (k *aliasKillStore) Remove(id vfs.InodeID) {
+	if k.kept == nil {
+		data, err := os.ReadFile(filepath.Join(k.dir, staging.AliasesDirName, aliasLogName))
+		if err != nil {
+			panic(err)
+		}
+		k.kept = data
+	}
+	k.LocalStore.Remove(id)
+}
+
+// A kill right after the staging's removal keeps the client's view of its
+// publication: the alias is recorded first.
+func TestRestartAfterRemovalKeepsPublicationAlias(t *testing.T) {
+	kill := &aliasKillStore{}
+	f := newWrappedReplayFixture(t, func(store *staging.LocalStore) staging.Store {
+		kill.LocalStore = store
+		return kill
+	})
+	kill.dir = f.stagingDir
+	state, fh := openCreateFile(t, f.conn, &f.xid, f.wire, "doc")
+	writeFileAt(t, f.conn, &f.xid, fh, state, 0, []byte("saved"))
+	if got := f.closeStatus(fh, state); got != nfs4.NFS4_OK {
+		t.Fatalf("CLOSE %s", nfs4.Nfsstat4Name(got))
+	}
+	f.conn.Close()
+	f.stop()
+	f.stop = nil
+	staging.CloseFiles(t, f.store)
+	if err := os.WriteFile(filepath.Join(f.stagingDir, staging.AliasesDirName, aliasLogName), kill.kept, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.wrapStore = nil
+	f.start()
+	if data, _ := readFileData(t, f.conn, &f.xid, fh, 0, 16); string(data) != "saved" {
+		t.Fatalf("READ through the client's handle after the restart %q, want its publication", data)
+	}
+}
+
+// A FILE_SYNC WRITE during the first upload, whose link applied and timed
+// out: after a restart the retransmitted CLOSE publishes the WRITE.
+func TestRestartWriteDuringAppliedUploadIsPublished(t *testing.T) {
+	f, pf := newPublishReplayFixture(t)
+	state, fh := openCreateFile(t, f.conn, &f.xid, f.wire, "doc")
+	writeFileAt(t, f.conn, &f.xid, fh, state, 0, []byte("saved"))
+	stagingID := stagingIDForTest(t, f.store, state)
+	pf.onLink(func(n int, _ vfs.InodeID, _ vfs.Cookie, link func() error) error {
+		if n > 1 {
+			return link()
+		}
+		if err := link(); err != nil {
+			return err
+		}
+		stageWrite(t, f.store, stagingID, 0, "SAVED")
+		return msgs.TIMEOUT
+	})
+	if got := f.closeStatus(fh, state); got != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("CLOSE %s, want DELAY", nfs4.Nfsstat4Name(got))
+	}
+	f.restart()
+	if got := f.closeStatus(fh, state); got != nfs4.NFS4_OK {
+		t.Fatalf("recovered CLOSE %s", nfs4.Nfsstat4Name(got))
+	}
+	if data, _ := readRoot(t, f.root, "doc"); data != "SAVED" {
+		t.Fatalf("doc holds %q, want the WRITE", data)
+	}
+}
+
+// Times set with the zero stateid in the restart window, before the
+// recovered writer's CLOSE comes back, reach its staging and so its
+// publication; while that CLOSE runs, they wait for it and then reach the
+// published file.
+func TestRestartZeroStateidTimesReachRecoveredWriter(t *testing.T) {
+	for _, concurrent := range []bool{false, true} {
+		t.Run(fmt.Sprintf("during-close=%t", concurrent), func(t *testing.T) {
+			f := newReplayFixture(t)
+			state, fh := openCreateFile(t, f.conn, &f.xid, f.wire, "doc")
+			writeFileAt(t, f.conn, &f.xid, fh, state, 0, []byte("saved"))
+			f.restart()
+			if !concurrent {
+				if got := setMtimeStatus(t, f.conn, &f.xid, fh, [16]byte{}, 1_000_000); got != nfs4.NFS4_OK {
+					t.Fatalf("SETATTR with the zero stateid %s", nfs4.Nfsstat4Name(got))
+				}
+				if got := f.closeStatus(fh, state); got != nfs4.NFS4_OK {
+					t.Fatalf("recovered CLOSE %s", nfs4.Nfsstat4Name(got))
+				}
+			} else {
+				other := dial(t, f.addr)
+				defer other.Close()
+				xid := uint32(1)
+				setupClient(t, other, &xid)
+				recording, release := holdRecord(f.srv)
+				defer testutil.CloseSignal(release)
+				closed := make(chan uint32, 1)
+				go func() { closed <- f.closeStatus(fh, state) }()
+				testutil.AwaitSignal(t, recording, "the recovered CLOSE recording its reply")
+				set := make(chan uint32, 1)
+				go func() { set <- setMtimeStatus(t, other, &xid, fh, [16]byte{}, 1_000_000) }()
+				testutil.AssertBlocked(t, set, "SETATTR behind the CLOSE")
+				testutil.CloseSignal(release)
+				if got := testutil.AwaitValue(t, closed, "the CLOSE"); got != nfs4.NFS4_OK {
+					t.Fatalf("recovered CLOSE %s", nfs4.Nfsstat4Name(got))
+				}
+				if got := testutil.AwaitValue(t, set, "the SETATTR"); got != nfs4.NFS4_OK {
+					t.Fatalf("SETATTR %s", nfs4.Nfsstat4Name(got))
+				}
+			}
+			published, err := f.srv.fs.Lookup(f.srv.fs.RootID(), "doc")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if info, err := f.srv.fs.Stat(published); err != nil || info.Mtime.Unix() != 1_000_000 {
+				t.Fatalf("published mtime %v %v", info.Mtime, err)
+			}
+			if data, _ := readRoot(t, f.root, "doc"); data != "saved" {
+				t.Fatalf("doc holds %q", data)
+			}
+		})
+	}
+}
+
+// writeBody writes data at offset 0 through stateid, FILE_SYNC.
+func writeBody(fh []byte, stateid [16]byte, data string) []byte {
+	return buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
+		putfhOp(w, fh)
+		ww := w.AppendArgarray_Write()
+		setStateid(ww.Stateid(), stateid)
+		ww = ww.SetOffset(0)
+		ww = ww.SetStable(fileSync4)
+		ww = ww.SetData([]byte(data))
+		w.Resume(ww.Finish())
+	})
+}
+
+// An OPEN_DOWNGRADE that ends its compound keeps the open's locks until
+// its reply is recorded: a same-owner OPEN on another slot, which makes the
+// open a writer again, waits for the record. That writer's bytes, written
+// before a restart, are not published by the downgrade's replay, and the
+// writer goes on and publishes them itself. The downgrade names the open by
+// its seqid or by seqid 0.
+func TestDowngradeHoldsOpenUntilRecorded(t *testing.T) {
+	for _, current := range []bool{false, true} {
+		t.Run(fmt.Sprintf("seqid0=%t", current), func(t *testing.T) {
+			testDowngradeHoldsOpenUntilRecorded(t, current)
+		})
+	}
+}
+
+func testDowngradeHoldsOpenUntilRecorded(t *testing.T, current bool) {
+	f := newReplayFixture(t)
+	writeRoot(t, f.root, "doc", "base")
+	if status, _, _, _ := openFileForOwner(t, f.conn, &f.xid, f.wire, "o", "doc", nfs4.OPEN4_SHARE_ACCESS_READ, false, false); status != nfs4.NFS4_OK {
+		t.Fatal(nfs4.Nfsstat4Name(status))
+	}
+	status, sid, fh, _ := openFileForOwner(t, f.conn, &f.xid, f.wire, "o", "doc", nfs4.OPEN4_SHARE_ACCESS_BOTH, false, false)
+	if status != nfs4.NFS4_OK {
+		t.Fatal(nfs4.Nfsstat4Name(status))
+	}
+	zero := sid
+	binary.BigEndian.PutUint32(zero[:4], 0)
+	named := sid
+	if current {
+		named = zero
+	}
+	downgrade := buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
+		putfhOp(w, fh)
+		dw := w.AppendArgarray_OpenDowngrade()
+		setStateid(dw.OpenStateid(), named)
+		dw.SetShareAccess(nfs4.OPEN4_SHARE_ACCESS_READ)
+		dw.SetShareDeny(nfs4.OPEN4_SHARE_DENY_NONE)
+	})
+	slotA, seqA := f.ts.acquire()
+	slotB, seqB := f.ts.acquire()
+	request := withSequence(downgrade, f.ts, slotA, seqA)
+	recording, release := holdRecord(f.srv)
+	defer testutil.CloseSignal(release)
+	first := sendAsync(f.conn, 7000, request)
+	testutil.AwaitSignal(t, recording, "the downgrade recording its reply")
+	other := dial(t, f.addr)
+	defer other.Close()
+	opened := sendAsync(other, 7001, withSequence(openBody(f.wire, "o", "doc", nfs4.OPEN4_SHARE_ACCESS_BOTH), f.ts, slotB, seqB))
+	testutil.AssertBlocked(t, opened, "a same-owner OPEN behind the downgrade's record")
+	testutil.CloseSignal(release)
+	reply := testutil.AwaitValue(t, first, "the downgrade")
+	if reply == nil || compoundStatus(t, reply) != nfs4.NFS4_OK {
+		t.Fatal("downgrade failed")
+	}
+	if got := testutil.AwaitValue(t, opened, "the OPEN"); got == nil || compoundStatus(t, got) != nfs4.NFS4_OK {
+		t.Fatal("OPEN after the downgrade failed")
+	}
+	f.ts.release(slotA)
+	f.ts.release(slotB)
+	other.Close()
+	slot, seq := f.ts.acquire()
+	if got := compoundStatus(t, f.send(writeBody(fh, zero, "new!"), slot, seq)); got != nfs4.NFS4_OK {
+		t.Fatalf("WRITE of the newer writer %s", nfs4.Nfsstat4Name(got))
+	}
+	f.ts.release(slot)
+	f.restart()
+	if replay := f.sendRaw(request); !bytes.Equal(mustParseRPCReply(t, replay), mustParseRPCReply(t, reply)) {
+		t.Fatal("the retransmission did not replay the downgrade's reply")
+	}
+	if data, _ := readRoot(t, f.root, "doc"); data != "base" {
+		t.Fatalf("doc holds %q after the replay, want the newer writer's bytes unpublished", data)
+	}
+	slot, seq = f.ts.acquire()
+	if got := compoundStatus(t, f.send(writeBody(fh, zero, "new2"), slot, seq)); got != nfs4.NFS4_OK {
+		t.Fatalf("WRITE of the newer writer after the restart %s", nfs4.Nfsstat4Name(got))
+	}
+	f.ts.release(slot)
+	if got := f.closeStatus(fh, zero); got != nfs4.NFS4_OK {
+		t.Fatalf("CLOSE of the newer writer %s", nfs4.Nfsstat4Name(got))
+	}
+	if data, _ := readRoot(t, f.root, "doc"); data != "new2" {
+		t.Fatalf("doc holds %q, want the newer writer's bytes", data)
+	}
+}
+
+// A writer that joined a DELAYed CLOSE's staging is recovered after a
+// restart under its own stateid and owner, and its CLOSE publishes its
+// bytes.
+func TestRestartRecoversJoinerUnderItsOwner(t *testing.T) {
+	f, pf := newPublishReplayFixture(t)
+	state, fh := openCreateFile(t, f.conn, &f.xid, f.wire, "doc")
+	writeFileAt(t, f.conn, &f.xid, fh, state, 0, []byte("first-version"))
+	stagingID := stagingIDForTest(t, f.store, state)
+	pf.timeoutLinks(1, false)
+	if got := f.closeStatus(fh, state); got != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("CLOSE %s, want DELAY", nfs4.Nfsstat4Name(got))
+	}
+	pf.onLink(nil)
+	res := sendCompound(t, f.conn, f.xid, func(w *nfs4.COMPOUND4argsWriter) { openWithSize(w, f.wire, "doc", "b", 0) })
+	f.xid++
+	if res.Status() != nfs4.NFS4_OK {
+		t.Fatalf("truncating join %s", nfs4.Nfsstat4Name(res.Status()))
+	}
+	iter := expectOK(t, res)
+	nextOp(t, &iter)
+	var joiner [16]byte
+	sid := nextOp(t, &iter).Value().AsOPEN4resEntry().Value().AsOPEN4resok().Stateid()
+	binary.BigEndian.PutUint32(joiner[:4], sid.Seqid())
+	for i := range 12 {
+		joiner[4+i] = sid.Other(i)
+	}
+	writeFileAt(t, f.conn, &f.xid, fh, joiner, 0, []byte("NEW"))
+	f.restart()
+	if meta, ok := f.store.GetMeta(stagingID); !ok || meta.NFSStateID != extractStateID(stateidOf(joiner)) || meta.OpenOwner != "b" {
+		t.Fatalf("recovered sidecar %+v %t, want the joiner", meta, ok)
+	}
+	if got := f.closeStatus(fh, joiner); got != nfs4.NFS4_OK {
+		t.Fatalf("joiner's recovered CLOSE %s", nfs4.Nfsstat4Name(got))
+	}
+	if data, _ := readRoot(t, f.root, "doc"); data != "NEW" {
+		t.Fatalf("doc holds %q, want the joiner's bytes", data)
+	}
+}
+
+// A recovered writer whose name is gone is discarded by a write OPEN of
+// the name, creating or not, after its pending candidate is fenced; a
+// fence with no answer gives the OPEN DELAY and keeps the staging.
+func TestRecoveredDiscardFencesCandidate(t *testing.T) {
+	for _, create := range []bool{true, false} {
+		t.Run(fmt.Sprintf("create=%t", create), func(t *testing.T) {
+			f, pf := newPublishReplayFixture(t)
+			state, fh := openCreateFile(t, f.conn, &f.xid, f.wire, "doc")
+			writeFileAt(t, f.conn, &f.xid, fh, state, 0, []byte("saved"))
+			stagingID := stagingIDForTest(t, f.store, state)
+			pf.timeoutLinks(1, false)
+			if got := f.closeStatus(fh, state); got != nfs4.NFS4ERR_DELAY {
+				t.Fatalf("CLOSE %s, want DELAY", nfs4.Nfsstat4Name(got))
+			}
+			pf.onLink(nil)
+			f.restart()
+			if err := f.srv.fs.Remove(f.srv.fs.RootID(), "doc"); err != nil {
+				t.Fatal(err)
+			}
+			open := func() uint32 {
+				status, _, _, _ := openFileForOwner(t, f.conn, &f.xid, f.wire, "test-owner-doc", "doc", nfs4.OPEN4_SHARE_ACCESS_BOTH, create, false)
+				return status
+			}
+			pf.set(func() { pf.scrapTimeouts = 1 })
+			if status := open(); status != nfs4.NFS4ERR_DELAY {
+				t.Fatalf("OPEN with an unanswered fence %s, want DELAY", nfs4.Nfsstat4Name(status))
+			}
+			if _, ok := f.store.GetMeta(stagingID); !ok {
+				t.Fatal("the recovered staging was discarded before its fence")
+			}
+			want := uint32(nfs4.NFS4ERR_NOENT)
+			if create {
+				want = nfs4.NFS4_OK
+			}
+			if status := open(); status != want {
+				t.Fatalf("retried OPEN %s, want %s", nfs4.Nfsstat4Name(status), nfs4.Nfsstat4Name(want))
+			}
+			if _, ok := f.store.GetMeta(stagingID); ok {
+				t.Fatal("the recovered staging outlived the OPEN")
+			}
+		})
+	}
+}
+
+// A sidecar save of a join keeps the pending fresh candidate, so the
+// joiner's CLOSE after a restart fences that candidate.
+func TestJoinBindKeepsCandidateAcrossRestart(t *testing.T) {
+	f, pf := newPublishReplayFixture(t)
+	state, fh := openCreateFile(t, f.conn, &f.xid, f.wire, "doc")
+	writeFileAt(t, f.conn, &f.xid, fh, state, 0, []byte("saved"))
+	stagingID := stagingIDForTest(t, f.store, state)
+	pf.timeoutLinks(2, false)
+	for range 2 {
+		if got := f.closeStatus(fh, state); got != nfs4.NFS4ERR_DELAY {
+			t.Fatalf("CLOSE %s, want DELAY", nfs4.Nfsstat4Name(got))
+		}
+	}
+	pf.onLink(nil)
+	meta, _ := f.store.GetMeta(stagingID)
+	fresh := meta.Candidate.ID
+	if fresh == 0 || fresh == stagingID {
+		t.Fatalf("candidate %+v, want a fresh transient", meta.Candidate)
+	}
+	status, joiner, _, _ := openFileForOwner(t, f.conn, &f.xid, f.wire, "b", "doc", nfs4.OPEN4_SHARE_ACCESS_BOTH, false, false)
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("join %s", nfs4.Nfsstat4Name(status))
+	}
+	f.restart()
+	if meta, ok := f.store.GetMeta(stagingID); !ok || meta.OpenOwner != "b" || meta.Candidate.ID != fresh {
+		t.Fatalf("recovered sidecar %+v %t, want the joiner with the fresh candidate", meta, ok)
+	}
+	if got := f.closeStatus(fh, joiner); got != nfs4.NFS4_OK {
+		t.Fatalf("joiner's recovered CLOSE %s", nfs4.Nfsstat4Name(got))
+	}
+	if data, _ := readRoot(t, f.root, "doc"); data != "saved" {
+		t.Fatalf("doc holds %q", data)
+	}
+}
+
+// A pending candidate survives a RENAME, which records it with the new
+// name, and a restart; the recovered CLOSE publishes at the new name. A
+// guard.
+func TestCandidateSurvivesRenameAndRestart(t *testing.T) {
+	f, pf := newPublishReplayFixture(t)
+	state, fh := openCreateFile(t, f.conn, &f.xid, f.wire, "doc")
+	writeFileAt(t, f.conn, &f.xid, fh, state, 0, []byte("saved"))
+	stagingID := stagingIDForTest(t, f.store, state)
+	pf.timeoutLinks(1, false)
+	if got := f.closeStatus(fh, state); got != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("CLOSE %s, want DELAY", nfs4.Nfsstat4Name(got))
+	}
+	pf.onLink(nil)
+	slot, seq := f.ts.acquire()
+	if got := compoundStatus(t, f.send(renameBody("doc", "moved"), slot, seq)); got != nfs4.NFS4_OK {
+		t.Fatalf("RENAME %s", nfs4.Nfsstat4Name(got))
+	}
+	f.ts.release(slot)
+	f.restart()
+	if meta, ok := f.store.GetMeta(stagingID); !ok || meta.Candidate.ID != stagingID || meta.FileName != "moved" {
+		t.Fatalf("recovered sidecar %+v %t, want the candidate at the new name", meta, ok)
+	}
+	if got := f.closeStatus(fh, state); got != nfs4.NFS4_OK {
+		t.Fatalf("recovered CLOSE %s", nfs4.Nfsstat4Name(got))
+	}
+	if data, _ := readRoot(t, f.root, "moved"); data != "saved" {
+		t.Fatalf("moved holds %q", data)
 	}
 }

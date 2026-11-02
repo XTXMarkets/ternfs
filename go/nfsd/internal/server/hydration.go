@@ -75,16 +75,33 @@ func (s *Server) setStagingSize(sf staging.File, size uint64) error {
 	return sf.Sync()
 }
 
+// discardStaging scraps an unpublished staging's transient, best effort,
+// and removes it with the open marker its sidecar names.
 func (s *Server) discardStaging(id vfs.InodeID) {
-	s.forgetPublication(id)
+	_ = s.discardStagingFenced(id, false)
+}
+
+// fenceAndDiscardStaging is discardStaging for a staging whose candidate
+// may still link: a transient error scrapping it keeps the staging and is
+// returned.
+func (s *Server) fenceAndDiscardStaging(id vfs.InodeID) error {
+	return s.discardStagingFenced(id, true)
+}
+
+func (s *Server) discardStagingFenced(id vfs.InodeID, fence bool) error {
 	meta, ok := s.stagingStore.GetMeta(id)
+	if ok {
+		var c staging.Candidate
+		if sf := s.stagingStore.Get(id); sf != nil {
+			c = sf.Candidate()
+		}
+		if err := s.scrapTransient(id, unpublished(id, meta, c)); err != nil && fence && c.ID != 0 {
+			return err
+		}
+	}
 	s.stagingStore.Remove(id)
 	if !ok {
-		return
-	}
-	if err := s.fs.ScrapFile(id, meta.TernCookie); err != nil &&
-		!os.IsNotExist(err) {
-		s.log.Warn("scrap transient staging file", "inode", id, "err", err)
+		return nil
 	}
 	if meta.ClientID != 0 {
 		if err := s.clients.RemoveOpen(meta.ClientID, meta.NFSStateID); err != nil &&
@@ -93,6 +110,7 @@ func (s *Server) discardStaging(id vfs.InodeID) {
 				"clientid", meta.ClientID, "err", err)
 		}
 	}
+	return nil
 }
 
 // Recheck ownership under the target lock: the lease snapshot may predate a
@@ -106,6 +124,9 @@ func (s *Server) retireStaging(id vfs.InodeID, meta staging.Meta) {
 	s.retireStagingLocked(id, current)
 }
 
+// retireStagingLocked retires the staging of an open whose lease ended,
+// fencing its candidate first, best effort, unless an earlier retirement
+// did.
 func (s *Server) retireStagingLocked(id vfs.InodeID, meta staging.Meta) error {
 	if meta.Unlinked {
 		if meta.Retired {
@@ -119,6 +140,9 @@ func (s *Server) retireStagingLocked(id vfs.InodeID, meta staging.Meta) error {
 		return nil
 	}
 	if sf := s.stagingStore.Get(id); sf != nil {
+		if c := sf.Candidate(); c.ID != 0 && !meta.Retired {
+			_ = s.scrapTransient(id, c)
+		}
 		if err := sf.Retire(meta.ClientID, meta.NFSStateID); err != nil {
 			s.log.Error("retain expired staging", "inode", id, "err", err)
 			return err

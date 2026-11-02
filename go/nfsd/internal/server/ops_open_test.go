@@ -68,7 +68,8 @@ func openWithSize(w *nfs4.COMPOUND4argsWriter, client uint64, name, owner string
 }
 
 // An OPEN that joins another owner's writer and sets its size truncates the
-// shared staging even when the sync fails; the IO error ends the session.
+// shared staging even when the sync fails. The IO error is the OPEN's
+// reply, recorded and replayed like any other; the session lives.
 func TestJoinedOpenSizeSyncFailure(t *testing.T) {
 	root := t.TempDir()
 	stageDir := t.TempDir()
@@ -114,7 +115,7 @@ func TestJoinedOpenSizeSyncFailure(t *testing.T) {
 	if err != nil || info.Size() != 3 {
 		t.Fatalf("shared real staging not truncated: %v %v", info, err)
 	}
-	admissionStatus(t, send(), nfs4.NFS4ERR_BADSESSION, nfs4.OP_SEQUENCE)
+	admissionStatus(t, send(), nfs4.NFS4ERR_IO, nfs4.OP_SEQUENCE, nfs4.OP_PUTROOTFH, nfs4.OP_OPEN)
 }
 
 // A definite OPEN failure before any effect is cached and replays without
@@ -1316,21 +1317,84 @@ func TestLinuxRecoveryOfFreshCreateAcrossRestart(t *testing.T) {
 	}
 }
 
-// publishFaultVFS is a backend whose shard stops answering: LinkFile of a
-// user file reports TIMEOUT a set number of times, after applying or not,
-// and the first lookups of one name may time out too. It counts the
-// constructions and scraps a publication makes once counting is on.
+// publishFaultVFS is a backend whose shard stops answering or refuses; its
+// faults are switched under its mutex, never by replacing the backend
+// under a running server.
+// linkFault, when set, runs each LinkFile of a user file in place of the
+// link: it may apply it with link, and returns what the LinkFile reports.
+// scrapTimeouts and statTimeouts answer that many ScrapFile and Stat calls
+// with TIMEOUT, and onSetTime runs before each SetTime. Once counting is
+// on it records, in order, the constructions, links and scraps the backend
+// carried out.
 type publishFaultVFS struct {
 	vfs.TernVFS
-	mu             sync.Mutex
-	linkTimeouts   int  // LinkFile calls still to be answered with TIMEOUT
-	applyOnTimeout bool // the link applies before TIMEOUT is reported
-	lookupTimeouts int  // Lookup calls of lookupName still to time out
-	lookupName     string
-	counting       bool
-	links          int
-	constructs     int
-	scrapped       []vfs.InodeID
+	mu            sync.Mutex
+	linkFault     func(n int, id vfs.InodeID, cookie vfs.Cookie, link func() error) error
+	scrapTimeouts int
+	statTimeouts  int
+	readTimeouts  int  // Read calls still to time out
+	failMarkers   bool // open markers cannot be written
+	// The faults below hold while set: Lookup of lookupTimeout, SetTime,
+	// ConstructFile in the root, and RemoveEdge and RenameEdge, which do
+	// not apply and are classified as on the remote backend.
+	lookupTimeout string
+	setTimeErr    error
+	constructErr  error
+	namespaceErr  error
+	onScrap       func(id vfs.InodeID) error // runs before each scrap; an error is the scrap's answer
+	onSetTime     func(id vfs.InodeID)
+	counting      bool
+	links         int
+	events        []string
+	// root and keep, when set, keep a scrapped transient's inode
+	// allocated (keepScrapped).
+	root, keep string
+}
+
+// newLocalPublishVFS is a publishFaultVFS over a LocalTernVFS at root.
+func newLocalPublishVFS(t *testing.T, root string) *publishFaultVFS {
+	return &publishFaultVFS{TernVFS: vfs.NewLocalTernVFS(root), root: root, keep: t.TempDir()}
+}
+
+// keepScrapped links a transient aside before it is scrapped. TernFS never
+// reuses an inode ID; LocalTernVFS would give the next transient the
+// scrapped one's inode number, which hides a candidate that is not fresh.
+func (fs *publishFaultVFS) keepScrapped(id vfs.InodeID) {
+	if fs.root == "" {
+		return
+	}
+	dir := filepath.Join(fs.root, vfs.NFSDirName, "transients")
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if st, ok := info.Sys().(*syscall.Stat_t); ok && st.Ino == id.Fileid() {
+			_ = os.Link(filepath.Join(dir, e.Name()), filepath.Join(fs.keep, e.Name()))
+		}
+	}
+}
+
+func (fs *publishFaultVFS) note(kind string, id vfs.InodeID) {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	if fs.counting {
+		fs.events = append(fs.events, fmt.Sprintf("%s %d", kind, id))
+	}
+}
+
+// count returns how many recorded events are of kind.
+func (fs *publishFaultVFS) count(kind string) int {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	n := 0
+	for _, e := range fs.events {
+		if len(e) > len(kind) && e[:len(kind)+1] == kind+" " {
+			n++
+		}
+	}
+	return n
 }
 
 func (fs *publishFaultVFS) LinkFile(id vfs.InodeID, cookie vfs.Cookie, dir vfs.InodeID, name string, data io.Reader) error {
@@ -1339,187 +1403,1306 @@ func (fs *publishFaultVFS) LinkFile(id vfs.InodeID, cookie vfs.Cookie, dir vfs.I
 	}
 	fs.mu.Lock()
 	fs.links++
-	timeout := fs.linkTimeouts > 0
-	if timeout {
-		fs.linkTimeouts--
-	}
-	apply := !timeout || fs.applyOnTimeout
+	n, fault := fs.links, fs.linkFault
 	fs.mu.Unlock()
-	if apply {
-		if err := fs.TernVFS.LinkFile(id, cookie, dir, name, data); err != nil {
-			return err
+	link := func() error {
+		err := fs.TernVFS.LinkFile(id, cookie, dir, name, data)
+		if err == nil {
+			fs.note("link", id)
 		}
+		return err
 	}
-	if timeout {
+	if fault == nil {
+		return link()
+	}
+	return fault(n, id, cookie, link)
+}
+
+// timeoutLinks answers the next n links with TIMEOUT, after applying them
+// when apply is set.
+func (fs *publishFaultVFS) timeoutLinks(n int, apply bool) {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	base := fs.links
+	fs.linkFault = func(i int, _ vfs.InodeID, _ vfs.Cookie, link func() error) error {
+		if i > base+n {
+			return link()
+		}
+		if apply {
+			if err := link(); err != nil {
+				return err
+			}
+		}
 		return msgs.TIMEOUT
 	}
-	return nil
+}
+
+func (fs *publishFaultVFS) Stat(id vfs.InodeID) (vfs.NodeInfo, error) {
+	fs.mu.Lock()
+	timeout := fs.statTimeouts > 0
+	if timeout {
+		fs.statTimeouts--
+	}
+	fs.mu.Unlock()
+	if timeout {
+		return vfs.NodeInfo{}, msgs.TIMEOUT
+	}
+	return fs.TernVFS.Stat(id)
+}
+
+func (fs *publishFaultVFS) faults() (string, error, error, error) {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	return fs.lookupTimeout, fs.setTimeErr, fs.constructErr, fs.namespaceErr
 }
 
 func (fs *publishFaultVFS) Lookup(dir vfs.InodeID, name string) (vfs.InodeID, error) {
-	fs.mu.Lock()
-	timeout := fs.lookupTimeouts > 0 && name == fs.lookupName
-	if timeout {
-		fs.lookupTimeouts--
-	}
-	fs.mu.Unlock()
-	if timeout {
+	if lookup, _, _, _ := fs.faults(); lookup != "" && lookup == name {
 		return 0, msgs.TIMEOUT
 	}
 	return fs.TernVFS.Lookup(dir, name)
 }
 
-func (fs *publishFaultVFS) ConstructFile(dir vfs.InodeID) (vfs.InodeID, vfs.Cookie, error) {
+func (fs *publishFaultVFS) RemoveEdge(dir vfs.InodeID, name string, edge vfs.Edge) error {
+	if _, _, _, err := fs.faults(); err != nil {
+		return err
+	}
+	return fs.TernVFS.RemoveEdge(dir, name, edge)
+}
+
+func (fs *publishFaultVFS) RenameEdge(dir vfs.InodeID, name string, edge vfs.Edge, dst vfs.InodeID, newName string) error {
+	if _, _, _, err := fs.faults(); err != nil {
+		return err
+	}
+	return fs.TernVFS.RenameEdge(dir, name, edge, dst, newName)
+}
+
+func (fs *publishFaultVFS) ClassifyMutation(op uint32, err error) vfs.MutationOutcome {
+	if _, _, _, injected := fs.faults(); injected != nil && errors.Is(err, injected) {
+		return (&vfs.RemoteTernVFS{}).ClassifyMutation(op, err)
+	}
+	return fs.TernVFS.ClassifyMutation(op, err)
+}
+
+// onLink sets linkFault.
+func (fs *publishFaultVFS) onLink(fault func(n int, id vfs.InodeID, cookie vfs.Cookie, link func() error) error) {
+	fs.set(func() { fs.linkFault = fault })
+}
+
+// set changes the faults under the mutex.
+func (fs *publishFaultVFS) set(change func()) {
 	fs.mu.Lock()
-	if fs.counting {
-		fs.constructs++
+	defer fs.mu.Unlock()
+	change()
+}
+
+func (fs *publishFaultVFS) Read(id vfs.InodeID, offset uint64, dest []byte) (int, bool, error) {
+	fs.mu.Lock()
+	timeout := fs.readTimeouts > 0
+	if timeout {
+		fs.readTimeouts--
 	}
 	fs.mu.Unlock()
-	return fs.TernVFS.ConstructFile(dir)
+	if timeout {
+		return 0, false, msgs.TIMEOUT
+	}
+	return fs.TernVFS.Read(id, offset, dest)
+}
+
+func (fs *publishFaultVFS) CreateFile(dir vfs.InodeID, name string, data io.Reader) (vfs.InodeID, error) {
+	fs.mu.Lock()
+	fail := fs.failMarkers && clientstore.IsActiveOpenName(name)
+	fs.mu.Unlock()
+	if fail {
+		return 0, errors.New("injected marker write failure")
+	}
+	return fs.TernVFS.CreateFile(dir, name, data)
+}
+
+func (fs *publishFaultVFS) ConstructFile(dir vfs.InodeID) (vfs.InodeID, vfs.Cookie, error) {
+	if _, _, err, _ := fs.faults(); err != nil && dir == fs.RootID() {
+		return 0, vfs.Cookie{}, err
+	}
+	id, cookie, err := fs.TernVFS.ConstructFile(dir)
+	if err == nil && dir == fs.RootID() {
+		// Not the client store's markers.
+		fs.note("construct", id)
+	}
+	return id, cookie, err
 }
 
 func (fs *publishFaultVFS) ScrapFile(id vfs.InodeID, cookie vfs.Cookie) error {
 	fs.mu.Lock()
-	if fs.counting {
-		fs.scrapped = append(fs.scrapped, id)
+	timeout := fs.scrapTimeouts > 0
+	if timeout {
+		fs.scrapTimeouts--
 	}
+	hook := fs.onScrap
 	fs.mu.Unlock()
-	return fs.TernVFS.ScrapFile(id, cookie)
+	if timeout {
+		return msgs.TIMEOUT
+	}
+	if hook != nil {
+		if err := hook(id); err != nil {
+			return err
+		}
+	}
+	fs.keepScrapped(id)
+	err := fs.TernVFS.ScrapFile(id, cookie)
+	if err == nil {
+		fs.note("scrap", id)
+	}
+	return err
 }
 
-func newPublishFaultServer(t *testing.T) (*publishFaultVFS, staging.Store, *Server, net.Conn, *uint32, uint64) {
+func (fs *publishFaultVFS) SetTime(id vfs.InodeID, mtime, atime *time.Time) error {
+	fs.mu.Lock()
+	hook, injected := fs.onSetTime, fs.setTimeErr
+	fs.mu.Unlock()
+	if hook != nil {
+		hook(id)
+	}
+	if injected != nil {
+		return injected
+	}
+	return fs.TernVFS.SetTime(id, mtime, atime)
+}
+
+type publishFixture struct {
+	fs       *publishFaultVFS
+	store    staging.Store
+	srv      *Server
+	addr     string
+	conn     net.Conn
+	xid      *uint32
+	clientID uint64
+}
+
+func newPublishFixture(t *testing.T) *publishFixture {
 	t.Helper()
-	fs := &publishFaultVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
-	store, err := staging.NewLocalStore(t.TempDir(), nil)
+	return newPublishFixtureWithStore(t, func(s staging.Store) staging.Store { return s })
+}
+
+// newPublishFixtureWithStore is newPublishFixture with the server's store
+// wrapped.
+func newPublishFixtureWithStore(t *testing.T, wrap func(staging.Store) staging.Store) *publishFixture {
+	t.Helper()
+	fs := newLocalPublishVFS(t, t.TempDir())
+	local, err := staging.NewLocalStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv, err := NewServer(fs, store, nil)
+	srv, err := NewServer(fs, wrap(local), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	addr, stop := serveTestServer(t, srv)
 	t.Cleanup(stop)
-	conn := dial(t, addr)
+	xid := uint32(1)
+	f := &publishFixture{fs: fs, store: local, srv: srv, addr: addr, conn: dial(t, addr), xid: &xid}
+	t.Cleanup(func() { f.conn.Close() })
+	f.clientID = setupClient(t, f.conn, f.xid)
+	return f
+}
+
+// mustDrained fails unless no open and no staging is left.
+func (f *publishFixture) mustDrained(t *testing.T, when string) {
+	t.Helper()
+	if n := f.srv.opens.StateCount(); n != 0 || len(f.store.Entries()) != 0 {
+		t.Fatalf("%d opens, %d staging entries %s", n, len(f.store.Entries()), when)
+	}
+}
+
+// writer opens name for write, creating it, writes data and starts
+// counting backend calls. It returns the open, the handle and the staging.
+func (f *publishFixture) writer(t *testing.T, name, data string) ([16]byte, []byte, vfs.InodeID) {
+	t.Helper()
+	sid, fh := openCreateFile(t, f.conn, f.xid, f.clientID, name)
+	writeFileAt(t, f.conn, f.xid, fh, sid, 0, []byte(data))
+	f.fs.mu.Lock()
+	f.fs.counting = true
+	f.fs.mu.Unlock()
+	return sid, fh, stagingIDForTest(t, f.store, sid)
+}
+
+// reader opens name for READ as another owner of the client.
+func (f *publishFixture) reader(t *testing.T, name string) [16]byte {
+	t.Helper()
+	status, sid, _, _ := openFileForOwner(t, f.conn, f.xid, f.clientID, "reader", name, nfs4.OPEN4_SHARE_ACCESS_READ, false, false)
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("reader OPEN %s", nfs4.Nfsstat4Name(status))
+	}
+	return sid
+}
+
+// sendBody sends a compound body through the session shim and returns the
+// reply.
+func sendBody(t *testing.T, conn net.Conn, xid *uint32, body []byte) []byte {
+	t.Helper()
+	reply, err := sendRPC(conn, *xid, procCompound, body)
+	*xid++
+	if err != nil {
+		t.Fatal(err)
+	}
+	return reply
+}
+
+// readStateid reads through sid and returns the status and data.
+func readStateid(t *testing.T, conn net.Conn, xid *uint32, fh []byte, sid [16]byte) (uint32, string) {
+	t.Helper()
+	res := sendCompound(t, conn, *xid, func(w *nfs4.COMPOUND4argsWriter) {
+		putfhOp(w, fh)
+		rw := w.AppendArgarray_Read()
+		setStateid(rw.Stateid(), sid)
+		rw.SetOffset(0)
+		rw.SetCount(64)
+	})
+	*xid++
+	if res.Status() != nfs4.NFS4_OK {
+		return res.Status(), ""
+	}
+	iter := res.Resarray()
+	iter.Next()
+	iter.Next()
+	return nfs4.NFS4_OK, string(iter.Resarray().Value().AsREAD4resEntry().Value().AsREAD4resok().Data())
+}
+
+// otherClient connects a second client.
+func (f *publishFixture) otherClient(t *testing.T) (net.Conn, *uint32, uint64) {
+	t.Helper()
+	conn := dial(t, f.addr)
 	t.Cleanup(func() { conn.Close() })
 	xid := uint32(1)
-	clientID := setupClient(t, conn, &xid)
-	return fs, store, srv, conn, &xid, clientID
+	id, confirm := requestClientID(t, conn, &xid, "other-client", [8]byte{2})
+	if status := confirmClientID(t, conn, &xid, id, confirm); status != nfs4.NFS4_OK {
+		t.Fatal(nfs4.Nfsstat4Name(status))
+	}
+	return conn, &xid, id
+}
+
+// stageWrite writes into a staging as a WRITE with a special stateid does,
+// while a CLOSE holds its locks.
+func stageWrite(t *testing.T, store staging.Store, id vfs.InodeID, offset uint64, data string) {
+	t.Helper()
+	sf := store.Get(id)
+	if sf == nil {
+		t.Error("no staging to write")
+		return
+	}
+	if err := sf.Write(offset, []byte(data)); err != nil {
+		t.Error(err)
+	}
+	if err := sf.Sync(); err != nil {
+		t.Error(err)
+	}
+}
+
+func mustPublished(t *testing.T, fs vfs.TernVFS, name, want string) vfs.InodeID {
+	t.Helper()
+	if data, err := readPublished(fs, name); err != nil || string(data) != want {
+		t.Fatalf("%s holds %q (%v), want %q", name, data, err, want)
+	}
+	id, err := fs.Lookup(fs.RootID(), name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func mustCloseStatus(t *testing.T, f *publishFixture, fh []byte, sid [16]byte, want uint32, what string) {
+	t.Helper()
+	if got := closeFileStatus(t, f.conn, f.xid, fh, sid); got != want {
+		t.Fatalf("%s: CLOSE %s, want %s", what, nfs4.Nfsstat4Name(got), nfs4.Nfsstat4Name(want))
+	}
 }
 
 // A CLOSE whose publication the backend does not answer loses nothing: it
-// keeps the open, the staging and the session and answers DELAY, as many
-// times as the backend stays silent. The retried CLOSE looks first, then
-// publishes through a fresh transient, since the first one may hold part
-// of the data, and scraps the one it abandoned (work-kd49, work-49b9).
+// keeps the open and the staging, records the candidate in the sidecar and
+// answers DELAY, as many times as the backend stays silent, here also for
+// the retry's resolution of the candidate. Once the backend answers, the
+// retry scraps the candidate, which proves it was never linked and keeps
+// it from ever linking, and only then publishes through a fresh transient.
 func TestClosePublicationTimeoutDelaysAndRetries(t *testing.T) {
-	fs, store, srv, conn, xid, clientID := newPublishFaultServer(t)
-	sid, fh := openCreateFile(t, conn, xid, clientID, "doc")
-	writeFileAt(t, conn, xid, fh, sid, 0, []byte("saved"))
-	stagingID := stagingIDForTest(t, store, sid)
-	fs.mu.Lock()
-	fs.linkTimeouts, fs.lookupTimeouts, fs.lookupName, fs.counting = 1, 1, "doc", true
-	fs.mu.Unlock()
-
-	// The link is submitted and not answered.
-	if got := closeFileStatus(t, conn, xid, fh, sid); got != nfs4.NFS4ERR_DELAY {
-		t.Fatalf("CLOSE with an unanswered link %s, want NFS4ERR_DELAY", nfs4.Nfsstat4Name(got))
-	}
-	if n := srv.opens.StateCount(); n != 1 {
+	f := newPublishFixture(t)
+	sid, fh, stagingID := f.writer(t, "doc", "saved")
+	meta, _ := f.store.GetMeta(stagingID)
+	f.fs.timeoutLinks(1, false)
+	mustCloseStatus(t, f, fh, sid, nfs4.NFS4ERR_DELAY, "unanswered link")
+	if n := f.srv.opens.StateCount(); n != 1 {
 		t.Fatalf("%d opens after the delayed CLOSE, want the open kept", n)
 	}
-	if _, ok := store.GetMeta(stagingID); !ok {
-		t.Fatal("staging discarded by the delayed CLOSE")
+	if saved, ok := f.store.GetMeta(stagingID); !ok || saved.Candidate.ID != stagingID {
+		t.Fatalf("sidecar candidate %+v (%t), want the staging's transient", saved.Candidate, ok)
 	}
-	// The name still holds the empty inode the OPEN published, nothing else.
-	if data, err := readPublished(fs.TernVFS, "doc"); err != nil || len(data) != 0 {
-		t.Fatalf("name holds %q (%v) while the link is unanswered, want the OPEN's empty version", data, err)
-	}
-	// The shard is still down: the retry's lookup gets no answer either.
-	// The session answers, so it was not retired.
-	if got := closeFileStatus(t, conn, xid, fh, sid); got != nfs4.NFS4ERR_DELAY {
-		t.Fatalf("CLOSE while the lookup is unanswered %s, want NFS4ERR_DELAY", nfs4.Nfsstat4Name(got))
-	}
-	if n := srv.metrics.publishDelays.Load(); n != 2 {
+	mustPublished(t, f.fs.TernVFS, "doc", "")
+	f.fs.set(func() { f.fs.scrapTimeouts = 1 })
+	mustCloseStatus(t, f, fh, sid, nfs4.NFS4ERR_DELAY, "unanswered resolution")
+	if n := f.srv.metrics.publishDelays.Load(); n != 2 {
 		t.Fatalf("publish delays = %d, want 2", n)
 	}
-	// The shard is back: the name is empty, so a fresh transient publishes.
-	if got := closeFileStatus(t, conn, xid, fh, sid); got != nfs4.NFS4_OK {
-		t.Fatalf("retried CLOSE %s, want NFS4_OK", nfs4.Nfsstat4Name(got))
+	mustCloseStatus(t, f, fh, sid, nfs4.NFS4_OK, "retry")
+	published := mustPublished(t, f.fs.TernVFS, "doc", "saved")
+	f.fs.mu.Lock()
+	events := f.fs.events
+	f.fs.mu.Unlock()
+	want := []string{fmt.Sprintf("scrap %d", stagingID), fmt.Sprintf("construct %d", published), fmt.Sprintf("link %d", published)}
+	if fmt.Sprint(events) != fmt.Sprint(want) {
+		t.Fatalf("backend calls %v, want %v", events, want)
 	}
-	if data, err := readPublished(fs.TernVFS, "doc"); err != nil || string(data) != "saved" {
-		t.Fatalf("published %q, %v", data, err)
+	// The abandoned transient can never be linked now.
+	if err := f.fs.TernVFS.LinkFile(stagingID, meta.TernCookie, f.fs.RootID(), "doc", bytes.NewReader([]byte("late"))); err == nil {
+		t.Fatal("the fenced candidate linked late")
 	}
-	published, err := fs.TernVFS.Lookup(fs.TernVFS.RootID(), "doc")
-	if err != nil || published == stagingID {
-		t.Fatalf("published inode %v (%v), want a fresh transient, not the staging %v", published, err, stagingID)
-	}
-	fs.mu.Lock()
-	constructs, scrapped, links := fs.constructs, fs.scrapped, fs.links
-	fs.mu.Unlock()
-	if constructs != 1 || links != 2 {
-		t.Fatalf("constructs %d links %d, want 1 and 2", constructs, links)
-	}
-	if len(scrapped) != 1 || scrapped[0] != stagingID {
-		t.Fatalf("scrapped %v, want the abandoned transient %v", scrapped, stagingID)
-	}
-	if n := srv.opens.StateCount(); n != 0 {
-		t.Fatalf("%d opens after the publishing CLOSE", n)
-	}
-	if n := len(store.Entries()); n != 0 {
-		t.Fatalf("%d staging entries after the publishing CLOSE", n)
-	}
-	if got := len(srv.publicationAttempts(stagingID)); got != 0 {
-		t.Fatalf("%d attempts remembered after publication", got)
-	}
+	f.mustDrained(t, "after the publishing CLOSE")
 }
 
-// A link that applied before the backend's answer was lost: the retried
-// CLOSE finds the staging at its name and publishes nothing twice.
+// A link that applied before the backend's answer was lost: the retry
+// proves it linked, by ScrapFile reporting not-exist and Stat succeeding,
+// and publishes nothing twice. A Stat with no answer delays once more.
 func TestClosePublicationAppliedButUnansweredPublishesOnce(t *testing.T) {
-	fs, store, srv, conn, xid, clientID := newPublishFaultServer(t)
-	sid, fh := openCreateFile(t, conn, xid, clientID, "doc")
-	writeFileAt(t, conn, xid, fh, sid, 0, []byte("saved"))
-	stagingID := stagingIDForTest(t, store, sid)
-	fs.mu.Lock()
-	fs.linkTimeouts, fs.applyOnTimeout, fs.counting = 1, true, true
-	fs.mu.Unlock()
-	if got := closeFileStatus(t, conn, xid, fh, sid); got != nfs4.NFS4ERR_DELAY {
-		t.Fatalf("CLOSE with an unanswered link %s, want NFS4ERR_DELAY", nfs4.Nfsstat4Name(got))
+	f := newPublishFixture(t)
+	sid, fh, stagingID := f.writer(t, "doc", "saved")
+	f.fs.timeoutLinks(1, true)
+	mustCloseStatus(t, f, fh, sid, nfs4.NFS4ERR_DELAY, "applied, unanswered link")
+	f.fs.set(func() { f.fs.statTimeouts = 1 })
+	mustCloseStatus(t, f, fh, sid, nfs4.NFS4ERR_DELAY, "unanswered Stat")
+	mustCloseStatus(t, f, fh, sid, nfs4.NFS4_OK, "retry")
+	if published := mustPublished(t, f.fs.TernVFS, "doc", "saved"); published != stagingID {
+		t.Fatalf("published inode %v, want the staging %v", published, stagingID)
 	}
-	if got := closeFileStatus(t, conn, xid, fh, sid); got != nfs4.NFS4_OK {
-		t.Fatalf("retried CLOSE %s, want NFS4_OK", nfs4.Nfsstat4Name(got))
+	if c, l, sc := f.fs.count("construct"), f.fs.count("link"), f.fs.count("scrap"); c != 0 || l != 1 || sc != 0 {
+		t.Fatalf("constructs %d links %d scraps %d, want 0, 1, 0", c, l, sc)
 	}
-	published, err := fs.TernVFS.Lookup(fs.TernVFS.RootID(), "doc")
-	if err != nil || published != stagingID {
-		t.Fatalf("published inode %v (%v), want the staging %v", published, err, stagingID)
+	f.mustDrained(t, "after the publishing CLOSE")
+}
+
+// A permanent publication error keeps its answer: the candidate is fenced,
+// the open ends, the staging goes, and the CLOSE reports the error
+// (TestFailedCloseReplaysFromSlot pins the replay).
+func TestClosePublicationPermanentErrorStillFails(t *testing.T) {
+	f := newPublishFixture(t)
+	sid, fh, stagingID := f.writer(t, "doc", "saved")
+	f.fs.onLink(func(int, vfs.InodeID, vfs.Cookie, func() error) error { return errors.New("injected link rejection") })
+	mustCloseStatus(t, f, fh, sid, nfs4.NFS4ERR_IO, "rejected link")
+	if got := f.fs.count("scrap"); got != 1 {
+		t.Fatalf("%d scraps, want the candidate %v fenced", got, stagingID)
 	}
-	if data, _ := readPublished(fs.TernVFS, "doc"); string(data) != "saved" {
-		t.Fatalf("published %q", data)
-	}
-	fs.mu.Lock()
-	constructs, scrapped, links := fs.constructs, fs.scrapped, fs.links
-	fs.mu.Unlock()
-	if constructs != 0 || links != 1 || len(scrapped) != 0 {
-		t.Fatalf("constructs %d links %d scrapped %v, want 0, 1, none", constructs, links, scrapped)
-	}
-	if n := srv.opens.StateCount(); n != 0 || len(store.Entries()) != 0 {
-		t.Fatalf("%d opens, %d staging entries after the publishing CLOSE", n, len(store.Entries()))
+	f.mustDrained(t, "after the failed CLOSE, want none")
+}
+
+// A WRITE acknowledged after a submission that applied and timed out is
+// published by the retry, through a fresh transient.
+func TestCloseRetryPublishesWriteAfterAppliedLink(t *testing.T) {
+	f := newPublishFixture(t)
+	sid, fh, _ := f.writer(t, "doc", "saved")
+	f.fs.timeoutLinks(1, true)
+	mustCloseStatus(t, f, fh, sid, nfs4.NFS4ERR_DELAY, "applied, unanswered link")
+	writeFileAt(t, f.conn, f.xid, fh, sid, 0, []byte("later"))
+	mustCloseStatus(t, f, fh, sid, nfs4.NFS4_OK, "retry")
+	mustPublished(t, f.fs.TernVFS, "doc", "later")
+	if got := f.fs.count("construct"); got != 1 {
+		t.Fatalf("%d constructions, want one fresh candidate", got)
 	}
 }
 
-// A permanent publication error keeps its answer: the open ends, the
-// staging goes, and the CLOSE reports it (TestFailedCloseReplaysFromSlot
-// pins the replay). Only the backend's silence is retried.
-func TestClosePublicationPermanentErrorStillFails(t *testing.T) {
-	fs, store, srv, conn, xid, clientID := newPublishFaultServer(t)
-	sid, fh := openCreateFile(t, conn, xid, clientID, "doc")
-	writeFileAt(t, conn, xid, fh, sid, 0, []byte("saved"))
-	fs.TernVFS = &failingLinkVFS{TernVFS: fs.TernVFS, remaining: 1}
-	if got := closeFileStatus(t, conn, xid, fh, sid); got != nfs4.NFS4ERR_IO {
-		t.Fatalf("CLOSE with a rejected link %s, want NFS4ERR_IO", nfs4.Nfsstat4Name(got))
+// A retry whose earlier attempt applied and was then replaced by another
+// client's save completes without publishing the older bytes again.
+func TestCloseRetryAfterForeignPublicationDoesNotRepublish(t *testing.T) {
+	f := newPublishFixture(t)
+	sid, fh, _ := f.writer(t, "doc", "mine")
+	f.fs.timeoutLinks(1, true)
+	mustCloseStatus(t, f, fh, sid, nfs4.NFS4ERR_DELAY, "applied, unanswered link")
+	conn, xid, other := f.otherClient(t)
+	osid, ofh := openWriteFile(t, conn, xid, other, "doc")
+	writeFileAt(t, conn, xid, ofh, osid, 0, []byte("theirs"))
+	closeFile(t, conn, xid, ofh, osid)
+	mustCloseStatus(t, f, fh, sid, nfs4.NFS4_OK, "retry")
+	mustPublished(t, f.fs.TernVFS, "doc", "theirs")
+	if got := f.fs.count("construct"); got != 1 {
+		t.Fatalf("%d constructions, want only the other client's: %v", got, f.fs.events)
 	}
-	if n := srv.opens.StateCount(); n != 0 || len(store.Entries()) != 0 {
-		t.Fatalf("%d opens, %d staging entries after the failed CLOSE, want none", n, len(store.Entries()))
+}
+
+// Times set after a submission that applied do not change the data
+// version, so the retry publishes nothing again; the CLOSE still restores
+// the times on the published file. A guard for the data version.
+func TestCloseRetryAfterTimesOnlySetattrDoesNotRepublish(t *testing.T) {
+	f := newPublishFixture(t)
+	sid, fh, stagingID := f.writer(t, "doc", "saved")
+	f.fs.timeoutLinks(1, true)
+	mustCloseStatus(t, f, fh, sid, nfs4.NFS4ERR_DELAY, "applied, unanswered link")
+	if got := setMtimeStatus(t, f.conn, f.xid, fh, sid, 1_000_000); got != nfs4.NFS4_OK {
+		t.Fatalf("SETATTR mtime %s", nfs4.Nfsstat4Name(got))
+	}
+	mustCloseStatus(t, f, fh, sid, nfs4.NFS4_OK, "retry")
+	if published := mustPublished(t, f.fs.TernVFS, "doc", "saved"); published != stagingID {
+		t.Fatalf("published %v, want the linked candidate %v", published, stagingID)
+	}
+	if got := f.fs.count("construct"); got != 0 {
+		t.Fatalf("%d constructions after a times-only change", got)
+	}
+	if info, err := f.fs.TernVFS.Stat(stagingID); err != nil || info.Mtime.Unix() != 1_000_000 {
+		t.Fatalf("published mtime %v %v", info.Mtime, err)
+	}
+}
+
+// LinkFile reporting not-exist for every candidate, as for a directory
+// removed natively, ends the CLOSE with NOENT after one fresh candidate.
+func TestCloseLinkNotExistEndsAfterOneFreshCandidate(t *testing.T) {
+	f := newPublishFixture(t)
+	sid, fh, _ := f.writer(t, "doc", "saved")
+	f.fs.onLink(func(int, vfs.InodeID, vfs.Cookie, func() error) error { return os.ErrNotExist })
+	mustCloseStatus(t, f, fh, sid, nfs4.NFS4ERR_NOENT, "links not-exist")
+	if c, l := f.fs.count("construct"), f.links(); c != 1 || l != 2 {
+		t.Fatalf("constructs %d links %d, want 1 and 2", c, l)
+	}
+	f.mustDrained(t, "after the failed CLOSE")
+}
+
+func (f *publishFixture) links() int {
+	f.fs.mu.Lock()
+	defer f.fs.mu.Unlock()
+	return f.fs.links
+}
+
+// A staging past its transient deadline, whose LinkFile reports not-exist
+// without linking, publishes through a fresh candidate in the same CLOSE.
+func TestCloseStagingPastDeadlinePublishesFresh(t *testing.T) {
+	f := newPublishFixture(t)
+	sid, fh, _ := f.writer(t, "doc", "saved")
+	f.fs.onLink(func(n int, _ vfs.InodeID, _ vfs.Cookie, link func() error) error {
+		if n == 1 {
+			return os.ErrNotExist
+		}
+		return link()
+	})
+	mustCloseStatus(t, f, fh, sid, nfs4.NFS4_OK, "stale staging")
+	mustPublished(t, f.fs.TernVFS, "doc", "saved")
+	// LocalTernVFS can reuse a scrapped transient's inode number, so count.
+	if got := f.fs.count("construct"); got != 1 || f.fs.count("scrap") != 1 {
+		t.Fatalf("backend calls %v, want the staging scrapped and one fresh candidate", f.fs.events)
+	}
+}
+
+// A FILE_SYNC WRITE during the fresh candidate's upload, whose link then
+// reports not-exist although it applied, gives DELAY; the retry publishes
+// the WRITE.
+func TestCloseWriteDuringFreshUploadDelays(t *testing.T) {
+	f := newPublishFixture(t)
+	sid, fh, stagingID := f.writer(t, "doc", "saved")
+	f.fs.onLink(func(n int, _ vfs.InodeID, _ vfs.Cookie, link func() error) error {
+		switch n {
+		case 1:
+			return os.ErrNotExist
+		case 2:
+			if err := link(); err != nil {
+				return err
+			}
+			stageWrite(t, f.store, stagingID, 0, "SAVED")
+			return os.ErrNotExist
+		}
+		return link()
+	})
+	mustCloseStatus(t, f, fh, sid, nfs4.NFS4ERR_DELAY, "WRITE during the upload")
+	mustCloseStatus(t, f, fh, sid, nfs4.NFS4_OK, "retry")
+	mustPublished(t, f.fs.TernVFS, "doc", "SAVED")
+	if got := f.fs.count("construct"); got != 2 {
+		t.Fatalf("%d constructions, want one per attempt", got)
+	}
+}
+
+// A WRITE with a special stateid while the publication restores the times
+// gives DELAY, and the retry publishes it.
+func TestCloseWriteDuringSetTimeDelays(t *testing.T) {
+	f := newPublishFixture(t)
+	sid, fh, stagingID := f.writer(t, "doc", "saved")
+	var once sync.Once
+	f.fs.set(func() {
+		f.fs.onSetTime = func(vfs.InodeID) { once.Do(func() { stageWrite(t, f.store, stagingID, 0, "SAVED") }) }
+	})
+	mustCloseStatus(t, f, fh, sid, nfs4.NFS4ERR_DELAY, "WRITE during SetTime")
+	mustCloseStatus(t, f, fh, sid, nfs4.NFS4_OK, "retry")
+	mustPublished(t, f.fs.TernVFS, "doc", "SAVED")
+}
+
+// A timestamp-only CLOSE also checks that no WRITE landed while it ran: one
+// during its SetTime gives DELAY, and the retry publishes the data.
+func TestTimestampOnlyCloseWriteDuringSetTimeDelays(t *testing.T) {
+	f := newPublishFixture(t)
+	sid, fh, _ := f.writer(t, "doc", "saved")
+	closeFile(t, f.conn, f.xid, fh, sid)
+	sid, fh = openWriteFile(t, f.conn, f.xid, f.clientID, "doc")
+	stagingID := stagingIDForTest(t, f.store, sid)
+	if got := setMtimeStatus(t, f.conn, f.xid, fh, sid, 1_000_000); got != nfs4.NFS4_OK {
+		t.Fatalf("SETATTR mtime %s", nfs4.Nfsstat4Name(got))
+	}
+	var once sync.Once
+	f.fs.set(func() {
+		f.fs.onSetTime = func(vfs.InodeID) { once.Do(func() { stageWrite(t, f.store, stagingID, 0, "SAVED") }) }
+	})
+	mustCloseStatus(t, f, fh, sid, nfs4.NFS4ERR_DELAY, "WRITE during SetTime")
+	mustCloseStatus(t, f, fh, sid, nfs4.NFS4_OK, "retry")
+	mustPublished(t, f.fs.TernVFS, "doc", "SAVED")
+}
+
+// A link refused while the name is locked applied nothing: DELAY, and the
+// retry publishes.
+func TestCloseLockedLinkDelays(t *testing.T) {
+	f := newPublishFixture(t)
+	sid, fh, _ := f.writer(t, "doc", "saved")
+	f.fs.onLink(func(n int, _ vfs.InodeID, _ vfs.Cookie, link func() error) error {
+		if n == 1 {
+			return nfs4.Error(nfs4.NFS4ERR_LOCKED)
+		}
+		return link()
+	})
+	mustCloseStatus(t, f, fh, sid, nfs4.NFS4ERR_DELAY, "locked name")
+	mustCloseStatus(t, f, fh, sid, nfs4.NFS4_OK, "retry")
+	mustPublished(t, f.fs.TernVFS, "doc", "saved")
+}
+
+// The candidate belongs to the staging, not to a request: a DELAYed CLOSE
+// is finished by the owner's CLOSE under a newer generation, after a
+// reopen, or by its OPEN_DOWNGRADE. A guard: the candidate is kept by
+// staging, not by stateid.
+func TestDelayedPublicationFinishedByOwnersCurrentStateid(t *testing.T) {
+	for _, finish := range []string{"CLOSE", "OPEN_DOWNGRADE"} {
+		t.Run(finish, func(t *testing.T) {
+			f := newPublishFixture(t)
+			sid, fh, _ := f.writer(t, "doc", "saved")
+			f.fs.timeoutLinks(1, false)
+			mustCloseStatus(t, f, fh, sid, nfs4.NFS4ERR_DELAY, "unanswered link")
+			// The same owner opens again: one stateid, a newer generation.
+			status, newer, _ := openByHandle(t, f.conn, f.xid, f.clientID, "test-owner-doc", fh, nfs4.OPEN4_SHARE_ACCESS_READ)
+			if status != nfs4.NFS4_OK || newer == sid {
+				t.Fatalf("reopen %s %x", nfs4.Nfsstat4Name(status), newer)
+			}
+			if finish == "CLOSE" {
+				mustCloseStatus(t, f, fh, newer, nfs4.NFS4_OK, "newer generation")
+			} else if got, _ := downgradeResult(t, f.conn, f.xid, fh, newer, nfs4.OPEN4_SHARE_ACCESS_READ, nfs4.OPEN4_SHARE_DENY_NONE); got != nfs4.NFS4_OK {
+				t.Fatalf("OPEN_DOWNGRADE %s", nfs4.Nfsstat4Name(got))
+			}
+			mustPublished(t, f.fs.TernVFS, "doc", "saved")
+			if got := f.fs.count("construct"); got != 1 {
+				t.Fatalf("%d constructions, want one fresh candidate", got)
+			}
+		})
+	}
+}
+
+// A timestamp-only CLOSE whose Lookup or SetTime gets no answer gives DELAY
+// with nothing changed; a permanent error ends the writer: the readers go
+// back to the published file, the staging is discarded and the open ends.
+func TestTimestampOnlyCloseBackendErrors(t *testing.T) {
+	for _, fault := range []string{"Lookup timeout", "SetTime timeout", "SetTime rejected"} {
+		t.Run(fault, func(t *testing.T) {
+			f := newPublishFixture(t)
+			sid, fh, _ := f.writer(t, "doc", "saved")
+			closeFile(t, f.conn, f.xid, fh, sid)
+			published := mustPublished(t, f.fs.TernVFS, "doc", "saved")
+			sid, fh = openWriteFile(t, f.conn, f.xid, f.clientID, "doc")
+			if got := setMtimeStatus(t, f.conn, f.xid, fh, sid, 1_000_000); got != nfs4.NFS4_OK {
+				t.Fatalf("SETATTR mtime %s", nfs4.Nfsstat4Name(got))
+			}
+			f.reader(t, "doc")
+			f.fs.set(func() {
+				switch fault {
+				case "Lookup timeout":
+					f.fs.lookupTimeout = "doc"
+				case "SetTime timeout":
+					f.fs.setTimeErr = msgs.TIMEOUT
+				case "SetTime rejected":
+					f.fs.setTimeErr = os.ErrPermission
+				}
+			})
+			if fault == "SetTime rejected" {
+				mustCloseStatus(t, f, fh, sid, nfs4.NFS4ERR_ACCESS, fault)
+				if n := len(f.store.Entries()); n != 0 {
+					t.Fatalf("%d staging entries after the ended writer", n)
+				}
+				states := f.srv.opens.ClientStates(incarnationForTest(t, f.srv, f.clientID))
+				if len(states) != 1 || states[0].Writes() || states[0].DataID != published {
+					t.Fatalf("opens after the ended writer %+v, want the reader on %v", states, published)
+				}
+				return
+			}
+			mustCloseStatus(t, f, fh, sid, nfs4.NFS4ERR_DELAY, fault)
+			if n := len(f.store.Entries()); n != 1 {
+				t.Fatalf("%d staging entries after the delay, want the staging kept", n)
+			}
+			f.fs.set(func() { f.fs.lookupTimeout, f.fs.setTimeErr = "", nil })
+			mustCloseStatus(t, f, fh, sid, nfs4.NFS4_OK, "retry")
+			if info, err := f.fs.Stat(published); err != nil || info.Mtime.Unix() != 1_000_000 {
+				t.Fatalf("published mtime %v %v", info.Mtime, err)
+			}
+		})
+	}
+}
+
+// setMtimeStatus sets the mtime through stateid and returns the status.
+func setMtimeStatus(t *testing.T, conn net.Conn, xid *uint32, fh []byte, sid [16]byte, seconds uint64) uint32 {
+	t.Helper()
+	res := sendCompound(t, conn, *xid, func(w *nfs4.COMPOUND4argsWriter) {
+		putfhOp(w, fh)
+		sw := w.AppendArgarray_Setattr()
+		setStateid(sw.Stateid(), sid)
+		aw := sw.StartObjAttributes()
+		value := binary.BigEndian.AppendUint32(nil, nfs4.SET_TO_CLIENT_TIME4)
+		value = binary.BigEndian.AppendUint64(value, seconds)
+		value = binary.BigEndian.AppendUint32(value, 0)
+		sw.Resume(finishTestFattr(aw, attrMask{0, 1 << (nfs4.FATTR4_TIME_MODIFY_SET - 32)}, value))
+		w.Resume(sw.Finish())
+	})
+	*xid++
+	return res.Status()
+}
+
+// A failed publication fences its candidate before failing the staging for
+// its readers: the scrap runs while the staging is still healthy.
+func TestFailedPublicationFencesBeforeQuarantine(t *testing.T) {
+	f := newPublishFixture(t)
+	sid, fh, stagingID := f.writer(t, "doc", "saved")
+	reader := f.reader(t, "doc")
+	fencedHealthy := false
+	f.fs.set(func() {
+		f.fs.onScrap = func(id vfs.InodeID) error {
+			if id == stagingID {
+				fencedHealthy = !f.store.Failed(stagingID)
+			}
+			return nil
+		}
+	})
+	f.fs.onLink(func(int, vfs.InodeID, vfs.Cookie, func() error) error { return errors.New("injected link rejection") })
+	mustCloseStatus(t, f, fh, sid, nfs4.NFS4ERR_IO, "rejected link")
+	if !fencedHealthy {
+		t.Fatal("the candidate was not fenced before the quarantine")
+	}
+	if status, _ := readStateid(t, f.conn, f.xid, fh, reader); status != nfs4.NFS4ERR_IO {
+		t.Fatalf("reader of the failed staging %s, want IO", nfs4.Nfsstat4Name(status))
+	}
+}
+
+// REMOVE and RENAME of a name whose writer has a pending candidate scrap
+// it before they look the name up, so that a late link cannot bring the
+// name back or land at the old name. A scrap with no answer gives DELAY
+// and changes nothing.
+func TestNamespaceChangeFencesPendingCandidate(t *testing.T) {
+	for _, op := range []string{"REMOVE", "RENAME"} {
+		t.Run(op, func(t *testing.T) {
+			f := newPublishFixture(t)
+			sid, fh, stagingID := f.writer(t, "doc", "saved")
+			f.fs.timeoutLinks(1, false)
+			mustCloseStatus(t, f, fh, sid, nfs4.NFS4ERR_DELAY, "unanswered link")
+			body := removeBody("doc")
+			if op == "RENAME" {
+				body = renameBody("doc", "moved")
+			}
+			f.fs.set(func() { f.fs.scrapTimeouts = 1 })
+			if got := compoundStatus(t, sendBody(t, f.conn, f.xid, body)); got != nfs4.NFS4ERR_DELAY {
+				t.Fatalf("%s with an unanswered fence %s, want DELAY", op, nfs4.Nfsstat4Name(got))
+			}
+			if meta, ok := f.store.GetMeta(stagingID); !ok || meta.Guarded || meta.Unlinked || meta.FileName != "doc" {
+				t.Fatalf("delayed %s changed the writer: %+v %t", op, meta, ok)
+			}
+			if got := compoundStatus(t, sendBody(t, f.conn, f.xid, body)); got != nfs4.NFS4_OK {
+				t.Fatalf("%s %s", op, nfs4.Nfsstat4Name(got))
+			}
+			if got := f.fs.count("scrap"); got != 1 {
+				t.Fatalf("%d scraps, want the candidate fenced", got)
+			}
+		})
+	}
+}
+
+// A writer quarantined by a namespace change of unknown outcome has its
+// pending candidate scrapped first.
+func TestQuarantineFencesPendingCandidate(t *testing.T) {
+	f := newPublishFixture(t)
+	sid, fh, stagingID := f.writer(t, "doc", "saved")
+	f.fs.timeoutLinks(1, false)
+	mustCloseStatus(t, f, fh, sid, nfs4.NFS4ERR_DELAY, "unanswered link")
+	f.fs.set(func() { f.fs.namespaceErr = msgs.TIMEOUT })
+	if got := compoundStatus(t, sendBody(t, f.conn, f.xid, removeBody("doc"))); got != nfs4.NFS4ERR_IO {
+		t.Fatalf("REMOVE of unknown outcome %s, want IO", nfs4.Nfsstat4Name(got))
+	}
+	f.fs.set(func() { f.fs.namespaceErr = nil })
+	if !f.store.Failed(stagingID) {
+		t.Fatal("the writer was not quarantined")
+	}
+	// Once, before the REMOVE's lookup.
+	if got := f.fs.count("scrap"); got != 1 {
+		t.Fatalf("%d scraps reached the backend", got)
+	}
+}
+
+// A reader of the writer's staging reads what the CLOSE published through
+// a fresh transient, also a READ that chose the staging before the CLOSE
+// removed it.
+func TestReaderReadsFreshPublication(t *testing.T) {
+	f := newPublishFixture(t)
+	sid, fh, stagingID := f.writer(t, "doc", "saved")
+	reader := f.reader(t, "doc")
+	f.fs.onLink(func(n int, _ vfs.InodeID, _ vfs.Cookie, link func() error) error {
+		if n == 1 {
+			return os.ErrNotExist
+		}
+		return link()
+	})
+	gate := &getGateStore{Store: f.store, armed: stagingID, entered: make(chan struct{}), release: make(chan struct{})}
+	defer testutil.CloseSignal(gate.release)
+	f.srv.stagingStore = gate
+	// The READ goes on a second connection of the same client.
+	conn := dial(t, f.addr)
+	defer conn.Close()
+	xid := uint32(9000)
+	if id := setupClient(t, conn, &xid); id != f.clientID {
+		t.Fatalf("second connection is client %d, want %d", id, f.clientID)
+	}
+	read := make(chan string, 1)
+	go func() {
+		status, data := readStateid(t, conn, &xid, fh, reader)
+		if status != nfs4.NFS4_OK {
+			t.Errorf("READ racing the CLOSE %s", nfs4.Nfsstat4Name(status))
+		}
+		read <- data
+	}()
+	testutil.AwaitSignal(t, gate.entered, "the READ holding the staging")
+	mustCloseStatus(t, f, fh, sid, nfs4.NFS4_OK, "fresh publication")
+	testutil.CloseSignal(gate.release)
+	if data := testutil.AwaitValue(t, read, "the READ"); data != "saved" {
+		t.Fatalf("READ that chose the staging read %q", data)
+	}
+	if published := mustPublished(t, f.fs.TernVFS, "doc", "saved"); published == stagingID {
+		t.Fatal("published the staging itself, not a fresh candidate")
+	}
+	if _, data := readStateid(t, f.conn, f.xid, fh, reader); data != "saved" {
+		t.Fatalf("reader read %q after the publication", data)
+	}
+}
+
+// getGateStore holds, once armed, a READ's Get of one staging inode, with
+// the staging it found, until released.
+type getGateStore struct {
+	staging.Store
+	mu               sync.Mutex
+	armed            vfs.InodeID
+	entered, release chan struct{}
+}
+
+func (g *getGateStore) Get(id vfs.InodeID) staging.File {
+	sf := g.Store.Get(id)
+	g.mu.Lock()
+	hold := g.armed != 0 && g.armed == id && calledFrom("opRead")
+	if hold {
+		g.armed = 0
+	}
+	g.mu.Unlock()
+	if hold {
+		close(g.entered)
+		<-g.release
+	}
+	return sf
+}
+
+// delayedWriter creates name as owner "a", writes data and gets DELAY from
+// its CLOSE, whose link the backend does not answer; the open is then
+// closing.
+func (f *publishFixture) delayedWriter(t *testing.T, name, data string) ([16]byte, []byte, vfs.InodeID) {
+	t.Helper()
+	sid, fh, stagingID := f.writer(t, name, data)
+	f.fs.timeoutLinks(1, false)
+	mustCloseStatus(t, f, fh, sid, nfs4.NFS4ERR_DELAY, "unanswered link")
+	f.fs.onLink(nil)
+	return sid, fh, stagingID
+}
+
+// A writer whose CLOSE answered DELAY, for its link, its base hydration or
+// its timestamp-only update, which libnfs gives up, is not handed a later
+// writer's staging: another owner joining it is bound to the sidecar, and
+// its CLOSE ends the staging, publishing, updating times or failing, and
+// expires the closing open. A truncating OPEN afterwards finds no writer
+// left on a removed staging.
+func TestDelayedCloseJoinedByAnotherOwner(t *testing.T) {
+	for _, ending := range []string{"publish", "hydration", "times", "fail"} {
+		t.Run(ending, func(t *testing.T) {
+			f := newPublishFixture(t)
+			var first [16]byte
+			var fh []byte
+			var stagingID vfs.InodeID
+			switch ending {
+			case "hydration":
+				sid, wfh, _ := f.writer(t, "doc", "0123456789")
+				closeFile(t, f.conn, f.xid, wfh, sid)
+				first, fh = openWriteFile(t, f.conn, f.xid, f.clientID, "doc")
+				stagingID = stagingIDForTest(t, f.store, first)
+				f.fs.set(func() { f.fs.readTimeouts = 1 << 20 })
+				writeFileAt(t, f.conn, f.xid, fh, first, 0, []byte("AB"))
+				mustCloseStatus(t, f, fh, first, nfs4.NFS4ERR_DELAY, "unanswered hydration")
+				f.fs.set(func() { f.fs.readTimeouts = 0 })
+			case "times":
+				sid, wfh, _ := f.writer(t, "doc", "base")
+				closeFile(t, f.conn, f.xid, wfh, sid)
+				first, fh = openWriteFile(t, f.conn, f.xid, f.clientID, "doc")
+				stagingID = stagingIDForTest(t, f.store, first)
+				if got := setMtimeStatus(t, f.conn, f.xid, fh, first, 1_000_000); got != nfs4.NFS4_OK {
+					t.Fatalf("SETATTR %s", nfs4.Nfsstat4Name(got))
+				}
+				f.fs.set(func() { f.fs.lookupTimeout = "doc" })
+				mustCloseStatus(t, f, fh, first, nfs4.NFS4ERR_DELAY, "unanswered Lookup")
+				f.fs.set(func() { f.fs.lookupTimeout = "" })
+			default:
+				first, fh, stagingID = f.delayedWriter(t, "doc", "first")
+			}
+			status, joiner, _, _ := openFileForOwner(t, f.conn, f.xid, f.clientID, "b", "doc", nfs4.OPEN4_SHARE_ACCESS_BOTH, false, false)
+			if status != nfs4.NFS4_OK {
+				t.Fatalf("joining OPEN %s", nfs4.Nfsstat4Name(status))
+			}
+			if meta, ok := f.store.GetMeta(stagingID); !ok || meta.NFSStateID != extractStateID(stateidOf(joiner)) || meta.OpenOwner != "b" {
+				t.Fatalf("sidecar %+v %t, want it bound to the joiner", meta, ok)
+			}
+			want := uint32(nfs4.NFS4_OK)
+			switch ending {
+			case "publish", "hydration":
+				writeFileAt(t, f.conn, f.xid, fh, joiner, 0, []byte("SECOND"))
+			case "fail":
+				f.fs.onLink(func(int, vfs.InodeID, vfs.Cookie, func() error) error { return errors.New("injected link rejection") })
+				want = nfs4.NFS4ERR_IO
+			}
+			mustCloseStatus(t, f, fh, joiner, want, "joiner's CLOSE")
+			f.fs.onLink(nil)
+			switch ending {
+			case "publish":
+				mustPublished(t, f.fs.TernVFS, "doc", "SECOND")
+			case "hydration":
+				mustPublished(t, f.fs.TernVFS, "doc", "SECOND6789")
+			case "times":
+				if info, err := f.fs.TernVFS.Stat(mustPublished(t, f.fs.TernVFS, "doc", "base")); err != nil || info.Mtime.Unix() != 1_000_000 {
+					t.Fatalf("published mtime %v %v", info.Mtime, err)
+				}
+			}
+			if f.srv.opens.Live(extractStateID(stateidOf(first))) {
+				t.Fatal("the closing open outlived the staging")
+			}
+			mustCloseStatus(t, f, fh, first, nfs4.NFS4ERR_EXPIRED, "closing open's retry")
+			res := sendCompound(t, f.conn, *f.xid, func(w *nfs4.COMPOUND4argsWriter) { openWithSize(w, f.clientID, "doc", "c", 0) })
+			*f.xid++
+			if res.Status() != nfs4.NFS4_OK {
+				t.Fatalf("truncating OPEN %s", nfs4.Nfsstat4Name(res.Status()))
+			}
+		})
+	}
+}
+
+// A joining OPEN whose marker cannot be written fails before it binds the
+// sidecar: the staging stays the closing open's. A guard for the order of
+// the joiner's bind.
+func TestJoinMarkerFailureKeepsClosingOwner(t *testing.T) {
+	f := newPublishFixture(t)
+	first, _, stagingID := f.delayedWriter(t, "doc", "first")
+	f.fs.set(func() { f.fs.failMarkers = true })
+	if status, _, _, _ := openFileForOwner(t, f.conn, f.xid, f.clientID, "b", "doc", nfs4.OPEN4_SHARE_ACCESS_BOTH, false, false); status == nfs4.NFS4_OK {
+		t.Fatal("joining OPEN succeeded without its marker")
+	}
+	if meta, ok := f.store.GetMeta(stagingID); !ok || meta.NFSStateID != extractStateID(stateidOf(first)) {
+		t.Fatalf("sidecar %+v %t, want it still the closing open's", meta, ok)
+	}
+}
+
+// A detached staging whose remaining writer CLOSEs is not handed to an
+// open whose own CLOSE answered DELAY: that open is expired and the image
+// discarded.
+func TestDetachedStagingNotHandedToClosingWriter(t *testing.T) {
+	f := newPublishFixture(t)
+	first, fh, _ := f.delayedWriter(t, "doc", "first")
+	status, joiner, _, _ := openFileForOwner(t, f.conn, f.xid, f.clientID, "b", "doc", nfs4.OPEN4_SHARE_ACCESS_BOTH, false, false)
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("joining OPEN %s", nfs4.Nfsstat4Name(status))
+	}
+	conn, xid, _ := f.otherClient(t)
+	removeFile(t, conn, xid, "doc")
+	mustCloseStatus(t, f, fh, joiner, nfs4.NFS4_OK, "joiner's CLOSE of the detached staging")
+	if n := len(f.store.Entries()); n != 0 {
+		t.Fatalf("%d staging entries, want the image discarded", n)
+	}
+	if f.srv.opens.Live(extractStateID(stateidOf(first))) {
+		t.Fatal("the closing open kept the image")
+	}
+}
+
+// A truncating OPEN that would join a writer whose staging failed answers
+// IO, as an operation on that writer does.
+func TestTruncatingJoinOfFailedWriterIsIO(t *testing.T) {
+	f := newPublishFixture(t)
+	f.writer(t, "doc", "saved")
+	f.fs.set(func() { f.fs.namespaceErr = msgs.TIMEOUT })
+	if got := compoundStatus(t, sendBody(t, f.conn, f.xid, removeBody("doc"))); got != nfs4.NFS4ERR_IO {
+		t.Fatalf("REMOVE of unknown outcome %s, want IO", nfs4.Nfsstat4Name(got))
+	}
+	f.fs.set(func() { f.fs.namespaceErr = nil })
+	res := sendCompound(t, f.conn, *f.xid, func(w *nfs4.COMPOUND4argsWriter) { openWithSize(w, f.clientID, "doc", "c", 0) })
+	*f.xid++
+	if res.Status() != nfs4.NFS4ERR_IO {
+		t.Fatalf("truncating OPEN joining the failed writer %s, want IO", nfs4.Nfsstat4Name(res.Status()))
+	}
+}
+
+// A read-only OPEN4_CREATE that sets a size owns its staging: its CLOSE
+// publishes the initialized file and leaves no staging.
+func TestReadOnlyCreateWithSizePublishes(t *testing.T) {
+	f := newPublishFixture(t)
+	size := uint64(5)
+	sid, fh := openCreateFileWithSizeAndAccess(t, f.conn, f.xid, f.clientID, "lock", &size, nfs4.OPEN4_SHARE_ACCESS_READ)
+	closeFile(t, f.conn, f.xid, fh, sid)
+	mustPublished(t, f.fs.TernVFS, "lock", "\x00\x00\x00\x00\x00")
+	if n := len(f.store.Entries()); n != 0 {
+		t.Fatalf("%d staging entries after the creator's CLOSE", n)
+	}
+}
+
+// replaceOnLookupVFS replaces one name with new content right after the
+// first Lookup of it returns, as a CLOSE publishing over it then would.
+type replaceOnLookupVFS struct {
+	vfs.TernVFS
+	name string
+	once sync.Once
+}
+
+func (fs *replaceOnLookupVFS) Lookup(dir vfs.InodeID, name string) (vfs.InodeID, error) {
+	id, err := fs.TernVFS.Lookup(dir, name)
+	if name == fs.name {
+		fs.once.Do(func() {
+			if _, err := fs.TernVFS.CreateFile(dir, name, bytes.NewReader([]byte("replaced"))); err != nil {
+				panic(err)
+			}
+		})
+	}
+	return id, err
+}
+
+// A read-only OPEN4_CREATE of an existing name that finds the name
+// replaced once it holds the file lock opens again, after releasing its
+// pathname lock, instead of waiting on it.
+func TestReadOnlyCreateReopenAfterReplacement(t *testing.T) {
+	root := t.TempDir()
+	writeRoot(t, root, "doc", "original")
+	fs := &replaceOnLookupVFS{TernVFS: vfs.NewLocalTernVFS(root), name: "doc"}
+	_, addr, cleanup := startTestServerWithVFS(t, fs)
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+	xid := uint32(1)
+	clientID := setupClient(t, conn, &xid)
+	done := make(chan uint32, 1)
+	go func() {
+		status, _, _, _ := openFileForOwner(t, conn, &xid, clientID, "o", "doc", nfs4.OPEN4_SHARE_ACCESS_READ, true, false)
+		done <- status
+	}()
+	if got := testutil.AwaitValue(t, done, "the read-only OPEN4_CREATE"); got != nfs4.NFS4_OK {
+		t.Fatalf("OPEN %s", nfs4.Nfsstat4Name(got))
+	}
+}
+
+// A timestamp-only CLOSE points the staging's readers back at their own
+// file, the version they opened, even when another client has published
+// at the name since: they do not move to that version. A guard.
+func TestTimestampOnlyCloseRetargetsReadersToTheirFile(t *testing.T) {
+	f := newPublishFixture(t)
+	sid, fh, _ := f.writer(t, "doc", "base")
+	closeFile(t, f.conn, f.xid, fh, sid)
+	fh = lookupFH(t, f.conn, f.xid, "doc")
+	_, w, _ := openByHandle(t, f.conn, f.xid, f.clientID, "w", fh, nfs4.OPEN4_SHARE_ACCESS_WRITE)
+	_, r, _ := openByHandle(t, f.conn, f.xid, f.clientID, "r", fh, nfs4.OPEN4_SHARE_ACCESS_READ)
+	if got := setMtimeStatus(t, f.conn, f.xid, fh, w, 1_000_000); got != nfs4.NFS4_OK {
+		t.Fatalf("SETATTR %s", nfs4.Nfsstat4Name(got))
+	}
+	conn, xid, other := f.otherClient(t)
+	osid, ofh := openWriteFile(t, conn, xid, other, "doc")
+	writeFileAt(t, conn, xid, ofh, osid, 0, []byte("OTHER"))
+	closeFile(t, conn, xid, ofh, osid)
+	mustCloseStatus(t, f, fh, w, nfs4.NFS4_OK, "timestamp-only")
+	if status, data := readStateid(t, f.conn, f.xid, fh, r); status != nfs4.NFS4_OK || data != "base" {
+		t.Fatalf("reader after the timestamp-only CLOSE %s %q, want the version it opened", nfs4.Nfsstat4Name(status), data)
+	}
+}
+
+// Times set without a staging of their own, with the zero stateid or
+// through a read open that borrows its client's writer, while that
+// writer's CLOSE publishes wait for the CLOSE, which holds the file lock
+// from reading the staging's times to removing it, and then reach the
+// published file.
+func TestStagingLessTimesWaitForWritersClose(t *testing.T) {
+	for _, borrowed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("borrowed=%v", borrowed), func(t *testing.T) {
+			f := newPublishFixture(t)
+			sid, fh, _ := f.writer(t, "doc", "saved")
+			var stateid [16]byte
+			if borrowed {
+				stateid = f.reader(t, "doc")
+			}
+			other := dial(t, f.addr)
+			defer other.Close()
+			oxid := uint32(1)
+			setupClient(t, other, &oxid)
+			gate := testutil.NewGate()
+			defer testutil.CloseSignal(gate.Release)
+			f.fs.set(func() { f.fs.onSetTime = func(vfs.InodeID) { gate.Wait() } })
+			closed := make(chan uint32, 1)
+			go func() {
+				xid := uint32(7000)
+				closed <- closeFileStatus(t, f.conn, &xid, fh, sid)
+			}()
+			testutil.AwaitSignal(t, gate.Entered, "the CLOSE restoring the times")
+			set := make(chan uint32, 1)
+			go func() { set <- setMtimeStatus(t, other, &oxid, fh, stateid, 1_000_000) }()
+			testutil.AssertBlocked(t, set, "SETATTR behind the CLOSE")
+			testutil.CloseSignal(gate.Release)
+			if got := testutil.AwaitValue(t, closed, "the CLOSE"); got != nfs4.NFS4_OK {
+				t.Fatalf("CLOSE %s", nfs4.Nfsstat4Name(got))
+			}
+			if got := testutil.AwaitValue(t, set, "the SETATTR"); got != nfs4.NFS4_OK {
+				t.Fatalf("SETATTR %s", nfs4.Nfsstat4Name(got))
+			}
+			if info, err := f.fs.Stat(mustPublished(t, f.fs.TernVFS, "doc", "saved")); err != nil || info.Mtime.Unix() != 1_000_000 {
+				t.Fatalf("published mtime %v %v", info.Mtime, err)
+			}
+		})
+	}
+}
+
+// A candidate the attempt's own resolution has scrapped is not fenced
+// again: when every link reports not-exist, the CLOSE ends with NOENT even
+// if a further scrap would get no answer. A guard.
+func TestCloseResolvedCandidateIsNotFencedAgain(t *testing.T) {
+	f := newPublishFixture(t)
+	sid, fh, _ := f.writer(t, "doc", "saved")
+	f.fs.onLink(func(int, vfs.InodeID, vfs.Cookie, func() error) error { return os.ErrNotExist })
+	scraps := 0
+	f.fs.set(func() {
+		f.fs.onScrap = func(vfs.InodeID) error {
+			if scraps++; scraps > 2 {
+				return msgs.TIMEOUT
+			}
+			return nil
+		}
+	})
+	mustCloseStatus(t, f, fh, sid, nfs4.NFS4ERR_NOENT, "links not-exist")
+	if n := len(f.store.Entries()); n != 0 {
+		t.Fatalf("%d staging entries after the failed CLOSE", n)
+	}
+}
+
+// bindFailStore refuses the Binds refuse picks.
+type bindFailStore struct {
+	staging.Store
+	refuse func(owner string, readOnly bool) bool
+}
+
+func (s bindFailStore) Bind(id vfs.InodeID, clientID uint64, stateID nfs4.StateID, owner string, readOnly bool) error {
+	if s.refuse(owner, readOnly) {
+		return errors.New("injected bind failure")
+	}
+	return s.Store.Bind(id, clientID, stateID, owner, readOnly)
+}
+
+// A detached staging whose hand-over to its reader cannot be saved fails
+// for that reader, which then gets IO rather than NOENT.
+func TestDetachedHandoffFailureFailsReader(t *testing.T) {
+	f := newPublishFixtureWithStore(t, func(s staging.Store) staging.Store {
+		return bindFailStore{s, func(string, bool) bool { return true }}
+	})
+	sid, fh, _ := f.writer(t, "doc", "granted")
+	reader := f.reader(t, "doc")
+	conn, oxid, _ := f.otherClient(t)
+	removeFile(t, conn, oxid, "doc")
+	mustCloseStatus(t, f, fh, sid, nfs4.NFS4_OK, "writer's CLOSE of the detached staging")
+	if status, data := readStateid(t, f.conn, f.xid, fh, reader); status != nfs4.NFS4ERR_IO {
+		t.Fatalf("reader after the failed hand-over %s %q, want IO", nfs4.Nfsstat4Name(status), data)
+	}
+}
+
+// A detached staging is not handed to a read open whose CLOSE answered
+// DELAY: its client may have given it up. A guard.
+func TestDetachedStagingNotHandedToClosingReader(t *testing.T) {
+	f := newPublishFixture(t)
+	sid, fh, _ := f.writer(t, "doc", "granted")
+	reader := f.reader(t, "doc")
+	f.srv.opens.MarkClosing(extractStateID(stateidOf(reader)))
+	conn, xid, _ := f.otherClient(t)
+	removeFile(t, conn, xid, "doc")
+	mustCloseStatus(t, f, fh, sid, nfs4.NFS4_OK, "writer's CLOSE of the detached staging")
+	if n := len(f.store.Entries()); n != 0 {
+		t.Fatalf("%d staging entries, want the image discarded", n)
+	}
+}
+
+// A writer retired because its open is gone has its pending candidate
+// scrapped, here by a CREATE at its name.
+func TestRetiredWriterCandidateIsFenced(t *testing.T) {
+	f := newPublishFixture(t)
+	first, _, stagingID := f.delayedWriter(t, "doc", "first")
+	if err := f.srv.clients.RemoveOpen(incarnationForTest(t, f.srv, f.clientID), extractStateID(stateidOf(first))); err != nil {
+		t.Fatal(err)
+	}
+	if got := compoundStatus(t, sendBody(t, f.conn, f.xid, mkdirBody("doc"))); got != nfs4.NFS4ERR_EXIST {
+		t.Fatalf("CREATE over the name %s, want EXIST", nfs4.Nfsstat4Name(got))
+	}
+	if meta, ok := f.store.GetMeta(stagingID); !ok || !meta.Retired {
+		t.Fatalf("writer %+v %t, want it retired", meta, ok)
+	}
+	if got := f.fs.count("scrap"); got != 1 {
+		t.Fatalf("%d scraps, want the pending candidate fenced", got)
+	}
+}
+
+// A joining OPEN that fails after binding the sidecar to itself gives the
+// sidecar back to the closing open. A guard.
+func TestFailedJoinRestoresClosingOwner(t *testing.T) {
+	f := newPublishFixture(t)
+	first, _, stagingID := f.delayedWriter(t, "doc", "first")
+	// Occupy the stateid the joining OPEN will be given, so that its
+	// opens.Open fails after the bind.
+	next := f.srv.opens.NewStateID()
+	binary.BigEndian.PutUint64(next[4:], binary.BigEndian.Uint64(next[4:])+1)
+	if _, err := f.srv.opens.Open(openstate.OwnerKey{ClientID: 1, Owner: "squatter"}, 1, 1, openstate.Grant{Access: nfs4.OPEN4_SHARE_ACCESS_READ}, next, false); err != nil {
+		t.Fatal(err)
+	}
+	if status, _, _, _ := openFileForOwner(t, f.conn, f.xid, f.clientID, "b", "doc", nfs4.OPEN4_SHARE_ACCESS_BOTH, false, false); status == nfs4.NFS4_OK {
+		t.Fatal("joining OPEN succeeded on an occupied stateid")
+	}
+	if meta, ok := f.store.GetMeta(stagingID); !ok || meta.NFSStateID != extractStateID(stateidOf(first)) || meta.OpenOwner != "test-owner-doc" {
+		t.Fatalf("sidecar %+v %t, want it the closing open's again", meta, ok)
+	}
+}
+
+// A clean CLOSE leaves no transient behind once its reply is written. A
+// guard.
+func TestCleanCloseLeavesNoTransient(t *testing.T) {
+	f := newPublishFixture(t)
+	sid, fh, _ := f.writer(t, "doc", "saved")
+	closeFile(t, f.conn, f.xid, fh, sid)
+	sid, fh = openWriteFile(t, f.conn, f.xid, f.clientID, "doc")
+	closeFile(t, f.conn, f.xid, fh, sid)
+	awaitRequestHoldsReleased(t, f.srv)
+	if n := f.fs.TernVFS.(*vfs.LocalTernVFS).TransientCount(); n != 0 {
+		t.Fatalf("%d transients after the clean CLOSE", n)
+	}
+}
+
+// A first link that applies, with a WRITE during its upload, and then
+// answers an error that is neither the backend's silence nor not-exist:
+// resolution finds it linked but stale, and the CLOSE publishes the WRITE
+// through one fresh transient.
+func TestAppliedLinkErrorWithWriteDuringUploadPublishesFresh(t *testing.T) {
+	f := newPublishFixture(t)
+	sid, fh, stagingID := f.writer(t, "doc", "saved")
+	f.fs.onLink(func(n int, _ vfs.InodeID, _ vfs.Cookie, link func() error) error {
+		if n != 1 {
+			return link()
+		}
+		if err := link(); err != nil {
+			return err
+		}
+		stageWrite(t, f.store, stagingID, 0, "LATER")
+		return errors.New("injected error after the link applied")
+	})
+	mustCloseStatus(t, f, fh, sid, nfs4.NFS4_OK, "stale applied link")
+	mustPublished(t, f.fs.TernVFS, "doc", "LATER")
+	if got := f.fs.count("construct"); got != 1 {
+		t.Fatalf("%d constructions, want one fresh candidate", got)
+	}
+}
+
+// A fresh candidate's link that applies but answers an error that is
+// neither the backend's silence nor not-exist is resolved as linked: the
+// CLOSE reports the publication.
+func TestFreshLinkAppliedWithErrorIsPublication(t *testing.T) {
+	f := newPublishFixture(t)
+	sid, fh, _ := f.writer(t, "doc", "saved")
+	f.fs.onLink(func(n int, _ vfs.InodeID, _ vfs.Cookie, link func() error) error {
+		switch n {
+		case 1:
+			return msgs.TIMEOUT
+		case 2:
+			if err := link(); err != nil {
+				return err
+			}
+			return errors.New("injected error after the link applied")
+		}
+		return link()
+	})
+	mustCloseStatus(t, f, fh, sid, nfs4.NFS4ERR_DELAY, "unanswered link")
+	mustCloseStatus(t, f, fh, sid, nfs4.NFS4_OK, "fresh link applied with an error")
+	mustPublished(t, f.fs.TernVFS, "doc", "saved")
+}
+
+// A detached writer downgraded to READ whose image cannot be bound to it
+// reads IO, not NOENT or other bytes.
+func TestDetachedDowngradeBindFailureReadsIO(t *testing.T) {
+	f := newPublishFixtureWithStore(t, func(s staging.Store) staging.Store {
+		return bindFailStore{s, func(_ string, readOnly bool) bool { return readOnly }}
+	})
+	s0, fh0, _ := f.writer(t, "doc", "base-version")
+	closeFile(t, f.conn, f.xid, fh0, s0)
+	fh := lookupFH(t, f.conn, f.xid, "doc")
+	openByHandle(t, f.conn, f.xid, f.clientID, "o", fh, nfs4.OPEN4_SHARE_ACCESS_READ)
+	_, sid, _ := openByHandle(t, f.conn, f.xid, f.clientID, "o", fh, nfs4.OPEN4_SHARE_ACCESS_WRITE)
+	writeFileAt(t, f.conn, f.xid, fh, sid, 0, []byte("GRANTED"))
+	conn, oxid, _ := f.otherClient(t)
+	removeFile(t, conn, oxid, "doc")
+	status, read := downgradeResult(t, f.conn, f.xid, fh, sid, nfs4.OPEN4_SHARE_ACCESS_READ, nfs4.OPEN4_SHARE_DENY_NONE)
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("downgrade %s", nfs4.Nfsstat4Name(status))
+	}
+	if status, data := readStateid(t, f.conn, f.xid, fh, read); status != nfs4.NFS4ERR_IO {
+		t.Fatalf("READ after the failed bind %s %q, want IO", nfs4.Nfsstat4Name(status), data)
+	}
+}
+
+// A join whose bind fails answers IO and leaves the joining owner's
+// existing marked open, and its marker, alone.
+func TestJoinBindFailureKeepsExistingOpen(t *testing.T) {
+	f := newPublishFixtureWithStore(t, func(s staging.Store) staging.Store {
+		return bindFailStore{s, func(owner string, _ bool) bool { return owner == "b" }}
+	})
+	s0, fh0, _ := f.writer(t, "doc", "base")
+	closeFile(t, f.conn, f.xid, fh0, s0)
+	fh := lookupFH(t, f.conn, f.xid, "doc")
+	// b: READ, then WRITE, then a clean downgrade: a marked read open.
+	openByHandle(t, f.conn, f.xid, f.clientID, "b", fh, nfs4.OPEN4_SHARE_ACCESS_READ)
+	_, bw, _ := openByHandle(t, f.conn, f.xid, f.clientID, "b", fh, nfs4.OPEN4_SHARE_ACCESS_WRITE)
+	status, bread := downgradeResult(t, f.conn, f.xid, fh, bw, nfs4.OPEN4_SHARE_ACCESS_READ, nfs4.OPEN4_SHARE_DENY_NONE)
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("b's downgrade %s", nfs4.Nfsstat4Name(status))
+	}
+	_, a, _ := openByHandle(t, f.conn, f.xid, f.clientID, "a", fh, nfs4.OPEN4_SHARE_ACCESS_BOTH)
+	writeFileAt(t, f.conn, f.xid, fh, a, 0, []byte("AAAA"))
+	f.fs.timeoutLinks(1, false)
+	mustCloseStatus(t, f, fh, a, nfs4.NFS4ERR_DELAY, "a's unanswered link")
+	f.fs.onLink(nil)
+	if status, _, _ := openByHandle(t, f.conn, f.xid, f.clientID, "b", fh, nfs4.OPEN4_SHARE_ACCESS_WRITE); status != nfs4.NFS4ERR_IO {
+		t.Fatalf("join with a failed bind %s, want IO", nfs4.Nfsstat4Name(status))
+	}
+	awaitRequestHoldsReleased(t, f.srv)
+	if status, data := readStateid(t, f.conn, f.xid, fh, bread); status != nfs4.NFS4_OK || data != "base" {
+		t.Fatalf("b's existing open after the failed join %s %q", nfs4.Nfsstat4Name(status), data)
+	}
+}
+
+// An OPEN_DOWNGRADE that answers DELAY leaves its open ordinary: its
+// client keeps the open and retries.
+func TestDelayedDowngradeIsNotClosing(t *testing.T) {
+	f := newPublishFixture(t)
+	s0, fh0, _ := f.writer(t, "doc", "base")
+	closeFile(t, f.conn, f.xid, fh0, s0)
+	fh := lookupFH(t, f.conn, f.xid, "doc")
+	openByHandle(t, f.conn, f.xid, f.clientID, "o", fh, nfs4.OPEN4_SHARE_ACCESS_READ)
+	_, sid, _ := openByHandle(t, f.conn, f.xid, f.clientID, "o", fh, nfs4.OPEN4_SHARE_ACCESS_WRITE)
+	writeFileAt(t, f.conn, f.xid, fh, sid, 0, []byte("NEW"))
+	f.fs.timeoutLinks(1, false)
+	if status, _ := downgradeResult(t, f.conn, f.xid, fh, sid, nfs4.OPEN4_SHARE_ACCESS_READ, nfs4.OPEN4_SHARE_DENY_NONE); status != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("downgrade %s, want DELAY", nfs4.Nfsstat4Name(status))
+	}
+	if f.srv.opens.Closing(extractStateID(stateidOf(sid))) {
+		t.Fatal("a DELAYed downgrade marked its open closing")
 	}
 }

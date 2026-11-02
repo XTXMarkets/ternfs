@@ -144,25 +144,43 @@ next one. `NFS4ERR_OP_ILLEGAL` and the errors for operations NFSv4.1
 removed keep their original status, as RFC 8881 section 2.10.6.1.3
 requires. A session that is destroyed or fatal drops its slots' replies.
 
-An operation whose effect cannot be established retires its session as
-fatal right after it returns, so that no recorded reply can assert an
-outcome the server does not know. An operation rejected before dispatch,
-by the compound checks above, runs no effect of its own and does not by
-itself retire the session; effects of earlier operations in the compound
-remain. On the native backend every mutation error has an
-unknown outcome, timeouts included, except a REMOVE that finds its edge
-already gone. The local test backend treats its recognized syscall errors
-as definite rejections; any other error from it, such as an injected
-transport or decoding error, is unknown. Staging I/O errors in WRITE,
-COMMIT, SETATTR and a sized OPEN count too. A CLOSE or OPEN_DOWNGRADE whose
-publication or hydration the backend does not answer retires nothing: it
-gets `NFS4ERR_DELAY` and keeps its open and staging; see
-[Writes and publication](../../DESIGN.md#writes-and-publication).
+An operation whose backend outcome is unknown answers with its own
+status, which is recorded and replayed like any other reply; the session
+goes on. On the native backend every namespace mutation error has an
+unknown outcome, timeouts and `DIRECTORY_NOT_EMPTY` included, except a
+REMOVE that finds its edge already gone; the staged writers it affects are
+failed, as described under
+[Unknown backend outcomes](../../DESIGN.md#unknown-backend-outcomes). The
+local test backend treats its recognized syscall errors as definite
+rejections; any other error from it, such as an injected transport or
+decoding error, is unknown. Staging I/O errors in WRITE, COMMIT, SETATTR and
+a sized OPEN are answered the same way. A CLOSE or OPEN_DOWNGRADE whose
+publication or hydration the backend does not answer gets `NFS4ERR_DELAY`
+and keeps its open and staging; see [Publication](#publication).
 
 A slot restored after a restart has two more cases, described under
 [Restart replay decision](#restart-replay-decision): it accepts, once, any
 sequence number later than the one it recorded, and a retransmission whose
 record is an intent runs again.
+
+### Locks held until the record
+
+A CLOSE, OPEN_DOWNGRADE, OPEN, CREATE, REMOVE or RENAME that ends a
+compound, as its last operation or the first to fail, keeps the locks it
+took on names, on a writer's publication target and on a file's open state
+until the slot's record is written. No other request can then change what
+it acted on before its retransmission could find the reply. Other
+operations, and earlier ones, release their locks when they return. Work that
+follows the effect without being part of the reply, such as removing a
+closed open's marker or scrapping the transient a clean CLOSE leaves, runs
+once the record is written.
+
+Linux 4.10 and later end CLOSE, OPEN_DOWNGRADE, REMOVE and RENAME compounds
+with that operation, and libnfs CLOSE, REMOVE and RENAME. Older Linux
+kernels send GETATTR after a CLOSE, which this does not cover. OPEN and
+CREATE are followed by GETFH or GETATTR and are not covered either. A
+request killed after its effect and before its record still runs again
+when it is retransmitted.
 
 ### Reply cache accounting
 
@@ -349,12 +367,14 @@ without the intent, because the unlink failed, does the operation get
 
 A file can protect only one effect per request, and a retransmission after
 a restart runs the whole compound again. So while a session's file is on
-disk, each compound may run at most one mutating operation. Before a second
-one of any kind runs, OPEN, WRITE, CLOSE, SETATTR and COMMIT included, the
-file is removed and the session goes on in memory only. A first mutating
-operation that changed nothing still counts. If the file cannot be removed,
-the second operation gets `NFS4ERR_SERVERFAULT` before its effect, and the
-session is retired.
+disk, each compound may run at most one mutating operation, COMMIT aside.
+Before a second one of any kind runs, OPEN, WRITE, CLOSE and SETATTR
+included, the file is removed and the session goes on in memory only. A
+first mutating operation that changed nothing still counts. COMMIT changes
+no file and no name, and run again after a restart it syncs the same
+staging, so the PUTFH, COMMIT, CLOSE that libnfs sends keeps the file. If
+the file cannot be removed, the second operation gets `NFS4ERR_SERVERFAULT`
+before its effect, and the session is retired.
 
 ### When a session file is removed
 
@@ -362,7 +382,7 @@ session is retired.
 | --- | --- |
 | The session ends: destroyed, expired, replaced or retired | Removed with its last use. If the unlink fails, a restart may restore it. |
 | A record write fails | Removed; the session goes on in memory. |
-| A compound's second mutating operation | Removed before it runs. |
+| A compound's second mutating operation, COMMIT aside | Removed before it runs. |
 | The session's first CB_COMPOUND | Removed before it is sent, because the file does not record the callback sequence. CB_NULL probes leave the file alone. |
 | An accepted BACKCHANNEL_CTL | Removed before the callback program and credential change. |
 | A CREATE_SESSION that inserts no session | Removed. |
@@ -391,7 +411,9 @@ A retransmission to a restored slot is answered in one of three ways:
   had at most one mutating operation. RENAME, REMOVE and CREATE of a
   directory or symlink would have written an intent. The others, alone,
   repeat safely or fail: an exclusive OPEN matches its verifier, a GUARDED
-  one gets `NFS4ERR_EXIST`, and a CLOSE finds its publication.
+  one gets `NFS4ERR_EXIST`, an upgrade OPEN gets a new stateid, a CLOSE
+  finds its publication through its candidate, and a CLOSE or
+  OPEN_DOWNGRADE whose staging was removed gets `NFS4ERR_BAD_STATEID`.
 
 When a compound runs again with an intent, each operation is decided:
 
@@ -404,9 +426,9 @@ When a compound runs again with an intent, each operation is decided:
 | | Edge gone or replaced | Applied: success. |
 | CREATE at the intent's index | Always | `NFS4ERR_DEADSESSION`: nothing shows whether it made what is, or is not, at the name. |
 | Another operation, or other names or directories, at the intent's index | | `NFS4ERR_DEADSESSION`. |
-| A mutating operation before the intent's index | | `NFS4ERR_DEADSESSION`. |
-| Any mutating operation, when the intent cannot be decoded | | `NFS4ERR_DEADSESSION`. |
-| A non-mutating operation | | Runs. |
+| A mutating operation other than COMMIT before the intent's index | | `NFS4ERR_DEADSESSION`. |
+| Any mutating operation other than COMMIT, when the intent cannot be decoded | | `NFS4ERR_DEADSESSION`. |
+| A non-mutating operation, or COMMIT | | Runs. |
 
 A backend lookup that fails while deciding returns its error, mapped to
 NFS. An operation decided as not applied runs on its recorded intent only
@@ -564,9 +586,9 @@ Other operations differ:
 - CLOSE looks up the local open, and otherwise the recovered staging found
   the same way, and closes that writer through its sidecar. Under the
   pathname and file locks it checks again whether another request has
-  adopted it meanwhile; if so the live open answers. When hydration fails,
-  or LinkFile fails and the file is not found already published, a CLOSE
-  of a live local open also expires that open, leaving a tombstone.
+  adopted it meanwhile; if so the live open answers. When its publication
+  fails (see [Publication](#publication)), a CLOSE of a live local open
+  also expires that open, leaving a tombstone.
   Later uses of the stateid then follow
   [Stateid scope](../openstate/README.md#stateid-scope). Retransmissions
   follow the [slot replay](#slot-replay) rules. A recovered writer's
@@ -578,14 +600,18 @@ Other operations differ:
 - TEST_STATEID and FREE_STATEID use the open state's own rules, plus this
   client's recovered staging, and read no durable state; see
   [Stateid scope](../openstate/README.md#stateid-scope).
-- A SETATTR with a special stateid skips the lookup and uses the client's
-  writer of the handle, or the handle, directly. A SETATTR with another
+- A SETATTR with a special stateid skips the lookup. A SETATTR with another
   stateid that changes the size needs the lookup to pass. A timestamp-only
   SETATTR whose stateid fails the lookup gets the lookup's error before any
   effect if the stateid is known to be another client's: live, expired or
-  naming its recovered staging. Otherwise it goes on with the client's
-  writer of the handle, or the handle, and the remaining checks; a failed
-  writer there still gets `NFS4ERR_IO`.
+  naming its recovered staging. Otherwise it goes on, and a failed writer
+  still gets `NFS4ERR_IO`. Times through a stateid that does not write, a
+  special one included, or through a writer whose staging has gone, go to
+  the client's [view](../openstate/README.md#client-views) of the handle,
+  chosen under the file lock that a CLOSE holds from reading the staging's
+  times to removing it: its writer's staging, live or recovered, or a
+  published version. Times on a file without staging that the backend does
+  not answer get `NFS4ERR_DELAY`.
 
 ### Writer recovery mechanics
 
@@ -595,8 +621,9 @@ paths:
 
 - **Old stateid.** As above. READ, WRITE, SETATTR and OPEN_DOWNGRADE adopt
   the writer. CLOSE closes it through its sidecar unless another request
-  adopted it meanwhile. COMMIT has no stateid: it syncs the client's
-  recovered writers of the handle without adopting them.
+  adopted it meanwhile, and resolves its publication candidate as a retried
+  CLOSE does; see [Publication](#publication). COMMIT has no stateid: it
+  syncs the client's recovered writers of the handle without adopting them.
 - **Reopen by pathname.** A writable or creating OPEN at a name selects a
   unique staging entry for that target whose read-only flag matches the
   requested access. Within the same incarnation,
@@ -661,7 +688,8 @@ Each sweep groups the staging entries by client and, for each client,
 takes a destruction hold and runs the expiry decision. If the client is
 expired, its staging is retired: a linked writer is retired in place, an
 unlinked one is discarded, and one already retired and now unlinked is
-quarantined. A writer rebound since the entry was read is left alone.
+quarantined. A linked writer's publication candidate is scrapped first,
+best effort. A writer rebound since the entry was read is left alone.
 
 For the first lease after startup, 90 seconds, this staging sweep does not
 run. Nothing else is held back: the sweeper's ordinary client expiry still
@@ -675,12 +703,75 @@ it counts as active while its durable open marker is active or a
 confirmation protects its client, and is otherwise retired; see
 [Writer lifecycle](../../DESIGN.md#writer-lifecycle).
 
+### Publication
+
+The last write CLOSE of a staging, or the downgrade of its last writer to
+READ, ends it ([ops_open.go](ops_open.go)). Every step that can answer
+`NFS4ERR_DELAY` comes before the open or the staging changes: a
+publication, hydration, scrap, lookup or SetTime the backend does not
+answer, a link refused because the name is locked, and a WRITE that landed
+while the publication ran. Only then does the CLOSE expire the staging's
+other writers, which can only be opens whose own CLOSE answered DELAY,
+point the staging's readers at what they read next, or fail the staging for
+them, and remove it.
+
+TernFS appends spans at a file's current size, so a transient that may hold
+some of them is never written again. The first publication records the
+staging's own transient as its candidate, with the current data version,
+and submits it. The next checkpoint saves that record, or the CLOSE saves
+it at once when the submission gets no answer. A retried CLOSE, and the
+first CLOSE of a writer recovered after a restart, resolve the candidate
+first, from positive evidence only:
+
+| Evidence | Meaning | The CLOSE |
+| --- | --- | --- |
+| `ScrapFile` succeeds | It was still transient, and a scrapped transient can never be linked. | Publishes through a fresh transient. |
+| `ScrapFile` reports not-exist and `Stat` succeeds | It was linked, whether or not another file has replaced it at the name since. | Completes without publishing again if it carried the current data version, also when another client has saved over it meanwhile. Otherwise publishes through a fresh transient. |
+| Both report not-exist | It is gone. | Publishes through a fresh transient. |
+| Any other answer | Not known. | `NFS4ERR_DELAY` if the backend did not answer; otherwise the publication fails. |
+
+A fresh transient is constructed, recorded as the candidate in the sidecar,
+uploaded and linked, at most one per attempt. A first submission answered
+not-exist is resolved the same way and, when not linked, retried through
+that fresh transient. A first submission that gets any other error but
+DELAY is resolved too, since another copy of the request may have linked
+it: the error stands only if the candidate did not link. A WRITE that lands
+while a publication runs (WRITE takes no file lock) leaves the linked
+version without it. If it landed during the upload, the CLOSE publishes
+again through one fresh transient; if it has made one already, or the WRITE
+landed after the link, it answers DELAY and the retry publishes the newer
+bytes. Times set meanwhile do not cause a second publication.
+
+A CLOSE that answers DELAY marks its open closing; see
+[Owners and files](../openstate/README.md#owners-and-files). libnfs turns
+DELAY into an error and gives the open up, so a later write OPEN of the
+same client that joins the staging takes the sidecar over, and its CLOSE
+publishes rather than handing the staging back to the abandoned open, which
+it expires. A reopen by the owner clears the mark. A write OPEN that would
+join a failed staging gets `NFS4ERR_IO`.
+
+A staging that will not be published fences its candidate before it goes:
+after a publication failure, and when it ends detached. The fence scraps
+the candidate, so that a link the backend has not answered yet cannot land
+later. A scrap the backend does not answer gives `NFS4ERR_DELAY` and keeps
+the staging. REMOVE and RENAME fence the writers at their names before their
+lookup (see [Mutation protocol](../../DESIGN.md#mutation-protocol)), OPEN
+fences a recovered staging it discards because its name has gone, and lease
+retirement fences, best effort. A CLOSE that leaves a transient it never
+submitted, a clean or timestamp-only one for example, scraps it once its
+reply is recorded.
+
+A publication whose upload fails, or that the backend rejects, is
+discarded, unless resolving the candidate shows that another copy of the
+request linked it. The staging goes, or is quarantined if other opens read
+it, the open ends, and the CLOSE reports the error, which the Linux client
+does not relay to the application.
+
 ### Failed-writer tombstones
 
 A writer whose namespace operation has an unknown outcome, or whose
-publication failed in hydration or LinkFile while other opens read it, is
-quarantined. Its staging entry stays as a tombstone for the life of the
-process; see
+publication failed while other opens read it, is quarantined. Its staging
+entry stays as a tombstone for the life of the process; see
 [staging](../staging/README.md#startup-recovery-and-quarantine). READ and
 WRITE with its stateid get `NFS4ERR_IO`. The writer index in
 [client views](../openstate/README.md#client-views) remembers it too, so
@@ -696,8 +787,9 @@ background hydration. Across the process, at most two background base reads
 run at once. Each waits up to 10 ms for foreground reads in progress to go
 first. The last write CLOSE, or a downgrade to READ, cancels the background
 worker and finishes the remaining ranges with foreground reads before
-uploading the file. The mechanics are in
-[Overlay files](../staging/README.md#overlay-files).
+uploading the file. A read the backend does not answer gives the CLOSE
+`NFS4ERR_DELAY`, and the retry resumes where it stopped. The mechanics are
+in [Overlay files](../staging/README.md#overlay-files).
 
 ## Backchannel
 

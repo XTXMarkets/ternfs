@@ -50,7 +50,6 @@ func (s *Server) opCommit(st *compoundState, w *nfs4.COMPOUND4resWriter) uint32 
 			continue
 		}
 		if err := sf.Sync(); err != nil {
-			st.effectUnknown = true
 			ew := w.AppendResarray_Commit()
 			return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_IO)
 		}
@@ -118,13 +117,18 @@ func (s *Server) opRead(args nfs4.READ4args, st *compoundState, w *nfs4.COMPOUND
 
 	if sf != nil {
 		n, eof, err = sf.Read(offset, buf, s.readBaseForeground)
-		if errors.Is(err, staging.ErrRemoved) && !s.stagingStore.Failed(dataID) {
-			n, eof, err = s.readBaseForeground(
-				s.clientView(st.clientID, st.currentID), offset, buf,
-			)
+	}
+	if (sf == nil || errors.Is(err, staging.ErrRemoved)) && !s.stagingStore.Failed(dataID) {
+		// READ takes no lock, so a CLOSE may have ended the staging chosen
+		// above: it points the staging's opens, and the client's view, at
+		// what it published. Read what the stateid resolves to now.
+		readID := dataID
+		if isSpecialStateID(stateid) {
+			readID = s.clientView(st.clientID, st.currentID)
+		} else if state, status := s.opens.Lookup(st.clientID, extractStateID(stateid), stateid.Seqid(), st.currentID); status == nfs4.NFS4_OK {
+			readID = state.DataID
 		}
-	} else {
-		n, eof, err = s.readBaseForeground(dataID, offset, buf)
+		n, eof, err = s.readBaseForeground(readID, offset, buf)
 	}
 
 	if s.stagingStore.Failed(dataID) {
@@ -434,7 +438,6 @@ func (s *Server) opWrite(args nfs4.WRITE4args, st *compoundState, w *nfs4.COMPOU
 	}
 
 	if err := sf.Write(offset, data); err != nil {
-		st.effectUnknown = true
 		ew := w.AppendResarray_Write()
 		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_IO)
 	}
@@ -444,7 +447,6 @@ func (s *Server) opWrite(args nfs4.WRITE4args, st *compoundState, w *nfs4.COMPOU
 	committed := uint32(unstable4)
 	if stable != unstable4 {
 		if err := sf.Sync(); err != nil {
-			st.effectUnknown = true
 			ew := w.AppendResarray_Write()
 			return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_IO)
 		}

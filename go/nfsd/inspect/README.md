@@ -276,7 +276,7 @@ incarnation and open owner, access mode, base inode and size, dirty
 ranges, writer attributes, the recovery key, the EXCLUSIVE4 verifier when present, and the `retired`,
 `unlinked` and `guarded` flags. An entry is `retired` when its lease
 expired and its acknowledged data is held for the client to reclaim. The
-sidecar version is the on-disk layout, such as `v8`, not an NFS version.
+sidecar version is the on-disk layout, such as `v9`, not an NFS version.
 
 A sidecar with no open marker is listed under its incarnation's `staging`.
 In an unfiltered report, sidecars belonging to no incarnation in the store

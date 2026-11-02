@@ -60,10 +60,6 @@ type Server struct {
 	views              openstate.ViewStore
 	names              nameCache
 	stagingStore       staging.Store
-	// Publications a CLOSE submitted and got no answer for, by staging
-	// inode: the transients each attempt went through (publishStaging).
-	publishMu          sync.Mutex
-	publishTried       map[vfs.InodeID][]publishAttempt
 	writeVerifier      [8]byte       // random per server instance, changes on restart
 	idleTimeout        time.Duration // timeout reading the next request
 	writeTimeout       time.Duration // timeout writing one reply
@@ -734,6 +730,10 @@ func (s *Server) compoundBody(req *rpcRequest, args nfs4.COMPOUND4args) (result 
 		}
 	}
 	st := &compoundState{principal: req.principal(), connection: req.connection, afterReply: &req.afterReply}
+	// Registered before the recovery below, so that the locks of the
+	// operation that ends the compound go only once its reply, whatever it
+	// is, has been recorded.
+	defer st.releaseHolds()
 	overallStatus := uint32(nfs4.NFS4_OK)
 	opCount := 0
 	var seq sequenceResult
@@ -974,9 +974,6 @@ func (s *Server) compoundBody(req *rpcRequest, args nfs4.COMPOUND4args) (result 
 		}
 
 		opCount++
-		if st.effectUnknown && seq.sess != nil {
-			s.sessions.retireSession(seq.sess, true)
-		}
 		if uint64(rpcAcceptedHeaderSize+w.Len())+uint64(suffix) > uint64(limit) {
 			if operationMutates(opnum) {
 				// A violated fixed bound after a known effect cannot be recast as
@@ -1000,6 +997,10 @@ func (s *Server) compoundBody(req *rpcRequest, args nfs4.COMPOUND4args) (result 
 			s.log.Debug("op failed", "op", nfs4.NfsOpnum4Name(opnum), "status", nfs4.Nfsstat4Name(opStatus))
 			overallStatus = opStatus
 			break
+		}
+		if index+1 < len(ops) {
+			// The compound goes on: this operation's locks go now.
+			st.releaseHolds()
 		}
 	}
 

@@ -5,10 +5,14 @@
 package server
 
 import (
+	"net"
 	"os"
+	"sync/atomic"
 	"testing"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sessionstore"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -86,4 +90,68 @@ func stagingFiles(dir string) ([]os.DirEntry, error) {
 		}
 	}
 	return files, nil
+}
+
+// holdRecord makes the next reply record wait, once written, until release
+// is closed; recording is closed when it waits. The compound's last
+// operation keeps its locks until then.
+func holdRecord(srv *Server) (recording, release chan struct{}) {
+	recording, release = make(chan struct{}), make(chan struct{})
+	persist := srv.sessions.persistSlot
+	var held atomic.Bool
+	srv.sessions.persistSlot = func(sess *session, slotID uint32, rec sessionstore.Record) {
+		persist(sess, slotID, rec)
+		if held.CompareAndSwap(false, true) {
+			close(recording)
+			<-release
+		}
+	}
+	return recording, release
+}
+
+// openBody opens name in the root for owner with access, creating nothing,
+// and returns its handle.
+func openBody(clientID uint64, owner, name string, access uint32) []byte {
+	return buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
+		w.AppendArgarray_Putrootfh()
+		ow := w.AppendArgarray_Open()
+		ow.SetShareAccess(access)
+		ow.SetShareDeny(nfs4.OPEN4_SHARE_DENY_NONE)
+		ownerW := ow.StartOwner()
+		ownerW = ownerW.SetClientid(clientID)
+		ow.Resume(ownerW.SetOwner([]byte(owner)).Finish())
+		ow.SetOpenhow_Default(nfs4.OPEN4_NOCREATE)
+		ow.Resume(ow.SetClaim_Null().SetData([]byte(name)).Finish())
+		w.Resume(ow.Finish())
+		w.AppendArgarray_Getfh()
+	})
+}
+
+// sendAsync sends wire on conn from another goroutine; the reply arrives
+// on the channel, nil on a transport error.
+func sendAsync(conn net.Conn, xid uint32, wire []byte) <-chan []byte {
+	done := make(chan []byte, 1)
+	go func() {
+		reply, err := sendRawRPC(conn, xid, procCompound, wire)
+		if err != nil {
+			reply = nil
+		}
+		done <- reply
+	}()
+	return done
+}
+
+// startTestServerWithVFS serves fs with a fresh staging directory.
+func startTestServerWithVFS(t *testing.T, fs vfs.TernVFS) (*Server, string, func()) {
+	t.Helper()
+	store, err := staging.NewLocalStore(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewServer(fs, store, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr, cleanup := serveTestServer(t, srv)
+	return srv, addr, cleanup
 }
