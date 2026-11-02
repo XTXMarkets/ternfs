@@ -14,22 +14,21 @@ import (
 func (t *RemoteTernVFS) CachedParent(id InodeID) (InodeID, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	parent, ok := t.parents[id]
-	return parent, ok
+	return t.parents.get(id)
 }
 
 // ForgetParent drops the parent cached for id.
 func (t *RemoteTernVFS) ForgetParent(id InodeID) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	delete(t.parents, id)
+	t.parents.remove(id)
 }
 
 // ReaderCached reports whether a file reader is cached for id.
 func (t *RemoteTernVFS) ReaderCached(id InodeID) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	_, ok := t.readers[msgs.InodeId(id)]
+	_, ok := t.readers.get(msgs.InodeId(id))
 	return ok
 }
 
@@ -37,7 +36,7 @@ func (t *RemoteTernVFS) ReaderCached(id InodeID) bool {
 func (t *RemoteTernVFS) CacheEmptyReader(id InodeID) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.readers[msgs.InodeId(id)] = &cachedReader{}
+	t.readers.put(msgs.InodeId(id), &cachedReader{})
 }
 
 // ForgetParent drops the parent recorded for id.

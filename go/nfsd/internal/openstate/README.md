@@ -173,12 +173,14 @@ process, and a read open of the name in that window would otherwise see
 the version before the edit.
 
 COMMIT has no stateid either. It uses a separate writer index: the staging
-each client wrote through each handle, at most eight per handle and 1024
-handles, kept for the life of the process. That index lets COMMIT find a
+each client wrote through each handle. That index lets COMMIT find a
 failed writer's tombstone after its CLOSE. It is not a list of the
-client's open writers. Its bound is first in, first out: once an entry is
-evicted, COMMIT through that handle can answer OK for a writer that
-failed. After a restart COMMIT also
+client's open writers. An entry lives as long as its staging: while the
+staging is live, or failed and kept as a tombstone. The server's sweep
+drops entries whose staging has gone, and nothing else evicts, so COMMIT
+through a handle reports a failed writer for as long as its tombstone
+stands. The index is bounded by the staging it names. After a restart
+COMMIT also
 syncs the client's recovered writers of the handle, without adopting them;
 see [Client recovery](../../RECOVERY.md#client-recovery).
 

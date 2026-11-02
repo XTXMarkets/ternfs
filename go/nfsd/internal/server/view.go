@@ -77,7 +77,14 @@ func (s *Server) viewHeld(key openstate.ViewKey) bool {
 
 func (s *Server) sweepViews() {
 	s.views.Sweep(s.clients.Now(), s.viewHeld)
+	s.views.PruneWriters(s.writerKept)
 	s.compactAliases()
+}
+
+// writerKept reports that a writer index entry still matters: its staging
+// is live, or failed and so a tombstone COMMIT must report.
+func (s *Server) writerKept(id vfs.InodeID) bool {
+	return s.stagingStore.Failed(id) || s.stagingStore.Get(id) != nil
 }
 
 // failedWriter reports whether a writer clientID used through fileID has

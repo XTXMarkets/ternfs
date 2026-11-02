@@ -498,5 +498,9 @@ RemoteTernVFS keeps two process-local caches. The parent map, filled by
 Lookup and Readdir, serves PUTFH's check for internal objects and LOOKUPP.
 The reader cache keeps one file reader per inode read, so READs reuse span
 metadata; a published file is immutable, so a cached reader cannot be
-stale. Neither is a record of the namespace: an entry goes only when this
-process overwrites or removes the name, and neither is bounded.
+stale. Neither is a record of the namespace: an entry goes when this
+process overwrites or removes the name, or when the cache is full and it
+is the least recently used. The parent map holds at most 262,144 entries
+and the reader cache 4,096. An evicted reader is created again; an
+evicted directory's parent is read again from the backend, and a file
+whose parent was evicted is treated as after a restart.

@@ -33,10 +33,11 @@ type ViewStore struct {
 	aliases map[ViewKey]publishedAlias
 	// writers records the staging each client wrote through a handle, so
 	// COMMIT, which has no stateid, still finds a failed writer's tombstone
-	// after its CLOSE. Entries live as long as the process, like the
-	// tombstones (bounded by maxTombstones).
-	writers   map[ViewKey][]vfs.InodeID
-	writerIDs []ViewKey
+	// after its CLOSE. An entry lives exactly as long as its staging: while
+	// it is live or a failed tombstone. PruneWriters drops the rest; nothing
+	// else evicts, so a failed writer is never forgotten while its
+	// tombstone stands.
+	writers map[ViewKey][]vfs.InodeID
 }
 
 func (vs *ViewStore) AddWriter(key ViewKey, dataID vfs.InodeID) {
@@ -50,16 +51,27 @@ func (vs *ViewStore) AddWriter(key ViewKey, dataID vfs.InodeID) {
 			return
 		}
 	}
-	if _, ok := vs.writers[key]; !ok {
-		vs.writerIDs = append(vs.writerIDs, key)
-		if len(vs.writerIDs) > maxTombstones {
-			delete(vs.writers, vs.writerIDs[0])
-			vs.writerIDs = vs.writerIDs[1:]
-		}
-	}
 	vs.writers[key] = append(vs.writers[key], dataID)
-	if len(vs.writers[key]) > 8 {
-		vs.writers[key] = vs.writers[key][1:]
+}
+
+// PruneWriters drops the writer entries whose staging kept no longer
+// reports: gone, published or discarded, and not failed. Such a writer can
+// never fail COMMIT again.
+func (vs *ViewStore) PruneWriters(kept func(vfs.InodeID) bool) {
+	vs.mu.Lock()
+	defer vs.mu.Unlock()
+	for key, ids := range vs.writers {
+		live := ids[:0]
+		for _, id := range ids {
+			if kept(id) {
+				live = append(live, id)
+			}
+		}
+		if len(live) == 0 {
+			delete(vs.writers, key)
+		} else {
+			vs.writers[key] = live
+		}
 	}
 }
 
