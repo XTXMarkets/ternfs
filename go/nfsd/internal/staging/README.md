@@ -52,9 +52,9 @@ a new one.
 
 A directory with server state but no `server-id` is a partial copy, and
 startup refuses it with `ErrPartialCopy`. Server state is a staged data
-file or sidecar, any file in `sessions/`, or any file in `clients/`, which
-is reserved for the server's client records. An alias log, quarantined
-pairs and empty subdirectories are not. A `server-id` that does not decode
+file or sidecar, any file in `sessions/`, or any file in `clients/`, where
+[clientrecords](../clientrecords/records.go) keeps the client records. An
+alias log, quarantined pairs and empty subdirectories are not. A `server-id` that does not decode
 also stops startup; it is never replaced.
 
 A `ReadOnlyStore` has no directory, so its server id is chosen once per

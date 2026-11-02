@@ -40,6 +40,7 @@ Two TernFS properties shape the design:
 | --- | --- | --- |
 | [internal/server](internal/server/server.go) | RPC and connections, sessions and slots, compounds and operations, persistent sessions and replay, the logical lease, confirmation, the staging lifecycle, the alias log and the backchannel. | [README](internal/server/README.md) |
 | [internal/clientstore](internal/clientstore/store.go) | The client records under `/.nfs`: identities, incarnations, confirmation, durable leases and collection. | [README](internal/clientstore/README.md) |
+| [internal/clientrecords](internal/clientrecords/records.go) | One fsynced record per confirmed client identity in the staging directory, replacing the client store. Not yet used by the server. | Package documentation. |
 | [internal/openstate](internal/openstate/store.go) | Process-local stateids, opens, tombstones and client views. | [README](internal/openstate/README.md) |
 | [internal/staging](internal/staging/store.go) | Staged data files and sidecars on the local disk, checkpoints, startup recovery and quarantine. | [README](internal/staging/README.md) |
 | [internal/sessionstore](internal/sessionstore/store.go) | The session file format on the staging disk. | [Session files on disk](internal/server/README.md#session-files-on-disk) |
