@@ -1475,12 +1475,12 @@ func TestLookupDurableOpenStorageErrorPreservesClientState(t *testing.T) {
 	owner := clientstore.ClientOwner{
 		Principal: clientstore.RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"},
 	}
-	clientID, confirm, err := srv.clients.SetClientID(
+	clientID, confirm, err := srv.clients.RegisterForTest(
 		[8]byte{1}, []byte("client"), owner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := srv.clients.ConfirmClientID(
+	if _, err := srv.clients.ConfirmForTest(
 		clientID, confirm, owner.Principal,
 	); err != nil {
 		t.Fatal(err)
@@ -1571,12 +1571,12 @@ func TestExpireIfLeaseDeadKeepsClientWithoutSlot(t *testing.T) {
 	owner := clientstore.ClientOwner{
 		Principal: clientstore.RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"},
 	}
-	clientID, confirm, err := srv.clients.SetClientID(
+	clientID, confirm, err := srv.clients.RegisterForTest(
 		[8]byte{1}, []byte("client"), owner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := srv.clients.ConfirmClientID(
+	if _, err := srv.clients.ConfirmForTest(
 		clientID, confirm, owner.Principal,
 	); err != nil {
 		t.Fatal(err)
@@ -1612,12 +1612,12 @@ func TestExpireIfLeaseDeadExpiresCollectedIncarnation(t *testing.T) {
 	owner := clientstore.ClientOwner{
 		Principal: clientstore.RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"},
 	}
-	clientID, confirm, err := srv.clients.SetClientID(
+	clientID, confirm, err := srv.clients.RegisterForTest(
 		[8]byte{1}, []byte("client"), owner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := srv.clients.ConfirmClientID(
+	if _, err := srv.clients.ConfirmForTest(
 		clientID, confirm, owner.Principal,
 	); err != nil {
 		t.Fatal(err)
@@ -1685,12 +1685,12 @@ func TestStagingSweepKeepsClientWithoutLeaseSlot(t *testing.T) {
 	owner := clientstore.ClientOwner{
 		Principal: clientstore.RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"},
 	}
-	clientID, confirm, err := srv.clients.SetClientID(
+	clientID, confirm, err := srv.clients.RegisterForTest(
 		[8]byte{1}, []byte("client"), owner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := srv.clients.ConfirmClientID(
+	if _, err := srv.clients.ConfirmForTest(
 		clientID, confirm, owner.Principal,
 	); err != nil {
 		t.Fatal(err)
@@ -1731,12 +1731,12 @@ func TestServerLeaseSweepExpiresAbandonedStaging(t *testing.T) {
 	owner := clientstore.ClientOwner{
 		Principal: clientstore.RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"},
 	}
-	clientID, confirm, err := srv.clients.SetClientID(
+	clientID, confirm, err := srv.clients.RegisterForTest(
 		[8]byte{1}, []byte("client"), owner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := srv.clients.ConfirmClientID(
+	if _, err := srv.clients.ConfirmForTest(
 		clientID, confirm, owner.Principal,
 	); err != nil {
 		t.Fatal(err)
@@ -1813,12 +1813,12 @@ func TestServerLeaseSweepKeepsClientRenewedByAnotherOwner(t *testing.T) {
 	owner := clientstore.ClientOwner{
 		Principal: clientstore.RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"},
 	}
-	clientID, confirm, err := srv.clients.SetClientID(
+	clientID, confirm, err := srv.clients.RegisterForTest(
 		[8]byte{1}, []byte("client"), owner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := srv.clients.ConfirmClientID(
+	if _, err := srv.clients.ConfirmForTest(
 		clientID, confirm, owner.Principal,
 	); err != nil {
 		t.Fatal(err)
@@ -1887,12 +1887,12 @@ func TestNewServerDelaysExpiredRecoveredStagingRemoval(t *testing.T) {
 	owner := clientstore.ClientOwner{
 		Principal: clientstore.RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"},
 	}
-	clientID, confirm, err := clients.SetClientID(
+	clientID, confirm, err := clients.RegisterForTest(
 		[8]byte{1}, []byte("client"), owner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := clients.ConfirmClientID(
+	if _, err := clients.ConfirmForTest(
 		clientID, confirm, owner.Principal,
 	); err != nil {
 		t.Fatal(err)
@@ -1914,12 +1914,12 @@ func TestNewServerDelaysExpiredRecoveredStagingRemoval(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	liveID, liveConfirm, err := clients.SetClientID(
+	liveID, liveConfirm, err := clients.RegisterForTest(
 		[8]byte{2}, []byte("live-client"), owner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := clients.ConfirmClientID(
+	if _, err := clients.ConfirmForTest(
 		liveID, liveConfirm, owner.Principal,
 	); err != nil {
 		t.Fatal(err)
@@ -1978,12 +1978,12 @@ func TestClientStoreGCKeepsConfirmedIncarnation(t *testing.T) {
 	owner := clientstore.ClientOwner{
 		Principal: clientstore.RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"},
 	}
-	clientID, confirm, err := store.SetClientID(
+	clientID, confirm, err := store.RegisterForTest(
 		[8]byte{1}, []byte("client"), owner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ConfirmClientID(
+	if _, err := store.ConfirmForTest(
 		clientID, confirm, owner.Principal,
 	); err != nil {
 		t.Fatal(err)
@@ -2045,12 +2045,12 @@ func TestClientStoreRecognizesConfirmedClientAfterRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	clientID, confirm, err := first.SetClientID(
+	clientID, confirm, err := first.RegisterForTest(
 		[8]byte{}, []byte("test-client"), clientstore.ClientOwner{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := first.ConfirmClientID(
+	if _, err := first.ConfirmForTest(
 		clientID, confirm, clientstore.RPCPrincipal{},
 	); err != nil {
 		t.Fatal(err)
@@ -7918,7 +7918,7 @@ func TestSetclientidReboot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	clientid2, confirm2, err := other.SetClientID(
+	clientid2, confirm2, err := other.RegisterForTest(
 		[8]byte{1}, []byte("test-client"), clientstore.ClientOwner{})
 	if err != nil {
 		t.Fatal(err)
@@ -7926,7 +7926,7 @@ func TestSetclientidReboot(t *testing.T) {
 	if clientid2 == incarnation1 {
 		t.Fatal("client reboot reused clientid")
 	}
-	if replaced, err := other.ConfirmClientID(
+	if replaced, err := other.ConfirmForTest(
 		clientid2, confirm2, clientstore.RPCPrincipal{},
 	); err != nil {
 		t.Fatal(err)
@@ -8115,12 +8115,12 @@ func TestServerLeaseSweepExpiresButDoesNotRevokeConfirmedClient(t *testing.T) {
 	owner := clientstore.ClientOwner{
 		Principal: clientstore.RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"},
 	}
-	clientID, confirm, err := srv.clients.SetClientID(
+	clientID, confirm, err := srv.clients.RegisterForTest(
 		[8]byte{1}, []byte("client"), owner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := srv.clients.ConfirmClientID(
+	if _, err := srv.clients.ConfirmForTest(
 		clientID, confirm, owner.Principal,
 	); err != nil {
 		t.Fatal(err)
@@ -8175,12 +8175,12 @@ func TestServerLeaseSweepDropsRenewOnlyClientCache(t *testing.T) {
 	owner := clientstore.ClientOwner{
 		Principal: clientstore.RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"},
 	}
-	clientID, confirm, err := srv.clients.SetClientID(
+	clientID, confirm, err := srv.clients.RegisterForTest(
 		[8]byte{1}, []byte("client"), owner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := srv.clients.ConfirmClientID(
+	if _, err := srv.clients.ConfirmForTest(
 		clientID, confirm, owner.Principal,
 	); err != nil {
 		t.Fatal(err)
@@ -8216,12 +8216,12 @@ func TestClientStoreMarkOpenReusesFreshLease(t *testing.T) {
 	owner := clientstore.ClientOwner{
 		Principal: clientstore.RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"},
 	}
-	clientID, confirm, err := store.SetClientID(
+	clientID, confirm, err := store.RegisterForTest(
 		[8]byte{1}, []byte("client"), owner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ConfirmClientID(
+	if _, err := store.ConfirmForTest(
 		clientID, confirm, owner.Principal,
 	); err != nil {
 		t.Fatal(err)
@@ -8276,12 +8276,12 @@ func TestClientStoreMarkOpenReusesFreshLease(t *testing.T) {
 		t.Fatal(err)
 	}
 	other.Now = store.Now
-	rebootID, rebootConfirm, err := other.SetClientID(
+	rebootID, rebootConfirm, err := other.RegisterForTest(
 		[8]byte{2}, []byte("client"), owner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := other.ConfirmClientID(
+	if _, err := other.ConfirmForTest(
 		rebootID, rebootConfirm, owner.Principal,
 	); err != nil {
 		t.Fatal(err)
@@ -8304,11 +8304,11 @@ func TestRunLeaseSweepContinuesAfterPanic(t *testing.T) {
 	base := time.Unix(1000, 0)
 	srv.clients.SetClock(func() time.Time { return base })
 	owner := clientstore.ClientOwner{Principal: clientstore.RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"}}
-	clientID, confirm, err := srv.clients.SetClientID([8]byte{1}, []byte("client"), owner)
+	clientID, confirm, err := srv.clients.RegisterForTest([8]byte{1}, []byte("client"), owner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := srv.clients.ConfirmClientID(clientID, confirm, owner.Principal); err != nil {
+	if _, err := srv.clients.ConfirmForTest(clientID, confirm, owner.Principal); err != nil {
 		t.Fatal(err)
 	}
 	publishLeaseForTest(t, srv, clientID)

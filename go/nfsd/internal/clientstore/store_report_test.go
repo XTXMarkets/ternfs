@@ -103,7 +103,7 @@ func newInspectFixture(t *testing.T) *inspectFixture {
 	}
 
 	// Identity B: registered but never confirmed.
-	f.pendingID, _, err = f.first.SetClientID(
+	f.pendingID, _, err = f.first.RegisterForTest(
 		[8]byte{3}, []byte("pending-client"), owner)
 	if err != nil {
 		t.Fatal(err)
@@ -172,11 +172,11 @@ func (f *inspectFixture) register(
 	owner ClientOwner,
 ) uint64 {
 	t.Helper()
-	clientID, confirm, err := store.SetClientID(verifier, identity, owner)
+	clientID, confirm, err := store.RegisterForTest(verifier, identity, owner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ConfirmClientID(clientID, confirm, owner.Principal); err != nil {
+	if _, err := store.ConfirmForTest(clientID, confirm, owner.Principal); err != nil {
 		t.Fatal(err)
 	}
 	return clientID

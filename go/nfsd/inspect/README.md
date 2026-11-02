@@ -243,7 +243,7 @@ reboot target is the incarnation a confirmed or pending incarnation's
 | `UNREACHABLE` | No pointer keeps it. Client collection removes it after it has aged. |
 
 `usable` is true only for `ACTIVE`: the incarnation's stateids are
-accepted. Each incarnation also shows its `client` and `update` records,
+accepted. Each incarnation also shows its `client` record,
 with the decoded principal; its lease and confirming slots, each naming the
 nfsd which wrote it; the expired marker; `gc_after`; its open markers; and
 temporary files. An open marker's `active` follows `usable`, and the

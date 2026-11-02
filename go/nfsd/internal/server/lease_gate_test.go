@@ -28,11 +28,11 @@ func TestLeaseGateDecisions(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(srv.clients.StopLeaseWorkers)
-	clientID, confirm, err := srv.clients.SetClientID([8]byte{1}, []byte("gate"), clientstore.ClientOwner{})
+	clientID, confirm, err := srv.clients.RegisterForTest([8]byte{1}, []byte("gate"), clientstore.ClientOwner{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := srv.clients.ConfirmClientID(clientID, confirm, clientstore.RPCPrincipal{}); err != nil {
+	if _, err := srv.clients.ConfirmForTest(clientID, confirm, clientstore.RPCPrincipal{}); err != nil {
 		t.Fatal(err)
 	}
 	ts := connectionSession(t, srv)
@@ -459,11 +459,11 @@ func TestRenewWithServerHooksDoesNotPass(t *testing.T) {
 	}
 	t.Cleanup(srv.clients.StopLeaseWorkers)
 	fs.LeaseName = srv.clients.LeaseName
-	clientID, confirm, err := srv.clients.SetClientID([8]byte{1}, []byte("renew"), clientstore.ClientOwner{})
+	clientID, confirm, err := srv.clients.RegisterForTest([8]byte{1}, []byte("renew"), clientstore.ClientOwner{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := srv.clients.ConfirmClientID(clientID, confirm, clientstore.RPCPrincipal{}); err != nil {
+	if _, err := srv.clients.ConfirmForTest(clientID, confirm, clientstore.RPCPrincipal{}); err != nil {
 		t.Fatal(err)
 	}
 	publishLeaseForTest(t, srv, clientID)

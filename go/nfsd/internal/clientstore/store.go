@@ -133,7 +133,6 @@ const (
 	ConfirmedName       = "confirmed"
 	pendingName         = "pending"
 	ClientRecordName    = "client"
-	updateName          = "update"
 	RebootName          = "reboot"
 	GCCandidateName     = "gc"
 	ExpiredName         = "expired"
@@ -251,79 +250,13 @@ func (cs *Store) lockIdentityMode(identityID vfs.InodeID, shared bool) func() {
 	}
 }
 
-// SetClientID creates an unconfirmed incarnation, except when a matching
-// verifier denotes a callback update to the confirmed incarnation.
-func (cs *Store) SetClientID(
-	verifier [8]byte,
-	id []byte,
-	owner ClientOwner,
-) (uint64, [8]byte, error) {
-	identityID, err := cs.identityDir(id)
-	if err != nil {
-		return 0, [8]byte{}, err
-	}
-	unlock := cs.LockIdentity(identityID)
-	defer unlock()
-
-	confirmedID, confirmed, err := cs.ReadIdentitySymlink(
-		identityID, ConfirmedName)
-	if err != nil {
-		return 0, [8]byte{}, err
-	}
-	if confirmed {
-		record, found, err := cs.readRecord(confirmedID, ClientRecordName)
-		if err != nil {
-			return 0, [8]byte{}, err
-		}
-		if !found {
-			return 0, [8]byte{}, fmt.Errorf(
-				"client store: confirmed client %d has no record", confirmedID)
-		}
-		samePrincipal := record.principal() == owner.Principal
-		if !samePrincipal {
-			active, err := cs.hasActiveOpen(confirmedID)
-			if err != nil {
-				return 0, [8]byte{}, err
-			}
-			if active {
-				return 0, [8]byte{}, ClientInUseError{}
-			}
-		}
-		leaseLive, leaseFound, err := cs.leaseStatus(confirmedID)
-		if err != nil {
-			return 0, [8]byte{}, err
-		}
-		expired := leaseFound && !leaseLive
-		if samePrincipal && !expired &&
-			bytes.Equal(record.Verifier, verifier[:]) {
-			confirm, err := newClientConfirmVerifier()
-			if err != nil {
-				return 0, [8]byte{}, err
-			}
-			update := newDurableClientRecord(id, verifier, confirm, owner)
-			if _, err := cs.replaceJSON(confirmedID, updateName, update); err != nil {
-				return 0, [8]byte{}, err
-			}
-			// A callback update supersedes any earlier unconfirmed incarnation.
-			if _, err := cs.replaceIdentitySymlink(
-				identityID, pendingName, confirmedID,
-			); err != nil {
-				return 0, [8]byte{}, err
-			}
-			return uint64(confirmedID), confirm, nil
-		}
-	}
-
-	return cs.createPending(identityID, verifier, id, owner)
-}
-
 // ExchangeID binds an NFSv4.1 EXCHANGE_ID to a durable incarnation
 // (README.md#registration). A matching verifier and principal adopt the
 // confirmed incarnation without any write; otherwise it creates a pending
 // incarnation for CREATE_SESSION to confirm. Adoption needs no expired marker
-// and either no lease or a live one. Unlike SetClientID, the observation only
-// reads: it publishes no marker and removes no lease slot, even when every
-// lease is dead. A read error is an error, never evidence of absence.
+// and either no lease or a live one. The observation only reads: it
+// publishes no marker and removes no lease slot, even when every lease is
+// dead. A read error is an error, never evidence of absence.
 func (cs *Store) ExchangeID(
 	verifier [8]byte,
 	id []byte,
@@ -408,120 +341,6 @@ func (cs *Store) createPending(
 	return uint64(incarnationID), confirm, nil
 }
 
-// ConfirmClientID returns the clientid replaced by a newly confirmed
-// incarnation. Replays return zero once reboot cleanup has completed.
-func (cs *Store) ConfirmClientID(
-	clientID uint64,
-	confirm [8]byte,
-	principal RPCPrincipal,
-) (uint64, error) {
-	incarnationID := vfs.InodeID(clientID)
-	identityID, valid, err := cs.identityForIncarnation(incarnationID)
-	if err != nil {
-		return 0, err
-	}
-	if !valid {
-		return 0, nfs4.Error(nfs4.NFS4ERR_STALE_CLIENTID)
-	}
-	unlock := cs.LockIdentity(identityID)
-	defer unlock()
-	record, found, err := cs.readRecord(incarnationID, ClientRecordName)
-	if err != nil {
-		return 0, err
-	}
-	if !found {
-		return 0, nfs4.Error(nfs4.NFS4ERR_STALE_CLIENTID)
-	}
-
-	pendingID, pending, err := cs.ReadIdentitySymlink(
-		identityID, pendingName)
-	if err != nil {
-		return 0, err
-	}
-	confirmedID, confirmed, err := cs.ReadIdentitySymlink(
-		identityID, ConfirmedName)
-	if err != nil {
-		return 0, err
-	}
-
-	if pending && pendingID == incarnationID &&
-		bytes.Equal(record.Confirm, confirm[:]) {
-		if record.principal() != principal {
-			return 0, nfs4.Error(nfs4.NFS4ERR_CLID_INUSE)
-		}
-		// The claim keeps this incarnation alive while another nfsd may
-		// replace pending.
-		if err := cs.beginConfirmation(incarnationID); err != nil {
-			return 0, err
-		}
-		pendingID, pending, err = cs.ReadIdentitySymlink(
-			identityID, pendingName)
-		if err != nil {
-			return 0, err
-		}
-		if !pending || pendingID != incarnationID {
-			_ = cs.removeIfExists(incarnationID, cs.ConfirmingName)
-			return 0, nfs4.Error(nfs4.NFS4ERR_STALE_CLIENTID)
-		}
-		if !confirmed || confirmedID != incarnationID {
-			if confirmed {
-				if _, err := cs.replaceRebootSymlink(
-					incarnationID, confirmedID); err != nil {
-					return 0, err
-				}
-			}
-			if _, err := cs.replaceIdentitySymlink(
-				identityID, ConfirmedName, incarnationID,
-			); err != nil {
-				return 0, err
-			}
-		}
-		replacedID, err := cs.finishConfirmed(incarnationID)
-		_ = cs.removeIfExists(incarnationID, cs.ConfirmingName)
-		return replacedID, err
-	}
-
-	if !confirmed || confirmedID != incarnationID {
-		return 0, nfs4.Error(nfs4.NFS4ERR_STALE_CLIENTID)
-	}
-	if bytes.Equal(record.Confirm, confirm[:]) {
-		if record.principal() != principal {
-			return 0, nfs4.Error(nfs4.NFS4ERR_CLID_INUSE)
-		}
-		return cs.finishConfirmed(incarnationID)
-	}
-
-	update, updateFound, err := cs.readRecord(incarnationID, updateName)
-	if err != nil {
-		return 0, err
-	}
-	if !updateFound || !bytes.Equal(update.Confirm, confirm[:]) {
-		return 0, nfs4.Error(nfs4.NFS4ERR_STALE_CLIENTID)
-	}
-	if update.principal() != principal {
-		return 0, nfs4.Error(nfs4.NFS4ERR_CLID_INUSE)
-	}
-	if _, err := cs.replaceJSON(
-		incarnationID, ClientRecordName, update,
-	); err != nil {
-		return 0, err
-	}
-	if err := cs.removeIfExists(incarnationID, updateName); err != nil {
-		return 0, err
-	}
-	return 0, nil
-}
-
-func (cs *Store) finishConfirmed(
-	incarnationID vfs.InodeID,
-) (uint64, error) {
-	replacedID, err := cs.finishReboot(incarnationID)
-	if replacedID != 0 {
-		cs.LocalClients.Delete(vfs.InodeID(replacedID))
-	}
-	return replacedID, err
-}
-
 func (cs *Store) beginConfirmation(incarnationID vfs.InodeID) error {
 	_, err := cs.replaceJSON(
 		incarnationID,
@@ -531,20 +350,6 @@ func (cs *Store) beginConfirmation(incarnationID vfs.InodeID) error {
 		},
 	)
 	return err
-}
-
-func (cs *Store) finishReboot(incarnationID vfs.InodeID) (uint64, error) {
-	oldID, found, err := cs.ReadRebootSymlink(incarnationID)
-	if err != nil || !found {
-		return 0, err
-	}
-	if err := cs.purgeState(oldID); err != nil {
-		return 0, err
-	}
-	if err := cs.removeIfExists(incarnationID, RebootName); err != nil {
-		return 0, err
-	}
-	return uint64(oldID), nil
 }
 
 func (cs *Store) purgeState(incarnationID vfs.InodeID) error {

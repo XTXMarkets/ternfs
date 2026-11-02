@@ -421,10 +421,9 @@ func (cs *Store) FinishReplacement(a *ConfirmAttempt) (uint64, error) {
 // names n, and n's reboot symlink, through one exact edge, names an
 // incarnation p other than n. Then p is purged and that exact edge removed.
 //
-// It acts on the same evidence the NFSv4.0 path's finishConfirmed purges on,
-// adding only the confirmed check and the exact edge, and is not a proof that
-// p can never be used again: the NFSv4.0 callback update can move confirmed
-// back to it, and the identity lock is local (README.md#replacement-purge).
+// It adds the confirmed check and the exact edge to the reboot evidence, and
+// is not a proof that p can never be used again: the identity lock is local
+// (README.md#replacement-purge).
 // It grants nothing on behalf of an attempt whose own B never applied.
 //
 // Locally, the purge is ordered with confirmation protection: once p is

@@ -694,7 +694,7 @@ func TestConfirmationPendingMoved(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.afterPrepare(func() {
-		if _, _, err := other.SetClientID([8]byte{11}, []byte("test-client"), clientstore.ClientOwner{}); err != nil {
+		if _, _, err := other.RegisterForTest([8]byte{11}, []byte("test-client"), clientstore.ClientOwner{}); err != nil {
 			t.Error(err)
 		}
 	})

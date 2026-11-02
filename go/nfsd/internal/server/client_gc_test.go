@@ -36,7 +36,7 @@ func TestClientStoreGCIsBoundedAndRetryable(t *testing.T) {
 
 	var clientID uint64
 	for i := 0; i < clientstore.MaxClientGCRemovals+3; i++ {
-		clientID, _, err = writer.SetClientID(
+		clientID, _, err = writer.RegisterForTest(
 			[8]byte{byte(i + 1)}, []byte("client"), owner)
 		if err != nil {
 			t.Fatal(err)
@@ -94,12 +94,12 @@ func TestServerSchedulesClientGC(t *testing.T) {
 	base := time.Unix(1000, 0)
 	srv.clients.SetClock(func() time.Time { return base })
 	owner := clientstore.ClientOwner{Principal: clientstore.RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"}}
-	oldID, _, err := srv.clients.SetClientID(
+	oldID, _, err := srv.clients.RegisterForTest(
 		[8]byte{1}, []byte("client"), owner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	clientID, _, err := srv.clients.SetClientID(
+	clientID, _, err := srv.clients.RegisterForTest(
 		[8]byte{2}, []byte("client"), owner)
 	if err != nil {
 		t.Fatal(err)
@@ -187,7 +187,7 @@ func TestScheduleClientGCRestartsForPendingWork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	clientID, _, err := srv.clients.SetClientID(
+	clientID, _, err := srv.clients.RegisterForTest(
 		[8]byte{1}, []byte("client"), clientstore.ClientOwner{})
 	if err != nil {
 		t.Fatal(err)
@@ -226,7 +226,7 @@ func TestClientGCContinuesAfterPanic(t *testing.T) {
 	}
 	var clientIDs []vfs.InodeID
 	for i := byte(1); i <= 2; i++ {
-		clientID, _, err := srv.clients.SetClientID(
+		clientID, _, err := srv.clients.RegisterForTest(
 			[8]byte{i}, []byte{byte('a' + i)}, clientstore.ClientOwner{})
 		if err != nil {
 			t.Fatal(err)

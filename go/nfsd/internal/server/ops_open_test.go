@@ -122,11 +122,11 @@ func TestJoinedOpenSizeSyncFailure(t *testing.T) {
 // ending the session.
 func TestDefiniteOpenErrorStaysReplayable(t *testing.T) {
 	srv := admissionWritableServer(t, vfs.NewLocalTernVFS(t.TempDir()))
-	client, confirm, err := srv.clients.SetClientID([8]byte{}, []byte("definite-open"), clientstore.ClientOwner{})
+	client, confirm, err := srv.clients.RegisterForTest([8]byte{}, []byte("definite-open"), clientstore.ClientOwner{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = srv.clients.ConfirmClientID(client, confirm, clientstore.RPCPrincipal{}); err != nil {
+	if _, err = srv.clients.ConfirmForTest(client, confirm, clientstore.RPCPrincipal{}); err != nil {
 		t.Fatal(err)
 	}
 	ts := connectionSession(t, srv)

@@ -31,7 +31,6 @@ writer, and [store_report.go](store_report.go) the read-only
     t.<hex>                 temporary
     i.<hex>/                one incarnation
         client              JSON record
-        update              JSON record
         reboot              symlink to ../i.<hex>
         o.<stateid>         empty open marker
         lease.<nfsd-id>     JSON expiry
@@ -48,7 +47,6 @@ writer, and [store_report.go](store_report.go) the read-only
 | `confirmed` | The identity's current incarnation. |
 | `pending` | The incarnation awaiting its first CREATE_SESSION. It may still name the confirmed one; see [Record updates](#record-updates). |
 | `client` | The owner, the client's verifier, the confirmation verifier nfsd issued and the RPC principal. The owner is kept for inspection; the directory name is its hash. |
-| `update` | An unconfirmed replacement for `client`, written only by the NFSv4.0 path. |
 | `reboot` | The incarnation this one replaced, while its state still needs purging. |
 | `o.<stateid>` | An open that needs a durable marker, named by its 12-byte stateid as hex. The detailed open state is process-local. |
 | `lease.<nfsd-id>` | One process's durable lease expiry. |
@@ -116,9 +114,6 @@ client's boot verifier and its principal. Staging sidecars record it, and
 it survives collection of the incarnation, so the same client boot can
 recover its staged data after its incarnation expires; see
 [Writer recovery](../../RECOVERY.md#writer-recovery).
-
-`SetClientID` and `ConfirmClientID` are the NFSv4.0 registration paths.
-The NFSv4.1 server does not call them.
 
 ## Confirmation
 

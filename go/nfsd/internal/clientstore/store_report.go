@@ -162,7 +162,6 @@ type inspectIncarnation struct {
 	// incarnation is confirmed and its lease is live.
 	Usable        bool                   `json:"usable"`
 	Record        *inspectRecord         `json:"client,omitempty"`
-	Update        *inspectRecord         `json:"update,omitempty"`
 	Reboot        *inspectPointer        `json:"reboot,omitempty"`
 	Leases        []inspectSlot          `json:"leases,omitempty"`
 	Confirming    []inspectSlot          `json:"confirming,omitempty"`
@@ -757,17 +756,13 @@ func (cs *Store) inspectIncarnation(
 	leaseLive := false
 	for _, entry := range entries {
 		switch {
-		case entry.Name == ClientRecordName || entry.Name == updateName:
+		case entry.Name == ClientRecordName:
 			record, err := cs.inspectRecord(entry)
 			if err != nil {
 				inc.Problems = append(inc.Problems, err.Error())
 				continue
 			}
-			if entry.Name == ClientRecordName {
-				inc.Record = record
-			} else {
-				inc.Update = record
-			}
+			inc.Record = record
 		case entry.Name == RebootName:
 			inc.Reboot, err = cs.inspectPointer(dir.ID, RebootName, true)
 			if err != nil {
@@ -847,7 +842,7 @@ func (cs *Store) inspectIncarnation(
 	return inc, nil
 }
 
-// inspectRecord decodes a client or update record. An unreadable record is a
+// inspectRecord decodes a client record. An unreadable record is a
 // defect in the store, so the error is returned for the caller to report.
 func (cs *Store) inspectRecord(entry vfs.DirEntry) (*inspectRecord, error) {
 	var record durableClientRecord

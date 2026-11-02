@@ -38,11 +38,11 @@ func newConfirmFixture(t *testing.T, withP bool) *confirmFixture {
 	}
 	f.store = store
 	if withP {
-		p, confirm, err := store.SetClientID([8]byte{1}, []byte("client"), ClientOwner{})
+		p, confirm, err := store.RegisterForTest([8]byte{1}, []byte("client"), ClientOwner{})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := store.ConfirmClientID(p, confirm, RPCPrincipal{}); err != nil {
+		if _, err := store.ConfirmForTest(p, confirm, RPCPrincipal{}); err != nil {
 			t.Fatal(err)
 		}
 		if err := store.MarkOpen(p, nfs4.StateID{1}); err != nil {
@@ -50,7 +50,7 @@ func newConfirmFixture(t *testing.T, withP bool) *confirmFixture {
 		}
 		f.p = vfs.InodeID(p)
 	}
-	n, confirm, err := store.SetClientID([8]byte{2}, []byte("client"), ClientOwner{})
+	n, confirm, err := store.RegisterForTest([8]byte{2}, []byte("client"), ClientOwner{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -600,7 +600,7 @@ func TestConfirmationEdgeGoneErrors(t *testing.T) {
 // proof that P is unchanged, so the attempt rolls back.
 func TestConfirmationRequiresPending(t *testing.T) {
 	f := newConfirmFixture(t, true)
-	if _, _, err := f.store.SetClientID([8]byte{3}, []byte("client"), ClientOwner{}); err != nil {
+	if _, _, err := f.store.RegisterForTest([8]byte{3}, []byte("client"), ClientOwner{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.store.PrepareConfirmation(uint64(f.n), f.confirm); nfs4.ErrorCode(err) != nfs4.NFS4ERR_STALE_CLIENTID {

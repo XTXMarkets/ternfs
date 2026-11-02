@@ -78,17 +78,17 @@ func TestClientStoreDurableState(t *testing.T) {
 	var clientID uint64
 	var confirm [8]byte
 	t.Run("registration and callback update", func(t *testing.T) {
-		if _, err := first.ConfirmClientID(
+		if _, err := first.ConfirmForTest(
 			0, [8]byte{}, RPCPrincipal{},
 		); nfs4.ErrorCode(err) != nfs4.NFS4ERR_STALE_CLIENTID {
 			t.Fatalf("zero clientid confirmation error = %v, want NFS4ERR_STALE_CLIENTID", err)
 		}
-		staleID, staleConfirm, err := first.SetClientID(
+		staleID, staleConfirm, err := first.RegisterForTest(
 			verifier, []byte("client"), owner1)
 		if err != nil {
 			t.Fatal(err)
 		}
-		clientID, confirm, err = first.SetClientID(
+		clientID, confirm, err = first.RegisterForTest(
 			verifier, []byte("client"), owner1)
 		if err != nil {
 			t.Fatal(err)
@@ -103,12 +103,12 @@ func TestClientStoreDurableState(t *testing.T) {
 			t.Fatalf("superseded pending incarnation %d was removed synchronously: %v",
 				staleID, err)
 		}
-		if _, err := second.ConfirmClientID(
+		if _, err := second.ConfirmForTest(
 			clientID, staleConfirm, owner1.Principal,
 		); nfs4.ErrorCode(err) != nfs4.NFS4ERR_STALE_CLIENTID {
 			t.Fatalf("replaced confirmation error = %v, want NFS4ERR_STALE_CLIENTID", err)
 		}
-		if _, err := second.ConfirmClientID(
+		if _, err := second.ConfirmForTest(
 			clientID, confirm, owner1.Principal,
 		); err != nil {
 			t.Fatal(err)
@@ -121,7 +121,7 @@ func TestClientStoreDurableState(t *testing.T) {
 			t.Fatal("confirmed client is not visible to another ClientStore")
 		}
 
-		updateID, updateConfirm, err := second.SetClientID(
+		updateID, updateConfirm, err := second.RegisterForTest(
 			verifier, []byte("client"), owner1)
 		if err != nil {
 			t.Fatal(err)
@@ -129,12 +129,12 @@ func TestClientStoreDurableState(t *testing.T) {
 		if updateID != clientID || updateConfirm == confirm {
 			t.Fatal("callback update did not retain clientid with a new token")
 		}
-		if _, err := first.ConfirmClientID(
+		if _, err := first.ConfirmForTest(
 			clientID, confirm, owner1.Principal,
 		); err != nil {
 			t.Fatalf("previous confirmed token should remain replayable: %v", err)
 		}
-		if _, err := first.ConfirmClientID(
+		if _, err := first.ConfirmForTest(
 			clientID, updateConfirm, owner1.Principal,
 		); err != nil {
 			t.Fatal(err)
@@ -147,7 +147,7 @@ func TestClientStoreDurableState(t *testing.T) {
 		if err := first.MarkOpen(clientID, stateID); err != nil {
 			t.Fatal(err)
 		}
-		if _, _, err := second.SetClientID(
+		if _, _, err := second.RegisterForTest(
 			[8]byte{2}, []byte("client"), owner2,
 		); err == nil {
 			t.Fatal("different-verifier owner conflict with active state was accepted")
@@ -157,7 +157,7 @@ func TestClientStoreDurableState(t *testing.T) {
 				t.Fatalf("different-verifier owner conflict = %v", err)
 			}
 		}
-		if _, _, err := second.SetClientID(
+		if _, _, err := second.RegisterForTest(
 			verifier, []byte("client"), owner2,
 		); err == nil {
 			t.Fatal("conflicting owner with active state was accepted")
@@ -170,7 +170,7 @@ func TestClientStoreDurableState(t *testing.T) {
 		if err := first.RemoveOpen(clientID, stateID); err != nil {
 			t.Fatal(err)
 		}
-		takeoverID, takeoverConfirm, err := second.SetClientID(
+		takeoverID, takeoverConfirm, err := second.RegisterForTest(
 			verifier, []byte("client"), owner2)
 		if err != nil {
 			t.Fatalf("inactive owner takeover failed: %v", err)
@@ -178,7 +178,7 @@ func TestClientStoreDurableState(t *testing.T) {
 		if takeoverID == clientID {
 			t.Fatal("inactive owner takeover reused clientid")
 		}
-		if _, err := first.ConfirmClientID(
+		if _, err := first.ConfirmForTest(
 			takeoverID, takeoverConfirm, owner2.Principal,
 		); err != nil {
 			t.Fatal(err)
@@ -190,7 +190,7 @@ func TestClientStoreDurableState(t *testing.T) {
 		if err := first.MarkOpen(clientID, stateID); err != nil {
 			t.Fatal(err)
 		}
-		reregisterID, reregisterConfirm, err := second.SetClientID(
+		reregisterID, reregisterConfirm, err := second.RegisterForTest(
 			verifier, []byte("client"), owner1,
 		)
 		if err != nil {
@@ -199,7 +199,7 @@ func TestClientStoreDurableState(t *testing.T) {
 		if reregisterID == clientID {
 			t.Fatal("registration after lease expiry reused clientid")
 		}
-		if _, err := second.ConfirmClientID(
+		if _, err := second.ConfirmForTest(
 			reregisterID, reregisterConfirm, owner1.Principal,
 		); err != nil {
 			t.Fatal(err)
@@ -220,7 +220,7 @@ func TestClientStoreDurableState(t *testing.T) {
 		if err := second.MarkOpen(clientID, stateID); err != nil {
 			t.Fatal(err)
 		}
-		rebootID, rebootConfirm, err := first.SetClientID(
+		rebootID, rebootConfirm, err := first.RegisterForTest(
 			[8]byte{2}, []byte("client"), owner1)
 		if err != nil {
 			t.Fatal(err)
@@ -228,7 +228,7 @@ func TestClientStoreDurableState(t *testing.T) {
 		if rebootID == clientID {
 			t.Fatal("client reboot reused clientid")
 		}
-		replacedID, err := second.ConfirmClientID(
+		replacedID, err := second.ConfirmForTest(
 			rebootID, rebootConfirm, owner1.Principal)
 		if err != nil {
 			t.Fatal(err)
@@ -279,70 +279,6 @@ func TestClientStoreDurableState(t *testing.T) {
 	})
 }
 
-func TestClientStoreConfirmationReplayAndUpdateRejection(t *testing.T) {
-	fs := vfs.NewLocalTernVFS(t.TempDir())
-	store, err := NewStore(fs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	owner := ClientOwner{
-		Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"},
-	}
-	otherPrincipal := RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "other"}
-	clientID, confirm, err := store.SetClientID(
-		[8]byte{1}, []byte("client"), owner)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.ConfirmClientID(
-		clientID, confirm, owner.Principal,
-	); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, _, err := store.SetClientID(
-		[8]byte{2}, []byte("client"), owner,
-	); err != nil {
-		t.Fatal(err)
-	}
-	if replaced, err := store.ConfirmClientID(
-		clientID, confirm, owner.Principal,
-	); err != nil {
-		t.Fatalf("confirmed SETCLIENTID_CONFIRM replay failed: %v", err)
-	} else if replaced != 0 {
-		t.Fatalf("confirmed replay replaced clientid %d", replaced)
-	}
-
-	updateID, updateConfirm, err := store.SetClientID(
-		[8]byte{1}, []byte("client"), owner)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if updateID != clientID {
-		t.Fatalf("callback update clientid = %d, want %d",
-			updateID, clientID)
-	}
-	wrongConfirm := updateConfirm
-	wrongConfirm[0] ^= 0xff
-	if _, err := store.ConfirmClientID(
-		clientID, wrongConfirm, owner.Principal,
-	); nfs4.ErrorCode(err) != nfs4.NFS4ERR_STALE_CLIENTID {
-		t.Fatalf("wrong callback-update token error = %v, want NFS4ERR_STALE_CLIENTID",
-			err)
-	}
-	if _, err := store.ConfirmClientID(
-		clientID, updateConfirm, otherPrincipal,
-	); nfs4.ErrorCode(err) != nfs4.NFS4ERR_CLID_INUSE {
-		t.Fatalf("callback-update principal error = %v, want NFS4ERR_CLID_INUSE",
-			err)
-	}
-	if _, err := store.ConfirmClientID(
-		clientID, updateConfirm, owner.Principal,
-	); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestClientStoreLeaseSlotsDoNotShortenEachOther(t *testing.T) {
 	fs := vfs.NewLocalTernVFS(t.TempDir())
 	first, err := NewStore(fs)
@@ -357,12 +293,12 @@ func TestClientStoreLeaseSlotsDoNotShortenEachOther(t *testing.T) {
 	first.Now = func() time.Time { return base }
 	second.Now = func() time.Time { return base }
 	owner := ClientOwner{Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"}}
-	clientID, confirm, err := first.SetClientID(
+	clientID, confirm, err := first.RegisterForTest(
 		[8]byte{1}, []byte("client"), owner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := second.ConfirmClientID(
+	if _, err := second.ConfirmForTest(
 		clientID, confirm, owner.Principal,
 	); err != nil {
 		t.Fatal(err)
@@ -644,12 +580,12 @@ func TestClientStoreHasOpenFastPathAndImplicitRenewal(t *testing.T) {
 	owner := ClientOwner{
 		Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"},
 	}
-	clientID, confirm, err := store.SetClientID(
+	clientID, confirm, err := store.RegisterForTest(
 		[8]byte{1}, []byte("client"), owner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ConfirmClientID(
+	if _, err := store.ConfirmForTest(
 		clientID, confirm, owner.Principal,
 	); err != nil {
 		t.Fatal(err)
@@ -743,12 +679,12 @@ func TestClientStoreImplicitRenewalRechecksReboot(t *testing.T) {
 	owner := ClientOwner{
 		Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"},
 	}
-	oldID, confirm, err := first.SetClientID(
+	oldID, confirm, err := first.RegisterForTest(
 		[8]byte{1}, []byte("client"), owner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := first.ConfirmClientID(
+	if _, err := first.ConfirmForTest(
 		oldID, confirm, owner.Principal,
 	); err != nil {
 		t.Fatal(err)
@@ -757,7 +693,7 @@ func TestClientStoreImplicitRenewalRechecksReboot(t *testing.T) {
 	if err := first.MarkOpen(oldID, stateID); err != nil {
 		t.Fatal(err)
 	}
-	newID, confirm, err := second.SetClientID(
+	newID, confirm, err := second.RegisterForTest(
 		[8]byte{2}, []byte("client"), owner)
 	if err != nil {
 		t.Fatal(err)
@@ -766,7 +702,7 @@ func TestClientStoreImplicitRenewalRechecksReboot(t *testing.T) {
 	// HasOpen writes no lease (README.md#refresher), so a reboot confirmed by
 	// another process cannot be raced by a renewal: the cached open sees the
 	// confirmed pointer move and reports nothing.
-	if _, err := second.ConfirmClientID(newID, confirm, owner.Principal); err != nil {
+	if _, err := second.ConfirmForTest(newID, confirm, owner.Principal); err != nil {
 		t.Fatalf("reboot confirmation failed: %v", err)
 	}
 	first.Now = func() time.Time {
@@ -811,11 +747,11 @@ func TestClientStoreNotedOpenHoldsNoMarker(t *testing.T) {
 	second.Now = func() time.Time { return base }
 	owner1 := ClientOwner{Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner-1"}}
 	owner2 := ClientOwner{Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner-2"}}
-	clientID, confirm, err := first.SetClientID([8]byte{1}, []byte("client"), owner1)
+	clientID, confirm, err := first.RegisterForTest([8]byte{1}, []byte("client"), owner1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := first.ConfirmClientID(clientID, confirm, owner1.Principal); err != nil {
+	if _, err := first.ConfirmForTest(clientID, confirm, owner1.Principal); err != nil {
 		t.Fatal(err)
 	}
 	stateID := nfs4.StateID{1}
@@ -834,11 +770,11 @@ func TestClientStoreNotedOpenHoldsNoMarker(t *testing.T) {
 		t.Fatalf("cached client lists %d open markers, want 0", n)
 	}
 
-	takeoverID, takeoverConfirm, err := second.SetClientID([8]byte{2}, []byte("client"), owner2)
+	takeoverID, takeoverConfirm, err := second.RegisterForTest([8]byte{2}, []byte("client"), owner2)
 	if err != nil {
 		t.Fatalf("takeover by another principal: %v", err)
 	}
-	if _, err := second.ConfirmClientID(takeoverID, takeoverConfirm, owner2.Principal); err != nil {
+	if _, err := second.ConfirmForTest(takeoverID, takeoverConfirm, owner2.Principal); err != nil {
 		t.Fatal(err)
 	}
 	if !first.LeaseProven(vfs.InodeID(clientID)) {
@@ -877,7 +813,7 @@ func TestClientStoreRejectsClientIDOutsideStateDirectory(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ConfirmClientID(
+	if _, err := store.ConfirmForTest(
 		uint64(incarnationID), confirm, RPCPrincipal{},
 	); nfs4.ErrorCode(err) != nfs4.NFS4ERR_STALE_CLIENTID {
 		t.Fatalf("forged clientid confirmation error = %v, want NFS4ERR_STALE_CLIENTID",
@@ -998,52 +934,6 @@ func (fs *beforeRenameHookVFS) Rename(
 		fs.once.Do(fs.hook)
 	}
 	return fs.TernVFS.Rename(srcDirID, srcName, dstDirID, dstName)
-}
-
-func TestClientStoreConfirmationRechecksPending(t *testing.T) {
-	baseFS := vfs.NewLocalTernVFS(t.TempDir())
-	hookFS := &renameHookVFS{TernVFS: baseFS}
-	first, err := NewStore(hookFS)
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := NewStore(baseFS)
-	if err != nil {
-		t.Fatal(err)
-	}
-	owner := ClientOwner{Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"}}
-	oldID, oldConfirm, err := first.SetClientID(
-		[8]byte{1}, []byte("client"), owner)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	var newID uint64
-	var newConfirm [8]byte
-	hookFS.dstName = first.ConfirmingName
-	hookFS.hook = func() {
-		newID, newConfirm, err = second.SetClientID(
-			[8]byte{2}, []byte("client"), owner)
-	}
-	_, confirmErr := first.ConfirmClientID(
-		oldID, oldConfirm, owner.Principal)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if nfs4.ErrorCode(confirmErr) != nfs4.NFS4ERR_STALE_CLIENTID {
-		t.Fatalf("superseded confirmation error = %v, want NFS4ERR_STALE_CLIENTID",
-			confirmErr)
-	}
-	if _, err := second.ConfirmClientID(
-		newID, newConfirm, owner.Principal,
-	); err != nil {
-		t.Fatalf("replacement confirmation failed: %v", err)
-	}
-	if confirmed, err := first.IsConfirmed(oldID); err != nil {
-		t.Fatal(err)
-	} else if confirmed {
-		t.Fatal("superseded confirmation replaced the confirmed pointer")
-	}
 }
 
 func TestClientStoreHasOpenRequiresLiveDurableLease(t *testing.T) {
@@ -1256,7 +1146,7 @@ func TestClientStoreConfirmLeavesPendingUntilReplacement(t *testing.T) {
 	owner := ClientOwner{
 		Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"},
 	}
-	clientID, confirm, err := store.SetClientID(
+	clientID, confirm, err := store.RegisterForTest(
 		[8]byte{1}, []byte("client"), owner)
 	if err != nil {
 		t.Fatal(err)
@@ -1265,7 +1155,7 @@ func TestClientStoreConfirmLeavesPendingUntilReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ConfirmClientID(
+	if _, err := store.ConfirmForTest(
 		clientID, confirm, owner.Principal,
 	); err != nil {
 		t.Fatal(err)
@@ -1278,7 +1168,7 @@ func TestClientStoreConfirmLeavesPendingUntilReplacement(t *testing.T) {
 		t.Fatalf("confirmed pending pointer = %d, %t; want %d, true",
 			pendingID, found, clientID)
 	}
-	replacementID, _, err := store.SetClientID(
+	replacementID, _, err := store.RegisterForTest(
 		[8]byte{2}, []byte("client"), owner)
 	if err != nil {
 		t.Fatal(err)
@@ -1416,7 +1306,7 @@ func TestClientStoreGCHonorsConfirmationClaims(t *testing.T) {
 	first.Now = func() time.Time { return base }
 	second.Now = func() time.Time { return base.Add(30 * time.Second) }
 	owner := ClientOwner{Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"}}
-	oldID, _, err := first.SetClientID(
+	oldID, _, err := first.RegisterForTest(
 		[8]byte{1}, []byte("client"), owner)
 	if err != nil {
 		t.Fatal(err)
@@ -1429,7 +1319,7 @@ func TestClientStoreGCHonorsConfirmationClaims(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	clientID, _, err := first.SetClientID(
+	clientID, _, err := first.RegisterForTest(
 		[8]byte{2}, []byte("client"), owner)
 	if err != nil {
 		t.Fatal(err)
@@ -1475,12 +1365,12 @@ func TestClientStoreGCRechecksConfirmationBeforeDeleting(t *testing.T) {
 	base := time.Unix(1000, 0)
 	writer.Now = func() time.Time { return base }
 	owner := ClientOwner{Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"}}
-	oldID, _, err := writer.SetClientID(
+	oldID, _, err := writer.RegisterForTest(
 		[8]byte{1}, []byte("client"), owner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	clientID, _, err := writer.SetClientID(
+	clientID, _, err := writer.RegisterForTest(
 		[8]byte{2}, []byte("client"), owner)
 	if err != nil {
 		t.Fatal(err)
@@ -1513,101 +1403,6 @@ func TestClientStoreGCRechecksConfirmationBeforeDeleting(t *testing.T) {
 	}
 }
 
-func TestClientStoreRebootCleanupIsRetryable(t *testing.T) {
-	baseFS := vfs.NewLocalTernVFS(t.TempDir())
-	first, err := NewStore(baseFS)
-	if err != nil {
-		t.Fatal(err)
-	}
-	failingFS := &RemoveFailureVFS{TernVFS: baseFS, Remaining: 1}
-	second, err := NewStore(failingFS)
-	if err != nil {
-		t.Fatal(err)
-	}
-	owner := ClientOwner{Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"}}
-	oldID, confirm, err := first.SetClientID(
-		[8]byte{1}, []byte("client"), owner)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := first.ConfirmClientID(
-		oldID, confirm, owner.Principal,
-	); err != nil {
-		t.Fatal(err)
-	}
-	var stateID nfs4.StateID
-	stateID[0] = 1
-	if err := first.MarkOpen(oldID, stateID); err != nil {
-		t.Fatal(err)
-	}
-	failingFS.Name = ActiveOpenName(stateID)
-
-	newID, confirm, err := first.SetClientID(
-		[8]byte{2}, []byte("client"), owner)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := second.ConfirmClientID(
-		newID, confirm, owner.Principal,
-	); !errors.Is(err, ErrInjectedRemove) {
-		t.Fatalf("reboot cleanup error = %v, want injected failure", err)
-	}
-	if confirmed, err := first.IsConfirmed(oldID); err != nil {
-		t.Fatal(err)
-	} else if confirmed {
-		t.Fatal("old client remained confirmed after pointer switch")
-	}
-	if confirmed, err := first.IsConfirmed(newID); err != nil {
-		t.Fatal(err)
-	} else if !confirmed {
-		t.Fatal("new client was not confirmed before cleanup retry")
-	}
-	if err := first.CollectStaleForClient(vfs.InodeID(newID)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := baseFS.Lookup(vfs.InodeID(oldID), GCCandidateName); !os.IsNotExist(err) {
-		t.Fatalf("in-progress reboot target was marked for collection: %v", err)
-	}
-
-	replacedID, err := second.ConfirmClientID(
-		newID, confirm, owner.Principal)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if replacedID != oldID {
-		t.Fatalf("cleanup retry replaced clientid %d, want %d", replacedID, oldID)
-	}
-	if active, err := first.HasOpen(oldID, stateID); err != nil {
-		t.Fatal(err)
-	} else if active {
-		t.Fatal("cleanup retry left old open active")
-	}
-
-	failingFS.Name = RebootName
-	failingFS.Remaining = 1
-	thirdID, confirm, err := first.SetClientID(
-		[8]byte{3}, []byte("client"), owner)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := second.ConfirmClientID(
-		thirdID, confirm, owner.Principal,
-	); !errors.Is(err, ErrInjectedRemove) {
-		t.Fatalf("reboot marker cleanup error = %v, want injected failure",
-			err)
-	}
-	replacedID, err = second.ConfirmClientID(
-		thirdID, confirm, owner.Principal)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if replacedID != newID {
-		t.Fatalf("marker retry replaced clientid %d, want %d", replacedID, newID)
-	}
-}
-
-// The HasOpen slow path rewrites the lease in TernFS. That rewrite must not
-// hold state.mu, or every fast-path stateid check for the client waits on it.
 func TestClientStoreHasOpenSlowPathDoesNotBlockFastPath(t *testing.T) {
 	baseFS := vfs.NewLocalTernVFS(t.TempDir())
 	hookFS := &markerLookupGateVFS{TernVFS: baseFS, Gate: testutil.NewGate()}
@@ -1677,7 +1472,7 @@ func TestStagingRecoveryKeySeparatesBootsAndPrincipals(t *testing.T) {
 	owner := ClientOwner{Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "one"}}
 	key := func(identity string, verifier byte, principal string) [32]byte {
 		owner.Principal.Body = principal
-		id, _, err := cs.SetClientID([8]byte{verifier}, []byte(identity), owner)
+		id, _, err := cs.RegisterForTest([8]byte{verifier}, []byte(identity), owner)
 		if err != nil {
 			t.Fatal(err)
 		}

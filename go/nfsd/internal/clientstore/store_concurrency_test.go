@@ -104,7 +104,7 @@ func TestClientStoreMarkerExcludesLifecycle(t *testing.T) {
 			fs := &markerGateVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
 				name: ActiveOpenName(nfs4.StateID{1}), Gate: testutil.NewGate()}
 			store, id := NewConfirmedStoreClient(t, fs, []byte("client"), [8]byte{1}, ClientOwner{})
-			next, verifier, err := store.SetClientID([8]byte{2}, []byte("client"), ClientOwner{})
+			next, verifier, err := store.RegisterForTest([8]byte{2}, []byte("client"), ClientOwner{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -122,7 +122,7 @@ func TestClientStoreMarkerExcludesLifecycle(t *testing.T) {
 			go func() {
 				switch action {
 				case "confirm":
-					_, err := store.ConfirmClientID(next, verifier, RPCPrincipal{})
+					_, err := store.ConfirmForTest(next, verifier, RPCPrincipal{})
 					done <- err
 				case "expire":
 					now.Add(int64(2 * LeaseTime))

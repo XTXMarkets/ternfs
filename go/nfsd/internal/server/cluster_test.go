@@ -1019,12 +1019,12 @@ func TestTernClientIncarnationGC(t *testing.T) {
 		Principal: clientstore.RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: t.Name()},
 	}
 	identity := []byte(t.Name())
-	oldID, confirm, err := first.SetClientID(
+	oldID, confirm, err := first.RegisterForTest(
 		[8]byte{1}, identity, owner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := first.ConfirmClientID(
+	if _, err := first.ConfirmForTest(
 		oldID, confirm, owner.Principal,
 	); err != nil {
 		t.Fatal(err)
@@ -1100,12 +1100,12 @@ func TestTernClientIncarnationGC(t *testing.T) {
 	}
 	fs.CacheEmptyReader(confirmedSymlinkID)
 
-	newID, confirm, err := first.SetClientID(
+	newID, confirm, err := first.RegisterForTest(
 		[8]byte{2}, identity, owner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := second.ConfirmClientID(
+	if _, err := second.ConfirmForTest(
 		newID, confirm, owner.Principal,
 	); err != nil {
 		t.Fatal(err)
