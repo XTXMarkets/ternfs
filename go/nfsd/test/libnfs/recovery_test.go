@@ -47,15 +47,9 @@ type recoveryIncarnation struct {
 	Incarnation string   `json:"incarnation"`
 	Roles       []string `json:"roles"`
 	Usable      bool     `json:"usable"`
-	Opens       []struct {
-		StateID string          `json:"stateid"`
-		Staging json.RawMessage `json:"staging"`
-	} `json:"opens"`
 	// Staging lists this incarnation's sidecars in the staging directory.
-	Staging []struct {
-		FileID  string `json:"file_id"`
-		Retired bool   `json:"retired"`
-	} `json:"staging"`
+	// nfsd keeps no open markers, so every sidecar is listed here.
+	Staging []stagedWriter `json:"staging"`
 }
 
 // storeReport reads the running server's durable store report for the
@@ -140,22 +134,19 @@ type stagedWriter struct {
 	Problems []string `json:"problems"`
 }
 
-// retainedWriter checks that the incarnation's only open still has its
+// retainedWriter checks that the incarnation has exactly one intact
 // staging, and reads its synced range [0, len(synced)) from the one staging
 // data file in the server's staging directory. The file is tied to the
 // report's entry by being the only one there and by its size.
 func (s *nfsTestServer) retainedWriter(t *testing.T, inc recoveryIncarnation, synced string) (string, stagedWriter) {
 	t.Helper()
-	if len(inc.Opens) != 1 || inc.Opens[0].Staging == nil {
-		t.Fatalf("expected one open with staging: %+v", inc)
+	if len(inc.Staging) != 1 {
+		t.Fatalf("expected one staging: %+v", inc)
 	}
-	var w stagedWriter
-	if err := json.Unmarshal(inc.Opens[0].Staging, &w); err != nil {
-		t.Fatal(err)
-	}
+	w := inc.Staging[0]
 	if !w.DataPresent || !w.MetaPresent || w.Retired || w.Unlinked || w.Guarded || len(w.Problems) != 0 ||
-		w.ReadOnly || !w.OwnerKnown || w.RecoveryKey == "" || w.StateID != inc.Opens[0].StateID {
-		t.Fatalf("staging not intact for its open %s: %+v", inc.Opens[0].StateID, w)
+		w.ReadOnly || !w.OwnerKnown || w.RecoveryKey == "" || w.StateID == "" {
+		t.Fatalf("staging not intact for its open %s: %+v", w.StateID, w)
 	}
 	covered := false
 	for _, r := range w.Dirty {
@@ -183,7 +174,7 @@ func (s *nfsTestServer) retainedWriter(t *testing.T, inc recoveryIncarnation, sy
 	if _, err := f.ReadAt(data, 0); err != nil || string(data) != synced {
 		t.Fatalf("staged bytes %q, %v; want %q", data, err, synced)
 	}
-	return inc.Opens[0].StateID, w
+	return w.StateID, w
 }
 
 // Sessions survive the nfsd process: the persistent reply cache records a
@@ -325,7 +316,7 @@ func runLibnfsRecovery(t *testing.T, suite *nfsTestSuite) {
 				if after.Incarnation != before.Incarnation {
 					t.Fatalf("client re-registered: %s -> %s", before.Incarnation, after.Incarnation)
 				}
-				if len(after.Opens) != 0 || len(after.Staging) != 0 {
+				if len(after.Staging) != 0 {
 					t.Fatalf("open or staging left after the publishing CLOSE: %+v", after)
 				}
 				if files, _ := filepath.Glob(filepath.Join(s.Staging, "*.staging")); len(files) != 0 {
@@ -374,14 +365,14 @@ func runLibnfsRecovery(t *testing.T, suite *nfsTestSuite) {
 		c.must(t, libnfsRequest{Op: "write", Handle: h, Data: []byte("abandoned")})
 		c.must(t, libnfsRequest{Op: "sync", Handle: h})
 		before := recoveryConfirmed(t, s.storeReport(t, c))
-		if !before.Usable || len(before.Opens) != 1 {
+		if !before.Usable || len(before.Staging) != 1 {
 			t.Fatalf("expected one live writer: %+v", before)
 		}
 		dead := s.client(t)
 		abandoned := dead.open(t, s, "dead-client", os.O_CREATE|os.O_EXCL|os.O_RDWR)
 		dead.must(t, libnfsRequest{Op: "write", Handle: abandoned, Data: []byte("client died")})
 		dead.must(t, libnfsRequest{Op: "sync", Handle: abandoned})
-		if inc := recoveryConfirmed(t, s.storeReport(t, dead)); !inc.Usable || len(inc.Opens) != 1 {
+		if inc := recoveryConfirmed(t, s.storeReport(t, dead)); !inc.Usable || len(inc.Staging) != 1 {
 			t.Fatalf("expected one live writer before killing client: %+v", inc)
 		}
 		dead.process.stop(t, syscall.SIGKILL)
@@ -428,8 +419,8 @@ func runLibnfsRecovery(t *testing.T, suite *nfsTestSuite) {
 			s.process.alive(t)
 			inc := recoveryConfirmed(t, s.storeReport(t, c))
 			deadInc := recoveryConfirmed(t, s.storeReport(t, dead))
-			return !inc.Usable && len(inc.Opens) == 0 && retiredStaging(inc) &&
-				!deadInc.Usable && len(deadInc.Opens) == 0 && retiredStaging(deadInc) &&
+			return !inc.Usable && retiredStaging(inc) &&
+				!deadInc.Usable && retiredStaging(deadInc) &&
 				retainedStaging()
 		})
 		// An expired clientid ends its sessions: the SEQUENCE in front of

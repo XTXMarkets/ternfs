@@ -47,7 +47,6 @@ type Store struct {
 	identityLocksMu sync.Mutex
 	identityLocks   map[vfs.InodeID]*clientIdentityLock
 	LeaseLocks      keyedlock.Locker[vfs.InodeID]
-	markerLocks     keyedlock.Locker[clientOpenMarker]
 
 	// Set by the server (../server/README.md#protection-and-destruction-holds):
 	// publishing an expired marker for an incarnation and collecting an
@@ -55,9 +54,13 @@ type Store struct {
 	// while a confirmation protects it. A resumed replacement purge holds
 	// them on n and its selected target. Nil in a Store without a server,
 	// including the read-only one nfsd -store-only opens.
-	BeginMarker  func(vfs.InodeID) (func(), bool)
-	BeginCollect func(vfs.InodeID) (func(), bool)
-	BeginPurge   func(n, p vfs.InodeID) (func(), bool)
+	BeginMarker func(vfs.InodeID) (func(), bool)
+	// HoldsWriteState, set by the server, reports that this process has a
+	// write open or a staged writer of the incarnation. Nil in a Store
+	// without a server.
+	HoldsWriteState func(uint64) bool
+	BeginCollect    func(vfs.InodeID) (func(), bool)
+	BeginPurge      func(n, p vfs.InodeID) (func(), bool)
 
 	// The durable lease refresher's records (lease_refresher.go), under
 	// RefreshMu, with their record and orphan credits.
@@ -97,17 +100,11 @@ type clientIdentityLock struct {
 	refs int
 }
 
-type clientOpenMarker struct {
-	clientID uint64
-	stateID  nfs4.StateID
-}
-
 type localClientState struct {
 	identityID       vfs.InodeID
 	confirmedPointer vfs.InodeID
 
-	mu    sync.Mutex
-	opens map[nfs4.StateID]struct{}
+	mu sync.Mutex
 }
 
 type confirmedClientLocation struct {
@@ -817,24 +814,10 @@ func (cs *Store) Renew(clientID uint64) error {
 	return nil
 }
 
-// MarkOpen records an open with a durable marker in the incarnation
-// directory, so that other nfsd processes, and this one after a restart,
-// can see that the open is active. Opens that write or hold staging are
-// marked.
-func (cs *Store) MarkOpen(clientID uint64, stateID nfs4.StateID) error {
-	return cs.registerOpen(clientID, stateID, true)
-}
-
-// NoteOpen admits a read-only open without a durable marker: the client
-// must be confirmed with a live lease, as for MarkOpen. A read-only open
-// has no staging to recover and nothing another process needs to see, so
-// it skips the marker's shard mutations. The caller's open state is its
-// only record; the client store keeps nothing for it.
+// NoteOpen admits an open: the client must be confirmed with a live lease.
+// It writes nothing. The server's open state is the open's only record, and
+// a writer's synced sidecar is what survives a restart.
 func (cs *Store) NoteOpen(clientID uint64, stateID nfs4.StateID) error {
-	return cs.registerOpen(clientID, stateID, false)
-}
-
-func (cs *Store) registerOpen(clientID uint64, stateID nfs4.StateID, durable bool) error {
 	incarnationID := vfs.InodeID(clientID)
 	identityID, valid, err := cs.identityForIncarnation(incarnationID)
 	if err != nil {
@@ -845,9 +828,6 @@ func (cs *Store) registerOpen(clientID uint64, stateID nfs4.StateID, durable boo
 	}
 	unlock := cs.readLockIdentity(identityID)
 	defer unlock()
-	unlockMarker := cs.markerLocks.Lock(clientOpenMarker{clientID, stateID})
-	defer unlockMarker()
-
 	location, confirmed, err := cs.confirmedLocationForIdentity(incarnationID, identityID)
 	if err != nil {
 		return err
@@ -855,32 +835,17 @@ func (cs *Store) registerOpen(clientID uint64, stateID nfs4.StateID, durable boo
 	if !confirmed {
 		return nfs4.Error(nfs4.NFS4ERR_STALE_CLIENTID)
 	}
-	state, err := cs.renewLease(incarnationID, location, false)
-	if err != nil {
-		return err
-	}
-	// Independent markers share identity ownership, but neither the lease
-	// lock nor the cache map lock is held across marker I/O.
-	if !durable {
-		return nil
-	}
-	if err := cs.EnsureMarker(incarnationID, ActiveOpenName(stateID)); err != nil {
-		return err
-	}
-	state.mu.Lock()
-	state.opens[stateID] = struct{}{}
-	state.mu.Unlock()
-	return nil
+	_, err = cs.renewLease(incarnationID, location, false)
+	return err
 }
 
-// renewLease checks a confirmed client's lease for registerOpen and
-// hasOpen, for marked and unmarked opens alike. It writes nothing: every
-// lease write belongs to the refresher (README.md#refresher). registerOpen
-// (requireLiveLease false) needs a live record whose proven lease is in the
-// future, else DELAY while a verify runs. hasOpen with requireLiveLease
-// reads the durable lease, which after a restart may be another process's,
-// and gets EXPIRED when it is dead. The caller holds shared identity
-// ownership.
+// renewLease checks a confirmed client's lease for NoteOpen and HasLocalOpen.
+// It writes nothing: every lease write belongs to the refresher
+// (README.md#refresher). NoteOpen (requireLiveLease false) needs a live
+// record whose proven lease is in the future, else DELAY while a verify
+// runs. HasLocalOpen with requireLiveLease reads the durable lease, which
+// after a restart may be the earlier process's, and gets EXPIRED when it is
+// dead. The caller holds shared identity ownership.
 func (cs *Store) renewLease(
 	incarnationID vfs.InodeID, location confirmedClientLocation,
 	requireLiveLease bool,
@@ -943,37 +908,6 @@ func (cs *Store) LeaseProven(incarnationID vfs.InodeID) bool {
 	return r.State == LeaseRecordLive && r.Proven > cs.Now().UnixNano()
 }
 
-// MarkerGone reports that the open's durable marker is definitely absent:
-// the open no longer exists, whatever the client's lease.
-func (cs *Store) MarkerGone(clientID uint64, stateID nfs4.StateID) bool {
-	_, err := cs.fs.Lookup(vfs.InodeID(clientID), ActiveOpenName(stateID))
-	return errors.Is(err, os.ErrNotExist)
-}
-
-func (cs *Store) RemoveOpen(clientID uint64, stateID nfs4.StateID) error {
-	incarnationID := vfs.InodeID(clientID)
-	identityID, valid, lockErr := cs.identityForIncarnation(incarnationID)
-	if lockErr != nil {
-		return lockErr
-	}
-	if !valid {
-		return nfs4.Error(nfs4.NFS4ERR_STALE_CLIENTID)
-	}
-	unlock := cs.readLockIdentity(identityID)
-	defer unlock()
-	unlockMarker := cs.markerLocks.Lock(clientOpenMarker{clientID, stateID})
-	defer unlockMarker()
-	err := cs.removeIfExists(incarnationID, ActiveOpenName(stateID))
-	if value, ok := cs.LocalClients.Load(incarnationID); ok {
-		state := value.(*localClientState)
-
-		state.mu.Lock()
-		delete(state.opens, stateID)
-		state.mu.Unlock()
-	}
-	return err
-}
-
 // CachedClientIDs includes clients which only renew and have no open state.
 func (cs *Store) CachedClientIDs() []uint64 {
 	var result []uint64
@@ -984,74 +918,58 @@ func (cs *Store) CachedClientIDs() []uint64 {
 	return result
 }
 
-// HasOpen reports that a marked open is active: its client is confirmed
-// with a live lease and its marker exists.
-func (cs *Store) HasOpen(clientID uint64, stateID nfs4.StateID) (bool, error) {
-	return cs.hasOpen(clientID, stateID, true)
-}
-
-// HasLocalOpen reports that the client of an open admitted with NoteOpen is
-// confirmed with a live lease. The caller has already found the open in its
-// own state. With no marker to check, the cached client answers from its
-// lease proof without an entry for the open, so a check in flight when the
-// open closes can still succeed.
+// HasLocalOpen reports that the client of an open this process holds, or
+// of a writer whose sidecar it recovered, is confirmed with a live lease. The
+// caller has already found the open or the sidecar; the client store keeps
+// no record of opens.
 func (cs *Store) HasLocalOpen(clientID uint64, stateID nfs4.StateID) (bool, error) {
-	return cs.hasOpen(clientID, stateID, false)
-}
-
-func (cs *Store) hasOpen(clientID uint64, stateID nfs4.StateID, marked bool) (bool, error) {
 	incarnationID := vfs.InodeID(clientID)
 	if value, ok := cs.LocalClients.Load(incarnationID); ok {
 		state := value.(*localClientState)
 
 		state.mu.Lock()
-		_, open := state.opens[stateID]
 		identityID := state.identityID
 		pointerID := state.confirmedPointer
 		state.mu.Unlock()
 
-		// A marked open's entry stands in for its marker; an unmarked open
-		// needs only the client.
-		if open || !marked {
-			currentPointer, err := cs.fs.Lookup(identityID, ConfirmedName)
-			if errors.Is(err, os.ErrNotExist) {
-				cs.LocalClients.Delete(incarnationID)
-				return false, nil
-			}
+		currentPointer, err := cs.fs.Lookup(identityID, ConfirmedName)
+		if errors.Is(err, os.ErrNotExist) {
+			cs.LocalClients.Delete(incarnationID)
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		if currentPointer != pointerID {
+			confirmedID, err := cs.resolveIdentitySymlink(
+				identityID, currentPointer)
 			if err != nil {
 				return false, err
 			}
-			if currentPointer != pointerID {
-				confirmedID, err := cs.resolveIdentitySymlink(
-					identityID, currentPointer)
-				if err != nil {
-					return false, err
-				}
-				if confirmedID != incarnationID {
-					cs.LocalClients.Delete(incarnationID)
-					return false, nil
-				}
-
-				state.mu.Lock()
-				state.confirmedPointer = currentPointer
-				state.mu.Unlock()
-
+			if confirmedID != incarnationID {
+				cs.LocalClients.Delete(incarnationID)
+				return false, nil
 			}
 
-			// Our own published lease answers without reading the lease,
-			// unless the client has been expired; otherwise the durable
-			// path below reads it.
-			if cs.LeaseProven(incarnationID) {
-				marked, err := cs.hasExpiredMarker(incarnationID)
-				if err != nil {
-					return false, err
-				}
-				if marked {
-					cs.LocalClients.Delete(incarnationID)
-					return false, nfs4.Error(nfs4.NFS4ERR_EXPIRED)
-				}
-				return true, nil
+			state.mu.Lock()
+			state.confirmedPointer = currentPointer
+			state.mu.Unlock()
+
+		}
+
+		// Our own published lease answers without reading the lease,
+		// unless the client has been expired; otherwise the durable
+		// path below reads it.
+		if cs.LeaseProven(incarnationID) {
+			marked, err := cs.hasExpiredMarker(incarnationID)
+			if err != nil {
+				return false, err
 			}
+			if marked {
+				cs.LocalClients.Delete(incarnationID)
+				return false, nfs4.Error(nfs4.NFS4ERR_EXPIRED)
+			}
+			return true, nil
 		}
 	}
 
@@ -1061,24 +979,12 @@ func (cs *Store) hasOpen(clientID uint64, stateID nfs4.StateID, marked bool) (bo
 	}
 	unlock := cs.readLockIdentity(identityID)
 	defer unlock()
-	// Keep the durable lookup and cache insertion ordered with operations
-	// on this marker while allowing unrelated markers to proceed.
-	unlockMarker := cs.markerLocks.Lock(clientOpenMarker{clientID, stateID})
-	defer unlockMarker()
 	location, confirmed, err := cs.confirmedLocationForIdentity(
 		incarnationID, identityID)
 	if err != nil || !confirmed {
 		return false, err
 	}
-	if marked {
-		name := ActiveOpenName(stateID)
-		if _, err := cs.fs.Lookup(incarnationID, name); errors.Is(err, os.ErrNotExist) {
-			return false, nil
-		} else if err != nil {
-			return false, err
-		}
-	}
-	state, err := cs.renewLease(incarnationID, location, true)
+	_, err = cs.renewLease(incarnationID, location, true)
 	if nfs4.ErrorCode(err) == nfs4.NFS4ERR_EXPIRED {
 		cs.LocalClients.Delete(incarnationID)
 		return false, nil
@@ -1086,13 +992,6 @@ func (cs *Store) hasOpen(clientID uint64, stateID nfs4.StateID, marked bool) (bo
 	if err != nil {
 		return false, err
 	}
-
-	if marked {
-		state.mu.Lock()
-		state.opens[stateID] = struct{}{}
-		state.mu.Unlock()
-	}
-
 	return true, nil
 }
 
@@ -1104,38 +1003,21 @@ func (cs *Store) localClientState(
 	state := &localClientState{
 		identityID:       identityID,
 		confirmedPointer: confirmedPointer,
-		opens:            make(map[nfs4.StateID]struct{}),
 	}
 	value, _ := cs.LocalClients.LoadOrStore(incarnationID, state)
 	return value.(*localClientState)
 }
 
+// hasActiveOpen reports that this process holds write state for the
+// incarnation and its durable lease is live: what CLID_INUSE protects
+// (README.md#registration). The server says which incarnations it holds
+// write state for; a Store without a server holds none.
 func (cs *Store) hasActiveOpen(incarnationID vfs.InodeID) (bool, error) {
-	entries, err := cs.entries(incarnationID)
-	if err != nil {
-		return false, err
+	if cs.HoldsWriteState == nil || !cs.HoldsWriteState(uint64(incarnationID)) {
+		return false, nil
 	}
-	now := cs.Now().UnixNano()
-	active := false
-	live := false
-	for _, entry := range entries {
-		switch {
-		case IsActiveOpenName(entry.Name):
-			active = true
-		case isLeaseName(entry.Name):
-			lease, err := cs.readLease(entry.ID)
-			if errors.Is(err, os.ErrNotExist) {
-				continue
-			}
-			if err != nil {
-				return false, err
-			}
-			if lease.ExpiresUnixNano > now {
-				live = true
-			}
-		}
-	}
-	return active && live, nil
+	live, _, err := cs.observeLeaseStatus(incarnationID)
+	return live, err
 }
 
 // A lease is live while any nfsd process has renewed its own slot. Taking the

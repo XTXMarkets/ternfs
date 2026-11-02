@@ -252,11 +252,8 @@ confirming slot is `collectable` once it has been expired for a full extra
 lease; a temporary file is `collectable` once it is a lease old. These say
 the record is old enough to be removed, not when it will be.
 
-An ordinary read-only open of an existing file has no open marker; it
-appears only in `/v1/opens` on the running process, not in this report.
-Opens with a writer or staging, and creates, are marked even when opened
-read-only, and a writer downgraded to READ keeps its marker. `/v1/opens`
-shows which opens are `marked`.
+nfsd writes no open markers; the ones a report shows were left by earlier
+releases. Opens appear only in `/v1/opens` on the running process.
 
 ### Staging join
 

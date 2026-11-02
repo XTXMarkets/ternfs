@@ -63,7 +63,7 @@ func (s *Server) retireIfInactiveWriter(id vfs.InodeID, meta staging.Meta) (bool
 	}
 	defer end()
 	if meta.ClientID != 0 {
-		active, err := s.clients.HasOpen(meta.ClientID, meta.NFSStateID)
+		active, err := s.clients.HasLocalOpen(meta.ClientID, meta.NFSStateID)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return true, err
 		}

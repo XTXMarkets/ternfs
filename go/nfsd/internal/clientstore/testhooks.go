@@ -179,3 +179,10 @@ func RefresherWorkerForTest(t testingT, fs *PassCountVFS) (*Store, uint64, *Leas
 	t.Cleanup(cs.StopLeaseWorkers)
 	return cs, clientID, r
 }
+
+// WriteOpenMarkerForTest writes an open marker as earlier releases did, for
+// tests of what purge, collection and the store report do with one left in
+// a store. nfsd no longer writes them.
+func (cs *Store) WriteOpenMarkerForTest(clientID uint64, stateID nfs4.StateID) error {
+	return cs.EnsureMarker(vfs.InodeID(clientID), ActiveOpenName(stateID))
+}

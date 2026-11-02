@@ -285,13 +285,6 @@ func (fs *visibilityFailureVFS) ConstructFile(dirID vfs.InodeID) (vfs.InodeID, v
 	return fs.LocalTernVFS.ConstructFile(dirID)
 }
 
-func (fs *visibilityFailureVFS) CreateFile(dirID vfs.InodeID, name string, data io.Reader) (vfs.InodeID, error) {
-	if fs.failure == "marker" && clientstore.IsActiveOpenName(name) {
-		return 0, errors.New("injected open marker failure")
-	}
-	return fs.LocalTernVFS.CreateFile(dirID, name, data)
-}
-
 func (fs *visibilityFailureVFS) LinkFile(id vfs.InodeID, cookie vfs.Cookie, dirID vfs.InodeID, name string, data io.Reader) error {
 	if fs.failure == "link" && data == nil {
 		return errors.New("injected empty publication failure")
@@ -300,7 +293,7 @@ func (fs *visibilityFailureVFS) LinkFile(id vfs.InodeID, cookie vfs.Cookie, dirI
 }
 
 func TestFailedCreationDoesNotPublishEmptyVersion(t *testing.T) {
-	for _, failure := range []string{"staging", "marker", "link"} {
+	for _, failure := range []string{"staging", "link"} {
 		t.Run(failure, func(t *testing.T) {
 			fs := &visibilityFailureVFS{
 				LocalTernVFS: vfs.NewLocalTernVFS(t.TempDir()),

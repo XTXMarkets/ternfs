@@ -134,7 +134,7 @@ func TestForeignStateidsAreBadStateid(t *testing.T) {
 		TernCookie: cookie, NFSStateID: recID, ClientID: incA}); err != nil {
 		t.Fatal(err)
 	}
-	if err := srv.clients.MarkOpen(incA, recID); err != nil {
+	if err := srv.clients.NoteOpen(incA, recID); err != nil {
 		t.Fatal(err)
 	}
 	recSid, recFH := scopedStateid(1, recID), vfs.InodeIDToFH(recStaging)
@@ -185,7 +185,7 @@ func TestForeignStateidsAreBadStateid(t *testing.T) {
 		}
 	}
 	for _, id := range []nfs4.StateID{liveID, recID} {
-		if open, err := srv.clients.HasOpen(incA, id); err != nil || !open {
+		if open, err := srv.clients.HasLocalOpen(incA, id); err != nil || !open {
 			t.Fatalf("A's marker %x: %t %v", id, open, err)
 		}
 	}

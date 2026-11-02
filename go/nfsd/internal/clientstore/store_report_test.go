@@ -94,7 +94,10 @@ func newInspectFixture(t *testing.T) *inspectFixture {
 		t.Fatal(err)
 	}
 	f.stateID = nfs4.StateID{0xab, 0xcd, 0xef, 0x01, 0, 0, 0, 0, 0, 0, 0, 7}
-	if err := f.first.MarkOpen(f.clientID, f.stateID); err != nil {
+	if err := f.first.NoteOpen(f.clientID, f.stateID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.first.WriteOpenMarkerForTest(f.clientID, f.stateID); err != nil {
 		t.Fatal(err)
 	}
 	f.now = f.now.Add(50 * time.Second)

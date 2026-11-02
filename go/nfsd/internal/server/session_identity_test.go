@@ -515,10 +515,9 @@ func TestClientStoreExchangeIDAdoptionObservation(t *testing.T) {
 				}
 			}
 			if test.otherPrincipal {
-				// A live open with another principal makes the identity in use.
-				if err := store.EnsureMarker(incarnation, clientstore.ActiveOpenName(nfs4.StateID{1})); err != nil {
-					t.Fatal(err)
-				}
+				// Write state this process holds, with a live lease, makes the
+				// identity in use for another principal.
+				store.HoldsWriteState = func(id uint64) bool { return id == uint64(incarnation) }
 			}
 			if test.readError {
 				failing.Mu.Lock()

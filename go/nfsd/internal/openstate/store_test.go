@@ -33,12 +33,12 @@ func assertOpenStateIndex(t *testing.T, store *Store) {
 func TestOpenRejectsOccupiedStateID(t *testing.T) {
 	store := NewStore()
 	owner := OwnerKey{ClientID: 1, Owner: "owner"}
-	first, err := store.Open(owner, vfs.MakeInodeID(vfs.InodeTypeFile, 1), vfs.MakeInodeID(vfs.InodeTypeFile, 1), testGrant(false), nfs4.StateID{}, false)
+	first, err := store.Open(owner, vfs.MakeInodeID(vfs.InodeTypeFile, 1), vfs.MakeInodeID(vfs.InodeTypeFile, 1), testGrant(false), nfs4.StateID{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.Open(
-		owner, vfs.MakeInodeID(vfs.InodeTypeFile, 2), vfs.MakeInodeID(vfs.InodeTypeFile, 2), testGrant(false), first.ID, false,
+		owner, vfs.MakeInodeID(vfs.InodeTypeFile, 2), vfs.MakeInodeID(vfs.InodeTypeFile, 2), testGrant(false), first.ID,
 	); err == nil {
 		t.Fatal("occupied stateid was reused for another file")
 	}
@@ -53,7 +53,7 @@ func TestWriteReopenUpgrades(t *testing.T) {
 	fileID := vfs.MakeInodeID(vfs.InodeTypeFile, 1)
 	stagingID := vfs.MakeInodeID(vfs.InodeTypeFile, 2)
 	state := addConfirmedOpen(t, store, owner, fileID)
-	upgraded, err := store.Open(owner, fileID, stagingID, testGrant(true), nfs4.StateID{}, true)
+	upgraded, err := store.Open(owner, fileID, stagingID, testGrant(true), nfs4.StateID{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +234,7 @@ func TestOpenClearsClosing(t *testing.T) {
 	store := NewStore()
 	owner := OwnerKey{ClientID: 1, Owner: "owner"}
 	file := vfs.MakeInodeID(vfs.InodeTypeFile, 1)
-	state, err := store.Open(owner, file, file, testGrant(true), nfs4.StateID{}, true)
+	state, err := store.Open(owner, file, file, testGrant(true), nfs4.StateID{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +242,7 @@ func TestOpenClearsClosing(t *testing.T) {
 	if !store.Closing(state.ID) {
 		t.Fatal("mark not set")
 	}
-	if _, err := store.Open(owner, file, file, testGrant(true), nfs4.StateID{}, true); err != nil {
+	if _, err := store.Open(owner, file, file, testGrant(true), nfs4.StateID{}); err != nil {
 		t.Fatal(err)
 	}
 	if store.Closing(state.ID) {
@@ -257,7 +257,7 @@ func TestReaderOfSkipsOtherClientsAndClosing(t *testing.T) {
 	staging := vfs.MakeInodeID(vfs.InodeTypeFile, 2)
 	open := func(client uint64, owner string) State {
 		t.Helper()
-		state, err := store.Open(OwnerKey{ClientID: client, Owner: owner}, file, staging, testGrant(false), nfs4.StateID{}, false)
+		state, err := store.Open(OwnerKey{ClientID: client, Owner: owner}, file, staging, testGrant(false), nfs4.StateID{})
 		if err != nil {
 			t.Fatal(err)
 		}

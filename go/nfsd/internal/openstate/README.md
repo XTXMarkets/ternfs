@@ -8,9 +8,8 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
 Package openstate is the process-local NFSv4.1 open state: stateids, the
 opens they name, expired-stateid tombstones, and each client's view of a
-handle. Nothing here is durable. The client store holds a marker for opens
-that need one ([clientstore](../clientstore/README.md#open-markers)), and a
-writer's staging sidecar records its stateid
+handle. Nothing here is durable. A writer's staging sidecar records its
+stateid
 ([staging](../staging/README.md#sidecars)). The server decides when to open,
 close, recover and expire; this package records the result.
 
@@ -51,8 +50,7 @@ An open records two inodes:
   open the version chosen at OPEN.
 
 Opens by one client of one handle share the client's page cache, so they
-share one staging writer. `Marked` records that the open has a durable
-marker; once set it stays set. Session slots order and deduplicate
+share one staging writer. Session slots order and deduplicate
 requests, so open-owners have no sequence numbers and no replay cache. An
 owner is not retained after its last open closes.
 
@@ -81,8 +79,8 @@ the session's reply cache instead.
 
 The server builds on these rules:
 
-- It checks durable state before using an open: a marked open needs its
-  marker, and any open needs a confirmed client with a live lease. Only a
+- It checks durable state before using an open: the open's client must be
+  confirmed with a live lease. Only a
   check that definitely finds the open inactive gives `NFS4ERR_EXPIRED`. A
   check that cannot read the store returns any NFS status the store
   reported, and otherwise `NFS4ERR_DELAY`; see
@@ -154,10 +152,8 @@ also writes it. The server applies them under the file lock.
   the binding fails, the readers get `NFS4ERR_IO`. The hand-over does not
   survive a restart.
 
-Read opens leave no durable marker, with two exceptions: a create, even
-when opened read-only, and any open that has had a writer or staging. A
-writer downgraded to READ keeps its marker, also when the downgrade
-publishes nothing.
+No open leaves a record in the client store. A writer's sidecar is what a
+restart recovers from.
 
 ## Client views
 

@@ -39,7 +39,7 @@ Two TernFS properties shape the design:
 | Package | Responsibility | Reference |
 | --- | --- | --- |
 | [internal/server](internal/server/server.go) | RPC and connections, sessions and slots, compounds and operations, persistent sessions and replay, the logical lease, confirmation, the staging lifecycle, the alias log and the backchannel. | [README](internal/server/README.md) |
-| [internal/clientstore](internal/clientstore/store.go) | The shared client records under `/.nfs`: identities, incarnations, confirmation, open markers, durable leases and collection. | [README](internal/clientstore/README.md) |
+| [internal/clientstore](internal/clientstore/store.go) | The client records under `/.nfs`: identities, incarnations, confirmation, durable leases and collection. | [README](internal/clientstore/README.md) |
 | [internal/openstate](internal/openstate/store.go) | Process-local stateids, opens, tombstones and client views. | [README](internal/openstate/README.md) |
 | [internal/staging](internal/staging/store.go) | Staged data files and sidecars on the local disk, checkpoints, startup recovery and quarantine. | [README](internal/staging/README.md) |
 | [internal/sessionstore](internal/sessionstore/store.go) | The session file format on the staging disk. | [Session files on disk](internal/server/README.md#session-files-on-disk) |
@@ -52,7 +52,7 @@ Two TernFS properties shape the design:
 | State | Owner and lifetime |
 | --- | --- |
 | Namespace and published file contents | TernFS; subject to its policies. |
-| Client identity, incarnation, lease slots and open markers | Shared TernFS client store under `/.nfs`; see [clientstore](internal/clientstore/README.md). |
+| Client identity, incarnation and lease slots | TernFS client store under `/.nfs`; see [clientstore](internal/clientstore/README.md). |
 | Staged bytes and checkpointed writer metadata | One daemon's staging disk; retained across compatible restarts; see [staging](internal/staging/README.md). |
 | Sessions, their slot reply caches and namespace intents | One daemon's staging disk (`sessions/`), written without fsync; a restart on the same host restores eligible sessions; see [Sessions across restarts](#sessions-across-restarts). |
 | Publication aliases | One daemon's staging disk (`aliases/published.jsonl`), not synced; rewritten at each sweep and reloaded at startup while unexpired; see the [alias log](internal/server/README.md#publication-alias-log). |
@@ -202,7 +202,7 @@ path in two ways:
 | Property or state | Meaning | Changed when |
 | --- | --- | --- |
 | Linked or unlinked | A linked writer publishes to its recorded directory and name on CLOSE. An unlinked one is still usable for I/O, but has no publication target, and CLOSE discards it unless another open of its client still reads it. | OPEN creates a linked writer; REMOVE or RENAME can detach it or move its target. |
-| Active or retired | Any writer not marked `Retired` in its sidecar. It need not have an open in this process: after a restart, staging is loaded before any request adopts it. A retired writer keeps its data for recovery, without a pathname reservation or an open descriptor. | The lease sweep retires the writers of an expired client. Before a namespace change, a non-retired writer at the name is checked: it counts as active while its durable open marker is active, or a confirmation protects its client, and is otherwise retired; a check that fails stops the change. Recovery rebinds a writer and clears `Retired`. |
+| Active or retired | Any writer not marked `Retired` in its sidecar. It need not have an open in this process: after a restart, staging is loaded before any request adopts it. A retired writer keeps its data for recovery, without a pathname reservation or an open descriptor. | The lease sweep retires the writers of an expired client. Before a namespace change, a non-retired writer at the name is checked: it counts as active while its client is confirmed with a live lease, or a confirmation protects it, and is otherwise retired; a check that fails stops the change. Recovery rebinds a writer and clears `Retired`. |
 | Failed | Excluded for the process lifetime, with its files moved to quarantine. | A namespace operation has an unknown outcome, or a CLOSE's publication fails while other opens read the staging. |
 | Quarantined at startup | Not loaded; its files are moved to quarantine. | Its sidecar is unreadable, `Guarded`, or both unlinked and retired. |
 
@@ -299,9 +299,9 @@ without changing it.
 
 Principal comparison uses credential flavour and normalized AUTH_SYS uid,
 gid and groups, ignoring timestamp and machine name. It is a collision
-guard. `NFS4ERR_CLID_INUSE` requires a different principal with live,
-marked open state; sessions without opens do not pin an identity
-indefinitely. The records and rules are in
+guard. `NFS4ERR_CLID_INUSE` requires a different principal while this
+daemon holds a write open or staged writer of the incarnation and its lease
+is live; sessions without write state do not pin an identity indefinitely. The records and rules are in
 [clientstore](internal/clientstore/README.md#registration).
 
 ### Wire clientids
@@ -338,9 +338,9 @@ The advertised lease is 90 seconds. Each incarnation has two leases here.
 SEQUENCE reads the refresher's cached proof and performs no backend I/O.
 An unproven or expired proof gives `NFS4ERR_DELAY` and requests refresh
 work. CREATE_SESSION waits up to two seconds for the first publication.
-OPEN also needs a live published lease before creating its marker. Stateid
-operations check the confirmed pointer and expired marker; a live local
-durable slot avoids reading every slot.
+OPEN also needs a live published lease. Stateid operations check the
+confirmed pointer and expired marker; a live local durable slot avoids
+reading every slot.
 
 The server's sweep runs every 45 seconds. A client is expired here only
 when its logical lease is not held, no confirmation protects it, and it has

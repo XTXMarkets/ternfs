@@ -226,7 +226,6 @@ func (cs *Store) SnapshotIncarnations(id vfs.InodeID) ([]inspect.Incarnation, in
 		cached := &inspect.CachedClient{
 			IdentityID:       inodeText(state.identityID),
 			ConfirmedPointer: inodeText(state.confirmedPointer),
-			Opens:            len(state.opens),
 		}
 		state.mu.Unlock()
 		get(inc).Cached = cached

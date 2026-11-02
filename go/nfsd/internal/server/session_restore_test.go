@@ -1081,7 +1081,7 @@ func TestRestartCloseAfterPublishedLinkIsIdempotent(t *testing.T) {
 	f.start()
 	// The first CLOSE also removed the open's durable marker, which the
 	// dying process would not have reached; put it back.
-	if err := f.srv.clients.MarkOpen(f.srv.sessions.lookup(f.ts.id).clientID, extractStateID(stateidOf(state))); err != nil {
+	if err := f.srv.clients.NoteOpen(f.srv.sessions.lookup(f.ts.id).clientID, extractStateID(stateidOf(state))); err != nil {
 		t.Fatal(err)
 	}
 	// The client's CLOSE, run again as a new request with the old stateid.
@@ -2293,10 +2293,6 @@ func TestRestartRecoveredCloseAfterConcurrentAdoption(t *testing.T) {
 	if f.srv.opens.Live(id) {
 		t.Fatal("the adopted open outlived the CLOSE")
 	}
-	awaitRequestHoldsReleased(t, f.srv) // the marker goes after the reply
-	if marked, err := f.srv.clients.HasOpen(f.srv.sessions.lookup(f.ts.id).clientID, id); err != nil || marked {
-		t.Fatalf("open marker after the CLOSE: %v %v", marked, err)
-	}
 }
 
 // A COMMIT ahead of a REMOVE in the compound does not make the REMOVE's
@@ -2597,7 +2593,7 @@ func (f *replayFixture) restartKeeping(kept map[string][]byte, stateid [16]byte)
 		}
 	}
 	f.start()
-	if err := f.srv.clients.MarkOpen(f.srv.sessions.lookup(f.ts.id).clientID, extractStateID(stateidOf(stateid))); err != nil {
+	if err := f.srv.clients.NoteOpen(f.srv.sessions.lookup(f.ts.id).clientID, extractStateID(stateidOf(stateid))); err != nil {
 		f.t.Fatal(err)
 	}
 }

@@ -82,25 +82,20 @@ func (s *Server) lookupDurableOpen(
 			Owner:      openstate.OwnerKey{ClientID: meta.ClientID},
 			Access:     recoveredAccess(meta),
 			Generation: stateid.Seqid(),
-			Marked:     true,
 		}, nfs4.NFS4_OK
 	}
-	// CLOSE can remove a failed writer's marker after the local lookup. Do
-	// not let that race expire the client's unrelated writers.
 	if status := s.expireInactiveOpen(state, func() bool { return s.stagingStore.Failed(fileID) }); status != nfs4.NFS4_OK {
 		return openstate.State{}, status
 	}
 	return state, nfs4.NFS4_OK
 }
 
-// expireInactiveOpen requires state's open to be active. When it is not, the
+// expireInactiveOpen requires state's client to be live. When it is not, the
 // operation gets EXPIRED, and the client's other state is untouched: local
 // expiry is the lease gate's decision, which the sweeper drives
-// (README.md#expiry-decision). A marked open whose own marker is gone loses its
-// entry; an unmarked one never had a marker, so only the gate ends it.
-// The decisive check runs under a destruction hold, so while a confirmation
-// protects the client it gives DELAY. failed reports a failed writer, which
-// gives IO.
+// (README.md#expiry-decision). The decisive check runs under a destruction
+// hold, so while a confirmation protects the client it gives DELAY. failed
+// reports a failed writer, which gives IO.
 func (s *Server) expireInactiveOpen(state openstate.State, failed func() bool) uint32 {
 	status := s.requireActiveOpen(state)
 	if status != nfs4.NFS4ERR_EXPIRED {
@@ -117,20 +112,16 @@ func (s *Server) expireInactiveOpen(state openstate.State, failed func() bool) u
 	if status = s.requireActiveOpen(state); status != nfs4.NFS4_OK && failed != nil && failed() {
 		return nfs4.NFS4ERR_IO
 	}
-	if status == nfs4.NFS4ERR_EXPIRED && state.Marked && s.clients.MarkerGone(state.Owner.ClientID, state.ID) {
-		// This open itself is gone, as after a CLOSE that discarded its
-		// writer: only its own local entry goes.
-		s.opens.Expire(state.ID)
-	}
 	return status
 }
 
-// retireInactiveRecovered checks a recovered writer's open marker and, when
-// it is gone, retires its staging. The decisive check and the retirement run
+// retireInactiveRecovered checks that a recovered writer's client is still
+// live and, when it is not, retires its staging. The synced sidecar is the
+// record that the open was not closed. The decisive check and the retirement run
 // under one destruction hold; while a confirmation protects the client it
 // gives DELAY and retires nothing.
 func (s *Server) retireInactiveRecovered(clientID uint64, id nfs4.StateID, retire func()) uint32 {
-	active, err := s.clients.HasOpen(clientID, id)
+	active, err := s.clients.HasLocalOpen(clientID, id)
 	if err != nil {
 		return clientstore.ErrToNFS(err)
 	}
@@ -142,7 +133,7 @@ func (s *Server) retireInactiveRecovered(clientID uint64, id nfs4.StateID, retir
 		return nfs4.NFS4ERR_DELAY // Not while confirming.
 	}
 	defer end()
-	if active, err = s.clients.HasOpen(clientID, id); err != nil {
+	if active, err = s.clients.HasLocalOpen(clientID, id); err != nil {
 		return clientstore.ErrToNFS(err)
 	}
 	if active {
@@ -174,7 +165,7 @@ func (s *Server) recoveredDataID(clientID uint64, id nfs4.StateID, fileID vfs.In
 }
 
 func (s *Server) requireActiveOpen(state openstate.State) uint32 {
-	active, err := s.hasOpen(state)
+	active, err := s.clients.HasLocalOpen(state.Owner.ClientID, state.ID)
 	if err != nil {
 		return clientstore.ErrToNFS(err)
 	}
@@ -186,14 +177,6 @@ func (s *Server) requireActiveOpen(state openstate.State) uint32 {
 
 // expireClientState drops local state without revoking a confirmed clientid.
 func (s *Server) expireClientState(clientID uint64) {
-	for _, state := range s.opens.ClientStates(clientID) {
-		if err := s.dropOpenRecord(clientID, state.ID, state.Marked); err != nil &&
-			nfs4.ErrorCode(err) != nfs4.NFS4ERR_STALE_CLIENTID {
-			s.log.Error("expire client: remove active-open record",
-				"clientid", clientID, "stateid", state.ID, "err", err)
-			return
-		}
-	}
 	for _, state := range s.opens.ExpireClient(clientID) {
 		meta, ok := s.stagingStore.GetMeta(state.DataID)
 		if ok && meta.ClientID == clientID && meta.NFSStateID == state.ID {
@@ -293,7 +276,6 @@ func (s *Server) releaseWrite(openStateid nfs4.Stateid4, st *compoundState, clos
 			Owner:      openstate.OwnerKey{ClientID: meta.ClientID},
 			Access:     recoveredAccess(meta),
 			Generation: generation,
-			Marked:     true,
 		}
 	}
 	// Lock order is pathname, then file. A writer's pathname comes from its
@@ -406,7 +388,6 @@ func (s *Server) releaseWrite(openStateid nfs4.Stateid4, st *compoundState, clos
 		if status != nfs4.NFS4_OK {
 			if status != nfs4.NFS4ERR_DELAY {
 				s.abandonFailedOpen(sid, recovered)
-				s.dropOpenRecordLater(st, state.Owner.ClientID, sid, state.Marked)
 			}
 			return fail(status)
 		}
@@ -452,7 +433,6 @@ func (s *Server) releaseWrite(openStateid nfs4.Stateid4, st *compoundState, clos
 	} else {
 		state, _ = s.opens.Close(sid)
 	}
-	s.dropOpenRecordLater(st, state.Owner.ClientID, sid, state.Marked)
 	if expiredClose {
 		return fail(nfs4.NFS4ERR_EXPIRED)
 	}
@@ -556,7 +536,6 @@ func (s *Server) endStaging(
 
 	for _, other := range s.opens.ExpireWriters(dataID, sid) {
 		s.log.Info("close: writer whose CLOSE was delayed expired", "inode", dataID, "stateid", other.ID)
-		s.dropOpenRecordLater(st, other.Owner.ClientID, other.ID, other.Marked)
 	}
 	switch {
 	case upload && endErr != nil:
@@ -601,18 +580,6 @@ func (s *Server) endStaging(
 		return 0, false, status
 	}
 	return published, false, nfs4.NFS4_OK
-}
-
-// dropOpenRecordLater removes an open's marker once the reply is written.
-func (s *Server) dropOpenRecordLater(st *compoundState, clientID uint64, id nfs4.StateID, marked bool) {
-	if clientID == 0 {
-		return
-	}
-	st.later(func() {
-		if err := s.dropOpenRecord(clientID, id, marked); err != nil && !os.IsNotExist(err) {
-			s.log.Error("close: remove active-open record", "stateid", id, "err", err)
-		}
-	})
 }
 
 // failForReaders quarantines a staging, when opens other than the closing
@@ -1410,32 +1377,21 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 		markID = s.opens.NewStateID()
 		nfsSID = markID
 	}
-	// A read-only open is recorded in this process only. Anything with a
-	// writer, staging or a created name gets a durable marker, which an
-	// upgrade of an unmarked read open creates now.
-	durable := staged || created || access&nfs4.OPEN4_SHARE_ACCESS_WRITE != 0
-	if err := s.recordOpen(clientID, markID, durable); err != nil {
+	// The open's client must be confirmed with a live lease. The open is
+	// recorded in this process only; a writer's sidecar is what a restart
+	// recovers from.
+	if err := s.clients.NoteOpen(clientID, markID); err != nil {
 		if staged {
 			cleanupStagedOpen()
 		}
 		return fail(clientstore.ErrToNFS(err))
 	}
-	// The record to drop if OPEN fails from here on: the marker, if this
-	// open or an existing one it joined has one.
-	marked, existingMarked := durable, false
-	if existing, ok := s.opens.ExistingOpen(ownerKey, publishedID); ok && existing.Marked {
-		marked, existingMarked = true, true
-	}
-	undoRecord := func() { _ = s.dropOpenRecord(clientID, markID, marked) }
 	// A joined staging bound to a closing open is bound to this one, so a
 	// restart recovers the writer under the owner still using it.
 	var joinedFrom staging.Meta
 	if joined {
 		if meta, ok := s.stagingStore.GetMeta(targetID); ok && meta.NFSStateID != markID && s.opens.Closing(meta.NFSStateID) {
 			if err := s.stagingStore.Bind(targetID, clientID, markID, ownerKey.Owner, false); err != nil {
-				if !existingMarked {
-					undoRecord()
-				}
 				return fail(nfs4.NFS4ERR_IO)
 			}
 			joinedFrom = meta
@@ -1445,17 +1401,15 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 		if err := s.stagingStore.Rebind(
 			recoveredStagingID, clientID, markID,
 		); err != nil {
-			undoRecord()
 			return fail(nfs4.NFS4ERR_IO)
 		}
 		stagingRebound = true
 		s.log.Info("recovered staging adopted", "inode", recoveredStagingID, "name", recoveredStagingMeta.FileName,
 			"old_stateid", recoveredStagingMeta.NFSStateID, "stateid", markID, "claim", claimType)
-		// Retired files release their descriptors; Rebind reopens them after
-		// the new durable marker exists. Apply CREATE size only then.
+		// Retired files release their descriptors; Rebind reopens them.
+		// Apply CREATE size only then.
 		if openSize != nil {
 			if err := applyOpenSize(); err != nil {
-				undoRecord()
 				cleanupStagedOpen()
 				return fail(nfs4.NFS4ERR_IO)
 			}
@@ -1465,7 +1419,6 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 		if err := s.fs.LinkFile(
 			placeholderID, placeholderCookie, placeholderDir, placeholderName, nil,
 		); err != nil {
-			undoRecord()
 			if staged {
 				cleanupStagedOpen()
 			}
@@ -1479,10 +1432,8 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 		targetID,
 		openstate.Grant{Access: access, Deny: args.ShareDeny()},
 		nfsSID,
-		durable,
 	)
 	if err != nil {
-		undoRecord()
 		if joinedFrom.ClientID != 0 {
 			if err := s.stagingStore.Bind(targetID, joinedFrom.ClientID, joinedFrom.NFSStateID,
 				joinedFrom.OpenOwner, joinedFrom.ReadOnly); err != nil {
@@ -1503,15 +1454,6 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 		s.names.remember(publishedID, openDir, openName)
 	}
 	response := openResponse{state: state, created: created}
-	if reusedStaging &&
-		recoveredStagingMeta.NFSStateID != response.state.ID {
-		if err := s.clients.RemoveOpen(
-			recoveredStagingMeta.ClientID,
-			recoveredStagingMeta.NFSStateID,
-		); err != nil && !os.IsNotExist(err) {
-			s.log.Warn("remove recovered staging open", "err", err)
-		}
-	}
 	return writeOpenResponse(w, st, response)
 }
 
@@ -1614,33 +1556,4 @@ func writeOpenResponse(
 func writeOpenError(w *nfs4.COMPOUND4resWriter, status uint32) uint32 {
 	ew := w.AppendResarray_Open()
 	return finishDefaultResponse(w, ew.Finish(), status)
-}
-
-// recordOpen admits an open through the client store, which requires a
-// confirmed client with a live lease. A durable open also gets a marker
-// other processes can see; otherwise the server's open state is the
-// open's only record.
-func (s *Server) recordOpen(clientID uint64, id nfs4.StateID, durable bool) error {
-	if durable {
-		return s.clients.MarkOpen(clientID, id)
-	}
-	return s.clients.NoteOpen(clientID, id)
-}
-
-// dropOpenRecord removes a marked open's marker. An unmarked open has
-// nothing in the client store to remove.
-func (s *Server) dropOpenRecord(clientID uint64, id nfs4.StateID, marked bool) error {
-	if !marked {
-		return nil
-	}
-	return s.clients.RemoveOpen(clientID, id)
-}
-
-// hasOpen reports that an open's client still holds it: by its marker, or
-// for an unmarked read open, by the client's lease alone.
-func (s *Server) hasOpen(state openstate.State) (bool, error) {
-	if state.Marked {
-		return s.clients.HasOpen(state.Owner.ClientID, state.ID)
-	}
-	return s.clients.HasLocalOpen(state.Owner.ClientID, state.ID)
 }

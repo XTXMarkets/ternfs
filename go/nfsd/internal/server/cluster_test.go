@@ -1030,7 +1030,7 @@ func TestTernClientIncarnationGC(t *testing.T) {
 		t.Fatal(err)
 	}
 	stateID := nfs4.StateID{1}
-	if err := first.MarkOpen(oldID, stateID); err != nil {
+	if err := first.NoteOpen(oldID, stateID); err != nil {
 		t.Fatal(err)
 	}
 	identityID, err := fs.LookupParent(vfs.InodeID(oldID))

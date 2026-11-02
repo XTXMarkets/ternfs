@@ -45,7 +45,7 @@ func newConfirmFixture(t *testing.T, withP bool) *confirmFixture {
 		if _, err := store.ConfirmForTest(p, confirm, RPCPrincipal{}); err != nil {
 			t.Fatal(err)
 		}
-		if err := store.MarkOpen(p, nfs4.StateID{1}); err != nil {
+		if err := store.WriteOpenMarkerForTest(p, nfs4.StateID{1}); err != nil {
 			t.Fatal(err)
 		}
 		f.p = vfs.InodeID(p)

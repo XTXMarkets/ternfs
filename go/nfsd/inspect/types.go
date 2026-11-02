@@ -304,11 +304,10 @@ type Orphan struct {
 }
 
 // CachedClient is the store location this process cached for the
-// incarnation and the open stateids it has marked.
+// incarnation.
 type CachedClient struct {
 	IdentityID       string `json:"identity_id"`
 	ConfirmedPointer string `json:"confirmed_pointer"`
-	Opens            int    `json:"open_markers"`
 }
 
 // SessionFilter selects sessions. Zero values select everything. Slots
@@ -471,10 +470,6 @@ type Open struct {
 	Generation  uint32   `json:"generation"`
 	Seq         uint64   `json:"seq"`
 	Writer      bool     `json:"writer"`
-	// Marked reports a durable open marker in the client store. Write
-	// opens, creates and recovered writers are marked, and stay marked
-	// after OPEN_DOWNGRADE; other read opens are process-local.
-	Marked bool `json:"marked"`
 }
 
 // ExpiredStateid is a tombstone: the owner gets EXPIRED, others BAD_STATEID.

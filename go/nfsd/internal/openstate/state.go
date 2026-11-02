@@ -32,11 +32,6 @@ type State struct {
 	modes      uint8
 	denyModes  uint8
 	Generation uint32
-	// Marked reports that the open has a durable marker in the client
-	// store. An open is marked once it is granted write access, creates
-	// its file or recovers a writer's staging, and stays marked; other read
-	// opens are recorded in this process only.
-	Marked bool
 	// Recovered reports an open adopted from an earlier process's staging.
 	// Its original grants are unknown, so a downgrade gets only the subset
 	// rule (DowngradeStatus).

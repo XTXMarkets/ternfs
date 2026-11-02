@@ -64,7 +64,7 @@ func TestDiagnosticsIncarnationJoinsStores(t *testing.T) {
 	if inc.Refresher == nil || inc.Refresher.State != inspect.LeaseLive || inc.Cached == nil {
 		t.Fatalf("client store part = %+v", inc)
 	}
-	if inc.Opens != 1 || inc.Cached.Opens != 1 {
+	if inc.Opens != 1 {
 		t.Fatalf("opens = %d cached = %+v", inc.Opens, inc.Cached)
 	}
 }

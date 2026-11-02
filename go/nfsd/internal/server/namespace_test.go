@@ -544,7 +544,7 @@ func TestRetiredSourceDoesNotBlockRename(t *testing.T) {
 					t.Fatal(err)
 				}
 				if destination == "active" {
-					if err := f.server.clients.MarkOpen(clientID, stateID); err != nil {
+					if err := f.server.clients.NoteOpen(clientID, stateID); err != nil {
 						t.Fatal(err)
 					}
 				} else if err := sf.Retire(clientID, stateID); err != nil {

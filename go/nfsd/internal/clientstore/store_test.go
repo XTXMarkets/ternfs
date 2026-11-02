@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -142,11 +141,17 @@ func TestClientStoreDurableState(t *testing.T) {
 	})
 
 	var stateID nfs4.StateID
+	// One process: the store asks the server which incarnations it holds
+	// write state for.
+	var heldID uint64
+	held := func(id uint64) bool { return id == heldID }
+	first.HoldsWriteState, second.HoldsWriteState = held, held
 	t.Run("ownership takeover and expiry", func(t *testing.T) {
 		stateID[0] = 1
-		if err := first.MarkOpen(clientID, stateID); err != nil {
+		if err := first.NoteOpen(clientID, stateID); err != nil {
 			t.Fatal(err)
 		}
+		heldID = clientID
 		if _, _, err := second.RegisterForTest(
 			[8]byte{2}, []byte("client"), owner2,
 		); err == nil {
@@ -167,9 +172,7 @@ func TestClientStoreDurableState(t *testing.T) {
 				t.Fatalf("active owner conflict = %v", err)
 			}
 		}
-		if err := first.RemoveOpen(clientID, stateID); err != nil {
-			t.Fatal(err)
-		}
+		heldID = 0
 		takeoverID, takeoverConfirm, err := second.RegisterForTest(
 			verifier, []byte("client"), owner2)
 		if err != nil {
@@ -187,9 +190,10 @@ func TestClientStoreDurableState(t *testing.T) {
 
 		second.Now = func() time.Time { return base.Add(LeaseWriteTerm + time.Second) }
 		stateID[0] = 2
-		if err := first.MarkOpen(clientID, stateID); err != nil {
+		if err := first.NoteOpen(clientID, stateID); err != nil {
 			t.Fatal(err)
 		}
+		heldID = clientID
 		reregisterID, reregisterConfirm, err := second.RegisterForTest(
 			verifier, []byte("client"), owner1,
 		)
@@ -204,7 +208,7 @@ func TestClientStoreDurableState(t *testing.T) {
 		); err != nil {
 			t.Fatal(err)
 		}
-		active, err := second.HasOpen(clientID, stateID)
+		active, err := second.HasLocalOpen(clientID, stateID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -217,7 +221,7 @@ func TestClientStoreDurableState(t *testing.T) {
 	t.Run("reboot and collection", func(t *testing.T) {
 		second.Now = func() time.Time { return base }
 		stateID[0] = 3
-		if err := second.MarkOpen(clientID, stateID); err != nil {
+		if err := second.NoteOpen(clientID, stateID); err != nil {
 			t.Fatal(err)
 		}
 		rebootID, rebootConfirm, err := first.RegisterForTest(
@@ -236,7 +240,7 @@ func TestClientStoreDurableState(t *testing.T) {
 		if replacedID != clientID {
 			t.Fatalf("reboot replaced clientid %d, want %d", replacedID, clientID)
 		}
-		active, err := first.HasOpen(clientID, stateID)
+		active, err := first.HasLocalOpen(clientID, stateID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -305,7 +309,7 @@ func TestClientStoreLeaseSlotsDoNotShortenEachOther(t *testing.T) {
 	}
 	var stateID nfs4.StateID
 	stateID[0] = 1
-	if err := first.MarkOpen(clientID, stateID); err != nil {
+	if err := first.NoteOpen(clientID, stateID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -363,7 +367,7 @@ func TestClientStoreRemovesExpiredProcessSlots(t *testing.T) {
 	first, clientID := NewConfirmedStoreClient(
 		t, fs, []byte("client"), [8]byte{1}, owner)
 	first.Now = func() time.Time { return base }
-	if err := first.MarkOpen(clientID, nfs4.StateID{1}); err != nil {
+	if err := first.NoteOpen(clientID, nfs4.StateID{1}); err != nil {
 		t.Fatal(err)
 	}
 	second, err := NewStore(fs)
@@ -426,7 +430,7 @@ func TestClientStoreExpiredLeaseDoesNotReviveAfterSlotCleanup(t *testing.T) {
 			return store.Renew(clientID)
 		}},
 		{"OPEN", func(store *Store, clientID uint64) error {
-			return store.MarkOpen(clientID, nfs4.StateID{2})
+			return store.NoteOpen(clientID, nfs4.StateID{2})
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -438,7 +442,7 @@ func TestClientStoreExpiredLeaseDoesNotReviveAfterSlotCleanup(t *testing.T) {
 			first, clientID := NewConfirmedStoreClient(
 				t, fs, []byte("client"), [8]byte{1}, owner)
 			first.Now = func() time.Time { return base }
-			if err := first.MarkOpen(clientID, nfs4.StateID{1}); err != nil {
+			if err := first.NoteOpen(clientID, nfs4.StateID{1}); err != nil {
 				t.Fatal(err)
 			}
 
@@ -480,7 +484,7 @@ func TestClientStoreCachedRenewSeesExpiredMarker(t *testing.T) {
 		t, fs, []byte("client"), [8]byte{1}, owner)
 	first.Now = func() time.Time { return base }
 	stateID := nfs4.StateID{1}
-	if err := first.MarkOpen(clientID, stateID); err != nil {
+	if err := first.NoteOpen(clientID, stateID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -502,7 +506,7 @@ func TestClientStoreCachedRenewSeesExpiredMarker(t *testing.T) {
 	first.Now = func() time.Time {
 		return base.Add(LeaseRenewAfter + time.Second)
 	}
-	if active, err := first.HasOpen(
+	if active, err := first.HasLocalOpen(
 		clientID, stateID,
 	); active || nfs4.ErrorCode(err) != nfs4.NFS4ERR_EXPIRED {
 		t.Fatalf("cached renewal after fleet expiry = active %t, err %v",
@@ -520,7 +524,7 @@ func TestClientStorePersistsExpiryBeforeSlotCleanup(t *testing.T) {
 	store, clientID := NewConfirmedStoreClient(
 		t, fs, []byte("client"), [8]byte{1}, owner)
 	store.Now = func() time.Time { return base }
-	if err := store.MarkOpen(clientID, nfs4.StateID{1}); err != nil {
+	if err := store.NoteOpen(clientID, nfs4.StateID{1}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -550,7 +554,7 @@ func TestClientStoreIsConfirmedUsesCachedLocation(t *testing.T) {
 		[8]byte{1},
 		ClientOwner{Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"}},
 	)
-	if err := store.MarkOpen(clientID, nfs4.StateID{1}); err != nil {
+	if err := store.NoteOpen(clientID, nfs4.StateID{1}); err != nil {
 		t.Fatal(err)
 	}
 	fs.Reset()
@@ -591,7 +595,7 @@ func TestClientStoreHasOpenFastPathAndImplicitRenewal(t *testing.T) {
 		t.Fatal(err)
 	}
 	stateID := nfs4.StateID{1}
-	if err := store.MarkOpen(clientID, stateID); err != nil {
+	if err := store.NoteOpen(clientID, stateID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -605,7 +609,7 @@ func TestClientStoreHasOpenFastPathAndImplicitRenewal(t *testing.T) {
 	} {
 		store.Now = func() time.Time { return base.Add(elapsed) }
 		fs.Reset()
-		active, err := store.HasOpen(clientID, stateID)
+		active, err := store.HasLocalOpen(clientID, stateID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -624,41 +628,11 @@ func TestClientStoreHasOpenFastPathAndImplicitRenewal(t *testing.T) {
 	// dead and writes nothing.
 	store.Now = func() time.Time { return base.Add(LeaseWriteTerm + time.Second) }
 	fs.Reset()
-	if active, err := store.HasOpen(clientID, stateID); err != nil || active {
+	if active, err := store.HasLocalOpen(clientID, stateID); err != nil || active {
 		t.Fatalf("open past the lease %t %v", active, err)
 	}
 	if fs.CreateFiles != 0 || fs.Renames != 0 {
 		t.Fatalf("HasOpen wrote: create=%d rename=%d", fs.CreateFiles, fs.Renames)
-	}
-}
-
-func TestClientStoreMarkOpenKeepsExistingMarkerInode(t *testing.T) {
-	fs := vfs.NewLocalTernVFS(t.TempDir())
-	store, clientID := NewConfirmedStoreClient(
-		t,
-		fs,
-		[]byte("client"),
-		[8]byte{1},
-		ClientOwner{Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"}},
-	)
-	stateID := nfs4.StateID{1}
-	if err := store.MarkOpen(clientID, stateID); err != nil {
-		t.Fatal(err)
-	}
-	before, err := fs.Lookup(vfs.InodeID(clientID), ActiveOpenName(stateID))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.MarkOpen(clientID, stateID); err != nil {
-		t.Fatal(err)
-	}
-	after, err := fs.Lookup(vfs.InodeID(clientID), ActiveOpenName(stateID))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if after != before {
-		t.Fatalf("replayed OPEN replaced marker inode %d with %d",
-			before, after)
 	}
 }
 
@@ -690,7 +664,7 @@ func TestClientStoreImplicitRenewalRechecksReboot(t *testing.T) {
 		t.Fatal(err)
 	}
 	stateID := nfs4.StateID{1}
-	if err := first.MarkOpen(oldID, stateID); err != nil {
+	if err := first.NoteOpen(oldID, stateID); err != nil {
 		t.Fatal(err)
 	}
 	newID, confirm, err := second.RegisterForTest(
@@ -708,7 +682,7 @@ func TestClientStoreImplicitRenewalRechecksReboot(t *testing.T) {
 	first.Now = func() time.Time {
 		return base.Add(LeaseRenewAfter + time.Second)
 	}
-	active, err := first.HasOpen(oldID, stateID)
+	active, err := first.HasLocalOpen(oldID, stateID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -766,8 +740,6 @@ func TestClientStoreNotedOpenHoldsNoMarker(t *testing.T) {
 	}
 	if incs, _ := first.SnapshotIncarnations(vfs.InodeID(clientID)); len(incs) != 1 || incs[0].Cached == nil {
 		t.Fatal("no cached client")
-	} else if n := incs[0].Cached.Opens; n != 0 {
-		t.Fatalf("cached client lists %d open markers, want 0", n)
 	}
 
 	takeoverID, takeoverConfirm, err := second.RegisterForTest([8]byte{2}, []byte("client"), owner2)
@@ -820,21 +792,10 @@ func TestClientStoreRejectsClientIDOutsideStateDirectory(t *testing.T) {
 			err)
 	}
 	stateID := nfs4.StateID{1}
-	if err := store.MarkOpen(
+	if err := store.NoteOpen(
 		uint64(incarnationID), stateID,
 	); nfs4.ErrorCode(err) != nfs4.NFS4ERR_STALE_CLIENTID {
-		t.Fatalf("forged clientid MarkOpen error = %v, want NFS4ERR_STALE_CLIENTID",
-			err)
-	}
-	if _, err := fs.Lookup(
-		incarnationID, ActiveOpenName(stateID),
-	); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("forged clientid created an open marker: %v", err)
-	}
-	if err := store.RemoveOpen(
-		uint64(incarnationID), stateID,
-	); nfs4.ErrorCode(err) != nfs4.NFS4ERR_STALE_CLIENTID {
-		t.Fatalf("forged clientid RemoveOpen error = %v, want NFS4ERR_STALE_CLIENTID",
+		t.Fatalf("forged clientid NoteOpen error = %v, want NFS4ERR_STALE_CLIENTID",
 			err)
 	}
 	if err := store.Renew(
@@ -843,10 +804,10 @@ func TestClientStoreRejectsClientIDOutsideStateDirectory(t *testing.T) {
 		t.Fatalf("forged clientid Renew error = %v, want NFS4ERR_STALE_CLIENTID",
 			err)
 	}
-	if active, err := store.HasOpen(
+	if active, err := store.HasLocalOpen(
 		uint64(incarnationID), stateID,
 	); err != nil {
-		t.Fatalf("forged clientid HasOpen error = %v, want nil", err)
+		t.Fatalf("forged clientid HasLocalOpen error = %v, want nil", err)
 	} else if active {
 		t.Fatal("forged clientid reported an active open")
 	}
@@ -936,26 +897,26 @@ func (fs *beforeRenameHookVFS) Rename(
 	return fs.TernVFS.Rename(srcDirID, srcName, dstDirID, dstName)
 }
 
-func TestClientStoreHasOpenRequiresLiveDurableLease(t *testing.T) {
+func TestClientStoreHasLocalOpenRequiresLiveDurableLease(t *testing.T) {
 	for _, cached := range []bool{false, true} {
 		for _, expired := range []bool{false, true} {
 			t.Run(fmt.Sprintf("cached=%t/expired=%t", cached, expired), func(t *testing.T) {
+				if cached && !expired {
+					t.Skip("a cached client's own proven lease answers without the durable slot")
+				}
 				fs := vfs.NewLocalTernVFS(t.TempDir())
 				store, id := NewConfirmedStoreClient(t, fs, []byte("client"), [8]byte{1}, ClientOwner{})
 				now := time.Unix(1000, 0)
 				store.Now = func() time.Time { return now }
 				sid := nfs4.StateID{1}
-				if err := store.MarkOpen(id, sid); err != nil {
+				if err := store.NoteOpen(id, sid); err != nil {
 					t.Fatal(err)
 				}
 				leaseID, err := fs.Lookup(vfs.InodeID(id), store.LeaseName)
 				if err != nil {
 					t.Fatal(err)
 				}
-				if cached {
-					state, _ := store.LocalClients.Load(vfs.InodeID(id))
-					delete(state.(*localClientState).opens, sid)
-				} else {
+				if !cached {
 					store.LocalClients.Delete(vfs.InodeID(id))
 				}
 				if expired {
@@ -963,8 +924,8 @@ func TestClientStoreHasOpenRequiresLiveDurableLease(t *testing.T) {
 				} else if err := fs.Remove(vfs.InodeID(id), store.LeaseName); err != nil {
 					t.Fatal(err)
 				}
-				if active, err := store.HasOpen(id, sid); err != nil || active {
-					t.Fatalf("marker without live lease = %v, %v", active, err)
+				if active, err := store.HasLocalOpen(id, sid); err != nil || active {
+					t.Fatalf("open without live lease = %v, %v", active, err)
 				}
 				currentID, err := fs.Lookup(vfs.InodeID(id), store.LeaseName)
 				if expired {
@@ -980,62 +941,6 @@ func TestClientStoreHasOpenRequiresLiveDurableLease(t *testing.T) {
 	}
 }
 
-func TestClientStoreMarkOpenKeepsExistingMarkerOnRenewFailure(t *testing.T) {
-	baseFS := vfs.NewLocalTernVFS(t.TempDir())
-	fs := &renameFailureVFS{TernVFS: baseFS}
-	base := time.Unix(1000, 0)
-	owner := ClientOwner{
-		Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"},
-	}
-	store, clientID := NewConfirmedStoreClient(
-		t, fs, []byte("client"), [8]byte{1}, owner)
-	store.Now = func() time.Time { return base }
-	stateID := nfs4.StateID{1}
-	if err := store.MarkOpen(clientID, stateID); err != nil {
-		t.Fatal(err)
-	}
-
-	// A refresh that fails while the published lease still lasts does not
-	// fail MarkOpen: the lease it relies on is proven (README.md#open-markers).
-	store.Now = func() time.Time {
-		return base.Add(LeaseRenewAfter + time.Second)
-	}
-	fs.dstName = store.LeaseName
-	fs.remaining = 1
-	if err := store.MarkOpen(clientID, stateID); err != nil {
-		t.Fatalf("MarkOpen within the proven lease = %v", err)
-	}
-	if fs.remaining != 0 {
-		t.Fatal("the due refresh was not attempted")
-	}
-	if _, err := baseFS.Lookup(
-		vfs.InodeID(clientID), ActiveOpenName(stateID),
-	); err != nil {
-		t.Fatalf("refresh failure removed existing marker: %v", err)
-	}
-
-	// Past the proven lease, with publication still failing, MarkOpen gets
-	// DELAY and creates no marker.
-	store.Now = func() time.Time { return base.Add(LeaseWriteTerm + time.Second) }
-	fs.remaining = 100
-	newStateID := nfs4.StateID{2}
-	if err := store.MarkOpen(
-		clientID, newStateID,
-	); nfs4.ErrorCode(err) != nfs4.NFS4ERR_DELAY {
-		t.Fatalf("new MarkOpen error = %v, want DELAY", err)
-	}
-	if _, err := baseFS.Lookup(
-		vfs.InodeID(clientID), ActiveOpenName(newStateID),
-	); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("failed refresh created a new marker: %v", err)
-	}
-	if _, err := baseFS.Lookup(
-		vfs.InodeID(clientID), ActiveOpenName(stateID),
-	); err != nil {
-		t.Fatalf("refresh failure removed existing marker: %v", err)
-	}
-}
-
 func TestClientStoreLiveSlotsSkipsRemovedEntry(t *testing.T) {
 	baseFS := vfs.NewLocalTernVFS(t.TempDir())
 	fs := &readAllHookVFS{TernVFS: baseFS}
@@ -1046,7 +951,7 @@ func TestClientStoreLiveSlotsSkipsRemovedEntry(t *testing.T) {
 	store, clientID := NewConfirmedStoreClient(
 		t, fs, []byte("client"), [8]byte{1}, owner)
 	store.Now = func() time.Time { return base }
-	if err := store.MarkOpen(clientID, nfs4.StateID{1}); err != nil {
+	if err := store.NoteOpen(clientID, nfs4.StateID{1}); err != nil {
 		t.Fatal(err)
 	}
 	leaseID, err := baseFS.Lookup(vfs.InodeID(clientID), store.LeaseName)
@@ -1103,7 +1008,7 @@ func TestClientStoreRenewalDoesNotBlockActiveState(t *testing.T) {
 		t, fs, []byte("client"), [8]byte{1}, owner)
 	store.Now = func() time.Time { return base }
 	stateID := nfs4.StateID{1}
-	if err := store.MarkOpen(clientID, stateID); err != nil {
+	if err := store.NoteOpen(clientID, stateID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1119,7 +1024,7 @@ func TestClientStoreRenewalDoesNotBlockActiveState(t *testing.T) {
 
 	activeResult := make(chan bool, 1)
 	go func() {
-		active, err := store.HasOpen(clientID, stateID)
+		active, err := store.HasLocalOpen(clientID, stateID)
 		activeResult <- err == nil && active
 	}()
 	select {
@@ -1400,66 +1305,6 @@ func TestClientStoreGCRechecksConfirmationBeforeDeleting(t *testing.T) {
 	}
 	if _, err := fs.Stat(vfs.InodeID(oldID)); err != nil {
 		t.Fatalf("GC removed an incarnation with a live confirmation claim: %v", err)
-	}
-}
-
-func TestClientStoreHasOpenSlowPathDoesNotBlockFastPath(t *testing.T) {
-	baseFS := vfs.NewLocalTernVFS(t.TempDir())
-	hookFS := &markerLookupGateVFS{TernVFS: baseFS, Gate: testutil.NewGate()}
-	defer testutil.CloseSignal(hookFS.Release)
-	owner := ClientOwner{
-		Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"},
-	}
-	first, clientID := NewConfirmedStoreClient(
-		t, hookFS, []byte("client"), [8]byte{1}, owner)
-	second, err := NewStore(baseFS)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	cachedState := nfs4.StateID{1}
-	if err := first.MarkOpen(clientID, cachedState); err != nil {
-		t.Fatal(err)
-	}
-	// An open recorded by another nfsd is only visible to first through the
-	// durable marker, so HasOpen takes the slow path for it.
-	remoteState := nfs4.StateID{2}
-	if err := second.MarkOpen(clientID, remoteState); err != nil {
-		t.Fatal(err)
-	}
-	hookFS.name = ActiveOpenName(remoteState)
-
-	type result struct {
-		open bool
-		err  error
-	}
-	slow := make(chan result, 1)
-	go func() {
-		open, err := first.HasOpen(clientID, remoteState)
-		slow <- result{open: open, err: err}
-	}()
-	testutil.AwaitSignal(t, hookFS.Entered, "slow-path marker lookup")
-
-	fast := make(chan result, 1)
-	go func() {
-		open, err := first.HasOpen(clientID, cachedState)
-		fast <- result{open: open, err: err}
-	}()
-	got := testutil.AwaitValue(t, fast, "fast-path HasOpen during the slow path")
-	if got.err != nil {
-		t.Fatalf("fast-path HasOpen failed: %v", got.err)
-	}
-	if !got.open {
-		t.Fatal("fast-path HasOpen lost a cached open during the slow path")
-	}
-
-	testutil.CloseSignal(hookFS.Release)
-	got = testutil.AwaitValue(t, slow, "slow-path HasOpen")
-	if got.err != nil {
-		t.Fatalf("slow-path HasOpen failed: %v", got.err)
-	}
-	if !got.open {
-		t.Fatal("slow-path HasOpen did not find the durable marker")
 	}
 }
 

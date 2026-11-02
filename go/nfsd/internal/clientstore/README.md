@@ -9,14 +9,14 @@ SPDX-License-Identifier: GPL-2.0-or-later
 Package clientstore keeps the NFS client records in TernFS, under
 `/.nfs/clients`, so they outlive the nfsd process and its staging disk:
 client identities and their incarnations, confirmation evidence, durable
-lease slots, open markers and collection. One daemon serves a tree; the
+lease slots and collection. One daemon serves a tree; the
 records let it check a returning client's principal, recognise a client
 reboot and decide whether a staged writer may be resumed, after a restart
 or a failover. The server owns the protocol
 decisions and the process-local state built on these records; see
 [Clients and leases](../../DESIGN.md#clients-and-leases).
 
-[store.go](store.go) holds the layout, registration, open markers, lease
+[store.go](store.go) holds the layout, registration, open admission, lease
 observation and collection. [confirm_attempt.go](confirm_attempt.go) is
 confirmation, [lease_refresher.go](lease_refresher.go) the durable lease
 writer, and [store_report.go](store_report.go) the read-only
@@ -32,7 +32,7 @@ writer, and [store_report.go](store_report.go) the read-only
     i.<hex>/                one incarnation
         client              JSON record
         reboot              symlink to ../i.<hex>
-        o.<stateid>         empty open marker
+        o.<stateid>         open marker, written by earlier releases only
         lease.<nfsd-id>     JSON expiry
         confirming.<nfsd-id> JSON expiry
         expired             empty marker
@@ -48,7 +48,7 @@ writer, and [store_report.go](store_report.go) the read-only
 | `pending` | The incarnation awaiting its first CREATE_SESSION. It may still name the confirmed one; see [Record updates](#record-updates). |
 | `client` | The owner, the client's verifier, the confirmation verifier nfsd issued and the RPC principal. The owner is kept for inspection; the directory name is its hash. |
 | `reboot` | The incarnation this one replaced, while its state still needs purging. |
-| `o.<stateid>` | An open that needs a durable marker, named by its 12-byte stateid as hex. The detailed open state is process-local. |
+| `o.<stateid>` | An open marker, named by its 12-byte stateid as hex. Earlier releases wrote one for every write open; nfsd no longer does. A replacement purge removes any left, and collection removes them with their incarnation. |
 | `lease.<nfsd-id>` | One process's durable lease expiry. |
 | `confirming.<nfsd-id>` | One process's claim on an incarnation it is confirming, with an expiry. |
 | `expired` | The fleet expired this incarnation. It cannot be revived. |
@@ -86,10 +86,11 @@ replaces it.
 `ExchangeID` binds an NFSv4.1 EXCHANGE_ID to an incarnation, under the
 identity's exclusive lock:
 
-- If the identity has a confirmed incarnation with a different principal
-  that has an open marker and a live lease, the call fails with
-  `ClientInUseError`, which the server returns as `NFS4ERR_CLID_INUSE`.
-  An identity with sessions but no marked open can be taken over.
+- If the identity has a confirmed incarnation with a different principal,
+  the server holds a write open or staged writer of it (`HoldsWriteState`)
+  and its lease is live, the call fails with `ClientInUseError`, which the
+  server returns as `NFS4ERR_CLID_INUSE`. An identity with sessions but no
+  write state can be taken over.
 - If the confirmed incarnation has the same principal and verifier, and no
   `expired` marker, and either no lease slot or a live one, it is adopted
   without any write. This is how the same client boot registering again,
@@ -167,8 +168,9 @@ settle anything.
 
 ### Replacement purge
 
-`FinishReplacement` completes a committed attempt. It purges P's open
-markers and lease slots only if write B applied or may have, and N's
+`FinishReplacement` completes a committed attempt. It purges P's lease
+slots, and any open markers earlier releases left, only if write B applied
+or may have, and N's
 `reboot` symlink, read through its exact edge, still names P. It then
 removes that edge and N's confirming claim. If the purge fails, the
 `reboot` symlink stays as evidence.
@@ -182,25 +184,21 @@ confirmation in progress defers it with `ErrPurgeProtected`.
 These steps order work within one process only. The identity lock is
 local, and another process's writes are not atomic with these reads.
 
-## Open markers
+## Open admission
 
-The server records an open with `MarkOpen`, which creates `o.<stateid>`,
-or `NoteOpen`, which creates nothing. Both require a confirmed incarnation
-whose lease record has a published lease in the future. Otherwise they get
-`NFS4ERR_DELAY` while the lease is read again, `NFS4ERR_STALE_CLIENTID` for
-a replaced incarnation, or `NFS4ERR_EXPIRED` once it is fleet-expired.
-Which opens are marked is the server's rule; see
-[Reader visibility](../openstate/README.md#reader-visibility).
+The server admits an open with `NoteOpen`, which writes nothing. It
+requires a confirmed incarnation whose lease record has a published lease
+in the future. Otherwise it gets `NFS4ERR_DELAY` while the lease is read
+again, `NFS4ERR_STALE_CLIENTID` for a replaced incarnation, or
+`NFS4ERR_EXPIRED` once it is expired.
 
-`HasOpen` reports a marked open active: its marker exists, its incarnation
-is still confirmed and its lease is live. The fast path, for an open this
-process recorded, checks the `confirmed` pointer and, while this process's
-own published lease is in the future, only the `expired` marker. Otherwise
-it reads the marker and every lease slot. `HasLocalOpen` makes the same
-client checks for an unmarked open. `RemoveOpen` removes a marker.
-`MarkerGone` reports a marker definitely absent.
-
-`NFS4ERR_CLID_INUSE` and the store report see only marked opens.
+`HasLocalOpen` reports that the client of an open the server holds, or of a
+writer whose sidecar it recovered, is still confirmed with a live lease.
+The fast path, for a client this process cached, checks the `confirmed`
+pointer and, while this process's own published lease is in the future,
+only the `expired` marker. Otherwise it reads the lease slots. The client
+store keeps no record of opens: a writer's synced sidecar is the evidence
+that its open was not closed.
 
 ## Durable leases
 
@@ -341,8 +339,7 @@ identity registers again. There is no sweep of abandoned identities.
 
 | Lock | Scope |
 | --- | --- |
-| Identity lock | Per identity directory, reader-writer. Registration, confirmation commit and settlement, replacement purge and collection take it exclusively. Open marker creation and removal, confirmation preparation, lease observation and the slow path of `HasOpen` share it. A waiting exclusive holder blocks new shared holders, so a collection can briefly delay new OPENs for that identity. |
-| Marker lock | Per open marker. Orders a marker's creation, removal and lookup with its cached entry, while unrelated markers proceed. |
+| Identity lock | Per identity directory, reader-writer. Registration, confirmation commit and settlement, replacement purge and collection take it exclusively. Open admission, confirmation preparation, lease observation and the slow path of `HasLocalOpen` share it. A waiting exclusive holder blocks new shared holders, so a collection can briefly delay new OPENs for that identity. |
 | `LeaseLocks` | Per incarnation, held for a refresher pass. A server's terminal steps take the identity lock under it. |
 | `RefreshMu`, then a record's `Mu` | The record map and each record's fields. `Mu` is never held across I/O. |
 | Attempt mutex | Serializes settlement and purge of one confirmation attempt, taken before the identity lock. `CommitConfirmation` takes the identity lock first, then the mutex of the attempt it is creating, which nothing else can see yet. |
@@ -358,8 +355,7 @@ writes.
 ## Garbage in TernFS
 
 Every replacement leaves the old record behind as history, and every
-marker removed leaves a dead file. Lease renewals and write-open markers
-therefore accumulate snapshot edges and dead inodes under `/.nfs` until the
+marker removed leaves a dead file. Lease renewals therefore accumulate snapshot edges and dead inodes under `/.nfs` until the
 shard garbage collector removes them under that directory's snapshot
 policy. Give `/.nfs` a short policy; see
 [Operating requirements](../../DEPLOYMENT.md#operating-requirements).

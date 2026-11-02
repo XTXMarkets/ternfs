@@ -26,7 +26,7 @@ func TestDiagnosticsCachedClientDuringRenewal(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		for range 500 {
-			if err := f.srv.clients.MarkOpen(f.incarnID, nfs4.StateID(f.stateid)); err != nil {
+			if err := f.srv.clients.NoteOpen(f.incarnID, nfs4.StateID(f.stateid)); err != nil {
 				done <- err
 				return
 			}

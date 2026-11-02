@@ -205,6 +205,7 @@ func NewServer(fs vfs.TernVFS, stagingStore staging.Store, logger *slog.Logger) 
 	clients.LeaseNeed = s.sessions.leaseNeed
 	clients.LeaseTerminal = s.leaseTerminal
 	clients.LeaseSessions = s.sessions.hasSessions
+	clients.HoldsWriteState = s.holdsWriteState
 	// The nfsd ID names this process's lease and confirming slots in the
 	// client store. The epoch is the first four bytes of every stateid this
 	// process issues. Both are needed to attribute persisted state and wire
@@ -1029,4 +1030,21 @@ func (s *Server) acceptsMinorVersion(minor uint32) bool {
 // a client sends it to provoke NFS4ERR_OP_ILLEGAL.
 func knownOperation(opnum uint32) bool {
 	return opnum >= nfs4.OP_ACCESS && opnum <= nfs4.OP_REMOVEXATTR
+}
+
+// holdsWriteState reports that this process has a write open of the
+// incarnation, or a staged writer of it that is not retired: what makes a
+// registration by another principal NFS4ERR_CLID_INUSE.
+func (s *Server) holdsWriteState(clientID uint64) bool {
+	for _, state := range s.opens.ClientStates(clientID) {
+		if state.Writes() {
+			return true
+		}
+	}
+	for _, meta := range s.stagingStore.Entries() {
+		if meta.ClientID == clientID && !meta.Retired {
+			return true
+		}
+	}
+	return false
 }

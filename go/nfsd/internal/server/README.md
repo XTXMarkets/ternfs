@@ -171,9 +171,8 @@ took on names, on a writer's publication target and on a file's open state
 until the slot's record is written. No other request can then change what
 it acted on before its retransmission could find the reply. Other
 operations, and earlier ones, release their locks when they return. Work that
-follows the effect without being part of the reply, such as removing a
-closed open's marker or scrapping the transient a clean CLOSE leaves, runs
-once the record is written.
+follows the effect without being part of the reply, such as scrapping the
+transient a clean CLOSE leaves, runs once the record is written.
 
 Linux 4.10 and later end CLOSE, OPEN_DOWNGRADE, REMOVE and RENAME compounds
 with that operation, and libnfs CLOSE, REMOVE and RENAME. Older Linux
@@ -551,7 +550,7 @@ never changes a committed reply.
 
 Stateids, owners, downgrades and what readers see are in
 [openstate](../openstate/README.md); the client-store side of opens is in
-[Open markers](../clientstore/README.md#open-markers).
+[Open admission](../clientstore/README.md#open-admission).
 
 ### Stateid checks
 
@@ -565,16 +564,15 @@ special stateid through one lookup, in this order:
 3. A failed writer's staging gets `NFS4ERR_IO`, after ordinary stateid
    errors.
 4. For recovered staging, the sidecar must still name the stateid and the
-   client. If the client store definitely shows the open inactive, because
-   its marker is gone, its incarnation is no longer confirmed or its lease
-   is dead, the staging is retired and the operation gets
+   client. If the client store definitely shows the client inactive,
+   because its incarnation is no longer confirmed or its lease is dead,
+   the staging is retired and the operation gets
    `NFS4ERR_EXPIRED`. Otherwise the server adopts the writer as a live open.
    When adoption is refused, because the staging is read-only or the owner
    already has a live open of the file, READ, WRITE and SETATTR run on the
    sidecar state.
-5. For a local open, its durable state must be active: see
-   [Stateid scope](../openstate/README.md#stateid-scope). An open whose own
-   marker is definitely gone loses its entry.
+5. For a local open, its client must be live: see
+   [Stateid scope](../openstate/README.md#stateid-scope).
 
 The decisive check before a retirement or a local expiry runs under a
 destruction hold, so it gives `NFS4ERR_DELAY` while a confirmation protects
@@ -699,8 +697,8 @@ inactive recovered writer. This is local cleanup only, not an NFS grace
 period.
 
 Before a namespace change, every non-retired writer at the name is checked:
-it counts as active while its durable open marker is active or a
-confirmation protects its client, and is otherwise retired; see
+it counts as active while its client is confirmed with a live lease or a
+confirmation protects it, and is otherwise retired; see
 [Writer lifecycle](../../DESIGN.md#writer-lifecycle).
 
 ### Publication

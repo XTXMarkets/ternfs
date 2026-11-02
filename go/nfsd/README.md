@@ -25,7 +25,7 @@ of its staging directory; see [Replace a host](RECOVERY.md#replace-a-host).
 | [Recovery](RECOVERY.md) | Crash and lease recovery, staging inspection, quarantine and replacement procedures. |
 | [Design](DESIGN.md) | How the packages fit together: state ownership, writes and publication, the writer lifecycle, namespace changes, clients and leases, sessions across restarts and lock order. |
 | [Server](internal/server/README.md) | Request handling, sessions and slots, persistent sessions and the restart replay decision, the lease gate, client confirmation, opens, the alias log, the staging lifecycle and the backchannel. |
-| [Client store](internal/clientstore/README.md) | The shared records under `/.nfs`: layout, registration, confirmation, open markers, durable leases and collection. |
+| [Client store](internal/clientstore/README.md) | The shared records under `/.nfs`: layout, registration, confirmation, durable leases and collection. |
 | [Open state](internal/openstate/README.md) | Stateids, opens, downgrades, reader visibility and client views. |
 | [Staging](internal/staging/README.md) | Staged data files and sidecars, checkpoints, startup recovery and quarantine. |
 | [Diagnostics API](inspect/README.md) | The read-only JSON API: resources, typed ids, snapshot consistency, store-only mode and the store report. |

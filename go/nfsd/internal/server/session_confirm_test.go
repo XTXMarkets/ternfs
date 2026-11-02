@@ -57,6 +57,13 @@ func newConfirmServer(t *testing.T) *confirmServer {
 	f.p = incarnationForTest(t, f.srv, f.wireP)
 	f.state, f.fh = openCreateFile(t, f.conn, &f.xid, f.wireP, "pfile")
 	writeFileAt(t, f.conn, &f.xid, f.fh, f.state, 0, []byte("P's bytes"))
+	// A marker as earlier releases wrote one: durable state of P that the
+	// replacement purge removes.
+	var pSID nfs4.StateID
+	copy(pSID[:], f.state[4:])
+	if err := f.srv.clients.WriteOpenMarkerForTest(f.p, pSID); err != nil {
+		t.Fatal(err)
+	}
 	wire, seq, status, err := exchangeID(f.conn, f.xid, "test-client", [8]byte{9})
 	f.xid++
 	if err != nil || status != nfs4.NFS4_OK || seq != 1 {
@@ -739,10 +746,9 @@ func TestConfirmationApplyPanic(t *testing.T) {
 	for _, resume := range []string{"retry", "sweeper"} {
 		t.Run("before publication/"+resume, func(t *testing.T) {
 			f := newConfirmServer(t)
-			// P's first removal is expireClientState's open marker.
-			f.fs.Mu.Lock()
-			f.fs.PanicRemove.Dir = vfs.InodeID(f.p)
-			f.fs.Mu.Unlock()
+			// expireClientState retires P's writer before N's session is
+			// published; the first retirement panics.
+			f.srv.stagingStore = &panicRetireStore{Store: f.srv.stagingStore, remaining: 1}
 			if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4ERR_DELAY {
 				t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 			}
@@ -769,9 +775,9 @@ func TestConfirmationApplyPanic(t *testing.T) {
 	}
 	t.Run("after publication", func(t *testing.T) {
 		f := newConfirmServer(t)
-		// Skip the open marker's removal; panic in the purge.
+		// P's first removal is in the purge, after publication.
 		f.fs.Mu.Lock()
-		f.fs.PanicRemove.Dir, f.fs.PanicRemove.Skip = vfs.InodeID(f.p), 1
+		f.fs.PanicRemove.Dir = vfs.InodeID(f.p)
 		f.fs.Mu.Unlock()
 		status, id := f.rawCreate(t, f.wireN, 1)
 		if status != nfs4.NFS4_OK || f.srv.protected(f.n) || f.nSessions() != 1 {
@@ -952,37 +958,6 @@ func TestProtectionOrdering(t *testing.T) {
 		// The expiry finished completely before any confirmation write.
 		if !f.present(t, vfs.InodeID(f.p), clientstore.ExpiredName) || len(f.srv.opens.ClientStates(f.p)) != 0 {
 			t.Fatal("admitted expiry did not complete")
-		}
-		testutil.AwaitValue(t, result, "confirmation")
-	})
-	t.Run("staging retirement", func(t *testing.T) {
-		f := newConfirmServer(t)
-		var sid nfs4.StateID
-		copy(sid[:], f.state[4:])
-		meta := f.pStaging(t)
-		if err := f.srv.clients.RemoveOpen(f.p, sid); err != nil {
-			t.Fatal(err)
-		}
-		result, resume := f.pausedCreate(t)
-		g := newGate()
-		defer testutil.CloseSignal(g.release)
-		f.fs.Mu.Lock()
-		f.fs.LookupHook.Dir, f.fs.LookupHook.Name, f.fs.LookupHook.Fn = vfs.InodeID(f.p), clientstore.ActiveOpenName(sid), g.hold
-		f.fs.Mu.Unlock()
-		retired := make(chan bool, 1)
-		go func() {
-			unlock := f.srv.lockMutationTargets(mutationTarget{dirID: meta.DirID, name: meta.FileName})
-			defer unlock()
-			busy, _ := f.srv.retireInactiveStagingTarget(meta.DirID, meta.FileName)
-			retired <- busy
-		}()
-		testutil.AwaitSignal(t, g.entered, "writer inspection")
-		resume()
-		f.awaitInstalling(t)
-		notYet(t, result, "confirmation behind an admitted retirement")
-		testutil.CloseSignal(g.release)
-		if busy := testutil.AwaitValue(t, retired, "retirement"); busy || !f.pStaging(t).Retired {
-			t.Fatal("admitted retirement did not complete")
 		}
 		testutil.AwaitValue(t, result, "confirmation")
 	})
@@ -1592,4 +1567,37 @@ func TestConfirmationPanicRetained(t *testing.T) {
 		t.Fatal("commit not applied once")
 	}
 	sessionFilesMatchSessions(t, f.srv)
+}
+
+// panicRetireStore panics in the first remaining Retire of any staging.
+type panicRetireStore struct {
+	staging.Store
+	mu        sync.Mutex
+	remaining int
+}
+
+func (s *panicRetireStore) Get(id vfs.InodeID) staging.File {
+	sf := s.Store.Get(id)
+	if sf == nil {
+		return nil
+	}
+	return &panicRetireFile{File: sf, store: s}
+}
+
+type panicRetireFile struct {
+	staging.File
+	store *panicRetireStore
+}
+
+func (f *panicRetireFile) Retire(clientID uint64, stateID nfs4.StateID) error {
+	f.store.mu.Lock()
+	panicking := f.store.remaining > 0
+	if panicking {
+		f.store.remaining--
+	}
+	f.store.mu.Unlock()
+	if panicking {
+		panic("injected retirement panic")
+	}
+	return f.File.Retire(clientID, stateID)
 }

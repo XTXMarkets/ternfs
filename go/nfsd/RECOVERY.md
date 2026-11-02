@@ -110,7 +110,7 @@ There are three paths, with different eligibility rules:
 
 | Path | Conditions |
 | --- | --- |
-| Continue with the old stateid | Sidecar matches the stateid and client incarnation, and the client presents the staging inode or the sidecar's base inode as its handle; its durable open marker and lease remain active. For a file the earlier process created, the base is the empty placeholder, which stays the client's handle after the name is renamed or removed. The stateid alone does not find the staging. |
+| Continue with the old stateid | Sidecar matches the stateid and client incarnation, and the client presents the staging inode or the sidecar's base inode as its handle; its incarnation is still confirmed with a live lease. For a file the earlier process created, the base is the empty placeholder, which stays the client's handle after the name is renamed or removed. The stateid alone does not find the staging. |
 | Reopen by pathname | A unique eligible staging entry matches the target and access. Within the same incarnation, another open-owner can adopt shared staging. |
 | Writable `CLAIM_FH` on a cold daemon | A unique healthy, linked writer matches the client and recorded owner, and its recorded pathname still names the held handle. |
 

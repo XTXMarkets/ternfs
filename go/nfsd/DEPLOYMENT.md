@@ -104,8 +104,8 @@ DNS changes alone do not redirect existing mounts.
 **Known issues.** The server's read-only mode is incomplete: timestamp-only
 SETATTR can still change backend timestamps. A client `ro` mount prevents
 ordinary writes through that mount; it does not enforce policy on other
-clients. The daemon also writes its client registrations, leases and open
-markers under `/.nfs`. Read-only service is therefore not a backend with no
+clients. The daemon also writes its client registrations and leases under
+`/.nfs`. Read-only service is therefore not a backend with no
 writes. It adds no coherence or failover guarantee for a concurrently
 changing namespace.
 
@@ -276,7 +276,7 @@ dashboard shows the waits as `admission_work_waits`.
 ### Client store snapshot policy
 
 Give `/.nfs` a snapshot policy appropriate for disposable client-store
-history. Lease and marker churn otherwise accumulates snapshot edges and
+history. Lease churn otherwise accumulates snapshot edges and
 dead inodes. For example, with the inode of `/.nfs` in `NFS_DIR_ID`:
 
 ```sh

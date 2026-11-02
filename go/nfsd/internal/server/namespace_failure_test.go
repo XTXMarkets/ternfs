@@ -255,7 +255,7 @@ func TestFailedWriterCloseDoesNotExpireSiblingDuringLookup(t *testing.T) {
 	if !ok || meta.Retired {
 		t.Fatal("failed writer expired its healthy sibling")
 	}
-	if active, err := f.server.clients.HasOpen(incarnationForTest(t, f.server, f.clientID), meta.NFSStateID); err != nil || !active {
+	if active, err := f.server.clients.HasLocalOpen(incarnationForTest(t, f.server, f.clientID), meta.NFSStateID); err != nil || !active {
 		t.Fatalf("sibling marker was revoked: %t, %v", active, err)
 	}
 	writeFileAt(t, f.conn, &f.xid, siblingFH, siblingState, 0, []byte("healthy sibling"))
