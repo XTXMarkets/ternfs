@@ -139,8 +139,9 @@ backend does not answer, also answer DELAY.
 
 TernFS appends spans at a file's current size, so a transient that may hold
 some of them is never written again. Each staging therefore has at most one
-publication candidate, saved in its sidecar: the transient a publication was
-last submitted through, and the data version it carried. A retried CLOSE,
+publication candidate, saved in its sidecar: the transient selected for
+publication and its data version. A fresh candidate is not submitted if its
+checkpoint fails; CLOSE returns DELAY and keeps the staging. A retried CLOSE,
 or one recovered after a restart, resolves the candidate first, from
 positive evidence only: a linked candidate with the current data version is
 the publication, and otherwise the CLOSE links one fresh transient. The

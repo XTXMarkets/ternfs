@@ -7,6 +7,7 @@ package server
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -20,6 +21,59 @@ import (
 )
 
 var errInjectedReader = errors.New("injected reader-source fault")
+
+// A READ that initially selected an immutable file can find a staging
+// after another OPEN upgrades the same owner. Both anonymous I/O and a
+// stateid with seqid zero must resolve that new source through staging.
+func TestReadAcrossWriterUpgrade(t *testing.T) {
+	for _, anonymous := range []bool{false, true} {
+		t.Run(fmt.Sprintf("anonymous=%t", anonymous), func(t *testing.T) {
+			gate := &getGateStore{entered: make(chan struct{}), release: make(chan struct{})}
+			f := newPublishFixtureWithStore(t, func(store staging.Store) staging.Store {
+				gate.Store = store
+				return gate
+			})
+			writer, fh, _ := f.writer(t, "doc", "saved")
+			closeFile(t, f.conn, f.xid, fh, writer)
+			fh = lookupFH(t, f.conn, f.xid, "doc")
+			status, reader, _ := openByHandle(t, f.conn, f.xid, f.clientID, "reader", fh, nfs4.OPEN4_SHARE_ACCESS_READ)
+			if status != nfs4.NFS4_OK {
+				t.Fatal(nfs4.Nfsstat4Name(status))
+			}
+			binary.BigEndian.PutUint32(reader[:4], 0)
+			if anonymous {
+				reader = [16]byte{}
+			}
+			id, _ := vfs.FHToInodeID(fh)
+			gate.mu.Lock()
+			gate.armed = id
+			gate.mu.Unlock()
+			conn := dial(t, f.addr)
+			defer conn.Close()
+			xid := uint32(9000)
+			setupClient(t, conn, &xid)
+			defer testutil.CloseSignal(gate.release)
+			type result struct {
+				status uint32
+				data   string
+			}
+			read := make(chan result, 1)
+			go func() {
+				status, data := readStateid(t, conn, &xid, fh, reader)
+				read <- result{status, data}
+			}()
+			testutil.AwaitSignal(t, gate.entered, "READ after choosing immutable version")
+			if status, _, _ := openByHandle(t, f.conn, f.xid, f.clientID, "reader", fh, nfs4.OPEN4_SHARE_ACCESS_WRITE); status != nfs4.NFS4_OK {
+				t.Fatal(nfs4.Nfsstat4Name(status))
+			}
+			testutil.CloseSignal(gate.release)
+			got := testutil.AwaitValue(t, read, "READ")
+			if got.status != nfs4.NFS4_OK || got.data != "saved" {
+				t.Fatalf("READ across upgrade: %s %q, want saved", nfs4.Nfsstat4Name(got.status), got.data)
+			}
+		})
+	}
+}
 
 // readerSourceVFS fails LinkFile of a name and fails reads of one inode.
 type readerSourceVFS struct {

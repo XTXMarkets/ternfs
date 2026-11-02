@@ -83,7 +83,7 @@ A sidecar records what a later CLOSE or recovery needs:
 | Guarded | A namespace operation was in flight. |
 | Retired | Its lease expired; the data is kept for recovery. |
 | Data version | Counts the writes and size changes the checkpoint includes. Times, hydration and checkpoints do not change it. |
-| Candidate | The transient a publication was last submitted through, its cookie and the data version it carried; zero for none. See [Publication](../server/README.md#publication). |
+| Candidate | The transient selected for publication, its cookie and data version; zero for none. It may not have been submitted yet. See [Publication](../server/README.md#publication). |
 
 The format is NFS9 and is the only one read or written. Decoding requires
 the exact layout: known flag bits only, normalized dirty ranges, sizes that
@@ -114,6 +114,12 @@ sets it in memory, or in memory and in a full checkpoint. The server saves a
 fresh transient as the candidate before submitting it, and the staging's own
 transient, submitted first, with the next checkpoint or when its submission
 gets no answer.
+
+Before a successful CLOSE removes linked staging, `Seal` checks the final
+data version and stops further writes and attribute changes under the same
+lock. A different version leaves it writable so CLOSE can retry. Reads and
+`Sync` remain available until removal; a mutation reaching a sealed file
+gets `ErrRemoved`. The seal is local to this process.
 
 `Retire` cancels hydration, syncs the data, saves the full checkpoint with
 `Retired` set and closes the data file. It does nothing if the file has

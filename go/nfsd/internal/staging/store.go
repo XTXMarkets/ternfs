@@ -62,6 +62,10 @@ type File interface {
 	// DataVersion counts the writes and size changes. Times, hydration and
 	// checkpoints do not change it.
 	DataVersion() uint64
+	// Seal checks the final data version and prevents further mutations.
+	// On a mismatch it returns false and leaves the file writable. Reads
+	// and Sync remain available until the store removes the file.
+	Seal(version uint64) bool
 	Candidate() Candidate
 	SetCandidate(c Candidate, persist bool) error
 	Retire(clientID uint64, stateID nfs4.StateID) error

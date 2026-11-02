@@ -461,8 +461,8 @@ func (s *Server) releaseWrite(openStateid nfs4.Stateid4, st *compoundState, clos
 
 // endStaging publishes, discards or fails the staging of its last writer,
 // open sid, for a CLOSE or OPEN_DOWNGRADE. Every step that can answer DELAY
-// comes before anything changes. kept reports a staging that stays as a
-// read open's data; for an error other than DELAY the writer has ended.
+// precedes ending the open or discarding staging. kept reports staging that
+// stays as a read open's data; for an error other than DELAY the writer has ended.
 func (s *Server) endStaging(
 	st *compoundState,
 	sid nfs4.StateID,
@@ -529,21 +529,10 @@ func (s *Server) endStaging(
 		if owner.ClientID != 0 {
 			s.publishedAs(owner.ClientID, st.currentID, id)
 		}
-		if sf.DataVersion() != dv {
-			// A WRITE landed since the bytes were read: the retry publishes
-			// the newer bytes.
-			if err := sf.SetCandidate(sf.Candidate(), true); err != nil {
-				s.log.Warn("close: save publication candidate", "inode", dataID, "err", err)
-			}
-			return delay(errStagingChanged)
-		}
+		version = dv
 		published = id
 	}
 	uploaded := upload && endErr == nil
-	if !upload && !detached && sf.DataVersion() != version {
-		// Data written while the ending was decided: the retry publishes it.
-		return delay(errStagingChanged)
-	}
 	// A staging that will not be published fences its candidate now.
 	candidate := sf.Candidate()
 	if !fenced && !uploaded && (detached || upload) && candidate.ID != 0 {
@@ -551,6 +540,18 @@ func (s *Server) endStaging(
 			return delay(err)
 		}
 		fenced = true
+	}
+
+	if endErr == nil && !detached && !sf.Seal(version) {
+		// Check the version and stop new writes under the staging lock.
+		// A WRITE that already selected the file can otherwise succeed
+		// after the final check and lose its bytes at Remove below.
+		if uploaded {
+			if err := sf.SetCandidate(sf.Candidate(), true); err != nil {
+				s.log.Warn("close: save publication candidate", "inode", dataID, "err", err)
+			}
+		}
+		return delay(errStagingChanged)
 	}
 
 	for _, other := range s.opens.ExpireWriters(dataID, sid) {
@@ -772,11 +773,13 @@ func (s *Server) abandonFailedOpen(sid nfs4.StateID, recovered bool) {
 // errStagingChanged: a WRITE landed during the publication.
 var errStagingChanged = errors.New("staging changed during its publication")
 
+var errCandidateCheckpoint = errors.New("publication candidate not checkpointed")
+
 // publicationDelayed reports a publication error a retried CLOSE gets
 // past.
 func publicationDelayed(err error) bool {
 	return vfs.IsTransientBackendError(err) || errors.Is(err, nfs4.Error(nfs4.NFS4ERR_LOCKED)) ||
-		errors.Is(err, errStagingChanged)
+		errors.Is(err, errStagingChanged) || errors.Is(err, errCandidateCheckpoint)
 }
 
 // publishStaging returns the inode now published for a staging and its
@@ -847,7 +850,10 @@ func (s *Server) publishFresh(meta staging.Meta, sf staging.File) (vfs.InodeID, 
 	}
 	c := staging.Candidate{ID: id, Cookie: cookie, Version: version}
 	if err := sf.SetCandidate(c, true); err != nil {
-		s.log.Warn("close: save publication candidate", "inode", id, "err", err)
+		// Recovery must know this transient before it can link. Keep the
+		// staging and delay without submitting; a retry resolves this
+		// unused candidate and checkpoints a fresh one.
+		return 0, 0, errors.Join(errCandidateCheckpoint, err)
 	}
 	err = s.linkCandidate(c, meta, sf)
 	if err != nil && !publicationDelayed(err) {

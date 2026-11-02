@@ -98,14 +98,6 @@ func (s *Server) opRead(args nfs4.READ4args, st *compoundState, w *nfs4.COMPOUND
 		}
 		dataID = state.DataID
 	}
-	sf := s.stagingStore.Get(dataID)
-	if s.stagingStore.Failed(dataID) {
-		ew := w.AppendResarray_Read()
-		ew.SetValue_Default(nfs4.NFS4ERR_IO)
-		w.Resume(ew.Finish())
-		return nfs4.NFS4ERR_IO
-	}
-
 	offset := args.Offset()
 	count := min(args.Count(), maxReadWrite)
 
@@ -115,20 +107,32 @@ func (s *Server) opRead(args nfs4.READ4args, st *compoundState, w *nfs4.COMPOUND
 	var eof bool
 	var err error
 
-	if sf != nil {
-		n, eof, err = sf.Read(offset, buf, s.readBaseForeground)
-	}
-	if (sf == nil || errors.Is(err, staging.ErrRemoved)) && !s.stagingStore.Failed(dataID) {
+	for {
+		sf := s.stagingStore.Get(dataID)
+		if s.stagingStore.Failed(dataID) {
+			break
+		}
+		if sf != nil {
+			n, eof, err = sf.Read(offset, buf, s.readBaseForeground)
+			if !errors.Is(err, staging.ErrRemoved) || s.stagingStore.Failed(dataID) {
+				break
+			}
+		}
 		// READ takes no lock, so a CLOSE may have ended the staging chosen
-		// above: it points the staging's opens, and the client's view, at
-		// what it published. Read what the stateid resolves to now.
+		// above, or an OPEN may have upgraded the reader to a writer.
+		// A changed source must go through staging selection again.
 		readID := dataID
 		if isSpecialStateID(stateid) {
 			readID = s.clientView(st.clientID, st.currentID)
 		} else if state, status := s.opens.Lookup(st.clientID, extractStateID(stateid), stateid.Seqid(), st.currentID); status == nfs4.NFS4_OK {
 			readID = state.DataID
 		}
+		if readID != dataID {
+			dataID = readID
+			continue
+		}
 		n, eof, err = s.readBaseForeground(readID, offset, buf)
+		break
 	}
 
 	if s.stagingStore.Failed(dataID) {
