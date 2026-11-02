@@ -37,6 +37,10 @@ target_link_libraries(logsdbappendertests PRIVATE core)
 add_executable(registrydbtests registrydbtests.cpp doctest.h)
 target_link_libraries(registrydbtests PRIVATE core registry)
 
+add_executable(cdcdbtests cdcdbtests.cpp doctest.h)
+target_link_libraries(cdcdbtests PRIVATE core shard cdc)
+target_include_directories(cdcdbtests PRIVATE ${ternfs_SOURCE_DIR}/cdc)
+
 add_executable(blockservicepickertests blockservicepickertests.cpp doctest.h)
 target_link_libraries(blockservicepickertests PRIVATE core shard)
 
