@@ -56,6 +56,19 @@ not passed; other daemons never have it. This causes the
 **Topology.** Direct each mount, including all its TCP connections, to one
 nfsd. Give that daemon a persistent staging directory.
 
+**Client mounts.** Mount with `vers=4.1,proto=tcp,hard`. A client that
+reopens files without walking their path must also mount with
+`lookupcache=none`. Samba is one: it opens a file `O_PATH` by name and
+reopens it for writing through `/proc/self/fd`. A writable open by
+filehandle needs nfsd to know the file's current name, and nfsd records
+names only for files a client has looked up or opened since it started. A
+handle the client learned from READDIR, kept across its own save, or held
+across a restart can therefore be refused with `NFS4ERR_STALE`. An
+ordinary open recovers by looking the name up again; a reopen through
+`/proc/self/fd` cannot, and Samba reports access denied. With
+`lookupcache=none` every open walks the path, so the name is fresh. It
+costs one LOOKUP per open.
+
 **Guarantees.** Same-client opens share a mutable view within the daemon.
 Publication is synchronous. REMOVE and RENAME update that daemon's staged
 writers so a later CLOSE follows the local namespace change.
