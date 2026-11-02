@@ -115,7 +115,8 @@ fresh transient as the candidate before submitting it, and the staging's own
 transient, submitted first, with the next checkpoint or when its submission
 gets no answer.
 
-Before a successful CLOSE removes linked staging, `Seal` checks the final
+Before a successful CLOSE removes staging, whether it published the data,
+updated only the times or found nothing to publish, `Seal` checks the final
 data version and stops further writes and attribute changes under the same
 lock. A different version leaves it writable so CLOSE can retry. Reads and
 `Sync` remain available until removal; a mutation reaching a sealed file
