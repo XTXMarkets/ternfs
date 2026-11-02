@@ -33,13 +33,12 @@ import (
 // is not the clientid a client sees: the server returns process-local wire
 // clientids that index this incarnation; see README.md#layout.
 type Store struct {
-	fs             vfs.TernVFS
-	NFSDirID       vfs.InodeID
-	DirID          vfs.InodeID
-	NfsdID         string
-	LeaseName      string
-	ConfirmingName string
-	Now            func() time.Time
+	fs        vfs.TernVFS
+	NFSDirID  vfs.InodeID
+	DirID     vfs.InodeID
+	NfsdID    string
+	LeaseName string
+	Now       func() time.Time
 	// clock is read by Now; SetClock swaps it while workers run.
 	clock        atomic.Pointer[func() time.Time]
 	LocalClients sync.Map
@@ -175,7 +174,6 @@ func NewStoreAt(
 		DirID:          clientsID,
 		NfsdID:         nfsdID,
 		LeaseName:      LeasePrefix + nfsdID,
-		ConfirmingName: confirmingPrefix + nfsdID,
 		identityLocks:  make(map[vfs.InodeID]*clientIdentityLock),
 		Refreshers:     make(map[vfs.InodeID]*LeaseRefresher),
 		RefresherLimit: maxRefreshers,
@@ -338,17 +336,6 @@ func (cs *Store) createPending(
 	return uint64(incarnationID), confirm, nil
 }
 
-func (cs *Store) beginConfirmation(incarnationID vfs.InodeID) error {
-	_, err := cs.replaceJSON(
-		incarnationID,
-		cs.ConfirmingName,
-		DurableLease{
-			ExpiresUnixNano: cs.Now().Add(ClientGCGrace).UnixNano(),
-		},
-	)
-	return err
-}
-
 func (cs *Store) purgeState(incarnationID vfs.InodeID) error {
 	entries, err := cs.entries(incarnationID)
 	if err != nil {
@@ -480,18 +467,6 @@ func (cs *Store) collectStaleResult(
 			}
 			continue
 		}
-		confirming, err := cs.hasLiveConfirmation(entry.ID)
-		if err != nil {
-			return false, err
-		}
-		if confirming {
-			recheck = true
-			if err := cs.removeIfExists(entry.ID, GCCandidateName); err != nil {
-				return false, err
-			}
-			continue
-		}
-
 		var candidate durableGCCandidate
 		found, err := cs.readJSON(entry.ID, GCCandidateName, &candidate)
 		if err != nil {
@@ -575,13 +550,6 @@ func (cs *Store) collectOldTemp(
 		return nil
 	}
 	return cs.removeIfExists(dirID, entry.Name)
-}
-
-func (cs *Store) hasLiveConfirmation(
-	incarnationID vfs.InodeID,
-) (bool, error) {
-	live, _, err := cs.liveSlots(incarnationID, confirmingPrefix)
-	return live, err
 }
 
 func (cs *Store) clientRoots(

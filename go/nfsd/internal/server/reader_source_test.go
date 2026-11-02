@@ -124,6 +124,7 @@ func newReaderFixture(t *testing.T, content string) *readerFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(srv.clients.StopLeaseWorkers)
 	addr, stop := serveTestServer(t, srv)
 	t.Cleanup(stop)
 	f := &readerFixture{srv: srv, fs: fs, conn: dial(t, addr), xid: 1}

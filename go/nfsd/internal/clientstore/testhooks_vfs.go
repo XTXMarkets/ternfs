@@ -128,11 +128,7 @@ func (fs *ConfirmFaultVFS) CreateFile(dir vfs.InodeID, name string, data io.Read
 	if hook != nil {
 		hook()
 	}
-	id, err := fs.TernVFS.CreateFile(dir, name, data)
-	if err == nil {
-		fs.record(dir, name, writeA)
-	}
-	return id, err
+	return fs.TernVFS.CreateFile(dir, name, data)
 }
 
 func (fs *ConfirmFaultVFS) LinkFile(id vfs.InodeID, cookie vfs.Cookie, dir vfs.InodeID, name string, data io.Reader) error {

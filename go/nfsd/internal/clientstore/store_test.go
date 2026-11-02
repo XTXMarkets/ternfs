@@ -370,14 +370,6 @@ func TestClientStoreRemovesExpiredProcessSlots(t *testing.T) {
 	if err := first.NoteOpen(clientID, nfs4.StateID{1}); err != nil {
 		t.Fatal(err)
 	}
-	second, err := NewStore(fs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	second.Now = func() time.Time { return base }
-	if err := second.beginConfirmation(vfs.InodeID(clientID)); err != nil {
-		t.Fatal(err)
-	}
 	observer, err := NewStore(fs)
 	if err != nil {
 		t.Fatal(err)
@@ -388,11 +380,7 @@ func TestClientStoreRemovesExpiredProcessSlots(t *testing.T) {
 	if _, _, err := observer.leaseStatus(vfs.InodeID(clientID)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := observer.hasLiveConfirmation(
-		vfs.InodeID(clientID)); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{first.LeaseName, second.ConfirmingName} {
+	for _, name := range []string{first.LeaseName} {
 		if _, err := fs.Lookup(vfs.InodeID(clientID), name); err != nil {
 			t.Fatalf("process slot %q removed without cleanup grace: %v",
 				name, err)
@@ -408,11 +396,7 @@ func TestClientStoreRemovesExpiredProcessSlots(t *testing.T) {
 	if _, _, err := collector.leaseStatus(vfs.InodeID(clientID)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := collector.hasLiveConfirmation(
-		vfs.InodeID(clientID)); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{first.LeaseName, second.ConfirmingName} {
+	for _, name := range []string{first.LeaseName} {
 		if _, err := fs.Lookup(
 			vfs.InodeID(clientID), name,
 		); !errors.Is(err, os.ErrNotExist) {
@@ -1190,121 +1174,6 @@ func TestClientStoreGCCollectsTemporaryAndHalfCreatedEntries(t *testing.T) {
 	}
 	if _, err := fs.Stat(halfCreated); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("half-created incarnation remains after GC: %v", err)
-	}
-}
-
-func TestClientStoreGCHonorsConfirmationClaims(t *testing.T) {
-	fs := vfs.NewLocalTernVFS(t.TempDir())
-	first, err := NewStore(fs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := NewStore(fs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	collector, err := NewStore(fs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	base := time.Unix(1000, 0)
-	first.Now = func() time.Time { return base }
-	second.Now = func() time.Time { return base.Add(30 * time.Second) }
-	owner := ClientOwner{Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"}}
-	oldID, _, err := first.RegisterForTest(
-		[8]byte{1}, []byte("client"), owner)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = first.beginConfirmation(vfs.InodeID(oldID))
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = second.beginConfirmation(vfs.InodeID(oldID))
-	if err != nil {
-		t.Fatal(err)
-	}
-	clientID, _, err := first.RegisterForTest(
-		[8]byte{2}, []byte("client"), owner)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	collector.Now = func() time.Time { return base.Add(100 * time.Second) }
-	if err := collector.CollectStaleForClient(vfs.InodeID(clientID)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := fs.Lookup(vfs.InodeID(oldID), GCCandidateName); !os.IsNotExist(err) {
-		t.Fatalf("live confirmation claim did not protect incarnation: %v", err)
-	}
-
-	collector.Now = func() time.Time { return base.Add(121 * time.Second) }
-	if err := collector.CollectStaleForClient(vfs.InodeID(clientID)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := fs.Lookup(vfs.InodeID(oldID), GCCandidateName); err != nil {
-		t.Fatalf("expired confirmation claims still protected incarnation: %v", err)
-	}
-}
-
-// TestClientStoreGCRechecksConfirmationBeforeDeleting covers a confirmation
-// claim that appears only after an incarnation has already aged into a GC
-// candidate: collectStale checks hasLiveConfirmation again on
-// every pass over every entry, before ever consulting the aged candidate's
-// due time, so a claim that shows up between the aging pass and the pass
-// that would otherwise delete it must still block the removal.
-func TestClientStoreGCRechecksConfirmationBeforeDeleting(t *testing.T) {
-	fs := vfs.NewLocalTernVFS(t.TempDir())
-	writer, err := NewStore(fs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	confirmer, err := NewStore(fs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	collector, err := NewStore(fs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	base := time.Unix(1000, 0)
-	writer.Now = func() time.Time { return base }
-	owner := ClientOwner{Principal: RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"}}
-	oldID, _, err := writer.RegisterForTest(
-		[8]byte{1}, []byte("client"), owner)
-	if err != nil {
-		t.Fatal(err)
-	}
-	clientID, _, err := writer.RegisterForTest(
-		[8]byte{2}, []byte("client"), owner)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Age oldID into a GC candidate with no confirmation claim yet.
-	collector.Now = func() time.Time { return base }
-	if err := collector.CollectStaleForClient(vfs.InodeID(clientID)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := fs.Lookup(vfs.InodeID(oldID), GCCandidateName); err != nil {
-		t.Fatalf("incarnation was not aged into a GC candidate: %v", err)
-	}
-
-	// A confirmation claims oldID only after it was already aged.
-	confirmer.Now = func() time.Time { return base.Add(30 * time.Second) }
-	err = confirmer.beginConfirmation(vfs.InodeID(oldID))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Once the candidate is due, the delete-time pass must recheck the live
-	// claim, not just the roots snapshot from before the claim existed.
-	collector.Now = func() time.Time { return base.Add(LeaseTime + time.Second) }
-	if err := collector.CollectStaleForClient(vfs.InodeID(clientID)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := fs.Stat(vfs.InodeID(oldID)); err != nil {
-		t.Fatalf("GC removed an incarnation with a live confirmation claim: %v", err)
 	}
 }
 

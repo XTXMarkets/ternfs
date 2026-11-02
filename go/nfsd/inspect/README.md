@@ -77,8 +77,8 @@ Every JSON response, the index and errors included, carries `now`,
 `nfsd_id`, `stateid_epoch`, `wire_epoch` and `mode`. The profiling pages are
 not JSON and carry none of them.
 
-- `nfsd_id` names this process's `lease.` and `confirming.` slots in the
-  client store.
+- `nfsd_id` names this process's `lease.` slots in the client store.
+  `confirming.` slots were written by earlier releases.
 - `stateid_epoch` is the first four bytes of every stateid and session id
   the process issued.
 - `wire_epoch` is the high 32 bits of every wire clientid it issued. It is

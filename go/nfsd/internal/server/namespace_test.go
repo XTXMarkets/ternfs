@@ -711,6 +711,7 @@ func TestCloseWaitsForStagedRename(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(srv.clients.StopLeaseWorkers)
 	addr, cleanup := serveTestServer(t, srv)
 	defer cleanup()
 	conn := dial(t, addr)

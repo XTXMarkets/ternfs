@@ -195,6 +195,7 @@ func TestActiveCompoundDoesNotExpireClientState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(srv.clients.StopLeaseWorkers)
 	addr, stop := serveTestServer(t, srv)
 	defer stop()
 	defer testutil.CloseSignal(fs.release)
@@ -350,6 +351,7 @@ func TestLoneFailedWriterLeavesSiblingsAlone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(srv.clients.StopLeaseWorkers)
 	addr, stop := serveTestServer(t, srv)
 	defer stop()
 	conn := dial(t, addr)

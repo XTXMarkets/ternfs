@@ -116,8 +116,8 @@ func (f *confirmFixture) confirmedIs(t *testing.T) vfs.InodeID {
 // only on proof; an unfenceable write stays unresolved until a later
 // settle succeeds.
 func TestConfirmationWriteFaults(t *testing.T) {
-	names := map[WriteID]string{writeA: "A", writeB: "B", WriteD: "D"}
-	for _, w := range []WriteID{writeA, writeB, WriteD} {
+	names := map[WriteID]string{writeB: "B", WriteD: "D"}
+	for _, w := range []WriteID{writeB, WriteD} {
 		for _, c := range []struct {
 			name             string
 			fault            ConfirmFault
@@ -262,7 +262,7 @@ func TestConfirmationFinishReplacement(t *testing.T) {
 		if err != nil || replaced != uint64(f.p) || pMarker(t, f) {
 			t.Fatalf("finish %d %v, P marker kept %t", replaced, err, pMarker(t, f))
 		}
-		for _, name := range []string{RebootName, f.store.ConfirmingName} {
+		for _, name := range []string{RebootName} {
 			if _, err := f.local.Lookup(f.n, name); !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("%s kept: %v", name, err)
 			}
@@ -401,11 +401,11 @@ func TestConfirmationPurgeBoundToCheckedReboot(t *testing.T) {
 
 // A rename that applies and then panics keeps its write record, submitted
 // with an unknown outcome. The attempt is unresolved until a settle fences
-// it, and the evidence decides: A or B applied without D rolls back; D
+// it, and the evidence decides: B applied without D rolls back; D
 // applied commits.
 func TestConfirmationAppliedThenPanic(t *testing.T) {
-	names := map[WriteID]string{writeA: "A", writeB: "B", WriteD: "D"}
-	for _, w := range []WriteID{writeA, writeB, WriteD} {
+	names := map[WriteID]string{writeB: "B", WriteD: "D"}
+	for _, w := range []WriteID{writeB, WriteD} {
 		t.Run(names[w], func(t *testing.T) {
 			f := newConfirmFixture(t, true)
 			f.fs.Set(w, FaultAppliedPanic, nil)
@@ -544,7 +544,7 @@ func TestConfirmationRevalidatesPredecessor(t *testing.T) {
 			}
 			before := f.confirmedIs(t)
 			a := f.store.CommitConfirmation(f.target, f.confirm)
-			if !errors.Is(a.PreWrite, errPredecessorChanged) || a.Result() != c.want || a.writes != [3]*edgeWrite{} {
+			if !errors.Is(a.PreWrite, errPredecessorChanged) || a.Result() != c.want || a.writes != [2]*edgeWrite{} {
 				t.Fatalf("commit %v %s %+v", a.PreWrite, confirmResultName(a.Result()), a.writes)
 			}
 			if c.want == ConfirmCommitted {
@@ -552,7 +552,7 @@ func TestConfirmationRevalidatesPredecessor(t *testing.T) {
 					t.Fatalf("committed elsewhere purged P: %d %v", replaced, err)
 				}
 			}
-			for _, name := range []string{f.store.ConfirmingName, RebootName} {
+			for _, name := range []string{RebootName} {
 				if _, err := f.local.Lookup(f.n, name); !errors.Is(err, os.ErrNotExist) {
 					t.Fatalf("%s written: %v", name, err)
 				}
@@ -607,7 +607,7 @@ func TestConfirmationRequiresPending(t *testing.T) {
 		t.Fatalf("prepare %v", err)
 	}
 	a := f.store.CommitConfirmation(f.target, f.confirm)
-	if nfs4.ErrorCode(a.PreWrite) != nfs4.NFS4ERR_STALE_CLIENTID || a.Result() != ConfirmRolledBack || a.writes != [3]*edgeWrite{} {
+	if nfs4.ErrorCode(a.PreWrite) != nfs4.NFS4ERR_STALE_CLIENTID || a.Result() != ConfirmRolledBack || a.writes != [2]*edgeWrite{} {
 		t.Fatalf("commit %v %s", a.PreWrite, confirmResultName(a.Result()))
 	}
 	if f.confirmedIs(t) != f.p {
@@ -633,7 +633,7 @@ func TestConfirmationStorePreWriteReadError(t *testing.T) {
 			f.fs.FailLookup = true
 			f.fs.Mu.Unlock()
 			a := f.store.CommitConfirmation(f.target, f.confirm)
-			if a.Result() != confirmUnresolved || a.PreWrite == nil || a.writes != [3]*edgeWrite{} {
+			if a.Result() != confirmUnresolved || a.PreWrite == nil || a.writes != [2]*edgeWrite{} {
 				t.Fatalf("commit %v %s", a.PreWrite, confirmResultName(a.Result()))
 			}
 			// Still unreadable: still unresolved.
@@ -649,7 +649,7 @@ func TestConfirmationStorePreWriteReadError(t *testing.T) {
 			if got := f.store.SettleConfirmation(a); got != c.want {
 				t.Fatalf("settled %s, want %s", confirmResultName(got), confirmResultName(c.want))
 			}
-			if f.present(t, f.n, f.store.ConfirmingName) || !pMarker(t, f) {
+			if f.present(t, f.n, RebootName) || !pMarker(t, f) {
 				t.Fatal("durable state changed")
 			}
 		})

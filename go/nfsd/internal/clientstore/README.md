@@ -34,7 +34,7 @@ writer, and [store_report.go](store_report.go) the read-only
         reboot              symlink to ../i.<hex>
         o.<stateid>         open marker, written by earlier releases only
         lease.<nfsd-id>     JSON expiry
-        confirming.<nfsd-id> JSON expiry
+        confirming.<nfsd-id> claim, written by earlier releases only
         expired             empty marker
         gc                  JSON collection time
         t.<hex>             temporary
@@ -50,7 +50,7 @@ writer, and [store_report.go](store_report.go) the read-only
 | `reboot` | The incarnation this one replaced, while its state still needs purging. |
 | `o.<stateid>` | An open marker, named by its 12-byte stateid as hex. Earlier releases wrote one for every write open; nfsd no longer does. A replacement purge removes any left, and collection removes them with their incarnation. |
 | `lease.<nfsd-id>` | One process's durable lease expiry. |
-| `confirming.<nfsd-id>` | One process's claim on an incarnation it is confirming, with an expiry. |
+| `confirming.<nfsd-id>` | A claim earlier releases wrote on an incarnation they were confirming. nfsd neither writes nor reads them; collection removes them with their incarnation. |
 | `expired` | The fleet expired this incarnation. It cannot be revived. |
 | `gc` | The earliest time an unreachable incarnation may be removed. |
 
@@ -132,14 +132,19 @@ requests for it wait, and registers protection for N and P before
 `CommitConfirmation` takes the exclusive identity lock and checks again
 that N is pending and that `confirmed` is still P through the same symlink.
 If either check fails or cannot be read, nothing is written. Otherwise it
-makes up to three writes, stopping at the first that does not plainly
+makes up to two writes, stopping at the first that does not plainly
 succeed:
 
 | Write | Target | Purpose |
 | --- | --- | --- |
-| A | `N/confirming.<nfsd-id>` | A claim that keeps N from collection, expiring after one lease. |
 | B | `N/reboot -> ../P` | Evidence for purging P afterwards. Skipped without a P. |
 | D | `confirmed -> N` | The commit. |
+
+No durable claim keeps N from collection during these writes. Collection
+runs only in this process, and the server refuses it for an identity while
+a confirmation of that identity is registered (`BeginCollect`). Earlier
+releases wrote a `confirming.<nfsd-id>` claim for other daemons; with one
+daemon per tree there are none.
 
 Each write creates a temporary, pins its edge and renames that exact edge.
 A rename that returned an error is fenced by removing the same temporary
@@ -172,7 +177,7 @@ settle anything.
 slots, and any open markers earlier releases left, only if write B applied
 or may have, and N's
 `reboot` symlink, read through its exact edge, still names P. It then
-removes that edge and N's confirming claim. If the purge fails, the
+removes that edge. If the purge fails, the
 `reboot` symlink stays as evidence.
 
 `ResumeReplacementPurge` finishes such a purge later from durable evidence
@@ -319,11 +324,10 @@ identities that asked for a recheck.
 
 1. The roots are `confirmed`, `pending` and the `reboot` targets of those
    two. A rooted incarnation loses any `gc` record.
-2. An incarnation with a live confirming claim is kept and rechecked.
-3. An unreachable incarnation is first given a `gc` record one lease in
+2. An unreachable incarnation is first given a `gc` record one lease in
    the future. This ages the observation that it is unreachable, not the
    incarnation.
-4. Once that time has passed, the roots are read again. A still
+3. Once that time has passed, the roots are read again. A still
    unreachable incarnation is removed: its entries, its `gc` record, then
    its directory.
 

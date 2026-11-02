@@ -83,7 +83,7 @@ func (a *ConfirmAttempt) Snapshot() *inspect.Attempt {
 			continue
 		}
 		rec := inspect.ConfirmWrite{
-			Name:      [...]string{"claim", "reboot", "confirmed"}[i],
+			Name:      [...]string{"reboot", "confirmed"}[i],
 			Dir:       inodeText(w.dir),
 			Temp:      w.temp,
 			Submitted: w.submitted,

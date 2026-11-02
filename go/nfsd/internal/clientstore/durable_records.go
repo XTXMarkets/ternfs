@@ -17,8 +17,8 @@ type durableClientRecord struct {
 	PrincipalBody   []byte `json:"principal_body"`
 }
 
-// DurableLease is the JSON body of a lease or confirming file. It records
-// when the lease or claim written by one nfsd expires.
+// DurableLease is the JSON body of a lease file, and of the confirming claim
+// files earlier releases wrote. It records when the lease or claim expires.
 type DurableLease struct {
 	ExpiresUnixNano int64 `json:"expires_unix_nano"`
 }

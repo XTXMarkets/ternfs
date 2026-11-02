@@ -353,7 +353,7 @@ func TestConfirmationProtectsDestructivePaths(t *testing.T) {
 		t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 	}
 	f.disarm()
-	// P's lease and the confirming claim expire, and P's open marker goes.
+	// P's lease expires, and P's legacy open marker goes.
 	f.advance(3 * clientstore.LeaseTime)
 	if err := f.fs.TernVFS.Remove(vfs.InodeID(f.p), clientstore.ActiveOpenName(sid)); err != nil {
 		t.Fatal(err)
@@ -502,8 +502,8 @@ func TestConfirmationConservative(t *testing.T) {
 		if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4ERR_STALE_CLIENTID {
 			t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
 		}
-		if f.present(t, vfs.InodeID(f.n), f.srv.clients.ConfirmingName) {
-			t.Fatal("write A made after the predecessor changed")
+		if f.present(t, vfs.InodeID(f.n), clientstore.RebootName) {
+			t.Fatal("write B made after the predecessor changed")
 		}
 		check(t, f)
 	})
@@ -666,7 +666,7 @@ func TestConfirmationPreWriteReadError(t *testing.T) {
 				pointConfirmed(t, f, m)
 			}
 			f.setFailLookup(false)
-			if f.present(t, vfs.InodeID(f.n), f.srv.clients.ConfirmingName) {
+			if f.present(t, vfs.InodeID(f.n), clientstore.RebootName) {
 				t.Fatal("a write was made")
 			}
 			if !changed {
@@ -950,7 +950,7 @@ func TestProtectionOrdering(t *testing.T) {
 		resume()
 		f.awaitInstalling(t)
 		notYet(t, result, "confirmation behind an admitted expiry")
-		if f.present(t, vfs.InodeID(f.n), f.srv.clients.ConfirmingName) {
+		if f.present(t, vfs.InodeID(f.n), clientstore.RebootName) {
 			t.Fatal("confirmation wrote while the expiry was running")
 		}
 		testutil.CloseSignal(g.release)
@@ -994,7 +994,7 @@ func TestProtectionOrdering(t *testing.T) {
 		if got := testutil.AwaitValue(t, result, "confirmation"); got != nfs4.NFS4ERR_DELAY && got != nfs4.NFS4ERR_STALE_CLIENTID {
 			t.Fatalf("superseded confirmation %s", nfs4.Nfsstat4Name(got))
 		}
-		if f.present(t, vfs.InodeID(f.n), f.srv.clients.ConfirmingName) || identityConfirmed(t, f) != vfs.InodeID(f.p) {
+		if f.present(t, vfs.InodeID(f.n), clientstore.RebootName) || identityConfirmed(t, f) != vfs.InodeID(f.p) {
 			t.Fatal("superseded N was written")
 		}
 		if got, _ := f.rawCreate(t, f.wireN, 1); got != nfs4.NFS4ERR_STALE_CLIENTID {
@@ -1464,7 +1464,7 @@ func TestPurgeProtectionOrdering(t *testing.T) {
 		if holdN != 1 || holdP != 1 || registered {
 			t.Fatalf("registration completed past the admitted purge: holds %d %d, registered %t", holdN, holdP, registered)
 		}
-		if f.present(t, vfs.InodeID(r), f.srv.clients.ConfirmingName) || identityConfirmed(t, f) != vfs.InodeID(f.n) {
+		if f.present(t, vfs.InodeID(r), clientstore.RebootName) || identityConfirmed(t, f) != vfs.InodeID(f.n) {
 			t.Fatal("confirmation wrote while the purge was running")
 		}
 		testutil.CloseSignal(g.release)

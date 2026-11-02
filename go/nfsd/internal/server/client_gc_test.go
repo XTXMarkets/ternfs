@@ -91,6 +91,7 @@ func TestServerSchedulesClientGC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(srv.clients.StopLeaseWorkers)
 	base := time.Unix(1000, 0)
 	srv.clients.SetClock(func() time.Time { return base })
 	owner := clientstore.ClientOwner{Principal: clientstore.RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"}}
@@ -141,6 +142,7 @@ func TestConfirmedClientGCRechecksAfterLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(srv.clients.StopLeaseWorkers)
 	base := time.Unix(1000, 0)
 	srv.clients.SetClock(func() time.Time { return base })
 	addr, cleanup := serveTestServer(t, srv)
@@ -187,6 +189,7 @@ func TestScheduleClientGCRestartsForPendingWork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(srv.clients.StopLeaseWorkers)
 	clientID, _, err := srv.clients.RegisterForTest(
 		[8]byte{1}, []byte("client"), clientstore.ClientOwner{})
 	if err != nil {
@@ -224,6 +227,7 @@ func TestClientGCContinuesAfterPanic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(srv.clients.StopLeaseWorkers)
 	var clientIDs []vfs.InodeID
 	for i := byte(1); i <= 2; i++ {
 		clientID, _, err := srv.clients.RegisterForTest(

@@ -160,10 +160,12 @@ type inspectIncarnation struct {
 	Status string `json:"status"`
 	// Usable reports whether stateids of this incarnation are accepted: the
 	// incarnation is confirmed and its lease is live.
-	Usable        bool                   `json:"usable"`
-	Record        *inspectRecord         `json:"client,omitempty"`
-	Reboot        *inspectPointer        `json:"reboot,omitempty"`
-	Leases        []inspectSlot          `json:"leases,omitempty"`
+	Usable bool            `json:"usable"`
+	Record *inspectRecord  `json:"client,omitempty"`
+	Reboot *inspectPointer `json:"reboot,omitempty"`
+	Leases []inspectSlot   `json:"leases,omitempty"`
+	// Confirming lists the claims earlier releases wrote during a
+	// confirmation. nfsd no longer writes or reads them.
 	Confirming    []inspectSlot          `json:"confirming,omitempty"`
 	ExpiredMarker bool                   `json:"expired_marker"`
 	GCAfter       *time.Time             `json:"gc_after,omitempty"`

@@ -244,6 +244,7 @@ func TestConnectionInFlightDuplicates(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			t.Cleanup(srv.clients.StopLeaseWorkers)
 			addr, cleanup := serveTestServer(t, srv)
 			defer cleanup()
 			defer testutil.CloseSignal(fs.Release)

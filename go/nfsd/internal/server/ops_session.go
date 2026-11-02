@@ -915,7 +915,7 @@ func (s *Server) opCreateSession(
 
 	if hasConfirm {
 		// A pending incarnation: closing its predecessor, the principal
-		// check, writes A, B and D, and acting on their result
+		// check, writes B and D, and acting on their result
 		// (README.md#client-confirmation).
 		status, reply, owned := s.confirmPending(cr, confirm, principal, st.principal)
 		handedOver = owned

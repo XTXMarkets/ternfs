@@ -1451,6 +1451,7 @@ func newClientStoreTestServer(
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(srv.clients.StopLeaseWorkers)
 	addr, cleanup := serveTestServer(t, srv)
 	conn := dial(t, addr)
 	t.Cleanup(func() {
@@ -1495,6 +1496,7 @@ func TestExpireIfLeaseDeadKeepsClientWithoutSlot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(srv.clients.StopLeaseWorkers)
 	owner := clientstore.ClientOwner{
 		Principal: clientstore.RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"},
 	}
@@ -1536,6 +1538,7 @@ func TestExpireIfLeaseDeadExpiresCollectedIncarnation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(srv.clients.StopLeaseWorkers)
 	owner := clientstore.ClientOwner{
 		Principal: clientstore.RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"},
 	}
@@ -3956,6 +3959,7 @@ func TestConcurrentClosePublishesOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(srv.clients.StopLeaseWorkers)
 	addr, cleanup := serveTestServer(t, srv)
 	defer cleanup()
 	conn := dial(t, addr)
@@ -6553,6 +6557,7 @@ func TestConcurrentOpenSharesOwnerState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(srv.clients.StopLeaseWorkers)
 	addr, cleanup := serveTestServer(t, srv)
 	defer cleanup()
 	firstConn := dial(t, addr)
@@ -6707,6 +6712,7 @@ func TestWaitingCloseRechecksStagingMeta(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(srv.clients.StopLeaseWorkers)
 	addr, cleanup := serveTestServer(t, srv)
 	defer cleanup()
 	firstConn := dial(t, addr)
@@ -6785,6 +6791,7 @@ func TestFailedCloseReplaysFromSlot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(srv.clients.StopLeaseWorkers)
 	addr, cleanup := serveTestServer(t, srv)
 	defer cleanup()
 	conn := dial(t, addr)
@@ -6870,6 +6877,7 @@ func TestConcurrentClosePublishesAtMostOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(srv.clients.StopLeaseWorkers)
 	addr, cleanup := serveTestServer(t, srv)
 	defer cleanup()
 	firstConn := dial(t, addr)
@@ -7630,6 +7638,7 @@ func TestSetclientidRebootRetiresStagingFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(srv.clients.StopLeaseWorkers)
 	addr, cleanup := serveTestServer(t, srv)
 	defer cleanup()
 	conn := dial(t, addr)
@@ -7964,6 +7973,7 @@ func TestServerLeaseSweepExpiresButDoesNotRevokeConfirmedClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(srv.clients.StopLeaseWorkers)
 	base := time.Unix(1000, 0)
 	srv.clients.SetClock(func() time.Time { return base })
 	owner := clientstore.ClientOwner{
@@ -8024,6 +8034,7 @@ func TestServerLeaseSweepDropsRenewOnlyClientCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(srv.clients.StopLeaseWorkers)
 	base := time.Unix(1000, 0)
 	srv.clients.SetClock(func() time.Time { return base })
 	owner := clientstore.ClientOwner{
@@ -8069,6 +8080,7 @@ func TestRunLeaseSweepContinuesAfterPanic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(srv.clients.StopLeaseWorkers)
 	base := time.Unix(1000, 0)
 	srv.clients.SetClock(func() time.Time { return base })
 	owner := clientstore.ClientOwner{Principal: clientstore.RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "owner"}}

@@ -142,6 +142,7 @@ func TestIndependentFilesRunConcurrently(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(srv.clients.StopLeaseWorkers)
 	addr, stop := serveTestServer(t, srv)
 	defer stop()
 	client := newCBTestClient(t, addr)

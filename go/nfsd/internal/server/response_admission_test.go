@@ -32,6 +32,7 @@ func admissionWritableServer(t *testing.T, fs vfs.TernVFS) *Server {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(srv.clients.StopLeaseWorkers)
 	t.Cleanup(srv.waitForClientGC)
 	t.Cleanup(srv.clients.StopLeaseWorkers)
 	useTestWireEpoch(srv) // Tests also run compounds directly.
@@ -197,6 +198,7 @@ func TestResponseAdmissionHandleBeforeEffect(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
+				t.Cleanup(srv.clients.StopLeaseWorkers)
 				clientID, confirm, err := srv.clients.RegisterForTest([8]byte{}, []byte("handles"), clientstore.ClientOwner{})
 				if err != nil {
 					t.Fatal(err)

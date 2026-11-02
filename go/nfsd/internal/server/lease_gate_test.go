@@ -250,6 +250,7 @@ func TestLocalExpiryDrainsSessionsWithoutMarker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(srv.clients.StopLeaseWorkers)
 	addr, stop := serveTestServer(t, srv)
 	defer stop()
 	before := srv.sessions.accounting()

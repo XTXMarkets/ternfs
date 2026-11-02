@@ -6,7 +6,6 @@ package clientstore
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -18,11 +17,14 @@ import (
 )
 
 // Confirmation of a pending incarnation N over the identity's confirmed
-// predecessor P (README.md#writes-and-fencing). Three replace-by-rename writes:
+// predecessor P (README.md#writes-and-fencing). Two replace-by-rename writes:
 //
-//	A  N/confirming.<nfsdID>       a claim that keeps N from GC
 //	B  N/reboot -> P               evidence for purging P afterwards
 //	D  identity/confirmed -> N     the commit
+//
+// Nothing durable keeps N from client GC while it is confirmed: GC runs only
+// in this process, and the server refuses it for an identity with a
+// confirmation in progress (Store.BeginCollect).
 //
 // Each write renames one pinned temp edge; a rename error is fenced by
 // removing that edge, and the result is decided by reading the confirmed
@@ -61,8 +63,7 @@ type confirmTarget struct {
 type WriteID int
 
 const (
-	writeA WriteID = iota
-	writeB
+	writeB WriteID = iota
 	WriteD
 )
 
@@ -131,7 +132,7 @@ const (
 type ConfirmAttempt struct {
 	mu       sync.Mutex
 	target   confirmTarget
-	writes   [3]*edgeWrite
+	writes   [2]*edgeWrite
 	observed struct {
 		id, file vfs.InodeID
 		found    bool
@@ -204,7 +205,7 @@ func (cs *Store) checkPendingLocked(identityID, n vfs.InodeID, confirm [8]byte) 
 	return nil
 }
 
-// CommitConfirmation makes writes A, B and D, stopping at the first that
+// CommitConfirmation makes writes B and D, stopping at the first that
 // does not plainly succeed, then fences and observes. The caller has closed
 // the target's P in this process and registered protection for N and P.
 //
@@ -242,24 +243,16 @@ func (cs *Store) CommitConfirmation(t confirmTarget, confirm [8]byte) (a *Confir
 			a.PreWrite = errPredecessorChanged
 		}
 	}
-	var claim []byte
-	if a.PreWrite == nil {
-		claim, a.PreWrite = json.Marshal(DurableLease{ExpiresUnixNano: cs.Now().Add(ClientGCGrace).UnixNano()})
-	}
 	if a.PreWrite != nil {
 		cs.settleLocked(a)
 		return a
 	}
 	ok := func(w *edgeWrite) bool { return w.submitted && w.err == nil }
-	a.writes[writeA] = &edgeWrite{dir: t.N, name: cs.ConfirmingName}
-	cs.edgeReplace(a.writes[writeA], func(temp string) (vfs.InodeID, error) {
-		return cs.fs.CreateFile(t.N, temp, bytes.NewReader(claim))
-	})
-	if ok(a.writes[writeA]) && t.P != 0 && t.P != t.N {
+	if t.P != 0 && t.P != t.N {
 		a.writes[writeB] = &edgeWrite{dir: t.N, name: RebootName}
 		cs.writePointer(a.writes[writeB], t.Identity, t.P, "../")
 	}
-	if ok(a.writes[writeA]) && (a.writes[writeB] == nil || ok(a.writes[writeB])) && t.P != t.N {
+	if (a.writes[writeB] == nil || ok(a.writes[writeB])) && t.P != t.N {
 		a.writes[WriteD] = &edgeWrite{dir: t.Identity, name: ConfirmedName}
 		cs.writePointer(a.writes[WriteD], t.Identity, t.N, "")
 	}
@@ -401,9 +394,6 @@ func (cs *Store) FinishReplacement(a *ConfirmAttempt) (uint64, error) {
 	t := a.target
 	unlock := cs.LockIdentity(t.Identity)
 	defer unlock()
-	// Only this process writes its own confirming name, and only for an
-	// attempt the caller serializes, so removing it by name is exact.
-	defer func() { _ = cs.removeIfExists(t.N, cs.ConfirmingName) }()
 	b := a.writes[writeB]
 	if t.P == 0 || (b.outcome() != writeApplied && b.outcome() != writeMaybe) {
 		return 0, nil

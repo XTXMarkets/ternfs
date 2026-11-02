@@ -14,7 +14,7 @@ import (
 
 // Confirmation of a pending incarnation N over its predecessor P, on the
 // server side (README.md#client-confirmation,
-// ../clientstore/README.md#confirmation). The client store makes writes A, B
+// ../clientstore/README.md#confirmation). The client store makes writes B
 // and D and decides each result from evidence; the server acts on it once.
 //
 // While a confirmation exists, from just before its first write until its
