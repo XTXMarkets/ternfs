@@ -6,6 +6,7 @@ package server
 
 import (
 	"bytes"
+	"os"
 	"sync"
 	"testing"
 
@@ -24,6 +25,54 @@ func backSessionForTest(t *testing.T, srv *Server) *session {
 	sess.backRequested = true
 	sess.cb = newCBSender(srv, sess, 0x40000001, callbackSec{flavor: nfs4.AUTH_NONE})
 	return sess
+}
+
+// EXCHANGE_ID's server owner and scope come from the staging directory's
+// server-id: a restart on the same directory, or on a copy of it, is the
+// same server, and an empty directory is a new one.
+func TestExchangeIDServerOwnerFollowsStaging(t *testing.T) {
+	owner := func(dir string) []byte {
+		t.Helper()
+		store, err := staging.NewLocalStore(dir, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer staging.CloseFiles(t, store)
+		srv, err := NewServer(vfs.NewLocalTernVFS(t.TempDir()), store, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer srv.clients.StopLeaseWorkers()
+		useTestWireEpoch(srv)
+		_, res := admissionRequest(t, srv, exchangeIDBody("owner", [8]byte{1}), 1, testConnection(t))
+		admissionStatus(t, res, nfs4.NFS4_OK, nfs4.OP_EXCHANGE_ID)
+		it := res.Resarray()
+		it.Next()
+		ex := it.Resarray().Value().AsEXCHANGEID4resEntry().Value().AsEXCHANGEID4resok()
+		major := bytes.Clone(ex.EirServerOwner().SoMajorId())
+		if want := "ternfs-nfsd/" + store.ServerID().String(); string(major) != want {
+			t.Fatalf("server owner %q, want %q", major, want)
+		}
+		if scope := ex.EirServerScope(); !bytes.Equal(scope, major) {
+			t.Fatalf("server scope %q, want the owner %q", scope, major)
+		}
+		return major
+	}
+	dir := t.TempDir()
+	first := owner(dir)
+	if again := owner(dir); !bytes.Equal(again, first) {
+		t.Fatalf("restart changed the server owner from %q to %q", first, again)
+	}
+	moved := t.TempDir()
+	if err := os.CopyFS(moved, os.DirFS(dir)); err != nil {
+		t.Fatal(err)
+	}
+	if got := owner(moved); !bytes.Equal(got, first) {
+		t.Fatalf("moved staging has server owner %q, want %q", got, first)
+	}
+	if wiped := owner(t.TempDir()); bytes.Equal(wiped, first) {
+		t.Fatalf("an empty staging directory kept the server owner %q", wiped)
+	}
 }
 
 // testConnection is a transport whose writes vanish; its probes end when

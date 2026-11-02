@@ -7705,6 +7705,12 @@ func TestLocalStagingStoreRejectsPreMagicSidecars(t *testing.T) {
 	} {
 		t.Run(sidecar.name, func(t *testing.T) {
 			dir := t.TempDir()
+			// The directory is this server's: only the sidecar is old.
+			empty, err := staging.NewLocalStore(dir, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			staging.CloseFiles(t, empty)
 			id := vfs.MakeInodeID(vfs.InodeTypeFile, 42)
 			data := []byte("legacy staged data")
 			if err := os.WriteFile(

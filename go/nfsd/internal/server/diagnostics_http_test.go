@@ -42,7 +42,7 @@ func getJSON(t *testing.T, base, path string, want int) map[string]any {
 	if err := json.Unmarshal(body, &out); err != nil {
 		t.Fatalf("GET %s: %v: %s", path, err, body)
 	}
-	for _, key := range []string{"now", "nfsd_id", "stateid_epoch", "wire_epoch", "mode"} {
+	for _, key := range []string{"now", "server_id", "stateid_epoch", "wire_epoch", "mode"} {
 		if _, ok := out[key]; !ok {
 			t.Fatalf("GET %s: no %s in envelope: %s", path, key, body)
 		}
@@ -193,7 +193,7 @@ func TestDiagnosticsHTTPStoreOnly(t *testing.T) {
 	ts := httptest.NewServer(inspect.Handler(nil, nil))
 	defer ts.Close()
 	index := getJSON(t, ts.URL, "/", http.StatusOK)
-	if index["mode"] != inspect.ModeStoreOnly || index["nfsd_id"] != "" {
+	if index["mode"] != inspect.ModeStoreOnly || index["server_id"] != "" {
 		t.Fatalf("envelope = %v", index)
 	}
 	for _, r := range index["resources"].([]any) {
@@ -261,7 +261,7 @@ func TestDiagnosticsStoreOnlyMode(t *testing.T) {
 	defer ts.Close()
 
 	index := getJSON(t, ts.URL, "/", http.StatusOK)
-	if index["mode"] != inspect.ModeStoreOnly || index["nfsd_id"] != "" {
+	if index["mode"] != inspect.ModeStoreOnly || index["server_id"] != "" {
 		t.Fatalf("envelope = %v", index)
 	}
 	getJSON(t, ts.URL, "/v1/sessions", http.StatusServiceUnavailable)
@@ -294,13 +294,11 @@ func TestDiagnosticsStoreOnlyMode(t *testing.T) {
 	if staged != 1 {
 		t.Fatalf("report shows %d staged writers, want 1: %v", staged, report)
 	}
+	// The temporary is the one problem: server-id and sessions/ are the
+	// server's own.
 	problems, _ := report["problems"].([]any)
-	found := false
-	for _, p := range problems {
-		found = found || strings.Contains(p.(string), "temporary metadata file present")
-	}
-	if !found {
-		t.Fatalf("temporary not reported: %v", problems)
+	if len(problems) != 1 || !strings.Contains(problems[0].(string), "temporary metadata file present") {
+		t.Fatalf("problems = %v, want only the temporary", problems)
 	}
 	if after := listing(); after != before {
 		t.Fatalf("store-only mode changed the staging directory:\n%s\n--\n%s", before, after)

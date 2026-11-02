@@ -701,6 +701,11 @@ func TestRestartReplaysCloseAndClosesPendingWriter(t *testing.T) {
 // startup and no session is built from it.
 func TestRestartDropsSessionOfUnknownIncarnation(t *testing.T) {
 	stagingDir := t.TempDir()
+	first, err := staging.NewLocalStore(stagingDir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staging.CloseFiles(t, first)
 	store, err := sessionstore.Open(filepath.Join(stagingDir, staging.SessionsDirName))
 	if err != nil {
 		t.Fatal(err)

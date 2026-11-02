@@ -60,6 +60,9 @@ type Server struct {
 	views              openstate.ViewStore
 	names              nameCache
 	stagingStore       staging.Store
+	// serverID is the staging directory's server-id: a moved staging
+	// directory is the same server and a wiped one a new server.
+	serverID           staging.ServerID
 	writeVerifier      [8]byte       // random per server instance, changes on restart
 	idleTimeout        time.Duration // timeout reading the next request
 	writeTimeout       time.Duration // timeout writing one reply
@@ -170,6 +173,7 @@ func NewServer(fs vfs.TernVFS, stagingStore staging.Store, logger *slog.Logger) 
 		fs:                 fs,
 		clients:            clients,
 		opens:              openstate.NewStore(),
+		serverID:           stagingStore.ServerID(),
 		stagingStore:       stagingStore,
 		writeVerifier:      verf,
 		idleTimeout:        5 * time.Minute,
@@ -206,12 +210,11 @@ func NewServer(fs vfs.TernVFS, stagingStore staging.Store, logger *slog.Logger) 
 	clients.LeaseTerminal = s.leaseTerminal
 	clients.LeaseSessions = s.sessions.hasSessions
 	clients.HoldsWriteState = s.holdsWriteState
-	// The nfsd ID names this process's lease and confirming slots in the
-	// client store. The epoch is the first four bytes of every stateid this
-	// process issues. Both are needed to attribute persisted state and wire
-	// stateids to an nfsd instance.
+	// The server id is the server owner clients see. The epoch is the first
+	// four bytes of every stateid this process issues, which attributes a
+	// wire stateid to an nfsd process.
 	logger.Info("nfsd instance",
-		"nfsd_id", clients.NfsdID,
+		"server_id", s.serverID.String(),
 		"stateid_epoch", fmt.Sprintf("%08x", s.opens.Epoch))
 	if d, ok := stagingStore.(interface{ Dir() string }); ok {
 		s.aliases = newAliasLog(d.Dir())

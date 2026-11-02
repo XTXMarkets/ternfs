@@ -28,7 +28,7 @@ func (s *Server) Envelope() inspect.Envelope {
 	epoch, _ := s.sessions.wireIDs.current()
 	return inspect.Envelope{
 		Now:          s.clients.Now(),
-		NfsdID:       s.clients.NfsdID,
+		ServerID:     s.serverID.String(),
 		StateidEpoch: fmt.Sprintf("%08x", s.opens.Epoch),
 		WireEpoch:    epoch,
 		Mode:         inspect.ModeServing,

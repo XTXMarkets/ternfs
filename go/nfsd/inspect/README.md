@@ -74,22 +74,24 @@ On `/v1/staging`, a `file` filter applies to the failed tombstones too. An
 ## Process identities
 
 Every JSON response, the index and errors included, carries `now`,
-`nfsd_id`, `stateid_epoch`, `wire_epoch` and `mode`. The profiling pages are
-not JSON and carry none of them.
+`server_id`, `stateid_epoch`, `wire_epoch` and `mode`. The profiling pages
+are not JSON and carry none of them.
 
-- `nfsd_id` identifies this process. It is the server owner Linux sees at
-  EXCHANGE_ID. The `lease.<nfsd-id>` and `confirming.<nfsd-id>` slots a
-  report may show were written by earlier releases, which kept one per
-  process.
+- `server_id` is the staging directory's `server-id`
+  ([server identity](../internal/staging/README.md#server-identity)). The
+  server owner Linux sees at EXCHANGE_ID is `ternfs-nfsd/<server_id>`. It
+  survives restarts and moves of the staging directory. The
+  `lease.<nfsd-id>` and `confirming.<nfsd-id>` slots a report may show were
+  written by earlier releases, which kept one per process.
 - `stateid_epoch` is the first four bytes of every stateid and session id
   the process issued.
 - `wire_epoch` is the high 32 bits of every wire clientid it issued. It is
   zero until the NFS endpoint is bound.
 - `mode` is `serving` or `store-only`. A store-only process issues
-  nothing, so its `nfsd_id` and `stateid_epoch` are empty strings and its
+  nothing, so its `server_id` and `stateid_epoch` are empty strings and its
   `wire_epoch` is zero.
 
-Startup logs contain `nfsd_id` and `stateid_epoch`, and the wire clientid
+Startup logs contain `server_id` and `stateid_epoch`, and the wire clientid
 epoch once the endpoint is bound. The `session created` log line records a
 wire clientid, its incarnation and its session id together, in the spellings
 the API uses. It is the one place all three appear. Grep a fleet's logs for

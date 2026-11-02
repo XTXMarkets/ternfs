@@ -52,6 +52,7 @@ Two TernFS properties shape the design:
 | State | Owner and lifetime |
 | --- | --- |
 | Namespace and published file contents | TernFS; subject to its policies. |
+| Server identity: the server owner and scope | One daemon's staging disk (`server-id`), written once; a moved staging directory is the same server and an empty one a new server; see [server identity](internal/staging/README.md#server-identity). |
 | Client identity, incarnation and lease slots | TernFS client store under `/.nfs`; see [clientstore](internal/clientstore/README.md). |
 | Staged bytes and checkpointed writer metadata | One daemon's staging disk; retained across compatible restarts; see [staging](internal/staging/README.md). |
 | Sessions, their slot reply caches and namespace intents | One daemon's staging disk (`sessions/`), written without fsync; a restart on the same host restores eligible sessions; see [Sessions across restarts](#sessions-across-restarts). |
@@ -63,10 +64,10 @@ The client records in TernFS outlive the process and its staging disk.
 After a restart or a failover they let the daemon check a returning
 client's principal, tell a client that rebooted from one that did not, and
 decide whether a staged writer may still be resumed. They hold neither
-staged bytes nor enough to rebuild opens. Every process advertises a new
-server owner, so the Linux client runs server-reboot recovery against a
-new process whatever the records say; the records decide what that
-recovery finds, not whether clients stay mounted.
+staged bytes nor enough to rebuild opens. Wire clientids belong to one
+process, so a Linux client whose session was not restored runs
+server-reboot recovery whatever the records say; the records decide what
+that recovery finds, not whether clients stay mounted.
 
 ## Filehandles and client views
 
@@ -450,7 +451,7 @@ is the list; each entry says where the handling is described.
 | Linux answers `NFS4ERR_DELAY` on a lone SEQUENCE by waiting its 15 s maximum. | CREATE_SESSION, and startup after a restore, wait for the first lease publication so SEQUENCE does not get DELAY. |
 | Linux 4.10 and later end CLOSE, OPEN_DOWNGRADE, REMOVE and RENAME compounds with that operation. | Locks held until the record; see [Sessions across restarts](#sessions-across-restarts). |
 | After a server restart Linux retransmits in-flight requests in no particular order, so a read OPEN can arrive before the CLOSE it follows. | The client's recovered writer is its view of the handle; see [client views](internal/openstate/README.md#client-views). |
-| Facing a new server owner, Linux runs server-reboot recovery: `CLAIM_PREVIOUS`, then reopens. | `CLAIM_PREVIOUS` gets `NFS4ERR_NO_GRACE`; reopens go through writer recovery. This is what clients see after a [failover](RECOVERY.md#replace-a-host). |
+| Facing a stale clientid or a new server, Linux runs server-reboot recovery: `CLAIM_PREVIOUS`, then reopens. | `CLAIM_PREVIOUS` gets `NFS4ERR_NO_GRACE`; reopens go through writer recovery. This is what clients see after a [failover](RECOVERY.md#replace-a-host). |
 | libnfs sends PUTFH, COMMIT, CLOSE in one compound. | The mutation gate does not count COMMIT; see [Sessions across restarts](#sessions-across-restarts). |
 | libnfs turns `NFS4ERR_DELAY` into an error. | Not handled: libnfs is a test client. |
 

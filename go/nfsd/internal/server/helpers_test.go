@@ -85,7 +85,7 @@ func stagingFiles(dir string) ([]os.DirEntry, error) {
 	}
 	files := entries[:0]
 	for _, e := range entries {
-		if !e.IsDir() {
+		if !e.IsDir() && e.Name() != staging.ServerIDFileName {
 			files = append(files, e)
 		}
 	}

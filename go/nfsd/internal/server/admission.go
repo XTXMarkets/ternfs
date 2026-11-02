@@ -90,8 +90,10 @@ func (s *Server) operationReplyBound(op nfs4.NfsArgop4) uint32 {
 	case nfs4.OP_SECINFO, nfs4.OP_SECINFO_NO_NAME:
 		return 20
 	case nfs4.OP_EXCHANGE_ID:
-		// fixed client/seq/flags/protection + server owner/scope/empty impl array
-		return uint32(8 + 8 + 4 + 4 + 4 + 8 + 4 + ((len(s.serverOwnerMajor()) + 3) &^ 3) + 4 + ((len(serverScope) + 3) &^ 3) + 4)
+		// fixed client/seq/flags/protection + server owner/scope/empty impl
+		// array; the owner major id and the scope are the same bytes
+		owner := uint32((len(s.serverOwner()) + 3) &^ 3)
+		return 8 + 8 + 4 + 4 + 4 + 8 + 4 + owner + 4 + owner + 4
 	case nfs4.OP_CREATE_SESSION:
 		return 88
 	case nfs4.OP_BIND_CONN_TO_SESSION:

@@ -24,10 +24,11 @@ import (
 // LocalStore manages staging files as local files in a directory.
 // File names encode the InodeID so state can be recovered on restart.
 type LocalStore struct {
-	mu      sync.Mutex
-	dir     string
-	files   map[vfs.InodeID]*localStagingEntry
-	targets map[stagingTarget]map[vfs.InodeID]struct{}
+	mu       sync.Mutex
+	dir      string
+	serverID ServerID
+	files    map[vfs.InodeID]*localStagingEntry
+	targets  map[stagingTarget]map[vfs.InodeID]struct{}
 	// recovered indexes the entries this process found on disk at startup
 	// by the handle a client holds them under: their own inode and, for a
 	// replacement, the file they replace. A request on a handle finds the
@@ -53,8 +54,13 @@ func NewLocalStore(dir string, logger *slog.Logger) (*LocalStore, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	serverID, err := loadServerID(dir)
+	if err != nil {
+		return nil, err
+	}
 	s := &LocalStore{
 		dir:        dir,
+		serverID:   serverID,
 		files:      make(map[vfs.InodeID]*localStagingEntry),
 		targets:    make(map[stagingTarget]map[vfs.InodeID]struct{}),
 		recovered:  make(map[vfs.InodeID]map[vfs.InodeID]struct{}),
@@ -179,6 +185,8 @@ func (s *LocalStore) CloseAll() {
 }
 
 func (s *LocalStore) ReadOnly() bool { return false }
+
+func (s *LocalStore) ServerID() ServerID { return s.serverID }
 
 func (s *LocalStore) Create(id vfs.InodeID, meta Meta) (File, error) {
 	unlock := s.fileLocks.Lock(id)

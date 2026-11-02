@@ -56,7 +56,7 @@ writer, and [store_report.go](store_report.go) the read-only
 | `expired` | nfsd expired this incarnation. It cannot be revived. |
 | `gc` | The earliest time an unreachable incarnation may be removed. |
 
-An `nfsd-id` is 32 random hex digits chosen when a process opens the store.
+An `nfsd-id` is 32 random hex digits an earlier release chose per process.
 The incarnation's directory inode is what the store and the diagnostics API
 call an incarnation. It is not the clientid a client sees: the server
 issues process-local wire clientids; see

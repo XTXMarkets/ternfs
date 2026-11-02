@@ -405,15 +405,13 @@ func writeSequenceError(w *nfs4.COMPOUND4resWriter, status uint32) {
 	w.Resume(ew.Finish())
 }
 
-// serverOwnerMajor identifies this export for session trunking checks.
-// Every nfsd serving one TernFS shares durable client state, but open state
-// and staging are local to each running nfsd and not shared with another
-// running at the same time, so each process is its own server owner.
-func (s *Server) serverOwnerMajor() []byte {
-	return []byte("ternfs-nfsd/" + s.clients.NfsdID)
+// serverOwner is the server owner major id and the server scope EXCHANGE_ID
+// returns. Both come from the server id, so a client sees the same server
+// after a restart or a move of the staging directory, and a new one after a
+// wipe.
+func (s *Server) serverOwner() []byte {
+	return []byte("ternfs-nfsd/" + s.serverID.String())
 }
-
-var serverScope = []byte("ternfs")
 
 func (s *Server) opExchangeID(
 	args nfs4.EXCHANGEID4args,
@@ -626,8 +624,9 @@ func (s *Server) writeExchangeIDResult(w *nfs4.COMPOUND4resWriter, c *sessionCli
 	ok.SetEirStateProtect_None()
 	sow := ok.StartEirServerOwner()
 	sow.SetSoMinorId(0)
-	ok.Resume(sow.SetSoMajorId(s.serverOwnerMajor()).Finish())
-	ok.SetEirServerScope(serverScope)
+	owner := s.serverOwner()
+	ok.Resume(sow.SetSoMajorId(owner).Finish())
+	ok.SetEirServerScope(owner)
 	impl := ok.StartEirServerImplId()
 	ok.Resume(impl.Finish())
 	ew.Resume(ok.Finish())

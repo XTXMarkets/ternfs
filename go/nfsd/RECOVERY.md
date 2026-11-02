@@ -243,8 +243,8 @@ can include writes not yet checkpointed; see the
 progress and session state are absent; on a running daemon, `/v1/staging`
 and `/v1/sessions` show them. A report taken while the daemon runs is an
 observation, not an atomic backup. Lease slots in the report name the
-`nfsd_id` that wrote them, and a stateid's first four bytes are the issuing
-process's `stateid_epoch`. Match these against startup logs or a serving
+`nfsd-id` of the earlier release that wrote them, and a stateid's first
+four bytes are the issuing process's `stateid_epoch`. Match these against startup logs or a serving
 daemon's [process identities](inspect/README.md#process-identities) to find
 that daemon; a store-only process has none of its own.
 
@@ -304,8 +304,12 @@ ssh B sync
 # Move the address to B, then start nfsd there.
 ```
 
-Copy the whole directory, `sessions/` and `aliases/` included: without the
-session files a CLOSE in flight at the failover is lost silently. Never
+Copy the whole directory, `server-id`, `sessions/` and `aliases/`
+included: without the session files a CLOSE in flight at the failover is
+lost silently. `server-id` makes the new daemon the same server; nfsd
+refuses to start on a copy that has staged files or session files but no
+`server-id`
+([server identity](internal/staging/README.md#server-identity)). Never
 start the new daemon from a copy taken while the old one was serving.
 `-S` keeps the sparse staging files sparse; `--numeric-ids` keeps
 ownership. Afterwards check the new daemon's startup log for restored
@@ -315,7 +319,8 @@ before the next failover.
 ### With an empty staging directory
 
 Use this when the old staging cannot be read. Start the new daemon with an
-empty staging directory owned as the unit expects. If the old disk may come
+empty staging directory owned as the unit expects. It writes a new
+`server-id` and is a new server to every client. If the old disk may come
 back, keep it untouched; its data can be recovered by hand later, before
 the base and transient inodes it needs are collected; see
 [Recover retained data manually](#recover-retained-data-manually). Tell
@@ -346,6 +351,11 @@ There is no general automatic repair command for quarantined staging.
 Drain writes and close their descriptors before stopping the old binary.
 Inspect remaining staging, including retired and quarantined entries.
 Preserve or recover unpublished data before changing formats.
+
+A staging directory written by a release without `server-id` stops
+startup if it holds staged files or session files: it looks like a partial
+copy. Drain writers, then move it aside and start on an empty directory.
+Clients register again with the new server.
 
 A binary which cannot read the existing sidecar format may fail startup.
 The current format is NFS9; older NFS5 to NFS8 sidecars are not

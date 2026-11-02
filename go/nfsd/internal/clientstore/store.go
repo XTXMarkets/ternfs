@@ -36,7 +36,6 @@ type Store struct {
 	fs       vfs.TernVFS
 	NFSDirID vfs.InodeID
 	DirID    vfs.InodeID
-	NfsdID   string
 	Now      func() time.Time
 	// clock is read by Now; SetClock swaps it while workers run.
 	clock        atomic.Pointer[func() time.Time]
@@ -163,22 +162,16 @@ func NewStore(fs vfs.TernVFS) (*Store, error) {
 	return NewStoreAt(fs, nfsID, clientsID)
 }
 
-// NewStoreAt builds a Store over existing directories with a fresh
-// process identity.
+// NewStoreAt builds a Store over existing directories.
 func NewStoreAt(
 	fs vfs.TernVFS,
 	nfsID vfs.InodeID,
 	clientsID vfs.InodeID,
 ) (*Store, error) {
-	nfsdID, err := randomHex(16)
-	if err != nil {
-		return nil, fmt.Errorf("client store: generate nfsd id: %w", err)
-	}
 	cs := &Store{
 		fs:             fs,
 		NFSDirID:       nfsID,
 		DirID:          clientsID,
-		NfsdID:         nfsdID,
 		identityLocks:  make(map[vfs.InodeID]*clientIdentityLock),
 		Refreshers:     make(map[vfs.InodeID]*LeaseRefresher),
 		RefresherLimit: maxRefreshers,

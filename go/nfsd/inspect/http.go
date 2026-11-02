@@ -488,7 +488,7 @@ var enums = map[string][]string{
 }
 
 var notes = []string{
-	"Every response carries now, nfsd_id, stateid_epoch, wire_epoch and mode. nfsd_id names this process's lease and confirming slots in the client store; stateid_epoch is the first four bytes of every stateid and session id it issued; wire_epoch is the high 32 bits of every wire clientid.",
+	"Every response carries now, server_id, stateid_epoch, wire_epoch and mode. server_id is the staging directory's server-id, the server owner clients see; stateid_epoch is the first four bytes of every stateid and session id it issued; wire_epoch is the high 32 bits of every wire clientid.",
 	"Every id is a typed kind:hex string, as listed under id kinds, and a filter or lookup takes exactly the kind it names: a value copied from any response, or from the session-created log line, pastes back unchanged. Uppercase hex is accepted. A zero wire-clientid, incarnation or inode is rejected rather than treated as no filter.",
 	"Snapshots are taken one lock at a time, so counts across resources may not agree exactly. A slot, staging file or confirmation attempt reported locked was held by a request or a backend call at that instant.",
 	"A stateid lookup with incomplete=true could not rule out recoverable staging without waiting. Staging responses are incomplete when they include locked entries; those entries have unknown owner metadata and remain possible matches for an incarnation filter. Retry for a complete result.",

@@ -984,6 +984,9 @@ func (r *inspectReport) readStaging(dir string) ([]*inspectStagingEntry, error) 
 			problem("%s: temporary metadata file present", path)
 			continue
 		}
+		if name == staging.ServerIDFileName {
+			continue // The server identity.
+		}
 		switch {
 		case strings.HasSuffix(name, ".staging"):
 			id, ok := parseName(name, ".staging")

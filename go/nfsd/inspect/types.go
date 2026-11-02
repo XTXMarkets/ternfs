@@ -29,14 +29,15 @@ const (
 	ModeStoreOnly = "store-only"
 )
 
-// Envelope is carried by every response. The three epochs identify the
-// process: nfsd_id names its lease and confirming slots in the client
-// store, stateid_epoch is the first four bytes of every stateid and session
-// id it issued, and wire_epoch is the high 32 bits of every wire clientid.
-// wire_epoch is zero until the NFS endpoint is bound.
+// Envelope is carried by every response. server_id identifies the server:
+// the staging directory's server-id, from which the server owner is derived.
+// The two epochs identify the process: stateid_epoch is the first four bytes
+// of every stateid and session id it issued, and wire_epoch is the high 32
+// bits of every wire clientid. wire_epoch is zero until the NFS endpoint is
+// bound.
 type Envelope struct {
 	Now          time.Time `json:"now"`
-	NfsdID       string    `json:"nfsd_id"`
+	ServerID     string    `json:"server_id"`
 	StateidEpoch string    `json:"stateid_epoch"`
 	WireEpoch    uint32    `json:"wire_epoch"`
 	Mode         string    `json:"mode"`
