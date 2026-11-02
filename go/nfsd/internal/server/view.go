@@ -82,9 +82,12 @@ func (s *Server) sweepViews() {
 }
 
 // writerKept reports that a writer index entry still matters: its staging
-// is live, or failed and so a tombstone COMMIT must report.
+// is live, or failed and so a tombstone COMMIT must report. It is one
+// check: asking Failed and then Get lets a quarantine between them answer
+// no to both, and the entry would be pruned while its tombstone survives,
+// so a later COMMIT through the handle would report success.
 func (s *Server) writerKept(id vfs.InodeID) bool {
-	return s.stagingStore.Failed(id) || s.stagingStore.Get(id) != nil
+	return s.stagingStore.Retained(id)
 }
 
 // failedWriter reports whether a writer clientID used through fileID has

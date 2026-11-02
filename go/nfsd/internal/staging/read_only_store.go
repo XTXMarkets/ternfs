@@ -46,6 +46,8 @@ func (ReadOnlyStore) Quarantine(vfs.InodeID) error { return nil }
 
 func (ReadOnlyStore) Failed(vfs.InodeID) bool { return false }
 
+func (ReadOnlyStore) Retained(vfs.InodeID) bool { return false }
+
 func (ReadOnlyStore) Remove(vfs.InodeID) {}
 
 func (ReadOnlyStore) StagedSize(vfs.InodeID) (uint64, bool) { return 0, false }

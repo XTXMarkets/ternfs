@@ -264,6 +264,12 @@ func (s *LocalStore) Failed(id vfs.InodeID) bool {
 	return entry != nil && entry.failed
 }
 
+func (s *LocalStore) Retained(id vfs.InodeID) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.files[id] != nil
+}
+
 func (s *LocalStore) GetMeta(id vfs.InodeID) (Meta, bool) {
 	file := s.Get(id)
 	if file == nil {

@@ -103,6 +103,10 @@ type Store interface {
 	// Quarantine excludes an entry for the process lifetime and preserves its files.
 	Quarantine(id vfs.InodeID) error
 	Failed(id vfs.InodeID) bool
+	// Retained reports, in one check, that the store holds an entry for id,
+	// live or failed. Failed and Get are separate checks, and a quarantine
+	// between them makes both say no.
+	Retained(id vfs.InodeID) bool
 	// Remove closes and removes the staging file and sidecar for the given inode.
 	Remove(id vfs.InodeID)
 	// StagedSize returns the staged size for the given inode.
