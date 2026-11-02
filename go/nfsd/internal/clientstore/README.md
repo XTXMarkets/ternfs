@@ -80,7 +80,7 @@ Markers are create-if-absent: an existing marker is kept, inode and all.
 
 After confirmation, `pending` may continue to name the confirmed
 incarnation. Removing it by lookup-then-remove could delete a newer pending
-pointer installed meanwhile. The next registration
+pointer another process installed meanwhile. The next registration
 replaces it.
 
 ## Registration
@@ -163,21 +163,12 @@ classified:
 
 | Read back | Result |
 | --- | --- |
-| `confirmed` names N | Committed, through D or by an earlier attempt. |
-| `confirmed` still names P, or is absent and there was no P, and D's rename did not return success | Rolled back: P is unchanged. |
+| `confirmed` names N | Committed, whether through D or by another process. |
+| D never applied, and `confirmed` is still P through the same symlink | Rolled back: P is unchanged. |
+| Anything else, including no `confirmed` | Conservative: neither committed nor provably unchanged. |
 | A fence or the read-back failed | Unresolved. |
-| Anything else | Unresolved. |
 
-The table assumes one writer. This process is the only one that changes
-`confirmed`, which rests on the operator fencing the old server before a
-failover. Once every fence has settled, D has either applied or can never
-apply: a fence that removed the temporary proves it never will, and one
-that found the edge gone means it was consumed, so `confirmed` names N if
-D applied and P if not. Any other read-back is a store this process did
-not produce. It decides nothing and keeps all its evidence, rather than
-guessing. Earlier releases called it conservative and dropped N's record.
-
-An unresolved attempt keeps all its
+Missing data never proves a rollback. An unresolved attempt keeps all its
 evidence. `SettleConfirmation` retries its fences and read-back and never
 writes again. A settled result is never recomputed. Elapsed time does not
 settle anything.
@@ -193,12 +184,12 @@ removes that edge. If the purge fails, the
 
 `ResumeReplacementPurge` finishes such a purge later from durable evidence
 alone: `confirmed` names N and N's `reboot` names another incarnation. It
-needs no attempt, so it works after a restart. It
+needs no attempt, so it works after a restart or in another process. It
 holds the server's destruction holds on N and P through the purge, and a
 confirmation in progress defers it with `ErrPurgeProtected`.
 
 These steps order work within one process only. The identity lock is
-local; nothing here orders writes by a second live daemon.
+local, and another process's writes are not atomic with these reads.
 
 ## Open admission
 

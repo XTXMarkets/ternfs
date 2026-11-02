@@ -174,10 +174,8 @@ func TestConfirmationWriteFaults(t *testing.T) {
 	}
 }
 
-// The read-back table when D's rename reports an error and the confirmed
-// pointer is then changed under it, as only another writer could. With one
-// writer, only a pointer naming N or P decides; anything else stays
-// unresolved.
+// The read-back table when D's rename reports an error and something else
+// has changed the confirmed pointer.
 func TestConfirmationObservation(t *testing.T) {
 	for _, c := range []struct {
 		name  string
@@ -185,13 +183,13 @@ func TestConfirmationObservation(t *testing.T) {
 		to    func(f *confirmFixture) vfs.InodeID
 		want  ConfirmResult
 	}{
-		{"never applied, P through another symlink", FaultNotApplied, func(f *confirmFixture) vfs.InodeID { return f.p }, ConfirmRolledBack},
-		{"never applied, another incarnation M", FaultNotApplied, func(f *confirmFixture) vfs.InodeID { return f.m }, confirmUnresolved},
-		{"never applied, absent", FaultNotApplied, func(f *confirmFixture) vfs.InodeID { return 0 }, confirmUnresolved},
+		{"never applied, P through another symlink", FaultNotApplied, func(f *confirmFixture) vfs.InodeID { return f.p }, ConfirmConservative},
+		{"never applied, another incarnation M", FaultNotApplied, func(f *confirmFixture) vfs.InodeID { return f.m }, ConfirmConservative},
+		{"never applied, absent", FaultNotApplied, func(f *confirmFixture) vfs.InodeID { return 0 }, ConfirmConservative},
 		{"never applied, N through another symlink", FaultNotApplied, func(f *confirmFixture) vfs.InodeID { return f.n }, ConfirmCommitted},
-		{"edge gone, P", faultAppliedErr, func(f *confirmFixture) vfs.InodeID { return f.p }, ConfirmRolledBack},
-		{"edge gone, M", faultAppliedErr, func(f *confirmFixture) vfs.InodeID { return f.m }, confirmUnresolved},
-		{"edge gone, absent", faultAppliedErr, func(f *confirmFixture) vfs.InodeID { return 0 }, confirmUnresolved},
+		{"edge gone, P", faultAppliedErr, func(f *confirmFixture) vfs.InodeID { return f.p }, ConfirmConservative},
+		{"edge gone, M", faultAppliedErr, func(f *confirmFixture) vfs.InodeID { return f.m }, ConfirmConservative},
+		{"edge gone, absent", faultAppliedErr, func(f *confirmFixture) vfs.InodeID { return 0 }, ConfirmConservative},
 		{"edge gone, N through another symlink", faultAppliedErr, func(f *confirmFixture) vfs.InodeID { return f.n }, ConfirmCommitted},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -226,12 +224,13 @@ func TestConfirmationObservation(t *testing.T) {
 }
 
 // A first confirmation has no predecessor: no B, and a D that never applied
-// observes the absent pointer it started from, which is a rollback.
+// observes an absent pointer, which the approved table treats as
+// conservative, not as a rollback.
 func TestConfirmationWithoutPredecessor(t *testing.T) {
 	f := newConfirmFixture(t, false)
 	f.fs.Set(WriteD, FaultNotApplied, nil)
 	a := f.commit(t)
-	if a.writes[writeB] != nil || a.Result() != ConfirmRolledBack {
+	if a.writes[writeB] != nil || a.Result() != ConfirmConservative {
 		t.Fatalf("B %+v, result %s", a.writes[writeB], confirmResultName(a.Result()))
 	}
 	f = newConfirmFixture(t, false)
@@ -438,8 +437,8 @@ func TestConfirmationAppliedThenPanic(t *testing.T) {
 }
 
 // A panic while settling leaves the attempt unresolved. A fence that removed
-// its temp before panicking is then found edge gone, so D can no longer
-// apply: with confirmed still P, that is a rollback. A panic in
+// its temp before panicking is then found edge gone, which may have applied:
+// with confirmed still P, that is conservative, never a rollback. A panic in
 // the read-back leaves the fences settled and only the read to repeat.
 func TestConfirmationSettlementPanic(t *testing.T) {
 	t.Run("fence", func(t *testing.T) {
@@ -453,7 +452,7 @@ func TestConfirmationSettlementPanic(t *testing.T) {
 			t.Fatalf("fence record %+v", d)
 		}
 		f.fs.Set(WriteD, FaultNone, nil)
-		if got := f.store.SettleConfirmation(a); got != ConfirmRolledBack {
+		if got := f.store.SettleConfirmation(a); got != ConfirmConservative {
 			t.Fatalf("settled %s", confirmResultName(got))
 		}
 	})
@@ -519,17 +518,16 @@ func TestConfirmationSettleSerialized(t *testing.T) {
 
 // CommitConfirmation revalidates the prepared P and Sp under the exclusive
 // identity lock, after the caller has closed P. A change writes nothing, and
-// the read-back classifies the attempt: P still named rolls back, a pointer
-// naming N commits without purge authority, and anything else, which only
-// another writer could produce, stays unresolved.
+// the read-back classifies the attempt: never a rollback, and a pointer
+// naming N commits without purge authority.
 func TestConfirmationRevalidatesPredecessor(t *testing.T) {
 	for _, c := range []struct {
 		change string
 		want   ConfirmResult
 	}{
-		{"P through another symlink", ConfirmRolledBack},
-		{"another incarnation", confirmUnresolved},
-		{"absent", confirmUnresolved},
+		{"P through another symlink", ConfirmConservative},
+		{"another incarnation", ConfirmConservative},
+		{"absent", ConfirmConservative},
 		{"N", ConfirmCommitted},
 	} {
 		t.Run(c.change, func(t *testing.T) {
@@ -619,8 +617,7 @@ func TestConfirmationRequiresPending(t *testing.T) {
 
 // A read error before any write gives no evidence about P: the attempt is
 // unresolved. Its settlement classifies whatever the pointer then shows:
-// unchanged P rolls back, and a pointer naming another incarnation, which
-// only another writer could produce, stays unresolved.
+// unchanged P rolls back, a pointer another process changed is conservative.
 func TestConfirmationStorePreWriteReadError(t *testing.T) {
 	for _, c := range []struct {
 		name   string
@@ -628,7 +625,7 @@ func TestConfirmationStorePreWriteReadError(t *testing.T) {
 		want   ConfirmResult
 	}{
 		{"unchanged", false, ConfirmRolledBack},
-		{"changed under it", true, confirmUnresolved},
+		{"changed by another process", true, ConfirmConservative},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			f := newConfirmFixture(t, true)

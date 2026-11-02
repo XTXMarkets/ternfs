@@ -557,9 +557,10 @@ type Observed struct {
 
 // Confirmation results, write outcomes and fence states.
 const (
-	ConfirmUnresolved = "unresolved"
-	ConfirmCommitted  = "committed"
-	ConfirmRolledBack = "rolled_back"
+	ConfirmUnresolved   = "unresolved"
+	ConfirmCommitted    = "committed"
+	ConfirmRolledBack   = "rolled_back"
+	ConfirmConservative = "conservative"
 
 	WriteNever     = "never"
 	WriteApplied   = "applied"
