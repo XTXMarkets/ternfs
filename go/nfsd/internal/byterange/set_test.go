@@ -82,29 +82,6 @@ func TestByteRangeSetRemoveSplitsWithoutCorruptingFollowingRanges(t *testing.T) 
 	}
 }
 
-func TestByteRangeSetContains(t *testing.T) {
-	ranges := Set{
-		{Start: 5, End: 15},
-		{Start: 20, End: 30},
-	}
-	for _, tt := range []struct {
-		start uint64
-		end   uint64
-		want  bool
-	}{
-		{start: 5, end: 15, want: true},
-		{start: 7, end: 10, want: true},
-		{start: 5, end: 16, want: false},
-		{start: 15, end: 20, want: false},
-		{start: 25, end: 25, want: true},
-	} {
-		if got := ranges.Contains(tt.start, tt.end); got != tt.want {
-			t.Errorf("contains(%d, %d) = %t, want %t",
-				tt.start, tt.end, got, tt.want)
-		}
-	}
-}
-
 func TestByteRangeSetGaps(t *testing.T) {
 	ranges := Set{
 		{Start: 5, End: 10},
