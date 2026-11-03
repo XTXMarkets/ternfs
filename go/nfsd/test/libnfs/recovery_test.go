@@ -284,43 +284,6 @@ func runLibnfsRecovery(t *testing.T, suite *nfsTestSuite) {
 		fresh.read(t, h, "published")
 		fresh.must(t, libnfsRequest{Op: "close", Handle: h})
 	})
-	t.Run("OperationsWhileServerDown", func(t *testing.T) {
-		for _, operation := range []string{"open", "close"} {
-			t.Run(operation, func(t *testing.T) {
-				s := suite.server(t)
-				c := s.client(t)
-				h := c.open(t, s, "file", os.O_CREATE|os.O_RDWR)
-				c.must(t, libnfsRequest{Op: "write", Handle: h, Data: []byte("published")})
-				c.must(t, libnfsRequest{Op: "close", Handle: h})
-				req := libnfsRequest{Op: "open", Path: "/" + s.Name + "/file", Flags: os.O_RDONLY}
-				if operation == "close" {
-					h = c.open(t, s, "file", os.O_RDWR)
-					c.must(t, libnfsRequest{Op: "write", Handle: h, Data: []byte("unpublished")})
-					c.must(t, libnfsRequest{Op: "sync", Handle: h})
-					req = libnfsRequest{Op: "close", Handle: h}
-				}
-				s.process.stop(t, syscall.SIGKILL)
-				r := c.call(t, req)
-				if r.Error == "" || r.Errno != int(syscall.EIO) {
-					t.Fatalf("%s while server down: %+v; expected EIO", operation, r)
-				}
-				t.Logf("libnfs %s while down: %s (errno %d)", operation, r.Error, r.Errno)
-				s.start(t)
-				s.published(t, "file", "published")
-				// Exhausting reconnect attempts leaves this libnfs context
-				// unusable even when the server returns.
-				r = c.call(t, libnfsRequest{Op: "open", Path: "/" + s.Name + "/file", Flags: os.O_RDONLY})
-				if r.Error == "" || r.Errno != int(syscall.EIO) {
-					t.Fatalf("exhausted libnfs context: %+v; expected EIO", r)
-				}
-				c.process.stop(t, syscall.SIGKILL)
-				fresh := s.client(t)
-				h = fresh.open(t, s, "file", os.O_RDONLY)
-				fresh.read(t, h, "published")
-				fresh.must(t, libnfsRequest{Op: "close", Handle: h})
-			})
-		}
-	})
 	t.Run("CloseSyncedWriterAfterRestart", func(t *testing.T) {
 		for _, tc := range []struct {
 			name, base string

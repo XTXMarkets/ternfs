@@ -101,7 +101,7 @@ libnfs 8 offers sessions as NFSv4.2, hence the server compatibility flag.
 make test-libnfs-cluster GO_TEST_FLAGS=-short
 make test-libnfs-cluster GO_TEST_FLAGS='-run TestLibnfs/recovery'
 make test-libnfs TEST_ARGS='-registry HOST:PORT' \
-    GO_TEST_FLAGS='-run TestLibnfs/ReadFile'
+    GO_TEST_FLAGS='-run TestLibnfs/ReadLargeFile'
 ```
 
 `-short` skips timed cases. `LIBNFS_TIMEOUT` overrides the default
