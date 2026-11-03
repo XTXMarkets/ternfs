@@ -41,11 +41,41 @@ type transientFile struct {
 	path   string // temp file path on disk
 }
 
+// privateDir is where the backend for root keeps its transients and
+// snapshots.
+func privateDir(root string) string { return filepath.Clean(root) + ".nfsd" }
+
+// CheckLocalRoot checks that root's private directory can share root's
+// filesystem, because publication renames transients into the tree and
+// snapshots are hard links out of it, and creates the directory. A root
+// that is a mount point is refused before anything is created.
+func CheckLocalRoot(root string) error {
+	private := privateDir(root)
+	beside := private
+	if _, err := os.Stat(private); errors.Is(err, os.ErrNotExist) {
+		beside = filepath.Dir(filepath.Clean(root))
+	}
+	var rootSt, besideSt syscall.Stat_t
+	if err := syscall.Stat(root, &rootSt); err != nil {
+		return fmt.Errorf("stat %s: %w", root, err)
+	}
+	if err := syscall.Stat(beside, &besideSt); err != nil {
+		return fmt.Errorf("stat %s: %w", beside, err)
+	}
+	if rootSt.Dev != besideSt.Dev {
+		return fmt.Errorf("%s must be on the filesystem of %s, so the root cannot be a mount point", private, root)
+	}
+	if err := os.MkdirAll(private, 0700); err != nil {
+		return fmt.Errorf("creating %s: %w", private, err)
+	}
+	return nil
+}
+
 func NewLocalTernVFS(root string) *LocalTernVFS {
 	root = filepath.Clean(root)
 	lfs := &LocalTernVFS{
 		root:      root,
-		private:   root + ".nfsd",
+		private:   privateDir(root),
 		byID:      make(map[InodeID]string),
 		byPath:    make(map[string]InodeID),
 		parent:    make(map[InodeID]InodeID),

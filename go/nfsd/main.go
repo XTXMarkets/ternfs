@@ -150,6 +150,9 @@ func openVFS(root string, registry string, verbose bool) (vfs.TernVFS, string, *
 		if err != nil || !info.IsDir() {
 			return nil, "", nil, fmt.Errorf("root must be a directory: %s", absRoot)
 		}
+		if err := vfs.CheckLocalRoot(absRoot); err != nil {
+			return nil, "", nil, err
+		}
 		return vfs.NewLocalTernVFS(absRoot), "local root " + absRoot, nil, nil
 	}
 	logLevel := log.INFO
