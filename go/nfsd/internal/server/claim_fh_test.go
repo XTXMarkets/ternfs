@@ -240,7 +240,6 @@ func TestOpenWaitsForPublishingClose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(srv.clients.StopLeaseWorkers)
 	addr, cleanup := serveTestServer(t, srv)
 	defer cleanup()
 	if err := os.WriteFile(filepath.Join(root, "file"), []byte("old"), 0644); err != nil {

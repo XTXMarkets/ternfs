@@ -6,9 +6,7 @@ package server
 
 import (
 	"encoding/binary"
-	"errors"
 	"fmt"
-	"io"
 	"net"
 	"strings"
 	"sync"
@@ -16,12 +14,9 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/inspect"
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/openstate"
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 // cbTestClient is a client connection that also serves callbacks: its
@@ -273,7 +268,6 @@ func newCBSessionLimits(t *testing.T, srv *Server, addr string, backReq, backReq
 		t.Fatal("backchannel not granted")
 	}
 	f.ts = newTestSession(readSessionID(ok.CsrSessionid()), f.clientID, ok.CsrForeChanAttrs().CaMaxrequests())
-	awaitLeaseProven(t, srv, incarnationForTest(t, srv, f.clientID))
 	return f
 }
 
@@ -418,7 +412,7 @@ func TestCBRecallSlotOncePerPressure(t *testing.T) {
 	f.srv.sessions.mu.Lock()
 	quiet := f.srv.sessions.groups[inc].quietUntil
 	f.srv.sessions.mu.Unlock()
-	if quiet.Before(before.Add(clientstore.LeaseTime - time.Second)) {
+	if quiet.Before(before.Add(leaseTime - time.Second)) {
 		t.Fatalf("callback did not renew: quiet until %s", quiet)
 	}
 
@@ -601,137 +595,35 @@ func TestCBWorkerHoldsSessionUntilExit(t *testing.T) {
 	waitFor(t, "late reply dropped", func() bool { return f.srv.backchannel.strayReplies.Load() == strays+1 })
 }
 
-// Callback renewal under the gate: live and deciding renew (deciding also
-// makes expiry give way); submitted and expired do not.
+// Callback renewal under the gate: only a live gate renews, not while
+// expiry is being written nor once it has been.
 func TestCallbackRenewalUnderGate(t *testing.T) {
 	ss := newSessionStore(1)
 	now := time.Now()
 	ss.now = func() time.Time { return now }
 	for _, c := range []struct {
-		name    string
-		lease   leaseGateState
-		phase   markerPhase
-		renews  bool
-		arbiter bool
+		name   string
+		lease  leaseGateState
+		renews bool
 	}{
-		{"live", gateLive, markerNone, true, false},
-		{"deciding", gateChecking, markerDeciding, true, true},
-		{"submitted", gateChecking, markerSubmitted, false, false},
-		{"expired", gateExpired, markerNone, false, false},
+		{"live", gateLive, true},
+		{"checking", gateChecking, false},
+		{"expired", gateExpired, false},
 	} {
 		ss.mu.Lock()
 		g, _ := ss.groupLocked(7)
-		g.lease, g.markerPhase, g.renewedDuringCheck, g.quietUntil = c.lease, c.phase, false, time.Time{}
+		g.lease, g.quietUntil = c.lease, time.Time{}
 		ss.mu.Unlock()
 		ss.callbackRenew(7, now)
 		ss.mu.Lock()
 		renewed := !g.quietUntil.IsZero()
-		if renewed != c.renews || g.renewedDuringCheck != c.arbiter {
-			t.Errorf("%s: renewed %t, arbitration %t", c.name, renewed, g.renewedDuringCheck)
+		if renewed != c.renews {
+			t.Errorf("%s: renewed %t", c.name, renewed)
 		}
-		if renewed && !g.quietUntil.Equal(now.Add(clientstore.LeaseTime)) {
+		if renewed && !g.quietUntil.Equal(now.Add(leaseTime)) {
 			t.Errorf("%s: quiet until %s", c.name, g.quietUntil)
 		}
 		ss.mu.Unlock()
-	}
-}
-
-// expiryGateVFS blocks the lease observation's lookup of the lease, and can
-// fail the expired marker's creation.
-type expiryGateVFS struct {
-	vfs.TernVFS
-	mu         sync.Mutex
-	dir        vfs.InodeID
-	entered    chan struct{}
-	release    chan struct{}
-	failMarker bool
-}
-
-func (fs *expiryGateVFS) Lookup(dir vfs.InodeID, name string) (vfs.InodeID, error) {
-	fs.mu.Lock()
-	block := fs.dir != 0 && dir == fs.dir && name == clientstore.LeaseName
-	if block {
-		fs.dir = 0
-	}
-	fs.mu.Unlock()
-	if block {
-		close(fs.entered)
-		<-fs.release
-	}
-	return fs.TernVFS.Lookup(dir, name)
-}
-
-func (fs *expiryGateVFS) CreateFile(dir vfs.InodeID, name string, data io.Reader) (vfs.InodeID, error) {
-	fs.mu.Lock()
-	fail := fs.failMarker && name == clientstore.ExpiredName
-	fs.mu.Unlock()
-	if fail {
-		return 0, errInjectedExpiry
-	}
-	return fs.TernVFS.CreateFile(dir, name, data)
-}
-
-var errInjectedExpiry = errors.New("injected marker failure")
-
-// A callback reply while expiry observes the lease makes the decision give
-// way and renews; callbacks keep the client live here although its durable
-// lease is dead. Once the marker is submitted the client expires, whether
-// the marker write succeeds or not.
-func TestCallbackArbitratesExpiry(t *testing.T) {
-	for _, c := range []string{"reply-during-check", "no-reply", "marker-error"} {
-		t.Run(c, func(t *testing.T) {
-			fs := &expiryGateVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
-			srv, err := NewServer(fs, staging.ReadOnlyStore{}, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(srv.clients.StopLeaseWorkers)
-			clientID, confirm, err := srv.clients.RegisterForTest([8]byte{1}, []byte("cb-expiry"), clientstore.ClientOwner{})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := srv.clients.ConfirmForTest(clientID, confirm, clientstore.RPCPrincipal{}); err != nil {
-				t.Fatal(err)
-			}
-			publishLeaseForTest(t, srv, clientID)
-			srv.clients.StopLeaseWorkers()
-			// The durable lease is long dead.
-			later := time.Now().Add(10 * clientstore.LeaseWriteTerm)
-			srv.clients.SetClock(func() time.Time { return later })
-			fs.mu.Lock()
-			fs.dir, fs.entered, fs.release = vfs.InodeID(clientID), make(chan struct{}), make(chan struct{})
-			fs.failMarker = c == "marker-error"
-			fs.mu.Unlock()
-			srv.sessions.mu.Lock()
-			srv.sessions.groupLocked(clientID)
-			srv.sessions.mu.Unlock()
-			decided := make(chan bool, 1)
-			go func() {
-				expired, _ := srv.decideExpired(clientID, false)
-				decided <- expired
-			}()
-			testutil.AwaitSignal(t, fs.entered, "lease observation")
-			if c == "reply-during-check" {
-				srv.sessions.callbackRenew(clientID, later)
-			}
-			close(fs.release)
-			expired := testutil.AwaitValue(t, decided, "expiry decision")
-			if want := c != "reply-during-check"; expired != want {
-				t.Fatalf("expired %t, want %t", expired, want)
-			}
-			_, markerErr := fs.TernVFS.Lookup(vfs.InodeID(clientID), clientstore.ExpiredName)
-			if marked := markerErr == nil; marked != (c == "no-reply") {
-				t.Fatalf("marker present %t", marked)
-			}
-			if c != "reply-during-check" {
-				return
-			}
-			// Renewed: the client stays live locally while the durable
-			// lease is dead.
-			if expired, err := srv.decideExpired(clientID, false); expired || err != nil {
-				t.Fatalf("renewed client decided %t %v", expired, err)
-			}
-		})
 	}
 }
 
@@ -798,7 +690,8 @@ func TestSequenceFlagsTable(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ss := newSessionStore(1)
-			srv := &Server{sessions: ss, opens: openstate.NewStore(), clients: &clientstore.Store{Now: time.Now}}
+			srv := &Server{sessions: ss, opens: openstate.NewStore()}
+			srv.SetClock(time.Now)
 			var sessions []*session
 			for _, sp := range tc.sessions {
 				sess := &session{clientID: sp.client, backRequested: sp.requested, slots: make([]sessionSlot, 1)}

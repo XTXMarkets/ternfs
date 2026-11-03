@@ -68,7 +68,6 @@ func TestClientRetirementHoldsRecords(t *testing.T) {
 	ss := srv.sessions
 	const client, count = 77, 64
 	ss.recordLimit = count
-	srv.clients.PinLeaseForTest(client)
 	var batch []*session
 	ss.mu.Lock()
 	for i := 0; i < count; i++ {

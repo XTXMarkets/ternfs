@@ -15,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
@@ -192,9 +191,8 @@ func TestAbandonedCreationKeepsEmptyVersion(t *testing.T) {
 	state, fh := openCreateFile(t, conn, &xid, clientID, "abandoned")
 	baseFH := lookupFH(t, conn, &xid, "abandoned")
 	writeFileAt(t, conn, &xid, fh, state, 0, []byte("unpublished"))
-	srv.waitForClientGC()
-	now := time.Now().Add(2 * clientstore.LeaseTime)
-	srv.clients.SetClock(func() time.Time { return now })
+	now := time.Now().Add(2 * leaseTime)
+	srv.SetClock(func() time.Time { return now })
 	srv.runLeaseSweep()
 	if staging.TargetBusy(srv.stagingStore, srv.fs.RootID(), "abandoned") {
 		t.Fatal("expired creator still holds staging")
@@ -275,9 +273,6 @@ type visibilityFailureVFS struct {
 }
 
 func (fs *visibilityFailureVFS) ConstructFile(dirID vfs.InodeID) (vfs.InodeID, vfs.Cookie, error) {
-	if clientStoreDir(fs.LocalTernVFS, dirID) {
-		return fs.LocalTernVFS.ConstructFile(dirID)
-	}
 	fs.constructs++
 	if fs.failure == "staging" && fs.constructs == 2 {
 		return 0, vfs.Cookie{}, errors.New("injected staging construction failure")
@@ -313,7 +308,6 @@ func TestFailedCreationDoesNotPublishEmptyVersion(t *testing.T) {
 			defer conn.Close()
 			xid := uint32(1)
 			clientID := setupClient(t, conn, &xid)
-			srv.waitForClientGC()
 			status, _, _, _ := openFileForOwner(
 				t, conn, &xid, clientID, "creator", "failed",
 				nfs4.OPEN4_SHARE_ACCESS_BOTH, true, false,
@@ -327,9 +321,6 @@ func TestFailedCreationDoesNotPublishEmptyVersion(t *testing.T) {
 			transients := fs.TransientCount()
 			if len(store.Entries()) != 0 || transients != 0 {
 				t.Fatal("failed creation leaked staging or transient inodes")
-			}
-			if count := activeOpenMarkerCount(t, srv, clientID); count != 0 {
-				t.Fatalf("failed creation left %d open markers", count)
 			}
 		})
 	}

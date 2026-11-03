@@ -75,11 +75,29 @@ var (
 	ErrUnfinished = errors.New("client records: earlier transition unfinished")
 	// ErrCorrupt is returned by Open for clients/ content it did not write.
 	ErrCorrupt = errors.New("client records: corrupt")
+	// ErrInUse is returned by Confirm for an incarnation a record already
+	// confirms or purges.
+	ErrInUse = errors.New("client records: incarnation in use")
 )
 
-// Incarnation is one confirmed lifetime of a client identity: 64 random
-// bits, never zero, chosen at confirmation. A sidecar's ClientID holds it.
+// Incarnation is one lifetime of a client identity: 64 random bits, never
+// zero, chosen by the server when the client registers and recorded when it
+// is confirmed. A sidecar's ClientID holds it.
 type Incarnation uint64
+
+// NewIncarnation returns a random incarnation. The caller checks it is not
+// in use.
+func NewIncarnation() Incarnation {
+	for {
+		var b [8]byte
+		if _, err := rand.Read(b[:]); err != nil {
+			panic(err) // crypto/rand does not fail on Linux
+		}
+		if id := Incarnation(binary.BigEndian.Uint64(b[:])); id != 0 {
+			return id
+		}
+	}
+}
 
 func (i Incarnation) String() string { return fmt.Sprintf("%016x", uint64(i)) }
 
@@ -169,6 +187,8 @@ type Records struct {
 	// failed is set when an update may have reached the directory without
 	// being made durable. Nothing is known about the records after it.
 	failed error
+	// memory: the records are kept in memory only (InMemory).
+	memory bool
 
 	// crash, set by tests, stops an update at a crash point when it
 	// returns an error, leaving the directory as a crash there would.
@@ -182,6 +202,16 @@ const (
 	crashRenamed crashPoint = "renamed"
 	crashRemoved crashPoint = "removed"
 )
+
+// InMemory returns an empty set of records kept in memory only, for a
+// server without a staging directory: a new server at every start.
+func InMemory() *Records {
+	return &Records{
+		memory:  true,
+		records: make(map[IdentityHash]Record),
+		byID:    make(map[Incarnation]IdentityHash),
+	}
+}
 
 // Open loads the records of stagingDir, creating clients/ if it is absent
 // and removing temporaries. Call it after the staging directory's server
@@ -257,6 +287,13 @@ func (r *Records) load(name string) (Record, error) {
 	return rec, nil
 }
 
+// InUse says whether a record confirms or purges id.
+func (r *Records) InUse(id Incarnation) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.inUse(id)
+}
+
 // inUse says whether a record confirms or purges id. r.mu is held.
 func (r *Records) inUse(id Incarnation) bool {
 	if _, confirmed := r.byID[id]; confirmed {
@@ -306,14 +343,17 @@ func (r *Records) List() []Record {
 	return out
 }
 
-// Confirm records a new confirmed incarnation for owner, with its boot
+// Confirm records id as owner's confirmed incarnation, with its boot
 // verifier and principal, and returns the record once it is durable. If
 // the identity already had a confirmed incarnation, a reboot or a takeover
 // by another principal replaced it: the record's Purging names it, and the
 // caller purges its state and calls FinishPurge.
-func (r *Records) Confirm(owner []byte, verifier [8]byte, principal Principal) (Record, error) {
+func (r *Records) Confirm(owner []byte, verifier [8]byte, principal Principal, id Incarnation) (Record, error) {
 	if len(owner) == 0 {
 		return Record{}, errors.New("client records: empty owner")
+	}
+	if id == 0 {
+		return Record{}, errors.New("client records: zero incarnation")
 	}
 	h := HashOwner(owner)
 	unlock := r.locks.Lock(h)
@@ -321,15 +361,12 @@ func (r *Records) Confirm(owner []byte, verifier [8]byte, principal Principal) (
 	r.mu.Lock()
 	old, exists := r.records[h]
 	err := r.failed
-	if err == nil && exists && (old.Purging != 0 || old.Expired) {
+	switch {
+	case err != nil:
+	case exists && (old.Purging != 0 || old.Expired):
 		err = ErrUnfinished
-	}
-	var id Incarnation
-	for err == nil && (id == 0 || r.inUse(id)) {
-		var b [8]byte
-		if _, err = rand.Read(b[:]); err == nil {
-			id = Incarnation(binary.BigEndian.Uint64(b[:]))
-		}
+	case r.inUse(id):
+		err = ErrInUse
 	}
 	r.mu.Unlock()
 	if err != nil {
@@ -386,9 +423,11 @@ func (r *Records) Remove(id Incarnation) error {
 	if rec.Purging != 0 {
 		return ErrUnfinished
 	}
-	path := filepath.Join(r.dir, h.String())
-	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
+	if !r.memory {
+		path := filepath.Join(r.dir, h.String())
+		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
 	}
 	r.mu.Lock()
 	delete(r.records, h)
@@ -467,6 +506,14 @@ func (r *Records) lockCurrent(id Incarnation) (IdentityHash, func(), error) {
 // write replaces rec's file and the in-memory copy, which confirmed old
 // before (zero for none). The identity lock is held.
 func (r *Records) write(rec Record, old Incarnation) error {
+	if r.memory {
+		r.mu.Lock()
+		delete(r.byID, old)
+		r.records[rec.Hash()] = rec.clone()
+		r.byID[rec.Incarnation] = rec.Hash()
+		r.mu.Unlock()
+		return nil
+	}
 	data, err := json.Marshal(newRecordJSON(rec))
 	if err != nil {
 		return err
@@ -498,6 +545,9 @@ func (r *Records) write(rec Record, old Incarnation) error {
 // settle makes a rename or unlink in clients/ durable. If that fails the
 // directory may hold the change or not, so every later transition fails.
 func (r *Records) settle(point crashPoint) error {
+	if r.memory {
+		return nil
+	}
 	err := r.crashAt(point)
 	if err == nil {
 		err = syncDir(r.dir)

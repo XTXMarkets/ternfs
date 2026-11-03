@@ -9,15 +9,13 @@ import (
 	"os"
 	"time"
 
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/openstate"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
-// lookupDurableOpen requires valid local protocol state and a live durable
-// lease. The lease invalidates stale local state after a reboot is confirmed.
+// lookupDurableOpen requires valid local protocol state and a live client.
 // After an nfsd restart there is no local state; the staging sidecar is then
 // the durable proof that this stateid is the confirmed write-open for this
 // transient file.
@@ -59,7 +57,7 @@ func (s *Server) lookupDurableOpen(
 			return openstate.State{}, status
 		}
 		if meta.ClientID != 0 {
-			if status := s.retireInactiveRecovered(meta.ClientID, id, func() {
+			if status := s.retireInactiveRecovered(meta.ClientID, func() {
 				s.retireStaging(fileID, meta)
 			}); status != nfs4.NFS4_OK {
 				return openstate.State{}, status
@@ -93,23 +91,11 @@ func (s *Server) lookupDurableOpen(
 // expireInactiveOpen requires state's client to be live. When it is not, the
 // operation gets EXPIRED, and the client's other state is untouched: local
 // expiry is the lease gate's decision, which the sweeper drives
-// (README.md#expiry-decision). The decisive check runs under a destruction
-// hold, so while a confirmation protects the client it gives DELAY. failed
-// reports a failed writer, which gives IO.
+// (README.md#expiry-decision). failed reports a failed writer, which gives
+// IO.
 func (s *Server) expireInactiveOpen(state openstate.State, failed func() bool) uint32 {
 	status := s.requireActiveOpen(state)
-	if status != nfs4.NFS4ERR_EXPIRED {
-		if status != nfs4.NFS4_OK && failed != nil && failed() {
-			return nfs4.NFS4ERR_IO
-		}
-		return status
-	}
-	end, ok := s.beginDestroy(state.Owner.ClientID)
-	if !ok {
-		return nfs4.NFS4ERR_DELAY // Not while confirming.
-	}
-	defer end()
-	if status = s.requireActiveOpen(state); status != nfs4.NFS4_OK && failed != nil && failed() {
+	if status != nfs4.NFS4_OK && failed != nil && failed() {
 		return nfs4.NFS4ERR_IO
 	}
 	return status
@@ -117,26 +103,9 @@ func (s *Server) expireInactiveOpen(state openstate.State, failed func() bool) u
 
 // retireInactiveRecovered checks that a recovered writer's client is still
 // live and, when it is not, retires its staging. The synced sidecar is the
-// record that the open was not closed. The decisive check and the retirement run
-// under one destruction hold; while a confirmation protects the client it
-// gives DELAY and retires nothing.
-func (s *Server) retireInactiveRecovered(clientID uint64, id nfs4.StateID, retire func()) uint32 {
-	active, err := s.clients.HasLocalOpen(clientID, id)
-	if err != nil {
-		return clientstore.ErrToNFS(err)
-	}
-	if active {
-		return nfs4.NFS4_OK
-	}
-	end, ok := s.beginDestroy(clientID)
-	if !ok {
-		return nfs4.NFS4ERR_DELAY // Not while confirming.
-	}
-	defer end()
-	if active, err = s.clients.HasLocalOpen(clientID, id); err != nil {
-		return clientstore.ErrToNFS(err)
-	}
-	if active {
+// record that the open was not closed.
+func (s *Server) retireInactiveRecovered(clientID uint64, retire func()) uint32 {
+	if s.clientLive(clientID) {
 		return nfs4.NFS4_OK
 	}
 	retire()
@@ -165,11 +134,7 @@ func (s *Server) recoveredDataID(clientID uint64, id nfs4.StateID, fileID vfs.In
 }
 
 func (s *Server) requireActiveOpen(state openstate.State) uint32 {
-	active, err := s.clients.HasLocalOpen(state.Owner.ClientID, state.ID)
-	if err != nil {
-		return clientstore.ErrToNFS(err)
-	}
-	if !active {
+	if !s.clientLive(state.Owner.ClientID) {
 		return nfs4.NFS4ERR_EXPIRED
 	}
 	return nfs4.NFS4_OK
@@ -332,7 +297,7 @@ func (s *Server) releaseWrite(openStateid nfs4.Stateid4, st *compoundState, clos
 			return fail(nfs4.NFS4ERR_DELAY)
 		}
 		if meta.ClientID != 0 {
-			if status := s.retireInactiveRecovered(meta.ClientID, sid, func() {
+			if status := s.retireInactiveRecovered(meta.ClientID, func() {
 				s.retireStagingLocked(dataID, meta)
 			}); status != nfs4.NFS4_OK {
 				return fail(status)
@@ -1012,9 +977,8 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 			}
 		}
 	}()
-	// The pathname lock and the destruction hold, which a re-open drops
-	// before it starts again.
-	releaseName, releaseRecovery := func() {}, func() {}
+	// The pathname lock, which a re-open drops before it starts again.
+	releaseName := func() {}
 	adoptRecoveredStaging := func() {
 		nfsSID = s.opens.NewStateID()
 		reusedStaging = true
@@ -1094,19 +1058,16 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 			}))
 			var recoveryErr error
 			recoveredStagingID, recoveredStagingMeta,
-				hasRecoveredStaging, releaseRecovery, recoveryErr = s.recoveredStagingTarget(
+				hasRecoveredStaging, recoveryErr = s.recoveredStagingTarget(
 				dirID, fileName, clientID, ownerKey.Owner,
 				access&nfs4.OPEN4_SHARE_ACCESS_WRITE != 0,
 			)
-			// Taking an expired incarnation's staging is destructive for it:
-			// its hold lasts, with the pathname lock, until OPEN returns.
-			defer releaseRecovery()
 			if recovering && errors.Is(recoveryErr, nfs4.Error(nfs4.NFS4ERR_EXPIRED)) {
 				// Another staging became selectable since preselection.
 				return fail(nfs4.NFS4ERR_STALE)
 			}
 			if recoveryErr != nil {
-				return fail(clientstore.ErrToNFS(recoveryErr))
+				return fail(statusOf(recoveryErr))
 			}
 			if recovering && !s.sameRecoveryCandidate(recoverID, recoverMeta,
 				recoveredStagingID, recoveredStagingMeta, hasRecoveredStaging) {
@@ -1355,7 +1316,6 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 		if current, err := s.fs.Lookup(openDir, openName); err == nil &&
 			current != publishedID {
 			releaseOpen()
-			releaseRecovery()
 			releaseName()
 			return s.openRetry(args, st, w, retries+1)
 		}
@@ -1380,11 +1340,11 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 	// The open's client must be confirmed with a live lease. The open is
 	// recorded in this process only; a writer's sidecar is what a restart
 	// recovers from.
-	if err := s.clients.NoteOpen(clientID, markID); err != nil {
+	if status := s.clientStatus(clientID); status != nfs4.NFS4_OK {
 		if staged {
 			cleanupStagedOpen()
 		}
-		return fail(clientstore.ErrToNFS(err))
+		return fail(status)
 	}
 	// A joined staging bound to a closing open is bound to this one, so a
 	// restart recovers the writer under the owner still using it.
@@ -1467,9 +1427,9 @@ func (s *Server) constructStaging(
 	baseInfo vfs.NodeInfo,
 	exclusiveVerifier *[8]byte,
 ) (vfs.InodeID, nfs4.StateID, uint32) {
-	recoveryKey, err := s.clients.StagingRecoveryKey(clientID)
-	if err != nil {
-		return 0, nfs4.StateID{}, clientstore.ErrToNFS(err)
+	recoveryKey, status := s.recoveryKey(clientID)
+	if status != nfs4.NFS4_OK {
+		return 0, nfs4.StateID{}, status
 	}
 	id, cookie, err := s.fs.ConstructFile(dirID)
 	if err != nil {

@@ -9,11 +9,9 @@ import (
 	"encoding/binary"
 	"math"
 	"reflect"
-	"syscall"
 	"testing"
 	"time"
 
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
@@ -79,23 +77,11 @@ func admissionImage(slot *sessionSlot) admissionSlotImage {
 	return admissionSlotImage{slot.seq, slot.occupied, slot.inUse, slot.cached, bytes.Clone(slot.reply), slot.digest, slot.user, slot.reserved}
 }
 
-type admissionLeaseVFS struct {
-	vfs.TernVFS
-	fail bool
-}
-
-func (fs *admissionLeaseVFS) Lookup(id vfs.InodeID, name string) (vfs.InodeID, error) {
-	if fs.fail {
-		return 0, syscall.EIO
-	}
-	return fs.TernVFS.Lookup(id, name)
-}
-
 func TestAdmissionFailedSequencePreservesCache(t *testing.T) {
-	cases := []string{"bad-session", "bad-slot", "bad-highest", "highest-below-slot", "misordered", "too-many-ops", "full-request", "response", "cache", "quota", "association", "renewal", "missing-client"}
+	cases := []string{"bad-session", "bad-slot", "bad-highest", "highest-below-slot", "misordered", "too-many-ops", "full-request", "response", "cache", "quota", "association", "expiry-deciding", "expired"}
 	for _, name := range cases {
 		t.Run(name, func(t *testing.T) {
-			fs := &admissionLeaseVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
+			fs := vfs.NewLocalTernVFS(t.TempDir())
 			srv, err := NewServer(fs, staging.ReadOnlyStore{}, nil)
 			if err != nil {
 				t.Fatal(err)
@@ -166,18 +152,21 @@ func TestAdmissionFailedSequencePreservesCache(t *testing.T) {
 					conn.sessions[other.id] = struct{}{}
 				}
 				want = nfs4.NFS4ERR_RESOURCE
-			case "renewal":
-				// The lease is not proven: DELAY from memory, with the
-				// store failing too.
-				setLeaseForTest(srv, sess.clientID, func(r *clientstore.LeaseRefresher) { r.Proven = 0 })
-				fs.fail = true
-				want = nfs4.NFS4ERR_DELAY
-				restore = func() { fs.fail = false; srv.clients.PinLeaseForTest(sess.clientID) }
-			case "missing-client":
-				setLeaseForTest(srv, sess.clientID, func(r *clientstore.LeaseRefresher) { r.State = clientstore.LeaseRecordStale })
-				want = nfs4.NFS4ERR_BADSESSION
+			case "expiry-deciding", "expired":
+				// The gate: DELAY while expiry is written, BADSESSION
+				// once it has been.
+				gate, status := gateChecking, uint32(nfs4.NFS4ERR_DELAY)
+				if name == "expired" {
+					gate, status = gateExpired, nfs4.NFS4ERR_BADSESSION
+				}
+				srv.sessions.mu.Lock()
+				srv.sessions.groups[sess.clientID].lease = gate
+				srv.sessions.mu.Unlock()
+				want = status
 				restore = func() {
-					setLeaseForTest(srv, sess.clientID, func(r *clientstore.LeaseRefresher) { r.State = clientstore.LeaseRecordLive })
+					srv.sessions.mu.Lock()
+					srv.sessions.groups[sess.clientID].lease = gateLive
+					srv.sessions.mu.Unlock()
 				}
 			}
 			_, res = admissionRequest(t, srv, next, 2, conn)

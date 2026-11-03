@@ -3,9 +3,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 // Package server is the NFSv4.1 server: connections and compounds,
-// sessions and their persistence, the logical lease, client confirmation,
-// opens, the staging lifecycle and the backchannel. README.md describes how
-// they work.
+// sessions and their persistence, client registration and the logical
+// lease, opens, the staging lifecycle and the backchannel. README.md
+// describes how they work.
 package server
 
 import (
@@ -17,13 +17,14 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"os"
 	"sort"
 	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
 
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientrecords"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/keyedlock"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/openstate"
@@ -50,8 +51,9 @@ func peekCompoundHeader(body []byte) (tag []byte, minor uint32, ok bool) {
 
 // Server is the NFSv4 server.
 type Server struct {
-	fs                 vfs.TernVFS
-	clients            *clientstore.Store
+	fs vfs.TernVFS
+	// records are the confirmed clients, kept beside staging (clients.go).
+	records            *clientrecords.Records
 	opens              *openstate.Store
 	sessions           *sessionStore
 	backchannel        backchannelStats
@@ -70,6 +72,11 @@ type Server struct {
 	log                *slog.Logger
 	startedAt          time.Time
 	NFSAddr            string // the -addr flag, for diagnostics
+	// clock is read by now; tests replace it with SetClock.
+	clock atomic.Pointer[func() time.Time]
+	// nfsDirID is /.nfs, where earlier releases kept their client store,
+	// zero if the tree has none. It stays hidden from clients.
+	nfsDirID vfs.InodeID
 
 	// Live connections, for diagnostics only; connsMu guards the map.
 	connsMu sync.Mutex
@@ -78,12 +85,6 @@ type Server struct {
 	foregroundReads atomic.Int64
 	hydrationSlots  chan struct{}
 	mutationLocks   keyedlock.Locker[mutationTarget]
-
-	clientGCMu      sync.Mutex
-	clientGCPending map[vfs.InodeID]struct{}
-	clientGCRecheck map[vfs.InodeID]struct{}
-	clientGCRunning bool
-	clientGCDone    chan struct{}
 
 	// aliasMu orders each publication alias set and its append to aliases
 	// with the sweep's snapshot and rewrite of that log (alias_log.go).
@@ -96,25 +97,8 @@ type Server struct {
 	// make it block or fail.
 	newSessionFile func(sessionstore.ID, sessionstore.Header) (*sessionstore.File, error)
 
-	// Confirmations in progress or unresolved (server_confirm.go), by N and
-	// P, by identity and by EXCHANGE_ID owner. At most one per identity.
-	// confirmMu is taken after any other lock, sessions.mu included, and
-	// held only for map access.
-	confirmMu          sync.Mutex
-	metrics            *Metrics
-	sessionFiles       *sessionstore.Store // nil without a staging directory
-	confirming         map[uint64]*confirmation
-	confirmingIdentity map[vfs.InodeID]*confirmation
-	confirmingOwners   map[string]*confirmation
-	// Destruction holds in flight, by incarnation and by identity
-	// (server_confirm.go), under confirmMu.
-	destroying         map[uint64]int
-	destroyingIdentity map[vfs.InodeID]int
-	destroyEnded       *sync.Cond // on confirmMu
-	// Incarnations whose replacement purge is known to be unfinished, a
-	// hint for warm EXCHANGE_ID (server_confirm.go), under confirmMu.
-	purgePending map[uint64]struct{}
-	purgeLimit   int
+	metrics      *Metrics
+	sessionFiles *sessionstore.Store // nil without a staging directory
 }
 
 type mutationTarget struct {
@@ -146,7 +130,6 @@ func (s *Server) lockMutationTargets(targets ...mutationTarget) func() {
 	}
 }
 
-const maxPendingClientGC = 256
 const DefaultMaxInFlightPerConn = 64
 
 // SetReplyWorkBudget bounds the reply work admitted at once across all
@@ -160,18 +143,29 @@ func (s *Server) SetReplyWorkBudget(bytes int) {
 }
 
 func NewServer(fs vfs.TernVFS, stagingStore staging.Store, logger *slog.Logger) (*Server, error) {
-	clients, err := clientstore.NewStore(fs)
-	if err != nil {
-		return nil, err
-	}
-	var verf [8]byte
-	rand.Read(verf[:])
 	if logger == nil {
 		logger = slog.Default()
 	}
+	nfsDirID, err := fs.Lookup(fs.RootID(), vfs.NFSDirName)
+	if errors.Is(err, os.ErrNotExist) {
+		nfsDirID, err = 0, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("look up %s: %w", vfs.NFSDirName, err)
+	}
+	stagingDir := stagingStore.Dir()
+	records := clientrecords.InMemory()
+	if stagingDir != "" {
+		if records, err = clientrecords.Open(stagingDir); err != nil {
+			return nil, err
+		}
+	}
+	var verf [8]byte
+	rand.Read(verf[:])
 	s := &Server{
 		fs:                 fs,
-		clients:            clients,
+		records:            records,
+		nfsDirID:           nfsDirID,
 		opens:              openstate.NewStore(),
 		serverID:           stagingStore.ServerID(),
 		stagingStore:       stagingStore,
@@ -180,135 +174,40 @@ func NewServer(fs vfs.TernVFS, stagingStore staging.Store, logger *slog.Logger) 
 		writeTimeout:       5 * time.Minute,
 		MaxInFlightPerConn: DefaultMaxInFlightPerConn,
 		log:                logger,
-		startedAt:          clients.Now(),
 		hydrationSlots:     make(chan struct{}, maxConcurrentHydrations),
-		clientGCPending:    make(map[vfs.InodeID]struct{}),
-		clientGCRecheck:    make(map[vfs.InodeID]struct{}),
 		metrics:            newMetrics(),
-		confirming:         make(map[uint64]*confirmation),
-		confirmingIdentity: make(map[vfs.InodeID]*confirmation),
-		confirmingOwners:   make(map[string]*confirmation),
-		destroying:         make(map[uint64]int),
-		destroyingIdentity: make(map[vfs.InodeID]int),
-		purgePending:       make(map[uint64]struct{}),
-		purgeLimit:         clientstore.MaxSessionRecords,
 		unlinkSessionFile:  (*sessionstore.File).Unlink,
 	}
-	s.destroyEnded = sync.NewCond(&s.confirmMu)
-	s.opens.Now = func() time.Time { return s.clients.Now() }
-	// The client store's expired marker, its client GC and a resumed
-	// replacement purge hold destruction holds for their whole action.
-	clients.BeginMarker = func(id vfs.InodeID) (func(), bool) { return s.beginDestroy(uint64(id)) }
-	clients.BeginCollect = s.beginDestroyIdentity
-	clients.BeginPurge = s.beginPurge
+	s.SetClock(time.Now)
+	s.startedAt = s.now()
+	s.opens.Now = s.now
 	s.sessions = newSessionStore(s.opens.Epoch)
-	s.sessions.now = func() time.Time { return s.clients.Now() }
+	s.sessions.now = s.now
 	s.sessions.persistSlot = s.persistSlot
-	// The durable lease refresher reads the logical lease's need, and
-	// retires an incarnation whose record turns stale or expired.
-	clients.LeaseNeed = s.sessions.leaseNeed
-	clients.LeaseTerminal = s.leaseTerminal
-	clients.LeaseSessions = s.sessions.hasSessions
-	clients.HoldsWriteState = s.holdsWriteState
 	// The server id is the server owner clients see. The epoch is the first
 	// four bytes of every stateid this process issues, which attributes a
 	// wire stateid to an nfsd process.
 	logger.Info("nfsd instance",
 		"server_id", s.serverID.String(),
 		"stateid_epoch", fmt.Sprintf("%08x", s.opens.Epoch))
-	if d, ok := stagingStore.(interface{ Dir() string }); ok {
-		s.aliases = newAliasLog(d.Dir())
+	if stagingDir != "" {
+		s.aliases = newAliasLog(stagingDir)
 		s.loadAliases()
-		s.openSessionFiles(d.Dir())
+		s.openSessionFiles(stagingDir)
 		s.restoreSessions()
+	}
+	// A record a crash left purging or expired is finished before the
+	// server serves. Its incarnation's sessions were not restored, and the
+	// lease sweep retires its staged writers, which are no longer its
+	// client's.
+	if err := records.Finish(s.settlePurge, s.settleExpiry); err != nil {
+		return nil, err
 	}
 	return s, nil
 }
 
-func (s *Server) scheduleClientGC(clientID uint64) {
-	id := vfs.InodeID(clientID)
-	s.clientGCMu.Lock()
-	if _, pending := s.clientGCPending[id]; !pending {
-		if len(s.clientGCPending) == maxPendingClientGC {
-			s.clientGCMu.Unlock()
-			// Collection is opportunistic; a later login will enqueue it again.
-			s.log.Warn("client GC queue is full")
-			return
-		}
-		s.clientGCPending[id] = struct{}{}
-	}
-	if s.clientGCRunning {
-		s.clientGCMu.Unlock()
-		return
-	}
-	s.clientGCRunning = true
-	s.clientGCDone = make(chan struct{})
-	s.clientGCMu.Unlock()
-	go s.runClientGC()
-}
-
-func (s *Server) runClientGC() {
-	for {
-		s.clientGCMu.Lock()
-		var clientID vfs.InodeID
-		for clientID = range s.clientGCPending {
-			delete(s.clientGCPending, clientID)
-			break
-		}
-		if clientID == 0 {
-			s.clientGCRunning = false
-			close(s.clientGCDone)
-			s.clientGCMu.Unlock()
-			return
-		}
-		s.clientGCMu.Unlock()
-
-		recheck, err := s.collectClientSafely(clientID)
-		if err != nil {
-			s.log.Warn("client GC failed", "clientid", uint64(clientID), "err", err)
-			recheck = true
-		}
-		if recheck {
-			s.clientGCMu.Lock()
-			_, alreadyQueued := s.clientGCRecheck[clientID]
-			dropped := !alreadyQueued &&
-				len(s.clientGCRecheck) == maxPendingClientGC
-			if !dropped {
-				s.clientGCRecheck[clientID] = struct{}{}
-			}
-			s.clientGCMu.Unlock()
-			if dropped {
-				s.log.Warn("client GC recheck queue is full")
-			}
-		}
-	}
-}
-
-func (s *Server) collectClientSafely(
-	clientID vfs.InodeID,
-) (recheck bool, err error) {
-	defer func() {
-		if recovered := recover(); recovered != nil {
-			recheck = true
-			s.log.Error("panic in client GC",
-				"clientid", uint64(clientID), "panic", recovered)
-		}
-	}()
-	return s.clients.CollectStaleForClientResult(clientID)
-}
-
-func (s *Server) scheduleClientGCRechecks() {
-	s.clientGCMu.Lock()
-	pending := s.clientGCRecheck
-	s.clientGCRecheck = make(map[vfs.InodeID]struct{})
-	s.clientGCMu.Unlock()
-	for clientID := range pending {
-		s.scheduleClientGC(uint64(clientID))
-	}
-}
-
 func (s *Server) removeExpiredStaging() {
-	if s.clients.Now().Before(s.startedAt.Add(clientstore.LeaseTime)) {
+	if s.inStartupLease() {
 		return
 	}
 	byClient := make(map[uint64]map[vfs.InodeID]staging.Meta)
@@ -326,15 +225,8 @@ func (s *Server) removeExpiredStaging() {
 	}
 }
 
-// removeClientExpiredStaging retires an expired client's staging, holding a
-// destruction hold from the lease check through the last retirement. A
-// confirmation protecting the client keeps its staging.
+// removeClientExpiredStaging retires an expired client's staging.
 func (s *Server) removeClientExpiredStaging(clientID uint64, fileIDs map[vfs.InodeID]staging.Meta) {
-	end, ok := s.beginDestroy(clientID)
-	if !ok {
-		return
-	}
-	defer end()
 	expired, err := s.decideExpired(clientID, true)
 	if err != nil {
 		s.log.Warn("staging lease check failed",
@@ -353,8 +245,8 @@ func (s *Server) sweepExpiredClientState() {
 	for _, clientID := range s.opens.ActiveClientIDs() {
 		clients[clientID] = struct{}{}
 	}
-	for _, clientID := range s.clients.CachedClientIDs() {
-		clients[clientID] = struct{}{}
+	for _, rec := range s.records.List() {
+		clients[uint64(rec.Incarnation)] = struct{}{}
 	}
 	s.sessions.mu.Lock()
 	for clientID := range s.sessions.groups {
@@ -366,42 +258,31 @@ func (s *Server) sweepExpiredClientState() {
 	}
 }
 
-// expireClientIfDead expires one client whose lease is dead, holding a
-// destruction hold from the decision through the last local effect. Expiry
-// waits while a confirmation protects the client.
+// expireClientIfDead expires one client whose lease is dead.
 func (s *Server) expireClientIfDead(clientID uint64) {
-	end, ok := s.beginDestroy(clientID)
-	if !ok {
-		return
-	}
-	defer end()
 	if _, err := s.decideExpired(clientID, true); err != nil {
 		s.log.Warn("client lease sweep failed",
 			"clientid", clientID, "err", err)
 	}
 }
 
-// runLeaseSweep is the sweeper's tick. It writes no lease: every durable
-// lease write belongs to the refresher (../clientstore/README.md#refresher).
+// runLeaseSweep is the sweeper's tick.
 func (s *Server) runLeaseSweep() {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			s.log.Error("panic in lease sweeper", "panic", recovered)
 		}
 	}()
-	s.settleConfirmations()
-	s.scheduleClientGCRechecks()
 	s.removeExpiredStaging()
 	s.sweepExpiredClientState()
 	s.sweepViews()
 	s.sessions.mu.Lock()
 	s.sessions.pruneGroupsLocked()
 	s.sessions.mu.Unlock()
-	s.clients.SweepLeaseRecords()
 }
 
 func (s *Server) runLeaseSweeper() {
-	ticker := time.NewTicker(clientstore.LeaseRenewAfter)
+	ticker := time.NewTicker(leaseSweepInterval)
 	defer ticker.Stop()
 	for range ticker.C {
 		s.runLeaseSweep()
@@ -445,7 +326,7 @@ func (s *Server) listen(addr string) (net.Listener, error) {
 
 func (s *Server) handleConn(conn net.Conn) {
 	remote := conn.RemoteAddr().String()
-	association := &rpcConnection{remote: remote, connectedAt: s.clients.Now()}
+	association := &rpcConnection{remote: remote, connectedAt: s.now()}
 	defer s.untrackConn(association)
 	defer s.disconnectBack(association)
 	s.log.Info("client connected", "remote", remote)

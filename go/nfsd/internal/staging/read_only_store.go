@@ -18,6 +18,8 @@ func (ReadOnlyStore) ReadOnly() bool { return true }
 
 func (ReadOnlyStore) ServerID() ServerID { return processServerID() }
 
+func (ReadOnlyStore) Dir() string { return "" }
+
 func (ReadOnlyStore) Create(vfs.InodeID, Meta) (File, error) {
 	return nil, os.ErrPermission
 }

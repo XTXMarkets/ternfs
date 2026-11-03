@@ -5,29 +5,31 @@
 package server
 
 import (
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/inspect"
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientrecords"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
-// The diagnostics snapshots of the server's own state: sessions, groups,
-// connections and confirmations, kept out of the files that implement them.
-// The client store, open state and staging store snapshot themselves, in
+// The diagnostics snapshots of the server's own state: sessions, groups and
+// connections, kept out of the files that implement them. The open state
+// and staging store snapshot themselves, in
 // the diagnostics.go of their packages, on the same rules. The owner-facing
 // entry points are methods of the type that owns the state they read: each
 // acquires that type's own locks, in the order the type's own writers use,
 // copies into the API's types and returns, so the aggregator in
 // diagnostics.go holds no lock and reads no guarded field. The private
-// record builders (clientRecord, groupRecord, confirmation.snapshot and the
-// enum-name helpers) run under a lock their owner method has already taken.
-// Ordinary registry and record mutexes are acquired normally. Three locks
-// are only tried, because a request path tries them or they are held across
-// I/O: session slots, staging files and confirmation attempts. A snapshot
+// record builders (clientRecord, groupRecord and the enum-name helpers) run
+// under a lock their owner method has already taken. Ordinary registry and
+// record mutexes are acquired normally. Two locks are only tried, because a
+// request path tries them or they are held across I/O: session slots and
+// staging files. A snapshot
 // never waits for their holders; it reports the entry as locked instead
 // (../../inspect/README.md#snapshot-consistency).
 
@@ -83,7 +85,7 @@ func (cb *cbSender) snapshot() (inspect.Backchannel, []*rpcConnection) {
 	defer cb.mu.Unlock()
 	return inspect.Backchannel{
 		Program:          cb.program,
-		Credential:       clientstore.AuthFlavorName(cb.sec.flavor),
+		Credential:       authFlavorName(cb.sec.flavor),
 		NextSeq:          cb.seq,
 		Fault:            cb.fault,
 		RecallPending:    cb.recall,
@@ -150,113 +152,6 @@ func (s *Server) liveConns() []*rpcConnection {
 	return out
 }
 
-// clientGCSnapshot copies the client GC queue state for /v1/status.
-func (s *Server) clientGCSnapshot() inspect.ClientGC {
-	s.clientGCMu.Lock()
-	defer s.clientGCMu.Unlock()
-	return inspect.ClientGC{
-		Pending: len(s.clientGCPending),
-		Recheck: len(s.clientGCRecheck),
-		Running: s.clientGCRunning,
-	}
-}
-
-// snapshot copies the confirmation as /v1/confirmations reports it. The
-// caller holds confirmMu; the attempt is read afterwards, under its own
-// lock.
-func (c *confirmation) snapshot() inspect.Confirmation {
-	out := inspect.Confirmation{
-		Identity: inodeText(c.identity),
-		OwnerHex: hex.EncodeToString([]byte(c.owner)),
-		New:      incarnationText(c.n),
-		Applying: c.applying,
-		Done:     c.done,
-	}
-	if c.p != 0 {
-		out.Predecessor = incarnationText(c.p)
-	}
-	return out
-}
-
-// confirmHolds copies, for /v1/incarnations, which incarnations a
-// confirmation protects as new or predecessor, the destruction holds on
-// them and the purge hints, one partial record each, for id or for all when
-// id is zero. Under confirmMu only: attempts are not inspected.
-func (s *Server) confirmHolds(id uint64) []inspect.Incarnation {
-	s.confirmMu.Lock()
-	defer s.confirmMu.Unlock()
-	recs := make(map[uint64]*inspect.Incarnation)
-	get := func(inc uint64) *inspect.Incarnation {
-		if id != 0 && inc != id {
-			return nil
-		}
-		if recs[inc] == nil {
-			recs[inc] = inspect.NewIncarnation(inc)
-		}
-		return recs[inc]
-	}
-	for inc := range s.confirming {
-		if r := get(inc); r != nil {
-			r.Confirming = true
-		}
-	}
-	for inc, holds := range s.destroying {
-		if r := get(inc); r != nil {
-			r.DestroyHolds = holds
-		}
-	}
-	for inc := range s.purgePending {
-		if r := get(inc); r != nil {
-			r.PurgePending = true
-		}
-	}
-	out := make([]inspect.Incarnation, 0, len(recs))
-	for _, r := range recs {
-		out = append(out, *r)
-	}
-	return out
-}
-
-// snapshotConfirmations copies the registry for /v1/confirmations: the
-// confirmations, destruction holds and purge hints under confirmMu, and
-// then, with it released, each attempt under its own tried lock, which a
-// settle holds across backend I/O. The envelope is left to the caller.
-func (s *Server) snapshotConfirmations() inspect.Confirmations {
-	out := inspect.Confirmations{
-		Records:              []inspect.Confirmation{},
-		DestroyHolds:         []inspect.Hold{},
-		IdentityDestroyHolds: []inspect.Hold{},
-		PurgePending:         []string{},
-	}
-	var attempts []*clientstore.ConfirmAttempt
-	s.confirmMu.Lock()
-	for _, c := range s.confirmingIdentity {
-		out.Records = append(out.Records, c.snapshot())
-		attempts = append(attempts, c.attempt)
-	}
-	for id, holds := range s.destroying {
-		out.DestroyHolds = append(out.DestroyHolds, inspect.Hold{ID: incarnationText(id), Holds: holds})
-	}
-	for id, holds := range s.destroyingIdentity {
-		out.IdentityDestroyHolds = append(out.IdentityDestroyHolds, inspect.Hold{ID: inodeText(id), Holds: holds})
-	}
-	for id := range s.purgePending {
-		out.PurgePending = append(out.PurgePending, incarnationText(id))
-	}
-	out.PurgeLimit = s.purgeLimit
-	s.confirmMu.Unlock()
-	for i, a := range attempts {
-		if a != nil {
-			out.Records[i].Attempt = a.Snapshot()
-		}
-	}
-	sort.Slice(out.Records, func(i, j int) bool { return out.Records[i].Identity < out.Records[j].Identity })
-	sort.Slice(out.DestroyHolds, func(i, j int) bool { return out.DestroyHolds[i].ID < out.DestroyHolds[j].ID })
-	sort.Slice(out.IdentityDestroyHolds, func(i, j int) bool { return out.IdentityDestroyHolds[i].ID < out.IdentityDestroyHolds[j].ID })
-	sort.Strings(out.PurgePending)
-	return out
-}
-
 // snapshot copies the slot. SEQUENCE tries the same lock and answers DELAY
 // when it is held, so this only tries it too: a slot a request holds is
 // reported locked with no detail, and a request that arrives during this
@@ -279,7 +174,7 @@ func (slot *sessionSlot) snapshot(index int) inspect.Slot {
 		Intent:     slot.hasIntent,
 	}
 	if slot.occupied {
-		out.User = &inspect.User{Flavor: clientstore.AuthFlavorName(slot.user.flavor), UID: slot.user.uid, GID: slot.user.gid}
+		out.User = &inspect.User{Flavor: authFlavorName(slot.user.flavor), UID: slot.user.uid, GID: slot.user.gid}
 	}
 	return out
 }
@@ -395,30 +290,16 @@ func (ss *sessionStore) snapshotSessions(f inspect.SessionFilter) []inspect.Sess
 // groupRecord copies a group. The caller holds ss.mu.
 func groupRecord(g *clientGroup) *inspect.Group {
 	return &inspect.Group{
-		Members:            g.members,
-		Provisional:        g.provisional,
-		Active:             g.active,
-		Creating:           g.creating,
-		State:              groupStateName(g.state),
-		QuietUntil:         inspect.Time(g.quietUntil),
-		LeaseGate:          leaseGateName(g.lease),
-		MarkerPhase:        markerPhaseName(g.markerPhase),
-		RenewedDuringCheck: g.renewedDuringCheck,
-		Dropped:            g.dropped,
-		ReclaimComplete:    g.reclaimComplete,
+		Members:         g.members,
+		Provisional:     g.provisional,
+		Active:          g.active,
+		Creating:        g.creating,
+		State:           groupStateName(g.state),
+		QuietUntil:      inspect.Time(g.quietUntil),
+		LeaseGate:       leaseGateName(g.lease),
+		Dropped:         g.dropped,
+		ReclaimComplete: g.reclaimComplete,
 	}
-}
-
-func markerPhaseName(ph markerPhase) string {
-	switch ph {
-	case markerNone:
-		return inspect.MarkerNone
-	case markerDeciding:
-		return inspect.MarkerDeciding
-	case markerSubmitted:
-		return inspect.MarkerSubmitted
-	}
-	return fmt.Sprintf("unknown_%d", ph)
 }
 
 func leaseGateName(st leaseGateState) string {
@@ -530,12 +411,11 @@ func clientRecord(c *sessionClient) inspect.Client {
 		Incarnation:  incarnationText(c.incarnation),
 		OwnerHex:     hex.EncodeToString([]byte(c.owner)),
 		Verifier:     hex.EncodeToString(c.verifier[:]),
-		Principal:    clientstore.PrincipalRecord(c.principal),
+		Principal:    principalRecord(c.principal),
 		CreatedAt:    c.createdAt,
 		State:        clientState(c),
-		HasConfirm:   c.hasConfirm,
+		HasConfirm:   c.pending(),
 		CreationSlot: slot,
-		Confirming:   c.confirming != nil,
 		Links:        inspect.IncarnationLinks(incarnationText(c.incarnation)),
 	}
 }
@@ -606,4 +486,49 @@ func (w *wireClientIDs) current() (epoch, last uint32) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.epoch, w.last
+}
+
+// authFlavorName names an RPC auth flavor for the diagnostics API.
+func authFlavorName(flavor uint32) string {
+	switch flavor {
+	case nfs4.AUTH_NONE:
+		return "auth_none"
+	case nfs4.AUTH_SYS:
+		return "auth_sys"
+	case nfs4.RPCSEC_GSS:
+		return "rpcsec_gss"
+	}
+	return fmt.Sprintf("flavor_%d", flavor)
+}
+
+// principalRecord formats a principal for the diagnostics API.
+func principalRecord(p clientrecords.Principal) inspect.Principal {
+	out := inspect.Principal{Flavor: authFlavorName(p.Flavor), Text: principalText(p)}
+	if p.Flavor != nfs4.AUTH_NONE {
+		out.BodyHex = hex.EncodeToString([]byte(p.Body))
+	}
+	return out
+}
+
+// principalText is a principal's readable form: AUTH_SYS's uid, gid and
+// groups, or the flavor and body.
+func principalText(p clientrecords.Principal) string {
+	body := []byte(p.Body)
+	switch p.Flavor {
+	case nfs4.AUTH_NONE:
+		return "AUTH_NONE"
+	case nfs4.AUTH_SYS:
+		if len(body) < 12 {
+			return "AUTH_SYS " + hex.EncodeToString(body)
+		}
+		uid := binary.BigEndian.Uint32(body[0:4])
+		gid := binary.BigEndian.Uint32(body[4:8])
+		n := int(binary.BigEndian.Uint32(body[8:12]))
+		gids := make([]string, 0, n)
+		for i := 0; i < n && 12+4*i+4 <= len(body); i++ {
+			gids = append(gids, fmt.Sprint(binary.BigEndian.Uint32(body[12+4*i:16+4*i])))
+		}
+		return fmt.Sprintf("AUTH_SYS uid=%d gid=%d groups=[%s]", uid, gid, strings.Join(gids, ","))
+	}
+	return fmt.Sprintf("flavor %d %s", p.Flavor, hex.EncodeToString(body))
 }

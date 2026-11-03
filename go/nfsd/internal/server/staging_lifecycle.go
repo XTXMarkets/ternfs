@@ -6,10 +6,8 @@ package server
 
 import (
 	"errors"
-	"os"
 	"slices"
 
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/openstate"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
@@ -53,18 +51,13 @@ func (s *Server) retireInactiveStagingTarget(dirID vfs.InodeID, name string) (bo
 	return activeWriter, nil
 }
 
-// retireIfInactiveWriter retires one writer whose open is gone. The check and
-// the retirement run under one destruction hold on its client; a writer
-// whose client a confirmation protects counts as active and is kept.
+// retireIfInactiveWriter retires one writer whose client is no longer
+// active. The caller holds the pathname lock, so the client's own expiry
+// is left to the sweeper.
 func (s *Server) retireIfInactiveWriter(id vfs.InodeID, meta staging.Meta) (bool, error) {
-	end, ok := s.beginDestroy(meta.ClientID)
-	if !ok {
-		return true, nil
-	}
-	defer end()
 	if meta.ClientID != 0 {
-		active, err := s.clients.HasLocalOpen(meta.ClientID, meta.NFSStateID)
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
+		active, err := s.clientActive(meta.ClientID)
+		if err != nil {
 			return true, err
 		}
 		if active {
@@ -194,37 +187,20 @@ func (s *Server) lockStagingTarget(fileID vfs.InodeID) (staging.Meta, bool, func
 	}
 }
 
-// recoveredStagingTarget selects the staging a recovering OPEN adopts. Taking
-// another incarnation's staging after its lease expired is destructive for
-// that incarnation, so its destruction hold is taken before the lease check
-// and returned in release, for the caller to call once the adoption is done.
-// While a confirmation protects that incarnation, the OPEN gets DELAY.
-// release is never nil.
+// recoveredStagingTarget selects the staging a recovering OPEN adopts: one
+// of this incarnation's whose stateid an earlier process issued, or another
+// incarnation's with this client boot's recovery key once that
+// incarnation's lease has expired.
 func (s *Server) recoveredStagingTarget(
 	dirID vfs.InodeID,
 	name string,
 	clientID uint64,
 	openOwner string,
 	write bool,
-) (_ vfs.InodeID, _ staging.Meta, _ bool, release func(), err error) {
-	holds := make(map[vfs.InodeID]func()) // by candidate staging
-	release = func() {
-		for id, end := range holds {
-			end()
-			delete(holds, id)
-		}
-	}
-	// The holds stay this function's until it returns successfully: an
-	// error or a panic (in a backend call or anywhere else) releases them.
-	handedOff := false
-	defer func() {
-		if !handedOff {
-			release()
-		}
-	}()
-	key, err := s.clients.StagingRecoveryKey(clientID)
-	if err != nil {
-		return 0, staging.Meta{}, false, release, err
+) (vfs.InodeID, staging.Meta, bool, error) {
+	key, status := s.recoveryKey(clientID)
+	if status != nfs4.NFS4_OK {
+		return 0, staging.Meta{}, false, nfs4.Error(status)
 	}
 	var foundID vfs.InodeID
 	var foundMeta staging.Meta
@@ -247,35 +223,24 @@ func (s *Server) recoveredStagingTarget(
 			if !meta.OwnerKnown || key == ([32]byte{}) || meta.RecoveryKey != key {
 				continue
 			}
-			end, ok := s.beginDestroy(meta.ClientID)
-			if !ok {
-				// The other incarnation's expiry waits for its confirmation.
-				return 0, staging.Meta{}, false, release, nfs4.Error(nfs4.NFS4ERR_DELAY)
-			}
-			holds[id] = end
 			// The expiry decision is the gate's (README.md#expiry-decision); this
 			// OPEN holds the pathname lock, so local expiry is the sweeper's.
 			expired, err := s.decideExpired(meta.ClientID, false)
 			if err != nil {
-				return 0, staging.Meta{}, false, release, err
+				return 0, staging.Meta{}, false, err
 			}
 			if !expired {
-				end()
-				delete(holds, id)
 				continue
 			}
 		}
 		// Never guess between multiple recovered sessions and hand one
 		// writer another's data.
 		if foundID != 0 {
-			return 0, staging.Meta{}, false, release, nfs4.Error(nfs4.NFS4ERR_EXPIRED)
+			return 0, staging.Meta{}, false, nfs4.Error(nfs4.NFS4ERR_EXPIRED)
 		}
 		foundID, foundMeta = id, meta
 	}
-	// Only the selected staging can still hold one: every other expired
-	// candidate made this return an error above.
-	handedOff = true
-	return foundID, foundMeta, foundID != 0, release, nil
+	return foundID, foundMeta, foundID != 0, nil
 }
 
 // claimFHRecoveryCandidate preselects, without locks, the staged writer a
@@ -317,9 +282,9 @@ func (s *Server) claimFHRecoveryCandidate(
 				continue
 			}
 			if !keyRead {
-				var err error
-				if key, err = s.clients.StagingRecoveryKey(clientID); err != nil {
-					return 0, staging.Meta{}, clientstore.ErrToNFS(err)
+				var status uint32
+				if key, status = s.recoveryKey(clientID); status != nfs4.NFS4_OK {
+					return 0, staging.Meta{}, status
 				}
 				keyRead = true
 			}
@@ -359,19 +324,11 @@ func (s *Server) claimFHRecoveryCandidate(
 }
 
 // recoveryLeaseExpired checks another incarnation's lease for preselection,
-// through the same expiry decision as recoveredStagingTarget. The decision
-// may publish its expired marker, so it holds a destruction hold, released
-// when the check returns; a confirmation protecting the incarnation gives
-// DELAY.
+// through the same expiry decision as recoveredStagingTarget.
 func (s *Server) recoveryLeaseExpired(clientID uint64) (bool, uint32) {
-	end, ok := s.beginDestroy(clientID)
-	if !ok {
-		return false, nfs4.NFS4ERR_DELAY
-	}
-	defer end()
 	expired, err := s.decideExpired(clientID, false)
 	if err != nil {
-		return false, clientstore.ErrToNFS(err)
+		return false, statusOf(err)
 	}
 	return expired, nfs4.NFS4_OK
 }

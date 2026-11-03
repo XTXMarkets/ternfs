@@ -7,7 +7,6 @@ package server
 import (
 	"time"
 
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
@@ -49,13 +48,12 @@ type clientGroup struct {
 	state    groupState
 
 	// The logical lease gate (README.md#lease-gate). quietUntil is extended when
-	// an active hold ends; while it is in the future, or any hold exists,
-	// this process never expires the client. lease is checking while
-	// decideExpired observes, and expired once it has decided.
-	quietUntil         time.Time
-	lease              leaseGateState
-	markerPhase        markerPhase
-	renewedDuringCheck bool
+	// an active hold ends and when a session is created; while it is in the
+	// future, or any hold exists, this process never expires the client.
+	// lease is checking while decideExpired writes the expired record, and
+	// expired once it has.
+	quietUntil time.Time
+	lease      leaseGateState
 	// dropped: the incarnation's sessions and wire record were dropped
 	// (replaced, destroyed or terminal), so it has no logical lease left to
 	// protect. A new session clears it.
@@ -70,14 +68,6 @@ const (
 	gateLive leaseGateState = iota
 	gateChecking
 	gateExpired
-)
-
-type markerPhase uint8
-
-const (
-	markerNone markerPhase = iota
-	markerDeciding
-	markerSubmitted
 )
 
 // busy reports work that replacement must not overtake.
@@ -136,23 +126,6 @@ func (ss *sessionStore) pruneGroupsLocked() {
 	for _, g := range ss.groups {
 		ss.releaseGroupLocked(g)
 	}
-}
-
-// hasSessions reports whether the incarnation has attached sessions here.
-func (ss *sessionStore) hasSessions(incarnation uint64) bool {
-	ss.mu.Lock()
-	defer ss.mu.Unlock()
-	g := ss.groups[incarnation]
-	return g != nil && g.members > 0
-}
-
-// leaseNeed is the refresher's need condition for an incarnation: an active
-// request, or a quiet period still running (../clientstore/README.md#refresher).
-func (ss *sessionStore) leaseNeed(incarnation uint64) bool {
-	ss.mu.Lock()
-	defer ss.mu.Unlock()
-	g := ss.groups[incarnation]
-	return g != nil && g.lease == gateLive && (g.active > 0 || ss.now().Before(g.quietUntil))
 }
 
 // admissionStatusLocked is the status for new work on an incarnation's
@@ -232,8 +205,7 @@ func (h *requestHold) activate() {
 
 // release ends the hold, once. A nil hold is a no-op. Ending an active
 // hold, after the reply is written or the connection failed, renews the
-// logical lease whatever the durable refresh did; a failed admission's
-// provisional hold renews nothing.
+// logical lease; a failed admission's provisional hold renews nothing.
 func (h *requestHold) release() {
 	if h == nil || h.group == nil {
 		return
@@ -243,7 +215,7 @@ func (h *requestHold) release() {
 	defer ss.mu.Unlock()
 	if h.active {
 		h.group.active--
-		if quiet := ss.now().Add(clientstore.LeaseTime); !h.group.dropped && quiet.After(h.group.quietUntil) {
+		if quiet := ss.now().Add(leaseTime); !h.group.dropped && quiet.After(h.group.quietUntil) {
 			h.group.quietUntil = quiet
 		}
 	} else {

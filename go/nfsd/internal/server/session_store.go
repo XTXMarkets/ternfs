@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/keyedlock"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sessionstore"
@@ -44,9 +43,9 @@ type sessionStore struct {
 	wireIDs                  wireClientIDs
 	now                      func() time.Time
 
-	// ownerLocks orders each owner's registrations and destructions: the
-	// durable registration and the wire publication happen together. Taken
-	// before the client store's identity lock and before mu.
+	// ownerLocks orders each owner's registrations, confirmations and
+	// destructions, so each is decided from the owner's current record and
+	// wire records. Taken before mu.
 	ownerLocks keyedlock.Locker[string]
 }
 
@@ -56,12 +55,12 @@ func newSessionStore(epoch uint32) *sessionStore {
 		sessions:    make(map[SessionID]*session),
 		clients:     make(map[uint64]*sessionClient),
 		owners:      make(map[string]*wireOwner),
-		wireLimit:   clientstore.MaxSessionRecords,
+		wireLimit:   maxSessionRecords,
 		groups:      make(map[uint64]*clientGroup),
 		groupLimit:  maxClientGroups,
 		cacheLimit:  replyCacheLimit,
 		workLimit:   maxReplyWorkBytes,
-		recordLimit: clientstore.MaxSessionRecords,
+		recordLimit: maxSessionRecords,
 		now:         time.Now,
 	}
 	ss.workFreed = sync.NewCond(&ss.cacheMu)
@@ -148,7 +147,7 @@ func (ss *sessionStore) destroyClientRecord(c *sessionClient) uint32 {
 		ss.mu.Unlock()
 		return nfs4.NFS4ERR_STALE_CLIENTID
 	}
-	// A closing incarnation is the predecessor of a confirmation in progress.
+	// A closing incarnation is being replaced by a confirmation.
 	if g := ss.groups[c.incarnation]; c.csBusy || g != nil && (g.members > 0 || g.state == groupClosing) {
 		ss.mu.Unlock()
 		return nfs4.NFS4ERR_CLIENTID_BUSY

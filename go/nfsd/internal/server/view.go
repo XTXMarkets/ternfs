@@ -5,7 +5,6 @@
 package server
 
 import (
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/openstate"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -60,7 +59,7 @@ func (s *Server) publishedAs(clientID uint64, fileID, dataID vfs.InodeID) {
 	}
 	s.aliasMu.Lock()
 	defer s.aliasMu.Unlock()
-	expires := s.clients.Now().Add(clientstore.LeaseTime)
+	expires := s.now().Add(leaseTime)
 	s.views.Set(openstate.ViewKey{ClientID: clientID, FileID: fileID}, dataID, expires)
 	// Persisted so that the client's view survives an nfsd restart; see
 	// alias_log.go.
@@ -76,7 +75,7 @@ func (s *Server) viewHeld(key openstate.ViewKey) bool {
 }
 
 func (s *Server) sweepViews() {
-	s.views.Sweep(s.clients.Now(), s.viewHeld)
+	s.views.Sweep(s.now(), s.viewHeld)
 	s.views.PruneWriters(s.writerKept)
 	s.compactAliases()
 }

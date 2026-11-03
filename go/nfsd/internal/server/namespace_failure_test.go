@@ -255,8 +255,8 @@ func TestFailedWriterCloseDoesNotExpireSiblingDuringLookup(t *testing.T) {
 	if !ok || meta.Retired {
 		t.Fatal("failed writer expired its healthy sibling")
 	}
-	if active, err := f.server.clients.HasLocalOpen(incarnationForTest(t, f.server, f.clientID), meta.NFSStateID); err != nil || !active {
-		t.Fatalf("sibling marker was revoked: %t, %v", active, err)
+	if !f.server.clientLive(incarnationForTest(t, f.server, f.clientID)) {
+		t.Fatal("the failed writer expired its client")
 	}
 	writeFileAt(t, f.conn, &f.xid, siblingFH, siblingState, 0, []byte("healthy sibling"))
 	closeFile(t, f.conn, &f.xid, siblingFH, siblingState)
@@ -358,11 +358,10 @@ func TestStagingStartupExcludesEveryBadEntry(t *testing.T) {
 			if recovered.Get(id) != nil || recovered.Get(healthy) == nil {
 				t.Fatal("startup did not isolate just the bad entry")
 			}
-			srv, err := NewServer(vfs.NewLocalTernVFS(t.TempDir()), recovered, nil)
+			_, err = NewServer(vfs.NewLocalTernVFS(t.TempDir()), recovered, nil)
 			if err != nil {
 				t.Fatalf("excluded entry prevented server startup: %v", err)
 			}
-			srv.waitForClientGC()
 			if problem == "quarantine failure" {
 				data, err := os.ReadFile(stage.(*staging.LocalFile).DataFile().Name())
 				if err != nil || string(data) != "private!" {

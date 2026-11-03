@@ -36,7 +36,7 @@ func openRecords(t *testing.T, dir string) *Records {
 
 func confirm(t *testing.T, r *Records, boot [8]byte) Record {
 	t.Helper()
-	rec, err := r.Confirm(owner, boot, principal)
+	rec, err := r.Confirm(owner, boot, principal, NewIncarnation())
 	check(t, err)
 	return rec
 }
@@ -81,7 +81,7 @@ func TestCrashPoints(t *testing.T) {
 		name:  "confirm new client",
 		setup: func(*testing.T, *Records) Incarnation { return 0 },
 		do: func(r *Records, _ Incarnation) error {
-			_, err := r.Confirm(owner, boot1, principal)
+			_, err := r.Confirm(owner, boot1, principal, NewIncarnation())
 			return err
 		},
 		before: outcome{},
@@ -92,7 +92,7 @@ func TestCrashPoints(t *testing.T) {
 			return confirm(t, r, boot1).Incarnation
 		},
 		do: func(r *Records, _ Incarnation) error {
-			_, err := r.Confirm(owner, boot2, principal)
+			_, err := r.Confirm(owner, boot2, principal, NewIncarnation())
 			return err
 		},
 		before: outcome{present: true, boot: boot1},
@@ -161,7 +161,7 @@ func TestCrashPoints(t *testing.T) {
 				if point == crashRenamed || point == crashRemoved {
 					// The directory may or may not hold the change, so
 					// the process trusts nothing more.
-					if _, err := r.Confirm([]byte("other"), boot1, principal); !errors.Is(err, errCrash) {
+					if _, err := r.Confirm([]byte("other"), boot1, principal, NewIncarnation()); !errors.Is(err, errCrash) {
 						t.Fatalf("update after an unsynced rename: got %v", err)
 					}
 				}
@@ -228,7 +228,7 @@ func TestIncarnationsAreNotRevived(t *testing.T) {
 	if err := r.Expire(first.Incarnation); !errors.Is(err, ErrNotCurrent) {
 		t.Fatalf("expire replaced incarnation: %v", err)
 	}
-	if _, err := r.Confirm(owner, boot1, principal); !errors.Is(err, ErrUnfinished) {
+	if _, err := r.Confirm(owner, boot1, principal, NewIncarnation()); !errors.Is(err, ErrUnfinished) {
 		t.Fatalf("confirm while purging: %v", err)
 	}
 	if err := r.Remove(rebooted.Incarnation); !errors.Is(err, ErrUnfinished) {
@@ -239,7 +239,7 @@ func TestIncarnationsAreNotRevived(t *testing.T) {
 	if _, live := r.Live(rebooted.Incarnation); live {
 		t.Fatal("expired incarnation live")
 	}
-	if _, err := r.Confirm(owner, boot2, principal); !errors.Is(err, ErrUnfinished) {
+	if _, err := r.Confirm(owner, boot2, principal, NewIncarnation()); !errors.Is(err, ErrUnfinished) {
 		t.Fatalf("confirm while expired: %v", err)
 	}
 	check(t, r.Remove(rebooted.Incarnation))

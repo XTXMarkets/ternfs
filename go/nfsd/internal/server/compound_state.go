@@ -7,7 +7,7 @@ package server
 import (
 	"sync"
 
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientrecords"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -18,7 +18,7 @@ type compoundState struct {
 	currentIDSet bool
 	savedID      vfs.InodeID
 	savedIDSet   bool
-	principal    clientstore.RPCPrincipal
+	principal    clientrecords.Principal
 	connection   *rpcConnection
 	replyBudget  uint32
 

@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/openstate"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
@@ -130,7 +129,7 @@ func (l *aliasLog) rewrite(recs []aliasRecord) error {
 
 // loadAliases installs the persisted aliases that are still live.
 func (s *Server) loadAliases() {
-	recs, err := s.aliases.load(s.clients.Now())
+	recs, err := s.aliases.load(s.now())
 	if err != nil {
 		s.log.Warn("publication aliases: load", "err", err)
 	}
@@ -153,7 +152,7 @@ func (s *Server) compactAliases() {
 	}
 	s.aliasMu.Lock()
 	defer s.aliasMu.Unlock()
-	heldUntil := s.clients.Now().Add(clientstore.LeaseTime)
+	heldUntil := s.now().Add(leaseTime)
 	var recs []aliasRecord
 	for _, a := range s.views.Entries() {
 		expires := a.Expires

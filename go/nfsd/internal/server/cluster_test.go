@@ -18,7 +18,6 @@ import (
 	"runtime"
 	"sort"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,7 +26,6 @@ import (
 	"github.com/XTXMarkets/ternfs/go/core/log"
 	"github.com/XTXMarkets/ternfs/go/core/managedprocess"
 	"github.com/XTXMarkets/ternfs/go/msgs"
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
@@ -252,7 +250,6 @@ func startTernTestServerState(t *testing.T) (*Server, string, func()) {
 	}()
 	return srv, ln.Addr().String(), func() {
 		ln.Close()
-		srv.waitForClientGC()
 		c.Close()
 	}
 }
@@ -927,9 +924,8 @@ func TestTernExchangeIDAndSequence(t *testing.T) {
 	slot, seq := ts.acquire()
 	defer ts.release(slot)
 	body := buildCompoundBody(nil, func(*nfs4.COMPOUND4argsWriter) {})
-	// The first SEQUENCE may get DELAY until the client's first lease is
-	// published (../clientstore/README.md#bootstrap); sendWarming retries it
-	// as a client would, on the same slot and sequence.
+	// sendWarming retries a DELAY on the first SEQUENCE as a client would,
+	// on the same slot and sequence.
 	reply, err := sendWarming(conn, xid, body, ts, slot, seq)
 	xid++
 	if err != nil {
@@ -957,188 +953,6 @@ func TestTernExchangeIDAndSequence(t *testing.T) {
 	}
 	if ok.SrStatusFlags() != 0 {
 		t.Fatalf("fresh session SEQUENCE status flags = %#x, want 0", ok.SrStatusFlags())
-	}
-}
-
-func TestTernClientIncarnationGC(t *testing.T) {
-	c, err := client.NewClient(
-		ternLogger, nil, registryAddr, msgs.AddrsInfo{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer c.Close()
-	fs := vfs.NewRemoteTernVFS(c, ternLogger, bufpool.NewBufPool())
-	cacheName := "client-store-cache-replacement"
-	firstCacheID, err := fs.CreateFile(fs.RootID(), cacheName, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	fs.CacheEmptyReader(firstCacheID)
-	secondCacheID, err := fs.CreateFile(fs.RootID(), cacheName, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, createOldParentCached := fs.CachedParent(firstCacheID)
-	createOldReaderCached := fs.ReaderCached(firstCacheID)
-	createSecondParent, _ := fs.CachedParent(secondCacheID)
-	if createOldParentCached || createOldReaderCached {
-		t.Fatalf("CreateFile retained overwritten inode %d in VFS caches",
-			firstCacheID)
-	}
-	if createSecondParent != fs.RootID() {
-		t.Fatalf("replacement parent = %d, want %d",
-			createSecondParent, fs.RootID())
-	}
-	if err := fs.Remove(fs.RootID(), cacheName); err != nil {
-		t.Fatal(err)
-	}
-
-	first, err := clientstore.NewStore(fs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := clientstore.NewStore(fs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	collector, err := clientstore.NewStore(fs)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	base := time.Unix(1000, 0)
-	var clock atomic.Int64
-	clock.Store(base.UnixNano())
-	now := func() time.Time { return time.Unix(0, clock.Load()) }
-	// Install once before using the stores. All three observe the same clock;
-	// advancing time does not replace functions or mutate captured variables.
-	first.Now = now
-	second.Now = now
-	collector.Now = now
-	owner := clientstore.ClientOwner{
-		Principal: clientstore.RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: t.Name()},
-	}
-	identity := []byte(t.Name())
-	oldID, confirm, err := first.RegisterForTest(
-		[8]byte{1}, identity, owner)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := first.ConfirmForTest(
-		oldID, confirm, owner.Principal,
-	); err != nil {
-		t.Fatal(err)
-	}
-	stateID := nfs4.StateID{1}
-	if err := first.NoteOpen(oldID, stateID); err != nil {
-		t.Fatal(err)
-	}
-	identityID, err := fs.LookupParent(vfs.InodeID(oldID))
-	if err != nil {
-		t.Fatal(err)
-	}
-	leaseID, err := fs.Lookup(vfs.InodeID(oldID), clientstore.LeaseName)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// A renewal below the coalescing threshold must not rewrite the lease.
-	// The refresher rewrites once the published lease is less than
-	// clientstore.LeaseTime + clientstore.LeaseRenewAfter/2 ahead
-	// (../clientstore/README.md#publication-schedule).
-	clock.Store(base.Add(clientstore.LeaseRenewAfter/2 - time.Nanosecond).UnixNano())
-	if err := first.Renew(oldID); err != nil {
-		t.Fatal(err)
-	}
-	coalescedLeaseID, err := fs.Lookup(vfs.InodeID(oldID), clientstore.LeaseName)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if coalescedLeaseID != leaseID {
-		t.Fatalf("below-threshold renewal replaced inode %d with %d",
-			leaseID, coalescedLeaseID)
-	}
-	for i := 1; i <= 3; i++ {
-		fs.CacheEmptyReader(leaseID)
-
-		// Each rewrite is beyond the threshold from the previous durable
-		// renewal, but before that lease expires.
-		clock.Store(base.Add(time.Duration(i) * (clientstore.LeaseRenewAfter + time.Second)).UnixNano())
-		if err := first.Renew(oldID); err != nil {
-			t.Fatal(err)
-		}
-		nextLeaseID, err := fs.Lookup(vfs.InodeID(oldID), clientstore.LeaseName)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if nextLeaseID == leaseID {
-			t.Fatalf("above-threshold renewal retained lease inode %d", leaseID)
-		}
-		_, oldParentCached := fs.CachedParent(leaseID)
-		oldReaderCached := fs.ReaderCached(leaseID)
-		nextParent, _ := fs.CachedParent(nextLeaseID)
-		if oldParentCached || oldReaderCached {
-			t.Errorf("renewal retained overwritten inode %d in VFS caches",
-				leaseID)
-		}
-		if nextParent != vfs.InodeID(oldID) {
-			t.Fatalf("renewed lease parent = %d, want %d",
-				nextParent, oldID)
-		}
-		leaseID = nextLeaseID
-	}
-	oldName, found, err := first.IncarnationName(
-		identityID, vfs.InodeID(oldID))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !found {
-		t.Fatal("old incarnation has no directory entry")
-	}
-	confirmedSymlinkID, err := fs.Lookup(identityID, clientstore.ConfirmedName)
-	if err != nil {
-		t.Fatal(err)
-	}
-	fs.CacheEmptyReader(confirmedSymlinkID)
-
-	newID, confirm, err := first.RegisterForTest(
-		[8]byte{2}, identity, owner)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := second.ConfirmForTest(
-		newID, confirm, owner.Principal,
-	); err != nil {
-		t.Fatal(err)
-	}
-	nextConfirmedSymlinkID, err := fs.Lookup(identityID, clientstore.ConfirmedName)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, oldParentCached := fs.CachedParent(confirmedSymlinkID)
-	oldReaderCached := fs.ReaderCached(confirmedSymlinkID)
-	nextParent, _ := fs.CachedParent(nextConfirmedSymlinkID)
-	if oldParentCached || oldReaderCached {
-		t.Errorf("confirmation retained overwritten inode %d in VFS caches",
-			confirmedSymlinkID)
-	}
-	if nextParent != identityID {
-		t.Fatalf("confirmed symlink parent = %d, want %d",
-			nextParent, identityID)
-	}
-	if err := collector.CollectStaleForClient(vfs.InodeID(newID)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := fs.Lookup(identityID, oldName); err != nil {
-		t.Fatalf("old incarnation removed before GC grace: %v", err)
-	}
-	// The first collection marks a candidate relative to the current shared
-	// clock, after the renewals and replacement, not the original base.
-	clock.Add(int64(clientstore.ClientGCGrace + time.Second))
-	if err := collector.CollectStaleForClient(vfs.InodeID(newID)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := fs.Lookup(identityID, oldName); !os.IsNotExist(err) {
-		t.Fatalf("old incarnation remains after collection: %v", err)
 	}
 }
 
@@ -2696,7 +2510,10 @@ func TestTernLookupParentCachesDirectoryOwner(t *testing.T) {
 	}
 	defer c.Close()
 	fs := vfs.NewRemoteTernVFS(c, ternLogger, bufpool.NewBufPool())
-	dirID, err := clientstore.EnsureDir(fs, fs.RootID(), "lookup-parent-cache")
+	dirID, err := fs.Lookup(fs.RootID(), "lookup-parent-cache")
+	if errors.Is(err, os.ErrNotExist) {
+		dirID, err = fs.Mkdir(fs.RootID(), "lookup-parent-cache")
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2917,9 +2734,8 @@ func TestTernRetiredSourceCanMoveAcrossDirectories(t *testing.T) {
 	}
 	writeFileAt(t, conn, &xid, fh, state, 0, []byte("unpublished"))
 	id := stagingIDForTest(t, srv.stagingStore, state)
-	srv.waitForClientGC()
-	now := time.Now().Add(2 * clientstore.LeaseTime)
-	srv.clients.SetClock(func() time.Time { return now })
+	now := time.Now().Add(2 * leaseTime)
+	srv.SetClock(func() time.Time { return now })
 	srv.runLeaseSweep()
 	meta, ok := srv.stagingStore.GetMeta(id)
 	if !ok || !meta.Retired {

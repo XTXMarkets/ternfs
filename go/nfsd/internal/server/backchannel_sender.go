@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
@@ -341,7 +340,6 @@ func (cb *cbSender) call(conn *rpcConnection, seq, target uint32) (cbOutcome, bo
 				cb.mu.Unlock()
 				// Renew while this goroutine still holds its session use.
 				cb.s.sessions.callbackRenew(cb.sess.clientID, cb.s.sessions.now())
-				cb.s.clients.NoteLeaseNeed(cb.sess.clientID)
 			}
 			return outcome, true
 		case <-timeout:
@@ -586,24 +584,16 @@ func (r recallReply) outcome() cbOutcome {
 }
 
 // callbackRenew renews the logical lease for an accepted CB_SEQUENCE
-// reply, under the gate (RFC 8881 §20.9.3): while live, and while expiry
-// is still deciding, when the renewal makes decideExpired give way; not
-// once the marker is submitted or the client expired.
+// reply, under the gate (RFC 8881 §20.9.3), while it is live: not once
+// expiry has been decided.
 func (ss *sessionStore) callbackRenew(clientID uint64, received time.Time) {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
 	g := ss.groups[clientID]
-	if g == nil {
+	if g == nil || g.lease != gateLive {
 		return
 	}
-	switch {
-	case g.lease == gateLive:
-	case g.lease == gateChecking && g.markerPhase == markerDeciding:
-		g.renewedDuringCheck = true
-	default:
-		return
-	}
-	if quiet := received.Add(clientstore.LeaseTime); quiet.After(g.quietUntil) {
+	if quiet := received.Add(leaseTime); quiet.After(g.quietUntil) {
 		g.quietUntil = quiet
 	}
 }

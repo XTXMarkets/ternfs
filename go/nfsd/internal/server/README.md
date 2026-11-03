@@ -7,9 +7,9 @@ SPDX-License-Identifier: GPL-2.0-or-later
 # server
 
 Package server is the NFSv4.1 server: connections and RPC framing,
-compounds and operations, sessions and their slots, the logical lease,
-client confirmation, the staging lifecycle, the publication alias log and
-the backchannel. It builds on [clientstore](../clientstore/README.md),
+compounds and operations, sessions and their slots, client registration
+and the logical lease, the staging lifecycle, the publication alias log
+and the backchannel. It builds on [clientrecords](../clientrecords/records.go),
 [openstate](../openstate/README.md), [staging](../staging/README.md) and
 [sessionstore](../sessionstore/store.go). How these fit together is in
 [Design](../../DESIGN.md); what operators can rely on is in
@@ -19,9 +19,10 @@ The main files are [server.go](server.go) (connections, compounds, the
 sweeper), [ops_session.go](ops_session.go) (session operations and
 SEQUENCE), [session_persist.go](session_persist.go),
 [replay_intent.go](replay_intent.go) and [replay_decide.go](replay_decide.go)
-(persistent sessions), [lease_gate.go](lease_gate.go) and
+(persistent sessions), [clients.go](clients.go) (registration and
+confirmation), [lease_gate.go](lease_gate.go) and
 [client_group.go](client_group.go) (the logical lease),
-[confirmation.go](confirmation.go), [ops_open.go](ops_open.go),
+[ops_open.go](ops_open.go),
 [staging_lifecycle.go](staging_lifecycle.go), [alias_log.go](alias_log.go),
 [backchannel.go](backchannel.go) and
 [backchannel_sender.go](backchannel_sender.go).
@@ -210,18 +211,11 @@ SEQUENCE does no backend I/O. Holding the slot's lock, it takes in order:
 3. the connection's association with the session, against its quota
    (`NFS4ERR_RESOURCE`);
 4. a reply buffer (`NFS4ERR_RESOURCE`);
-5. a renewal check from memory: `NFS4ERR_DELAY` with no lease record
-   credit; `NFS4ERR_BADSESSION` for a stale or expired record; and
-   `NFS4ERR_DELAY`, with a verify requested, when this process's published
-   lease is not in the future or the confirmed pointer has not been read in
-   the last 45 seconds.
+5. the lease gate again, since expiry may have started since the hold.
 
 Any failure releases what was taken, in reverse, and changes nothing.
 Otherwise the request commits, which cannot fail: the association is
-published, the hold becomes active and the refresher is told the lease is
-needed. CREATE_SESSION waits up to two seconds for its client's first lease
-publication, so a client's first SEQUENCE normally does not get DELAY; the
-first SEQUENCE after an idle period still can.
+published and the hold becomes active.
 
 ### Connection associations
 
@@ -241,16 +235,15 @@ small for a SEQUENCE `NFS4ERR_TOOSMALL`, and, when a backchannel is asked
 for, an unusable callback credential list `NFS4ERR_NOENT` or
 `NFS4ERR_INVAL`. It then looks its clientid up among this process's wire
 records. A clientid this process never issued, one from another epoch and
-a retired one all get `NFS4ERR_STALE_CLIENTID`, before any slot or store
+a retired one all get `NFS4ERR_STALE_CLIENTID`, before any slot or record
 effect.
 
 The record has one creation slot. Outcomes that create nothing are decided
-from that slot before a new creation's reservations (group, session
-record, lease record), so they work when those are exhausted:
+from that slot before a new creation's reservations (group and session
+record), so they work when those are exhausted:
 
 | Request | Result |
 | --- | --- |
-| The sequence a held confirmation owns | The confirmation is settled through its own creation; see [Client confirmation](#client-confirmation). The retry reserves the connection's association with the session, and a back association when one was granted, and gets `NFS4ERR_RESOURCE` with nothing settled when the connection is full. |
 | Its incarnation is being replaced | `NFS4ERR_DELAY`. |
 | Its incarnation was replaced | `NFS4ERR_STALE_CLIENTID`. |
 | The sequence a running request owns | `NFS4ERR_DELAY`. |
@@ -258,8 +251,8 @@ record, lease record), so they work when those are exhausted:
 | Any other sequence than the next one | `NFS4ERR_SEQ_MISORDERED`, without overwriting the cached outcome. |
 
 A new creation then reserves, before it claims the slot: a client group, a
-session record, a lease record, and the connection's association with the
-new session, plus a back association when a backchannel is granted. A
+session record, and the connection's association with the new session,
+plus a back association when a backchannel is granted. A
 reservation that fails gets `NFS4ERR_DELAY` or `NFS4ERR_RESOURCE` and
 leaves the slot as it was. The slot is then checked again and claimed, and
 the session file is created.
@@ -268,14 +261,13 @@ A pending incarnation is confirmed; see
 [Client confirmation](#client-confirmation). An adopted record that was
 not confirmed here belongs to the principal that registered it; another
 principal gets `NFS4ERR_CLID_INUSE`, and that outcome is cached. Otherwise
-the server checks, without writing, that the incarnation is still the
-confirmed one. If it is not, the record is retired and the request gets
-`NFS4ERR_STALE_CLIENTID`; a store read error gives the store's status. A
-record retired meanwhile, or an incarnation this process has expired,
-inserts no session and gets `NFS4ERR_STALE_CLIENTID`. Only `NFS4_OK` and
-`NFS4ERR_CLID_INUSE` are cached. A confirmation left unresolved or
-interrupted keeps the slot and the creation for its retry or the sweeper;
-any other exit rolls the slot back.
+the server checks, without writing, that a live client record still
+confirms the incarnation. If none does, the wire record is retired and the
+request gets `NFS4ERR_STALE_CLIENTID`. A record retired meanwhile, or an
+incarnation this process has expired, inserts no session and gets
+`NFS4ERR_STALE_CLIENTID`. A new session starts its client's lease. Only
+`NFS4_OK` and `NFS4ERR_CLID_INUSE` are cached; any other exit rolls the
+slot back.
 
 ## Persistent sessions
 
@@ -337,16 +329,16 @@ is rebuilt into a session only when:
 - it recorded at least one request, since otherwise there is nothing to
   answer and the client may never have learnt of the session;
 - its session record decodes;
-- its incarnation is still the confirmed one;
-- the session gets a lease record, reply-cache space for every recorded
-  reply, a session record and a client group.
+- a live client record confirms its incarnation: not a rebooted, expired
+  or destroyed client's, so the reply cache never outlives its client;
+- the session gets reply-cache space for every recorded reply, a session
+  record and a client group.
 
 Any other file is removed, and its session is unknown: a client using it
 gets `NFS4ERR_BADSESSION`. Every session ID found on disk, restored or not,
 is never given to a new session. Restored slots are marked as restored.
-The server then starts each rebuilt incarnation's lease
-[bootstrap](../clientstore/README.md#bootstrap) and waits up to two seconds
-for each; one not published by then is logged, and startup continues.
+A restored session's client has the fresh lease every confirmed record
+starts with; see [Lease gate](#lease-gate).
 
 A restored session is retired later like any other, for example when its
 incarnation expires. A client using it then gets `NFS4ERR_BADSESSION`.
@@ -436,124 +428,127 @@ since the decision, it gets `NFS4ERR_DEADSESSION`. After
 `NFS4ERR_DEADSESSION` the client re-establishes its session. The client's
 view of this is in [Client recovery](../../RECOVERY.md#client-recovery).
 
-## Lease gate
+## Clients and leases
+
+A client this server has confirmed has a record in `clients/` under the
+staging directory ([clientrecords](../clientrecords/records.go)): its
+EXCHANGE_ID owner, principal, confirmed incarnation and boot verifier, the
+incarnation a reboot replaced while it is purged, and whether it expired.
+Nothing else about clients is durable. Wire records, sessions, the logical
+lease and opens live in this process. A record update is a local write,
+fsync and rename with a known outcome, and the server acts on it only
+after it returns. A staging directory that is wiped has no records: every
+client is new.
+
+An incarnation is 64 random bits, chosen at EXCHANGE_ID and recorded at
+confirmation. Its staged writers keep it, with the recovery key, a hash of
+the identity, the boot verifier and the principal, so that the same client
+boot can recover its data after its incarnation expired and no other
+principal can.
+
+### Registration
+
+EXCHANGE_ID is decided under the owner's lock, which confirmation and
+DESTROY_CLIENTID also take. A wire record of this process with the same
+verifier and principal answers it, with `EXCHGID4_FLAG_CONFIRMED_R` and no
+I/O. Otherwise the identity's record decides:
+
+- A confirmed incarnation whose lease has run out is expired first; see
+  [Expiry decision](#expiry-decision).
+- The same principal and boot verifier adopt the live confirmed
+  incarnation, writing nothing. This is how a client whose session file did
+  not survive a restart keeps its incarnation and its writers; it is
+  answered as a new registration, without `CONFIRMED_R`.
+- Another principal gets `NFS4ERR_CLID_INUSE` while the confirmed
+  incarnation has write state here, a write open or a staged writer that is
+  not retired, and a live lease.
+- Otherwise the client is new, rebooted or taking the identity over: it
+  gets a pending incarnation, in memory only, for CREATE_SESSION to
+  confirm. A server restart before that loses it, and the client registers
+  again.
+
+### Client confirmation
+
+The first CREATE_SESSION of a pending incarnation N confirms it, under the
+owner's lock. A registration belongs to the principal that made it;
+another principal gets `NFS4ERR_CLID_INUSE`. If the identity's record
+still shows a reboot's purge or an expiry unfinished, that is finished
+first. If it confirms another incarnation P, that is a reboot or a
+takeover: the principal check is repeated against P's write state, and P
+is closed, so its new requests wait (`NFS4ERR_DELAY`, or
+`NFS4ERR_CLIENTID_BUSY` for DESTROY_CLIENTID), or the CREATE_SESSION gets
+`NFS4ERR_DELAY` while P has requests running.
+
+Then the record is written confirming N, with `purging` naming P. Only
+once it is durable is P marked replaced and purged here: its sessions and
+their files, its wire record and its opens go, and its staged writers are
+retired. None of them resumes, since no record confirms P any more. The
+record is written again without `purging`, and the session is inserted
+and the reply sent. A crash after the first write leaves `purging`, and
+the next start finishes the purge before it serves. A record write that
+fails gets `NFS4ERR_SERVERFAULT`, with P reopened.
+
+DESTROY_CLIENTID of an idle client retires its wire record and opens and
+removes its record.
+
+### Lease gate
 
 Each client incarnation has a group here: its sessions, its wire record,
-the requests running for it and its logical lease gate. The model and its
-timings are in [Two leases](../../DESIGN.md#two-leases).
+the requests running for it and its logical lease gate. The lease is in
+memory only. The model and its timings are in
+[Two leases](../../DESIGN.md#two-leases).
 
 A SEQUENCE takes a provisional hold, which becomes active when it commits.
 An active hold ends when the request's worker finishes, and then extends
-the quiet period to one lease from that moment. A validated CB_SEQUENCE
-reply also extends it. While any hold exists or the quiet period runs, the
-lease is held and this process does not expire the client.
+the quiet period to one lease from that moment. A new session and a
+validated CB_SEQUENCE reply also extend it. While any hold exists or the
+quiet period runs, the lease is held and this process does not expire the
+client. A restart gives every confirmed record a fresh lease: nothing
+expires in the first lease after startup, and a client that never comes
+back expires after it.
 
 ### Expiry decision
 
-`decideExpired` is the only path that writes the `expired` marker. Its
-caller holds a destruction hold on the client, so it never runs while a
-confirmation protects it. If the lease is held, or a decision is already
-in progress, it changes nothing. Otherwise the gate turns to checking,
-which makes new SEQUENCEs get `NFS4ERR_DELAY`, and it reads the client
-store:
-
-| Observation | Action |
-| --- | --- |
-| A read error | The gate returns to live. Nothing is published or expired; a later sweep tries again. |
-| The incarnation directory is gone | Expired here. |
-| The confirmed pointer names another incarnation | Its lease and any legacy open markers are purged, then expired here. |
-| An `expired` marker exists | Decided before, by this process or an earlier run of it; expired here. |
-| The lease is live, or none exists yet | The gate returns to live. A first CREATE_SESSION may still be publishing it. A lease an earlier run wrote counts, which is how a restart keeps a client. |
-| The lease exists and is not live | A renewal or hold that arrived during the check wins. Otherwise the marker is written, and the client is expired here even if that write fails. |
-
-No row looks at another daemon. One nfsd decides for its tree, which rests
-on the operator fencing the old server before a failover.
+`decideExpired` expires a client whose lease has run out. If the lease is
+held, a CREATE_SESSION is in progress, the startup lease is running, or a
+decision is already in progress, it changes nothing; a pending
+registration is left to be reclaimed. Otherwise, for an incarnation a live
+record confirms, the gate turns to checking, which makes new SEQUENCEs get
+`NFS4ERR_DELAY`, and the record is written expired. A write that fails
+returns the gate to live, and a later sweep tries again. An incarnation
+no record confirms is expired with no write: an absent record counts as
+expired.
 
 Expiring a client here retires its wire record, its sessions, cancelling
-their callbacks, and its local open state. Once expired, its SEQUENCEs get
-`NFS4ERR_BADSESSION` and a CREATE_SESSION for it gets
-`NFS4ERR_STALE_CLIENTID`.
+their callbacks and removing their files, and its local open state, then
+removes its record. A record left expired by a crash is removed at the
+next start. Once expired, its SEQUENCEs get `NFS4ERR_BADSESSION` and a
+CREATE_SESSION for it gets `NFS4ERR_STALE_CLIENTID`. A caller holding a
+pathname lock, such as OPEN's recovery check, leaves the opens to the
+sweeper.
 
-The refresher's terminal steps, for a stale or expired record, take
-another path: they close the gate and retire the incarnation's sessions
-under a destruction hold, but keep its wire record. A committed
-CREATE_SESSION result still replays, and a new CREATE_SESSION for the
-incarnation inserts no session and gets `NFS4ERR_STALE_CLIENTID`.
+One nfsd decides for its tree, which rests on the operator fencing the old
+server before a failover.
 
 ### Sweeper
 
 The sweeper runs every 45 seconds. Each tick it:
 
-1. settles confirmations left unresolved;
-2. schedules client-store collection for identities that asked for a
-   recheck;
-3. retires the staging of expired clients; see
+1. retires the staging of expired clients; see
    [Sweep and startup grace](#sweep-and-startup-grace);
-4. runs the expiry decision for every client with opens, cached store
-   state or a group here;
-5. sweeps client views and compacts the
+2. runs the expiry decision for every client with opens, a record or a
+   group here;
+3. sweeps client views and compacts the
    [alias log](#publication-alias-log);
-6. forgets groups kept only by a quiet period that has ended;
-7. has idle lease records freed.
+4. forgets groups kept only by a quiet period that has ended.
 
 A panic in a tick is logged, and the next tick runs.
-
-## Client confirmation
-
-The client store makes the confirmation writes and decides each outcome;
-see [Confirmation](../clientstore/README.md#confirmation). The server
-decides when to confirm and acts on each result once.
-
-### Protection and destruction holds
-
-Before the first write, the server closes admission for the predecessor P
-in this process, so its new requests wait, and registers protection for the
-pending incarnation N and P. While protected, nothing in this process
-marks, purges, expires, retires, reclaims or collects them:
-
-- P's SEQUENCE, BIND_CONN_TO_SESSION and CREATE_SESSION get `NFS4ERR_DELAY`,
-  and DESTROY_CLIENTID gets `NFS4ERR_CLIENTID_BUSY`.
-- N's CREATE_SESSION slot stays held for its sequence, so its retry waits
-  or gets the settled outcome.
-- A new EXCHANGE_ID for the identity gets `NFS4ERR_DELAY`.
-
-Every destructive action takes a destruction hold on the incarnation, or
-on the identity for collection, from its first check to its last effect,
-backend waits included. A new hold is refused once protection is
-installed. Registration installs protection first and then waits for the
-holds already admitted to end. Every destructive action therefore either
-finishes before protection is complete or does not start.
-
-### Applying a result
-
-| Result | Action | CREATE_SESSION gets |
-| --- | --- | --- |
-| Committed | Mark P replaced; drop P's sessions and wire record and expire its local open state; insert N's session; purge P on the attempt's evidence; unregister. | `NFS4_OK` |
-| Rolled back | Reopen P; unregister. | `NFS4ERR_DELAY` |
-| Conservative | Mark P replaced and drop its sessions here, keeping its durable state; retire N's wire record; unregister. | `NFS4ERR_STALE_CLIENTID` |
-| Unresolved | Nothing changes. N and P stay protected. | `NFS4ERR_DELAY` |
-
-An unresolved result is retried by the same CREATE_SESSION sequence and by
-the sweeper. Lease expiry and elapsed time never resolve it. Application
-runs in stages, each recorded when it returns, so a panic resumes at the
-first unfinished stage and never repeats one that is not idempotent. Once
-published, an OK reply stays OK.
-
-### Resumed purge
-
-A purge that fails, or is interrupted, stays owned by its durable evidence:
-N confirmed and N's `reboot` symlink naming P. Every successful
-CREATE_SESSION reads that evidence and resumes the purge. A purge known to
-have failed is also noted in a bounded set of hints, so that an EXCHANGE_ID
-that otherwise makes no store call retries it. A purge that a confirmation
-protects is deferred, keeping the hint and the evidence. A failed purge
-never changes a committed reply.
 
 ## Opens
 
 Stateids, owners, downgrades and what readers see are in
-[openstate](../openstate/README.md); the client-store side of opens is in
-[Open admission](../clientstore/README.md#open-admission).
+[openstate](../openstate/README.md). An open needs its client to be live:
+a record confirms its incarnation and this process has not expired it.
 
 ### Stateid checks
 
@@ -567,20 +562,14 @@ special stateid through one lookup, in this order:
 3. A failed writer's staging gets `NFS4ERR_IO`, after ordinary stateid
    errors.
 4. For recovered staging, the sidecar must still name the stateid and the
-   client. If the client store definitely shows the client inactive,
-   because its incarnation is no longer confirmed or its lease is dead,
-   the staging is retired and the operation gets
-   `NFS4ERR_EXPIRED`. Otherwise the server adopts the writer as a live open.
+   client. If the client is not live, because no record confirms its
+   incarnation or this process expired it, the staging is retired and the
+   operation gets `NFS4ERR_EXPIRED`. Otherwise the server adopts the writer as a live open.
    When adoption is refused, because the staging is read-only or the owner
    already has a live open of the file, READ, WRITE and SETATTR run on the
    sidecar state.
 5. For a local open, its client must be live: see
    [Stateid scope](../openstate/README.md#stateid-scope).
-
-The decisive check before a retirement or a local expiry runs under a
-destruction hold, so it gives `NFS4ERR_DELAY` while a confirmation protects
-the client. A store read error gives the store's NFS status, or
-`NFS4ERR_DELAY`.
 
 Other operations differ:
 
@@ -631,8 +620,8 @@ paths:
   any open-owner may take shared staging whose stateid an earlier process
   issued. From another incarnation, the sidecar must carry this client's
   recovery key and the same open-owner, and that incarnation must be
-  expired. The check holds a destruction hold on it and runs the expiry
-  decision. More than one candidate gets `NFS4ERR_EXPIRED`.
+  expired, which the check decides. More than one candidate gets
+  `NFS4ERR_EXPIRED`.
 - **Cold writable CLAIM_FH.** When this process has no current name for
   the handle, typically after a restart, it preselects, without locks, a
   unique healthy, linked writer of this client whose recorded name holds the
@@ -686,7 +675,7 @@ have expired by the time the process starts again.
 ### Sweep and startup grace
 
 Each sweep groups the staging entries by client and, for each client,
-takes a destruction hold and runs the expiry decision. If the client is
+runs the expiry decision. If the client is
 expired, its staging is retired: a linked writer is retired in place, an
 unlinked one is discarded, and one already retired and now unlinked is
 quarantined. A linked writer's publication candidate is scrapped first,
@@ -700,8 +689,8 @@ inactive recovered writer. This is local cleanup only, not an NFS grace
 period.
 
 Before a namespace change, every non-retired writer at the name is checked:
-it counts as active while its client is confirmed with a live lease or a
-confirmation protects it, and is otherwise retired; see
+it counts as active while its client is live with a lease that has not
+run out, and is otherwise retired; see
 [Writer lifecycle](../../DESIGN.md#writer-lifecycle).
 
 ### Publication

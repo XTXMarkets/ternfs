@@ -125,7 +125,7 @@ func main() {
 			os.Exit(1)
 		}
 		go func() {
-			err := http.Serve(ln, inspect.Handler(srv, srv))
+			err := http.Serve(ln, inspect.Handler(srv, nil))
 			slogger.Error("diagnostics server stopped", "err", err)
 		}()
 		slogger.Info("diagnostics listening", "addr", ln.Addr().String())
@@ -184,10 +184,42 @@ func runStoreOnly(slogger *slog.Logger, root, registry, stagingDir, statusAddr s
 		os.Exit(1)
 	}
 	slogger.Info("diagnostics listening in store-only mode", "addr", ln.Addr().String(), "staging", stagingDir)
-	if err := http.Serve(ln, inspect.Handler(nil, server.StoreOnlySource{ClientStore: store, StagingDir: stagingDir})); err != nil {
+	if err := http.Serve(ln, inspect.Handler(nil, storeOnlySource{clientStore: store, stagingDir: stagingDir})); err != nil {
 		slogger.Error("diagnostics server stopped", "err", err)
 		os.Exit(1)
 	}
+}
+
+// storeOnlySource is the diagnostics source of a process that runs no NFS
+// server: a read-only client store opened with clientstore.OpenReader, and
+// a staging directory that is only ever read by the store report. It has
+// no server id and no epochs, since it issues nothing.
+type storeOnlySource struct {
+	clientStore *clientstore.Store
+	stagingDir  string
+}
+
+var _ inspect.StoreSource = storeOnlySource{}
+
+func (s storeOnlySource) Envelope() inspect.Envelope {
+	return inspect.Envelope{Now: s.clientStore.Now(), Mode: inspect.ModeStoreOnly}
+}
+
+// Store runs the durable-store reader for the API. It checks the query
+// before any backend read, reads the backend and, when asked, the staging
+// directory, and never writes either.
+func (s storeOnlySource) Store(q inspect.StoreQuery) (any, error) {
+	if q.Incarnation != 0 && !clientstore.IsDirectoryInodeID(vfs.InodeID(q.Incarnation)) {
+		return nil, fmt.Errorf("%w: %s is not a directory inode", inspect.ErrBadRequest,
+			inspect.Scalar(inspect.KindIncarnation, q.Incarnation))
+	}
+	stagingDir := s.stagingDir
+	if !q.Staging {
+		stagingDir = ""
+	} else if stagingDir == "" {
+		return nil, fmt.Errorf("%w: no staging directory is configured", inspect.ErrBadRequest)
+	}
+	return s.clientStore.Inspect(q, stagingDir)
 }
 
 // openVFS opens the local directory or the TernFS cluster named by exactly

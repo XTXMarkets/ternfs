@@ -39,9 +39,7 @@ func connectionSession(t *testing.T, srv *Server) *testSession {
 	t.Helper()
 	// Compounds on the server may start lease workers; stop them before
 	// the test's directories go.
-	t.Cleanup(srv.clients.StopLeaseWorkers)
 	// Its client is not in the store: give it a fixed live lease.
-	srv.clients.PinLeaseForTest(1)
 	srv.sessions.mu.Lock()
 	defer srv.sessions.mu.Unlock()
 	sess := &session{
@@ -244,7 +242,6 @@ func TestConnectionInFlightDuplicates(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(srv.clients.StopLeaseWorkers)
 			addr, cleanup := serveTestServer(t, srv)
 			defer cleanup()
 			defer testutil.CloseSignal(fs.Release)

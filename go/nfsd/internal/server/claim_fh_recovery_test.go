@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
@@ -131,7 +130,7 @@ func newRestartedWriter(t *testing.T, name string, replacement bool, now func() 
 		t.Fatal(err)
 	}
 	if now != nil {
-		f.srv.clients.SetClock(now)
+		f.srv.SetClock(now)
 	}
 	addr, stopSecond := serveTestServer(t, f.srv)
 	f.conn = dial(t, addr)
@@ -239,7 +238,7 @@ func TestClaimFHRecoversStagedWriter(t *testing.T) {
 // After the writer's lease has expired, the client's next incarnation
 // recovers it through CLAIM_FH by RecoveryKey.
 func TestClaimFHRecoversAfterExpiry(t *testing.T) {
-	later := func() time.Time { return time.Now().Add(3 * clientstore.LeaseTime) }
+	later := func() time.Time { return time.Now().Add(3 * leaseTime) }
 	f := newClaimFHRestart(t, "file", true, later)
 	if n := incarnationForTest(t, f.srv, f.wire); n == f.incarnation {
 		t.Fatal("expired incarnation was adopted")

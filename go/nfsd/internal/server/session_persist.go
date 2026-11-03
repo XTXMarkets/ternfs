@@ -13,7 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientrecords"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sessionstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
@@ -260,7 +260,7 @@ const maxUserRecord = 512
 
 // createSessionFile makes the file for a creation's session, once the
 // creation holds its slot and has negotiated the fore channel, and before
-// it is committed, directly or by a confirmation. It runs without the
+// it is committed. It runs without the
 // store's lock: the file is the creation's until commitLocked gives it to
 // the session, and release removes it on every other outcome. A file that
 // cannot be made leaves the session in memory only, unless the failure left
@@ -406,8 +406,9 @@ func (s *Server) writeRecord(sess *session, slotID uint32, rec sessionstore.Reco
 }
 
 // restoreSessions rebuilds, at startup, every session whose file is on the
-// staging disk, that recorded a request and whose incarnation is still the
-// confirmed one, with its slots as the earlier process recorded them. A
+// staging disk, that recorded a request and whose incarnation a live client
+// record still confirms, with its slots as the earlier process recorded
+// them. Its lease is the fresh one every confirmed record starts with. A
 // file that cannot be used is removed: its session is lost, and a client
 // that retransmits to it gets BADSESSION as it would from any unknown
 // session.
@@ -435,10 +436,6 @@ func (s *Server) restoreSessions() {
 		os.Remove(p.Path)
 	}
 	restored := 0
-	// Each incarnation needs a lease refresher record, as CREATE_SESSION
-	// reserves one before it creates a session; without it every SEQUENCE
-	// would get DELAY. An incarnation refused a record loses its sessions.
-	leaseRecords := map[uint64]func(){}
 	withSession := map[uint64]bool{}
 	for _, f := range files {
 		if !recordedRequest(f) {
@@ -456,15 +453,6 @@ func (s *Server) restoreSessions() {
 			f.Remove()
 			continue
 		}
-		release, reserved := leaseRecords[rec.incarnation]
-		if !reserved {
-			if release, reserved = s.clients.ReserveLeaseRecord(rec.incarnation); !reserved {
-				s.log.Warn("session not restored: no lease record credit", "session", sessionText(SessionID(f.ID())))
-				f.Remove()
-				continue
-			}
-			leaseRecords[rec.incarnation] = release
-		}
 		if s.restoreSession(f, rec) {
 			restored++
 			withSession[rec.incarnation] = true
@@ -472,35 +460,8 @@ func (s *Server) restoreSessions() {
 			f.Remove()
 		}
 	}
-	// An incarnation whose sessions were all refused is not served here,
-	// and this process must not publish a lease for it.
-	for inc, release := range leaseRecords {
-		if !withSession[inc] {
-			release()
-			delete(leaseRecords, inc)
-		}
-	}
-	// A restored incarnation has no lease from this process yet. Publish
-	// one now, as CREATE_SESSION does, and wait for it as CREATE_SESSION
-	// does: a SEQUENCE that found it missing would get NFS4ERR_DELAY, and
-	// the Linux client answers DELAY on a lone SEQUENCE, which its state
-	// manager sends after a reconnect, by waiting its 15 s maximum with
-	// every other request held behind it.
-	var wg sync.WaitGroup
-	for inc, release := range leaseRecords {
-		s.clients.StartLeaseBootstrap(inc)
-		wg.Add(1)
-		go func(inc uint64, release func()) {
-			defer wg.Done()
-			defer release()
-			if !s.clients.AwaitLeasePublished(inc, clientstore.BootstrapWait) {
-				s.log.Warn("restored incarnation's lease not published in time", "incarnation", incarnationText(inc))
-			}
-		}(inc, release)
-	}
-	wg.Wait()
 	if len(files) > 0 || len(problems) > 0 {
-		s.log.Info("sessions restored", "restored", restored, "incarnations", len(leaseRecords), "files", len(files), "unusable", len(problems))
+		s.log.Info("sessions restored", "restored", restored, "incarnations", len(withSession), "files", len(files), "unusable", len(problems))
 	}
 	s.metrics.replaySessionsRestored.Add(uint64(restored))
 }
@@ -523,10 +484,11 @@ func recordedRequest(f *sessionstore.File) bool {
 func (s *Server) restoreSession(f *sessionstore.File, rec sessionRecord) bool {
 	id := SessionID(f.ID())
 	h := f.Header()
-	confirmed, err := s.clients.IsConfirmed(rec.incarnation)
-	if err != nil || !confirmed {
-		s.log.Info("session not restored: its incarnation is not the confirmed one",
-			"session", sessionText(id), "incarnation", incarnationText(rec.incarnation), "err", err)
+	// The reply cache never outlives its client: a rebooted, expired or
+	// destroyed client's session is gone.
+	if _, live := s.records.Live(clientrecords.Incarnation(rec.incarnation)); !live {
+		s.log.Info("session not restored: no live client record confirms its incarnation",
+			"session", sessionText(id), "incarnation", incarnationText(rec.incarnation))
 		return false
 	}
 	sess := &session{

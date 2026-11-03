@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
@@ -230,7 +229,7 @@ func TestSessionAndWorkCapacityBeforeEffects(t *testing.T) {
 		t.Fatalf("failed work admission charged %+v", a)
 	}
 	ss.workLimit = maxReplyWorkBytes
-	ss.recordLimit = clientstore.MaxSessionRecords
+	ss.recordLimit = maxSessionRecords
 	ss.mu.Lock()
 	ss.next = uint64(^uint32(0))
 	ss.mu.Unlock()

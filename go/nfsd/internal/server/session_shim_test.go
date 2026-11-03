@@ -42,9 +42,8 @@ type testSession struct {
 
 	lastSlot, lastSeq uint32
 	retransmit        bool
-	// warm is set by the session's first admitted SEQUENCE. Until then
-	// SEQUENCE may get DELAY while the client's first lease is published,
-	// and the shim retries, as Linux does (../clientstore/README.md#bootstrap).
+	// warm is set by the session's first admitted SEQUENCE. Until then a
+	// DELAY is retried, as Linux does.
 	warm atomic.Bool
 
 	// For recovery after BADSESSION.
@@ -527,7 +526,6 @@ func createSessionCached(conn net.Conn, xid uint32, clientID uint64, seq, cached
 		ts.identity, ts.verifier = previous.identity, previous.verifier
 	}
 	registerTestSession(conn, ts)
-	awaitShimLease(conn, clientID)
 	return ts, nfs4.NFS4_OK, nil
 }
 

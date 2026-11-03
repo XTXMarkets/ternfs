@@ -84,6 +84,9 @@ type Store interface {
 	// ServerID identifies the server: the staging directory's server-id,
 	// or one per process without a staging directory.
 	ServerID() ServerID
+	// Dir is the staging directory, "" without one. The server keeps its
+	// session files, publication aliases and client records in it.
+	Dir() string
 	// Create creates a new staging file with associated metadata.
 	Create(id vfs.InodeID, meta Meta) (File, error)
 	// Get returns the staging file for the given inode, or nil.

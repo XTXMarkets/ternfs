@@ -5,14 +5,13 @@
 package server
 
 import (
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sessionstore"
 )
 
 // creation holds one CREATE_SESSION's reservations: the incarnation's group
 // hold, its session record and its creation slot for seq. They are released
-// once, by finish, by the request or by the confirmation that took them over.
+// once, by finish, when the request returns.
 type creation struct {
 	s          *Server
 	c          *sessionClient
@@ -23,9 +22,6 @@ type creation struct {
 	record     bool // the session-record reservation is held
 	slot       bool // c.csBusy for seq belongs to this creation
 	created    *session
-	resume     bool // look for an unfinished replacement purge after commit
-	// leaseRecord releases the refresher record reserved before the slot.
-	leaseRecord func()
 	// backGrant: CONN_BACK_CHAN was asked for on a transport that can carry
 	// callbacks, so the result grants it.
 	backGrant bool
@@ -82,20 +78,21 @@ func (cr *creation) commitLocked() (createSessionResult, bool) {
 	}
 	cr.created = sess
 	ss.confirmWireLocked(c)
-	c.hasConfirm = false
-	// Every successful CREATE_SESSION of a confirmed incarnation finishes a
-	// replacement purge left by an earlier one, here or before a restart.
-	cr.resume = true
+	// A new session starts the client's lease: it expires a lease after
+	// this if the client sends nothing.
+	if g := ss.groups[c.incarnation]; g != nil {
+		if quiet := ss.now().Add(leaseTime); quiet.After(g.quietUntil) {
+			g.quietUntil = quiet
+		}
+	}
 	result := createSessionResult{id: cr.id, seq: cr.seq, foreAttrs: cr.fore, backAttr: cr.back, back: cr.backGrant}
 	cr.cacheLocked(nfs4.NFS4_OK, result)
 	return result, true
 }
 
-// finish runs when the request returns, with no lock held: the committed
-// session's bootstrap, the resumed replacement purge, then the release of
-// every reservation still held. An uncached slot is rolled back. The purge
-// contains its own panics, and the release is deferred, so it runs
-// regardless.
+// finish runs when the request returns, with no lock held: it logs the
+// committed session, then releases every reservation still held. An
+// uncached slot is rolled back.
 func (cr *creation) finish() {
 	s := cr.s
 	defer cr.release()
@@ -109,17 +106,6 @@ func (cr *creation) finish() {
 			"wire_clientid", wireText(cr.c.clientID),
 			"incarnation", incarnationText(created.clientID),
 			"session", sessionText(created.id))
-		// The first durable publication: until it, SEQUENCE gets DELAY
-		// (../clientstore/README.md#bootstrap). The worker writes it; the reply waits a
-		// bounded time for it, so a client's first SEQUENCE normally finds
-		// it published. Clients such as libnfs treat a DELAY there as a
-		// mount failure.
-		s.clients.StartLeaseBootstrap(created.clientID)
-		s.clients.AwaitLeasePublished(created.clientID, clientstore.BootstrapWait)
-	}
-	if cr.resume {
-		cr.resume = false
-		s.resumeReplacementPurge(cr.c.incarnation)
 	}
 }
 
@@ -141,9 +127,5 @@ func (cr *creation) release() {
 	if cr.endCreate != nil {
 		cr.endCreate()
 		cr.endCreate = nil
-	}
-	if cr.leaseRecord != nil {
-		cr.leaseRecord()
-		cr.leaseRecord = nil
 	}
 }

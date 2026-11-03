@@ -9,13 +9,11 @@ import (
 	"fmt"
 	"sync"
 	"time"
-
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 )
 
 // Wire clientids are the eir_clientid values EXCHANGE_ID returns. They are
 // process-local: the record a wire clientid indexes lives only in this
-// process's memory, and the client store never holds one. A session file
+// process's memory, and no client record holds one. A session file
 // records the value of its session's wire clientid
 // (README.md#session-files-on-disk). A wire clientid is the process epoch in the
 // high 32 bits and a counter in the low 32 bits. The epoch is a whole second
@@ -24,7 +22,7 @@ import (
 // the endpoint. A clientid from another epoch is therefore never mistaken
 // for one of ours. The counter never wraps.
 //
-// Wire clientids are distinct from durable client incarnations and from the
+// Wire clientids are distinct from client incarnations and from the
 // session ID's own epoch and counter.
 
 const maxWireCounter = ^uint32(0)
@@ -150,13 +148,12 @@ func (ss *sessionStore) retireWireLocked(c *sessionClient) {
 }
 
 // retireWireOf retires an incarnation's wire record once the client has
-// expired or is no longer confirmed. Its sessions are left to fail on their
-// own; a new EXCHANGE_ID then starts from the durable store.
+// expired or is no longer confirmed. A new EXCHANGE_ID then starts from the
+// client's record.
 func (ss *sessionStore) retireWireOf(incarnation uint64) {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
-	// A record being confirmed is protected; its confirmation decides.
-	if g := ss.groups[incarnation]; g != nil && g.wire != nil && g.wire.confirming == nil {
+	if g := ss.groups[incarnation]; g != nil && g.wire != nil {
 		ss.retireWireLocked(g.wire)
 	}
 }
@@ -166,7 +163,7 @@ func (ss *sessionStore) retireWireOf(incarnation uint64) {
 // progress.
 func (ss *sessionStore) reclaimUnconfirmedLocked(now time.Time) {
 	for _, c := range ss.clients {
-		if !c.confirmed && !c.csBusy && !now.Before(c.createdAt.Add(clientstore.LeaseTime)) {
+		if !c.confirmed && !c.csBusy && !now.Before(c.createdAt.Add(leaseTime)) {
 			ss.retireWireLocked(c)
 		}
 	}
