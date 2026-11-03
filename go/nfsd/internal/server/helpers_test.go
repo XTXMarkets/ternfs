@@ -7,6 +7,7 @@ package server
 import (
 	"net"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -24,6 +25,16 @@ func sequenceArgsForTest(t *testing.T, wire []byte) nfs4.SEQUENCE4args {
 		t.Fatal("SEQUENCE arguments")
 	}
 	return it.Argarray().Value().AsSEQUENCE4args()
+}
+
+// createFile publishes a file with data at name, replacing what is there,
+// as a TernFS client would: through a transient.
+func createFile(fs vfs.TernVFS, dir vfs.InodeID, name, data string) (vfs.InodeID, error) {
+	id, cookie, err := fs.ConstructFile(dir)
+	if err != nil {
+		return 0, err
+	}
+	return id, fs.LinkFile(id, cookie, dir, name, strings.NewReader(data))
 }
 
 func readPublished(fs vfs.TernVFS, name string) ([]byte, error) {

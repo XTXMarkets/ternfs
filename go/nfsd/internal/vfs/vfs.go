@@ -119,11 +119,6 @@ type TernVFS interface {
 	// but LocalTernVFS writes it at link time.
 	LinkFile(fileID InodeID, cookie Cookie, dirID InodeID, name string, data io.Reader) error
 
-	// CreateFile creates or replaces a regular file with the given data.
-	// This matches TernFS LinkFile semantics. It is used for internal
-	// bookkeeping files, not NFS file creation.
-	CreateFile(dirID InodeID, name string, data io.Reader) (InodeID, error)
-
 	// Remove removes a file, directory, or symlink by name from a directory.
 	// A removed file remains readable by inode until it is collected.
 	Remove(dirID InodeID, name string) error

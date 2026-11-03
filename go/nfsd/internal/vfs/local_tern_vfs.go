@@ -418,42 +418,6 @@ func (lfs *LocalTernVFS) LinkFile(fileID InodeID, cookie Cookie, dirID InodeID, 
 	return nil
 }
 
-func (lfs *LocalTernVFS) CreateFile(dirID InodeID, name string, data io.Reader) (InodeID, error) {
-	dirPath, ok := lfs.resolve(dirID)
-	if !ok {
-		return 0, os.ErrNotExist
-	}
-	childPath := filepath.Join(dirPath, name)
-	oldID := lfs.statInodeID(childPath)
-	f, err := os.CreateTemp(dirPath, ".nfsd-create-")
-	if err != nil {
-		return 0, err
-	}
-	tempPath := f.Name()
-	if data != nil {
-		if _, err := io.Copy(f, data); err != nil {
-			f.Close()
-			os.Remove(tempPath)
-			return 0, err
-		}
-	}
-	if err := f.Close(); err != nil {
-		os.Remove(tempPath)
-		return 0, err
-	}
-	if err := os.Rename(tempPath, childPath); err != nil {
-		os.Remove(tempPath)
-		return 0, err
-	}
-	if oldID != 0 {
-		lfs.mu.Lock()
-		delete(lfs.byID, oldID)
-		delete(lfs.parent, oldID)
-		lfs.mu.Unlock()
-	}
-	return lfs.register(childPath, dirID), nil
-}
-
 // snapshotLocked keeps a published inode readable by ID after its directory
 // entry is removed or replaced, as a TernFS snapshot edge does until it is
 // collected. The caller holds lfs.mu.

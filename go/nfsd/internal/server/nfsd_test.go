@@ -934,31 +934,6 @@ func TestPutfhBadHandle(t *testing.T) {
 	}
 }
 
-func TestLocalTernVFSCreateFileReplacesExistingFile(t *testing.T) {
-	fs := vfs.NewLocalTernVFS(t.TempDir())
-	firstID, err := fs.CreateFile(
-		fs.RootID(), "record", bytes.NewReader([]byte("first")))
-	if err != nil {
-		t.Fatal(err)
-	}
-	secondID, err := fs.CreateFile(
-		fs.RootID(), "record", bytes.NewReader([]byte("second")))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if secondID == firstID {
-		t.Fatalf("replacement retained inode %d", firstID)
-	}
-	if _, err := fs.Stat(firstID); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("replaced inode still resolves: %v", err)
-	}
-	if got, err := fs.ReadAll(secondID); err != nil {
-		t.Fatal(err)
-	} else if string(got) != "second" {
-		t.Fatalf("replacement data = %q, want second", got)
-	}
-}
-
 func TestSavefhRestorefh(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "a.txt"), []byte("aaa"), 0644)

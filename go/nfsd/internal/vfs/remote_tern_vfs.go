@@ -331,48 +331,6 @@ func (t *RemoteTernVFS) LinkFile(fileID InodeID, cookie Cookie, dirID InodeID, n
 	return nil
 }
 
-func (t *RemoteTernVFS) CreateFile(dirID InodeID, name string, data io.Reader) (InodeID, error) {
-	dirMid := msgs.InodeId(dirID)
-	overwrittenID, err := t.Lookup(dirID, name)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return 0, err
-	}
-	// ConstructFile on the same shard as the directory.
-	var constructResp msgs.ConstructFileResp
-	if err := t.client.ShardRequest(t.log, dirMid.Shard(), &msgs.ConstructFileReq{
-		Type: msgs.FILE,
-		Note: name,
-	}, &constructResp); err != nil {
-		return 0, TernToOSError(err)
-	}
-	fileId := constructResp.Id
-	cookie := constructResp.Cookie
-	// Write data.
-	if data != nil {
-		if err := t.client.WriteFile(t.log, t.bufPool, t.dirInfoCache, dirMid, fileId, cookie, data); err != nil {
-			return 0, TernToOSError(err)
-		}
-	}
-	// Link.
-	if err := t.client.ShardRequest(t.log, dirMid.Shard(), &msgs.LinkFileReq{
-		FileId:  fileId,
-		Cookie:  cookie,
-		OwnerId: dirMid,
-		Name:    name,
-	}, &msgs.LinkFileResp{}); err != nil {
-		return 0, TernToOSError(err)
-	}
-	childID := InodeID(fileId)
-	t.mu.Lock()
-	if overwrittenID != 0 && overwrittenID != childID {
-		t.parents.remove(overwrittenID)
-		t.readers.remove(msgs.InodeId(overwrittenID))
-	}
-	t.parents.put(childID, dirID)
-	t.mu.Unlock()
-	return childID, nil
-}
-
 func (t *RemoteTernVFS) LookupEdge(dirID InodeID, name string) (Edge, error) {
 	dirMid := msgs.InodeId(dirID)
 	var resp msgs.LookupResp

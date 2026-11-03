@@ -10,7 +10,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -521,7 +520,7 @@ func TestRetiredSourceDoesNotBlockRename(t *testing.T) {
 					t.Fatal(err)
 				}
 			} else if destination != "absent" {
-				base, err := f.fs.CreateFile(dir, "moved", strings.NewReader("displaced"))
+				base, err := createFile(f.fs, dir, "moved", "displaced")
 				if err != nil {
 					t.Fatal(err)
 				}

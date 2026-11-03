@@ -354,7 +354,7 @@ func TestExpiredWriterRecoversAcknowledgedData(t *testing.T) {
 				map[bool]string{false: "/same-server", true: "/restart"}[restart], func(t *testing.T) {
 				fs := vfs.NewLocalTernVFS(t.TempDir())
 				if existing {
-					if _, err := fs.CreateFile(fs.RootID(), "file", bytes.NewBufferString("original")); err != nil {
+					if _, err := createFile(fs, fs.RootID(), "file", "original"); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -490,7 +490,7 @@ func TestMetadataOnlyCloseSkipsDataIO(t *testing.T) {
 	for _, concurrentPublish := range []bool{false, true} {
 		t.Run(map[bool]string{false: "same-version", true: "newer-version"}[concurrentPublish], func(t *testing.T) {
 			base := vfs.NewLocalTernVFS(t.TempDir())
-			published, err := base.CreateFile(base.RootID(), "file", bytes.NewBufferString("original"))
+			published, err := createFile(base, base.RootID(), "file", "original")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -521,7 +521,7 @@ func TestMetadataOnlyCloseSkipsDataIO(t *testing.T) {
 			want := "original"
 			if concurrentPublish {
 				want = "newer"
-				published, err = base.CreateFile(base.RootID(), "file", bytes.NewBufferString(want))
+				published, err = createFile(base, base.RootID(), "file", want)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -2091,7 +2091,7 @@ func (fs *replaceOnLookupVFS) Lookup(dir vfs.InodeID, name string) (vfs.InodeID,
 	id, err := fs.TernVFS.Lookup(dir, name)
 	if name == fs.name {
 		fs.once.Do(func() {
-			if _, err := fs.TernVFS.CreateFile(dir, name, bytes.NewReader([]byte("replaced"))); err != nil {
+			if _, err := createFile(fs.TernVFS, dir, name, "replaced"); err != nil {
 				panic(err)
 			}
 		})
