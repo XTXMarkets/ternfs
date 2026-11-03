@@ -37,8 +37,8 @@
 //     writers, then calls FinishPurge, which clears it.
 //   - Expiry sets expired. The caller retires the incarnation's sessions,
 //     then calls Remove.
-//   - Destruction is Remove alone, before the sessions are retired: an
-//     absent record already says they are no longer the client's.
+//   - Destruction retires the incarnation's sessions and opens first and
+//     then calls Remove, the order the server uses for DESTROY_CLIENTID.
 //
 // Nothing else accumulates: a record goes at expiry or destruction.
 package clientrecords

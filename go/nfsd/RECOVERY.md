@@ -25,7 +25,7 @@ Published data stays in TernFS in every case.
 | Connection loss, daemon still running | Kept while live. | Kept. | Kept. | The client reconnects and goes on with its session. Lease expiry can retire its opens if it stays away. |
 | Restart in place | Restored from `sessions/` when eligible; see [session restoration](internal/server/README.md#session-restoration). | Loaded. | Recovered from sidecars. | The client goes on with its session, retransmissions get their recorded replies, and writers resume through their old stateids. Read opens get `BAD_STATEID` and the client reopens them. |
 | Failover with a copy of the stopped daemon's staging directory | Restored. | Loaded. | Recovered. | The same as a restart in place, since every piece of state is in the copied directory. Measured in a sandbox: nothing lost; see [Deployment](DEPLOYMENT.md#failover-with-the-staging-directory). Clients must reach the new daemon at the old address. |
-| Host crash, disk intact | Restored if their files survived: session files are not synced. | Loaded: they are synced. | Recovered: sidecars are synced. | A client whose session file survived goes on with it. One whose file was lost registers again; its record still confirms its incarnation, so its writers can resume through `CLAIM_FH` or their old stateids. This case has not been tested. |
+| Host crash, disk intact | Restored if their files survived: session files are not synced. | Loaded: they are synced. | Recovered: sidecars are synced. | A client whose session file survived goes on with it. One whose file was lost registers again; its record still confirms its incarnation, so its writers can resume through `CLAIM_FH` or their old stateids. Measured in a sandbox by deleting the session file before the restart: writers resumed with their data, and a CLOSE in flight at the crash was lost silently. A fresh mount's `stat` can show such a file empty while a read returns the recovered staged data, until the writer's CLOSE publishes it. |
 | Wipe: an empty staging directory, after a failover or an upgrade | None. | None. | None; the old disk keeps them if it survives. | A new server. Every client gets `NFS4ERR_BADSESSION`, registers again as a new client and reopens its files. Read-only opens continue. Every file open for writing loses its unpublished writes, mostly silently: a later write gets `EBADF`, and fsync and close return 0. |
 | Disk loss | None. | None. | Lost. | The same as a wipe. |
 | Client reboot | The old boot's go. | Rewritten for the new boot. | The old boot's are retired; the new boot cannot adopt them. | Confirmation of the new incarnation ends the old one. |
@@ -319,8 +319,8 @@ back, keep it untouched; its data can be recovered by hand later, before
 the base and transient inodes it needs are collected; see
 [Recover retained data manually](#recover-retained-data-manually). Tell
 the users of files that were open for writing at the failover that their
-last changes may be gone: the new daemon's journal names the refused
-writable reopens ("writable open by filehandle refused").
+last changes may be gone. nfsd does not list those files: a refused
+writable reopen answers `NFS4ERR_STALE` and is not logged by name.
 
 ## Recover retained data manually
 
