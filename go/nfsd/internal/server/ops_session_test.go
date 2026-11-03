@@ -123,6 +123,20 @@ func TestBindDirectionMatrix(t *testing.T) {
 		}
 	}
 
+	// A session that asked for no backchannel cannot gain one. It has a
+	// callback sender, as every created session does.
+	plainSess := backSessionForTest(t, srv)
+	plainSess.backRequested = false
+	plain := plainSess.id
+	for dir, status := range map[uint32]uint32{nfs4.CDFC4_BACK: nfs4.NFS4ERR_INVAL, nfs4.CDFC4_BACK_OR_BOTH: nfs4.NFS4ERR_INVAL, nfs4.CDFC4_FORE_OR_BOTH: nfs4.NFS4_OK} {
+		conn := testConnection(t)
+		_, res := admissionRequest(t, srv, admissionBind(plain, dir, false), 1, conn)
+		admissionStatus(t, res, status, nfs4.OP_BIND_CONN_TO_SESSION)
+		if conn.carriesBack(plain) {
+			t.Errorf("dir %d gave a back association", dir)
+		}
+	}
+
 	// Full quotas: RESOURCE, and neither direction is taken.
 	for _, full := range []string{"fore", "back"} {
 		sess := backSessionForTest(t, srv)
