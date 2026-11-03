@@ -39,8 +39,8 @@ func (s *Server) now() time.Time { return (*s.clock.Load())() }
 func (s *Server) SetClock(now func() time.Time) { s.clock.Store(&now) }
 
 // inStartupLease reports the first lease interval after start. Every
-// confirmed record starts with a fresh logical lease, so nothing expires in
-// it; a client that never comes back expires after it.
+// confirmed record starts with a fresh logical lease, so no confirmed
+// client expires in it; one that never comes back expires after it.
 func (s *Server) inStartupLease() bool {
 	return s.now().Before(s.startedAt.Add(leaseTime))
 }

@@ -39,7 +39,7 @@ func (s *Server) decideExpired(clientID uint64, expireState bool) (bool, error) 
 	}
 	switch {
 	case g.lease == gateExpired:
-	case g.lease == gateChecking || g.leaseHeldLocked(ss.now()) || g.creating > 0 || s.inStartupLease():
+	case g.lease == gateChecking || g.leaseHeldLocked(ss.now()) || g.creating > 0 || s.startupLeaseHolds(clientID):
 		ss.releaseGroupLocked(g)
 		ss.mu.Unlock()
 		return false, nil
@@ -71,6 +71,19 @@ func (s *Server) decideExpired(clientID uint64, expireState bool) (bool, error) 
 		s.log.Warn("expired client record not removed", "incarnation", incarnationText(clientID), "err", err)
 	}
 	return true, nil
+}
+
+// startupLeaseHolds reports the fresh lease a restart gives a confirmed
+// record. It protects only an incarnation a live record confirms: one with
+// no record, or an expired one, is expired at once, so the same client boot
+// can recover its retained writers by recovery key straight after a
+// restart.
+func (s *Server) startupLeaseHolds(clientID uint64) bool {
+	if !s.inStartupLease() {
+		return false
+	}
+	_, live := s.records.Live(clientrecords.Incarnation(clientID))
+	return live
 }
 
 // retireIncarnationSessions detaches the incarnation's sessions under the
