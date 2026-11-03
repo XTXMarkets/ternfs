@@ -357,7 +357,7 @@ this process has not expired it.
 The server's sweep runs every 45 seconds. A client is expired when its
 lease is not held, no CREATE_SESSION for it is in progress, and the
 startup lease does not cover it. Its record is first written `expired`,
-while new SEQUENCEs wait; then its sessions, wire record and opens are
+while new SEQUENCEs and CREATE_SESSIONs wait; then its sessions, wire record and opens are
 retired, and the record is removed. A crash in between leaves an expired
 record, which the next start finishes. A record write that fails leaves
 the client live, and a later sweep tries again. An incarnation that no

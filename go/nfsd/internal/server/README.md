@@ -513,8 +513,10 @@ back expires after it.
 held, a CREATE_SESSION is in progress, the startup lease is running, or a
 decision is already in progress, it changes nothing; a pending
 registration is left to be reclaimed. Otherwise, for an incarnation a live
-record confirms, the gate turns to checking, which makes new SEQUENCEs get
-`NFS4ERR_DELAY`, and the record is written expired. A write that fails
+record confirms, the gate turns to checking, which makes new SEQUENCEs and
+CREATE_SESSIONs get `NFS4ERR_DELAY`, and the record is written expired. A
+CREATE_SESSION checks the gate under the lock that counts it, so expiry
+either sees it in progress or it sees the gate. A write that fails
 returns the gate to live, and a later sweep tries again. An incarnation
 no record confirms is expired with no write: an absent record counts as
 expired.

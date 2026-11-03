@@ -96,6 +96,9 @@ type Server struct {
 	// newSessionFile creates a session's file, sessionFiles.Create; tests
 	// make it block or fail.
 	newSessionFile func(sessionstore.ID, sessionstore.Header) (*sessionstore.File, error)
+	// expireRecord writes an incarnation's record expired, records.Expire;
+	// tests make it block.
+	expireRecord func(clientrecords.Incarnation) error
 
 	metrics      *Metrics
 	sessionFiles *sessionstore.Store // nil if the session store could not be opened
@@ -175,6 +178,7 @@ func NewServer(fs vfs.TernVFS, stagingStore staging.Store, logger *slog.Logger) 
 		hydrationSlots:     make(chan struct{}, maxConcurrentHydrations),
 		metrics:            newMetrics(),
 		unlinkSessionFile:  (*sessionstore.File).Unlink,
+		expireRecord:       records.Expire,
 	}
 	s.SetClock(time.Now)
 	s.startedAt = s.now()

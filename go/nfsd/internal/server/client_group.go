@@ -229,8 +229,11 @@ func (h *requestHold) release() {
 }
 
 // beginCreate counts a CREATE_SESSION in progress for an incarnation, so
-// replacement cannot invalidate the incarnation while it may still insert a
-// session. The caller calls the returned function when it is done.
+// neither replacement nor expiry can invalidate the incarnation while it may
+// still insert a session. The lease gate shares the lock with the count, as
+// in holdRequest: expiry either sees the creation or the creation sees the
+// gate, DELAY while expiry is being decided and STALE_CLIENTID once it was.
+// The caller calls the returned function when it is done.
 func (ss *sessionStore) beginCreate(incarnation uint64) (func(), uint32) {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
@@ -238,13 +241,16 @@ func (ss *sessionStore) beginCreate(incarnation uint64) (func(), uint32) {
 	if !ok {
 		return nil, nfs4.NFS4ERR_DELAY
 	}
-	switch g.state {
-	case groupClosing:
+	status := uint32(nfs4.NFS4_OK)
+	switch {
+	case g.state == groupClosing || g.lease == gateChecking:
+		status = nfs4.NFS4ERR_DELAY
+	case g.state == groupReplaced || g.lease == gateExpired:
+		status = nfs4.NFS4ERR_STALE_CLIENTID
+	}
+	if status != nfs4.NFS4_OK {
 		ss.releaseGroupLocked(g)
-		return nil, nfs4.NFS4ERR_DELAY
-	case groupReplaced:
-		ss.releaseGroupLocked(g)
-		return nil, nfs4.NFS4ERR_STALE_CLIENTID
+		return nil, status
 	}
 	g.creating++
 	return func() {

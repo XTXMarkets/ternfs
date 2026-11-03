@@ -5,11 +5,13 @@
 package server
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientrecords"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -60,5 +62,53 @@ func TestStartupLeaseDoesNotProtectAbsentRecord(t *testing.T) {
 	}
 	if _, _, found, err := srv.recoveredStagingTarget(local.RootID(), "f", n, "o", true); err != nil || !found {
 		t.Fatalf("same boot's writer in the startup lease: found=%v err=%v", found, err)
+	}
+}
+
+// No CREATE_SESSION enters while expiry is being decided. Expiry checks
+// for creations before it sets the gate checking, so one admitted during
+// the record write could insert a session the expiry then retires: OK,
+// then BADSESSION on its first SEQUENCE. It gets DELAY instead, and its
+// retry sees the outcome.
+func TestCreateSessionWaitsForExpiryDecision(t *testing.T) {
+	srv := identityServerAt(t, vfs.NewLocalTernVFS(t.TempDir()), t.TempDir())
+	wire, _ := registerForTest(t, srv, "client", 1)
+	incarnation := incarnationForTest(t, srv, wire)
+	awaitRequestHoldsReleased(t, srv)
+	afterLeaseForTest(srv)
+
+	entered, release := make(chan struct{}), make(chan struct{})
+	expire := srv.expireRecord
+	srv.expireRecord = func(id clientrecords.Incarnation) error {
+		testutil.CloseSignal(entered)
+		<-release
+		return expire(id)
+	}
+	t.Cleanup(func() { testutil.CloseSignal(release) })
+	decided := make(chan error, 1)
+	go func() {
+		expired, err := srv.decideExpired(incarnation, true)
+		if err == nil && !expired {
+			err = errors.New("lease that ran out not expired")
+		}
+		decided <- err
+	}()
+	testutil.AwaitSignal(t, entered, "expiry's record write")
+
+	status, id := createResult(t, srv, 1, wire, 2)
+	if status != nfs4.NFS4ERR_DELAY {
+		testutil.CloseSignal(release)
+		if err := testutil.AwaitValue(t, decided, "expiry"); err != nil {
+			t.Fatal(err)
+		}
+		t.Fatalf("CREATE_SESSION while expiry was decided: %s, then SEQUENCE %s",
+			nfs4.Nfsstat4Name(status), nfs4.Nfsstat4Name(sequenceStatusForTest(t, srv, id)))
+	}
+	testutil.CloseSignal(release)
+	if err := testutil.AwaitValue(t, decided, "expiry"); err != nil {
+		t.Fatal(err)
+	}
+	if status, _ := createResult(t, srv, 1, wire, 2); status != nfs4.NFS4ERR_STALE_CLIENTID {
+		t.Fatalf("CREATE_SESSION retried after expiry: %s", nfs4.Nfsstat4Name(status))
 	}
 }

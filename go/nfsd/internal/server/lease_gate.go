@@ -17,12 +17,13 @@ import (
 
 // decideExpired reports whether the client is expired, deciding it when its
 // lease has run out. A live record is first written expired, while the gate
-// is checking, so SEQUENCE gets DELAY until the decision is durable; then
-// the client's state in this process is retired and its record removed.
-// An incarnation no record confirms is expired with no write. With
-// expireState its opens are expired too; OPEN's recovery checks, which hold
-// a pathname lock that expiry may need, leave them to the sweeper. A failed
-// record write returns the gate to live; the sweeper tries again.
+// is checking, so SEQUENCE and CREATE_SESSION get DELAY until the decision
+// is durable; then the client's state in this process is retired and its
+// record removed. An incarnation no record confirms is expired with no
+// write. With expireState its opens are expired too; OPEN's recovery
+// checks, which hold a pathname lock that expiry may need, leave them to the
+// sweeper. A failed record write returns the gate to live; the sweeper tries
+// again.
 func (s *Server) decideExpired(clientID uint64, expireState bool) (bool, error) {
 	ss := s.sessions
 	ss.mu.Lock()
@@ -52,7 +53,7 @@ func (s *Server) decideExpired(clientID uint64, expireState bool) (bool, error) 
 	default:
 		g.lease = gateChecking
 		ss.mu.Unlock()
-		err := s.records.Expire(clientrecords.Incarnation(clientID))
+		err := s.expireRecord(clientrecords.Incarnation(clientID))
 		ss.mu.Lock()
 		if err != nil && !errors.Is(err, clientrecords.ErrNotCurrent) {
 			g.lease = gateLive
