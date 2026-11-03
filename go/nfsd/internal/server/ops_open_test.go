@@ -1596,6 +1596,40 @@ func TestCloseWriteDuringFreshUploadDelays(t *testing.T) {
 	}
 }
 
+// A WRITE with a special stateid while the publication restores the times
+// gives DELAY, and the retry publishes it.
+func TestCloseWriteDuringSetTimeDelays(t *testing.T) {
+	f := newPublishFixture(t)
+	sid, fh, stagingID := f.writer(t, "doc", "saved")
+	var once sync.Once
+	f.fs.set(func() {
+		f.fs.onSetTime = func(vfs.InodeID) { once.Do(func() { stageWrite(t, f.store, stagingID, 0, "SAVED") }) }
+	})
+	mustCloseStatus(t, f, fh, sid, nfs4.NFS4ERR_DELAY, "WRITE during SetTime")
+	mustCloseStatus(t, f, fh, sid, nfs4.NFS4_OK, "retry")
+	mustPublished(t, f.fs.TernVFS, "doc", "SAVED")
+}
+
+// A timestamp-only CLOSE also checks that no WRITE landed while it ran: one
+// during its SetTime gives DELAY, and the retry publishes the data.
+func TestTimestampOnlyCloseWriteDuringSetTimeDelays(t *testing.T) {
+	f := newPublishFixture(t)
+	sid, fh, _ := f.writer(t, "doc", "saved")
+	closeFile(t, f.conn, f.xid, fh, sid)
+	sid, fh = openWriteFile(t, f.conn, f.xid, f.clientID, "doc")
+	stagingID := stagingIDForTest(t, f.store, sid)
+	if got := setMtimeStatus(t, f.conn, f.xid, fh, sid, 1_000_000); got != nfs4.NFS4_OK {
+		t.Fatalf("SETATTR mtime %s", nfs4.Nfsstat4Name(got))
+	}
+	var once sync.Once
+	f.fs.set(func() {
+		f.fs.onSetTime = func(vfs.InodeID) { once.Do(func() { stageWrite(t, f.store, stagingID, 0, "SAVED") }) }
+	})
+	mustCloseStatus(t, f, fh, sid, nfs4.NFS4ERR_DELAY, "WRITE during SetTime")
+	mustCloseStatus(t, f, fh, sid, nfs4.NFS4_OK, "retry")
+	mustPublished(t, f.fs.TernVFS, "doc", "SAVED")
+}
+
 // A link refused while the name is locked applied nothing: DELAY, and the
 // retry publishes.
 func TestCloseLockedLinkDelays(t *testing.T) {
