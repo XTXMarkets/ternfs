@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -69,7 +70,8 @@ type outcome struct {
 // A crash at either, or before the update starts, leaves a directory Open
 // loads as the state before or after the update, and Finish completes a
 // multi-step transition from the evidence in the record: a reboot's purge,
-// an expiry's retirement.
+// an expiry's retirement. The process that failed to sync still sees the
+// state before the update, so it never acts on one it reported failed.
 func TestCrashPoints(t *testing.T) {
 	cases := []struct {
 		name          string
@@ -145,6 +147,7 @@ func TestCrashPoints(t *testing.T) {
 				dir := t.TempDir()
 				r := openRecords(t, dir)
 				id := tc.setup(t, r)
+				before := r.List()
 				fired := false
 				r.crash = func(p crashPoint) error {
 					if p != point {
@@ -159,6 +162,11 @@ func TestCrashPoints(t *testing.T) {
 					}
 				}
 				if point == crashRenamed || point == crashRemoved {
+					// The update was not reported durable, so the
+					// process still sees the state before it.
+					if got := r.List(); !reflect.DeepEqual(got, before) {
+						t.Fatalf("in-memory records after an unsynced update %+v, want %+v", got, before)
+					}
 					// The directory may or may not hold the change, so
 					// the process trusts nothing more.
 					if _, err := r.Confirm([]byte("other"), boot1, principal, NewIncarnation()); !errors.Is(err, errCrash) {

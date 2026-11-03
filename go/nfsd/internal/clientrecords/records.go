@@ -429,11 +429,14 @@ func (r *Records) Remove(id Incarnation) error {
 			return err
 		}
 	}
+	if err := r.settle(crashRemoved); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	delete(r.records, h)
 	delete(r.byID, id)
 	r.mu.Unlock()
-	return r.settle(crashRemoved)
+	return nil
 }
 
 // Finish completes the transitions a crash interrupted. It runs at startup,
@@ -504,7 +507,10 @@ func (r *Records) lockCurrent(id Incarnation) (IdentityHash, func(), error) {
 }
 
 // write replaces rec's file and the in-memory copy, which confirmed old
-// before (zero for none). The identity lock is held.
+// before (zero for none). The identity lock is held. The in-memory copy
+// changes only once the file is durable: Lookup, Live and List never show
+// an update the caller has not been told succeeded, which it would act on,
+// such as a confirmation it answered with an error.
 func (r *Records) write(rec Record, old Incarnation) error {
 	if r.memory {
 		r.mu.Lock()
@@ -534,16 +540,20 @@ func (r *Records) write(rec Record, old Incarnation) error {
 		os.Remove(tmp.Name())
 		return err
 	}
+	if err := r.settle(crashRenamed); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	delete(r.byID, old)
 	r.records[h] = rec.clone()
 	r.byID[rec.Incarnation] = h
 	r.mu.Unlock()
-	return r.settle(crashRenamed)
+	return nil
 }
 
 // settle makes a rename or unlink in clients/ durable. If that fails the
-// directory may hold the change or not, so every later transition fails.
+// directory may hold the change or not, so every later transition fails,
+// and the in-memory records keep the state before it.
 func (r *Records) settle(point crashPoint) error {
 	if r.memory {
 		return nil
