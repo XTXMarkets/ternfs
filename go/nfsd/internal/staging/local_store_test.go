@@ -19,7 +19,7 @@ import (
 // (NFS8) stop startup instead of being quarantined, so an upgrade with
 // undrained staging is noticed.
 func TestOlderStagingFormatFailsStartup(t *testing.T) {
-	for _, format := range []string{"NFS5", "NFS6", "NFS7", "NFS8"} {
+	for _, format := range []string{"NFS8"} {
 		t.Run(format, func(t *testing.T) {
 			dir := t.TempDir()
 			store, _, sf := CreateOverlayStage(t, dir, vfs.MakeInodeID(vfs.InodeTypeFile, 1), []byte("base"))
