@@ -99,10 +99,7 @@ func TestExclusiveVerifierDoesNotFollowReplacement(t *testing.T) {
 	// another client.
 	otherConn := dial(t, addr)
 	defer otherConn.Close()
-	otherID, confirm := requestClientID(t, otherConn, &xid, "replacement-client", [8]byte{2})
-	if status := confirmClientID(t, otherConn, &xid, otherID, confirm); status != nfs4.NFS4_OK {
-		t.Fatal(nfs4.Nfsstat4Name(status))
-	}
+	otherID := setupClientAs(t, otherConn, &xid, "replacement-client", [8]byte{2})
 	status, other, otherFH, _ := openFileForOwner(t, otherConn, &xid, otherID, "replacement", "file",
 		nfs4.OPEN4_SHARE_ACCESS_BOTH, false, false)
 	if status != nfs4.NFS4_OK {

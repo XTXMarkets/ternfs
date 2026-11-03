@@ -271,10 +271,7 @@ func TestClaimFHRecoveryRefusals(t *testing.T) {
 		before := f.meta(t)
 		other := dial(t, f.conn.RemoteAddr().String())
 		defer other.Close()
-		otherWire, confirm := requestClientID(t, other, &f.xid, "other-client", [8]byte{2})
-		if status := confirmClientID(t, other, &f.xid, otherWire, confirm); status != nfs4.NFS4_OK {
-			t.Fatal(nfs4.Nfsstat4Name(status))
-		}
+		otherWire := setupClientAs(t, other, &f.xid, "other-client", [8]byte{2})
 		if status, _, _ := openByHandle(t, other, &f.xid, otherWire, f.owner, f.fh, nfs4.OPEN4_SHARE_ACCESS_BOTH); status != nfs4.NFS4ERR_STALE {
 			t.Fatalf("CLAIM_FH by another client = %s", nfs4.Nfsstat4Name(status))
 		}

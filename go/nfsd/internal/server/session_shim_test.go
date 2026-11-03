@@ -19,7 +19,7 @@ import (
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
-// The protocol tests build COMPOUNDs as an NFSv4.0 client would. sendRPC
+// The protocol tests build COMPOUNDs without SEQUENCE. sendRPC
 // gives each one a session: it inserts SEQUENCE as the first operation and
 // removes SEQUENCE's result from the reply, so tests index results from
 // their own first operation.
@@ -548,19 +548,6 @@ func createTestSession(conn net.Conn, xid uint32, identity string, verifier [8]b
 	return ts, nil
 }
 
-// encodeConfirm carries the CREATE_SESSION sequence id where NFSv4.0 tests
-// held the SETCLIENTID_CONFIRM verifier.
-func encodeConfirm(seq uint32) [8]byte {
-	var confirm [8]byte
-	binary.BigEndian.PutUint32(confirm[:4], seq)
-	confirm[4] = 1
-	return confirm
-}
-
-func decodeConfirm(confirm [8]byte) uint32 {
-	return binary.BigEndian.Uint32(confirm[:4])
-}
-
 // waitForOpenFileWaiter signals once a second request waits on the file's
 // open lock or on a pathname lock.
 func (s *Server) waitForOpenFileWaiter(clientID uint64, fh []byte) <-chan struct{} {
@@ -581,32 +568,6 @@ func (s *Server) waitForOpenFileWaiter(clientID uint64, fh []byte) <-chan struct
 		}
 	}()
 	return ch
-}
-
-// testIdentities remembers the EXCHANGE_ID arguments behind each clientid.
-var testIdentities = identityMap{m: make(map[uint64]identityEntry)}
-
-type identityEntry struct {
-	identity string
-	verifier [8]byte
-}
-
-type identityMap struct {
-	mu sync.Mutex
-	m  map[uint64]identityEntry
-}
-
-func (im *identityMap) set(clientID uint64, identity string, verifier [8]byte) {
-	im.mu.Lock()
-	defer im.mu.Unlock()
-	im.m[clientID] = identityEntry{identity, verifier}
-}
-
-func (im *identityMap) get(clientID uint64) (string, [8]byte) {
-	im.mu.Lock()
-	defer im.mu.Unlock()
-	e := im.m[clientID]
-	return e.identity, e.verifier
 }
 
 // stagingIDForTest returns the staging inode of the writer with stateid. A

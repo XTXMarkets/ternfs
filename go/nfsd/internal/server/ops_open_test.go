@@ -287,7 +287,7 @@ func TestRecoveredDowngradeCollisionWaits(t *testing.T) {
 
 // A lone writer whose publication failed (no other reader) gets
 // errors on its later operations, but they touch only its own state: the
-// client's other writer keeps its open, marker and staging, and publishes.
+// client's other writer keeps its open and staging, and publishes.
 func TestLoneFailedWriterLeavesSiblingsAlone(t *testing.T) {
 	fs := &readerSourceVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
 	staging, err := staging.NewLocalStore(t.TempDir(), nil)
@@ -1408,10 +1408,7 @@ func (f *publishFixture) otherClient(t *testing.T) (net.Conn, *uint32, uint64) {
 	conn := dial(t, f.addr)
 	t.Cleanup(func() { conn.Close() })
 	xid := uint32(1)
-	id, confirm := requestClientID(t, conn, &xid, "other-client", [8]byte{2})
-	if status := confirmClientID(t, conn, &xid, id, confirm); status != nfs4.NFS4_OK {
-		t.Fatal(nfs4.Nfsstat4Name(status))
-	}
+	id := setupClientAs(t, conn, &xid, "other-client", [8]byte{2})
 	return conn, &xid, id
 }
 
@@ -2260,7 +2257,7 @@ func TestDetachedStagingNotHandedToClosingReader(t *testing.T) {
 func TestRetiredWriterCandidateIsFenced(t *testing.T) {
 	f := newPublishFixture(t)
 	_, _, stagingID := f.delayedWriter(t, "doc", "first")
-	f.clientID = setupClientWithVerifier(t, f.conn, f.xid, [8]byte{9})
+	f.clientID = setupClientAs(t, f.conn, f.xid, "test-client", [8]byte{9})
 	if got := compoundStatus(t, sendBody(t, f.conn, f.xid, mkdirBody("doc"))); got != nfs4.NFS4ERR_EXIST {
 		t.Fatalf("CREATE over the name %s, want EXIST", nfs4.Nfsstat4Name(got))
 	}
@@ -2377,7 +2374,7 @@ func TestDetachedDowngradeBindFailureReadsIO(t *testing.T) {
 }
 
 // A join whose bind fails answers IO and leaves the joining owner's
-// existing marked open, and its marker, alone.
+// existing open alone.
 func TestJoinBindFailureKeepsExistingOpen(t *testing.T) {
 	f := newPublishFixtureWithStore(t, func(s staging.Store) staging.Store {
 		return bindFailStore{s, func(owner string, _ bool) bool { return owner == "b" }}
@@ -2385,7 +2382,7 @@ func TestJoinBindFailureKeepsExistingOpen(t *testing.T) {
 	s0, fh0, _ := f.writer(t, "doc", "base")
 	closeFile(t, f.conn, f.xid, fh0, s0)
 	fh := lookupFH(t, f.conn, f.xid, "doc")
-	// b: READ, then WRITE, then a clean downgrade: a marked read open.
+	// b: READ, then WRITE, then a clean downgrade: a read open.
 	openByHandle(t, f.conn, f.xid, f.clientID, "b", fh, nfs4.OPEN4_SHARE_ACCESS_READ)
 	_, bw, _ := openByHandle(t, f.conn, f.xid, f.clientID, "b", fh, nfs4.OPEN4_SHARE_ACCESS_WRITE)
 	status, bread := downgradeResult(t, f.conn, f.xid, fh, bw, nfs4.OPEN4_SHARE_ACCESS_READ, nfs4.OPEN4_SHARE_DENY_NONE)

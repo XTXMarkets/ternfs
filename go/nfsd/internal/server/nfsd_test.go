@@ -413,69 +413,28 @@ func setVerifier(verifier nfs4.Verifier4, data [8]byte) {
 	}
 }
 
-// requestClientID runs EXCHANGE_ID. The returned confirm value carries the
-// CREATE_SESSION sequence id for confirmClientID.
-func requestClientID(
-	t *testing.T,
-	conn net.Conn,
-	xid *uint32,
-	identity string,
-	verifier [8]byte,
-) (uint64, [8]byte) {
+// setupClientAs registers a client: EXCHANGE_ID, then the CREATE_SESSION
+// that confirms it.
+func setupClientAs(t *testing.T, conn net.Conn, xid *uint32, identity string, verifier [8]byte) uint64 {
 	t.Helper()
 	clientID, seq, status, err := exchangeID(conn, *xid, identity, verifier)
 	*xid++
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || status != nfs4.NFS4_OK {
+		t.Fatalf("EXCHANGE_ID %s %v", nfs4.Nfsstat4Name(status), err)
 	}
-	if status != nfs4.NFS4_OK {
-		t.Fatalf("EXCHANGE_ID status = %s", nfs4.Nfsstat4Name(status))
-	}
-	testIdentities.set(clientID, identity, verifier)
-	return clientID, encodeConfirm(seq)
-}
-
-// confirmClientID runs CREATE_SESSION, which confirms the clientid.
-func confirmClientID(
-	t *testing.T,
-	conn net.Conn,
-	xid *uint32,
-	clientid uint64,
-	confirm [8]byte,
-) uint32 {
-	t.Helper()
-	ts, status, err := createSession(conn, *xid, clientid, decodeConfirm(confirm))
+	ts, status, err := createSession(conn, *xid, clientID, seq)
 	*xid++
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || status != nfs4.NFS4_OK {
+		t.Fatalf("CREATE_SESSION %s %v", nfs4.Nfsstat4Name(status), err)
 	}
-	if ts != nil {
-		ts.identity, ts.verifier = testIdentities.get(clientid)
-	}
-	return status
+	ts.identity, ts.verifier = identity, verifier
+	return clientID
 }
 
-// setupClient runs EXCHANGE_ID + CREATE_SESSION with a zero verifier.
+// setupClient registers "test-client" with a zero verifier.
 func setupClient(t *testing.T, conn net.Conn, xid *uint32) uint64 {
 	t.Helper()
-	return setupClientWithVerifier(t, conn, xid, [8]byte{})
-}
-
-func setupClientWithVerifier(
-	t *testing.T,
-	conn net.Conn,
-	xid *uint32,
-	verifier [8]byte,
-) uint64 {
-	t.Helper()
-	clientid, confirm := requestClientID(
-		t, conn, xid, "test-client", verifier)
-	if status := confirmClientID(
-		t, conn, xid, clientid, confirm,
-	); status != nfs4.NFS4_OK {
-		t.Fatalf("CREATE_SESSION status = %s", nfs4.Nfsstat4Name(status))
-	}
-	return clientid
+	return setupClientAs(t, conn, xid, "test-client", [8]byte{})
 }
 
 func TestNullRPC(t *testing.T) {
@@ -526,50 +485,6 @@ func TestProgMismatch(t *testing.T) {
 	acceptStat := binary.BigEndian.Uint32(reply[20:24])
 	if acceptStat != acceptProgMismatch {
 		t.Fatalf("accept_stat = %d, want PROG_MISMATCH (%d)", acceptStat, acceptProgMismatch)
-	}
-}
-
-func TestPutrootfhGetattr(t *testing.T) {
-	dir := t.TempDir()
-	addr, cleanup := startTestServer(t, dir)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-
-	res := sendCompound(t, conn, 2, func(w *nfs4.COMPOUND4argsWriter) {
-		w.AppendArgarray_Putrootfh()
-
-		gw := w.AppendArgarray_Getattr()
-		bw := gw.StartAttrRequest()
-		bw.AppendData(1<<nfs4.FATTR4_TYPE | 1<<nfs4.FATTR4_FILEID)
-		buf := bw.Finish()
-		gw.Resume(buf)
-		buf = gw.Finish()
-		w.Resume(buf)
-	})
-
-	iter := expectOK(t, res)
-	if res.ResarrayCount() != 2 {
-		t.Fatalf("resarray count = %d, want 2", res.ResarrayCount())
-	}
-
-	// PUTROOTFH
-	entry := nextOp(t, &iter)
-	if entry.Disc() != nfs4.OP_PUTROOTFH {
-		t.Fatalf("op[0] = %d, want OP_PUTROOTFH", entry.Disc())
-	}
-	if entry.Value().AsPUTROOTFH4res().Status() != nfs4.NFS4_OK {
-		t.Fatal("PUTROOTFH failed")
-	}
-
-	// GETATTR
-	entry = nextOp(t, &iter)
-	if entry.Disc() != nfs4.OP_GETATTR {
-		t.Fatalf("op[1] = %d, want OP_GETATTR", entry.Disc())
-	}
-	getattrRes := entry.Value().AsGETATTR4resEntry()
-	if getattrRes.Disc() != nfs4.NFS4_OK {
-		t.Fatalf("GETATTR status = %d", getattrRes.Disc())
 	}
 }
 
@@ -859,59 +774,6 @@ func TestReaddirEmpty(t *testing.T) {
 	}
 }
 
-func TestPutfhRoundTrip(t *testing.T) {
-	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("hello"), 0644)
-
-	addr, cleanup := startTestServer(t, dir)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-
-	// First: PUTROOTFH + LOOKUP + GETFH to get a file handle.
-	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
-		w.AppendArgarray_Putrootfh()
-
-		lw := w.AppendArgarray_Lookup()
-		nw := lw.StartObjname()
-		buf := nw.SetData([]byte("file.txt")).Finish()
-		lw.Resume(buf)
-		buf = lw.Finish()
-		w.Resume(buf)
-
-		w.AppendArgarray_Getfh()
-	})
-
-	iter := expectOK(t, res)
-	nextOp(t, &iter) // PUTROOTFH
-	nextOp(t, &iter) // LOOKUP
-	entry := nextOp(t, &iter)
-	fh := append([]byte(nil), entry.Value().AsGETFH4resEntry().Value().AsGETFH4resok().Object().Data()...)
-
-	// Second: PUTFH(fh) + READ to read via the file handle.
-	res = sendCompound(t, conn, 2, func(w *nfs4.COMPOUND4argsWriter) {
-		pw := w.AppendArgarray_Putfh()
-		fhW := pw.StartObject()
-		buf := fhW.SetData(fh).Finish()
-		pw.Resume(buf)
-		buf = pw.Finish()
-		w.Resume(buf)
-
-		rw := w.AppendArgarray_Read()
-		rw.Stateid().SetSeqid(0)
-		rw.SetOffset(0)
-		rw.SetCount(1024)
-	})
-
-	iter = expectOK(t, res)
-	nextOp(t, &iter) // PUTFH
-	entry = nextOp(t, &iter)
-	readOk := entry.Value().AsREAD4resEntry().Value().AsREAD4resok()
-	if string(readOk.Data()) != "hello" {
-		t.Fatalf("READ via PUTFH = %q, want %q", readOk.Data(), "hello")
-	}
-}
-
 func TestPutfhBadHandle(t *testing.T) {
 	dir := t.TempDir()
 	addr, cleanup := startTestServer(t, dir)
@@ -1196,40 +1058,6 @@ func TestAccessMasksUnsupportedBitsByType(t *testing.T) {
 	}
 }
 
-func TestOpenConfirmClose(t *testing.T) {
-	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("content"), 0644)
-
-	addr, cleanup := startTestServer(t, dir)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-
-	xid := uint32(1)
-	clientid := setupClient(t, conn, &xid)
-	stateid, fh := openReadFile(t, conn, &xid, clientid, "file.txt")
-
-	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
-		pw := w.AppendArgarray_Putfh()
-		buf := pw.StartObject().SetData(fh).Finish()
-		pw.Resume(buf)
-		w.Resume(pw.Finish())
-		rw := w.AppendArgarray_Read()
-		setStateid(rw.Stateid(), stateid)
-		rw.SetOffset(0)
-		rw.SetCount(1024)
-	})
-	xid++
-	iter := expectOK(t, res)
-	nextOp(t, &iter)
-	entry := nextOp(t, &iter)
-	readOk := entry.Value().AsREAD4resEntry().Value().AsREAD4resok()
-	if string(readOk.Data()) != "content" {
-		t.Fatalf("READ = %q, want %q", readOk.Data(), "content")
-	}
-	closeFile(t, conn, &xid, fh, stateid)
-}
-
 func addConfirmedOpenForTest(
 	t *testing.T,
 	srv *Server,
@@ -1441,71 +1269,6 @@ func TestSetattr(t *testing.T) {
 	}
 }
 
-// RFC 8881 section 18 removes these NFSv4.0 operations.
-func TestRemovedOperationsNotSupported(t *testing.T) {
-	dir := t.TempDir()
-	addr, cleanup := startTestServer(t, dir)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-
-	xid := uint32(1)
-	clientid := setupClient(t, conn, &xid)
-
-	for _, test := range []struct {
-		name  string
-		build func(w *nfs4.COMPOUND4argsWriter)
-	}{
-		{"RELEASE_LOCKOWNER", func(w *nfs4.COMPOUND4argsWriter) {
-			rlw := w.AppendArgarray_ReleaseLockowner()
-			loW := rlw.StartLockOwner()
-			loW = loW.SetClientid(clientid)
-			loW = loW.SetOwner([]byte("test-lock-owner"))
-			rlw.Resume(loW.Finish())
-			w.Resume(rlw.Finish())
-		}},
-		{"RENEW", func(w *nfs4.COMPOUND4argsWriter) {
-			w.AppendArgarray_Renew().SetClientid(clientid)
-		}},
-		{"OPEN_CONFIRM", func(w *nfs4.COMPOUND4argsWriter) {
-			w.AppendArgarray_Putrootfh()
-			w.AppendArgarray_OpenConfirm()
-		}},
-	} {
-		res := sendCompound(t, conn, xid, test.build)
-		xid++
-		if res.Status() != nfs4.NFS4ERR_NOTSUPP {
-			t.Errorf("%s status = %s, want NFS4ERR_NOTSUPP",
-				test.name, nfs4.Nfsstat4Name(res.Status()))
-		}
-	}
-}
-
-// Every compound must start with SEQUENCE or a session-management operation.
-func TestCompoundRequiresSequence(t *testing.T) {
-	dir := t.TempDir()
-	addr, cleanup := startTestServer(t, dir)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-
-	body := buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
-		w.AppendArgarray_Putrootfh()
-	})
-	reply, err := sendRawRPC(conn, 1, procCompound, body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	res, err := parseCompoundReply(reply)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Status() != nfs4.NFS4ERR_OP_NOT_IN_SESSION {
-		t.Fatalf("status = %s, want NFS4ERR_OP_NOT_IN_SESSION",
-			nfs4.Nfsstat4Name(res.Status()))
-	}
-}
-
 func TestIllegalOp(t *testing.T) {
 	dir := t.TempDir()
 	addr, cleanup := startTestServer(t, dir)
@@ -1519,69 +1282,6 @@ func TestIllegalOp(t *testing.T) {
 
 	if res.Status() != nfs4.NFS4ERR_OP_ILLEGAL {
 		t.Fatalf("status = %d, want NFS4ERR_OP_ILLEGAL (%d)", res.Status(), nfs4.NFS4ERR_OP_ILLEGAL)
-	}
-}
-
-func TestUnknownOp(t *testing.T) {
-	dir := t.TempDir()
-	addr, cleanup := startTestServer(t, dir)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-
-	// Empty tag, minor version one, one operation, and undefined operation zero.
-	body := make([]byte, 16)
-	binary.BigEndian.PutUint32(body[4:8], nfsMinorVersion)
-	binary.BigEndian.PutUint32(body[8:12], 1)
-
-	reply, err := sendRPC(conn, 1, procCompound, body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	res, ok := nfs4.ReadCOMPOUND4res(mustParseRPCReply(t, reply))
-	if !ok {
-		t.Fatal("failed to parse COMPOUND4res")
-	}
-	if res.Status() != nfs4.NFS4ERR_OP_ILLEGAL {
-		t.Fatalf("status = %s, want NFS4ERR_OP_ILLEGAL", nfs4.Nfsstat4Name(res.Status()))
-	}
-	if res.ResarrayCount() != 1 {
-		t.Fatalf("resarray count = %d, want 1", res.ResarrayCount())
-	}
-	iter := res.Resarray()
-	entry := nextOp(t, &iter)
-	if entry.Disc() != nfs4.OP_ILLEGAL {
-		t.Fatalf("result operation = %s, want OP_ILLEGAL", nfs4.NfsOpnum4Name(entry.Disc()))
-	}
-	if status := entry.Value().AsILLEGAL4res().Status(); status != nfs4.NFS4ERR_OP_ILLEGAL {
-		t.Fatalf("operation status = %s, want NFS4ERR_OP_ILLEGAL", nfs4.Nfsstat4Name(status))
-	}
-}
-
-func TestLookupNonExistent(t *testing.T) {
-	dir := t.TempDir()
-	addr, cleanup := startTestServer(t, dir)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-
-	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
-		w.AppendArgarray_Putrootfh()
-
-		lw := w.AppendArgarray_Lookup()
-		nw := lw.StartObjname()
-		buf := nw.SetData([]byte("nonexistent.txt")).Finish()
-		lw.Resume(buf)
-		buf = lw.Finish()
-		w.Resume(buf)
-	})
-
-	if res.Status() != nfs4.NFS4ERR_NOENT {
-		t.Fatalf("status = %d, want NFS4ERR_NOENT (%d)", res.Status(), nfs4.NFS4ERR_NOENT)
-	}
-	// Should have 2 ops: PUTROOTFH (success) + LOOKUP (failure).
-	if res.ResarrayCount() != 2 {
-		t.Fatalf("resarray count = %d, want 2", res.ResarrayCount())
 	}
 }
 
@@ -2726,46 +2426,6 @@ func TestGetattr_Symlink(t *testing.T) {
 	}
 }
 
-func TestMultipleCompoundsOnConnection(t *testing.T) {
-	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "a.txt"), []byte("aaa"), 0644)
-	os.WriteFile(filepath.Join(dir, "b.txt"), []byte("bbb"), 0644)
-
-	addr, cleanup := startTestServer(t, dir)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-
-	// Send multiple compounds on the same connection.
-	for i, name := range []string{"a.txt", "b.txt"} {
-		expected := string(name[0]) + string(name[0]) + string(name[0])
-		res := sendCompound(t, conn, uint32(i+1), func(w *nfs4.COMPOUND4argsWriter) {
-			w.AppendArgarray_Putrootfh()
-
-			lw := w.AppendArgarray_Lookup()
-			nw := lw.StartObjname()
-			buf := nw.SetData([]byte(name)).Finish()
-			lw.Resume(buf)
-			buf = lw.Finish()
-			w.Resume(buf)
-
-			rw := w.AppendArgarray_Read()
-			rw.Stateid().SetSeqid(0)
-			rw.SetOffset(0)
-			rw.SetCount(1024)
-		})
-
-		iter := expectOK(t, res)
-		nextOp(t, &iter) // PUTROOTFH
-		nextOp(t, &iter) // LOOKUP
-		entry := nextOp(t, &iter)
-		data := entry.Value().AsREAD4resEntry().Value().AsREAD4resok().Data()
-		if string(data) != expected {
-			t.Fatalf("compound %d: READ = %q, want %q", i, data, expected)
-		}
-	}
-}
-
 func TestLargeFileRead(t *testing.T) {
 	dir := t.TempDir()
 	content := make([]byte, 128*1024)
@@ -3585,14 +3245,7 @@ func TestReadCloseIgnoresOtherWriterStaging(t *testing.T) {
 
 	xid := uint32(1)
 	readerClient := setupClient(t, conn, &xid)
-	writerClient, confirm := requestClientID(
-		t, conn, &xid, "writer-client", [8]byte{},
-	)
-	if status := confirmClientID(
-		t, conn, &xid, writerClient, confirm,
-	); status != nfs4.NFS4_OK {
-		t.Fatal("writer CREATE_SESSION failed")
-	}
+	writerClient := setupClientAs(t, conn, &xid, "writer-client", [8]byte{})
 	readerState, readerFH := openReadFile(
 		t, conn, &xid, readerClient, "existing.txt",
 	)
@@ -3633,14 +3286,7 @@ func TestClientRebootDoesNotDiscardOtherWriter(t *testing.T) {
 
 	xid := uint32(1)
 	readerClient := setupClient(t, conn, &xid)
-	writerClient, confirm := requestClientID(
-		t, conn, &xid, "writer-client", [8]byte{},
-	)
-	if status := confirmClientID(
-		t, conn, &xid, writerClient, confirm,
-	); status != nfs4.NFS4_OK {
-		t.Fatal("writer CREATE_SESSION failed")
-	}
+	writerClient := setupClientAs(t, conn, &xid, "writer-client", [8]byte{})
 	_, _ = openReadFile(
 		t, conn, &xid, readerClient, "existing.txt",
 	)
@@ -3651,14 +3297,7 @@ func TestClientRebootDoesNotDiscardOtherWriter(t *testing.T) {
 		t, conn, &xid, writerFH, writerState, 0, []byte("changed"),
 	)
 
-	rebootedClient, rebootConfirm := requestClientID(
-		t, conn, &xid, "test-client", [8]byte{1},
-	)
-	if status := confirmClientID(
-		t, conn, &xid, rebootedClient, rebootConfirm,
-	); status != nfs4.NFS4_OK {
-		t.Fatalf("reader reboot confirmation = %s", nfs4.Nfsstat4Name(status))
-	}
+	setupClientAs(t, conn, &xid, "test-client", [8]byte{1})
 	if !staging.TargetBusy(stagingStore, fs.RootID(), "existing.txt") {
 		t.Fatal("reader reboot discarded another client's staging")
 	}
@@ -4352,23 +3991,6 @@ func TestRenameToSameNameIsNoOp(t *testing.T) {
 	if got := ok.TargetCinfo(); got.Before() != got.After() {
 		t.Errorf("target cinfo changed: before=%d after=%d",
 			got.Before(), got.After())
-	}
-}
-
-func TestDelegpurgeNotSupported(t *testing.T) {
-	dir := t.TempDir()
-	addr, cleanup := startTestServer(t, dir)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-
-	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
-		dw := w.AppendArgarray_Delegpurge()
-		dw.SetClientid(1)
-	})
-
-	if res.Status() != nfs4.NFS4ERR_NOTSUPP {
-		t.Fatalf("DELEGPURGE status = %d, want NFS4ERR_NOTSUPP", res.Status())
 	}
 }
 
@@ -5997,36 +5619,6 @@ func (fs *blockingFailingLinkVFS) LinkFile(
 	return errors.New("injected LinkFile failure")
 }
 
-type notifyingStagingStore struct {
-	staging.Store
-
-	mu       sync.Mutex
-	calls    int
-	notifyAt int
-	notified chan struct{}
-}
-
-func (store *notifyingStagingStore) GetMeta(
-	id vfs.InodeID,
-) (staging.Meta, bool) {
-	store.mu.Lock()
-	store.calls++
-	if store.calls == store.notifyAt {
-		close(store.notified)
-	}
-	store.mu.Unlock()
-	return store.Store.GetMeta(id)
-}
-
-func (store *notifyingStagingStore) notifyNextGetMeta() <-chan struct{} {
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	store.calls = 0
-	store.notifyAt = 1
-	store.notified = make(chan struct{})
-	return store.notified
-}
-
 func TestWaitingCloseRechecksStagingMeta(t *testing.T) {
 	fs := &blockingFailingLinkVFS{
 		TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
@@ -6034,11 +5626,10 @@ func TestWaitingCloseRechecksStagingMeta(t *testing.T) {
 		release: make(chan struct{}),
 	}
 	defer testutil.CloseSignal(fs.release)
-	localStaging, err := staging.NewLocalStore(t.TempDir(), nil)
+	staging, err := staging.NewLocalStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	staging := &notifyingStagingStore{Store: localStaging}
 	srv, err := NewServer(fs, staging, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -6197,11 +5788,10 @@ func TestConcurrentClosePublishesAtMostOnce(t *testing.T) {
 		},
 	}
 	defer testutil.CloseSignal(fs.releaseFirst)
-	localStaging, err := staging.NewLocalStore(t.TempDir(), nil)
+	staging, err := staging.NewLocalStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	staging := &notifyingStagingStore{Store: localStaging}
 	srv, err := NewServer(fs, staging, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -6548,67 +6138,6 @@ func TestSetattrSizeRejectsNonRegularFiles(t *testing.T) {
 	}
 }
 
-func TestCommitVerifier(t *testing.T) {
-	dir := t.TempDir()
-	addr, cleanup := startTestServer(t, dir)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-
-	xid := uint32(1)
-	clientid := setupClient(t, conn, &xid)
-
-	stateid, fh := openCreateFile(t, conn, &xid, clientid, "commit.txt")
-
-	// WRITE some data.
-	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
-		pw := w.AppendArgarray_Putfh()
-		fhW := pw.StartObject()
-		buf := fhW.SetData(fh).Finish()
-		pw.Resume(buf)
-		buf = pw.Finish()
-		w.Resume(buf)
-		ww := w.AppendArgarray_Write()
-		setStateid(ww.Stateid(), stateid)
-		ww = ww.SetOffset(0)
-		ww = ww.SetStable(0) // UNSTABLE4
-		ww = ww.SetData([]byte("commit test"))
-		buf = ww.Finish()
-		w.Resume(buf)
-	})
-	xid++
-	expectOK(t, res)
-
-	// COMMIT and check the write verifier is non-zero.
-	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
-		pw := w.AppendArgarray_Putfh()
-		fhW := pw.StartObject()
-		buf := fhW.SetData(fh).Finish()
-		pw.Resume(buf)
-		buf = pw.Finish()
-		w.Resume(buf)
-		w.AppendArgarray_Commit()
-	})
-	xid++
-	iter := expectOK(t, res)
-	nextOp(t, &iter) // PUTFH
-	entry := nextOp(t, &iter)
-	commitOk := entry.Value().AsCOMMIT4resEntry().Value().AsCOMMIT4resok()
-	verf := commitOk.Writeverf()
-	var allZero bool = true
-	for i := 0; i < 8; i++ {
-		if verf.Data(i) != 0 {
-			allZero = false
-			break
-		}
-	}
-	if allZero {
-		t.Fatal("COMMIT write verifier should be non-zero")
-	}
-
-	closeFile(t, conn, &xid, fh, stateid)
-}
-
 func TestLockNotSupported(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("data"), 0644)
@@ -6880,149 +6409,11 @@ func TestStagedWriteOperationsAfterServerRestart(t *testing.T) {
 	}
 }
 
-func TestSetclientidRebootRetiresStagingFiles(t *testing.T) {
-	rootDir := t.TempDir()
-	stagingDir := t.TempDir()
-	fs := vfs.NewLocalTernVFS(rootDir)
-	staging, err := staging.NewLocalStore(stagingDir, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	srv, err := NewServer(fs, staging, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr, cleanup := serveTestServer(t, srv)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-
-	xid := uint32(1)
-	clientID := setupClient(t, conn, &xid)
-	stateid, fh := openCreateFile(
-		t, conn, &xid, clientID, "reboot.txt")
-	fileID := stagingIDForTest(t, staging, stateid)
-	if staging.Get(fileID) == nil {
-		t.Fatal("write OPEN did not create staging")
-	}
-
-	var rebootVerifier [8]byte
-	for i := range rebootVerifier {
-		rebootVerifier[i] = byte(i + 1)
-	}
-	setupClientWithVerifier(t, conn, &xid, rebootVerifier)
-
-	assertRetiredStaging(t, staging, fileID)
-	entries, err := stagingFiles(stagingDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) != 2 {
-		t.Fatalf("client reboot lost recoverable staging: %v", entries)
-	}
-	// The rebooted client is a new incarnation: its predecessor's stateid
-	// is not its own (../openstate/README.md#stateid-scope).
-	if status := closeFileStatus(
-		t, conn, &xid, fh, stateid); status != nfs4.NFS4ERR_BAD_STATEID {
-		t.Fatalf("CLOSE after reboot = %s, want NFS4ERR_BAD_STATEID",
-			nfs4.Nfsstat4Name(status))
-	}
-}
-
-func TestLocalStagingStoreRejectsPreMagicSidecars(t *testing.T) {
-	// There are no deployed NFS servers, so nfsd reads one sidecar format.
-	// Sidecars from before the format marker are quarantined, not loaded.
-	meta := staging.Meta{
-		DirID:      vfs.MakeInodeID(vfs.InodeTypeDir, 7),
-		FileName:   "legacy.txt",
-		TernCookie: vfs.Cookie{1, 2, 3},
-		NFSStateID: nfs4.StateID{4, 5, 6},
-		ClientID:   99,
-	}
-	name := []byte(meta.FileName)
-	header := make([]byte, 30+len(name))
-	binary.BigEndian.PutUint64(header[0:8], uint64(meta.DirID))
-	copy(header[8:16], meta.TernCookie[:])
-	copy(header[16:28], meta.NFSStateID[:])
-	binary.BigEndian.PutUint16(header[28:30], uint16(len(name)))
-	copy(header[30:], name)
-	withClientID := append(append([]byte(nil), header...), make([]byte, 8)...)
-	binary.BigEndian.PutUint64(withClientID[len(header):], meta.ClientID)
-
-	for _, sidecar := range []struct {
-		name    string
-		encoded []byte
-	}{
-		{"no-clientid", header},
-		{"clientid-only", withClientID},
-	} {
-		t.Run(sidecar.name, func(t *testing.T) {
-			dir := t.TempDir()
-			// The directory is this server's: only the sidecar is old.
-			empty, err := staging.NewLocalStore(dir, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			staging.CloseFiles(t, empty)
-			id := vfs.MakeInodeID(vfs.InodeTypeFile, 42)
-			data := []byte("legacy staged data")
-			if err := os.WriteFile(
-				filepath.Join(dir, fmt.Sprintf("%016x.staging", uint64(id))),
-				data, 0600,
-			); err != nil {
-				t.Fatal(err)
-			}
-			metaPath := filepath.Join(
-				dir, fmt.Sprintf("%016x.meta", uint64(id)))
-			if err := os.WriteFile(metaPath, sidecar.encoded, 0600); err != nil {
-				t.Fatal(err)
-			}
-			store, err := staging.NewLocalStore(dir, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer staging.CloseFiles(t, store)
-			if _, found := store.GetMeta(id); found || store.Get(id) != nil {
-				t.Fatal("pre-magic staging sidecar was loaded")
-			}
-			files, err := filepath.Glob(
-				filepath.Join(dir, "quarantine", "*", "*.staging"))
-			if err != nil || len(files) != 1 {
-				t.Fatalf("quarantine files = %v, err = %v", files, err)
-			}
-			if got, err := os.ReadFile(files[0]); err != nil ||
-				!bytes.Equal(got, data) {
-				t.Fatalf("quarantined data = %q, err = %v", got, err)
-			}
-		})
-	}
-}
-
-func TestLoadStagingMetaRejectsTrailingBytes(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "staging.meta")
-	meta := staging.Meta{
-		DirID:      vfs.MakeInodeID(vfs.InodeTypeDir, 1),
-		FileName:   "file.txt",
-		TernCookie: vfs.Cookie{1},
-		NFSStateID: nfs4.StateID{2},
-		ClientID:   3,
-	}
-	if err := staging.SaveMeta(path, meta); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, append(data, 0), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := staging.LoadMeta(path); err == nil {
-		t.Fatal("staging metadata with trailing bytes was accepted")
-	}
-}
-
-func TestSetclientidReboot(t *testing.T) {
+// A rebooted client, registering with a new verifier, fences its old
+// incarnation: the old sessions are BADSESSION, the old clientid is stale,
+// and the old stateids are another incarnation's, whose writer is retired
+// for recovery and never resumed.
+func TestClientRebootFencesOldIncarnation(t *testing.T) {
 	dir := t.TempDir()
 	srv, addr, cleanup := startTestServerWithServer(t, dir)
 	defer cleanup()

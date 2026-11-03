@@ -237,7 +237,7 @@ func TestFailedWriterCloseDoesNotExpireSiblingDuringLookup(t *testing.T) {
 	}()
 	testutil.AwaitSignal(t, store.entered, "READ local stateid lookup")
 	// The READ has copied valid local state and observed no tombstone.
-	// Fail W1, then let CLOSE remove its marker before READ checks it.
+	// Fail W1, then let CLOSE end its open before READ checks it.
 	f.server.fs = &namespaceFaultVFS{TernVFS: f.fs, err: errors.New("lost reply")}
 	if got := removeNamespaceFile(t, f, "source"); got != nfs4.NFS4ERR_IO {
 		t.Fatal(nfs4.Nfsstat4Name(got))

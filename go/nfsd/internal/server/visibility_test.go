@@ -32,10 +32,7 @@ func exerciseVisibleCreation(t *testing.T, addr, name string, reverse bool) {
 	defer otherConn.Close()
 	xid := uint32(1)
 	clientID := setupClient(t, conn, &xid)
-	otherID, confirm := requestClientID(t, otherConn, &xid, "other-"+name, [8]byte{2})
-	if status := confirmClientID(t, otherConn, &xid, otherID, confirm); status != nfs4.NFS4_OK {
-		t.Fatal(nfs4.Nfsstat4Name(status))
-	}
+	otherID := setupClientAs(t, otherConn, &xid, "other-"+name, [8]byte{2})
 	size := uint64(5)
 	creator, creatorFH := openCreateFileWithSize(t, conn, &xid, clientID, name, &size)
 	emptyFH := lookupFH(t, otherConn, &xid, name)
@@ -96,10 +93,7 @@ func exerciseVisibleCreation(t *testing.T, addr, name string, reverse bool) {
 	}
 	viewer := dial(t, addr)
 	defer viewer.Close()
-	viewerID, viewerConfirm := requestClientID(t, viewer, &xid, "viewer-"+name, [8]byte{3})
-	if status := confirmClientID(t, viewer, &xid, viewerID, viewerConfirm); status != nfs4.NFS4_OK {
-		t.Fatal(nfs4.Nfsstat4Name(status))
-	}
+	setupClientAs(t, viewer, &xid, "viewer-"+name, [8]byte{3})
 	closeFile(t, firstConn, &xid, emptyFH, creator)
 	check(viewer, lookupFH(t, viewer, &xid, name), firstWant)
 	check(viewer, emptyFH, "")

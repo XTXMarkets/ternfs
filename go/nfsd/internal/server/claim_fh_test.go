@@ -91,10 +91,7 @@ func TestOpenClaimFH(t *testing.T) {
 	// open by handle then reports STALE, and the client looks up the name.
 	other := dial(t, addr)
 	defer other.Close()
-	otherID, confirm := requestClientID(t, other, &xid, "other", [8]byte{2})
-	if status := confirmClientID(t, other, &xid, otherID, confirm); status != nfs4.NFS4_OK {
-		t.Fatal(nfs4.Nfsstat4Name(status))
-	}
+	otherID := setupClientAs(t, other, &xid, "other", [8]byte{2})
 	if status, _, _ := openByHandle(t, other, &xid, otherID, "writer", fh, nfs4.OPEN4_SHARE_ACCESS_BOTH); status != nfs4.NFS4ERR_STALE {
 		t.Fatalf("write CLAIM_FH of replaced file = %s, want STALE", nfs4.Nfsstat4Name(status))
 	}
@@ -251,10 +248,7 @@ func TestOpenWaitsForPublishingClose(t *testing.T) {
 	defer reader.Close()
 	xid := uint32(1)
 	writerID := setupClient(t, writer, &xid)
-	readerID, confirm := requestClientID(t, reader, &xid, "reader", [8]byte{2})
-	if status := confirmClientID(t, reader, &xid, readerID, confirm); status != nfs4.NFS4_OK {
-		t.Fatal(nfs4.Nfsstat4Name(status))
-	}
+	readerID := setupClientAs(t, reader, &xid, "reader", [8]byte{2})
 	state, fh := openWriteFile(t, writer, &xid, writerID, "file")
 	writeFileAt(t, writer, &xid, fh, state, 0, []byte("new"))
 	closed := make(chan struct{})

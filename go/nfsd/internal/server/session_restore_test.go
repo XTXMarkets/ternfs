@@ -2338,10 +2338,7 @@ func TestRenameHoldsNamesUntilRecorded(t *testing.T) {
 	other := dial(t, f.addr)
 	defer other.Close()
 	xid := uint32(1)
-	id, confirm := requestClientID(t, other, &xid, "other-client", [8]byte{2})
-	if status := confirmClientID(t, other, &xid, id, confirm); status != nfs4.NFS4_OK {
-		t.Fatal(nfs4.Nfsstat4Name(status))
-	}
+	setupClientAs(t, other, &xid, "other-client", [8]byte{2})
 	removed := make(chan uint32, 1)
 	go func() {
 		reply, err := sendRPC(other, 7001, procCompound, removeBody("b"))
@@ -2573,9 +2570,8 @@ func (f *replayFixture) stagingFiles(id vfs.InodeID) map[string][]byte {
 }
 
 // restartKeeping restarts with the given files put back in the staging
-// directory and the open's marker, which the dead process would not have
-// removed.
-func (f *replayFixture) restartKeeping(kept map[string][]byte, stateid [16]byte) {
+// directory, which the dead process would not have removed.
+func (f *replayFixture) restartKeeping(kept map[string][]byte) {
 	f.t.Helper()
 	f.conn.Close()
 	f.stop()
@@ -2616,7 +2612,7 @@ func TestRestartAfterFreshPublicationCompletes(t *testing.T) {
 		t.Fatalf("retried CLOSE %s", nfs4.Nfsstat4Name(got))
 	}
 	pf.set(func() { pf.onSetTime = nil })
-	f.restartKeeping(kept, state)
+	f.restartKeeping(kept)
 	if got := f.closeStatus(fh, state); got != nfs4.NFS4_OK {
 		t.Fatalf("CLOSE after the restart %s", nfs4.Nfsstat4Name(got))
 	}
@@ -2735,10 +2731,7 @@ func TestRestartAppliedLinkThenForeignPublicationCompletes(t *testing.T) {
 	other := dial(t, f.addr)
 	defer other.Close()
 	xid := uint32(1)
-	otherID, confirm := requestClientID(t, other, &xid, "other-client", [8]byte{2})
-	if status := confirmClientID(t, other, &xid, otherID, confirm); status != nfs4.NFS4_OK {
-		t.Fatal(nfs4.Nfsstat4Name(status))
-	}
+	otherID := setupClientAs(t, other, &xid, "other-client", [8]byte{2})
 	osid, ofh := openWriteFile(t, other, &xid, otherID, "doc")
 	writeFileAt(t, other, &xid, ofh, osid, 0, []byte("theirs"))
 	closeFile(t, other, &xid, ofh, osid)

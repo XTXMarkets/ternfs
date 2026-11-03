@@ -1094,13 +1094,7 @@ func TestTernStagedFileGetattrAndRead(t *testing.T) {
 // setupNamedClient is like setupClient but with a custom identity string.
 func setupNamedClient(t *testing.T, conn net.Conn, xid *uint32, identity string) uint64 {
 	t.Helper()
-	clientid, confirm := requestClientID(
-		t, conn, xid, identity, [8]byte{})
-	if status := confirmClientID(
-		t, conn, xid, clientid, confirm,
-	); status != nfs4.NFS4_OK {
-		t.Fatal("SETCLIENTID_CONFIRM failed")
-	}
+	clientid := setupClientAs(t, conn, xid, identity, [8]byte{})
 	return clientid
 }
 

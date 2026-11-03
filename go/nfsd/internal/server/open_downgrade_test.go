@@ -189,25 +189,6 @@ func TestOpenDowngradeRecoveredWriterToRead(t *testing.T) {
 	closeFile(t, conn, &xid, restarted.fh, read)
 }
 
-// A downgrade that publishes nothing keeps the open's marker: the open
-// goes on as a read open, and its next operation is not EXPIRED.
-func TestCleanDowngradeKeepsMarker(t *testing.T) {
-	srv, conn, xid, clientID, fh := openGrantFixture(t, "old")
-	openByHandle(t, conn, xid, clientID, "o", fh, nfs4.OPEN4_SHARE_ACCESS_READ)
-	_, both, _ := openByHandle(t, conn, xid, clientID, "o", fh, nfs4.OPEN4_SHARE_ACCESS_WRITE)
-	status, read := downgradeResult(t, conn, xid, fh, both, nfs4.OPEN4_SHARE_ACCESS_READ, nfs4.OPEN4_SHARE_DENY_NONE)
-	if status != nfs4.NFS4_OK {
-		t.Fatalf("clean downgrade %s", nfs4.Nfsstat4Name(status))
-	}
-	awaitRequestHoldsReleased(t, srv)
-	if got := stateidOpStatus(t, conn, xid, "READ", fh, read); got != nfs4.NFS4_OK {
-		t.Fatalf("READ after a clean downgrade %s", nfs4.Nfsstat4Name(got))
-	}
-	if got := closeFileStatus(t, conn, xid, fh, read); got != nfs4.NFS4_OK {
-		t.Fatalf("CLOSE after a clean downgrade %s", nfs4.Nfsstat4Name(got))
-	}
-}
-
 // A writer whose name another client removes, downgraded to READ, goes on
 // reading its own image, written to or not; its CLOSE then discards it.
 func TestDetachedDowngradeReadsItsImage(t *testing.T) {

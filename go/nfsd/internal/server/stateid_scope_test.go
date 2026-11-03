@@ -101,8 +101,8 @@ func stateidOpStatus(t *testing.T, conn net.Conn, xid *uint32, op string, fh []b
 }
 
 // Client B presenting client A's live, recovered or expired stateid gets
-// BAD_STATEID from every stateid operation, and A's opens, staging and
-// markers survive (../openstate/README.md#stateid-scope).
+// BAD_STATEID from every stateid operation, and A's opens and staging
+// survive (../openstate/README.md#stateid-scope).
 func TestForeignStateidsAreBadStateid(t *testing.T) {
 	srv, addr, cleanup := startTestServerWithServer(t, t.TempDir())
 	defer cleanup()
