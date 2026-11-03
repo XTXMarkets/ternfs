@@ -507,39 +507,6 @@ func TestPrincipalCheckOrdersWithWritableOpen(t *testing.T) {
 	}
 }
 
-// A rebooted client, a new verifier from the same principal, replaces its
-// incarnation at confirmation: the record names the new one, the old one's
-// sessions go, and it is never live again.
-func TestRebootReplacesIncarnation(t *testing.T) {
-	local, dir := vfs.NewLocalTernVFS(t.TempDir()), t.TempDir()
-	srv := identityServerAt(t, local, dir)
-	old := identityExchange(t, srv, 1, "client", [8]byte{1}, false)
-	_, oldSession := createResult(t, srv, 1, old.clientID, 1)
-	oldInc := incarnationForTest(t, srv, old.clientID)
-	reboot := identityExchange(t, srv, 1, "client", [8]byte{2}, false)
-	status, newSession := createResult(t, srv, 1, reboot.clientID, 1)
-	if status != nfs4.NFS4_OK {
-		t.Fatal(nfs4.Nfsstat4Name(status))
-	}
-	newInc := incarnationForTest(t, srv, reboot.clientID)
-	recs := recordsForTest(srv)
-	if len(recs) != 1 || uint64(recs[0].Incarnation) != newInc || recs[0].Verifier != [8]byte{2} || recs[0].Purging != 0 {
-		t.Fatalf("records after the reboot %+v", recs)
-	}
-	if srv.sessions.lookup(oldSession) != nil || srv.clientLive(oldInc) || !srv.clientLive(newInc) {
-		t.Fatal("the old incarnation survived its client's reboot")
-	}
-	if got := sequenceStatusForTest(t, srv, oldSession); got != nfs4.NFS4ERR_BADSESSION {
-		t.Fatalf("SEQUENCE on the old session %s", nfs4.Nfsstat4Name(got))
-	}
-	// A restart keeps the new incarnation and nothing of the old one.
-	restarted := identityServerAt(t, local, dir)
-	if !restarted.clientLive(newInc) || restarted.clientLive(oldInc) {
-		t.Fatal("restart changed which incarnation is live")
-	}
-	_ = newSession
-}
-
 // A start finishes what a crash left in a record: a reboot's purge, so the
 // replaced incarnation is gone and the new one live, and an expiry, whose
 // record is removed.

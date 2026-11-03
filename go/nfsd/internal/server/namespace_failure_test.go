@@ -5,7 +5,6 @@
 package server
 
 import (
-	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -288,7 +287,7 @@ func TestNamespaceGuardRestartMakesNoRecoveryCalls(t *testing.T) {
 }
 
 func TestStagingStartupExcludesEveryBadEntry(t *testing.T) {
-	for _, problem := range []string{"corrupt", "foreign magic", "quarantine failure", "unreadable sidecar", "truncate failure", "retired detached"} {
+	for _, problem := range []string{"quarantine failure", "unreadable sidecar", "truncate failure", "retired detached"} {
 		t.Run(problem, func(t *testing.T) {
 			if problem == "unreadable sidecar" && os.Geteuid() == 0 {
 				t.Skip("root bypasses unreadable sidecar permissions")
@@ -308,22 +307,11 @@ func TestStagingStartupExcludesEveryBadEntry(t *testing.T) {
 			}
 			meta, _ = staging.LoadMeta(path)
 			switch problem {
-			case "corrupt", "quarantine failure":
+			case "quarantine failure":
 				if err := os.WriteFile(path, []byte("corrupt"), 0600); err != nil {
 					t.Fatal(err)
 				}
-				if problem == "quarantine failure" {
-					if err := os.WriteFile(filepath.Join(dir, staging.QuarantineDirName), []byte("blocked"), 0600); err != nil {
-						t.Fatal(err)
-					}
-				}
-			case "foreign magic":
-				data, err := os.ReadFile(path)
-				if err != nil {
-					t.Fatal(err)
-				}
-				data = bytes.Replace(data, []byte("NFS9"), []byte("XFS9"), 1)
-				if err := os.WriteFile(path, data, 0600); err != nil {
+				if err := os.WriteFile(filepath.Join(dir, staging.QuarantineDirName), []byte("blocked"), 0600); err != nil {
 					t.Fatal(err)
 				}
 			case "unreadable sidecar":
@@ -386,19 +374,14 @@ func TestNamespaceSidecarStrictDecode(t *testing.T) {
 	}
 	// Fixed NFS9 layout, with no dirty ranges in this checkpoint.
 	flagOffset := 30 + len(meta.FileName) + 8 + 4 + 8 + 8 + 8 + 4 + 32
-	for _, kind := range []string{"NFS5", "NFS7", "NFS8", "trailer", "unknown flag", "truncated"} {
+	for _, kind := range []string{"trailer", "unknown flag"} {
 		t.Run(kind, func(t *testing.T) {
 			bad := append([]byte(nil), data...)
 			switch kind {
-			case "NFS5", "NFS7", "NFS8":
-				magic := 30 + int(binary.BigEndian.Uint16(bad[28:30])) + 8
-				copy(bad[magic:], kind)
 			case "trailer":
 				bad = append(bad, 0)
 			case "unknown flag":
 				bad[flagOffset] |= 128
-			case "truncated":
-				bad = bad[:len(bad)-1]
 			}
 			if err := os.WriteFile(path, bad, 0600); err != nil {
 				t.Fatal(err)

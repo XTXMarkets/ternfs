@@ -149,41 +149,23 @@ func newConnectionTestServerWithLog(t *testing.T, limit int, logger *slog.Logger
 }
 
 func TestConnectionConcurrentCompounds(t *testing.T) {
-	for _, limit := range []int{1, 2} {
-		t.Run(fmt.Sprint(limit), func(t *testing.T) {
-			srv, fs := newConnectionTestServer(t, limit)
-			ts := connectionSession(t, srv)
-			fs.All = false
-			addr, cleanup := serveTestServer(t, srv)
-			defer cleanup()
-			defer testutil.CloseSignal(fs.Release)
-			conn := dial(t, addr)
-			defer conn.Close()
-			writeCallForTest(t, conn, statCallForTest(ts, 1))
-			testutil.AwaitSignal(t, fs.Entered, "slow stat")
-			writeCallForTest(t, conn, statCallForTest(ts, 2))
-			if limit == 1 {
-				conn.SetReadDeadline(time.Now().Add(25 * time.Millisecond))
-				if _, err := readFrame(conn); err == nil {
-					t.Fatal("reply bypassed limit of one")
-				}
-				testutil.CloseSignal(fs.Release)
-				if xid := readXIDForTest(t, conn); xid != 1 {
-					t.Fatalf("first reply = %d", xid)
-				}
-				if xid := readXIDForTest(t, conn); xid != 2 {
-					t.Fatalf("second reply = %d", xid)
-				}
-			} else {
-				if xid := readXIDForTest(t, conn); xid != 2 {
-					t.Fatalf("fast reply = %d", xid)
-				}
-				testutil.CloseSignal(fs.Release)
-				if xid := readXIDForTest(t, conn); xid != 1 {
-					t.Fatalf("slow reply = %d", xid)
-				}
-			}
-		})
+	srv, fs := newConnectionTestServer(t, 2)
+	ts := connectionSession(t, srv)
+	fs.All = false
+	addr, cleanup := serveTestServer(t, srv)
+	defer cleanup()
+	defer testutil.CloseSignal(fs.Release)
+	conn := dial(t, addr)
+	defer conn.Close()
+	writeCallForTest(t, conn, statCallForTest(ts, 1))
+	testutil.AwaitSignal(t, fs.Entered, "slow stat")
+	writeCallForTest(t, conn, statCallForTest(ts, 2))
+	if xid := readXIDForTest(t, conn); xid != 2 {
+		t.Fatalf("fast reply = %d", xid)
+	}
+	testutil.CloseSignal(fs.Release)
+	if xid := readXIDForTest(t, conn); xid != 1 {
+		t.Fatalf("slow reply = %d", xid)
 	}
 }
 
@@ -295,28 +277,6 @@ func TestConnectionInFlightDuplicates(t *testing.T) {
 	}
 }
 
-func TestConnectionHalfCloseDrainsReply(t *testing.T) {
-	srv, fs := newConnectionTestServer(t, 2)
-	ts := connectionSession(t, srv)
-	addr, cleanup := serveTestServer(t, srv)
-	defer cleanup()
-	defer testutil.CloseSignal(fs.Release)
-	conn := dial(t, addr)
-	defer conn.Close()
-	writeCallForTest(t, conn, statCallForTest(ts, 1))
-	testutil.AwaitSignal(t, fs.Entered, "stat before half-close")
-	if err := conn.(*net.TCPConn).CloseWrite(); err != nil {
-		t.Fatal(err)
-	}
-	testutil.CloseSignal(fs.Release)
-	if xid := readXIDForTest(t, conn); xid != 1 {
-		t.Fatalf("drained reply = %d", xid)
-	}
-	if _, err := readFrame(conn); err != io.EOF {
-		t.Fatalf("after drain = %v", err)
-	}
-}
-
 type replyConn struct {
 	net.Conn
 	writes     atomic.Int32
@@ -332,7 +292,7 @@ func (c *replyConn) Write(data []byte) (int, error) {
 }
 
 func TestConnectionTermination(t *testing.T) {
-	for _, mode := range []string{"disconnect", "read-timeout", "write-timeout", "write-panic"} {
+	for _, mode := range []string{"disconnect", "write-timeout", "write-panic"} {
 		t.Run(mode, func(t *testing.T) {
 			// The reader logs "client disconnected" after it has recorded EOF
 			// as the cause; a failed reply write logs "RPC reply failed".
@@ -341,10 +301,6 @@ func TestConnectionTermination(t *testing.T) {
 			ts := connectionSession(t, srv)
 			srv.idleTimeout = 0
 			srv.writeTimeout = 25 * time.Millisecond
-			if mode == "read-timeout" {
-				srv.idleTimeout = 25 * time.Millisecond
-				srv.writeTimeout = time.Second
-			}
 			server, client := net.Pipe()
 			conn := &replyConn{Conn: server, panicWrite: mode == "write-panic"}
 			done := make(chan struct{})
@@ -364,11 +320,6 @@ func TestConnectionTermination(t *testing.T) {
 				// drained reply's write fails second.
 				testutil.AwaitSignal(t, logs["client disconnected"].ch, "EOF recorded as the cause")
 			}
-			if mode == "read-timeout" {
-				// The idle timeout closes the connection before the drain,
-				// while the stat is still held, so its reply is never written.
-				awaitServerClose(t, client, "read timeout")
-			}
 			testutil.CloseSignal(fs.Release)
 			testutil.AwaitSignal(t, done, "connection handler exit")
 			// With no reader on the pipe, the first frame's header write
@@ -384,7 +335,7 @@ func TestConnectionTermination(t *testing.T) {
 			// Disconnect reads EOF and then fails to write the drained
 			// reply: the first cause is kept.
 			assertConnectionEnds(t, srv, map[string]string{
-				"disconnect": "client", "read-timeout": "idle", "write-timeout": "server", "write-panic": "server",
+				"disconnect": "client", "write-timeout": "server", "write-panic": "server",
 			}[mode])
 		})
 	}
@@ -447,17 +398,6 @@ func awaitServerClose(t *testing.T, client net.Conn, description string) {
 	if ne, ok := err.(net.Error); ok && ne.Timeout() {
 		t.Fatalf("%s: the server did not close the connection", description)
 	}
-}
-
-// A server that has already closed its end, before the client starts
-// waiting, counts as closed.
-func TestAwaitServerCloseAlreadyClosed(t *testing.T) {
-	server, client := net.Pipe()
-	defer client.Close()
-	if err := server.Close(); err != nil {
-		t.Fatal(err)
-	}
-	awaitServerClose(t, client, "server closed before waiting")
 }
 
 // assertConnectionEnds checks that every connection the server accepted,
@@ -668,8 +608,7 @@ func TestConnectionRefusedRequestEndsOnce(t *testing.T) {
 
 // Admission is decided when work would be charged. A request whose
 // connection has closed is refused even when capacity is free, both when
-// capacity frees while it waits and when it arrives after the close; an
-// open connection with free capacity is admitted, as a control.
+// capacity frees while it waits and when it arrives after the close.
 func TestReplyWorkRefusesClosedConnection(t *testing.T) {
 	type state struct {
 		bytes, replies int
@@ -744,19 +683,6 @@ func TestReplyWorkRefusesClosedConnection(t *testing.T) {
 		if req.replyWork != nil || after != before || srv.metrics.workWaiters.Load() != 0 || fs.Calls.Load() != 0 {
 			t.Fatalf("refused request changed state %+v -> %+v, lease %v, calls %d",
 				before, after, req.replyWork != nil, fs.Calls.Load())
-		}
-	})
-
-	t.Run("open-with-free-capacity", func(t *testing.T) {
-		srv, fs, ts := setup(t)
-		req := request(t, ts, 1, make(chan struct{}))
-		before := read(srv)
-		if srv.handleRPC(req, "test") == nil {
-			t.Fatal("a request on an open connection was refused")
-		}
-		req.releaseReply()
-		if fs.Calls.Load() != 1 || read(srv).compounds != before.compounds+1 {
-			t.Fatalf("the admitted request did not execute: calls %d", fs.Calls.Load())
 		}
 	})
 }

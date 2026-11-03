@@ -60,7 +60,6 @@ type claimFHRestart struct {
 	conn        net.Conn
 	xid         uint32
 	wire        uint64
-	oldWire     uint64 // the first process's clientid
 	incarnation uint64 // the writer's incarnation, from the first process
 	name, owner string
 	fh          []byte // the handle the client holds: H
@@ -102,7 +101,6 @@ func newRestartedWriter(t *testing.T, name string, replacement bool, now func() 
 	conn := dial(t, addr)
 	xid := uint32(1)
 	wire := setupClient(t, conn, &xid)
-	f.oldWire = wire
 	f.incarnation = incarnationForTest(t, first, wire)
 	healthy, healthyFH := openCreateFile(t, conn, &xid, wire, "healthy")
 	writeFileAt(t, conn, &xid, healthyFH, healthy, 0, []byte("closed"))

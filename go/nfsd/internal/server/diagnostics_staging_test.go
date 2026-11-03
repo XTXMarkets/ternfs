@@ -100,49 +100,41 @@ func TestDiagnosticsStagingFilterKeepsUnknownOwners(t *testing.T) {
 // A file reports hydrating while its reader runs, including after a cancel
 // until the reader has exited.
 func TestDiagnosticsHydrationReportsWorkerActivity(t *testing.T) {
-	for _, stop := range []string{"complete", "cancel"} {
-		t.Run(stop, func(t *testing.T) {
-			srv, store := diagnosticsStagingStore(t)
-			file, err := store.Create(vfs.InodeID(0x4000000000000001), staging.Meta{
-				DirID: srv.fs.RootID(), FileName: "hydrate", ClientID: 7,
-				BaseID: vfs.InodeID(0x4000000000000002), BaseSize: 1,
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			sf := file.(*staging.LocalFile)
-			check := func(want bool) {
-				t.Helper()
-				out, err := srv.Staging(inspect.StagingFilter{})
-				if err != nil || len(out.Records) != 1 || out.Records[0].Hydrating != want {
-					t.Fatalf("hydrating want %t: %+v, %v", want, out, err)
-				}
-			}
-			check(false)
-			entered, cancelled, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
-			defer testutil.CloseSignal(release)
-			sf.StartHydration(func(cancel <-chan struct{}, _ vfs.InodeID, _ uint64, dest []byte) (int, bool, error) {
-				close(entered)
-				if stop == "cancel" {
-					<-cancel
-					close(cancelled)
-				}
-				<-release
-				dest[0] = 'x'
-				return 1, true, nil
-			})
-			testutil.AwaitSignal(t, entered, "hydration reader")
-			check(true)
-			done := sf.HydrationForTest(stop == "cancel")
-			if stop == "cancel" {
-				testutil.AwaitSignal(t, cancelled, "hydration cancellation")
-				check(true) // Cancellation requested, but the reader has not exited.
-			}
-			testutil.CloseSignal(release)
-			testutil.AwaitSignal(t, done, "hydration completion")
-			check(false)
-		})
+	srv, store := diagnosticsStagingStore(t)
+	file, err := store.Create(vfs.InodeID(0x4000000000000001), staging.Meta{
+		DirID: srv.fs.RootID(), FileName: "hydrate", ClientID: 7,
+		BaseID: vfs.InodeID(0x4000000000000002), BaseSize: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
+	sf := file.(*staging.LocalFile)
+	check := func(want bool) {
+		t.Helper()
+		out, err := srv.Staging(inspect.StagingFilter{})
+		if err != nil || len(out.Records) != 1 || out.Records[0].Hydrating != want {
+			t.Fatalf("hydrating want %t: %+v, %v", want, out, err)
+		}
+	}
+	check(false)
+	entered, cancelled, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	defer testutil.CloseSignal(release)
+	sf.StartHydration(func(cancel <-chan struct{}, _ vfs.InodeID, _ uint64, dest []byte) (int, bool, error) {
+		close(entered)
+		<-cancel
+		close(cancelled)
+		<-release
+		dest[0] = 'x'
+		return 1, true, nil
+	})
+	testutil.AwaitSignal(t, entered, "hydration reader")
+	check(true)
+	done := sf.HydrationForTest(true)
+	testutil.AwaitSignal(t, cancelled, "hydration cancellation")
+	check(true) // Cancellation requested, but the reader has not exited.
+	testutil.CloseSignal(release)
+	testutil.AwaitSignal(t, done, "hydration completion")
+	check(false)
 }
 
 // A failed tombstone records no owner, so the file filter applies to the

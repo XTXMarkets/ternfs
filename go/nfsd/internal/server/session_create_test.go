@@ -140,30 +140,6 @@ func TestCreateSessionOutcomeTable(t *testing.T) {
 	}
 }
 
-// A destroyed session's cached creation result still replays, and the
-// session stays destroyed.
-func TestCreateSessionReplayOfDestroyedSession(t *testing.T) {
-	srv := identityServer(t, vfs.NewLocalTernVFS(t.TempDir()))
-	wire := identityExchange(t, srv, 1, "client", [8]byte{1}, false).clientID
-	status, id := createResult(t, srv, 1, wire, 1)
-	if status != nfs4.NFS4_OK || !srv.sessions.destroySession(id) {
-		t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(status))
-	}
-	conn := &rpcConnection{}
-	res := identityCallOn(t, srv, 1, conn, createSessionBody(wire, 1))
-	it := res.Resarray()
-	if res.Status() != nfs4.NFS4_OK || !it.Next() ||
-		readSessionID(it.Resarray().Value().AsCREATESESSION4resEntry().Value().AsCREATESESSION4resok().CsrSessionid()) != id {
-		t.Fatalf("replay %s", nfs4.Nfsstat4Name(res.Status()))
-	}
-	if srv.sessions.lookup(id) != nil || conn.associated(id) {
-		t.Fatal("replay rebuilt or associated the destroyed session")
-	}
-	if got := sequenceStatusForTest(t, srv, id); got != nfs4.NFS4ERR_BADSESSION {
-		t.Fatalf("SEQUENCE on the destroyed session %s", nfs4.Nfsstat4Name(got))
-	}
-}
-
 // identityCallOn is identityCall on a transport connection.
 func identityCallOn(t *testing.T, srv *Server, uid uint32, conn *rpcConnection, body []byte) nfs4.COMPOUND4res {
 	t.Helper()

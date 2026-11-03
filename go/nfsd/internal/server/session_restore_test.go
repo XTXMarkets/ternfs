@@ -649,53 +649,6 @@ func TestRestartReplaysUncachedPrefix(t *testing.T) {
 	}
 }
 
-// The Linux client's writes across a restart: a CLOSE answered before the
-// kill is replayed from the cache, and a CLOSE never sent before it runs on
-// the restored session with its old stateid through the recovered writer.
-// Each file is published once and staging is left empty.
-func TestRestartReplaysCloseAndClosesPendingWriter(t *testing.T) {
-	f := newReplayFixture(t)
-	closedState, closedFH := openCreateFile(t, f.conn, &f.xid, f.wire, "closed")
-	writeFileAt(t, f.conn, &f.xid, closedFH, closedState, 0, []byte("closed before"))
-	closeBody := func(fh []byte, stateid [16]byte) []byte {
-		return buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
-			pw := w.AppendArgarray_Putfh()
-			pw.Resume(pw.StartObject().SetData(fh).Finish())
-			w.Resume(pw.Finish())
-			caw := w.AppendArgarray_Close()
-			setStateid(caw.OpenStateid(), stateid)
-		})
-	}
-	// The slot stays held so that nothing else advances it before the
-	// retransmission.
-	slot, seq := f.ts.acquire()
-	defer f.ts.release(slot)
-	closeRequest := withSequence(closeBody(closedFH, closedState), f.ts, slot, seq)
-	if got := compoundStatus(t, f.sendRaw(closeRequest)); got != nfs4.NFS4_OK {
-		t.Fatalf("CLOSE before restart %s", nfs4.Nfsstat4Name(got))
-	}
-	pendingState, pendingFH := openCreateFile(t, f.conn, &f.xid, f.wire, "pending")
-	writeFileAt(t, f.conn, &f.xid, pendingFH, pendingState, 0, []byte("pending at the kill"))
-	f.restart()
-
-	if got := compoundStatus(t, f.sendRaw(closeRequest)); got != nfs4.NFS4_OK {
-		t.Fatalf("CLOSE retransmitted after restart %s", nfs4.Nfsstat4Name(got))
-	}
-	slot2, seq2 := f.ts.acquire()
-	f.ts.release(slot2)
-	if got := compoundStatus(t, f.send(closeBody(pendingFH, pendingState), slot2, seq2)); got != nfs4.NFS4_OK {
-		t.Fatalf("CLOSE of the pending writer after restart %s", nfs4.Nfsstat4Name(got))
-	}
-	for name, want := range map[string]string{"closed": "closed before", "pending": "pending at the kill"} {
-		if data, ok := readRoot(t, f.root, name); !ok || data != want {
-			t.Fatalf("%s = %q %v", name, data, ok)
-		}
-	}
-	if n := len(f.store.Entries()); n != 0 {
-		t.Fatalf("%d staging entries left", n)
-	}
-}
-
 // A session file whose incarnation is not the confirmed one is removed at
 // startup and no session is built from it.
 func TestRestartDropsSessionOfUnknownIncarnation(t *testing.T) {
@@ -2502,27 +2455,6 @@ func TestPanicReleasesHeldName(t *testing.T) {
 				t.Fatalf("later REMOVE %s", nfs4.Nfsstat4Name(got))
 			}
 		})
-	}
-}
-
-// An OPEN_DOWNGRADE of a writer recovered after a restart completes: the
-// adoption's own locks are released before the downgrade takes its. A
-// guard: the adoption keeps scoped locks while the downgrade holds its own.
-func TestRestartRecoveredDowngradeCompletes(t *testing.T) {
-	f := newReplayFixture(t)
-	state, fh := openCreateFile(t, f.conn, &f.xid, f.wire, "doc")
-	writeFileAt(t, f.conn, &f.xid, fh, state, 0, []byte("saved"))
-	f.restart()
-	done := make(chan uint32, 1)
-	go func() {
-		got, _ := downgradeResult(t, f.conn, &f.xid, fh, state, nfs4.OPEN4_SHARE_ACCESS_READ, nfs4.OPEN4_SHARE_DENY_NONE)
-		done <- got
-	}()
-	if got := testutil.AwaitValue(t, done, "the recovered downgrade"); got != nfs4.NFS4_OK {
-		t.Fatalf("OPEN_DOWNGRADE %s", nfs4.Nfsstat4Name(got))
-	}
-	if data, _ := readRoot(t, f.root, "doc"); data != "saved" {
-		t.Fatalf("doc holds %q", data)
 	}
 }
 

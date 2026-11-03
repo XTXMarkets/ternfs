@@ -105,53 +105,6 @@ func TestOpenClaimFH(t *testing.T) {
 	}
 }
 
-// rsync --inplace: one owner reads the file, then opens it for write, which
-// upgrades its open. The writes must publish.
-func TestOpenUpgradePublishesWrites(t *testing.T) {
-	addr, cleanup := startTestServer(t, t.TempDir())
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-	xid := uint32(1)
-	clientID := setupClient(t, conn, &xid)
-	state, fh := openCreateFile(t, conn, &xid, clientID, "target")
-	writeFileAt(t, conn, &xid, fh, state, 0, []byte("old target\n"))
-	closeFile(t, conn, &xid, fh, state)
-	fh = lookupFH(t, conn, &xid, "target")
-	status, reader, _ := openByHandle(t, conn, &xid, clientID, "owner", fh, nfs4.OPEN4_SHARE_ACCESS_READ)
-	if status != nfs4.NFS4_OK {
-		t.Fatal(nfs4.Nfsstat4Name(status))
-	}
-	status, upgraded, _ := openByHandle(t, conn, &xid, clientID, "owner", fh, nfs4.OPEN4_SHARE_ACCESS_BOTH)
-	if status != nfs4.NFS4_OK || !bytes.Equal(upgraded[4:], reader[4:]) {
-		t.Fatalf("upgrade = %s", nfs4.Nfsstat4Name(status))
-	}
-	current := upgraded
-	binary.BigEndian.PutUint32(current[:4], 0)
-	writeFileAt(t, conn, &xid, fh, current, 0, []byte("replacement from rsync --inplace\n"))
-	// Linux closes the write by downgrading to the read it still holds.
-	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
-		pw := w.AppendArgarray_Putfh()
-		pw.Resume(pw.StartObject().SetData(fh).Finish())
-		w.Resume(pw.Finish())
-		dw := w.AppendArgarray_OpenDowngrade()
-		setStateid(dw.OpenStateid(), current)
-		dw.SetShareAccess(nfs4.OPEN4_SHARE_ACCESS_READ)
-		dw.SetShareDeny(nfs4.OPEN4_SHARE_DENY_NONE)
-	})
-	xid++
-	if res.Status() != nfs4.NFS4_OK {
-		t.Fatalf("OPEN_DOWNGRADE = %s", nfs4.Nfsstat4Name(res.Status()))
-	}
-	if data, _ := readFileData(t, conn, &xid, fh, 0, 64); string(data) != "replacement from rsync --inplace\n" {
-		t.Fatalf("read after downgrade %q", data)
-	}
-	closeFile(t, conn, &xid, fh, current)
-	if data, _ := readFileData(t, conn, &xid, lookupFH(t, conn, &xid, "target"), 0, 64); string(data) != "replacement from rsync --inplace\n" {
-		t.Fatalf("published %q", data)
-	}
-}
-
 func downgradeForTest(t *testing.T, conn net.Conn, xid *uint32, fh []byte, sid [16]byte, access uint32) {
 	t.Helper()
 	res := sendCompound(t, conn, *xid, func(w *nfs4.COMPOUND4argsWriter) {

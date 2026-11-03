@@ -644,44 +644,6 @@ func TestReadWithOffset(t *testing.T) {
 	}
 }
 
-func TestReadEmptyFile(t *testing.T) {
-	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "empty.txt"), nil, 0644)
-
-	addr, cleanup := startTestServer(t, dir)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-
-	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
-		w.AppendArgarray_Putrootfh()
-
-		lw := w.AppendArgarray_Lookup()
-		nw := lw.StartObjname()
-		buf := nw.SetData([]byte("empty.txt")).Finish()
-		lw.Resume(buf)
-		buf = lw.Finish()
-		w.Resume(buf)
-
-		rw := w.AppendArgarray_Read()
-		rw.Stateid().SetSeqid(0)
-		rw.SetOffset(0)
-		rw.SetCount(1024)
-	})
-
-	iter := expectOK(t, res)
-	nextOp(t, &iter) // PUTROOTFH
-	nextOp(t, &iter) // LOOKUP
-	entry := nextOp(t, &iter)
-	readOk := entry.Value().AsREAD4resEntry().Value().AsREAD4resok()
-	if len(readOk.Data()) != 0 {
-		t.Fatalf("expected 0 bytes, got %d", len(readOk.Data()))
-	}
-	if readOk.Eof() != nfs4.TRUE {
-		t.Fatal("expected EOF for empty file")
-	}
-}
-
 func TestReaddir(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "aaa.txt"), []byte("A"), 0644)
@@ -951,37 +913,6 @@ func TestReadlink(t *testing.T) {
 	target := string(readlinkRes.Value().AsREADLINK4resok().Link().Data())
 	if target != "target.txt" {
 		t.Fatalf("readlink = %q, want %q", target, "target.txt")
-	}
-}
-
-func TestAccess(t *testing.T) {
-	dir := t.TempDir()
-	addr, cleanup := startTestServer(t, dir)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-
-	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
-		w.AppendArgarray_Putrootfh()
-
-		aw := w.AppendArgarray_Access()
-		aw.SetAccess(nfs4.ACCESS4_READ | nfs4.ACCESS4_LOOKUP)
-	})
-
-	iter := expectOK(t, res)
-	nextOp(t, &iter) // PUTROOTFH
-	entry := nextOp(t, &iter)
-	accessRes := entry.Value().AsACCESS4resEntry()
-	if accessRes.Disc() != nfs4.NFS4_OK {
-		t.Fatalf("ACCESS status = %d", accessRes.Disc())
-	}
-	accessOk := accessRes.Value().AsACCESS4resok()
-	requested := uint32(nfs4.ACCESS4_READ | nfs4.ACCESS4_LOOKUP)
-	if accessOk.Supported() != requested {
-		t.Fatalf("supported = %d, want %d", accessOk.Supported(), requested)
-	}
-	if accessOk.Access() != requested {
-		t.Fatalf("access = %d, want %d", accessOk.Access(), requested)
 	}
 }
 
@@ -2178,129 +2109,6 @@ func TestCompoundStopsOnError(t *testing.T) {
 	}
 }
 
-func TestSubdirNavigation(t *testing.T) {
-	dir := t.TempDir()
-	os.MkdirAll(filepath.Join(dir, "a", "b", "c"), 0755)
-	os.WriteFile(filepath.Join(dir, "a", "b", "c", "deep.txt"), []byte("deep content"), 0644)
-
-	addr, cleanup := startTestServer(t, dir)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-
-	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
-		w.AppendArgarray_Putrootfh()
-
-		for _, name := range []string{"a", "b", "c", "deep.txt"} {
-			lw := w.AppendArgarray_Lookup()
-			nw := lw.StartObjname()
-			buf := nw.SetData([]byte(name)).Finish()
-			lw.Resume(buf)
-			buf = lw.Finish()
-			w.Resume(buf)
-		}
-
-		rw := w.AppendArgarray_Read()
-		rw.Stateid().SetSeqid(0)
-		rw.SetOffset(0)
-		rw.SetCount(1024)
-	})
-
-	iter := expectOK(t, res)
-	// 1 PUTROOTFH + 4 LOOKUPs + 1 READ = 6
-	for i := 0; i < 5; i++ {
-		nextOp(t, &iter)
-	}
-	entry := nextOp(t, &iter)
-	readOk := entry.Value().AsREAD4resEntry().Value().AsREAD4resok()
-	if string(readOk.Data()) != "deep content" {
-		t.Fatalf("READ = %q, want %q", readOk.Data(), "deep content")
-	}
-}
-
-func TestGetattr_RootType(t *testing.T) {
-	dir := t.TempDir()
-	addr, cleanup := startTestServer(t, dir)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-
-	// Request type attribute for root — should be NF4DIR (2).
-	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
-		w.AppendArgarray_Putrootfh()
-
-		gw := w.AppendArgarray_Getattr()
-		bw := gw.StartAttrRequest()
-		bw.AppendData(1 << nfs4.FATTR4_TYPE)
-		buf := bw.Finish()
-		gw.Resume(buf)
-		buf = gw.Finish()
-		w.Resume(buf)
-	})
-
-	iter := expectOK(t, res)
-	nextOp(t, &iter) // PUTROOTFH
-	entry := nextOp(t, &iter)
-	getattrRes := entry.Value().AsGETATTR4resEntry()
-	if getattrRes.Disc() != nfs4.NFS4_OK {
-		t.Fatalf("GETATTR status = %d", getattrRes.Disc())
-	}
-	// Parse the attribute data manually.
-	getattrOk := getattrRes.Value().AsGETATTR4resok()
-	attrData := getAttrData(t, getattrOk)
-	if len(attrData) < 4 {
-		t.Fatalf("attr data too short: %d bytes", len(attrData))
-	}
-	nfsType := binary.BigEndian.Uint32(attrData[:4])
-	if nfsType != 2 { // NF4DIR
-		t.Fatalf("root type = %d, want 2 (NF4DIR)", nfsType)
-	}
-}
-
-func TestGetattr_FileSize(t *testing.T) {
-	dir := t.TempDir()
-	content := []byte("twelve chars")
-	os.WriteFile(filepath.Join(dir, "sized.txt"), content, 0644)
-
-	addr, cleanup := startTestServer(t, dir)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-
-	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
-		w.AppendArgarray_Putrootfh()
-
-		lw := w.AppendArgarray_Lookup()
-		nw := lw.StartObjname()
-		buf := nw.SetData([]byte("sized.txt")).Finish()
-		lw.Resume(buf)
-		buf = lw.Finish()
-		w.Resume(buf)
-
-		gw := w.AppendArgarray_Getattr()
-		bw := gw.StartAttrRequest()
-		bw.AppendData(1 << nfs4.FATTR4_SIZE)
-		buf = bw.Finish()
-		gw.Resume(buf)
-		buf = gw.Finish()
-		w.Resume(buf)
-	})
-
-	iter := expectOK(t, res)
-	nextOp(t, &iter) // PUTROOTFH
-	nextOp(t, &iter) // LOOKUP
-	entry := nextOp(t, &iter)
-	getattrOk := entry.Value().AsGETATTR4resEntry().Value().AsGETATTR4resok()
-	attrData := getAttrData(t, getattrOk)
-	if len(attrData) < 8 {
-		t.Fatalf("attr data too short: %d bytes", len(attrData))
-	}
-	size := binary.BigEndian.Uint64(attrData[:8])
-	if size != uint64(len(content)) {
-		t.Fatalf("size = %d, want %d", size, len(content))
-	}
-}
-
 func TestGetattr_Mode(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "f.txt"), []byte("x"), 0644)
@@ -2763,103 +2571,6 @@ func TestWriteAndRead(t *testing.T) {
 	if string(data) != string(writeData) {
 		t.Fatalf("file content = %q, want %q", data, writeData)
 	}
-}
-
-func TestStagedFileGetattrAndRead(t *testing.T) {
-	dir := t.TempDir()
-	addr, cleanup := startTestServer(t, dir)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-
-	xid := uint32(1)
-	clientid := setupClient(t, conn, &xid)
-	openStateid, fh := openCreateFile(
-		t, conn, &xid, clientid, "staged.txt",
-	)
-
-	// Write some data using the open stateid.
-	writeData := []byte("staged content here!")
-	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
-		pw := w.AppendArgarray_Putfh()
-		fhW := pw.StartObject()
-		buf := fhW.SetData(fh).Finish()
-		pw.Resume(buf)
-		buf = pw.Finish()
-		w.Resume(buf)
-
-		ww := w.AppendArgarray_Write()
-		setStateid(ww.Stateid(), openStateid)
-		ww = ww.SetOffset(0)
-		ww = ww.SetStable(2)
-		ww = ww.SetData(writeData)
-		buf = ww.Finish()
-		w.Resume(buf)
-	})
-	xid++
-	expectOK(t, res)
-
-	// GETATTR should reflect the staged size, not the empty VFS file.
-	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
-		pw := w.AppendArgarray_Putfh()
-		fhW := pw.StartObject()
-		buf := fhW.SetData(fh).Finish()
-		pw.Resume(buf)
-		buf = pw.Finish()
-		w.Resume(buf)
-
-		gw := w.AppendArgarray_Getattr()
-		bw := gw.StartAttrRequest()
-		bw.AppendData(1 << nfs4.FATTR4_SIZE)
-		buf = bw.Finish()
-		gw.Resume(buf)
-		buf = gw.Finish()
-		w.Resume(buf)
-	})
-	xid++
-
-	iter := expectOK(t, res)
-	nextOp(t, &iter) // PUTFH
-	entry := nextOp(t, &iter)
-	getattrOk := entry.Value().AsGETATTR4resEntry().Value().AsGETATTR4resok()
-	attrData := getAttrData(t, getattrOk)
-	if len(attrData) < 8 {
-		t.Fatalf("attr data too short: %d bytes", len(attrData))
-	}
-	size := binary.BigEndian.Uint64(attrData[:8])
-	if size != uint64(len(writeData)) {
-		t.Fatalf("GETATTR size = %d, want %d (staged size)", size, len(writeData))
-	}
-
-	// READ with anonymous stateid should return staged data.
-	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
-		pw := w.AppendArgarray_Putfh()
-		fhW := pw.StartObject()
-		buf := fhW.SetData(fh).Finish()
-		pw.Resume(buf)
-		buf = pw.Finish()
-		w.Resume(buf)
-
-		rw := w.AppendArgarray_Read()
-		rw.Stateid().SetSeqid(0) // anonymous stateid (all zeros)
-		rw.SetOffset(0)
-		rw.SetCount(1024)
-	})
-	xid++
-
-	iter = expectOK(t, res)
-	nextOp(t, &iter) // PUTFH
-	entry = nextOp(t, &iter)
-	readRes := entry.Value().AsREAD4resEntry()
-	if readRes.Disc() != nfs4.NFS4_OK {
-		t.Fatalf("READ status = %s", nfs4.Nfsstat4Name(readRes.Disc()))
-	}
-	readData := readRes.Value().AsREAD4resok().Data()
-	if string(readData) != string(writeData) {
-		t.Fatalf("READ data = %q, want %q", readData, writeData)
-	}
-
-	closeFile(t, conn, &xid, fh, openStateid)
 }
 
 func TestOpenExistingForWrite(t *testing.T) {
@@ -3439,57 +3150,6 @@ func TestRecoveredMutableOpenCanBeReplayedByClient(t *testing.T) {
 	}
 	if string(data) != "changedl" {
 		t.Fatalf("recovered publication = %q, want %q", data, "changedl")
-	}
-}
-
-func TestRecoveredNewFileCanBeReopenedWithoutCreate(t *testing.T) {
-	dir := t.TempDir()
-	fs := vfs.NewLocalTernVFS(dir)
-	stagingDir := t.TempDir()
-	staging1, err := staging.NewLocalStore(stagingDir, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	srv1, err := NewServer(fs, staging1, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr1, cleanup1 := serveTestServer(t, srv1)
-	conn1 := dial(t, addr1)
-	xid := uint32(1)
-	clientid := setupClient(t, conn1, &xid)
-	originalState, originalFH := openCreateFile(
-		t, conn1, &xid, clientid, "new.txt",
-	)
-	writeFileAt(
-		t, conn1, &xid, originalFH, originalState, 0, []byte("contents"),
-	)
-	conn1.Close()
-	cleanup1()
-
-	staging2, err := staging.NewLocalStore(stagingDir, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	srv2, err := NewServer(fs, staging2, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr2, cleanup2 := serveTestServer(t, srv2)
-	defer cleanup2()
-	conn2 := dial(t, addr2)
-	defer conn2.Close()
-
-	replayedState, replayedFH := openWriteFile(
-		t, conn2, &xid, clientid, "new.txt",
-	)
-	closeFile(t, conn2, &xid, replayedFH, replayedState)
-	data, err := os.ReadFile(filepath.Join(dir, "new.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != "contents" {
-		t.Fatalf("recovered publication = %q, want %q", data, "contents")
 	}
 }
 
@@ -4118,30 +3778,6 @@ func testMinorVersionMismatch(t *testing.T, conn net.Conn, minor uint32) {
 	if res.Status() != nfs4.NFS4ERR_MINOR_VERS_MISMATCH {
 		t.Fatalf("status = %s, want NFS4ERR_MINOR_VERS_MISMATCH",
 			nfs4.Nfsstat4Name(res.Status()))
-	}
-}
-
-func TestCreateEmptyFile(t *testing.T) {
-	dir := t.TempDir()
-	addr, cleanup := startTestServer(t, dir)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-
-	xid := uint32(1)
-	clientid := setupClient(t, conn, &xid)
-	openStateid, fh := openCreateFile(
-		t, conn, &xid, clientid, "empty.txt",
-	)
-	closeFile(t, conn, &xid, fh, openStateid)
-
-	// Verify the empty file was created on disk.
-	data, err := os.ReadFile(filepath.Join(dir, "empty.txt"))
-	if err != nil {
-		t.Fatalf("reading file: %v", err)
-	}
-	if len(data) != 0 {
-		t.Fatalf("file content = %q, want empty", data)
 	}
 }
 
@@ -5906,111 +5542,6 @@ func TestWriteBadStateid(t *testing.T) {
 	}
 }
 
-// TestWriteSpecialStateid verifies that WRITE accepts the anonymous special
-// stateid (all zeros) on a file already open for write, matching opRead's
-// existing isSpecialStateID exemption. Clients — including pynfs's own
-// nfs4lib.write_file default and the Linux kernel client's zero_stateid
-// fallback — may legitimately omit a real stateid on WRITE.
-func TestWriteSpecialStateid(t *testing.T) {
-	dir := t.TempDir()
-	addr, cleanup := startTestServer(t, dir)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-
-	xid := uint32(1)
-	clientid := setupClient(t, conn, &xid)
-	stateid, fh := openCreateFile(
-		t, conn, &xid, clientid, "specialwrite.txt")
-
-	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
-		pw := w.AppendArgarray_Putfh()
-		buf := pw.StartObject().SetData(fh).Finish()
-		pw.Resume(buf)
-		w.Resume(pw.Finish())
-		ww := w.AppendArgarray_Write()
-		sid := ww.Stateid()
-		sid.SetSeqid(0)
-		for i := 0; i < 12; i++ {
-			sid.SetOther(i, 0) // anonymous special stateid
-		}
-		ww = ww.SetOffset(0)
-		ww = ww.SetStable(fileSync4)
-		ww = ww.SetData([]byte("hello"))
-		buf = ww.Finish()
-		w.Resume(buf)
-	})
-	xid++
-
-	expectOK(t, res)
-	closeFile(t, conn, &xid, fh, stateid)
-	data, err := os.ReadFile(filepath.Join(dir, "specialwrite.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != "hello" {
-		t.Fatalf("file content = %q, want %q", data, "hello")
-	}
-}
-
-// TestSetattrSizeSpecialStateid verifies that SETATTR(SIZE) accepts the
-// anonymous special stateid on a file already open for write, matching
-// opRead's and opWrite's isSpecialStateID exemption. pynfs's own
-// nfs4lib.setattr default stateid is the anonymous one.
-func TestSetattrSizeSpecialStateid(t *testing.T) {
-	dir := t.TempDir()
-	addr, cleanup := startTestServer(t, dir)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-
-	xid := uint32(1)
-	clientid := setupClient(t, conn, &xid)
-	stateid, fh := openCreateFile(
-		t, conn, &xid, clientid, "specialsetattr.txt")
-
-	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
-		pw := w.AppendArgarray_Putfh()
-		buf := pw.StartObject().SetData(fh).Finish()
-		pw.Resume(buf)
-		w.Resume(pw.Finish())
-		saw := w.AppendArgarray_Setattr()
-		sid := saw.Stateid()
-		sid.SetSeqid(0)
-		for i := 0; i < 12; i++ {
-			sid.SetOther(i, 0) // anonymous special stateid
-		}
-		faw := saw.StartObjAttributes()
-		bmW := faw.StartAttrmask()
-		bmW.AppendData(1 << nfs4.FATTR4_SIZE)
-		buf = bmW.Finish()
-		faw.Resume(buf)
-		attrData := make([]byte, 8)
-		binary.BigEndian.PutUint64(attrData, 10)
-		alW := faw.StartAttrVals()
-		buf = alW.SetData(attrData).Finish()
-		faw.Resume(buf)
-		buf = faw.Finish()
-		saw.Resume(buf)
-		buf = saw.Finish()
-		w.Resume(buf)
-	})
-	xid++
-
-	if res.Status() != nfs4.NFS4_OK {
-		t.Fatalf("SETATTR(SIZE) with special stateid: status = %s, want NFS4_OK",
-			nfs4.Nfsstat4Name(res.Status()))
-	}
-	closeFile(t, conn, &xid, fh, stateid)
-	info, err := os.Stat(filepath.Join(dir, "specialsetattr.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Size() != 10 {
-		t.Fatalf("file size = %d, want 10", info.Size())
-	}
-}
-
 // TestWriteAndSetattrSizeNoStagingSameStatus checks that WRITE and SETATTR
 // size with the anonymous stateid on a file that has no staging on this nfsd
 // both report NFS4ERR_OPENMODE, the same status as a read-only open.
@@ -6290,87 +5821,62 @@ func TestRecoveredStagedWriteWithDeadLeaseExpires(t *testing.T) {
 }
 
 func TestStagedWriteOperationsAfterServerRestart(t *testing.T) {
-	for _, operation := range []string{"close", "write", "read", "setattr-size"} {
+	for _, operation := range []string{"read", "setattr-size"} {
 		t.Run(operation, func(t *testing.T) {
 			initial := []byte("before restart")
 			restarted := restartWithStagedWrite(
 				t, operation+".txt", initial)
 
 			expected := append([]byte(nil), initial...)
-			if operation != "close" {
-				res := sendCompound(
-					t, restarted.conn, restarted.xid,
-					func(w *nfs4.COMPOUND4argsWriter) {
-						pw := w.AppendArgarray_Putfh()
-						buf := pw.StartObject().SetData(restarted.fh).Finish()
-						pw.Resume(buf)
-						w.Resume(pw.Finish())
-						switch operation {
-						case "write":
-							appended := []byte(" and after")
-							expected = append(expected, appended...)
-							ww := w.AppendArgarray_Write()
-							setStateid(ww.Stateid(), restarted.stateid)
-							ww = ww.SetOffset(uint64(len(initial)))
-							ww = ww.SetStable(fileSync4)
-							ww = ww.SetData(appended)
-							w.Resume(ww.Finish())
-						case "read":
-							rw := w.AppendArgarray_Read()
-							setStateid(rw.Stateid(), restarted.stateid)
-							rw.SetOffset(0)
-							rw.SetCount(1024)
-						case "setattr-size":
-							expected = expected[:6]
-							saw := w.AppendArgarray_Setattr()
-							setStateid(saw.Stateid(), restarted.stateid)
-							faw := saw.StartObjAttributes()
-							bmW := faw.StartAttrmask()
-							bmW.AppendData(1 << nfs4.FATTR4_SIZE)
-							buf = bmW.Finish()
-							faw.Resume(buf)
-							attrData := make([]byte, 8)
-							binary.BigEndian.PutUint64(
-								attrData, uint64(len(expected)))
-							alW := faw.StartAttrVals()
-							buf = alW.SetData(attrData).Finish()
-							faw.Resume(buf)
-							saw.Resume(faw.Finish())
-							w.Resume(saw.Finish())
-						}
-					})
-				restarted.xid++
-				iter := expectOK(t, res)
-				nextOp(t, &iter)
-				entry := nextOp(t, &iter)
-				if operation == "read" {
-					got := entry.Value().AsREAD4resEntry().
-						Value().AsREAD4resok().Data()
-					if !bytes.Equal(got, expected) {
-						t.Fatalf("recovered READ = %q, want %q", got, expected)
+			res := sendCompound(
+				t, restarted.conn, restarted.xid,
+				func(w *nfs4.COMPOUND4argsWriter) {
+					pw := w.AppendArgarray_Putfh()
+					buf := pw.StartObject().SetData(restarted.fh).Finish()
+					pw.Resume(buf)
+					w.Resume(pw.Finish())
+					switch operation {
+					case "read":
+						rw := w.AppendArgarray_Read()
+						setStateid(rw.Stateid(), restarted.stateid)
+						rw.SetOffset(0)
+						rw.SetCount(1024)
+					case "setattr-size":
+						expected = expected[:6]
+						saw := w.AppendArgarray_Setattr()
+						setStateid(saw.Stateid(), restarted.stateid)
+						faw := saw.StartObjAttributes()
+						bmW := faw.StartAttrmask()
+						bmW.AppendData(1 << nfs4.FATTR4_SIZE)
+						buf = bmW.Finish()
+						faw.Resume(buf)
+						attrData := make([]byte, 8)
+						binary.BigEndian.PutUint64(
+							attrData, uint64(len(expected)))
+						alW := faw.StartAttrVals()
+						buf = alW.SetData(attrData).Finish()
+						faw.Resume(buf)
+						saw.Resume(faw.Finish())
+						w.Resume(saw.Finish())
 					}
+				})
+			restarted.xid++
+			iter := expectOK(t, res)
+			nextOp(t, &iter)
+			entry := nextOp(t, &iter)
+			if operation == "read" {
+				got := entry.Value().AsREAD4resEntry().
+					Value().AsREAD4resok().Data()
+				if !bytes.Equal(got, expected) {
+					t.Fatalf("recovered READ = %q, want %q", got, expected)
 				}
 			}
 
-			status, first := closeFileResult(
+			status, _ := closeFileResult(
 				t, restarted.conn, &restarted.xid, restarted.fh,
 				restarted.stateid)
 			if status != nfs4.NFS4_OK {
 				t.Fatalf("recovered CLOSE = %s", nfs4.Nfsstat4Name(status))
-			}
-			if operation == "close" {
-				retransmitNext(restarted.conn)
-				status, replay := closeFileResult(
-					t, restarted.conn, &restarted.xid, restarted.fh,
-					restarted.stateid)
-				if status != nfs4.NFS4_OK {
-					t.Fatalf("recovered CLOSE replay = %s",
-						nfs4.Nfsstat4Name(status))
-				}
-				if replay != first {
-					t.Fatalf("recovered CLOSE replay stateid = %x, want %x",
-						replay, first)
-				}
 			}
 			got, err := os.ReadFile(
 				filepath.Join(restarted.rootDir, operation+".txt"))

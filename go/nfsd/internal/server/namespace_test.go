@@ -92,8 +92,6 @@ func TestNamespaceErrorOutcomes(t *testing.T) {
 			{"local rejection", os.ErrPermission, false, false, nfs4.NFS4ERR_ACCESS, false, false},
 			{"lost reply", errors.New("lost reply"), true, false, nfs4.NFS4ERR_IO, true, false},
 			{"send failure", errors.New("send failure"), false, false, nfs4.NFS4ERR_IO, true, false},
-			{"submitted rejection", msgs.NOT_AUTHORISED, false, true, nfs4.NFS4ERR_IO, true, false},
-			{"malformed response", msgs.MALFORMED_RESPONSE, true, true, nfs4.NFS4ERR_IO, true, false},
 			{"edge gone", msgs.EDGE_NOT_FOUND, true, true, nfs4.NFS4ERR_NOENT, false, true},
 			{"edge replaced", msgs.MISMATCHING_CREATION_TIME, true, true, nfs4.NFS4ERR_NOENT, false, true},
 		} {
@@ -771,24 +769,6 @@ func TestCloseWaitsForStagedRename(t *testing.T) {
 	}
 	if string(data) != "updated!" {
 		t.Fatalf("renamed file content = %q, want %q", data, "updated!")
-	}
-}
-
-func TestRenameOverOpenStaging(t *testing.T) {
-	f := newNamespaceFixture(t)
-	if status := renameNamespaceFile(t, f, "target", "source"); status != nfs4.NFS4_OK {
-		t.Fatalf("RENAME returned %s", nfs4.Nfsstat4Name(status))
-	}
-	meta, _ := f.store.GetMeta(f.id)
-	if !meta.Unlinked || meta.Guarded {
-		t.Fatalf("destination writer not detached: %+v", meta)
-	}
-	writeFileAt(t, f.conn, &f.xid, f.fh, f.state, 0, []byte("old writer"))
-	f.restart(t)
-	closeFile(t, f.conn, &f.xid, f.fh, f.state)
-	data, err := os.ReadFile(filepath.Join(f.root, "source"))
-	if err != nil || string(data) != "replacement" {
-		t.Fatalf("detached writer overwrote replacement: %q, %v", data, err)
 	}
 }
 

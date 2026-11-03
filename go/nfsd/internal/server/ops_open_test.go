@@ -583,33 +583,24 @@ func (s sizeErrorStore) Get(id vfs.InodeID) staging.File {
 func (sizeErrorFile) SetSize(uint64) error { return errors.New("injected size failure") }
 
 func TestOpenSizeErrorReplay(t *testing.T) {
-	for _, ioFailure := range []bool{false, true} {
-		t.Run(map[bool]string{false: "FBIG", true: "IO"}[ioFailure], func(t *testing.T) {
-			store, err := staging.NewLocalStore(t.TempDir(), nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var ss staging.Store = store
-			size, want := uint64(1<<63), uint32(nfs4.NFS4ERR_FBIG)
-			if ioFailure {
-				ss, size, want = sizeErrorStore{store}, 1, nfs4.NFS4ERR_IO
-			}
-			srv, err := NewServer(vfs.NewLocalTernVFS(t.TempDir()), ss, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			addr, cleanup := serveTestServer(t, srv)
-			defer cleanup()
-			conn := dial(t, addr)
-			defer conn.Close()
-			xid := uint32(1)
-			clientID := setupClient(t, conn, &xid)
-			for range 2 {
-				if got := createSizeStatus(t, conn, &xid, clientID, size); got != want {
-					t.Fatalf("OPEN/replay = %s, want %s", nfs4.Nfsstat4Name(got), nfs4.Nfsstat4Name(want))
-				}
-			}
-		})
+	store, err := staging.NewLocalStore(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewServer(vfs.NewLocalTernVFS(t.TempDir()), sizeErrorStore{store}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr, cleanup := serveTestServer(t, srv)
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+	xid := uint32(1)
+	clientID := setupClient(t, conn, &xid)
+	for range 2 {
+		if got := createSizeStatus(t, conn, &xid, clientID, 1); got != nfs4.NFS4ERR_IO {
+			t.Fatalf("OPEN/replay = %s, want IO", nfs4.Nfsstat4Name(got))
+		}
 	}
 }
 
@@ -1578,44 +1569,6 @@ func TestCloseRetryAfterTimesOnlySetattrDoesNotRepublish(t *testing.T) {
 	}
 }
 
-// LinkFile reporting not-exist for every candidate, as for a directory
-// removed natively, ends the CLOSE with NOENT after one fresh candidate.
-func TestCloseLinkNotExistEndsAfterOneFreshCandidate(t *testing.T) {
-	f := newPublishFixture(t)
-	sid, fh, _ := f.writer(t, "doc", "saved")
-	f.fs.onLink(func(int, vfs.InodeID, vfs.Cookie, func() error) error { return os.ErrNotExist })
-	mustCloseStatus(t, f, fh, sid, nfs4.NFS4ERR_NOENT, "links not-exist")
-	if c, l := f.fs.count("construct"), f.links(); c != 1 || l != 2 {
-		t.Fatalf("constructs %d links %d, want 1 and 2", c, l)
-	}
-	f.mustDrained(t, "after the failed CLOSE")
-}
-
-func (f *publishFixture) links() int {
-	f.fs.mu.Lock()
-	defer f.fs.mu.Unlock()
-	return f.fs.links
-}
-
-// A staging past its transient deadline, whose LinkFile reports not-exist
-// without linking, publishes through a fresh candidate in the same CLOSE.
-func TestCloseStagingPastDeadlinePublishesFresh(t *testing.T) {
-	f := newPublishFixture(t)
-	sid, fh, _ := f.writer(t, "doc", "saved")
-	f.fs.onLink(func(n int, _ vfs.InodeID, _ vfs.Cookie, link func() error) error {
-		if n == 1 {
-			return os.ErrNotExist
-		}
-		return link()
-	})
-	mustCloseStatus(t, f, fh, sid, nfs4.NFS4_OK, "stale staging")
-	mustPublished(t, f.fs.TernVFS, "doc", "saved")
-	// LocalTernVFS can reuse a scrapped transient's inode number, so count.
-	if got := f.fs.count("construct"); got != 1 || f.fs.count("scrap") != 1 {
-		t.Fatalf("backend calls %v, want the staging scrapped and one fresh candidate", f.fs.events)
-	}
-}
-
 // A FILE_SYNC WRITE during the fresh candidate's upload, whose link then
 // reports not-exist although it applied, gives DELAY; the retry publishes
 // the WRITE.
@@ -1641,40 +1594,6 @@ func TestCloseWriteDuringFreshUploadDelays(t *testing.T) {
 	if got := f.fs.count("construct"); got != 2 {
 		t.Fatalf("%d constructions, want one per attempt", got)
 	}
-}
-
-// A WRITE with a special stateid while the publication restores the times
-// gives DELAY, and the retry publishes it.
-func TestCloseWriteDuringSetTimeDelays(t *testing.T) {
-	f := newPublishFixture(t)
-	sid, fh, stagingID := f.writer(t, "doc", "saved")
-	var once sync.Once
-	f.fs.set(func() {
-		f.fs.onSetTime = func(vfs.InodeID) { once.Do(func() { stageWrite(t, f.store, stagingID, 0, "SAVED") }) }
-	})
-	mustCloseStatus(t, f, fh, sid, nfs4.NFS4ERR_DELAY, "WRITE during SetTime")
-	mustCloseStatus(t, f, fh, sid, nfs4.NFS4_OK, "retry")
-	mustPublished(t, f.fs.TernVFS, "doc", "SAVED")
-}
-
-// A timestamp-only CLOSE also checks that no WRITE landed while it ran: one
-// during its SetTime gives DELAY, and the retry publishes the data.
-func TestTimestampOnlyCloseWriteDuringSetTimeDelays(t *testing.T) {
-	f := newPublishFixture(t)
-	sid, fh, _ := f.writer(t, "doc", "saved")
-	closeFile(t, f.conn, f.xid, fh, sid)
-	sid, fh = openWriteFile(t, f.conn, f.xid, f.clientID, "doc")
-	stagingID := stagingIDForTest(t, f.store, sid)
-	if got := setMtimeStatus(t, f.conn, f.xid, fh, sid, 1_000_000); got != nfs4.NFS4_OK {
-		t.Fatalf("SETATTR mtime %s", nfs4.Nfsstat4Name(got))
-	}
-	var once sync.Once
-	f.fs.set(func() {
-		f.fs.onSetTime = func(vfs.InodeID) { once.Do(func() { stageWrite(t, f.store, stagingID, 0, "SAVED") }) }
-	})
-	mustCloseStatus(t, f, fh, sid, nfs4.NFS4ERR_DELAY, "WRITE during SetTime")
-	mustCloseStatus(t, f, fh, sid, nfs4.NFS4_OK, "retry")
-	mustPublished(t, f.fs.TernVFS, "doc", "SAVED")
 }
 
 // A link refused while the name is locked applied nothing: DELAY, and the

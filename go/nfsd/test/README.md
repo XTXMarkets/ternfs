@@ -33,7 +33,7 @@ Run from `go/nfsd`:
 make test
 make test GO_TEST_FLAGS='-race -count=1'
 make test-cluster
-make test-cluster GO_TEST_FLAGS='-v -run TestTernWriteAndRead'
+make test-cluster GO_TEST_FLAGS='-v -run TestTernLargeFile'
 ```
 
 `make test` runs `go test . ./internal/...`. The untagged tests include

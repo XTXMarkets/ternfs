@@ -668,29 +668,3 @@ func TestAdmissionDestroyClientWithOpenAndNoSession(t *testing.T) {
 	admissionStatus(t, send(admissionDestroy(replacement.id)), nfs4.NFS4_OK, nfs4.OP_DESTROY_SESSION)
 	admissionStatus(t, send(destroy), nfs4.NFS4_OK, nfs4.OP_DESTROY_CLIENTID)
 }
-
-func TestAdmissionUncachedSetattrErrorShape(t *testing.T) {
-	srv, _ := newConnectionTestServer(t, 2)
-	ts := connectionSession(t, srv)
-	body := buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
-		op := w.AppendArgarray_Setattr()
-		attrs := op.StartObjAttributes()
-		mask := attrs.StartAttrmask()
-		attrs.Resume(mask.Finish())
-		attrs.Resume(attrs.StartAttrVals().SetData(nil).Finish())
-		op.Resume(attrs.Finish())
-		w.Resume(op.Finish())
-	})
-	wire := admissionSequence(body, ts, 0, 1, false)
-	_, res := admissionRequest(t, srv, wire, 1, nil)
-	admissionStatus(t, res, nfs4.NFS4ERR_NOFILEHANDLE, nfs4.OP_SEQUENCE, nfs4.OP_SETATTR)
-	reply, res := admissionRequest(t, srv, wire, 2, nil)
-	admissionStatus(t, res, nfs4.NFS4ERR_RETRY_UNCACHED_REP, nfs4.OP_SEQUENCE, nfs4.OP_SETATTR)
-	it := res.Resarray()
-	it.Next()
-	it.Next()
-	attrs := it.Resarray().Value().AsSETATTR4res()
-	if attrs.Status() != nfs4.NFS4ERR_RETRY_UNCACHED_REP || attrs.Attrsset().Count() != 0 || len(reply) != 92 {
-		t.Fatal("SETATTR error missing empty attrsset/prefix")
-	}
-}

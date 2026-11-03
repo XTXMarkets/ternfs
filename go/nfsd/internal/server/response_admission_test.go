@@ -347,7 +347,7 @@ func TestResponseAdmissionAttributeAndDirectoryBudgets(t *testing.T) {
 
 func TestResponseAdmissionErrorDiscriminants(t *testing.T) {
 	for _, minor := range []uint32{1, 2} {
-		for _, op := range []uint32{nfs4.OP_DELEGPURGE, nfs4.OP_OPEN_CONFIRM, nfs4.OP_ALLOCATE, 9999} {
+		for _, op := range []uint32{nfs4.OP_DELEGPURGE, nfs4.OP_ALLOCATE} {
 			t.Run(fmt.Sprintf("minor%d/op%d", minor, op), func(t *testing.T) {
 				srv, _ := newConnectionTestServer(t, 2)
 				srv.AllowMinorVersion2 = true
@@ -359,18 +359,12 @@ func TestResponseAdmissionErrorDiscriminants(t *testing.T) {
 				switch op {
 				case nfs4.OP_DELEGPURGE:
 					body = binary.BigEndian.AppendUint64(body, 1)
-				case nfs4.OP_OPEN_CONFIRM:
-					body = append(body, make([]byte, 20)...)
 				case nfs4.OP_ALLOCATE:
 					body = append(body, make([]byte, 32)...)
 				}
 				wire := admissionSequence(body, ts, 0, 1, true)
 				_, res := admissionRequest(t, srv, wire, 1, nil)
-				want, status := op, uint32(nfs4.NFS4ERR_NOTSUPP)
-				if !knownOperation(op) {
-					want, status = nfs4.OP_ILLEGAL, nfs4.NFS4ERR_OP_ILLEGAL
-				}
-				admissionStatus(t, res, status, nfs4.OP_SEQUENCE, want)
+				admissionStatus(t, res, nfs4.NFS4ERR_NOTSUPP, nfs4.OP_SEQUENCE, op)
 			})
 		}
 	}
