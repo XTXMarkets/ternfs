@@ -382,6 +382,10 @@ public:
         }
 
         if (!_shared.isLeader.load(std::memory_order_relaxed) && _logsDB.isLeader()) {
+            // Following and election recovery may have advanced the log, or
+            // discarded entries from our previous term. LogsDB starts assigning
+            // indices after the recovered release point when leadership changes.
+            _logsDBLogIndex = _logsDB.getLastReleased();
             // If we've got dangling transactions, immediately start processing it
             auto bootstrap = CDCLogEntry::prepareBootstrapEntry();
             auto& entry = entries.emplace_back();
