@@ -41,16 +41,10 @@ type aliasLog struct {
 }
 
 func newAliasLog(stagingDir string) *aliasLog {
-	if stagingDir == "" {
-		return nil
-	}
 	return &aliasLog{path: filepath.Join(stagingDir, staging.AliasesDirName, aliasLogName), rename: os.Rename}
 }
 
 func (l *aliasLog) append(rec aliasRecord) error {
-	if l == nil {
-		return nil
-	}
 	if err := os.MkdirAll(filepath.Dir(l.path), 0o755); err != nil {
 		return err
 	}
@@ -70,9 +64,6 @@ func (l *aliasLog) append(rec aliasRecord) error {
 // load returns the records whose alias has not expired at now. A malformed
 // line ends the read: what came before it is kept, the rest is lost.
 func (l *aliasLog) load(now time.Time) ([]aliasRecord, error) {
-	if l == nil {
-		return nil, nil
-	}
 	f, err := os.Open(l.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
@@ -97,9 +88,6 @@ func (l *aliasLog) load(now time.Time) ([]aliasRecord, error) {
 
 // rewrite replaces the file with the given records, through a rename.
 func (l *aliasLog) rewrite(recs []aliasRecord) error {
-	if l == nil {
-		return nil
-	}
 	if err := os.MkdirAll(filepath.Dir(l.path), 0o755); err != nil {
 		return err
 	}
@@ -147,9 +135,6 @@ func (s *Server) loadAliases() {
 // the next sweep keeps it too. A publication waits for the rewrite, since
 // its append to the file being replaced would be lost.
 func (s *Server) compactAliases() {
-	if s.aliases == nil {
-		return
-	}
 	s.aliasMu.Lock()
 	defer s.aliasMu.Unlock()
 	heldUntil := s.now().Add(leaseTime)

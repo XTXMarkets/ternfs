@@ -948,9 +948,6 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 	}
 
 	access := args.ShareAccess() & nfs4.OPEN4_SHARE_ACCESS_BOTH
-	if s.stagingStore.ReadOnly() && access&nfs4.OPEN4_SHARE_ACCESS_WRITE != 0 {
-		return fail(nfs4.NFS4ERR_ROFS)
-	}
 
 	// targetID is the inode the open's I/O uses; publishedID is the inode
 	// the name resolves to, which is the filehandle OPEN returns.
@@ -1115,9 +1112,6 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 				lookupStatus := s.errToNFS(err)
 				if lookupStatus != nfs4.NFS4ERR_NOENT {
 					return fail(lookupStatus)
-				}
-				if s.stagingStore.ReadOnly() {
-					return fail(nfs4.NFS4ERR_ROFS)
 				}
 				if hasRecoveredStaging {
 					if recoveredStagingMeta.BaseID != 0 {

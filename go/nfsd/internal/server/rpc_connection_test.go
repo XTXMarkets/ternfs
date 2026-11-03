@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -16,7 +15,7 @@ import (
 // a pending-only failure leaves nothing, and pending tokens count toward
 // the quota so SEQUENCE gets RESOURCE before any renewal work.
 func TestAssociationTokens(t *testing.T) {
-	srv, err := NewServer(vfs.NewLocalTernVFS(t.TempDir()), staging.ReadOnlyStore{}, nil)
+	srv, err := NewServer(vfs.NewLocalTernVFS(t.TempDir()), newTestStaging(t), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

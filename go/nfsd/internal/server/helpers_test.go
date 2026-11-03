@@ -141,14 +141,20 @@ func sendAsync(conn net.Conn, xid uint32, wire []byte) <-chan []byte {
 	return done
 }
 
-// startTestServerWithVFS serves fs with a fresh staging directory.
-func startTestServerWithVFS(t *testing.T, fs vfs.TernVFS) (*Server, string, func()) {
+// newTestStaging returns a store on a fresh staging directory.
+func newTestStaging(t *testing.T) *staging.LocalStore {
 	t.Helper()
 	store, err := staging.NewLocalStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv, err := NewServer(fs, store, nil)
+	return store
+}
+
+// startTestServerWithVFS serves fs with a fresh staging directory.
+func startTestServerWithVFS(t *testing.T, fs vfs.TernVFS) (*Server, string, func()) {
+	t.Helper()
+	srv, err := NewServer(fs, newTestStaging(t), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -13,7 +13,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 )
 
 // ServerIDFileName is the file in the staging directory holding the server
@@ -113,13 +112,3 @@ func serverState(dir string) (string, error) {
 	}
 	return "", nil
 }
-
-// processServerID is the identity of a server without a staging directory:
-// one per process, since it keeps no state for a later one.
-var processServerID = sync.OnceValue(func() ServerID {
-	var id ServerID
-	if _, err := rand.Read(id[:]); err != nil {
-		panic("generate nfsd server id: " + err.Error())
-	}
-	return id
-})

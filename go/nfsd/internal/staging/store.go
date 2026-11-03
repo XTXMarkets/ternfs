@@ -79,13 +79,10 @@ type File interface {
 // All staging queries go through this interface — the NFS server
 // does not maintain its own staging caches.
 type Store interface {
-	// ReadOnly returns true if no staging directory is configured.
-	ReadOnly() bool
-	// ServerID identifies the server: the staging directory's server-id,
-	// or one per process without a staging directory.
+	// ServerID identifies the server: the staging directory's server-id.
 	ServerID() ServerID
-	// Dir is the staging directory, "" without one. The server keeps its
-	// session files, publication aliases and client records in it.
+	// Dir is the staging directory. The server keeps its session files,
+	// publication aliases and client records in it.
 	Dir() string
 	// Create creates a new staging file with associated metadata.
 	Create(id vfs.InodeID, meta Meta) (File, error)

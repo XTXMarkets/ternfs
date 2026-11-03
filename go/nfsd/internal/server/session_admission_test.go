@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -82,7 +81,7 @@ func TestAdmissionFailedSequencePreservesCache(t *testing.T) {
 	for _, name := range cases {
 		t.Run(name, func(t *testing.T) {
 			fs := vfs.NewLocalTernVFS(t.TempDir())
-			srv, err := NewServer(fs, staging.ReadOnlyStore{}, nil)
+			srv, err := NewServer(fs, newTestStaging(t), nil)
 			if err != nil {
 				t.Fatal(err)
 			}

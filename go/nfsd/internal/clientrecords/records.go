@@ -187,8 +187,6 @@ type Records struct {
 	// failed is set when an update may have reached the directory without
 	// being made durable. Nothing is known about the records after it.
 	failed error
-	// memory: the records are kept in memory only (InMemory).
-	memory bool
 
 	// crash, set by tests, stops an update at a crash point when it
 	// returns an error, leaving the directory as a crash there would.
@@ -202,16 +200,6 @@ const (
 	crashRenamed crashPoint = "renamed"
 	crashRemoved crashPoint = "removed"
 )
-
-// InMemory returns an empty set of records kept in memory only, for a
-// server without a staging directory: a new server at every start.
-func InMemory() *Records {
-	return &Records{
-		memory:  true,
-		records: make(map[IdentityHash]Record),
-		byID:    make(map[Incarnation]IdentityHash),
-	}
-}
 
 // Open loads the records of stagingDir, creating clients/ if it is absent
 // and removing temporaries. Call it after the staging directory's server
@@ -423,11 +411,9 @@ func (r *Records) Remove(id Incarnation) error {
 	if rec.Purging != 0 {
 		return ErrUnfinished
 	}
-	if !r.memory {
-		path := filepath.Join(r.dir, h.String())
-		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return err
-		}
+	path := filepath.Join(r.dir, h.String())
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
 	}
 	if err := r.settle(crashRemoved); err != nil {
 		return err
@@ -512,14 +498,6 @@ func (r *Records) lockCurrent(id Incarnation) (IdentityHash, func(), error) {
 // an update the caller has not been told succeeded, which it would act on,
 // such as a confirmation it answered with an error.
 func (r *Records) write(rec Record, old Incarnation) error {
-	if r.memory {
-		r.mu.Lock()
-		delete(r.byID, old)
-		r.records[rec.Hash()] = rec.clone()
-		r.byID[rec.Incarnation] = rec.Hash()
-		r.mu.Unlock()
-		return nil
-	}
 	data, err := json.Marshal(newRecordJSON(rec))
 	if err != nil {
 		return err
@@ -555,9 +533,6 @@ func (r *Records) write(rec Record, old Incarnation) error {
 // directory may hold the change or not, so every later transition fails,
 // and the in-memory records keep the state before it.
 func (r *Records) settle(point crashPoint) error {
-	if r.memory {
-		return nil
-	}
 	err := r.crashAt(point)
 	if err == nil {
 		err = syncDir(r.dir)

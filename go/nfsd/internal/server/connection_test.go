@@ -138,7 +138,7 @@ func newConnectionTestServerWithLog(t *testing.T, limit int, logger *slog.Logger
 	fs := &statGateVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
 		Gate: testutil.NewGate()}
 	fs.All = true
-	srv, err := NewServer(fs, staging.ReadOnlyStore{}, logger)
+	srv, err := NewServer(fs, newTestStaging(t), logger)
 	if err != nil {
 		t.Fatal(err)
 	}

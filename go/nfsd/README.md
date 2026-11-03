@@ -53,12 +53,11 @@ Mounts that Samba or another client reopens without a path walk also need
 Read [Deployment](DEPLOYMENT.md) before choosing the staging disk or a
 server replacement procedure.
 
-Omitting `-staging` selects the server's
-[read-only mode](DEPLOYMENT.md#read-only-servers). `-root DIR` selects a
-local test backend instead of `-registry`; exactly one is required.
-`-v` enables request logging. `-status-addr` serves a read-only JSON
-[diagnostics API](inspect/README.md); `-store-only` serves only that
-API, without the NFS server. `-influx-db-origin`, `-influx-db-org`,
+`-staging DIR` is required. `-root DIR` selects a local test backend
+instead of `-registry`; exactly one is required. `-v` enables request
+logging. `-status-addr` serves a read-only JSON
+[diagnostics API](inspect/README.md); `-store-only` serves only that API,
+without the NFS server. `-influx-db-origin`, `-influx-db-org`,
 `-influx-db-bucket` and `-filesystem` push [metrics](DEPLOYMENT.md#metrics).
 `./nfsd -h` lists the other options.
 

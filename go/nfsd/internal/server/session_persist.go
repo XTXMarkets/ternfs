@@ -136,7 +136,6 @@ func (sf *sessionFile) close() {
 }
 
 // openSessionFiles prepares the session store under the staging directory.
-// Without a staging directory nothing is persisted.
 func (s *Server) openSessionFiles(stagingDir string) {
 	store, err := sessionstore.Open(filepath.Join(stagingDir, staging.SessionsDirName))
 	if err != nil {

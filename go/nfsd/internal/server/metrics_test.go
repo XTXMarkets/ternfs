@@ -296,7 +296,7 @@ func (fs statPanicVFS) Stat(id vfs.InodeID) (vfs.NodeInfo, error) {
 // A panic while an operation runs, before it has a result, is counted once
 // as that operation's SERVERFAULT.
 func TestMetricsCountPanicDuringOperation(t *testing.T) {
-	srv, err := NewServer(statPanicVFS{vfs.NewLocalTernVFS(t.TempDir())}, staging.ReadOnlyStore{}, nil)
+	srv, err := NewServer(statPanicVFS{vfs.NewLocalTernVFS(t.TempDir())}, newTestStaging(t), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -345,7 +345,7 @@ func TestMetricsCountLatePanicReplacesResult(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var armed, fired atomic.Bool
-			srv, err := NewServer(vfs.NewLocalTernVFS(t.TempDir()), staging.ReadOnlyStore{}, slog.New(panicOnDone{&armed, &fired}))
+			srv, err := NewServer(vfs.NewLocalTernVFS(t.TempDir()), newTestStaging(t), slog.New(panicOnDone{&armed, &fired}))
 			if err != nil {
 				t.Fatal(err)
 			}

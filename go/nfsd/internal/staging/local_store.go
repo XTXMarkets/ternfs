@@ -184,8 +184,6 @@ func (s *LocalStore) CloseAll() {
 	s.files = nil
 }
 
-func (s *LocalStore) ReadOnly() bool { return false }
-
 func (s *LocalStore) ServerID() ServerID { return s.serverID }
 
 func (s *LocalStore) Create(id vfs.InodeID, meta Meta) (File, error) {

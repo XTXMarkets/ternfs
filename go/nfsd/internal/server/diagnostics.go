@@ -307,7 +307,7 @@ func (s *Server) ResolveStateid(id [12]byte) (inspect.Resolution, error) {
 				return r, nil
 			}
 			r.Incomplete = staged.Incomplete
-		} else if !s.stagingStore.ReadOnly() {
+		} else {
 			r.Incomplete = true
 		}
 		switch {

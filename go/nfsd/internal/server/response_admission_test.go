@@ -83,7 +83,7 @@ func TestResponseAdmissionReadFullRPCBoundary(t *testing.T) {
 				if err := os.WriteFile(filepath.Join(root, "file"), []byte("12345"), 0600); err != nil {
 					t.Fatal(err)
 				}
-				srv, err := NewServer(vfs.NewLocalTernVFS(root), staging.ReadOnlyStore{}, nil)
+				srv, err := NewServer(vfs.NewLocalTernVFS(root), newTestStaging(t), nil)
 				if err != nil {
 					t.Fatal(err)
 				}

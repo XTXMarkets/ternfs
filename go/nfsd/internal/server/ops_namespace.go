@@ -22,10 +22,6 @@ func (s *Server) opCreate(args nfs4.CREATE4args, st *compoundState, w *nfs4.COMP
 		ew := w.AppendResarray_Create()
 		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_NOTDIR)
 	}
-	if s.stagingStore.ReadOnly() {
-		ew := w.AppendResarray_Create()
-		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_ROFS)
-	}
 
 	name, status := toTernFSName(args.Objname().Data())
 	if status != nfs4.NFS4_OK {
@@ -241,10 +237,6 @@ func (s *Server) opRemove(args nfs4.REMOVE4args, st *compoundState, w *nfs4.COMP
 		ew := w.AppendResarray_Remove()
 		return finishDefaultResponse(w, ew.Finish(), status)
 	}
-	if s.stagingStore.ReadOnly() {
-		ew := w.AppendResarray_Remove()
-		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_ROFS)
-	}
 
 	name, status := toTernFSName(args.Target().Data())
 	if status != nfs4.NFS4_OK {
@@ -317,10 +309,6 @@ func (s *Server) opRename(args nfs4.RENAME4args, st *compoundState, w *nfs4.COMP
 	if status := requireDirectory(st.currentID); status != nfs4.NFS4_OK {
 		ew := w.AppendResarray_Rename()
 		return finishDefaultResponse(w, ew.Finish(), status)
-	}
-	if s.stagingStore.ReadOnly() {
-		ew := w.AppendResarray_Rename()
-		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_ROFS)
 	}
 
 	oldName, status := toTernFSName(args.Oldname().Data())

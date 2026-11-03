@@ -99,7 +99,11 @@ func TestMetricsPayload(t *testing.T) {
 // decrease. Attempts is sampled separately and is not compared. Run under
 // -race this also checks the exporter's reads are atomic.
 func TestMetricsBackendDuringRequests(t *testing.T) {
-	srv, err := server.NewServer(vfs.NewLocalTernVFS(t.TempDir()), staging.ReadOnlyStore{}, nil)
+	ss, err := staging.NewLocalStore(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := server.NewServer(vfs.NewLocalTernVFS(t.TempDir()), ss, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +189,11 @@ func TestMetricsBackendDuringRequests(t *testing.T) {
 // name, nfs_opnum4(123456), is not a valid tag value, and the counter is
 // cumulative, so before this every later push failed.
 func TestMetricsPayloadUnknownOpcode(t *testing.T) {
-	srv, err := server.NewServer(vfs.NewLocalTernVFS(t.TempDir()), staging.ReadOnlyStore{}, nil)
+	ss, err := staging.NewLocalStore(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := server.NewServer(vfs.NewLocalTernVFS(t.TempDir()), ss, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

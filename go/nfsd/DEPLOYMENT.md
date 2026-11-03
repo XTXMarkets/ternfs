@@ -45,7 +45,6 @@ not passed; a failover with an empty staging directory loses it. This causes the
 | Mode | Intended use | Main limit |
 | --- | --- | --- |
 | [One writable server](#one-writable-server) | Each tree served by one daemon and its staging disk. | Staged data has no second copy in TernFS. |
-| [Read-only servers](#read-only-servers) | Read published data without write staging. | Sessions still require affinity; the mode does not block timestamp updates. |
 | [Failover with the staging directory](#failover-with-the-staging-directory) | Move a tree's daemon to another host, copying the stopped daemon's staging. The preferred failover. | The copy time is outage time. |
 | [Failover with an empty staging directory](#failover-with-an-empty-staging-directory) | Move a tree's daemon when the old staging cannot be read. | Unpublished writes of files open for writing are lost, mostly silently. |
 
@@ -88,26 +87,6 @@ unpublished contents and every session.
 **Known issues.** The backend-timeout and rejected-publication issues below
 apply. A surviving disk is not a guarantee that every descriptor resumes.
 There are no enforced share reservations or byte-range locks.
-
-### Read-only servers
-
-**Topology.** Omit `-staging` and use read-only client mounts, for example
-`-o vers=4.1,proto=tcp,hard,ro`. Each mount still belongs to one daemon.
-
-**Guarantees.** Published files can be read without local write staging.
-The daemon rejects writable opens and create/remove/rename mutations.
-
-**Failure behaviour.** A replacement can serve the published data without
-the old host's disk. Existing sessions and opens still need recovery, and
-DNS changes alone do not redirect existing mounts.
-
-**Known issues.** The server's read-only mode is incomplete: timestamp-only
-SETATTR can still change backend timestamps. A client `ro` mount prevents
-ordinary writes through that mount; it does not enforce policy on other
-clients. The daemon also writes its client registrations and leases under
-`/.nfs`. Read-only service is therefore not a backend with no
-writes. It adds no coherence or failover guarantee for a concurrently
-changing namespace.
 
 ### Failover with the staging directory
 
@@ -286,7 +265,7 @@ terncli set-dir-info -id "$NFS_DIR_ID" -tag SNAPSHOT \
 
 Do not apply that recommendation to user data indiscriminately: staging
 recovery can need retained base versions. Keep `/.nfs` itself while serving
-the filesystem. Even a read-only daemon uses its current records.
+the filesystem.
 
 ### Network access
 

@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -48,7 +47,7 @@ func incarnationForTest(t *testing.T, srv *Server, wireID uint64) uint64 {
 
 func wireTestServer(t *testing.T) *Server {
 	t.Helper()
-	srv, err := NewServer(vfs.NewLocalTernVFS(t.TempDir()), staging.ReadOnlyStore{}, nil)
+	srv, err := NewServer(vfs.NewLocalTernVFS(t.TempDir()), newTestStaging(t), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

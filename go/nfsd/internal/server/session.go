@@ -52,7 +52,7 @@ type session struct {
 	fatal     atomic.Bool
 
 	// file is the session's persistent record and slot table, empty when
-	// the server has no staging directory or the file could not be made.
+	// the session store or the file could not be made.
 	// Requests use it without the store lock; it is closed when the
 	// session's last use ends (releaseSessionUse).
 	file sessionFile

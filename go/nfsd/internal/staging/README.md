@@ -57,9 +57,6 @@ file or sidecar, any file in `sessions/`, or any file in `clients/`, where
 alias log, quarantined pairs and empty subdirectories are not. A `server-id` that does not decode
 also stops startup; it is never replaced.
 
-A `ReadOnlyStore` has no directory, so its server id is chosen once per
-process.
-
 ## Overlay files
 
 A staged file has a base when it replaces an immutable inode. A create's
@@ -201,13 +198,6 @@ process: `Get`, `GetMeta` and `Entries` no longer return the entry,
 operation has an unknown outcome, and a staging whose publication failed
 during CLOSE while other opens read it. A tombstone is not persisted; a
 restart changes the write verifier.
-
-## Read-only store
-
-`ReadOnlyStore` is used when `-staging` is omitted. It holds nothing.
-`Create` and every namespace or ownership update get `os.ErrPermission`,
-lookups find nothing, and `Quarantine` and `Remove` do nothing. See
-[read-only servers](../../DEPLOYMENT.md#read-only-servers).
 
 ## Locking
 

@@ -12,7 +12,6 @@ import (
 
 	"github.com/XTXMarkets/ternfs/go/msgs"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -59,7 +58,7 @@ func (fs *pagedVFS) Stat(id vfs.InodeID) (vfs.NodeInfo, error) {
 // returns the largest page that fits, and continues from its last cookie.
 func TestReaddirPreparationWithinReservation(t *testing.T) {
 	fs := &pagedVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir()), entries: 12000}
-	srv, err := NewServer(fs, staging.ReadOnlyStore{}, nil)
+	srv, err := NewServer(fs, newTestStaging(t), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

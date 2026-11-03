@@ -89,7 +89,7 @@ type Server struct {
 	// aliasMu orders each publication alias set and its append to aliases
 	// with the sweep's snapshot and rewrite of that log (alias_log.go).
 	aliasMu sync.Mutex
-	aliases *aliasLog // nil without a staging directory
+	aliases *aliasLog
 	// unlinkSessionFile deletes a session's file from the staging disk;
 	// tests make it block or fail.
 	unlinkSessionFile func(*sessionstore.File) error
@@ -98,7 +98,7 @@ type Server struct {
 	newSessionFile func(sessionstore.ID, sessionstore.Header) (*sessionstore.File, error)
 
 	metrics      *Metrics
-	sessionFiles *sessionstore.Store // nil without a staging directory
+	sessionFiles *sessionstore.Store // nil if the session store could not be opened
 }
 
 type mutationTarget struct {
@@ -154,11 +154,9 @@ func NewServer(fs vfs.TernVFS, stagingStore staging.Store, logger *slog.Logger) 
 		return nil, fmt.Errorf("look up %s: %w", vfs.NFSDirName, err)
 	}
 	stagingDir := stagingStore.Dir()
-	records := clientrecords.InMemory()
-	if stagingDir != "" {
-		if records, err = clientrecords.Open(stagingDir); err != nil {
-			return nil, err
-		}
+	records, err := clientrecords.Open(stagingDir)
+	if err != nil {
+		return nil, err
 	}
 	var verf [8]byte
 	rand.Read(verf[:])
@@ -190,12 +188,10 @@ func NewServer(fs vfs.TernVFS, stagingStore staging.Store, logger *slog.Logger) 
 	logger.Info("nfsd instance",
 		"server_id", s.serverID.String(),
 		"stateid_epoch", fmt.Sprintf("%08x", s.opens.Epoch))
-	if stagingDir != "" {
-		s.aliases = newAliasLog(stagingDir)
-		s.loadAliases()
-		s.openSessionFiles(stagingDir)
-		s.restoreSessions()
-	}
+	s.aliases = newAliasLog(stagingDir)
+	s.loadAliases()
+	s.openSessionFiles(stagingDir)
+	s.restoreSessions()
 	// A record a crash left purging or expired is finished before the
 	// server serves. Its incarnation's sessions were not restored, and the
 	// lease sweep retires its staged writers, which are no longer its
