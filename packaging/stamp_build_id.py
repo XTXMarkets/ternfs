@@ -17,71 +17,65 @@ unique to both the binary and the build. This is what rpm's
 
 import argparse
 import hashlib
-import struct
+import subprocess
+import tempfile
 from pathlib import Path
-from typing import BinaryIO, Optional, Sequence, Tuple
+from typing import Optional, Sequence
 
 
-SHT_NOTE = 7
-NT_GNU_BUILD_ID = 3
+BUILD_ID_SECTION = ".note.gnu.build-id"
+# The note is namesz, descsz and type (4 bytes each), the name "GNU\0", and
+# then the build ID.
+BUILD_ID_OFFSET = 16
 
 
-def _round_up(size: int, alignment: int) -> int:
-    return (size + alignment - 1) // alignment * alignment
-
-
-def _find_gnu_build_id(elf: BinaryIO, path: Path) -> Tuple[int, bytes]:
-    """Return the file offset and contents of the NT_GNU_BUILD_ID descriptor."""
-    header = elf.read(64)
-    if len(header) < 64 or header[:4] != b"\x7fELF":
-        raise ValueError(f"not an ELF file: {path}")
-    if header[4] != 2 or header[5] != 1:
-        raise ValueError(f"not a little-endian ELF64 file: {path}")
-    shoff = struct.unpack_from("<Q", header, 0x28)[0]
-    shentsize, shnum = struct.unpack_from("<HH", header, 0x3A)
-    for index in range(shnum):
-        elf.seek(shoff + index * shentsize)
-        section = elf.read(64)
-        sh_type = struct.unpack_from("<I", section, 4)[0]
-        if sh_type != SHT_NOTE:
-            continue
-        offset, size, _, _, alignment = struct.unpack_from("<QQIIQ", section, 0x18)
-        padding = 8 if alignment == 8 else 4
-        elf.seek(offset)
-        notes = elf.read(size)
-        position = 0
-        while position + 12 <= len(notes):
-            namesz, descsz, note_type = struct.unpack_from("<III", notes, position)
-            position += 12
-            name = notes[position : position + namesz]
-            position += _round_up(namesz, padding)
-            desc = notes[position : position + descsz]
-            if name == b"GNU\0" and note_type == NT_GNU_BUILD_ID:
-                return offset + position, desc
-            position += _round_up(descsz, padding)
-    raise ValueError(f"binary has no GNU build ID: {path}")
+def _read_note(path: Path, note: Path) -> bytes:
+    subprocess.run(
+        [
+            "objcopy",
+            "--output-target=binary",
+            f"--only-section={BUILD_ID_SECTION}",
+            str(path),
+            str(note),
+        ],
+        check=True,
+    )
+    contents = note.read_bytes()
+    if len(contents) <= BUILD_ID_OFFSET or contents[12:BUILD_ID_OFFSET] != b"GNU\0":
+        raise ValueError(f"binary has no GNU build ID: {path}")
+    return contents
 
 
 def gnu_build_id(path: Path) -> str:
-    """Return the GNU build ID of a little-endian ELF64 file as hex."""
-    with path.open("rb") as elf:
-        return _find_gnu_build_id(elf, path)[1].hex()
+    """Return the GNU build ID of an ELF file as hex."""
+    with tempfile.TemporaryDirectory(prefix="ternfs-build-id-") as temporary:
+        note = _read_note(path, Path(temporary) / "note")
+    return note[BUILD_ID_OFFSET:].hex()
 
 
 def stamp_build_id(path: Path, build_number: int) -> str:
     """Replace the GNU build ID in place and return the new one as hex."""
     if build_number < 1:
         raise ValueError("build number must be positive")
-    with path.open("r+b") as elf:
-        offset, build_id = _find_gnu_build_id(elf, path)
+    with tempfile.TemporaryDirectory(prefix="ternfs-build-id-") as temporary:
+        note_path = Path(temporary) / "note"
+        note = _read_note(path, note_path)
+        build_id = note[BUILD_ID_OFFSET:]
         digest = hashlib.sha256(
             f"ternfs-build-number-{build_number}\0".encode() + build_id
         ).digest()
         if len(build_id) > len(digest):
             raise ValueError(f"build ID is longer than {len(digest)} bytes: {path}")
         stamped = digest[: len(build_id)]
-        elf.seek(offset)
-        elf.write(stamped)
+        note_path.write_bytes(note[:BUILD_ID_OFFSET] + stamped)
+        subprocess.run(
+            [
+                "objcopy",
+                f"--update-section={BUILD_ID_SECTION}={note_path}",
+                str(path),
+            ],
+            check=True,
+        )
     return stamped.hex()
 
 

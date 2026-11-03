@@ -17,7 +17,16 @@ from unittest.mock import patch
 
 import build_release_deb
 from stamp_build_id import gnu_build_id, stamp_build_id
-from test_stamp_build_id import compile_binary
+
+
+def compile_binary(path: Path, source: str, build_id: str = "sha1") -> None:
+    source_path = path.with_suffix(".c")
+    source_path.write_text(source)
+    subprocess.run(
+        ["cc", "-g", "-O0", f"-Wl,--build-id={build_id}", "-o", path, source_path],
+        check=True,
+    )
+    source_path.unlink()
 
 
 @unittest.skipUnless(shutil.which("cc"), "needs a C compiler")
