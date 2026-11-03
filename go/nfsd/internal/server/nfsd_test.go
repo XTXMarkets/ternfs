@@ -1097,7 +1097,8 @@ func testServerWithClient(t *testing.T) (*Server, *staging.LocalStore, uint64, t
 }
 
 // The lease sweep expires a client whose lease has run out: its opens are
-// expired, its staged writers retired for recovery, and its record goes.
+// expired, its staged writers retired for recovery, and its record goes,
+// so its clientid is stale.
 func TestServerLeaseSweepExpiresAbandonedStaging(t *testing.T) {
 	srv, stagingStore, clientID, base := testServerWithClient(t)
 	fs := srv.fs
@@ -1131,6 +1132,9 @@ func TestServerLeaseSweepExpiresAbandonedStaging(t *testing.T) {
 	}
 	if srv.clientLive(clientID) || len(srv.records.List()) != 0 {
 		t.Fatalf("expired client still live, records %+v", srv.records.List())
+	}
+	if status := srv.clientStatus(clientID); status != nfs4.NFS4ERR_STALE_CLIENTID {
+		t.Fatalf("client after the sweep %s, want STALE_CLIENTID", nfs4.Nfsstat4Name(status))
 	}
 }
 
@@ -1192,28 +1196,6 @@ func TestNewServerDelaysExpiredRecoveredStagingRemoval(t *testing.T) {
 	assertRetiredStaging(t, recovered, fileID)
 	if m, ok := recovered.GetMeta(liveFileID); !ok || m.Retired {
 		t.Fatal("startup retired staging with a live lease")
-	}
-}
-
-// A lease sweep expires a client's state and its record: the client is no
-// longer live, and a new open of it is STALE_CLIENTID.
-func TestServerLeaseSweepExpiresClient(t *testing.T) {
-	srv, _, clientID, base := testServerWithClient(t)
-	fileID, _, err := srv.fs.ConstructFile(srv.fs.RootID())
-	if err != nil {
-		t.Fatal(err)
-	}
-	state := addConfirmedOpenForTest(t, srv, clientID, "reader", fileID, false)
-	srv.SetClock(func() time.Time { return base.Add(leaseTime + time.Second) })
-	srv.sweepExpiredClientState()
-	if _, status := srv.opens.Lookup(
-		state.Owner.ClientID, state.ID, state.Generation, fileID,
-	); status != nfs4.NFS4ERR_EXPIRED {
-		t.Fatalf("swept state = %s, want NFS4ERR_EXPIRED",
-			nfs4.Nfsstat4Name(status))
-	}
-	if status := srv.clientStatus(clientID); status != nfs4.NFS4ERR_STALE_CLIENTID {
-		t.Fatalf("client after the sweep %s, want STALE_CLIENTID", nfs4.Nfsstat4Name(status))
 	}
 }
 
