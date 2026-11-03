@@ -5,6 +5,8 @@
 package server
 
 import (
+	"sync"
+
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
@@ -12,14 +14,13 @@ import (
 
 // compoundState tracks the current/saved filehandle during COMPOUND execution.
 type compoundState struct {
-	currentID     vfs.InodeID
-	currentIDSet  bool
-	savedID       vfs.InodeID
-	savedIDSet    bool
-	principal     clientstore.RPCPrincipal
-	connection    *rpcConnection
-	replyBudget   uint32
-	effectUnknown bool // Submitted mutation lacks whole-call outcome proof.
+	currentID    vfs.InodeID
+	currentIDSet bool
+	savedID      vfs.InodeID
+	savedIDSet   bool
+	principal    clientstore.RPCPrincipal
+	connection   *rpcConnection
+	replyBudget  uint32
 
 	// session and clientID come from the compound's SEQUENCE, as do the
 	// slot it claimed and its sequence number, for intents.
@@ -40,6 +41,8 @@ type compoundState struct {
 
 	// afterReply collects work for after the reply is written.
 	afterReply *[]func()
+	// holds releases the running operation's locks (hold).
+	holds []func()
 
 	// currentStateID is the stateid returned by the last OPEN, CLOSE or
 	// OPEN_DOWNGRADE, substituted for the special current stateid
@@ -64,12 +67,6 @@ func (st *compoundState) setCurrentStateID(id nfs4.StateID, generation uint32) {
 	st.currentStateID = id
 	st.currentGeneration = generation
 	st.currentStateIDSet = true
-}
-
-func (st *compoundState) observeMutation(fs vfs.TernVFS, op uint32, err error) {
-	if err != nil && fs.ClassifyMutation(op, err) == vfs.MutationUnknown {
-		st.effectUnknown = true
-	}
 }
 
 // isCurrentStateID reports the special stateid meaning the compound's
@@ -110,6 +107,24 @@ func isSpecialStateID(stateid nfs4.Stateid4) bool {
 		allOne = allOne && stateid.Other(i) == 0xff
 	}
 	return allZero || allOne
+}
+
+// hold registers unlock with the compound and returns an idempotent early
+// release. compoundBody releases the rest when the operation returns or,
+// when it ends the compound, once its reply is recorded.
+func (st *compoundState) hold(unlock func()) func() {
+	release := sync.OnceFunc(unlock)
+	st.holds = append(st.holds, release)
+	return release
+}
+
+// releaseHolds releases the running operation's locks, last taken first.
+func (st *compoundState) releaseHolds() {
+	holds := st.holds
+	st.holds = nil
+	for i := len(holds) - 1; i >= 0; i-- {
+		holds[i]()
+	}
 }
 
 // later runs f after the compound's reply is written, or at once for a

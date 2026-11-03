@@ -55,11 +55,15 @@ rules are in the
 After `NFS4ERR_DEADSESSION` the client re-establishes its session.
 
 While a session's file is on disk, each of its compounds may run at most
-one mutating operation. Before a second one of any kind runs, the file is
-removed and the session goes on in memory only, so a retransmission of
-that request after a restart gets `NFS4ERR_BADSESSION`. A restored slot
-accepts a later sequence number than it recorded once, since the record of
-a later request may not have been written.
+one mutating operation, COMMIT aside. Before a second one of any kind runs,
+the file is removed and the session goes on in memory only, so a
+retransmission of that request after a restart gets `NFS4ERR_BADSESSION`.
+A restored slot accepts a later sequence number than it recorded once,
+since the record of a later request may not have been written. That request
+runs as a new one: an upgrade OPEN gets a new stateid, and a CLOSE or
+OPEN_DOWNGRADE whose staging was removed gets `NFS4ERR_BAD_STATEID`. A
+request killed after its effect and before its record runs again when it
+is retransmitted.
 
 A session with no usable file is unknown to the new daemon, and so is one
 retired after the restart because its incarnation expired: SEQUENCE and
@@ -125,14 +129,23 @@ do not guarantee that the client can repair an existing descriptor by
 looking up a name.
 
 The base and transient TernFS inodes must still exist. Retaining staging
-does not extend TernFS snapshot or transient-file retention. Also account
-for the [CLOSE defect](DEPLOYMENT.md#a-backend-timeout-is-treated-as-a-failure)
-before relying on recovered writes. A CLOSE whose hydration of the base
-fails, or whose LinkFile fails without the file turning out to be
-published already, discards its staging. If other opens were reading that
-staging, it is quarantined instead, and those readers get `NFS4ERR_IO`. A
-timestamp-only CLOSE whose lookup or SetTime fails returns the error
-without discarding it.
+does not extend TernFS snapshot or transient-file retention.
+
+A recovered CLOSE resolves the publication candidate its sidecar records,
+or the staging's own transient when it records none, as a retried CLOSE
+does: if the earlier process's link applied and nothing has been written
+since, it completes without publishing again, and otherwise it publishes
+through a fresh transient; see
+[Publication](internal/server/README.md#publication). Times set with the
+zero stateid before the CLOSE comes back go to the recovered staging. Also
+account for the
+[CLOSE defect](DEPLOYMENT.md#a-rejected-publication-is-not-reported-to-the-application)
+before relying on recovered writes. A CLOSE whose publication the backend
+rejects discards its staging, unless resolving the candidate shows that the
+link applied. If other opens were reading that staging, it is quarantined
+instead, and those readers get `NFS4ERR_IO`. A timestamp-only CLOSE whose
+lookup or SetTime the backend does not answer gets `NFS4ERR_DELAY` and
+keeps the staging.
 
 ## Lease expiry
 
@@ -144,10 +157,11 @@ Client-store errors generally produce `NFS4ERR_DELAY` and defer recovery or
 expiry while the outcome is unresolved.
 
 On expiry, linked staging is retired. Its acknowledged data remains on
-disk, but it releases file descriptors and its pathname reservation.
-It stays until recovered and closed or explicitly removed. Unlinked staging
-is discarded on expiry. Staging already retired when it becomes unlinked
-is quarantined.
+disk, but it releases file descriptors and its pathname reservation, and
+its publication candidate is scrapped, best effort, so that a link the
+backend has not answered cannot land later. It stays until recovered and
+closed or explicitly removed. Unlinked staging is discarded on expiry.
+Staging already retired when it becomes unlinked is quarantined.
 
 For the first 90 seconds after startup, the periodic staging sweep does not
 run. Ordinary client expiry, and the check before a namespace change, can
@@ -158,7 +172,7 @@ interval.
 ## Startup and quarantine
 
 Startup reads each `.staging`/`.meta` pair. The current sidecar format is
-NFS8. Recovery restores checkpointed size and dirty ranges; bytes outside
+NFS9. Recovery restores checkpointed size and dirty ranges; bytes outside
 the checkpoint cannot be assumed committed.
 
 Interrupted REMOVE/RENAME operations leave a `Guarded` sidecar. Startup
@@ -297,7 +311,7 @@ Inspect remaining staging, including retired and quarantined entries.
 Preserve or recover unpublished data before changing formats.
 
 A binary which cannot read the existing sidecar format may fail startup.
-The current format is NFS8; older NFS5, NFS6 and NFS7 sidecars are not
+The current format is NFS9; older NFS5 to NFS8 sidecars are not
 automatically converted. Use a compatible binary to finish or recover them.
 Remove staging only after its data has been accounted for. It can contain
 bytes already acknowledged by fsync.

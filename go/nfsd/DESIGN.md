@@ -68,14 +68,15 @@ handle, even when I/O uses staging or another published version.
 
 An open records both its handle inode and its data inode. Real-stateid
 operations use the open's data inode. GETATTR, VERIFY and special-stateid
-READ use the client's view of the handle instead: its writer, then a recent
-publication alias, then its latest open, then the handle itself. COMMIT has
-no stateid either, but does not use the view. It syncs the handle, every
-staging the client wrote through it, from a separate writer index, and
-after a restart the client's recovered writers of the handle. The view,
-the writer index, the alias lifetime and what readers see when a writer
-closes are in [openstate](internal/openstate/README.md#client-views).
-Stateids, owners and downgrades are there too.
+READ use the client's view of the handle instead: its writer, live or
+recovered, then a recent publication alias, then its latest open, then the
+handle itself. COMMIT has no stateid either, but does not use the view. It
+syncs the handle, every staging the client wrote through it, from a
+separate writer index, and after a restart the client's recovered writers
+of the handle. The view, the writer index, the alias lifetime and what
+readers see when a writer closes are in
+[openstate](internal/openstate/README.md#client-views). Stateids, owners
+and downgrades are there too.
 
 The server also records each publication alias on the staging disk, so a
 short process restart does not reverse what a client reads through a handle
@@ -121,18 +122,46 @@ The last write CLOSE, or downgrade to READ, finishes hydration, uploads the
 whole replacement and links it at the target. There is no background CLOSE.
 Earlier closes hand sidecar ownership to another writer of the shared
 staging. A clean writer scraps its transient without publication; an
-unlinked writer discards its private version.
+unlinked writer discards its private version, unless another open of its
+client still reads it; see
+[Reader visibility](internal/openstate/README.md#reader-visibility).
+
+A publication the backend does not answer in time, as a shard restart
+causes (the Go client gives a shard 10 s), is neither a success nor a
+failure: the link may have applied, in whole or in part, or not at all. The
+CLOSE then keeps the open and the staging and answers `NFS4ERR_DELAY`; the
+Linux client retries CLOSE after DELAY with a backoff that reaches 15 s, so
+`close(2)` blocks for about the outage, as on a hard mount. There is no
+limit to the retries while the backend is silent: the lease still runs, and
+a client that goes away leaves the writer to lease expiry as any other. A
+link refused because the name is locked, and hydration of the base that the
+backend does not answer, also answer DELAY.
+
+TernFS appends spans at a file's current size, so a transient that may hold
+some of them is never written again. Each staging therefore has at most one
+publication candidate, saved in its sidecar: the transient selected for
+publication and its data version. A fresh candidate is not submitted if its
+checkpoint fails; CLOSE returns DELAY and keeps the staging. A retried CLOSE,
+or one recovered after a restart, resolves the candidate first, from
+positive evidence only: a linked candidate with the current data version is
+the publication, and otherwise the CLOSE links one fresh transient. The
+candidate belongs to the staging, not to an open, so whichever CLOSE or
+OPEN_DOWNGRADE ends the staging finishes it. A staging that will not be
+published scraps its candidate before it goes, so that a link the backend
+has not answered cannot land later. The mechanics are in
+[Publication](internal/server/README.md#publication).
 
 Timestamp-only publication updates the current published inode without
-replacing its contents. If that lookup or SetTime fails, CLOSE returns the
-error and keeps the staging; a failed SetTime may still have applied.
-After data publication succeeds, failure to restore timestamps is logged
-and CLOSE still succeeds because the data is already visible. A hydration
-failure, or a LinkFile failure where the file is not found already
-published, discards the staging, unless other opens read it; then it is
-quarantined and those readers get `NFS4ERR_IO`. The client-visible
-consequences are under
-[failed CLOSE](DEPLOYMENT.md#a-backend-timeout-is-treated-as-a-failure).
+replacing its contents. A lookup or SetTime the backend does not answer
+gives `NFS4ERR_DELAY` with nothing changed; any other error ends the writer,
+as a clean CLOSE does, and is returned. After data publication succeeds,
+failure to restore timestamps is logged and CLOSE still succeeds because the
+data is already visible. A publication whose upload fails, or that the
+backend rejects, discards the staging, unless resolving the candidate shows
+that another copy of the request linked it. If other opens read the
+staging, it is quarantined instead and those readers get `NFS4ERR_IO`. The
+client-visible consequences are under
+[failed CLOSE](DEPLOYMENT.md#a-rejected-publication-is-not-reported-to-the-application).
 
 Initial CREATE attributes can be staged even for a read-only create OPEN;
 the share access still prohibits WRITE. EXCLUSIVE4 and EXCLUSIVE4_1 retries
@@ -148,9 +177,9 @@ path in two ways:
 
 | Property or state | Meaning | Changed when |
 | --- | --- | --- |
-| Linked or unlinked | A linked writer publishes to its recorded directory and name on CLOSE. An unlinked one is still usable for I/O, but has no publication target, and CLOSE discards it. | OPEN creates a linked writer; REMOVE or RENAME can detach it or move its target. |
+| Linked or unlinked | A linked writer publishes to its recorded directory and name on CLOSE. An unlinked one is still usable for I/O, but has no publication target, and CLOSE discards it unless another open of its client still reads it. | OPEN creates a linked writer; REMOVE or RENAME can detach it or move its target. |
 | Active or retired | Any writer not marked `Retired` in its sidecar. It need not have an open in this process: after a restart, staging is loaded before any request adopts it. A retired writer keeps its data for recovery, without a pathname reservation or an open descriptor. | The lease sweep retires the writers of an expired client. Before a namespace change, a non-retired writer at the name is checked: it counts as active while its durable open marker is active, or a confirmation protects its client, and is otherwise retired; a check that fails stops the change. Recovery rebinds a writer and clears `Retired`. |
-| Failed | Excluded for the process lifetime, with its files moved to quarantine. | A namespace operation has an unknown outcome, or hydration or LinkFile fails during CLOSE while other opens read the staging. |
+| Failed | Excluded for the process lifetime, with its files moved to quarantine. | A namespace operation has an unknown outcome, or a CLOSE's publication fails while other opens read the staging. |
 | Quarantined at startup | Not loaded; its files are moved to quarantine. | Its sidecar is unreadable, `Guarded`, or both unlinked and retired. |
 
 Recovery is in [Writer recovery](RECOVERY.md#writer-recovery). Linked
@@ -189,8 +218,17 @@ normally handles unlink of a busy file through a `.nfs...` silly rename.
 
 The UDP client can submit more than one copy. An error for one copy does
 not prove another did not apply. Production namespace rejections are
-therefore treated conservatively. The local test backend can classify
-syscall rejections as known non-application and leave writers linked.
+therefore treated conservatively: every error except a REMOVE whose edge is
+gone is an unknown outcome, `TIMEOUT` and `DIRECTORY_NOT_EMPTY` included.
+The local test backend can classify syscall rejections as known
+non-application and leave writers linked. No outcome ends the session: the
+status is the operation's reply, recorded and replayed like any other.
+
+A CLOSE's own publication is different: a backend that gives no answer
+fails no writer, and the CLOSE is retried after `NFS4ERR_DELAY`, as
+described under [Writes and publication](#writes-and-publication). SETATTR
+of times on a file without staging, and an OPEN whose `ConstructFile` gets
+no answer, also give `NFS4ERR_DELAY`, since running them again is harmless.
 
 Failed-writer tombstones remain after CLOSE so COMMIT, which has no stateid,
 cannot acknowledge a failed writer as healthy. They are process-local;
@@ -203,10 +241,13 @@ cleanup within one daemon. Before submitting a mutation, the server:
 
 1. Retires inactive writers and captures the affected IDs and intended
    targets under the pathname locks.
-2. Looks up the source edge and destination as needed.
-3. Checkpoints `Guarded` on affected writers.
-4. Submits the operation using the source edge identity.
-5. Records the outcome and clears guards when the outcome is known.
+2. Scraps each affected writer's publication candidate, so that a link the
+   backend has not answered cannot land at the old name later. A scrap the
+   backend does not answer gives `NFS4ERR_DELAY` before anything is saved.
+3. Looks up the source edge and destination as needed.
+4. Checkpoints `Guarded` on affected writers.
+5. Submits the operation using the source edge identity.
+6. Records the outcome and clears guards when the outcome is known.
 
 A lookup or guard failure stops before submission. The source edge identity
 prevents a delayed mutation from applying to a later file at the same name.
@@ -344,21 +385,25 @@ daemon does not know.
 - A completed request's record is written, without fsync, before its reply
   goes to the socket. A process restart can answer a retransmission from
   it; a host crash may have lost it.
+- A CLOSE, OPEN_DOWNGRADE, OPEN, CREATE, REMOVE or RENAME that ends a
+  compound keeps the locks it took until its record is written, so no other
+  request changes what it acted on before a retransmission could find the
+  reply; see
+  [Locks held until the record](internal/server/README.md#locks-held-until-the-record).
 - RENAME, REMOVE and CREATE of a directory or symlink record an intent
   before their effect. A request the earlier process was running when it
   died is decided against TernFS from that intent, or gets
   `NFS4ERR_DEADSESSION` when nothing can prove the outcome; see the
   [replay decision](internal/server/README.md#restart-replay-decision).
 - A file can protect one effect per request, so a compound's second
-  mutating operation removes the file first, and that session is not
-  restored.
+  mutating operation, COMMIT aside, removes the file first, and that
+  session is not restored.
 - Anything the file does not record, the first CB_COMPOUND and an accepted
   BACKCHANNEL_CTL, removes the file first. CB_NULL does not.
-- A mutation whose backend outcome cannot be established retires the
-  session as fatal. On the native backend that is every mutation error
-  except a REMOVE whose edge is already gone, timeouts included. The client
-  then creates a new session; see the
-  [known issue](DEPLOYMENT.md#a-backend-timeout-is-treated-as-a-failure).
+- A mutation whose backend outcome cannot be established does not end the
+  session. Its status, `NFS4ERR_IO` when it affects staged writers, is
+  recorded like any other reply and asserts nothing about the outcome; see
+  [Unknown backend outcomes](#unknown-backend-outcomes).
 
 A restart rebuilds a session only from a usable file that recorded a
 request, for an incarnation still confirmed, within the new process's
@@ -373,19 +418,22 @@ Locks across packages are taken in this order:
 1. Pathname locks, which serialize namespace changes, writable OPEN,
    CLOSE, recovery and cleanup of a target.
 2. The openstate file lock, by filehandle, which serializes OPEN, CLOSE and
-   OPEN_DOWNGRADE of one file; see
-   [openstate](internal/openstate/README.md#locking).
+   OPEN_DOWNGRADE of one file, and a SETATTR of times through the client's
+   view; see [openstate](internal/openstate/README.md#locking).
 3. Staging locks: the per-inode lock for creation and cleanup, and the
    per-file lock held across that file's disk I/O. The store map lock
    covers indexing only; see [staging](internal/staging/README.md#locking).
 
 These keep OPEN, CLOSE, downgrade and namespace changes ordered within a
-process without serializing unrelated files. The client store has its own
-locks; see [clientstore](internal/clientstore/README.md#locks). The server's
-destruction holds keep destructive client-store work away from
-incarnations a confirmation protects. None of these locks is shared
-between processes. Diagnostics try, rather than wait for, locks held across
-I/O; see [snapshot consistency](inspect/README.md#snapshot-consistency).
+process without serializing unrelated files. The CLOSE, OPEN_DOWNGRADE,
+OPEN, CREATE, REMOVE or RENAME that ends a compound releases its pathname
+and file locks only once its slot record is written; other operations, and
+earlier ones, release theirs when they return. The client store has its own
+locks; see [clientstore](internal/clientstore/README.md#locks). The
+server's destruction holds keep destructive client-store work away from
+incarnations a confirmation protects. None of these locks is shared between
+processes. Diagnostics try, rather than wait for, locks held across I/O;
+see [snapshot consistency](inspect/README.md#snapshot-consistency).
 
 ## Backend boundary
 

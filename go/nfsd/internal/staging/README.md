@@ -82,8 +82,10 @@ A sidecar records what a later CLOSE or recovery needs:
 | Unlinked | Detached from its publication target. |
 | Guarded | A namespace operation was in flight. |
 | Retired | Its lease expired; the data is kept for recovery. |
+| Data version | Counts the writes and size changes the checkpoint includes. Times, hydration and checkpoints do not change it. |
+| Candidate | The transient selected for publication, its cookie and data version; zero for none. It may not have been submitted yet. See [Publication](../server/README.md#publication). |
 
-The format is NFS8 and is the only one read or written. Decoding requires
+The format is NFS9 and is the only one read or written. Decoding requires
 the exact layout: known flag bits only, normalized dirty ranges, sizes that
 fit a signed 64-bit offset and no trailing bytes. The byte layout is
 documented beside the encoder in [sidecar.go](sidecar.go).
@@ -107,16 +109,32 @@ namespace fields on top of the last data checkpoint. They never checkpoint
 unstable data. A failed namespace save keeps the new state in memory and
 marks the checkpoint dirty for `Sync` to repair.
 
+Every save records the file's current publication candidate. `SetCandidate`
+sets it in memory, or in memory and in a full checkpoint. The server saves a
+fresh transient as the candidate before submitting it, and the staging's own
+transient, submitted first, with the next checkpoint or when its submission
+gets no answer.
+
+Before a successful CLOSE removes staging, whether it published the data,
+updated only the times or found nothing to publish, `Seal` checks the final
+data version and stops further writes and attribute changes under the same
+lock. A different version leaves it writable so CLOSE can retry. Reads and
+`Sync` remain available until removal; a mutation reaching a sealed file
+gets `ErrRemoved`. The seal is local to this process.
+
 `Retire` cancels hydration, syncs the data, saves the full checkpoint with
 `Retired` set and closes the data file. It does nothing if the file has
 been rebound to another owner since the caller checked. `Rebind` gives a
-writer a new incarnation and stateid, on recovery or when an earlier CLOSE
-hands shared staging to another open. It clears `Retired`, reopening a
-retired writer's data file. If its save fails it keeps the previous
-owner in memory and tries to write the previous sidecar back. That can fail
-too; the checkpoint is then marked dirty, and the sidecar on disk may be
-either version. A failed rebind of a retired writer also closes the data
-file it reopened.
+writer a new incarnation and stateid, on recovery or when an upgrade keeps
+the existing open's stateid. `Bind` names another open as the owner in one
+save, with its open-owner and whether it only reads: when an earlier CLOSE
+hands shared staging to another writer, when a write open takes over the
+staging of an open whose CLOSE answered DELAY, and when a detached staging
+is kept for a read open. Both clear `Retired`, reopening a retired writer's
+data file. If the save fails they keep the previous owner in memory and try
+to write the previous sidecar back. That can fail too; the checkpoint is
+then marked dirty, and the sidecar on disk may be either version. A failed
+rebind of a retired writer also closes the data file it reopened.
 
 ## Startup recovery and quarantine
 
@@ -137,7 +155,11 @@ file it reopened.
    Outside them the bytes are read from the base again, so a write after
    the checkpoint outside its ranges is not recovered. A file without a
    base keeps its data file's size.
-6. The entry is registered. A retired entry has no open data file. An
+6. A sidecar without a candidate gets the staging's own transient as one,
+   since the earlier process may have submitted it before a checkpoint
+   recorded it. A candidate newer than the data checkpoint starts the data
+   version above it, so that no later write makes it look current.
+7. The entry is registered. A retired entry has no open data file. An
    unlinked entry is not indexed by target.
 
 A data file that cannot be opened, examined or truncated is logged and
@@ -155,9 +177,9 @@ At run time `Quarantine` also leaves a tombstone for the life of the
 process: `Get`, `GetMeta` and `Entries` no longer return the entry,
 `Failed` reports it, `Create` of the same inode gets `ErrRemoved` and
 `Remove` does nothing. The server quarantines a writer whose namespace
-operation has an unknown outcome, and a staging whose hydration or LinkFile
-failed during CLOSE while other opens read it. A tombstone is not
-persisted; a restart changes the write verifier.
+operation has an unknown outcome, and a staging whose publication failed
+during CLOSE while other opens read it. A tombstone is not persisted; a
+restart changes the write verifier.
 
 ## Read-only store
 

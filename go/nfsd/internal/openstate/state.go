@@ -41,6 +41,10 @@ type State struct {
 	// Its original grants are unknown, so a downgrade gets only the subset
 	// rule (DowngradeStatus).
 	Recovered bool
+	// closing: the open's CLOSE answered DELAY. Its client may have given
+	// the open up, as libnfs does, so a later writer of its staging does
+	// not hand the staging to it (Store.OtherWriter).
+	closing bool
 	// learnGeneration: the open was adopted from a request whose stateid
 	// carried seqid 0 ("the current one"), so its generation is unknown.
 	// The first request to present a seqid sets it.

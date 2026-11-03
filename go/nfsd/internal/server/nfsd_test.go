@@ -135,18 +135,7 @@ func startTestServerWithServer(
 	dir string,
 ) (srv *Server, addr string, cleanup func()) {
 	t.Helper()
-	fs := vfs.NewLocalTernVFS(dir)
-	stagingDir := t.TempDir()
-	ss, err := staging.NewLocalStore(stagingDir, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	srv, err = NewServer(fs, ss, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr, cleanup = serveTestServer(t, srv)
-	return srv, addr, cleanup
+	return startTestServerWithVFS(t, vfs.NewLocalTernVFS(dir))
 }
 
 func serveTestServer(t *testing.T, srv *Server) (addr string, cleanup func()) {

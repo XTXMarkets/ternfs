@@ -228,3 +228,50 @@ func TestOpenStateStoreBoundsExpiredTombstones(t *testing.T) {
 		t.Fatal("oldest expired stateid was not evicted")
 	}
 }
+
+// A repeated OPEN by the owner of a closing open makes it ordinary again.
+func TestOpenClearsClosing(t *testing.T) {
+	store := NewStore()
+	owner := OwnerKey{ClientID: 1, Owner: "owner"}
+	file := vfs.MakeInodeID(vfs.InodeTypeFile, 1)
+	state, err := store.Open(owner, file, file, testGrant(true), nfs4.StateID{}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.MarkClosing(state.ID)
+	if !store.Closing(state.ID) {
+		t.Fatal("mark not set")
+	}
+	if _, err := store.Open(owner, file, file, testGrant(true), nfs4.StateID{}, true); err != nil {
+		t.Fatal(err)
+	}
+	if store.Closing(state.ID) {
+		t.Fatal("a repeated OPEN left the open closing")
+	}
+}
+
+// ReaderOf returns only a reader of the same client that is not closing.
+func TestReaderOfSkipsOtherClientsAndClosing(t *testing.T) {
+	store := NewStore()
+	file := vfs.MakeInodeID(vfs.InodeTypeFile, 1)
+	staging := vfs.MakeInodeID(vfs.InodeTypeFile, 2)
+	open := func(client uint64, owner string) State {
+		t.Helper()
+		state, err := store.Open(OwnerKey{ClientID: client, Owner: owner}, file, staging, testGrant(false), nfs4.StateID{}, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return state
+	}
+	writer := open(1, "writer")
+	open(2, "other-client")
+	closing := open(1, "closing")
+	store.MarkClosing(closing.ID)
+	if r, ok := store.ReaderOf(staging, writer.ID, 1); ok {
+		t.Fatalf("ReaderOf returned %+v", r)
+	}
+	reader := open(1, "reader")
+	if r, ok := store.ReaderOf(staging, writer.ID, 1); !ok || r.ID != reader.ID {
+		t.Fatalf("ReaderOf = %+v %t, want the reader", r, ok)
+	}
+}

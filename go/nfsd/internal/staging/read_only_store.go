@@ -28,6 +28,10 @@ func (ReadOnlyStore) FindTargets(vfs.InodeID, string) map[vfs.InodeID]Meta { ret
 
 func (ReadOnlyStore) Entries() map[vfs.InodeID]Meta { return nil }
 
+func (ReadOnlyStore) Bind(vfs.InodeID, uint64, nfs4.StateID, string, bool) error {
+	return os.ErrPermission
+}
+
 func (ReadOnlyStore) Rebind(vfs.InodeID, uint64, nfs4.StateID) error {
 	return os.ErrPermission
 }
@@ -45,3 +49,5 @@ func (ReadOnlyStore) Failed(vfs.InodeID) bool { return false }
 func (ReadOnlyStore) Remove(vfs.InodeID) {}
 
 func (ReadOnlyStore) StagedSize(vfs.InodeID) (uint64, bool) { return 0, false }
+
+func (ReadOnlyStore) RecoveredWriters(vfs.InodeID) []vfs.InodeID { return nil }

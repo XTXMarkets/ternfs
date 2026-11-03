@@ -121,6 +121,17 @@ func (s *Server) guardNamespaceWriters(writers []namespaceWriter) error {
 	return nil
 }
 
+// fenceNamespaceWriters fences the captured writers' candidates before the
+// source edge is looked up, so the edge shows any that linked already.
+func (s *Server) fenceNamespaceWriters(writers []namespaceWriter) uint32 {
+	for _, writer := range writers {
+		if err := s.fenceCandidate(writer.id); err != nil {
+			return nfs4.NFS4ERR_DELAY
+		}
+	}
+	return nfs4.NFS4_OK
+}
+
 // Writer disposition is separate from the reply: REMOVE edge-gone errors
 // detach the captured writers but still return NOENT. Known outcomes survive
 // final checkpoint failures; an unknown outcome fails only these writers.

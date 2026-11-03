@@ -516,6 +516,17 @@ func TernToOSError(err error) error {
 	}
 }
 
+// IsTransientBackendError reports an error that says nothing about the
+// request's outcome because the backend did not answer in time: the Go
+// client's TIMEOUT once its overall budget for a shard, the CDC or the
+// registry is spent, which a shard restart produces. The request may have
+// applied, in whole or in part, or not at all; it can be looked into and
+// tried again once the backend answers. The caller decides what a retry
+// may assume.
+func IsTransientBackendError(err error) bool {
+	return errors.Is(err, msgs.TIMEOUT) || errors.Is(err, os.ErrDeadlineExceeded)
+}
+
 func (t *RemoteTernVFS) ClassifyMutation(op uint32, err error) MutationOutcome {
 	if err == nil {
 		return MutationApplied

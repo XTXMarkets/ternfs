@@ -21,7 +21,7 @@ These are the current implementation's guarantees and limitations.
 | Successful create OPEN | The pathname contains an empty published file. Initial size and later writes can still be private. |
 | Unstable WRITE | The server accepted bytes into local staging. The client must retain them until made stable. |
 | Stable WRITE or COMMIT | Checkpoints staging data and metadata on the local disk. After a restart, COMMIT also syncs the client's recovered writers of the handle. It does not publish to TernFS. |
-| Last write CLOSE or downgrade to READ | Publishes a changed, linked staging version synchronously. A clean writer leaves the published file unchanged; an unlinked writer discards its private version. |
+| Last write CLOSE or downgrade to READ | Publishes a changed, linked staging version synchronously, or answers `NFS4ERR_DELAY` while the backend does not answer, and the client retries. A clean writer leaves the published file unchanged; an unlinked writer discards its private version. |
 | Fresh lookup after publication | Finds the replacement inode. Already held handles and client caches need not select that version. |
 
 Writers on one client share staging for the same file within one daemon.
@@ -56,6 +56,19 @@ not passed; other daemons never have it. This causes the
 **Topology.** Direct each mount, including all its TCP connections, to one
 nfsd. Give that daemon a persistent staging directory.
 
+**Client mounts.** Mount with `vers=4.1,proto=tcp,hard`. A client that
+reopens files without walking their path must also mount with
+`lookupcache=none`. Samba is one: it opens a file `O_PATH` by name and
+reopens it for writing through `/proc/self/fd`. A writable open by
+filehandle needs nfsd to know the file's current name, and nfsd records
+names only for files a client has looked up or opened since it started. A
+handle the client learned from READDIR, kept across its own save, or held
+across a restart can therefore be refused with `NFS4ERR_STALE`. An
+ordinary open recovers by looking the name up again; a reopen through
+`/proc/self/fd` cannot, and Samba reports access denied. With
+`lookupcache=none` every open walks the path, so the name is fresh. It
+costs one LOOKUP per open.
+
 **Guarantees.** Same-client opens share a mutable view within the daemon.
 Publication is synchronous. REMOVE and RENAME update that daemon's staged
 writers so a later CLOSE follows the local namespace change.
@@ -70,9 +83,9 @@ passed. Read opens are reopened by the client. Session files and aliases are
 written without fsync, so a host crash can lose them. Disk loss removes
 unpublished contents and every session.
 
-**Known issues.** The backend-timeout issue below applies. A surviving
-disk is not a guarantee that every descriptor resumes. There are no
-enforced share reservations or byte-range locks.
+**Known issues.** The backend-timeout and rejected-publication issues below
+apply. A surviving disk is not a guarantee that every descriptor resumes.
+There are no enforced share reservations or byte-range locks.
 
 ### Independent writable servers
 
@@ -176,7 +189,7 @@ mounts.
 
 ## Known defects
 
-### A backend timeout is treated as a failure
+### A backend timeout fails writers at a REMOVE or RENAME
 
 nfsd uses the Go client's default timeout settings: an overall limit of
 10 s on a shard request, 60 s on a CDC request and 5 min on a block-service
@@ -186,32 +199,53 @@ request spends in the client's send queue comes on top, a block-service
 request sets a fresh socket deadline for each attempt, and one CLOSE makes
 many requests.
 
-When publication fails, CLOSE returns the backend error mapped to an NFS
-status. A timeout, or any error without a more specific mapping, is
+CLOSE and OPEN_DOWNGRADE do not treat a timeout as a failure. A publication
+or hydration the backend does not answer gets `NFS4ERR_DELAY` and keeps the
+open and the staging, and the Linux client retries, so `close(2)` blocks for
+about the outage, as on a hard mount; see
+[Publication](internal/server/README.md#publication). A client that does
+not retry DELAY, such as libnfs, gets an error from its close instead.
+
+REMOVE and RENAME do. A timeout there, like any error except a REMOVE whose
+edge is already gone, is an unknown outcome. The staged writers at the
+names are failed and quarantined, and the operation gets `NFS4ERR_IO` even
+if it applied; with no staged writer it gets the mapped backend error. The
+session is kept. Deciding these outcomes by looking the names up is not
+done yet.
+
+### A rejected publication is not reported to the application
+
+When the backend rejects a publication, CLOSE returns the backend error
+mapped to an NFS status. Any error without a more specific mapping is
 `NFS4ERR_IO`; a missing name is `NFS4ERR_NOENT` and a permission error
 `NFS4ERR_ACCESS`. What happens to the staging depends on the step that
 failed:
 
-- If hydration fails, or LinkFile fails and the file is not found already
-  published, the staging is discarded and the transient file scrapped,
-  best effort. If other opens still read that staging, it is quarantined
-  instead: its files are kept, and those readers get `NFS4ERR_IO`.
-- If a timestamp-only CLOSE fails to look up the name or set the times,
-  the staging is kept. A failed SetTime may still have applied.
+- If the upload fails, or LinkFile is rejected and resolving the
+  publication candidate does not show that another copy of the request
+  linked it, the staging is discarded and its transient scrapped. A first
+  LinkFile answered not-exist is not a rejection: the CLOSE retries once
+  through a fresh transient. If other
+  opens still read that staging, it is quarantined instead: its files are
+  kept, and those readers get `NFS4ERR_IO`.
+- If a timestamp-only CLOSE gets an error other than a timeout looking up
+  the name or setting the times, the writer ends as after a clean CLOSE. A
+  failed SetTime may still have applied.
 
 The Linux client discards a CLOSE's status, so `close(2)` returns 0 and the
 application believes its save was published while the name holds the
-previous version or the empty placeholder. A shard outage that outlasts
-these retries produces this. No shorter outage has been established as
-safe. Tracked as `work-kd49`.
+previous version or the empty placeholder. An upload error that is neither
+a timeout nor a missing file, such as a block service refusing writes after
+the Go client's retries, takes this path too.
 
-Any mutation whose outcome cannot be established, which includes every
-backend timeout, also retires the client's session. The client re-creates
-it, and while the daemon confirms the new session its OPEN, WRITE and
-CLOSE get `NFS4ERR_DELAY`, which the Linux client answers with a backoff
-of up to 15 s for asynchronous operations. If this happens while the shard
-is still down, every application on the mount stalls for the rest of the
-outage. Tracked as `work-49b9`.
+### A CLOSE retried after an hour can publish again
+
+A retried CLOSE decides that its earlier link did not apply when `ScrapFile`
+of the candidate succeeds. A candidate that did link, was then replaced at
+the name by another save, and was collected by snapshot GC after terngc's
+`-collect-directories-min-edge-age` (one hour by default) is a transient
+again. A CLOSE still retrying that late publishes its bytes again, over the
+newer save.
 
 ### Old handles name their original version
 
@@ -231,9 +265,9 @@ client then looks the name up again.
 
 A writer whose client's lease expires is retired with its data in place,
 including one that acknowledged nothing, and is kept until recovered or
-removed by an administrator (`work-yhrt`). An `EXCLUSIVE4` create retried
+removed by an administrator. An `EXCLUSIVE4` create retried
 by the same client boot after its lease expired gets `NFS4ERR_EXIST`
-instead of adopting its retired staging (`work-obgt`).
+instead of adopting its retired staging.
 
 ## Operating requirements
 
@@ -283,7 +317,7 @@ authentication either; see [Diagnostics](#diagnostics).
 ### Upgrades
 
 For upgrades, drain and close writers, then account for remaining active,
-retired and quarantined staging. The current sidecar format is NFS8.
+retired and quarantined staging. The current sidecar format is NFS9.
 Deleting staging to bypass a format incompatibility discards unpublished
 data. Follow [upgrade recovery](RECOVERY.md#upgrade-the-server).
 
@@ -316,6 +350,7 @@ Counters are cumulative from process start. Latency histograms have a
 | `eggsfs_nfsd_admission_cache_bytes`, `_cache_limit`, `_sessions`, `_records`, `_groups`, `_active_requests` | | Reply cache and session store figures (gauges). |
 | `eggsfs_nfsd_state_opens`, `_aliases` | | Live open stateids and publication aliases (gauges). |
 | `eggsfs_nfsd_state_publishes` | | Files published by CLOSE or OPEN_DOWNGRADE. |
+| `eggsfs_nfsd_state_publish_delays` | | CLOSEs and OPEN_DOWNGRADEs answered `NFS4ERR_DELAY` because the backend did not answer a step of the publication, its hydration, scrap, lookup or SetTime, refused the link on a locked name, a candidate checkpoint failed, or a WRITE landed while it ran; the client retries them. |
 | `eggsfs_nfsd_staging_files`, `_bytes`, `_retired`, `_unlinked`, `_busy`, `_hydrations_in_flight` | | The staging store (gauges). Files are read without waiting on a file busy with disk I/O: a busy file counts in `files` and `busy` but not in `bytes`, `retired` or `unlinked`, so those are lower bounds while `busy` is above zero. `bytes` is the files' live size, including UNSTABLE writes not yet committed. |
 | `eggsfs_nfsd_replay_records`, `_write_failures`, `_record_bytes`, `_intents` | | The persistent reply cache: slot and intent records written, record writes and session file creations that failed, reply bytes recorded, intents. |
 | `eggsfs_nfsd_replay_session_files` | | Sessions with a file on the staging disk (gauge). |

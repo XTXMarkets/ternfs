@@ -287,7 +287,7 @@ func TestInspectReportsClientState(t *testing.T) {
 		report.StagingSummary.Complete != 2 {
 		t.Fatalf("staging summary = %+v", report.StagingSummary)
 	}
-	if open.Staging.SidecarVersion != "v8" ||
+	if open.Staging.SidecarVersion != "v9" ||
 		open.Staging.BaseID != inodeText(vfs.MakeInodeID(vfs.InodeTypeFile, 123)) ||
 		open.Staging.BaseSize != 8192 || open.Staging.CheckpointSize != 4096 ||
 		len(open.Staging.Dirty) != 1 || !open.Staging.MetadataChanged ||
@@ -908,7 +908,7 @@ func TestInspectReportsStagingIntegrity(t *testing.T) {
 		!strings.Contains(got.Problems[0], "cannot read metadata sidecar") {
 		t.Fatalf("malformed entry = %+v", got)
 	}
-	if got := byID[inodeText(4)]; got == nil || got.SidecarVersion != "v8" ||
+	if got := byID[inodeText(4)]; got == nil || got.SidecarVersion != "v9" ||
 		!got.Exclusive || got.Verifier != "0102030000000000" ||
 		!got.ReadOnly || !got.Retired || !got.Unlinked || !got.Guarded ||
 		!strings.HasPrefix(got.RecoveryKey, "aabb") ||

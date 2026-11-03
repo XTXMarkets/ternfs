@@ -72,15 +72,15 @@ func (s *Server) replayGate(st *compoundState, opnum uint32) uint32 {
 	switch {
 	case !r.pending:
 	case r.malformed:
-		refuse = operationMutates(opnum)
+		refuse = recoveryEffect(opnum)
 	case st.opIndex < r.op:
-		refuse = operationMutates(opnum)
+		refuse = recoveryEffect(opnum)
 	case st.opIndex == r.op:
 		refuse = opnum != intentOperation(r.intent)
 	default:
 		// The operation it names went on without deciding it. Nothing does,
 		// but if one did, what came after it is not known either.
-		refuse = operationMutates(opnum)
+		refuse = recoveryEffect(opnum)
 	}
 	if !refuse {
 		return nfs4.NFS4_OK
@@ -89,6 +89,17 @@ func (s *Server) replayGate(st *compoundState, opnum uint32) uint32 {
 		"seq", st.seq, "op", nfs4.NfsOpnum4Name(opnum), "index", st.opIndex, "malformed", r.malformed)
 	s.metrics.replayUndecidable.Add(1)
 	return nfs4.NFS4ERR_DEADSESSION
+}
+
+// recoveryEffect reports an operation whose effect a restored session has
+// to account for. COMMIT is not one: it changes no file and no name, and
+// run again after a restart it syncs the same staging, or fails on a
+// stateid that is gone. It is an effect for the reply budget
+// (operationMutates), not for the gates: libnfs closes a file with PUTFH,
+// COMMIT, CLOSE in one compound, and a COMMIT ahead of a REMOVE must not
+// make the REMOVE's intent undecidable after a restart.
+func recoveryEffect(opnum uint32) bool {
+	return operationMutates(opnum) && opnum != nfs4.OP_COMMIT
 }
 
 // mutationGate removes the session's file before a compound's second
@@ -102,7 +113,7 @@ func (s *Server) replayGate(st *compoundState, opnum uint32) uint32 {
 // counts. If the file cannot be removed, the operation gets SERVERFAULT
 // before its effect, and the session is retired once its slot is unlocked.
 func (s *Server) mutationGate(st *compoundState, opnum uint32) uint32 {
-	if st.session == nil || !operationMutates(opnum) {
+	if st.session == nil || !recoveryEffect(opnum) {
 		return nfs4.NFS4_OK
 	}
 	if !st.mutated {

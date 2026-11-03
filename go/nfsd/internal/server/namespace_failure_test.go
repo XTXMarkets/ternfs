@@ -320,7 +320,7 @@ func TestStagingStartupExcludesEveryBadEntry(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				data = bytes.Replace(data, []byte("NFS8"), []byte("XFS8"), 1)
+				data = bytes.Replace(data, []byte("NFS9"), []byte("XFS9"), 1)
 				if err := os.WriteFile(path, data, 0600); err != nil {
 					t.Fatal(err)
 				}
@@ -383,13 +383,13 @@ func TestNamespaceSidecarStrictDecode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Fixed NFS8 layout, with no dirty ranges in this checkpoint.
+	// Fixed NFS9 layout, with no dirty ranges in this checkpoint.
 	flagOffset := 30 + len(meta.FileName) + 8 + 4 + 8 + 8 + 8 + 4 + 32
-	for _, kind := range []string{"NFS5", "NFS7", "NFS9", "trailer", "unknown flag", "truncated"} {
+	for _, kind := range []string{"NFS5", "NFS7", "NFS8", "trailer", "unknown flag", "truncated"} {
 		t.Run(kind, func(t *testing.T) {
 			bad := append([]byte(nil), data...)
 			switch kind {
-			case "NFS5", "NFS7", "NFS9":
+			case "NFS5", "NFS7", "NFS8":
 				magic := 30 + int(binary.BigEndian.Uint16(bad[28:30])) + 8
 				copy(bad[magic:], kind)
 			case "trailer":

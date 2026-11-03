@@ -32,8 +32,14 @@ type LocalFile struct {
 	dirty           byterange.Set
 	attrs           vfs.NodeInfo
 	metadataChanged bool
+	// dataVersion counts the writes and size changes, and candidate is the
+	// publication submitted and not yet resolved. meta holds the values
+	// last saved.
+	dataVersion     uint64
+	candidate       Candidate
 	hydrated        byterange.Set
 	checkpointDirty bool
+	sealed          bool
 	removed         bool
 
 	hydrateMu      sync.Mutex
@@ -76,7 +82,7 @@ func (sf *LocalFile) changedLocked() {
 func (sf *LocalFile) SetTime(mtime, atime *time.Time) error {
 	sf.mu.Lock()
 	defer sf.mu.Unlock()
-	if sf.removed {
+	if sf.removed || sf.sealed {
 		return ErrRemoved
 	}
 	if mtime != nil {
@@ -122,6 +128,44 @@ func (sf *LocalFile) DataChanged() bool {
 	return len(sf.dirty) != 0 || sf.size != sf.meta.BaseSize
 }
 
+func (sf *LocalFile) DataVersion() uint64 {
+	sf.mu.Lock()
+	defer sf.mu.Unlock()
+	return sf.dataVersion
+}
+
+func (sf *LocalFile) Seal(version uint64) bool {
+	sf.mu.Lock()
+	defer sf.mu.Unlock()
+	if sf.removed || sf.dataVersion != version {
+		return false
+	}
+	sf.sealed = true
+	return true
+}
+
+func (sf *LocalFile) Candidate() Candidate {
+	sf.mu.Lock()
+	defer sf.mu.Unlock()
+	return sf.candidate
+}
+
+// SetCandidate sets the publication candidate. With persist it then
+// checkpoints, as Sync does. A failed save leaves the candidate set, and
+// the next checkpoint writes it.
+func (sf *LocalFile) SetCandidate(c Candidate, persist bool) error {
+	sf.mu.Lock()
+	defer sf.mu.Unlock()
+	if sf.removed {
+		return ErrRemoved
+	}
+	sf.candidate = c
+	if !persist {
+		return nil
+	}
+	return sf.syncLocked()
+}
+
 func (sf *LocalFile) Retire(clientID uint64, stateID nfs4.StateID) error {
 	sf.hydrateMu.Lock()
 	done := sf.cancelHydrationLocked()
@@ -156,6 +200,8 @@ func (sf *LocalFile) saveMetaLocked() error {
 	meta.Size = sf.size
 	meta.Attrs = sf.attrs
 	meta.MetadataChanged = sf.metadataChanged
+	meta.DataVersion = sf.dataVersion
+	meta.Candidate = sf.candidate
 	meta.Version = MetaVersion
 	if err := SaveMeta(sf.metaPath, meta); err != nil {
 		return err
@@ -169,6 +215,7 @@ func (sf *LocalFile) saveMetaLocked() error {
 func (sf *LocalFile) checkpointChangedLocked() bool {
 	if sf.checkpointDirty || sf.meta.MetadataChanged != sf.metadataChanged ||
 		sf.meta.Attrs != sf.attrs || sf.meta.Size != sf.size ||
+		sf.meta.DataVersion != sf.dataVersion || sf.meta.Candidate != sf.candidate ||
 		len(sf.meta.Dirty) != len(sf.dirty) {
 		return true
 	}
@@ -181,12 +228,14 @@ func (sf *LocalFile) checkpointChangedLocked() bool {
 }
 
 // updateMetaLocked changes sidecar metadata without checkpointing unstable
-// data. The caller holds sf.mu.
+// data: the data version stays the checkpointed one, and the candidate is
+// the current one. The caller holds sf.mu.
 func (sf *LocalFile) updateMetaLocked(meta Meta) error {
 	if sf.removed {
 		return ErrRemoved
 	}
 	previous := sf.meta
+	meta.Candidate, previous.Candidate = sf.candidate, sf.candidate
 	if err := SaveMeta(sf.metaPath, meta); err != nil {
 		// A directory sync can fail after the replacement was installed.
 		restoreErr := SaveMeta(sf.metaPath, previous)
@@ -201,9 +250,10 @@ func (sf *LocalFile) updateMetaLocked(meta Meta) error {
 	return nil
 }
 
-func (sf *LocalFile) rebind(
+func (sf *LocalFile) bind(
 	clientID uint64,
 	stateID nfs4.StateID,
+	update func(*Meta),
 ) error {
 	sf.mu.Lock()
 	defer sf.mu.Unlock()
@@ -222,6 +272,7 @@ func (sf *LocalFile) rebind(
 	meta.ClientID = clientID
 	meta.NFSStateID = stateID
 	meta.Retired = false
+	update(&meta)
 	err := sf.updateMetaLocked(meta)
 	if err != nil && oldMeta.Retired {
 		_ = sf.f.Close()
@@ -232,7 +283,7 @@ func (sf *LocalFile) rebind(
 func (sf *LocalFile) SetSize(size uint64) error {
 	sf.mu.Lock()
 	defer sf.mu.Unlock()
-	if sf.removed {
+	if sf.removed || sf.sealed {
 		return ErrRemoved
 	}
 	oldSize := sf.size
@@ -243,6 +294,7 @@ func (sf *LocalFile) SetSize(size uint64) error {
 		return err
 	}
 	sf.size = size
+	sf.dataVersion++
 	sf.changedLocked()
 	sf.attrs.Mtime = sf.attrs.Ctime
 	if sf.meta.BaseID == 0 {
@@ -260,7 +312,7 @@ func (sf *LocalFile) SetSize(size uint64) error {
 func (sf *LocalFile) Write(offset uint64, data []byte) error {
 	sf.mu.Lock()
 	defer sf.mu.Unlock()
-	if sf.removed {
+	if sf.removed || sf.sealed {
 		return ErrRemoved
 	}
 	if len(data) == 0 {
@@ -279,6 +331,7 @@ func (sf *LocalFile) Write(offset uint64, data []byte) error {
 	if _, err := sf.f.WriteAt(data, int64(offset)); err != nil {
 		return err
 	}
+	sf.dataVersion++
 	sf.changedLocked()
 	sf.attrs.Mtime = sf.attrs.Ctime
 	if sf.meta.BaseID == 0 {
@@ -585,6 +638,10 @@ func (sf *LocalFile) Sync() error {
 	if sf.removed {
 		return ErrRemoved
 	}
+	return sf.syncLocked()
+}
+
+func (sf *LocalFile) syncLocked() error {
 	if err := sf.f.Sync(); err != nil {
 		return err
 	}

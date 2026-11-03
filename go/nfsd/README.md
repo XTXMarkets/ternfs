@@ -48,6 +48,8 @@ sudo mount -t nfs -o vers=4.1,proto=tcp,hard nfs.example:/ /mnt/ternfs
 ```
 
 The mountpoint must already exist. Keep the mount directed at one nfsd.
+Mounts that Samba or another client reopens without a path walk also need
+`lookupcache=none`; see [client mounts](DEPLOYMENT.md#one-writable-server).
 Read [Deployment](DEPLOYMENT.md) before choosing the staging disk or a
 server replacement procedure.
 

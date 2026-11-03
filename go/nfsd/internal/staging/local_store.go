@@ -28,7 +28,12 @@ type LocalStore struct {
 	dir     string
 	files   map[vfs.InodeID]*localStagingEntry
 	targets map[stagingTarget]map[vfs.InodeID]struct{}
-	log     *slog.Logger
+	// recovered indexes the entries this process found on disk at startup
+	// by the handle a client holds them under: their own inode and, for a
+	// replacement, the file they replace. A request on a handle finds the
+	// client's unadopted writers here without a scan of every entry.
+	recovered map[vfs.InodeID]map[vfs.InodeID]struct{}
+	log       *slog.Logger
 
 	fileLocks  keyedlock.Locker[vfs.InodeID]
 	createFile func(string) (*os.File, error)
@@ -37,6 +42,7 @@ type LocalStore struct {
 type localStagingEntry struct {
 	file   *LocalFile
 	target stagingTarget
+	baseID vfs.InodeID // for the recovered index; a base never changes
 	failed bool
 }
 
@@ -51,6 +57,7 @@ func NewLocalStore(dir string, logger *slog.Logger) (*LocalStore, error) {
 		dir:        dir,
 		files:      make(map[vfs.InodeID]*localStagingEntry),
 		targets:    make(map[stagingTarget]map[vfs.InodeID]struct{}),
+		recovered:  make(map[vfs.InodeID]map[vfs.InodeID]struct{}),
 		log:        logger,
 		createFile: os.Create,
 	}
@@ -124,6 +131,17 @@ func NewLocalStore(dir string, logger *slog.Logger) (*LocalStore, error) {
 			}
 		}
 		target := stagingTarget{dirID: meta.DirID, name: meta.FileName}
+		candidate, version := meta.Candidate, meta.DataVersion
+		if candidate.ID == 0 {
+			// The earlier process may have submitted the staging's own
+			// transient without a checkpoint recording it.
+			candidate = Candidate{ID: id, Cookie: meta.TernCookie, Version: version}
+		}
+		if candidate.Version > version {
+			// A namespace save recorded a candidate newer than the data
+			// checkpoint: no later write may make it look current.
+			version = candidate.Version + 1
+		}
 		entry := &localStagingEntry{
 			file: &LocalFile{
 				f:               f,
@@ -133,12 +151,16 @@ func NewLocalStore(dir string, logger *slog.Logger) (*LocalStore, error) {
 				dirty:           append(byterange.Set(nil), meta.Dirty...),
 				attrs:           stagingAttributes(meta.Attrs, info.ModTime()),
 				metadataChanged: meta.MetadataChanged,
+				dataVersion:     version,
+				candidate:       candidate,
 			},
 			target: target,
+			baseID: meta.BaseID,
 		}
 		if !meta.Unlinked {
 			s.addTargetLocked(id, target)
 		}
+		s.addRecoveredLocked(id, meta)
 		if meta.Retired {
 			_ = f.Close()
 		}
@@ -172,6 +194,7 @@ func (s *LocalStore) Create(id vfs.InodeID, meta Meta) (File, error) {
 	}
 	target := stagingTarget{dirID: meta.DirID, name: meta.FileName}
 	meta.Size = meta.BaseSize
+	meta.DataVersion, meta.Candidate = 0, Candidate{}
 	meta.Version = MetaVersion
 	meta.Attrs = stagingAttributes(meta.Attrs, time.Now())
 	path := filepath.Join(s.dir, fmt.Sprintf("%016x.staging", uint64(id)))
@@ -217,6 +240,14 @@ func (s *LocalStore) Create(id vfs.InodeID, meta Meta) (File, error) {
 }
 
 func (s *LocalStore) Get(id vfs.InodeID) File {
+	if file := s.liveFile(id); file != nil {
+		return file
+	}
+	return nil
+}
+
+// liveFile returns id's file unless it is missing or failed.
+func (s *LocalStore) liveFile(id vfs.InodeID) *LocalFile {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	entry := s.files[id]
@@ -276,15 +307,28 @@ func (s *LocalStore) Rebind(
 	clientID uint64,
 	stateID nfs4.StateID,
 ) error {
-	s.mu.Lock()
-	entry := s.files[id]
-	if entry == nil || entry.failed {
-		s.mu.Unlock()
+	file := s.liveFile(id)
+	if file == nil {
 		return os.ErrNotExist
 	}
-	file := entry.file
-	s.mu.Unlock()
-	return file.rebind(clientID, stateID)
+	return file.bind(clientID, stateID, func(*Meta) {})
+}
+
+func (s *LocalStore) Bind(
+	id vfs.InodeID,
+	clientID uint64,
+	stateID nfs4.StateID,
+	openOwner string,
+	readOnly bool,
+) error {
+	file := s.liveFile(id)
+	if file == nil {
+		return os.ErrNotExist
+	}
+	return file.bind(clientID, stateID, func(meta *Meta) {
+		meta.OpenOwner, meta.OwnerKnown = openOwner, true
+		meta.ReadOnly = readOnly
+	})
 }
 
 func (s *LocalStore) addTargetLocked(id vfs.InodeID, target stagingTarget) {
@@ -299,6 +343,40 @@ func (s *LocalStore) removeTargetLocked(id vfs.InodeID, entry *localStagingEntry
 	if len(s.targets[entry.target]) == 0 {
 		delete(s.targets, entry.target)
 	}
+}
+
+func (s *LocalStore) addRecoveredLocked(id vfs.InodeID, meta Meta) {
+	for _, handle := range []vfs.InodeID{id, meta.BaseID} {
+		if handle == 0 {
+			continue
+		}
+		if s.recovered[handle] == nil {
+			s.recovered[handle] = make(map[vfs.InodeID]struct{})
+		}
+		s.recovered[handle][id] = struct{}{}
+	}
+}
+
+func (s *LocalStore) removeRecoveredLocked(id, baseID vfs.InodeID) {
+	for _, handle := range []vfs.InodeID{id, baseID} {
+		delete(s.recovered[handle], id)
+		if len(s.recovered[handle]) == 0 {
+			delete(s.recovered, handle)
+		}
+	}
+}
+
+// RecoveredWriters lists the staging inodes recovered at startup that a
+// client may hold through handleID: the entry itself, or a replacement of
+// it. Entries this process created, removed or quarantined are not listed.
+func (s *LocalStore) RecoveredWriters(handleID vfs.InodeID) []vfs.InodeID {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ids := make([]vfs.InodeID, 0, len(s.recovered[handleID]))
+	for id := range s.recovered[handleID] {
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 // The pathname lock serializes namespace callers. File checkpoint I/O takes
@@ -322,7 +400,9 @@ func (s *LocalStore) updateNamespace(id vfs.InodeID, update func(*Meta)) error {
 	}
 	update(&sf.meta)
 	// Meta() includes live dirty ranges. Save only sf.meta, which describes
-	// the last data checkpoint and the namespace fields just assigned.
+	// the last data checkpoint and the namespace fields just assigned, with
+	// the current candidate.
+	sf.meta.Candidate = sf.candidate
 	err := SaveMeta(sf.metaPath, sf.meta)
 	sf.checkpointDirty = err != nil
 	s.mu.Lock()
@@ -370,6 +450,7 @@ func (s *LocalStore) Quarantine(id vfs.InodeID) error {
 	// cleanup. Restart changes the write verifier and ends its required lifetime.
 	entry.failed = true
 	s.removeTargetLocked(id, entry)
+	s.removeRecoveredLocked(id, entry.baseID)
 	s.mu.Unlock()
 	entry.file.prepareRemove()
 	return quarantineStagingFiles(s.dir, id)
@@ -423,6 +504,7 @@ func (s *LocalStore) Remove(id vfs.InodeID) {
 	}
 	delete(s.files, id)
 	s.removeTargetLocked(id, entry)
+	s.removeRecoveredLocked(id, entry.baseID)
 	s.mu.Unlock()
 	entry.file.prepareRemove()
 	name := entry.file.f.Name()

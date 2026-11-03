@@ -56,6 +56,15 @@ marker; once set it stays set. Session slots order and deduplicate
 requests, so open-owners have no sequence numbers and no replay cache. An
 owner is not retained after its last open closes.
 
+An open whose CLOSE answered `NFS4ERR_DELAY` is marked closing. libnfs
+gives such an open up, so it is not treated as a writer still using the
+staging: another writer's CLOSE does not hand it the staging
+(`OtherWriter`), a write open of the same client that joins the staging
+takes its sidecar over, and the CLOSE that ends the staging expires it
+(`ExpireWriters`). A repeated OPEN by its owner clears the mark. A
+downgrade that answers DELAY does not set it. See
+[Publication](../server/README.md#publication).
+
 ## Stateid scope
 
 A stateid is valid only for the incarnation that owns it and the handle it
@@ -112,37 +121,60 @@ These rules decide what a read open of a handle sees when the same client
 also writes it. The server applies them under the file lock.
 
 - A read OPEN takes the client's [view](#client-views) of the handle. When
-  the client has a writer, that is the writer's staging, so the client
-  reads its own writes. The source is chosen again once the file lock is
+  the client has a writer, live or recovered from the staging disk, that is
+  the writer's staging, so the client reads its own writes; the read open
+  never owns that staging, and its CLOSE leaves it to the writer. The
+  source is chosen again once the file lock is
   held, since a writer's CLOSE may have ended that staging meanwhile. A
   failed staging, or a published version that no longer exists, falls back
   to the handle.
-- A clean CLOSE, or a timestamp-only CLOSE that succeeds, discards the
-  staging and points every open whose I/O used it back at its own handle
-  (`Retarget`). A timestamp-only CLOSE whose lookup or SetTime fails returns
-  the error, keeps the staging and does not retarget its readers. A failed
-  SetTime may still have applied.
-- A successful data publication links the staging inode as the replacement.
-  Opens that read it stay on it and now read the published file.
-- When hydration or LinkFile fails and other opens read the staging, it is
+- The open that created a file owns its staging even when it is read-only,
+  so its CLOSE publishes a size set at CREATE.
+- A clean or timestamp-only CLOSE discards the staging and points every
+  open whose I/O used it back at its own handle (`Retarget`). A
+  timestamp-only CLOSE whose lookup or SetTime the backend does not answer
+  gets `NFS4ERR_DELAY` and changes nothing; any other error ends the
+  staging the same way.
+- A successful data publication points the staging's opens at what it
+  published, before the staging goes: the staging inode itself, or the
+  fresh transient a retried CLOSE published through.
+- When the publication fails and other opens read the staging, it is
   quarantined: its files are kept under `quarantine/` and it stays failed
   for the life of the process. Those readers get `NFS4ERR_IO`, never the old
   bytes or `NFS4ERR_NOENT`. With no other reader the staging is discarded.
+- READ takes no lock. A READ that chose the staging just before a CLOSE
+  removed it reads what its stateid resolves to then. If an OPEN upgraded
+  that source to a writer, READ checks staging again before using the backend.
 - A writer downgraded to READ reads the version its writer published.
+- A writer whose name was removed keeps its private version while an open
+  of its client reads it. A downgrade to READ goes on reading it, and a
+  writer's CLOSE hands it to another read open of the client that is not
+  closing (`ReaderOf`), bound to that open as read-only in the sidecar, so
+  a restart does not bring back a writer; that open's CLOSE discards it. If
+  the binding fails, the readers get `NFS4ERR_IO`. The hand-over does not
+  survive a restart.
 
 Read opens leave no durable marker, with two exceptions: a create, even
 when opened read-only, and any open that has had a writer or staging. A
-writer downgraded to READ keeps its marker.
+writer downgraded to READ keeps its marker, also when the downgrade
+publishes nothing.
 
 ## Client views
 
 Operations without a usable stateid, such as GETATTR, VERIFY and READ with a
 special stateid, use the client's view of a handle. The view is, in order:
 
-1. the staging of the client's most recent write open of the handle;
+1. the staging of the client's most recent write open of the handle, or a
+   writer of its own that the restarted process recovered from the staging
+   disk and no request has adopted yet;
 2. the client's publication alias for the handle;
 3. the data inode of the client's most recent open of it;
 4. the handle itself.
+
+The recovered writer counts because after a restart the client's in-flight
+CLOSE is retransmitted some time after its first requests reach the new
+process, and a read open of the name in that window would otherwise see
+the version before the edit.
 
 COMMIT has no stateid either. It uses a separate writer index: the staging
 each client wrote through each handle, at most eight per handle and 1024
@@ -174,6 +206,9 @@ only the in-memory aliases.
 `Store.mu` guards the open and tombstone maps and is never held across
 I/O. `LockFile`, keyed by filehandle, serializes OPEN, CLOSE and
 OPEN_DOWNGRADE of one file across all clients, so an OPEN after a publishing
-CLOSE sees what it published. Opens of different files run in parallel. A
-caller that needs the file's pathname lock takes it before `LockFile`.
-`ViewStore` has its own mutex.
+CLOSE sees what it published; a SETATTR of times through the client's view
+takes it too, and releases it when it returns. A CLOSE, OPEN_DOWNGRADE or
+OPEN that ends a compound keeps it until its slot record is written; see
+[Locks held until the record](../server/README.md#locks-held-until-the-record).
+Opens of different files run in parallel. A caller that needs the file's
+pathname lock takes it before `LockFile`. `ViewStore` has its own mutex.

@@ -250,26 +250,34 @@ func (s *Server) opSetattr(args nfs4.SETATTR4args, st *compoundState, w *nfs4.CO
 			return setattrReply(nfs4.NFS4ERR_OPENMODE, attrMask{})
 		}
 		if err := s.setStagingSize(sf, *newSize); err != nil {
-			st.effectUnknown = true
 			return setattrReply(nfs4.NFS4ERR_IO, attrMask{})
 		}
 		resultMask[0] |= 1 << nfs4.FATTR4_SIZE
 	}
 	if setAtime != nil || setMtime != nil {
+		if sf == nil || isSpecialStateID(stateid) || !state.Writes() {
+			// The version the client sees, chosen under the file lock, which
+			// a CLOSE holds from reading the staging's times to removing it.
+			unlock := s.opens.LockFile(st.currentID)
+			defer unlock()
+			view := s.clientView(st.clientID, st.currentID)
+			if sf = s.directStaging(view); sf == nil {
+				if err := s.fs.SetTime(view, setMtime, setAtime); err != nil {
+					if vfs.IsTransientBackendError(err) {
+						// Setting times again is harmless: the client retries.
+						return setattrReply(nfs4.NFS4ERR_DELAY, attrMask{})
+					}
+					return setattrReply(nfs4.NFS4ERR_IO, attrMask{})
+				}
+			}
+		}
 		if sf != nil {
 			if err := sf.SetTime(setMtime, setAtime); err != nil {
-				st.effectUnknown = true
 				return setattrReply(nfs4.NFS4ERR_IO, attrMask{})
 			}
 			if err := sf.Sync(); err != nil {
-				st.effectUnknown = true
 				return setattrReply(nfs4.NFS4ERR_IO, attrMask{})
 			}
-		} else if err := s.fs.SetTime(
-			s.clientView(st.clientID, st.currentID), setMtime, setAtime,
-		); err != nil {
-			st.observeMutation(s.fs, nfs4.OP_SETATTR, err)
-			return setattrReply(nfs4.NFS4ERR_IO, attrMask{})
 		}
 		if setAtime != nil {
 			resultMask[1] |= 1 << (nfs4.FATTR4_TIME_ACCESS_SET - 32)
