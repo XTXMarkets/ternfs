@@ -507,7 +507,8 @@ Lookup, Readdir and the calls that create or move a name, serves LOOKUPP.
 The reader cache keeps one file reader per inode read, so READs reuse span
 metadata; a published file is immutable, so a cached reader cannot be
 stale. Neither is a record of the namespace: an entry goes when this
-process overwrites or removes the name, or when the cache is full and it
-is the least recently used. The parent map holds at most 262,144 entries
+process removes the name, or when the cache is full and it is the least
+recently used. Overwriting a name drops nothing; the displaced inode's
+entries stay until they are evicted. The parent map holds at most 262,144 entries
 and the reader cache 4,096. An evicted reader is created again, and an
 evicted directory's parent is read again from the backend.

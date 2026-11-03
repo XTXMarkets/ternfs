@@ -484,9 +484,11 @@ once it is durable is P marked replaced and purged here: its sessions and
 their files, its wire record and its opens go, and its staged writers are
 retired. None of them resumes, since no record confirms P any more. The
 record is written again without `purging`, and the session is inserted
-and the reply sent. A crash after the first write leaves `purging`, and
-the next start finishes the purge before it serves. A record write that
-fails gets `NFS4ERR_SERVERFAULT`, with P reopened.
+and the reply sent. A crash in between, or a failure of that second
+write, leaves `purging`, and the CREATE_SESSION still succeeds. The next
+start finishes the purge before it serves, and so does the next
+registration that replaces N. If the first write fails, the
+CREATE_SESSION gets `NFS4ERR_SERVERFAULT` and P is reopened.
 
 DESTROY_CLIENTID of an idle client retires its wire record and opens and
 removes its record.

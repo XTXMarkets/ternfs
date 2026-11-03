@@ -204,7 +204,8 @@ func (s *Server) confirmPending(cr *creation, caller clientrecords.Principal) (u
 		ss.replaced(p)
 		s.purgeReplaced(p)
 		if err := s.records.FinishPurge(id); err != nil {
-			// The record stays purging, and the next start finishes it.
+			// The record stays purging. The next start, or the next
+			// registration that replaces this incarnation, finishes it.
 			s.log.Warn("client record still purging", "incarnation", incarnationText(c.incarnation), "err", err)
 		}
 	}
