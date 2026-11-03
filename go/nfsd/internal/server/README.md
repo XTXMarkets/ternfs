@@ -473,10 +473,11 @@ owner's lock. A registration belongs to the principal that made it;
 another principal gets `NFS4ERR_CLID_INUSE`. If the identity's record
 still shows a reboot's purge or an expiry unfinished, that is finished
 first. If it confirms another incarnation P, that is a reboot or a
-takeover: the principal check is repeated against P's write state, and P
-is closed, so its new requests wait (`NFS4ERR_DELAY`, or
+takeover: P is closed, so its new requests wait (`NFS4ERR_DELAY`, or
 `NFS4ERR_CLIENTID_BUSY` for DESTROY_CLIENTID), or the CREATE_SESSION gets
-`NFS4ERR_DELAY` while P has requests running.
+`NFS4ERR_DELAY` while P has requests running. Only then is the principal
+check repeated against P's write state, so no OPEN of P can succeed after
+it; when it refuses the takeover with `NFS4ERR_CLID_INUSE`, P is reopened.
 
 Then the record is written confirming N, with `purging` naming P. Only
 once it is durable is P marked replaced and purged here: its sessions and

@@ -174,16 +174,18 @@ func (s *Server) confirmPending(cr *creation, caller clientrecords.Principal) (u
 		// A reboot or a takeover: the confirmed incarnation is replaced.
 		// New requests on its sessions wait from here.
 		p = uint64(old.Incarnation)
+		if !ss.closeForReplacement(p) {
+			return nfs4.NFS4ERR_DELAY, createSessionResult{}
+		}
 		if old.Principal != c.principal && s.holdsWriteState(p) {
 			// The principal check again: the incarnation may have
-			// opened for writing since the registration.
+			// opened for writing since the registration. It comes after
+			// admission closed, so no OPEN can succeed behind it.
+			ss.reopen(p)
 			ss.mu.Lock()
 			cr.cacheLocked(nfs4.NFS4ERR_CLID_INUSE, createSessionResult{})
 			ss.mu.Unlock()
 			return nfs4.NFS4ERR_CLID_INUSE, createSessionResult{}
-		}
-		if !ss.closeForReplacement(p) {
-			return nfs4.NFS4ERR_DELAY, createSessionResult{}
 		}
 	}
 	if !exists || old.Incarnation != id {

@@ -412,6 +412,9 @@ func TestPrincipalCheck(t *testing.T) {
 	if !srv.clientLive(incA) || srv.sessions.lookup(sessionA) == nil {
 		t.Fatal("CLID_INUSE disturbed the client")
 	}
+	if got := sequenceStatusForTest(t, srv, sessionA); got != nfs4.NFS4_OK {
+		t.Fatalf("SEQUENCE after CLID_INUSE %s", nfs4.Nfsstat4Name(got))
+	}
 	// Once the lease has run out, the second principal takes over.
 	endQuietForTest(srv)
 	afterLeaseForTest(srv)
@@ -429,6 +432,76 @@ func TestPrincipalCheck(t *testing.T) {
 	}
 	if srv.sessions.lookup(sessionA) != nil || srv.clientLive(incA) {
 		t.Fatal("the replaced incarnation kept its session or stayed live")
+	}
+}
+
+// entriesHookStore runs a hook, once, just after the next Entries call has
+// read the store: after the staging scan that ends the write-state check.
+type entriesHookStore struct {
+	staging.Store
+	hook atomic.Pointer[func()]
+}
+
+func (s *entriesHookStore) Entries() map[vfs.InodeID]staging.Meta {
+	entries := s.Store.Entries()
+	if hook := s.hook.Swap(nil); hook != nil {
+		(*hook)()
+	}
+	return entries
+}
+
+// The principal check at confirmation and the client's own writable OPEN
+// are ordered: a takeover never replaces a client whose OPEN succeeded. The
+// OPEN here arrives just after the takeover's CREATE_SESSION has scanned
+// for write state.
+// Either it is admitted and the takeover is CLID_INUSE, or it waits behind
+// the takeover and the client goes.
+func TestPrincipalCheckOrdersWithWritableOpen(t *testing.T) {
+	root := t.TempDir()
+	fs := vfs.NewLocalTernVFS(root)
+	srv := identityServer(t, fs)
+	hooked := &entriesHookStore{Store: srv.stagingStore}
+	srv.stagingStore = hooked
+	writeRoot(t, root, "doc", "base")
+	a := identityExchange(t, srv, 1, "shared", [8]byte{1}, false)
+	status, sessionA := createResult(t, srv, 1, a.clientID, 1)
+	if status != nfs4.NFS4_OK {
+		t.Fatal(nfs4.Nfsstat4Name(status))
+	}
+	incA := incarnationForTest(t, srv, a.clientID)
+	b := identityExchange(t, srv, 2, "shared", [8]byte{2}, false)
+	if b.status != nfs4.NFS4_OK {
+		t.Fatalf("EXCHANGE_ID by another principal without write state %s", nfs4.Nfsstat4Name(b.status))
+	}
+	ts := newTestSession(sessionA, a.clientID, 1)
+	var opened uint32
+	open := func() {
+		slot, seq := ts.acquire()
+		opened = identityCall(t, srv, 1, withSequence(openBody(a.clientID, "o", "doc", nfs4.OPEN4_SHARE_ACCESS_BOTH), ts, slot, seq)).Status()
+	}
+	hooked.hook.Store(&open)
+	takeover, _ := createResult(t, srv, 2, b.clientID, 1)
+	if hooked.hook.Load() != nil {
+		t.Fatal("the confirmation did not check for write state")
+	}
+	switch {
+	case opened == nfs4.NFS4_OK:
+		if takeover != nfs4.NFS4ERR_CLID_INUSE {
+			t.Fatalf("takeover %s after the client's writable OPEN, want CLID_INUSE", nfs4.Nfsstat4Name(takeover))
+		}
+		if !srv.clientLive(incA) || srv.sessions.lookup(sessionA) == nil {
+			t.Fatal("the refused takeover disturbed the client")
+		}
+		slot, seq := ts.acquire()
+		if got := identityCall(t, srv, 1, withSequence(buildCompoundBody(nil, nil), ts, slot, seq)).Status(); got != nfs4.NFS4_OK {
+			t.Fatalf("SEQUENCE after the refused takeover %s", nfs4.Nfsstat4Name(got))
+		}
+	case opened == nfs4.NFS4ERR_DELAY:
+		if takeover != nfs4.NFS4_OK {
+			t.Fatalf("takeover %s with no write state, want NFS4_OK", nfs4.Nfsstat4Name(takeover))
+		}
+	default:
+		t.Fatalf("OPEN during the takeover %s", nfs4.Nfsstat4Name(opened))
 	}
 }
 
