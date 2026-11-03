@@ -142,7 +142,10 @@ with `NFS4ERR_NO_GRACE` and reopened its files; new work succeeded 0.6 to
 read-only opens, were unaffected. Those runs predate the local client
 records: the new daemon read the old records from TernFS and bound the
 client to its old incarnation. Now it has none, and the client registers
-as new; that has not been measured yet.
+as new. That was measured with the local records in the sandbox
+acceptance runs and on the QA rig: a new server identity, no client
+records, the client registering as new and staying mounted, with the same
+descriptor outcomes as before.
 
 **Failure behaviour.** Files open for writing at the failover lose their
 unpublished writes, mostly without an error. The new daemon refuses their

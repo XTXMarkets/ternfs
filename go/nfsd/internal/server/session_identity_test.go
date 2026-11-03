@@ -477,6 +477,7 @@ func TestPrincipalCheckOrdersWithWritableOpen(t *testing.T) {
 	var opened uint32
 	open := func() {
 		slot, seq := ts.acquire()
+		defer ts.release(slot) // one slot: the OPEN_OK branch below acquires it again
 		opened = identityCall(t, srv, 1, withSequence(openBody(a.clientID, "o", "doc", nfs4.OPEN4_SHARE_ACCESS_BOTH), ts, slot, seq)).Status()
 	}
 	hooked.hook.Store(&open)
@@ -493,6 +494,7 @@ func TestPrincipalCheckOrdersWithWritableOpen(t *testing.T) {
 			t.Fatal("the refused takeover disturbed the client")
 		}
 		slot, seq := ts.acquire()
+		defer ts.release(slot)
 		if got := identityCall(t, srv, 1, withSequence(buildCompoundBody(nil, nil), ts, slot, seq)).Status(); got != nfs4.NFS4_OK {
 			t.Fatalf("SEQUENCE after the refused takeover %s", nfs4.Nfsstat4Name(got))
 		}
