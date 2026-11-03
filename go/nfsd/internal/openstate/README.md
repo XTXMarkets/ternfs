@@ -79,12 +79,10 @@ the session's reply cache instead.
 
 The server builds on these rules:
 
-- It checks durable state before using an open: the open's client must be
-  confirmed with a live lease. Only a
-  check that definitely finds the open inactive gives `NFS4ERR_EXPIRED`. A
-  check that cannot read the store returns any NFS status the store
-  reported, and otherwise `NFS4ERR_DELAY`; see
-  [Two leases](../../DESIGN.md#two-leases).
+- It checks the client before using an open: a client record must confirm
+  the open's incarnation, and this process must not have expired it.
+  Otherwise the open gets `NFS4ERR_EXPIRED`. The check reads only memory;
+  see [The lease](../../DESIGN.md#the-lease).
 - It also treats another client's recovered staging as foreign, so its
   stateid gets `NFS4ERR_BAD_STATEID`, timestamp-only SETATTR included.
 - TEST_STATEID uses these rules without a filehandle, and also accepts a

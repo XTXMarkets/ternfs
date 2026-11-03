@@ -271,9 +271,8 @@ slot back.
 
 ## Persistent sessions
 
-With a staging directory, sessions are kept on disk so that a
-retransmission after a restart gets its original reply (RFC 8881
-section 2.10.6.5). Without one, sessions live in memory only.
+Sessions are kept in the staging directory so that a retransmission after
+a restart gets its original reply (RFC 8881 section 2.10.6.5).
 
 ### Session files on disk
 
@@ -496,7 +495,7 @@ removes its record.
 Each client incarnation has a group here: its sessions, its wire record,
 the requests running for it and its logical lease gate. The lease is in
 memory only. The model and its timings are in
-[Two leases](../../DESIGN.md#two-leases).
+[The lease](../../DESIGN.md#the-lease).
 
 A SEQUENCE takes a provisional hold, which becomes active when it commits.
 An active hold ends when the request's worker finishes, and then extends

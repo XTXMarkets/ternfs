@@ -6,23 +6,29 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
 # Recovering nfsd
 
-Recovery depends on three separate stores: published data and client records
-in TernFS, staging on the nfsd disk, and protocol state in process memory.
-Only the first two survive a process crash. Session files and publication
-aliases on the staging disk let a restarted daemon rebuild part of the
-third. The
+Recovery depends on three places: published data in TernFS, the staging
+directory on the nfsd disk, and protocol state in process memory. The
+staging directory is the server: its identity (`server-id`), the client
+records (`clients/`), the staged writers, the session files (`sessions/`)
+and the publication aliases (`aliases/`). nfsd keeps nothing about clients
+in TernFS. A process crash loses only the memory, and the session files
+and aliases let a restarted daemon rebuild part of it. The
 [deployment modes and known defects](DEPLOYMENT.md) define the limits of
 the procedures here.
 
 ## What survives a failure
 
-| Event | Published data | Unpublished staging | Client protocol state |
-| --- | --- | --- | --- |
-| Connection loss, daemon still running | Unchanged. | Remains on the daemon. | Sessions can be reused while live; lease expiry can retire opens. |
-| Daemon crash, staging disk retained | Remains in TernFS. | Eligible checkpoints can be recovered. | Eligible sessions, their cached replies and namespace intents, and publication aliases, are restored from the disk; see [session restoration](internal/server/README.md#session-restoration). Read opens are not: their stateids get `BAD_STATEID` and the client reopens. |
-| Failover with the staging directory copied | Remains in TernFS. | Same recovery scope as a daemon restart. | The new daemon restores from the copied files, under the same conditions. Records written without fsync may be missing after a host crash. Clients must reach it at the old address. |
-| Failover with an empty staging directory | Remains in TernFS. | Lost, including acknowledged stable bytes; the old disk keeps them if it survives. | Clients stay mounted and run server-reboot recovery; writable reopens of files open at the failover are refused. |
-| Client reboot | Remains in TernFS. | Linked old staging may be retained, but the new client boot cannot adopt it automatically. | Confirmation of a new incarnation invalidates the old one. |
+Published data stays in TernFS in every case.
+
+| Event | Sessions | Client records | Staged writers | What clients see |
+| --- | --- | --- | --- | --- |
+| Connection loss, daemon still running | Kept while live. | Kept. | Kept. | The client reconnects and goes on with its session. Lease expiry can retire its opens if it stays away. |
+| Restart in place | Restored from `sessions/` when eligible; see [session restoration](internal/server/README.md#session-restoration). | Loaded. | Recovered from sidecars. | The client goes on with its session, retransmissions get their recorded replies, and writers resume through their old stateids. Read opens get `BAD_STATEID` and the client reopens them. |
+| Failover with a copy of the stopped daemon's staging directory | Restored. | Loaded. | Recovered. | The same as a restart in place, since every piece of state is in the copied directory. Measured in a sandbox: nothing lost; see [Deployment](DEPLOYMENT.md#failover-with-the-staging-directory). Clients must reach the new daemon at the old address. |
+| Host crash, disk intact | Restored if their files survived: session files are not synced. | Loaded: they are synced. | Recovered: sidecars are synced. | A client whose session file survived goes on with it. One whose file was lost registers again; its record still confirms its incarnation, so its writers can resume through `CLAIM_FH` or their old stateids. This case has not been tested. |
+| Wipe: an empty staging directory, after a failover or an upgrade | None. | None. | None; the old disk keeps them if it survives. | A new server. Every client gets `NFS4ERR_BADSESSION`, registers again as a new client and reopens its files. Read-only opens continue. Every file open for writing loses its unpublished writes, mostly silently: a later write gets `EBADF`, and fsync and close return 0. |
+| Disk loss | None. | None. | Lost. | The same as a wipe. |
+| Client reboot | The old boot's go. | Rewritten for the new boot. | The old boot's are retired; the new boot cannot adopt them. | Confirmation of the new incarnation ends the old one. |
 
 No restart publishes all leftover staging automatically. The client must
 recover an eligible writer and close it. A successful mount alone proves
@@ -36,13 +42,12 @@ the session from its file on the staging disk. That needs a usable file
 that recorded a request, an incarnation that is still the confirmed one,
 and room for the session in the new daemon; see
 [session restoration](internal/server/README.md#session-restoration).
-Before it listens, the new daemon starts publishing rebuilt incarnations'
-leases and waits up to two seconds for each; if one is not published by
-then, it logs a warning and starts anyway.
-The Linux client, which learns nothing of the restart, retransmits every
-request that was in flight with the same slot and sequence number and goes
-on using its stateids. A retransmission of a completed request is answered
-from the recorded reply.
+Before it listens, the new daemon finishes any reboot purge or expiry that
+a client record shows unfinished, and every confirmed record starts a
+fresh lease. The Linux client, which learns nothing of the restart,
+retransmits every request that was in flight with the same slot and
+sequence number and goes on using its stateids. A retransmission of a
+completed request is answered from the recorded reply.
 
 A slot holding an intent but no reply belongs to a request the earlier
 process was running when it died. The request runs again, and the
@@ -69,8 +74,9 @@ A session with no usable file is unknown to the new daemon, and so is one
 retired after the restart because its incarnation expired: SEQUENCE and
 BIND_CONN_TO_SESSION receive `NFS4ERR_BADSESSION`, CREATE_SESSION with the
 old wire clientid `NFS4ERR_STALE_CLIENTID`, and EXCHANGE_ID and
-CREATE_SESSION establish new wire state, reusing the durable incarnation
-when it is still eligible.
+CREATE_SESSION establish new wire state. A client whose record survived and
+that comes back with the same boot verifier and principal keeps its
+confirmed incarnation, and with it its staged writers.
 
 There is no NFS reclaim grace period. OPEN with `CLAIM_PREVIOUS` receives
 `NFS4ERR_NO_GRACE`; RECLAIM_COMPLETE is accepted without reconstructing
@@ -118,7 +124,8 @@ If the old incarnation expired, recovery into a new incarnation additionally
 requires the sidecar's recovery key and original open-owner. The key
 identifies the stable client identity, boot verifier and normalized RPC
 principal. A rebooted client, another principal or another client cannot
-adopt those bytes. The key survives collection of the old incarnation.
+adopt those bytes. The key does not depend on the old incarnation's
+record, which expiry removes.
 
 Recovery by pathname can retain an older writer's private version even
 after another writer published. Cold recovery by handle cannot do that
@@ -150,11 +157,13 @@ keeps the staging.
 ## Lease expiry
 
 The advertised lease is 90 seconds. This is not a deadline at which every
-idle writer disappears: the daemon has a logical lease and each
-incarnation a durable lease, with a periodic sweep. See
-[Two leases](DESIGN.md#two-leases).
-Client-store errors generally produce `NFS4ERR_DELAY` and defer recovery or
-expiry while the outcome is unresolved.
+idle writer disappears: the lease is kept in the daemon's memory and
+checked by a periodic sweep, and a client expires about 90 to 135 seconds
+after its last request. A restart gives every confirmed client a fresh
+lease. See [The lease](DESIGN.md#the-lease). Expiry writes the client's
+record expired, retires its sessions and opens, and removes the record. If
+the record cannot be written the client stays live, and the next sweep
+tries again.
 
 On expiry, linked staging is retired. Its acknowledged data remains on
 disk, but it releases file descriptors and its pathname reservation, and
@@ -192,6 +201,18 @@ move can leave the pair split between directories. Keep both parts. The
 mechanism is in [staging](internal/staging/README.md#startup-recovery-and-quarantine).
 A failed CLOSE has its own rules for what is kept; see
 [Writer recovery](#writer-recovery).
+
+Startup removes the temporaries a crash left in `clients/` and finishes a
+reboot purge or an expiry that a record shows unfinished. A file there
+that nfsd did not write, one that does not decode or whose name does not
+match its owner, stops startup with `client records: corrupt`. Move it
+aside to start; that client then registers as new.
+
+If syncing `clients/` fails while the daemon serves, it cannot tell whether
+the update reached the disk, so it changes no record afterwards:
+CREATE_SESSIONs that need a record write get `NFS4ERR_SERVERFAULT`, and no
+client expires. The log says `not durable`. Restart the daemon, which
+reloads the records from the disk.
 
 ## Inspect stored state
 
@@ -275,11 +296,11 @@ ssh B sync
 # Move the address to B, then start nfsd there.
 ```
 
-Copy the whole directory, `server-id`, `sessions/` and `aliases/`
-included: without the session files a CLOSE in flight at the failover is
-lost silently. `server-id` makes the new daemon the same server; nfsd
-refuses to start on a copy that has staged files or session files but no
-`server-id`
+Copy the whole directory, `server-id`, `clients/`, `sessions/` and
+`aliases/` included: without the session files a CLOSE in flight at the
+failover is lost silently. `server-id` makes the new daemon the same
+server; nfsd refuses to start on a copy that has staged files, session
+files or client records but no `server-id`
 ([server identity](internal/staging/README.md#server-identity)). Never
 start the new daemon from a copy taken while the old one was serving.
 `-S` keeps the sparse staging files sparse; `--numeric-ids` keeps
@@ -291,7 +312,9 @@ before the next failover.
 
 Use this when the old staging cannot be read. Start the new daemon with an
 empty staging directory owned as the unit expects. It writes a new
-`server-id` and is a new server to every client. If the old disk may come
+`server-id` and is a new server to every client: it has no client records,
+so every client registers as new and the principal check starts afresh.
+If the old disk may come
 back, keep it untouched; its data can be recovered by hand later, before
 the base and transient inodes it needs are collected; see
 [Recover retained data manually](#recover-retained-data-manually). Tell
@@ -323,10 +346,29 @@ Drain writes and close their descriptors before stopping the old binary.
 Inspect remaining staging, including retired and quarantined entries.
 Preserve or recover unpublished data before changing formats.
 
-A staging directory written by a release without `server-id` stops
-startup if it holds staged files or session files: it looks like a partial
-copy. Drain writers, then move it aside and start on an empty directory.
-Clients register again with the new server.
+### From a release with client records in TernFS
+
+Releases before this one kept client records in TernFS under
+`/.nfs/clients`, and their staging directories have no `server-id`; their
+sidecars and session files name incarnations by TernFS inode. None of it
+is converted. The upgrade is a wipe, one reboot recovery per tree:
+
+1. Drain writers: stop or quiesce the applications that write through the
+   tree, so no file is open for writing. Check that `/v1/staging` on the
+   old daemon shows no live writers.
+2. Stop nfsd.
+3. Move the old staging directory aside and create an empty one, owned as
+   the unit expects. Keep the old one until its contents are accounted
+   for. Starting the new binary on it fails: with staged files or session
+   files and no `server-id` it looks like a partial copy.
+4. Start the new binary. It writes `server-id` and serves as a new server.
+5. Clients get `NFS4ERR_BADSESSION`, register again and reopen their
+   files. Nothing is lost if step 1 drained every writer.
+6. Later, delete `/.nfs/clients` from the tree by hand, through a TernFS
+   client: nfsd hides `/.nfs`. This release still hides it from LOOKUP and
+   READDIR so the old records are not exposed; a later release stops.
+
+### Sidecar formats
 
 A binary which cannot read the existing sidecar format may fail startup.
 The current format is NFS9; older NFS5 to NFS8 sidecars are not

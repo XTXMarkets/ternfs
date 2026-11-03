@@ -417,7 +417,8 @@ func (os *Store) Close(id nfs4.StateID) (State, bool) {
 	return closed, true
 }
 
-// Expire removes an open whose durable lease state has gone.
+// Expire removes an open and leaves a tombstone, so its stateid gets
+// EXPIRED.
 func (os *Store) Expire(id nfs4.StateID) {
 	os.mu.Lock()
 	defer os.mu.Unlock()
@@ -498,8 +499,8 @@ func (os *Store) CanRecover(id nfs4.StateID) bool {
 	return binary.BigEndian.Uint32(id[0:4]) != os.Epoch
 }
 
-// ExpireClient drops process-local state. Persistent client-store checks
-// prevent a replaced clientid from opening new state.
+// ExpireClient drops process-local state. The server's client record
+// checks prevent a replaced clientid from opening new state.
 func (os *Store) ExpireClient(clientID uint64) []State {
 	if clientID == 0 {
 		return nil

@@ -6,10 +6,11 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
 # Deploying nfsd
 
-One nfsd serves each tree. It owns its sessions, open state and local
-staging. Client identities, incarnations and leases are kept in TernFS, so
-they outlive the process and its staging disk. A second daemon on the same
-tree is not supported.
+One nfsd serves each tree. Its staging directory is the server: the server
+identity, the client records, the session files and the staged writes are
+all there, so a copy of the whole directory is the same server and an
+empty one is a new server. nfsd keeps nothing in TernFS except the data. A
+second daemon on the same tree is not supported.
 
 These are the current implementation's guarantees and limitations.
 [Recovery](RECOVERY.md) describes the recovery paths and operator steps.
@@ -55,7 +56,9 @@ are local to one daemon.
 ### One writable server
 
 **Topology.** Direct each mount, including all its TCP connections, to one
-nfsd. Give that daemon a persistent staging directory.
+nfsd. Give that daemon a persistent staging directory. Emptying it makes a
+new server, which costs every client a reboot recovery and every file open
+for writing its unpublished writes.
 
 **Client mounts.** Mount with `vers=4.1,proto=tcp,hard`. A client that
 reopens files without walking their path must also mount with
@@ -81,8 +84,10 @@ see [session restoration](internal/server/README.md#session-restoration). A
 restart also recovers eligible checkpointed writers through their old
 stateids, and restores publication aliases whose recorded expiry has not
 passed. Read opens are reopened by the client. Session files and aliases are
-written without fsync, so a host crash can lose them. Disk loss removes
-unpublished contents and every session.
+written without fsync, so a host crash can lose them; client records and
+sidecars are synced, so a client that lost its session registers again
+with its writers still eligible. Disk loss is a new server: it removes
+unpublished contents, every session and every client record.
 
 **Known issues.** The backend-timeout and rejected-publication issues below
 apply. A surviving disk is not a guarantee that every descriptor resumes.
@@ -96,7 +101,8 @@ there with the same binary and flags. The procedure is in
 [Replace a host](RECOVERY.md#replace-a-host).
 
 **Guarantees.** The same recovery scope as a restart in place: the copied
-session files, sidecars and aliases are what the new daemon recovers from.
+`server-id`, client records, session files, sidecars and aliases are what
+the new daemon recovers from, so it is the same server.
 Measured with a Linux 6.1 client in a sandbox, killing the old daemon and
 starting the new one from an rsync copy of its staging: the client carried
 on with its session without registering again, every descriptor open for
@@ -106,8 +112,9 @@ CLOSE in flight at the kill, and reads of just-saved files were correct.
 **Failure behaviour.** Clients stall on their hard mounts from the moment
 the old daemon stops until the new one answers, so the copy time is outage
 time. If the session files are missing or unusable on the new host, the
-mount still survives: the client registers again and staged writers are
-adopted from their sidecars, but a CLOSE in flight at the failover returns
+mount still survives: the client registers again with its incarnation
+still confirmed and staged writers are adopted from their sidecars, but a
+CLOSE in flight at the failover returns
 0 to the application and its data stays unpublished on the new host's
 staging disk. A copy taken while the old daemon still served loses
 whatever that daemon acknowledged after the copy, silently; in the sandbox
@@ -122,14 +129,20 @@ failover.
 
 **Topology.** As above, but the new daemon starts with an empty staging
 directory, because the old one cannot be read. Keep the old disk untouched
-if it may come back: it holds the only copy of what is lost.
+if it may come back: it holds the only copy of what is lost. The new
+daemon is a new server, with a new server owner and no client records.
+An upgrade from a release that kept client records in TernFS is the same
+case; see [Upgrades](#upgrades).
 
 **Guarantees.** Published data remains accessible. Clients stay mounted.
 Measured with a Linux 6.1 client in a sandbox, five failovers: the client
 saw its session refused, registered again, had `CLAIM_PREVIOUS` refused
 with `NFS4ERR_NO_GRACE` and reopened its files; new work succeeded 0.6 to
 3 s after the new daemon listened. Files closed before the failover, and
-read-only opens, were unaffected.
+read-only opens, were unaffected. Those runs predate the local client
+records: the new daemon read the old records from TernFS and bound the
+client to its old incarnation. Now it has none, and the client registers
+as new; that has not been measured yet.
 
 **Failure behaviour.** Files open for writing at the failover lose their
 unpublished writes, mostly without an error. The new daemon refuses their
@@ -265,6 +278,22 @@ For upgrades, drain and close writers, then account for remaining active,
 retired and quarantined staging. The current sidecar format is NFS9.
 Deleting staging to bypass a format incompatibility discards unpublished
 data. Follow [upgrade recovery](RECOVERY.md#upgrade-the-server).
+
+The upgrade from a release that kept client records in TernFS under
+`/.nfs` is a wipe: drain writers, stop nfsd, move the old staging directory
+aside, start the new binary on an empty directory, and delete
+`/.nfs/clients` by hand later. Every client goes through one reboot
+recovery. The steps are in
+[Upgrade the server](RECOVERY.md#from-a-release-with-client-records-in-ternfs).
+
+### Client records
+
+The client records are small JSON files in `clients/`, one per client
+identity, written by one process and fsynced. They need no maintenance:
+a record goes when its client expires or is destroyed. Do not edit them
+while nfsd runs: the process keeps its own copy and acts on that. Removing
+one while nfsd is stopped makes that client new, and its staged writers
+are treated as an expired client's.
 
 ## Metrics
 

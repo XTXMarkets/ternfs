@@ -17,6 +17,14 @@ and the implementation has known recovery defects. One nfsd serves each
 tree. Failover moves its address to another host, preferably with a copy
 of its staging directory; see [Replace a host](RECOVERY.md#replace-a-host).
 
+The staging directory is the server. It holds the server identity, the
+client records and the session files as well as the staged writes, and
+nfsd keeps nothing in TernFS except the data. A restart on the directory,
+or on a copy of it, is the same server; an empty directory is a new server,
+and every client registers again. Upgrading from a release that kept
+client records in TernFS starts on an empty directory; see
+[Upgrade the server](RECOVERY.md#upgrade-the-server).
+
 ## Documents
 
 | Document | Contents |
@@ -24,9 +32,10 @@ of its staging directory; see [Replace a host](RECOVERY.md#replace-a-host).
 | [Deployment](DEPLOYMENT.md) | Deployment modes, guarantees, failure behaviour and known issues. |
 | [Recovery](RECOVERY.md) | Crash and lease recovery, staging inspection, quarantine and replacement procedures. |
 | [Design](DESIGN.md) | How the packages fit together: state ownership, writes and publication, the writer lifecycle, namespace changes, clients and leases, sessions across restarts and lock order. |
-| [Server](internal/server/README.md) | Request handling, sessions and slots, persistent sessions and the restart replay decision, the lease gate, client confirmation, opens, the alias log, the staging lifecycle and the backchannel. |
+| [Server](internal/server/README.md) | Request handling, sessions and slots, persistent sessions and the restart replay decision, client registration and confirmation, the lease gate, opens, the alias log, the staging lifecycle and the backchannel. |
 | [Open state](internal/openstate/README.md) | Stateids, opens, downgrades, reader visibility and client views. |
-| [Staging](internal/staging/README.md) | Staged data files and sidecars, checkpoints, startup recovery and quarantine. |
+| [Staging](internal/staging/README.md) | The staging directory's layout and server identity, staged data files and sidecars, checkpoints, startup recovery and quarantine. |
+| [Client records](internal/clientrecords/records.go) | The client record format and its transitions, in the package documentation. |
 | [Diagnostics API](inspect/README.md) | The read-only JSON API: resources, client records, typed ids and snapshot consistency. |
 | [Testing](test/README.md) | Test suites, prerequisites, commands and coverage limits. |
 
@@ -52,7 +61,8 @@ Mounts that Samba or another client reopens without a path walk also need
 Read [Deployment](DEPLOYMENT.md) before choosing the staging disk or a
 server replacement procedure.
 
-`-staging DIR` is required. `-root DIR` selects a local test backend
+`-staging DIR` is required; it is the server, so keep it on a persistent
+disk. `-root DIR` selects a local test backend
 instead of `-registry`; exactly one is required. `-v` enables request
 logging. `-status-addr` serves a read-only JSON
 [diagnostics API](inspect/README.md). `-influx-db-origin`, `-influx-db-org`,

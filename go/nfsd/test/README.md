@@ -221,7 +221,7 @@ two opens through one mount, while writers on one client now share staging.
 Those tests need updating before this path establishes NFSv4.1 coverage.
 
 Each workload unmounts and stops its daemon before namespace cleanup,
-which deletes the whole filesystem including `/.nfs`. Run this only against
+which deletes the whole filesystem. Run this only against
 the temporary test cluster. The
 [CI workflow](../../../.github/workflows/main.yml) selects this kernel-client
 path; it does not select the separate libnfs, pynfs or functional QEMU suites.

@@ -30,15 +30,19 @@ an operator can recover is in [Recovery](../../RECOVERY.md#startup-and-quarantin
     .<inode>.meta.tmp-<random>      sidecar being written
     quarantine/<inode>-<random>/    a pair moved aside
     aliases/                        the server's publication alias log
+    clients/                        the client records
     sessions/                       the server's session files
 ```
 
 `<inode>` is the transient inode as 16 lowercase hex digits. The directory
 is created mode 0700 and sidecars are written mode 0600. This package owns
 `server-id`, the pairs, their temporaries and `quarantine/`. It skips
-`aliases/` and `sessions/`, which belong to the server; see
-[Publication alias log](../server/README.md#publication-alias-log)
+`aliases/`, `clients/` and `sessions/`, which belong to the server; see
+[Publication alias log](../server/README.md#publication-alias-log),
+[clientrecords](../clientrecords/records.go)
 and [Session files on disk](../server/README.md#session-files-on-disk).
+Together they are the server: a copy of the whole directory is the same
+server, and an empty one a new server.
 
 ## Server identity
 
