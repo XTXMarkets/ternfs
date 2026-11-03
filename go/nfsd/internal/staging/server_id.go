@@ -41,7 +41,11 @@ func loadServerID(dir string) (ServerID, error) {
 	if err == nil {
 		var id ServerID
 		text := strings.TrimSuffix(string(data), "\n")
-		if n, err := hex.Decode(id[:], []byte(text)); err != nil || n != len(id) || len(text) != 2*len(id) {
+		// Length first: hex.Decode writes into id and panics on a longer text.
+		if len(text) != 2*len(id) {
+			return ServerID{}, fmt.Errorf("%s: not %d hex digits", path, 2*len(id))
+		}
+		if n, err := hex.Decode(id[:], []byte(text)); err != nil || n != len(id) {
 			return ServerID{}, fmt.Errorf("%s: not %d hex digits", path, 2*len(id))
 		}
 		return id, nil

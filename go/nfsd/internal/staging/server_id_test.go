@@ -41,14 +41,17 @@ func TestServerIDWrittenOnceAndKept(t *testing.T) {
 		t.Fatal("two empty staging directories got the same server id")
 	}
 	path := filepath.Join(dir, ServerIDFileName)
-	if err := os.WriteFile(path, []byte("not hex\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := NewLocalStore(dir, nil); err == nil {
-		t.Fatal("startup accepted a malformed server-id")
-	}
-	if data, _ := os.ReadFile(path); string(data) != "not hex\n" {
-		t.Fatalf("malformed server-id was replaced with %q", data)
+	good := first.ServerID().String()
+	for _, bad := range []string{"not hex\n", good[:31] + "\n", good + "00\n", good + good + "\n", "\n"} {
+		if err := os.WriteFile(path, []byte(bad), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := NewLocalStore(dir, nil); err == nil {
+			t.Fatalf("startup accepted the malformed server-id %q", bad)
+		}
+		if data, _ := os.ReadFile(path); string(data) != bad {
+			t.Fatalf("malformed server-id %q was replaced with %q", bad, data)
+		}
 	}
 }
 
