@@ -74,8 +74,9 @@ make test-pynfs TEST_ARGS='-registry HOST:PORT'
 ```
 
 Both modes start their own nfsd processes. They create and mutate test data
-in the selected backend. Use an isolated test filesystem; pynfs cases can
-reuse client identities, so run it serially against one filesystem.
+in the selected backend. Use an isolated test filesystem, and run one suite
+at a time against it: each nfsd the harness starts serves the whole
+filesystem, and two daemons on one tree are not supported.
 
 Shared options in `TEST_ARGS`:
 

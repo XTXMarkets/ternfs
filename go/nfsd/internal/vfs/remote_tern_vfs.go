@@ -28,8 +28,7 @@ type RemoteTernVFS struct {
 
 	// mu guards both caches. Each is bounded and evicts the least recently
 	// used entry. Losing one costs a backend call: a reader is created
-	// again, a directory's parent is read from StatDirectory, and a file
-	// whose parent is gone is treated as after a restart.
+	// again, and a directory's parent is read from StatDirectory.
 	mu      sync.Mutex
 	parents *lru[InodeID, InodeID]            // child → parent, populated by Lookup
 	readers *lru[msgs.InodeId, *cachedReader] // file reader cache
@@ -117,10 +116,9 @@ func (t *RemoteTernVFS) LookupParent(id InodeID) (InodeID, error) {
 			// Root directory or snapshot directory — parent is itself.
 			return id, nil
 		}
-		// Cache the owner like Lookup and Readdir do. PUTFH walks every
-		// directory filehandle up to the root, and a client which keeps
-		// using its filehandles after an nfsd restart never issues the
-		// LOOKUPs that would otherwise fill this cache.
+		// Cache the owner like Lookup and Readdir do, for LOOKUPP. A
+		// client which keeps using its filehandles after an nfsd restart
+		// never issues the LOOKUPs that would otherwise fill this cache.
 		parentID := InodeID(resp.Owner)
 
 		t.mu.Lock()

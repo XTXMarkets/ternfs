@@ -69,8 +69,8 @@ On `/v1/staging`, a `file` filter applies to the failed tombstones too. An
 ## Client records
 
 `client_records` in `/v1/clients` lists the client records: one per client
-identity, from its first confirmation to its expiry, destruction or the end
-of a reboot purge. Each shows the `identity_hash` that names its file under
+identity, from its first confirmation to its expiry or destruction. A
+reboot or takeover keeps the record and replaces its incarnation. Each shows the `identity_hash` that names its file under
 `clients/`, the EXCHANGE_ID owner as hex, the principal, the `confirmed`
 incarnation with its boot verifier and `confirmed_at`, `purging` while a
 reboot or takeover's replaced incarnation is being purged, and `expired`

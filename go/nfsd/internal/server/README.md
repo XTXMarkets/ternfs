@@ -797,7 +797,7 @@ in [Overlay files](../staging/README.md#overlay-files).
 CREATE_SESSION with `CREATE_SESSION4_FLAG_CONN_BACK_CHAN`, on a connection
 that can carry callbacks, is granted a backchannel there. The back
 association is reserved before the creation slot, and also on a connection
-that replays a cached CREATE_SESSION or retries one held for confirmation.
+that replays a cached CREATE_SESSION.
 The callback credential is the first `AUTH_NONE` or `AUTH_SYS` entry
 offered, sent verbatim. A list offering only `RPCSEC_GSS` gets
 `NFS4ERR_NOENT` and one with no usable entry `NFS4ERR_INVAL`, both before

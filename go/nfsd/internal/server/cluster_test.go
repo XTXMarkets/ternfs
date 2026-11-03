@@ -1750,9 +1750,9 @@ func TestTernCreateEmptyFile(t *testing.T) {
 	cleanupViaNFS(t, conn, &xid, "empty.txt")
 }
 
-// PUTFH walks LookupParent from a directory filehandle up to the root. The
-// StatDirectory owner must be cached, or a client which keeps using its
-// filehandles after an nfsd restart pays that walk on every compound.
+// LOOKUPP calls LookupParent on a directory filehandle. The StatDirectory
+// owner must be cached, or a client which keeps using its filehandles after
+// an nfsd restart pays a backend call on every LOOKUPP.
 func TestTernLookupParentCachesDirectoryOwner(t *testing.T) {
 	c, err := client.NewClient(
 		ternLogger, nil, registryAddr, msgs.AddrsInfo{})

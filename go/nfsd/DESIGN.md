@@ -342,9 +342,12 @@ keeps its hold until it returns. A new session and a validated callback
 reply also renew it. This process does not expire a client while its
 lease is held.
 
-SEQUENCE does no I/O. It gets `NFS4ERR_DELAY` only while the client's
-expiry is being decided, which writes its local record, or while a
-reboot's confirmation replaces the incarnation. OPEN and the stateid
+SEQUENCE does no I/O. Apart from a retransmission whose original is still
+running, or a slot whose lock is held at that instant (see
+[Slot replay](internal/server/README.md#slot-replay)), it gets
+`NFS4ERR_DELAY` only while the client's expiry is being decided, which
+writes its local record, or while a reboot's confirmation replaces the
+incarnation. OPEN and the stateid
 operations check in memory that a record confirms the incarnation and that
 this process has not expired it.
 
@@ -389,9 +392,10 @@ confirming N with `purging` naming P, and only once that is durable purges
 P here: its sessions and their files, its wire record and its opens go, and
 its staged writers are retired. It then writes the record without
 `purging` and replies. A crash in between, or a failure of that second
-write, leaves `purging`, and the next start finishes the purge before it
-serves. A record write that fails gets
-`NFS4ERR_SERVERFAULT`, and P is reopened.
+write, leaves `purging`, and the CREATE_SESSION still succeeds. The next
+start finishes the purge before it serves, and so does the next
+registration that replaces N. If the first write fails, the CREATE_SESSION
+gets `NFS4ERR_SERVERFAULT` and P is reopened.
 
 P's writers are never resumed: no record confirms P any more, and their
 recovery key names the old boot verifier. See
@@ -452,7 +456,7 @@ is the list; each entry says where the handling is described.
 | Linux discards a CLOSE's status: `close(2)` returns 0 whatever CLOSE answered. | A CLOSE the backend does not answer gets `NFS4ERR_DELAY` and is retried. A rejected publication is still lost silently; see [Known defects](DEPLOYMENT.md#a-rejected-publication-is-not-reported-to-the-application). |
 | Linux retries CLOSE after `NFS4ERR_DELAY`, backing off to 15 s. | The CLOSE DELAY relies on it; see [Writes and publication](#writes-and-publication). |
 | Linux re-encodes a retransmission with its current highest slot. | The slot digest leaves out SEQUENCE arguments; see [Slot replay](internal/server/README.md#slot-replay). |
-| Linux answers `NFS4ERR_DELAY` on a lone SEQUENCE by waiting its 15 s maximum. | SEQUENCE does no I/O. It gets DELAY only while the client's expiry decision writes its local record, or a reboot's confirmation replaces its incarnation; see [The lease](#the-lease). |
+| Linux answers `NFS4ERR_DELAY` on a lone SEQUENCE by waiting its 15 s maximum. | SEQUENCE does no I/O. Apart from the slot cases in [Slot replay](internal/server/README.md#slot-replay), it gets DELAY only while the client's expiry decision writes its local record, or a reboot's confirmation replaces its incarnation; see [The lease](#the-lease). |
 | After losing its session to a server restart, Linux registers again with the same owner and boot verifier. | The client record adopts the confirmed incarnation, so its staged writers stay eligible; see [Identities and incarnations](#identities-and-incarnations). |
 | Linux 4.10 and later end CLOSE, OPEN_DOWNGRADE, REMOVE and RENAME compounds with that operation. | Locks held until the record; see [Sessions across restarts](#sessions-across-restarts). |
 | After a server restart Linux retransmits in-flight requests in no particular order, so a read OPEN can arrive before the CLOSE it follows. | The client's recovered writer is its view of the handle; see [client views](internal/openstate/README.md#client-views). |
@@ -499,12 +503,11 @@ outcome is unknown can be fenced, and a delayed mutation cannot apply to a
 later file at the same name.
 
 RemoteTernVFS keeps two process-local caches. The parent map, filled by
-Lookup and Readdir, serves PUTFH's check for internal objects and LOOKUPP.
+Lookup, Readdir and the calls that create or move a name, serves LOOKUPP.
 The reader cache keeps one file reader per inode read, so READs reuse span
 metadata; a published file is immutable, so a cached reader cannot be
 stale. Neither is a record of the namespace: an entry goes when this
 process overwrites or removes the name, or when the cache is full and it
 is the least recently used. The parent map holds at most 262,144 entries
-and the reader cache 4,096. An evicted reader is created again; an
-evicted directory's parent is read again from the backend, and a file
-whose parent was evicted is treated as after a restart.
+and the reader cache 4,096. An evicted reader is created again, and an
+evicted directory's parent is read again from the backend.

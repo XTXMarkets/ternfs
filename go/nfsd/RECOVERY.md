@@ -269,8 +269,8 @@ in [Deployment](DEPLOYMENT.md#failover-with-the-staging-directory).
    unit and make sure the old host cannot come back with the address. nfsd
    has no fencing of its own.
 2. The new host runs a binary that reads the old sidecar format, with the
-   same `-registry`, `-filesystem` and `-owner` flags, as the same uid, with
-   its staging directory at the path its unit uses.
+   same `-registry` and `-filesystem` flags, as the same uid, with its
+   staging directory at the path its unit uses.
 
 Wire-clientid epochs come from wall time after binding the socket, so
 clocks must not go backwards across successive owners of an address; NTP

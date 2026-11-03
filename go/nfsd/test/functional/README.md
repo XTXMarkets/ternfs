@@ -28,9 +28,8 @@ pathname lookup finds the replacement. The Vim cases set `backupskip` and
 `backupcopy` explicitly so their write strategy does not depend on the test
 root's path.
 
-Writers of the same file on one client and daemon share staging. Other
-clients, or writers through different daemons, have independent versions;
-the last successful publication wins. These tests do not establish atomic
+Writers of the same file on one client share staging. Other clients have
+independent versions; the last successful publication wins. These tests do not establish atomic
 append across clients.
 
 See the [test guide](../README.md) for other suites and
