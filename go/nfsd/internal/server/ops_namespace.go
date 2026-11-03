@@ -155,11 +155,6 @@ func (s *Server) opLookup(args nfs4.LOOKUP4args, st *compoundState, w *nfs4.COMP
 		r := w.AppendResarray_Lookup()
 		return finishStatusResponse(&r, status)
 	}
-	// Hide the internal .nfs directory from client access.
-	if name == vfs.NFSDirName && st.currentID == s.fs.RootID() {
-		r := w.AppendResarray_Lookup()
-		return finishStatusResponse(&r, nfs4.NFS4ERR_NOENT)
-	}
 	id, err := s.fs.Lookup(st.currentID, name)
 	if err != nil {
 		r := w.AppendResarray_Lookup()
@@ -200,15 +195,6 @@ func (s *Server) opPutfh(args nfs4.PUTFH4args, st *compoundState, w *nfs4.COMPOU
 	fhData := args.Object().Data()
 	id, ok := vfs.FHToInodeID(fhData)
 	if !ok {
-		r := w.AppendResarray_Putfh()
-		return finishStatusResponse(&r, nfs4.NFS4ERR_BADHANDLE)
-	}
-	internal, err := s.isInternalFilehandle(id)
-	if err != nil {
-		r := w.AppendResarray_Putfh()
-		return finishStatusResponse(&r, statusOf(err))
-	}
-	if internal {
 		r := w.AppendResarray_Putfh()
 		return finishStatusResponse(&r, nfs4.NFS4ERR_BADHANDLE)
 	}
@@ -446,10 +432,6 @@ func (s *Server) opSecinfo(args nfs4.SECINFO4args, st *compoundState, w *nfs4.CO
 	if status != nfs4.NFS4_OK {
 		ew := w.AppendResarray_Secinfo()
 		return finishDefaultResponse(w, ew.Finish(), status)
-	}
-	if name == vfs.NFSDirName && st.currentID == s.fs.RootID() {
-		ew := w.AppendResarray_Secinfo()
-		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_NOENT)
 	}
 	if _, err := s.fs.Lookup(st.currentID, name); err != nil {
 		ew := w.AppendResarray_Secinfo()

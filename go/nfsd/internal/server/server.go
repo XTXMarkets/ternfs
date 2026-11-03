@@ -17,7 +17,6 @@ import (
 	"io"
 	"log/slog"
 	"net"
-	"os"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -74,9 +73,6 @@ type Server struct {
 	NFSAddr            string // the -addr flag, for diagnostics
 	// clock is read by now; tests replace it with SetClock.
 	clock atomic.Pointer[func() time.Time]
-	// nfsDirID is /.nfs, where earlier releases kept their client store,
-	// zero if the tree has none. It stays hidden from clients.
-	nfsDirID vfs.InodeID
 
 	// Live connections, for diagnostics only; connsMu guards the map.
 	connsMu sync.Mutex
@@ -149,13 +145,6 @@ func NewServer(fs vfs.TernVFS, stagingStore staging.Store, logger *slog.Logger) 
 	if logger == nil {
 		logger = slog.Default()
 	}
-	nfsDirID, err := fs.Lookup(fs.RootID(), vfs.NFSDirName)
-	if errors.Is(err, os.ErrNotExist) {
-		nfsDirID, err = 0, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("look up %s: %w", vfs.NFSDirName, err)
-	}
 	stagingDir := stagingStore.Dir()
 	records, err := clientrecords.Open(stagingDir)
 	if err != nil {
@@ -166,7 +155,6 @@ func NewServer(fs vfs.TernVFS, stagingStore staging.Store, logger *slog.Logger) 
 	s := &Server{
 		fs:                 fs,
 		records:            records,
-		nfsDirID:           nfsDirID,
 		opens:              openstate.NewStore(),
 		serverID:           stagingStore.ServerID(),
 		stagingStore:       stagingStore,

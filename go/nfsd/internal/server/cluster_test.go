@@ -1474,7 +1474,7 @@ func TestTernReaddirPagination(t *testing.T) {
 
 	names := collectTernReaddirNames(t, conn, &xid, rootFH)
 
-	// Filter to only our test files (other tests may have left .nfs dir).
+	// Filter to only our test files; other tests share the cluster root.
 	var filtered []string
 	for _, n := range names {
 		if len(n) >= 3 && n[:3] == "pg_" {
@@ -2351,34 +2351,6 @@ func TestTernConcurrentWrites(t *testing.T) {
 	xid := uint32(1)
 	for i := 0; i < numClients; i++ {
 		cleanupViaNFS(t, conn, &xid, fmt.Sprintf("concurrent_%d.txt", i))
-	}
-}
-
-// --- .nfs directory should be hidden in READDIR ---
-
-func TestTernNfsDirHidden(t *testing.T) {
-	addr, cleanup := startTernTestServer(t)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-
-	xid := uint32(1)
-
-	// Get root FH.
-	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
-		w.AppendArgarray_Putrootfh()
-		w.AppendArgarray_Getfh()
-	})
-	xid++
-	iter := expectOK(t, res)
-	nextOp(t, &iter)
-	rootFH := append([]byte(nil), nextOp(t, &iter).Value().AsGETFH4resEntry().Value().AsGETFH4resok().Object().Data()...)
-
-	names := collectTernReaddirNames(t, conn, &xid, rootFH)
-	for _, n := range names {
-		if n == ".nfs" {
-			t.Fatal(".nfs directory should be hidden in READDIR")
-		}
 	}
 }
 

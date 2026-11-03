@@ -6,12 +6,10 @@ package server
 
 import (
 	"errors"
-	"os"
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientrecords"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 // Clients on the local client records (../clientrecords;
@@ -284,31 +282,6 @@ func (s *Server) settlePurge(rec clientrecords.Record) error {
 func (s *Server) settleExpiry(rec clientrecords.Record) error {
 	s.retireClient(uint64(rec.Incarnation), true)
 	return nil
-}
-
-// isInternalFilehandle reports a handle inside /.nfs, which earlier
-// releases used for their client store and clients never see.
-func (s *Server) isInternalFilehandle(id vfs.InodeID) (bool, error) {
-	if s.nfsDirID == 0 {
-		return false, nil
-	}
-	for id != s.fs.RootID() {
-		if id == s.nfsDirID {
-			return true, nil
-		}
-		parent, err := s.fs.LookupParent(id)
-		if errors.Is(err, os.ErrNotExist) {
-			return false, nil
-		}
-		if err != nil {
-			return false, err
-		}
-		if parent == id {
-			return false, nil
-		}
-		id = parent
-	}
-	return false, nil
 }
 
 // statusOf is the status of an error that carries one, and DELAY for any

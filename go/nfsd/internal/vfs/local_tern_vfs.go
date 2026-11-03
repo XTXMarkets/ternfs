@@ -12,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -24,6 +23,11 @@ import (
 type LocalTernVFS struct {
 	root   string
 	rootID InodeID
+	// private holds transients and snapshots, which have no directory
+	// entry. It sits next to root, so nothing in the exported tree is
+	// special, and on the same filesystem, so its files can be renamed and
+	// linked into the tree.
+	private string
 
 	mu        sync.RWMutex
 	byID      map[InodeID]string // id -> path relative to root
@@ -38,8 +42,10 @@ type transientFile struct {
 }
 
 func NewLocalTernVFS(root string) *LocalTernVFS {
+	root = filepath.Clean(root)
 	lfs := &LocalTernVFS{
 		root:      root,
+		private:   root + ".nfsd",
 		byID:      make(map[InodeID]string),
 		byPath:    make(map[string]InodeID),
 		parent:    make(map[InodeID]InodeID),
@@ -50,31 +56,29 @@ func NewLocalTernVFS(root string) *LocalTernVFS {
 	lfs.byID[rootID] = ""
 	lfs.byPath[""] = rootID
 	lfs.parent[rootID] = rootID // root is its own parent
-	// Walk the directory tree to populate maps so that file handles from a
-	// previous server instance remain valid after restart.
-	filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil || path == root {
+	// Walk the tree and the private files to populate maps so that file
+	// handles from a previous server instance remain valid after restart.
+	// A private file's parent is the root.
+	for _, dir := range []string{root, lfs.private} {
+		filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+			if err != nil || path == dir || dir == lfs.private && info.IsDir() {
+				return nil
+			}
+			rel, _ := filepath.Rel(root, path)
+			id := lfs.statInodeID(path)
+			if id == 0 {
+				return nil
+			}
+			parentRel := filepath.Dir(rel)
+			if parentRel == "." || dir == lfs.private {
+				parentRel = ""
+			}
+			lfs.byID[id] = rel
+			lfs.byPath[rel] = id
+			lfs.parent[id] = lfs.byPath[parentRel]
 			return nil
-		}
-		rel, _ := filepath.Rel(root, path)
-		id := lfs.statInodeID(path)
-		if id == 0 {
-			return nil
-		}
-		parentRel := filepath.Dir(rel)
-		if parentRel == "." {
-			parentRel = ""
-		}
-		lfs.byID[id] = rel
-		lfs.byPath[rel] = id
-		lfs.parent[id] = lfs.byPath[parentRel]
-		// Retained versions and private transients are user inodes.
-		if strings.HasPrefix(rel, filepath.Join(NFSDirName, "snapshots")+string(os.PathSeparator)) ||
-			strings.HasPrefix(rel, filepath.Join(NFSDirName, "transients")+string(os.PathSeparator)) {
-			lfs.parent[id] = rootID
-		}
-		return nil
-	})
+		})
+	}
 	return lfs
 }
 
@@ -318,7 +322,7 @@ func (lfs *LocalTernVFS) Symlink(dirID InodeID, name string, target string) (Ino
 
 func (lfs *LocalTernVFS) ConstructFile(dirID InodeID) (InodeID, Cookie, error) {
 	// Transient inodes have no public pathname in TernFS.
-	transients := filepath.Join(lfs.root, NFSDirName, "transients")
+	transients := filepath.Join(lfs.private, "transients")
 	if err := os.MkdirAll(transients, 0700); err != nil {
 		return 0, Cookie{}, err
 	}
@@ -457,8 +461,8 @@ func (lfs *LocalTernVFS) snapshotLocked(path string, id InodeID) error {
 	if id.Type() == InodeTypeDir {
 		return nil
 	}
-	snapshotRel := filepath.Join(NFSDirName, "snapshots", fmt.Sprintf("%016x", uint64(id)))
-	snapshotPath := filepath.Join(lfs.root, snapshotRel)
+	snapshotPath := filepath.Join(lfs.private, "snapshots", fmt.Sprintf("%016x", uint64(id)))
+	snapshotRel, _ := filepath.Rel(lfs.root, snapshotPath)
 	if err := os.MkdirAll(filepath.Dir(snapshotPath), 0700); err != nil {
 		return err
 	}

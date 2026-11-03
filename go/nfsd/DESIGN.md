@@ -125,13 +125,7 @@ name up again. A client that reopens without a path walk cannot, and must
 mount with `lookupcache=none`; see
 [Client mounts](DEPLOYMENT.md#one-writable-server).
 
-Ownership and modes are synthetic. Earlier releases kept their client
-records in TernFS under `/.nfs`. nfsd no longer writes it, but still hides
-it from LOOKUP and READDIR, so the old records are not exposed before an
-operator deletes them; see [Upgrade the server](RECOVERY.md#upgrade-the-server).
-PUTFH rejects objects under it whose ancestry is known locally; after
-restart, a guessed file inode can escape that check because TernFS cannot
-recover its parent from the inode.
+Ownership and modes are synthetic.
 
 ## Writes and publication
 

@@ -23,10 +23,6 @@ const (
 	InodeTypeSymlink = 3
 )
 
-// NFSDirName is the directory under the root where earlier releases kept
-// their client store. nfsd hides it from clients and never writes it.
-const NFSDirName = ".nfs"
-
 func (id InodeID) Type() uint64   { return (uint64(id) >> 61) & 0x3 }
 func (id InodeID) Fileid() uint64 { return uint64(id) & ((1 << 61) - 1) }
 

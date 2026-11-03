@@ -357,16 +357,17 @@ is converted. The upgrade is a wipe, one reboot recovery per tree:
    tree, so no file is open for writing. Check that `/v1/staging` on the
    old daemon shows no live writers.
 2. Stop nfsd.
-3. Move the old staging directory aside and create an empty one, owned as
+3. Delete `/.nfs` from the tree through a TernFS client. It holds only the
+   old records. This can also wait until the new binary is running, but
+   until it is deleted clients see an ordinary `.nfs` directory holding
+   the old records.
+4. Move the old staging directory aside and create an empty one, owned as
    the unit expects. Keep the old one until its contents are accounted
    for. Starting the new binary on it fails: with staged files or session
    files and no `server-id` it looks like a partial copy.
-4. Start the new binary. It writes `server-id` and serves as a new server.
-5. Clients get `NFS4ERR_BADSESSION`, register again and reopen their
+5. Start the new binary. It writes `server-id` and serves as a new server.
+6. Clients get `NFS4ERR_BADSESSION`, register again and reopen their
    files. Nothing is lost if step 1 drained every writer.
-6. Later, delete `/.nfs/clients` from the tree by hand, through a TernFS
-   client: nfsd hides `/.nfs`. This release still hides it from LOOKUP and
-   READDIR so the old records are not exposed; a later release stops.
 
 ### Sidecar formats
 

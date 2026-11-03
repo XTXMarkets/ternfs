@@ -63,7 +63,8 @@ server replacement procedure.
 
 `-staging DIR` is required; it is the server, so keep it on a persistent
 disk. `-root DIR` selects a local test backend
-instead of `-registry`; exactly one is required. `-v` enables request
+instead of `-registry`; exactly one is required. The local backend keeps
+its transient and replaced files in `DIR.nfsd`, next to the exported tree. `-v` enables request
 logging. `-status-addr` serves a read-only JSON
 [diagnostics API](inspect/README.md). `-influx-db-origin`, `-influx-db-org`,
 `-influx-db-bucket` and `-filesystem` push [metrics](DEPLOYMENT.md#metrics).

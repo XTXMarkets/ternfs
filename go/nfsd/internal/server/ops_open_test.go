@@ -1109,7 +1109,7 @@ func (fs *publishFaultVFS) keepScrapped(id vfs.InodeID) {
 	if fs.root == "" {
 		return
 	}
-	dir := filepath.Join(fs.root, vfs.NFSDirName, "transients")
+	dir := filepath.Clean(fs.root) + ".nfsd/transients" // LocalTernVFS's private transients
 	entries, _ := os.ReadDir(dir)
 	for _, e := range entries {
 		info, err := e.Info()

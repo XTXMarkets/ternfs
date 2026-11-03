@@ -384,8 +384,8 @@ func (s *Server) releaseWrite(openStateid nfs4.Stateid4, st *compoundState, clos
 			return state, nfs4.NFS4_OK
 		}
 		// A recovered writer downgraded to READ continues as a live read
-		// open under its stateid, keeping its marker. Adoption was checked
-		// before publication, under the same file lock.
+		// open under its stateid. Adoption was checked before publication,
+		// under the same file lock.
 		if adopted, ok := s.opens.Adopt(recoveredOwner(meta), st.currentID, readID, *to, sid, openstate.NextGeneration(generation)); ok {
 			return adopted, nfs4.NFS4_OK
 		}

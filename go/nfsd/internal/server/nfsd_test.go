@@ -934,56 +934,6 @@ func TestPutfhBadHandle(t *testing.T) {
 	}
 }
 
-// Earlier releases kept their client store under /.nfs. Its handles stay
-// hidden: PUTFH of anything inside it is BADHANDLE.
-func TestPutfhRejectsClientStoreHandles(t *testing.T) {
-	dir := t.TempDir()
-	tree := vfs.NewLocalTernVFS(dir)
-	nfsID, err := tree.Mkdir(tree.RootID(), vfs.NFSDirName)
-	if err != nil {
-		t.Fatal(err)
-	}
-	clientsID, err := tree.Mkdir(nfsID, "clients")
-	if err != nil {
-		t.Fatal(err)
-	}
-	recordID, err := tree.CreateFile(clientsID, "client", bytes.NewReader([]byte("{}")))
-	if err != nil {
-		t.Fatal(err)
-	}
-	ordinaryID, err := tree.CreateFile(tree.RootID(), "ordinary", bytes.NewReader([]byte("data")))
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, addr, cleanup := startTestServerWithServer(t, dir)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-	xid := uint32(1)
-	for name, c := range map[string]struct {
-		id   vfs.InodeID
-		want uint32
-	}{
-		"nfs directory":     {nfsID, nfs4.NFS4ERR_BADHANDLE},
-		"clients directory": {clientsID, nfs4.NFS4ERR_BADHANDLE},
-		"client record":     {recordID, nfs4.NFS4ERR_BADHANDLE},
-		"ordinary file":     {ordinaryID, nfs4.NFS4_OK},
-	} {
-		t.Run(name, func(t *testing.T) {
-			res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
-				pw := w.AppendArgarray_Putfh()
-				buf := pw.StartObject().SetData(vfs.InodeIDToFH(c.id)).Finish()
-				pw.Resume(buf)
-				w.Resume(pw.Finish())
-			})
-			xid++
-			if res.Status() != c.want {
-				t.Fatalf("PUTFH status = %s, want %s", nfs4.Nfsstat4Name(res.Status()), nfs4.Nfsstat4Name(c.want))
-			}
-		})
-	}
-}
-
 func TestLocalTernVFSCreateFileReplacesExistingFile(t *testing.T) {
 	fs := vfs.NewLocalTernVFS(t.TempDir())
 	firstID, err := fs.CreateFile(
@@ -5286,45 +5236,6 @@ func TestReaddirTooSmall(t *testing.T) {
 
 	if res.Status() != nfs4.NFS4ERR_TOOSMALL {
 		t.Fatalf("expected NFS4ERR_TOOSMALL, got %s", nfs4.Nfsstat4Name(res.Status()))
-	}
-}
-
-func TestReaddirNfsDirHidden(t *testing.T) {
-	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "visible.txt"), []byte("x"), 0644)
-
-	addr, cleanup := startTestServer(t, dir)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-
-	xid := uint32(1)
-
-	// Get root FH.
-	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
-		w.AppendArgarray_Putrootfh()
-		w.AppendArgarray_Getfh()
-	})
-	xid++
-	iter := expectOK(t, res)
-	nextOp(t, &iter)
-	entry := nextOp(t, &iter)
-	rootFH := append([]byte(nil), entry.Value().AsGETFH4resEntry().Value().AsGETFH4resok().Object().Data()...)
-
-	names := collectReaddirNames(t, conn, &xid, rootFH)
-	for _, name := range names {
-		if name == ".nfs" {
-			t.Fatal(".nfs directory should be hidden from READDIR")
-		}
-	}
-	found := false
-	for _, name := range names {
-		if name == "visible.txt" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatal("visible.txt not found in READDIR")
 	}
 }
 

@@ -310,10 +310,10 @@ Deleting staging to bypass a format incompatibility discards unpublished
 data. Follow [upgrade recovery](RECOVERY.md#upgrade-the-server).
 
 The upgrade from a release that kept client records in TernFS under
-`/.nfs` is a wipe: drain writers, stop nfsd, move the old staging directory
-aside, start the new binary on an empty directory, and delete
-`/.nfs/clients` by hand later. Every client goes through one reboot
-recovery. The steps are in
+`/.nfs` is a wipe: drain writers, stop nfsd, delete `/.nfs`, move the old
+staging directory aside and start the new binary on an empty directory.
+Until `/.nfs` is deleted, clients see it as an ordinary directory holding
+the old records. Every client goes through one reboot recovery. The steps are in
 [Upgrade the server](RECOVERY.md#from-a-release-with-client-records-in-ternfs).
 
 ### Client records
