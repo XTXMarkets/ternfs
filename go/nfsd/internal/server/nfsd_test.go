@@ -2076,6 +2076,20 @@ func TestNoFilehandle(t *testing.T) {
 	if res.Status() != nfs4.NFS4ERR_NOFILEHANDLE {
 		t.Fatalf("status = %d, want NFS4ERR_NOFILEHANDLE (%d)", res.Status(), nfs4.NFS4ERR_NOFILEHANDLE)
 	}
+
+	// SETATTR checks the filehandle before it decodes any attributes.
+	res = sendCompound(t, conn, 2, func(w *nfs4.COMPOUND4argsWriter) {
+		op := w.AppendArgarray_Setattr()
+		attrs := op.StartObjAttributes()
+		mask := attrs.StartAttrmask()
+		attrs.Resume(mask.Finish())
+		attrs.Resume(attrs.StartAttrVals().SetData(nil).Finish())
+		op.Resume(attrs.Finish())
+		w.Resume(op.Finish())
+	})
+	if res.Status() != nfs4.NFS4ERR_NOFILEHANDLE {
+		t.Fatalf("SETATTR status = %s, want NOFILEHANDLE", nfs4.Nfsstat4Name(res.Status()))
+	}
 }
 
 func TestCompoundStopsOnError(t *testing.T) {
