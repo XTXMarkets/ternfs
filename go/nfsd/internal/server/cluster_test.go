@@ -2742,11 +2742,11 @@ func TestTernRetiredSourceCanMoveAcrossDirectories(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := srv.fs.ReadAll(published)
+	data, err := readAll(srv.fs, published)
 	if err != nil || string(data) != "published" {
 		t.Fatalf("move changed published bytes: %q, %v", data, err)
 	}
-	if err := srv.fs.Remove(dir, "moved"); err != nil {
+	if err := removeName(srv.fs, dir, "moved"); err != nil {
 		t.Fatal(err)
 	}
 	cleanupViaNFS(t, conn, &xid, "retired-move-dir")

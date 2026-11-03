@@ -535,7 +535,7 @@ func TestMetadataOnlyCloseSkipsDataIO(t *testing.T) {
 			if err != nil || !info.Mtime.Equal(stamp) {
 				t.Fatalf("published attributes = %+v, err=%v", info, err)
 			}
-			got, err := base.ReadAll(current)
+			got, err := readAll(base, current)
 			if err != nil || string(got) != want {
 				t.Fatalf("published data = %q, err=%v", got, err)
 			}

@@ -173,16 +173,6 @@ func (t *RemoteTernVFS) Read(fileID InodeID, offset uint64, dest []byte) (int, b
 	return n, eof, nil
 }
 
-func (t *RemoteTernVFS) ReadAll(fileID InodeID) ([]byte, error) {
-	buf, err := t.client.FetchFile(t.log, t.bufPool, msgs.InodeId(fileID))
-	if err != nil {
-		return nil, TernToOSError(err)
-	}
-	data := append([]byte(nil), buf.Bytes()...)
-	t.bufPool.Put(buf)
-	return data, nil
-}
-
 func (t *RemoteTernVFS) getOrCreateReader(mid msgs.InodeId) (*cachedReader, error) {
 	t.mu.Lock()
 	cr, ok := t.readers.get(mid)
@@ -343,14 +333,6 @@ func (t *RemoteTernVFS) LookupEdge(dirID InodeID, name string) (Edge, error) {
 	return Edge{ID: InodeID(resp.TargetId), CreationTime: uint64(resp.CreationTime)}, nil
 }
 
-func (t *RemoteTernVFS) Remove(dirID InodeID, name string) error {
-	edge, err := t.LookupEdge(dirID, name)
-	if err != nil {
-		return err
-	}
-	return TernToOSError(t.RemoveEdge(dirID, name, edge))
-}
-
 func (t *RemoteTernVFS) RemoveEdge(dirID InodeID, name string, edge Edge) error {
 	dirMid := msgs.InodeId(dirID)
 	targetId := msgs.InodeId(edge.ID)
@@ -383,14 +365,6 @@ func (t *RemoteTernVFS) RemoveEdge(dirID InodeID, name string, edge Edge) error 
 	t.parents.remove(InodeID(targetId))
 	t.mu.Unlock()
 	return nil
-}
-
-func (t *RemoteTernVFS) Rename(srcDirID InodeID, srcName string, dstDirID InodeID, dstName string) error {
-	edge, err := t.LookupEdge(srcDirID, srcName)
-	if err != nil {
-		return err
-	}
-	return TernToOSError(t.RenameEdge(srcDirID, srcName, edge, dstDirID, dstName))
 }
 
 func (t *RemoteTernVFS) RenameEdge(srcDirID InodeID, srcName string, edge Edge, dstDirID InodeID, dstName string) error {

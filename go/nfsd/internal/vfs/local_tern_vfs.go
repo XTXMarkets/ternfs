@@ -280,14 +280,6 @@ func (lfs *LocalTernVFS) Read(fileID InodeID, offset uint64, dest []byte) (int, 
 	return n, eof, nil
 }
 
-func (lfs *LocalTernVFS) ReadAll(fileID InodeID) ([]byte, error) {
-	path, ok := lfs.resolve(fileID)
-	if !ok {
-		return nil, os.ErrNotExist
-	}
-	return os.ReadFile(path)
-}
-
 func (lfs *LocalTernVFS) Readlink(fileID InodeID) (string, error) {
 	path, ok := lfs.resolve(fileID)
 	if !ok {
@@ -445,15 +437,7 @@ func (lfs *LocalTernVFS) LookupEdge(dirID InodeID, name string) (Edge, error) {
 	return Edge{ID: id}, nil
 }
 
-func (lfs *LocalTernVFS) Remove(dirID InodeID, name string) error {
-	return lfs.remove(dirID, name, nil)
-}
-
 func (lfs *LocalTernVFS) RemoveEdge(dirID InodeID, name string, edge Edge) error {
-	return lfs.remove(dirID, name, &edge)
-}
-
-func (lfs *LocalTernVFS) remove(dirID InodeID, name string, pin *Edge) error {
 	dirPath, ok := lfs.resolve(dirID)
 	if !ok {
 		return os.ErrNotExist
@@ -463,10 +447,7 @@ func (lfs *LocalTernVFS) remove(dirID InodeID, name string, pin *Edge) error {
 	defer lfs.mu.Unlock()
 	// Check what it is to update our maps.
 	childID := lfs.statInodeID(childPath)
-	if pin != nil && childID != pin.ID {
-		return os.ErrNotExist
-	}
-	if childID == 0 {
+	if childID == 0 || childID != edge.ID {
 		return os.ErrNotExist
 	}
 	if err := lfs.snapshotLocked(childPath, childID); err != nil {
@@ -484,15 +465,7 @@ func (lfs *LocalTernVFS) remove(dirID InodeID, name string, pin *Edge) error {
 	return nil
 }
 
-func (lfs *LocalTernVFS) Rename(srcDirID InodeID, srcName string, dstDirID InodeID, dstName string) error {
-	return lfs.rename(srcDirID, srcName, nil, dstDirID, dstName)
-}
-
 func (lfs *LocalTernVFS) RenameEdge(srcDirID InodeID, srcName string, edge Edge, dstDirID InodeID, dstName string) error {
-	return lfs.rename(srcDirID, srcName, &edge, dstDirID, dstName)
-}
-
-func (lfs *LocalTernVFS) rename(srcDirID InodeID, srcName string, pin *Edge, dstDirID InodeID, dstName string) error {
 	srcDir, ok := lfs.resolve(srcDirID)
 	if !ok {
 		return os.ErrNotExist
@@ -506,11 +479,7 @@ func (lfs *LocalTernVFS) rename(srcDirID InodeID, srcName string, pin *Edge, dst
 
 	lfs.mu.Lock()
 	srcID := lfs.statInodeID(srcPath)
-	if pin != nil && srcID != pin.ID {
-		lfs.mu.Unlock()
-		return os.ErrNotExist
-	}
-	if srcID == 0 {
+	if srcID == 0 || srcID != edge.ID {
 		lfs.mu.Unlock()
 		return os.ErrNotExist
 	}

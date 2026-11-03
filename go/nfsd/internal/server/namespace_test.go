@@ -649,7 +649,7 @@ func TestRenameOpenStaging(t *testing.T) {
 	if !ok {
 		t.Fatal("first writer's handle does not decode")
 	}
-	if data, err := f.fs.ReadAll(baseID); err != nil || string(data) != "original" {
+	if data, err := readAll(f.fs, baseID); err != nil || string(data) != "original" {
 		t.Fatalf("first writer's base after the publication: %q %v", data, err)
 	}
 	status, state, fh, _ := openFileForOwner(t, f.conn, &f.xid, f.clientID,
@@ -800,19 +800,10 @@ type blockingRenameVFS struct {
 	once             sync.Once
 }
 
-func (fs *blockingRenameVFS) hold(dstName string) {
+func (fs *blockingRenameVFS) RenameEdge(srcDirID vfs.InodeID, srcName string, edge vfs.Edge, dstDirID vfs.InodeID, dstName string) error {
 	if dstName == fs.dstName {
 		fs.once.Do(func() { close(fs.entered) })
 		<-fs.release
 	}
-}
-
-func (fs *blockingRenameVFS) Rename(srcDirID vfs.InodeID, srcName string, dstDirID vfs.InodeID, dstName string) error {
-	fs.hold(dstName)
-	return fs.TernVFS.Rename(srcDirID, srcName, dstDirID, dstName)
-}
-
-func (fs *blockingRenameVFS) RenameEdge(srcDirID vfs.InodeID, srcName string, edge vfs.Edge, dstDirID vfs.InodeID, dstName string) error {
-	fs.hold(dstName)
 	return fs.TernVFS.RenameEdge(srcDirID, srcName, edge, dstDirID, dstName)
 }

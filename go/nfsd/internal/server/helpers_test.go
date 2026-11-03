@@ -42,7 +42,32 @@ func readPublished(fs vfs.TernVFS, name string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return fs.ReadAll(id)
+	return readAll(fs, id)
+}
+
+// readAll reads the whole of file id from the backend.
+func readAll(fs vfs.TernVFS, id vfs.InodeID) ([]byte, error) {
+	var data []byte
+	buf := make([]byte, 1<<16)
+	for {
+		n, eof, err := fs.Read(id, uint64(len(data)), buf)
+		if err != nil {
+			return nil, err
+		}
+		data = append(data, buf[:n]...)
+		if eof || n == 0 {
+			return data, nil
+		}
+	}
+}
+
+// removeName removes name from dir through the edge it has now.
+func removeName(fs vfs.TernVFS, dir vfs.InodeID, name string) error {
+	edge, err := fs.LookupEdge(dir, name)
+	if err != nil {
+		return err
+	}
+	return fs.RemoveEdge(dir, name, edge)
 }
 
 // addrOfTestServer finds a served test server's address in the registry.

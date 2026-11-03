@@ -91,9 +91,6 @@ type TernVFS interface {
 	// Read reads file data into dest, returning bytes read and EOF flag.
 	Read(fileID InodeID, offset uint64, dest []byte) (n int, eof bool, err error)
 
-	// ReadAll reads a small internal file without retaining reader state.
-	ReadAll(fileID InodeID) ([]byte, error)
-
 	// Readlink reads the target of a symlink.
 	Readlink(fileID InodeID) (string, error)
 
@@ -119,23 +116,17 @@ type TernVFS interface {
 	// but LocalTernVFS writes it at link time.
 	LinkFile(fileID InodeID, cookie Cookie, dirID InodeID, name string, data io.Reader) error
 
-	// Remove removes a file, directory, or symlink by name from a directory.
-	// A removed file remains readable by inode until it is collected.
-	Remove(dirID InodeID, name string) error
-
-	// Rename moves/renames a directory entry. A replaced file remains
-	// readable by inode until it is collected.
-	Rename(srcDirID InodeID, srcName string, dstDirID InodeID, dstName string) error
-
 	// LookupEdge finds a child by name and returns the entry it was found
 	// through, so that a later mutation can be pinned to it.
 	LookupEdge(dirID InodeID, name string) (Edge, error)
 
 	// RemoveEdge removes the pinned entry and returns the raw backend error.
+	// A removed file remains readable by inode until it is collected.
 	RemoveEdge(dirID InodeID, name string, edge Edge) error
 
 	// RenameEdge moves the entry only while srcName still refers to edge, with
-	// the same error contract as RemoveEdge.
+	// the same error contract as RemoveEdge. A replaced file remains readable
+	// by inode until it is collected.
 	RenameEdge(srcDirID InodeID, srcName string, edge Edge, dstDirID InodeID, dstName string) error
 
 	// ClassifyMutation describes the entire submitted call, including retries.

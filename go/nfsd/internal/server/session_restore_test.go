@@ -3031,7 +3031,7 @@ func TestRecoveredDiscardFencesCandidate(t *testing.T) {
 			}
 			pf.onLink(nil)
 			f.restart()
-			if err := f.srv.fs.Remove(f.srv.fs.RootID(), "doc"); err != nil {
+			if err := removeName(f.srv.fs, f.srv.fs.RootID(), "doc"); err != nil {
 				t.Fatal(err)
 			}
 			open := func() uint32 {

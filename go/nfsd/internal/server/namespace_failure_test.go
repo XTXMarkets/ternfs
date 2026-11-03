@@ -268,7 +268,11 @@ func TestNamespaceGuardRestartMakesNoRecoveryCalls(t *testing.T) {
 				t.Fatal(err)
 			}
 			if applied {
-				if err := f.fs.Rename(f.fs.RootID(), "source", f.fs.RootID(), "target"); err != nil {
+				edge, err := f.fs.LookupEdge(f.fs.RootID(), "source")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := f.fs.RenameEdge(f.fs.RootID(), "source", edge, f.fs.RootID(), "target"); err != nil {
 					t.Fatal(err)
 				}
 			}

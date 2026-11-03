@@ -61,7 +61,7 @@ func publishedData(t *testing.T, srv *Server) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := srv.fs.ReadAll(id)
+	data, err := readAll(srv.fs, id)
 	if err != nil {
 		t.Fatal(err)
 	}
