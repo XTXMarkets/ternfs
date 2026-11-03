@@ -9,7 +9,34 @@ set -eu -o pipefail
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 cd $SCRIPT_DIR
 
+usage() {
+    echo "usage: $0 [--build-number <number>] <build-variant>" >&2
+    exit 2
+}
+
+# Keep the original arguments for the container re-exec below.
+args=("$@")
+parsed=$(getopt --options '' --longoptions build-number: --name "$0" -- "$@") || usage
+eval set -- "$parsed"
+build_number=
+while true; do
+    case $1 in
+        --build-number)
+            build_number=$2
+            shift 2
+            ;;
+        --)
+            shift
+            break
+            ;;
+    esac
+done
+[ $# -eq 1 ] || usage
 build_variant=$1
+if [ -n "$build_number" ] && ! [[ $build_number =~ ^[1-9][0-9]*$ ]]; then
+    echo "--build-number must be a positive integer, got '$build_number'" >&2
+    exit 2
+fi
 
 # Determine if we need a container
 container=
@@ -44,7 +71,7 @@ if [ -n "$container" ] && [ "${IN_TERN_BUILD_CONTAINER:-}" != "1" ]; then
         -e GOCACHE=/ternfs/.cache \
         -e GOMODCACHE=/ternfs/.go-cache \
         "$container" \
-        /ternfs/build.sh "$@"
+        /ternfs/build.sh "${args[@]}"
 fi
 
 # Normalize build variant to cmake build type
@@ -94,6 +121,13 @@ binaries=(
     go/nfsd/nfsd
 )
 
+# Packaged builds need distinct build numbers: unchanged binaries otherwise
+# keep their build IDs, and the debug symbol packages of different releases
+# cannot be installed together. See docs/debian-packaging.md. We stamp the
+# copies, since incremental builds reuse the originals.
 for binary in "${binaries[@]}"; do
     cp $binary $out_dir
+    if [ -n "$build_number" ]; then
+        ${PWD}/packaging/stamp_build_id.py --build-number "$build_number" "$out_dir/$(basename $binary)"
+    fi
 done
