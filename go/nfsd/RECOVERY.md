@@ -195,58 +195,29 @@ A failed CLOSE has its own rules for what is kept; see
 
 ## Inspect stored state
 
-The [diagnostics API](inspect/README.md) reads the durable client store and
-the staging sidecars without changing them. On a running daemon, use its
-`-status-addr`. When the daemon will not start, or should not be disturbed:
+On a running daemon, the [diagnostics API](inspect/README.md) on its
+`-status-addr` shows the client records (`/v1/clients`), the staged
+writers (`/v1/staging`) and the sessions (`/v1/sessions`) without changing
+them.
 
-1. On the host which owns the staging disk, start a
-   [store-only](inspect/README.md#store-only-mode) process against the same
-   backend. It never opens the staging store, so startup recovery does not
-   quarantine or truncate anything. It runs in the foreground until
-   stopped, so run the following steps from another terminal.
+When the daemon will not start, or should not be disturbed, read the
+staging directory itself. Starting a daemon on it runs startup recovery,
+which can quarantine and truncate staged files, so copy the directory aside
+first if it must stay as it is. The client records are small JSON files,
+one per client identity:
 
-   ```sh
-   nfsd -store-only -registry registry.example:55556 -staging /var/lib/nfsd \
-       -status-addr 127.0.0.1:9049
-   ```
+```sh
+jq . /var/lib/nfsd/clients/*
+```
 
-2. Save a whole-store report with the sidecars joined, then read it from
-   the saved file:
-
-   ```sh
-   curl -sf -o store-report.json 'http://127.0.0.1:9049/v1/store?staging=1'
-   jq .report.summary store-report.json
-   ```
-
-3. Narrow it to the affected client with one
-   [selector](inspect/README.md#selectors), for example:
-
-   ```sh
-   curl -s 'http://127.0.0.1:9049/v1/store?staging=1&identity=Linux%20NFSv4.1%20host' | jq .report
-   curl -s 'http://127.0.0.1:9049/v1/store?staging=1&stateid=stateid:09cb5ee40000000000000001' | jq .report
-   ```
-
-   An `incarnation` selector takes the durable incarnation directory inode,
-   not the wire clientid a client sees. Only the process that issued a wire
-   clientid can resolve it, with [lookup](inspect/README.md#lookup).
-
-4. Read `summary.problems` and find each problem where it was recorded; see
-   [problems and notes](inspect/README.md#problems-and-notes). Quarantined
-   files count as problems. Retired, unlinked and guarded staging entries do
-   not, so account for them separately: a count of zero does not mean all
-   staged writes were published or recovered.
-
-The report's sidecar fields are the last checkpoint, while a data file's
-size, allocation and modification time are current disk statistics that
-can include writes not yet checkpointed; see the
-[staging join](inspect/README.md#staging-join). Live dirty ranges, hydration
-progress and session state are absent; on a running daemon, `/v1/staging`
-and `/v1/sessions` show them. A report taken while the daemon runs is an
-observation, not an atomic backup. Lease slots in the report name the
-`nfsd-id` of the earlier release that wrote them, and a stateid's first
-four bytes are the issuing process's `stateid_epoch`. Match these against startup logs or a serving
-daemon's [process identities](inspect/README.md#process-identities) to find
-that daemon; a store-only process has none of its own.
+Each names the identity's `confirmed` incarnation and boot verifier, and
+`purging` or `expired` when a reboot purge or an expiry was interrupted;
+the next start finishes either. A staged writer is a `.staging` data file
+and a `.meta` sidecar named with its inode as 16 hex digits; sidecars are
+binary and are only decoded by a daemon. A stateid's first four bytes are
+the issuing process's `stateid_epoch`. Match it against startup logs or a
+serving daemon's [process identities](inspect/README.md#process-identities)
+to find that daemon.
 
 ## Restart on the same host
 

@@ -34,7 +34,7 @@ func getJSON(t *testing.T, base, path string, want int) map[string]any {
 	if err := json.Unmarshal(body, &out); err != nil {
 		t.Fatalf("GET %s: %v: %s", path, err, body)
 	}
-	for _, key := range []string{"now", "server_id", "stateid_epoch", "wire_epoch", "mode"} {
+	for _, key := range []string{"now", "server_id", "stateid_epoch", "wire_epoch"} {
 		if _, ok := out[key]; !ok {
 			t.Fatalf("GET %s: no %s in envelope: %s", path, key, body)
 		}
@@ -46,7 +46,7 @@ func getJSON(t *testing.T, base, path string, want int) map[string]any {
 // paste back between resources, JSON errors and pprof.
 func TestDiagnosticsHTTP(t *testing.T) {
 	f := newDiagnosticsFixture(t)
-	ts := httptest.NewServer(inspect.Handler(f.srv, nil))
+	ts := httptest.NewServer(inspect.Handler(f.srv))
 	defer ts.Close()
 
 	index := getJSON(t, ts.URL, "/", http.StatusOK)
@@ -54,25 +54,18 @@ func TestDiagnosticsHTTP(t *testing.T) {
 	if len(resources) < 6 {
 		t.Fatalf("index lists %d resources", len(resources))
 	}
-	needsServer := map[string]bool{}
 	for _, r := range resources {
 		r := r.(map[string]any)
 		if r["path"] == "" || r["description"] == "" {
 			t.Fatalf("resource %v lacks a path or description", r)
 		}
-		needsServer[r["path"].(string)] = r["needs_running_server"] == true
-	}
-	// The index must say what the handler does: lookup resolves against
-	// memory and is unavailable in store-only mode; the store report is not.
-	if !needsServer["/v1/lookup"] || needsServer["/v1/store"] || needsServer["/"] {
-		t.Fatalf("needs_running_server = %v", needsServer)
 	}
 	if enums := index["enums"].(map[string]any); enums["client.state"] == nil || enums["id kinds"] == nil {
 		t.Fatalf("enums = %v", enums)
 	}
 
 	status := getJSON(t, ts.URL, "/v1/status", http.StatusOK)
-	if status["mode"] != inspect.ModeServing || status["accounting"].(map[string]any)["sessions"].(float64) != 1 {
+	if status["accounting"].(map[string]any)["sessions"].(float64) != 1 {
 		t.Fatalf("status = %v", status)
 	}
 
@@ -87,6 +80,14 @@ func TestDiagnosticsHTTP(t *testing.T) {
 	incarnation := recs[0].(map[string]any)["incarnation"].(string)
 	if incarnation != incarnationText(f.incarnID) {
 		t.Fatalf("incarnation = %q", incarnation)
+	}
+	// The wire clientid's incarnation is confirmed by the client record.
+	if local := clients["client_records"].([]any); len(local) != 1 ||
+		local[0].(map[string]any)["confirmed"] != incarnation || local[0].(map[string]any)["expired"] != false {
+		t.Fatalf("client records = %v", clients)
+	}
+	if local := getJSON(t, ts.URL, "/v1/clients?owner=00", http.StatusOK)["client_records"].([]any); len(local) != 0 {
+		t.Fatalf("owner filter kept client records %v", local)
 	}
 	incs := getJSON(t, ts.URL, "/v1/incarnations?id="+incarnation, http.StatusOK)
 	if recs := incs["records"].([]any); len(recs) != 1 || recs[0].(map[string]any)["group"] == nil {
@@ -113,11 +114,6 @@ func TestDiagnosticsHTTP(t *testing.T) {
 	if recs := staging["records"].([]any); len(recs) != 1 || staging["configured"] != true {
 		t.Fatalf("staging = %v", staging)
 	}
-	confs := getJSON(t, ts.URL, "/v1/confirmations", http.StatusOK)
-	if len(confs["records"].([]any)) != 0 {
-		t.Fatalf("confirmations = %v", confs)
-	}
-
 	conns := getJSON(t, ts.URL, "/v1/connections?session="+session, http.StatusOK)
 	if recs := conns["records"].([]any); len(recs) != 1 || recs[0].(map[string]any)["path"] == nil {
 		t.Fatalf("connections = %v", conns)
@@ -127,9 +123,6 @@ func TestDiagnosticsHTTP(t *testing.T) {
 	if lookup["kind"] != inspect.KindStateid || lookup["known"] != true || lookup["id"] != stateid {
 		t.Fatalf("lookup = %v", lookup)
 	}
-
-	// A serving nfsd keeps no client store to report on.
-	getJSON(t, ts.URL, "/v1/store?incarnation="+incarnation, http.StatusServiceUnavailable)
 
 	// Errors are JSON with the envelope and a status.
 	for path, want := range map[string]int{
@@ -162,26 +155,5 @@ func TestDiagnosticsHTTP(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("pprof index = %d", resp.StatusCode)
-	}
-}
-
-// Without a running server or a store the API still answers the index with
-// its fallback envelope and marks the memory resources unavailable,
-// lookup included, whether or not it was given an id.
-func TestDiagnosticsHTTPStoreOnly(t *testing.T) {
-	ts := httptest.NewServer(inspect.Handler(nil, nil))
-	defer ts.Close()
-	index := getJSON(t, ts.URL, "/", http.StatusOK)
-	if index["mode"] != inspect.ModeStoreOnly || index["server_id"] != "" {
-		t.Fatalf("envelope = %v", index)
-	}
-	for _, r := range index["resources"].([]any) {
-		r := r.(map[string]any)
-		if r["needs_running_server"] == true {
-			getJSON(t, ts.URL, r["path"].(string), http.StatusServiceUnavailable)
-		}
-	}
-	for _, path := range []string{"/v1/lookup", "/v1/lookup?id=" + incarnationText(1), "/v1/store"} {
-		getJSON(t, ts.URL, path, http.StatusServiceUnavailable)
 	}
 }

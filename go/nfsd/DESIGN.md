@@ -39,8 +39,7 @@ Two TernFS properties shape the design:
 | Package | Responsibility | Reference |
 | --- | --- | --- |
 | [internal/server](internal/server/server.go) | RPC and connections, sessions and slots, compounds and operations, persistent sessions and replay, the logical lease, confirmation, the staging lifecycle, the alias log and the backchannel. | [README](internal/server/README.md) |
-| [internal/clientstore](internal/clientstore/store.go) | The client records under `/.nfs`: identities, incarnations, confirmation, durable leases and collection. | [README](internal/clientstore/README.md) |
-| [internal/clientrecords](internal/clientrecords/records.go) | One fsynced record per confirmed client identity in the staging directory, replacing the client store. Not yet used by the server. | Package documentation. |
+| [internal/clientrecords](internal/clientrecords/records.go) | One fsynced record per confirmed client identity in the staging directory. | Package documentation. |
 | [internal/openstate](internal/openstate/store.go) | Process-local stateids, opens, tombstones and client views. | [README](internal/openstate/README.md) |
 | [internal/staging](internal/staging/store.go) | Staged data files and sidecars on the local disk, checkpoints, startup recovery and quarantine. | [README](internal/staging/README.md) |
 | [internal/sessionstore](internal/sessionstore/store.go) | The session file format on the staging disk. | [Session files on disk](internal/server/README.md#session-files-on-disk) |
@@ -54,7 +53,7 @@ Two TernFS properties shape the design:
 | --- | --- |
 | Namespace and published file contents | TernFS; subject to its policies. |
 | Server identity: the server owner and scope | One daemon's staging disk (`server-id`), written once; a moved staging directory is the same server and an empty one a new server; see [server identity](internal/staging/README.md#server-identity). |
-| Client identity, incarnation and lease slots | TernFS client store under `/.nfs`; see [clientstore](internal/clientstore/README.md). |
+| Client identity, confirmed incarnation and principal | One daemon's staging disk (`clients/`), one fsynced record per identity; see [clientrecords](internal/clientrecords/records.go). |
 | Staged bytes and checkpointed writer metadata | One daemon's staging disk; retained across compatible restarts; see [staging](internal/staging/README.md). |
 | Sessions, their slot reply caches and namespace intents | One daemon's staging disk (`sessions/`), written without fsync; a restart on the same host restores eligible sessions; see [Sessions across restarts](#sessions-across-restarts). |
 | Publication aliases | One daemon's staging disk (`aliases/published.jsonl`), not synced; rewritten at each sweep and reloaded at startup while unexpired; see the [alias log](internal/server/README.md#publication-alias-log). |
@@ -303,8 +302,8 @@ Principal comparison uses credential flavour and normalized AUTH_SYS uid,
 gid and groups, ignoring timestamp and machine name. It is a collision
 guard. `NFS4ERR_CLID_INUSE` requires a different principal while this
 daemon holds a write open or staged writer of the incarnation and its lease
-is live; sessions without write state do not pin an identity indefinitely. The records and rules are in
-[clientstore](internal/clientstore/README.md#registration).
+is live; sessions without write state do not pin an identity indefinitely.
+The records are in [clientrecords](internal/clientrecords/records.go).
 
 ### Wire clientids
 
@@ -329,8 +328,8 @@ The advertised lease is 90 seconds. Each incarnation has two leases here.
   does not expire a client while its logical lease is held.
 - The *durable lease* is the incarnation's one `lease` file in the client
   store, written only by the
-  [refresher](internal/clientstore/README.md#refresher): once at
-  [bootstrap](internal/clientstore/README.md#bootstrap), after
+  refresher: once at
+  bootstrap, after
   CREATE_SESSION or a session restore, and then while the logical lease is
   needed. It is published 135 seconds ahead and refreshed when
   less than 112.5 seconds remain: about every 22.5 seconds while the client
@@ -373,7 +372,7 @@ them.
 
 The expired marker stops an expired incarnation from acquiring a new lease,
 including after a restart; see
-[expired marker](internal/clientstore/README.md#expired-marker). Data
+expired marker. Data
 disposition on expiry is described in [Recovery](RECOVERY.md#lease-expiry).
 See [Lease gate](internal/server/README.md#lease-gate).
 
@@ -381,7 +380,7 @@ See [Lease gate](internal/server/README.md#lease-gate).
 
 Confirmation of a replacement incarnation is in two parts. The client
 store makes its writes and decides each outcome from evidence; see
-[Confirmation](internal/clientstore/README.md#confirmation). The server
+Confirmation. The server
 acts on each result once. Before the writes, it closes admission for the
 old incarnation in this process, so its new requests wait, and protects
 both incarnations.
@@ -473,11 +472,9 @@ These keep OPEN, CLOSE, downgrade and namespace changes ordered within a
 process without serializing unrelated files. The CLOSE, OPEN_DOWNGRADE,
 OPEN, CREATE, REMOVE or RENAME that ends a compound releases its pathname
 and file locks only once its slot record is written; other operations, and
-earlier ones, release theirs when they return. The client store has its own
-locks; see [clientstore](internal/clientstore/README.md#locks). The
-server's destruction holds keep destructive client-store work away from
-incarnations a confirmation protects. None of these locks is shared between
-processes. Diagnostics try, rather than wait for, locks held across I/O;
+earlier ones, release theirs when they return. The client records
+serialise the transitions of one identity with a lock of their own. None
+of these locks is shared between processes. Diagnostics try, rather than wait for, locks held across I/O;
 see [snapshot consistency](inspect/README.md#snapshot-consistency).
 
 ## Backend boundary

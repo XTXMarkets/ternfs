@@ -252,21 +252,6 @@ does not fit waits for replies to drain rather than being refused. A request
 larger than the whole budget is refused and its connection closed. A
 dashboard shows the waits as `admission_work_waits`.
 
-### Client store snapshot policy
-
-Give `/.nfs` a snapshot policy appropriate for disposable client-store
-history. Lease churn otherwise accumulates snapshot edges and
-dead inodes. For example, with the inode of `/.nfs` in `NFS_DIR_ID`:
-
-```sh
-terncli set-dir-info -id "$NFS_DIR_ID" -tag SNAPSHOT \
-    -body '{"DeleteAfterVersions": 0}'
-```
-
-Do not apply that recommendation to user data indiscriminately: staging
-recovery can need retained base versions. Keep `/.nfs` itself while serving
-the filesystem.
-
 ### Network access
 
 Ownership and modes are synthetic. AUTH_SYS principal comparison is an
@@ -328,10 +313,8 @@ client is mounting means a session was retired.
 ## Diagnostics
 
 `-status-addr` serves a read-only JSON API about the process's own state,
-off by default. `-store-only` serves the same API without the NFS server,
-reading the client store and staging sidecars without changing them. The
-[diagnostics API reference](inspect/README.md) describes the resources,
-typed ids and the store report.
+off by default. The [diagnostics API reference](inspect/README.md)
+describes the resources, the client records and typed ids.
 
 ```sh
 nfsd -registry registry.example:55556 -staging /var/lib/nfsd \

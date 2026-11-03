@@ -19,7 +19,6 @@ import (
 	"github.com/XTXMarkets/ternfs/go/core/bufpool"
 	"github.com/XTXMarkets/ternfs/go/core/log"
 	"github.com/XTXMarkets/ternfs/go/msgs"
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/server"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
@@ -45,15 +44,6 @@ func main() {
 	metricsInterval := flag.Duration("metrics-interval", defaultMetricsInterval, "how often metrics are pushed")
 	statusAddr := flag.String("status-addr", "",
 		"serve the read-only diagnostics API (JSON over HTTP) on this address; off by default")
-	storeOnly := flag.Bool("store-only", false,
-		"serve only the diagnostics API, reading the client store and -staging without\n"+
-			"starting the NFS server or touching anything; requires -status-addr")
-	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(),
-			"Usage: %s [options]\n       %s -store-only -status-addr ADDR [options]\n\nOptions:\n",
-			os.Args[0], os.Args[0])
-		flag.PrintDefaults()
-	}
 	flag.Parse()
 	// nfsd takes no positional arguments. Rejecting them here, before any
 	// directory or listener is touched, keeps a mistyped command line from
@@ -76,15 +66,6 @@ func main() {
 		level = slog.LevelDebug
 	}
 	slogger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
-
-	if *storeOnly {
-		if *statusAddr == "" {
-			fmt.Fprintln(os.Stderr, "-store-only requires -status-addr")
-			os.Exit(2)
-		}
-		runStoreOnly(slogger, *root, *registry, *stagingDir, *statusAddr, *verbose)
-		return
-	}
 
 	if *stagingDir == "" {
 		fmt.Fprintln(os.Stderr, "-staging is required")
@@ -122,7 +103,7 @@ func main() {
 			os.Exit(1)
 		}
 		go func() {
-			err := http.Serve(ln, inspect.Handler(srv, nil))
+			err := http.Serve(ln, inspect.Handler(srv))
 			slogger.Error("diagnostics server stopped", "err", err)
 		}()
 		slogger.Info("diagnostics listening", "addr", ln.Addr().String())
@@ -149,74 +130,6 @@ func main() {
 		slogger.Error("server error", "err", err)
 		os.Exit(1)
 	}
-}
-
-// runStoreOnly serves the diagnostics API for a process that is not an NFS
-// server, for when nfsd will not start or a host's store should be read
-// without disturbing it. It opens the client store read-only and never
-// opens the staging store: staging.NewLocalStore would quarantine and
-// truncate during recovery, so sidecars are only read by the store report,
-// on request.
-func runStoreOnly(slogger *slog.Logger, root, registry, stagingDir, statusAddr string, verbose bool) {
-	fs, target, _, err := openVFS(root, registry, verbose)
-	if err != nil {
-		slogger.Error("opening filesystem", "err", err)
-		os.Exit(1)
-	}
-	slogger.Info("filesystem opened", "target", target)
-	store, err := clientstore.OpenReader(fs)
-	if err != nil {
-		slogger.Error("opening client store", "err", err)
-		os.Exit(1)
-	}
-	if stagingDir != "" {
-		if info, err := os.Stat(stagingDir); err != nil || !info.IsDir() {
-			slogger.Error("staging directory", "path", stagingDir, "err", err)
-			os.Exit(1)
-		}
-	}
-	ln, err := net.Listen("tcp", statusAddr)
-	if err != nil {
-		slogger.Error("diagnostics listen", "addr", statusAddr, "err", err)
-		os.Exit(1)
-	}
-	slogger.Info("diagnostics listening in store-only mode", "addr", ln.Addr().String(), "staging", stagingDir)
-	if err := http.Serve(ln, inspect.Handler(nil, storeOnlySource{clientStore: store, stagingDir: stagingDir})); err != nil {
-		slogger.Error("diagnostics server stopped", "err", err)
-		os.Exit(1)
-	}
-}
-
-// storeOnlySource is the diagnostics source of a process that runs no NFS
-// server: a read-only client store opened with clientstore.OpenReader, and
-// a staging directory that is only ever read by the store report. It has
-// no server id and no epochs, since it issues nothing.
-type storeOnlySource struct {
-	clientStore *clientstore.Store
-	stagingDir  string
-}
-
-var _ inspect.StoreSource = storeOnlySource{}
-
-func (s storeOnlySource) Envelope() inspect.Envelope {
-	return inspect.Envelope{Now: s.clientStore.Now(), Mode: inspect.ModeStoreOnly}
-}
-
-// Store runs the durable-store reader for the API. It checks the query
-// before any backend read, reads the backend and, when asked, the staging
-// directory, and never writes either.
-func (s storeOnlySource) Store(q inspect.StoreQuery) (any, error) {
-	if q.Incarnation != 0 && !clientstore.IsDirectoryInodeID(vfs.InodeID(q.Incarnation)) {
-		return nil, fmt.Errorf("%w: %s is not a directory inode", inspect.ErrBadRequest,
-			inspect.Scalar(inspect.KindIncarnation, q.Incarnation))
-	}
-	stagingDir := s.stagingDir
-	if !q.Staging {
-		stagingDir = ""
-	} else if stagingDir == "" {
-		return nil, fmt.Errorf("%w: no staging directory is configured", inspect.ErrBadRequest)
-	}
-	return s.clientStore.Inspect(q, stagingDir)
 }
 
 // openVFS opens the local directory or the TernFS cluster named by exactly

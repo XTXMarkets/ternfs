@@ -65,7 +65,7 @@ func TestDiagnosticsStagingFilterKeepsUnknownOwners(t *testing.T) {
 	}
 
 	// The partial-result contract is also visible on the wire.
-	httpServer := httptest.NewServer(inspect.Handler(srv, nil))
+	httpServer := httptest.NewServer(inspect.Handler(srv))
 	defer func() {
 		// A regressed lookup may still hold an HTTP request on this lock
 		// after the test client's deadline. Release it before Close waits.

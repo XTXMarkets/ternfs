@@ -43,8 +43,7 @@ func TestNamespaceUnstagedErrorOutcomes(t *testing.T) {
 					t.Fatal(err)
 				}
 				// The fault applies to namespace operations only, as in the
-				// other namespace fixtures; the client store's confirmation
-				// writes also use explicit edges.
+				// other namespace fixtures.
 				server.fs = &namespaceFaultVFS{TernVFS: base, err: tc.err, remote: true}
 				addr, stop := serveTestServer(t, server)
 				defer stop()

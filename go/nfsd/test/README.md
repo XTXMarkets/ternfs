@@ -38,7 +38,7 @@ make test-cluster GO_TEST_FLAGS='-v -run TestTernWriteAndRead'
 
 `make test` runs `go test . ./internal/...`. The untagged tests include
 [nfsd_test.go](../internal/server/nfsd_test.go), the
-[client-store tests](../internal/clientstore/store_test.go), session tests
+[client record tests](../internal/clientrecords/records_test.go), session tests
 and staging tests. `make test` does not include the diagnostics API package;
 run its typed-ID tests from `go/nfsd` with:
 
@@ -178,8 +178,7 @@ make test-functional-cluster FUNCTIONAL_TESTS=0005,0009
 ```
 
 The target rebuilds the image before running. `FUNCTIONAL_TIMEOUT` defaults
-to 30 minutes. Each guest uses a distinct hostname for its client identity
-because the daemons share the durable client store.
+to 30 minutes. Each guest uses a distinct hostname for its client identity.
 
 For the explicit crash test, build the image, then run:
 

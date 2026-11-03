@@ -30,7 +30,6 @@ func (s *Server) Envelope() inspect.Envelope {
 		ServerID:     s.serverID.String(),
 		StateidEpoch: fmt.Sprintf("%08x", s.opens.Epoch),
 		WireEpoch:    epoch,
-		Mode:         inspect.ModeServing,
 	}
 }
 
@@ -88,11 +87,31 @@ func (s *Server) Connections(f inspect.ConnectionFilter) (inspect.Connections, e
 	return out, nil
 }
 
+// Clients lists the client records and the wire records matching f. A wire
+// or incarnation filter selects the client record of the incarnations it
+// matched, which the record confirms or is purging.
 func (s *Server) Clients(f inspect.ClientFilter) (inspect.Clients, error) {
-	out := inspect.Clients{Envelope: s.Envelope()}
+	out := inspect.Clients{Envelope: s.Envelope(), ClientRecords: []inspect.ClientRecord{}}
 	out.Records, out.Owners, out.WireLimit = s.sessions.snapshotClients(f)
 	sort.Slice(out.Records, func(i, j int) bool { return out.Records[i].WireClientID < out.Records[j].WireClientID })
 	sort.Slice(out.Owners, func(i, j int) bool { return out.Owners[i].OwnerHex < out.Owners[j].OwnerHex })
+	incarnations := make(map[string]bool)
+	if f.Incarnation != 0 {
+		incarnations[incarnationText(f.Incarnation)] = true
+	}
+	if f.WireClientID != 0 {
+		for _, c := range out.Records {
+			incarnations[c.Incarnation] = true
+		}
+	}
+	for _, rec := range s.records.List() {
+		r := clientRecordView(rec)
+		if f.OwnerHex != "" && r.OwnerHex != f.OwnerHex ||
+			(f.Incarnation != 0 || f.WireClientID != 0) && !incarnations[r.Confirmed] && !incarnations[r.Purging] {
+			continue
+		}
+		out.ClientRecords = append(out.ClientRecords, r)
+	}
 	return out, nil
 }
 
@@ -156,18 +175,6 @@ func (s *Server) Opens(f inspect.OpenFilter) (inspect.Opens, error) {
 	})
 	out.Views.NameHints = s.names.size()
 	return out, nil
-}
-
-// Confirmations is always empty: a confirmation is one record write inside
-// its CREATE_SESSION.
-func (s *Server) Confirmations() (inspect.Confirmations, error) {
-	return inspect.Confirmations{
-		Envelope:             s.Envelope(),
-		Records:              []inspect.Confirmation{},
-		DestroyHolds:         []inspect.Hold{},
-		IdentityDestroyHolds: []inspect.Hold{},
-		PurgePending:         []string{},
-	}, nil
 }
 
 func (s *Server) Staging(f inspect.StagingFilter) (inspect.Staging, error) {
@@ -277,7 +284,7 @@ func (s *Server) ResolveStateid(id [12]byte) (inspect.Resolution, error) {
 	r := inspect.Resolution{
 		Epoch:               fmt.Sprintf("%08x", epoch),
 		IssuedByThisProcess: inspect.Bool(epoch == s.opens.Epoch),
-		Links:               []string{"/v1/opens?stateid=" + stateidText(sid), "/v1/store?stateid=" + stateidText(sid)},
+		Links:               []string{"/v1/opens?stateid=" + stateidText(sid)},
 	}
 	owner, live, expired := s.opens.StateidOwner(sid)
 	switch {

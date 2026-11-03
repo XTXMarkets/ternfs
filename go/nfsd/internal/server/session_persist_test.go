@@ -168,8 +168,7 @@ type intentWatchVFS struct {
 	t          *testing.T
 	stagingDir string
 	id         SessionID
-	// dir is the directory the test mutates; the client store's own
-	// renames under /.nfs are not watched.
+	// dir is the directory the test mutates.
 	dir  vfs.InodeID
 	seen []sessionstore.Record
 }

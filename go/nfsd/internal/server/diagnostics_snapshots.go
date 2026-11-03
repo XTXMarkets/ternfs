@@ -397,6 +397,22 @@ func (nc *nameCache) size() int {
 	return len(nc.entries)
 }
 
+// clientRecordView formats a client record for /v1/clients.
+func clientRecordView(rec clientrecords.Record) inspect.ClientRecord {
+	confirmed := incarnationText(uint64(rec.Incarnation))
+	return inspect.ClientRecord{
+		IdentityHash: identityHashText(rec.Hash()),
+		OwnerHex:     hex.EncodeToString(rec.Owner),
+		Principal:    principalRecord(rec.Principal),
+		Confirmed:    confirmed,
+		Verifier:     hex.EncodeToString(rec.Verifier[:]),
+		ConfirmedAt:  rec.ConfirmedAt,
+		Purging:      incarnationText(uint64(rec.Purging)),
+		Expired:      rec.Expired,
+		Links:        inspect.IncarnationLinks(confirmed),
+	}
+}
+
 // clientRecord copies a wire record. The caller holds sessions.mu.
 func clientRecord(c *sessionClient) inspect.Client {
 	slot := inspect.CreationSlot{Seq: c.csSeq, Cached: c.csCached, Busy: c.csBusy}

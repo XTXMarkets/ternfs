@@ -139,7 +139,7 @@ func TestDiagnosticsLookup(t *testing.T) {
 	if r := resolve(t, sessionText(f.session), inspect.KindSession); !r.Known || r.State != "live" || r.Incarnation != inc {
 		t.Fatalf("session = %+v", r)
 	}
-	// An identity hash needs no server state; it points at the store report.
+	// An identity hash needs no server state; it points at the client records.
 	if r := resolve(t, inspect.ID(inspect.KindIdentityHash, make([]byte, 32)), inspect.KindIdentityHash); r.Known || len(r.Links) != 1 {
 		t.Fatalf("identity hash = %+v", r)
 	}

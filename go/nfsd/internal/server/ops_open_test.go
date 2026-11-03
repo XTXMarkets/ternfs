@@ -1261,7 +1261,6 @@ func (fs *publishFaultVFS) ConstructFile(dir vfs.InodeID) (vfs.InodeID, vfs.Cook
 	}
 	id, cookie, err := fs.TernVFS.ConstructFile(dir)
 	if err == nil && dir == fs.RootID() {
-		// Not the client store's markers.
 		fs.note("construct", id)
 	}
 	return id, cookie, err

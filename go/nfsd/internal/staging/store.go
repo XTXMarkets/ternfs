@@ -20,7 +20,6 @@ import (
 // holds pairs moved aside rather than deleted: at startup those whose sidecar
 // would not decode, was guarded, or was both unlinked and retired, and at run
 // time failed writers (README.md#startup-recovery-and-quarantine).
-// /v1/store?staging=1 lists them.
 const QuarantineDirName = "quarantine"
 
 // AliasesDirName is the staging subdirectory holding the server's

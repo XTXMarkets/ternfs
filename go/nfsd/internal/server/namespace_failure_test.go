@@ -23,9 +23,7 @@ import (
 )
 
 // namespaceProbeVFS counts the namespace calls made against the root
-// directory, where the fixtures' names live. The client store's own calls
-// under /.nfs, such as publishing a restored session's lease at startup,
-// are not namespace recovery and are not counted.
+// directory, where the fixtures' names live.
 type namespaceProbeVFS struct {
 	vfs.TernVFS
 	mutations atomic.Int32

@@ -25,10 +25,9 @@ of its staging directory; see [Replace a host](RECOVERY.md#replace-a-host).
 | [Recovery](RECOVERY.md) | Crash and lease recovery, staging inspection, quarantine and replacement procedures. |
 | [Design](DESIGN.md) | How the packages fit together: state ownership, writes and publication, the writer lifecycle, namespace changes, clients and leases, sessions across restarts and lock order. |
 | [Server](internal/server/README.md) | Request handling, sessions and slots, persistent sessions and the restart replay decision, the lease gate, client confirmation, opens, the alias log, the staging lifecycle and the backchannel. |
-| [Client store](internal/clientstore/README.md) | The shared records under `/.nfs`: layout, registration, confirmation, durable leases and collection. |
 | [Open state](internal/openstate/README.md) | Stateids, opens, downgrades, reader visibility and client views. |
 | [Staging](internal/staging/README.md) | Staged data files and sidecars, checkpoints, startup recovery and quarantine. |
-| [Diagnostics API](inspect/README.md) | The read-only JSON API: resources, typed ids, snapshot consistency, store-only mode and the store report. |
+| [Diagnostics API](inspect/README.md) | The read-only JSON API: resources, client records, typed ids and snapshot consistency. |
 | [Testing](test/README.md) | Test suites, prerequisites, commands and coverage limits. |
 
 ## Run
@@ -56,8 +55,7 @@ server replacement procedure.
 `-staging DIR` is required. `-root DIR` selects a local test backend
 instead of `-registry`; exactly one is required. `-v` enables request
 logging. `-status-addr` serves a read-only JSON
-[diagnostics API](inspect/README.md); `-store-only` serves only that API,
-without the NFS server. `-influx-db-origin`, `-influx-db-org`,
+[diagnostics API](inspect/README.md). `-influx-db-origin`, `-influx-db-org`,
 `-influx-db-bucket` and `-filesystem` push [metrics](DEPLOYMENT.md#metrics).
 `./nfsd -h` lists the other options.
 

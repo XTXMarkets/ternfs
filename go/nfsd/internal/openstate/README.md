@@ -152,8 +152,8 @@ also writes it. The server applies them under the file lock.
   the binding fails, the readers get `NFS4ERR_IO`. The hand-over does not
   survive a restart.
 
-No open leaves a record in the client store. A writer's sidecar is what a
-restart recovers from.
+No open leaves a record of its own. A writer's sidecar is what a restart
+recovers from.
 
 ## Client views
 
