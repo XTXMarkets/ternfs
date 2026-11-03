@@ -115,3 +115,17 @@ func TestWireEpochFailureReleasesListener(t *testing.T) {
 	}
 	ln.Close()
 }
+
+// The epoch is the high half of every wire clientid, and 0 means unset: an
+// epoch outside 1..0xffffffff is refused and issues nothing.
+func TestWireEpochRange(t *testing.T) {
+	for _, epoch := range []int64{0, 1 << 32} {
+		var w wireClientIDs
+		if err := w.start(epoch); err == nil {
+			t.Fatalf("epoch %d accepted", epoch)
+		}
+		if _, err := w.next(); !errors.Is(err, errWireEpochUnset) {
+			t.Fatalf("rejected epoch %d issued a clientid: %v", epoch, err)
+		}
+	}
+}

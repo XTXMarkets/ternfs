@@ -299,8 +299,8 @@ func TestCachedReplayAtRecordLimit(t *testing.T) {
 		t.Fatalf("new CREATE_SESSION at the limit %s", nfs4.Nfsstat4Name(got))
 	}
 	// A destroyed session's replay returns its result and rebuilds nothing.
-	if !ss.destroySession(committed) {
-		t.Fatal("DESTROY_SESSION")
+	if !ss.destroySession(committed) || ss.destroySession(committed) {
+		t.Fatal("DESTROY_SESSION, or a second one found the session")
 	}
 	ss.mu.Lock()
 	ss.recordLimit = ss.records + ss.pendingSessions
