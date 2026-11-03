@@ -245,6 +245,33 @@ removed by an administrator. An `EXCLUSIVE4` create retried
 by the same client boot after its lease expired gets `NFS4ERR_EXIST`
 instead of adopting its retired staging.
 
+### DESTROY_CLIENTID after a restart
+
+Wire clientids belong to one process, and a restart restores sessions but
+not the wire records behind them. A client that destroys its clientid on a
+restored session, as Linux does at unmount, gets `NFS4ERR_STALE_CLIENTID`.
+Its record stays until its lease expires, 90 s later, and then goes as for
+any expired client.
+
+### A failed fsync of the client records stops record updates
+
+If fsync of `clients/` fails, nfsd no longer knows whether the update
+reached the disk, and it stops changing records until it restarts and
+reads them again. Until then every confirmation, expiry and destruction
+fails: a new or rebooted client's CREATE_SESSION gets `NFS4ERR_SERVERFAULT`,
+and EXCHANGE_ID for a client whose lease has run out gets `NFS4ERR_DELAY`.
+nfsd keeps serving everything else and reports the failure only in its
+log. Restart it.
+
+### An interrupted reboot purge waits for a restart
+
+When a client reboots, its record is marked `purging` until the old
+incarnation's sessions and writers are gone. If that purge fails, the mark
+stays. A restart finishes it, and so does the same client registering
+again. Expiry and DESTROY_CLIENTID do not: they log a warning and leave the
+record, and DESTROY_CLIENTID answers `NFS4ERR_SERVERFAULT` after it has
+already retired the client's sessions.
+
 ## Operating requirements
 
 ### Staging disk
