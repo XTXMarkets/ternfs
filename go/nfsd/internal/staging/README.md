@@ -147,9 +147,9 @@ gets `ErrRemoved`. The seal is local to this process.
 `Retire` cancels hydration, syncs the data, saves the full checkpoint with
 `Retired` set and closes the data file. It does nothing if the file has
 been rebound to another owner since the caller checked. `Rebind` gives a
-writer a new incarnation and stateid, on recovery or when an upgrade keeps
-the existing open's stateid. `Bind` names another open as the owner in one
-save, with its open-owner and whether it only reads: when an earlier CLOSE
+writer a new incarnation and stateid on recovery. `Bind` names another
+open as the owner in one save, with its open-owner and whether it only
+reads: when an earlier CLOSE
 hands shared staging to another writer, when a write open takes over the
 staging of an open whose CLOSE answered DELAY, and when a detached staging
 is kept for a read open. Both clear `Retired`, reopening a retired writer's

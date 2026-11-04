@@ -957,6 +957,8 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 	created := false
 	staged := false
 	reusedStaging := false
+	// construct: a new writer's staging is built over targetID.
+	construct := false
 	var openSize *uint64
 	var exclusiveVerifier *[8]byte
 	var recoveredStagingID vfs.InodeID
@@ -1219,31 +1221,14 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 				}
 				return fail(status)
 			}
-			baseID := targetID
 			if hasRecoveredStaging {
 				// Another writer may have published since this session opened.
 				// Its immutable base and private edits still belong to this owner.
 				adoptRecoveredStaging()
 				targetID = recoveredStagingID
 			} else {
-				var baseInfo vfs.NodeInfo
-				if baseID != placeholderID {
-					var err error
-					baseInfo, err = s.fs.Stat(baseID)
-					if err != nil {
-						return fail(s.errToNFS(err))
-					}
-				}
-				var status uint32
-				targetID, nfsSID, status = s.constructStaging(
-					dirID, fileName, clientID, ownerKey.Owner,
-					access&nfs4.OPEN4_SHARE_ACCESS_WRITE != 0, baseID, baseInfo,
-					exclusiveVerifier,
-				)
-				if status != nfs4.NFS4_OK {
-					return fail(status)
-				}
-				staged = true
+				// Built under the file lock, once the stateid is known.
+				construct, staged = true, true
 			}
 		}
 	case nfs4.CLAIM_PREVIOUS:
@@ -1282,7 +1267,7 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 		}
 		return s.setStagingSize(sf, *openSize)
 	}
-	if staged && openSize != nil && !reusedStaging {
+	if joined && openSize != nil {
 		// A joined writer applies the size to the shared staging, as a
 		// truncating open through the client's cache would.
 		if err := applyOpenSize(); err != nil {
@@ -1317,19 +1302,38 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 	markID := nfsSID
 	if existing, ok := s.opens.ExistingOpen(ownerKey, publishedID); ok {
 		markID = existing.ID
-		if staged && !reusedStaging && !joined {
-			// An upgrade keeps the existing stateid, so the new writer's
-			// staging records it.
-			if err := s.stagingStore.Rebind(targetID, clientID, markID); err != nil {
-				cleanupStagedOpen()
-				return fail(nfs4.NFS4ERR_IO)
-			}
-			nfsSID = markID
-		}
 	}
 	if markID == (nfs4.StateID{}) {
 		markID = s.opens.NewStateID()
 		nfsSID = markID
+	}
+	if construct {
+		// The new writer's staging records the open's stateid, the
+		// existing one for an upgrade.
+		var baseInfo vfs.NodeInfo
+		if targetID != placeholderID {
+			var err error
+			baseInfo, err = s.fs.Stat(targetID)
+			if err != nil {
+				return fail(s.errToNFS(err))
+			}
+		}
+		var status uint32
+		targetID, status = s.constructStaging(
+			openDir, openName, clientID, ownerKey.Owner,
+			access&nfs4.OPEN4_SHARE_ACCESS_WRITE != 0, targetID, baseInfo,
+			markID, exclusiveVerifier,
+		)
+		if status != nfs4.NFS4_OK {
+			return fail(status)
+		}
+		nfsSID = markID
+		if openSize != nil {
+			if err := applyOpenSize(); err != nil {
+				cleanupStagedOpen()
+				return fail(nfs4.NFS4ERR_IO)
+			}
+		}
 	}
 	// The open's client must be confirmed with a live lease. The open is
 	// recorded in this process only; a writer's sidecar is what a restart
@@ -1411,6 +1415,9 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 	return writeOpenResponse(w, st, response)
 }
 
+// constructStaging builds a writer's staging over baseID for the open
+// stateID. The caller holds the file lock, so stateID is the one the OPEN
+// returns.
 func (s *Server) constructStaging(
 	dirID vfs.InodeID,
 	fileName string,
@@ -1419,17 +1426,17 @@ func (s *Server) constructStaging(
 	write bool,
 	baseID vfs.InodeID,
 	baseInfo vfs.NodeInfo,
+	stateID nfs4.StateID,
 	exclusiveVerifier *[8]byte,
-) (vfs.InodeID, nfs4.StateID, uint32) {
+) (vfs.InodeID, uint32) {
 	recoveryKey, status := s.recoveryKey(clientID)
 	if status != nfs4.NFS4_OK {
-		return 0, nfs4.StateID{}, status
+		return 0, status
 	}
 	id, cookie, err := s.fs.ConstructFile(dirID)
 	if err != nil {
-		return 0, nfs4.StateID{}, s.constructErrToNFS(err)
+		return 0, s.constructErrToNFS(err)
 	}
-	stateID := s.opens.NewStateID()
 	meta := staging.Meta{
 		DirID:       dirID,
 		FileName:    fileName,
@@ -1451,9 +1458,9 @@ func (s *Server) constructStaging(
 	if _, err := s.stagingStore.Create(id, meta); err != nil {
 		_ = s.fs.ScrapFile(id, cookie)
 		s.log.Error("staging create error", "err", err)
-		return 0, nfs4.StateID{}, nfs4.NFS4ERR_IO
+		return 0, nfs4.NFS4ERR_IO
 	}
-	return id, stateID, nfs4.NFS4_OK
+	return id, nfs4.NFS4_OK
 }
 
 // constructErrToNFS answers DELAY for an unanswered ConstructFile, which has
