@@ -373,6 +373,23 @@ func mkdirBody(name string) []byte {
 	})
 }
 
+// mkdirUnderBody makes name in the directory dir, found by name from the
+// root, so a replacement of dir between the attempts changes where it lands.
+func mkdirUnderBody(dir, name string) []byte {
+	return buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
+		w.AppendArgarray_Putrootfh()
+		lw := w.AppendArgarray_Lookup()
+		lw.Resume(lw.StartObjname().SetData([]byte(dir)).Finish())
+		w.Resume(lw.Finish())
+		cw := w.AppendArgarray_Create()
+		cw.SetObjtype_Nf4dir()
+		cw.Resume(cw.StartObjname().SetData([]byte(name)).Finish())
+		finishEmptyCreateattrs(&cw)
+		w.Resume(cw.Finish())
+		w.AppendArgarray_Getfh()
+	})
+}
+
 func symlinkBody(name, target string) []byte {
 	return buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
@@ -1420,8 +1437,9 @@ func TestRestartMutationBeforeIntentNotRestored(t *testing.T) {
 }
 
 // A CREATE run again with its intent restored is DEADSESSION whatever is at
-// the name, and changes nothing there: an object may be someone else's, and
-// a name absent may be one this CREATE made and someone removed since.
+// the name, and changes nothing there: an object may be someone else's, a
+// name absent may be one this CREATE made and someone removed since, and a
+// parent found by name may have been replaced.
 func TestRestartPendingCreateFailsClosed(t *testing.T) {
 	marker := func(f *replayFixture, dir string) {
 		writeRoot(t, f.root, dir+"/marker", "mine")
@@ -1429,28 +1447,50 @@ func TestRestartPendingCreateFailsClosed(t *testing.T) {
 	for _, c := range []struct {
 		name    string
 		body    []byte
+		path    string                 // the name the CREATE makes, from the root
+		setup   func(f *replayFixture) // before the first attempt
 		before  func(f *replayFixture) // in the first process, before its Mkdir
 		after   func(f *replayFixture) // after the restart, before the replay
 		first   uint32                 // the first attempt's status
 		present bool                   // the name after the replay
 		marked  bool                   // sub holds a marker the replay must keep
 	}{
-		{name: "made", body: mkdirBody("sub"), after: func(f *replayFixture) { marker(f, "sub") }, first: nfs4.NFS4_OK, present: true, marked: true},
-		{name: "made then removed", body: mkdirBody("sub"), after: func(f *replayFixture) {
+		{name: "made", body: mkdirBody("sub"), path: "sub", after: func(f *replayFixture) { marker(f, "sub") }, first: nfs4.NFS4_OK, present: true, marked: true},
+		{name: "made then removed", body: mkdirBody("sub"), path: "sub", after: func(f *replayFixture) {
 			if err := os.Remove(filepath.Join(f.root, "sub")); err != nil {
 				t.Fatal(err)
 			}
 		}, first: nfs4.NFS4_OK},
-		{name: "someone else's", body: mkdirBody("sub"), before: func(f *replayFixture) {
+		{name: "someone else's", body: mkdirBody("sub"), path: "sub", before: func(f *replayFixture) {
 			if err := os.Mkdir(filepath.Join(f.root, "sub"), 0o755); err != nil {
 				t.Fatal(err)
 			}
 			marker(f, "sub")
 		}, first: nfs4.NFS4ERR_EXIST, present: true, marked: true},
-		{name: "symlink made", body: symlinkBody("link", "elsewhere"), first: nfs4.NFS4_OK, present: true},
+		{name: "symlink made", body: symlinkBody("link", "elsewhere"), path: "link", first: nfs4.NFS4_OK, present: true},
+		{name: "symlink made then removed", body: symlinkBody("link", "elsewhere"), path: "link", after: func(f *replayFixture) {
+			if err := os.Remove(filepath.Join(f.root, "link")); err != nil {
+				t.Fatal(err)
+			}
+		}, first: nfs4.NFS4_OK},
+		{name: "parent replaced", body: mkdirUnderBody("d", "sub"), path: "d/sub", setup: func(f *replayFixture) {
+			if err := os.Mkdir(filepath.Join(f.root, "d"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}, after: func(f *replayFixture) {
+			if err := os.Rename(filepath.Join(f.root, "d"), filepath.Join(f.root, "d.old")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(filepath.Join(f.root, "d"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}, first: nfs4.NFS4_OK},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			f := newReplayFixture(t)
+			if c.setup != nil {
+				c.setup(f)
+			}
 			slot, seq := f.ts.acquire()
 			f.ts.release(slot)
 			request := withSequence(c.body, f.ts, slot, seq)
@@ -1475,12 +1515,8 @@ func TestRestartPendingCreateFailsClosed(t *testing.T) {
 			if len(after) != len(before) {
 				t.Fatalf("the replay changed the directory: %d entries, then %d", len(before), len(after))
 			}
-			name := "sub"
-			if c.name == "symlink made" {
-				name = "link"
-			}
-			if _, err := os.Lstat(filepath.Join(f.root, name)); (err == nil) != c.present {
-				t.Fatalf("%s after the replay: %v", name, err)
+			if _, err := os.Lstat(filepath.Join(f.root, c.path)); (err == nil) != c.present {
+				t.Fatalf("%s after the replay: %v", c.path, err)
 			}
 			if c.marked {
 				if data, ok := readRoot(t, f.root, "sub/marker"); !ok || data != "mine" {
