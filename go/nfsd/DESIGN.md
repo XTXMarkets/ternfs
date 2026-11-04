@@ -254,8 +254,9 @@ status is the operation's reply, recorded and replayed like any other.
 A CLOSE's own publication is different: a backend that gives no answer
 fails no writer, and the CLOSE is retried after `NFS4ERR_DELAY`, as
 described under [Writes and publication](#writes-and-publication). SETATTR
-of times on a file without staging, and an OPEN whose `ConstructFile` gets
-no answer, also give `NFS4ERR_DELAY`, since running them again is harmless.
+of times on a file without staging, an OPEN whose `ConstructFile` gets no
+answer, and a GETATTR whose stat gets no answer, also give `NFS4ERR_DELAY`,
+since running them again is harmless.
 
 Failed-writer tombstones remain after CLOSE so COMMIT, which has no stateid,
 cannot acknowledge a failed writer as healthy. They are process-local;
@@ -454,6 +455,7 @@ is the list; each entry says where the handling is described.
 | A client reopens a file without a path walk, as smbd does through `/proc/self/fd`. | A deployment rule: such a client mounts with `lookupcache=none`. Without it, a refused reopen is `NFS4ERR_STALE`, which smbd reports as access denied. See [Client mounts](DEPLOYMENT.md#one-writable-server). |
 | A client keeps its handle after its own save and revalidates it by GETATTR. | Publication aliases while the handle is open and for a lease after; content reversal after that is a [known defect](DEPLOYMENT.md#old-handles-name-their-original-version). |
 | Linux discards a CLOSE's status: `close(2)` returns 0 whatever CLOSE answered. | A CLOSE the backend does not answer gets `NFS4ERR_DELAY` and is retried. A rejected publication is still lost silently; see [Known defects](DEPLOYMENT.md#a-rejected-publication-is-not-reported-to-the-application). |
+| Linux closes a read open with PUTFH, GETATTR, CLOSE, and when the GETATTR fails with `NFS4ERR_IO` it forgets the stateid without closing it. | A GETATTR the backend does not answer gets `NFS4ERR_DELAY`, so the client retries the compound and the CLOSE runs once the backend answers. |
 | Linux retries CLOSE after `NFS4ERR_DELAY`, backing off to 15 s. | The CLOSE DELAY relies on it; see [Writes and publication](#writes-and-publication). |
 | Linux re-encodes a retransmission with its current highest slot. | The slot digest leaves out SEQUENCE arguments; see [Slot replay](internal/server/README.md#slot-replay). |
 | Linux answers `NFS4ERR_DELAY` on a lone SEQUENCE by waiting its 15 s maximum. | SEQUENCE does no I/O. Apart from the slot cases in [Slot replay](internal/server/README.md#slot-replay), it gets DELAY only while the client's expiry decision writes its local record, or a reboot's confirmation replaces its incarnation; see [The lease](#the-lease). |

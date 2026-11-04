@@ -180,6 +180,10 @@ open and the staging, and the Linux client retries, so `close(2)` blocks for
 about the outage, as on a hard mount; see
 [Publication](internal/server/README.md#publication). A client that does
 not retry DELAY, such as libnfs, gets an error from its close instead.
+GETATTR gets `NFS4ERR_DELAY` too: Linux sends one before the CLOSE of a
+read open and drops that open without closing it when the GETATTR fails.
+Other reads the backend does not answer, such as LOOKUP, READ and READDIR,
+still get `NFS4ERR_IO`.
 
 REMOVE and RENAME do. A timeout there, like any error except a REMOVE whose
 edge is already gone, is an unknown outcome. The staged writers at the

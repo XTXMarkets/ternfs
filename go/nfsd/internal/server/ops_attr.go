@@ -43,7 +43,14 @@ func (s *Server) opGetattr(args nfs4.GETATTR4args, st *compoundState, w *nfs4.CO
 	ni, err := s.stat(s.clientView(st.clientID, st.currentID))
 	if err != nil {
 		ew := w.AppendResarray_Getattr()
-		status := s.errToNFS(err)
+		// A GETATTR is safe to repeat, and Linux puts one before the
+		// CLOSE of a read open: an IO there makes the client drop the
+		// stateid without closing it, while DELAY makes it retry the
+		// compound until the backend answers.
+		status := nfs4.NFS4ERR_DELAY
+		if !vfs.IsTransientBackendError(err) {
+			status = s.errToNFS(err)
+		}
 		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 
