@@ -85,6 +85,7 @@ host crash; see [session restoration](internal/server/README.md#session-restorat
 Byte-range locking, share-deny
 enforcement, delegations, pNFS, hard links, named attributes and
 special files are unsupported. There is no protocol reclaim grace period.
-Ownership and permissions are synthetic. This is not a general-purpose
+Ownership and permissions are synthetic; chmod and chown succeed and
+change nothing. This is not a general-purpose
 POSIX filesystem; the [deployment guarantees](DEPLOYMENT.md#data-guarantees)
 describe the observable file semantics.

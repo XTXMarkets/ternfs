@@ -4584,7 +4584,9 @@ func TestSetattrTime(t *testing.T) {
 	}
 }
 
-func TestSetattrModeRejected(t *testing.T) {
+// chmod and chown succeed and change nothing: Samba chmods on security
+// descriptor changes, and EIO from that reaches Windows as access denied.
+func TestSetattrModeAndOwnerIgnored(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("data"), 0644)
 
@@ -4593,37 +4595,51 @@ func TestSetattrModeRejected(t *testing.T) {
 	conn := dial(t, addr)
 	defer conn.Close()
 
-	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
-		w.AppendArgarray_Putrootfh()
-
-		lw := w.AppendArgarray_Lookup()
-		nw := lw.StartObjname()
-		buf := nw.SetData([]byte("file.txt")).Finish()
-		lw.Resume(buf)
-		buf = lw.Finish()
-		w.Resume(buf)
-
-		saw := w.AppendArgarray_Setattr()
-		saw.Stateid().SetSeqid(0)
-		faw := saw.StartObjAttributes()
-		bmW := faw.StartAttrmask()
-		bmW.AppendData(0)
-		bmW.AppendData(1 << (nfs4.FATTR4_MODE - 32)) // mode is not supported
-		buf = bmW.Finish()
-		faw.Resume(buf)
-		attrData := make([]byte, 4)
-		binary.BigEndian.PutUint32(attrData[0:4], 0755)
-		alW := faw.StartAttrVals()
-		buf = alW.SetData(attrData).Finish()
-		faw.Resume(buf)
-		buf = faw.Finish()
-		saw.Resume(buf)
-		buf = saw.Finish()
-		w.Resume(buf)
-	})
-
-	if res.Status() != nfs4.NFS4ERR_ATTRNOTSUPP {
-		t.Fatalf("expected NFS4ERR_ATTRNOTSUPP, got %s", nfs4.Nfsstat4Name(res.Status()))
+	mask := attrMask{0, 1<<(nfs4.FATTR4_MODE-32) |
+		1<<(nfs4.FATTR4_OWNER-32) | 1<<(nfs4.FATTR4_OWNER_GROUP-32)}
+	data := binary.BigEndian.AppendUint32(nil, 0700)
+	data = encodeString(data, "root")
+	data = encodeString(data, "wheel")
+	for _, test := range []struct {
+		name     string
+		lookup   string
+		wantMode uint32
+	}{
+		{"file", "file.txt", 0644},
+		{"directory", "", 0755},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				if test.lookup != "" {
+					lw := w.AppendArgarray_Lookup()
+					lw.Resume(lw.StartObjname().SetData([]byte(test.lookup)).Finish())
+					w.Resume(lw.Finish())
+				}
+				sw := w.AppendArgarray_Setattr()
+				sw.Stateid().SetSeqid(0)
+				sw.Resume(finishTestFattr(sw.StartObjAttributes(), mask, data))
+				w.Resume(sw.Finish())
+				gw := w.AppendArgarray_Getattr()
+				bw := gw.StartAttrRequest()
+				bw.AppendData(0)
+				bw.AppendData(1 << (nfs4.FATTR4_MODE - 32))
+				gw.Resume(bw.Finish())
+				w.Resume(gw.Finish())
+			})
+			iter := expectOK(t, res)
+			nextOp(t, &iter) // PUTROOTFH
+			if test.lookup != "" {
+				nextOp(t, &iter)
+			}
+			if got := parseBitmap(nextOp(t, &iter).Value().AsSETATTR4res().Attrsset()); got != mask {
+				t.Fatalf("attrsset = %#x, want %#x", got, mask)
+			}
+			attrData := getAttrData(t, nextOp(t, &iter).Value().AsGETATTR4resEntry().Value().AsGETATTR4resok())
+			if mode := binary.BigEndian.Uint32(attrData[:4]); mode != test.wantMode {
+				t.Fatalf("mode after chmod = %#o, want %#o", mode, test.wantMode)
+			}
+		})
 	}
 }
 
@@ -4649,6 +4665,12 @@ func TestSetattrValidation(t *testing.T) {
 		{
 			name:       "mode missing data",
 			mask:       attrMask{0, 1 << (nfs4.FATTR4_MODE - 32)},
+			wantStatus: nfs4.NFS4ERR_BADXDR,
+		},
+		{
+			name:       "owner string longer than data",
+			mask:       attrMask{0, 1 << (nfs4.FATTR4_OWNER - 32)},
+			attrData:   []byte{0, 0, 0, 8, 'r', 'o', 'o', 't'},
 			wantStatus: nfs4.NFS4ERR_BADXDR,
 		},
 		{

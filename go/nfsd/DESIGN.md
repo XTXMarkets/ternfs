@@ -125,7 +125,9 @@ name up again. A client that reopens without a path walk cannot, and must
 mount with `lookupcache=none`; see
 [Client mounts](DEPLOYMENT.md#one-writable-server).
 
-Ownership and modes are synthetic.
+Ownership and modes are synthetic. SETATTR of mode, owner and group is
+accepted and ignored, so chmod and chown succeed; Samba chmods whenever
+it maps a Windows security descriptor.
 
 ## Writes and publication
 
