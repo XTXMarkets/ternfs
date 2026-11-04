@@ -59,18 +59,16 @@ func check(t *testing.T, err error) {
 // outcome is an identity's state once Finish has completed whatever a crash
 // interrupted.
 type outcome struct {
-	present bool    // a confirmed, live record without purging
+	present bool    // a confirmed, live record
 	boot    [8]byte // its verifier
-	purge   bool    // Finish purged a replaced incarnation
 	retire  bool    // Finish retired an expired incarnation
 }
 
 // Every update is a crash point before its rename, with the temporary
 // synced, and after its rename or unlink, before the directory is synced.
 // A crash at either, or before the update starts, leaves a directory Open
-// loads as the state before or after the update, and Finish completes a
-// multi-step transition from the evidence in the record: a reboot's purge,
-// an expiry's retirement. The process that failed to sync still sees the
+// loads as the state before or after the update, and Finish completes an
+// expiry from the evidence in the record. The process that failed to sync still sees the
 // state before the update, so it never acts on one it reported failed.
 func TestCrashPoints(t *testing.T) {
 	cases := []struct {
@@ -98,15 +96,6 @@ func TestCrashPoints(t *testing.T) {
 			return err
 		},
 		before: outcome{present: true, boot: boot1},
-		after:  outcome{present: true, boot: boot2, purge: true},
-	}, {
-		name: "finish purge",
-		setup: func(t *testing.T, r *Records) Incarnation {
-			confirm(t, r, boot1)
-			return confirm(t, r, boot2).Incarnation
-		},
-		do:     func(r *Records, id Incarnation) error { return r.FinishPurge(id) },
-		before: outcome{present: true, boot: boot2, purge: true},
 		after:  outcome{present: true, boot: boot2},
 	}, {
 		name: "expire",
@@ -183,12 +172,6 @@ func TestCrashPoints(t *testing.T) {
 				}
 				var got outcome
 				check(t, r.Finish(func(rec Record) error {
-					if rec.Purging == 0 || rec.Purging == rec.Incarnation {
-						t.Fatalf("purge of %+v", rec)
-					}
-					got.purge = true
-					return nil
-				}, func(rec Record) error {
 					if !rec.Expired {
 						t.Fatalf("retire of %+v", rec)
 					}
@@ -196,7 +179,7 @@ func TestCrashPoints(t *testing.T) {
 					return nil
 				}))
 				if rec, ok := r.Lookup(HashOwner(owner)); ok {
-					if rec.Purging != 0 || rec.Expired {
+					if rec.Expired {
 						t.Fatalf("unfinished after Finish: %+v", rec)
 					}
 					if _, live := r.Live(rec.Incarnation); !live {
@@ -219,15 +202,16 @@ func TestCrashPoints(t *testing.T) {
 	}
 }
 
-// A replaced or expired incarnation is never live again, and a transition
-// that would drop the evidence of an unfinished one is refused. The same
+// A replaced or expired incarnation is never live again, and a
+// confirmation that would drop the evidence of an unfinished expiry is
+// refused. The same
 // client boot returning after its expiry gets a new incarnation with the
 // same recovery key.
 func TestIncarnationsAreNotRevived(t *testing.T) {
 	r := openRecords(t, t.TempDir())
 	first := confirm(t, r, boot1)
 	rebooted := confirm(t, r, boot2)
-	if rebooted.Purging != first.Incarnation || rebooted.Incarnation == first.Incarnation {
+	if rebooted.Incarnation == first.Incarnation || r.InUse(first.Incarnation) {
 		t.Fatalf("reboot: %+v after %+v", rebooted, first)
 	}
 	if _, live := r.Live(first.Incarnation); live {
@@ -236,13 +220,6 @@ func TestIncarnationsAreNotRevived(t *testing.T) {
 	if err := r.Expire(first.Incarnation); !errors.Is(err, ErrNotCurrent) {
 		t.Fatalf("expire replaced incarnation: %v", err)
 	}
-	if _, err := r.Confirm(owner, boot1, principal, NewIncarnation()); !errors.Is(err, ErrUnfinished) {
-		t.Fatalf("confirm while purging: %v", err)
-	}
-	if err := r.Remove(rebooted.Incarnation); !errors.Is(err, ErrUnfinished) {
-		t.Fatalf("remove while purging: %v", err)
-	}
-	check(t, r.FinishPurge(rebooted.Incarnation))
 	check(t, r.Expire(rebooted.Incarnation))
 	if _, live := r.Live(rebooted.Incarnation); live {
 		t.Fatal("expired incarnation live")
@@ -252,7 +229,7 @@ func TestIncarnationsAreNotRevived(t *testing.T) {
 	}
 	check(t, r.Remove(rebooted.Incarnation))
 	back := confirm(t, r, boot2)
-	if back.Incarnation == rebooted.Incarnation || back.Purging != 0 {
+	if back.Incarnation == rebooted.Incarnation {
 		t.Fatalf("return after expiry: %+v", back)
 	}
 	if back.RecoveryKey() != rebooted.RecoveryKey() {

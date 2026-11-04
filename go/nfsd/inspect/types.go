@@ -118,9 +118,7 @@ type Clients struct {
 }
 
 // ClientRecord is one client identity's record in the staging directory:
-// its confirmed incarnation, boot verifier and principal. Purging names the
-// incarnation a reboot or takeover replaced, while its state is purged.
-// Expired is set between the expiry decision and the record's removal.
+// its confirmed incarnation, boot verifier and principal. Expired is set between the expiry decision and the record's removal.
 type ClientRecord struct {
 	IdentityHash string    `json:"identity_hash"`
 	OwnerHex     string    `json:"owner_hex"`
@@ -128,7 +126,6 @@ type ClientRecord struct {
 	Confirmed    string    `json:"confirmed"`
 	Verifier     string    `json:"verifier"`
 	ConfirmedAt  time.Time `json:"confirmed_at"`
-	Purging      string    `json:"purging,omitempty"`
 	Expired      bool      `json:"expired"`
 	Links        []string  `json:"links"`
 }

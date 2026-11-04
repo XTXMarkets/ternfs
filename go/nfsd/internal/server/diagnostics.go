@@ -89,7 +89,7 @@ func (s *Server) Connections(f inspect.ConnectionFilter) (inspect.Connections, e
 
 // Clients lists the client records and the wire records matching f. A wire
 // or incarnation filter selects the client record of the incarnations it
-// matched, which the record confirms or is purging.
+// matched, which the record confirms.
 func (s *Server) Clients(f inspect.ClientFilter) (inspect.Clients, error) {
 	out := inspect.Clients{Envelope: s.Envelope(), ClientRecords: []inspect.ClientRecord{}}
 	out.Records, out.Owners, out.WireLimit = s.sessions.snapshotClients(f)
@@ -107,7 +107,7 @@ func (s *Server) Clients(f inspect.ClientFilter) (inspect.Clients, error) {
 	for _, rec := range s.records.List() {
 		r := clientRecordView(rec)
 		if f.OwnerHex != "" && r.OwnerHex != f.OwnerHex ||
-			(f.Incarnation != 0 || f.WireClientID != 0) && !incarnations[r.Confirmed] && !incarnations[r.Purging] {
+			(f.Incarnation != 0 || f.WireClientID != 0) && !incarnations[r.Confirmed] {
 			continue
 		}
 		out.ClientRecords = append(out.ClientRecords, r)
@@ -247,7 +247,7 @@ func (s *Server) ResolveIncarnation(id uint64) (inspect.Resolution, error) {
 	r.Links = inspect.IncarnationLinks(r.Incarnation)
 	switch {
 	case recorded:
-		r.Note = "a client incarnation a client record confirms or is purging"
+		r.Note = "a client incarnation a client record confirms"
 	case r.Known:
 		r.Note = "a client incarnation this process has state for and no record confirms: pending, replaced, expired or destroyed"
 	default:

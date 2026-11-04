@@ -263,17 +263,6 @@ and EXCHANGE_ID for a client whose lease has run out gets `NFS4ERR_DELAY`.
 nfsd keeps serving everything else and reports the failure only in its
 log. Restart it.
 
-### An interrupted reboot purge waits for a restart
-
-When a client reboots, its record is marked `purging` until the old
-incarnation's sessions and writers are gone. If that purge fails, the mark
-stays. A restart finishes it, and so does the client's next reboot or a
-takeover of its identity: a registration that replaces the incarnation.
-The same client registering again with the same verifier and principal
-keeps its incarnation and leaves the mark. Expiry and DESTROY_CLIENTID do
-not: they log the failure and leave the record, and DESTROY_CLIENTID
-answers `NFS4ERR_SERVERFAULT` after it has already retired the client ID.
-
 ## Operating requirements
 
 ### Staging disk

@@ -42,11 +42,11 @@ the session from its file on the staging disk. That needs a usable file
 that recorded a request, an incarnation that is still the confirmed one,
 and room for the session in the new daemon; see
 [session restoration](internal/server/README.md#session-restoration).
-Before it listens, the new daemon finishes any reboot purge or expiry that
-a client record shows unfinished, and every confirmed record starts a
-fresh lease. The Linux client, which learns nothing of the restart,
-retransmits every request that was in flight with the same slot and
-sequence number and goes on using its stateids. A retransmission of a
+Before it listens, the new daemon finishes any expiry that a client record
+shows unfinished, and every confirmed record starts a fresh lease. The
+Linux client, which learns nothing of the restart, retransmits every
+request that was in flight with the same slot and sequence number and goes
+on using its stateids. A retransmission of a
 completed request is answered from the recorded reply.
 
 A slot holding an intent but no reply belongs to a request the earlier
@@ -202,11 +202,11 @@ mechanism is in [staging](internal/staging/README.md#startup-recovery-and-quaran
 A failed CLOSE has its own rules for what is kept; see
 [Writer recovery](#writer-recovery).
 
-Startup removes the temporaries a crash left in `clients/` and finishes a
-reboot purge or an expiry that a record shows unfinished. A file there
-that nfsd did not write, one that does not decode or whose name does not
-match its owner, stops startup with `client records: corrupt`. Move it
-aside to start; that client then registers as new.
+Startup removes the temporaries a crash left in `clients/` and finishes an
+expiry that a record shows unfinished. A file there that nfsd did not
+write, one that does not decode or whose name does not match its owner,
+stops startup with `client records: corrupt`. Move it aside to start; that
+client then registers as new.
 
 If syncing `clients/` fails while the daemon serves, it cannot tell whether
 the update reached the disk, so it changes no record afterwards:
@@ -232,13 +232,13 @@ jq . /var/lib/nfsd/clients/*
 ```
 
 Each names the identity's `confirmed` incarnation and boot verifier, and
-`purging` or `expired` when a reboot purge or an expiry was interrupted;
-the next start finishes either. A staged writer is a `.staging` data file
-and a `.meta` sidecar named with its inode as 16 hex digits; sidecars are
-binary and are only decoded by a daemon. A stateid's first four bytes are
-the issuing process's `stateid_epoch`. Match it against startup logs or a
-serving daemon's [process identities](inspect/README.md#process-identities)
-to find that daemon.
+`expired` when an expiry was interrupted; the next start finishes it. A
+staged writer is a `.staging` data file and a `.meta` sidecar named with
+its inode as 16 hex digits; sidecars are binary and are only decoded by a
+daemon. A stateid's first four bytes are the issuing process's
+`stateid_epoch`. Match it against startup logs or a serving daemon's
+[process identities](inspect/README.md#process-identities) to find that
+daemon.
 
 ## Restart on the same host
 

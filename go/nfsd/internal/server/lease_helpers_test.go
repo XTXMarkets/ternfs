@@ -77,10 +77,5 @@ func confirmForTest(t *testing.T, srv *Server, owner string, verifier [8]byte, p
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rec.Purging != 0 {
-		if err := srv.records.FinishPurge(rec.Incarnation); err != nil {
-			t.Fatal(err)
-		}
-	}
 	return uint64(rec.Incarnation)
 }

@@ -388,14 +388,13 @@ A changed boot verifier is a reboot. A different principal taking over an
 identity whose incarnation holds no write state is handled the same way.
 The first CREATE_SESSION of the new incarnation N closes admission for the
 old one, P, in this process, so P's new requests wait. It writes the record
-confirming N with `purging` naming P, and only once that is durable purges
-P here: its sessions and their files, its wire record and its opens go, and
-its staged writers are retired. It then writes the record without
-`purging` and replies. A crash in between, or a failure of that second
-write, leaves `purging`, and the CREATE_SESSION still succeeds. The next
-start finishes the purge before it serves, and so does the next
-registration that replaces N. If the first write fails, the CREATE_SESSION
-gets `NFS4ERR_SERVERFAULT` and P is reopened.
+confirming N, and only once that is durable purges P here: its sessions
+and their files, its wire record and its opens go, and its staged writers
+are retired. Then it replies. A crash between the write and the purge
+leaves nothing to finish: no record confirms P, so the next start restores
+none of its sessions and the sweep retires its staged writers. If the
+write fails, the CREATE_SESSION gets `NFS4ERR_SERVERFAULT` and P is
+reopened.
 
 P's writers are never resumed: no record confirms P any more, and their
 recovery key names the old boot verifier. See

@@ -177,7 +177,7 @@ var resources = []resource{
 		Description: "The client records in the staging directory, one per client identity, and the EXCHANGE_ID wire clientids this process issued, each bound to an incarnation, with the CREATE_SESSION replay slot.",
 		Filters: map[string]string{
 			"wire":        "one wire-clientid, and the client record of its incarnation",
-			"incarnation": "wire clientids bound to this incarnation, and the client record that confirms or is purging it",
+			"incarnation": "wire clientids bound to this incarnation, and the client record that confirms it",
 			"owner":       "wire clientids and the client record of this EXCHANGE_ID owner, hex",
 		},
 		handle: func(h *handler, q url.Values) (any, error) {

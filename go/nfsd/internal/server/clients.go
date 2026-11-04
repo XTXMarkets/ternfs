@@ -131,8 +131,9 @@ func (s *Server) newIncarnationLocked() uint64 {
 // confirmPending confirms a pending registration for a creation that holds
 // its slot, and inserts the session (README.md#client-confirmation). The
 // record goes first: it is durable before the reply, and before the
-// incarnation it replaces is purged. A crash after it leaves the record
-// purging, which the next start finishes. The owner lock orders the
+// incarnation it replaces is purged. A crash after it leaves no record
+// confirming the replaced incarnation, so the next start neither restores
+// its sessions nor resumes its staged writers. The owner lock orders the
 // confirmation with the owner's registrations and destruction.
 func (s *Server) confirmPending(cr *creation, caller clientrecords.Principal) (uint32, createSessionResult) {
 	ss, c := s.sessions, cr.c
@@ -157,8 +158,7 @@ func (s *Server) confirmPending(cr *creation, caller clientrecords.Principal) (u
 	h := clientrecords.HashOwner(owner)
 	old, exists := s.records.Lookup(h)
 	if exists && old.Incarnation != id {
-		// An earlier reboot's purge or an expiry still to finish, or a
-		// lease that has run out.
+		// An expiry still to finish, or a lease that has run out.
 		if status := s.settleRecord(old); status != nfs4.NFS4_OK {
 			return status, createSessionResult{}
 		}
@@ -203,11 +203,6 @@ func (s *Server) confirmPending(cr *creation, caller clientrecords.Principal) (u
 	if p != 0 {
 		ss.replaced(p)
 		s.purgeReplaced(p)
-		if err := s.records.FinishPurge(id); err != nil {
-			// The record stays purging. The next start, or the next
-			// registration that replaces this incarnation, finishes it.
-			s.log.Warn("client record still purging", "incarnation", incarnationText(c.incarnation), "err", err)
-		}
 	}
 	ss.mu.Lock()
 	reply, inserted := cr.commitLocked()
@@ -252,16 +247,8 @@ func (s *Server) removeRecord(clientID uint64) error {
 	return err
 }
 
-// settleRecord finishes a transition a record shows unfinished: a reboot's
-// purge, or an expiry whose record was not removed.
+// settleRecord finishes an expiry whose record was not removed.
 func (s *Server) settleRecord(rec clientrecords.Record) uint32 {
-	if rec.Purging != 0 {
-		s.purgeReplaced(uint64(rec.Purging))
-		if err := s.records.FinishPurge(rec.Incarnation); err != nil {
-			s.log.Warn("client record still purging", "incarnation", incarnationText(uint64(rec.Incarnation)), "err", err)
-			return nfs4.NFS4ERR_DELAY
-		}
-	}
 	if rec.Expired {
 		s.retireClient(uint64(rec.Incarnation), true)
 		if err := s.removeRecord(uint64(rec.Incarnation)); err != nil {
@@ -272,14 +259,9 @@ func (s *Server) settleRecord(rec clientrecords.Record) uint32 {
 	return nfs4.NFS4_OK
 }
 
-// settlePurge and settleExpiry are clientrecords.Finish's callbacks at
-// startup, before anything is served: the incarnation's sessions were not
-// restored, and the sweeper retires its staged writers.
-func (s *Server) settlePurge(rec clientrecords.Record) error {
-	s.purgeReplaced(uint64(rec.Purging))
-	return nil
-}
-
+// settleExpiry is clientrecords.Finish's callback at startup, before
+// anything is served: the incarnation's sessions were not restored, and the
+// sweeper retires its staged writers.
 func (s *Server) settleExpiry(rec clientrecords.Record) error {
 	s.retireClient(uint64(rec.Incarnation), true)
 	return nil

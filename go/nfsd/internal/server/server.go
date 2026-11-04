@@ -184,11 +184,10 @@ func NewServer(fs vfs.TernVFS, stagingStore staging.Store, logger *slog.Logger) 
 	s.loadAliases()
 	s.openSessionFiles(stagingDir)
 	s.restoreSessions()
-	// A record a crash left purging or expired is finished before the
-	// server serves. Its incarnation's sessions were not restored, and the
-	// lease sweep retires its staged writers, which are no longer its
-	// client's.
-	if err := records.Finish(s.settlePurge, s.settleExpiry); err != nil {
+	// A record a crash left expired is finished before the server serves.
+	// Its incarnation's sessions were not restored, and the lease sweep
+	// retires its staged writers, which are no longer its client's.
+	if err := records.Finish(s.settleExpiry); err != nil {
 		return nil, err
 	}
 	return s, nil

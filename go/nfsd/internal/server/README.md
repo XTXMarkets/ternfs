@@ -431,8 +431,8 @@ view of this is in [Client recovery](../../RECOVERY.md#client-recovery).
 
 A client this server has confirmed has a record in `clients/` under the
 staging directory ([clientrecords](../clientrecords/records.go)): its
-EXCHANGE_ID owner, principal, confirmed incarnation and boot verifier, the
-incarnation a reboot replaced while it is purged, and whether it expired.
+EXCHANGE_ID owner, principal, confirmed incarnation and boot verifier, and
+whether it expired.
 Nothing else about clients is durable. Wire records, sessions, the logical
 lease and opens live in this process. A record update is a local write,
 fsync and rename with a known outcome, and the server acts on it only
@@ -471,24 +471,23 @@ I/O. Otherwise the identity's record decides:
 The first CREATE_SESSION of a pending incarnation N confirms it, under the
 owner's lock. A registration belongs to the principal that made it;
 another principal gets `NFS4ERR_CLID_INUSE`. If the identity's record
-still shows a reboot's purge or an expiry unfinished, that is finished
-first. If it confirms another incarnation P, that is a reboot or a
-takeover: P is closed, so its new requests wait (`NFS4ERR_DELAY`, or
-`NFS4ERR_CLIENTID_BUSY` for DESTROY_CLIENTID), or the CREATE_SESSION gets
-`NFS4ERR_DELAY` while P has requests running. Only then is the principal
-check repeated against P's write state, so no OPEN of P can succeed after
-it; when it refuses the takeover with `NFS4ERR_CLID_INUSE`, P is reopened.
+still shows an expiry unfinished, that is finished first. If it confirms
+another incarnation P, that is a reboot or a takeover: P is closed, so its
+new requests wait (`NFS4ERR_DELAY`, or `NFS4ERR_CLIENTID_BUSY` for
+DESTROY_CLIENTID), or the CREATE_SESSION gets `NFS4ERR_DELAY` while P has
+requests running. Only then is the principal check repeated against P's
+write state, so no OPEN of P can succeed after it; when it refuses the
+takeover with `NFS4ERR_CLID_INUSE`, P is reopened.
 
-Then the record is written confirming N, with `purging` naming P. Only
-once it is durable is P marked replaced and purged here: its sessions and
-their files, its wire record and its opens go, and its staged writers are
-retired. None of them resumes, since no record confirms P any more. The
-record is written again without `purging`, and the session is inserted
-and the reply sent. A crash in between, or a failure of that second
-write, leaves `purging`, and the CREATE_SESSION still succeeds. The next
-start finishes the purge before it serves, and so does the next
-registration that replaces N. If the first write fails, the
-CREATE_SESSION gets `NFS4ERR_SERVERFAULT` and P is reopened.
+Then the record is written confirming N. Only once it is durable is P
+marked replaced and purged here: its sessions and their files, its wire
+record and its opens go, and its staged writers are retired. None of them
+resumes, since no record confirms P any more. Then the session is
+inserted and the reply sent. A crash between the write and the purge
+leaves nothing to finish: the next start restores none of P's sessions,
+since no record confirms P, and the sweep retires its staged writers. If
+the write fails, the CREATE_SESSION gets `NFS4ERR_SERVERFAULT` and P is
+reopened.
 
 DESTROY_CLIENTID of an idle client retires its wire record and opens and
 removes its record.

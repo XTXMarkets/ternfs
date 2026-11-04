@@ -6,9 +6,8 @@
 // in the staging directory, under clients/. A record holds what the server
 // needs to decide registration, confirmation, client reboot, expiry and
 // writer eligibility after a restart: the EXCHANGE_ID owner, the RPC
-// principal, the confirmed incarnation and its boot verifier, the
-// incarnation a reboot replaced while its state is purged, and whether the
-// client expired. An unconfirmed registration is not recorded.
+// principal, the confirmed incarnation and its boot verifier, and whether
+// the client expired. An unconfirmed registration is not recorded.
 //
 // The staging directory is the server's identity, so the records go with it:
 // a restart or a copy of the whole directory keeps them, a wiped directory
@@ -29,16 +28,17 @@
 // state is purged or retired after the record says so. Open removes
 // temporaries a crash left.
 //
-// A transition with more than one step leaves evidence in the record until
-// its last step, and Finish completes it at startup:
+// A reboot (Confirm over a confirmed record) is one write. The caller then
+// purges the replaced incarnation's sessions and staged writers. A crash
+// before it has done so leaves nothing to finish: no record confirms that
+// incarnation, so a restart neither restores its sessions nor resumes its
+// writers.
 //
-//   - A reboot (Confirm over a confirmed record) sets purging to the replaced
-//     incarnation. The caller purges that incarnation's sessions and staged
-//     writers, then calls FinishPurge, which clears it.
-//   - Expiry sets expired. The caller retires the incarnation's sessions,
-//     then calls Remove.
-//   - Destruction retires the incarnation's sessions and opens first and
-//     then calls Remove, the order the server uses for DESTROY_CLIENTID.
+// Expiry has two steps. It sets expired, the caller retires the
+// incarnation's sessions, then calls Remove. A crash between them leaves
+// the record expired, and Finish completes the expiry at startup.
+// Destruction retires the incarnation's sessions and opens first and then
+// calls Remove, the order the server uses for DESTROY_CLIENTID.
 //
 // Nothing else accumulates: a record goes at expiry or destruction.
 package clientrecords
@@ -69,14 +69,13 @@ var (
 	// ErrNotCurrent is returned by a transition naming an incarnation that
 	// no record has confirmed.
 	ErrNotCurrent = errors.New("client records: incarnation is not confirmed")
-	// ErrUnfinished is returned by a transition that would drop the
-	// evidence of one still in progress: Confirm over a record that is
-	// purging or expired, Remove of one that is purging.
+	// ErrUnfinished is returned by Confirm over a record that is expired,
+	// which would drop the evidence of an expiry still in progress.
 	ErrUnfinished = errors.New("client records: earlier transition unfinished")
 	// ErrCorrupt is returned by Open for clients/ content it did not write.
 	ErrCorrupt = errors.New("client records: corrupt")
 	// ErrInUse is returned by Confirm for an incarnation a record already
-	// confirms or purges.
+	// confirms.
 	ErrInUse = errors.New("client records: incarnation in use")
 )
 
@@ -139,9 +138,6 @@ type Record struct {
 	Incarnation Incarnation
 	Verifier    [8]byte
 	ConfirmedAt time.Time
-	// Purging is the incarnation a reboot replaced, while its state is
-	// being purged; zero otherwise.
-	Purging Incarnation
 	// Expired says the server expired Incarnation and is retiring its
 	// state. The record is removed once it has.
 	Expired bool
@@ -269,30 +265,18 @@ func (r *Records) load(name string) (Record, error) {
 		return Record{}, fmt.Errorf("%w: %s: no owner", ErrCorrupt, path)
 	case rec.Hash() != want:
 		return Record{}, fmt.Errorf("%w: %s: owner does not match the name", ErrCorrupt, path)
-	case rec.Incarnation == 0 || rec.Purging == rec.Incarnation:
+	case rec.Incarnation == 0:
 		return Record{}, fmt.Errorf("%w: %s: bad incarnation", ErrCorrupt, path)
 	}
 	return rec, nil
 }
 
-// InUse says whether a record confirms or purges id.
+// InUse says whether a record confirms id.
 func (r *Records) InUse(id Incarnation) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.inUse(id)
-}
-
-// inUse says whether a record confirms or purges id. r.mu is held.
-func (r *Records) inUse(id Incarnation) bool {
-	if _, confirmed := r.byID[id]; confirmed {
-		return true
-	}
-	for _, rec := range r.records {
-		if rec.Purging == id {
-			return true
-		}
-	}
-	return false
+	_, ok := r.byID[id]
+	return ok
 }
 
 // Lookup returns the record of an identity.
@@ -334,8 +318,7 @@ func (r *Records) List() []Record {
 // Confirm records id as owner's confirmed incarnation, with its boot
 // verifier and principal, and returns the record once it is durable. If
 // the identity already had a confirmed incarnation, a reboot or a takeover
-// by another principal replaced it: the record's Purging names it, and the
-// caller purges its state and calls FinishPurge.
+// by another principal replaced it, and the caller purges its state.
 func (r *Records) Confirm(owner []byte, verifier [8]byte, principal Principal, id Incarnation) (Record, error) {
 	if len(owner) == 0 {
 		return Record{}, errors.New("client records: empty owner")
@@ -348,12 +331,13 @@ func (r *Records) Confirm(owner []byte, verifier [8]byte, principal Principal, i
 	defer unlock()
 	r.mu.Lock()
 	old, exists := r.records[h]
+	_, used := r.byID[id]
 	err := r.failed
 	switch {
 	case err != nil:
-	case exists && (old.Purging != 0 || old.Expired):
+	case exists && old.Expired:
 		err = ErrUnfinished
-	case r.inUse(id):
+	case used:
 		err = ErrInUse
 	}
 	r.mu.Unlock()
@@ -367,23 +351,10 @@ func (r *Records) Confirm(owner []byte, verifier [8]byte, principal Principal, i
 		Verifier:    verifier,
 		ConfirmedAt: time.Now().UTC(),
 	}
-	if exists {
-		rec.Purging = old.Incarnation
-	}
 	if err := r.write(rec, old.Incarnation); err != nil {
 		return Record{}, err
 	}
 	return rec.clone(), nil
-}
-
-// FinishPurge records that the incarnation replaced by id's confirmation
-// has been purged. It does nothing if the record is not purging.
-func (r *Records) FinishPurge(id Incarnation) error {
-	return r.update(id, func(rec *Record) bool {
-		changed := rec.Purging != 0
-		rec.Purging = 0
-		return changed
-	})
 }
 
 // Expire records that the server expired incarnation id. The caller then
@@ -397,20 +368,13 @@ func (r *Records) Expire(id Incarnation) error {
 }
 
 // Remove removes the record whose confirmed incarnation is id: the end of
-// an expiry, or DESTROY_CLIENTID. A record still purging is kept, since it
-// is the evidence the purge is unfinished.
+// an expiry, or DESTROY_CLIENTID.
 func (r *Records) Remove(id Incarnation) error {
 	h, unlock, err := r.lockCurrent(id)
 	if err != nil {
 		return err
 	}
 	defer unlock()
-	r.mu.Lock()
-	rec := r.records[h]
-	r.mu.Unlock()
-	if rec.Purging != 0 {
-		return ErrUnfinished
-	}
 	path := filepath.Join(r.dir, h.String())
 	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
@@ -425,21 +389,11 @@ func (r *Records) Remove(id Incarnation) error {
 	return nil
 }
 
-// Finish completes the transitions a crash interrupted. It runs at startup,
-// before the server serves: purge is called for a record still purging,
-// with the replaced incarnation in Purging, and retire for an expired one,
-// whose record is then removed. Both callbacks must tolerate state already
-// partly gone.
-func (r *Records) Finish(purge, retire func(Record) error) error {
+// Finish completes the expiries a crash interrupted. It runs at startup,
+// before the server serves: retire is called for an expired record, which
+// is then removed. retire must tolerate state already partly gone.
+func (r *Records) Finish(retire func(Record) error) error {
 	for _, rec := range r.List() {
-		if rec.Purging != 0 {
-			if err := purge(rec); err != nil {
-				return err
-			}
-			if err := r.FinishPurge(rec.Incarnation); err != nil {
-				return err
-			}
-		}
 		if rec.Expired {
 			if err := retire(rec); err != nil {
 				return err
@@ -588,8 +542,7 @@ type recordJSON struct {
 		Verifier    hexVerifier `json:"verifier"`
 		ConfirmedAt time.Time   `json:"confirmed_at"`
 	} `json:"confirmed"`
-	Purging Incarnation `json:"purging,omitempty"`
-	Expired bool        `json:"expired"`
+	Expired bool `json:"expired"`
 }
 
 func newRecordJSON(rec Record) recordJSON {
@@ -600,7 +553,6 @@ func newRecordJSON(rec Record) recordJSON {
 	j.Confirmed.ID = rec.Incarnation
 	j.Confirmed.Verifier = hexVerifier(rec.Verifier)
 	j.Confirmed.ConfirmedAt = rec.ConfirmedAt
-	j.Purging = rec.Purging
 	j.Expired = rec.Expired
 	return j
 }
@@ -612,7 +564,6 @@ func (j recordJSON) record() Record {
 		Incarnation: j.Confirmed.ID,
 		Verifier:    j.Confirmed.Verifier,
 		ConfirmedAt: j.Confirmed.ConfirmedAt,
-		Purging:     j.Purging,
 		Expired:     j.Expired,
 	}
 }

@@ -427,7 +427,7 @@ func TestPrincipalCheck(t *testing.T) {
 	}
 	recs := recordsForTest(srv)
 	if len(recs) != 1 || uint64(recs[0].Incarnation) != incarnationForTest(t, srv, b.clientID) ||
-		recs[0].Principal == (clientrecords.Principal{}) || recs[0].Purging != 0 {
+		recs[0].Principal == (clientrecords.Principal{}) {
 		t.Fatalf("records after the takeover %+v", recs)
 	}
 	if srv.sessions.lookup(sessionA) != nil || srv.clientLive(incA) {
@@ -507,9 +507,9 @@ func TestPrincipalCheckOrdersWithWritableOpen(t *testing.T) {
 	}
 }
 
-// A start finishes what a crash left in a record: a reboot's purge, so the
-// replaced incarnation is gone and the new one live, and an expiry, whose
-// record is removed.
+// A start finishes what a crash interrupted: after a reboot's record and
+// before its purge, the replaced incarnation is gone and the new one live;
+// after an expiry's record, the record is removed.
 func TestRestartFinishesInterruptedTransitions(t *testing.T) {
 	local, dir := vfs.NewLocalTernVFS(t.TempDir()), t.TempDir()
 	first := identityServerAt(t, local, dir)
@@ -517,7 +517,7 @@ func TestRestartFinishesInterruptedTransitions(t *testing.T) {
 	old := confirmForTest(t, first, "rebooted", [8]byte{1}, principal)
 	// The crash came after the reboot's record and before its purge.
 	rebooted, err := first.records.Confirm([]byte("rebooted"), [8]byte{2}, principal, clientrecords.NewIncarnation())
-	if err != nil || rebooted.Purging != clientrecords.Incarnation(old) {
+	if err != nil {
 		t.Fatalf("reboot record %+v %v", rebooted, err)
 	}
 	// And after another client's expiry record, before its removal.
@@ -527,7 +527,7 @@ func TestRestartFinishesInterruptedTransitions(t *testing.T) {
 	}
 	srv := identityServerAt(t, local, dir)
 	recs := recordsForTest(srv)
-	if len(recs) != 1 || recs[0].Incarnation != rebooted.Incarnation || recs[0].Purging != 0 {
+	if len(recs) != 1 || recs[0].Incarnation != rebooted.Incarnation {
 		t.Fatalf("records after the restart %+v", recs)
 	}
 	if srv.clientLive(old) || srv.clientLive(expired) || !srv.clientLive(uint64(rebooted.Incarnation)) {
