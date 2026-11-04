@@ -1730,7 +1730,7 @@ struct CDCDBImpl {
             {
                 // Additional safety check: the key is what we expect.
                 auto foundKey = ExternalValue<DirsToTxnsKey>::FromSlice(it->key());
-                ALWAYS_ASSERT(!foundKey().isSentinel() && foundKey().txnId() == txnId);
+                ALWAYS_ASSERT(foundKey().dirId() == dirId && !foundKey().isSentinel() && foundKey().txnId() == txnId);
             }
             // now that we've done our checks, we can remove the key
             ROCKS_DB_CHECKED(dbTxn.Delete(_dirsToTxnsCf, k.toSlice()));
@@ -1743,23 +1743,13 @@ struct CDCDBImpl {
             bool removeSentinel = true;
             if (it->Valid()) { // there's something, set the sentinel
                 auto nextK = ExternalValue<DirsToTxnsKey>::FromSlice(it->key());
-                // This should never happen, since we specify the upper bound.
-                // However the RocksDB that we use is buggy, see
-                // <https://github.com/facebook/rocksdb/commit/543191f2eacadf14e3aa6ff9a08f85a8ad82da95>.
-                // To be removed on upgrade.
-                if (nextK().dirId() == dirId) {
-                    removeSentinel = false;
-                    auto sentinelV = CDCTxnIdValue::Static(nextK().txnId());
-                    LOG_DEBUG(_env, "selected %s as next in line after finishing %s", nextK().txnId(), txnId);
-                    mightBeReady.emplace_back(nextK().txnId());
-                    ROCKS_DB_CHECKED(dbTxn.Put(_dirsToTxnsCf, sentinelK.toSlice(), sentinelV.toSlice()));
-                } else {
-                    RAISE_ALERT_APP_TYPE(_env, XmonAppType::DAYTIME, "Unexpectedly stepped from %s to %s, is RocksDB not respecting our upper bound?", dirId, nextK().dirId());
-                }
-            } else {
+                ALWAYS_ASSERT(nextK().dirId() == dirId); // must be true given the upper bound
+                auto sentinelV = CDCTxnIdValue::Static(nextK().txnId());
+                LOG_DEBUG(_env, "selected %s as next in line after finishing %s", nextK().txnId(), txnId);
+                mightBeReady.emplace_back(nextK().txnId());
+                ROCKS_DB_CHECKED(dbTxn.Put(_dirsToTxnsCf, sentinelK.toSlice(), sentinelV.toSlice()));
+            } else { // we were the last ones here, remove sentinel
                 ROCKS_DB_CHECKED(it->status());
-            }
-            if (removeSentinel) { // we were the last ones here, remove sentinel
                 ROCKS_DB_CHECKED(dbTxn.Delete(_dirsToTxnsCf, sentinelK.toSlice()));
             }
         }
