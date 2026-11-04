@@ -39,22 +39,21 @@ func (s *nfsTestServer) published(t *testing.T, name, want string) {
 // server's help, as an operator would after a crash.
 type recoveryIncarnation struct {
 	Incarnation string `json:"incarnation"`
-	// Usable: the client's record confirms this incarnation and has not
-	// expired.
+	// Usable: the client's record confirms this incarnation.
 	Usable bool `json:"usable"`
 	// Staging lists this incarnation's sidecars in the staging directory.
 	// nfsd keeps no open markers, so every sidecar is listed here.
 	Staging []stagedWriter `json:"staging"`
 }
 
-// clientRecord reads the client's record: the incarnation it confirms and
-// whether it expired. ok is false without one.
-func (s *nfsTestServer) clientRecord(t *testing.T, c *libnfsProcessClient) (incarnation string, expired, ok bool) {
+// clientRecord reads the incarnation the client's record confirms. ok is
+// false without one.
+func (s *nfsTestServer) clientRecord(t *testing.T, c *libnfsProcessClient) (incarnation string, ok bool) {
 	t.Helper()
 	sum := sha256.Sum256([]byte(c.identity))
 	data, err := os.ReadFile(filepath.Join(s.Staging, "clients", hex.EncodeToString(sum[:])))
 	if errors.Is(err, os.ErrNotExist) {
-		return "", false, false
+		return "", false
 	}
 	if err != nil {
 		t.Fatal(err)
@@ -63,18 +62,17 @@ func (s *nfsTestServer) clientRecord(t *testing.T, c *libnfsProcessClient) (inca
 		Confirmed struct {
 			ID string `json:"id"`
 		} `json:"confirmed"`
-		Expired bool `json:"expired"`
 	}
 	if err := json.Unmarshal(data, &rec); err != nil {
 		t.Fatalf("client record %s: %v", data, err)
 	}
-	return rec.Confirmed.ID, rec.Expired, true
+	return rec.Confirmed.ID, true
 }
 
 // recoveryConfirmed is the incarnation the client's record confirms.
 func (s *nfsTestServer) recoveryConfirmed(t *testing.T, c *libnfsProcessClient) recoveryIncarnation {
 	t.Helper()
-	id, _, ok := s.clientRecord(t, c)
+	id, ok := s.clientRecord(t, c)
 	if !ok {
 		t.Fatal("no client record")
 	}
@@ -85,8 +83,8 @@ func (s *nfsTestServer) recoveryConfirmed(t *testing.T, c *libnfsProcessClient) 
 // read in the run artifacts.
 func (s *nfsTestServer) recoveryIncarnation(t *testing.T, c *libnfsProcessClient, id string) recoveryIncarnation {
 	t.Helper()
-	confirmed, expired, ok := s.clientRecord(t, c)
-	inc := recoveryIncarnation{Incarnation: id, Usable: ok && confirmed == id && !expired, Staging: []stagedWriter{}}
+	confirmed, ok := s.clientRecord(t, c)
+	inc := recoveryIncarnation{Incarnation: id, Usable: ok && confirmed == id, Staging: []stagedWriter{}}
 	sidecars, err := filepath.Glob(filepath.Join(s.Staging, "*.meta"))
 	if err != nil {
 		t.Fatal(err)

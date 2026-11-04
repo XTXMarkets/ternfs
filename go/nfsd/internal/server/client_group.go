@@ -50,8 +50,8 @@ type clientGroup struct {
 	// The logical lease gate (README.md#lease-gate). quietUntil is extended when
 	// an active hold ends and when a session is created; while it is in the
 	// future, or any hold exists, this process never expires the client.
-	// lease is checking while decideExpired writes the expired record, and
-	// expired once it has.
+	// lease is checking while decideExpired removes the record, and expired
+	// once it has.
 	quietUntil time.Time
 	lease      leaseGateState
 	// dropped: the incarnation's sessions and wire record were dropped

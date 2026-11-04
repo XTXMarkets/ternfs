@@ -42,8 +42,7 @@ the session from its file on the staging disk. That needs a usable file
 that recorded a request, an incarnation that is still the confirmed one,
 and room for the session in the new daemon; see
 [session restoration](internal/server/README.md#session-restoration).
-Before it listens, the new daemon finishes any expiry that a client record
-shows unfinished, and every confirmed record starts a fresh lease. The
+Every confirmed record starts a fresh lease. The
 Linux client, which learns nothing of the restart, retransmits every
 request that was in flight with the same slot and sequence number and goes
 on using its stateids. A retransmission of a
@@ -160,10 +159,9 @@ The advertised lease is 90 seconds. This is not a deadline at which every
 idle writer disappears: the lease is kept in the daemon's memory and
 checked by a periodic sweep, and a client expires about 90 to 135 seconds
 after its last request. A restart gives every confirmed client a fresh
-lease. See [The lease](DESIGN.md#the-lease). Expiry writes the client's
-record expired, retires its sessions and opens, and removes the record. If
-the record cannot be written the client stays live, and the next sweep
-tries again.
+lease. See [The lease](DESIGN.md#the-lease). Expiry removes the client's
+record, then retires its sessions and opens. If the record cannot be
+removed the client stays live, and the next sweep tries again.
 
 On expiry, linked staging is retired. Its acknowledged data remains on
 disk, but it releases file descriptors and its pathname reservation, and
@@ -202,8 +200,7 @@ mechanism is in [staging](internal/staging/README.md#startup-recovery-and-quaran
 A failed CLOSE has its own rules for what is kept; see
 [Writer recovery](#writer-recovery).
 
-Startup removes the temporaries a crash left in `clients/` and finishes an
-expiry that a record shows unfinished. A file there that nfsd did not
+Startup removes the temporaries a crash left in `clients/`. A file there that nfsd did not
 write, one that does not decode or whose name does not match its owner,
 stops startup with `client records: corrupt`. Move it aside to start; that
 client then registers as new.
@@ -231,8 +228,7 @@ one per client identity:
 jq . /var/lib/nfsd/clients/*
 ```
 
-Each names the identity's `confirmed` incarnation and boot verifier, and
-`expired` when an expiry was interrupted; the next start finishes it. A
+Each names the identity's `confirmed` incarnation and boot verifier. A
 staged writer is a `.staging` data file and a `.meta` sidecar named with
 its inode as 16 hex digits; sidecars are binary and are only decoded by a
 daemon. A stateid's first four bytes are the issuing process's

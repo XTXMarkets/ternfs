@@ -407,7 +407,6 @@ func clientRecordView(rec clientrecords.Record) inspect.ClientRecord {
 		Confirmed:    confirmed,
 		Verifier:     hex.EncodeToString(rec.Verifier[:]),
 		ConfirmedAt:  rec.ConfirmedAt,
-		Expired:      rec.Expired,
 		Links:        inspect.IncarnationLinks(confirmed),
 	}
 }

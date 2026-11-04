@@ -37,15 +37,12 @@ func TestStartupLeaseDoesNotProtectAbsentRecord(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// P expires in the first process: its writer is retained for recovery
-	// and its record removed.
-	if err := first.records.Expire(clientrecords.Incarnation(p)); err != nil {
+	// P expires in the first process: its record is removed and its writer
+	// retained for recovery.
+	if err := first.records.Remove(clientrecords.Incarnation(p)); err != nil {
 		t.Fatal(err)
 	}
 	if err := sf.Retire(p, sid); err != nil {
-		t.Fatal(err)
-	}
-	if err := first.records.Remove(clientrecords.Incarnation(p)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -67,7 +64,7 @@ func TestStartupLeaseDoesNotProtectAbsentRecord(t *testing.T) {
 
 // No CREATE_SESSION enters while expiry is being decided. Expiry checks
 // for creations before it sets the gate checking, so one admitted during
-// the record write could insert a session the expiry then retires: OK,
+// the record removal could insert a session the expiry then retires: OK,
 // then BADSESSION on its first SEQUENCE. It gets DELAY instead, and its
 // retry sees the outcome.
 func TestCreateSessionWaitsForExpiryDecision(t *testing.T) {
@@ -78,11 +75,11 @@ func TestCreateSessionWaitsForExpiryDecision(t *testing.T) {
 	afterLeaseForTest(srv)
 
 	entered, release := make(chan struct{}), make(chan struct{})
-	expire := srv.expireRecord
-	srv.expireRecord = func(id clientrecords.Incarnation) error {
+	remove := srv.removeClientRecord
+	srv.removeClientRecord = func(id clientrecords.Incarnation) error {
 		testutil.CloseSignal(entered)
 		<-release
-		return expire(id)
+		return remove(id)
 	}
 	t.Cleanup(func() { testutil.CloseSignal(release) })
 	decided := make(chan error, 1)
@@ -93,7 +90,7 @@ func TestCreateSessionWaitsForExpiryDecision(t *testing.T) {
 		}
 		decided <- err
 	}()
-	testutil.AwaitSignal(t, entered, "expiry's record write")
+	testutil.AwaitSignal(t, entered, "expiry's record removal")
 
 	status, id := createResult(t, srv, 1, wire, 2)
 	if status != nfs4.NFS4ERR_DELAY {

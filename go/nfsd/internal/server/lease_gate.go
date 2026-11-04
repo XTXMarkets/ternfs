@@ -4,11 +4,7 @@
 
 package server
 
-import (
-	"errors"
-
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientrecords"
-)
+import "github.com/XTXMarkets/ternfs/go/nfsd/internal/clientrecords"
 
 // The logical lease and its expiry (README.md#lease-gate). The lease is
 // kept per incarnation in the group's gate, in memory only. A request's
@@ -16,14 +12,13 @@ import (
 // confirmed record a fresh one.
 
 // decideExpired reports whether the client is expired, deciding it when its
-// lease has run out. A live record is first written expired, while the gate
-// is checking, so SEQUENCE and CREATE_SESSION get DELAY until the decision
-// is durable; then the client's state in this process is retired and its
-// record removed. An incarnation no record confirms is expired with no
-// write. With expireState its opens are expired too; OPEN's recovery
-// checks, which hold a pathname lock that expiry may need, leave them to the
-// sweeper. A failed record write returns the gate to live; the sweeper tries
-// again.
+// lease has run out. A live record is first removed, while the gate is
+// checking, so SEQUENCE and CREATE_SESSION get DELAY until the decision is
+// durable; then the client's state in this process is retired. An
+// incarnation no record confirms is expired with no write. With
+// expireState its opens are expired too; OPEN's recovery checks, which hold
+// a pathname lock that expiry may need, leave them to the sweeper. A failed
+// removal returns the gate to live; the sweeper tries again.
 func (s *Server) decideExpired(clientID uint64, expireState bool) (bool, error) {
 	ss := s.sessions
 	ss.mu.Lock()
@@ -53,9 +48,9 @@ func (s *Server) decideExpired(clientID uint64, expireState bool) (bool, error) 
 	default:
 		g.lease = gateChecking
 		ss.mu.Unlock()
-		err := s.expireRecord(clientrecords.Incarnation(clientID))
+		err := s.removeRecord(clientID)
 		ss.mu.Lock()
-		if err != nil && !errors.Is(err, clientrecords.ErrNotCurrent) {
+		if err != nil {
 			g.lease = gateLive
 			ss.releaseGroupLocked(g)
 			ss.mu.Unlock()
@@ -66,19 +61,13 @@ func (s *Server) decideExpired(clientID uint64, expireState bool) (bool, error) 
 	ss.mu.Unlock()
 	defer release()
 	s.retireClient(clientID, expireState)
-	if err := s.removeRecord(clientID); err != nil {
-		// Expired on disk: the next start, or a registration of the
-		// identity, removes it.
-		s.log.Warn("expired client record not removed", "incarnation", incarnationText(clientID), "err", err)
-	}
 	return true, nil
 }
 
 // startupLeaseHolds reports the fresh lease a restart gives a confirmed
-// record. It protects only an incarnation a live record confirms: one with
-// no record, or an expired one, is expired at once, so the same client boot
-// can recover its retained writers by recovery key straight after a
-// restart.
+// record. It protects only an incarnation a record confirms: one with no
+// record is expired at once, so the same client boot can recover its
+// retained writers by recovery key straight after a restart.
 func (s *Server) startupLeaseHolds(clientID uint64) bool {
 	if !s.inStartupLease() {
 		return false

@@ -205,7 +205,7 @@ path in two ways:
 | Property or state | Meaning | Changed when |
 | --- | --- | --- |
 | Linked or unlinked | A linked writer publishes to its recorded directory and name on CLOSE. An unlinked one is still usable for I/O, but has no publication target, and CLOSE discards it unless another open of its client still reads it. | OPEN creates a linked writer; REMOVE or RENAME can detach it or move its target. |
-| Active or retired | Any writer not marked `Retired` in its sidecar. It need not have an open in this process: after a restart, staging is loaded before any request adopts it. A retired writer keeps its data for recovery, without a pathname reservation or an open descriptor. | The lease sweep retires the writers of an expired client. Before a namespace change, a non-retired writer at the name is checked: it counts as active while a record confirms its client and its lease has not run out, and is otherwise retired; a check that cannot write the expiry record stops the change. Recovery rebinds a writer and clears `Retired`. |
+| Active or retired | Any writer not marked `Retired` in its sidecar. It need not have an open in this process: after a restart, staging is loaded before any request adopts it. A retired writer keeps its data for recovery, without a pathname reservation or an open descriptor. | The lease sweep retires the writers of an expired client. Before a namespace change, a non-retired writer at the name is checked: it counts as active while a record confirms its client and its lease has not run out, and is otherwise retired; a check that cannot remove the client's record stops the change. Recovery rebinds a writer and clears `Retired`. |
 | Failed | Excluded for the process lifetime, with its files moved to quarantine. | A namespace operation has an unknown outcome, or a CLOSE's publication fails while other opens read the staging. |
 | Quarantined at startup | Not loaded; its files are moved to quarantine. | Its sidecar is unreadable, `Guarded`, or both unlinked and retired. |
 
@@ -346,19 +346,20 @@ SEQUENCE does no I/O. Apart from a retransmission whose original is still
 running, or a slot whose lock is held at that instant (see
 [Slot replay](internal/server/README.md#slot-replay)), it gets
 `NFS4ERR_DELAY` only while the client's expiry is being decided, which
-writes its local record, or while a reboot's confirmation replaces the
+removes its local record, or while a reboot's confirmation replaces the
 incarnation. OPEN and the stateid
 operations check in memory that a record confirms the incarnation and that
 this process has not expired it.
 
 The server's sweep runs every 45 seconds. A client is expired when its
 lease is not held, no CREATE_SESSION for it is in progress, and the
-startup lease does not cover it. Its record is first written `expired`,
-while new SEQUENCEs and CREATE_SESSIONs wait; then its sessions, wire record and opens are
-retired, and the record is removed. A crash in between leaves an expired
-record, which the next start finishes. A record write that fails leaves
-the client live, and a later sweep tries again. An incarnation that no
-record confirms counts as expired.
+startup lease does not cover it. Its record is removed first, while new
+SEQUENCEs and CREATE_SESSIONs wait; then its sessions, wire record and
+opens are retired. A crash in between leaves nothing to finish: no record
+confirms the incarnation, so the next start restores none of its sessions
+and the sweep retires its staged writers. A removal that fails leaves the
+client live, and a later sweep tries again. An incarnation that no record
+confirms counts as expired.
 
 A restart gives every confirmed record a fresh lease. Nothing it confirms
 expires in the first lease after startup, and a client that never comes

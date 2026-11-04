@@ -56,20 +56,18 @@ func check(t *testing.T, err error) {
 	}
 }
 
-// outcome is an identity's state once Finish has completed whatever a crash
-// interrupted.
+// outcome is an identity's state after a restart.
 type outcome struct {
 	present bool    // a confirmed, live record
 	boot    [8]byte // its verifier
-	retire  bool    // Finish retired an expired incarnation
 }
 
 // Every update is a crash point before its rename, with the temporary
 // synced, and after its rename or unlink, before the directory is synced.
 // A crash at either, or before the update starts, leaves a directory Open
-// loads as the state before or after the update, and Finish completes an
-// expiry from the evidence in the record. The process that failed to sync still sees the
-// state before the update, so it never acts on one it reported failed.
+// loads as the state before or after the update. The process that failed
+// to sync still sees the state before the update, so it never acts on one
+// it reported failed.
 func TestCrashPoints(t *testing.T) {
 	cases := []struct {
 		name          string
@@ -98,26 +96,7 @@ func TestCrashPoints(t *testing.T) {
 		before: outcome{present: true, boot: boot1},
 		after:  outcome{present: true, boot: boot2},
 	}, {
-		name: "expire",
-		setup: func(t *testing.T, r *Records) Incarnation {
-			return confirm(t, r, boot1).Incarnation
-		},
-		do:     func(r *Records, id Incarnation) error { return r.Expire(id) },
-		before: outcome{present: true, boot: boot1},
-		after:  outcome{retire: true},
-	}, {
-		name:   "remove expired",
-		remove: true,
-		setup: func(t *testing.T, r *Records) Incarnation {
-			id := confirm(t, r, boot1).Incarnation
-			check(t, r.Expire(id))
-			return id
-		},
-		do:     func(r *Records, id Incarnation) error { return r.Remove(id) },
-		before: outcome{retire: true},
-		after:  outcome{},
-	}, {
-		name:   "destroy",
+		name:   "remove",
 		remove: true,
 		setup: func(t *testing.T, r *Records) Incarnation {
 			return confirm(t, r, boot1).Incarnation
@@ -171,17 +150,7 @@ func TestCrashPoints(t *testing.T) {
 					}
 				}
 				var got outcome
-				check(t, r.Finish(func(rec Record) error {
-					if !rec.Expired {
-						t.Fatalf("retire of %+v", rec)
-					}
-					got.retire = true
-					return nil
-				}))
 				if rec, ok := r.Lookup(HashOwner(owner)); ok {
-					if rec.Expired {
-						t.Fatalf("unfinished after Finish: %+v", rec)
-					}
 					if _, live := r.Live(rec.Incarnation); !live {
 						t.Fatalf("record not live: %+v", rec)
 					}
@@ -195,18 +164,16 @@ func TestCrashPoints(t *testing.T) {
 					t.Fatalf("got %+v, want %+v", got, want)
 				}
 				if len(r.List()) != len(clientFiles(t, dir)) {
-					t.Fatal("records and files differ after Finish")
+					t.Fatal("records and files differ after a restart")
 				}
 			})
 		}
 	}
 }
 
-// A replaced or expired incarnation is never live again, and a
-// confirmation that would drop the evidence of an unfinished expiry is
-// refused. The same
-// client boot returning after its expiry gets a new incarnation with the
-// same recovery key.
+// A replaced or expired incarnation is never live again. The same client
+// boot returning after its expiry gets a new incarnation with the same
+// recovery key.
 func TestIncarnationsAreNotRevived(t *testing.T) {
 	r := openRecords(t, t.TempDir())
 	first := confirm(t, r, boot1)
@@ -217,17 +184,13 @@ func TestIncarnationsAreNotRevived(t *testing.T) {
 	if _, live := r.Live(first.Incarnation); live {
 		t.Fatal("replaced incarnation live")
 	}
-	if err := r.Expire(first.Incarnation); !errors.Is(err, ErrNotCurrent) {
+	if err := r.Remove(first.Incarnation); !errors.Is(err, ErrNotCurrent) {
 		t.Fatalf("expire replaced incarnation: %v", err)
 	}
-	check(t, r.Expire(rebooted.Incarnation))
+	check(t, r.Remove(rebooted.Incarnation))
 	if _, live := r.Live(rebooted.Incarnation); live {
 		t.Fatal("expired incarnation live")
 	}
-	if _, err := r.Confirm(owner, boot2, principal, NewIncarnation()); !errors.Is(err, ErrUnfinished) {
-		t.Fatalf("confirm while expired: %v", err)
-	}
-	check(t, r.Remove(rebooted.Incarnation))
 	back := confirm(t, r, boot2)
 	if back.Incarnation == rebooted.Incarnation {
 		t.Fatalf("return after expiry: %+v", back)
@@ -242,6 +205,26 @@ func TestIncarnationsAreNotRevived(t *testing.T) {
 	other.Principal.Body = "uid 4321"
 	if other.RecoveryKey() == back.RecoveryKey() {
 		t.Fatal("different principals, same recovery key")
+	}
+}
+
+// An earlier build wrote a record expired before removing it, so a crash
+// could leave one. Open removes it rather than load it as live.
+func TestOpenRemovesExpiredRecords(t *testing.T) {
+	dir := t.TempDir()
+	r := openRecords(t, dir)
+	rec := confirm(t, r, boot1)
+	path := filepath.Join(dir, staging.ClientsDirName, rec.Hash().String())
+	data, err := os.ReadFile(path)
+	check(t, err)
+	data = append(data[:len(data)-1], []byte(`,"expired":true}`)...)
+	check(t, os.WriteFile(path, data, 0600))
+	r = openRecords(t, dir)
+	if _, live := r.Live(rec.Incarnation); live {
+		t.Fatal("expired record loaded as live")
+	}
+	if n := len(clientFiles(t, dir)); n != 0 {
+		t.Fatalf("%d files left in clients/", n)
 	}
 }
 

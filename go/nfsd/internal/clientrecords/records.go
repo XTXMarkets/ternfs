@@ -6,8 +6,8 @@
 // in the staging directory, under clients/. A record holds what the server
 // needs to decide registration, confirmation, client reboot, expiry and
 // writer eligibility after a restart: the EXCHANGE_ID owner, the RPC
-// principal, the confirmed incarnation and its boot verifier, and whether
-// the client expired. An unconfirmed registration is not recorded.
+// principal, and the confirmed incarnation and its boot verifier. An
+// unconfirmed registration is not recorded.
 //
 // The staging directory is the server's identity, so the records go with it:
 // a restart or a copy of the whole directory keeps them, a wiped directory
@@ -34,9 +34,9 @@
 // incarnation, so a restart neither restores its sessions nor resumes its
 // writers.
 //
-// Expiry has two steps. It sets expired, the caller retires the
-// incarnation's sessions, then calls Remove. A crash between them leaves
-// the record expired, and Finish completes the expiry at startup.
+// Expiry and destruction are one Remove each. Expiry removes the record
+// first and the caller then retires the incarnation's state; a crash before
+// it has done so leaves nothing to finish, for the same reason as a reboot.
 // Destruction retires the incarnation's sessions and opens first and then
 // calls Remove, the order the server uses for DESTROY_CLIENTID.
 //
@@ -69,9 +69,6 @@ var (
 	// ErrNotCurrent is returned by a transition naming an incarnation that
 	// no record has confirmed.
 	ErrNotCurrent = errors.New("client records: incarnation is not confirmed")
-	// ErrUnfinished is returned by Confirm over a record that is expired,
-	// which would drop the evidence of an expiry still in progress.
-	ErrUnfinished = errors.New("client records: earlier transition unfinished")
 	// ErrCorrupt is returned by Open for clients/ content it did not write.
 	ErrCorrupt = errors.New("client records: corrupt")
 	// ErrInUse is returned by Confirm for an incarnation a record already
@@ -138,9 +135,6 @@ type Record struct {
 	Incarnation Incarnation
 	Verifier    [8]byte
 	ConfirmedAt time.Time
-	// Expired says the server expired Incarnation and is retiring its
-	// state. The record is removed once it has.
-	Expired bool
 }
 
 func (rec Record) Hash() IdentityHash { return HashOwner(rec.Owner) }
@@ -198,9 +192,11 @@ const (
 )
 
 // Open loads the records of stagingDir, creating clients/ if it is absent
-// and removing temporaries. Call it after the staging directory's server
-// identity has been checked, which refuses a directory with records but no
-// server-id.
+// and removing temporaries. It also removes a record an earlier build left
+// marked expired: that build marked a record expired before removing it,
+// and a crash in between left the mark. Call it after the staging
+// directory's server identity has been checked, which refuses a directory
+// with records but no server-id.
 func Open(stagingDir string) (*Records, error) {
 	dir := filepath.Join(stagingDir, staging.ClientsDirName)
 	switch err := os.Mkdir(dir, 0700); {
@@ -220,6 +216,7 @@ func Open(stagingDir string) (*Records, error) {
 	if err != nil {
 		return nil, err
 	}
+	removed := false
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() {
@@ -231,9 +228,16 @@ func Open(stagingDir string) (*Records, error) {
 			}
 			continue
 		}
-		rec, err := r.load(name)
+		rec, expired, err := r.load(name)
 		if err != nil {
 			return nil, err
+		}
+		if expired {
+			if err := os.Remove(filepath.Join(dir, name)); err != nil {
+				return nil, err
+			}
+			removed = true
+			continue
 		}
 		h := rec.Hash()
 		if _, dup := r.byID[rec.Incarnation]; dup {
@@ -242,33 +246,39 @@ func Open(stagingDir string) (*Records, error) {
 		r.records[h] = rec
 		r.byID[rec.Incarnation] = h
 	}
+	if removed {
+		if err := syncDir(dir); err != nil {
+			return nil, err
+		}
+	}
 	return r, nil
 }
 
-func (r *Records) load(name string) (Record, error) {
+// load reads one record, and whether an earlier build marked it expired.
+func (r *Records) load(name string) (Record, bool, error) {
 	path := filepath.Join(r.dir, name)
 	var want IdentityHash
 	if n, err := hex.Decode(want[:], []byte(name)); err != nil || n != len(want) || len(name) != 2*len(want) || strings.ToLower(name) != name {
-		return Record{}, fmt.Errorf("%w: unexpected entry %s", ErrCorrupt, path)
+		return Record{}, false, fmt.Errorf("%w: unexpected entry %s", ErrCorrupt, path)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return Record{}, err
+		return Record{}, false, err
 	}
 	var j recordJSON
 	if err := json.Unmarshal(data, &j); err != nil {
-		return Record{}, fmt.Errorf("%w: %s: %v", ErrCorrupt, path, err)
+		return Record{}, false, fmt.Errorf("%w: %s: %v", ErrCorrupt, path, err)
 	}
 	rec := j.record()
 	switch {
 	case len(rec.Owner) == 0:
-		return Record{}, fmt.Errorf("%w: %s: no owner", ErrCorrupt, path)
+		return Record{}, false, fmt.Errorf("%w: %s: no owner", ErrCorrupt, path)
 	case rec.Hash() != want:
-		return Record{}, fmt.Errorf("%w: %s: owner does not match the name", ErrCorrupt, path)
+		return Record{}, false, fmt.Errorf("%w: %s: owner does not match the name", ErrCorrupt, path)
 	case rec.Incarnation == 0:
-		return Record{}, fmt.Errorf("%w: %s: bad incarnation", ErrCorrupt, path)
+		return Record{}, false, fmt.Errorf("%w: %s: bad incarnation", ErrCorrupt, path)
 	}
-	return rec, nil
+	return rec, j.Expired, nil
 }
 
 // InUse says whether a record confirms id.
@@ -287,14 +297,14 @@ func (r *Records) Lookup(h IdentityHash) (Record, bool) {
 	return rec.clone(), ok
 }
 
-// Live returns the record whose confirmed incarnation is id, unless it
-// expired. A session file or staged writer of any other incarnation is no
-// longer its client's: the client rebooted, expired or was destroyed.
+// Live returns the record whose confirmed incarnation is id. A session
+// file or staged writer of any other incarnation is no longer its client's:
+// the client rebooted, expired or was destroyed.
 func (r *Records) Live(id Incarnation) (Record, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	h, ok := r.byID[id]
-	if !ok || r.records[h].Expired {
+	if !ok {
 		return Record{}, false
 	}
 	return r.records[h].clone(), true
@@ -330,14 +340,10 @@ func (r *Records) Confirm(owner []byte, verifier [8]byte, principal Principal, i
 	unlock := r.locks.Lock(h)
 	defer unlock()
 	r.mu.Lock()
-	old, exists := r.records[h]
+	old := r.records[h]
 	_, used := r.byID[id]
 	err := r.failed
-	switch {
-	case err != nil:
-	case exists && old.Expired:
-		err = ErrUnfinished
-	case used:
+	if err == nil && used {
 		err = ErrInUse
 	}
 	r.mu.Unlock()
@@ -357,18 +363,8 @@ func (r *Records) Confirm(owner []byte, verifier [8]byte, principal Principal, i
 	return rec.clone(), nil
 }
 
-// Expire records that the server expired incarnation id. The caller then
-// retires its state and calls Remove.
-func (r *Records) Expire(id Incarnation) error {
-	return r.update(id, func(rec *Record) bool {
-		changed := !rec.Expired
-		rec.Expired = true
-		return changed
-	})
-}
-
-// Remove removes the record whose confirmed incarnation is id: the end of
-// an expiry, or DESTROY_CLIENTID.
+// Remove removes the record whose confirmed incarnation is id: an expiry,
+// or DESTROY_CLIENTID.
 func (r *Records) Remove(id Incarnation) error {
 	h, unlock, err := r.lockCurrent(id)
 	if err != nil {
@@ -387,40 +383,6 @@ func (r *Records) Remove(id Incarnation) error {
 	delete(r.byID, id)
 	r.mu.Unlock()
 	return nil
-}
-
-// Finish completes the expiries a crash interrupted. It runs at startup,
-// before the server serves: retire is called for an expired record, which
-// is then removed. retire must tolerate state already partly gone.
-func (r *Records) Finish(retire func(Record) error) error {
-	for _, rec := range r.List() {
-		if rec.Expired {
-			if err := retire(rec); err != nil {
-				return err
-			}
-			if err := r.Remove(rec.Incarnation); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-// update rewrites the record confirming id with change applied, if change
-// reports a difference.
-func (r *Records) update(id Incarnation, change func(*Record) bool) error {
-	h, unlock, err := r.lockCurrent(id)
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	r.mu.Lock()
-	rec := r.records[h].clone()
-	r.mu.Unlock()
-	if !change(&rec) {
-		return nil
-	}
-	return r.write(rec, id)
 }
 
 // lockCurrent locks the identity whose confirmed incarnation is id.
@@ -542,7 +504,9 @@ type recordJSON struct {
 		Verifier    hexVerifier `json:"verifier"`
 		ConfirmedAt time.Time   `json:"confirmed_at"`
 	} `json:"confirmed"`
-	Expired bool `json:"expired"`
+	// Expired is only read: an earlier build marked a record expired before
+	// removing it, and Open removes a record that still has the mark.
+	Expired bool `json:"expired,omitempty"`
 }
 
 func newRecordJSON(rec Record) recordJSON {
@@ -553,7 +517,6 @@ func newRecordJSON(rec Record) recordJSON {
 	j.Confirmed.ID = rec.Incarnation
 	j.Confirmed.Verifier = hexVerifier(rec.Verifier)
 	j.Confirmed.ConfirmedAt = rec.ConfirmedAt
-	j.Expired = rec.Expired
 	return j
 }
 
@@ -564,7 +527,6 @@ func (j recordJSON) record() Record {
 		Incarnation: j.Confirmed.ID,
 		Verifier:    j.Confirmed.Verifier,
 		ConfirmedAt: j.Confirmed.ConfirmedAt,
-		Expired:     j.Expired,
 	}
 }
 

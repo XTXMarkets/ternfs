@@ -83,7 +83,7 @@ func TestDiagnosticsHTTP(t *testing.T) {
 	}
 	// The wire clientid's incarnation is confirmed by the client record.
 	if local := clients["client_records"].([]any); len(local) != 1 ||
-		local[0].(map[string]any)["confirmed"] != incarnation || local[0].(map[string]any)["expired"] != false {
+		local[0].(map[string]any)["confirmed"] != incarnation {
 		t.Fatalf("client records = %v", clients)
 	}
 	if local := getJSON(t, ts.URL, "/v1/clients?owner=00", http.StatusOK)["client_records"].([]any); len(local) != 0 {

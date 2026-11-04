@@ -507,10 +507,10 @@ func TestPrincipalCheckOrdersWithWritableOpen(t *testing.T) {
 	}
 }
 
-// A start finishes what a crash interrupted: after a reboot's record and
-// before its purge, the replaced incarnation is gone and the new one live;
-// after an expiry's record, the record is removed.
-func TestRestartFinishesInterruptedTransitions(t *testing.T) {
+// A crash after a reboot's record and before its purge leaves nothing to
+// finish: after a restart the replaced incarnation is gone and the new one
+// live.
+func TestRestartAfterInterruptedReboot(t *testing.T) {
 	local, dir := vfs.NewLocalTernVFS(t.TempDir()), t.TempDir()
 	first := identityServerAt(t, local, dir)
 	principal := clientrecords.Principal{Flavor: nfs4.AUTH_SYS, Body: "owner"}
@@ -520,17 +520,12 @@ func TestRestartFinishesInterruptedTransitions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reboot record %+v %v", rebooted, err)
 	}
-	// And after another client's expiry record, before its removal.
-	expired := confirmForTest(t, first, "expired", [8]byte{1}, principal)
-	if err := first.records.Expire(clientrecords.Incarnation(expired)); err != nil {
-		t.Fatal(err)
-	}
 	srv := identityServerAt(t, local, dir)
 	recs := recordsForTest(srv)
 	if len(recs) != 1 || recs[0].Incarnation != rebooted.Incarnation {
 		t.Fatalf("records after the restart %+v", recs)
 	}
-	if srv.clientLive(old) || srv.clientLive(expired) || !srv.clientLive(uint64(rebooted.Incarnation)) {
+	if srv.clientLive(old) || !srv.clientLive(uint64(rebooted.Incarnation)) {
 		t.Fatal("restart left the wrong incarnations live")
 	}
 }

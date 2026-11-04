@@ -92,9 +92,9 @@ type Server struct {
 	// newSessionFile creates a session's file, sessionFiles.Create; tests
 	// make it block or fail.
 	newSessionFile func(sessionstore.ID, sessionstore.Header) (*sessionstore.File, error)
-	// expireRecord writes an incarnation's record expired, records.Expire;
+	// removeClientRecord removes an incarnation's record, records.Remove;
 	// tests make it block.
-	expireRecord func(clientrecords.Incarnation) error
+	removeClientRecord func(clientrecords.Incarnation) error
 
 	metrics      *Metrics
 	sessionFiles *sessionstore.Store // nil if the session store could not be opened
@@ -166,7 +166,7 @@ func NewServer(fs vfs.TernVFS, stagingStore staging.Store, logger *slog.Logger) 
 		hydrationSlots:     make(chan struct{}, maxConcurrentHydrations),
 		metrics:            newMetrics(),
 		unlinkSessionFile:  (*sessionstore.File).Unlink,
-		expireRecord:       records.Expire,
+		removeClientRecord: records.Remove,
 	}
 	s.SetClock(time.Now)
 	s.startedAt = s.now()
@@ -184,12 +184,6 @@ func NewServer(fs vfs.TernVFS, stagingStore staging.Store, logger *slog.Logger) 
 	s.loadAliases()
 	s.openSessionFiles(stagingDir)
 	s.restoreSessions()
-	// A record a crash left expired is finished before the server serves.
-	// Its incarnation's sessions were not restored, and the lease sweep
-	// retires its staged writers, which are no longer its client's.
-	if err := records.Finish(s.settleExpiry); err != nil {
-		return nil, err
-	}
 	return s, nil
 }
 

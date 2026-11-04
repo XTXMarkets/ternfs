@@ -72,8 +72,7 @@ On `/v1/staging`, a `file` filter applies to the failed tombstones too. An
 identity, from its first confirmation to its expiry or destruction. A
 reboot or takeover keeps the record and replaces its incarnation. Each shows the `identity_hash` that names its file under
 `clients/`, the EXCHANGE_ID owner as hex, the principal, the `confirmed`
-incarnation with its boot verifier and `confirmed_at`, and `expired`
-between the expiry decision and the record's removal. A record whose update
+incarnation with its boot verifier and `confirmed_at`. A record whose update
 failed to sync is shown as it was before the update.
 
 A `wire` or `incarnation` filter keeps the record that confirms the

@@ -98,7 +98,7 @@ func (s *Server) clientActive(clientID uint64) (bool, error) {
 // caller for a new pending incarnation, which CREATE_SESSION confirms.
 func (s *Server) register(owner []byte, verifier [8]byte, principal clientrecords.Principal) (incarnation uint64, adopted bool, status uint32) {
 	rec, ok := s.records.Lookup(clientrecords.HashOwner(owner))
-	if !ok || rec.Expired {
+	if !ok {
 		return 0, false, nfs4.NFS4_OK
 	}
 	confirmed := uint64(rec.Incarnation)
@@ -158,10 +158,7 @@ func (s *Server) confirmPending(cr *creation, caller clientrecords.Principal) (u
 	h := clientrecords.HashOwner(owner)
 	old, exists := s.records.Lookup(h)
 	if exists && old.Incarnation != id {
-		// An expiry still to finish, or a lease that has run out.
-		if status := s.settleRecord(old); status != nfs4.NFS4_OK {
-			return status, createSessionResult{}
-		}
+		// A lease that has run out.
 		if _, err := s.decideExpired(uint64(old.Incarnation), true); err != nil {
 			return statusOf(err), createSessionResult{}
 		}
@@ -190,10 +187,6 @@ func (s *Server) confirmPending(cr *creation, caller clientrecords.Principal) (u
 		if _, err := s.records.Confirm(owner, c.verifier, c.principal, id); err != nil {
 			if p != 0 {
 				ss.reopen(p)
-			}
-			if errors.Is(err, clientrecords.ErrUnfinished) {
-				// The sweeper expired P meanwhile; the retry finishes it.
-				return nfs4.NFS4ERR_DELAY, createSessionResult{}
 			}
 			s.log.Error("client record not written; CREATE_SESSION fails",
 				"incarnation", incarnationText(c.incarnation), "err", err)
@@ -236,35 +229,14 @@ func (s *Server) retireClient(clientID uint64, withState bool) {
 	}
 }
 
-// removeRecord removes the record confirming clientID, once its sessions
-// are retired. A record already gone, or confirming another incarnation,
-// is not an error.
+// removeRecord removes the record confirming clientID. A record already
+// gone, or confirming another incarnation, is not an error.
 func (s *Server) removeRecord(clientID uint64) error {
-	err := s.records.Remove(clientrecords.Incarnation(clientID))
+	err := s.removeClientRecord(clientrecords.Incarnation(clientID))
 	if errors.Is(err, clientrecords.ErrNotCurrent) {
 		return nil
 	}
 	return err
-}
-
-// settleRecord finishes an expiry whose record was not removed.
-func (s *Server) settleRecord(rec clientrecords.Record) uint32 {
-	if rec.Expired {
-		s.retireClient(uint64(rec.Incarnation), true)
-		if err := s.removeRecord(uint64(rec.Incarnation)); err != nil {
-			s.log.Warn("expired client record not removed", "incarnation", incarnationText(uint64(rec.Incarnation)), "err", err)
-			return nfs4.NFS4ERR_DELAY
-		}
-	}
-	return nfs4.NFS4_OK
-}
-
-// settleExpiry is clientrecords.Finish's callback at startup, before
-// anything is served: the incarnation's sessions were not restored, and the
-// sweeper retires its staged writers.
-func (s *Server) settleExpiry(rec clientrecords.Record) error {
-	s.retireClient(uint64(rec.Incarnation), true)
-	return nil
 }
 
 // statusOf is the status of an error that carries one, and DELAY for any

@@ -431,8 +431,7 @@ view of this is in [Client recovery](../../RECOVERY.md#client-recovery).
 
 A client this server has confirmed has a record in `clients/` under the
 staging directory ([clientrecords](../clientrecords/records.go)): its
-EXCHANGE_ID owner, principal, confirmed incarnation and boot verifier, and
-whether it expired.
+EXCHANGE_ID owner, principal, and confirmed incarnation and boot verifier.
 Nothing else about clients is durable. Wire records, sessions, the logical
 lease and opens live in this process. A record update is a local write,
 fsync and rename with a known outcome, and the server acts on it only
@@ -471,11 +470,11 @@ I/O. Otherwise the identity's record decides:
 The first CREATE_SESSION of a pending incarnation N confirms it, under the
 owner's lock. A registration belongs to the principal that made it;
 another principal gets `NFS4ERR_CLID_INUSE`. If the identity's record
-still shows an expiry unfinished, that is finished first. If it confirms
-another incarnation P, that is a reboot or a takeover: P is closed, so its
-new requests wait (`NFS4ERR_DELAY`, or `NFS4ERR_CLIENTID_BUSY` for
-DESTROY_CLIENTID), or the CREATE_SESSION gets `NFS4ERR_DELAY` while P has
-requests running. Only then is the principal check repeated against P's
+confirms another incarnation P whose lease has run out, P is expired
+first. If it still confirms P, that is a reboot or a takeover: P is
+closed, so its new requests wait (`NFS4ERR_DELAY`, or
+`NFS4ERR_CLIENTID_BUSY` for DESTROY_CLIENTID), or the CREATE_SESSION gets
+`NFS4ERR_DELAY` while P has requests running. Only then is the principal check repeated against P's
 write state, so no OPEN of P can succeed after it; when it refuses the
 takeover with `NFS4ERR_CLID_INUSE`, P is reopened.
 
@@ -513,19 +512,21 @@ back expires after it.
 `decideExpired` expires a client whose lease has run out. If the lease is
 held, a CREATE_SESSION is in progress, the startup lease is running, or a
 decision is already in progress, it changes nothing; a pending
-registration is left to be reclaimed. Otherwise, for an incarnation a live
+registration is left to be reclaimed. Otherwise, for an incarnation a
 record confirms, the gate turns to checking, which makes new SEQUENCEs and
-CREATE_SESSIONs get `NFS4ERR_DELAY`, and the record is written expired. A
+CREATE_SESSIONs get `NFS4ERR_DELAY`, and the record is removed. A
 CREATE_SESSION checks the gate under the lock that counts it, so expiry
-either sees it in progress or it sees the gate. A write that fails
+either sees it in progress or it sees the gate. A removal that fails
 returns the gate to live, and a later sweep tries again. An incarnation
 no record confirms is expired with no write: an absent record counts as
 expired.
 
-Expiring a client here retires its wire record, its sessions, cancelling
-their callbacks and removing their files, and its local open state, then
-removes its record. A record left expired by a crash is removed at the
-next start. Once expired, its SEQUENCEs get `NFS4ERR_BADSESSION` and a
+Once the record is gone, the gate turns to expired, and expiring the
+client here retires its wire record, its sessions, cancelling their
+callbacks and removing their files, and its local open state. A crash
+before that leaves nothing to finish: the next start restores none of its
+sessions, since no record confirms it, and the sweep retires its staged
+writers. Once expired, its SEQUENCEs get `NFS4ERR_BADSESSION` and a
 CREATE_SESSION for it gets `NFS4ERR_STALE_CLIENTID`. A caller holding a
 pathname lock, such as OPEN's recovery check, leaves the opens to the
 sweeper.

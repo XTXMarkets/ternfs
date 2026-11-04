@@ -310,7 +310,7 @@ var enums = map[string][]string{
 	},
 	"group.lease_gate": {
 		GateLive + ": the logical lease is live or being held",
-		GateChecking + ": the expiry decision is writing the client record expired",
+		GateChecking + ": the expiry decision is removing the client record",
 		GateExpired + ": this process has expired the client",
 	},
 	"connection.path, backchannel.connections[].path": {
