@@ -20,7 +20,6 @@ import (
 // holds pairs moved aside rather than deleted: at startup those whose sidecar
 // would not decode, was guarded, or was both unlinked and retired, and at run
 // time failed writers (README.md#startup-recovery-and-quarantine).
-// /v1/store?staging=1 lists them.
 const QuarantineDirName = "quarantine"
 
 // AliasesDirName is the staging subdirectory holding the server's
@@ -79,8 +78,11 @@ type File interface {
 // All staging queries go through this interface — the NFS server
 // does not maintain its own staging caches.
 type Store interface {
-	// ReadOnly returns true if no staging directory is configured.
-	ReadOnly() bool
+	// ServerID identifies the server: the staging directory's server-id.
+	ServerID() ServerID
+	// Dir is the staging directory. The server keeps its session files,
+	// publication aliases and client records in it.
+	Dir() string
 	// Create creates a new staging file with associated metadata.
 	Create(id vfs.InodeID, meta Meta) (File, error)
 	// Get returns the staging file for the given inode, or nil.
@@ -103,6 +105,10 @@ type Store interface {
 	// Quarantine excludes an entry for the process lifetime and preserves its files.
 	Quarantine(id vfs.InodeID) error
 	Failed(id vfs.InodeID) bool
+	// Retained reports, in one check, that the store holds an entry for id,
+	// live or failed. Failed and Get are separate checks, and a quarantine
+	// between them makes both say no.
+	Retained(id vfs.InodeID) bool
 	// Remove closes and removes the staging file and sidecar for the given inode.
 	Remove(id vfs.InodeID)
 	// StagedSize returns the staged size for the given inode.

@@ -5,7 +5,6 @@
 package server
 
 import (
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/openstate"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -60,7 +59,7 @@ func (s *Server) publishedAs(clientID uint64, fileID, dataID vfs.InodeID) {
 	}
 	s.aliasMu.Lock()
 	defer s.aliasMu.Unlock()
-	expires := s.clients.Now().Add(clientstore.LeaseTime)
+	expires := s.now().Add(leaseTime)
 	s.views.Set(openstate.ViewKey{ClientID: clientID, FileID: fileID}, dataID, expires)
 	// Persisted so that the client's view survives an nfsd restart; see
 	// alias_log.go.
@@ -76,8 +75,18 @@ func (s *Server) viewHeld(key openstate.ViewKey) bool {
 }
 
 func (s *Server) sweepViews() {
-	s.views.Sweep(s.clients.Now(), s.viewHeld)
+	s.views.Sweep(s.now(), s.viewHeld)
+	s.views.PruneWriters(s.writerKept)
 	s.compactAliases()
+}
+
+// writerKept reports that a writer index entry still matters: its staging
+// is live, or failed and so a tombstone COMMIT must report. It is one
+// check: asking Failed and then Get lets a quarantine between them answer
+// no to both, and the entry would be pruned while its tombstone survives,
+// so a later COMMIT through the handle would report success.
+func (s *Server) writerKept(id vfs.InodeID) bool {
+	return s.stagingStore.Retained(id)
 }
 
 // failedWriter reports whether a writer clientID used through fileID has

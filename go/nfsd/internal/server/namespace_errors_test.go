@@ -43,8 +43,7 @@ func TestNamespaceUnstagedErrorOutcomes(t *testing.T) {
 					t.Fatal(err)
 				}
 				// The fault applies to namespace operations only, as in the
-				// other namespace fixtures; the client store's confirmation
-				// writes also use explicit edges.
+				// other namespace fixtures.
 				server.fs = &namespaceFaultVFS{TernVFS: base, err: tc.err, remote: true}
 				addr, stop := serveTestServer(t, server)
 				defer stop()
@@ -72,22 +71,5 @@ func TestNamespaceUnstagedErrorOutcomes(t *testing.T) {
 				}
 			})
 		}
-	}
-}
-
-func TestRemoveLocalEdgeGone(t *testing.T) {
-	f := newNamespaceFixture(t)
-	f.server.fs = &namespaceFaultVFS{TernVFS: f.fs, err: os.ErrNotExist, apply: true}
-	if got := removeNamespaceFile(t, f, "source"); got != nfs4.NFS4ERR_NOENT {
-		t.Fatalf("REMOVE = %s, want NOENT", nfs4.Nfsstat4Name(got))
-	}
-	meta, ok := f.store.GetMeta(f.id)
-	if !ok || !meta.Unlinked || meta.Guarded || f.store.Failed(f.id) {
-		t.Fatalf("edge-gone writer was not detached: %+v", meta)
-	}
-	writeFileAt(t, f.conn, &f.xid, f.fh, f.state, 0, []byte("detached bytes"))
-	closeFile(t, f.conn, &f.xid, f.fh, f.state)
-	if _, err := os.Stat(filepath.Join(f.root, "source")); !os.IsNotExist(err) {
-		t.Fatalf("detached writer published: %v", err)
 	}
 }

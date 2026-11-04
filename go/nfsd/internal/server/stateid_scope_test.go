@@ -101,8 +101,8 @@ func stateidOpStatus(t *testing.T, conn net.Conn, xid *uint32, op string, fh []b
 }
 
 // Client B presenting client A's live, recovered or expired stateid gets
-// BAD_STATEID from every stateid operation, and A's opens, staging and
-// markers survive (../openstate/README.md#stateid-scope).
+// BAD_STATEID from every stateid operation, and A's opens and staging
+// survive (../openstate/README.md#stateid-scope).
 func TestForeignStateidsAreBadStateid(t *testing.T) {
 	srv, addr, cleanup := startTestServerWithServer(t, t.TempDir())
 	defer cleanup()
@@ -132,9 +132,6 @@ func TestForeignStateidsAreBadStateid(t *testing.T) {
 	}
 	if _, err := srv.stagingStore.Create(recStaging, staging.Meta{DirID: root, FileName: "a-recovered",
 		TernCookie: cookie, NFSStateID: recID, ClientID: incA}); err != nil {
-		t.Fatal(err)
-	}
-	if err := srv.clients.MarkOpen(incA, recID); err != nil {
 		t.Fatal(err)
 	}
 	recSid, recFH := scopedStateid(1, recID), vfs.InodeIDToFH(recStaging)
@@ -185,8 +182,8 @@ func TestForeignStateidsAreBadStateid(t *testing.T) {
 		}
 	}
 	for _, id := range []nfs4.StateID{liveID, recID} {
-		if open, err := srv.clients.HasOpen(incA, id); err != nil || !open {
-			t.Fatalf("A's marker %x: %t %v", id, open, err)
+		if !srv.clientLive(incA) {
+			t.Fatalf("A expired with %x", id)
 		}
 	}
 	for _, check := range []struct {

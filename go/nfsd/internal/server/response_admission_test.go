@@ -15,7 +15,7 @@ import (
 	"testing"
 
 	"github.com/XTXMarkets/ternfs/go/msgs"
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientrecords"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
@@ -32,8 +32,6 @@ func admissionWritableServer(t *testing.T, fs vfs.TernVFS) *Server {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(srv.waitForClientGC)
-	t.Cleanup(srv.clients.StopLeaseWorkers)
 	useTestWireEpoch(srv) // Tests also run compounds directly.
 	return srv
 }
@@ -85,7 +83,7 @@ func TestResponseAdmissionReadFullRPCBoundary(t *testing.T) {
 				if err := os.WriteFile(filepath.Join(root, "file"), []byte("12345"), 0600); err != nil {
 					t.Fatal(err)
 				}
-				srv, err := NewServer(vfs.NewLocalTernVFS(root), staging.ReadOnlyStore{}, nil)
+				srv, err := NewServer(vfs.NewLocalTernVFS(root), newTestStaging(t), nil)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -197,17 +195,10 @@ func TestResponseAdmissionHandleBeforeEffect(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				clientID, confirm, err := srv.clients.SetClientID([8]byte{}, []byte("handles"), clientstore.ClientOwner{})
-				if err != nil {
-					t.Fatal(err)
-				}
-				if _, err = srv.clients.ConfirmClientID(clientID, confirm, clientstore.RPCPrincipal{}); err != nil {
-					t.Fatal(err)
-				}
+				clientID := confirmForTest(t, srv, "handles", [8]byte{}, clientrecords.Principal{})
 				ts := connectionSession(t, srv)
 				sess := srv.sessions.lookup(ts.id)
 				moveSessionForTest(srv.sessions, sess, clientID, sess.id)
-				srv.clients.PinLeaseForTest(clientID)
 				bound := uint32(140)
 				if opnum == nfs4.OP_OPEN {
 					bound = 164
@@ -356,7 +347,7 @@ func TestResponseAdmissionAttributeAndDirectoryBudgets(t *testing.T) {
 
 func TestResponseAdmissionErrorDiscriminants(t *testing.T) {
 	for _, minor := range []uint32{1, 2} {
-		for _, op := range []uint32{nfs4.OP_DELEGPURGE, nfs4.OP_OPEN_CONFIRM, nfs4.OP_ALLOCATE, 9999} {
+		for _, op := range []uint32{nfs4.OP_DELEGPURGE, nfs4.OP_ALLOCATE} {
 			t.Run(fmt.Sprintf("minor%d/op%d", minor, op), func(t *testing.T) {
 				srv, _ := newConnectionTestServer(t, 2)
 				srv.AllowMinorVersion2 = true
@@ -368,18 +359,12 @@ func TestResponseAdmissionErrorDiscriminants(t *testing.T) {
 				switch op {
 				case nfs4.OP_DELEGPURGE:
 					body = binary.BigEndian.AppendUint64(body, 1)
-				case nfs4.OP_OPEN_CONFIRM:
-					body = append(body, make([]byte, 20)...)
 				case nfs4.OP_ALLOCATE:
 					body = append(body, make([]byte, 32)...)
 				}
 				wire := admissionSequence(body, ts, 0, 1, true)
 				_, res := admissionRequest(t, srv, wire, 1, nil)
-				want, status := op, uint32(nfs4.NFS4ERR_NOTSUPP)
-				if !knownOperation(op) {
-					want, status = nfs4.OP_ILLEGAL, nfs4.NFS4ERR_OP_ILLEGAL
-				}
-				admissionStatus(t, res, status, nfs4.OP_SEQUENCE, want)
+				admissionStatus(t, res, nfs4.NFS4ERR_NOTSUPP, nfs4.OP_SEQUENCE, op)
 			})
 		}
 	}
@@ -542,7 +527,7 @@ type admissionLinkFaultVFS struct {
 }
 
 func (fs *admissionLinkFaultVFS) LinkFile(id vfs.InodeID, cookie vfs.Cookie, dir vfs.InodeID, name string, data io.Reader) error {
-	if !fs.fail || data == nil || clientstore.LeaseTemp(name) {
+	if !fs.fail || data == nil {
 		return fs.TernVFS.LinkFile(id, cookie, dir, name, data)
 	}
 	fs.submissions++

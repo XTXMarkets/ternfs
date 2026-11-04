@@ -7,9 +7,8 @@ package server
 import (
 	"crypto/sha256"
 	"encoding/binary"
-	"errors"
 
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientrecords"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sessionstore"
 )
@@ -243,8 +242,8 @@ func (s *Server) startSequence(args nfs4.SEQUENCE4args, admission ...sequenceAdm
 		}
 		undo = append(undo, reply.release)
 	}
-	// Renewal check, from memory only.
-	if status := s.renewalCheck(hold, sess); status != nfs4.NFS4_OK {
+	// The gate again: expiry may have started deciding since the hold.
+	if status := hold.gateStatus(); status != nfs4.NFS4_OK {
 		return sequenceResult{status: status}
 	}
 	if sess.destroyed.Load() || sess.fatal.Load() {
@@ -255,7 +254,6 @@ func (s *Server) startSequence(args nfs4.SEQUENCE4args, admission ...sequenceAdm
 	committed = true
 	token.commit()
 	hold.activate()
-	s.clients.NoteLeaseNeed(sess.clientID)
 	if replay && !rerun {
 		if slot.restored {
 			s.metrics.replayServed.Add(1)
@@ -362,30 +360,6 @@ func (r *sequenceResult) finish(reply []byte) {
 	}
 }
 
-// renewalCheck is admission's renewal check (README.md#sequence-admission). It
-// reads the gate and the refresher's record from memory, never the store.
-// A lease this process cannot prove, or a confirmed pointer not read
-// recently, gives DELAY and asks the refresher to verify.
-func (s *Server) renewalCheck(hold *requestHold, sess *session) uint32 {
-	if status := hold.gateStatus(); status != nfs4.NFS4_OK {
-		return status
-	}
-	view, ok := s.clients.LeaseView(sess.clientID)
-	if !ok {
-		// No refresher record credit.
-		return nfs4.NFS4ERR_DELAY
-	}
-	if view.State != clientstore.LeaseRecordLive {
-		return nfs4.NFS4ERR_BADSESSION
-	}
-	now := s.clients.Now().UnixNano()
-	if view.Proven <= now || view.VerifiedAt < now-int64(clientstore.LeaseRenewAfter) {
-		s.clients.RequestLeaseVerify(sess.clientID)
-		return nfs4.NFS4ERR_DELAY
-	}
-	return nfs4.NFS4_OK
-}
-
 func (s *Server) writeSequenceOK(w *nfs4.COMPOUND4resWriter, seq *sequenceResult) {
 	ew := w.AppendResarray_Sequence()
 	ok := ew.SetValue_Nfs4Ok()
@@ -405,15 +379,13 @@ func writeSequenceError(w *nfs4.COMPOUND4resWriter, status uint32) {
 	w.Resume(ew.Finish())
 }
 
-// serverOwnerMajor identifies this export for session trunking checks.
-// Every nfsd serving one TernFS shares durable client state, but open state
-// and staging are local to each running nfsd and not shared with another
-// running at the same time, so each process is its own server owner.
-func (s *Server) serverOwnerMajor() []byte {
-	return []byte("ternfs-nfsd/" + s.clients.NfsdID)
+// serverOwner is the server owner major id and the server scope EXCHANGE_ID
+// returns. Both come from the server id, so a client sees the same server
+// after a restart or a move of the staging directory, and a new one after a
+// wipe.
+func (s *Server) serverOwner() []byte {
+	return []byte("ternfs-nfsd/" + s.serverID.String())
 }
-
-var serverScope = []byte("ternfs")
 
 func (s *Server) opExchangeID(
 	args nfs4.EXCHANGEID4args,
@@ -445,12 +417,7 @@ func (s *Server) opExchangeID(
 	if flags&nfs4.EXCHGID4_FLAG_UPD_CONFIRMED_REC_A != 0 {
 		// An update of a confirmed record (RFC 8881 section 18.35.5,
 		// cases 6-9). nfsd has no per-client properties for an update to
-		// change, so a valid update returns the record unchanged. It only
-		// reads, so it needs no ordering with a confirmation beyond waiting
-		// while one is in progress (README.md#protection-and-destruction-holds).
-		if s.confirmingOwner(ownerKey) {
-			return fail(nfs4.NFS4ERR_DELAY)
-		}
+		// change, so a valid update returns the record unchanged.
 		ss.mu.Lock()
 		var c *sessionClient
 		if o := ss.owners[ownerKey]; o != nil {
@@ -460,30 +427,26 @@ func (s *Server) opExchangeID(
 		if c == nil {
 			return fail(nfs4.NFS4ERR_NOENT)
 		}
-		incarnation, status := s.clients.ConfirmedRecord(owner.CoOwnerid(), verifier, st.principal)
-		if status != nfs4.NFS4_OK {
-			return fail(status)
-		}
-		if incarnation != c.incarnation {
+		// RFC 8881 section 18.35.5 cases 6-8 need a confirmed record
+		// with the same verifier and principal.
+		rec, ok := s.records.Lookup(clientrecords.HashOwner(owner.CoOwnerid()))
+		switch {
+		case !ok || uint64(rec.Incarnation) != c.incarnation:
 			// This process's confirmed record is no longer the durable one.
 			return fail(nfs4.NFS4ERR_NOENT)
+		case rec.Verifier != verifier:
+			return fail(nfs4.NFS4ERR_NOT_SAME)
+		case rec.Principal != st.principal:
+			return fail(nfs4.NFS4ERR_PERM)
 		}
 		return s.writeExchangeIDResult(w, c, true)
 	}
 
-	// One registration at a time per owner, so the wire record this request
-	// publishes names the durable registration it made. Otherwise a slower
-	// request could publish a pending incarnation that a faster one has
-	// already superseded in the store.
+	// One registration or confirmation at a time per owner, so the wire
+	// record this request publishes is decided from the owner's current
+	// record.
 	unlockOwner := ss.ownerLocks.Lock(ownerKey)
 	defer unlockOwner()
-	// Checked under the owner lock, which a confirmation's registration
-	// also takes: either this request's durable registration and wire
-	// publication finish before protection is installed, or it sees the
-	// owner confirming and waits (README.md#protection-and-destruction-holds).
-	if s.confirmingOwner(ownerKey) {
-		return fail(nfs4.NFS4ERR_DELAY)
-	}
 
 	// Case 2: a retransmission or a client that already holds the record.
 	// The record and its creation sequence are unchanged; nothing is written.
@@ -493,20 +456,11 @@ func (s *Server) opExchangeID(
 		!ss.expiredLocked(o.confirmed.incarnation) {
 		c := o.confirmed
 		ss.mu.Unlock()
-		if s.hasPurgePending(c.incarnation) {
-			// The only store call case 2 makes: a failed purge's retry.
-			s.resumeReplacementPurge(c.incarnation)
-		}
 		return s.writeExchangeIDResult(w, c, true)
 	}
 	if o := ss.owners[ownerKey]; o != nil && o.confirmed != nil && ss.expiredLocked(o.confirmed.incarnation) {
 		// This process expired the record's incarnation: it is not returned
-		// as live. The record is retired and registration starts again from
-		// the store; while a confirmation protects it, the client waits.
-		if o.confirmed.confirming != nil {
-			ss.mu.Unlock()
-			return fail(nfs4.NFS4ERR_DELAY)
-		}
+		// as live. The wire record is retired and registration starts again.
 		ss.retireWireLocked(o.confirmed)
 	}
 	if status := s.wireCapacityLocked(0); status != nfs4.NFS4_OK {
@@ -515,19 +469,17 @@ func (s *Server) opExchangeID(
 	}
 	ss.mu.Unlock()
 
-	incarnation, confirm, adopted, err := s.clients.ExchangeID(
-		verifier, owner.CoOwnerid(), clientstore.ClientOwner{Principal: st.principal})
-	if err != nil {
-		var inUse clientstore.ClientInUseError
-		if errors.As(err, &inUse) {
-			return fail(nfs4.NFS4ERR_CLID_INUSE)
-		}
-		return fail(clientstore.ErrToNFS(err))
+	incarnation, adopted, status := s.register(owner.CoOwnerid(), verifier, st.principal)
+	if status != nfs4.NFS4_OK {
+		return fail(status)
 	}
 
 	ss.mu.Lock()
+	if incarnation == 0 {
+		incarnation = s.newIncarnationLocked()
+	}
 	o := ss.owners[ownerKey]
-	if o != nil && o.confirmed != nil && o.confirmed.incarnation == incarnation {
+	if adopted && o != nil && o.confirmed != nil && o.confirmed.incarnation == incarnation {
 		// A concurrent CREATE_SESSION confirmed the record this request would
 		// have adopted; answer as case 2.
 		c := o.confirmed
@@ -536,12 +488,6 @@ func (s *Server) opExchangeID(
 	}
 	if g := ss.groups[incarnation]; g != nil && g.state == groupClosing {
 		// Another client is replacing this incarnation.
-		ss.mu.Unlock()
-		return fail(nfs4.NFS4ERR_DELAY)
-	}
-	if o != nil && o.unconfirmed != nil && o.unconfirmed.confirming != nil {
-		// The record is being confirmed: it is not superseded
-		// (README.md#protection-and-destruction-holds).
 		ss.mu.Unlock()
 		return fail(nfs4.NFS4ERR_DELAY)
 	}
@@ -564,25 +510,18 @@ func (s *Server) opExchangeID(
 		return fail(nfs4.NFS4ERR_SERVERFAULT)
 	}
 	// wireCapacityLocked checked the group credit under this lock.
-	g, _ := ss.groupLocked(incarnation)
-	// A cold adoption is how a client regains an incarnation that this
-	// process treated as replaced without proof.
-	g.state = groupOpen
+	ss.groupLocked(incarnation)
 	c := &sessionClient{
 		clientID:    clientID,
 		incarnation: incarnation,
 		owner:       ownerKey,
 		verifier:    verifier,
 		principal:   st.principal,
-		createdAt:   s.clients.Now(),
+		createdAt:   s.now(),
 		adopted:     adopted,
-		confirm:     confirm,
-		hasConfirm:  !adopted,
 	}
 	ss.addWireLocked(c)
 	ss.mu.Unlock()
-
-	s.scheduleClientGC(incarnation)
 	return s.writeExchangeIDResult(w, c, false)
 }
 
@@ -601,7 +540,7 @@ func (s *Server) wireCapacityLocked(incarnation uint64) uint32 {
 		return len(ss.clients) < ss.wireLimit && ss.groupAvailableLocked(incarnation)
 	}
 	if !admits() {
-		ss.reclaimUnconfirmedLocked(s.clients.Now())
+		ss.reclaimUnconfirmedLocked(s.now())
 	}
 	if !admits() {
 		return nfs4.NFS4ERR_DELAY
@@ -626,8 +565,9 @@ func (s *Server) writeExchangeIDResult(w *nfs4.COMPOUND4resWriter, c *sessionCli
 	ok.SetEirStateProtect_None()
 	sow := ok.StartEirServerOwner()
 	sow.SetSoMinorId(0)
-	ok.Resume(sow.SetSoMajorId(s.serverOwnerMajor()).Finish())
-	ok.SetEirServerScope(serverScope)
+	owner := s.serverOwner()
+	ok.Resume(sow.SetSoMajorId(owner).Finish())
+	ok.SetEirServerScope(owner)
 	impl := ok.StartEirServerImplId()
 	ok.Resume(impl.Finish())
 	ew.Resume(ok.Finish())
@@ -713,25 +653,17 @@ func (s *Server) opCreateSession(
 		}
 	}
 
-	// This request's reservations are released when it returns. An
-	// unresolved confirmation takes them over instead. No connection lock is
-	// held across store calls: the association is a token, counted against
-	// the connection's quota from before the slot
+	// This request's reservations are released when it returns. No
+	// connection lock is held across record writes: the association is a
+	// token, counted against the connection's quota from before the slot
 	// (README.md#connection-associations).
 	cr := &creation{s: s, seq: seq, back: back, cbProgram: args.CsaCbProgram(), cbSec: cbSec, backRequested: backRequested}
-	handedOver := false
-	var settled func() // finishes an earlier confirmation this retry applied
 	var token *associationToken
 	var backTok *backToken
 	defer func() {
 		token.abort() // a no-op once committed
 		backTok.abort()
-		if settled != nil {
-			settled()
-		}
-		if !handedOver {
-			cr.finish()
-		}
+		cr.finish()
 	}()
 	ss := s.sessions
 	// associate publishes a newly created session's association, reserved
@@ -782,18 +714,14 @@ func (s *Server) opCreateSession(
 	}
 	// Outcomes that create nothing are decided from the slot before any
 	// reservation, so they need no group credit, session record or serial,
-	// and work at those limits: a held confirmation's retry, which uses its
-	// own creation's reservations; a replay of the cached outcome; and the
+	// and work at those limits: a replay of the cached outcome, and the
 	// waiting and misordered sequences. A closing or replaced incarnation
 	// gives the statuses beginCreate would. Only a new creation reserves,
 	// and then checks the slot again below.
-	var held *confirmation
 	var early, cached bool
 	var earlyStatus uint32
 	var reply createSessionResult
 	switch g := ss.groups[c.incarnation]; {
-	case c.csBusy && seq == c.csBusySeq && c.confirming != nil:
-		held, early = c.confirming, true
 	case g != nil && g.state == groupClosing:
 		early, earlyStatus = true, nfs4.NFS4ERR_DELAY
 	case g != nil && g.state == groupReplaced:
@@ -809,16 +737,6 @@ func (s *Server) opCreateSession(
 	}
 	ss.mu.Unlock()
 	switch {
-	case held != nil:
-		// A retry of a held confirmation uses the reservations its creation
-		// already owns: no new group hold or session record, so it settles
-		// at the record cap.
-		status, reply, done := s.retryHeldConfirmation(held, st)
-		settled = done
-		if status != nfs4.NFS4_OK {
-			return fail(status)
-		}
-		return writeCreateSessionResult(w, reply)
 	case cached:
 		// A cached result never rebuilds its session: once destroyed, the
 		// session stays BADSESSION and the connection gains nothing. A
@@ -852,11 +770,6 @@ func (s *Server) opCreateSession(
 		return fail(nfs4.NFS4ERR_DELAY)
 	}
 	cr.id, cr.record = id, true
-	// The refresher record that bootstrap will use
-	// (../clientstore/README.md#record-bounds).
-	if cr.leaseRecord, admitted = s.clients.ReserveLeaseRecord(incarnation); !admitted {
-		return fail(nfs4.NFS4ERR_DELAY)
-	}
 	// The new session's association on this connection, and its back
 	// association when a backchannel is asked for and this transport can
 	// carry one: both before the slot, so a full connection changes nothing.
@@ -881,8 +794,7 @@ func (s *Server) opCreateSession(
 	}
 	switch {
 	case c.csBusy && seq == c.csBusySeq:
-		// The request owning the slot is running, or a confirmation was
-		// registered since the check above; its retry settles it.
+		// The request owning the slot is running.
 		ss.mu.Unlock()
 		return fail(nfs4.NFS4ERR_DELAY)
 	case c.csCached && seq == c.csSeq:
@@ -906,19 +818,18 @@ func (s *Server) opCreateSession(
 	}
 	c.csBusy, c.csBusySeq = true, seq
 	cr.slot = true // Any exit that caches no outcome rolls the slot back.
-	confirmed, confirm, hasConfirm, principal := c.confirmed, c.confirm, c.hasConfirm, c.principal
+	confirmed, pending, principal := c.confirmed, c.pending(), c.principal
 	ss.mu.Unlock()
 	cr.fore = s.negotiateForeChannel(fore)
 	if status := s.createSessionFile(cr); status != nfs4.NFS4_OK {
 		return fail(status)
 	}
 
-	if hasConfirm {
-		// A pending incarnation: closing its predecessor, the principal
-		// check, writes A, B and D, and acting on their result
+	if pending {
+		// A new registration: the principal check, the record, the purge
+		// of the incarnation it replaces, then the session
 		// (README.md#client-confirmation).
-		status, reply, owned := s.confirmPending(cr, confirm, principal, st.principal)
-		handedOver = owned
+		status, reply := s.confirmPending(cr, st.principal)
 		if status != nfs4.NFS4_OK {
 			return fail(status)
 		}
@@ -934,15 +845,10 @@ func (s *Server) opCreateSession(
 	}
 	// An adopted or already confirmed record: check, without writing, that
 	// the incarnation is still the confirmed one
-	// (README.md#create_session-outcomes). If not,
-	// STALE_CLIENTID ends the record and leaves its slot untouched; a store
-	// that proves the incarnation stale must not leave a record a later
-	// EXCHANGE_ID would return as confirmed.
-	confirmedNow, err := s.clients.IsConfirmed(incarnation)
-	if err != nil {
-		return fail(clientstore.ErrToNFS(err))
-	}
-	if !confirmedNow {
+	// (README.md#create_session-outcomes). If not, STALE_CLIENTID ends the
+	// wire record and leaves its slot untouched, so no later EXCHANGE_ID
+	// returns it as confirmed.
+	if _, live := s.records.Live(clientrecords.Incarnation(incarnation)); !live {
 		ss.mu.Lock()
 		ss.retireWireLocked(c)
 		ss.mu.Unlock()
@@ -1035,6 +941,13 @@ func (s *Server) opDestroyClientID(args nfs4.DESTROYCLIENTID4args, st *compoundS
 		return status
 	}
 	s.expireClientState(incarnation)
+	// The client is gone, and so is its record: a later registration of the
+	// identity is a new client.
+	if err := s.removeRecord(incarnation); err != nil {
+		s.log.Error("destroyed client's record not removed", "incarnation", incarnationText(incarnation), "err", err)
+		r.SetDcrStatus(nfs4.NFS4ERR_SERVERFAULT)
+		return nfs4.NFS4ERR_SERVERFAULT
+	}
 	r.SetDcrStatus(nfs4.NFS4_OK)
 	return nfs4.NFS4_OK
 }

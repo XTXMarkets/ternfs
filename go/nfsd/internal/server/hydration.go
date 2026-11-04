@@ -6,7 +6,6 @@ package server
 
 import (
 	"context"
-	"os"
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
@@ -76,7 +75,7 @@ func (s *Server) setStagingSize(sf staging.File, size uint64) error {
 }
 
 // discardStaging scraps an unpublished staging's transient, best effort,
-// and removes it with the open marker its sidecar names.
+// and removes it.
 func (s *Server) discardStaging(id vfs.InodeID) {
 	_ = s.discardStagingFenced(id, false)
 }
@@ -100,16 +99,6 @@ func (s *Server) discardStagingFenced(id vfs.InodeID, fence bool) error {
 		}
 	}
 	s.stagingStore.Remove(id)
-	if !ok {
-		return nil
-	}
-	if meta.ClientID != 0 {
-		if err := s.clients.RemoveOpen(meta.ClientID, meta.NFSStateID); err != nil &&
-			!os.IsNotExist(err) {
-			s.log.Warn("remove discarded staging open",
-				"clientid", meta.ClientID, "err", err)
-		}
-	}
 	return nil
 }
 

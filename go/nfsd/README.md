@@ -13,9 +13,17 @@ replacement on the last write CLOSE or downgrade to read access.
 
 **Successful fsync does not publish or replicate staged data.** Unpublished
 data depends on the staging disk. Recovery with that disk is conditional,
-and the implementation has known recovery defects. Several nfsd processes
-can serve one TernFS namespace, but they do not form one NFS server with
-shared sessions or transparent failover.
+and the implementation has known recovery defects. One nfsd serves each
+tree. Failover moves its address to another host, preferably with a copy
+of its staging directory; see [Replace a host](RECOVERY.md#replace-a-host).
+
+The staging directory is the server. It holds the server identity, the
+client records and the session files as well as the staged writes, and
+nfsd keeps nothing in TernFS except the data. A restart on the directory,
+or on a copy of it, is the same server; an empty directory is a new server,
+and every client registers again. Upgrading from a release that kept
+client records in TernFS starts on an empty directory; see
+[Upgrade the server](RECOVERY.md#upgrade-the-server).
 
 ## Documents
 
@@ -24,11 +32,11 @@ shared sessions or transparent failover.
 | [Deployment](DEPLOYMENT.md) | Deployment modes, guarantees, failure behaviour and known issues. |
 | [Recovery](RECOVERY.md) | Crash and lease recovery, staging inspection, quarantine and replacement procedures. |
 | [Design](DESIGN.md) | How the packages fit together: state ownership, writes and publication, the writer lifecycle, namespace changes, clients and leases, sessions across restarts and lock order. |
-| [Server](internal/server/README.md) | Request handling, sessions and slots, persistent sessions and the restart replay decision, the lease gate, client confirmation, opens, the alias log, the staging lifecycle and the backchannel. |
-| [Client store](internal/clientstore/README.md) | The shared records under `/.nfs`: layout, registration, confirmation, open markers, durable leases and collection. |
+| [Server](internal/server/README.md) | Request handling, sessions and slots, persistent sessions and the restart replay decision, client registration and confirmation, the lease gate, opens, the alias log, the staging lifecycle and the backchannel. |
 | [Open state](internal/openstate/README.md) | Stateids, opens, downgrades, reader visibility and client views. |
-| [Staging](internal/staging/README.md) | Staged data files and sidecars, checkpoints, startup recovery and quarantine. |
-| [Diagnostics API](inspect/README.md) | The read-only JSON API: resources, typed ids, snapshot consistency, store-only mode and the store report. |
+| [Staging](internal/staging/README.md) | The staging directory's layout and server identity, staged data files and sidecars, checkpoints, startup recovery and quarantine. |
+| [Client records](internal/clientrecords/records.go) | The client record format and its transitions, in the package documentation. |
+| [Diagnostics API](inspect/README.md) | The read-only JSON API: resources, client records, typed ids and snapshot consistency. |
 | [Testing](test/README.md) | Test suites, prerequisites, commands and coverage limits. |
 
 ## Run
@@ -53,12 +61,13 @@ Mounts that Samba or another client reopens without a path walk also need
 Read [Deployment](DEPLOYMENT.md) before choosing the staging disk or a
 server replacement procedure.
 
-Omitting `-staging` selects the server's
-[read-only mode](DEPLOYMENT.md#read-only-servers). `-root DIR` selects a
-local test backend instead of `-registry`; exactly one is required.
-`-v` enables request logging. `-status-addr` serves a read-only JSON
-[diagnostics API](inspect/README.md); `-store-only` serves only that
-API, without the NFS server. `-influx-db-origin`, `-influx-db-org`,
+`-staging DIR` is required; it is the server, so keep it on a persistent
+disk. `-root DIR` selects a local test backend
+instead of `-registry`; exactly one is required. The local backend keeps
+its transient and replaced files in `DIR.nfsd`, next to the exported tree
+and on its filesystem, so `DIR` cannot be a mount point. `-v` enables request
+logging. `-status-addr` serves a read-only JSON
+[diagnostics API](inspect/README.md). `-influx-db-origin`, `-influx-db-org`,
 `-influx-db-bucket` and `-filesystem` push [metrics](DEPLOYMENT.md#metrics).
 `./nfsd -h` lists the other options.
 
@@ -73,7 +82,7 @@ Linux mounts should still request `vers=4.1`.
 Sessions and their reply caches can survive a restart of the daemon on the
 same staging disk. Restoration is conditional and is not promised after a
 host crash; see [session restoration](internal/server/README.md#session-restoration).
-Sessions do not move between daemons. Byte-range locking, share-deny
+Byte-range locking, share-deny
 enforcement, delegations, pNFS, hard links, named attributes and
 special files are unsupported. There is no protocol reclaim grace period.
 Ownership and permissions are synthetic. This is not a general-purpose

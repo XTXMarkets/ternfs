@@ -15,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
@@ -33,10 +32,7 @@ func exerciseVisibleCreation(t *testing.T, addr, name string, reverse bool) {
 	defer otherConn.Close()
 	xid := uint32(1)
 	clientID := setupClient(t, conn, &xid)
-	otherID, confirm := requestClientID(t, otherConn, &xid, "other-"+name, [8]byte{2})
-	if status := confirmClientID(t, otherConn, &xid, otherID, confirm); status != nfs4.NFS4_OK {
-		t.Fatal(nfs4.Nfsstat4Name(status))
-	}
+	otherID := setupClientAs(t, otherConn, &xid, "other-"+name, [8]byte{2})
 	size := uint64(5)
 	creator, creatorFH := openCreateFileWithSize(t, conn, &xid, clientID, name, &size)
 	emptyFH := lookupFH(t, otherConn, &xid, name)
@@ -97,10 +93,7 @@ func exerciseVisibleCreation(t *testing.T, addr, name string, reverse bool) {
 	}
 	viewer := dial(t, addr)
 	defer viewer.Close()
-	viewerID, viewerConfirm := requestClientID(t, viewer, &xid, "viewer-"+name, [8]byte{3})
-	if status := confirmClientID(t, viewer, &xid, viewerID, viewerConfirm); status != nfs4.NFS4_OK {
-		t.Fatal(nfs4.Nfsstat4Name(status))
-	}
+	setupClientAs(t, viewer, &xid, "viewer-"+name, [8]byte{3})
 	closeFile(t, firstConn, &xid, emptyFH, creator)
 	check(viewer, lookupFH(t, viewer, &xid, name), firstWant)
 	check(viewer, emptyFH, "")
@@ -192,9 +185,8 @@ func TestAbandonedCreationKeepsEmptyVersion(t *testing.T) {
 	state, fh := openCreateFile(t, conn, &xid, clientID, "abandoned")
 	baseFH := lookupFH(t, conn, &xid, "abandoned")
 	writeFileAt(t, conn, &xid, fh, state, 0, []byte("unpublished"))
-	srv.waitForClientGC()
-	now := time.Now().Add(2 * clientstore.LeaseTime)
-	srv.clients.SetClock(func() time.Time { return now })
+	now := time.Now().Add(2 * leaseTime)
+	srv.SetClock(func() time.Time { return now })
 	srv.runLeaseSweep()
 	if staging.TargetBusy(srv.stagingStore, srv.fs.RootID(), "abandoned") {
 		t.Fatal("expired creator still holds staging")
@@ -275,21 +267,11 @@ type visibilityFailureVFS struct {
 }
 
 func (fs *visibilityFailureVFS) ConstructFile(dirID vfs.InodeID) (vfs.InodeID, vfs.Cookie, error) {
-	if clientStoreDir(fs.LocalTernVFS, dirID) {
-		return fs.LocalTernVFS.ConstructFile(dirID)
-	}
 	fs.constructs++
 	if fs.failure == "staging" && fs.constructs == 2 {
 		return 0, vfs.Cookie{}, errors.New("injected staging construction failure")
 	}
 	return fs.LocalTernVFS.ConstructFile(dirID)
-}
-
-func (fs *visibilityFailureVFS) CreateFile(dirID vfs.InodeID, name string, data io.Reader) (vfs.InodeID, error) {
-	if fs.failure == "marker" && clientstore.IsActiveOpenName(name) {
-		return 0, errors.New("injected open marker failure")
-	}
-	return fs.LocalTernVFS.CreateFile(dirID, name, data)
 }
 
 func (fs *visibilityFailureVFS) LinkFile(id vfs.InodeID, cookie vfs.Cookie, dirID vfs.InodeID, name string, data io.Reader) error {
@@ -300,7 +282,7 @@ func (fs *visibilityFailureVFS) LinkFile(id vfs.InodeID, cookie vfs.Cookie, dirI
 }
 
 func TestFailedCreationDoesNotPublishEmptyVersion(t *testing.T) {
-	for _, failure := range []string{"staging", "marker", "link"} {
+	for _, failure := range []string{"staging", "link"} {
 		t.Run(failure, func(t *testing.T) {
 			fs := &visibilityFailureVFS{
 				LocalTernVFS: vfs.NewLocalTernVFS(t.TempDir()),
@@ -320,7 +302,6 @@ func TestFailedCreationDoesNotPublishEmptyVersion(t *testing.T) {
 			defer conn.Close()
 			xid := uint32(1)
 			clientID := setupClient(t, conn, &xid)
-			srv.waitForClientGC()
 			status, _, _, _ := openFileForOwner(
 				t, conn, &xid, clientID, "creator", "failed",
 				nfs4.OPEN4_SHARE_ACCESS_BOTH, true, false,
@@ -334,9 +315,6 @@ func TestFailedCreationDoesNotPublishEmptyVersion(t *testing.T) {
 			transients := fs.TransientCount()
 			if len(store.Entries()) != 0 || transients != 0 {
 				t.Fatal("failed creation leaked staging or transient inodes")
-			}
-			if count := activeOpenMarkerCount(t, srv, clientID); count != 0 {
-				t.Fatalf("failed creation left %d open markers", count)
 			}
 		})
 	}

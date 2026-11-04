@@ -5,13 +5,10 @@
 package server
 
 import (
-	"io"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
@@ -103,7 +100,7 @@ func TestCreateSessionOutcomeTable(t *testing.T) {
 	}
 	unchanged("reservation failure")
 	srv.sessions.mu.Lock()
-	srv.sessions.recordLimit = clientstore.MaxSessionRecords
+	srv.sessions.recordLimit = maxSessionRecords
 	srv.sessions.mu.Unlock()
 
 	// Another principal on an unconfirmed record: CLID_INUSE, cached. Its
@@ -140,30 +137,6 @@ func TestCreateSessionOutcomeTable(t *testing.T) {
 	}
 	if got := identityExchange(t, srv, 1, "client", [8]byte{1}, false); got.clientID != wire || got.seq != 4 {
 		t.Fatalf("warm EXCHANGE_ID %+v", got)
-	}
-}
-
-// A destroyed session's cached creation result still replays, and the
-// session stays destroyed.
-func TestCreateSessionReplayOfDestroyedSession(t *testing.T) {
-	srv := identityServer(t, vfs.NewLocalTernVFS(t.TempDir()))
-	wire := identityExchange(t, srv, 1, "client", [8]byte{1}, false).clientID
-	status, id := createResult(t, srv, 1, wire, 1)
-	if status != nfs4.NFS4_OK || !srv.sessions.destroySession(id) {
-		t.Fatalf("CREATE_SESSION %s", nfs4.Nfsstat4Name(status))
-	}
-	conn := &rpcConnection{}
-	res := identityCallOn(t, srv, 1, conn, createSessionBody(wire, 1))
-	it := res.Resarray()
-	if res.Status() != nfs4.NFS4_OK || !it.Next() ||
-		readSessionID(it.Resarray().Value().AsCREATESESSION4resEntry().Value().AsCREATESESSION4resok().CsrSessionid()) != id {
-		t.Fatalf("replay %s", nfs4.Nfsstat4Name(res.Status()))
-	}
-	if srv.sessions.lookup(id) != nil || conn.associated(id) {
-		t.Fatal("replay rebuilt or associated the destroyed session")
-	}
-	if got := sequenceStatusForTest(t, srv, id); got != nfs4.NFS4ERR_BADSESSION {
-		t.Fatalf("SEQUENCE on the destroyed session %s", nfs4.Nfsstat4Name(got))
 	}
 }
 
@@ -211,16 +184,13 @@ func TestCreateSessionSequenceWraps(t *testing.T) {
 // sequence replays, any other is misordered and DESTROY_CLIENTID is busy.
 // Exactly one session results.
 func TestCreateSessionConcurrentSameSequence(t *testing.T) {
-	fs := &confirmedLookupGateVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
-		entered: make(chan struct{}), release: make(chan struct{})}
-	srv := identityServer(t, fs)
-	defer testutil.CloseSignal(fs.release)
+	srv := identityServer(t, vfs.NewLocalTernVFS(t.TempDir()))
+	fs := gateCreations(t, srv)
 	wire := identityExchange(t, srv, 1, "client", [8]byte{1}, false).clientID
 	status, previous := createResult(t, srv, 1, wire, 1)
 	if status != nfs4.NFS4_OK {
 		t.Fatal(nfs4.Nfsstat4Name(status))
 	}
-	srv.waitForClientGC()
 	fs.armed.Store(true)
 	type result struct {
 		status uint32
@@ -231,7 +201,7 @@ func TestCreateSessionConcurrentSameSequence(t *testing.T) {
 		status, id := createResult(t, srv, 1, wire, 2)
 		running <- result{status, id}
 	}()
-	testutil.AwaitSignal(t, fs.entered, "CREATE_SESSION 2 checking the store")
+	testutil.AwaitSignal(t, fs.entered, "CREATE_SESSION 2 in progress")
 	if got, _ := createResult(t, srv, 1, wire, 2); got != nfs4.NFS4ERR_DELAY {
 		t.Fatalf("same sequence while running %s", nfs4.Nfsstat4Name(got))
 	}
@@ -260,21 +230,19 @@ func TestCreateSessionConcurrentSameSequence(t *testing.T) {
 // An unconfirmed record whose CREATE_SESSION is in progress is not
 // reclaimed at the record cap.
 func TestCreateSessionInProgressRecordNotReclaimed(t *testing.T) {
-	local := vfs.NewLocalTernVFS(t.TempDir())
-	first := identityServer(t, local)
+	local, dir := vfs.NewLocalTernVFS(t.TempDir()), t.TempDir()
+	first := identityServerAt(t, local, dir)
 	p := identityExchange(t, first, 1, "client", [8]byte{1}, false)
 	if got, _ := createResult(t, first, 1, p.clientID, 1); got != nfs4.NFS4_OK {
 		t.Fatal(nfs4.Nfsstat4Name(got))
 	}
-	fs := &confirmedLookupGateVFS{TernVFS: local, entered: make(chan struct{}), release: make(chan struct{})}
-	srv := identityServer(t, fs)
-	defer testutil.CloseSignal(fs.release)
+	srv := identityServerAt(t, local, dir)
+	fs := gateCreations(t, srv)
 	var clock atomic.Int64
 	start := time.Now()
 	clock.Store(start.UnixNano())
-	srv.clients.SetClock(func() time.Time { return time.Unix(0, clock.Load()) })
+	srv.SetClock(func() time.Time { return time.Unix(0, clock.Load()) })
 	adopted := identityExchange(t, srv, 1, "client", [8]byte{1}, false)
-	srv.waitForClientGC()
 	fs.armed.Store(true)
 	running := make(chan uint32, 1)
 	go func() {
@@ -282,7 +250,7 @@ func TestCreateSessionInProgressRecordNotReclaimed(t *testing.T) {
 		running <- status
 	}()
 	testutil.AwaitSignal(t, fs.entered, "adopted confirmation")
-	clock.Store(start.Add(clientstore.LeaseTime).UnixNano())
+	clock.Store(start.Add(leaseTime).UnixNano())
 	srv.sessions.wireLimit = 1
 	if got := identityExchange(t, srv, 1, "other", [8]byte{1}, false); got.status != nfs4.NFS4ERR_DELAY {
 		t.Fatalf("EXCHANGE_ID at the cap %s", nfs4.Nfsstat4Name(got.status))
@@ -293,131 +261,32 @@ func TestCreateSessionInProgressRecordNotReclaimed(t *testing.T) {
 	}
 }
 
-// leaseRenameFailureVFS fails the publication renames into lease slots
-// while armed.
-type leaseRenameFailureVFS struct {
-	vfs.TernVFS
-	armed atomic.Bool
-}
-
-func (fs *leaseRenameFailureVFS) RenameEdge(src vfs.InodeID, name string, edge vfs.Edge, dst vfs.InodeID, newName string) error {
-	if fs.armed.Load() && strings.HasPrefix(newName, clientstore.LeasePrefix) {
-		return clientstore.ErrInjectedLookup
-	}
-	return fs.TernVFS.RenameEdge(src, name, edge, dst, newName)
-}
-
-// A committed CREATE_SESSION starts bootstrap, the client's first durable
-// publication, and never becomes an error
-// (../clientstore/README.md#bootstrap). Until the
-// publication SEQUENCE gets DELAY; a store that proves the client expired
-// makes the session unusable while its cached result still replays.
-func TestCreateSessionBootstrap(t *testing.T) {
-	t.Run("publication failing", func(t *testing.T) {
-		fs := &leaseRenameFailureVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
-		srv := identityServer(t, fs)
-		wire := identityExchange(t, srv, 1, "client", [8]byte{1}, false).clientID
-		incarnation := incarnationForTest(t, srv, wire)
-		fs.armed.Store(true)
-		status, id := createResult(t, srv, 1, wire, 1)
-		if status != nfs4.NFS4_OK || srv.sessions.lookup(id) == nil {
-			t.Fatalf("CREATE_SESSION with failing publication %s", nfs4.Nfsstat4Name(status))
-		}
-		leasePassForTest(t, srv, incarnation)
-		if got := sequenceStatusForTest(t, srv, id); got != nfs4.NFS4ERR_DELAY {
-			t.Fatalf("SEQUENCE before the first publication %s", nfs4.Nfsstat4Name(got))
-		}
-		if got, replay := createResult(t, srv, 1, wire, 1); got != nfs4.NFS4_OK || replay != id {
-			t.Fatalf("replay %s", nfs4.Nfsstat4Name(got))
-		}
-		// The store recovers: the attempt is fenced, then published.
-		fs.armed.Store(false)
-		leasePassForTest(t, srv, incarnation)
-		awaitLeaseProven(t, srv, incarnation)
-		if got := sequenceStatusForTest(t, srv, id); got != nfs4.NFS4_OK {
-			t.Fatalf("SEQUENCE after the publication %s", nfs4.Nfsstat4Name(got))
-		}
-	})
-	t.Run("expired", func(t *testing.T) {
-		local := vfs.NewLocalTernVFS(t.TempDir())
-		srv := identityServer(t, local)
-		wire := identityExchange(t, srv, 1, "client", [8]byte{1}, false).clientID
-		incarnation := vfs.InodeID(incarnationForTest(t, srv, wire))
-		// Another process expired the client; the store check still passes,
-		// so the creation commits and bootstrap then finds the marker.
-		srv.waitForClientGC()
-		if _, err := local.CreateFile(incarnation, clientstore.ExpiredName, nil); err != nil {
-			t.Fatal(err)
-		}
-		status, id := createResult(t, srv, 1, wire, 1)
-		if status != nfs4.NFS4_OK {
-			t.Fatalf("committed CREATE_SESSION became %s", nfs4.Nfsstat4Name(status))
-		}
-		leasePassForTest(t, srv, uint64(incarnation))
-		if srv.sessions.lookup(id) != nil {
-			t.Fatal("expired client's session stayed usable")
-		}
-		if got := sequenceStatusForTest(t, srv, id); got != nfs4.NFS4ERR_BADSESSION {
-			t.Fatalf("SEQUENCE %s", nfs4.Nfsstat4Name(got))
-		}
-		if got, replay := createResult(t, srv, 1, wire, 1); got != nfs4.NFS4_OK || replay != id {
-			t.Fatalf("committed result lost: %s", nfs4.Nfsstat4Name(got))
-		}
-	})
-	t.Run("record credit", func(t *testing.T) {
-		srv := identityServer(t, vfs.NewLocalTernVFS(t.TempDir()))
-		wire := identityExchange(t, srv, 1, "client", [8]byte{1}, false).clientID
-		srv.clients.RefreshMu.Lock()
-		srv.clients.RefresherLimit = len(srv.clients.Refreshers)
-		srv.clients.RefreshMu.Unlock()
-		if got, _ := createResult(t, srv, 1, wire, 1); got != nfs4.NFS4ERR_DELAY {
-			t.Fatalf("CREATE_SESSION without a refresher credit %s", nfs4.Nfsstat4Name(got))
-		}
-		if seq, cached, busy := creationSlot(srv, wire); seq != 0 || cached || busy {
-			t.Fatalf("refused creation changed the slot: %d %t %t", seq, cached, busy)
-		}
-	})
-}
-
 // A replay of a cached outcome creates nothing, so it reserves no session
-// record or serial: it works with the budget saturated. Here the sweeper
-// commits a first confirmation (no predecessor) with the record limit 1
-// before the client's retry; the retry returns exactly that session, and
-// nothing else is allocated. A destroyed session's replay at the limit still
-// returns its result without rebuilding it.
+// record or serial: it works with the budget saturated. Here a first
+// confirmation commits with the record limit 1 and its reply is lost; the
+// client's retry returns exactly that session, and nothing else is
+// allocated. A destroyed session's replay at the limit still returns its
+// result without rebuilding it.
 func TestCachedReplayAtRecordLimit(t *testing.T) {
-	fs := clientstore.NewConfirmFaultVFS(t)
-	srv := identityServer(t, fs)
+	srv := identityServer(t, vfs.NewLocalTernVFS(t.TempDir()))
 	ss := srv.sessions
 	wire := identityExchange(t, srv, 1, "client", [8]byte{1}, false).clientID
 	ss.mu.Lock()
 	ss.recordLimit = 1
 	ss.mu.Unlock()
-	fs.Set(clientstore.WriteD, clientstore.FaultAppliedFail, nil)
-	fs.Mu.Lock()
-	fs.Armed = true
-	fs.Mu.Unlock()
-	if got, _ := createResult(t, srv, 1, wire, 1); got != nfs4.NFS4ERR_DELAY {
-		t.Fatalf("CREATE_SESSION with an unfenceable D %s", nfs4.Nfsstat4Name(got))
+	status, committed := createResult(t, srv, 1, wire, 1)
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("first CREATE_SESSION %s", nfs4.Nfsstat4Name(status))
 	}
-	fs.Set(clientstore.WriteD, clientstore.FaultNone, nil)
-	srv.settleConfirmations()
-	var committed SessionID
-	ss.mu.Lock()
-	for id := range ss.sessions {
-		committed = id
-	}
-	busy := ss.wireRecordLocked(wire).csBusy
-	ss.mu.Unlock()
-	if a := ss.accounting(); a.Sessions != 1 || a.Records != 1 || a.PendingSessions != 0 || busy {
-		t.Fatalf("sweeper commit %+v, slot busy %t", a, busy)
+	if a := ss.accounting(); a.Sessions != 1 || a.Records != 1 || a.PendingSessions != 0 {
+		t.Fatalf("first commit %+v", a)
 	}
 	conn := &rpcConnection{}
 	res := identityCallOn(t, srv, 1, conn, createSessionBody(wire, 1))
 	it := res.Resarray()
 	if res.Status() != nfs4.NFS4_OK || !it.Next() ||
 		readSessionID(it.Resarray().Value().AsCREATESESSION4resEntry().Value().AsCREATESESSION4resok().CsrSessionid()) != committed {
-		t.Fatalf("retry after the sweeper's commit %s", nfs4.Nfsstat4Name(res.Status()))
+		t.Fatalf("retry after the lost reply %s", nfs4.Nfsstat4Name(res.Status()))
 	}
 	if !conn.associated(committed) {
 		t.Fatal("replay not associated")
@@ -430,8 +299,8 @@ func TestCachedReplayAtRecordLimit(t *testing.T) {
 		t.Fatalf("new CREATE_SESSION at the limit %s", nfs4.Nfsstat4Name(got))
 	}
 	// A destroyed session's replay returns its result and rebuilds nothing.
-	if !ss.destroySession(committed) {
-		t.Fatal("DESTROY_SESSION")
+	if !ss.destroySession(committed) || ss.destroySession(committed) {
+		t.Fatal("DESTROY_SESSION, or a second one found the session")
 	}
 	ss.mu.Lock()
 	ss.recordLimit = ss.records + ss.pendingSessions
@@ -487,10 +356,8 @@ func TestCachedReplayAtSerialExhaustion(t *testing.T) {
 // a creator that started, or finished, after the earlier checks is never
 // destroyed.
 func TestDestroyClientIDFinalCheckSeesCreation(t *testing.T) {
-	fs := &confirmedLookupGateVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
-		entered: make(chan struct{}), release: make(chan struct{})}
-	srv := identityServer(t, fs)
-	defer testutil.CloseSignal(fs.release)
+	srv := identityServer(t, vfs.NewLocalTernVFS(t.TempDir()))
+	fs := gateCreations(t, srv)
 	ss := srv.sessions
 	wire := identityExchange(t, srv, 1, "client", [8]byte{1}, false).clientID
 	status, first := createResult(t, srv, 1, wire, 1)
@@ -508,14 +375,13 @@ func TestDestroyClientIDFinalCheckSeesCreation(t *testing.T) {
 	}
 
 	// A creator takes the slot before the destruction's final step.
-	srv.waitForClientGC()
 	fs.armed.Store(true)
 	created := make(chan uint32, 1)
 	go func() {
 		status, _ := createResult(t, srv, 1, wire, 2)
 		created <- status
 	}()
-	testutil.AwaitSignal(t, fs.entered, "CREATE_SESSION in the store")
+	testutil.AwaitSignal(t, fs.entered, "CREATE_SESSION in progress")
 	if got := ss.destroyClientRecord(c); got != nfs4.NFS4ERR_CLIENTID_BUSY {
 		t.Fatalf("destruction while creating %s", nfs4.Nfsstat4Name(got))
 	}
@@ -529,53 +395,6 @@ func TestDestroyClientIDFinalCheckSeesCreation(t *testing.T) {
 	}
 	if got := identityExchange(t, srv, 1, "client", [8]byte{1}, false); got.clientID != wire || !got.confirmed {
 		t.Fatalf("record destroyed: %+v", got)
-	}
-}
-
-// leaseLinkPanicVFS panics in the LINK of lease temps while armed.
-type leaseLinkPanicVFS struct {
-	vfs.TernVFS
-	armed atomic.Bool
-}
-
-func (fs *leaseLinkPanicVFS) LinkFile(id vfs.InodeID, cookie vfs.Cookie, dir vfs.InodeID, name string, data io.Reader) error {
-	if strings.HasPrefix(name, clientstore.TempPrefix) && fs.armed.CompareAndSwap(true, false) {
-		panic("injected publication panic")
-	}
-	return fs.TernVFS.LinkFile(id, cookie, dir, name, data)
-}
-
-// A panic in the bootstrap publication is contained in the refresher: the
-// committed OK stands, in the reply and its replay, every hold and charge is
-// released, and a later pass publishes.
-func TestCreateSessionBootstrapPanicKeepsOK(t *testing.T) {
-	fs := &leaseLinkPanicVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
-	srv := identityServer(t, fs)
-	ss := srv.sessions
-	wire := identityExchange(t, srv, 1, "client", [8]byte{1}, false).clientID
-	incarnation := incarnationForTest(t, srv, wire)
-	fs.armed.Store(true)
-	status, id := createResult(t, srv, 1, wire, 1)
-	if status != nfs4.NFS4_OK || ss.lookup(id) == nil {
-		t.Fatalf("CREATE_SESSION with a publication panic %s", nfs4.Nfsstat4Name(status))
-	}
-	leasePassForTest(t, srv, incarnation)
-	if fs.armed.Load() {
-		t.Fatal("publication did not reach the injected panic")
-	}
-	if got, replay := createResult(t, srv, 1, wire, 1); got != nfs4.NFS4_OK || replay != id {
-		t.Fatalf("replay after a publication panic %s", nfs4.Nfsstat4Name(got))
-	}
-	// The creation's group hold is gone.
-	if !ss.closeForReplacement(incarnation) {
-		t.Fatal("publication panic left the creation in progress")
-	}
-	ss.reopen(incarnation)
-	leasePassForTest(t, srv, incarnation)
-	awaitLeaseProven(t, srv, incarnation)
-	ss.destroySession(id)
-	if a := ss.accounting(); a.Records != 0 || a.Sessions != 0 || a.ActiveRequests != 0 || a.ProvisionalRequests != 0 {
-		t.Fatalf("publication panic leaked %+v", a)
 	}
 }
 

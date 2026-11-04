@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/inspect"
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -46,8 +45,8 @@ func newDiagnosticsFixture(t *testing.T) *diagnosticsFixture {
 	return f
 }
 
-// /v1/incarnations joins the partial records of the session store, the
-// client store and the open state into one record per incarnation.
+// /v1/incarnations joins the partial records of the session store and the
+// open state into one record per incarnation.
 func TestDiagnosticsIncarnationJoinsStores(t *testing.T) {
 	f := newDiagnosticsFixture(t)
 	incs, err := f.srv.Incarnations(inspect.IncarnationFilter{ID: f.incarnID})
@@ -61,11 +60,8 @@ func TestDiagnosticsIncarnationJoinsStores(t *testing.T) {
 	if inc.Group == nil || inc.WireClientID != wireText(f.wire) || len(inc.Sessions) != 1 || inc.Sessions[0] != sessionText(f.session) {
 		t.Fatalf("session store part = %+v", inc)
 	}
-	if inc.Refresher == nil || inc.Refresher.State != inspect.LeaseLive || inc.Cached == nil {
-		t.Fatalf("client store part = %+v", inc)
-	}
-	if inc.Opens != 1 || inc.Cached.Opens != 1 {
-		t.Fatalf("opens = %d cached = %+v", inc.Opens, inc.Cached)
+	if inc.Opens != 1 {
+		t.Fatalf("opens = %d", inc.Opens)
 	}
 }
 
@@ -143,7 +139,7 @@ func TestDiagnosticsLookup(t *testing.T) {
 	if r := resolve(t, sessionText(f.session), inspect.KindSession); !r.Known || r.State != "live" || r.Incarnation != inc {
 		t.Fatalf("session = %+v", r)
 	}
-	// An identity hash needs no server state; it points at the store report.
+	// An identity hash needs no server state; it points at the client records.
 	if r := resolve(t, inspect.ID(inspect.KindIdentityHash, make([]byte, 32)), inspect.KindIdentityHash); r.Known || len(r.Links) != 1 {
 		t.Fatalf("identity hash = %+v", r)
 	}
@@ -159,32 +155,5 @@ func TestDiagnosticsLookup(t *testing.T) {
 	unknown := stateidText(diagnosticStateid(f.srv.opens.Epoch, 0xbeef))
 	if r := resolve(t, unknown, inspect.KindStateid); r.Known || r.State != "" || r.Incomplete || !*r.IssuedByThisProcess {
 		t.Fatalf("unknown stateid = %+v", r)
-	}
-}
-
-// A confirmation whose attempt a settle holds is reported locked rather
-// than waited for, and in full once the settle ends.
-func TestDiagnosticsSkipsLockedConfirmation(t *testing.T) {
-	f := newDiagnosticsFixture(t)
-	attempt := &clientstore.ConfirmAttempt{}
-	attempt.LockForTest()
-	c := &confirmation{identity: 7, owner: "o", n: 11, p: 5, attempt: attempt, applying: true}
-	f.srv.confirmMu.Lock()
-	f.srv.confirmingIdentity[7] = c
-	f.srv.confirmMu.Unlock()
-	defer func() {
-		f.srv.confirmMu.Lock()
-		delete(f.srv.confirmingIdentity, 7)
-		f.srv.confirmMu.Unlock()
-	}()
-	confs, _ := f.srv.Confirmations()
-	if len(confs.Records) != 1 || confs.Records[0].Attempt == nil || !confs.Records[0].Attempt.Locked || confs.Records[0].Predecessor != incarnationText(5) {
-		attempt.UnlockForTest()
-		t.Fatalf("locked confirmation = %+v", confs.Records)
-	}
-	attempt.UnlockForTest()
-	confs, _ = f.srv.Confirmations()
-	if a := confs.Records[0].Attempt; a.Locked || a.Result != inspect.ConfirmUnresolved || len(a.Writes) != 0 {
-		t.Fatalf("attempt = %+v", a)
 	}
 }

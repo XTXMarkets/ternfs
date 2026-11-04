@@ -95,17 +95,6 @@ func (f *libnfsFile) Sync() error {
 	return nil
 }
 
-func (f *libnfsFile) SyncSize() (uint64, error) {
-	if err := f.Sync(); err != nil {
-		return 0, err
-	}
-	var st C.struct_nfs_stat_64
-	if C.nfs_fstat64(f.client.nfs, f.fh, &st) != 0 {
-		return 0, fmt.Errorf("nfs_fstat64: %s", C.GoString(C.nfs_get_error(f.client.nfs)))
-	}
-	return uint64(st.nfs_size), nil
-}
-
 func libnfsConnectAt(host string, port int, root, identity string) (*libnfsClient, error) {
 	nfs := C.nfs_init_context()
 	if nfs == nil {
@@ -240,20 +229,4 @@ func (c *libnfsClient) Readlink(path string) (string, error) {
 		}
 	}
 	return string(buf), nil
-}
-
-func (c *libnfsClient) Lstat(path string) (libnfsStat, error) {
-	cpath := C.CString(path)
-	defer C.free(unsafe.Pointer(cpath))
-	var st C.struct_nfs_stat_64
-	ret := C.nfs_lstat64(c.nfs, cpath, &st)
-	if ret != 0 {
-		msg := C.GoString(C.nfs_get_error(c.nfs))
-		return libnfsStat{}, fmt.Errorf("nfs_lstat64(%q): %s", path, msg)
-	}
-	return libnfsStat{
-		Mode:  uint64(st.nfs_mode),
-		Size:  uint64(st.nfs_size),
-		Nlink: uint64(st.nfs_nlink),
-	}, nil
 }

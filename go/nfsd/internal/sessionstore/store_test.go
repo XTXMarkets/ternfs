@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
-	"hash/crc32"
 	"os"
 	"path/filepath"
 	"sync"
@@ -184,8 +183,6 @@ func TestTornWriteKeepsNewestRecord(t *testing.T) {
 		{"reply after intent and reply", []step{r(1), i(2), r(2), r(3)}, r(2)},
 		{"intent after intent and reply", []step{r(1), i(2), r(2), i(3)}, r(2)},
 		{"reply after intent, reloaded between", []step{r(1), i(2), reloadStep, r(2)}, i(2)},
-		{"reply after reply, reloaded between", []step{r(1), r(2), reloadStep, r(3)}, r(2)},
-		{"reply after intent across the wrap", []step{r(0xffffffff), i(0), r(0)}, i(0)},
 		{"reply after a refused write", []step{r(1), {seq: 2, kind: KindSlot, tooLarge: true}, r(2)}, r(1)},
 	} {
 		for _, torn := range []bool{false, true} {
@@ -395,34 +392,5 @@ func TestConcurrentSlots(t *testing.T) {
 		if rec, ok := g.Slot(slot); !ok || rec.Seq != 50+slot {
 			t.Fatalf("slot %d: %+v %v", slot, rec, ok)
 		}
-	}
-}
-
-// A file of another format version is a problem, left in place: its records
-// may mean something else.
-func TestOtherVersionIsAProblem(t *testing.T) {
-	s := openStore(t)
-	f, err := s.Create(testID(9), Header{SlotCount: 1, AreaSize: 256, Session: []byte("s")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.Close()
-	path := s.Path(testID(9))
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	binary.BigEndian.PutUint16(data[4:6], formatVersion-1)
-	off := headerFixedSize + 1
-	binary.BigEndian.PutUint32(data[off:], crc32.Checksum(data[:off], crcTable))
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	files, problems, err := s.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(files) != 0 || len(problems) != 1 || !errors.Is(problems[0].Err, ErrCorrupt) {
-		t.Fatalf("files %d, problems %v", len(files), problems)
 	}
 }

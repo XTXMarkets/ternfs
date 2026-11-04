@@ -14,32 +14,20 @@
 package inspect
 
 import (
-	"errors"
 	"time"
 )
 
-// ErrUnavailable is returned by a Source that has no running server, which
-// is the store-only mode: the durable store can be read but there is no
-// in-memory state.
-var ErrUnavailable = errors.New("not available: no NFS server is running in this process")
-
-// Mode values for Envelope.Mode.
-const (
-	ModeServing   = "serving"
-	ModeStoreOnly = "store-only"
-)
-
-// Envelope is carried by every response. The three epochs identify the
-// process: nfsd_id names its lease and confirming slots in the client
-// store, stateid_epoch is the first four bytes of every stateid and session
-// id it issued, and wire_epoch is the high 32 bits of every wire clientid.
-// wire_epoch is zero until the NFS endpoint is bound.
+// Envelope is carried by every response. server_id identifies the server:
+// the staging directory's server-id, from which the server owner is derived.
+// The two epochs identify the process: stateid_epoch is the first four bytes
+// of every stateid and session id it issued, and wire_epoch is the high 32
+// bits of every wire clientid. wire_epoch is zero until the NFS endpoint is
+// bound.
 type Envelope struct {
 	Now          time.Time `json:"now"`
-	NfsdID       string    `json:"nfsd_id"`
+	ServerID     string    `json:"server_id"`
 	StateidEpoch string    `json:"stateid_epoch"`
 	WireEpoch    uint32    `json:"wire_epoch"`
-	Mode         string    `json:"mode"`
 }
 
 // Source is what the server exposes to the API. Each method takes a
@@ -53,7 +41,6 @@ type Source interface {
 	Sessions(SessionFilter) (Sessions, error)
 	Connections(ConnectionFilter) (Connections, error)
 	Opens(OpenFilter) (Opens, error)
-	Confirmations() (Confirmations, error)
 	Staging(StagingFilter) (Staging, error)
 
 	// Resolvers for /v1/lookup, one per kind the server has state for. Each
@@ -77,7 +64,6 @@ type Status struct {
 	ForegroundReads    int64      `json:"foreground_reads"`
 	HydrationsInFlight int        `json:"hydrations_in_flight"`
 	StrayCallbacks     uint64     `json:"stray_callback_replies"`
-	ClientGC           ClientGC   `json:"client_gc"`
 	Connections        int        `json:"connections"`
 }
 
@@ -113,30 +99,38 @@ type Wire struct {
 	Limit       int    `json:"record_limit"`
 }
 
-type ClientGC struct {
-	Pending int  `json:"pending"`
-	Recheck int  `json:"recheck"`
-	Running bool `json:"running"`
-}
-
-// ClientFilter selects wire client records. Zero values select everything;
-// the HTTP layer rejects an explicit zero id.
+// ClientFilter selects client records and wire client records. Zero values
+// select everything; the HTTP layer rejects an explicit zero id.
 type ClientFilter struct {
 	WireClientID uint64
 	Incarnation  uint64
 	OwnerHex     string
 }
 
-// Clients lists the EXCHANGE_ID records this process has issued.
+// Clients lists the client records in the staging directory and the
+// EXCHANGE_ID records this process has issued.
 type Clients struct {
 	Envelope
-	Records   []Client `json:"records"`
-	Owners    []Owner  `json:"owners"`
-	WireLimit int      `json:"wire_limit"`
+	ClientRecords []ClientRecord `json:"client_records"`
+	Records       []Client       `json:"records"`
+	Owners        []Owner        `json:"owners"`
+	WireLimit     int            `json:"wire_limit"`
+}
+
+// ClientRecord is one client identity's record in the staging directory:
+// its confirmed incarnation, boot verifier and principal.
+type ClientRecord struct {
+	IdentityHash string    `json:"identity_hash"`
+	OwnerHex     string    `json:"owner_hex"`
+	Principal    Principal `json:"principal"`
+	Confirmed    string    `json:"confirmed"`
+	Verifier     string    `json:"verifier"`
+	ConfirmedAt  time.Time `json:"confirmed_at"`
+	Links        []string  `json:"links"`
 }
 
 // Client is one wire clientid: the value EXCHANGE_ID returned. It is
-// process-local and never stored; incarnation is the durable client it is
+// process-local and never stored; incarnation is the client it is
 // bound to, which owns sessions and state.
 type Client struct {
 	WireClientID string    `json:"wire_clientid"`
@@ -146,12 +140,11 @@ type Client struct {
 	Principal    Principal `json:"principal"`
 	CreatedAt    time.Time `json:"created_at"`
 	// State: unconfirmed until the first CREATE_SESSION; confirmed after
-	// it; adopted when the incarnation was already durably confirmed when
-	// this process first saw it; retired once dropped.
+	// it; adopted when EXCHANGE_ID found the incarnation already confirmed
+	// by its client record; retired once dropped.
 	State        string       `json:"state"`
 	HasConfirm   bool         `json:"has_confirm"`
 	CreationSlot CreationSlot `json:"creation_slot"`
-	Confirming   bool         `json:"confirming"`
 	Links        []string     `json:"links"`
 }
 
@@ -191,10 +184,8 @@ type IncarnationFilter struct {
 	ID uint64
 }
 
-// Incarnations joins everything this process keeps per durable client
-// incarnation: the session group with its logical lease gate, the durable
-// lease refresher record, the cached store location, confirmation
-// protection and destruction holds.
+// Incarnations joins everything this process keeps per client incarnation:
+// the session group with its logical lease gate, sessions and opens.
 type Incarnations struct {
 	Envelope
 	Records []Incarnation     `json:"records"`
@@ -202,27 +193,18 @@ type Incarnations struct {
 }
 
 type IncarnationLimits struct {
-	Refreshers     int `json:"refreshers"`
-	RefresherLimit int `json:"refresher_limit"`
-	Orphans        int `json:"orphans"`
-	OrphanLimit    int `json:"orphan_limit"`
-	Groups         int `json:"groups"`
-	GroupCredits   int `json:"group_credits"`
-	GroupLimit     int `json:"group_limit"`
+	Groups       int `json:"groups"`
+	GroupCredits int `json:"group_credits"`
+	GroupLimit   int `json:"group_limit"`
 }
 
 type Incarnation struct {
-	ID           string        `json:"incarnation"`
-	WireClientID string        `json:"wire_clientid,omitempty"`
-	Group        *Group        `json:"group,omitempty"`
-	Refresher    *Refresher    `json:"lease_refresher,omitempty"`
-	Cached       *CachedClient `json:"cached_store_location,omitempty"`
-	Sessions     []string      `json:"sessions"`
-	Opens        int           `json:"opens"`
-	Confirming   bool          `json:"confirming"`
-	DestroyHolds int           `json:"destroy_holds"`
-	PurgePending bool          `json:"purge_pending"`
-	Links        []string      `json:"links"`
+	ID           string   `json:"incarnation"`
+	WireClientID string   `json:"wire_clientid,omitempty"`
+	Group        *Group   `json:"group,omitempty"`
+	Sessions     []string `json:"sessions"`
+	Opens        int      `json:"opens"`
+	Links        []string `json:"links"`
 }
 
 // Group is the session group and logical lease gate of an incarnation.
@@ -230,20 +212,18 @@ type Incarnation struct {
 // quiet_until is in the future; the process never expires the client while
 // it is held.
 type Group struct {
-	Members            int        `json:"members"`
-	Provisional        int        `json:"provisional_requests"`
-	Active             int        `json:"active_requests"`
-	Creating           int        `json:"create_sessions_in_progress"`
-	State              string     `json:"state"`
-	QuietUntil         *time.Time `json:"quiet_until,omitempty"`
-	LeaseGate          string     `json:"lease_gate"`
-	MarkerPhase        string     `json:"expired_marker_phase"`
-	RenewedDuringCheck bool       `json:"renewed_during_check"`
-	Dropped            bool       `json:"dropped"`
-	ReclaimComplete    bool       `json:"reclaim_complete"`
+	Members         int        `json:"members"`
+	Provisional     int        `json:"provisional_requests"`
+	Active          int        `json:"active_requests"`
+	Creating        int        `json:"create_sessions_in_progress"`
+	State           string     `json:"state"`
+	QuietUntil      *time.Time `json:"quiet_until,omitempty"`
+	LeaseGate       string     `json:"lease_gate"`
+	Dropped         bool       `json:"dropped"`
+	ReclaimComplete bool       `json:"reclaim_complete"`
 }
 
-// Group states, lease gate states and marker phases.
+// Group states and lease gate states.
 const (
 	GroupOpen     = "open"
 	GroupClosing  = "closing"
@@ -252,64 +232,7 @@ const (
 	GateLive     = "live"
 	GateChecking = "checking"
 	GateExpired  = "expired"
-
-	MarkerNone      = "none"
-	MarkerDeciding  = "deciding"
-	MarkerSubmitted = "submitted"
 )
-
-// Refresher is the durable lease worker's record. proven is the lower bound
-// on the lease expiry published in the client store; a request is admitted
-// only while it is in the future.
-type Refresher struct {
-	Identity    string     `json:"identity,omitempty"`
-	State       string     `json:"state"`
-	Proven      *time.Time `json:"proven_until,omitempty"`
-	VerifiedAt  *time.Time `json:"verified_at,omitempty"`
-	LastExpiry  *time.Time `json:"last_written_expiry,omitempty"`
-	HasAttempt  bool       `json:"unsettled_rename"`
-	Orphans     []Orphan   `json:"temp_obligations"`
-	Bootstrap   bool       `json:"bootstrap"`
-	InCall      bool       `json:"in_call"`
-	Running     bool       `json:"worker_running"`
-	Verify      bool       `json:"verify_wanted"`
-	LastPass    *time.Time `json:"last_pass,omitempty"`
-	Backoff     string     `json:"backoff,omitempty"`
-	Refs        int        `json:"reservations"`
-	Finished    bool       `json:"finished"`
-	Pinned      bool       `json:"pinned"`
-	NotBefore   *time.Time `json:"not_before,omitempty"`
-	MaintainAt  *time.Time `json:"maintain_at,omitempty"`
-	IdleWaiting bool       `json:"idle_waiting"`
-	Reclaim     bool       `json:"reclaim"`
-}
-
-// Refresher states and temp obligation phases.
-const (
-	LeaseLive         = "live"
-	LeaseStale        = "stale"
-	LeaseFleetExpired = "fleet_expired"
-
-	OrphanConstructing = "constructing"
-	OrphanLinking      = "linking"
-	OrphanLinked       = "linked"
-	OrphanUnresolved   = "unresolved"
-)
-
-// Orphan is a temporary lease file whose edge has not been consumed yet.
-type Orphan struct {
-	Temp  string `json:"temp"`
-	Inode string `json:"inode,omitempty"`
-	Phase string `json:"phase"`
-}
-
-// CachedClient is the store location this process cached for the
-// incarnation and the open stateids it has marked.
-type CachedClient struct {
-	IdentityID       string `json:"identity_id"`
-	ConfirmedPointer string `json:"confirmed_pointer"`
-	Opens            int    `json:"open_markers"`
-}
 
 // SessionFilter selects sessions. Zero values select everything. Slots
 // omits the per-slot detail when false.
@@ -471,10 +394,6 @@ type Open struct {
 	Generation  uint32   `json:"generation"`
 	Seq         uint64   `json:"seq"`
 	Writer      bool     `json:"writer"`
-	// Marked reports a durable open marker in the client store. Write
-	// opens, creates and recovered writers are marked, and stay marked
-	// after OPEN_DOWNGRADE; other read opens are process-local.
-	Marked bool `json:"marked"`
 }
 
 // ExpiredStateid is a tombstone: the owner gets EXPIRED, others BAD_STATEID.
@@ -498,85 +417,6 @@ type Alias struct {
 	DataID      string    `json:"data"`
 	Expires     time.Time `json:"expires"`
 }
-
-// Confirmations are the client confirmations this process has in progress
-// or unresolved, with the protection and destruction holds around them.
-type Confirmations struct {
-	Envelope
-	Records              []Confirmation `json:"records"`
-	DestroyHolds         []Hold         `json:"destroy_holds"`
-	IdentityDestroyHolds []Hold         `json:"identity_destroy_holds"`
-	PurgePending         []string       `json:"purge_pending"`
-	PurgeLimit           int            `json:"purge_limit"`
-}
-
-// Hold counts the destruction holds in flight on an incarnation or an
-// identity directory.
-type Hold struct {
-	ID    string `json:"id"`
-	Holds int    `json:"holds"`
-}
-
-// Confirmation is one identity's confirmation of incarnation new over
-// predecessor. While it exists, neither may be expired, retired or
-// collected.
-type Confirmation struct {
-	Identity    string   `json:"identity"`
-	OwnerHex    string   `json:"owner_hex"`
-	New         string   `json:"new"`
-	Predecessor string   `json:"predecessor,omitempty"`
-	Applying    bool     `json:"applying"`
-	Done        bool     `json:"done"`
-	Attempt     *Attempt `json:"attempt,omitempty"`
-}
-
-// Attempt is the evidence of the confirmation's writes. It is locked while
-// a settle runs backend I/O, in which case only locked is reported.
-type Attempt struct {
-	Locked   bool           `json:"locked,omitempty"`
-	Result   string         `json:"result,omitempty"`
-	PreWrite string         `json:"no_write_reason,omitempty"`
-	Panicked bool           `json:"panicked,omitempty"`
-	Writes   []ConfirmWrite `json:"writes,omitempty"`
-	Observed *Observed      `json:"observed,omitempty"`
-}
-
-type ConfirmWrite struct {
-	Name      string `json:"name"`
-	Dir       string `json:"dir"`
-	Temp      string `json:"temp,omitempty"`
-	Submitted bool   `json:"submitted"`
-	Error     string `json:"error,omitempty"`
-	Fence     string `json:"fence"`
-	// FenceError is why the fence is failed: the RemoveEdge error, or the
-	// unknown-outcome marker when it never returned. Empty otherwise.
-	FenceError string `json:"fence_error,omitempty"`
-	Outcome    string `json:"outcome"`
-}
-
-type Observed struct {
-	Confirmed string `json:"confirmed,omitempty"`
-	File      string `json:"file,omitempty"`
-	Found     bool   `json:"found"`
-}
-
-// Confirmation results, write outcomes and fence states.
-const (
-	ConfirmUnresolved   = "unresolved"
-	ConfirmCommitted    = "committed"
-	ConfirmRolledBack   = "rolled_back"
-	ConfirmConservative = "conservative"
-
-	WriteNever     = "never"
-	WriteApplied   = "applied"
-	WriteMaybe     = "maybe"
-	WriteUnsettled = "unsettled"
-
-	FenceNone       = "none"
-	FenceNotApplied = "not_applied"
-	FenceEdgeGone   = "edge_gone"
-	FenceFailed     = "failed"
-)
 
 // StagingFilter selects staging entries. Zero values select everything.
 // Locked entries with unavailable owner metadata remain possible matches
@@ -632,15 +472,6 @@ func Time(t time.Time) *time.Time {
 	if t.IsZero() {
 		return nil
 	}
-	return &t
-}
-
-// UnixNanos converts a unix nanosecond timestamp, zero meaning unset.
-func UnixNanos(ns int64) *time.Time {
-	if ns == 0 {
-		return nil
-	}
-	t := time.Unix(0, ns)
 	return &t
 }
 

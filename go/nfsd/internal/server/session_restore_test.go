@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/msgs"
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/openstate"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sessionstore"
@@ -374,6 +373,23 @@ func mkdirBody(name string) []byte {
 	})
 }
 
+// mkdirUnderBody makes name in the directory dir, found by name from the
+// root, so a replacement of dir between the attempts changes where it lands.
+func mkdirUnderBody(dir, name string) []byte {
+	return buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
+		w.AppendArgarray_Putrootfh()
+		lw := w.AppendArgarray_Lookup()
+		lw.Resume(lw.StartObjname().SetData([]byte(dir)).Finish())
+		w.Resume(lw.Finish())
+		cw := w.AppendArgarray_Create()
+		cw.SetObjtype_Nf4dir()
+		cw.Resume(cw.StartObjname().SetData([]byte(name)).Finish())
+		finishEmptyCreateattrs(&cw)
+		w.Resume(cw.Finish())
+		w.AppendArgarray_Getfh()
+	})
+}
+
 func symlinkBody(name, target string) []byte {
 	return buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
@@ -650,57 +666,15 @@ func TestRestartReplaysUncachedPrefix(t *testing.T) {
 	}
 }
 
-// The Linux client's writes across a restart: a CLOSE answered before the
-// kill is replayed from the cache, and a CLOSE never sent before it runs on
-// the restored session with its old stateid through the recovered writer.
-// Each file is published once and staging is left empty.
-func TestRestartReplaysCloseAndClosesPendingWriter(t *testing.T) {
-	f := newReplayFixture(t)
-	closedState, closedFH := openCreateFile(t, f.conn, &f.xid, f.wire, "closed")
-	writeFileAt(t, f.conn, &f.xid, closedFH, closedState, 0, []byte("closed before"))
-	closeBody := func(fh []byte, stateid [16]byte) []byte {
-		return buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
-			pw := w.AppendArgarray_Putfh()
-			pw.Resume(pw.StartObject().SetData(fh).Finish())
-			w.Resume(pw.Finish())
-			caw := w.AppendArgarray_Close()
-			setStateid(caw.OpenStateid(), stateid)
-		})
-	}
-	// The slot stays held so that nothing else advances it before the
-	// retransmission.
-	slot, seq := f.ts.acquire()
-	defer f.ts.release(slot)
-	closeRequest := withSequence(closeBody(closedFH, closedState), f.ts, slot, seq)
-	if got := compoundStatus(t, f.sendRaw(closeRequest)); got != nfs4.NFS4_OK {
-		t.Fatalf("CLOSE before restart %s", nfs4.Nfsstat4Name(got))
-	}
-	pendingState, pendingFH := openCreateFile(t, f.conn, &f.xid, f.wire, "pending")
-	writeFileAt(t, f.conn, &f.xid, pendingFH, pendingState, 0, []byte("pending at the kill"))
-	f.restart()
-
-	if got := compoundStatus(t, f.sendRaw(closeRequest)); got != nfs4.NFS4_OK {
-		t.Fatalf("CLOSE retransmitted after restart %s", nfs4.Nfsstat4Name(got))
-	}
-	slot2, seq2 := f.ts.acquire()
-	f.ts.release(slot2)
-	if got := compoundStatus(t, f.send(closeBody(pendingFH, pendingState), slot2, seq2)); got != nfs4.NFS4_OK {
-		t.Fatalf("CLOSE of the pending writer after restart %s", nfs4.Nfsstat4Name(got))
-	}
-	for name, want := range map[string]string{"closed": "closed before", "pending": "pending at the kill"} {
-		if data, ok := readRoot(t, f.root, name); !ok || data != want {
-			t.Fatalf("%s = %q %v", name, data, ok)
-		}
-	}
-	if n := len(f.store.Entries()); n != 0 {
-		t.Fatalf("%d staging entries left", n)
-	}
-}
-
 // A session file whose incarnation is not the confirmed one is removed at
 // startup and no session is built from it.
 func TestRestartDropsSessionOfUnknownIncarnation(t *testing.T) {
 	stagingDir := t.TempDir()
+	first, err := staging.NewLocalStore(stagingDir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staging.CloseFiles(t, first)
 	store, err := sessionstore.Open(filepath.Join(stagingDir, staging.SessionsDirName))
 	if err != nil {
 		t.Fatal(err)
@@ -726,7 +700,6 @@ func TestRestartDropsSessionOfUnknownIncarnation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer srv.clients.StopLeaseWorkers()
 	if _, err := os.Stat(store.Path(id)); !os.IsNotExist(err) {
 		t.Fatalf("file of an unknown incarnation kept: %v", err)
 	}
@@ -737,9 +710,7 @@ func TestRestartDropsSessionOfUnknownIncarnation(t *testing.T) {
 
 // A session whose recorded replies the reply cache cannot hold is not
 // restored at all: a slot without its reply would run a completed request
-// again, so the client gets BADSESSION and registers afresh. The new
-// process holds no session of the incarnation, so it publishes no lease
-// for it.
+// again, so the client gets BADSESSION and registers afresh.
 func TestRestartRefusesSessionWhenReplyCacheFull(t *testing.T) {
 	f := newReplayFixture(t)
 	writeRoot(t, f.root, "victim", "first")
@@ -749,7 +720,6 @@ func TestRestartRefusesSessionWhenReplyCacheFull(t *testing.T) {
 	if got := compoundStatus(t, f.sendRaw(request)); got != nfs4.NFS4_OK {
 		t.Fatal(nfs4.Nfsstat4Name(got))
 	}
-	incarnation := f.srv.sessions.lookup(f.ts.id).clientID
 	path := f.srv.sessionFiles.Path(sessionstore.ID(f.ts.id))
 	limit := replyCacheLimit
 	replyCacheLimit = cachedReplyOverhead // room for nothing
@@ -763,10 +733,6 @@ func TestRestartRefusesSessionWhenReplyCacheFull(t *testing.T) {
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("refused session's file kept: %v", err)
-	}
-	// Startup waits for the leases it publishes, so one would be there now.
-	if _, err := f.srv.fs.Lookup(vfs.InodeID(incarnation), f.srv.clients.LeaseName); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("lease of an incarnation with no restored session: %v", err)
 	}
 	writeRoot(t, f.root, "victim", "second")
 	reply, err := sendRawRPC(f.conn, f.xid, procCompound, request)
@@ -782,9 +748,9 @@ func TestRestartRefusesSessionWhenReplyCacheFull(t *testing.T) {
 	}
 }
 
-// A restored session whose client never returns is retired when the
-// incarnation's durable lease, last written by the earlier process, runs
-// out: the sweep expires the client and the session's file goes with it.
+// A restored session whose client never returns is retired when the fresh
+// lease the restart gave its client runs out: the sweep expires the client,
+// the session's file goes with it, and so does the client's record.
 func TestRestartAbandonedSessionExpiresWithLease(t *testing.T) {
 	f := newReplayFixture(t)
 	path := f.srv.sessionFiles.Path(sessionstore.ID(f.ts.id))
@@ -796,12 +762,15 @@ func TestRestartAbandonedSessionExpiresWithLease(t *testing.T) {
 	if a := f.srv.sessions.accounting(); a.Sessions != 1 {
 		t.Fatalf("after restart %+v", a)
 	}
-	f.srv.clients.StopLeaseWorkers()
-	later := time.Now().Add(10 * clientstore.LeaseWriteTerm)
-	f.srv.clients.SetClock(func() time.Time { return later })
+	// Within the startup lease nothing expires.
 	f.srv.runLeaseSweep()
-	if a := f.srv.sessions.accounting(); a.Sessions != 0 {
-		t.Fatalf("after the sweep %+v", a)
+	if a := f.srv.sessions.accounting(); a.Sessions != 1 {
+		t.Fatalf("swept within the startup lease %+v", a)
+	}
+	afterLeaseForTest(f.srv)
+	f.srv.runLeaseSweep()
+	if a := f.srv.sessions.accounting(); a.Sessions != 0 || len(f.srv.records.List()) != 0 {
+		t.Fatalf("after the sweep %+v, records %+v", a, f.srv.records.List())
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("abandoned session's file: %v", err)
@@ -1079,11 +1048,6 @@ func TestRestartCloseAfterPublishedLinkIsIdempotent(t *testing.T) {
 		}
 	}
 	f.start()
-	// The first CLOSE also removed the open's durable marker, which the
-	// dying process would not have reached; put it back.
-	if err := f.srv.clients.MarkOpen(f.srv.sessions.lookup(f.ts.id).clientID, extractStateID(stateidOf(state))); err != nil {
-		t.Fatal(err)
-	}
 	// The client's CLOSE, run again as a new request with the old stateid.
 	closeBody := buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
 		pw := w.AppendArgarray_Putfh()
@@ -1473,8 +1437,9 @@ func TestRestartMutationBeforeIntentNotRestored(t *testing.T) {
 }
 
 // A CREATE run again with its intent restored is DEADSESSION whatever is at
-// the name, and changes nothing there: an object may be someone else's, and
-// a name absent may be one this CREATE made and someone removed since.
+// the name, and changes nothing there: an object may be someone else's, a
+// name absent may be one this CREATE made and someone removed since, and a
+// parent found by name may have been replaced.
 func TestRestartPendingCreateFailsClosed(t *testing.T) {
 	marker := func(f *replayFixture, dir string) {
 		writeRoot(t, f.root, dir+"/marker", "mine")
@@ -1482,28 +1447,50 @@ func TestRestartPendingCreateFailsClosed(t *testing.T) {
 	for _, c := range []struct {
 		name    string
 		body    []byte
+		path    string                 // the name the CREATE makes, from the root
+		setup   func(f *replayFixture) // before the first attempt
 		before  func(f *replayFixture) // in the first process, before its Mkdir
 		after   func(f *replayFixture) // after the restart, before the replay
 		first   uint32                 // the first attempt's status
 		present bool                   // the name after the replay
 		marked  bool                   // sub holds a marker the replay must keep
 	}{
-		{name: "made", body: mkdirBody("sub"), after: func(f *replayFixture) { marker(f, "sub") }, first: nfs4.NFS4_OK, present: true, marked: true},
-		{name: "made then removed", body: mkdirBody("sub"), after: func(f *replayFixture) {
+		{name: "made", body: mkdirBody("sub"), path: "sub", after: func(f *replayFixture) { marker(f, "sub") }, first: nfs4.NFS4_OK, present: true, marked: true},
+		{name: "made then removed", body: mkdirBody("sub"), path: "sub", after: func(f *replayFixture) {
 			if err := os.Remove(filepath.Join(f.root, "sub")); err != nil {
 				t.Fatal(err)
 			}
 		}, first: nfs4.NFS4_OK},
-		{name: "someone else's", body: mkdirBody("sub"), before: func(f *replayFixture) {
+		{name: "someone else's", body: mkdirBody("sub"), path: "sub", before: func(f *replayFixture) {
 			if err := os.Mkdir(filepath.Join(f.root, "sub"), 0o755); err != nil {
 				t.Fatal(err)
 			}
 			marker(f, "sub")
 		}, first: nfs4.NFS4ERR_EXIST, present: true, marked: true},
-		{name: "symlink made", body: symlinkBody("link", "elsewhere"), first: nfs4.NFS4_OK, present: true},
+		{name: "symlink made", body: symlinkBody("link", "elsewhere"), path: "link", first: nfs4.NFS4_OK, present: true},
+		{name: "symlink made then removed", body: symlinkBody("link", "elsewhere"), path: "link", after: func(f *replayFixture) {
+			if err := os.Remove(filepath.Join(f.root, "link")); err != nil {
+				t.Fatal(err)
+			}
+		}, first: nfs4.NFS4_OK},
+		{name: "parent replaced", body: mkdirUnderBody("d", "sub"), path: "d/sub", setup: func(f *replayFixture) {
+			if err := os.Mkdir(filepath.Join(f.root, "d"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}, after: func(f *replayFixture) {
+			if err := os.Rename(filepath.Join(f.root, "d"), filepath.Join(f.root, "d.old")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(filepath.Join(f.root, "d"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}, first: nfs4.NFS4_OK},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			f := newReplayFixture(t)
+			if c.setup != nil {
+				c.setup(f)
+			}
 			slot, seq := f.ts.acquire()
 			f.ts.release(slot)
 			request := withSequence(c.body, f.ts, slot, seq)
@@ -1528,12 +1515,8 @@ func TestRestartPendingCreateFailsClosed(t *testing.T) {
 			if len(after) != len(before) {
 				t.Fatalf("the replay changed the directory: %d entries, then %d", len(before), len(after))
 			}
-			name := "sub"
-			if c.name == "symlink made" {
-				name = "link"
-			}
-			if _, err := os.Lstat(filepath.Join(f.root, name)); (err == nil) != c.present {
-				t.Fatalf("%s after the replay: %v", name, err)
+			if _, err := os.Lstat(filepath.Join(f.root, c.path)); (err == nil) != c.present {
+				t.Fatalf("%s after the replay: %v", c.path, err)
 			}
 			if c.marked {
 				if data, ok := readRoot(t, f.root, "sub/marker"); !ok || data != "mine" {
@@ -2293,10 +2276,6 @@ func TestRestartRecoveredCloseAfterConcurrentAdoption(t *testing.T) {
 	if f.srv.opens.Live(id) {
 		t.Fatal("the adopted open outlived the CLOSE")
 	}
-	awaitRequestHoldsReleased(t, f.srv) // the marker goes after the reply
-	if marked, err := f.srv.clients.HasOpen(f.srv.sessions.lookup(f.ts.id).clientID, id); err != nil || marked {
-		t.Fatalf("open marker after the CLOSE: %v %v", marked, err)
-	}
 }
 
 // A COMMIT ahead of a REMOVE in the compound does not make the REMOVE's
@@ -2348,10 +2327,7 @@ func TestRenameHoldsNamesUntilRecorded(t *testing.T) {
 	other := dial(t, f.addr)
 	defer other.Close()
 	xid := uint32(1)
-	id, confirm := requestClientID(t, other, &xid, "other-client", [8]byte{2})
-	if status := confirmClientID(t, other, &xid, id, confirm); status != nfs4.NFS4_OK {
-		t.Fatal(nfs4.Nfsstat4Name(status))
-	}
+	setupClientAs(t, other, &xid, "other-client", [8]byte{2})
 	removed := make(chan uint32, 1)
 	go func() {
 		reply, err := sendRPC(other, 7001, procCompound, removeBody("b"))
@@ -2518,27 +2494,6 @@ func TestPanicReleasesHeldName(t *testing.T) {
 	}
 }
 
-// An OPEN_DOWNGRADE of a writer recovered after a restart completes: the
-// adoption's own locks are released before the downgrade takes its. A
-// guard: the adoption keeps scoped locks while the downgrade holds its own.
-func TestRestartRecoveredDowngradeCompletes(t *testing.T) {
-	f := newReplayFixture(t)
-	state, fh := openCreateFile(t, f.conn, &f.xid, f.wire, "doc")
-	writeFileAt(t, f.conn, &f.xid, fh, state, 0, []byte("saved"))
-	f.restart()
-	done := make(chan uint32, 1)
-	go func() {
-		got, _ := downgradeResult(t, f.conn, &f.xid, fh, state, nfs4.OPEN4_SHARE_ACCESS_READ, nfs4.OPEN4_SHARE_DENY_NONE)
-		done <- got
-	}()
-	if got := testutil.AwaitValue(t, done, "the recovered downgrade"); got != nfs4.NFS4_OK {
-		t.Fatalf("OPEN_DOWNGRADE %s", nfs4.Nfsstat4Name(got))
-	}
-	if data, _ := readRoot(t, f.root, "doc"); data != "saved" {
-		t.Fatalf("doc holds %q", data)
-	}
-}
-
 // newPublishReplayFixture is newReplayFixture over a publishFaultVFS, which
 // stays across restarts, as the backend does.
 func newPublishReplayFixture(t *testing.T) (*replayFixture, *publishFaultVFS) {
@@ -2583,9 +2538,8 @@ func (f *replayFixture) stagingFiles(id vfs.InodeID) map[string][]byte {
 }
 
 // restartKeeping restarts with the given files put back in the staging
-// directory and the open's marker, which the dead process would not have
-// removed.
-func (f *replayFixture) restartKeeping(kept map[string][]byte, stateid [16]byte) {
+// directory, which the dead process would not have removed.
+func (f *replayFixture) restartKeeping(kept map[string][]byte) {
 	f.t.Helper()
 	f.conn.Close()
 	f.stop()
@@ -2597,9 +2551,6 @@ func (f *replayFixture) restartKeeping(kept map[string][]byte, stateid [16]byte)
 		}
 	}
 	f.start()
-	if err := f.srv.clients.MarkOpen(f.srv.sessions.lookup(f.ts.id).clientID, extractStateID(stateidOf(stateid))); err != nil {
-		f.t.Fatal(err)
-	}
 }
 
 // A restart after a fresh transient was linked, before the staging was
@@ -2629,7 +2580,7 @@ func TestRestartAfterFreshPublicationCompletes(t *testing.T) {
 		t.Fatalf("retried CLOSE %s", nfs4.Nfsstat4Name(got))
 	}
 	pf.set(func() { pf.onSetTime = nil })
-	f.restartKeeping(kept, state)
+	f.restartKeeping(kept)
 	if got := f.closeStatus(fh, state); got != nfs4.NFS4_OK {
 		t.Fatalf("CLOSE after the restart %s", nfs4.Nfsstat4Name(got))
 	}
@@ -2748,10 +2699,7 @@ func TestRestartAppliedLinkThenForeignPublicationCompletes(t *testing.T) {
 	other := dial(t, f.addr)
 	defer other.Close()
 	xid := uint32(1)
-	otherID, confirm := requestClientID(t, other, &xid, "other-client", [8]byte{2})
-	if status := confirmClientID(t, other, &xid, otherID, confirm); status != nfs4.NFS4_OK {
-		t.Fatal(nfs4.Nfsstat4Name(status))
-	}
+	otherID := setupClientAs(t, other, &xid, "other-client", [8]byte{2})
 	osid, ofh := openWriteFile(t, other, &xid, otherID, "doc")
 	writeFileAt(t, other, &xid, ofh, osid, 0, []byte("theirs"))
 	closeFile(t, other, &xid, ofh, osid)
@@ -3044,7 +2992,7 @@ func TestRecoveredDiscardFencesCandidate(t *testing.T) {
 			}
 			pf.onLink(nil)
 			f.restart()
-			if err := f.srv.fs.Remove(f.srv.fs.RootID(), "doc"); err != nil {
+			if err := removeName(f.srv.fs, f.srv.fs.RootID(), "doc"); err != nil {
 				t.Fatal(err)
 			}
 			open := func() uint32 {

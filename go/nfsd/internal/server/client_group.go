@@ -7,7 +7,6 @@ package server
 import (
 	"time"
 
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
@@ -49,13 +48,12 @@ type clientGroup struct {
 	state    groupState
 
 	// The logical lease gate (README.md#lease-gate). quietUntil is extended when
-	// an active hold ends; while it is in the future, or any hold exists,
-	// this process never expires the client. lease is checking while
-	// decideExpired observes, and expired once it has decided.
-	quietUntil         time.Time
-	lease              leaseGateState
-	markerPhase        markerPhase
-	renewedDuringCheck bool
+	// an active hold ends and when a session is created; while it is in the
+	// future, or any hold exists, this process never expires the client.
+	// lease is checking while decideExpired removes the record, and expired
+	// once it has.
+	quietUntil time.Time
+	lease      leaseGateState
 	// dropped: the incarnation's sessions and wire record were dropped
 	// (replaced, destroyed or terminal), so it has no logical lease left to
 	// protect. A new session clears it.
@@ -70,14 +68,6 @@ const (
 	gateLive leaseGateState = iota
 	gateChecking
 	gateExpired
-)
-
-type markerPhase uint8
-
-const (
-	markerNone markerPhase = iota
-	markerDeciding
-	markerSubmitted
 )
 
 // busy reports work that replacement must not overtake.
@@ -136,23 +126,6 @@ func (ss *sessionStore) pruneGroupsLocked() {
 	for _, g := range ss.groups {
 		ss.releaseGroupLocked(g)
 	}
-}
-
-// hasSessions reports whether the incarnation has attached sessions here.
-func (ss *sessionStore) hasSessions(incarnation uint64) bool {
-	ss.mu.Lock()
-	defer ss.mu.Unlock()
-	g := ss.groups[incarnation]
-	return g != nil && g.members > 0
-}
-
-// leaseNeed is the refresher's need condition for an incarnation: an active
-// request, or a quiet period still running (../clientstore/README.md#refresher).
-func (ss *sessionStore) leaseNeed(incarnation uint64) bool {
-	ss.mu.Lock()
-	defer ss.mu.Unlock()
-	g := ss.groups[incarnation]
-	return g != nil && g.lease == gateLive && (g.active > 0 || ss.now().Before(g.quietUntil))
 }
 
 // admissionStatusLocked is the status for new work on an incarnation's
@@ -232,8 +205,7 @@ func (h *requestHold) activate() {
 
 // release ends the hold, once. A nil hold is a no-op. Ending an active
 // hold, after the reply is written or the connection failed, renews the
-// logical lease whatever the durable refresh did; a failed admission's
-// provisional hold renews nothing.
+// logical lease; a failed admission's provisional hold renews nothing.
 func (h *requestHold) release() {
 	if h == nil || h.group == nil {
 		return
@@ -243,7 +215,7 @@ func (h *requestHold) release() {
 	defer ss.mu.Unlock()
 	if h.active {
 		h.group.active--
-		if quiet := ss.now().Add(clientstore.LeaseTime); !h.group.dropped && quiet.After(h.group.quietUntil) {
+		if quiet := ss.now().Add(leaseTime); !h.group.dropped && quiet.After(h.group.quietUntil) {
 			h.group.quietUntil = quiet
 		}
 	} else {
@@ -257,8 +229,11 @@ func (h *requestHold) release() {
 }
 
 // beginCreate counts a CREATE_SESSION in progress for an incarnation, so
-// replacement cannot invalidate the incarnation while it may still insert a
-// session. The caller calls the returned function when it is done.
+// neither replacement nor expiry can invalidate the incarnation while it may
+// still insert a session. The lease gate shares the lock with the count, as
+// in holdRequest: expiry either sees the creation or the creation sees the
+// gate, DELAY while expiry is being decided and STALE_CLIENTID once it was.
+// The caller calls the returned function when it is done.
 func (ss *sessionStore) beginCreate(incarnation uint64) (func(), uint32) {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
@@ -266,13 +241,16 @@ func (ss *sessionStore) beginCreate(incarnation uint64) (func(), uint32) {
 	if !ok {
 		return nil, nfs4.NFS4ERR_DELAY
 	}
-	switch g.state {
-	case groupClosing:
+	status := uint32(nfs4.NFS4_OK)
+	switch {
+	case g.state == groupClosing || g.lease == gateChecking:
+		status = nfs4.NFS4ERR_DELAY
+	case g.state == groupReplaced || g.lease == gateExpired:
+		status = nfs4.NFS4ERR_STALE_CLIENTID
+	}
+	if status != nfs4.NFS4_OK {
 		ss.releaseGroupLocked(g)
-		return nil, nfs4.NFS4ERR_DELAY
-	case groupReplaced:
-		ss.releaseGroupLocked(g)
-		return nil, nfs4.NFS4ERR_STALE_CLIENTID
+		return nil, status
 	}
 	g.creating++
 	return func() {

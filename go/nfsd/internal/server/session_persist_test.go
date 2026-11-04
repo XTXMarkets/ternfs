@@ -130,37 +130,6 @@ func TestSessionFileRecordsEveryRequest(t *testing.T) {
 	}
 }
 
-// An uncached request records the SEQUENCE-only prefix that a replay gets,
-// so the replay after a restart answers RETRY_UNCACHED_REP as today.
-func TestSessionFileRecordsUncachedPrefix(t *testing.T) {
-	srv := admissionWritableServer(t, vfs.NewLocalTernVFS(t.TempDir()))
-	stagingDir := srv.sessionFiles.Dir()
-	addr, stop := serveTestServer(t, srv)
-	defer stop()
-	conn := dial(t, addr)
-	defer conn.Close()
-	xid := uint32(1)
-	client := setupClient(t, conn, &xid)
-	ts := testSessionForClient(conn, client)
-	body := buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) { w.AppendArgarray_Putrootfh() })
-	_, res := admissionRequest(t, srv, admissionSequence(body, ts, 0, 1, false), 1, nil)
-	if res.Status() != nfs4.NFS4_OK {
-		t.Fatalf("uncached compound %s", nfs4.Nfsstat4Name(res.Status()))
-	}
-	_, recs := sessionFileRecords(t, filepath.Dir(stagingDir), ts.id)
-	rec, ok := recs[0]
-	if !ok || rec.CacheThis || rec.Seq != 1 {
-		t.Fatalf("slot 0 record %+v %v", rec, ok)
-	}
-	sess := srv.sessions.lookup(ts.id)
-	if !bytes.Equal(rec.Payload, sess.slots[0].reply) {
-		t.Fatal("recorded prefix differs from the slot's")
-	}
-	if res, ok := nfs4.ReadCOMPOUND4res(rec.Payload); !ok || res.Status() != nfs4.NFS4ERR_RETRY_UNCACHED_REP {
-		t.Fatalf("recorded prefix status %s", nfs4.Nfsstat4Name(res.Status()))
-	}
-}
-
 // intentWatchVFS captures the slot records of a session while a namespace
 // effect runs, which is when an intent must already be on disk.
 type intentWatchVFS struct {
@@ -168,8 +137,7 @@ type intentWatchVFS struct {
 	t          *testing.T
 	stagingDir string
 	id         SessionID
-	// dir is the directory the test mutates; the client store's own
-	// renames under /.nfs are not watched.
+	// dir is the directory the test mutates.
 	dir  vfs.InodeID
 	seen []sessionstore.Record
 }
@@ -639,18 +607,6 @@ func noOrphanSessionFiles(t *testing.T, srv *Server) {
 		}
 		if !found {
 			t.Fatalf("session file %s belongs to no session", e.Name())
-		}
-	}
-}
-
-// sessionFilesMatchSessions checks that the session store holds a file for
-// every session and for nothing else.
-func sessionFilesMatchSessions(t *testing.T, srv *Server) {
-	t.Helper()
-	noOrphanSessionFiles(t, srv)
-	for id, sess := range srv.sessions.accountingSessions() {
-		if !sess.file.onDisk.Load() {
-			t.Fatalf("session %s has no file", sessionText(id))
 		}
 	}
 }

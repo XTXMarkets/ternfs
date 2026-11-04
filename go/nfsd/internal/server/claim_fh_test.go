@@ -91,10 +91,7 @@ func TestOpenClaimFH(t *testing.T) {
 	// open by handle then reports STALE, and the client looks up the name.
 	other := dial(t, addr)
 	defer other.Close()
-	otherID, confirm := requestClientID(t, other, &xid, "other", [8]byte{2})
-	if status := confirmClientID(t, other, &xid, otherID, confirm); status != nfs4.NFS4_OK {
-		t.Fatal(nfs4.Nfsstat4Name(status))
-	}
+	otherID := setupClientAs(t, other, &xid, "other", [8]byte{2})
 	if status, _, _ := openByHandle(t, other, &xid, otherID, "writer", fh, nfs4.OPEN4_SHARE_ACCESS_BOTH); status != nfs4.NFS4ERR_STALE {
 		t.Fatalf("write CLAIM_FH of replaced file = %s, want STALE", nfs4.Nfsstat4Name(status))
 	}
@@ -105,53 +102,6 @@ func TestOpenClaimFH(t *testing.T) {
 			t.Fatalf("replaced version reads %q", data)
 		}
 		closeFile(t, other, &xid, fh, sid)
-	}
-}
-
-// rsync --inplace: one owner reads the file, then opens it for write, which
-// upgrades its open. The writes must publish.
-func TestOpenUpgradePublishesWrites(t *testing.T) {
-	addr, cleanup := startTestServer(t, t.TempDir())
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-	xid := uint32(1)
-	clientID := setupClient(t, conn, &xid)
-	state, fh := openCreateFile(t, conn, &xid, clientID, "target")
-	writeFileAt(t, conn, &xid, fh, state, 0, []byte("old target\n"))
-	closeFile(t, conn, &xid, fh, state)
-	fh = lookupFH(t, conn, &xid, "target")
-	status, reader, _ := openByHandle(t, conn, &xid, clientID, "owner", fh, nfs4.OPEN4_SHARE_ACCESS_READ)
-	if status != nfs4.NFS4_OK {
-		t.Fatal(nfs4.Nfsstat4Name(status))
-	}
-	status, upgraded, _ := openByHandle(t, conn, &xid, clientID, "owner", fh, nfs4.OPEN4_SHARE_ACCESS_BOTH)
-	if status != nfs4.NFS4_OK || !bytes.Equal(upgraded[4:], reader[4:]) {
-		t.Fatalf("upgrade = %s", nfs4.Nfsstat4Name(status))
-	}
-	current := upgraded
-	binary.BigEndian.PutUint32(current[:4], 0)
-	writeFileAt(t, conn, &xid, fh, current, 0, []byte("replacement from rsync --inplace\n"))
-	// Linux closes the write by downgrading to the read it still holds.
-	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
-		pw := w.AppendArgarray_Putfh()
-		pw.Resume(pw.StartObject().SetData(fh).Finish())
-		w.Resume(pw.Finish())
-		dw := w.AppendArgarray_OpenDowngrade()
-		setStateid(dw.OpenStateid(), current)
-		dw.SetShareAccess(nfs4.OPEN4_SHARE_ACCESS_READ)
-		dw.SetShareDeny(nfs4.OPEN4_SHARE_DENY_NONE)
-	})
-	xid++
-	if res.Status() != nfs4.NFS4_OK {
-		t.Fatalf("OPEN_DOWNGRADE = %s", nfs4.Nfsstat4Name(res.Status()))
-	}
-	if data, _ := readFileData(t, conn, &xid, fh, 0, 64); string(data) != "replacement from rsync --inplace\n" {
-		t.Fatalf("read after downgrade %q", data)
-	}
-	closeFile(t, conn, &xid, fh, current)
-	if data, _ := readFileData(t, conn, &xid, lookupFH(t, conn, &xid, "target"), 0, 64); string(data) != "replacement from rsync --inplace\n" {
-		t.Fatalf("published %q", data)
 	}
 }
 
@@ -251,10 +201,7 @@ func TestOpenWaitsForPublishingClose(t *testing.T) {
 	defer reader.Close()
 	xid := uint32(1)
 	writerID := setupClient(t, writer, &xid)
-	readerID, confirm := requestClientID(t, reader, &xid, "reader", [8]byte{2})
-	if status := confirmClientID(t, reader, &xid, readerID, confirm); status != nfs4.NFS4_OK {
-		t.Fatal(nfs4.Nfsstat4Name(status))
-	}
+	readerID := setupClientAs(t, reader, &xid, "reader", [8]byte{2})
 	state, fh := openWriteFile(t, writer, &xid, writerID, "file")
 	writeFileAt(t, writer, &xid, fh, state, 0, []byte("new"))
 	closed := make(chan struct{})

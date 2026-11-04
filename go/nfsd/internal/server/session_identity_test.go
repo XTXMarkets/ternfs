@@ -6,72 +6,16 @@ package server
 
 import (
 	"encoding/binary"
-	"errors"
-	"io"
-	"os"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientrecords"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
+	"reflect"
 )
-
-// countingWriteVFS counts mutations that changed the store.
-type countingWriteVFS struct {
-	vfs.TernVFS
-	writes atomic.Int64
-}
-
-func (fs *countingWriteVFS) count(err error) error {
-	if err == nil {
-		fs.writes.Add(1)
-	}
-	return err
-}
-func (fs *countingWriteVFS) Mkdir(dir vfs.InodeID, name string) (vfs.InodeID, error) {
-	id, err := fs.TernVFS.Mkdir(dir, name)
-	return id, fs.count(err)
-}
-func (fs *countingWriteVFS) Symlink(dir vfs.InodeID, name, target string) (vfs.InodeID, error) {
-	id, err := fs.TernVFS.Symlink(dir, name, target)
-	return id, fs.count(err)
-}
-func (fs *countingWriteVFS) CreateFile(dir vfs.InodeID, name string, data io.Reader) (vfs.InodeID, error) {
-	id, err := fs.TernVFS.CreateFile(dir, name, data)
-	return id, fs.count(err)
-}
-
-// The refresher's own lease writes (its temps and lease.<nfsdID>) run in
-// the background for every client and are not counted.
-func (fs *countingWriteVFS) LinkFile(id vfs.InodeID, cookie vfs.Cookie, dir vfs.InodeID, name string, data io.Reader) error {
-	if clientstore.LeaseTemp(name) {
-		return fs.TernVFS.LinkFile(id, cookie, dir, name, data)
-	}
-	return fs.count(fs.TernVFS.LinkFile(id, cookie, dir, name, data))
-}
-func (fs *countingWriteVFS) Remove(dir vfs.InodeID, name string) error {
-	return fs.count(fs.TernVFS.Remove(dir, name))
-}
-func (fs *countingWriteVFS) RemoveEdge(dir vfs.InodeID, name string, edge vfs.Edge) error {
-	if clientstore.LeaseTemp(name) || strings.HasPrefix(name, clientstore.LeasePrefix) {
-		return fs.TernVFS.RemoveEdge(dir, name, edge)
-	}
-	return fs.count(fs.TernVFS.RemoveEdge(dir, name, edge))
-}
-func (fs *countingWriteVFS) Rename(src vfs.InodeID, name string, dst vfs.InodeID, newName string) error {
-	return fs.count(fs.TernVFS.Rename(src, name, dst, newName))
-}
-func (fs *countingWriteVFS) RenameEdge(src vfs.InodeID, name string, edge vfs.Edge, dst vfs.InodeID, newName string) error {
-	if strings.HasPrefix(newName, clientstore.LeasePrefix) {
-		return fs.TernVFS.RenameEdge(src, name, edge, dst, newName)
-	}
-	return fs.count(fs.TernVFS.RenameEdge(src, name, edge, dst, newName))
-}
 
 func authSysCredForTest(uid uint32) []byte {
 	body := binary.BigEndian.AppendUint32(nil, 1) // stamp
@@ -142,17 +86,31 @@ func identityDestroy(t *testing.T, srv *Server, clientID uint64) uint32 {
 	})).Status()
 }
 
+// identityServer is a server on fs with a staging directory of its own.
 func identityServer(t *testing.T, fs vfs.TernVFS) *Server {
 	t.Helper()
-	srv, err := NewServer(fs, staging.ReadOnlyStore{}, nil)
+	return identityServerAt(t, fs, t.TempDir())
+}
+
+// identityServerAt is a server on fs and the staging directory dir: a
+// second one on the same directory is the same server started again.
+func identityServerAt(t *testing.T, fs vfs.TernVFS, dir string) *Server {
+	t.Helper()
+	store, err := staging.NewLocalStore(dir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(srv.waitForClientGC)
-	t.Cleanup(srv.clients.StopLeaseWorkers)
+	t.Cleanup(store.CloseAll)
+	srv, err := NewServer(fs, store, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	useTestWireEpoch(srv)
 	return srv
 }
+
+// recordsForTest lists the server's client records.
+func recordsForTest(srv *Server) []clientrecords.Record { return srv.records.List() }
 
 func wireRecords(srv *Server) int {
 	srv.sessions.mu.Lock()
@@ -162,8 +120,7 @@ func wireRecords(srv *Server) int {
 
 // The EXCHANGE_ID case table, RFC 8881 section 18.35.5, over wire records.
 func TestExchangeIDCases(t *testing.T) {
-	fs := &countingWriteVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
-	srv := identityServer(t, fs)
+	srv := identityServer(t, vfs.NewLocalTernVFS(t.TempDir()))
 	epoch := uint64(srv.sessions.wireIDs.epoch)
 
 	// Case 7: an update needs a confirmed record.
@@ -201,15 +158,13 @@ func TestExchangeIDCases(t *testing.T) {
 	confirmedIncarnation := incarnationForTest(t, srv, second.clientID)
 
 	// Case 2: same record and sequence, CONFIRMED_R, nothing written.
-	srv.waitForClientGC()
-	before := fs.writes.Load()
+	before := recordsForTest(srv)
 	warm := identityExchange(t, srv, 1, "client", [8]byte{1}, false)
 	if warm.status != nfs4.NFS4_OK || warm.clientID != second.clientID || !warm.confirmed || warm.seq != 4 {
 		t.Fatalf("warm EXCHANGE_ID %+v", warm)
 	}
-	srv.waitForClientGC()
-	if fs.writes.Load() != before {
-		t.Fatal("warm EXCHANGE_ID wrote to the store")
+	if !reflect.DeepEqual(recordsForTest(srv), before) {
+		t.Fatal("warm EXCHANGE_ID wrote a client record")
 	}
 	// Case 6 returns the record unchanged; cases 8 and 9 refuse.
 	if got := identityExchange(t, srv, 1, "client", [8]byte{1}, true); got.status != nfs4.NFS4_OK ||
@@ -252,27 +207,32 @@ func TestExchangeIDCases(t *testing.T) {
 	if got := identityCreate(t, srv, 1, reboot.clientID, 1); got != nfs4.NFS4ERR_STALE_CLIENTID {
 		t.Fatalf("CREATE_SESSION after DESTROY_CLIENTID %s", nfs4.Nfsstat4Name(got))
 	}
+	// Destroying the confirmed client removes its client record too, once
+	// its sessions are gone.
+	srv.retireIncarnationSessions(confirmedIncarnation)
+	if got := identityDestroy(t, srv, second.clientID); got != nfs4.NFS4_OK {
+		t.Fatalf("DESTROY_CLIENTID of the confirmed client %s", nfs4.Nfsstat4Name(got))
+	}
+	if recs := recordsForTest(srv); len(recs) != 0 {
+		t.Fatalf("client records after DESTROY_CLIENTID: %+v", recs)
+	}
 }
 
-// Each process issues its own clientids for the same durable incarnation. A
-// cold EXCHANGE_ID adopts a confirmed incarnation without writing, and no
-// process accepts another's clientid.
+// Each process issues its own clientids for the same incarnation. After a
+// restart, a cold EXCHANGE_ID adopts the incarnation its client record
+// confirms without writing, and no process accepts another's clientid.
 func TestExchangeIDProcessesKeepIndependentClientIDs(t *testing.T) {
-	local := vfs.NewLocalTernVFS(t.TempDir())
-	first := identityServer(t, local)
+	local, dir := vfs.NewLocalTernVFS(t.TempDir()), t.TempDir()
+	first := identityServerAt(t, local, dir)
 	a := identityExchange(t, first, 1, "client", [8]byte{1}, false)
 	if a.status != nfs4.NFS4_OK || identityCreate(t, first, 1, a.clientID, 1) != nfs4.NFS4_OK {
 		t.Fatalf("first process registration %+v", a)
 	}
 	incarnation := incarnationForTest(t, first, a.clientID)
-	first.waitForClientGC()
 
-	fs := &countingWriteVFS{TernVFS: local}
-	second := identityServer(t, fs)
-	second.waitForClientGC()
-	before := fs.writes.Load()
+	second := identityServerAt(t, local, dir)
+	before := recordsForTest(second)
 	b := identityExchange(t, second, 1, "client", [8]byte{1}, false)
-	second.waitForClientGC()
 	if b.status != nfs4.NFS4_OK || b.confirmed || b.seq != 1 || b.clientID == a.clientID ||
 		b.clientID>>32 == a.clientID>>32 {
 		t.Fatalf("second process EXCHANGE_ID %+v, first %#x", b, a.clientID)
@@ -280,8 +240,8 @@ func TestExchangeIDProcessesKeepIndependentClientIDs(t *testing.T) {
 	if got := incarnationForTest(t, second, b.clientID); got != incarnation {
 		t.Fatalf("second process bound incarnation %d, want %d", got, incarnation)
 	}
-	if fs.writes.Load() != before {
-		t.Fatal("adoption wrote to the store")
+	if !reflect.DeepEqual(recordsForTest(second), before) {
+		t.Fatal("adoption wrote a client record")
 	}
 	for _, check := range []struct {
 		srv *Server
@@ -294,7 +254,7 @@ func TestExchangeIDProcessesKeepIndependentClientIDs(t *testing.T) {
 			t.Fatalf("DESTROY_CLIENTID with another process's clientid %s", nfs4.Nfsstat4Name(got))
 		}
 	}
-	// The adopted record confirms by checking the durable state.
+	// The adopted record confirms by checking the client record.
 	if got := identityCreate(t, second, 1, b.clientID, 1); got != nfs4.NFS4_OK {
 		t.Fatalf("CREATE_SESSION on adopted record %s", nfs4.Nfsstat4Name(got))
 	}
@@ -312,7 +272,7 @@ func TestExchangeIDBoundsAndRetirement(t *testing.T) {
 	setNow := func(t time.Time) { clock.Store(t.UnixNano()) }
 	created := time.Now()
 	setNow(created)
-	srv.clients.SetClock(func() time.Time { return time.Unix(0, clock.Load()) })
+	srv.SetClock(func() time.Time { return time.Unix(0, clock.Load()) })
 	confirmed := identityExchange(t, srv, 1, "confirmed", [8]byte{1}, false)
 	if identityCreate(t, srv, 1, confirmed.clientID, 1) != nfs4.NFS4_OK {
 		t.Fatal("registration")
@@ -321,13 +281,13 @@ func TestExchangeIDBoundsAndRetirement(t *testing.T) {
 	// The cap counts every live record. Only records that waited a lease
 	// interval for CREATE_SESSION are reclaimed.
 	srv.sessions.wireLimit = 2
-	setNow(created.Add(-clientstore.LeaseTime / 2))
+	setNow(created.Add(-leaseTime / 2))
 	waiting := identityExchange(t, srv, 1, "waiting", [8]byte{1}, false)
 	setNow(created)
 	if got := identityExchange(t, srv, 1, "new", [8]byte{1}, false); got.status != nfs4.NFS4ERR_DELAY {
 		t.Fatalf("EXCHANGE_ID at the cap %s", nfs4.Nfsstat4Name(got.status))
 	}
-	setNow(created.Add(clientstore.LeaseTime / 2))
+	setNow(created.Add(leaseTime / 2))
 	admitted := identityExchange(t, srv, 1, "new", [8]byte{1}, false)
 	if admitted.status != nfs4.NFS4_OK || wireRecords(srv) != 2 {
 		t.Fatalf("EXCHANGE_ID after reclamation %+v, %d records", admitted, wireRecords(srv))
@@ -338,7 +298,7 @@ func TestExchangeIDBoundsAndRetirement(t *testing.T) {
 	if got := identityCreate(t, srv, 1, confirmed.clientID, 2); got != nfs4.NFS4_OK {
 		t.Fatalf("confirmed record reclaimed: %s", nfs4.Nfsstat4Name(got))
 	}
-	srv.sessions.wireLimit = clientstore.MaxSessionRecords
+	srv.sessions.wireLimit = maxSessionRecords
 
 	// Exhaustion: no new record, but existing ones keep working.
 	srv.sessions.wireIDs.mu.Lock()
@@ -358,8 +318,8 @@ func TestExchangeIDBoundsAndRetirement(t *testing.T) {
 	srv.sessions.wireIDs.last = 100
 	srv.sessions.wireIDs.mu.Unlock()
 
-	// Expiry ends the record: the client starts again from the store.
-	setNow(created.Add(clientstore.LeaseTime/2 + 3*clientstore.LeaseTime))
+	// Expiry ends the record: the client registers again as a new client.
+	setNow(created.Add(leaseTime/2 + 3*leaseTime))
 	srv.runLeaseSweep()
 	if got := identityCreate(t, srv, 1, confirmed.clientID, 3); got != nfs4.NFS4ERR_STALE_CLIENTID {
 		t.Fatalf("CREATE_SESSION on expired client %s", nfs4.Nfsstat4Name(got))
@@ -370,193 +330,202 @@ func TestExchangeIDBoundsAndRetirement(t *testing.T) {
 	}
 }
 
-// awaitOwnerWaiter waits until a second request queues on an owner's lock.
-func awaitOwnerWaiter(t *testing.T, ss *sessionStore, owner string) {
-	t.Helper()
-	for deadline := time.Now().Add(testutil.ChannelTimeout); ; {
-		refs := ss.ownerLocks.Refs(owner)
-		if refs == 2 {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("owner lock refs %d", refs)
-		}
-		time.Sleep(time.Millisecond)
-	}
-}
-
-// Two EXCHANGE_IDs for one owner register in order. The second waits for
-// the first to publish its record, then supersedes it, so the last reply's
-// clientid is usable. Without that order, the first could publish a pending
-// incarnation the second had already replaced, leaving neither usable.
-func TestExchangeIDSameOwnerRegistersInOrder(t *testing.T) {
-	fs := &confirmedLookupGateVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
-		entered: make(chan struct{}), release: make(chan struct{})}
-	srv := identityServer(t, fs)
-	defer testutil.CloseSignal(fs.release)
-	fs.armed.Store(true)
-	first, second := make(chan exchangeResult, 1), make(chan exchangeResult, 1)
-	go func() { first <- identityExchange(t, srv, 1, "client", [8]byte{1}, false) }()
-	testutil.AwaitSignal(t, fs.entered, "first registration in the store")
-	go func() { second <- identityExchange(t, srv, 1, "client", [8]byte{1}, false) }()
-	awaitOwnerWaiter(t, srv.sessions, "client")
-	select {
-	case got := <-second:
-		t.Fatalf("second registration overtook the first: %+v", got)
-	default:
-	}
-	testutil.CloseSignal(fs.release)
-	a := testutil.AwaitValue(t, first, "first registration")
-	b := testutil.AwaitValue(t, second, "second registration")
-	if a.status != nfs4.NFS4_OK || b.status != nfs4.NFS4_OK || a.clientID == b.clientID {
-		t.Fatalf("registrations %+v, %+v", a, b)
-	}
-	if got := identityCreate(t, srv, 1, a.clientID, 1); got != nfs4.NFS4ERR_STALE_CLIENTID {
-		t.Fatalf("CREATE_SESSION on superseded registration %s", nfs4.Nfsstat4Name(got))
-	}
-	if got := identityCreate(t, srv, 1, b.clientID, 1); got != nfs4.NFS4_OK {
-		t.Fatalf("CREATE_SESSION on latest registration %s", nfs4.Nfsstat4Name(got))
-	}
-}
-
-// A DESTROY_CLIENTID admitted for one record never destroys a newer record
-// of the same incarnation.
+// A DESTROY_CLIENTID of one wire record never destroys a newer record of
+// the same incarnation.
 func TestDestroyClientIDRetiresOnlyItsRecord(t *testing.T) {
-	local := vfs.NewLocalTernVFS(t.TempDir())
-	first := identityServer(t, local)
+	local, dir := vfs.NewLocalTernVFS(t.TempDir()), t.TempDir()
+	first := identityServerAt(t, local, dir)
 	p := identityExchange(t, first, 1, "client", [8]byte{1}, false)
 	if identityCreate(t, first, 1, p.clientID, 1) != nfs4.NFS4_OK {
 		t.Fatal("registration")
 	}
-	fs := &confirmedLookupGateVFS{TernVFS: local, entered: make(chan struct{}), release: make(chan struct{})}
-	srv := identityServer(t, fs)
+	srv := identityServerAt(t, local, dir)
 	ss := srv.sessions
-	defer testutil.CloseSignal(fs.release)
 	// A: an unconfirmed cold adoption of P, with no sessions or opens.
 	a := identityExchange(t, srv, 1, "client", [8]byte{1}, false)
 	ss.mu.Lock()
 	recordA := ss.wireRecordLocked(a.clientID)
 	ss.mu.Unlock()
-
-	// A second adoption of P is in the store when DESTROY_CLIENTID(A) arrives.
-	// Client GC also reads the confirmed pointer; let it finish first so the
-	// gate catches the adoption.
-	srv.waitForClientGC()
-	fs.armed.Store(true)
-	exchanged := make(chan exchangeResult, 1)
-	go func() { exchanged <- identityExchange(t, srv, 1, "client", [8]byte{1}, false) }()
-	testutil.AwaitSignal(t, fs.entered, "adoption in the store")
-	destroyed := make(chan uint32, 1)
-	go func() { destroyed <- identityDestroy(t, srv, a.clientID) }()
-	awaitOwnerWaiter(t, ss, "client")
-	testutil.CloseSignal(fs.release)
-	b := testutil.AwaitValue(t, exchanged, "second adoption")
+	// B: a second adoption supersedes A.
+	b := identityExchange(t, srv, 1, "client", [8]byte{1}, false)
 	if b.status != nfs4.NFS4_OK || b.clientID == a.clientID || incarnationForTest(t, srv, b.clientID) != recordA.incarnation {
 		t.Fatalf("second adoption %+v", b)
 	}
-	if got := testutil.AwaitValue(t, destroyed, "delayed DESTROY_CLIENTID"); got != nfs4.NFS4ERR_STALE_CLIENTID {
+	if got := identityDestroy(t, srv, a.clientID); got != nfs4.NFS4ERR_STALE_CLIENTID {
 		t.Fatalf("DESTROY_CLIENTID of a superseded record %s", nfs4.Nfsstat4Name(got))
 	}
 	// The same holds for a destruction already past its checks.
 	if got := ss.destroyClientRecord(recordA); got != nfs4.NFS4ERR_STALE_CLIENTID {
 		t.Fatalf("stale record destruction %s", nfs4.Nfsstat4Name(got))
 	}
-	if wireRecords(srv) != 1 {
-		t.Fatalf("%d wire records", wireRecords(srv))
+	if wireRecords(srv) != 1 || len(recordsForTest(srv)) != 1 {
+		t.Fatalf("%d wire records, client records %+v", wireRecords(srv), recordsForTest(srv))
 	}
 	if got := identityCreate(t, srv, 1, b.clientID, 1); got != nfs4.NFS4_OK {
 		t.Fatalf("CREATE_SESSION on the newer record %s", nfs4.Nfsstat4Name(got))
 	}
 }
 
-// Deciding whether EXCHANGE_ID may adopt a confirmed incarnation only reads
-// the store, and follows SetClientID's predicate: no expired marker, and
-// either no lease or a live one.
-func TestClientStoreExchangeIDAdoptionObservation(t *testing.T) {
-	const verifier = 1
-	type setup struct {
-		name                string
-		leases              map[string]time.Duration // slot name -> expiry relative to now
-		marker, readError   bool
-		otherPrincipal      bool
-		adopt               bool
-		wantErr, wantInUse  bool
-		zeroWrites          bool
-		keepSlots, noMarker bool
+// holdWriteStateForTest gives the incarnation a staged writer, the write
+// state that keeps its identity from another principal.
+func holdWriteStateForTest(t *testing.T, srv *Server, fs vfs.TernVFS, incarnation uint64) {
+	t.Helper()
+	id, cookie, err := fs.ConstructFile(fs.RootID())
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, test := range []setup{
-		{name: "live and old", leases: map[string]time.Duration{"lease.live": clientstore.LeaseTime, "lease.old": -2 * clientstore.LeaseTime},
-			adopt: true, zeroWrites: true, keepSlots: true, noMarker: true},
-		{name: "absent", adopt: true, zeroWrites: true, noMarker: true},
-		{name: "all dead", leases: map[string]time.Duration{"lease.dead": -2 * clientstore.LeaseTime},
-			keepSlots: true, noMarker: true},
-		{name: "expired marker", leases: map[string]time.Duration{"lease.live": clientstore.LeaseTime}, marker: true,
-			keepSlots: true},
-		{name: "read error", leases: map[string]time.Duration{"lease.live": clientstore.LeaseTime}, readError: true,
-			wantErr: true, zeroWrites: true, keepSlots: true, noMarker: true},
-		{name: "other principal", leases: map[string]time.Duration{"lease.live": clientstore.LeaseTime}, otherPrincipal: true,
-			wantErr: true, wantInUse: true, zeroWrites: true, keepSlots: true, noMarker: true},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			failing := &clientstore.LookupFailureVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
-			fs := &countingWriteVFS{TernVFS: failing}
-			store, id := clientstore.NewConfirmedStoreClient(t, fs, []byte("adopt"), [8]byte{verifier}, clientstore.ClientOwner{})
-			now := time.Now()
-			store.Now = func() time.Time { return now }
-			incarnation := vfs.InodeID(id)
-			for name, expiry := range test.leases {
-				if _, err := store.CreateJSON(incarnation, name, clientstore.DurableLease{ExpiresUnixNano: now.Add(expiry).UnixNano()}); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if test.marker {
-				if err := store.EnsureMarker(incarnation, clientstore.ExpiredName); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if test.otherPrincipal {
-				// A live open with another principal makes the identity in use.
-				if err := store.EnsureMarker(incarnation, clientstore.ActiveOpenName(nfs4.StateID{1})); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if test.readError {
-				failing.Mu.Lock()
-				failing.Name, failing.Remaining = clientstore.ExpiredName, 1
-				failing.Mu.Unlock()
-			}
-			owner := clientstore.ClientOwner{}
-			if test.otherPrincipal {
-				owner.Principal = clientstore.RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: "other"}
-			}
-			before := fs.writes.Load()
-			got, _, adopted, err := store.ExchangeID([8]byte{verifier}, []byte("adopt"), owner)
-			switch {
-			case test.wantErr:
-				var inUse clientstore.ClientInUseError
-				if err == nil || errors.As(err, &inUse) != test.wantInUse {
-					t.Fatalf("err %v", err)
-				}
-			case err != nil:
-				t.Fatal(err)
-			case adopted != test.adopt || (got == id) != test.adopt:
-				t.Fatalf("adopted %t, incarnation %d (confirmed %d)", adopted, got, id)
-			}
-			if test.zeroWrites && fs.writes.Load() != before {
-				t.Fatalf("%d writes", fs.writes.Load()-before)
-			}
-			if test.keepSlots {
-				for name := range test.leases {
-					if _, err := failing.TernVFS.Lookup(incarnation, name); err != nil {
-						t.Fatalf("observation removed %s: %v", name, err)
-					}
-				}
-			}
-			if test.noMarker {
-				if _, err := failing.TernVFS.Lookup(incarnation, clientstore.ExpiredName); !errors.Is(err, os.ErrNotExist) {
-					t.Fatalf("observation published an expired marker: %v", err)
-				}
-			}
-		})
+	if _, err := srv.stagingStore.Create(id, staging.Meta{DirID: fs.RootID(), FileName: "held",
+		TernCookie: cookie, NFSStateID: srv.opens.NewStateID(), ClientID: incarnation}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The principal check: another principal registering a client's identity
+// gets CLID_INUSE while the client has write state and a live lease, and
+// takes the identity over once the lease has expired. The takeover replaces
+// the incarnation, whose writers and sessions go, and records the new
+// principal.
+func TestPrincipalCheck(t *testing.T) {
+	fs := vfs.NewLocalTernVFS(t.TempDir())
+	srv := identityServer(t, fs)
+	a := identityExchange(t, srv, 1, "shared", [8]byte{1}, false)
+	status, sessionA := createResult(t, srv, 1, a.clientID, 1)
+	if status != nfs4.NFS4_OK {
+		t.Fatal(nfs4.Nfsstat4Name(status))
+	}
+	incA := incarnationForTest(t, srv, a.clientID)
+	// Without write state the identity is not in use: another principal
+	// may register it.
+	early := identityExchange(t, srv, 2, "shared", [8]byte{2}, false)
+	if early.status != nfs4.NFS4_OK {
+		t.Fatalf("EXCHANGE_ID by another principal without write state %s", nfs4.Nfsstat4Name(early.status))
+	}
+	holdWriteStateForTest(t, srv, fs, incA)
+	if got := identityExchange(t, srv, 2, "shared", [8]byte{3}, false); got.status != nfs4.NFS4ERR_CLID_INUSE {
+		t.Fatalf("EXCHANGE_ID by another principal %s, want CLID_INUSE", nfs4.Nfsstat4Name(got.status))
+	}
+	// The registration made before the write state is checked again at
+	// confirmation.
+	if got, _ := createResult(t, srv, 2, early.clientID, 1); got != nfs4.NFS4ERR_CLID_INUSE {
+		t.Fatalf("CREATE_SESSION of the earlier registration %s, want CLID_INUSE", nfs4.Nfsstat4Name(got))
+	}
+	if !srv.clientLive(incA) || srv.sessions.lookup(sessionA) == nil {
+		t.Fatal("CLID_INUSE disturbed the client")
+	}
+	if got := sequenceStatusForTest(t, srv, sessionA); got != nfs4.NFS4_OK {
+		t.Fatalf("SEQUENCE after CLID_INUSE %s", nfs4.Nfsstat4Name(got))
+	}
+	// Once the lease has run out, the second principal takes over.
+	endQuietForTest(srv)
+	afterLeaseForTest(srv)
+	b := identityExchange(t, srv, 2, "shared", [8]byte{2}, false)
+	if b.status != nfs4.NFS4_OK {
+		t.Fatalf("EXCHANGE_ID after the lease %s", nfs4.Nfsstat4Name(b.status))
+	}
+	if got, _ := createResult(t, srv, 2, b.clientID, 1); got != nfs4.NFS4_OK {
+		t.Fatalf("takeover CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
+	}
+	recs := recordsForTest(srv)
+	if len(recs) != 1 || uint64(recs[0].Incarnation) != incarnationForTest(t, srv, b.clientID) ||
+		recs[0].Principal == (clientrecords.Principal{}) {
+		t.Fatalf("records after the takeover %+v", recs)
+	}
+	if srv.sessions.lookup(sessionA) != nil || srv.clientLive(incA) {
+		t.Fatal("the replaced incarnation kept its session or stayed live")
+	}
+}
+
+// entriesHookStore runs a hook, once, just after the next Entries call has
+// read the store: after the staging scan that ends the write-state check.
+type entriesHookStore struct {
+	staging.Store
+	hook atomic.Pointer[func()]
+}
+
+func (s *entriesHookStore) Entries() map[vfs.InodeID]staging.Meta {
+	entries := s.Store.Entries()
+	if hook := s.hook.Swap(nil); hook != nil {
+		(*hook)()
+	}
+	return entries
+}
+
+// The principal check at confirmation and the client's own writable OPEN
+// are ordered: a takeover never replaces a client whose OPEN succeeded. The
+// OPEN here arrives just after the takeover's CREATE_SESSION has scanned
+// for write state.
+// Either it is admitted and the takeover is CLID_INUSE, or it waits behind
+// the takeover and the client goes.
+func TestPrincipalCheckOrdersWithWritableOpen(t *testing.T) {
+	root := t.TempDir()
+	fs := vfs.NewLocalTernVFS(root)
+	srv := identityServer(t, fs)
+	hooked := &entriesHookStore{Store: srv.stagingStore}
+	srv.stagingStore = hooked
+	writeRoot(t, root, "doc", "base")
+	a := identityExchange(t, srv, 1, "shared", [8]byte{1}, false)
+	status, sessionA := createResult(t, srv, 1, a.clientID, 1)
+	if status != nfs4.NFS4_OK {
+		t.Fatal(nfs4.Nfsstat4Name(status))
+	}
+	incA := incarnationForTest(t, srv, a.clientID)
+	b := identityExchange(t, srv, 2, "shared", [8]byte{2}, false)
+	if b.status != nfs4.NFS4_OK {
+		t.Fatalf("EXCHANGE_ID by another principal without write state %s", nfs4.Nfsstat4Name(b.status))
+	}
+	ts := newTestSession(sessionA, a.clientID, 1)
+	var opened uint32
+	open := func() {
+		slot, seq := ts.acquire()
+		defer ts.release(slot) // one slot: the OPEN_OK branch below acquires it again
+		opened = identityCall(t, srv, 1, withSequence(openBody(a.clientID, "o", "doc", nfs4.OPEN4_SHARE_ACCESS_BOTH), ts, slot, seq)).Status()
+	}
+	hooked.hook.Store(&open)
+	takeover, _ := createResult(t, srv, 2, b.clientID, 1)
+	if hooked.hook.Load() != nil {
+		t.Fatal("the confirmation did not check for write state")
+	}
+	switch {
+	case opened == nfs4.NFS4_OK:
+		if takeover != nfs4.NFS4ERR_CLID_INUSE {
+			t.Fatalf("takeover %s after the client's writable OPEN, want CLID_INUSE", nfs4.Nfsstat4Name(takeover))
+		}
+		if !srv.clientLive(incA) || srv.sessions.lookup(sessionA) == nil {
+			t.Fatal("the refused takeover disturbed the client")
+		}
+		slot, seq := ts.acquire()
+		defer ts.release(slot)
+		if got := identityCall(t, srv, 1, withSequence(buildCompoundBody(nil, nil), ts, slot, seq)).Status(); got != nfs4.NFS4_OK {
+			t.Fatalf("SEQUENCE after the refused takeover %s", nfs4.Nfsstat4Name(got))
+		}
+	case opened == nfs4.NFS4ERR_DELAY:
+		if takeover != nfs4.NFS4_OK {
+			t.Fatalf("takeover %s with no write state, want NFS4_OK", nfs4.Nfsstat4Name(takeover))
+		}
+	default:
+		t.Fatalf("OPEN during the takeover %s", nfs4.Nfsstat4Name(opened))
+	}
+}
+
+// A crash after a reboot's record and before its purge leaves nothing to
+// finish: after a restart the replaced incarnation is gone and the new one
+// live.
+func TestRestartAfterInterruptedReboot(t *testing.T) {
+	local, dir := vfs.NewLocalTernVFS(t.TempDir()), t.TempDir()
+	first := identityServerAt(t, local, dir)
+	principal := clientrecords.Principal{Flavor: nfs4.AUTH_SYS, Body: "owner"}
+	old := confirmForTest(t, first, "rebooted", [8]byte{1}, principal)
+	// The crash came after the reboot's record and before its purge.
+	rebooted, err := first.records.Confirm([]byte("rebooted"), [8]byte{2}, principal, clientrecords.NewIncarnation())
+	if err != nil {
+		t.Fatalf("reboot record %+v %v", rebooted, err)
+	}
+	srv := identityServerAt(t, local, dir)
+	recs := recordsForTest(srv)
+	if len(recs) != 1 || recs[0].Incarnation != rebooted.Incarnation {
+		t.Fatalf("records after the restart %+v", recs)
+	}
+	if srv.clientLive(old) || !srv.clientLive(uint64(rebooted.Incarnation)) {
+		t.Fatal("restart left the wrong incarnations live")
 	}
 }

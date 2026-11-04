@@ -227,13 +227,11 @@ func (s *Server) Start(ctx context.Context) error {
 		if s.StatusAddr == "" {
 			return true, nil
 		}
-		var status struct {
-			Mode string `json:"mode"`
-		}
+		var status json.RawMessage
 		if err := s.Diagnostics(ctx, "/v1/status", &status); err != nil {
 			return false, nil
 		}
-		return status.Mode == "serving", nil
+		return true, nil
 	})
 }
 
@@ -265,7 +263,7 @@ func (s *Server) Diagnostics(ctx context.Context, path string, out any) error {
 // state, fetched before the process is stopped.
 var diagnosticsDump = []string{
 	"/", "/v1/status", "/v1/clients", "/v1/incarnations", "/v1/sessions",
-	"/v1/connections", "/v1/opens", "/v1/staging", "/v1/confirmations",
+	"/v1/connections", "/v1/opens", "/v1/staging",
 }
 
 // DumpDiagnostics writes each resource of the running server's diagnostics

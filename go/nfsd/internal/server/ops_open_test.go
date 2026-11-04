@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/msgs"
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientrecords"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/openstate"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
@@ -122,17 +122,10 @@ func TestJoinedOpenSizeSyncFailure(t *testing.T) {
 // ending the session.
 func TestDefiniteOpenErrorStaysReplayable(t *testing.T) {
 	srv := admissionWritableServer(t, vfs.NewLocalTernVFS(t.TempDir()))
-	client, confirm, err := srv.clients.SetClientID([8]byte{}, []byte("definite-open"), clientstore.ClientOwner{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = srv.clients.ConfirmClientID(client, confirm, clientstore.RPCPrincipal{}); err != nil {
-		t.Fatal(err)
-	}
+	client := confirmForTest(t, srv, "definite-open", [8]byte{}, clientrecords.Principal{})
 	ts := connectionSession(t, srv)
 	ts.clientID = client
 	moveSessionForTest(srv.sessions, srv.sessions.lookup(ts.id), client, ts.id)
-	srv.clients.PinLeaseForTest(client)
 	body := buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
 		w.AppendArgarray_Putrootfh()
 		op := w.AppendArgarray_Open()
@@ -154,50 +147,21 @@ func TestDefiniteOpenErrorStaysReplayable(t *testing.T) {
 	}
 }
 
-// confirmedLookupHold blocks the first Lookup of the confirmed pointer once
-// armed: in HasOpen that is the first read of an operation's durable-open
-// check.
-type confirmedLookupHold struct {
-	vfs.TernVFS
-	mu      sync.Mutex
-	armed   bool
-	entered chan struct{}
-	release chan struct{}
-}
-
-func (fs *confirmedLookupHold) Lookup(dir vfs.InodeID, name string) (vfs.InodeID, error) {
-	fs.mu.Lock()
-	hold := fs.armed && name == clientstore.ConfirmedName
-	if hold {
-		fs.armed = false
-	}
-	fs.mu.Unlock()
-	if hold {
-		close(fs.entered)
-		<-fs.release
-	}
-	return fs.TernVFS.Lookup(dir, name)
-}
-
-// An admitted CLOSE whose durable-open check finds the durable lease dead
-// gets EXPIRED within bounded time, and the client's other state is left
-// alone while its logical lease is held: local expiry is the gate's
-// decision. (Before, the operation expired the client itself, re-entering
-// the staging pathname lock CLOSE holds.)
+// An admitted CLOSE whose client is no longer live gets EXPIRED, and the
+// client's other state is left alone while its logical lease is held:
+// local expiry is the gate's decision. (Before, the operation expired the
+// client itself, re-entering the staging pathname lock CLOSE holds.)
 func TestActiveCompoundDoesNotExpireClientState(t *testing.T) {
-	fs := &confirmedLookupHold{TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
-		entered: make(chan struct{}), release: make(chan struct{})}
 	staging, err := staging.NewLocalStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv, err := NewServer(fs, staging, nil)
+	srv, err := NewServer(vfs.NewLocalTernVFS(t.TempDir()), staging, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	addr, stop := serveTestServer(t, srv)
 	defer stop()
-	defer testutil.CloseSignal(fs.release)
 	conn := dial(t, addr)
 	defer conn.Close()
 	xid := uint32(1)
@@ -209,27 +173,12 @@ func TestActiveCompoundDoesNotExpireClientState(t *testing.T) {
 	writeFileAt(t, conn, &xid, bFH, bSid, 0, []byte("B's bytes"))
 	bStaging := stagingIDForTest(t, staging, bSid)
 
-	// No more refreshes: the lease stays as published, then dies.
-	srv.clients.StopLeaseWorkers()
-	var skew atomic.Int64
-	srv.clients.SetClock(func() time.Time { return time.Now().Add(time.Duration(skew.Load())) })
-	fs.mu.Lock()
-	fs.armed = true
-	fs.mu.Unlock()
-	closed := make(chan uint32, 1)
-	go func() {
-		x := uint32(500)
-		status, _, err := closeFileResultE(conn, &x, aFH, aSid)
-		if err != nil {
-			t.Error(err)
-		}
-		closed <- status
-	}()
-	testutil.AwaitSignal(t, fs.entered, "CLOSE's durable-open check")
-	skew.Store(int64(10 * clientstore.LeaseWriteTerm))
-	testutil.CloseSignal(fs.release)
-	if got := testutil.AwaitValue(t, closed, "CLOSE with a dead durable lease"); got != nfs4.NFS4ERR_EXPIRED {
-		t.Fatalf("CLOSE %s, want EXPIRED", nfs4.Nfsstat4Name(got))
+	// The record goes, as if the client had been destroyed elsewhere.
+	if err := srv.records.Remove(clientrecords.Incarnation(inc)); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, err := closeFileResultE(conn, &xid, aFH, aSid); err != nil || got != nfs4.NFS4ERR_EXPIRED {
+		t.Fatalf("CLOSE %s %v, want EXPIRED", nfs4.Nfsstat4Name(got), err)
 	}
 	awaitRequestHoldsReleased(t, srv)
 
@@ -241,17 +190,13 @@ func TestActiveCompoundDoesNotExpireClientState(t *testing.T) {
 	if m, ok := staging.GetMeta(bStaging); !ok || m.Retired {
 		t.Fatal("the operation retired the client's other staging")
 	}
-	if _, err := fs.TernVFS.Lookup(vfs.InodeID(inc), clientstore.ActiveOpenName(bID)); err != nil {
-		t.Fatalf("the operation removed the other open's marker: %v", err)
-	}
 	// The gate decides: not while the logical lease is held...
-	end, _ := srv.beginDestroy(inc)
 	if expired, _ := srv.decideExpired(inc, true); expired {
 		t.Fatal("expired during the quiet period")
 	}
-	end()
 	// ...and once it is not, the sweeper's decision expires the client.
 	endQuietForTest(srv)
+	afterLeaseForTest(srv)
 	srv.sweepExpiredClientState()
 	if srv.opens.Live(bID) {
 		t.Fatal("sweeper did not expire the dead client")
@@ -326,8 +271,8 @@ func TestRecoveredDowngradeCollisionWaits(t *testing.T) {
 	if !r.srv.opens.Live(liveID) || r.srv.opens.Live(recovered) {
 		t.Fatal("the refused downgrade changed the open state")
 	}
-	if open, err := r.srv.clients.HasOpen(r.clientID, recovered); err != nil || !open {
-		t.Fatalf("the recovered writer's marker %t %v", open, err)
+	if !r.srv.clientLive(r.clientID) {
+		t.Fatal("the refused downgrade expired the recovered writer's client")
 	}
 	closeFile(t, conn, &xid, r.fh, live)
 	status, read := downgradeResult(t, conn, &xid, r.fh, r.stateid, nfs4.OPEN4_SHARE_ACCESS_READ, nfs4.OPEN4_SHARE_DENY_NONE)
@@ -342,7 +287,7 @@ func TestRecoveredDowngradeCollisionWaits(t *testing.T) {
 
 // A lone writer whose publication failed (no other reader) gets
 // errors on its later operations, but they touch only its own state: the
-// client's other writer keeps its open, marker and staging, and publishes.
+// client's other writer keeps its open and staging, and publishes.
 func TestLoneFailedWriterLeavesSiblingsAlone(t *testing.T) {
 	fs := &readerSourceVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir())}
 	staging, err := staging.NewLocalStore(t.TempDir(), nil)
@@ -359,7 +304,6 @@ func TestLoneFailedWriterLeavesSiblingsAlone(t *testing.T) {
 	defer conn.Close()
 	xid := uint32(1)
 	clientID := setupClient(t, conn, &xid)
-	inc := incarnationForTest(t, srv, clientID)
 	aSid, aFH := openCreateFile(t, conn, &xid, clientID, "a")
 	writeFileAt(t, conn, &xid, aFH, aSid, 0, []byte("A"))
 	bSid, bFH := openCreateFile(t, conn, &xid, clientID, "b")
@@ -386,9 +330,6 @@ func TestLoneFailedWriterLeavesSiblingsAlone(t *testing.T) {
 	if m, ok := staging.GetMeta(bStaging); !ok || m.Retired {
 		t.Fatal("the failed writer's operations retired the sibling staging")
 	}
-	if _, err := fs.TernVFS.Lookup(vfs.InodeID(inc), clientstore.ActiveOpenName(bID)); err != nil {
-		t.Fatalf("the sibling's marker: %v", err)
-	}
 	closeFile(t, conn, &xid, bFH, bSid)
 	if data, err := readPublished(fs.TernVFS, "b"); err != nil || string(data) != "B's bytes" {
 		t.Fatalf("sibling published %q %v", data, err)
@@ -413,7 +354,7 @@ func TestExpiredWriterRecoversAcknowledgedData(t *testing.T) {
 				map[bool]string{false: "/same-server", true: "/restart"}[restart], func(t *testing.T) {
 				fs := vfs.NewLocalTernVFS(t.TempDir())
 				if existing {
-					if _, err := fs.CreateFile(fs.RootID(), "file", bytes.NewBufferString("original")); err != nil {
+					if _, err := createFile(fs, fs.RootID(), "file", "original"); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -439,10 +380,9 @@ func TestExpiredWriterRecoversAcknowledgedData(t *testing.T) {
 				}
 				writeFileAt(t, conn, &xid, fh, state, 0, []byte("UPDATED!"))
 				id := stagingIDForTest(t, srv.stagingStore, state)
-				srv.waitForClientGC()
 				awaitRequestHoldsReleased(t, srv)
-				now := time.Now().Add(2 * clientstore.LeaseTime)
-				srv.clients.SetClock(func() time.Time { return now })
+				now := time.Now().Add(2 * leaseTime)
+				srv.SetClock(func() time.Time { return now })
 				srv.runLeaseSweep()
 				assertRetiredStaging(t, store, id)
 				if restart {
@@ -457,7 +397,7 @@ func TestExpiredWriterRecoversAcknowledgedData(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					srv.clients.SetClock(func() time.Time { return now })
+					srv.SetClock(func() time.Time { return now })
 					addr, cleanup = serveTestServer(t, srv)
 					conn = dial(t, addr)
 				}
@@ -465,7 +405,6 @@ func TestExpiredWriterRecoversAcknowledgedData(t *testing.T) {
 				if newClient == clientID {
 					t.Fatal("expired lease reused its old clientid")
 				}
-				srv.waitForClientGC()
 				status, recovered, recoveredFH, _ := openFileForOwner(t, conn, &xid, newClient,
 					"recovering-writer", "file", nfs4.OPEN4_SHARE_ACCESS_BOTH, false, false)
 				if status != nfs4.NFS4_OK {
@@ -522,7 +461,7 @@ func TestPublishedCloseSurvivesTimestampFailure(t *testing.T) {
 			t.Fatalf("CLOSE/replay = %s", nfs4.Nfsstat4Name(status))
 		}
 	}
-	if len(store.Entries()) != 0 || activeOpenMarkerCount(t, srv, clientID) != 0 {
+	if len(store.Entries()) != 0 {
 		t.Fatal("committed CLOSE retained state")
 	}
 	got, _ := readFileData(t, conn, &xid, lookupFH(t, conn, &xid, "file"), 0, 32)
@@ -543,9 +482,6 @@ func (fs *metadataOnlyVFS) Read(vfs.InodeID, uint64, []byte) (int, bool, error) 
 }
 
 func (fs *metadataOnlyVFS) LinkFile(id vfs.InodeID, cookie vfs.Cookie, dir vfs.InodeID, name string, data io.Reader) error {
-	if clientstore.LeaseTemp(name) {
-		return fs.LocalTernVFS.LinkFile(id, cookie, dir, name, data)
-	}
 	fs.links.Add(1)
 	return errors.New("metadata-only CLOSE must not publish data")
 }
@@ -554,7 +490,7 @@ func TestMetadataOnlyCloseSkipsDataIO(t *testing.T) {
 	for _, concurrentPublish := range []bool{false, true} {
 		t.Run(map[bool]string{false: "same-version", true: "newer-version"}[concurrentPublish], func(t *testing.T) {
 			base := vfs.NewLocalTernVFS(t.TempDir())
-			published, err := base.CreateFile(base.RootID(), "file", bytes.NewBufferString("original"))
+			published, err := createFile(base, base.RootID(), "file", "original")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -585,7 +521,7 @@ func TestMetadataOnlyCloseSkipsDataIO(t *testing.T) {
 			want := "original"
 			if concurrentPublish {
 				want = "newer"
-				published, err = base.CreateFile(base.RootID(), "file", bytes.NewBufferString(want))
+				published, err = createFile(base, base.RootID(), "file", want)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -599,7 +535,7 @@ func TestMetadataOnlyCloseSkipsDataIO(t *testing.T) {
 			if err != nil || !info.Mtime.Equal(stamp) {
 				t.Fatalf("published attributes = %+v, err=%v", info, err)
 			}
-			got, err := base.ReadAll(current)
+			got, err := readAll(base, current)
 			if err != nil || string(got) != want {
 				t.Fatalf("published data = %q, err=%v", got, err)
 			}
@@ -647,33 +583,24 @@ func (s sizeErrorStore) Get(id vfs.InodeID) staging.File {
 func (sizeErrorFile) SetSize(uint64) error { return errors.New("injected size failure") }
 
 func TestOpenSizeErrorReplay(t *testing.T) {
-	for _, ioFailure := range []bool{false, true} {
-		t.Run(map[bool]string{false: "FBIG", true: "IO"}[ioFailure], func(t *testing.T) {
-			store, err := staging.NewLocalStore(t.TempDir(), nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var ss staging.Store = store
-			size, want := uint64(1<<63), uint32(nfs4.NFS4ERR_FBIG)
-			if ioFailure {
-				ss, size, want = sizeErrorStore{store}, 1, nfs4.NFS4ERR_IO
-			}
-			srv, err := NewServer(vfs.NewLocalTernVFS(t.TempDir()), ss, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			addr, cleanup := serveTestServer(t, srv)
-			defer cleanup()
-			conn := dial(t, addr)
-			defer conn.Close()
-			xid := uint32(1)
-			clientID := setupClient(t, conn, &xid)
-			for range 2 {
-				if got := createSizeStatus(t, conn, &xid, clientID, size); got != want {
-					t.Fatalf("OPEN/replay = %s, want %s", nfs4.Nfsstat4Name(got), nfs4.Nfsstat4Name(want))
-				}
-			}
-		})
+	store, err := staging.NewLocalStore(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewServer(vfs.NewLocalTernVFS(t.TempDir()), sizeErrorStore{store}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr, cleanup := serveTestServer(t, srv)
+	defer cleanup()
+	conn := dial(t, addr)
+	defer conn.Close()
+	xid := uint32(1)
+	clientID := setupClient(t, conn, &xid)
+	for range 2 {
+		if got := createSizeStatus(t, conn, &xid, clientID, 1); got != nfs4.NFS4ERR_IO {
+			t.Fatalf("OPEN/replay = %s, want IO", nfs4.Nfsstat4Name(got))
+		}
 	}
 }
 
@@ -686,9 +613,8 @@ func TestRecoveredRetiredCreateAppliesSize(t *testing.T) {
 	clientID := setupClient(t, conn, &xid)
 	state, fh := openCreateFile(t, conn, &xid, clientID, "file")
 	writeFileAt(t, conn, &xid, fh, state, 0, []byte("acknowledged"))
-	srv.waitForClientGC()
-	now := time.Now().Add(2 * clientstore.LeaseTime)
-	srv.clients.SetClock(func() time.Time { return now })
+	now := time.Now().Add(2 * leaseTime)
+	srv.SetClock(func() time.Time { return now })
 	srv.runLeaseSweep()
 	newClient := setupClient(t, conn, &xid)
 	size := uint64(3)
@@ -701,188 +627,6 @@ func TestRecoveredRetiredCreateAppliesSize(t *testing.T) {
 	if string(got) != "ack" {
 		t.Fatalf("recovered CREATE size was not applied: %q", got)
 	}
-}
-
-// markerVFS counts the client store's open-marker mutations.
-type markerVFS struct {
-	*vfs.LocalTernVFS
-	creates, removes atomic.Int64
-}
-
-func (v *markerVFS) CreateFile(dirID vfs.InodeID, name string, data io.Reader) (vfs.InodeID, error) {
-	if clientstore.IsActiveOpenName(name) {
-		v.creates.Add(1)
-	}
-	return v.LocalTernVFS.CreateFile(dirID, name, data)
-}
-
-func (v *markerVFS) Remove(dirID vfs.InodeID, name string) error {
-	if clientstore.IsActiveOpenName(name) {
-		v.removes.Add(1)
-	}
-	return v.LocalTernVFS.Remove(dirID, name)
-}
-
-func (v *markerVFS) RemoveEdge(dirID vfs.InodeID, name string, edge vfs.Edge) error {
-	if clientstore.IsActiveOpenName(name) {
-		v.removes.Add(1)
-	}
-	return v.LocalTernVFS.RemoveEdge(dirID, name, edge)
-}
-
-// A read-only open is process-local: its OPEN and CLOSE write nothing to
-// the client store, which on TernFS saves three shard mutations per open.
-// A write open is marked, and an owner's read open gets its marker when
-// an OPEN for write upgrades it. The cached client lists only the markers.
-func TestReadOpenHasNoDurableMarker(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "file.txt"), []byte("data"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	fs := &markerVFS{LocalTernVFS: vfs.NewLocalTernVFS(dir)}
-	ss, err := staging.NewLocalStore(t.TempDir(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	srv, err := NewServer(fs, ss, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr, cleanup := serveTestServer(t, srv)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-	xid := uint32(1)
-	clientID := setupClient(t, conn, &xid)
-	incarnation := incarnationForTest(t, srv, clientID)
-	markers := func(wantCreates, wantRemoves int64, wantLive int, step string) {
-		t.Helper()
-		if c, r := fs.creates.Load(), fs.removes.Load(); c != wantCreates || r != wantRemoves {
-			t.Fatalf("%s: marker creates/removes = %d/%d, want %d/%d", step, c, r, wantCreates, wantRemoves)
-		}
-		if got := activeOpenMarkerCount(t, srv, clientID); got != wantLive {
-			t.Fatalf("%s: live markers = %d, want %d", step, got, wantLive)
-		}
-		cached := -1
-		if incs, _ := srv.clients.SnapshotIncarnations(vfs.InodeID(incarnation)); len(incs) == 1 && incs[0].Cached != nil {
-			cached = incs[0].Cached.Opens
-		}
-		if cached != wantLive {
-			t.Fatalf("%s: cached client's open markers = %d, want %d", step, cached, wantLive)
-		}
-	}
-
-	status, reader, fh, _ := openFileForOwner(
-		t, conn, &xid, clientID, "reader", "file.txt",
-		nfs4.OPEN4_SHARE_ACCESS_READ, false, false,
-	)
-	if status != nfs4.NFS4_OK {
-		t.Fatalf("read OPEN %s", nfs4.Nfsstat4Name(status))
-	}
-	if data, eof := readFileData(t, conn, &xid, fh, 0, 16); string(data) != "data" || !eof {
-		t.Fatalf("READ through the unmarked open = %q, %t", data, eof)
-	}
-	markers(0, 0, 0, "read open")
-	closeFile(t, conn, &xid, fh, reader)
-	markers(0, 0, 0, "read close")
-
-	status, writer, fh, _ := openFileForOwner(
-		t, conn, &xid, clientID, "writer", "file.txt",
-		nfs4.OPEN4_SHARE_ACCESS_BOTH, false, false,
-	)
-	if status != nfs4.NFS4_OK {
-		t.Fatalf("write OPEN %s", nfs4.Nfsstat4Name(status))
-	}
-	markers(1, 0, 1, "write open")
-	writeFileAt(t, conn, &xid, fh, writer, 0, []byte("DATA"))
-	closeFile(t, conn, &xid, fh, writer)
-	markers(1, 1, 0, "write close")
-
-	status, first, fh, _ := openFileForOwner(
-		t, conn, &xid, clientID, "upgrader", "file.txt",
-		nfs4.OPEN4_SHARE_ACCESS_READ, false, false,
-	)
-	if status != nfs4.NFS4_OK {
-		t.Fatalf("read OPEN before upgrade %s", nfs4.Nfsstat4Name(status))
-	}
-	markers(1, 1, 0, "read open before upgrade")
-	status, upgraded, upgradedFH, _ := openFileForOwner(
-		t, conn, &xid, clientID, "upgrader", "file.txt",
-		nfs4.OPEN4_SHARE_ACCESS_BOTH, false, false,
-	)
-	if status != nfs4.NFS4_OK || !bytes.Equal(first[4:], upgraded[4:]) || !bytes.Equal(fh, upgradedFH) {
-		t.Fatalf("upgrade OPEN %s, stateid %x -> %x", nfs4.Nfsstat4Name(status), first[4:], upgraded[4:])
-	}
-	markers(2, 1, 1, "upgrade to write")
-	writeFileAt(t, conn, &xid, fh, upgraded, 0, []byte("DATA2"))
-	closeFile(t, conn, &xid, fh, upgraded)
-	markers(2, 2, 0, "close of the upgraded open")
-	if data, err := readPublished(fs, "file.txt"); err != nil || string(data) != "DATA2" {
-		t.Fatalf("published %q %v", data, err)
-	}
-}
-
-// A read open whose client's lease lapses gets EXPIRED, as a write open
-// does, but expiring the client's state is the lease gate's decision: both
-// opens keep their entries, and once the lease is renewed the same
-// stateids work again.
-func TestReadOpenOutlivesLapsedLease(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "file.txt"), []byte("data"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	srv, addr, cleanup := startTestServerWithServer(t, dir)
-	defer cleanup()
-	var clock atomic.Int64
-	clock.Store(time.Now().UnixNano())
-	srv.clients.SetClock(func() time.Time { return time.Unix(0, clock.Load()) })
-	conn := dial(t, addr)
-	defer conn.Close()
-	xid := uint32(1)
-	clientID := setupClient(t, conn, &xid)
-	incarnation := incarnationForTest(t, srv, clientID)
-	status, reader, readFH, _ := openFileForOwner(
-		t, conn, &xid, clientID, "reader", "file.txt",
-		nfs4.OPEN4_SHARE_ACCESS_READ, false, false,
-	)
-	if status != nfs4.NFS4_OK {
-		t.Fatalf("read OPEN %s", nfs4.Nfsstat4Name(status))
-	}
-	writer, writeFH := openCreateFile(t, conn, &xid, clientID, "written")
-	check := func(want uint32, step string) {
-		t.Helper()
-		for _, open := range []struct {
-			name    string
-			stateid [16]byte
-			fh      []byte
-		}{{"read", reader, readFH}, {"write", writer, writeFH}} {
-			fileID, _ := vfs.FHToInodeID(open.fh)
-			if _, got := srv.lookupDurableOpen(incarnation, stateid4For(t, open.stateid), fileID); got != want {
-				t.Fatalf("%s: %s open %s, want %s", step, open.name, nfs4.Nfsstat4Name(got), nfs4.Nfsstat4Name(want))
-			}
-			var id nfs4.StateID
-			copy(id[:], open.stateid[4:])
-			if !srv.opens.Live(id) {
-				t.Fatalf("%s: %s open lost its entry", step, open.name)
-			}
-		}
-	}
-
-	// Past this process's published lease and the durable one, with no
-	// sweep to expire the client.
-	srv.clients.StopLeaseWorkers()
-	clock.Add(int64(clientstore.LeaseWriteTerm + time.Second))
-	check(nfs4.NFS4ERR_EXPIRED, "lapsed lease")
-	// The refresher publishes again, as it does for an active client once
-	// its writes succeed.
-	srv.clients.RefreshMu.Lock()
-	r, ok := srv.clients.RecordLocked(vfs.InodeID(incarnation), true)
-	srv.clients.RefreshMu.Unlock()
-	if !ok {
-		t.Fatal("no refresher record")
-	}
-	r.SafePass(true)
-	check(nfs4.NFS4_OK, "renewed lease")
 }
 
 // A file created and written before an nfsd restart is closed through the
@@ -1040,9 +784,9 @@ func TestPublicationAliasSurvivesRestart(t *testing.T) {
 		t.Fatalf("after restart, old handle reads %q, want the version this client published", data)
 	}
 	// Sweeping with the alias expired drops it from memory and the file.
-	srv.clients.SetClock(func() time.Time { return time.Now().Add(2 * clientstore.LeaseTime) })
+	srv.SetClock(func() time.Time { return time.Now().Add(2 * leaseTime) })
 	srv.sweepViews()
-	if recs, err := srv.aliases.load(srv.clients.Now()); err != nil || len(recs) != 0 {
+	if recs, err := srv.aliases.load(srv.now()); err != nil || len(recs) != 0 {
 		t.Fatalf("after expiry the log holds %d records (%v)", len(recs), err)
 	}
 }
@@ -1066,7 +810,6 @@ func TestHeldPublicationAliasStaysInLog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(srv.clients.StopLeaseWorkers)
 	addr, cleanup := serveTestServer(t, srv)
 	defer cleanup()
 	conn := dial(t, addr)
@@ -1086,16 +829,15 @@ func TestHeldPublicationAliasStaysInLog(t *testing.T) {
 
 	// Two leases on, the read open still holds the alias. Nothing else may
 	// act on the jumped clock.
-	srv.clients.StopLeaseWorkers()
 	awaitRequestHoldsReleased(t, srv)
-	later := time.Now().Add(2 * clientstore.LeaseTime)
-	srv.clients.SetClock(func() time.Time { return later })
+	later := time.Now().Add(2 * leaseTime)
+	srv.SetClock(func() time.Time { return later })
 	srv.sweepViews()
 	held := srv.views.Entries()
 	if len(held) != 1 {
 		t.Fatalf("%d aliases in memory after the sweep, want the held one", len(held))
 	}
-	recs, err := srv.aliases.load(later.Add(clientstore.LeaseRenewAfter))
+	recs, err := srv.aliases.load(later.Add(leaseSweepInterval))
 	if err != nil || len(recs) != 1 || vfs.InodeID(recs[0].DataID) != held[0].DataID {
 		t.Fatalf("a process starting before the next sweep loads %v (%v), want the held alias", recs, err)
 	}
@@ -1119,7 +861,6 @@ func TestAliasPublishedDuringRewriteSurvivesRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(srv.clients.StopLeaseWorkers)
 	entered, release := make(chan struct{}), make(chan struct{})
 	var enterOnce, releaseOnce sync.Once
 	srv.aliases.rename = func(oldpath, newpath string) error {
@@ -1160,9 +901,8 @@ func TestAliasPublishedDuringRewriteSurvivesRestart(t *testing.T) {
 	case <-published:
 	case <-time.After(100 * time.Millisecond):
 	}
-	srv.clients.StopLeaseWorkers()
-	later := time.Now().Add(2 * clientstore.LeaseTime)
-	srv.clients.SetClock(func() time.Time { return later })
+	later := time.Now().Add(2 * leaseTime)
+	srv.SetClock(func() time.Time { return later })
 	finish()
 	if recs, err := srv.aliases.load(later); err != nil || len(recs) != 1 || recs[0].DataID != 0x1002 {
 		t.Fatalf("at the time of the publication the log loads %v (%v), want its alias", recs, err)
@@ -1178,7 +918,6 @@ func TestAliasPublishedDuringRewriteSurvivesRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(restarted.clients.StopLeaseWorkers)
 	if dataID, ok := restarted.views.Get(key); !ok || dataID != 0x1002 {
 		t.Fatalf("after a restart the alias is %v %v, want the publication made during the rewrite", dataID, ok)
 	}
@@ -1189,7 +928,7 @@ func TestAliasPublishedDuringRewriteSurvivesRestart(t *testing.T) {
 // aliases before that line are installed and none after it.
 func TestAliasLogLoadsUpToMalformedLine(t *testing.T) {
 	stagingDir := t.TempDir()
-	expires := time.Now().Add(clientstore.LeaseTime)
+	expires := time.Now().Add(leaseTime)
 	before := aliasRecord{ClientID: 7, FileID: 0x1001, DataID: 0x1002, Expires: expires}
 	after := aliasRecord{ClientID: 7, FileID: 0x2001, DataID: 0x2002, Expires: expires}
 	var log []byte
@@ -1220,7 +959,6 @@ func TestAliasLogLoadsUpToMalformedLine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(srv.clients.StopLeaseWorkers)
 	if dataID, ok := srv.views.Get(openstate.ViewKey{ClientID: 7, FileID: 0x1001}); !ok || dataID != 0x1002 {
 		t.Fatalf("alias before the malformed line = %v %v, want it installed", dataID, ok)
 	}
@@ -1332,8 +1070,7 @@ type publishFaultVFS struct {
 	linkFault     func(n int, id vfs.InodeID, cookie vfs.Cookie, link func() error) error
 	scrapTimeouts int
 	statTimeouts  int
-	readTimeouts  int  // Read calls still to time out
-	failMarkers   bool // open markers cannot be written
+	readTimeouts  int // Read calls still to time out
 	// The faults below hold while set: Lookup of lookupTimeout, SetTime,
 	// ConstructFile in the root, and RemoveEdge and RenameEdge, which do
 	// not apply and are classified as on the remote backend.
@@ -1363,7 +1100,7 @@ func (fs *publishFaultVFS) keepScrapped(id vfs.InodeID) {
 	if fs.root == "" {
 		return
 	}
-	dir := filepath.Join(fs.root, vfs.NFSDirName, "transients")
+	dir := filepath.Clean(fs.root) + ".nfsd/transients" // LocalTernVFS's private transients
 	entries, _ := os.ReadDir(dir)
 	for _, e := range entries {
 		info, err := e.Info()
@@ -1398,7 +1135,7 @@ func (fs *publishFaultVFS) count(kind string) int {
 }
 
 func (fs *publishFaultVFS) LinkFile(id vfs.InodeID, cookie vfs.Cookie, dir vfs.InodeID, name string, data io.Reader) error {
-	if data == nil || clientstore.LeaseTemp(name) {
+	if data == nil {
 		return fs.TernVFS.LinkFile(id, cookie, dir, name, data)
 	}
 	fs.mu.Lock()
@@ -1509,23 +1246,12 @@ func (fs *publishFaultVFS) Read(id vfs.InodeID, offset uint64, dest []byte) (int
 	return fs.TernVFS.Read(id, offset, dest)
 }
 
-func (fs *publishFaultVFS) CreateFile(dir vfs.InodeID, name string, data io.Reader) (vfs.InodeID, error) {
-	fs.mu.Lock()
-	fail := fs.failMarkers && clientstore.IsActiveOpenName(name)
-	fs.mu.Unlock()
-	if fail {
-		return 0, errors.New("injected marker write failure")
-	}
-	return fs.TernVFS.CreateFile(dir, name, data)
-}
-
 func (fs *publishFaultVFS) ConstructFile(dir vfs.InodeID) (vfs.InodeID, vfs.Cookie, error) {
 	if _, _, err, _ := fs.faults(); err != nil && dir == fs.RootID() {
 		return 0, vfs.Cookie{}, err
 	}
 	id, cookie, err := fs.TernVFS.ConstructFile(dir)
 	if err == nil && dir == fs.RootID() {
-		// Not the client store's markers.
 		fs.note("construct", id)
 	}
 	return id, cookie, err
@@ -1673,10 +1399,7 @@ func (f *publishFixture) otherClient(t *testing.T) (net.Conn, *uint32, uint64) {
 	conn := dial(t, f.addr)
 	t.Cleanup(func() { conn.Close() })
 	xid := uint32(1)
-	id, confirm := requestClientID(t, conn, &xid, "other-client", [8]byte{2})
-	if status := confirmClientID(t, conn, &xid, id, confirm); status != nfs4.NFS4_OK {
-		t.Fatal(nfs4.Nfsstat4Name(status))
-	}
+	id := setupClientAs(t, conn, &xid, "other-client", [8]byte{2})
 	return conn, &xid, id
 }
 
@@ -1843,44 +1566,6 @@ func TestCloseRetryAfterTimesOnlySetattrDoesNotRepublish(t *testing.T) {
 	}
 	if info, err := f.fs.TernVFS.Stat(stagingID); err != nil || info.Mtime.Unix() != 1_000_000 {
 		t.Fatalf("published mtime %v %v", info.Mtime, err)
-	}
-}
-
-// LinkFile reporting not-exist for every candidate, as for a directory
-// removed natively, ends the CLOSE with NOENT after one fresh candidate.
-func TestCloseLinkNotExistEndsAfterOneFreshCandidate(t *testing.T) {
-	f := newPublishFixture(t)
-	sid, fh, _ := f.writer(t, "doc", "saved")
-	f.fs.onLink(func(int, vfs.InodeID, vfs.Cookie, func() error) error { return os.ErrNotExist })
-	mustCloseStatus(t, f, fh, sid, nfs4.NFS4ERR_NOENT, "links not-exist")
-	if c, l := f.fs.count("construct"), f.links(); c != 1 || l != 2 {
-		t.Fatalf("constructs %d links %d, want 1 and 2", c, l)
-	}
-	f.mustDrained(t, "after the failed CLOSE")
-}
-
-func (f *publishFixture) links() int {
-	f.fs.mu.Lock()
-	defer f.fs.mu.Unlock()
-	return f.fs.links
-}
-
-// A staging past its transient deadline, whose LinkFile reports not-exist
-// without linking, publishes through a fresh candidate in the same CLOSE.
-func TestCloseStagingPastDeadlinePublishesFresh(t *testing.T) {
-	f := newPublishFixture(t)
-	sid, fh, _ := f.writer(t, "doc", "saved")
-	f.fs.onLink(func(n int, _ vfs.InodeID, _ vfs.Cookie, link func() error) error {
-		if n == 1 {
-			return os.ErrNotExist
-		}
-		return link()
-	})
-	mustCloseStatus(t, f, fh, sid, nfs4.NFS4_OK, "stale staging")
-	mustPublished(t, f.fs.TernVFS, "doc", "saved")
-	// LocalTernVFS can reuse a scrapped transient's inode number, so count.
-	if got := f.fs.count("construct"); got != 1 || f.fs.count("scrap") != 1 {
-		t.Fatalf("backend calls %v, want the staging scrapped and one fresh candidate", f.fs.events)
 	}
 }
 
@@ -2293,21 +1978,6 @@ func TestDelayedCloseJoinedByAnotherOwner(t *testing.T) {
 	}
 }
 
-// A joining OPEN whose marker cannot be written fails before it binds the
-// sidecar: the staging stays the closing open's. A guard for the order of
-// the joiner's bind.
-func TestJoinMarkerFailureKeepsClosingOwner(t *testing.T) {
-	f := newPublishFixture(t)
-	first, _, stagingID := f.delayedWriter(t, "doc", "first")
-	f.fs.set(func() { f.fs.failMarkers = true })
-	if status, _, _, _ := openFileForOwner(t, f.conn, f.xid, f.clientID, "b", "doc", nfs4.OPEN4_SHARE_ACCESS_BOTH, false, false); status == nfs4.NFS4_OK {
-		t.Fatal("joining OPEN succeeded without its marker")
-	}
-	if meta, ok := f.store.GetMeta(stagingID); !ok || meta.NFSStateID != extractStateID(stateidOf(first)) {
-		t.Fatalf("sidecar %+v %t, want it still the closing open's", meta, ok)
-	}
-}
-
 // A detached staging whose remaining writer CLOSEs is not handed to an
 // open whose own CLOSE answered DELAY: that open is expired and the image
 // discarded.
@@ -2371,7 +2041,7 @@ func (fs *replaceOnLookupVFS) Lookup(dir vfs.InodeID, name string) (vfs.InodeID,
 	id, err := fs.TernVFS.Lookup(dir, name)
 	if name == fs.name {
 		fs.once.Do(func() {
-			if _, err := fs.TernVFS.CreateFile(dir, name, bytes.NewReader([]byte("replaced"))); err != nil {
+			if _, err := createFile(fs.TernVFS, dir, name, "replaced"); err != nil {
 				panic(err)
 			}
 		})
@@ -2535,14 +2205,12 @@ func TestDetachedStagingNotHandedToClosingReader(t *testing.T) {
 	}
 }
 
-// A writer retired because its open is gone has its pending candidate
-// scrapped, here by a CREATE at its name.
+// A writer retired because its client is gone, here replaced by a reboot,
+// has its pending candidate scrapped, by a CREATE at its name.
 func TestRetiredWriterCandidateIsFenced(t *testing.T) {
 	f := newPublishFixture(t)
-	first, _, stagingID := f.delayedWriter(t, "doc", "first")
-	if err := f.srv.clients.RemoveOpen(incarnationForTest(t, f.srv, f.clientID), extractStateID(stateidOf(first))); err != nil {
-		t.Fatal(err)
-	}
+	_, _, stagingID := f.delayedWriter(t, "doc", "first")
+	f.clientID = setupClientAs(t, f.conn, f.xid, "test-client", [8]byte{9})
 	if got := compoundStatus(t, sendBody(t, f.conn, f.xid, mkdirBody("doc"))); got != nfs4.NFS4ERR_EXIST {
 		t.Fatalf("CREATE over the name %s, want EXIST", nfs4.Nfsstat4Name(got))
 	}
@@ -2563,7 +2231,7 @@ func TestFailedJoinRestoresClosingOwner(t *testing.T) {
 	// opens.Open fails after the bind.
 	next := f.srv.opens.NewStateID()
 	binary.BigEndian.PutUint64(next[4:], binary.BigEndian.Uint64(next[4:])+1)
-	if _, err := f.srv.opens.Open(openstate.OwnerKey{ClientID: 1, Owner: "squatter"}, 1, 1, openstate.Grant{Access: nfs4.OPEN4_SHARE_ACCESS_READ}, next, false); err != nil {
+	if _, err := f.srv.opens.Open(openstate.OwnerKey{ClientID: 1, Owner: "squatter"}, 1, 1, openstate.Grant{Access: nfs4.OPEN4_SHARE_ACCESS_READ}, next); err != nil {
 		t.Fatal(err)
 	}
 	if status, _, _, _ := openFileForOwner(t, f.conn, f.xid, f.clientID, "b", "doc", nfs4.OPEN4_SHARE_ACCESS_BOTH, false, false); status == nfs4.NFS4_OK {
@@ -2659,7 +2327,7 @@ func TestDetachedDowngradeBindFailureReadsIO(t *testing.T) {
 }
 
 // A join whose bind fails answers IO and leaves the joining owner's
-// existing marked open, and its marker, alone.
+// existing open alone.
 func TestJoinBindFailureKeepsExistingOpen(t *testing.T) {
 	f := newPublishFixtureWithStore(t, func(s staging.Store) staging.Store {
 		return bindFailStore{s, func(owner string, _ bool) bool { return owner == "b" }}
@@ -2667,7 +2335,7 @@ func TestJoinBindFailureKeepsExistingOpen(t *testing.T) {
 	s0, fh0, _ := f.writer(t, "doc", "base")
 	closeFile(t, f.conn, f.xid, fh0, s0)
 	fh := lookupFH(t, f.conn, f.xid, "doc")
-	// b: READ, then WRITE, then a clean downgrade: a marked read open.
+	// b: READ, then WRITE, then a clean downgrade: a read open.
 	openByHandle(t, f.conn, f.xid, f.clientID, "b", fh, nfs4.OPEN4_SHARE_ACCESS_READ)
 	_, bw, _ := openByHandle(t, f.conn, f.xid, f.clientID, "b", fh, nfs4.OPEN4_SHARE_ACCESS_WRITE)
 	status, bread := downgradeResult(t, f.conn, f.xid, fh, bw, nfs4.OPEN4_SHARE_ACCESS_READ, nfs4.OPEN4_SHARE_DENY_NONE)

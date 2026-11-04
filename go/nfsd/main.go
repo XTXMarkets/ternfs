@@ -19,7 +19,6 @@ import (
 	"github.com/XTXMarkets/ternfs/go/core/bufpool"
 	"github.com/XTXMarkets/ternfs/go/core/log"
 	"github.com/XTXMarkets/ternfs/go/msgs"
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/server"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
@@ -29,7 +28,7 @@ func main() {
 	addr := flag.String("addr", ":2049", "listen address")
 	root := flag.String("root", "", "local root directory to export (for testing)")
 	registry := flag.String("registry", "", "TernFS registry address (for production)")
-	stagingDir := flag.String("staging", "", "staging directory for writes (omit for read-only)")
+	stagingDir := flag.String("staging", "", "staging directory: writes, sessions and client records (required)")
 	verbose := flag.Bool("v", false, "verbose logging of NFS requests/responses")
 	allowMinor2 := flag.Bool("allow-minor-version-2", false,
 		"also accept NFSv4.2 COMPOUNDs, served as NFSv4.1 with every 4.2 operation unsupported")
@@ -45,15 +44,6 @@ func main() {
 	metricsInterval := flag.Duration("metrics-interval", defaultMetricsInterval, "how often metrics are pushed")
 	statusAddr := flag.String("status-addr", "",
 		"serve the read-only diagnostics API (JSON over HTTP) on this address; off by default")
-	storeOnly := flag.Bool("store-only", false,
-		"serve only the diagnostics API, reading the client store and -staging without\n"+
-			"starting the NFS server or touching anything; requires -status-addr")
-	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(),
-			"Usage: %s [options]\n       %s -store-only -status-addr ADDR [options]\n\nOptions:\n",
-			os.Args[0], os.Args[0])
-		flag.PrintDefaults()
-	}
 	flag.Parse()
 	// nfsd takes no positional arguments. Rejecting them here, before any
 	// directory or listener is touched, keeps a mistyped command line from
@@ -77,30 +67,18 @@ func main() {
 	}
 	slogger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 
-	if *storeOnly {
-		if *statusAddr == "" {
-			fmt.Fprintln(os.Stderr, "-store-only requires -status-addr")
-			os.Exit(2)
-		}
-		runStoreOnly(slogger, *root, *registry, *stagingDir, *statusAddr, *verbose)
-		return
+	if *stagingDir == "" {
+		fmt.Fprintln(os.Stderr, "-staging is required")
+		os.Exit(2)
 	}
-
 	// Set up local state before dialling the cluster, so that a bad -staging
 	// path or an unusable -root fails without a round trip to the registry.
-	var ss staging.Store
-	if *stagingDir != "" {
-		store, err := staging.NewLocalStore(*stagingDir, slogger)
-		if err != nil {
-			slogger.Error("creating staging store", "err", err)
-			os.Exit(1)
-		}
-		ss = store
-		slogger.Info("staging directory configured", "path", *stagingDir)
-	} else {
-		ss = staging.ReadOnlyStore{}
-		slogger.Info("no staging directory — read-only mode")
+	ss, err := staging.NewLocalStore(*stagingDir, slogger)
+	if err != nil {
+		slogger.Error("creating staging store", "err", err)
+		os.Exit(1)
 	}
+	slogger.Info("staging directory configured", "path", *stagingDir)
 
 	fs, target, counters, err := openVFS(*root, *registry, *verbose)
 	if err != nil {
@@ -125,7 +103,7 @@ func main() {
 			os.Exit(1)
 		}
 		go func() {
-			err := http.Serve(ln, inspect.Handler(srv, srv))
+			err := http.Serve(ln, inspect.Handler(srv))
 			slogger.Error("diagnostics server stopped", "err", err)
 		}()
 		slogger.Info("diagnostics listening", "addr", ln.Addr().String())
@@ -154,42 +132,6 @@ func main() {
 	}
 }
 
-// runStoreOnly serves the diagnostics API for a process that is not an NFS
-// server, for when nfsd will not start or a host's store should be read
-// without disturbing it. It opens the client store read-only and never
-// opens the staging store: staging.NewLocalStore would quarantine and
-// truncate during recovery, so sidecars are only read by the store report,
-// on request.
-func runStoreOnly(slogger *slog.Logger, root, registry, stagingDir, statusAddr string, verbose bool) {
-	fs, target, _, err := openVFS(root, registry, verbose)
-	if err != nil {
-		slogger.Error("opening filesystem", "err", err)
-		os.Exit(1)
-	}
-	slogger.Info("filesystem opened", "target", target)
-	store, err := clientstore.OpenReader(fs)
-	if err != nil {
-		slogger.Error("opening client store", "err", err)
-		os.Exit(1)
-	}
-	if stagingDir != "" {
-		if info, err := os.Stat(stagingDir); err != nil || !info.IsDir() {
-			slogger.Error("staging directory", "path", stagingDir, "err", err)
-			os.Exit(1)
-		}
-	}
-	ln, err := net.Listen("tcp", statusAddr)
-	if err != nil {
-		slogger.Error("diagnostics listen", "addr", statusAddr, "err", err)
-		os.Exit(1)
-	}
-	slogger.Info("diagnostics listening in store-only mode", "addr", ln.Addr().String(), "staging", stagingDir)
-	if err := http.Serve(ln, inspect.Handler(nil, server.StoreOnlySource{ClientStore: store, StagingDir: stagingDir})); err != nil {
-		slogger.Error("diagnostics server stopped", "err", err)
-		os.Exit(1)
-	}
-}
-
 // openVFS opens the local directory or the TernFS cluster named by exactly
 // one of root and registry. It also returns a description of what it opened,
 // with a local root resolved to an absolute path, and for a TernFS backend
@@ -207,6 +149,9 @@ func openVFS(root string, registry string, verbose bool) (vfs.TernVFS, string, *
 		info, err := os.Stat(absRoot)
 		if err != nil || !info.IsDir() {
 			return nil, "", nil, fmt.Errorf("root must be a directory: %s", absRoot)
+		}
+		if err := vfs.CheckLocalRoot(absRoot); err != nil {
+			return nil, "", nil, err
 		}
 		return vfs.NewLocalTernVFS(absRoot), "local root " + absRoot, nil, nil
 	}

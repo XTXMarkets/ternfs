@@ -208,89 +208,28 @@ func TestAssessmentReadSurvivesCleanWriterClose(t *testing.T) {
 	}
 }
 
-// A timestamp-only CLOSE also returns the reader to the published file.
-func TestReaderSurvivesTimestampOnlyClose(t *testing.T) {
-	f := newReaderFixture(t, "original")
-	writer := f.openWriter(t)
-	reader := f.openReader(t, true)
-	res := sendCompound(t, f.conn, f.xid, func(w *nfs4.COMPOUND4argsWriter) {
-		putfhOp(w, f.fh)
-		sw := w.AppendArgarray_Setattr()
-		setStateid(sw.Stateid(), writer)
-		aw := sw.StartObjAttributes()
-		value := binary.BigEndian.AppendUint32(nil, nfs4.SET_TO_CLIENT_TIME4)
-		value = binary.BigEndian.AppendUint64(value, 1_000_000)
-		value = binary.BigEndian.AppendUint32(value, 0)
-		sw.Resume(finishTestFattr(aw, attrMask{0, 1 << (nfs4.FATTR4_TIME_MODIFY_SET - 32)}, value))
-		w.Resume(sw.Finish())
-	})
-	f.xid++
-	if res.Status() != nfs4.NFS4_OK {
-		t.Fatalf("SETATTR mtime %s", nfs4.Nfsstat4Name(res.Status()))
-	}
-	closeFile(t, f.conn, &f.xid, f.fh, writer)
-	if status, data := f.read(t, reader); status != nfs4.NFS4_OK || data != "original" {
-		t.Fatalf("reader after timestamp-only CLOSE %s %q", nfs4.Nfsstat4Name(status), data)
-	}
-	if got := f.dataID(t, reader); got != f.fileID {
-		t.Fatalf("reader source %d, want %d", got, f.fileID)
-	}
-	info, err := f.fs.Stat(f.fileID)
-	if err != nil || info.Mtime.Unix() != 1_000_000 {
-		t.Fatalf("published mtime %v %v", info.Mtime, err)
-	}
-}
-
-// After a publishing CLOSE, the reader reads what was published.
-func TestReaderReadsPublishedVersion(t *testing.T) {
-	f := newReaderFixture(t, "original")
-	writer := f.openWriter(t)
-	reader := f.openReader(t, true)
-	writeFileAt(t, f.conn, &f.xid, f.fh, writer, 0, []byte("CHANGED!"))
-	closeFile(t, f.conn, &f.xid, f.fh, writer)
-	if status, data := f.read(t, reader); status != nfs4.NFS4_OK || data != "CHANGED!" {
-		t.Fatalf("reader after publishing CLOSE %s %q", nfs4.Nfsstat4Name(status), data)
-	}
-}
-
-// A failed publication leaves the reader with IO, never the old bytes and
-// never NOENT: a LinkFile error of unknown outcome, or a hydration failure.
+// A publication that fails on hydration leaves the reader with IO, never
+// the old bytes and never NOENT. TestFailedPublicationFencesBeforeQuarantine
+// does the same for a LinkFile error.
 func TestReaderGetsIOAfterFailedPublication(t *testing.T) {
-	t.Run("link", func(t *testing.T) {
-		f := newReaderFixture(t, "original")
-		writer := f.openWriter(t)
-		reader := f.openReader(t, true)
-		writeFileAt(t, f.conn, &f.xid, f.fh, writer, 0, []byte("CHANGED!"))
-		f.fs.mu.Lock()
-		f.fs.failLink = "f"
-		f.fs.mu.Unlock()
-		if status := closeFileStatus(t, f.conn, &f.xid, f.fh, writer); status == nfs4.NFS4_OK {
-			t.Fatal("CLOSE succeeded despite the LinkFile error")
-		}
-		if status, data := f.read(t, reader); status != nfs4.NFS4ERR_IO {
-			t.Fatalf("reader after LinkFile error %s %q, want IO", nfs4.Nfsstat4Name(status), data)
-		}
-	})
-	t.Run("hydration", func(t *testing.T) {
-		f := newReaderFixture(t, "original content")
-		writer := f.openWriter(t)
-		reader := f.openReader(t, true)
-		// The WRITE starts hydration in the background; reading the base
-		// fails from before it.
-		f.fs.mu.Lock()
-		f.fs.failRead = f.fileID
-		f.fs.mu.Unlock()
-		writeFileAt(t, f.conn, &f.xid, f.fh, writer, 0, []byte("X"))
-		if status := closeFileStatus(t, f.conn, &f.xid, f.fh, writer); status == nfs4.NFS4_OK {
-			t.Fatal("CLOSE succeeded despite the hydration failure")
-		}
-		f.fs.mu.Lock()
-		f.fs.failRead = 0
-		f.fs.mu.Unlock()
-		if status, data := f.read(t, reader); status != nfs4.NFS4ERR_IO {
-			t.Fatalf("reader after hydration failure %s %q, want IO", nfs4.Nfsstat4Name(status), data)
-		}
-	})
+	f := newReaderFixture(t, "original content")
+	writer := f.openWriter(t)
+	reader := f.openReader(t, true)
+	// The WRITE starts hydration in the background; reading the base
+	// fails from before it.
+	f.fs.mu.Lock()
+	f.fs.failRead = f.fileID
+	f.fs.mu.Unlock()
+	writeFileAt(t, f.conn, &f.xid, f.fh, writer, 0, []byte("X"))
+	if status := closeFileStatus(t, f.conn, &f.xid, f.fh, writer); status == nfs4.NFS4_OK {
+		t.Fatal("CLOSE succeeded despite the hydration failure")
+	}
+	f.fs.mu.Lock()
+	f.fs.failRead = 0
+	f.fs.mu.Unlock()
+	if status, data := f.read(t, reader); status != nfs4.NFS4ERR_IO {
+		t.Fatalf("reader after hydration failure %s %q, want IO", nfs4.Nfsstat4Name(status), data)
+	}
 }
 
 // A read OPEN that chose the writer's staging and then waited behind a

@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
@@ -61,7 +60,6 @@ type claimFHRestart struct {
 	conn        net.Conn
 	xid         uint32
 	wire        uint64
-	oldWire     uint64 // the first process's clientid
 	incarnation uint64 // the writer's incarnation, from the first process
 	name, owner string
 	fh          []byte // the handle the client holds: H
@@ -103,7 +101,6 @@ func newRestartedWriter(t *testing.T, name string, replacement bool, now func() 
 	conn := dial(t, addr)
 	xid := uint32(1)
 	wire := setupClient(t, conn, &xid)
-	f.oldWire = wire
 	f.incarnation = incarnationForTest(t, first, wire)
 	healthy, healthyFH := openCreateFile(t, conn, &xid, wire, "healthy")
 	writeFileAt(t, conn, &xid, healthyFH, healthy, 0, []byte("closed"))
@@ -131,7 +128,7 @@ func newRestartedWriter(t *testing.T, name string, replacement bool, now func() 
 		t.Fatal(err)
 	}
 	if now != nil {
-		f.srv.clients.SetClock(now)
+		f.srv.SetClock(now)
 	}
 	addr, stopSecond := serveTestServer(t, f.srv)
 	f.conn = dial(t, addr)
@@ -239,7 +236,7 @@ func TestClaimFHRecoversStagedWriter(t *testing.T) {
 // After the writer's lease has expired, the client's next incarnation
 // recovers it through CLAIM_FH by RecoveryKey.
 func TestClaimFHRecoversAfterExpiry(t *testing.T) {
-	later := func() time.Time { return time.Now().Add(3 * clientstore.LeaseTime) }
+	later := func() time.Time { return time.Now().Add(3 * leaseTime) }
 	f := newClaimFHRestart(t, "file", true, later)
 	if n := incarnationForTest(t, f.srv, f.wire); n == f.incarnation {
 		t.Fatal("expired incarnation was adopted")
@@ -272,10 +269,7 @@ func TestClaimFHRecoveryRefusals(t *testing.T) {
 		before := f.meta(t)
 		other := dial(t, f.conn.RemoteAddr().String())
 		defer other.Close()
-		otherWire, confirm := requestClientID(t, other, &f.xid, "other-client", [8]byte{2})
-		if status := confirmClientID(t, other, &f.xid, otherWire, confirm); status != nfs4.NFS4_OK {
-			t.Fatal(nfs4.Nfsstat4Name(status))
-		}
+		otherWire := setupClientAs(t, other, &f.xid, "other-client", [8]byte{2})
 		if status, _, _ := openByHandle(t, other, &f.xid, otherWire, f.owner, f.fh, nfs4.OPEN4_SHARE_ACCESS_BOTH); status != nfs4.NFS4ERR_STALE {
 			t.Fatalf("CLAIM_FH by another client = %s", nfs4.Nfsstat4Name(status))
 		}

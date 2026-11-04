@@ -10,7 +10,7 @@ import (
 	"sort"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/inspect"
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientrecords"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
@@ -19,19 +19,17 @@ import (
 // Server implements inspect.Source (../../inspect/README.md#snapshot-consistency).
 // This file takes no lock and reads no guarded field: each store's snapshot
 // methods, in diagnostics_snapshots.go and in the diagnostics.go of the
-// clientstore, openstate and staging packages, take only their owner's locks
-// and return copies, which this file composes, filters and sorts.
+// openstate and staging packages, take only their owner's locks and return
+// copies, which this file composes, filters and sorts.
 var _ inspect.Source = (*Server)(nil)
-var _ inspect.StoreSource = (*Server)(nil)
 
 func (s *Server) Envelope() inspect.Envelope {
 	epoch, _ := s.sessions.wireIDs.current()
 	return inspect.Envelope{
-		Now:          s.clients.Now(),
-		NfsdID:       s.clients.NfsdID,
+		Now:          s.now(),
+		ServerID:     s.serverID.String(),
 		StateidEpoch: fmt.Sprintf("%08x", s.opens.Epoch),
 		WireEpoch:    epoch,
-		Mode:         inspect.ModeServing,
 	}
 }
 
@@ -45,7 +43,7 @@ func (s *Server) Status() (inspect.Status, error) {
 		Limits: inspect.Limits{
 			MaxInFlightPerConnection: s.MaxInFlightPerConn,
 			AllowMinorVersion2:       s.AllowMinorVersion2,
-			LeaseTime:                clientstore.LeaseTime.String(),
+			LeaseTime:                leaseTime.String(),
 		},
 		Accounting: inspect.Accounting{
 			CacheBytes:          acc.CacheBytes,
@@ -68,7 +66,6 @@ func (s *Server) Status() (inspect.Status, error) {
 		ForegroundReads:    s.foregroundReads.Load(),
 		HydrationsInFlight: len(s.hydrationSlots),
 		StrayCallbacks:     s.backchannel.strayReplies.Load(),
-		ClientGC:           s.clientGCSnapshot(),
 		Connections:        len(s.liveConns()),
 	}, nil
 }
@@ -90,17 +87,37 @@ func (s *Server) Connections(f inspect.ConnectionFilter) (inspect.Connections, e
 	return out, nil
 }
 
+// Clients lists the client records and the wire records matching f. A wire
+// or incarnation filter selects the client record of the incarnations it
+// matched, which the record confirms.
 func (s *Server) Clients(f inspect.ClientFilter) (inspect.Clients, error) {
-	out := inspect.Clients{Envelope: s.Envelope()}
+	out := inspect.Clients{Envelope: s.Envelope(), ClientRecords: []inspect.ClientRecord{}}
 	out.Records, out.Owners, out.WireLimit = s.sessions.snapshotClients(f)
 	sort.Slice(out.Records, func(i, j int) bool { return out.Records[i].WireClientID < out.Records[j].WireClientID })
 	sort.Slice(out.Owners, func(i, j int) bool { return out.Owners[i].OwnerHex < out.Owners[j].OwnerHex })
+	incarnations := make(map[string]bool)
+	if f.Incarnation != 0 {
+		incarnations[incarnationText(f.Incarnation)] = true
+	}
+	if f.WireClientID != 0 {
+		for _, c := range out.Records {
+			incarnations[c.Incarnation] = true
+		}
+	}
+	for _, rec := range s.records.List() {
+		r := clientRecordView(rec)
+		if f.OwnerHex != "" && r.OwnerHex != f.OwnerHex ||
+			(f.Incarnation != 0 || f.WireClientID != 0) && !incarnations[r.Confirmed] {
+			continue
+		}
+		out.ClientRecords = append(out.ClientRecords, r)
+	}
 	return out, nil
 }
 
-// Incarnations joins the partial records of the session store, the client
-// store, the open state and the confirmation registry. The join key is the
-// incarnation's formatted id, which every partial record already carries.
+// Incarnations joins the partial records of the session store and the open
+// state. The join key is the incarnation's formatted id, which every partial
+// record already carries.
 func (s *Server) Incarnations(f inspect.IncarnationFilter) (inspect.Incarnations, error) {
 	out := inspect.Incarnations{Envelope: s.Envelope(), Records: []inspect.Incarnation{}}
 	recs := make(map[string]*inspect.Incarnation)
@@ -118,21 +135,8 @@ func (s *Server) Incarnations(f inspect.IncarnationFilter) (inspect.Incarnations
 		r.Group, r.WireClientID, r.Sessions = p.Group, p.WireClientID, p.Sessions
 	}
 
-	leases, limits := s.clients.SnapshotIncarnations(vfs.InodeID(f.ID))
-	out.Limits.Refreshers, out.Limits.RefresherLimit = limits.Refreshers, limits.RefresherLimit
-	out.Limits.Orphans, out.Limits.OrphanLimit = limits.Orphans, limits.OrphanLimit
-	for _, p := range leases {
-		r := get(p.ID)
-		r.Refresher, r.Cached = p.Refresher, p.Cached
-	}
-
 	for id, n := range s.opens.OpensByIncarnation(f.ID) {
 		get(incarnationText(id)).Opens = n
-	}
-
-	for _, p := range s.confirmHolds(f.ID) {
-		r := get(p.ID)
-		r.Confirming, r.DestroyHolds, r.PurgePending = p.Confirming, p.DestroyHolds, p.PurgePending
 	}
 
 	for _, r := range recs {
@@ -170,12 +174,6 @@ func (s *Server) Opens(f inspect.OpenFilter) (inspect.Opens, error) {
 		return a.Incarnation < b.Incarnation || a.Incarnation == b.Incarnation && a.FileID < b.FileID
 	})
 	out.Views.NameHints = s.names.size()
-	return out, nil
-}
-
-func (s *Server) Confirmations() (inspect.Confirmations, error) {
-	out := s.snapshotConfirmations()
-	out.Envelope = s.Envelope()
 	return out, nil
 }
 
@@ -242,18 +240,18 @@ func (s *Server) ResolveWireClientID(id uint64) (inspect.Resolution, error) {
 
 func (s *Server) ResolveIncarnation(id uint64) (inspect.Resolution, error) {
 	r := inspect.Resolution{Incarnation: incarnationText(id)}
-	if !clientstore.IsDirectoryInodeID(vfs.InodeID(id)) {
-		r.Note = "not a directory inode, so not an incarnation directory"
-		return r, nil
-	}
 	wire, grouped := s.sessions.incarnationKnown(id)
 	r.WireClientID = wire
-	r.Known = grouped || s.clients.HasIncarnationState(vfs.InodeID(id))
+	recorded := s.records.InUse(clientrecords.Incarnation(id))
+	r.Known = grouped || recorded
 	r.Links = inspect.IncarnationLinks(r.Incarnation)
-	if r.Known {
-		r.Note = "a client incarnation directory inode this process has state for"
-	} else {
-		r.Note = "a directory inode; if it is an incarnation, this process has no state for it and only the store report can describe it"
+	switch {
+	case recorded:
+		r.Note = "a client incarnation a client record confirms"
+	case r.Known:
+		r.Note = "a client incarnation this process has state for and no record confirms: pending, replaced, expired or destroyed"
+	default:
+		r.Note = "no client record or state here names this incarnation"
 	}
 	return r, nil
 }
@@ -286,7 +284,7 @@ func (s *Server) ResolveStateid(id [12]byte) (inspect.Resolution, error) {
 	r := inspect.Resolution{
 		Epoch:               fmt.Sprintf("%08x", epoch),
 		IssuedByThisProcess: inspect.Bool(epoch == s.opens.Epoch),
-		Links:               []string{"/v1/opens?stateid=" + stateidText(sid), "/v1/store?stateid=" + stateidText(sid)},
+		Links:               []string{"/v1/opens?stateid=" + stateidText(sid)},
 	}
 	owner, live, expired := s.opens.StateidOwner(sid)
 	switch {
@@ -316,7 +314,7 @@ func (s *Server) ResolveStateid(id [12]byte) (inspect.Resolution, error) {
 				return r, nil
 			}
 			r.Incomplete = staged.Incomplete
-		} else if !s.stagingStore.ReadOnly() {
+		} else {
 			r.Incomplete = true
 		}
 		switch {
@@ -358,48 +356,4 @@ func (s *Server) ResolveSession(id [16]byte) (inspect.Resolution, error) {
 		r.Note = "issued by this process but gone: destroyed, or its client expired or was replaced"
 	}
 	return r, nil
-}
-
-// Store serves the durable-store report through the API. Staging sidecars
-// are read only when asked, from the server's own staging directory.
-func (s *Server) Store(q inspect.StoreQuery) (any, error) {
-	stagingDir := ""
-	if local, ok := s.stagingStore.(*staging.LocalStore); ok {
-		stagingDir = local.Dir()
-	}
-	return storeReport(s.clients, stagingDir, q)
-}
-
-// storeReport runs the durable-store reader for the API. It checks the
-// query before any backend read, reads the backend and, when asked, the
-// staging directory, and never writes either.
-func storeReport(cs *clientstore.Store, stagingDir string, q inspect.StoreQuery) (any, error) {
-	if q.Incarnation != 0 && !clientstore.IsDirectoryInodeID(vfs.InodeID(q.Incarnation)) {
-		return nil, fmt.Errorf("%w: %s is not a directory inode", inspect.ErrBadRequest, incarnationText(q.Incarnation))
-	}
-	if !q.Staging {
-		stagingDir = ""
-	} else if stagingDir == "" {
-		return nil, fmt.Errorf("%w: no staging directory is configured", inspect.ErrBadRequest)
-	}
-	return cs.Inspect(q, stagingDir)
-}
-
-// StoreOnlySource is the diagnostics source of a process that runs no NFS
-// server: a read-only client store opened with clientstore.OpenReader, and
-// a staging directory that is only ever read by the store report. It has
-// no nfsd id and no epochs, since it issues nothing.
-type StoreOnlySource struct {
-	ClientStore *clientstore.Store
-	StagingDir  string
-}
-
-var _ inspect.StoreSource = StoreOnlySource{}
-
-func (s StoreOnlySource) Envelope() inspect.Envelope {
-	return inspect.Envelope{Now: s.ClientStore.Now(), Mode: inspect.ModeStoreOnly}
-}
-
-func (s StoreOnlySource) Store(q inspect.StoreQuery) (any, error) {
-	return storeReport(s.ClientStore, s.StagingDir, q)
 }

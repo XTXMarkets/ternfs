@@ -30,40 +30,6 @@ func assertOpenStateIndex(t *testing.T, store *Store) {
 	}
 }
 
-func TestOpenRejectsOccupiedStateID(t *testing.T) {
-	store := NewStore()
-	owner := OwnerKey{ClientID: 1, Owner: "owner"}
-	first, err := store.Open(owner, vfs.MakeInodeID(vfs.InodeTypeFile, 1), vfs.MakeInodeID(vfs.InodeTypeFile, 1), testGrant(false), nfs4.StateID{}, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.Open(
-		owner, vfs.MakeInodeID(vfs.InodeTypeFile, 2), vfs.MakeInodeID(vfs.InodeTypeFile, 2), testGrant(false), first.ID, false,
-	); err == nil {
-		t.Fatal("occupied stateid was reused for another file")
-	}
-	assertOpenStateIndex(t, store)
-}
-
-// A write OPEN by an owner that holds a read open upgrades the same
-// stateid to the new writer's staging (RFC 8881 section 18.16.3).
-func TestWriteReopenUpgrades(t *testing.T) {
-	store := NewStore()
-	owner := OwnerKey{ClientID: 1, Owner: "owner"}
-	fileID := vfs.MakeInodeID(vfs.InodeTypeFile, 1)
-	stagingID := vfs.MakeInodeID(vfs.InodeTypeFile, 2)
-	state := addConfirmedOpen(t, store, owner, fileID)
-	upgraded, err := store.Open(owner, fileID, stagingID, testGrant(true), nfs4.StateID{}, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if upgraded.ID != state.ID || !upgraded.Writes() || upgraded.DataID != stagingID ||
-		upgraded.Generation != state.Generation+1 {
-		t.Fatalf("upgrade = %+v from %+v", upgraded, state)
-	}
-	assertOpenStateIndex(t, store)
-}
-
 func TestStateidGenerationWrapsToOne(t *testing.T) {
 	for _, test := range []struct {
 		generation uint32
@@ -93,24 +59,6 @@ func addConfirmedOpen(
 		t.Fatalf("OPEN status = %s", nfs4.Nfsstat4Name(status))
 	}
 	return state
-}
-
-func TestReopenAdvancesGeneration(t *testing.T) {
-	store := NewStore()
-	defer assertOpenStateIndex(t, store)
-	owner := OwnerKey{ClientID: 1, Owner: "owner"}
-	fileID := vfs.MakeInodeID(vfs.InodeTypeFile, 1)
-	first := addConfirmedOpen(t, store, owner, fileID)
-	second := addConfirmedOpen(t, store, owner, fileID)
-	if second.ID != first.ID || second.Generation != first.Generation+1 {
-		t.Fatalf("reopen = %+v after %+v", second, first)
-	}
-	if _, status := store.Lookup(owner.ClientID, first.ID, first.Generation, fileID); status != nfs4.NFS4ERR_OLD_STATEID {
-		t.Fatalf("old generation = %s", nfs4.Nfsstat4Name(status))
-	}
-	if _, status := store.Lookup(owner.ClientID, first.ID, 0, fileID); status != nfs4.NFS4_OK {
-		t.Fatalf("current-generation seqid 0 = %s", nfs4.Nfsstat4Name(status))
-	}
 }
 
 func TestOpenStateStoreLookupClassifiesStateids(t *testing.T) {
@@ -234,7 +182,7 @@ func TestOpenClearsClosing(t *testing.T) {
 	store := NewStore()
 	owner := OwnerKey{ClientID: 1, Owner: "owner"}
 	file := vfs.MakeInodeID(vfs.InodeTypeFile, 1)
-	state, err := store.Open(owner, file, file, testGrant(true), nfs4.StateID{}, true)
+	state, err := store.Open(owner, file, file, testGrant(true), nfs4.StateID{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +190,7 @@ func TestOpenClearsClosing(t *testing.T) {
 	if !store.Closing(state.ID) {
 		t.Fatal("mark not set")
 	}
-	if _, err := store.Open(owner, file, file, testGrant(true), nfs4.StateID{}, true); err != nil {
+	if _, err := store.Open(owner, file, file, testGrant(true), nfs4.StateID{}); err != nil {
 		t.Fatal(err)
 	}
 	if store.Closing(state.ID) {
@@ -257,7 +205,7 @@ func TestReaderOfSkipsOtherClientsAndClosing(t *testing.T) {
 	staging := vfs.MakeInodeID(vfs.InodeTypeFile, 2)
 	open := func(client uint64, owner string) State {
 		t.Helper()
-		state, err := store.Open(OwnerKey{ClientID: client, Owner: owner}, file, staging, testGrant(false), nfs4.StateID{}, false)
+		state, err := store.Open(OwnerKey{ClientID: client, Owner: owner}, file, staging, testGrant(false), nfs4.StateID{})
 		if err != nil {
 			t.Fatal(err)
 		}

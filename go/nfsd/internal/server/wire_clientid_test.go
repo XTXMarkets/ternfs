@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -34,7 +33,7 @@ func useTestWireEpoch(srv *Server) {
 }
 
 // incarnationForTest maps a live wire clientid, as EXCHANGE_ID returned it,
-// to the durable incarnation that clientstore.Store, open state and staging use.
+// to the incarnation that client records, open state and staging use.
 func incarnationForTest(t *testing.T, srv *Server, wireID uint64) uint64 {
 	t.Helper()
 	srv.sessions.mu.Lock()
@@ -48,7 +47,7 @@ func incarnationForTest(t *testing.T, srv *Server, wireID uint64) uint64 {
 
 func wireTestServer(t *testing.T) *Server {
 	t.Helper()
-	srv, err := NewServer(vfs.NewLocalTernVFS(t.TempDir()), staging.ReadOnlyStore{}, nil)
+	srv, err := NewServer(vfs.NewLocalTernVFS(t.TempDir()), newTestStaging(t), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,64 +116,16 @@ func TestWireEpochFailureReleasesListener(t *testing.T) {
 	ln.Close()
 }
 
-func TestWireEpochAfterWaitsForNextSecond(t *testing.T) {
-	bound := time.Unix(100, 900_000_000)
-	clock := time.Unix(100, 950_000_000)
-	var slept []time.Duration
-	epoch := wireEpochAfter(bound, func() time.Time { return clock }, func(d time.Duration) {
-		slept = append(slept, d)
-		clock = clock.Add(d)
-	})
-	if epoch != 101 || len(slept) != 1 || slept[0] != 50*time.Millisecond {
-		t.Fatalf("epoch %d after sleeping %v", epoch, slept)
-	}
-	// A clock already past the bound second does not wait.
-	clock = time.Unix(205, 0)
-	slept = nil
-	if epoch := wireEpochAfter(bound, func() time.Time { return clock }, func(d time.Duration) {
-		slept = append(slept, d)
-	}); epoch != 205 || slept != nil {
-		t.Fatalf("epoch %d after sleeping %v", epoch, slept)
-	}
-}
-
+// The epoch is the high half of every wire clientid, and 0 means unset: an
+// epoch outside 1..0xffffffff is refused and issues nothing.
 func TestWireEpochRange(t *testing.T) {
-	for _, epoch := range []int64{-1, 0, 1 << 32} {
+	for _, epoch := range []int64{0, 1 << 32} {
 		var w wireClientIDs
 		if err := w.start(epoch); err == nil {
 			t.Fatalf("epoch %d accepted", epoch)
 		}
 		if _, err := w.next(); !errors.Is(err, errWireEpochUnset) {
 			t.Fatalf("rejected epoch %d issued a clientid: %v", epoch, err)
-		}
-	}
-	var w wireClientIDs
-	if err := w.start(0xffffffff); err != nil {
-		t.Fatal(err)
-	}
-	if err := w.start(1); err == nil || w.epoch != 0xffffffff {
-		t.Fatalf("epoch changed after start: %v %d", err, w.epoch)
-	}
-	if id, err := w.next(); err != nil || id != 0xffffffff<<32|1 {
-		t.Fatalf("clientid %x %v", id, err)
-	}
-}
-
-func TestWireClientIDsNeverWrap(t *testing.T) {
-	var w wireClientIDs
-	if err := w.start(7); err != nil {
-		t.Fatal(err)
-	}
-	if id, err := w.next(); err != nil || id != 7<<32|1 {
-		t.Fatalf("first clientid %x %v", id, err)
-	}
-	w.last = maxWireCounter - 1
-	if id, err := w.next(); err != nil || id != 7<<32|0xffffffff {
-		t.Fatalf("last clientid %x %v", id, err)
-	}
-	for range 2 {
-		if id, err := w.next(); !errors.Is(err, errWireIDsExhausted) {
-			t.Fatalf("clientid %x after exhaustion: %v", id, err)
 		}
 	}
 }

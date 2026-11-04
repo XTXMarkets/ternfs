@@ -26,10 +26,20 @@ type RemoteTernVFS struct {
 	bufPool      *bufpool.BufPool
 	dirInfoCache *client.DirInfoCache
 
+	// mu guards both caches. Each is bounded and evicts the least recently
+	// used entry. Losing one costs a backend call: a reader is created
+	// again, and a directory's parent is read from StatDirectory.
 	mu      sync.Mutex
-	parents map[InodeID]InodeID            // child → parent, populated by Lookup
-	readers map[msgs.InodeId]*cachedReader // file reader cache
+	parents *lru[InodeID, InodeID]            // child → parent, populated by Lookup
+	readers *lru[msgs.InodeId, *cachedReader] // file reader cache
 }
+
+// Cache bounds. A parent entry is about a hundred bytes; a reader holds a
+// file's span metadata.
+const (
+	maxCachedParents = 1 << 18
+	maxCachedReaders = 4096
+)
 
 type cachedReader struct {
 	reader   *client.FileReader
@@ -42,8 +52,8 @@ func NewRemoteTernVFS(c *client.Client, logger *log.Logger, bufPool *bufpool.Buf
 		log:          logger,
 		bufPool:      bufPool,
 		dirInfoCache: client.NewDirInfoCache(),
-		parents:      make(map[InodeID]InodeID),
-		readers:      make(map[msgs.InodeId]*cachedReader),
+		parents:      newLRU[InodeID, InodeID](maxCachedParents),
+		readers:      newLRU[msgs.InodeId, *cachedReader](maxCachedReaders),
 	}
 }
 
@@ -82,7 +92,7 @@ func (t *RemoteTernVFS) Lookup(dirID InodeID, name string) (InodeID, error) {
 	}
 	childID := InodeID(resp.TargetId)
 	t.mu.Lock()
-	t.parents[childID] = dirID
+	t.parents.put(childID, dirID)
 	t.mu.Unlock()
 	return childID, nil
 }
@@ -90,7 +100,7 @@ func (t *RemoteTernVFS) Lookup(dirID InodeID, name string) (InodeID, error) {
 func (t *RemoteTernVFS) LookupParent(id InodeID) (InodeID, error) {
 	// Check the parent cache first.
 	t.mu.Lock()
-	pid, ok := t.parents[id]
+	pid, ok := t.parents.get(id)
 	t.mu.Unlock()
 	if ok {
 		return pid, nil
@@ -106,14 +116,13 @@ func (t *RemoteTernVFS) LookupParent(id InodeID) (InodeID, error) {
 			// Root directory or snapshot directory — parent is itself.
 			return id, nil
 		}
-		// Cache the owner like Lookup and Readdir do. PUTFH walks every
-		// directory filehandle up to the root, and a client which keeps
-		// using its filehandles after an nfsd restart never issues the
-		// LOOKUPs that would otherwise fill this cache.
+		// Cache the owner like Lookup and Readdir do, for LOOKUPP. A
+		// client which keeps using its filehandles after an nfsd restart
+		// never issues the LOOKUPs that would otherwise fill this cache.
 		parentID := InodeID(resp.Owner)
 
 		t.mu.Lock()
-		t.parents[id] = parentID
+		t.parents.put(id, parentID)
 		t.mu.Unlock()
 
 		return parentID, nil
@@ -139,7 +148,7 @@ func (t *RemoteTernVFS) Readdir(dirID InodeID, startHash uint64) ([]DirEntry, ui
 			ID:       InodeID(e.TargetId),
 			NameHash: uint64(e.NameHash),
 		}
-		t.parents[InodeID(e.TargetId)] = dirID
+		t.parents.put(InodeID(e.TargetId), dirID)
 	}
 	t.mu.Unlock()
 	return entries, uint64(resp.NextHash), nil
@@ -162,19 +171,9 @@ func (t *RemoteTernVFS) Read(fileID InodeID, offset uint64, dest []byte) (int, b
 	return n, eof, nil
 }
 
-func (t *RemoteTernVFS) ReadAll(fileID InodeID) ([]byte, error) {
-	buf, err := t.client.FetchFile(t.log, t.bufPool, msgs.InodeId(fileID))
-	if err != nil {
-		return nil, TernToOSError(err)
-	}
-	data := append([]byte(nil), buf.Bytes()...)
-	t.bufPool.Put(buf)
-	return data, nil
-}
-
 func (t *RemoteTernVFS) getOrCreateReader(mid msgs.InodeId) (*cachedReader, error) {
 	t.mu.Lock()
-	cr, ok := t.readers[mid]
+	cr, ok := t.readers.get(mid)
 	t.mu.Unlock()
 	if ok {
 		return cr, nil
@@ -192,10 +191,10 @@ func (t *RemoteTernVFS) getOrCreateReader(mid msgs.InodeId) (*cachedReader, erro
 	t.mu.Lock()
 	// Another goroutine may have created the reader while we were unlocked;
 	// if so, discard ours and use theirs.
-	if existing, ok := t.readers[mid]; ok {
+	if existing, ok := t.readers.get(mid); ok {
 		cr = existing
 	} else {
-		t.readers[mid] = cr
+		t.readers.put(mid, cr)
 	}
 	t.mu.Unlock()
 	return cr, nil
@@ -223,7 +222,7 @@ func (t *RemoteTernVFS) Mkdir(dirID InodeID, name string) (InodeID, error) {
 	}
 	childID := InodeID(resp.Id)
 	t.mu.Lock()
-	t.parents[childID] = dirID
+	t.parents.put(childID, dirID)
 	t.mu.Unlock()
 	return childID, nil
 }
@@ -265,7 +264,7 @@ func (t *RemoteTernVFS) Symlink(dirID InodeID, name string, target string) (Inod
 	}
 	childID := InodeID(fileId)
 	t.mu.Lock()
-	t.parents[childID] = dirID
+	t.parents.put(childID, dirID)
 	t.mu.Unlock()
 	return childID, nil
 }
@@ -315,51 +314,9 @@ func (t *RemoteTernVFS) LinkFile(fileID InodeID, cookie Cookie, dirID InodeID, n
 	}
 	childID := InodeID(mid)
 	t.mu.Lock()
-	t.parents[childID] = dirID
+	t.parents.put(childID, dirID)
 	t.mu.Unlock()
 	return nil
-}
-
-func (t *RemoteTernVFS) CreateFile(dirID InodeID, name string, data io.Reader) (InodeID, error) {
-	dirMid := msgs.InodeId(dirID)
-	overwrittenID, err := t.Lookup(dirID, name)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return 0, err
-	}
-	// ConstructFile on the same shard as the directory.
-	var constructResp msgs.ConstructFileResp
-	if err := t.client.ShardRequest(t.log, dirMid.Shard(), &msgs.ConstructFileReq{
-		Type: msgs.FILE,
-		Note: name,
-	}, &constructResp); err != nil {
-		return 0, TernToOSError(err)
-	}
-	fileId := constructResp.Id
-	cookie := constructResp.Cookie
-	// Write data.
-	if data != nil {
-		if err := t.client.WriteFile(t.log, t.bufPool, t.dirInfoCache, dirMid, fileId, cookie, data); err != nil {
-			return 0, TernToOSError(err)
-		}
-	}
-	// Link.
-	if err := t.client.ShardRequest(t.log, dirMid.Shard(), &msgs.LinkFileReq{
-		FileId:  fileId,
-		Cookie:  cookie,
-		OwnerId: dirMid,
-		Name:    name,
-	}, &msgs.LinkFileResp{}); err != nil {
-		return 0, TernToOSError(err)
-	}
-	childID := InodeID(fileId)
-	t.mu.Lock()
-	if overwrittenID != 0 && overwrittenID != childID {
-		delete(t.parents, overwrittenID)
-		delete(t.readers, msgs.InodeId(overwrittenID))
-	}
-	t.parents[childID] = dirID
-	t.mu.Unlock()
-	return childID, nil
 }
 
 func (t *RemoteTernVFS) LookupEdge(dirID InodeID, name string) (Edge, error) {
@@ -372,14 +329,6 @@ func (t *RemoteTernVFS) LookupEdge(dirID InodeID, name string) (Edge, error) {
 		return Edge{}, TernToOSError(err)
 	}
 	return Edge{ID: InodeID(resp.TargetId), CreationTime: uint64(resp.CreationTime)}, nil
-}
-
-func (t *RemoteTernVFS) Remove(dirID InodeID, name string) error {
-	edge, err := t.LookupEdge(dirID, name)
-	if err != nil {
-		return err
-	}
-	return TernToOSError(t.RemoveEdge(dirID, name, edge))
 }
 
 func (t *RemoteTernVFS) RemoveEdge(dirID InodeID, name string, edge Edge) error {
@@ -410,18 +359,10 @@ func (t *RemoteTernVFS) RemoveEdge(dirID InodeID, name string, edge Edge) error 
 	}
 	// Evict cached reader for removed files.
 	t.mu.Lock()
-	delete(t.readers, targetId)
-	delete(t.parents, InodeID(targetId))
+	t.readers.remove(targetId)
+	t.parents.remove(InodeID(targetId))
 	t.mu.Unlock()
 	return nil
-}
-
-func (t *RemoteTernVFS) Rename(srcDirID InodeID, srcName string, dstDirID InodeID, dstName string) error {
-	edge, err := t.LookupEdge(srcDirID, srcName)
-	if err != nil {
-		return err
-	}
-	return TernToOSError(t.RenameEdge(srcDirID, srcName, edge, dstDirID, dstName))
 }
 
 func (t *RemoteTernVFS) RenameEdge(srcDirID InodeID, srcName string, edge Edge, dstDirID InodeID, dstName string) error {
@@ -470,7 +411,7 @@ func (t *RemoteTernVFS) RenameEdge(srcDirID InodeID, srcName string, edge Edge, 
 	// Readers are keyed by immutable inode, so a displaced file's cached
 	// reader still describes its snapshot. Destination preflight belongs to
 	// the caller and must run before any writer is guarded.
-	t.parents[InodeID(targetId)] = dstDirID
+	t.parents.put(InodeID(targetId), dstDirID)
 	t.mu.Unlock()
 	return nil
 }

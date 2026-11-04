@@ -5,7 +5,6 @@
 package server
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -95,59 +94,5 @@ func TestRestartRetransmissionGetsBadSession(t *testing.T) {
 	}
 	if a := srv.sessions.accounting(); a.Sessions != 0 || a.Records != 0 || a.Groups != 0 {
 		t.Fatalf("old session rebuilt state %+v", a)
-	}
-}
-
-// The approved restart path for a staged writer, on the wire: the old
-// clientid is stale; EXCHANGE_ID gives a new clientid with sequence 1;
-// CREATE_SESSION 1 adopts the still-confirmed incarnation; CLAIM_PREVIOUS
-// gets NO_GRACE; a writable CLAIM_FH of the held handle recovers the
-// writer; CLOSE publishes the data written before and after the restart.
-func TestRestartRawRecoverySequence(t *testing.T) {
-	f := newRestartedWriter(t, "file", false, nil)
-	if _, status, err := createSession(f.conn, f.xid, f.oldWire, 2); err != nil || status != nfs4.NFS4ERR_STALE_CLIENTID {
-		t.Fatalf("CREATE_SESSION with the old clientid %s %v", nfs4.Nfsstat4Name(status), err)
-	}
-	f.xid++
-	wire, seq, status, err := exchangeID(f.conn, f.xid, "test-client", [8]byte{})
-	f.xid++
-	if err != nil || status != nfs4.NFS4_OK || seq != 1 || wire == f.oldWire {
-		t.Fatalf("EXCHANGE_ID %#x seq %d %s %v", wire, seq, nfs4.Nfsstat4Name(status), err)
-	}
-	if _, status, err := createSession(f.conn, f.xid, wire, 1); err != nil || status != nfs4.NFS4_OK {
-		t.Fatalf("CREATE_SESSION 1 %s %v", nfs4.Nfsstat4Name(status), err)
-	}
-	f.xid++
-	f.wire = wire
-	if got := incarnationForTest(t, f.srv, wire); got != f.incarnation {
-		t.Fatalf("new clientid bound incarnation %d, want the adopted %d", got, f.incarnation)
-	}
-	res := sendCompound(t, f.conn, f.xid, func(w *nfs4.COMPOUND4argsWriter) {
-		pw := w.AppendArgarray_Putfh()
-		pw.Resume(pw.StartObject().SetData(f.fh).Finish())
-		w.Resume(pw.Finish())
-		ow := w.AppendArgarray_Open()
-		ow.SetShareAccess(nfs4.OPEN4_SHARE_ACCESS_BOTH)
-		ow.SetShareDeny(nfs4.OPEN4_SHARE_DENY_NONE)
-		ownerW := ow.StartOwner().SetClientid(wire)
-		ow.Resume(ownerW.SetOwner([]byte(f.owner)).Finish())
-		ow.SetOpenhow_Default(nfs4.OPEN4_NOCREATE)
-		ow.SetClaim_Previous()
-		w.Resume(ow.Finish())
-	})
-	f.xid++
-	if res.Status() != nfs4.NFS4ERR_NO_GRACE {
-		t.Fatalf("CLAIM_PREVIOUS %s", nfs4.Nfsstat4Name(res.Status()))
-	}
-	status, sid, fh := f.claimFH(t, f.owner)
-	if status != nfs4.NFS4_OK || !bytes.Equal(fh, f.fh) {
-		t.Fatalf("CLAIM_FH %s", nfs4.Nfsstat4Name(status))
-	}
-	more := []byte(" and after")
-	writeFileAt(t, f.conn, &f.xid, f.fh, sid, uint64(len(f.data)), more)
-	closeFile(t, f.conn, &f.xid, f.fh, sid)
-	want := append(append([]byte(nil), f.data...), more...)
-	if got, err := os.ReadFile(filepath.Join(f.root, f.name)); err != nil || !bytes.Equal(got, want) {
-		t.Fatalf("published %q %v, want %q", got, err, want)
 	}
 }

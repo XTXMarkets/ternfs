@@ -10,10 +10,3 @@ type Error uint32
 func (e Error) Error() string {
 	return "nfs error"
 }
-
-func ErrorCode(err error) uint32 {
-	if e, ok := err.(Error); ok {
-		return uint32(e)
-	}
-	return NFS4ERR_SERVERFAULT
-}

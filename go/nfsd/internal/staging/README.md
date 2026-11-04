@@ -24,20 +24,42 @@ an operator can recover is in [Recovery](../../RECOVERY.md#startup-and-quarantin
 
 ```text
 <staging>/
+    server-id                       the server identity, 32 hex digits
     <inode>.staging                 data, sparse
     <inode>.meta                    sidecar
     .<inode>.meta.tmp-<random>      sidecar being written
     quarantine/<inode>-<random>/    a pair moved aside
     aliases/                        the server's publication alias log
+    clients/                        the client records
     sessions/                       the server's session files
 ```
 
 `<inode>` is the transient inode as 16 lowercase hex digits. The directory
 is created mode 0700 and sidecars are written mode 0600. This package owns
-the pairs, their temporaries and `quarantine/`. It skips `aliases/` and
-`sessions/`, which belong to the server; see
-[Publication alias log](../server/README.md#publication-alias-log)
+`server-id`, the pairs, their temporaries and `quarantine/`. It skips
+`aliases/`, `clients/` and `sessions/`, which belong to the server; see
+[Publication alias log](../server/README.md#publication-alias-log),
+[clientrecords](../clientrecords/records.go)
 and [Session files on disk](../server/README.md#session-files-on-disk).
+Together they are the server: a copy of the whole directory is the same
+server, and an empty one a new server.
+
+## Server identity
+
+The staging directory is the server's identity. `server-id` holds 16
+random bytes as 32 hex digits and a newline. `NewLocalStore` writes it at
+the first start on a directory without server state: a temporary file,
+fsync, rename, fsync of the directory. Every later start reads it. The
+server derives the NFSv4.1 server owner and scope from it, so a restart or
+a copy of the whole directory is the same server, and an empty directory is
+a new one.
+
+A directory with server state but no `server-id` is a partial copy, and
+startup refuses it with `ErrPartialCopy`. Server state is a staged data
+file or sidecar, any file in `sessions/`, or any file in `clients/`, where
+[clientrecords](../clientrecords/records.go) keeps the client records. An
+alias log, quarantined pairs and empty subdirectories are not. A `server-id` that does not decode
+also stops startup; it is never replaced.
 
 ## Overlay files
 
@@ -125,9 +147,9 @@ gets `ErrRemoved`. The seal is local to this process.
 `Retire` cancels hydration, syncs the data, saves the full checkpoint with
 `Retired` set and closes the data file. It does nothing if the file has
 been rebound to another owner since the caller checked. `Rebind` gives a
-writer a new incarnation and stateid, on recovery or when an upgrade keeps
-the existing open's stateid. `Bind` names another open as the owner in one
-save, with its open-owner and whether it only reads: when an earlier CLOSE
+writer a new incarnation and stateid on recovery. `Bind` names another
+open as the owner in one save, with its open-owner and whether it only
+reads: when an earlier CLOSE
 hands shared staging to another writer, when a write open takes over the
 staging of an open whose CLOSE answered DELAY, and when a detached staging
 is kept for a read open. Both clear `Retired`, reopening a retired writer's
@@ -180,13 +202,6 @@ process: `Get`, `GetMeta` and `Entries` no longer return the entry,
 operation has an unknown outcome, and a staging whose publication failed
 during CLOSE while other opens read it. A tombstone is not persisted; a
 restart changes the write verifier.
-
-## Read-only store
-
-`ReadOnlyStore` is used when `-staging` is omitted. It holds nothing.
-`Create` and every namespace or ownership update get `os.ErrPermission`,
-lookups find nothing, and `Quarantine` and `Remove` do nothing. See
-[read-only servers](../../DEPLOYMENT.md#read-only-servers).
 
 ## Locking
 

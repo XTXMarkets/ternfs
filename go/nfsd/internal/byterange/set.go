@@ -122,21 +122,6 @@ func (rs *Set) Remove(start, end uint64) {
 	*rs = out
 }
 
-func (rs Set) Contains(start, end uint64) bool {
-	if start >= end {
-		return true
-	}
-	for _, r := range rs {
-		if r.Start > start {
-			return false
-		}
-		if r.End > start {
-			return r.End >= end
-		}
-	}
-	return false
-}
-
 // Gaps returns portions of [start, end) not covered by the set.
 func (rs Set) Gaps(start, end uint64) []Range {
 	if start >= end {

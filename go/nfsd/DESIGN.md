@@ -22,17 +22,22 @@ Two TernFS properties shape the design:
 1. A file is immutable once it is linked into a directory. nfsd therefore
    presents mutable NFS files by copy-on-write: a writer's changes are
    staged on the nfsd host and published as a new immutable inode on CLOSE.
-2. Several nfsd processes may serve the same namespace, and any of them may
-   restart. Client lifetimes and lease decisions must therefore be visible
-   to every process. Everything else stays local to the process or its
-   staging disk.
+2. One nfsd serves a tree at a time. It restarts in place on the same
+   staging disk, which is the normal recovery, and its address can move to
+   another host, which is failover. Staging stays on that daemon's local
+   POSIX disk: nfsd turns TernFS, where a file is visible on close, into
+   POSIX, where it is visible on write, and only a local POSIX filesystem
+   can hold the bytes in between. Two daemons on one tree are not
+   supported and nfsd does not detect them: the operator fences the old
+   daemon before its address moves; see
+   [Replace a host](RECOVERY.md#replace-a-host).
 
 ## Packages
 
 | Package | Responsibility | Reference |
 | --- | --- | --- |
 | [internal/server](internal/server/server.go) | RPC and connections, sessions and slots, compounds and operations, persistent sessions and replay, the logical lease, confirmation, the staging lifecycle, the alias log and the backchannel. | [README](internal/server/README.md) |
-| [internal/clientstore](internal/clientstore/store.go) | The shared client records under `/.nfs`: identities, incarnations, confirmation, open markers, durable leases and collection. | [README](internal/clientstore/README.md) |
+| [internal/clientrecords](internal/clientrecords/records.go) | One fsynced record per confirmed client identity in the staging directory. | Package documentation. |
 | [internal/openstate](internal/openstate/store.go) | Process-local stateids, opens, tombstones and client views. | [README](internal/openstate/README.md) |
 | [internal/staging](internal/staging/store.go) | Staged data files and sidecars on the local disk, checkpoints, startup recovery and quarantine. | [README](internal/staging/README.md) |
 | [internal/sessionstore](internal/sessionstore/store.go) | The session file format on the staging disk. | [Session files on disk](internal/server/README.md#session-files-on-disk) |
@@ -42,21 +47,33 @@ Two TernFS properties shape the design:
 
 ## State ownership
 
-| State | Owner and lifetime |
-| --- | --- |
-| Namespace and published file contents | TernFS; subject to its policies. |
-| Client identity, incarnation, lease slots and open markers | Shared TernFS client store under `/.nfs`; see [clientstore](internal/clientstore/README.md). |
-| Staged bytes and checkpointed writer metadata | One daemon's staging disk; retained across compatible restarts; see [staging](internal/staging/README.md). |
-| Sessions, their slot reply caches and namespace intents | One daemon's staging disk (`sessions/`), written without fsync; a restart on the same host restores eligible sessions; see [Sessions across restarts](#sessions-across-restarts). |
-| Publication aliases | One daemon's staging disk (`aliases/published.jsonl`), not synced; rewritten at each sweep and reloaded at startup while unexpired; see the [alias log](internal/server/README.md#publication-alias-log). |
-| Wire clientids and logical leases | One daemon process. A restored session rebinds to its incarnation, whose lease is published again at startup. |
-| Detailed opens and pathname hints | One daemon process, with writer recovery from sidecars; read opens are reopened by the client; see [openstate](internal/openstate/README.md). |
+The staging directory is the server. It holds the server's identity, its
+client records, its sessions and its staged writes. A restart on the same
+directory, or on a copy of the whole stopped directory, is the same
+server. An empty directory is a new server: every session is gone, every
+client registers again, unpublished writes are lost and nothing about old
+clients is remembered. There is no middle ground. Startup refuses a
+directory that has server state but no `server-id`, since that is a
+partial copy. nfsd keeps nothing in TernFS except the data. What clients
+see in each case is in
+[What survives a failure](RECOVERY.md#what-survives-a-failure).
 
-Shared client records let one daemon detect a reboot or expiry established
-elsewhere. Local staging does not replace that authority. Conversely, the
-shared records contain neither staged bytes nor enough information to
-reconstruct general opens. Every process advertises its own server owner;
-this is client-lifetime coordination, not a shared NFS session service.
+| State | Lives in | Durability and lifetime |
+| --- | --- | --- |
+| Namespace and published file contents | TernFS | Subject to its policies. |
+| Server identity: the server owner and scope | `server-id` in the staging directory | Written once and synced at the first start on an empty directory; as long as the directory. See [server identity](internal/staging/README.md#server-identity). |
+| Client records: identity, principal, confirmed incarnation and boot verifier | `clients/`, one file per identity | Replaced through a synced temporary and a rename. From the first confirmation to expiry or destruction. See [Identities and incarnations](#identities-and-incarnations). |
+| Staged bytes and sidecars | The staging directory | Sidecars synced at checkpoints. Until published, discarded or quarantined. See [staging](internal/staging/README.md). |
+| Sessions, their slot reply caches and namespace intents | `sessions/` | Written without fsync. A restart restores eligible sessions. See [Sessions across restarts](#sessions-across-restarts). |
+| Publication aliases | `aliases/published.jsonl` | Not synced; rewritten at each sweep and reloaded at startup while unexpired. See the [alias log](internal/server/README.md#publication-alias-log). |
+| Wire clientids and logical leases | Process memory | The process. A restart gives every confirmed record a fresh lease. |
+| Opens, stateids, tombstones, client views, the writer index and name hints | Process memory | The process, with writer recovery from sidecars; read opens are reopened by the client. See [openstate](internal/openstate/README.md). |
+
+Wire clientids belong to one process, so a Linux client whose session was
+not restored runs server-reboot recovery whatever the records say. The
+records decide what that recovery finds: a client that comes back with the
+same boot verifier and principal keeps its confirmed incarnation, and with
+it its staged writers, and a client without a record is new.
 
 ## Filehandles and client views
 
@@ -87,6 +104,9 @@ until it looked the name up again. See the
 [alias log](internal/server/README.md#publication-alias-log) and
 [old handles](DEPLOYMENT.md#old-handles-name-their-original-version).
 
+Aliases exist so a client sees its own save through the handle it holds.
+They are not seen by other clients and do not replace a fresh lookup.
+
 A read `CLAIM_FH` OPEN needs only the inode. A writable one needs a
 publication target. A bounded table of 65,536 pathname hints remembers
 where LOOKUP and OPEN saw files; each hint is checked against the current
@@ -94,11 +114,18 @@ directory entry. A cold miss can use eligible recovered staging, otherwise
 it returns `NFS4ERR_STALE`. See
 [Writer recovery mechanics](internal/server/README.md#writer-recovery-mechanics).
 
-Ownership and modes are synthetic. The `/.nfs` namespace is hidden from
-LOOKUP and READDIR. PUTFH rejects internal objects whose ancestry is known
-locally; after restart, a guessed file inode can escape that check because
-TernFS cannot recover its parent from the inode. Client-store records
-contain identity and expiry metadata, not authentication secrets.
+The hints exist for one case: finding where to publish when a writable
+open names a handle after a write has changed the file's inode. They are
+not a map of the namespace. READDIR hands out filehandles without filling
+them; a handle held across this process's start, a handle the client
+learned from READDIR, and a reference taken before the file was replaced
+all miss. Eviction is by first insertion, and a hit does not refresh an
+entry. An ordinary open on Linux recovers from the STALE by looking the
+name up again. A client that reopens without a path walk cannot, and must
+mount with `lookupcache=none`; see
+[Client mounts](DEPLOYMENT.md#one-writable-server).
+
+Ownership and modes are synthetic.
 
 ## Writes and publication
 
@@ -178,7 +205,7 @@ path in two ways:
 | Property or state | Meaning | Changed when |
 | --- | --- | --- |
 | Linked or unlinked | A linked writer publishes to its recorded directory and name on CLOSE. An unlinked one is still usable for I/O, but has no publication target, and CLOSE discards it unless another open of its client still reads it. | OPEN creates a linked writer; REMOVE or RENAME can detach it or move its target. |
-| Active or retired | Any writer not marked `Retired` in its sidecar. It need not have an open in this process: after a restart, staging is loaded before any request adopts it. A retired writer keeps its data for recovery, without a pathname reservation or an open descriptor. | The lease sweep retires the writers of an expired client. Before a namespace change, a non-retired writer at the name is checked: it counts as active while its durable open marker is active, or a confirmation protects its client, and is otherwise retired; a check that fails stops the change. Recovery rebinds a writer and clears `Retired`. |
+| Active or retired | Any writer not marked `Retired` in its sidecar. It need not have an open in this process: after a restart, staging is loaded before any request adopts it. A retired writer keeps its data for recovery, without a pathname reservation or an open descriptor. | The lease sweep retires the writers of an expired client. Before a namespace change, a non-retired writer at the name is checked: it counts as active while a record confirms its client and its lease has not run out, and is otherwise retired; a check that cannot remove the client's record stops the change. Recovery rebinds a writer and clears `Retired`. |
 | Failed | Excluded for the process lifetime, with its files moved to quarantine. | A namespace operation has an unknown outcome, or a CLOSE's publication fails while other opens read the staging. |
 | Quarantined at startup | Not loaded; its files are moved to quarantine. | Its sidecar is unreadable, `Guarded`, or both unlinked and retired. |
 
@@ -264,21 +291,34 @@ the pathname locks provide that ordering. The implementation is in
 
 ### Identities and incarnations
 
-EXCHANGE_ID supplies an opaque client identity and boot verifier. The
-shared store hashes the identity to select a stable parent directory. A
-verifier-defined lifetime is a durable *incarnation*, identified internally
-by its directory inode. An unchanged verifier can reuse a live confirmed
-incarnation; a changed verifier creates a pending replacement, which its
-first CREATE_SESSION confirms. Later CREATE_SESSIONs create additional
-sessions. EXCHANGE_ID's update-confirmed flag reads the existing record
-without changing it.
+EXCHANGE_ID supplies an opaque client identity and boot verifier. One boot
+of a client is an *incarnation*: 64 random bits, chosen when it registers.
+A registration is pending, in memory only, until its first CREATE_SESSION
+confirms it. Confirmation writes the identity's record in `clients/`,
+named by the SHA-256 of the identity: the owner, the principal, the
+confirmed incarnation and its boot verifier. Later CREATE_SESSIONs create
+additional sessions. A record update is a temporary file, fsync, rename
+and fsync of `clients/`. Its outcome is known, and the server acts on it,
+or replies, only once it is durable. A record lives from the identity's
+first confirmation to its expiry or DESTROY_CLIENTID, and a reboot
+rewrites it. Nothing else accumulates, so nothing is collected.
+
+An EXCHANGE_ID with the record's principal and boot verifier adopts the
+confirmed incarnation and writes nothing. That is how a client whose
+session did not survive a restart keeps its incarnation, and with it its
+staged writers; it is still answered as a new registration. A changed
+verifier gets a pending incarnation, whose confirmation is a
+[client reboot](#client-reboot). EXCHANGE_ID's update-confirmed flag reads
+the existing record without changing it.
 
 Principal comparison uses credential flavour and normalized AUTH_SYS uid,
 gid and groups, ignoring timestamp and machine name. It is a collision
-guard. `NFS4ERR_CLID_INUSE` requires a different principal with live,
-marked open state; sessions without opens do not pin an identity
-indefinitely. The records and rules are in
-[clientstore](internal/clientstore/README.md#registration).
+guard. `NFS4ERR_CLID_INUSE` requires a different principal while this
+daemon holds a write open or staged writer of the incarnation and its lease
+is live; sessions without write state do not pin an identity indefinitely.
+The check comes from the record, so it starts afresh with an empty staging
+directory, which is what a new server means. The rules are in
+[Registration](internal/server/README.md#registration).
 
 ### Wire clientids
 
@@ -289,84 +329,76 @@ fresh wire clientids, under the endpoint and clock assumptions in
 [Recovery](RECOVERY.md#replace-a-host). See
 [wire_clientid.go](internal/server/wire_clientid.go).
 
-### Two leases
+### The lease
 
-The advertised lease is 90 seconds. Each incarnation has two leases here.
+The advertised lease is 90 seconds. The lease is logical and kept per
+incarnation in this process's memory; nothing about it is durable. It is
+held while any admitted request holds it, and for a quiet period of one
+lease after the last hold is released. A request's hold is released when
+its worker finishes: after the compound has executed and its reply has
+been written, or skipped because the connection had closed. Not when it
+arrives, and not when its connection fails: a request still executing
+keeps its hold until it returns. A new session and a validated callback
+reply also renew it. This process does not expire a client while its
+lease is held.
 
-- The *logical lease* is this process's, in memory. It is held while any
-  admitted request holds it, and for a quiet period of one lease after the
-  last hold is released. A request's hold is released when its worker
-  finishes: after the compound has executed and its reply has been written,
-  or skipped because the connection had closed. Not when it arrives, and
-  not when its connection fails: a request still executing keeps its hold
-  until it returns. A validated callback reply also renews it. This process
-  does not expire a client while its logical lease is held.
-- The *durable lease* is this process's `lease.<nfsd-id>` slot in the
-  client store, written only by the
-  [refresher](internal/clientstore/README.md#refresher): once at
-  [bootstrap](internal/clientstore/README.md#bootstrap), after
-  CREATE_SESSION or a session restore, and then while the logical lease is
-  needed. It is published 135 seconds ahead and refreshed when
-  less than 112.5 seconds remain: about every 22.5 seconds while the client
-  is active. Failures back off from about 5.6 to 22.5 seconds. The fleet
-  lease is live while any process's slot is live.
+SEQUENCE does no I/O. Apart from a retransmission whose original is still
+running, or a slot whose lock is held at that instant (see
+[Slot replay](internal/server/README.md#slot-replay)), it gets
+`NFS4ERR_DELAY` only while the client's expiry is being decided, which
+removes its local record, or while a reboot's confirmation replaces the
+incarnation. OPEN and the stateid
+operations check in memory that a record confirms the incarnation and that
+this process has not expired it.
 
-SEQUENCE reads the refresher's cached proof and performs no backend I/O.
-An unproven or expired proof gives `NFS4ERR_DELAY` and requests refresh
-work. CREATE_SESSION waits up to two seconds for the first publication.
-OPEN also needs a live published lease before creating its marker. Stateid
-operations check the confirmed pointer and expired marker; a live local
-durable slot avoids reading every slot.
+The server's sweep runs every 45 seconds. A client is expired when its
+lease is not held, no CREATE_SESSION for it is in progress, and the
+startup lease does not cover it. Its record is removed first, while new
+SEQUENCEs and CREATE_SESSIONs wait; then its sessions, wire record and
+opens are retired. A crash in between leaves nothing to finish: no record
+confirms the incarnation, so the next start restores none of its sessions
+and the sweep retires its staged writers. A removal that fails leaves the
+client live, and a later sweep tries again. An incarnation that no record
+confirms counts as expired.
 
-The server's sweep runs every 45 seconds. A client is expired here only
-when its logical lease is not held, no confirmation protects it, and it has
-durable slots but none is live. A client with no slot yet is not expired;
-its first OPEN may still be registering its lease. Only that decision
-writes the `expired` marker, and a renewal or hold that arrives while it is
-checking wins.
-Expiry retires local sessions even if writing the marker fails. Another
-daemon can still expire a client whose durable publication lapsed; a local
-logical lease cannot prevent that fleet decision.
+A restart gives every confirmed record a fresh lease. Nothing it confirms
+expires in the first lease after startup, and a client that never comes
+back expires after it, so a client that died while nfsd was down gets one
+extra lease.
+
+This process is the only one that decides. That rests on the operator
+fencing the old server before a failover (DEPLOYMENT.md): nothing in nfsd
+stops a second live daemon, on a copy of the same staging directory, from
+deciding for the same clients.
 
 Nominal timings follow from these constants. Suppose the hold of a
-client's last request here is released at time t, its bootstrap
-publication is done, and afterwards nothing renews it: no further requests
-or callbacks, no confirmation protection and no other process publishing a
-lease for it; and the backend and scheduler make ordinary progress. Then:
+client's last request here is released at time t, nothing renews it
+afterwards, and the scheduler makes ordinary progress. Then the quiet
+period ends at t + 90 s, and the next sweep after that expires the client,
+by about t + 135 s. After a restart at time s, a confirmed client that does
+not come back expires by about s + 135 s. These are derived estimates, not
+deadlines the code enforces; a request still executing lengthens them.
 
-- the quiet period ends at t + 90 s, and with it the durable refreshes;
-- this process's slot therefore expires by about t + 225 s (90 + 135), and
-  other daemons can see it live until then;
-- the next sweep after that expires the client here, by about t + 270 s.
-
-These are derived estimates, not deadlines the code enforces. A slow
-backend, a request still executing, confirmation protection or another
-daemon's lease lengthens them.
-
-Another process's dead slot becomes eligible for pruning one further lease,
-90 seconds, after it expired. That is not a promise of removal: a slot is
-removed only by a refresher pass for a lease that is needed or
-bootstrapping, while this process's own published lease is live; see
-[slot pruning](internal/clientstore/README.md#expired-marker-and-slot-pruning).
-Expired markers prevent slot removal from reviving an old incarnation. Data
-disposition on expiry is described in [Recovery](RECOVERY.md#lease-expiry).
-See [Lease gate](internal/server/README.md#lease-gate).
+Data disposition on expiry is described in
+[Recovery](RECOVERY.md#lease-expiry). See
+[Lease gate](internal/server/README.md#lease-gate).
 
 ### Client reboot
 
-Confirmation of a replacement incarnation is in two parts. The client
-store makes its writes and decides each outcome from evidence; see
-[Confirmation](internal/clientstore/README.md#confirmation). The server
-acts on each result once. Before the writes, it closes admission for the
-old incarnation in this process, so its new requests wait, and protects
-both incarnations.
+A changed boot verifier is a reboot. A different principal taking over an
+identity whose incarnation holds no write state is handled the same way.
+The first CREATE_SESSION of the new incarnation N closes admission for the
+old one, P, in this process, so P's new requests wait. It writes the record
+confirming N, and only once that is durable purges P here: its sessions
+and their files, its wire record and its opens go, and its staged writers
+are retired. Then it replies. A crash between the write and the purge
+leaves nothing to finish: no record confirms P, so the next start restores
+none of its sessions and the sweep retires its staged writers. If the
+write fails, the CREATE_SESSION gets `NFS4ERR_SERVERFAULT` and P is
+reopened.
 
-A replacement becomes confirmed before the old incarnation's opens and
-leases are purged. A reboot pointer makes an interrupted purge retryable.
-While a confirmation outcome is unresolved, the local server protects both
-incarnations from expiry and destructive cleanup, delays dependent
-requests and rejects client destruction as busy. Elapsed time alone does
-not settle an unknown outcome. See
+P's writers are never resumed: no record confirms P any more, and their
+recovery key names the old boot verifier. See
 [Client confirmation](internal/server/README.md#client-confirmation).
 
 ## Sessions across restarts
@@ -374,8 +406,8 @@ not settle an unknown outcome. See
 NFSv4.1 session slots replace open-owner sequence numbers: a retransmission
 on a slot gets the slot's recorded reply instead of running again. That
 only holds while the slot still exists. Sessions therefore live in memory
-and, with a staging directory, in one file each under `sessions/`, so that
-a restart of the process on the same staging disk can rebuild them. The
+and in one file each under `sessions/`, so that a restart of the process
+on the same staging directory, or on a copy of it, can rebuild them. The
 mechanisms are in
 [Persistent sessions](internal/server/README.md#persistent-sessions).
 
@@ -406,10 +438,31 @@ daemon does not know.
   [Unknown backend outcomes](#unknown-backend-outcomes).
 
 A restart rebuilds a session only from a usable file that recorded a
-request, for an incarnation still confirmed, within the new process's
-resource limits; see
+request, for an incarnation a live client record confirms, within the new
+process's resource limits; see
 [Session restoration](internal/server/README.md#session-restoration).
 Sessions never move between daemons. `PERSIST` is not granted.
+
+## Client behaviours nfsd depends on
+
+Several mechanisms exist because of how particular clients behave. This
+is the list; each entry says where the handling is described.
+
+| Behaviour | How nfsd handles it |
+| --- | --- |
+| Linux 4.1 opens a cached dentry by `CLAIM_FH` with the handle it holds, and keeps its inode even when the OPEN reply names another. | Name hints for handles this process named, cold recovery of staged writers after a restart, `NFS4ERR_STALE` otherwise. See [Filehandles and client views](#filehandles-and-client-views). |
+| A client reopens a file without a path walk, as smbd does through `/proc/self/fd`. | A deployment rule: such a client mounts with `lookupcache=none`. Without it, a refused reopen is `NFS4ERR_STALE`, which smbd reports as access denied. See [Client mounts](DEPLOYMENT.md#one-writable-server). |
+| A client keeps its handle after its own save and revalidates it by GETATTR. | Publication aliases while the handle is open and for a lease after; content reversal after that is a [known defect](DEPLOYMENT.md#old-handles-name-their-original-version). |
+| Linux discards a CLOSE's status: `close(2)` returns 0 whatever CLOSE answered. | A CLOSE the backend does not answer gets `NFS4ERR_DELAY` and is retried. A rejected publication is still lost silently; see [Known defects](DEPLOYMENT.md#a-rejected-publication-is-not-reported-to-the-application). |
+| Linux retries CLOSE after `NFS4ERR_DELAY`, backing off to 15 s. | The CLOSE DELAY relies on it; see [Writes and publication](#writes-and-publication). |
+| Linux re-encodes a retransmission with its current highest slot. | The slot digest leaves out SEQUENCE arguments; see [Slot replay](internal/server/README.md#slot-replay). |
+| Linux answers `NFS4ERR_DELAY` on a lone SEQUENCE by waiting its 15 s maximum. | SEQUENCE does no I/O. Apart from the slot cases in [Slot replay](internal/server/README.md#slot-replay), it gets DELAY only while the client's expiry decision writes its local record, or a reboot's confirmation replaces its incarnation; see [The lease](#the-lease). |
+| After losing its session to a server restart, Linux registers again with the same owner and boot verifier. | The client record adopts the confirmed incarnation, so its staged writers stay eligible; see [Identities and incarnations](#identities-and-incarnations). |
+| Linux 4.10 and later end CLOSE, OPEN_DOWNGRADE, REMOVE and RENAME compounds with that operation. | Locks held until the record; see [Sessions across restarts](#sessions-across-restarts). |
+| After a server restart Linux retransmits in-flight requests in no particular order, so a read OPEN can arrive before the CLOSE it follows. | The client's recovered writer is its view of the handle; see [client views](internal/openstate/README.md#client-views). |
+| Facing a stale clientid or a new server, Linux runs server-reboot recovery: `CLAIM_PREVIOUS`, then reopens. It did so with a changed server owner in every failover test, and with a changed server scope after a wipe, where it skipped `CLAIM_PREVIOUS` and registered as new. | `CLAIM_PREVIOUS` gets `NFS4ERR_NO_GRACE`; reopens go through writer recovery. An empty staging directory is a new server, with a new owner and no client records, and every client registers as new. This is what clients see after a [failover](RECOVERY.md#replace-a-host). |
+| libnfs sends PUTFH, COMMIT, CLOSE in one compound. | The mutation gate does not count COMMIT; see [Sessions across restarts](#sessions-across-restarts). |
+| libnfs turns `NFS4ERR_DELAY` into an error. | Not handled: libnfs is a test client. |
 
 ## Lock order
 
@@ -428,11 +481,9 @@ These keep OPEN, CLOSE, downgrade and namespace changes ordered within a
 process without serializing unrelated files. The CLOSE, OPEN_DOWNGRADE,
 OPEN, CREATE, REMOVE or RENAME that ends a compound releases its pathname
 and file locks only once its slot record is written; other operations, and
-earlier ones, release theirs when they return. The client store has its own
-locks; see [clientstore](internal/clientstore/README.md#locks). The
-server's destruction holds keep destructive client-store work away from
-incarnations a confirmation protects. None of these locks is shared between
-processes. Diagnostics try, rather than wait for, locks held across I/O;
+earlier ones, release theirs when they return. The client records
+serialise the transitions of one identity with a lock of their own. None
+of these locks is shared between processes. Diagnostics try, rather than wait for, locks held across I/O;
 see [snapshot consistency](inspect/README.md#snapshot-consistency).
 
 ## Backend boundary
@@ -450,3 +501,14 @@ name with its contents, and scrapping it. It also has edge operations that
 look up, rename or remove one exact directory edge, so an operation whose
 outcome is unknown can be fenced, and a delayed mutation cannot apply to a
 later file at the same name.
+
+RemoteTernVFS keeps two process-local caches. The parent map, filled by
+Lookup, Readdir and the calls that create or move a name, serves LOOKUPP.
+The reader cache keeps one file reader per inode read, so READs reuse span
+metadata; a published file is immutable, so a cached reader cannot be
+stale. Neither is a record of the namespace: an entry goes when this
+process removes the name, or when the cache is full and it is the least
+recently used. Overwriting a name drops nothing; the displaced inode's
+entries stay until they are evicted. The parent map holds at most 262,144 entries
+and the reader cache 4,096. An evicted reader is created again, and an
+evicted directory's parent is read again from the backend.

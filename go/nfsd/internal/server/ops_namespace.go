@@ -9,7 +9,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -22,10 +21,6 @@ func (s *Server) opCreate(args nfs4.CREATE4args, st *compoundState, w *nfs4.COMP
 	if st.currentID.Type() != vfs.InodeTypeDir {
 		ew := w.AppendResarray_Create()
 		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_NOTDIR)
-	}
-	if s.stagingStore.ReadOnly() {
-		ew := w.AppendResarray_Create()
-		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_ROFS)
 	}
 
 	name, status := toTernFSName(args.Objname().Data())
@@ -160,11 +155,6 @@ func (s *Server) opLookup(args nfs4.LOOKUP4args, st *compoundState, w *nfs4.COMP
 		r := w.AppendResarray_Lookup()
 		return finishStatusResponse(&r, status)
 	}
-	// Hide the internal .nfs directory from client access.
-	if name == vfs.NFSDirName && st.currentID == s.fs.RootID() {
-		r := w.AppendResarray_Lookup()
-		return finishStatusResponse(&r, nfs4.NFS4ERR_NOENT)
-	}
 	id, err := s.fs.Lookup(st.currentID, name)
 	if err != nil {
 		r := w.AppendResarray_Lookup()
@@ -208,16 +198,6 @@ func (s *Server) opPutfh(args nfs4.PUTFH4args, st *compoundState, w *nfs4.COMPOU
 		r := w.AppendResarray_Putfh()
 		return finishStatusResponse(&r, nfs4.NFS4ERR_BADHANDLE)
 	}
-	internal, err := s.clients.IsInternalFilehandle(id)
-	if err != nil {
-		r := w.AppendResarray_Putfh()
-		status := clientstore.ErrToNFS(err)
-		return finishStatusResponse(&r, status)
-	}
-	if internal {
-		r := w.AppendResarray_Putfh()
-		return finishStatusResponse(&r, nfs4.NFS4ERR_BADHANDLE)
-	}
 	st.setCurrentFH(id)
 	r := w.AppendResarray_Putfh()
 	return finishStatusResponse(&r, nfs4.NFS4_OK)
@@ -242,10 +222,6 @@ func (s *Server) opRemove(args nfs4.REMOVE4args, st *compoundState, w *nfs4.COMP
 	if status := requireDirectory(st.currentID); status != nfs4.NFS4_OK {
 		ew := w.AppendResarray_Remove()
 		return finishDefaultResponse(w, ew.Finish(), status)
-	}
-	if s.stagingStore.ReadOnly() {
-		ew := w.AppendResarray_Remove()
-		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_ROFS)
 	}
 
 	name, status := toTernFSName(args.Target().Data())
@@ -319,10 +295,6 @@ func (s *Server) opRename(args nfs4.RENAME4args, st *compoundState, w *nfs4.COMP
 	if status := requireDirectory(st.currentID); status != nfs4.NFS4_OK {
 		ew := w.AppendResarray_Rename()
 		return finishDefaultResponse(w, ew.Finish(), status)
-	}
-	if s.stagingStore.ReadOnly() {
-		ew := w.AppendResarray_Rename()
-		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_ROFS)
 	}
 
 	oldName, status := toTernFSName(args.Oldname().Data())
@@ -460,10 +432,6 @@ func (s *Server) opSecinfo(args nfs4.SECINFO4args, st *compoundState, w *nfs4.CO
 	if status != nfs4.NFS4_OK {
 		ew := w.AppendResarray_Secinfo()
 		return finishDefaultResponse(w, ew.Finish(), status)
-	}
-	if name == vfs.NFSDirName && st.currentID == s.fs.RootID() {
-		ew := w.AppendResarray_Secinfo()
-		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_NOENT)
 	}
 	if _, err := s.fs.Lookup(st.currentID, name); err != nil {
 		ew := w.AppendResarray_Secinfo()

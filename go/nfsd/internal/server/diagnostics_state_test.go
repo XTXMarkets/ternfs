@@ -6,91 +6,15 @@ package server
 
 import (
 	"encoding/binary"
-	"fmt"
 	"testing"
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/inspect"
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/openstate"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
-
-// Race detector test: incarnation snapshots read cached store locations
-// under their own lock while MarkOpen renews them.
-func TestDiagnosticsCachedClientDuringRenewal(t *testing.T) {
-	f := newDiagnosticsFixture(t)
-	done := make(chan error, 1)
-	go func() {
-		for range 500 {
-			if err := f.srv.clients.MarkOpen(f.incarnID, nfs4.StateID(f.stateid)); err != nil {
-				done <- err
-				return
-			}
-		}
-		done <- nil
-	}()
-	for {
-		select {
-		case err := <-done:
-			if err != nil {
-				t.Fatal(err)
-			}
-			return
-		default:
-			out, err := f.srv.Incarnations(inspect.IncarnationFilter{ID: f.incarnID})
-			if err != nil || len(out.Records) != 1 {
-				t.Fatalf("incarnation snapshot: %+v, %v", out, err)
-			}
-		}
-	}
-}
-
-// Race detector test: incarnation snapshots read a refresher's published
-// expiry under its mutex while the worker publishes.
-func TestDiagnosticsLeaseDuringPublication(t *testing.T) {
-	cs, id, r, _ := clientstore.RefresherForTest(t, vfs.NewLocalTernVFS(t.TempDir()))
-	srv := &Server{clients: cs, sessions: newSessionStore(1), opens: openstate.NewStore()}
-	done := make(chan error, 1)
-	go func() {
-		// The worker owns LeaseLocks during every refresh. Force each
-		// publication due so snapshots overlap real LastExpiry writes.
-		release := cs.LeaseLocks.Lock(vfs.InodeID(id))
-		defer release()
-		for range 100 {
-			r.Mu.Lock()
-			r.Proven = 0
-			r.Mu.Unlock()
-			if !r.Refresh() {
-				done <- fmt.Errorf("lease publication failed")
-				return
-			}
-		}
-		done <- nil
-	}()
-	for {
-		select {
-		case err := <-done:
-			if err != nil {
-				t.Fatal(err)
-			}
-			r.Mu.Lock()
-			published := r.LastExpiry
-			r.Mu.Unlock()
-			if published == 0 {
-				t.Fatal("no lease was published")
-			}
-			return
-		default:
-			if _, err := srv.Incarnations(inspect.IncarnationFilter{ID: id}); err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
-}
 
 func diagnosticsStagingStore(t *testing.T) (*Server, *staging.LocalStore) {
 	t.Helper()

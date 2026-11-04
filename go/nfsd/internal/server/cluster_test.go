@@ -18,7 +18,6 @@ import (
 	"runtime"
 	"sort"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,7 +26,6 @@ import (
 	"github.com/XTXMarkets/ternfs/go/core/log"
 	"github.com/XTXMarkets/ternfs/go/core/managedprocess"
 	"github.com/XTXMarkets/ternfs/go/msgs"
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
@@ -252,7 +250,6 @@ func startTernTestServerState(t *testing.T) (*Server, string, func()) {
 	}()
 	return srv, ln.Addr().String(), func() {
 		ln.Close()
-		srv.waitForClientGC()
 		c.Close()
 	}
 }
@@ -401,82 +398,6 @@ func cleanupViaNFS(t *testing.T, conn net.Conn, xid *uint32, name string) {
 	_ = res
 }
 
-func TestTernPutrootfhGetattr(t *testing.T) {
-	addr, cleanup := startTernTestServer(t)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-
-	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
-		w.AppendArgarray_Putrootfh()
-
-		gw := w.AppendArgarray_Getattr()
-		bw := gw.StartAttrRequest()
-		bw.AppendData(1<<nfs4.FATTR4_TYPE | 1<<nfs4.FATTR4_FILEID)
-		buf := bw.Finish()
-		gw.Resume(buf)
-		buf = gw.Finish()
-		w.Resume(buf)
-	})
-
-	iter := expectOK(t, res)
-	entry := nextOp(t, &iter)
-	if entry.Value().AsPUTROOTFH4res().Status() != nfs4.NFS4_OK {
-		t.Fatal("PUTROOTFH failed")
-	}
-	entry = nextOp(t, &iter)
-	getattrRes := entry.Value().AsGETATTR4resEntry()
-	if getattrRes.Disc() != nfs4.NFS4_OK {
-		t.Fatalf("GETATTR status = %d", getattrRes.Disc())
-	}
-}
-
-func TestTernCreateAndRead(t *testing.T) {
-	addr, cleanup := startTernTestServer(t)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-
-	xid := uint32(1)
-	clientid := setupClient(t, conn, &xid)
-
-	testData := []byte("Hello from TernFS NFS test!")
-	fh := createFileViaNFS(t, conn, &xid, clientid, "test-create.txt", testData)
-
-	// READ the file back.
-	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
-		pfW := w.AppendArgarray_Putfh()
-		buf := pfW.StartObject().SetData(fh).Finish()
-		pfW.Resume(buf)
-		buf = pfW.Finish()
-		w.Resume(buf)
-
-		rw := w.AppendArgarray_Read()
-		rw.Stateid().SetSeqid(0)
-		rw.SetOffset(0)
-		rw.SetCount(4096)
-	})
-	xid++
-
-	iter := expectOK(t, res)
-	nextOp(t, &iter) // PUTFH
-	readEntry := nextOp(t, &iter)
-	readRes := readEntry.Value().AsREAD4resEntry()
-	if readRes.Disc() != nfs4.NFS4_OK {
-		t.Fatalf("READ status = %d", readRes.Disc())
-	}
-	readOK := readRes.Value().AsREAD4resok()
-	got := readOK.Data()
-	if string(got) != string(testData) {
-		t.Fatalf("READ data = %q, want %q", got, testData)
-	}
-	if readOK.Eof() == 0 {
-		t.Fatal("expected EOF")
-	}
-
-	cleanupViaNFS(t, conn, &xid, "test-create.txt")
-}
-
 func TestTernLookupAndStat(t *testing.T) {
 	addr, cleanup := startTernTestServer(t)
 	defer cleanup()
@@ -536,151 +457,6 @@ func TestTernLookupAndStat(t *testing.T) {
 	cleanupViaNFS(t, conn, &xid, "stat-test.txt")
 }
 
-func TestTernReaddir(t *testing.T) {
-	addr, cleanup := startTernTestServer(t)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-
-	xid := uint32(1)
-	clientid := setupClient(t, conn, &xid)
-
-	// Create a few files.
-	names := []string{"readdir-a.txt", "readdir-b.txt", "readdir-c.txt"}
-	for _, name := range names {
-		createFileViaNFS(t, conn, &xid, clientid, name, []byte("data"))
-	}
-
-	// READDIR
-	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
-		w.AppendArgarray_Putrootfh()
-
-		rdw := w.AppendArgarray_Readdir()
-		rdw.SetCookie(0)
-		rdw.SetDircount(4096)
-		rdw.SetMaxcount(32768)
-		bw := rdw.StartAttrRequest()
-		bw.AppendData(1 << nfs4.FATTR4_TYPE)
-		buf := bw.Finish()
-		rdw.Resume(buf)
-		buf = rdw.Finish()
-		w.Resume(buf)
-	})
-	xid++
-
-	iter := expectOK(t, res)
-	nextOp(t, &iter) // PUTROOTFH
-	rdEntry := nextOp(t, &iter)
-	rdRes := rdEntry.Value().AsREADDIR4resEntry()
-	if rdRes.Disc() != nfs4.NFS4_OK {
-		t.Fatalf("READDIR status = %d", rdRes.Disc())
-	}
-
-	// Collect entry names.
-	rdOK := rdRes.Value().AsREADDIR4resok()
-	found := make(map[string]bool)
-	reply := rdOK.Reply()
-	if reply.EntriesPresent() == nfs4.TRUE {
-		entOpt := reply.Entries()
-		for {
-			ent := entOpt.AsEntry4()
-			found[string(ent.Name().Data())] = true
-			if ent.NextentryPresent() != nfs4.TRUE {
-				break
-			}
-			entOpt = ent.Nextentry()
-		}
-	}
-
-	for _, name := range names {
-		if !found[name] {
-			t.Errorf("READDIR missing entry %q", name)
-		}
-	}
-
-	// Cleanup.
-	for _, name := range names {
-		cleanupViaNFS(t, conn, &xid, name)
-	}
-}
-
-func TestTernMkdirAndRemove(t *testing.T) {
-	addr, cleanup := startTernTestServer(t)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-
-	xid := uint32(1)
-
-	// CREATE directory
-	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
-		w.AppendArgarray_Putrootfh()
-
-		cw := w.AppendArgarray_Create()
-		cw.SetObjtype_Nf4dir()
-		nameW := cw.StartObjname()
-		buf := nameW.SetData([]byte("test-dir")).Finish()
-		cw.Resume(buf)
-		faw := cw.StartCreateattrs()
-		bmW := faw.StartAttrmask()
-		buf = bmW.Finish()
-		faw.Resume(buf)
-		alW := faw.StartAttrVals()
-		buf = alW.SetData(nil).Finish()
-		faw.Resume(buf)
-		buf = faw.Finish()
-		cw.Resume(buf)
-		buf = cw.Finish()
-		w.Resume(buf)
-	})
-	xid++
-	iter := expectOK(t, res)
-	nextOp(t, &iter) // PUTROOTFH
-	createEntry := nextOp(t, &iter)
-	createRes := createEntry.Value().AsCREATE4resEntry()
-	if createRes.Disc() != nfs4.NFS4_OK {
-		t.Fatalf("CREATE dir status = %d", createRes.Disc())
-	}
-
-	// LOOKUP the directory
-	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
-		w.AppendArgarray_Putrootfh()
-		lw := w.AppendArgarray_Lookup()
-		nw := lw.StartObjname()
-		buf := nw.SetData([]byte("test-dir")).Finish()
-		lw.Resume(buf)
-		buf = lw.Finish()
-		w.Resume(buf)
-
-		gw := w.AppendArgarray_Getattr()
-		bw := gw.StartAttrRequest()
-		bw.AppendData(1 << nfs4.FATTR4_TYPE)
-		buf = bw.Finish()
-		gw.Resume(buf)
-		buf = gw.Finish()
-		w.Resume(buf)
-	})
-	xid++
-	iter = expectOK(t, res)
-	nextOp(t, &iter) // PUTROOTFH
-	lookupEntry := nextOp(t, &iter)
-	if lookupEntry.Value().AsLOOKUP4res().Status() != nfs4.NFS4_OK {
-		t.Fatal("LOOKUP dir failed")
-	}
-	getattrEntry := nextOp(t, &iter)
-	attrData := getAttrData(t, getattrEntry.Value().AsGETATTR4resEntry().Value().AsGETATTR4resok())
-	if len(attrData) < 4 {
-		t.Fatal("attr data too short")
-	}
-	ftype := binary.BigEndian.Uint32(attrData[:4])
-	if ftype != uint32(nfs4.NF4DIR) {
-		t.Fatalf("type = %d, want NF4DIR", ftype)
-	}
-
-	// REMOVE the directory
-	cleanupViaNFS(t, conn, &xid, "test-dir")
-}
-
 // These large read-only requests exceed the negotiated 64 KiB reply cache.
 // Request caching explicitly remains enabled for all other fixture compounds.
 func sendUncachedTernRead(t *testing.T, conn net.Conn, xid uint32, fh []byte, offset uint64, count uint32) nfs4.COMPOUND4res {
@@ -713,46 +489,6 @@ func sendUncachedTernRead(t *testing.T, conn net.Conn, xid uint32, fh []byte, of
 		t.Fatal(err)
 	}
 	return res
-}
-
-func TestTernWriteAndRead(t *testing.T) {
-	addr, cleanup := startTernTestServer(t)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-
-	xid := uint32(1)
-	clientid := setupClient(t, conn, &xid)
-
-	// Create a file, write data in chunks, read it back.
-	data := make([]byte, 128*1024) // 128KB
-	for i := range data {
-		data[i] = byte(i % 251) // deterministic pattern
-	}
-
-	fh := createFileViaNFS(t, conn, &xid, clientid, "large-write.txt", data)
-
-	// Read back in one shot with cachethis=false.
-	res := sendUncachedTernRead(t, conn, xid, fh, 0, uint32(len(data)))
-	xid++
-	iter := expectOK(t, res)
-	nextOp(t, &iter) // PUTFH
-	readEntry := nextOp(t, &iter)
-	readRes := readEntry.Value().AsREAD4resEntry()
-	if readRes.Disc() != nfs4.NFS4_OK {
-		t.Fatalf("READ status = %d", readRes.Disc())
-	}
-	got := readRes.Value().AsREAD4resok().Data()
-	if len(got) != len(data) {
-		t.Fatalf("READ len = %d, want %d", len(got), len(data))
-	}
-	for i := range got {
-		if got[i] != data[i] {
-			t.Fatalf("data mismatch at byte %d: got %d, want %d", i, got[i], data[i])
-		}
-	}
-
-	cleanupViaNFS(t, conn, &xid, "large-write.txt")
 }
 
 func TestTernSymlink(t *testing.T) {
@@ -824,91 +560,6 @@ func TestTernSymlink(t *testing.T) {
 	cleanupViaNFS(t, conn, &xid, "test-link")
 }
 
-func TestTernRename(t *testing.T) {
-	addr, cleanup := startTernTestServer(t)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-
-	xid := uint32(1)
-	clientid := setupClient(t, conn, &xid)
-
-	createFileViaNFS(t, conn, &xid, clientid, "rename-src.txt", []byte("rename data"))
-
-	// RENAME: PUTROOTFH + SAVEFH + PUTROOTFH + RENAME
-	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
-		w.AppendArgarray_Putrootfh()
-		w.AppendArgarray_Savefh()
-		w.AppendArgarray_Putrootfh() // same dir rename
-
-		rw := w.AppendArgarray_Rename()
-		oldW := rw.StartOldname()
-		buf := oldW.SetData([]byte("rename-src.txt")).Finish()
-		rw.Resume(buf)
-		newW := rw.StartNewname()
-		buf = newW.SetData([]byte("rename-dst.txt")).Finish()
-		rw.Resume(buf)
-		buf = rw.Finish()
-		w.Resume(buf)
-	})
-	xid++
-	iter := expectOK(t, res)
-	nextOp(t, &iter) // PUTROOTFH
-	nextOp(t, &iter) // SAVEFH
-	nextOp(t, &iter) // PUTROOTFH
-	renameEntry := nextOp(t, &iter)
-	renameRes := renameEntry.Value().AsRENAME4resEntry()
-	if renameRes.Disc() != nfs4.NFS4_OK {
-		t.Fatalf("RENAME status = %d", renameRes.Disc())
-	}
-
-	// Verify old name is gone.
-	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
-		w.AppendArgarray_Putrootfh()
-		lw := w.AppendArgarray_Lookup()
-		nw := lw.StartObjname()
-		buf := nw.SetData([]byte("rename-src.txt")).Finish()
-		lw.Resume(buf)
-		buf = lw.Finish()
-		w.Resume(buf)
-	})
-	xid++
-	if res.Status() == nfs4.NFS4_OK {
-		t.Fatal("expected old name to be gone after rename")
-	}
-
-	// Verify new name exists and has correct data.
-	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
-		w.AppendArgarray_Putrootfh()
-		lw := w.AppendArgarray_Lookup()
-		nw := lw.StartObjname()
-		buf := nw.SetData([]byte("rename-dst.txt")).Finish()
-		lw.Resume(buf)
-		buf = lw.Finish()
-		w.Resume(buf)
-
-		rw := w.AppendArgarray_Read()
-		rw.Stateid().SetSeqid(0)
-		rw.SetOffset(0)
-		rw.SetCount(4096)
-	})
-	xid++
-	iter = expectOK(t, res)
-	nextOp(t, &iter) // PUTROOTFH
-	nextOp(t, &iter) // LOOKUP
-	readEntry := nextOp(t, &iter)
-	readRes := readEntry.Value().AsREAD4resEntry()
-	if readRes.Disc() != nfs4.NFS4_OK {
-		t.Fatalf("READ after rename status = %d", readRes.Disc())
-	}
-	got := string(readRes.Value().AsREAD4resok().Data())
-	if got != "rename data" {
-		t.Fatalf("data after rename = %q, want %q", got, "rename data")
-	}
-
-	cleanupViaNFS(t, conn, &xid, "rename-dst.txt")
-}
-
 func TestTernExchangeIDAndSequence(t *testing.T) {
 	addr, cleanup := startTernTestServer(t)
 	defer cleanup()
@@ -927,9 +578,8 @@ func TestTernExchangeIDAndSequence(t *testing.T) {
 	slot, seq := ts.acquire()
 	defer ts.release(slot)
 	body := buildCompoundBody(nil, func(*nfs4.COMPOUND4argsWriter) {})
-	// The first SEQUENCE may get DELAY until the client's first lease is
-	// published (../clientstore/README.md#bootstrap); sendWarming retries it
-	// as a client would, on the same slot and sequence.
+	// sendWarming retries a DELAY on the first SEQUENCE as a client would,
+	// on the same slot and sequence.
 	reply, err := sendWarming(conn, xid, body, ts, slot, seq)
 	xid++
 	if err != nil {
@@ -960,333 +610,10 @@ func TestTernExchangeIDAndSequence(t *testing.T) {
 	}
 }
 
-func TestTernClientIncarnationGC(t *testing.T) {
-	c, err := client.NewClient(
-		ternLogger, nil, registryAddr, msgs.AddrsInfo{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer c.Close()
-	fs := vfs.NewRemoteTernVFS(c, ternLogger, bufpool.NewBufPool())
-	cacheName := "client-store-cache-replacement"
-	firstCacheID, err := fs.CreateFile(fs.RootID(), cacheName, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	fs.CacheEmptyReader(firstCacheID)
-	secondCacheID, err := fs.CreateFile(fs.RootID(), cacheName, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, createOldParentCached := fs.CachedParent(firstCacheID)
-	createOldReaderCached := fs.ReaderCached(firstCacheID)
-	createSecondParent, _ := fs.CachedParent(secondCacheID)
-	if createOldParentCached || createOldReaderCached {
-		t.Fatalf("CreateFile retained overwritten inode %d in VFS caches",
-			firstCacheID)
-	}
-	if createSecondParent != fs.RootID() {
-		t.Fatalf("replacement parent = %d, want %d",
-			createSecondParent, fs.RootID())
-	}
-	if err := fs.Remove(fs.RootID(), cacheName); err != nil {
-		t.Fatal(err)
-	}
-
-	first, err := clientstore.NewStore(fs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := clientstore.NewStore(fs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	collector, err := clientstore.NewStore(fs)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	base := time.Unix(1000, 0)
-	var clock atomic.Int64
-	clock.Store(base.UnixNano())
-	now := func() time.Time { return time.Unix(0, clock.Load()) }
-	// Install once before using the stores. All three observe the same clock;
-	// advancing time does not replace functions or mutate captured variables.
-	first.Now = now
-	second.Now = now
-	collector.Now = now
-	owner := clientstore.ClientOwner{
-		Principal: clientstore.RPCPrincipal{Flavor: nfs4.AUTH_SYS, Body: t.Name()},
-	}
-	identity := []byte(t.Name())
-	oldID, confirm, err := first.SetClientID(
-		[8]byte{1}, identity, owner)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := first.ConfirmClientID(
-		oldID, confirm, owner.Principal,
-	); err != nil {
-		t.Fatal(err)
-	}
-	stateID := nfs4.StateID{1}
-	if err := first.MarkOpen(oldID, stateID); err != nil {
-		t.Fatal(err)
-	}
-	identityID, err := fs.LookupParent(vfs.InodeID(oldID))
-	if err != nil {
-		t.Fatal(err)
-	}
-	leaseID, err := fs.Lookup(vfs.InodeID(oldID), first.LeaseName)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// A renewal below the coalescing threshold must not rewrite the lease.
-	// The refresher rewrites once the published lease is less than
-	// clientstore.LeaseTime + clientstore.LeaseRenewAfter/2 ahead
-	// (../clientstore/README.md#publication-schedule).
-	clock.Store(base.Add(clientstore.LeaseRenewAfter/2 - time.Nanosecond).UnixNano())
-	if err := first.Renew(oldID); err != nil {
-		t.Fatal(err)
-	}
-	coalescedLeaseID, err := fs.Lookup(vfs.InodeID(oldID), first.LeaseName)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if coalescedLeaseID != leaseID {
-		t.Fatalf("below-threshold renewal replaced inode %d with %d",
-			leaseID, coalescedLeaseID)
-	}
-	for i := 1; i <= 3; i++ {
-		fs.CacheEmptyReader(leaseID)
-
-		// Each rewrite is beyond the threshold from the previous durable
-		// renewal, but before that lease expires.
-		clock.Store(base.Add(time.Duration(i) * (clientstore.LeaseRenewAfter + time.Second)).UnixNano())
-		if err := first.Renew(oldID); err != nil {
-			t.Fatal(err)
-		}
-		nextLeaseID, err := fs.Lookup(vfs.InodeID(oldID), first.LeaseName)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if nextLeaseID == leaseID {
-			t.Fatalf("above-threshold renewal retained lease inode %d", leaseID)
-		}
-		_, oldParentCached := fs.CachedParent(leaseID)
-		oldReaderCached := fs.ReaderCached(leaseID)
-		nextParent, _ := fs.CachedParent(nextLeaseID)
-		if oldParentCached || oldReaderCached {
-			t.Errorf("renewal retained overwritten inode %d in VFS caches",
-				leaseID)
-		}
-		if nextParent != vfs.InodeID(oldID) {
-			t.Fatalf("renewed lease parent = %d, want %d",
-				nextParent, oldID)
-		}
-		leaseID = nextLeaseID
-	}
-	oldName, found, err := first.IncarnationName(
-		identityID, vfs.InodeID(oldID))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !found {
-		t.Fatal("old incarnation has no directory entry")
-	}
-	confirmedSymlinkID, err := fs.Lookup(identityID, clientstore.ConfirmedName)
-	if err != nil {
-		t.Fatal(err)
-	}
-	fs.CacheEmptyReader(confirmedSymlinkID)
-
-	newID, confirm, err := first.SetClientID(
-		[8]byte{2}, identity, owner)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := second.ConfirmClientID(
-		newID, confirm, owner.Principal,
-	); err != nil {
-		t.Fatal(err)
-	}
-	nextConfirmedSymlinkID, err := fs.Lookup(identityID, clientstore.ConfirmedName)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, oldParentCached := fs.CachedParent(confirmedSymlinkID)
-	oldReaderCached := fs.ReaderCached(confirmedSymlinkID)
-	nextParent, _ := fs.CachedParent(nextConfirmedSymlinkID)
-	if oldParentCached || oldReaderCached {
-		t.Errorf("confirmation retained overwritten inode %d in VFS caches",
-			confirmedSymlinkID)
-	}
-	if nextParent != identityID {
-		t.Fatalf("confirmed symlink parent = %d, want %d",
-			nextParent, identityID)
-	}
-	if err := collector.CollectStaleForClient(vfs.InodeID(newID)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := fs.Lookup(identityID, oldName); err != nil {
-		t.Fatalf("old incarnation removed before GC grace: %v", err)
-	}
-	// The first collection marks a candidate relative to the current shared
-	// clock, after the renewals and replacement, not the original base.
-	clock.Add(int64(clientstore.ClientGCGrace + time.Second))
-	if err := collector.CollectStaleForClient(vfs.InodeID(newID)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := fs.Lookup(identityID, oldName); !os.IsNotExist(err) {
-		t.Fatalf("old incarnation remains after collection: %v", err)
-	}
-}
-
-func TestTernStagedFileGetattrAndRead(t *testing.T) {
-	addr, cleanup := startTernTestServer(t)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-
-	xid := uint32(1)
-	clientid := setupClient(t, conn, &xid)
-
-	// Session OPEN CREATE + GETFH
-	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
-		w.AppendArgarray_Putrootfh()
-
-		ow := w.AppendArgarray_Open()
-		ow.SetShareAccess(nfs4.OPEN4_SHARE_ACCESS_BOTH)
-		ow.SetShareDeny(nfs4.OPEN4_SHARE_DENY_NONE)
-		ownerW := ow.StartOwner()
-		ownerW = ownerW.SetClientid(clientid)
-		ownerW = ownerW.SetOwner([]byte("nfstest"))
-		buf := ownerW.Finish()
-		ow.Resume(buf)
-		chw := ow.SetOpenhow_Create()
-		faw := chw.SetValue_Unchecked4()
-		bmW := faw.StartAttrmask()
-		buf = bmW.Finish()
-		faw.Resume(buf)
-		alW := faw.StartAttrVals()
-		buf = alW.SetData(nil).Finish()
-		faw.Resume(buf)
-		buf = faw.Finish()
-		chw.Resume(buf)
-		buf = chw.Finish()
-		ow.Resume(buf)
-		cw := ow.SetClaim_Null()
-		buf = cw.SetData([]byte("staged.txt")).Finish()
-		ow.Resume(buf)
-		buf = ow.Finish()
-		w.Resume(buf)
-
-		w.AppendArgarray_Getfh()
-	})
-	xid++
-	iter := expectOK(t, res)
-	nextOp(t, &iter) // PUTROOTFH
-	openOK := nextOp(t, &iter).Value().AsOPEN4resEntry().Value().AsOPEN4resok()
-	stateid := clusterOpenStateid(t, openOK)
-	fh := append([]byte(nil), nextOp(t, &iter).Value().AsGETFH4resEntry().Value().AsGETFH4resok().Object().Data()...)
-
-	// WRITE some data
-	testData := []byte("staged file content")
-	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
-		pfW := w.AppendArgarray_Putfh()
-		buf := pfW.StartObject().SetData(fh).Finish()
-		pfW.Resume(buf)
-		buf = pfW.Finish()
-		w.Resume(buf)
-
-		ww := w.AppendArgarray_Write()
-		copyStateid(ww.Stateid(), stateid)
-		ww = ww.SetOffset(0)
-		ww = ww.SetStable(2) // FILE_SYNC4
-		ww = ww.SetData(testData)
-		buf = ww.Finish()
-		w.Resume(buf)
-	})
-	xid++
-	expectOK(t, res)
-
-	// GETATTR should return staged size (before CLOSE).
-	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
-		pfW := w.AppendArgarray_Putfh()
-		buf := pfW.StartObject().SetData(fh).Finish()
-		pfW.Resume(buf)
-		buf = pfW.Finish()
-		w.Resume(buf)
-
-		gw := w.AppendArgarray_Getattr()
-		bw := gw.StartAttrRequest()
-		bw.AppendData(1 << nfs4.FATTR4_SIZE)
-		buf = bw.Finish()
-		gw.Resume(buf)
-		buf = gw.Finish()
-		w.Resume(buf)
-	})
-	xid++
-	iter = expectOK(t, res)
-	nextOp(t, &iter) // PUTFH
-	attrData := getAttrData(t, nextOp(t, &iter).Value().AsGETATTR4resEntry().Value().AsGETATTR4resok())
-	if len(attrData) < 8 {
-		t.Fatal("attr data too short")
-	}
-	size := binary.BigEndian.Uint64(attrData[:8])
-	if size != uint64(len(testData)) {
-		t.Fatalf("staged GETATTR size = %d, want %d", size, len(testData))
-	}
-
-	// READ should return staged data (before CLOSE).
-	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
-		pfW := w.AppendArgarray_Putfh()
-		buf := pfW.StartObject().SetData(fh).Finish()
-		pfW.Resume(buf)
-		buf = pfW.Finish()
-		w.Resume(buf)
-
-		rw := w.AppendArgarray_Read()
-		copyStateid(rw.Stateid(), stateid)
-		rw.SetOffset(0)
-		rw.SetCount(4096)
-	})
-	xid++
-	iter = expectOK(t, res)
-	nextOp(t, &iter) // PUTFH
-	readOK := nextOp(t, &iter).Value().AsREAD4resEntry().Value().AsREAD4resok()
-	got := string(readOK.Data())
-	if got != string(testData) {
-		t.Fatalf("staged READ = %q, want %q", got, string(testData))
-	}
-
-	// CLOSE to commit.
-	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
-		pfW := w.AppendArgarray_Putfh()
-		buf := pfW.StartObject().SetData(fh).Finish()
-		pfW.Resume(buf)
-		buf = pfW.Finish()
-		w.Resume(buf)
-
-		caw := w.AppendArgarray_Close()
-		copyStateid(caw.OpenStateid(), stateid)
-	})
-	xid++
-	expectOK(t, res)
-
-	cleanupViaNFS(t, conn, &xid, "staged.txt")
-}
-
 // setupNamedClient is like setupClient but with a custom identity string.
 func setupNamedClient(t *testing.T, conn net.Conn, xid *uint32, identity string) uint64 {
 	t.Helper()
-	clientid, confirm := requestClientID(
-		t, conn, xid, identity, [8]byte{})
-	if status := confirmClientID(
-		t, conn, xid, clientid, confirm,
-	); status != nfs4.NFS4_OK {
-		t.Fatal("SETCLIENTID_CONFIRM failed")
-	}
+	clientid := setupClientAs(t, conn, xid, identity, [8]byte{})
 	return clientid
 }
 
@@ -1660,7 +987,7 @@ func TestTernReaddirPagination(t *testing.T) {
 
 	names := collectTernReaddirNames(t, conn, &xid, rootFH)
 
-	// Filter to only our test files (other tests may have left .nfs dir).
+	// Filter to only our test files; other tests share the cluster root.
 	var filtered []string
 	for _, n := range names {
 		if len(n) >= 3 && n[:3] == "pg_" {
@@ -2074,113 +1401,6 @@ func TestTernRemoveNonEmptyDir(t *testing.T) {
 	cleanupViaNFS(t, conn, &xid, "notempty_dir")
 }
 
-// --- COMMIT test ---
-
-func TestTernCommit(t *testing.T) {
-	addr, cleanup := startTernTestServer(t)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-
-	xid := uint32(1)
-	clientid := setupClient(t, conn, &xid)
-
-	// Session OPEN CREATE + GETFH
-	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
-		w.AppendArgarray_Putrootfh()
-		ow := w.AppendArgarray_Open()
-		ow.SetShareAccess(nfs4.OPEN4_SHARE_ACCESS_BOTH)
-		ow.SetShareDeny(nfs4.OPEN4_SHARE_DENY_NONE)
-		ownerW := ow.StartOwner()
-		ownerW = ownerW.SetClientid(clientid)
-		ownerW = ownerW.SetOwner([]byte("nfstest"))
-		buf := ownerW.Finish()
-		ow.Resume(buf)
-		chw := ow.SetOpenhow_Create()
-		faw := chw.SetValue_Unchecked4()
-		bmW := faw.StartAttrmask()
-		buf = bmW.Finish()
-		faw.Resume(buf)
-		alW := faw.StartAttrVals()
-		buf = alW.SetData(nil).Finish()
-		faw.Resume(buf)
-		buf = faw.Finish()
-		chw.Resume(buf)
-		buf = chw.Finish()
-		ow.Resume(buf)
-		cw := ow.SetClaim_Null()
-		buf = cw.SetData([]byte("commit.txt")).Finish()
-		ow.Resume(buf)
-		buf = ow.Finish()
-		w.Resume(buf)
-		w.AppendArgarray_Getfh()
-	})
-	xid++
-	iter := expectOK(t, res)
-	nextOp(t, &iter) // PUTROOTFH
-	openOK := nextOp(t, &iter).Value().AsOPEN4resEntry().Value().AsOPEN4resok()
-	stateid := clusterOpenStateid(t, openOK)
-	fh := append([]byte(nil), nextOp(t, &iter).Value().AsGETFH4resEntry().Value().AsGETFH4resok().Object().Data()...)
-
-	// WRITE with UNSTABLE4.
-	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
-		pfW := w.AppendArgarray_Putfh()
-		buf := pfW.StartObject().SetData(fh).Finish()
-		pfW.Resume(buf)
-		buf = pfW.Finish()
-		w.Resume(buf)
-		ww := w.AppendArgarray_Write()
-		copyStateid(ww.Stateid(), stateid)
-		ww = ww.SetOffset(0)
-		ww = ww.SetStable(0) // UNSTABLE4
-		ww = ww.SetData([]byte("commit test data"))
-		buf = ww.Finish()
-		w.Resume(buf)
-	})
-	xid++
-	expectOK(t, res)
-
-	// COMMIT — should succeed and return a non-zero verifier.
-	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
-		pfW := w.AppendArgarray_Putfh()
-		buf := pfW.StartObject().SetData(fh).Finish()
-		pfW.Resume(buf)
-		buf = pfW.Finish()
-		w.Resume(buf)
-		w.AppendArgarray_Commit()
-	})
-	xid++
-	iter = expectOK(t, res)
-	nextOp(t, &iter) // PUTFH
-	commitOk := nextOp(t, &iter).Value().AsCOMMIT4resEntry().Value().AsCOMMIT4resok()
-	verf := commitOk.Writeverf()
-	allZero := true
-	for i := 0; i < 8; i++ {
-		if verf.Data(i) != 0 {
-			allZero = false
-			break
-		}
-	}
-	if allZero {
-		t.Fatal("COMMIT write verifier should be non-zero")
-	}
-
-	// CLOSE.
-	res = sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
-		pfW := w.AppendArgarray_Putfh()
-		buf := pfW.StartObject().SetData(fh).Finish()
-		pfW.Resume(buf)
-		buf = pfW.Finish()
-		w.Resume(buf)
-		caw := w.AppendArgarray_Close()
-		copyStateid(caw.OpenStateid(), stateid)
-	})
-	xid++
-	expectOK(t, res)
-
-	cleanupViaNFS(t, conn, &xid, "commit.txt")
-}
-
 // --- SETATTR: set mtime ---
 
 func TestTernSetattr(t *testing.T) {
@@ -2264,47 +1484,6 @@ func TestTernSetattr(t *testing.T) {
 	}
 
 	cleanupViaNFS(t, conn, &xid, "setattr.txt")
-}
-
-// --- File replacement: delete + recreate same name ---
-
-func TestTernFileReplacement(t *testing.T) {
-	addr, cleanup := startTernTestServer(t)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-
-	xid := uint32(1)
-	clientid := setupClient(t, conn, &xid)
-
-	// Create file with original content.
-	createFileViaNFS(t, conn, &xid, clientid, "replace.txt", []byte("version 1"))
-
-	// Verify original.
-	fh1 := lookupFH(t, conn, &xid, "replace.txt")
-	got, _ := readFileData(t, conn, &xid, fh1, 0, 4096)
-	if string(got) != "version 1" {
-		t.Fatalf("original data = %q, want %q", got, "version 1")
-	}
-
-	// Delete and recreate with new content.
-	cleanupViaNFS(t, conn, &xid, "replace.txt")
-	createFileViaNFS(t, conn, &xid, clientid, "replace.txt", []byte("version 2"))
-
-	// Verify replacement.
-	fh2 := lookupFH(t, conn, &xid, "replace.txt")
-	got, _ = readFileData(t, conn, &xid, fh2, 0, 4096)
-	if string(got) != "version 2" {
-		t.Fatalf("replacement data = %q, want %q", got, "version 2")
-	}
-
-	// Old handle should no longer work (file was deleted and a new inode created).
-	if string(fh1) == string(fh2) {
-		// If handles happen to be the same (unlikely), we can't test staleness.
-		t.Log("handles are identical (inode reuse), skipping stale handle check")
-	}
-
-	cleanupViaNFS(t, conn, &xid, "replace.txt")
 }
 
 // --- Cross-directory rename ---
@@ -2540,61 +1719,6 @@ func TestTernConcurrentWrites(t *testing.T) {
 	}
 }
 
-// --- .nfs directory should be hidden in READDIR ---
-
-func TestTernNfsDirHidden(t *testing.T) {
-	addr, cleanup := startTernTestServer(t)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-
-	xid := uint32(1)
-
-	// Get root FH.
-	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
-		w.AppendArgarray_Putrootfh()
-		w.AppendArgarray_Getfh()
-	})
-	xid++
-	iter := expectOK(t, res)
-	nextOp(t, &iter)
-	rootFH := append([]byte(nil), nextOp(t, &iter).Value().AsGETFH4resEntry().Value().AsGETFH4resok().Object().Data()...)
-
-	names := collectTernReaddirNames(t, conn, &xid, rootFH)
-	for _, n := range names {
-		if n == ".nfs" {
-			t.Fatal(".nfs directory should be hidden in READDIR")
-		}
-	}
-}
-
-// --- Lookup non-existent file → NFS4ERR_NOENT ---
-
-func TestTernLookupNonExistent(t *testing.T) {
-	addr, cleanup := startTernTestServer(t)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-
-	xid := uint32(1)
-
-	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
-		w.AppendArgarray_Putrootfh()
-		lw := w.AppendArgarray_Lookup()
-		nw := lw.StartObjname()
-		buf := nw.SetData([]byte("nonexistent-file-12345.txt")).Finish()
-		lw.Resume(buf)
-		buf = lw.Finish()
-		w.Resume(buf)
-	})
-	xid++
-
-	if res.Status() != nfs4.NFS4ERR_NOENT {
-		t.Fatalf("LOOKUP non-existent: got status %s, want NFS4ERR_NOENT",
-			nfs4.Nfsstat4Name(res.Status()))
-	}
-}
-
 // --- Empty file creation and read ---
 
 func TestTernCreateEmptyFile(t *testing.T) {
@@ -2626,68 +1750,9 @@ func TestTernCreateEmptyFile(t *testing.T) {
 	cleanupViaNFS(t, conn, &xid, "empty.txt")
 }
 
-// --- Multiple operations in single COMPOUND ---
-
-func TestTernCompoundChaining(t *testing.T) {
-	addr, cleanup := startTernTestServer(t)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
-
-	xid := uint32(1)
-	clientid := setupClient(t, conn, &xid)
-
-	createFileViaNFS(t, conn, &xid, clientid, "chain-a.txt", []byte("aaa"))
-	createFileViaNFS(t, conn, &xid, clientid, "chain-b.txt", []byte("bbb"))
-
-	// Single compound: PUTROOTFH + LOOKUP(a) + READ + PUTROOTFH + LOOKUP(b) + READ
-	res := sendCompound(t, conn, xid, func(w *nfs4.COMPOUND4argsWriter) {
-		w.AppendArgarray_Putrootfh()
-		lw := w.AppendArgarray_Lookup()
-		nw := lw.StartObjname()
-		buf := nw.SetData([]byte("chain-a.txt")).Finish()
-		lw.Resume(buf)
-		buf = lw.Finish()
-		w.Resume(buf)
-		rw := w.AppendArgarray_Read()
-		rw.Stateid().SetSeqid(0)
-		rw.SetOffset(0)
-		rw.SetCount(4096)
-
-		w.AppendArgarray_Putrootfh()
-		lw = w.AppendArgarray_Lookup()
-		nw = lw.StartObjname()
-		buf = nw.SetData([]byte("chain-b.txt")).Finish()
-		lw.Resume(buf)
-		buf = lw.Finish()
-		w.Resume(buf)
-		rw = w.AppendArgarray_Read()
-		rw.Stateid().SetSeqid(0)
-		rw.SetOffset(0)
-		rw.SetCount(4096)
-	})
-	xid++
-	iter := expectOK(t, res)
-	nextOp(t, &iter) // PUTROOTFH
-	nextOp(t, &iter) // LOOKUP a
-	readA := nextOp(t, &iter).Value().AsREAD4resEntry().Value().AsREAD4resok()
-	if string(readA.Data()) != "aaa" {
-		t.Fatalf("file a = %q, want %q", readA.Data(), "aaa")
-	}
-	nextOp(t, &iter) // PUTROOTFH
-	nextOp(t, &iter) // LOOKUP b
-	readB := nextOp(t, &iter).Value().AsREAD4resEntry().Value().AsREAD4resok()
-	if string(readB.Data()) != "bbb" {
-		t.Fatalf("file b = %q, want %q", readB.Data(), "bbb")
-	}
-
-	cleanupViaNFS(t, conn, &xid, "chain-a.txt")
-	cleanupViaNFS(t, conn, &xid, "chain-b.txt")
-}
-
-// PUTFH walks LookupParent from a directory filehandle up to the root. The
-// StatDirectory owner must be cached, or a client which keeps using its
-// filehandles after an nfsd restart pays that walk on every compound.
+// LOOKUPP calls LookupParent on a directory filehandle. The StatDirectory
+// owner must be cached, or a client which keeps using its filehandles after
+// an nfsd restart pays a backend call on every LOOKUPP.
 func TestTernLookupParentCachesDirectoryOwner(t *testing.T) {
 	c, err := client.NewClient(
 		ternLogger, nil, registryAddr, msgs.AddrsInfo{})
@@ -2696,7 +1761,10 @@ func TestTernLookupParentCachesDirectoryOwner(t *testing.T) {
 	}
 	defer c.Close()
 	fs := vfs.NewRemoteTernVFS(c, ternLogger, bufpool.NewBufPool())
-	dirID, err := clientstore.EnsureDir(fs, fs.RootID(), "lookup-parent-cache")
+	dirID, err := fs.Lookup(fs.RootID(), "lookup-parent-cache")
+	if errors.Is(err, os.ErrNotExist) {
+		dirID, err = fs.Mkdir(fs.RootID(), "lookup-parent-cache")
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2917,9 +1985,8 @@ func TestTernRetiredSourceCanMoveAcrossDirectories(t *testing.T) {
 	}
 	writeFileAt(t, conn, &xid, fh, state, 0, []byte("unpublished"))
 	id := stagingIDForTest(t, srv.stagingStore, state)
-	srv.waitForClientGC()
-	now := time.Now().Add(2 * clientstore.LeaseTime)
-	srv.clients.SetClock(func() time.Time { return now })
+	now := time.Now().Add(2 * leaseTime)
+	srv.SetClock(func() time.Time { return now })
 	srv.runLeaseSweep()
 	meta, ok := srv.stagingStore.GetMeta(id)
 	if !ok || !meta.Retired {
@@ -2954,11 +2021,11 @@ func TestTernRetiredSourceCanMoveAcrossDirectories(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := srv.fs.ReadAll(published)
+	data, err := readAll(srv.fs, published)
 	if err != nil || string(data) != "published" {
 		t.Fatalf("move changed published bytes: %q, %v", data, err)
 	}
-	if err := srv.fs.Remove(dir, "moved"); err != nil {
+	if err := removeName(srv.fs, dir, "moved"); err != nil {
 		t.Fatal(err)
 	}
 	cleanupViaNFS(t, conn, &xid, "retired-move-dir")

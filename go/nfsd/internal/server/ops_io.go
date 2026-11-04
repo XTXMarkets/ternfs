@@ -224,7 +224,6 @@ func (s *Server) opReaddir(args nfs4.READDIR4args, st *compoundState, w *nfs4.CO
 	// NFS cookie semantics: cookie=X means "I already have entries up to
 	// and including X". Skip entries with NameHash <= cookie on continuations,
 	// since VFS Readdir returns entries with hash >= startHash (inclusive).
-	// Also hide the internal .nfs directory from client directory listings.
 	var page []vfs.DirEntry
 	startHash := cookie
 	lastPage := false
@@ -234,9 +233,6 @@ func (s *Server) opReaddir(args nfs4.READDIR4args, st *compoundState, w *nfs4.CO
 				e := page[0]
 				page = page[1:]
 				if cookie != 0 && e.NameHash <= cookie {
-					continue
-				}
-				if st.currentID == s.fs.RootID() && e.Name == vfs.NFSDirName {
 					continue
 				}
 				return e, true, nil

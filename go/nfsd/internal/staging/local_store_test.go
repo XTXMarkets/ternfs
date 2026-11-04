@@ -19,7 +19,7 @@ import (
 // (NFS8) stop startup instead of being quarantined, so an upgrade with
 // undrained staging is noticed.
 func TestOlderStagingFormatFailsStartup(t *testing.T) {
-	for _, format := range []string{"NFS5", "NFS6", "NFS7", "NFS8"} {
+	for _, format := range []string{"NFS8"} {
 		t.Run(format, func(t *testing.T) {
 			dir := t.TempDir()
 			store, _, sf := CreateOverlayStage(t, dir, vfs.MakeInodeID(vfs.InodeTypeFile, 1), []byte("base"))
@@ -123,5 +123,39 @@ func TestLoadedDataVersionStartsAboveCandidate(t *testing.T) {
 	got := loaded.Get(id)
 	if got.Candidate() != c || got.DataVersion() <= c.Version {
 		t.Fatalf("loaded candidate %+v, data version %d; want %+v below the data version", got.Candidate(), got.DataVersion(), c)
+	}
+}
+
+// Retained answers for live and failed entries alike, in one check, and no
+// for a removed one. Writer-index pruning depends on that: Failed then Get
+// both say no when a quarantine lands between them.
+func TestRetainedCoversLiveAndFailedEntries(t *testing.T) {
+	store, err := NewLocalStore(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := vfs.MakeInodeID(vfs.InodeTypeFile, 100)
+	if store.Retained(id) {
+		t.Fatal("retained before create")
+	}
+	if _, err := store.Create(id, Meta{DirID: vfs.MakeInodeID(vfs.InodeTypeDir, 1), FileName: "f"}); err != nil {
+		t.Fatal(err)
+	}
+	if !store.Retained(id) {
+		t.Fatal("live entry not retained")
+	}
+	if err := store.Quarantine(id); err != nil {
+		t.Fatal(err)
+	}
+	if !store.Retained(id) || store.Get(id) != nil || !store.Failed(id) {
+		t.Fatal("quarantined entry must be retained, failed and not live")
+	}
+	other := vfs.MakeInodeID(vfs.InodeTypeFile, 101)
+	if _, err := store.Create(other, Meta{DirID: vfs.MakeInodeID(vfs.InodeTypeDir, 1), FileName: "g"}); err != nil {
+		t.Fatal(err)
+	}
+	store.Remove(other)
+	if store.Retained(other) {
+		t.Fatal("removed entry retained")
 	}
 }

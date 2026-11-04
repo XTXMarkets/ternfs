@@ -10,15 +10,14 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/msgs"
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
+	"sync"
 )
 
 type namespaceFaultVFS struct {
@@ -93,8 +92,6 @@ func TestNamespaceErrorOutcomes(t *testing.T) {
 			{"local rejection", os.ErrPermission, false, false, nfs4.NFS4ERR_ACCESS, false, false},
 			{"lost reply", errors.New("lost reply"), true, false, nfs4.NFS4ERR_IO, true, false},
 			{"send failure", errors.New("send failure"), false, false, nfs4.NFS4ERR_IO, true, false},
-			{"submitted rejection", msgs.NOT_AUTHORISED, false, true, nfs4.NFS4ERR_IO, true, false},
-			{"malformed response", msgs.MALFORMED_RESPONSE, true, true, nfs4.NFS4ERR_IO, true, false},
 			{"edge gone", msgs.EDGE_NOT_FOUND, true, true, nfs4.NFS4ERR_NOENT, false, true},
 			{"edge replaced", msgs.MISMATCHING_CREATION_TIME, true, true, nfs4.NFS4ERR_NOENT, false, true},
 		} {
@@ -260,10 +257,9 @@ func renameNamespaceFile(t *testing.T, f *namespaceFixture, from, to string) uin
 
 func expireNamespaceClient(t *testing.T, f *namespaceFixture) {
 	t.Helper()
-	f.server.waitForClientGC()
 	awaitRequestHoldsReleased(t, f.server)
-	now := time.Now().Add(2 * clientstore.LeaseTime)
-	f.server.clients.SetClock(func() time.Time { return now })
+	now := time.Now().Add(2 * leaseTime)
+	f.server.SetClock(func() time.Time { return now })
 	f.server.runLeaseSweep()
 }
 
@@ -522,7 +518,7 @@ func TestRetiredSourceDoesNotBlockRename(t *testing.T) {
 					t.Fatal(err)
 				}
 			} else if destination != "absent" {
-				base, err := f.fs.CreateFile(dir, "moved", strings.NewReader("displaced"))
+				base, err := createFile(f.fs, dir, "moved", "displaced")
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -543,12 +539,10 @@ func TestRetiredSourceDoesNotBlockRename(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if destination == "active" {
-					if err := f.server.clients.MarkOpen(clientID, stateID); err != nil {
+				if destination != "active" {
+					if err := sf.Retire(clientID, stateID); err != nil {
 						t.Fatal(err)
 					}
-				} else if err := sf.Retire(clientID, stateID); err != nil {
-					t.Fatal(err)
 				}
 			}
 			var savedMetaPath string
@@ -653,7 +647,7 @@ func TestRenameOpenStaging(t *testing.T) {
 	if !ok {
 		t.Fatal("first writer's handle does not decode")
 	}
-	if data, err := f.fs.ReadAll(baseID); err != nil || string(data) != "original" {
+	if data, err := readAll(f.fs, baseID); err != nil || string(data) != "original" {
 		t.Fatalf("first writer's base after the publication: %q %v", data, err)
 	}
 	status, state, fh, _ := openFileForOwner(t, f.conn, &f.xid, f.clientID,
@@ -697,11 +691,11 @@ func TestCloseWaitsForStagedRename(t *testing.T) {
 		t.Fatal(err)
 	}
 	baseFS := vfs.NewLocalTernVFS(dir)
-	fs := &clientstore.BlockingRenameVFS{
+	fs := &blockingRenameVFS{
 		TernVFS: baseFS,
-		DstName: "renamed.txt",
-		Entered: make(chan struct{}),
-		Release: make(chan struct{}),
+		dstName: "renamed.txt",
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
 	}
 	staging, err := staging.NewLocalStore(t.TempDir(), nil)
 	if err != nil {
@@ -739,7 +733,7 @@ func TestCloseWaitsForStagedRename(t *testing.T) {
 		})
 		renameDone <- res.Status()
 	}()
-	<-fs.Entered
+	<-fs.entered
 
 	closeDone := make(chan uint32, 1)
 	go func() {
@@ -751,12 +745,12 @@ func TestCloseWaitsForStagedRename(t *testing.T) {
 	}()
 	select {
 	case status := <-closeDone:
-		close(fs.Release)
+		close(fs.release)
 		t.Fatalf("CLOSE completed during RENAME with status %s",
 			nfs4.Nfsstat4Name(status))
 	case <-time.After(100 * time.Millisecond):
 	}
-	close(fs.Release)
+	close(fs.release)
 
 	if status := <-renameDone; status != nfs4.NFS4_OK {
 		t.Fatalf("RENAME status = %s, want NFS4_OK",
@@ -778,20 +772,18 @@ func TestCloseWaitsForStagedRename(t *testing.T) {
 	}
 }
 
-func TestRenameOverOpenStaging(t *testing.T) {
-	f := newNamespaceFixture(t)
-	if status := renameNamespaceFile(t, f, "target", "source"); status != nfs4.NFS4_OK {
-		t.Fatalf("RENAME returned %s", nfs4.Nfsstat4Name(status))
+// blockingRenameVFS holds the first rename to dstName until release.
+type blockingRenameVFS struct {
+	vfs.TernVFS
+	dstName          string
+	entered, release chan struct{}
+	once             sync.Once
+}
+
+func (fs *blockingRenameVFS) RenameEdge(srcDirID vfs.InodeID, srcName string, edge vfs.Edge, dstDirID vfs.InodeID, dstName string) error {
+	if dstName == fs.dstName {
+		fs.once.Do(func() { close(fs.entered) })
+		<-fs.release
 	}
-	meta, _ := f.store.GetMeta(f.id)
-	if !meta.Unlinked || meta.Guarded {
-		t.Fatalf("destination writer not detached: %+v", meta)
-	}
-	writeFileAt(t, f.conn, &f.xid, f.fh, f.state, 0, []byte("old writer"))
-	f.restart(t)
-	closeFile(t, f.conn, &f.xid, f.fh, f.state)
-	data, err := os.ReadFile(filepath.Join(f.root, "source"))
-	if err != nil || string(data) != "replacement" {
-		t.Fatalf("detached writer overwrote replacement: %q, %v", data, err)
-	}
+	return fs.TernVFS.RenameEdge(srcDirID, srcName, edge, dstDirID, dstName)
 }

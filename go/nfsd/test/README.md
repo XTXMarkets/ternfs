@@ -33,12 +33,12 @@ Run from `go/nfsd`:
 make test
 make test GO_TEST_FLAGS='-race -count=1'
 make test-cluster
-make test-cluster GO_TEST_FLAGS='-v -run TestTernWriteAndRead'
+make test-cluster GO_TEST_FLAGS='-v -run TestTernLargeFile'
 ```
 
 `make test` runs `go test . ./internal/...`. The untagged tests include
 [nfsd_test.go](../internal/server/nfsd_test.go), the
-[client-store tests](../internal/clientstore/store_test.go), session tests
+[client record tests](../internal/clientrecords/records_test.go), session tests
 and staging tests. `make test` does not include the diagnostics API package;
 run its typed-ID tests from `go/nfsd` with:
 
@@ -74,8 +74,9 @@ make test-pynfs TEST_ARGS='-registry HOST:PORT'
 ```
 
 Both modes start their own nfsd processes. They create and mutate test data
-in the selected backend. Use an isolated test filesystem; pynfs cases can
-reuse client identities, so run it serially against one filesystem.
+in the selected backend. Use an isolated test filesystem, and run one suite
+at a time against it: each nfsd the harness starts serves the whole
+filesystem, and two daemons on one tree are not supported.
 
 Shared options in `TEST_ARGS`:
 
@@ -101,7 +102,7 @@ libnfs 8 offers sessions as NFSv4.2, hence the server compatibility flag.
 make test-libnfs-cluster GO_TEST_FLAGS=-short
 make test-libnfs-cluster GO_TEST_FLAGS='-run TestLibnfs/recovery'
 make test-libnfs TEST_ARGS='-registry HOST:PORT' \
-    GO_TEST_FLAGS='-run TestLibnfs/ReadFile'
+    GO_TEST_FLAGS='-run TestLibnfs/ReadLargeFile'
 ```
 
 `-short` skips timed cases. `LIBNFS_TIMEOUT` overrides the default
@@ -178,8 +179,7 @@ make test-functional-cluster FUNCTIONAL_TESTS=0005,0009
 ```
 
 The target rebuilds the image before running. `FUNCTIONAL_TIMEOUT` defaults
-to 30 minutes. Each guest uses a distinct hostname for its client identity
-because the daemons share the durable client store.
+to 30 minutes. Each guest uses a distinct hostname for its client identity.
 
 For the explicit crash test, build the image, then run:
 
@@ -222,7 +222,7 @@ two opens through one mount, while writers on one client now share staging.
 Those tests need updating before this path establishes NFSv4.1 coverage.
 
 Each workload unmounts and stops its daemon before namespace cleanup,
-which deletes the whole filesystem including `/.nfs`. Run this only against
+which deletes the whole filesystem. Run this only against
 the temporary test cluster. The
 [CI workflow](../../../.github/workflows/main.yml) selects this kernel-client
 path; it does not select the separate libnfs, pynfs or functional QEMU suites.

@@ -7,6 +7,7 @@ package server
 import (
 	"net"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -26,12 +27,47 @@ func sequenceArgsForTest(t *testing.T, wire []byte) nfs4.SEQUENCE4args {
 	return it.Argarray().Value().AsSEQUENCE4args()
 }
 
+// createFile publishes a file with data at name, replacing what is there,
+// as a TernFS client would: through a transient.
+func createFile(fs vfs.TernVFS, dir vfs.InodeID, name, data string) (vfs.InodeID, error) {
+	id, cookie, err := fs.ConstructFile(dir)
+	if err != nil {
+		return 0, err
+	}
+	return id, fs.LinkFile(id, cookie, dir, name, strings.NewReader(data))
+}
+
 func readPublished(fs vfs.TernVFS, name string) ([]byte, error) {
 	id, err := fs.Lookup(fs.RootID(), name)
 	if err != nil {
 		return nil, err
 	}
-	return fs.ReadAll(id)
+	return readAll(fs, id)
+}
+
+// readAll reads the whole of file id from the backend.
+func readAll(fs vfs.TernVFS, id vfs.InodeID) ([]byte, error) {
+	var data []byte
+	buf := make([]byte, 1<<16)
+	for {
+		n, eof, err := fs.Read(id, uint64(len(data)), buf)
+		if err != nil {
+			return nil, err
+		}
+		data = append(data, buf[:n]...)
+		if eof || n == 0 {
+			return data, nil
+		}
+	}
+}
+
+// removeName removes name from dir through the edge it has now.
+func removeName(fs vfs.TernVFS, dir vfs.InodeID, name string) error {
+	edge, err := fs.LookupEdge(dir, name)
+	if err != nil {
+		return err
+	}
+	return fs.RemoveEdge(dir, name, edge)
 }
 
 // addrOfTestServer finds a served test server's address in the registry.
@@ -85,7 +121,7 @@ func stagingFiles(dir string) ([]os.DirEntry, error) {
 	}
 	files := entries[:0]
 	for _, e := range entries {
-		if !e.IsDir() {
+		if !e.IsDir() && e.Name() != staging.ServerIDFileName {
 			files = append(files, e)
 		}
 	}
@@ -141,14 +177,20 @@ func sendAsync(conn net.Conn, xid uint32, wire []byte) <-chan []byte {
 	return done
 }
 
-// startTestServerWithVFS serves fs with a fresh staging directory.
-func startTestServerWithVFS(t *testing.T, fs vfs.TernVFS) (*Server, string, func()) {
+// newTestStaging returns a store on a fresh staging directory.
+func newTestStaging(t *testing.T) *staging.LocalStore {
 	t.Helper()
 	store, err := staging.NewLocalStore(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv, err := NewServer(fs, store, nil)
+	return store
+}
+
+// startTestServerWithVFS serves fs with a fresh staging directory.
+func startTestServerWithVFS(t *testing.T, fs vfs.TernVFS) (*Server, string, func()) {
+	t.Helper()
+	srv, err := NewServer(fs, newTestStaging(t), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

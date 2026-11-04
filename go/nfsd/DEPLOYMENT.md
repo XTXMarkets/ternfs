@@ -6,10 +6,11 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
 # Deploying nfsd
 
-An nfsd process owns its sessions, open state and local staging. The TernFS
-namespace and client registration store are shared. Sharing that store
-coordinates client lifetimes; it does not share staged bytes or make the
-processes interchangeable.
+One nfsd serves each tree. Its staging directory is the server: the server
+identity, the client records, the session files and the staged writes are
+all there, so a copy of the whole directory is the same server and an
+empty one is a new server. nfsd keeps nothing in TernFS except the data. A
+second daemon on the same tree is not supported.
 
 These are the current implementation's guarantees and limitations.
 [Recovery](RECOVERY.md) describes the recovery paths and operator steps.
@@ -26,8 +27,8 @@ These are the current implementation's guarantees and limitations.
 
 Writers on one client share staging for the same file within one daemon.
 Other clients have independent versions. Concurrent writers do not merge
-edits: the last successful publication wins the pathname. This also applies
-across daemons. Do not use this as a distributed append or locking service.
+edits: the last successful publication wins the pathname. Do not use this
+as a distributed append or locking service.
 
 Published contents have TernFS's configured durability and retention.
 Unpublished contents depend on the staging disk. Even after fsync, a new
@@ -37,24 +38,27 @@ show its previous published contents.
 An old handle identifies an immutable inode, but the issuing daemon may
 temporarily map it to the client's newer version. A process restart on
 the same staging disk keeps that mapping only if its recorded expiry has
-not passed; other daemons never have it. This causes the
+not passed; a failover with an empty staging directory loses it. This causes the
 [old-handle defect](#old-handles-name-their-original-version).
 
 ## Deployment modes
 
 | Mode | Intended use | Main limit |
 | --- | --- | --- |
-| [One writable server](#one-writable-server) | Clients pinned to one daemon and its staging disk. | Staged data has no second copy in TernFS. |
-| [Independent writable servers](#independent-writable-servers) | Separate mounts serve one namespace through different daemons. | Mutable views and namespace bookkeeping are local. |
-| [Read-only servers](#read-only-servers) | Read published data without write staging. | Sessions still require affinity; the mode does not block timestamp updates. |
-| [Replacement with the staging disk](#replacement-with-the-staging-disk) | Recover a stopped server on another host. | Existing opens recover only in the supported cases. |
-| [Replacement without the staging disk](#replacement-without-the-staging-disk) | Restore access to published data. | Unpublished stable data is unavailable. |
-| [One mount distributed across servers](#one-mount-distributed-across-servers) | Not supported. | Sessions and stateids are not shared. |
+| [One writable server](#one-writable-server) | Each tree served by one daemon and its staging disk. | Staged data has no second copy in TernFS. |
+| [Failover with the staging directory](#failover-with-the-staging-directory) | Move a tree's daemon to another host, copying the stopped daemon's staging. The preferred failover. | The copy time is outage time. |
+| [Failover with an empty staging directory](#failover-with-an-empty-staging-directory) | Move a tree's daemon when the old staging cannot be read. | Unpublished writes of files open for writing are lost, mostly silently. |
+
+Several daemons serving one tree, or one mount spread across daemons, are
+not supported. Sessions, stateids, staged writers and namespace bookkeeping
+are local to one daemon.
 
 ### One writable server
 
 **Topology.** Direct each mount, including all its TCP connections, to one
-nfsd. Give that daemon a persistent staging directory.
+nfsd. Give that daemon a persistent staging directory. Emptying it makes a
+new server, which costs every client a reboot recovery and every file open
+for writing its unpublished writes.
 
 **Client mounts.** Mount with `vers=4.1,proto=tcp,hard`. A client that
 reopens files without walking their path must also mount with
@@ -80,112 +84,83 @@ see [session restoration](internal/server/README.md#session-restoration). A
 restart also recovers eligible checkpointed writers through their old
 stateids, and restores publication aliases whose recorded expiry has not
 passed. Read opens are reopened by the client. Session files and aliases are
-written without fsync, so a host crash can lose them. Disk loss removes
-unpublished contents and every session.
+written without fsync, so a host crash can lose them; client records and
+sidecars are synced, so a client that lost its session registers again
+with its writers still eligible. Disk loss is a new server: it removes
+unpublished contents, every session and every client record.
 
 **Known issues.** The backend-timeout and rejected-publication issues below
 apply. A surviving disk is not a guarantee that every descriptor resumes.
 There are no enforced share reservations or byte-range locks.
 
-### Independent writable servers
+### Failover with the staging directory
 
-**Topology.** Several daemons serve one TernFS namespace, each with its own
-address and staging directory. A client may mount more than one, but each
-mount must stay with its chosen daemon.
+**Topology.** The operator fences the old daemon, copies its stopped
+staging directory to the new host, moves the tree's address and starts nfsd
+there with the same binary and flags. The procedure is in
+[Replace a host](RECOVERY.md#replace-a-host).
 
-**Guarantees.** The published namespace is shared. A fresh lookup can see
-another daemon's completed publication. Client reboot and lease decisions
-are coordinated through the shared client store.
+**Guarantees.** The same recovery scope as a restart in place: the copied
+`server-id`, client records, session files, sidecars and aliases are what
+the new daemon recovers from, so it is the same server.
+Measured with a Linux 6.1 client in a sandbox, killing the old daemon and
+starting the new one from an rsync copy of its staging: the client carried
+on with its session without registering again, every descriptor open for
+writing kept its data, including data acknowledged by fsync and a 1 GiB
+CLOSE in flight at the kill, and reads of just-saved files were correct.
 
-**Failure behaviour.** Surviving daemons continue serving published files.
-They cannot take over another daemon's unpublished writes without its
-staging disk. Reads through another daemon do not see a client's private
-writes, even if it registered the same client identity there.
+**Failure behaviour.** Clients stall on their hard mounts from the moment
+the old daemon stops until the new one answers, so the copy time is outage
+time. If the session files are missing or unusable on the new host, the
+mount still survives: the client registers again with its incarnation
+still confirmed and staged writers are adopted from their sidecars, but a
+CLOSE in flight at the failover returns
+0 to the application and its data stays unpublished on the new host's
+staging disk. A copy taken while the old daemon still served loses
+whatever that daemon acknowledged after the copy, silently; in the sandbox
+an fsync-acknowledged write left a hole of zeros.
 
-**Known issues.** Namespace bookkeeping does not cross daemons. If A has a
-writer for `x` and B removes `x`, A's later CLOSE can recreate `x`. If B
-renames it to `y`, A can publish at the old name. GUARDED and exclusive
-create checks are also serialized only locally. All single-server recovery
-defects remain. A backend outage can prevent A from renewing its durable
-lease long enough for B to expire the client, even while A has active work.
+**Known issues.** All restart defects below apply. Never run two daemons
+against the same staging directory or tree. Staging left behind by a lost
+CLOSE or a bad copy is carried into every later copy; resolve it after each
+failover.
 
-### Read-only servers
+### Failover with an empty staging directory
 
-**Topology.** Omit `-staging` and use read-only client mounts, for example
-`-o vers=4.1,proto=tcp,hard,ro`. Each mount still belongs to one daemon.
+**Topology.** As above, but the new daemon starts with an empty staging
+directory, because the old one cannot be read. Keep the old disk untouched
+if it may come back: it holds the only copy of what is lost. The new
+daemon is a new server, with a new server owner and no client records.
+An upgrade from a release that kept client records in TernFS is the same
+case; see [Upgrades](#upgrades).
 
-**Guarantees.** Published files can be read without local write staging.
-The daemon rejects writable opens and create/remove/rename mutations.
+**Guarantees.** Published data remains accessible. Clients stay mounted.
+Measured with a Linux 6.1 client in a sandbox, five failovers: the client
+saw its session refused, registered again, had `CLAIM_PREVIOUS` refused
+with `NFS4ERR_NO_GRACE` and reopened its files; new work succeeded 0.6 to
+3 s after the new daemon listened. Files closed before the failover, and
+read-only opens, were unaffected. Those runs predate the local client
+records: the new daemon read the old records from TernFS and bound the
+client to its old incarnation. Now it has none, and the client registers
+as new. That was measured with the local records in the sandbox
+acceptance runs and on the QA rig: a new server identity, no client
+records, the client registering as new and staying mounted, with the same
+descriptor outcomes as before.
 
-**Failure behaviour.** A replacement can serve the published data without
-the old host's disk. Existing sessions and opens still need recovery, and
-DNS changes alone do not redirect existing mounts.
+**Failure behaviour.** Files open for writing at the failover lose their
+unpublished writes, mostly without an error. The new daemon refuses their
+writable reopens with `NFS4ERR_STALE`, having neither a name nor staging
+for them. The application then gets `EBADF` on its next write, while
+`fsync` and `close` return 0; data an earlier fsync acknowledged is lost
+too, and the server holds the previous version of an existing file or an
+empty file for a new one. A CLOSE in flight returns 0 and its data is
+lost. Reads of files saved just before the failover returned the previous
+version for 10 to 20 s, because the client's aliases went with the old
+staging directory. Once a write is acknowledged as stable, NFS has no way
+to tell the client it was lost, so this is inherent to the procedure.
 
-**Known issues.** The server's read-only mode is incomplete: timestamp-only
-SETATTR can still change backend timestamps. A client `ro` mount prevents
-ordinary writes through that mount; it does not enforce policy on other
-clients. The daemon also writes its client registrations, leases and open
-markers under `/.nfs`. Read-only service is therefore not a backend with no
-writes. It adds no coherence or failover guarantee for a concurrently
-changing namespace.
-
-### Replacement with the staging disk
-
-**Topology.** Stop or fence the old daemon, attach its staging disk to the
-replacement, and use the same TernFS backend and compatible sidecar format.
-To preserve existing mounts' destination, arrange takeover of the address
-they already use.
-
-**Guarantees.** Eligible staged writers have the local data and sidecars
-needed for recovery. This has the same recovery scope as an in-place restart.
-
-**Failure behaviour.** The new daemon has new wire clientids and in-memory
-state. It can restore sessions from the disk under the same conditions as
-an in-place restart, but a host crash can have lost session records written
-without fsync. Writer recovery still depends on the client identity and
-boot, the held handle, the namespace, and retained base/transient inodes.
-
-**Known issues.** All restart defects below apply. A movable disk does not
-make active/active service safe: never run two daemons against the same
-staging directory. Endpoint ownership and clocks also matter; see
-[host replacement](RECOVERY.md#replace-a-host).
-
-### Replacement without the staging disk
-
-**Topology.** Start a fresh daemon against the same TernFS backend with a
-new staging directory. Direct new mounts to it, or separately arrange
-address takeover for existing mounts.
-
-**Guarantees.** Published data remains accessible under TernFS's normal
-retention rules. New clients can open files and begin new writes.
-
-**Failure behaviour.** The replacement lacks the old daemon's unpublished
-bytes, including bytes acknowledged stable. The pathname may contain an
-empty placeholder or the earlier published version. Existing write
-descriptors cannot rely on resuming.
-
-**Known issues.** A changed write verifier lets clients detect loss of
-unstable writes. It does not require them to retain or resend stable data.
-If the old disk is recovered later, its staging needs reconciliation with
-any intervening publications; do not blindly bring both daemons online.
-
-### One mount distributed across servers
-
-**Topology.** A load balancer, proxy or client sends one mount's connections
-to independent nfsd processes.
-
-**Guarantees.** None for a shared NFS session. Multiple connections work
-when they all reach the same daemon.
-
-**Failure behaviour.** A session issued by A is unknown to B and gets
-`NFS4ERR_BADSESSION`. Registering separately with B does not transfer A's
-opens, staged data or handle aliases.
-
-**Known issues.** Each process advertises a distinct server owner. There is
-no session trunking across daemons, transparent NFS migration, or replicated
-reply cache. Per-connection stickiness is insufficient if one mount has
-connections to several daemons. This remains unsupported for read-only
-mounts.
+**Known issues.** The new write verifier tells clients to resend unstable
+writes they still hold; it does not bring back stable ones.
 
 ## Known defects
 
@@ -253,13 +228,14 @@ A client reads its newly published contents through the handle it still
 holds while the daemon keeps a publication alias for it: while the handle
 is open and for one lease after publication. The alias survives a restart
 while its recorded expiry, renewed at each sweep for an open handle, is
-still in the future. After it lapses, including during a long outage, or
-through another daemon, the handle names its original immutable inode
-again, so a read through a very old handle can return older bytes. The
+still in the future. After it lapses, including during a long outage or
+after a failover with an empty staging directory, the handle names its
+original immutable inode again, so a read through a very old handle can return older bytes. The
 replacement is always available through a fresh pathname lookup. A
 writable OPEN by handle can get `NFS4ERR_STALE` when the daemon has
-neither a remembered current pathname nor eligible staging; the Linux
-client then looks the name up again.
+neither a remembered current pathname nor eligible staging. An ordinary
+open on Linux then looks the name up again; a reopen without a path walk
+cannot, which is why such clients mount with `lookupcache=none`.
 
 ### Lease expiry leaves retired staging
 
@@ -268,6 +244,24 @@ including one that acknowledged nothing, and is kept until recovered or
 removed by an administrator. An `EXCLUSIVE4` create retried
 by the same client boot after its lease expired gets `NFS4ERR_EXIST`
 instead of adopting its retired staging.
+
+### DESTROY_CLIENTID after a restart
+
+Wire clientids belong to one process, and a restart restores sessions but
+not the wire records behind them. A client that destroys its clientid on a
+restored session, as Linux does at unmount, gets `NFS4ERR_STALE_CLIENTID`.
+Its record stays until its lease expires, 90 s later, and then goes as for
+any expired client.
+
+### A failed fsync of the client records stops record updates
+
+If fsync of `clients/` fails, nfsd no longer knows whether the update
+reached the disk, and it stops changing records until it restarts and
+reads them again. Until then every confirmation, expiry and destruction
+fails: a new or rebooted client's CREATE_SESSION gets `NFS4ERR_SERVERFAULT`,
+and EXCHANGE_ID for a client whose lease has run out gets `NFS4ERR_DELAY`.
+nfsd keeps serving everything else and reports the failure only in its
+log. Restart it.
 
 ## Operating requirements
 
@@ -292,21 +286,6 @@ does not fit waits for replies to drain rather than being refused. A request
 larger than the whole budget is refused and its connection closed. A
 dashboard shows the waits as `admission_work_waits`.
 
-### Client store snapshot policy
-
-Give `/.nfs` a snapshot policy appropriate for disposable client-store
-history. Lease and marker churn otherwise accumulates snapshot edges and
-dead inodes. For example, with the inode of `/.nfs` in `NFS_DIR_ID`:
-
-```sh
-terncli set-dir-info -id "$NFS_DIR_ID" -tag SNAPSHOT \
-    -body '{"DeleteAfterVersions": 0}'
-```
-
-Do not apply that recommendation to user data indiscriminately: staging
-recovery can need retained base versions. Keep `/.nfs` itself while serving
-the filesystem. Even a read-only daemon uses its current records.
-
 ### Network access
 
 Ownership and modes are synthetic. AUTH_SYS principal comparison is an
@@ -320,6 +299,22 @@ For upgrades, drain and close writers, then account for remaining active,
 retired and quarantined staging. The current sidecar format is NFS9.
 Deleting staging to bypass a format incompatibility discards unpublished
 data. Follow [upgrade recovery](RECOVERY.md#upgrade-the-server).
+
+The upgrade from a release that kept client records in TernFS under
+`/.nfs` is a wipe: drain writers, stop nfsd, delete `/.nfs`, move the old
+staging directory aside and start the new binary on an empty directory.
+Until `/.nfs` is deleted, clients see it as an ordinary directory holding
+the old records. Every client goes through one reboot recovery. The steps are in
+[Upgrade the server](RECOVERY.md#from-a-release-with-client-records-in-ternfs).
+
+### Client records
+
+The client records are small JSON files in `clients/`, one per client
+identity, written by one process and fsynced. They need no maintenance:
+a record goes when its client expires or is destroyed. Do not edit them
+while nfsd runs: the process keeps its own copy and acts on that. Removing
+one while nfsd is stopped makes that client new, and its staged writers
+are treated as an expired client's.
 
 ## Metrics
 
@@ -368,10 +363,8 @@ client is mounting means a session was retired.
 ## Diagnostics
 
 `-status-addr` serves a read-only JSON API about the process's own state,
-off by default. `-store-only` serves the same API without the NFS server,
-reading the client store and staging sidecars without changing them. The
-[diagnostics API reference](inspect/README.md) describes the resources,
-typed ids and the store report.
+off by default. The [diagnostics API reference](inspect/README.md)
+describes the resources, the client records and typed ids.
 
 ```sh
 nfsd -registry registry.example:55556 -staging /var/lib/nfsd \
