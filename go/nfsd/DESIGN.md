@@ -125,7 +125,9 @@ name up again. A client that reopens without a path walk cannot, and must
 mount with `lookupcache=none`; see
 [Client mounts](DEPLOYMENT.md#one-writable-server).
 
-Ownership and modes are synthetic.
+Ownership and modes are synthetic. SETATTR of mode, owner and group is
+accepted and ignored, so chmod and chown succeed; Samba chmods whenever
+it maps a Windows security descriptor.
 
 ## Writes and publication
 
@@ -191,7 +193,11 @@ client-visible consequences are under
 [failed CLOSE](DEPLOYMENT.md#a-rejected-publication-is-not-reported-to-the-application).
 
 Initial CREATE attributes can be staged even for a read-only create OPEN;
-the share access still prohibits WRITE. EXCLUSIVE4 and EXCLUSIVE4_1 retries
+the share access still prohibits WRITE. While that open lasts, the client
+sees the staging as the file, so a write OPEN of it by the same client
+joins the staging as it would join a writer's, and takes over its sidecar.
+Samba does this for a Windows create with read access followed by an open
+for write. EXCLUSIVE4 and EXCLUSIVE4_1 retries
 reuse staging for a matching client, owner and verifier while the name
 still contains the original placeholder. The verifier remains in staging
 until CLOSE; it is not a reservation across hosts. See

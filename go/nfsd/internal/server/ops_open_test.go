@@ -2029,6 +2029,92 @@ func TestReadOnlyCreateWithSizePublishes(t *testing.T) {
 	}
 }
 
+// A write OPEN of the client's read-only create, still open, joins its
+// staging, which the client already sees as the file. Samba opens O_CREAT
+// read-only for a Windows OPEN_IF with read access, then O_RDWR.
+func TestWriteOpenJoinsReadOnlyCreate(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		writerOwner  string
+		creatorFirst bool
+	}{
+		{name: "same owner", writerOwner: "test-owner-doc"},
+		{name: "other owner, writer closes first", writerOwner: "writer"},
+		{name: "other owner, creator closes first", writerOwner: "writer", creatorFirst: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newPublishFixture(t)
+			size := uint64(5)
+			csid, cfh := openCreateFileWithSizeAndAccess(t, f.conn, f.xid, f.clientID, "doc", &size, nfs4.OPEN4_SHARE_ACCESS_READ)
+			status, wsid, wfh, _ := openFileForOwner(t, f.conn, f.xid, f.clientID, test.writerOwner, "doc",
+				nfs4.OPEN4_SHARE_ACCESS_BOTH, false, false)
+			if status != nfs4.NFS4_OK {
+				t.Fatalf("write OPEN while the read-only create is open = %s", nfs4.Nfsstat4Name(status))
+			}
+			if n := len(f.store.Entries()); n != 1 {
+				t.Fatalf("%d staging entries, want the creator's one", n)
+			}
+			writeFileAt(t, f.conn, f.xid, wfh, wsid, 0, []byte("hi"))
+			if test.writerOwner == "test-owner-doc" {
+				closeFile(t, f.conn, f.xid, wfh, wsid)
+			} else if test.creatorFirst {
+				closeFile(t, f.conn, f.xid, cfh, csid)
+				closeFile(t, f.conn, f.xid, wfh, wsid)
+			} else {
+				closeFile(t, f.conn, f.xid, wfh, wsid)
+				closeFile(t, f.conn, f.xid, cfh, csid)
+			}
+			mustPublished(t, f.fs.TernVFS, "doc", "hi\x00\x00\x00")
+			f.mustDrained(t, "after the last CLOSE")
+		})
+	}
+}
+
+// The joined writer survives a restart: it writes again through the
+// recovered sidecar, and its CLOSE publishes both writes.
+func TestJoinedReadOnlyCreateSurvivesRestart(t *testing.T) {
+	fs := vfs.NewLocalTernVFS(t.TempDir())
+	stagingDir := t.TempDir()
+	store, err := staging.NewLocalStore(stagingDir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewServer(fs, store, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr, cleanup := serveTestServer(t, srv)
+	conn := dial(t, addr)
+	xid := uint32(1)
+	clientID := setupClient(t, conn, &xid)
+	openCreateFileWithSizeAndAccess(t, conn, &xid, clientID, "doc", nil, nfs4.OPEN4_SHARE_ACCESS_READ)
+	status, sid, fh, _ := openFileForOwner(t, conn, &xid, clientID, "test-owner-doc", "doc",
+		nfs4.OPEN4_SHARE_ACCESS_BOTH, false, false)
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("write OPEN while the read-only create is open = %s", nfs4.Nfsstat4Name(status))
+	}
+	writeFileAt(t, conn, &xid, fh, sid, 0, []byte("hi"))
+	conn.Close()
+	cleanup()
+	store.PrepareRemoveAll()
+
+	recovered, err := staging.NewLocalStore(stagingDir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err = NewServer(fs, recovered, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr, cleanup = serveTestServer(t, srv)
+	defer cleanup()
+	conn = dial(t, addr)
+	defer conn.Close()
+	writeFileAt(t, conn, &xid, fh, sid, 2, []byte("!"))
+	closeFile(t, conn, &xid, fh, sid)
+	mustPublished(t, fs, "doc", "hi!")
+}
+
 // replaceOnLookupVFS replaces one name with new content right after the
 // first Lookup of it returns, as a CLOSE publishing over it then would.
 type replaceOnLookupVFS struct {
