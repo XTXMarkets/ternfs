@@ -320,6 +320,51 @@ identity-collision guard, not an authentication or permission boundary.
 Choose network access accordingly. The diagnostics API has no
 authentication either; see [Diagnostics](#diagnostics).
 
+### Samba
+
+A Samba share over nfsd is its own share on a kernel NFSv4.1 mount, with
+its own limitations. [smb.conf.in](test/samba/smb.conf.in) is the tested
+reference, and the [Samba suite](test/README.md#samba-over-the-kernel-client)
+runs it.
+
+Mount with `vers=4.1,proto=tcp,hard,actimeo=1,lookupcache=none`; see
+[Client mounts](#one-writable-server). The share needs:
+
+- `admin users` naming the share's `valid users`. Every file is owned by
+  `nobody` with mode 0644, and every directory 0755, so Samba refuses an
+  ordinary user's writes otherwise. `valid users` is then the only access
+  control.
+- `dfree command` pointing at a script that runs `df`. Without it Samba asks
+  rquotad on the NFS server, which nfsd does not run, and each free-space
+  query waits 60 s.
+- `veto files = /.nfs*/`, which hides the Linux NFS client's silly renames
+  of open, unlinked files. Leave `delete veto files` off. A silly-renamed
+  file cannot be deleted while it is open and goes by itself when it
+  closes, and Samba 4.17 and 4.19 panic the user's smbd when that deletion
+  fails as a folder is removed.
+- `oplocks = no` and `kernel oplocks = no`. An oplock lets a Windows client
+  cache a file, and Samba cannot break it when an NFS client changes the
+  file.
+- `posix locking = no`, since nfsd does not support NFS locks.
+- `store dos attributes = no` and `ea support = no`, since nfsd has no
+  extended attributes.
+
+Users of the share see these limitations:
+
+- Byte-range locks hold between users of one smbd, not against NFS clients.
+- Hidden, system, archive and read-only flags do not stick.
+- Changes on the Security tab are accepted and change nothing.
+- "Date created" is made up from the other times and moves with them.
+- A file's ID changes every time it is saved, since every save publishes a
+  new TernFS inode.
+- A file open for writing cannot be moved to another folder; it can be
+  renamed within its own. An open file cannot be deleted or replaced, as on
+  Windows, and a folder holding a deleted file that is still open cannot be
+  removed until the file is closed.
+- Times before 1970 are stored as 1970, and times after April 2262 as 2262.
+- Free space shows nfsd's fixed figures, and quota information is not
+  available.
+
 ### Upgrades
 
 For upgrades, drain and close writers, then account for remaining active,
