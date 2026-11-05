@@ -32,7 +32,10 @@ mnt=${mnt:-}
 functional=${functional:-}
 case_timeout=${case_timeout:-300}
 
-exec > >(tee -a "$log") 2>&1
+# The driver creates the log empty. Write it at ordinary offsets: a 6.14
+# guest's 9p client, mounted cache=loose, repeated earlier output in a file
+# written with O_APPEND.
+exec > >(tee "$log") 2>&1
 finish() {
 	echo "GUEST-DONE"
 	sync
@@ -75,7 +78,7 @@ diagnostics() {
 
 mkdir -p "$mnt"
 # 10.0.2.2 is the host's loopback interface as seen through qemu user networking.
-if ! mount -t nfs4 -o vers=4.1,proto=tcp,port="$nfsport",hard,timeo=600 "10.0.2.2:$export_path" "$mnt"; then
+if ! mount -t nfs4 -o vers=4.1,proto=tcp,port="$nfsport",hard,timeo=600${mount_extra:+,$mount_extra} "10.0.2.2:$export_path" "$mnt"; then
 	echo "MOUNT-FAILED"
 	dmesg | tail -20
 	echo "suite exit=2"
@@ -89,6 +92,16 @@ if [[ ${mode:-} == restart-mid-write ]]; then
 	timeout -s KILL "$case_timeout" python3 "${restart_writer:-}" "$mnt" "${control:-}" < /dev/null
 	status=$?
 	(( status == 137 )) && diagnostics
+	echo "suite exit=$status"
+	umount "$mnt" || umount -f "$mnt" || echo "umount failed"
+	exit "$status"
+fi
+
+# The driver's -samba mode: smbtorture through Samba on the mount, instead of
+# the functional cases. The driver judges the results.
+if [[ ${mode:-} == samba ]]; then
+	"${samba:-}/guest.sh" "$mnt" "${samba_results:-}" "${samba_suites:-}" "$case_timeout" < /dev/null
+	status=$?
 	echo "suite exit=$status"
 	umount "$mnt" || umount -f "$mnt" || echo "umount failed"
 	exit "$status"
