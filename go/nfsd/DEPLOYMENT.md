@@ -48,6 +48,7 @@ not passed; a failover with an empty staging directory loses it. This causes the
 | [One writable server](#one-writable-server) | Each tree served by one daemon and its staging disk. | Staged data has no second copy in TernFS. |
 | [Failover with the staging directory](#failover-with-the-staging-directory) | Move a tree's daemon to another host, copying the stopped daemon's staging. The preferred failover. | The copy time is outage time. |
 | [Failover with an empty staging directory](#failover-with-an-empty-staging-directory) | Move a tree's daemon when the old staging cannot be read. | Unpublished writes of files open for writing are lost, mostly silently. |
+| [Read-only server](#read-only-server) | Serve published data to clients that only read. | Nothing can be changed through it, not even timestamps. |
 
 Several daemons serving one tree, or one mount spread across daemons, are
 not supported. Sessions, stateids, staged writers and namespace bookkeeping
@@ -161,6 +162,28 @@ to tell the client it was lost, so this is inherent to the procedure.
 
 **Known issues.** The new write verifier tells clients to resend unstable
 writes they still hold; it does not bring back stable ones.
+
+### Read-only server
+
+**Topology.** Start nfsd with `-read-only` and mount with `ro`, for example
+`-o vers=4.1,proto=tcp,hard,ro`. The daemon still needs a staging
+directory, for its sessions and client records; it stays small. A
+directory that holds staged writers is refused at startup, because a
+read-only daemon could never publish them: start it writable once first.
+
+**Guarantees.** OPEN for writing, OPEN that would create a file, CREATE,
+REMOVE, RENAME, SETATTR and WRITE get `NFS4ERR_ROFS`, whatever the client's
+mount options. An OPEN with create of an existing file opens it for
+reading, as `open(O_CREAT)` does on a read-only mount. ACCESS grants no
+modify, extend or delete.
+
+**Failure behaviour.** There are no unpublished writes to lose, so a
+replacement on another host with an empty staging directory costs clients
+only the reboot recovery described in
+[failover with an empty staging directory](#failover-with-an-empty-staging-directory).
+
+**Known issues.** Ownership and modes are still synthetic, and the whole
+tree is exported; see [network access](#network-access).
 
 ## Known defects
 

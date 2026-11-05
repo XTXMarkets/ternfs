@@ -59,6 +59,7 @@ type Server struct {
 	backchannel        backchannelStats
 	cbXIDs             atomic.Uint32
 	AllowMinorVersion2 bool
+	ReadOnly           bool // the -read-only flag: every change is refused with NFS4ERR_ROFS
 	views              openstate.ViewStore
 	names              nameCache
 	stagingStore       staging.Store

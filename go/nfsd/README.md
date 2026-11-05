@@ -62,7 +62,8 @@ Read [Deployment](DEPLOYMENT.md) before choosing the staging disk or a
 server replacement procedure.
 
 `-staging DIR` is required; it is the server, so keep it on a persistent
-disk. `-root DIR` selects a local test backend
+disk. `-read-only` refuses every change to the filesystem; see
+[read-only server](DEPLOYMENT.md#read-only-server). `-root DIR` selects a local test backend
 instead of `-registry`; exactly one is required. The local backend keeps
 its transient and replaced files in `DIR.nfsd`, next to the exported tree
 and on its filesystem, so `DIR` cannot be a mount point. `-v` enables request

@@ -3677,6 +3677,135 @@ func TestLinkNotSupported(t *testing.T) {
 	}
 }
 
+// A read-only server refuses every change, timestamps included, and still
+// serves reads. An open with create of an existing file opens it, as
+// open(O_CREAT) does on a read-only mount.
+func TestReadOnlyRefusesChanges(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "file"), []byte("data"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(filepath.Join(root, "file"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := newTestStaging(t)
+	srv, err := NewServer(vfs.NewLocalTernVFS(root), store, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.ReadOnly = true
+	addr, stop := serveTestServer(t, srv)
+	defer stop()
+	conn := dial(t, addr)
+	defer conn.Close()
+	xid := uint32(1)
+	clientID := setupClient(t, conn, &xid)
+	fh := lookupFH(t, conn, &xid, "file")
+
+	compound := func(build func(w *nfs4.COMPOUND4argsWriter)) nfs4.COMPOUND4res {
+		res := sendCompound(t, conn, xid, build)
+		xid++
+		return res
+	}
+	refused := []struct {
+		op    string
+		build func(w *nfs4.COMPOUND4argsWriter)
+	}{
+		{"CREATE", func(w *nfs4.COMPOUND4argsWriter) {
+			w.AppendArgarray_Putrootfh()
+			admissionCreate(w, "dir")
+		}},
+		{"REMOVE", func(w *nfs4.COMPOUND4argsWriter) {
+			w.AppendArgarray_Putrootfh()
+			admissionRemove(w, "file")
+		}},
+		{"RENAME", func(w *nfs4.COMPOUND4argsWriter) {
+			w.AppendArgarray_Putrootfh()
+			w.AppendArgarray_Savefh()
+			rw := w.AppendArgarray_Rename()
+			rw.Resume(rw.StartOldname().SetData([]byte("file")).Finish())
+			rw.Resume(rw.StartNewname().SetData([]byte("moved")).Finish())
+			w.Resume(rw.Finish())
+		}},
+		{"SETATTR mtime", func(w *nfs4.COMPOUND4argsWriter) {
+			putfhOp(w, fh)
+			saw := w.AppendArgarray_Setattr()
+			faw := saw.StartObjAttributes()
+			bmW := faw.StartAttrmask()
+			bmW.AppendData(0)
+			bmW.AppendData(1 << (nfs4.FATTR4_TIME_MODIFY_SET - 32))
+			faw.Resume(bmW.Finish())
+			value := binary.BigEndian.AppendUint32(nil, nfs4.SET_TO_SERVER_TIME4)
+			faw.Resume(faw.StartAttrVals().SetData(value).Finish())
+			saw.Resume(faw.Finish())
+			w.Resume(saw.Finish())
+		}},
+		{"WRITE", func(w *nfs4.COMPOUND4argsWriter) {
+			putfhOp(w, fh)
+			ww := w.AppendArgarray_Write()
+			ww = ww.SetOffset(0)
+			ww = ww.SetStable(fileSync4)
+			ww = ww.SetData([]byte("changed"))
+			w.Resume(ww.Finish())
+		}},
+	}
+	for _, r := range refused {
+		if status := compound(r.build).Status(); status != nfs4.NFS4ERR_ROFS {
+			t.Errorf("%s: %s, want NFS4ERR_ROFS", r.op, nfs4.Nfsstat4Name(status))
+		}
+	}
+
+	opens := []struct {
+		name   string
+		access uint32
+		create bool
+		want   uint32
+	}{
+		{"file", nfs4.OPEN4_SHARE_ACCESS_WRITE, false, nfs4.NFS4ERR_ROFS},
+		{"file", nfs4.OPEN4_SHARE_ACCESS_BOTH, false, nfs4.NFS4ERR_ROFS},
+		{"missing", nfs4.OPEN4_SHARE_ACCESS_READ, true, nfs4.NFS4ERR_ROFS},
+		{"file", nfs4.OPEN4_SHARE_ACCESS_READ, true, nfs4.NFS4_OK},
+		{"file", nfs4.OPEN4_SHARE_ACCESS_READ, false, nfs4.NFS4_OK},
+	}
+	for i, o := range opens {
+		owner := fmt.Sprintf("owner-%d", i)
+		status, _, _, _ := openFileForOwner(t, conn, &xid, clientID, owner, o.name, o.access, o.create, false)
+		if status != o.want {
+			t.Errorf("OPEN %s access %d create %t: %s, want %s", o.name, o.access, o.create,
+				nfs4.Nfsstat4Name(status), nfs4.Nfsstat4Name(o.want))
+		}
+	}
+
+	res := compound(func(w *nfs4.COMPOUND4argsWriter) {
+		putfhOp(w, fh)
+		aw := w.AppendArgarray_Access()
+		aw.SetAccess(nfs4.ACCESS4_READ | nfs4.ACCESS4_MODIFY | nfs4.ACCESS4_EXTEND)
+	})
+	iter := expectOK(t, res)
+	nextOp(t, &iter)
+	ok := nextOp(t, &iter).Value().AsACCESS4resEntry().Value().AsACCESS4resok()
+	if ok.Access() != nfs4.ACCESS4_READ {
+		t.Errorf("ACCESS granted %#x, want READ only", ok.Access())
+	}
+
+	if data, err := os.ReadFile(filepath.Join(root, "file")); err != nil || string(data) != "data" {
+		t.Errorf("file holds %q (%v), want %q", data, err, "data")
+	}
+	after, err := os.Stat(filepath.Join(root, "file"))
+	if err != nil || !after.ModTime().Equal(before.ModTime()) {
+		t.Errorf("file mtime %v (%v), want %v", after.ModTime(), err, before.ModTime())
+	}
+	for _, name := range []string{"dir", "moved", "missing"} {
+		if _, err := os.Lstat(filepath.Join(root, name)); !os.IsNotExist(err) {
+			t.Errorf("%s exists after a refused change (%v)", name, err)
+		}
+	}
+	if n := len(store.Entries()); n != 0 {
+		t.Errorf("%d staged files, want none", n)
+	}
+}
+
 func TestCreateSymlink(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "target.txt"), []byte("target"), 0644)

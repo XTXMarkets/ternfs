@@ -387,6 +387,10 @@ func (s *Server) opWrite(args nfs4.WRITE4args, st *compoundState, w *nfs4.COMPOU
 		ew := w.AppendResarray_Write()
 		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_NOFILEHANDLE)
 	}
+	if s.ReadOnly {
+		ew := w.AppendResarray_Write()
+		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_ROFS)
+	}
 	if status := requireRegularFile(st.currentID); status != nfs4.NFS4_OK {
 		ew := w.AppendResarray_Write()
 		return finishDefaultResponse(w, ew.Finish(), status)

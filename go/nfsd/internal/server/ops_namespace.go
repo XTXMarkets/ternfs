@@ -18,6 +18,10 @@ func (s *Server) opCreate(args nfs4.CREATE4args, st *compoundState, w *nfs4.COMP
 		ew := w.AppendResarray_Create()
 		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_NOFILEHANDLE)
 	}
+	if s.ReadOnly {
+		ew := w.AppendResarray_Create()
+		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_ROFS)
+	}
 	if st.currentID.Type() != vfs.InodeTypeDir {
 		ew := w.AppendResarray_Create()
 		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_NOTDIR)
@@ -219,6 +223,10 @@ func (s *Server) opRemove(args nfs4.REMOVE4args, st *compoundState, w *nfs4.COMP
 		ew := w.AppendResarray_Remove()
 		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_NOFILEHANDLE)
 	}
+	if s.ReadOnly {
+		ew := w.AppendResarray_Remove()
+		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_ROFS)
+	}
 	if status := requireDirectory(st.currentID); status != nfs4.NFS4_OK {
 		ew := w.AppendResarray_Remove()
 		return finishDefaultResponse(w, ew.Finish(), status)
@@ -287,6 +295,10 @@ func (s *Server) opRename(args nfs4.RENAME4args, st *compoundState, w *nfs4.COMP
 	if !st.currentIDSet || !st.savedIDSet {
 		ew := w.AppendResarray_Rename()
 		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_NOFILEHANDLE)
+	}
+	if s.ReadOnly {
+		ew := w.AppendResarray_Rename()
+		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_ROFS)
 	}
 	if status := requireDirectory(st.savedID); status != nfs4.NFS4_OK {
 		ew := w.AppendResarray_Rename()

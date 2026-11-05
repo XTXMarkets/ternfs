@@ -27,10 +27,14 @@ func (s *Server) opAccess(args nfs4.ACCESS4args, st *compoundState, w *nfs4.COMP
 		meaningful |= nfs4.ACCESS4_EXECUTE
 	}
 	requested := args.Access() & meaningful
+	granted := requested
+	if s.ReadOnly {
+		granted &^= nfs4.ACCESS4_MODIFY | nfs4.ACCESS4_EXTEND | nfs4.ACCESS4_DELETE
+	}
 	ew := w.AppendResarray_Access()
 	ok := ew.SetValue_Nfs4Ok()
 	ok.SetSupported(requested)
-	ok.SetAccess(requested)
+	ok.SetAccess(granted)
 	w.Resume(ew.Finish())
 	return nfs4.NFS4_OK
 }
@@ -116,6 +120,10 @@ func (s *Server) opSetattr(args nfs4.SETATTR4args, st *compoundState, w *nfs4.CO
 
 	if !st.currentIDSet {
 		return setattrReply(nfs4.NFS4ERR_NOFILEHANDLE, attrMask{})
+	}
+	// Timestamps included: a read-only server changes nothing.
+	if s.ReadOnly {
+		return setattrReply(nfs4.NFS4ERR_ROFS, attrMask{})
 	}
 
 	fa := args.ObjAttributes()
