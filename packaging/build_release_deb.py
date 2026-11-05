@@ -15,12 +15,14 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
 
 RELEASE_BINARIES = (
+    "nfsd",
     "ternblocks",
     "terncdc",
     "terncli",
@@ -171,6 +173,7 @@ def build_release_deb(
     architecture: str = "amd64",
     build_variant: str = "alpine",
     created_epoch: Optional[int] = None,
+    source_dirty: bool = False,
 ) -> Path:
     if not ARCHITECTURE_RE.fullmatch(architecture):
         raise ValueError(f"invalid Debian architecture: {architecture!r}")
@@ -199,6 +202,7 @@ def build_release_deb(
             "schema_version": 1,
             "release_id": rid,
             "source_revision": revision,
+            "source_dirty": source_dirty,
             "build_number": build_number,
             "build_variant": build_variant,
             "created": created,
@@ -242,13 +246,26 @@ def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, default=Path("dist"))
     parser.add_argument("--architecture", default="amd64")
     parser.add_argument("--build-variant", default="alpine")
+    parser.add_argument(
+        "-g",
+        "--ignore-git",
+        action="store_true",
+        help="package a checkout with uncommitted changes; release.json records source_dirty",
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = _parse_args(argv)
     repo_dir = Path(__file__).resolve().parent.parent
-    require_clean_checkout(repo_dir)
+    source_dirty = False
+    if args.ignore_git:
+        # The release ID still names HEAD, which the binaries may not match.
+        source_dirty = bool(_run_git(repo_dir, "status", "--porcelain"))
+        if source_dirty:
+            print("warning: packaging a dirty checkout", file=sys.stderr)
+    else:
+        require_clean_checkout(repo_dir)
     revision = git_revision(repo_dir)
     created_epoch = int(_run_git(repo_dir, "show", "-s", "--format=%ct", revision))
     output = build_release_deb(
@@ -260,6 +277,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         architecture=args.architecture,
         build_variant=args.build_variant,
         created_epoch=created_epoch,
+        source_dirty=source_dirty,
     )
     print(output)
     return 0
