@@ -1107,7 +1107,8 @@ func (fs *publishFaultVFS) keepScrapped(id vfs.InodeID) {
 		if err != nil {
 			continue
 		}
-		if st, ok := info.Sys().(*syscall.Stat_t); ok && st.Ino == id.Fileid() {
+		// LocalTernVFS makes an id from the host inode number and the type.
+		if st, ok := info.Sys().(*syscall.Stat_t); ok && st.Ino == uint64(id)&(1<<61-1) {
 			_ = os.Link(filepath.Join(dir, e.Name()), filepath.Join(fs.keep, e.Name()))
 		}
 	}

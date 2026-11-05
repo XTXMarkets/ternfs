@@ -25,7 +25,7 @@ const (
 )
 
 func (id InodeID) Type() uint64   { return (uint64(id) >> 61) & 0x3 }
-func (id InodeID) Fileid() uint64 { return uint64(id) & ((1 << 61) - 1) }
+func (id InodeID) Fileid() uint64 { return uint64(id) }
 
 func MakeInodeID(typ uint64, ino uint64) InodeID {
 	return InodeID((typ << 61) | (ino & ((1 << 61) - 1)))
