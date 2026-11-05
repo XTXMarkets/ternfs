@@ -22,7 +22,7 @@ These are the current implementation's guarantees and limitations.
 | Successful create OPEN | The pathname contains an empty published file. Initial size and later writes can still be private. |
 | Unstable WRITE | The server accepted bytes into local staging. The client must retain them until made stable. |
 | Stable WRITE or COMMIT | Checkpoints staging data and metadata on the local disk. After a restart, COMMIT also syncs the client's recovered writers of the handle. It does not publish to TernFS. |
-| Last write CLOSE or downgrade to READ | Publishes a changed, linked staging version synchronously, or answers `NFS4ERR_DELAY` while the backend does not answer, and the client retries. A clean writer leaves the published file unchanged; an unlinked writer discards its private version. |
+| Last write CLOSE or downgrade to READ | Publishes a changed, linked staging version synchronously, or answers `NFS4ERR_DELAY` while the backend does not answer, and the client retries. A clean writer leaves the published file unchanged; an unlinked writer discards its private version. Once it answers OK, neither a restart nor a power loss brings that writer back. |
 | Fresh lookup after publication | Finds the replacement inode. Already held handles and client caches need not select that version. |
 
 Writers on one client share staging for the same file within one daemon.

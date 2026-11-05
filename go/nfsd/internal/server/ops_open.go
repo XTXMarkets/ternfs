@@ -230,6 +230,10 @@ func (s *Server) releaseWrite(openStateid nfs4.Stateid4, st *compoundState, clos
 		// its staging sidecar.
 		dataID, ok := s.recoveredDataID(st.clientID, sid, st.currentID)
 		if !ok {
+			if closing && st.clientID != 0 && s.opens.CanRecover(sid) && s.publishedAtStartup[sid] == st.clientID {
+				// Startup found its publication done and dropped the staging.
+				return openstate.State{ID: sid, Generation: openstate.NextGeneration(generation)}, nfs4.NFS4_OK
+			}
 			return openstate.State{}, status
 		}
 		meta, _ := s.stagingStore.GetMeta(dataID)

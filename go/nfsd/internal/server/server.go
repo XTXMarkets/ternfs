@@ -17,6 +17,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"os"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -95,6 +96,10 @@ type Server struct {
 	// removeClientRecord removes an incarnation's record, records.Remove;
 	// tests make it block.
 	removeClientRecord func(clientrecords.Incarnation) error
+	// publishedAtStartup maps the stateid of each writer that startup found
+	// already published to its client, so that a late CLOSE of it answers
+	// OK. Written only in NewServer.
+	publishedAtStartup map[nfs4.StateID]uint64
 
 	metrics      *Metrics
 	sessionFiles *sessionstore.Store // nil if the session store could not be opened
@@ -169,7 +174,6 @@ func NewServer(fs vfs.TernVFS, stagingStore staging.Store, logger *slog.Logger) 
 		removeClientRecord: records.Remove,
 	}
 	s.SetClock(time.Now)
-	s.startedAt = s.now()
 	s.opens.Now = s.now
 	s.sessions = newSessionStore(s.opens.Epoch)
 	s.sessions.now = s.now
@@ -184,7 +188,52 @@ func NewServer(fs vfs.TernVFS, stagingStore staging.Store, logger *slog.Logger) 
 	s.loadAliases()
 	s.openSessionFiles(stagingDir)
 	s.restoreSessions()
+	s.dropPublishedStaging()
+	// The startup lease is the restored clients' time to reconnect, so it
+	// starts once startup's backend calls are done.
+	s.startedAt = s.now()
 	return s, nil
+}
+
+// dropPublishedStaging removes each recovered staging whose candidate is
+// linked at its checkpointed data version: its CLOSE published it and did
+// not get to remove it. Left in place, the client's next OPEN would adopt
+// it and publish its old bytes over later versions. A late CLOSE of its
+// stateid still answers OK, through publishedAtStartup. The first backend
+// error other than not-exist ends the pass, so a backend that does not
+// answer costs one timeout rather than one per entry.
+func (s *Server) dropPublishedStaging() {
+	s.publishedAtStartup = make(map[nfs4.StateID]uint64)
+	for id, meta := range s.stagingStore.Entries() {
+		sf := s.stagingStore.Get(id)
+		if meta.Unlinked || sf == nil {
+			continue
+		}
+		c := sf.Candidate()
+		if c.Version != sf.DataVersion() {
+			// Writes after the link still need publishing.
+			continue
+		}
+		if _, err := s.fs.Stat(c.ID); os.IsNotExist(err) {
+			continue
+		} else if err != nil {
+			s.log.Warn("staging recover: cannot stat candidate, keeping the rest unchecked", "inode", id, "candidate", c.ID, "err", err)
+			return
+		}
+		// CLOSE restores the writer's times after the link; this one may
+		// not have got that far.
+		info := sf.Stat()
+		if err := s.fs.SetTime(c.ID, &info.Mtime, &info.Atime); err != nil {
+			s.log.Warn("staging recover: cannot restore times of a published candidate, keeping the rest unchecked", "inode", id, "candidate", c.ID, "err", err)
+			return
+		}
+		s.log.Info("staging recover: already published", "inode", id, "name", meta.FileName, "candidate", c.ID)
+		if meta.ClientID != 0 && meta.BaseID != 0 {
+			s.publishedAs(meta.ClientID, meta.BaseID, c.ID)
+		}
+		s.publishedAtStartup[meta.NFSStateID] = meta.ClientID
+		s.stagingStore.Remove(id)
+	}
 }
 
 func (s *Server) removeExpiredStaging() {

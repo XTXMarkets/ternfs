@@ -505,7 +505,9 @@ validated CB_SEQUENCE reply also extend it. While any hold exists or the
 quiet period runs, the lease is held and this process does not expire the
 client. A restart gives every confirmed record a fresh lease: nothing
 expires in the first lease after startup, and a client that never comes
-back expires after it.
+back expires after it. That lease starts at the end of `NewServer`, after
+its backend calls, so a slow backend at startup does not use up the
+clients' time to reconnect.
 
 ### Expiry decision
 
@@ -633,6 +635,25 @@ paths:
   than one `NFS4ERR_EXPIRED`. Under the pathname lock, the pathname
   selection must pick the same entry, or the OPEN gets `NFS4ERR_STALE`.
 
+Before any of these, `NewServer` runs `dropPublishedStaging`
+([server.go](server.go)). A recovered staging whose candidate carries its
+checkpointed data version and stats as linked was published by a CLOSE
+that died before removing it, or whose removal a power loss undid. Left in
+place, the reopen by pathname or `CLAIM_FH` would adopt it, and its CLOSE
+would publish the old bytes over whatever another client saved since. The
+staging is removed, the client's view of the base is pointed at the linked
+inode, and its stateid goes into `publishedAtStartup` with its client. A
+later CLOSE of that stateid by the same client, which finds no recovered
+writer, answers OK, as the CLOSE would have if the staging were still there.
+The check uses `Stat` only, not the scrap of a recovered CLOSE: a live
+writer's own transient stats not-exist and is left alone, at the cost of
+one read per recovered staging. The first error other than not-exist keeps
+that entry and ends the pass, leaving the rest unchecked: a shard that does
+not answer costs a 10 second timeout per `Stat`, and startup would wait for
+each. Such an entry stays adoptable, as it was before this check. A
+candidate that was linked, replaced and then deleted before the restart
+also stats not-exist, and that entry is kept, as before.
+
 OPEN supports `CLAIM_NULL` and `CLAIM_FH`. A read `CLAIM_FH` needs no name
 and uses the client's view. `CLAIM_PREVIOUS` gets `NFS4ERR_NO_GRACE`. Every
 other claim type gets `NFS4ERR_NOTSUPP`.
@@ -708,7 +729,9 @@ that fails, and a WRITE that landed while the publication ran. Only then
 does the CLOSE expire the staging's other writers, which can only be opens
 whose own CLOSE answered DELAY,
 point the staging's readers at what they read next, or fail the staging for
-them, and remove it.
+them, and remove it. The removal syncs the staging directory before the
+reply, so an acknowledged CLOSE's staging does not come back after a power
+loss.
 
 TernFS appends spans at a file's current size, so a transient that may hold
 some of them is never written again. The first publication records the
@@ -716,7 +739,9 @@ staging's own transient as its candidate, with the current data version,
 and submits it. The next checkpoint saves that record, or the CLOSE saves
 it at once when the submission gets no answer. A retried CLOSE, and the
 first CLOSE of a writer recovered after a restart, resolve the candidate
-first, from positive evidence only:
+first, from positive evidence only. Startup applies the linked case of the
+table, by `Stat` alone, before any CLOSE comes back; see
+[Writer recovery mechanics](#writer-recovery-mechanics).
 
 | Evidence | Meaning | The CLOSE |
 | --- | --- | --- |

@@ -173,13 +173,19 @@ some of them is never written again. Each staging therefore has at most one
 publication candidate, saved in its sidecar: the transient selected for
 publication and its data version. A fresh candidate is not submitted if its
 checkpoint fails; CLOSE returns DELAY and keeps the staging. A retried CLOSE,
-or one recovered after a restart, resolves the candidate first, from
-positive evidence only: a linked candidate with the current data version is
-the publication, and otherwise the CLOSE links one fresh transient. The
-candidate belongs to the staging, not to an open, so whichever CLOSE or
-OPEN_DOWNGRADE ends the staging finishes it. A staging that will not be
-published scraps its candidate before it goes, so that a link the backend
-has not answered cannot land later. The mechanics are in
+or one recovered after a restart, resolves the candidate first, from positive
+evidence only: a linked candidate with the current data version is the
+publication, and otherwise the CLOSE links one fresh transient. Startup
+applies the same rule to every recovered staging: one whose candidate is
+linked at its checkpointed data version was published by a CLOSE that died
+before removing it, and is dropped, so that no OPEN adopts it. Its times are
+restored on the candidate first, since that CLOSE may not have done it.
+Removing a staging syncs the staging directory before the CLOSE answers, so a
+power loss cannot bring back one whose CLOSE was acknowledged. The candidate
+belongs to the staging, not to an open, so whichever CLOSE or OPEN_DOWNGRADE
+ends the staging finishes it. A staging that will not be published scraps its
+candidate before it goes, so that a link the backend has not answered cannot
+land later. The mechanics are in
 [Publication](internal/server/README.md#publication).
 
 Timestamp-only publication updates the current published inode without
@@ -371,9 +377,9 @@ client live, and a later sweep tries again. An incarnation that no record
 confirms counts as expired.
 
 A restart gives every confirmed record a fresh lease. Nothing it confirms
-expires in the first lease after startup, and a client that never comes
-back expires after it, so a client that died while nfsd was down gets one
-extra lease.
+expires in the first lease after startup, which starts once startup is done
+talking to the backend, and a client that never comes back expires after it,
+so a client that died while nfsd was down gets one extra lease.
 
 This process is the only one that decides. That rests on the operator
 fencing the old server before a failover (DEPLOYMENT.md): nothing in nfsd
