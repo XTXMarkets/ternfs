@@ -66,6 +66,7 @@ class BuildReleaseDebTest(unittest.TestCase):
         manifest = json.loads((release_root / "release.json").read_text())
         self.assertEqual(manifest["schema_version"], 1)
         self.assertEqual(manifest["source_revision"], "a" * 40)
+        self.assertFalse(manifest["source_dirty"])
         self.assertEqual(manifest["build_variant"], "alpine")
         self.assertEqual(manifest["build_number"], 42)
         self.assertEqual(manifest["package"]["version"], "0.1.0-1")
