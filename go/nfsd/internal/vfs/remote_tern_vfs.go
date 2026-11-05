@@ -422,10 +422,10 @@ func (t *RemoteTernVFS) SetTime(id InodeID, mtime *time.Time, atime *time.Time) 
 	req.Id = mid
 	// MSB of Mtime/Atime indicates "set this field".
 	if mtime != nil {
-		req.Mtime = (1 << 63) | uint64(mtime.UnixNano())
+		req.Mtime = (1 << 63) | uint64(ClampTime(*mtime).UnixNano())
 	}
 	if atime != nil {
-		req.Atime = (1 << 63) | uint64(atime.UnixNano())
+		req.Atime = (1 << 63) | uint64(ClampTime(*atime).UnixNano())
 	}
 	if err := t.client.ShardRequest(t.log, mid.Shard(), &req, &msgs.SetTimeResp{}); err != nil {
 		return TernToOSError(err)

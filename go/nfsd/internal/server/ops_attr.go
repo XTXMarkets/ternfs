@@ -122,22 +122,16 @@ func (s *Server) opSetattr(args nfs4.SETATTR4args, st *compoundState, w *nfs4.CO
 	mask := parseBitmap(fa.Attrmask())
 	attrData := fa.AttrVals().Data()
 
-	// Supported writable attrs.
+	// Supported writable attrs. Ownership and modes are synthetic, so mode,
+	// owner and group are accepted and ignored: chmod and chown succeed and
+	// change nothing.
 	const supportedSet0 = 1 << nfs4.FATTR4_SIZE
-	supportedSet1 := uint32((1 << (nfs4.FATTR4_TIME_ACCESS_SET - 32)) |
-		(1 << (nfs4.FATTR4_TIME_MODIFY_SET - 32)))
-
-	// Validate fixed-width MODE data before reporting that MODE itself is not
-	// supported. RFC 7530 requires malformed attribute XDR to take precedence.
-	const modeMask = 1 << (nfs4.FATTR4_MODE - 32)
-	if mask[0] == 0 && mask[1] == modeMask && mask[2] == 0 && len(attrData) != 4 {
-		return setattrReply(nfs4.NFS4ERR_BADXDR, attrMask{})
-	}
-	// EXCLUSIVE4 clients send mode in a follow-up SETATTR. Modes are synthetic.
-	if writer := s.clientWriter(st.clientID, st.currentID); s.directStaging(writer) != nil ||
-		s.stagingStore.Failed(writer) {
-		supportedSet1 |= modeMask
-	}
+	const ignoredSet1 = (1 << (nfs4.FATTR4_MODE - 32)) |
+		(1 << (nfs4.FATTR4_OWNER - 32)) |
+		(1 << (nfs4.FATTR4_OWNER_GROUP - 32))
+	const supportedSet1 = ignoredSet1 |
+		(1 << (nfs4.FATTR4_TIME_ACCESS_SET - 32)) |
+		(1 << (nfs4.FATTR4_TIME_MODIFY_SET - 32))
 
 	if mask[0]&^writableAttrs0 != 0 || mask[1]&^writableAttrs1 != 0 || mask[2] != 0 {
 		return setattrReply(nfs4.NFS4ERR_INVAL, attrMask{})
@@ -161,13 +155,26 @@ func (s *Server) opSetattr(args nfs4.SETATTR4args, st *compoundState, w *nfs4.CO
 		}
 		newSize = &size
 	}
-	if mask[1]&modeMask != 0 {
+	if mask[1]&(1<<(nfs4.FATTR4_MODE-32)) != 0 {
 		if attrOff+4 > len(attrData) {
 			return setattrReply(nfs4.NFS4ERR_BADXDR, attrMask{})
 		}
 		attrOff += 4
-		resultMask[1] |= modeMask
 	}
+	for _, bit := range []uint32{nfs4.FATTR4_OWNER, nfs4.FATTR4_OWNER_GROUP} {
+		if mask[1]&(1<<(bit-32)) == 0 {
+			continue
+		}
+		if attrOff+4 > len(attrData) {
+			return setattrReply(nfs4.NFS4ERR_BADXDR, attrMask{})
+		}
+		padded := (uint64(binary.BigEndian.Uint32(attrData[attrOff:])) + 3) &^ 3
+		if uint64(attrOff)+4+padded > uint64(len(attrData)) {
+			return setattrReply(nfs4.NFS4ERR_BADXDR, attrMask{})
+		}
+		attrOff += 4 + int(padded)
+	}
+	resultMask[1] |= mask[1] & ignoredSet1
 
 	// parseTimeSet reads a SET_TO_CLIENT_TIME4 or SET_TO_SERVER_TIME4
 	// value from attrData at the current offset.
@@ -187,7 +194,8 @@ func (s *Server) opSetattr(args nfs4.SETATTR4args, st *compoundState, w *nfs4.CO
 			if nsec >= 1_000_000_000 {
 				return nil, nfs4.NFS4ERR_INVAL
 			}
-			t := time.Unix(sec, int64(nsec))
+			// Clamped here, so staging holds what publication will store.
+			t := vfs.ClampTime(time.Unix(sec, int64(nsec)))
 			return &t, nfs4.NFS4_OK
 		}
 		if how == nfs4.SET_TO_SERVER_TIME4 {
