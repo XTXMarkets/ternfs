@@ -12,12 +12,13 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import stat
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, NamedTuple, Optional, Sequence, Tuple
+
+from stamp_build_id import gnu_build_id
 
 
 RELEASE_BINARIES = (
@@ -37,6 +38,13 @@ REVISION_RE = re.compile(r"^[0-9a-f]{7,40}$")
 PROJECT_VERSION_RE = re.compile(r"^[0-9]+(?:\.[0-9]+){2}$")
 ARCHITECTURE_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 BUILD_VARIANT_RE = re.compile(r"^[a-z0-9][a-z0-9.+-]*$")
+
+MAINTAINER = "TernFS Authors <ternfs@users.noreply.github.com>"
+
+
+class ReleasePackages(NamedTuple):
+    package: Path
+    debug_package: Path
 
 
 def _run_git(repo_dir: Path, *args: str) -> str:
@@ -90,11 +98,40 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _copy_binaries(
+def _strip_binary(source: Path, target: Path, debug_target: Path) -> None:
+    # Mirrors debhelper's dh_strip for executables.
+    subprocess.run(
+        [
+            "objcopy",
+            "--only-keep-debug",
+            "--compress-debug-sections",
+            str(source),
+            str(debug_target),
+        ],
+        check=True,
+    )
+    debug_target.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH)
+    subprocess.run(
+        [
+            "objcopy",
+            "--strip-all",
+            "--remove-section=.comment",
+            "--remove-section=.note",
+            f"--add-gnu-debuglink={debug_target}",
+            str(source),
+            str(target),
+        ],
+        check=True,
+    )
+
+
+def _install_binaries(
     build_dir: Path,
     destination: Path,
-) -> List[Dict[str, object]]:
+    debug_destination: Path,
+) -> Tuple[List[Dict[str, object]], List[str]]:
     result = []
+    build_ids = []
     destination.mkdir(parents=True)
     for name in RELEASE_BINARIES:
         source = build_dir / name
@@ -103,8 +140,14 @@ def _copy_binaries(
         if not os.access(source, os.X_OK):
             raise PermissionError(f"release binary is not executable: {source}")
 
+        build_id = gnu_build_id(source)
+        if build_id in build_ids:
+            raise ValueError(f"release binary has a duplicate build ID: {source}")
+        build_ids.append(build_id)
+        debug_target = debug_destination / build_id[:2] / f"{build_id[2:]}.debug"
+        debug_target.parent.mkdir(parents=True, exist_ok=True)
         target = destination / name
-        shutil.copy2(source, target)
+        _strip_binary(source, target, debug_target)
         target.chmod(
             stat.S_IRUSR
             | stat.S_IWUSR
@@ -121,7 +164,7 @@ def _copy_binaries(
                 "size": target.stat().st_size,
             }
         )
-    return result
+    return result, build_ids
 
 
 def _installed_size_kib(package_root: Path) -> int:
@@ -140,25 +183,38 @@ def _normalize_mtimes(package_root: Path, created_epoch: int) -> None:
 
 def _write_control(
     package_root: Path,
-    name: str,
-    version: str,
-    architecture: str,
+    fields: Sequence[Tuple[str, str]],
+    description: str,
 ) -> None:
     control_dir = package_root / "DEBIAN"
     control_dir.mkdir()
-    control = (
-        f"Package: {name}\n"
-        f"Version: {version}\n"
-        f"Architecture: {architecture}\n"
-        "Section: admin\n"
-        "Priority: optional\n"
-        "Maintainer: TernFS Authors <ternfs@users.noreply.github.com>\n"
-        f"Installed-Size: {_installed_size_kib(package_root)}\n"
-        "Description: immutable TernFS userspace release\n"
-        " Co-installable server binaries and administrative tools for one\n"
-        " source revision. Installing this package does not activate services.\n"
-    )
+    fields = [
+        *fields,
+        ("Maintainer", MAINTAINER),
+        ("Installed-Size", str(_installed_size_kib(package_root))),
+        ("Description", description),
+    ]
+    control = "".join(f"{key}: {value}\n" for key, value in fields)
     (control_dir / "control").write_text(control, encoding="utf-8")
+
+
+def _build_deb(package_root: Path, output: Path, created_epoch: int) -> None:
+    _normalize_mtimes(package_root, created_epoch)
+    environment = os.environ.copy()
+    environment["SOURCE_DATE_EPOCH"] = str(created_epoch)
+    subprocess.run(
+        [
+            "dpkg-deb",
+            "--root-owner-group",
+            "-Zgzip",
+            "-z6",
+            "--build",
+            str(package_root),
+            str(output),
+        ],
+        check=True,
+        env=environment,
+    )
 
 
 def build_release_deb(
@@ -171,7 +227,7 @@ def build_release_deb(
     architecture: str = "amd64",
     build_variant: str = "alpine",
     created_epoch: Optional[int] = None,
-) -> Path:
+) -> ReleasePackages:
     if not ARCHITECTURE_RE.fullmatch(architecture):
         raise ValueError(f"invalid Debian architecture: {architecture!r}")
     if not BUILD_VARIANT_RE.fullmatch(build_variant):
@@ -179,10 +235,16 @@ def build_release_deb(
     rid = release_id(build_number, revision)
     deb_version = package_version(version)
     package_name = f"ternfs-release-{rid}"
+    debug_package_name = f"{package_name}-dbgsym"
     output_dir.mkdir(parents=True, exist_ok=True)
     output = output_dir / f"{package_name}_{deb_version}_{architecture}.deb"
-    if output.exists():
-        raise FileExistsError(f"refusing to replace existing package: {output}")
+    # Ubuntu publishes automatic debug symbol packages as .ddeb.
+    debug_output = (
+        output_dir / f"{debug_package_name}_{deb_version}_{architecture}.ddeb"
+    )
+    for path in (output, debug_output):
+        if path.exists():
+            raise FileExistsError(f"refusing to replace existing package: {path}")
 
     if created_epoch is None:
         created_epoch = int(os.environ.get("SOURCE_DATE_EPOCH", "0"))
@@ -193,8 +255,15 @@ def build_release_deb(
 
     with tempfile.TemporaryDirectory(prefix="ternfs-release-") as temporary:
         package_root = Path(temporary) / "root"
+        debug_root = Path(temporary) / "debug-root"
         release_root = package_root / "usr/lib/ternfs/releases" / rid
-        binaries = _copy_binaries(build_dir, release_root / "bin")
+        # Packages for different builds only stay co-installable if the build
+        # IDs differ, which `build.sh --build-number` guarantees.
+        binaries, build_ids = _install_binaries(
+            build_dir,
+            release_root / "bin",
+            debug_root / "usr/lib/debug/.build-id",
+        )
         manifest = {
             "schema_version": 1,
             "release_id": rid,
@@ -213,24 +282,36 @@ def build_release_deb(
             json.dumps(manifest, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
-        _write_control(package_root, package_name, deb_version, architecture)
-        _normalize_mtimes(package_root, created_epoch)
-        environment = os.environ.copy()
-        environment["SOURCE_DATE_EPOCH"] = str(created_epoch)
-        subprocess.run(
+        _write_control(
+            package_root,
             [
-                "dpkg-deb",
-                "--root-owner-group",
-                "-Zgzip",
-                "-z6",
-                "--build",
-                str(package_root),
-                str(output),
+                ("Package", package_name),
+                ("Version", deb_version),
+                ("Architecture", architecture),
+                ("Section", "admin"),
+                ("Priority", "optional"),
             ],
-            check=True,
-            env=environment,
+            "immutable TernFS userspace release\n"
+            " Co-installable server binaries and administrative tools for one\n"
+            " source revision. Installing this package does not activate services.",
         )
-    return output
+        _write_control(
+            debug_root,
+            [
+                ("Package", debug_package_name),
+                ("Version", deb_version),
+                ("Auto-Built-Package", "debug-symbols"),
+                ("Architecture", architecture),
+                ("Depends", f"{package_name} (= {deb_version})"),
+                ("Section", "debug"),
+                ("Priority", "optional"),
+                ("Build-Ids", " ".join(sorted(build_ids))),
+            ],
+            f"debug symbols for {package_name}",
+        )
+        _build_deb(package_root, output, created_epoch)
+        _build_deb(debug_root, debug_output, created_epoch)
+    return ReleasePackages(output, debug_output)
 
 
 def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
@@ -251,7 +332,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     require_clean_checkout(repo_dir)
     revision = git_revision(repo_dir)
     created_epoch = int(_run_git(repo_dir, "show", "-s", "--format=%ct", revision))
-    output = build_release_deb(
+    packages = build_release_deb(
         build_dir=args.build_dir.resolve(),
         output_dir=args.output_dir.resolve(),
         build_number=args.build_number,
@@ -261,7 +342,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         build_variant=args.build_variant,
         created_epoch=created_epoch,
     )
-    print(output)
+    for package in packages:
+        print(package)
     return 0
 
 

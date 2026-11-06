@@ -13,7 +13,7 @@ A userspace release package:
 
 - is named `ternfs-release-r<build>-g<commit>`;
 - installs under `/usr/lib/ternfs/releases/<release-id>/`;
-- contains binaries and a checksummed `release.json`;
+- contains stripped binaries and a checksummed `release.json`;
 - contains no environment configuration or credentials;
 - contains no systemd units or maintainer scripts;
 - does not enable, stop, start, or restart services;
@@ -22,22 +22,39 @@ A userspace release package:
 Branches are build inputs, not deployment identities. Resolve a branch to a
 commit before building and deploy the resulting immutable release ID.
 
+Each release package has a matching `ternfs-release-r<build>-g<commit>-dbgsym`
+debug symbol package, following Ubuntu's automatic debug symbol package
+conventions. It depends on the exact release package version and installs one
+`/usr/lib/debug/.build-id/<xx>/<rest>.debug` file per binary, where gdb,
+elfutils, systemd-coredump and debuginfod look for it. Its `Build-Ids` field
+lists the GNU build IDs of the binaries.
+
 ## Building
 
 Build TernFS first, then package the completed output directory:
 
 ```bash
-./build.sh alpine
+./build.sh alpine --build-number 1842
 ./packaging/build_release_deb.py \
     --build-number 1842 \
     --build-dir build/alpine \
     --output-dir dist
 ```
 
-The source checkout must be clean. The output is similar to:
+`build.sh --build-number` stamps the build number into the GNU build ID of
+every binary. Use a distinct build number for every build you package, and give
+the same number to `packaging/build_release_deb.py --build-number`. Without
+the stamp, a binary that a change does not touch is byte-identical across
+builds and keeps its build ID. The debug symbol packages of those builds then
+contain the same files, and cannot be installed together. The release packages
+themselves stay co-installable either way.
+
+The source checkout must be clean. Every release binary must have a GNU build
+ID. Stripping uses `objcopy` from binutils. The output is similar to:
 
 ```text
 dist/ternfs-release-r1842-g0123456789ab_0.1.0-1_amd64.deb
+dist/ternfs-release-r1842-g0123456789ab-dbgsym_0.1.0-1_amd64.ddeb
 ```
 
 The package name identifies the build and source commit. The Debian version
@@ -45,7 +62,10 @@ is `<project-version>-1`, and `release.json` records the full source revision.
 
 To distribute packages through apt, you should configure repository
 publication, signing, and Debian distribution metadata. Publish the generated
-package without modifying its contents.
+packages without modifying their contents. The debug package uses Ubuntu's
+`.ddeb` extension, so the repository must accept `.ddeb` files, usually in a
+separate debug component or repository. Install it with apt or `dpkg -i` only
+on hosts where you need symbols.
 
 ## Release Selection
 
