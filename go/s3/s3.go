@@ -16,6 +16,7 @@ import (
 	"github.com/XTXMarkets/ternfs/go/msgs"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"runtime/debug"
 	"strconv"
@@ -166,9 +167,16 @@ func parseObjectPath(str string) *objectPath {
 }
 
 // --- Handler Implementation ---
+type storageClient interface {
+	ShardRequest(*log.Logger, msgs.ShardId, msgs.ShardRequest, msgs.ShardResponse) error
+	CDCRequest(*log.Logger, msgs.CDCRequest, msgs.CDCResponse) error
+	ReadFile(*log.Logger, *bufpool.BufPool, msgs.InodeId) (io.ReadSeekCloser, error)
+	WriteFile(*log.Logger, *bufpool.BufPool, *client.DirInfoCache, msgs.InodeId, msgs.InodeId, [8]byte, io.Reader) error
+}
+
 type S3Server struct {
 	log          *log.Logger
-	c            *client.Client
+	c            storageClient
 	bufPool      *bufpool.BufPool
 	dirInfoCache *client.DirInfoCache
 	bucketPaths  map[string]string
@@ -356,10 +364,15 @@ func (s *S3Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	query := r.URL.Query()
-
-	// Route the request to the correct handler.
+	query, err := url.ParseQuery(r.URL.RawQuery)
 	switch {
+	case err != nil:
+		handlerErr = &S3Error{
+			Code: "InvalidRequest", Message: "Malformed query string.",
+			StatusCode: http.StatusBadRequest,
+		}
+	case query.Has("renameObject"):
+		handler = s.handleRenameObject
 	case query.Has("uploads"):
 		handler = s.handleCreateMultipartUpload
 	case query.Has("uploadId") && query.Has("partNumber"):
@@ -386,7 +399,7 @@ func (s *S3Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if handler != nil {
 		// Wrap the handler to recover from panics and call it.
 		handlerErr = s.recoverPanics(handler)(ctx, w, r, bucketName, rootId, path)
-	} else {
+	} else if handlerErr == nil {
 		handlerErr = &S3Error{Code: "MethodNotAllowed", Message: "The specified method is not allowed against this resource.", StatusCode: http.StatusMethodNotAllowed}
 	}
 
@@ -423,10 +436,16 @@ func (s *S3Server) writeXML(w http.ResponseWriter, statusCode int, data interfac
 
 // lookupDir traverses a path to find the final directory's InodeId.
 func (s *S3Server) lookupDir(ctx context.Context, rootId msgs.InodeId, path *objectPath) (msgs.InodeId, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	s.log.Debug("lookupDir=%q in root %d", path.String(), rootId)
 	current := rootId
 
 	for _, segment := range path.segments {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
 		lookupResp := &msgs.LookupResp{}
 		req := &msgs.LookupReq{DirId: current, Name: segment}
 		if err := s.c.ShardRequest(s.log, current.Shard(), req, lookupResp); err != nil {
@@ -435,7 +454,7 @@ func (s *S3Server) lookupDir(ctx context.Context, rootId msgs.InodeId, path *obj
 			}
 			return 0, fmt.Errorf("lookup failed for segment '%s': %w", segment, err)
 		}
-		if lookupResp.TargetId.Type() != msgs.DIRECTORY {
+		if !lookupResp.TargetId.IsDirectory() {
 			return 0, &S3Error{Code: "InvalidRequest", Message: fmt.Sprintf("A component of the path is not a directory: %s", segment), StatusCode: http.StatusBadRequest}
 		}
 		current = lookupResp.TargetId
@@ -455,6 +474,9 @@ func (s *S3Server) lookupDirEntry(ctx context.Context, rootId msgs.InodeId, path
 
 	lookupResp = &msgs.LookupResp{}
 	req := &msgs.LookupReq{DirId: dirId, Name: path.basename()}
+	if err := ctx.Err(); err != nil {
+		return 0, nil, err
+	}
 	if err := s.c.ShardRequest(s.log, dirId.Shard(), req, lookupResp); err != nil {
 		if errors.Is(err, msgs.NAME_NOT_FOUND) {
 			return 0, nil, &S3Error{Code: "NoSuchKey", Message: "The specified key does not exist.", StatusCode: http.StatusNotFound}
@@ -911,7 +933,7 @@ func (s *S3Server) handleDeleteObjects(ctx context.Context, w http.ResponseWrite
 }
 
 // lookupPath is a helper to resolve a full path from the filesystem root to an InodeId.
-func lookupPath(ctx context.Context, log *log.Logger, c *client.Client, path *objectPath) (msgs.InodeId, error) {
+func lookupPath(ctx context.Context, log *log.Logger, c storageClient, path *objectPath) (msgs.InodeId, error) {
 	current := msgs.ROOT_DIR_INODE_ID
 	for _, segment := range path.segments {
 		lookupResp := &msgs.LookupResp{}
