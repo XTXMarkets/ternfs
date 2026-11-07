@@ -2308,6 +2308,7 @@ func main() {
 			reflect.TypeOf(msgs.BlockPolicy{}),
 			reflect.TypeOf(msgs.SnapshotPolicy{}),
 			reflect.TypeOf(msgs.FullShardInfo{}),
+			reflect.TypeOf(msgs.ShardReplicaAnnouncement{}),
 			reflect.TypeOf(msgs.RegisterBlockServiceInfo{}),
 			reflect.TypeOf(msgs.FullBlockServiceInfo{}),
 			reflect.TypeOf(msgs.BlockServiceSpace{}),

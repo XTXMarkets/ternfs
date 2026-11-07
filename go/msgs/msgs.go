@@ -11,13 +11,14 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"github.com/XTXMarkets/ternfs/go/core/bincode"
-	"github.com/XTXMarkets/ternfs/go/core/parity"
 	"io"
 	"path"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/core/bincode"
+	"github.com/XTXMarkets/ternfs/go/core/parity"
 )
 
 //go:generate go run ../bincodegen
@@ -2347,6 +2348,18 @@ type FullShardInfo struct {
 	Addrs      AddrsInfo
 	LastSeen   TernTime
 	LocationId Location
+}
+
+// Sent directly between the replicas of a shard, at every location.
+type ShardReplicaAnnouncement struct {
+	Shrid    ShardReplicaId
+	Location Location
+	IsLeader bool
+	Addrs    AddrsInfo
+	// The last entry the replica has applied to the state it serves reads
+	// from, and when the primary leader created that entry.
+	LastApplied     LogIdx
+	LastAppliedTime TernTime
 }
 
 type AllShardsDEPRECATEDResp struct {

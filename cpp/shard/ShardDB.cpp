@@ -4202,6 +4202,14 @@ TernTime ShardDB::lastAppliedEntryTime() const {
     return impl->_lastAppliedEntryTime(options);
 }
 
+std::pair<LogIdx, TernTime> ShardDB::lastAppliedForReads() const {
+    auto* impl = (ShardDBImpl*)_impl;
+    auto snapshot = impl->_getCurrentReadSnapshot();
+    rocksdb::ReadOptions options;
+    options.snapshot = snapshot.get();
+    return {LogIdx(impl->_lastAppliedLogEntry(options)), impl->_lastAppliedEntryTime(options)};
+}
+
 const std::array<uint8_t, 16>& ShardDB::secretKey() const {
     return ((ShardDBImpl*)_impl)->_secretKey;
 }

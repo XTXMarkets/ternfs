@@ -21,6 +21,7 @@
 #include "Time.hpp"
 #include "CDCKey.hpp"
 #include "Random.hpp"
+#include "ShardKey.hpp"
 
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest.h"
@@ -472,6 +473,72 @@ TEST_CASE("CBC MAC") {
         {83,72,65,0,202,51,170,123,110,151,72,1,128,7,0,0,0,0,0,0,32,0,0,0,0,0,0,0,32,1,0,0},
         {7,78,66,131,192,124,19,0}
     );
+}
+
+TEST_CASE("shard replica announcement protocol") {
+    AES128Key key;
+    expandKey(ShardKey, key);
+
+    ShardReplicaAnnouncementMsg announcement;
+    announcement.id = 42;
+    announcement.body.shrid = ShardReplicaId(ShardId(17), ReplicaId(3));
+    announcement.body.location = 2;
+    announcement.body.isLeader = true;
+    announcement.body.addrs[0].ip.data = {127, 0, 0, 1};
+    announcement.body.addrs[0].port = 12001;
+    announcement.body.addrs[1].ip.data = {10, 20, 30, 40};
+    announcement.body.addrs[1].port = 12002;
+
+    std::array<char, ShardReplicaAnnouncementMsg::STATIC_SIZE + 1> bytes{};
+    BincodeBuf packBuf(bytes.data(), bytes.size());
+    announcement.pack(packBuf, key);
+    CHECK(packBuf.len() == ShardReplicaAnnouncementMsg::STATIC_SIZE);
+
+    ShardReplicaAnnouncementMsg decoded;
+    BincodeBuf unpackBuf(bytes.data(), packBuf.len());
+    decoded.unpack(unpackBuf, key);
+    CHECK(decoded.id == announcement.id);
+    CHECK(decoded.body.shrid == announcement.body.shrid);
+    CHECK(decoded.body.location == announcement.body.location);
+    CHECK(decoded.body.isLeader == announcement.body.isLeader);
+    CHECK(decoded.body.addrs == announcement.body.addrs);
+
+    SUBCASE("rejects an invalid MAC") {
+        bytes[ShardReplicaAnnouncementMsg::STATIC_SIZE - 1] ^= 1;
+        BincodeBuf buf(bytes.data(), ShardReplicaAnnouncementMsg::STATIC_SIZE);
+        ShardReplicaAnnouncementMsg invalid;
+        CHECK_THROWS_AS(invalid.unpack(buf, key), BincodeException);
+    }
+
+    SUBCASE("rejects the wrong protocol") {
+        bytes[0] ^= 1;
+        BincodeBuf buf(bytes.data(), ShardReplicaAnnouncementMsg::STATIC_SIZE);
+        ShardReplicaAnnouncementMsg invalid;
+        CHECK_THROWS_AS(invalid.unpack(buf, key), BincodeException);
+    }
+
+    SUBCASE("rejects a truncated message") {
+        BincodeBuf buf(bytes.data(), ShardReplicaAnnouncementMsg::STATIC_SIZE - 1);
+        ShardReplicaAnnouncementMsg invalid;
+        CHECK_THROWS_AS(invalid.unpack(buf, key), BincodeException);
+    }
+
+    SUBCASE("rejects an invalid replica identity") {
+        ShardReplicaAnnouncementMsg invalidIdentity;
+        invalidIdentity.body.shrid.u16 = (uint16_t(ReplicaId::invalid().u8) << 8) | announcement.body.shrid.shardId().u8;
+        BincodeBuf invalidPackBuf(bytes.data(), bytes.size());
+        invalidIdentity.pack(invalidPackBuf, key);
+
+        BincodeBuf buf(bytes.data(), invalidPackBuf.len());
+        ShardReplicaAnnouncementMsg invalid;
+        CHECK_THROWS_AS(invalid.unpack(buf, key), BincodeException);
+    }
+
+    SUBCASE("rejects trailing bytes") {
+        BincodeBuf buf(bytes.data(), bytes.size());
+        ShardReplicaAnnouncementMsg invalid;
+        CHECK_THROWS_AS(invalid.unpack(buf, key), BincodeException);
+    }
 }
 
 struct TempShardDB {

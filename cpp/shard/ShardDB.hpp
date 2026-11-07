@@ -90,6 +90,10 @@ public:
     // The time of the last log entry applied to the DB
     TernTime lastAppliedEntryTime() const;
 
+    // The index and time of the last log entry visible to reads, taken from
+    // the same snapshot.
+    std::pair<LogIdx, TernTime> lastAppliedForReads() const;
+
     // Applies the log entry at the given index, and fills in the client response.
     // The log entry index should be the next in line to be applied to the state --
     // `lastAppliedLogEntry() + 1`.

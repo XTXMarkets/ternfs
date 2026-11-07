@@ -35,6 +35,7 @@
 #include "ShardKey.hpp"
 #include "SharedRocksDB.hpp"
 #include "RegistryClient.hpp"
+#include "ReplicaTracker.hpp"
 #include "SPSC.hpp"
 #include "Time.hpp"
 #include "Timings.hpp"
@@ -123,12 +124,37 @@ struct ShardShared {
     std::atomic<uint64_t> droppedReadReqs;
     std::atomic<uint64_t> gatedStaleReads;
 
+    // Highest release point known to the writer. Secondary followers learn it
+    // from their local leader.
+    std::atomic<uint64_t> knownLastReleased;
+
+    // Waits for other locations to apply an entry before we respond, by the
+    // location waited for. Written by the writer, read by the metrics inserter.
+    struct CrossLocationWaitStats {
+        std::atomic<uint64_t> started{0};    // waits sent to the location
+        std::atomic<uint64_t> skipped{0};    // not waited for, the location looked down
+        std::atomic<uint64_t> timedOut{0};   // given up mid-wait after -region-wait-timeout
+        std::atomic<uint64_t> silent{0};     // not waited for, no recent announcement received
+        std::atomic<uint64_t> lagging{0};    // not waited for, the location's leader announced being too far behind
+        std::atomic<uint64_t> dropped{0};    // given up mid-wait, the location looked down or went missing
+        std::atomic<uint64_t> finished{0};   // the location confirmed it applied the entry
+        std::atomic<uint64_t> finishedNs{0}; // total time until those confirmations
+        std::atomic<uint64_t> inFlight{0};   // waits outstanding now
+        std::atomic<uint64_t> oldestNs{0};   // age of the oldest outstanding wait
+    };
+    std::array<CrossLocationWaitStats, 256> crossLocationWaits;
+    // Responses delayed by cross-location waits, including waits we abandoned.
+    std::atomic<uint64_t> crossLocationHeldResponses{0};
+    std::atomic<uint64_t> crossLocationHeldNs{0};
+
     // we should get up to date information from registry before we start serving any requests
     // this is populated by ShardRegisterer
     std::atomic<bool> isInitiated;
     std::atomic<bool> isBlockServiceCacheInitiated;
 
     RegistryClient registryClient;
+
+    ReplicaTracker replicaTracker;
 
     ShardShared() = delete;
     ShardShared(const ShardOptions& options_, SharedRocksDB& sharedDB_, BlockServicesCacheDB& blockServicesCache_, ShardDB& shardDB_, LogsDB& logsDB_, UDPSocketPair&& sock, Logger& logger, std::shared_ptr<XmonAgent>& xmon) :
@@ -160,11 +186,11 @@ struct ShardShared {
         droppedProxyWriteResps(0),
         droppedReadReqs(0),
         gatedStaleReads(0),
+        knownLastReleased(0),
         isInitiated(false),
         isBlockServiceCacheInitiated(false),
         registryClient(logger, xmon, options_.registryClientOptions.host, options_.registryClientOptions.port, options_.registryClientOptions.timeout),
-        _replicas(nullptr),
-        _leadersAtOtherLocations(std::make_shared<const std::vector<FullShardInfo>>())
+        replicaTracker(logger, xmon, options_.shrid(), options_.logsDBOptions.location, options_.isLeader(), socks[0].addr())
     {
         for (uint16_t i = 0; i < options_.numReaders; ++i) {
             readerRequestsQueues.emplace_back(std::make_unique<SPSC<ShardReq>>(READER_QUEUE_SIZE));
@@ -182,11 +208,7 @@ struct ShardShared {
     }
 
     inline std::shared_ptr<const std::array<AddrsInfo, LogsDB::REPLICA_COUNT>> getReplicas() const {
-        return _replicas.load();
-    }
-
-    inline void setReplicas(const std::array<AddrsInfo, LogsDB::REPLICA_COUNT>&& replicas) {
-        _replicas.store(std::make_shared<const std::array<AddrsInfo, LogsDB::REPLICA_COUNT>>(replicas));
+        return replicaTracker.localReplicas();
     }
 
     inline bool readStale() const {
@@ -195,17 +217,8 @@ struct ShardShared {
     }
 
     inline std::shared_ptr<const std::vector<FullShardInfo>> getLeadersAtOtherLocations() const {
-        return _leadersAtOtherLocations.load();
+        return replicaTracker.remoteLeaders();
     }
-
-    inline void setLeadersAtOtherLocations(const std::vector<FullShardInfo>&& leadersAtOtherLocations) {
-        _leadersAtOtherLocations.store(std::make_shared<const std::vector<FullShardInfo>>(leadersAtOtherLocations));
-    }
-
-private:
-    // replication information
-    std::atomic<std::shared_ptr<const std::array<AddrsInfo, LogsDB::REPLICA_COUNT>>> _replicas; // used for replicating shard within location
-    std::atomic<std::shared_ptr<const std::vector<FullShardInfo>>> _leadersAtOtherLocations; // used for cross location replication
 };
 
 static bool bigRequest(ShardMessageKind kind) {
@@ -319,14 +332,15 @@ static void packCheckPointedShardResponse(
     LOG_DEBUG(env, "will send response for req id %s kind %s to %s", msg.id, reqKind, req.clientAddr);
 }
 
-static constexpr std::array<uint32_t, 7> ShardProtocols = {
+static constexpr std::array<uint32_t, 8> ShardProtocols = {
         SHARD_REQ_PROTOCOL_VERSION,
         SHARD_RESP_PROTOCOL_VERSION,
         CDC_TO_SHARD_REQ_PROTOCOL_VERSION,
         LOG_REQ_PROTOCOL_VERSION,
         LOG_RESP_PROTOCOL_VERSION,
         PROXY_SHARD_RESP_PROTOCOL_VERSION,
-        PROXY_SHARD_REQ_PROTOCOL_VERSION};
+        PROXY_SHARD_REQ_PROTOCOL_VERSION,
+        SHARD_REPLICA_ANNOUNCEMENT_PROTOCOL_VERSION};
 
 using ShardChannel = MultiplexedChannel<ShardProtocols.size(), ShardProtocols>;
 
@@ -377,6 +391,22 @@ public:
     virtual ~ShardServer() = default;
 
 private:
+    void _handleReplicaAnnouncement(UDPMessage& msg) {
+        ShardReplicaAnnouncementMsg announcement;
+        try {
+            announcement.unpack(msg.buf, _expandedShardKey);
+        } catch (const BincodeException& err) {
+            LOG_ERROR(_env, "Could not parse shard replica announcement from %s: %s", msg.clientAddr, err.what());
+            return;
+        }
+
+        if (!_shared.options.replicaAnnouncements) {
+            return;
+        }
+
+        _shared.replicaTracker.recordAnnouncement(msg.clientAddr, announcement.body, ternNow());
+    }
+
     void _handleLogsDBResponse(UDPMessage& msg) {
         LOG_DEBUG(_env, "received LogsDBResponse from %s", msg.clientAddr);
 
@@ -602,7 +632,8 @@ private:
 
 public:
     virtual void step() override {
-        if (unlikely(!_shared.isInitiated.load(std::memory_order_acquire) || !_shared.isBlockServiceCacheInitiated.load(std::memory_order_acquire))) {
+        const bool ready = _shared.isInitiated.load(std::memory_order_acquire) && _shared.isBlockServiceCacheInitiated.load(std::memory_order_acquire);
+        if (unlikely(!ready && !_shared.options.replicaAnnouncements)) {
             (100_ms).sleepRetry();
             return;
         }
@@ -617,6 +648,14 @@ public:
         _waitResponses.clear();
 
         if (unlikely(!_channel->receiveMessages(_env, _shared.socks, *_receiver))) {
+            return;
+        }
+
+        for (auto& msg : _channel->protocolMessages(SHARD_REPLICA_ANNOUNCEMENT_PROTOCOL_VERSION)) {
+            _handleReplicaAnnouncement(msg);
+        }
+
+        if (unlikely(!ready)) {
             return;
         }
 
@@ -700,6 +739,48 @@ public:
 
         _shared.receivedReaderReqs.fetch_add(_readRequests.size(), std::memory_order_relaxed);
         _shared.droppedReadReqs.fetch_add(std::distance(readIt, _readRequests.end()), std::memory_order_relaxed);
+    }
+};
+
+struct ShardReplicaAnnouncer : Loop {
+private:
+    ShardShared& _shared;
+    AES128Key _expandedShardKey;
+    UDPSender _sender;
+
+public:
+    ShardReplicaAnnouncer(Logger& logger, std::shared_ptr<XmonAgent>& xmon, ShardShared& shared) :
+        Loop(logger, xmon, "announcer"),
+        _shared(shared)
+    {
+        expandKey(ShardKey, _expandedShardKey);
+    }
+
+    virtual void step() override {
+        _shared.replicaTracker.expire(ternNow());
+
+        ShardReplicaAnnouncementMsg announcement;
+        announcement.body.shrid = _shared.options.shrid();
+        announcement.body.location = _shared.options.logsDBOptions.location;
+        announcement.body.isLeader = _shared.options.isLeader() && (_shared.options.logsDBOptions.noReplication || _shared.isInitiated.load(std::memory_order_acquire));
+        announcement.body.addrs = _shared.sock().addr();
+        std::tie(announcement.body.lastApplied, announcement.body.lastAppliedTime) = _shared.shardDB.lastAppliedForReads();
+
+        auto targets = _shared.replicaTracker.announcementTargets();
+        for (const auto& target : *targets) {
+            _sender.prepareOutgoingMessage(
+                _env,
+                _shared.sock().addr(),
+                target,
+                [&announcement, this](BincodeBuf& buf) {
+                    announcement.pack(buf, _expandedShardKey);
+                });
+        }
+        _sender.sendMessages(_env, _shared.sock());
+
+        if (Loop::sleep(100_ms) < 0 && errno != EINTR) {
+            throw SYSCALL_EXCEPTION("sleep");
+        }
     }
 };
 
@@ -818,7 +899,11 @@ private:
     // Cross-region wait tracking for CDC writes
     static constexpr Duration CROSS_REGION_WAIT_RETRY_INTERVAL = 200_ms;
     Duration _shardDownThreshold;
+    Duration _regionWaitTimeout;
+    Duration _regionSilenceThreshold;
+    Duration _regionLagThreshold;
     std::unordered_map<uint64_t, CrossRegionWaitInfo> _crossRegionWaitResponses; // wait req id -> info
+    std::array<bool, 256> _publishedCrossLocationWaits{}; // locations with non-zero wait gauges published
     std::unordered_map<uint64_t, uint64_t> _waitReqIdToResponseId;
 
     uint64_t _requestIdCounter;
@@ -854,6 +939,9 @@ public:
         _nextTimeout(0),
         _catchupWindowIndex(0),
         _shardDownThreshold(shared.options.regionStalenessThreshold),
+        _regionWaitTimeout(shared.options.regionWaitTimeout),
+        _regionSilenceThreshold(shared.options.regionSilenceThreshold),
+        _regionLagThreshold(shared.options.regionLagThreshold),
         _requestIdCounter(RandomGenerator().generate64())
     {
         expandKey(ShardKey, _expandedShardKey);
@@ -963,12 +1051,55 @@ public:
         }
     }
 
+    // No progress for the selected address means these checks cannot skip it.
+    // Previously announced progress is retained when announcements go silent,
+    // even if the peer keeps registering.
+    bool _waitForLocation(uint8_t locationId, TernTime now) {
+        auto remoteProgress = _shared.replicaTracker.remoteProgress();
+        for (const auto& leader : *remoteProgress) {
+            if (leader.locationId != locationId) {
+                continue;
+            }
+            if (_regionSilenceThreshold != 0 && now - leader.lastHeard >= _regionSilenceThreshold) {
+                LOG_DEBUG(_env, "Skipping wait for location %s, not heard from for %s", locationId, now - leader.lastHeard);
+                _shared.crossLocationWaits[locationId].silent.fetch_add(1, std::memory_order_relaxed);
+                return false;
+            }
+            Duration lag = leader.lastHeard > leader.lastAppliedTime ? leader.lastHeard - leader.lastAppliedTime : Duration(0);
+            if (_regionLagThreshold != 0 && lag >= _regionLagThreshold) {
+                LOG_DEBUG(_env, "Skipping wait for location %s, it announced being %s behind", locationId, lag);
+                _shared.crossLocationWaits[locationId].lagging.fetch_add(1, std::memory_order_relaxed);
+                return false;
+            }
+            return true;
+        }
+        return true;
+    }
+
+    // Publishes how many waits are outstanding per location and how old the
+    // oldest is. Locations we published before but have nothing for now go
+    // back to zero.
+    void _publishCrossLocationWaitGauges(TernTime now, const std::array<uint64_t, 256>& inFlight, const std::array<TernTime, 256>& oldest) {
+        for (int loc = 0; loc < 256; ++loc) {
+            if (inFlight[loc] == 0 && !_publishedCrossLocationWaits[loc]) {
+                continue;
+            }
+            auto& stats = _shared.crossLocationWaits[loc];
+            stats.inFlight.store(inFlight[loc], std::memory_order_relaxed);
+            stats.oldestNs.store(inFlight[loc] == 0 ? 0 : (now - oldest[loc]).ns, std::memory_order_relaxed);
+            _publishedCrossLocationWaits[loc] = inFlight[loc] != 0;
+        }
+    }
+
     void _sendCrossRegionWaitResponses() {
+        auto now = ternNow();
+        std::array<uint64_t, 256> inFlight{};
+        std::array<TernTime, 256> oldest{};
         if (_crossRegionWaitResponses.empty()) {
+            _publishCrossLocationWaitGauges(now, inFlight, oldest);
             return;
         }
 
-        auto now = ternNow();
         auto leadersAtOtherLocations = _shared.getLeadersAtOtherLocations();
 
         for (auto it = _crossRegionWaitResponses.begin(); it != _crossRegionWaitResponses.end(); ) {
@@ -999,10 +1130,25 @@ public:
                 }
 
                 if (!locationFound || locationDown) {
+                    _shared.crossLocationWaits[locationId].dropped.fetch_add(1, std::memory_order_relaxed);
                     _waitReqIdToResponseId.erase(locState.waitReqId);
                     locIt = waitInfo.locationStates.erase(locIt);
                     continue;
                 }
+
+                if (_regionWaitTimeout != 0 && now - waitInfo.createdAt >= _regionWaitTimeout) {
+                    LOG_DEBUG(_env, "Giving up waiting for location %s to apply LogIdx %s after %s",
+                            locationId, waitInfo.idx.u64, now - waitInfo.createdAt);
+                    _shared.crossLocationWaits[locationId].timedOut.fetch_add(1, std::memory_order_relaxed);
+                    _waitReqIdToResponseId.erase(locState.waitReqId);
+                    locIt = waitInfo.locationStates.erase(locIt);
+                    continue;
+                }
+
+                if (inFlight[locationId] == 0 || waitInfo.createdAt < oldest[locationId]) {
+                    oldest[locationId] = waitInfo.createdAt;
+                }
+                ++inFlight[locationId];
 
                 auto timeSinceLastSent = now - locState.lastSent;
                 if (timeSinceLastSent >= CROSS_REGION_WAIT_RETRY_INTERVAL) {
@@ -1030,7 +1176,7 @@ public:
             }
 
             if (waitInfo.locationStates.empty()) {
-                LOG_DEBUG(_env, "All secondary locations have applied LogIdx %s, sending response for request %s",
+                LOG_DEBUG(_env, "Cross-location waits ended for LogIdx %s, sending response for request %s",
                          waitInfo.idx.u64, waitInfo.originalRequest.msg.id);
 
                 bool dropArtificially = _packetDropRand.generate64() % 10'000 < _outgoingPacketDropProbability;
@@ -1040,11 +1186,14 @@ public:
 
                 ALWAYS_ASSERT(_inFlightRequestKeys.erase(InFlightRequestKey{waitInfo.originalRequest.msg.id,
                                                                             waitInfo.originalRequest.clientAddr}) == 1);
+                _shared.crossLocationHeldResponses.fetch_add(1, std::memory_order_relaxed);
+                _shared.crossLocationHeldNs.fetch_add((now - waitInfo.createdAt).ns, std::memory_order_relaxed);
                 it = _crossRegionWaitResponses.erase(it);
             } else {
                 ++it;
             }
         }
+        _publishCrossLocationWaitGauges(now, inFlight, oldest);
     }
 
     void _maybeEmitHeartbeat() {
@@ -1214,8 +1363,8 @@ public:
                                 _shared.shardDB.applyLogEntry(logsDBEntry.idx.u64, shardEntry,  resp.body.resp);
 
 
-                                // For CDC requests, wait for all secondary leaders to apply
-                                // before sending response
+                                // Delay CDC until the selected locations apply the entry
+                                // or their waits are abandoned.
                                 auto now = ternNow();
                                 auto leadersAtOtherLocations = _shared.getLeadersAtOtherLocations();
                                 bool needsCrossLocationWait = false;
@@ -1246,9 +1395,14 @@ public:
                                         if (timeSinceLastSeen >= _shardDownThreshold) {
                                             LOG_INFO(_env, "Skipping wait for secondary leader at location %s (down for %s)",
                                                     leader.locationId, timeSinceLastSeen);
+                                            _shared.crossLocationWaits[leader.locationId].skipped.fetch_add(1, std::memory_order_relaxed);
+                                            continue;
+                                        }
+                                        if (!_waitForLocation(leader.locationId, now)) {
                                             continue;
                                         }
                                         shouldWait = true;
+                                        _shared.crossLocationWaits[leader.locationId].started.fetch_add(1, std::memory_order_relaxed);
 
                                         uint64_t waitReqId = ++_requestIdCounter;
                                         CrossRegionLocationState locState;
@@ -1654,8 +1808,8 @@ public:
             resp.body.checkPointIdx = _shared.shardDB.read(req.msg.body, resp.body.resp);
             resp.id = req.msg.id;
 
-            // For CDC requests, wait for all secondary leaders to apply
-            // before sending response
+            // Delay CDC until the selected locations reach this checkpoint
+            // or their waits are abandoned.
             auto now = ternNow();
             auto leadersAtOtherLocations = _shared.getLeadersAtOtherLocations();
             bool shouldWait = false;
@@ -1673,9 +1827,14 @@ public:
                     if (timeSinceLastSeen >= _shardDownThreshold) {
                         LOG_INFO(_env, "Skipping wait for secondary leader at location %s (down for %s)",
                                 leader.locationId, timeSinceLastSeen);
+                        _shared.crossLocationWaits[leader.locationId].skipped.fetch_add(1, std::memory_order_relaxed);
+                        continue;
+                    }
+                    if (!_waitForLocation(leader.locationId, now)) {
                         continue;
                     }
                     shouldWait = true;
+                    _shared.crossLocationWaits[leader.locationId].started.fetch_add(1, std::memory_order_relaxed);
 
                     uint64_t waitReqId = ++_requestIdCounter;
                     CrossRegionLocationState locState;
@@ -1740,7 +1899,9 @@ public:
                         continue;
                     }
 
-                    auto& locState = locIt->second;
+                    auto& stats = _shared.crossLocationWaits[respondingLocationId];
+                    stats.finished.fetch_add(1, std::memory_order_relaxed);
+                    stats.finishedNs.fetch_add((now - waitIt->second.createdAt).ns, std::memory_order_relaxed);
                     waitIt->second.locationStates.erase(locIt);
                     LOG_DEBUG(_env, "Received WaitStateAppliedResp for LogIdx %s from location %s, %s locations remaining",
                                 waitIt->second.idx.u64, respondingLocationId,
@@ -1940,6 +2101,8 @@ public:
         _sendCrossRegionWaitResponses();
 
         _shared.shardDB.flush(true);
+
+        _shared.knownLastReleased.store(_knownLastReleased.u64, std::memory_order_relaxed);
 
         for (auto& req : _linkReadRequests) {
             _processLinkReadRequest(req);
@@ -2207,7 +2370,7 @@ public:
         {
             std::vector<FullShardInfo> allReplicas;
             bool isInitiated = _shared.isInitiated.load(std::memory_order_acquire);
-            bool needsWait = _shared.options.logsDBOptions.initialStart && !isInitiated && !_noReplication;
+            bool needsWait = _shared.options.logsDBOptions.initialStart && !isInitiated && !_noReplication && !_shared.options.replicaAnnouncements;
             uint8_t minKnown = 0;
             Duration timeout = 10_sec;
             if (needsWait) {
@@ -2222,18 +2385,13 @@ public:
                 return false;
             }
 
-            std::vector<FullShardInfo> leadersAtOtherLocations;
+            _shared.replicaTracker.seedRegistry(allReplicas, ternNow());
+            LOG_DEBUG(_env, "Leaders at other locations now %s", *_shared.getLeadersAtOtherLocations());
+
             std::array<AddrsInfo, LogsDB::REPLICA_COUNT> localReplicas;
             for (auto& replica : allReplicas) {
-                if (replica.id.shardId() != _shrid.shardId()) {
-                    continue;
-                }
-                if (replica.locationId == _location) {
+                if (replica.id.shardId() == _shrid.shardId() && replica.locationId == _location) {
                     localReplicas[replica.id.replicaId().u8] = replica.addrs;
-                    continue;
-                }
-                if (replica.isLeader && replica.addrs.addrs[0].port != 0) {
-                    leadersAtOtherLocations.emplace_back(std::move(replica));
                 }
             }
             if (_shared.sock().addr() != localReplicas[_shrid.replicaId().u8]) {
@@ -2248,19 +2406,12 @@ public:
                         ++emptyReplicas;
                     }
                 }
-                if (emptyReplicas > 0 && !_noReplication) {
+                if (emptyReplicas > 0 && !_noReplication && !_shared.options.replicaAnnouncements) {
                     _env.updateAlert(_alert, "Didn't get enough replicas with known addresses from registry");
                     return false;
                 }
             }
 
-            if (unlikely(!_shared.getReplicas() || *_shared.getReplicas() != localReplicas)) {
-                LOG_DEBUG(_env, "Updating replicas to %s %s %s %s %s", localReplicas[0], localReplicas[1], localReplicas[2], localReplicas[3], localReplicas[4]);
-                _shared.setReplicas(std::move(localReplicas));
-            }
-
-            LOG_DEBUG(_env, "Updating leaders at other locations to %s", leadersAtOtherLocations);
-            _shared.setLeadersAtOtherLocations(std::move(leadersAtOtherLocations));
         }
 
         _env.clearAlert(_alert);
@@ -2557,6 +2708,60 @@ public:
         }
 
         {
+            // The backlog is how many entries we still have to apply. On a
+            // secondary location follower the release point is our own
+            // leader's, not the primary's.
+            const auto [lastApplied, lastAppliedTime] = _shared.shardDB.lastAppliedForReads();
+            const uint64_t knownLastReleased = _shared.knownLastReleased.load(std::memory_order_relaxed);
+            newMeassurement("eggsfs_shard_progress");
+            _metricsBuilder.fieldU64("last_applied", lastApplied.u64);
+            _metricsBuilder.fieldU64("known_last_released", knownLastReleased);
+            _metricsBuilder.fieldU64("backlog", knownLastReleased > lastApplied.u64 ? knownLastReleased - lastApplied.u64 : 0);
+            _metricsBuilder.timestamp(now);
+        }
+
+        for (int loc = 0; loc < 256; ++loc) {
+            const auto& stats = _shared.crossLocationWaits[loc];
+            uint64_t started = stats.started.load(std::memory_order_relaxed);
+            uint64_t skipped = stats.skipped.load(std::memory_order_relaxed);
+            uint64_t silent = stats.silent.load(std::memory_order_relaxed);
+            uint64_t lagging = stats.lagging.load(std::memory_order_relaxed);
+            if (started == 0 && skipped == 0 && silent == 0 && lagging == 0) { continue; }
+            newMeassurement("eggsfs_shard_cross_location_wait");
+            _metricsBuilder.tag("target_location", loc);
+            _metricsBuilder.fieldU64("started", started);
+            _metricsBuilder.fieldU64("skipped", skipped);
+            _metricsBuilder.fieldU64("silent", silent);
+            _metricsBuilder.fieldU64("lagging", lagging);
+            _metricsBuilder.fieldU64("dropped", stats.dropped.load(std::memory_order_relaxed));
+            _metricsBuilder.fieldU64("timed_out", stats.timedOut.load(std::memory_order_relaxed));
+            _metricsBuilder.fieldU64("finished", stats.finished.load(std::memory_order_relaxed));
+            _metricsBuilder.fieldU64("finished_ns", stats.finishedNs.load(std::memory_order_relaxed));
+            _metricsBuilder.fieldU64("in_flight", stats.inFlight.load(std::memory_order_relaxed));
+            _metricsBuilder.fieldU64("oldest_ns", stats.oldestNs.load(std::memory_order_relaxed));
+            _metricsBuilder.timestamp(now);
+        }
+        // How far each leader at another location had applied when we last
+        // heard from it directly. The lag is only meaningful on the primary
+        // location, where we created the entries ourselves.
+        // Hold the snapshot for the whole loop: a temporary in the range
+        // expression would be destroyed before the loop body runs.
+        auto remoteProgress = _shared.replicaTracker.remoteProgress();
+        for (const auto& leader : *remoteProgress) {
+            newMeassurement("eggsfs_shard_cross_location_view");
+            _metricsBuilder.tag("target_location", (int)leader.locationId);
+            _metricsBuilder.fieldU64("progress_age_ns", now > leader.lastHeard ? (now - leader.lastHeard).ns : 0);
+            _metricsBuilder.fieldU64("lag_ns", leader.lastHeard > leader.lastAppliedTime ? (leader.lastHeard - leader.lastAppliedTime).ns : 0);
+            _metricsBuilder.timestamp(now);
+        }
+        if (uint64_t held = _shared.crossLocationHeldResponses.load(std::memory_order_relaxed); held > 0) {
+            newMeassurement("eggsfs_shard_cross_location_held");
+            _metricsBuilder.fieldU64("count", held);
+            _metricsBuilder.fieldU64("ns", _shared.crossLocationHeldNs.load(std::memory_order_relaxed));
+            _metricsBuilder.timestamp(now);
+        }
+
+        {
             _rocksDBStats.clear();
             _shared.sharedDB.rocksDBMetrics(_rocksDBStats);
             for (const auto& [name, value]: _rocksDBStats) {
@@ -2646,7 +2851,12 @@ void runShard(ShardOptions& options) {
         LOG_INFO(env, "  registryPort = %s", options.registryClientOptions.port);
         LOG_INFO(env, "  ownAddres = %s", options.serverOptions.addrs);
         LOG_INFO(env, "  simulateOutgoingPacketDrop = %s", options.serverOptions.simulateOutgoingPacketDrop);
+        LOG_INFO(env, "  replicaAnnouncements = %s", options.replicaAnnouncements);
         LOG_INFO(env, "  syslog = %s", (int)options.logOptions.syslog);
+        LOG_INFO(env, "  regionStalenessThreshold = %s", options.regionStalenessThreshold);
+        LOG_INFO(env, "  regionWaitTimeout = %s", options.regionWaitTimeout);
+        LOG_INFO(env, "  regionSilenceThreshold = %s", options.regionSilenceThreshold);
+        LOG_INFO(env, "  regionLagThreshold = %s", options.regionLagThreshold);
         LOG_INFO(env, "Using LogsDB with options:");
         LOG_INFO(env, "    noReplication = '%s'", (int)options.logsDBOptions.noReplication);
         LOG_INFO(env, "    avoidBeingLeader = '%s'", (int)options.logsDBOptions.avoidBeingLeader);
@@ -2702,6 +2912,9 @@ void runShard(ShardOptions& options) {
     ShardShared shared(options, sharedDB, blockServicesCache, shardDB, logsDB, UDPSocketPair(env, options.serverOptions.addrs), logger, xmon);
 
     threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardServer>(logger, xmon, shared)));
+    if (options.replicaAnnouncements) {
+        threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardReplicaAnnouncer>(logger, xmon, shared)));
+    }
     for (uint16_t i = 0; i < options.numReaders; ++i) {
         threads.emplace_back(LoopThread::Spawn(std::make_unique<ShardReader>(logger, xmon, shared, *shared.readerRequestsQueues[i])));
     }

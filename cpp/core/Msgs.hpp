@@ -188,7 +188,7 @@ struct ShardReplicaId {
     }
 
     constexpr bool valid() const {
-        return replicaId().valid();
+        return (u16 >> 8) < 5;
     }
 };
 

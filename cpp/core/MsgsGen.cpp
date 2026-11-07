@@ -1579,6 +1579,44 @@ std::ostream& operator<<(std::ostream& out, const FullShardInfo& x) {
     return out;
 }
 
+void ShardReplicaAnnouncement::pack(BincodeBuf& buf) const {
+    shrid.pack(buf);
+    buf.packScalar<uint8_t>(location);
+    buf.packScalar<bool>(isLeader);
+    addrs.pack(buf);
+    lastApplied.pack(buf);
+    lastAppliedTime.pack(buf);
+}
+void ShardReplicaAnnouncement::unpack(BincodeBuf& buf) {
+    shrid.unpack(buf);
+    location = buf.unpackScalar<uint8_t>();
+    isLeader = buf.unpackScalar<bool>();
+    addrs.unpack(buf);
+    lastApplied.unpack(buf);
+    lastAppliedTime.unpack(buf);
+}
+void ShardReplicaAnnouncement::clear() {
+    shrid = ShardReplicaId();
+    location = uint8_t(0);
+    isLeader = bool(0);
+    addrs.clear();
+    lastApplied = LogIdx();
+    lastAppliedTime = TernTime();
+}
+bool ShardReplicaAnnouncement::operator==(const ShardReplicaAnnouncement& rhs) const {
+    if ((ShardReplicaId)this->shrid != (ShardReplicaId)rhs.shrid) { return false; };
+    if ((uint8_t)this->location != (uint8_t)rhs.location) { return false; };
+    if ((bool)this->isLeader != (bool)rhs.isLeader) { return false; };
+    if (addrs != rhs.addrs) { return false; };
+    if ((LogIdx)this->lastApplied != (LogIdx)rhs.lastApplied) { return false; };
+    if ((TernTime)this->lastAppliedTime != (TernTime)rhs.lastAppliedTime) { return false; };
+    return true;
+}
+std::ostream& operator<<(std::ostream& out, const ShardReplicaAnnouncement& x) {
+    out << "ShardReplicaAnnouncement(" << "Shrid=" << x.shrid << ", " << "Location=" << (int)x.location << ", " << "IsLeader=" << x.isLeader << ", " << "Addrs=" << x.addrs << ", " << "LastApplied=" << x.lastApplied << ", " << "LastAppliedTime=" << x.lastAppliedTime << ")";
+    return out;
+}
+
 void RegisterBlockServiceInfo::pack(BincodeBuf& buf) const {
     id.pack(buf);
     buf.packScalar<uint8_t>(locationId);
