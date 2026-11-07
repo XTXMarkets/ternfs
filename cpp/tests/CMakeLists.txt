@@ -5,7 +5,7 @@
 include_directories(${ternfs_SOURCE_DIR}/core ${ternfs_SOURCE_DIR}/shard ${ternfs_SOURCE_DIR}/registry)
 
 add_executable(tests tests.cpp doctest.h)
-target_link_libraries(tests PRIVATE core shard cdc)
+target_link_libraries(tests PRIVATE core shard cdc crc32c)
 
 add_executable(shardsnapshottests shardsnapshottests.cpp doctest.h)
 target_link_libraries(shardsnapshottests PRIVATE core shard)
