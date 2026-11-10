@@ -19,8 +19,10 @@
 #include "ErrorCount.hpp"
 #include "LogsDB.hpp"
 #include "Loop.hpp"
+#include "Metrics.hpp"
 #include "Msgs.hpp"
 #include "MsgsGen.hpp"
+#include "PeriodicLoop.hpp"
 
 #include "Registerer.hpp"
 #include "Registry.hpp"
@@ -390,6 +392,55 @@ private:
 };
 
 
+// Sends how many requests of each kind this replica has received. Mostly
+// useful to check that nothing still sends a deprecated kind before we
+// remove it.
+struct RegistryMetricsInserter : PeriodicLoop {
+private:
+    InfluxDB _influxDB;
+    const RegistryServer& _server;
+    ReplicaId _replicaId;
+    uint8_t _location;
+    XmonNCAlert _sendMetricsAlert;
+    MetricsBuilder _metricsBuilder;
+public:
+    RegistryMetricsInserter(Logger& logger, std::shared_ptr<XmonAgent>& xmon, const InfluxDB& influxDB, const RegistryServer& server, ReplicaId replicaId, uint8_t location):
+        PeriodicLoop(logger, xmon, "metrics", {1_sec, 1.0, 1_mins, 0.1}),
+        _influxDB(influxDB),
+        _server(server),
+        _replicaId(replicaId),
+        _location(location),
+        _sendMetricsAlert(XmonAppType::DAYTIME, 1_mins)
+    {}
+
+    virtual ~RegistryMetricsInserter() = default;
+
+    virtual bool periodicStep() override {
+        auto now = ternNow();
+        const auto& counts = _server.receivedRequestCounts();
+        for (RegistryMessageKind kind : allRegistryMessageKind) {
+            uint64_t count = counts[(int)kind].load(std::memory_order_relaxed);
+            if (count == 0) { continue; }
+            _metricsBuilder.measurement("eggsfs_registry_requests");
+            _metricsBuilder.tag("kind", kind);
+            _metricsBuilder.tag("replica", _replicaId);
+            _metricsBuilder.tag("location", (int)_location);
+            _metricsBuilder.fieldU64("count", count);
+            _metricsBuilder.timestamp(now);
+        }
+        std::string err = sendMetrics(_influxDB, 10_sec, _metricsBuilder.payload());
+        _metricsBuilder.reset();
+        if (err.empty()) {
+            LOG_INFO(_env, "Sent metrics to influxdb");
+            _env.clearAlert(_sendMetricsAlert);
+            return true;
+        } else {
+            _env.updateAlert(_sendMetricsAlert, "Could not insert metrics: %s", err);
+            return false;
+        }
+    }
+};
+
 Registry::Registry(Logger &logger, std::shared_ptr<XmonAgent> xmon)
     : _env(logger, xmon, "registry") {
 
@@ -479,6 +530,10 @@ void Registry::start(const RegistryOptions& options, LoopThreads& threads) {
     threads.emplace_back(LoopThread::Spawn(std::move(writer)));
     threads.emplace_back(LoopThread::Spawn(std::move(tracker)));
     threads.emplace_back(LoopThread::Spawn(std::move(registryLoop)));
+    if (!options.metricsOptions.origin.empty()) {
+        threads.emplace_back(LoopThread::Spawn(std::make_unique<RegistryMetricsInserter>(
+            logger, xmon, options.metricsOptions, *_state->server, options.logsDBOptions.replicaId, options.logsDBOptions.location)));
+    }
 }
 
 void Registry::close() {

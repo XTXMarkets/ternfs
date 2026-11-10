@@ -1215,7 +1215,7 @@ void RegistryDB::shards(std::vector<FullShardInfo>& out) const {
     }
     ROCKS_DB_CHECKED(it->status());
     delete it;
-    ALWAYS_ASSERT((!out.empty()) && (out.size() % LogsDB::REPLICA_COUNT * ShardId::SHARD_COUNT == 0));
+    ALWAYS_ASSERT((!out.empty()) && (out.size() % (LogsDB::REPLICA_COUNT * ShardId::SHARD_COUNT) == 0));
 }
 
 void RegistryDB::cdcs(std::vector<CdcInfo>& out) const {
