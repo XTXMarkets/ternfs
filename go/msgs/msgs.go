@@ -1391,6 +1391,55 @@ type SwapBlocksReq struct {
 
 type SwapBlocksResp struct{}
 
+// Replaces one block chosen by the caller. The shard chooses a writable
+// destination in the same location and storage class, preserving the span's
+// failure-domain separation.
+//
+// The new block lives in a single-span transient holder until certified.
+// The holder's span is dirty, like one from ADD_SPAN_INITIATE, so it can't be
+// linked and its block can't be swapped into a clean span before it is written.
+// If the caller abandons it, ordinary GC can destruct the holder.
+// A transient target's dirty last span can only be replaced after its deadline;
+// a condemned last span cannot be replaced while GC is erasing it.
+type ReplaceBlockInitiateReq struct {
+	FileId     InodeId
+	ByteOffset uint64
+	OldBlockId BlockId
+}
+
+type ReplaceBlockInitiateResp struct {
+	HolderId     InodeId
+	HolderCookie Cookie
+	NewBlock     AddSpanInitiateBlockInfo
+}
+
+// Checks the write proof and replaces OldBlockId. If the old block's service is
+// decommissioned, the old reference and holder are removed without an erase
+// proof. Otherwise the old block moves into the holder, which stays dirty, for
+// ordinary GC. If the old block has moved, or the span is being written or
+// removed, returns BLOCK_NOT_FOUND or SPAN_NOT_FOUND. If GC has condemned the
+// holder, returns SPAN_NOT_FOUND. A change between prepare and apply returns
+// Replaced=false. In either case the holder is left for GC.
+//
+// If the new block is already in the span and the old block isn't, for instance
+// because this request already applied and its reply was lost, the proof is
+// checked and Replaced=true is returned without changing anything, even if the
+// span has been condemned since. Once the span is gone, or the new block has
+// been moved out of it, a repeat can't be told apart from a losing attempt and
+// gets an error or Replaced=false.
+type ReplaceBlockCertifyReq struct {
+	FileId       InodeId
+	ByteOffset   uint64
+	OldBlockId   BlockId
+	HolderId     InodeId
+	HolderCookie Cookie
+	NewBlock     BlockProof
+}
+
+type ReplaceBlockCertifyResp struct {
+	Replaced bool
+}
+
 // TODO this works with transient files, but doesn't require a cookie -- it's a bit
 // inconsistent.
 //
@@ -2021,6 +2070,23 @@ type SwapBlocksEntry struct {
 	FileId2     InodeId
 	ByteOffset2 uint64
 	BlockId2    BlockId
+}
+
+type ReplaceBlockInitiateEntry struct {
+	FileId            InodeId
+	ByteOffset        uint64
+	OldBlockId        BlockId
+	NewBlockServiceId BlockServiceId
+	DeadlineTime      TernTime
+}
+
+type ReplaceBlockCertifyEntry struct {
+	FileId          InodeId
+	ByteOffset      uint64
+	OldBlockId      BlockId
+	HolderId        InodeId
+	NewBlock        BlockProof
+	DiscardOldBlock bool // decided by the leader from the old service's decommissioned state
 }
 
 type SwapSpansEntry struct {

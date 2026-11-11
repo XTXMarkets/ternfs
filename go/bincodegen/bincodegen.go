@@ -1555,6 +1555,8 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 			reflect.TypeOf(msgs.SameShardHardFileUnlinkEntry{}),
 			reflect.TypeOf(msgs.MakeFileTransientEntry{}),
 			reflect.TypeOf(msgs.HeartbeatEntry{}),
+			reflect.TypeOf(msgs.ReplaceBlockInitiateEntry{}),
+			reflect.TypeOf(msgs.ReplaceBlockCertifyEntry{}),
 		},
 	)
 
@@ -1858,6 +1860,17 @@ func main() {
 			0x78,
 			reflect.TypeOf(msgs.SwapBlocksReq{}),
 			reflect.TypeOf(msgs.SwapBlocksResp{}),
+		},
+		// 0x70-0x7F is full, these are private too
+		{
+			0x17,
+			reflect.TypeOf(msgs.ReplaceBlockInitiateReq{}),
+			reflect.TypeOf(msgs.ReplaceBlockInitiateResp{}),
+		},
+		{
+			0x18,
+			reflect.TypeOf(msgs.ReplaceBlockCertifyReq{}),
+			reflect.TypeOf(msgs.ReplaceBlockCertifyResp{}),
 		},
 		{
 			0x79,
