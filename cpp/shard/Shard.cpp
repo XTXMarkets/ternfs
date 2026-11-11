@@ -2690,6 +2690,10 @@ void runShard(ShardOptions& options) {
     // a single thread while idle cores are available. See -rocksdb-max-* flags.
     rocksDBOptions.max_background_jobs = options.rocksdbMaxBackgroundJobs;
     rocksDBOptions.max_subcompactions = options.rocksdbMaxSubcompactions;
+    // Support the -rocksdb-max-total-wal-size and the -rocksdb-*-log-file-* flags.
+    rocksDBOptions.max_total_wal_size = options.rocksdbMaxTotalWalSize;
+    rocksDBOptions.max_log_file_size = options.rocksdbMaxLogFileSize;
+    rocksDBOptions.keep_log_file_num = options.rocksdbKeepLogFileNum;
     sharedDB.open(rocksDBOptions);
 
     BlockServicesCacheDB blockServicesCache(logger, xmon, sharedDB, options.blockServiceWritableDelay,

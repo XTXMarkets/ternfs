@@ -76,6 +76,22 @@ static bool parseShardOptions(CommandLineArgs& args, ShardOptions& options) {
             options.rocksdbMaxSubcompactions = parseUint16(args.next());
             continue;
         }
+        if (arg == "-rocksdb-max-total-wal-size") {
+            options.rocksdbMaxTotalWalSize = std::stoull(args.next().getArg());
+            continue;
+        }
+        if (arg == "-rocksdb-max-log-file-size") {
+            options.rocksdbMaxLogFileSize = std::stoull(args.next().getArg());
+            continue;
+        }
+        if (arg == "-rocksdb-keep-log-file-num") {
+            options.rocksdbKeepLogFileNum = std::stoull(args.next().getArg());
+            if (options.rocksdbKeepLogFileNum == 0) {
+                fprintf(stderr, "-rocksdb-keep-log-file-num must be bigger than 0\n");
+                return false;
+            }
+            continue;
+        }
         fprintf(stderr, "unknown argument %s\n", args.peekArg().c_str());
         return false;
     }
@@ -114,6 +130,12 @@ static void printShardOptionsUsage() {
     fprintf(stderr, "       Max RocksDB background jobs (flush+compaction threads). Default: 4\n");
     fprintf(stderr, " -rocksdb-max-subcompactions\n");
     fprintf(stderr, "       Max RocksDB subcompactions (intra-compaction parallelism). Default: 4\n");
+    fprintf(stderr, " -rocksdb-max-total-wal-size\n");
+    fprintf(stderr, "       Total WAL bytes above which RocksDB flushes the column families holding the oldest WAL. 0 keeps the RocksDB default, four times the memtable budget. Default: 0\n");
+    fprintf(stderr, " -rocksdb-max-log-file-size\n");
+    fprintf(stderr, "       RocksDB info log (LOG) bytes above which it is rolled. 0 rolls only on open. Default: 0\n");
+    fprintf(stderr, " -rocksdb-keep-log-file-num\n");
+    fprintf(stderr, "       RocksDB info log files to keep, counting the current one. Default: 1000\n");
 }
 
 static bool validateShardOptions(const ShardOptions& options) {
