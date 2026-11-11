@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -222,6 +223,26 @@ func (s *S3Server) recoverPanics(handler s3Handler) s3Handler {
 // FileEtag generates a consistent ETag for a given file ID.
 func FileEtag(id msgs.InodeId) string {
 	return fmt.Sprintf(`"%x"`, uint64(id))
+}
+
+// TernFS stores no permissions, so only symlinks report a mode on reads.
+const s3SymlinkMode = syscall.S_IFLNK | 0o777
+
+// fileTypeFromPermissions reads x-amz-meta-file-permissions, the octal st_mode
+// that Amazon FSx for Lustre and File Cache store in S3 object metadata.
+func fileTypeFromPermissions(r *http.Request) msgs.InodeType {
+	mode, err := strconv.ParseUint(r.Header.Get("X-Amz-Meta-File-Permissions"), 8, 32)
+	if err == nil && mode&syscall.S_IFMT == syscall.S_IFLNK {
+		return msgs.SYMLINK
+	}
+	return msgs.FILE
+}
+
+func setPermissionsHeader(w http.ResponseWriter, typ msgs.InodeType) {
+	if typ != msgs.SYMLINK {
+		return
+	}
+	w.Header().Set("X-Amz-Meta-File-Permissions", fmt.Sprintf("%07o", s3SymlinkMode))
 }
 
 // parseRange parses the HTTP Range header.
@@ -510,6 +531,7 @@ func (s *S3Server) handleGetObject(ctx context.Context, w http.ResponseWriter, r
 	} else {
 		w.Header().Set("Content-Type", "application/octet-stream")
 	}
+	setPermissionsHeader(w, dentry.TargetId.Type())
 
 	if rangeHeader == "" {
 		w.Header().Set("Content-Length", strconv.FormatInt(int64(size), 10))
@@ -701,6 +723,20 @@ func (s *S3Server) handlePutObject(ctx context.Context, w http.ResponseWriter, r
 		return &S3Error{Code: "MethodNotAllowed", Message: "PUT is not allowed on a bucket. To create a bucket, use the AWS CLI or other tools.", StatusCode: http.StatusMethodNotAllowed}
 	}
 
+	fileType := fileTypeFromPermissions(r)
+	var body io.Reader = r.Body
+	if fileType == msgs.SYMLINK {
+		// PATH_MAX: the kmod BUGs on symlinks longer than a page.
+		target, err := io.ReadAll(io.LimitReader(r.Body, 4096))
+		if err != nil {
+			return fmt.Errorf("failed to read symlink target: %w", err)
+		}
+		if len(target) == 0 || len(target) >= 4096 || bytes.IndexByte(target, 0) >= 0 {
+			return &S3Error{Code: "InvalidArgument", Message: "A symlink target must be 1 to 4095 bytes without NUL.", StatusCode: http.StatusBadRequest}
+		}
+		body = bytes.NewReader(target)
+	}
+
 	ownerId := rootId
 	var err error
 
@@ -750,12 +786,12 @@ func (s *S3Server) handlePutObject(ctx context.Context, w http.ResponseWriter, r
 		}
 	} else {
 		fileResp := msgs.ConstructFileResp{}
-		if err := s.c.ShardRequest(s.log, ownerId.Shard(), &msgs.ConstructFileReq{Type: msgs.FILE}, &fileResp); err != nil {
+		if err := s.c.ShardRequest(s.log, ownerId.Shard(), &msgs.ConstructFileReq{Type: fileType}, &fileResp); err != nil {
 			return fmt.Errorf("failed to construct file: %w", err)
 		}
 		fileId := fileResp.Id
 		cookie := fileResp.Cookie
-		if err := s.c.WriteFile(s.log, s.bufPool, s.dirInfoCache, ownerId, fileId, cookie, r.Body); err != nil {
+		if err := s.c.WriteFile(s.log, s.bufPool, s.dirInfoCache, ownerId, fileId, cookie, body); err != nil {
 			return fmt.Errorf("failed to write file data: %w", err)
 		}
 		linkReq := &msgs.LinkFileReq{FileId: fileId, Cookie: cookie, OwnerId: ownerId, Name: basename}
