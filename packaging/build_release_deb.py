@@ -194,7 +194,11 @@ def build_release_deb(
         tz=datetime.timezone.utc,
     ).isoformat()
 
-    with tempfile.TemporaryDirectory(prefix="ternfs-release-") as temporary:
+    with (
+        tempfile.TemporaryDirectory(prefix="ternfs-release-") as temporary,
+        tempfile.TemporaryDirectory(prefix=".ternfs-release-", dir=output_dir) as staging,
+    ):
+        staged_output = Path(staging) / output.name
         package_root = Path(temporary) / "root"
         release_root = package_root / "usr/lib/ternfs/releases" / rid
         binaries = _copy_binaries(build_dir, release_root / "bin")
@@ -229,11 +233,13 @@ def build_release_deb(
                 "-z6",
                 "--build",
                 str(package_root),
-                str(output),
+                str(staged_output),
             ],
             check=True,
             env=environment,
         )
+        # Publish only complete packages and never replace a concurrent publisher.
+        os.link(staged_output, output)
     return output
 
 
