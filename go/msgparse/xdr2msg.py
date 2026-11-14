@@ -54,7 +54,11 @@ def tokenize(src):
         if m.group(3):
             yield ("NUM", m.group(3))
         elif m.group(4):
-            yield ("NUM", m.group(4))
+            digits = m.group(4)
+            # XDR's leading zero denotes octal; .msg uses decimal or hex.
+            if len(digits) > 1 and digits.startswith("0"):
+                digits = str(int(digits, 8))
+            yield ("NUM", digits)
         elif m.group(5):
             yield ("ID", m.group(5))
         elif m.group(6):
