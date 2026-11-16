@@ -72,6 +72,7 @@ jobs:
     name: Run tests on EC2
     needs: start-runner
     runs-on: ${{ needs.start-runner.outputs.label }} # Runs on the newly created EC2 instance
+    timeout-minutes: 150
     permissions:
       contents: read
       id-token: none
@@ -109,6 +110,8 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+          # Fork code runs on disposable EC2 with no secrets, OIDC token, or IAM role.
+          allow-unsafe-pr-checkout: true
       - name: Compile kmod with Ubuntu 20.04 kernel headers
         run: |
           docker run --rm \
