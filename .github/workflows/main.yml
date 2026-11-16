@@ -186,7 +186,7 @@ jobs:
   stop-runner:
     name: Stop self-hosted EC2 runner
     needs: [start-runner, run-build]
-    if: always()
+    if: always() && needs.start-runner.outputs.ec2-instance-id != ''
     runs-on: ubuntu-latest
     steps:
       - name: Configure AWS credentials
@@ -197,7 +197,6 @@ jobs:
           aws-region: us-east-1
       - name: Stop EC2 runner
         uses: bitonic/ec2-github-runner@8034bafdf19451028a886dd3279cfac6b703d52c
-        if: needs.start-runner.outputs.ec2-instance-id != ''
         with:
           mode: stop
           github-token: ${{ secrets.REPO_GITHUB_TOKEN }}
