@@ -20,7 +20,10 @@ jobs:
   start-runner:
     name: Start self-hosted EC2 runner
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' || contains(github.event.pull_request.labels.*.name, 'ci')
+    permissions:
+      contents: read
+      id-token: write
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci-aws-oidc' || contains(github.event.pull_request.labels.*.name, 'ci')
     outputs:
       label: ${{ steps.start-ec2-runner.outputs.label }}
       ec2-instance-id: ${{ steps.start-ec2-runner.outputs.ec2-instance-id }}
@@ -28,8 +31,8 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: arn:aws:iam::019714370473:role/ternfs-ci-github
+          role-session-name: ternfs-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
           aws-region: us-east-1
       - name: Start EC2 runner
         id: start-ec2-runner
@@ -38,6 +41,8 @@ jobs:
           mode: start
           github-token: ${{ secrets.REPO_GITHUB_TOKEN }}
           ec2-instance-type: m6id.metal
+          aws-resource-tags: >
+            [{"Key":"ManagedBy","Value":"ternfs-ci"}]
           availability-zones-config: >
             [
               {"imageId":"ami-0360c520857e3138f","subnetId":"subnet-080446fa4c5b836d9","securityGroupId":"sg-00ea50179403152ca"},
@@ -67,6 +72,9 @@ jobs:
     name: Run tests on EC2
     needs: start-runner
     runs-on: ${{ needs.start-runner.outputs.label }} # Runs on the newly created EC2 instance
+    permissions:
+      contents: read
+      id-token: none
     steps:
       - name: Install docker
         run: |
@@ -192,12 +200,15 @@ jobs:
     needs: [start-runner, run-build]
     if: always() && needs.start-runner.outputs.ec2-instance-id != ''
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: arn:aws:iam::019714370473:role/ternfs-ci-github
+          role-session-name: ternfs-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
           aws-region: us-east-1
       - name: Stop EC2 runner
         uses: machulav/ec2-github-runner@343a1b2ae682e681c3cec9a235d882da17ff04ef # v2.6.1
