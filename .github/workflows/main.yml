@@ -33,7 +33,7 @@ jobs:
           aws-region: us-east-1
       - name: Start EC2 runner
         id: start-ec2-runner
-        uses: bitonic/ec2-github-runner@8034bafdf19451028a886dd3279cfac6b703d52c
+        uses: machulav/ec2-github-runner@343a1b2ae682e681c3cec9a235d882da17ff04ef # v2.6.1
         with:
           mode: start
           github-token: ${{ secrets.REPO_GITHUB_TOKEN }}
@@ -44,7 +44,6 @@ jobs:
           # Need a bit more space for root filesystem (to install apt packages, mostly)
           block-device-mappings: >
             [{"DeviceName": "/dev/sda1", "Ebs": {"VolumeSize": 25, "VolumeType": "gp3"}}]
-          key-name: ternfs-ci
           # We need to do this before everything else since we'll have to work in /actions-runner/_work
           # afterwards. This is pretty annoying since if anything fails here we won't see any logs.
           pre-runner-script: |
@@ -196,7 +195,7 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
       - name: Stop EC2 runner
-        uses: bitonic/ec2-github-runner@8034bafdf19451028a886dd3279cfac6b703d52c
+        uses: machulav/ec2-github-runner@343a1b2ae682e681c3cec9a235d882da17ff04ef # v2.6.1
         with:
           mode: stop
           github-token: ${{ secrets.REPO_GITHUB_TOKEN }}
