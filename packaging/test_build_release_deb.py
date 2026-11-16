@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import build_release_deb
 
@@ -133,6 +134,35 @@ class BuildReleaseDebTest(unittest.TestCase):
         with self.assertRaisesRegex(FileNotFoundError, "ternweb"):
             self.build()
         self.assertEqual(list((self.root / "dist").iterdir()), [])
+
+    def test_failed_dpkg_does_not_publish_a_partial_package(self) -> None:
+        def fail_after_writing(args, **kwargs):
+            Path(args[-1]).write_bytes(b"partial package")
+            raise subprocess.CalledProcessError(1, args)
+
+        with (
+            patch.object(build_release_deb, "_normalize_mtimes"),
+            patch.object(build_release_deb.subprocess, "run", side_effect=fail_after_writing),
+        ):
+            with self.assertRaises(subprocess.CalledProcessError):
+                self.build()
+        self.assertEqual(list((self.root / "dist").iterdir()), [])
+
+    def test_publish_preserves_package_created_during_build(self) -> None:
+        output = self.root / "dist" / "ternfs-release-r42-gaaaaaaaaaaaa_0.1.0-1_amd64.deb"
+
+        def finish_after_competing_publish(args, **kwargs):
+            output.write_bytes(b"first publisher")
+            Path(args[-1]).write_bytes(b"second publisher")
+
+        with (
+            patch.object(build_release_deb, "_normalize_mtimes"),
+            patch.object(build_release_deb.subprocess, "run", side_effect=finish_after_competing_publish),
+        ):
+            with self.assertRaises(FileExistsError):
+                self.build()
+        self.assertEqual(output.read_bytes(), b"first publisher")
+        self.assertEqual(list(output.parent.iterdir()), [output])
 
     def test_release_identity_rejects_invalid_inputs(self) -> None:
         with self.assertRaisesRegex(ValueError, "positive"):
