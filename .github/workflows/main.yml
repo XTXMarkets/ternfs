@@ -37,10 +37,15 @@ jobs:
         with:
           mode: start
           github-token: ${{ secrets.REPO_GITHUB_TOKEN }}
-          ec2-image-id: ami-0360c520857e3138f # Ubuntu 24.04 LTS in us-east-1
           ec2-instance-type: m6id.metal
-          subnet-id: subnet-0c8c82178fa2827a8
-          security-group-id: sg-00ea50179403152ca
+          availability-zones-config: >
+            [
+              {"imageId":"ami-0360c520857e3138f","subnetId":"subnet-080446fa4c5b836d9","securityGroupId":"sg-00ea50179403152ca"},
+              {"imageId":"ami-0360c520857e3138f","subnetId":"subnet-062ef1e78e9c28e29","securityGroupId":"sg-00ea50179403152ca"},
+              {"imageId":"ami-0360c520857e3138f","subnetId":"subnet-0554dca44bcb1b035","securityGroupId":"sg-00ea50179403152ca"},
+              {"imageId":"ami-0360c520857e3138f","subnetId":"subnet-0d671a193af42ba9d","securityGroupId":"sg-00ea50179403152ca"},
+              {"imageId":"ami-0360c520857e3138f","subnetId":"subnet-0c8c82178fa2827a8","securityGroupId":"sg-00ea50179403152ca"}
+            ]
           # Need a bit more space for root filesystem (to install apt packages, mostly)
           block-device-mappings: >
             [{"DeviceName": "/dev/sda1", "Ebs": {"VolumeSize": 25, "VolumeType": "gp3"}}]
