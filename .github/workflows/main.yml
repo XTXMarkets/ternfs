@@ -10,7 +10,7 @@ on:
       - main
     paths-ignore:
       - '**/*.md'
-  pull_request:
+  pull_request_target:
     types:
       - opened
       - synchronize
@@ -106,6 +106,9 @@ jobs:
           apt-get install -y docker-ce docker-ce-cli containerd.io
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
       - name: Compile kmod with Ubuntu 20.04 kernel headers
         run: |
           docker run --rm \
