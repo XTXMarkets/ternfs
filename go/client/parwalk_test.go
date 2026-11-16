@@ -212,6 +212,65 @@ func TestParwalkStopsOnContextCancel(t *testing.T) {
 	}
 }
 
+func TestParwalkFullQueue(t *testing.T) {
+	// One shard 2 worker, held in a callback while shard 1 finds more
+	// shard 2 directories than the queue can take.
+	const queueSize = 16
+	const numDirs = queueSize + 10
+	dirs := parwalkTestDirs{}
+	root := dirs.add(msgs.NULL_INODE_ID, "root", msgs.DIRECTORY, 1)
+	dirs.add(dirs.add(root, "holder", msgs.DIRECTORY, 2), "hold", msgs.FILE, 2)
+	for i := 0; i < numDirs; i++ {
+		dirs.add(dirs.add(root, fmt.Sprintf("d%04d", i), msgs.DIRECTORY, 2), "f", msgs.FILE, 2)
+	}
+	firstDir := "/root/d0000"
+	lastDir := fmt.Sprintf("/root/d%04d", numDirs-1)
+
+	held := make(chan struct{})
+	release := make(chan struct{})
+	var mu sync.Mutex
+	visits := map[string]int{}
+	readByFinder := 0
+	err := parwalkTestWalk(t, dirs, &ParwalkOptions{WorkersPerShard: 1, QueueSize: queueSize}, root, func(fullPath string) error {
+		switch fullPath {
+		case "/root/holder/hold":
+			close(held)
+			<-release
+		case firstDir:
+			<-held
+		case lastDir:
+			close(release)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		visits[fullPath]++
+		if path.Base(fullPath) == "f" {
+			select {
+			case <-release:
+			default:
+				// the shard 2 worker is still held
+				readByFinder++
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := 1 + 2 + 2*numDirs; len(visits) != want {
+		t.Fatalf("visited %d paths, want %d", len(visits), want)
+	}
+	for fullPath, count := range visits {
+		if count != 1 {
+			t.Fatalf("%s visited %d times", fullPath, count)
+		}
+	}
+	// all but the last of the directories which did not fit in the queue
+	if want := numDirs - queueSize - 1; readByFinder < want {
+		t.Fatalf("%d directories read by their finder, want at least %d", readByFinder, want)
+	}
+}
+
 func TestParwalkFromInode(t *testing.T) {
 	file := msgs.MakeInodeId(msgs.FILE, 1, 1)
 	var called bool

@@ -250,6 +250,12 @@ type ParwalkOptions struct {
 	// name. NULL (deletion) edges are ignored. Implies Snapshot=true. Useful
 	// for walking a deleted/historical subtree.
 	SnapshotLatest bool
+	// QueueSize is how many directories can wait for each shard's workers,
+	// zero meaning 10,000. When a shard's queue is full the worker that
+	// found the directory reads it itself. All 256 queues are allocated
+	// up front, 24 bytes per directory, so the default costs 61 MB per
+	// walk.
+	QueueSize int
 }
 
 // Parwalk traverses the subtree rooted at `root` (a path), invoking callback
@@ -345,6 +351,13 @@ func parwalkRunWithSeeds(
 	if options.WorkersPerShard < 1 {
 		panic(fmt.Errorf("workersPerShard=%d < 1", options.WorkersPerShard))
 	}
+	if options.QueueSize < 0 {
+		panic(fmt.Errorf("queueSize=%d < 0", options.QueueSize))
+	}
+	queueSize := options.QueueSize
+	if queueSize == 0 {
+		queueSize = 10_000
+	}
 	parent := options.Context
 	if parent == nil {
 		parent = context.Background()
@@ -361,7 +374,7 @@ func parwalkRunWithSeeds(
 		snapshotLatest: options.SnapshotLatest,
 	}
 	for i := 0; i < 256; i++ {
-		env.chans[i] = make(chan parwarlkReq, 10_000)
+		env.chans[i] = make(chan parwarlkReq, queueSize)
 	}
 	var workers sync.WaitGroup
 	for i := 0; i < 256; i++ {
