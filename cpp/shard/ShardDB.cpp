@@ -3308,7 +3308,7 @@ struct ShardDBImpl {
         }
 
         // Fetch span state
-        auto state1 = _fetchSpanState(time, entry.fileId1, entry.byteOffset1 + sourceSpan().size());
+        auto state1 = _fetchSpanState(time, entry.fileId1, entry.byteOffset1 + sourceSpan().spanSize());
         if (state1 != SpanState::CLEAN) {
             return TernError::ADD_SPAN_LOCATION_NOT_CLEAN;
         }
@@ -3556,8 +3556,8 @@ struct ShardDBImpl {
         }
 
         // Fetch span state
-        auto state1 = _fetchSpanState(time, entry.fileId1, entry.byteOffset1 + span1().size());
-        auto state2 = _fetchSpanState(time, entry.fileId2, entry.byteOffset2 + span2().size());
+        auto state1 = _fetchSpanState(time, entry.fileId1, entry.byteOffset1 + span1().spanSize());
+        auto state2 = _fetchSpanState(time, entry.fileId2, entry.byteOffset2 + span2().spanSize());
         // We don't want to put not-certified blocks in clean spans, or similar
         if (state1 != state2) {
             return TernError::SWAP_BLOCKS_MISMATCHING_STATE;
@@ -3885,8 +3885,8 @@ struct ShardDBImpl {
             return TernError::SWAP_SPANS_MISMATCHING_CRC;
         }
         // Fetch span state
-        auto state1 = _fetchSpanState(time, entry.fileId1, entry.byteOffset1 + span1().size());
-        auto state2 = _fetchSpanState(time, entry.fileId2, entry.byteOffset2 + span2().size());
+        auto state1 = _fetchSpanState(time, entry.fileId1, entry.byteOffset1 + span1().spanSize());
+        auto state2 = _fetchSpanState(time, entry.fileId2, entry.byteOffset2 + span2().spanSize());
         if (state1 != SpanState::CLEAN || state2 != SpanState::CLEAN) {
             return TernError::SWAP_SPANS_NOT_CLEAN;
         }

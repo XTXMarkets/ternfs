@@ -1478,6 +1478,20 @@ TEST_CASE("replace blocks requests fit in a packet") {
     CHECK(f.filesIn(1) == std::vector<InodeId>{files.front().id});
 }
 
+TEST_CASE("swap blocks refuses a block that hasn't been certified") {
+    ReplaceBlocksTest f;
+    auto file = f.makeFile();
+    auto dirty = f.addScratch(4, false);
+    auto& swap = f.req->setSwapBlocks();
+    swap.fileId1 = file.id;
+    swap.byteOffset1 = 0;
+    swap.blockId1 = file.blocks[0].at(1);
+    swap.fileId2 = f.scratch.id;
+    swap.byteOffset2 = dirty.offset;
+    swap.blockId2 = dirty.blockId;
+    CHECK(f.run() == TernError::SWAP_BLOCKS_MISMATCHING_STATE);
+}
+
 TEST_CASE("test fmt") {
     {
         std::stringstream ss;
