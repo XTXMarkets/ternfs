@@ -271,9 +271,10 @@ and [lease recovery](../../terntests/nfsoutage.go). The latter disconnects
 a TCP proxy for 100 seconds and checks new-file and replacement writes
 across the outage; it does not crash nfsd.
 
-This path mounts with `vers=4.1`. Its mutation workloads check the shared
-staging used by writers on one client. Cross-client writer isolation and
-publication are covered by the raw protocol tests in `internal/server`.
+This path mounts with `vers=4.1`. Its mutation workloads check independent
+transient handles and staging per write open, including opens through one
+client. Each successful CLOSE publishes that writer; retained readers keep
+the version they opened.
 
 Each workload unmounts and stops its daemon before namespace cleanup,
 which deletes the whole filesystem. Run this only against

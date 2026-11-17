@@ -78,52 +78,46 @@ it its staged writers, and a client without a record is new.
 ## Filehandles and client views
 
 A filehandle is an eight-byte TernFS inode ID. The server reports
-`FH4_PERSISTENT`. A new-file OPEN returns the empty published placeholder's
-handle; an existing-file OPEN returns the published inode's handle. The
-transient staging inode is separate. FILEID and FILEHANDLE describe the
-handle, even when I/O uses staging or another published version.
+`FH4_PERSISTENT`. A staged OPEN returns its own transient staging inode as the
+filehandle; two writers, including two from one client, therefore have
+independent identities and independent staging. An ordinary read OPEN by name
+uses the published inode currently at that name. FILEID and FILEHANDLE describe
+the returned handle, including when that writer's publication is subsequently
+replaced by another writer.
 
-An open records both its handle inode and its data inode. Real-stateid
-operations use the open's data inode. GETATTR, VERIFY and special-stateid
-READ use the client's view of the handle instead: its writer, live or
-recovered, then a recent publication alias, then its latest open, then the
-handle itself. COMMIT has no stateid either, but does not use the view. It
-syncs the handle, every staging the client wrote through it, from a
-separate writer index, and after a restart the client's recovered writers
-of the handle. The view, the writer index, the alias lifetime and what
-readers see when a writer closes are in
-[openstate](internal/openstate/README.md#client-views). Stateids, owners
-and downgrades are there too.
+An open records its handle inode and the data inode used for I/O. A private
+writer starts with both set to its staging inode; after publication its data
+inode names that publication. Clean or detached close falls back to the
+recorded base rather than a discarded transient. GETATTR, VERIFY and
+special-stateid READ use the client's view of the handle. COMMIT instead syncs
+the handle's staging, including recovered staging after a restart, without
+looking through a published base for another writer. The writer index and
+alias lifetime are in [openstate](internal/openstate/README.md#client-views).
 
-The server also records each publication alias on the staging disk, so a
-short process restart does not reverse what a client reads through a handle
-it still holds. After a longer outage the alias can have expired, even for a
-handle the client still has open. Without aliases, a client that had just
-saved read the previous version, or the empty placeholder of a new file,
-until it looked the name up again. See the
-[alias log](internal/server/README.md#publication-alias-log) and
+Publication is always through a fresh immutable candidate, so a live private
+staging inode is never linked at the public pathname. Private handles receive
+publication aliases to those fresh candidates. The server records aliases on
+the staging disk so a short restart does not reverse what the writer reads
+through its own handle, but does not redirect independent base readers. Aliases
+do not substitute a fresh lookup, and other clients do not see them. See
+[Publication alias log](internal/server/README.md#publication-alias-log) and
 [old handles](DEPLOYMENT.md#old-handles-name-their-original-version).
 
-Aliases exist so a client sees its own save through the handle it holds.
-They are not seen by other clients and do not replace a fresh lookup.
+Linux ignores a new filehandle returned by a `CLAIM_FH` OPEN of a cached
+dentry, retaining the inode it already holds. A new writable `CLAIM_FH`
+therefore gets `NFS4ERR_STALE`, making the VFS retry through the pathname and
+`CLAIM_NULL`, which accepts a private transient handle. A read `CLAIM_FH` may
+reuse a valid immutable handle. If a previously remembered name no longer
+contains that handle it instead gets STALE, forcing a lookup before opening to
+avoid selecting stale bytes for the current pathname.
 
-A read `CLAIM_FH` OPEN needs only the inode. A writable one needs a
-publication target. A bounded table of 65,536 pathname hints remembers
-where LOOKUP and OPEN saw files; each hint is checked against the current
-directory entry. A cold miss can use eligible recovered staging, otherwise
-it returns `NFS4ERR_STALE`. See
+Recovery is the exception. A writable `CLAIM_FH` naming the client's own
+eligible private staging can resume that exact writer through its original
+handle, owner and stateid, including after a restart when no pathname fallback
+exists. Its target pathname must exist, but need not still hold the staging's
+published base. A fresh or unrelated handle gets STALE without constructing
+staging. See
 [Writer recovery mechanics](internal/server/README.md#writer-recovery-mechanics).
-
-The hints exist for one case: finding where to publish when a writable
-open names a handle after a write has changed the file's inode. They are
-not a map of the namespace. READDIR hands out filehandles without filling
-them; a handle held across this process's start, a handle the client
-learned from READDIR, and a reference taken before the file was replaced
-all miss. Eviction is by first insertion, and a hit does not refresh an
-entry. An ordinary open on Linux recovers from the STALE by looking the
-name up again. A client that reopens without a path walk cannot, and must
-mount with `lookupcache=none`; see
-[Client mounts](DEPLOYMENT.md#one-writable-server).
 
 Ownership and modes are synthetic. SETATTR of mode, owner and group is
 accepted and ignored, so chmod and chown succeed; Samba chmods whenever
@@ -134,9 +128,9 @@ Linux does for a filesystem with a limited timestamp range.
 ## Writes and publication
 
 A writable OPEN constructs a transient inode on the target directory's
-shard. Creating a pathname also publishes a separate empty inode before
-replying. Further writers of that file on the same client and daemon join
-the staging; other clients build independent versions.
+shard and returns that inode as its private filehandle. Creating a pathname
+also publishes a separate empty inode before replying. Every independent write
+OPEN constructs another writer; there is no same-client staging join.
 
 The staged file is a sparse overlay over the immutable base seen at OPEN.
 Its data file and sidecar, named by the transient inode, are described in
@@ -149,13 +143,13 @@ sidecar. Namespace checkpoints update only namespace fields, preserving the
 current durable data checkpoint. See
 [Checkpoints](internal/staging/README.md#checkpoints).
 
-The last write CLOSE, or downgrade to READ, finishes hydration, uploads the
-whole replacement and links it at the target. There is no background CLOSE.
-Earlier closes hand sidecar ownership to another writer of the shared
-staging. A clean writer scraps its transient without publication; an
-unlinked writer discards its private version, unless another open of its
-client still reads it; see
-[Reader visibility](internal/openstate/README.md#reader-visibility).
+Each writer's CLOSE, or downgrade to READ, finishes hydration, uploads its
+whole replacement and links it at the target. It does not wait for unrelated
+writers on the same client to close, which would defer publication
+indefinitely. There is no background CLOSE. A clean writer scraps its
+transient without publication; an unlinked writer discards its private version
+unless its own read state still uses it. Publication ordering between writers
+is CLOSE ordering; the last successful publication wins the pathname.
 
 A publication the backend does not answer in time, as a shard restart
 causes (the Go client gives a shard 10 s), is neither a success nor a

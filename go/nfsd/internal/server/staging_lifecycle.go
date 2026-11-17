@@ -187,70 +187,12 @@ func (s *Server) lockStagingTarget(fileID vfs.InodeID) (staging.Meta, bool, func
 	}
 }
 
-// recoveredStagingTarget selects the staging a recovering OPEN adopts: one
-// of this incarnation's whose stateid an earlier process issued, or another
-// incarnation's with this client boot's recovery key once that
-// incarnation's lease has expired.
-func (s *Server) recoveredStagingTarget(
-	dirID vfs.InodeID,
-	name string,
-	clientID uint64,
-	openOwner string,
-	write bool,
-) (vfs.InodeID, staging.Meta, bool, error) {
-	key, status := s.recoveryKey(clientID)
-	if status != nfs4.NFS4_OK {
-		return 0, staging.Meta{}, false, nfs4.Error(status)
-	}
-	var foundID vfs.InodeID
-	var foundMeta staging.Meta
-	// Writers on one client share staging, so any of the client's open
-	// owners may reclaim it after a server restart. Reclaim after lease
-	// expiry, by a new incarnation, still requires the original owner.
-	for id, meta := range s.stagingStore.FindTargets(dirID, name) {
-		if meta.DirID != dirID || meta.FileName != name ||
-			meta.ReadOnly == write {
-			continue
-		}
-		if meta.ClientID != clientID && meta.OwnerKnown && meta.OpenOwner != openOwner {
-			continue
-		}
-		if meta.ClientID == clientID {
-			if !s.opens.CanRecover(meta.NFSStateID) {
-				continue
-			}
-		} else {
-			if !meta.OwnerKnown || key == ([32]byte{}) || meta.RecoveryKey != key {
-				continue
-			}
-			// The expiry decision is the gate's (README.md#expiry-decision); this
-			// OPEN holds the pathname lock, so local expiry is the sweeper's.
-			expired, err := s.decideExpired(meta.ClientID, false)
-			if err != nil {
-				return 0, staging.Meta{}, false, err
-			}
-			if !expired {
-				continue
-			}
-		}
-		// Never guess between multiple recovered sessions and hand one
-		// writer another's data.
-		if foundID != 0 {
-			return 0, staging.Meta{}, false, nfs4.Error(nfs4.NFS4ERR_EXPIRED)
-		}
-		foundID, foundMeta = id, meta
-	}
-	return foundID, foundMeta, foundID != 0, nil
-}
-
-// claimFHRecoveryCandidate preselects, without locks, the staged writer a
-// writable CLAIM_FH of fileID recovers when this nfsd has no name for it
-// (README.md#writer-recovery-mechanics): typically the first OPEN after a
-// restart. A candidate
+// claimFHRecoveryCandidate preselects the exact private writer a writable
+// CLAIM_FH can recover, typically the first OPEN after a restart. A candidate
 // is a writable, linked, healthy staging entry of this incarnation whose
 // stateid an earlier process issued, or another incarnation's with this
 // client's RecoveryKey whose lease has expired, as recoveredStagingTarget
-// accepts. A known owner must match. Its name must currently hold fileID.
+// accepts. A known owner must match.
 //
 // Exactly one candidate is returned with NFS4_OK; none gives STALE, as for
 // any handle this nfsd cannot name, and more than one gives EXPIRED. The
@@ -266,6 +208,9 @@ func (s *Server) claimFHRecoveryCandidate(
 	var foundID vfs.InodeID
 	var foundMeta staging.Meta
 	for id, meta := range s.stagingStore.Entries() {
+		if id != fileID {
+			continue
+		}
 		if meta.ReadOnly || meta.Unlinked || s.stagingStore.Failed(id) {
 			continue
 		}
@@ -291,16 +236,6 @@ func (s *Server) claimFHRecoveryCandidate(
 			if key == ([32]byte{}) || meta.RecoveryKey != key {
 				continue
 			}
-		}
-		current, err := s.fs.Lookup(meta.DirID, meta.FileName)
-		if err != nil {
-			if s.errToNFS(err) == nfs4.NFS4ERR_NOENT {
-				continue
-			}
-			return 0, staging.Meta{}, s.errToNFS(err)
-		}
-		if current != fileID {
-			continue
 		}
 		if crossIncarnation {
 			expired, status := s.recoveryLeaseExpired(meta.ClientID)
@@ -333,9 +268,9 @@ func (s *Server) recoveryLeaseExpired(clientID uint64) (bool, uint32) {
 	return expired, nfs4.NFS4_OK
 }
 
-// sameRecoveryCandidate reports whether recoveredStagingTarget, under the
-// pathname lock, selected exactly the preselected staging, unchanged in its
-// stateid, incarnation and owner, and still linked and healthy.
+// sameRecoveryCandidate reports whether revalidation found the preselected
+// staging unchanged: its stateid, incarnation, owner, directory and name are
+// the same, and the staging is still linked and healthy.
 func (s *Server) sameRecoveryCandidate(
 	wantID vfs.InodeID, want staging.Meta,
 	gotID vfs.InodeID, got staging.Meta, found bool,

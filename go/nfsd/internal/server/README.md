@@ -620,20 +620,17 @@ paths:
   adopted it meanwhile, and resolves its publication candidate as a retried
   CLOSE does; see [Publication](#publication). COMMIT has no stateid: it
   syncs the client's recovered writers of the handle without adopting them.
-- **Reopen by pathname.** A writable or creating OPEN at a name selects a
-  unique staging entry for that target whose read-only flag matches the
-  requested access. Within the same incarnation,
-  any open-owner may take shared staging whose stateid an earlier process
-  issued. From another incarnation, the sidecar must carry this client's
-  recovery key and the same open-owner, and that incarnation must be
-  expired, which the check decides. More than one candidate gets
-  `NFS4ERR_EXPIRED`.
-- **Cold writable CLAIM_FH.** When this process has no current name for
-  the handle, typically after a restart, it preselects, without locks, a
-  unique healthy, linked writer of this client whose recorded name holds the
-  handle and whose known owner matches. None gives `NFS4ERR_STALE`, and more
-  than one `NFS4ERR_EXPIRED`. Under the pathname lock, the pathname
-  selection must pick the same entry, or the OPEN gets `NFS4ERR_STALE`.
+- **Fresh pathname open.** A writable or creating OPEN by name constructs a
+  new private writer from the currently published base. It never adopts an
+  unrelated recovered writer by pathname. That guarantees independent
+  fresh opens even if several eligible old writers remain staged.
+- **Cold writable CLAIM_FH.** When a fresh cached-dentry OPEN would ignore the
+  private transient filehandle Linux needs, the server returns
+  `NFS4ERR_STALE`; the VFS then retries through the pathname and `CLAIM_NULL`.
+  The exception is exact private-writer recovery: the supplied handle names
+  that sidecar directly, with a matching owner and eligible stateid. The
+  path must exist but may contain a replacement base. Rebind, remove or fail
+  recovery adoption returns STALE.
 
 Before any of these, `NewServer` runs `dropPublishedStaging`
 ([server.go](server.go)). A recovered staging whose candidate carries its
@@ -641,8 +638,9 @@ checkpointed data version and stats as linked was published by a CLOSE
 that died before removing it, or whose removal a power loss undid. Left in
 place, the reopen by pathname or `CLAIM_FH` would adopt it, and its CLOSE
 would publish the old bytes over whatever another client saved since. The
-staging is removed, the client's view of the base is pointed at the linked
-inode, and its stateid goes into `publishedAtStartup` with its client. A
+staging is removed. Only the writer's own private handle is aliased to the
+linked candidate; independent base readers are never redirected to that
+replacement. Its stateid goes into `publishedAtStartup` with its client. A
 later CLOSE of that stateid by the same client, which finds no recovered
 writer, answers OK, as the CLOSE would have if the staging were still there.
 The check uses `Stat` only, not the scrap of a recovered CLOSE: a live
@@ -654,9 +652,12 @@ each. Such an entry stays adoptable, as it was before this check. A
 candidate that was linked, replaced and then deleted before the restart
 also stats not-exist, and that entry is kept, as before.
 
-OPEN supports `CLAIM_NULL` and `CLAIM_FH`. A read `CLAIM_FH` needs no name
-and uses the client's view. `CLAIM_PREVIOUS` gets `NFS4ERR_NO_GRACE`. Every
-other claim type gets `NFS4ERR_NOTSUPP`.
+OPEN accepts `CLAIM_NULL` and `CLAIM_FH`. A read `CLAIM_FH` may reopen a
+valid immutable handle, returning STALE when its remembered pathname now
+contains a replacement. Fresh writable `CLAIM_FH` gets STALE to force a
+pathname retry; only an exact eligible private writer can resume through
+`CLAIM_FH`. `CLAIM_PREVIOUS` gets `NFS4ERR_NO_GRACE`. Every other claim type
+gets `NFS4ERR_NOTSUPP`.
 
 ### Exclusive creates
 
@@ -734,8 +735,9 @@ reply, so an acknowledged CLOSE's staging does not come back after a power
 loss.
 
 TernFS appends spans at a file's current size, so a transient that may hold
-some of them is never written again. The first publication records the
-staging's own transient as its candidate, with the current data version,
+some of them is never written again. The first publication constructs a fresh
+transient as its candidate, with the current data version, rather than expose
+the private staging inode at the pathname,
 and submits it. The next checkpoint saves that record, or the CLOSE saves
 it at once when the submission gets no answer. A retried CLOSE, and the
 first CLOSE of a writer recovered after a restart, resolve the candidate

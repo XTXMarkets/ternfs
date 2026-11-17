@@ -229,8 +229,8 @@ func (s *Server) dropPublishedStaging() {
 			return
 		}
 		s.log.Info("staging recover: already published", "inode", id, "name", meta.FileName, "candidate", c.ID)
-		if meta.ClientID != 0 && meta.BaseID != 0 {
-			s.publishedAs(meta.ClientID, meta.BaseID, c.ID)
+		if meta.ClientID != 0 {
+			s.publishedAs(meta.ClientID, id, c.ID)
 		}
 		s.publishedAtStartup[meta.NFSStateID] = meta.ClientID
 		s.stagingStore.Remove(id)

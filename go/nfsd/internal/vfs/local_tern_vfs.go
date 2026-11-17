@@ -6,6 +6,7 @@ package vfs
 
 import (
 	"crypto/rand"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +16,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
@@ -86,6 +89,17 @@ func NewLocalTernVFS(root string) *LocalTernVFS {
 	lfs.byID[rootID] = ""
 	lfs.byPath[""] = rootID
 	lfs.parent[rootID] = rootID // root is its own parent
+	transients := filepath.Join(lfs.private, "transients")
+	if entries, err := os.ReadDir(transients); err == nil {
+		for _, entry := range entries {
+			path := filepath.Join(transients, entry.Name())
+			id := lfs.statInodeID(path)
+			var cookie Cookie
+			if n, err := syscall.Getxattr(path, "user.ternfs.cookie", cookie[:]); id != 0 && err == nil && n == len(cookie) {
+				lfs.transient[id] = transientFile{cookie: cookie, path: path}
+			}
+		}
+	}
 	// Walk the tree and the private files to populate maps so that file
 	// handles from a previous server instance remain valid after restart.
 	// A private file's parent is the root.
@@ -127,6 +141,13 @@ func (lfs *LocalTernVFS) statInodeID(path string) InodeID {
 		typ = InodeTypeSymlink
 	default:
 		typ = InodeTypeFile
+	}
+	const inodeXattr = "user.ternfs.inode"
+	var encoded [8]byte
+	if typ == InodeTypeFile {
+		if n, err := unix.Lgetxattr(path, inodeXattr, encoded[:]); err == nil && n == len(encoded) {
+			return MakeInodeID(typ, binary.BigEndian.Uint64(encoded[:]))
+		}
 	}
 	return MakeInodeID(typ, st.Ino)
 }
@@ -355,21 +376,47 @@ func (lfs *LocalTernVFS) ConstructFile(dirID InodeID) (InodeID, Cookie, error) {
 	path := f.Name()
 	f.Close()
 
-	id := lfs.statInodeID(path)
-	if id == 0 {
-		os.Remove(path)
-		return 0, Cookie{}, fmt.Errorf("failed to stat transient file")
-	}
-
 	var cookie Cookie
 	rand.Read(cookie[:])
 
 	rel, _ := filepath.Rel(lfs.root, path)
-	lfs.mu.Lock()
-	lfs.transient[id] = transientFile{cookie: cookie, path: path}
-	lfs.byID[id] = rel
-	lfs.mu.Unlock()
+	var id InodeID
+	for {
+		var raw [8]byte
+		if _, err := rand.Read(raw[:]); err != nil {
+			os.Remove(path)
+			return 0, Cookie{}, err
+		}
+		// Temporary-file inode numbers get reused, but a retained snapshot or
+		// publication alias must never acquire a different file's identity.
+		id = MakeInodeID(InodeTypeFile, binary.BigEndian.Uint64(raw[:]))
+		lfs.mu.Lock()
+		if _, exists := lfs.byID[id]; !exists {
+			lfs.transient[id] = transientFile{cookie: cookie, path: path}
+			lfs.byID[id] = rel
+			lfs.mu.Unlock()
+			break
+		}
+		lfs.mu.Unlock()
+	}
 
+	encoded := binary.BigEndian.AppendUint64(nil, uint64(id)&((1<<61)-1))
+	if err := syscall.Setxattr(path, "user.ternfs.inode", encoded, 0); err != nil {
+		lfs.mu.Lock()
+		delete(lfs.transient, id)
+		delete(lfs.byID, id)
+		lfs.mu.Unlock()
+		os.Remove(path)
+		return 0, Cookie{}, err
+	}
+	if err := syscall.Setxattr(path, "user.ternfs.cookie", cookie[:], 0); err != nil {
+		lfs.mu.Lock()
+		delete(lfs.transient, id)
+		delete(lfs.byID, id)
+		lfs.mu.Unlock()
+		os.Remove(path)
+		return 0, Cookie{}, err
+	}
 	return id, cookie, nil
 }
 
@@ -424,15 +471,20 @@ func (lfs *LocalTernVFS) LinkFile(fileID InodeID, cookie Cookie, dirID InodeID, 
 	}
 	lfs.mu.Lock()
 	defer lfs.mu.Unlock()
-	if oldID := lfs.statInodeID(childPath); oldID != 0 {
+	rel, _ := filepath.Rel(lfs.root, childPath)
+	if oldID := lfs.byPath[rel]; oldID != 0 {
 		if err := lfs.snapshotLocked(childPath, oldID); err != nil {
-			return err
+			if !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+			delete(lfs.byPath, rel)
+			delete(lfs.byID, oldID)
+			delete(lfs.parent, oldID)
 		}
 	}
 	if err := os.Rename(tf.path, childPath); err != nil {
 		return err
 	}
-	rel, _ := filepath.Rel(lfs.root, childPath)
 	delete(lfs.transient, fileID)
 	lfs.byID[fileID] = rel
 	lfs.byPath[rel] = fileID
@@ -475,8 +527,8 @@ func (lfs *LocalTernVFS) RemoveEdge(dirID InodeID, name string, edge Edge) error
 	childPath := filepath.Join(dirPath, name)
 	lfs.mu.Lock()
 	defer lfs.mu.Unlock()
-	// Check what it is to update our maps.
-	childID := lfs.statInodeID(childPath)
+	rel, _ := filepath.Rel(lfs.root, childPath)
+	childID := lfs.byPath[rel]
 	if childID == 0 || childID != edge.ID {
 		return os.ErrNotExist
 	}
@@ -486,7 +538,6 @@ func (lfs *LocalTernVFS) RemoveEdge(dirID InodeID, name string, edge Edge) error
 	if err := os.Remove(childPath); err != nil {
 		return err
 	}
-	rel, _ := filepath.Rel(lfs.root, childPath)
 	if childID.Type() == InodeTypeDir {
 		delete(lfs.byID, childID)
 	}
@@ -508,12 +559,14 @@ func (lfs *LocalTernVFS) RenameEdge(srcDirID InodeID, srcName string, edge Edge,
 	dstPath := filepath.Join(dstDir, dstName)
 
 	lfs.mu.Lock()
-	srcID := lfs.statInodeID(srcPath)
+	srcRel, _ := filepath.Rel(lfs.root, srcPath)
+	dstRel, _ := filepath.Rel(lfs.root, dstPath)
+	srcID := lfs.byPath[srcRel]
 	if srcID == 0 || srcID != edge.ID {
 		lfs.mu.Unlock()
 		return os.ErrNotExist
 	}
-	if dstID := lfs.statInodeID(dstPath); dstID != 0 && dstID != srcID {
+	if dstID := lfs.byPath[dstRel]; dstID != 0 && dstID != srcID {
 		if err := lfs.snapshotLocked(dstPath, dstID); err != nil {
 			lfs.mu.Unlock()
 			return err
@@ -524,14 +577,12 @@ func (lfs *LocalTernVFS) RenameEdge(srcDirID InodeID, srcName string, edge Edge,
 		return err
 	}
 
-	// Update maps: remove old path, register new path.
-	srcRel, _ := filepath.Rel(lfs.root, srcPath)
-	delete(lfs.byID, srcID)
+	// Preserve the renamed inode's identity.
 	delete(lfs.byPath, srcRel)
-	delete(lfs.parent, srcID)
+	lfs.byID[srcID] = dstRel
+	lfs.byPath[dstRel] = srcID
+	lfs.parent[srcID] = dstDirID
 	lfs.mu.Unlock()
-
-	lfs.register(dstPath, dstDirID)
 	return nil
 }
 

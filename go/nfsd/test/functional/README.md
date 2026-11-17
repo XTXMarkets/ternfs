@@ -22,14 +22,14 @@ strace -ff -o /tmp/0007.trace \
 The suite checks supported workflows and explicitly rejected combinations.
 Unexpected failures are reported rather than skipped.
 
-Overwriting a file publishes a replacement inode on the last write CLOSE.
-The open descriptor's FILEID still describes its original handle; a fresh
-pathname lookup finds the replacement. The Vim cases set `backupskip` and
+Overwriting a file publishes a replacement inode on each write CLOSE.
+The open descriptor's FILEID describes that writer's transient handle; a fresh
+pathname lookup finds its publication. The Vim cases set `backupskip` and
 `backupcopy` explicitly so their write strategy does not depend on the test
 root's path.
 
-Writers of the same file on one client share staging. Other clients have
-independent versions; the last successful publication wins. These tests do not establish atomic
+Every write open has independent staging, including opens on one client.
+The last successful publication wins. These tests do not establish atomic
 append across clients.
 
 See the [test guide](../README.md) for other suites and

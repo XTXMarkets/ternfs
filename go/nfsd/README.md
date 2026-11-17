@@ -9,7 +9,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
 `nfsd` serves TernFS over NFSv4.1. It supports directory traversal, reads,
 file creation, writes, removal and rename. It adapts mutable NFS files to
 TernFS by staging writes on the nfsd host and publishing an immutable
-replacement on the last write CLOSE or downgrade to read access.
+replacement on each writer's CLOSE or downgrade to read access.
 
 **Successful fsync does not publish or replicate staged data.** Unpublished
 data depends on the staging disk. Recovery with that disk is conditional,

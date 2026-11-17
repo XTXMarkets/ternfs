@@ -22,20 +22,6 @@ func (s *Server) clientWriter(clientID uint64, fileID vfs.InodeID) vfs.InodeID {
 	return fileID
 }
 
-// readOnlyCreator returns clientID's read-only create open of fileID while
-// it still owns its staging. The client sees that staging as the file, so a
-// write open of the file joins it as it would join a writer.
-func (s *Server) readOnlyCreator(clientID uint64, fileID vfs.InodeID) (openstate.State, bool) {
-	for _, state := range s.opens.ClientOpens(clientID, fileID) {
-		meta, ok := s.stagingStore.GetMeta(state.DataID)
-		if ok && meta.ReadOnly && !meta.Unlinked &&
-			meta.ClientID == clientID && meta.NFSStateID == state.ID {
-			return state, true
-		}
-	}
-	return openstate.State{}, false
-}
-
 // clientView returns the inode clientID sees through handle fileID.
 func (s *Server) clientView(clientID uint64, fileID vfs.InodeID) vfs.InodeID {
 	opens := s.opens.ClientOpens(clientID, fileID)
@@ -44,12 +30,8 @@ func (s *Server) clientView(clientID uint64, fileID vfs.InodeID) vfs.InodeID {
 			return state.DataID
 		}
 	}
-	// After a restart the client's writer of the handle is on the staging
-	// disk until a request adopts it or its CLOSE's retransmission publishes
-	// it. It is the client's view meanwhile, as a live writer is: a read
-	// OPEN of the name in that window saw the version before the edit
-	// (QA soak 2026-10-21). Several are rare, since a client's opens of a
-	// file share one staging; the newest inode is the latest edit.
+	// RecoveredWritersOf filters recovered writers to this exact private
+	// handle, so this cannot select a sibling writer of the same base.
 	var recovered vfs.InodeID
 	for _, id := range s.recoveredWritersOf(clientID, fileID) {
 		recovered = max(recovered, id)

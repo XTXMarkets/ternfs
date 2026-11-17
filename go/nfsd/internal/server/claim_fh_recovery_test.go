@@ -288,21 +288,27 @@ func TestClaimFHRecoveryRefusals(t *testing.T) {
 	})
 	t.Run("replaced", func(t *testing.T) {
 		f := newClaimFHRestart(t, "file", true, nil)
-		before := f.meta(t)
 		replaceLocalFile(t, f.root, f.name)
-		if status, _, _ := f.claimFH(t, f.owner); status != nfs4.NFS4ERR_STALE {
+		status, sid, _ := f.claimFH(t, f.owner)
+		if status != nfs4.NFS4_OK {
 			t.Fatalf("CLAIM_FH of a replaced target = %s", nfs4.Nfsstat4Name(status))
 		}
-		f.assertNothingAdopted(t, before)
+		closeFile(t, f.conn, &f.xid, f.fh, sid)
+		if got, _ := readFileData(t, f.conn, &f.xid, lookupFH(t, f.conn, &f.xid, f.name), 0, 128); !bytes.Equal(got, f.data) {
+			t.Fatalf("published %q, want %q", got, f.data)
+		}
 	})
-	t.Run("two candidates", func(t *testing.T) {
+	t.Run("exact handle among two candidates", func(t *testing.T) {
 		f := newClaimFHRestart(t, "file", false, nil)
-		before := f.meta(t)
 		f.injectWriter(t)
-		if status, _, _ := f.claimFH(t, f.owner); status != nfs4.NFS4ERR_EXPIRED {
+		status, sid, _ := f.claimFH(t, f.owner)
+		if status != nfs4.NFS4_OK {
 			t.Fatalf("CLAIM_FH with two candidates = %s", nfs4.Nfsstat4Name(status))
 		}
-		f.assertNothingAdopted(t, before)
+		closeFile(t, f.conn, &f.xid, f.fh, sid)
+		if got, _ := readFileData(t, f.conn, &f.xid, lookupFH(t, f.conn, &f.xid, f.name), 0, 128); !bytes.Equal(got, f.data) {
+			t.Fatalf("published %q, want %q", got, f.data)
+		}
 	})
 	t.Run("healthy handle", func(t *testing.T) {
 		f := newClaimFHRestart(t, "file", false, nil)
@@ -357,34 +363,73 @@ func replaceLocalFile(t *testing.T, root, name string) {
 	}
 }
 
-// Changes after the lockless preselection and before the pathname lock: the
-// selection is checked again under the lock and anything other than the
-// same staging, still at a name holding H, gives STALE with nothing
-// adopted.
+func TestReadClaimFHRecoversOpenVersion(t *testing.T) {
+	f := newClaimFHRestart(t, "file", true, nil)
+	status, sid, fh := openByHandle(t, f.conn, &f.xid, f.wire, f.owner, f.fh, nfs4.OPEN4_SHARE_ACCESS_READ)
+	if status != nfs4.NFS4_OK || !bytes.Equal(fh, f.fh) {
+		t.Fatalf("read CLAIM_FH after restart = %s", nfs4.Nfsstat4Name(status))
+	}
+	status, data := readStateid(t, f.conn, &f.xid, fh, sid)
+	if status != nfs4.NFS4_OK || string(data) != string(f.data) {
+		t.Fatalf("recovered READ = %s %q", nfs4.Nfsstat4Name(status), data)
+	}
+}
+
+func TestFreshNamedOpenDoesNotAdoptRecoveredWriter(t *testing.T) {
+	f := newClaimFHRestart(t, "file", true, nil)
+	freshSid, freshFH := openWriteFile(t, f.conn, &f.xid, f.wire, f.name)
+	if bytes.Equal(freshFH, f.fh) {
+		t.Fatal("fresh pathname OPEN adopted the old writer's handle")
+	}
+	if len(f.staging.Entries()) != 2 {
+		t.Fatal("fresh OPEN did not construct independent staging")
+	}
+	writeFileAt(t, f.conn, &f.xid, freshFH, freshSid, 0, []byte("fresh"))
+	read, _ := readStateid(t, f.conn, &f.xid, freshFH, freshSid)
+	if read != nfs4.NFS4_OK {
+		t.Fatalf("fresh writer READ = %s", nfs4.Nfsstat4Name(read))
+	}
+	oldStatus, oldSid, oldFH := f.claimFH(t, f.owner)
+	if oldStatus != nfs4.NFS4_OK {
+		t.Fatalf("exact recovery = %s", nfs4.Nfsstat4Name(oldStatus))
+	}
+	if status, _ := readStateid(t, f.conn, &f.xid, oldFH, oldSid); status != nfs4.NFS4_OK {
+		t.Fatalf("recovered writer lost its data: %s", nfs4.Nfsstat4Name(status))
+	}
+	closeFile(t, f.conn, &f.xid, freshFH, freshSid)
+	closeFile(t, f.conn, &f.xid, f.fh, oldSid)
+	if data, _ := readRoot(t, f.root, f.name); string(data) != string(f.data) {
+		t.Fatalf("final pathname = %q, want the exact recovered writer's bytes", data)
+	}
+}
+
+// of the published base does not invalidate the private writer, but a sidecar
+// rebind, removal or failure is detected without adopting the old identity.
 func TestClaimFHRecoveryRevalidation(t *testing.T) {
 	for _, c := range []struct {
 		name   string
+		want   uint32
 		change func(t *testing.T, f *claimFHRestart)
 		gone   bool // the change removes the staging
 	}{
 		{name: "target replaced", change: func(t *testing.T, f *claimFHRestart) {
 			replaceLocalFile(t, f.root, f.name)
 		}},
-		{name: "target renamed away", change: func(t *testing.T, f *claimFHRestart) {
+		{name: "target renamed away", want: nfs4.NFS4ERR_STALE, change: func(t *testing.T, f *claimFHRestart) {
 			if err := os.Rename(filepath.Join(f.root, f.name), filepath.Join(f.root, "moved")); err != nil {
 				t.Fatal(err)
 			}
 		}},
-		{name: "staging rebound", change: func(t *testing.T, f *claimFHRestart) {
+		{name: "staging rebound", want: nfs4.NFS4ERR_STALE, change: func(t *testing.T, f *claimFHRestart) {
 			meta := f.meta(t)
 			if err := f.staging.Rebind(f.stagingID, meta.ClientID, oldEpochStateID(f.srv)); err != nil {
 				t.Fatal(err)
 			}
 		}},
-		{name: "staging removed", gone: true, change: func(t *testing.T, f *claimFHRestart) {
+		{name: "staging removed", want: nfs4.NFS4ERR_STALE, gone: true, change: func(t *testing.T, f *claimFHRestart) {
 			f.staging.Remove(f.stagingID)
 		}},
-		{name: "staging failed", gone: true, change: func(t *testing.T, f *claimFHRestart) {
+		{name: "staging failed", want: nfs4.NFS4ERR_STALE, gone: true, change: func(t *testing.T, f *claimFHRestart) {
 			if err := f.staging.Quarantine(f.stagingID); err != nil {
 				t.Fatal(err)
 			}
@@ -404,11 +449,16 @@ func TestClaimFHRecoveryRevalidation(t *testing.T) {
 					changed = f.meta(t)
 				}
 			})
-			if status, _, _ := f.claimFH(t, f.owner); status != nfs4.NFS4ERR_STALE {
-				t.Fatalf("CLAIM_FH = %s, want STALE", nfs4.Nfsstat4Name(status))
+			status, sid, _ := f.claimFH(t, f.owner)
+			if status != c.want {
+				t.Fatalf("CLAIM_FH = %s, want %s", nfs4.Nfsstat4Name(status), nfs4.Nfsstat4Name(c.want))
 			}
 			if !ran {
-				t.Fatal("the change did not run between preselection and the lock")
+				t.Fatal("the change did not run before adoption")
+			}
+			if c.want == nfs4.NFS4_OK {
+				closeFile(t, f.conn, &f.xid, f.fh, sid)
+				return
 			}
 			if c.gone {
 				if states := f.srv.opens.ClientStates(incarnationForTest(t, f.srv, f.wire)); len(states) != 0 {

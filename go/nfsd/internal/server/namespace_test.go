@@ -5,6 +5,7 @@
 package server
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"net"
@@ -392,15 +393,38 @@ func TestRetiredWritersFollowNamespaceChanges(t *testing.T) {
 			status, state, fh, _ := openFileForOwner(t, f.conn, &f.xid, clientID,
 				"test-owner-source", "target", nfs4.OPEN4_SHARE_ACCESS_BOTH, false, false)
 			if status != nfs4.NFS4_OK {
-				t.Fatalf("reclaim returned %s", nfs4.Nfsstat4Name(status))
+				t.Fatalf("fresh OPEN returned %s", nfs4.Nfsstat4Name(status))
+			}
+			if bytes.Equal(fh, f.fh) {
+				t.Fatal("fresh OPEN adopted the retired writer")
+			}
+			data, _ := readFileData(t, f.conn, &f.xid, fh, 0, 128)
+			if string(data) != "original" {
+				t.Fatalf("fresh writer's base = %q, want original", data)
 			}
 			closeFile(t, f.conn, &f.xid, fh, state)
-			if _, err := os.Stat(filepath.Join(f.root, "source")); !os.IsNotExist(err) {
-				t.Fatalf("reclaim resurrected old source: %v", err)
-			}
 			data, err := os.ReadFile(filepath.Join(f.root, "target"))
+			if err != nil || string(data) != "original" {
+				t.Fatalf("no-op fresh CLOSE published %q, %v", data, err)
+			}
+
+			status, recoveredState, recoveredFH := openByHandle(t, f.conn, &f.xid,
+				clientID, "test-owner-source", f.fh, nfs4.OPEN4_SHARE_ACCESS_BOTH)
+			if status != nfs4.NFS4_OK || !bytes.Equal(recoveredFH, f.fh) {
+				t.Fatalf("exact recovery = %s, original handle: %t",
+					nfs4.Nfsstat4Name(status), bytes.Equal(recoveredFH, f.fh))
+			}
+			data, _ = readFileData(t, f.conn, &f.xid, recoveredFH, 0, 128)
+			if string(data) != "private data" {
+				t.Fatalf("recovered writer's data = %q", data)
+			}
+			closeFile(t, f.conn, &f.xid, recoveredFH, recoveredState)
+			if _, err := os.Stat(filepath.Join(f.root, "source")); !os.IsNotExist(err) {
+				t.Fatalf("recovery resurrected old source: %v", err)
+			}
+			data, err = os.ReadFile(filepath.Join(f.root, "target"))
 			if err != nil || string(data) != "private data" {
-				t.Fatalf("reclaimed data = %q, %v", data, err)
+				t.Fatalf("recovered publication = %q, %v", data, err)
 			}
 		})
 	}
@@ -643,11 +667,8 @@ func TestRenameOpenStaging(t *testing.T) {
 	if err := f.fs.LinkFile(other, cookie, f.fs.RootID(), "source", nil); err != nil {
 		t.Fatal(err)
 	}
-	baseID, ok := vfs.FHToInodeID(f.fh)
-	if !ok {
-		t.Fatal("first writer's handle does not decode")
-	}
-	if data, err := readAll(f.fs, baseID); err != nil || string(data) != "original" {
+	meta, _ := f.store.GetMeta(f.id)
+	if data, err := readAll(f.fs, meta.BaseID); err != nil || string(data) != "original" {
 		t.Fatalf("first writer's base after the publication: %q %v", data, err)
 	}
 	status, state, fh, _ := openFileForOwner(t, f.conn, &f.xid, f.clientID,
@@ -656,7 +677,7 @@ func TestRenameOpenStaging(t *testing.T) {
 		t.Fatalf("second OPEN returned %s", nfs4.Nfsstat4Name(status))
 	}
 	second := stagingIDForTest(t, f.store, state)
-	meta, _ := f.store.GetMeta(second)
+	meta, _ = f.store.GetMeta(second)
 	if meta.BaseID != other {
 		t.Fatal("fixture did not open a different base inode")
 	}

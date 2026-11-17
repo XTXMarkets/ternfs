@@ -20,8 +20,8 @@ import (
 )
 
 // The only sidecar format this nfsd reads or writes. NFS9 is the NFSv4.1
-// server: one writer per client and file, found by stateid, with its
-// publication candidate. Earlier formats make startup fail; drain or
+// server: one writer per staged open, found by its private filehandle and
+// stateid, with its publication candidate. Earlier formats make startup fail; drain or
 // remove the staging directory before upgrading.
 const (
 	formatMagic = "NFS9"

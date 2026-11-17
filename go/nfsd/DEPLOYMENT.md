@@ -22,13 +22,13 @@ These are the current implementation's guarantees and limitations.
 | Successful create OPEN | The pathname contains an empty published file. Initial size and later writes can still be private. |
 | Unstable WRITE | The server accepted bytes into local staging. The client must retain them until made stable. |
 | Stable WRITE or COMMIT | Checkpoints staging data and metadata on the local disk. After a restart, COMMIT also syncs the client's recovered writers of the handle. It does not publish to TernFS. |
-| Last write CLOSE or downgrade to READ | Publishes a changed, linked staging version synchronously, or answers `NFS4ERR_DELAY` while the backend does not answer, and the client retries. A clean writer leaves the published file unchanged; an unlinked writer discards its private version. Once it answers OK, neither a restart nor a power loss brings that writer back. |
+| Each write CLOSE or downgrade to READ | Publishes a changed, linked staging version synchronously, or answers `NFS4ERR_DELAY` while the backend does not answer, and the client retries. A clean writer leaves the published file unchanged; an unlinked writer discards its private version. Once it answers OK, neither a restart nor a power loss brings that writer back. |
 | Fresh lookup after publication | Finds the replacement inode. Already held handles and client caches need not select that version. |
 
-Writers on one client share staging for the same file within one daemon.
-Other clients have independent versions. Concurrent writers do not merge
-edits: the last successful publication wins the pathname. Do not use this
-as a distributed append or locking service.
+Every write OPEN gets a private transient filehandle and staging, including
+opens through one client. Writers do not merge edits: the last successful
+publication wins the pathname. Do not use this as a distributed append or
+locking service.
 
 Published contents have TernFS's configured durability and retention.
 Unpublished contents depend on the staging disk. Even after fsync, a new
@@ -61,22 +61,21 @@ nfsd. Give that daemon a persistent staging directory. Emptying it makes a
 new server, which costs every client a reboot recovery and every file open
 for writing its unpublished writes.
 
-**Client mounts.** Mount with `vers=4.1,proto=tcp,hard`. A client that
-reopens files without walking their path must also mount with
-`lookupcache=none`. Samba is one: it opens a file `O_PATH` by name and
-reopens it for writing through `/proc/self/fd`. A writable open by
-filehandle needs nfsd to know the file's current name, and nfsd records
-names only for files a client has looked up or opened since it started. A
-handle the client learned from READDIR, kept across its own save, or held
-across a restart can therefore be refused with `NFS4ERR_STALE`. An
-ordinary open recovers by looking the name up again; a reopen through
-`/proc/self/fd` cannot, and Samba reports access denied. With
-`lookupcache=none` every open walks the path, so the name is fresh. It
-costs one LOOKUP per open.
+**Client mounts.** Mount with `vers=4.1,proto=tcp,hard`. Linux opens
+cached dentries by `CLAIM_FH` and retains their existing inode even when
+OPEN returns a new filehandle. Fresh writable `CLAIM_FH` opens receive
+`NFS4ERR_STALE`, causing the VFS to retry through the pathname and
+`CLAIM_NULL`, because a new private writer needs a new transient handle.
+Valid immutable read handles can recover without this error. Handle-only
+pathless reopens cannot rely on the pathname fallback; only exact
+private-writer and existing read-handle recovery are available.
 
-**Guarantees.** Same-client opens share a mutable view within the daemon.
-Publication is synchronous. REMOVE and RENAME update that daemon's staged
-writers so a later CLOSE follows the local namespace change.
+**Guarantees.** Same-client writers have independent mutable versions;
+each publishes synchronously at its own CLOSE. REMOVE and RENAME update
+that daemon's staged writers so a later CLOSE follows the local namespace
+change. Read opens retain their selected immutable version until they
+reopen by name, while a writer's CLOSE makes its own handle name its own
+publication.
 
 **Failure behaviour.** Restarting the process with the same disk can restore
 sessions and their cached replies, so clients continue on the same session

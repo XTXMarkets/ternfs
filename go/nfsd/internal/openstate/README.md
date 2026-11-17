@@ -44,24 +44,24 @@ staging.
 
 An open records two inodes:
 
-- `FileID` is the filehandle the client holds: the published inode at the
-  name when it opened.
-- `DataID` is what its I/O uses: a writer's staging inode, or for a read
-  open the version chosen at OPEN.
+- `FileID` is the filehandle the client holds: a private transient inode for
+  a staged open, or the published inode selected for an ordinary read.
+- `DataID` is what its I/O uses: the writer's private staging inode, or the
+  immutable version chosen at OPEN and after publication or clean close.
 
-Opens by one client of one handle share the client's page cache, so they
-share one staging writer. Session slots order and deduplicate
+Each write OPEN normally has a distinct `FileID`, so writers through one
+client do not share a staging version. Session slots order and deduplicate
 requests, so open-owners have no sequence numbers and no replay cache. An
 owner is not retained after its last open closes.
 
 An open whose CLOSE answered `NFS4ERR_DELAY` is marked closing. libnfs
 gives such an open up, so it is not treated as a writer still using the
 staging: another writer's CLOSE does not hand it the staging
-(`OtherWriter`), a write open of the same client that joins the staging
-takes its sidecar over, and the CLOSE that ends the staging expires it
-(`ExpireWriters`). A repeated OPEN by its owner clears the mark. A
-downgrade that answers DELAY does not set it. See
-[Publication](../server/README.md#publication).
+(`OtherWriter`), and the CLOSE that ends the staging expires it
+(`ExpireWriters`). These rules only apply to opens actually using the same
+staging ID, never to another writer's independent stage. A repeated OPEN by
+its owner clears the mark. A downgrade that answers DELAY does not set it.
+See [Publication](../server/README.md#publication).
 
 ## Stateid scope
 
@@ -113,24 +113,21 @@ anything is published; both opens are kept.
 
 ## Reader visibility
 
-These rules decide what a read open of a handle sees when the same client
-also writes it. The server applies them under the file lock.
+These rules decide which version an open's I/O uses. The server applies
+them under the file lock and never substitutes another writer's independent
+staging merely because it belongs to the same client or pathname.
 
-- A read OPEN takes the client's [view](#client-views) of the handle. When
-  the client has a writer, live or recovered from the staging disk, that is
-  the writer's staging, so the client reads its own writes; the read open
-  never owns that staging, and its CLOSE leaves it to the writer. The
-  source is chosen again once the file lock is
-  held, since a writer's CLOSE may have ended that staging meanwhile. A
-  failed staging, or a published version that no longer exists, falls back
-  to the handle.
-- The open that created a file owns its staging even when it is read-only,
-  so its CLOSE publishes a size set at CREATE.
-- A clean or timestamp-only CLOSE discards the staging and points every
-  open whose I/O used it back at its own handle (`Retarget`). A
-  timestamp-only CLOSE whose lookup or SetTime the backend does not answer
-  gets `NFS4ERR_DELAY` and changes nothing; any other error ends the
-  staging the same way.
+- A read OPEN by name selects the current published immutable version. An
+  exact private-handle recovery selects the handle's own staging, or its
+  restored publication alias. The source is checked again once the file lock is
+  held, since the writer's CLOSE may have ended that staging meanwhile.
+- The open that created a file owns its private staging even when it is
+  read-only, so its CLOSE publishes a size set at CREATE.
+- A clean CLOSE discards the staging and points its opens at the immutable
+  base (`Retarget` with the sidecar's base ID). A timestamp-only CLOSE
+  selects the current published object instead, never a discarded transient.
+  A lookup or SetTime the backend does not answer gets `NFS4ERR_DELAY` and
+  changes nothing; any other error ends the staging the same way.
 - A successful data publication points the staging's opens at what it
   published, before the staging goes: the staging inode itself, or the
   fresh transient a retried CLOSE published through.
@@ -184,8 +181,10 @@ see [Client recovery](../../RECOVERY.md#client-recovery).
 
 ## Publication aliases
 
-When a client's CLOSE publishes a replacement over a handle it holds, the
-server sets an alias from that client's handle to the replacement. The
+When a writer's CLOSE publishes through a fresh candidate rather than exposing
+its private staging inode, the server sets an alias from that private handle to
+the replacement. A publication always uses a fresh candidate, so ordinary first
+publication needs this alias as well as fresh candidates after delayed retries. The
 handle then keeps showing the replacement, so close-to-open revalidation
 sees the client's own write. Other clients are not affected. A later LOOKUP
 finds the replacement's own handle.
@@ -194,8 +193,8 @@ An alias's expiry is one lease after publication. A sweep drops an expired
 alias only when the client has no open of the handle; while the handle is
 open the alias stays. A lookup does not check the expiry, so a closed
 handle's alias lasts until the first sweep after it expires: 90 to 135 s
-after publication, with the 45 s sweep. After the alias is gone the handle
-names its original immutable version again.
+after publication, with the 45 s sweep. After the alias is gone resolution
+falls back to whatever immutable version the backend retains for the handle.
 
 Aliases are for one thing: a client seeing its own save through the handle
 it holds. Other clients do not see them, and they are not a substitute for

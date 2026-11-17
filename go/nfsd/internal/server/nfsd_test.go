@@ -2613,9 +2613,8 @@ func TestOpenExistingForWrite(t *testing.T) {
 	if !ok {
 		t.Fatalf("invalid filehandle %x", fh)
 	}
-	if want := vfs.MakeInodeID(vfs.InodeTypeFile, stat.Ino); fhID != want {
-		t.Fatalf("write-open filehandle = %v, want published inode %v",
-			fhID, want)
+	if published := vfs.MakeInodeID(vfs.InodeTypeFile, stat.Ino); fhID == published {
+		t.Fatalf("write-open returned published inode %v instead of a private transient", published)
 	}
 	writeFileAt(t, conn, &xid, fh, stateid, 3, []byte("XYZ"))
 
@@ -3152,9 +3151,14 @@ func TestRecoveredMutableOpenCanBeReplayedByClient(t *testing.T) {
 	conn2 := dial(t, addr2)
 	defer conn2.Close()
 
-	replayedState, replayedFH := openWriteFile(
-		t, conn2, &xid, clientid, "existing.txt",
+	status, replayedState, replayedFH := openByHandle(
+		t, conn2, &xid, clientid, "test-owner-existing.txt", originalFH,
+		nfs4.OPEN4_SHARE_ACCESS_BOTH,
 	)
+	if status != nfs4.NFS4_OK || !bytes.Equal(replayedFH, originalFH) {
+		t.Fatalf("CLAIM_FH replay = %s, original handle: %t",
+			nfs4.Nfsstat4Name(status), bytes.Equal(replayedFH, originalFH))
+	}
 	closeFile(t, conn2, &xid, replayedFH, replayedState)
 	if !checkedStaging.checked {
 		t.Fatal("recovered staging was not rebound")
@@ -3226,17 +3230,39 @@ func TestRecoveredMutableOpenKeepsOriginalBase(t *testing.T) {
 	conn2 := dial(t, addr2)
 	defer conn2.Close()
 
-	recoveredState, recoveredFH := openWriteFile(t, conn2, &xid, clientid, "existing.txt")
-	// Reopening by name returns the handle the name has now; the recovered
-	// staging keeps its own base.
-	if !bytes.Equal(recoveredFH, vfs.InodeIDToFH(currentID)) {
-		t.Fatal("recovered OPEN did not return the current published handle")
+	freshState, freshFH := openWriteFile(t, conn2, &xid, clientid, "existing.txt")
+	if bytes.Equal(freshFH, fh) || bytes.Equal(freshFH, vfs.InodeIDToFH(currentID)) {
+		t.Fatal("named OPEN did not allocate an independent private writer")
+	}
+	freshMeta, ok := staging2.GetMeta(stagingIDForTest(t, staging2, freshState))
+	if !ok || freshMeta.BaseID != currentID || freshMeta.BaseSize != uint64(len("new base")) {
+		t.Fatalf("fresh writer did not use the current base: %+v", freshMeta)
+	}
+	data, _ := readFileData(t, conn2, &xid, freshFH, 0, 128)
+	if string(data) != "new base" {
+		t.Fatalf("fresh writer's base = %q, want new base", data)
+	}
+	closeFile(t, conn2, &xid, freshFH, freshState)
+	data, err = os.ReadFile(path)
+	if err != nil || string(data) != "new base" {
+		t.Fatalf("no-op fresh CLOSE published %q, %v", data, err)
+	}
+
+	status, recoveredState, recoveredFH := openByHandle(t, conn2, &xid, clientid,
+		"test-owner-existing.txt", fh, nfs4.OPEN4_SHARE_ACCESS_BOTH)
+	if status != nfs4.NFS4_OK || !bytes.Equal(recoveredFH, fh) {
+		t.Fatalf("exact recovery = %s, original handle: %t",
+			nfs4.Nfsstat4Name(status), bytes.Equal(recoveredFH, fh))
+	}
+	data, _ = readFileData(t, conn2, &xid, recoveredFH, 0, 128)
+	if string(data) != "changedl" {
+		t.Fatalf("recovered writer's data = %q, want changedl", data)
 	}
 	closeFile(t, conn2, &xid, recoveredFH, recoveredState)
 	if staging.TargetBusy(staging2, fs.RootID(), "existing.txt") {
 		t.Fatal("recovered publication left staging registered")
 	}
-	data, err := os.ReadFile(path)
+	data, err = os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3302,10 +3328,11 @@ func TestRecoveredMissingBaseCreatesFreshFile(t *testing.T) {
 	if !found || newMeta.BaseID == 0 || newMeta.BaseSize != 0 || newMeta.Size != 0 {
 		t.Fatal("fresh create did not allocate staging over a new empty version")
 	}
-	// The local backend's filesystem can immediately reuse the scrapped
-	// transient's inode number; its replacement session must still be fresh.
-	if oldStagingID != newID && staging2.Get(oldStagingID) != nil {
-		t.Fatal("fresh create retained stale replacement staging")
+	if newID == oldStagingID || bytes.Equal(newFH, fh) {
+		t.Fatal("fresh create adopted the recovered replacement writer")
+	}
+	if staging2.Get(oldStagingID) == nil {
+		t.Fatal("fresh create discarded the recovered replacement writer")
 	}
 	writeFileAt(t, conn2, &xid, newFH, newState, 0, []byte("fresh"))
 	closeFile(t, conn2, &xid, newFH, newState)

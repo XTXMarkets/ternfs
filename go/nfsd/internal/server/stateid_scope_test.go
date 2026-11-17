@@ -142,7 +142,7 @@ func TestForeignStateidsAreBadStateid(t *testing.T) {
 		t.Fatal(err)
 	}
 	xidB := uint32(100)
-	liveFile, _ := vfs.FHToInodeID(liveFH)
+	liveFile, err := srv.fs.Lookup(srv.fs.RootID(), "a-live")
 	publishedBefore, err := srv.fs.Stat(liveFile)
 	if err != nil {
 		t.Fatal(err)
@@ -166,7 +166,7 @@ func TestForeignStateidsAreBadStateid(t *testing.T) {
 	// A's state survived, and B's timestamp SETATTRs changed no times.
 	var liveID nfs4.StateID
 	copy(liveID[:], liveSid[4:])
-	state, status := srv.opens.Lookup(incA, liveID, 0, liveFile)
+	state, status := srv.opens.Lookup(incA, liveID, 0, stagingIDForTest(t, srv.stagingStore, liveSid))
 	if status != nfs4.NFS4_OK {
 		t.Fatalf("A's live open %s", nfs4.Nfsstat4Name(status))
 	}

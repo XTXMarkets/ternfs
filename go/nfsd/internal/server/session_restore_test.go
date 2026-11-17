@@ -898,16 +898,11 @@ func TestRestartWriteAdoptsRecoveredWriter(t *testing.T) {
 	}
 }
 
-// The read-back of an in-place edit, opened across a restart. The edit's
-// CLOSE was in flight when nfsd died; after the restart the client's read
-// OPEN of the name reached nfsd before the CLOSE's retransmission, and its
-// READ returned the version before the edit (QA soak of 2026-10-21, a
-// nfsfault read-back mismatch): clientView knew live opens and aliases,
-// not the writers recovered from the staging disk. A client's recovered
-// writer is its view of the handle, as a live writer is, until the
-// recovered CLOSE publishes it; the read open then follows the
-// publication, as it does when a live writer's CLOSE removes the staging.
-func TestRestartReadOpenSeesRecoveredWriter(t *testing.T) {
+// An in-place edit's CLOSE is in flight when nfsd dies. After the restart,
+// a read OPEN of the name gets the published base, not the recovered writer's
+// private staging. The writer still reads its edit through its transient
+// handle, and its recovered CLOSE publishes it without moving the reader.
+func TestRestartReadOpenIsIndependentOfRecoveredWriter(t *testing.T) {
 	for _, readerFirst := range []bool{false, true} {
 		name := "reader closes after the recovered CLOSE"
 		if readerFirst {
@@ -920,6 +915,9 @@ func TestRestartReadOpenSeesRecoveredWriter(t *testing.T) {
 			writeFileAt(t, f.conn, &f.xid, fh, state, 0, []byte("version two"))
 			f.restart()
 			readState, readFH := openReadFile(t, f.conn, &f.xid, f.wire, "doc")
+			if bytes.Equal(fh, readFH) {
+				t.Fatal("read OPEN borrowed the recovered writer's private handle")
+			}
 			readAt := func(sid [16]byte) string {
 				status, data := readStateid(t, f.conn, &f.xid, readFH, sid)
 				if status != nfs4.NFS4_OK {
@@ -927,14 +925,16 @@ func TestRestartReadOpenSeesRecoveredWriter(t *testing.T) {
 				}
 				return data
 			}
-			if got := readAt(readState); got != "version two" {
-				t.Fatalf("read open before the recovered CLOSE reads %q, want the edit", got)
+			if got := readAt(readState); got != "version one" {
+				t.Fatalf("read open before the recovered CLOSE reads %q, want the published base", got)
 			}
-			if got := readAt([16]byte{}); got != "version two" {
-				t.Fatalf("anonymous READ before the recovered CLOSE reads %q, want the edit", got)
+			if got := readAt([16]byte{}); got != "version one" {
+				t.Fatalf("anonymous READ before the recovered CLOSE reads %q, want the published base", got)
+			}
+			if got, _ := readFileData(t, f.conn, &f.xid, fh, 0, 64); string(got) != "version two" {
+				t.Fatalf("recovered writer's private handle reads %q", got)
 			}
 			if readerFirst {
-				// The reader's CLOSE leaves the staging it read to its writer.
 				closeFile(t, f.conn, &f.xid, readFH, readState)
 				if n := len(f.store.Entries()); n != 1 {
 					t.Fatalf("%d staging entries after the reader's CLOSE, want the recovered writer's", n)
@@ -949,8 +949,8 @@ func TestRestartReadOpenSeesRecoveredWriter(t *testing.T) {
 				t.Fatalf("published %q %v", got, ok)
 			}
 			if !readerFirst {
-				if got := readAt(readState); got != "version two" {
-					t.Fatalf("read open after the recovered CLOSE reads %q, want the publication", got)
+				if got := readAt(readState); got != "version one" {
+					t.Fatalf("read open after the recovered CLOSE reads %q, want its original version", got)
 				}
 				closeFile(t, f.conn, &f.xid, readFH, readState)
 			}
@@ -1156,15 +1156,28 @@ func TestRestartKillAfterLinkOpenBeforeCloseRetransmit(t *testing.T) {
 }
 
 // The removal of a published staging did not reach the disk before a
-// power loss, so the staging comes back as it was before the CLOSE. The
-// client has its reply and does not retransmit the CLOSE.
+// power loss, so the staging and its fresh-candidate checkpoint come back
+// as they were when the candidate linked. The client has its reply and does
+// not retransmit the CLOSE.
 func TestRestartPublishedStagingRestoredIsDropped(t *testing.T) {
-	f := newReplayFixture(t)
+	f, pf := newPublishReplayFixture(t)
 	state, fh := openCreateFile(t, f.conn, &f.xid, f.wire, "doc")
 	writeFileAt(t, f.conn, &f.xid, fh, state, 0, []byte("v1"))
-	kept := f.stagingFiles(stagingIDForTest(t, f.store, state))
+	stagingID := stagingIDForTest(t, f.store, state)
+	var kept map[string][]byte
+	pf.onLink(func(_ int, _ vfs.InodeID, _ vfs.Cookie, link func() error) error {
+		err := link()
+		if err == nil && kept == nil {
+			kept = f.stagingFiles(stagingID)
+		}
+		return err
+	})
 	closeFile(t, f.conn, &f.xid, fh, state)
+	pf.onLink(nil)
 	f.restartKeeping(kept, false)
+	if data, _ := readFileData(t, f.conn, &f.xid, fh, 0, 64); string(data) != "v1" {
+		t.Fatalf("private handle after the restart reads %q, want its published candidate", data)
+	}
 	f.republishedThenAppended(fh, state)
 }
 
@@ -2594,7 +2607,7 @@ func TestCloseReleasesAtRecordOnlyWhenLast(t *testing.T) {
 			testutil.AwaitSignal(t, recording, "the CLOSE compound recording its reply")
 			opened := make(chan uint32, 1)
 			go func() {
-				status, _, _ := openByHandle(t, conn, &xid, f.clientID, "other-owner", fh, nfs4.OPEN4_SHARE_ACCESS_READ)
+				status, _, _, _ := openFileForOwner(t, conn, &xid, f.clientID, "other-owner", "doc", nfs4.OPEN4_SHARE_ACCESS_READ, false, false)
 				opened <- status
 			}()
 			if delayed {
@@ -2803,8 +2816,8 @@ func TestRestartAfterFreshPublicationCompletes(t *testing.T) {
 	if published, err := f.srv.fs.Lookup(f.srv.fs.RootID(), "doc"); err != nil || published == stagingID {
 		t.Fatalf("doc is %v (%v), want the fresh candidate, not the staging", published, err)
 	}
-	if got := pf.count("construct"); got != 1 {
-		t.Fatalf("%d constructions, want the one fresh candidate", got)
+	if got := pf.count("construct"); got != 2 {
+		t.Fatalf("%d constructions, want one fresh candidate per publication attempt", got)
 	}
 	if n := len(f.store.Entries()); n != 0 {
 		t.Fatalf("%d staging entries left", n)
@@ -2859,12 +2872,11 @@ func TestRestartAfterPartialUploadPublishesFresh(t *testing.T) {
 	}
 }
 
-// A restart after a link that applied and timed out: before the CLOSE's
-// retransmission, a write OPEN of the client adopts the staging, which the
-// name now holds, and writes. Its CLOSE publishes those bytes, also after
-// a second restart, through the staging's own inode, which a READ there
-// also sees.
-func TestRestartAdoptedLinkedStagingPublishesAdopterBytes(t *testing.T) {
+// A restart after a link that applied and timed out drops the published
+// staging. A new write OPEN then creates an independent writer over that
+// publication, with its own transient handle, and publishes its bytes after
+// zero or one further restarts.
+func TestRestartIndependentWriterPublishesOverLinkedStaging(t *testing.T) {
 	for _, second := range []bool{false, true} {
 		t.Run(fmt.Sprintf("second-restart=%t", second), func(t *testing.T) {
 			f, pf := newPublishReplayFixture(t)
@@ -2876,22 +2888,22 @@ func TestRestartAdoptedLinkedStagingPublishesAdopterBytes(t *testing.T) {
 				t.Fatalf("CLOSE %s, want DELAY", nfs4.Nfsstat4Name(got))
 			}
 			f.restart()
-			adopter, sfh := openWriteFile(t, f.conn, &f.xid, f.wire, "doc")
-			if id, _ := vfs.FHToInodeID(sfh); id != stagingID {
-				t.Fatalf("adopting OPEN returned %v, want the staging's own inode %v", id, stagingID)
+			writer, writerFH := openWriteFile(t, f.conn, &f.xid, f.wire, "doc")
+			if id, _ := vfs.FHToInodeID(writerFH); id == stagingID {
+				t.Fatalf("independent OPEN reused the published staging's inode %v", stagingID)
 			}
-			writeFileAt(t, f.conn, &f.xid, sfh, adopter, 0, []byte("v2"))
+			writeFileAt(t, f.conn, &f.xid, writerFH, writer, 0, []byte("v2"))
 			if second {
 				f.restart()
-				if data, _ := readFileData(t, f.conn, &f.xid, sfh, 0, 16); string(data) != "v2" {
-					t.Fatalf("READ through the staging's inode after the restart %q, want v2", data)
+				if data, _ := readFileData(t, f.conn, &f.xid, writerFH, 0, 16); string(data) != "v2" {
+					t.Fatalf("READ through the private handle after the restart %q, want v2", data)
 				}
 			}
-			if got := f.closeStatus(sfh, adopter); got != nfs4.NFS4_OK {
-				t.Fatalf("adopter's CLOSE %s", nfs4.Nfsstat4Name(got))
+			if got := f.closeStatus(writerFH, writer); got != nfs4.NFS4_OK {
+				t.Fatalf("independent writer's CLOSE %s", nfs4.Nfsstat4Name(got))
 			}
 			if data, _ := readRoot(t, f.root, "doc"); data != "v2" {
-				t.Fatalf("doc holds %q, want the adopter's bytes", data)
+				t.Fatalf("doc holds %q, want the independent writer's bytes", data)
 			}
 		})
 	}
@@ -2924,18 +2936,21 @@ func TestRestartAppliedLinkThenForeignPublicationCompletes(t *testing.T) {
 	}
 }
 
-// aliasKillStore keeps the alias log as it is when a staging is removed,
-// for the restart to put back: a kill right after the removal.
+// aliasKillStore keeps the alias log, if publication needed one, as it is
+// when a staging is removed, for the restart to put back: a kill right after
+// the removal.
 type aliasKillStore struct {
 	*staging.LocalStore
-	dir  string
-	kept []byte
+	dir      string
+	captured bool
+	kept     []byte
 }
 
 func (k *aliasKillStore) Remove(id vfs.InodeID) {
-	if k.kept == nil {
+	if !k.captured {
+		k.captured = true
 		data, err := os.ReadFile(filepath.Join(k.dir, staging.AliasesDirName, aliasLogName))
-		if err != nil {
+		if err != nil && !os.IsNotExist(err) {
 			panic(err)
 		}
 		k.kept = data
@@ -2943,9 +2958,34 @@ func (k *aliasKillStore) Remove(id vfs.InodeID) {
 	k.LocalStore.Remove(id)
 }
 
-// A kill right after the staging's removal keeps the client's view of its
-// publication: the alias is recorded first.
-func TestRestartAfterRemovalKeepsPublicationAlias(t *testing.T) {
+func TestRestartDoesNotRetargetIndependentBaseReader(t *testing.T) {
+	f, pf := newPublishReplayFixture(t)
+	writeRoot(t, f.root, "doc", "original")
+	readerStatus, _, baseFH, _ := openFileForOwner(t, f.conn, &f.xid, f.wire, "reader", "doc", nfs4.OPEN4_SHARE_ACCESS_READ, false, false)
+	if readerStatus != nfs4.NFS4_OK {
+		t.Fatalf("reader OPEN = %s", nfs4.Nfsstat4Name(readerStatus))
+	}
+	writer, writerFH := openWriteFile(t, f.conn, &f.xid, f.wire, "doc")
+	writeFileAt(t, f.conn, &f.xid, writerFH, writer, 0, []byte("replaced"))
+	pf.timeoutLinks(1, true)
+	if got := f.closeStatus(writerFH, writer); got != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("publication CLOSE = %s, want DELAY", nfs4.Nfsstat4Name(got))
+	}
+	f.restart()
+	if data, _ := readFileData(t, f.conn, &f.xid, baseFH, 0, 64); string(data) != "original" {
+		t.Fatalf("independent base reader changed after restart: %q", data)
+	}
+	reopenedStatus, reopenedSID, _ := openByHandle(t, f.conn, &f.xid, f.wire, "reader", baseFH, nfs4.OPEN4_SHARE_ACCESS_READ)
+	if reopenedStatus != nfs4.NFS4_OK {
+		t.Fatalf("read recovery after restart = %s", nfs4.Nfsstat4Name(reopenedStatus))
+	}
+	closeFile(t, f.conn, &f.xid, baseFH, reopenedSID)
+}
+
+// A kill right after a direct staging publication and its removal keeps the
+// private handle's view. Handle and published inode are identical here, so no
+// alias is needed; the persistent inode identity is sufficient.
+func TestRestartAfterRemovalKeepsPrivatePublication(t *testing.T) {
 	kill := &aliasKillStore{}
 	f := newWrappedReplayFixture(t, func(store *staging.LocalStore) staging.Store {
 		kill.LocalStore = store
@@ -2961,8 +3001,10 @@ func TestRestartAfterRemovalKeepsPublicationAlias(t *testing.T) {
 	f.stop()
 	f.stop = nil
 	staging.CloseFiles(t, f.store)
-	if err := os.WriteFile(filepath.Join(f.stagingDir, staging.AliasesDirName, aliasLogName), kill.kept, 0o600); err != nil {
-		t.Fatal(err)
+	if kill.kept != nil {
+		if err := os.WriteFile(filepath.Join(f.stagingDir, staging.AliasesDirName, aliasLogName), kill.kept, 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	f.wrapStore = nil
 	f.start()
@@ -3066,12 +3108,12 @@ func writeBody(fh []byte, stateid [16]byte, data string) []byte {
 	})
 }
 
-// An OPEN_DOWNGRADE that ends its compound keeps the open's locks until
-// its reply is recorded: a same-owner OPEN on another slot, which makes the
-// open a writer again, waits for the record. That writer's bytes, written
-// before a restart, are not published by the downgrade's replay, and the
-// writer goes on and publishes them itself. The downgrade names the open by
-// its seqid or by seqid 0.
+// A recovered OPEN_DOWNGRADE that ends its compound keeps its locks until
+// the reply is recorded: an independent read OPEN on another slot waits. A
+// later same-owner write OPEN gets a new private writer, whose bytes are not
+// published by a replay of the downgrade after another restart. The writer
+// recovers and publishes them itself. The downgrade names its open by seqid
+// or 0.
 func TestDowngradeHoldsOpenUntilRecorded(t *testing.T) {
 	for _, current := range []bool{false, true} {
 		t.Run(fmt.Sprintf("seqid0=%t", current), func(t *testing.T) {
@@ -3106,28 +3148,39 @@ func testDowngradeHoldsOpenUntilRecorded(t *testing.T, current bool) {
 	slotA, seqA := f.ts.acquire()
 	slotB, seqB := f.ts.acquire()
 	request := withSequence(downgrade, f.ts, slotA, seqA)
+	f.restart()
 	recording, release := holdRecord(f.srv)
 	defer testutil.CloseSignal(release)
 	first := sendAsync(f.conn, 7000, request)
 	testutil.AwaitSignal(t, recording, "the downgrade recording its reply")
 	other := dial(t, f.addr)
 	defer other.Close()
-	opened := sendAsync(other, 7001, withSequence(openBody(f.wire, "o", "doc", nfs4.OPEN4_SHARE_ACCESS_BOTH), f.ts, slotB, seqB))
-	testutil.AssertBlocked(t, opened, "a same-owner OPEN behind the downgrade's record")
+	opened := sendAsync(other, 7001, withSequence(openBody(f.wire, "o", "doc", nfs4.OPEN4_SHARE_ACCESS_READ), f.ts, slotB, seqB))
+	testutil.AssertBlocked(t, opened, "an independent read OPEN behind the downgrade's record")
 	testutil.CloseSignal(release)
 	reply := testutil.AwaitValue(t, first, "the downgrade")
 	if reply == nil || compoundStatus(t, reply) != nfs4.NFS4_OK {
 		t.Fatal("downgrade failed")
 	}
-	if got := testutil.AwaitValue(t, opened, "the OPEN"); got == nil || compoundStatus(t, got) != nfs4.NFS4_OK {
+	openedReply := testutil.AwaitValue(t, opened, "the OPEN")
+	if openedReply == nil || compoundStatus(t, openedReply) != nfs4.NFS4_OK {
 		t.Fatal("OPEN after the downgrade failed")
 	}
 	f.ts.release(slotA)
 	f.ts.release(slotB)
 	other.Close()
+	status, writer, writerFH, _ := openFileForOwner(t, f.conn, &f.xid, f.wire, "o", "doc", nfs4.OPEN4_SHARE_ACCESS_BOTH, false, false)
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("independent writer OPEN %s", nfs4.Nfsstat4Name(status))
+	}
+	if bytes.Equal(writerFH, fh) {
+		t.Fatal("same-owner OPEN reused the downgraded writer's private handle")
+	}
+	writerZero := writer
+	binary.BigEndian.PutUint32(writerZero[:4], 0)
 	slot, seq := f.ts.acquire()
-	if got := compoundStatus(t, f.send(writeBody(fh, zero, "new!"), slot, seq)); got != nfs4.NFS4_OK {
-		t.Fatalf("WRITE of the newer writer %s", nfs4.Nfsstat4Name(got))
+	if got := compoundStatus(t, f.send(writeBody(writerFH, writerZero, "new!"), slot, seq)); got != nfs4.NFS4_OK {
+		t.Fatalf("WRITE of the independent writer %s", nfs4.Nfsstat4Name(got))
 	}
 	f.ts.release(slot)
 	f.restart()
@@ -3135,25 +3188,25 @@ func testDowngradeHoldsOpenUntilRecorded(t *testing.T, current bool) {
 		t.Fatal("the retransmission did not replay the downgrade's reply")
 	}
 	if data, _ := readRoot(t, f.root, "doc"); data != "base" {
-		t.Fatalf("doc holds %q after the replay, want the newer writer's bytes unpublished", data)
+		t.Fatalf("doc holds %q after the replay, want the independent writer's bytes unpublished", data)
 	}
 	slot, seq = f.ts.acquire()
-	if got := compoundStatus(t, f.send(writeBody(fh, zero, "new2"), slot, seq)); got != nfs4.NFS4_OK {
-		t.Fatalf("WRITE of the newer writer after the restart %s", nfs4.Nfsstat4Name(got))
+	if got := compoundStatus(t, f.send(writeBody(writerFH, writerZero, "new2"), slot, seq)); got != nfs4.NFS4_OK {
+		t.Fatalf("WRITE of the independent writer after the restart %s", nfs4.Nfsstat4Name(got))
 	}
 	f.ts.release(slot)
-	if got := f.closeStatus(fh, zero); got != nfs4.NFS4_OK {
-		t.Fatalf("CLOSE of the newer writer %s", nfs4.Nfsstat4Name(got))
+	if got := f.closeStatus(writerFH, writerZero); got != nfs4.NFS4_OK {
+		t.Fatalf("CLOSE of the independent writer %s", nfs4.Nfsstat4Name(got))
 	}
 	if data, _ := readRoot(t, f.root, "doc"); data != "new2" {
-		t.Fatalf("doc holds %q, want the newer writer's bytes", data)
+		t.Fatalf("doc holds %q, want the independent writer's bytes", data)
 	}
 }
 
-// A writer that joined a DELAYed CLOSE's staging is recovered after a
-// restart under its own stateid and owner, and its CLOSE publishes its
-// bytes.
-func TestRestartRecoversJoinerUnderItsOwner(t *testing.T) {
+// An independent writer opened beside a DELAYed CLOSE is recovered after a
+// restart under its own stateid, owner and private handle. Its CLOSE leaves
+// the first writer's staging alone and publishes its own bytes.
+func TestRestartRecoversIndependentWriterUnderItsOwner(t *testing.T) {
 	f, pf := newPublishReplayFixture(t)
 	state, fh := openCreateFile(t, f.conn, &f.xid, f.wire, "doc")
 	writeFileAt(t, f.conn, &f.xid, fh, state, 0, []byte("first-version"))
@@ -3163,36 +3216,38 @@ func TestRestartRecoversJoinerUnderItsOwner(t *testing.T) {
 		t.Fatalf("CLOSE %s, want DELAY", nfs4.Nfsstat4Name(got))
 	}
 	pf.onLink(nil)
-	res := sendCompound(t, f.conn, f.xid, func(w *nfs4.COMPOUND4argsWriter) { openWithSize(w, f.wire, "doc", "b", 0) })
-	f.xid++
-	if res.Status() != nfs4.NFS4_OK {
-		t.Fatalf("truncating join %s", nfs4.Nfsstat4Name(res.Status()))
+	status, second, secondFH, _ := openFileForOwner(t, f.conn, &f.xid, f.wire, "b", "doc", nfs4.OPEN4_SHARE_ACCESS_BOTH, false, false)
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("independent OPEN %s", nfs4.Nfsstat4Name(status))
 	}
-	iter := expectOK(t, res)
-	nextOp(t, &iter)
-	var joiner [16]byte
-	sid := nextOp(t, &iter).Value().AsOPEN4resEntry().Value().AsOPEN4resok().Stateid()
-	binary.BigEndian.PutUint32(joiner[:4], sid.Seqid())
-	for i := range 12 {
-		joiner[4+i] = sid.Other(i)
+	secondID := stagingIDForTest(t, f.store, second)
+	if secondID == stagingID || bytes.Equal(secondFH, fh) {
+		t.Fatal("independent writer borrowed the delayed writer")
 	}
-	writeFileAt(t, f.conn, &f.xid, fh, joiner, 0, []byte("NEW"))
+	writeFileAt(t, f.conn, &f.xid, secondFH, second, 0, []byte("NEW"))
 	f.restart()
-	if meta, ok := f.store.GetMeta(stagingID); !ok || meta.NFSStateID != extractStateID(stateidOf(joiner)) || meta.OpenOwner != "b" {
-		t.Fatalf("recovered sidecar %+v %t, want the joiner", meta, ok)
+	if meta, ok := f.store.GetMeta(secondID); !ok || meta.NFSStateID != extractStateID(stateidOf(second)) || meta.OpenOwner != "b" {
+		t.Fatalf("recovered sidecar %+v %t, want the independent writer", meta, ok)
 	}
-	if got := f.closeStatus(fh, joiner); got != nfs4.NFS4_OK {
-		t.Fatalf("joiner's recovered CLOSE %s", nfs4.Nfsstat4Name(got))
+	if meta, ok := f.store.GetMeta(stagingID); !ok || meta.NFSStateID != extractStateID(stateidOf(state)) || meta.OpenOwner != "test-owner-doc" {
+		t.Fatalf("first writer's sidecar %+v %t changed", meta, ok)
+	}
+	if got := f.closeStatus(secondFH, second); got != nfs4.NFS4_OK {
+		t.Fatalf("independent writer's recovered CLOSE %s", nfs4.Nfsstat4Name(got))
 	}
 	if data, _ := readRoot(t, f.root, "doc"); data != "NEW" {
-		t.Fatalf("doc holds %q, want the joiner's bytes", data)
+		t.Fatalf("doc holds %q, want the independent writer's bytes", data)
+	}
+	if _, ok := f.store.GetMeta(stagingID); !ok {
+		t.Fatal("independent writer's CLOSE removed the first staging")
 	}
 }
 
-// A recovered writer whose name is gone is discarded by a write OPEN of
-// the name, creating or not, after its pending candidate is fenced; a
-// fence with no answer gives the OPEN DELAY and keeps the staging.
-func TestRecoveredDiscardFencesCandidate(t *testing.T) {
+// A fresh write OPEN of a missing name does not adopt or discard a recovered
+// writer, creating or not. Its unanswered candidate remains for exact recovery
+// through the private handle: the first recovered CLOSE gets DELAY resolving
+// it, and the retry publishes through another fresh candidate.
+func TestFreshNamedOpenLeavesRecoveredCandidate(t *testing.T) {
 	for _, create := range []bool{true, false} {
 		t.Run(fmt.Sprintf("create=%t", create), func(t *testing.T) {
 			f, pf := newPublishReplayFixture(t)
@@ -3208,34 +3263,53 @@ func TestRecoveredDiscardFencesCandidate(t *testing.T) {
 			if err := removeName(f.srv.fs, f.srv.fs.RootID(), "doc"); err != nil {
 				t.Fatal(err)
 			}
-			open := func() uint32 {
-				status, _, _, _ := openFileForOwner(t, f.conn, &f.xid, f.wire, "test-owner-doc", "doc", nfs4.OPEN4_SHARE_ACCESS_BOTH, create, false)
-				return status
+			beforeFresh, ok := f.store.GetMeta(stagingID)
+			if !ok || beforeFresh.Candidate.ID == 0 || beforeFresh.Candidate.ID == stagingID {
+				t.Fatalf("recovered candidate %+v %t, want a fresh transient", beforeFresh.Candidate, ok)
 			}
+			candidate := beforeFresh.Candidate
 			pf.set(func() { pf.scrapTimeouts = 1 })
-			if status := open(); status != nfs4.NFS4ERR_DELAY {
-				t.Fatalf("OPEN with an unanswered fence %s, want DELAY", nfs4.Nfsstat4Name(status))
-			}
-			if _, ok := f.store.GetMeta(stagingID); !ok {
-				t.Fatal("the recovered staging was discarded before its fence")
-			}
 			want := uint32(nfs4.NFS4ERR_NOENT)
 			if create {
 				want = nfs4.NFS4_OK
 			}
-			if status := open(); status != want {
-				t.Fatalf("retried OPEN %s, want %s", nfs4.Nfsstat4Name(status), nfs4.Nfsstat4Name(want))
+			status, freshState, freshFH, _ := openFileForOwner(t, f.conn, &f.xid, f.wire, "test-owner-doc", "doc", nfs4.OPEN4_SHARE_ACCESS_BOTH, create, false)
+			if status != want {
+				t.Fatalf("fresh OPEN %s, want %s", nfs4.Nfsstat4Name(status), nfs4.Nfsstat4Name(want))
 			}
-			if _, ok := f.store.GetMeta(stagingID); ok {
-				t.Fatal("the recovered staging outlived the OPEN")
+			if create && (bytes.Equal(freshFH, fh) || stagingIDForTest(t, f.store, freshState) == stagingID) {
+				t.Fatal("fresh pathname OPEN adopted the recovered writer")
+			}
+			if meta, ok := f.store.GetMeta(stagingID); !ok || meta.Candidate != candidate {
+				t.Fatalf("fresh OPEN disturbed the recovered candidate %+v %t", meta, ok)
+			}
+			if got := f.closeStatus(fh, state); got != nfs4.NFS4ERR_DELAY {
+				t.Fatalf("exact recovered CLOSE with an unanswered candidate resolution %s, want DELAY", nfs4.Nfsstat4Name(got))
+			}
+			if _, ok := f.store.GetMeta(stagingID); !ok {
+				t.Fatal("recovered staging was discarded before its candidate resolved")
+			}
+			if got := f.closeStatus(fh, state); got != nfs4.NFS4_OK {
+				t.Fatalf("retried exact recovered CLOSE %s", nfs4.Nfsstat4Name(got))
+			}
+			if data, _ := readRoot(t, f.root, "doc"); data != "saved" {
+				t.Fatalf("doc holds %q, want the exactly recovered writer's bytes", data)
+			}
+			published, err := f.srv.fs.Lookup(f.srv.fs.RootID(), "doc")
+			if err != nil || published == stagingID || published == candidate.ID {
+				t.Fatalf("recovered CLOSE published %v (%v), want another fresh candidate", published, err)
+			}
+			if create {
+				closeFile(t, f.conn, &f.xid, freshFH, freshState)
 			}
 		})
 	}
 }
 
-// A sidecar save of a join keeps the pending fresh candidate, so the
-// joiner's CLOSE after a restart fences that candidate.
-func TestJoinBindKeepsCandidateAcrossRestart(t *testing.T) {
+// Opening an independent writer does not rebind another writer's sidecar or
+// disturb its pending fresh candidate. After a restart, the original close
+// still fences that candidate and publishes the original writer's bytes.
+func TestIndependentOpenKeepsCandidateAcrossRestart(t *testing.T) {
 	f, pf := newPublishReplayFixture(t)
 	state, fh := openCreateFile(t, f.conn, &f.xid, f.wire, "doc")
 	writeFileAt(t, f.conn, &f.xid, fh, state, 0, []byte("saved"))
@@ -3252,16 +3326,22 @@ func TestJoinBindKeepsCandidateAcrossRestart(t *testing.T) {
 	if fresh == 0 || fresh == stagingID {
 		t.Fatalf("candidate %+v, want a fresh transient", meta.Candidate)
 	}
-	status, joiner, _, _ := openFileForOwner(t, f.conn, &f.xid, f.wire, "b", "doc", nfs4.OPEN4_SHARE_ACCESS_BOTH, false, false)
+	status, second, secondFH, _ := openFileForOwner(t, f.conn, &f.xid, f.wire, "b", "doc", nfs4.OPEN4_SHARE_ACCESS_BOTH, false, false)
 	if status != nfs4.NFS4_OK {
-		t.Fatalf("join %s", nfs4.Nfsstat4Name(status))
+		t.Fatalf("independent OPEN %s", nfs4.Nfsstat4Name(status))
+	}
+	if secondID := stagingIDForTest(t, f.store, second); secondID == stagingID || bytes.Equal(secondFH, fh) {
+		t.Fatal("independent OPEN borrowed the pending writer")
+	}
+	if meta, ok := f.store.GetMeta(stagingID); !ok || meta.NFSStateID != extractStateID(stateidOf(state)) || meta.OpenOwner != "test-owner-doc" || meta.Candidate.ID != fresh {
+		t.Fatalf("sidecar %+v %t changed after independent OPEN", meta, ok)
 	}
 	f.restart()
-	if meta, ok := f.store.GetMeta(stagingID); !ok || meta.OpenOwner != "b" || meta.Candidate.ID != fresh {
-		t.Fatalf("recovered sidecar %+v %t, want the joiner with the fresh candidate", meta, ok)
+	if meta, ok := f.store.GetMeta(stagingID); !ok || meta.OpenOwner != "test-owner-doc" || meta.Candidate.ID != fresh {
+		t.Fatalf("recovered sidecar %+v %t, want the original writer with its fresh candidate", meta, ok)
 	}
-	if got := f.closeStatus(fh, joiner); got != nfs4.NFS4_OK {
-		t.Fatalf("joiner's recovered CLOSE %s", nfs4.Nfsstat4Name(got))
+	if got := f.closeStatus(fh, state); got != nfs4.NFS4_OK {
+		t.Fatalf("original writer's recovered CLOSE %s", nfs4.Nfsstat4Name(got))
 	}
 	if data, _ := readRoot(t, f.root, "doc"); data != "saved" {
 		t.Fatalf("doc holds %q", data)
@@ -3281,20 +3361,29 @@ func TestCandidateSurvivesRenameAndRestart(t *testing.T) {
 		t.Fatalf("CLOSE %s, want DELAY", nfs4.Nfsstat4Name(got))
 	}
 	pf.onLink(nil)
+	metaBeforeRename, ok := f.store.GetMeta(stagingID)
+	if !ok || metaBeforeRename.Candidate.ID == 0 || metaBeforeRename.Candidate.ID == stagingID {
+		t.Fatalf("pending candidate %+v %t, want a fresh transient", metaBeforeRename.Candidate, ok)
+	}
+	candidate := metaBeforeRename.Candidate
 	slot, seq := f.ts.acquire()
 	if got := compoundStatus(t, f.send(renameBody("doc", "moved"), slot, seq)); got != nfs4.NFS4_OK {
 		t.Fatalf("RENAME %s", nfs4.Nfsstat4Name(got))
 	}
 	f.ts.release(slot)
 	f.restart()
-	if meta, ok := f.store.GetMeta(stagingID); !ok || meta.Candidate.ID != stagingID || meta.FileName != "moved" {
-		t.Fatalf("recovered sidecar %+v %t, want the candidate at the new name", meta, ok)
+	if meta, ok := f.store.GetMeta(stagingID); !ok || meta.Candidate != candidate || meta.FileName != "moved" {
+		t.Fatalf("recovered sidecar %+v %t, want the same fresh candidate at the new name", meta, ok)
 	}
 	if got := f.closeStatus(fh, state); got != nfs4.NFS4_OK {
 		t.Fatalf("recovered CLOSE %s", nfs4.Nfsstat4Name(got))
 	}
 	if data, _ := readRoot(t, f.root, "moved"); data != "saved" {
 		t.Fatalf("moved holds %q", data)
+	}
+	published, err := f.srv.fs.Lookup(f.srv.fs.RootID(), "moved")
+	if err != nil || published == stagingID || published == candidate.ID {
+		t.Fatalf("recovered CLOSE published %v (%v), want a fresh candidate after the fenced one", published, err)
 	}
 }
 

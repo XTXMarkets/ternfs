@@ -57,8 +57,8 @@ func TestStartupLeaseDoesNotProtectAbsentRecord(t *testing.T) {
 	if expired, err := srv.decideExpired(n, false); err != nil || expired {
 		t.Fatalf("confirmed incarnation in the startup lease: expired=%v err=%v", expired, err)
 	}
-	if _, _, found, err := srv.recoveredStagingTarget(local.RootID(), "f", n, "o", true); err != nil || !found {
-		t.Fatalf("same boot's writer in the startup lease: found=%v err=%v", found, err)
+	if _, _, status := srv.claimFHRecoveryCandidate(id, n, "o"); status != nfs4.NFS4_OK {
+		t.Fatalf("same boot's writer in the startup lease: %s", nfs4.Nfsstat4Name(status))
 	}
 }
 

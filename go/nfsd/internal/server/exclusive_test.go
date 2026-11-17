@@ -37,8 +37,8 @@ func TestOpenExclusive4(t *testing.T) {
 		t.Fatalf("OPEN replay changed its result: %s", nfs4.Nfsstat4Name(status))
 	}
 	publishedFH := lookupFH(t, conn, &xid, "file")
-	if !bytes.Equal(publishedFH, fh) {
-		t.Fatal("exclusive writer does not hold the published empty filehandle")
+	if bytes.Equal(publishedFH, fh) {
+		t.Fatal("exclusive writer holds the published empty filehandle")
 	}
 	writeFileAt(t, conn, &xid, fh, state, 0, []byte("private"))
 	if data, err := os.ReadFile(filepath.Join(root, "file")); err != nil || len(data) != 0 {
@@ -94,8 +94,10 @@ func TestExclusiveVerifierDoesNotFollowReplacement(t *testing.T) {
 	if status != nfs4.NFS4_OK {
 		t.Fatal(nfs4.Nfsstat4Name(status))
 	}
-	// Writers on one client share staging, so the replacement comes from
-	// another client.
+	publishedFH := lookupFH(t, conn, &xid, "file")
+	if bytes.Equal(publishedFH, fh) {
+		t.Fatal("exclusive creator holds the published placeholder")
+	}
 	otherConn := dial(t, addr)
 	defer otherConn.Close()
 	otherID := setupClientAs(t, otherConn, &xid, "replacement-client", [8]byte{2})
@@ -103,6 +105,9 @@ func TestExclusiveVerifierDoesNotFollowReplacement(t *testing.T) {
 		nfs4.OPEN4_SHARE_ACCESS_BOTH, false, false)
 	if status != nfs4.NFS4_OK {
 		t.Fatal(nfs4.Nfsstat4Name(status))
+	}
+	if bytes.Equal(otherFH, publishedFH) || bytes.Equal(otherFH, fh) {
+		t.Fatal("independent replacement writer did not get a private filehandle")
 	}
 	writeFileAt(t, otherConn, &xid, otherFH, other, 0, []byte("replacement"))
 	closeFile(t, otherConn, &xid, otherFH, other)
@@ -119,7 +124,8 @@ func TestExclusiveVerifierDoesNotFollowReplacement(t *testing.T) {
 }
 
 func TestExclusiveCreateRecovery(t *testing.T) {
-	fs := vfs.NewLocalTernVFS(t.TempDir())
+	root := t.TempDir()
+	fs := vfs.NewLocalTernVFS(root)
 	stagingDir := t.TempDir()
 	store, err := staging.NewLocalStore(stagingDir, nil)
 	if err != nil {
@@ -137,6 +143,13 @@ func TestExclusiveCreateRecovery(t *testing.T) {
 	status, state, fh, _ := openExclusiveFile(t, conn, &xid, clientID, "owner", "file", verifier)
 	if status != nfs4.NFS4_OK {
 		t.Fatal(nfs4.Nfsstat4Name(status))
+	}
+	publishedFH := lookupFH(t, conn, &xid, "file")
+	if bytes.Equal(publishedFH, fh) {
+		t.Fatal("exclusive creator holds the published placeholder")
+	}
+	if data, _ := readFileData(t, conn, &xid, publishedFH, 0, 1024); len(data) != 0 {
+		t.Fatalf("published placeholder contains private data: %q", data)
 	}
 	writeFileAt(t, conn, &xid, fh, state, 0, []byte("checkpoint"))
 	conn.Close()
@@ -160,16 +173,23 @@ func TestExclusiveCreateRecovery(t *testing.T) {
 	if status != nfs4.NFS4ERR_EXIST {
 		t.Fatalf("changed verifier after restart: %s", nfs4.Nfsstat4Name(status))
 	}
-	status, state, restoredFH, flags := openExclusiveFile(t, conn, &xid, clientID, "owner", "file", verifier)
+	status, state, restoredFH, _ := openExclusiveFile(t, conn, &xid, clientID, "owner", "file", verifier)
 	if status != nfs4.NFS4_OK || !bytes.Equal(restoredFH, fh) {
-		t.Fatalf("recovery: %s, fh=%x, want %x", nfs4.Nfsstat4Name(status), restoredFH, fh)
+		t.Fatalf("recovery: %s, fh=%x, want private fh %x", nfs4.Nfsstat4Name(status), restoredFH, fh)
 	}
-	_ = flags
-	if data, _ := readFileData(t, conn, &xid, fh, 0, 1024); string(data) != "checkpoint" {
+	if currentPublishedFH := lookupFH(t, conn, &xid, "file"); !bytes.Equal(currentPublishedFH, publishedFH) ||
+		bytes.Equal(currentPublishedFH, restoredFH) {
+		t.Fatalf("recovery changed the published placeholder: fh=%x, original=%x, private=%x",
+			currentPublishedFH, publishedFH, restoredFH)
+	}
+	if data, _ := readFileData(t, conn, &xid, restoredFH, 0, 1024); string(data) != "checkpoint" {
 		t.Fatalf("recovered data = %q", data)
 	}
-	if status, _ := closeFileResult(t, conn, &xid, fh, state); status != nfs4.NFS4_OK {
+	if status, _ := closeFileResult(t, conn, &xid, restoredFH, state); status != nfs4.NFS4_OK {
 		t.Fatal(nfs4.Nfsstat4Name(status))
+	}
+	if data, err := os.ReadFile(filepath.Join(root, "file")); err != nil || string(data) != "checkpoint" {
+		t.Fatalf("published recovered data = %q, %v", data, err)
 	}
 }
 
@@ -195,7 +215,14 @@ func TestExclusiveSetattr(t *testing.T) {
 	if status != nfs4.NFS4_OK {
 		t.Fatal(nfs4.Nfsstat4Name(status))
 	}
+	publishedFH := lookupFH(t, conn, &xid, "file")
+	if bytes.Equal(publishedFH, fh) {
+		t.Fatal("exclusive creator holds the published placeholder")
+	}
 	writeFileAt(t, conn, &xid, fh, state, 0, []byte("payload"))
+	if data, _ := readFileData(t, conn, &xid, publishedFH, 0, 1024); len(data) != 0 {
+		t.Fatalf("published placeholder contains private data: %q", data)
+	}
 	atime, mtime := time.Unix(1_600_000_000, 123), time.Unix(1_700_000_000, 456)
 	mask := attrMask{1 << nfs4.FATTR4_SIZE,
 		1<<(nfs4.FATTR4_MODE-32) | 1<<(nfs4.FATTR4_TIME_ACCESS_SET-32) | 1<<(nfs4.FATTR4_TIME_MODIFY_SET-32)}

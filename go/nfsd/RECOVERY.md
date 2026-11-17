@@ -115,9 +115,9 @@ There are three paths, with different eligibility rules:
 
 | Path | Conditions |
 | --- | --- |
-| Continue with the old stateid | Sidecar matches the stateid and client incarnation, and the client presents the staging inode or the sidecar's base inode as its handle; its incarnation is still confirmed with a live lease. For a file the earlier process created, the base is the empty placeholder, which stays the client's handle after the name is renamed or removed. The stateid alone does not find the staging. |
-| Reopen by pathname | A unique eligible staging entry matches the target and access. Within the same incarnation, another open-owner can adopt shared staging. |
-| Writable `CLAIM_FH` on a cold daemon | A unique healthy, linked writer matches the client and recorded owner, and its recorded pathname still names the held handle. |
+| Continue with the old stateid | Sidecar matches the stateid and client incarnation, and the client presents its private staging inode as its handle. The stateid alone does not find staging through a published base. |
+| Fresh pathname open | Never adopts an old writer merely because target and open-owner match. A fresh private handle and staging version are constructed from the currently published base. |
+| Writable `CLAIM_FH` on a cold daemon | The handle identifies this client's own healthy, linked private staging, with the matching recorded owner. The target pathname must still exist, though its published base may have been replaced. Other fresh handles return STALE and require a pathname open. |
 
 If the old incarnation expired, recovery into a new incarnation additionally
 requires the sidecar's recovery key and original open-owner. The key
@@ -126,13 +126,13 @@ principal. A rebooted client, another principal or another client cannot
 adopt those bytes. The key does not depend on the old incarnation's
 record, which expiry removes.
 
-Recovery by pathname can retain an older writer's private version even
-after another writer published. Cold recovery by handle cannot do that
-when the name no longer contains the held inode. An unlinked or quarantined
-writer is also excluded from cold `CLAIM_FH` recovery. No candidate gives
-`NFS4ERR_STALE`; ambiguous candidates give `NFS4ERR_EXPIRED`. These responses
-do not guarantee that the client can repair an existing descriptor by
-looking up a name.
+Recovery can retain an older writer's private version after another writer
+has published over its base. Exact-handle recovery distinguishes multiple
+writers that shared a base; it does not choose one by inode order. An
+unlinked or quarantined writer is excluded from a new `CLAIM_FH` recovery.
+Fresh handles give `NFS4ERR_STALE`, which forces a pathname retry rather than
+risking an incorrect immutable version. These responses do not guarantee that
+an application relying only on an old handle can open without a pathname retry.
 
 The base and transient TernFS inodes must still exist. Retaining staging
 does not extend TernFS snapshot or transient-file retention.

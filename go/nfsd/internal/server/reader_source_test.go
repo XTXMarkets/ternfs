@@ -22,10 +22,10 @@ import (
 
 var errInjectedReader = errors.New("injected reader-source fault")
 
-// A READ that initially selected an immutable file can find a staging
-// after another OPEN upgrades the same owner. Both anonymous I/O and a
-// stateid with seqid zero must resolve that new source through staging.
-func TestReadAcrossWriterUpgrade(t *testing.T) {
+// A READ that selected an immutable file keeps it when another owner opens
+// a private writer. Both anonymous I/O and a stateid with seqid zero stay on
+// the published base instead of acquiring the writer's private staging.
+func TestReadAcrossIndependentWriterOpen(t *testing.T) {
 	for _, anonymous := range []bool{false, true} {
 		t.Run(fmt.Sprintf("anonymous=%t", anonymous), func(t *testing.T) {
 			gate := &getGateStore{entered: make(chan struct{}), release: make(chan struct{})}
@@ -36,7 +36,7 @@ func TestReadAcrossWriterUpgrade(t *testing.T) {
 			writer, fh, _ := f.writer(t, "doc", "saved")
 			closeFile(t, f.conn, f.xid, fh, writer)
 			fh = lookupFH(t, f.conn, f.xid, "doc")
-			status, reader, _ := openByHandle(t, f.conn, f.xid, f.clientID, "reader", fh, nfs4.OPEN4_SHARE_ACCESS_READ)
+			status, reader, _, _ := openFileForOwner(t, f.conn, f.xid, f.clientID, "reader", "doc", nfs4.OPEN4_SHARE_ACCESS_READ, false, false)
 			if status != nfs4.NFS4_OK {
 				t.Fatal(nfs4.Nfsstat4Name(status))
 			}
@@ -63,13 +63,19 @@ func TestReadAcrossWriterUpgrade(t *testing.T) {
 				read <- result{status, data}
 			}()
 			testutil.AwaitSignal(t, gate.entered, "READ after choosing immutable version")
-			if status, _, _ := openByHandle(t, f.conn, f.xid, f.clientID, "reader", fh, nfs4.OPEN4_SHARE_ACCESS_WRITE); status != nfs4.NFS4_OK {
-				t.Fatal(nfs4.Nfsstat4Name(status))
+			writerStatus, writer, writerFH, _ := openFileForOwner(t, f.conn, f.xid, f.clientID, "writer", "doc", nfs4.OPEN4_SHARE_ACCESS_WRITE, false, false)
+			if writerStatus != nfs4.NFS4_OK {
+				t.Fatal(nfs4.Nfsstat4Name(writerStatus))
 			}
+			writeFileAt(t, f.conn, f.xid, writerFH, writer, 0, []byte("private"))
 			testutil.CloseSignal(gate.release)
 			got := testutil.AwaitValue(t, read, "READ")
 			if got.status != nfs4.NFS4_OK || got.data != "saved" {
-				t.Fatalf("READ across upgrade: %s %q, want saved", nfs4.Nfsstat4Name(got.status), got.data)
+				t.Fatalf("READ across independent writer OPEN: %s %q, want saved", nfs4.Nfsstat4Name(got.status), got.data)
+			}
+			closeFile(t, f.conn, f.xid, writerFH, writer)
+			if data, _ := readFileData(t, f.conn, f.xid, lookupFH(t, f.conn, f.xid, "doc"), 0, 64); string(data) != "private" {
+				t.Fatalf("writer published %q, want private", data)
 			}
 		})
 	}
@@ -137,16 +143,9 @@ func newReaderFixture(t *testing.T, content string) *readerFixture {
 	return f
 }
 
-// openReader opens "f" for READ as owner "r", by handle or by name.
-func (f *readerFixture) openReader(t *testing.T, claimFH bool) [16]byte {
+// openReader opens "f" for READ as owner "r" by name.
+func (f *readerFixture) openReader(t *testing.T) [16]byte {
 	t.Helper()
-	if claimFH {
-		status, sid, _ := openByHandle(t, f.conn, &f.xid, f.clientID, "r", f.fh, nfs4.OPEN4_SHARE_ACCESS_READ)
-		if status != nfs4.NFS4_OK {
-			t.Fatalf("reader OPEN by handle %s", nfs4.Nfsstat4Name(status))
-		}
-		return sid
-	}
 	status, sid, _, _ := openFileForOwner(t, f.conn, &f.xid, f.clientID, "r", "f", nfs4.OPEN4_SHARE_ACCESS_READ, false, false)
 	if status != nfs4.NFS4_OK {
 		t.Fatalf("reader OPEN by name %s", nfs4.Nfsstat4Name(status))
@@ -154,13 +153,13 @@ func (f *readerFixture) openReader(t *testing.T, claimFH bool) [16]byte {
 	return sid
 }
 
-func (f *readerFixture) openWriter(t *testing.T) [16]byte {
+func (f *readerFixture) openWriter(t *testing.T) ([16]byte, []byte) {
 	t.Helper()
-	status, sid, _ := openByHandle(t, f.conn, &f.xid, f.clientID, "w", f.fh, nfs4.OPEN4_SHARE_ACCESS_WRITE)
+	status, sid, fh, _ := openFileForOwner(t, f.conn, &f.xid, f.clientID, "w", "f", nfs4.OPEN4_SHARE_ACCESS_WRITE, false, false)
 	if status != nfs4.NFS4_OK {
 		t.Fatalf("writer OPEN %s", nfs4.Nfsstat4Name(status))
 	}
-	return sid
+	return sid, fh
 }
 
 // read reads through sid and returns the status and data.
@@ -180,63 +179,56 @@ func (f *readerFixture) dataID(t *testing.T, sid [16]byte) vfs.InodeID {
 	return state.DataID
 }
 
-// Another owner's read OPEN sees the client's writer's staging; a clean
-// writer CLOSE then leaves the reader on the published file, not NOENT
-// (../openstate/README.md#reader-visibility; the conversion regression).
+// An independent read OPEN retains the published base while another owner's
+// writer is open and after its clean CLOSE.
 func TestAssessmentReadSurvivesCleanWriterClose(t *testing.T) {
-	for _, claimFH := range []bool{true, false} {
-		name := "CLAIM_NULL"
-		if claimFH {
-			name = "CLAIM_FH"
-		}
-		t.Run(name, func(t *testing.T) {
-			f := newReaderFixture(t, "original")
-			writer := f.openWriter(t)
-			reader := f.openReader(t, claimFH)
-			if status, data := f.read(t, reader); status != nfs4.NFS4_OK || data != "original" {
-				t.Fatalf("reader before CLOSE %s %q", nfs4.Nfsstat4Name(status), data)
-			}
-			closeFile(t, f.conn, &f.xid, f.fh, writer)
-			if status, data := f.read(t, reader); status != nfs4.NFS4_OK || data != "original" {
-				t.Fatalf("reader after clean CLOSE %s %q", nfs4.Nfsstat4Name(status), data)
-			}
-			if got := f.dataID(t, reader); got != f.fileID {
-				t.Fatalf("reader source %d, want the published %d", got, f.fileID)
-			}
-			closeFile(t, f.conn, &f.xid, f.fh, reader)
-		})
+	f := newReaderFixture(t, "original")
+	writer, writerFH := f.openWriter(t)
+	reader := f.openReader(t)
+	if got := f.dataID(t, reader); got != f.fileID {
+		t.Fatalf("reader source before CLOSE %d, want the published %d", got, f.fileID)
 	}
+	if status, data := f.read(t, reader); status != nfs4.NFS4_OK || data != "original" {
+		t.Fatalf("reader before CLOSE %s %q", nfs4.Nfsstat4Name(status), data)
+	}
+	closeFile(t, f.conn, &f.xid, writerFH, writer)
+	if status, data := f.read(t, reader); status != nfs4.NFS4_OK || data != "original" {
+		t.Fatalf("reader after clean CLOSE %s %q", nfs4.Nfsstat4Name(status), data)
+	}
+	if got := f.dataID(t, reader); got != f.fileID {
+		t.Fatalf("reader source %d, want the published %d", got, f.fileID)
+	}
+	closeFile(t, f.conn, &f.xid, f.fh, reader)
 }
 
-// A publication that fails on hydration leaves the reader with IO, never
-// the old bytes and never NOENT. TestFailedPublicationFencesBeforeQuarantine
-// does the same for a LinkFile error.
-func TestReaderGetsIOAfterFailedPublication(t *testing.T) {
+// A publication that fails on the writer's hydration does not disturb an
+// independent reader's retained base.
+func TestIndependentReaderSurvivesFailedPublication(t *testing.T) {
 	f := newReaderFixture(t, "original content")
-	writer := f.openWriter(t)
-	reader := f.openReader(t, true)
+	writer, writerFH := f.openWriter(t)
+	reader := f.openReader(t)
 	// The WRITE starts hydration in the background; reading the base
 	// fails from before it.
 	f.fs.mu.Lock()
 	f.fs.failRead = f.fileID
 	f.fs.mu.Unlock()
-	writeFileAt(t, f.conn, &f.xid, f.fh, writer, 0, []byte("X"))
-	if status := closeFileStatus(t, f.conn, &f.xid, f.fh, writer); status == nfs4.NFS4_OK {
+	writeFileAt(t, f.conn, &f.xid, writerFH, writer, 0, []byte("X"))
+	if status := closeFileStatus(t, f.conn, &f.xid, writerFH, writer); status == nfs4.NFS4_OK {
 		t.Fatal("CLOSE succeeded despite the hydration failure")
 	}
 	f.fs.mu.Lock()
 	f.fs.failRead = 0
 	f.fs.mu.Unlock()
-	if status, data := f.read(t, reader); status != nfs4.NFS4ERR_IO {
-		t.Fatalf("reader after hydration failure %s %q, want IO", nfs4.Nfsstat4Name(status), data)
+	if status, data := f.read(t, reader); status != nfs4.NFS4_OK || data != "original content" {
+		t.Fatalf("reader after hydration failure %s %q, want original content", nfs4.Nfsstat4Name(status), data)
 	}
 }
 
-// A read OPEN that chose the writer's staging and then waited behind a
-// clean CLOSE selects again under the file lock and ends on the file.
+// A read OPEN that waits behind another owner's clean CLOSE ends on the
+// published base, not the writer's private staging.
 func TestReadOpenBehindCleanCloseEndsOnFile(t *testing.T) {
 	f := newReaderFixture(t, "original")
-	writer := f.openWriter(t)
+	writer, writerFH := f.openWriter(t)
 	// The OPEN goes on another connection of the client: two requests in
 	// flight on one connection would share its replies.
 	conn := dial(t, addrOfTestServer(t, f.srv))
@@ -250,12 +242,12 @@ func TestReadOpenBehindCleanCloseEndsOnFile(t *testing.T) {
 	closed := make(chan uint32, 1)
 	go func() {
 		xid := uint32(5000)
-		closed <- closeFileStatus(t, f.conn, &xid, f.fh, writer)
+		closed <- closeFileStatus(t, f.conn, &xid, writerFH, writer)
 	}()
 	testutil.AwaitSignal(t, recording, "clean CLOSE recording its reply")
 	opened := make(chan [16]byte, 1)
 	go func() {
-		status, sid, _ := openByHandle(t, conn, &xid, f.clientID, "r", f.fh, nfs4.OPEN4_SHARE_ACCESS_READ)
+		status, sid, _, _ := openFileForOwner(t, conn, &xid, f.clientID, "r", "f", nfs4.OPEN4_SHARE_ACCESS_READ, false, false)
 		if status != nfs4.NFS4_OK {
 			t.Errorf("reader OPEN %s", nfs4.Nfsstat4Name(status))
 		}

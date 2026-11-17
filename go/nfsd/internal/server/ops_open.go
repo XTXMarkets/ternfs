@@ -112,23 +112,14 @@ func (s *Server) retireInactiveRecovered(clientID uint64, retire func()) uint32 
 	return nfs4.NFS4ERR_EXPIRED
 }
 
-// recoveredDataID finds the staging of clientID's write open issued by an
-// earlier nfsd process. Its client may present the staging inode as the
-// handle (as before this process), or the base inode the staging replaces.
-// A file created by OPEN has the empty placeholder published at its name as
-// its base, which is the handle its client holds. Another client's staging
-// is not found.
+// recoveredDataID finds the staging of clientID's writer through that
+// writer's private transient handle. Another client's staging is not found.
 func (s *Server) recoveredDataID(clientID uint64, id nfs4.StateID, fileID vfs.InodeID) (vfs.InodeID, bool) {
 	if !s.opens.CanRecover(id) {
 		return 0, false
 	}
 	if meta, ok := s.stagingStore.GetMeta(fileID); ok && meta.NFSStateID == id {
 		return fileID, meta.ClientID == clientID
-	}
-	for stagingID, meta := range s.stagingStore.Entries() {
-		if meta.NFSStateID == id && meta.BaseID == fileID {
-			return stagingID, meta.ClientID == clientID
-		}
 	}
 	return 0, false
 }
@@ -254,6 +245,10 @@ func (s *Server) releaseWrite(openStateid nfs4.Stateid4, st *compoundState, clos
 	meta, hasMeta, unlockTarget := s.lockStagingTarget(dataID)
 	releaseTarget := st.hold(unlockTarget)
 	releaseOpen := st.hold(s.opens.LockFile(st.currentID))
+	releaseBase := func() {}
+	if hasMeta && meta.BaseID != 0 && meta.BaseID != st.currentID {
+		releaseBase = st.hold(s.opens.LockFile(meta.BaseID))
+	}
 	if recovered && s.opens.Live(sid) {
 		// Adopted since the lookup above, by a request that took these
 		// locks first. No adoption can start while they are held, so the
@@ -266,6 +261,7 @@ func (s *Server) releaseWrite(openStateid nfs4.Stateid4, st *compoundState, clos
 			return openstate.State{}, status
 		}
 		if current.DataID != dataID {
+			releaseBase()
 			releaseOpen()
 			releaseTarget()
 			return s.releaseWrite(openStateid, st, closing, to)
@@ -333,9 +329,8 @@ func (s *Server) releaseWrite(openStateid nfs4.Stateid4, st *compoundState, clos
 	}
 	if hasMeta && !recovered {
 		if next, ok := s.opens.OtherWriter(sid, dataID); ok {
-			// Another open of this client still writes the shared staging.
-			// The final write CLOSE publishes it; hand the sidecar's
-			// ownership to that open so recovery and expiry follow it.
+			// Another open still writes this staging. The final write CLOSE
+			// publishes it; hand the sidecar's ownership to that open.
 			s.log.Info("close: staging handed to another open of this client", "inode", dataID, "stateid", sid, "next", next.ID)
 			if meta.NFSStateID == sid {
 				if err := s.stagingStore.Bind(dataID, next.Owner.ClientID, next.ID, next.Owner.Owner, false); err != nil {
@@ -534,14 +529,24 @@ func (s *Server) endStaging(
 	case uploaded:
 		s.opens.Retarget(dataID, published)
 	default:
-		// Clean, timestamp-only or ended: back to the published file.
-		s.opens.Retarget(dataID, 0)
+		fallback := published
+		if fallback == 0 {
+			fallback = meta.BaseID
+			if owner.ClientID != 0 && fallback != 0 {
+				s.publishedAs(owner.ClientID, st.currentID, fallback)
+			}
+		}
+		s.opens.Retarget(dataID, fallback)
 	}
 	s.stagingStore.Remove(dataID)
 	if !uploaded && !fenced {
 		c := unpublished(dataID, meta, candidate)
 		st.later(func() { _ = s.scrapTransient(dataID, c) })
 	}
+	// Fresh candidates leave the original staging transient unlinked.
+	st.later(func() {
+		_ = s.scrapTransient(dataID, staging.Candidate{ID: dataID, Cookie: meta.TernCookie})
+	})
 	if endErr != nil {
 		status := s.errToNFS(endErr)
 		s.log.Error("close: publication failed", "inode", dataID, "name", meta.FileName,
@@ -685,6 +690,9 @@ func (s *Server) adoptRecoveredWriter(clientID uint64, handleID, dataID vfs.Inod
 func (s *Server) recoveredWritersOf(clientID uint64, handleID vfs.InodeID) []vfs.InodeID {
 	var ids []vfs.InodeID
 	for _, id := range s.stagingStore.RecoveredWriters(handleID) {
+		if id != handleID {
+			continue
+		}
 		meta, ok := s.stagingStore.GetMeta(id)
 		if !ok || meta.ClientID != clientID || meta.ReadOnly || !s.opens.CanRecover(meta.NFSStateID) {
 			continue
@@ -719,41 +727,19 @@ func publicationDelayed(err error) bool {
 }
 
 // publishStaging returns the inode now published for a staging and its
-// data version. TernFS appends spans at a file's current size, so a
-// transient that may hold some is never written again: the candidate, the
-// transient last submitted, is resolved first, and a linked one with the
-// current data version is the publication; otherwise one fresh transient
-// is linked.
+// data version. The first publication always uses a fresh transient, so
+// linking the result never exposes the private staging inode as the pathname's
+// next version. TernFS appends spans at a file's current size, so a transient
+// that may hold some is never written again: the candidate, the transient last
+// submitted, is resolved first, and a linked one with the current data version
+// is the publication; otherwise one fresh transient is linked.
 func (s *Server) publishStaging(stagingID vfs.InodeID, meta staging.Meta, sf staging.File) (vfs.InodeID, uint64, error) {
 	c := sf.Candidate()
 	// linkErr is a first submission's error that another copy of the
 	// request may hide: it stands only if the candidate did not link.
 	var linkErr error
 	if c.ID == 0 {
-		if err := s.hydrateForPublication(sf); err != nil {
-			return 0, 0, err
-		}
-		// Set before the submission, so that a checkpoint during the upload
-		// records it beside the newer data version.
-		c = staging.Candidate{ID: stagingID, Cookie: meta.TernCookie, Version: sf.DataVersion()}
-		if err := sf.SetCandidate(c, false); err != nil {
-			return 0, 0, err
-		}
-		err := s.linkCandidate(c, meta, sf)
-		switch {
-		case err == nil && sf.DataVersion() == c.Version:
-			return c.ID, c.Version, nil
-		case err == nil:
-			// A WRITE, which takes no file lock, landed during the upload.
-			return s.publishFresh(meta, sf)
-		case publicationDelayed(err):
-			if err := sf.SetCandidate(c, true); err != nil {
-				s.log.Warn("close: save publication candidate", "inode", stagingID, "err", err)
-			}
-			return 0, 0, err
-		case !os.IsNotExist(err):
-			linkErr = err
-		}
+		return s.publishFresh(meta, sf)
 	}
 	linked, err := s.resolveCandidate(c)
 	switch {
@@ -957,10 +943,10 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 	}
 
 	// targetID is the inode the open's I/O uses; publishedID is the inode
-	// the name resolves to, which is the filehandle OPEN returns.
+	// the pathname resolves to. A staged OPEN returns targetID as its private
+	// filehandle, while an ordinary read OPEN returns publishedID.
 	var targetID, publishedID vfs.InodeID
 	var nfsSID nfs4.StateID
-	joined := false
 	created := false
 	staged := false
 	reusedStaging := false
@@ -992,7 +978,7 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 	}
 
 	// openDir and openName are where the file is opened, remembered for
-	// later opens by filehandle.
+	// later exact-handle recovery. Fresh opens use the pathname fallback.
 	var openDir vfs.InodeID
 	var openName string
 	// A writable CLAIM_FH this nfsd cannot name may recover a staged writer
@@ -1023,7 +1009,12 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 				return fail(nfs4.NFS4ERR_INVAL)
 			}
 			if access&nfs4.OPEN4_SHARE_ACCESS_WRITE == 0 {
-				if _, err := s.fs.Stat(fileID); err != nil {
+				if _, seen := s.names.lookup(fileID); seen {
+					if _, _, current := s.nameOf(fileID); !current {
+						return fail(nfs4.NFS4ERR_STALE)
+					}
+				}
+				if _, err := s.stat(fileID); err != nil {
 					return fail(s.errToNFS(err))
 				}
 				targetID, publishedID = s.clientView(clientID, fileID), fileID
@@ -1045,6 +1036,9 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 				dirID, fileName = recoverMeta.DirID, recoverMeta.FileName
 				recovering = true
 			}
+			if !recovering {
+				return fail(nfs4.NFS4ERR_STALE)
+			}
 		} else {
 			dirID = st.currentID
 			if status := requireDirectory(dirID); status != nfs4.NFS4_OK {
@@ -1062,24 +1056,8 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 				dirID: dirID,
 				name:  fileName,
 			}))
-			var recoveryErr error
-			recoveredStagingID, recoveredStagingMeta,
-				hasRecoveredStaging, recoveryErr = s.recoveredStagingTarget(
-				dirID, fileName, clientID, ownerKey.Owner,
-				access&nfs4.OPEN4_SHARE_ACCESS_WRITE != 0,
-			)
-			if recovering && errors.Is(recoveryErr, nfs4.Error(nfs4.NFS4ERR_EXPIRED)) {
-				// Another staging became selectable since preselection.
-				return fail(nfs4.NFS4ERR_STALE)
-			}
-			if recoveryErr != nil {
-				return fail(statusOf(recoveryErr))
-			}
-			if recovering && !s.sameRecoveryCandidate(recoverID, recoverMeta,
-				recoveredStagingID, recoveredStagingMeta, hasRecoveredStaging) {
-				// The preselected staging was rebound, removed or failed, or
-				// another one is selected now: adopt nothing.
-				return fail(nfs4.NFS4ERR_STALE)
+			if recovering {
+				recoveredStagingID, recoveredStagingMeta, hasRecoveredStaging = recoverID, recoverMeta, true
 			}
 		}
 
@@ -1159,7 +1137,7 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 				if !found || meta.ReadOnly != (access&nfs4.OPEN4_SHARE_ACCESS_WRITE == 0) {
 					return fail(nfs4.NFS4ERR_EXIST)
 				}
-				existing, local := s.opens.ExistingOpen(ownerKey, publishedID)
+				existing, local := s.opens.ExistingOpen(ownerKey, stagingID)
 				if local && existing.ID == meta.NFSStateID {
 					nfsSID = existing.ID
 					reusedStaging, staged = true, true
@@ -1204,34 +1182,14 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 					}
 					return fail(lookupStatus)
 				}
-			} else if claimType == nfs4.CLAIM_FH && id != st.currentID {
+			} else if claimType == nfs4.CLAIM_FH && !recovering && id != st.currentID {
 				// Replaced since the name was checked.
 				return fail(nfs4.NFS4ERR_STALE)
 			} else {
-				// A read sees this client's own writes to the file.
-				targetID = s.clientView(clientID, id)
+				targetID = id
 			}
 		}
 
-		if !staged && access&nfs4.OPEN4_SHARE_ACCESS_WRITE != 0 {
-			// Join this client's writer of the same file, or the staging of
-			// its read-only create of it.
-			writer, ok := s.opens.WriterOf(clientID, publishedID)
-			if !ok {
-				writer, ok = s.readOnlyCreator(clientID, publishedID)
-			}
-			if ok {
-				if s.stagingStore.Failed(writer.DataID) {
-					// As for any operation on that writer.
-					return fail(nfs4.NFS4ERR_IO)
-				}
-				targetID = writer.DataID
-				staged, joined = true, true
-				if writer.Owner == ownerKey {
-					nfsSID = writer.ID
-				}
-			}
-		}
 		if !staged && (created || access&nfs4.OPEN4_SHARE_ACCESS_WRITE != 0) {
 			if status := requireRegularFile(targetID); status != nfs4.NFS4_OK {
 				if targetID.Type() == vfs.InodeTypeSymlink {
@@ -1258,9 +1216,6 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 
 	stagingRebound := false
 	cleanupStagedOpen := func() {
-		if joined {
-			return
-		}
 		if reusedStaging {
 			if stagingRebound {
 				if err := s.stagingStore.Rebind(
@@ -1285,15 +1240,6 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 		}
 		return s.setStagingSize(sf, *openSize)
 	}
-	if joined && openSize != nil {
-		// A joined writer applies the size to the shared staging, as a
-		// truncating open through the client's cache would.
-		if err := applyOpenSize(); err != nil {
-			cleanupStagedOpen()
-			return fail(nfs4.NFS4ERR_IO)
-		}
-	}
-
 	if status := requireRegularFile(targetID); status != nfs4.NFS4_OK {
 		if targetID.Type() == vfs.InodeTypeSymlink {
 			status = nfs4.NFS4ERR_SYMLINK
@@ -1301,7 +1247,7 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 		return fail(status)
 	}
 
-	releaseOpen := st.hold(s.opens.LockFile(publishedID))
+	releaseOpen := st.hold(s.opens.LockFile(targetID))
 	if !staged && !created && access&nfs4.OPEN4_SHARE_ACCESS_WRITE == 0 {
 		// A writer's CLOSE may have ended the staging this read selected
 		// while it waited for the file (../openstate/README.md#reader-visibility).
@@ -1318,8 +1264,10 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 		}
 	}
 	markID := nfsSID
-	if existing, ok := s.opens.ExistingOpen(ownerKey, publishedID); ok {
-		markID = existing.ID
+	if !construct {
+		if existing, ok := s.opens.ExistingOpen(ownerKey, targetID); ok {
+			markID = existing.ID
+		}
 	}
 	if markID == (nfs4.StateID{}) {
 		markID = s.opens.NewStateID()
@@ -1362,17 +1310,19 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 		}
 		return fail(status)
 	}
-	// A joined staging bound to a closing open, or to a read-only create, is
-	// bound to this writer, so a restart recovers the writer under the owner
-	// still using it.
-	var joinedFrom staging.Meta
-	if joined {
-		if meta, ok := s.stagingStore.GetMeta(targetID); ok &&
-			(meta.ReadOnly || meta.NFSStateID != markID && s.opens.Closing(meta.NFSStateID)) {
-			if err := s.stagingStore.Bind(targetID, clientID, markID, ownerKey.Owner, false); err != nil {
-				return fail(nfs4.NFS4ERR_IO)
+	if recovering {
+		confirmedID, confirmedMeta, status := s.claimFHRecoveryCandidate(st.currentID, clientID, ownerKey.Owner)
+		if status != nfs4.NFS4_OK {
+			return fail(status)
+		}
+		if !s.sameRecoveryCandidate(recoverID, recoverMeta, confirmedID, confirmedMeta, true) {
+			return fail(nfs4.NFS4ERR_STALE)
+		}
+		if _, err := s.fs.Lookup(recoverMeta.DirID, recoverMeta.FileName); err != nil {
+			if s.errToNFS(err) == nfs4.NFS4ERR_NOENT {
+				return fail(nfs4.NFS4ERR_STALE)
 			}
-			joinedFrom = meta
+			return fail(s.errToNFS(err))
 		}
 	}
 	if reusedStaging && recoveredStagingMeta.NFSStateID != markID {
@@ -1404,32 +1354,31 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 		}
 		placeholderPublished = true
 	}
+	handleID := publishedID
+	if staged {
+		handleID = targetID
+	}
 	state, err := s.opens.Open(
 		ownerKey,
-		publishedID,
+		handleID,
 		targetID,
 		openstate.Grant{Access: access, Deny: args.ShareDeny()},
 		nfsSID,
 	)
 	if err != nil {
-		if joinedFrom.ClientID != 0 {
-			if err := s.stagingStore.Bind(targetID, joinedFrom.ClientID, joinedFrom.NFSStateID,
-				joinedFrom.OpenOwner, joinedFrom.ReadOnly); err != nil {
-				s.log.Error("restore joined staging owner", "err", err)
-			}
-		}
 		if staged {
 			cleanupStagedOpen()
 		}
 		return fail(nfs4.NFS4ERR_SERVERFAULT)
 	}
 	if state.Writes() {
-		s.views.AddWriter(openstate.ViewKey{ClientID: clientID, FileID: publishedID}, state.DataID)
+		s.views.AddWriter(openstate.ViewKey{ClientID: clientID, FileID: state.FileID}, state.DataID)
 	}
 	if placeholderDir != 0 {
 		s.names.remember(publishedID, placeholderDir, placeholderName)
-	} else if openDir != 0 {
-		s.names.remember(publishedID, openDir, openName)
+	}
+	if openDir != 0 {
+		s.names.remember(state.FileID, openDir, openName)
 	}
 	response := openResponse{state: state, created: created}
 	return writeOpenResponse(w, st, response)

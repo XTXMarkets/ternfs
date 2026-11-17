@@ -71,38 +71,44 @@ func TestOpenClaimFH(t *testing.T) {
 	closeFile(t, conn, &xid, fh, state)
 	fh = lookupFH(t, conn, &xid, "file")
 
-	status, reader, readerFH := openByHandle(t, conn, &xid, clientID, "reader", fh, nfs4.OPEN4_SHARE_ACCESS_READ)
+	status, readerSid, readerFH := openByHandle(t, conn, &xid, clientID, "reader", fh, nfs4.OPEN4_SHARE_ACCESS_READ)
 	if status != nfs4.NFS4_OK || !bytes.Equal(readerFH, fh) {
 		t.Fatalf("read CLAIM_FH = %s", nfs4.Nfsstat4Name(status))
 	}
-	status, writer, writerFH := openByHandle(t, conn, &xid, clientID, "writer", fh, nfs4.OPEN4_SHARE_ACCESS_BOTH)
-	if status != nfs4.NFS4_OK || !bytes.Equal(writerFH, fh) {
-		t.Fatalf("write CLAIM_FH = %s", nfs4.Nfsstat4Name(status))
+	status, _, _ = openByHandle(t, conn, &xid, clientID, "writer", fh, nfs4.OPEN4_SHARE_ACCESS_BOTH)
+	if status != nfs4.NFS4ERR_STALE {
+		t.Fatalf("write CLAIM_FH = %s, want STALE", nfs4.Nfsstat4Name(status))
 	}
-	writeFileAt(t, conn, &xid, fh, writer, 0, []byte("SECOND"))
-	closeFile(t, conn, &xid, fh, writer)
+	status, writer, writerFH, _ := openFileForOwner(t, conn, &xid, clientID, "writer", "file", nfs4.OPEN4_SHARE_ACCESS_BOTH, false, false)
+	if status != nfs4.NFS4_OK || bytes.Equal(writerFH, fh) {
+		t.Fatalf("CLAIM_NULL = %s, private handle differs: %t", nfs4.Nfsstat4Name(status), !bytes.Equal(writerFH, fh))
+	}
+	writeFileAt(t, conn, &xid, writerFH, writer, 0, []byte("SECOND"))
+	closeFile(t, conn, &xid, writerFH, writer)
 	if data, _ := readFileData(t, conn, &xid, lookupFH(t, conn, &xid, "file"), 0, 64); string(data) != "SECOND" {
 		t.Fatalf("published %q", data)
 	}
-	closeFile(t, conn, &xid, fh, reader)
+	closeFile(t, conn, &xid, readerFH, readerSid)
 
-	// After the closing client's alias lapses, the old handle names the
-	// replaced version, whose name now belongs to another inode. A write
-	// open by handle then reports STALE, and the client looks up the name.
 	other := dial(t, addr)
 	defer other.Close()
 	otherID := setupClientAs(t, other, &xid, "other", [8]byte{2})
-	if status, _, _ := openByHandle(t, other, &xid, otherID, "writer", fh, nfs4.OPEN4_SHARE_ACCESS_BOTH); status != nfs4.NFS4ERR_STALE {
-		t.Fatalf("write CLAIM_FH of replaced file = %s, want STALE", nfs4.Nfsstat4Name(status))
-	}
-	if status, sid, _ := openByHandle(t, other, &xid, otherID, "reader", fh, nfs4.OPEN4_SHARE_ACCESS_READ); status != nfs4.NFS4_OK {
-		t.Fatalf("read CLAIM_FH of replaced file = %s", nfs4.Nfsstat4Name(status))
-	} else {
-		if data, _ := readFileData(t, other, &xid, fh, 0, 64); string(data) != "first" {
-			t.Fatalf("replaced version reads %q", data)
+	for _, access := range []uint32{nfs4.OPEN4_SHARE_ACCESS_READ, nfs4.OPEN4_SHARE_ACCESS_BOTH} {
+		if status, _, _ := openByHandle(t, other, &xid, otherID, "reader", fh, access); status != nfs4.NFS4ERR_STALE {
+			t.Fatalf("CLAIM_FH after replacement = %s, want STALE", nfs4.Nfsstat4Name(status))
 		}
-		closeFile(t, other, &xid, fh, sid)
 	}
+	if data, _ := readFileData(t, other, &xid, fh, 0, 64); string(data) != "first" {
+		t.Fatalf("retained handle reads %q", data)
+	}
+	status, reader, readerFH, _ := openFileForOwner(t, other, &xid, otherID, "reader", "file", nfs4.OPEN4_SHARE_ACCESS_READ, false, false)
+	if status != nfs4.NFS4_OK {
+		t.Fatalf("read CLAIM_NULL after replacement = %s", nfs4.Nfsstat4Name(status))
+	}
+	if data, _ := readFileData(t, other, &xid, readerFH, 0, 64); string(data) != "SECOND" {
+		t.Fatalf("replacement reads %q", data)
+	}
+	closeFile(t, other, &xid, readerFH, reader)
 }
 
 func downgradeForTest(t *testing.T, conn net.Conn, xid *uint32, fh []byte, sid [16]byte, access uint32) {
@@ -135,21 +141,22 @@ func TestRsyncInPlaceSequence(t *testing.T) {
 	writeFileAt(t, conn, &xid, fh, state, 0, []byte("old target\n"))
 	closeFile(t, conn, &xid, fh, state)
 	fh = lookupFH(t, conn, &xid, "target")
-	status, sid, _ := openByHandle(t, conn, &xid, clientID, "owner", fh, nfs4.OPEN4_SHARE_ACCESS_WRITE)
+	status, sid, writerFH, _ := openFileForOwner(t, conn, &xid, clientID, "owner", "target", nfs4.OPEN4_SHARE_ACCESS_WRITE, false, false)
+	if status != nfs4.NFS4_OK || bytes.Equal(writerFH, fh) {
+		t.Fatalf("private write CLAIM_NULL = %s", nfs4.Nfsstat4Name(status))
+	}
+	writerSID := sid
+	status, sid, readerFH, _ := openFileForOwner(t, conn, &xid, clientID, "owner", "target", nfs4.OPEN4_SHARE_ACCESS_READ, false, false)
 	if status != nfs4.NFS4_OK {
 		t.Fatal(nfs4.Nfsstat4Name(status))
 	}
-	status, sid, _ = openByHandle(t, conn, &xid, clientID, "owner", fh, nfs4.OPEN4_SHARE_ACCESS_READ)
-	if status != nfs4.NFS4_OK {
-		t.Fatal(nfs4.Nfsstat4Name(status))
-	}
-	readFileData(t, conn, &xid, fh, 0, 64)
-	downgradeForTest(t, conn, &xid, fh, sid, nfs4.OPEN4_SHARE_ACCESS_WRITE)
-	cur := sid
+	readFileData(t, conn, &xid, readerFH, 0, 64)
+	downgradeForTest(t, conn, &xid, writerFH, writerSID, nfs4.OPEN4_SHARE_ACCESS_WRITE)
+	cur := writerSID
 	binary.BigEndian.PutUint32(cur[:4], 0)
-	setSizeForTest(t, conn, &xid, fh, cur, 33)
-	writeFileAt(t, conn, &xid, fh, cur, 0, []byte("replacement from rsync --inplace\n"))
-	closeFile(t, conn, &xid, fh, cur)
+	setSizeForTest(t, conn, &xid, writerFH, cur, 33)
+	writeFileAt(t, conn, &xid, writerFH, cur, 0, []byte("replacement from rsync --inplace\n"))
+	closeFile(t, conn, &xid, writerFH, cur)
 	if data, _ := readFileData(t, conn, &xid, lookupFH(t, conn, &xid, "target"), 0, 64); string(data) != "replacement from rsync --inplace\n" {
 		t.Fatalf("published %q", data)
 	}

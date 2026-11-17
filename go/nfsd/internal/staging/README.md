@@ -154,10 +154,8 @@ fails is logged.
 been rebound to another owner since the caller checked. `Rebind` gives a
 writer a new incarnation and stateid on recovery. `Bind` names another
 open as the owner in one save, with its open-owner and whether it only
-reads: when an earlier CLOSE
-hands shared staging to another writer, when a write open takes over the
-staging of an open whose CLOSE answered DELAY, and when a detached staging
-is kept for a read open. Both clear `Retired`, reopening a retired writer's
+reads: when a writer's owner changes during recovery or delayed-close
+handling, and when a detached staging is retained for its read open. Both clear `Retired`, reopening a retired writer's
 data file. If the save fails they keep the previous owner in memory and try
 to write the previous sidecar back. That can fail too; the checkpoint is
 then marked dirty, and the sidecar on disk may be either version. A failed

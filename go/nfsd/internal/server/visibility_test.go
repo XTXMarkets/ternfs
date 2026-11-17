@@ -22,8 +22,9 @@ import (
 )
 
 // exerciseVisibleCreation checks that CREATE publishes an empty file at
-// once. The creator's client sees its staged contents through the empty
-// file's handle; other clients see the empty version until CLOSE.
+// once. The creator receives a private handle for its staged contents;
+// clients see the empty version through the published handle until a writer
+// publishes its own replacement.
 func exerciseVisibleCreation(t *testing.T, addr, name string, reverse bool) {
 	t.Helper()
 	conn := dial(t, addr)
@@ -36,8 +37,8 @@ func exerciseVisibleCreation(t *testing.T, addr, name string, reverse bool) {
 	size := uint64(5)
 	creator, creatorFH := openCreateFileWithSize(t, conn, &xid, clientID, name, &size)
 	emptyFH := lookupFH(t, otherConn, &xid, name)
-	if !bytes.Equal(emptyFH, creatorFH) {
-		t.Fatal("creator's handle is not the published empty file")
+	if bytes.Equal(emptyFH, creatorFH) {
+		t.Fatal("creator did not receive a private transient handle")
 	}
 	checkSize := func(c net.Conn, fh []byte, want uint64) {
 		t.Helper()
@@ -80,6 +81,9 @@ func exerciseVisibleCreation(t *testing.T, addr, name string, reverse bool) {
 	if status != nfs4.NFS4_OK {
 		t.Fatal(nfs4.Nfsstat4Name(status))
 	}
+	if bytes.Equal(writerFH, creatorFH) || bytes.Equal(writerFH, emptyFH) {
+		t.Fatal("second writer did not receive an independent staging handle")
+	}
 	checkSize(otherConn, writerFH, 0)
 	writeFileAt(t, otherConn, &xid, writerFH, writer, 0, []byte("second"))
 	check(conn, creatorFH, "first")
@@ -88,17 +92,19 @@ func exerciseVisibleCreation(t *testing.T, addr, name string, reverse bool) {
 	firstConn, lastConn := conn, otherConn
 	if reverse {
 		creator, writer = writer, creator
+		creatorFH, writerFH = writerFH, creatorFH
 		firstConn, lastConn = lastConn, firstConn
 		firstWant, lastWant = lastWant, firstWant
 	}
 	viewer := dial(t, addr)
 	defer viewer.Close()
 	setupClientAs(t, viewer, &xid, "viewer-"+name, [8]byte{3})
-	closeFile(t, firstConn, &xid, emptyFH, creator)
+	closeFile(t, firstConn, &xid, creatorFH, creator)
 	check(viewer, lookupFH(t, viewer, &xid, name), firstWant)
 	check(viewer, emptyFH, "")
-	check(lastConn, emptyFH, lastWant)
-	closeFile(t, lastConn, &xid, emptyFH, writer)
+	check(lastConn, writerFH, lastWant)
+	check(lastConn, emptyFH, "")
+	closeFile(t, lastConn, &xid, writerFH, writer)
 	check(viewer, lookupFH(t, viewer, &xid, name), lastWant)
 	check(viewer, emptyFH, "")
 	closeFile(t, otherConn, &xid, readerFH, reader)
@@ -255,8 +261,11 @@ func TestReadOnlyCreationSurvivesRestart(t *testing.T) {
 	if !bytes.Equal(data, make([]byte, 5)) {
 		t.Fatalf("initial CREATE size was lost: %q", data)
 	}
-	if !bytes.Equal(emptyFH, fh) {
-		t.Fatal("creator's handle is not the published empty file")
+	if bytes.Equal(emptyFH, fh) {
+		t.Fatal("creator did not receive a private transient handle")
+	}
+	if data, _ := readFileData(t, conn, &xid, emptyFH, 0, 1024); len(data) != 0 {
+		t.Fatalf("retained empty version changed: %q", data)
 	}
 }
 

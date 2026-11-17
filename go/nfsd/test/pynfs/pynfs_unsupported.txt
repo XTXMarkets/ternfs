@@ -10,8 +10,20 @@ CSID4
 # Share reservations (share_deny) are not enforced.
 COUR3
 
+# A fresh OPEN after create can select a different immutable or transient
+# inode. The stock test expects the old filehandle's stateid to advance, which
+# cannot also move that stateid to the new filehandle without redirecting the
+# original writer's I/O.
+OPEN2
+
 # TernFS has no hard links.
 RNM20
+
+# Fresh writable CLAIM_FH gets STALE and must retry by pathname: Linux would
+# keep the old inode even if OPEN returned the next private transient handle,
+# so the handle-only OPEN cannot start a new writer. The stock test expects
+# that write to succeed through the retained handle instead.
+OPEN7
 
 # TernFS cannot rename a directory over an existing empty directory.
 RNM13
