@@ -202,7 +202,7 @@ jobs:
   stop-runner:
     name: Stop self-hosted EC2 runner
     needs: [start-runner, run-build]
-    if: always()
+    if: always() && needs.start-runner.outputs.ec2-instance-id != ''
     runs-on: ubuntu-latest
     permissions:
       contents: read
