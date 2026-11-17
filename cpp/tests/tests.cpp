@@ -12,10 +12,12 @@
 
 
 #include "Bincode.hpp"
+#include "LogsDB.hpp"
 #include "Protocol.hpp"
 #include "ShardDB.hpp"
 #include "ShardDBData.hpp"
 #include "Crypto.hpp"
+#include "crc32c.h"
 #include "RocksDBUtils.hpp"
 #include "SharedRocksDB.hpp"
 #include "Time.hpp"
@@ -939,6 +941,541 @@ TEST_CASE("add span validates layout before preparing a log entry") {
     SUBCASE("production erasure coding configuration is supported") {
         CHECK(prepareAddSpan(Parity(10, 4), 1, 14) == TernError::COULD_NOT_PICK_BLOCK_SERVICES);
     }
+}
+
+struct ReplaceBlocksTest {
+    struct ClockReset { ~ClockReset() { _setCurrentTime(0); } } clockReset;
+    TempShardDB db{LogLevel::LOG_ERROR, ShardId(0)};
+    std::unique_ptr<ShardReqContainer> req = std::make_unique<ShardReqContainer>();
+    std::unique_ptr<ShardRespContainer> resp = std::make_unique<ShardRespContainer>();
+    std::unique_ptr<ShardLogEntry> entry = std::make_unique<ShardLogEntry>();
+    std::vector<FullBlockServiceInfo> services;
+    std::array<AES128Key, 8> keys;
+    uint64_t logIndex = 0;
+    static constexpr uint32_t BLOCK_SIZE = 4096;
+    static constexpr uint32_t CELL_CRC = 0x12345678;
+
+    // Spans are mirrored on block services 1, 2 and 3. Scratch blocks go to 4-7.
+    struct File {
+        InodeId id;
+        BincodeFixedBytes<8> cookie;
+        // block id by span and block service
+        std::vector<std::map<uint64_t, uint64_t>> blocks;
+    };
+    File scratch;
+    uint64_t scratchSize = 0;
+
+    struct ScratchBlock {
+        uint64_t offset;
+        uint64_t blockId;
+    };
+
+    TernError prepare() {
+        _setCurrentTime(ternNow() + 1_ms);
+        return db->prepareLogEntry(*req, *entry);
+    }
+
+    TernError applyEntry(const ShardLogEntry& logEntry) {
+        db->applyLogEntry(++logIndex, logEntry, *resp);
+        db->flush(false);
+        return resp->kind() == ShardMessageKind::ERROR ? resp->getError() : TernError::NO_ERROR;
+    }
+
+    TernError run() {
+        auto err = prepare();
+        return err == TernError::NO_ERROR ? applyEntry(*entry) : err;
+    }
+
+    void apply(TernError expected = TernError::NO_ERROR) {
+        REQUIRE(run() == expected);
+    }
+
+    BlockProof proof(char tag, uint64_t bs, uint64_t blockId) {
+        char buf[32]{};
+        BincodeBuf packed(buf, sizeof(buf));
+        packed.packScalar<uint64_t>(bs);
+        packed.packScalar<char>(tag);
+        packed.packScalar<uint64_t>(blockId);
+        BlockProof result;
+        result.blockId = blockId;
+        result.proof.data = cbcmac(keys[bs], (uint8_t*)buf, sizeof(buf));
+        return result;
+    }
+
+    ReplaceBlocksTest() {
+        for (uint64_t id = 1; id <= 7; ++id) {
+            auto& bs = services.emplace_back();
+            bs.id = BlockServiceId(id);
+            bs.locationId = 0;
+            bs.storageClass = HDD_STORAGE;
+            bs.failureDomain.name.data[0] = id;
+            bs.secretKey.data.fill(id);
+            expandKey(bs.secretKey.data, keys[id]);
+            bs.capacityBytes = 1ull << 30;
+            bs.availableBytes = 1ull << 30;
+        }
+        updateServices();
+        scratch = construct();
+    }
+
+    void updateServices() {
+        db.blockServicesCacheDB->updateCache(services);
+    }
+
+    void decommission(uint64_t bs) {
+        services[bs-1].flags = BlockServiceFlags::DECOMMISSIONED;
+        updateServices();
+    }
+
+    File construct() {
+        req->setConstructFile().type = (uint8_t)InodeType::FILE;
+        apply();
+        return File{resp->getConstructFile().id, resp->getConstructFile().cookie, {}};
+    }
+
+    // Adds a span in the file's location 0, on the block services not
+    // blacklisted, and returns its block ids by block service.
+    std::map<uint64_t, uint64_t> addSpan(const File& file, uint64_t offset, Parity parity, const std::vector<uint64_t>& blacklist, bool certify = true) {
+        auto& atLocation = req->setAddSpanAtLocationInitiate();
+        auto& add = atLocation.req.req;
+        add.fileId = file.id;
+        add.cookie = file.cookie;
+        add.byteOffset = offset;
+        add.size = BLOCK_SIZE;
+        add.crc = Crc(crc32c_append_pclmul(0, CELL_CRC, BLOCK_SIZE));
+        add.storageClass = HDD_STORAGE;
+        add.parity = parity;
+        add.stripes = 1;
+        add.cellSize = BLOCK_SIZE;
+        add.crcs.els.assign(parity.blocks(), Crc(CELL_CRC));
+        for (auto bs : blacklist) {
+            add.blacklist.els.emplace_back().blockService = BlockServiceId(bs);
+        }
+        apply();
+        auto blocks = resp->getAddSpanAtLocationInitiate().resp.blocks.els;
+        REQUIRE(blocks.size() == parity.blocks());
+        std::map<uint64_t, uint64_t> result;
+        for (const auto& block : blocks) {
+            result[block.blockServiceId.u64] = block.blockId;
+        }
+        if (certify) {
+            auto& certifyReq = req->setAddSpanCertify();
+            certifyReq.fileId = file.id;
+            certifyReq.cookie = file.cookie;
+            certifyReq.byteOffset = offset;
+            for (const auto& block : blocks) {
+                certifyReq.proofs.els.push_back(proof('W', block.blockServiceId.u64, block.blockId));
+            }
+            apply();
+        }
+        return result;
+    }
+
+    File makeFile(size_t spans = 1, bool link = true, bool certifyLast = true) {
+        auto file = construct();
+        for (size_t i = 0; i < spans; ++i) {
+            file.blocks.push_back(addSpan(file, i*BLOCK_SIZE, Parity(1, 2), {4, 5, 6, 7}, certifyLast || i+1 < spans));
+        }
+        if (link) {
+            auto& linkReq = req->setLinkFile();
+            linkReq.fileId = file.id;
+            linkReq.cookie = file.cookie;
+            linkReq.ownerId = ROOT_DIR_INODE_ID;
+            linkReq.name = BincodeBytes("file" + std::to_string(file.id.u64));
+            apply();
+        }
+        return file;
+    }
+
+    ScratchBlock addScratch(uint64_t bs, bool certify = true) {
+        std::vector<uint64_t> blacklist;
+        for (uint64_t other = 1; other <= services.size(); ++other) {
+            if (other != bs) { blacklist.push_back(other); }
+        }
+        ScratchBlock block{scratchSize, addSpan(scratch, scratchSize, Parity(1, 0), blacklist, certify).at(bs)};
+        scratchSize += BLOCK_SIZE;
+        return block;
+    }
+
+    ReplaceBlock item(const File& file, size_t span, uint64_t oldBs, const ScratchBlock& block) {
+        ReplaceBlock item;
+        item.fileId = file.id;
+        item.byteOffset = span*BLOCK_SIZE;
+        item.oldBlockId = file.blocks[span].at(oldBs);
+        item.oldBlockServiceId = BlockServiceId(oldBs);
+        item.scratchByteOffset = block.offset;
+        item.newBlockId = block.blockId;
+        return item;
+    }
+
+    ReplaceBlocksReq& request(const std::vector<ReplaceBlock>& items) {
+        auto& replace = req->setReplaceBlocks();
+        replace.scratchId = scratch.id;
+        replace.scratchCookie = scratch.cookie;
+        replace.blocks.els = items;
+        return replace;
+    }
+
+    TernError replace(const std::vector<ReplaceBlock>& items) {
+        request(items);
+        return run();
+    }
+
+    // Every block in the file, as (span offset, block id, block service)
+    std::vector<std::tuple<uint64_t, uint64_t, uint64_t>> spanBlocks(InodeId id) {
+        req->setFileSpans().fileId = id;
+        db->read(*req, *resp);
+        std::vector<std::tuple<uint64_t, uint64_t, uint64_t>> result;
+        if (resp->kind() == ShardMessageKind::ERROR && resp->getError() == TernError::FILE_NOT_FOUND) {
+            return result;
+        }
+        REQUIRE(resp->kind() == ShardMessageKind::FILE_SPANS);
+        const auto& spans = resp->getFileSpans();
+        for (const auto& span : spans.spans.els) {
+            for (const auto& location : span.getLocations().locations.els) {
+                for (const auto& block : location.blocks.els) {
+                    result.emplace_back(span.header.byteOffset, block.blockId, spans.blockServices.els[block.blockServiceIx].id.u64);
+                }
+            }
+        }
+        return result;
+    }
+
+    std::vector<InodeId> filesIn(uint64_t blockServiceId) {
+        req->setBlockServiceFiles().blockServiceId = BlockServiceId(blockServiceId);
+        db->read(*req, *resp);
+        REQUIRE(resp->kind() == ShardMessageKind::BLOCK_SERVICE_FILES);
+        return resp->getBlockServiceFiles().fileIds.els;
+    }
+
+    uint64_t transientSize(InodeId id) {
+        req->setStatTransientFile().id = id;
+        db->read(*req, *resp);
+        REQUIRE(resp->kind() == ShardMessageKind::STAT_TRANSIENT_FILE);
+        return resp->getStatTransientFile().size;
+    }
+
+    // The files' blocks, the scratch file's size, and which files each block
+    // service holds
+    auto state(const std::vector<File>& files) {
+        std::vector<std::vector<std::tuple<uint64_t, uint64_t, uint64_t>>> blocks;
+        for (const auto& file : files) {
+            blocks.push_back(spanBlocks(file.id));
+        }
+        blocks.push_back(spanBlocks(scratch.id));
+        std::vector<std::vector<InodeId>> held;
+        for (uint64_t id = 1; id <= services.size(); ++id) {
+            held.push_back(filesIn(id));
+        }
+        return std::make_tuple(blocks, transientSize(scratch.id), held);
+    }
+
+    // Walks GC through destructing the file
+    void destruct(const File& file) {
+        auto& scrap = req->setScrapTransientFile();
+        scrap.id = file.id;
+        scrap.cookie = file.cookie;
+        apply();
+        for (;;) {
+            auto& remove = req->setRemoveSpanInitiate();
+            remove.fileId = file.id;
+            remove.cookie = file.cookie;
+            auto err = run();
+            if (err == TernError::FILE_EMPTY) {
+                break;
+            }
+            REQUIRE(err == TernError::NO_ERROR);
+            auto removed = resp->getRemoveSpanInitiate();
+            auto& certify = req->setRemoveSpanCertify();
+            certify.fileId = file.id;
+            certify.cookie = file.cookie;
+            certify.byteOffset = removed.byteOffset;
+            for (const auto& block : removed.blocks.els) {
+                certify.proofs.els.push_back(proof('E', block.blockServiceId.u64, block.blockId));
+            }
+            apply();
+        }
+        req->setRemoveInode().id = file.id;
+        apply();
+    }
+};
+
+static bool contains(const std::vector<InodeId>& files, InodeId id) {
+    return std::find(files.begin(), files.end(), id) != files.end();
+}
+
+TEST_CASE("replace blocks across files") {
+    ReplaceBlocksTest f;
+    std::vector<ReplaceBlocksTest::File> files{f.makeFile(), f.makeFile(2), f.makeFile(1, false)};
+    f.decommission(1);
+    std::vector<ReplaceBlock> items{
+        f.item(files[0], 0, 1, f.addScratch(4)),
+        f.item(files[1], 0, 1, f.addScratch(5)),
+        f.item(files[1], 1, 1, f.addScratch(6)),
+        f.item(files[2], 0, 1, f.addScratch(7)),
+    };
+    NO_TERN_ERROR(f.replace(items));
+    CHECK(f.resp->kind() == ShardMessageKind::REPLACE_BLOCKS);
+    for (const auto& item : items) {
+        bool found = false;
+        for (const auto& [offset, blockId, bs] : f.spanBlocks(item.fileId)) {
+            CHECK(blockId != item.oldBlockId);
+            found |= offset == item.byteOffset && blockId == item.newBlockId;
+        }
+        CHECK(found);
+    }
+    CHECK(f.filesIn(1).empty());
+    CHECK(f.filesIn(4) == std::vector<InodeId>{files[0].id});
+    CHECK(f.filesIn(5) == std::vector<InodeId>{files[1].id});
+    CHECK(f.filesIn(6) == std::vector<InodeId>{files[1].id});
+    CHECK(f.filesIn(7) == std::vector<InodeId>{files[2].id});
+    CHECK(f.spanBlocks(f.scratch.id).empty());
+    CHECK(f.transientSize(f.scratch.id) == 0);
+}
+
+TEST_CASE("repeating a replacement that applied changes nothing") {
+    ReplaceBlocksTest f;
+    std::vector<ReplaceBlocksTest::File> files{f.makeFile(), f.makeFile()};
+    f.decommission(1);
+    std::vector<ReplaceBlock> items{f.item(files[0], 0, 1, f.addScratch(4)), f.item(files[1], 0, 1, f.addScratch(5))};
+    f.request(items);
+    NO_TERN_ERROR(f.prepare());
+    auto first = std::make_unique<ShardLogEntry>(*f.entry);
+    NO_TERN_ERROR(f.prepare());
+    auto second = std::make_unique<ShardLogEntry>(*f.entry);
+    NO_TERN_ERROR(f.applyEntry(*first));
+    const auto repeat = [&]() {
+        auto after = f.state(files);
+        SUBCASE("entry prepared before the first one applied") {
+            NO_TERN_ERROR(f.applyEntry(*second));
+        }
+        SUBCASE("request prepared again") {
+            NO_TERN_ERROR(f.replace(items));
+        }
+        CHECK(f.state(files) == after);
+    };
+    SUBCASE("scratch file still empty") {
+        repeat();
+    }
+    SUBCASE("scratch file refilled") {
+        // the same offsets now hold other blocks
+        f.scratchSize = 0;
+        f.addScratch(6);
+        f.addScratch(7);
+        repeat();
+    }
+}
+
+TEST_CASE("one bad item fails the whole replacement") {
+    ReplaceBlocksTest f;
+    std::vector<ReplaceBlocksTest::File> files{f.makeFile(), f.makeFile(), f.makeFile()};
+    f.decommission(1);
+    std::vector<ReplaceBlock> items{
+        f.item(files[0], 0, 1, f.addScratch(4)),
+        f.item(files[1], 0, 1, f.addScratch(5)),
+        f.item(files[2], 0, 1, f.addScratch(6)),
+    };
+    auto before = f.state(files);
+    SUBCASE("old block gone") {
+        items[2].oldBlockId++;
+        CHECK(f.replace(items) == TernError::BLOCK_NOT_FOUND);
+    }
+    SUBCASE("scratch span holds a different block") {
+        items[2].newBlockId++;
+        CHECK(f.replace(items) == TernError::BLOCK_NOT_FOUND);
+    }
+    SUBCASE("no scratch span there") {
+        items[2].scratchByteOffset = f.scratchSize;
+        CHECK(f.replace(items) == TernError::SPAN_NOT_FOUND);
+    }
+    CHECK(f.state(files) == before);
+}
+
+TEST_CASE("replace blocks checks the scratch file's cookie") {
+    ReplaceBlocksTest f;
+    auto file = f.makeFile();
+    f.decommission(1);
+    f.request({f.item(file, 0, 1, f.addScratch(4))}).scratchCookie.data[0] ^= 1;
+    CHECK(f.prepare() == TernError::BAD_COOKIE);
+}
+
+TEST_CASE("replace blocks only drops blocks on decommissioned block services") {
+    ReplaceBlocksTest f;
+    auto file = f.makeFile();
+    auto item = f.item(file, 0, 1, f.addScratch(4));
+    f.request({item});
+    CHECK(f.prepare() == TernError::BLOCK_SERVICE_NOT_DECOMMISSIONED);
+    // The leader decides, so a replica that hasn't heard about the
+    // decommissioning yet applies the entry all the same
+    f.decommission(1);
+    NO_TERN_ERROR(f.prepare());
+    f.services[0].flags = BlockServiceFlags::EMPTY;
+    f.updateServices();
+    NO_TERN_ERROR(f.applyEntry(*f.entry));
+    CHECK(f.filesIn(1).empty());
+    CHECK(f.filesIn(4) == std::vector<InodeId>{file.id});
+}
+
+TEST_CASE("replace blocks checks the old block is in the named block service") {
+    ReplaceBlocksTest f;
+    auto file = f.makeFile();
+    f.decommission(1);
+    auto item = f.item(file, 0, 2, f.addScratch(4));
+    item.oldBlockServiceId = BlockServiceId(1);
+    auto before = f.state({file});
+    CHECK(f.replace({item}) == TernError::MALFORMED_REQUEST);
+    CHECK(f.state({file}) == before);
+}
+
+TEST_CASE("replace blocks only takes certified scratch spans") {
+    ReplaceBlocksTest f;
+    auto file = f.makeFile();
+    f.decommission(1);
+    auto dirty = f.addScratch(4, false);
+    auto before = f.state({file});
+    CHECK(f.replace({f.item(file, 0, 1, dirty)}) == TernError::LAST_SPAN_STATE_NOT_CLEAN);
+    CHECK(f.state({file}) == before);
+}
+
+TEST_CASE("replace blocks rejects a scratch span named twice") {
+    ReplaceBlocksTest f;
+    std::vector<ReplaceBlocksTest::File> files{f.makeFile(), f.makeFile()};
+    f.decommission(1);
+    auto block = f.addScratch(4);
+    f.request({f.item(files[0], 0, 1, block), f.item(files[1], 0, 1, block)});
+    CHECK(f.prepare() == TernError::MALFORMED_REQUEST);
+}
+
+TEST_CASE("replace two blocks in one span") {
+    ReplaceBlocksTest f;
+    auto file = f.makeFile();
+    f.decommission(1);
+    f.decommission(2);
+    auto first = f.addScratch(4);
+    auto second = f.addScratch(5);
+    std::vector<ReplaceBlock> items{f.item(file, 0, 1, first), f.item(file, 0, 2, second)};
+    SUBCASE("on different block services") {
+        NO_TERN_ERROR(f.replace(items));
+        std::set<uint64_t> held;
+        for (const auto& [offset, blockId, bs] : f.spanBlocks(file.id)) {
+            held.insert(bs);
+        }
+        CHECK(held == std::set<uint64_t>{3, 4, 5});
+        CHECK(f.filesIn(1).empty());
+        CHECK(f.filesIn(2).empty());
+        CHECK(f.filesIn(4) == std::vector<InodeId>{file.id});
+        CHECK(f.filesIn(5) == std::vector<InodeId>{file.id});
+        CHECK(f.transientSize(f.scratch.id) == 0);
+    }
+    SUBCASE("on the same block service") {
+        items[1] = f.item(file, 0, 2, f.addScratch(4));
+        auto before = f.state({file});
+        CHECK(f.replace(items) == TernError::REPLACE_BLOCKS_DUPLICATE_BLOCK_SERVICE);
+        CHECK(f.state({file}) == before);
+    }
+}
+
+TEST_CASE("replace blocks keeps block services and failure domains apart") {
+    ReplaceBlocksTest f;
+    auto file = f.makeFile();
+    f.decommission(1);
+    SUBCASE("block service") {
+        CHECK(f.replace({f.item(file, 0, 1, f.addScratch(2))}) == TernError::REPLACE_BLOCKS_DUPLICATE_BLOCK_SERVICE);
+    }
+    SUBCASE("failure domain") {
+        f.services[3].failureDomain.name.data[0] = 2;
+        f.updateServices();
+        CHECK(f.replace({f.item(file, 0, 1, f.addScratch(4))}) == TernError::REPLACE_BLOCKS_DUPLICATE_FAILURE_DOMAIN);
+    }
+    CHECK(contains(f.filesIn(1), file.id));
+}
+
+TEST_CASE("replace blocks in transient files") {
+    ReplaceBlocksTest f;
+    // the last span is still being written
+    auto file = f.makeFile(2, false, false);
+    f.decommission(1);
+    SUBCASE("before the deadline only the clean spans") {
+        CHECK(f.replace({f.item(file, 1, 1, f.addScratch(4))}) == TernError::SPAN_NOT_FOUND);
+        NO_TERN_ERROR(f.replace({f.item(file, 0, 1, f.addScratch(5))}));
+    }
+    auto& scrap = f.req->setScrapTransientFile();
+    scrap.id = file.id;
+    scrap.cookie = file.cookie;
+    f.apply();
+    SUBCASE("after the deadline the dirty last span too") {
+        NO_TERN_ERROR(f.replace({f.item(file, 1, 1, f.addScratch(4))}));
+        CHECK(f.filesIn(4) == std::vector<InodeId>{file.id});
+    }
+    SUBCASE("but not once GC has condemned it") {
+        auto& remove = f.req->setRemoveSpanInitiate();
+        remove.fileId = file.id;
+        remove.cookie = file.cookie;
+        f.apply();
+        CHECK(f.resp->getRemoveSpanInitiate().byteOffset == ReplaceBlocksTest::BLOCK_SIZE);
+        CHECK(f.replace({f.item(file, 1, 1, f.addScratch(4))}) == TernError::SPAN_NOT_FOUND);
+    }
+}
+
+TEST_CASE("replace blocks only takes spans off the end of the scratch file") {
+    ReplaceBlocksTest f;
+    std::vector<ReplaceBlocksTest::File> files{f.makeFile(), f.makeFile(), f.makeFile()};
+    f.decommission(1);
+    std::vector<ReplaceBlocksTest::ScratchBlock> blocks{f.addScratch(4), f.addScratch(5), f.addScratch(6)};
+    auto before = f.state(files);
+    SUBCASE("not the first") {
+        CHECK(f.replace({f.item(files[0], 0, 1, blocks[0])}) == TernError::MALFORMED_REQUEST);
+        CHECK(f.state(files) == before);
+    }
+    SUBCASE("not the first and the last") {
+        CHECK(f.replace({f.item(files[0], 0, 1, blocks[0]), f.item(files[2], 0, 1, blocks[2])}) == TernError::MALFORMED_REQUEST);
+        CHECK(f.state(files) == before);
+    }
+    SUBCASE("the last two, in either order") {
+        NO_TERN_ERROR(f.replace({f.item(files[2], 0, 1, blocks[2]), f.item(files[1], 0, 1, blocks[1])}));
+        CHECK(f.transientSize(f.scratch.id) == ReplaceBlocksTest::BLOCK_SIZE);
+        CHECK(contains(f.filesIn(4), f.scratch.id));
+        CHECK_FALSE(contains(f.filesIn(5), f.scratch.id));
+        CHECK_FALSE(contains(f.filesIn(6), f.scratch.id));
+    }
+    // GC can destruct whatever is left
+    f.destruct(f.scratch);
+    for (uint64_t bs = 4; bs <= 6; ++bs) {
+        CHECK_FALSE(contains(f.filesIn(bs), f.scratch.id));
+    }
+    f.req->setStatTransientFile().id = f.scratch.id;
+    f.db->read(*f.req, *f.resp);
+    REQUIRE(f.resp->kind() == ShardMessageKind::ERROR);
+    CHECK(f.resp->getError() == TernError::FILE_NOT_FOUND);
+}
+
+TEST_CASE("replace blocks requests fit in a packet") {
+    ReplaceBlocksTest f;
+    std::vector<ReplaceBlocksTest::File> files;
+    std::vector<ReplaceBlock> items;
+    for (size_t i = 0; i < MAX_REPLACE_BLOCKS+1; ++i) {
+        files.push_back(f.makeFile());
+    }
+    f.decommission(1);
+    for (size_t i = 0; i < MAX_REPLACE_BLOCKS+1; ++i) {
+        items.push_back(f.item(files[i], 0, 1, f.addScratch(4 + i%4)));
+    }
+    f.request(items);
+    CHECK(f.prepare() == TernError::MALFORMED_REQUEST);
+    f.request({});
+    CHECK(f.prepare() == TernError::MALFORMED_REQUEST);
+
+    items.erase(items.begin());
+    ProxyShardReqMsg msg;
+    msg.body.setReplaceBlocks() = f.request(items);
+    CHECK(msg.packedSize() <= DEFAULT_UDP_MTU);
+    NO_TERN_ERROR(f.prepare());
+    std::array<char, MAX_UDP_MTU> buf;
+    BincodeBuf packed(buf.data(), buf.size());
+    f.entry->pack(packed);
+    CHECK(packed.len() <= LogsDB::DEFAULT_UDP_ENTRY_SIZE);
+    NO_TERN_ERROR(f.applyEntry(*f.entry));
+    CHECK(f.filesIn(1) == std::vector<InodeId>{files.front().id});
 }
 
 TEST_CASE("test fmt") {
