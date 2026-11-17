@@ -43,7 +43,7 @@ The important bit above is the "make the file transient", which feeds into the n
 
 ## File destruction
 
-File destruction is simpler: it goes thorugh the transient files, and permanently removes the expired ones. All transient files have a _deadline_, which is bumped by one hour every time the transient file is modified. This is to ensure that files that are currently being worked on are not deleted. In pseudocode:
+File destruction is simpler: it goes through the transient files, and permanently removes the expired ones. All transient files have a _deadline_, which is bumped by one hour every time the transient file is modified. This is to ensure that files that are currently being worked on are not deleted. In pseudocode:
 
 ```
 while True:
