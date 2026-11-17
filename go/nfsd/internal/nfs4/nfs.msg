@@ -2483,8 +2483,8 @@ message ff_layouthint4 {
 }
 
 enum ff_cb_recall_any_mask : beu32 {
-    FF_RCA4_TYPE_MASK_READ = 2;
-    FF_RCA4_TYPE_MASK_RW   = 1;
+    FF_RCA4_TYPE_MASK_READ = 4294967294;
+    FF_RCA4_TYPE_MASK_RW   = 4294967295;
 }
 
 message GETXATTR4args {

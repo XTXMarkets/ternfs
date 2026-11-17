@@ -42,7 +42,7 @@ TOKEN_RE = re.compile(r"""
     (\d+)                 |  # decimal literal
     ([a-zA-Z_]\w*)        |  # identifier
     ("[^"]*")             |  # string literal
-    ([{}\[\]<>()=;:,*])  |  # punctuation
+    ([{}\[\]<>()=;:,*-]) |  # punctuation
     (\s+)                    # whitespace
 """, re.VERBOSE | re.DOTALL)
 
@@ -164,7 +164,11 @@ class Parser:
         vals = []
         while not self.match("P", "}"):
             vn = self.exp("ID")[1]
-            vv = self.adv()[1] if self.match("P", "=") else str(len(vals))
+            if self.match("P", "="):
+                negative = bool(self.match("P", "-"))
+                vv = "-" + self.exp("NUM")[1] if negative else self.adv()[1]
+            else:
+                vv = str(len(vals))
             vals.append(EnumVal(vn, vv)); self.match("P", ",")
         self.exp("P", ";")
         return Enum(n, vals)
@@ -489,7 +493,14 @@ class Gen:
         self.out.append(f"enum {e.name} : beu32 {{")
         start = self._start_block()
         for v in e.values:
-            self.out.append(f"    {v.name} = {self.rc(v.value)};")
+            value = self.rc(v.value)
+            if value.startswith("-"):
+                # .msg uses beu32; retain the signed XDR enum's two's-complement bits.
+                signed = int(value, 0)
+                if signed < -(1 << 31):
+                    raise ValueError(f"XDR enum value out of int32 range: {value}")
+                value = str(signed & 0xffffffff)
+            self.out.append(f"    {v.name} = {value};")
         self._end_block(start)
         self.out.append("}")
         self.out.append("")
