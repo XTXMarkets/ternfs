@@ -1069,6 +1069,206 @@ func TestRestartCloseAfterPublishedLinkIsIdempotent(t *testing.T) {
 	}
 }
 
+// A CLOSE whose LinkFile was applied but not answered gets DELAY before it
+// restores the writer's times over the publication time LinkFile stamps.
+// After a restart the staging is dropped as published; the times it holds
+// must reach the published file first, since the retransmitted CLOSE finds
+// nothing left to take them from.
+func TestRestartAfterUnansweredLinkKeepsTimes(t *testing.T) {
+	f, pf := newPublishReplayFixture(t)
+	state, fh := openCreateFile(t, f.conn, &f.xid, f.wire, "doc")
+	writeFileAt(t, f.conn, &f.xid, fh, state, 0, []byte("v1"))
+	const mtime = 1_600_000_000
+	if status := setMtimeStatus(t, f.conn, &f.xid, fh, state, mtime); status != nfs4.NFS4_OK {
+		t.Fatalf("SETATTR mtime %s", nfs4.Nfsstat4Name(status))
+	}
+	pf.timeoutLinks(1, true)
+	if status := closeFileStatus(t, f.conn, &f.xid, fh, state); status != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("CLOSE with an unanswered link %s, want DELAY", nfs4.Nfsstat4Name(status))
+	}
+	f.restart()
+	closeBody := buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
+		pw := w.AppendArgarray_Putfh()
+		pw.Resume(pw.StartObject().SetData(fh).Finish())
+		w.Resume(pw.Finish())
+		caw := w.AppendArgarray_Close()
+		setStateid(caw.OpenStateid(), state)
+	})
+	slot, seq := f.ts.acquire()
+	f.ts.release(slot)
+	if got := compoundStatus(t, f.send(closeBody, slot, seq)); got != nfs4.NFS4_OK {
+		t.Fatalf("CLOSE after the restart %s", nfs4.Nfsstat4Name(got))
+	}
+	if got, ok := readRoot(t, f.root, "doc"); !ok || got != "v1" {
+		t.Fatalf("published %q %v", got, ok)
+	}
+	info, err := os.Stat(filepath.Join(f.root, "doc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.ModTime().Unix(); got != mtime {
+		t.Fatalf("published mtime %d, want the %d set before the CLOSE", got, mtime)
+	}
+}
+
+// The same, with a backend that does not answer the SetTime at startup: the
+// staging stays, still holding the times.
+func TestRestartAfterUnansweredLinkSilentSetTimeKeepsStaging(t *testing.T) {
+	f, pf := newPublishReplayFixture(t)
+	state, fh := openCreateFile(t, f.conn, &f.xid, f.wire, "doc")
+	writeFileAt(t, f.conn, &f.xid, fh, state, 0, []byte("v1"))
+	pf.timeoutLinks(1, true)
+	if status := closeFileStatus(t, f.conn, &f.xid, fh, state); status != nfs4.NFS4ERR_DELAY {
+		t.Fatalf("CLOSE with an unanswered link %s, want DELAY", nfs4.Nfsstat4Name(status))
+	}
+	f.conn.Close()
+	f.stop()
+	f.stop = nil
+	staging.CloseFiles(t, f.store)
+	pf.set(func() { pf.setTimeErr = msgs.TIMEOUT })
+	f.start()
+	if n := len(f.store.Entries()); n != 1 {
+		t.Fatalf("%d staging entries after the restart, want the published one kept", n)
+	}
+}
+
+// A kill after CLOSE's LinkFile and before it removed the staging. On disk
+// the staging is the writer as it was before the CLOSE. The client opens
+// the name again before it retransmits the CLOSE, after another client has
+// replaced the file: the open must find the other client's version, not
+// adopt the staging and publish its old bytes over it.
+func TestRestartKillAfterLinkOpenBeforeCloseRetransmit(t *testing.T) {
+	f, pf := newPublishReplayFixture(t)
+	state, fh := openCreateFile(t, f.conn, &f.xid, f.wire, "doc")
+	writeFileAt(t, f.conn, &f.xid, fh, state, 0, []byte("v1"))
+	var atLink map[string][]byte
+	pf.onLink(func(_ int, _ vfs.InodeID, _ vfs.Cookie, link func() error) error {
+		err := link()
+		if err == nil && atLink == nil {
+			atLink = readStagingDir(t, f.stagingDir)
+		}
+		return err
+	})
+	closeFile(t, f.conn, &f.xid, fh, state)
+	pf.onLink(nil)
+	f.restartKeeping(atLink, true)
+	f.republishedThenAppended(fh, state)
+}
+
+// The removal of a published staging did not reach the disk before a
+// power loss, so the staging comes back as it was before the CLOSE. The
+// client has its reply and does not retransmit the CLOSE.
+func TestRestartPublishedStagingRestoredIsDropped(t *testing.T) {
+	f := newReplayFixture(t)
+	state, fh := openCreateFile(t, f.conn, &f.xid, f.wire, "doc")
+	writeFileAt(t, f.conn, &f.xid, fh, state, 0, []byte("v1"))
+	kept := f.stagingFiles(stagingIDForTest(t, f.store, state))
+	closeFile(t, f.conn, &f.xid, fh, state)
+	f.restartKeeping(kept, false)
+	f.republishedThenAppended(fh, state)
+}
+
+// A backend that does not answer at a restart. The startup check of
+// recovered stagings gives up at the first stat error, rather than paying
+// a shard timeout for each, and the startup lease, the restored clients'
+// time to reconnect, starts after it.
+func TestRestartStartupLeaseAfterSilentBackend(t *testing.T) {
+	f := newReplayFixture(t)
+	for _, name := range []string{"a", "b"} {
+		state, fh := openCreateFile(t, f.conn, &f.xid, f.wire, name)
+		writeFileAt(t, f.conn, &f.xid, fh, state, 0, []byte(name))
+	}
+	f.conn.Close()
+	f.stop()
+	f.stop = nil
+	staging.CloseFiles(t, f.store)
+	silent := &silentStatVFS{TernVFS: f.fs.TernVFS}
+	f.fs.TernVFS = silent
+	f.start()
+	if silent.calls != 1 {
+		t.Fatalf("%d stats at startup, want 1", silent.calls)
+	}
+	if f.srv.startedAt.Before(silent.last) {
+		t.Fatalf("startup lease from %v, before the stat at %v", f.srv.startedAt, silent.last)
+	}
+	if n := len(f.store.Entries()); n != 2 {
+		t.Fatalf("%d staging entries after the restart, want 2", n)
+	}
+}
+
+// silentStatVFS answers every Stat with a timeout, as a shard that does not
+// answer does, and records when the last one returned.
+type silentStatVFS struct {
+	vfs.TernVFS
+	calls int
+	last  time.Time
+}
+
+func (v *silentStatVFS) Stat(vfs.InodeID) (vfs.NodeInfo, error) {
+	v.calls++
+	v.last = time.Now()
+	return vfs.NodeInfo{}, msgs.TIMEOUT
+}
+
+// republishedThenAppended has another client replace doc, published as v1
+// by the fixture's client through fh and state before the restart; then
+// the fixture's client opens doc for write and appends. A CLOSE of state
+// still answers OK.
+func (f *replayFixture) republishedThenAppended(fh []byte, state [16]byte) {
+	t := f.t
+	if got, ok := readRoot(t, f.root, "doc"); !ok || got != "v1" {
+		t.Fatalf("published before the restart %q %v", got, ok)
+	}
+	other := dial(t, f.addr)
+	t.Cleanup(func() { other.Close() })
+	xid := uint32(1)
+	wire := setupClientAs(t, other, &xid, "other-client", [8]byte{9})
+	osid, ofh := openWriteFile(t, other, &xid, wire, "doc")
+	setFileSize(t, other, &xid, ofh, osid, 0)
+	writeFileAt(t, other, &xid, ofh, osid, 0, []byte("OTHER-v2"))
+	closeFile(t, other, &xid, ofh, osid)
+
+	sid, wfh := openWriteFile(t, f.conn, &f.xid, f.wire, "doc")
+	if got, _ := readFileData(t, f.conn, &f.xid, wfh, 0, 64); string(got) != "OTHER-v2" {
+		t.Fatalf("write open after the other client's publication reads %q", got)
+	}
+	writeFileAt(t, f.conn, &f.xid, wfh, sid, uint64(len("OTHER-v2")), []byte("+A"))
+	closeFile(t, f.conn, &f.xid, wfh, sid)
+	if got, ok := readRoot(t, f.root, "doc"); !ok || got != "OTHER-v2+A" {
+		t.Fatalf("published %q %v, want OTHER-v2+A", got, ok)
+	}
+	if got := f.closeStatus(fh, state); got != nfs4.NFS4_OK {
+		t.Fatalf("late CLOSE of the published writer %s", nfs4.Nfsstat4Name(got))
+	}
+	if got, ok := readRoot(t, f.root, "doc"); !ok || got != "OTHER-v2+A" {
+		t.Fatalf("after the late CLOSE %q %v", got, ok)
+	}
+	if n := len(f.store.Entries()); n != 0 {
+		t.Fatalf("%d staging entries left", n)
+	}
+}
+
+// readStagingDir reads every file under dir, by path relative to it.
+func readStagingDir(t *testing.T, dir string) map[string][]byte {
+	files := map[string][]byte{}
+	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(dir, path)
+		files[rel] = data
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return files
+}
+
 // A session that caches no reply still records the intent of a RENAME of
 // two names of the longest length TernFS takes. Its process dies after the
 // rename; meanwhile a new file appears at the old name. The retransmission
@@ -2538,15 +2738,28 @@ func (f *replayFixture) stagingFiles(id vfs.InodeID) map[string][]byte {
 }
 
 // restartKeeping restarts with the given files put back in the staging
-// directory, which the dead process would not have removed.
-func (f *replayFixture) restartKeeping(kept map[string][]byte) {
+// directory, which the dead process would not have removed. With whole,
+// the directory holds only them: a kill at the moment they were read.
+func (f *replayFixture) restartKeeping(kept map[string][]byte, whole bool) {
 	f.t.Helper()
 	f.conn.Close()
 	f.stop()
 	f.stop = nil
 	staging.CloseFiles(f.t, f.store)
+	if whole {
+		entries, _ := os.ReadDir(f.stagingDir)
+		for _, e := range entries {
+			if err := os.RemoveAll(filepath.Join(f.stagingDir, e.Name())); err != nil {
+				f.t.Fatal(err)
+			}
+		}
+	}
 	for name, data := range kept {
-		if err := os.WriteFile(filepath.Join(f.stagingDir, name), data, 0o600); err != nil {
+		path := filepath.Join(f.stagingDir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			f.t.Fatal(err)
+		}
+		if err := os.WriteFile(path, data, 0o600); err != nil {
 			f.t.Fatal(err)
 		}
 	}
@@ -2580,7 +2793,7 @@ func TestRestartAfterFreshPublicationCompletes(t *testing.T) {
 		t.Fatalf("retried CLOSE %s", nfs4.Nfsstat4Name(got))
 	}
 	pf.set(func() { pf.onSetTime = nil })
-	f.restartKeeping(kept)
+	f.restartKeeping(kept, false)
 	if got := f.closeStatus(fh, state); got != nfs4.NFS4_OK {
 		t.Fatalf("CLOSE after the restart %s", nfs4.Nfsstat4Name(got))
 	}

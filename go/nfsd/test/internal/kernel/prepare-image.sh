@@ -54,6 +54,12 @@ if [[ -z $version || ! -f /boot/vmlinuz-$version ]]; then
 	echo "no kernel found under /boot with modules under /lib/modules; install linux-image-amd64" >&2
 	exit 1
 fi
+if [[ ! -r /boot/vmlinuz-$version ]]; then
+	# Ubuntu installs kernel images readable by root only.
+	echo "/boot/vmlinuz-$version is not readable; make it world-readable with:" >&2
+	echo "  sudo dpkg-statoverride --update --add root root 0644 /boot/vmlinuz-$version" >&2
+	exit 1
+fi
 modules=/lib/modules/$version
 [[ -f $modules/modules.dep ]] || depmod -a "$version"
 for required in nfsv4 virtio_net; do

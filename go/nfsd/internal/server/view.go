@@ -22,6 +22,20 @@ func (s *Server) clientWriter(clientID uint64, fileID vfs.InodeID) vfs.InodeID {
 	return fileID
 }
 
+// readOnlyCreator returns clientID's read-only create open of fileID while
+// it still owns its staging. The client sees that staging as the file, so a
+// write open of the file joins it as it would join a writer.
+func (s *Server) readOnlyCreator(clientID uint64, fileID vfs.InodeID) (openstate.State, bool) {
+	for _, state := range s.opens.ClientOpens(clientID, fileID) {
+		meta, ok := s.stagingStore.GetMeta(state.DataID)
+		if ok && meta.ReadOnly && !meta.Unlinked &&
+			meta.ClientID == clientID && meta.NFSStateID == state.ID {
+			return state, true
+		}
+	}
+	return openstate.State{}, false
+}
+
 // clientView returns the inode clientID sees through handle fileID.
 func (s *Server) clientView(clientID uint64, fileID vfs.InodeID) vfs.InodeID {
 	opens := s.opens.ClientOpens(clientID, fileID)

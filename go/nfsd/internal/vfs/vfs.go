@@ -10,6 +10,7 @@ package vfs
 import (
 	"encoding/binary"
 	"io"
+	"math"
 	"time"
 )
 
@@ -24,7 +25,7 @@ const (
 )
 
 func (id InodeID) Type() uint64   { return (uint64(id) >> 61) & 0x3 }
-func (id InodeID) Fileid() uint64 { return uint64(id) & ((1 << 61) - 1) }
+func (id InodeID) Fileid() uint64 { return uint64(id) }
 
 func MakeInodeID(typ uint64, ino uint64) InodeID {
 	return InodeID((typ << 61) | (ino & ((1 << 61) - 1)))
@@ -151,4 +152,23 @@ func FHToInodeID(fh []byte) (InodeID, bool) {
 		return 0, false
 	}
 	return InodeID(binary.BigEndian.Uint64(fh)), true
+}
+
+// TernFS stores a time as nanoseconds since the Unix epoch in 63 bits, from
+// 1970 to April 2262.
+var (
+	minTernTime = time.Unix(0, 0)
+	maxTernTime = time.Unix(0, math.MaxInt64)
+)
+
+// ClampTime moves a time TernFS cannot store to the nearer end of its range,
+// as Linux does for a filesystem with a limited timestamp range.
+func ClampTime(t time.Time) time.Time {
+	if t.Before(minTernTime) {
+		return minTernTime
+	}
+	if t.After(maxTernTime) {
+		return maxTernTime
+	}
+	return t
 }

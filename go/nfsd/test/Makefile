@@ -36,6 +36,8 @@ LIBNFS_TIMEOUT ?= 15m
 FUNCTIONAL_TEST_ROOT ?=
 FUNCTIONAL_TESTS ?= all
 FUNCTIONAL_TIMEOUT ?= 30m
+SAMBA_SUITES ?=
+SAMBA_TIMEOUT ?= 45m
 KERNEL_IMAGE_DIR := $(DEPS_DIR)/kernel
 
 .DEFAULT_GOAL := help
@@ -43,33 +45,38 @@ KERNEL_IMAGE_DIR := $(DEPS_DIR)/kernel
 .PHONY: help fetch-libnfs build-libnfs \
 	test-libnfs test-libnfs-cluster clean-libnfs fetch-pynfs build-pynfs \
 	test-pynfs test-pynfs-cluster clean-pynfs test-functional \
-	build-kernel-image test-functional-cluster clean-kernel-image
+	build-kernel-image test-functional-cluster clean-kernel-image \
+	test-samba test-samba-cluster
 
 help:
 	@printf '%s\n' \
 		'Client test harnesses (the package tests are in ../Makefile):' \
-		'  fetch-libnfs     Fetch the pinned libnfs source' \
-		'  build-libnfs     Build and install libnfs under .deps' \
-		'  test-libnfs      Run libnfs tests against an existing backend' \
-		'  test-libnfs-cluster  Run libnfs tests with a temporary ternrun cluster' \
-		'  clean-libnfs     Remove downloaded and built libnfs files' \
-		'  fetch-pynfs      Fetch the pinned pynfs source under .deps' \
-		'  build-pynfs      Generate the pynfs NFSv4.1 modules' \
-		'  test-pynfs       Run pynfs against an existing backend' \
-		'  test-pynfs-cluster  Run pynfs with a temporary ternrun cluster' \
-		'  clean-pynfs      Remove downloaded and built pynfs files' \
-		'  test-functional  Run common workflows on an existing NFS mount' \
-		'  build-kernel-image  Build the qemu guest image from an installed kernel' \
+		'  fetch-libnfs             Fetch the pinned libnfs source' \
+		'  build-libnfs             Build and install libnfs under .deps' \
+		'  test-libnfs              Run libnfs tests against an existing backend' \
+		'  test-libnfs-cluster      Run libnfs tests with a temporary ternrun cluster' \
+		'  clean-libnfs             Remove downloaded and built libnfs files' \
+		'  fetch-pynfs              Fetch the pinned pynfs source under .deps' \
+		'  build-pynfs              Generate the pynfs NFSv4.1 modules' \
+		'  test-pynfs               Run pynfs against an existing backend' \
+		'  test-pynfs-cluster       Run pynfs with a temporary ternrun cluster' \
+		'  clean-pynfs              Remove downloaded and built pynfs files' \
+		'  test-functional          Run common workflows on an existing NFS mount' \
+		'  build-kernel-image       Build the qemu guest image from an installed kernel' \
 		'  test-functional-cluster  Run the workflows through a kernel NFS client in qemu' \
-		'  clean-kernel-image  Remove the qemu guest image' \
+		'  clean-kernel-image       Remove the qemu guest image' \
+		'  test-samba               Run smbtorture through Samba on the kernel client in qemu' \
+		'  test-samba-cluster       The same with a temporary ternrun cluster' \
 		'' \
 		'Targets ending in -cluster start their own backend.' \
 		'Other client targets require TEST_ARGS="-registry HOST:PORT".' \
 		'Use TEST_ARGS="-binaries-dir DIR" with -cluster targets for prebuilt backend binaries.' \
+		'Set TMPDIR to a directory with plenty of space: run directories, including the cluster data, go under it.' \
 		'Set GO_TEST_FLAGS to pass additional arguments to Go test invocations.' \
 		'Set PYNFS_TESTS, PYNFS_ARGS, PYNFS_SKIP_FILE, PYNFS_OUTPUT and PYNFS_TIMEOUT to configure pynfs.' \
 		'Set FUNCTIONAL_TEST_ROOT to an existing mounted test directory for test-functional.' \
-		'Set FUNCTIONAL_TESTS (case numbers, comma-separated) and FUNCTIONAL_TIMEOUT for test-functional-cluster.'
+		'Set FUNCTIONAL_TESTS (case numbers, comma-separated) and FUNCTIONAL_TIMEOUT for test-functional-cluster.' \
+		'Set SAMBA_SUITES (smbtorture suites, comma-separated) and SAMBA_TIMEOUT for test-samba.'
 
 fetch-libnfs: $(LIBNFS_FETCHED)
 
@@ -96,7 +103,7 @@ $(LIBNFS_BUILT): $(LIBNFS_FETCHED)
 	cmake --install "$(LIBNFS_BUILD)"
 	touch "$@"
 
-test-libnfs-cluster test-pynfs-cluster test-functional-cluster: CLUSTER_ARG = -cluster
+test-libnfs-cluster test-pynfs-cluster test-functional-cluster test-samba-cluster: CLUSTER_ARG = -cluster
 
 test-libnfs test-libnfs-cluster: $(LIBNFS_BUILT)
 	go test -count=1 -v -timeout "$(LIBNFS_TIMEOUT)" -tags libnfs \
@@ -148,6 +155,11 @@ build-kernel-image:
 test-functional-cluster: build-kernel-image
 	go run ./internal/kernel -image-dir "$(KERNEL_IMAGE_DIR)" -tests "$(FUNCTIONAL_TESTS)" \
 		-timeout "$(FUNCTIONAL_TIMEOUT)" $(TEST_ARGS) $(CLUSTER_ARG)
+
+test-samba test-samba-cluster: build-kernel-image
+	go run ./internal/kernel -image-dir "$(KERNEL_IMAGE_DIR)" -samba \
+		$(if $(SAMBA_SUITES),-samba-suites "$(SAMBA_SUITES)") \
+		-timeout "$(SAMBA_TIMEOUT)" $(TEST_ARGS) $(CLUSTER_ARG)
 
 clean-kernel-image:
 	rm -rf "$(KERNEL_IMAGE_DIR)"

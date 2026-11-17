@@ -62,7 +62,8 @@ Read [Deployment](DEPLOYMENT.md) before choosing the staging disk or a
 server replacement procedure.
 
 `-staging DIR` is required; it is the server, so keep it on a persistent
-disk. `-root DIR` selects a local test backend
+disk. `-read-only` refuses every change to the filesystem; see
+[read-only server](DEPLOYMENT.md#read-only-server). `-root DIR` selects a local test backend
 instead of `-registry`; exactly one is required. The local backend keeps
 its transient and replaced files in `DIR.nfsd`, next to the exported tree
 and on its filesystem, so `DIR` cannot be a mount point. `-v` enables request
@@ -85,6 +86,7 @@ host crash; see [session restoration](internal/server/README.md#session-restorat
 Byte-range locking, share-deny
 enforcement, delegations, pNFS, hard links, named attributes and
 special files are unsupported. There is no protocol reclaim grace period.
-Ownership and permissions are synthetic. This is not a general-purpose
+Ownership and permissions are synthetic; chmod and chown succeed and
+change nothing. This is not a general-purpose
 POSIX filesystem; the [deployment guarantees](DEPLOYMENT.md#data-guarantees)
 describe the observable file semantics.

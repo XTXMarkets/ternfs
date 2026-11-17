@@ -34,7 +34,10 @@ Build TernFS first, then package the completed output directory:
     --output-dir dist
 ```
 
-The source checkout must be clean. The output is similar to:
+The source checkout must be clean. `-g` (`--ignore-git`) packages a
+checkout with uncommitted changes, for local builds: the release ID still
+names `HEAD`, and `release.json` records `"source_dirty": true`. The output
+is similar to:
 
 ```text
 dist/ternfs-release-r1842-g0123456789ab_0.1.0-1_amd64.deb

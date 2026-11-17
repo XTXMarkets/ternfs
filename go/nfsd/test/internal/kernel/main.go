@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/test/internal/harness"
+	"github.com/XTXMarkets/ternfs/go/nfsd/test/samba"
 )
 
 var resultPattern = regexp.MustCompile(`(?m)^suite exit=(\d+)$`)
@@ -45,21 +46,52 @@ func main() {
 	image := flag.String("image-dir", "", "guest kernel image directory written by prepare-image.sh")
 	tests := flag.String("tests", "all", "comma-separated functional case numbers, or all")
 	timeout := flag.Duration("timeout", 30*time.Minute, "overall run timeout")
-	caseTimeout := flag.Duration("case-timeout", 5*time.Minute, "timeout for one functional case in the guest")
+	caseTimeout := flag.Duration("case-timeout", 5*time.Minute,
+		"timeout for one functional case, or one smbtorture suite with -samba (default 20m there), in the guest")
 	smp := flag.Int("smp", 4, "guest CPUs")
 	memory := flag.String("mem", "4G", "guest memory")
 	restart := flag.Bool("restart-mid-write", false,
 		"instead of the functional cases, kill and restart nfsd while the guest holds a writer open, then check what it publishes")
+	sambaMode := flag.Bool("samba", false,
+		"instead of the functional cases, run smbtorture through Samba on the mount and compare with a tmpfs share")
+	sambaSuites := flag.String("samba-suites", samba.DefaultSuites, "comma-separated smbtorture suites for -samba")
+	sambaManifest := flag.String("samba-known", "samba/known_differences.txt", "known nfsd-only smbtorture failures for -samba")
 	flag.Parse()
+	if *restart && *sambaMode {
+		fmt.Fprintln(os.Stderr, "-restart-mid-write and -samba are separate runs")
+		os.Exit(2)
+	}
+	var sambaRun *sambaOptions
+	if *sambaMode {
+		// A suite such as smb2.dir makes thousands of backend mutations, and a
+		// local cluster on a disk with slow fsync takes minutes over it.
+		caseTimeoutSet := false
+		flag.Visit(func(f *flag.Flag) { caseTimeoutSet = caseTimeoutSet || f.Name == "case-timeout" })
+		if !caseTimeoutSet {
+			*caseTimeout = 20 * time.Minute
+		}
+		sambaRun = &sambaOptions{suites: *sambaSuites, manifest: harness.SourcePath(*sambaManifest)}
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	ctx, cancel := context.WithTimeout(ctx, *timeout)
 	defer cancel()
-	if err := run(ctx, opts, *image, *tests, *caseTimeout, *smp, *memory, *restart); err != nil {
+	if err := run(ctx, opts, *image, *tests, *caseTimeout, *smp, *memory, *restart, sambaRun); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
+
+// sambaOptions selects the -samba run.
+type sambaOptions struct {
+	suites   string
+	manifest string
+}
+
+// sambaMountOptions are added to the mount for Samba. smbd reopens files for
+// writing through /proc/self/fd, without a path walk, so the mount needs
+// lookupcache=none (DEPLOYMENT.md, Client mounts).
+const sambaMountOptions = "actimeo=1,lookupcache=none"
 
 const restartWriterName = "restart-mid-write.dat"
 
@@ -92,7 +124,7 @@ func restartMidWrite(ctx context.Context, server *harness.Server, control string
 }
 
 func run(ctx context.Context, opts harness.Options, image, tests string,
-	caseTimeout time.Duration, smp int, memory string, restart bool) (err error) {
+	caseTimeout time.Duration, smp int, memory string, restart bool, sambaRun *sambaOptions) (err error) {
 	if image == "" {
 		return fmt.Errorf("-image-dir is required; run prepare-image.sh or make build-kernel-image")
 	}
@@ -107,6 +139,11 @@ func run(ctx context.Context, opts harness.Options, image, tests string,
 	qemu, err := exec.LookPath("qemu-system-x86_64")
 	if err != nil {
 		return fmt.Errorf("qemu-system-x86_64 is not installed: %w", err)
+	}
+	if sambaRun != nil {
+		if err := samba.CheckTools(); err != nil {
+			return err
+		}
 	}
 	kernelDir := harness.SourcePath("internal/kernel")
 	functional := harness.SourcePath("functional")
@@ -140,6 +177,12 @@ func run(ctx context.Context, opts harness.Options, image, tests string,
 		}
 		extra = []string{"mode=restart-mid-write", "control=" + control,
 			"restart_writer=" + filepath.Join(kernelDir, "restart-writer.py")}
+	}
+	sambaResults := filepath.Join(server.Dir, "samba")
+	if sambaRun != nil {
+		extra = []string{"mode=samba", "samba=" + harness.SourcePath("samba"),
+			"samba_results=" + sambaResults, "samba_suites=" + sambaRun.suites,
+			"mount_extra=" + sambaMountOptions}
 	}
 	cmdline, err := kernelCommandLine(append([]string{
 		"console=ttyS0", "loglevel=4", "panic=-1",
@@ -214,7 +257,15 @@ func run(ctx context.Context, opts harness.Options, image, tests string,
 		return errors.Join(waitErr, restartErr, fmt.Errorf("guest reported no result; see %s", guest.Log))
 	}
 	if status, _ := strconv.Atoi(string(match[1])); status != 0 {
-		return errors.Join(restartErr, fmt.Errorf("functional cases failed (guest exit %d)", status))
+		what := "functional cases"
+		if sambaRun != nil {
+			what = "Samba run"
+		}
+		return errors.Join(restartErr, fmt.Errorf("%s failed (guest exit %d)", what, status))
+	}
+	if sambaRun != nil {
+		return errors.Join(waitErr, samba.Evaluate(sambaResults, sambaRun.manifest,
+			strings.Split(sambaRun.suites, ","), os.Stdout))
 	}
 	if restart {
 		if restartErr != nil {

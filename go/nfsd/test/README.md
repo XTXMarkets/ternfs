@@ -23,6 +23,7 @@ and unsupported features. The current contract and defects are described in
 | libnfs | Separate client and nfsd processes; TernFS backend. | Behaviour through the libnfs client library. |
 | pynfs | NFSv4.1 protocol client; TernFS backend. | Selected protocol conformance cases. |
 | Functional scripts | Applications on an existing mount, or a QEMU kernel client. | File workflows and application-visible results. |
+| Samba | smbtorture through smbd on the QEMU kernel client; TernFS backend. | SMB2 behaviour over nfsd, compared with a tmpfs share. |
 | CI NFS integration | Linux client in the CI VM; TernFS backend. | Mounted filesystem, mutation and outage workloads, with the limitations below. |
 
 ## Unit and native-backend tests
@@ -197,6 +198,60 @@ recovery or a crash partway through native CLOSE publication.
 
 The driver also accepts `-registry`, `-binaries-dir`, `-nfsd` and
 `-artifacts-dir` directly.
+
+## Samba over the kernel client
+
+The fsgw hosts serve the tree to Windows through Samba on a kernel NFS mount
+of nfsd. The driver's `-samba` mode runs that arrangement in the same guest:
+it mounts nfsd with `lookupcache=none` added, as
+[Client mounts](../DEPLOYMENT.md#one-writable-server) requires, starts smbd
+with [smb.conf.in](samba/smb.conf.in), and runs smbtorture's SMB2 suites
+against a share on the mount and against a tmpfs share with the same
+options. The share carries the settings [Samba](../DEPLOYMENT.md#samba)
+lists for a share over nfsd.
+
+Besides the kernel image prerequisites above, this needs the `samba` and
+`samba-testsuite` packages on the host, on Debian and Ubuntu alike. The
+guest runs the host's smbd and smbtorture from the 9p root, and the driver
+checks for them before it starts anything; nothing is started on the host.
+The `samba` package enables and starts its own smbd on the host when
+installed, which this does not use; stop it with `systemctl disable --now
+smbd nmbd` if it is not wanted. In a minimal container the package's
+post-install step can fail on `root:adm`; the binaries are installed
+regardless.
+
+```sh
+make test-samba-cluster TEST_ARGS='-binaries-dir /path/to/binaries'
+make test-samba TEST_ARGS='-registry HOST:PORT'
+make test-samba-cluster SAMBA_SUITES=smb2.sharemode,smb2.delete-on-close-perms
+```
+
+A case that fails on both shares is Samba or configuration and is reported
+as `both-failed`. A case that fails only on nfsd, or does not run there,
+fails the run unless [known_differences.txt](samba/known_differences.txt)
+lists it with its reason. A listed case that no longer differs is reported as
+`stale-manifest-entry`. smbtorture's raw output and the smbd logs are kept
+under the run's `samba` directory when the run fails.
+
+The default suites leave out `smb2.lease`, `smb2.oplock` and
+`smb2.durable-open`, which fail on both shares because the fsgw shares set
+`oplocks = no`. `SAMBA_TIMEOUT` defaults to 45 minutes, and each suite may
+take up to 20 (`-case-timeout`). The default suites take about ten minutes
+under TCG when backend writes take under a millisecond. A file created
+through Samba costs about three backend writes, so with a cluster on a disk
+whose fsync takes 10 ms, such as a large encrypted volume chosen with
+`TMPDIR`, `smb2.dir` alone takes about seven minutes. Results depend on the
+host's Samba version; the control share absorbs most of that, but a new
+version can change case names in the manifest. This suite is not currently
+selected by CI.
+
+The SMB user is an ordinary user, as Windows users are through winbind, and
+the share lists it in `admin users`. nfsd's ownership and modes are
+synthetic: every file is owned by `nobody` with mode 0644, and every
+directory 0755. Samba checks a user's access against those, so without
+`admin users` an ordinary user can read but cannot create, overwrite or
+make directories. The share's `valid users` is therefore the only access
+control, and the suite says nothing about permissions.
 
 ## Separate CI NFS integration
 

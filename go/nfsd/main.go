@@ -30,6 +30,8 @@ func main() {
 	registry := flag.String("registry", "", "TernFS registry address (for production)")
 	stagingDir := flag.String("staging", "", "staging directory: writes, sessions and client records (required)")
 	verbose := flag.Bool("v", false, "verbose logging of NFS requests/responses")
+	readOnly := flag.Bool("read-only", false,
+		"refuse every change to the filesystem; staging then holds only sessions and client records")
 	allowMinor2 := flag.Bool("allow-minor-version-2", false,
 		"also accept NFSv4.2 COMPOUNDs, served as NFSv4.1 with every 4.2 operation unsupported")
 	replyWorkMiB := flag.Int("reply-work-budget-mib", server.DefaultReplyWorkBudgetMiB,
@@ -79,6 +81,12 @@ func main() {
 		os.Exit(1)
 	}
 	slogger.Info("staging directory configured", "path", *stagingDir)
+	if n := len(ss.Entries()); *readOnly && n > 0 {
+		// A read-only server can never publish them.
+		slogger.Error("staging holds staged writers; start the server writable to publish them",
+			"path", *stagingDir, "writers", n)
+		os.Exit(1)
+	}
 
 	fs, target, counters, err := openVFS(*root, *registry, *verbose)
 	if err != nil {
@@ -95,6 +103,10 @@ func main() {
 	srv.MaxInFlightPerConn = *maxInFlight
 	srv.SetReplyWorkBudget(*replyWorkMiB << 20)
 	srv.AllowMinorVersion2 = *allowMinor2
+	srv.ReadOnly = *readOnly
+	if *readOnly {
+		slogger.Info("read-only: every change to the filesystem is refused")
+	}
 	srv.NFSAddr = *addr
 	if *statusAddr != "" {
 		ln, err := net.Listen("tcp", *statusAddr)

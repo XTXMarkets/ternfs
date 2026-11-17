@@ -522,6 +522,11 @@ func (s *LocalStore) Remove(id vfs.InodeID) {
 	name := entry.file.f.Name()
 	os.Remove(name)
 	os.Remove(strings.TrimSuffix(name, ".staging") + ".meta")
+	// A removal lost to a power loss would bring back a writer whose CLOSE
+	// had been answered, and the next OPEN would adopt it.
+	if err := syncDir(filepath.Dir(name)); err != nil {
+		s.log.Warn("staging remove: cannot sync directory", "inode", id, "err", err)
+	}
 }
 
 func (s *LocalStore) StagedSize(id vfs.InodeID) (uint64, bool) {
