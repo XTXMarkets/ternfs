@@ -20,6 +20,7 @@ enum test_mode {
     TEST_BLOCK,
     TEST_GETATTR_ERROR,
     TEST_SPAN_ERROR,
+    TEST_SPAN_MISSING,
     TEST_BUFFER_ERROR,
     TEST_PAGE_ERROR,
     TEST_FETCH_ERROR,
@@ -95,6 +96,7 @@ static struct ternfs_span* test_get_span(
 ) {
     span_gets++;
     if (mode == TEST_SPAN_ERROR) { return ERR_PTR(-EIO); }
+    if (mode == TEST_SPAN_MISSING) { return NULL; }
     if (mode == TEST_INLINE) { return &inline_span.span; }
     return &block_span.span;
 }
@@ -261,6 +263,10 @@ static int __init symlink_test_init(void) {
     if (err) { return err; }
     err = expect_error(
         &enode, TEST_SPAN_ERROR, -EIO, 1, 0, 0, "span lookup error"
+    );
+    if (err) { return err; }
+    err = expect_error(
+        &enode, TEST_SPAN_MISSING, -EIO, 1, 0, 0, "missing span"
     );
     if (err) { return err; }
     err = expect_error(

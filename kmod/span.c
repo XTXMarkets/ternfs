@@ -915,7 +915,6 @@ struct ternfs_span* ternfs_get_span(struct ternfs_fs_info* fs_info, struct ternf
 
     u64 fetched_at = get_jiffies_64();
 
-retry:
     // Check if we already have the span
     {
         down_read(&spans->__lock);
@@ -935,8 +934,6 @@ retry:
                 return span;
             }
         }
-        // While it looks it must be there it could be again removed already
-        // BUG_ON(fetched); // If we've just fetched it must be here.
     }
 
     // We need to fetch the spans.
@@ -977,9 +974,13 @@ retry:
             ternfs_put_span(span);
         }
     }
-    up_write(&spans->__lock);
 
-    goto retry;
+    struct ternfs_span* span = lookup_span(&spans->__spans, offset);
+    if (likely(span != NULL)) {
+        atomic_inc(&span->refcount);
+    }
+    up_write(&spans->__lock);
+    GET_SPAN_EXIT(span);
 
 #undef GET_SPAN_EXIT
 }

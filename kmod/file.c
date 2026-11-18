@@ -1009,6 +1009,12 @@ static int file_readpages(struct file *filp, struct address_space *mapping, stru
         span = NULL;
         goto out_err;
     }
+    if (span == NULL) {
+        list_for_each_entry(page, pages, lru) {
+            zero_user_segment(page, 0, PAGE_SIZE);
+        }
+        goto out;
+    }
 
     if (span->storage_class == TERNFS_INLINE_STORAGE) {
         struct ternfs_inline_span* inline_span = TERNFS_INLINE_SPAN(span);
@@ -1077,6 +1083,10 @@ retry:
         ternfs_debug("file=%016lx get_span failed at offset=%llu", enode->inode.i_ino, off);
         err = PTR_ERR(span);
         span = NULL;
+        goto out;
+    }
+    if (span == NULL) {
+        zero_user_segment(page, 0, PAGE_SIZE);
         goto out;
     }
 
@@ -1216,6 +1226,7 @@ static void file_readahead(struct readahead_control *rac)
         span = NULL;
         goto out_err;
     }
+    if (span == NULL) { goto out_process; }
 
     // Allocate pages for readahead
     unsigned i;
