@@ -193,15 +193,24 @@ func inodeNFSMode(id vfs.InodeID) uint32 {
 	}
 }
 
-// encodeAttrs encodes the requested attributes into an XDR byte buffer.
-// Attributes MUST be encoded in order of their bit position.
-func encodeAttrs(mask attrMask, id vfs.InodeID, ni vfs.NodeInfo) []byte {
-	return appendAttrs(make([]byte, 0, 256), mask, id, ni)
+// fileOwner is the owner and group every file reports; TernFS stores
+// neither. The strings go to clients as they are. Linux clients take a
+// numeric id ("1000") as it is and map "user@domain" through idmap when the
+// domain is theirs; anything else maps to the client's nobody.
+type fileOwner struct {
+	user, group string
 }
 
-// appendAttrs appends encodeAttrs's encoding to buf. For a given mask the
-// encoding has a fixed length, so a buffer of that capacity never grows.
-func appendAttrs(buf []byte, mask attrMask, id vfs.InodeID, ni vfs.NodeInfo) []byte {
+// encodeAttrs encodes the requested attributes into an XDR byte buffer.
+// Attributes MUST be encoded in order of their bit position.
+func encodeAttrs(mask attrMask, owner fileOwner, id vfs.InodeID, ni vfs.NodeInfo) []byte {
+	return appendAttrs(make([]byte, 0, 256), mask, owner, id, ni)
+}
+
+// appendAttrs appends encodeAttrs's encoding to buf. For a given mask and
+// owner the encoding has a fixed length, so a buffer of that capacity never
+// grows.
+func appendAttrs(buf []byte, mask attrMask, owner fileOwner, id vfs.InodeID, ni vfs.NodeInfo) []byte {
 
 	// Word 0 attributes (bits 0-31).
 	if mask[0]&(1<<nfs4.FATTR4_SUPPORTED_ATTRS) != 0 {
@@ -310,10 +319,10 @@ func appendAttrs(buf []byte, mask attrMask, id vfs.InodeID, ni vfs.NodeInfo) []b
 		buf = binary.BigEndian.AppendUint32(buf, 1)
 	}
 	if mask[1]&(1<<(nfs4.FATTR4_OWNER-32)) != 0 {
-		buf = encodeString(buf, "nobody")
+		buf = encodeString(buf, owner.user)
 	}
 	if mask[1]&(1<<(nfs4.FATTR4_OWNER_GROUP-32)) != 0 {
-		buf = encodeString(buf, "nogroup")
+		buf = encodeString(buf, owner.group)
 	}
 	if mask[1]&(1<<(nfs4.FATTR4_RAWDEV-32)) != 0 {
 		buf = binary.BigEndian.AppendUint32(buf, 0)

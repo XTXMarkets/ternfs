@@ -6218,7 +6218,7 @@ func TestReaddirEntryXDRSize(t *testing.T) {
 				respMask: respMask,
 			}
 			if tc.statOK {
-				re.attrData = encodeAttrs(respMask, id, ni)
+				re.attrData = encodeAttrs(respMask, fileOwner{}, id, ni)
 			}
 
 			predicted := readdirEntryXDRSize(&re)

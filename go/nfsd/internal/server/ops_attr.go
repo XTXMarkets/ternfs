@@ -74,7 +74,7 @@ func (s *Server) opGetattr(args nfs4.GETATTR4args, st *compoundState, w *nfs4.CO
 	respMask[2] = reqMask[2] & supportedAttrs2
 
 	faw := okW.StartObjAttributes()
-	attrBuf := encodeAttrs(respMask, st.currentID, ni)
+	attrBuf := encodeAttrs(respMask, s.owner, st.currentID, ni)
 	okW.Resume(writeFattr(&faw, respMask[:], attrBuf))
 	ew.Resume(okW.Finish())
 	w.Resume(ew.Finish())
@@ -351,7 +351,7 @@ func (s *Server) verifyAttrs(id, dataID vfs.InodeID, supplied nfs4.Fattr4) (bool
 	}
 
 	// Encode what we would return for these attributes.
-	expected := encodeAttrs(mask, id, ni)
+	expected := encodeAttrs(mask, s.owner, id, ni)
 
 	// Get the supplied attribute values.
 	suppliedData := supplied.AttrVals().Data()

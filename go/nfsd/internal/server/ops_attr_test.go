@@ -5,10 +5,12 @@
 package server
 
 import (
+	"bytes"
 	"fmt"
 	"testing"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 // A backend that does not answer a GETATTR in time gets DELAY, not IO.
@@ -67,4 +69,43 @@ func TestGetattrBackendTimeoutDelaysCloseCompound(t *testing.T) {
 		t.Fatalf("retried close compound: %s, ops %v, want NFS4_OK with %v", nfs4.Nfsstat4Name(status), ops, want)
 	}
 	f.mustDrained(t, "after the retried CLOSE")
+}
+
+// Files report the owner and group given to SetOwner, as they are.
+func TestGetattrOwner(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		user, group string
+	}{
+		{"names", "steve@localdomain", "universe@localdomain"},
+		{"numeric", "10303", "10641"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			srv, err := NewServer(vfs.NewLocalTernVFS(t.TempDir()), newTestStaging(t), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			srv.SetOwner(test.user, test.group)
+			addr, cleanup := serveTestServer(t, srv)
+			defer cleanup()
+			conn := dial(t, addr)
+			defer conn.Close()
+
+			res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				gw := w.AppendArgarray_Getattr()
+				bw := gw.StartAttrRequest()
+				bw.AppendData(0)
+				bw.AppendData(1<<(nfs4.FATTR4_OWNER-32) | 1<<(nfs4.FATTR4_OWNER_GROUP-32))
+				gw.Resume(bw.Finish())
+				w.Resume(gw.Finish())
+			})
+			iter := expectOK(t, res)
+			nextOp(t, &iter) // PUTROOTFH
+			got := getAttrData(t, nextOp(t, &iter).Value().AsGETATTR4resEntry().Value().AsGETATTR4resok())
+			if want := encodeString(encodeString(nil, test.user), test.group); !bytes.Equal(got, want) {
+				t.Fatalf("owner and group = %q, want %q", got, want)
+			}
+		})
+	}
 }

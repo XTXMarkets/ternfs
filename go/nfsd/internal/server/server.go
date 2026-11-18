@@ -104,6 +104,9 @@ type Server struct {
 
 	metrics      *Metrics
 	sessionFiles *sessionstore.Store // nil if the session store could not be opened
+
+	// owner is the owner and group every file reports; SetOwner sets it.
+	owner fileOwner
 }
 
 type mutationTarget struct {
@@ -136,6 +139,12 @@ func (s *Server) lockMutationTargets(targets ...mutationTarget) func() {
 }
 
 const DefaultMaxInFlightPerConn = 64
+
+// SetOwner makes every file report user and group as its owner and group.
+// Call it before Serve.
+func (s *Server) SetOwner(user, group string) {
+	s.owner = fileOwner{user: user, group: group}
+}
 
 // SetReplyWorkBudget bounds the reply work admitted at once across all
 // connections. Requests beyond it wait for releases.
