@@ -109,7 +109,8 @@ type Store interface {
 	// live or failed. Failed and Get are separate checks, and a quarantine
 	// between them makes both say no.
 	Retained(id vfs.InodeID) bool
-	// Remove closes and removes the staging file and sidecar for the given inode.
+	// Remove closes and removes the staging file and sidecar for the given
+	// inode, and syncs the directory so that a power loss cannot bring it back.
 	Remove(id vfs.InodeID)
 	// StagedSize returns the staged size for the given inode.
 	// Returns (0, false) if the inode has no staging file.

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"os"
 	"path/filepath"
@@ -3676,6 +3677,135 @@ func TestLinkNotSupported(t *testing.T) {
 	}
 }
 
+// A read-only server refuses every change, timestamps included, and still
+// serves reads. An open with create of an existing file opens it, as
+// open(O_CREAT) does on a read-only mount.
+func TestReadOnlyRefusesChanges(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "file"), []byte("data"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(filepath.Join(root, "file"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := newTestStaging(t)
+	srv, err := NewServer(vfs.NewLocalTernVFS(root), store, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.ReadOnly = true
+	addr, stop := serveTestServer(t, srv)
+	defer stop()
+	conn := dial(t, addr)
+	defer conn.Close()
+	xid := uint32(1)
+	clientID := setupClient(t, conn, &xid)
+	fh := lookupFH(t, conn, &xid, "file")
+
+	compound := func(build func(w *nfs4.COMPOUND4argsWriter)) nfs4.COMPOUND4res {
+		res := sendCompound(t, conn, xid, build)
+		xid++
+		return res
+	}
+	refused := []struct {
+		op    string
+		build func(w *nfs4.COMPOUND4argsWriter)
+	}{
+		{"CREATE", func(w *nfs4.COMPOUND4argsWriter) {
+			w.AppendArgarray_Putrootfh()
+			admissionCreate(w, "dir")
+		}},
+		{"REMOVE", func(w *nfs4.COMPOUND4argsWriter) {
+			w.AppendArgarray_Putrootfh()
+			admissionRemove(w, "file")
+		}},
+		{"RENAME", func(w *nfs4.COMPOUND4argsWriter) {
+			w.AppendArgarray_Putrootfh()
+			w.AppendArgarray_Savefh()
+			rw := w.AppendArgarray_Rename()
+			rw.Resume(rw.StartOldname().SetData([]byte("file")).Finish())
+			rw.Resume(rw.StartNewname().SetData([]byte("moved")).Finish())
+			w.Resume(rw.Finish())
+		}},
+		{"SETATTR mtime", func(w *nfs4.COMPOUND4argsWriter) {
+			putfhOp(w, fh)
+			saw := w.AppendArgarray_Setattr()
+			faw := saw.StartObjAttributes()
+			bmW := faw.StartAttrmask()
+			bmW.AppendData(0)
+			bmW.AppendData(1 << (nfs4.FATTR4_TIME_MODIFY_SET - 32))
+			faw.Resume(bmW.Finish())
+			value := binary.BigEndian.AppendUint32(nil, nfs4.SET_TO_SERVER_TIME4)
+			faw.Resume(faw.StartAttrVals().SetData(value).Finish())
+			saw.Resume(faw.Finish())
+			w.Resume(saw.Finish())
+		}},
+		{"WRITE", func(w *nfs4.COMPOUND4argsWriter) {
+			putfhOp(w, fh)
+			ww := w.AppendArgarray_Write()
+			ww = ww.SetOffset(0)
+			ww = ww.SetStable(fileSync4)
+			ww = ww.SetData([]byte("changed"))
+			w.Resume(ww.Finish())
+		}},
+	}
+	for _, r := range refused {
+		if status := compound(r.build).Status(); status != nfs4.NFS4ERR_ROFS {
+			t.Errorf("%s: %s, want NFS4ERR_ROFS", r.op, nfs4.Nfsstat4Name(status))
+		}
+	}
+
+	opens := []struct {
+		name   string
+		access uint32
+		create bool
+		want   uint32
+	}{
+		{"file", nfs4.OPEN4_SHARE_ACCESS_WRITE, false, nfs4.NFS4ERR_ROFS},
+		{"file", nfs4.OPEN4_SHARE_ACCESS_BOTH, false, nfs4.NFS4ERR_ROFS},
+		{"missing", nfs4.OPEN4_SHARE_ACCESS_READ, true, nfs4.NFS4ERR_ROFS},
+		{"file", nfs4.OPEN4_SHARE_ACCESS_READ, true, nfs4.NFS4_OK},
+		{"file", nfs4.OPEN4_SHARE_ACCESS_READ, false, nfs4.NFS4_OK},
+	}
+	for i, o := range opens {
+		owner := fmt.Sprintf("owner-%d", i)
+		status, _, _, _ := openFileForOwner(t, conn, &xid, clientID, owner, o.name, o.access, o.create, false)
+		if status != o.want {
+			t.Errorf("OPEN %s access %d create %t: %s, want %s", o.name, o.access, o.create,
+				nfs4.Nfsstat4Name(status), nfs4.Nfsstat4Name(o.want))
+		}
+	}
+
+	res := compound(func(w *nfs4.COMPOUND4argsWriter) {
+		putfhOp(w, fh)
+		aw := w.AppendArgarray_Access()
+		aw.SetAccess(nfs4.ACCESS4_READ | nfs4.ACCESS4_MODIFY | nfs4.ACCESS4_EXTEND)
+	})
+	iter := expectOK(t, res)
+	nextOp(t, &iter)
+	ok := nextOp(t, &iter).Value().AsACCESS4resEntry().Value().AsACCESS4resok()
+	if ok.Access() != nfs4.ACCESS4_READ {
+		t.Errorf("ACCESS granted %#x, want READ only", ok.Access())
+	}
+
+	if data, err := os.ReadFile(filepath.Join(root, "file")); err != nil || string(data) != "data" {
+		t.Errorf("file holds %q (%v), want %q", data, err, "data")
+	}
+	after, err := os.Stat(filepath.Join(root, "file"))
+	if err != nil || !after.ModTime().Equal(before.ModTime()) {
+		t.Errorf("file mtime %v (%v), want %v", after.ModTime(), err, before.ModTime())
+	}
+	for _, name := range []string{"dir", "moved", "missing"} {
+		if _, err := os.Lstat(filepath.Join(root, name)); !os.IsNotExist(err) {
+			t.Errorf("%s exists after a refused change (%v)", name, err)
+		}
+	}
+	if n := len(store.Entries()); n != 0 {
+		t.Errorf("%d staged files, want none", n)
+	}
+}
+
 func TestCreateSymlink(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "target.txt"), []byte("target"), 0644)
@@ -4520,71 +4650,55 @@ func TestReaddirNewFileVisibleBeforeClose(t *testing.T) {
 	}
 }
 
+// Times TernFS cannot store are clamped to its range, 1970 to 2262.
 func TestSetattrTime(t *testing.T) {
-	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("data"), 0644)
+	for _, test := range []struct {
+		name string
+		set  time.Time
+		want time.Time
+	}{
+		{"in range", time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)},
+		{"before 1970", time.Unix(-1, 0), time.Unix(0, 0)},
+		{"after 2262", time.Date(3000, 1, 1, 0, 0, 0, 0, time.UTC), time.Unix(0, math.MaxInt64)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			os.WriteFile(filepath.Join(dir, "file.txt"), []byte("data"), 0644)
+			addr, cleanup := startTestServer(t, dir)
+			defer cleanup()
+			conn := dial(t, addr)
+			defer conn.Close()
 
-	addr, cleanup := startTestServer(t, dir)
-	defer cleanup()
-	conn := dial(t, addr)
-	defer conn.Close()
+			attrData := binary.BigEndian.AppendUint32(nil, nfs4.SET_TO_CLIENT_TIME4)
+			attrData = binary.BigEndian.AppendUint64(attrData, uint64(test.set.Unix()))
+			attrData = binary.BigEndian.AppendUint32(attrData, uint32(test.set.Nanosecond()))
+			res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				lw := w.AppendArgarray_Lookup()
+				lw.Resume(lw.StartObjname().SetData([]byte("file.txt")).Finish())
+				w.Resume(lw.Finish())
+				sw := w.AppendArgarray_Setattr()
+				sw.Stateid().SetSeqid(0)
+				sw.Resume(finishTestFattr(sw.StartObjAttributes(),
+					attrMask{0, 1 << (nfs4.FATTR4_TIME_MODIFY_SET - 32)}, attrData))
+				w.Resume(sw.Finish())
+			})
+			expectOK(t, res)
 
-	// Set mtime to a specific time (2020-01-01 00:00:00 UTC).
-	targetTime := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
-	targetSec := targetTime.Unix()
-	targetNsec := uint32(0)
-
-	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
-		w.AppendArgarray_Putrootfh()
-
-		lw := w.AppendArgarray_Lookup()
-		nw := lw.StartObjname()
-		buf := nw.SetData([]byte("file.txt")).Finish()
-		lw.Resume(buf)
-		buf = lw.Finish()
-		w.Resume(buf)
-
-		saw := w.AppendArgarray_Setattr()
-		saw.Stateid().SetSeqid(0)
-		faw := saw.StartObjAttributes()
-		bmW := faw.StartAttrmask()
-		bmW.AppendData(0) // word 0: nothing
-		bmW.AppendData(1 << (nfs4.FATTR4_TIME_MODIFY_SET - 32))
-		buf = bmW.Finish()
-		faw.Resume(buf)
-		// Attr data: SET_TO_CLIENT_TIME4(1) + nfstime4(sec:8 + nsec:4)
-		attrData := make([]byte, 4+8+4)
-		binary.BigEndian.PutUint32(attrData[0:4], nfs4.SET_TO_CLIENT_TIME4)
-		binary.BigEndian.PutUint64(attrData[4:12], uint64(targetSec))
-		binary.BigEndian.PutUint32(attrData[12:16], targetNsec)
-		alW := faw.StartAttrVals()
-		buf = alW.SetData(attrData).Finish()
-		faw.Resume(buf)
-		buf = faw.Finish()
-		saw.Resume(buf)
-		buf = saw.Finish()
-		w.Resume(buf)
-	})
-
-	iter := expectOK(t, res)
-	nextOp(t, &iter) // PUTROOTFH
-	nextOp(t, &iter) // LOOKUP
-	entry := nextOp(t, &iter)
-	if entry.Value().AsSETATTR4res().Status() != nfs4.NFS4_OK {
-		t.Fatalf("SETATTR status = %s", nfs4.Nfsstat4Name(entry.Value().AsSETATTR4res().Status()))
-	}
-
-	// Verify mtime was set on disk.
-	info, err := os.Stat(filepath.Join(dir, "file.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !info.ModTime().Equal(targetTime) {
-		t.Fatalf("mtime = %v, want %v", info.ModTime(), targetTime)
+			info, err := os.Stat(filepath.Join(dir, "file.txt"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !info.ModTime().Equal(test.want) {
+				t.Fatalf("mtime = %v, want %v", info.ModTime(), test.want)
+			}
+		})
 	}
 }
 
-func TestSetattrModeRejected(t *testing.T) {
+// chmod and chown succeed and change nothing: Samba chmods on security
+// descriptor changes, and EIO from that reaches Windows as access denied.
+func TestSetattrModeAndOwnerIgnored(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("data"), 0644)
 
@@ -4593,37 +4707,51 @@ func TestSetattrModeRejected(t *testing.T) {
 	conn := dial(t, addr)
 	defer conn.Close()
 
-	res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
-		w.AppendArgarray_Putrootfh()
-
-		lw := w.AppendArgarray_Lookup()
-		nw := lw.StartObjname()
-		buf := nw.SetData([]byte("file.txt")).Finish()
-		lw.Resume(buf)
-		buf = lw.Finish()
-		w.Resume(buf)
-
-		saw := w.AppendArgarray_Setattr()
-		saw.Stateid().SetSeqid(0)
-		faw := saw.StartObjAttributes()
-		bmW := faw.StartAttrmask()
-		bmW.AppendData(0)
-		bmW.AppendData(1 << (nfs4.FATTR4_MODE - 32)) // mode is not supported
-		buf = bmW.Finish()
-		faw.Resume(buf)
-		attrData := make([]byte, 4)
-		binary.BigEndian.PutUint32(attrData[0:4], 0755)
-		alW := faw.StartAttrVals()
-		buf = alW.SetData(attrData).Finish()
-		faw.Resume(buf)
-		buf = faw.Finish()
-		saw.Resume(buf)
-		buf = saw.Finish()
-		w.Resume(buf)
-	})
-
-	if res.Status() != nfs4.NFS4ERR_ATTRNOTSUPP {
-		t.Fatalf("expected NFS4ERR_ATTRNOTSUPP, got %s", nfs4.Nfsstat4Name(res.Status()))
+	mask := attrMask{0, 1<<(nfs4.FATTR4_MODE-32) |
+		1<<(nfs4.FATTR4_OWNER-32) | 1<<(nfs4.FATTR4_OWNER_GROUP-32)}
+	data := binary.BigEndian.AppendUint32(nil, 0700)
+	data = encodeString(data, "root")
+	data = encodeString(data, "wheel")
+	for _, test := range []struct {
+		name     string
+		lookup   string
+		wantMode uint32
+	}{
+		{"file", "file.txt", 0644},
+		{"directory", "", 0755},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			res := sendCompound(t, conn, 1, func(w *nfs4.COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				if test.lookup != "" {
+					lw := w.AppendArgarray_Lookup()
+					lw.Resume(lw.StartObjname().SetData([]byte(test.lookup)).Finish())
+					w.Resume(lw.Finish())
+				}
+				sw := w.AppendArgarray_Setattr()
+				sw.Stateid().SetSeqid(0)
+				sw.Resume(finishTestFattr(sw.StartObjAttributes(), mask, data))
+				w.Resume(sw.Finish())
+				gw := w.AppendArgarray_Getattr()
+				bw := gw.StartAttrRequest()
+				bw.AppendData(0)
+				bw.AppendData(1 << (nfs4.FATTR4_MODE - 32))
+				gw.Resume(bw.Finish())
+				w.Resume(gw.Finish())
+			})
+			iter := expectOK(t, res)
+			nextOp(t, &iter) // PUTROOTFH
+			if test.lookup != "" {
+				nextOp(t, &iter)
+			}
+			if got := parseBitmap(nextOp(t, &iter).Value().AsSETATTR4res().Attrsset()); got != mask {
+				t.Fatalf("attrsset = %#x, want %#x", got, mask)
+			}
+			attrData := getAttrData(t, nextOp(t, &iter).Value().AsGETATTR4resEntry().Value().AsGETATTR4resok())
+			if mode := binary.BigEndian.Uint32(attrData[:4]); mode != test.wantMode {
+				t.Fatalf("mode after chmod = %#o, want %#o", mode, test.wantMode)
+			}
+		})
 	}
 }
 
@@ -4649,6 +4777,12 @@ func TestSetattrValidation(t *testing.T) {
 		{
 			name:       "mode missing data",
 			mask:       attrMask{0, 1 << (nfs4.FATTR4_MODE - 32)},
+			wantStatus: nfs4.NFS4ERR_BADXDR,
+		},
+		{
+			name:       "owner string longer than data",
+			mask:       attrMask{0, 1 << (nfs4.FATTR4_OWNER - 32)},
+			attrData:   []byte{0, 0, 0, 8, 'r', 'o', 'o', 't'},
 			wantStatus: nfs4.NFS4ERR_BADXDR,
 		},
 		{

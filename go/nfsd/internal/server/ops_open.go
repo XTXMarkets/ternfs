@@ -230,6 +230,10 @@ func (s *Server) releaseWrite(openStateid nfs4.Stateid4, st *compoundState, clos
 		// its staging sidecar.
 		dataID, ok := s.recoveredDataID(st.clientID, sid, st.currentID)
 		if !ok {
+			if closing && st.clientID != 0 && s.opens.CanRecover(sid) && s.publishedAtStartup[sid] == st.clientID {
+				// Startup found its publication done and dropped the staging.
+				return openstate.State{ID: sid, Generation: openstate.NextGeneration(generation)}, nfs4.NFS4_OK
+			}
 			return openstate.State{}, status
 		}
 		meta, _ := s.stagingStore.GetMeta(dataID)
@@ -948,6 +952,9 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 	}
 
 	access := args.ShareAccess() & nfs4.OPEN4_SHARE_ACCESS_BOTH
+	if s.ReadOnly && access&nfs4.OPEN4_SHARE_ACCESS_WRITE != 0 {
+		return fail(nfs4.NFS4ERR_ROFS)
+	}
 
 	// targetID is the inode the open's I/O uses; publishedID is the inode
 	// the name resolves to, which is the filehandle OPEN returns.
@@ -1115,6 +1122,12 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 				if lookupStatus != nfs4.NFS4ERR_NOENT {
 					return fail(lookupStatus)
 				}
+				// The name is missing, so this OPEN would create it. One
+				// that found the name opened the file above, as open(O_CREAT)
+				// does on a read-only mount.
+				if s.ReadOnly {
+					return fail(nfs4.NFS4ERR_ROFS)
+				}
 				if hasRecoveredStaging {
 					if recoveredStagingMeta.BaseID != 0 {
 						if s.fenceAndDiscardStaging(recoveredStagingID) != nil {
@@ -1201,8 +1214,13 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 		}
 
 		if !staged && access&nfs4.OPEN4_SHARE_ACCESS_WRITE != 0 {
-			// Join this client's writer of the same file.
-			if writer, ok := s.opens.WriterOf(clientID, publishedID); ok {
+			// Join this client's writer of the same file, or the staging of
+			// its read-only create of it.
+			writer, ok := s.opens.WriterOf(clientID, publishedID)
+			if !ok {
+				writer, ok = s.readOnlyCreator(clientID, publishedID)
+			}
+			if ok {
 				if s.stagingStore.Failed(writer.DataID) {
 					// As for any operation on that writer.
 					return fail(nfs4.NFS4ERR_IO)
@@ -1344,11 +1362,13 @@ func (s *Server) openRetry(args nfs4.OPEN4args, st *compoundState, w *nfs4.COMPO
 		}
 		return fail(status)
 	}
-	// A joined staging bound to a closing open is bound to this one, so a
-	// restart recovers the writer under the owner still using it.
+	// A joined staging bound to a closing open, or to a read-only create, is
+	// bound to this writer, so a restart recovers the writer under the owner
+	// still using it.
 	var joinedFrom staging.Meta
 	if joined {
-		if meta, ok := s.stagingStore.GetMeta(targetID); ok && meta.NFSStateID != markID && s.opens.Closing(meta.NFSStateID) {
+		if meta, ok := s.stagingStore.GetMeta(targetID); ok &&
+			(meta.ReadOnly || meta.NFSStateID != markID && s.opens.Closing(meta.NFSStateID)) {
 			if err := s.stagingStore.Bind(targetID, clientID, markID, ownerKey.Owner, false); err != nil {
 				return fail(nfs4.NFS4ERR_IO)
 			}

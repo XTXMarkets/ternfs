@@ -144,6 +144,11 @@ lock. A different version leaves it writable so CLOSE can retry. Reads and
 `Sync` remain available until removal; a mutation reaching a sealed file
 gets `ErrRemoved`. The seal is local to this process.
 
+`Remove` deletes the data file and the sidecar and syncs the staging
+directory before it returns. CLOSE answers only after that, so a power loss
+cannot bring back a staging whose CLOSE the client saw succeed. A sync that
+fails is logged.
+
 `Retire` cancels hydration, syncs the data, saves the full checkpoint with
 `Retired` set and closes the data file. It does nothing if the file has
 been rebound to another owner since the caller checked. `Rebind` gives a
@@ -187,7 +192,12 @@ rebind of a retired writer also closes the data file it reopened.
 A data file that cannot be opened, examined or truncated is logged and
 skipped where it is. A sidecar without a data file is not loaded. Which
 recovered writers a client may use is the server's decision; see
-[Writer recovery](../../RECOVERY.md#writer-recovery).
+[Writer recovery](../../RECOVERY.md#writer-recovery). The server also drops,
+at startup, a recovered entry whose CLOSE had already published it; see
+[Writer recovery mechanics](../server/README.md#writer-recovery-mechanics).
+A process killed between the link and `Remove` leaves such an entry. A
+removal lost to a power loss would too, which is why `Remove` syncs the
+directory.
 
 Quarantine moves a pair into a new directory under `quarantine/`. It syncs
 the new directory, `quarantine/` and the staging directory before the

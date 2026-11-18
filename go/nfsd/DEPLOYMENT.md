@@ -22,7 +22,7 @@ These are the current implementation's guarantees and limitations.
 | Successful create OPEN | The pathname contains an empty published file. Initial size and later writes can still be private. |
 | Unstable WRITE | The server accepted bytes into local staging. The client must retain them until made stable. |
 | Stable WRITE or COMMIT | Checkpoints staging data and metadata on the local disk. After a restart, COMMIT also syncs the client's recovered writers of the handle. It does not publish to TernFS. |
-| Last write CLOSE or downgrade to READ | Publishes a changed, linked staging version synchronously, or answers `NFS4ERR_DELAY` while the backend does not answer, and the client retries. A clean writer leaves the published file unchanged; an unlinked writer discards its private version. |
+| Last write CLOSE or downgrade to READ | Publishes a changed, linked staging version synchronously, or answers `NFS4ERR_DELAY` while the backend does not answer, and the client retries. A clean writer leaves the published file unchanged; an unlinked writer discards its private version. Once it answers OK, neither a restart nor a power loss brings that writer back. |
 | Fresh lookup after publication | Finds the replacement inode. Already held handles and client caches need not select that version. |
 
 Writers on one client share staging for the same file within one daemon.
@@ -48,6 +48,7 @@ not passed; a failover with an empty staging directory loses it. This causes the
 | [One writable server](#one-writable-server) | Each tree served by one daemon and its staging disk. | Staged data has no second copy in TernFS. |
 | [Failover with the staging directory](#failover-with-the-staging-directory) | Move a tree's daemon to another host, copying the stopped daemon's staging. The preferred failover. | The copy time is outage time. |
 | [Failover with an empty staging directory](#failover-with-an-empty-staging-directory) | Move a tree's daemon when the old staging cannot be read. | Unpublished writes of files open for writing are lost, mostly silently. |
+| [Read-only server](#read-only-server) | Serve published data to clients that only read. | Nothing can be changed through it, not even timestamps. |
 
 Several daemons serving one tree, or one mount spread across daemons, are
 not supported. Sessions, stateids, staged writers and namespace bookkeeping
@@ -161,6 +162,28 @@ to tell the client it was lost, so this is inherent to the procedure.
 
 **Known issues.** The new write verifier tells clients to resend unstable
 writes they still hold; it does not bring back stable ones.
+
+### Read-only server
+
+**Topology.** Start nfsd with `-read-only` and mount with `ro`, for example
+`-o vers=4.1,proto=tcp,hard,ro`. The daemon still needs a staging
+directory, for its sessions and client records; it stays small. A
+directory that holds staged writers is refused at startup, because a
+read-only daemon could never publish them: start it writable once first.
+
+**Guarantees.** OPEN for writing, OPEN that would create a file, CREATE,
+REMOVE, RENAME, SETATTR and WRITE get `NFS4ERR_ROFS`, whatever the client's
+mount options. An OPEN with create of an existing file opens it for
+reading, as `open(O_CREAT)` does on a read-only mount. ACCESS grants no
+modify, extend or delete.
+
+**Failure behaviour.** There are no unpublished writes to lose, so a
+replacement on another host with an empty staging directory costs clients
+only the reboot recovery described in
+[failover with an empty staging directory](#failover-with-an-empty-staging-directory).
+
+**Known issues.** Ownership and modes are still synthetic, and the whole
+tree is exported; see [network access](#network-access).
 
 ## Known defects
 
@@ -296,6 +319,51 @@ Ownership and modes are synthetic. AUTH_SYS principal comparison is an
 identity-collision guard, not an authentication or permission boundary.
 Choose network access accordingly. The diagnostics API has no
 authentication either; see [Diagnostics](#diagnostics).
+
+### Samba
+
+A Samba share over nfsd is its own share on a kernel NFSv4.1 mount, with
+its own limitations. [smb.conf.in](test/samba/smb.conf.in) is the tested
+reference, and the [Samba suite](test/README.md#samba-over-the-kernel-client)
+runs it.
+
+Mount with `vers=4.1,proto=tcp,hard,actimeo=1,lookupcache=none`; see
+[Client mounts](#one-writable-server). The share needs:
+
+- `admin users` naming the share's `valid users`. Every file is owned by
+  `nobody` with mode 0644, and every directory 0755, so Samba refuses an
+  ordinary user's writes otherwise. `valid users` is then the only access
+  control.
+- `dfree command` pointing at a script that runs `df`. Without it Samba asks
+  rquotad on the NFS server, which nfsd does not run, and each free-space
+  query waits 60 s.
+- `veto files = /.nfs*/`, which hides the Linux NFS client's silly renames
+  of open, unlinked files. Leave `delete veto files` off. A silly-renamed
+  file cannot be deleted while it is open and goes by itself when it
+  closes, and Samba 4.17 and 4.19 panic the user's smbd when that deletion
+  fails as a folder is removed.
+- `oplocks = no` and `kernel oplocks = no`. An oplock lets a Windows client
+  cache a file, and Samba cannot break it when an NFS client changes the
+  file.
+- `posix locking = no`, since nfsd does not support NFS locks.
+- `store dos attributes = no` and `ea support = no`, since nfsd has no
+  extended attributes.
+
+Users of the share see these limitations:
+
+- Byte-range locks hold between users of one smbd, not against NFS clients.
+- Hidden, system, archive and read-only flags do not stick.
+- Changes on the Security tab are accepted and change nothing.
+- "Date created" is made up from the other times and moves with them.
+- A file's ID changes every time it is saved, since every save publishes a
+  new TernFS inode.
+- A file open for writing cannot be moved to another folder; it can be
+  renamed within its own. An open file cannot be deleted or replaced, as on
+  Windows, and a folder holding a deleted file that is still open cannot be
+  removed until the file is closed.
+- Times before 1970 are stored as 1970, and times after April 2262 as 2262.
+- Free space shows nfsd's fixed figures, and quota information is not
+  available.
 
 ### Upgrades
 

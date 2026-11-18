@@ -1,0 +1,97 @@
+# Copyright 2026 XTX Markets Technologies Limited
+#
+# SPDX-License-Identifier: GPL-2.0-or-later
+#
+# Samba in the qemu guest, written out by guest.sh with @RUN@, @NFS@,
+# @CONTROL@, @DFREE@ and @USER@ replaced. Standalone server, one local
+# user, SMB3 only, leases on globally as the fsgw configuration has them.
+# Everything Samba writes is under @RUN@, a guest tmpfs: it cannot bind
+# unix sockets on the 9p root.
+
+[global]
+   workgroup = TEST
+   server role = standalone server
+   security = user
+   netbios name = NFSDGUEST
+   interfaces = lo
+   bind interfaces only = yes
+   disable netbios = yes
+   smb ports = 445
+   server min protocol = SMB3_02
+   smb2 leases = yes
+   log level = 1
+   log file = @RUN@/log/log.%m
+   max log size = 0
+   private dir = @RUN@/private
+   lock directory = @RUN@/lock
+   state directory = @RUN@/state
+   cache directory = @RUN@/cache
+   pid directory = @RUN@/pid
+   ncalrpc dir = @RUN@/ncalrpc
+   binddns dir = @RUN@/binddns
+   usershare max shares = 0
+   passdb backend = tdbsam
+   map to guest = never
+   load printers = no
+   printing = bsd
+   printcap name = /dev/null
+   disable spoolss = yes
+   kernel change notify = no
+
+# The share under test: a directory on the kernel NFSv4.1 mount of nfsd,
+# with the options the fsgw shares need over nfsd.
+[nfs]
+   path = @NFS@
+   valid users = @USER@
+   # Ownership and modes on nfsd are synthetic: every file is nobody's, 0644,
+   # and every directory 0755, so Samba would refuse an ordinary user's
+   # writes. The share is the only gate, and its users are root within it.
+   admin users = @USER@
+   # Samba otherwise asks rquotad on the NFS server for free space, which
+   # nfsd does not run, and each query blocks for 60 s.
+   dfree command = @DFREE@
+   # Hide the Linux NFS client's silly renames of open, unlinked files.
+   # Leave delete veto files off: such a file cannot be deleted while it is
+   # open, goes by itself when it closes, and Samba 4.17 and 4.19 panic in
+   # rmdir_internals when deleting it fails.
+   veto files = /.nfs*/
+   read only = no
+   case sensitive = yes
+   oplocks = no
+   kernel oplocks = no
+   posix locking = no
+   strict locking = no
+   store dos attributes = no
+   ea support = no
+   map archive = no
+   map hidden = no
+   map system = no
+   map readonly = no
+   strict sync = yes
+   create mask = 0660
+   force create mode = 0660
+   directory mask = 0770
+   force directory mode = 0770
+
+# The control: the same options on a guest tmpfs.
+[control]
+   path = @CONTROL@
+   valid users = @USER@
+   admin users = @USER@
+   read only = no
+   case sensitive = yes
+   oplocks = no
+   kernel oplocks = no
+   posix locking = no
+   strict locking = no
+   store dos attributes = no
+   ea support = no
+   map archive = no
+   map hidden = no
+   map system = no
+   map readonly = no
+   strict sync = yes
+   create mask = 0660
+   force create mode = 0660
+   directory mask = 0770
+   force directory mode = 0770

@@ -35,8 +35,8 @@ func nfsMutationTest(l *log.Logger, mnt string) {
 		{"timestamps", nfsSetTimes},
 		{"modify existing", nfsModifyExisting},
 		{"fsync/fstat/append", nfsFsyncFstatAppend},
-		{"private writers", nfsPrivateWriters},
-		{"visible creation", nfsVisibleCreation},
+		{"shared writers", nfsSharedWriters},
+		{"shared creation", nfsSharedCreation},
 	} {
 		fmt.Printf("  nfs mutations: %s\n", test.name)
 		start := time.Now()
@@ -285,16 +285,16 @@ func nfsFsyncFstatAppend(l *log.Logger, dir string) {
 	}
 }
 
-func nfsPrivateWriters(l *log.Logger, dir string) {
-	l.Info("nfs mutation: private writers and retained readers")
-	p := path.Join(dir, "private.txt")
+func nfsSharedWriters(l *log.Logger, dir string) {
+	l.Info("nfs mutation: shared writers")
+	p := path.Join(dir, "shared.txt")
 	if err := os.WriteFile(p, []byte("original"), 0644); err != nil {
 		panic(err)
 	}
 	open := func(flags int) *os.File {
 		f, err := os.OpenFile(p, flags, 0644)
 		if err != nil {
-			panic(fmt.Errorf("open private writer test: %w", err))
+			panic(fmt.Errorf("open shared writer test: %w", err))
 		}
 		return f
 	}
@@ -319,33 +319,32 @@ func nfsPrivateWriters(l *log.Logger, dir string) {
 			panic(err)
 		}
 		if string(data[:n]) != want {
-			panic(fmt.Errorf("private writer read = %q, want %q", data[:n], want))
+			panic(fmt.Errorf("shared writer read = %q, want %q", data[:n], want))
 		}
 	}
 	write(first, "FIRST", 0)
 	write(second, "SECOND", 8)
-	check(reader, "original")
-	check(first, "FIRSTnal")
-	check(second, "originalSECOND")
+	for _, f := range []*os.File{reader, first, second} {
+		check(f, "FIRSTnalSECOND")
+	}
 	if err := second.Close(); err != nil {
 		panic(err)
 	}
-	published := open(os.O_RDONLY)
-	defer published.Close()
-	check(published, "originalSECOND")
-	check(reader, "original")
+	otherReader := open(os.O_RDONLY)
+	defer otherReader.Close()
+	check(otherReader, "FIRSTnalSECOND")
 	if err := first.Close(); err != nil {
 		panic(err)
 	}
 	last := open(os.O_RDONLY)
 	defer last.Close()
-	check(last, "FIRSTnal")
-	check(published, "originalSECOND")
-	check(reader, "original")
+	for _, f := range []*os.File{reader, otherReader, last} {
+		check(f, "FIRSTnalSECOND")
+	}
 }
 
-func nfsVisibleCreation(l *log.Logger, dir string) {
-	l.Info("nfs mutation: empty published version before first close")
+func nfsSharedCreation(l *log.Logger, dir string) {
+	l.Info("nfs mutation: writers on a new file share staging")
 	p := path.Join(dir, "visible.txt")
 	creator, err := os.OpenFile(p, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
@@ -358,16 +357,14 @@ func nfsVisibleCreation(l *log.Logger, dir string) {
 	if err := creator.Sync(); err != nil {
 		panic(err)
 	}
-	// A new read open discovers the published empty inode, even though the
-	// creator has already synced nonempty private data.
 	reader, err := os.Open(p)
 	if err != nil {
 		panic(fmt.Errorf("open new pathname before creator CLOSE: %w", err))
 	}
 	defer reader.Close()
 	info, err := reader.Stat()
-	if err != nil || info.Size() != 0 {
-		panic(fmt.Errorf("new published version must be empty: info=%v err=%v", info, err))
+	if err != nil || info.Size() != int64(len("first")) {
+		panic(fmt.Errorf("same-client reader must see the staged data: info=%v err=%v", info, err))
 	}
 	writer, err := os.OpenFile(p, os.O_RDWR, 0644)
 	if err != nil {
@@ -375,8 +372,8 @@ func nfsVisibleCreation(l *log.Logger, dir string) {
 	}
 	defer writer.Close()
 	info, err = writer.Stat()
-	if err != nil || info.Size() != 0 {
-		panic(fmt.Errorf("second writer must start empty: info=%v err=%v", info, err))
+	if err != nil || info.Size() != int64(len("first")) {
+		panic(fmt.Errorf("second writer must join the existing staging: info=%v err=%v", info, err))
 	}
 	if _, err := writer.Write([]byte("second")); err != nil {
 		panic(err)
@@ -387,21 +384,21 @@ func nfsVisibleCreation(l *log.Logger, dir string) {
 	checkPath := func(want string) {
 		got, err := os.ReadFile(p)
 		if err != nil || string(got) != want {
-			panic(fmt.Errorf("published data = %q, err=%v, want %q", got, err, want))
+			panic(fmt.Errorf("shared data = %q, err=%v, want %q", got, err, want))
 		}
 	}
-	checkPath("")
+	checkPath("second")
 	if err := creator.Close(); err != nil {
 		panic(err)
 	}
-	checkPath("first")
+	checkPath("second")
 	if err := writer.Close(); err != nil {
 		panic(err)
 	}
 	checkPath("second")
 	buf := make([]byte, 16)
 	n, err := reader.Read(buf)
-	if n != 0 || err != io.EOF {
-		panic(fmt.Errorf("original reader changed: n=%d err=%v", n, err))
+	if n != len("second") || err != nil || string(buf[:n]) != "second" {
+		panic(fmt.Errorf("reader data = %q, n=%d err=%v", buf[:n], n, err))
 	}
 }

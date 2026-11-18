@@ -25,7 +25,7 @@ Published data stays in TernFS in every case.
 | Connection loss, daemon still running | Kept while live. | Kept. | Kept. | The client reconnects and goes on with its session. Lease expiry can retire its opens if it stays away. |
 | Restart in place | Restored from `sessions/` when eligible; see [session restoration](internal/server/README.md#session-restoration). | Loaded. | Recovered from sidecars. | The client goes on with its session, retransmissions get their recorded replies, and writers resume through their old stateids. Read opens get `BAD_STATEID` and the client reopens them. |
 | Failover with a copy of the stopped daemon's staging directory | Restored. | Loaded. | Recovered. | The same as a restart in place, since every piece of state is in the copied directory. Measured in a sandbox: nothing lost; see [Deployment](DEPLOYMENT.md#failover-with-the-staging-directory). Clients must reach the new daemon at the old address. |
-| Host crash, disk intact | Restored if their files survived: session files are not synced. | Loaded: they are synced. | Recovered: sidecars are synced. | A client whose session file survived goes on with it. One whose file was lost registers again; its record still confirms its incarnation, so its writers can resume through `CLAIM_FH` or their old stateids. Measured in a sandbox by deleting the session file before the restart: writers resumed with their data, and a CLOSE in flight at the crash was lost silently. A fresh mount's `stat` can show such a file empty while a read returns the recovered staged data, until the writer's CLOSE publishes it. |
+| Host crash, disk intact | Restored if their files survived: session files are not synced. | Loaded: they are synced. | Recovered: sidecars are synced. An acknowledged CLOSE's removal of its staging is synced too, so it does not come back. | A client whose session file survived goes on with it. One whose file was lost registers again; its record still confirms its incarnation, so its writers can resume through `CLAIM_FH` or their old stateids. Measured in a sandbox by deleting the session file before the restart: writers resumed with their data, and a CLOSE in flight at the crash was lost silently. A fresh mount's `stat` can show such a file empty while a read returns the recovered staged data, until the writer's CLOSE publishes it. |
 | Wipe: an empty staging directory, after a failover or an upgrade | None. | None. | None; the old disk keeps them if it survives. | A new server. Every client gets `NFS4ERR_BADSESSION`, registers again as a new client and reopens its files. Read-only opens continue. Every file open for writing loses its unpublished writes, mostly silently: a later write gets `EBADF`, and fsync and close return 0. |
 | Disk loss | None. | None. | Lost. | The same as a wipe. |
 | Client reboot | The old boot's go. | Rewritten for the new boot. | The old boot's are retired; the new boot cannot adopt them. | Confirmation of the new incarnation ends the old one. |
@@ -142,16 +142,24 @@ or the staging's own transient when it records none, as a retried CLOSE
 does: if the earlier process's link applied and nothing has been written
 since, it completes without publishing again, and otherwise it publishes
 through a fresh transient; see
-[Publication](internal/server/README.md#publication). Times set with the
-zero stateid before the CLOSE comes back go to the recovered staging. Also
-account for the
-[CLOSE defect](DEPLOYMENT.md#a-rejected-publication-is-not-reported-to-the-application)
+[Publication](internal/server/README.md#publication). The daemon does not
+wait for the CLOSE to apply that rule. At startup it drops a recovered
+staging whose candidate is linked at its checkpointed data version, since
+a CLOSE had published it and was killed before removing it. Otherwise the
+client's next OPEN of the name could adopt it and publish its old bytes
+over a later version. It first restores the writer's times on the
+published file, which that CLOSE may not have done. A later CLOSE of its
+stateid answers OK. If the backend does not answer, the check stops at
+the first error and keeps the rest of the staging as it is, rather than
+hold up startup. Times set with the zero stateid before the CLOSE comes
+back go to the recovered staging. Also account for the [CLOSE
+defect](DEPLOYMENT.md#a-rejected-publication-is-not-reported-to-the-application)
 before relying on recovered writes. A CLOSE whose publication the backend
-rejects discards its staging, unless resolving the candidate shows that the
-link applied. If other opens were reading that staging, it is quarantined
-instead, and those readers get `NFS4ERR_IO`. A timestamp-only CLOSE whose
-lookup or SetTime the backend does not answer gets `NFS4ERR_DELAY` and
-keeps the staging.
+rejects discards its staging, unless resolving the candidate shows that
+the link applied. If other opens were reading that staging, it is
+quarantined instead, and those readers get `NFS4ERR_IO`. A timestamp-only
+CLOSE whose lookup or SetTime the backend does not answer gets
+`NFS4ERR_DELAY` and keeps the staging.
 
 ## Lease expiry
 
