@@ -141,9 +141,10 @@ public:
     // When becoming a leader you need to pass a bootstrap log entry which will
     // instruct which requests to send to shards.
     //
-    // This function crashes hard if the caller passes it a response it's not
-    // expecting. So the caller should track responses and make sure only relevant
-    // ones are passed in.
+    // A response for a txn that is not executing is dropped. Any other
+    // response it's not expecting (one for an earlier step of an executing
+    // txn) is applied to the current step, so the caller should track
+    // responses and make sure only relevant ones are passed in.
     void applyLogEntry(
         bool sync,
         const CDCLogEntry& entry,
