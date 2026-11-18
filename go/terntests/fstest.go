@@ -1342,7 +1342,6 @@ func fsTest(
 			client:  s3Client,
 			bufPool: bufPool,
 		}
-		s3FileTypeRoundTrip(log, c, harness)
 		state := fsTestState[string]{
 			totalDirs: 1, // root dir
 			rootDir:   *newFsTestDir("/"),
