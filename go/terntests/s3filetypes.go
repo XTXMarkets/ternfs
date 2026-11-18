@@ -6,15 +6,18 @@ package main
 
 import (
 	"context"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"time"
 
 	"github.com/XTXMarkets/ternfs/go/client"
 	"github.com/XTXMarkets/ternfs/go/core/log"
 	"github.com/XTXMarkets/ternfs/go/msgs"
+	terns3 "github.com/XTXMarkets/ternfs/go/s3"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
@@ -101,6 +104,74 @@ func s3FileTypeRoundTrip(log *log.Logger, c *client.Client, harness *s3TestHarne
 				}
 			}()
 		}
+	}
+	outsideName := dirName + "-outside"
+	outsideId, outsideTime := direct.createDirectory(
+		log, msgs.ROOT_DIR_INODE_ID, outsideName,
+	)
+	defer deleteDir(log, c, msgs.ROOT_DIR_INODE_ID, outsideName, outsideTime, outsideId)
+	target := "../" + outsideName + "/target"
+	for _, fixture := range []struct {
+		key  string
+		body string
+		mode string
+	}{
+		{outsideName + "/target", "outside bucket data", "0100644"},
+		{dirName + "/outside-link", target, "0120777"},
+		{dirName + "/outside-directory", "../" + outsideName, "0120777"},
+	} {
+		_, err := harness.client.PutObject(context.TODO(), &s3.PutObjectInput{
+			Bucket:   aws.String(harness.bucket),
+			Key:      aws.String(fixture.key),
+			Body:     strings.NewReader(fixture.body),
+			Metadata: map[string]string{"file-permissions": fixture.mode},
+		})
+		if err != nil {
+			panic(err)
+		}
+	}
+	// Scope the gateway to a subdirectory so the existing links point outside its bucket.
+	server := httptest.NewServer(terns3.NewS3Server(
+		log, c, harness.bufPool, client.NewDirInfoCache(),
+		map[string]string{harness.bucket: "/" + dirName}, "",
+	))
+	defer server.Close()
+	for _, tc := range []struct {
+		key    string
+		status int
+		code   string
+	}{
+		{"outside-link", http.StatusOK, ""},
+		{"outside-directory/target", http.StatusBadRequest, "InvalidRequest"},
+	} {
+		func() {
+			requestURL := server.URL + "/" + harness.bucket + "/" + tc.key
+			resp, err := server.Client().Get(requestURL)
+			if err != nil {
+				panic(err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != tc.status {
+				panic(fmt.Errorf("GET %s: expected %d, got %s",
+					requestURL, tc.status, resp.Status))
+			}
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				panic(err)
+			}
+			if tc.status == http.StatusOK {
+				checkFileData(tc.key, 0, len(target), body, []byte(target))
+			} else {
+				var response terns3.S3Error
+				if err := xml.Unmarshal(body, &response); err != nil {
+					panic(err)
+				}
+				if response.Code != tc.code {
+					panic(fmt.Errorf("GET %s: expected %s, got %q",
+						requestURL, tc.code, response.Code))
+				}
+			}
+		}()
 	}
 	log.Info("S3 file type round trip passed")
 }
