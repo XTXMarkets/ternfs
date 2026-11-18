@@ -225,24 +225,73 @@ func FileEtag(id msgs.InodeId) string {
 	return fmt.Sprintf(`"%x"`, uint64(id))
 }
 
-// TernFS stores no permissions, so only symlinks report a mode on reads.
-const s3SymlinkMode = syscall.S_IFLNK | 0o777
+// Modes reported on reads. TernFS stores no permissions, only the type bits matter.
+const (
+	s3DefaultDirMode  = syscall.S_IFDIR | 0o755
+	s3DefaultFileMode = syscall.S_IFREG | 0o644
+	s3SymlinkMode     = syscall.S_IFLNK | 0o777
+)
 
-// fileTypeFromPermissions reads x-amz-meta-file-permissions, the octal st_mode
-// that Amazon FSx for Lustre and File Cache store in S3 object metadata.
-func fileTypeFromPermissions(r *http.Request) msgs.InodeType {
-	mode, err := strconv.ParseUint(r.Header.Get("X-Amz-Meta-File-Permissions"), 8, 32)
-	if err == nil && mode&syscall.S_IFMT == syscall.S_IFLNK {
-		return msgs.SYMLINK
+func parseModeHeader(value string) (uint64, bool) {
+	mode, err := strconv.ParseUint(strings.TrimSpace(value), 8, 32)
+	if err != nil {
+		return 0, false
 	}
-	return msgs.FILE
+	return mode, true
 }
 
-func setPermissionsHeader(w http.ResponseWriter, typ msgs.InodeType) {
-	if typ != msgs.SYMLINK {
-		return
+func fileTypeFromHeaders(r *http.Request) (msgs.InodeType, error) {
+	var mode uint64
+	slash := strings.HasSuffix(r.URL.Path, "/")
+	values := r.Header.Values("X-Amz-Meta-File-Permissions")
+	if len(values) > 0 {
+		var ok bool
+		mode, ok = parseModeHeader(values[0])
+		if slash && (!ok || mode&syscall.S_IFMT != syscall.S_IFDIR) {
+			return 0, &S3Error{
+				Code:       "InvalidArgument",
+				Message:    "X-Amz-Meta-File-Permissions must specify a directory for a key ending with /",
+				StatusCode: http.StatusBadRequest,
+			}
+		}
 	}
-	w.Header().Set("X-Amz-Meta-File-Permissions", fmt.Sprintf("%07o", s3SymlinkMode))
+	switch mode & syscall.S_IFMT {
+	case 0, syscall.S_IFREG, syscall.S_IFDIR, syscall.S_IFLNK:
+	default:
+		return 0, &S3Error{
+			Code:       "InvalidArgument",
+			Message:    "X-Amz-Meta-File-Permissions has an unsupported file type",
+			StatusCode: http.StatusBadRequest,
+		}
+	}
+	directory := slash || isDirectoryContentType(r.Header.Get("Content-Type"))
+	if directory && mode&syscall.S_IFMT == syscall.S_IFLNK {
+		return 0, &S3Error{
+			Code:       "InvalidArgument",
+			Message:    "symlink metadata conflicts with a directory hint",
+			StatusCode: http.StatusBadRequest,
+		}
+	}
+	if directory || mode&syscall.S_IFMT == syscall.S_IFDIR {
+		return msgs.DIRECTORY, nil
+	}
+	if mode&syscall.S_IFMT == syscall.S_IFLNK {
+		return msgs.SYMLINK, nil
+	}
+	return msgs.FILE, nil
+}
+
+func setModeHeaders(w http.ResponseWriter, typ msgs.InodeType) {
+	var mode uint32
+	switch typ {
+	case msgs.SYMLINK:
+		mode = s3SymlinkMode
+	case msgs.DIRECTORY:
+		mode = s3DefaultDirMode
+	default:
+		mode = s3DefaultFileMode
+	}
+	w.Header().Set("X-Amz-Meta-File-Permissions", fmt.Sprintf("%07o", mode))
 }
 
 // parseRange parses the HTTP Range header.
@@ -531,7 +580,7 @@ func (s *S3Server) handleGetObject(ctx context.Context, w http.ResponseWriter, r
 	} else {
 		w.Header().Set("Content-Type", "application/octet-stream")
 	}
-	setPermissionsHeader(w, dentry.TargetId.Type())
+	setModeHeaders(w, dentry.TargetId.Type())
 
 	if rangeHeader == "" {
 		w.Header().Set("Content-Length", strconv.FormatInt(int64(size), 10))
@@ -598,6 +647,7 @@ func (s *S3Server) handleGetObjectAttributes(ctx context.Context, w http.Respons
 	w.Header().Set("x-amz-object-attributes-last-modified", lastModified.Time().UTC().Format(http.TimeFormat))
 	w.Header().Set("x-amz-object-attributes-object-size", strconv.FormatInt(int64(size), 10))
 	w.Header().Set("x-amz-storage-class", "STANDARD")
+	setModeHeaders(w, inode.Type())
 	w.WriteHeader(http.StatusOK)
 	return nil
 }
@@ -716,6 +766,21 @@ func (s *S3Server) handleListObjectsV2(ctx context.Context, w http.ResponseWrite
 	return nil
 }
 
+func readSymlinkTarget(body io.Reader) ([]byte, error) {
+	target, err := io.ReadAll(io.LimitReader(body, 4096))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read symlink target: %w", err)
+	}
+	if len(target) == 0 || len(target) > 4095 || bytes.IndexByte(target, 0) >= 0 {
+		return nil, &S3Error{
+			Code:       "InvalidArgument",
+			Message:    "symlink target must contain 1-4095 bytes and no NUL",
+			StatusCode: http.StatusBadRequest,
+		}
+	}
+	return target, nil
+}
+
 func (s *S3Server) handlePutObject(ctx context.Context, w http.ResponseWriter, r *http.Request, bucket string, rootId msgs.InodeId, path *objectPath) error {
 	s.log.Debug("PutObject: bucket=%q path=%q", bucket, path.String())
 
@@ -723,22 +788,20 @@ func (s *S3Server) handlePutObject(ctx context.Context, w http.ResponseWriter, r
 		return &S3Error{Code: "MethodNotAllowed", Message: "PUT is not allowed on a bucket. To create a bucket, use the AWS CLI or other tools.", StatusCode: http.StatusMethodNotAllowed}
 	}
 
-	fileType := fileTypeFromPermissions(r)
+	fileType, err := fileTypeFromHeaders(r)
+	if err != nil {
+		return err
+	}
 	var body io.Reader = r.Body
 	if fileType == msgs.SYMLINK {
-		// PATH_MAX: the kmod BUGs on symlinks longer than a page.
-		target, err := io.ReadAll(io.LimitReader(r.Body, 4096))
+		target, err := readSymlinkTarget(body)
 		if err != nil {
-			return fmt.Errorf("failed to read symlink target: %w", err)
-		}
-		if len(target) == 0 || len(target) >= 4096 || bytes.IndexByte(target, 0) >= 0 {
-			return &S3Error{Code: "InvalidArgument", Message: "A symlink target must be 1 to 4095 bytes without NUL.", StatusCode: http.StatusBadRequest}
+			return err
 		}
 		body = bytes.NewReader(target)
 	}
 
 	ownerId := rootId
-	var err error
 
 	// Create parent directories if they don't exist
 	for _, dirName := range path.dir().segments {
@@ -765,7 +828,7 @@ func (s *S3Server) handlePutObject(ctx context.Context, w http.ResponseWriter, r
 
 	var inode msgs.InodeId
 	basename := path.basename()
-	if path.isDirectory || isDirectoryContentType(r.Header.Get("Content-Type")) {
+	if fileType == msgs.DIRECTORY {
 		resp := &msgs.MakeDirectoryResp{}
 		if err := s.c.CDCRequest(s.log, &msgs.MakeDirectoryReq{OwnerId: ownerId, Name: basename}, resp); err != nil {
 			// mkdir must be idempotent: clients (e.g. s3fs) re-PUT directory
