@@ -73,7 +73,7 @@ func (s *Server) operationReplyBound(op nfs4.NfsArgop4) uint32 {
 		mask[0] &= supportedAttrs0
 		mask[1] &= supportedAttrs1
 		mask[2] &= supportedAttrs2
-		return uint32(28 + len(encodeAttrs(mask, 0, vfs.NodeInfo{})))
+		return uint32(28 + len(encodeAttrs(mask, s.owner, 0, vfs.NodeInfo{})))
 	case nfs4.OP_READ:
 		count := min(op.AsREAD4args().Count(), uint32(maxReadWrite))
 		return 16 + (count+3)&^3

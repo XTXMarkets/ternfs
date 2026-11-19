@@ -261,7 +261,7 @@ func (s *Server) opReaddir(args nfs4.READDIR4args, st *compoundState, w *nfs4.CO
 	respMask[0] = reqMask[0] & supportedAttrs0
 	respMask[1] = reqMask[1] & supportedAttrs1
 	respMask[2] = reqMask[2] & supportedAttrs2
-	attrSize := len(encodeAttrs(respMask, 0, vfs.NodeInfo{}))
+	attrSize := len(encodeAttrs(respMask, s.owner, 0, vfs.NodeInfo{}))
 	// Two candidates alternate: the one being written and its successor,
 	// whose size decides the written entry's nextentry discriminant.
 	candidates := [2]readdirEntry{
@@ -274,7 +274,7 @@ func (s *Server) opReaddir(args nfs4.READDIR4args, st *compoundState, w *nfs4.CO
 		re.DirEntry = e
 		re.attrData = nil // Stat failed: encode empty attrs.
 		if ni, err := s.stat(e.ID); err == nil {
-			re.attrData = appendAttrs(scratch[i][:0], respMask, e.ID, ni)
+			re.attrData = appendAttrs(scratch[i][:0], respMask, s.owner, e.ID, ni)
 			scratch[i] = re.attrData
 		}
 	}

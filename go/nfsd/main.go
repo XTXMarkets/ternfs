@@ -7,13 +7,14 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/XTXMarkets/ternfs/go/nfsd/inspect"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/inspect"
 
 	"github.com/XTXMarkets/ternfs/go/client"
 	"github.com/XTXMarkets/ternfs/go/core/bufpool"
@@ -32,6 +33,10 @@ func main() {
 	verbose := flag.Bool("v", false, "verbose logging of NFS requests/responses")
 	readOnly := flag.Bool("read-only", false,
 		"refuse every change to the filesystem; staging then holds only sessions and client records")
+	owner := flag.String("owner", "nobody",
+		"owner every file reports: user@domain, with the clients' idmap domain, or a numeric uid")
+	ownerGroup := flag.String("owner-group", "nogroup",
+		"group every file reports: group@domain, with the clients' idmap domain, or a numeric gid")
 	allowMinor2 := flag.Bool("allow-minor-version-2", false,
 		"also accept NFSv4.2 COMPOUNDs, served as NFSv4.1 with every 4.2 operation unsupported")
 	replyWorkMiB := flag.Int("reply-work-budget-mib", server.DefaultReplyWorkBudgetMiB,
@@ -60,6 +65,10 @@ func main() {
 	}
 	if *maxInFlight <= 0 {
 		fmt.Fprintln(os.Stderr, "-max-in-flight-per-connection must be positive")
+		os.Exit(2)
+	}
+	if *owner == "" || *ownerGroup == "" {
+		fmt.Fprintln(os.Stderr, "-owner and -owner-group must not be empty")
 		os.Exit(2)
 	}
 
@@ -104,6 +113,7 @@ func main() {
 	srv.SetReplyWorkBudget(*replyWorkMiB << 20)
 	srv.AllowMinorVersion2 = *allowMinor2
 	srv.ReadOnly = *readOnly
+	srv.SetOwner(*owner, *ownerGroup)
 	if *readOnly {
 		slogger.Info("read-only: every change to the filesystem is refused")
 	}

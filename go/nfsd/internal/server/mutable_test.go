@@ -283,7 +283,7 @@ func TestStagingCheckpointRetry(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			wantAttrs := encodeAttrs(mutableAttrMask, id, stage.Stat())
+			wantAttrs := encodeAttrs(mutableAttrMask, fileOwner{}, id, stage.Stat())
 			sf := stage.(*staging.LocalFile)
 			metaPath := sf.MetaPath()
 			sf.SetMetaPath(filepath.Join(dir, "missing", "file.meta"))
@@ -307,7 +307,7 @@ func TestStagingCheckpointRetry(t *testing.T) {
 			if string(buf) != want {
 				t.Fatalf("recovered %q, want %q", buf, want)
 			}
-			if !bytes.Equal(encodeAttrs(mutableAttrMask, id, rs.Stat()), wantAttrs) {
+			if !bytes.Equal(encodeAttrs(mutableAttrMask, fileOwner{}, id, rs.Stat()), wantAttrs) {
 				t.Fatal("checkpoint did not preserve writer attributes")
 			}
 		})

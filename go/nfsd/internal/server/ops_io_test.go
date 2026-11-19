@@ -62,6 +62,7 @@ func TestReaddirPreparationWithinReservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	srv.SetOwner("nobody", "nogroup")
 	ts := connectionSession(t, srv)
 	sess := srv.sessions.lookup(ts.id)
 	sess.maxResp = 1 << 20
