@@ -206,6 +206,37 @@ func TestRefreshShardReplicas(t *testing.T) {
 	}
 }
 
+func TestSetFetchBlockServicesOnlyRefreshesBlockServices(t *testing.T) {
+	logger := log.NewLogger(os.Stderr, &log.LoggerOptions{Level: log.ERROR})
+	c := &Client{
+		registryConn:      &RegistryConn{log: logger, reqChan: make(chan shuckReq)},
+		blockServicesLock: &sync.RWMutex{},
+		blockServices:     map[msgs.BlockServiceId]msgs.FullBlockServiceInfo{},
+	}
+	done := make(chan struct{})
+	go func() {
+		c.SetFetchBlockServices()
+		close(done)
+	}()
+	req := receiveMetadata(t, c.registryConn.reqChan)
+	if _, ok := req.req.(*msgs.ChangedBlockServicesReq); !ok {
+		t.Fatalf("registry request = %T, want ChangedBlockServicesReq", req.req)
+	}
+	req.respC <- shuckResp{resp: &msgs.ChangedBlockServicesResp{
+		BlockServices: []msgs.FullBlockServiceInfo{{Id: 1}},
+		LastChange:    42,
+	}}
+	receiveMetadata(t, done)
+	select {
+	case extra := <-c.registryConn.reqChan:
+		t.Fatalf("unexpected additional registry request: %T", extra.req)
+	default:
+	}
+	if bs, ok := c.GetBlockService(1); !ok || bs.Id != 1 {
+		t.Fatalf("block service = %+v, present = %v", bs, ok)
+	}
+}
+
 func TestShardReplicaSnapshotError(t *testing.T) {
 	c, logger := metadataRoutingClient(t, DefaultShardTimeout, metadataTestAddrs, func(packet []byte, _ *net.UDPAddr) ([]byte, error) {
 		return metadataRetryReply(packet, msgs.NOT_AUTHORISED), nil
