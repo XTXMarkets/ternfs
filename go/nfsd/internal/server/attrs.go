@@ -204,9 +204,8 @@ func encodeAttrs(mask attrMask, owner fileOwner, id vfs.InodeID, ni vfs.NodeInfo
 	return appendAttrs(make([]byte, 0, 256), mask, owner, id, ni)
 }
 
-// appendAttrs appends encodeAttrs's encoding to buf. For a given mask and
-// owner the encoding has a fixed length, so a buffer of that capacity never
-// grows.
+// appendAttrs appends encodeAttrs's encoding to buf. For a given mask the
+// encoding has a fixed length, so a buffer of that capacity never grows.
 func appendAttrs(buf []byte, mask attrMask, owner fileOwner, id vfs.InodeID, ni vfs.NodeInfo) []byte {
 
 	// Word 0 attributes (bits 0-31).

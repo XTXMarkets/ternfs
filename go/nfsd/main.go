@@ -7,13 +7,14 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/XTXMarkets/ternfs/go/nfsd/inspect"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/inspect"
 
 	"github.com/XTXMarkets/ternfs/go/client"
 	"github.com/XTXMarkets/ternfs/go/core/bufpool"
@@ -113,7 +114,6 @@ func main() {
 	srv.AllowMinorVersion2 = *allowMinor2
 	srv.ReadOnly = *readOnly
 	srv.SetOwner(*owner, *ownerGroup)
-	slogger.Info("every file reports one owner", "owner", *owner, "group", *ownerGroup)
 	if *readOnly {
 		slogger.Info("read-only: every change to the filesystem is refused")
 	}

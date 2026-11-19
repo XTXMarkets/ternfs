@@ -62,7 +62,6 @@ func TestReaddirPreparationWithinReservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// entrySize below counts these owner strings.
 	srv.SetOwner("nobody", "nogroup")
 	ts := connectionSession(t, srv)
 	sess := srv.sessions.lookup(ts.id)
