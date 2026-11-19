@@ -21,6 +21,7 @@ import (
 	"github.com/XTXMarkets/ternfs/go/core/flags"
 	"github.com/XTXMarkets/ternfs/go/core/log"
 	"github.com/XTXMarkets/ternfs/go/msgs"
+	"golang.org/x/sys/unix"
 )
 
 var errGrepInterrupted = errors.New("grep interrupted")
@@ -73,6 +74,66 @@ func includeGrepDepth(roots []string, maxDepth int, filePath string, id msgs.Ino
 	return depth <= maxDepth
 }
 
+type grepStatus struct {
+	output    io.Writer
+	terminal  bool
+	verbose   bool
+	visible   bool
+	hasLast   bool
+	lastStats client.TreeGrepStats
+}
+
+func newGrepStatus(output io.Writer, logger *log.Logger) *grepStatus {
+	terminal := false
+	if file, ok := output.(interface{ Fd() uintptr }); ok {
+		_, err := unix.IoctlGetTermios(int(file.Fd()), unix.TCGETS)
+		terminal = err == nil
+	}
+	return &grepStatus{
+		output:   output,
+		terminal: terminal,
+		verbose:  logger != nil && logger.Level() <= log.DEBUG,
+	}
+}
+
+func (status *grepStatus) clear() error {
+	if !status.visible {
+		return nil
+	}
+	status.visible = false
+	_, err := fmt.Fprint(status.output, "\r\x1b[K")
+	return err
+}
+
+func (status *grepStatus) progress(stats client.TreeGrepStats) error {
+	if !status.terminal {
+		if status.verbose {
+			return writeGrepStats(status.output, "progress", stats)
+		}
+		return nil
+	}
+	if status.hasLast && stats == status.lastStats {
+		return nil
+	}
+	status.lastStats = stats
+	status.hasLast = true
+	if _, err := fmt.Fprintf(status.output, "\r\x1b[K%s", formatGrepStats("progress", stats)); err != nil {
+		return err
+	}
+	status.visible = true
+	return nil
+}
+
+func (status *grepStatus) done(stats client.TreeGrepStats) error {
+	if err := status.clear(); err != nil {
+		return err
+	}
+	if status.verbose {
+		return writeGrepStats(status.output, "done", stats)
+	}
+	return nil
+}
+
 func runGrep(
 	logger *log.Logger,
 	ternClient *client.Client,
@@ -120,11 +181,15 @@ func runGrep(
 			return namePattern == nil || includeGrepName(namePattern, filePath, id), nil
 		}
 	}
+	status := newGrepStatus(stderr, logger)
 	stats, grepErr := grep.Grep(
 		ctx,
 		options,
 		client.TreeGrepCallbacks{
 			Match: func(match client.GrepMatch) error {
+				if err := status.clear(); err != nil {
+					return err
+				}
 				_, err := fmt.Fprintf(stdout, "%s:%d:%d:%s\n",
 					match.Path,
 					match.LineNumber,
@@ -134,17 +199,17 @@ func runGrep(
 				return err
 			},
 			FileError: func(fileErr client.TreeGrepFileError) error {
+				if err := status.clear(); err != nil {
+					return err
+				}
 				_, err := fmt.Fprintf(stderr, "grep: %s: %v\n",
 					fileErr.Path, fileErr.Err)
 				return err
 			},
-			Progress: func(stats client.TreeGrepStats) error {
-				return writeGrepStats(stderr, "progress", stats)
-			},
+			Progress: status.progress,
 		},
 	)
-	if err := writeGrepStats(stderr, "done", stats); err != nil &&
-		grepErr == nil {
+	if err := status.done(stats); err != nil && grepErr == nil {
 		grepErr = err
 	}
 	if ctx.Err() != nil && errors.Is(grepErr, context.Cause(ctx)) {
@@ -159,14 +224,9 @@ func runGrep(
 	return nil
 }
 
-func writeGrepStats(
-	output io.Writer,
-	state string,
-	stats client.TreeGrepStats,
-) error {
-	_, err := fmt.Fprintf(
-		output,
-		"grep: %s: files_found=%d files_scanned=%d files_skipped_by_size=%d file_errors=%d bytes_scanned=%d matches_found=%d\n",
+func formatGrepStats(state string, stats client.TreeGrepStats) string {
+	return fmt.Sprintf(
+		"grep: %s: files_found=%d files_scanned=%d files_skipped_by_size=%d file_errors=%d bytes_scanned=%d matches_found=%d",
 		state,
 		stats.FilesFound,
 		stats.FilesScanned,
@@ -175,6 +235,10 @@ func writeGrepStats(
 		stats.BytesScanned,
 		stats.MatchesFound,
 	)
+}
+
+func writeGrepStats(output io.Writer, state string, stats client.TreeGrepStats) error {
+	_, err := fmt.Fprintln(output, formatGrepStats(state, stats))
 	return err
 }
 
