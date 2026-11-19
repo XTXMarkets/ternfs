@@ -26,6 +26,7 @@ func TestScanGrepReader(t *testing.T) {
 		strings.NewReader(contents),
 		regexp.MustCompile("foo"),
 		1024,
+		false,
 		func(lineNumber uint64, byteOffset uint64, line []byte) error {
 			matches = append(matches, foundMatch{
 				lineNumber: lineNumber,
@@ -62,6 +63,7 @@ func TestScanGrepReaderRejectsLongLine(t *testing.T) {
 		strings.NewReader("12345\n"),
 		regexp.MustCompile("."),
 		4,
+		false,
 		func(uint64, uint64, []byte) error {
 			t.Fatal("match callback was called")
 			return nil
@@ -93,6 +95,7 @@ func TestScanGrepReaderDoesNotMatchPartialLineBeforeError(t *testing.T) {
 		&failingGrepReader{contents: "partial foo"},
 		regexp.MustCompile("foo"),
 		1024,
+		false,
 		func(uint64, uint64, []byte) error {
 			t.Fatal("match callback was called")
 			return nil
@@ -134,6 +137,8 @@ func TestScanGrepReaderCancellationBetweenBufferRefills(t *testing.T) {
 		reader,
 		regexp.MustCompile("needle"),
 		len(contents),
+		// Keep this cancellation at the large scan-buffer refill.
+		true,
 		func(uint64, uint64, []byte) error {
 			t.Fatal("match callback was called")
 			return nil
@@ -161,6 +166,7 @@ func TestScanGrepReaderFragmentedLine(t *testing.T) {
 		strings.NewReader(contents),
 		regexp.MustCompile("needle"),
 		2*grepReadBufferSize,
+		false,
 		func(lineNumber uint64, byteOffset uint64, line []byte) error {
 			if lineNumber != 2 {
 				t.Fatalf("match on line %d, want 2", lineNumber)
@@ -180,5 +186,74 @@ func TestScanGrepReaderFragmentedLine(t *testing.T) {
 	}
 	if !strings.HasSuffix(matched[0], " needle") || len(matched[0]) != len(longLine)+7 {
 		t.Fatalf("matched line has length %d, want %d", len(matched[0]), len(longLine)+7)
+	}
+}
+
+func TestScanGrepReaderTextDetection(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		content string
+		binary  bool
+	}{
+		{"ascii", "needle\r\n", false},
+		{"utf8", "日本語 café needle\n", false},
+		{"empty", "", false},
+		// Only NUL counts, as in git: these are all text.
+		{"latin1", "% temperature in \xb0C\nneedle\n", false},
+		{"bmp-like prefix", "BM_return,weight\nneedle\n", false},
+		{"control bytes", "\x0b\x1a\x1bneedle\n", false},
+		{"nul after probe", strings.Repeat("a\n", grepBinaryProbeBytes/2) + "\x00 needle\n", false},
+		{"nul", "needle\x00\n", true},
+		{"nul at end of probe", strings.Repeat("a\n", grepBinaryProbeBytes/2-1) + "a\x00\nneedle\n", true},
+		{"png", "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR needle", true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			matches := 0
+			scanned, err := scanGrepReader(t.Context(), strings.NewReader(test.content),
+				regexp.MustCompile("needle"), 4096, false,
+				func(_ uint64, offset uint64, _ []byte) error {
+					matches++
+					if want := strings.Index(test.content, "needle"); offset != uint64(want) {
+						t.Errorf("offset = %d, want %d", offset, want)
+					}
+					return nil
+				})
+			if test.binary {
+				if !errors.Is(err, ErrGrepBinaryFile) || matches != 0 {
+					t.Fatalf("error = %v, matches = %d; want binary skip without matches", err, matches)
+				}
+				return
+			}
+			wantMatches := 1
+			if test.content == "" {
+				wantMatches = 0
+			}
+			if err != nil || scanned != uint64(len(test.content)) || matches != wantMatches {
+				t.Fatalf("error = %v, bytes = %d, matches = %d", err, scanned, matches)
+			}
+		})
+	}
+}
+
+type countingGrepReader struct {
+	io.Reader
+	read int
+}
+
+func (r *countingGrepReader) Read(p []byte) (int, error) {
+	n, err := r.Reader.Read(p)
+	r.read += n
+	return n, err
+}
+
+func TestScanGrepReaderSkipsBinaryWithoutReadingWholeFile(t *testing.T) {
+	reader := &countingGrepReader{Reader: strings.NewReader("\x00" + strings.Repeat("needle\n", 1<<18))}
+	_, err := scanGrepReader(t.Context(), reader, regexp.MustCompile("needle"), 1024, false,
+		func(uint64, uint64, []byte) error {
+			t.Fatal("binary file emitted a match")
+			return nil
+		})
+	if !errors.Is(err, ErrGrepBinaryFile) || reader.read > grepBinaryProbeBytes {
+		t.Fatalf("error = %v, read = %d; want binary skip after the prefix", err, reader.read)
 	}
 }

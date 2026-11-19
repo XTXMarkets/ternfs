@@ -24,10 +24,12 @@ type TreeGrepOptions struct {
 	Roots []string
 	// Parwalk configures the walk of the roots. Its Context is ignored:
 	// the walk is cancelled through the context passed to Grep.
-	Parwalk          ParwalkOptions
-	Pattern          *regexp.Regexp
-	MaxFileSize      uint64
-	MaxLineSize      int
+	Parwalk     ParwalkOptions
+	Pattern     *regexp.Regexp
+	MaxFileSize uint64
+	MaxLineSize int
+	// SearchBinary bypasses the default text detection on each file's prefix.
+	SearchBinary     bool
 	ProgressInterval time.Duration
 	// Filter is called for every walked edge. Returning false excludes the
 	// entry; excluding a directory also prunes its subtree.
@@ -47,6 +49,7 @@ type TreeGrepStats struct {
 	BytesScanned       uint64
 	MatchesFound       uint64
 	FilesSkippedBySize uint64
+	FilesSkippedBinary uint64
 	FileErrors         uint64
 }
 
@@ -118,6 +121,7 @@ func NewTreeGrep(
 
 // Grep walks the roots and searches regular files. Individual file failures
 // are reported through FileError and do not stop the remaining search.
+// Files identified as binary are counted as skipped unless SearchBinary is set.
 //
 // Acquiring the file-read budget blocks inside the walk callback, so the walk
 // does not run ahead of the file reads.
@@ -235,6 +239,7 @@ func (grep *TreeGrep) grepFile(
 		run.options.Pattern,
 		run.options.MaxFileSize,
 		run.options.MaxLineSize,
+		run.options.SearchBinary,
 		func(match GrepMatch) error {
 			emitErr = run.emit(func() error {
 				run.stats.MatchesFound++
@@ -250,14 +255,16 @@ func (grep *TreeGrep) grepFile(
 	defer run.mutex.Unlock()
 	run.stats.BytesScanned += bytesScanned
 	switch {
-	case err == nil:
-		run.stats.FilesScanned++
-	case errors.Is(err, ErrGrepFileTooLarge):
-		run.stats.FilesSkippedBySize++
 	case emitErr != nil:
 		return emitErr
 	case run.ctx.Err() != nil:
 		// cancelled part way through the file
+	case err == nil:
+		run.stats.FilesScanned++
+	case errors.Is(err, ErrGrepFileTooLarge):
+		run.stats.FilesSkippedBySize++
+	case errors.Is(err, ErrGrepBinaryFile):
+		run.stats.FilesSkippedBinary++
 	default:
 		run.stats.FileErrors++
 		if run.callbacks.FileError != nil {

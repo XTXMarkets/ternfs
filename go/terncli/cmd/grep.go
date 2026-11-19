@@ -35,6 +35,7 @@ type grepParams struct {
 	maxDepth         int
 	maxFileSize      uint64
 	maxLineSize      int
+	searchBinary     bool
 	progressInterval time.Duration
 }
 
@@ -171,6 +172,7 @@ func runGrep(
 		Pattern:          pattern,
 		MaxFileSize:      params.maxFileSize,
 		MaxLineSize:      params.maxLineSize,
+		SearchBinary:     params.searchBinary,
 		ProgressInterval: params.progressInterval,
 	}
 	if namePattern != nil || params.maxDepth > 0 {
@@ -226,11 +228,12 @@ func runGrep(
 
 func formatGrepStats(state string, stats client.TreeGrepStats) string {
 	return fmt.Sprintf(
-		"grep: %s: files_found=%d files_scanned=%d files_skipped_by_size=%d file_errors=%d bytes_scanned=%d matches_found=%d",
+		"grep: %s: files_found=%d files_scanned=%d files_skipped_by_size=%d files_skipped_binary=%d file_errors=%d bytes_scanned=%d matches_found=%d",
 		state,
 		stats.FilesFound,
 		stats.FilesScanned,
 		stats.FilesSkippedBySize,
+		stats.FilesSkippedBinary,
 		stats.FileErrors,
 		stats.BytesScanned,
 		stats.MatchesFound,
@@ -264,6 +267,9 @@ func NewGrep() Command {
 	)
 	grepCmd.IntVar(&params.maxLineSize, "max-line-size", 0,
 		"Fail a file when an encoded line exceeds this many bytes; zero means the library default (1 MiB).",
+	)
+	grepCmd.BoolVar(&params.searchBinary, "binary", false,
+		"Search binary files too; by default, like git grep -I, skip files with a NUL byte in their first 8000 bytes.",
 	)
 	grepCmd.DurationVar(&params.progressInterval, "progress-interval", 10*time.Second,
 		"Progress reporting interval; non-positive disables progress reports.",

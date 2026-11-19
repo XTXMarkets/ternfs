@@ -23,8 +23,13 @@ const defaultGrepMaxLineSize = 1024 * 1024
 // from ReadSlice as a single zero-copy fragment.
 const grepReadBufferSize = 1 << 20
 
+// grepBinaryProbeBytes is git's FIRST_FEW_BYTES: a file with a NUL byte in
+// this prefix is binary.
+const grepBinaryProbeBytes = 8000
+
 var ErrGrepLineTooLong = errors.New("grep line is too long")
 var ErrGrepFileTooLarge = errors.New("grep file is too large")
+var ErrGrepBinaryFile = errors.New("grep file is binary")
 
 // GrepMatch describes the first match on one line. ByteOffset is the
 // offset of the match within the file, not the offset of the line.
@@ -37,9 +42,11 @@ type GrepMatch struct {
 }
 
 // GrepFile searches one file for pattern, invoking onMatch for the first
-// match on each matching line, and returns the number of bytes read. A
+// match on each matching line, and returns the number of bytes scanned. A
 // maxFileSize of zero is unlimited; a maxLineSize <= 0 uses a sensible
 // default. Size-limit errors are ErrGrepFileTooLarge or ErrGrepLineTooLong.
+// Unless searchBinary is set, a file with a NUL byte in its first 8000 bytes
+// is binary, as in git, and returns ErrGrepBinaryFile without being scanned.
 func GrepFile(
 	ctx context.Context,
 	logger *log.Logger,
@@ -50,6 +57,7 @@ func GrepFile(
 	pattern *regexp.Regexp,
 	maxFileSize uint64,
 	maxLineSize int,
+	searchBinary bool,
 	onMatch func(GrepMatch) error,
 ) (uint64, error) {
 	if maxLineSize <= 0 {
@@ -70,6 +78,7 @@ func GrepFile(
 		&fileReader{client: client, log: logger, bufPool: bufPool, reader: reader},
 		pattern,
 		maxLineSize,
+		searchBinary,
 		func(
 			lineNumber uint64,
 			byteOffset uint64,
@@ -107,12 +116,27 @@ func scanGrepReader(
 	reader io.Reader,
 	pattern *regexp.Regexp,
 	maxLineSize int,
+	searchBinary bool,
 	match func(lineNumber uint64, byteOffset uint64, line []byte) error,
 ) (uint64, error) {
-	buffered := bufio.NewReaderSize(
-		grepContextReader{ctx: ctx, reader: reader},
-		grepReadBufferSize,
-	)
+	reader = grepContextReader{ctx: ctx, reader: reader}
+	if !searchBinary {
+		// Avoid filling the large scan buffer just to reject a binary file.
+		sniffed := bufio.NewReaderSize(reader, grepBinaryProbeBytes)
+		prefix, err := sniffed.Peek(grepBinaryProbeBytes)
+		if ctx.Err() != nil {
+			return uint64(len(prefix)), context.Cause(ctx)
+		}
+		if err != nil && !errors.Is(err, io.EOF) {
+			return uint64(len(prefix)), err
+		}
+		if bytes.IndexByte(prefix, 0) >= 0 {
+			return uint64(len(prefix)), ErrGrepBinaryFile
+		}
+		// Peek preserves the prefix, including line numbers and byte offsets.
+		reader = sniffed
+	}
+	buffered := bufio.NewReaderSize(reader, grepReadBufferSize)
 	var bytesScanned uint64
 	for lineNumber := uint64(1); ; lineNumber++ {
 		lineStart := bytesScanned
