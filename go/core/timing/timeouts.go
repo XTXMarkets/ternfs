@@ -6,7 +6,7 @@ package timing
 
 import (
 	"fmt"
-	"github.com/XTXMarkets/ternfs/go/core/wyhash"
+	"math/rand/v2"
 	"time"
 )
 
@@ -16,7 +16,6 @@ type ReqTimeouts struct {
 	Overall time.Duration // the max overall waiting time for a request
 	Growth  float64
 	Jitter  float64 // in percentage, e.g. 0.10 for a 10% jitter
-	rand    wyhash.Rand
 }
 
 func NewReqTimeouts(initial time.Duration, max time.Duration, overall time.Duration, growth float64, jitter float64) *ReqTimeouts {
@@ -41,7 +40,6 @@ func NewReqTimeouts(initial time.Duration, max time.Duration, overall time.Durat
 		Overall: overall,
 		Growth:  growth,
 		Jitter:  jitter,
-		rand:    *wyhash.New(0),
 	}
 }
 
@@ -51,7 +49,7 @@ func (r *ReqTimeouts) NextNow(startedAt time.Time, now time.Time) time.Duration 
 	if r.Overall > 0 && elapsed >= r.Overall {
 		return time.Duration(0)
 	}
-	g := r.Growth + r.Growth*r.Jitter*(r.rand.Float64()-0.5)
+	g := r.Growth + r.Growth*r.Jitter*(rand.Float64()-0.5)
 	timeout := r.Initial + startedAt.Add(time.Duration(float64(elapsed/1000000)*g)*1000000).Sub(now) // compute in milliseconds to avoid inf
 	if timeout > r.Max {
 		timeout = r.Max
