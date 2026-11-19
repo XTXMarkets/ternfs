@@ -175,7 +175,6 @@ func main() {
 			if err != nil {
 				panic(fmt.Errorf("could not create client: %v", err))
 			}
-			ternClient.SetFetchBlockServices()
 
 			shardTimeouts := client.DefaultShardTimeout
 			printTimeouts := false

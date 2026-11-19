@@ -85,6 +85,7 @@ func NewMigrate() Command {
 				os.Exit(0)
 			}
 		}
+		runtime.getClient().SetFetchBlockServices()
 		stats := cleanup.MigrateStats{}
 		progressReportAlert := l.NewNCAlert(10 * time.Second)
 		for failureDomain, bss := range blockServicesToMigrate {

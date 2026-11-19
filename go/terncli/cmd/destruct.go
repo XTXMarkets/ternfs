@@ -19,6 +19,7 @@ func NewDestruct() Command {
 	destructFileCookieU64 := destructCmd.Uint64("cookie", 0, "Transient file cookie. Must be present if file is specified.")
 	destructRun := func(runtime *Runtime) {
 		l := runtime.Log
+		runtime.getClient().SetFetchBlockServices()
 		if *destructFileIdU64 == 0 {
 			state := &cleanup.DestructFilesState{}
 			opts := &cleanup.DestructFilesOptions{NumWorkersPerShard: 10, WorkersQueueSize: 100}

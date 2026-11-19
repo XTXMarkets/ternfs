@@ -1785,7 +1785,7 @@ func (c *Client) SetFetchBlockServices() {
 		c.fetchBlockServices = true
 	}()
 	if needToInitFetch {
-		c.refreshAddrs()
+		c.refreshBlockServices()
 	}
 }
 
