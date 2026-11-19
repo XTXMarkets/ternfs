@@ -193,10 +193,7 @@ func inodeNFSMode(id vfs.InodeID) uint32 {
 	}
 }
 
-// fileOwner is the owner and group every file reports; TernFS stores
-// neither. The strings go to clients as they are. Linux clients take a
-// numeric id ("1000") as it is and map "user@domain" through idmap when the
-// domain is theirs; anything else maps to the client's nobody.
+// fileOwner is the owner and group every file reports
 type fileOwner struct {
 	user, group string
 }
