@@ -254,14 +254,16 @@ func parseRange(rangeHeader string, totalSize int64) (start, length int64, err e
 		end = totalSize - 1
 	}
 	if startStr == "" {
-		// This is a suffix range, e.g., "bytes=-500"
-		suffixLength, err := strconv.ParseInt(endStr, 10, 64)
-		if err != nil {
-			return 0, 0, errors.New("invalid suffix range")
-		}
-		start = totalSize - suffixLength
-		length = suffixLength
+		// This is a suffix range, e.g., "bytes=-500", so end holds the
+		// number of bytes to return from the end of the object. A suffix
+		// longer than the object selects all of it (RFC 9110 section 14.1.2).
+		length = min(end, totalSize)
+		start = totalSize - length
+		end = totalSize - 1
 	} else {
+		// A last byte position past the end of the object selects up to
+		// the last byte (RFC 9110 section 14.1.2).
+		end = min(end, totalSize-1)
 		length = end - start + 1
 	}
 	if start > end || start >= totalSize || length <= 0 {
@@ -501,7 +503,6 @@ func (s *S3Server) handleGetObject(ctx context.Context, w http.ResponseWriter, r
 		lastModified = statResp.Mtime
 	}
 
-	rangeHeader := r.Header.Get("Range")
 	w.Header().Set("ETag", FileEtag(dentry.TargetId))
 	w.Header().Set("Last-Modified", lastModified.Time().Format(http.TimeFormat))
 	w.Header().Set("Accept-Ranges", "bytes")
@@ -511,8 +512,15 @@ func (s *S3Server) handleGetObject(ctx context.Context, w http.ResponseWriter, r
 		w.Header().Set("Content-Type", "application/octet-stream")
 	}
 
+	return s.writeObjectBody(w, r, path, bodyReader, int64(size))
+}
+
+// writeObjectBody writes the status, length headers and body of a GetObject
+// response, or only the part of the body selected by the Range header.
+func (s *S3Server) writeObjectBody(w http.ResponseWriter, r *http.Request, path *objectPath, bodyReader io.ReadSeeker, size int64) error {
+	rangeHeader := r.Header.Get("Range")
 	if rangeHeader == "" {
-		w.Header().Set("Content-Length", strconv.FormatInt(int64(size), 10))
+		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 		w.WriteHeader(http.StatusOK)
 		if r.Method != http.MethodHead {
 			if _, err := io.Copy(w, bodyReader); err != nil {
@@ -522,7 +530,7 @@ func (s *S3Server) handleGetObject(ctx context.Context, w http.ResponseWriter, r
 		return nil
 	}
 
-	start, length, err := parseRange(rangeHeader, int64(size))
+	start, length, err := parseRange(rangeHeader, size)
 	if err != nil {
 		w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", size))
 		return &S3Error{Code: "InvalidRange", Message: "The requested range is not satisfiable", StatusCode: http.StatusRequestedRangeNotSatisfiable}
