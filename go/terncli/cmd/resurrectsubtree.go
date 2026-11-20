@@ -6,6 +6,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"flag"
 	"fmt"
 	"github.com/XTXMarkets/ternfs/go/client"
@@ -136,6 +137,7 @@ func NewResurrectSubtree() Command {
 		var dstDirIds sync.Map
 		dstDirIds.Store(srcRootId, dstRootId)
 		err = client.ParwalkFromInode(
+			context.Background(),
 			l,
 			c,
 			&client.ParwalkOptions{
@@ -144,7 +146,7 @@ func NewResurrectSubtree() Command {
 			},
 			srcRootId,
 			dstRootPath,
-			func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error {
+			func(_ context.Context, parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error {
 				if parent == msgs.NULL_INODE_ID {
 					// Root: already created outside the walk.
 					return nil

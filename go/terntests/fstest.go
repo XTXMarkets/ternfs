@@ -1177,8 +1177,8 @@ func fsTestInternal[Id comparable](
 			blockServicesById[blockServices.BlockServices[i].Id] = &blockServices.BlockServices[i]
 		}
 		client.Parwalk(
-			log, c, &client.ParwalkOptions{WorkersPerShard: 1}, "/",
-			func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, fileId msgs.InodeId, current bool, owned bool) error {
+			context.Background(), log, c, &client.ParwalkOptions{WorkersPerShard: 1}, "/",
+			func(_ context.Context, parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, fileId msgs.InodeId, current bool, owned bool) error {
 				if fileId.Type() == msgs.DIRECTORY {
 					return nil
 				}

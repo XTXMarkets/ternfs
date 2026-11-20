@@ -17,15 +17,11 @@ import (
 	"github.com/XTXMarkets/ternfs/go/msgs"
 )
 
-const defaultGrepMaxLineSize = 1024 * 1024
-
-// grepReadBufferSize is large enough that virtually every line comes back
-// from ReadSlice as a single zero-copy fragment.
-const grepReadBufferSize = 1 << 20
-
-// grepBinaryProbeBytes is git's FIRST_FEW_BYTES: a file with a NUL byte in
-// this prefix is binary.
-const grepBinaryProbeBytes = 8000
+const (
+	defaultGrepMaxLineSize = 1024 * 1024
+	grepReadBufferSize     = 1 << 20
+	grepBinaryProbeBytes   = 8000
+)
 
 var ErrGrepLineTooLong = errors.New("grep line is too long")
 var ErrGrepFileTooLarge = errors.New("grep file is too large")
@@ -133,7 +129,6 @@ func scanGrepReader(
 		if bytes.IndexByte(prefix, 0) >= 0 {
 			return uint64(len(prefix)), ErrGrepBinaryFile
 		}
-		// Peek preserves the prefix, including line numbers and byte offsets.
 		reader = sniffed
 	}
 	buffered := bufio.NewReaderSize(reader, grepReadBufferSize)

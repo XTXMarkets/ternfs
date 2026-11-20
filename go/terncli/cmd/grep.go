@@ -80,7 +80,6 @@ type grepStatus struct {
 	terminal  bool
 	verbose   bool
 	visible   bool
-	hasLast   bool
 	lastStats client.TreeGrepStats
 }
 
@@ -113,11 +112,10 @@ func (status *grepStatus) progress(stats client.TreeGrepStats) error {
 		}
 		return nil
 	}
-	if status.hasLast && stats == status.lastStats {
+	if status.visible && stats == status.lastStats {
 		return nil
 	}
 	status.lastStats = stats
-	status.hasLast = true
 	if _, err := fmt.Fprintf(status.output, "\r\x1b[K%s", formatGrepStats("progress", stats)); err != nil {
 		return err
 	}

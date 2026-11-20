@@ -5,6 +5,7 @@
 package cmd
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"github.com/XTXMarkets/ternfs/go/client"
@@ -47,6 +48,7 @@ func NewFind() Command {
 		}
 		c := runtime.getClient()
 		err := client.Parwalk(
+			context.Background(),
 			l,
 			c,
 			&client.ParwalkOptions{
@@ -54,7 +56,7 @@ func NewFind() Command {
 				Snapshot:        *findSnapshot,
 			},
 			*findDir,
-			func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error {
+			func(_ context.Context, parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error {
 				if !owned && *findOnlyOwned {
 					return nil
 				}

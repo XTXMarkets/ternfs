@@ -46,7 +46,7 @@ type parwalkEnv struct {
 	snapshotLatest     bool
 	failOnReadDirError bool
 	rootIds            map[msgs.InodeId]struct{}
-	callback           func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error
+	callback           func(ctx context.Context, parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error
 }
 
 func (env *parwalkEnv) visit(
@@ -63,7 +63,7 @@ func (env *parwalkEnv) visit(
 	if err := env.ctx.Err(); err != nil {
 		return err
 	}
-	cbErr := env.callback(parent, parentPath, name, creationTime, id, current, owned)
+	cbErr := env.callback(env.ctx, parent, parentPath, name, creationTime, id, current, owned)
 	if errors.Is(cbErr, ErrSkipSubtree) {
 		return nil
 	}
@@ -246,10 +246,6 @@ func (env *parwalkEnv) processSnapshotLatest(
 }
 
 type ParwalkOptions struct {
-	// Context, when set, stops the walk once it is cancelled: the walk
-	// returns the context's cause. Shard requests already in flight are
-	// not interrupted.
-	Context         context.Context
 	WorkersPerShard int
 	// FailOnReadDirError stops on read failures below the roots; missing roots always fail.
 	FailOnReadDirError bool
@@ -272,24 +268,24 @@ type ParwalkOptions struct {
 // from an inode id (useful when the root has no live path, e.g. a deleted
 // directory).
 //
+// Cancelling ctx stops the walk, which then returns ctx's cause. Shard
+// requests already in flight are not interrupted.
+//
 // The callback runs concurrently on the walk's goroutines. If it returns an
 // error other than ErrSkipSubtree the walk stops and returns the first such
-// error. The walk's goroutines have exited by the time it returns.
+// error. The callback's context is cancelled when the walk stops, including
+// when it finishes: a callback that waits should watch it, and work that
+// outlives the walk must not use it. The walk's goroutines have exited by
+// the time it returns.
 func Parwalk(
+	ctx context.Context,
 	log *log.Logger,
 	client *Client,
 	options *ParwalkOptions,
 	root string,
-	callback func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error,
+	callback func(ctx context.Context, parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error,
 ) error {
-	rootId, creationTime, parentId, err := client.ResolvePathWithParent(log, root)
-	if err != nil {
-		return err
-	}
-	parentPath, name := parwalkSplitRoot(root)
-	return parwalkRunWithSeeds(log, client, options, callback, []parwalkSeed{
-		{parentId: parentId, parentPath: parentPath, name: name, creationTime: creationTime, rootId: rootId},
-	})
+	return ParwalkMany(ctx, log, client, options, []string{root}, callback)
 }
 
 // ParwalkFromInode is like Parwalk but takes an inode id as the root instead
@@ -299,15 +295,16 @@ func Parwalk(
 // (e.g. a destination path when walking a deleted subtree to reconstruct it
 // somewhere else).
 func ParwalkFromInode(
+	ctx context.Context,
 	log *log.Logger,
 	client *Client,
 	options *ParwalkOptions,
 	rootId msgs.InodeId,
 	rootPath string,
-	callback func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error,
+	callback func(ctx context.Context, parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error,
 ) error {
 	parentPath, name := parwalkSplitRoot(rootPath)
-	return parwalkRunWithSeeds(log, client, options, callback, []parwalkSeed{
+	return parwalkRunWithSeeds(ctx, log, client, options, callback, []parwalkSeed{
 		{parentId: msgs.NULL_INODE_ID, parentPath: parentPath, name: name, creationTime: 0, rootId: rootId},
 	})
 }
@@ -321,16 +318,17 @@ func ParwalkFromInode(
 // The callback contract is identical to Parwalk; callers that want to know
 // which root an edge belongs to can derive it from the parentPath argument.
 func ParwalkMany(
+	ctx context.Context,
 	log *log.Logger,
 	client *Client,
 	options *ParwalkOptions,
 	roots []string,
-	callback func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error,
+	callback func(ctx context.Context, parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error,
 ) error {
 	seeds := make([]parwalkSeed, 0, len(roots))
 	for _, root := range roots {
-		if options.Context != nil && options.Context.Err() != nil {
-			return context.Cause(options.Context)
+		if err := context.Cause(ctx); err != nil {
+			return err
 		}
 		rootId, creationTime, parentId, err := client.ResolvePathWithParent(log, root)
 		if err != nil {
@@ -345,7 +343,7 @@ func ParwalkMany(
 			rootId:       rootId,
 		})
 	}
-	return parwalkRunWithSeeds(log, client, options, callback, seeds)
+	return parwalkRunWithSeeds(ctx, log, client, options, callback, seeds)
 }
 
 // The parent path and name a root's own edge is reported with. The root is
@@ -365,10 +363,11 @@ type parwalkSeed struct {
 }
 
 func parwalkRunWithSeeds(
+	ctx context.Context,
 	log *log.Logger,
 	client parwalkClient,
 	options *ParwalkOptions,
-	callback func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error,
+	callback func(ctx context.Context, parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error,
 	seeds []parwalkSeed,
 ) error {
 	if options.WorkersPerShard < 1 {
@@ -381,11 +380,7 @@ func parwalkRunWithSeeds(
 	if queueSize == 0 {
 		queueSize = 10_000
 	}
-	parent := options.Context
-	if parent == nil {
-		parent = context.Background()
-	}
-	ctx, cancel := context.WithCancelCause(parent)
+	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	rootIds := make(map[msgs.InodeId]struct{}, len(seeds))
 	for _, seed := range seeds {

@@ -5,6 +5,7 @@
 package cmd
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"github.com/XTXMarkets/ternfs/go/client"
@@ -20,13 +21,14 @@ func outputFullFileSizes(log *log.Logger, c *client.Client) {
 	var examinedDirs uint64
 	var examinedFiles uint64
 	err := client.Parwalk(
+		context.Background(),
 		log,
 		c,
 		&client.ParwalkOptions{
 			WorkersPerShard: 1,
 		},
 		"/",
-		func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error {
+		func(_ context.Context, parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error {
 			if id.Type() == msgs.DIRECTORY {
 				if atomic.AddUint64(&examinedDirs, 1)%1000000 == 0 {
 					log.Info("examined %v dirs, %v files", examinedDirs, examinedFiles)
