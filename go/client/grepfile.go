@@ -58,7 +58,7 @@ func GrepFile(
 	if err := context.Cause(ctx); err != nil {
 		return 0, err
 	}
-	reader, err := client.NewFileReader(logger, id)
+	reader, err := client.newFileReader(ctx, logger, id)
 	if err != nil {
 		return 0, err
 	}

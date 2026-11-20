@@ -2,8 +2,11 @@ package client
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
+	"github.com/XTXMarkets/ternfs/go/core/bincode"
 	"github.com/XTXMarkets/ternfs/go/core/bufpool"
 	"github.com/XTXMarkets/ternfs/go/core/crc32c"
 	"github.com/XTXMarkets/ternfs/go/core/log"
@@ -626,4 +629,27 @@ func TestRsReaderWithRandomPageCache(t *testing.T) {
 
 func TestRsSpan(t *testing.T) {
 	runRsTests(runRsSpanTest)
+}
+
+func TestFetchSpansStopsBetweenPagesOnCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	stopErr := errors.New("stop listing spans")
+	var pages atomic.Int32
+	c, logger := metadataRetryClient(t, DefaultShardTimeout, metadataTestAddrs, func(packet []byte) ([]byte, error) {
+		page := pages.Add(1)
+		cancel(stopErr)
+		// Always claim there is another page.
+		body, err := bincode.Pack(&msgs.LocalFileSpansResp{NextOffset: uint64(page) * uint64(msgs.TERN_PAGE_SIZE)})
+		if err != nil {
+			return nil, err
+		}
+		reply := binary.LittleEndian.AppendUint32(nil, msgs.SHARD_RESP_PROTOCOL_VERSION)
+		reply = append(reply, packet[4:13]...)
+		return append(reply, body...), nil
+	})
+	_, err := c.fetchSpans(ctx, logger, msgs.MakeInodeId(msgs.FILE, 0, 10))
+	if !errors.Is(err, stopErr) || pages.Load() != 1 {
+		t.Fatalf("error = %v after %d pages; want %v after one page", err, pages.Load(), stopErr)
+	}
 }
