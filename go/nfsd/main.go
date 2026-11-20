@@ -47,10 +47,14 @@ func main() {
 	influxOrg := flag.String("influx-db-org", "", "InfluxDB org for metrics")
 	influxBucket := flag.String("influx-db-bucket", "", "InfluxDB bucket for metrics")
 	filesystem := flag.String("filesystem", "", "name of the served filesystem, the filesystem tag on every metric; required with -influx-db-origin")
-	instance := flag.String("instance", "", "instance tag on every metric (default: short hostname and NFS port)")
+	instance := flag.String("instance", "", "instance tag on every metric, and the xmon app instance (default: short hostname and NFS port)")
 	metricsInterval := flag.Duration("metrics-interval", defaultMetricsInterval, "how often metrics are pushed")
 	statusAddr := flag.String("status-addr", "",
 		"serve the read-only diagnostics API (JSON over HTTP) on this address; off by default")
+	xmon := flag.String("xmon", "", "Xmon address (empty for no xmon)")
+	xmonAppType := flag.String("xmon-app-type", string(log.XMON_DAYTIME),
+		fmt.Sprintf("xmon app type, which picks the rota and schedule: %s, %s or %s",
+			log.XMON_NEVER, log.XMON_DAYTIME, log.XMON_CRITICAL))
 	flag.Parse()
 	// nfsd takes no positional arguments. Rejecting them here, before any
 	// directory or listener is touched, keeps a mistyped command line from
@@ -78,6 +82,17 @@ func main() {
 	}
 	slogger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 
+	if *instance == "" {
+		hostname, _ := os.Hostname()
+		*instance = defaultInstance(hostname, *addr)
+	}
+	// The xmon app instance is the metrics instance.
+	ternLevel := log.INFO
+	if *verbose {
+		ternLevel = log.DEBUG
+	}
+	ternLogger := log.NewLogger(os.Stderr, &log.LoggerOptions{Level: ternLevel, XmonAddr: *xmon, AppInstance: *instance, AppType: log.XmonAppType(*xmonAppType)})
+
 	if *stagingDir == "" {
 		fmt.Fprintln(os.Stderr, "-staging is required")
 		os.Exit(2)
@@ -97,7 +112,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	fs, target, counters, err := openVFS(*root, *registry, *verbose)
+	fs, target, counters, err := openVFS(*root, *registry, ternLogger)
 	if err != nil {
 		slogger.Error("opening filesystem", "err", err)
 		os.Exit(1)
@@ -135,10 +150,6 @@ func main() {
 			fmt.Fprintln(os.Stderr, "-filesystem is required with -influx-db-origin")
 			os.Exit(2)
 		}
-		if *instance == "" {
-			hostname, _ := os.Hostname()
-			*instance = defaultInstance(hostname, *addr)
-		}
 		pusher := &metricsPusher{
 			srv: srv, counters: counters,
 			db:         &log.InfluxDB{Origin: *influxOrigin, Org: *influxOrg, Bucket: *influxBucket},
@@ -158,7 +169,7 @@ func main() {
 // one of root and registry. It also returns a description of what it opened,
 // with a local root resolved to an absolute path, and for a TernFS backend
 // the client's request counters for the metrics exporter.
-func openVFS(root string, registry string, verbose bool) (vfs.TernVFS, string, *client.ClientCounters, error) {
+func openVFS(root string, registry string, ternLogger *log.Logger) (vfs.TernVFS, string, *client.ClientCounters, error) {
 	if (root == "") == (registry == "") {
 		return nil, "", nil, fmt.Errorf(
 			"exactly one of -root (local) or -registry (TernFS) must be specified")
@@ -177,11 +188,6 @@ func openVFS(root string, registry string, verbose bool) (vfs.TernVFS, string, *
 		}
 		return vfs.NewLocalTernVFS(absRoot), "local root " + absRoot, nil, nil
 	}
-	logLevel := log.INFO
-	if verbose {
-		logLevel = log.DEBUG
-	}
-	ternLogger := log.NewLogger(os.Stderr, &log.LoggerOptions{Level: logLevel})
 	c, err := client.NewClient(ternLogger, nil, registry, msgs.AddrsInfo{})
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("connecting to TernFS registry: %w", err)
