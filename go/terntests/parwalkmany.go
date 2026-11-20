@@ -5,6 +5,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"github.com/XTXMarkets/ternfs/go/client"
 	"github.com/XTXMarkets/ternfs/go/core/log"
@@ -85,7 +86,7 @@ func parwalkManyTest(
 		maxConc      int32
 	)
 
-	cb := func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error {
+	cb := func(_ context.Context, parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error {
 		shid := id.Shard()
 		atomic.AddInt32(&activeShards[shid], 1)
 		// Recompute max distinct active shards. Coarse — we just count
@@ -132,7 +133,7 @@ func parwalkManyTest(
 	}
 
 	if err := client.ParwalkMany(
-		logger, c,
+		context.Background(), logger, c,
 		&client.ParwalkOptions{WorkersPerShard: opts.workersPerShard},
 		roots,
 		cb,

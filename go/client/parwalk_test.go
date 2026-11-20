@@ -74,6 +74,7 @@ func parwalkTestTree() (parwalkTestDirs, msgs.InodeId) {
 // behind.
 func parwalkTestWalk(
 	t *testing.T,
+	ctx context.Context,
 	dirs parwalkTestDirs,
 	options *ParwalkOptions,
 	root msgs.InodeId,
@@ -82,8 +83,8 @@ func parwalkTestWalk(
 	t.Helper()
 	before := runtime.NumGoroutine()
 	err := parwalkRunWithSeeds(
-		nil, dirs, options,
-		func(_ msgs.InodeId, parentPath string, name string, _ msgs.TernTime, _ msgs.InodeId, _ bool, _ bool) error {
+		ctx, nil, dirs, options,
+		func(_ context.Context, _ msgs.InodeId, parentPath string, name string, _ msgs.TernTime, _ msgs.InodeId, _ bool, _ bool) error {
 			return callback(path.Join(parentPath, name))
 		},
 		[]parwalkSeed{{parentId: msgs.NULL_INODE_ID, parentPath: "/", name: "root", rootId: root}},
@@ -104,7 +105,7 @@ func TestParwalkVisitsEveryEdgeOnce(t *testing.T) {
 	dirs, root := parwalkTestTree()
 	var mu sync.Mutex
 	visits := map[string]int{}
-	err := parwalkTestWalk(t, dirs, &ParwalkOptions{WorkersPerShard: 2}, root, func(fullPath string) error {
+	err := parwalkTestWalk(t, t.Context(), dirs, &ParwalkOptions{WorkersPerShard: 2}, root, func(fullPath string) error {
 		mu.Lock()
 		defer mu.Unlock()
 		visits[fullPath]++
@@ -133,7 +134,7 @@ func TestParwalkSkipSubtree(t *testing.T) {
 	dirs, root := parwalkTestTree()
 	var mu sync.Mutex
 	var visited []string
-	err := parwalkTestWalk(t, dirs, &ParwalkOptions{WorkersPerShard: 2}, root, func(fullPath string) error {
+	err := parwalkTestWalk(t, t.Context(), dirs, &ParwalkOptions{WorkersPerShard: 2}, root, func(fullPath string) error {
 		mu.Lock()
 		defer mu.Unlock()
 		visited = append(visited, fullPath)
@@ -162,7 +163,7 @@ func TestParwalkReturnsCallbackError(t *testing.T) {
 		t.Run(failAt, func(t *testing.T) {
 			dirs, root := parwalkTestTree()
 			callbackErr := fmt.Errorf("failed at %s", failAt)
-			err := parwalkTestWalk(t, dirs, &ParwalkOptions{WorkersPerShard: 2}, root, func(fullPath string) error {
+			err := parwalkTestWalk(t, t.Context(), dirs, &ParwalkOptions{WorkersPerShard: 2}, root, func(fullPath string) error {
 				if fullPath == failAt {
 					return callbackErr
 				}
@@ -188,7 +189,7 @@ func TestParwalkStopsOnContextCancel(t *testing.T) {
 	stopErr := errors.New("stop")
 	ctx, cancel := context.WithCancelCause(context.Background())
 	var visited []string
-	err := parwalkTestWalk(t, dirs, &ParwalkOptions{Context: ctx, WorkersPerShard: 1}, root, func(fullPath string) error {
+	err := parwalkTestWalk(t, ctx, dirs, &ParwalkOptions{WorkersPerShard: 1}, root, func(fullPath string) error {
 		visited = append(visited, fullPath)
 		if fullPath == "/root/d1/d2" {
 			cancel(stopErr)
@@ -204,7 +205,7 @@ func TestParwalkStopsOnContextCancel(t *testing.T) {
 	}
 
 	// already cancelled: nothing is visited
-	err = parwalkTestWalk(t, dirs, &ParwalkOptions{Context: ctx, WorkersPerShard: 1}, root, func(fullPath string) error {
+	err = parwalkTestWalk(t, ctx, dirs, &ParwalkOptions{WorkersPerShard: 1}, root, func(fullPath string) error {
 		t.Errorf("visited %s after cancellation", fullPath)
 		return nil
 	})
@@ -232,7 +233,7 @@ func TestParwalkFullQueue(t *testing.T) {
 	var mu sync.Mutex
 	visits := map[string]int{}
 	readByFinder := 0
-	err := parwalkTestWalk(t, dirs, &ParwalkOptions{WorkersPerShard: 1, QueueSize: queueSize}, root, func(fullPath string) error {
+	err := parwalkTestWalk(t, t.Context(), dirs, &ParwalkOptions{WorkersPerShard: 1, QueueSize: queueSize}, root, func(fullPath string) error {
 		switch fullPath {
 		case "/root/holder/hold":
 			close(held)
@@ -287,8 +288,8 @@ func TestParwalkFromInode(t *testing.T) {
 	} {
 		var called bool
 		err := ParwalkFromInode(
-			nil, nil, &ParwalkOptions{WorkersPerShard: 1}, file, test.rootPath,
-			func(parent msgs.InodeId, parentPath string, name string, _ msgs.TernTime, id msgs.InodeId, current bool, owned bool) error {
+			t.Context(), nil, nil, &ParwalkOptions{WorkersPerShard: 1}, file, test.rootPath,
+			func(_ context.Context, parent msgs.InodeId, parentPath string, name string, _ msgs.TernTime, id msgs.InodeId, current bool, owned bool) error {
 				called = true
 				if parent != msgs.NULL_INODE_ID || parentPath != test.parentPath || name != test.name || id != file || !current || !owned {
 					t.Errorf(

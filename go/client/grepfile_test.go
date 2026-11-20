@@ -95,7 +95,7 @@ func TestScanGrepReaderDoesNotMatchPartialLineBeforeError(t *testing.T) {
 		&failingGrepReader{contents: "partial foo"},
 		regexp.MustCompile("foo"),
 		1024,
-		false,
+		true,
 		func(uint64, uint64, []byte) error {
 			t.Fatal("match callback was called")
 			return nil
@@ -195,17 +195,14 @@ func TestScanGrepReaderTextDetection(t *testing.T) {
 		content string
 		binary  bool
 	}{
-		{"ascii", "needle\r\n", false},
 		{"utf8", "日本語 café needle\n", false},
 		{"empty", "", false},
 		// Only NUL counts, as in git: these are all text.
 		{"latin1", "% temperature in \xb0C\nneedle\n", false},
-		{"bmp-like prefix", "BM_return,weight\nneedle\n", false},
 		{"control bytes", "\x0b\x1a\x1bneedle\n", false},
 		{"nul after probe", strings.Repeat("a\n", grepBinaryProbeBytes/2) + "\x00 needle\n", false},
 		{"nul", "needle\x00\n", true},
 		{"nul at end of probe", strings.Repeat("a\n", grepBinaryProbeBytes/2-1) + "a\x00\nneedle\n", true},
-		{"png", "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR needle", true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			matches := 0

@@ -21,9 +21,7 @@ import (
 
 // TreeGrepOptions describes one current-tree regular-expression search.
 type TreeGrepOptions struct {
-	Roots []string
-	// Parwalk configures the walk of the roots. Its Context is ignored:
-	// the walk is cancelled through the context passed to Grep.
+	Roots       []string
 	Parwalk     ParwalkOptions
 	Pattern     *regexp.Regexp
 	MaxFileSize uint64
@@ -72,8 +70,6 @@ type TreeGrep struct {
 }
 
 type treeGrepRun struct {
-	// The walk and the file reads run in group, and the first error from
-	// any of them cancels ctx.
 	group     *errgroup.Group
 	ctx       context.Context
 	options   *TreeGrepOptions
@@ -171,14 +167,14 @@ func (grep *TreeGrep) Grep(
 	group.Go(func() error {
 		parwalkOptions := options.Parwalk
 		parwalkOptions.FailOnReadDirError = true
-		parwalkOptions.Context = grepCtx
 		return ParwalkMany(
+			grepCtx,
 			grep.log,
 			grep.client,
 			&parwalkOptions,
 			options.Roots,
-			func(_ msgs.InodeId, parentPath string, name string, _ msgs.TernTime, id msgs.InodeId, _ bool, _ bool) error {
-				return grep.visit(run, path.Join(parentPath, name), id)
+			func(walkCtx context.Context, _ msgs.InodeId, parentPath string, name string, _ msgs.TernTime, id msgs.InodeId, _ bool, _ bool) error {
+				return grep.visit(run, walkCtx, path.Join(parentPath, name), id)
 			},
 		)
 	})
@@ -191,9 +187,7 @@ func (grep *TreeGrep) Grep(
 	return run.stats, err
 }
 
-// visit is the walk callback. It starts a search of each file the filter lets
-// through, once there is room in the file-read budget.
-func (grep *TreeGrep) visit(run *treeGrepRun, fullPath string, id msgs.InodeId) error {
+func (grep *TreeGrep) visit(run *treeGrepRun, walkCtx context.Context, fullPath string, id msgs.InodeId) error {
 	if run.options.Filter != nil {
 		include, err := run.options.Filter(fullPath, id)
 		if err != nil {
@@ -207,8 +201,8 @@ func (grep *TreeGrep) visit(run *treeGrepRun, fullPath string, id msgs.InodeId) 
 		return nil
 	}
 	select {
-	case <-run.ctx.Done():
-		return context.Cause(run.ctx)
+	case <-walkCtx.Done():
+		return context.Cause(walkCtx)
 	case grep.sem <- struct{}{}:
 	}
 	run.mutex.Lock()
@@ -221,8 +215,6 @@ func (grep *TreeGrep) visit(run *treeGrepRun, fullPath string, id msgs.InodeId) 
 	return nil
 }
 
-// grepFile searches one file. A file that cannot be searched is reported and
-// counted; the error returned is one that stops the whole search.
 func (grep *TreeGrep) grepFile(
 	run *treeGrepRun,
 	filePath string,
