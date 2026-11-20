@@ -6,6 +6,7 @@ package client
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"github.com/XTXMarkets/ternfs/go/core/bufpool"
@@ -762,8 +763,17 @@ func (c *Client) FetchSpans(
 	log *log.Logger,
 	fileId msgs.InodeId,
 ) (spans []SpanWithBlockServices, err error) {
+	return c.fetchSpans(context.Background(), log, fileId)
+}
+
+// fetchSpans stops between pages once ctx is cancelled; a page already
+// requested is not interrupted.
+func (c *Client) fetchSpans(ctx context.Context, log *log.Logger, fileId msgs.InodeId) (spans []SpanWithBlockServices, err error) {
 	var byteOffset uint64
 	for {
+		if err := context.Cause(ctx); err != nil {
+			return nil, err
+		}
 		req := msgs.LocalFileSpansReq{FileId: fileId, ByteOffset: byteOffset}
 		resp := msgs.LocalFileSpansResp{}
 		if err := c.ShardRequest(log, fileId.Shard(), &req, &resp); err != nil {
@@ -1439,7 +1449,11 @@ func (f *FileReader) Read(
 }
 
 func (client *Client) NewFileReader(log *log.Logger, id msgs.InodeId) (*FileReader, error) {
-	spans, err := client.FetchSpans(log, id)
+	return client.newFileReader(context.Background(), log, id)
+}
+
+func (client *Client) newFileReader(ctx context.Context, log *log.Logger, id msgs.InodeId) (*FileReader, error) {
+	spans, err := client.fetchSpans(ctx, log, id)
 	if err != nil {
 		return nil, err
 	}

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"os"
 	"path"
 	"runtime"
 	"slices"
@@ -304,5 +305,55 @@ func TestParwalkFromInode(t *testing.T) {
 		if !called {
 			t.Fatalf("root %q: callback was not called", test.rootPath)
 		}
+	}
+}
+
+type parwalkFailingClient struct {
+	err error
+}
+
+func (client parwalkFailingClient) ShardRequest(*log.Logger, msgs.ShardId, msgs.ShardRequest, msgs.ShardResponse) error {
+	return client.err
+}
+
+func (parwalkFailingClient) fullReadDir(*log.Logger, msgs.InodeId, msgs.FullReadDirFlags, string, msgs.TernTime) (*msgs.FullReadDirResp, error) {
+	panic("snapshot walks are not served")
+}
+
+func TestParwalkReadDirErrors(t *testing.T) {
+	readErr := errors.New("shard unavailable")
+	logger := log.NewLogger(os.Stderr, &log.LoggerOptions{Level: log.INFO})
+	for _, test := range []struct {
+		name    string
+		readErr error
+		strict  bool
+		root    bool
+		wantErr bool
+	}{
+		{name: "missing directory ignored", readErr: msgs.DIRECTORY_NOT_FOUND, strict: true},
+		{name: "missing file ignored", readErr: msgs.FILE_NOT_FOUND, strict: true},
+		{name: "other errors returned", readErr: readErr, strict: true, wantErr: true},
+		{name: "missing root returned without strict mode", readErr: msgs.DIRECTORY_NOT_FOUND, root: true, wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := msgs.MakeInodeId(msgs.DIRECTORY, 1, 1)
+			var rootIds map[msgs.InodeId]struct{}
+			if test.root {
+				rootIds = map[msgs.InodeId]struct{}{root: {}}
+			}
+			env := parwalkEnv{
+				ctx:                context.Background(),
+				client:             parwalkFailingClient{err: test.readErr},
+				failOnReadDirError: test.strict,
+				rootIds:            rootIds,
+			}
+			err := env.process(logger, 1, root, "/root")
+			if test.wantErr && !errors.Is(err, test.readErr) {
+				t.Fatalf("error = %v, want %v", err, test.readErr)
+			}
+			if !test.wantErr && err != nil {
+				t.Fatalf("error = %v, want nil", err)
+			}
+		})
 	}
 }
