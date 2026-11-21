@@ -49,7 +49,7 @@ func scrubFileInternal(
 ) error {
 	log.Debug("starting to scrub file %v", file)
 
-	badBlock := func(blockService *msgs.BlockService, blockSize uint32, block *msgs.FetchedBlock) (bool, error) {
+	shouldMigrate := func(blockService *msgs.BlockService, blockSize uint32, block *msgs.FetchedBlock) (bool, error) {
 		err := c.CheckBlock(log, blockService, block.BlockId, blockSize, block.Crc)
 		if badBlockError(err) {
 			// The file can become transient after we fetched its spans, while
@@ -70,7 +70,7 @@ func scrubFileInternal(
 		}
 		return false, err
 	}
-	return migrateBlocksInFileGeneric(log, c, bufPool, &stats.Migrate, timeStats, progressReportAlert, "scrubbed", badBlock, scratchFile, file)
+	return migrateBlocksInFileGeneric(log, c, bufPool, &stats.Migrate, timeStats, progressReportAlert, "scrubbed", shouldMigrate, scratchFile, file)
 }
 
 type scrubRequest struct {

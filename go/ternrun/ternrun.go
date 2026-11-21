@@ -45,6 +45,8 @@ func main() {
 	leaderOnly := flag.Bool("leader-only", false, "Run only LogsDB leader with LEADER_NO_FOLLOWERS")
 	locations := flag.String("locations", "loc1", "Comma separated list of locations to simulate multi datacenter. Default `loc1`")
 	noGc := flag.Bool("no-gc", false, "Don't start GC processes")
+	transientDeadline := flag.Duration("transient-deadline", 0, "Shard transient file deadline interval, the shard's default if 0. Lower it to test GC quickly.")
+	futureCutoff := flag.Duration("future-cutoff", 0, "How long block services refuse to erase a block after it was written, the block service's default if 0. Lower it to test GC quickly.")
 	flag.Parse()
 	noRunawayArgs()
 
@@ -262,6 +264,9 @@ func main() {
 				Addr1:            "127.0.0.1:0",
 				ReserverdStorage: 10 << 30, // 10GB
 			}
+			if *futureCutoff > 0 {
+				opts.FutureCutoff = futureCutoff
+			}
 			procs.StartBlockService(l, &opts)
 		}
 	}
@@ -327,6 +332,9 @@ func main() {
 					LogsDBFlags:               nil,
 					Addr1:                     "127.0.0.1:0",
 					BlockServiceWritableDelay: &noWritableDelay,
+				}
+				if *transientDeadline > 0 {
+					opts.TransientDeadlineInterval = transientDeadline
 				}
 				if r == 0 {
 					if *leaderOnly {

@@ -1391,6 +1391,41 @@ type SwapBlocksReq struct {
 
 type SwapBlocksResp struct{}
 
+// Keeps REPLACE_BLOCKS requests and log entries within DEFAULT_UDP_MTU.
+const MAX_REPLACE_BLOCKS = 29
+
+type ReplaceBlock struct {
+	FileId            InodeId
+	ByteOffset        uint64
+	OldBlockId        BlockId
+	OldBlockServiceId BlockServiceId
+	ScratchByteOffset uint64
+	NewBlockId        BlockId
+}
+
+// For each item, moves NewBlockId out of the certified one-block span at
+// ScratchByteOffset in the scratch transient file, and puts it in place of
+// OldBlockId in the span at ByteOffset in FileId. OldBlockId must be on
+// OldBlockServiceId, which must be decommissioned, and is dropped without an
+// erase proof. Either every item applies or none does.
+//
+// The scratch spans must be the last ones in the scratch file, which is
+// truncated to where they started, so the file never has a hole in it.
+//
+// An item whose NewBlockId is already in the target span, and whose OldBlockId
+// isn't, is done and leaves the scratch file alone, so repeating a request that
+// applied is a no-op even after the scratch file has been reused.
+//
+// Transient targets need no cookie, but their last span can't be replaced while
+// it is condemned, or dirty before the file's deadline.
+type ReplaceBlocksReq struct {
+	ScratchId     InodeId
+	ScratchCookie Cookie
+	Blocks        []ReplaceBlock
+}
+
+type ReplaceBlocksResp struct{}
+
 // TODO this works with transient files, but doesn't require a cookie -- it's a bit
 // inconsistent.
 //
@@ -2021,6 +2056,11 @@ type SwapBlocksEntry struct {
 	FileId2     InodeId
 	ByteOffset2 uint64
 	BlockId2    BlockId
+}
+
+type ReplaceBlocksEntry struct {
+	ScratchId InodeId
+	Blocks    []ReplaceBlock
 }
 
 type SwapSpansEntry struct {
