@@ -24,6 +24,14 @@ Prepare and build the 6.14.9 QEMU kernel as usual (skip this if it is already bu
 (cd kmod/linux && make oldconfig && make prepare && make -j)
 ```
 
+To run the QEMU tests under lockdep instead of KASAN, rebuild the kernel with
+`config-lockdep.fragment` merged into the config (`./fetchlinux.sh 6.14.9 lockdep`),
+which this does together with the image and the tests:
+
+```sh
+./ci.py --prepare-image <base-image> --kmod-config lockdep --kmod --short --leader-only
+```
+
 Run both compile checks with one command:
 
 ```sh
