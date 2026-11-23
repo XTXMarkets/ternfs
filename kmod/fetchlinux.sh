@@ -7,9 +7,10 @@
 set -eu -o pipefail
 
 version=${1:-6.14.9}
+fragment=${2:-}
 case "$version" in
     6.12.44|6.14.9) ;;
-    *) echo "Usage: $0 [6.12.44|6.14.9]" >&2; exit 2 ;;
+    *) echo "Usage: $0 [6.12.44|6.14.9] [lockdep]" >&2; exit 2 ;;
 esac
 
 # Download or resume
@@ -28,6 +29,15 @@ if [[ "$version" = 6.12.44 ]]; then
     make -C "linux-${version}" -j"$(nproc)" modules_prepare
 else
     cp "config-kasan-${version}" "linux-${version}/.config"
+    if [[ -n "$fragment" ]]; then
+        "linux-${version}/scripts/kconfig/merge_config.sh" -m -O "linux-${version}" "linux-${version}/.config" "config-${fragment}.fragment"
+        make -C "linux-${version}" olddefconfig
+        # olddefconfig silently drops options with unmet dependencies
+        if grep -vxFf "linux-${version}/.config" "config-${fragment}.fragment"; then
+            echo "options above from config-${fragment}.fragment are not in .config" >&2
+            exit 1
+        fi
+    fi
 
     # Keep the QEMU kernel on 6.14.9.
     rm -f linux
