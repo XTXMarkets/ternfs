@@ -7,9 +7,14 @@
 set -eu -o pipefail
 
 base_img=""
+config=""
 
 while [[ "$#" -gt 0 ]]; do
     case "$1" in
+        -config)
+            config="$2"
+            shift 2
+            ;;
         *)
             if [[ -n "$base_img" ]]; then
                 echo "Bad usage -- base image specified twice"
@@ -33,7 +38,7 @@ SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 cd $SCRIPT_DIR
 
 # prepare linux sources
-./fetchlinux.sh
+./fetchlinux.sh 6.14.9 "$config"
 
 # build linux kernel
 (cd linux && make oldconfig && make prepare && make -j)
