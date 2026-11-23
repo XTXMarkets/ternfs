@@ -79,9 +79,10 @@ extra-files-clean:
 ternfs-client-tests: revision.c extra-files registry-tests
 	$(MAKE) -C $(KDIR) M=$(CURDIR) C=1 modules
 
+# Kbuild's clean with M= would also strip kernel trees under kmod/.
+MODULE_OUTPUTS := *.o .*.o *.ko *.mod *.mod.c .*.cmd .*.d modules.order Module.symvers
 ternfs-client-clean:
-	$(MAKE) -C $(KDIR) M=$(CURDIR) clean
-	rm -f *.o *.ko
+	rm -f $(MODULE_OUTPUTS) $(addprefix tests/,$(MODULE_OUTPUTS))
 
 
 bincode_tests: bincode_tests.c bincodegen.h bincode.h
@@ -136,7 +137,7 @@ compile-check:
 			echo "$$kdir: expected Linux $$version, found $$actual" >&2; exit 1; \
 		fi; \
 		echo "Compiling TernFS for Linux $$version"; \
-		$(MAKE) KDIR="$$kdir" ternfs-client-clean; \
+		$(MAKE) ternfs-client-clean; \
 		$(MAKE) KDIR="$$kdir" ternfs-client-compile; \
 	done
 
