@@ -32,6 +32,9 @@ which this does together with the image and the tests:
 ./ci.py --prepare-image <base-image> --kmod-config lockdep --kmod --short --leader-only
 ```
 
+In CI, adding the `ci-lockdep` label to a pull request runs this on an EC2
+runner (`.github/workflows/lockdep.yml`).
+
 Run both compile checks with one command:
 
 ```sh

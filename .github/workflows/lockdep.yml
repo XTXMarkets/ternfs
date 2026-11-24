@@ -1,0 +1,178 @@
+# Copyright 2026 XTX Markets Technologies Limited
+#
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+name: Lockdep kmod CI on EC2 Runner
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - synchronize
+      - labeled
+
+jobs:
+  start-runner:
+    name: Start self-hosted EC2 runner for lockdep
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    if: contains(github.event.pull_request.labels.*.name, 'ci-lockdep') && (github.event.action != 'labeled' || github.event.label.name == 'ci-lockdep')
+    outputs:
+      label: ${{ steps.start-ec2-runner.outputs.label }}
+      ec2-instance-id: ${{ steps.start-ec2-runner.outputs.ec2-instance-id }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::019714370473:role/ternfs-ci-github
+          role-session-name: ternfs-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+          aws-region: us-east-1
+      - name: Start EC2 runner
+        id: start-ec2-runner
+        uses: machulav/ec2-github-runner@343a1b2ae682e681c3cec9a235d882da17ff04ef # v2.6.1
+        with:
+          mode: start
+          github-token: ${{ secrets.REPO_GITHUB_TOKEN }}
+          ec2-instance-type: m6id.metal
+          aws-resource-tags: >
+            [{"Key":"ManagedBy","Value":"ternfs-ci"}]
+          availability-zones-config: >
+            [
+              {"imageId":"ami-0360c520857e3138f","subnetId":"subnet-080446fa4c5b836d9","securityGroupId":"sg-00ea50179403152ca"},
+              {"imageId":"ami-0360c520857e3138f","subnetId":"subnet-062ef1e78e9c28e29","securityGroupId":"sg-00ea50179403152ca"},
+              {"imageId":"ami-0360c520857e3138f","subnetId":"subnet-0554dca44bcb1b035","securityGroupId":"sg-00ea50179403152ca"},
+              {"imageId":"ami-0360c520857e3138f","subnetId":"subnet-0d671a193af42ba9d","securityGroupId":"sg-00ea50179403152ca"},
+              {"imageId":"ami-0360c520857e3138f","subnetId":"subnet-0c8c82178fa2827a8","securityGroupId":"sg-00ea50179403152ca"}
+            ]
+          # Need a bit more space for root filesystem (to install apt packages, mostly)
+          block-device-mappings: >
+            [{"DeviceName": "/dev/sda1", "Ebs": {"VolumeSize": 25, "VolumeType": "gp3"}}]
+          # We need to do this before everything else since we'll have to work in /actions-runner/_work
+          # afterwards. This is pretty annoying since if anything fails here we won't see any logs.
+          pre-runner-script: |
+            # Setup one SSD for the runner
+            for dev in $(lsblk --raw -pno NAME,MOUNTPOINT | grep -P '^\/dev\/nvme[0-9]n[0-9] *$' | xargs); do
+              if [[ $(lsblk --raw -pno NAME,MOUNTPOINT | grep -F $dev | wc -l) -eq 1 ]]; then
+                data_dev_work=$dev
+                break
+              fi
+            done
+            mkfs.ext4 -F $data_dev_work
+            mkdir -p /actions-runner/_work
+            mount $data_dev_work /actions-runner/_work
+
+  run-lockdep:
+    name: Run kmod tests under lockdep on EC2
+    needs: start-runner
+    runs-on: ${{ needs.start-runner.outputs.label }} # Runs on the newly created EC2 instance
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      id-token: none
+    steps:
+      - name: Install docker
+        run: |
+          # Switch to archive.ubuntu.com.
+          sed -Ei 's|https?://[a-z0-9-]+\.ec2\.archive\.ubuntu\.com|http://archive.ubuntu.com|' /etc/apt/sources.list.d/ubuntu.sources
+          # Use the other SSD for docker
+          for dev in $(lsblk --raw -pno NAME,MOUNTPOINT | grep -P '^\/dev\/nvme[0-9]n[0-9] *$' | xargs); do
+            if [[ $(lsblk --raw -pno NAME,MOUNTPOINT | grep -F $dev | wc -l) -eq 1 ]]; then
+              docker_dev=$dev
+              break
+            fi
+          done
+          mkfs.ext4 -F $docker_dev
+          mkdir -p /docker-data
+          mount $docker_dev /docker-data
+          mkdir -p /etc/docker
+          echo '{"data-root": "/docker-data"}' > /etc/docker/daemon.json
+          # Install docker
+          apt-get update
+          apt-get install -y ca-certificates curl gnupg
+          install -m 0755 -d /etc/apt/keyrings
+          curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+          chmod a+r /etc/apt/keyrings/docker.gpg
+          echo \
+            "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+            $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+            tee /etc/apt/sources.list.d/docker.list > /dev/null
+          apt-get update
+          apt-get install -y docker-ce docker-ce-cli containerd.io
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          # Fork code runs on disposable EC2 with no secrets, OIDC token, or IAM role.
+          allow-unsafe-pr-checkout: true
+      - name: Install packages for CI
+        run: apt-get install -y build-essential
+      - name: Install packages for kmod CI
+        run: |
+          sudo sed -Ei 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources
+          apt-get update
+          # --no-install-recommends keeps gtk/gstreamer/spice GUI deps out;
+          # we only ever run qemu headless in CI.
+          apt-get install -y --no-install-recommends qemu-system-x86 cloud-image-utils
+          # build-dep only pulls the kernel build toolchain, which is the same
+          # across kernel flavours.
+          #
+          # Pick the newest 6.14 -generic *binary* package, then resolve its
+          # real *source* package and build-dep that: on noble the GA `linux`
+          # source is 6.8, and 6.14 ships from a differently-named HWE source
+          # (e.g. linux-hwe-6.14), so we must not assume the name or build-dep
+          # the binary directly.
+          kpkg=$(apt-cache search --names-only '^linux-image-unsigned-6\.14\..*-generic$' \
+            | awk '{print $1}' | sort -V | tail -n1)
+          if [ -z "$kpkg" ]; then echo "no 6.14 -generic kernel binary package found" >&2; exit 1; fi
+          src_pkg=$(apt-cache show "$kpkg" | awk '/^Source:/ {print $2; exit}')
+          if [ -z "$src_pkg" ]; then echo "could not resolve source package for $kpkg" >&2; exit 1; fi
+          echo "kernel binary $kpkg -> source $src_pkg"
+          apt-get build-dep -y --no-install-recommends "$src_pkg"
+          apt-get install -y --no-install-recommends fakeroot llvm libncurses-dev dwarves
+      - name: Download base qemu image
+        run: curl -fsSL -O https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
+      - name: Run kmod tests under lockdep
+        run: ./ci.py --short --prepare-image ${{ github.workspace }}/noble-server-cloudimg-amd64.img --kmod-config lockdep --kmod --leader-only
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-lockdep-logs
+          path: |
+            **/ternfs-client.ko
+            **/trace
+            **/dmesg
+            **/test-out
+            **/log
+            **/test-log
+            **/stdout
+            **/stderr
+            **/vm-out
+            **/test-results/*.xml
+            **/output-*.log
+
+  stop-runner:
+    name: Stop self-hosted EC2 runner for lockdep
+    needs: [start-runner, run-lockdep]
+    if: always() && needs.start-runner.outputs.ec2-instance-id != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::019714370473:role/ternfs-ci-github
+          role-session-name: ternfs-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+          aws-region: us-east-1
+      - name: Stop EC2 runner
+        uses: machulav/ec2-github-runner@343a1b2ae682e681c3cec9a235d882da17ff04ef # v2.6.1
+        with:
+          mode: stop
+          github-token: ${{ secrets.REPO_GITHUB_TOKEN }}
+          label: ${{ needs.start-runner.outputs.label }}
+          ec2-instance-id: ${{ needs.start-runner.outputs.ec2-instance-id }}
