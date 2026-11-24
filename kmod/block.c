@@ -857,10 +857,10 @@ static struct block_socket*  get_block_socket(
     if (err < 0) {
         if (unlikely(err != -EINPROGRESS)) {
             ternfs_warn("could not connect to block service at %pI4:%d: %d", &sock->addr.sin_addr, ntohs(sock->addr.sin_port), err);
-            write_lock(&sock->sock->sk->sk_callback_lock);
+            write_lock_bh(&sock->sock->sk->sk_callback_lock);
             sock->sock->sk->sk_state_change = sock->saved_state_change;
             sock->sock->sk->sk_user_data = NULL;
-            write_unlock(&sock->sock->sk->sk_callback_lock);
+            write_unlock_bh(&sock->sock->sk->sk_callback_lock);
             mark_bad_addr(sock->addr.sin_addr.s_addr, sock->addr.sin_port);
             block_socket_put(sock);
             goto out_err;
@@ -871,10 +871,10 @@ static struct block_socket*  get_block_socket(
                 if (err <= 0) {
                     ternfs_warn("timed out waiting for connection to %pI4:%d to be established", &sock->addr.sin_addr, ntohs(sock->addr.sin_port));
                     // cleanup socket
-                    write_lock(&sock->sock->sk->sk_callback_lock);
+                    write_lock_bh(&sock->sock->sk->sk_callback_lock);
                     sock->sock->sk->sk_state_change = sock->saved_state_change;
                     sock->sock->sk->sk_user_data = NULL;
-                    write_unlock(&sock->sock->sk->sk_callback_lock);
+                    write_unlock_bh(&sock->sock->sk->sk_callback_lock);
                     mark_bad_addr(sock->addr.sin_addr.s_addr, sock->addr.sin_port);
                     block_socket_put(sock);
                     err = -ETIMEDOUT;
@@ -902,7 +902,7 @@ static struct block_socket*  get_block_socket(
     // callbacks contextually to adding the socket to the hash
     // map.
 
-    write_lock(&sock->sock->sk->sk_callback_lock);
+    write_lock_bh(&sock->sock->sk->sk_callback_lock);
 
     spin_lock(&ops->locks[bucket]);
     // Take the RCU lock while holding the socket lock so that
@@ -919,7 +919,7 @@ static struct block_socket*  get_block_socket(
             sock->sock->sk->sk_user_data = NULL;
             rcu_read_unlock();
             spin_unlock(&ops->locks[bucket]);
-            write_unlock(&sock->sock->sk->sk_callback_lock);
+            write_unlock_bh(&sock->sock->sk->sk_callback_lock);
             ternfs_debug("multiple callers tried to get socket to %pI4:%d, dropping one", &other_sock->addr.sin_addr, ntohs(other_sock->addr.sin_port));
             // call again rather than trying to `sock_release` with the
             // RCU read lock held, this might not be safe in atomic context.
@@ -945,7 +945,7 @@ static struct block_socket*  get_block_socket(
 
     spin_unlock(&ops->locks[bucket]);
 
-    write_unlock(&sock->sock->sk->sk_callback_lock);
+    write_unlock_bh(&sock->sock->sk->sk_callback_lock);
 
     atomic_inc(&ops->len[bucket]);
 
