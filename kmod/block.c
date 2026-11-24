@@ -1240,7 +1240,6 @@ static void fetch_request_constructor(void* ptr) {
     struct fetch_request* req = (struct fetch_request*)ptr;
 
     INIT_LIST_HEAD(&req->pages);
-    INIT_WORK(&req->breq.complete_work, fetch_complete_work);
 }
 
 int ternfs_drop_fetch_block_sockets(void) {
@@ -1455,6 +1454,7 @@ int ternfs_fetch_block_pages_with_crc(
 
     struct fetch_request* req = kmem_cache_alloc(fetch_request_cachep, GFP_KERNEL);
     if (!req) { err = -ENOMEM; goto out_err; }
+    INIT_WORK(&req->breq.complete_work, fetch_complete_work);
 
     req->callback = callback;
     req->data = data;
@@ -1581,7 +1581,6 @@ static void write_request_constructor(void* ptr) {
     struct write_request* req = (struct write_request*)ptr;
 
     INIT_LIST_HEAD(&req->pages);
-    INIT_WORK(&req->breq.complete_work, write_block_complete_work);
 }
 
 int ternfs_drop_write_block_sockets(void) {
@@ -1794,6 +1793,7 @@ int ternfs_write_block(
 
     struct write_request* req = kmem_cache_alloc(write_request_cachep, GFP_KERNEL);
     if (!req) { err = -ENOMEM; goto out_err; }
+    INIT_WORK(&req->breq.complete_work, write_block_complete_work);
 
     req->callback = callback;
     req->data = data;
