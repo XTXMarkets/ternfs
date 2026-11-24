@@ -189,10 +189,10 @@ static struct block_socket* add_test_socket(struct block_ops* ops) {
     write_unlock_bh(&socket->sock->sk->sk_callback_lock);
 
     bucket = hash_min(block_socket_key(&socket->addr), BLOCK_SOCKET_BITS);
-    spin_lock(&ops->locks[bucket]);
+    spin_lock_bh(&ops->locks[bucket]);
     hlist_add_head_rcu(&socket->hnode, &ops->sockets[bucket]);
     atomic_inc(&ops->len[bucket]);
-    spin_unlock(&ops->locks[bucket]);
+    spin_unlock_bh(&ops->locks[bucket]);
     return socket;
 }
 

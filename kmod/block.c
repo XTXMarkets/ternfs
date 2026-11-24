@@ -666,9 +666,9 @@ static bool block_socket_cleanup(
 
     // First, remove socket from hashmap. After we're done with this,
     // we know nobody's going to add new requests to this.
-    spin_lock(&ops->locks[bucket]);
+    spin_lock_bh(&ops->locks[bucket]);
     hash_del_rcu(&socket->hnode); // tied to atomic_dec below
-    spin_unlock(&ops->locks[bucket]);
+    spin_unlock_bh(&ops->locks[bucket]);
     // After the grace period, release the hash reference from a worker.
     call_rcu(&socket->rcu_list, rcu_block_socket_put);
     ternfs_debug("socket(%p) %pI4:%d refcount %d removed from hashmap", socket, &socket->addr.sin_addr, ntohs(socket->addr.sin_port), atomic_read(&socket->refcount));
