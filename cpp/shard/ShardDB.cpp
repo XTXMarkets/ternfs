@@ -12,6 +12,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <optional>
 #include <rocksdb/db.h>
 #include <rocksdb/options.h>
 #include <rocksdb/snapshot.h>
@@ -1689,16 +1690,21 @@ struct ShardDBImpl {
         return TernError::NO_ERROR;
     }
 
-    static bool _findSpanBlock(const SpanBody& span, uint64_t blockId, uint8_t& locIx, uint8_t& blockIx) {
-        for (locIx = 0; locIx < span.locationCount(); ++locIx) {
+    struct SpanBlockIx {
+        uint8_t locIx;
+        uint8_t blockIx;
+    };
+
+    static std::optional<SpanBlockIx> _findSpanBlock(const SpanBody& span, uint64_t blockId) {
+        for (uint8_t locIx = 0; locIx < span.locationCount(); ++locIx) {
             auto blocks = span.blocksBodyReadOnly(locIx);
-            for (blockIx = 0; blockIx < blocks.parity().blocks(); ++blockIx) {
+            for (uint8_t blockIx = 0; blockIx < blocks.parity().blocks(); ++blockIx) {
                 if (blocks.block(blockIx).blockId() == blockId) {
-                    return true;
+                    return SpanBlockIx{locIx, blockIx};
                 }
             }
         }
-        return false;
+        return std::nullopt;
     }
 
     TernError _prepareReplaceBlocks(TernTime time, const ReplaceBlocksReq& req, ReplaceBlocksEntry& entry) {
@@ -3638,8 +3644,7 @@ struct ShardDBImpl {
     }
 
     static bool _replaceBlockDone(const SpanBody& span, const ReplaceBlock& item) {
-        uint8_t locIx, blockIx;
-        return !_findSpanBlock(span, item.oldBlockId, locIx, blockIx) && _findSpanBlock(span, item.newBlockId, locIx, blockIx);
+        return !_findSpanBlock(span, item.oldBlockId) && _findSpanBlock(span, item.newBlockId);
     }
 
     TernError _applyReplaceBlocks(TernTime time, rocksdb::WriteBatch& batch, const ReplaceBlocksEntry& entry, ReplaceBlocksResp& resp) {
@@ -3673,10 +3678,11 @@ struct ShardDBImpl {
             if (err != TernError::NO_ERROR) {
                 return err;
             }
-            uint8_t locIx, blockIx;
-            if (!_findSpanBlock(span(), item.oldBlockId, locIx, blockIx)) {
+            auto oldIx = _findSpanBlock(span(), item.oldBlockId);
+            if (!oldIx) {
                 return TernError::BLOCK_NOT_FOUND;
             }
+            auto [locIx, blockIx] = *oldIx;
             // Check that the block is in the blockservice `oldBlockServiceId` that
             // prepare already verified is decomissioned.
             if (span().blocksBodyReadOnly(locIx).block(blockIx).blockService() != item.oldBlockServiceId) {
