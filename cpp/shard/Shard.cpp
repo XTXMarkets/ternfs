@@ -1914,13 +1914,10 @@ public:
                 _inFlightEntries.emplace(_shardEntries[i].idx.u64, std::move(_shardEntries[i]));
             }
             _logsDBEntries.clear();
-            // Entries released during this step (at once, without
-            // replication) are applied and answered at the start of the
-            // next one. Start it now rather than after the response
-            // timeout: that wait added about 10 ms to every mutation on an
-            // otherwise idle shard.
-            if (_logsDB.getLastReleased().u64 > _currentLogIndex) {
-                _nextTimeout = 0;
+            // Without replication the entries were released as they were
+            // appended, so apply and answer them in this step.
+            if (_shared.options.logsDBOptions.noReplication) {
+                _applyLogEntries();
             }
         }
 
