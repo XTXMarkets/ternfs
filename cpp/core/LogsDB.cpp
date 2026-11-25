@@ -74,6 +74,7 @@ public:
         _env(logger, xmon, "LogsDB"),
         _db(sharedDB.db()),
         _replicaId(replicaId),
+        _noReplication(noReplication),
         _stats(),
         _partitions(_env,sharedDB),
         _metadata(_env,_stats, sharedDB, replicaId, _partitions),
@@ -237,7 +238,13 @@ public:
     }
 
     TernError appendEntries(std::vector<LogsDBLogEntry>& entries) {
-        return _appender.appendEntries(entries);
+        auto err = _appender.appendEntries(entries);
+        // Without replication the entries are released as they are appended, so
+        // make them readable now rather than at the next processIncomingMessages.
+        if (_noReplication && err == TernError::NO_ERROR) {
+            _catchupReader.maybeCatchUp();
+        }
+        return err;
     }
 
     LogIdx getLastContinuous() const {
@@ -280,6 +287,7 @@ private:
     Env _env;
     rocksdb::DB* _db;
     const ReplicaId _replicaId;
+    const bool _noReplication;
     LogsDBStats _stats;
     DataPartitions _partitions;
     LogMetadata _metadata;

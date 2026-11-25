@@ -1919,6 +1919,11 @@ public:
                 _inFlightEntries.emplace(_shardEntries[i].idx.u64, std::move(_shardEntries[i]));
             }
             _logsDBEntries.clear();
+            // Without replication the entries were released as they were
+            // appended, so apply and answer them in this step.
+            if (_shared.options.logsDBOptions.noReplication) {
+                _applyLogEntries();
+            }
         }
 
         // Log if not active is not chaty but it's messages are higher priority as they make us progress state under high load.
