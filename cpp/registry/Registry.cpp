@@ -25,6 +25,7 @@
 #include "Registerer.hpp"
 #include "Registry.hpp"
 #include "RegistryDB.hpp"
+#include "RegistryMetrics.hpp"
 #include "RegistryReader.hpp"
 #include "RegistryServer.hpp"
 #include "RegistryWriter.hpp"
@@ -418,6 +419,10 @@ void Registry::start(const RegistryOptions& options, LoopThreads& threads) {
     threads.emplace_back(LoopThread::Spawn(std::move(writer)));
     threads.emplace_back(LoopThread::Spawn(std::move(tracker)));
     threads.emplace_back(LoopThread::Spawn(std::move(registryLoop)));
+    if (!options.metricsOptions.origin.empty()) {
+        threads.emplace_back(LoopThread::Spawn(std::make_unique<RegistryMetricsInserter>(
+            logger, xmon, options, *_state->registryDB, *_state->logsDB)));
+    }
 }
 
 void Registry::close() {

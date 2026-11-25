@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
 #include <iostream>
 #include <ostream>
 #include <resolv.h>
@@ -9,6 +10,7 @@
 #include "Bincode.hpp"
 #include "Msgs.hpp"
 #include "MsgsGen.hpp"
+#include "RegistryMetrics.hpp"
 #include "Time.hpp"
 #include "utils/TempRegistryDB.hpp"
 
@@ -1442,4 +1444,35 @@ TEST_CASE("UnreadableFailureDomains") {
     CHECK(unreadable[0].locationId == DEFAULT_LOCATION);
     CHECK(unreadable[0].storageClass == HDD_STORAGE);
     CHECK(unreadable[0].count == 2);
+}
+
+TEST_CASE("DecommissionMetrics") {
+    auto now = ternNow();
+    std::vector<FullBlockServiceInfo> services = {
+        testBlockService(0x10, HDD_STORAGE, "host one", BlockServiceFlags::DECOMMISSIONED, true),
+        testBlockService(0x20, HDD_STORAGE, "host2", BlockServiceFlags::DECOMMISSIONED, false),
+        testBlockService(0x30, HDD_STORAGE, "host3", BlockServiceFlags::STALE, true),
+        testBlockService(0x40, FLASH_STORAGE, "host4", BlockServiceFlags::EMPTY, true),
+    };
+    services[0].lastInfoChange = now - 90_mins;
+    MetricsBuilder metrics;
+    decommissionMetrics(metrics, services, 4, now);
+    std::vector<std::string> lines;
+    std::stringstream ss(metrics.payload());
+    for (std::string line; std::getline(ss, line);) {
+        // drop the timestamp
+        lines.push_back(line.substr(0, line.rfind(' ')));
+    }
+    std::vector<std::string> expected = {
+        "eggsfs_registry_decommissioned_block_service,blockservice=0x0000000000000010,location=0,storageclass=HDD,failuredomain=host-one,pathprefix=host-one "
+            "decommissioned_at=" + std::to_string(services[0].lastInfoChange.ns / 1'000'000'000ull) + "i,age=5400i",
+        "eggsfs_registry_unreadable_failure_domains,location=0,storageclass=HDD count=2i,limit=4i",
+        "eggsfs_registry_decommissioned_block_services,location=0,storageclass=HDD count=2i,with_files=1i",
+        "eggsfs_registry_unreadable_failure_domains,location=0,storageclass=FLASH count=0i,limit=4i",
+        "eggsfs_registry_decommissioned_block_services,location=0,storageclass=FLASH count=0i,with_files=0i",
+    };
+    // groups come out in no particular order
+    std::sort(lines.begin(), lines.end());
+    std::sort(expected.begin(), expected.end());
+    CHECK(lines == expected);
 }
