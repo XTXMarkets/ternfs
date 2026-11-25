@@ -1702,9 +1702,6 @@ struct ShardDBImpl {
     }
 
     TernError _prepareReplaceBlocks(TernTime time, const ReplaceBlocksReq& req, ReplaceBlocksEntry& entry) {
-        if (req.scratchId.type() != InodeType::FILE) {
-            return TernError::FILE_IS_NOT_TRANSIENT;
-        }
         if (req.scratchId.shard() != _shid) {
             return TernError::BAD_SHARD;
         }
