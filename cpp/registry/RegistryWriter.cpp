@@ -116,6 +116,12 @@ void RegistryWriter::_applyLogEntries() {
 
     _logsDB.flush(true);
 
+    if (!_logsDB.isLeader()) {
+        _logIdxToRequestId.clear();
+        _writeResults.clear();
+        return;
+    }
+
     // Convert write results to registry responses
     for (auto &writeResult : _writeResults) {
         auto requestIdIt = _logIdxToRequestId.find(writeResult.idx);
@@ -125,6 +131,7 @@ void RegistryWriter::_applyLogEntries() {
         auto& regiResp = _registryResponses.emplace_back();
 
         regiResp.requestId = requestIdIt->second;
+        _logIdxToRequestId.erase(requestIdIt);
         RegistryRespContainer& resp = regiResp.resp;
 
         if (writeResult.err != TernError::NO_ERROR) {
@@ -176,7 +183,8 @@ void RegistryWriter::_applyLogEntries() {
             resp.setUpdateBlockServicePath();
             break;
         default:
-            ALWAYS_ASSERT(false);
+            LOG_ERROR(_env, "no response for applied %s request %s", writeResult.kind, regiResp.requestId);
+            resp.setError() = TernError::INTERNAL_ERROR;
             break;
         }
     }
