@@ -20,6 +20,16 @@ struct RegistryDBWriteResult {
     TernError err;
 };
 
+struct UnreadableFailureDomains {
+    uint8_t locationId;
+    uint8_t storageClass;
+    uint32_t count;
+};
+
+// The number of failure domains with files on a block service that can't be
+// read, per location and storage class. Groups with none are left out.
+std::vector<UnreadableFailureDomains> unreadableFailureDomains(const std::vector<FullBlockServiceInfo>& blockServices);
+
 class RegistryDB {
 public:
     static std::vector<rocksdb::ColumnFamilyDescriptor> getColumnFamilyDescriptors();

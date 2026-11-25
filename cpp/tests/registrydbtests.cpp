@@ -1413,3 +1413,33 @@ TEST_CASE("CdcLeaderClearsOtherReplicas") {
         }
     }
 }
+
+static FullBlockServiceInfo testBlockService(uint64_t id, uint8_t storageClass, const char* failureDomain, BlockServiceFlags flags, bool hasFiles) {
+    FullBlockServiceInfo bs;
+    bs.id = BlockServiceId(id);
+    bs.locationId = DEFAULT_LOCATION;
+    bs.storageClass = storageClass;
+    bs.failureDomain.name = failureDomain;
+    bs.flags = flags;
+    bs.hasFiles = hasFiles;
+    bs.path = std::string(failureDomain) + ":/storage/" + std::to_string(id);
+    return bs;
+}
+
+TEST_CASE("UnreadableFailureDomains") {
+    std::vector<FullBlockServiceInfo> services = {
+        // two in one failure domain count once
+        testBlockService(1, HDD_STORAGE, "fd1", BlockServiceFlags::DECOMMISSIONED, true),
+        testBlockService(2, HDD_STORAGE, "fd1", BlockServiceFlags::STALE, true),
+        testBlockService(3, HDD_STORAGE, "fd2", BlockServiceFlags::NO_READ, true),
+        // readable, or without files
+        testBlockService(4, HDD_STORAGE, "fd3", BlockServiceFlags::NO_WRITE, true),
+        testBlockService(5, HDD_STORAGE, "fd4", BlockServiceFlags::DECOMMISSIONED, false),
+        testBlockService(6, FLASH_STORAGE, "fd1", BlockServiceFlags::EMPTY, true),
+    };
+    auto unreadable = unreadableFailureDomains(services);
+    REQUIRE(unreadable.size() == 1);
+    CHECK(unreadable[0].locationId == DEFAULT_LOCATION);
+    CHECK(unreadable[0].storageClass == HDD_STORAGE);
+    CHECK(unreadable[0].count == 2);
+}

@@ -170,72 +170,9 @@ public:
                 std::vector<FullBlockServiceInfo> blockServices;
                 _registryDB.blockServices(blockServices);
 
-                const FullBlockServiceInfo* targetBS = nullptr;
-
-                struct GroupKey {
-                    uint8_t loc;
-                    uint8_t sc;
-                    bool operator==(const GroupKey& o) const { return loc == o.loc && sc == o.sc; }
-                };
-                struct GroupStats {
-                    GroupKey key;
-                    uint32_t unreadableCount = 0;
-                };
-
-                struct UnreadableFDKey {
-                    uint8_t loc;
-                    uint8_t sc;
-                    FailureDomain fd;
-
-                    bool operator==(const UnreadableFDKey& other) const {
-                        return loc == other.loc && sc == other.sc && fd == other.fd;
-                    }
-                };
-
-                struct UnreadableFDKeyHash {
-                    std::size_t operator()(const UnreadableFDKey& k) const {
-                        size_t hash = 2166136261u;
-                        auto combine = [&](uint8_t b) {
-                            hash ^= b;
-                            hash *= 16777619u;
-                        };
-
-                        combine(k.loc);
-                        combine(k.sc);
-
-                        for (uint8_t b : k.fd.name.data) {
-                            combine(b);
-                        }
-                        return hash;
-                    }
-                };
-
-                std::vector<GroupStats> stats;
-                std::unordered_set<UnreadableFDKey, UnreadableFDKeyHash> unreadableFDs;
-
-                for (const auto& bs : blockServices) {
-                    if (bs.id == targetId) {
-                        targetBS = &bs;
-                    }
-
-                    if(!bs.hasFiles || blockServiceFlagsReadable(bs.flags)) {
-                        continue;
-                    }
-
-                    GroupKey key{bs.locationId, bs.storageClass};
-                    auto it = std::find_if(stats.begin(), stats.end(), [&](const GroupStats& g){ return g.key == key; });
-                    if (it == stats.end()) {
-                        stats.push_back({key, 1});
-                        unreadableFDs.insert({bs.locationId, bs.storageClass, bs.failureDomain});
-                    } else {
-                        if (unreadableFDs.find({bs.locationId, bs.storageClass, bs.failureDomain}) == unreadableFDs.end()) {
-                            unreadableFDs.insert({bs.locationId, bs.storageClass, bs.failureDomain});
-                            it->unreadableCount++;
-                        }
-                    }
-                }
-
-                if (!targetBS) {
+                auto targetBS = std::find_if(blockServices.begin(), blockServices.end(),
+                    [&](const auto& bs) { return bs.id == targetId; });
+                if (targetBS == blockServices.end()) {
                     auto& resp = _registryResponses.emplace_back();
                     resp.requestId = req.requestId;
                     resp.resp.setError() = TernError::BLOCK_SERVICE_NOT_FOUND;
@@ -262,10 +199,12 @@ public:
                     }
                 }
 
-                GroupKey targetKey{targetBS->locationId, targetBS->storageClass};
-                auto it = std::find_if(stats.begin(), stats.end(), [&](const GroupStats& g){ return g.key == targetKey; });
+                auto unreadable = unreadableFailureDomains(blockServices);
+                auto it = std::find_if(unreadable.begin(), unreadable.end(), [&](const auto& u) {
+                    return u.locationId == targetBS->locationId && u.storageClass == targetBS->storageClass;
+                });
 
-                if (it != stats.end() && it->unreadableCount >= _options.alertAfterUnavailableFailureDomains) {
+                if (it != unreadable.end() && it->count >= _options.alertAfterUnavailableFailureDomains) {
                     auto& resp = _registryResponses.emplace_back();
                     resp.requestId = req.requestId;
                     resp.resp.setError() = TernError::AUTO_DECOMMISSION_FORBIDDEN;
