@@ -54,6 +54,11 @@ public:
     }
 
     BlockServicesCache(const BlockServicesCache&) = delete;
+
+    bool isDecommissioned(BlockServiceId blockServiceId) const {
+        auto it = blockServices.find(blockServiceId.u64);
+        return it != blockServices.end() && (it->second.flags & BlockServiceFlags::DECOMMISSIONED) != BlockServiceFlags::EMPTY;
+    }
 };
 
 struct BlockServicesCacheDB {

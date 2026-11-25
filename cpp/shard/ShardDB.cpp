@@ -1640,11 +1640,6 @@ struct ShardDBImpl {
         return TernError::NO_ERROR;
     }
 
-    static bool _isDecommissioned(const BlockServicesCache& cache, BlockServiceId blockServiceId) {
-        auto it = cache.blockServices.find(blockServiceId.u64);
-        return it != cache.blockServices.end() && (it->second.flags & BlockServiceFlags::DECOMMISSIONED) != BlockServiceFlags::EMPTY;
-    }
-
     TernError _getReplaceTargetSpan(
         const rocksdb::ReadOptions& options, InodeId fileId, uint64_t byteOffset,
         std::string& spanValue, ExternalValue<SpanBody>& span
@@ -1732,7 +1727,7 @@ struct ShardDBImpl {
             if (!scratchOffsets.insert(item.scratchByteOffset).second) {
                 return TernError::MALFORMED_REQUEST;
             }
-            if (!_isDecommissioned(cache, item.oldBlockServiceId)) {
+            if (!cache.isDecommissioned(item.oldBlockServiceId)) {
                 return TernError::BLOCK_SERVICE_NOT_DECOMMISSIONED;
             }
         }
