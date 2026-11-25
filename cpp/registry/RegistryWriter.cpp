@@ -175,6 +175,9 @@ void RegistryWriter::_applyLogEntries() {
         case RegistryMessageKind::UPDATE_BLOCK_SERVICE_PATH:
             resp.setUpdateBlockServicePath();
             break;
+        case RegistryMessageKind::SET_BLOCK_SERVICE_HAS_FILES:
+            resp.setSetBlockServiceHasFiles();
+            break;
         default:
             ALWAYS_ASSERT(false);
             break;
