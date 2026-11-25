@@ -231,9 +231,14 @@ public:
             case RegistryMessageKind::CLEAR_SHARD_INFO:
             case RegistryMessageKind::MOVE_CDC_LEADER:
             case RegistryMessageKind::CLEAR_CDC_INFO:
-            case RegistryMessageKind::UPDATE_BLOCK_SERVICE_PATH:
-            case RegistryMessageKind::SET_BLOCK_SERVICE_HAS_FILES: {
+            case RegistryMessageKind::UPDATE_BLOCK_SERVICE_PATH: {
                 _writeRequests.emplace_back(std::move(req));
+                break;
+            }
+            case RegistryMessageKind::SET_BLOCK_SERVICE_HAS_FILES: {
+                auto& resp = _registryResponses.emplace_back();
+                resp.requestId = req.requestId;
+                resp.resp.setError() = TernError::NOT_AUTHORISED;
                 break;
             }
             case RegistryMessageKind::ALL_REGISTRY_REPLICAS_DE_PR_EC_AT_ED:
