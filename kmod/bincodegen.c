@@ -105,6 +105,12 @@ const char* ternfs_err_str(int err) {
     case 105: return "REGISTRY_OVERLOADED";
     case 106: return "SHARDS_NOT_READY";
     case 107: return "CDC_NOT_READY";
+    case 108: return "BLOCK_SERVICE_NOT_DECOMMISSIONED";
+    case 109: return "REPLACE_BLOCKS_MISMATCHING_SIZE";
+    case 110: return "REPLACE_BLOCKS_MISMATCHING_CRC";
+    case 111: return "REPLACE_BLOCKS_MISMATCHING_LOCATION";
+    case 112: return "REPLACE_BLOCKS_DUPLICATE_BLOCK_SERVICE";
+    case 113: return "REPLACE_BLOCKS_DUPLICATE_FAILURE_DOMAIN";
     default: return "UNKNOWN";
     }
 }

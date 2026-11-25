@@ -5,21 +5,42 @@
 package server
 
 import (
+	"time"
 	"unsafe"
 
 	"github.com/XTXMarkets/ternfs/go/msgs"
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
+// DefaultReplyWorkBudgetMiB is the default -reply-work-budget-mib. A compound
+// with one 1 MiB READ reserves about 8.5 MiB, so this admits roughly a
+// thousand such requests at once. WRITE compounds reserve much less.
+const DefaultReplyWorkBudgetMiB = 8192
+
 const (
-	maxReplyWorkBytes   = 512 << 20
+	maxReplyWorkBytes   = DefaultReplyWorkBudgetMiB << 20
 	cachedReplyOverhead = 128
+
+	// Reply envelope accounting, shared by admission (acquireReplyWork) and
+	// execution (compoundBody), which must agree on every term.
+	compoundHeaderBytes = 12 // status, tag length, result count
+	sequenceResultBytes = 44 // SEQUENCE resok: session id, sequence and slot ids, flags
+	failedResultBytes   = 8  // one operation's opnum and status
+	// The envelope is replyWorkMultiplier times the sum of the reply
+	// capacity and replyWorkFixedBytes. It covers the response writer, its
+	// checkpoints and growth, variable-result scratch and the full encoded
+	// output existing at once. READDIR's preparation allowance is separate.
+	replyWorkMultiplier = 8
+	replyWorkFixedBytes = 64<<10 + 1024
+	// replyBoundSlack covers the fixed-size results execution adds around
+	// the per-operation bounds: a trailing error result and the handle
+	// obligation of an OPEN or CREATE.
+	replyBoundSlack = 256
 	// A group is referenced by a wire record, a session, or a request or
 	// CREATE_SESSION in progress. The first two are bounded by their own
 	// caps; the credit bounds groups that only running work keeps.
-	maxClientGroups = 2 * clientstore.MaxSessionRecords
+	maxClientGroups = 2 * maxSessionRecords
 )
 
 // A cachedReply owns one allocation or a pre-effect capacity reservation.
@@ -78,8 +99,8 @@ func (b *cachedReply) storeBody(data []byte) {
 // touching the slot: the old buffer stays attached, charged and replayable
 // until installSlotReply at commit; undo releases only the new charge. The
 // capacity check credits the old buffer only when nothing else holds it, so
-// the total exceeds cacheLimit by at most one per-slot credit (canonical r3
-// §7.1).
+// the total exceeds cacheLimit by at most one per-slot credit
+// (README.md#reply-cache-accounting).
 func (ss *sessionStore) reserveSlotReply(sess *session, slot *sessionSlot, bytes int) (*cachedReply, bool) {
 	ss.cacheMu.Lock()
 	defer ss.cacheMu.Unlock()
@@ -114,10 +135,16 @@ func (ss *sessionStore) installSlotReply(slot *sessionSlot, reply *cachedReply) 
 	}
 }
 
+// variableReplyOperation reports an operation whose result is sized from
+// the remaining reply budget at execution rather than from a fixed bound.
+func variableReplyOperation(op uint32) bool {
+	return op == nfs4.OP_READDIR || op == nfs4.OP_READLINK
+}
+
 // replyWork charges a conservative allocation envelope independently of cache.
 // It covers the response writer, checkpoints/growth, variable-result scratch and
 // full RPC output simultaneously. It lives until transport completion, not until
-// slot finish. This ownership says nothing about the client's lease (N09).
+// slot finish. The client's lease is tracked separately by its request hold.
 type replyWork struct {
 	store          *sessionStore
 	capacity       int
@@ -157,34 +184,88 @@ func (req *rpcRequest) acquireReplyWork(s *Server) bool {
 	if req.proc == procCompound {
 		if args, ok := nfs4.ReadCOMPOUND4args(req.body); ok {
 			it := args.Argarray()
-			if it.Next() && it.Argarray().Disc() == nfs4.OP_SEQUENCE {
-				a := it.Argarray().Value().AsSEQUENCE4args()
-				if sess := s.sessions.lookup(readSessionID(a.SaSessionid())); sess != nil {
-					capacity = int(sess.maxResp)
-					if a.SaCachethis() != 0 {
-						capacity = min(capacity, int(sess.maxCached))
+			tagBytes := (len(args.Tag().Data()) + 3) &^ 3
+			// The reply the compound can produce: the RPC and COMPOUND
+			// headers, the SEQUENCE result, and each operation's bound, as
+			// execution enforces them. READDIR and READLINK size their
+			// results from whatever budget remains, so a compound with one
+			// keeps the session's full response size.
+			bounded := rpcAcceptedHeaderSize + compoundHeaderBytes + tagBytes
+			variable := false
+			if it.Next() {
+				first := it.Argarray().Value()
+				if first.Disc() == nfs4.OP_SEQUENCE {
+					bounded += sequenceResultBytes
+					a := first.AsSEQUENCE4args()
+					if sess := s.sessions.lookup(readSessionID(a.SaSessionid())); sess != nil {
+						capacity = int(sess.maxResp)
+						if a.SaCachethis() != 0 {
+							capacity = min(capacity, int(sess.maxCached))
+						}
 					}
+				} else {
+					bounded += int(s.operationReplyBound(first))
+					variable = variable || variableReplyOperation(first.Disc())
 				}
 			}
 			// Operations past the limit are never executed.
-			for n := 1; !readdir && n <= maxCompoundOperations && it.Next(); n++ {
-				readdir = it.Argarray().Disc() == nfs4.OP_READDIR
+			for n := 1; n <= maxCompoundOperations && it.Next(); n++ {
+				op := it.Argarray().Value()
+				readdir = readdir || op.Disc() == nfs4.OP_READDIR
+				variable = variable || variableReplyOperation(op.Disc())
+				bounded += int(s.operationReplyBound(op))
+			}
+			if !variable {
+				capacity = min(capacity, bounded+replyBoundSlack)
 			}
 			// A failed SEQUENCE still echoes its tag without consuming a slot.
-			capacity = max(capacity, rpcAcceptedHeaderSize+12+((len(args.Tag().Data())+3)&^3)+8)
+			capacity = max(capacity, rpcAcceptedHeaderSize+compoundHeaderBytes+tagBytes+failedResultBytes)
 		}
 	}
 	// Go append growth and temporary variable results are covered conservatively.
-	// READ is admitted before its buffer; READLINK is bounded separately below.
-	// One READDIR runs at a time, so one preparation allowance covers them all.
-	charge := 8 * (capacity + (64 << 10) + 1024)
+	// READ is admitted before allocating its buffer. READDIR operations within
+	// a compound run sequentially, so one preparation allowance covers them all.
+	charge := replyWorkMultiplier * (capacity + replyWorkFixedBytes)
 	if readdir {
 		charge += readdirPrepareBytes
 	}
 	ss := s.sessions
 	ss.cacheMu.Lock()
 	defer ss.cacheMu.Unlock()
-	if ss.workBytes+charge > ss.workLimit {
+	if charge > ss.workLimit {
+		return false // Can never be admitted.
+	}
+	// The limit is a bound on memory, not a reason to drop the connection:
+	// a request that does not fit waits here, holding its connection
+	// admission slot, until replies release work or its connection closes
+	// (README.md#reply-work).
+	//
+	// Admission is decided here, under cacheMu, as work is charged: a
+	// request whose connection has closed is refused even when capacity is
+	// free, including capacity released while it waited, so it neither
+	// executes nor holds work for a reply nobody will read.
+	admitted, waited := false, false
+	var waitStart time.Time
+	for {
+		if req.connection != nil && req.connection.isClosed() {
+			break
+		}
+		if ss.workBytes+charge <= ss.workLimit {
+			admitted = true
+			break
+		}
+		if !waited {
+			waited, waitStart = true, time.Now()
+			s.metrics.workWaits.Add(1)
+			s.metrics.workWaiters.Add(1)
+		}
+		ss.workFreed.Wait()
+	}
+	if waited {
+		s.metrics.workWaiters.Add(-1)
+		s.metrics.workWaitNanos.Add(uint64(time.Since(waitStart)))
+	}
+	if !admitted {
 		return false
 	}
 	ss.workBytes += charge
@@ -215,6 +296,7 @@ func (req *rpcRequest) releaseReply() {
 	work.store.cacheMu.Lock()
 	work.store.workBytes -= work.charge
 	work.store.workReplies--
+	work.store.workFreed.Broadcast()
 	work.store.cacheMu.Unlock()
 }
 func (req *rpcRequest) joinRPCBody(body []byte) []byte {
@@ -234,11 +316,15 @@ func (req *rpcRequest) joinRPCBody(body []byte) []byte {
 func (ss *sessionStore) reserveSessionRecord(clientID uint64) (SessionID, bool) {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
-	if ss.records+ss.pendingSessions >= ss.recordLimit || ss.next >= uint64(^uint32(0)) {
+	if ss.records+ss.pendingSessions >= ss.recordLimit {
+		return SessionID{}, false
+	}
+	id, ok := ss.newSessionIDLocked(clientID)
+	if !ok {
 		return SessionID{}, false
 	}
 	ss.pendingSessions++
-	return ss.newSessionIDLocked(clientID), true
+	return id, true
 }
 func (ss *sessionStore) releaseSessionRecord() {
 	ss.mu.Lock()
@@ -257,6 +343,7 @@ func (ss *sessionStore) insertSessionLocked(sess *session) {
 	if !ok {
 		panic("session inserted without a group credit")
 	}
+	ss.observeSessionIDLocked(sess.id)
 	ss.sessions[sess.id] = sess
 	sess.users = 1
 	ss.records++
@@ -274,13 +361,22 @@ func (ss *sessionStore) useSession(sess *session) bool {
 }
 func (ss *sessionStore) releaseSessionUse(sess *session) {
 	ss.mu.Lock()
-	defer ss.mu.Unlock()
 	sess.users--
+	last := false
 	switch {
 	case sess.users < 0:
 		panic("session use underflow")
 	case sess.users == 0:
 		ss.records--
+		last = true
+	}
+	ss.mu.Unlock()
+	if last {
+		// The last use of a retired session has ended: no request can
+		// write its file any more, so it goes with the session. A
+		// retransmission after that gets BADSESSION, as for any session
+		// this process destroyed.
+		sess.file.close()
 	}
 }
 

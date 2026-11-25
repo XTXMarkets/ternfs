@@ -26,12 +26,24 @@ type State struct {
 	// Access is the READ/WRITE share access granted. modes holds bit v for
 	// each distinct share_access value v the open was granted, and
 	// denyModes bit d for each share_deny value d requested. Deny is kept
-	// for OPEN_DOWNGRADE's validation only; it is not enforced (canonical
-	// r3 §11).
+	// for OPEN_DOWNGRADE's validation only; it is not enforced
+	// (README.md#downgrades).
 	Access     uint32
 	modes      uint8
 	denyModes  uint8
 	Generation uint32
+	// Recovered reports an open adopted from an earlier process's staging.
+	// Its original grants are unknown, so a downgrade gets only the subset
+	// rule (DowngradeStatus).
+	Recovered bool
+	// closing: the open's CLOSE answered DELAY. Its client may have given
+	// the open up, as libnfs does, so a later writer of its staging does
+	// not hand the staging to it (Store.OtherWriter).
+	closing bool
+	// learnGeneration: the open was adopted from a request whose stateid
+	// carried seqid 0 ("the current one"), so its generation is unknown.
+	// The first request to present a seqid sets it.
+	learnGeneration bool
 	// seq orders opens of one file for choosing the most recent.
 	seq uint64
 }
@@ -39,7 +51,7 @@ type State struct {
 // Writes reports write access: the open has a writer.
 func (s State) Writes() bool { return s.Access&nfs4.OPEN4_SHARE_ACCESS_WRITE != 0 }
 
-// grant is one OPEN or OPEN_DOWNGRADE's share access and deny.
+// Grant is one OPEN or OPEN_DOWNGRADE's share access and deny.
 type Grant struct {
 	Access, Deny uint32
 }

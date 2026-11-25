@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <linux/sysctl.h>
-#include <linux/version.h>
 
 #include "dir.h"
 #include "span.h"
@@ -14,12 +13,6 @@
 #include "file.h"
 #include "block.h"
 #include "metadata.h"
-
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
-#define __sysctl_buffer __user
-#else
-#define __sysctl_buffer __kernel
-#endif
 
 int ternfs_debug_output = 0;
 
@@ -36,24 +29,16 @@ int ternfs_debug_output = 0;
 
 static int drop_fetch_block_sockets;
 static int ternfs_drop_fetch_block_sockets_sysctl(
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0))
-    struct ctl_table* table,
-#else
     const struct ctl_table* table,
-#endif
-    int write, void __sysctl_buffer* buffer, size_t* len, loff_t* ppos)
+    int write, void __kernel* buffer, size_t* len, loff_t* ppos)
 {
     ternfs_do_sysctl(ternfs_drop_fetch_block_sockets);
 }
 
 static int drop_write_block_sockets;
 static int ternfs_drop_write_block_sockets_sysctl(
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0))
-    struct ctl_table* table,
-#else
     const struct ctl_table* table,
-#endif
-    int write, void __sysctl_buffer* buffer, size_t* len, loff_t* ppos)
+    int write, void __kernel* buffer, size_t* len, loff_t* ppos)
 {
     ternfs_do_sysctl(ternfs_drop_write_block_sockets);
 }
@@ -170,41 +155,12 @@ static struct ctl_table ternfs_cb_sysctls[] = {
         .extra2 = &ternfs_max_mtu,
     },
 
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0))
-    {}
-#endif
 };
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 4, 0)
-static struct ctl_table ternfs_cb_sysctl_dir[] = {
-    {
-        .procname = "eggsfs",
-        .mode = 0555,
-        .child = ternfs_cb_sysctls,
-    },
-
-    {}
-};
-
-static struct ctl_table ternfs_cb_sysctl_root[] = {
-    {
-        .procname = "fs",
-        .mode = 0555,
-        .child = ternfs_cb_sysctl_dir,
-    },
-
-    {}
-};
-#endif
 
 static struct ctl_table_header* ternfs_callback_sysctl_table;
 
 int __init ternfs_sysctl_init(void) {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 4, 0)
-    ternfs_callback_sysctl_table = register_sysctl_table(ternfs_cb_sysctl_root);
-#else
     ternfs_callback_sysctl_table = register_sysctl("fs/eggsfs", ternfs_cb_sysctls);
-#endif
     if (ternfs_callback_sysctl_table == NULL) {
         return -ENOMEM;
     }

@@ -9,14 +9,18 @@ import (
 	"sync"
 	"time"
 
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/keyedlock"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sessionstore"
 )
 
 type SessionID [nfs4.NFS4_SESSIONID_SIZE]byte
 
 type sessionStore struct {
+	// persistSlot, when set, records a completed request on its session's
+	// file (session_persist.go).
+	persistSlot func(sess *session, slotID uint32, rec sessionstore.Record)
+
 	mu                                sync.Mutex
 	epoch                             uint32
 	next                              uint64
@@ -31,43 +35,87 @@ type sessionStore struct {
 	cachedBuffers                     int
 	cacheLimit                        int
 	workBytes, workReplies, workLimit int
-	records, pendingSessions          int
-	recordLimit                       int
-	wireIDs                           wireClientIDs
-	now                               func() time.Time
+	// workFreed is signalled under cacheMu when reply work is released or a
+	// connection closes, for requests waiting in acquireReplyWork.
+	workFreed                *sync.Cond
+	records, pendingSessions int
+	recordLimit              int
+	wireIDs                  wireClientIDs
+	now                      func() time.Time
 
-	// ownerLocks orders each owner's registrations and destructions: the
-	// durable registration and the wire publication happen together. Taken
-	// before the client store's identity lock and before mu.
+	// ownerLocks orders each owner's registrations, confirmations and
+	// destructions, so each is decided from the owner's current record and
+	// wire records. Taken before mu.
 	ownerLocks keyedlock.Locker[string]
 }
 
 func newSessionStore(epoch uint32) *sessionStore {
-	return &sessionStore{
+	ss := &sessionStore{
 		epoch:       epoch,
 		sessions:    make(map[SessionID]*session),
 		clients:     make(map[uint64]*sessionClient),
 		owners:      make(map[string]*wireOwner),
-		wireLimit:   clientstore.MaxSessionRecords,
+		wireLimit:   maxSessionRecords,
 		groups:      make(map[uint64]*clientGroup),
 		groupLimit:  maxClientGroups,
-		cacheLimit:  maxSessionCacheBytes,
+		cacheLimit:  replyCacheLimit,
 		workLimit:   maxReplyWorkBytes,
-		recordLimit: clientstore.MaxSessionRecords,
+		recordLimit: maxSessionRecords,
 		now:         time.Now,
 	}
+	ss.workFreed = sync.NewCond(&ss.cacheMu)
+	return ss
+}
+
+// wakeWorkWaiters lets requests waiting for reply work re-check their
+// connection, which has closed.
+func (ss *sessionStore) wakeWorkWaiters() {
+	ss.cacheMu.Lock()
+	ss.workFreed.Broadcast()
+	ss.cacheMu.Unlock()
 }
 
 // A session ID is the issuing process's epoch, the incarnation and a
-// counter. A session never outlives its process, so an ID from another
-// epoch is unknown here.
-func (ss *sessionStore) newSessionIDLocked(clientID uint64) SessionID {
+// counter. It reports false, giving no ID, once the counter is at its last
+// value; the counter never wraps. A restored session keeps the ID an
+// earlier process gave it, and the epoch is random, so an ID of this
+// epoch may already be known: observeSessionIDLocked moves the counter
+// past it, and no ID this process has seen is given again.
+func (ss *sessionStore) newSessionIDLocked(clientID uint64) (SessionID, bool) {
+	if ss.next >= uint64(^uint32(0)) {
+		return SessionID{}, false
+	}
 	ss.next++
 	var id SessionID
 	binary.BigEndian.PutUint32(id[0:4], ss.epoch)
 	binary.BigEndian.PutUint64(id[4:12], clientID)
 	binary.BigEndian.PutUint32(id[12:16], uint32(ss.next))
-	return id
+	return id, true
+}
+
+// observeSessionIDLocked moves the ID counter past a known session ID of
+// this process's epoch. The caller holds ss.mu.
+func (ss *sessionStore) observeSessionIDLocked(id SessionID) {
+	if binary.BigEndian.Uint32(id[0:4]) == ss.epoch {
+		ss.next = max(ss.next, uint64(binary.BigEndian.Uint32(id[12:16])))
+	}
+}
+
+// replyCacheLimit bounds the reply cache of a new store; a variable so that
+// tests can start a server with a small one.
+var replyCacheLimit = maxSessionCacheBytes
+
+// persistedSessions counts the sessions with a file on disk.
+func (ss *sessionStore) persistedSessions() int {
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+	n := 0
+	for _, sess := range ss.sessions {
+		if sess.file.onDisk.Load() {
+			n++
+		}
+	}
+	return n
 }
 
 func (ss *sessionStore) lookup(id SessionID) *session {
@@ -99,7 +147,7 @@ func (ss *sessionStore) destroyClientRecord(c *sessionClient) uint32 {
 		ss.mu.Unlock()
 		return nfs4.NFS4ERR_STALE_CLIENTID
 	}
-	// A closing incarnation is the predecessor of a confirmation in progress.
+	// A closing incarnation is being replaced by a confirmation.
 	if g := ss.groups[c.incarnation]; c.csBusy || g != nil && (g.members > 0 || g.state == groupClosing) {
 		ss.mu.Unlock()
 		return nfs4.NFS4ERR_CLIENTID_BUSY

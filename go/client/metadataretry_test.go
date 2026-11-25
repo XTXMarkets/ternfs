@@ -56,11 +56,11 @@ func testMetadataRequest(c *Client, logger *log.Logger, api, name string) <-chan
 
 type metadataSendTestSocket struct {
 	*net.UDPConn
-	send func([]byte) ([]byte, error)
+	send func([]byte, *net.UDPAddr) ([]byte, error)
 }
 
-func (s *metadataSendTestSocket) WriteToUDP(packet []byte, _ *net.UDPAddr) (int, error) {
-	reply, err := s.send(packet)
+func (s *metadataSendTestSocket) WriteToUDP(packet []byte, addr *net.UDPAddr) (int, error) {
+	reply, err := s.send(packet, addr)
 	if reply != nil {
 		if _, replyErr := s.UDPConn.WriteToUDP(reply, s.LocalAddr().(*net.UDPAddr)); replyErr != nil {
 			return 0, replyErr
@@ -73,6 +73,13 @@ var metadataTestAddrs = msgs.AddrsInfo{Addr1: msgs.IpPort{Addrs: [4]byte{127, 0,
 
 // Inject send failures while replies and timeouts use the real socket reader.
 func metadataRetryClient(t *testing.T, timeouts timing.ReqTimeouts, addr msgs.AddrsInfo, send func([]byte) ([]byte, error)) (*Client, *log.Logger) {
+	t.Helper()
+	return metadataRoutingClient(t, timeouts, addr, func(packet []byte, _ *net.UDPAddr) ([]byte, error) {
+		return send(packet)
+	})
+}
+
+func metadataRoutingClient(t *testing.T, timeouts timing.ReqTimeouts, addr msgs.AddrsInfo, send func([]byte, *net.UDPAddr) ([]byte, error)) (*Client, *log.Logger) {
 	t.Helper()
 	sock, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {

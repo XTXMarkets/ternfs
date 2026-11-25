@@ -16,6 +16,7 @@ func NewScrubFile() Command {
 	scrubFileRun := func(runtime *Runtime) {
 		l := runtime.Log
 		file := msgs.InodeId(*scrubFileId)
+		runtime.getClient().SetFetchBlockServices()
 		stats := &cleanup.ScrubState{}
 		if err := cleanup.ScrubFile(l, runtime.getClient(), stats, file); err != nil {
 			panic(err)

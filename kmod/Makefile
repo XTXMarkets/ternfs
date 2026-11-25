@@ -48,13 +48,8 @@ ternfs-client-objs += \
 	policy.o \
 	policy_update.o
 
-HAVE_INODE_ATIME_ACCESSORS := $(shell grep -q inode_get_atime_sec \
-    $(srctree)/include/linux/fs.h 2>/dev/null && echo 1)
-
 EXTRA_CFLAGS = -I$(src) -g -DDEBUG -fdiagnostics-color=always -Wno-declaration-after-statement
-ifeq ($(HAVE_INODE_ATIME_ACCESSORS),1)
-  EXTRA_CFLAGS += -DHAVE_INODE_ATIME_ACCESSORS
-endif
+EXTRA_CFLAGS += -include $(src)/kernel_floor.h
 
 export CF = -Wbitwise -Wcontext -Wcast_truncate -Wsparse-all -Wno-shadow -Wnopointer-arith -Wnosizeof-bool -DCONFIG_SPARSE_RCU_POINTER
 
@@ -84,9 +79,10 @@ extra-files-clean:
 ternfs-client-tests: revision.c extra-files registry-tests
 	$(MAKE) -C $(KDIR) M=$(CURDIR) C=1 modules
 
+# Kbuild's clean with M= would also strip kernel trees under kmod/.
+MODULE_OUTPUTS := *.o .*.o *.ko *.mod *.mod.c .*.cmd .*.d modules.order Module.symvers
 ternfs-client-clean:
-	$(MAKE) -C $(KDIR) M=$(CURDIR) clean
-	rm -f *.o *.ko
+	rm -f $(MODULE_OUTPUTS) $(addprefix tests/,$(MODULE_OUTPUTS))
 
 
 bincode_tests: bincode_tests.c bincodegen.h bincode.h
@@ -121,5 +117,28 @@ ternfs-client:
 # We don't want sparse as a dependency.
 ternfs-client-local: revision.c extra-files
 	$(MAKE) -C $(KDIR) M=$(CURDIR) modules
+
+# modules_prepare has no Module.symvers, so stop before modpost.
+.PHONY: ternfs-client-compile
+ternfs-client-compile: revision.c extra-files
+	$(MAKE) -C $(KDIR) M=$(CURDIR) KCFLAGS="$(KCFLAGS) -Werror" ternfs-client.o
+
+COMPILE_KERNELS ?= 6.12.44 6.14.9
+.PHONY: compile-check
+compile-check:
+	+@set -eu; for version in $(COMPILE_KERNELS); do \
+		case "$$version" in \
+			6.12.44) kdir="$(CURDIR)/linux-6.12.44" ;; \
+			6.14.9) kdir="$(CURDIR)/linux" ;; \
+			*) echo "Unsupported compile-check kernel: $$version" >&2; exit 2 ;; \
+		esac; \
+		actual=$$($(MAKE) -s --no-print-directory -C "$$kdir" kernelversion); \
+		if [ "$$actual" != "$$version" ]; then \
+			echo "$$kdir: expected Linux $$version, found $$actual" >&2; exit 1; \
+		fi; \
+		echo "Compiling TernFS for Linux $$version"; \
+		$(MAKE) ternfs-client-clean; \
+		$(MAKE) KDIR="$$kdir" ternfs-client-compile; \
+	done
 
 clean: ternfs-client-clean tests-clean

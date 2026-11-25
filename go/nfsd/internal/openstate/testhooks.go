@@ -9,7 +9,8 @@ import (
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
-// Test hooks: nfsd tests outside this package add and count opens.
+// Test hooks: nfsd tests outside this package add and inspect opens. Nothing
+// in the nfsd binary calls them, so the linker leaves them out of it.
 
 // testGrant is the grant of a test's read or write OPEN.
 func testGrant(write bool) Grant {
@@ -31,13 +32,6 @@ func AddOpenForTest(
 		return State{}, nfs4.NFS4ERR_SERVERFAULT
 	}
 	return state, nfs4.NFS4_OK
-}
-
-// StateCount returns the number of live open states.
-func (os *Store) StateCount() int {
-	os.mu.Lock()
-	defer os.mu.Unlock()
-	return len(os.states)
 }
 
 // FileLockRefs returns the holders and waiters of fileID's open lock.

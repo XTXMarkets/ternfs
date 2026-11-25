@@ -13,6 +13,7 @@ func NewScrub() Command {
 	scrubCmd := flag.NewFlagSet("scrub", flag.ExitOnError)
 	scrubRun := func(runtime *Runtime) {
 		l := runtime.Log
+		runtime.getClient().SetFetchBlockServices()
 		stats := cleanup.ScrubState{}
 		if err := cleanup.ScrubFilesInAllShards(l, runtime.getClient(), &cleanup.ScrubOptions{NumWorkersPerShard: 10}, nil, &stats); err != nil {
 			panic(err)

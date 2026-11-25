@@ -47,6 +47,7 @@ func (c *Client) metadataRequest(
 	respBody bincode.Unpackable,
 	counters *ReqCounters,
 	dontWait bool,
+	replica *msgs.ReplicaId,
 ) error {
 	attempts := 0
 	respChan := make(chan *metadataProcessorResponse, 16)
@@ -80,6 +81,7 @@ func (c *Client) metadataRequest(
 			requestId: requestId,
 			timeout:   timeout,
 			shard:     shid,
+			replica:   replica,
 			req:       reqBody,
 			resp:      respBody,
 			extra:     nil,
@@ -117,7 +119,8 @@ func (c *Client) metadataRequest(
 					shouldCheckIdempotency = true
 				}
 			}
-			if shouldCheckIdempotency {
+			// Recovery checks use leader reads, so keep explicit replica requests local.
+			if shouldCheckIdempotency && replica == nil {
 				if shid >= 0 {
 					ternError = c.checkRepeatedShardRequestError(log, reqBody.(msgs.ShardRequest), respBody.(msgs.ShardResponse), ternError)
 				} else {

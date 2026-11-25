@@ -2,12 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <linux/version.h>
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0))
-#include <asm/unaligned.h>
-#else
 #include <linux/unaligned.h>
-#endif
 #include <linux/module.h>
 #include <linux/dns_resolver.h>
 #include <linux/sunrpc/addr.h>
@@ -209,19 +204,19 @@ static int ternfs_create_registry_tcp_socket(struct socket** sock) {
     struct __kernel_sock_timeval tv;
     tv.tv_sec = 10;
     tv.tv_usec = 0;
-    err = COMPAT_SET_SOCKOPT(*sock, SOL_SOCKET, SO_RCVTIMEO_NEW, &tv, sizeof(tv));
+    err = sock_setsockopt(*sock, SOL_SOCKET, SO_RCVTIMEO_NEW, KERNEL_SOCKPTR(&tv), sizeof(tv));
     if (err < 0) {
         ternfs_warn("could not set receive timeout on registry socket: %d", err);
         goto out_sock;
     }
-    err = COMPAT_SET_SOCKOPT(*sock, SOL_SOCKET, SO_SNDTIMEO_NEW, &tv, sizeof(tv));
+    err = sock_setsockopt(*sock, SOL_SOCKET, SO_SNDTIMEO_NEW, KERNEL_SOCKPTR(&tv), sizeof(tv));
     if (err < 0) {
         ternfs_warn("could not set send timeout on registry socket: %d", err);
         goto out_sock;
     }
 
     int syn_count = 3;
-    err = COMPAT_SET_SOCKOPT(*sock, SOL_TCP, TCP_SYNCNT, &syn_count, sizeof(syn_count));
+    err = sock_setsockopt(*sock, SOL_TCP, TCP_SYNCNT, KERNEL_SOCKPTR(&syn_count), sizeof(syn_count));
     if (err < 0) {
         ternfs_warn("could not set TCP_SYNCNT=%d on registry socket: %d", syn_count, err);
         goto out_sock;

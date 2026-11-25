@@ -5,32 +5,48 @@
 package server
 
 import (
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
+	"sync"
+
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientrecords"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 // compoundState tracks the current/saved filehandle during COMPOUND execution.
 type compoundState struct {
-	currentID     vfs.InodeID
-	currentIDSet  bool
-	savedID       vfs.InodeID
-	savedIDSet    bool
-	principal     clientstore.RPCPrincipal
-	connection    *rpcConnection
-	replyBudget   uint32
-	effectUnknown bool // Submitted mutation lacks whole-call outcome proof.
+	currentID    vfs.InodeID
+	currentIDSet bool
+	savedID      vfs.InodeID
+	savedIDSet   bool
+	principal    clientrecords.Principal
+	connection   *rpcConnection
+	replyBudget  uint32
 
-	// session and clientID come from the compound's SEQUENCE.
-	session  *session
-	clientID uint64
+	// session and clientID come from the compound's SEQUENCE, as do the
+	// slot it claimed and its sequence number, for intents.
+	session     *session
+	clientID    uint64
+	slot        *sessionSlot
+	slotID, seq uint32
+	// replay is the intent a restored slot held for this request, when the
+	// request is being run again after a restart (replay_decide.go).
+	replay replayState
+	// opIndex is the index in the compound of the operation being run.
+	// intentOp is one more than the index of the operation whose intent is
+	// on the slot, written or restored, and 0 when there is none.
+	opIndex, intentOp int
+	// mutated: a mutating operation of this compound has been permitted
+	// to run, so a later one removes the session's file (mutationGate).
+	mutated bool
 
 	// afterReply collects work for after the reply is written.
 	afterReply *[]func()
+	// holds releases the running operation's locks (hold).
+	holds []func()
 
-	// currentStateID is the stateid returned by the last OPEN or CLOSE,
-	// substituted for the special current stateid (RFC 8881 section
-	// 16.2.3.1.2). Changing the current filehandle clears it.
+	// currentStateID is the stateid returned by the last OPEN, CLOSE or
+	// OPEN_DOWNGRADE, substituted for the special current stateid
+	// (RFC 8881 section 16.2.3.1.2). Changing the current filehandle clears it.
 	currentStateID    nfs4.StateID
 	currentGeneration uint32
 	currentStateIDSet bool
@@ -51,12 +67,6 @@ func (st *compoundState) setCurrentStateID(id nfs4.StateID, generation uint32) {
 	st.currentStateID = id
 	st.currentGeneration = generation
 	st.currentStateIDSet = true
-}
-
-func (st *compoundState) observeMutation(fs vfs.TernVFS, op uint32, err error) {
-	if err != nil && fs.ClassifyMutation(op, err) == vfs.MutationUnknown {
-		st.effectUnknown = true
-	}
 }
 
 // isCurrentStateID reports the special stateid meaning the compound's
@@ -97,6 +107,24 @@ func isSpecialStateID(stateid nfs4.Stateid4) bool {
 		allOne = allOne && stateid.Other(i) == 0xff
 	}
 	return allZero || allOne
+}
+
+// hold registers unlock with the compound and returns an idempotent early
+// release. compoundBody releases the rest when the operation returns or,
+// when it ends the compound, once its reply is recorded.
+func (st *compoundState) hold(unlock func()) func() {
+	release := sync.OnceFunc(unlock)
+	st.holds = append(st.holds, release)
+	return release
+}
+
+// releaseHolds releases the running operation's locks, last taken first.
+func (st *compoundState) releaseHolds() {
+	holds := st.holds
+	st.holds = nil
+	for i := len(holds) - 1; i >= 0; i-- {
+		holds[i]()
+	}
 }
 
 // later runs f after the compound's reply is written, or at once for a

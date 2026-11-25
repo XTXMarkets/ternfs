@@ -13,12 +13,12 @@ import (
 // Forechannel association belongs to the live TCP connection, not its remote
 // address or registration principal.
 //
-// A request that may associate the connection with a session reserves a
-// token first (canonical r3 §7.2). sessions holds committed associations,
-// which associated() sees; pending counts provisional owners. The quota
-// counts each ID once, in either map. mu is held only for map operations,
-// never across backend or renewal work; lock order is slot.mu, mu, then
-// sessionStore.mu.
+// A request that may associate the connection with a session reserves a token
+// first (README.md#connection-associations). sessions holds committed
+// associations, which associated() sees; pending counts provisional owners.
+// The quota counts each ID once, in either map. mu is held only for map
+// operations, never across backend or renewal work; lock order is slot.mu, mu,
+// then sessionStore.mu.
 type rpcConnection struct {
 	mu       sync.Mutex
 	sessions map[SessionID]struct{}
@@ -40,6 +40,20 @@ type rpcConnection struct {
 	connectedAt time.Time
 	inFlight    atomic.Int32
 	requests    atomic.Uint64
+}
+
+// isClosed reports that the connection has ended, so a request waiting
+// for resources on its behalf should stop.
+func (c *rpcConnection) isClosed() bool {
+	if c.closed == nil {
+		return false
+	}
+	select {
+	case <-c.closed:
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *rpcConnection) associated(id SessionID) bool {

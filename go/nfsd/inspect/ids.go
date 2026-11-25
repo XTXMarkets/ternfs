@@ -18,7 +18,7 @@ import (
 // interchange. A value copied from a response or from the session-created
 // log line pastes back unchanged. Uppercase hex is accepted on input.
 //
-// These are presentation forms. The wire protocol, the store's directory
+// These are presentation forms. The wire protocol, the client record file
 // names and the sidecar bytes are unchanged; the server formats observed
 // values when it reports and leaves an unavailable id as the empty string.
 const (
@@ -75,7 +75,7 @@ func IncarnationLinks(incarnation string) []string {
 	return []string{
 		"/v1/incarnations?id=" + incarnation,
 		"/v1/sessions?incarnation=" + incarnation,
-		"/v1/store?incarnation=" + incarnation,
+		"/v1/clients?incarnation=" + incarnation,
 	}
 }
 
@@ -87,16 +87,6 @@ func Scalar(kind string, id uint64) string {
 		return ""
 	}
 	return ID(kind, binary.BigEndian.AppendUint64(nil, id))
-}
-
-// IdentityHash formats an identity directory name, which is the hash as 64
-// hex digits when the store is well formed, or "" when it is not.
-func IdentityHash(name string) string {
-	raw, err := hex.DecodeString(name)
-	if err != nil || len(raw) != 32 {
-		return ""
-	}
-	return ID(KindIdentityHash, raw)
 }
 
 // NewIncarnation is the empty /v1/incarnations record each store fills its

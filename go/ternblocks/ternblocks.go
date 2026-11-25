@@ -229,6 +229,7 @@ func initBlockServicesInfo(
 	log.Info("initializing block services info")
 	var wg sync.WaitGroup
 	wg.Add(len(blockServices))
+	errs := make(chan error, len(blockServices))
 	alert := log.NewNCAlert(0)
 	log.RaiseNC(alert, "getting info for %v block services", len(blockServices))
 	for id, bs := range blockServices {
@@ -245,6 +246,7 @@ func initBlockServicesInfo(
 		}
 		closureBs := bs
 		go func() {
+			defer wg.Done()
 			// Always refresh space before the first registration, including
 			// services whose block counts were restored from the registry.
 			if err := updateBlockServiceInfoCapacity(log, closureBs, reservedStorage, reservedXfsMetadata); err != nil {
@@ -254,14 +256,22 @@ func initBlockServicesInfo(
 			// only update if it isn't filled it in already from registry
 			if closureBs.cachedInfo.Blocks == 0 {
 				if err := updateBlockServiceInfoBlocks(log, closureBs); err != nil {
-					panic(err)
+					errs <- fmt.Errorf(
+						"could not scan blocks for block service %v at %v: %w",
+						closureBs.cachedInfo.Id,
+						closureBs.path,
+						err,
+					)
 				}
 			}
-			wg.Done()
 		}()
 	}
 	wg.Wait()
+	close(errs)
 	log.ClearNC(alert)
+	for err := range errs {
+		return err
+	}
 	return nil
 }
 
@@ -1085,6 +1095,9 @@ func handleAdmittedRequest(
 			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, err)
 		}
 	case *msgs.WriteBlockReq:
+		if err := checkWriteCertificate(log, blockService.cipher, blockServiceId, whichReq, env.stats[blockServiceId]); err != nil {
+			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, err)
+		}
 		pastCutoffTime := msgs.TernTime(uint64(whichReq.BlockId)).Time().Add(-PAST_CUTOFF)
 		futureCutoffTime := msgs.TernTime(uint64(whichReq.BlockId)).Time().Add(WRITE_FUTURE_CUTOFF)
 		now := time.Now()
@@ -1095,9 +1108,6 @@ func handleAdmittedRequest(
 			log.ErrorNoAlert("block %v is too old to be written (now=%v, futureCutoffTime=%v)", whichReq.BlockId, now, futureCutoffTime)
 			atomic.AddUint64(&env.stats[blockServiceId].blockTooOldForWrite, 1)
 			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, msgs.BLOCK_TOO_OLD_FOR_WRITE)
-		}
-		if err := checkWriteCertificate(log, blockService.cipher, blockServiceId, whichReq, env.stats[blockServiceId]); err != nil {
-			return handleRequestError(log, blockServices, deadBlockServices, conn, lastError, blockServiceId, kind, err)
 		}
 		if whichReq.Size > MAX_OBJECT_SIZE {
 			log.RaiseAlert("block %v exceeds max object size: %v > %v", whichReq.BlockId, whichReq.Size, MAX_OBJECT_SIZE)
@@ -1178,7 +1188,9 @@ func retrieveOrCreateKey(log *log.Logger, dir string) ([16]byte, error) {
 	if err != nil {
 		return [16]byte{}, fmt.Errorf("could not open or create key file %v: %v", keyFilePath, err)
 	}
-	keyFile.Seek(0, 0)
+	if _, err := keyFile.Seek(0, 0); err != nil {
+		return [16]byte{}, fmt.Errorf("could not seek key file %v: %w", keyFilePath, err)
+	}
 	if err := syscall.Flock(int(keyFile.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		return [16]byte{}, fmt.Errorf("could not lock key file %v: %v", keyFilePath, err)
 	}
@@ -1191,14 +1203,14 @@ func retrieveOrCreateKey(log *log.Logger, dir string) ([16]byte, error) {
 	if err == io.EOF {
 		log.Info("creating new secret key")
 		if _, err := crand.Read(key[:]); err != nil {
-			panic(err)
+			return [16]byte{}, fmt.Errorf("could not generate key for %v: %w", keyFilePath, err)
 		}
 		if _, err := keyFile.Write(key[:]); err != nil {
 			return [16]byte{}, fmt.Errorf("could not write key file %v: %w", keyFilePath, err)
 		}
 		keyCrc := crc32c.Sum(0, key[:])
 		if err := binary.Write(keyFile, binary.LittleEndian, keyCrc); err != nil {
-			return [16]byte{}, fmt.Errorf("could not write key crc %v: %w", keyFilePath, err)
+			return [16]byte{}, fmt.Errorf("could not write crc to key file %v: %w", keyFilePath, err)
 		}
 		log.Info("creating directory structure")
 		if err := os.Mkdir(path.Join(dir, "with_crc"), 0755); err != nil && !os.IsExist(err) {
@@ -1788,7 +1800,10 @@ func main() {
 		actualPort2 = uint16(listener2.Addr().(*net.TCPAddr).Port)
 	}
 
-	initBlockServicesInfo(env, l, msgs.Location(*locationId), msgs.AddrsInfo{Addr1: msgs.IpPort{Addrs: ownIp1, Port: actualPort1}, Addr2: msgs.IpPort{Addrs: ownIp2, Port: actualPort2}}, failureDomain, blockServices, *reservedStorage, *reservedXfsMetadata)
+	if err := initBlockServicesInfo(env, l, msgs.Location(*locationId), msgs.AddrsInfo{Addr1: msgs.IpPort{Addrs: ownIp1, Port: actualPort1}, Addr2: msgs.IpPort{Addrs: ownIp2, Port: actualPort2}}, failureDomain, blockServices, *reservedStorage, *reservedXfsMetadata); err != nil {
+		l.RaiseAlert("could not initialize block services: %v", err)
+		os.Exit(1)
+	}
 	l.Info("finished updating block service info, will now start")
 
 	terminateChan := make(chan any)

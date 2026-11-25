@@ -18,6 +18,7 @@ parser.add_argument('--nfs', action='store_true', help='Run the NFS integration 
 parser.add_argument('--build', action='store_true')
 parser.add_argument('--docker', action='store_true', help='Build and run in docker image')
 parser.add_argument('--prepare-image', default=None, type=str, help='Build the kmod image given the provided base image')
+parser.add_argument('--kmod-config', default=None, choices=['lockdep'], help='With --prepare-image, merge kmod/config-<name>.fragment into the kernel config')
 parser.add_argument('--leader-only', action='store_true', help='Run only LogsDB leader with LEADER_NO_FOLLOWERS')
 parser.add_argument('--close-tracker-object', default=None, type=str, help='Run fuse driver with the given close tracker object')
 parser.add_argument('--filter', default=None, type=str, help='Regex to filter test names')
@@ -105,7 +106,7 @@ if args.integration:
 
 if args.prepare_image:
     bold_print('prepare kmod image')
-    run_cmd_unbuffered(['./kmod/ci_prepare.sh', args.prepare_image])
+    run_cmd_unbuffered(['./kmod/ci_prepare.sh', args.prepare_image] + (['-config', args.kmod_config] if args.kmod_config else []))
 
 if args.kmod:
     bold_print('kmod tests')

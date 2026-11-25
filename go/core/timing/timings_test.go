@@ -37,6 +37,54 @@ func TestTimingsBins(t *testing.T) {
 	}
 }
 
+func timingsCount(bins []HistogramBin) uint64 {
+	n := uint64(0)
+	for _, bin := range bins {
+		n += bin.Count
+	}
+	return n
+}
+
+// A snapshot has bins of its own: later adds to the original do not show in
+// it, and merging into it does not change what was merged.
+func TestTimingsSnapshotDetached(t *testing.T) {
+	live := NewTimings(40, 10*time.Microsecond, 1.5)
+	other := NewTimings(40, 10*time.Microsecond, 1.5)
+	live.Add(time.Millisecond)
+	other.Add(time.Second)
+	snap := live.Snapshot()
+	live.Add(time.Millisecond)
+	snap.Merge(other)
+	assert.Equal(t, timingsCount(snap.Histogram()), 2)  // its own count and the merged one
+	assert.Equal(t, timingsCount(live.Histogram()), 2)  // its own adds only
+	assert.Equal(t, timingsCount(other.Histogram()), 1) // the merge source is unchanged
+}
+
+// Histogram, Snapshot and Merge read bins that Add is updating; run under
+// -race this checks the loads are atomic.
+func TestTimingsReadsDuringAdd(t *testing.T) {
+	live := NewTimings(40, 10*time.Microsecond, 1.5)
+	const adds = 10000
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < adds; i++ {
+			live.Add(time.Duration(i) * time.Microsecond)
+		}
+	}()
+	for reading := true; reading; {
+		select {
+		case <-done:
+			reading = false
+		default:
+		}
+		snap := live.Snapshot()
+		snap.Merge(live)
+		_ = live.Histogram()
+	}
+	assert.Equal(t, timingsCount(live.Histogram()), adds)
+}
+
 func checkDurations(d1 time.Duration, d2 time.Duration) bool {
 	return math.Abs(float64(d1-d2)/float64(d1+d2)) < 0.0001
 }

@@ -2,11 +2,15 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+// Package vfs is the boundary between the NFS server and TernFS: the
+// TernVFS interface and its native and local implementations. See
+// ../../DESIGN.md#backend-boundary.
 package vfs
 
 import (
 	"encoding/binary"
 	"io"
+	"math"
 	"time"
 )
 
@@ -20,11 +24,8 @@ const (
 	InodeTypeSymlink = 3
 )
 
-// NFSDirName is the directory under the root that holds nfsd's own state.
-const NFSDirName = ".nfs"
-
 func (id InodeID) Type() uint64   { return (uint64(id) >> 61) & 0x3 }
-func (id InodeID) Fileid() uint64 { return uint64(id) & ((1 << 61) - 1) }
+func (id InodeID) Fileid() uint64 { return uint64(id) }
 
 func MakeInodeID(typ uint64, ino uint64) InodeID {
 	return InodeID((typ << 61) | (ino & ((1 << 61) - 1)))
@@ -91,9 +92,6 @@ type TernVFS interface {
 	// Read reads file data into dest, returning bytes read and EOF flag.
 	Read(fileID InodeID, offset uint64, dest []byte) (n int, eof bool, err error)
 
-	// ReadAll reads a small internal file without retaining reader state.
-	ReadAll(fileID InodeID) ([]byte, error)
-
 	// Readlink reads the target of a symlink.
 	Readlink(fileID InodeID) (string, error)
 
@@ -119,28 +117,17 @@ type TernVFS interface {
 	// but LocalTernVFS writes it at link time.
 	LinkFile(fileID InodeID, cookie Cookie, dirID InodeID, name string, data io.Reader) error
 
-	// CreateFile creates or replaces a regular file with the given data.
-	// This matches TernFS LinkFile semantics. It is used for internal
-	// bookkeeping files, not NFS file creation.
-	CreateFile(dirID InodeID, name string, data io.Reader) (InodeID, error)
-
-	// Remove removes a file, directory, or symlink by name from a directory.
-	// A removed file remains readable by inode until it is collected.
-	Remove(dirID InodeID, name string) error
-
-	// Rename moves/renames a directory entry. A replaced file remains
-	// readable by inode until it is collected.
-	Rename(srcDirID InodeID, srcName string, dstDirID InodeID, dstName string) error
-
 	// LookupEdge finds a child by name and returns the entry it was found
 	// through, so that a later mutation can be pinned to it.
 	LookupEdge(dirID InodeID, name string) (Edge, error)
 
 	// RemoveEdge removes the pinned entry and returns the raw backend error.
+	// A removed file remains readable by inode until it is collected.
 	RemoveEdge(dirID InodeID, name string, edge Edge) error
 
 	// RenameEdge moves the entry only while srcName still refers to edge, with
-	// the same error contract as RemoveEdge.
+	// the same error contract as RemoveEdge. A replaced file remains readable
+	// by inode until it is collected.
 	RenameEdge(srcDirID InodeID, srcName string, edge Edge, dstDirID InodeID, dstName string) error
 
 	// ClassifyMutation describes the entire submitted call, including retries.
@@ -165,4 +152,23 @@ func FHToInodeID(fh []byte) (InodeID, bool) {
 		return 0, false
 	}
 	return InodeID(binary.BigEndian.Uint64(fh)), true
+}
+
+// TernFS stores a time as nanoseconds since the Unix epoch in 63 bits, from
+// 1970 to April 2262.
+var (
+	minTernTime = time.Unix(0, 0)
+	maxTernTime = time.Unix(0, math.MaxInt64)
+)
+
+// ClampTime moves a time TernFS cannot store to the nearer end of its range,
+// as Linux does for a filesystem with a limited timestamp range.
+func ClampTime(t time.Time) time.Time {
+	if t.Before(minTernTime) {
+		return minTernTime
+	}
+	if t.After(maxTernTime) {
+		return maxTernTime
+	}
+	return t
 }

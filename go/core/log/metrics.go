@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -50,6 +51,17 @@ func validMetricsName(name string) {
 	}
 }
 
+// Tag values additionally allow '+', so that a histogram's final bucket can
+// carry the le="+Inf" label histogram_quantile requires. Line protocol
+// only escapes commas, equals signs and spaces in tag values.
+func validTagValue(value string) {
+	for _, ch := range value {
+		if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '-' || ch == '_' || ch == '.' || ch == ':' || ch == '+') {
+			panic(fmt.Errorf("bad metrics tag value %q", value))
+		}
+	}
+}
+
 func (b *MetricsBuilder) Measurement(name string) {
 	if !(b.state == METRICS_INIT || b.state == METRICS_TIMESTAMP) {
 		panic(fmt.Errorf("bad state %v for measurement", b.state))
@@ -67,7 +79,7 @@ func (b *MetricsBuilder) Tag(name string, value string) {
 		panic(fmt.Errorf("bad state %v for tag", b.state))
 	}
 	validMetricsName(name)
-	validMetricsName(value)
+	validTagValue(value)
 	fmt.Fprintf(&b.payload, ",%s=%s", name, value)
 	b.state = METRICS_TAGS
 }
@@ -116,5 +128,11 @@ func (idb *InfluxDB) SendMetrics(payload io.Reader) error {
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// The store explains a rejected payload in the body; keep the start
+		// of it, which names the offending line.
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("metrics store returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
 	return nil
 }

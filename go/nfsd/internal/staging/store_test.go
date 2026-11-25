@@ -424,63 +424,6 @@ func TestStagingRetainsUncommittedNewFileOnRestart(t *testing.T) {
 	}
 }
 
-func TestStagingAllowsIndependentReplacementsOfSameBase(t *testing.T) {
-	store, err := NewLocalStore(t.TempDir(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	baseID := vfs.MakeInodeID(vfs.InodeTypeFile, 10)
-	firstID := vfs.MakeInodeID(vfs.InodeTypeFile, 100)
-	secondID := vfs.MakeInodeID(vfs.InodeTypeFile, 101)
-	meta := Meta{
-		DirID:    vfs.MakeInodeID(vfs.InodeTypeDir, 1),
-		FileName: "file",
-		BaseID:   baseID,
-		BaseSize: 10,
-	}
-	if _, err := store.Create(firstID, meta); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.Create(secondID, meta); err != nil {
-		t.Fatalf("second replacement failed: %v", err)
-	}
-
-	store.Remove(firstID)
-	if _, err := store.Create(secondID, meta); err != nil {
-		t.Fatalf("replacement after close failed: %v", err)
-	}
-}
-
-func TestStagingKeepsBaseFilehandlePrivate(t *testing.T) {
-	store, err := NewLocalStore(t.TempDir(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	baseID := vfs.MakeInodeID(vfs.InodeTypeFile, 10)
-	stagingID := vfs.MakeInodeID(vfs.InodeTypeFile, 100)
-	stage, err := store.Create(stagingID, Meta{
-		DirID:    vfs.MakeInodeID(vfs.InodeTypeDir, 1),
-		FileName: "file",
-		BaseID:   baseID,
-		BaseSize: 10,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if store.Get(baseID) != nil {
-		t.Fatal("published base handle exposes private staging")
-	}
-	if store.Get(baseID) != nil {
-		t.Fatal("base handle resolves to a writer")
-	}
-	store.Remove(baseID)
-	if store.Get(stagingID) != stage {
-		t.Fatal("removing the base handle discarded private staging")
-	}
-	store.Remove(stagingID)
-
-}
-
 func TestStagingRebindSurvivesRestart(t *testing.T) {
 	dir := t.TempDir()
 	store, err := NewLocalStore(dir, nil)

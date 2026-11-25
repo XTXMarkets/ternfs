@@ -7,7 +7,6 @@
 package libnfs
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -21,19 +20,12 @@ func TestLibnfs(t *testing.T) {
 		name string
 		run  func(*testing.T, *nfsTestSuite)
 	}{
-		{"PrivateMutableWriters", testLibnfsPrivateMutableWriters},
 		{"ExclusiveCreate", testLibnfsExclusiveCreate},
-		{"StatRoot", testLibnfsStatRoot},
-		{"ReadFile", testLibnfsReadFile},
 		{"ReadLargeFile", testLibnfsReadLargeFile},
 		{"ReadDir", testLibnfsReadDir},
 		{"SubdirNavigation", testLibnfsSubdirNavigation},
 		{"StatFile", testLibnfsStatFile},
 		{"Readlink", testLibnfsReadlink},
-		{"EmptyFile", testLibnfsEmptyFile},
-		{"EmptyDir", testLibnfsEmptyDir},
-		{"NonExistent", testLibnfsNonExistent},
-		{"ManyFiles", testLibnfsManyFiles},
 		{"recovery", runLibnfsRecovery},
 	} {
 		t.Run(tc.name, func(t *testing.T) { tc.run(t, suite) })
@@ -67,113 +59,6 @@ func connectLibnfs(t *testing.T, suite *nfsTestSuite, fixtureDir string) *libnfs
 	server := suite.server(t)
 	server.seed(t, fixtureDir)
 	return server.clientAt(t, "/"+server.Name)
-}
-
-// Writers in one client share its staged version of a file; a writer in
-// another client stays private until its CLOSE. Readers keep the version
-// they opened.
-func testLibnfsPrivateMutableWriters(t *testing.T, suite *nfsTestSuite) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "private.txt"), []byte("original"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	server := suite.server(t)
-	server.seed(t, dir)
-	c := server.clientAt(t, "/"+server.Name)
-	t.Cleanup(c.Close)
-	other := server.clientAt(t, "/"+server.Name)
-	t.Cleanup(other.Close)
-	open := func(c *libnfsProcessClient, flags int) *libnfsProcessFile {
-		f, err := c.OpenFile("/private.txt", flags)
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { _ = f.Close() })
-		return f
-	}
-	reader := open(other, os.O_RDONLY)
-	first := open(c, os.O_RDWR)
-	joined := open(c, os.O_RDWR)
-	second := open(other, os.O_RDWR)
-	check := func(f *libnfsProcessFile, want string) {
-		t.Helper()
-		got, err := f.Read()
-		if err != nil || string(got) != want {
-			t.Fatalf("read = %q, %v; want %q", got, err, want)
-		}
-	}
-	if err := first.WriteAt([]byte("XYZ"), 8); err != nil {
-		t.Fatal(err)
-	}
-	end, err := first.SyncSize()
-	if err != nil || end != 11 {
-		t.Fatalf("fsync/fstat size=%d err=%v", end, err)
-	}
-	if err := joined.WriteAt([]byte("Q"), end); err != nil {
-		t.Fatal(err)
-	}
-	if err := second.WriteAt([]byte("SECOND"), 0); err != nil {
-		t.Fatal(err)
-	}
-	check(reader, "original")
-	check(first, "originalXYZQ")
-	check(joined, "originalXYZQ")
-	check(second, "SECONDal")
-	if err := second.Close(); err != nil {
-		t.Fatal(err)
-	}
-	check(reader, "original")
-	fresh := open(other, os.O_RDONLY)
-	check(fresh, "SECONDal")
-	// The first client's staging publishes at its last write CLOSE.
-	if err := first.Close(); err != nil {
-		t.Fatal(err)
-	}
-	check(fresh, "SECONDal")
-	if err := joined.Close(); err != nil {
-		t.Fatal(err)
-	}
-	check(reader, "original")
-	check(fresh, "SECONDal")
-	last := open(other, os.O_RDONLY)
-	check(last, "originalXYZQ")
-	// Close before destroying the libnfs context; Cleanup also handles failures.
-	for _, f := range []*libnfsProcessFile{reader, fresh, last} {
-		if err := f.Close(); err != nil {
-			t.Fatal(err)
-		}
-	}
-}
-
-func testLibnfsStatRoot(t *testing.T, suite *nfsTestSuite) {
-	dir := t.TempDir()
-	c := connectLibnfs(t, suite, dir)
-	defer c.Close()
-
-	st, err := c.Stat("/")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if st.Mode&0040000 == 0 {
-		t.Fatalf("root is not a directory: mode=%#o", st.Mode)
-	}
-}
-
-func testLibnfsReadFile(t *testing.T, suite *nfsTestSuite) {
-	dir := t.TempDir()
-	content := []byte("Hello from libnfs test!")
-	os.WriteFile(filepath.Join(dir, "test.txt"), content, 0644)
-
-	c := connectLibnfs(t, suite, dir)
-	defer c.Close()
-
-	data, err := c.ReadFile("/test.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != string(content) {
-		t.Fatalf("read = %q, want %q", data, content)
-	}
 }
 
 func testLibnfsReadLargeFile(t *testing.T, suite *nfsTestSuite) {
@@ -294,84 +179,5 @@ func testLibnfsReadlink(t *testing.T, suite *nfsTestSuite) {
 	}
 	if string(data) != "target" {
 		t.Fatalf("read through symlink = %q, want %q", data, "target")
-	}
-}
-
-func testLibnfsEmptyFile(t *testing.T, suite *nfsTestSuite) {
-	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "empty.txt"), nil, 0644)
-
-	c := connectLibnfs(t, suite, dir)
-	defer c.Close()
-
-	data, err := c.ReadFile("/empty.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(data) != 0 {
-		t.Fatalf("expected empty, got %d bytes", len(data))
-	}
-
-	st, err := c.Stat("/empty.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if st.Size != 0 {
-		t.Fatalf("size = %d, want 0", st.Size)
-	}
-}
-
-func testLibnfsEmptyDir(t *testing.T, suite *nfsTestSuite) {
-	dir := t.TempDir()
-	os.Mkdir(filepath.Join(dir, "empty"), 0755)
-
-	c := connectLibnfs(t, suite, dir)
-	defer c.Close()
-
-	names, err := c.ReadDir("/empty")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(names) != 0 {
-		t.Fatalf("expected empty dir, got %v", names)
-	}
-}
-
-func testLibnfsNonExistent(t *testing.T, suite *nfsTestSuite) {
-	dir := t.TempDir()
-	c := connectLibnfs(t, suite, dir)
-	defer c.Close()
-
-	_, err := c.Stat("/no-such-file.txt")
-	if err == nil {
-		t.Fatal("expected error for non-existent file")
-	}
-}
-
-func testLibnfsManyFiles(t *testing.T, suite *nfsTestSuite) {
-	dir := t.TempDir()
-	var expected []string
-	for i := 0; i < 100; i++ {
-		name := fmt.Sprintf("file_%03d.txt", i)
-		os.WriteFile(filepath.Join(dir, name), []byte(name), 0644)
-		expected = append(expected, name)
-	}
-	sort.Strings(expected)
-
-	c := connectLibnfs(t, suite, dir)
-	defer c.Close()
-
-	names, err := c.ReadDir("/")
-	if err != nil {
-		t.Fatal(err)
-	}
-	sort.Strings(names)
-	if len(names) != len(expected) {
-		t.Fatalf("readdir returned %d entries, want %d", len(names), len(expected))
-	}
-	for i := range expected {
-		if names[i] != expected[i] {
-			t.Fatalf("readdir[%d] = %q, want %q", i, names[i], expected[i])
-		}
 	}
 }

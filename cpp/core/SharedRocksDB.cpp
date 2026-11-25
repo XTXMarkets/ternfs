@@ -6,6 +6,7 @@
 
 #include <fstream>
 #include <filesystem>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <rocksdb/db.h>
@@ -200,7 +201,7 @@ void SharedRocksDB::dumpRocksDBStatistics() {
 
 namespace fs = std::filesystem;
 
-TernError SharedRocksDB::snapshot(const std::string& path) {
+TernError SharedRocksDB::snapshot(const std::string& path, bool flushMemtables) {
     std::shared_lock<std::shared_mutex> _(_stateMutex);
     ALWAYS_ASSERT(_db.get() != nullptr);
     LOG_INFO(_env, "Creating snapshot in  %s", path);
@@ -240,7 +241,7 @@ TernError SharedRocksDB::snapshot(const std::string& path) {
         return TernError::CANNOT_CREATE_DB_SNAPSHOT;
     }
 
-    status = checkpoint->CreateCheckpoint(tmpPath);
+    status = checkpoint->CreateCheckpoint(tmpPath, flushMemtables ? 0 : std::numeric_limits<uint64_t>::max());
     if (!status.ok()) {
         LOG_ERROR(_env, "Failed storing checkpint (%s)", status.ToString());
         // try to cleanup tmpPath

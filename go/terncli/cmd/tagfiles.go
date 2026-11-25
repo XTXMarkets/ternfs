@@ -5,6 +5,7 @@
 package cmd
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"github.com/XTXMarkets/ternfs/go/client"
@@ -149,7 +150,7 @@ func runTagFiles(l *log.Logger, c *client.Client, p *tagFilesParams) error {
 		}
 	}
 
-	cb := func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error {
+	cb := func(_ context.Context, parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error {
 		if id.Type() == msgs.DIRECTORY {
 			stats.dirs.Add(1)
 			if !owned || !current || len(dirRules) == 0 {
@@ -262,6 +263,7 @@ func runTagFiles(l *log.Logger, c *client.Client, p *tagFilesParams) error {
 	}
 
 	walkErr := client.ParwalkMany(
+		context.Background(),
 		l,
 		c,
 		&client.ParwalkOptions{WorkersPerShard: p.workersPerShard},

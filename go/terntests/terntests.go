@@ -201,7 +201,7 @@ func mountNfs(nfsAddr string, mountPoint string) {
 	if err != nil {
 		panic(fmt.Errorf("bad nfs addr %q: %w", nfsAddr, err))
 	}
-	opts := fmt.Sprintf("vers=4.0,port=%s,soft,timeo=30,retrans=2", port)
+	opts := fmt.Sprintf("vers=4.1,port=%s,soft,timeo=30,retrans=2", port)
 	out, err := exec.Command("sudo", "mount", "-t", "nfs4", "-o", opts, host+":/", mountPoint).CombinedOutput()
 	if err != nil {
 		panic(fmt.Errorf("could not mount nfs (%w): %s", err, out))
@@ -985,6 +985,16 @@ func (r *RunTests) run(
 		fmt.Sprintf("%v dirs, %v files", resurrectOpts.numDirs, resurrectOpts.numFiles),
 		func(counters *client.ClientCounters) {
 			resurrectSubtreeTest(log, r.terncliExe, r.registryAddress(), r.mountPoint, &resurrectOpts)
+		},
+	)
+
+	// Decommissions a block service, so keep it last.
+	r.test(
+		log,
+		"migrate decommissioned",
+		"",
+		func(counters *client.ClientCounters) {
+			migrateDecommissionedTest(log, r.registryAddress(), counters)
 		},
 	)
 

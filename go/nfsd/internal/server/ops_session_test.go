@@ -6,13 +6,12 @@ package server
 
 import (
 	"bytes"
+	"os"
 	"sync"
 	"testing"
 
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -24,6 +23,53 @@ func backSessionForTest(t *testing.T, srv *Server) *session {
 	sess.backRequested = true
 	sess.cb = newCBSender(srv, sess, 0x40000001, callbackSec{flavor: nfs4.AUTH_NONE})
 	return sess
+}
+
+// EXCHANGE_ID's server owner and scope come from the staging directory's
+// server-id: a restart on the same directory, or on a copy of it, is the
+// same server, and an empty directory is a new one.
+func TestExchangeIDServerOwnerFollowsStaging(t *testing.T) {
+	owner := func(dir string) []byte {
+		t.Helper()
+		store, err := staging.NewLocalStore(dir, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer staging.CloseFiles(t, store)
+		srv, err := NewServer(vfs.NewLocalTernVFS(t.TempDir()), store, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		useTestWireEpoch(srv)
+		_, res := admissionRequest(t, srv, exchangeIDBody("owner", [8]byte{1}), 1, testConnection(t))
+		admissionStatus(t, res, nfs4.NFS4_OK, nfs4.OP_EXCHANGE_ID)
+		it := res.Resarray()
+		it.Next()
+		ex := it.Resarray().Value().AsEXCHANGEID4resEntry().Value().AsEXCHANGEID4resok()
+		major := bytes.Clone(ex.EirServerOwner().SoMajorId())
+		if want := "ternfs-nfsd/" + store.ServerID().String(); string(major) != want {
+			t.Fatalf("server owner %q, want %q", major, want)
+		}
+		if scope := ex.EirServerScope(); !bytes.Equal(scope, major) {
+			t.Fatalf("server scope %q, want the owner %q", scope, major)
+		}
+		return major
+	}
+	dir := t.TempDir()
+	first := owner(dir)
+	if again := owner(dir); !bytes.Equal(again, first) {
+		t.Fatalf("restart changed the server owner from %q to %q", first, again)
+	}
+	moved := t.TempDir()
+	if err := os.CopyFS(moved, os.DirFS(dir)); err != nil {
+		t.Fatal(err)
+	}
+	if got := owner(moved); !bytes.Equal(got, first) {
+		t.Fatalf("moved staging has server owner %q, want %q", got, first)
+	}
+	if wiped := owner(t.TempDir()); bytes.Equal(wiped, first) {
+		t.Fatalf("an empty staging directory kept the server owner %q", wiped)
+	}
 }
 
 // testConnection is a transport whose writes vanish; its probes end when
@@ -77,13 +123,16 @@ func TestBindDirectionMatrix(t *testing.T) {
 		}
 	}
 
-	// A session that asked for no backchannel cannot gain one.
-	plain := srv.sessions.lookup(connectionSession(t, srv).id)
+	// A session that asked for no backchannel cannot gain one. It has a
+	// callback sender, as every created session does.
+	plainSess := backSessionForTest(t, srv)
+	plainSess.backRequested = false
+	plain := plainSess.id
 	for dir, status := range map[uint32]uint32{nfs4.CDFC4_BACK: nfs4.NFS4ERR_INVAL, nfs4.CDFC4_BACK_OR_BOTH: nfs4.NFS4ERR_INVAL, nfs4.CDFC4_FORE_OR_BOTH: nfs4.NFS4_OK} {
 		conn := testConnection(t)
-		_, res := admissionRequest(t, srv, admissionBind(plain.id, dir, false), 1, conn)
+		_, res := admissionRequest(t, srv, admissionBind(plain, dir, false), 1, conn)
 		admissionStatus(t, res, status, nfs4.OP_BIND_CONN_TO_SESSION)
-		if conn.carriesBack(plain.id) {
+		if conn.carriesBack(plain) {
 			t.Errorf("dir %d gave a back association", dir)
 		}
 	}
@@ -127,26 +176,6 @@ func TestCreateSessionReplayBindsBackchannel(t *testing.T) {
 	second.answerNull(t)
 }
 
-// A held confirmation's retry on a second connection binds the granted
-// backchannel to that connection.
-func TestHeldCreateSessionRetryBindsBackchannel(t *testing.T) {
-	f := newConfirmServer(t)
-	body := backCreateSessionBody(f.wireN, 1, nfs4.CREATE_SESSION4_FLAG_CONN_BACK_CHAN, offerNone)
-	// D applies but reports failure: held, and settled by the retry.
-	f.arm(clientstore.WriteD, clientstore.FaultAppliedFail, nil)
-	if got := f.rawStatus(t, body); got != nfs4.NFS4ERR_DELAY {
-		t.Fatalf("unresolved CREATE_SESSION %s", nfs4.Nfsstat4Name(got))
-	}
-	f.disarm()
-	f.fs.Set(clientstore.WriteD, clientstore.FaultNone, nil)
-	retry := newCBTestClient(t, addrOfTestServer(t, f.srv))
-	_, flags := createdSession(t, retry.compound(4000, body))
-	if flags&nfs4.CREATE_SESSION4_FLAG_CONN_BACK_CHAN == 0 {
-		t.Fatal("no backchannel granted")
-	}
-	retry.answerNull(t)
-}
-
 // With the connection's back quota full, CREATE_SESSION asking for a
 // backchannel gets RESOURCE before creating anything.
 func TestCreateSessionBackQuotaBeforeEffects(t *testing.T) {
@@ -175,69 +204,20 @@ func TestCreateSessionBackQuotaBeforeEffects(t *testing.T) {
 	admissionStatus(t, res, nfs4.NFS4_OK, nfs4.OP_CREATE_SESSION)
 }
 
-// Once the refresher has retired an incarnation here, its cached
-// CREATE_SESSION still replays the same (dead) session, but a new sequence
-// gets STALE_CLIENTID and creates nothing.
-func TestNoNewSessionForExpiredIncarnation(t *testing.T) {
+// Expiry decided while a CREATE_SESSION is past its slot reservation and
+// before its commit: the commit sees the gate and inserts nothing.
+func TestCreateSessionRacingExpiry(t *testing.T) {
 	srv, addr, cleanup := startTestServerWithServer(t, t.TempDir())
 	defer cleanup()
-	c := newCBTestClient(t, addr)
-	clientID, seq := exchangeOn(t, c, 1, "lease1")
-	body := backCreateSessionBody(clientID, seq, 0)
-	id, _ := createdSession(t, c.compound(2, body))
-	inc := incarnationForTest(t, srv, clientID)
-	srv.clients.StopLeaseWorkers()
-	setLeaseForTest(srv, inc, func(r *clientstore.LeaseRefresher) { r.State = clientstore.LeaseRecordStale })
-	leasePassForTest(t, srv, inc)
-	if srv.sessions.lookup(id) != nil {
-		t.Fatal("terminal pass did not retire the session")
-	}
-	before := srv.sessions.accounting()
-	if replayed, _ := createdSession(t, c.compound(3, body)); replayed != id {
-		t.Fatal("the cached CREATE_SESSION did not replay")
-	}
-	if res := c.compound(4, backCreateSessionBody(clientID, seq+1, 0)); res.Status() != nfs4.NFS4ERR_STALE_CLIENTID {
-		t.Fatalf("new CREATE_SESSION %s, want STALE_CLIENTID", nfs4.Nfsstat4Name(res.Status()))
-	}
-	after := srv.sessions.accounting()
-	if after.Sessions != before.Sessions || after.Records != before.Records || after.PendingSessions != before.PendingSessions {
-		t.Fatalf("refused CREATE_SESSION changed %+v to %+v", before, after)
-	}
-	// The slot did not advance: the old sequence still replays.
-	if replayed, _ := createdSession(t, c.compound(5, body)); replayed != id {
-		t.Fatal("the slot moved")
-	}
-}
-
-// Expiry decided while a CREATE_SESSION is past its slot
-// reservation and before its commit; the commit sees it.
-func TestCreateSessionRacingExpiry(t *testing.T) {
-	fs := &confirmedLookupHold{TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
-		entered: make(chan struct{}), release: make(chan struct{})}
-	srv, err := NewServer(fs, staging.ReadOnlyStore{}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr, stop := serveTestServer(t, srv)
-	defer stop()
-	defer testutil.CloseSignal(fs.release)
 	c := newCBTestClient(t, addr)
 	clientID, seq := exchangeOn(t, c, 1, "lease1-race")
 	createdSession(t, c.compound(2, backCreateSessionBody(clientID, seq, 0)))
 	inc := incarnationForTest(t, srv, clientID)
-	fs.mu.Lock()
-	fs.armed = true // CREATE_SESSION's IsConfirmed check pauses
-	fs.mu.Unlock()
-	srv.clients.StopLeaseWorkers()
-	done := make(chan uint32, 1)
-	go func() { done <- c.compound(3, backCreateSessionBody(clientID, seq+1, 0)).Status() }()
-	testutil.AwaitSignal(t, fs.entered, "CREATE_SESSION's confirmation check")
 	srv.sessions.mu.Lock()
 	srv.sessions.groups[inc].lease = gateExpired
 	srv.sessions.mu.Unlock()
 	before := srv.sessions.accounting()
-	testutil.CloseSignal(fs.release)
-	if got := testutil.AwaitValue(t, done, "CREATE_SESSION"); got != nfs4.NFS4ERR_STALE_CLIENTID {
+	if got := c.compound(3, backCreateSessionBody(clientID, seq+1, 0)).Status(); got != nfs4.NFS4ERR_STALE_CLIENTID {
 		t.Fatalf("CREATE_SESSION racing expiry %s, want STALE_CLIENTID", nfs4.Nfsstat4Name(got))
 	}
 	if after := srv.sessions.accounting(); after.Sessions != before.Sessions {
@@ -245,32 +225,23 @@ func TestCreateSessionRacingExpiry(t *testing.T) {
 	}
 }
 
-// After the refresher has retired a fleet-expired
-// incarnation here, the client recovers by registering again, without
-// waiting for a sweep. Its cached CREATE_SESSION replays the dead session,
-// a new sequence gets STALE_CLIENTID, and EXCHANGE_ID does not hand back the
-// expired record as warm: it gives a new clientid, whose CREATE_SESSION and
-// first SEQUENCE succeed. The old session stays BADSESSION.
+// An expired client recovers by registering again. Its wire record went
+// with its lease, so CREATE_SESSION on it gets STALE_CLIENTID, and
+// EXCHANGE_ID does not hand back the expired record as warm: it gives a
+// new clientid and incarnation, whose CREATE_SESSION and first SEQUENCE
+// succeed. The old session stays BADSESSION.
 func TestExpiredRegistrationRecovers(t *testing.T) {
 	srv, addr, cleanup := startTestServerWithServer(t, t.TempDir())
 	defer cleanup()
 	c := newCBTestClient(t, addr)
 	oldWire, seq := exchangeOn(t, c, 1, "expired-registration")
-	body := backCreateSessionBody(oldWire, seq, 0)
-	oldID, _ := createdSession(t, c.compound(2, body))
+	oldID, _ := createdSession(t, c.compound(2, backCreateSessionBody(oldWire, seq, 0)))
 	inc := incarnationForTest(t, srv, oldWire)
-	// Another process marked the client expired; this process's refresher
-	// sees the marker and retires the incarnation's sessions.
-	if err := srv.clients.PublishExpiredMarker(inc); err != nil {
-		t.Fatal(err)
-	}
-	srv.clients.StopLeaseWorkers()
-	leasePassForTest(t, srv, inc)
+	awaitRequestHoldsReleased(t, srv)
+	afterLeaseForTest(srv)
+	srv.runLeaseSweep()
 	if srv.sessions.lookup(oldID) != nil {
-		t.Fatal("the terminal pass did not retire the session")
-	}
-	if replayed, _ := createdSession(t, c.compound(3, body)); replayed != oldID {
-		t.Fatal("the cached CREATE_SESSION did not replay")
+		t.Fatal("expiry did not retire the session")
 	}
 	if res := c.compound(4, backCreateSessionBody(oldWire, seq+1, 0)); res.Status() != nfs4.NFS4ERR_STALE_CLIENTID {
 		t.Fatalf("new CREATE_SESSION %s, want STALE_CLIENTID", nfs4.Nfsstat4Name(res.Status()))
@@ -279,21 +250,10 @@ func TestExpiredRegistrationRecovers(t *testing.T) {
 	if newWire == oldWire {
 		t.Fatal("EXCHANGE_ID returned the expired registration as warm")
 	}
-	// Workers were stopped for the terminal pass, so CREATE_SESSION waits
-	// out its bootstrap bound and the test publishes with one pass, as the
-	// worker would.
 	newID, _ := createdSession(t, c.compound(6, backCreateSessionBody(newWire, newSeq, 0)))
-	newInc := incarnationForTest(t, srv, newWire)
-	if newInc == inc {
-		t.Fatal("the fleet-expired incarnation was adopted again")
+	if newInc := incarnationForTest(t, srv, newWire); newInc == inc {
+		t.Fatal("the expired incarnation was adopted again")
 	}
-	srv.clients.RefreshMu.Lock()
-	r, ok := srv.clients.RecordLocked(vfs.InodeID(newInc), true)
-	srv.clients.RefreshMu.Unlock()
-	if !ok {
-		t.Fatal("no record")
-	}
-	r.SafePass(true)
 	ts := newTestSession(newID, newWire, 16)
 	empty := buildCompoundBody(nil, func(*nfs4.COMPOUND4argsWriter) {})
 	if res := c.compound(7, withSequence(empty, ts, 0, 1)); res.Status() != nfs4.NFS4_OK {
@@ -383,102 +343,4 @@ func TestConcurrentBindsSerialize(t *testing.T) {
 			}
 		}
 	}
-}
-
-// leaseRemoveHold blocks the first RemoveEdge of the lease name once
-// armed: the terminal pass's cleanup of our lease.
-type leaseRemoveHold struct {
-	vfs.TernVFS
-	mu        sync.Mutex
-	leaseName string
-	armed     bool
-	entered   chan struct{}
-	release   chan struct{}
-}
-
-func (fs *leaseRemoveHold) RemoveEdge(dir vfs.InodeID, name string, edge vfs.Edge) error {
-	fs.mu.Lock()
-	hold := fs.armed && name == fs.leaseName
-	if hold {
-		fs.armed = false
-	}
-	fs.mu.Unlock()
-	if hold {
-		close(fs.entered)
-		<-fs.release
-	}
-	return fs.TernVFS.RemoveEdge(dir, name, edge)
-}
-
-// Once the refresher knows an incarnation is terminal, a new
-// CREATE_SESSION cannot commit, even while the terminal cleanup's store
-// I/O is blocked. The cached CREATE_SESSION still replays, and the slot
-// does not move.
-func TestTerminalAdmissionBeforeCleanup(t *testing.T) {
-	fs := &leaseRemoveHold{TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
-		entered: make(chan struct{}), release: make(chan struct{})}
-	srv, err := NewServer(fs, staging.ReadOnlyStore{}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	fs.leaseName = srv.clients.LeaseName
-	addr, stop := serveTestServer(t, srv)
-	defer stop()
-	defer testutil.CloseSignal(fs.release)
-	c := newCBTestClient(t, addr)
-	clientID, seq := exchangeOn(t, c, 1, "terminal-cleanup")
-	body := backCreateSessionBody(clientID, seq, 0)
-	id, _ := createdSession(t, c.compound(2, body))
-	inc := incarnationForTest(t, srv, clientID)
-	srv.clients.StopLeaseWorkers()
-	if !fs.present(vfs.InodeID(inc)) {
-		t.Fatal("no published lease to clean up")
-	}
-	setLeaseForTest(srv, inc, func(r *clientstore.LeaseRefresher) { r.State = clientstore.LeaseRecordStale })
-	fs.mu.Lock()
-	fs.armed = true
-	fs.mu.Unlock()
-	cs := srv.clients
-	cs.RefreshMu.Lock()
-	r, _ := cs.RecordLocked(vfs.InodeID(inc), true)
-	cs.RefreshMu.Unlock()
-	passed := make(chan struct{})
-	go func() {
-		defer close(passed)
-		r.SafePass(false)
-	}()
-	testutil.AwaitSignal(t, fs.entered, "the terminal cleanup's RemoveEdge")
-
-	before := srv.sessions.accounting()
-	if res := c.compound(3, backCreateSessionBody(clientID, seq+1, 0)); res.Status() != nfs4.NFS4ERR_STALE_CLIENTID {
-		t.Fatalf("CREATE_SESSION during terminal cleanup %s, want STALE_CLIENTID", nfs4.Nfsstat4Name(res.Status()))
-	}
-	if after := srv.sessions.accounting(); after.Sessions != before.Sessions ||
-		after.Records != before.Records || after.PendingSessions != before.PendingSessions {
-		t.Fatalf("refused CREATE_SESSION changed %+v to %+v", before, after)
-	}
-	if replayed, _ := createdSession(t, c.compound(4, body)); replayed != id {
-		t.Fatal("the cached CREATE_SESSION did not replay during cleanup")
-	}
-
-	testutil.CloseSignal(fs.release)
-	testutil.AwaitSignal(t, passed, "the terminal pass")
-	if fs.present(vfs.InodeID(inc)) {
-		t.Fatal("the terminal pass left our lease")
-	}
-	if srv.sessions.lookup(id) != nil {
-		t.Fatal("the terminal pass did not retire the session")
-	}
-	// After cleanup: still a replay of the dead session, and still no new one.
-	if replayed, _ := createdSession(t, c.compound(5, body)); replayed != id {
-		t.Fatal("the cached CREATE_SESSION did not replay after cleanup")
-	}
-	if res := c.compound(6, backCreateSessionBody(clientID, seq+1, 0)); res.Status() != nfs4.NFS4ERR_STALE_CLIENTID {
-		t.Fatalf("CREATE_SESSION after terminal cleanup %s, want STALE_CLIENTID", nfs4.Nfsstat4Name(res.Status()))
-	}
-}
-
-func (fs *leaseRemoveHold) present(dir vfs.InodeID) bool {
-	_, err := fs.TernVFS.Lookup(dir, fs.leaseName)
-	return err == nil
 }

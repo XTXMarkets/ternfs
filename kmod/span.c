@@ -185,13 +185,6 @@ static int try_fill_from_page_cache(struct address_space *mapping, struct list_h
     return 0;
 }
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
-static inline u32 prandom_u32(void)
-{
-	return get_random_u32();
-}
-#endif
-
 // Starts loading up D blocks as necessary.
 static int fetch_span_blocks(struct fetch_span_pages_state* st) {
     int i;
@@ -224,7 +217,7 @@ static int fetch_span_blocks(struct fetch_span_pages_state* st) {
         // blocks at random, so that we can use mirrored files to avoid
         // hotspot for super busy files.
         if (D == 1) {
-            int start = prandom_u32()%B;
+            int start = get_random_u32()%B;
             int j;
             for (j = start; j < start + B; j++) {
                 i = j%B;
@@ -431,7 +424,6 @@ static inline pgoff_t page_index_impl(struct page *page) {
     return page->index;
 }
 
-
 int ternfs_span_get_pages(struct ternfs_block_span* block_span, struct address_space * mapping, struct list_head *pages, unsigned nr_pages, struct list_head *extra_pages) {
     int err;
 
@@ -479,7 +471,6 @@ int ternfs_span_get_pages(struct ternfs_block_span* block_span, struct address_s
     u32 start_block_offset = stripe_offset%block_span->cell_size + stripe_ix * block_span->cell_size;
 
     u32 next_block_offset = (u32)-1;
-
 
     for(;;) {
         BUG_ON(curr_off > block_span->span.end);
@@ -658,7 +649,6 @@ int ternfs_span_get_pages(struct ternfs_block_span* block_span, struct address_s
                     // padding page that we will want to discard.
                     page_ix = (unsigned long)-1;
                 }
-
 
                 struct page *page = list_first_entry_or_null(&st->blocks_pages[curr_block_ix], struct page, lru);
                 BUG_ON(page == NULL);
@@ -915,7 +905,6 @@ struct ternfs_span* ternfs_get_span(struct ternfs_fs_info* fs_info, struct ternf
 
     u64 fetched_at = get_jiffies_64();
 
-retry:
     // Check if we already have the span
     {
         down_read(&spans->__lock);
@@ -935,8 +924,6 @@ retry:
                 return span;
             }
         }
-        // While it looks it must be there it could be again removed already
-        // BUG_ON(fetched); // If we've just fetched it must be here.
     }
 
     // We need to fetch the spans.
@@ -977,9 +964,13 @@ retry:
             ternfs_put_span(span);
         }
     }
-    up_write(&spans->__lock);
 
-    goto retry;
+    struct ternfs_span* span = lookup_span(&spans->__spans, offset);
+    if (likely(span != NULL)) {
+        atomic_inc(&span->refcount);
+    }
+    up_write(&spans->__lock);
+    GET_SPAN_EXIT(span);
 
 #undef GET_SPAN_EXIT
 }

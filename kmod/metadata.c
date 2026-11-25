@@ -249,7 +249,7 @@ int ternfs_shard_readdir(struct ternfs_fs_info* info, u64 dir, u64 start_pos, vo
             if (likely(ctx.err == 0)) {
                 int err = ternfs_dir_readdir_entry_cb(data, name_hash.x, name.str.buf, name.str.len, creation_time.x, target_id.x);
                 if (err) {
-                    consume_skb(skb);
+                    finish_resp(skb, kind, &ctx);
                     return err;
                 }
             }
@@ -327,14 +327,15 @@ static bool check_deleted_edge(
         }
         ternfs_full_read_dir_resp_get_end(&ctx, results_len, end);
         ternfs_full_read_dir_resp_get_finish(&ctx, end);
-        consume_skb(skb);
-        if (ctx.err != 0) { return false; }
+        if (finish_resp(skb, kind, &ctx) != 0) { return false; }
     }
 
     return good;
 }
 
-static bool check_new_edge_after_rename(
+// Return true if there is a recent edge from dir/name to target (even if that has since been replaced)
+// Limited to one page of current and historical edges within rename_idempotency_window of the current time.
+static bool check_new_edge(
     struct ternfs_fs_info* info, u64 dir, u64 target, const char* name, int name_len, u64* creation_time
 ) {
     int i;
@@ -385,8 +386,7 @@ static bool check_new_edge_after_rename(
         }
         ternfs_full_read_dir_resp_get_end(&ctx, results_len, end);
         ternfs_full_read_dir_resp_get_finish(&ctx, end);
-        consume_skb(skb);
-        if (ctx.err != 0) { return false; }
+        if (finish_resp(skb, kind, &ctx) != 0) { return false; }
     }
     return good;
 }
@@ -517,7 +517,7 @@ int ternfs_shard_rename(
             // See commentary in shardreq.go
             if (
                 check_deleted_edge(info, dir, target, old_name, old_name_len, old_creation_time, false) &&
-                check_new_edge_after_rename(info, dir, target, new_name, new_name_len, new_creation_time)
+                check_new_edge(info, dir, target, new_name, new_name_len, new_creation_time)
             ) {
                 recovered = true;
                 ctx.err = 0;
@@ -525,7 +525,7 @@ int ternfs_shard_rename(
         }
         FINISH_RESP();
 
-        if (!recovered) { // otherwise it's set by `check_new_edge_after_rename`
+        if (!recovered) { // otherwise it's set by `check_new_edge`
             *new_creation_time = resp_new_creation_time.x;
         }
     }
@@ -556,8 +556,19 @@ int ternfs_shard_link_file(struct ternfs_fs_info* info, u64 file, u64 cookie, u6
         ternfs_link_file_resp_get_creation_time(&ctx, start, resp_creation_time);
         ternfs_link_file_resp_get_end(&ctx, resp_creation_time, end);
         ternfs_link_file_resp_get_finish(&ctx, end);
+        bool recovered = false;
+        if (ctx.err == TERNFS_ERR_FILE_NOT_FOUND) {
+            ternfs_debug("got file not found, performing followup checks");
+            // Return success if the link previously succeeded
+            if (check_new_edge(info, dir, file, name, name_len, creation_time)) {
+                recovered = true;
+                ctx.err = 0;
+            }
+        }
         FINISH_RESP();
-        *creation_time = resp_creation_time.x;
+        if (!recovered) { // otherwise it's set by `check_new_edge`
+            *creation_time = resp_creation_time.x;
+        }
     }
 
     return 0;
@@ -901,7 +912,7 @@ int ternfs_shard_add_span_initiate(
         ternfs_add_span_initiate_resp_get_start(&ctx, start);
         ternfs_add_span_initiate_resp_get_blocks(&ctx, start, blocks);
         if (unlikely(ctx.err == 0 && blocks.len != B)) {
-            consume_skb(skb);
+            finish_resp(skb, kind, &ctx);
             ternfs_warn("expected %d blocks, got %d", B, blocks.len);
             return TERNFS_ERR_MALFORMED_RESPONSE;
         }
@@ -936,11 +947,7 @@ int ternfs_shard_add_span_initiate(
         }
         ternfs_add_span_initiate_resp_get_end(&ctx, blocks, end);
         ternfs_add_span_initiate_resp_get_finish(&ctx, end);
-        consume_skb(skb);
-        if (unlikely(ctx.err != 0)) {
-            ternfs_debug("resp of kind %02x failed with err %d", kind, ctx.err);
-            return ctx.err;
-        }
+        FINISH_RESP();
     }
 
     return 0;
@@ -1286,7 +1293,7 @@ int ternfs_cdc_rename_directory(
             // See commentary in shardreq.go
             if (
                 check_deleted_edge(info, old_parent, target, old_name, old_name_len, old_creation_time, false) &&
-                check_new_edge_after_rename(info, new_parent, target, new_name, new_name_len, new_creation_time)
+                check_new_edge(info, new_parent, target, new_name, new_name_len, new_creation_time)
             ) {
                 recovered = true;
                 ctx.err = 0;
@@ -1337,7 +1344,7 @@ int ternfs_cdc_rename_file(
             // See commentary in shardreq.go
             if (
                 check_deleted_edge(info, old_parent, target, old_name, old_name_len, old_creation_time, false) &&
-                check_new_edge_after_rename(info, new_parent, target, new_name, new_name_len, new_creation_time)
+                check_new_edge(info, new_parent, target, new_name, new_name_len, new_creation_time)
             ) {
                 recovered = true;
                 ctx.err = 0;

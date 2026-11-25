@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sessionstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -243,26 +243,36 @@ func TestGroupClosingAndReplacedAdmission(t *testing.T) {
 	}
 }
 
-type confirmedLookupGateVFS struct {
-	vfs.TernVFS
+// creationGate holds the next CREATE_SESSION, once armed, as it creates its
+// session file: past its slot and its reservations, before its commit.
+type creationGate struct {
 	armed            atomic.Bool
 	entered, release chan struct{}
 }
 
-func (fs *confirmedLookupGateVFS) Lookup(dir vfs.InodeID, name string) (vfs.InodeID, error) {
-	if name == clientstore.ConfirmedName && fs.armed.CompareAndSwap(true, false) {
-		close(fs.entered)
-		<-fs.release
+func gateCreations(t *testing.T, srv *Server) *creationGate {
+	t.Helper()
+	if srv.sessionFiles == nil {
+		t.Fatal("no session files to gate")
 	}
-	return fs.TernVFS.Lookup(dir, name)
+	g := &creationGate{entered: make(chan struct{}), release: make(chan struct{})}
+	create := srv.newSessionFile
+	srv.newSessionFile = func(id sessionstore.ID, h sessionstore.Header) (*sessionstore.File, error) {
+		if g.armed.CompareAndSwap(true, false) {
+			close(g.entered)
+			<-g.release
+		}
+		return create(id, h)
+	}
+	t.Cleanup(func() { testutil.CloseSignal(g.release) })
+	return g
 }
 
-// A standalone CREATE_SESSION blocked in the store keeps replacement out
-// until it has inserted its session.
+// A CREATE_SESSION in progress keeps replacement out until it has inserted
+// its session.
 func TestGroupStandaloneCreateSessionExcludesReplacement(t *testing.T) {
-	fs := &confirmedLookupGateVFS{TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
-		entered: make(chan struct{}), release: make(chan struct{})}
-	srv := admissionWritableServer(t, fs)
+	srv := admissionWritableServer(t, vfs.NewLocalTernVFS(t.TempDir()))
+	fs := gateCreations(t, srv)
 	addr, stop := serveTestServer(t, srv)
 	defer stop()
 	conn := dial(t, addr)
@@ -279,7 +289,7 @@ func TestGroupStandaloneCreateSessionExcludesReplacement(t *testing.T) {
 		result <- res
 	}()
 	incarnation := incarnationForTest(t, srv, client)
-	testutil.AwaitSignal(t, fs.entered, "CREATE_SESSION store check")
+	testutil.AwaitSignal(t, fs.entered, "CREATE_SESSION in progress")
 	if srv.sessions.closeForReplacement(incarnation) {
 		t.Fatal("replacement overtook an in-progress CREATE_SESSION")
 	}

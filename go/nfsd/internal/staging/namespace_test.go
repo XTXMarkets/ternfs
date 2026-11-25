@@ -198,6 +198,14 @@ func TestNamespaceMutationClassification(t *testing.T) {
 			local.ClassifyMutation(op, errors.New("lost reply")) != vfs.MutationUnknown {
 			t.Fatal("local classification does not distinguish syscall rejection")
 		}
+		// A local REMOVE of a name already gone still detaches the staging.
+		want := vfs.MutationNotApplied
+		if op == nfs4.OP_REMOVE {
+			want = vfs.MutationDetachOnly
+		}
+		if got := local.ClassifyMutation(op, &os.PathError{Op: "remove", Path: "doc", Err: syscall.ENOENT}); got != want {
+			t.Fatalf("local edge-gone classification = %v, want %v", got, want)
+		}
 	}
 }
 

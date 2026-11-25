@@ -770,13 +770,18 @@ TEST_CASE("DecommissionBlockService") {
     std::vector<LogsDBLogEntry> logEntries;
     std::vector<RegistryDBWriteResult> writeResults;
 
+    auto now = ternNow();
+    SUBCASE("recent") {}
+    SUBCASE("emptyAndOlderThanOneWeek") {
+        now = now - 336_hours;
+    }
 
     {
         auto& entry = logEntries.emplace_back();
         entry.idx = db->lastAppliedLogEntry() + 1;
 
         RegistryDBLogEntry registryLogEntry;
-        registryLogEntry.entryTime = ternNow();
+        registryLogEntry.entryTime = now;
         auto& reqContainer = registryLogEntry.requests.els.emplace_back();
         auto& registerReq = reqContainer.setRegisterBlockServices();
 
@@ -803,7 +808,7 @@ TEST_CASE("DecommissionBlockService") {
         entry.idx = db->lastAppliedLogEntry() + 2;
 
         RegistryDBLogEntry registryLogEntry;
-        registryLogEntry.entryTime = ternNow();
+        registryLogEntry.entryTime = now;
         auto& reqContainer = registryLogEntry.requests.els.emplace_back();
         auto& decommissionReq = reqContainer.setDecommissionBlockService();
         decommissionReq.id = BlockServiceId(300);
@@ -827,6 +832,8 @@ TEST_CASE("DecommissionBlockService") {
     for (const auto& service : services) {
         if (service.id == BlockServiceId(300)) {
             CHECK(service.flags == BlockServiceFlags::DECOMMISSIONED);
+            CHECK_FALSE(service.hasFiles);
+            CHECK(service.lastInfoChange == now);
             found = true;
             break;
         }

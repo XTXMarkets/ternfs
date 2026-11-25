@@ -5,9 +5,15 @@
 package server
 
 import (
+	"net"
+	"os"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/sessionstore"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -21,12 +27,47 @@ func sequenceArgsForTest(t *testing.T, wire []byte) nfs4.SEQUENCE4args {
 	return it.Argarray().Value().AsSEQUENCE4args()
 }
 
+// createFile publishes a file with data at name, replacing what is there,
+// as a TernFS client would: through a transient.
+func createFile(fs vfs.TernVFS, dir vfs.InodeID, name, data string) (vfs.InodeID, error) {
+	id, cookie, err := fs.ConstructFile(dir)
+	if err != nil {
+		return 0, err
+	}
+	return id, fs.LinkFile(id, cookie, dir, name, strings.NewReader(data))
+}
+
 func readPublished(fs vfs.TernVFS, name string) ([]byte, error) {
 	id, err := fs.Lookup(fs.RootID(), name)
 	if err != nil {
 		return nil, err
 	}
-	return fs.ReadAll(id)
+	return readAll(fs, id)
+}
+
+// readAll reads the whole of file id from the backend.
+func readAll(fs vfs.TernVFS, id vfs.InodeID) ([]byte, error) {
+	var data []byte
+	buf := make([]byte, 1<<16)
+	for {
+		n, eof, err := fs.Read(id, uint64(len(data)), buf)
+		if err != nil {
+			return nil, err
+		}
+		data = append(data, buf[:n]...)
+		if eof || n == 0 {
+			return data, nil
+		}
+	}
+}
+
+// removeName removes name from dir through the edge it has now.
+func removeName(fs vfs.TernVFS, dir vfs.InodeID, name string) error {
+	edge, err := fs.LookupEdge(dir, name)
+	if err != nil {
+		return err
+	}
+	return fs.RemoveEdge(dir, name, edge)
 }
 
 // addrOfTestServer finds a served test server's address in the registry.
@@ -69,4 +110,90 @@ func createdSession(t *testing.T, res nfs4.COMPOUND4res) (SessionID, uint32) {
 	it.Next()
 	ok := it.Resarray().Value().AsCREATESESSION4resEntry().Value().AsCREATESESSION4resok()
 	return readSessionID(ok.CsrSessionid()), ok.CsrFlags()
+}
+
+// stagingFiles lists the staging directory's files, leaving out its
+// subdirectories: aliases and quarantine are not staged writers.
+func stagingFiles(dir string) ([]os.DirEntry, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	files := entries[:0]
+	for _, e := range entries {
+		if !e.IsDir() && e.Name() != staging.ServerIDFileName {
+			files = append(files, e)
+		}
+	}
+	return files, nil
+}
+
+// holdRecord makes the next reply record wait, once written, until release
+// is closed; recording is closed when it waits. The compound's last
+// operation keeps its locks until then.
+func holdRecord(srv *Server) (recording, release chan struct{}) {
+	recording, release = make(chan struct{}), make(chan struct{})
+	persist := srv.sessions.persistSlot
+	var held atomic.Bool
+	srv.sessions.persistSlot = func(sess *session, slotID uint32, rec sessionstore.Record) {
+		persist(sess, slotID, rec)
+		if held.CompareAndSwap(false, true) {
+			close(recording)
+			<-release
+		}
+	}
+	return recording, release
+}
+
+// openBody opens name in the root for owner with access, creating nothing,
+// and returns its handle.
+func openBody(clientID uint64, owner, name string, access uint32) []byte {
+	return buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
+		w.AppendArgarray_Putrootfh()
+		ow := w.AppendArgarray_Open()
+		ow.SetShareAccess(access)
+		ow.SetShareDeny(nfs4.OPEN4_SHARE_DENY_NONE)
+		ownerW := ow.StartOwner()
+		ownerW = ownerW.SetClientid(clientID)
+		ow.Resume(ownerW.SetOwner([]byte(owner)).Finish())
+		ow.SetOpenhow_Default(nfs4.OPEN4_NOCREATE)
+		ow.Resume(ow.SetClaim_Null().SetData([]byte(name)).Finish())
+		w.Resume(ow.Finish())
+		w.AppendArgarray_Getfh()
+	})
+}
+
+// sendAsync sends wire on conn from another goroutine; the reply arrives
+// on the channel, nil on a transport error.
+func sendAsync(conn net.Conn, xid uint32, wire []byte) <-chan []byte {
+	done := make(chan []byte, 1)
+	go func() {
+		reply, err := sendRawRPC(conn, xid, procCompound, wire)
+		if err != nil {
+			reply = nil
+		}
+		done <- reply
+	}()
+	return done
+}
+
+// newTestStaging returns a store on a fresh staging directory.
+func newTestStaging(t *testing.T) *staging.LocalStore {
+	t.Helper()
+	store, err := staging.NewLocalStore(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store
+}
+
+// startTestServerWithVFS serves fs with a fresh staging directory.
+func startTestServerWithVFS(t *testing.T, fs vfs.TernVFS) (*Server, string, func()) {
+	t.Helper()
+	srv, err := NewServer(fs, newTestStaging(t), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr, cleanup := serveTestServer(t, srv)
+	return srv, addr, cleanup
 }

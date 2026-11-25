@@ -18,6 +18,8 @@ type Timings struct {
 	bins      []uint64
 }
 
+// Merge adds t2's counts into t1. t2 may be live; t1 must be private to the
+// caller, such as a Snapshot.
 func (t1 *Timings) Merge(t2 *Timings) {
 	if !reflect.DeepEqual(t1.histo, t2.histo) {
 		panic(fmt.Errorf("different histos, %+v vs %+v", t1.histo, t2.histo))
@@ -26,8 +28,18 @@ func (t1 *Timings) Merge(t2 *Timings) {
 		t1.startedAt = t2.startedAt
 	}
 	for i := 0; i < len(t1.bins); i++ {
-		t1.bins[i] += t2.bins[i]
+		t1.bins[i] += atomic.LoadUint64(&t2.bins[i])
 	}
+}
+
+// Snapshot copies t into storage of its own. Each bin is loaded atomically,
+// so it is safe against concurrent Add, but the bins are not one instant.
+func (t *Timings) Snapshot() Timings {
+	s := Timings{histo: t.histo, startedAt: t.startedAt, bins: make([]uint64, len(t.bins))}
+	for i := range t.bins {
+		s.bins[i] = atomic.LoadUint64(&t.bins[i])
+	}
+	return s
 }
 
 type HistogramBin struct {
@@ -38,7 +50,7 @@ type HistogramBin struct {
 func (t *Timings) Histogram() []HistogramBin {
 	bins := make([]HistogramBin, len(t.bins))
 	for i, upperBound := range t.histo.Bins() {
-		bins[i].Count = t.bins[i]
+		bins[i].Count = atomic.LoadUint64(&t.bins[i])
 		bins[i].UpperBound = time.Duration(upperBound)
 	}
 	return bins

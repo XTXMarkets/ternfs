@@ -106,8 +106,14 @@
 #define TERNFS_ERR_REGISTRY_OVERLOADED 105
 #define TERNFS_ERR_SHARDS_NOT_READY 106
 #define TERNFS_ERR_CDC_NOT_READY 107
+#define TERNFS_ERR_BLOCK_SERVICE_NOT_DECOMMISSIONED 108
+#define TERNFS_ERR_REPLACE_BLOCKS_MISMATCHING_SIZE 109
+#define TERNFS_ERR_REPLACE_BLOCKS_MISMATCHING_CRC 110
+#define TERNFS_ERR_REPLACE_BLOCKS_MISMATCHING_LOCATION 111
+#define TERNFS_ERR_REPLACE_BLOCKS_DUPLICATE_BLOCK_SERVICE 112
+#define TERNFS_ERR_REPLACE_BLOCKS_DUPLICATE_FAILURE_DOMAIN 113
 
-#define __print_ternfs_err(i) __print_symbolic(i, { 10, "INTERNAL_ERROR" }, { 11, "FATAL_ERROR" }, { 12, "TIMEOUT" }, { 13, "MALFORMED_REQUEST" }, { 14, "MALFORMED_RESPONSE" }, { 15, "NOT_AUTHORISED" }, { 16, "UNRECOGNIZED_REQUEST" }, { 17, "FILE_NOT_FOUND" }, { 18, "DIRECTORY_NOT_FOUND" }, { 19, "NAME_NOT_FOUND" }, { 20, "EDGE_NOT_FOUND" }, { 21, "EDGE_IS_LOCKED" }, { 22, "TYPE_IS_DIRECTORY" }, { 23, "TYPE_IS_NOT_DIRECTORY" }, { 24, "BAD_COOKIE" }, { 25, "INCONSISTENT_STORAGE_CLASS_PARITY" }, { 26, "LAST_SPAN_STATE_NOT_CLEAN" }, { 27, "COULD_NOT_PICK_BLOCK_SERVICES" }, { 28, "BAD_SPAN_BODY" }, { 29, "SPAN_NOT_FOUND" }, { 30, "BLOCK_SERVICE_NOT_FOUND" }, { 31, "CANNOT_CERTIFY_BLOCKLESS_SPAN" }, { 32, "BAD_NUMBER_OF_BLOCKS_PROOFS" }, { 33, "BAD_BLOCK_PROOF" }, { 34, "CANNOT_OVERRIDE_NAME" }, { 35, "NAME_IS_LOCKED" }, { 36, "MTIME_IS_TOO_RECENT" }, { 37, "MISMATCHING_TARGET" }, { 38, "MISMATCHING_OWNER" }, { 39, "MISMATCHING_CREATION_TIME" }, { 40, "DIRECTORY_NOT_EMPTY" }, { 41, "FILE_IS_TRANSIENT" }, { 42, "OLD_DIRECTORY_NOT_FOUND" }, { 43, "NEW_DIRECTORY_NOT_FOUND" }, { 44, "LOOP_IN_DIRECTORY_RENAME" }, { 45, "DIRECTORY_HAS_OWNER" }, { 46, "FILE_IS_NOT_TRANSIENT" }, { 47, "FILE_NOT_EMPTY" }, { 48, "CANNOT_REMOVE_ROOT_DIRECTORY" }, { 49, "FILE_EMPTY" }, { 50, "CANNOT_REMOVE_DIRTY_SPAN" }, { 51, "BAD_SHARD" }, { 52, "BAD_NAME" }, { 53, "MORE_RECENT_SNAPSHOT_EDGE" }, { 54, "MORE_RECENT_CURRENT_EDGE" }, { 55, "BAD_DIRECTORY_INFO" }, { 56, "DEADLINE_NOT_PASSED" }, { 57, "SAME_SOURCE_AND_DESTINATION" }, { 58, "SAME_DIRECTORIES" }, { 59, "SAME_SHARD" }, { 60, "BAD_PROTOCOL_VERSION" }, { 61, "BAD_CERTIFICATE" }, { 62, "BLOCK_TOO_RECENT_FOR_DELETION" }, { 63, "BLOCK_FETCH_OUT_OF_BOUNDS" }, { 64, "BAD_BLOCK_CRC" }, { 65, "BLOCK_TOO_BIG" }, { 66, "BLOCK_NOT_FOUND" }, { 67, "CANNOT_UNSET_DECOMMISSIONED" }, { 68, "CANNOT_REGISTER_DECOMMISSIONED_OR_STALE" }, { 69, "BLOCK_TOO_OLD_FOR_WRITE" }, { 70, "BLOCK_IO_ERROR_DEVICE" }, { 71, "BLOCK_IO_ERROR_FILE" }, { 72, "INVALID_REPLICA" }, { 73, "DIFFERENT_ADDRS_INFO" }, { 74, "LEADER_PREEMPTED" }, { 75, "LOG_ENTRY_MISSING" }, { 76, "LOG_ENTRY_TRIMMED" }, { 77, "LOG_ENTRY_UNRELEASED" }, { 78, "LOG_ENTRY_RELEASED" }, { 79, "AUTO_DECOMMISSION_FORBIDDEN" }, { 80, "INCONSISTENT_BLOCK_SERVICE_REGISTRATION" }, { 81, "SWAP_BLOCKS_INLINE_STORAGE" }, { 82, "SWAP_BLOCKS_MISMATCHING_SIZE" }, { 83, "SWAP_BLOCKS_MISMATCHING_STATE" }, { 84, "SWAP_BLOCKS_MISMATCHING_CRC" }, { 85, "SWAP_BLOCKS_DUPLICATE_BLOCK_SERVICE" }, { 86, "SWAP_SPANS_INLINE_STORAGE" }, { 87, "SWAP_SPANS_MISMATCHING_SIZE" }, { 88, "SWAP_SPANS_NOT_CLEAN" }, { 89, "SWAP_SPANS_MISMATCHING_CRC" }, { 90, "SWAP_SPANS_MISMATCHING_BLOCKS" }, { 91, "EDGE_NOT_OWNED" }, { 92, "CANNOT_CREATE_DB_SNAPSHOT" }, { 93, "BLOCK_SIZE_NOT_MULTIPLE_OF_PAGE_SIZE" }, { 94, "SWAP_BLOCKS_DUPLICATE_FAILURE_DOMAIN" }, { 95, "TRANSIENT_LOCATION_COUNT" }, { 96, "ADD_SPAN_LOCATION_INLINE_STORAGE" }, { 97, "ADD_SPAN_LOCATION_MISMATCHING_SIZE" }, { 98, "ADD_SPAN_LOCATION_NOT_CLEAN" }, { 99, "ADD_SPAN_LOCATION_MISMATCHING_CRC" }, { 100, "ADD_SPAN_LOCATION_EXISTS" }, { 101, "SWAP_BLOCKS_MISMATCHING_LOCATION" }, { 102, "LOCATION_EXISTS" }, { 103, "LOCATION_NOT_FOUND" }, { 104, "AUTO_DECOMMISSION_RATE_LIMITED" }, { 105, "REGISTRY_OVERLOADED" }, { 106, "SHARDS_NOT_READY" }, { 107, "CDC_NOT_READY" })
+#define __print_ternfs_err(i) __print_symbolic(i, { 10, "INTERNAL_ERROR" }, { 11, "FATAL_ERROR" }, { 12, "TIMEOUT" }, { 13, "MALFORMED_REQUEST" }, { 14, "MALFORMED_RESPONSE" }, { 15, "NOT_AUTHORISED" }, { 16, "UNRECOGNIZED_REQUEST" }, { 17, "FILE_NOT_FOUND" }, { 18, "DIRECTORY_NOT_FOUND" }, { 19, "NAME_NOT_FOUND" }, { 20, "EDGE_NOT_FOUND" }, { 21, "EDGE_IS_LOCKED" }, { 22, "TYPE_IS_DIRECTORY" }, { 23, "TYPE_IS_NOT_DIRECTORY" }, { 24, "BAD_COOKIE" }, { 25, "INCONSISTENT_STORAGE_CLASS_PARITY" }, { 26, "LAST_SPAN_STATE_NOT_CLEAN" }, { 27, "COULD_NOT_PICK_BLOCK_SERVICES" }, { 28, "BAD_SPAN_BODY" }, { 29, "SPAN_NOT_FOUND" }, { 30, "BLOCK_SERVICE_NOT_FOUND" }, { 31, "CANNOT_CERTIFY_BLOCKLESS_SPAN" }, { 32, "BAD_NUMBER_OF_BLOCKS_PROOFS" }, { 33, "BAD_BLOCK_PROOF" }, { 34, "CANNOT_OVERRIDE_NAME" }, { 35, "NAME_IS_LOCKED" }, { 36, "MTIME_IS_TOO_RECENT" }, { 37, "MISMATCHING_TARGET" }, { 38, "MISMATCHING_OWNER" }, { 39, "MISMATCHING_CREATION_TIME" }, { 40, "DIRECTORY_NOT_EMPTY" }, { 41, "FILE_IS_TRANSIENT" }, { 42, "OLD_DIRECTORY_NOT_FOUND" }, { 43, "NEW_DIRECTORY_NOT_FOUND" }, { 44, "LOOP_IN_DIRECTORY_RENAME" }, { 45, "DIRECTORY_HAS_OWNER" }, { 46, "FILE_IS_NOT_TRANSIENT" }, { 47, "FILE_NOT_EMPTY" }, { 48, "CANNOT_REMOVE_ROOT_DIRECTORY" }, { 49, "FILE_EMPTY" }, { 50, "CANNOT_REMOVE_DIRTY_SPAN" }, { 51, "BAD_SHARD" }, { 52, "BAD_NAME" }, { 53, "MORE_RECENT_SNAPSHOT_EDGE" }, { 54, "MORE_RECENT_CURRENT_EDGE" }, { 55, "BAD_DIRECTORY_INFO" }, { 56, "DEADLINE_NOT_PASSED" }, { 57, "SAME_SOURCE_AND_DESTINATION" }, { 58, "SAME_DIRECTORIES" }, { 59, "SAME_SHARD" }, { 60, "BAD_PROTOCOL_VERSION" }, { 61, "BAD_CERTIFICATE" }, { 62, "BLOCK_TOO_RECENT_FOR_DELETION" }, { 63, "BLOCK_FETCH_OUT_OF_BOUNDS" }, { 64, "BAD_BLOCK_CRC" }, { 65, "BLOCK_TOO_BIG" }, { 66, "BLOCK_NOT_FOUND" }, { 67, "CANNOT_UNSET_DECOMMISSIONED" }, { 68, "CANNOT_REGISTER_DECOMMISSIONED_OR_STALE" }, { 69, "BLOCK_TOO_OLD_FOR_WRITE" }, { 70, "BLOCK_IO_ERROR_DEVICE" }, { 71, "BLOCK_IO_ERROR_FILE" }, { 72, "INVALID_REPLICA" }, { 73, "DIFFERENT_ADDRS_INFO" }, { 74, "LEADER_PREEMPTED" }, { 75, "LOG_ENTRY_MISSING" }, { 76, "LOG_ENTRY_TRIMMED" }, { 77, "LOG_ENTRY_UNRELEASED" }, { 78, "LOG_ENTRY_RELEASED" }, { 79, "AUTO_DECOMMISSION_FORBIDDEN" }, { 80, "INCONSISTENT_BLOCK_SERVICE_REGISTRATION" }, { 81, "SWAP_BLOCKS_INLINE_STORAGE" }, { 82, "SWAP_BLOCKS_MISMATCHING_SIZE" }, { 83, "SWAP_BLOCKS_MISMATCHING_STATE" }, { 84, "SWAP_BLOCKS_MISMATCHING_CRC" }, { 85, "SWAP_BLOCKS_DUPLICATE_BLOCK_SERVICE" }, { 86, "SWAP_SPANS_INLINE_STORAGE" }, { 87, "SWAP_SPANS_MISMATCHING_SIZE" }, { 88, "SWAP_SPANS_NOT_CLEAN" }, { 89, "SWAP_SPANS_MISMATCHING_CRC" }, { 90, "SWAP_SPANS_MISMATCHING_BLOCKS" }, { 91, "EDGE_NOT_OWNED" }, { 92, "CANNOT_CREATE_DB_SNAPSHOT" }, { 93, "BLOCK_SIZE_NOT_MULTIPLE_OF_PAGE_SIZE" }, { 94, "SWAP_BLOCKS_DUPLICATE_FAILURE_DOMAIN" }, { 95, "TRANSIENT_LOCATION_COUNT" }, { 96, "ADD_SPAN_LOCATION_INLINE_STORAGE" }, { 97, "ADD_SPAN_LOCATION_MISMATCHING_SIZE" }, { 98, "ADD_SPAN_LOCATION_NOT_CLEAN" }, { 99, "ADD_SPAN_LOCATION_MISMATCHING_CRC" }, { 100, "ADD_SPAN_LOCATION_EXISTS" }, { 101, "SWAP_BLOCKS_MISMATCHING_LOCATION" }, { 102, "LOCATION_EXISTS" }, { 103, "LOCATION_NOT_FOUND" }, { 104, "AUTO_DECOMMISSION_RATE_LIMITED" }, { 105, "REGISTRY_OVERLOADED" }, { 106, "SHARDS_NOT_READY" }, { 107, "CDC_NOT_READY" }, { 108, "BLOCK_SERVICE_NOT_DECOMMISSIONED" }, { 109, "REPLACE_BLOCKS_MISMATCHING_SIZE" }, { 110, "REPLACE_BLOCKS_MISMATCHING_CRC" }, { 111, "REPLACE_BLOCKS_MISMATCHING_LOCATION" }, { 112, "REPLACE_BLOCKS_DUPLICATE_BLOCK_SERVICE" }, { 113, "REPLACE_BLOCKS_DUPLICATE_FAILURE_DOMAIN" })
 const char* ternfs_err_str(int err);
 
 #define TERNFS_SHARD_LOOKUP 0x1
@@ -345,6 +351,7 @@ struct ternfs_directory_info_start;
 
 struct ternfs_directory_info_entries { u16 len; };
 static inline void _ternfs_directory_info_get_entries(struct ternfs_bincode_get_ctx* ctx, struct ternfs_directory_info_start** prev, struct ternfs_directory_info_entries* next) {
+    next->len = 0;
     if (likely(ctx->err == 0)) {
         if (unlikely(ctx->end - ctx->buf < 2)) {
             ctx->err = TERNFS_ERR_MALFORMED_RESPONSE;
@@ -352,8 +359,6 @@ static inline void _ternfs_directory_info_get_entries(struct ternfs_bincode_get_
             next->len = get_unaligned_le16(ctx->buf);
             ctx->buf += 2;
         }
-    } else {
-        next->len = 0;
     }
 }
 #define ternfs_directory_info_get_entries(ctx, prev, next) \
@@ -1453,6 +1458,7 @@ static inline void _ternfs_fetched_blocks_span_get_cell_size(struct ternfs_binco
 
 struct ternfs_fetched_blocks_span_blocks { u16 len; };
 static inline void _ternfs_fetched_blocks_span_get_blocks(struct ternfs_bincode_get_ctx* ctx, struct ternfs_fetched_blocks_span_cell_size* prev, struct ternfs_fetched_blocks_span_blocks* next) {
+    next->len = 0;
     if (likely(ctx->err == 0)) {
         if (unlikely(ctx->end - ctx->buf < 2)) {
             ctx->err = TERNFS_ERR_MALFORMED_RESPONSE;
@@ -1460,8 +1466,6 @@ static inline void _ternfs_fetched_blocks_span_get_blocks(struct ternfs_bincode_
             next->len = get_unaligned_le16(ctx->buf);
             ctx->buf += 2;
         }
-    } else {
-        next->len = 0;
     }
 }
 #define ternfs_fetched_blocks_span_get_blocks(ctx, prev, next) \
@@ -1470,6 +1474,7 @@ static inline void _ternfs_fetched_blocks_span_get_blocks(struct ternfs_bincode_
 
 struct ternfs_fetched_blocks_span_stripes_crc { u16 len; };
 static inline void _ternfs_fetched_blocks_span_get_stripes_crc(struct ternfs_bincode_get_ctx* ctx, struct ternfs_fetched_blocks_span_blocks* prev, struct ternfs_fetched_blocks_span_stripes_crc* next) {
+    next->len = 0;
     if (likely(ctx->err == 0)) {
         if (unlikely(ctx->end - ctx->buf < 2)) {
             ctx->err = TERNFS_ERR_MALFORMED_RESPONSE;
@@ -1477,8 +1482,6 @@ static inline void _ternfs_fetched_blocks_span_get_stripes_crc(struct ternfs_bin
             next->len = get_unaligned_le16(ctx->buf);
             ctx->buf += 2;
         }
-    } else {
-        next->len = 0;
     }
 }
 #define ternfs_fetched_blocks_span_get_stripes_crc(ctx, prev, next) \
@@ -1634,6 +1637,7 @@ static inline void _ternfs_fetched_block_services_get_cell_size(struct ternfs_bi
 
 struct ternfs_fetched_block_services_blocks { u16 len; };
 static inline void _ternfs_fetched_block_services_get_blocks(struct ternfs_bincode_get_ctx* ctx, struct ternfs_fetched_block_services_cell_size* prev, struct ternfs_fetched_block_services_blocks* next) {
+    next->len = 0;
     if (likely(ctx->err == 0)) {
         if (unlikely(ctx->end - ctx->buf < 2)) {
             ctx->err = TERNFS_ERR_MALFORMED_RESPONSE;
@@ -1641,8 +1645,6 @@ static inline void _ternfs_fetched_block_services_get_blocks(struct ternfs_binco
             next->len = get_unaligned_le16(ctx->buf);
             ctx->buf += 2;
         }
-    } else {
-        next->len = 0;
     }
 }
 #define ternfs_fetched_block_services_get_blocks(ctx, prev, next) \
@@ -1651,6 +1653,7 @@ static inline void _ternfs_fetched_block_services_get_blocks(struct ternfs_binco
 
 struct ternfs_fetched_block_services_stripes_crc { u16 len; };
 static inline void _ternfs_fetched_block_services_get_stripes_crc(struct ternfs_bincode_get_ctx* ctx, struct ternfs_fetched_block_services_blocks* prev, struct ternfs_fetched_block_services_stripes_crc* next) {
+    next->len = 0;
     if (likely(ctx->err == 0)) {
         if (unlikely(ctx->end - ctx->buf < 2)) {
             ctx->err = TERNFS_ERR_MALFORMED_RESPONSE;
@@ -1658,8 +1661,6 @@ static inline void _ternfs_fetched_block_services_get_stripes_crc(struct ternfs_
             next->len = get_unaligned_le16(ctx->buf);
             ctx->buf += 2;
         }
-    } else {
-        next->len = 0;
     }
 }
 #define ternfs_fetched_block_services_get_stripes_crc(ctx, prev, next) \
@@ -1760,6 +1761,7 @@ struct ternfs_fetched_locations_start;
 
 struct ternfs_fetched_locations_locations { u16 len; };
 static inline void _ternfs_fetched_locations_get_locations(struct ternfs_bincode_get_ctx* ctx, struct ternfs_fetched_locations_start** prev, struct ternfs_fetched_locations_locations* next) {
+    next->len = 0;
     if (likely(ctx->err == 0)) {
         if (unlikely(ctx->end - ctx->buf < 2)) {
             ctx->err = TERNFS_ERR_MALFORMED_RESPONSE;
@@ -1767,8 +1769,6 @@ static inline void _ternfs_fetched_locations_get_locations(struct ternfs_bincode
             next->len = get_unaligned_le16(ctx->buf);
             ctx->buf += 2;
         }
-    } else {
-        next->len = 0;
     }
 }
 #define ternfs_fetched_locations_get_locations(ctx, prev, next) \
@@ -2759,6 +2759,7 @@ static inline void _ternfs_read_dir_resp_get_next_hash(struct ternfs_bincode_get
 
 struct ternfs_read_dir_resp_results { u16 len; };
 static inline void _ternfs_read_dir_resp_get_results(struct ternfs_bincode_get_ctx* ctx, struct ternfs_read_dir_resp_next_hash* prev, struct ternfs_read_dir_resp_results* next) {
+    next->len = 0;
     if (likely(ctx->err == 0)) {
         if (unlikely(ctx->end - ctx->buf < 2)) {
             ctx->err = TERNFS_ERR_MALFORMED_RESPONSE;
@@ -2766,8 +2767,6 @@ static inline void _ternfs_read_dir_resp_get_results(struct ternfs_bincode_get_c
             next->len = get_unaligned_le16(ctx->buf);
             ctx->buf += 2;
         }
-    } else {
-        next->len = 0;
     }
 }
 #define ternfs_read_dir_resp_get_results(ctx, prev, next) \
@@ -3057,6 +3056,7 @@ static inline void _ternfs_add_span_initiate_req_get_storage_class(struct ternfs
 
 struct ternfs_add_span_initiate_req_blacklist { u16 len; };
 static inline void _ternfs_add_span_initiate_req_get_blacklist(struct ternfs_bincode_get_ctx* ctx, struct ternfs_add_span_initiate_req_storage_class* prev, struct ternfs_add_span_initiate_req_blacklist* next) {
+    next->len = 0;
     if (likely(ctx->err == 0)) {
         if (unlikely(ctx->end - ctx->buf < 2)) {
             ctx->err = TERNFS_ERR_MALFORMED_RESPONSE;
@@ -3064,8 +3064,6 @@ static inline void _ternfs_add_span_initiate_req_get_blacklist(struct ternfs_bin
             next->len = get_unaligned_le16(ctx->buf);
             ctx->buf += 2;
         }
-    } else {
-        next->len = 0;
     }
 }
 #define ternfs_add_span_initiate_req_get_blacklist(ctx, prev, next) \
@@ -3119,6 +3117,7 @@ static inline void _ternfs_add_span_initiate_req_get_cell_size(struct ternfs_bin
 
 struct ternfs_add_span_initiate_req_crcs { u16 len; };
 static inline void _ternfs_add_span_initiate_req_get_crcs(struct ternfs_bincode_get_ctx* ctx, struct ternfs_add_span_initiate_req_cell_size* prev, struct ternfs_add_span_initiate_req_crcs* next) {
+    next->len = 0;
     if (likely(ctx->err == 0)) {
         if (unlikely(ctx->end - ctx->buf < 2)) {
             ctx->err = TERNFS_ERR_MALFORMED_RESPONSE;
@@ -3126,8 +3125,6 @@ static inline void _ternfs_add_span_initiate_req_get_crcs(struct ternfs_bincode_
             next->len = get_unaligned_le16(ctx->buf);
             ctx->buf += 2;
         }
-    } else {
-        next->len = 0;
     }
 }
 #define ternfs_add_span_initiate_req_get_crcs(ctx, prev, next) \
@@ -3268,6 +3265,7 @@ struct ternfs_add_span_initiate_resp_start;
 
 struct ternfs_add_span_initiate_resp_blocks { u16 len; };
 static inline void _ternfs_add_span_initiate_resp_get_blocks(struct ternfs_bincode_get_ctx* ctx, struct ternfs_add_span_initiate_resp_start** prev, struct ternfs_add_span_initiate_resp_blocks* next) {
+    next->len = 0;
     if (likely(ctx->err == 0)) {
         if (unlikely(ctx->end - ctx->buf < 2)) {
             ctx->err = TERNFS_ERR_MALFORMED_RESPONSE;
@@ -3275,8 +3273,6 @@ static inline void _ternfs_add_span_initiate_resp_get_blocks(struct ternfs_binco
             next->len = get_unaligned_le16(ctx->buf);
             ctx->buf += 2;
         }
-    } else {
-        next->len = 0;
     }
 }
 #define ternfs_add_span_initiate_resp_get_blocks(ctx, prev, next) \
@@ -3361,6 +3357,7 @@ static inline void _ternfs_add_span_certify_req_get_byte_offset(struct ternfs_bi
 
 struct ternfs_add_span_certify_req_proofs { u16 len; };
 static inline void _ternfs_add_span_certify_req_get_proofs(struct ternfs_bincode_get_ctx* ctx, struct ternfs_add_span_certify_req_byte_offset* prev, struct ternfs_add_span_certify_req_proofs* next) {
+    next->len = 0;
     if (likely(ctx->err == 0)) {
         if (unlikely(ctx->end - ctx->buf < 2)) {
             ctx->err = TERNFS_ERR_MALFORMED_RESPONSE;
@@ -3368,8 +3365,6 @@ static inline void _ternfs_add_span_certify_req_get_proofs(struct ternfs_bincode
             next->len = get_unaligned_le16(ctx->buf);
             ctx->buf += 2;
         }
-    } else {
-        next->len = 0;
     }
 }
 #define ternfs_add_span_certify_req_get_proofs(ctx, prev, next) \
@@ -3946,6 +3941,7 @@ static inline void _ternfs_local_file_spans_resp_get_next_offset(struct ternfs_b
 
 struct ternfs_local_file_spans_resp_block_services { u16 len; };
 static inline void _ternfs_local_file_spans_resp_get_block_services(struct ternfs_bincode_get_ctx* ctx, struct ternfs_local_file_spans_resp_next_offset* prev, struct ternfs_local_file_spans_resp_block_services* next) {
+    next->len = 0;
     if (likely(ctx->err == 0)) {
         if (unlikely(ctx->end - ctx->buf < 2)) {
             ctx->err = TERNFS_ERR_MALFORMED_RESPONSE;
@@ -3953,8 +3949,6 @@ static inline void _ternfs_local_file_spans_resp_get_block_services(struct ternf
             next->len = get_unaligned_le16(ctx->buf);
             ctx->buf += 2;
         }
-    } else {
-        next->len = 0;
     }
 }
 #define ternfs_local_file_spans_resp_get_block_services(ctx, prev, next) \
@@ -3963,6 +3957,7 @@ static inline void _ternfs_local_file_spans_resp_get_block_services(struct ternf
 
 struct ternfs_local_file_spans_resp_spans { u16 len; };
 static inline void _ternfs_local_file_spans_resp_get_spans(struct ternfs_bincode_get_ctx* ctx, struct ternfs_local_file_spans_resp_block_services* prev, struct ternfs_local_file_spans_resp_spans* next) {
+    next->len = 0;
     if (likely(ctx->err == 0)) {
         if (unlikely(ctx->end - ctx->buf < 2)) {
             ctx->err = TERNFS_ERR_MALFORMED_RESPONSE;
@@ -3970,8 +3965,6 @@ static inline void _ternfs_local_file_spans_resp_get_spans(struct ternfs_bincode
             next->len = get_unaligned_le16(ctx->buf);
             ctx->buf += 2;
         }
-    } else {
-        next->len = 0;
     }
 }
 #define ternfs_local_file_spans_resp_get_spans(ctx, prev, next) \
@@ -4765,6 +4758,7 @@ struct ternfs_full_read_dir_resp_start;
 
 struct ternfs_full_read_dir_resp_results { u16 len; };
 static inline void _ternfs_full_read_dir_resp_get_results(struct ternfs_bincode_get_ctx* ctx, struct ternfs_full_read_dir_cursor_end** prev, struct ternfs_full_read_dir_resp_results* next) {
+    next->len = 0;
     if (likely(ctx->err == 0)) {
         if (unlikely(ctx->end - ctx->buf < 2)) {
             ctx->err = TERNFS_ERR_MALFORMED_RESPONSE;
@@ -4772,8 +4766,6 @@ static inline void _ternfs_full_read_dir_resp_get_results(struct ternfs_bincode_
             next->len = get_unaligned_le16(ctx->buf);
             ctx->buf += 2;
         }
-    } else {
-        next->len = 0;
     }
 }
 #define ternfs_full_read_dir_resp_get_results(ctx, prev, next) \
@@ -6267,6 +6259,7 @@ struct ternfs_local_shards_resp_start;
 
 struct ternfs_local_shards_resp_shards { u16 len; };
 static inline void _ternfs_local_shards_resp_get_shards(struct ternfs_bincode_get_ctx* ctx, struct ternfs_local_shards_resp_start** prev, struct ternfs_local_shards_resp_shards* next) {
+    next->len = 0;
     if (likely(ctx->err == 0)) {
         if (unlikely(ctx->end - ctx->buf < 2)) {
             ctx->err = TERNFS_ERR_MALFORMED_RESPONSE;
@@ -6274,8 +6267,6 @@ static inline void _ternfs_local_shards_resp_get_shards(struct ternfs_bincode_ge
             next->len = get_unaligned_le16(ctx->buf);
             ctx->buf += 2;
         }
-    } else {
-        next->len = 0;
     }
 }
 #define ternfs_local_shards_resp_get_shards(ctx, prev, next) \
@@ -6660,6 +6651,7 @@ static inline void _ternfs_local_changed_block_services_resp_get_last_change(str
 
 struct ternfs_local_changed_block_services_resp_block_services { u16 len; };
 static inline void _ternfs_local_changed_block_services_resp_get_block_services(struct ternfs_bincode_get_ctx* ctx, struct ternfs_local_changed_block_services_resp_last_change* prev, struct ternfs_local_changed_block_services_resp_block_services* next) {
+    next->len = 0;
     if (likely(ctx->err == 0)) {
         if (unlikely(ctx->end - ctx->buf < 2)) {
             ctx->err = TERNFS_ERR_MALFORMED_RESPONSE;
@@ -6667,8 +6659,6 @@ static inline void _ternfs_local_changed_block_services_resp_get_block_services(
             next->len = get_unaligned_le16(ctx->buf);
             ctx->buf += 2;
         }
-    } else {
-        next->len = 0;
     }
 }
 #define ternfs_local_changed_block_services_resp_get_block_services(ctx, prev, next) \

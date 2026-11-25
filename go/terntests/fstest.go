@@ -1115,7 +1115,7 @@ func fsTestInternal[Id comparable](
 			blockServiceToPurge := findBlockServiceToPurge(log, c)
 			log.Info("will migrate block service %v", blockServiceToPurge)
 
-			migrator := cleanup.Migrator(registryAddress, log, c, 1, 0, 1, false, "", 0)
+			migrator := cleanup.Migrator(log, c, &cleanup.MigratorOptions{NumMigrators: 1, NumParallelFiles: 1})
 			wg := sync.WaitGroup{}
 			wg.Add(1)
 			go func() {
@@ -1177,8 +1177,8 @@ func fsTestInternal[Id comparable](
 			blockServicesById[blockServices.BlockServices[i].Id] = &blockServices.BlockServices[i]
 		}
 		client.Parwalk(
-			log, c, &client.ParwalkOptions{WorkersPerShard: 1}, "/",
-			func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, fileId msgs.InodeId, current bool, owned bool) error {
+			context.Background(), log, c, &client.ParwalkOptions{WorkersPerShard: 1}, "/",
+			func(_ context.Context, parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, fileId msgs.InodeId, current bool, owned bool) error {
 				if fileId.Type() == msgs.DIRECTORY {
 					return nil
 				}

@@ -22,7 +22,7 @@ import (
 
 // peakVFS holds user-file ConstructFile and LinkFile calls at the TernVFS
 // call boundary, before they reach the wrapped VFS, until released,
-// recording how many reached that boundary at once. Client-store files pass.
+// recording how many reached that boundary at once.
 // This measures nfsd's own concurrency up to the VFS; it says nothing about
 // concurrency inside the storage backend, native RPCs or throughput.
 type peakVFS struct {
@@ -35,9 +35,6 @@ type peakVFS struct {
 }
 
 func (fs *peakVFS) hold(kind string, dir vfs.InodeID) func() {
-	if clientStoreDir(fs.TernVFS, dir) {
-		return func() {}
-	}
 	fs.mu.Lock()
 	if fs.gate != kind {
 		fs.mu.Unlock()

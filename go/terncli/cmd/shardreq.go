@@ -14,12 +14,19 @@ import (
 
 func NewShardReq() Command {
 	shardReqCmd := flag.NewFlagSet("shard-req", flag.ExitOnError)
-	shardReqShard := shardReqCmd.Uint("shard", 0, "Shard to send the req too")
+	shardReqShard := shardReqCmd.Uint("shard", 0, "Shard to send the request to (0..255)")
+	shardReqReplica := shardReqCmd.Int("replica", -1, "Replica to send the request to (0..4, default: current leader)")
 	shardReqKind := shardReqCmd.String("kind", "", "")
 	shardReqReq := shardReqCmd.String("req", "", "Request body, in JSON")
 	shardReqYes := shardReqCmd.Bool("yes", false, "Do not ask for confirmation")
 	shardReqRun := func(runtime *Runtime) {
 		l := runtime.Log
+		if *shardReqShard > 255 {
+			panic(fmt.Errorf("shard must be in 0..255"))
+		}
+		if *shardReqReplica < -1 || *shardReqReplica > 4 {
+			panic(fmt.Errorf("replica must be in 0..4, or -1 for the current leader"))
+		}
 		req, resp, err := msgs.MkShardMessage(*shardReqKind)
 		if err != nil {
 			panic(err)
@@ -28,7 +35,11 @@ func NewShardReq() Command {
 			panic(fmt.Errorf("could not decode shard req: %w", err))
 		}
 		shard := msgs.ShardId(*shardReqShard)
-		fmt.Printf("Will send this request to shard %v: %T %+v\n", shard, req, req)
+		if *shardReqReplica < 0 {
+			fmt.Printf("Will send this request to shard %v: %T %+v\n", shard, req, req)
+		} else {
+			fmt.Printf("Will send this request to shard %v replica %v: %T %+v\n", shard, *shardReqReplica, req, req)
+		}
 		if !*shardReqYes {
 			for {
 				var action string
@@ -43,7 +54,12 @@ func NewShardReq() Command {
 				}
 			}
 		}
-		if err := runtime.getClient().ShardRequest(l, shard, req, resp); err != nil {
+		if *shardReqReplica < 0 {
+			err = runtime.getClient().ShardRequest(l, shard, req, resp)
+		} else {
+			err = runtime.getClient().ShardReplicaRequest(l, msgs.MakeShardReplicaId(shard, msgs.ReplicaId(*shardReqReplica)), req, resp)
+		}
+		if err != nil {
 			panic(err)
 		}
 		out, err := json.MarshalIndent(resp, "", "  ")

@@ -36,7 +36,6 @@ type libnfsReply struct {
 	Stat   libnfsStat
 	Names  []string
 	Target string
-	Size   uint64
 	Error  string
 	Errno  int
 }
@@ -117,7 +116,7 @@ func TestLibnfsClientProcess(t *testing.T) {
 				files[nextHandle] = f
 				result.Handle = nextHandle
 			}
-		case "read", "write", "sync", "syncsize", "close":
+		case "read", "write", "sync", "close":
 			f := files[req.Handle]
 			if f == nil {
 				err = fmt.Errorf("unknown handle %d", req.Handle)
@@ -130,8 +129,6 @@ func TestLibnfsClientProcess(t *testing.T) {
 				err = f.WriteAt(req.Data, req.Offset)
 			case "sync":
 				err = f.Sync()
-			case "syncsize":
-				result.Size, err = f.SyncSize()
 			case "close":
 				err = f.Close()
 				delete(files, req.Handle)
@@ -269,41 +266,4 @@ func (c *libnfsProcessClient) ReadDir(path string) ([]string, error) {
 func (c *libnfsProcessClient) Readlink(path string) (string, error) {
 	r := c.call(c.t, libnfsRequest{Op: "readlink", Path: path})
 	return r.Target, r.err()
-}
-
-type libnfsProcessFile struct {
-	client *libnfsProcessClient
-	handle int
-}
-
-func (c *libnfsProcessClient) OpenFile(path string, flags int) (*libnfsProcessFile, error) {
-	r := c.call(c.t, libnfsRequest{Op: "open", Path: path, Flags: flags})
-	if err := r.err(); err != nil {
-		return nil, err
-	}
-	return &libnfsProcessFile{client: c, handle: r.Handle}, nil
-}
-
-func (f *libnfsProcessFile) Close() error {
-	if f.handle == 0 {
-		return nil
-	}
-	r := f.client.call(f.client.t, libnfsRequest{Op: "close", Handle: f.handle})
-	f.handle = 0
-	return r.err()
-}
-
-func (f *libnfsProcessFile) Read() ([]byte, error) {
-	r := f.client.call(f.client.t, libnfsRequest{Op: "read", Handle: f.handle})
-	return r.Data, r.err()
-}
-
-func (f *libnfsProcessFile) WriteAt(data []byte, offset uint64) error {
-	r := f.client.call(f.client.t, libnfsRequest{Op: "write", Handle: f.handle, Data: data, Offset: offset})
-	return r.err()
-}
-
-func (f *libnfsProcessFile) SyncSize() (uint64, error) {
-	r := f.client.call(f.client.t, libnfsRequest{Op: "syncsize", Handle: f.handle})
-	return r.Size, r.err()
 }

@@ -38,7 +38,7 @@ char* ternfs_read_link(struct ternfs_inode* enode) {
 
     if (size == 0) { goto out; }
     span = ternfs_get_span((struct ternfs_fs_info*)enode->inode.i_sb->s_fs_info, &enode->file.spans, 0);
-    BUG_ON(span == NULL);
+    if (span == NULL) { err = -EIO; goto out; }
     if (IS_ERR(span)) {
         err = PTR_ERR(span);
         span = NULL;

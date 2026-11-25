@@ -18,10 +18,17 @@ func resultErrorSize(op uint32) uint32 {
 	return 8
 }
 
-func appendResultError(body []byte, op, status uint32) []byte {
+// wireOperation is the opcode a result carries on the wire: an operation the
+// XDR does not define is answered as OP_ILLEGAL.
+func wireOperation(op uint32) uint32 {
 	if !knownOperation(op) {
-		op = nfs4.OP_ILLEGAL
+		return nfs4.OP_ILLEGAL
 	}
+	return op
+}
+
+func appendResultError(body []byte, op, status uint32) []byte {
+	op = wireOperation(op)
 	body = binary.BigEndian.AppendUint32(body, op)
 	body = binary.BigEndian.AppendUint32(body, status)
 	if op == nfs4.OP_SETATTR {
@@ -66,7 +73,7 @@ func (s *Server) operationReplyBound(op nfs4.NfsArgop4) uint32 {
 		mask[0] &= supportedAttrs0
 		mask[1] &= supportedAttrs1
 		mask[2] &= supportedAttrs2
-		return uint32(28 + len(encodeAttrs(mask, 0, vfs.NodeInfo{})))
+		return uint32(28 + len(encodeAttrs(mask, s.owner, 0, vfs.NodeInfo{})))
 	case nfs4.OP_READ:
 		count := min(op.AsREAD4args().Count(), uint32(maxReadWrite))
 		return 16 + (count+3)&^3
@@ -83,8 +90,10 @@ func (s *Server) operationReplyBound(op nfs4.NfsArgop4) uint32 {
 	case nfs4.OP_SECINFO, nfs4.OP_SECINFO_NO_NAME:
 		return 20
 	case nfs4.OP_EXCHANGE_ID:
-		// fixed client/seq/flags/protection + server owner/scope/empty impl array
-		return uint32(8 + 8 + 4 + 4 + 4 + 8 + 4 + ((len(s.serverOwnerMajor()) + 3) &^ 3) + 4 + ((len(serverScope) + 3) &^ 3) + 4)
+		// fixed client/seq/flags/protection + server owner/scope/empty impl
+		// array; the owner major id and the scope are the same bytes
+		owner := uint32((len(s.serverOwner()) + 3) &^ 3)
+		return 8 + 8 + 4 + 4 + 4 + 8 + 4 + owner + 4 + owner + 4
 	case nfs4.OP_CREATE_SESSION:
 		return 88
 	case nfs4.OP_BIND_CONN_TO_SESSION:

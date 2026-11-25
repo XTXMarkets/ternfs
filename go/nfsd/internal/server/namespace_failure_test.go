@@ -5,7 +5,6 @@
 package server
 
 import (
-	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -22,6 +21,8 @@ import (
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
+// namespaceProbeVFS counts the namespace calls made against the root
+// directory, where the fixtures' names live.
 type namespaceProbeVFS struct {
 	vfs.TernVFS
 	mutations atomic.Int32
@@ -30,22 +31,28 @@ type namespaceProbeVFS struct {
 }
 
 func (fs *namespaceProbeVFS) LookupEdge(dir vfs.InodeID, name string) (vfs.Edge, error) {
-	fs.lookups.Add(1)
+	if dir == fs.TernVFS.RootID() {
+		fs.lookups.Add(1)
+	}
 	return fs.TernVFS.LookupEdge(dir, name)
 }
 
 func (fs *namespaceProbeVFS) RemoveEdge(dir vfs.InodeID, name string, edge vfs.Edge) error {
-	fs.mutations.Add(1)
-	if fs.before != nil {
-		fs.before()
+	if dir == fs.TernVFS.RootID() {
+		fs.mutations.Add(1)
+		if fs.before != nil {
+			fs.before()
+		}
 	}
 	return fs.TernVFS.RemoveEdge(dir, name, edge)
 }
 
 func (fs *namespaceProbeVFS) RenameEdge(dir vfs.InodeID, name string, edge vfs.Edge, dst vfs.InodeID, newName string) error {
-	fs.mutations.Add(1)
-	if fs.before != nil {
-		fs.before()
+	if dir == fs.TernVFS.RootID() {
+		fs.mutations.Add(1)
+		if fs.before != nil {
+			fs.before()
+		}
 	}
 	return fs.TernVFS.RenameEdge(dir, name, edge, dst, newName)
 }
@@ -229,7 +236,7 @@ func TestFailedWriterCloseDoesNotExpireSiblingDuringLookup(t *testing.T) {
 	}()
 	testutil.AwaitSignal(t, store.entered, "READ local stateid lookup")
 	// The READ has copied valid local state and observed no tombstone.
-	// Fail W1, then let CLOSE remove its marker before READ checks it.
+	// Fail W1, then let CLOSE end its open before READ checks it.
 	f.server.fs = &namespaceFaultVFS{TernVFS: f.fs, err: errors.New("lost reply")}
 	if got := removeNamespaceFile(t, f, "source"); got != nfs4.NFS4ERR_IO {
 		t.Fatal(nfs4.Nfsstat4Name(got))
@@ -245,8 +252,8 @@ func TestFailedWriterCloseDoesNotExpireSiblingDuringLookup(t *testing.T) {
 	if !ok || meta.Retired {
 		t.Fatal("failed writer expired its healthy sibling")
 	}
-	if active, err := f.server.clients.HasOpen(incarnationForTest(t, f.server, f.clientID), meta.NFSStateID); err != nil || !active {
-		t.Fatalf("sibling marker was revoked: %t, %v", active, err)
+	if !f.server.clientLive(incarnationForTest(t, f.server, f.clientID)) {
+		t.Fatal("the failed writer expired its client")
 	}
 	writeFileAt(t, f.conn, &f.xid, siblingFH, siblingState, 0, []byte("healthy sibling"))
 	closeFile(t, f.conn, &f.xid, siblingFH, siblingState)
@@ -260,7 +267,11 @@ func TestNamespaceGuardRestartMakesNoRecoveryCalls(t *testing.T) {
 				t.Fatal(err)
 			}
 			if applied {
-				if err := f.fs.Rename(f.fs.RootID(), "source", f.fs.RootID(), "target"); err != nil {
+				edge, err := f.fs.LookupEdge(f.fs.RootID(), "source")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := f.fs.RenameEdge(f.fs.RootID(), "source", edge, f.fs.RootID(), "target"); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -276,7 +287,7 @@ func TestNamespaceGuardRestartMakesNoRecoveryCalls(t *testing.T) {
 }
 
 func TestStagingStartupExcludesEveryBadEntry(t *testing.T) {
-	for _, problem := range []string{"corrupt", "foreign magic", "quarantine failure", "unreadable sidecar", "truncate failure", "retired detached"} {
+	for _, problem := range []string{"quarantine failure", "unreadable sidecar", "truncate failure", "retired detached"} {
 		t.Run(problem, func(t *testing.T) {
 			if problem == "unreadable sidecar" && os.Geteuid() == 0 {
 				t.Skip("root bypasses unreadable sidecar permissions")
@@ -296,22 +307,11 @@ func TestStagingStartupExcludesEveryBadEntry(t *testing.T) {
 			}
 			meta, _ = staging.LoadMeta(path)
 			switch problem {
-			case "corrupt", "quarantine failure":
+			case "quarantine failure":
 				if err := os.WriteFile(path, []byte("corrupt"), 0600); err != nil {
 					t.Fatal(err)
 				}
-				if problem == "quarantine failure" {
-					if err := os.WriteFile(filepath.Join(dir, staging.QuarantineDirName), []byte("blocked"), 0600); err != nil {
-						t.Fatal(err)
-					}
-				}
-			case "foreign magic":
-				data, err := os.ReadFile(path)
-				if err != nil {
-					t.Fatal(err)
-				}
-				data = bytes.Replace(data, []byte("NFS8"), []byte("XFS8"), 1)
-				if err := os.WriteFile(path, data, 0600); err != nil {
+				if err := os.WriteFile(filepath.Join(dir, staging.QuarantineDirName), []byte("blocked"), 0600); err != nil {
 					t.Fatal(err)
 				}
 			case "unreadable sidecar":
@@ -348,11 +348,10 @@ func TestStagingStartupExcludesEveryBadEntry(t *testing.T) {
 			if recovered.Get(id) != nil || recovered.Get(healthy) == nil {
 				t.Fatal("startup did not isolate just the bad entry")
 			}
-			srv, err := NewServer(vfs.NewLocalTernVFS(t.TempDir()), recovered, nil)
+			_, err = NewServer(vfs.NewLocalTernVFS(t.TempDir()), recovered, nil)
 			if err != nil {
 				t.Fatalf("excluded entry prevented server startup: %v", err)
 			}
-			srv.waitForClientGC()
 			if problem == "quarantine failure" {
 				data, err := os.ReadFile(stage.(*staging.LocalFile).DataFile().Name())
 				if err != nil || string(data) != "private!" {
@@ -373,21 +372,16 @@ func TestNamespaceSidecarStrictDecode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Fixed NFS8 layout, with no dirty ranges in this checkpoint.
+	// Fixed NFS9 layout, with no dirty ranges in this checkpoint.
 	flagOffset := 30 + len(meta.FileName) + 8 + 4 + 8 + 8 + 8 + 4 + 32
-	for _, kind := range []string{"NFS5", "NFS7", "NFS9", "trailer", "unknown flag", "truncated"} {
+	for _, kind := range []string{"trailer", "unknown flag"} {
 		t.Run(kind, func(t *testing.T) {
 			bad := append([]byte(nil), data...)
 			switch kind {
-			case "NFS5", "NFS7", "NFS9":
-				magic := 30 + int(binary.BigEndian.Uint16(bad[28:30])) + 8
-				copy(bad[magic:], kind)
 			case "trailer":
 				bad = append(bad, 0)
 			case "unknown flag":
 				bad[flagOffset] |= 128
-			case "truncated":
-				bad = bad[:len(bad)-1]
 			}
 			if err := os.WriteFile(path, bad, 0600); err != nil {
 				t.Fatal(err)

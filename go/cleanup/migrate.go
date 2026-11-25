@@ -9,6 +9,11 @@ import (
 	"container/heap"
 	"errors"
 	"fmt"
+	"io"
+	"sync"
+	"sync/atomic"
+	"time"
+
 	"github.com/XTXMarkets/ternfs/go/cleanup/scratch"
 	"github.com/XTXMarkets/ternfs/go/client"
 	"github.com/XTXMarkets/ternfs/go/core/bufpool"
@@ -17,10 +22,6 @@ import (
 	"github.com/XTXMarkets/ternfs/go/core/rs"
 	"github.com/XTXMarkets/ternfs/go/core/timing"
 	"github.com/XTXMarkets/ternfs/go/msgs"
-	"io"
-	"sync"
-	"sync/atomic"
-	"time"
 )
 
 type MigrateStats struct {
@@ -290,7 +291,7 @@ func migrateBlocksInFileGeneric(
 	timeStats *timeStats,
 	progressReportAlert *log.XmonNCAlert,
 	what string,
-	badBlock func(blockService *msgs.BlockService, blockSize uint32, block *msgs.FetchedBlock) (bool, error),
+	shouldMigrate func(blockService *msgs.BlockService, blockSize uint32, block *msgs.FetchedBlock) (bool, error),
 	scratchFile scratch.ScratchFile,
 	fileId msgs.InodeId,
 ) error {
@@ -344,12 +345,12 @@ func migrateBlocksInFileGeneric(
 				for blockIx := range lb.Blocks {
 					block := &lb.Blocks[blockIx]
 					bs := &fileSpansResp.BlockServices[block.BlockServiceIx]
-					isBadBlock, err := badBlock(bs, lb.CellSize*uint32(lb.Stripes), block)
+					selected, err := shouldMigrate(bs, lb.CellSize*uint32(lb.Stripes), block)
 					if err != nil {
 						return err
 					}
-					toMigrate[lIx][blockIx] = isBadBlock
-					usableByLoc[lIx][blockIx] = !isBadBlock && bs.Flags.CanRead()
+					toMigrate[lIx][blockIx] = selected
+					usableByLoc[lIx][blockIx] = !selected && bs.Flags.CanRead()
 				}
 			}
 			for locIx := range locationsBody.Locations {
@@ -435,6 +436,273 @@ func migrateBlocksInFileGeneric(
 	return nil
 }
 
+// A batch of REPLACE_BLOCKS items, all in one scratch file
+type replaceBatch struct {
+	scratchId msgs.InodeId
+	items     []msgs.ReplaceBlock
+	sizes     []uint32
+	// files with blocks that were rebuilt but not replaced
+	unreplaced []msgs.InodeId
+}
+
+// Rebuilds the files' blocks that are on decommissioned block services in
+// the location into the scratch file, and swaps them into the files with
+// REPLACE_BLOCKS, many at a time. The files must be in the scratch file's
+// shard. Returns an error per file.
+//
+// One block the shard won't take fails its whole batch. The files in a failed
+// batch are tried again straight away, each on its own, so that the others
+// don't wait with it. A block that still isn't replaced waits for the next
+// scan of its block service.
+func replaceDecommissionedBlocks(
+	log *log.Logger,
+	c *client.Client,
+	bufPool *bufpool.BufPool,
+	stats *MigrateStats,
+	scratchFile scratch.ScratchFile,
+	files []msgs.InodeId,
+	location msgs.Location,
+	shouldMigrate func(*msgs.BlockService, uint32, *msgs.FetchedBlock) (bool, error),
+) []error {
+	batch := replaceBatch{}
+	errs := make([]error, len(files))
+	fileIx := make(map[msgs.InodeId]int, len(files))
+	for i, fileId := range files {
+		fileIx[fileId] = i
+		errs[i] = rebuildDecommissionedBlocks(log, c, bufPool, stats, scratchFile, &batch, fileId, location, shouldMigrate)
+	}
+	batch.flush(log, c, stats, scratchFile)
+	retried := map[msgs.InodeId]bool{}
+	for _, fileId := range batch.unreplaced {
+		if retried[fileId] {
+			continue
+		}
+		retried[fileId] = true
+		single := replaceBatch{}
+		err := rebuildDecommissionedBlocks(log, c, bufPool, stats, scratchFile, &single, fileId, location, shouldMigrate)
+		single.flush(log, c, stats, scratchFile)
+		if i := fileIx[fileId]; errs[i] == nil {
+			errs[i] = err
+		}
+	}
+	for i := range files {
+		if errs[i] == nil {
+			atomic.AddUint64(&stats.MigratedFiles, 1)
+		} else if errs[i] == msgs.FILE_NOT_FOUND {
+			errs[i] = nil
+		}
+	}
+	return errs
+}
+
+func rebuildDecommissionedBlocks(
+	log *log.Logger,
+	c *client.Client,
+	bufPool *bufpool.BufPool,
+	stats *MigrateStats,
+	scratchFile scratch.ScratchFile,
+	batch *replaceBatch,
+	fileId msgs.InodeId,
+	location msgs.Location,
+	shouldMigrate func(*msgs.BlockService, uint32, *msgs.FetchedBlock) (bool, error),
+) error {
+	req := msgs.FileSpansReq{FileId: fileId}
+	for {
+		resp := msgs.FileSpansResp{}
+		if err := c.ShardRequest(log, fileId.Shard(), &req, &resp); err != nil {
+			return err
+		}
+		for _, span := range resp.Spans {
+			if span.Header.IsInline {
+				continue
+			}
+			locations := span.Body.(*msgs.FetchedLocations).Locations
+			for locIx := range locations {
+				blocks := &locations[locIx]
+				if blocks.LocationId != location {
+					continue
+				}
+				var blacklist []msgs.BlacklistEntry
+				for blockIx := range blocks.Blocks {
+					block := &blocks.Blocks[blockIx]
+					bs := &resp.BlockServices[block.BlockServiceIx]
+					if !bs.Flags.HasAny(msgs.TERNFS_BLOCK_SERVICE_DECOMMISSIONED) {
+						continue
+					}
+					selected, err := shouldMigrate(bs, blocks.CellSize*uint32(blocks.Stripes), block)
+					if err != nil {
+						return err
+					}
+					if !selected {
+						continue
+					}
+					if blacklist == nil {
+						for _, sibling := range blocks.Blocks {
+							id := resp.BlockServices[sibling.BlockServiceIx].Id
+							failureDomain, ok := c.GetFailureDomainForBlockService(id)
+							if !ok {
+								return fmt.Errorf("could not find failure domain for [%v]", id)
+							}
+							blacklist = append(blacklist, msgs.BlacklistEntry{FailureDomain: failureDomain, BlockService: id})
+						}
+					}
+					item, err := rebuildBlock(log, c, bufPool, scratchFile, fileId, span.Header.ByteOffset, resp.BlockServices, blacklist, locations, locIx, uint8(blockIx))
+					if err == errBlockUnrecoverable {
+						// Only a live file's data is at risk, deleted files are GC's business.
+						// Either way, try again at the next scan of the block service.
+						if _, statErr := c.StatFile(log, fileId); statErr == msgs.FILE_NOT_FOUND || statErr == msgs.FILE_IS_TRANSIENT {
+							log.Debug("not alerting about unrecoverable block %v because file %v is %v", block.BlockId, fileId, statErr)
+						} else if statErr != nil {
+							log.Info("could not replace block %v in file %v: %v, and could not stat the file: %v", block.BlockId, fileId, err, statErr)
+						} else {
+							log.RaiseAlert("could not recover block %v in file %v from any location (P=%d, D=%d)", block.BlockId, fileId, blocks.Parity.ParityBlocks(), blocks.Parity.DataBlocks())
+						}
+						continue
+					}
+					if err != nil {
+						log.Info("could not rebuild block %v in file %v: %v", block.BlockId, fileId, err)
+						continue
+					}
+					batch.add(log, c, stats, scratchFile, item.scratchId, item.req, blocks.CellSize*uint32(blocks.Stripes))
+					failureDomain, ok := c.GetFailureDomainForBlockService(item.newBlockService)
+					if !ok {
+						return fmt.Errorf("could not find failure domain for [%v]", item.newBlockService)
+					}
+					blacklist = append(blacklist, msgs.BlacklistEntry{FailureDomain: failureDomain, BlockService: item.newBlockService})
+				}
+			}
+		}
+		if resp.NextOffset == 0 {
+			return nil
+		}
+		req.ByteOffset = resp.NextOffset
+	}
+}
+
+// Locations only have to agree on the span's size and CRC. Block i of another
+// location holds the same bytes as ours only if it splits the span the same way.
+func sameBlockLayout(a, b *msgs.FetchedBlockServices) bool {
+	return a.Parity == b.Parity && a.Stripes == b.Stripes && a.CellSize == b.CellSize && len(a.Blocks) == len(b.Blocks)
+}
+
+type rebuiltBlock struct {
+	scratchId       msgs.InodeId
+	newBlockService msgs.BlockServiceId
+	req             msgs.ReplaceBlock
+}
+
+func rebuildBlock(
+	log *log.Logger,
+	c *client.Client,
+	bufPool *bufpool.BufPool,
+	scratchFile scratch.ScratchFile,
+	fileId msgs.InodeId,
+	byteOffset uint64,
+	blockServices []msgs.BlockService,
+	blacklist []msgs.BlacklistEntry,
+	locations []msgs.FetchedBlockServices,
+	dstLocIx int,
+	blockIx uint8,
+) (rebuiltBlock, error) {
+	dst := &locations[dstLocIx]
+	oldBlock := &dst.Blocks[blockIx]
+	for _, srcLocIx := range append([]int{dstLocIx}, otherLocationIxs(len(locations), dstLocIx)...) {
+		src := &locations[srcLocIx]
+		if srcLocIx != dstLocIx && !sameBlockLayout(dst, src) {
+			log.Debug("not recovering block %v in file %v from location %v, it splits the span differently", oldBlock.BlockId, fileId, src.LocationId)
+			continue
+		}
+		usable := func(ix int) bool {
+			return !(srcLocIx == dstLocIx && ix == int(blockIx)) && blockServices[src.Blocks[ix].BlockServiceIx].Flags.CanRead()
+		}
+		data, err := obtainBlockData(log, c, bufPool, fileId, blockServices, src, blockIx, usable)
+		if err == errBlockUnrecoverable {
+			continue
+		}
+		if err != nil {
+			return rebuiltBlock{}, err
+		}
+		blockSize := dst.CellSize * uint32(dst.Stripes)
+		scratchId, newBlockId, newBlockService, scratchOffset, err := writeBlock(log, c, scratchFile, fileId, blacklist, blockSize, dst.StorageClass, dst.LocationId, oldBlock, bytes.NewReader(data.Bytes()))
+		bufPool.Put(data)
+		if err != nil {
+			return rebuiltBlock{}, err
+		}
+		return rebuiltBlock{
+			scratchId:       scratchId,
+			newBlockService: newBlockService,
+			req: msgs.ReplaceBlock{
+				FileId:            fileId,
+				ByteOffset:        byteOffset,
+				OldBlockId:        oldBlock.BlockId,
+				OldBlockServiceId: blockServices[oldBlock.BlockServiceIx].Id,
+				ScratchByteOffset: scratchOffset,
+				NewBlockId:        newBlockId,
+			},
+		}, nil
+	}
+	return rebuiltBlock{}, errBlockUnrecoverable
+}
+
+func (b *replaceBatch) add(log *log.Logger, c *client.Client, stats *MigrateStats, scratchFile scratch.ScratchFile, scratchId msgs.InodeId, item msgs.ReplaceBlock, blockSize uint32) {
+	if scratchId != b.scratchId {
+		// the scratch file was scrapped, after a failed write or at the end of its lifetime
+		if len(b.items) > 0 {
+			log.Info("scratch file %v is gone with %v blocks in it", b.scratchId, len(b.items))
+		}
+		b.giveUp()
+		b.scratchId = scratchId
+	}
+	b.items = append(b.items, item)
+	b.sizes = append(b.sizes, blockSize)
+	if len(b.items) == msgs.MAX_REPLACE_BLOCKS {
+		b.flush(log, c, stats, scratchFile)
+	}
+}
+
+// The batch's blocks stay in a scratch file that has been or will be scrapped.
+func (b *replaceBatch) giveUp() {
+	for _, item := range b.items {
+		b.unreplaced = append(b.unreplaced, item.FileId)
+	}
+	b.items = b.items[:0]
+	b.sizes = b.sizes[:0]
+}
+
+// If the batch fails the scratch file is scrapped, so that the next batch
+// starts from an empty one.
+func (b *replaceBatch) flush(log *log.Logger, c *client.Client, stats *MigrateStats, scratchFile scratch.ScratchFile) {
+	if len(b.items) == 0 {
+		return
+	}
+	locked, err := scratchFile.Lock()
+	if err != nil {
+		log.Info("could not lock scratch file to replace %v blocks: %v", len(b.items), err)
+		b.giveUp()
+		return
+	}
+	defer locked.Unlock()
+	if locked.FileId() != b.scratchId {
+		log.Info("scratch file %v is gone with %v blocks in it", b.scratchId, len(b.items))
+		b.giveUp()
+		return
+	}
+	req := msgs.ReplaceBlocksReq{ScratchId: b.scratchId, ScratchCookie: locked.Cookie(), Blocks: b.items}
+	if err := c.ShardRequest(log, locked.Shard(), &req, &msgs.ReplaceBlocksResp{}); err != nil {
+		log.Info("could not replace %v blocks in scratch file %v: %v", len(b.items), b.scratchId, err)
+		locked.ClearOnUnlock(fmt.Sprintf("%v blocks were not replaced", len(b.items)))
+		b.giveUp()
+		return
+	}
+	for _, size := range b.sizes {
+		atomic.AddUint64(&stats.MigratedBlocks, 1)
+		atomic.AddUint64(&stats.MigratedBytes, uint64(size))
+	}
+	b.items = b.items[:0]
+	b.sizes = b.sizes[:0]
+	locked.ResetSize()
+}
+
 // Migrates the blocks in that block service, in that file.
 //
 // If the source block service it's still healthy, it'll just copy the block over, otherwise
@@ -449,10 +717,10 @@ func MigrateBlocksInFile(
 ) error {
 	scratchFile := scratch.NewScratchFile(log, c, fileId.Shard(), fmt.Sprintf("migrating file %v", fileId))
 	defer scratchFile.Close()
-	badBlock := func(blockService *msgs.BlockService, blockSize uint32, block *msgs.FetchedBlock) (bool, error) {
+	shouldMigrate := func(blockService *msgs.BlockService, blockSize uint32, block *msgs.FetchedBlock) (bool, error) {
 		return blockService.Id == blockServiceId, nil
 	}
-	return migrateBlocksInFileGeneric(log, c, bufpool.NewBufPool(), stats, newTimeStats(), progressReportAlert, fmt.Sprintf("%v: migrated", blockServiceId), badBlock, scratchFile, fileId)
+	return migrateBlocksInFileGeneric(log, c, bufpool.NewBufPool(), stats, newTimeStats(), progressReportAlert, fmt.Sprintf("%v: migrated", blockServiceId), shouldMigrate, scratchFile, fileId)
 }
 
 // Tries to migrate as many blocks as possible from that block service in a certain
@@ -471,7 +739,7 @@ func migrateBlocksInternal(
 	defer scratchFile.Close()
 	filesReq := msgs.BlockServiceFilesReq{BlockServiceId: blockServiceId}
 	filesResp := msgs.BlockServiceFilesResp{}
-	badBlock := func(blockService *msgs.BlockService, blockSize uint32, block *msgs.FetchedBlock) (bool, error) {
+	shouldMigrate := func(blockService *msgs.BlockService, blockSize uint32, block *msgs.FetchedBlock) (bool, error) {
 		return blockService.Id == blockServiceId, nil
 	}
 	blockNotFoundAlert := log.NewNCAlert(time.Hour)
@@ -490,7 +758,7 @@ func migrateBlocksInternal(
 				continue
 			}
 			for attempts := 1; ; attempts++ {
-				if err := migrateBlocksInFileGeneric(log, c, bufPool, stats, timeStats, progressReportAlert, fmt.Sprintf("%v: migrated", blockServiceId), badBlock, scratchFile, file); err != nil {
+				if err := migrateBlocksInFileGeneric(log, c, bufPool, stats, timeStats, progressReportAlert, fmt.Sprintf("%v: migrated", blockServiceId), shouldMigrate, scratchFile, file); err != nil {
 					if err == msgs.BLOCK_NOT_FOUND {
 						log.RaiseNC(blockNotFoundAlert, "could not migrate blocks in file %v after %v attempts because a block was not found in it. this is probably due to conflicts with other migrations or scrubbing. will retry in one second.", file, attempts)
 						time.Sleep(time.Second)
@@ -568,8 +836,23 @@ type migratingBlockService struct {
 	lastFetchCompletedAt time.Time
 }
 
+type MigratorOptions struct {
+	// Files are split between migrators by (fileId>>8) % NumMigrators, like
+	// destruct-files. This migrator takes the ones equal to MigratorIdx.
+	NumMigrators     uint64
+	MigratorIdx      uint64
+	NumParallelFiles uint32
+	LogOnly          bool
+	// If set, only block services in this failure domain are migrated.
+	FailureDomain string
+	LocationId    msgs.Location
+	// Use REPLACE_BLOCKS for blocks in decommissioned block services. Only set
+	// this once every shard knows the request: older shards drop it, so every
+	// file would wait for a timeout.
+	ReplaceDecommissioned bool
+}
+
 type migrator struct {
-	registryAddress           string
 	log                       *log.Logger
 	client                    *client.Client
 	numMigrators              uint64
@@ -580,40 +863,48 @@ type migrator struct {
 	scheduledBlockServices    map[msgs.BlockServiceId]*migratingBlockService
 	fileFetchers              [256]chan msgs.BlockServiceId
 	fileAggregatorNewFile     chan msgs.InodeId
-	fileAggregatoFileFinished chan fileMigrationResult
-	fileMigratorsNewFile      chan msgs.InodeId
+	fileAggregatoFileFinished chan []fileMigrationResult
+	fileMigratorsNewFile      chan []msgs.InodeId
 	statsC                    chan MigrateStats
 	stopC                     chan bool
 	logOnly                   bool
 	failureDomainFilter       string
 	locationId                msgs.Location
+	replaceDecommissioned     bool
 }
 
-func Migrator(registryAddress string, log *log.Logger, client *client.Client, numMigrators uint64, migratorIdx uint64, numParallelFiles uint32, logOnly bool, failureDomain string, locationId msgs.Location) *migrator {
+func Migrator(log *log.Logger, client *client.Client, opts *MigratorOptions) *migrator {
 	res := migrator{
-		registryAddress,
-		log,
-		client,
-		numMigrators,
-		migratorIdx,
-		uint64(numParallelFiles),
-		MigrateStats{},
-		&sync.RWMutex{},
-		map[msgs.BlockServiceId]*migratingBlockService{},
-		[256]chan msgs.BlockServiceId{},
-		make(chan msgs.InodeId, 10000),
-		make(chan fileMigrationResult, numParallelFiles),
-		make(chan msgs.InodeId, numParallelFiles),
-		make(chan MigrateStats, 10),
-		make(chan bool),
-		logOnly,
-		failureDomain,
-		locationId,
+		log:                       log,
+		client:                    client,
+		numMigrators:              opts.NumMigrators,
+		migratorIdx:               opts.MigratorIdx,
+		numParallelFiles:          uint64(opts.NumParallelFiles),
+		blockServicesLock:         &sync.RWMutex{},
+		scheduledBlockServices:    map[msgs.BlockServiceId]*migratingBlockService{},
+		fileAggregatorNewFile:     make(chan msgs.InodeId, 10000),
+		fileAggregatoFileFinished: make(chan []fileMigrationResult, opts.NumParallelFiles),
+		fileMigratorsNewFile:      make(chan []msgs.InodeId, opts.NumParallelFiles),
+		statsC:                    make(chan MigrateStats, 10),
+		stopC:                     make(chan bool),
+		logOnly:                   opts.LogOnly,
+		failureDomainFilter:       opts.FailureDomain,
+		locationId:                opts.LocationId,
+		replaceDecommissioned:     opts.ReplaceDecommissioned,
 	}
 	for i := range len(res.fileFetchers) {
 		res.fileFetchers[i] = make(chan msgs.BlockServiceId, 500)
 	}
 	return &res
+}
+
+// A block is ours to move if its block service is one the registry told us to
+// evacuate (and that passed the failure domain filter, if any).
+func (m *migrator) isScheduled(blockService *msgs.BlockService, blockSize uint32, block *msgs.FetchedBlock) (bool, error) {
+	m.blockServicesLock.RLock()
+	defer m.blockServicesLock.RUnlock()
+	_, ok := m.scheduledBlockServices[blockService.Id]
+	return ok, nil
 }
 
 func (m *migrator) Run() {
@@ -772,6 +1063,7 @@ type fileInfo struct {
 type filePQ struct {
 	pq         []fileInfo
 	inodeToIdx map[msgs.InodeId]int
+	shardFiles [256]map[msgs.InodeId]struct{}
 }
 
 func (pq filePQ) Len() int { return len(pq.pq) }
@@ -794,6 +1086,11 @@ func (pq *filePQ) Push(x any) {
 	item := x.(fileInfo)
 	pq.inodeToIdx[item.id] = n
 	pq.pq = append(pq.pq, item)
+	shid := item.id.Shard()
+	if pq.shardFiles[shid] == nil {
+		pq.shardFiles[shid] = make(map[msgs.InodeId]struct{})
+	}
+	pq.shardFiles[shid][item.id] = struct{}{}
 }
 
 func (pq *filePQ) Pop() any {
@@ -801,8 +1098,22 @@ func (pq *filePQ) Pop() any {
 	n := len(old)
 	item := old[n-1]
 	delete(pq.inodeToIdx, item.id)
+	delete(pq.shardFiles[item.id.Shard()], item.id)
 	pq.pq = old[0 : n-1]
 	return item
+}
+
+// Adds queued files in the same shard as the first one to the group, up to n
+// files in all.
+func (pq *filePQ) popShard(group []msgs.InodeId, n int) []msgs.InodeId {
+	for file := range pq.shardFiles[group[0].Shard()] {
+		if len(group) >= n {
+			break
+		}
+		heap.Remove(pq, pq.inodeToIdx[file])
+		group = append(group, file)
+	}
+	return group
 }
 
 func (m *migrator) runFileAggregator(wg *sync.WaitGroup) {
@@ -814,15 +1125,24 @@ func (m *migrator) runFileAggregator(wg *sync.WaitGroup) {
 		defer ticker.Stop()
 		timeStats := newTimeStats()
 		totalInProgress := uint64(0)
+		groupsInProgress := uint64(0)
 		queue := filePQ{inodeToIdx: make(map[msgs.InodeId]int)}
 		heap.Init(&queue)
 		inProgressFiles := map[msgs.InodeId]int{}
 		pushMoreWork := func() {
-			for totalInProgress < m.numParallelFiles && queue.Len() > 0 {
-				newFile := heap.Pop(&queue).(fileInfo)
-				totalInProgress++
-				inProgressFiles[newFile.id] = 1
-				m.fileMigratorsNewFile <- newFile.id
+			for groupsInProgress < m.numParallelFiles && queue.Len() > 0 {
+				group := []msgs.InodeId{heap.Pop(&queue).(fileInfo).id}
+				if m.replaceDecommissioned {
+					// Files almost always have a single block on a given block
+					// service, so it takes many files to fill a batch.
+					group = queue.popShard(group, msgs.MAX_REPLACE_BLOCKS)
+				}
+				for _, file := range group {
+					totalInProgress++
+					inProgressFiles[file] = 1
+				}
+				groupsInProgress++
+				m.fileMigratorsNewFile <- group
 			}
 		}
 		inProgressAlert := m.log.NewNCAlert(1 * time.Minute)
@@ -851,24 +1171,31 @@ func (m *migrator) runFileAggregator(wg *sync.WaitGroup) {
 						heap.Fix(&queue, idx)
 					}
 				}
-			case fileResult, ok := <-m.fileAggregatoFileFinished:
+			case fileResults, ok := <-m.fileAggregatoFileFinished:
 				if !ok {
 					return
 				}
-				totalInProgress--
-				m.stats.FilesToMigrate--
-				errorCount := inProgressFiles[fileResult.id] - 1
-				if errorCount > 0 {
-					// we saw the file again in another block service while it was processed
-					// queue it again
-					heap.Push(&queue, fileInfo{fileResult.id, errorCount})
-					m.stats.FilesToMigrate++
-				} else {
-					delete(inProgressFiles, fileResult.id)
+				groupsInProgress--
+				failed := []msgs.InodeId{}
+				for _, fileResult := range fileResults {
+					totalInProgress--
+					m.stats.FilesToMigrate--
+					errorCount := inProgressFiles[fileResult.id] - 1
+					if errorCount > 0 {
+						// we saw the file again in another block service while it was processed
+						// queue it again
+						heap.Push(&queue, fileInfo{fileResult.id, errorCount})
+						m.stats.FilesToMigrate++
+					} else {
+						delete(inProgressFiles, fileResult.id)
+					}
+					if fileResult.err != nil && errorCount == 0 {
+						failed = append(failed, fileResult.id)
+					}
 				}
 				pushMoreWork()
-				if fileResult.err != nil && errorCount == 0 {
-					m.fileAggregatorNewFile <- fileResult.id
+				for _, file := range failed {
+					m.fileAggregatorNewFile <- file
 				}
 			case <-ticker.C:
 				if m.stats.FilesToMigrate == 0 {
@@ -895,12 +1222,6 @@ func (m *migrator) closeMigrators() {
 }
 
 func (m *migrator) runFileMigrators(wg *sync.WaitGroup) {
-	badBlock := func(blockService *msgs.BlockService, blockSize uint32, block *msgs.FetchedBlock) (bool, error) {
-		m.blockServicesLock.RLock()
-		defer m.blockServicesLock.RUnlock()
-		_, ok := m.scheduledBlockServices[blockService.Id]
-		return ok, nil
-	}
 	bufPool := bufpool.NewBufPool()
 	for range m.numParallelFiles {
 		wg.Go(func() {
@@ -914,16 +1235,30 @@ func (m *migrator) runFileMigrators(wg *sync.WaitGroup) {
 					tmpFile.Close()
 				}
 			}()
-			for file := range m.fileMigratorsNewFile {
-				shid := file.Shard()
+			for files := range m.fileMigratorsNewFile {
+				shid := files[0].Shard()
 				if scratchFiles[shid] == nil {
 					scratchFiles[shid] = scratch.NewScratchFile(m.log, m.client, shid, fmt.Sprintf("migrator for blockservices in shard %v", shid))
 				}
 				tmpFile := scratchFiles[shid]
 
+				if m.replaceDecommissioned {
+					errs := replaceDecommissionedBlocks(m.log, m.client, bufPool, &m.stats, tmpFile, files, m.locationId, m.isScheduled)
+					results := make([]fileMigrationResult, len(files))
+					for i, file := range files {
+						if errs[i] != nil {
+							m.log.Info("could not migrate file %v in shard %v: %v", file, shid, errs[i])
+						}
+						results[i] = fileMigrationResult{file, errs[i]}
+					}
+					m.fileAggregatoFileFinished <- results
+					continue
+				}
+
+				file := files[0]
 				err := error(nil)
 				for {
-					if err = migrateBlocksInFileGeneric(m.log, m.client, bufPool, &m.stats, nil, nil, "", badBlock, tmpFile, file); err == nil {
+					if err = migrateBlocksInFileGeneric(m.log, m.client, bufPool, &m.stats, nil, nil, "", m.isScheduled, tmpFile, file); err == nil {
 						break
 					}
 					if err != msgs.BLOCK_NOT_FOUND {
@@ -934,7 +1269,7 @@ func (m *migrator) runFileMigrators(wg *sync.WaitGroup) {
 					time.Sleep(time.Second)
 				}
 				m.log.ClearNC(blockNotFoundAlert)
-				m.fileAggregatoFileFinished <- fileMigrationResult{file, err}
+				m.fileAggregatoFileFinished <- []fileMigrationResult{{file, err}}
 			}
 		})
 	}

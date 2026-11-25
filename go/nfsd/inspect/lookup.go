@@ -34,8 +34,7 @@ type Resolution struct {
 
 // Resolve answers /v1/lookup for one id. The kind prefix chooses the
 // resolver and the value is parsed for that kind alone; a zero wire
-// clientid, incarnation or inode is an error. In store-only mode the HTTP
-// layer answers 503 before calling this.
+// clientid, incarnation or inode is an error.
 func Resolve(src Source, text string) (Resolution, error) {
 	kind, _, _ := strings.Cut(text, ":")
 	var (
@@ -69,8 +68,8 @@ func Resolve(src Source, text string) (Resolution, error) {
 	case KindIdentityHash:
 		if raw, err = ParseID(kind, text); err == nil {
 			r = Resolution{
-				Note:  "the SHA-256 of an EXCHANGE_ID client owner, which names its identity directory in the client store; the store report describes it",
-				Links: []string{"/v1/store?identity-hash=" + ID(kind, raw)},
+				Note:  "the SHA-256 of an EXCHANGE_ID client owner, which names its client record file under clients/ in the staging directory; /v1/clients lists the records with their identity hashes",
+				Links: []string{"/v1/clients"},
 			}
 		}
 	default:

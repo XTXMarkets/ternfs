@@ -7,9 +7,7 @@ package server
 import (
 	"testing"
 
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
@@ -17,7 +15,7 @@ import (
 // a pending-only failure leaves nothing, and pending tokens count toward
 // the quota so SEQUENCE gets RESOURCE before any renewal work.
 func TestAssociationTokens(t *testing.T) {
-	srv, err := NewServer(vfs.NewLocalTernVFS(t.TempDir()), staging.ReadOnlyStore{}, nil)
+	srv, err := NewServer(vfs.NewLocalTernVFS(t.TempDir()), newTestStaging(t), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,17 +56,10 @@ func TestAssociationTokens(t *testing.T) {
 	if _, ok := conn.reserve(srv, other.id); ok {
 		t.Fatal("pending tokens not counted against the quota")
 	}
-	// SEQUENCE on the full connection: RESOURCE, with no verify requested.
-	sess := srv.sessions.lookup(other.id)
-	setLeaseForTest(srv, sess.clientID, func(r *clientstore.LeaseRefresher) { r.Proven = 0 })
+	// SEQUENCE on the full connection: RESOURCE.
 	body := buildCompoundBody(nil, func(*nfs4.COMPOUND4argsWriter) {})
 	_, res := admissionRequest(t, srv, admissionSequence(body, other, 0, 1, true), 1, conn)
 	admissionStatus(t, res, nfs4.NFS4ERR_RESOURCE, nfs4.OP_SEQUENCE)
-	setLeaseForTest(srv, sess.clientID, func(r *clientstore.LeaseRefresher) {
-		if r.Verify {
-			t.Error("RESOURCE admission requested a verify")
-		}
-	})
 	for _, tok := range tokens {
 		tok.abort()
 	}

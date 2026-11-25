@@ -4,8 +4,6 @@
 
 #include "net.h"
 
-#include <linux/version.h>
-
 #include "log.h"
 #include "super.h"
 #include "trace.h"
@@ -90,7 +88,7 @@ static void sock_readable(struct sock* sk) {
     s = (struct ternfs_metadata_socket*)sk->sk_user_data;
     BUG_ON(!s);
     for (;;) {
-        skb = COMPAT_SKB_RECV_UDP(sk, MSG_DONTWAIT, &err);
+        skb = skb_recv_udp(sk, MSG_DONTWAIT, &err);
         if (!skb) {
             read_unlock_bh(&sk->sk_callback_lock);
             return;
@@ -194,7 +192,7 @@ int ternfs_init_shard_socket(struct ternfs_metadata_socket* s) {
 
     int new_rcvbuf_size = 1024 * 1024;
     int optlen = sizeof(new_rcvbuf_size);
-    err = COMPAT_SET_SOCKOPT(s->sock, SOL_SOCKET, SO_RCVBUF, &new_rcvbuf_size, optlen);
+    err = sock_setsockopt(s->sock, SOL_SOCKET, SO_RCVBUF, KERNEL_SOCKPTR(&new_rcvbuf_size), optlen);
     if (err) { goto out_socket; }
 
     write_lock_bh(&s->sock->sk->sk_callback_lock);

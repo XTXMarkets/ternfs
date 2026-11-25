@@ -143,6 +143,7 @@ func (c *Client) shardRequestInternal(
 	// are made regarding the contents of `respBody`.
 	respBody msgs.ShardResponse,
 	dontWait bool,
+	replica *msgs.ReplicaId,
 ) error {
 	msgKind := reqBody.ShardRequestKind()
 	if !dontWait && msgKind != respBody.ShardResponseKind() {
@@ -169,7 +170,7 @@ func (c *Client) shardRequestInternal(
 	if c.counters != nil {
 		counters = &c.counters.Shard[uint8(msgKind)][uint8(shid)]
 	}
-	return c.metadataRequest(logger, int16(shid), reqBody, respBody, counters, dontWait)
+	return c.metadataRequest(logger, int16(shid), reqBody, respBody, counters, dontWait, replica)
 }
 
 // ShardRequestDontWait queues a request without waiting for a reply.
@@ -180,7 +181,7 @@ func (c *Client) ShardRequestDontWait(
 	shid msgs.ShardId,
 	reqBody msgs.ShardRequest,
 ) error {
-	return c.shardRequestInternal(logger, shid, reqBody, nil, true)
+	return c.shardRequestInternal(logger, shid, reqBody, nil, true, nil)
 }
 
 // This function will set the mtu field for requests that have it with whatever is in `SetMTU`
@@ -192,7 +193,17 @@ func (c *Client) ShardRequest(
 	// are made regarding the contents of `respBody`.
 	respBody msgs.ShardResponse,
 ) error {
-	return c.shardRequestInternal(logger, shid, reqBody, respBody, false)
+	return c.shardRequestInternal(logger, shid, reqBody, respBody, false, nil)
+}
+
+func (c *Client) ShardReplicaRequest(
+	logger *log.Logger,
+	shrid msgs.ShardReplicaId,
+	reqBody msgs.ShardRequest,
+	respBody msgs.ShardResponse,
+) error {
+	replica := shrid.Replica()
+	return c.shardRequestInternal(logger, shrid.Shard(), reqBody, respBody, false, &replica)
 }
 
 func createShardSocket(shid msgs.ShardId, ip [4]byte, port uint16) (*net.UDPConn, error) {

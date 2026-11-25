@@ -43,3 +43,49 @@ func TestCDCRequestReturnsIO(t *testing.T) {
 		t.Fatalf("cdcRequest = %v, want EIO", errno)
 	}
 }
+
+func TestCanDeleteFileImmediately(t *testing.T) {
+	previousCache := dirInfoCache
+	dirInfoCache = client.NewDirInfoCache()
+	t.Cleanup(func() { dirInfoCache = previousCache })
+
+	timeRetention := msgs.ActiveDeleteAfterTime(30 * 24 * time.Hour)
+	timeZero := msgs.ActiveDeleteAfterTime(0)
+	versionRetention := msgs.ActiveDeleteAfterVersions(1)
+	versionZero := msgs.ActiveDeleteAfterVersions(0)
+	tests := []struct {
+		name     string
+		time     msgs.DeleteAfterTime
+		versions msgs.DeleteAfterVersions
+		want     bool
+	}{
+		{"both_inactive", 0, 0, false},
+		{"time_retention", timeRetention, 0, false},
+		{"version_retention", 0, versionRetention, false},
+		{"both_retention", timeRetention, versionRetention, false},
+		{"time_zero", timeZero, 0, true},
+		{"version_zero", 0, versionZero, true},
+		{"time_zero_version_retention", timeZero, versionRetention, true},
+		{"time_retention_version_zero", timeRetention, versionZero, true},
+		{"both_zero", timeZero, versionZero, true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			policy := msgs.SnapshotPolicy{
+				DeleteAfterTime:     test.time,
+				DeleteAfterVersions: test.versions,
+			}
+			dir := msgs.ROOT_DIR_INODE_ID
+			dirInfoCache.UpdatePolicy(dir, &policy)
+			dirInfoCache.UpdateInheritedFrom(dir, msgs.SNAPSHOT_POLICY_TAG, dir)
+
+			got, errno := canDeleteFileImmediately(dir)
+			if errno != 0 {
+				t.Fatal(errno)
+			}
+			if got != test.want {
+				t.Errorf("canDeleteFileImmediately() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}

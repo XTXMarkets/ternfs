@@ -8,6 +8,7 @@
 package cleanup
 
 import (
+	"context"
 	"fmt"
 	"github.com/XTXMarkets/ternfs/go/cleanup/scratch"
 	"github.com/XTXMarkets/ternfs/go/client"
@@ -211,8 +212,8 @@ func DefragFiles(
 ) error {
 	timeStats := newTimeStats()
 	return client.Parwalk(
-		log, c, &client.ParwalkOptions{WorkersPerShard: options.WorkersPerShard}, root,
-		func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error {
+		context.Background(), log, c, &client.ParwalkOptions{WorkersPerShard: options.WorkersPerShard}, root,
+		func(_ context.Context, parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error {
 			if id.Type() == msgs.DIRECTORY {
 				return nil
 			}
@@ -326,8 +327,8 @@ func DefragSpans(
 ) error {
 	timeStats := newTimeStats()
 	return client.Parwalk(
-		log, c, &client.ParwalkOptions{WorkersPerShard: 5}, root,
-		func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error {
+		context.Background(), log, c, &client.ParwalkOptions{WorkersPerShard: 5}, root,
+		func(_ context.Context, parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error {
 			if id.Type() == msgs.DIRECTORY {
 				return nil
 			}

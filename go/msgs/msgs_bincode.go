@@ -260,6 +260,12 @@ const (
 	REGISTRY_OVERLOADED                     TernError = 105
 	SHARDS_NOT_READY                        TernError = 106
 	CDC_NOT_READY                           TernError = 107
+	BLOCK_SERVICE_NOT_DECOMMISSIONED        TernError = 108
+	REPLACE_BLOCKS_MISMATCHING_SIZE         TernError = 109
+	REPLACE_BLOCKS_MISMATCHING_CRC          TernError = 110
+	REPLACE_BLOCKS_MISMATCHING_LOCATION     TernError = 111
+	REPLACE_BLOCKS_DUPLICATE_BLOCK_SERVICE  TernError = 112
+	REPLACE_BLOCKS_DUPLICATE_FAILURE_DOMAIN TernError = 113
 )
 
 func (err TernError) String() string {
@@ -460,6 +466,18 @@ func (err TernError) String() string {
 		return "SHARDS_NOT_READY"
 	case 107:
 		return "CDC_NOT_READY"
+	case 108:
+		return "BLOCK_SERVICE_NOT_DECOMMISSIONED"
+	case 109:
+		return "REPLACE_BLOCKS_MISMATCHING_SIZE"
+	case 110:
+		return "REPLACE_BLOCKS_MISMATCHING_CRC"
+	case 111:
+		return "REPLACE_BLOCKS_MISMATCHING_LOCATION"
+	case 112:
+		return "REPLACE_BLOCKS_DUPLICATE_BLOCK_SERVICE"
+	case 113:
+		return "REPLACE_BLOCKS_DUPLICATE_FAILURE_DOMAIN"
 	default:
 		return fmt.Sprintf("TernError(%d)", err)
 	}
@@ -529,6 +547,8 @@ func (k ShardMessageKind) String() string {
 		return "REMOVE_SPAN_CERTIFY"
 	case 120:
 		return "SWAP_BLOCKS"
+	case 23:
+		return "REPLACE_BLOCKS"
 	case 121:
 		return "BLOCK_SERVICE_FILES"
 	case 122:
@@ -596,6 +616,7 @@ const (
 	REMOVE_SPAN_INITIATE             ShardMessageKind = 0x76
 	REMOVE_SPAN_CERTIFY              ShardMessageKind = 0x77
 	SWAP_BLOCKS                      ShardMessageKind = 0x78
+	REPLACE_BLOCKS                   ShardMessageKind = 0x17
 	BLOCK_SERVICE_FILES              ShardMessageKind = 0x79
 	REMOVE_INODE                     ShardMessageKind = 0x7A
 	ADD_SPAN_INITIATE_WITH_REFERENCE ShardMessageKind = 0x7C
@@ -645,6 +666,7 @@ var AllShardMessageKind = [...]ShardMessageKind{
 	REMOVE_SPAN_INITIATE,
 	REMOVE_SPAN_CERTIFY,
 	SWAP_BLOCKS,
+	REPLACE_BLOCKS,
 	BLOCK_SERVICE_FILES,
 	REMOVE_INODE,
 	ADD_SPAN_INITIATE_WITH_REFERENCE,
@@ -728,6 +750,8 @@ func MkShardMessage(k string) (ShardRequest, ShardResponse, error) {
 		return &RemoveSpanCertifyReq{}, &RemoveSpanCertifyResp{}, nil
 	case k == "SWAP_BLOCKS":
 		return &SwapBlocksReq{}, &SwapBlocksResp{}, nil
+	case k == "REPLACE_BLOCKS":
+		return &ReplaceBlocksReq{}, &ReplaceBlocksResp{}, nil
 	case k == "BLOCK_SERVICE_FILES":
 		return &BlockServiceFilesReq{}, &BlockServiceFilesResp{}, nil
 	case k == "REMOVE_INODE":
@@ -911,6 +935,8 @@ func (k RegistryMessageKind) String() string {
 		return "BLOCK_SERVICES_NEEDING_MIGRATION"
 	case 48:
 		return "BLOCK_SERVICE_AVAILABLE_SPACE"
+	case 49:
+		return "LOCAL_SHARD_REPLICAS"
 	default:
 		return fmt.Sprintf("RegistryMessageKind(%d)", k)
 	}
@@ -958,6 +984,7 @@ const (
 	CHANGED_BLOCK_SERVICES                      RegistryMessageKind = 0x2E
 	BLOCK_SERVICES_NEEDING_MIGRATION            RegistryMessageKind = 0x2F
 	BLOCK_SERVICE_AVAILABLE_SPACE               RegistryMessageKind = 0x30
+	LOCAL_SHARD_REPLICAS                        RegistryMessageKind = 0x31
 )
 
 var AllRegistryMessageKind = [...]RegistryMessageKind{
@@ -1002,9 +1029,10 @@ var AllRegistryMessageKind = [...]RegistryMessageKind{
 	CHANGED_BLOCK_SERVICES,
 	BLOCK_SERVICES_NEEDING_MIGRATION,
 	BLOCK_SERVICE_AVAILABLE_SPACE,
+	LOCAL_SHARD_REPLICAS,
 }
 
-const MaxRegistryMessageKind RegistryMessageKind = 48
+const MaxRegistryMessageKind RegistryMessageKind = 49
 
 func MkRegistryMessage(k string) (RegistryRequest, RegistryResponse, error) {
 	switch {
@@ -1090,6 +1118,8 @@ func MkRegistryMessage(k string) (RegistryRequest, RegistryResponse, error) {
 		return &BlockServicesNeedingMigrationReq{}, &BlockServicesNeedingMigrationResp{}, nil
 	case k == "BLOCK_SERVICE_AVAILABLE_SPACE":
 		return &BlockServiceAvailableSpaceReq{}, &BlockServiceAvailableSpaceResp{}, nil
+	case k == "LOCAL_SHARD_REPLICAS":
+		return &LocalShardReplicasReq{}, &LocalShardReplicasResp{}, nil
 	default:
 		return nil, nil, fmt.Errorf("bad kind string %s", k)
 	}
@@ -3049,6 +3079,61 @@ func (v *SwapBlocksResp) Pack(w io.Writer) error {
 }
 
 func (v *SwapBlocksResp) Unpack(r io.Reader) error {
+	return nil
+}
+
+func (v *ReplaceBlocksReq) ShardRequestKind() ShardMessageKind {
+	return REPLACE_BLOCKS
+}
+
+func (v *ReplaceBlocksReq) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.ScratchId)); err != nil {
+		return err
+	}
+	if err := bincode.PackFixedBytes(w, 8, v.ScratchCookie[:]); err != nil {
+		return err
+	}
+	len1 := len(v.Blocks)
+	if err := bincode.PackLength(w, len1); err != nil {
+		return err
+	}
+	for i := 0; i < len1; i++ {
+		if err := v.Blocks[i].Pack(w); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (v *ReplaceBlocksReq) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.ScratchId)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackFixedBytes(r, 8, v.ScratchCookie[:]); err != nil {
+		return err
+	}
+	var len1 int
+	if err := bincode.UnpackLength(r, &len1); err != nil {
+		return err
+	}
+	bincode.EnsureLength(&v.Blocks, len1)
+	for i := 0; i < len1; i++ {
+		if err := v.Blocks[i].Unpack(r); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (v *ReplaceBlocksResp) ShardResponseKind() ShardMessageKind {
+	return REPLACE_BLOCKS
+}
+
+func (v *ReplaceBlocksResp) Pack(w io.Writer) error {
+	return nil
+}
+
+func (v *ReplaceBlocksResp) Unpack(r io.Reader) error {
 	return nil
 }
 
@@ -5375,6 +5460,50 @@ func (v *LocationInfo) Unpack(r io.Reader) error {
 	return nil
 }
 
+func (v *ReplaceBlock) Pack(w io.Writer) error {
+	if err := bincode.PackScalar(w, uint64(v.FileId)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.ByteOffset)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.OldBlockId)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.OldBlockServiceId)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.ScratchByteOffset)); err != nil {
+		return err
+	}
+	if err := bincode.PackScalar(w, uint64(v.NewBlockId)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (v *ReplaceBlock) Unpack(r io.Reader) error {
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.FileId)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.ByteOffset)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.OldBlockId)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.OldBlockServiceId)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.ScratchByteOffset)); err != nil {
+		return err
+	}
+	if err := bincode.UnpackScalar(r, (*uint64)(&v.NewBlockId)); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (v *IpPort) Pack(w io.Writer) error {
 	if err := bincode.PackFixedBytes(w, 4, v.Addrs[:]); err != nil {
 		return err
@@ -7244,6 +7373,49 @@ func (v *BlockServiceAvailableSpaceResp) Unpack(r io.Reader) error {
 	bincode.EnsureLength(&v.BlockServices, len1)
 	for i := 0; i < len1; i++ {
 		if err := v.BlockServices[i].Unpack(r); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (v *LocalShardReplicasReq) RegistryRequestKind() RegistryMessageKind {
+	return LOCAL_SHARD_REPLICAS
+}
+
+func (v *LocalShardReplicasReq) Pack(w io.Writer) error {
+	return nil
+}
+
+func (v *LocalShardReplicasReq) Unpack(r io.Reader) error {
+	return nil
+}
+
+func (v *LocalShardReplicasResp) RegistryResponseKind() RegistryMessageKind {
+	return LOCAL_SHARD_REPLICAS
+}
+
+func (v *LocalShardReplicasResp) Pack(w io.Writer) error {
+	len1 := len(v.Shards)
+	if err := bincode.PackLength(w, len1); err != nil {
+		return err
+	}
+	for i := 0; i < len1; i++ {
+		if err := v.Shards[i].Pack(w); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (v *LocalShardReplicasResp) Unpack(r io.Reader) error {
+	var len1 int
+	if err := bincode.UnpackLength(r, &len1); err != nil {
+		return err
+	}
+	bincode.EnsureLength(&v.Shards, len1)
+	for i := 0; i < len1; i++ {
+		if err := v.Shards[i].Unpack(r); err != nil {
 			return err
 		}
 	}

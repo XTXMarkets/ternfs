@@ -86,10 +86,7 @@ func exercisePrivateMutableWriters(t *testing.T, addr, name string, reverse bool
 	defer otherConn.Close()
 	xid := uint32(1)
 	clientID := setupClient(t, conn, &xid)
-	otherID, otherConfirm := requestClientID(t, otherConn, &xid, "other-"+name, [8]byte{2})
-	if status := confirmClientID(t, otherConn, &xid, otherID, otherConfirm); status != nfs4.NFS4_OK {
-		t.Fatal(nfs4.Nfsstat4Name(status))
-	}
+	otherID := setupClientAs(t, otherConn, &xid, "other-"+name, [8]byte{2})
 	createdState, createdFH := openCreateFile(t, conn, &xid, clientID, name)
 	writeFileAt(t, conn, &xid, createdFH, createdState, 0, []byte("original"))
 	closeFile(t, conn, &xid, createdFH, createdState)
@@ -120,10 +117,7 @@ func exercisePrivateMutableWriters(t *testing.T, addr, name string, reverse bool
 	// A third client sees the published attributes.
 	viewer := dial(t, addr)
 	defer viewer.Close()
-	viewerID, viewerConfirm := requestClientID(t, viewer, &xid, "viewer-"+name, [8]byte{3})
-	if status := confirmClientID(t, viewer, &xid, viewerID, viewerConfirm); status != nfs4.NFS4_OK {
-		t.Fatal(nfs4.Nfsstat4Name(status))
-	}
+	setupClientAs(t, viewer, &xid, "viewer-"+name, [8]byte{3})
 	publishedAttrs := mutableAttrs(t, viewer, &xid, baseFH)
 	if !bytes.Equal(baseAttrs[:16], publishedAttrs[:16]) || !bytes.Equal(baseAttrs[28:], publishedAttrs[28:]) {
 		t.Fatal("writer changed published attributes")
@@ -289,7 +283,7 @@ func TestStagingCheckpointRetry(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			wantAttrs := encodeAttrs(mutableAttrMask, id, stage.Stat())
+			wantAttrs := encodeAttrs(mutableAttrMask, fileOwner{}, id, stage.Stat())
 			sf := stage.(*staging.LocalFile)
 			metaPath := sf.MetaPath()
 			sf.SetMetaPath(filepath.Join(dir, "missing", "file.meta"))
@@ -313,7 +307,7 @@ func TestStagingCheckpointRetry(t *testing.T) {
 			if string(buf) != want {
 				t.Fatalf("recovered %q, want %q", buf, want)
 			}
-			if !bytes.Equal(encodeAttrs(mutableAttrMask, id, rs.Stat()), wantAttrs) {
+			if !bytes.Equal(encodeAttrs(mutableAttrMask, fileOwner{}, id, rs.Stat()), wantAttrs) {
 				t.Fatal("checkpoint did not preserve writer attributes")
 			}
 		})

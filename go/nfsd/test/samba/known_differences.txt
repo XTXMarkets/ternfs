@@ -1,0 +1,31 @@
+# smbtorture cases that fail on the nfsd share but not on the tmpfs control
+# share, for known reasons. One "suite/case" per line; the reason goes in the
+# comments above it. Cases that fail on both shares need no entry.
+
+# nfsd does not report TIME_CREATE, so Samba makes a create time up from the
+# other times and it moves when they do. Explorer's "Date created" column is
+# the visible effect.
+smb2.dir/find
+
+# Samba answers a quota query on an NFS-backed share by asking rquotad on the
+# server, which nfsd does not run. Windows does not need quota information.
+smb2.getinfo/fsinfo
+
+# TernFS stores times from 1970 to 2262, and nfsd clamps a time before 1970
+# to the epoch. These cases expect the pre-1970 time back.
+smb2.timestamps/time_t_-1
+smb2.timestamps/time_t_-2
+smb2.timestamps/time_t_1968
+
+# Intermittent: a write through a handle, then a flush, end-of-file change
+# or basic-info change, sometimes leaves the write time where it was on the
+# nfsd share. Not isolated.
+smb2.timestamps/delayed-write-vs-flush
+smb2.timestamps/delayed-write-vs-seteof
+smb2.timestamps/delayed-write-vs-setbasic
+
+# Moves a file it still has open for writing to another directory. nfsd
+# refuses a cross-directory RENAME of a file with an active writer, whose
+# transient inode belongs to the source directory's shard (DESIGN.md,
+# REMOVE and RENAME).
+smb2.notify/mask-change

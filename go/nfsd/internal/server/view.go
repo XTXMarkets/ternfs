@@ -5,14 +5,14 @@
 package server
 
 import (
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/openstate"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
 // clientWriter returns the staging inode of clientID's most recent write
-// open of fileID, or fileID itself. Restart-recovered writers present
-// their staging inode as the handle.
+// open of fileID, or fileID itself. Recovered staging not yet adopted as a
+// live open is absent from the open index this reads
+// (README.md#stateid-checks).
 func (s *Server) clientWriter(clientID uint64, fileID vfs.InodeID) vfs.InodeID {
 	for _, state := range s.opens.ClientOpens(clientID, fileID) {
 		if state.Writes() {
@@ -22,6 +22,20 @@ func (s *Server) clientWriter(clientID uint64, fileID vfs.InodeID) vfs.InodeID {
 	return fileID
 }
 
+// readOnlyCreator returns clientID's read-only create open of fileID while
+// it still owns its staging. The client sees that staging as the file, so a
+// write open of the file joins it as it would join a writer.
+func (s *Server) readOnlyCreator(clientID uint64, fileID vfs.InodeID) (openstate.State, bool) {
+	for _, state := range s.opens.ClientOpens(clientID, fileID) {
+		meta, ok := s.stagingStore.GetMeta(state.DataID)
+		if ok && meta.ReadOnly && !meta.Unlinked &&
+			meta.ClientID == clientID && meta.NFSStateID == state.ID {
+			return state, true
+		}
+	}
+	return openstate.State{}, false
+}
+
 // clientView returns the inode clientID sees through handle fileID.
 func (s *Server) clientView(clientID uint64, fileID vfs.InodeID) vfs.InodeID {
 	opens := s.opens.ClientOpens(clientID, fileID)
@@ -29,6 +43,19 @@ func (s *Server) clientView(clientID uint64, fileID vfs.InodeID) vfs.InodeID {
 		if state.Writes() {
 			return state.DataID
 		}
+	}
+	// After a restart the client's writer of the handle is on the staging
+	// disk until a request adopts it or its CLOSE's retransmission publishes
+	// it. It is the client's view meanwhile, as a live writer is: a read
+	// OPEN of the name in that window saw the version before the edit
+	// (QA soak 2026-10-21). Several are rare, since a client's opens of a
+	// file share one staging; the newest inode is the latest edit.
+	var recovered vfs.InodeID
+	for _, id := range s.recoveredWritersOf(clientID, fileID) {
+		recovered = max(recovered, id)
+	}
+	if recovered != 0 {
+		return recovered
 	}
 	if dataID, ok := s.views.Get(openstate.ViewKey{ClientID: clientID, FileID: fileID}); ok {
 		return dataID
@@ -44,13 +71,36 @@ func (s *Server) publishedAs(clientID uint64, fileID, dataID vfs.InodeID) {
 	if fileID == dataID {
 		return
 	}
-	s.views.Set(openstate.ViewKey{ClientID: clientID, FileID: fileID}, dataID, s.clients.Now().Add(clientstore.LeaseTime))
+	s.aliasMu.Lock()
+	defer s.aliasMu.Unlock()
+	expires := s.now().Add(leaseTime)
+	s.views.Set(openstate.ViewKey{ClientID: clientID, FileID: fileID}, dataID, expires)
+	// Persisted so that the client's view survives an nfsd restart; see
+	// alias_log.go.
+	if err := s.aliases.append(aliasRecord{ClientID: clientID, FileID: uint64(fileID), DataID: uint64(dataID), Expires: expires}); err != nil {
+		s.log.Warn("publication aliases: append", "err", err)
+	}
+}
+
+// viewHeld reports that the alias's client still has its handle open,
+// which keeps the alias past its expiry.
+func (s *Server) viewHeld(key openstate.ViewKey) bool {
+	return len(s.opens.ClientOpens(key.ClientID, key.FileID)) > 0
 }
 
 func (s *Server) sweepViews() {
-	s.views.Sweep(s.clients.Now(), func(key openstate.ViewKey) bool {
-		return len(s.opens.ClientOpens(key.ClientID, key.FileID)) > 0
-	})
+	s.views.Sweep(s.now(), s.viewHeld)
+	s.views.PruneWriters(s.writerKept)
+	s.compactAliases()
+}
+
+// writerKept reports that a writer index entry still matters: its staging
+// is live, or failed and so a tombstone COMMIT must report. It is one
+// check: asking Failed and then Get lets a quarantine between them answer
+// no to both, and the entry would be pruned while its tombstone survives,
+// so a later COMMIT through the handle would report success.
+func (s *Server) writerKept(id vfs.InodeID) bool {
+	return s.stagingStore.Retained(id)
 }
 
 // failedWriter reports whether a writer clientID used through fileID has

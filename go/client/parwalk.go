@@ -9,6 +9,7 @@
 package client
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path"
@@ -28,13 +29,24 @@ type parwarlkReq struct {
 	path string
 }
 
+// What the walk needs from Client to list directories.
+type parwalkClient interface {
+	ShardRequest(log *log.Logger, shid msgs.ShardId, reqBody msgs.ShardRequest, respBody msgs.ShardResponse) error
+	fullReadDir(log *log.Logger, dirId msgs.InodeId, flags msgs.FullReadDirFlags, startName string, startTime msgs.TernTime) (*msgs.FullReadDirResp, error)
+}
+
 type parwalkEnv struct {
-	wg             sync.WaitGroup
-	chans          []chan parwarlkReq
-	client         *Client
-	snapshot       bool
-	snapshotLatest bool
-	callback       func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error
+	// Cancelled with the first error, which stops the walk.
+	ctx                context.Context
+	cancel             context.CancelCauseFunc
+	wg                 sync.WaitGroup
+	chans              []chan parwarlkReq
+	client             parwalkClient
+	snapshot           bool
+	snapshotLatest     bool
+	failOnReadDirError bool
+	rootIds            map[msgs.InodeId]struct{}
+	callback           func(ctx context.Context, parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error
 }
 
 func (env *parwalkEnv) visit(
@@ -48,7 +60,10 @@ func (env *parwalkEnv) visit(
 	current bool,
 	owned bool,
 ) error {
-	cbErr := env.callback(parent, parentPath, name, creationTime, id, current, owned)
+	if err := env.ctx.Err(); err != nil {
+		return err
+	}
+	cbErr := env.callback(env.ctx, parent, parentPath, name, creationTime, id, current, owned)
 	if errors.Is(cbErr, ErrSkipSubtree) {
 		return nil
 	}
@@ -66,22 +81,39 @@ func (env *parwalkEnv) visit(
 	fullPath := path.Join(parentPath, name)
 	if parent != msgs.NULL_INODE_ID && homeShid == id.Shard() {
 		// same shard, handle right now
-		env.process(log, homeShid, id, fullPath)
-	} else {
-		req := parwarlkReq{
-			id:   id,
-			path: fullPath,
+		return env.process(log, homeShid, id, fullPath)
+	}
+	req := parwarlkReq{
+		id:   id,
+		path: fullPath,
+	}
+	// count the request before a worker can finish it
+	env.wg.Add(1)
+	select {
+	// pass to other shard
+	case env.chans[id.Shard()] <- req:
+		return nil
+	// queue is full, do it yourself
+	default:
+		defer env.wg.Done()
+		return env.process(log, homeShid, id, fullPath)
+	}
+}
+
+// readDirError decides whether a failed directory read stops the walk. A
+// directory deleted during the walk is skipped, unless it is a root.
+func (env *parwalkEnv) readDirError(log *log.Logger, id msgs.InodeId, pathStr string, err error) error {
+	if errors.Is(err, msgs.DIRECTORY_NOT_FOUND) || errors.Is(err, msgs.FILE_NOT_FOUND) {
+		if _, root := env.rootIds[id]; !root {
+			return nil
 		}
-		select {
-		// pass to other shard
-		case env.chans[id.Shard()] <- req:
-			env.wg.Add(1)
-		// queue is full, do it yourself
-		default:
-			env.process(log, homeShid, id, fullPath)
+	} else {
+		log.Debug("failed to read dir %v at path %q: %v", id, pathStr, err)
+		if !env.failOnReadDirError {
+			return nil
 		}
 	}
-	return nil
+	return fmt.Errorf("read dir %v at path %q: %w", id, pathStr, err)
 }
 
 func (env *parwalkEnv) process(
@@ -96,6 +128,9 @@ func (env *parwalkEnv) process(
 	if env.snapshot {
 		cursor := msgs.FullReadDirCursor{}
 		for {
+			if err := env.ctx.Err(); err != nil {
+				return err
+			}
 			flags := msgs.FullReadDirFlags(0)
 			if cursor.Current {
 				flags = msgs.FULL_READ_DIR_CURRENT
@@ -108,8 +143,7 @@ func (env *parwalkEnv) process(
 				cursor.StartTime,
 			)
 			if err != nil {
-				log.Debug("failed to read dir %v at path %q, it might have been deleted in the meantime: %v", id, pathStr, err)
-				return nil
+				return env.readDirError(log, id, pathStr, err)
 			}
 			for _, e := range resp.Results {
 				if e.TargetId.Id() == msgs.NULL_INODE_ID { // no point looking at deletion edges
@@ -130,9 +164,11 @@ func (env *parwalkEnv) process(
 		}
 		readResp := &msgs.ReadDirResp{}
 		for {
+			if err := env.ctx.Err(); err != nil {
+				return err
+			}
 			if err := env.client.ShardRequest(log, id.Shard(), readReq, readResp); err != nil {
-				log.Debug("failed to read dir %v at path %q, it might have been deleted in the meantime: %v", id, pathStr, err)
-				return nil
+				return env.readDirError(log, id, pathStr, err)
 			}
 			for _, e := range readResp.Results {
 				if err := env.visit(log, homeShid, id, pathStr, e.Name, e.CreationTime, e.TargetId, true, true); err != nil {
@@ -165,6 +201,9 @@ func (env *parwalkEnv) processSnapshotLatest(
 	latest := map[string]latestEdge{}
 	cursor := msgs.FullReadDirCursor{}
 	for {
+		if err := env.ctx.Err(); err != nil {
+			return err
+		}
 		flags := msgs.FULL_READ_DIR_BACKWARDS
 		if cursor.Current {
 			flags |= msgs.FULL_READ_DIR_CURRENT
@@ -177,8 +216,7 @@ func (env *parwalkEnv) processSnapshotLatest(
 			cursor.StartTime,
 		)
 		if err != nil {
-			log.Debug("failed to read dir %v at path %q, it might have been deleted in the meantime: %v", id, pathStr, err)
-			return nil
+			return env.readDirError(log, id, pathStr, err)
 		}
 		for _, e := range resp.Results {
 			if e.TargetId.Id() == msgs.NULL_INODE_ID {
@@ -209,32 +247,45 @@ func (env *parwalkEnv) processSnapshotLatest(
 
 type ParwalkOptions struct {
 	WorkersPerShard int
-	Snapshot        bool
+	// FailOnReadDirError stops on read failures below the roots; missing roots always fail.
+	FailOnReadDirError bool
+	Snapshot           bool
 	// SnapshotLatest, when true, iterates snapshot edges backwards (newest
 	// first) and invokes the callback only for the newest non-null edge per
 	// name. NULL (deletion) edges are ignored. Implies Snapshot=true. Useful
 	// for walking a deleted/historical subtree.
 	SnapshotLatest bool
+	// QueueSize is how many directories can wait for each shard's workers,
+	// zero meaning 10,000. When a shard's queue is full the worker that
+	// found the directory reads it itself. All 256 queues are allocated
+	// up front, 24 bytes per directory, so the default costs 61 MB per
+	// walk.
+	QueueSize int
 }
 
 // Parwalk traverses the subtree rooted at `root` (a path), invoking callback
 // for each edge it visits. See ParwalkFromInode for a variant that starts
 // from an inode id (useful when the root has no live path, e.g. a deleted
 // directory).
+//
+// Cancelling ctx stops the walk, which then returns ctx's cause. Shard
+// requests already in flight are not interrupted.
+//
+// The callback runs concurrently on the walk's goroutines. If it returns an
+// error other than ErrSkipSubtree the walk stops and returns the first such
+// error. The callback's context is cancelled when the walk stops, including
+// when it finishes: a callback that waits should watch it, and work that
+// outlives the walk must not use it. The walk's goroutines have exited by
+// the time it returns.
 func Parwalk(
+	ctx context.Context,
 	log *log.Logger,
 	client *Client,
 	options *ParwalkOptions,
 	root string,
-	callback func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error,
+	callback func(ctx context.Context, parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error,
 ) error {
-	rootId, creationTime, parentId, err := client.ResolvePathWithParent(log, root)
-	if err != nil {
-		return err
-	}
-	return parwalkRunWithSeeds(log, client, options, callback, []parwalkSeed{
-		{parentId: parentId, parentPath: path.Dir(root), name: path.Base(root), creationTime: creationTime, rootId: rootId},
-	})
+	return ParwalkMany(ctx, log, client, options, []string{root}, callback)
 }
 
 // ParwalkFromInode is like Parwalk but takes an inode id as the root instead
@@ -244,15 +295,17 @@ func Parwalk(
 // (e.g. a destination path when walking a deleted subtree to reconstruct it
 // somewhere else).
 func ParwalkFromInode(
+	ctx context.Context,
 	log *log.Logger,
 	client *Client,
 	options *ParwalkOptions,
 	rootId msgs.InodeId,
 	rootPath string,
-	callback func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error,
+	callback func(ctx context.Context, parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error,
 ) error {
-	return parwalkRunWithSeeds(log, client, options, callback, []parwalkSeed{
-		{parentId: msgs.NULL_INODE_ID, parentPath: path.Dir(rootPath), name: path.Base(rootPath), creationTime: 0, rootId: rootId},
+	parentPath, name := parwalkSplitRoot(rootPath)
+	return parwalkRunWithSeeds(ctx, log, client, options, callback, []parwalkSeed{
+		{parentId: msgs.NULL_INODE_ID, parentPath: parentPath, name: name, creationTime: 0, rootId: rootId},
 	})
 }
 
@@ -265,27 +318,40 @@ func ParwalkFromInode(
 // The callback contract is identical to Parwalk; callers that want to know
 // which root an edge belongs to can derive it from the parentPath argument.
 func ParwalkMany(
+	ctx context.Context,
 	log *log.Logger,
 	client *Client,
 	options *ParwalkOptions,
 	roots []string,
-	callback func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error,
+	callback func(ctx context.Context, parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error,
 ) error {
 	seeds := make([]parwalkSeed, 0, len(roots))
 	for _, root := range roots {
+		if err := context.Cause(ctx); err != nil {
+			return err
+		}
 		rootId, creationTime, parentId, err := client.ResolvePathWithParent(log, root)
 		if err != nil {
 			return fmt.Errorf("resolve %q: %w", root, err)
 		}
+		parentPath, name := parwalkSplitRoot(root)
 		seeds = append(seeds, parwalkSeed{
 			parentId:     parentId,
-			parentPath:   path.Dir(root),
-			name:         path.Base(root),
+			parentPath:   parentPath,
+			name:         name,
 			creationTime: creationTime,
 			rootId:       rootId,
 		})
 	}
-	return parwalkRunWithSeeds(log, client, options, callback, seeds)
+	return parwalkRunWithSeeds(ctx, log, client, options, callback, seeds)
+}
+
+// The parent path and name a root's own edge is reported with. The root is
+// cleaned first: path.Dir and path.Base disagree about a trailing slash, so
+// "/a/" would be reported as "/a/a".
+func parwalkSplitRoot(root string) (parentPath string, name string) {
+	root = path.Clean(root)
+	return path.Dir(root), path.Base(root)
 }
 
 type parwalkSeed struct {
@@ -297,59 +363,70 @@ type parwalkSeed struct {
 }
 
 func parwalkRunWithSeeds(
+	ctx context.Context,
 	log *log.Logger,
-	client *Client,
+	client parwalkClient,
 	options *ParwalkOptions,
-	callback func(parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error,
+	callback func(ctx context.Context, parent msgs.InodeId, parentPath string, name string, creationTime msgs.TernTime, id msgs.InodeId, current bool, owned bool) error,
 	seeds []parwalkSeed,
 ) error {
 	if options.WorkersPerShard < 1 {
 		panic(fmt.Errorf("workersPerShard=%d < 1", options.WorkersPerShard))
 	}
+	if options.QueueSize < 0 {
+		panic(fmt.Errorf("queueSize=%d < 0", options.QueueSize))
+	}
+	queueSize := options.QueueSize
+	if queueSize == 0 {
+		queueSize = 10_000
+	}
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	rootIds := make(map[msgs.InodeId]struct{}, len(seeds))
+	for _, seed := range seeds {
+		rootIds[seed.rootId] = struct{}{}
+	}
 	env := parwalkEnv{
-		chans:          make([]chan parwarlkReq, 256),
-		client:         client,
-		callback:       callback,
-		snapshot:       options.Snapshot || options.SnapshotLatest,
-		snapshotLatest: options.SnapshotLatest,
+		ctx:                ctx,
+		cancel:             cancel,
+		chans:              make([]chan parwarlkReq, 256),
+		client:             client,
+		callback:           callback,
+		snapshot:           options.Snapshot || options.SnapshotLatest,
+		snapshotLatest:     options.SnapshotLatest,
+		failOnReadDirError: options.FailOnReadDirError,
+		rootIds:            rootIds,
 	}
 	for i := 0; i < 256; i++ {
-		env.chans[i] = make(chan parwarlkReq, 10_000)
+		env.chans[i] = make(chan parwarlkReq, queueSize)
 	}
-	errChan := make(chan error, 1)
+	var workers sync.WaitGroup
 	for i := 0; i < 256; i++ {
 		shid := msgs.ShardId(i)
 		ch := env.chans[shid]
 		for j := 0; j < options.WorkersPerShard; j++ {
-			go func() {
-				for {
-					req, more := <-ch
-					if !more {
-						return
-					}
+			workers.Go(func() {
+				for req := range ch {
 					if err := env.process(log, shid, req.id, req.path); err != nil {
-						for _, ch := range env.chans {
-							close(ch)
-						}
-						select {
-						case errChan <- err:
-						default:
-						}
-						return
+						env.cancel(err)
 					}
 					env.wg.Done()
 				}
-			}()
+			})
 		}
 	}
 	for _, s := range seeds {
 		if err := env.visit(log, 0, s.parentId, s.parentPath, s.name, s.creationTime, s.rootId, true, true); err != nil {
-			return err
+			env.cancel(err)
+			break
 		}
 	}
-	go func() {
-		env.wg.Wait()
-		errChan <- nil
-	}()
-	return <-errChan
+	// Once every request is done nothing can send any more, so the queues
+	// can be closed to stop the workers.
+	env.wg.Wait()
+	for _, ch := range env.chans {
+		close(ch)
+	}
+	workers.Wait()
+	return context.Cause(ctx)
 }

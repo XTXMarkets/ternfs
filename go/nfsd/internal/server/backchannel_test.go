@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -337,15 +336,10 @@ func TestPendingBackReservationDoesNotKeepOldProbe(t *testing.T) {
 }
 
 func pendingBackProbe(t *testing.T, prune bool) {
-	fs := &confirmedLookupHold{TernVFS: vfs.NewLocalTernVFS(t.TempDir()),
-		entered: make(chan struct{}), release: make(chan struct{})}
-	srv, err := NewServer(fs, staging.ReadOnlyStore{}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	srv := admissionWritableServer(t, vfs.NewLocalTernVFS(t.TempDir()))
+	fs := gateCreations(t, srv)
 	addr, stop := serveTestServer(t, srv)
 	defer stop()
-	defer testutil.CloseSignal(fs.release)
 	c := newCBTestClient(t, addr)
 	clientID, seq := exchangeOn(t, c, 1, "probe-owner")
 	s0, flags := createdSession(t, c.compound(2, backCreateSessionBody(clientID, seq,
@@ -364,17 +358,14 @@ func pendingBackProbe(t *testing.T, prune bool) {
 		t.Fatalf("%d outstanding calls, want S0's CB_NULL", conn.outstandingCalls())
 	}
 
-	// S1 reserves its back association, then waits in IsConfirmed.
-	srv.clients.StopLeaseWorkers() // no refresher reads the confirmed pointer
-	fs.mu.Lock()
-	fs.armed = true
-	fs.mu.Unlock()
+	// S1 reserves its back association, then waits before its commit.
+	fs.armed.Store(true)
 	s1Done := make(chan nfs4.COMPOUND4res, 1)
 	go func() {
 		s1Done <- c.compound(3, backCreateSessionBody(clientID, seq+1,
 			nfs4.CREATE_SESSION4_FLAG_CONN_BACK_CHAN, offerNone))
 	}()
-	testutil.AwaitSignal(t, fs.entered, "S1's confirmation check")
+	testutil.AwaitSignal(t, fs.entered, "S1's creation")
 	conn.mu.Lock()
 	pending := len(conn.backPending)
 	conn.mu.Unlock()

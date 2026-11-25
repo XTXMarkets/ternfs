@@ -14,7 +14,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
+	"github.com/XTXMarkets/ternfs/go/msgs"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientrecords"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/staging"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/testutil"
@@ -31,8 +32,6 @@ func admissionWritableServer(t *testing.T, fs vfs.TernVFS) *Server {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(srv.waitForClientGC)
-	t.Cleanup(srv.clients.StopLeaseWorkers)
 	useTestWireEpoch(srv) // Tests also run compounds directly.
 	return srv
 }
@@ -84,7 +83,7 @@ func TestResponseAdmissionReadFullRPCBoundary(t *testing.T) {
 				if err := os.WriteFile(filepath.Join(root, "file"), []byte("12345"), 0600); err != nil {
 					t.Fatal(err)
 				}
-				srv, err := NewServer(vfs.NewLocalTernVFS(root), staging.ReadOnlyStore{}, nil)
+				srv, err := NewServer(vfs.NewLocalTernVFS(root), newTestStaging(t), nil)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -196,17 +195,10 @@ func TestResponseAdmissionHandleBeforeEffect(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				clientID, confirm, err := srv.clients.SetClientID([8]byte{}, []byte("handles"), clientstore.ClientOwner{})
-				if err != nil {
-					t.Fatal(err)
-				}
-				if _, err = srv.clients.ConfirmClientID(clientID, confirm, clientstore.RPCPrincipal{}); err != nil {
-					t.Fatal(err)
-				}
+				clientID := confirmForTest(t, srv, "handles", [8]byte{}, clientrecords.Principal{})
 				ts := connectionSession(t, srv)
 				sess := srv.sessions.lookup(ts.id)
 				moveSessionForTest(srv.sessions, sess, clientID, sess.id)
-				srv.clients.PinLeaseForTest(clientID)
 				bound := uint32(140)
 				if opnum == nfs4.OP_OPEN {
 					bound = 164
@@ -355,7 +347,7 @@ func TestResponseAdmissionAttributeAndDirectoryBudgets(t *testing.T) {
 
 func TestResponseAdmissionErrorDiscriminants(t *testing.T) {
 	for _, minor := range []uint32{1, 2} {
-		for _, op := range []uint32{nfs4.OP_DELEGPURGE, nfs4.OP_OPEN_CONFIRM, nfs4.OP_ALLOCATE, 9999} {
+		for _, op := range []uint32{nfs4.OP_DELEGPURGE, nfs4.OP_ALLOCATE} {
 			t.Run(fmt.Sprintf("minor%d/op%d", minor, op), func(t *testing.T) {
 				srv, _ := newConnectionTestServer(t, 2)
 				srv.AllowMinorVersion2 = true
@@ -367,18 +359,12 @@ func TestResponseAdmissionErrorDiscriminants(t *testing.T) {
 				switch op {
 				case nfs4.OP_DELEGPURGE:
 					body = binary.BigEndian.AppendUint64(body, 1)
-				case nfs4.OP_OPEN_CONFIRM:
-					body = append(body, make([]byte, 20)...)
 				case nfs4.OP_ALLOCATE:
 					body = append(body, make([]byte, 32)...)
 				}
 				wire := admissionSequence(body, ts, 0, 1, true)
 				_, res := admissionRequest(t, srv, wire, 1, nil)
-				want, status := op, uint32(nfs4.NFS4ERR_NOTSUPP)
-				if !knownOperation(op) {
-					want, status = nfs4.OP_ILLEGAL, nfs4.NFS4ERR_OP_ILLEGAL
-				}
-				admissionStatus(t, res, status, nfs4.OP_SEQUENCE, want)
+				admissionStatus(t, res, nfs4.NFS4ERR_NOTSUPP, nfs4.OP_SEQUENCE, op)
 			})
 		}
 	}
@@ -449,16 +435,41 @@ func TestResponseAdmissionUnknownNamespaceEffect(t *testing.T) {
 			}
 			fs.err = nil
 			fs.apply = true
+			// The unknown outcome is the REMOVE's reply: a retransmission
+			// does not run it again, and the session goes on.
 			_, res = admissionRequest(t, srv, wire, 2, &rpcConnection{})
-			admissionStatus(t, res, nfs4.NFS4ERR_BADSESSION, nfs4.OP_SEQUENCE)
-			next := admissionSequence(buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) { w.AppendArgarray_Putrootfh(); admissionRemove(w, "victim") }), ts, 0, 2, true)
-			_, res = admissionRequest(t, srv, next, 3, nil)
-			admissionStatus(t, res, nfs4.NFS4ERR_BADSESSION, nfs4.OP_SEQUENCE)
+			admissionStatus(t, res, nfs4.NFS4ERR_RETRY_UNCACHED_REP, nfs4.OP_SEQUENCE, nfs4.OP_PUTROOTFH)
 			if data, err := os.ReadFile(filepath.Join(root, "victim")); err != nil || string(data) != "replacement" {
 				t.Fatal("unknown-effect retry executed again")
 			}
+			next := admissionSequence(buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) { w.AppendArgarray_Putrootfh() }), ts, 0, 2, true)
+			_, res = admissionRequest(t, srv, next, 3, nil)
+			admissionStatus(t, res, nfs4.NFS4_OK, nfs4.OP_SEQUENCE, nfs4.OP_PUTROOTFH)
 		})
 	}
+}
+
+// A REMOVE the backend rejects with DIRECTORY_NOT_EMPTY is an unknown
+// outcome, which does not retire the session: the client gets NOTEMPTY and
+// the next request on the slot is served. Every rm -r over
+// NFS produces one of these.
+func TestResponseAdmissionNotEmptyRemoveKeepsSession(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "victim"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	fs := &namespaceFaultVFS{TernVFS: vfs.NewLocalTernVFS(root), err: msgs.DIRECTORY_NOT_EMPTY, remote: true}
+	srv := admissionWritableServer(t, fs)
+	ts := connectionSession(t, srv)
+	wire := admissionSequence(buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) { w.AppendArgarray_Putrootfh(); admissionRemove(w, "victim") }), ts, 0, 1, false)
+	_, res := admissionRequest(t, srv, wire, 1, nil)
+	admissionStatus(t, res, nfs4.NFS4ERR_NOTEMPTY, nfs4.OP_SEQUENCE, nfs4.OP_PUTROOTFH, nfs4.OP_REMOVE)
+	if _, err := os.Stat(filepath.Join(root, "victim")); err != nil {
+		t.Fatalf("rejected REMOVE changed the namespace: %v", err)
+	}
+	next := admissionSequence(buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) { w.AppendArgarray_Putrootfh() }), ts, 0, 2, false)
+	_, res = admissionRequest(t, srv, next, 2, nil)
+	admissionStatus(t, res, nfs4.NFS4_OK, nfs4.OP_SEQUENCE, nfs4.OP_PUTROOTFH)
 }
 
 func TestResponseAdmissionSetattrBudgetErrorCompleteXDR(t *testing.T) {
@@ -516,7 +527,7 @@ type admissionLinkFaultVFS struct {
 }
 
 func (fs *admissionLinkFaultVFS) LinkFile(id vfs.InodeID, cookie vfs.Cookie, dir vfs.InodeID, name string, data io.Reader) error {
-	if !fs.fail || data == nil || clientstore.LeaseTemp(name) {
+	if !fs.fail || data == nil {
 		return fs.TernVFS.LinkFile(id, cookie, dir, name, data)
 	}
 	fs.submissions++
@@ -566,24 +577,119 @@ func TestResponseAdmissionUnknownCloseEffect(t *testing.T) {
 				}
 				return res
 			}
-			admissionStatus(t, send(), nfs4.NFS4ERR_IO, nfs4.OP_SEQUENCE, nfs4.OP_PUTFH, nfs4.OP_CLOSE)
-			content, err := os.ReadFile(filepath.Join(root, "victim"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			want := ""
 			if applied {
-				want = "pending"
+				// The link happened: resolving the candidate finds it linked
+				// with the current data, so the CLOSE reports the publication
+				// it made and the session lives on.
+				admissionStatus(t, send(), nfs4.NFS4_OK, nfs4.OP_SEQUENCE, nfs4.OP_PUTFH, nfs4.OP_CLOSE)
+				if content, err := os.ReadFile(filepath.Join(root, "victim")); err != nil || string(content) != "pending" {
+					t.Fatalf("published %q %v", content, err)
+				}
+				if n := len(srv.stagingStore.Entries()); n != 0 {
+					t.Fatalf("%d staging entries left", n)
+				}
+				admissionStatus(t, send(), nfs4.NFS4_OK, nfs4.OP_SEQUENCE, nfs4.OP_PUTFH, nfs4.OP_CLOSE)
+				if fs.submissions != 1 {
+					t.Fatalf("LinkFile submitted %d times", fs.submissions)
+				}
+				return
 			}
-			if string(content) != want {
-				t.Fatalf("applied=%t data=%q", applied, content)
+			admissionStatus(t, send(), nfs4.NFS4ERR_IO, nfs4.OP_SEQUENCE, nfs4.OP_PUTFH, nfs4.OP_CLOSE)
+			if content, err := os.ReadFile(filepath.Join(root, "victim")); err != nil || string(content) != "" {
+				t.Fatalf("data=%q %v", content, err)
 			}
 			if err := os.WriteFile(filepath.Join(root, "victim"), []byte("replacement"), 0600); err != nil {
 				t.Fatal(err)
 			}
-			admissionStatus(t, send(), nfs4.NFS4ERR_BADSESSION, nfs4.OP_SEQUENCE)
+			admissionStatus(t, send(), nfs4.NFS4ERR_IO, nfs4.OP_SEQUENCE, nfs4.OP_PUTFH, nfs4.OP_CLOSE)
 			if content, err := os.ReadFile(filepath.Join(root, "victim")); err != nil || string(content) != "replacement" || fs.submissions != 1 {
 				t.Fatal("unknown CLOSE reexecuted")
+			}
+		})
+	}
+}
+
+// Backend errors answer their operation and leave the session alone: a
+// RENAME the backend does not answer gets IO, a REMOVE refused on a locked
+// edge gets LOCKED, and times on a file without staging get DELAY, since
+// setting them again is harmless. The next request on the slot is served.
+// TestOpenConstructTimeoutDelays covers OPEN.
+func TestBackendErrorsKeepSession(t *testing.T) {
+	mtime := func(w *nfs4.COMPOUND4argsWriter) {
+		sw := w.AppendArgarray_Setattr()
+		setStateid(sw.Stateid(), [16]byte{})
+		aw := sw.StartObjAttributes()
+		value := binary.BigEndian.AppendUint32(nil, nfs4.SET_TO_CLIENT_TIME4)
+		value = binary.BigEndian.AppendUint64(value, 1_000_000)
+		value = binary.BigEndian.AppendUint32(value, 0)
+		sw.Resume(finishTestFattr(aw, attrMask{0, 1 << (nfs4.FATTR4_TIME_MODIFY_SET - 32)}, value))
+		w.Resume(sw.Finish())
+	}
+	for _, tc := range []struct {
+		name string
+		fs   func(vfs.TernVFS) vfs.TernVFS
+		ops  func(w *nfs4.COMPOUND4argsWriter)
+		last uint32
+		want uint32
+	}{
+		{"RENAME timeout", func(inner vfs.TernVFS) vfs.TernVFS {
+			return &namespaceFaultVFS{TernVFS: inner, err: msgs.TIMEOUT, remote: true}
+		}, func(w *nfs4.COMPOUND4argsWriter) {
+			w.AppendArgarray_Savefh()
+			rw := w.AppendArgarray_Rename()
+			rw.Resume(rw.StartOldname().SetData([]byte("victim")).Finish())
+			rw.Resume(rw.StartNewname().SetData([]byte("moved")).Finish())
+			w.Resume(rw.Finish())
+		}, nfs4.OP_RENAME, nfs4.NFS4ERR_IO},
+		{"REMOVE locked", func(inner vfs.TernVFS) vfs.TernVFS {
+			return &namespaceFaultVFS{TernVFS: inner, err: msgs.EDGE_IS_LOCKED, remote: true}
+		}, func(w *nfs4.COMPOUND4argsWriter) { admissionRemove(w, "victim") }, nfs4.OP_REMOVE, nfs4.NFS4ERR_LOCKED},
+		{"SETATTR SetTime timeout", func(inner vfs.TernVFS) vfs.TernVFS {
+			return &publishFaultVFS{TernVFS: inner, setTimeErr: msgs.TIMEOUT}
+		}, func(w *nfs4.COMPOUND4argsWriter) { admissionLookup(w, "victim"); mtime(w) }, nfs4.OP_SETATTR, nfs4.NFS4ERR_DELAY},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeRoot(t, root, "victim", "data")
+			srv := admissionWritableServer(t, tc.fs(vfs.NewLocalTernVFS(root)))
+			ts := connectionSession(t, srv)
+			wire := admissionSequence(buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) {
+				w.AppendArgarray_Putrootfh()
+				tc.ops(w)
+			}), ts, 0, 1, true)
+			_, res := admissionRequest(t, srv, wire, 1, nil)
+			ops := []uint32{nfs4.OP_SEQUENCE, nfs4.OP_PUTROOTFH}
+			if tc.last == nfs4.OP_RENAME {
+				ops = append(ops, nfs4.OP_SAVEFH)
+			} else if tc.last == nfs4.OP_SETATTR {
+				ops = append(ops, nfs4.OP_LOOKUP)
+			}
+			admissionStatus(t, res, tc.want, append(ops, tc.last)...)
+			next := admissionSequence(buildCompoundBody(nil, func(w *nfs4.COMPOUND4argsWriter) { w.AppendArgarray_Putrootfh() }), ts, 0, 2, true)
+			_, res = admissionRequest(t, srv, next, 2, nil)
+			admissionStatus(t, res, nfs4.NFS4_OK, nfs4.OP_SEQUENCE, nfs4.OP_PUTROOTFH)
+		})
+	}
+}
+
+// An OPEN whose ConstructFile the backend does not answer, for its
+// placeholder or its staging, gets DELAY: an unreferenced transient is
+// collected at its deadline. The session serves the retry.
+func TestOpenConstructTimeoutDelays(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		t.Run(fmt.Sprint(existing), func(t *testing.T) {
+			f := newPublishFixture(t)
+			if existing {
+				sid, fh, _ := f.writer(t, "doc", "saved")
+				closeFile(t, f.conn, f.xid, fh, sid)
+			}
+			f.fs.set(func() { f.fs.constructErr = msgs.TIMEOUT })
+			if status, _, _, _ := openFileForOwner(t, f.conn, f.xid, f.clientID, "o", "doc", nfs4.OPEN4_SHARE_ACCESS_BOTH, true, false); status != nfs4.NFS4ERR_DELAY {
+				t.Fatalf("OPEN with an unanswered ConstructFile %s, want DELAY", nfs4.Nfsstat4Name(status))
+			}
+			f.fs.set(func() { f.fs.constructErr = nil })
+			if status, _, _, _ := openFileForOwner(t, f.conn, f.xid, f.clientID, "o", "doc", nfs4.OPEN4_SHARE_ACCESS_BOTH, true, false); status != nfs4.NFS4_OK {
+				t.Fatalf("retried OPEN %s", nfs4.Nfsstat4Name(status))
 			}
 		})
 	}

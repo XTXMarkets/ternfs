@@ -6,6 +6,7 @@ package server
 
 import (
 	"github.com/XTXMarkets/ternfs/go/nfsd/inspect"
+	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientrecords"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -20,6 +21,6 @@ func incarnationText(id uint64) string   { return inspect.Scalar(inspect.KindInc
 func inodeText(id vfs.InodeID) string    { return inspect.Scalar(inspect.KindInode, uint64(id)) }
 func stateidText(id nfs4.StateID) string { return inspect.ID(inspect.KindStateid, id[:]) }
 func sessionText(id SessionID) string    { return inspect.ID(inspect.KindSession, id[:]) }
-func identityHashText(name string) string {
-	return inspect.IdentityHash(name)
+func identityHashText(h clientrecords.IdentityHash) string {
+	return inspect.ID(inspect.KindIdentityHash, h[:])
 }

@@ -27,10 +27,14 @@ func (s *Server) opAccess(args nfs4.ACCESS4args, st *compoundState, w *nfs4.COMP
 		meaningful |= nfs4.ACCESS4_EXECUTE
 	}
 	requested := args.Access() & meaningful
+	granted := requested
+	if s.ReadOnly {
+		granted &^= nfs4.ACCESS4_MODIFY | nfs4.ACCESS4_EXTEND | nfs4.ACCESS4_DELETE
+	}
 	ew := w.AppendResarray_Access()
 	ok := ew.SetValue_Nfs4Ok()
 	ok.SetSupported(requested)
-	ok.SetAccess(requested)
+	ok.SetAccess(granted)
 	w.Resume(ew.Finish())
 	return nfs4.NFS4_OK
 }
@@ -43,7 +47,14 @@ func (s *Server) opGetattr(args nfs4.GETATTR4args, st *compoundState, w *nfs4.CO
 	ni, err := s.stat(s.clientView(st.clientID, st.currentID))
 	if err != nil {
 		ew := w.AppendResarray_Getattr()
-		status := s.errToNFS(err)
+		// A GETATTR is safe to repeat, and Linux puts one before the
+		// CLOSE of a read open: an IO there makes the client drop the
+		// stateid without closing it, while DELAY makes it retry the
+		// compound until the backend answers.
+		status := nfs4.NFS4ERR_DELAY
+		if !vfs.IsTransientBackendError(err) {
+			status = s.errToNFS(err)
+		}
 		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 
@@ -63,7 +74,7 @@ func (s *Server) opGetattr(args nfs4.GETATTR4args, st *compoundState, w *nfs4.CO
 	respMask[2] = reqMask[2] & supportedAttrs2
 
 	faw := okW.StartObjAttributes()
-	attrBuf := encodeAttrs(respMask, st.currentID, ni)
+	attrBuf := encodeAttrs(respMask, s.owner, st.currentID, ni)
 	okW.Resume(writeFattr(&faw, respMask[:], attrBuf))
 	ew.Resume(okW.Finish())
 	w.Resume(ew.Finish())
@@ -110,27 +121,25 @@ func (s *Server) opSetattr(args nfs4.SETATTR4args, st *compoundState, w *nfs4.CO
 	if !st.currentIDSet {
 		return setattrReply(nfs4.NFS4ERR_NOFILEHANDLE, attrMask{})
 	}
+	// Timestamps included: a read-only server changes nothing.
+	if s.ReadOnly {
+		return setattrReply(nfs4.NFS4ERR_ROFS, attrMask{})
+	}
 
 	fa := args.ObjAttributes()
 	mask := parseBitmap(fa.Attrmask())
 	attrData := fa.AttrVals().Data()
 
-	// Supported writable attrs.
+	// Supported writable attrs. Ownership and modes are synthetic, so mode,
+	// owner and group are accepted and ignored: chmod and chown succeed and
+	// change nothing.
 	const supportedSet0 = 1 << nfs4.FATTR4_SIZE
-	supportedSet1 := uint32((1 << (nfs4.FATTR4_TIME_ACCESS_SET - 32)) |
-		(1 << (nfs4.FATTR4_TIME_MODIFY_SET - 32)))
-
-	// Validate fixed-width MODE data before reporting that MODE itself is not
-	// supported. RFC 7530 requires malformed attribute XDR to take precedence.
-	const modeMask = 1 << (nfs4.FATTR4_MODE - 32)
-	if mask[0] == 0 && mask[1] == modeMask && mask[2] == 0 && len(attrData) != 4 {
-		return setattrReply(nfs4.NFS4ERR_BADXDR, attrMask{})
-	}
-	// EXCLUSIVE4 clients send mode in a follow-up SETATTR. Modes are synthetic.
-	if writer := s.clientWriter(st.clientID, st.currentID); s.directStaging(writer) != nil ||
-		s.stagingStore.Failed(writer) {
-		supportedSet1 |= modeMask
-	}
+	const ignoredSet1 = (1 << (nfs4.FATTR4_MODE - 32)) |
+		(1 << (nfs4.FATTR4_OWNER - 32)) |
+		(1 << (nfs4.FATTR4_OWNER_GROUP - 32))
+	const supportedSet1 = ignoredSet1 |
+		(1 << (nfs4.FATTR4_TIME_ACCESS_SET - 32)) |
+		(1 << (nfs4.FATTR4_TIME_MODIFY_SET - 32))
 
 	if mask[0]&^writableAttrs0 != 0 || mask[1]&^writableAttrs1 != 0 || mask[2] != 0 {
 		return setattrReply(nfs4.NFS4ERR_INVAL, attrMask{})
@@ -154,13 +163,26 @@ func (s *Server) opSetattr(args nfs4.SETATTR4args, st *compoundState, w *nfs4.CO
 		}
 		newSize = &size
 	}
-	if mask[1]&modeMask != 0 {
+	if mask[1]&(1<<(nfs4.FATTR4_MODE-32)) != 0 {
 		if attrOff+4 > len(attrData) {
 			return setattrReply(nfs4.NFS4ERR_BADXDR, attrMask{})
 		}
 		attrOff += 4
-		resultMask[1] |= modeMask
 	}
+	for _, bit := range []uint32{nfs4.FATTR4_OWNER, nfs4.FATTR4_OWNER_GROUP} {
+		if mask[1]&(1<<(bit-32)) == 0 {
+			continue
+		}
+		if attrOff+4 > len(attrData) {
+			return setattrReply(nfs4.NFS4ERR_BADXDR, attrMask{})
+		}
+		padded := (uint64(binary.BigEndian.Uint32(attrData[attrOff:])) + 3) &^ 3
+		if uint64(attrOff)+4+padded > uint64(len(attrData)) {
+			return setattrReply(nfs4.NFS4ERR_BADXDR, attrMask{})
+		}
+		attrOff += 4 + int(padded)
+	}
+	resultMask[1] |= mask[1] & ignoredSet1
 
 	// parseTimeSet reads a SET_TO_CLIENT_TIME4 or SET_TO_SERVER_TIME4
 	// value from attrData at the current offset.
@@ -180,7 +202,8 @@ func (s *Server) opSetattr(args nfs4.SETATTR4args, st *compoundState, w *nfs4.CO
 			if nsec >= 1_000_000_000 {
 				return nil, nfs4.NFS4ERR_INVAL
 			}
-			t := time.Unix(sec, int64(nsec))
+			// Clamped here, so staging holds what publication will store.
+			t := vfs.ClampTime(time.Unix(sec, int64(nsec)))
 			return &t, nfs4.NFS4_OK
 		}
 		if how == nfs4.SET_TO_SERVER_TIME4 {
@@ -226,7 +249,7 @@ func (s *Server) opSetattr(args nfs4.SETATTR4args, st *compoundState, w *nfs4.CO
 			sf = s.stagingOwnedBy(dataID, state)
 		case newSize != nil || s.foreignStateID(st.clientID, extractStateID(stateid)):
 			// Another client's stateid is rejected before any effect, times
-			// included (canonical r3 §10).
+			// included (README.md#stateid-checks).
 			return setattrReply(status, attrMask{})
 		default:
 			// Times need no open; apply them as this client sees the file.
@@ -250,26 +273,34 @@ func (s *Server) opSetattr(args nfs4.SETATTR4args, st *compoundState, w *nfs4.CO
 			return setattrReply(nfs4.NFS4ERR_OPENMODE, attrMask{})
 		}
 		if err := s.setStagingSize(sf, *newSize); err != nil {
-			st.effectUnknown = true
 			return setattrReply(nfs4.NFS4ERR_IO, attrMask{})
 		}
 		resultMask[0] |= 1 << nfs4.FATTR4_SIZE
 	}
 	if setAtime != nil || setMtime != nil {
+		if sf == nil || isSpecialStateID(stateid) || !state.Writes() {
+			// The version the client sees, chosen under the file lock, which
+			// a CLOSE holds from reading the staging's times to removing it.
+			unlock := s.opens.LockFile(st.currentID)
+			defer unlock()
+			view := s.clientView(st.clientID, st.currentID)
+			if sf = s.directStaging(view); sf == nil {
+				if err := s.fs.SetTime(view, setMtime, setAtime); err != nil {
+					if vfs.IsTransientBackendError(err) {
+						// Setting times again is harmless: the client retries.
+						return setattrReply(nfs4.NFS4ERR_DELAY, attrMask{})
+					}
+					return setattrReply(nfs4.NFS4ERR_IO, attrMask{})
+				}
+			}
+		}
 		if sf != nil {
 			if err := sf.SetTime(setMtime, setAtime); err != nil {
-				st.effectUnknown = true
 				return setattrReply(nfs4.NFS4ERR_IO, attrMask{})
 			}
 			if err := sf.Sync(); err != nil {
-				st.effectUnknown = true
 				return setattrReply(nfs4.NFS4ERR_IO, attrMask{})
 			}
-		} else if err := s.fs.SetTime(
-			s.clientView(st.clientID, st.currentID), setMtime, setAtime,
-		); err != nil {
-			st.observeMutation(s.fs, nfs4.OP_SETATTR, err)
-			return setattrReply(nfs4.NFS4ERR_IO, attrMask{})
 		}
 		if setAtime != nil {
 			resultMask[1] |= 1 << (nfs4.FATTR4_TIME_ACCESS_SET - 32)
@@ -320,7 +351,7 @@ func (s *Server) verifyAttrs(id, dataID vfs.InodeID, supplied nfs4.Fattr4) (bool
 	}
 
 	// Encode what we would return for these attributes.
-	expected := encodeAttrs(mask, id, ni)
+	expected := encodeAttrs(mask, s.owner, id, ni)
 
 	// Get the supplied attribute values.
 	suppliedData := supplied.AttrVals().Data()

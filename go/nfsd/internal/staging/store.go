@@ -2,6 +2,9 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+// Package staging keeps writable opens' files on the local staging disk
+// until CLOSE publishes them. README.md describes the layout, sidecars,
+// checkpoints, startup recovery and quarantine.
 package staging
 
 import (
@@ -14,9 +17,19 @@ import (
 )
 
 // QuarantineDirName is the subdirectory of the staging directory which
-// holds checkpoints whose metadata sidecar would not decode. Recovery moves
-// them aside rather than deleting them; /v1/store?staging=1 lists them.
+// holds pairs moved aside rather than deleted: at startup those whose sidecar
+// would not decode, was guarded, or was both unlinked and retired, and at run
+// time failed writers (README.md#startup-recovery-and-quarantine).
 const QuarantineDirName = "quarantine"
+
+// AliasesDirName is the staging subdirectory holding the server's
+// publication alias log, which recovery and the inspector leave alone.
+const AliasesDirName = "aliases"
+
+// SessionsDirName is the staging subdirectory holding the server's session
+// files (the persistent reply cache), which recovery and the inspector
+// leave alone.
+const SessionsDirName = "sessions"
 
 var ErrRemoved = errors.New("staging file was removed")
 
@@ -45,6 +58,15 @@ type File interface {
 	Base() (id vfs.InodeID, size uint64)
 	Dirty() bool
 	DataChanged() bool
+	// DataVersion counts the writes and size changes. Times, hydration and
+	// checkpoints do not change it.
+	DataVersion() uint64
+	// Seal checks the final data version and prevents further mutations.
+	// On a mismatch it returns false and leaves the file writable. Reads
+	// and Sync remain available until the store removes the file.
+	Seal(version uint64) bool
+	Candidate() Candidate
+	SetCandidate(c Candidate, persist bool) error
 	Retire(clientID uint64, stateID nfs4.StateID) error
 	StartHydration(readBase stagingHydrationReader)
 	FinishHydration(readBase BaseReader) error
@@ -56,8 +78,11 @@ type File interface {
 // All staging queries go through this interface — the NFS server
 // does not maintain its own staging caches.
 type Store interface {
-	// ReadOnly returns true if no staging directory is configured.
-	ReadOnly() bool
+	// ServerID identifies the server: the staging directory's server-id.
+	ServerID() ServerID
+	// Dir is the staging directory. The server keeps its session files,
+	// publication aliases and client records in it.
+	Dir() string
 	// Create creates a new staging file with associated metadata.
 	Create(id vfs.InodeID, meta Meta) (File, error)
 	// Get returns the staging file for the given inode, or nil.
@@ -70,6 +95,9 @@ type Store interface {
 	Entries() map[vfs.InodeID]Meta
 	// Rebind updates the owning client and stateid of a recovered staging file.
 	Rebind(id vfs.InodeID, clientID uint64, stateID nfs4.StateID) error
+	// Bind names another open as the owner in one save: its client, stateid
+	// and open owner, and readOnly for an open that only reads the staging.
+	Bind(id vfs.InodeID, clientID uint64, stateID nfs4.StateID, openOwner string, readOnly bool) error
 	// Namespace updates preserve the current durable data checkpoint.
 	SetGuard(id vfs.InodeID, guarded bool) error
 	Detach(id vfs.InodeID) error
@@ -77,9 +105,17 @@ type Store interface {
 	// Quarantine excludes an entry for the process lifetime and preserves its files.
 	Quarantine(id vfs.InodeID) error
 	Failed(id vfs.InodeID) bool
-	// Remove closes and removes the staging file and sidecar for the given inode.
+	// Retained reports, in one check, that the store holds an entry for id,
+	// live or failed. Failed and Get are separate checks, and a quarantine
+	// between them makes both say no.
+	Retained(id vfs.InodeID) bool
+	// Remove closes and removes the staging file and sidecar for the given
+	// inode, and syncs the directory so that a power loss cannot bring it back.
 	Remove(id vfs.InodeID)
 	// StagedSize returns the staged size for the given inode.
 	// Returns (0, false) if the inode has no staging file.
 	StagedSize(id vfs.InodeID) (uint64, bool)
+	// RecoveredWriters lists the entries recovered at startup that a client
+	// may hold through handleID: the entry itself, or a replacement of it.
+	RecoveredWriters(handleID vfs.InodeID) []vfs.InodeID
 }

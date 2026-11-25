@@ -6,6 +6,7 @@ __pycache__/
 .mypy_cache/
 .cache/
 build/
+dist/
 vgcore.*
 compile_commands.json
 .idea

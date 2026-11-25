@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+// Package openstate is the process-local NFSv4.1 open state: stateids,
+// opens, tombstones and client views. README.md describes its rules.
 package openstate
 
 import (
@@ -42,7 +44,7 @@ type Store struct {
 	states  map[nfs4.StateID]*State
 	byFile  map[openFileKey]*State
 	// expired maps an expired stateid's tombstone to its owner incarnation,
-	// so only the owner sees EXPIRED or may free it (canonical r3 §10).
+	// so only the owner sees EXPIRED or may free it (README.md#stateid-scope).
 	expired map[nfs4.StateID]uint64
 	// expiredIDs bounds expired.
 	expiredIDs []nfs4.StateID
@@ -104,15 +106,15 @@ func (os *Store) markExpiredLocked(id nfs4.StateID, owner uint64) {
 	}
 }
 
-// lockFile serializes OPEN, CLOSE and OPEN_DOWNGRADE of one file, named by
+// LockFile serializes OPEN, CLOSE and OPEN_DOWNGRADE of one file, named by
 // the filehandle clients hold. A caller which needs the file's pathname
 // lock takes it first.
 func (os *Store) LockFile(fileID vfs.InodeID) func() {
 	return os.fileLocks.Lock(fileID)
 }
 
-// existingOpen returns the owner's open of fileID. The caller holds
-// lockFile for the pair.
+// ExistingOpen returns the owner's open of fileID. The caller holds
+// LockFile for the file.
 func (os *Store) ExistingOpen(owner OwnerKey, fileID vfs.InodeID) (State, bool) {
 	os.mu.Lock()
 	defer os.mu.Unlock()
@@ -123,11 +125,11 @@ func (os *Store) ExistingOpen(owner OwnerKey, fileID vfs.InodeID) (State, bool) 
 	return *state, true
 }
 
-// open records a successful OPEN. A repeated OPEN by the same owner of the
+// Open records a successful OPEN. A repeated OPEN by the same owner of the
 // same file returns the existing stateid with an incremented generation
 // (RFC 8881 section 8.2.2), its access ORed in and its share values
 // recorded. An OPEN for write of an owner's read open upgrades it to
-// dataID, the new writer's staging. The caller holds lockFile for the pair.
+// dataID, the new writer's staging. The caller holds LockFile for the file.
 func (os *Store) Open(
 	owner OwnerKey,
 	fileID vfs.InodeID,
@@ -148,6 +150,7 @@ func (os *Store) Open(
 		state.denyModes |= 1 << g.Deny
 		state.Generation = NextGeneration(state.Generation)
 		state.seq = os.nextSeq
+		state.closing = false
 		return *state, nil
 	}
 	if id == (nfs4.StateID{}) {
@@ -172,7 +175,7 @@ func (os *Store) Open(
 	return *state, nil
 }
 
-// ownerOf returns the incarnation owning a live or expired stateid.
+// OwnerOf returns the incarnation owning a live or expired stateid.
 func (os *Store) OwnerOf(id nfs4.StateID) (uint64, bool) {
 	os.mu.Lock()
 	defer os.mu.Unlock()
@@ -183,17 +186,17 @@ func (os *Store) OwnerOf(id nfs4.StateID) (uint64, bool) {
 	return owner, ok
 }
 
-// adoptable reports that adopt would succeed: no live open has the stateid,
-// and the owner has no live open of fileID. The caller holds lockFile.
+// Adoptable reports that Adopt would succeed: no live open has the stateid,
+// and the owner has no live open of fileID. The caller holds LockFile.
 func (os *Store) Adoptable(owner OwnerKey, fileID vfs.InodeID, id nfs4.StateID) bool {
 	os.mu.Lock()
 	defer os.mu.Unlock()
 	return os.states[id] == nil && os.byFile[openFileKey{owner: owner, fileID: fileID}] == nil
 }
 
-// adopt installs a recovered open as a live one under its stateid, at
+// Adopt installs a recovered open as a live one under its stateid, at
 // generation, after OPEN_DOWNGRADE published its writer. The caller holds
-// lockFile for the pair.
+// LockFile for the file.
 func (os *Store) Adopt(owner OwnerKey, fileID, dataID vfs.InodeID, g Grant, id nfs4.StateID, generation uint32) (State, bool) {
 	os.mu.Lock()
 	defer os.mu.Unlock()
@@ -205,14 +208,15 @@ func (os *Store) Adopt(owner OwnerKey, fileID, dataID vfs.InodeID, g Grant, id n
 	state := &State{
 		ID: id, FileID: fileID, DataID: dataID, Owner: owner,
 		Access: g.Access, modes: 1 << g.Access, denyModes: 1 << g.Deny,
-		Generation: generation, seq: os.nextSeq,
+		Generation: generation, Recovered: true, seq: os.nextSeq,
+		learnGeneration: generation == 0,
 	}
 	os.states[id] = state
 	os.byFile[key] = state
 	return *state, true
 }
 
-// lookup validates a stateid that clientID presented with fileID. A zero
+// Lookup validates a stateid that clientID presented with fileID. A zero
 // seqid means the current generation (RFC 8881 section 8.2.2). Another
 // client's stateid, live or expired, is BAD_STATEID (RFC 8881 section
 // 8.2.2), with no other effect.
@@ -251,6 +255,7 @@ func (os *Store) lookupLocked(
 	if state.Owner.ClientID != clientID || state.FileID != fileID {
 		return nil, nfs4.NFS4ERR_BAD_STATEID
 	}
+	state.learnGenerationLocked(generation)
 	if generation != 0 && generation < state.Generation {
 		return nil, nfs4.NFS4ERR_OLD_STATEID
 	}
@@ -260,7 +265,7 @@ func (os *Store) lookupLocked(
 	return state, nfs4.NFS4_OK
 }
 
-// status answers TEST_STATEID for clientID without a filehandle.
+// Status answers TEST_STATEID for clientID without a filehandle.
 func (os *Store) Status(clientID uint64, id nfs4.StateID, generation uint32) uint32 {
 	os.mu.Lock()
 	defer os.mu.Unlock()
@@ -271,6 +276,7 @@ func (os *Store) Status(clientID uint64, id nfs4.StateID, generation uint32) uin
 	if state.Owner.ClientID != clientID {
 		return nfs4.NFS4ERR_BAD_STATEID
 	}
+	state.learnGenerationLocked(generation)
 	if generation != 0 && generation < state.Generation {
 		return nfs4.NFS4ERR_OLD_STATEID
 	}
@@ -280,9 +286,18 @@ func (os *Store) Status(clientID uint64, id nfs4.StateID, generation uint32) uin
 	return nfs4.NFS4_OK
 }
 
-// downgrade narrows an open to g with I/O on dataID: for a write open
+// learnGenerationLocked takes the first seqid an adopted open of unknown
+// generation is presented with as its generation. The caller holds os.mu.
+func (s *State) learnGenerationLocked(generation uint32) {
+	if s.learnGeneration && generation != 0 {
+		s.Generation = generation
+		s.learnGeneration = false
+	}
+}
+
+// Downgrade narrows an open to g with I/O on dataID: for a write open
 // downgraded to READ, the version its writer published. It advances the
-// generation. The caller holds lockFile for the pair and has checked g.
+// generation. The caller holds LockFile for the file and has checked g.
 func (os *Store) Downgrade(id nfs4.StateID, dataID vfs.InodeID, g Grant) (State, bool) {
 	os.mu.Lock()
 	defer os.mu.Unlock()
@@ -296,7 +311,7 @@ func (os *Store) Downgrade(id nfs4.StateID, dataID vfs.InodeID, g Grant) (State,
 	return *state, true
 }
 
-// clientOpens returns clientID's opens of fileID, most recent first.
+// ClientOpens returns clientID's opens of fileID, most recent first.
 func (os *Store) ClientOpens(clientID uint64, fileID vfs.InodeID) []State {
 	os.mu.Lock()
 	defer os.mu.Unlock()
@@ -310,7 +325,7 @@ func (os *Store) ClientOpens(clientID uint64, fileID vfs.InodeID) []State {
 	return result
 }
 
-// writerOf returns a write open by clientID of fileID, if any. Opens by one
+// WriterOf returns a write open by clientID of fileID, if any. Opens by one
 // client of one handle share the client's page cache, so they share one
 // staging writer.
 func (os *Store) WriterOf(clientID uint64, fileID vfs.InodeID) (State, bool) {
@@ -324,19 +339,54 @@ func (os *Store) WriterOf(clientID uint64, fileID vfs.InodeID) (State, bool) {
 	return State{}, false
 }
 
-// otherWriter returns an open other than id which writes to dataID.
+// OtherWriter returns an open other than id which writes to dataID and is
+// not closing.
 func (os *Store) OtherWriter(id nfs4.StateID, dataID vfs.InodeID) (State, bool) {
 	os.mu.Lock()
 	defer os.mu.Unlock()
 	for other, state := range os.states {
-		if other != id && state.Writes() && state.DataID == dataID {
+		if other != id && state.Writes() && state.DataID == dataID && !state.closing {
 			return *state, true
 		}
 	}
 	return State{}, false
 }
 
-// forget drops clientID's expired stateid's tombstone (FREE_STATEID). It
+// MarkClosing records that id's CLOSE answered DELAY. A later OPEN by its
+// owner of its file clears the mark (Open). The caller holds LockFile.
+func (os *Store) MarkClosing(id nfs4.StateID) {
+	os.mu.Lock()
+	defer os.mu.Unlock()
+	if state := os.states[id]; state != nil {
+		state.closing = true
+	}
+}
+
+// Closing reports that id is a live open whose CLOSE answered DELAY.
+func (os *Store) Closing(id nfs4.StateID) bool {
+	os.mu.Lock()
+	defer os.mu.Unlock()
+	state := os.states[id]
+	return state != nil && state.closing
+}
+
+// ExpireWriters expires the opens other than id which write to dataID, a
+// staging an open's CLOSE or OPEN_DOWNGRADE is ending, and returns them.
+// The caller holds LockFile.
+func (os *Store) ExpireWriters(dataID vfs.InodeID, id nfs4.StateID) []State {
+	os.mu.Lock()
+	defer os.mu.Unlock()
+	var expired []State
+	for other, state := range os.states {
+		if other != id && state.Writes() && state.DataID == dataID {
+			os.expireLocked(other)
+			expired = append(expired, *state)
+		}
+	}
+	return expired
+}
+
+// Forget drops clientID's expired stateid's tombstone (FREE_STATEID). It
 // reports false, changing nothing, for any other stateid.
 func (os *Store) Forget(clientID uint64, id nfs4.StateID) bool {
 	os.mu.Lock()
@@ -348,8 +398,8 @@ func (os *Store) Forget(clientID uint64, id nfs4.StateID) bool {
 	return true
 }
 
-// close removes an open and returns its final state with the generation
-// incremented. The caller holds lockFile for the pair.
+// Close removes an open and returns its final state with the generation
+// incremented. The caller holds LockFile for the file.
 func (os *Store) Close(id nfs4.StateID) (State, bool) {
 	os.mu.Lock()
 	defer os.mu.Unlock()
@@ -367,10 +417,15 @@ func (os *Store) Close(id nfs4.StateID) (State, bool) {
 	return closed, true
 }
 
-// expire removes an open whose durable lease state has gone.
+// Expire removes an open and leaves a tombstone, so its stateid gets
+// EXPIRED.
 func (os *Store) Expire(id nfs4.StateID) {
 	os.mu.Lock()
 	defer os.mu.Unlock()
+	os.expireLocked(id)
+}
+
+func (os *Store) expireLocked(id nfs4.StateID) {
 	state := os.states[id]
 	if state == nil {
 		return
@@ -383,20 +438,38 @@ func (os *Store) Expire(id nfs4.StateID) {
 	os.markExpiredLocked(id, state.Owner.ClientID)
 }
 
-// retarget points the opens whose I/O uses stagingID, a staging a clean or
-// timestamp-only CLOSE is discarding, back to their own fileID (canonical
-// r3 §11). The caller holds lockFile.
-func (os *Store) Retarget(stagingID vfs.InodeID) {
+// Retarget points the opens whose I/O uses stagingID, a staging a CLOSE
+// is ending, at publishedID, the version it published, or with zero back
+// at their own fileID, for a clean or timestamp-only CLOSE
+// (README.md#reader-visibility). The caller holds LockFile.
+func (os *Store) Retarget(stagingID, publishedID vfs.InodeID) {
 	os.mu.Lock()
 	defer os.mu.Unlock()
 	for _, state := range os.states {
 		if state.DataID == stagingID {
-			state.DataID = state.FileID
+			state.DataID = publishedID
+			if publishedID == 0 {
+				state.DataID = state.FileID
+			}
 		}
 	}
 }
 
-// readers reports opens other than id whose I/O uses dataID.
+// ReaderOf returns an open of clientID other than id whose I/O uses dataID,
+// which does not write and is not closing.
+func (os *Store) ReaderOf(dataID vfs.InodeID, id nfs4.StateID, clientID uint64) (State, bool) {
+	os.mu.Lock()
+	defer os.mu.Unlock()
+	for other, state := range os.states {
+		if other != id && state.DataID == dataID && !state.Writes() && !state.closing &&
+			state.Owner.ClientID == clientID {
+			return *state, true
+		}
+	}
+	return State{}, false
+}
+
+// Readers reports opens other than id whose I/O uses dataID.
 func (os *Store) Readers(dataID vfs.InodeID, id nfs4.StateID) bool {
 	os.mu.Lock()
 	defer os.mu.Unlock()
@@ -408,14 +481,14 @@ func (os *Store) Readers(dataID vfs.InodeID, id nfs4.StateID) bool {
 	return false
 }
 
-// live reports whether id names a local open.
+// Live reports whether id names a local open.
 func (os *Store) Live(id nfs4.StateID) bool {
 	os.mu.Lock()
 	defer os.mu.Unlock()
 	return os.states[id] != nil
 }
 
-// canRecover reports whether id names a write open issued by an earlier
+// CanRecover reports whether id names a write open issued by an earlier
 // nfsd process. Its staging sidecar may still hold the client's data.
 func (os *Store) CanRecover(id nfs4.StateID) bool {
 	os.mu.Lock()
@@ -426,8 +499,8 @@ func (os *Store) CanRecover(id nfs4.StateID) bool {
 	return binary.BigEndian.Uint32(id[0:4]) != os.Epoch
 }
 
-// expireClient drops process-local state. Persistent client-store checks
-// prevent a replaced clientid from opening new state.
+// ExpireClient drops process-local state. The server's client record
+// checks prevent a replaced clientid from opening new state.
 func (os *Store) ExpireClient(clientID uint64) []State {
 	if clientID == 0 {
 		return nil

@@ -56,6 +56,7 @@ func newCommands() map[string]terncmd.Command {
 		terncmd.NewResurrectSubtree(),
 		terncmd.NewResolveSamplePaths(),
 		terncmd.NewTagFiles(),
+		terncmd.NewGrep(),
 	} {
 		result[command.FlagSet().Name()] = command
 	}
@@ -175,7 +176,6 @@ func main() {
 			if err != nil {
 				panic(fmt.Errorf("could not create client: %v", err))
 			}
-			ternClient.SetFetchBlockServices()
 
 			shardTimeouts := client.DefaultShardTimeout
 			printTimeouts := false

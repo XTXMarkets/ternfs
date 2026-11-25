@@ -9,14 +9,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 )
 
-// The backchannel sender (canonical r3 §12). nfsd sends only CB_NULL, to
-// probe a back connection when it appears, and CB_COMPOUND carrying
-// CB_SEQUENCE and CB_RECALL_SLOT, to ask a session to use fewer slots
-// while the reply cache is under pressure.
+// The backchannel sender: CB_NULL probes, and CB_COMPOUND carrying
+// CB_SEQUENCE and CB_RECALL_SLOT under reply-cache pressure
+// (README.md#callback-sender).
 //
 // Each session has one sender, which runs a goroutine only while it has a
 // recall to deliver. It uses slot 0, with its sequence starting at 1, and
@@ -303,6 +301,15 @@ func (cb *cbSender) call(conn *rpcConnection, seq, target uint32) (cbOutcome, bo
 		// recall was queued: it is dropped, unsent, consuming nothing.
 		return cbUnfit, true
 	}
+	// The session's file does not record the callback sequence, so a
+	// session restored from it after this call would start again at the
+	// sequence the client has used. The file goes first, or nothing is
+	// sent and the session is retired. This goroutine holds a use of the
+	// session and no lock.
+	if !cb.s.dropSessionFile(cb.sess, "a callback") {
+		cb.s.sessions.retireSession(cb.sess, true)
+		return cbFault, true
+	}
 	if !conn.registerCall(call) {
 		return cbRetry, false
 	}
@@ -333,7 +340,6 @@ func (cb *cbSender) call(conn *rpcConnection, seq, target uint32) (cbOutcome, bo
 				cb.mu.Unlock()
 				// Renew while this goroutine still holds its session use.
 				cb.s.sessions.callbackRenew(cb.sess.clientID, cb.s.sessions.now())
-				cb.s.clients.NoteLeaseNeed(cb.sess.clientID)
 			}
 			return outcome, true
 		case <-timeout:
@@ -578,24 +584,16 @@ func (r recallReply) outcome() cbOutcome {
 }
 
 // callbackRenew renews the logical lease for an accepted CB_SEQUENCE
-// reply, under the gate (RFC 8881 §20.9.3): while live, and while expiry
-// is still deciding, when the renewal makes decideExpired give way; not
-// once the marker is submitted or the client expired.
+// reply, under the gate (RFC 8881 §20.9.3), while it is live: not once
+// expiry has been decided.
 func (ss *sessionStore) callbackRenew(clientID uint64, received time.Time) {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
 	g := ss.groups[clientID]
-	if g == nil {
+	if g == nil || g.lease != gateLive {
 		return
 	}
-	switch {
-	case g.lease == gateLive:
-	case g.lease == gateChecking && g.markerPhase == markerDeciding:
-		g.renewedDuringCheck = true
-	default:
-		return
-	}
-	if quiet := received.Add(clientstore.LeaseTime); quiet.After(g.quietUntil) {
+	if quiet := received.Add(leaseTime); quiet.After(g.quietUntil) {
 		g.quietUntil = quiet
 	}
 }

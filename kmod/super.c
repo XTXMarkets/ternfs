@@ -426,7 +426,12 @@ static struct dentry* ternfs_mount(struct file_system_type* fs_type, int flags, 
     sb->s_magic = TERNFS_SUPER_MAGIC;
     sb->s_blocksize_bits = ffs(sb->s_blocksize) - 1;
 
-    sb->s_bdi = &noop_backing_dev_info;
+    // A bdi of our own, rather than the shared noop_backing_dev_info: writeback
+    // then cleans inodes that the VFS marks dirty (d_tmpfile() dirties every
+    // O_TMPFILE inode), so they can reach the inode LRU, and ra_pages applies
+    // to this filesystem only.
+    err = super_setup_bdi(sb);
+    if (err) { goto out_sb; }
     sb->s_bdi->ra_pages = ternfs_readahead_pages;
 
     struct inode* root = ternfs_get_inode_normal(sb, NULL, TERNFS_ROOT_INODE);

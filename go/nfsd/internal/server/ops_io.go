@@ -25,9 +25,11 @@ func (s *Server) opCommit(st *compoundState, w *nfs4.COMPOUND4resWriter) uint32 
 	}
 
 	// COMMIT carries no stateid. Sync every writer this client has open
-	// through the handle, and the handle's own staging after a restart.
+	// through the handle, the handle's own staging, and after a restart the
+	// client's writers of the handle that no request has adopted yet.
 	writers := append([]vfs.InodeID{st.currentID},
 		s.views.WritersOf(openstate.ViewKey{ClientID: st.clientID, FileID: st.currentID})...)
+	writers = append(writers, s.recoveredWritersOf(st.clientID, st.currentID)...)
 	failed := func() bool {
 		for _, id := range writers {
 			if s.stagingStore.Failed(id) {
@@ -48,7 +50,6 @@ func (s *Server) opCommit(st *compoundState, w *nfs4.COMPOUND4resWriter) uint32 
 			continue
 		}
 		if err := sf.Sync(); err != nil {
-			st.effectUnknown = true
 			ew := w.AppendResarray_Commit()
 			return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_IO)
 		}
@@ -97,14 +98,6 @@ func (s *Server) opRead(args nfs4.READ4args, st *compoundState, w *nfs4.COMPOUND
 		}
 		dataID = state.DataID
 	}
-	sf := s.stagingStore.Get(dataID)
-	if s.stagingStore.Failed(dataID) {
-		ew := w.AppendResarray_Read()
-		ew.SetValue_Default(nfs4.NFS4ERR_IO)
-		w.Resume(ew.Finish())
-		return nfs4.NFS4ERR_IO
-	}
-
 	offset := args.Offset()
 	count := min(args.Count(), maxReadWrite)
 
@@ -114,15 +107,32 @@ func (s *Server) opRead(args nfs4.READ4args, st *compoundState, w *nfs4.COMPOUND
 	var eof bool
 	var err error
 
-	if sf != nil {
-		n, eof, err = sf.Read(offset, buf, s.readBaseForeground)
-		if errors.Is(err, staging.ErrRemoved) && !s.stagingStore.Failed(dataID) {
-			n, eof, err = s.readBaseForeground(
-				s.clientView(st.clientID, st.currentID), offset, buf,
-			)
+	for {
+		sf := s.stagingStore.Get(dataID)
+		if s.stagingStore.Failed(dataID) {
+			break
 		}
-	} else {
-		n, eof, err = s.readBaseForeground(dataID, offset, buf)
+		if sf != nil {
+			n, eof, err = sf.Read(offset, buf, s.readBaseForeground)
+			if !errors.Is(err, staging.ErrRemoved) || s.stagingStore.Failed(dataID) {
+				break
+			}
+		}
+		// READ takes no lock, so a CLOSE may have ended the staging chosen
+		// above, or an OPEN may have upgraded the reader to a writer.
+		// A changed source must go through staging selection again.
+		readID := dataID
+		if isSpecialStateID(stateid) {
+			readID = s.clientView(st.clientID, st.currentID)
+		} else if state, status := s.opens.Lookup(st.clientID, extractStateID(stateid), stateid.Seqid(), st.currentID); status == nfs4.NFS4_OK {
+			readID = state.DataID
+		}
+		if readID != dataID {
+			dataID = readID
+			continue
+		}
+		n, eof, err = s.readBaseForeground(readID, offset, buf)
+		break
 	}
 
 	if s.stagingStore.Failed(dataID) {
@@ -144,6 +154,7 @@ func (s *Server) opRead(args nfs4.READ4args, st *compoundState, w *nfs4.COMPOUND
 		okW = okW.SetEof(nfs4.FALSE)
 	}
 	okW = okW.SetData(buf[:n])
+	s.metrics.addIO(true, n)
 	rbuf := okW.Finish()
 	ew.Resume(rbuf)
 	w.Resume(ew.Finish())
@@ -213,7 +224,6 @@ func (s *Server) opReaddir(args nfs4.READDIR4args, st *compoundState, w *nfs4.CO
 	// NFS cookie semantics: cookie=X means "I already have entries up to
 	// and including X". Skip entries with NameHash <= cookie on continuations,
 	// since VFS Readdir returns entries with hash >= startHash (inclusive).
-	// Also hide the internal .nfs directory from client directory listings.
 	var page []vfs.DirEntry
 	startHash := cookie
 	lastPage := false
@@ -223,9 +233,6 @@ func (s *Server) opReaddir(args nfs4.READDIR4args, st *compoundState, w *nfs4.CO
 				e := page[0]
 				page = page[1:]
 				if cookie != 0 && e.NameHash <= cookie {
-					continue
-				}
-				if st.currentID == s.fs.RootID() && e.Name == vfs.NFSDirName {
 					continue
 				}
 				return e, true, nil
@@ -254,7 +261,7 @@ func (s *Server) opReaddir(args nfs4.READDIR4args, st *compoundState, w *nfs4.CO
 	respMask[0] = reqMask[0] & supportedAttrs0
 	respMask[1] = reqMask[1] & supportedAttrs1
 	respMask[2] = reqMask[2] & supportedAttrs2
-	attrSize := len(encodeAttrs(respMask, 0, vfs.NodeInfo{}))
+	attrSize := len(encodeAttrs(respMask, s.owner, 0, vfs.NodeInfo{}))
 	// Two candidates alternate: the one being written and its successor,
 	// whose size decides the written entry's nextentry discriminant.
 	candidates := [2]readdirEntry{
@@ -267,7 +274,7 @@ func (s *Server) opReaddir(args nfs4.READDIR4args, st *compoundState, w *nfs4.CO
 		re.DirEntry = e
 		re.attrData = nil // Stat failed: encode empty attrs.
 		if ni, err := s.stat(e.ID); err == nil {
-			re.attrData = appendAttrs(scratch[i][:0], respMask, e.ID, ni)
+			re.attrData = appendAttrs(scratch[i][:0], respMask, s.owner, e.ID, ni)
 			scratch[i] = re.attrData
 		}
 	}
@@ -380,6 +387,10 @@ func (s *Server) opWrite(args nfs4.WRITE4args, st *compoundState, w *nfs4.COMPOU
 		ew := w.AppendResarray_Write()
 		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_NOFILEHANDLE)
 	}
+	if s.ReadOnly {
+		ew := w.AppendResarray_Write()
+		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_ROFS)
+	}
 	if status := requireRegularFile(st.currentID); status != nfs4.NFS4_OK {
 		ew := w.AppendResarray_Write()
 		return finishDefaultResponse(w, ew.Finish(), status)
@@ -431,7 +442,6 @@ func (s *Server) opWrite(args nfs4.WRITE4args, st *compoundState, w *nfs4.COMPOU
 	}
 
 	if err := sf.Write(offset, data); err != nil {
-		st.effectUnknown = true
 		ew := w.AppendResarray_Write()
 		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_IO)
 	}
@@ -441,7 +451,6 @@ func (s *Server) opWrite(args nfs4.WRITE4args, st *compoundState, w *nfs4.COMPOU
 	committed := uint32(unstable4)
 	if stable != unstable4 {
 		if err := sf.Sync(); err != nil {
-			st.effectUnknown = true
 			ew := w.AppendResarray_Write()
 			return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_IO)
 		}
@@ -457,6 +466,7 @@ func (s *Server) opWrite(args nfs4.WRITE4args, st *compoundState, w *nfs4.COMPOU
 	okW := ew.SetValue_Nfs4Ok()
 	okW.SetCount(uint32(len(data)))
 	okW.SetCommitted(committed)
+	s.metrics.addIO(false, len(data))
 	verf := okW.Writeverf()
 	for i := 0; i < 8; i++ {
 		verf.SetData(i, s.writeVerifier[i])

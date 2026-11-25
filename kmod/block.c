@@ -660,16 +660,15 @@ static bool block_socket_cleanup(
     ternfs_debug("socket(%p) %pI4:%d refcount %d callbacks unlocked", socket, &socket->addr.sin_addr, ntohs(socket->addr.sin_port), atomic_read(&socket->refcount));
 
 
-
     u64 key = block_socket_key(&socket->addr);
     int bucket = hash_min(key, BLOCK_SOCKET_BITS);
 
 
     // First, remove socket from hashmap. After we're done with this,
     // we know nobody's going to add new requests to this.
-    spin_lock(&ops->locks[bucket]);
+    spin_lock_bh(&ops->locks[bucket]);
     hash_del_rcu(&socket->hnode); // tied to atomic_dec below
-    spin_unlock(&ops->locks[bucket]);
+    spin_unlock_bh(&ops->locks[bucket]);
     // After the grace period, release the hash reference from a worker.
     call_rcu(&socket->rcu_list, rcu_block_socket_put);
     ternfs_debug("socket(%p) %pI4:%d refcount %d removed from hashmap", socket, &socket->addr.sin_addr, ntohs(socket->addr.sin_port), atomic_read(&socket->refcount));
@@ -858,10 +857,10 @@ static struct block_socket*  get_block_socket(
     if (err < 0) {
         if (unlikely(err != -EINPROGRESS)) {
             ternfs_warn("could not connect to block service at %pI4:%d: %d", &sock->addr.sin_addr, ntohs(sock->addr.sin_port), err);
-            write_lock(&sock->sock->sk->sk_callback_lock);
+            write_lock_bh(&sock->sock->sk->sk_callback_lock);
             sock->sock->sk->sk_state_change = sock->saved_state_change;
             sock->sock->sk->sk_user_data = NULL;
-            write_unlock(&sock->sock->sk->sk_callback_lock);
+            write_unlock_bh(&sock->sock->sk->sk_callback_lock);
             mark_bad_addr(sock->addr.sin_addr.s_addr, sock->addr.sin_port);
             block_socket_put(sock);
             goto out_err;
@@ -872,10 +871,10 @@ static struct block_socket*  get_block_socket(
                 if (err <= 0) {
                     ternfs_warn("timed out waiting for connection to %pI4:%d to be established", &sock->addr.sin_addr, ntohs(sock->addr.sin_port));
                     // cleanup socket
-                    write_lock(&sock->sock->sk->sk_callback_lock);
+                    write_lock_bh(&sock->sock->sk->sk_callback_lock);
                     sock->sock->sk->sk_state_change = sock->saved_state_change;
                     sock->sock->sk->sk_user_data = NULL;
-                    write_unlock(&sock->sock->sk->sk_callback_lock);
+                    write_unlock_bh(&sock->sock->sk->sk_callback_lock);
                     mark_bad_addr(sock->addr.sin_addr.s_addr, sock->addr.sin_port);
                     block_socket_put(sock);
                     err = -ETIMEDOUT;
@@ -903,7 +902,7 @@ static struct block_socket*  get_block_socket(
     // callbacks contextually to adding the socket to the hash
     // map.
 
-    write_lock(&sock->sock->sk->sk_callback_lock);
+    write_lock_bh(&sock->sock->sk->sk_callback_lock);
 
     spin_lock(&ops->locks[bucket]);
     // Take the RCU lock while holding the socket lock so that
@@ -920,7 +919,7 @@ static struct block_socket*  get_block_socket(
             sock->sock->sk->sk_user_data = NULL;
             rcu_read_unlock();
             spin_unlock(&ops->locks[bucket]);
-            write_unlock(&sock->sock->sk->sk_callback_lock);
+            write_unlock_bh(&sock->sock->sk->sk_callback_lock);
             ternfs_debug("multiple callers tried to get socket to %pI4:%d, dropping one", &other_sock->addr.sin_addr, ntohs(other_sock->addr.sin_port));
             // call again rather than trying to `sock_release` with the
             // RCU read lock held, this might not be safe in atomic context.
@@ -946,7 +945,7 @@ static struct block_socket*  get_block_socket(
 
     spin_unlock(&ops->locks[bucket]);
 
-    write_unlock(&sock->sock->sk->sk_callback_lock);
+    write_unlock_bh(&sock->sock->sk->sk_callback_lock);
 
     atomic_inc(&ops->len[bucket]);
 
@@ -1241,7 +1240,6 @@ static void fetch_request_constructor(void* ptr) {
     struct fetch_request* req = (struct fetch_request*)ptr;
 
     INIT_LIST_HEAD(&req->pages);
-    INIT_WORK(&req->breq.complete_work, fetch_complete_work);
 }
 
 int ternfs_drop_fetch_block_sockets(void) {
@@ -1456,6 +1454,7 @@ int ternfs_fetch_block_pages_with_crc(
 
     struct fetch_request* req = kmem_cache_alloc(fetch_request_cachep, GFP_KERNEL);
     if (!req) { err = -ENOMEM; goto out_err; }
+    INIT_WORK(&req->breq.complete_work, fetch_complete_work);
 
     req->callback = callback;
     req->data = data;
@@ -1582,7 +1581,6 @@ static void write_request_constructor(void* ptr) {
     struct write_request* req = (struct write_request*)ptr;
 
     INIT_LIST_HEAD(&req->pages);
-    INIT_WORK(&req->breq.complete_work, write_block_complete_work);
 }
 
 int ternfs_drop_write_block_sockets(void) {
@@ -1646,7 +1644,7 @@ static int write_block_write_req(struct block_socket* socket, struct block_reque
     // Write the pages out
     while (write_req_written < write_size) {
         struct page* page = list_first_entry(&req->pages, struct page, lru);
-        int sent = kernel_sendpage(
+        int sent = ternfs_sendpage(
             socket->sock, page,
             page->index,
             min((u32)(PAGE_SIZE - page->index), write_size - write_req_written),
@@ -1795,6 +1793,7 @@ int ternfs_write_block(
 
     struct write_request* req = kmem_cache_alloc(write_request_cachep, GFP_KERNEL);
     if (!req) { err = -ENOMEM; goto out_err; }
+    INIT_WORK(&req->breq.complete_work, write_block_complete_work);
 
     req->callback = callback;
     req->data = data;

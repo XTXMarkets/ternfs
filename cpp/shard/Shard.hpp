@@ -22,6 +22,12 @@ struct ShardOptions {
     uint16_t numReaders = 1;
     int32_t rocksdbMaxBackgroundJobs = 4;
     int32_t rocksdbMaxSubcompactions = 4;
+    // Total WAL bytes above which RocksDB flushes the column families holding the oldest WAL. 0 keeps the RocksDB default.
+    uint64_t rocksdbMaxTotalWalSize = 0;
+    // Info log (LOG) bytes above which RocksDB rolls it. 0 rolls only on open.
+    uint64_t rocksdbMaxLogFileSize = 0;
+    // Info log files to keep, counting the current one.
+    uint64_t rocksdbKeepLogFileNum = 1000;
     Duration regionStalenessThreshold = 10_mins;
     // Stop serving reads when our newest applied log entry is older than this. 0 disables read gating.
     Duration readStalenessThreshold = 10_sec;

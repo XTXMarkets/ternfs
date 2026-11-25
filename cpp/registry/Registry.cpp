@@ -135,6 +135,7 @@ public:
                 break;
             }
             case RegistryMessageKind::LOCAL_SHARDS:
+            case RegistryMessageKind::LOCAL_SHARD_REPLICAS:
             case RegistryMessageKind::LOCAL_CDC:
             case RegistryMessageKind::INFO:
             case RegistryMessageKind::REGISTRY:

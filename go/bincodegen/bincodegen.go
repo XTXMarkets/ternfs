@@ -606,6 +606,7 @@ func generateKmodGet(staticSizes map[string]int, h io.Writer, typ reflect.Type) 
 				generateKmodStruct(h, typ, fldName, "u16 len")
 				nextType := fmt.Sprintf("struct %s_%s", kmodStructName(typ), fldName)
 				fmt.Fprintf(h, "static inline void _%s_get_%s(struct ternfs_bincode_get_ctx* ctx, %s* prev, %s* next) {\n", kmodStructName(typ), fldName, prevType, nextType)
+				fmt.Fprintf(h, "    next->len = 0;\n") // loops remain safe even if the length field is truncated
 				fmt.Fprintf(h, "    if (likely(ctx->err == 0)) {\n")
 				fmt.Fprintf(h, "        if (unlikely(ctx->end - ctx->buf < 2)) {\n")
 				fmt.Fprintf(h, "            ctx->err = TERNFS_ERR_MALFORMED_RESPONSE;\n")
@@ -613,8 +614,6 @@ func generateKmodGet(staticSizes map[string]int, h io.Writer, typ reflect.Type) 
 				fmt.Fprintf(h, "            next->len = get_unaligned_le16(ctx->buf);\n")
 				fmt.Fprintf(h, "            ctx->buf += 2;\n")
 				fmt.Fprintf(h, "        }\n")
-				fmt.Fprintf(h, "    } else {\n")
-				fmt.Fprintf(h, "        next->len = 0;\n") // so that loops can work even in the case of errors
 				fmt.Fprintf(h, "    }\n")
 				fmt.Fprintf(h, "}\n")
 				fmt.Fprintf(h, "#define %s_get_%s(ctx, prev, next) \\\n", kmodStructName(typ), fldName)
@@ -1476,6 +1475,8 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 
 	generateCppErr(hppOut, cppOut, errors)
 
+	fmt.Fprintf(hppOut, "constexpr size_t MAX_REPLACE_BLOCKS = %d; // see msgs.go\n\n", msgs.MAX_REPLACE_BLOCKS)
+
 	generateCppKind(hppOut, cppOut, "Shard", shardReqResps)
 	generateCppKind(hppOut, cppOut, "CDC", cdcReqResps)
 	generateCppKind(hppOut, cppOut, "Registry", registryReqResps)
@@ -1556,6 +1557,7 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 			reflect.TypeOf(msgs.SameShardHardFileUnlinkEntry{}),
 			reflect.TypeOf(msgs.MakeFileTransientEntry{}),
 			reflect.TypeOf(msgs.HeartbeatEntry{}),
+			reflect.TypeOf(msgs.ReplaceBlocksEntry{}),
 		},
 	)
 
@@ -1691,6 +1693,12 @@ func main() {
 		"REGISTRY_OVERLOADED",
 		"SHARDS_NOT_READY",
 		"CDC_NOT_READY",
+		"BLOCK_SERVICE_NOT_DECOMMISSIONED",
+		"REPLACE_BLOCKS_MISMATCHING_SIZE",
+		"REPLACE_BLOCKS_MISMATCHING_CRC",
+		"REPLACE_BLOCKS_MISMATCHING_LOCATION",
+		"REPLACE_BLOCKS_DUPLICATE_BLOCK_SERVICE",
+		"REPLACE_BLOCKS_DUPLICATE_FAILURE_DOMAIN",
 	}
 
 	kernelShardReqResps := []reqRespType{
@@ -1859,6 +1867,12 @@ func main() {
 			0x78,
 			reflect.TypeOf(msgs.SwapBlocksReq{}),
 			reflect.TypeOf(msgs.SwapBlocksResp{}),
+		},
+		// 0x70-0x7F is full, this is private too
+		{
+			0x17,
+			reflect.TypeOf(msgs.ReplaceBlocksReq{}),
+			reflect.TypeOf(msgs.ReplaceBlocksResp{}),
 		},
 		{
 			0x79,
@@ -2189,6 +2203,11 @@ func main() {
 			reflect.TypeOf(msgs.BlockServiceAvailableSpaceReq{}),
 			reflect.TypeOf(msgs.BlockServiceAvailableSpaceResp{}),
 		},
+		{
+			0x31,
+			reflect.TypeOf(msgs.LocalShardReplicasReq{}),
+			reflect.TypeOf(msgs.LocalShardReplicasResp{}),
+		},
 	}...)
 
 	kernelBlocksReqResps := []reqRespType{
@@ -2309,6 +2328,7 @@ func main() {
 			reflect.TypeOf(msgs.BlockServiceSpace{}),
 			reflect.TypeOf(msgs.CdcInfo{}),
 			reflect.TypeOf(msgs.LocationInfo{}),
+			reflect.TypeOf(msgs.ReplaceBlock{}),
 		}...)...)
 
 	goExtras := append(extras, []reflect.Type{

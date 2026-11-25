@@ -9,7 +9,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/XTXMarkets/ternfs/go/nfsd/internal/clientstore"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/nfs4"
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
@@ -19,13 +18,13 @@ func (s *Server) opCreate(args nfs4.CREATE4args, st *compoundState, w *nfs4.COMP
 		ew := w.AppendResarray_Create()
 		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_NOFILEHANDLE)
 	}
+	if s.ReadOnly {
+		ew := w.AppendResarray_Create()
+		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_ROFS)
+	}
 	if st.currentID.Type() != vfs.InodeTypeDir {
 		ew := w.AppendResarray_Create()
 		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_NOTDIR)
-	}
-	if s.stagingStore.ReadOnly() {
-		ew := w.AppendResarray_Create()
-		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_ROFS)
 	}
 
 	name, status := toTernFSName(args.Objname().Data())
@@ -48,11 +47,14 @@ func (s *Server) opCreate(args nfs4.CREATE4args, st *compoundState, w *nfs4.COMP
 		ew := w.AppendResarray_Create()
 		return finishDefaultResponse(w, ew.Finish(), status)
 	}
-	unlock := s.lockMutationTargets(mutationTarget{
+	st.hold(s.lockMutationTargets(mutationTarget{
 		dirID: st.currentID,
 		name:  name,
-	})
-	defer unlock()
+	}))
+	if verdict, status := s.decideCreateReplay(st, st.currentID, name); verdict != replayNone {
+		ew := w.AppendResarray_Create()
+		return finishDefaultResponse(w, ew.Finish(), status)
+	}
 	busy, err := s.stagingTargetBusy(st.currentID, name)
 	if err != nil {
 		ew := w.AppendResarray_Create()
@@ -75,6 +77,10 @@ func (s *Server) opCreate(args nfs4.CREATE4args, st *compoundState, w *nfs4.COMP
 
 	switch objType {
 	case nfs4.NF4DIR:
+		if status := s.persistIntent(st, createIntent{dir: st.currentID, name: name, objType: nfs4.NF4DIR}.encode(st.opIndex)); status != nfs4.NFS4_OK {
+			ew := w.AppendResarray_Create()
+			return finishDefaultResponse(w, ew.Finish(), status)
+		}
 		newID, err = s.fs.Mkdir(st.currentID, name)
 	case nfs4.NF4LNK:
 		targetData := args.Objtype().AsLinktext4().Data()
@@ -87,16 +93,24 @@ func (s *Server) opCreate(args nfs4.CREATE4args, st *compoundState, w *nfs4.COMP
 			return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_NAMETOOLONG)
 		}
 		target := string(targetData)
+		if status := s.persistIntent(st, createIntent{dir: st.currentID, name: name, objType: nfs4.NF4LNK, target: target}.encode(st.opIndex)); status != nfs4.NFS4_OK {
+			ew := w.AppendResarray_Create()
+			return finishDefaultResponse(w, ew.Finish(), status)
+		}
 		newID, err = s.fs.Symlink(st.currentID, name, target)
 	}
 
 	if err != nil {
-		st.observeMutation(s.fs, nfs4.OP_CREATE, err)
 		ew := w.AppendResarray_Create()
 		status := s.errToNFS(err)
 		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 
+	return writeCreateOK(w, st, newID)
+}
+
+// writeCreateOK finishes a successful CREATE of newID.
+func writeCreateOK(w *nfs4.COMPOUND4resWriter, st *compoundState, newID vfs.InodeID) uint32 {
 	st.setCurrentFH(newID)
 
 	ew := w.AppendResarray_Create()
@@ -145,11 +159,6 @@ func (s *Server) opLookup(args nfs4.LOOKUP4args, st *compoundState, w *nfs4.COMP
 		r := w.AppendResarray_Lookup()
 		return finishStatusResponse(&r, status)
 	}
-	// Hide the internal .nfs directory from client access.
-	if name == vfs.NFSDirName && st.currentID == s.fs.RootID() {
-		r := w.AppendResarray_Lookup()
-		return finishStatusResponse(&r, nfs4.NFS4ERR_NOENT)
-	}
 	id, err := s.fs.Lookup(st.currentID, name)
 	if err != nil {
 		r := w.AppendResarray_Lookup()
@@ -193,16 +202,6 @@ func (s *Server) opPutfh(args nfs4.PUTFH4args, st *compoundState, w *nfs4.COMPOU
 		r := w.AppendResarray_Putfh()
 		return finishStatusResponse(&r, nfs4.NFS4ERR_BADHANDLE)
 	}
-	internal, err := s.clients.IsInternalFilehandle(id)
-	if err != nil {
-		r := w.AppendResarray_Putfh()
-		status := clientstore.ErrToNFS(err)
-		return finishStatusResponse(&r, status)
-	}
-	if internal {
-		r := w.AppendResarray_Putfh()
-		return finishStatusResponse(&r, nfs4.NFS4ERR_BADHANDLE)
-	}
 	st.setCurrentFH(id)
 	r := w.AppendResarray_Putfh()
 	return finishStatusResponse(&r, nfs4.NFS4_OK)
@@ -224,13 +223,13 @@ func (s *Server) opRemove(args nfs4.REMOVE4args, st *compoundState, w *nfs4.COMP
 		ew := w.AppendResarray_Remove()
 		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_NOFILEHANDLE)
 	}
+	if s.ReadOnly {
+		ew := w.AppendResarray_Remove()
+		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_ROFS)
+	}
 	if status := requireDirectory(st.currentID); status != nfs4.NFS4_OK {
 		ew := w.AppendResarray_Remove()
 		return finishDefaultResponse(w, ew.Finish(), status)
-	}
-	if s.stagingStore.ReadOnly() {
-		ew := w.AppendResarray_Remove()
-		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_ROFS)
 	}
 
 	name, status := toTernFSName(args.Target().Data())
@@ -238,33 +237,50 @@ func (s *Server) opRemove(args nfs4.REMOVE4args, st *compoundState, w *nfs4.COMP
 		ew := w.AppendResarray_Remove()
 		return finishDefaultResponse(w, ew.Finish(), status)
 	}
-	unlock := s.lockMutationTargets(mutationTarget{
+	st.hold(s.lockMutationTargets(mutationTarget{
 		dirID: st.currentID,
 		name:  name,
-	})
-	defer unlock()
+	}))
 	fail := func(status uint32) uint32 {
 		ew := w.AppendResarray_Remove()
 		return finishDefaultResponse(w, ew.Finish(), status)
+	}
+	switch verdict, status := s.decideRemoveReplay(st, st.currentID, name); verdict {
+	case replayApplied:
+		return writeRemoveOK(w)
+	case replayUndecidable:
+		return fail(status)
 	}
 	if _, err := s.retireInactiveStagingTarget(st.currentID, name); err != nil {
 		return fail(s.errToNFS(err))
 	}
 	writers := s.namespaceWriters(st.currentID, name, nil)
+	if status := s.fenceNamespaceWriters(writers); status != nfs4.NFS4_OK {
+		return fail(status)
+	}
 	edge, err := s.fs.LookupEdge(st.currentID, name)
 	if err != nil {
 		return fail(s.errToNFS(err))
+	}
+	// The intent goes before the writers' guard, so that a REMOVE refused
+	// here has nothing to undo; one whose guard then fails left an intent
+	// that a replay finds not applied.
+	if status := s.persistIntent(st, removeIntent{dir: st.currentID, name: name, edge: edge}.encode(st.opIndex)); status != nfs4.NFS4_OK {
+		return fail(status)
 	}
 	if err := s.guardNamespaceWriters(writers); err != nil {
 		s.log.Warn("cannot guard REMOVE writers", "err", err)
 		return fail(nfs4.NFS4ERR_IO)
 	}
 	err = s.fs.RemoveEdge(st.currentID, name, edge)
-	st.observeMutation(s.fs, nfs4.OP_REMOVE, err)
 	if status := s.finishNamespaceWriters(writers, nfs4.OP_REMOVE, err); status != nfs4.NFS4_OK {
 		return fail(status)
 	}
+	return writeRemoveOK(w)
+}
 
+// writeRemoveOK finishes a successful REMOVE.
+func writeRemoveOK(w *nfs4.COMPOUND4resWriter) uint32 {
 	ew := w.AppendResarray_Remove()
 	okW := ew.SetValue_Nfs4Ok()
 	cinfo := okW.Cinfo()
@@ -280,6 +296,10 @@ func (s *Server) opRename(args nfs4.RENAME4args, st *compoundState, w *nfs4.COMP
 		ew := w.AppendResarray_Rename()
 		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_NOFILEHANDLE)
 	}
+	if s.ReadOnly {
+		ew := w.AppendResarray_Rename()
+		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_ROFS)
+	}
 	if status := requireDirectory(st.savedID); status != nfs4.NFS4_OK {
 		ew := w.AppendResarray_Rename()
 		return finishDefaultResponse(w, ew.Finish(), status)
@@ -287,10 +307,6 @@ func (s *Server) opRename(args nfs4.RENAME4args, st *compoundState, w *nfs4.COMP
 	if status := requireDirectory(st.currentID); status != nfs4.NFS4_OK {
 		ew := w.AppendResarray_Rename()
 		return finishDefaultResponse(w, ew.Finish(), status)
-	}
-	if s.stagingStore.ReadOnly() {
-		ew := w.AppendResarray_Rename()
-		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_ROFS)
 	}
 
 	oldName, status := toTernFSName(args.Oldname().Data())
@@ -303,6 +319,23 @@ func (s *Server) opRename(args nfs4.RENAME4args, st *compoundState, w *nfs4.COMP
 		ew := w.AppendResarray_Rename()
 		return finishDefaultResponse(w, ew.Finish(), status)
 	}
+	st.hold(s.lockMutationTargets(
+		mutationTarget{dirID: st.savedID, name: oldName},
+		mutationTarget{dirID: st.currentID, name: newName},
+	))
+
+	fail := func(status uint32) uint32 {
+		ew := w.AppendResarray_Rename()
+		return finishDefaultResponse(w, ew.Finish(), status)
+	}
+	// A replay is decided first, also when the names now resolve to one:
+	// the RENAME the intent records may have crossed directories.
+	switch verdict, status := s.decideRenameReplay(st, st.savedID, oldName, st.currentID, newName); verdict {
+	case replayApplied:
+		return writeRenameOK(w)
+	case replayUndecidable:
+		return fail(status)
+	}
 	if st.savedID == st.currentID && oldName == newName {
 		ew := w.AppendResarray_Rename()
 		okW := ew.SetValue_Nfs4Ok()
@@ -311,17 +344,6 @@ func (s *Server) opRename(args nfs4.RENAME4args, st *compoundState, w *nfs4.COMP
 		setChangeInfo(okW.TargetCinfo(), nfs4.TRUE, now, now)
 		w.Resume(ew.Finish())
 		return nfs4.NFS4_OK
-	}
-
-	unlock := s.lockMutationTargets(
-		mutationTarget{dirID: st.savedID, name: oldName},
-		mutationTarget{dirID: st.currentID, name: newName},
-	)
-	defer unlock()
-
-	fail := func(status uint32) uint32 {
-		ew := w.AppendResarray_Rename()
-		return finishDefaultResponse(w, ew.Finish(), status)
 	}
 	sourceActive, err := s.retireInactiveStagingTarget(st.savedID, oldName)
 	if err != nil {
@@ -341,6 +363,9 @@ func (s *Server) opRename(args nfs4.RENAME4args, st *compoundState, w *nfs4.COMP
 	}
 	writers := s.namespaceWriters(st.savedID, oldName, sourceTarget)
 	writers = append(writers, s.namespaceWriters(st.currentID, newName, nil)...)
+	if status := s.fenceNamespaceWriters(writers); status != nfs4.NFS4_OK {
+		return fail(status)
+	}
 	edge, err := s.fs.LookupEdge(st.savedID, oldName)
 	if err != nil {
 		return fail(s.errToNFS(err))
@@ -352,6 +377,11 @@ func (s *Server) opRename(args nfs4.RENAME4args, st *compoundState, w *nfs4.COMP
 	if err == nil && (edge.ID.Type() == vfs.InodeTypeDir) != (dst.Type() == vfs.InodeTypeDir) {
 		return fail(nfs4.NFS4ERR_EXIST)
 	}
+	// The intent goes before the writers' guard, as for REMOVE.
+	if status := s.persistIntent(st, renameIntent{srcDir: st.savedID, srcName: oldName, src: edge,
+		dstDir: st.currentID, dstName: newName, dst: dst}.encode(st.opIndex)); status != nfs4.NFS4_OK {
+		return fail(status)
+	}
 	// Preflight cannot freeze the destination. A later type race is a
 	// submitted failure and can quarantine writers on the remote backend.
 	if err := s.guardNamespaceWriters(writers); err != nil {
@@ -359,11 +389,14 @@ func (s *Server) opRename(args nfs4.RENAME4args, st *compoundState, w *nfs4.COMP
 		return fail(nfs4.NFS4ERR_IO)
 	}
 	err = s.fs.RenameEdge(st.savedID, oldName, edge, st.currentID, newName)
-	st.observeMutation(s.fs, nfs4.OP_RENAME, err)
 	if status := s.finishNamespaceWriters(writers, nfs4.OP_RENAME, err); status != nfs4.NFS4_OK {
 		return fail(status)
 	}
+	return writeRenameOK(w)
+}
 
+// writeRenameOK finishes a successful RENAME.
+func writeRenameOK(w *nfs4.COMPOUND4resWriter) uint32 {
 	ew := w.AppendResarray_Rename()
 	okW := ew.SetValue_Nfs4Ok()
 	now := uint64(time.Now().UnixNano())
@@ -411,10 +444,6 @@ func (s *Server) opSecinfo(args nfs4.SECINFO4args, st *compoundState, w *nfs4.CO
 	if status != nfs4.NFS4_OK {
 		ew := w.AppendResarray_Secinfo()
 		return finishDefaultResponse(w, ew.Finish(), status)
-	}
-	if name == vfs.NFSDirName && st.currentID == s.fs.RootID() {
-		ew := w.AppendResarray_Secinfo()
-		return finishDefaultResponse(w, ew.Finish(), nfs4.NFS4ERR_NOENT)
 	}
 	if _, err := s.fs.Lookup(st.currentID, name); err != nil {
 		ew := w.AppendResarray_Secinfo()
