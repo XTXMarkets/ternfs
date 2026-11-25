@@ -120,6 +120,13 @@ func (f *lockedScratchFile) AddSize(size uint64) {
 	f.size += size
 }
 
+func (f *lockedScratchFile) ResetSize() {
+	if !f.locked {
+		panic(fmt.Errorf("accessing size on unlocked scratch file with note %s", f.note))
+	}
+	f.size = 0
+}
+
 func (f *lockedScratchFile) ClearOnUnlock(reason string) {
 	if !f.locked {
 		panic(fmt.Errorf("accessing size on unlocked scratch file with note %s", f.note))

@@ -1475,6 +1475,8 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 
 	generateCppErr(hppOut, cppOut, errors)
 
+	fmt.Fprintf(hppOut, "constexpr size_t MAX_REPLACE_BLOCKS = %d; // see msgs.go\n\n", msgs.MAX_REPLACE_BLOCKS)
+
 	generateCppKind(hppOut, cppOut, "Shard", shardReqResps)
 	generateCppKind(hppOut, cppOut, "CDC", cdcReqResps)
 	generateCppKind(hppOut, cppOut, "Registry", registryReqResps)
@@ -1555,6 +1557,7 @@ func generateCpp(errors []string, shardReqResps []reqRespType, cdcReqResps []req
 			reflect.TypeOf(msgs.SameShardHardFileUnlinkEntry{}),
 			reflect.TypeOf(msgs.MakeFileTransientEntry{}),
 			reflect.TypeOf(msgs.HeartbeatEntry{}),
+			reflect.TypeOf(msgs.ReplaceBlocksEntry{}),
 		},
 	)
 
@@ -1690,6 +1693,12 @@ func main() {
 		"REGISTRY_OVERLOADED",
 		"SHARDS_NOT_READY",
 		"CDC_NOT_READY",
+		"BLOCK_SERVICE_NOT_DECOMMISSIONED",
+		"REPLACE_BLOCKS_MISMATCHING_SIZE",
+		"REPLACE_BLOCKS_MISMATCHING_CRC",
+		"REPLACE_BLOCKS_MISMATCHING_LOCATION",
+		"REPLACE_BLOCKS_DUPLICATE_BLOCK_SERVICE",
+		"REPLACE_BLOCKS_DUPLICATE_FAILURE_DOMAIN",
 	}
 
 	kernelShardReqResps := []reqRespType{
@@ -1858,6 +1867,12 @@ func main() {
 			0x78,
 			reflect.TypeOf(msgs.SwapBlocksReq{}),
 			reflect.TypeOf(msgs.SwapBlocksResp{}),
+		},
+		// 0x70-0x7F is full, this is private too
+		{
+			0x17,
+			reflect.TypeOf(msgs.ReplaceBlocksReq{}),
+			reflect.TypeOf(msgs.ReplaceBlocksResp{}),
 		},
 		{
 			0x79,
@@ -2313,6 +2328,7 @@ func main() {
 			reflect.TypeOf(msgs.BlockServiceSpace{}),
 			reflect.TypeOf(msgs.CdcInfo{}),
 			reflect.TypeOf(msgs.LocationInfo{}),
+			reflect.TypeOf(msgs.ReplaceBlock{}),
 		}...)...)
 
 	goExtras := append(extras, []reflect.Type{
