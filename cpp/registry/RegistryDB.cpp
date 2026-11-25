@@ -15,6 +15,7 @@
 #include "Time.hpp"
 #include <rocksdb/db.h>
 #include <rocksdb/write_batch.h>
+#include <algorithm>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -1227,6 +1228,61 @@ void RegistryDB::cdcs(std::vector<CdcInfo>& out) const {
     ROCKS_DB_CHECKED(it->status());
     delete it;
     ALWAYS_ASSERT((!out.empty()) && (out.size() % LogsDB::REPLICA_COUNT == 0));
+}
+
+namespace {
+struct UnreadableFDKey {
+    uint8_t loc;
+    uint8_t sc;
+    FailureDomain fd;
+
+    bool operator==(const UnreadableFDKey& other) const {
+        return loc == other.loc && sc == other.sc && fd == other.fd;
+    }
+};
+
+struct UnreadableFDKeyHash {
+    std::size_t operator()(const UnreadableFDKey& k) const {
+        size_t hash = 2166136261u;
+        auto combine = [&](uint8_t b) {
+            hash ^= b;
+            hash *= 16777619u;
+        };
+
+        combine(k.loc);
+        combine(k.sc);
+
+        for (uint8_t b : k.fd.name.data) {
+            combine(b);
+        }
+        return hash;
+    }
+};
+}
+
+std::vector<UnreadableFailureDomains> unreadableFailureDomains(const std::vector<FullBlockServiceInfo>& blockServices) {
+    std::vector<UnreadableFailureDomains> stats;
+    std::unordered_set<UnreadableFDKey, UnreadableFDKeyHash> unreadableFDs;
+
+    for (const auto& bs : blockServices) {
+        if(!bs.hasFiles || blockServiceFlagsReadable(bs.flags)) {
+            continue;
+        }
+
+        auto it = std::find_if(stats.begin(), stats.end(), [&](const UnreadableFailureDomains& g) {
+            return g.locationId == bs.locationId && g.storageClass == bs.storageClass;
+        });
+        if (it == stats.end()) {
+            stats.push_back({bs.locationId, bs.storageClass, 1});
+            unreadableFDs.insert({bs.locationId, bs.storageClass, bs.failureDomain});
+        } else {
+            if (unreadableFDs.find({bs.locationId, bs.storageClass, bs.failureDomain}) == unreadableFDs.end()) {
+                unreadableFDs.insert({bs.locationId, bs.storageClass, bs.failureDomain});
+                it->count++;
+            }
+        }
+    }
+    return stats;
 }
 
 void RegistryDB::blockServices(std::vector<FullBlockServiceInfo>& out) const{

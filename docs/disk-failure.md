@@ -61,3 +61,40 @@ We might notice that disks fail in a variety of ways (alerts in the block servic
 1. After you've replaced the disk and the partition is mounted, restart `ternblocks` again so that a new block service will be spun up.
 
     Again, clients will automatically work around the temporary failures due to the restart.
+
+## Monitoring decommissioning
+
+With `-influx-db-origin` set, the registry leader reports decommissioning
+once a minute. Other replicas send nothing, so a series carries on when the
+leader changes. All three measurements have `location` and `storageclass`
+tags.
+
+The `eggsfs_registry_unreadable_failure_domains` measurement has a row for
+every location and storage class with a block service. Fields:
+
+* `count`: failure domains with files on a block service that can't be read
+  (decommissioned, stale or `NO_READ`).
+* `limit`: `-alert-at-unavailable-failure-domains`. Automatic
+  decommissioning is refused with `AUTO_DECOMMISSION_FORBIDDEN` once `count`
+  reaches it.
+
+The `eggsfs_registry_decommissioned_block_services` measurement has a row for
+every location and storage class with a block service. Fields:
+
+* `count`: decommissioned block services.
+* `with_files`: those that still have files, i.e. haven't finished
+  migrating.
+
+The `eggsfs_registry_decommissioned_block_service` measurement has a row for
+each decommissioned block service that still has files. It also has
+`blockservice` and `failuredomain` tags, and `pathprefix` (the host part of
+the path) when the path has one. Fields:
+
+* `decommissioned_at`: when it was decommissioned, in Unix seconds.
+* `age`: seconds since it was decommissioned.
+
+A block service has files until the registry's file tracker finds none on
+any shard. The tracker scans at most every 15 minutes, so a series ends up
+to about 15 minutes after migration finishes. A few files the migrator
+can't move, or transient files GC hasn't destructed yet, keep it going.
+The last `age` of a series is how long the block service took to empty.
