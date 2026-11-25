@@ -550,7 +550,7 @@ static int ternfs_setattr(struct mnt_idmap* uns, struct dentry* dentry, struct i
         mtime |= 1ull << 63;
     }
 
-    int err = ternfs_shard_set_time((struct ternfs_fs_info*)dentry->d_inode->i_sb->s_fs_info, dentry->d_inode->i_ino, mtime, atime);
+    int err = ternfs_error_to_linux(ternfs_shard_set_time((struct ternfs_fs_info*)dentry->d_inode->i_sb->s_fs_info, dentry->d_inode->i_ino, mtime, atime));
     if (err) { return err; }
 
     // could copy out attributes instead?

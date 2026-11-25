@@ -210,7 +210,7 @@ static int fetch_span_blocks(struct fetch_span_pages_state* st) {
             ternfs_warn("we're out of blocks, giving up " LOG_STR, LOG_ARGS);
             int err = atomic_read(&st->last_block_err);
             BUG_ON(err == 0);
-            return err;
+            return ternfs_error_to_linux(err);
         }
 
         // Find the next block to download. If we're mirrored, download
