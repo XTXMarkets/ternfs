@@ -12,6 +12,7 @@ import (
 
 // #cgo CFLAGS: -march=skylake
 // #cgo CXXFLAGS: -std=c++20 -march=skylake
+// #include <stdlib.h>
 // #include "rs.h"
 //
 // void set_ptr(uint8_t** ptrs, size_t i, uint8_t* ptr) {
@@ -74,10 +75,12 @@ func (r *Rs) ComputeParityInto(data [][]byte, parity [][]byte) {
 	blockSize := r.checkBlockSize(data, parity)
 	// prepare C structs
 	dataPtrs := (**C.uchar)(C.malloc(C.size_t(uintptr(r.Parity().DataBlocks()) * unsafe.Sizeof((*C.uchar)(nil)))))
+	defer C.free(unsafe.Pointer(dataPtrs))
 	for i := range data {
 		C.set_ptr(dataPtrs, C.ulong(i), (*C.uchar)(&data[i][0]))
 	}
 	parityPtrs := (**C.uchar)(C.malloc(C.size_t(uintptr(r.Parity().ParityBlocks()) * unsafe.Sizeof((*C.uchar)(nil)))))
+	defer C.free(unsafe.Pointer(parityPtrs))
 	for i := range parity {
 		C.set_ptr(parityPtrs, C.ulong(i), (*C.uchar)(&parity[i][0]))
 	}
@@ -117,6 +120,7 @@ func (r *Rs) RecoverInto(
 		}
 	}
 	blocksPtrs := (**C.uchar)(C.malloc(C.size_t(uintptr(r.Parity().DataBlocks()) * unsafe.Sizeof((*C.uchar)(nil)))))
+	defer C.free(unsafe.Pointer(blocksPtrs))
 	for i := range blocks {
 		C.set_ptr(blocksPtrs, C.ulong(i), (*C.uchar)(&blocks[i][0]))
 	}
