@@ -34,6 +34,10 @@ constexpr uint32_t PROXY_SHARD_REQ_PROTOCOL_VERSION = 0x5414853;
 // '6414853'
 constexpr uint32_t PROXY_SHARD_RESP_PROTOCOL_VERSION = 0x6414853;
 
+// >>> format(struct.unpack('<I', b'SHA\7')[0], 'x')
+// '7414853'
+constexpr uint32_t SHARD_REPLICA_ANNOUNCEMENT_PROTOCOL_VERSION = 0x7414853;
+
 // >>> format(struct.unpack('<I', b'CDC\0')[0], 'x')
 // '434443'
 constexpr uint32_t CDC_REQ_PROTOCOL_VERSION = 0x434443;
@@ -103,3 +107,14 @@ using LogReqMsg = SignedProtocolMessage<LOG_REQ_PROTOCOL_VERSION, LogReqContaine
 using LogRespMsg = SignedProtocolMessage<LOG_RESP_PROTOCOL_VERSION, LogRespContainer>;
 using ProxyShardReqMsg = SignedProtocolMessage<PROXY_SHARD_REQ_PROTOCOL_VERSION, ShardReqContainer>;
 using ProxyShardRespMsg = SignedProtocolMessage<PROXY_SHARD_RESP_PROTOCOL_VERSION, ShardCheckPointedResp>;
+
+// SignedProtocolMessage includes body.kind() in diagnostics. This fixed-body
+// protocol has no discriminator, so provide a diagnostic name around the
+// generated wire body.
+struct ShardReplicaAnnouncementBody : ShardReplicaAnnouncement {
+    const char* kind() const {
+        return "SHARD_REPLICA_ANNOUNCEMENT";
+    }
+};
+
+using ShardReplicaAnnouncementMsg = SignedProtocolMessage<SHARD_REPLICA_ANNOUNCEMENT_PROTOCOL_VERSION, ShardReplicaAnnouncementBody>;

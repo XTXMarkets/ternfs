@@ -332,6 +332,7 @@ func main() {
 					LogsDBFlags:               nil,
 					Addr1:                     "127.0.0.1:0",
 					BlockServiceWritableDelay: &noWritableDelay,
+					ReplicaAnnouncements:      true,
 				}
 				if *transientDeadline > 0 {
 					opts.TransientDeadlineInterval = transientDeadline
