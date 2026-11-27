@@ -41,12 +41,20 @@ client records in TernFS starts on an empty directory; see
 
 ## Run
 
-From `go/nfsd`, build and start a server using the TernFS registry's bincode
-endpoint:
+From `go/nfsd`, build a server and start it with a config file, here
+`nfsd.json`, that uses the TernFS registry's bincode endpoint:
+
+```json
+{
+  "registry": "registry.example:55556",
+  "addr": ":2049",
+  "staging": "/var/lib/nfsd"
+}
+```
 
 ```sh
 go build -o nfsd .
-./nfsd -registry registry.example:55556 -addr :2049 -staging /var/lib/nfsd
+./nfsd -config nfsd.json
 ```
 
 Mount from Linux with NFSv4.1 explicitly:
@@ -61,22 +69,46 @@ Mounts that Samba or another client reopens without a path walk also need
 Read [Deployment](DEPLOYMENT.md) before choosing the staging disk or a
 server replacement procedure.
 
-`-staging DIR` is required; it is the server, so keep it on a persistent
-disk. `-read-only` refuses every change to the filesystem; see
-[read-only server](DEPLOYMENT.md#read-only-server). `-root DIR` selects a local test backend
-instead of `-registry`; exactly one is required. The local backend keeps
-its transient and replaced files in `DIR.nfsd`, next to the exported tree
-and on its filesystem, so `DIR` cannot be a mount point. `-v` enables request
-logging. `-status-addr` serves a read-only JSON
-[diagnostics API](inspect/README.md). `-influx-db-origin`, `-influx-db-org`,
-`-influx-db-bucket` and `-filesystem` push [metrics](DEPLOYMENT.md#metrics).
-`./nfsd -h` lists the other options.
+`-config FILE` is the only command-line option. The file is a JSON object
+of settings, with durations as Go duration strings, and a key it leaves out
+has its default. A missing `-config`, any other argument, an unreadable
+file, invalid JSON, an unknown key or a bad value stops the server at
+startup.
+
+`staging` is required; it is the server, so keep it on a persistent disk.
+`read_only` refuses every change to the filesystem; see
+[read-only server](DEPLOYMENT.md#read-only-server). `root` selects a local
+test backend instead of `registry`; exactly one is required. The local
+backend keeps its transient and replaced files in `<root>.nfsd`, next to the
+exported tree and on its filesystem, so `root` cannot be a mount point.
+`verbose` enables request logging. `status_addr` serves a read-only JSON
+[diagnostics API](inspect/README.md). `influx_db_origin`, `influx_db_org`,
+`influx_db_bucket` and `filesystem` push [metrics](DEPLOYMENT.md#metrics).
+
+| Key | Default | Setting |
+| --- | --- | --- |
+| `staging` | required | Staging directory: writes, sessions and client records. |
+| `registry`, `root` | one required | TernFS registry address, or a local directory to export for testing. |
+| `addr` | `:2049` | NFS listen address. |
+| `read_only` | `false` | Refuse every change to the filesystem. |
+| `owner`, `owner_group` | `nobody`, `nogroup` | Owner and group every file reports: `user@domain` or `group@domain` with the clients' idmap domain, or a numeric id. |
+| `allow_minor_version_2` | `false` | Accept NFSv4.2 compounds; see [NFS profile](#nfs-profile). |
+| `reply_work_budget_mib` | `8192` | Memory reserved for replies in flight, in MiB. |
+| `max_in_flight_per_connection` | `64` | Requests admitted per TCP connection. |
+| `verbose` | `false` | Log NFS requests and responses. |
+| `status_addr` | off | Diagnostics API address. |
+| `influx_db_origin`, `influx_db_org`, `influx_db_bucket` | off | InfluxDB line-protocol store for metrics. |
+| `filesystem` | | Filesystem tag on every metric; required with `influx_db_origin`. |
+| `instance` | short hostname and NFS port | Instance tag on every metric, and the xmon app instance. |
+| `metrics_interval` | `10s` | How often metrics are pushed. |
+| `xmon` | off | Xmon address. |
+| `xmon_app_type` | `restech_eggsfs.daytime` | Xmon app type, which picks the rota and schedule: `restech_eggsfs.never`, `restech_eggsfs.daytime` or `restech_eggsfs.critical`. |
 
 ## NFS profile
 
 The server implements a restricted NFSv4.1 profile. NFSv4.0 requests receive
-`NFS4ERR_MINOR_VERS_MISMATCH`. The compatibility flag
-`-allow-minor-version-2` accepts NFSv4.2 compounds with 4.1 behaviour and
+`NFS4ERR_MINOR_VERS_MISMATCH`. The compatibility setting
+`allow_minor_version_2` accepts NFSv4.2 compounds with 4.1 behaviour and
 rejects 4.2-only operations with `NFS4ERR_NOTSUPP`. It exists for libnfs 8;
 Linux mounts should still request `vers=4.1`.
 

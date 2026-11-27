@@ -13,7 +13,7 @@ import (
 	"github.com/XTXMarkets/ternfs/go/nfsd/internal/vfs"
 )
 
-// DefaultReplyWorkBudgetMiB is the default -reply-work-budget-mib. A compound
+// DefaultReplyWorkBudgetMiB is the default reply_work_budget_mib. A compound
 // with one 1 MiB READ reserves about 8.5 MiB, so this admits roughly a
 // thousand such requests at once. WRITE compounds reserve much less.
 const DefaultReplyWorkBudgetMiB = 8192

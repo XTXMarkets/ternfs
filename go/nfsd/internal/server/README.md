@@ -33,7 +33,7 @@ confirmation), [lease_gate.go](lease_gate.go) and
 
 Each TCP connection has one reader. Before reading a frame, it takes one of
 the connection's admission slots, 64 by default
-(`-max-in-flight-per-connection`). Excess requests wait in socket buffers.
+(`max_in_flight_per_connection`). Excess requests wait in socket buffers.
 The read deadline is five minutes from the start of each frame read. An RPC
 message is at most 2 MiB.
 
@@ -69,7 +69,7 @@ skipped because the connection had closed.
 ### Reply work
 
 Before executing, an admitted request reserves reply work from a
-process-wide budget, `-reply-work-budget-mib` (8 GiB by default). The
+process-wide budget, `reply_work_budget_mib` (8 GiB by default). The
 charge is eight times the sum of its reply capacity and a 65 KiB
 allowance, plus a READDIR preparation allowance when the compound has one.
 

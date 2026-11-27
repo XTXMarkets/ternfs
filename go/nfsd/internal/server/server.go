@@ -59,7 +59,7 @@ type Server struct {
 	backchannel        backchannelStats
 	cbXIDs             atomic.Uint32
 	AllowMinorVersion2 bool
-	ReadOnly           bool // the -read-only flag: every change is refused with NFS4ERR_ROFS
+	ReadOnly           bool // the read_only setting: every change is refused with NFS4ERR_ROFS
 	views              openstate.ViewStore
 	names              nameCache
 	stagingStore       staging.Store
@@ -72,7 +72,7 @@ type Server struct {
 	MaxInFlightPerConn int
 	log                *slog.Logger
 	startedAt          time.Time
-	NFSAddr            string // the -addr flag, for diagnostics
+	NFSAddr            string // the addr setting, for diagnostics
 	// clock is read by now; tests replace it with SetClock.
 	clock atomic.Pointer[func() time.Time]
 

@@ -25,11 +25,19 @@ internals. The server's snapshots are in
 
 ## Enabling the API
 
-`-status-addr` turns the API on. It is off by default.
+The `status_addr` key of the config file turns the API on. It is off by
+default.
+
+```json
+{
+  "registry": "registry.example:55556",
+  "staging": "/var/lib/nfsd",
+  "status_addr": "127.0.0.1:9049"
+}
+```
 
 ```sh
-nfsd -registry registry.example:55556 -staging /var/lib/nfsd \
-    -status-addr 127.0.0.1:9049
+nfsd -config nfsd.json
 curl -s http://127.0.0.1:9049/ | jq .
 ```
 
