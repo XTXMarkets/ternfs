@@ -1979,6 +1979,16 @@ struct CDCDBImpl {
             std::vector<CDCTxnId> txnIdsToStart;
             _enqueueCDCReqs(*dbTxn, cdcReqs, step, txnIdsToStart, cdcReqsTxnIds);
             for (const auto& resp: shardResps) {
+                // A response for a txn that is no longer executing answers a
+                // step that an earlier response already advanced: the step was
+                // sent twice and both answers were logged. Advancing a finished
+                // txn would fail on its missing state, on every replica and on
+                // every restart, since the entry stays in the log. Every
+                // replica drops it alike.
+                if (unlikely(!_isExecuting(*dbTxn, resp.txnId))) {
+                    LOG_ERROR(_env, "dropping shard response %s for txn %s, which is not executing", resp.resp.kind(), resp.txnId);
+                    continue;
+                }
                 _advanceWithResp(*dbTxn, resp.txnId, &resp.resp, step, txnIdsToStart);
             }
             _startExecuting(*dbTxn, txnIdsToStart, step);
