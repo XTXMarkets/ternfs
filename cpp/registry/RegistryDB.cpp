@@ -1242,18 +1242,13 @@ struct UnreadableFDKey {
 };
 
 struct UnreadableFDKeyHash {
+    __attribute__((no_sanitize("integer"))) // FNV-1a wraps by design
     std::size_t operator()(const UnreadableFDKey& k) const {
         size_t hash = 2166136261u;
-        auto combine = [&](uint8_t b) {
-            hash ^= b;
-            hash *= 16777619u;
-        };
-
-        combine(k.loc);
-        combine(k.sc);
-
+        hash = (hash ^ k.loc) * 16777619u;
+        hash = (hash ^ k.sc) * 16777619u;
         for (uint8_t b : k.fd.name.data) {
-            combine(b);
+            hash = (hash ^ b) * 16777619u;
         }
         return hash;
     }
