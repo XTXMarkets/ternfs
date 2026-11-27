@@ -7,7 +7,7 @@ SHELL := /bin/bash
 
 LIBNFS_REPOSITORY := https://github.com/sahlberg/libnfs.git
 # 8.0.0 is the first release with sessions, offered as NFSv4.2. The tests
-# start nfsd with -allow-minor-version-2 to accept it.
+# start nfsd with allow_minor_version_2 set to accept it.
 LIBNFS_VERSION := 8.0.0
 LIBNFS_REVISION := libnfs-$(LIBNFS_VERSION)
 

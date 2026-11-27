@@ -9,6 +9,7 @@ package managedprocess
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/XTXMarkets/ternfs/go/core/log"
@@ -662,18 +663,24 @@ func (procs *ManagedProcesses) StartNfsWithStop(ll *log.Logger, opts *NfsOpts) (
 	createDataDir(opts.Path)
 	stagingDir := path.Join(opts.Path, "staging")
 	createDataDir(stagingDir)
-	args := []string{
-		"-addr", opts.Addr,
-		"-registry", opts.RegistryAddress,
-		"-staging", stagingDir,
+	// nfsd takes every setting from its config file.
+	config, err := json.Marshal(map[string]any{
+		"addr":     opts.Addr,
+		"registry": opts.RegistryAddress,
+		"staging":  stagingDir,
+		"verbose":  opts.LogLevel == log.DEBUG || opts.LogLevel == log.TRACE,
+	})
+	if err != nil {
+		panic(err)
 	}
-	if opts.LogLevel == log.DEBUG || opts.LogLevel == log.TRACE {
-		args = append(args, "-v")
+	configFile := path.Join(opts.Path, "nfsd.json")
+	if err := os.WriteFile(configFile, config, 0644); err != nil {
+		panic(fmt.Errorf("could not write %s: %w", configFile, err))
 	}
 	id := procs.Start(ll, &ManagedProcessArgs{
 		Name:            "nfsd",
 		Exe:             opts.Exe,
-		Args:            args,
+		Args:            []string{"-config", configFile},
 		StdoutFile:      path.Join(opts.Path, "stdout"),
 		StderrFile:      path.Join(opts.Path, "stderr"),
 		TerminateOnExit: true,

@@ -88,8 +88,8 @@ Shared options in `TEST_ARGS`:
 | `-artifacts-dir DIR` | Choose the local parent directory for run artifacts. |
 
 Relative paths are resolved from `go/nfsd/test`. Failed runs retain logs and
-test data; successful runs clean up. The harness enables
-`-allow-minor-version-2` for libnfs. Linux and pynfs still request 4.1.
+test data; successful runs clean up. The harness sets
+`allow_minor_version_2` for libnfs. Linux and pynfs still request 4.1.
 
 ## libnfs
 
@@ -97,7 +97,7 @@ test data; successful runs clean up. The harness enables
 need Linux, Go, CMake and a C/C++ toolchain, but no kernel mount or root.
 Make builds pinned libnfs 8.0.0 under `.deps`. It unpacks
 `.deps/libnfs-libnfs-8.0.0.tar.gz` if present; otherwise it clones the tag.
-libnfs 8 offers sessions as NFSv4.2, hence the server compatibility flag.
+libnfs 8 offers sessions as NFSv4.2, hence the server compatibility setting.
 
 ```sh
 make test-libnfs-cluster GO_TEST_FLAGS=-short

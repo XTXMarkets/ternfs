@@ -204,13 +204,20 @@ func (s *Server) Start(ctx context.Context) error {
 	s.epoch++
 	// libnfs offers sessions only as NFSv4.2. The kernel guest and pynfs
 	// ask for 4.1 explicitly, so accepting 4.2 does not change what they use.
-	args := []string{"-addr", s.Addr, "-staging", s.Staging, "-registry", s.Suite.Registry,
-		"-allow-minor-version-2", "-v"}
+	settings := map[string]any{"addr": s.Addr, "staging": s.Staging, "registry": s.Suite.Registry,
+		"allow_minor_version_2": true, "verbose": true}
 	if s.StatusAddr != "" {
-		args = append(args, "-status-addr", s.StatusAddr)
+		settings["status_addr"] = s.StatusAddr
 	}
-	var err error
-	s.Process, err = StartProcess(exec.Command(s.Suite.Binary, args...),
+	config, err := json.Marshal(settings)
+	if err != nil {
+		return err
+	}
+	configFile := filepath.Join(s.Dir, "nfsd.json")
+	if err := os.WriteFile(configFile, config, 0o644); err != nil {
+		return err
+	}
+	s.Process, err = StartProcess(exec.Command(s.Suite.Binary, "-config", configFile),
 		filepath.Join(s.Dir, fmt.Sprintf("nfsd-%d.log", s.epoch)))
 	if err != nil {
 		return err

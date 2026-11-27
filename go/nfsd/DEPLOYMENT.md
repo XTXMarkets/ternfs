@@ -98,7 +98,7 @@ There are no enforced share reservations or byte-range locks.
 
 **Topology.** The operator fences the old daemon, copies its stopped
 staging directory to the new host, moves the tree's address and starts nfsd
-there with the same binary and flags. The procedure is in
+there with the same binary and config file. The procedure is in
 [Replace a host](RECOVERY.md#replace-a-host).
 
 **Guarantees.** The same recovery scope as a restart in place: the copied
@@ -165,7 +165,7 @@ writes they still hold; it does not bring back stable ones.
 
 ### Read-only server
 
-**Topology.** Start nfsd with `-read-only` and mount with `ro`, for example
+**Topology.** Start nfsd with `read_only` set in its config file and mount with `ro`, for example
 `-o vers=4.1,proto=tcp,hard,ro`. The daemon still needs a staging
 directory, for its sessions and client records; it stays small. A
 directory that holds staged writers is refused at startup, because a
@@ -302,10 +302,10 @@ staging has no automatic age-based deletion.
 
 ### Request limits
 
-Bound request concurrency with `-max-in-flight-per-connection` if needed.
+Bound request concurrency with `max_in_flight_per_connection` if needed.
 Its default is 64; it bounds request count per connection, not bytes,
 connections or total server RSS. Monitor RSS and tune it for the workload.
-Reply memory is bounded across the process by `-reply-work-budget-mib`,
+Reply memory is bounded across the process by `reply_work_budget_mib`,
 8 GiB by default. Each request reserves eight times its reply capacity plus
 a fixed allowance before it runs, so a 1 MiB READ reserves about 8.5 MiB; see
 [reply work](internal/server/README.md#reply-work). A request that
@@ -390,13 +390,13 @@ are treated as an expired client's.
 
 ## Metrics
 
-With `-influx-db-origin`, `-influx-db-org` and `-influx-db-bucket`, nfsd
-pushes its metrics every `-metrics-interval` (10 s) as InfluxDB line
+With `influx_db_origin`, `influx_db_org` and `influx_db_bucket`, nfsd
+pushes its metrics every `metrics_interval` (10 s) as InfluxDB line
 protocol, the way the other TernFS Go services do, so VictoriaMetrics
-stores each field as `<measurement>_<field>`. `-filesystem` is required and
+stores each field as `<measurement>_<field>`. `filesystem` is required and
 becomes the `filesystem` label on every series; `instance` is the short
-host name and NFS port unless `-instance` says otherwise, so several nfsd
-processes on one host stay apart. The `Eggs NFS` dashboard reads these.
+host name and NFS port unless the `instance` key sets it, so several
+nfsd processes on one host stay apart. The `Eggs NFS` dashboard reads these.
 
 Counters are cumulative from process start. Latency histograms have a
 `le` label with the bound in seconds and a final `+Inf`, for
@@ -412,7 +412,7 @@ Counters are cumulative from process start. Latency histograms have a
 | `eggsfs_nfsd_connections_open` | | Tracked connection handlers, including connections draining requests (gauge). |
 | `eggsfs_nfsd_connections_accepted`, `_closed_by_client`, `_closed_by_server`, `_idle_timeouts`, `_read_errors`, `_parse_errors` | | How connections began and ended. Each ended connection is counted once, by the first cause seen, when its handler returns, so the causes sum to the accepted connections that are no longer open. A client close is EOF or a reset; a server close is a reply write failure, a panic, a request refused or dropped without a reply, or a conflicting XID. |
 | `eggsfs_nfsd_admission_in_flight`, `_max_in_flight` | | Requests admitted and not yet answered, and the sum of per-connection limits (gauges). |
-| `eggsfs_nfsd_admission_work_bytes`, `_work_limit`, `_work_replies`, `_work_waiters` | | Reply-work reservations against `-reply-work-budget-mib`, and requests waiting for it (gauges). |
+| `eggsfs_nfsd_admission_work_bytes`, `_work_limit`, `_work_replies`, `_work_waiters` | | Reply-work reservations against `reply_work_budget_mib`, and requests waiting for it (gauges). |
 | `eggsfs_nfsd_admission_work_waits`, `_work_wait_nanos` | | Waits for reply work begun, and time spent waiting. |
 | `eggsfs_nfsd_admission_cache_bytes`, `_cache_limit`, `_sessions`, `_records`, `_groups`, `_active_requests` | | Reply cache and session store figures (gauges). |
 | `eggsfs_nfsd_state_opens`, `_aliases` | | Live open stateids and publication aliases (gauges). |
@@ -434,13 +434,20 @@ client is mounting means a session was retired.
 
 ## Diagnostics
 
-`-status-addr` serves a read-only JSON API about the process's own state,
+`status_addr` serves a read-only JSON API about the process's own state,
 off by default. The [diagnostics API reference](inspect/README.md)
 describes the resources, the client records and typed ids.
 
+```json
+{
+  "registry": "registry.example:55556",
+  "staging": "/var/lib/nfsd",
+  "status_addr": "127.0.0.1:9049"
+}
+```
+
 ```sh
-nfsd -registry registry.example:55556 -staging /var/lib/nfsd \
-    -status-addr 127.0.0.1:9049
+nfsd -config nfsd.json
 curl -s http://127.0.0.1:9049/ | jq .
 ```
 
